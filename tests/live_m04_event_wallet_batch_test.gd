@@ -4,25 +4,47 @@ extends "res://tests/live_event_treasure_continuation_test.gd"
 const REQUIRED := ["button_trail", "loose_seam", "thimble_well", "frayed_signpost",
 	"needle_gate", "quilting_bee", "estate_sale", "lantern_moth_clearing",
 	"patchwork_ferry", "spool_clocktower", "ragpicker_cart", "quilt_bridge",
-	"button_moon_festival"]
+	"button_moon_festival", "v3_raincoat_bridge", "v3_puppet_box_office",
+	"v3_mismatched_mittens", "v3_coil_and_crow", "v3_patchwork_lighthouse", "v3_button_orchard"]
 var gold_purchases := 0
+
+
+func _combined_catalog() -> Dictionary:
+	var events: Array = []
+	for path in ["res://data/events/m04_events.json", "res://data/events/v3_roadside_events.json"]:
+		var document: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
+		events.append_array(document.events.duplicate(true))
+	return {"events": events}
+
+
+func _event_path(map: RunMap, choices: Array, remaining: int) -> Array:
+	for id in choices:
+		var node := map.get_node(id)
+		if node.type not in ["Event", "Treasure"]:
+			continue
+		var needed := remaining - (1 if node.type == "Event" else 0)
+		if needed == 0:
+			return [id]
+		var tail := _event_path(map, node.outgoing, needed)
+		if not tail.is_empty():
+			return [id] + tail
+	return []
 
 
 func _fixtures() -> Dictionary:
 	var found := {}
-	var ids: Array = RunM04EventRotation.new().get_generic_event_ids()
-	# Six consecutive Events are rare. Revalidate known genuine seeds first;
-	# the bounded search remains a fallback when the generated route/pool changes.
-	# Needle Gate's first matching seed lies beyond the old search ceiling.
-	var hints := [2712, 10378, 16044, 36044, 41749, 41911, 44324,
-		54601, 71433, 103089, 133047, 133487, 743907]
+	var ids: Array = RunM04EventRotation.new(_combined_catalog()).get_generic_event_ids()
+	# Treasure traversal consumes no RNG or wallet; allow it between the six
+	# authentic Events rather than requiring a rare six-consecutive-Event route.
+	var hints := [4178, 25765, 26720, 28625, 35959, 38144, 80384, 94902,
+		104705, 107050, 123370, 133091, 140812, 176208, 205371, 324423, 388809, 390215, 503851]
 	for value in hints + range(1, 500000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
 		if not map.generate(rng):
 			continue
-		var path := _find_path(map, map.get_legal_choices(), ["Event", "Event", "Event", "Event", "Event", "Event"])
+		var path := _event_path(map, map.get_legal_choices(), 6)
 		if path.is_empty():
 			continue
 		var toll := RunNeedleToll.new({"heroes": CombatParty.new(app._load_party_definitions()).get_heroes(),
@@ -30,13 +52,110 @@ func _fixtures() -> Dictionary:
 		_check(toll.pay_toll("warden").ok, "fixture stages real paid toll draws")
 		var event_id: String = ids[rng.randi_range(0, ids.size() - 1)]
 		if not found.has(event_id):
-			found[event_id] = {"seed": value, "path": path.slice(0, 5), "next": path[5]}
+			var events: Array = []
+			var transit := {}
+			var treasures: Array = []
+			for id in path:
+				if map.get_node(id).type == "Treasure":
+					treasures.append(id)
+				else:
+					transit[id] = treasures.duplicate()
+					treasures.clear()
+					events.append(id)
+			found[event_id] = {"seed": value, "path": events.slice(0, 5), "next": events[5], "transit": transit}
 		var complete := true
 		for required in REQUIRED:
 			complete = complete and found.has(required)
 		if complete:
 			break
 	return found
+
+
+func _catalog_contract() -> void:
+	var document := _combined_catalog()
+	var snapshot := document.duplicate(true)
+	var live: Dictionary = app._load_wallet_event_catalog()
+	_check(live == document, "live catalog preserves both detached authored catalogs")
+	var rotation := RunM04EventRotation.new(live)
+	_check(rotation.is_catalog_valid(), "combined catalog validates for the real rotation")
+	var ids := rotation.get_generic_event_ids()
+	for id in REQUIRED:
+		_check(ids.count(id) == 1, "combined eligible pool contains required ID exactly once: " + id)
+	_check(not ids.has("quiet_spool"), "Quiet Spool stays on its dedicated special route")
+	var expected: Dictionary = preload("res://tests/v3_roadside_events_test.gd").EXPECTED
+	for id in expected:
+		var matches := rotation.get_generic_events().filter(func(record): return record.id == id)
+		_check(matches.size() == 1, "roadside catalog record is eligible: " + id)
+		if matches.size() != 1:
+			continue
+		var record: Dictionary = matches[0]
+		_check(record.title == expected[id].title and record.description == expected[id].description
+			and record.choices.size() == 3, "exact authored roadside presentation: " + id)
+		var choice_ids := []
+		for choice in record.choices:
+			choice_ids.append(choice.id)
+			_check(expected[id].outcomes.has(choice.id)
+				and int(choice.outcome.gold) == expected[id].outcomes[choice.id].gold
+				and int(choice.outcome.scraps) == expected[id].outcomes[choice.id].scraps,
+				"exact signed roadside outcome: " + id)
+		_check(choice_ids == expected[id].choices, "exact three authored roadside choice IDs: " + id)
+	live.events.clear()
+	_check(document == snapshot and app._load_wallet_event_catalog() == snapshot,
+		"returned combined document cannot mutate source or subsequent load")
+
+
+func _catalog_failures(entry: Callable) -> void:
+	var original: String = app.roadside_event_catalog_path
+	app.roadside_event_catalog_path = "res://missing_roadside_catalog.json"
+	_reject_wallet(entry, "missing roadside catalog")
+	var path := OS.get_environment("TEMP").path_join("patchwork_cycle258_roadside_%d.json" % OS.get_process_id())
+	app.roadside_event_catalog_path = path
+	var source: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(original))
+	var broken: Array = [null, {}, {"events": [null]}]
+	for index in range(source.events.size()):
+		var missing := source.duplicate(true)
+		missing.events.remove_at(index)
+		broken.append(missing)
+		var duplicate := source.duplicate(true)
+		duplicate.events.append(source.events[index].duplicate(true))
+		broken.append(duplicate)
+		var malformed := source.duplicate(true)
+		malformed.events[index].choices[0].outcome.gold = "invalid"
+		broken.append(malformed)
+		var two_choices := source.duplicate(true)
+		two_choices.events[index].choices.pop_back()
+		broken.append(two_choices)
+	var collision := source.duplicate(true)
+	collision.events.append(_combined_catalog().events[0].duplicate(true))
+	broken.append(collision)
+	for document in broken:
+		var file := FileAccess.open(path, FileAccess.WRITE)
+		_check(file != null, "negative roadside fixture opens outside repository")
+		if file == null:
+			break
+		file.store_string(JSON.stringify(document))
+		file.close()
+		_reject_wallet(entry, "malformed, missing, duplicate or colliding roadside catalog")
+	var additive := source.duplicate(true)
+	var extra: Dictionary = source.events[0].duplicate(true)
+	extra.id = "future_roadside_event"
+	additive.events.append(extra)
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	_check(file != null, "additive roadside fixture opens outside repository")
+	if file != null:
+		file.store_string(JSON.stringify(additive))
+		file.close()
+		var before := _wallet_state()
+		var rotation := RunM04EventRotation.new(app._load_wallet_event_catalog())
+		_check(rotation.is_catalog_valid() and rotation.get_generic_event_ids().has(extra.id),
+			"valid future roadside additions join the pool without a fixed total")
+		_check(_wallet_state() == before, "catalog validation consumes no state or RNG")
+	DirAccess.remove_absolute(path)
+	app.roadside_event_catalog_path = original
+	var history: Array = app._wallet_event_history.duplicate()
+	app._wallet_event_history = RunM04EventRotation.new(_combined_catalog()).get_generic_event_ids()
+	_reject_wallet(entry, "exhausted generic rotation")
+	app._wallet_event_history = history
 
 
 func _wallet() -> Dictionary:
@@ -71,6 +190,7 @@ func _reach(fixture: Dictionary, funded: bool = true) -> void:
 	await _click(app.start_button)
 	_check(app.run_map != null and app.run_rng != null, "real title Start creates seeded run")
 	for index in range(3):
+		await _traverse_treasures(fixture, fixture.path[index])
 		await _click(_route_action(fixture.path[index]))
 		var panel: LiveEventChoicePanel = app.quiet_spool_panel if index == 0 \
 			else (app.moth_panel if index == 1 else app.dye_vat_panel)
@@ -82,6 +202,7 @@ func _reach(fixture: Dictionary, funded: bool = true) -> void:
 	_check(app._quiet_spool_completed and app._moth_completed and app._dye_vat_completed
 		and _wallet() == {"gold": 0, "scraps": 2 if funded else 0},
 		"three authentic special receipts establish exact opening wallet")
+	await _traverse_treasures(fixture, fixture.path[3])
 	await _click(_route_action(fixture.path[3]))
 	_check(is_instance_valid(app.needle_toll_panel), "fourth Event mounts the inserted toll")
 	if not is_instance_valid(app.needle_toll_panel):
@@ -94,6 +215,15 @@ func _reach(fixture: Dictionary, funded: bool = true) -> void:
 	_check(app.needle_toll_panel == null and app._needle_toll_completed
 		and _wallet() == {"gold": 0, "scraps": 2 if funded else 0},
 		"Skip resumes routing with the exact original wallet including zero-wallet negatives")
+	await _traverse_treasures(fixture, fixture.path[4])
+
+
+func _traverse_treasures(fixture: Dictionary, target: String) -> void:
+	for id in fixture.transit[target]:
+		var before := [_wallet(), _other_ledgers()]
+		await _click(_route_action(id))
+		_check(app.run_map.get_current_node_id() == id and app.run_map.get_node(id).type == "Treasure"
+			and [_wallet(), _other_ledgers()] == before, "legal intervening Treasure changes only the route")
 
 
 func _return_title() -> void:
@@ -112,7 +242,7 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 	var entry: Callable = button.pressed.get_connections()[0].callable
 	var rng := RandomNumberGenerator.new()
 	rng.state = app.run_rng.state
-	var ids := RunM04EventRotation.new().get_generic_event_ids()
+	var ids := RunM04EventRotation.new(_combined_catalog()).get_generic_event_ids()
 	var expected_id: String = ids[rng.randi_range(0, ids.size() - 1)]
 	var before: Array = _other_ledgers()
 	await _click(button)
@@ -190,6 +320,7 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 		"wallet": expected}), "replayed owner receipt")
 	_reject_wallet(entry, "completed route replay")
 	var result := [_wallet(), app.run_map.get_route(), str(app.run_rng.state), record, chosen.id]
+	await _traverse_treasures(fixture, fixture.next)
 	await _click(_route_action(fixture.next))
 	_check(app.run_map.get_current_node_id() == fixture.next, "settlement admits genuine connected successor")
 	var second: LiveEventChoicePanel = app.wallet_event_panel
@@ -238,9 +369,12 @@ func _failures(fixture: Dictionary) -> void:
 	app.event_catalog_path = "res://missing_event_catalog.json"
 	_reject_wallet(entry, "missing catalog rejects without draw")
 	app.event_catalog_path = catalog_path
+	_catalog_failures(entry)
 	app.session_gold = -1
 	_reject_wallet(entry, "failed wallet panel mount rolls back selection draw")
 	app.session_gold = 0
+	_reject_wallet(app._open_wallet_event.bind(app.run_map.get_current_node_id(), weakref(app.run_map)),
+		"visited map admission rolls back staged draw and panel")
 	button.disabled = true
 	_reject_wallet(entry, "disabled route")
 	button.disabled = false
@@ -316,6 +450,7 @@ func _run() -> void:
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await _frames()
+	_catalog_contract()
 	seed(227227)
 	var global_next := randi()
 	seed(227227)
@@ -329,6 +464,8 @@ func _run() -> void:
 		_check(not first.is_empty() and first == replay, "same seed mouse/keyboard replay matches exact Event, wallet, route and RNG")
 	if fixtures.has("button_trail"):
 		await _failures(fixtures.button_trail)
+	if fixtures.has("v3_mismatched_mittens"):
+		await _failures(fixtures.v3_mismatched_mittens)
 	_check(gold_purchases > 0, "real generic sales fund real gold-cost choices")
 	_check(randi() == global_next, "all selection, choices and rejections preserve global RNG")
 	app.free()

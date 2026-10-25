@@ -19,6 +19,14 @@ var moth_visits := 0
 var quilt_awards := 0
 
 
+func _combined_wallet_catalog() -> Dictionary:
+	var events: Array = []
+	for path in ["res://data/events/m04_events.json", "res://data/events/v3_roadside_events.json"]:
+		var document: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
+		events.append_array(document.events.duplicate(true))
+	return {"events": events}
+
+
 func _frames() -> void:
 	for frame in range(3):
 		await process_frame
@@ -186,7 +194,7 @@ func _node(id: String, index: int) -> bool:
 			expected_rng.state = int(inventory[8])
 			var history: Array = app._wallet_event_history.duplicate()
 			history.pop_back()
-			var selected := RunM04EventRotation.new().select_event(expected_rng, history)
+			var selected := RunM04EventRotation.new(_combined_wallet_catalog()).select_event(expected_rng, history)
 			_check(selected.ok and selected.event == record and app.run_rng.state == expected_rng.state,
 				"later Event uses exactly one seeded rotation draw")
 			var wallet := {"gold": app.session_gold, "scraps": app.run_scraps}
@@ -849,7 +857,7 @@ func _needle_visits(fixture: Dictionary, branch: String, keyboard: bool) -> Arra
 	for index in range(4, 6):
 		var expected_rng := RandomNumberGenerator.new()
 		expected_rng.state = app.run_rng.state
-		var rotation := RunM04EventRotation.new().select_event(expected_rng, app._wallet_event_history)
+		var rotation := RunM04EventRotation.new(_combined_wallet_catalog()).select_event(expected_rng, app._wallet_event_history)
 		await _activate(_needle_button(fixture.path[index]), keyboard)
 		var wallet_panel: LiveEventChoicePanel = app.wallet_event_panel
 		_check(is_instance_valid(wallet_panel) and app.needle_toll_panel == null,

@@ -725,6 +725,9 @@ var _connected_route: Array[String] = []
 var _placeholder_map: WeakRef
 var _placeholder_route: Array[String] = []
 var event_catalog_path := "res://data/events/m04_events.json"
+var roadside_event_catalog_path := "res://data/events/v3_roadside_events.json"
+const REQUIRED_ROADSIDE_EVENT_IDS := ["v3_raincoat_bridge", "v3_puppet_box_office",
+	"v3_mismatched_mittens", "v3_coil_and_crow", "v3_patchwork_lighthouse", "v3_button_orchard"]
 var wallet_event_panel: LiveEventChoicePanel
 var _wallet_event_record: Dictionary = {}
 var _wallet_event_context: Array = []
@@ -3132,13 +3135,50 @@ func _wallet_event_snapshot() -> Array:
 		_quiet_spool_completed, _moth_completed, _dye_vat_completed]
 
 
+func _load_wallet_event_catalog() -> Dictionary:
+	# Validate before drawing. Required roadside entries fail closed as a pack;
+	# unique, valid future additions remain eligible without a fixed pool size.
+	var document: Variant = JSON.parse_string(FileAccess.get_file_as_string(event_catalog_path)) \
+		if FileAccess.file_exists(event_catalog_path) else null
+	if not document is Dictionary or not RunM04EventRotation.new(document).is_catalog_valid():
+		return {}
+	var roadside: Variant = JSON.parse_string(FileAccess.get_file_as_string(roadside_event_catalog_path)) \
+		if FileAccess.file_exists(roadside_event_catalog_path) else null
+	if not roadside is Dictionary or not roadside.get("events") is Array:
+		return {}
+	var combined: Dictionary = document.duplicate(true)
+	var seen := {}
+	for record in combined.events:
+		if record is Dictionary:
+			seen[record.get("id")] = true
+	var roadside_ids := {}
+	for record in roadside.events:
+		var service := RunEventChoice.new(record)
+		if not service.is_valid() or seen.has(record.id):
+			return {}
+		if REQUIRED_ROADSIDE_EVENT_IDS.has(record.id) and record.choices.size() != 3:
+			return {}
+		var preview := service.preview_wallet_choices({"gold": 0, "scraps": 0})
+		if not preview.ok:
+			return {}
+		for choice in preview.choices:
+			if choice.gold_delta == null or choice.scraps_delta == null:
+				return {}
+		seen[record.id] = true
+		roadside_ids[record.id] = true
+		combined.events.append(record.duplicate(true))
+	for required in REQUIRED_ROADSIDE_EVENT_IDS:
+		if not roadside_ids.has(required):
+			return {}
+	return {"events": combined.events}
+
+
 func _open_wallet_event(id: String, source: WeakRef) -> bool:
 	# Draw on a detached copy: failed mounting/admission must consume nothing.
 	var staged_rng := RandomNumberGenerator.new()
 	staged_rng.state = run_rng.state
-	var document: Variant = JSON.parse_string(FileAccess.get_file_as_string(event_catalog_path)) \
-		if FileAccess.file_exists(event_catalog_path) else null
-	if document == null:
+	var document := _load_wallet_event_catalog()
+	if document.is_empty():
 		return false
 	var selection := RunM04EventRotation.new(document).select_event(staged_rng, _wallet_event_history)
 	if not selection.ok:
