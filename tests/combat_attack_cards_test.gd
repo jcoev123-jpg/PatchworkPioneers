@@ -11,6 +11,10 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_strike_plus()
+	_test_thorns_starter_attacks()
+	_test_thorns_bomb_and_downed_owner()
+	_test_thorns_rejections()
+	_test_thorns_seeded_replay()
 	_test_contract_and_five_attacks()
 	_test_modifier_math_and_first_attack()
 	_test_bomb_roster_shapes()
@@ -1890,3 +1894,240 @@ func _test_red_bobbin_cuff() -> void:
 		"an absent torn ledger fails closed")
 	_arm_reject(missing_torn, arm_only, torn, _deck(["seamstress_prick"]), party,
 		_enemies([60]), 1, "absent torn ledger rejects before the hit")
+
+
+## Thorns applies to the real held-card/deck/party/roster transaction, while
+## retaining precisely the existing public hit receipt (no extra keys).
+func _thorns_check_play(service: CombatAttackCards, deck: CombatDeck,
+		party: CombatParty, foes: CombatEnemies, id: String, target: int,
+		hits: Array, cost: int, owner_position: int, owner_hp: int,
+		owner_block: int, label: String) -> void:
+	var before := _snapshot(deck, party, foes)
+	var owner_id: String = StarterCards.new().get_definition(id).owner
+	_check(before.hand.has(id) and before.active and before.energy >= cost,
+		label + ": authentic held, affordable card and active turn")
+	_check(party.get_hero(owner_position).get("id") == owner_id
+		and not party.is_downed(owner_position), label + ": unique living owner at actual position")
+	var expected := before.duplicate(true)
+	expected["energy"] -= cost
+	expected["state_energy"] -= cost
+	var hand: Array = expected["hand"]
+	hand.erase(id)
+	var discard: Array = expected["discard"]
+	discard.append(id)
+	var expected_enemies: Array = expected["enemies"]
+	for hit in hits:
+		var entry: Dictionary = expected_enemies[hit.position - 1]
+		entry["block"] -= hit.block_absorbed
+		entry["hp"] -= hit.hp_loss
+		for status in hit.statuses:
+			if not entry.has("statuses"):
+				entry["statuses"] = {}
+			entry["statuses"][status] = entry["statuses"].get(status, 0) + hit.statuses[status]
+	var expected_heroes: Array = expected["party"]
+	var owner: Dictionary = expected_heroes[owner_position - 1]
+	owner["hp"] = owner_hp
+	owner["block"] = owner_block
+	var all_slain := true
+	for entry in expected_enemies:
+		if entry.hp > 0:
+			all_slain = false
+	expected["victory"] = all_slain
+	seed(13840)
+	var next_global := randi()
+	seed(13840)
+	var forecast := service.forecast_attack(deck, party, foes, id)
+	_check(forecast.playable and forecast.hits.size() == hits.size(),
+		label + ": pure forecast covers real hit recipients")
+	for hit in hits:
+		_check({"position": hit.position, "damage": hit.damage} in forecast.hits,
+			label + ": pre-hit computed damage agrees with forecast")
+	_check(_snapshot(deck, party, foes) == before
+		and randi() == next_global, label + ": forecast cannot retaliate, spend or advance RNG")
+	var result := service.play_attack(deck, party, foes, id, target)
+	_check(result == {"ok": true, "hits": hits},
+		label + ": unchanged ordered hit-array schema and damage/status math")
+	_check(_snapshot(deck, party, foes) == expected,
+		label + ": exact authoritative heroes, enemies, piles, turn, cost and RNG")
+	if id.begins_with("tinker_"):
+		_check(service._tinker._consumed, label + ": Tinker first-attack latch consumed")
+
+
+func _test_thorns_starter_attacks() -> void:
+	var strikes := _deck(["warden_strike"])
+	var warden := _party()
+	var thorned := _enemies([20])
+	thorned._enemies[0]["thorns"] = 3
+	_check(warden.gain_block(1, 2) and thorned.gain_block(1, 2),
+		"Strike: hero Block 2 and enemy Block 2 set before real hit")
+	_thorns_check_play(CombatAttackCards.new(), strikes, warden, thorned,
+		"warden_strike", 1, [_hit(1, 6, 2, 4)], 1, 1, 39, 0,
+		"Strike 6 versus Thorns 3: Warden Block 2 absorbs, HP loses 1")
+	var plus_party := _party()
+	var plus_foes := _enemies([20])
+	plus_foes._enemies[0]["thorns"] = 2
+	_thorns_check_play(CombatAttackCards.new(), _plus_deck(), plus_party, plus_foes,
+		"warden_strike_plus", 1, [_hit(1, 7, 0, 7)], 1, 1, 38, 0,
+		"real upgraded Strike+ uses same Thorns seam")
+	var blocked := _party()
+	var armored := _enemies([20])
+	armored._enemies[0]["thorns"] = 3
+	_check(armored.gain_block(1, 8), "Shield Bash target fully absorbs eight damage")
+	_thorns_check_play(CombatAttackCards.new(), _deck(["warden_shield_bash"]),
+		blocked, armored, "warden_shield_bash", 1,
+		[_hit(1, 8, 8, 0, {"weak": 1})], 2, 1, 37, 0,
+		"Shield Bash with fully absorbed hit still retaliates and applies Weak")
+	var lethal := _party()
+	var near_death := _enemies([5])
+	near_death._enemies[0]["thorns"] = 3
+	_thorns_check_play(CombatAttackCards.new(), _deck(["warden_strike"]),
+		lethal, near_death, "warden_strike", 1,
+		[_hit(1, 6, 0, 5)], 1, 1, 37, 0,
+		"lethal Strike retaliates from pre-hit Thorns 3 after enemy dies")
+	var swapped := _party(["warden", "tinker", "seamstress"])
+	var prick_foes := _enemies([20])
+	prick_foes._enemies[0]["thorns"] = 3
+	_check(swapped.gain_block(3, 1), "swapped Seamstress gains one Block in slot 3")
+	_thorns_check_play(CombatAttackCards.new(), _deck(["seamstress_prick"]),
+		swapped, prick_foes, "seamstress_prick", 1,
+		[_hit(1, 3, 0, 3, {"bleed": 3})], 1, 3, 28, 0,
+		"swapped Prick retaliates on owner slot 3, preserves Bleed 3")
+	_check(swapped.get_hero(1).hp == 40 and swapped.get_hero(2).hp == 26,
+		"swapped attack never redirects damage to original slot or another hero")
+	var pop_party := _party()
+	var pop_foes := _enemies([25])
+	pop_foes._enemies[0]["thorns"] = 2
+	_check(pop_party.gain_block(3, 1), "Pop Shot's Tinker owns one Block")
+	_thorns_check_play(CombatAttackCards.new(), _deck(["tinker_pop_shot"]),
+		pop_party, pop_foes, "tinker_pop_shot", 1,
+		[_hit(1, 8, 0, 8)], 1, 3, 25, 0,
+		"first Pop Shot +3 uses computed eight damage, Thorns 2")
+	for value in [null, 0]:
+		var plain := _party()
+		var unthorned := _enemies([20])
+		if value != null:
+			unthorned._enemies[0]["thorns"] = value
+		_thorns_check_play(CombatAttackCards.new(), _deck(["warden_strike"]),
+			plain, unthorned, "warden_strike", 1,
+			[_hit(1, 6, 0, 6)], 1, 1, 40, 0,
+			"absent/zero Thorns never retaliates: " + str(value))
+
+
+func _test_thorns_bomb_and_downed_owner() -> void:
+	for third_slain in [false, true]:
+		var tinker := _party()
+		var foes := _enemies([30, 30, 30])
+		foes._enemies[0]["thorns"] = 3
+		foes._enemies[1]["thorns"] = 3
+		_check(tinker.gain_block(3, 2) and foes.gain_block(2, 8),
+			"Bomb: Tinker Block 2 and second target Block 8 set")
+		var hits: Array = [_hit(1, 7, 0, 7), _hit(2, 7, 7, 0)]
+		if third_slain:
+			_check(foes.apply_damage(3, 30) and foes.is_slain(3),
+				"slain third slot remains present but cannot receive Bomb")
+		else:
+			hits.append(_hit(3, 7, 0, 7))
+		_thorns_check_play(CombatAttackCards.new(), _deck(["tinker_scrap_bomb"]),
+			tinker, foes, "tinker_scrap_bomb", 0,
+			hits, 2, 3, 22, 0,
+			"real target-free Bomb: two Thorns 3, third %s" % (
+				"slain" if third_slain else "living plain"))
+	var low := _party()
+	_check(low.apply_damage(3, 23) and low.get_hero(3).hp == 3,
+		"low-HP Tinker remains living before Bomb")
+	var three := _enemies([30, 30, 30])
+	three._enemies[0]["thorns"] = 3
+	three._enemies[1]["thorns"] = 3
+	_thorns_check_play(CombatAttackCards.new(), _deck(["tinker_scrap_bomb"]),
+		low, three, "tinker_scrap_bomb", 0,
+		[_hit(1, 7, 0, 7), _hit(2, 7, 0, 7), _hit(3, 7, 0, 7)],
+		2, 3, 0, 0, "downed Tinker never rolls back remaining Bomb recipients")
+
+
+func _test_thorns_rejections() -> void:
+	for value in [-3, 1.5, "3", true, null, [], {}]:
+		for card_id in ["warden_strike", "tinker_scrap_bomb"]:
+			var deck := _deck([card_id])
+			var party := _party()
+			var foes := _enemies([25, 25, 25])
+			var slot := 1 if card_id == "warden_strike" else 2
+			foes._enemies[slot - 1]["thorns"] = value
+			var service := CombatAttackCards.new()
+			var target := 1 if card_id == "warden_strike" else 0
+			var before := _snapshot(deck, party, foes)
+			_check(not service.forecast_attack(deck, party, foes, card_id).playable
+				and _snapshot(deck, party, foes) == before,
+				"malformed Thorns " + str(value) + " refuses forecast before mutation")
+			_reject(service, deck, party, foes, card_id, target,
+				"malformed Thorns " + str(value) + " at attacked slot " + str(slot))
+			_check(not service._tinker._consumed,
+				"malformed late Bomb Thorns cannot consume Tinker first-hit bonus")
+	# Rejections with valid Thorns must still leave the entire ledger untouched.
+	var foes := _enemies([30])
+	foes._enemies[0]["thorns"] = 3
+	var held := _deck(["warden_strike"])
+	_reject(CombatAttackCards.new(), held, _party(), foes,
+		"warden_strike", 0, "Thorns on unselected legal card")
+	var spent := _deck(["warden_strike"])
+	_check(spent.try_spend_energy(3), "unaffordable Thorns test pre-spends all three energy")
+	_reject(CombatAttackCards.new(), spent, _party(), foes,
+		"warden_strike", 1, "Thorns cannot fire on unaffordable card")
+	var absent := _deck(["warden_strike"])
+	_check(absent.discard_played("warden_strike"), "unheld Thorns test removes one copy")
+	while absent.hand.has("warden_strike"):
+		_check(absent.discard_played("warden_strike"), "remove second real Strike copy")
+	_reject(CombatAttackCards.new(), absent, _party(), foes,
+		"warden_strike", 1, "Thorns cannot fire on unheld card")
+	var bad := _enemies([30, 30])
+	bad._enemies[1]["thorns"] = -2
+	var valid := _party()
+	var bomb_deck := _deck(["tinker_scrap_bomb"])
+	var resolver := CombatAttackCards.new()
+	_reject(resolver, bomb_deck, valid, bad, "tinker_scrap_bomb", 0,
+		"late malformed enemy prevents any Bomb hit, energy or latch mutation")
+	bad._enemies[1]["thorns"] = 3
+	_thorns_check_play(resolver, bomb_deck, valid, bad, "tinker_scrap_bomb", 0,
+		[_hit(1, 7, 0, 7), _hit(2, 7, 0, 7)], 2, 3, 23, 0,
+		"subsequent valid Bomb retains first-attack bonus after rejected batch")
+
+
+func _thorns_replay(seed_value: int) -> Dictionary:
+	var deck := _deck(["tinker_scrap_bomb", "warden_strike"], seed_value)
+	var party := _party()
+	var foes := _enemies([30, 30, 30])
+	foes._enemies[0]["thorns"] = 3
+	foes._enemies[1]["thorns"] = 3
+	foes.gain_block(2, 8)
+	party.gain_block(3, 2)
+	var attacks := CombatAttackCards.new()
+	var forecast := attacks.forecast_attack(deck, party, foes, "tinker_scrap_bomb")
+	var before := _snapshot(deck, party, foes)
+	var events := [
+		attacks.play_attack(deck, party, foes, "tinker_scrap_bomb", 0),
+		attacks.play_attack(deck, party, foes, "warden_strike", 1)
+	]
+	return {"forecast": forecast, "before": before, "events": events,
+		"after": _snapshot(deck, party, foes), "latch": attacks._tinker._consumed}
+
+
+func _test_thorns_seeded_replay() -> void:
+	var first := _thorns_replay(63418)
+	var second := _thorns_replay(63418)
+	_check(first == second,
+		"two genuine same-seed Thorns replays agree on hits, owner HP, Block, piles, turn and RNG")
+	_check(first.forecast == {"playable": true, "requires_selection": false,
+		"hits": [{"position": 1, "damage": 7}, {"position": 2, "damage": 7},
+			{"position": 3, "damage": 7}]},
+		"forecast of Thorns Bomb is pure damage without retaliation rows")
+	_check(first.before.party[2].hp == 26 and first.before.party[2].block == 2
+		and first.after.party[2].hp == 22 and first.after.party[2].block == 0
+		and first.after.party[0].hp == 37,
+		"two Bomb Thorns retaliations then Warden Strike Thorns damage actual owners")
+	_check(first.events == [
+		{"ok": true, "hits": [_hit(1, 7, 0, 7), _hit(2, 7, 7, 0), _hit(3, 7, 0, 7)]},
+		{"ok": true, "hits": [_hit(1, 6, 0, 6)]}],
+		"same-seed replay keeps exact ordered public hit payloads, no Thorns fields")
+	_check(first.after.energy == 0 and first.after.state_energy == 0
+		and first.after.discard.has("tinker_scrap_bomb")
+		and first.after.discard.has("warden_strike") and first.latch,
+		"two real paid cards, discarded copies, intact first-attack latch and active turn")

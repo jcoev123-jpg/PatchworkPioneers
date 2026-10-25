@@ -117,6 +117,10 @@ func _play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var owner_statuses: Dictionary = plan.owner_statuses
 	var target_statuses: Dictionary = plan.target_statuses
 	var owner_id: String = plan.owner_id
+	# Detached pre-hit records survive lethal damage and multi-target resolution.
+	var pre_hits: Dictionary = {}
+	for position in positions:
+		pre_hits[position] = enemies.get_enemy(position)
 	if card_id in CombatBasicAttacks.SUPPORTED_CARD_IDS:
 		var final_damage := _statuses.adjusted_attack_damage(attack_damage,
 			owner_statuses, target_statuses[target_position])
@@ -128,13 +132,15 @@ func _play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		_tinker.record_successful_attack(card_id)
 		if _patches != null:
 			_patches.record_successful_attack(owner_id)
-		return {"ok": true, "hits": [{
+		var hits: Array[Dictionary] = [{
 			"position": target_position,
 			"damage": final_damage,
 			"block_absorbed": before["block"] - after["block"],
 			"hp_loss": before["hp"] - after["hp"],
 			"statuses": applications[target_position]
-		}]}
+		}]
+		_retaliate_hits(party, plan.owner_position, hits, pre_hits)
+		return {"ok": true, "hits": hits}
 	# All downstream operations are now guaranteed by the real models and
 	# immutable preflight. The existing status bridge owns final-floor rounding.
 	if not deck.try_spend_energy(cost_value):
@@ -163,7 +169,23 @@ func _play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	_tinker.record_successful_attack(card_id)
 	if _patches != null:
 		_patches.record_successful_attack(owner_id)
+	_retaliate_hits(party, plan.owner_position, hits, pre_hits)
 	return {"ok": true, "hits": hits}
+
+
+## Reconstruct the authentic bridge receipt without changing public hit rows.
+## Resolve after every confirmed enemy hit: an attacker downed by an earlier
+## Thorns defender must never cancel later Bomb hits, status or card payment.
+func _retaliate_hits(party: CombatParty, owner_position: int,
+		hits: Array[Dictionary], pre_hits: Dictionary) -> void:
+	var keywords := CombatEnemyKeywordRules.new()
+	for hit in hits:
+		if hit["damage"] <= 0:
+			continue
+		var receipt := {"ok": true, "damage": hit["damage"],
+			"block_absorbed": hit["block_absorbed"], "hp_loss": hit["hp_loss"]}
+		keywords.resolve_thorns_retaliation(party, owner_position,
+			pre_hits[hit["position"]], receipt)
 
 
 ## Pure preflight shared by forecasts and committed attacks. No latch is consumed.
@@ -231,9 +253,11 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return _failure()
 	var owner_statuses: Dictionary = {}
 	var owner_count := 0
+	var owner_position := 0
 	for hero in heroes:
 		if hero["id"] == owner_id:
 			owner_count += 1
+			owner_position = hero["position"]
 			owner_statuses = hero.get("statuses", {})
 	if owner_count != 1:
 		return _failure()
@@ -262,6 +286,11 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if not enemy.get("hp") is int or not enemy.get("block") is int:
 			return _failure()
 		if enemy["hp"] <= 0 or enemy["block"] < 0:
+			return _failure()
+		# Thorns metadata is not a CombatStatuses counter. Inspect every actual
+		# recipient before energy, discard, damage, statuses or latches mutate.
+		var thorns: Variant = enemy.get("thorns", 0)
+		if not thorns is int or thorns < 0:
 			return _failure()
 		target_statuses[position] = enemy.get("statuses", {})
 
@@ -307,7 +336,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"attack_damage": attack_damage, "cost": cost_value - cost_discount,
 		"printed_cost": cost_value,
 		"requires_selection": preview["requires_selection"],
-		"owner_id": owner_id,
+		"owner_id": owner_id, "owner_position": owner_position,
 		"owner_statuses": owner_statuses, "target_statuses": target_statuses}
 
 
