@@ -1044,6 +1044,7 @@ func _test_windup_turret_ac2() -> void:
 
 		var res: Dictionary = svc.resolve_wind_up_turret(state, enemies, rng)
 		_check(res.get("ok") == true, "AC2 beat %d resolves" % (beat + 1))
+		_check(rng.state == oracle.state, "AC2 beat %d exactly consumed the oracle draw" % (beat + 1))
 		_check(int(res.get("target", 0)) == expected_target,
 			"AC2 beat %d chosen position matches oracle" % (beat + 1))
 		_check(int(res.get("remaining", -1)) == 2 - beat,
@@ -1097,13 +1098,30 @@ func _test_windup_turret_ac2() -> void:
 	var oracle2 := _rng(seed)
 	var targets_a: Array[int] = []
 	var targets_b: Array[int] = []
-	## Replay only first beat target for determinism check.
-	var living_r: Array[int] = [1, 2, 3]
-	var expected_r: int = living_r[oracle2.randi_range(0, 2)]
-	targets_a.append(expected_r)
-	var res_r: Dictionary = svc.resolve_wind_up_turret(state2, enemies2, rng2)
-	targets_b.append(int(res_r.get("target", 0)))
-	_check(targets_a == targets_b, "AC2 equal seed yields same first target")
+	var res_a: Array[Dictionary] = []
+	var res_b: Array[Dictionary] = []
+	var state_a = svc.create_wind_up_turret()
+	var rng_a = _rng(seed)
+	var enemies_a = _enemies([10, 20, 30])
+	_check(enemies_a.gain_block(1, 1) and enemies_a.gain_block(2, 2) and enemies_a.gain_block(3, 3), "AC2 setup replay A")
+	
+	for i in range(3):
+		var ra = svc.resolve_wind_up_turret(state_a, enemies_a, rng_a)
+		state_a = ra.get("state")
+		targets_a.append(int(ra.get("target", 0)))
+		res_a.append(ra)
+		
+	for i in range(3):
+		var rb = svc.resolve_wind_up_turret(state2, enemies2, rng2)
+		state2 = rb.get("state")
+		targets_b.append(int(rb.get("target", 0)))
+		res_b.append(rb)
+		
+	_check(targets_a == targets_b, "AC2 equal seed yields identical sequence of targets")
+	for i in range(3):
+		_check(res_a[i].get("remaining") == res_b[i].get("remaining"), "AC2 beat %d replay remaining" % (i+1))
+		_check(res_a[i].get("hp_change") == res_b[i].get("hp_change"), "AC2 beat %d replay hp change" % (i+1))
+		_check(res_a[i].get("block_absorbed") == res_b[i].get("block_absorbed"), "AC2 beat %d replay block absorbed" % (i+1))
 
 
 func _test_windup_turret_ac3() -> void:
@@ -1160,40 +1178,46 @@ func _test_windup_turret_ac3() -> void:
 	var valid_enemies := _enemies([10, 10, 10])
 	var valid_rng := _rng(1)
 	var bad_state := {"remaining": 99}
+	var bad_state_snap := bad_state.duplicate(true)
 	var snap_enemies := valid_enemies.get_enemies()
 	var rng_before := valid_rng.state
 	var bad_res := svc.resolve_wind_up_turret(bad_state, valid_enemies, valid_rng)
 	_check(bad_res.get("ok") == false, "AC3 malformed state rejects")
 	_check(valid_enemies.get_enemies() == snap_enemies, "AC3 malformed state enemies unchanged")
 	_check(valid_rng.state == rng_before, "AC3 malformed state no RNG")
+	_check(bad_state == bad_state_snap, "AC3 malformed state input unchanged")
 
 	## Null roster rejects.
 	var st := svc.create_wind_up_turret()
+	var st_snap := st.duplicate(true)
 	var rng2 := _rng(2)
 	var before_rng2 := rng2.state
 	var null_res := svc.resolve_wind_up_turret(st, null, rng2)
 	_check(null_res.get("ok") == false, "AC3 null roster rejects")
 	_check(rng2.state == before_rng2, "AC3 null roster no RNG")
+	_check(st == st_snap, "AC3 null roster leaves state unchanged")
 
 	## Null RNG rejects.
 	var st2 := svc.create_wind_up_turret()
+	var st2_snap := st2.duplicate(true)
 	var en2 := _enemies([10, 10, 10])
 	var snap_en2 := en2.get_enemies()
 	var null_rng_res := svc.resolve_wind_up_turret(st2, en2, null)
 	_check(null_rng_res.get("ok") == false, "AC3 null RNG rejects")
 	_check(en2.get_enemies() == snap_en2, "AC3 null RNG enemies unchanged")
-	_check(st2.get("remaining") == 3, "AC3 null RNG state unchanged")
+	_check(st2 == st2_snap, "AC3 null RNG input state unchanged")
 
 	## Invalid roster (empty definitions) rejects.
 	var invalid_enemies := CombatEnemies.new([])
 	_check(not invalid_enemies.is_valid(), "AC3 invalid roster fixture")
 	var st3 := svc.create_wind_up_turret()
+	var st3_snap := st3.duplicate(true)
 	var rng3 := _rng(3)
 	var before3 := rng3.state
 	var invalid_res := svc.resolve_wind_up_turret(st3, invalid_enemies, rng3)
 	_check(invalid_res.get("ok") == false, "AC3 invalid roster rejects")
 	_check(rng3.state == before3, "AC3 invalid roster no RNG")
-	_check(st3.get("remaining") == 3, "AC3 invalid roster state unchanged")
+	_check(st3 == st3_snap, "AC3 invalid roster input state unchanged")
 
 ## ---------------------------------------------------------------------------
 ## M05 HEAD Exposed projection fixtures (Button Glass Visor: HEAD,
