@@ -1,0 +1,105 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/live_v3_party_picker.gd" id="1_picker"]
+
+[node name="V3PartyPicker" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+script = ExtResource("1_picker")
+
+[node name="Backdrop" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.045, 0.074, 0.128, 1)
+
+[node name="PaperPanel" type="PanelContainer" parent="."]
+layout_mode = 1
+anchor_left = 0.047
+anchor_top = 0.024
+anchor_right = 0.953
+anchor_bottom = 0.976
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Margins" type="MarginContainer" parent="PaperPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 10
+
+[node name="Body" type="VBoxContainer" parent="PaperPanel/Margins"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="TopStitches" type="Label" parent="PaperPanel/Margins/Body"]
+layout_mode = 2
+text = "×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×"
+horizontal_alignment = 1
+
+[node name="Title" type="Label" parent="PaperPanel/Margins/Body"]
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+text = "SEW YOUR COMPANY"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SubTitle" type="Label" parent="PaperPanel/Margins/Body"]
+custom_minimum_size = Vector2(0, 25)
+layout_mode = 2
+text = "Eight threadbound souls. Choose exactly three. The journey will decide their places."
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="HeroGrid" type="GridContainer" parent="PaperPanel/Margins/Body"]
+custom_minimum_size = Vector2(0, 404)
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/h_separation = 12
+theme_override_constants/v_separation = 10
+columns = 4
+
+[node name="Foot" type="HBoxContainer" parent="PaperPanel/Margins/Body"]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+theme_override_constants/separation = 15
+
+[node name="SelectionCount" type="Label" parent="PaperPanel/Margins/Body/Foot"]
+custom_minimum_size = Vector2(210, 0)
+layout_mode = 2
+text = "Selected 0/3"
+vertical_alignment = 1
+
+[node name="Hint" type="Label" parent="PaperPanel/Margins/Body/Foot"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "In picking order  ·  no positions assigned"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="CancelButton" type="Button" parent="PaperPanel/Margins/Body/Foot"]
+custom_minimum_size = Vector2(148, 52)
+layout_mode = 2
+focus_mode = 2
+text = "Cancel"
+
+[node name="ContinueButton" type="Button" parent="PaperPanel/Margins/Body/Foot"]
+custom_minimum_size = Vector2(180, 52)
+layout_mode = 2
+focus_mode = 2
+disabled = true
+text = "Continue"
+
+[node name="BottomStitches" type="Label" parent="PaperPanel/Margins/Body"]
+layout_mode = 2
+text = "×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×"
+horizontal_alignment = 1
