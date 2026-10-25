@@ -13,6 +13,16 @@ const STITCH_PLUS := {"id": "seamstress_stitch_up_plus", "owner_id": "seamstress
 const TUNE := {"id": "tinker_tune_up", "owner_id": "tinker", "cost": 0,
 	"from_positions": [1, 2, 3], "effect": "draw", "amount": 1}
 
+## Independent literal expectations for the four authored Scarecrow straw cards,
+## never read back from the resolver under test.
+const STRAW_BLOCKS := {
+	"scarecrow_straw_padding": 4,
+	"scarecrow_straw_padding_plus": 6,
+	"scarecrow_straw_wrap": 6,
+	"scarecrow_straw_wrap_plus": 8,
+}
+const STRAW_COST := 1
+
 var failures: Array[String] = []
 var checks := 0
 var service := CombatSupportCards.new()
@@ -27,6 +37,7 @@ func _initialize() -> void:
 	_test_bound_rejections()
 	_test_hemguard_cuff()
 	_test_reinforced_browband()
+	_test_scarecrow_straw()
 	for failure in failures:
 		printerr(failure)
 	print("combat_support_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -822,3 +833,352 @@ func _test_reinforced_browband() -> void:
 			"authentic non-Block support still plays")
 		_check(_snapshot(c.deck, c.party) == _expected(initial, choice["def"], 1),
 			"HEAD leaves original Mend/Tune effect, cost, piles and RNG unchanged")
+
+
+## Three distinct living heroes, with the one true Scarecrow at the given position.
+func _straw_party(scarecrow_position: int = 1) -> CombatParty:
+	var others: Array[String] = ["warden", "seamstress", "tinker"]
+	var roster: Array = []
+	for position in [1, 2, 3]:
+		if position == scarecrow_position:
+			roster.append({"id": "scarecrow", "max_hp": 34})
+		else:
+			roster.append({"id": others.pop_front(), "max_hp": 30})
+	var party := CombatParty.new(roster)
+	_check(party.is_valid() and party.get_heroes().size() == 3
+		and party.get_hero(scarecrow_position).get("id") == "scarecrow",
+		"fixture builds three distinct heroes with a living Scarecrow at " + str(scarecrow_position))
+	return party
+
+
+## A real started turn whose hand genuinely holds card_id. Six or more authored
+## cards leave a remainder in the draw pile, which a real draw pulls into the hand.
+func _straw_deck(cards: Array[String], seed_value: int, card_id: String) -> CombatDeck:
+	var deck := _deck(cards, seed_value)
+	var guard := 0
+	while not deck.hand.has(card_id) and guard < cards.size():
+		_check(deck.draw_extra(1) == 1, "fixture draws " + card_id + " into the shared hand")
+		guard += 1
+	_check(deck.hand.has(card_id) and deck.turn_active and deck.energy == CombatState.TURN_ENERGY,
+		"fixture genuinely holds a playable " + card_id)
+	return deck
+
+
+## Independent oracle: one printed-energy charge, Block on the selected recipient,
+## one shared-deck draw through the existing seeded refill, then one discard.
+func _straw_expected(before: Array, card_id: String, block: int, recipient: int) -> Array:
+	var after := before.duplicate(true)
+	after[4] -= STRAW_COST
+	after[6] -= STRAW_COST
+	after[7][recipient - 1]["block"] += block
+	_oracle_draw(after, 1)
+	var index: int = after[1].find(card_id)
+	if index < 0:
+		return after
+	after[1].remove_at(index)
+	after[2].append(card_id)
+	return after
+
+
+func _straw_accepted(deck: CombatDeck, party: CombatParty, card_id: String, target: int,
+		label: String) -> void:
+	var block: int = STRAW_BLOCKS[card_id]
+	var blocks_before: Array[int] = []
+	for position in [1, 2, 3]:
+		blocks_before.append(party.get_hero(position)["block"])
+	var hand_before: int = deck.hand.count(card_id)
+	var discard_before: int = deck.discard_pile.count(card_id)
+	var energy_before: int = deck.energy
+	var hand_size_before: int = deck.hand.size()
+	var drawable: int = deck.draw_pile.size() + deck.discard_pile.size()
+	var before := _snapshot(deck, party)
+	_check(deck.hand.has(card_id) and deck.turn_active and energy_before >= STRAW_COST,
+		label + ": real shared hand, active turn and energy before play")
+
+	_check(service.play_scarecrow_straw(deck, party, card_id, target), label + ": accepted")
+	_check(_snapshot(deck, party) == _straw_expected(before, card_id, block, target),
+		label + ": complete piles, party, energy, turn and seeded RNG transition")
+	_check(party.get_hero(target)["block"] == blocks_before[target - 1] + block,
+		label + ": target alone gains printed Block " + str(block))
+	for other in [1, 2, 3]:
+		if other != target:
+			_check(party.get_hero(other)["block"] == blocks_before[other - 1],
+				label + ": non-target " + str(other) + " gains no Block")
+	_check(deck.energy == energy_before - STRAW_COST, label + ": exactly one energy spent")
+	_check(deck.hand.count(card_id) == hand_before - 1
+		and deck.discard_pile.count(card_id) == discard_before + 1,
+		label + ": exactly one held copy moved to discard")
+	_check(deck.hand.size() == hand_size_before - 1 + (1 if drawable > 0 else 0),
+		label + ": exactly one shared-deck draw attempted")
+
+
+func _straw_rejected(deck: CombatDeck, party: CombatParty, card_id: Variant, target: int,
+		label: String) -> void:
+	var before := _snapshot(deck, party)
+	_check(not service.play_scarecrow_straw(deck, party, card_id, target), label + ": rejected")
+	_check(_snapshot(deck, party) == before,
+		label + ": atomic rejection preserves party, piles, energy, turn and seeded RNG")
+
+
+func _test_scarecrow_straw() -> void:
+	_test_scarecrow_straw_matrix()
+	_test_scarecrow_straw_draw_paths()
+	_test_scarecrow_straw_replay()
+	_test_scarecrow_straw_rejections()
+
+
+## AC1: all four genuine IDs, every legal Scarecrow source slot and every legal
+## living recipient (Scarecrow itself included) receive only the printed Block
+## while the one shared hand draws once.
+func _test_scarecrow_straw_matrix() -> void:
+	var starter := ScarecrowStarterCards.new()
+	var pool := ScarecrowPoolCards.new()
+	for card_id: String in STRAW_BLOCKS:
+		_check(starter.has_card(card_id) or pool.has_card(card_id),
+			card_id + " is a genuine authored Scarecrow catalog record")
+		var record: Dictionary = starter.get_definition(card_id)
+		if record.is_empty():
+			record = pool.get_definition(card_id)
+		_check(record.get("effects").get("block") == STRAW_BLOCKS[card_id],
+			card_id + " authored Block matches the independent expectation")
+		_check(record.get("effects").get("draw") == 1, card_id + " authored draw is exactly one")
+		_check(record.get("cost") == STRAW_COST, card_id + " authored cost is one energy")
+		_check(record.get("owner") == "scarecrow" and record.get("target_kind") == "ally_single",
+			card_id + " is a Scarecrow ally support card")
+		for scarecrow_position in [1, 2, 3]:
+			for target in [1, 2, 3]:
+				var party := _straw_party(scarecrow_position)
+				var deck := _straw_deck([card_id, "straw_a", "straw_b", "straw_c",
+					"straw_d", "straw_e"], 42, card_id)
+				_straw_accepted(deck, party, card_id, target, card_id + " from "
+					+ str(scarecrow_position) + " to " + str(target))
+
+
+## AC2: ordinary draw, older-discard refill and a genuinely exhausted deck all
+## succeed with exactly one energy and one discard, and two plays in one turn
+## never charge or discard twice.
+func _test_scarecrow_straw_draw_paths() -> void:
+	# Exhausted deck: the paid Block still resolves and zero cards are drawn.
+	var empty_party := _straw_party(3)
+	var empty_deck := _straw_deck(["scarecrow_straw_wrap_plus"], 42, "scarecrow_straw_wrap_plus")
+	_check(empty_deck.draw_pile.is_empty() and empty_deck.discard_pile.is_empty(),
+		"exhausted fixture genuinely has nothing to draw")
+	_straw_accepted(empty_deck, empty_party, "scarecrow_straw_wrap_plus", 1, "exhausted deck")
+	_check(empty_deck.hand.is_empty()
+		and empty_deck.discard_pile == ["scarecrow_straw_wrap_plus"] and empty_deck.energy == 2,
+		"exhausted deck: zero drawn, one printed energy and one discard")
+
+	# Refill: the still-held card cannot enter its own reshuffle, so the older
+	# discard is drawn instead of the card being played.
+	var refill_party := _straw_party(1)
+	var refill := _deck(["scarecrow_straw_padding", "straw_older"], 42)
+	_check(refill.hand.size() == 2 and refill.draw_pile.is_empty(),
+		"refill fixture deals both cards into the real shared hand")
+	_check(refill.discard_played("straw_older") and refill.discard_pile == ["straw_older"],
+		"refill fixture keeps exactly one older discard")
+	_straw_accepted(refill, refill_party, "scarecrow_straw_padding", 2, "older-discard refill")
+	_check(refill.hand == ["straw_older"] and refill.discard_pile == ["scarecrow_straw_padding"],
+		"refill drew the older discard, never the card it was resolving")
+
+	# Ordinary draw from a nonempty pile, without any reshuffle. A bounded
+	# deterministic seed search finds a deal that holds the card in the initial
+	# five-card hand while leaving a real card in the draw pile.
+	var ordinary_party := _straw_party(2)
+	var ordinary: CombatDeck = null
+	for seed_value in range(1, 65):
+		var candidate := CombatDeck.new(["scarecrow_straw_padding", "straw_a", "straw_b",
+			"straw_c", "straw_d", "straw_e"], _rng(seed_value))
+		if candidate.start_turn() and candidate.hand.has("scarecrow_straw_padding") \
+				and not candidate.draw_pile.is_empty():
+			ordinary = candidate
+			break
+	_check(ordinary != null, "bounded seeded search finds an ordinary nonempty draw pile")
+	if ordinary != null:
+		var pile_before: int = ordinary.draw_pile.size()
+		_straw_accepted(ordinary, ordinary_party, "scarecrow_straw_padding", 3, "ordinary pile draw")
+		_check(ordinary.draw_pile.size() == pile_before - 1,
+			"ordinary draw consumed exactly one card from the existing draw pile")
+
+	# A second held copy stays in hand: one play consumes exactly one copy.
+	var twin_party := _straw_party(1)
+	var twin := _deck(["scarecrow_straw_padding", "scarecrow_straw_padding", "straw_a"], 42)
+	_check(twin.hand.count("scarecrow_straw_padding") == 2,
+		"duplicate-copy fixture genuinely holds two straw copies")
+	_straw_accepted(twin, twin_party, "scarecrow_straw_padding", 1, "one of two held copies")
+	_check(twin.hand.count("scarecrow_straw_padding") == 1
+		and twin.discard_pile.count("scarecrow_straw_padding") == 1,
+		"one play leaves the second held copy untouched")
+
+	# Two legal plays in one turn charge and discard once each.
+	var pair_party := _straw_party(2)
+	var pair := _deck(["scarecrow_straw_padding", "scarecrow_straw_wrap", "straw_a",
+		"straw_b", "straw_c"], 42)
+	_check(pair.hand.has("scarecrow_straw_padding") and pair.hand.has("scarecrow_straw_wrap"),
+		"two-play fixture genuinely holds both straw cards")
+	_straw_accepted(pair, pair_party, "scarecrow_straw_padding", 1, "first straw play of the turn")
+	_check(pair.energy == 2, "first straw play leaves two energy")
+	_straw_accepted(pair, pair_party, "scarecrow_straw_wrap", 3, "second straw play of the turn")
+	_check(pair.energy == 1
+		and pair_party.get_hero(1)["block"] == STRAW_BLOCKS["scarecrow_straw_padding"]
+		and pair_party.get_hero(3)["block"] == STRAW_BLOCKS["scarecrow_straw_wrap"]
+		and pair_party.get_hero(2)["block"] == 0,
+		"two plays grant their own printed Block and spend one energy each")
+
+
+func _straw_sequence(seed_value: int) -> Array:
+	var party := _straw_party(2)
+	var deck := _straw_deck(["scarecrow_straw_padding", "scarecrow_straw_wrap",
+		"straw_a", "straw_b", "straw_c", "straw_d"], seed_value, "scarecrow_straw_padding")
+	var trace: Array = [_snapshot(deck, party)]
+	_check(service.play_scarecrow_straw(deck, party, "scarecrow_straw_padding", 3),
+		"straw replay Padding commits")
+	trace.append(_snapshot(deck, party))
+	if not deck.hand.has("scarecrow_straw_wrap"):
+		_check(deck.draw_extra(1) == 1, "straw replay fixture draws Wrap into the shared hand")
+	_check(deck.hand.has("scarecrow_straw_wrap"), "straw replay fixture genuinely holds Wrap")
+	_check(service.play_scarecrow_straw(deck, party, "scarecrow_straw_wrap", 1),
+		"straw replay Wrap commits")
+	trace.append(_snapshot(deck, party))
+	_straw_rejected(deck, party, "scarecrow_straw_wrap", 2, "straw replay Wrap is consumed")
+	_check(deck.end_turn() and deck.start_turn(), "straw replay refills a real next shared turn")
+	trace.append(_snapshot(deck, party))
+	return trace
+
+
+## Seeded refill order and RNG progression replay exactly across identical runs.
+func _test_scarecrow_straw_replay() -> void:
+	for seed_value in [0, 42, 987654]:
+		var first := _straw_sequence(seed_value)
+		var second := _straw_sequence(seed_value)
+		_check(first.size() == 4 and second.size() == 4,
+			"straw replay records four complete real snapshots")
+		_check(first == second, "identical straw plays, seed and refill replay exactly")
+
+
+## AC3: every failed precondition rejects without spending, drawing, discarding,
+## granting Block or advancing the seeded RNG.
+func _test_scarecrow_straw_rejections() -> void:
+	var card_id := "scarecrow_straw_padding"
+
+	# Inactive shared turn while the genuine card and all three energy remain.
+	var inactive := _straw_deck([card_id, "straw_a", "straw_b"], 42, card_id)
+	inactive.combat_state.end_player_turn()
+	inactive.combat_state.energy = CombatState.TURN_ENERGY
+	_check(not inactive.turn_active and inactive.hand.has(card_id) and inactive.energy == 3,
+		"inactive-turn fixture still holds the real card and full energy")
+	_straw_rejected(inactive, _straw_party(1), card_id, 1, "inactive shared turn")
+
+	# Null services and an invalid party.
+	var ready := _straw_deck([card_id], 42, card_id)
+	_check(not service.play_scarecrow_straw(null, _straw_party(1), card_id, 1),
+		"null deck rejects safely")
+	_check(not service.play_scarecrow_straw(ready, null, card_id, 1), "null party rejects safely")
+	_straw_rejected(ready, CombatParty.new([]), card_id, 1, "invalid party")
+
+	# The card exists but is not in the actual hand.
+	var absent := _straw_deck([card_id, "straw_a", "straw_b", "straw_c"], 42, card_id)
+	_check(absent.discard_played(card_id) and not absent.hand.has(card_id)
+		and absent.discard_pile.has(card_id),
+		"absent-from-hand fixture really moved the card into discard")
+	_straw_rejected(absent, _straw_party(1), card_id, 1, "card absent from the actual hand")
+
+	# Genuine but unsupported Scarecrow and other-hero IDs, each really held.
+	for bad_id: String in ["scarecrow_fork_jab", "scarecrow_crow_peck", "warden_brace"]:
+		var bad_deck := _straw_deck([bad_id], 42, bad_id)
+		_check(bad_deck.hand.has(bad_id), "unsupported-ID fixture genuinely holds " + bad_id)
+		_straw_rejected(bad_deck, _straw_party(1), bad_id, 1, "unsupported card ID " + bad_id)
+
+	# Unknown, malformed and forged values reject while the real straw card is held.
+	var held := _straw_deck([card_id], 42, card_id)
+	for bad_value in ["scarecrow_straw_padding_plus_plus", "", "straw_padding", 7, null,
+			StringName("scarecrow_straw_padding"),
+			{"id": card_id, "effects": {"block": 999, "draw": 1}}]:
+		_straw_rejected(held, _straw_party(1), bad_value, 1, "unsupported identifier " + str(bad_value))
+
+	# Missing Scarecrow in an otherwise valid, funded party.
+	var no_scarecrow := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26}])
+	_check(no_scarecrow.is_valid(), "party without Scarecrow is otherwise valid")
+	var missing := _straw_deck([card_id], 42, card_id)
+	_check(missing.hand.has(card_id) and missing.energy == 3,
+		"missing-owner fixture is otherwise entirely playable")
+	_straw_rejected(missing, no_scarecrow, card_id, 1, "no Scarecrow in the party")
+
+	# Downed Scarecrow in each legal source slot.
+	for scarecrow_position in [1, 2, 3]:
+		var downed_party := _straw_party(scarecrow_position)
+		_check(downed_party.apply_damage(scarecrow_position, 999)
+			and downed_party.is_downed(scarecrow_position),
+			"downed Scarecrow fixture at " + str(scarecrow_position))
+		_straw_rejected(_straw_deck([card_id], 42, card_id), downed_party, card_id, 1,
+			"downed Scarecrow at " + str(scarecrow_position))
+
+	# Insufficient shared energy.
+	var poor := _straw_deck([card_id], 42, card_id)
+	_check(poor.try_spend_energy(3) and poor.energy == 0,
+		"energy-shortage fixture really spent all three energy")
+	_straw_rejected(poor, _straw_party(1), card_id, 1, "insufficient shared energy")
+
+	# Invalid recipients.
+	var targets := _straw_deck([card_id], 42, card_id)
+	for bad_target in [-1, 0, 4]:
+		_straw_rejected(targets, _straw_party(2), card_id, bad_target,
+			"invalid recipient " + str(bad_target))
+
+	# Downed recipients, while the Scarecrow owner itself stays living.
+	for target in [1, 3]:
+		var hurt := _straw_party(2)
+		_check(hurt.apply_damage(target, 999) and hurt.is_downed(target) and not hurt.is_downed(2),
+			"downed recipient fixture at " + str(target))
+		_straw_rejected(_straw_deck([card_id], 42, card_id), hurt, card_id, target,
+			"downed recipient " + str(target))
+
+	# Target Block overflow rejects before spending; the exact boundary is legal.
+	var full := _straw_party(1)
+	_check(full.gain_block(1, CombatParty.MAX_INT - STRAW_BLOCKS[card_id] + 1),
+		"overflow fixture leaves one point less room than the printed Block")
+	_straw_rejected(_straw_deck([card_id], 42, card_id), full, card_id, 1,
+		"target Block overflow rejects before spending")
+	var boundary := _straw_party(1)
+	_check(boundary.gain_block(1, CombatParty.MAX_INT - STRAW_BLOCKS[card_id]),
+		"capacity boundary fixture leaves exactly enough room")
+	var boundary_deck := _straw_deck([card_id], 42, card_id)
+	var boundary_before := _snapshot(boundary_deck, boundary)
+	_check(service.play_scarecrow_straw(boundary_deck, boundary, card_id, 1),
+		"exact capacity boundary play succeeds")
+	_check(boundary.get_hero(1)["block"] == CombatParty.MAX_INT
+		and _snapshot(boundary_deck, boundary) == _straw_expected(boundary_before, card_id,
+			STRAW_BLOCKS[card_id], 1),
+		"capacity boundary reaches MAX_INT with no overflow")
+
+	# A consumed copy cannot be played twice.
+	var consumed_party := _straw_party(1)
+	var consumed := _straw_deck([card_id], 42, card_id)
+	_check(service.play_scarecrow_straw(consumed, consumed_party, card_id, 1),
+		"first straw play really commits")
+	_straw_rejected(consumed, consumed_party, card_id, 1, "consumed copy cannot be replayed")
+
+	# The existing patch-binding validity guard covers straw support too.
+	var classic := _party()
+	var torn := RunTornMending.new(classic.get_heroes())
+	var slots: Array = JSON.parse_string(FileAccess.get_file_as_string(CombatShopPatchRules.SLOTS_CATALOG))
+	var wardrobe := RunPatchWardrobe.new(classic.get_heroes(), [], slots, 5)
+	_check(wardrobe.is_valid() and torn.is_valid(), "real patch ledgers for the straw binding guard")
+	_check(service.bind_patch_wardrobe(wardrobe, torn) and service.is_patch_binding_valid(),
+		"valid patch binding still allows straw support")
+	_straw_accepted(_straw_deck([card_id], 42, card_id), _straw_party(1), card_id, 1,
+		"straw support under a valid patch binding")
+	_check(wardrobe.start_rest("straw-rest", wardrobe.get_snapshot()).ok,
+		"real ledger really advances after binding")
+	_check(not service.is_patch_binding_valid(), "advanced ledger really invalidates the binding")
+	_straw_rejected(_straw_deck([card_id], 42, card_id), _straw_party(1), card_id, 1,
+		"stale patch binding rejects straw support atomically")
+	_check(service.bind_patch_wardrobe(wardrobe, torn) and service.is_patch_binding_valid(),
+		"fresh binding recovers the straw resolver")
+	var recovered := _straw_deck([card_id], 42, card_id)
+	var recovered_party := _straw_party(1)
+	_check(service.play_scarecrow_straw(recovered, recovered_party, card_id, 1)
+		and recovered_party.get_hero(1)["block"] == STRAW_BLOCKS[card_id],
+		"recovered binding restores the printed straw Block")
