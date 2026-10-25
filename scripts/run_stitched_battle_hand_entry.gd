@@ -5,27 +5,38 @@ extends RefCounted
 ## the caller's receipt must match its reconstructed canonical ledger.
 ## Invalid admission never draws from (or reseeds) the supplied run RNG.
 
-const PATH_CARD_IDS: Array[String] = ["warden_bulwark_brace", "warden_lance_pin"]
+const PATH_CARD_IDS: Array[String] = [
+    "warden_bulwark_brace", "warden_lance_pin",
+    "seamstress_leech_stitch", "seamstress_fray",
+    "tinker_scope", "tinker_wind_up",
+]
 
 ## A successful result owns a fresh shuffled CombatDeck, a detached snapshot,
 ## and the validated RunRestStitchCards authority required by
 ## CombatStitchedCards.play_stitched(). It does NOT start a turn or play cards.
-## The optional Warden Path choice augments only the battle deck, never Rest.
+## An optional Warden-only or complete three-hero claim augments only the
+## battle deck, never the permanent Rest ledger.
 func admit_next_fight(deck_ids: Variant, descriptors: Variant,
         remaining_scraps: Variant, next_stitch_id: Variant,
         expected_receipt: Variant, run_rng: RandomNumberGenerator,
-        warden_path_receipt: Variant = null) -> Dictionary:
+        path_receipt: Variant = null) -> Dictionary:
     var failure := {"ok": false}
     if run_rng == null or typeof(expected_receipt) != TYPE_STRING or expected_receipt.is_empty():
         return failure
 
-    # A supplied receipt is not optional on failure: authenticate every typed
-    # field against a fresh genuine choice before any shuffle or RNG use.
+    # Recreate the complete authored claim before any shuffle or RNG use.
+    # A partial or malformed trio cannot fall back to a Warden-only claim.
     var chosen: Dictionary = {}
-    if warden_path_receipt != null:
-        chosen = RunWardenPathChoice.authenticate_receipt(warden_path_receipt)
-        if not chosen.get("ok", false):
-            return failure
+    var chosen_trio: Dictionary = {}
+    if path_receipt != null:
+        if typeof(path_receipt) == TYPE_DICTIONARY and (path_receipt.has("paths") or path_receipt.has("deck")):
+            chosen_trio = RunHeroPathLoadout.authenticate_receipt(path_receipt)
+            if not chosen_trio.get("ok", false):
+                return failure
+        else:
+            chosen = RunWardenPathChoice.authenticate_receipt(path_receipt)
+            if not chosen.get("ok", false):
+                return failure
 
     # The constructor copies inputs, enforces canonical authored half
     # definitions, exactly one owned copy of each descriptor, and ID serials.
@@ -50,6 +61,8 @@ func admit_next_fight(deck_ids: Variant, descriptors: Variant,
     card_ids.assign(snapshot["deck"])
     if not chosen.is_empty():
         card_ids.append(chosen["card_id"])
+    if not chosen_trio.is_empty():
+        card_ids.append_array(chosen_trio["card_ids"])
     var combat_deck := CombatDeck.new(card_ids, run_rng)
     var result := {
         "ok": true,
@@ -59,4 +72,6 @@ func admit_next_fight(deck_ids: Variant, descriptors: Variant,
     }
     if not chosen.is_empty():
         result["battle_only_warden_path"] = chosen.duplicate(true)
+    if not chosen_trio.is_empty():
+        result["battle_only_hero_paths"] = chosen_trio.duplicate(true)
     return result

@@ -122,3 +122,56 @@ func _record(choice: Dictionary) -> Dictionary:
 		"passive": (choice["passive"] as Dictionary).duplicate(true),
 		"card": (choice["card"] as Dictionary).duplicate(true),
 	}
+
+
+## Authenticate a detached three-hero claim by recreating the complete authored
+## selection. Never accept a card ID, passive, owner or deck supplied on its own.
+static func authenticate_receipt(candidate: Variant) -> Dictionary:
+	if typeof(candidate) != TYPE_DICTIONARY:
+		return {"ok": false}
+	var receipt: Dictionary = candidate
+	var proposed_paths: Variant = receipt.get("paths")
+	if typeof(proposed_paths) != TYPE_DICTIONARY:
+		return {"ok": false}
+	var paths: Dictionary = proposed_paths
+	if paths.size() != HERO_ORDER.size():
+		return {"ok": false}
+	var selections: Dictionary = {}
+	for hero in HERO_ORDER:
+		if typeof(paths.get(hero)) != TYPE_DICTIONARY:
+			return {"ok": false}
+		selections[hero] = paths[hero].get("path_id")
+	if not RunHeroPathLoadout.new()._valid_selections(selections):
+		return {"ok": false}
+	var fresh := RunHeroPathLoadout.new()
+	var canonical := fresh.choose(selections)
+	if not canonical.get("ok", false) or not _exactly_equal(receipt, canonical):
+		return {"ok": false}
+	var card_ids: Array[String] = []
+	for hero in HERO_ORDER:
+		card_ids.append(canonical["paths"][hero]["card"]["id"])
+	return {"ok": true, "card_ids": card_ids, "receipt": canonical.duplicate(true)}
+
+
+static func _exactly_equal(a: Variant, b: Variant) -> bool:
+	if typeof(a) != typeof(b):
+		return false
+	if a is Array:
+		var left: Array = a
+		var right: Array = b
+		if left.size() != right.size():
+			return false
+		for index in left.size():
+			if not _exactly_equal(left[index], right[index]):
+				return false
+		return true
+	if a is Dictionary:
+		var left: Dictionary = a
+		var right: Dictionary = b
+		if left.size() != right.size():
+			return false
+		for key in left:
+			if not right.has(key) or not _exactly_equal(left[key], right[key]):
+				return false
+		return true
+	return a == b
