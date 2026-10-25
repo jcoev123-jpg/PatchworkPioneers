@@ -96,5 +96,12 @@ static func _parse_catalog_text(json_text: String) -> Array:
 		if not RunFightEncounterSelection._coerce_integral_field(record, "max_hp") \
 				or record["max_hp"] <= 0:
 			return []
+		# Optional Thorns metadata is content, not a status counter: JSON decodes
+		# it as a double, so coerce it here to the genuine nonnegative int that
+		# CombatAttackCards and CombatEnemyKeywordRules read, and refuse anything
+		# non-integral or negative before any record is published.
+		if record.has("thorns") and (not RunFightEncounterSelection._coerce_integral_field(
+				record, "thorns") or record["thorns"] < 0):
+			return []
 		seen.append(id)
 	return records
