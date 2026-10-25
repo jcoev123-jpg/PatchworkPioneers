@@ -340,6 +340,21 @@ func _scenario(mode: String, atlas: bool, keyboard: bool) -> Array:
 	var expected: Dictionary = {}
 	var submitted := _intent(mode)
 	await _activate(panel.upgrade_button if mode == "upgrade" else panel.stitch_button if mode == "stitch" else panel.leave_button, keyboard)
+	if mode != "leave":
+		var authentic: Array = visit.upgrade_options() if mode == "upgrade" else visit.stitch_first_options()
+		_check(not authentic.is_empty() and panel.option_buttons.size() == authentic.size(),
+			"routed panel displays all authentic source occurrence mini-cards")
+		if not authentic.is_empty() and not panel.option_buttons.is_empty():
+			var card: Button = panel.option_buttons[0]
+			var record: Dictionary = authentic[0]
+			var ink := ""
+			for label in card.find_children("*", "Label", true, false):
+				ink += (label as Label).text + "\n"
+			_check(card.get_meta("option") == record and ink.contains(record.owner.capitalize())
+				and ink.contains("copy #%d" % (record.index + 1))
+				and ink.contains("%d energy" % record.cost)
+				and ink.contains(record.get("display_name", record.get("name", ""))),
+				"actual seeded route mounts readable owner/cost/name/index labels")
 	if mode == "upgrade":
 		var duplicate: Button
 		for option in panel.option_buttons:
