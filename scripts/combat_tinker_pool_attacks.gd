@@ -70,6 +70,21 @@ func is_supported_card(card_id: String) -> bool:
 	return BASE_IDS.has(base_id) and (card_id == base_id or card_id == base_id + "_plus")
 
 
+## Read-only immediate-play route for Ricochet's two authored variants. All
+## legality, sequential deaths, status math and RNG cloning belong to _prepare;
+## this accessor exposes only the original enemy slots, never its private plan.
+func preview_ricochet_route(deck: CombatDeck, party: CombatParty,
+		enemies: CombatEnemies, card_id: String, cost_discount: int = 0) -> Dictionary:
+	if card_id != "tinker_ricochet" and card_id != "tinker_ricochet_plus":
+		return {"ok": false, "positions": []}
+	var plan: Dictionary = _prepare(deck, party, enemies, card_id, 0, _pinned,
+		cost_discount)
+	if not plan.get("ok", false):
+		return {"ok": false, "positions": []}
+	var positions: Array[int] = plan["positions"]
+	return {"ok": true, "positions": positions.duplicate()}
+
+
 func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int = 0, pinned: CombatPinned = null,
 		cost_discount: int = 0) -> Dictionary:

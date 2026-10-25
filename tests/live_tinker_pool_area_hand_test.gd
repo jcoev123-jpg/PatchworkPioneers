@@ -76,6 +76,21 @@ func _mouse(panel: Control) -> void:
 	await _frames()
 
 
+## Real hover without a press, so the forecast can be examined before commit.
+func _hover(panel: Control) -> void:
+	var motion := InputEventMouseMotion.new()
+	motion.position = panel.get_global_rect().get_center()
+	root.push_input(motion, true)
+	await _frames()
+
+
+func _quote_text(hits: Array) -> String:
+	var parts: Array[String] = []
+	for index in range(hits.size()):
+		parts.append("hit %d → enemy %d" % [index + 1, int(hits[index]["position"])])
+	return "If played now: " + "; ".join(parts)
+
+
 func _press() -> InputEventMouseButton:
 	var event := InputEventMouseButton.new()
 	event.button_index = MOUSE_BUTTON_LEFT
@@ -469,6 +484,19 @@ func _case(id: String, by_key: bool, key: Key = KEY_ENTER, hole: bool = false) -
 	var callback: Callable = adapter._bindings[panel]["callback"]
 	var before := _state()
 	var oracle := _oracle(before, id)
+	if id.begins_with("tinker_ricochet"):
+		_check(oracle.event.get("ok", false) and not oracle.event.hits.is_empty(),
+			"Ricochet quote has an independent genuine seeded-play oracle")
+		if by_key:
+			panel.grab_focus()
+			await _frames()
+			_check(panel.has_focus(), "Ricochet keyboard focus is on real held panel")
+		else:
+			await _hover(panel)
+		_check(panel.tooltip_text.contains(_quote_text(oracle.event.hits)),
+			"mounted hover/focus quotes exact independent ordered original hit slots: " + id)
+		_check(_state() == before and app.run_rng.state == before.rng,
+			"mounting and refreshing Ricochet quote never spends or advances seed: " + id)
 	if by_key:
 		panel.grab_focus()
 		_check(panel.has_focus(), "real Tinker hand card focused: " + id)
@@ -1164,6 +1192,14 @@ func _refusals() -> void:
 		elif mode == "end_turn":
 			app.deck.end_turn()
 		var before := _state()
+		if is_instance_valid(panel) and mode != "return":
+			# Refresh synchronously BEFORE an obsolete session can rebind.
+			# No extra frame may run here: the original regression proves
+			# that a captured callback is rejected after the authority swap.
+			adapter._refresh_ricochet_tooltips()
+			_check(not panel.tooltip_text.contains("hit 1 → enemy")
+				and _state() == before,
+				"stale or unplayable Ricochet has no invented quote or spend: " + mode)
 		if mode == "targets":
 			callback.call(_press())
 			_check(_state() == before and adapter._pending.is_empty(),
@@ -1316,6 +1352,97 @@ func _routed_three() -> void:
 	await _return()
 
 
+
+## The two real held Ricochets share the same battle, but never a stale
+## tooltip. Rebinding, keyboard focus changes, roster deaths, energy and turn
+## changes must recompute or retire the seeded sequence before another cast.
+func _ricochet_quote_refresh() -> void:
+	var base := "tinker_ricochet"
+	var plus := "tinker_ricochet_plus"
+	if not await _start(base):
+		await _return()
+		return
+	app.deck.draw_pile.append(plus)
+	_check(app.deck.draw_extra(1) == 1 and app.deck.hand.has(plus),
+		"second actual held Ricochet+ is drawn for switching focus")
+	app._refresh_hand()
+	await _frames()
+	var first_panel := _panel(base)
+	var plus_panel := _panel(plus)
+	_check(first_panel != null and plus_panel != null
+		and adapter._bindings.has(first_panel) and adapter._bindings.has(plus_panel),
+		"both area cards have valid live hand bindings")
+	if first_panel == null or plus_panel == null:
+		await _return()
+		return
+	# Move pointer off the hand, then use genuine focus traversal.
+	var motion := InputEventMouseMotion.new()
+	motion.position = Vector2(1, 1)
+	root.push_input(motion, true)
+	first_panel.grab_focus()
+	await _frames()
+	var original := _state()
+	var oracle_base := _oracle(original, base)
+	_check(oracle_base.event.get("ok", false) and not oracle_base.event.hits.is_empty()
+		and first_panel.tooltip_text.contains(_quote_text(oracle_base.event.hits)),
+		"first held Ricochet keyboard focus displays its genuine seeded route")
+	plus_panel.grab_focus()
+	await _frames()
+	var second := _state()
+	var oracle_plus := _oracle(second, plus)
+	_check(oracle_plus.event.get("ok", false) and not oracle_plus.event.hits.is_empty()
+		and plus_panel.tooltip_text.contains(_quote_text(oracle_plus.event.hits)),
+		"focus switching to Ricochet+ quotes its own upgraded cast")
+	_check(not first_panel.tooltip_text.contains("hit 1 → enemy")
+		and _state() == original,
+		"switching focus retires the earlier card forecast without any spend")
+	# A seeded run RNG change must use the current seed, never cached order.
+	app.run_rng.seed = 771
+	var reseeded := _state()
+	var reseeded_oracle := _oracle(reseeded, plus)
+	await _frames()
+	_check(reseeded_oracle.event.get("ok", false)
+		and plus_panel.tooltip_text.contains(_quote_text(reseeded_oracle.event.hits))
+		and _state() == reseeded,
+		"focus quote tracks a changed run RNG without advancing it")
+	# Leave only original foe 1 alive on two HP: later hits do not exist.
+	for pos in range(2, app.enemies.get_enemies().size() + 1):
+		var hp: int = app.enemies.get_enemy(pos).hp
+		_check(app.enemies.apply_damage(pos, hp), "other foe actually slain in original slot")
+	var first_hp: int = app.enemies.get_enemy(1).hp
+	_check(first_hp >= 2 and app.enemies.apply_damage(1, first_hp - 2)
+		and app.enemies.get_enemy(1).hp == 2, "only surviving target is two HP")
+	var lethal_before := _state()
+	await _frames()
+	_check(plus_panel.tooltip_text.contains("If played now: hit 1 → enemy 1")
+		and not plus_panel.tooltip_text.contains("hit 2")
+		and _state() == lethal_before,
+		"fresh living roster shortens the quote to one terminal original-slot hit")
+	app.deck.combat_state.energy = 0
+	var unaffordable := _state()
+	await _frames()
+	_check(plus_panel.tooltip_text.contains("If played now: unavailable")
+		and not plus_panel.tooltip_text.contains("hit 1 → enemy")
+		and _state() == unaffordable,
+		"energy loss clears a previously legal hit order and does not commit")
+	app.deck.combat_state.energy = 3
+	app.enemy_intents.advance_turn()
+	await _frames()
+	var turn_now := _state()
+	var refreshed := _oracle(turn_now, plus)
+	var tooltip: String = plus_panel.tooltip_text
+	_check((tooltip.contains(_quote_text(refreshed.event.hits))
+		if refreshed.event.get("ok", false) else tooltip.contains("unavailable"))
+		and _state() == turn_now,
+		"turn/session refresh never promises an outdated hit order")
+	_check(app.deck.end_turn(), "real end-turn retires forecast availability")
+	await _frames()
+	_check(not plus_panel.tooltip_text.contains("hit 1 → enemy")
+		and not first_panel.tooltip_text.contains("hit 1 → enemy"),
+		"turn end clears both held-card forecasts")
+	await _return()
+
+
 func _ricochet_reselect() -> void:
 	var id := "tinker_ricochet_plus"
 	if not await _start(id):
@@ -1452,6 +1579,7 @@ func _run() -> void:
 	await _shrapnel_unravel_skip()
 	await _routed_three()
 	await _ricochet_reselect()
+	await _ricochet_quote_refresh()
 	await _shared_latch()
 	await _queued_and_discard()
 	await _queued_stale_receipts()

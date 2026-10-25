@@ -147,6 +147,7 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	_sync_battle()
+	_refresh_ricochet_tooltips()
 
 
 func _is_card(card_id: String) -> bool:
@@ -353,6 +354,43 @@ func _bind(panel: Control, card_id: String) -> void:
 	_mount_cue(panel, card_id)
 	_focus_chain()
 
+
+## The tooltip is an immediate conditional quote, not a cached prediction.
+## Refresh only held, focused/hovered Ricochet panels. Re-run the original
+## resolver preflight after every live state change; it clones the battle RNG.
+## Removing focus, losing legality or retiring a panel clears any old route.
+func _refresh_ricochet_tooltips() -> void:
+	var app = get_parent()
+	if app == null:
+		return
+	for panel in _bindings.keys():
+		if not is_instance_valid(panel):
+			continue
+		var id: String = _bindings[panel]["id"]
+		if id != "tinker_ricochet" and id != "tinker_ricochet_plus":
+			continue
+		var hint := INSTRUCTION + "\n" + _rule_text(id)
+		if panel.has_focus() or panel.get_viewport().gui_get_hovered_control() == panel:
+			var route: Dictionary = {}
+			if _eligible(panel, id) and _deck._rng == _rng and _turn_index(app) == _turn:
+				var latch: CombatTinkerFirstAttack = _live_tinker_latch(app)
+				if latch != null:
+					# Same null-Pinned and Path discount as the actual area commit.
+					route = CombatTinkerPoolAttacks.new(latch).preview_ricochet_route(
+						_deck, _party, _enemies, id, _live_tinker_discount(id))
+			if route.get("ok", false):
+				var parts: Array[String] = []
+				var positions: Array = route.get("positions", [])
+				for index in range(positions.size()):
+					parts.append("hit %d → enemy %d" % [index + 1, int(positions[index])])
+				if not parts.is_empty():
+					hint += "\nIf played now: " + "; ".join(parts)
+				else:
+					hint += "\nIf played now: unavailable"
+			else:
+				hint += "\nIf played now: unavailable"
+		if panel.tooltip_text != hint:
+			panel.tooltip_text = hint
 
 func _exclusive_energy_input(panel: Control, card_id: String) -> void:
 	if card_id not in ENERGY_IDS:
@@ -713,6 +751,7 @@ func _unbind(panel) -> void:
 	var callback: Callable = _bindings[panel]["callback"]
 	var cue = _bindings[panel].get("cue")
 	if is_instance_valid(panel):
+		panel.tooltip_text = INSTRUCTION + "\n" + _rule_text(_bindings[panel]["id"])
 		if panel.gui_input.is_connected(callback):
 			panel.gui_input.disconnect(callback)
 		if panel.get_parent() != get_parent().hand_view:
