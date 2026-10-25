@@ -225,6 +225,7 @@ func _initialize() -> void:
 		_test_unravel_trio_shop_offers_and_purchases(party, deck, catalog)
 		_test_tinker_attack_shop_stock(party, deck, catalog)
 		_test_peddler_cards(party, deck, catalog)
+		_test_peddler_stock(party, deck, catalog)
 	else:
 		_check(false, "preconditions for non-vacuous shop stock tests failed")
 	if failures.is_empty():
@@ -2795,3 +2796,243 @@ func _test_peddler_cards(party: Array[String], deck: Array[String], catalog: Sta
 	_check(rndup.state == beforedup, "peddler duplicate candidate preserves RNG")
 	# Inputs unchanged.
 	_check(peddler_cards.size() == 6, "peddler leaves candidate input unchanged")
+
+
+## Peddler v3-3: one priced card per party hero plus one priced patch.
+## Uses real initial_offers.json patch IDs (stitched_badge, spare_spool, quilted_coat = 100g).
+func _test_peddler_stock(party: Array[String], deck: Array[String], catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var card_pool := _card_pool(catalog, party, authored)
+	# Use the three real patch IDs from initial_offers.json at their authored 100g price.
+	var real_patches: Array = [
+		{"id": "stitched_badge", "price": 100},
+		{"id": "spare_spool", "price": 100},
+		{"id": "quilted_coat", "price": 100},
+	]
+	var owned_patches: Array[String] = []
+
+	# AC1: valid three-hero party, real priced candidates, at least one patch.
+	var rng := _rng(SEED + 10000)
+	var result := RunShopStockOffers.generate_peddler_stock(rng, party, card_pool, real_patches, owned_patches)
+	_check(result.get("ok", false), "peddler stock generates with valid inputs")
+	var cards: Array = result.get("cards", [])
+	var patches: Array = result.get("patches", [])
+	_check(cards.size() == 3, "peddler stock returns exactly three cards")
+	_check(patches.size() == 1, "peddler stock returns exactly one patch")
+	# Every offered card must be from the candidate pool, have correct owner and price.
+	var warden_pool := WardenPoolCards.new()
+	var seamstress_pool := SeamstressPoolCards.new()
+	var tinker_pool := TinkerPoolCards.new()
+	for offer in cards:
+		var card_id: String = offer.get("id", "")
+		_check(_pool_has_id(card_pool, card_id), "offered card is from candidate pool: " + card_id)
+		var expected_owner: String = ""
+		if catalog.has_card(card_id):
+			expected_owner = catalog.get_definition(card_id).get("owner", "")
+		elif warden_pool.has_card(card_id):
+			expected_owner = warden_pool.get_definition(card_id).get("owner", "")
+		elif seamstress_pool.has_card(card_id):
+			expected_owner = seamstress_pool.get_definition(card_id).get("owner", "")
+		elif tinker_pool.has_card(card_id):
+			expected_owner = tinker_pool.get_definition(card_id).get("owner", "")
+		_check(offer.get("owner") == expected_owner, "offer uses correct catalog owner for " + card_id)
+		_check(party.has(offer.get("owner")), "offered card belongs to the party: " + card_id)
+		_check(offer.get("price") == _pool_price(card_pool, card_id), "offer keeps the supplied price: " + card_id)
+	# One card per hero in party order.
+	for i in range(3):
+		_check(cards[i].get("owner") == party[i], "card " + str(i) + " owner matches party order: " + party[i])
+	# Patch must be from real_patches and keep its price.
+	var patch_offer: Dictionary = patches[0]
+	_check(_pool_has_id(real_patches, patch_offer.get("id", "")), "offered patch is from candidate pool")
+	_check(patch_offer.get("price") == _pool_price(real_patches, patch_offer.get("id", "")), "patch keeps supplied price")
+
+	# AC2: seeded replay and exact RNG state match independent four-draw oracle.
+	var oracle_rng := _rng(SEED + 10000)
+	var rng_a := _rng(SEED + 10000)
+	var rng_b := _rng(SEED + 10000)
+	var expected := _peddler_stock_oracle(catalog, party, card_pool, real_patches, owned_patches, oracle_rng)
+	var result_a := RunShopStockOffers.generate_peddler_stock(rng_a, party, card_pool, real_patches, owned_patches)
+	_check(result_a.get("ok", false), "first stock generates")
+	_check(result_a == expected, "stock matches independent four-draw sorted-ID oracle")
+	_check(rng_a.state == oracle_rng.state, "four draws leave matching RNG state")
+	# Reverse candidate orders and confirm identical outputs.
+	var reversed_cards := card_pool.duplicate(true)
+	reversed_cards.reverse()
+	var reversed_patches := real_patches.duplicate(true)
+	reversed_patches.reverse()
+	var result_b := RunShopStockOffers.generate_peddler_stock(rng_b, party, reversed_cards, reversed_patches, owned_patches)
+	_check(result_b == result_a, "reordered inputs produce identical stock")
+	_check(rng_b.state == rng_a.state, "reordered inputs leave identical RNG state")
+
+	# AC2: unowned-patch preference, then owned fallback.
+	# First test with unowned patches available (already tested above).
+	# Now test with all patches owned - should fall back to owned.
+	var all_owned := ["stitched_badge", "spare_spool", "quilted_coat"]
+	var rng_owned := _rng(SEED + 10001)
+	var result_owned := RunShopStockOffers.generate_peddler_stock(rng_owned, party, card_pool, real_patches, all_owned)
+	_check(result_owned.get("ok", false), "peddler stock generates when all patches owned")
+	_check(result_owned.get("patches", []).size() == 1, "one patch offered from owned fallback")
+	# The patch should be one of the owned ones.
+	var offered_patch_id: String = result_owned["patches"][0]["id"]
+	_check(all_owned.has(offered_patch_id), "offered patch is from owned fallback pool")
+
+	# AC3: empty patch pool fails closed, no RNG spent.
+	var rng_empty := _rng(SEED + 10002)
+	var state_before := rng_empty.state
+	var result_empty := RunShopStockOffers.generate_peddler_stock(rng_empty, party, card_pool, [], owned_patches)
+	_check(not result_empty.get("ok", true), "empty patch pool fails closed")
+	_check(result_empty.get("cards", []).is_empty() and result_empty.get("patches", []).is_empty(), "empty patch pool returns empty shape")
+	_check(rng_empty.state == state_before, "empty patch pool preserves RNG")
+
+	# AC3: duplicate patch IDs fail closed.
+	var dup_patches := real_patches.duplicate(true)
+	dup_patches.append({"id": "stitched_badge", "price": 100})
+	var rng_dup := _rng(SEED + 10003)
+	state_before = rng_dup.state
+	var result_dup := RunShopStockOffers.generate_peddler_stock(rng_dup, party, card_pool, dup_patches, owned_patches)
+	_check(not result_dup.get("ok", true), "duplicate patch IDs fail closed")
+	_check(rng_dup.state == state_before, "duplicate patch IDs preserve RNG")
+
+	# AC3: malformed patch price (negative) fails closed.
+	var neg_patches := real_patches.duplicate(true)
+	neg_patches[0] = {"id": "stitched_badge", "price": -1}
+	var rng_neg := _rng(SEED + 10004)
+	state_before = rng_neg.state
+	var result_neg := RunShopStockOffers.generate_peddler_stock(rng_neg, party, card_pool, neg_patches, owned_patches)
+	_check(not result_neg.get("ok", true), "negative patch price fails closed")
+	_check(rng_neg.state == state_before, "negative patch price preserves RNG")
+
+	# AC3: malformed patch price (fractional) fails closed.
+	var frac_patches := real_patches.duplicate(true)
+	frac_patches[0] = {"id": "stitched_badge", "price": 12.5}
+	var rng_frac := _rng(SEED + 10005)
+	state_before = rng_frac.state
+	var result_frac := RunShopStockOffers.generate_peddler_stock(rng_frac, party, card_pool, frac_patches, owned_patches)
+	_check(not result_frac.get("ok", true), "fractional patch price fails closed")
+	_check(rng_frac.state == state_before, "fractional patch price preserves RNG")
+
+	# AC3: malformed owned IDs (empty string) fails closed.
+	var bad_owned := ["", "spare_spool"]
+	var rng_bad_owned := _rng(SEED + 10006)
+	state_before = rng_bad_owned.state
+	var result_bad_owned := RunShopStockOffers.generate_peddler_stock(rng_bad_owned, party, card_pool, real_patches, bad_owned)
+	_check(not result_bad_owned.get("ok", true), "malformed owned ID fails closed")
+	_check(rng_bad_owned.state == state_before, "malformed owned ID preserves RNG")
+
+	# AC3: duplicate party members fails closed.
+	var dup_party := [party[0], party[0], party[2]]
+	var rng_dup_party := _rng(SEED + 10007)
+	state_before = rng_dup_party.state
+	var result_dup_party := RunShopStockOffers.generate_peddler_stock(rng_dup_party, dup_party, card_pool, real_patches, owned_patches)
+	_check(not result_dup_party.get("ok", true), "duplicate party fails closed")
+	_check(rng_dup_party.state == state_before, "duplicate party preserves RNG")
+
+	# AC3: insufficient per-hero card stock fails closed.
+	# Build a card pool with only Warden cards.
+	var warden_only := []
+	for entry in card_pool:
+		if entry.get("owner") == "warden":
+			warden_only.append(entry)
+	var rng_insuff := _rng(SEED + 10008)
+	state_before = rng_insuff.state
+	var result_insuff := RunShopStockOffers.generate_peddler_stock(rng_insuff, party, warden_only, real_patches, owned_patches)
+	_check(not result_insuff.get("ok", true), "insufficient per-hero card stock fails closed")
+	_check(rng_insuff.state == state_before, "insufficient card stock preserves RNG")
+
+	# AC3: null/invalid inputs fail closed.
+	_reject_peddler_stock("null RNG", null, party, card_pool, real_patches, owned_patches)
+	_reject_peddler_stock("wrong-type RNG", RefCounted.new(), party, card_pool, real_patches, owned_patches)
+	_reject_peddler_stock("nonarray party", _rng(), "warden", card_pool, real_patches, owned_patches)
+	_reject_peddler_stock("nonarray card pool", _rng(), party, "cards", real_patches, owned_patches)
+	_reject_peddler_stock("nonarray patch pool", _rng(), party, card_pool, "patches", owned_patches)
+	_reject_peddler_stock("nonarray owned patches", _rng(), party, card_pool, real_patches, "owned")
+
+	# Inputs unchanged.
+	_check(card_pool == _card_pool(catalog, party, authored), "card pool unchanged")
+	_check(real_patches.size() == 3, "patch pool unchanged")
+	_check(owned_patches.is_empty(), "owned patches unchanged")
+
+
+## Independent sorted-pool oracle for Peddler stock (3 hero cards + 1 patch).
+func _peddler_stock_oracle(catalog: StarterCards, party: Array[String], card_pool: Array,
+		patch_pool: Array, owned: Array[String], rng: RandomNumberGenerator) -> Dictionary:
+	var warden_pool := WardenPoolCards.new()
+	var seamstress_pool := SeamstressPoolCards.new()
+	var tinker_pool := TinkerPoolCards.new()
+
+	# Build eligible card IDs per hero.
+	var card_prices := {}
+	var eligible_by_hero := {}
+	for hero_id in party:
+		eligible_by_hero[hero_id] = []
+	for entry in card_pool:
+		var card_id: String = entry["id"]
+		var owner: String = entry["owner"]
+		var price: int = entry["price"]
+		if party.has(owner):
+			card_prices[card_id] = price
+			eligible_by_hero[owner].append(card_id)
+	for hero_id in party:
+		eligible_by_hero[hero_id].sort()
+
+	# Build patch pools.
+	var patch_prices := {}
+	var eligible_patches: Array[String] = []
+	var owned_patches: Array[String] = []
+	for entry in patch_pool:
+		var patch_id: String = entry["id"]
+		var price: int = entry["price"]
+		patch_prices[patch_id] = price
+		if owned.has(patch_id):
+			owned_patches.append(patch_id)
+		else:
+			eligible_patches.append(patch_id)
+	eligible_patches.sort()
+	owned_patches.sort()
+
+	# Draw cards: one per hero in party order.
+	var cards: Array = []
+	for hero_id in party:
+		var ids: Array = eligible_by_hero[hero_id]
+		var index: int = rng.randi_range(0, ids.size() - 1)
+		var chosen: String = ids[index]
+		ids.remove_at(index)
+		cards.append({"id": chosen, "owner": hero_id, "price": card_prices[chosen]})
+
+	# Draw patch: prefer unowned, fallback to owned.
+	var patch_pool_draw: Array[String] = eligible_patches
+	if patch_pool_draw.is_empty():
+		patch_pool_draw = owned_patches
+	var patches: Array = []
+	if not patch_pool_draw.is_empty():
+		var patch_index: int = rng.randi_range(0, patch_pool_draw.size() - 1)
+		var chosen_patch: String = patch_pool_draw[patch_index]
+		patches.append({"id": chosen_patch, "price": patch_prices[chosen_patch]})
+
+	return {"ok": true, "cards": cards, "patches": patches}
+
+
+## Rejection helper for peddler stock tests.
+func _reject_peddler_stock(label: String, rng_input: Variant, party_input: Variant,
+		cards_input: Variant, patches_input: Variant, owned_input: Variant) -> void:
+	var state_before: int = rng_input.state if rng_input is RandomNumberGenerator else -1
+	var party_before = party_input.duplicate(true) if party_input is Array else party_input
+	var cards_before = cards_input.duplicate(true) if cards_input is Array else cards_input
+	var patches_before = patches_input.duplicate(true) if patches_input is Array else patches_input
+	var owned_before = owned_input.duplicate(true) if owned_input is Array else owned_input
+	var global_expected := -1
+	if not (rng_input is RandomNumberGenerator):
+		seed(48213)
+		global_expected = randi()
+		seed(48213)
+	var result: Dictionary = RunShopStockOffers.generate_peddler_stock(rng_input, party_input, cards_input, patches_input, owned_input)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("cards", ["bad"]).is_empty() and result.get("patches", ["bad"]).is_empty(), label + ": no offers published")
+	if rng_input is RandomNumberGenerator:
+		_check(rng_input.state == state_before, label + ": no RNG consumed")
+	if global_expected >= 0:
+		_check(randi() == global_expected, label + ": global RNG untouched")
+	_check(party_input == party_before, label + ": party unchanged")
+	_check(cards_input == cards_before, label + ": card candidates unchanged")
+	_check(patches_input == patches_before, label + ": patch candidates unchanged")
+	_check(owned_input == owned_before, label + ": owned patches unchanged")
