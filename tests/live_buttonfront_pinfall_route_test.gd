@@ -152,16 +152,26 @@ func _run() -> void:
 		_check(app.round_flow._party == app.party and app.round_flow._enemies == app.enemies
 			and app.round_flow._deck == app.deck and app.round_flow._intents == app.enemy_intents
 			and app.deck._rng == app.run_rng, "real models and single run RNG drive End Turn")
+		var oracle := _independent(fixture, app)
+		_check(not oracle.is_empty(), "independent seeded oracle rebuilds the same Fight")
+		if oracle.is_empty():
+			app.free()
+			continue
 		var enemies: Array = app.enemies.get_enemies()
 		_check(enemies.size() == 2, "two real enemies mounted")
 		if enemies.size() != 2:
 			app.free()
 			continue
-		_check(enemies[0].id == "button_guard" and enemies[0].position == 1
-			and enemies[0].name == "Button Guard" and enemies[0].hp == 16
-			and enemies[1].id == "fray_scavenger" and enemies[1].position == 2
-			and enemies[1].name == "Fray Scavenger" and enemies[1].hp == 14,
-			"authored identities, slots and HP appear in real roster")
+		var floor_number: int = int(app.run_map.get_node(fixture.id).get("floor", 0))
+		var mounted_ids: Array = []
+		var group_ok := true
+		for enemy in enemies:
+			mounted_ids.append(enemy.id)
+			group_ok = group_ok and BAND_ORACLE.records().has(enemy.id)
+		_check(group_ok and BAND_ORACLE.legal_group(mounted_ids, floor_number),
+			"mounted roster is a legal floor-%d band group of authored normals" % floor_number)
+		_check(enemies == oracle.enemies.get_enemies(),
+			"band identities, slots and authored HP match the seeded oracle")
 		var presenter = app.get_node("LiveEnemyRoster")
 		_check(presenter.enemies == app.enemies and presenter._labels.size() == 2,
 			"live roster presenter binds the actual two enemies")
@@ -176,12 +186,8 @@ func _run() -> void:
 				"real enemy meter displays exact HP and Block")
 		_check(app.party.get_hero(1).hp == 40 and app.party.get_hero(1).block == 6,
 			"ordinary Warden opening Block absorbs exactly the Exposed-enhanced six damage")
-		var oracle := _independent(fixture, app)
-		_check(not oracle.is_empty() and _matches_oracle(app, oracle),
+		_check(_matches_oracle(app, oracle),
 			"opening roster, weighted intent, HP, Block, full deck and RNG match seeded oracle")
-		if oracle.is_empty():
-			app.free()
-			continue
 		var trace: Array = [_values(app)]
 		for turn in range(4):
 			_check(not app.intent_label.visible and app.intent_label.text == _oracle_label(oracle),

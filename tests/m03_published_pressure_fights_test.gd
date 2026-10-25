@@ -99,7 +99,7 @@ func _enter(s: Dictionary, registry: Dictionary, production: bool) -> Dictionary
     return service._entry_from_data(s["map"], s["rng"], s["selector"], registry)
 
 
-func _snapshot(entry: Dictionary, id: String) -> Dictionary:
+func _snapshot(entry: Dictionary, id: String, group: Array = []) -> Dictionary:
     _check(entry.get("success") == true and entry.get("node_type") == "Fight"
         and entry.get("encounter_id") == id, id + " admitted by real typed service")
     if not entry.get("success", false):
@@ -114,16 +114,19 @@ func _snapshot(entry: Dictionary, id: String) -> Dictionary:
         FileAccess.get_file_as_string("res://data/encounters/%s.json" % id))
     _check(not definitions.is_empty() and definitions.size() == ROSTERS[id].size()
         and entry.get("definitions") == definitions, id + " actual full authored schedule")
-    var catalog := RunTypedBattleRoster._parse_catalog_text(
-        FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
-    _check(not catalog.is_empty(), "actual normal enemy catalog loads")
+    var catalog: Dictionary = preload("res://tests/floor_band_oracle.gd").records()
+    _check(not catalog.is_empty(), "independent ordinary floor-band catalogs load")
+    var expected_ids: Array = group if not group.is_empty() else (
+        enemies.get_enemies().map(func(actor): return actor.id))
+    _check(preload("res://tests/floor_band_oracle.gd").legal_group(expected_ids, 1)
+        and expected_ids.size() == ROSTERS[id].size(),
+        id + " has legal distinct actual floor-band sources of canonical schedule arity")
     var expected_actors := []
-    for index in range(ROSTERS[id].size()):
-        var matches := catalog.filter(func(record): return record["id"] == ROSTERS[id][index])
-        _check(matches.size() == 1, id + " unique catalog actor at slot " + str(index + 1))
-        if matches.size() != 1:
+    for index in range(expected_ids.size()):
+        _check(catalog.has(expected_ids[index]), id + " unique catalog actor at slot " + str(index + 1))
+        if not catalog.has(expected_ids[index]):
             continue
-        var actor: Dictionary = matches[0].duplicate(true)
+        var actor: Dictionary = catalog[expected_ids[index]].duplicate(true)
         actor.merge({"position": index + 1, "hp": actor["max_hp"], "block": 0}, true)
         expected_actors.append(actor)
     _check(enemies.get_enemies() == expected_actors, id + " complete ordered fresh actor snapshots")
@@ -151,12 +154,16 @@ func _exercise(value: int, id: String, registry: Dictionary, production: bool) -
     var ids: Array = registry["Fight"].keys()
     ids.sort()
     _check(ids[oracle.randi_range(0, ids.size() - 1)] == id, id + " sorted seeded oracle")
+    var band_group: Array = preload("res://tests/floor_band_oracle.gd").group(
+        s["map"].get_current_floor(), ROSTERS[id].size(), oracle)
+    _check(preload("res://tests/floor_band_oracle.gd").legal_group(
+        band_group, s["map"].get_current_floor()), id + " independent shrinking band draws")
     seed(91091)
     var expected_global := randi()
     seed(91091)
     var first := _enter(s, registry, production)
     _check(randi() == expected_global, id + " no global RNG draw")
-    var snapshot := _snapshot(first, id)
+    var snapshot := _snapshot(first, id, band_group)
     if snapshot.is_empty():
         return
     var after := _state(s)
@@ -165,7 +172,7 @@ func _exercise(value: int, id: String, registry: Dictionary, production: bool) -
     expected_state["bound"] = s["map"]
     expected_state["cache"] = s["selector"]._selected.duplicate(true)
     _check(after == expected_state and not after["cache"].is_empty(),
-        id + " one selection draw and cache; unchanged entire route/map")
+        id + " one encounter and band-group draw sequence cached; unchanged entire route/map")
     _check(first["enemies"].apply_damage(1, 2) and first["enemies"].gain_block(2, 5),
         id + " first actors mutated through real APIs")
     first["definitions"][0]["pattern"].clear()
@@ -173,10 +180,10 @@ func _exercise(value: int, id: String, registry: Dictionary, production: bool) -
     _check(_state(s) == after, id + " cached re-entry no RNG/map/cache change")
     _check(second.get("enemies") != first["enemies"] and second.get("intents") != first["intents"],
         id + " distinct cached actors and scheduler")
-    _check(_snapshot(second, id) == snapshot, id + " detached re-entry restores all state")
+    _check(_snapshot(second, id, band_group) == snapshot, id + " detached re-entry restores all state")
     var replay := _setup(value)
     var repeated := _enter(replay, registry, production)
-    _check(_snapshot(repeated, id) == snapshot, id + " same-seed complete actor/intent trace")
+    _check(_snapshot(repeated, id, band_group) == snapshot, id + " same-seed complete actor/intent trace")
     var replay_state := _state(replay)
     replay_state["bound"] = s["map"]
     _check(replay_state == after, id + " same-seed complete map/RNG/cache trace")

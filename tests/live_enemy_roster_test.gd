@@ -1087,8 +1087,11 @@ func _idle_motion(app, presenter, expect_fallback: bool = false) -> void:
 			_check(puppet.posed_image_rect().size.y > 0.0
 				and puppet.posed_actor_rect().is_equal_approx(puppet.posed_image_rect()),
 				"supplied art draw path uses the same shared pose: " + puppet.name)
-	_check(fallback_seen == expect_fallback,
-		"the drawn fallback animates exactly when an actor has no supplied art")
+	var actual_fallback := false
+	for puppet in presenter._puppets:
+		actual_fallback = actual_fallback or puppet.current_texture() == null
+	_check(fallback_seen == actual_fallback,
+		"the drawn fallback animates exactly for the actors actually lacking art")
 	for puppet in presenter._puppets:
 		puppet._process(0.4)
 	var after_hit: Array[Rect2] = []
@@ -2597,9 +2600,9 @@ func _m05_pairs(pool: Dictionary) -> Array:
 	return pairs
 
 
-## One seeded production Fight that really admits this M05 pair. The prediction reproduces
-## only the live selector's single ordered-pool draw, so no encounter file is changed.
-func _m05_pair_seed(pool: Dictionary, pair_ids: Array) -> Dictionary:
+## Find a real first-floor Fight whose independent shrinking-array draws actually
+## admit the requested M05 actor; the named encounter only owns the schedule.
+func _m05_pair_seed(pool: Dictionary, target_id: String) -> Dictionary:
 	var fight = pool.get("Fight")
 	if not fight is Dictionary or fight.is_empty():
 		return {}
@@ -2616,19 +2619,24 @@ func _m05_pair_seed(pool: Dictionary, pair_ids: Array) -> Dictionary:
 				continue
 			var picked: String = ids[rng.randi_range(0, ids.size() - 1)]
 			var entry = fight.get(picked)
-			if entry is Dictionary and entry.get("enemy_ids") == pair_ids:
-				return {"seed": seed_value, "node": node_id}
+			if not entry is Dictionary or not entry.get("enemy_ids") is Array:
+				continue
+			var group: Array = preload("res://tests/floor_band_oracle.gd").group(
+				map.get_current_floor(), entry.enemy_ids.size(), rng)
+			if group.has(target_id):
+				return {"seed": seed_value, "node": node_id, "group": group,
+					"encounter": picked, "selection_rng": rng.state}
 	return {}
 
 
-## Mount one authentic M05 pair through the real title, map and route controls, prove both
-## enemy puppets draw their own sewn fallback, then return to the title. Returns the IDs of
-## the roster that was really admitted.
-func _mount_m05_pair(app, presenter, pool: Dictionary, pair_ids: Array) -> Array:
+## Mount one band-selected Fight through real title, map and route controls,
+## prove the selected M05 actor draws its own sewn fallback without mutating play,
+## then return to the title with the exact admitted roster IDs.
+func _mount_m05_pair(app, presenter, pool: Dictionary, target_id: String) -> Array:
 	var admitted: Array[String] = []
-	var seed_info := _m05_pair_seed(pool, pair_ids)
+	var seed_info := _m05_pair_seed(pool, target_id)
 	_check(not seed_info.is_empty(),
-		"a seeded production Fight really selects the M05 pair " + str(pair_ids))
+		"a seeded production Fight really draws M05 normal " + target_id)
 	if seed_info.is_empty():
 		return admitted
 	app.run_seed = int(seed_info.seed)
@@ -2640,7 +2648,7 @@ func _mount_m05_pair(app, presenter, pool: Dictionary, pair_ids: Array) -> Array
 			route_button = candidate
 			break
 	_check(route_button != null and not route_button.disabled,
-		"the routed M05 Fight is reachable by its own map control " + str(pair_ids))
+		"the routed M05 Fight is reachable by its own map control " + target_id)
 	if route_button == null:
 		if is_instance_valid(app.route_back_button):
 			app.route_back_button.pressed.emit()
@@ -2652,17 +2660,20 @@ func _mount_m05_pair(app, presenter, pool: Dictionary, pair_ids: Array) -> Array
 	if app.enemies != null:
 		for enemy in app.enemies.get_enemies():
 			admitted.append(String(enemy.get("id")))
-	_check(admitted == pair_ids and presenter.enemies == app.enemies
-		and presenter._puppets.size() == CombatParty.PARTY_SIZE + pair_ids.size(),
-		"the real routed battle mounts exactly the selected M05 pair " + str(pair_ids))
-	if admitted != pair_ids or app.enemies == null or presenter.enemies != app.enemies:
+	_check(admitted == seed_info.group and admitted.has(target_id)
+		and app.encounter_id == seed_info.encounter and presenter.enemies == app.enemies
+		and presenter._puppets.size() == CombatParty.PARTY_SIZE + admitted.size(),
+		"the real routed Fight mounts the independent band-selected group with " + target_id)
+	if admitted != seed_info.group or app.enemies == null or presenter.enemies != app.enemies:
 		if app.deck != null:
 			app.return_button.pressed.emit()
 			await process_frame
 		return admitted
 	var before: Array = _snapshot(app)
-	for index in range(pair_ids.size()):
-		var actor_id: String = pair_ids[index]
+	for index in range(admitted.size()):
+		var actor_id: String = admitted[index]
+		if not M05_NORMALS.has(actor_id):
+			continue
 		var expected: Dictionary = M05_NORMALS[actor_id]
 		var actor: Dictionary = app.enemies.get_enemy(index + 1)
 		var puppet = presenter._puppets[CombatParty.PARTY_SIZE + index]
@@ -2691,9 +2702,9 @@ func _mount_m05_pair(app, presenter, pool: Dictionary, pair_ids: Array) -> Array
 			"the same foot line, contact shadow and pinned tag stay unchanged: " + actor_id)
 	_check(presenter._puppets[CombatParty.PARTY_SIZE].fallback_silhouettes()
 		!= presenter._puppets[CombatParty.PARTY_SIZE + 1].fallback_silhouettes(),
-		"the two M05 enemies in one battle draw two different sewn variants")
+		"the two distinct band-selected actors keep distinct sewn silhouettes")
 	# The identity fallback keeps the same bounded lunge, recoil and fall as any actor.
-	var host = presenter._puppets[CombatParty.PARTY_SIZE]
+	var host = presenter._puppets[CombatParty.PARTY_SIZE + admitted.find(target_id)]
 	var phase: float = host.idle_phase
 	var rest: Rect2 = host.posed_fallback_rect()
 	_check(host.trigger_attack(0.6) and host.attacking() and host.pose_texture() == null,
@@ -2734,6 +2745,142 @@ func _mount_m05_pair(app, presenter, pool: Dictionary, pair_ids: Array) -> Array
 ## The four authored M05 normals must be identifiable in real routed battles without an
 ## image: each exact ID maps to its own sewn fallback kind, binds no texture, keeps its
 ## authentic record, and the generic fallback stays for a fabricated ID. Presentation only.
+## Take only legal connected Fight edges; no map graph, roster or run RNG is forged.
+## A genuine five-Fight route reaches the mid band where Felt Bulwark belongs.
+func _next_fight_chain(map: RunMap, origin: String, remaining: int) -> Array:
+	if remaining == 0:
+		return []
+	for node_id in map.get_node(origin).get("outgoing", []):
+		if map.get_node(node_id).get("type") != "Fight":
+			continue
+		var tail: Array = _next_fight_chain(map, node_id, remaining - 1)
+		if tail.size() == remaining - 1:
+			return [node_id] + tail
+	return []
+
+
+func _midband_m05_seed(first_seed: int = 1) -> Dictionary:
+	for value in range(first_seed, 30000):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		for first in map.get_legal_choices():
+			if map.get_node(first).get("type") != "Fight":
+				continue
+			var tail := _next_fight_chain(map, first, 4)
+			if tail.size() == 4:
+				return {"seed": value, "nodes": [first] + tail}
+	return {}
+
+
+## Drive real title, node controls, Fight wins and Skip/Continue until floor 5,
+## and check the unillustrated mid-band actor on its actual mounted stage.
+func _midband_felt_bulwark(app, presenter, first_seed: int = 1, attempts: int = 0) -> void:
+	var seed_info := _midband_m05_seed(first_seed)
+	var found := false
+	_check(not seed_info.is_empty() and seed_info.get("nodes", []).size() == 5,
+		"a seed has five genuinely connected Fight choices through floor five")
+	if seed_info.is_empty():
+		return
+	app.run_seed = int(seed_info.seed)
+	app.route_button.pressed.emit()
+	await process_frame
+	var reached := true
+	for floor_index in range(5):
+		var node_id: String = seed_info.nodes[floor_index]
+		var route_control: Button = null
+		for candidate in app.route_buttons:
+			if candidate.get_meta("route_id", "") == node_id:
+				route_control = candidate
+				break
+		_check(route_control != null and not route_control.disabled
+			and app.run_map.get_legal_choices().has(node_id),
+			"each connected Fight is a real mounted legal route action at floor %d" % (floor_index + 1))
+		if route_control == null:
+			reached = false
+			break
+		route_control.pressed.emit()
+		for frame in range(3):
+			await process_frame
+		_check(app.enemies != null and app.run_map.get_current_floor() == floor_index + 1
+			and app.encounter_id.length() > 0,
+			"real Fight entry admits authoritative actors and typed schedule at floor %d" % (floor_index + 1))
+		if app.enemies == null:
+			reached = false
+			break
+		if floor_index == 4:
+			break
+		# Victory fixture uses authentic CombatEnemies damage APIs, not an
+		# injected Fight group, outcome or test-only selector.
+		for enemy in app.enemies.get_enemies():
+			_check(app.enemies.apply_damage(enemy.position, 9999),
+				"living source is slain through the real combat actor model")
+		app._observe_battle_result()
+		await process_frame
+		_check(app.reward_buttons.size() == 4
+			and app.reward_buttons[3].is_visible_in_tree(),
+			"real Fight victory exposes the actual Skip reward control")
+		app.reward_buttons[3].pressed.emit()
+		await process_frame
+		app.continue_button.pressed.emit()
+		await process_frame
+	if reached and app.enemies != null and app.run_map.get_current_floor() == 5:
+		var current_ids: Array = app.enemies.get_enemies().map(
+			func(record): return record.id)
+		var records: Dictionary = preload("res://tests/floor_band_oracle.gd").records()
+		_check(preload("res://tests/floor_band_oracle.gd").legal_group(current_ids, 5),
+			"floor-five mounted actors are distinct members of the authored mid band")
+		_check(current_ids.size() == app.enemy_intents._definitions.size()
+			and presenter._puppets.size() == CombatParty.PARTY_SIZE + current_ids.size(),
+			"floor-five group preserves its independent typed encounter arity and mounted controls")
+		# Test every actually selected actor's authentic record. M05's Felt
+		# Bulwark has an identifiable art-free puppet when it is drawn.
+		for i in range(current_ids.size()):
+			var record: Dictionary = app.enemies.get_enemy(i + 1)
+			var authored: Dictionary = records[current_ids[i]]
+			_check(record.id == authored.id and record.max_hp == int(
+				RunNormalAttackFloorScaling.scale_normal_max_hp(int(authored.max_hp), 5).max_hp)
+				and record.name == authored.name and record.position == i + 1
+				and record.hp == int(RunNormalAttackFloorScaling.scale_normal_max_hp(
+					int(authored.max_hp), 5).max_hp),
+				"mid-band actor keeps authenticated catalog stats and source slot: " + str(record) + " versus " + str(authored))
+			if current_ids[i] == "felt_bulwark":
+				var host = presenter._puppets[CombatParty.PARTY_SIZE + i]
+				var before := _snapshot(app)
+				_check(host.actor_id == "felt_bulwark"
+					and host.fallback_kind == "felt_bulwark"
+					and host.current_texture() == null
+					and not host.fallback_silhouettes().is_empty()
+					and presenter._labels[i].text == authored.name,
+					"genuinely mounted Felt Bulwark wears its own distinct sewn fallback and pinned label")
+				_check(host.trigger_attack(0.6) and host.attacking()
+					and host.pose_texture() == null, "Felt Bulwark puppet keeps its bounded fallback attack")
+				host.cancel_attack()
+				_check(host.trigger_recoil(0.6) and host.recoiling(),
+					"Felt Bulwark puppet keeps its bounded fallback recoil")
+				host.cancel_recoil()
+				var prior_fallen: bool = host.fallen
+				host.fallen = true
+				_check(host.settle_fall(0.6), "Felt Bulwark puppet keeps its bounded fall settle")
+				host.cancel_fall()
+				host.fallen = prior_fallen
+				_check(_snapshot(app) == before,
+					"Felt Bulwark fallback animation changes no battle, deck or RNG state")
+		found = current_ids.has("felt_bulwark")
+	if app.deck != null:
+		app.return_button.pressed.emit()
+		await process_frame
+	if not found:
+		if attempts < 20:
+			await _midband_felt_bulwark(app, presenter, int(seed_info.seed) + 1, attempts + 1)
+		else:
+			_check(false, "bounded distinct seeded connected floor-five Fights mount Felt Bulwark")
+	else:
+		_check(found, "authentic routed floor-five group includes and mounts Felt Bulwark")
+
+
 func _m05_fallbacks(app, presenter) -> void:
 	var records := _m05_records()
 	for actor_id in M05_NORMALS:
@@ -2764,15 +2911,19 @@ func _m05_fallbacks(app, presenter) -> void:
 		"the production Fight pool parses for the live M05 fallback check")
 	var mounted := {}
 	if pool is Dictionary and pool.get("Fight") is Dictionary:
-		for pair_ids in _m05_pairs(pool):
-			if mounted.size() >= M05_NORMALS.size():
-				break
-			var admitted: Array = await _mount_m05_pair(app, presenter, pool, pair_ids)
-			for actor_id in admitted:
+		_check(_m05_pairs(pool).size() >= 2,
+			"both published M05 schedule aliases remain independently registered")
+		for actor_id in M05_NORMALS:
+			if not preload("res://tests/floor_band_oracle.gd").band_ids(1).has(actor_id):
+				continue
+			var admitted: Array = await _mount_m05_pair(app, presenter, pool, actor_id)
+			if admitted.has(actor_id):
 				mounted[actor_id] = true
+	await _midband_felt_bulwark(app, presenter)
 	for actor_id in M05_NORMALS:
-		_check(mounted.has(actor_id),
-			"the M05 normal really appears in a genuine routed battle: " + actor_id)
+		if preload("res://tests/floor_band_oracle.gd").band_ids(1).has(actor_id):
+			_check(mounted.has(actor_id),
+				"the low-band M05 normal really appears in a genuine routed battle: " + actor_id)
 	# One mounted slot, rebound through the real IDs and then a fabricated one.
 	_fixture_start(app)
 	await process_frame

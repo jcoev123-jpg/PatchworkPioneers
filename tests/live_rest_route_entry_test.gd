@@ -255,6 +255,9 @@ func _routed_win(fixture: Dictionary, downed: bool, capped_survivor: bool = fals
 			break
 		if capped_survivor:
 			_check(app.party.heal(2, 999), "fixture tops up living survivor before final card inputs")
+			if not app.party.is_downed(1) and app.party.get_hero(1).hp == app.party.get_hero(1).max_hp:
+				_check(app.party.apply_damage(1, 1),
+					"fixture keeps a living wounded Warden witness regardless of the enemy roster")
 			app.party._heroes[1].statuses = {"exposed": 2}
 		for play in range(3):
 			var id := ""

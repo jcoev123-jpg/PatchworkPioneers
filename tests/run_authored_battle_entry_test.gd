@@ -84,6 +84,13 @@ const TRIPLE := "triple_spool_pinch"
 const TRIPLE_ROSTER := ["fray_scavenger", "button_guard", "spool_stalker"]
 const PARTY_PATH := "res://data/heroes/starter_party.json"
 const FIGHT_SEED := 4103
+## The runtime floor-band admission reads only the ordinary normal-enemy
+## catalogs and splits them into the three exact floor bands.
+const BAND_CATALOGS := [
+    "res://data/enemies/starter_enemies.json",
+    "res://data/enemies/run_enemies.json",
+]
+const BAND_KEYS := ["1-4", "5-8", "9-11"]
 ## The exact applied events the ordinary phase transaction records for the
 ## new encounter's first authored beat, in enemy-position order.
 const TRIPLE_BEAT0_EVENTS := [
@@ -100,6 +107,8 @@ const TRIPLE_BEAT1_EVENTS := [
 
 var checks := 0
 var failures: Array[String] = []
+var _normal_records_cache: Dictionary = {}
+var _floor_bands_cache: Dictionary = {}
 
 
 func _initialize() -> void:
@@ -118,6 +127,10 @@ func _initialize() -> void:
     _test_triple_spool_pinch_rejection_and_retry()
     _test_twelve_floor_elite_boss_replay()
     _test_atomic_rejection_and_retry()
+    _test_floor_band_groups_across_floors()
+    _test_stale_cached_group_rejection()
+    _test_injected_band_pool_rejection()
+    _test_wrong_selector_binding()
     if failures.is_empty():
         print("run_authored_battle_entry_test: PASS (", checks, " checks)")
     else:
@@ -137,6 +150,123 @@ func _rng(value: int) -> RandomNumberGenerator:
     var rng := RandomNumberGenerator.new()
     rng.seed = value
     return rng
+
+
+## The authored normal-enemy records the live floor bands are built from, read
+## independently from the data files (never from the entry service's helpers).
+func _normal_records() -> Dictionary:
+    if not _normal_records_cache.is_empty():
+        return _normal_records_cache
+    for path in BAND_CATALOGS:
+        var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+        _check(parsed is Array and not parsed.is_empty(),
+            "live band normal catalog parses: " + path)
+        if not parsed is Array:
+            continue
+        for record in parsed:
+            if not record is Dictionary or not record.get("id") is String:
+                continue
+            var copy: Dictionary = record.duplicate(true)
+            if copy.get("max_hp") is float:
+                copy["max_hp"] = int(copy["max_hp"])
+            _normal_records_cache[copy["id"]] = copy
+    return _normal_records_cache
+
+
+## Independent statement of the documented runtime band rule: order the live
+## normal actors by authored max HP and then ID, and split into three contiguous
+## bands (the larger remainder first) so every band keeps at least four IDs.
+func _floor_bands() -> Dictionary:
+    if not _floor_bands_cache.is_empty():
+        return _floor_bands_cache
+    var records := _normal_records()
+    var entries: Array = []
+    for enemy_id in records:
+        entries.append({"id": enemy_id, "max_hp": int(records[enemy_id]["max_hp"])})
+    entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+        if a["max_hp"] != b["max_hp"]:
+            return a["max_hp"] < b["max_hp"]
+        return a["id"] < b["id"])
+    var ids: Array = []
+    for entry in entries:
+        ids.append(entry["id"])
+    _check(ids.size() >= 12,
+        "live normal roster supplies at least four actors for each of three bands")
+    if ids.size() < 12:
+        return {}
+    var low_end := int(ceilf(ids.size() / 3.0))
+    var mid_end := low_end + int(ceilf((ids.size() - low_end) / 2.0))
+    _floor_bands_cache = {
+        "1-4": ids.slice(0, low_end),
+        "5-8": ids.slice(low_end, mid_end),
+        "9-11": ids.slice(mid_end, ids.size()),
+    }
+    return _floor_bands_cache
+
+
+func _band_key(floor_number: int) -> String:
+    if floor_number >= 1 and floor_number <= 4:
+        return "1-4"
+    if floor_number >= 5 and floor_number <= 8:
+        return "5-8"
+    if floor_number >= 9 and floor_number <= 11:
+        return "9-11"
+    return ""
+
+
+## Independent oracle for one floor-band group: sort the band, then exactly
+## `count` shrinking-array draws on the supplied generator.
+func _band_group_oracle(bands: Dictionary, floor_number: int, count: int,
+        rng: RandomNumberGenerator) -> Array:
+    var band := _band_key(floor_number)
+    if band.is_empty() or not bands.has(band):
+        return []
+    var remaining: Array = bands[band].duplicate()
+    remaining.sort()
+    var group: Array = []
+    for _draw in range(count):
+        if remaining.is_empty():
+            return []
+        var index: int = rng.randi_range(0, remaining.size() - 1)
+        group.append(remaining[index])
+        remaining.remove_at(index)
+    return group
+
+
+## Authored ordered source count of an encounter, i.e. the live group size.
+func _schedule_arity(encounter_id: String) -> int:
+    var pools := _registry()
+    if not pools.get("Fight") is Dictionary or not pools["Fight"].has(encounter_id):
+        return 0
+    var binding = pools["Fight"][encounter_id]
+    if not binding is Dictionary:
+        return 0
+    return RunFightEncounterSelection._parse_schedule_text(
+        FileAccess.get_file_as_string(binding.get("schedule", ""))).size()
+
+
+## Mirror the live Fight admission on an oracle generator: one sorted encounter
+## draw, then exactly one floor-band draw per authored source.
+func _oracle_fight(rng: RandomNumberGenerator, floor_number: int,
+        encounter_ids: Array) -> Dictionary:
+    var sorted: Array = encounter_ids.duplicate()
+    sorted.sort()
+    if sorted.is_empty():
+        return {}
+    var chosen: String = sorted[rng.randi_range(0, sorted.size() - 1)]
+    var arity := _schedule_arity(chosen)
+    if arity <= 0:
+        return {}
+    return {"encounter_id": chosen, "arity": arity,
+        "group": _band_group_oracle(_floor_bands(), floor_number, arity, rng)}
+
+
+## Exact authored identity of a chosen group member.
+func _group_actor(enemy_id: String) -> Dictionary:
+    var records := _normal_records()
+    _check(records.has(enemy_id),
+        "chosen floor-band actor has an authored normal record: " + str(enemy_id))
+    return records.get(enemy_id, {})
 
 
 func _sources() -> Dictionary:
@@ -386,13 +516,20 @@ func _opening(map: RunMap) -> String:
     return ""
 
 
+## Verify one entry result. Ordinary Fights mount a floor-band group of the same
+## size as the reused authored schedule, so the caller supplies the expected
+## group IDs; Elite/Boss keep their typed authored roster.
 func _verify_entry(result: Dictionary, kind: String, expected_id: String,
-        label: String) -> Dictionary:
+        label: String, expected_enemy_ids: Array = []) -> Dictionary:
     _check(result.get("success") == true and result.get("node_type") == kind and
         result.get("encounter_id") == expected_id, label + " exact type and selected ID")
     if not result.get("success", false):
         return {}
-    var ids: Array = BINDINGS[kind][expected_id]
+    var ids: Array = expected_enemy_ids
+    if ids.is_empty() and kind != "Fight":
+        ids = BINDINGS[kind][expected_id]
+    _check(not ids.is_empty() and ids.size() == result.get("definitions", []).size(),
+        label + " supplies one expected actor per authored source")
     var enemies = result.get("enemies")
     var intents = result.get("intents")
     _check(enemies is CombatEnemies and enemies.is_valid() and
@@ -406,10 +543,14 @@ func _verify_entry(result: Dictionary, kind: String, expected_id: String,
         label + " every authored source maps one-to-one to actor")
     for i in range(ids.size()):
         var enemy: Dictionary = enemies.get_enemy(i + 1)
-        _check(enemy.get("id") == ids[i] and enemy.get("name") == NAMES[ids[i]] and
+        var authored := _group_actor(ids[i]) if kind == "Fight" else {}
+        var expected_name: String = authored.get("name", NAMES.get(ids[i], ""))
+        var expected_hp: int = int(authored.get("max_hp", HP.get(ids[i], 0)))
+        var expected_art: String = authored.get("art_path", ART_PATHS.get(ids[i], ""))
+        _check(enemy.get("id") == ids[i] and enemy.get("name") == expected_name and
             enemy.get("position") == i + 1 and
-            enemy.get("max_hp") == HP[ids[i]] and enemy.get("hp") == HP[ids[i]] and
-            enemy.get("block") == 0 and enemy.get("art_path") == ART_PATHS[ids[i]] and
+            enemy.get("max_hp") == expected_hp and enemy.get("hp") == expected_hp and
+            enemy.get("block") == 0 and enemy.get("art_path") == expected_art and
             enemy.get("art_path", "").begins_with(
             "res://assets/paper/enemies/"), label + " real slot %d identity/HP/Block/art" % (i+1))
     var snapshots := []
@@ -448,7 +589,9 @@ func _test_seeded_fight_and_isolation() -> void:
         return
     var ids: Array = pools["Fight"].keys()
     ids.sort()
-    var expected_id: String = ids[oracle.randi_range(0, ids.size() - 1)]
+    var expected := _oracle_fight(oracle, map.get_node(id).get("floor"), ids)
+    var expected_id: String = expected["encounter_id"]
+    var expected_group: Array = expected["group"]
     var selector := RunFightEncounterSelection.new()
     var before_sources := _sources()
     var service := RunAuthoredBattleEntry.new()
@@ -459,10 +602,12 @@ func _test_seeded_fight_and_isolation() -> void:
     var first := service.entry_current_battle(map, rng, selector)
     _check(randi() == global_next, "entry never consumes global RNG")
     _check(rng.state == oracle.state and map.get_route() == [id],
-        "exactly one sorted-pool RNG draw; map not advanced")
-    var snapshot := _verify_entry(first, "Fight", expected_id, "first Fight")
+        "one sorted encounter draw plus one floor-band draw per source; map not advanced")
+    var snapshot := _verify_entry(first, "Fight", expected_id, "first Fight", expected_group)
     if snapshot.is_empty():
         return
+    _check(first["enemies"].get_enemies().map(func(e): return e["id"]) == expected_group,
+        "first Fight mounts exactly the seeded floor-band group")
     var cache_before := selector._selected.duplicate(true)
     var fixed_rng_state := rng.state
     _check(first["enemies"].gain_block(1, 4) and
@@ -475,10 +620,10 @@ func _test_seeded_fight_and_isolation() -> void:
     _check(second.get("success") and rng.state == fixed_rng_state and
         selector._selected == cache_before, "same committed node never rerolls or poisons selector cache")
     _check(first["enemies"] != second["enemies"] and first["intents"] != second["intents"] and
-        second["enemies"].get_enemy(1)["hp"] == HP[BINDINGS["Fight"][expected_id][0]] and
+        second["enemies"].get_enemy(1)["hp"] == int(_group_actor(expected_group[0])["max_hp"]) and
         second["intents"].get_intents() == _expected_first_actions(expected_id),
         "mutated first response cannot affect fresh actors or fresh intent turn zero")
-    var resnapshot := _verify_entry(second, "Fight", expected_id, "cached Fight")
+    var resnapshot := _verify_entry(second, "Fight", expected_id, "cached Fight", expected_group)
     _check(snapshot == resnapshot, "cached result has independent full unmodified roster and intents")
     _check(_sources() == before_sources, "no catalog, registry or schedule source mutated")
 
@@ -548,11 +693,19 @@ func _play_route(seed_value: int, route: Array, registry: Dictionary) -> Diction
         found[kind] += 1
         var sorted: Array = registry[kind].keys()
         sorted.sort()
-        var expected_id: String = sorted[oracle.randi_range(0, sorted.size() - 1)]
+        var expected := {}
+        if kind == "Fight":
+            expected = _oracle_fight(oracle, map.get_node(id).get("floor"), sorted)
+        else:
+            expected = {"encounter_id": sorted[oracle.randi_range(0, sorted.size() - 1)],
+                "group": []}
+        var expected_id: String = expected["encounter_id"]
+        var expected_group: Array = expected.get("group", [])
         var chosen := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
         _check(chosen.get("success") and rng.state == oracle.state,
-            "route: " + kind + " spends precisely one sorted choice draw")
-        var snap := _verify_entry(chosen, kind, expected_id, "route " + kind + " floor %d" % (i+1))
+            "route: " + kind + " spends exactly its sorted encounter and band draws")
+        var snap := _verify_entry(chosen, kind, expected_id,
+            "route " + kind + " floor %d" % (i+1), expected_group)
         if snap.is_empty():
             continue
         snap["node"] = id
@@ -565,7 +718,7 @@ func _play_route(seed_value: int, route: Array, registry: Dictionary) -> Diction
         map.get_node(map.get_current_node_id())["type"] == "Boss",
         "route ends at actual generated floor twelve Boss")
     _check(map.get_route() == oracle_map.get_route() and rng.state == oracle.state,
-        "complete route and RNG match separate one-draw oracle")
+        "complete route and RNG match the separate encounter + band oracle")
     return {"records": records, "route": map.get_route(), "graph": map.get_floors(),
         "rng": rng.state, "cache": selector._selected.duplicate(true)}
 
@@ -650,12 +803,16 @@ func _test_atomic_rejection_and_retry() -> void:
         "separate oracle generates same genuine selected node")
     var sorted_ids: Array = registry["Fight"].keys()
     sorted_ids.sort()
-    var expected_id: String = sorted_ids[oracle.randi_range(0, sorted_ids.size() - 1)]
+    var expected := _oracle_fight(oracle, map.get_node(id).get("floor"), sorted_ids)
+    var expected_id: String = expected["encounter_id"]
     var good := RunAuthoredBattleEntry.new()._entry_from_data(
         map, rng, selector, changed_kind)
     _check(good.get("success") and good.get("encounter_id") == expected_id and
         rng.state == oracle.state,
-        "malformed other kind does not invalidate Fight; retry uses exact one draw")
+        "malformed other kind does not invalidate Fight; retry uses exact encounter + band draws")
+    _check(not _verify_entry(good, "Fight", expected_id,
+        "Fight retry after rejections", expected["group"]).is_empty(),
+        "Fight retry mounts the seeded band group with valid intents")
     var rest_node := ""
     var nonbattle_map := RunMap.new()
     var nonbattle_rng := _rng(1)
@@ -803,14 +960,15 @@ func _test_triple_spool_pinch_entry() -> void:
         setup["selector"], focused)
     _check(randi() == global_next, "focused entry consumes no global RNG")
     setup["oracle"].randi_range(0, 0)
+    var expected_group := _band_group_oracle(_floor_bands(),
+        setup["map"].get_node(setup["node"]).get("floor"), 3, setup["oracle"])
     _check(first.get("success") == true and first.get("encounter_id") == TRIPLE,
         "single-candidate registry selects the new Fight deterministically")
-    _check(setup["rng"].state == state_before and
-        setup["rng"].state == setup["after_choose"] and
+    _check(setup["rng"].state != state_before and
         setup["rng"].state == setup["oracle"].state,
-        "entry spends exactly the one single-candidate selection call of the run RNG")
+        "entry spends exactly one floor-band draw per admitted source")
     # Complete roster, HP/Block/art and the full nine-beat announced timeline.
-    var snapshot := _verify_entry(first, "Fight", TRIPLE, "focused Fight")
+    var snapshot := _verify_entry(first, "Fight", TRIPLE, "focused Fight", expected_group)
     if snapshot.is_empty():
         return
     var declared: Array = first["definitions"]
@@ -820,15 +978,22 @@ func _test_triple_spool_pinch_entry() -> void:
         _check(at_position.size() == 1,
             "exactly one authoritative source at enemy position %d" % position)
     var actors: CombatEnemies = first["enemies"]
-    _check(actors.get_enemy(1)["id"] == TRIPLE_ROSTER[0] and
-        actors.get_enemy(2)["id"] == TRIPLE_ROSTER[1] and
-        actors.get_enemy(3)["id"] == TRIPLE_ROSTER[2],
-        "actor slots hold the ordered three distinct roster IDs")
-    _check(actors.get_enemy(1)["max_hp"] == 14 and actors.get_enemy(2)["max_hp"] == 16 and
-        actors.get_enemy(3)["max_hp"] == 14,
-        "fresh actor max HP is the authored 14/16/14")
-    _check(actors.get_enemy(1)["hp"] == 14 and actors.get_enemy(2)["hp"] == 16 and
-        actors.get_enemy(3)["hp"] == 14 and actors.get_enemy(1)["block"] == 0 and
+    _check(actors.get_enemy(1)["id"] == expected_group[0] and
+        actors.get_enemy(2)["id"] == expected_group[1] and
+        actors.get_enemy(3)["id"] == expected_group[2],
+        "actor slots hold the seeded three distinct floor-band IDs")
+    var expected_hp: Array = [
+        int(_group_actor(expected_group[0])["max_hp"]),
+        int(_group_actor(expected_group[1])["max_hp"]),
+        int(_group_actor(expected_group[2])["max_hp"]),
+    ]
+    _check(actors.get_enemy(1)["max_hp"] == expected_hp[0] and
+        actors.get_enemy(2)["max_hp"] == expected_hp[1] and
+        actors.get_enemy(3)["max_hp"] == expected_hp[2],
+        "fresh actor max HP is each chosen actor's authored max HP")
+    _check(actors.get_enemy(1)["hp"] == expected_hp[0] and
+        actors.get_enemy(2)["hp"] == expected_hp[1] and
+        actors.get_enemy(3)["hp"] == expected_hp[2] and actors.get_enemy(1)["block"] == 0 and
         actors.get_enemy(2)["block"] == 0 and actors.get_enemy(3)["block"] == 0,
         "fresh actors start at full HP and zero Block")
     # A returned result is fully isolated: mutation cannot poison re-entry.
@@ -846,11 +1011,12 @@ func _test_triple_spool_pinch_entry() -> void:
         setup["selector"]._selected == cache_before,
         "cached re-entry succeeds with no new draw and an unchanged selector cache")
     _check(first["enemies"] != again["enemies"] and first["intents"] != again["intents"] and
-        again["enemies"].get_enemy(1)["hp"] == 14 and
+        again["enemies"].get_enemy(1)["hp"] == expected_hp[0] and
+        again["enemies"].get_enemy(1)["id"] == expected_group[0] and
         again["enemies"].get_enemy(2)["block"] == 0 and
         again["intents"].get_intents() == _expected_actions_beat(TRIPLE, 0),
         "mutated first result cannot poison fresh actors, Block or turn-zero intents")
-    var resnapshot := _verify_entry(again, "Fight", TRIPLE, "cached focused Fight")
+    var resnapshot := _verify_entry(again, "Fight", TRIPLE, "cached focused Fight", expected_group)
     _check(not resnapshot.is_empty() and resnapshot == snapshot,
         "cached entry returns an independent full roster and announced timeline")
     # Two independent same-seed instances replay identically, beat for beat.
@@ -858,18 +1024,20 @@ func _test_triple_spool_pinch_entry() -> void:
     var other_first := service._entry_from_data(other["map"], other["rng"],
         other["selector"], focused)
     other["oracle"].randi_range(0, 0)
+    var other_group := _band_group_oracle(_floor_bands(),
+        other["map"].get_node(other["node"]).get("floor"), 3, other["oracle"])
     _check(other_first.get("success") == true and
         other_first.get("encounter_id") == snapshot["id"] and
-        other["rng"].state == other["after_choose"] and
         other["rng"].state == setup["rng"].state and
         other["map"].get_floors() == setup["map"].get_floors() and
         other["map"].get_route() == setup["map"].get_route() and
         other["selector"]._selected == setup["selector"]._selected,
         "independent same-seed instance reproduces graph, route, choice, cache and run RNG")
-    _check(other_first["enemies"].get_enemies() == snapshot["actors"],
+    _check(other_first["enemies"].get_enemies() == snapshot["actors"] and
+        other_group == expected_group,
         "independent instance reproduces the identical authoritative actors")
     var other_snapshot := _verify_entry(other_first, "Fight", TRIPLE,
-        "independent focused Fight")
+        "independent focused Fight", other_group)
     _check(not other_snapshot.is_empty() and other_snapshot == snapshot,
         "two independent seeded instances announce and replay every beat identically")
 
@@ -892,14 +1060,22 @@ func _test_triple_spool_pinch_phase() -> void:
     var party := _triple_party()
     var enemies: CombatEnemies = entered["enemies"]
     var intents: CombatEnemyIntents = entered["intents"]
+    var base_hp: Array = []
+    for enemy in enemies.get_enemies():
+        base_hp.append(int(enemy["max_hp"]))
+    _check(base_hp.size() == 3 and base_hp == [
+        int(_group_actor(enemies.get_enemy(1)["id"])["max_hp"]),
+        int(_group_actor(enemies.get_enemy(2)["id"])["max_hp"]),
+        int(_group_actor(enemies.get_enemy(3)["id"])["max_hp"])],
+        "the three admitted actors are authored normals at their exact base HP")
     _check(party.get_hero(1)["id"] == "warden" and party.get_hero(2)["id"] == "seamstress" and
         party.get_hero(3)["id"] == "tinker" and
         party.get_hero(1)["hp"] == 40 and party.get_hero(2)["hp"] == 30 and
         party.get_hero(3)["hp"] == 26,
         "authored starter party: Warden 40, Seamstress 30, Tinker 26")
     _check(_hero_ledger(party) == [[40, 0], [30, 0], [26, 0]] and
-        _enemy_ledger(enemies) == [[14, 0], [16, 0], [14, 0]],
-        "fresh 40/30/26 heroes and fresh 14/16/14 enemies all start at zero Block")
+        _enemy_ledger(enemies) == [[base_hp[0], 0], [base_hp[1], 0], [base_hp[2], 0]],
+        "fresh 40/30/26 heroes and fresh full-HP band actors all start at zero Block")
     var phase := CombatEnemyPhase.new()
     var beat0: Array = intents.get_intents()
     _check(beat0 == _expected_actions_beat(TRIPLE, 0),
@@ -910,8 +1086,8 @@ func _test_triple_spool_pinch_phase() -> void:
     _check(intents.get_intents() == beat0,
         "executing a phase never advances the announcement")
     _check(_hero_ledger(party) == [[40, 0], [29, 0], [25, 0]] and
-        _enemy_ledger(enemies) == [[14, 0], [16, 2], [14, 0]],
-        "beat 0 leaves Seamstress 29, Tinker 25 and Button Guard 2 Block")
+        _enemy_ledger(enemies) == [[base_hp[0], 0], [base_hp[1], 2], [base_hp[2], 0]],
+        "beat 0 leaves Seamstress 29, Tinker 25 and the middle band actor 2 Block")
     _check(intents.advance_turn(), "the schedule advances to beat 1")
     var beat1: Array = intents.get_intents()
     _check(beat1 == _expected_actions_beat(TRIPLE, 1),
@@ -920,8 +1096,8 @@ func _test_triple_spool_pinch_phase() -> void:
     _check(second.get("ok") == true and second.get("events") == TRIPLE_BEAT1_EVENTS,
         "beat 1 publishes the source-ordered applied events")
     _check(_hero_ledger(party) == [[39, 0], [28, 0], [25, 0]] and
-        _enemy_ledger(enemies) == [[14, 1], [16, 2], [14, 0]],
-        "beat 1 leaves Warden 39, Seamstress 28 and Fray Scavenger 1 Block")
+        _enemy_ledger(enemies) == [[base_hp[0], 1], [base_hp[1], 2], [base_hp[2], 0]],
+        "beat 1 leaves Warden 39, Seamstress 28 and the first band actor 1 Block")
     _check(intents.advance_turn() and intents.get_intents() == beat0,
         "the third announced beat wraps to the first beat exactly")
 
@@ -942,7 +1118,11 @@ func _test_triple_spool_pinch_slain_source() -> void:
     var party := _triple_party()
     var enemies: CombatEnemies = entered["enemies"]
     var intents: CombatEnemyIntents = entered["intents"]
-    _check(enemies.apply_damage(3, 14) and enemies.is_slain(3),
+    var base_hp: Array = []
+    for enemy in enemies.get_enemies():
+        base_hp.append(int(enemy["max_hp"]))
+    _check(base_hp.size() == 3 and
+        enemies.apply_damage(3, base_hp[2]) and enemies.is_slain(3),
         "third source is slain before its announced attack")
     var announced: Array = intents.get_intents()
     _check(announced == _expected_actions_beat(TRIPLE, 0),
@@ -955,8 +1135,8 @@ func _test_triple_spool_pinch_slain_source() -> void:
         "slain source is inert while living positions 1 and 2 still resolve")
     _check(_hero_ledger(party) == [[40, 0], [29, 0], [26, 0]],
         "the slain source dealt no damage: only Seamstress took the first hit")
-    _check(_enemy_ledger(enemies) == [[14, 0], [16, 2], [0, 0]],
-        "slain slot keeps its position and gains no Block; Button Guard still blocks")
+    _check(_enemy_ledger(enemies) == [[base_hp[0], 0], [base_hp[1], 2], [0, 0]],
+        "slain slot keeps its position and gains no Block; the middle actor still blocks")
 
 
 ## AC3: missing or incorrect new bindings are rejected atomically, leaving
@@ -999,10 +1179,13 @@ func _test_triple_spool_pinch_rejection_and_retry() -> void:
     _check(good.get("success") == true and good.get("encounter_id") == TRIPLE,
         "corrected retry enters triple_spool_pinch")
     setup["oracle"].randi_range(0, 0)
-    _check(rng.state == setup["after_choose"] and rng.state == setup["oracle"].state,
-        "corrected retry spends exactly the one selection call")
+    var expected_group := _band_group_oracle(_floor_bands(),
+        map.get_node(setup["node"]).get("floor"), 3, setup["oracle"])
+    _check(rng.state != setup["after_choose"] and rng.state == setup["oracle"].state,
+        "corrected retry spends exactly one band draw per admitted source")
     _check(party.get_heroes() == party_before, "successful entry never mutates the party")
-    _check(not _verify_entry(good, "Fight", TRIPLE, "corrected retry").is_empty(),
+    _check(not _verify_entry(good, "Fight", TRIPLE, "corrected retry",
+        expected_group).is_empty(),
         "corrected retry produces fully verified actors and intents")
     _check(_sources() == sources_before,
         "authored sources unchanged across every rejection and the retry")
@@ -1174,7 +1357,10 @@ func _test_seamshift_full_pool_entry() -> void:
     _reject(map, rng, selector, invalid, "invalid Seamshift binding fails full pool before RNG")
     var ids: Array = pool["Fight"].keys()
     ids.sort()
-    var oracle_id: String = ids[setup["oracle"].randi_range(0, ids.size() - 1)]
+    var expected := _oracle_fight(setup["oracle"],
+        map.get_node(setup["node"]).get("floor"), ids)
+    var oracle_id: String = expected["encounter_id"]
+    var expected_group: Array = expected["group"]
     _check(oracle_id == SEAMSHIFT and map.get_node(setup["node"]).get("type") == "Fight",
         "one sorted oracle draw on legitimate selected Fight predicts Seamshift")
     var service := RunAuthoredBattleEntry.new()
@@ -1183,15 +1369,17 @@ func _test_seamshift_full_pool_entry() -> void:
     seed(515015)
     var first := service.entry_current_battle(map, rng, selector)
     _check(randi() == global_next and rng.state == setup["oracle"].state,
-        "public full-pool entry spends one run draw and no global RNG")
-    var snapshot := _verify_entry(first, "Fight", SEAMSHIFT, "public Seamshift Fight")
+        "public full-pool entry spends its encounter and band draws, no global RNG")
+    var snapshot := _verify_entry(first, "Fight", SEAMSHIFT, "public Seamshift Fight",
+        expected_group)
     if snapshot.is_empty():
         return
     var cache_before := selector._selected.duplicate(true)
     var cached_rng_state := rng.state
     _check(selector._selected.has(setup["node"]) and
-        selector._selected[setup["node"]]["encounter_id"] == SEAMSHIFT,
-        "public selector caches the chosen Seamshift node by ID")
+        selector._selected[setup["node"]]["encounter_id"] == SEAMSHIFT and
+        selector._selected[setup["node"]]["enemy_ids"] == expected_group,
+        "public selector caches the chosen Seamshift node and its floor-band group")
     first["definitions"][0]["pattern"][0]["amount"] = 777
     first["definitions"][0]["pattern"].clear()
     first["enemies"].gain_block(1, 5)
@@ -1202,7 +1390,8 @@ func _test_seamshift_full_pool_entry() -> void:
         rng.state == cached_rng_state and selector._selected == cache_before and
         first["enemies"] != again["enemies"] and first["intents"] != again["intents"],
         "public cached replay returns detached actors/intents with zero extra draws")
-    var again_snapshot := _verify_entry(again, "Fight", SEAMSHIFT, "cached Seamshift Fight")
+    var again_snapshot := _verify_entry(again, "Fight", SEAMSHIFT, "cached Seamshift Fight",
+        expected_group)
     _check(not again_snapshot.is_empty() and again_snapshot == snapshot,
         "mutated public result cannot poison any actor or the nine-beat authored cycle")
     var replay := _focused_setup(seed_value)
@@ -1212,7 +1401,8 @@ func _test_seamshift_full_pool_entry() -> void:
         replay["rng"].state == cached_rng_state and
         replay["selector"]._selected == cache_before,
         "independent same-seed public entry repeats selection, cache and RNG")
-    _check(_verify_entry(replay_entry, "Fight", SEAMSHIFT, "replayed Seamshift Fight") == snapshot,
+    _check(_verify_entry(replay_entry, "Fight", SEAMSHIFT, "replayed Seamshift Fight",
+        expected_group) == snapshot,
         "independent run repeats exact three actors and nine ordered announcements")
 
     # Phase uses a fresh public entry's authoritative actors and intents.
@@ -1240,7 +1430,10 @@ func _test_seamshift_full_pool_entry() -> void:
         party.get_hero(2).get("hp") == 40 and party.get_hero(2).get("block") == 0 and
         party.get_hero(2).get("statuses", {}) == {"exposed": 1} and
         party.get_hero(3).get("id") == "tinker" and
-        _enemy_ledger(combat["enemies"]) == [[18, 0], [14, 0], [14, 0]],
+        _enemy_ledger(combat["enemies"]) == [[
+            int(_group_actor(expected_group[0])["max_hp"]), 0], [
+            int(_group_actor(expected_group[1])["max_hp"]), 0], [
+            int(_group_actor(expected_group[2])["max_hp"]), 0]],
         "Warden displaced to middle, marked Exposed, loses six Block not HP")
 
     var prior_seed := _find_full_pool_seed_for("starter_attacks")
@@ -1249,10 +1442,287 @@ func _test_seamshift_full_pool_entry() -> void:
         var prior := _focused_setup(prior_seed)
         var prior_entry := service.entry_current_battle(
             prior["map"], prior["rng"], prior["selector"])
+        var prior_expected := _oracle_fight(prior["oracle"],
+            prior["map"].get_node(prior["node"]).get("floor"), ids)
+        _check(prior_expected.get("encounter_id", "") == "starter_attacks",
+            "the prior seed's one sorted draw predicts the earlier encounter")
         _check(not _verify_entry(prior_entry, "Fight", "starter_attacks",
-            "earlier full-pool Fight").is_empty(),
+            "earlier full-pool Fight", prior_expected.get("group", [])).is_empty(),
             "real selection still reaches and fully verifies earlier Fight")
     _check(_sources() == sources_before, "Seamshift selection never mutates source JSON")
+
+
+## AC3: a cached floor-band group that is stale, foreign, duplicated or the
+## wrong size is rejected without touching the map, run RNG or cache.
+func _test_stale_cached_group_rejection() -> void:
+    var pools := _registry()
+    if not pools.get("Fight") is Dictionary:
+        return
+    var sources_before := _sources()
+    var rng := _rng(4103)
+    var map := RunMap.new()
+    _check(map.generate(rng), "stale-group fixture generates a real map")
+    if not map.is_generated():
+        return
+    var id := _opening(map)
+    if id.is_empty() or not map.choose_node(id):
+        _check(false, "stale-group fixture commits an opening Fight")
+        return
+    var service := RunAuthoredBattleEntry.new()
+    var selector := RunFightEncounterSelection.new()
+    var first := service.entry_current_battle(map, rng, selector)
+    _check(first.get("success") == true, "stale-group fixture enters its real Fight")
+    if not first.get("success", false):
+        return
+    var group: Array = selector._selected[id]["enemy_ids"].duplicate()
+    var floor_number: int = map.get_node(id).get("floor")
+    var band := _band_key(floor_number)
+    var foreign := ""
+    for other_band in BAND_KEYS:
+        if other_band != band and not _floor_bands()[other_band].is_empty():
+            foreign = _floor_bands()[other_band][0]
+            break
+    var unknown := selector._selected.duplicate(true)
+    unknown[id]["enemy_ids"] = group.duplicate()
+    unknown[id]["enemy_ids"][0] = "unknown_normal"
+    selector._selected = unknown
+    _reject(map, rng, selector, pools, "cached group with an unknown enemy ID", true)
+    var duplicated := unknown.duplicate(true)
+    duplicated[id]["enemy_ids"] = group.duplicate()
+    duplicated[id]["enemy_ids"][1] = group[0]
+    selector._selected = duplicated
+    _reject(map, rng, selector, pools, "cached group with a repeated enemy ID", true)
+    var off_band := unknown.duplicate(true)
+    off_band[id]["enemy_ids"] = group.duplicate()
+    off_band[id]["enemy_ids"][0] = foreign
+    selector._selected = off_band
+    _reject(map, rng, selector, pools, "cached group with a foreign-band enemy ID", true)
+    var short := unknown.duplicate(true)
+    short[id]["enemy_ids"] = group.slice(0, group.size() - 1)
+    selector._selected = short
+    _reject(map, rng, selector, pools, "cached group with the wrong source count", true)
+    var wrong_type := unknown.duplicate(true)
+    wrong_type[id]["enemy_ids"] = "ragling"
+    selector._selected = wrong_type
+    _reject(map, rng, selector, pools, "cached group that is not an Array", true)
+    # Restoring the authenticated cache makes the same node enter again with no
+    # new draw and the identical group.
+    selector._selected = {id: {"success": true, "node_type": "Fight",
+        "encounter_id": first.get("encounter_id"),
+        "definitions": first["definitions"].duplicate(true),
+        "enemy_ids": group.duplicate()}}
+    selector._bound_map = map
+    var cached_state := rng.state
+    var again := service.entry_current_battle(map, rng, selector)
+    _check(again.get("success") == true and
+        again["enemies"].get_enemies().map(func(enemy): return enemy["id"]) == group and
+        rng.state == cached_state,
+        "restored authenticated cache re-enters the identical group without a draw")
+    _check(_sources() == sources_before,
+        "stale-group rejection left authored sources untouched")
+
+
+## AC3: malformed or empty injected band pools reject before the selector can
+## draw or cache anything, and a corrected retry then enters the real group.
+func _test_injected_band_pool_rejection() -> void:
+    var focused := _checked_focused_registry()
+    if not focused.get("Fight") is Dictionary:
+        return
+    var bands := _floor_bands()
+    if bands.is_empty():
+        return
+    var setup := _focused_setup(FIGHT_SEED)
+    var map: RunMap = setup["map"]
+    var rng: RandomNumberGenerator = setup["rng"]
+    var selector: RunFightEncounterSelection = setup["selector"]
+    var missing := bands.duplicate(true)
+    missing.erase("9-11")
+    var empty := bands.duplicate(true)
+    empty["1-4"] = []
+    var too_few := bands.duplicate(true)
+    too_few["5-8"] = bands["5-8"].slice(0, 3)
+    var repeated := bands.duplicate(true)
+    repeated["1-4"] = bands["1-4"].duplicate()
+    repeated["1-4"][1] = repeated["1-4"][0]
+    var padded := bands.duplicate(true)
+    padded["9-11"] = bands["9-11"].duplicate()
+    padded["9-11"][0] = " " + padded["9-11"][0]
+    var not_array := bands.duplicate(true)
+    not_array["5-8"] = "button_guard,felt_bulwark"
+    for case in [
+            {"pools": {}, "label": "empty band dictionary"},
+            {"pools": missing, "label": "missing high band"},
+            {"pools": empty, "label": "empty low band"},
+            {"pools": too_few, "label": "three-ID mid band"},
+            {"pools": repeated, "label": "duplicate low-band ID"},
+            {"pools": padded, "label": "whitespace-padded band ID"},
+            {"pools": not_array, "label": "non-Array band"},
+            {"pools": "1-4,5-8,9-11", "label": "non-Dictionary band pools"}]:
+        _reject_entry_with_bands(map, rng, selector, focused, case["pools"],
+            case["label"] + " rejects atomically")
+    var expected := _oracle_fight(setup["oracle"],
+        map.get_node(setup["node"]).get("floor"), ["triple_spool_pinch"])
+    var good := RunAuthoredBattleEntry.new()._entry_from_data(
+        map, rng, selector, focused, bands)
+    _check(good.get("success") == true and
+        good["enemies"].get_enemies().map(func(e): return e["id"]) == expected["group"] and
+        rng.state == setup["oracle"].state,
+        "corrected band pools enter the exact seeded group with the mirrored draws")
+    _check(not _verify_entry(good, "Fight", "triple_spool_pinch",
+        "injected-band retry", expected["group"]).is_empty(),
+        "corrected band pools produce valid actors and executed-source intents")
+
+
+func _reject_entry_with_bands(map: RunMap, rng: RandomNumberGenerator,
+        selector: RunFightEncounterSelection, registry: Dictionary, pools: Variant,
+        label: String) -> void:
+    var before := _snap(map, rng, selector)
+    var service := RunAuthoredBattleEntry.new()
+    var outcome := service._entry_from_data(map, rng, selector, registry, pools)
+    _check(outcome == {"success": false}, label)
+    _check(_snap(map, rng, selector) == before,
+        label + " leaves map, route, RNG and cached selection unchanged")
+
+
+## AC3: a selector bound to another run's map rejects this map's committed
+## Fight without touching either map, the run RNG or the cached selection.
+func _test_wrong_selector_binding() -> void:
+    var pools := _registry()
+    if not pools.get("Fight") is Dictionary:
+        return
+    var map_a := RunMap.new()
+    var rng_a := _rng(4103)
+    if not map_a.generate(rng_a):
+        return
+    var node_a := _opening(map_a)
+    if node_a.is_empty() or not map_a.choose_node(node_a):
+        return
+    var selector := RunFightEncounterSelection.new()
+    var service := RunAuthoredBattleEntry.new()
+    var entered := service.entry_current_battle(map_a, rng_a, selector)
+    _check(entered.get("success") == true and selector._bound_map == map_a,
+        "wrong-binding fixture authenticates a selector on its own map")
+    if not entered.get("success", false):
+        return
+    var group: Array = entered["enemies"].get_enemies().map(
+        func(enemy): return enemy["id"])
+    var map_b := RunMap.new()
+    var rng_b := _rng(90210)
+    if not map_b.generate(rng_b):
+        return
+    var node_b := _opening(map_b)
+    if node_b.is_empty() or not map_b.choose_node(node_b):
+        return
+    var before_b := _snap(map_b, rng_b, selector)
+    var replay := service.entry_current_battle(map_b, rng_b, selector)
+    _check(replay == {"success": false},
+        "a committed Fight on another map rejects the foreign selector binding")
+    _check(_snap(map_b, rng_b, selector) == before_b,
+        "foreign selector rejection changes no map, RNG or cached selection")
+    var before_a := _snap(map_a, rng_a, selector)
+    var cached := service.entry_current_battle(map_a, rng_a, selector)
+    _check(cached.get("success") == true and
+        cached["enemies"].get_enemies().map(func(enemy): return enemy["id"]) == group and
+        selector._selected[node_a]["enemy_ids"] == group,
+        "the original run still re-enters its cached band group")
+    _check(rng_a.state == before_a["rng"] and selector._selected == before_a["cache"],
+        "the original run's RNG and cache are untouched by the foreign attempt")
+
+
+## AC1: genuine generated routes reach ordinary Fights on floors 1-4, 5-8 and
+## 9-11; every admitted group comes from that floor's band and executes.
+func _test_floor_band_groups_across_floors() -> void:
+    var bands := _floor_bands()
+    if bands.is_empty():
+        return
+    var covered := {}
+    for value in range(1, 400):
+        if covered.size() == BAND_KEYS.size():
+            break
+        var rng := _rng(value)
+        var oracle := _rng(value)
+        var map := RunMap.new()
+        var oracle_map := RunMap.new()
+        if not map.generate(rng) or not oracle_map.generate(oracle):
+            continue
+        _check(map.get_floors() == oracle_map.get_floors(),
+            "floor-band route fixture starts from equivalent real maps")
+        var selector := RunFightEncounterSelection.new()
+        var sources_before := _sources()
+        while true:
+            var legal := map.get_legal_choices()
+            if legal.is_empty():
+                break
+            var chosen := ""
+            for candidate in legal:
+                var node := map.get_node(candidate)
+                if node.type == "Fight" and not covered.has(_band_key(int(node.floor))):
+                    chosen = candidate
+                    break
+            if chosen.is_empty():
+                chosen = legal[0]
+            if not map.choose_node(chosen):
+                break
+            var node := map.get_node(chosen)
+            if node.type != "Fight":
+                continue
+            var floor_number := int(node.floor)
+            var band := _band_key(floor_number)
+            var ids: Array = _registry()["Fight"].keys()
+            var expected := _oracle_fight(oracle, floor_number, ids)
+            var entered := RunAuthoredBattleEntry.new().entry_current_battle(
+                map, rng, selector)
+            _check(entered.get("success") == true and
+                entered.get("node_type") == "Fight",
+                "genuine floor %d Fight admits a band group" % floor_number)
+            if not entered.get("success", false):
+                break
+            var group: Array = entered["enemies"].get_enemies().map(
+                func(enemy): return enemy["id"])
+            _check(group == expected["group"] and rng.state == oracle.state,
+                "floor %d group matches the independent encounter + band oracle" % floor_number)
+            _check(not band.is_empty() and group.size() >= 2 and group.size() <= 3 and
+                group.size() == entered["definitions"].size(),
+                "floor %d group is a legal two-or-three actor group" % floor_number)
+            var seen: Array = []
+            var in_band := true
+            for enemy_id in group:
+                in_band = in_band and bands[band].has(enemy_id) and not enemy_id in seen
+                seen.append(enemy_id)
+            _check(in_band, "floor %d group uses only its own band without repeats" % floor_number)
+            var actors: Array = entered["enemies"].get_enemies()
+            var exact := actors.size() == group.size()
+            for index in range(actors.size()):
+                var authored := _group_actor(group[index])
+                exact = exact and actors[index].get("id") == group[index] \
+                    and actors[index].get("name") == authored.get("name") \
+                    and actors[index].get("max_hp") == int(authored["max_hp"]) \
+                    and actors[index].get("hp") == int(authored["max_hp"]) \
+                    and actors[index].get("block") == 0 \
+                    and actors[index].get("art_path") == authored.get("art_path")
+            _check(exact, "floor %d actors carry exact authored identity and fresh state" % floor_number)
+            _check(entered["intents"].is_valid() and
+                entered["intents"].get_intents() == _expected_actions_beat(
+                    expected["encounter_id"], 0),
+                "floor %d reuses the selected schedule's announced actions" % floor_number)
+            var party := _triple_party()
+            var phase := CombatEnemyPhase.new().execute_phase(
+                party, entered["enemies"], entered["intents"].get_intents())
+            _check(phase.get("ok") == true and
+                phase.get("events", []).size() == group.size(),
+                "floor %d announced intents execute through the real phase" % floor_number)
+            _check(selector._selected.has(chosen) and
+                selector._selected[chosen]["enemy_ids"] == group,
+                "floor %d caches its group on the committed node" % floor_number)
+            covered[band] = group.duplicate()
+        _check(_sources() == sources_before,
+            "floor-band admission never mutates an authored source")
+    for band in BAND_KEYS:
+        _check(covered.has(band),
+            "a genuine route admitted a " + band + " band group")
+    if covered.size() == BAND_KEYS.size():
+        _check(covered["1-4"] != covered["9-11"],
+            "the low and high floor bands admit different authored actors")
 
 
 ## AC1: inspect per-ID Elite bindings, schedules and four-catalog enemy records

@@ -1,5 +1,7 @@
 extends SceneTree
 
+const BAND_ORACLE := preload("res://tests/floor_band_oracle.gd")
+
 var failures: Array[String] = []
 var checks := 0
 ## Exact mounted atlas facts: independent of RunRouteAtlas.stop_consequence().
@@ -538,27 +540,29 @@ func _run() -> void:
 		var draw_rng := RandomNumberGenerator.new()
 		draw_rng.state = rng.state
 		var expected_id: String = ids[draw_rng.randi_range(0, ids.size() - 1)]
+		var floor_number: int = int(map.get_node(fight_id).get("floor", 0))
+		var authored := RunFightEncounterSelection._parse_schedule_text(
+			FileAccess.get_file_as_string(registry.Fight[expected_id].schedule))
+		var expected_group := BAND_ORACLE.group(floor_number, authored.size(), draw_rng)
 		var selection := RunFightEncounterSelection.new()
 		var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selection)
 		_check(selected.get("success", false) and selected.get("encounter_id") == expected_id
-			and rng.state == draw_rng.state, "selector spends exactly one sorted-pool draw")
+			and rng.state == draw_rng.state, "selector spends its sorted-pool and band draws")
 		if not selected.get("success", false):
 			break
-		var authored := RunFightEncounterSelection._parse_schedule_text(
-			FileAccess.get_file_as_string(registry.Fight[expected_id].schedule))
 		var expected_intents := CombatEnemyIntents.new(authored)
 		_check(expected_intents.is_valid() and not authored.is_empty(), "selected authored two-enemy schedule valid")
 		_check(app.enemy_intents._definitions == authored and selected.definitions == authored,
 			"battle receives exact selected authored definitions")
 		var reference_party := CombatParty.new(app._load_party_definitions())
 		# Independent bindings and catalog lookup, without the production assembler.
-		var expected_rosters := {}
-		for key in registry.Fight:
-			expected_rosters[key] = registry.Fight[key].enemy_ids
+		_check(BAND_ORACLE.legal_group(expected_group, floor_number)
+			and expected_group.size() == authored.size(),
+			"independent floor-band oracle supplies this Fight's group")
 		var catalog: Array = JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_ENEMIES_PATH))
 		catalog.append_array(JSON.parse_string(FileAccess.get_file_as_string(app.RUN_ENEMIES_PATH)))
 		var ordered: Array = []
-		for enemy_id in expected_rosters[expected_id]:
+		for enemy_id in expected_group:
 			var matches: Array = catalog.filter(func(record): return record.id == enemy_id)
 			_check(matches.size() == 1, "unique authored enemy ID: " + enemy_id)
 			if matches.size() == 1:

@@ -1291,9 +1291,10 @@ func _rivet_cast(id: String, target: int, damage: int, exposed_before: int,
 		"the target holds no status before the confirmed " + id)
 	_check(await _choose(id, keyboard), "physical hand selection arms the real " + id)
 	var armed := _live_state()
-	# The authored starter encounter has two real enemies: slot 3 is not a legal
-	# recipient, so the shortcut must not queue a cast or mutate anything.
-	presenter._queue_attack(3)
+	# The mounted battle may hold two or three real enemies: only a slot past
+	# the actual roster is unoccupied, so it must not queue a cast or mutate.
+	var illegal_slot: int = app.enemies.get_enemies().size() + 1
+	presenter._queue_attack(illegal_slot)
 	_check(not presenter._queued and _live_state() == armed,
 		"an unoccupied enemy slot cannot queue the real " + id)
 	_check(_live_state() == before and app.enemies.get_enemy(target).get("statuses", {})

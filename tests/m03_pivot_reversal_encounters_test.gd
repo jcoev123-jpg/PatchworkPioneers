@@ -344,6 +344,9 @@ func _play(name: String, ids: Array, provided_enemies: CombatEnemies = null,
 			and party.get_hero(index + 1).get("block") == 0,
 			name + ": real starter HP, position, identity and zero opening Block")
 	var enemy_hp := [16, 14] if name == "front_hem_pivot" else [14, 18]
+	if provided_enemies != null:
+		var band_records: Dictionary = preload("res://tests/floor_band_oracle.gd").records()
+		enemy_hp = [int(band_records[ids[0]].max_hp), int(band_records[ids[1]].max_hp)]
 	for index in range(2):
 		_check(enemies.get_enemy(index + 1).get("id") == ids[index]
 			and enemies.get_enemy(index + 1).get("hp") == enemy_hp[index],
@@ -550,6 +553,10 @@ func _test_published_entry_and_replay() -> void:
 			and oracle_map.choose_node(node_id),
 			"published search seed %d: legal opening Fight committed" % seed_value)
 		var picked: String = sorted_ids[oracle_rng.randi_range(0, sorted_ids.size() - 1)]
+		var group: Array = preload("res://tests/floor_band_oracle.gd").group(
+			map.get_current_floor(), fight_pool[picked].enemy_ids.size(), oracle_rng)
+		_check(preload("res://tests/floor_band_oracle.gd").legal_group(
+			group, map.get_current_floor()), "oracle supplies a legal live floor-band group")
 		var expected_state := oracle_rng.state
 		var selector := RunFightEncounterSelection.new()
 		var replay_selector := RunFightEncounterSelection.new()
@@ -576,11 +583,11 @@ func _test_published_entry_and_replay() -> void:
 				"published search seed %d: replay builds fresh equal models" % seed_value)
 		if picked in ["front_hem_pivot", "rear_spool_reversal"] and not found.has(picked):
 			found[picked] = seed_value
-			var expected_ids := (["button_guard", "fray_scavenger"]
-				if picked == "front_hem_pivot" else ["spool_stalker", "seam_ripper"])
-			var expected_names := (["Button Guard", "Fray Scavenger"]
-				if picked == "front_hem_pivot" else ["Spool Stalker", "Seam Ripper"])
-			var expected_hp := [16, 14] if picked == "front_hem_pivot" else [14, 18]
+			var expected_ids: Array = group
+			var band_records: Dictionary = preload("res://tests/floor_band_oracle.gd").records()
+			var expected_names := [band_records[group[0]].name, band_records[group[1]].name]
+			var expected_hp := [int(band_records[group[0]].max_hp),
+				int(band_records[group[1]].max_hp)]
 			_check(entry.get("definitions") == _expected(picked),
 				picked + ": entry_current_battle returns exact two-source schedule")
 			var enemies: CombatEnemies = entry.get("enemies")
@@ -622,9 +629,12 @@ func _test_published_entry_and_replay() -> void:
 				picked + ": cached entry returns fresh unmodified enemies and turn-0 intents")
 			# Drive the actual three-beat combat phases using the entry's real models.
 			var entered_play := _play(picked, expected_ids, cached["enemies"], cached["intents"])
-			var baseline_play := _play(picked, expected_ids)
-			_check(entered_play == baseline_play,
-				picked + ": published entry models execute identical three-beat shove timeline")
+			var authored_ids: Array = fight_pool[picked].enemy_ids
+			var baseline_play := _play(picked, authored_ids)
+			_check(entered_play.events == baseline_play.events
+				and entered_play.heroes == baseline_play.heroes
+				and entered_play.snapshots.size() == baseline_play.snapshots.size(),
+				picked + ": floor-band entry executes the exact authored three-beat shove and hero timeline")
 		if found.size() == 2:
 			break
 	_check(found.has("front_hem_pivot") and found.has("rear_spool_reversal"),
@@ -850,6 +860,10 @@ func _test_published_rejections_and_retry() -> void:
 	var sorted_ids: Array = registry["Fight"].keys()
 	sorted_ids.sort()
 	var expected_id: String = sorted_ids[oracle_rng.randi_range(0, sorted_ids.size() - 1)]
+	var recovered_group: Array = preload("res://tests/floor_band_oracle.gd").group(
+		map.get_current_floor(), registry["Fight"][expected_id].enemy_ids.size(), oracle_rng)
+	_check(preload("res://tests/floor_band_oracle.gd").legal_group(
+		recovered_group, map.get_current_floor()), "rejection retry oracle draws legal band actors")
 	var recovered := RunAuthoredBattleEntry.new()._entry_from_data(
 		map, rng, selector, registry)
 	_check(recovered.get("success") == true and recovered.get("node_type") == "Fight"

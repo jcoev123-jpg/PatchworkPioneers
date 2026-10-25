@@ -365,7 +365,12 @@ func _mounted() -> void:
 			continue
 		var selected_id: String = ids[rng.randi_range(0, ids.size() - 1)]
 		if PAIRS.has(selected_id):
-			fixture = {"seed": seed_value, "node": node, "encounter": selected_id}
+			var group: Array = preload("res://tests/floor_band_oracle.gd").group(
+				map.get_current_floor(), PAIRS[selected_id].enemy_ids.size(), rng)
+			if not group.any(func(actor_id): return NEW.has(actor_id)):
+				continue
+			fixture = {"seed": seed_value, "node": node, "encounter": selected_id,
+				"group": group, "rng_state": rng.state}
 			break
 	_check(not fixture.is_empty(), "genuine seeded full Fight rotation reaches new alternative")
 	if fixture.is_empty():
@@ -405,19 +410,31 @@ func _mounted() -> void:
 		app.free()
 		return
 	var presenter = app.get_node("LiveEnemyRoster")
-	var expected: Array = PAIRS[fixture.encounter].enemy_ids
-	_check(presenter.enemies == app.enemies and presenter._labels.size() == 2
-		and presenter._puppets.size() >= 5, "mounted battle owns both felt puppets")
-	for index in range(2):
+	var expected: Array = fixture.group
+	var records: Dictionary = preload("res://tests/floor_band_oracle.gd").records()
+	_check(preload("res://tests/floor_band_oracle.gd").legal_group(
+		expected, app.run_map.get_current_floor()) and app.encounter_id == fixture.encounter,
+		"physical route matches independent shrinking-band roster and run RNG")
+	_check(presenter.enemies == app.enemies and presenter._labels.size() == expected.size()
+		and presenter._puppets.size() >= CombatParty.PARTY_SIZE + expected.size(),
+		"mounted battle owns both real selected enemy puppets")
+	var m05_count := 0
+	for index in range(expected.size()):
 		var actor: Dictionary = app.enemies.get_enemy(index + 1)
-		var puppet = presenter._puppets[index + 3]
+		var puppet = presenter._puppets[index + CombatParty.PARTY_SIZE]
 		_check(actor.id == expected[index] and puppet.actor_id == expected[index]
+			and actor.position == index + 1 and actor.max_hp == int(records[expected[index]].max_hp)
+			and actor.hp == actor.max_hp and actor.block == 0
 			and puppet.is_visible_in_tree() and puppet.size.x > 0
-			and presenter._labels[index].text == NEW[expected[index]].name,
-			"named actor renders in genuine existing fallback stage " + expected[index])
-		_check(presenter.art_for(expected[index]).get("idle") == null
-			and puppet.current_texture() == null,
-			"unmapped M05 actor uses procedural felt puppet fallback " + expected[index])
+			and presenter._labels[index].text == records[expected[index]].name,
+			"band-selected actor renders its exact catalog ID, HP and name " + expected[index])
+		if NEW.has(expected[index]):
+			m05_count += 1
+			_check(presenter.art_for(expected[index]).get("idle") == null
+				and puppet.current_texture() == null and puppet.fallback_kind == expected[index]
+				and not puppet.fallback_silhouettes().is_empty(),
+				"genuine M05 actor uses its distinct sewn fallback " + expected[index])
+	_check(m05_count > 0, "seeded live band group actually contains an M05 normal")
 	_check(app.deck.hand.size() == 5 and app.end_turn_button.is_visible_in_tree(),
 		"real five-card hand and End Turn reachable at 1280x720")
 	# A genuine mounted card remains playable before enemy End Turn.

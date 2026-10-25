@@ -29,7 +29,7 @@ func _run() -> void:
 	root.add_child(app)
 	await _frames()
 	presenter = app.get_node("LiveAttackPreview")
-	var fixture := _upgrade_fixture()
+	var fixture := _upgrade_fixture(200)
 	_check(not fixture.is_empty(), "authentic seeded Fight -> Rest -> Fight exists")
 	if fixture.is_empty():
 		await _finish_tune()

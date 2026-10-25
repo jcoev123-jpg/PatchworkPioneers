@@ -73,7 +73,7 @@ func _run() -> void:
 	var fixture := {}
 	var spool := -1
 	var next_seed := 1
-	for attempt in range(20):
+	for attempt in range(240):
 		fixture = _sequence_fixture(["Shop", "Fight", "Fight"], next_seed, true)
 		_check(not fixture.is_empty(), "genuine map has Shop and two connected Fights")
 		if fixture.is_empty() or not await _routed_win(fixture, false):

@@ -254,6 +254,19 @@ func _earn(fixture: Dictionary, pair: Array, keyboard: bool,
 		return ""
 	while not app.deck.hand.has(id) and not app.deck.draw_pile.is_empty():
 		_check(app.deck.draw_extra(1) == 1, "draw actual owned composite")
+	# The detailed face needs the real hand's authored card width (>= 88px).
+	# Return only the fixture's own extra draws so an 11-card hand cannot shrink
+	# every card below that minimum; the composite and the opening deal stay.
+	while app.deck.hand.size() > CombatDeck.TURN_DRAW:
+		var extra := ""
+		for card_id in app.deck.hand:
+			if card_id != id:
+				extra = card_id
+				break
+		if extra.is_empty():
+			break
+		app.deck.hand.erase(extra)
+		app.deck.draw_pile.push_back(extra)
 	app._refresh_hand()
 	await _frames()
 	_check(_panel(id) != null and presenter._bindings.has(_panel(id)), "held ordered panel bound to production presenter")

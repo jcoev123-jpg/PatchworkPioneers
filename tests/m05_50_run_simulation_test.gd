@@ -8,14 +8,14 @@ var failures: Array[String] = []
 var checks := 0
 
 
-## Ten normal kinds repin the early-defeat (99) and generic wallet (110) fixtures.
+## Expanded normal roster repins early-defeat (99) and unaffordable generic-wallet (541) fixtures.
 ## Keep 47 original seeds and the offered/acquired/played Blanket Stitch witness (267),
 ## with the unchanged strategy; neither outcomes nor choices are injected.
 func _cohort_seeds() -> Array[int]:
 	var values: Array[int] = []
 	for value in range(1, 48):
 		values.append(value)
-	values.append_array([99, 110, 267])
+	values.append_array([99, 541, 267])
 	return values
 
 

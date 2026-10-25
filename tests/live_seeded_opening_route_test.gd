@@ -122,14 +122,23 @@ func _typed(app, heroes: Array, cards: Array, rng_state: int, kind: String) -> v
 	_check(app.enemy_intents._definitions == schedule, "exact typed authored schedule mounted")
 	var actors: Array = app.enemies.get_enemies()
 	_check(actors.size() == entry.enemy_ids.size() and not actors.is_empty(), "complete typed roster mounted")
+	var floor_number: int = int(app.run_map.get_node(app.run_map.get_current_node_id()).get("floor", 0))
+	var actual_ids: Array = []
 	for index in range(actors.size()):
-		_check(actors[index].id == entry.enemy_ids[index] and actors[index].position == index + 1,
-			"typed enemy identity and source slot")
+		actual_ids.append(actors[index].id)
+		_check(actors[index].position == index + 1, "typed enemy identity and source slot")
+	if kind == "Fight":
+		_check(BAND_ORACLE.legal_group(actual_ids, floor_number),
+			"mounted Fight roster is a legal floor-%d band group" % floor_number)
+	else:
+		for index in range(actors.size()):
+			_check(actors[index].id == entry.enemy_ids[index],
+				"typed enemy identity and source slot")
 	var catalog: Array = []
 	for path in RunAuthoredBattleEntry.CATALOG_PATHS:
 		catalog.append_array(RunTypedBattleRoster._parse_catalog_text(FileAccess.get_file_as_string(path)))
 	var definitions: Array = []
-	for id in entry.enemy_ids:
+	for id in actual_ids:
 		var matches := catalog.filter(func(record): return record.id == id)
 		_check(matches.size() == 1, "one authored enemy definition: " + id)
 		if matches.size() == 1:
@@ -145,6 +154,9 @@ func _typed(app, heroes: Array, cards: Array, rng_state: int, kind: String) -> v
 	var ids: Array = pools[kind].keys()
 	ids.sort()
 	_check(app.encounter_id == ids[rng.randi_range(0, ids.size() - 1)], "one sorted typed selection draw")
+	if kind == "Fight":
+		_check(BAND_ORACLE.group(floor_number, actors.size(), rng) == actual_ids,
+			"mounted Fight band group is the exact seeded floor-band draw")
 	var reference := CombatDeck.new(cards, rng)
 	var independent := CombatEnemyIntents.new(schedule)
 	var roster := CombatEnemies.new(definitions)

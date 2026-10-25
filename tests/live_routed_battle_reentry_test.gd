@@ -2,6 +2,7 @@ extends "res://tests/live_shop_continuation_test.gd"
 ## Real connected input, typed-entry oracle, atomic rejection, and terminal latch.
 
 const ROSTER_ART := preload("res://scripts/live_enemy_roster.gd")
+const FLOOR_BAND_ORACLE := preload("res://tests/floor_band_oracle.gd")
 const BATTLE_BACKDROP := {
 	"Fight": "res://assets/paper/backgrounds/battle_meadow.png",
 	"Elite": "res://assets/paper/backgrounds/battle_ruins.png",
@@ -129,11 +130,42 @@ func _oracle(id: String) -> Dictionary:
 	var selector := RunFightEncounterSelection.new()
 	selector._bound_map = map
 	selector._selected = app.fight_selection._selected.duplicate(true)
+	var draw_rng := RandomNumberGenerator.new()
+	draw_rng.state = rng.state
 	var entry := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
 	_check(entry.get("success", false), "authored typed entry oracle succeeds")
 	if not entry.get("success", false):
 		return {}
 	if map.get_node(id).type == "Fight":
+		# Independent admission oracle: the routed click must spend one sorted
+		# typed encounter draw followed by precisely one floor-band draw per source.
+		var parsed_pool: Variant = JSON.parse_string(
+			FileAccess.get_file_as_string(RunAuthoredBattleEntry.POOLS_PATH))
+		_check(parsed_pool is Dictionary and parsed_pool.get("Fight") is Dictionary
+			and not parsed_pool["Fight"].is_empty(),
+			"mounted Fight has a real nonempty authored encounter registry")
+		if not parsed_pool is Dictionary or not parsed_pool.get("Fight") is Dictionary \
+				or parsed_pool["Fight"].is_empty():
+			return {}
+		var choices: Array = parsed_pool["Fight"].keys()
+		choices.sort()
+		var expected_id: String = choices[draw_rng.randi_range(0, choices.size() - 1)]
+		var path: String = parsed_pool["Fight"][expected_id].schedule
+		var schedule: Array = RunFightEncounterSelection._parse_schedule_text(
+			FileAccess.get_file_as_string(path))
+		_check(schedule.size() >= 2 and schedule.size() <= CombatEnemies.MAX_ENEMIES,
+			"mounted Fight's typed schedule has a playable source count")
+		if schedule.size() < 2 or schedule.size() > CombatEnemies.MAX_ENEMIES:
+			return {}
+		var expected_ids: Array = FLOOR_BAND_ORACLE.group(
+			map.get_node(id).floor, schedule.size(), draw_rng)
+		var actual_ids: Array = []
+		for enemy in entry.enemies.get_enemies():
+			actual_ids.append(enemy.id)
+		_check(FLOOR_BAND_ORACLE.legal_group(actual_ids, map.get_node(id).floor)
+			and actual_ids.size() == schedule.size() and actual_ids == expected_ids
+			and entry.encounter_id == expected_id and rng.state == draw_rng.state,
+			"actual routed Fight uses exact independent encounter and floor-band RNG draws")
 		var definitions: Array = entry.enemies.get_enemies()
 		var floor_number: int = map.get_node(id).floor
 		for definition in definitions:

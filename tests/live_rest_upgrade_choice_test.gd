@@ -2,8 +2,8 @@ extends "res://tests/live_routed_battle_reentry_test.gd"
 ## Real connected Rest selection and actual held Strike+ combat input.
 
 
-func _upgrade_fixture() -> Dictionary:
-	for value in range(1, 1000):
+func _upgrade_fixture(first_seed: int = 1) -> Dictionary:
+	for value in range(first_seed, 1000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()

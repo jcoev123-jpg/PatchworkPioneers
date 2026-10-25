@@ -190,11 +190,27 @@ func _replay(choice: Dictionary) -> String:
 		_check(hero.id == ["warden", "seamstress", "tinker"][index]
 			and hero.hp == [40, 30, 26][index] and hero.max_hp == hero.hp
 			and hero.block == 0 and hero.position == index + 1, "healthy authored hero in original slot")
+	# Replay the public selector and floor-band draws without consulting the entry service.
+	var band_rng := _rng(choice.seed)
+	var band_map := RunMap.new()
+	_check(band_map.generate(band_rng) and band_map.choose_node(choice.node),
+		"independent seeded route commits the same Fight for floor-band sampling")
+	var encounter_ids: Array = pool.Fight.keys()
+	encounter_ids.sort()
+	_check(encounter_ids[band_rng.randi_range(0, encounter_ids.size() - 1)] == ENCOUNTER,
+		"independent sorted selector retains Double-Hem encounter binding")
+	var group: Array = preload("res://tests/floor_band_oracle.gd").group(
+		band_map.get_current_floor(), 2, band_rng)
+	var normal_records: Dictionary = preload("res://tests/floor_band_oracle.gd").records()
+	_check(group.size() == 2 and preload("res://tests/floor_band_oracle.gd").legal_group(
+		group, 1) and str(band_rng.state) == choice.selection_rng,
+		"two legal independent band draws reproduce full entry RNG state")
 	for index in range(2):
 		var enemy := enemies.get_enemy(index + 1)
-		_check(enemy.id == ROSTER[index] and enemy.hp == [14, 18][index]
+		_check(enemy.id == group[index] and enemy.hp == int(normal_records[group[index]].max_hp)
+			and enemy.name == normal_records[group[index]].name
 			and enemy.max_hp == enemy.hp and enemy.block == 0
-			and enemy.position == index + 1, "exact living authored enemy in source slot")
+			and enemy.position == index + 1, "exact living band-selected source with authored record")
 	_check(result.get_outcome() == CombatBattleResult.ACTIVE and act.begin_current_battle(result),
 		"bind selected opening node to actual ACTIVE result")
 	var expected := _snapshot(f)

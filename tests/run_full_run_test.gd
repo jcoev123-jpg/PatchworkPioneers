@@ -32,6 +32,37 @@ func _frames() -> void:
 		await process_frame
 
 
+## Independent floor-band oracle: order the live normal-enemy catalogs by
+## authored max HP then ID and split into the three consecutive bands.
+func _floor_band_ids(floor_number: int) -> Array:
+	var entries: Array = []
+	for path in ["res://data/enemies/starter_enemies.json", "res://data/enemies/run_enemies.json"]:
+		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+		if not parsed is Array:
+			return []
+		for record in parsed:
+			if record is Dictionary and record.get("id") is String:
+				entries.append({"id": record["id"], "max_hp": int(record["max_hp"])})
+	entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if a["max_hp"] != b["max_hp"]:
+			return a["max_hp"] < b["max_hp"]
+		return a["id"] < b["id"])
+	var ids: Array = []
+	for entry in entries:
+		ids.append(entry["id"])
+	if ids.size() < 12:
+		return []
+	var low_end := int(ceilf(ids.size() / 3.0))
+	var mid_end := low_end + int(ceilf((ids.size() - low_end) / 2.0))
+	if floor_number >= 1 and floor_number <= 4:
+		return ids.slice(0, low_end)
+	if floor_number >= 5 and floor_number <= 8:
+		return ids.slice(low_end, mid_end)
+	if floor_number >= 9 and floor_number <= 11:
+		return ids.slice(mid_end, ids.size())
+	return []
+
+
 func _search(map: RunMap, choices: Array, path: Array, counts: Dictionary) -> Array:
 	for id in choices:
 		var node := map.get_node(id)
@@ -380,7 +411,20 @@ func _battle(loss: bool = false) -> bool:
 	var ids: Array = []
 	for enemy in app.enemies.get_enemies():
 		ids.append(enemy.id)
-	_check(ids == entry.enemy_ids and not ids.is_empty(), "actual typed enemies mounted")
+	if kind == "Fight":
+		# Ordinary Fights mount a floor-band group of the reused schedule's
+		# own source count; Elite/Boss keep their exact authored roster.
+		var floor_number: int = int(app.run_map.get_node(
+			app.run_map.get_current_node_id()).get("floor", 0))
+		var band := _floor_band_ids(floor_number)
+		var in_band: bool = not band.is_empty() and ids.size() == entry.enemy_ids.size()
+		var seen: Array = []
+		for enemy_id in ids:
+			in_band = in_band and band.has(enemy_id) and not enemy_id in seen
+			seen.append(enemy_id)
+		_check(in_band, "actual floor-band enemies mounted on floor %d" % floor_number)
+	else:
+		_check(ids == entry.enemy_ids and not ids.is_empty(), "actual typed enemies mounted")
 	_check(app.enemy_intents._definitions == RunFightEncounterSelection._parse_schedule_text(
 		FileAccess.get_file_as_string(entry.schedule)), "actual authored enemy schedule mounted")
 	# The routed Fight/Elite/Boss admission binds that genuine roster and party to

@@ -243,7 +243,7 @@ func _public_entry(setup: Dictionary) -> Dictionary:
         setup["map"], setup["rng"], setup["selector"])
 
 
-func _check_entry(entry: Dictionary, label: String) -> void:
+func _check_entry(entry: Dictionary, label: String, expected_group: Array = []) -> void:
     _check(entry.get("success") == true and entry.get("node_type") == "Fight"
         and entry.get("encounter_id") == ENCOUNTER, label + ": exact typed selection")
     if not entry.get("success", false):
@@ -257,8 +257,11 @@ func _check_entry(entry: Dictionary, label: String) -> void:
     _check(actors.size() == 2, label + ": two real actors")
     if actors.size() == 2:
         for i in range(2):
-            _check(actors[i]["id"] == ROSTER[i] and actors[i]["position"] == i + 1
-                and actors[i]["max_hp"] == (14 if i == 0 else 18)
+            _check((expected_group.is_empty() or actors[i]["id"] == expected_group[i])
+                and preload("res://tests/floor_band_oracle.gd").band_ids(1).has(actors[i]["id"])
+                and actors[i]["position"] == i + 1
+                and actors[i]["max_hp"] == int(
+                    preload("res://tests/floor_band_oracle.gd").records()[actors[i]["id"]]["max_hp"])
                 and actors[i]["hp"] == actors[i]["max_hp"] and actors[i]["block"] == 0
                 and actors[i].get("art_path", "").begins_with("res://assets/paper/enemies/"),
                 label + ": authentic slot %d ID, HP, Block and art" % (i + 1))
@@ -272,6 +275,9 @@ func _test_public_entry_and_cache(seed_value: int) -> void:
     names.sort()
     var expected: String = names[setup["oracle"].randi_range(0, names.size() - 1)]
     _check(expected == ENCOUNTER, "independent sorted-pool oracle selects the new ID")
+    var group: Array = preload("res://tests/floor_band_oracle.gd").group(
+        setup["mirror"].get_current_floor(), _expected_definitions().size(), setup["oracle"])
+    _check(group.size() == 2, "independent group oracle samples two valid floor-band sources")
     var before_files := [FileAccess.get_file_as_string(POOLS),
         FileAccess.get_file_as_string(SCHEDULE), FileAccess.get_file_as_string(ENEMY_CATALOG)]
     seed(772314)
@@ -281,13 +287,14 @@ func _test_public_entry_and_cache(seed_value: int) -> void:
     _check(randi() == expected_global, "entry does not spend global RNG")
     _check(setup["rng"].state == setup["oracle"].state and
         setup["map"].get_route() == [setup["node"]],
-        "public entry spends one sorted candidate draw, not an additional map choice")
-    _check_entry(first, "public entry")
+        "public entry spends encounter plus two shrinking-band draws, not another map choice")
+    _check_entry(first, "public entry", group)
     if not first.get("success", false):
         return
     var selected_cache: Dictionary = setup["selector"]._selected.duplicate(true)
     var selected_state: int = setup["rng"].state
     var original_defs: Array = first["definitions"].duplicate(true)
+    var original_ledger: Array = _enemy_ledger(first["enemies"])
     _check(first["enemies"].apply_damage(1, 5) and first["enemies"].gain_block(2, 4)
         and first["intents"].advance_turn(), "first response actors and intents are mutable")
     first["definitions"][0]["pattern"][0]["amount"] = 999
@@ -295,19 +302,19 @@ func _test_public_entry_and_cache(seed_value: int) -> void:
     first["intents"].get_intents()[0]["amount"] = 999
     first["encounter_id"] = "tampered"
     var cached := _public_entry(setup)
-    _check_entry(cached, "cached entry")
+    _check_entry(cached, "cached entry", group)
     _check(cached.get("success") and cached["enemies"] != first["enemies"]
         and cached["intents"] != first["intents"]
         and cached["definitions"] == original_defs
         and cached["intents"].get_intents() == _expected_announced(0)
-        and _enemy_ledger(cached["enemies"]) == [[14, 0], [18, 0]],
+        and _enemy_ledger(cached["enemies"]) == original_ledger,
         "cached re-entry returns fresh actors, intent cycles and detached definitions")
     _check(setup["rng"].state == selected_state
         and setup["selector"]._selected == selected_cache,
         "cached re-entry spends no run RNG and retains unpoisoned selector cache")
     var replay := _setup(seed_value)
     var second := _public_entry(replay)
-    _check_entry(second, "independent replay")
+    _check_entry(second, "independent replay", group)
     _check(second.get("success") and replay["rng"].state == selected_state
         and replay["selector"]._selected == selected_cache
         and replay["map"].get_floors() == setup["map"].get_floors()
@@ -325,10 +332,27 @@ func _test_public_entry_and_cache(seed_value: int) -> void:
         "entry, cache and replay never mutate source files")
 
 
+## The authored roster is still a separately executable fixed-ledger scenario;
+## the public Fight uses the floor-band group instead.
+func _authored_entry() -> Dictionary:
+    var assembled := RunTypedBattleRoster.new().assemble(
+        {"success": true, "node_type": "Fight", "encounter_id": ENCOUNTER,
+            "definitions": _expected_definitions()},
+        {ENCOUNTER: ROSTER}, RunAuthoredBattleEntry.CATALOG_PATHS)
+    _check(assembled.get("ok", false) and assembled.get("enemies") is CombatEnemies,
+        "direct typed assembler retains the two named authored sources")
+    if not assembled.get("ok", false):
+        return {"success": false}
+    assembled["success"] = true
+    assembled["intents"] = CombatEnemyIntents.new(assembled["definitions"])
+    return assembled
+
+
 func _test_all_beats(seed_value: int) -> void:
     var setup := _setup(seed_value)
-    var entry := _public_entry(setup)
-    _check_entry(entry, "combat phase")
+    var entry := _authored_entry()
+    _check(entry.get("success") and entry["definitions"] == _expected_definitions(),
+        "combat phase uses the original executable named-authored schedule")
     if not entry.get("success", false):
         return
     var party := _party()
@@ -367,8 +391,9 @@ func _test_all_beats(seed_value: int) -> void:
 
 func _test_slain_sources(seed_value: int) -> void:
     var setup := _setup(seed_value)
-    var entry := _public_entry(setup)
-    _check_entry(entry, "slain second source")
+    var entry := _authored_entry()
+    _check(entry.get("success") and entry["definitions"] == _expected_definitions(),
+        "slain second source preserves the direct authored roster")
     if not entry.get("success", false):
         return
     var party := _party()
@@ -387,8 +412,9 @@ func _test_slain_sources(seed_value: int) -> void:
     _check(_hero_ledger(party) == [[40, 3], [30, 0], [26, 0]]
         and _enemy_ledger(enemies) == [[14, 0], [0, 0]],
         "slain source cannot consume the remaining three Warden Block")
-    var other := _public_entry(_setup(seed_value))
-    _check_entry(other, "slain first source")
+    var other := _authored_entry()
+    _check(other.get("success") and other["definitions"] == _expected_definitions(),
+        "slain first source uses the second independent authored assembly")
     if not other.get("success", false):
         return
     var other_party := _party()
@@ -477,6 +503,8 @@ func _test_invalid_preconditions(seed_value: int) -> void:
     sorted.sort()
     _check(corrected.get("success") and
         sorted[setup["oracle"].randi_range(0, sorted.size() - 1)] == ENCOUNTER
+        and preload("res://tests/floor_band_oracle.gd").group(
+            setup["map"].get_current_floor(), 2, setup["oracle"]).size() == 2
         and setup["rng"].state == setup["oracle"].state,
         "valid retry takes precisely one original sorted-pool draw")
     _check(party.get_heroes() == unchanged_party

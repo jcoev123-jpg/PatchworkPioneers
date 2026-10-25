@@ -1473,7 +1473,26 @@ func _test_real_mounted_hand() -> void:
 	_check(int(app.enemy_attacks[0].get("target_position", 0)) == 1, "AC2: enemy 1 attacks Warden")
 	var enemy1_hp_before: int = int(app.enemies.get_enemy(1).hp)
 	var enemy2_hp_before: int = int(app.enemies.get_enemy(2).hp)
-	_check(enemy1_hp_before == 12 and enemy2_hp_before == 12, "AC2: enemy starting HPs are 12 and 12")
+	var oracle_rng := RandomNumberGenerator.new()
+	oracle_rng.seed = int(fixture.seed)
+	var oracle_map := RunMap.new()
+	_check(oracle_map.generate(oracle_rng) and oracle_map.choose_node(fixture.fight),
+		"AC2: independent seeded map reaches the actual mounted Fight")
+	var registry: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+		RunAuthoredBattleEntry.POOLS_PATH))
+	var ids: Array = registry["Fight"].keys()
+	ids.sort()
+	_check(ids[oracle_rng.randi_range(0, ids.size() - 1)] == "starter_attacks",
+		"AC2: independent oracle selects the live authored schedule")
+	var band_ids: Array = preload("res://tests/floor_band_oracle.gd").group(
+		oracle_map.get_current_floor(), 2, oracle_rng)
+	var records: Dictionary = preload("res://tests/floor_band_oracle.gd").records()
+	_check(band_ids.size() == 2 and app.enemies.get_enemy(1).id == band_ids[0]
+		and app.enemies.get_enemy(2).id == band_ids[1]
+		and enemy1_hp_before == int(records[band_ids[0]].max_hp)
+		and enemy2_hp_before == int(records[band_ids[1]].max_hp)
+		and app.run_map.get_current_node_id() == fixture.fight,
+		"AC2: both mounted IDs and HP match independent floor-band sampling and RNG")
 
 	app.end_turn_button.pressed.emit()
 	await _frames()
