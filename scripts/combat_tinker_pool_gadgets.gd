@@ -504,7 +504,17 @@ func _resolve_wind_up_turret(arg1: Variant, arg2: Variant = null, arg3: Variant 
 		hp_lost = hp_before - hp_after
 
 	var new_remaining: int = remaining - 1
-	_set_turret_remaining(state, new_remaining)
+	var next_state: Variant
+	if state is Dictionary:
+		next_state = state.duplicate(true)
+	else:
+		next_state = {}
+		for key in _TURRET_STATE_KEYS:
+			var val: Variant = state.get(key)
+			if val != null:
+				next_state[key] = val
+
+	_set_turret_remaining(next_state, new_remaining)
 
 	var rng_consumed: bool = (living.size() >= 2) and (rng.state != rng_state_before)
 
@@ -526,7 +536,7 @@ func _resolve_wind_up_turret(arg1: Variant, arg2: Variant = null, arg3: Variant 
 		"damage": 3 if target > 0 else 0,
 		"damage_dealt": 3 if target > 0 else 0,
 		"rng_consumed": rng_consumed,
-		"state": state,
+		"state": next_state,
 	}
 	for key in _TURRET_STATE_KEYS:
 		result[key] = new_remaining
