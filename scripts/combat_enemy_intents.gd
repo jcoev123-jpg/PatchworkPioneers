@@ -297,6 +297,20 @@ static func shove_is_legal(party: CombatParty, target: int, direction: int) -> b
 	return not party.is_downed(target) and not party.is_downed(destination)
 
 
+## The hero an authored forward pull really moves. The policy's own target keeps
+## the beat when it can already step forward; otherwise the front-most living
+## hero with a living hero directly in front of it is pulled instead, which is
+## the middle-to-front signature of a zipped pull. 0 means the party has no legal
+## forward pair at all, so the caller's pre-existing fallback stays in charge.
+static func forward_pull_target(party: CombatParty, policy_target: int) -> int:
+	if shove_is_legal(party, policy_target, -1):
+		return policy_target
+	for candidate in range(2, CombatParty.PARTY_SIZE + 1):
+		if shove_is_legal(party, candidate, -1):
+			return candidate
+	return 0
+
+
 ## Resolve one cached announcement against the actors as they stand now. A
 ## policy action whose announced hero is already downed falls back to the
 ## policy's first living choice, deterministically and without fresh RNG.
@@ -358,6 +372,15 @@ static func _draw_batch(slots: Array, party: CombatParty,
 			action["target_position"] = target
 			if action["type"] == "shove":
 				var direction: int = action["direction"]
+				# An authored forward pull names the hero it drags toward slot 1.
+				# The front policy's own hero cannot step forward, so announce the
+				# nearest legal middle-to-front pair and keep the pull direction
+				# instead of reversing the enemy's signature move into a push.
+				if direction == -1:
+					var pulled := forward_pull_target(party, target)
+					if pulled > 0:
+						target = pulled
+						action["target_position"] = pulled
 				if target + direction < 1 or target + direction > CombatParty.PARTY_SIZE \
 						or (not shove_is_legal(party, target, direction)
 							and shove_is_legal(party, target, -direction)):

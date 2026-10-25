@@ -83,6 +83,7 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 	for record in rare_records:
 		if app.run_trinkets.has(record.id):
 			continue
+		power_ids[record.id] = record.slot
 		weights[record.id] = 100 * int(record.stock_weight_percent) / 100
 		prices[record.id] = int(record.shop_price_gold)
 	var remaining: Array = weights.keys()
@@ -132,6 +133,21 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 		and app.patch_stall_visit.get_state().status == "available", "confirmed real visit")
 	_check(app.patch_stall_purchases.get_stock() == {"cards": [], "trinkets": expected}
 		and app.run_rng.state == oracle.state, "exact independently seeded three-offer stock and RNG")
+	var service: RunPatchStallVisit = app.patch_stall_service
+	_check(service != null and service.is_valid() and not service.is_consumed(), "real route constructs open one-use service")
+	var service_state := service.read_state()
+	var ids: Array = []
+	for hero in app.run_heroes:
+		ids.append(hero.id)
+	_check(service_state.node_id == fixture.id and service_state.visit_id == fixture.id
+		and service_state.snapshot == {"party_ids": ids, "deck_ids": app.run_deck,
+			"owned_trinkets": app.run_trinkets, "gold": app.session_gold}, "service binds confirmed node and exact live ledger")
+	_check(service.quote() == {"offers": expected, "decisions": ["buy_patch", "leave"]}, "service authentic quote matches independent seeded oracle")
+	for index in range(3):
+		var offer: Dictionary = expected[index]
+		_check(app.patch_stall_buttons[index].text == "%s (%s) - %d gold%s" % [String(offer.id).capitalize(),
+			power_ids[offer.id], offer.price,
+			" (insufficient gold)" if app.session_gold < offer.price else ""], "visible choice displays exact authentic price and patch")
 	_check(app.patch_stall_buttons.size() == 3 and app.patch_stall_heroes.item_count == 3
 		and app.patch_stall_leave.text == "Leave" and not is_instance_valid(app.shop_view), "only patch choices, three recipients and Leave")
 	var controls: Array = [app.patch_stall_heroes] + app.patch_stall_buttons + [app.patch_stall_leave]
@@ -147,6 +163,13 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 	var action: Button = app.patch_stall_buttons[1]
 	var callback: Callable = action.pressed.get_connections()[0].callable
 	var original: Dictionary = app._sewing_context()
+	var foreign := RunPatchStallVisit.new(fixture.id, ids, app.run_deck, app.run_trinkets, app.session_gold, expected)
+	app.patch_stall_service = foreign
+	_stall_refuse(callback, "foreign service with identical quote")
+	app.patch_stall_service = service
+	service._snapshot.gold += 1
+	_stall_refuse(callback, "service source drift")
+	service._snapshot.gold -= 1
 	app.session_gold += 1
 	_stall_refuse(callback, "gold drift")
 	app.session_gold -= 1
@@ -211,6 +234,8 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 		await _click(chosen)
 	await _frames()
 	_check(app._patch_stall_closed and not app.patch_stall_view.visible and app._can_choose_connected_route(), "one decision closes visit and admits onward play")
+	_check(service.is_consumed() and service.read_state().snapshot == service_state.snapshot,
+		"physical decision consumes exactly the bound service without replacing its source")
 	_check(app.run_rng.state == original.rng_state and app.run_deck == original.deck
 		and app.run_heroes == original.heroes and app.run_removal_count == original.removals, "choice preserves HP, deck, removal and RNG")
 	if buy:
@@ -251,7 +276,7 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 	result.append(app.run_rng.state)
 	app._return_to_title()
 	await _frames()
-	_check(app.patch_stall_view == null and app._patch_stall_visits.is_empty(), "title clears witnesses")
+	_check(app.patch_stall_view == null and app.patch_stall_service == null and app._patch_stall_visits.is_empty(), "title clears service and witnesses")
 	dead.call()
 	_check(app.run_map == null and app.run_rng == null, "freed control callback cannot revive run")
 	app.free()

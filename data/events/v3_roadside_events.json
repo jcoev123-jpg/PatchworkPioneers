@@ -59,6 +59,66 @@
         { "id": "ribbon_trade", "text": "Trade for ribbons (-14 gold, +2 scraps)", "outcome": { "gold": -14, "scraps": 2 } },
         { "id": "sell_harvest", "text": "Sell the harvest (+20 gold, -1 scrap)", "outcome": { "gold": 20, "scraps": -1 } }
       ]
+    },
+    {
+      "id": "v3_lacework_railway",
+      "title": "The Lacework Railway",
+      "description": "A railway platform is suspended on braids of lace, its brass bell ringing in the fog.",
+      "choices": [
+        { "id": "mend_platform", "text": "Mend a fraying platform braid (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "buy_spool_ticket", "text": "Buy a spool ticket (-18 gold, +2 scraps)", "outcome": { "gold": -18, "scraps": 2 } },
+        { "id": "board_silently", "text": "Board silently (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_moonshadow_tailor",
+      "title": "The Moonshadow Tailor",
+      "description": "A tailor in a patched top hat fits velvet shadows beneath a button moon.",
+      "choices": [
+        { "id": "deliver_cloth", "text": "Deliver washed cloth (+11 gold)", "outcome": { "gold": 11, "scraps": 0 } },
+        { "id": "trade_salvage", "text": "Trade a salvaged scrap (+19 gold, -1 scrap)", "outcome": { "gold": 19, "scraps": -1 } },
+        { "id": "refuse_fitting", "text": "Refuse a fitting (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_sleeping_thimble_giant",
+      "title": "The Sleeping Thimble Giant",
+      "description": "A giant sewing thimble snores beside a sewing-table hill, spilling copper shanks.",
+      "choices": [
+        { "id": "gather_shanks", "text": "Gather loose copper shanks (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "polish_thimble", "text": "Polish the thimble (+31 gold, -2 scraps)", "outcome": { "gold": 31, "scraps": -2 } },
+        { "id": "tiptoe_away", "text": "Tiptoe away (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_needlefall_star",
+      "title": "The Needlefall Star",
+      "description": "A falling star has pinned a silver needle through a midnight quilt field.",
+      "choices": [
+        { "id": "pocket_silver", "text": "Pocket a silver sliver (+8 gold)", "outcome": { "gold": 8, "scraps": 0 } },
+        { "id": "buy_starthread", "text": "Buy star-thread (-16 gold, +3 scraps)", "outcome": { "gold": -16, "scraps": 3 } },
+        { "id": "leave_star", "text": "Leave the pin shining (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_jackdaw_stitchmarket",
+      "title": "The Jackdaw Stitchmarket",
+      "description": "Button-eyed jackdaws barter embroidery in a market strung between dark branches.",
+      "choices": [
+        { "id": "exchange_buttons", "text": "Exchange found buttons (+13 gold)", "outcome": { "gold": 13, "scraps": 0 } },
+        { "id": "trade_thread", "text": "Trade a spare scrap for lace (+16 gold, -1 scrap)", "outcome": { "gold": 16, "scraps": -1 } },
+        { "id": "purse_closed", "text": "Keep your purse closed (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_dreaming_quilt_fair",
+      "title": "The Dreaming Quilt Fair",
+      "description": "Somnolent ragdolls parade under embroidered pennants and glowing stitched lanterns.",
+      "choices": [
+        { "id": "repair_pennants", "text": "Repair worn pennants (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "auction_trim", "text": "Auction rare trim (+24 gold, -2 scraps)", "outcome": { "gold": 24, "scraps": -2 } },
+        { "id": "watch_parade", "text": "Watch the procession (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }

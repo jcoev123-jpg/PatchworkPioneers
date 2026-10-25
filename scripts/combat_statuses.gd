@@ -1,7 +1,9 @@
 class_name CombatStatuses
 extends RefCounted
-## Pure, actor-local rules. Neither entrypoint changes a caller's status dictionary.
-## Status counts represent remaining *owner* turns, including the current turn.
+## Pure, actor-local rules. No entrypoint changes a caller's status dictionary.
+## Bleed, Weak, Exposed and Tangled counts represent remaining *owner* turns,
+## including the current turn. Riposte is not an N-turn counter: N is the
+## counterdamage returned by each confirmed hit during its single owner turn.
 
 const MAX_INT := 9223372036854775807
 
@@ -43,8 +45,25 @@ func adjusted_attack_damage(base_damage: int, attacker_statuses: Dictionary, def
 	return adjusted
 
 
+## Riposte N means "when hit, strike back N". N is damage, never a duration: an
+## active Riposte may counter every separate confirmed hit during its one owner
+## turn, then expires completely at that owner's turn end.
+## The authoritative caller owns hit confirmation, eligibility and the actual
+## damage transaction; this pure projection only reports the counterdamage.
+## Invalid status input, an unconfirmed (skipped) hit, and no/zero Riposte all
+## return 0. Nothing here mutates HP, Block, RNG, cards, statuses or attackers.
+func riposte_damage_for_confirmed_hit(statuses: Dictionary, hit_confirmed: bool) -> int:
+	if not hit_confirmed or not _valid_statuses(statuses):
+		return 0
+	var riposte: int = statuses.get("riposte", 0)
+	if riposte <= 0:
+		return 0
+	return riposte
+
+
 ## One affected actor's turn ends. Bleed is direct HP loss, never Block damage.
 ## Weak, Exposed and Tangled expire at this boundary, after applying during this turn.
+## Riposte is removed completely after this one owner turn, whatever its N was.
 ## Invalid state returns ok=false and an independent, unchanged deep snapshot.
 func end_owner_turn(hp: int, block: int, statuses: Dictionary) -> Dictionary:
 	var next_statuses: Dictionary = statuses.duplicate(true)
@@ -62,7 +81,7 @@ func end_owner_turn(hp: int, block: int, statuses: Dictionary) -> Dictionary:
 
 func _valid_statuses(statuses: Dictionary) -> bool:
 	for name in statuses:
-		if not name is String or name not in ["bleed", "weak", "exposed", "tangled"]:
+		if not name is String or name not in ["bleed", "weak", "exposed", "tangled", "riposte"]:
 			return false
 		var count = statuses[name]
 		if not count is int or count < 0:

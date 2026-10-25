@@ -1334,9 +1334,10 @@ func _open_route() -> void:
 	route_view.add_child(heading)
 	var actions: Array[Button] = []
 	var branch_targets: Array[Rect2] = []
-	for id in run_map.get_legal_choices():
+	for choice in _authenticated_route_choices(run_map, RunV3StopChoiceProjection.project_legal_choices(run_map)):
+		var id: String = choice.id
 		var node := run_map.get_node(id)
-		var button := _route_choice_button(id, String(node.type))
+		var button := _route_choice_button(id, String(node.type), true, choice)
 		button.position = Vector2(ROUTE_PATCH_LEFT, route_patch_top(int(node.get("position", 0))))
 		route_view.add_child(button)
 		branch_targets.append(Rect2(button.position, button.size))
@@ -1422,11 +1423,29 @@ func _route_token_texture(path: String) -> Texture2D:
 	return _route_tokens.get(path)
 
 
-## One art-backed opening patch: exact ID in metadata, readable kind label, sewn token,
-## a stitched felt face and a readable kind accent. Its page slot is set by the caller
-## from the authored node position, so the patch is never a list row.
-func _route_choice_button(id: String, kind: String, opening: bool = true) -> Button:
+## Authenticate the complete read projection against the current map before presentation.
+## Detached projected kinds never participate in route admission or dispatch.
+func _authenticated_route_choices(source_map: RunMap, projected: Array) -> Array:
+	if source_map == null or source_map != run_map:
+		return []
+	var legal := source_map.get_legal_choices()
+	if projected.size() != legal.size():
+		return []
+	for index in range(legal.size()):
+		var source := source_map.get_node(legal[index])
+		var choice = projected[index]
+		if not choice is Dictionary or source.is_empty() \
+			or choice.get("id") != legal[index] or choice.get("type") != source.get("type") \
+			or choice.get("v3_kind") != RunV3StopChoiceProjection.v3_kind_for(str(source.get("type"))):
+			return []
+	return projected.duplicate(true)
+
+
+## Keep the authenticated source kind for token art, availability and dispatch.
+func _route_choice_button(id: String, kind: String, opening: bool, choice: Dictionary) -> Button:
 	var label := route_kind_label(kind)
+	if kind in ["Rest", "Shop"]:
+		label += " / " + str(choice.v3_kind)
 	var button := Button.new()
 	button.name = "Opening_" + id
 	button.text = label
@@ -1436,6 +1455,7 @@ func _route_choice_button(id: String, kind: String, opening: bool = true) -> But
 	button.add_theme_font_size_override("font_size", 20)
 	button.set_meta("route_id", id)
 	button.set_meta("route_kind", kind)
+	button.set_meta("v3_kind", choice.v3_kind)
 	button.set_meta("route_label", label)
 	if kind in ["SewingCircle", "Campfire", "PatchStall", "Unpicker"]:
 		button.set_meta("sewing_source", _sewing_context())
@@ -1444,6 +1464,10 @@ func _route_choice_button(id: String, kind: String, opening: bool = true) -> But
 		button.text = label + " (unavailable)"
 	else:
 		button.tooltip_text = "Choose this %s" % label.to_lower()
+		if kind == "Rest":
+			button.tooltip_text = "Campfire preview: opens the legacy Rest screen to heal or upgrade a card."
+		elif kind == "Shop":
+			button.tooltip_text = "Peddler preview: opens the legacy Shop screen to buy cards or remove a card."
 	_style_route_button(button, ROUTE_KIND_THREAD.get(kind, ROUTE_BOOK_THREAD), true)
 	button.add_child(_route_token(kind))
 	button.add_child(_route_patch_stitch(kind))
@@ -2470,9 +2494,10 @@ func _present_connected_route(source_map: WeakRef) -> void:
 	route_view.add_child(branches)
 	var targets: Array[Rect2] = []
 	var prior := run_map.get_route()
-	for id in run_map.get_legal_choices():
+	for choice in _authenticated_route_choices(run_map, RunV3StopChoiceProjection.project_legal_choices(run_map)):
+		var id: String = choice.id
 		var node := run_map.get_node(id)
-		var action := _route_choice_button(id, String(node.type), false)
+		var action := _route_choice_button(id, String(node.type), false, choice)
 		# Four legal patches fit above up to three direct-child Mend quotes.
 		action.custom_minimum_size = Vector2(ROUTE_PATCH_SIZE.x, 54)
 		action.size = action.custom_minimum_size
@@ -3970,6 +3995,7 @@ var patch_stall_buttons: Array[Button] = []
 var patch_stall_heroes: OptionButton
 var patch_stall_leave: Button
 var patch_stall_visit: RunShopVisit
+var patch_stall_service: RunPatchStallVisit
 var patch_stall_purchases: RunShopPurchases
 var _patch_stall_wardrobe: RunPatchWardrobe
 var _patch_stall_original: Dictionary = {}
@@ -3983,7 +4009,8 @@ func _patch_stall_snapshot() -> Array:
 		patch_stall_visit.get_state(), patch_stall_purchases, patch_stall_purchases.get_state(),
 		patch_stall_purchases.get_stock(), patch_stall_purchases.patch_stall_choice_used(),
 		_patch_stall_wardrobe, _patch_stall_wardrobe.get_snapshot(), patch_stall_view,
-		patch_stall_buttons.duplicate(), patch_stall_heroes, patch_stall_leave]
+		patch_stall_buttons.duplicate(), patch_stall_heroes, patch_stall_leave,
+		patch_stall_service, patch_stall_service.read_state(), patch_stall_service.quote()]
 
 
 func _choose_patch_stall_route(id: String, source: WeakRef, prior: Array[String], button) -> bool:
@@ -4031,10 +4058,17 @@ func _choose_patch_stall_route(id: String, source: WeakRef, prior: Array[String]
 		run_map.undo_choice(id, prior)
 		run_rng.state = rng_before
 		return false
+	var service := RunPatchStallVisit.new(run_map.get_current_node_id(), ids,
+		run_deck, run_trinkets, session_gold, sampled.offers)
+	if not service.is_valid():
+		run_map.undo_choice(id, prior)
+		run_rng.state = rng_before
+		return false
 	_clear_route_view()
 	if is_instance_valid(patch_stall_view):
 		patch_stall_view.free()
 	patch_stall_visit = visit
+	patch_stall_service = service
 	patch_stall_purchases = purchases
 	_patch_stall_wardrobe = wardrobe
 	_patch_stall_closed = false
@@ -4055,7 +4089,7 @@ func _choose_patch_stall_route(id: String, source: WeakRef, prior: Array[String]
 		patch_stall_heroes.add_item(hero.id.capitalize())
 		patch_stall_heroes.set_item_metadata(patch_stall_heroes.item_count - 1, hero.id)
 	patch_stall_view.add_child(patch_stall_heroes)
-	for offer in purchases.get_stock().trinkets:
+	for offer in service.quote().offers:
 		var action := Button.new()
 		action.text = "%s (%s) - %d gold%s" % [String(offer.id).capitalize(),
 			w.definitions[offer.id], offer.price, " (insufficient gold)" if session_gold < offer.price else ""]
@@ -4085,11 +4119,16 @@ func _choose_patch_stall_route(id: String, source: WeakRef, prior: Array[String]
 
 func _patch_stall_action(button, view, visit: RunShopVisit) -> void:
 	if _patch_stall_closed or _patch_stall_context.is_empty() or visit == null or visit != patch_stall_visit \
+		or patch_stall_service == null or patch_stall_service.is_consumed() \
 		or not is_instance_valid(view) or view != patch_stall_view or view.get_parent() != self \
 		or not view.is_visible_in_tree() or not is_instance_valid(button) \
 		or button not in patch_stall_buttons + [patch_stall_leave] or button.get_parent() != view \
 		or button.disabled or not button.is_visible_in_tree() or _patch_stall_snapshot() != _patch_stall_context \
 		or run_map.get_node(run_map.get_current_node_id()).get("type") != "PatchStall":
+		return
+	var service_state := patch_stall_service.read_state()
+	var node_id := run_map.get_current_node_id()
+	if service_state.node_id != node_id or service_state.status != "available":
 		return
 	if button != patch_stall_leave:
 		if not is_instance_valid(patch_stall_heroes) or patch_stall_heroes.get_parent() != view \
@@ -4102,8 +4141,11 @@ func _patch_stall_action(button, view, visit: RunShopVisit) -> void:
 			or patch_stall_heroes.get_item_text(row) != String(run_heroes[row].id).capitalize():
 			return
 		var index := patch_stall_buttons.find(button)
-		var offer: Dictionary = patch_stall_purchases.get_stock().trinkets[index]
+		var offer: Dictionary = patch_stall_service.quote().offers[index]
 		if button.get_meta("patch_id", "") != offer.id:
+			return
+		var receipt := patch_stall_service.preview_purchase(offer.id, service_state.visit_id, node_id, service_state.snapshot)
+		if receipt.is_empty():
 			return
 		var carry := party_carryover as RunTornCarryover
 		var w := _patch_stall_wardrobe.get_snapshot()
@@ -4115,10 +4157,17 @@ func _patch_stall_action(button, view, visit: RunShopVisit) -> void:
 			patch_stall_purchases.get_stock(), visit.get_state(), w)
 		if not result.ok:
 			return
+		assert(result.purchase_receipt == receipt, "Atomic purchase must match service preflight")
+		var reconciled := patch_stall_service.reconcile_purchase(result.purchase_receipt,
+			service_state.visit_id, node_id, service_state.snapshot)
+		assert(reconciled, "Successful identical atomic receipt must consume the service")
 		run_trinkets.assign(result.wardrobe_state.owned)
 		run_scraps = result.wardrobe_state.scraps
 		session_gold = result.wardrobe_state.gold
 		carry.bind_wardrobe(_patch_stall_wardrobe, carry.torn, result.wardrobe_state)
+	else:
+		if not patch_stall_service.leave(service_state.visit_id, node_id, service_state.snapshot).ok:
+			return
 	visit.close_visit()
 	_patch_stall_closed = true
 	_patch_stall_original = _sewing_context()
@@ -4127,7 +4176,7 @@ func _patch_stall_action(button, view, visit: RunShopVisit) -> void:
 	_present_connected_route(weakref(run_map))
 
 
-var campfire_view: VBoxContainer
+var campfire_view: LiveCampfirePanel
 var campfire_heal_button: Button
 var campfire_leave_button: Button
 var campfire_visit: RunCampfireVisit
@@ -4136,8 +4185,7 @@ var _campfire_closed := false
 var _campfire_visits: Dictionary = {}
 
 
-var unpicker_view: VBoxContainer
-var unpicker_cards: OptionButton
+var unpicker_view: LiveUnpickerPanel
 var unpicker_remove_button: Button
 var unpicker_leave_button: Button
 var unpicker_visit: RunUnpickerVisit
@@ -4177,79 +4225,51 @@ func _choose_unpicker_route(id: String, source: WeakRef, prior: Array[String], b
 	unpicker_visit = visit
 	_unpicker_source = visit.read_state()
 	_unpicker_closed = false
-	unpicker_view = VBoxContainer.new()
+	unpicker_view = LiveUnpickerPanel.new()
 	unpicker_view.name = "Unpicker"
-	unpicker_view.position = Vector2(300, 190)
-	unpicker_view.custom_minimum_size = Vector2(680, 260)
-	unpicker_view.add_theme_constant_override("separation", 16)
+	unpicker_view.position = Vector2(200, 60)
 	add_child(unpicker_view)
-	var title := Label.new()
-	title.text = "Unpicker - remove one owned card or Leave\nGold: %d | Remove: %d gold" % [session_gold, visit.quote().price]
-	unpicker_view.add_child(title)
-	unpicker_cards = OptionButton.new()
-	unpicker_view.add_child(unpicker_cards)
-	# The service removes the first matching occurrence. Present exactly those
-	# physical occurrences, with their deck positions, rather than mislabel duplicates.
-	for index in range(run_deck.size()):
-		if run_deck.find(run_deck[index]) != index:
-			continue
-		unpicker_cards.add_item(_unpicker_card_text(index))
-		unpicker_cards.set_item_metadata(unpicker_cards.item_count - 1, index)
-	unpicker_remove_button = Button.new()
-	unpicker_remove_button.text = "Remove - %d gold" % visit.quote().price
-	unpicker_remove_button.disabled = session_gold < visit.quote().price or unpicker_cards.item_count == 0
-	unpicker_leave_button = Button.new()
-	unpicker_leave_button.text = "Leave"
-	for action in [unpicker_remove_button, unpicker_leave_button]:
-		unpicker_view.add_child(action)
-		action.pressed.connect(_unpicker_action.bind(action, unpicker_view, visit))
-	var controls := [unpicker_cards, unpicker_remove_button, unpicker_leave_button]
-	for i in range(controls.size()):
-		controls[i].custom_minimum_size.y = 48
-		controls[i].focus_next = controls[i].get_path_to(controls[(i + 1) % 3])
-		controls[i].focus_previous = controls[i].get_path_to(controls[(i + 2) % 3])
+	unpicker_view.bind(visit)
+	unpicker_remove_button = unpicker_view.remove_button
+	unpicker_leave_button = unpicker_view.leave_button
+	unpicker_view.decision_requested.connect(_unpicker_decision.bind(unpicker_view, visit))
 	_unpicker_original = _sewing_context()
-	unpicker_leave_button.grab_focus()
 	return true
 
 
-func _unpicker_card_text(index: int) -> String:
-	var definition: Dictionary = run_stitch_descriptors.get(run_deck[index], RunRestStitchCards.resolve_card_definition(run_deck[index]))
-	return "%d. %s" % [index + 1, definition.get("display_name", run_deck[index])]
-
-
-func _unpicker_action(button, view, visit: RunUnpickerVisit) -> void:
+func _unpicker_decision(intent: Dictionary, view, visit: RunUnpickerVisit) -> void:
 	if _unpicker_closed or _unpicker_original.is_empty() or _unpicker_original != _sewing_context() \
 		or visit == null or visit != unpicker_visit or visit.read_state() != _unpicker_source \
 		or not is_instance_valid(view) or view != unpicker_view or view.get_parent() != self \
-		or not view.is_visible_in_tree() or button not in [unpicker_remove_button, unpicker_leave_button] \
-		or not is_instance_valid(button) or button.disabled \
+		or not view.is_visible_in_tree() or view._visit != visit or view._source != _unpicker_source \
+		or view.wallet_label.text != view._quote_line() \
+		or unpicker_remove_button != view.remove_button or unpicker_leave_button != view.leave_button \
+		or not view._submitted or run_map == null \
+		or run_map.get_current_node_id() != _unpicker_source.get("node_id") \
 		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Unpicker":
 		return
-	for control in [unpicker_cards, unpicker_remove_button, unpicker_leave_button]:
-		if not is_instance_valid(control) or control.get_parent() != view or not control.is_visible_in_tree():
-			return
 	var id := run_map.get_current_node_id()
+	if intent.get("visit_id") != _unpicker_source.visit_id or intent.get("node_id") != id \
+		or intent.get("expected_snapshot") != _unpicker_source:
+		return
 	var staged := RunUnpickerVisit.new(id, run_deck, session_gold, run_removal_count,
 		run_stitch_descriptors, run_next_stitch_id)
 	if not staged.is_valid() or staged.read_state() != _unpicker_source:
 		return
 	var result: Dictionary
-	if button == unpicker_remove_button:
-		var indices: Array[int] = []
-		for index in range(run_deck.size()):
-			if run_deck.find(run_deck[index]) == index:
-				indices.append(index)
-		if unpicker_cards.disabled or unpicker_cards.item_count != indices.size() \
-			or unpicker_cards.selected < 0 or unpicker_cards.selected >= indices.size():
-			return
-		for i in range(indices.size()):
-			if unpicker_cards.get_item_metadata(i) != indices[i] or unpicker_cards.is_item_disabled(i) \
-				or unpicker_cards.get_item_text(i) != _unpicker_card_text(indices[i]):
+	match intent.get("action"):
+		"remove_card":
+			var card: Variant = intent.get("selected_card_id")
+			if intent.size() != 5 or typeof(card) != TYPE_STRING or card != view._selected_id \
+				or not run_deck.has(card) or not view._honest_row(view._selected_button, card, true):
 				return
-		result = staged.remove_card(run_deck[indices[unpicker_cards.selected]], _unpicker_source.visit_id, id, _unpicker_source)
-	else:
-		result = staged.leave(_unpicker_source.visit_id, id, _unpicker_source)
+			result = staged.remove_card(card, intent.visit_id, id, intent.expected_snapshot)
+		"leave":
+			if intent.size() != 4:
+				return
+			result = staged.leave(intent.visit_id, id, intent.expected_snapshot)
+		_:
+			return
 	if not result.ok or result.source_snapshot != _unpicker_source \
 		or result.source_receipt != _unpicker_source.receipt or _unpicker_original != _sewing_context() \
 		or visit.read_state() != _unpicker_source:
@@ -4265,9 +4285,7 @@ func _unpicker_action(button, view, visit: RunUnpickerVisit) -> void:
 	_unpicker_closed = true
 	_unpicker_original = _sewing_context()
 	_unpicker_visits[id] = [run_map, run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()]
-	for control in [unpicker_cards, unpicker_remove_button, unpicker_leave_button]:
-		control.disabled = true
-	view.hide()
+	view.close()
 	_present_connected_route(weakref(run_map))
 
 
@@ -4300,27 +4318,15 @@ func _choose_campfire_route(id: String, source: WeakRef, prior: Array[String], b
 		campfire_view.queue_free()
 	campfire_visit = visit
 	_campfire_closed = false
-	campfire_view = VBoxContainer.new()
+	campfire_view = LiveCampfirePanel.new()
 	campfire_view.name = "Campfire"
-	campfire_view.position = Vector2(300, 190)
-	campfire_view.custom_minimum_size = Vector2(680, 240)
-	campfire_view.size = Vector2(680, 240)
-	campfire_view.add_theme_constant_override("separation", 16)
+	campfire_view.position = Vector2(200, 60)
 	add_child(campfire_view)
-	var title := Label.new()
-	title.text = "Campfire — choose one action\nHeal each hero 30% max HP (torn revives at 1 HP first), or leave."
-	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	title.custom_minimum_size.y = 88
-	title.add_theme_font_size_override("font_size", 22)
-	campfire_view.add_child(title)
-	campfire_heal_button = Button.new()
-	campfire_leave_button = Button.new()
-	campfire_heal_button.text = "Heal"
-	campfire_leave_button.text = "Leave"
-	for action in [campfire_heal_button, campfire_leave_button]:
-		campfire_view.add_child(action)
-		action.custom_minimum_size.y = 48
-		action.pressed.connect(_campfire_action.bind(action, campfire_view, visit))
+	campfire_view.bind(visit)
+	campfire_heal_button = campfire_view.heal_button
+	campfire_leave_button = campfire_view.leave_button
+	var snapshot := visit.read_state()
+	campfire_view.decision_requested.connect(_campfire_action.bind(campfire_view, visit, snapshot))
 	campfire_heal_button.focus_next = campfire_heal_button.get_path_to(campfire_leave_button)
 	campfire_leave_button.focus_next = campfire_leave_button.get_path_to(campfire_heal_button)
 	campfire_heal_button.focus_previous = campfire_heal_button.focus_next
@@ -4330,41 +4336,63 @@ func _choose_campfire_route(id: String, source: WeakRef, prior: Array[String], b
 	return true
 
 
-func _campfire_action(button, view, visit: RunCampfireVisit) -> void:
+func _campfire_action(intent: Dictionary, view,
+		visit: RunCampfireVisit, snapshot: Dictionary) -> void:
+	if not _commit_campfire_action(intent, view, visit, snapshot):
+		# A refused submission spends neither the service nor the UI's next attempt.
+		# Rebinding also retires the callback generation that emitted this request.
+		if is_instance_valid(view) and view == campfire_view and visit == campfire_visit \
+			and not _campfire_closed and view._submitted and visit.read_state() == snapshot:
+			view.bind(visit)
+
+
+func _commit_campfire_action(intent: Dictionary, view,
+		visit: RunCampfireVisit, snapshot: Dictionary) -> bool:
 	if _campfire_closed or _campfire_original.is_empty() or _campfire_original != _sewing_context() \
 		or visit == null or visit != campfire_visit or not is_instance_valid(view) \
 		or view != campfire_view or view.get_parent() != self or not view.is_visible_in_tree() \
-		or button not in [campfire_heal_button, campfire_leave_button] \
-		or not is_instance_valid(button) or button.get_parent() != view or button.disabled \
-		or not button.is_visible_in_tree() or run_map.get_node(run_map.get_current_node_id()).get("type") != "Campfire":
-		return
+		or not view._submitted or view._visit != visit or view._snapshot != snapshot \
+		or not view._display_current() or run_map == null \
+		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Campfire":
+		return false
 	var id := run_map.get_current_node_id()
-	# Authenticate the service itself, then stage its decision on a detached visit.
-	if visit.read_state() != {"ok": true, "node_id": id, "status": RunCampfireVisit.OPEN, "heroes": run_heroes}:
-		return
+	if intent.size() != 4 or intent.get("action") not in ["heal", "leave"] \
+		or intent.get("source_visit") != visit or intent.get("node_id") != id \
+		or intent.get("expected_heroes") != snapshot.get("heroes") \
+		or snapshot != {"ok": true, "node_id": id, "status": RunCampfireVisit.OPEN, "heroes": run_heroes} \
+		or visit.read_state() != snapshot:
+		return false
+	var carry := party_carryover as RunTornCarryover
+	if carry == null or carry._observer() == null or carry.read_state().heroes != run_heroes:
+		return false
+	if carry._wardrobe != null:
+		var state := carry._wardrobe.get_snapshot()
+		if not carry._wardrobe.is_valid() or state.heroes != run_heroes or state.cards != run_deck \
+			or state.owned != run_trinkets or state.scraps != run_scraps or state.gold != session_gold \
+			or state.seed != run_seed or state.rest_id != "" \
+			or not carry.can_bind_wardrobe(carry._wardrobe, carry.torn, state):
+			return false
 	var staged := RunCampfireVisit.new(id, run_heroes)
-	var receipt := staged.choose_heal(id, run_heroes) if button == campfire_heal_button else staged.leave(id, run_heroes)
+	var receipt := staged.choose_heal(id, run_heroes) if intent.action == "heal" else staged.leave(id, run_heroes)
 	if not receipt.ok or receipt.node_id != id:
-		return
-	if button == campfire_heal_button:
-		var carry := party_carryover as RunTornCarryover
+		return false
+	if intent.action == "heal":
 		if carry == null or carry._observer() == null or carry.read_state().completed_rests.has(id):
-			return
+			return false
 		var proposed := carry._observer().apply_rest(id, run_heroes, true)
 		if not proposed.ok or proposed.heroes != receipt.heroes:
-			return
+			return false
 		var recovered := carry.choose_rest_heal(id)
 		if not recovered.ok or recovered.heroes != receipt.heroes:
-			return
+			return false
 		run_heroes = recovered.heroes.duplicate(true)
 	campfire_visit = staged
 	_campfire_closed = true
 	_campfire_original = _sewing_context()
 	_campfire_visits[id] = [run_map, run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()]
-	campfire_heal_button.disabled = true
-	campfire_leave_button.disabled = true
-	view.hide()
+	view.close()
 	_present_connected_route(weakref(run_map))
+	return true
 
 
 var sewing_view: LiveSewingCirclePanel
@@ -6405,7 +6433,6 @@ func _return_to_title() -> void:
 	if is_instance_valid(unpicker_view):
 		unpicker_view.free()
 	unpicker_view = null
-	unpicker_cards = null
 	unpicker_remove_button = null
 	unpicker_leave_button = null
 	unpicker_visit = null
@@ -6417,12 +6444,15 @@ func _return_to_title() -> void:
 		remove_child(campfire_view)
 		campfire_view.queue_free()
 	campfire_view = null
+	campfire_heal_button = null
+	campfire_leave_button = null
 	campfire_visit = null
 	_campfire_original.clear()
 	if is_instance_valid(patch_stall_view):
 		patch_stall_view.free()
 	patch_stall_view = null
 	patch_stall_visit = null
+	patch_stall_service = null
 	patch_stall_purchases = null
 	_patch_stall_wardrobe = null
 	patch_stall_buttons.clear()

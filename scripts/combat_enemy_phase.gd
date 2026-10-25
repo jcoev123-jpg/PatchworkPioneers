@@ -6,6 +6,10 @@ extends RefCounted
 ## hero who really loses HP to it. Strictly boolean or absent.
 const BLEED_ON_ATTACK_FIELD := "bleed_on_attack"
 const BLEED_ON_ATTACK_AMOUNT := 1
+## Authored content flag: this enemy heals for the HP its own confirmed hit
+## really removed, clamped to its missing HP. Block-absorbed damage is not
+## Drain. Strictly boolean or absent, exactly like the bleeding sting.
+const DRAIN_FIELD := "drain"
 
 func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		reactions: CombatWardenGuardReactions = null, policy_targets := false) -> Dictionary:
@@ -16,7 +20,7 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 	var roster := enemies.get_enemies()
 	# Malformed authored metadata fails the whole phase before any actor is
 	# staged or published; an absent flag stays valid.
-	if not _bleed_metadata_valid(roster):
+	if not _attack_metadata_valid(roster):
 		return failure
 	var validator := CombatStatusTurnBatch.new()
 	if not validator.tick_side("heroes", heroes).ok or not validator.tick_side("enemies", roster).ok:
@@ -70,9 +74,14 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 				# The sting's status is judged by the recipient's real HP change,
 				# so Block and a Guard redirect decide it, not the announcement.
 				var sting: bool = _stings(staged_enemies, source)
+				var drains: bool = _drains(staged_enemies, source)
 				var hp_before: int = -1
 				if sting and actual_target >= 1 and actual_target <= CombatParty.PARTY_SIZE:
 					hp_before = staged_party.get_hero(actual_target).get("hp", 0)
+				# Drain quotes only this single confirmed hit, so the real
+				# recipient's pre-hit record is captured before it is dispatched.
+				var recipient_before: Dictionary = staged_party.get_hero(actual_target)
+				var hit_target: int = actual_target
 				var damage := CombatStatuses.new().adjusted_attack_damage(effective.amount,
 					staged_enemies.get_enemy(source).get("statuses", {}),
 					staged_party.get_hero(actual_target).get("statuses", {}))
@@ -89,11 +98,25 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 					event.redirected = reaction_result.redirected
 					event.retaliation_damage = reaction_result.retaliation_damage
 					event.retaliatory_damage = reaction_result.retaliatory_damage
+					hit_target = reaction_result.actual_target_position
 				else:
 					var result := CombatEnemyAttacks.new().execute_attacks(staged_party, [attack])
 					if not result.ok:
 						return failure
 					event.applied = result.events[0].applied
+				# Drain is the source's own reward for that one confirmed hit: it
+				# heals the actor that really lost HP (after Guard and Block), not
+				# the announced slot, and a skipped beat or a source slain by
+				# Thorns in the same resolution can never heal or revive anything.
+				if drains and event.applied and not staged_enemies.is_slain(source):
+					if hit_target != actual_target:
+						return failure
+					var receipt := _hit_receipt(recipient_before,
+						staged_party.get_hero(hit_target), damage)
+					if not receipt.get("ok", false) \
+							or not CombatEnemyKeywordRules.new().resolve_drain_after_hit(
+								staged_enemies, source, receipt).get("ok", false):
+						return failure
 				# A slain attacker (Thorns retaliation) never lands its sting, and
 				# the bonus status must not break the batch's atomicity.
 				if sting and not staged_enemies.is_slain(source) \
@@ -152,16 +175,47 @@ static func _stings(enemies: CombatEnemies, source: int) -> bool:
 	return value is bool and value == true
 
 
-## The optional authored flag is content, never a number or a truthy string:
+## True only for a roster record that authors boolean Drain.
+static func _drains(enemies: CombatEnemies, source: int) -> bool:
+	if enemies == null or not enemies.is_valid():
+		return false
+	var value: Variant = enemies.get_enemy(source).get(DRAIN_FIELD, false)
+	return value is bool and value == true
+
+
+## The optional authored flags are content, never numbers or truthy strings:
 ## one malformed record fails the whole phase before any beat is staged.
-static func _bleed_metadata_valid(roster: Array) -> bool:
+static func _attack_metadata_valid(roster: Array) -> bool:
 	for enemy in roster:
 		if not enemy is Dictionary:
 			return false
 		if enemy.has(BLEED_ON_ATTACK_FIELD) \
 				and not (enemy[BLEED_ON_ATTACK_FIELD] is bool):
 			return false
+		if enemy.has(DRAIN_FIELD) and not (enemy[DRAIN_FIELD] is bool):
+			return false
 	return true
+
+
+## Detached CombatStatusAttacks.resolve_vs_hero-shaped receipt for the single hit
+## the phase just dispatched, read from the real recipient's own before/after
+## records. A stale or inverted reading fails closed instead of inventing damage.
+static func _hit_receipt(before: Dictionary, after: Dictionary, damage: int) -> Dictionary:
+	var failure := {"ok": false, "damage": 0, "block_absorbed": 0, "hp_loss": 0}
+	if before.is_empty() or after.is_empty() or damage < 0:
+		return failure
+	var before_hp: Variant = before.get("hp")
+	var before_block: Variant = before.get("block")
+	var after_hp: Variant = after.get("hp")
+	var after_block: Variant = after.get("block")
+	if not before_hp is int or not before_block is int \
+			or not after_hp is int or not after_block is int:
+		return failure
+	var block_absorbed: int = before_block - after_block
+	var hp_loss: int = before_hp - after_hp
+	if block_absorbed < 0 or hp_loss < 0:
+		return failure
+	return {"ok": true, "damage": damage, "block_absorbed": block_absorbed, "hp_loss": hp_loss}
 
 
 ## Add exactly one Bleed to the hero who actually lost HP to the sting, already

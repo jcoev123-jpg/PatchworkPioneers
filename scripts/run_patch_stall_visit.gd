@@ -93,6 +93,28 @@ func buy_patch(patch_id: Variant, expected_visit_id: Variant, expected_node_id: 
 	}
 
 
+## Read-only preflight for the live atomic paid-and-sewn coordinator.
+func preview_purchase(patch_id: Variant, expected_visit_id: Variant, expected_node_id: Variant, expected_snapshot: Variant) -> Dictionary:
+	if not _validate_request(expected_visit_id, expected_node_id, expected_snapshot) or not patch_id is String:
+		return {}
+	for offer in quote().offers:
+		if offer.id == patch_id and not offer.sold and _snapshot.gold >= offer.price:
+			return {"kind": "trinket", "id": patch_id, "price": offer.price}
+	return {}
+
+
+## Consume only an identical successful atomic receipt. Never buy again or
+## publish the detached gross inventory: sewing may have destroyed a patch.
+func reconcile_purchase(receipt: Variant, expected_visit_id: Variant, expected_node_id: Variant, expected_snapshot: Variant) -> bool:
+	if not receipt is Dictionary:
+		return false
+	var expected := preview_purchase(receipt.get("id"), expected_visit_id, expected_node_id, expected_snapshot)
+	if expected.is_empty() or receipt != expected:
+		return false
+	_status = "closed"
+	return true
+
+
 func leave(expected_visit_id: Variant, expected_node_id: Variant, expected_snapshot: Variant) -> Dictionary:
 	if not _validate_request(expected_visit_id, expected_node_id, expected_snapshot):
 		return {"ok": false}

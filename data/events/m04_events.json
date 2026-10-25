@@ -138,6 +138,66 @@
         { "id": "buy_ribbons", "text": "Buy two ribbon bundles for 16 gold (+2 scraps)", "outcome": { "gold": -16, "scraps": 2 } },
         { "id": "sell_masks", "text": "Sell two scraps of festival fabric (+28 gold)", "outcome": { "gold": 28, "scraps": -2 } }
       ]
+    },
+    {
+      "id": "v3_lost_thimble_ball",
+      "title": "The Lost Thimble Ball",
+      "description": "Under a velvet marquee, three button-eyed puppets waltz around a missing silver thimble.",
+      "choices": [
+        { "id": "return_thimble", "text": "Return the thimble for 17 gold", "outcome": { "gold": 17, "scraps": 0 } },
+        { "id": "trade_ribbon", "text": "Trade 12 gold for two ribbon scraps", "outcome": { "gold": -12, "scraps": 2 } },
+        { "id": "walk_past", "text": "Pass the velvet marquee", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_moonlace_tailor",
+      "title": "The Moonlace Tailor",
+      "description": "A pale quiltmaker holds up moonlit lace, its hems fluttering against a great needle hoop.",
+      "choices": [
+        { "id": "offer_scraps", "text": "Sell two scraps for 31 gold", "outcome": { "gold": 31, "scraps": -2 } },
+        { "id": "gather_trimmings", "text": "Gather dropped lace trimmings (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "leave", "text": "Leave the tailor to the moonlight", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_copper_bell_choir",
+      "title": "The Copper-Bell Choir",
+      "description": "Button-eyed ragdolls ring tiny copper bells beneath an oxblood awning.",
+      "choices": [
+        { "id": "sort_bell_tags", "text": "Sort the bell tags for 10 gold", "outcome": { "gold": 10, "scraps": 0 } },
+        { "id": "buy_bell_cord", "text": "Pay 14 gold for two cord scraps", "outcome": { "gold": -14, "scraps": 2 } },
+        { "id": "listen", "text": "Listen to the bells and go", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_stitched_rooftop_market",
+      "title": "Rooftop Stitch Market",
+      "description": "A rope ladder climbs to a sewn rooftop where velvet-winged crows barter loose thread.",
+      "choices": [
+        { "id": "sell_fabric", "text": "Sell one scrap of fine fabric for 19 gold", "outcome": { "gold": 19, "scraps": -1 } },
+        { "id": "collect_strands", "text": "Collect stray thread (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "descend", "text": "Climb back down", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_torn_parasol_caravan",
+      "title": "The Torn Parasol Caravan",
+      "description": "Patch-covered parasols shuffle along on tiny wooden feet through lantern fog.",
+      "choices": [
+        { "id": "repair_frames", "text": "Repair the frames with two scraps for 27 gold", "outcome": { "gold": 27, "scraps": -2 } },
+        { "id": "buy_tassels", "text": "Pay 9 gold for one loose tassel scrap", "outcome": { "gold": -9, "scraps": 1 } },
+        { "id": "pass_by", "text": "Wave the caravan onward", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_silk_mirror_fountain",
+      "title": "The Silk-Mirror Fountain",
+      "description": "A midnight fountain shows unsewn paths in its trembling silk reflection.",
+      "choices": [
+        { "id": "comb_ribbons", "text": "Comb loose ribbons from the water (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "buy_spools", "text": "Give 20 gold for three dry spools (+3 scraps)", "outcome": { "gold": -20, "scraps": 3 } },
+        { "id": "turn_away", "text": "Turn away from the reflection", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }

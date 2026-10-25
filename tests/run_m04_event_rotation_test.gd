@@ -11,6 +11,8 @@ extends SceneTree
 ## invalid/missing/duplicated required catalog fixtures with no RNG drift,
 ## forward-compatible future additions, detached return values, and the existing
 ## RunEventChoice wallet preview/settlement of selected records.
+## The V3-4 batches (six roadside and six midnight-story wallet Events) are each
+## verified by per-ID tables of exact authored text and signed outcomes.
 
 const EVENTS_PATH := "res://data/events/m04_events.json"
 
@@ -56,6 +58,7 @@ func _initialize() -> void:
 	_test_future_catalog_additions()
 	_test_wallet_outcomes_of_selected_records()
 	_test_v3_wallet_event_batch()
+	_test_midnight_story_event_batch()
 	_check(source_document == source_snapshot, "shipped catalog document unchanged by every flow")
 	_report()
 
@@ -652,6 +655,255 @@ func _test_v3_wallet_event_batch() -> void:
 	_check(rotation.get_generic_events() == pool_snapshot, "wallet flows never mutate the rotation listing")
 
 
+## Table-driven verification of the six V3-4 midnight-story wallet-only Events
+## appended to the generic M04 rotation. The expected contract below is an
+## independent copy of the authored story and signed outcomes; it never reads
+## the production catalog or the selector's constants back as its oracle.
+## Only per-ID membership is asserted: no catalog total and no ordered list.
+func _test_midnight_story_event_batch() -> void:
+	var expected: Dictionary = {
+		"v3_lost_thimble_ball": {
+			"title": "The Lost Thimble Ball",
+			"description": "Under a velvet marquee, three button-eyed puppets waltz around a missing silver thimble.",
+			"choices": [
+				{"id": "return_thimble", "text": "Return the thimble for 17 gold", "gold": 17, "scraps": 0},
+				{"id": "trade_ribbon", "text": "Trade 12 gold for two ribbon scraps", "gold": -12, "scraps": 2},
+				{"id": "walk_past", "text": "Pass the velvet marquee", "gold": 0, "scraps": 0},
+			],
+		},
+		"v3_moonlace_tailor": {
+			"title": "The Moonlace Tailor",
+			"description": "A pale quiltmaker holds up moonlit lace, its hems fluttering against a great needle hoop.",
+			"choices": [
+				{"id": "offer_scraps", "text": "Sell two scraps for 31 gold", "gold": 31, "scraps": -2},
+				{"id": "gather_trimmings", "text": "Gather dropped lace trimmings (+1 scrap)", "gold": 0, "scraps": 1},
+				{"id": "leave", "text": "Leave the tailor to the moonlight", "gold": 0, "scraps": 0},
+			],
+		},
+		"v3_copper_bell_choir": {
+			"title": "The Copper-Bell Choir",
+			"description": "Button-eyed ragdolls ring tiny copper bells beneath an oxblood awning.",
+			"choices": [
+				{"id": "sort_bell_tags", "text": "Sort the bell tags for 10 gold", "gold": 10, "scraps": 0},
+				{"id": "buy_bell_cord", "text": "Pay 14 gold for two cord scraps", "gold": -14, "scraps": 2},
+				{"id": "listen", "text": "Listen to the bells and go", "gold": 0, "scraps": 0},
+			],
+		},
+		"v3_stitched_rooftop_market": {
+			"title": "Rooftop Stitch Market",
+			"description": "A rope ladder climbs to a sewn rooftop where velvet-winged crows barter loose thread.",
+			"choices": [
+				{"id": "sell_fabric", "text": "Sell one scrap of fine fabric for 19 gold", "gold": 19, "scraps": -1},
+				{"id": "collect_strands", "text": "Collect stray thread (+1 scrap)", "gold": 0, "scraps": 1},
+				{"id": "descend", "text": "Climb back down", "gold": 0, "scraps": 0},
+			],
+		},
+		"v3_torn_parasol_caravan": {
+			"title": "The Torn Parasol Caravan",
+			"description": "Patch-covered parasols shuffle along on tiny wooden feet through lantern fog.",
+			"choices": [
+				{"id": "repair_frames", "text": "Repair the frames with two scraps for 27 gold", "gold": 27, "scraps": -2},
+				{"id": "buy_tassels", "text": "Pay 9 gold for one loose tassel scrap", "gold": -9, "scraps": 1},
+				{"id": "pass_by", "text": "Wave the caravan onward", "gold": 0, "scraps": 0},
+			],
+		},
+		"v3_silk_mirror_fountain": {
+			"title": "The Silk-Mirror Fountain",
+			"description": "A midnight fountain shows unsewn paths in its trembling silk reflection.",
+			"choices": [
+				{"id": "comb_ribbons", "text": "Comb loose ribbons from the water (+1 scrap)", "gold": 0, "scraps": 1},
+				{"id": "buy_spools", "text": "Give 20 gold for three dry spools (+3 scraps)", "gold": -20, "scraps": 3},
+				{"id": "turn_away", "text": "Turn away from the reflection", "gold": 0, "scraps": 0},
+			],
+		},
+	}
+	## Independent per-ID seeds for the forced single-eligible selection replay.
+	var seeds: Dictionary = {
+		"v3_lost_thimble_ball": 62001,
+		"v3_moonlace_tailor": 62002,
+		"v3_copper_bell_choir": 62003,
+		"v3_stitched_rooftop_market": 62004,
+		"v3_torn_parasol_caravan": 62005,
+		"v3_silk_mirror_fountain": 62006,
+	}
+	var rotation := RunM04EventRotation.new()
+	var listing: Array = rotation.get_generic_events()
+	var ids: Array = rotation.get_generic_event_ids()
+	var listing_snapshot: Array = listing.duplicate(true)
+	var rng_guard := RandomNumberGenerator.new()
+	rng_guard.seed = 731731
+	var guard_state := rng_guard.state
+	for event_id in expected:
+		var contract: Dictionary = expected[event_id]
+		# Exactly one sourced record and one generic rotation record per ID.
+		var sourced_matches := _matches(_source_events(), event_id)
+		_check(sourced_matches.size() == 1, "exactly one sourced record for " + event_id)
+		var listed_matches := _matches(listing, event_id)
+		_check(listed_matches.size() == 1, "exactly one generic rotation record for " + event_id)
+		_check(ids.count(event_id) == 1, "the generic ID listing carries " + event_id + " exactly once")
+		if sourced_matches.size() != 1 or listed_matches.size() != 1:
+			continue
+		var source_record: Dictionary = sourced_matches[0]
+		var record: Dictionary = listed_matches[0]
+		_check(record == source_record, "the rotation copies the authored record: " + event_id)
+		_check(record.size() == 4 and record.has("id") and record.has("title")
+			and record.has("description") and record.has("choices"),
+			"authored record carries exactly id/title/description/choices: " + event_id)
+		_check(record.get("title") == contract["title"], "authored title: " + event_id)
+		_check(record.get("description") == contract["description"], "authored description: " + event_id)
+		var choices: Array = record.get("choices", [])
+		_check(choices.size() == 3, "three authored choices: " + event_id)
+		var by_choice: Dictionary = {}
+		for choice in choices:
+			_check(choice is Dictionary, "every choice is an object: " + event_id)
+			if not choice is Dictionary:
+				continue
+			var choice_key: Variant = (choice as Dictionary).get("id")
+			_check(choice_key is String, "every choice has a string ID: " + event_id)
+			if not choice_key is String:
+				continue
+			_check(not by_choice.has(choice_key), "choice IDs are distinct: " + event_id + " / " + str(choice_key))
+			by_choice[choice_key] = choice
+		_check(by_choice.size() == 3, "three distinct choice IDs: " + event_id)
+		for choice_def in contract["choices"]:
+			var choice_id: String = choice_def["id"]
+			_check(by_choice.has(choice_id), "authored choice present: " + event_id + " / " + choice_id)
+			if not by_choice.has(choice_id):
+				continue
+			var choice: Dictionary = by_choice[choice_id]
+			_check(choice.get("text") == choice_def["text"],
+				"authored choice text: " + event_id + " / " + choice_id)
+			var outcome: Variant = choice.get("outcome")
+			_check(outcome is Dictionary, "choice outcome is an object: " + event_id + " / " + choice_id)
+			if not outcome is Dictionary:
+				continue
+			var outcome_dict: Dictionary = outcome
+			_check(outcome_dict.size() == 2 and outcome_dict.has("gold") and outcome_dict.has("scraps"),
+				"exact signed outcome keys: " + event_id + " / " + choice_id)
+			# JSON parsing may deliver whole numbers as floats; the authored
+			# contract is a whole signed amount either way.
+			var gold_amount: Variant = _signed_amount(outcome_dict.get("gold"))
+			var scraps_amount: Variant = _signed_amount(outcome_dict.get("scraps"))
+			_check(gold_amount != null and scraps_amount != null,
+				"whole-number outcome amounts: " + event_id + " / " + choice_id)
+			_check(gold_amount == choice_def["gold"] and scraps_amount == choice_def["scraps"],
+				"authored signed outcome: " + event_id + " / " + choice_id)
+		# Excluding every other generic ID leaves only this event, which the real
+		# selector must return after exactly one range draw.
+		var excluded: Array = ids.duplicate()
+		excluded.erase(event_id)
+		var seed_value: int = seeds[event_id]
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = seed_value
+		oracle.randi_range(0, 0)
+		var picked := rotation.select_event(rng, excluded)
+		_check(picked.get("ok") == true, "forced selection succeeds: " + event_id)
+		var selected: Dictionary = picked.get("event", {})
+		_check(selected.get("id") == event_id, "forced selection returns " + event_id)
+		_check(rng.state == oracle.state, "forced selection consumes exactly one range draw: " + event_id)
+		var replay_rng := RandomNumberGenerator.new()
+		replay_rng.seed = seed_value
+		var replay := rotation.select_event(replay_rng, excluded)
+		_check(replay.get("ok") == true and replay.get("event") == selected
+			and replay_rng.state == rng.state,
+			"identical seed and exclusions replay " + event_id)
+		# The returned record is a detached copy of the authored record.
+		var selected_snapshot: Dictionary = selected.duplicate(true)
+		selected["title"] = "MUTATED"
+		selected["choices"] = []
+		selected["injected"] = true
+		var detached_rng := RandomNumberGenerator.new()
+		detached_rng.seed = seed_value
+		var detached := rotation.select_event(detached_rng, excluded)
+		_check(detached.get("event") == selected_snapshot and detached.get("event") == source_record,
+			"the selected " + event_id + " is a detached authored copy")
+		# Wallet preview and one-shot settlement for all three authored choices.
+		var funded := {"gold": 100, "scraps": 5}
+		var funded_snapshot: Dictionary = funded.duplicate(true)
+		var forecast_service := RunEventChoice.new(source_record)
+		_check(forecast_service.is_valid(), "authored record is a valid RunEventChoice: " + event_id)
+		var preview := forecast_service.preview_wallet_choices(funded)
+		_check(preview.get("ok") == true and preview.get("event_id") == event_id,
+			"funded preview succeeds: " + event_id)
+		var rows := _preview_map(preview)
+		_check(rows.size() == 3, "funded preview lists all three choices: " + event_id)
+		var fallback_def: Dictionary = {}
+		for choice_def in contract["choices"]:
+			if int(choice_def["gold"]) == 0 and int(choice_def["scraps"]) == 0:
+				fallback_def = choice_def
+		_check(not fallback_def.is_empty(), "each event keeps one free fallback choice: " + event_id)
+		var zero := {"gold": 0, "scraps": 0}
+		for choice_def in contract["choices"]:
+			var choice_id: String = choice_def["id"]
+			var gold_delta: int = choice_def["gold"]
+			var scraps_delta: int = choice_def["scraps"]
+			var after := {"gold": 100 + gold_delta, "scraps": 5 + scraps_delta}
+			var row: Dictionary = rows.get(choice_id, {})
+			_check(row.get("gold_delta") == gold_delta and row.get("scraps_delta") == scraps_delta,
+				"funded preview reports authored deltas: " + event_id + " / " + choice_id)
+			_check(row.get("affordable") == true and row.get("wallet") == after,
+				"funded preview forecasts the exact balance: " + event_id + " / " + choice_id)
+			var committed := RunEventChoice.new(source_record)
+			var receipt := committed.choose_with_wallet(choice_id, funded)
+			_check(receipt.get("ok") == true and receipt.get("event_id") == event_id
+				and receipt.get("choice_id") == choice_id,
+				"exact authored claim: " + event_id + " / " + choice_id)
+			_check(receipt.get("wallet") == after, "the claim applies the authored deltas once: "
+				+ event_id + " / " + choice_id)
+			_check(committed.is_claimed() and not committed.is_valid(),
+				"the claim latches and closes the visit: " + event_id + " / " + choice_id)
+			var replay_claim := committed.choose_with_wallet(choice_id, funded)
+			_check(replay_claim.get("ok") == false and replay_claim.get("wallet") == funded,
+				"the settled claim cannot be replayed: " + event_id + " / " + choice_id)
+			# Signed debits at an empty wallet: refused without consuming the visit,
+			# then the same selector settles its authored free fallback.
+			var paid := gold_delta < 0 or scraps_delta < 0
+			var zero_snapshot: Dictionary = zero.duplicate(true)
+			var scarce := RunEventChoice.new(source_record)
+			var scarce_rows := _preview_map(scarce.preview_wallet_choices(zero))
+			_check(scarce_rows.get(choice_id, {}).get("affordable") == (not paid),
+				"zero-wallet affordability matches the signed outcome: " + event_id + " / " + choice_id)
+			if paid:
+				var denied := scarce.choose_with_wallet(choice_id, zero)
+				_check(denied.get("ok") == false and denied.get("wallet") == zero,
+					"a signed debit is refused at an empty wallet: " + event_id + " / " + choice_id)
+				_check(not scarce.is_claimed() and scarce.is_valid(),
+					"a refused debit keeps the visit open: " + event_id + " / " + choice_id)
+				_check(not fallback_def.is_empty(), "a refused debit has a free fallback: "
+					+ event_id + " / " + choice_id)
+				if not fallback_def.is_empty():
+					var fallback_id: String = fallback_def["id"]
+					var fallback := scarce.choose_with_wallet(fallback_id, zero)
+					_check(fallback.get("ok") == true and fallback.get("wallet") == {
+						"gold": int(fallback_def["gold"]), "scraps": int(fallback_def["scraps"])},
+						"the same selector settles the free fallback: " + event_id + " / " + choice_id)
+					_check(scarce.is_claimed() and scarce.choose_with_wallet(fallback_id, zero).get("ok") == false,
+						"the fallback claim is single: " + event_id + " / " + choice_id)
+			else:
+				var granted := scarce.choose_with_wallet(choice_id, zero)
+				_check(granted.get("ok") == true and granted.get("wallet") == {
+					"gold": gold_delta, "scraps": scraps_delta},
+					"a nonnegative choice settles at an empty wallet: " + event_id + " / " + choice_id)
+				_check(scarce.is_claimed() and scarce.choose_with_wallet(choice_id, zero).get("ok") == false,
+					"the empty-wallet claim cannot be replayed: " + event_id + " / " + choice_id)
+			_check(zero == zero_snapshot, "the caller's empty wallet is unchanged: "
+				+ event_id + " / " + choice_id)
+		# An unknown choice ID is denied without consuming the visit.
+		var stranger := RunEventChoice.new(source_record)
+		var unknown_claim := stranger.choose_with_wallet("unlisted_choice", zero)
+		_check(unknown_claim.get("ok") == false and unknown_claim.get("wallet") == zero
+			and not stranger.is_claimed() and stranger.is_valid(),
+			"an unknown choice ID is denied without consuming the visit: " + event_id)
+		_check(forecast_service.is_valid(), "previews never consume the visit: " + event_id)
+		_check(funded == funded_snapshot, "the caller's funded wallet is unchanged: " + event_id)
+	_check(rotation.get_generic_events() == listing_snapshot,
+		"the midnight-story batch never mutates the rotation listing")
+	_check(rng_guard.state == guard_state,
+		"selections, previews and claims never touch an unrelated run RNG")
+
+
 ## Deterministic seed per new event id for forced selections.
 func _event_seed(event_id: String) -> int:
 	match event_id:
@@ -713,6 +965,18 @@ func _future_event() -> Dictionary:
 			{"id": "pass", "text": "Pass by", "outcome": {"gold": 0, "scraps": 0}},
 		],
 	}
+
+
+## The authored signed amount as an int, or null when the JSON value is not a
+## finite whole number. JSON may deliver whole numbers as floats.
+func _signed_amount(value: Variant) -> Variant:
+	if typeof(value) == TYPE_INT:
+		return value
+	if typeof(value) == TYPE_FLOAT:
+		var number: float = value
+		if is_finite(number) and floor(number) == number and absf(number) <= 9007199254740992.0:
+			return int(number)
+	return null
 
 
 func _matches(listing: Array, event_id: String) -> Array:

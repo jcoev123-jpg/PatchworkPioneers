@@ -9,8 +9,8 @@ const EXPECTED_ROUTE_LABELS := {
 	"Unpicker": "Unpicker",
 	"Fight": "Fight",
 	"Elite": "Elite fight",
-	"Rest": "Rest stop",
-	"Shop": "Shop",
+	"Rest": "Rest stop / Campfire",
+	"Shop": "Shop / Peddler",
 	"Event": "Event",
 	"Treasure": "Treasure",
 	"Boss": "Boss fight",
@@ -55,6 +55,51 @@ func _button(app, id: String) -> Button:
 			return button
 	_check(false, "legal route button exists: " + id)
 	return null
+
+
+func _projected_book(app) -> void:
+	var before := _record(app)
+	var legal: Array = app.run_map.get_legal_choices()
+	_check(not legal.is_empty() and app.route_buttons.size() == legal.size(), "nonempty authentic projected chooser")
+	var shown: Array = []
+	for button in app.route_buttons:
+		var id: String = button.get_meta("route_id")
+		var node: Dictionary = app.run_map.get_node(id)
+		_check(not node.is_empty() and legal.has(id), "projection has genuine legal source")
+		if node.is_empty():
+			continue
+		var kind: String = node.type
+		var expected: String = {"Rest": "Campfire", "Shop": "Peddler"}.get(kind, kind)
+		shown.append(id)
+		_check(button.get_meta("route_kind") == kind and button.get_meta("v3_kind") == expected
+			and button.text == EXPECTED_ROUTE_LABELS.get(kind, kind)
+			and button.get_meta("route_label") == button.text, "source kind and independent projected caption/metadata")
+		if kind == "Rest":
+			_check(button.tooltip_text == "Campfire preview: opens the legacy Rest screen to heal or upgrade a card.", "honest legacy Rest help")
+		elif kind == "Shop":
+			_check(button.tooltip_text == "Peddler preview: opens the legacy Shop screen to buy cards or remove a card.", "honest legacy Shop help")
+		var font: Font = button.get_theme_font("font")
+		_check(font.get_string_size(button.text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+			button.get_theme_font_size("font_size")).x <= button.size.x - 72,
+			"full projected caption fits beside original token")
+	_check(shown == legal, "projected chooser preserves legal source order")
+	var projected := RunV3StopChoiceProjection.project_legal_choices(app.run_map)
+	_check(app._authenticated_route_choices(app.run_map, projected) == projected, "real projection authenticates")
+	for field in ["id", "type", "v3_kind"]:
+		var forged := projected.duplicate(true)
+		forged[0][field] = "foreign"
+		_check(app._authenticated_route_choices(app.run_map, forged).is_empty(), "forged projection rejected: " + field)
+	var foreign := RunMap.new()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = app.run_seed
+	_check(foreign.generate(rng), "foreign map is genuinely generated")
+	_check(app._authenticated_route_choices(foreign, projected).is_empty(), "identical-seed foreign map rejected")
+	_check(app._authenticated_route_choices(app.run_map, projected.slice(1)).is_empty(), "incomplete projection rejected")
+	if projected.size() > 1:
+		var reordered := projected.duplicate(true)
+		reordered.reverse()
+		_check(app._authenticated_route_choices(app.run_map, reordered).is_empty(), "reordered projection rejected")
+	_check(_record(app) == before, "projection reads and rejections preserve every authority and RNG")
 
 
 func _clean(app) -> void:
@@ -480,6 +525,7 @@ func _run() -> void:
 				and app.run_deck.size() == 12 and app.party_carryover is RunTornCarryover,
 				"Start publishes canonical seeded map, twelve cards and three heroes before combat")
 			_opening_book(app)
+			_projected_book(app)
 			_slate_snapshot_fallback(app)
 			# Every mounted patch is reachable in authored order by Tab and back by
 			# reverse Tab, without spending any route or RNG state.
@@ -535,6 +581,15 @@ func _run() -> void:
 			var start_rng: int = shared.state
 			var kind: String = fixture[0]
 			var action := _button(app, fixture[2])
+			var route_kind: String = action.get_meta("route_kind")
+			action.set_meta("route_kind", "foreign")
+			action.set_meta("v3_kind", route_kind)
+			var forged_before := _record(app)
+			_check(not app._choose_route(fixture[2]) and _record(app) == forged_before,
+				"detached v3 kind cannot authorize a false source kind")
+			action.set_meta("route_kind", route_kind)
+			action.set_meta("v3_kind", {"Rest": "Campfire", "Shop": "Peddler"}.get(route_kind, route_kind))
+			stale.append(action.pressed.get_connections()[0].callable)
 			action.disabled = true
 			var disabled_before := _record(app)
 			_check(not app._choose_route(fixture[2]) and _record(app) == disabled_before, "disabled otherwise-legal opening rejects without mutation")
@@ -572,7 +627,10 @@ func _run() -> void:
 				await _activate(app.rest_continue_button, mode == 1)
 			elif kind == "Unpicker":
 				_check(app.unpicker_visit.is_valid() and app.unpicker_view.is_visible_in_tree(), "real seeded Unpicker mounted")
-				stale.append(app.unpicker_leave_button.pressed.get_connections()[0].callable)
+				var source: Dictionary = app.unpicker_visit.read_state()
+				stale.append(app.unpicker_view.decision_requested.get_connections()[0].callable.bind({
+					"action": "leave", "visit_id": source.visit_id, "node_id": source.node_id,
+					"expected_snapshot": source.duplicate(true)}))
 				await _activate(app.unpicker_leave_button, mode == 1)
 			elif kind == "Shop":
 				_check(app.shop_visit != null and app.shop_purchases != null and app.shop_view.is_visible_in_tree(),
@@ -591,6 +649,10 @@ func _run() -> void:
 					and app.run_heroes == heroes and app.run_deck == cards and shared.state == start_rng,
 					"placeholder has no effects and mounts actual connected choices")
 			if kind not in ["Fight", "Elite"]:
+				_projected_book(app)
+				var obsolete := RunV3StopChoiceProjection.project_legal_choices(map)
+				_check(not obsolete.is_empty() and app._authenticated_route_choices(app.run_map, obsolete).is_empty(),
+					"authentic opening projection becomes stale after route movement")
 				_check(app.run_map.get_legal_choices().has(fixture[3])
 					and app.run_map.get_node(fixture[3]).type == "Fight", "next Fight is an actual connected node")
 				start_rng = shared.state

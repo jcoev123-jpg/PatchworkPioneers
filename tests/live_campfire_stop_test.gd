@@ -49,21 +49,36 @@ func _camp_enter(atlas: bool) -> void:
 		and not is_instance_valid(app.shop_view), "only Heal and Leave mounted")
 	var viewport := Rect2(Vector2.ZERO, Vector2(1280, 720))
 	_check(viewport.encloses(app.campfire_view.get_global_rect())
-		and not app.campfire_heal_button.get_global_rect().intersects(app.campfire_leave_button.get_global_rect()),
+		and not app.campfire_view.heal_button.get_global_rect().intersects(app.campfire_view.leave_button.get_global_rect()),
 		"compact visit and separate reachable actions fit the viewport")
-	app.campfire_heal_button.grab_focus()
+	_check(app.campfire_view is LiveCampfirePanel and app.campfire_view.position == Vector2(200, 60)
+		and app.campfire_view.size == Vector2(880, 600), "real route mounts authored sewn panel")
+	_check(app.campfire_heal_button == app.campfire_view.heal_button
+		and app.campfire_leave_button == app.campfire_view.leave_button, "existing aliases reference sewn controls")
+	for i in range(3):
+		var hero: Dictionary = before.heroes[i]
+		var forecast := mini(hero.max_hp, maxi(1, hero.hp) + int(floor(hero.max_hp * 0.3)))
+		var actor_name := str(hero.get("name", "")).strip_edges()
+		if actor_name.is_empty():
+			actor_name = str(hero.id).replace("_", " ").capitalize()
+		var note := "  ·  TORN → REVIVED" if hero.hp == 0 else ""
+		var caption := "%s    %d → %d / %d HP%s" % [actor_name, hero.hp, forecast, hero.max_hp, note]
+		_check(app.campfire_view.hero_labels[i].text == caption, "real hero forecast mounted")
+	app.campfire_view.heal_button.grab_focus()
 	await _key(KEY_TAB)
-	_check(app.campfire_leave_button.has_focus(), "Tab reaches Leave")
+	_check(app.campfire_view.leave_button.has_focus(), "Tab reaches Leave")
 	await _key(KEY_TAB)
-	_check(app.campfire_heal_button.has_focus(), "Tab cycles to Heal")
+	_check(app.campfire_view.heal_button.has_focus(), "Tab cycles to Heal")
 
 
 func _camp_negatives() -> void:
-	var callback: Callable = app.campfire_heal_button.pressed.get_connections()[0].callable
+	var callback: Callable = func():
+		var current: Callable = app.campfire_view._connections[app.campfire_view.heal_button]
+		current.call()
 	var original: Dictionary = app._sewing_context()
-	app.campfire_heal_button.disabled = true
+	app.campfire_view.heal_button.disabled = true
 	_refuse(callback, "disabled control")
-	app.campfire_heal_button.disabled = false
+	app.campfire_view.heal_button.disabled = false
 	app.campfire_view.hide()
 	_refuse(callback, "hidden visit")
 	app.campfire_view.show()
@@ -99,13 +114,29 @@ func _camp_negatives() -> void:
 	app.run_deck.append("forged")
 	_refuse(callback, "drifted deck")
 	app.run_deck.pop_back()
-	var fake := Button.new()
-	app.campfire_view.add_child(fake)
-	_refuse(app._campfire_action.bind(fake, app.campfire_view, app.campfire_visit), "forged control")
-	fake.free()
+	var intent := {"action": "heal", "source_visit": app.campfire_visit,
+		"node_id": fixture.id, "expected_heroes": original.heroes.duplicate(true)}
+	var bound: Dictionary = app.campfire_visit.read_state()
+	_refuse(app._campfire_action.bind(intent, app.campfire_view, app.campfire_visit, bound),
+		"forged direct control request without panel submission")
+	for key in ["action", "source_visit", "node_id", "expected_heroes", "extra"]:
+		var forged := intent.duplicate(true)
+		match key:
+			"action": forged.action = "buy"
+			"source_visit": forged.source_visit = RunCampfireVisit.new(fixture.id, original.heroes)
+			"node_id": forged.node_id = fixture.next
+			"expected_heroes": forged.expected_heroes[0].hp -= 1
+			"extra": forged.extra = true
+		app.campfire_view._submitted = true
+		_refuse(app._campfire_action.bind(forged, app.campfire_view, app.campfire_visit, bound),
+			"forged intent " + key)
+	var retired: Callable = app.campfire_view._connections[app.campfire_view.heal_button]
+	app.campfire_view.bind(app.campfire_visit)
+	_refuse(retired, "retired panel callback generation")
 	app.campfire_visit._heroes[0].hp -= 1
 	_refuse(callback, "forged service roster")
 	app.campfire_visit._heroes = original.heroes.duplicate(true)
+	app.campfire_view.bind(app.campfire_visit)
 	_check(app._sewing_context() == original, "negative fixtures restore exact authority")
 
 
@@ -138,8 +169,8 @@ func _camp_scenario(connected: bool, heal: bool, keyboard: bool) -> Array:
 	if heal:
 		for hero in expected:
 			hero.hp = mini(hero.max_hp, maxi(1, hero.hp) + int(floor(hero.max_hp * 0.3)))
-	var button: Button = app.campfire_heal_button if heal else app.campfire_leave_button
-	var callback: Callable = button.pressed.get_connections()[0].callable
+	var button: Button = app.campfire_view.heal_button if heal else app.campfire_view.leave_button
+	var callback: Callable = app.campfire_view._connections[button]
 	if keyboard:
 		button.grab_focus()
 		await _key(KEY_SPACE)
@@ -175,7 +206,9 @@ func _camp_scenario(connected: bool, heal: bool, keyboard: bool) -> Array:
 	replay.append(app.run_rng.state)
 	app._return_to_title()
 	await _frames()
-	_check(app.campfire_view == null and app._campfire_visits.is_empty(), "title clears visit witnesses")
+	_check(app.campfire_view == null and app.campfire_visit == null
+		and app.campfire_heal_button == null and app.campfire_leave_button == null
+		and app._campfire_original.is_empty() and app._campfire_visits.is_empty(), "title clears visit witnesses")
 	app.free()
 	await _frames()
 	return replay
