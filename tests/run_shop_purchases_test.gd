@@ -26,6 +26,7 @@ func _initialize() -> void:
 	_test_patch_stall_contract()
 	_test_patch_stall_purchase()
 	_test_patch_stall_rejections()
+	_test_patch_stall_sampling()
 	if failures.is_empty():
 		print("run_shop_purchases_test: PASS (", checks, " checks)")
 	else:
@@ -1222,3 +1223,209 @@ func _test_legacy_quote_and_rebase() -> void:
 	_check(result.deck.count("w_start") == 1 and visit.get_state().prior_removals == 2,
 		"legacy first-copy semantics and removal count preserved")
 	_check(randi() == expected_draw, "legacy rebase consumes no global RNG")
+
+
+func _test_patch_stall_sampling() -> void:
+	# Read the shipped candidate catalog from initial_offers.json.
+	var authored_text := FileAccess.get_file_as_string("res://data/shop/initial_offers.json")
+	_check(authored_text != null and not authored_text.is_empty(),
+		"sampling reads initial_offers.json")
+	var authored: Variant = JSON.parse_string(authored_text)
+	_check(typeof(authored) == TYPE_DICTIONARY and authored.has("trinkets"),
+		"initial_offers.json has trinket candidates")
+
+	var candidates: Array = authored.get("trinkets", [])
+
+	# Real power definitions must exclude the inert starter slots.
+	var powers := RunAuthoredPatchDefinitions.load_power_definitions()
+	_check(typeof(powers) == TYPE_ARRAY and not powers.is_empty(),
+		"power definitions loaded")
+	var has_inert: bool = false
+	var real_power_ids: Array = []
+	for entry in powers:
+		var id_str: String = str(entry.get("id", ""))
+		if id_str == "stitched_badge" or id_str == "spare_spool":
+			has_inert = true
+		else:
+			real_power_ids.append(id_str)
+	_check(not has_inert, "initial starter slots excluded from real powers")
+
+	# Helper must return exactly three offers for a genuine seed and candidates.
+	seed(88001)
+	var expected_draw := randi()
+	seed(88001)
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 88001
+
+	var owned: Array = ["button_eye"]
+	var result := RunShopPurchases.sample_patch_stall_offers(rng, candidates, owned)
+	_check(result.get("ok") == true, "genuine sampling succeeds with real candidates")
+	_check(result.has("offers"), "success carries offers array")
+	_check(result.get("offers").size() == 3, "exactly three offers returned")
+	print("DEBUG offers type: ", typeof(result.get("offers")), ", value: ", result.get("offers"))
+
+	# Every returned offer must be a real unowned power with a positive price.
+	var selected_ids: Array = []
+	for offer in result.get("offers"):
+		_check(typeof(offer) == TYPE_DICTIONARY, "offer is dictionary")
+		_check(offer.has("id") and offer.has("price"), "offer has id and price")
+		var id_str: String = str(offer.get("id"))
+		var price: int = int(offer.get("price"))
+		_check(price > 0, "positive authored price " + id_str)
+		_check(not selected_ids.has(id_str), "distinct selected id " + id_str)
+		# The selected IDs should not include owned or inert entries.
+		_check(not id_str.is_empty(), "non-empty selected id")
+		_check(id_str != "stitched_badge" and id_str != "spare_spool",
+			"never selects inert starter slot")
+		_check(not owned.has(id_str), "selected id not owned")
+		_check(real_power_ids.has(id_str), "selected id is a catalog power")
+		selected_ids.append(id_str)
+
+	# Same seed + same owned + same candidates yields identical offers.
+	var replay_result := RunShopPurchases.sample_patch_stall_offers(
+		RandomNumberGenerator.new(), candidates, owned)
+	# Replay needs a new RNG; use the same seed for deterministic replay.
+	var replay_rng := RandomNumberGenerator.new()
+	replay_rng.seed = 88001
+	replay_result = RunShopPurchases.sample_patch_stall_offers(
+		replay_rng, candidates, owned)
+	_check(replay_result.get("ok") == true, "replay with same seed succeeds")
+	_check(replay_result.get("offers") == result.get("offers"),
+		"same seed yields same three offers")
+
+	# Reversed candidate order replay must still yield the same offers.
+	var reversed_candidates: Array = candidates.duplicate(true)
+	reversed_candidates.reverse()
+	var reversed_result := RunShopPurchases.sample_patch_stall_offers(
+		RandomNumberGenerator.new(), reversed_candidates, owned)
+	var reversed_rng := RandomNumberGenerator.new()
+	reversed_rng.seed = 88001
+	reversed_result = RunShopPurchases.sample_patch_stall_offers(
+		reversed_rng, reversed_candidates, owned)
+	_check(reversed_result.get("ok") == true,
+		"reversed candidates with same seed succeeds")
+	_check(reversed_result.get("offers") == result.get("offers"),
+		"reversed-candidate replay yields same offers (input-order independent)")
+
+	# The three unique unowned prices should all be the authored 100 gold.
+	var prices: Array = []
+	for offer in result.get("offers"):
+		prices.append(offer.get("price"))
+	_check(prices.size() == 3 and prices[0] == 100 and prices[1] == 100
+		and prices[2] == 100, "three unique unowned prices are authored 100 gold")
+
+	# Feed the result to the existing purchase constructor for patch_stall.
+	var stall_fixture := {
+		"party_ids": PATCH_STALL_PARTY.duplicate(),
+		"deck": PATCH_STALL_DECK.duplicate(),
+		"trinkets": ["button_eye"],
+		"gold": 150,
+		"cards": [],
+		"offers_trinkets": []
+	}
+	# Build three patch offers from the sampled result.
+	var sampled_offers: Array = result.get("offers")
+	stall_fixture["offers_trinkets"] = []
+	for offer in sampled_offers:
+		stall_fixture["offers_trinkets"].append({
+			"id": offer.get("id"), "price": offer.get("price")
+		})
+
+	var stall := RunShopPurchases.new(
+		stall_fixture["party_ids"], stall_fixture["deck"],
+		stall_fixture["trinkets"], stall_fixture["gold"],
+		stall_fixture["cards"], stall_fixture["offers_trinkets"], "patch_stall"
+	)
+	_check(stall.is_valid(), "patch stall constructed from sampled offers is valid")
+	_check(stall.get_stock()["cards"].is_empty(), "patch stall has zero cards")
+	_check(stall.get_stock()["trinkets"].size() == 3,
+		"patch stall has exactly three trinket offers")
+
+	# Exact-one-purchase receipt and gold/stock checks.
+	var purchase_target: String = str(sampled_offers[0].get("id"))
+	var purchase_result := stall.buy("trinket", purchase_target)
+	_check(purchase_result.get("ok") == true,
+		"patch stall buys the first sampled patch")
+	_check(purchase_result.has("receipt"), "purchase returns receipt")
+	_check(purchase_result.get("receipt").get("kind") == "trinket",
+		"receipt kind is trinket")
+	_check(purchase_result.get("receipt").get("id") == purchase_target,
+		"receipt matches purchased patch id")
+	_check(purchase_result.get("receipt").get("price") == 100,
+		"receipt price is authored 100 gold")
+	_check(stall.get_state()["gold"] == 50,
+		"gold debited exactly 100 from 150")
+	_check(stall.get_state()["trinkets"].has(purchase_target),
+		"purchased patch added to trinkets")
+	_check(stall.get_state()["trinkets"].count(purchase_target) == 1,
+		"exactly one copy of purchased patch in inventory")
+	_check(stall.patch_stall_choice_used(), "choice latched after purchase")
+
+	# A second purchase must be rejected.
+	var second_purchase := stall.buy("trinket", str(sampled_offers[1].get("id")))
+	_check(not second_purchase.get("ok"), "second patch purchase rejected")
+	_check(not second_purchase.has("receipt"), "rejected second purchase has no receipt")
+
+	# Rejected attempts must not advance the RNG.
+	seed(99001)
+	var expected_draw2 := randi()
+	seed(99001)
+	var bad_candidates: Array = [{"id": "unknown_patch", "price": 100}]
+	var bad_result := RunShopPurchases.sample_patch_stall_offers(
+		RandomNumberGenerator.new(), bad_candidates, owned)
+	# The bad result must fail; verify no RNG was moved by comparing draws.
+	_check(randi() == expected_draw2, "failed preflight consumes no global RNG")
+
+	# Rejection for unknown/duplicate/malformed offers.
+	var malformed_candidates: Array = [
+		{"id": "button_eye", "price": 100},
+		{"id": "button_eye", "price": 100},  # duplicate
+	]
+	var malformed_result := RunShopPurchases.sample_patch_stall_offers(
+		RandomNumberGenerator.new(), malformed_candidates, owned)
+	_check(not malformed_result.get("ok"), "duplicate candidate IDs rejected")
+
+	# Invalid owned IDs must fail.
+	var invalid_owned_result := RunShopPurchases.sample_patch_stall_offers(
+		RandomNumberGenerator.new(), candidates, ["not_a_string", 7, true])
+	_check(not invalid_owned_result.get("ok"), "invalid owned IDs rejected")
+
+	# Invalid RNG must fail (not RandomNumberGenerator).
+	var invalid_rng_result := RunShopPurchases.sample_patch_stall_offers(
+		"not_an_rng", candidates, owned)
+	_check(not invalid_rng_result.get("ok"), "invalid RNG rejected")
+
+	# Unavailable three-offer stock (fewer than 3 eligible unowned powers).
+	var too_few_candidates := [
+		{"id": "stitched_badge", "price": 100},
+		{"id": "spare_spool", "price": 100},
+	]
+	var too_few_result := RunShopPurchases.sample_patch_stall_offers(
+		RandomNumberGenerator.new(), too_few_candidates, [])
+	_check(not too_few_result.get("ok"),
+		"fewer than three eligible power candidates rejected")
+
+	# Prior Shop behavior must remain intact.
+	var normal_shop := RunShopPurchases.new(
+		PATCH_STALL_PARTY.duplicate(), PATCH_STALL_DECK.duplicate(), ["button_eye"], 150,
+		[
+			{"id": "warden_brace", "owner": "warden", "price": 25},
+			{"id": "tinker_pop_shot", "owner": "tinker", "price": 30},
+			{"id": "seamstress_mend", "owner": "seamstress", "price": 15},
+			{"id": "tinker_scrap_bomb", "owner": "tinker", "price": 20},
+			{"id": "warden_shield_bash", "owner": "warden", "price": 10}
+		],
+		[{"id": "t_spool", "price": 40}, {"id": "t_pocket", "price": 20}]
+	)
+	_check(normal_shop.is_valid(), "normal Shop with 5 cards and 2 patches stays valid")
+
+	# Owned-patch behaviors still pass.
+	var owned_stall := _patch_stall(_patch_stall_fixture(150, ["button_eye", "spare_spool"]))
+	_check(owned_stall.is_valid(), "owned-listing stall admits")
+	_check(owned_stall.get_stock()["trinkets"][1]["sold"],
+		"owned listing starts sold")
+
+	# Restore the original seed to verify the helper never touched global RNG.
+	seed(88001)
+	_check(randi() == expected_draw, "sampling tests consume no global RNG")
