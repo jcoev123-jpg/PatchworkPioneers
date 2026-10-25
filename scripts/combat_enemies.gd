@@ -102,6 +102,16 @@ func gain_block(position: int, amount: int) -> bool:
 	return true
 
 
+## Restore HP on a living slot, clamped to max_hp. Healing never revives a slain
+## enemy, never overheals, and preserves position, id, Block, metadata and statuses.
+func heal(position: int, amount: int) -> bool:
+	if not _can_target(position, amount):
+		return false
+	var enemy := _enemies[position - 1]
+	enemy["hp"] += mini(amount, enemy["max_hp"] - enemy["hp"])
+	return true
+
+
 func is_slain(position: int) -> bool:
 	return _valid_position(position) and _enemies[position - 1]["hp"] == 0
 
