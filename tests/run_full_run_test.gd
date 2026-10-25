@@ -201,6 +201,25 @@ func _node(id: String, index: int) -> bool:
 				break
 		_check(_inventory() == inventory, "visit applies only its exact authored wallet and seeded draw; HP and ledgers unchanged")
 		no_effect_visits += 1
+	elif kind == "Campfire":
+		_check(app.route_view == null and is_instance_valid(app.campfire_view)
+			and app.campfire_view.is_visible_in_tree(), "Campfire blocks routing until its one-use choice")
+		var visit := RunCampfireVisit.new(id, app.run_heroes)
+		var receipt: Dictionary = visit.choose_heal(id, app.run_heroes)
+		_check(receipt.ok and receipt.decision == "heal", "Campfire service admits exact heal receipt")
+		if receipt.ok:
+			var expected_inventory: Array = inventory.duplicate(true)
+			expected_inventory[1] = receipt.heroes.duplicate(true)
+			var expected_carry: Dictionary = expected_inventory[9]
+			expected_carry.heroes = receipt.heroes.duplicate(true)
+			expected_carry.completed_rests.append(id)
+			var campfire_callback := _retained(app.campfire_heal_button)
+			await _activate(app.campfire_heal_button, index % 2 == 0)
+			_check(app.campfire_visit.read_state().status == RunCampfireVisit.HEALED
+				and app.route_view != null and app.route_view.is_visible_in_tree()
+				and _inventory() == expected_inventory,
+				"Campfire heal commits the service receipt through run and carryover ledgers")
+			stale.append(campfire_callback)
 	await _reject_stale()
 	_record(["node", id, app.run_map.get_node(id).type])
 	return true
@@ -624,7 +643,8 @@ func _win(fixture: Dictionary) -> Array:
 			await _activate(app.shop_continue_button)
 			stale.append(callback)
 		else:
-			_check(kind in ["Event", "Treasure"] and app.route_view.is_visible_in_tree(), "no-effect visit exposes next connected controls")
+			_check(kind in ["Event", "Treasure", "Campfire"] and app.route_view.is_visible_in_tree(),
+				"settled map visit exposes next connected controls")
 	_check(battles == 4, "two Fights, one Elite and final Boss actually completed")
 	return trace.duplicate(true)
 

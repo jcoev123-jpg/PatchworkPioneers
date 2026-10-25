@@ -100,7 +100,7 @@ func _run() -> void:
 	root.add_child(app)
 	await _frames()
 	presenter = app.get_node("LiveAttackPreview")
-	var fixture := _sequence_fixture(["Elite", "Elite", "Rest", "Fight"])
+	var fixture := _sequence_fixture(["Elite", "Elite", "Rest", "Fight"], 765)
 	_check(not fixture.is_empty(), "seeded real route has two Elites, Rest and onward Fight")
 	if fixture.is_empty():
 		await _finish_patches()

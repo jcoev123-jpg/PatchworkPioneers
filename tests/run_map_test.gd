@@ -3,8 +3,7 @@ extends SceneTree
 var failures: Array[String] = []
 var checks := 0
 
-const NORMAL_TYPES := ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "SewingCircle"]
-const FORMERLY_BLOCKED_SEED := 6
+const NORMAL_TYPES := ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire"]
 
 
 func _initialize() -> void:
@@ -146,6 +145,8 @@ func _test_seeded_replay_and_structure() -> void:
 func _test_playable_openings_preserve_original_generation() -> void:
 	var blocked_count := 0
 	var playable_count := 0
+	var campfire_seen := false
+	var blocked_fallback_verified := false
 	for value in range(128):
 		var original_rng := _rng(value)
 		var original := _original_graph(original_rng)
@@ -153,21 +154,23 @@ func _test_playable_openings_preserve_original_generation() -> void:
 		var originally_playable := false
 		for node in original[0]:
 			originally_playable = originally_playable or node.type == "Fight"
+		for row in original:
+			for node in row:
+				campfire_seen = campfire_seen or node.type == "Campfire"
 		if originally_playable:
 			playable_count += 1
 		else:
 			blocked_count += 1
 			expected[0][0].type = "Fight"
-		if value == FORMERLY_BLOCKED_SEED:
-			_check(not originally_playable, "pinned seed was blocked before fallback")
-			_check(original[0].size() == 3 and original[0][0].type == "Event"
-				and original[0][1].type == "Shop" and original[0][2].type == "Elite",
-				"pinned seven-kind oracle opening is Event, Shop, Elite")
 		var rng := _rng(value)
 		var map := RunMap.new()
 		_check(map.generate(rng), "opening generates for seed %d" % value)
 		_check(map.get_floors() == expected,
 			"seed %d preserves original graph except required first-node fallback" % value)
+		if not originally_playable and not blocked_fallback_verified:
+			_check(map.get_node(expected[0][0].id).type == "Fight",
+				"bounded seed %d proves the blocked opening receives its Fight fallback" % value)
+			blocked_fallback_verified = true
 		_check(rng.state == original_rng.state,
 			"seed %d preserves exact original draw sequence state" % value)
 		var legal_fight := false
@@ -177,6 +180,9 @@ func _test_playable_openings_preserve_original_generation() -> void:
 		_assert_graph(map)
 	_check(blocked_count > 0 and playable_count > 0,
 		"seed sweep exercises both fallback and already-playable graphs")
+	_check(blocked_fallback_verified,
+		"bounded seed search finds and verifies a blocked opening fallback")
+	_check(campfire_seen, "seed sweep includes Campfire nodes")
 
 
 func _assert_graph(map: RunMap) -> void:

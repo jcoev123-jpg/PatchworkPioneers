@@ -115,10 +115,9 @@ func _run() -> void:
 		claim.call()
 		_check(app.run_scraps == 3, "duplicate Elite claim inert")
 		await _click(app.continue_button)
-		await _visit_path(fixture.rest_path.slice(0, -1), false)
 		if session == 4:
 			# Authentic canonical ledger with a pool upgrade and an issued composite;
-			# mount it through the same connected Rest admission as the earned deck.
+			# install it before transit so any intermediate Shop snapshots this deck.
 			var plus: String = WardenPoolCards.new().get_upgrade_id(earned_pool)
 			_check(RunRestStitchCards.is_authored_pool_plus(plus), "earned pool has an authored plus")
 			app.run_deck.append(plus)
@@ -137,6 +136,7 @@ func _run() -> void:
 			app.run_stitch_descriptors = issued.descriptors.duplicate(true)
 			app.run_scraps = issued.remaining_scraps
 			app.run_next_stitch_id = issued.next_stitch_id
+		await _visit_path(fixture.rest_path.slice(0, -1), false)
 		await _click(_route_action(fixture.rest_path.back()))
 		_check(app.rest_stitch != null and app.rest_stitch.is_valid() and not app.rest_stitch_button.disabled, "earned purse admits real Rest stitch")
 		if app.rest_stitch == null:

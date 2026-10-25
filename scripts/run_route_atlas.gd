@@ -53,6 +53,7 @@ const MAP_BOARD_PATH := "res://assets/paper/backgrounds/map_board.png"
 ## Kinds without an entry keep the original drawn paper marker, and so does a token
 ## whose file cannot be loaded, so a missing PNG never breaks the preview.
 const NODE_TOKEN_PATHS := {
+	"Campfire": "res://assets/paper/ui/map_node_campfire.png",
 	"SewingCircle": "res://assets/paper/ui/map_node_sewing_circle.png",
 	"Fight": "res://assets/paper/ui/map_node_fight.png",
 	"Elite": "res://assets/paper/ui/map_node_elite.png",
@@ -233,7 +234,7 @@ class NodeToken extends Control:
 				RunRouteAtlas.THREAD, 2.0, true)
 		var font := get_theme_default_font()
 		if font != null:
-			var glyph := "S" if token_kind == "SewingCircle" else ("▣" if token_kind == "Treasure" else "?")
+			var glyph := "C" if token_kind == "Campfire" else ("S" if token_kind == "SewingCircle" else ("▣" if token_kind == "Treasure" else "?"))
 			draw_string(font, middle + Vector2(-10, 9), glyph, HORIZONTAL_ALIGNMENT_CENTER,
 				20.0, 27, RunRouteAtlas.INK)
 
@@ -1115,6 +1116,10 @@ func _add_thread(source: String, target: String, positions: Dictionary,
 ## The detailed Rest alternative is tooltip-only so the small ticket stays legible.
 static func stop_consequence(kind: String) -> Dictionary:
 	match kind:
+		"Campfire":
+			return {"lead": "Choose one: heal or leave",
+				"detail": "Heal 30% max HP; torn revives at 1 HP first",
+				"tooltip": "One action: heal each hero 30% max HP (torn revives at 1 HP first), or leave unchanged"}
 		"SewingCircle":
 			return {"lead": "Choose one: upgrade or stitch",
 				"detail": "Stitch different owners: 3 scraps; or leave",

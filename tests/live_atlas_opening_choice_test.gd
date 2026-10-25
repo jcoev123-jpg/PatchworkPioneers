@@ -2,6 +2,9 @@ extends "res://tests/live_run_map_entry_test.gd"
 
 ## Independent, pinned design facts for the actual mounted player-facing atlas.
 const LIVE_HELP := {
+	"Campfire": ["Choose one: heal or leave",
+		"Heal 30% max HP; torn revives at 1 HP first",
+		"One action: heal each hero 30% max HP (torn revives at 1 HP first), or leave unchanged"],
 	"SewingCircle": ["Choose one: upgrade or stitch",
 		"Stitch different owners: 3 scraps; or leave",
 		"Upgrade one card, stitch two different-owner cards for 3 scraps, or leave unchanged"],
@@ -85,6 +88,7 @@ func _inert(app, callback: Callable, id: String, reason: String) -> void:
 func _tokens(atlas: RunRouteAtlas) -> void:
 	var expected := {
 		"SewingCircle": "res://assets/paper/ui/map_node_sewing_circle.png",
+		"Campfire": "res://assets/paper/ui/map_node_campfire.png",
 		"Fight": "res://assets/paper/ui/map_node_fight.png",
 		"Elite": "res://assets/paper/ui/map_node_elite.png",
 		"Event": "res://assets/paper/ui/map_node_event.png",
@@ -219,6 +223,11 @@ func _assert_flow(app, kind: String, id: String, rng_state: int) -> void:
 			and app.act_outcome.get_state().pending_node_id == id,
 			"live outcome latch and torn witness bind the actual %s battle" % kind)
 		return
+	if kind == "Campfire":
+		_check(app.campfire_view != null and app.campfire_view.is_visible_in_tree()
+			and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN
+			and app.run_rng.state == rng_state and app.route_view == null, "Campfire mounts two-choice visit without RNG")
+		return
 	if kind == "Rest":
 		_check(app.rest_view != null and app.rest_view.is_visible_in_tree()
 			and app.rest_recovery != null and is_instance_valid(app.rest_continue_button)
@@ -264,12 +273,14 @@ func _leave_flow(app, kind: String) -> void:
 	if kind == "Event" and is_instance_valid(app.quiet_spool_panel):
 		_check(app.route_view == null, "Event exit requires completing its pending choice")
 		await _click(app.quiet_spool_panel.get_choice_buttons()[1])
+	if kind == "Campfire":
+		await _click(app.campfire_leave_button)
 	var back: Button
 	if kind == "Rest":
 		back = app.rest_back_button
 	elif kind == "Shop":
 		back = app.shop_back_button
-	elif kind in ["Event", "Treasure"]:
+	elif kind in ["Event", "Treasure", "Campfire"]:
 		back = app.route_back_button
 	else:
 		back = app.return_button
@@ -287,11 +298,23 @@ func _leave_flow(app, kind: String) -> void:
 
 ## Mouse, Enter and Space on the actual marker must match the direct chooser.
 func _legal_openings(app) -> void:
-	var cases: Array = [
-		["Rest", 7, "f01_n3"], ["Shop", 2, "f01_n2"],
-		["Event", 3, "f01_n2"], ["Treasure", 1, "f01_n1"],
-		["Elite", 1, "f01_n2"],
-	]
+	var cases: Array = []
+	for kind in ["Rest", "Shop", "Event", "Treasure", "Elite", "Campfire"]:
+		var found: Array = []
+		for value in range(1, 1000):
+			var rng := RandomNumberGenerator.new()
+			rng.seed = value
+			var map := RunMap.new()
+			map.generate(rng)
+			for id in map.get_legal_choices():
+				if map.get_node(id).type == kind:
+					found = [kind, value, id]
+					break
+			if not found.is_empty():
+				break
+		_check(not found.is_empty(), "bounded real opening exists for " + kind)
+		if not found.is_empty():
+			cases.append(found)
 	for fixture in cases:
 		var kind: String = fixture[0]
 		var replay: Array = []

@@ -8,6 +8,17 @@ var failures: Array[String] = []
 var checks := 0
 
 
+## Eight normal kinds repin two route fixtures. These seeds naturally witness
+## an early defeat (102) and an offered, acquired, later-played Blanket Stitch
+## (186), with the unchanged strategy; neither outcomes nor choices are injected.
+func _cohort_seeds() -> Array[int]:
+	var values: Array[int] = []
+	for value in range(1, 49):
+		values.append(value)
+	values.append_array([102, 186])
+	return values
+
+
 func _initialize() -> void:
 	_test_earned_pool_fixture()
 	_test_energy_pool_fixture()
@@ -16,7 +27,7 @@ func _initialize() -> void:
 	var start_ms := Time.get_ticks_msec()
 	var seeds: Array[int] = []
 	var first: Array[Dictionary] = []
-	for value in range(1, SEED_COUNT + 1):
+	for value in _cohort_seeds():
 		seeds.append(value)
 		var trial := _run_seed(value)
 		_check(trial.get("ok", false), "seed %d first run: %s" % [value, trial.get("error", "")])
@@ -24,10 +35,10 @@ func _initialize() -> void:
 			break
 		first.append(trial)
 	_check(seeds.size() == SEED_COUNT and _unique_count(seeds) == SEED_COUNT,
-		"exactly 50 distinct seeds 1..50")
+		"exactly 50 distinct pinned route seeds")
 	if failures.is_empty():
 		var second: Array[Dictionary] = []
-		for value in range(1, SEED_COUNT + 1):
+		for value in _cohort_seeds():
 			var replay := _run_seed(value)
 			_check(replay.get("ok", false), "seed %d independent replay: %s" % [value, replay.get("error", "")])
 			if not replay.get("ok", false):
@@ -403,6 +414,28 @@ func _run_seed(value: int) -> Dictionary:
 				return _fail("authentic Rest heal/revive")
 			if not wardrobe.end_rest(choice, wardrobe.get_snapshot()).get("ok", false):
 				return _fail("Rest wardrobe closing")
+		elif kind == "Campfire":
+			var before: Dictionary = carry.read_state()
+			var heroes: Array = before.heroes
+			var should_heal: bool = heroes.any(func(hero): return hero.hp < hero.max_hp)
+			var visit := RunCampfireVisit.new(choice, heroes)
+			if not visit.read_state().ok:
+				return _fail("Campfire visit admission")
+			var receipt: Dictionary = visit.choose_heal(choice, heroes) if should_heal \
+				else visit.leave(choice, heroes)
+			if not receipt.get("ok", false):
+				return _fail("Campfire service decision")
+			if should_heal:
+				var recovered := carry.choose_rest_heal(choice)
+				var expected: Dictionary = before.duplicate(true)
+				expected.heroes = receipt.heroes.duplicate(true)
+				expected.completed_rests.append(choice)
+				if not recovered.get("ok", false) or recovered.heroes != receipt.heroes \
+						or carry.read_state() != expected \
+						or wardrobe.get_snapshot().heroes != receipt.heroes:
+					return _fail("Campfire heal did not commit its exact carryover receipt")
+			elif carry.read_state() != before:
+				return _fail("Campfire Leave changed run carryover")
 		elif kind == "Shop":
 			var party_ids: Array[String] = []
 			for hero in carry.read_state().heroes:
@@ -1521,7 +1554,7 @@ func _report(trials: Array[Dictionary]) -> void:
 	print("M05 earned Seamstress rewards=%s accepted_plays=%s" % [JSON.stringify(seamstress_rewards), JSON.stringify(seamstress_plays)])
 	for family in [["tinker_scatter_bolts", "tinker_shrapnel_seam"], ["tinker_spare_parts", "tinker_sight_glass"]]:
 		_check(family.any(func(id): return tinker_rewards.get(id, 0) > 0 and tinker_plays.get(id, 0) > 0),
-			"original 50 seeds acquire offered Tinker family and play later real hands " + str(family))
+			"pinned 50 seeds acquire offered Tinker family and play later real hands " + str(family))
 	print("M05 earned Tinker rewards=%s accepted_plays=%s" % [JSON.stringify(tinker_rewards), JSON.stringify(tinker_plays)])
 	_check(stitches > 0 and sews > 0,
 		"cohort must actually commit a Rest stitch and an owned patch sew")

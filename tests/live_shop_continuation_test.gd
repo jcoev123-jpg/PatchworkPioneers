@@ -154,6 +154,28 @@ func _paid_card(index: int, keyboard: bool) -> void:
 	_check(_continuation_state() == before, "sold live purchase cannot replay or spend again")
 
 
+## The random stock is not guaranteed to contain a base pool card. Find a
+## genuine uninterrupted battle/reward RNG stream that exercises paid carryover.
+func _pool_continuation_fixture(kind: String) -> Dictionary:
+	var first := 1
+	for attempt in range(40):
+		var candidate := _continuation_fixture(kind, first, 50000)
+		if candidate.is_empty():
+			return {}
+		first = candidate.seed + 1
+		if not await _routed_win(candidate, false):
+			return {}
+		await _click(app.reward_buttons[0 if kind == "Shop" else 3])
+		await _click(app.continue_button)
+		var stock: Dictionary = _stock_oracle().stock
+		var found := _unsold_pool_offer_index(stock) >= 0
+		app._return_to_title()
+		await _frames()
+		if found:
+			return candidate
+	return {}
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -162,7 +184,7 @@ func _run() -> void:
 	presenter = app.get_node("LiveAttackPreview")
 	var stale: Array[Callable] = []
 	for kind in ["Rest", "Shop"]:
-		var fixture := _continuation_fixture(kind)
+		var fixture := await _pool_continuation_fixture(kind)
 		_check(not fixture.is_empty(), "seeded graph supports Fight -> Shop -> " + kind)
 		if fixture.is_empty():
 			continue

@@ -17,7 +17,7 @@ extends RefCounted
 const FLOOR_COUNT := 12
 const MIN_NODES := 3
 const MAX_NODES := 4
-const NORMAL_TYPES := ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "SewingCircle"]
+const NORMAL_TYPES := ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire"]
 
 var _floor_ids: Array = []
 var _nodes: Dictionary = {}

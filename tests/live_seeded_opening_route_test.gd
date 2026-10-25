@@ -4,6 +4,7 @@ extends "res://tests/live_run_map_entry_test.gd"
 ## Written out here, not read from App, so the mounted label cannot agree with a broken map.
 const EXPECTED_ROUTE_LABELS := {
 	"SewingCircle": "Sewing Circle",
+	"Campfire": "Campfire",
 	"Fight": "Fight",
 	"Elite": "Elite fight",
 	"Rest": "Rest stop",
@@ -418,11 +419,28 @@ func _run() -> void:
 	root.add_child(app)
 	await process_frame
 	await _invalid_starts(app)
-	var cases: Array = [
-		["Fight", 1, "f01_n0", ""], ["Elite", 1, "f01_n2", ""],
-		["Rest", 13, "f01_n0", "f02_n1"], ["Shop", 2, "f01_n2", "f02_n3"],
-		["Event", 8, "f01_n1", "f02_n0"], ["Treasure", 1, "f01_n1", "f02_n1"],
-	]
+	var cases: Array = [["Fight", 1, "f01_n0", ""], ["Elite", 1, "f01_n3", ""]]
+	for kind in ["Rest", "Shop", "Event", "Treasure"]:
+		var found: Array = []
+		for value in range(1, 1000):
+			var rng := RandomNumberGenerator.new()
+			rng.seed = value
+			var map := RunMap.new()
+			map.generate(rng)
+			for id in map.get_legal_choices():
+				if map.get_node(id).type != kind:
+					continue
+				for next in map.get_node(id).outgoing:
+					if map.get_node(next).type == "Fight":
+						found = [kind, value, id, next]
+						break
+				if not found.is_empty():
+					break
+			if not found.is_empty():
+				break
+		_check(not found.is_empty(), "bounded genuine connected Fight fixture for " + kind)
+		if not found.is_empty():
+			cases.append(found)
 	for required in ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure"]:
 		_check(cases.any(func(row): return row[0] == required), "required opening fixture exists: " + required)
 	var stale: Array[Callable] = []

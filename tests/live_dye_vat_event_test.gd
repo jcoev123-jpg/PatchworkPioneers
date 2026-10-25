@@ -13,7 +13,9 @@ func _dye_fixture() -> Dictionary:
 	if not _cached_dye_fixture.is_empty():
 		return _cached_dye_fixture.duplicate(true)
 	var kinds: Array = ["Fight", "Event", "Event", "Event", "Event", "Event", "Fight"]
-	for value in range(1, 200000):
+	# Repinned for the eight-kind map. Still generate and authenticate every
+	# node and the opening encounter; avoid a million-seed search on each run.
+	for value in [980220]:
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()

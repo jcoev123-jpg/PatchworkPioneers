@@ -4,6 +4,7 @@ var failures: Array[String] = []
 var checks := 0
 ## Exact mounted atlas facts: independent of RunRouteAtlas.stop_consequence().
 const ROUTE_HELP_TOOLTIPS := {
+	"Campfire": "One action: heal each hero 30% max HP (torn revives at 1 HP first), or leave unchanged",
 	"SewingCircle": "Upgrade one card, stitch two different-owner cards for 3 scraps, or leave unchanged",
 	"Fight": "On win: 10–20 gold + 1 scrap; choose 1 of 3 cards or skip",
 	"Elite": "On win: 25–35 gold + 2 scraps + patch; choose 1 of 3 cards or skip",
@@ -343,7 +344,7 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
-	# Seven-kind independent oracle: seed 6 draws Event, Shop, Elite before fallback.
+	# Eight-kind independent oracle: seed 6 keeps Event and Campfire after fallback.
 	var fixture_seed := 6
 	var fight_id := "f01_n0"
 	var reference_rng := RandomNumberGenerator.new()
@@ -713,9 +714,9 @@ func _run() -> void:
 			"fallback Fight enabled and initially focused")
 		for index in [1, 2]:
 			_check(not app.route_buttons[index].disabled, "all legal opening types are enabled")
-		_check(app.run_map.get_floors()[0][1].type == "Shop"
-			and app.run_map.get_floors()[0][2].type == "Elite",
-			"fallback preserves remaining seven-kind oracle entries")
+		_check(app.run_map.get_floors()[0][1].type == "Event"
+			and app.run_map.get_floors()[0][2].type == "Campfire",
+			"fallback preserves remaining eight-kind oracle entries")
 		app.route_buttons.back().grab_focus()
 		await _key(KEY_TAB)
 		_check(app.route_map_button.has_focus(), "Tab reaches full map after legal choices")

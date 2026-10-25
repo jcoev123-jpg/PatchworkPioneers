@@ -81,6 +81,9 @@ func _marker(view: RunRouteAtlas, id: String) -> PanelContainer:
 ## cannot inherit a wording mistake from the view itself.
 ## Independent authored stop guidance oracle; does not call the atlas presentation helper.
 const EXPECTED_HELP := {
+	"Campfire": {"lead": "Choose one: heal or leave",
+		"detail": "Heal 30% max HP; torn revives at 1 HP first",
+		"tooltip": "One action: heal each hero 30% max HP (torn revives at 1 HP first), or leave unchanged"},
 	"SewingCircle": {"lead": "Choose one: upgrade or stitch",
 		"detail": "Stitch different owners: 3 scraps; or leave",
 		"tooltip": "Upgrade one card, stitch two different-owner cards for 3 scraps, or leave unchanged"},

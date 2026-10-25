@@ -7,9 +7,9 @@ extends "res://tests/live_stitched_hand_play_test.gd"
 ## The same earned-stitch route, now with a battle waiting after the stitched
 ## Fight so the mounted reward can be settled and the run can continue.
 func _hand_fixture() -> Dictionary:
-	# Seed 1815 is the first verified route in this bounded search band that
+	# Seed 16669 is the first verified route in this bounded search band that
 	# wins its stronger weighted Elite with all three stitch owners alive.
-	for value in range(1815, 20001):
+	for value in range(16669, 20001):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
@@ -69,6 +69,16 @@ func _canonical_oracle(id: String) -> Dictionary:
 	_check(entry.get("success", false), "independent typed encounter selection succeeds")
 	if not entry.get("success", false):
 		return {}
+	if entry.node_type == "Fight":
+		var definitions: Array = entry.enemies.get_enemies()
+		for definition in definitions:
+			var scaled := RunNormalAttackFloorScaling.scale_normal_max_hp(
+				definition.max_hp, map.get_node(id).floor)
+			_check(scaled.ok, "oracle normal roster has valid authored floor scaling")
+			if not scaled.ok:
+				return {}
+			definition.max_hp = scaled.max_hp
+		entry.enemies = CombatEnemies.new(definitions)
 	var receipt: Dictionary = app._stitch_snapshot()
 	var admitted := RunStitchedBattleHandEntry.new().admit_next_fight(
 		receipt.deck, receipt.descriptors, receipt.remaining_scraps,
