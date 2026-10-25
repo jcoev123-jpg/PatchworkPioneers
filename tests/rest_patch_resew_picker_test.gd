@@ -451,32 +451,45 @@ func _assert_changed_slot_preview(f: Dictionary, kind: String, slot: String,
 		"real %s %s forecast has the expected two before/after slot assignments" % [kind, slot])
 	var preview := picker.preview_label.text
 	var lines := preview.split(String.chr(10))
-	_check(lines.size() == 3, "preview has just an action and two changed-slot lines")
+	var tooltip := picker.preview_label.tooltip_text
+	_check(lines.size() == 4,
+		"preview has action/wallet, independent source/destination and no-heal lines")
 	_check(picker.preview_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
-		and picker.preview_label.tooltip_text == preview,
-		"preview wraps long forecast text and provides full hover/focus tooltip")
-	if lines.size() != 3:
+		and tooltip != preview and tooltip.contains("Before:")
+		and tooltip.contains("After:"),
+		"concise sewn preview wraps while tooltip preserves complete powers")
+	if lines.size() != 4:
 		return
-	var slot_name := slot.to_lower().capitalize() + " patch"
-	var header := "%s / %s / %s to %s / Cost: %d scrap / Scraps %d to %d" % [
-		kind.to_lower().capitalize(), slot_name, from_id.capitalize(), to_id.capitalize(),
+	var header := "%s %s: %s to %s • Cost: %d scrap • Scraps: %d → %d" % [
+		kind.to_lower().capitalize(), slot, from_id.capitalize(), to_id.capitalize(),
 		forecast["cost"], snapshot["scraps"], snapshot["scraps"] - forecast["cost"]]
 	_check(lines[0] == header and picker.scraps_label.text == "Scraps: %d" % snapshot["scraps"],
 		"action and wallet match real %s %s forecast and current purse" % [kind, slot])
+	_check(lines[3] == "Equipping does not heal • Rest action remains available."
+		and tooltip.ends_with(lines[3]),
+		"both visible forecast and full tooltip forbid equip healing and preserve Rest action")
 	for index in range(2):
 		var wearer: Dictionary = source if index == 0 else destination
+		var role := "Source" if index == 0 else "Destination"
 		var before: Dictionary = wearer["before"]
 		var after: Dictionary = wearer["after"]
 		var before_patch: Dictionary = before["slots"][slot]
 		var after_patch: Dictionary = after["slots"][slot]
-		var expected_start := "%s %s: %s to %s / " % [
-			wearer["hero_id"].capitalize(), slot_name,
-			_expected_patch_state(before_patch), _expected_patch_state(after_patch)]
-		var expected_health := "HP %d/%d to %d/%d / effective cap %d to %d" % [
+		var expected_health := "HP %d/%d → %d/%d • effective cap %d → %d" % [
 			before["hp"], before["base_max_hp"], after["hp"], after["base_max_hp"],
 			before["effective_max_hp"], after["effective_max_hp"]]
-		_check(lines[index + 1] == expected_start + expected_health,
-			"changed %s wearer quotes actual slot, power, activity, HP and cap" % wearer["hero_id"])
+		var expected_line := "%s %s %s: %s → %s • %s" % [
+			role, wearer["hero_id"].capitalize(), slot,
+			_expected_brief_patch(before_patch), _expected_brief_patch(after_patch),
+			expected_health]
+		_check(lines[index + 1] == expected_line,
+			"separate %s before→after patch, HP and effective cap are forecast-exact" % role)
+		var detail := "%s %s %s\nBefore: %s\nAfter: %s\n%s" % [
+			role, wearer["hero_id"].capitalize(), slot,
+			_expected_patch_state(before_patch), _expected_patch_state(after_patch),
+			expected_health]
+		_check(tooltip.contains(detail),
+			"full tooltip preserves exact %s wearer activity and authored effects" % role)
 		for patch in [before_patch, after_patch]:
 			var patch_id: String = patch["id"]
 			if patch_id.is_empty():
@@ -491,6 +504,13 @@ func _assert_changed_slot_preview(f: Dictionary, kind: String, slot: String,
 		_check(not preview.contains(other_slot) and
 			not preview.contains(other_slot.to_lower().capitalize() + " patch:"),
 			"preview omits unrelated %s inventories" % other_slot)
+
+
+func _expected_brief_patch(patch: Dictionary) -> String:
+	if patch["id"] == "":
+		return "empty"
+	var nice: String = patch["id"].replace("_", " ").capitalize()
+	return nice + (" (dormant; no power)" if not patch["active"] else "")
 
 
 func _expected_patch_state(patch: Dictionary) -> String:
@@ -908,8 +928,10 @@ func _torn_preview_active() -> void:
 		and torn_source_lines[1] == "Spare Spool • torn/inactive"
 		and not torn_source_lines[0].contains("/")
 		and picker._source_buttons[picker.source_selector.selected].text.contains("torn/inactive")
-		and source_line.contains("Tinker Arm patch:")
-		and source_line.contains("Spare Spool (dormant; inactive power:")
+		and source_line.contains("Source Tinker ARM:")
+		and source_line.contains("Spare Spool (dormant; no power)")
+		and picker.preview_label.tooltip_text.contains(
+			"Spare Spool (dormant; inactive power:")
 		and not source_line.contains("Spare Spool (active:"),
 		"torn source tag leads with its sewn wearer/slot and keeps the torn suffix")
 	_pick("quilted_coat", "tinker")
@@ -924,7 +946,8 @@ func _torn_preview_active() -> void:
 		_check(not recipient["slots"]["COAT"]["active"] and recipient["hp"] == 0
 			and recipient["effective_max_hp"] == recipient["base_max_hp"]
 			and recipient["base_max_hp"] == t.read_state().heroes[2].max_hp
-			and destination_line.contains(
+			and destination_line.contains("Quilted Coat (dormant; no power)")
+			and picker.preview_label.tooltip_text.contains(
 				"Quilted Coat (dormant; inactive power: +6 effective max HP (no heal))")
 			and not destination_line.contains("Quilted Coat (active:"),
 			"torn Tinker cannot activate Quilted Coat +6 or receive an equip heal")

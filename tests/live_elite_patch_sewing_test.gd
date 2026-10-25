@@ -457,6 +457,7 @@ func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
 	await _verify_heading_fallback()
 	var entries: Dictionary = {}
 	var lines: Dictionary = {}
+	var tooltips: Dictionary = {}
 	_check(sewing._eligible() and sewing._claim_context == sewing._context(),
 		"preview is mounted only with the genuinely confirmed Elite claim context")
 	var expected_name: String = _expected_name(drop)
@@ -472,25 +473,29 @@ func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
 		if preview.get("ok") != true:
 			continue
 		entries[hero_id] = preview
-		var displaced_expected: String = "empty %s slot; +0 scrap" % preview.slot
+		var old_name := "empty"
+		var old_fate := ""
 		if preview.displaced_id != "":
-			displaced_expected = "replaces %s in %s slot (destroyed); +1 scrap" % [
-				_expected_name(preview.displaced_id), preview.slot]
-			if not preview.displaced_rules_text.is_empty():
-				displaced_expected += " [old: %s]" % preview.displaced_rules_text
+			old_name = _expected_name(preview.displaced_id)
+			old_fate = " (old patch destroyed)"
 		var power_expected: String = preview.rules_text
 		if power_expected.is_empty():
 			power_expected = "power not documented"
-		lines[hero_id] = "%s: %s (%s) - %s; %s" % [
-			hero_id.capitalize(), expected_name, preview.slot, power_expected, displaced_expected]
+		lines[hero_id] = "%s · %s · %s\nPower: %s\nSew: %s → %s%s • +%d scrap" % [
+			hero_id.capitalize(), preview.slot, expected_name, power_expected,
+			old_name, expected_name, old_fate, preview.scrap_delta]
+		tooltips[hero_id] = lines[hero_id]
+		if preview.displaced_id != "" and not preview.displaced_rules_text.is_empty():
+			tooltips[hero_id] += "\nOld power (%s): %s" % [
+				_expected_name(preview.displaced_id), preview.displaced_rules_text]
 	# The prompt starts as the mount sentence and, once a hero tag is reached,
 	# keeps that hero's exact line. Both are literal; the raw ID is never shown.
 	var mount_power: String = entries.values()[0].rules_text if not entries.is_empty() else ""
 	if mount_power.is_empty():
 		mount_power = "power not documented"
 	var prompt_allowed: Array[String] = [
-		"%s (%s): %s. Choose a living wearer (free); focus a hero for slot consequences." % [
-			expected_name, SLOT_NAMES[expected_slot], mount_power]]
+		"%s · %s\nPower: %s\nFree sew • Focus a living wearer for +0/+1 scrap." % [
+			expected_name, expected_slot, mount_power]]
 	prompt_allowed.append_array(lines.values())
 	_check(is_instance_valid(sewing._prompt) and sewing._prompt.is_visible_in_tree()
 		and sewing._prompt.autowrap_mode != TextServer.AUTOWRAP_OFF
@@ -503,11 +508,11 @@ func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
 		if not entries.has(hero_id):
 			continue
 		var explanation: String = button.tooltip_text
-		_check(explanation == lines[hero_id] and not explanation.contains(drop),
+		_check(explanation == tooltips[hero_id] and not explanation.contains(drop),
 			"mounted %s tooltip literally names the drop, power and own +0/+1 scrap displacement" % hero_id)
 		await _hover(button)
-		_check(sewing._prompt.text == explanation,
-			"real mouse hover exposes %s tooltip content visibly" % hero_id)
+		_check(sewing._prompt.text == lines[hero_id],
+			"real mouse hover exposes %s concise consequence visibly" % hero_id)
 		# AC1 repair: each drawn text state of this cream tag must use dark ink on
 		# its own paper surface; the shell theme otherwise supplies cream hover,
 		# pressed, focus and hover+pressed text.
@@ -547,7 +552,7 @@ func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
 				"%s presentation probe releases without sewing" % hero_id)
 		button.grab_focus()
 		await _frames()
-		_check(button.has_focus() and sewing._prompt.text == explanation,
+		_check(button.has_focus() and sewing._prompt.text == lines[hero_id],
 			"physical keyboard focus reads %s power and replacement in prompt" % hero_id)
 		if not button.disabled:
 			# Keyboard focus draws the normal paper box, so it needs the ink focus colour.
@@ -781,7 +786,7 @@ func _test_torn_warden_focus(fixture: Dictionary) -> void:
 			var preview: Dictionary = RunPatchWearerSummary.preview_sew(
 				sewing.wardrobe, torn, drop, id)
 			_check(preview.get("ok") == true and preview.get("wearer") == id
-				and button.tooltip_text == sewing._preview_line(preview)
+				and button.tooltip_text == sewing._preview_tooltip(preview)
 				and button.focus_mode == Control.FOCUS_ALL,
 				"living torn-party choice has owner-specific real preview: " + id)
 			previews[id] = preview
@@ -798,7 +803,8 @@ func _test_torn_warden_focus(fixture: Dictionary) -> void:
 		for index in [1, 2]:
 			await _key(KEY_TAB)
 			_check(buttons[index].has_focus()
-				and sewing._prompt.text == buttons[index].tooltip_text,
+				and sewing._prompt.text == sewing._preview_line(
+					previews[buttons[index].get_meta("hero_id")]),
 				"physical Tab reaches and previews living %s after recurring app focus refresh" % buttons[index].text)
 		await _key(KEY_TAB)
 		_check(app.continue_button.has_focus(), "physical Tab exits torn-party choices to Continue")
@@ -1176,26 +1182,27 @@ func _test_displaced_name(fixture: Dictionary) -> void:
 		and preview.get("displaced_rules_text") == "+9 maximum HP",
 		"oracle preview is an occupied COAT with its authored power and +1 scrap")
 	# These three strings are written independently of any production formatter.
-	_check(sewing._prompt.text == "Quilted Coat (COAT): +6 maximum HP. Choose a living wearer (free); focus a hero for slot consequences.",
+	_check(sewing._prompt.text == "Quilted Coat · COAT\nPower: +6 maximum HP\nFree sew • Focus a living wearer for +0/+1 scrap.",
 		"mounted prompt literally names Quilted Coat and its COAT slot power")
 	var target: Button = sewing.hero_buttons.filter(
 		func(button): return button.get_meta("hero_id") == wearer)[0]
-	var loss := "Warden: Quilted Coat (COAT) - +6 maximum HP; replaces Reinforced Patchcoat in COAT slot (destroyed); +1 scrap [old: +9 maximum HP]"
-	_check(target.tooltip_text == loss,
+	var visible := "Warden · COAT · Quilted Coat\nPower: +6 maximum HP\nSew: Reinforced Patchcoat → Quilted Coat (old patch destroyed) • +1 scrap"
+	var full := visible + "\nOld power (Reinforced Patchcoat): +9 maximum HP"
+	_check(target.tooltip_text == full,
 		"mounted tooltip literally names the displaced Reinforced Patchcoat and +1 scrap")
 	_check(not target.tooltip_text.contains("reinforced_patchcoat")
 		and not target.tooltip_text.contains(drop),
 		"tooltip shows sewn names, never raw patch IDs")
 	await _hover(target)
-	_check(sewing._prompt.text == loss,
+	_check(sewing._prompt.text == visible,
 		"real pointer hover visibly shows the displaced name and +1 scrap")
 	target.grab_focus()
 	await _frames()
-	_check(target.has_focus() and sewing._prompt.text == loss,
+	_check(target.has_focus() and sewing._prompt.text == visible,
 		"physical keyboard focus shows the displaced name and +1 scrap")
 	for other in sewing.hero_buttons:
 		if other.get_meta("hero_id") != wearer:
-			_check(other.tooltip_text.ends_with("empty COAT slot; +0 scrap"),
+			_check(other.tooltip_text.contains("Sew: empty → Quilted Coat • +0 scrap"),
 				"each other living wearer keeps the exact +0 scrap empty-slot consequence")
 	var entries: Dictionary = await _verify_preview_choice(drop, state)
 	_check(entries.size() == 3, "all three real displaced-preview choices stay readable and read-only")

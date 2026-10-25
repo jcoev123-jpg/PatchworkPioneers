@@ -360,37 +360,57 @@ func _expected_changed_patch(patch: Dictionary) -> String:
 		if not effect.is_empty() else "%s (active)" % human
 
 
-func _assert_compact_preview(preview: String, forecast: Dictionary, purse: int) -> void:
+func _brief_changed_patch(patch: Dictionary) -> String:
+	if patch["id"] == "":
+		return "empty"
+	var name: String = patch["id"].replace("_", " ").capitalize()
+	return name + (" (dormant; no power)" if not patch["active"] else "")
+
+
+func _assert_compact_preview(preview: String, forecast: Dictionary, purse: int,
+		full: String) -> void:
 	_check(forecast.get("ok") == true and forecast.get("cost") == 1
 		and forecast.has("source") and forecast.has("destination"),
 		"compact mounted check requires an authentic one-scrap forecast")
 	if forecast.get("ok") != true:
 		return
 	var lines := preview.split(String.chr(10))
-	_check(lines.size() == 3,
-		"mounted forecast displays action and exactly two changed-slot lines")
-	if lines.size() != 3:
+	_check(lines.size() == 4,
+		"mounted forecast displays action, both wearers and no-heal guidance")
+	if lines.size() != 4:
 		return
 	var slot: String = forecast["slot"]
-	var slot_label := slot.to_lower().capitalize() + " patch"
-	var header := "%s / %s / %s to %s / Cost: %d scrap / Scraps %d to %d" % [
-		str(forecast["kind"]).capitalize(), slot_label,
+	var header := "%s %s: %s to %s • Cost: %d scrap • Scraps: %d → %d" % [
+		str(forecast["kind"]).capitalize(), slot,
 		str(forecast["source"]["hero_id"]).capitalize(),
 		str(forecast["destination"]["hero_id"]).capitalize(),
 		forecast["cost"], purse, purse - forecast["cost"]]
 	_check(lines[0] == header, "mounted forecast matches exact action, owners, slot and wallet")
+	_check(lines[3] == "Equipping does not heal • Rest action remains available.",
+		"mounted forecast explicitly denies healing and preserves Rest action")
+
+	_check(full.begins_with(header) and full.ends_with(lines[3]) and full != preview,
+		"complete wearer power details live in tooltip, not slash-compressed labels")
 	for index in range(2):
 		var wearer: Dictionary = forecast["source"] if index == 0 else forecast["destination"]
+		var role := "Source" if index == 0 else "Destination"
 		var before: Dictionary = wearer["before"]
 		var after: Dictionary = wearer["after"]
-		var expected := "%s %s: %s to %s / HP %d/%d to %d/%d / effective cap %d to %d" % [
-			str(wearer["hero_id"]).capitalize(), slot_label,
-			_expected_changed_patch(before["slots"][slot]),
-			_expected_changed_patch(after["slots"][slot]),
+		var health := "HP %d/%d → %d/%d • effective cap %d → %d" % [
 			before["hp"], before["base_max_hp"], after["hp"], after["base_max_hp"],
 			before["effective_max_hp"], after["effective_max_hp"]]
+		var expected := "%s %s %s: %s → %s • %s" % [
+			role, str(wearer["hero_id"]).capitalize(), slot,
+			_brief_changed_patch(before["slots"][slot]),
+			_brief_changed_patch(after["slots"][slot]), health]
 		_check(lines[index + 1] == expected,
-			"mounted changed slot agrees with exact before/after power, activity, HP and cap")
+			"mounted changed slot agrees with exact before/after patch, HP and cap")
+		var detail := "%s %s %s\nBefore: %s\nAfter: %s\n%s" % [
+			role, str(wearer["hero_id"]).capitalize(), slot,
+			_expected_changed_patch(before["slots"][slot]),
+			_expected_changed_patch(after["slots"][slot]), health]
+		_check(full.contains(detail),
+			"full tooltip agrees with exact before/after power, activity, HP and cap")
 	for unchanged in RunRestPatchResewOptions.SLOTS:
 		if unchanged != slot:
 			_check(not preview.contains(unchanged)
@@ -417,7 +437,8 @@ func _ui_test(activation: Key) -> void:
 		w, t, original, f.rest, initial)
 	_check(not initial.is_empty() and initial_forecast.get("ok") == true,
 		"initial mounted choice has a real selected option and forecast")
-	_assert_compact_preview(picker.preview_label.text, initial_forecast, original.scraps)
+	_assert_compact_preview(picker.preview_label.text, initial_forecast, original.scraps,
+		picker.preview_label.tooltip_text)
 	var screen := Rect2(0, 0, 1280, 720)
 	for control in [picker.source_selector, picker.destination_selector,
 			picker.confirm_button, picker.preview_label]:
@@ -462,12 +483,13 @@ func _ui_test(activation: Key) -> void:
 			and selected.exchanged_id == forecast.exchanged_id,
 			"physical tags bind the entire exact service option and forecast")
 		if forecast.get("ok") == true:
-			_assert_compact_preview(preview, forecast, original.scraps)
+			_assert_compact_preview(preview, forecast, original.scraps,
+				picker.preview_label.tooltip_text)
 		var friendly_kind := str(spec[2]).capitalize()
 		var friendly_slot := str(spec[3]).capitalize()
 		var friendly_detail := "empty %s slot" % friendly_slot if spec[2] == "MOVE" else (
 			"swap with %s" % str(service.exchanged_id).replace("_", " ").capitalize())
-		_check(preview.contains("%s / %s patch" % [friendly_kind, friendly_slot])
+		_check(preview.contains("%s %s:" % [friendly_kind, spec[3]])
 			and preview.contains("%s to %s" % [
 				str(service.from_hero).capitalize(), str(service.to_hero).capitalize()])
 			and picker._source_buttons[source_index].text.contains(
@@ -476,12 +498,13 @@ func _ui_test(activation: Key) -> void:
 			and picker._destination_buttons[destination_index].text.contains(friendly_detail),
 			"mouse-selected chips and changed-slot forecast keep human action/recipient labels")
 		_check(preview.contains(friendly_kind)
-			and preview.contains(spec[6] + " (active:")
-			and preview.contains(spec[4]) and preview.contains(str(spec[5]))
+			and picker.preview_label.tooltip_text.contains(spec[6] + " (active:")
+			and picker.preview_label.tooltip_text.contains(spec[4])
+			and preview.contains(str(spec[5]))
 			and not picker.confirm_button.disabled,
 			"physical mouse choice shows real Shop MOVE/SWAP and exact active power: "
 			+ spec[0] + " to " + spec[1])
-		_check(preview.contains("Scraps %d to %d" % [original.scraps, original.scraps - 1])
+		_check(preview.contains("Scraps: %d → %d" % [original.scraps, original.scraps - 1])
 			and original.scraps >= 1 and w.get_snapshot() == original,
 			"mounted %s selection quotes exact Rest wallet %d to %d without spending"
 			% [spec[2], original.scraps, original.scraps - 1])
@@ -516,7 +539,8 @@ func _ui_test(activation: Key) -> void:
 			var move_option: Dictionary = picker.selected_option()
 			var move_forecast := RunRestPatchResewOptions.forecast(
 				w, t, original, f.rest, move_option)
-			_assert_compact_preview(picker.preview_label.text, move_forecast, original.scraps)
+			_assert_compact_preview(picker.preview_label.text, move_forecast, original.scraps,
+				picker.preview_label.tooltip_text)
 			_check(move_option.get("kind") == "MOVE"
 				and move_forecast.get("ok") == true
 				and move_forecast.destination.before.slots.HEAD.id == ""
@@ -532,10 +556,11 @@ func _ui_test(activation: Key) -> void:
 			var chosen := picker.selected_option()
 			var swap_forecast := RunRestPatchResewOptions.forecast(
 				w, t, original, f.rest, chosen)
-			_assert_compact_preview(picker.preview_label.text, swap_forecast, original.scraps)
+			_assert_compact_preview(picker.preview_label.text, swap_forecast, original.scraps,
+				picker.preview_label.tooltip_text)
 			_check(chosen.get("kind") == "SWAP"
 				and chosen.get("exchanged_id") == "stitched_badge"
-				and picker.preview_label.text.contains("Exposed 1")
+				and picker.preview_label.tooltip_text.contains("Exposed 1")
 				and swap_forecast.get("ok") == true
 				and swap_forecast.source.after.slots.HEAD.id == "stitched_badge"
 				and swap_forecast.destination.after.slots.HEAD.id == "button_eye"
@@ -611,14 +636,16 @@ func _one_scrap_case(target: String, kind: String, exchanged: String) -> void:
 		and chosen.get("cost") == 1, "one-scrap selection binds the real " + kind + " option")
 	var boundary_forecast := RunRestPatchResewOptions.forecast(
 		w, t, snapshot, f.rest, chosen)
-	_assert_compact_preview(preview, boundary_forecast, snapshot.scraps)
+	_assert_compact_preview(preview, boundary_forecast, snapshot.scraps,
+		picker.preview_label.tooltip_text)
 	_check(snapshot.scraps == 1
-		and preview.contains("Scraps 1 to 0") and preview.contains("Cost: 1 scrap")
-		and preview.contains("Warden Head patch:")
-		and preview.contains(str(target).capitalize() + " Head patch:"),
+		and preview.contains("Scraps: 1 → 0") and preview.contains("Cost: 1 scrap")
+		and preview.contains("Source Warden HEAD:")
+		and preview.contains("Destination " + str(target).capitalize() + " HEAD:"),
 		"one-scrap " + kind + " preview visibly quotes 1 to 0 with both wearers")
 	if kind == "SWAP":
-		_check(preview.contains("Stitched Badge (active:"),
+		_check(preview.contains("Stitched Badge")
+			and picker.preview_label.tooltip_text.contains("Stitched Badge (active:"),
 			"one-scrap SWAP keeps the occupied patch and documented power")
 	var repeated: String = preview
 	picker._update_preview()
@@ -965,11 +992,14 @@ func _borrowed_button_tests() -> void:
 			var selected := picker.selected_option()
 			_check(selected == move, "mounted tags bind the entire exact service option")
 			var preview: String = picker.preview_label.text
-			_assert_compact_preview(preview, forecast, before.scraps)
-			_check(preview.contains("Move / Coat patch")
-				and preview.contains("Warden Coat patch:")
-				and preview.contains("Seamstress Coat patch:")
-				and preview.contains("empty to Borrowed Button (active: " + BORROWED_BUTTON_TEXT)
+			_assert_compact_preview(preview, forecast, before.scraps,
+				picker.preview_label.tooltip_text)
+			_check(preview.contains("Move COAT:")
+				and preview.contains("Source Warden COAT:")
+				and preview.contains("Destination Seamstress COAT:")
+				and preview.contains("empty → Borrowed Button")
+				and picker.preview_label.tooltip_text.contains(
+					"Borrowed Button (active: " + BORROWED_BUTTON_TEXT)
 				and preview.contains("Cost: 1 scrap")
 				and not picker.confirm_button.disabled,
 				"mounted picker prints Borrowed Button's active authored text for MOVE")
@@ -1084,13 +1114,15 @@ func _borrowed_button_tests() -> void:
 		if torn_destination >= 0:
 			await _pick(picker_torn._destination_buttons[torn_destination], false)
 			var torn_preview: String = picker_torn.preview_label.text
-			_assert_compact_preview(torn_preview, torn_forecast, torn_snapshot.scraps)
+			_assert_compact_preview(torn_preview, torn_forecast, torn_snapshot.scraps,
+				picker_torn.preview_label.tooltip_text)
 			var recipient_line := torn_preview.split(String.chr(10))[2]
-			_check(recipient_line.contains("Seamstress Coat patch:")
-				and recipient_line.contains("HP 0/27 to 0/27 / effective cap 27 to 27")
-				and recipient_line.contains(
+			_check(recipient_line.contains("Destination Seamstress COAT:")
+				and recipient_line.contains("HP 0/27 → 0/27 • effective cap 27 → 27")
+				and recipient_line.contains("Borrowed Button (dormant; no power)")
+				and picker_torn.preview_label.tooltip_text.contains(
 					"Borrowed Button (dormant; inactive power: " + BORROWED_BUTTON_TEXT + ")")
-				and torn_preview.contains("Warden Coat patch:")
+				and torn_preview.contains("Source Warden COAT:")
 				and torn_preview.contains("Cost: 1 scrap"),
 				"mounted picker shows the torn Borrowed Button recipient as dormant")
 	picker_torn.free()
