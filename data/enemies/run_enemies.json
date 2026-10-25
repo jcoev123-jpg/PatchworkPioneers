@@ -49,5 +49,8 @@
       {"type": "attack", "amount": 3, "weight": 3},
       {"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
       {"type": "block", "amount": 2, "weight": 1}
-    ]}}
+    ]}},
+  {"id":"scissor_crab","name":"Scissor Crab","max_hp":26,"art_path":"res://assets/paper/enemies/scissor_crab.png","intent":{"target":"front","actions":[{"type":"snip_block","amount":0,"weight":2},{"type":"attack","amount":6,"weight":3}]}},
+  {"id":"thimble_beetle","name":"Thimble Beetle","max_hp":29,"art_path":"res://assets/paper/enemies/thimble_beetle.png","intent":{"target":"front","actions":[{"type":"block","amount":9,"weight":3},{"type":"attack","amount":5,"weight":2}]}},
+  {"id":"zipper_snake","name":"Zipper Snake","max_hp":24,"art_path":"res://assets/paper/enemies/zipper_snake.png","intent":{"target":"front","actions":[{"type":"shove","amount":0,"direction":-1,"weight":2},{"type":"attack","amount":6,"weight":3}]}}
 ]
