@@ -126,6 +126,11 @@ func _check_mounted_labels(screen: String) -> void:
 	var boot = root.get_node("LiveWebPlaytestBoot")
 	var entered: bool = await boot.enter_preview(app, screen)
 	_check(entered, "real mounted " + screen + " preview precondition")
+	if screen == "shop":
+		await _check_peddler_labels(app)
+		app.free()
+		await process_frame
+		return
 	var gallery = app.get_node_or_null("LiveVisitCardTiles")
 	_check(gallery != null and gallery.is_gallery_mounted()
 		and gallery.gallery_kind() == screen.capitalize(),
@@ -180,6 +185,56 @@ func _check_mounted_labels(screen: String) -> void:
 
 
 # --- one guidance label ----------------------------------------------------
+
+## The routed Shop now prints its guidance and exact prices directly on the
+## one-choice Peddler rail. The detached legacy gallery typography checks and
+## the complete mounted Rest gallery assertions above remain in place.
+func _check_peddler_labels(app) -> void:
+	_check(app.peddler_visit != null and app.peddler_visit.is_open()
+		and app.peddler_buttons.size() == 4 and is_instance_valid(app.shop_view),
+		"real Peddler preview has an open authority and four direct choices")
+	if app.peddler_visit == null or not is_instance_valid(app.shop_view):
+		return
+	var before: Dictionary = app._sewing_context()
+	var bound: Dictionary = app.peddler_visit.read_state()
+	var title := app.shop_view.get_child(0) as Label
+	_check(title != null and title.text == "Peddler — choose one purchase"
+		and title.get_theme_font_size("font_size") >= MIN_BODY_SIZE,
+		"mounted Peddler guidance states the single-purchase rule at readable size")
+	var wallet: Label = app.shop_label
+	_check(wallet.text == "Gold: %d" % bound.state.gold and wallet.is_visible_in_tree()
+		and wallet.get_theme_font_size("font_size") >= MIN_BODY_SIZE,
+		"mounted wallet prints the complete authoritative gold amount at body size")
+	for label: Label in [title, wallet]:
+		_check(not label.clip_text and label.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING
+			and label.mouse_filter == Control.MOUSE_FILTER_IGNORE and label.focus_mode == Control.FOCUS_NONE
+			and label.gui_input.get_connections().is_empty(), "Peddler guidance stays complete and input-inert")
+	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	var prices := {}
+	for record in authored.cards + authored.trinkets:
+		prices[record.id] = int(record.price)
+	var offers: Array = bound.stock.cards + bound.stock.trinkets
+	for i in range(4):
+		var offer: Dictionary = offers[i]
+		var label: String = RunPoolCardRewardOffers.resolve_reward_definition(offer.id).display_name if i < 3 else String(offer.id).capitalize()
+		var expected := "Buy %s · %d gold" % [label, prices[offer.id]]
+		var button: Button = app.peddler_buttons[i]
+		_check(button.text == expected and button.get_meta("offer_id") == offer.id
+			and offer.price == prices[offer.id] and button.disabled == (offer.sold or bound.state.gold < offer.price),
+			"every direct Peddler choice prints its complete catalog name and authored price")
+		var size := button.get_theme_font_size("font_size")
+		var measured := button.get_theme_font("font").get_string_size(expected, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
+		_check(size >= MIN_BODY_SIZE and measured.x + button.get_theme_stylebox("normal").get_minimum_size().x <= button.size.x,
+			"short Peddler price sentence fits its real sewn button without truncation")
+	_check(app.peddler_leave_button.text == "Leave · FREE" and not app.peddler_leave_button.disabled,
+		"Peddler always prints an available free Leave")
+	for control in [app.shop_view, title, wallet] + app.peddler_buttons + [app.peddler_leave_button]:
+		_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).grow(0.5).encloses(control.get_global_rect()),
+			"Peddler guidance and every priced action fit the live viewport")
+	await _frames()
+	_check(app._sewing_context() == before and app.peddler_visit.read_state() == bound,
+		"reading Peddler guidance changes no run ledger, stock or seeded RNG")
+
 
 ## One guidance label's real measured facts: its complete published text and
 ## node name, effective body size, word wrap with no trimming, dark ink against

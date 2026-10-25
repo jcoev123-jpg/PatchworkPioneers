@@ -15,6 +15,7 @@ extends SceneTree
 ## verified by per-ID tables of exact authored text and signed outcomes.
 
 const EVENTS_PATH := "res://data/events/m04_events.json"
+const ROADSIDE_EVENTS_PATH := "res://data/events/v3_roadside_events.json"
 
 ## Independent copy of the thirteen named generic IDs; never read from the
 ## production constant, so a shrink there is caught here.
@@ -213,7 +214,7 @@ func _test_seeded_choice() -> void:
 
 func _test_sorted_eligibility() -> void:
 	var shipped := RunM04EventRotation.new()
-	var reversed_events: Array = (source_document.get("events") as Array).duplicate(true)
+	var reversed_events: Array = _combined_events()
 	reversed_events.reverse()
 	var reversed_rotation := RunM04EventRotation.new({"events": reversed_events})
 	_check(reversed_rotation.is_catalog_valid(), "a reverse-ordered catalog fixture still validates")
@@ -1215,6 +1216,30 @@ func _force_selection(rotation: RunM04EventRotation, target_id: String, seed_val
 
 func _source_events() -> Array:
 	return (source_document.get("events") as Array).duplicate(true)
+
+
+## Every event the default selector ships: the generic M04 catalog plus the
+## standalone roadside pack. A fixture that must mirror the shipping merge (for
+## example the reversed-order ordering check) uses this instead of the generic
+## catalog alone.
+func _combined_events() -> Array:
+	var events: Array = _source_events()
+	var file := FileAccess.open(ROADSIDE_EVENTS_PATH, FileAccess.READ)
+	_check(file != null, "v3_roadside_events.json opens for the combined ordering fixture")
+	if file == null:
+		return events
+	var text := file.get_as_text()
+	file.close()
+	var parser := JSON.new()
+	var parsed := parser.parse(text)
+	_check(parsed == OK, "v3_roadside_events.json parses for the combined ordering fixture")
+	if parsed != OK or not parser.data is Dictionary:
+		return events
+	var roadside: Variant = (parser.data as Dictionary).get("events")
+	_check(roadside is Array, "v3_roadside_events.json carries an events array for the ordering fixture")
+	if roadside is Array:
+		events.append_array((roadside as Array).duplicate(true))
+	return events
 
 
 func _without(events: Array, drop_id: String) -> Array:

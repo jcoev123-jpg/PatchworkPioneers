@@ -251,27 +251,63 @@ func _assert_flow(app, kind: String, id: String, rng_state: int) -> void:
 		return
 	if kind == "Shop":
 		_check(app.shop_view != null and app.shop_view.is_visible_in_tree()
-			and app.shop_visit != null and app.shop_purchases != null
-			and app.shop_offers.item_count > 0 and app.route_view == null,
-			"Shop marker mounts its existing seeded visit")
+			and app.peddler_visit != null and app.peddler_visit.is_open()
+			and app.peddler_buttons.size() == 4 and app.peddler_heroes.item_count == 3
+			and app.peddler_leave_button.is_visible_in_tree() and app.route_view == null,
+			"Shop marker mounts one seeded Peddler visit with four buys and Leave")
 		var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
 		var rng := RandomNumberGenerator.new()
 		rng.state = rng_state
 		var owners: Array[String] = []
 		for hero in app.run_heroes:
 			owners.append(hero.id)
-		var expected := RunShopStockOffers.generate(rng, owners, authored.cards, authored.trinkets, [])
-		_check(expected.ok and app.run_rng.state == rng.state,
-			"Shop spends exactly one seeded stock draw")
-		var stock: Array = app.shop_purchases.get_stock().cards
-		_check(stock.size() == expected.cards.size(), "Shop mounts the complete authored card stock")
-		for index in range(mini(stock.size(), expected.cards.size())):
-			_check(stock[index].id == expected.cards[index].id
-				and stock[index].price == expected.cards[index].price
-				and app.shop_offers.get_item_metadata(index) == expected.cards[index].id,
-				"visible Shop offer matches the independent stock oracle")
+		var expected_cards: Array = []
+		var catalogs: Array = [StarterCards.new(), WardenPoolCards.new(), SeamstressPoolCards.new(),
+			TinkerPoolCards.new(), LanternMonkPoolCards.new(), RagDuelistPoolCards.new(),
+			ScarecrowPoolCards.new(), YarnRangerPoolCards.new()]
+		for owner in owners:
+			var pool: Array = []
+			for candidate in authored.cards:
+				var card_owner := ""
+				var is_pool := false
+				for catalog_index in range(catalogs.size()):
+					var catalog = catalogs[catalog_index]
+					if catalog.has_card(candidate.id):
+						card_owner = catalog.get_definition(candidate.id).get("owner", "")
+						is_pool = catalog_index > 0
+						break
+				if card_owner == owner and not (is_pool and candidate.id.ends_with("_plus")):
+					pool.append(candidate)
+			pool.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.id < b.id)
+			_check(not pool.is_empty(), "independent Peddler oracle has authored candidates for this party owner")
+			if pool.is_empty():
+				return
+			var chosen: Dictionary = pool[rng.randi_range(0, pool.size() - 1)]
+			expected_cards.append({"id": chosen.id, "owner": owner, "price": int(chosen.price), "sold": false})
+		var patch_pool: Array = []
+		for candidate in authored.trinkets:
+			if not app.run_trinkets.has(candidate.id):
+				patch_pool.append(candidate)
+		patch_pool.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.id < b.id)
+		_check(not patch_pool.is_empty(), "independent Peddler oracle has an unowned patch candidate")
+		if patch_pool.is_empty():
+			return
+		var patch: Dictionary = patch_pool[rng.randi_range(0, patch_pool.size() - 1)]
+		var expected_stock := {"cards": expected_cards,
+			"trinkets": [{"id": patch.id, "price": int(patch.price), "sold": false}]}
+		var state: Dictionary = app.peddler_visit.read_state()
+		_check(state.ok and state.stock == expected_stock and app.run_rng.state == rng.state,
+			"Peddler stock and four-draw RNG state match independent sorted-pool oracle")
+		for index in range(3):
+			var offer: Dictionary = expected_cards[index]
+			_check(app.peddler_buttons[index].get_meta("offer_id") == offer.id
+				and app.peddler_buttons[index].text.contains("%d gold" % offer.price),
+				"visible owner card choice matches authored ID and quote")
+		_check(app.peddler_buttons[3].get_meta("offer_id") == patch.id
+			and app.peddler_buttons[3].text.contains("%d gold" % patch.price),
+			"visible patch choice matches authored ID and quote")
 		_check(app.session_gold == 0 and app.run_deck.size() == 12,
-			"Shop opening spends none of the seeded session")
+			"Peddler opening changes no run deck or wallet")
 		return
 	_check(app.route_view != null and app.route_view.is_visible_in_tree()
 		and app._placeholder_route == [id] and app.deck == null
@@ -296,11 +332,13 @@ func _leave_flow(app, kind: String) -> void:
 		await _click(app.unpicker_leave_button)
 	if kind == "Campfire":
 		await _click(app.campfire_leave_button)
+	if kind == "Shop":
+		await _click(app.peddler_leave_button)
 	var back: Button
 	if kind == "Rest":
 		back = app.rest_back_button
 	elif kind == "Shop":
-		back = app.shop_back_button
+		back = app.route_back_button
 	elif kind in ["Event", "Treasure", "Campfire", "Unpicker", "PatchStall", "SewingCircle"]:
 		back = app.route_back_button
 	else:

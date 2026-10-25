@@ -468,6 +468,11 @@ func _check_mounted_rail(screen: String) -> void:
 		app.free()
 		await process_frame
 		return
+	if screen == "shop":
+		await _check_peddler_rail(app)
+		app.free()
+		await process_frame
+		return
 	_check(gallery != null and gallery.is_gallery_mounted() and gallery.gallery_kind() == screen.capitalize(),
 		screen + " mounts the real visit card gallery")
 	if gallery == null or not gallery.is_gallery_mounted():
@@ -580,7 +585,7 @@ func _check_bounded_shop_rail(app, gallery) -> void:
 		"the bounded equipment card still shows a real window onto its content")
 	var actions: Array = [
 		[app.shop_buy_button, "Buy"], [app.shop_remove_button, "Remove"],
-		[app.shop_continue_button, "Continue"], [app.shop_back_button, "Return"]]
+		[app.peddler_leave_button, "Continue"], [app.shop_back_button, "Return"]]
 	for entry in actions:
 		var button = entry[0]
 		var name: String = entry[1]
@@ -611,7 +616,7 @@ func _check_bounded_shop_rail(app, gallery) -> void:
 		"the bounded card keeps a visible window shorter than its taller content")
 	for name in ["Remove", "Continue", "Return"]:
 		var button: Button = app.shop_remove_button if name == "Remove" \
-			else app.shop_continue_button if name == "Continue" else app.shop_back_button
+			else app.peddler_leave_button if name == "Continue" else app.shop_back_button
 		_check(is_instance_valid(button) and button.is_visible_in_tree()
 			and not button.disabled and button.pressed.get_connections().size() == 1,
 			"tall preview leaves the same enabled Shop action mounted: " + name)
@@ -957,3 +962,45 @@ func _contrast(a: Color, b: Color) -> float:
 	var high := maxf(_luminance(a), _luminance(b))
 	var low := minf(_luminance(a), _luminance(b))
 	return (high + 0.05) / (low + 0.05)
+
+
+func _check_peddler_rail(app) -> void:
+	_check(app.peddler_visit != null and app.peddler_visit.is_open() and app.peddler_buttons.size() == 4,
+		"real preview mounts authoritative Peddler and four short choices")
+	var before: Dictionary = app._sewing_context()
+	var bound: Dictionary = app.peddler_visit.read_state()
+	var actions: Array = app.peddler_buttons + [app.peddler_leave_button]
+	var direct: Array = []
+	for child in app.shop_view.get_children():
+		if child is Button and not child is OptionButton:
+			direct.append(child)
+	_check(direct == actions, "exactly four priced choices and Leave form the sewn rail")
+	var snapshots: Array = []
+	for i in range(actions.size()):
+		var button: Button = actions[i]
+		_check_face(button, true, "Peddler choice")
+		_check(button.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect())
+			and button.pressed.get_connections().size() == 1, "Peddler action fits viewport with one authentic callback")
+		var expected := "Leave \u00b7 FREE"
+		if i < 4:
+			var offer: Dictionary = (bound.stock.cards + bound.stock.trinkets)[i]
+			var label: String = RunPoolCardRewardOffers.resolve_reward_definition(offer.id).display_name if i < 3 else String(offer.id).capitalize()
+			expected = "Buy %s \u00b7 %d gold" % [label, offer.price]
+		_check(button.text == expected, "Peddler short price caption stays authentic")
+		snapshots.append([button.get_instance_id(), button.text, button.disabled, button.pressed.get_connections()[0].callable])
+	var bed: Control = app.visit_backdrop
+	_check(is_instance_valid(bed) and bed.mouse_filter == Control.MOUSE_FILTER_IGNORE and bed.focus_mode == Control.FOCUS_NONE,
+		"Peddler retains inert authored backdrop")
+	app.shop_view.position += Vector2(1, 1)
+	await process_frame
+	app.shop_view.position -= Vector2(1, 1)
+	app.shop_view.hide()
+	await process_frame
+	app.shop_view.show()
+	await process_frame
+	for i in range(actions.size()):
+		var button: Button = actions[i]
+		_check([button.get_instance_id(), button.text, button.disabled, button.pressed.get_connections()[0].callable] == snapshots[i],
+			"layout and visibility retain exact labels, affordability, identities and callbacks")
+		_check_face(button, true, "Peddler retained choice")
+	_check(app._sewing_context() == before, "presentation inspection changes no run ledger or RNG")

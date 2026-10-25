@@ -1,12 +1,17 @@
 class_name RunM04EventRotation
 extends RefCounted
-## Scene-free, read-only selector for the authored generic M04 wallet Events in
-## res://data/events/m04_events.json: button_trail, loose_seam, thimble_well,
-## frayed_signpost, needle_gate, quilting_bee and estate_sale.
+## Scene-free, read-only selector for the authored generic wallet Events.
+##
+## The no-argument shipping path combines the two authored catalogs:
+## res://data/events/m04_events.json (button_trail, loose_seam, thimble_well,
+## frayed_signpost, needle_gate, quilting_bee and estate_sale plus every accepted
+## additive tale) and res://data/events/v3_roadside_events.json (the twelve V3
+## roadside wallet tales). An injected {"events": [...]} document is used
+## exactly as passed: it is never extended with the shipped roadside pack.
 ##
 ## The future run owner supplies its own seeded RandomNumberGenerator, its own
-## wallet and its own visit history. This helper only validates the shipped
-## catalog at construction and returns a detached event record; it never
+## wallet and its own visit history. This helper only validates the sourced
+## catalogs at construction and returns a detached event record; it never
 ## creates or reseeds an RNG, commits a wallet, advances a map or records a
 ## visit. A rejected call consumes no RNG state, and a successful call consumes
 ## exactly one randi_range() draw after sorting the eligible IDs, so JSON order
@@ -18,6 +23,7 @@ extends RefCounted
 ## never treated as fixed.
 
 const EVENTS_PATH := "res://data/events/m04_events.json"
+const ROADSIDE_EVENTS_PATH := "res://data/events/v3_roadside_events.json"
 
 const REQUIRED_EVENT_IDS := [
 	"button_trail",
@@ -27,6 +33,25 @@ const REQUIRED_EVENT_IDS := [
 	"needle_gate",
 	"quilting_bee",
 	"estate_sale",
+]
+
+## Shipped V3-4 roadside pack. Every one of these authored wallet tales must join
+## the default rotation; an absent or malformed roadside source fails the whole
+## shipping merge instead of offering a partial pool. An injected fixture is not
+## required to carry them, so test and other-catalog sources keep their contract.
+const REQUIRED_ROADSIDE_EVENT_IDS := [
+	"v3_raincoat_bridge",
+	"v3_puppet_box_office",
+	"v3_mismatched_mittens",
+	"v3_coil_and_crow",
+	"v3_patchwork_lighthouse",
+	"v3_button_orchard",
+	"v3_lacework_railway",
+	"v3_moonshadow_tailor",
+	"v3_sleeping_thimble_giant",
+	"v3_needlefall_star",
+	"v3_jackdaw_stitchmarket",
+	"v3_dreaming_quilt_fair",
 ]
 
 ## Separately routed specials that live in the same JSON but must never become
@@ -40,9 +65,9 @@ var _pool: Array = []
 
 
 ## Builds and validates the rotation. Pass an injected {"events": [...]}
-## document (for tests or another catalog source); omit it to read the shipped
-## M04 JSON. An absent, unparsable or malformed-required catalog leaves the
-## rotation invalid, so every selection fails closed.
+## document (for tests or another catalog source); omit it to read and merge the
+## two shipped catalogs. An absent, unparsable or malformed-required catalog
+## leaves the rotation invalid, so every selection fails closed.
 func _init(catalog_source: Variant = null) -> void:
 	var document: Variant = catalog_source
 	if document == null:
@@ -181,7 +206,7 @@ func _build_pool(document: Variant) -> bool:
 ## A record is presentable when RunEventChoice accepts its schema and every
 ## authored choice carries a parseable signed gold/scraps outcome. Both checks
 ## reuse the existing contracts and leave the record untouched.
-func _is_presentable(record: Variant) -> bool:
+static func _is_presentable(record: Variant) -> bool:
 	if not record is Dictionary:
 		return false
 	var service := RunEventChoice.new(record)
@@ -207,9 +232,66 @@ func _is_presentable(record: Variant) -> bool:
 
 
 static func _load_shipped_catalog() -> Variant:
-	if not FileAccess.file_exists(EVENTS_PATH):
+	var generic: Variant = _parse_catalog_file(EVENTS_PATH)
+	if not generic is Dictionary:
 		return null
-	var file := FileAccess.open(EVENTS_PATH, FileAccess.READ)
+	var roadside: Variant = _parse_catalog_file(ROADSIDE_EVENTS_PATH)
+	if not roadside is Dictionary:
+		return null
+	return _combine_shipped_catalogs(generic, roadside)
+
+
+## The default shipping merge: the generic M04 document plus the standalone V3
+## roadside pack, as one {"events": [...]} document for _build_pool. Every
+## roadside record must be an authored, presentable, uniquely identified record
+## and all twelve required roadside IDs must be present; otherwise the whole
+## merge is rejected (null) so a partial default pool is never offered. Either
+## source stays untouched: only detached copies enter the merged document.
+static func _combine_shipped_catalogs(generic: Variant, roadside: Variant) -> Variant:
+	if not generic is Dictionary or not roadside is Dictionary:
+		return null
+	var generic_events: Variant = (generic as Dictionary).get("events")
+	var roadside_events: Variant = (roadside as Dictionary).get("events")
+	if not generic_events is Array or not roadside_events is Array:
+		return null
+	var seen: Dictionary = {}
+	var merged: Array = []
+	for record in (generic_events as Array):
+		if not record is Dictionary:
+			continue
+		var raw_id: Variant = (record as Dictionary).get("id")
+		if raw_id is String:
+			seen[raw_id] = true
+		merged.append((record as Dictionary).duplicate(true))
+	var roadside_ids: Dictionary = {}
+	for record in (roadside_events as Array):
+		if not record is Dictionary:
+			return null
+		var raw_id: Variant = (record as Dictionary).get("id")
+		if not raw_id is String:
+			return null
+		var event_id: String = raw_id
+		if event_id.strip_edges().is_empty():
+			return null
+		# A cross-catalog or in-pack duplicate is ambiguous shipped data: the
+		# default pool would silently lose a record, so the merge fails closed.
+		if seen.has(event_id) or roadside_ids.has(event_id):
+			return null
+		if not _is_presentable(record):
+			return null
+		seen[event_id] = true
+		roadside_ids[event_id] = true
+		merged.append((record as Dictionary).duplicate(true))
+	for required_id in REQUIRED_ROADSIDE_EVENT_IDS:
+		if not roadside_ids.has(required_id):
+			return null
+	return {"events": merged}
+
+
+static func _parse_catalog_file(path: String) -> Variant:
+	if not FileAccess.file_exists(path):
+		return null
+	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return null
 	var text := file.get_as_text()

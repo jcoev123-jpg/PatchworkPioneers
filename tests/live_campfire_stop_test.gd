@@ -61,8 +61,10 @@ func _camp_enter(atlas: bool) -> void:
 		var actor_name := str(hero.get("name", "")).strip_edges()
 		if actor_name.is_empty():
 			actor_name = str(hero.id).replace("_", " ").capitalize()
+		var gain: int = int(forecast) - int(hero.hp)
+		var gain_text := "FULL" if gain == 0 else ("(+%d HP)" % gain)
 		var note := "  ·  TORN → REVIVED" if hero.hp == 0 else ""
-		var caption := "%s    %d → %d / %d HP%s" % [actor_name, hero.hp, forecast, hero.max_hp, note]
+		var caption := "%s    %d → %d / %d HP  ·  %s%s" % [actor_name, hero.hp, forecast, hero.max_hp, gain_text, note]
 		_check(app.campfire_view.hero_labels[i].text == caption, "real hero forecast mounted")
 	app.campfire_view.heal_button.grab_focus()
 	await _key(KEY_TAB)

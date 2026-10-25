@@ -94,9 +94,9 @@ func _search(map: RunMap, choices: Array, path: Array, counts: Dictionary) -> Ar
 
 
 func _fixture() -> Dictionary:
-	# The expanded stop pool repins the retained fixture (now seed 1107) with a funded Shop,
+	# The expanded stop pool repins the retained fixture (now seed 1957) with a funded Shop,
 	# final recovery and a witnessed full win using the unchanged held-card pilot.
-	for value in [1107] + range(128, SEED_LIMIT + 1):
+	for value in [1957] + range(128, SEED_LIMIT + 1):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
@@ -122,9 +122,7 @@ func _state() -> Array:
 		app.party_carryover.read_state(), app.act_outcome.get_state(), combat,
 		app.fight_reward_offers.duplicate(true), app.fight_reward_claimed,
 		app.multi_fight_rewards.read_state() if app.multi_fight_rewards != null else {},
-		app.shop_visit.get_state() if app.shop_visit != null else {},
-		app.shop_purchases.get_state() if app.shop_purchases != null else {},
-		app.shop_purchases.get_stock() if app.shop_purchases != null else {},
+		app.peddler_visit.read_state() if app.peddler_visit != null else {},
 		[app.fight_rewards._prepared, app.fight_rewards._award,
 			app.fight_rewards._choice.get_offers(), app.fight_rewards._choice.is_claimed()]
 			if app.fight_rewards != null else [],
@@ -686,40 +684,44 @@ func _win(fixture: Dictionary) -> Array:
 			await _activate(app.rest_continue_button, true)
 			stale.append(callback)
 		elif kind == "Shop":
-			var stock: Array = app.shop_purchases.get_stock().cards
-			# Buy the cheapest affordable listing: which card the seeded draw
-			# puts first is not part of this paid-purchase contract.
+			var stock: Array = app.peddler_visit.read_state().stock.cards
+			# Buy the cheapest affordable card from the genuine three-owner
+			# Peddler stock; its direct choice performs the one-use purchase.
 			var offer: Dictionary = {}
+			var selected := -1
 			for listing in stock:
 				if app.session_gold >= listing.price \
 						and (offer.is_empty() or listing.price < offer.price):
 					offer = listing
+					selected = stock.find(listing)
 			if not offer.is_empty():
-				# Select that listing through the mounted picker, as a player does,
-				# so the enabled Buy control targets it.
-				var selected: int = stock.find(offer)
-				if app.shop_offers.selected != selected:
-					app.shop_offers.select(selected)
-					app.shop_offers.item_selected.emit(selected)
-					await _frames()
+				var purchase: Button = app.peddler_buttons[selected]
 				var expected: Array = app.run_deck.duplicate()
 				expected.append(offer.id)
 				var gold: int = app.session_gold
 				var scraps: int = app.run_scraps
 				var rng: int = app.run_rng.state
-				var buy := _retained(app.shop_buy_button)
-				await _activate(app.shop_buy_button, true)
+				var buy := _retained(purchase)
+				await _activate(purchase, true)
 				_check(app.run_deck == expected and app.session_gold == gold - offer.price
-					and app.run_scraps == scraps and app.run_rng.state == rng, "Shop buys one actual card for exact price")
+					and app.run_scraps == scraps and app.run_rng.state == rng
+					and app.peddler_visit.read_state().status == RunPeddlerVisit.USED
+					and app.shop_view == null and app.route_view.is_visible_in_tree(),
+					"Peddler card Buy publishes the exact price and admits the next route")
 				var settled := _state()
 				buy.call()
-				_check(_state() == settled, "sold Shop control cannot double-pay or spend RNG")
+				_check(_state() == settled, "consumed Peddler control cannot double-pay or spend RNG")
 				stale.append(buy)
 				purchases += 1
-			_record(["shop"])
-			var callback := _retained(app.shop_continue_button)
-			await _activate(app.shop_continue_button)
-			stale.append(callback)
+				_record(["shop"])
+			else:
+				var leave := _retained(app.peddler_leave_button)
+				var unchanged := _inventory()
+				await _activate(app.peddler_leave_button)
+				_check(app.peddler_visit.read_state().status == RunPeddlerVisit.LEFT
+					and _inventory() == unchanged and app.route_view.is_visible_in_tree(),
+					"short Peddler wallet leaves free and admits the next route")
+				stale.append(leave)
 		else:
 			_check(kind in ["Event", "Treasure", "Campfire", "Unpicker"] and app.route_view.is_visible_in_tree(),
 				"settled map visit exposes next connected controls")

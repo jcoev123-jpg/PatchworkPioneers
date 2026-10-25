@@ -21,7 +21,14 @@ const KNOWN_EFFECT_KEYS := [
 	"self_hp_loss", "conditional_damage", "random_target_each_hit", "rng_source",
 	"living_targets_only", "duration", "next_attack_damage_bonus",
 	"next_turn_energy", "expires", "blind", "blind_next_attack",
+	"dodge_next_attack", "exhaust",
 ]
+## The two V3 one-shot descriptors the face names beside the classic effects.
+## They are printed design wording only: this formatter assumes no enemy attack
+## will actually miss and no played card enters an exhaust pile.
+const SELF_DODGE_CLAUSE := "dodge the next attack"
+const ALLY_DODGE_CLAUSE := "dodges the next attack"
+const EXHAUST_SENTENCE := "Exhaust."
 ## Sentences are separated by one space, so the face reads as ordinary prose.
 const SEPARATOR := " "
 ## Terse markers the hover legend still explains for the painted pips.
@@ -63,6 +70,16 @@ static func describe(definition: Variant, applied: Dictionary = {}) -> Dictionar
 			undescribed = true
 		if not sentence.is_empty():
 			phrases.append(sentence)
+	# Exhaust is a card-level descriptor, so it follows every affected-target
+	# sentence ("Blind to all. Exhaust.") when the record authors the boolean
+	# true. Only that exact flag is read; any other value stays undescribed. The
+	# sentence states the printed design rule only: it claims no live discard or
+	# exhaust pile.
+	if effects.has("exhaust"):
+		if effects["exhaust"] is bool and bool(effects["exhaust"]):
+			phrases.append(EXHAUST_SENTENCE)
+		else:
+			undescribed = true
 	var unknown := undescribed or has_unknown(definition)
 	if unknown:
 		phrases.append(UNKNOWN_SENTENCE)
@@ -282,9 +299,10 @@ static func _status_clause(effects: Dictionary, applied: Dictionary) -> Dictiona
 	return {"text": "apply " + _join_and(typed), "empty": false, "unknown": unknown}
 
 
-## Self-directed effects: Block, draw, energy, HP loss, Guard, Thorns and the
-## bonus that arms a later attack. `other_ally_block` shares this sentence
-## because it is paid by the same cast while the rest of the line stays short.
+## Self-directed effects: Block, draw, energy, HP loss, Guard, Thorns, the
+## one-shot Dodge and the bonus that arms a later attack. `other_ally_block`
+## shares this sentence because it is paid by the same cast while the rest of
+## the line stays short.
 static func _self_sentence(card: Dictionary, effects: Dictionary) -> Dictionary:
 	var unknown := false
 	var clauses: Array[String] = []
@@ -361,6 +379,17 @@ static func _self_sentence(card: Dictionary, effects: Dictionary) -> Dictionary:
 			clauses.append("gain %d Riposte" % riposte)
 		else:
 			unknown = true
+	# Dodge is the Rag Duelist's and Lantern Monk's one-shot next-attack
+	# avoidance. A single chosen ally prints it in the ally sentence, so this
+	# sentence only owns the caster's own record; every other recipient stays
+	# undescribed rather than borrowing a self Dodge.
+	if effects.has("dodge_next_attack") \
+			and str(card.get("target_kind", "")) != "ally_single":
+		var dodge := _dodge_clause(card, effects)
+		if bool(dodge.get("valid", false)):
+			clauses.append(str(dodge["clause"]))
+		else:
+			unknown = true
 	if clauses.is_empty():
 		return {"sentence": "", "unknown": unknown}
 	var sentences: Array[String] = []
@@ -369,7 +398,8 @@ static func _self_sentence(card: Dictionary, effects: Dictionary) -> Dictionary:
 	return {"sentence": SEPARATOR.join(sentences), "unknown": unknown}
 
 
-## A single chosen ally: healing first, then the Block it also receives.
+## A single chosen ally: healing first, then the Block and one-shot Dodge it
+## also receives, joined into one natural short sentence.
 static func _ally_sentence(card: Dictionary, effects: Dictionary,
 		applied: Dictionary) -> Dictionary:
 	if str(card.get("target_kind", "")) != "ally_single":
@@ -389,6 +419,14 @@ static func _ally_sentence(card: Dictionary, effects: Dictionary,
 		if block >= 0:
 			clauses.append("grant %d Block" % block if healed
 				else "ally gains %d Block" % block)
+		else:
+			unknown = true
+	# An ally Dodge joins the Block in the same sentence: "Ally gains 6 Block
+	# and dodges the next attack."
+	if effects.has("dodge_next_attack"):
+		var dodge := _dodge_clause(card, effects)
+		if bool(dodge.get("valid", false)):
+			clauses.append(str(dodge["clause"]))
 		else:
 			unknown = true
 	var status_clause := _status_clause(effects, applied)
@@ -494,6 +532,27 @@ static func _hits(effects: Dictionary) -> int:
 static func _one_turn(effects: Dictionary) -> bool:
 	var value: Variant = effects.get("duration")
 	return value is int and int(value) == 1
+
+
+## The authored one-shot Dodge: the integer one on the caster's own record or on
+## a single chosen ally, with the optional authored one-turn duration when the
+## record carries one. Any other amount or type, another recipient, a malformed
+## duration or an absent `dodge_next_attack` is not a Dodge this formatter will
+## print, so the face keeps the honest fallback. The wording repeats the printed
+## design rule only; live combat does not cancel an enemy attack here.
+static func _dodge_clause(card: Dictionary, effects: Dictionary) -> Dictionary:
+	var target := str(card.get("target_kind", ""))
+	if target != "self" and target != "ally_single":
+		return {"valid": false, "clause": ""}
+	var amount: Variant = effects.get("dodge_next_attack")
+	# `true` and `1.0` are not the authored integer one.
+	if not amount is int or int(amount) != 1:
+		return {"valid": false, "clause": ""}
+	# The duration is optional, but a present one must be the authored one turn.
+	if effects.has("duration") and not _one_turn(effects):
+		return {"valid": false, "clause": ""}
+	return {"valid": true,
+		"clause": ALLY_DODGE_CLAUSE if target == "ally_single" else SELF_DODGE_CLAUSE}
 
 
 ## Tangled is applied to an enemy only; a self or ally cast never borrows its count.

@@ -208,9 +208,11 @@ func _preview_fixture(visit: RunCampfireVisit, expected_hp: Array, label: String
 		var expected_name := str(before.get("name", "")).strip_edges()
 		if expected_name.is_empty():
 			expected_name = str(before["id"]).replace("_", " ").capitalize()
+		var gain := int(after["hp"]) - int(before["hp"])
+		var gain_text := "FULL" if gain == 0 else ("(+%d HP)" % gain)
 		var note := "  ·  TORN → REVIVED" if int(before["hp"]) == 0 else ""
-		var caption := "%s    %d → %d / %d HP%s" % [
-			expected_name, before["hp"], after["hp"], before["max_hp"], note]
+		var caption := "%s    %d → %d / %d HP  ·  %s%s" % [
+			expected_name, before["hp"], after["hp"], before["max_hp"], gain_text, note]
 		_check(panel.hero_labels[i].text == caption,
 			label + ": truthful source name / HP ribbon " + str(i))
 		_check(panel.hero_labels[i].get_theme_font_size("font_size") >= 24

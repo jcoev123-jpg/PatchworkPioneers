@@ -259,7 +259,7 @@ func _check_visit_theme(shared: Theme) -> void:
 
 
 func _check_visit_controls(app, screen: String) -> void:
-	var selectors: Array = [app.shop_patch_offers, app.shop_patch_heroes] if screen == "shop" \
+	var selectors: Array = [app.peddler_heroes] if screen == "shop" \
 		else [app.rest_stitch_first, app.rest_stitch_second]
 	var deck: Array = app.run_deck.duplicate(true)
 	var wallet := [app.session_gold, app.run_scraps]
@@ -296,6 +296,14 @@ func _check_visit_controls(app, screen: String) -> void:
 		_check(selector.selected == selected, screen + " inspecting popup preserves selection")
 		for index in range(selector.item_count):
 			_check(selector.get_item_metadata(index) == metadata[index], screen + " popup preserves metadata")
+	if screen == "shop":
+		_check(app.peddler_visit != null and app.peddler_visit.is_open() and app.peddler_buttons.size() == 4,
+			"Peddler mounts four authentic direct choices")
+		for button in app.peddler_buttons + [app.peddler_leave_button]:
+			_check(button.is_visible_in_tree() and button.get_theme_stylebox("normal") is StyleBoxTexture
+				and button.pressed.get_connections().size() == 1, "Peddler direct choice inherits sewn action skin and authentic callback")
+		_check(app.run_deck == deck and [app.session_gold, app.run_scraps] == wallet, "Peddler popup inspection leaves run inventory untouched")
+		return
 	var gallery = app.get_node_or_null("LiveVisitCardTiles")
 	_check(gallery != null and gallery.is_gallery_mounted(), screen + " mounts the real populated gallery")
 	if gallery != null and gallery.is_gallery_mounted():

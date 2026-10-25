@@ -1467,7 +1467,7 @@ func _route_choice_button(id: String, kind: String, opening: bool, choice: Dicti
 		if kind == "Rest":
 			button.tooltip_text = "Campfire preview: opens the legacy Rest screen to heal or upgrade a card."
 		elif kind == "Shop":
-			button.tooltip_text = "Peddler preview: opens the legacy Shop screen to buy cards or remove a card."
+			button.tooltip_text = "Peddler: buy one of three cards or one patch, or Leave for free."
 	_style_route_button(button, ROUTE_KIND_THREAD.get(kind, ROUTE_BOOK_THREAD), true)
 	button.add_child(_route_token(kind))
 	button.add_child(_route_patch_stitch(kind))
@@ -2717,6 +2717,13 @@ func _unfought_run() -> bool:
 	for id in run_map.get_route():
 		if run_map.get_node(id).get("type") not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "PatchStall", "Unpicker"]:
 			return false
+		if run_map.get_node(id).get("type") == "Shop":
+			var prefix := run_map.get_route().slice(0, run_map.get_route().find(id) + 1)
+			var witness: Array = _peddler_witnesses.get(id, [])
+			if witness.size() != 7 or witness.slice(0, 4) != [run_map, run_map.get_generation_revision(), run_map.get_floors(), prefix] \
+				or not witness[4] is RunPeddlerVisit or not witness[4].is_consumed() \
+				or witness[4].read_state() != witness[5] or witness[6].get("ok") != true:
+				return false
 		if run_map.get_node(id).get("type") == "PatchStall":
 			var prefix := run_map.get_route().slice(0, run_map.get_route().find(id) + 1)
 			if _patch_stall_visits.get(id, []) != [run_map, run_map.get_generation_revision(), run_map.get_floors(), prefix]:
@@ -2793,7 +2800,7 @@ func _can_choose_connected_route() -> bool:
 	if run_map.get_node(run_map.get_current_node_id()).get("type") in ["Event", "Treasure"]:
 		return _placeholder_map != null and _placeholder_map.get_ref() == run_map \
 			and not _placeholder_route.is_empty() and run_map.get_route() == _placeholder_route
-	return _current_shop_ledger("closed")
+	return _peddler_closed()
 
 
 ## Stage every combat model before replacing the last mounted battle. The entry
@@ -5309,101 +5316,238 @@ func _refresh_rest_hp() -> void:
 	rest_hp_label.text = "\n".join(lines)
 
 
+var peddler_visit: RunPeddlerVisit
+var peddler_buttons: Array[Button] = []
+var peddler_leave_button: Button
+var peddler_heroes: OptionButton
+var peddler_receipt: Dictionary = {}
+var _peddler_wardrobe: RunPatchWardrobe
+var _peddler_wardrobe_source: RunPatchWardrobe
+var _peddler_view_source: WeakRef
+var _peddler_context: Dictionary = {}
+var _peddler_bound: Dictionary = {}
+var _peddler_wardrobe_bound: Dictionary = {}
+var _peddler_witnesses: Dictionary = {}
+
+
+func _peddler_closed() -> bool:
+	if run_map == null or peddler_visit == null or not peddler_visit.is_consumed() \
+		or shop_view != null or _peddler_context != _sewing_context():
+		return false
+	var id := run_map.get_current_node_id()
+	return _peddler_witnesses.get(id, []) == [run_map, run_map.get_generation_revision(),
+		run_map.get_floors(), run_map.get_route(), peddler_visit, peddler_visit.read_state(), peddler_receipt]
+
+
 func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], button) -> bool:
 	if not _can_choose_connected_route() or source_map == null or source_map.get_ref() != run_map \
 		or run_map.get_route() != prior or not is_instance_valid(route_view) \
 		or not route_view.is_visible_in_tree() or not is_instance_valid(button) \
-		or button not in route_buttons or button.disabled or not button.is_visible_in_tree() \
-		or button.get_meta("route_id") != id or not run_map.get_legal_choices().has(id) \
-		or run_map.get_node(id).get("type") != "Shop":
+		or button not in route_buttons or button.get_parent() != route_view \
+		or button.disabled or not button.is_visible_in_tree() or button.get_meta("route_id") != id \
+		or button.get_meta("route_kind") != "Shop" or not run_map.get_legal_choices().has(id) \
+		or run_map.get_node(id).get("type") != "Shop" or run_rng == null:
 		return false
-	var visit := RunShopVisit.new(run_deck, session_gold, run_removal_count, run_trinkets,
-		run_stitch_descriptors, run_next_stitch_id)
-	var offers: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
-	if not (offers is Dictionary) or not (offers.get("cards") is Array) \
-		or not (offers.get("trinkets") is Array) or run_rng == null:
+	var carry := party_carryover as RunTornCarryover
+	var definitions := RunAuthoredPatchDefinitions.load_definitions()
+	if carry == null or definitions.is_empty():
 		return false
-	var patch_candidates := _validated_patch_candidates(offers.trinkets)
-	if patch_candidates.is_empty():
+	var registry := RunRestStitchCards.new(run_deck, run_stitch_descriptors, run_scraps, run_next_stitch_id)
+	if not registry.is_valid():
 		return false
-	var party_ids: Array[String] = []
-	for hero in run_heroes:
-		if not (hero is Dictionary) or not (hero.get("id") is String):
+	var wardrobe := carry._wardrobe
+	if wardrobe == null:
+		wardrobe = RunPatchWardrobe.new(run_heroes, run_trinkets, definitions,
+			run_scraps, session_gold, run_deck, run_seed, true)
+	var w := wardrobe.get_snapshot()
+	if not wardrobe.is_valid() or w.heroes != run_heroes or w.owned != run_trinkets \
+		or w.cards != run_deck or w.scraps != run_scraps or w.gold != session_gold \
+		or w.seed != run_seed or w.rest_id != "" or not carry.can_bind_wardrobe(wardrobe, carry.torn, w):
+		return false
+	var authored: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	if not authored is Dictionary or not authored.get("cards") is Array or not authored.get("trinkets") is Array:
+		return false
+	var candidates := _validated_patch_candidates(authored.trinkets)
+	if candidates.is_empty():
+		return false
+	var canonical_slots := {}
+	for definition in definitions:
+		canonical_slots[definition.id] = definition.slot
+	for candidate in candidates:
+		if w.definitions.get(candidate.id) != canonical_slots.get(candidate.id):
 			return false
-		party_ids.append(hero.id)
-	var rng_before := run_rng.state
-	var stock := RunShopStockOffers.generate(run_rng, party_ids, offers.cards, patch_candidates, run_trinkets)
-	if not stock.ok:
-		run_rng.state = rng_before
+	var ids: Array = []
+	for hero in run_heroes:
+		ids.append(hero.id)
+	# Stage on a detached copy: a refused entry cannot spend the run RNG.
+	var staged_rng := RandomNumberGenerator.new()
+	staged_rng.state = run_rng.state
+	var stock := RunShopStockOffers.generate_peddler_stock(staged_rng, ids,
+		authored.cards, candidates, run_trinkets)
+	var visit := RunPeddlerVisit.new(id, ids, run_deck, run_trinkets, session_gold, stock)
+	if not visit.is_open() or not run_map.choose_node(id):
 		return false
-	var purchases := RunShopPurchases.new(party_ids, run_deck, run_trinkets, session_gold, stock.cards, stock.trinkets)
-	if not purchases.is_valid():
-		run_rng.state = rng_before
-		return false
-	if not visit.get_state().valid or not run_map.choose_node(id):
-		run_rng.state = rng_before
-		return false
-	if not visit.open_visit(id):
-		run_map.undo_choice(id, prior)
-		run_rng.state = rng_before
-		return false
-	shop_visit = visit
-	shop_purchases = purchases
-	_shop_map = weakref(run_map)
-	_shop_route = run_map.get_route()
+	run_rng.state = staged_rng.state
 	_clear_route_view()
-	if is_instance_valid(shop_view):
-		remove_child(shop_view)
-		shop_view.queue_free()
+	peddler_visit = visit
+	_peddler_wardrobe = wardrobe
+	_peddler_wardrobe_source = wardrobe
+	_peddler_bound = visit.read_state()
+	_peddler_wardrobe_bound = w
+	peddler_receipt = {}
 	shop_view = VBoxContainer.new()
-	shop_view.set_anchors_preset(Control.PRESET_CENTER)
+	shop_view.name = "Peddler"
+	shop_view.position = Vector2(310, 60)
+	shop_view.custom_minimum_size.x = 660
 	shop_view.add_theme_constant_override("separation", 12)
 	add_child(shop_view)
+	_peddler_view_source = weakref(shop_view)
 	_mount_visit_backdrop("Shop", shop_view)
-	var heading := Label.new()
-	heading.name = "ShopTitle"
-	heading.text = "Shop - Floor %d" % run_map.get_current_floor()
-	heading.theme_type_variation = &"PatchHeading"
-	shop_view.add_child(heading)
+	var title := Label.new()
+	title.text = "Peddler — choose one purchase"
+	title.theme_type_variation = &"PatchHeading"
+	shop_view.add_child(title)
 	shop_label = Label.new()
+	shop_label.text = "Gold: %d" % session_gold
 	shop_view.add_child(shop_label)
-	shop_offers = OptionButton.new()
-	shop_offers.custom_minimum_size = Vector2(440, 48)
-	shop_view.add_child(shop_offers)
-	shop_offers.item_selected.connect(_select_shop_offer)
-	shop_buy_button = Button.new()
-	shop_buy_button.text = "Buy"
-	shop_buy_button.custom_minimum_size = Vector2(440, 48)
-	shop_buy_button.pressed.connect(_buy_at_shop.bind(visit, purchases, shop_buy_button))
-	shop_view.add_child(shop_buy_button)
-	shop_cards = OptionButton.new()
-	shop_cards.custom_minimum_size = Vector2(440, 48)
-	shop_view.add_child(shop_cards)
-	shop_remove_button = Button.new()
-	shop_remove_button.text = "Remove"
-	shop_remove_button.custom_minimum_size = Vector2(440, 56)
-	shop_remove_button.pressed.connect(_remove_at_shop.bind(visit, shop_remove_button))
-	shop_view.add_child(shop_remove_button)
-	_mount_shop_patches()
-	shop_continue_button = Button.new()
-	shop_continue_button.text = "Continue"
-	shop_continue_button.custom_minimum_size = Vector2(440, 48)
-	shop_continue_button.pressed.connect(_continue_from_shop.bind(visit, _shop_map, _shop_route.duplicate(), shop_continue_button))
-	shop_view.add_child(shop_continue_button)
-	shop_back_button = Button.new()
-	shop_back_button.text = "Return"
-	shop_back_button.pressed.connect(_return_from_visit.bind(shop_view))
-	shop_view.add_child(shop_back_button)
-	_shop_patch_context = _shop_patch_snapshot()
-	_refresh_shop()
-	_focus_visit(shop_view)
-	var actions: Array[Control] = [shop_offers, shop_buy_button, shop_cards, shop_remove_button, shop_patch_offers, shop_patch_heroes, shop_patch_buy_button, shop_continue_button, shop_back_button]
-	for index in range(actions.size()):
-		actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
-		actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
-	shop_offers.grab_focus()
-	_shop_patch_context = _shop_patch_snapshot()
+	peddler_heroes = OptionButton.new()
+	peddler_heroes.custom_minimum_size.y = 42
+	for hero in run_heroes:
+		peddler_heroes.add_item(hero.id.capitalize())
+		peddler_heroes.set_item_metadata(peddler_heroes.item_count - 1, hero.id)
+	peddler_heroes.tooltip_text = "Sew the patch onto this hero's matching slot."
+	shop_view.add_child(peddler_heroes)
+	peddler_buttons.clear()
+	for offer in _peddler_bound.stock.cards + _peddler_bound.stock.trinkets:
+		var kind := "card" if offer.has("owner") else "trinket"
+		var action := _peddler_button(_peddler_caption(offer, kind))
+		action.set_meta("offer_id", offer.id)
+		action.disabled = offer.sold or session_gold < offer.price
+		action.pressed.connect(_peddler_action.bind(visit, weakref(action), kind, offer.id, _peddler_bound))
+		peddler_buttons.append(action)
+	peddler_leave_button = _peddler_button("Leave · FREE")
+	peddler_leave_button.pressed.connect(_peddler_action.bind(visit, weakref(peddler_leave_button), "leave", "", _peddler_bound))
+	var actions: Array[Control] = [peddler_heroes]
+	for action in peddler_buttons:
+		if not action.disabled:
+			actions.append(action)
+	actions.append(peddler_leave_button)
+	for i in range(actions.size()):
+		actions[i].focus_next = actions[i].get_path_to(actions[(i + 1) % actions.size()])
+		actions[i].focus_previous = actions[i].get_path_to(actions[(i + actions.size() - 1) % actions.size()])
+	peddler_leave_button.grab_focus()
+	_peddler_context = _sewing_context()
 	return true
+
+
+func _peddler_button(caption: String) -> Button:
+	var action := Button.new()
+	action.text = caption
+	action.custom_minimum_size = Vector2(660, 54)
+	action.theme_type_variation = LiveVisitCardTiles.ACTION_VARIATION
+	action.add_theme_font_size_override("font_size", LiveVisitCardTiles.ACTION_FONT_SIZE)
+	var skin := LiveVisitCardTiles.new()
+	skin.apply_action_skin(action)
+	skin.free()
+	shop_view.add_child(action)
+	return action
+
+
+func _peddler_caption(offer: Dictionary, kind: String) -> String:
+	var label := String(offer.id).capitalize()
+	if kind == "card":
+		label = RunPoolCardRewardOffers.resolve_reward_definition(offer.id).get("display_name", label)
+	return "Buy %s · %d gold" % [label, offer.price]
+
+
+func _peddler_action(visit: RunPeddlerVisit, source: WeakRef, kind: String,
+		id: String, bound: Dictionary) -> void:
+	if visit == null or visit != peddler_visit or not visit.is_open() or source == null \
+		or not is_instance_valid(shop_view) or not shop_view.is_visible_in_tree() \
+		or _peddler_view_source == null or _peddler_view_source.get_ref() != shop_view \
+		or _peddler_wardrobe == null or _peddler_wardrobe != _peddler_wardrobe_source \
+		or peddler_buttons.size() != 4 \
+		or shop_view.get_parent() != self or _peddler_context != _sewing_context() \
+		or bound != visit.read_state() or bound != _peddler_bound \
+		or run_map.get_current_node_id() != bound.node_id \
+		or run_map.get_node(bound.node_id).get("type") != "Shop":
+		return
+	var button = source.get_ref()
+	if not is_instance_valid(button) or button.get_parent() != shop_view \
+		or not button.is_visible_in_tree() or button.disabled \
+		or not is_instance_valid(peddler_heroes) or peddler_heroes.get_parent() != shop_view \
+		or peddler_heroes.disabled or not peddler_heroes.is_visible_in_tree() \
+		or peddler_heroes.item_count != 3 or shop_label.text != "Gold: %d" % session_gold:
+		return
+	for i in range(3):
+		if not peddler_heroes.get_item_metadata(i) is String \
+			or peddler_heroes.get_item_metadata(i) != run_heroes[i].id \
+			or peddler_heroes.get_item_text(i) != String(run_heroes[i].id).capitalize():
+			return
+	var w := _peddler_wardrobe.get_snapshot()
+	var carry := party_carryover as RunTornCarryover
+	if w != _peddler_wardrobe_bound or w.heroes != run_heroes or w.cards != run_deck or w.owned != run_trinkets \
+		or w.scraps != run_scraps or w.gold != session_gold or w.seed != run_seed \
+		or w.rest_id != "" or not carry.can_bind_wardrobe(_peddler_wardrobe, carry.torn, w):
+		return
+	var receipt: Dictionary
+	if kind == "leave":
+		if button != peddler_leave_button or button.text != "Leave · FREE":
+			return
+		receipt = visit.leave(bound.node_id, bound.state, bound.stock)
+	else:
+		var offers: Array = bound.stock.cards if kind == "card" else bound.stock.trinkets
+		var index := -1
+		for i in range(offers.size()):
+			if offers[i].id == id:
+				index = i
+		if index < 0 or button != peddler_buttons[index if kind == "card" else 3] \
+			or not button.get_meta("offer_id", "") is String \
+			or button.get_meta("offer_id", "") != id or button.text != _peddler_caption(offers[index], kind):
+			return
+		if kind == "trinket":
+			var owner := peddler_heroes.selected
+			if owner < 0 or owner >= 3:
+				return
+			var result := RunShopPatchSewing.purchase_peddler_and_sew(visit, _peddler_wardrobe,
+				bound.node_id, id, run_heroes[owner].id, w.definitions.get(id),
+				"peddler:%s" % bound.node_id, bound, w)
+			if not result.ok:
+				return
+			receipt = result.receipt
+		else:
+			receipt = visit.choose_purchase(bound.node_id, bound.state, bound.stock, kind, id)
+			if receipt.ok:
+				var refreshed := _peddler_wardrobe.refresh_run_context(run_heroes, run_trinkets,
+					run_scraps, receipt.state.gold, receipt.state.deck, w)
+				assert(refreshed, "Validated card purchase must refresh wardrobe")
+	if not receipt.get("ok", false):
+		return
+	if kind != "leave":
+		var state := _peddler_wardrobe.get_snapshot()
+		run_deck.assign(receipt.state.deck)
+		run_trinkets.assign(state.owned)
+		session_gold = state.gold
+		run_scraps = state.scraps
+		var reconciled := carry.bind_wardrobe(_peddler_wardrobe, carry.torn, state)
+		assert(reconciled, "Peddler preflight must preserve carryover binding")
+	peddler_receipt = receipt.duplicate(true)
+	for action in peddler_buttons + [peddler_leave_button]:
+		action.disabled = true
+		for connection in action.pressed.get_connections():
+			action.pressed.disconnect(connection.callable)
+	_clear_visit_backdrop()
+	remove_child(shop_view)
+	shop_view.queue_free()
+	shop_view = null
+	peddler_buttons.clear()
+	peddler_leave_button = null
+	peddler_heroes = null
+	shop_continue_button = null
+	_peddler_context = _sewing_context()
+	_peddler_witnesses[bound.node_id] = [run_map, run_map.get_generation_revision(),
+		run_map.get_floors(), run_map.get_route(), visit, visit.read_state(), peddler_receipt.duplicate(true)]
+	_present_connected_route(weakref(run_map))
 
 
 func _shop_offer_text(offer: Dictionary) -> String:
@@ -6474,6 +6618,20 @@ func _return_to_title() -> void:
 	_patch_stall_visits.clear()
 	_patch_stall_closed = false
 	_campfire_visits.clear()
+	if peddler_visit != null:
+		peddler_visit.close()
+	peddler_visit = null
+	peddler_buttons.clear()
+	peddler_leave_button = null
+	peddler_heroes = null
+	peddler_receipt.clear()
+	_peddler_wardrobe = null
+	_peddler_wardrobe_source = null
+	_peddler_view_source = null
+	_peddler_context.clear()
+	_peddler_bound.clear()
+	_peddler_wardrobe_bound.clear()
+	_peddler_witnesses.clear()
 	_campfire_closed = false
 	if is_instance_valid(sewing_view):
 		remove_child(sewing_view)

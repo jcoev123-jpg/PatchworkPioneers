@@ -6,10 +6,42 @@ extends SceneTree
 ## global ordering. Each required event is checked for its exact presentation,
 ## its three uniquely identified choices (including a free Leave) and both
 ## signed wallet fields, then driven through the shipped RunEventChoice for a
-## funded and a zero wallet, and finally through the combined generic selector.
+## funded and a zero wallet.
+##
+## Selector coverage proves the shipped admission end to end: a fresh uninjected
+## RunM04EventRotation serves the generic M04 records, every merged lantern tale
+## and all twelve roadside tales exactly once while quiet_spool stays special;
+## the eligible pool equals an independently derived sorted oracle of both
+## shipped catalogs; a seeded selection consumes exactly one range draw and
+## replays; excluding every other ID selects a named roadside record; an
+## exhausted or malformed call consumes no RNG; and a broken roadside source
+## rejects the whole default merge instead of offering a partial pool.
 
 const EVENTS_PATH := "res://data/events/v3_roadside_events.json"
 const M04_EVENTS_PATH := "res://data/events/m04_events.json"
+
+const QUIET_SPOOL_ID := "quiet_spool"
+
+## The original generic base plus the accepted six lantern-haunted tales. They
+## are named here independently of the production selector constants.
+const REQUIRED_GENERIC_IDS := [
+	"button_trail",
+	"loose_seam",
+	"thimble_well",
+	"frayed_signpost",
+	"needle_gate",
+	"quilting_bee",
+	"estate_sale",
+]
+
+const LANTERN_EVENT_IDS := [
+	"lantern_moth_clearing",
+	"patchwork_ferry",
+	"spool_clocktower",
+	"ragpicker_cart",
+	"quilt_bridge",
+	"button_moon_festival",
+]
 
 const EXPECTED := {
 	"v3_raincoat_bridge": {
@@ -417,29 +449,366 @@ func _run_tests() -> void:
 			else:
 				_check(is_affordable, "Free choice is affordable at zero: " + cid)
 
-	_check_combined_selector()
+	_check_injected_selector()
+	_check_default_admission()
+	_check_default_selection_contract()
+	_check_default_merge_failures()
 
-## Every authored roadside record must reach the shipped combined generic
-## rotation as its own eligible ID. Nothing here asserts a pool size or a whole
-## ordered ID list, so additive peer catalogs never clash with this test.
-func _check_combined_selector() -> void:
+## An injected catalog is used exactly as passed. The synthetic combination below
+## is a genuine injection, and the generic-only injection proves the selector
+## never appends the shipped roadside pack to a fixture on its own.
+func _check_injected_selector() -> void:
 	var m04: Dictionary = _read_document(M04_EVENTS_PATH)
 	var roadside: Dictionary = _read_document(EVENTS_PATH)
 	if m04.is_empty() or roadside.is_empty():
 		return
-	var combined: Array = []
-	combined.append_array((m04.get("events", []) as Array).duplicate(true))
-	combined.append_array((roadside.get("events", []) as Array).duplicate(true))
+	var combined: Array = _source_events(m04)
+	combined.append_array(_source_events(roadside))
 	var rotation := RunM04EventRotation.new({"events": combined})
 	_check(rotation.is_catalog_valid(), "Combined catalog validates for the shipped generic rotation")
+	if rotation.is_catalog_valid():
+		var ids := rotation.get_generic_event_ids()
+		for expected_id in EXPECTED:
+			_check(ids.count(expected_id) == 1,
+				"Roadside event is eligible exactly once in the combined pool: " + expected_id)
+			var matches: Array = _matches(rotation.get_generic_events(), expected_id)
+			_check(matches.size() == 1 and matches[0].title == EXPECTED[expected_id]["title"]
+				and matches[0].description == EXPECTED[expected_id]["description"],
+				"Combined pool serves the exact authored roadside record: " + expected_id)
+		_check(not ids.has(QUIET_SPOOL_ID), "Quiet Spool stays on its dedicated special route")
+	var generic_only := RunM04EventRotation.new(m04)
+	_check(generic_only.is_catalog_valid(), "A generic-only injected catalog still validates on its own")
+	var generic_ids: Array = generic_only.get_generic_event_ids()
+	for expected_id in EXPECTED:
+		_check(not generic_ids.has(expected_id),
+			"An injected fixture is used exactly as passed, with no roadside pack appended: " + expected_id)
+
+## AC1: a fresh uninjected selector admits the shipped generic records, the
+## merged lantern-haunted tales and every roadside tale exactly once, serves the
+## verbatim authored records, and never offers the separately routed special.
+## Nothing here asserts a fixed pool total or a whole ordered ID list.
+func _check_default_admission() -> void:
+	var m04: Dictionary = _read_document(M04_EVENTS_PATH)
+	var roadside: Dictionary = _read_document(EVENTS_PATH)
+	if m04.is_empty() or roadside.is_empty():
+		return
+	var m04_by_id := _records_by_id(_source_events(m04))
+	var roadside_by_id := _records_by_id(_source_events(roadside))
+	for required_id in REQUIRED_GENERIC_IDS + LANTERN_EVENT_IDS:
+		_check(m04_by_id.has(required_id), "the generic source still ships " + required_id)
+	for expected_id in EXPECTED:
+		_check(roadside_by_id.has(expected_id), "the roadside source still ships " + expected_id)
+	var rotation := RunM04EventRotation.new()
+	_check(rotation.is_catalog_valid(), "the default shipped selector validates both authored catalogs")
 	if not rotation.is_catalog_valid():
 		return
-	var ids := rotation.get_generic_event_ids()
+	var ids: Array = rotation.get_generic_event_ids()
+	var listing: Array = rotation.get_generic_events()
 	for expected_id in EXPECTED:
-		_check(ids.count(expected_id) == 1, "Roadside event is eligible exactly once in the combined pool: " + expected_id)
-		var matches: Array = rotation.get_generic_events().filter(
-			func(record): return record.id == expected_id)
-		_check(matches.size() == 1 and matches[0].title == EXPECTED[expected_id]["title"]
-			and matches[0].description == EXPECTED[expected_id]["description"],
-			"Combined pool serves the exact authored roadside record: " + expected_id)
-	_check(not ids.has("quiet_spool"), "Quiet Spool stays on its dedicated special route")
+		_check(ids.count(expected_id) == 1,
+			"the default selector admits the roadside tale exactly once: " + expected_id)
+		var matches: Array = _matches(listing, expected_id)
+		_check(matches.size() == 1, "the default selector lists one record for " + expected_id)
+		if matches.size() != 1 or not roadside_by_id.has(expected_id):
+			continue
+		_check(matches[0] == roadside_by_id[expected_id],
+			"the default selector serves the verbatim authored roadside record: " + expected_id)
+		_check(RunEventChoice.new(matches[0]).is_valid(),
+			"the admitted roadside record is presentable to the event view: " + expected_id)
+	for generic_id in m04_by_id:
+		if generic_id == QUIET_SPOOL_ID:
+			continue
+		_check(ids.count(generic_id) == 1,
+			"the default selector keeps the shipped generic tale eligible: " + generic_id)
+		var generic_matches: Array = _matches(listing, generic_id)
+		_check(generic_matches.size() == 1 and generic_matches[0] == m04_by_id[generic_id],
+			"the default selector serves the unchanged generic record: " + generic_id)
+	for required_id in REQUIRED_GENERIC_IDS + LANTERN_EVENT_IDS:
+		_check(ids.count(required_id) == 1, "the required generic ID stays eligible: " + required_id)
+	_check(not ids.has(QUIET_SPOOL_ID), "Quiet Spool never joins the default rotation")
+	_check(_matches(listing, QUIET_SPOOL_ID).is_empty(), "Quiet Spool has no default rotation record")
+	_check(m04_by_id.has(QUIET_SPOOL_ID), "the special Quiet Spool record stays in its own source catalog")
+	var oracle_ids: Array = _expected_eligible_ids(m04, roadside)
+	_check(ids == oracle_ids,
+		"the default pool is exactly the sorted eligible IDs of both shipped catalogs")
+	var sorted_ids: Array = ids.duplicate()
+	sorted_ids.sort()
+	_check(ids == sorted_ids, "the default pool is sorted by eligible ID")
+	# Copy mutation of either returned value never reaches the selector or sources.
+	var listing_snapshot: Array = listing.duplicate(true)
+	var id_snapshot: Array = ids.duplicate()
+	listing[0]["title"] = "MUTATED"
+	listing[0]["choices"] = []
+	listing.append({"id": "injected_by_test"})
+	ids.append("injected_by_test")
+	_check(rotation.get_generic_events() == listing_snapshot,
+		"mutating a returned default record never reaches the selector")
+	_check(rotation.get_generic_event_ids() == id_snapshot,
+		"mutating a returned default ID list never reaches the selector")
+	_check(m04 == _read_document(M04_EVENTS_PATH) and roadside == _read_document(EVENTS_PATH),
+		"default admission never mutates either shipped source catalog")
+
+## AC2: seeded selection from the default combined pool uses the sorted eligible
+## IDs and exactly one randi_range draw, returns a detached authentic record,
+## forces any named roadside tale through honest exclusions, and rejects an
+## exhausted or malformed call without an RNG draw.
+func _check_default_selection_contract() -> void:
+	var m04: Dictionary = _read_document(M04_EVENTS_PATH)
+	var roadside: Dictionary = _read_document(EVENTS_PATH)
+	if m04.is_empty() or roadside.is_empty():
+		return
+	var roadside_by_id := _records_by_id(_source_events(roadside))
+	var m04_snapshot: Dictionary = m04.duplicate(true)
+	var roadside_snapshot: Dictionary = roadside.duplicate(true)
+	var rotation := RunM04EventRotation.new()
+	_check(rotation.is_catalog_valid(), "the default selector validates for the seeded contract")
+	if not rotation.is_catalog_valid():
+		return
+	var ids: Array = rotation.get_generic_event_ids()
+	_check(ids == _expected_eligible_ids(m04, roadside),
+		"the default eligible pool matches the independent sorted oracle")
+	_check(ids.size() > EXPECTED.size(),
+		"the default pool holds the generic records alongside the roadside tales")
+	if ids.is_empty():
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20261026
+	var oracle := RandomNumberGenerator.new()
+	oracle.seed = 20261026
+	var expected_id: String = ids[oracle.randi_range(0, ids.size() - 1)]
+	var result := rotation.select_event(rng)
+	_check(result.get("ok") == true, "a seeded default selection succeeds")
+	_check(result.get("event", {}).get("id") == expected_id,
+		"the default selection matches an independent sorted seeded oracle")
+	_check(rng.state == oracle.state,
+		"a default selection consumes exactly one randi_range draw")
+	var replay := RandomNumberGenerator.new()
+	replay.seed = 20261026
+	var again := rotation.select_event(replay)
+	_check(again.get("event", {}).get("id") == expected_id and replay.state == rng.state,
+		"the same seed replays the same default event and RNG state")
+	var index := 0
+	for expected_roadside in EXPECTED:
+		index += 1
+		_check(ids.has(expected_roadside),
+			"the default pool carries the roadside ID before forcing it: " + expected_roadside)
+		if not ids.has(expected_roadside):
+			continue
+		var excluded: Array = ids.duplicate()
+		excluded.erase(expected_roadside)
+		var forced_rng := RandomNumberGenerator.new()
+		forced_rng.seed = 91000 + index
+		var forced_oracle := RandomNumberGenerator.new()
+		forced_oracle.seed = 91000 + index
+		forced_oracle.randi_range(0, 0)
+		var forced := rotation.select_event(forced_rng, excluded)
+		_check(forced.get("ok") == true,
+			"excluding every other event selects the named roadside tale: " + expected_roadside)
+		var selected: Dictionary = forced.get("event", {})
+		_check(selected.get("id") == expected_roadside,
+			"the forced roadside selection is the named tale: " + expected_roadside)
+		_check(forced_rng.state == forced_oracle.state,
+			"a forced roadside selection still consumes exactly one draw: " + expected_roadside)
+		_check(selected == roadside_by_id.get(expected_roadside, {}),
+			"the forced roadside selection is the authentic authored record: " + expected_roadside)
+		# The returned record is detached from the selector and the source.
+		var selected_snapshot: Dictionary = selected.duplicate(true)
+		selected["title"] = "MUTATED"
+		selected["choices"] = []
+		var detached_rng := RandomNumberGenerator.new()
+		detached_rng.seed = 91000 + index
+		var detached := rotation.select_event(detached_rng, excluded)
+		_check(detached.get("event") == selected_snapshot
+			and detached.get("event") == roadside_by_id.get(expected_roadside, {}),
+			"the selected roadside record is a detached authored copy: " + expected_roadside)
+	# An exhausted pool rejects without a draw.
+	var guard := RandomNumberGenerator.new()
+	guard.seed = 424242
+	var guard_state: int = guard.state
+	var none_result := rotation.select_event(guard, ids)
+	_check(none_result.get("ok") == false and (none_result.get("event") as Dictionary).is_empty(),
+		"excluding every eligible default event rejects with no event")
+	_check(guard.state == guard_state, "an exhausted default pool consumes no RNG")
+	# Malformed exclusions reject without a draw.
+	for bad_list in [7, true, "button_trail", {}, [1], [""], ["   "], [null], [["button_trail"]]]:
+		var bad_result := rotation.select_event(guard, bad_list)
+		_check(bad_result.get("ok") == false and (bad_result.get("event") as Dictionary).is_empty(),
+			"a malformed default exclusion list rejects: " + str(bad_list))
+		_check(guard.state == guard_state,
+			"a malformed default exclusion list consumes no RNG: " + str(bad_list))
+		_check(rotation.select_event(bad_list).get("ok") == false,
+			"a malformed default RNG value rejects: " + str(bad_list))
+		_check(guard.state == guard_state,
+			"a malformed default RNG value consumes no RNG: " + str(bad_list))
+	# Unknown exclusions are ignored and never change the draw.
+	var unknown_rng := RandomNumberGenerator.new()
+	unknown_rng.seed = 616161
+	var plain_rng := RandomNumberGenerator.new()
+	plain_rng.seed = 616161
+	var with_unknown := rotation.select_event(unknown_rng, ["v3_future_tale_not_in_catalog"])
+	var plain := rotation.select_event(plain_rng)
+	_check(with_unknown.get("event", {}).get("id") == plain.get("event", {}).get("id"),
+		"an unknown default exclusion is ignored")
+	_check(unknown_rng.state == plain_rng.state,
+		"an unknown default exclusion never changes the draw")
+	_check(m04 == m04_snapshot and roadside == roadside_snapshot,
+		"seeded default selection never mutates either shipped source catalog")
+
+## AC4: a broken roadside source rejects the whole default merge, so a malformed
+## or partial shipped pack can never silently produce an incomplete pool.
+func _check_default_merge_failures() -> void:
+	var m04: Dictionary = _read_document(M04_EVENTS_PATH)
+	var roadside: Dictionary = _read_document(EVENTS_PATH)
+	if m04.is_empty() or roadside.is_empty():
+		return
+	var roadside_events: Array = _source_events(roadside)
+	var cases: Array = [
+		{"name": "absent roadside document", "roadside": null},
+		{"name": "roadside document without events", "roadside": {}},
+		{"name": "roadside events is not an array", "roadside": {"events": "v3_raincoat_bridge"}},
+		{"name": "empty roadside events", "roadside": {"events": []}},
+		{"name": "non-object roadside record", "roadside": {"events": [17]}},
+	]
+	cases.append({"name": "missing required roadside record", "roadside": {
+		"events": _without_record(roadside_events, "v3_lacework_railway")}})
+	var blank_title := _record_copy(roadside_events, "v3_dreaming_quilt_fair")
+	blank_title["title"] = " "
+	cases.append({"name": "blank roadside title", "roadside": {"events": _replace_record(
+		roadside_events, "v3_dreaming_quilt_fair", blank_title)}})
+	var broken_outcome := _record_copy(roadside_events, "v3_button_orchard")
+	((broken_outcome["choices"] as Array)[0] as Dictionary)["outcome"] = {"gold": 1}
+	cases.append({"name": "malformed roadside outcome", "roadside": {"events": _replace_record(
+		roadside_events, "v3_button_orchard", broken_outcome)}})
+	var duplicated: Array = roadside_events.duplicate(true)
+	duplicated.append(_record_copy(roadside_events, "v3_needlefall_star"))
+	cases.append({"name": "duplicated roadside record", "roadside": {"events": duplicated}})
+	var crossed: Array = roadside_events.duplicate(true)
+	crossed.append((m04["events"][0] as Dictionary).duplicate(true))
+	cases.append({"name": "cross-catalog duplicate ID", "roadside": {"events": crossed}})
+	for entry in cases:
+		_check(RunM04EventRotation._combine_shipped_catalogs(m04, entry["roadside"]) == null,
+			"the default shipped merge rejects: " + entry["name"])
+	# The genuine pair merges, validates and admits every named roadside tale.
+	var merged: Variant = RunM04EventRotation._combine_shipped_catalogs(m04, roadside)
+	_check(merged is Dictionary, "the genuine shipped pair merges")
+	if not merged is Dictionary:
+		return
+	var merged_events: Array = (merged as Dictionary).get("events", [])
+	_check(merged_events.size() == (m04["events"] as Array).size() + roadside_events.size(),
+		"the merge keeps every authored generic record and adds every roadside record")
+	var rotation := RunM04EventRotation.new(merged)
+	_check(rotation.is_catalog_valid(), "the merged shipped document validates")
+	var ids: Array = rotation.get_generic_event_ids()
+	for expected_id in EXPECTED:
+		_check(ids.count(expected_id) == 1,
+			"the merged shipped document admits exactly one " + expected_id)
+	_check(not ids.has(QUIET_SPOOL_ID),
+		"the merged shipped document keeps Quiet Spool on its special route")
+	_check(m04 == _read_document(M04_EVENTS_PATH) and roadside == _read_document(EVENTS_PATH),
+		"merging never mutates either shipped source document")
+
+func _source_events(document: Dictionary) -> Array:
+	var events: Variant = document.get("events")
+	if not events is Array:
+		return []
+	return (events as Array).duplicate(true)
+
+func _records_by_id(events: Array) -> Dictionary:
+	var by_id: Dictionary = {}
+	for record in events:
+		if not record is Dictionary:
+			continue
+		var raw_id: Variant = record.get("id")
+		if not raw_id is String or (raw_id as String).strip_edges().is_empty():
+			continue
+		if by_id.has(raw_id):
+			continue
+		by_id[raw_id] = record
+	return by_id
+
+func _matches(listing: Array, event_id: String) -> Array:
+	var found: Array = []
+	for record in listing:
+		if record is Dictionary and record.get("id") == event_id:
+			found.append(record)
+	return found
+
+func _without_record(events: Array, drop_id: String) -> Array:
+	var kept: Array = []
+	for record in events:
+		if record is Dictionary and record.get("id") == drop_id:
+			continue
+		kept.append(record)
+	return kept
+
+func _replace_record(events: Array, target_id: String, replacement: Variant) -> Array:
+	var out: Array = []
+	for record in events:
+		if record is Dictionary and record.get("id") == target_id:
+			out.append(replacement)
+		else:
+			out.append(record)
+	return out
+
+func _record_copy(events: Array, target_id: String) -> Dictionary:
+	for record in events:
+		if record is Dictionary and record.get("id") == target_id:
+			return (record as Dictionary).duplicate(true)
+	return {}
+
+## The eligible IDs a default rotation must expose, derived only from the two
+## independently loaded source documents: every unique, presentable generic
+## record except the separately routed special, plus every roadside record.
+## Sorted so the selector's ordering is verified rather than assumed.
+func _expected_eligible_ids(m04: Dictionary, roadside: Dictionary) -> Array:
+	var by_id: Dictionary = {}
+	var order: Array = []
+	for events in [_source_events(m04), _source_events(roadside)]:
+		for record in events:
+			if not record is Dictionary:
+				continue
+			var raw_id: Variant = record.get("id")
+			if not raw_id is String or (raw_id as String).strip_edges().is_empty():
+				continue
+			if by_id.has(raw_id):
+				by_id[raw_id] = null
+				continue
+			by_id[raw_id] = record
+			order.append(raw_id)
+	var ids: Array = []
+	for event_id in order:
+		var record: Variant = by_id[event_id]
+		if not record is Dictionary:
+			continue
+		if event_id == QUIET_SPOOL_ID:
+			continue
+		if _is_presentable_by_contract(record):
+			ids.append(event_id)
+	ids.sort()
+	return ids
+
+## Independent presentability check built from the public RunEventChoice
+## contract, so the expected default pool never mirrors the selector's internals.
+func _is_presentable_by_contract(record: Variant) -> bool:
+	if not record is Dictionary:
+		return false
+	var service := RunEventChoice.new(record)
+	if not service.is_valid():
+		return false
+	var preview: Dictionary = service.preview_wallet_choices({"gold": 0, "scraps": 0})
+	if not preview.get("ok", false):
+		return false
+	var choices: Variant = (record as Dictionary).get("choices")
+	var previews: Variant = preview.get("choices")
+	if not choices is Array or not previews is Array:
+		return false
+	if (previews as Array).size() != (choices as Array).size():
+		return false
+	for entry in previews:
+		if not entry is Dictionary:
+			return false
+		if (entry as Dictionary).get("gold_delta") == null:
+			return false
+		if (entry as Dictionary).get("scraps_delta") == null:
+			return false
+	return true

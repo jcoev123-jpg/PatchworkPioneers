@@ -219,7 +219,7 @@ func _run() -> void:
 	for callback in retained:
 		callback.call()
 	_check(_state() == standalone and app.run_map == null and app.act_outcome == null
-		and app.party_carryover == null and app.rest_recovery == null and app.shop_visit == null
+		and app.party_carryover == null and app.rest_recovery == null and app.peddler_visit == null
 		and app.route_view == null and app.terminal_result_panel == null,
 		"post-title callbacks preserve standalone combat without reviving routed session")
 	await _click(app.return_button)
