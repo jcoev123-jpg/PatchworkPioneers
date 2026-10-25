@@ -118,6 +118,8 @@ func _catalog_test() -> void:
 	var seamstress := SeamstressPoolCards.new()
 	var tinker := TinkerPoolCards.new()
 	var starter := StarterCards.new()
+	var lantern_starters := LanternMonkStarterCards.new()
+	var lantern_pool := LanternMonkPoolCards.new()
 	var cases := [
 		[warden, "warden_pinning_jab", ["Pinned"], ["DIFFERENT hero", "+5", "before Weak/Exposed", "expires"]],
 		[warden, "warden_draw_fire", ["Guarding"], ["position 1", "other heroes", "next turn"]],
@@ -225,6 +227,7 @@ func _catalog_test() -> void:
 	_energy_catalog_test(tinker, seamstress)
 	_bleed_doubling_catalog_test(seamstress)
 	_pin_and_pound_catalog_test(warden)
+	_blind_catalog_test(lantern_starters, lantern_pool)
 	# Exact authored shapes are explained; every unknown, malformed or partial
 	# variant stays silent and leaves the caller's definition untouched. These
 	# effect fixtures mirror the catalog descriptors but are built independently.
@@ -671,10 +674,10 @@ func _bleed_doubling_catalog_test(seamstress: SeamstressPoolCards) -> void:
 	_check(not mixed_names.has("Bleed doubling") and mixed_names.has("Bleed 2"),
 		"an extra effect key drops the doubling row and keeps the ordinary Bleed row")
 	_check(CardKeywordGlossary.KEYWORD_ORDER == ["bleed", "weak", "exposed", "pinned",
-		"unravel", "guarding", "thorns", "riposte", "tangled"]
+		"unravel", "guarding", "thorns", "riposte", "tangled", "blind"]
 		and CardKeywordGlossary.SPECIAL_ORDER == ["conditional_damage", "random_hit",
 			"energy_tradeoff", "bleed_doubling", "two_hits"],
-		"two hits is the last special row after the legacy and Riposte/Tangled keyword rows")
+		"Blind is the last keyword row after the legacy, Riposte and Tangled rows, and two hits is the last special row")
 
 
 ## A detached Pin and Pound definition with the authored structural keys the
@@ -872,6 +875,248 @@ func _pin_and_pound_catalog_test(warden: WardenPoolCards) -> void:
 	_check(not pin_claim_names.has("Two hits") and pin_claim_names.has("Pinned")
 		and pin_claim == pin_claim_before,
 		"an extra pin claim drops the two-hit row and keeps only its ordinary Pinned row")
+
+
+## Row keywords of a describe() result, in the order the formatter produced them.
+func _row_names(rows: Array[Dictionary]) -> Array[String]:
+	var names: Array[String] = []
+	for row: Dictionary in rows:
+		names.append(String(row.get("keyword", "")))
+	return names
+
+
+## A detached Blind definition shaped like a real catalog record: the strict
+## descriptor shape plus the authored target kind. A malformed fixture can never
+## borrow a positive verdict from a real catalog entry.
+func _blind_definition(target_kind: Variant, effects: Variant) -> Dictionary:
+	var definition := {"id": "lantern_monk_help_fixture"}
+	definition["target_kind"] = target_kind
+	definition["effects"] = effects.duplicate(true) if effects is Dictionary else effects
+	return definition
+
+
+## The row a Blind card must print: one-shot, no stack and no duration, the next
+## attack missing and the Blind spent, plus the honest note that live combat does
+## not cancel the attack yet. No digit can appear because Blind has no amount.
+func _check_blind_text(text: String, card_id: String) -> void:
+	_check(text.contains("NEXT attack") and text.contains("misses"),
+		"Blind Help states the affected enemy's NEXT attack misses for " + card_id)
+	_check(text.contains("after that attack") and text.contains("spent"),
+		"Blind Help states the Blind is spent after that attack for " + card_id)
+	_check(text.contains("never a stack or a number of turns"),
+		"Blind Help invents no duration or stack for " + card_id)
+	_check(text.contains("live combat does not yet cancel"),
+		"Blind Help makes no live-play claim for " + card_id)
+	var no_amount := true
+	for digit: String in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]:
+		if text.contains(digit):
+			no_amount = false
+	_check(no_amount, "Blind Help prints no numeric amount or duration for " + card_id)
+
+
+## AC1: the real Lantern Monk catalogs author Blind in two shapes -- the starter
+## `blind: 1` and the pool `blind_next_attack: true` -- and each base and '+' card
+## that really authors one gets exactly one Blind Help row. The rows are read from
+## detached catalog definitions, so no catalog total or ordered ID list is assumed;
+## the other cards in both catalogs must never gain a Blind row.
+func _blind_catalog_test(starters: LanternMonkStarterCards,
+		pool: LanternMonkPoolCards) -> void:
+	var cases := [
+		{"catalog": starters, "id": "lantern_monk_wick_spark", "target": "enemy_single",
+			"cost": 1, "damage": 4, "draw": 0, "exposed": 0, "spelling": "blind",
+			"rows": ["Blind"]},
+		{"catalog": starters, "id": "lantern_monk_wick_spark_plus", "target": "enemy_single",
+			"cost": 1, "damage": 6, "draw": 0, "exposed": 0, "spelling": "blind",
+			"rows": ["Blind"]},
+		{"catalog": starters, "id": "lantern_monk_moth_wink", "target": "enemy_single",
+			"cost": 1, "damage": 0, "draw": 1, "exposed": 0, "spelling": "blind",
+			"rows": ["Blind"]},
+		{"catalog": starters, "id": "lantern_monk_moth_wink_plus", "target": "enemy_single",
+			"cost": 0, "damage": 0, "draw": 1, "exposed": 0, "spelling": "blind",
+			"rows": ["Blind"]},
+		{"catalog": pool, "id": "lantern_monk_wick_flicker", "target": "enemy_single",
+			"cost": 1, "damage": 4, "draw": 0, "exposed": 0, "spelling": "blind_next_attack",
+			"rows": ["Blind"]},
+		{"catalog": pool, "id": "lantern_monk_wick_flicker_plus", "target": "enemy_single",
+			"cost": 1, "damage": 6, "draw": 0, "exposed": 0, "spelling": "blind_next_attack",
+			"rows": ["Blind"]},
+		{"catalog": pool, "id": "lantern_monk_moth_lure", "target": "enemy_single",
+			"cost": 1, "damage": 0, "draw": 1, "exposed": 0, "spelling": "blind_next_attack",
+			"rows": ["Blind"]},
+		{"catalog": pool, "id": "lantern_monk_moth_lure_plus", "target": "enemy_single",
+			"cost": 0, "damage": 0, "draw": 1, "exposed": 0, "spelling": "blind_next_attack",
+			"rows": ["Blind"]},
+		{"catalog": pool, "id": "lantern_monk_snuff_flame", "target": "enemy_single",
+			"cost": 1, "damage": 3, "draw": 0, "exposed": 1, "spelling": "blind_next_attack",
+			"rows": ["Exposed 1", "Blind"]},
+		{"catalog": pool, "id": "lantern_monk_snuff_flame_plus", "target": "enemy_single",
+			"cost": 1, "damage": 4, "draw": 0, "exposed": 2, "spelling": "blind_next_attack",
+			"rows": ["Exposed 2", "Blind"]},
+		{"catalog": pool, "id": "lantern_monk_moth_cloud", "target": "enemy_all",
+			"cost": 2, "damage": 0, "draw": 0, "exposed": 0, "spelling": "blind_next_attack",
+			"rows": ["Blind"]},
+		{"catalog": pool, "id": "lantern_monk_moth_cloud_plus", "target": "enemy_all",
+			"cost": 1, "damage": 0, "draw": 0, "exposed": 0, "spelling": "blind_next_attack",
+			"rows": ["Blind"]},
+	]
+	for case: Dictionary in cases:
+		var catalog: Variant = case["catalog"]
+		var card_id: String = String(case["id"])
+		_check(catalog.has_card(card_id),
+			"Blind card is present in its real catalog " + card_id)
+		if not catalog.has_card(card_id):
+			continue
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			"actual detached catalog definition " + card_id)
+		if definition.is_empty():
+			continue
+		var original: Dictionary = definition.duplicate(true)
+		var effects: Dictionary = definition.get("effects", {})
+		_check(String(definition.get("owner", "")) == "lantern_monk"
+			and String(definition.get("target_kind", "")) == String(case["target"])
+			and int(definition.get("cost", -1)) == int(case["cost"]),
+			"authored Lantern Monk owner, target and cost for " + card_id)
+		_check(int(effects.get("damage", 0)) == int(case["damage"])
+			and int(effects.get("draw", 0)) == int(case["draw"])
+			and int(effects.get("exposed", 0)) == int(case["exposed"]),
+			"authored damage, draw and Exposed amounts for " + card_id)
+		if String(case["spelling"]) == "blind":
+			_check(effects.get("blind") is int and int(effects["blind"]) == 1
+				and not effects.has("blind_next_attack"),
+				"authored starter Blind is exactly the integer one " + card_id)
+		else:
+			_check(effects.get("blind_next_attack") is bool
+				and bool(effects["blind_next_attack"]) and not effects.has("blind"),
+				"authored pool Blind is exactly the boolean true " + card_id)
+		var rows := CardKeywordGlossary.describe(definition)
+		var names := _row_names(rows)
+		_check(names == case["rows"],
+			"catalog %s prints exactly %s, got %s" % [card_id, str(case["rows"]), str(names)])
+		_check(names.count("Blind") == 1, "exactly one Blind Help row for " + card_id)
+		var blind_text := ""
+		for row: Dictionary in rows:
+			if String(row.get("keyword", "")) == "Blind":
+				blind_text = String(row.get("explanation", ""))
+		if blind_text.is_empty():
+			continue
+		_check_blind_text(blind_text, card_id)
+		_check(definition == original and catalog.get_definition(card_id) == original,
+			"Blind Help never mutates the catalog definition " + card_id)
+		_check(CardKeywordGlossary.describe(definition) == rows,
+			"Blind Help stays deterministic for " + card_id)
+		rows[rows.size() - 1]["keyword"] = "Tampered"
+		rows[rows.size() - 1]["explanation"] = "Tampered"
+		var fresh := CardKeywordGlossary.describe(definition)
+		_check(_row_names(fresh) == case["rows"] and definition == original,
+			"Blind Help results are detached from the caller's definition " + card_id)
+	# Blind is only authored on the six named starter cards and four named pool
+	# families; every other base and '+' card in both catalogs stays without it.
+	var blind_base_ids := ["lantern_monk_wick_spark", "lantern_monk_moth_wink",
+		"lantern_monk_wick_flicker", "lantern_monk_moth_lure",
+		"lantern_monk_snuff_flame", "lantern_monk_moth_cloud"]
+	var others: Array[String] = []
+	for base_id: String in starters.get_starter_ids():
+		if not blind_base_ids.has(base_id):
+			others.append(base_id)
+	for base_id: String in pool.get_base_ids():
+		if not blind_base_ids.has(base_id):
+			others.append(base_id)
+	_check(not others.is_empty(),
+		"both real Lantern Monk catalogs still author cards without Blind")
+	for base_id: String in others:
+		var catalog: Variant = starters if starters.has_card(base_id) else pool
+		var authored: Array[String] = [base_id, String(catalog.get_upgrade_id(base_id))]
+		for card_id: String in authored:
+			if card_id.is_empty():
+				continue
+			var definition: Dictionary = catalog.get_definition(card_id)
+			_check(not definition.is_empty()
+				and not (definition.get("effects", {}) as Dictionary).has("blind")
+				and not (definition.get("effects", {}) as Dictionary).has("blind_next_attack"),
+				"non-Blind Lantern Monk card authors no Blind descriptor " + card_id)
+			_check(not _row_names(CardKeywordGlossary.describe(definition)).has("Blind"),
+				"non-Blind Lantern Monk card gains no Blind Help row " + card_id)
+	# AC2: a well-formed Blind is explained beside damage, draw, Exposed, exhaust
+	# or a whole-enemy target, with the established rows keeping their own order.
+	var single_with_damage := _blind_definition("enemy_single", {"damage": 4, "blind": 1})
+	var all_with_exposed := _blind_definition("enemy_all",
+		{"damage": 3, "exposed": 1, "blind_next_attack": true, "exhaust": true})
+	var random_with_draw := _blind_definition("enemy_random",
+		{"blind_next_attack": true, "draw": 1})
+	_check(_row_names(CardKeywordGlossary.describe(single_with_damage)) == ["Blind"],
+		"damage plus a single-enemy Blind prints one Blind row")
+	_check(_row_names(CardKeywordGlossary.describe(all_with_exposed)) == ["Exposed 1", "Blind"],
+		"a whole-enemy Exposed plus Blind prints Exposed first and Blind last")
+	_check(_row_names(CardKeywordGlossary.describe(random_with_draw)) == ["Blind"],
+		"a random-enemy Blind with draw prints one Blind row")
+	var exposed_only := _blind_definition("enemy_all", {"exposed": 1})
+	_check(CardKeywordGlossary.describe(all_with_exposed)[0]
+		== CardKeywordGlossary.describe(exposed_only)[0],
+		"the Exposed row beside a Blind keeps its established value and explanation")
+	# AC3: every other authored shape stays silent instead of inventing a Blind.
+	var fixtures: Array = []
+	fixtures.append(["blind 0", _blind_definition("enemy_single", {"blind": 0})])
+	fixtures.append(["blind 2", _blind_definition("enemy_single", {"blind": 2})])
+	fixtures.append(["bool true in the integer spelling",
+		_blind_definition("enemy_single", {"blind": true})])
+	fixtures.append(["float one", _blind_definition("enemy_single", {"blind": 1.0})])
+	fixtures.append(["text one", _blind_definition("enemy_single", {"blind": "1"})])
+	fixtures.append(["null Blind", _blind_definition("enemy_single", {"blind": null})])
+	fixtures.append(["blind_next_attack false",
+		_blind_definition("enemy_single", {"blind_next_attack": false})])
+	fixtures.append(["integer one in the boolean spelling",
+		_blind_definition("enemy_single", {"blind_next_attack": 1})])
+	fixtures.append(["text true", _blind_definition("enemy_single",
+		{"blind_next_attack": "true"})])
+	fixtures.append(["null next attack flag",
+		_blind_definition("enemy_single", {"blind_next_attack": null})])
+	fixtures.append(["both spellings once",
+		_blind_definition("enemy_single", {"blind": 1, "blind_next_attack": true})])
+	fixtures.append(["self target", _blind_definition("self", {"blind": 1})])
+	fixtures.append(["self target in the boolean spelling",
+		_blind_definition("self", {"blind_next_attack": true})])
+	fixtures.append(["ally target", _blind_definition("ally_single", {"blind": 1})])
+	fixtures.append(["party target", _blind_definition("party_all", {"blind_next_attack": true})])
+	fixtures.append(["missing target kind", _blind_definition(null, {"blind": 1})])
+	fixtures.append(["unknown target kind", _blind_definition("battlefield", {"blind": 1})])
+	fixtures.append(["non-string target kind", _blind_definition(7, {"blind_next_attack": true})])
+	fixtures.append(["unreadable effect block", _blind_definition("enemy_single", "blind")])
+	for case in fixtures:
+		var broken: Dictionary = case[1]
+		var broken_before: Dictionary = broken.duplicate(true)
+		var rows := CardKeywordGlossary.describe(broken)
+		_check(not _row_names(rows).has("Blind"),
+			"%s never fabricates a Blind Help row" % String(case[0]))
+		_check(broken == broken_before,
+			"%s leaves the fixture untouched" % String(case[0]))
+		_check(CardKeywordGlossary.describe(broken) == rows,
+			"%s stays deterministic" % String(case[0]))
+	# A malformed or ambiguous Blind beside a legitimate keyword keeps that row
+	# exactly as the keyword alone would print it.
+	for pair in [[_blind_definition("enemy_single", {"blind": 2, "exposed": 1}),
+			_blind_definition("enemy_single", {"exposed": 1})],
+			[_blind_definition("party_all", {"blind_next_attack": true, "exposed": 1}),
+			_blind_definition("party_all", {"exposed": 1})]]:
+		var mixed: Dictionary = pair[0]
+		var mixed_before: Dictionary = mixed.duplicate(true)
+		var mixed_names := _row_names(CardKeywordGlossary.describe(mixed))
+		_check(mixed_names == ["Exposed 1"] and not mixed_names.has("Blind"),
+			"a malformed Blind keeps only the independent Exposed row: " + str(mixed_names))
+		_check(CardKeywordGlossary.describe(mixed) == CardKeywordGlossary.describe(pair[1]),
+			"a malformed Blind does not corrupt the Exposed row it sits beside")
+		_check(mixed == mixed_before, "the malformed compound fixture is never mutated")
+	_check(single_with_damage == _blind_definition("enemy_single", {"damage": 4, "blind": 1})
+		and all_with_exposed == _blind_definition("enemy_all",
+			{"damage": 3, "exposed": 1, "blind_next_attack": true, "exhaust": true})
+		and random_with_draw == _blind_definition("enemy_random",
+			{"blind_next_attack": true, "draw": 1}),
+		"negative cases never mutate the positive Blind fixtures")
+	_check(CardKeywordGlossary.KEYWORD_ORDER[CardKeywordGlossary.KEYWORD_ORDER.size() - 1]
+		== "blind"
+		and CardKeywordGlossary.KEYWORD_ORDER[CardKeywordGlossary.KEYWORD_ORDER.size() - 2]
+		== "tangled",
+		"Blind is appended after Tangled as the last keyword row")
 
 
 func _help_in_fixture(fixture: Dictionary, kind: String) -> void:
