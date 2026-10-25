@@ -43,14 +43,13 @@ func _fixtures() -> Dictionary:
 	# authentic Events rather than requiring a rare six-consecutive-Event route.
 	# Revalidate these known genuine seeds first; the bounded search remains a
 	# fallback when the generated route/pool changes.
-	# Repinned genuine seeds after the six stitched-roadside stories and then the
-	# six lantern-haunted stories grew the combined eligible pool, so every
-	# required generic Event again has one verified one-draw witness here.
-	var hints := [64084, 171159, 171871, 233942, 277144, 292590, 366071, 379017,
-		449195, 456282, 549411, 723106, 822958, 1363210, 1439241, 1634509,
-		1825487, 1926516, 3023381,
-		# Earlier genuine witnesses retained as fallbacks.
-		7756, 35510, 45517, 50329, 610125, 1310530, 1478428, 2218200]
+	# Repinned genuine seeds after the six stitched-roadside stories, the six
+	# lantern-haunted stories and then the six gothic story choices grew the
+	# combined eligible pool, so every required generic Event again has one
+	# verified one-draw witness here.
+	var hints := [64084, 1405687, 680308, 292590, 1649793, 309742, 775148,
+		3103369, 236527, 456282, 45517, 622337, 558844, 1382871, 899240, 50329,
+		576647, 3188434, 756725]
 	for value in hints + range(1, 500000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
