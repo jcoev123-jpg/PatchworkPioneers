@@ -39,12 +39,44 @@ const RAG_FACE_CASES := [
 ## The seven keyword rows that existed before Riposte and Tangled were appended.
 const LEGACY_KEYWORD_ORDER := ["bleed", "weak", "exposed", "pinned", "unravel",
 	"guarding", "thorns"]
+## The twelve Lantern Monk record variants that author a Blind: two starter and
+## four reward-pool bases plus each real '+' variant. Looked up by named ID only,
+## so no catalog total or ordered ID list is asserted here. Moth Cloud keeps the
+## honest fallback for its unsupported `exhaust`, so only its Blind is named.
+const LANTERN_MONK_FACE_CASES := [
+	{"id": "lantern_monk_wick_spark", "target": "enemy_single",
+		"line": "Deal 4. Blind."},
+	{"id": "lantern_monk_wick_spark_plus", "target": "enemy_single",
+		"line": "Deal 6. Blind."},
+	{"id": "lantern_monk_moth_wink", "target": "enemy_single",
+		"line": "Blind. Draw 1."},
+	{"id": "lantern_monk_moth_wink_plus", "target": "enemy_single",
+		"line": "Blind. Draw 1."},
+	{"id": "lantern_monk_wick_flicker", "target": "enemy_single",
+		"line": "Deal 4. Blind."},
+	{"id": "lantern_monk_wick_flicker_plus", "target": "enemy_single",
+		"line": "Deal 6. Blind."},
+	{"id": "lantern_monk_moth_lure", "target": "enemy_single",
+		"line": "Blind. Draw 1."},
+	{"id": "lantern_monk_moth_lure_plus", "target": "enemy_single",
+		"line": "Blind. Draw 1."},
+	{"id": "lantern_monk_snuff_flame", "target": "enemy_single",
+		"line": "Deal 3. Exposed 1. Blind."},
+	{"id": "lantern_monk_snuff_flame_plus", "target": "enemy_single",
+		"line": "Deal 4. Exposed 2. Blind."},
+	{"id": "lantern_monk_moth_cloud", "target": "enemy_all", "unknown": true,
+		"line": "Blind to all. " + UNKNOWN_FALLBACK},
+	{"id": "lantern_monk_moth_cloud_plus", "target": "enemy_all", "unknown": true,
+		"line": "Blind to all. " + UNKNOWN_FALLBACK},
+]
 
 var failures: Array[String] = []
 var checks := 0
 var warden := WardenPoolCards.new()
 var tinker := TinkerPoolCards.new()
 var rag_duelist := RagDuelistPoolCards.new()
+var lantern_monk_starter := LanternMonkStarterCards.new()
+var lantern_monk_pool := LanternMonkPoolCards.new()
 
 
 func _initialize() -> void:
@@ -58,6 +90,8 @@ func _initialize() -> void:
 	_test_rag_duelist_faces()
 	_test_rag_duelist_help()
 	_test_rag_duelist_malformed()
+	_test_lantern_monk_faces()
+	_test_blind_malformed_fallbacks()
 	_check(randi() == expected_global, "short-line formatting draws no global RNG")
 	for failure in failures:
 		printerr(failure)
@@ -457,4 +491,160 @@ func _test_rag_duelist_malformed() -> void:
 	CardKeywordGlossary.describe(mystery)
 	_check(not snare.is_empty() and snare == snare_before,
 		"malformed probes cannot alter a shipped Rag Duelist record")
+
+
+func _lantern_monk_definition(card_id: String) -> Dictionary:
+	if lantern_monk_starter.has_card(card_id):
+		return lantern_monk_starter.get_definition(card_id)
+	if lantern_monk_pool.has_card(card_id):
+		return lantern_monk_pool.get_definition(card_id)
+	return {}
+
+
+## AC1/AC2: the shipped Lantern Monk records that author `blind: 1` or
+## `blind_next_attack: true` print exactly one Blind clause on their real face.
+## Each record's owner, target, authored amounts and strict Blind spelling are
+## checked before the exact string, so an empty or unrelated record cannot pass.
+## The effect descriptors are still data: this proves the face wording only.
+func _test_lantern_monk_faces() -> void:
+	for entry in LANTERN_MONK_FACE_CASES:
+		var card_id := str(entry["id"])
+		var expected_line := str(entry["line"])
+		var definition := _lantern_monk_definition(card_id)
+		_check(not definition.is_empty(), "Lantern Monk catalog record exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var effects: Dictionary = definition.get("effects", {})
+		_check(str(definition.get("owner", "")) == "lantern_monk",
+			"authored Lantern Monk owner: " + card_id)
+		_check(str(definition.get("target_kind", "")) == str(entry["target"]),
+			"authored target stays the named one: " + card_id)
+		if lantern_monk_starter.has_card(card_id):
+			_check(effects.get("blind") is int and int(effects["blind"]) == 1,
+				"authored starter Blind is the integer one: " + card_id)
+			_check(not effects.has("blind_next_attack"),
+				"the starter record authors one Blind spelling: " + card_id)
+		else:
+			_check(effects.get("blind_next_attack") is bool
+				and bool(effects["blind_next_attack"]),
+				"authored pool Blind is the boolean true: " + card_id)
+			_check(not effects.has("blind"),
+				"the pool record authors one Blind spelling: " + card_id)
+		var before := definition.duplicate(true)
+		var described := CardShortRules.describe(definition)
+		var line := str(described.get("line", ""))
+		_check(described.get("known") == true, "face record is described: " + card_id)
+		_check(CardShortRules.has_unknown(definition) == bool(entry.get("unknown", false)),
+			"a valid Blind alone never triggers the fallback: " + card_id)
+		_check(bool(described.get("unknown", false)) == bool(entry.get("unknown", false)),
+			"fallback expectation follows the shipped record: %s (%s)" % [card_id, line])
+		_check(line.count("Blind") == 1,
+			"exactly one Blind clause: %s (%s)" % [card_id, line])
+		_check(line == expected_line,
+			"short face for %s: got '%s', want '%s'" % [card_id, line, expected_line])
+		var blind_at := line.find("Blind")
+		if effects.get("damage") is int:
+			_check(line.begins_with("Deal %d." % int(effects["damage"])),
+				"face damage equals the authored amount: " + card_id)
+			_check(blind_at > line.find("Deal"),
+				"Blind follows the damage clause: " + card_id)
+		else:
+			_check(not line.begins_with("Deal"),
+				"a record with no authored damage prints none: " + card_id)
+		if effects.get("exposed") is int:
+			_check(line.contains("Exposed %d." % int(effects["exposed"])),
+				"face Exposed equals the authored amount: " + card_id)
+			_check(blind_at > line.find("Exposed"),
+				"Blind follows the status clause: " + card_id)
+		if effects.get("draw") is int:
+			_check(line.contains("Draw %d." % int(effects["draw"])),
+				"face Draw equals the authored amount: " + card_id)
+			_check(blind_at < line.find("Draw"),
+				"Blind precedes the Draw clause: " + card_id)
+		if bool(entry.get("unknown", false)):
+			_check(line.ends_with(UNKNOWN_FALLBACK),
+				"the unsupported sibling keeps its fallback: " + card_id)
+		for word in HELP_ONLY_WORDS:
+			_check(not line.contains(word),
+				"face omits Help-only wording '%s': %s (%s)" % [word, card_id, line])
+		_check(not line.to_lower().contains("turn"),
+			"the face prints no Blind duration: %s (%s)" % [card_id, line])
+		_check(CardShortRules.line(_lantern_monk_definition(card_id)) == expected_line,
+			"repeated formatting is identical: " + card_id)
+		_check(definition == before and _lantern_monk_definition(card_id) == before,
+			"formatting never mutates the shipped record: " + card_id)
+		var detached := _lantern_monk_definition(card_id)
+		var detached_effects: Dictionary = detached.get("effects", {})
+		detached_effects["blind"] = 0
+		detached_effects["blind_next_attack"] = false
+		_check(_lantern_monk_definition(card_id) == before,
+			"catalog lookups stay detached from the formatter: " + card_id)
+
+
+## AC3: only the two strict authored Blind spellings print, and only on an enemy
+## recipient. Every other shape keeps the honest fallback, invents no keyword,
+## never mutates its probe and never touches a shipped record.
+func _test_blind_malformed_fallbacks() -> void:
+	for value: Variant in [0, 2, "1", true, -1, 1.0]:
+		var probe := {"id": "card_short_rules_bad_blind", "owner": "lantern_monk",
+			"target_kind": "enemy_single", "effects": {"damage": 2, "blind": value}}
+		var before := probe.duplicate(true)
+		var line := CardShortRules.line(probe)
+		_check(line == "Deal 2. " + UNKNOWN_FALLBACK,
+			"a malformed Blind %s falls back honestly: %s" % [str(value), line])
+		_check(not line.contains("Blind"), "no Blind is invented for %s" % str(value))
+		_check(probe == before, "the malformed Blind probe is never mutated: " + str(value))
+	for value: Variant in [false, 1, "true", 0]:
+		var probe := {"id": "card_short_rules_bad_blind_next_attack",
+			"owner": "lantern_monk", "target_kind": "enemy_single",
+			"effects": {"damage": 2, "blind_next_attack": value}}
+		var before := probe.duplicate(true)
+		var line := CardShortRules.line(probe)
+		_check(line == "Deal 2. " + UNKNOWN_FALLBACK,
+			"a malformed blind_next_attack %s falls back honestly: %s" % [str(value), line])
+		_check(not line.contains("Blind"),
+			"no Blind is invented for blind_next_attack %s" % str(value))
+		_check(probe == before,
+			"the malformed next-attack probe is never mutated: " + str(value))
+	# A strict payload on a self or ally recipient never borrows an enemy Blind.
+	for target: String in ["self", "ally_single", "party_all"]:
+		for effects: Dictionary in [{"blind": 1}, {"blind_next_attack": true}]:
+			var probe := {"id": "card_short_rules_wrong_target",
+				"owner": "lantern_monk", "target_kind": target, "effects": effects}
+			var before := probe.duplicate(true)
+			var line := CardShortRules.line(probe)
+			_check(line == UNKNOWN_FALLBACK,
+				"a Blind on %s falls back honestly: %s" % [target, line])
+			_check(not line.contains("Blind"),
+				"no Blind is printed for a %s recipient" % target)
+			_check(probe == before, "the wrong-target probe is never mutated: " + target)
+	# Both authored spellings at once are ambiguous, so neither is chosen.
+	var both := {"id": "card_short_rules_both_blind", "owner": "lantern_monk",
+		"target_kind": "enemy_single",
+		"effects": {"damage": 2, "blind": 1, "blind_next_attack": true}}
+	var both_before := both.duplicate(true)
+	var both_line := CardShortRules.line(both)
+	_check(both_line == "Deal 2. " + UNKNOWN_FALLBACK,
+		"two conflicting Blind spellings fall back honestly: " + both_line)
+	_check(not both_line.contains("Blind"), "no Blind is guessed from two spellings")
+	_check(both == both_before, "the conflicting-spellings probe is never mutated")
+	# A genuine Blind beside an unsupported sibling prints only the Blind and
+	# keeps the honest fallback for the other effect.
+	var sibling := {"id": "card_short_rules_blind_sibling", "owner": "lantern_monk",
+		"target_kind": "enemy_single",
+		"effects": {"blind": 1, "mystery_status": 9}}
+	var sibling_before := sibling.duplicate(true)
+	var sibling_line := CardShortRules.line(sibling)
+	_check(sibling_line == "Blind. " + UNKNOWN_FALLBACK,
+		"a valid Blind beside an unsupported sibling: " + sibling_line)
+	_check(sibling_line.count("Blind") == 1 and not sibling_line.contains("9"),
+		"the unsupported sibling invents no Blind and leaks no amount")
+	_check(sibling == sibling_before, "the sibling probe is never mutated")
+	# Formatting the malformed probes cannot reach into a shipped record.
+	var snuff := lantern_monk_pool.get_definition("lantern_monk_snuff_flame")
+	var snuff_before := snuff.duplicate(true)
+	CardShortRules.line(both)
+	CardShortRules.line(sibling)
+	_check(not snuff.is_empty() and snuff == snuff_before,
+		"malformed probes cannot alter a shipped Lantern Monk record")
 
