@@ -1,13 +1,14 @@
 extends SceneTree
-## Deterministic headless test for the five hero-specific v3 roadside Events in
+## Deterministic headless test for the hero-specific v3 roadside Events in
 ## data/events/v3_hero_choice_events.json.
 ##
 ## This catalog is authored data only: every event names its future party hero
 ## in `required_hero` and lists its two non-Leave hero choices in
-## `hero_choice_ids`, but no live party filter is wired here. The existing
-## one-use RunEventChoice only validates/settles the authored wallet choices, so
-## these checks cover exact authored metadata and wallet receipts without
-## asserting any party-aware eligibility.
+## `hero_choice_ids`. RunV3HeroEventOffers performs the scene-free party
+## admission, but neither service is live-wired from app.gd yet. The one-use
+## RunEventChoice only validates/settles the authored wallet choices, so these
+## checks cover exact authored metadata and wallet receipts without asserting
+## any live on-screen eligibility.
 ##
 ## Lookups are by authored event/choice ID, never by catalog size, catalog order,
 ## a global ordered ID list or a positional event index.
@@ -17,8 +18,10 @@ const EVENTS_PATH := "res://data/events/v3_hero_choice_events.json"
 const START_GOLD := 30
 const START_SCRAPS := 3
 
-## Independent task-local mapping of the five authored records. It is never read
-## from the production catalog, so a missing field or a reworded choice is caught.
+## Independent task-local mapping of the authored records. It is never read from
+## the production catalog, so a missing field or a reworded choice is caught.
+## Only the named records are listed: the catalog may be appended to by other
+## tasks, so no total count or full ordered ID list is asserted here.
 const EVENTS := {
 	"v3_warden_shield_menders": {
 		"title": "The Shield-Menders",
@@ -73,6 +76,61 @@ const EVENTS := {
 			"duel_for_purse": {"text": "Win the friendly fencing purse (+20 gold)", "gold": 20, "scraps": 0},
 			"trade_ribbon": {"text": "Buy two red ribbon bundles (spend 10 gold; gain 2 scraps)", "gold": -10, "scraps": 2},
 			"leave": {"text": "Leave without exchanging anything", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_scarecrow_crow_roost": {
+		"title": "The Crow's Threshing",
+		"description": "A black crow perches on a burlap-headed straw doll beside an overgrown granary.",
+		"required_hero": "scarecrow",
+		"hero_choice_ids": ["gather_loose_straw", "sell_crow_feathers"],
+		"choices": {
+			"gather_loose_straw": {"text": "Gather loose straw ties (+2 scraps)", "gold": 0, "scraps": 2},
+			"sell_crow_feathers": {"text": "Trade a bundle of crow feathers (spend 1 scrap; gain 19 gold)", "gold": 19, "scraps": -1},
+			"leave": {"text": "Leave the roost untouched", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_yarn_ranger_knit_ford": {
+		"title": "The Knitted Ford",
+		"description": "A narrow crossing is webbed with wool bolas and two bent knitting-needle posts.",
+		"required_hero": "yarn_ranger",
+		"hero_choice_ids": ["retrieve_bolas", "purchase_wool"],
+		"choices": {
+			"retrieve_bolas": {"text": "Retrieve a spool tangled in the ford (+1 scrap)", "gold": 0, "scraps": 1},
+			"purchase_wool": {"text": "Buy fresh coloured wool (spend 14 gold; gain 2 scraps)", "gold": -14, "scraps": 2},
+			"leave": {"text": "Cross without disturbing the knitting", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_button_golem_button_press": {
+		"title": "The Giant Button Press",
+		"description": "A rattling bronze press stamps brass buttons as a towering button-bodied golem waits.",
+		"required_hero": "button_golem",
+		"hero_choice_ids": ["stamp_brass", "collect_shanks"],
+		"choices": {
+			"stamp_brass": {"text": "Feed the press two scrap bundles (spend 2 scraps; gain 31 gold)", "gold": 31, "scraps": -2},
+			"collect_shanks": {"text": "Collect fallen button shanks (+1 scrap)", "gold": 0, "scraps": 1},
+			"leave": {"text": "Leave the button press", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_lantern_monk_evening_beacon": {
+		"title": "The Evening Beacon",
+		"description": "Moths ring a dim lantern pole while travellers queue to relight their stitched lamps.",
+		"required_hero": "lantern_monk",
+		"hero_choice_ids": ["trim_evening_wick", "gather_amber_wax"],
+		"choices": {
+			"trim_evening_wick": {"text": "Trim the beacon wick (spend 1 scrap; gain 16 gold)", "gold": 16, "scraps": -1},
+			"gather_amber_wax": {"text": "Buy two wax spools (spend 10 gold; gain 2 scraps)", "gold": -10, "scraps": 2},
+			"leave": {"text": "Let the lantern burn", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_rag_duelist_scarlet_fair": {
+		"title": "The Scarlet Fencing Fair",
+		"description": "A feather-hatted puppet duelist invites the party to a needle-rapier bout.",
+		"required_hero": "rag_duelist",
+		"hero_choice_ids": ["win_scarlet_purse", "buy_fencing_ribbon"],
+		"choices": {
+			"win_scarlet_purse": {"text": "Win the fencing purse (+22 gold)", "gold": 22, "scraps": 0},
+			"buy_fencing_ribbon": {"text": "Buy fresh fencing ribbons (spend 13 gold; gain 2 scraps)", "gold": -13, "scraps": 2},
+			"leave": {"text": "Bow and leave the fair", "gold": 0, "scraps": 0},
 		},
 	},
 }
@@ -636,40 +694,62 @@ func _test_unoffered_choice_ids() -> void:
 
 
 func _test_hero_metadata() -> void:
-	var heroes := {}
+	# Per-record authored metadata only. The catalog is append-safe, so this
+	# asserts ID presence/collisions, never a global record, hero or choice
+	# total, and it never demands one event per required hero.
+	var event_ids := {}
 	var hero_choice_ids := {}
-	var hero_choice_count := 0
+	var named_heroes := {}
 	for event_id in EVENTS:
 		var matches := _matching(event_id)
 		var expected: Dictionary = _expected(event_id)
 		_check(matches.size() == 1, "hero metadata case has one authored record: " + event_id)
+		_check(not event_ids.has(event_id), "authored event ID is globally unique: " + event_id)
+		event_ids[event_id] = true
 		if matches.size() != 1:
 			continue
 		var record: Dictionary = matches[0]
 		var hero: Variant = record.get("required_hero")
 		_check(hero == expected["required_hero"], "required_hero matches the authored hero: " + event_id)
 		if hero is String:
-			_check(not heroes.has(hero), "each hero-specific event names a distinct hero: " + str(hero))
-			heroes[hero] = true
+			named_heroes[hero] = true
+		_check(hero is String and RunV3HeroEventOffers.HERO_IDS.has(hero),
+			"required_hero is a party hero known to admission: " + event_id)
+		var authored := _choice_ids(record)
 		var listed: Variant = record.get("hero_choice_ids")
+		_check(listed is Array, "hero_choice_ids is an authored array: " + event_id)
 		if not listed is Array:
 			continue
-		var authored := _choice_ids(record)
-		hero_choice_count += (listed as Array).size()
-		for choice_id in listed:
-			_check(choice_id is String and authored.has(choice_id),
-				"hero_choice_ids only names authored choices: " + event_id + "/" + str(choice_id))
+		var listed_ids: Array = listed
+		_check(listed_ids.size() == 2,
+			"hero_choice_ids declares exactly two hero choices: " + event_id)
+		var local_ids := {}
+		for choice_id in listed_ids:
+			_check(choice_id is String, "hero_choice_ids entries are strings: " + event_id)
+			if not choice_id is String:
+				continue
+			_check(not local_ids.has(choice_id),
+				"hero_choice_ids entries are unique within the record: " + event_id)
+			local_ids[choice_id] = true
+			_check(choice_id != "leave", "hero_choice_ids excludes the Leave choice: " + event_id)
+			_check(authored.has(choice_id),
+				"hero_choice_ids only names authored choices: " + event_id + "/" + choice_id)
 			_check(not hero_choice_ids.has(choice_id),
-				"hero choice IDs are unique across the five events: " + str(choice_id))
+				"hero choice ID collision across named records: " + choice_id + " (" + event_id + ")")
 			hero_choice_ids[choice_id] = true
-	_check(hero_choice_count == 10,
-		"the five events declare exactly ten hero-specific choices")
-	_check(hero_choice_ids.size() == 10,
-		"the ten hero-specific choice IDs are distinct")
-	_check(heroes.size() == 5, "the five events name five distinct required heroes")
-	for required_hero in ["warden", "seamstress", "tinker", "lantern_monk", "rag_duelist"]:
-		_check(heroes.has(required_hero), "catalog names the required hero: " + required_hero)
-	# The starter party keeps its three current heroes; these two stay future-only.
+		var non_leave := {}
+		for authored_choice_id in authored:
+			if authored_choice_id != "leave":
+				non_leave[authored_choice_id] = true
+		_check(local_ids == non_leave,
+			"hero_choice_ids equals exactly the authored non-Leave choices: " + event_id)
+	# Every hero named by the task is represented by at least one named record;
+	# membership only, so two events may legitimately share a required hero.
+	for required_hero in ["warden", "seamstress", "tinker", "lantern_monk", "rag_duelist",
+		"scarecrow", "yarn_ranger", "button_golem"]:
+		_check(named_heroes.has(required_hero), "catalog names the required hero: " + required_hero)
+	# The starter party keeps its three current heroes; authored Events may name
+	# heroes a later party slice introduces.
 	var party_file := FileAccess.open("res://data/heroes/starter_party.json", FileAccess.READ)
 	_check(party_file != null, "the starter party file still opens")
 	if party_file != null:

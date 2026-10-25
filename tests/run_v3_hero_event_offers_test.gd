@@ -8,6 +8,11 @@ const CASES := {
 	"v3_tinker_clockwork_wagon": ["tinker", "fix_ratchet", 28, -2],
 	"v3_lantern_monk_moth_vigil": ["lantern_monk", "buy_wax", -12, 2],
 	"v3_rag_duelist_needle_fair": ["rag_duelist", "trade_ribbon", -10, 2],
+	"v3_scarecrow_crow_roost": ["scarecrow", "sell_crow_feathers", 19, -1],
+	"v3_yarn_ranger_knit_ford": ["yarn_ranger", "purchase_wool", -14, 2],
+	"v3_button_golem_button_press": ["button_golem", "stamp_brass", 31, -2],
+	"v3_lantern_monk_evening_beacon": ["lantern_monk", "trim_evening_wick", 16, -1],
+	"v3_rag_duelist_scarlet_fair": ["rag_duelist", "buy_fencing_ribbon", -13, 2],
 }
 
 var failures: Array[String] = []
@@ -71,6 +76,17 @@ func _test_parties_and_receipts() -> void:
 			if visit == null:
 				continue
 			var wallet := {"gold": 30, "scraps": 3}
+			var preview := visit.preview_wallet_choices(wallet)
+			_check(preview.get("ok") == true and preview.get("event_id") == event_id
+				and not visit.is_claimed(), "genuine affordable preview before claim: " + event_id)
+			var previewed := {}
+			for entry in preview.get("choices", []):
+				if entry is Dictionary and entry.get("choice_id") == spec[1]:
+					previewed = entry
+			_check(previewed.get("gold_delta") == spec[2] and previewed.get("scraps_delta") == spec[3]
+				and previewed.get("affordable") == true
+				and previewed.get("wallet") == {"gold": 30 + spec[2], "scraps": 3 + spec[3]},
+				"preview quotes the exact affordable signed delta: " + event_id)
 			var receipt := visit.choose_with_wallet(spec[1], wallet)
 			_check(receipt == {"ok": true, "event_id": event_id, "choice_id": spec[1],
 				"wallet": {"gold": 30 + spec[2], "scraps": 3 + spec[3]}}, "exact signed receipt: " + event_id)
@@ -191,7 +207,8 @@ func _replay(value: int) -> Array:
 	var service := RunV3HeroEventOffers.new(PARTY_B)
 	var receipts: Array = [service.get_offers()]
 	var wallet := {"gold": 30, "scraps": 3}
-	for event_id in ["v3_lantern_monk_moth_vigil", "v3_rag_duelist_needle_fair", "v3_tinker_clockwork_wagon"]:
+	for event_id in ["v3_lantern_monk_moth_vigil", "v3_rag_duelist_needle_fair", "v3_tinker_clockwork_wagon",
+		"v3_lantern_monk_evening_beacon", "v3_rag_duelist_scarlet_fair"]:
 		var visit := service.enter(event_id)
 		_check(visit != null and visit.is_valid(), "replay has genuine admitted visit")
 		if visit == null:
