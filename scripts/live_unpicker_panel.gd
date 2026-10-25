@@ -214,17 +214,30 @@ func _card_name(id: String) -> String:
 	if descriptors.has(id):
 		var descriptor: Dictionary = descriptors[id]
 		var named := str(descriptor.get("display_name", "")).strip_edges()
-		if not named.is_empty():
-			return named
 		var halves: Array = descriptor.get("half_ids", [])
-		var names: PackedStringArray = []
+		if named.is_empty():
+			var names: PackedStringArray = []
+			for half in halves:
+				var definition := RunRestStitchCards.resolve_card_definition(half)
+				names.append(str(definition.get("display_name", "Unknown half")))
+			named = " / ".join(names) if not names.is_empty() else "Unknown stitched card"
+		var owners: PackedStringArray = []
 		for half in halves:
 			var definition := RunRestStitchCards.resolve_card_definition(half)
-			names.append(str(definition.get("display_name", "Unknown half")))
-		return " / ".join(names) if not names.is_empty() else "Unknown stitched card"
+			var owner_id := str(definition.get("owner", ""))
+			if not owner_id.is_empty():
+				owners.append(owner_id.capitalize())
+		var owner_prefix := " / ".join(owners)
+		if not owner_prefix.is_empty():
+			owner_prefix += " - "
+		return owner_prefix + named
 	var definition := RunRestStitchCards.resolve_card_definition(id)
 	var named := str(definition.get("display_name", "")).strip_edges()
-	return named if not named.is_empty() else "Unknown card"
+	if named.is_empty():
+		named = "Unknown card"
+	var owner_id := str(definition.get("owner", ""))
+	var owner_prefix := owner_id.capitalize() + " " if not owner_id.is_empty() else ""
+	return owner_prefix + named
 
 
 func _caption(id: String) -> String:

@@ -164,10 +164,13 @@ func _test_layout() -> void:
 	for i in range(unique.size()):
 		var id: String = unique[i]
 		var first: int = source.deck.find(id)
-		var expected_name := str(RunRestStitchCards.resolve_card_definition(id).get("display_name", ""))
+		var definition := RunRestStitchCards.resolve_card_definition(id)
+		var expected_name := str(definition.get("display_name", ""))
+		var expected_owner := str(definition.get("owner", "")).capitalize()
 		_check(not expected_name.is_empty() and panel.card_buttons[i].text.contains(expected_name)
+				and (expected_owner.is_empty() or panel.card_buttons[i].text.contains(expected_owner))
 				and panel.card_buttons[i].text.contains("%02d" % (first + 1)),
-				"first source position and independently resolved authored name for " + id)
+				"first source position and independently resolved authored name and readable owner for " + id)
 		_check(panel.card_buttons[i].focus_mode == Control.FOCUS_ALL,
 				"canonical card row is keyboard reachable")
 	_check(panel.choice_scroll.get_v_scroll_bar().max_value > panel.choice_scroll.size.y,
@@ -317,9 +320,13 @@ func _test_stitched() -> void:
 	if row_index < 0:
 		return
 	var card_row := panel.card_buttons[row_index]
+	var halves: Array = source.descriptors[id].half_ids
+	var owner1 := str(RunRestStitchCards.resolve_card_definition(halves[0]).get("owner", "")).capitalize()
+	var owner2 := str(RunRestStitchCards.resolve_card_definition(halves[1]).get("owner", "")).capitalize()
 	_check(card_row.text.contains(source.descriptors[id].display_name)
-			and card_row.text.contains("%02d" % (first + 1)),
-			"descriptor names composite on canonical first-occurrence tile")
+			and card_row.text.contains("%02d" % (first + 1))
+			and card_row.text.contains(owner1 + " / " + owner2 + " - "),
+			"descriptor names composite on canonical first-occurrence tile with ordered owners")
 	await _activate(card_row, false)
 	await _activate(panel.remove_button, false)
 	_check(intents.size() == 1 and intents[0].get("selected_card_id") == id,
