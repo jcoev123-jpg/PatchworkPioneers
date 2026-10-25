@@ -1,10 +1,11 @@
 class_name CombatTinkerDirectFirePreview
 extends RefCounted
-## Pure live-hand adapter for exactly six single-target Tinker pool attacks.
+## Pure live-hand adapter for the single-target Tinker pool attacks.
 ## The resolver's own _prepare decides legality for EACH original enemy slot.
 
 const IDS := [
 	"tinker_rivet_shot", "tinker_rivet_shot_plus",
+	"tinker_spring_trap", "tinker_spring_trap_plus",
 	"tinker_long_barrel", "tinker_long_barrel_plus",
 	"tinker_bobbin_cannon", "tinker_bobbin_cannon_plus"
 ]

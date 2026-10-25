@@ -66,6 +66,11 @@ const CARD_SIDE_MARGIN := 10
 const PIPS_STRIP_HEIGHT := 20
 const COST_COIN_SIZE := 38
 const CHOOSE_HEIGHT := 44
+## VIS V2 body floor at 1280x720: the short rules and the rarity tag are read
+## from arm's length at the sewing table, so both keep the project body face at
+## 18 px instead of the earlier 15 px. The card's own name stays on its 21 px
+## display strip, so a taller body line only needs the rules strip's own room.
+const BODY_FONT_SIZE := 18
 ## Keyword Help gets its own sewn cell beside the owner felt, never sewn onto the
 ## hero's ribbon: a 10px gap of card paper separates the two patches so the full
 ## hero name and the Help label read independently. Its 24px cell is too short
@@ -328,7 +333,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	content.add_child(name_label)
 
 	# Rarity tag (only for pool cards with authored rarity)
-	var rarity_label := _card_label("RarityLabel", "", 15)
+	var rarity_label := _card_label("RarityLabel", "", BODY_FONT_SIZE)
 	rarity_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	var rarity: String = String(definition.get("rarity", "")).strip_edges().to_lower()
 	if RARITY_COLORS.has(rarity):
@@ -381,7 +386,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	# Effects text: the same detached short-sentence formatter the held hand
 	# uses. No live passive boost is predicted for a detached reward offer.
 	var effect_line := CardShortRules.line(definition)
-	var rules_label := _card_label("RulesLabel", effect_line, 15)
+	var rules_label := _card_label("RulesLabel", effect_line, BODY_FONT_SIZE)
 	rules_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	rules_label.custom_minimum_size = Vector2(0, 60)
 	content.add_child(rules_label)

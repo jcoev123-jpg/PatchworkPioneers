@@ -3,6 +3,7 @@ extends SceneTree
 
 const IDS := [
 	"tinker_rivet_shot", "tinker_rivet_shot_plus",
+	"tinker_spring_trap", "tinker_spring_trap_plus",
 	"tinker_long_barrel", "tinker_long_barrel_plus",
 	"tinker_bobbin_cannon", "tinker_bobbin_cannon_plus"
 ]
@@ -72,7 +73,7 @@ func _state() -> Array:
 		app.party.get_heroes(), app.enemies.get_enemies(),
 		app.enemy_intents.get_intents(), app.battle_result.get_outcome(),
 		app.run_rng.seed, app.run_rng.state, view._play._tinker._consumed,
-		app._battle_closed]
+		app._battle_closed, view._pinned._pinner_by_position.duplicate(true) if view._pinned != null else {}]
 
 
 func _oracle(id: String, position: int, before: Array) -> Dictionary:
@@ -91,13 +92,16 @@ func _oracle(id: String, position: int, before: Array) -> Dictionary:
 	enemies._enemies.assign((before[6] as Array).duplicate(true))
 	var first := CombatTinkerFirstAttack.new()
 	first._consumed = bool(before[11])
-	var service := CombatTinkerPoolAttacks.new(first)
+	var pin := CombatPinned.new()
+	pin._pinner_by_position = (before[13] as Dictionary).duplicate(true)
+	var service := CombatTinkerPoolAttacks.new(first, pin)
 	var event: Dictionary = service.play_attack(deck, party, enemies, id, position)
 	return {"event": event, "draw": deck.draw_pile.duplicate(),
 		"hand": deck.hand.duplicate(), "discard": deck.discard_pile.duplicate(),
 		"energy": deck.energy, "party": party.get_heroes(),
 		"enemies": enemies.get_enemies(), "seed": rng.seed,
-		"rng": rng.state, "consumed": first._consumed}
+		"rng": rng.state, "consumed": first._consumed,
+		"pin": pin._pinner_by_position.duplicate(true)}
 
 
 func _compare(oracle: Dictionary, id: String, before: Array) -> void:
@@ -114,6 +118,9 @@ func _compare(oracle: Dictionary, id: String, before: Array) -> void:
 	_check(view._play._tinker._consumed == oracle.consumed
 		and view._direct_fire.get_first_attack() == view._play._tinker,
 		id + " direct and starter use identical first-attack latch")
+	_check(view._pinned != null and view._pinned._pinner_by_position == oracle.pin
+		and view._direct_fire.get_pinned() == view._pinned,
+		id + " exact battle-shared Pinned state equals detached resolver")
 	_check(app.enemy_intents.get_intents() == before[7]
 		and app.battle_result.get_outcome() == before[8],
 		id + " no foreign turn or outcome mutation")
@@ -132,7 +139,8 @@ func _begin(id: String = "") -> bool:
 		and app.enemies is CombatEnemies and app.enemy_intents != null \
 		and app.run_rng != null and app.deck._rng == app.run_rng \
 		and app.battle_result != null and is_instance_valid(app.hand_view)
-	_check(ready and view._play._tinker == view._direct_fire.get_first_attack(),
+	_check(ready and view._play._tinker == view._direct_fire.get_first_attack()
+		and view._pinned != null and view._direct_fire.get_pinned() == view._pinned,
 		"real fresh scene mounts the battle and a shared Tinker passive")
 	if not ready:
 		return false
@@ -213,6 +221,10 @@ func _play_one(id: String, keyboard: bool, weak: bool = false) -> void:
 	else:
 		await _click(app.get_node("LiveEnemyRoster")._labels[0])
 	_compare(oracle, id, before)
+	if id.begins_with("tinker_spring_trap"):
+		_check(not app.enemies.is_slain(1) and view._pinned.pinner_for_enemy(1) == "tinker"
+			and oracle.pin.get(1, "") == "tinker",
+			"surviving Spring Trap keeps Tinker's shared pin")
 	var after: Array = _state()
 	await _key(KEY_1)
 	await _click(app.get_node("LiveEnemyRoster")._labels[0])
@@ -546,6 +558,170 @@ func _real_turn_reset() -> void:
 	await _leave()
 
 
+## A real pin survives a turn and a same-owner hit, then the mounted Warden
+## consumes exactly one +5 before the two status multipliers.
+func _spring_pin_followup() -> void:
+	if not await _begin("tinker_spring_trap"):
+		return
+	app.enemies._enemies[0]["max_hp"] = 90
+	app.enemies._enemies[0]["hp"] = 90
+	_check(app.enemies.is_valid(), "durable original enemy supports three confirmed hits")
+	await _click(_panel("tinker_spring_trap"))
+	var before: Array = _state()
+	var spring_oracle := _oracle("tinker_spring_trap", 1, before)
+	await _key(KEY_1)
+	_compare(spring_oracle, "Spring before Warden", before)
+	_check(view._pinned.pinner_for_enemy(1) == "tinker",
+		"first mounted Spring records Tinker in shared Pinned")
+	var old_turn: int = app.enemy_intents._turn_index
+	await _click(app.end_turn_button)
+	_check(app.deck.turn_active and app.enemy_intents._turn_index > old_turn
+		and view._pinned.pinner_for_enemy(1) == "tinker",
+		"unused Spring pin persists across real End Turn")
+	for id in ["tinker_pop_shot", "warden_seam_breaker"]:
+		app.deck.draw_pile.append(id)
+		_check(app.deck.draw_extra(1) == 1 and app.deck.hand.back() == id,
+			"draw genuine follow-up card " + id)
+	app._refresh_hand()
+	await _frames()
+	_check(_panel("tinker_pop_shot") != null and _panel("warden_seam_breaker") != null
+		and app.deck.energy == 3 and not app.enemies.is_slain(1),
+		"new turn mounts both owners with enough energy and living target")
+	await _click(_panel("tinker_pop_shot"))
+	await _key(KEY_1)
+	_check(view.last_event.get("ok", false) and view._pinned.pinner_for_enemy(1) == "tinker",
+		"confirmed same-Tinker starter hit does not consume Spring pin")
+	app.party._heroes[0]["statuses"] = {"weak": 1}
+	_check(app.enemies.apply_statuses({1: {"exposed": 1}}),
+		"real Weak Warden and Exposed target set status arithmetic")
+	var expected: int = CombatStatuses.new().adjusted_attack_damage(12,
+		app.party.get_hero(1).get("statuses", {}),
+		app.enemies.get_enemy(1).get("statuses", {}))
+	var no_pin: int = CombatStatuses.new().adjusted_attack_damage(7,
+		app.party.get_hero(1).get("statuses", {}),
+		app.enemies.get_enemy(1).get("statuses", {}))
+	_check(expected > no_pin and view._pinned.bonus_for_attack(app.enemies, 1, "warden") == 5,
+		"Warden's +5 is available before Weak/Exposed")
+	await _click(_panel("warden_seam_breaker"))
+	await _key(KEY_1)
+	var hits: Array = view.last_event.get("hits", [])
+	_check(view.last_event.get("ok", false) and hits.size() == 1
+		and hits[0].get("pin_bonus", -1) == 5
+		and hits[0].get("damage", -1) == expected
+		and hits[0].get("pin_consumed", false)
+		and view._pinned.pinner_for_enemy(1) == "",
+		"mounted Warden gets exactly one status-adjusted +5 and consumes pin")
+	await _leave()
+
+
+func _spring_lethal() -> void:
+	if not await _begin("tinker_spring_trap_plus"):
+		return
+	app.enemies._enemies[0]["hp"] = 1
+	_check(app.enemies.is_valid() and not app.enemies.is_slain(1),
+		"lethal Spring fixture starts with living original target")
+	await _click(_panel("tinker_spring_trap_plus"))
+	var before: Array = _state()
+	var oracle := _oracle("tinker_spring_trap_plus", 1, before)
+	await _click(app.get_node("LiveEnemyRoster")._labels[0])
+	_compare(oracle, "lethal Spring+", before)
+	_check(app.enemies.is_slain(1) and view._pinned.pinner_for_enemy(1) == ""
+		and not bool(view.last_event.hits[0].pinned),
+		"lethal Spring+ never stores a pin on the fallen enemy")
+	await _leave()
+
+
+func _spring_rejections() -> void:
+	for id in ["tinker_spring_trap", "tinker_spring_trap_plus"]:
+		for mode in ["energy", "downed", "owner_slot", "unheld", "slain",
+				"target_changed", "session", "turn", "hand_changed", "pin_missing",
+				"pin_replaced"]:
+			if not await _begin(id):
+				return
+			var panel := _panel(id)
+			await _click(panel)
+			var old_target: String = str(app.enemies.get_enemy(1).id)
+			var queued_hand: Array = app.deck.hand.duplicate()
+			var queued_pin: CombatPinned = view._pinned
+			var old_turn: int = view._turn
+			match mode:
+				"energy":
+					app.deck.combat_state.energy = 0
+				"downed":
+					_check(app.party.apply_damage(3, 10000) and app.party.is_downed(3),
+						"Spring downed owner precondition")
+				"owner_slot":
+					var first: Dictionary = CombatPositionSwaps.preview_adjacent_swap(app.party, 2, 1)
+					_check(first.get("ok", false), "first real owner swap")
+					app.party._heroes.assign(first.heroes)
+					var second: Dictionary = CombatPositionSwaps.preview_adjacent_swap(app.party, 1, 1)
+					_check(second.get("ok", false), "second real owner swap")
+					app.party._heroes.assign(second.heroes)
+					_check(app.party.is_valid() and app.party.get_hero(1).id == "tinker",
+						"living Tinker is in illegal slot 1")
+				"unheld":
+					_check(app.deck.discard_played(id) and not app.deck.hand.has(id),
+						"Spring removed from actual shared hand")
+				"slain":
+					_check(app.enemies.apply_damage(1, 10000) and app.enemies.is_slain(1),
+						"original Spring target slain before commit")
+				"target_changed":
+					app.enemies._enemies[0]["id"] = "replacement"
+				"session":
+					view._session = []
+				"turn":
+					view._turn += 1
+				"hand_changed":
+					app.deck.hand.reverse()
+				"pin_missing":
+					view._pinned = null
+					view._direct_fire.set_pinned(null)
+				"pin_replaced":
+					view._pinned = CombatPinned.new()
+			var metadata = app.get_node("LiveSupportHand")._metadata
+			metadata._update_visual(panel)
+			if mode == "slain":
+				_check(not view._target_preview(id).get("target_positions", []).has(1),
+					id + " offers no slain original target")
+			elif mode != "target_changed":
+				_check(not metadata.visual_state(panel).get("playable", true),
+					id + " refused " + mode + " is dim in actual hand")
+			var before: Array = _state()
+			var last: Dictionary = view.last_event.duplicate(true)
+			view._queued = true
+			view._commit(panel, id, 1, view._token, app.party, app.enemies,
+				app.battle_result, app.run_rng, old_turn, old_target,
+				panel.get_index(), app.deck, queued_hand, app.run_map, queued_pin)
+			_check(_state() == before and view.last_event == last,
+				id + " deferred " + mode + " rejects without spending or RNG")
+			await _key(KEY_1)
+			_check(_state() == before, id + " refused key cannot replay: " + mode)
+			await _leave()
+
+
+func _spring_stale_panel() -> void:
+	if not await _begin("tinker_spring_trap"):
+		return
+	var old := _panel("tinker_spring_trap")
+	await _click(old)
+	var captured: Callable = view._bindings[old].input
+	app.hand_view.remove_child(old)
+	app._refresh_hand()
+	await _frames()
+	_check(not view._bindings.has(old) and old.gui_input.get_connections().is_empty(),
+		"removed Spring panel loses the real presenter's binding")
+	var before: Array = _state()
+	var event := InputEventMouseButton.new()
+	event.pressed = true
+	event.button_index = MOUSE_BUTTON_LEFT
+	captured.call(event)
+	await _key(KEY_1)
+	_check(_state() == before and view._pinned.pinner_for_enemy(1) == "",
+		"stale Spring callback cannot spend, hit or pin")
+	old.free()
+	await _leave()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load("res://scenes/app.tscn") as PackedScene
@@ -577,6 +753,10 @@ func _run() -> void:
 	await _area_interleave()
 	await _duplicates_and_stale_panel()
 	await _real_turn_reset()
+	await _spring_pin_followup()
+	await _spring_lethal()
+	await _spring_rejections()
+	await _spring_stale_panel()
 	app.free()
 	_finish()
 

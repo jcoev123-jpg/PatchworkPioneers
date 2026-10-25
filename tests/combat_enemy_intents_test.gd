@@ -277,7 +277,7 @@ func _test_authored_catalog_intents() -> void:
 		"res://data/enemies/m04_elites.json": {
 			"needle_marshal": ["Needle Marshal", 28], "spool_hexer": ["Spool Hexer", 24]},
 		"res://data/enemies/boss.json": {
-			"patchwork_behemoth": ["Patchwork Behemoth", 42]},
+			"patchwork_behemoth": ["Patchwork Behemoth", 84]},
 	}
 	var policies: Array[String] = []
 	for path in authored:
@@ -613,10 +613,10 @@ func _test_behemoth_phase_transition_cache() -> void:
 	rng.seed = 18721
 	var schedule := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
 	_check(enemies.is_valid() and schedule.bind_battle(enemies, party, rng),
-		"canonical real Behemoth binds at 42 HP")
+		"canonical real Behemoth binds at 84 HP")
 	if not schedule.is_bound():
 		return
-	_assert_boss_slot(schedule._slots[0], 2, "front", "42 HP")
+	_assert_boss_slot(schedule._slots[0], 40, "front", "84 HP")
 	_check(CombatEnemyIntents.policy_for(enemies, 1) == "front",
 		"executor policy is front for phase one")
 	var first := schedule.get_intents()
@@ -624,16 +624,16 @@ func _test_behemoth_phase_transition_cache() -> void:
 		"real Boss has one cached slot")
 	var before := rng.state
 	_check(enemies.gain_block(1, 6) and enemies.apply_damage(1, 6)
-		and enemies.get_enemy(1).hp == 42, "Block absorbs damage without lowering HP")
+		and enemies.get_enemy(1).hp == 84, "Block absorbs damage without lowering HP")
 	_check(schedule.get_intents() == first and rng.state == before,
 		"Block and read cannot transition or spend RNG")
-	_check(enemies.apply_damage(1, 20) and enemies.get_enemy(1).hp == 22
+	_check(enemies.apply_damage(1, 62) and enemies.get_enemy(1).hp == 22
 		and schedule.advance_turn(), "22 HP advances in phase one")
-	_assert_boss_slot(schedule._slots[0], 2, "front", "22 HP")
+	_assert_boss_slot(schedule._slots[0], 40, "front", "22 HP")
 	var locked := schedule.get_intents()
 	before = rng.state
 	_check(enemies.apply_damage(1, 1) and enemies.get_enemy(1).hp == 21,
-		"player hit crosses the actual half-HP boundary")
+		"player hit crosses the fixed 21-HP boundary")
 	for ignored in range(5):
 		var hostile := schedule.get_intents()
 		hostile[0]["amount"] = 999

@@ -153,8 +153,11 @@ func _visible() -> void:
 	_check(presenter.help_label.size_flags_horizontal != Control.SIZE_EXPAND_FILL,
 		"idle Help cue shrinks instead of consuming a stretch row")
 	_check(presenter.help_label.focus_mode == Control.FOCUS_NONE
-		and presenter.help_label.gui_input.get_connections().is_empty(),
-		"Help cue adds no keyboard focus target or input handler")
+		and presenter.help_label.gui_input.get_connections().size() == 1,
+		"Help cue has one click handler and adds no keyboard focus target")
+	_check(presenter.help_label.get_parent().name == "BattleHandInformation"
+		and not presenter._hud.is_ancestor_of(presenter.help_label),
+		"idle Help lives in the hand-information strip outside SupportHUD")
 	_check(presenter.help_label.has_theme_stylebox_override("normal")
 		and presenter.help_label.get_child_count() == 1
 		and presenter.help_label.get_child(0).mouse_filter == Control.MOUSE_FILTER_IGNORE
@@ -393,6 +396,45 @@ func _help_hover_case(stage: String) -> void:
 	_check(presenter.help_label.focus_mode == Control.FOCUS_NONE
 		and not app.hand_view.is_ancestor_of(presenter.help_label),
 		"hovering the cue adds no focus target and never enters the hand: " + stage)
+	var before := _live()
+	await _mouse(presenter.help_label, MOUSE_BUTTON_RIGHT)
+	root.push_input(_key(KEY_F1, true, true), true)
+	await _frames()
+	_check(not presenter.help_disclosure.is_visible_in_tree() and _live() == before,
+		"right-click and F1 echo keep idle Help closed and state unchanged")
+	_check(app.deck.hand.size() == app.hand_view.get_child_count()
+		and not app.deck.hand.is_empty() and not presenter._help_slot.visible,
+		"Help input has real held cards and starts closed: " + stage)
+	await _mouse(presenter.help_label)
+	_check(presenter.help_disclosure.is_visible_in_tree()
+		and presenter.help_disclosure.text == presenter.help_label.tooltip_text,
+		"mouse reveals the complete tooltip instructions: " + stage)
+	var mouse_text: String = presenter.help_disclosure.text
+	await _help_geometry(stage)
+	await _keyboard(KEY_F1)
+	_check(not presenter.help_disclosure.is_visible_in_tree(), "F1 dismisses mouse Help")
+	await _keyboard(KEY_F1)
+	_check(presenter.help_disclosure.is_visible_in_tree()
+		and presenter.help_disclosure.text == mouse_text, "F1 reveals identical complete Help")
+	await _keyboard(KEY_ESCAPE)
+	_check(not presenter.help_disclosure.is_visible_in_tree(), "Esc dismisses Help")
+	await _keyboard(KEY_F1)
+	await _keyboard(KEY_F1)
+	_check(not presenter.help_disclosure.is_visible_in_tree()
+		and app.battle_view.find_children("SupportHandHelpDisclosure", "Label", true, false).size() == 1,
+		"repeated toggles reuse one disclosure")
+	_check(_live() == before, "Help mouse/F1/Esc leave cards, turn, HP, energy and RNG unchanged")
+
+
+func _help_geometry(stage: String) -> void:
+	var disclosure: Label = presenter.help_disclosure
+	_check(disclosure.get_line_count() > 0
+		and disclosure.get_visible_line_count() == disclosure.get_line_count()
+		and root.get_visible_rect().encloses(disclosure.get_global_rect()),
+		"complete Help fits the viewport without clipped lines: " + stage)
+	for panel in app.hand_view.get_children() + app.hero_panels:
+		_check(not disclosure.get_global_rect().intersects(panel.get_global_rect()),
+			"Help does not cover card or ally targets: " + stage)
 
 
 ## A real mounted-battle resize must re-measure the same sewn table and its authored tray,
@@ -626,6 +668,8 @@ func _run() -> void:
 		_check(session_table != 0 and (session == 0 or session_table != previous_table),
 			"each Return/start mounts one fresh table instead of a stale one")
 		previous_table = session_table
+		_check(app.deck.hand.size() == 5 and app.hand_view.get_child_count() == 5,
+			"Help relocation is exercised with five real mounted cards")
 		var before := _live()
 		_fixture_start(app)
 		presenter._sync_battle()
@@ -713,13 +757,18 @@ func _run() -> void:
 		await _negative_cases()
 		var closed_table: int = presenter.backing.get_instance_id() if is_instance_valid(presenter.backing) else 0
 		_check(closed_table != 0 and closed_table == table_instance, "session kept its single table through play and turns")
+		await _keyboard(KEY_F1)
+		_check(presenter.help_disclosure.is_visible_in_tree(), "Return lifecycle starts with open Help")
 		app.return_button.pressed.emit()
 		_check(presenter._bindings.is_empty() and presenter._deck == null
 			and presenter._action_variations.is_empty(), "Return immediately disconnects session and restores fonts")
 		_check(presenter.backing == null, "Return drops the table reference immediately")
 		await _frames()
 		_check(app.deck == null and presenter.energy_label == null and presenter.energy_orb == null
-			and presenter.help_label == null and presenter.cancel_button == null, "title removes all support presentation")
+			and presenter.help_label == null and presenter.cancel_button == null
+			and presenter.help_disclosure == null
+			and app.find_children("SupportHandHelpDisclosure", "Label", true, false).is_empty(),
+			"title removes all support presentation including open disclosure")
 		_check(app.find_children("SupportHandEnergyOrb", "Control", true, false).is_empty(), "Return leaves no orphan orb")
 		_check(app.find_children("SupportHandHelp", "Label", true, false).is_empty()
 			and app.find_children("SupportHandQuiltTitle", "Label", true, false).is_empty()
@@ -889,6 +938,12 @@ func _select_ally(id: String, keyboard: bool) -> bool:
 	if panel == null:
 		return false
 	var before := _live()
+	if not presenter._pending.get("choosing", false):
+		if not presenter.help_disclosure.is_visible_in_tree():
+			await _keyboard(KEY_F1)
+		_check(presenter.help_disclosure.is_visible_in_tree(), "idle ally selection starts with open Help")
+	else:
+		_check(not presenter.help_disclosure.is_visible_in_tree(), "switching ally cards keeps Help closed")
 	if keyboard:
 		panel.grab_focus()
 		await _keyboard(KEY_ENTER)
@@ -897,6 +952,12 @@ func _select_ally(id: String, keyboard: bool) -> bool:
 	_check(_live() == before, "pending ally choice never charges or changes rules")
 	var choosing: bool = presenter._pending.get("choosing", false)
 	_check(choosing and presenter.cancel_button.is_visible_in_tree(), "target mode and cancel visible")
+	_check(not presenter.help_disclosure.is_visible_in_tree()
+		and presenter.help_label.get_parent() == presenter._hud,
+		"ally selection closes disclosure and restores the existing SupportHUD prompt")
+	await _keyboard(KEY_F1)
+	_check(not presenter.help_disclosure.is_visible_in_tree() and _live() == before,
+		"F1 during targeting keeps the existing prompt and rules state")
 	_action_font_checks("target selection")
 	_check(not presenter.quilt_row.is_visible_in_tree()
 		and not presenter.quilt_row.find_child("SupportHandQuiltTitle", true, false).is_visible_in_tree(),

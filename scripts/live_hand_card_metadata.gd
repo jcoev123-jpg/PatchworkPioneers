@@ -977,7 +977,13 @@ func _update_visual(panel: Control) -> void:
 		if battle_preview != null and is_instance_valid(battle_preview) \
 				and battle_preview.has_method("tinker_cost_discount"):
 			discount = int(battle_preview.tinker_cost_discount(id))
-		if _targeting.supports(id):
+		if id in CombatTinkerDirectFirePreview.IDS:
+			# The mounted battle owns both the legal picker and its shared pin.
+			# Catalog knowledge alone cannot enable Spring Trap.
+			playable = battle_preview != null and is_instance_valid(battle_preview) \
+				and battle_preview._eligible(panel) \
+				and bool(battle_preview._target_preview(id).get("playable", false))
+		elif _targeting.supports(id):
 			# Starter, plain-strike, heavy and Sight Glass attacks share their own
 			# read-only preview; no catalog record alone can claim a legal target.
 			playable = bool(_targeting.get_preview(_app.deck, _app.party, _app.enemies, id, discount).get("playable", false))

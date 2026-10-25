@@ -766,6 +766,12 @@ func _target_preview(id: String) -> Dictionary:
 	# resolver's printed-cost affordability check.
 	var discount: int = tinker_cost_discount(id)
 	if _direct_fire_preview.supports(id):
+		if id.begins_with("tinker_spring_trap") and (_pinned == null \
+				or _direct_fire.get_pinned() != _pinned or app._battle_closed \
+				or app.deck != _deck or app.enemy_intents == null \
+				or _turn != app.enemy_intents._turn_index \
+				or _session != [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents]):
+			return {"playable": false, "requires_selection": false, "target_positions": []}
 		return _direct_fire_preview.get_preview(_deck, app.party, app.enemies, id, _direct_fire, discount)
 	if _targeting.is_seamstress_control(id):
 		return _control_preview(id)
@@ -796,12 +802,13 @@ func _queue_attack(position: int) -> void:
 		target_id = str(app.enemies.get_enemy(position).get("id", ""))
 	_commit.call_deferred(_armed, id, position, _token,
 		app.party, app.enemies, app.battle_result, app.run_rng, _turn, target_id,
-		_armed.get_index(), _deck, _deck.hand.duplicate(), app.run_map)
+		_armed.get_index(), _deck, _deck.hand.duplicate(), app.run_map, _pinned)
 
 
 func _commit(panel, id: String, position: int, token: int, party, enemies, result, rng,
 		turn: int, target_id: String = "", panel_index: int = -1,
-		queued_deck = null, queued_hand: Array = [], queued_map = null) -> void:
+		queued_deck = null, queued_hand: Array = [], queued_map = null,
+		queued_pinned: CombatPinned = null) -> void:
 	var app = get_parent()
 	if not is_inside_tree() or app == null or app.get_node_or_null("LiveAttackPreview") != self or token != _token or not _queued:
 		return
@@ -823,6 +830,10 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		return
 	if guarded and (app.deck != queued_deck or app.run_map != queued_map or panel_index < 0 \
 			or panel.get_index() != panel_index or app.deck.hand != queued_hand):
+		_reject_stitch()
+		return
+	if direct and id.begins_with("tinker_spring_trap") and (_pinned == null \
+			or queued_pinned != _pinned or _direct_fire.get_pinned() != _pinned):
 		_reject_stitch()
 		return
 	var energy_before: int = _deck.energy
@@ -869,7 +880,7 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 		var direct_discount: int = tinker_cost_discount(id)
 		if forecast:
 			return _direct_fire_preview.get_preview(_deck, party, enemies, id, _direct_fire, direct_discount)
-		return _direct_fire.play_attack(_deck, party, enemies, id, position, null, direct_discount)
+		return _direct_fire.play_attack(_deck, party, enemies, id, position, _pinned, direct_discount)
 	if _targeting.is_pool_combo_attack(id):
 		if forecast:
 			return _combo_preview(id)
@@ -1210,6 +1221,7 @@ func _sync_battle() -> void:
 		# One Pinned set and one Unravel gauge live for this whole battle session.
 		# They are created here and never recreated or reset by a hand refresh.
 		_pinned = CombatPinned.new()
+		_direct_fire.set_pinned(_pinned)
 		_unravel = CombatUnravel.new()
 		_routed_gauge_shared = false
 		var tiers := enemy_tier_map(app.enemies)

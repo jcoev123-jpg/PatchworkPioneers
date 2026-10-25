@@ -12,6 +12,7 @@ func _initialize() -> void:
 	_test_earned_pool_fixture()
 	_test_energy_pool_fixture()
 	_test_seamstress_pool_fixture()
+	_test_tinker_pool_fixture()
 	var start_ms := Time.get_ticks_msec()
 	var seeds: Array[int] = []
 	var first: Array[Dictionary] = []
@@ -195,6 +196,9 @@ func _run_seed(value: int) -> Dictionary:
 					or not heavy.bind_patch_wardrobe(wardrobe, carry.torn) \
 					or not blocks.bind_patch_wardrobe(wardrobe, carry.torn):
 				return _fail("genuinely worn patch rules binding")
+			var tinker := _tinker_services(wardrobe, carry.torn, unravel, attacks)
+			if not tinker.ok:
+				return _fail("Tinker authentic combat binding")
 			attacks.start_player_turn()
 			var terminal := ""
 			for turn in range(TURN_CAP):
@@ -203,13 +207,18 @@ func _run_seed(value: int) -> Dictionary:
 					action_total += 1
 					var decision := strategy.choose_card(combat_deck, party, enemies,
 						attacks, run_cards, plain, heavy, rejected_ids, blocks,
-						seam.heals, seam.control, seam.bleed, unravel)
+						seam.heals, seam.control, seam.bleed, unravel, tinker.area, tinker.area_unravel, tinker.gadgets)
 					if decision.is_empty():
 						break
 					var before := _combat_snapshot(combat_deck, party, enemies, rng)
 					var accepted := false
 					var pool_receipt := {}
 					match decision.kind:
+						"earned_tinker":
+							if not acquired_ids.has(decision.id):
+								return _fail("unearned Tinker held card")
+							pool_receipt = _play_tinker(tinker, combat_deck, party, enemies, rng, decision)
+							accepted = pool_receipt.get("ok", false)
 						"earned_seamstress":
 							if not acquired_ids.has(decision.id):
 								return _fail("unearned Seamstress held card")
@@ -258,9 +267,9 @@ func _run_seed(value: int) -> Dictionary:
 							return _fail("rejected card mutated paid combat/RNG")
 						rejected_ids.append(decision.id)
 						continue
-					if decision.kind in ["earned_pool", "earned_block", "earned_energy", "earned_seamstress"]:
+					if decision.kind in ["earned_pool", "earned_block", "earned_energy", "earned_seamstress", "earned_tinker"]:
 						var definition := strategy._pool_definition(decision.id)
-						var valid: bool = (pool_receipt.get("ok", false) if decision.kind in ["earned_energy", "earned_seamstress"] else
+						var valid: bool = (pool_receipt.get("ok", false) if decision.kind in ["earned_energy", "earned_seamstress", "earned_tinker"] else
 							_pool_transition_valid(before, combat_deck, party, enemies,
 								rng, decision, definition, pool_receipt))
 						if not valid:
@@ -268,7 +277,7 @@ func _run_seed(value: int) -> Dictionary:
 						earned_plays.append({"id": decision.id, "target": decision.target,
 							"receipt": pool_receipt.duplicate(true), "battle": choice})
 					plays += 1
-					if before[0] <= combat_deck.energy and decision.kind not in ["support", "earned_block", "earned_energy"]:
+					if before[0] <= combat_deck.energy and decision.kind not in ["support", "earned_block", "earned_energy", "earned_tinker"]:
 						return _fail("paid combat did not charge energy")
 					if decision.kind == "support":
 						# Draw support can refill from discard before its own discard.
@@ -285,7 +294,7 @@ func _run_seed(value: int) -> Dictionary:
 								or oracle.draw_pile != combat_deck.draw_pile or oracle.discard_pile != combat_deck.discard_pile \
 								or oracle_rng.state != rng.state or combat_deck.energy != before[0] - definition.cost:
 							return _fail("support exact draw/refill, one payment and one discard")
-					elif decision.kind != "earned_energy" and combat_deck.discard_pile.count(decision.id) <= before[2].count(decision.id):
+					elif decision.kind not in ["earned_energy", "earned_tinker"] and combat_deck.discard_pile.count(decision.id) <= before[2].count(decision.id):
 						return _fail("confirmed card not discarded")
 					if flow.observe_result() != CombatBattleResult.ACTIVE:
 						break
@@ -304,7 +313,9 @@ func _run_seed(value: int) -> Dictionary:
 			if terminal not in [CombatBattleResult.VICTORY, CombatBattleResult.DEFEAT]:
 				return _fail("encounter exceeded %d real turns %s" % [TURN_CAP, choice])
 			if terminal == CombatBattleResult.DEFEAT:
-				if not party.is_defeated() or enemies.is_victorious():
+				# Enemy Bleed can finish the Boss after the enemy attack has
+				# already latched DEFEAT. The first observed result stays final.
+				if not party.is_defeated() or result.get_outcome() != CombatBattleResult.DEFEAT or not result.is_finished():
 					return _fail("non-authentic defeat")
 				lost = true
 				break
@@ -1303,6 +1314,8 @@ func _report(trials: Array[Dictionary]) -> void:
 	var energy_rewards := {}
 	var seamstress_rewards := {}
 	var seamstress_plays := {}
+	var tinker_rewards := {}
+	var tinker_plays := {}
 	var earned_receipts := []
 	var starter_ids := StarterCards.new().get_starting_deck()
 	for trial in trials:
@@ -1333,6 +1346,11 @@ func _report(trials: Array[Dictionary]) -> void:
 				acquired_energy[id] = acquired_energy.get(id, 0) + 1
 		for visit in trial.reward_visits:
 			print("M05 seed=%d Reward offers=%s selected=%s" % [trial.seed, JSON.stringify(visit.offers), visit.selected])
+			if M05SeededRunStrategy.EARNED_TINKER.has(visit.selected):
+				_check(visit.offers.size() == 3 and visit.offers.any(func(item): return item.id == visit.selected) \
+					and not visit.selected.ends_with("_plus") and trial.seed % 3 == 0,
+					"Tinker acquired from genuine eligible three-card offer")
+				tinker_rewards[visit.selected] = tinker_rewards.get(visit.selected, 0) + 1
 			if M05SeededRunStrategy.EARNED_SEAMSTRESS.has(visit.selected):
 				_check(visit.offers.size() == 3 and visit.offers.any(func(item): return item.id == visit.selected) \
 					and not visit.selected.ends_with("_plus") and trial.seed % 3 == 0,
@@ -1347,12 +1365,15 @@ func _report(trials: Array[Dictionary]) -> void:
 			var is_block := M05SeededRunStrategy.EARNED_POOL_BLOCKS.has(event.id.trim_suffix("_plus"))
 			var is_energy := CombatPoolEnergyCards.SUPPORTED_IDS.has(event.id)
 			var is_seamstress := M05SeededRunStrategy.EARNED_SEAMSTRESS.has(event.id.trim_suffix("_plus"))
+			var is_tinker := M05SeededRunStrategy.EARNED_TINKER.has(event.id.trim_suffix("_plus"))
 			_check(trial.acquired_ids.has(event.id) and event.receipt.get("ok", false) \
-				and (event.receipt.has("heal_delta") if is_seamstress else (event.receipt.get("energy_gain") == 1 if is_energy else
+				and (event.receipt.has("after") if is_tinker else (event.receipt.has("heal_delta") if is_seamstress else (event.receipt.get("energy_gain") == 1 if is_energy else
 				(not event.receipt.get("block_deltas", {}).is_empty() if is_block \
-				else not event.receipt.get("hits", []).is_empty()))),
+				else not event.receipt.get("hits", []).is_empty())))),
 				"accepted earned play has genuine acquired ID and effect receipt")
-			if is_seamstress:
+			if is_tinker:
+				tinker_plays[event.id] = tinker_plays.get(event.id, 0) + 1
+			elif is_seamstress:
 				seamstress_plays[event.id] = seamstress_plays.get(event.id, 0) + 1
 			elif is_energy:
 				energy_plays[event.id] = energy_plays.get(event.id, 0) + 1
@@ -1395,6 +1416,10 @@ func _report(trials: Array[Dictionary]) -> void:
 		_check(seamstress_rewards.get(id, 0) > 0 and seamstress_plays.get(id, 0) > 0,
 			"cohort acquires offered Seamstress base and later plays it " + id)
 	print("M05 earned Seamstress rewards=%s accepted_plays=%s" % [JSON.stringify(seamstress_rewards), JSON.stringify(seamstress_plays)])
+	for family in [["tinker_scatter_bolts", "tinker_shrapnel_seam"], ["tinker_spare_parts", "tinker_sight_glass"]]:
+		_check(family.any(func(id): return tinker_rewards.get(id, 0) > 0 and tinker_plays.get(id, 0) > 0),
+			"original 50 seeds acquire offered Tinker family and play later real hands " + str(family))
+	print("M05 earned Tinker rewards=%s accepted_plays=%s" % [JSON.stringify(tinker_rewards), JSON.stringify(tinker_plays)])
 	_check(stitches > 0 and sews > 0,
 		"cohort must actually commit a Rest stitch and an owned patch sew")
 	_check(visits > 0 and purchases > 0 and unaffordable > 0,
@@ -1413,7 +1438,7 @@ func _report(trials: Array[Dictionary]) -> void:
 	print("M05 Events special=%s generic=%d unaffordable rejections=%d; no-effect Treasure=%d" %
 		[JSON.stringify(specials), generic, event_unaffordable, treasures])
 	print("M05 supported earned-pool coverage PARTIAL (other pool shapes deliberately unselected); acquired=%s accepted_plays=%d receipts=%s" % [
-		JSON.stringify(acquired), earned_plays + block_plays + _energy_play_count(energy_plays) + _energy_play_count(seamstress_plays), JSON.stringify(earned_receipts)])
+		JSON.stringify(acquired), earned_plays + block_plays + _energy_play_count(energy_plays) + _energy_play_count(seamstress_plays) + _energy_play_count(tinker_plays), JSON.stringify(earned_receipts)])
 	print("M05 earned Block acquired=%s accepted_plays=%d; earned direct-hit plays=%d" % [
 		JSON.stringify(acquired_blocks), block_plays, earned_plays])
 	print("M05 earned energy acquired=%s rewards=%s accepted_plays=%s" % [
@@ -1454,6 +1479,266 @@ func _report(trials: Array[Dictionary]) -> void:
 			"FAIL" if exceeds else "PASS"])
 		print("M05 optional acquired-card over-half diagnostic: %s" % [
 			"FAIL" if optional_frequencies.values().any(func(count): return count * 2 > wins) else "PASS"])
+
+
+func _tinker_services(wardrobe: RunPatchWardrobe, torn: RunTornMending,
+		unravel: CombatUnravel, attacks: CombatAttackCards) -> Dictionary:
+	var area := CombatTinkerPoolAttacks.new(attacks._tinker)
+	var area_unravel := CombatTinkerPoolUnravelAttacks.new(attacks._tinker, unravel)
+	var gadgets := CombatTinkerPoolGadgets.new()
+	var valid := area.bind_patch_wardrobe(wardrobe, torn)
+	# All confirmed attacks consume the same battle-long Button Eye authority.
+	area._patches = attacks._patches
+	valid = area_unravel.set_patch_rules(attacks._patches) and valid
+	valid = gadgets.bind_patch_wardrobe(wardrobe, torn) and valid
+	return {"ok": valid, "area": area, "area_unravel": area_unravel,
+		"gadgets": gadgets, "attacks": attacks, "unravel": unravel,
+		"wardrobe": wardrobe, "torn": torn}
+
+
+func _tinker_snapshot(services: Dictionary, deck: CombatDeck, party: CombatParty,
+		enemies: CombatEnemies, rng: RandomNumberGenerator) -> Array:
+	var gauges := []
+	for enemy in enemies.get_enemies():
+		gauges.append(services.unravel.get_snapshot(enemy.position))
+	return [_combat_snapshot(deck, party, enemies, rng), gauges,
+		services.wardrobe.get_snapshot(), services.torn.read_state(),
+		services.attacks._patches.latch_snapshot(), services.attacks._tinker._consumed,
+		services.attacks._tinker.path_bonus()]
+
+
+func _play_tinker(services: Dictionary, deck: CombatDeck, party: CombatParty,
+		enemies: CombatEnemies, rng: RandomNumberGenerator, decision: Dictionary) -> Dictionary:
+	# A frozen attack projection alone does not authenticate a later run ledger.
+	if not services.gadgets.is_patch_binding_valid() or not services.attacks._patches.is_current():
+		return {"ok": false}
+	var before := _tinker_snapshot(services, deck, party, enemies, rng)
+	var definition := TinkerPoolCards.new().get_definition(decision.id)
+	var base: String = decision.id.trim_suffix("_plus")
+	var expected: Array = before[0].duplicate(true)
+	var gauges: Array = before[1].duplicate(true)
+	var hits := []
+	var patches: CombatPatchAttackRules = services.attacks._patches
+	var gadget: CombatTinkerPoolGadgets = services.gadgets
+	var owners: Array = party.get_heroes().filter(func(hero): return hero.id == "tinker")
+	if owners.is_empty():
+		return {"ok": false}
+	var owner: Dictionary = owners[0]
+	var is_attack: bool = definition.effects.has("damage")
+	var expected_block := 0
+	var expected_exposed := 0
+	var oracle_rng := RandomNumberGenerator.new()
+	oracle_rng.state = int(before[0][6])
+	var oracle := CombatDeck.new([], oracle_rng)
+	oracle.hand.assign(expected[1])
+	oracle.discard_pile.assign(expected[2])
+	oracle.draw_pile.assign(expected[3])
+	oracle.combat_state.player_turn_active = true
+	var drawn := 0
+	if is_attack:
+		var raw: int = definition.effects.damage + services.attacks._tinker.bonus_for_attack(decision.id) + patches.damage_bonus("tinker")
+		var first_exposed: int = patches.exposed_for_first_hit("tinker").get("exposed", 0)
+		for enemy in expected[5]:
+			if enemy.hp <= 0 or not definition.to_positions.has(enemy.position):
+				continue
+			var damage := CombatStatuses.new().adjusted_attack_damage(raw, owner.get("statuses", {}), enemy.get("statuses", {}))
+			var absorbed := mini(enemy.block, damage)
+			var loss := mini(enemy.hp, damage - absorbed)
+			enemy.block -= absorbed
+			enemy.hp -= loss
+			var statuses := {}
+			if hits.is_empty() and first_exposed > 0:
+				statuses = {"exposed": first_exposed}
+				if not enemy.has("statuses"):
+					enemy.statuses = {}
+				enemy.statuses.exposed = int(enemy.statuses.get("exposed", 0)) + first_exposed
+			var hit := {"position": enemy.position, "damage": damage,
+				"block_absorbed": absorbed, "hp_loss": loss, "statuses": statuses}
+			if base == "tinker_shrapnel_seam":
+				var amount: int = definition.effects.unravel + patches.card_unravel_bonus("tinker", decision.id) if enemy.hp > 0 else 0
+				hit["unravel"] = amount
+				if amount > 0 and not gauges[enemy.position - 1].is_empty():
+					var gauge: Dictionary = gauges[enemy.position - 1]
+					gauge.gauge = mini(gauge.threshold, gauge.gauge + amount)
+					if gauge.gauge == gauge.threshold:
+						gauge.unravelled = true
+						gauge.skip_pending = true
+			hits.append(hit)
+	else:
+		if base == "tinker_spare_parts":
+			expected_block = int(definition.effects.block) + gadget.get_patches().card_block_bonus("tinker", decision.id) + gadget.get_head_patches().get_bonus("tinker", decision.id, "block")
+			expected[4][owner.position - 1].block += expected_block
+		elif decision.target >= 1 and decision.target <= expected[5].size():
+			expected_exposed = int(definition.effects.exposed) + gadget.get_head_patches().get_bonus("tinker", decision.id, "exposed")
+			var enemy: Dictionary = expected[5][decision.target - 1]
+			if not enemy.has("statuses"):
+				enemy.statuses = {}
+			enemy.statuses.exposed = int(enemy.statuses.get("exposed", 0)) + expected_exposed
+		drawn = oracle.draw_extra(1)
+	var receipt: Dictionary
+	match base:
+		"tinker_scatter_bolts":
+			receipt = services.area.play_attack(deck, party, enemies, decision.id, decision.target)
+		"tinker_shrapnel_seam":
+			receipt = services.area_unravel.play_attack(deck, party, enemies, decision.id, decision.target)
+		"tinker_spare_parts":
+			receipt = gadget.resolve_spare_parts(deck, party, decision.id, decision.target)
+		_:
+			receipt = gadget.resolve_sight_glass(deck, party, enemies, decision.id, decision.target)
+	if not receipt.get("ok", false):
+		return receipt
+	_check(oracle.discard_played(decision.id), "Tinker oracle discards one held copy")
+	expected[0] -= definition.cost
+	expected[1] = oracle.hand.duplicate()
+	expected[2] = oracle.discard_pile.duplicate()
+	expected[3] = oracle.draw_pile.duplicate()
+	expected[6] = str(oracle_rng.state)
+	var after := _tinker_snapshot(services, deck, party, enemies, rng)
+	var latches: Dictionary = before[4].duplicate(true)
+	if is_attack and patches.active_snapshot().get("tinker", []).has("button_eye"):
+		latches.tinker = true
+	var valid: bool = after[0] == expected and after[1] == gauges and after[2] == before[2] \
+		and after[3] == before[3] and after[4] == latches \
+		and after[5] == (true if is_attack else before[5]) and after[6] == (0 if is_attack else before[6])
+	if is_attack:
+		valid = valid and not hits.is_empty() and receipt.hits == hits
+	else:
+		valid = valid and receipt.drawn == drawn
+		valid = valid and (receipt.block == expected_block if base == "tinker_spare_parts" else receipt.exposed_applied == expected_exposed and receipt.target == decision.target)
+	_check(valid, "Tinker exact effects/payment/discard/gauges/latches/RNG " + decision.id)
+	receipt["ok"] = valid
+	receipt["before"] = before
+	receipt["after"] = after
+	return receipt
+
+
+func _tinker_decision(strategy: M05SeededRunStrategy, services: Dictionary,
+		deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, rejected: Array = []) -> Dictionary:
+	return strategy.choose_card(deck, party, enemies, services.attacks,
+		RunRestStitchCards.new(StarterCards.new().get_starting_deck(), {}, 0, 1),
+		CombatPoolPlainStrikes.new(), CombatWardenPoolHeavyAttacks.new(), rejected,
+		null, null, null, null, services.unravel, services.area, services.area_unravel, services.gadgets)
+
+
+func _test_tinker_pool_fixture() -> void:
+	var strategy := M05SeededRunStrategy.new()
+	for base in M05SeededRunStrategy.EARNED_TINKER:
+		for suffix in ["", "_plus"]:
+			var id: String = base + suffix
+			var definition := TinkerPoolCards.new().get_definition(id)
+			var plus: bool = suffix != ""
+			var authored: Dictionary = {"damage": 4 if plus else 3, "living_targets_only": true}
+			if base == "tinker_shrapnel_seam":
+				authored = {"damage": 7 if plus else 5, "unravel": 3 if plus else 2, "living_targets_only": true}
+			elif base == "tinker_spare_parts":
+				authored = {"block": 4 if plus else 3, "draw": 1}
+			elif base == "tinker_sight_glass":
+				authored = {"exposed": 2, "draw": 1}
+			_check(definition.effects == authored, "authored Tinker base/+ " + id)
+			var area: bool = base in ["tinker_scatter_bolts", "tinker_shrapnel_seam"]
+			_check(definition.cost == (0 if base == "tinker_spare_parts" else (2 if base == "tinker_shrapnel_seam" else 1)) \
+				and definition.from_positions == ([3] if area else [2, 3]) \
+				and definition.to_positions == ([] if base == "tinker_spare_parts" else [1, 2, 3]) \
+				and definition.target_kind == ("enemy_all" if area else ("self" if base == "tinker_spare_parts" else "enemy_single")), "authored Tinker cost/FROM/TO/kind " + id)
+			_check(strategy.choose_reward([{"id": id}], 3, 0) == (id if suffix == "" else "") \
+				and strategy.choose_reward([{"id": id}], 1, 0).is_empty() \
+				and strategy.choose_reward([{"id": id}], 3, 1).is_empty(), "Tinker reward keeps skips and base-only offers")
+			for condition in ["legal", "middle", "refill", "primed", "consumed", "slain_gap", "lethal", "absent", "no_energy", "inactive", "downed_owner", "missing_owner", "wrong_slot", "wrong_target", "dead_target", "dead_targets", "invalid_gauge", "foreign_gauge", "overflow", "stale", "stale_torn", "rejected"]:
+				if condition == "dead_target" and base != "tinker_sight_glass":
+					continue
+				if condition in ["invalid_gauge", "foreign_gauge"] and base != "tinker_shrapnel_seam":
+					continue
+				if condition == "overflow" and definition.effects.has("damage"):
+					continue
+				var rng := RandomNumberGenerator.new()
+				rng.seed = 8422
+				var held: Array[String] = [id, "tinker_ricochet", "tinker_long_barrel"]
+				if condition == "consumed":
+					held.append("tinker_pop_shot")
+				var deck := CombatDeck.new(held, rng)
+				var heroes := _load_party().get_heroes()
+				if condition == "wrong_slot":
+					heroes = [heroes[2], heroes[1], heroes[0]]
+				elif condition == "middle":
+					heroes = [heroes[0], heroes[2], heroes[1]]
+				elif condition == "missing_owner":
+					heroes[2].id = "foreign_owner"
+				var party := CombatParty.new(heroes)
+				var torn := RunTornMending.new(_load_party().get_heroes())
+				var wardrobe := RunPatchWardrobe.new(torn.read_state().heroes, [], RunAuthoredPatchDefinitions.load_definitions(), 0, 0, [id], 8422)
+				var enemies := CombatEnemies.new([{"id": "a", "max_hp": 50}, {"id": "b", "max_hp": 50}, {"id": "c", "max_hp": 50}])
+				var unravel := CombatUnravel.new()
+				var attacks := CombatAttackCards.new()
+				_check(unravel.bind_roster(enemies, {1: "normal", 2: "normal", 3: "normal"}) \
+					and attacks.bind_patch_wardrobe(wardrobe, torn) and deck.start_turn() and deck.hand.has(id) \
+					and party.is_valid(), "real held Tinker prerequisites " + id + condition)
+				var services := _tinker_services(wardrobe, torn, unravel, attacks)
+				_check(services.ok and services.area.get_first_attack() == attacks._tinker \
+					and services.area_unravel.get_first_attack() == attacks._tinker \
+					and services.area_unravel.get_unravel() == unravel, "authentic shared Tinker authorities")
+				if condition == "refill":
+					_check(deck.discard_played("tinker_ricochet") and deck.discard_played("tinker_long_barrel") and deck.draw_pile.is_empty(), "real reshuffle supply")
+				elif condition == "primed":
+					_check(enemies.gain_block(1, 5) and enemies.apply_statuses({1: {"exposed": 2}}) \
+						and unravel.apply_unravel(enemies, 1, 7), "primed Block/status/gauge")
+				elif condition == "consumed":
+					# A genuine starter commit must consume the same first-attack latch.
+					_check(attacks.play_attack(deck, party, enemies, "tinker_pop_shot", 1).ok and attacks._tinker._consumed, "starter consumes shared first attack")
+				elif condition == "slain_gap":
+					_check(enemies.apply_damage(2, 100) and enemies.is_slain(2) and not enemies.is_slain(3), "living slots around slain gap")
+				elif condition == "lethal":
+					_check(enemies.apply_damage(1, 49) and enemies.get_enemy(1).hp == 1, "lethal first recipient")
+				elif condition == "absent":
+					_check(deck.discard_played(id) and not deck.hand.has(id), "absent held copy")
+				elif condition == "no_energy":
+					_check(deck.try_spend_energy(3) and deck.energy == 0, "zero energy boundary")
+				elif condition == "inactive":
+					_check(deck.end_turn() and not deck.turn_active, "inactive turn")
+				elif condition == "downed_owner":
+					_check(party.apply_damage(3, 100) and party.is_downed(3), "downed Tinker")
+				elif condition == "dead_targets":
+					for position in [1, 2, 3]:
+						_check(enemies.apply_damage(position, 100) and enemies.is_slain(position), "no living target")
+				elif condition == "dead_target":
+					_check(enemies.apply_damage(1, 100) and enemies.is_slain(1) and not enemies.is_slain(2), "slain selected target with living alternatives")
+				elif condition == "invalid_gauge":
+					unravel._gauges[1].gauge = -1
+					_check(unravel.get_snapshot(1).gauge == -1, "malformed gauge")
+				elif condition == "foreign_gauge":
+					_check(unravel.bind_roster(CombatEnemies.new([{"id": "foreign", "max_hp": 50}]), {1: "normal"}) and unravel._bound_enemies != enemies, "foreign gauge roster")
+				elif condition == "overflow":
+					_check(party.gain_block(3, CombatParty.MAX_INT) if base == "tinker_spare_parts" else enemies.apply_statuses({1: {"exposed": CombatEnemies.MAX_INT}, 2: {"exposed": CombatEnemies.MAX_INT}, 3: {"exposed": CombatEnemies.MAX_INT}}), "capacity boundary")
+				elif condition == "stale":
+					_check(wardrobe.refresh_run_context(torn.read_state().heroes, [], 1, 0, [id], wardrobe.get_snapshot()) and not services.gadgets.is_patch_binding_valid(), "genuine stale run context")
+				elif condition == "stale_torn":
+					var start := _load_party()
+					var ending := _load_party()
+					_check(ending.apply_damage(3, 100) and torn.observe_battle_end("tinker_fixture", start.get_heroes(), ending.get_heroes()).ok \
+						and torn.read_state().heroes[2].hp == 0 and party.get_hero(3).hp > 0 \
+						and not services.gadgets.is_patch_binding_valid(), "real tear invalidates bound combat with living divergent owner")
+				var target := 1 if base == "tinker_sight_glass" else 0
+				if condition == "wrong_target":
+					target = 4 if base == "tinker_sight_glass" else 1
+				var before := _tinker_snapshot(services, deck, party, enemies, rng)
+				var decision := _tinker_decision(strategy, services, deck, party, enemies, [id] if condition == "rejected" else [])
+				_check(before == _tinker_snapshot(services, deck, party, enemies, rng), "Tinker policy is read-only")
+				var legal: bool = condition in ["legal", "refill", "primed", "consumed", "slain_gap", "lethal"] or (condition == "middle" and definition.from_positions.has(2)) or (condition == "no_energy" and base == "tinker_spare_parts") or (condition == "dead_targets" and base == "tinker_spare_parts")
+				if condition == "rejected":
+					_check(decision.is_empty(), "action rejection latch skips Tinker")
+					continue
+				if condition == "wrong_target":
+					_check(decision.get("id") == id, "policy chooses legal target despite invalid explicit request")
+				elif condition == "dead_target":
+					_check(decision.get("id") == id and decision.target == 2, "policy targets living authored alternative")
+				else:
+					_check(decision.get("id") == id if legal and condition != "dead_targets" else decision.is_empty(), "Tinker legal selection " + id + condition)
+				var receipt := _play_tinker(services, deck, party, enemies, rng, {"id": id, "target": target})
+				if legal:
+					_check(receipt.get("ok", false), "committed held Tinker " + id + condition)
+					var spent := _tinker_snapshot(services, deck, party, enemies, rng)
+					_check(not deck.hand.has(id) and not _play_tinker(services, deck, party, enemies, rng, {"id": id, "target": target}).get("ok", false) and spent == _tinker_snapshot(services, deck, party, enemies, rng), "spent Tinker refuses unchanged")
+				else:
+					_check(not receipt.get("ok", true) and before == _tinker_snapshot(services, deck, party, enemies, rng), "Tinker refusal preserves combat/authorities/RNG " + id + condition)
 
 
 func _energy_play_count(counts: Dictionary) -> int:
