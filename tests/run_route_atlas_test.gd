@@ -4,10 +4,14 @@ var failures: Array[String] = []
 var checks := 0
 var requests: Array[String] = []
 var seen_help_kinds: Dictionary = {}
-## The six committed sewn tokens, written out independently of the view's own table so
+## Kinds whose authored advice was proved by the synthetic mounted Peddler preview instead
+## of a seeded generated map, kept apart so a real-map omission can never hide there.
+var preview_help_kinds: Dictionary = {}
+## The committed sewn tokens, written out independently of the view's own table so
 ## this regression cannot silently inherit an omission from the implementation.
 const TOKEN_PATHS := {
 	"Unpicker": "res://assets/paper/ui/map_node_unpicker.png",
+	"Peddler": "res://assets/paper/ui/map_node_peddler.png",
 	"PatchStall": "res://assets/paper/ui/map_node_patch_stall.png",
 	"SewingCircle": "res://assets/paper/ui/map_node_sewing_circle.png",
 		"Campfire": "res://assets/paper/ui/map_node_campfire.png",
@@ -155,6 +159,9 @@ const EXPECTED_HELP := {
 	"Shop": {"lead": "Browse 5 cards + 2 patches",
 		"detail": "Remove card: 75 gold initially, +25 each time",
 		"tooltip": "5 cards + 2 patches; card removal starts at 75 gold, increasing 25 per removal"},
+	"Peddler": {"lead": "Choose one: buy 1 of 3 hero cards or 1 patch",
+		"detail": "All 4 priced on the stock; one purchase, or leave",
+		"tooltip": "Buy one of 3 priced party-hero cards (one per hero) or the one priced patch, one purchase per visit, or leave; actual prices appear on the stock"},
 	"Event": {"lead": "2–3 choices when visited",
 		"detail": "Outcomes shown on arrival; no guaranteed yield",
 		"tooltip": "2–3 choices; outcomes revealed on visit, no guaranteed yield"},
@@ -172,6 +179,214 @@ func _hover_text(node: Dictionary, legal: bool = false) -> String:
 	if legal:
 		return prefix + " · " + str(EXPECTED_HELP[str(node["type"])]["tooltip"])
 	return prefix
+
+
+## A synthetic two-floor map that authors one Peddler node. Seeded generation never emits
+## Peddler yet, so this probe supplies its own authored record without changing RunMap's
+## generation, fixed map-kind distribution, route or RNG. Everything it reads is detached.
+class PeddlerPreviewMap extends RunMap:
+	const PEDDLER_ID := "f01_n0"
+	const NEXT_ID := "f02_n0"
+	var route_ids: Array[String] = []
+
+	func is_generated() -> bool:
+		return true
+
+	func get_generation_revision() -> int:
+		return 1
+
+	func get_floors() -> Array:
+		return [[_record(PEDDLER_ID, 1, "Peddler", [NEXT_ID])],
+			[_record(NEXT_ID, 2, "Fight", [])]]
+
+	func get_node(node_id: String) -> Dictionary:
+		if node_id == PEDDLER_ID:
+			return _record(PEDDLER_ID, 1, "Peddler", [NEXT_ID])
+		if node_id == NEXT_ID:
+			return _record(NEXT_ID, 2, "Fight", [])
+		return {}
+
+	func get_legal_choices() -> Array[String]:
+		var choices: Array[String] = []
+		if route_ids.is_empty():
+			choices.append(PEDDLER_ID)
+		elif route_ids.back() == PEDDLER_ID:
+			choices.append(NEXT_ID)
+		return choices
+
+	func get_route() -> Array[String]:
+		return route_ids.duplicate()
+
+	func get_current_node_id() -> String:
+		return "" if route_ids.is_empty() else route_ids.back()
+
+	func get_current_floor() -> int:
+		return route_ids.size()
+
+	func is_complete() -> bool:
+		return false
+
+	func choose_node(node_id: String) -> bool:
+		if not get_legal_choices().has(node_id):
+			return false
+		route_ids.append(node_id)
+		return true
+
+	func _record(id: String, floor_number: int, kind: String, outgoing: Array) -> Dictionary:
+		return {"id": id, "floor": floor_number, "position": 0, "type": kind,
+			"outgoing": outgoing.duplicate()}
+
+
+func _synthetic_state(map: RunMap) -> Dictionary:
+	return {"floors": map.get_floors(), "route": map.get_route(),
+		"legal": map.get_legal_choices(), "current": map.get_current_node_id(),
+		"floor": map.get_current_floor(), "complete": map.is_complete(),
+		"generated": map.is_generated(), "revision": map.get_generation_revision()}
+
+
+## AC1/AC2/AC3: Peddler's distinct tag, drawn fallback and authored one-visit advice.
+## Seeded maps never author Peddler yet, so this probe mounts its own synthetic authored
+## map and drives the real atlas marker, hover and choice ticket, while a genuinely seeded
+## map and the run and global RNG streams stay untouched.
+func _verify_peddler_preview(view: RunRouteAtlas) -> void:
+	# AC1: the token mapping is written out here, not read back from the view's own table.
+	_check(RunRouteAtlas.node_token_path("Peddler")
+		== "res://assets/paper/ui/map_node_peddler.png",
+		"Peddler owns its distinct committed sewn token path")
+	var peddler_plan := RunRouteAtlas.NodeToken.fallback_plan("Peddler")
+	var stall_plan := RunRouteAtlas.NodeToken.fallback_plan("PatchStall")
+	var badge_plan := RunRouteAtlas.NodeToken.fallback_plan("Fight")
+	_check(peddler_plan.get("emblem") == "purse" and peddler_plan.get("glyph") == ""
+		and stall_plan.get("emblem") == "badge" and stall_plan.get("glyph") == "P"
+		and badge_plan.get("emblem") == "badge" and badge_plan.get("glyph") == "?"
+		and peddler_plan != stall_plan,
+		"Peddler's drawn fallback is a coin purse, never PatchStall's P or the generic ?")
+	_check(float(peddler_plan["art_bottom"]) > 0.0
+		and float(peddler_plan["art_bottom"]) <= 52.0,
+		"Peddler fallback art stops above the sewn tag's caption band")
+	# AC2: independent authored wording oracle plus the opaque-ID rule.
+	var record := {"id": "f01_n0", "floor": 1, "position": 0, "type": "Peddler",
+		"outgoing": ["f02_n0"]}
+	var facts: Dictionary = EXPECTED_HELP["Peddler"]
+	var hover := "Floor 01 · Peddler · Branch 1"
+	_check(not facts.is_empty()
+		and RunRouteAtlas.stop_consequence("Peddler") == facts
+		and RunRouteAtlas.node_hover_text(record, "Peddler", true)
+			== hover + " · " + str(facts["tooltip"])
+		and RunRouteAtlas.node_hover_text(record) == hover
+		and not RunRouteAtlas.node_hover_text(record, "Peddler", true).contains("f01_n0"),
+		"Peddler hover and consequence spell the authored floor, kind and branch")
+	_check(str(facts["lead"]).contains("3") and str(facts["lead"]).contains("patch")
+		and str(facts["detail"]).contains("leave")
+		and str(facts["detail"]).contains("price")
+		and str(facts["tooltip"]).contains("one purchase")
+		and str(facts["tooltip"]).contains("leave")
+		and str(facts["tooltip"]).contains("prices appear on the stock")
+		and not str(facts["lead"]).contains("gold")
+		and not str(facts["detail"]).contains("gold"),
+		"Peddler advice promises 3 hero cards + 1 patch, one buy or leave, prices on the stock")
+	_check(RunRouteAtlas.stop_consequence("Unknown").is_empty()
+		and RunRouteAtlas.node_hover_text({"floor": 4, "position": 1, "type": "Unknown"},
+			"", true) == "Floor 04 · Unknown · Branch 2",
+		"an unknown kind still receives no invented Peddler help")
+	# AC3: mount the real preview on the synthetic authored map. The seeded guard map and
+	# its RNG prove the probe changes no model, route or randomness.
+	var token_path: String = TOKEN_PATHS["Peddler"]
+	var token_texture: Texture2D = null
+	if ResourceLoader.exists(token_path, "Texture2D"):
+		token_texture = load(token_path) as Texture2D
+	var guard_rng := _rng(24680)
+	var guard_map := RunMap.new()
+	_check(guard_map.generate(guard_rng), "Peddler preview probe guards a genuinely seeded map")
+	var guard_before := _state(guard_map, guard_rng)
+	var synthetic := PeddlerPreviewMap.new()
+	var synthetic_before := _synthetic_state(synthetic)
+	seed(64207)
+	var expected_global := randi()
+	seed(64207)
+	view.bind_map(synthetic)
+	var marker := view.get_node_or_null("Node_f01_n0") as PanelContainer
+	_check(marker != null and marker.get_meta("route_id") == "f01_n0"
+		and marker.get_meta("route_kind") == "Peddler"
+		and marker.get_meta("route_state") == "legal"
+		and Rect2(marker.position, marker.size).intersects(RunRouteAtlas.PAGE_RIGHT),
+		"mounted Peddler preview sews its authored legal marker on the right page")
+	if marker == null:
+		_check(false, "synthetic Peddler marker exposes its art, caption and action")
+		view.bind_map(null)
+		return
+	_verify_token_marker(marker, "f01_n0", view, "synthetic Peddler")
+	var art := marker.get_node_or_null("Art") as RunRouteAtlas.NodeToken
+	var caption := marker.get_node_or_null("Identity") as Label
+	var action := marker.get_node_or_null("Action") as Button
+	_check(art != null and art.token_kind == "Peddler"
+		and str(art.get_meta("art_path")) == token_path
+		and art.token_texture == token_texture
+		and art.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"mounted Peddler marker binds the optional token path and its cached texture")
+	if art != null:
+		var emblem := str(RunRouteAtlas.NodeToken.fallback_plan(art.token_kind).get("emblem", ""))
+		if token_texture == null:
+			_check(emblem == "purse" and art.token_rect() == Rect2(),
+				"a missing Peddler PNG keeps the distinct drawn purse, never a lettered badge")
+		else:
+			var drawn := art.token_rect()
+			_check(emblem == "purse" and drawn.size.x > 0.0 and drawn.size.y > 0.0
+				and _inside(drawn, Rect2(Vector2.ZERO, art.size)),
+				"present Peddler art fills the upper tag without distortion")
+	_check(caption != null and caption.text == "1 Peddler"
+		and not caption.text.contains("f01_n0")
+		and caption.get_theme_font_size("font_size") >= 18
+		and _keeps_body_face(caption)
+		and caption.get_combined_minimum_size().x <= marker.size.x
+		and caption.vertical_alignment == VERTICAL_ALIGNMENT_BOTTOM,
+		"mounted Peddler caption reads at 18+ points above the tag edge, no raw node ID")
+	_check(marker.tooltip_text == hover + " · " + str(facts["tooltip"])
+		and not marker.tooltip_text.contains("f01_n0"),
+		"mounted Peddler hover names the floor, kind, branch and one-visit advice")
+	_check(action != null and action.focus_mode == Control.FOCUS_ALL and not action.disabled
+		and action.get_meta("route_id") == "f01_n0"
+		and action.tooltip_text == "Choose " + hover + " · " + str(facts["tooltip"]) + " (key 1)"
+		and not action.tooltip_text.contains("f01_n0"),
+		"mounted Peddler action answers shortcut 1 with the same honest advice")
+	var ticket := view.choice_ticket()
+	_check(ticket != null and ticket.visible and ticket.is_visible_in_tree()
+		and ticket.route_id == "f01_n0",
+		"synthetic Peddler preview shows one ticket for its genuine legal choice")
+	if ticket != null:
+		_check(ticket.header_text == "MEADOW · FLOOR 01 · BRANCH 1"
+			and ticket.lead_text == "Peddler · " + str(facts["lead"])
+			and ticket.detail_text == str(facts["detail"])
+			and not ticket.header_text.contains("f01_n0")
+			and not ticket.lead_text.contains("f01_n0"),
+			"mounted Peddler ticket states its area, floor, branch and exact authored choice")
+		var rect := Rect2(ticket.position, ticket.size)
+		var diary := view.get_node_or_null("JourneyJournal") as RunRouteAtlas.JourneyJournal
+		var tab := view.next_area_tab()
+		_check(rect == RunRouteAtlas.CHOICE_TICKET_RECT
+			and _inside(rect, RunRouteAtlas.PAGE_LEFT)
+			and diary != null and tab != null
+			and not rect.intersects(Rect2(diary.position, diary.size))
+			and not rect.intersects(Rect2(tab.position, tab.size))
+			and ticket.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and ticket.focus_mode == Control.FOCUS_NONE
+			and _keeps_body_face(ticket)
+			and RunRouteAtlas.ChoiceTicket.FONT_SIZE >= 18,
+			"mounted Peddler ticket stays inside its 532x74 left-page bounds")
+		var face := ticket.get_theme_default_font()
+		if face != null:
+			for content in [ticket.header_text, ticket.lead_text, ticket.detail_text]:
+				_check(face.get_string_size(content, HORIZONTAL_ALIGNMENT_LEFT, -1,
+					RunRouteAtlas.ChoiceTicket.FONT_SIZE).x <= ticket.size.x - 28.0,
+					"each authored Peddler ticket line is unclipped at 18 points")
+	_check(randi() == expected_global, "the whole Peddler preview consumes no global RNG")
+	_check(_synthetic_state(synthetic) == synthetic_before
+		and synthetic.get_route().is_empty(),
+		"the Peddler preview never commits or mutates its authored synthetic map")
+	view.bind_map(null)
+	_check(view.get_child_count() == 0 and _state(guard_map, guard_rng) == guard_before,
+		"the Peddler preview leaves a genuinely seeded map and its RNG untouched")
+	preview_help_kinds["Peddler"] = true
 
 
 # The mounted preview must always show a complete open book: owner art or drawing.
@@ -277,7 +492,7 @@ func _verify_token_sources(view: RunRouteAtlas, label: String) -> void:
 		and view.has_cached_node_token(failed_path), label + ": missing texture cached as null")
 	var probe := RunRouteAtlas.new()
 	var none: Array[String] = []
-	var test_kinds := ["Fight", "Elite", "Event", "Shop", "Rest", "Treasure", "Boss", "SewingCircle", "Campfire", "PatchStall", "Unpicker"]
+	var test_kinds := ["Fight", "Elite", "Event", "Shop", "Rest", "Treasure", "Boss", "SewingCircle", "Campfire", "PatchStall", "Unpicker", "Peddler"]
 	for i in range(test_kinds.size()):
 		var kind: String = test_kinds[i]
 		var id := "f01_n%d" % i
@@ -1367,6 +1582,8 @@ func _run() -> void:
 	_check(first.get_child_count() == 0, "null map is empty and inert")
 	# Token mapping, optional loading/caching and both marker branches, on the mounted view.
 	_verify_token_sources(first, "token sources")
+	# AC1/AC2/AC3: Peddler's distinct tag, fallback and one-visit advice, mounted synthetically.
+	_verify_peddler_preview(first)
 
 	for seed_value in [6, 42]:
 		var rng := _rng(seed_value)
@@ -1580,8 +1797,13 @@ func _run() -> void:
 	first.queue_free()
 	await process_frame
 	for kind in EXPECTED_HELP:
-		_check(seen_help_kinds.has(kind),
-			"real generated legal route exposed consequence guidance for " + kind)
+		_check(seen_help_kinds.has(kind) or preview_help_kinds.has(kind),
+			"real generated legal route or the mounted Peddler preview exposed consequence guidance for " + kind)
+	_check(preview_help_kinds == {"Peddler": true},
+		"only Peddler relies on the synthetic preview; every other kind came from a seeded route")
+	for kind in seen_help_kinds:
+		_check(EXPECTED_HELP.has(kind),
+			"every generated route kind was vetted by the independent advice oracle: " + kind)
 	if failures.is_empty():
 		print("run_route_atlas_test: PASS (", checks, " checks)")
 	else:

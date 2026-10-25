@@ -49,11 +49,12 @@ const OTHER_THREAD := Color("#837886")
 const OTHER_BORDER := Color("#938999")
 ## Owner art path, kept in code so the relay's ART phase can drop in the board image.
 const MAP_BOARD_PATH := "res://assets/paper/backgrounds/map_board.png"
-## The six authored sewn route tokens: one committed image per exact authored kind.
+## The authored sewn route tokens: one committed image per exact authored kind.
 ## Kinds without an entry keep the original drawn paper marker, and so does a token
 ## whose file cannot be loaded, so a missing PNG never breaks the preview.
 const NODE_TOKEN_PATHS := {
 	"Unpicker": "res://assets/paper/ui/map_node_unpicker.png",
+	"Peddler": "res://assets/paper/ui/map_node_peddler.png",
 	"Campfire": "res://assets/paper/ui/map_node_campfire.png",
 	"PatchStall": "res://assets/paper/ui/map_node_patch_stall.png",
 	"SewingCircle": "res://assets/paper/ui/map_node_sewing_circle.png",
@@ -201,6 +202,30 @@ class RouteTag extends PanelContainer:
 ## Inert token art or drawn fallback in the top half of a sewn angular tag.
 ## The caption sits along the lower edge, and the transparent Action covers the face.
 class NodeToken extends Control:
+	const PAPER_FILL := Color("#d8c9a2")
+	const COIN_RADIUS := 6.5
+
+	## Drawn fallback for one authored kind. "badge" is the lettered paper disc; "purse" is
+	## Peddler's tied coin purse, whose neck, plump body and coins can never read as
+	## PatchStall's letter P. `art_bottom` is the lowest painted pixel of the emblem, so the
+	## readable caption band along the tag's lower edge stays clear of the art for every
+	## kind. A kind without an entry keeps the original neutral '?' paper badge.
+	static func fallback_plan(kind: String) -> Dictionary:
+		match kind:
+			"Peddler":
+				return {"emblem": "purse", "glyph": "", "art_bottom": 49.0}
+			"Unpicker":
+				return {"emblem": "badge", "glyph": "U", "art_bottom": 49.0}
+			"PatchStall":
+				return {"emblem": "badge", "glyph": "P", "art_bottom": 49.0}
+			"Campfire":
+				return {"emblem": "badge", "glyph": "C", "art_bottom": 49.0}
+			"SewingCircle":
+				return {"emblem": "badge", "glyph": "S", "art_bottom": 49.0}
+			"Treasure":
+				return {"emblem": "badge", "glyph": "▣", "art_bottom": 49.0}
+		return {"emblem": "badge", "glyph": "?", "art_bottom": 49.0}
+
 	var token_kind := ""
 	var token_texture: Texture2D = null
 
@@ -227,18 +252,55 @@ class NodeToken extends Control:
 		if rect.size.x > 0.0 and rect.size.y > 0.0:
 			draw_texture_rect(token_texture, rect, false)
 			return
-		# Treasure and unknown/missing textures receive a stitched paper emblem.
+		var plan := fallback_plan(token_kind)
 		var middle := Vector2(size.x * 0.5, 26.0)
-		draw_circle(middle, 23.0, Color("#d8c9a2"))
+		if str(plan["emblem"]) == "purse":
+			_draw_coin_purse(middle)
+			return
+		# Treasure and unknown/missing textures receive a stitched paper emblem.
+		draw_circle(middle, 23.0, PAPER_FILL)
 		draw_arc(middle, 21.0, 0.0, TAU, 32, RunRouteAtlas.INK, 1.6, true)
 		for offset in [-17.0, -5.0, 7.0]:
 			draw_line(middle + Vector2(offset, -18), middle + Vector2(offset + 5, -18),
 				RunRouteAtlas.THREAD, 2.0, true)
 		var font := get_theme_default_font()
 		if font != null:
-			var glyph := "U" if token_kind == "Unpicker" else "P" if token_kind == "PatchStall" else ("C" if token_kind == "Campfire" else ("S" if token_kind == "SewingCircle" else ("▣" if token_kind == "Treasure" else "?")))
-			draw_string(font, middle + Vector2(-10, 9), glyph, HORIZONTAL_ALIGNMENT_CENTER,
-				20.0, 27, RunRouteAtlas.INK)
+			draw_string(font, middle + Vector2(-10, 9), str(plan["glyph"]),
+				HORIZONTAL_ALIGNMENT_CENTER, 20.0, 27, RunRouteAtlas.INK)
+
+	## Peddler's drawn fallback: two cream coins above a tied, ink-outlined purse stitched
+	## with the tag's own running thread. It is a pouch silhouette, not a lettered disc, so
+	## even beside every other fallback it reads as the Peddler stop.
+	func _draw_coin_purse(middle: Vector2) -> void:
+		for coin in [middle + Vector2(-8.0, -16.0), middle + Vector2(9.0, -19.0)]:
+			draw_circle(coin, COIN_RADIUS, PAPER_FILL)
+			draw_arc(coin, COIN_RADIUS, 0.0, TAU, 20, RunRouteAtlas.INK, 1.6, true)
+			draw_line(coin + Vector2(-3.2, 0.0), coin + Vector2(3.2, 0.0),
+				RunRouteAtlas.THREAD, 1.6, true)
+		# The tied neck band the drawstring gathers.
+		draw_rect(Rect2(middle.x - 9.0, middle.y - 10.0, 18.0, 6.0), PAPER_FILL)
+		draw_rect(Rect2(middle.x - 9.0, middle.y - 10.0, 18.0, 6.0),
+			RunRouteAtlas.INK, false, 1.4)
+		# A plump pouch below the neck, clearly wider and rounder than any badge disc.
+		var pouch := PackedVector2Array([
+			middle + Vector2(-9.0, -4.0),
+			middle + Vector2(-16.0, 7.0),
+			middle + Vector2(-12.0, 20.0),
+			middle + Vector2(0.0, 23.0),
+			middle + Vector2(12.0, 20.0),
+			middle + Vector2(16.0, 7.0),
+			middle + Vector2(9.0, -4.0),
+		])
+		draw_colored_polygon(pouch, PAPER_FILL)
+		var outline := pouch.duplicate()
+		outline.append(pouch[0])
+		draw_polyline(outline, RunRouteAtlas.INK, 1.6, true)
+		# Cream running stitches tie the purse to the sewn tag language.
+		for row in range(3):
+			var y := middle.y + 2.0 + float(row) * 5.0
+			draw_line(Vector2(middle.x - 8.0 + float(row) * 1.6, y),
+				Vector2(middle.x + 8.0 - float(row) * 1.6, y),
+				RunRouteAtlas.THREAD, 1.4, true)
 
 ## The Action draws a sewn inset seam WITHIN its angular felt tag when focused: a
 ## double dashed rectangle hugging the inside of the tag silhouette, with a cross
@@ -1150,6 +1212,10 @@ static func stop_consequence(kind: String) -> Dictionary:
 			return {"lead": "Browse 5 cards + 2 patches",
 				"detail": "Remove card: 75 gold initially, +25 each time",
 				"tooltip": "5 cards + 2 patches; card removal starts at 75 gold, increasing 25 per removal"}
+		"Peddler":
+			return {"lead": "Choose one: buy 1 of 3 hero cards or 1 patch",
+				"detail": "All 4 priced on the stock; one purchase, or leave",
+				"tooltip": "Buy one of 3 priced party-hero cards (one per hero) or the one priced patch, one purchase per visit, or leave; actual prices appear on the stock"}
 		"Event":
 			return {"lead": "2–3 choices when visited",
 				"detail": "Outcomes shown on arrival; no guaranteed yield",
