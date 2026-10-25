@@ -30,6 +30,9 @@ func _initialize() -> void:
 	_test_visor_exposed_ac1()
 	_test_visor_scope_ac2()
 	_test_visor_rejections_ac3()
+	_test_windup_turret_ac1()
+	_test_windup_turret_ac2()
+	_test_windup_turret_ac3()
 	for failure in failures:
 		printerr(failure)
 	print("combat_tinker_pool_gadgets_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -975,6 +978,246 @@ func _test_wearer_rejections_ac3() -> void:
 	_check(enemies.get_enemy(2)["statuses"]["exposed"] == 2 and deck.energy == 2,
 		"AC3 Sight Glass applies only Exposed 2 and its printed energy")
 
+
+## ---------------------------------------------------------------------------
+## Wind-up Turret: detached three-beat seeded end-of-turn effect.
+## ---------------------------------------------------------------------------
+
+func _test_windup_turret_ac1() -> void:
+	var svc := CombatTinkerPoolGadgets.new()
+	var first_state := svc.create_wind_up_turret()
+	var second_state := svc.create_wind_up_turret()
+	_check(first_state.get("remaining") == 3, "AC1 turret state reports 3 pending beats")
+	_check(second_state.get("remaining") == 3, "AC1 second turret state reports 3 pending beats")
+	for key in ["remaining", "remaining_beats", "ticks_remaining", "pending"]:
+		_check(first_state.get(key) == 3 and second_state.get(key) == 3,
+			"AC1 state alias " + key + " is 3")
+
+	## Independent counters: ticking one does not touch the other.
+	var enemies := _enemies([10, 10, 10])
+	var rng := _rng(123)
+	var first_state_before := first_state.duplicate(true)
+	var result := svc.resolve_wind_up_turret(first_state, enemies, rng)
+	_check(result.get("ok") == true, "AC1 first tick resolves")
+	_check(first_state == first_state_before, "AC1 first state untouched")
+	_check(result.get("state").get("remaining") == 2, "AC1 first counter decremented in result state")
+	_check(second_state.get("remaining") == 3, "AC1 second counter untouched")
+
+
+func _test_windup_turret_ac2() -> void:
+	var svc := CombatTinkerPoolGadgets.new()
+	var enemies := _enemies([10, 20, 30])
+	_check(enemies.gain_block(1, 1) and enemies.gain_block(2, 2) and enemies.gain_block(3, 3),
+		"AC2 distinct Block fixtures")
+	var seed := 98765
+	var state := svc.create_wind_up_turret()
+	var rng := _rng(seed)
+	var oracle := _rng(seed)
+
+	var beat: int = 0
+	var rng_state_before_beat1: int = rng.state
+	while beat < 3:
+		## Independent oracle predicts the target from living positions.
+		var living: Array[int] = []
+		for enemy in enemies.get_enemies():
+			if int(enemy.get("hp", 0)) > 0:
+				living.append(int(enemy.get("position", 0)))
+		living.sort()
+		var expected_target: int = 0
+		if living.size() >= 2:
+			expected_target = living[oracle.randi_range(0, living.size() - 1)]
+		elif living.size() == 1:
+			expected_target = living[0]
+
+		var block_before: int = 0
+		var hp_before: int = 0
+		if expected_target > 0:
+			var eb: Dictionary = enemies.get_enemy(expected_target)
+			block_before = int(eb.get("block", 0))
+			hp_before = int(eb.get("hp", 0))
+
+		var rng_before: int = rng.state
+		var state_before: Dictionary = state.duplicate(true)
+		var enemies_before: Dictionary = {}
+		for enemy in enemies.get_enemies():
+			enemies_before[int(enemy.get("position"))] = enemy.duplicate(true)
+
+		var res: Dictionary = svc.resolve_wind_up_turret(state, enemies, rng)
+		_check(res.get("ok") == true, "AC2 beat %d resolves" % (beat + 1))
+		_check(rng.state == oracle.state, "AC2 beat %d exactly consumed the oracle draw" % (beat + 1))
+		_check(int(res.get("target", 0)) == expected_target,
+			"AC2 beat %d chosen position matches oracle" % (beat + 1))
+		_check(int(res.get("remaining", -1)) == 2 - beat,
+			"AC2 beat %d remaining count" % (beat + 1))
+		
+		_check(state == state_before, "AC2 beat %d state untouched" % (beat + 1))
+		state = res.get("state")
+		_check(state.get("remaining") == 2 - beat,
+			"AC2 beat %d next-state decremented" % (beat + 1))
+
+		for enemy in enemies.get_enemies():
+			var pos = int(enemy.get("position"))
+			if pos != expected_target:
+				_check(enemy == enemies_before[pos], "AC2 beat %d non-target enemy unchanged" % (beat + 1))
+
+		if expected_target > 0:
+			var absorbed: int = mini(block_before, 3)
+			var hp_loss: int = mini(hp_before, 3 - absorbed)
+			_check(int(res.get("block_absorbed", -1)) == absorbed,
+				"AC2 beat %d actual Block absorbed" % (beat + 1))
+			_check(int(res.get("hp_lost", -1)) == hp_loss,
+				"AC2 beat %d actual HP lost" % (beat + 1))
+			_check(enemies.get_enemy(expected_target).get("hp", -1) == hp_before - hp_loss,
+				"AC2 beat %d enemy HP updated" % (beat + 1))
+			_check(enemies.get_enemy(expected_target).get("block", -1) == block_before - absorbed,
+				"AC2 beat %d enemy Block updated" % (beat + 1))
+
+		## RNG consumption matches living count.
+		if living.size() >= 2:
+			_check(rng.state != rng_before, "AC2 beat %d consumed one draw" % (beat + 1))
+		else:
+			_check(rng.state == rng_before, "AC2 beat %d consumed no draw" % (beat + 1))
+
+		beat += 1
+
+	## Fourth tick is inert.
+	var rng_before4: int = rng.state
+	var state_before4: Dictionary = state.duplicate(true)
+	var res4: Dictionary = svc.resolve_wind_up_turret(state, enemies, rng)
+	_check(res4.get("ok") == false, "AC2 fourth tick has no effect")
+	_check(state == state_before4, "AC2 fourth tick leaves state unchanged")
+	_check(rng.state == rng_before4, "AC2 fourth tick consumes no RNG")
+	_check(enemies.is_valid(), "AC2 roster still valid after fourth")
+
+	## Equal seed repeats the same result.
+	var enemies2 := _enemies([10, 20, 30])
+	_check(enemies2.gain_block(1, 1) and enemies2.gain_block(2, 2) and enemies2.gain_block(3, 3),
+		"AC2 replay Block fixtures")
+	var state2 := svc.create_wind_up_turret()
+	var rng2 := _rng(seed)
+	var oracle2 := _rng(seed)
+	var targets_a: Array[int] = []
+	var targets_b: Array[int] = []
+	var res_a: Array[Dictionary] = []
+	var res_b: Array[Dictionary] = []
+	var state_a = svc.create_wind_up_turret()
+	var rng_a = _rng(seed)
+	var enemies_a = _enemies([10, 20, 30])
+	_check(enemies_a.gain_block(1, 1) and enemies_a.gain_block(2, 2) and enemies_a.gain_block(3, 3), "AC2 setup replay A")
+	
+	for i in range(3):
+		var ra = svc.resolve_wind_up_turret(state_a, enemies_a, rng_a)
+		state_a = ra.get("state")
+		targets_a.append(int(ra.get("target", 0)))
+		res_a.append(ra)
+		
+	for i in range(3):
+		var rb = svc.resolve_wind_up_turret(state2, enemies2, rng2)
+		state2 = rb.get("state")
+		targets_b.append(int(rb.get("target", 0)))
+		res_b.append(rb)
+		
+	_check(targets_a == targets_b, "AC2 equal seed yields identical sequence of targets")
+	for i in range(3):
+		_check(res_a[i].get("remaining") == res_b[i].get("remaining"), "AC2 beat %d replay remaining" % (i+1))
+		_check(res_a[i].get("hp_change") == res_b[i].get("hp_change"), "AC2 beat %d replay hp change" % (i+1))
+		_check(res_a[i].get("block_absorbed") == res_b[i].get("block_absorbed"), "AC2 beat %d replay block absorbed" % (i+1))
+
+
+func _test_windup_turret_ac3() -> void:
+	var svc := CombatTinkerPoolGadgets.new()
+
+	## Single living foe: no RNG draw.
+	var single_enemies := _enemies([10, 10, 10])
+	_check(single_enemies.apply_damage(1, 10) and single_enemies.is_slain(1), "AC3 slay pos1")
+	_check(single_enemies.apply_damage(3, 10) and single_enemies.is_slain(3), "AC3 slay pos3")
+	var single_state := svc.create_wind_up_turret()
+	var single_rng := _rng(555)
+	var single_rng_before: int = single_rng.state
+	var single_state_before := single_state.duplicate(true)
+	var single_res := svc.resolve_wind_up_turret(single_state, single_enemies, single_rng)
+	_check(single_res.get("ok") == true, "AC3 single living resolves")
+	_check(int(single_res.get("target", 0)) == 2, "AC3 single living targets pos2")
+	_check(single_rng.state == single_rng_before, "AC3 single living consumes no RNG")
+	_check(single_state == single_state_before, "AC3 single living leaves input state unchanged")
+	_check(single_res.get("state").get("remaining") == 2, "AC3 single living next-state decrements")
+
+	## Dead middle: never target dead slot; one draw for two living.
+	var middle_enemies := _enemies([10, 10, 10])
+	_check(middle_enemies.apply_damage(2, 10) and middle_enemies.is_slain(2), "AC3 slay middle")
+	var middle_state := svc.create_wind_up_turret()
+	var middle_rng := _rng(777)
+	var middle_rng_before: int = middle_rng.state
+	var middle_state_before := middle_state.duplicate(true)
+	var middle_res := svc.resolve_wind_up_turret(middle_state, middle_enemies, middle_rng)
+	_check(middle_res.get("ok") == true, "AC3 dead-middle resolves")
+	_check(int(middle_res.get("target", 0)) in [1, 3], "AC3 dead-middle avoids pos2")
+	_check(middle_rng.state != middle_rng_before, "AC3 dead-middle consumes one draw")
+	_check(middle_state == middle_state_before, "AC3 dead-middle leaves input state unchanged")
+	_check(middle_res.get("state").get("remaining") == 2, "AC3 dead-middle next-state decrements")
+
+	## No living foes: no target, no damage, no RNG, decrements.
+	var none_enemies := _enemies([10, 10, 10])
+	for pos in [1, 2, 3]:
+		_check(none_enemies.apply_damage(pos, 10) and none_enemies.is_slain(pos), "AC3 slay pos%d" % pos)
+	var none_state := svc.create_wind_up_turret()
+	var none_rng := _rng(999)
+	var none_rng_before: int = none_rng.state
+	var none_before_snap := none_enemies.get_enemies()
+	var none_state_before := none_state.duplicate(true)
+	var none_res := svc.resolve_wind_up_turret(none_state, none_enemies, none_rng)
+	_check(none_res.get("ok") == true, "AC3 no-living resolves")
+	_check(int(none_res.get("target", 0)) == 0, "AC3 no-living no target")
+	_check(int(none_res.get("damage", 0)) == 0, "AC3 no-living no damage")
+	_check(none_rng.state == none_rng_before, "AC3 no-living no RNG")
+	_check(none_enemies.get_enemies() == none_before_snap, "AC3 no-living enemies unchanged")
+	_check(none_state == none_state_before, "AC3 no-living leaves input state unchanged")
+	_check(none_res.get("state").get("remaining") == 2, "AC3 no-living next-state decrements")
+
+	## Invalid state rejects atomically.
+	var valid_enemies := _enemies([10, 10, 10])
+	var valid_rng := _rng(1)
+	var bad_state := {"remaining": 99}
+	var bad_state_snap := bad_state.duplicate(true)
+	var snap_enemies := valid_enemies.get_enemies()
+	var rng_before := valid_rng.state
+	var bad_res := svc.resolve_wind_up_turret(bad_state, valid_enemies, valid_rng)
+	_check(bad_res.get("ok") == false, "AC3 malformed state rejects")
+	_check(valid_enemies.get_enemies() == snap_enemies, "AC3 malformed state enemies unchanged")
+	_check(valid_rng.state == rng_before, "AC3 malformed state no RNG")
+	_check(bad_state == bad_state_snap, "AC3 malformed state input unchanged")
+
+	## Null roster rejects.
+	var st := svc.create_wind_up_turret()
+	var st_snap := st.duplicate(true)
+	var rng2 := _rng(2)
+	var before_rng2 := rng2.state
+	var null_res := svc.resolve_wind_up_turret(st, null, rng2)
+	_check(null_res.get("ok") == false, "AC3 null roster rejects")
+	_check(rng2.state == before_rng2, "AC3 null roster no RNG")
+	_check(st == st_snap, "AC3 null roster leaves state unchanged")
+
+	## Null RNG rejects.
+	var st2 := svc.create_wind_up_turret()
+	var st2_snap := st2.duplicate(true)
+	var en2 := _enemies([10, 10, 10])
+	var snap_en2 := en2.get_enemies()
+	var null_rng_res := svc.resolve_wind_up_turret(st2, en2, null)
+	_check(null_rng_res.get("ok") == false, "AC3 null RNG rejects")
+	_check(en2.get_enemies() == snap_en2, "AC3 null RNG enemies unchanged")
+	_check(st2 == st2_snap, "AC3 null RNG input state unchanged")
+
+	## Invalid roster (empty definitions) rejects.
+	var invalid_enemies := CombatEnemies.new([])
+	_check(not invalid_enemies.is_valid(), "AC3 invalid roster fixture")
+	var st3 := svc.create_wind_up_turret()
+	var st3_snap := st3.duplicate(true)
+	var rng3 := _rng(3)
+	var before3 := rng3.state
+	var invalid_res := svc.resolve_wind_up_turret(st3, invalid_enemies, rng3)
+	_check(invalid_res.get("ok") == false, "AC3 invalid roster rejects")
+	_check(rng3.state == before3, "AC3 invalid roster no RNG")
+	_check(st3 == st3_snap, "AC3 invalid roster input state unchanged")
 
 ## ---------------------------------------------------------------------------
 ## M05 HEAD Exposed projection fixtures (Button Glass Visor: HEAD,
