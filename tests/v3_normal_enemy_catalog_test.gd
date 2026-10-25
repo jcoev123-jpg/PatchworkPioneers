@@ -12,6 +12,9 @@ func _initialize() -> void:
 	_test_trio_catalog_records()
 	_test_hedgehog_thorns_through_typed_roster()
 	_test_trio_seeded_announcements()
+	_test_harder_normal_catalog_records()
+	_test_harder_normal_seeded_announcements()
+	_test_harder_normal_phase_actions()
 	_test_negative_fixtures()
 	if failures.is_empty():
 		print("v3_normal_enemy_catalog_test: PASS (", checks, " checks)")
@@ -759,3 +762,373 @@ func _test_negative_fixtures() -> void:
 		"downed-target shove falls back and flips to a legal living neighbour")
 	_check(CombatEnemyIntents.shove_is_legal(downed_party, int(resolved.get("target_position", 0)),
 		int(resolved.get("direction", 0))), "resolved shove destination is living and in range")
+
+## The three harder look-driven normals of this batch. Identity, HP and the
+## exact weighted intent are author-set for this bounded V3-2 slice; the design
+## fixes only the 5-9 floor-1-4 normal attack band, which every attack obeys.
+func _harder_expected() -> Dictionary:
+	return {
+		"shearwing_mantis": {"id": "shearwing_mantis", "name": "Shearwing Mantis",
+			"max_hp": 26, "art_path": "res://assets/paper/enemies/shearwing_mantis.png",
+			"intent": {"target": "front", "actions": [
+				{"type": "snip_block", "amount": 0, "weight": 2},
+				{"type": "attack", "amount": 8, "weight": 3}]}},
+		"spoolback_hound": {"id": "spoolback_hound", "name": "Spoolback Hound",
+			"max_hp": 28, "art_path": "res://assets/paper/enemies/spoolback_hound.png",
+			"intent": {"target": "front", "actions": [
+				{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+				{"type": "attack", "amount": 7, "weight": 3}]}},
+		"inkbrush_imp": {"id": "inkbrush_imp", "name": "Inkbrush Imp",
+			"max_hp": 23, "art_path": "res://assets/paper/enemies/inkbrush_imp.png",
+			"intent": {"target": "lowest_living_hp", "actions": [
+				{"type": "debuff", "amount": 2, "status": "exposed", "weight": 2},
+				{"type": "attack", "amount": 6, "weight": 3}]}}
+	}
+
+## True when the authored alternative carries exactly the keys its supported
+## kind needs, so no invented field or unsupported type can slip in.
+func _alternative_shape_is_exact(raw: Variant) -> bool:
+	if not raw is Dictionary:
+		return false
+	var expected: Array = []
+	match String(raw.get("type", "")):
+		"attack", "snip_block":
+			expected = ["amount", "type", "weight"]
+		"shove":
+			expected = ["amount", "direction", "type", "weight"]
+		"debuff":
+			expected = ["amount", "status", "type", "weight"]
+		_:
+			return false
+	var actual: Array = raw.keys()
+	actual.sort()
+	expected.sort()
+	return actual == expected
+
+func _test_harder_normal_catalog_records() -> void:
+	var parsed := _load_parsed()
+	var ids: Array[String] = []
+	for record in parsed:
+		if record is Dictionary:
+			ids.append(String(record.get("id", "")))
+	# The fourteen earlier records stay exactly as authored; this batch only
+	# appends, so no global total and no ordered list is asserted.
+	var earlier := _old_expected()
+	earlier.merge(_new_expected())
+	earlier.merge(_trio_expected())
+	for kept_id in earlier:
+		_check(ids.has(String(kept_id)),
+			"earlier normal still present after this append: " + String(kept_id))
+		_check(_norm(_find(parsed, String(kept_id))) == _norm(earlier[kept_id]),
+			"earlier normal record is unchanged: " + String(kept_id))
+	var harder := _harder_expected()
+	for new_id in harder:
+		var occurrences := 0
+		for present in ids:
+			if present == String(new_id):
+				occurrences += 1
+		_check(occurrences == 1, "harder normal is authored exactly once: " + String(new_id))
+		var record := _find(parsed, String(new_id))
+		_check(not record.is_empty(), "harder normal record present: " + String(new_id))
+		if record.is_empty():
+			continue
+		_check(_norm(record) == _norm(harder[new_id]),
+			"harder normal has its exact authored fields: " + String(new_id))
+		var spec: Variant = record.get("intent")
+		_check(spec is Dictionary
+			and spec.get("target") == harder[new_id]["intent"]["target"],
+			"harder normal keeps its authored target policy: " + String(new_id))
+		_check(not CombatEnemyIntents._weighted_slot(1, spec).is_empty(),
+			"harder normal intent validates as a weighted slot: " + String(new_id))
+		var actions: Variant = spec.get("actions") if spec is Dictionary else null
+		_check(actions is Array and not actions.is_empty(),
+			"harder normal authors weighted action alternatives: " + String(new_id))
+		if not actions is Array:
+			continue
+		for raw in actions:
+			_check(CombatEnemyIntents.weighted_action(raw) != {},
+				"harder alternative validates through the weighted scheduler: %s %s"
+					% [new_id, str(raw)])
+			_check(_alternative_shape_is_exact(raw),
+				"harder alternative uses supported mechanics and exact fields: %s %s"
+					% [new_id, str(raw)])
+			if raw is Dictionary and raw.get("type") == "attack":
+				var amount := int(raw.get("amount", 0))
+				_check(amount >= 5 and amount <= 9,
+					"harder normal attack stays inside the authored 5-9 band: " + String(new_id))
+	# Look-driven identity: each enemy's signature move is unmistakable.
+	var mantis := _find(parsed, "shearwing_mantis")
+	_check(_has_alternative(mantis, "snip_block", 0) and _has_alternative(mantis, "attack", 8),
+		"Shearwing Mantis shears the front Block away or hits for 8")
+	var hound := _find(parsed, "spoolback_hound")
+	_check(_has_alternative(hound, "shove", 0) and _has_alternative(hound, "attack", 7),
+		"Spoolback Hound leashes a +1 shove or bites for 7")
+	var imp := _find(parsed, "inkbrush_imp")
+	_check(_has_alternative(imp, "debuff", 2, "exposed") and _has_alternative(imp, "attack", 6),
+		"Inkbrush Imp marks Exposed 2 or hits for 6")
+	_check(imp.get("intent", {}).get("target") == "lowest_living_hp",
+		"Inkbrush Imp marks the lowest-living hero")
+
+## Three independent source records bound with two separately seeded real
+## schedulers; identical seeds must replay first and successive announcements
+## while reads never consume RNG and the parsed sources stay detached.
+func _test_harder_normal_seeded_announcements() -> void:
+	var parsed := _load_parsed()
+	var selected: Array = []
+	for id in ["shearwing_mantis", "spoolback_hound", "inkbrush_imp"]:
+		var record := _find(parsed, id)
+		_check(not record.is_empty(), "authentic harder normal source present: " + id)
+		selected.append(record)
+	_check(selected.size() == 3, "precondition: all three authentic records loaded")
+	if selected.size() != 3 or selected.has({}):
+		return
+	var party := _party()
+	_check(party.is_valid() and party.get_heroes().size() == CombatParty.PARTY_SIZE,
+		"precondition: a valid three-hero CombatParty")
+	for position in range(1, CombatParty.PARTY_SIZE + 1):
+		_check(party.get_hero(position).get("hp", 0) > 0,
+			"precondition: hero slot %d is living" % position)
+	_check(party.get_hero(1).get("hp") == 40 and party.get_hero(2).get("hp") == 30
+		and party.get_hero(3).get("hp") == 26,
+		"precondition: the back hero is the unique lowest-living target")
+	var snapshot: Array = selected.duplicate(true)
+	var first := _bind(582201, selected)
+	var second := _bind(582201, selected)
+	_check(first.get("ok") == true and second.get("ok") == true,
+		"the three harder normals bind on identical seeds")
+	_check(first.scheduler.is_bound() and second.scheduler.is_bound(),
+		"both seeded bindings report the weighted mode")
+	var first_intents: Array = first.scheduler.get_intents()
+	var second_intents: Array = second.scheduler.get_intents()
+	_check(first_intents.size() == 3, "one announcement per harder normal")
+	_check(first_intents == second_intents,
+		"same-seed first-turn announcements replay identically")
+	_check(first.rng.state == second.rng.state,
+		"same-seed bindings leave matching RNG state")
+	var state_before: int = first.rng.state
+	var reread: Array = first.scheduler.get_intents()
+	_check(reread == first_intents and first.rng.state == state_before,
+		"repeated reads neither change announcements nor consume RNG")
+	_check(first.scheduler.advance_turn(), "the first seeded schedule advances a turn")
+	_check(second.scheduler.advance_turn(), "the second seeded schedule advances a turn")
+	var first_next: Array = first.scheduler.get_intents()
+	_check(first_next.size() == 3 and first_next == second.scheduler.get_intents(),
+		"successive announced turns replay identically on equal seeds")
+	_check(first.rng.state == second.rng.state,
+		"successive turns keep matching RNG state")
+	for index in range(first_intents.size()):
+		var announced: Dictionary = first_intents[index]
+		var source: Dictionary = selected[index]
+		_check(announced.get("enemy_position") == index + 1,
+			"announcement keeps its source slot: " + String(source.get("id", "")))
+		_check(_is_authored_alternative(source, announced),
+			"announcement is an authored alternative: " + String(source.get("id", "")))
+		if announced.get("type") in ["attack", "debuff", "snip_block", "shove"]:
+			var expected_target := 1 \
+				if String(source.get("intent", {}).get("target", "")) == "front" else 3
+			_check(announced.get("target_position") == expected_target,
+				"announcement applies the authored target policy: " + String(source.get("id", "")))
+		for field in ["type", "amount", "status", "direction"]:
+			if not announced.has(field):
+				continue
+			var chosen: bool = false
+			for raw in source.get("intent", {}).get("actions", []):
+				if raw is Dictionary and raw.get("type") == announced.get("type") \
+						and int(raw.get("amount", -1)) == int(announced.get("amount", -2)) \
+						and raw.get(field) == announced.get(field):
+					chosen = true
+			_check(chosen, "announcement field %s matches an authored alternative: %s"
+				% [field, String(source.get("id", ""))])
+	_check(selected == snapshot,
+		"weighted binding never mutates the parsed source records")
+	_check(_norm(_find(_load_parsed(), "shearwing_mantis"))
+		== _norm(_harder_expected()["shearwing_mantis"]),
+		"the parsed catalog stays detached after binding")
+	# Independent option validation for every authored alternative.
+	for id in ["shearwing_mantis", "spoolback_hound", "inkbrush_imp"]:
+		var record := _find(parsed, id)
+		var spec: Variant = record.get("intent")
+		var slot := CombatEnemyIntents._weighted_slot(1, spec)
+		_check(not slot.is_empty(), "authored harder slot validates: " + id)
+		var actions: Array = slot.get("actions", [])
+		_check(actions.size() == 2, "authored harder slot keeps both alternatives: " + id)
+		for entry in actions:
+			_check(int(entry.get("weight", 0)) > 0,
+				"authored harder alternative has a positive weight: " + id)
+
+## The authored alternative of one kind/amount in a parsed record, so forced
+## encounters carry the genuine catalog entry rather than a hand copy.
+func _authored_alternative(record: Dictionary, kind: String, amount: int) -> Dictionary:
+	var spec: Variant = record.get("intent")
+	if not spec is Dictionary:
+		return {}
+	var actions: Variant = spec.get("actions")
+	if not actions is Array:
+		return {}
+	for raw in actions:
+		if raw is Dictionary and raw.get("type") == kind and int(raw.get("amount", -1)) == amount:
+			return raw.duplicate(true)
+	return {}
+
+## Bind a valid one-source encounter carrying exactly one authored alternative,
+## so an executed beat never depends on a lucky weighted roll.
+func _force_normal_alternative(source: Dictionary, raw: Variant,
+		party: CombatParty) -> Dictionary:
+	var normalized := CombatEnemyIntents.weighted_action(raw)
+	_check(not normalized.is_empty(), "forced alternative is a valid authored action: " + str(raw))
+	if normalized.is_empty() or source.is_empty():
+		return {}
+	var forced: Dictionary = source.duplicate(true)
+	var action: Dictionary = normalized["action"].duplicate(true)
+	action["weight"] = 1
+	forced["intent"] = {"target": source["intent"]["target"], "actions": [action]}
+	var enemies := CombatEnemies.new([forced])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 2631
+	var scheduler := CombatEnemyIntents.new([_enemy(1, [{"type": "block", "amount": 1}])])
+	var bound := enemies.is_valid() and scheduler.bind_battle(enemies, party, rng)
+	_check(bound, "forced one-source harder encounter binds: " + str(raw))
+	if not bound:
+		return {}
+	return {"enemies": enemies, "intents": scheduler.get_intents()}
+
+func _test_harder_normal_phase_actions() -> void:
+	var parsed := _load_parsed()
+	var mantis := _find(parsed, "shearwing_mantis")
+	var hound := _find(parsed, "spoolback_hound")
+	var imp := _find(parsed, "inkbrush_imp")
+	for record in [mantis, hound, imp]:
+		_check(not record.is_empty(), "authentic harder normal record present for the phase checks")
+	# Shearwing Mantis: the tailor-shear forelegs strip the front Block entirely.
+	var snip_party := _party()
+	_check(snip_party.gain_block(1, 7), "precondition: the front hero really holds seven Block")
+	_check(snip_party.get_hero(1).get("hp") == 40,
+		"precondition: the front hero is at full HP")
+	var snip := _force_normal_alternative(mantis, _authored_alternative(mantis, "snip_block", 0),
+		snip_party)
+	if not snip.is_empty():
+		_check(snip.intents.size() == 1 and snip.intents[0].get("type") == "snip_block"
+			and snip.intents[0].get("target_position") == 1,
+			"Mantis snip announces against the front hero")
+		var receipt := CombatEnemyPhase.new().execute_phase(snip_party, snip.enemies,
+			snip.intents, null, true)
+		_check(receipt.get("ok") == true and receipt.get("events", []).size() == 1,
+			"the announced Mantis snip resolves through a real CombatEnemyPhase")
+		if receipt.get("ok", false) and receipt.get("events", []).size() == 1:
+			var event: Dictionary = receipt["events"][0]
+			_check(event.get("type") == "snip_block" and event.get("applied") == true
+				and event.get("target_position") == 1 and event.get("enemy_position") == 1,
+				"the phase reports the applied front snip")
+		_check(snip_party.get_hero(1).get("block") == 0 and snip_party.get_hero(1).get("hp") == 40,
+			"Mantis snip leaves the front hero at zero Block and full HP")
+	_check(snip_party.get_hero(2).get("block") == 0 and snip_party.get_hero(2).get("hp") == 30,
+		"the Mantis snip never touches the middle hero")
+	# Spoolback Hound: the thread leash pulls the front hero toward the middle.
+	var shove_party := _party()
+	_check(shove_party.get_hero(1).get("id") == "warden"
+		and shove_party.get_hero(2).get("id") == "seamstress",
+		"precondition: slots 1 and 2 hold Warden then Seamstress")
+	var shove := _force_normal_alternative(hound, _authored_alternative(hound, "shove", 0),
+		shove_party)
+	if not shove.is_empty():
+		_check(shove.intents.size() == 1 and shove.intents[0].get("type") == "shove"
+			and shove.intents[0].get("target_position") == 1
+			and shove.intents[0].get("direction") == 1,
+			"Hound leash announces a legal +1 shove from the front hero")
+		_check(CombatEnemyIntents.shove_is_legal(shove_party, 1, 1),
+			"precondition: the announced +1 shove is legal")
+		var receipt := CombatEnemyPhase.new().execute_phase(shove_party, shove.enemies,
+			shove.intents, null, true)
+		_check(receipt.get("ok") == true and receipt.get("events", []).size() == 1,
+			"the announced Hound shove resolves through a real CombatEnemyPhase")
+		if receipt.get("ok", false) and receipt.get("events", []).size() == 1:
+			var event: Dictionary = receipt["events"][0]
+			_check(event.get("type") == "shove" and event.get("applied") == true
+				and event.get("target_position") == 1 and event.get("direction") == 1,
+				"the phase reports the applied +1 shove")
+		_check(shove_party.get_hero(1).get("id") == "seamstress"
+			and shove_party.get_hero(1).get("position") == 1,
+			"the Hound pulls Seamstress forward into slot 1")
+		_check(shove_party.get_hero(2).get("id") == "warden"
+			and shove_party.get_hero(2).get("position") == 2,
+			"Warden moves back into slot 2")
+		_check(shove_party.get_hero(1).get("hp") == 30 and shove_party.get_hero(1).get("block") == 0
+			and shove_party.get_hero(2).get("hp") == 40 and shove_party.get_hero(2).get("block") == 0,
+			"the exchange costs neither swapped hero HP or Block")
+		_check(shove_party.get_hero(3).get("id") == "tinker"
+			and shove_party.get_hero(3).get("hp") == 26 and shove_party.get_hero(3).get("block") == 0,
+			"the untouched back slot keeps its hero and state")
+	# Inkbrush Imp: the dye brush marks vulnerable seams with the existing status.
+	var debuff_party := _party()
+	_check(debuff_party.apply_damage(2, 10), "precondition: the middle hero really takes damage")
+	_check(debuff_party.get_hero(2).get("hp") == 20 and debuff_party.get_hero(3).get("hp") == 26
+		and debuff_party.get_hero(1).get("hp") == 40,
+		"precondition: the middle hero is the unique lowest-living target")
+	_check(CombatEnemyIntents.priority_target(debuff_party, "lowest_living_hp") == 2,
+		"precondition: the authored policy really selects the middle hero")
+	var debuff := _force_normal_alternative(imp, _authored_alternative(imp, "debuff", 2),
+		debuff_party)
+	if not debuff.is_empty():
+		_check(debuff.intents.size() == 1 and debuff.intents[0].get("type") == "debuff"
+			and debuff.intents[0].get("status") == "exposed"
+			and debuff.intents[0].get("target_position") == 2,
+			"Imp marks the uniquely damaged hero with Exposed")
+		var receipt := CombatEnemyPhase.new().execute_phase(debuff_party, debuff.enemies,
+			debuff.intents, null, true)
+		_check(receipt.get("ok") == true and receipt.get("events", []).size() == 1,
+			"the announced Imp debuff resolves through a real CombatEnemyPhase")
+		if receipt.get("ok", false) and receipt.get("events", []).size() == 1:
+			var event: Dictionary = receipt["events"][0]
+			_check(event.get("type") == "debuff" and event.get("applied") == true
+				and event.get("status") == "exposed" and event.get("target_position") == 2,
+				"the phase reports the applied Exposed mark")
+		_check(debuff_party.get_hero(2).get("statuses", {}).get("exposed", 0) == 2,
+			"the Imp's Exposed 2 lands on the marked hero through the existing status handler")
+		_check(debuff_party.get_hero(2).get("hp") == 20,
+			"the Exposed mark costs the target no HP")
+		for position in [1, 3]:
+			_check(debuff_party.get_hero(position).get("statuses", {}).get("exposed", 0) == 0,
+				"unmarked hero %d gains no Exposed" % position)
+	# Every authored attack resolves through the real phase with Block first.
+	var attack_cases := [
+		{"id": "shearwing_mantis", "amount": 8, "block": 5},
+		{"id": "spoolback_hound", "amount": 7, "block": 5},
+		{"id": "inkbrush_imp", "amount": 6, "block": 4}]
+	for case in attack_cases:
+		var record := _find(parsed, String(case.id))
+		var policy := String(record.get("intent", {}).get("target", ""))
+		var attack_party := _party()
+		var target := CombatEnemyIntents.priority_target(attack_party, policy)
+		_check(target >= 1, "precondition: the attack policy selects a living hero: " + String(case.id))
+		if target < 1:
+			continue
+		_check(attack_party.gain_block(target, int(case.block)),
+			"precondition: the policy target holds Block: " + String(case.id))
+		var hp_before := int(attack_party.get_hero(target).get("hp", 0))
+		var attack := _force_normal_alternative(record,
+			_authored_alternative(record, "attack", int(case.amount)), attack_party)
+		if attack.is_empty():
+			continue
+		_check(attack.intents.size() == 1 and attack.intents[0].get("type") == "attack"
+			and int(attack.intents[0].get("amount", -1)) == int(case.amount)
+			and attack.intents[0].get("target_position") == target,
+			"the attack announces its authored %d damage on the policy target: %s"
+				% [int(case.amount), String(case.id)])
+		var receipt := CombatEnemyPhase.new().execute_phase(attack_party, attack.enemies,
+			attack.intents, null, true)
+		_check(receipt.get("ok") == true and receipt.get("events", []).size() == 1,
+			"the announced %d-damage attack resolves through a real CombatEnemyPhase: %s"
+				% [int(case.amount), String(case.id)])
+		if receipt.get("ok", false) and receipt.get("events", []).size() == 1:
+			var event: Dictionary = receipt["events"][0]
+			_check(event.get("type") == "attack" and event.get("applied") == true
+				and event.get("target_position") == target,
+				"the phase reports the applied attack on the policy target: " + String(case.id))
+		var absorbed := mini(int(case.block), int(case.amount))
+		_check(attack_party.get_hero(target).get("block") == int(case.block) - absorbed,
+			"Block is consumed before HP for the %d-damage hit: %s"
+				% [int(case.amount), String(case.id)])
+		_check(attack_party.get_hero(target).get("hp")
+			== hp_before - (int(case.amount) - absorbed),
+			"only the unabsorbed remainder reaches HP for the %d-damage hit: %s"
+				% [int(case.amount), String(case.id)])
