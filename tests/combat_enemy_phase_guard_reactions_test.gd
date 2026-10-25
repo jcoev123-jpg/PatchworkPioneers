@@ -11,6 +11,7 @@ func _initialize() -> void:
 	_test_counter_stitch_variants()
 	_test_joint_modes_and_turn_boundary()
 	_test_guard_redirect_drain()
+	_test_guard_redirect_enrage_bonus()
 	_test_skips_and_rollback()
 	if failures.is_empty():
 		print("combat_enemy_phase_guard_reactions_test: PASS (", checks, " checks)")
@@ -421,4 +422,88 @@ func _test_guard_redirect_drain() -> void:
 		"AC3: the surviving retaliation beat applies its usual damage and Thorns")
 	_check(enemies.get_enemy(1).hp == 12,
 		"AC3: Drain heals the seven hero HP lost, after Thorns damage, once")
+
+
+func _enrage_enemies(definitions: Array) -> CombatEnemies:
+	var enemies := CombatEnemies.new(definitions)
+	_check(enemies.is_valid() and enemies.get_enemies().size() == definitions.size(),
+		"precondition: real Enrage roster keeps its original source slots")
+	return enemies
+
+
+## AC2: a living Enrage source's stored +2-per-stack bonus lands exactly once,
+## inside the base the existing status formula scales, while a genuine paid Guard
+## redirect keeps its unchanged event contract, actual recipient and Thorns.
+func _test_guard_redirect_enrage_bonus() -> void:
+	# 5 announced + three stored stacks * 2 = 11, absorbed whole by Draw Fire's
+	# twelve Block: exactly one bonus, and no Thorns was paid for.
+	var party := _party()
+	var enemies := _enrage_enemies([{"id": "patch-imp", "max_hp": 18,
+		"enrage": true, "enrage_stacks": 3}])
+	_check(enemies.get_enemy(1).get("enrage") == true
+		and enemies.get_enemy(1).get("enrage_stacks") == 3,
+		"AC2 precondition: the living source really stores three Enrage stacks")
+	var deck := _deck(["warden_draw_fire", "warden_counter_stitch",
+		"warden_iron_hem", "warden_hold_the_line", "warden_quick_darn"])
+	var reactions := CombatWardenGuardReactions.new()
+	_check(reactions.play_from_hand(deck, party, "warden_draw_fire")
+		and reactions.is_guarding() and party.get_hero(1).block == 12,
+		"AC2 precondition: authentic paid Draw Fire guards with twelve Block")
+	var rng_before: int = deck._rng.state
+	var source_record: Dictionary = enemies._enemies[0]
+	var result: Dictionary = phase.execute_phase(party, enemies, [_attack(1, 5, 2)], reactions)
+	_check(result == {"ok": true, "events": [_hit(1, 2, true, 1, true, 0)]},
+		"AC2: the Enrage beat redirected by Guard keeps the exact reaction event")
+	_check(party.get_hero(1).hp == 40 and party.get_hero(1).block == 1
+		and party.get_hero(2).hp == 30,
+		"AC2: the +6 bonus lands once, so twelve Block leaves exactly one Block")
+	_check(enemies.get_enemy(1) == source_record and is_same(enemies._enemies[0], source_record),
+		"AC2: the phase neither awards a stack nor rewrites the source record")
+	_check(deck._rng.state == rng_before and reactions.is_guarding(),
+		"AC2: the redirect consumes no RNG and keeps the Guarding mode")
+
+	# A paid Counter-stitch keeps its unchanged Thorns retaliation on top.
+	party = _party()
+	enemies = _enrage_enemies([{"id": "patch-imp", "max_hp": 18,
+		"enrage": true, "enrage_stacks": 2}])
+	deck = _deck(["warden_draw_fire", "warden_counter_stitch",
+		"warden_iron_hem", "warden_hold_the_line", "warden_quick_darn"])
+	reactions = CombatWardenGuardReactions.new()
+	_check(reactions.play_from_hand(deck, party, "warden_draw_fire")
+		and reactions.play_from_hand(deck, party, "warden_counter_stitch")
+		and party.get_hero(1).block == 17 and reactions.get_thorns() == 3,
+		"AC2 precondition: authentic paid modes with 17 Block and Thorns 3")
+	rng_before = deck._rng.state
+	result = phase.execute_phase(party, enemies, [_attack(1, 5, 2)], reactions)
+	_check(result == {"ok": true, "events": [_hit(1, 2, true, 1, true, 3)]},
+		"AC2: the redirected Enrage beat keeps its unchanged retaliation receipt")
+	_check(party.get_hero(1).hp == 40 and party.get_hero(1).block == 8
+		and party.get_hero(2).hp == 30,
+		"AC2: nine boosted damage is absorbed once by the seventeen Block")
+	_check(enemies.get_enemy(1).hp == 15 and reactions.get_thorns() == 3
+		and deck._rng.state == rng_before,
+		"AC2: Thorns still retaliates exactly once and keeps its mode and RNG")
+
+	# The bonus is part of the base the existing Exposed adjustment scales.
+	party = _party()
+	enemies = _enrage_enemies([{"id": "patch-imp", "max_hp": 18,
+		"enrage": true, "enrage_stacks": 3}])
+	deck = _deck(["warden_draw_fire", "warden_counter_stitch",
+		"warden_iron_hem", "warden_hold_the_line", "warden_quick_darn"])
+	reactions = CombatWardenGuardReactions.new()
+	party._heroes[0]["statuses"] = {"exposed": 2}
+	_check(reactions.play_from_hand(deck, party, "warden_draw_fire")
+		and party.get_hero(1).block == 12
+		and party.get_hero(1).statuses == {"exposed": 2},
+		"AC2 precondition: authentic twelve Block on a genuinely Exposed Warden")
+	rng_before = deck._rng.state
+	result = phase.execute_phase(party, enemies, [_attack(1, 5, 3)], reactions)
+	_check(result == {"ok": true, "events": [_hit(1, 3, true, 1, true, 0)]},
+		"AC2: an Exposed Guard redirect keeps the exact announced/actual receipt")
+	# (5 + 3 * 2) * 3/2 = 16.5 -> 16 after twelve Block: four real HP lost.
+	_check(party.get_hero(1).hp == 36 and party.get_hero(1).block == 0
+		and party.get_hero(3).hp == 26,
+		"AC2: the status adjustment scales the already-boosted base exactly once")
+	_check(deck._rng.state == rng_before and enemies.get_enemy(1).hp == 18,
+		"AC2: the Exposed redirect consumes no RNG and takes no Thorns")
 
