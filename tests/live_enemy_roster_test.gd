@@ -1437,8 +1437,8 @@ func _tag_print_width(label: Label, text: String) -> float:
 
 ## Small pinned name tags: the authoritative short name sewn in the shipped PatchHeading
 ## display face, input inert, below the art band and clear of the meter row and the
-## intent badges. The lettering is measured with the effective font, at the same 16 px
-## target and inside the 26 px felt band, so a wider display face cannot clip silently.
+## intent badges. The lettering is measured with the effective font, at the readable 18 px
+## VIS body size and inside the 26 px felt band, so a wider display face cannot clip silently.
 func _name_tags(app, presenter) -> void:
 	var theme: Theme = app.theme
 	_check(theme != null and theme.is_type_variation("PatchHeading", "Label")
@@ -1464,8 +1464,8 @@ func _name_tags(app, presenter) -> void:
 			"enemy tag keeps its stable name and wears the sewn display lettering: " + name)
 		var tag_font: Font = label.get_theme_font("font")
 		var tag_size: int = label.get_theme_font_size("font_size")
-		_check(tag_font != null and tag_font.resource_path == HEADING_FONT and tag_size == 16,
-			"enemy tag resolves PatchHeading Londrina Solid Regular at the 16 px target: " + name)
+		_check(tag_font != null and tag_font.resource_path == HEADING_FONT and tag_size == 18,
+			"enemy tag resolves PatchHeading Londrina Solid Regular at the readable 18 px size: " + name)
 		_check(label.max_lines_visible == 1 and not label.text.contains("\n")
 			and label.vertical_alignment == VERTICAL_ALIGNMENT_BOTTOM
 			and label.get_theme_constant("outline_size") == 6,
@@ -1508,8 +1508,8 @@ func _name_tags(app, presenter) -> void:
 			"hero tag keeps its stable name and wears the sewn display lettering: " + hero_name)
 		var tag_font: Font = tag.get_theme_font("font")
 		var tag_size: int = tag.get_theme_font_size("font_size")
-		_check(tag_font != null and tag_font.resource_path == HEADING_FONT and tag_size == 16,
-			"hero tag resolves PatchHeading Londrina Solid Regular at the 16 px target: " + hero_name)
+		_check(tag_font != null and tag_font.resource_path == HEADING_FONT and tag_size == 18,
+			"hero tag resolves PatchHeading Londrina Solid Regular at the readable 18 px size: " + hero_name)
 		_check(tag.max_lines_visible == 1 and not tag.text.contains("\n")
 			and tag.get_theme_constant("outline_size") == 6,
 			"hero tag stays one line of high-contrast felt lettering: " + hero_name)
@@ -1539,6 +1539,10 @@ func _name_tags(app, presenter) -> void:
 	_check(hero_builder.count("theme_type_variation") == 1
 		and mount.count("theme_type_variation") == 1,
 		"neither tag path overrides the inherited variation with a second assignment")
+	_check(ROSTER_ART.NAME_TAG_FONT_SIZE == 18, "the pinned name size is the 18 px VIS body floor")
+	_check(hero_builder.contains('add_theme_font_size_override("font_size", NAME_TAG_FONT_SIZE)')
+		and mount.contains('add_theme_font_size_override("font_size", NAME_TAG_FONT_SIZE)'),
+		"source applies the one 18 px name size in both the hero tag builder and the enemy tag path")
 	var meters = app.get_node("LiveCombatMeters")
 	if is_instance_valid(meters.row) and not presenter._labels.is_empty():
 		_check(not presenter._labels[0].get_global_rect().intersects(meters.row.get_global_rect()),
