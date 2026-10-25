@@ -1,14 +1,25 @@
 extends "res://tests/live_sewing_circle_stop_test.gd"
 
 
-func _pick(selector: OptionButton, index: int) -> void:
-	selector.select(0)
-	selector.grab_focus()
-	await _key(KEY_ENTER)
-	for i in range(index):
-		await _key(KEY_DOWN)
-	await _key(KEY_ENTER)
-	_check(selector.selected == index, "physical popup input selects exact occurrence")
+func _unpicker_intent(action: String = "remove_card") -> Dictionary:
+	var source: Dictionary = app._unpicker_source
+	var intent := {"action": action, "visit_id": source.visit_id,
+		"node_id": source.node_id, "expected_snapshot": source.duplicate(true)}
+	if action == "remove_card":
+		intent.selected_card_id = app.unpicker_view._selected_id
+	return intent
+
+
+func _held_request() -> Callable:
+	var panel: LiveUnpickerPanel = app.unpicker_view
+	var listener: Callable = panel.decision_requested.get_connections()[0].callable
+	var intent := _unpicker_intent()
+	# Exercise controller preflight with a submitted, source-authenticated payload.
+	return func():
+		var submitted := panel._submitted
+		panel._submitted = true
+		listener.call(intent)
+		panel._submitted = submitted
 
 
 func _unpicker_state() -> Array:
@@ -23,15 +34,19 @@ func _reject_action(callback: Callable, reason: String) -> void:
 
 
 func _negative_actions() -> void:
-	var callback: Callable = app.unpicker_remove_button.pressed.get_connections()[0].callable
+	var callback := _held_request()
 	var original: Dictionary = app._sewing_context()
 	var was_disabled: bool = app.unpicker_remove_button.disabled
 	app.unpicker_remove_button.disabled = true
-	_reject_action(callback, "disabled control")
+	_reject_action(app.unpicker_remove_button.pressed.get_connections()[0].callable, "disabled control")
 	app.unpicker_remove_button.disabled = false
 	app.unpicker_view.hide()
 	_reject_action(callback, "hidden visit")
 	app.unpicker_view.show()
+	var wallet_text: String = app.unpicker_view.wallet_label.text
+	app.unpicker_view.wallet_label.text = "forged quote"
+	_reject_action(callback, "drifted displayed wallet")
+	app.unpicker_view.wallet_label.text = wallet_text
 	var rng_identity = app.run_rng
 	app.run_rng = RandomNumberGenerator.new()
 	app.run_rng.state = rng_identity.state
@@ -64,9 +79,9 @@ func _negative_actions() -> void:
 	app.run_deck.append("forged")
 	_reject_action(callback, "drifted deck")
 	app.run_deck.pop_back()
-	var fake := Button.new()
+	var fake := LiveUnpickerPanel.new()
 	app.unpicker_view.add_child(fake)
-	_reject_action(app._unpicker_action.bind(fake, app.unpicker_view, app.unpicker_visit), "forged control")
+	_reject_action(app._unpicker_decision.bind(_unpicker_intent(), fake, app.unpicker_visit), "forged control")
 	fake.free()
 	app.unpicker_visit._gold += 1
 	_reject_action(callback, "forged service wallet")
@@ -178,14 +193,29 @@ func _enter_unpicker(atlas: bool) -> void:
 		and app.run_map.get_route() == before.route + [fixture.id], "physical choice enters exactly one Unpicker")
 	_check(app.unpicker_visit.read_state() == app._unpicker_source and app._unpicker_source.deck == before.deck, "visit binds exact deck source")
 	_check(Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(app.unpicker_view.get_global_rect()), "compact visit fits viewport")
-	_check(app.unpicker_view.get_child_count() == 4 and app.unpicker_remove_button.text == "Remove - %d gold" % app._unpicker_source.price, "one selector, exact quote, Remove and Leave only")
+	var panel: LiveUnpickerPanel = app.unpicker_view
+	_check(panel.wallet_label.text.contains("Wallet: %d gold" % before.gold)
+		and panel.wallet_label.text.contains("Remove: %d gold" % (75 + 25 * before.removals)),
+		"sewn panel displays authentic wallet and escalating quote")
+	var ids: Array[String] = []
+	for id in before.deck:
+		if not ids.has(id):
+			ids.append(id)
+	_check(not ids.is_empty() and panel.card_buttons.size() == ids.size(), "canonical first-occurrence tiles include duplicates only once")
+	for i in range(ids.size()):
+		_check(panel._rows[panel.card_buttons[i]].id == ids[i]
+			and panel._rows[panel.card_buttons[i]].first == before.deck.find(ids[i]),
+			"tile maps to exact first owned occurrence")
+	_check(panel.choice_scroll.is_visible_in_tree() and panel.choice_scroll.get_v_scroll_bar().visible,
+		"owned cards have a visible scroll")
+	await _activate(panel.card_buttons[0], atlas)
 
 
 func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bool) -> Array:
 	await _unpicker_boot(stitched, funded)
 	await _enter_unpicker(keyboard)
 	await _negative_actions()
-	var callback: Callable = app.unpicker_remove_button.pressed.get_connections()[0].callable
+	var callback := _held_request()
 	var original: Dictionary = app._sewing_context()
 	# Numeric, descriptor and selector drift must fail without consuming the visit.
 	for field in ["session_gold", "run_removal_count", "run_next_stitch_id", "run_seed"]:
@@ -193,10 +223,17 @@ func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bo
 		app.set(field, value + 1)
 		_reject_action(callback, "changed " + field)
 		app.set(field, value)
-	var metadata: Variant = app.unpicker_cards.get_item_metadata(0)
-	app.unpicker_cards.set_item_metadata(0, 99999)
-	_reject_action(callback, "forged selector occurrence")
-	app.unpicker_cards.set_item_metadata(0, metadata)
+	var first_tile: Button = app.unpicker_view.card_buttons[0]
+	var caption := first_tile.text
+	first_tile.text = "forged occurrence"
+	_reject_action(callback, "forged tile occurrence")
+	first_tile.text = caption
+	if stitched:
+		var descriptor_id: String = app.run_stitch_descriptors.keys()[0]
+		var descriptor: Dictionary = app.run_stitch_descriptors[descriptor_id].duplicate(true)
+		app.run_stitch_descriptors[descriptor_id]["display_name"] = "drifted stitch"
+		_reject_action(callback, "changed stitch descriptor")
+		app.run_stitch_descriptors[descriptor_id] = descriptor
 	var service = app.unpicker_visit
 	app.unpicker_visit = RunUnpickerVisit.new(fixture.id, app.run_deck, app.session_gold, app.run_removal_count, app.run_stitch_descriptors, app.run_next_stitch_id)
 	_reject_action(callback, "foreign service identity")
@@ -207,31 +244,51 @@ func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bo
 		app.unpicker_remove_button.disabled = false
 		_reject_action(callback, "forced unaffordable action still refuses")
 		app.unpicker_remove_button.disabled = true
+	var panel: LiveUnpickerPanel = app.unpicker_view
 	var selected := 0
 	if stitched:
 		var stitch_id: String = app.run_stitch_descriptors.keys()[0]
-		for i in range(app.unpicker_cards.item_count):
-			if app.run_deck[app.unpicker_cards.get_item_metadata(i)] == stitch_id:
+		for i in range(panel.card_buttons.size()):
+			if panel._rows[panel.card_buttons[i]].id == stitch_id:
 				selected = i
-	if keyboard and funded:
-		await _pick(app.unpicker_cards, selected)
-	else:
-		app.unpicker_cards.select(selected)
+	var tile: Button = panel.card_buttons[selected]
+	panel.choice_scroll.ensure_control_visible(tile)
+	await _frames()
+	await _activate(tile, keyboard)
 	if funded:
-		app.unpicker_cards.grab_focus()
+		panel.card_buttons.back().grab_focus()
 		await _key(KEY_TAB)
-		_check(app.unpicker_remove_button.has_focus(), "Tab reaches Remove from owned-card selector")
+		_check(app.unpicker_remove_button.has_focus(), "Tab reaches Remove from owned-card tiles")
 		await _key(KEY_TAB)
 		_check(app.unpicker_leave_button.has_focus(), "Tab reaches Leave")
 		await _key(KEY_TAB)
-		_check(app.unpicker_cards.has_focus(), "Tab cycles to selector")
+		_check(panel.card_buttons[0].has_focus(), "Tab cycles to first tile")
 	var source: Dictionary = app.unpicker_visit.read_state()
 	var oracle := RunUnpickerVisit.new(fixture.id, app.run_deck, app.session_gold, app.run_removal_count, app.run_stitch_descriptors, app.run_next_stitch_id)
-	var card: String = app.run_deck[app.unpicker_cards.get_item_metadata(selected)]
+	var card: String = panel._rows[tile].id
 	var expected := oracle.remove_card(card, source.visit_id, fixture.id, source) if remove else oracle.leave(source.visit_id, fixture.id, source)
 	_check(expected.ok, "independent real service accepts intended decision")
 	var action: Button = app.unpicker_remove_button if remove else app.unpicker_leave_button
 	var saved: Callable = action.pressed.get_connections()[0].callable
+	var listener: Callable = panel.decision_requested.get_connections()[0].callable
+	var saved_intent := _unpicker_intent("remove_card" if remove else "leave")
+	_reject_action(listener.bind(saved_intent), "direct intent before physical submission")
+	panel._submitted = true
+	for bad in [{"action": "unknown"}, {"node_id": "foreign"}, {"visit_id": "forged"},
+		{"expected_snapshot": {}}, {"extra": true}, {"selected_card_id": "unowned"}]:
+		var forged := saved_intent.duplicate(true)
+		for key in bad:
+			forged[key] = bad[key]
+		_reject_action(listener.bind(forged), "forged payload " + str(bad.keys()))
+	if remove:
+		var alternate: String = panel._rows[panel.card_buttons[1]].id
+		if alternate == card:
+			alternate = panel._rows[panel.card_buttons[0]].id
+		_check(alternate != card and app.run_deck.has(alternate), "alternate forged selection is genuinely owned")
+		var swapped := saved_intent.duplicate(true)
+		swapped.selected_card_id = alternate
+		_reject_action(listener.bind(swapped), "owned but unselected card")
+	panel._submitted = false
 	if keyboard:
 		action.grab_focus()
 		await _key(KEY_SPACE)
@@ -243,6 +300,9 @@ func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bo
 	_check(app.run_deck == expected.deck and app.session_gold == expected.gold and app.run_removal_count == expected.prior_removals
 		and app.run_stitch_descriptors == expected.descriptors and app.run_next_stitch_id == expected.next_stitch_id, "all five receipt fields commit together")
 	if remove:
+		var remaining: Array = original.deck.duplicate()
+		remaining.remove_at(remaining.find(card))
+		_check(app.run_deck == remaining, "only the first selected occurrence is removed in exact deck order")
 		_check(app.run_deck.size() == original.deck.size() - 1 and app.session_gold == original.gold - 75 - 25 * original.removals
 			and app.run_removal_count == original.removals + 1, "one actual occurrence removed and exact escalating debit")
 		if stitched:
@@ -256,6 +316,7 @@ func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bo
 	var wardrobe: Dictionary = app.party_carryover._wardrobe.get_snapshot()
 	_check(wardrobe.cards == app.run_deck and wardrobe.gold == app.session_gold, "connected-map wardrobe stays synchronized")
 	_reject_action(saved, "replayed consumed callback")
+	_reject_action(listener.bind(saved_intent), "stale intent after panel closure")
 	var witness: Array = app._unpicker_visits[fixture.id]
 	app._unpicker_visits.erase(fixture.id)
 	_check(not app._can_choose_connected_route(), "closure witness required")
@@ -267,13 +328,15 @@ func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bo
 	await _frames()
 	_check(app.deck != null and app.run_map.get_route().back() == fixture.next, "legal onward Fight starts")
 	_reject_action(saved, "old callback after onward Fight")
+	_reject_action(listener.bind(saved_intent), "stale intent after onward Fight")
 	replay.append(app.deck.hand.duplicate())
 	replay.append(app.run_rng.state)
 	app._return_to_title()
 	await _frames()
 	_check(app.unpicker_view == null and app.unpicker_visit == null and app._unpicker_source.is_empty()
 		and app._unpicker_original.is_empty() and app._unpicker_visits.is_empty(), "Return clears visit and witnesses")
-	saved.call()
+	_check(not saved.is_valid(), "title frees panel-owned action callback")
+	listener.call(saved_intent)
 	_check(app.run_map == null and app.unpicker_visit == null, "title rejects retained callback")
 	app.free()
 	await _frames()
