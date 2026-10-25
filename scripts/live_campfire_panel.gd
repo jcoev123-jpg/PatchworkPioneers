@@ -192,8 +192,10 @@ func _hero_text(i: int) -> String:
 	var before: int = int(hero["hp"])
 	var after: int = int(forecast["hp"])
 	var maximum: int = int(hero["max_hp"])
+	var gain: int = after - before
+	var gain_text := "FULL" if gain == 0 else ("(+%d HP)" % gain)
 	var note := "  ·  TORN → REVIVED" if before == 0 else ""
-	return "%s    %d → %d / %d HP%s" % [display_name, before, after, maximum, note]
+	return "%s    %d → %d / %d HP  ·  %s%s" % [display_name, before, after, maximum, gain_text, note]
 
 
 func _display_current() -> bool:
