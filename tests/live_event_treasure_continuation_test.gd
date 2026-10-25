@@ -42,9 +42,9 @@ func _effects() -> Array:
 	state.remove_at(4) # Route is the sole intended model change.
 	return [state, app.run_removal_count,
 		app.party_carryover.read_state(),
-		app.shop_visit.get_state() if app.shop_visit != null else {},
-		app.shop_purchases.get_state() if app.shop_purchases != null else {},
-		app.shop_purchases.get_stock() if app.shop_purchases != null else {}]
+		app.peddler_visit.read_state() if app.peddler_visit != null else {},
+		app.peddler_visit.read_state().state if app.peddler_visit != null else {},
+		app.peddler_visit.read_state().stock if app.peddler_visit != null else {}]
 
 
 func _placeholder_state() -> Array:
@@ -127,9 +127,9 @@ func _run() -> void:
 						_check(app.rest_recovery.is_consumed(), "real Rest healed")
 						await _click(app.rest_continue_button)
 					else:
-						_check(app.shop_visit != null, "real Shop visit mounted")
-						await _click(app.shop_continue_button)
-						_check(app.shop_visit.get_state().status == "closed", "real Shop closed")
+						_check(app.peddler_visit != null, "real Shop visit mounted")
+						await _click(app.peddler_leave_button)
+						_check(app.peddler_visit.read_state().status == RunPeddlerVisit.LEFT, "real Shop closed")
 				var stale: Array[Callable] = []
 				var timeline: Array = []
 				var final_visit: String = path.pop_back()
@@ -196,8 +196,8 @@ func _run() -> void:
 						await _click(app.rest_heal_button)
 						await _click(app.rest_continue_button)
 					else:
-						_check(app.shop_view.is_visible_in_tree() and app.shop_visit.get_state().status == "available", "Shop after placeholder is fresh")
-						await _click(app.shop_continue_button)
+						_check(app.shop_view.is_visible_in_tree() and app.peddler_visit.read_state().status == RunPeddlerVisit.OPEN, "Shop after placeholder is fresh")
+						await _click(app.peddler_leave_button)
 					timeline.append([_effects(), app.run_map.get_route(), app.run_map.get_legal_choices()])
 				if session == 0:
 					replay = timeline

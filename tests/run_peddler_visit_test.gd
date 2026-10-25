@@ -46,6 +46,7 @@ func _initialize() -> void:
 	_test_rejections_do_not_consume_leave()
 	_test_invalid_construction()
 	_test_replay_and_rng()
+	_test_atomic_sewing()
 	_check(randi() == expected_global,
 		"all stock sampling, decisions, refusals and Leave consume no global RNG")
 	_finish()
@@ -71,6 +72,78 @@ func _rng(seed_value: int) -> RandomNumberGenerator:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 	return rng
+
+
+func _test_atomic_sewing() -> void:
+	var raw: Array = JSON.parse_string(FileAccess.get_file_as_string("res://data/heroes/starter_party.json"))
+	for hero in raw:
+		hero.max_hp = int(hero.max_hp)
+	var heroes := CombatParty.new(raw).get_heroes()
+	var definitions := RunAuthoredPatchDefinitions.load_definitions()
+	var stock := _sampled_stock(_rng(SEED))
+	var acquired: String = stock.patches[0].id
+	var slot := ""
+	for definition in definitions:
+		if definition.id == acquired:
+			slot = definition.slot
+	var displaced := ""
+	for definition in definitions:
+		if definition.id != acquired and definition.slot == slot:
+			displaced = definition.id
+			break
+	_check(not slot.is_empty() and not displaced.is_empty(), "real sampled patch has a distinct authored occupied-slot fixture")
+	if slot.is_empty() or displaced.is_empty():
+		return
+	for replacement in [false, true]:
+		var owned := [displaced] if replacement else []
+		var visit := RunPeddlerVisit.new("peddler_atomic", PARTY, DECK, owned, 500, stock)
+		var wardrobe := RunPatchWardrobe.new(heroes, owned, definitions, 2, 500, DECK, SEED, true)
+		if replacement:
+			_check(wardrobe.sew(displaced, "warden", slot, "prior", wardrobe.get_snapshot()).ok,
+				"occupied-slot fixture is sewn through public authority")
+		var bound := visit.read_state()
+		var w := wardrobe.get_snapshot()
+		for proposal in [
+			["foreign", slot, "paid"], ["warden", "UNKNOWN", "paid"],
+			["warden", "ARM" if slot != "ARM" else "HEAD", "paid"],
+			["warden", slot, ""], ["warden", slot, "prior"] if replacement else ["foreign", slot, "other"]]:
+			var result := RunShopPatchSewing.purchase_peddler_and_sew(visit, wardrobe, bound.node_id,
+				acquired, proposal[0], proposal[1], proposal[2], bound, w)
+			_check(not result.ok and visit.read_state() == bound and wardrobe.get_snapshot() == w,
+				"invalid owner, slot or operation refuses both authorities before debit")
+		var stale := w.duplicate(true)
+		stale.gold -= 1
+		_check(not RunShopPatchSewing.purchase_peddler_and_sew(visit, wardrobe, bound.node_id,
+			acquired, "warden", slot, "paid", bound, stale).ok
+			and visit.read_state() == bound and wardrobe.get_snapshot() == w, "stale complete wardrobe snapshot refuses atomically")
+		wardrobe._worn.seamstress[slot] = acquired
+		var malformed := wardrobe.get_snapshot()
+		_check(not RunShopPatchSewing.purchase_peddler_and_sew(visit, wardrobe, bound.node_id,
+			acquired, "warden", slot, "paid", bound, malformed).ok
+			and visit.read_state() == bound and wardrobe.get_snapshot() == malformed, "unowned patch on another wearer refuses before payment")
+		wardrobe._worn.seamstress[slot] = ""
+		_check(wardrobe.get_snapshot() == w, "negative fixtures restore authentic wardrobe")
+		var paid := RunShopPatchSewing.purchase_peddler_and_sew(visit, wardrobe, bound.node_id,
+			acquired, "warden", slot, "paid", bound, w)
+		_check(paid.ok and visit.is_consumed(), "one preflighted patch transaction consumes service")
+		var after := wardrobe.get_snapshot()
+		var expected_owned: Array = [] if replacement else owned.duplicate()
+		expected_owned.append(acquired)
+		_check(after.owned == expected_owned and visit.read_state().state.trinkets == expected_owned
+			and after.gold == 500 - int(stock.patches[0].price) and after.worn.warden[slot] == acquired
+			and after.scraps == 2 + (1 if replacement else 0), "single ledger and wardrobe agree on exact debit and settled replacement")
+		_check(paid.receipt.state == visit.read_state().state and paid.receipt.price == int(stock.patches[0].price)
+			and paid.sew_receipt.displaced_id == (displaced if replacement else ""), "published receipt is exact settled service state")
+		var consumed := visit.read_state()
+		_check(not RunShopPatchSewing.purchase_peddler_and_sew(visit, wardrobe, bound.node_id,
+			acquired, "warden", slot, "paid", bound, w).ok
+			and not visit.settle_displaced_patch(displaced, acquired, consumed)
+			and visit.read_state() == consumed and wardrobe.get_snapshot() == after, "paid sewing and settlement cannot replay")
+	var abandoned := RunPeddlerVisit.new("abandoned", PARTY, DECK, [], 500, stock)
+	var original := abandoned.read_state()
+	abandoned.close()
+	_check(abandoned.is_consumed() and not abandoned.choose_purchase(original.node_id, original.state,
+		original.stock, "card", original.stock.cards[0].id).ok, "teardown retires open service generation")
 
 
 func _sampled_stock(rng: RandomNumberGenerator) -> Dictionary:

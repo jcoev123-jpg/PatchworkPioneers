@@ -79,7 +79,7 @@ func _shop_fixture() -> Dictionary:
 					if map.get_node(rest).type != "Rest":
 						continue
 					for shop in map.get_node(rest).outgoing:
-						if map.get_node(shop).type != "Shop":
+						if map.get_node(shop).type != "Unpicker":
 							continue
 						for later in map.get_node(shop).outgoing:
 							if map.get_node(later).type != "Rest":
@@ -162,163 +162,152 @@ func _run() -> void:
 	await _frames()
 	presenter = app.get_node("LiveAttackPreview")
 	var fixture := _shop_fixture()
-	_check(not fixture.is_empty(), "seeded Fight-Elite-Rest-Shop-Rest-Fight route exists")
+	_check(not fixture.is_empty(), "seeded Fight-Elite-Rest-Unpicker-Rest-Fight exists")
 	var stale: Array[Callable] = []
 	var replay: Array = []
-	if not fixture.is_empty():
-		for session in range(4):
-			var keyboard := session == 1
-			var poor := session == 2
-			fixture_gold = 74 if poor else 500
-			fixture_count = 2 if keyboard else 0
-			var stitched := await _prepare_shop_receipt(fixture, keyboard)
-			_check(not stitched.is_empty() and app.run_stitch_descriptors.has(stitched),
-				"genuine mounted Rest receipt owns the cross-owner composite")
-			if stitched.is_empty():
-				break
-			_reject_shop(stale, "previous-session retained callbacks")
-			var entry = _route_action(fixture.shop)
-			_check(entry != null, "connected Shop control exists")
-			if entry == null:
-				break
-			var enter: Callable = entry.pressed.get_connections()[0].callable
-			var registry: Dictionary = app.run_stitch_descriptors.duplicate(true)
-			app.run_stitch_descriptors[stitched].cost += 1
-			_reject_shop([enter], "forged descriptor refuses Shop entry")
-			_check(app.shop_visit == null, "forged entry never mounts a Shop")
-			app.run_stitch_descriptors = registry.duplicate(true)
-			app.run_next_stitch_id = 1
-			_reject_shop([enter], "stale allocator refuses Shop entry")
-			app.run_next_stitch_id = 2
-			await _click(entry)
-			_check(app.shop_visit != null and app.shop_purchases != null and app._current_shop_ledger()
-				and app._shop_patch_current(), "real Shop mounts synchronized stitched visit, purchase and wardrobe ledgers")
-			if app.shop_visit == null or app.shop_purchases == null:
-				break
-			var remove: Callable = app.shop_remove_button.pressed.get_connections()[0].callable
-			var buy: Callable = app.shop_buy_button.pressed.get_connections()[0].callable
-			var exit: Callable = app.shop_continue_button.pressed.get_connections()[0].callable
-			stale = [remove, buy, exit]
-			for field in ["run_stitch_descriptors", "run_next_stitch_id"]:
-				var saved: Variant = app.get(field)
-				app.set(field, {} if field == "run_stitch_descriptors" else 3)
-				_reject_shop(stale, "stale live " + field + " blocks removal, buying and Continue")
-				app.set(field, saved)
-			app.shop_purchases._state.gold += 1
-			_reject_shop([remove, buy], "stale purchase ledger")
-			app.shop_purchases._state.gold -= 1
-			app.shop_cards.select(-1)
-			_reject_shop([remove], "unavailable selection")
-			app.shop_cards.select(0)
-			app.shop_cards.set_item_text(0, "stitched_999999")
-			_reject_shop([remove], "forged selected row")
-			app.shop_cards.set_item_text(0, app._shop_owned_text(0))
-			for index in range(app.run_deck.size()):
-				var id: String = app.run_deck[index]
-				var definition := RunRestStitchCards.resolve_card_definition(id)
-				var name: String = registry[id].display_name if id == stitched else definition.display_name
-				_check(app.shop_cards.get_item_text(index) == "Deck #%d: %s" % [index + 1, name]
-					and app.shop_cards.get_item_metadata(index) == id,
-					"genuine Rest composite and ordinary copies show canonical names with authentic IDs")
-			if not poor:
-				await _buy_stitch_shop(0, keyboard)
-			var target: String = "warden_strike" if keyboard else stitched
-			var row: int = app.run_deck.find(target)
-			_check(row >= 0 and app.run_deck.count(stitched) == 1, "selected owned card and separate composite are real")
-			await _select_shop_row("removal", row, keyboard)
-			var before := _ledger_state()
-			var expected: Array = app.run_deck.duplicate()
-			expected.erase(target)
-			var descriptors: Dictionary = registry.duplicate(true)
-			if not keyboard:
-				descriptors.erase(stitched)
-			var gold: int = app.session_gold
-			var count: int = app.run_removal_count
-			if keyboard:
-				app.shop_remove_button.grab_focus()
-				await _key(KEY_ENTER)
-			else:
-				await _click(app.shop_remove_button)
-			if poor:
-				_check(_ledger_state() == before and app.shop_visit.get_state().removal_available,
-					"insufficient funds leave entire authentic composite and all ledgers unchanged")
-				_reject_shop([remove], "insufficient funds callback")
-			else:
-				_check(app.run_deck == expected and app.run_stitch_descriptors == descriptors
-					and app.run_next_stitch_id == 2 and app.session_gold == gold - 75 - 25 * count
-					and app.run_removal_count == count + 1, "physical Remove atomically publishes exact five-field retirement and rising debit")
-				var visit: Dictionary = app.shop_visit.get_state()
-				var purchases: Dictionary = app.shop_purchases.get_state()
-				_check(visit.deck == expected and visit.descriptors == descriptors and visit.next_stitch_id == 2
-					and visit.gold == app.session_gold and visit.prior_removals == count + 1 and visit.status == "used"
-					and purchases.deck == expected and purchases.gold == app.session_gold
-					and app.shop_purchases.get_stock() == before[6] and app.run_trinkets == before[3]
-					and app.run_rng.state == before[0][0][0][3] and app._shop_patch_current(),
-					"both ledgers, stock, trinkets, RNG and wardrobe agree after removal")
-				_reject_shop([remove], "repeated removal callback")
-				app.shop_remove_button.disabled = false
-				app.shop_cards.disabled = false
-				_reject_shop([remove], "forced enabled repeated removal")
-				app._refresh_shop()
-				var after_removal := _ledger_state()
-				await _click(app.shop_remove_button)
-				app.shop_remove_button.grab_focus()
-				await _key(KEY_SPACE)
-				_check(_ledger_state() == after_removal, "repeated mouse and keyboard removal cannot debit or remove twice")
-				await _buy_stitch_shop(1, keyboard)
-				_check(app.shop_remove_button.disabled, "post-removal purchase keeps one-use removal disabled")
-				if session == 0:
-					replay = [app._stitch_snapshot(), app.session_gold, app.run_removal_count,
-						app.run_rng.state, app.run_map.get_route(), app.shop_visit.get_state(),
-						app.shop_purchases.get_state(), app.shop_purchases.get_stock()]
-				elif session == 3:
-					_check([app._stitch_snapshot(), app.session_gold, app.run_removal_count,
-						app.run_rng.state, app.run_map.get_route(), app.shop_visit.get_state(),
-						app.shop_purchases.get_state(), app.shop_purchases.get_stock()] == replay,
-						"same seeded mounted Rest-Shop timeline replays complete ledgers and RNG")
-			await _click(app.shop_continue_button)
-			_check(app.route_view != null and app.shop_visit.get_state().status == "closed", "real Continue closes Shop into connected route")
-			_reject_shop(stale, "closed Shop callbacks")
-			await _click(_route_action(fixture.later))
-			_check(app.rest_stitch != null and app.rest_stitch.is_valid()
-				and app.rest_stitch.get_snapshot() == app._stitch_snapshot(), "connected later Rest accepts exact surviving ledger")
-			_reject_shop(stale, "old Shop callbacks in later Rest")
-			await _click(app.rest_heal_button)
-			await _click(app.rest_continue_button)
-			await _click(_route_action(fixture.battle))
-			_check(app.run_map.get_current_node_id() == fixture.battle and app.battle_view.is_visible_in_tree()
-				and app.deck != null and app.deck.hand.size() == 5, "connected battle admits surviving stitched ledger through real route")
-			_reject_shop(stale, "old Shop callbacks in later battle")
-			await _click(app.return_button)
-	if not fixture.is_empty():
-		fixture_gold = 500
-		fixture_count = 0
-		var upgraded := await _prepare_shop_receipt(fixture, false, true)
-		_check(upgraded == "warden_strike_plus", "upgraded Shop fixture earned its plus through Rest")
-		if not upgraded.is_empty():
-			await _click(_route_action(fixture.shop))
-			_check(app.shop_visit != null and app._current_shop_ledger(), "upgraded deck mounts genuine Shop")
-			if app.shop_visit != null:
-				var row: int = app.run_deck.find(upgraded)
-				var definition := RunRestStitchCards.resolve_card_definition(upgraded)
-				_check(row >= 0 and not definition.is_empty() and definition.display_name.ends_with("+")
-					and app.shop_cards.get_item_text(row) == "Deck #%d: %s" % [row + 1, definition.display_name]
-					and app.shop_cards.get_item_metadata(row) == upgraded, "owned plus uses canonical name and original ID")
-				await _select_shop_row("removal", row, true)
-				var expected: Array = app.run_deck.duplicate()
-				expected.remove_at(row)
-				app.shop_remove_button.grab_focus()
-				await _key(KEY_ENTER)
-				_check(app.run_deck == expected and app.session_gold == 425 and app.run_removal_count == 1
-					and app._current_shop_ledger(), "keyboard removes exact upgraded ID for one canonical debit")
-				for index in range(app.run_deck.size()):
-					_check(app.shop_cards.get_item_metadata(index) == app.run_deck[index]
-						and app.shop_cards.get_item_text(index) == "Deck #%d: %s" % [index + 1,
-							RunRestStitchCards.resolve_card_definition(app.run_deck[index]).display_name],
-						"paid removal rebuilds canonical labels and metadata for remaining occurrences")
+	for session in range(5):
+		var keyboard := session == 1
+		var poor := session == 2
+		var upgrade := session == 4
+		fixture_gold = 74 if poor else 500
+		fixture_count = 2 if keyboard else 0
+		if fixture.is_empty():
+			break
+		var earned := await _prepare_shop_receipt(fixture, keyboard, upgrade)
+		_check(not earned.is_empty() and app.run_deck.has(earned), "genuine Rest earns stitched or upgraded removal target")
+		if earned.is_empty():
+			break
+		var entry: Button = _route_action(fixture.shop)
+		var enter: Callable = entry.pressed.get_connections()[0].callable
+		var descriptors: Dictionary = app.run_stitch_descriptors.duplicate(true)
+		if not upgrade:
+			app.run_stitch_descriptors[earned].cost += 1
+			var before: Dictionary = app._sewing_context()
+			enter.call()
+			_check(app._sewing_context() == before and app.unpicker_visit == null, "forged stitch descriptor refuses real Unpicker entry")
+			app.run_stitch_descriptors = descriptors.duplicate(true)
+		await _click(entry)
+		_check(app.unpicker_visit != null and app.unpicker_view.is_visible_in_tree(), "whole-card removal now mounts real Unpicker")
+		if app.unpicker_visit == null:
+			break
+		var view: LiveUnpickerPanel = app.unpicker_view
+		var callbacks: Array[Callable] = []
+		callbacks.append(view.remove_button.pressed.get_connections()[0].callable)
+		callbacks.append(view.leave_button.pressed.get_connections()[0].callable)
+		var state: Dictionary = app._sewing_context()
+		for old in stale:
+			old.call()
+		_check(app._sewing_context() == state, "previous-run callbacks cannot alter fresh Unpicker")
+		var target := "warden_strike" if keyboard else earned
+		var selected: Button
+		for row in view.card_buttons:
+			if view._rows[row].get("id") == target:
+				selected = row
+		_check(selected != null and app.run_deck.has(target), "actual owned target has a canonical whole-card row")
+		if selected == null:
+			break
+		view.choice_scroll.ensure_control_visible(selected)
+		await _frames()
+		if keyboard:
+			selected.grab_focus()
+			await _key(KEY_ENTER)
+		else:
+			await _click(selected)
+		_check(view._selected_id == target and app._sewing_context() == state, "selection alone cannot remove or debit")
+		var held := _held_unpicker_remove(view)
+		app.session_gold += 1
+		_reject_unpicker(held, "drifted gold")
+		app.session_gold -= 1
+		app.run_removal_count += 1
+		_reject_unpicker(held, "drifted removal history")
+		app.run_removal_count -= 1
+		app.run_next_stitch_id += 1
+		_reject_unpicker(held, "drifted stitch cursor")
+		app.run_next_stitch_id -= 1
+		if not upgrade:
+			app.run_stitch_descriptors[earned].cost += 1
+			_reject_unpicker(held, "forged live composite descriptor")
+			app.run_stitch_descriptors = descriptors.duplicate(true)
+			app.run_stitch_descriptors.erase(earned)
+			_reject_unpicker(held, "missing live composite descriptor")
+			app.run_stitch_descriptors = descriptors.duplicate(true)
+		app.run_deck.append("warden_strike")
+		_reject_unpicker(held, "drifted ordered deck")
+		app.run_deck.pop_back()
+		_check(app._sewing_context() == state, "negative Unpicker fixtures restore authentic stitched ledger")
+		var text := selected.text
+		selected.text = "forged card"
+		callbacks[0].call()
+		_check(app._sewing_context() == state, "forged row refuses removal")
+		selected.text = text
+		var expected: Array = app.run_deck.duplicate()
+		expected.erase(target)
+		var registry: Dictionary = descriptors.duplicate(true)
+		registry.erase(target)
+		var price: int = 75 + 25 * app.run_removal_count
+		if keyboard:
+			view.remove_button.grab_focus()
+			await _key(KEY_ENTER)
+		else:
+			await _click(view.remove_button)
+		if poor:
+			_check(app._sewing_context() == state and not app._unpicker_closed, "short wallet preserves entire composite, cursor, wallet, RNG and removal history")
+			callbacks[0].call()
+			_check(app._sewing_context() == state, "shortfall retained callback cannot spend")
+			await _click(view.leave_button)
+		else:
+			_check(app.run_deck == expected and app.run_stitch_descriptors == registry and app.run_next_stitch_id == state.cursor
+				and app.session_gold == state.gold - price and app.run_removal_count == state.removals + 1
+				and app.run_rng.state == state.rng_state and app.run_trinkets == state.patches,
+				"whole-card Unpicker atomically retires first exact owned ID and descriptor with escalating canonical debit")
+			var after: Dictionary = app._sewing_context()
+			for callback in callbacks:
+				callback.call()
+			_check(app._sewing_context() == after and app._can_choose_connected_route(), "spent removal cannot replay and surviving stitched ledger admits route")
+			var observation := [app._stitch_snapshot(), app.session_gold, app.run_removal_count, app.run_rng.state, app.run_map.get_route()]
+			if session == 0:
+				replay = observation
+			elif session == 3:
+				_check(observation == replay, "same seeded Rest-Unpicker timeline replays complete surviving ledger")
+		var source: Dictionary = app._unpicker_source
+		stale.assign([view.decision_requested.get_connections()[0].callable.bind({
+			"action": "remove_card", "visit_id": source.visit_id, "node_id": source.node_id,
+			"expected_snapshot": source.duplicate(true), "selected_card_id": target})])
+		await _click(_route_action(fixture.later))
+		_check(app.rest_stitch != null and app.rest_stitch.is_valid() and app.rest_stitch.get_snapshot() == app._stitch_snapshot(), "later Rest accepts surviving authenticated ledger")
+		await _click(app.rest_heal_button)
+		await _click(app.rest_continue_button)
+		await _click(_route_action(fixture.battle))
+		_check(app.run_map.get_current_node_id() == fixture.battle and app.deck != null and app.deck.hand.size() == 5,
+			"real onward Fight admits surviving deck and stitch descriptors")
+		state = app._sewing_context()
+		for old in stale:
+			old.call()
+		_check(app._sewing_context() == state, "old removal controls cannot change later battle")
+		await _click(app.return_button)
 	app.free()
 	await _frames()
 	for failure in failures:
 		printerr(failure)
 	print("live_shop_stitched_removal_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _held_unpicker_remove(view: LiveUnpickerPanel) -> Callable:
+	var source: Dictionary = app._unpicker_source
+	var intent := {"action": "remove_card", "visit_id": source.visit_id, "node_id": source.node_id,
+		"expected_snapshot": source.duplicate(true), "selected_card_id": view._selected_id}
+	var listener: Callable = view.decision_requested.get_connections()[0].callable
+	return func():
+		var submitted := view._submitted
+		view._submitted = true
+		listener.call(intent)
+		view._submitted = submitted
+
+
+func _reject_unpicker(callback: Callable, reason: String) -> void:
+	var before: Dictionary = app._sewing_context()
+	var visit: Dictionary = app.unpicker_visit.read_state()
+	callback.call()
+	_check(app._sewing_context() == before and app.unpicker_visit.read_state() == visit and not app._unpicker_closed,
+		reason + " refuses without changing run, visit, descriptors or RNG")

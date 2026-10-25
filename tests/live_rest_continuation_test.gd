@@ -37,7 +37,7 @@ func _rest_state() -> Array:
 	var state: Array = _continuation_state() if app.run_map != null else [
 		app.run_heroes.duplicate(true), app.run_deck.duplicate(), app.session_gold,
 		app.run_removal_count, app.run_rng, app.deck, app.party, app.enemies,
-		app.shop_visit, app.shop_purchases, app.title_view.visible]
+		app.peddler_visit, app.peddler_receipt, app.title_view.visible]
 	return [app.run_scraps, app.run_stitch_descriptors.duplicate(true), app.run_next_stitch_id, state, app.run_map.get_floors() if app.run_map != null else [],
 		app.rest_recovery.is_consumed() if app.rest_recovery != null else false,
 		app._rest_heroes.duplicate(true), app._rest_committed_heroes.duplicate(true),
@@ -253,9 +253,9 @@ func _run() -> void:
 			_check(app.run_map == map and map.get_route() == prior + [fixture.next], "same map advances exactly one floor")
 			_check(_persistent().slice(0, 3) == before.slice(0, 3) and app.run_removal_count == 2, "next visit retains exact healed heroes/deck/gold/nonzero removals")
 			if kind == "Shop":
-				_check(app.shop_visit != null and app.shop_purchases != null, "next actual Shop mounted")
-				if app.shop_purchases != null:
-					_check(app.shop_purchases.get_stock() == stock.stock and app.run_rng.state == stock.state, "Shop draws exactly once from ongoing run RNG")
+				_check(app.peddler_visit != null and app.peddler_visit.is_open(), "next actual Shop mounted")
+				if app.peddler_visit != null:
+					_check(app.peddler_visit.read_state().stock == stock.stock and app.run_rng.state == stock.state, "Shop draws exactly once from ongoing run RNG")
 				_bounds(app.shop_view)
 			else:
 				_check(not is_instance_id_valid(old_view) and app.rest_recovery != visit
@@ -274,7 +274,9 @@ func _run() -> void:
 			else:
 				_check(_continuation_state() == replay, "mouse/keyboard seeded replay reproduces full run and services")
 			stale = [exit, heal, back, choose]
-			await _click(app.rest_back_button if kind == "Rest" else app.shop_back_button)
+			if kind == "Shop":
+				await _click(app.peddler_leave_button)
+			await _click(app.rest_back_button if kind == "Rest" else app.route_back_button)
 			_check(app.title_view.visible and app.run_map == null and app.run_rng == null and app.rest_recovery == null
 				and app.rest_continue_button == null and app._rest_committed_heroes.is_empty()
 				and app.run_heroes.is_empty() and app.run_deck.is_empty() and app.session_gold == 0 and app.run_removal_count == 0,
@@ -291,7 +293,7 @@ func _run() -> void:
 	for callback in stale:
 		_reject_rest(callback, "old visit input against standalone M01 fixture")
 	_check(_state() == standalone and app.run_map == null and app.rest_recovery == null
-		and app.shop_visit == null and app.shop_purchases == null and app.party_carryover == null,
+		and app.peddler_visit == null and app.peddler_visit == null and app.party_carryover == null,
 		"retained inputs preserve standalone combat without reviving map, Rest, Shop or torn state")
 	await _click(app.return_button)
 	app.free()

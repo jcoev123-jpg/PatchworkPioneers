@@ -347,18 +347,18 @@ func _run() -> void:
 		var owners: Array[String] = []
 		for hero in app.run_heroes:
 			owners.append(hero.id)
-		var stock := RunShopStockOffers.generate(shop_rng, owners, authored.cards, authored.trinkets, app.run_trinkets)
+		var stock := RunShopStockOffers.generate_peddler_stock(shop_rng, owners, authored.cards, authored.trinkets, app.run_trinkets)
 		_check(stock.ok, "owned inventory admits later Shop oracle")
 		for offer in stock.cards:
 			offer.sold = false
-		for offer in stock.trinkets:
+		for offer in stock.patches:
 			offer.sold = app.run_trinkets.has(offer.id)
 		await _click(_route_action(shop_id))
-		_check(app.shop_visit != null and app.shop_view.is_visible_in_tree(), "legal next path mounts later Shop")
-		_check(app.shop_visit.get_state().trinkets == app.run_trinkets and app.shop_purchases.get_state().trinkets == app.run_trinkets
-			and app.shop_purchases.get_stock() == {"cards": stock.cards, "trinkets": stock.trinkets}
+		_check(app.peddler_visit != null and app.shop_view.is_visible_in_tree(), "legal next path mounts later Shop")
+		_check(app.peddler_visit.read_state().state.trinkets == app.run_trinkets and app.peddler_visit.read_state().state.deck == app.run_deck
+			and app.peddler_visit.read_state().stock == {"cards": stock.cards, "trinkets": stock.patches}
 			and app.run_rng.state == shop_rng.state, "later Shop sees exact owned IDs and seeded sold stock")
-		await _click(app.shop_continue_button)
+		await _click(app.peddler_leave_button)
 		await _click(app.route_back_button)
 		for old in stale:
 			old.call()

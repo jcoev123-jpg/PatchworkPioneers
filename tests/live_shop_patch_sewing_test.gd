@@ -3,6 +3,37 @@ extends "res://tests/live_elite_reward_continuation_test.gd"
 
 var wardrobe: RunPatchWardrobe
 
+const PREVIEW_POWERS := {
+	"stitched_badge": {"slot": "HEAD", "effect": "opening_block_bonus", "amount": 3,
+		"text": "+3 opening Block for this living wearer (stacks with innate Block)"},
+	"spare_spool": {"slot": "ARM", "effect": "healing_card_bonus", "amount": 2,
+		"text": "+2 healing on positive-heal cards owned by this living wearer only"},
+	"quilted_coat": {"slot": "COAT", "max_hp_bonus": 6, "text": "+6 maximum HP"},
+	"button_eye": {"slot": "HEAD", "effect": "first_attack_exposed", "amount": 1,
+		"text": "first successful attack each combat also applies Exposed 1"},
+	"pincushion_arm": {"slot": "ARM", "effect": "card_attack_bonus", "amount": 1,
+		"text": "+1 damage on that wearer's damaging cards"},
+	"switchback_button": {"slot": "HEAD", "effect": "different_owner_followup_block", "amount": 2, "once_per_player_turn": true, "text": "Once per player turn, when a different living hero's committed card or stitched half (ordered first then second) immediately precedes this living wearer's committed card or half, this wearer gains 2 Block; same-owner repeats and rejected plays never set it up."},
+	"padded_vest": {"slot": "COAT", "max_hp_bonus": 4, "text": "+4 maximum HP"},
+	"double_quilt_coat": {"slot": "COAT", "max_hp_bonus": 8, "text": "+8 maximum HP"},
+	"scrap_lined_vest": {"slot": "COAT", "max_hp_bonus": 3, "text": "+3 maximum HP"},
+	"wool_patch_cloak": {"slot": "COAT", "max_hp_bonus": 5, "text": "+5 maximum HP"},
+	"chain_stitched_coat": {"slot": "COAT", "max_hp_bonus": 7, "text": "+7 maximum HP"},
+	"reinforced_patchcoat": {"slot": "COAT", "max_hp_bonus": 9, "text": "+9 maximum HP"},
+	"thick_felt_mantle": {"slot": "COAT", "max_hp_bonus": 10, "text": "+10 maximum HP"},
+	"bloodstitch_bonnet": {"slot": "HEAD", "effect": "card_bleed_bonus", "amount": 1, "text": "+1 Bleed on eligible Bleed cards owned by this living wearer only"},
+	"button_glass_visor": {"slot": "HEAD", "effect": "card_exposed_bonus", "amount": 1, "text": "+1 Exposed on eligible Exposed cards owned by this living wearer only"},
+	"stern_seam_cap": {"slot": "HEAD", "effect": "card_weak_bonus", "amount": 1, "text": "+1 Weak on eligible Weak cards owned by this living wearer only"},
+	"reinforced_browband": {"slot": "HEAD", "effect": "card_block_bonus", "amount": 2, "text": "+2 Block on eligible Block cards owned by this living wearer only"},
+	"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2, "text": "+2 Block on eligible Block cards owned by this living wearer only"},
+	"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1, "text": "+1 Bleed on eligible Bleed cards owned by this living wearer only"},
+	"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1, "text": "+1 Unravel on eligible Unravel cards owned by this living wearer only"},
+	"threadguard_wrap": {"slot": "ARM", "effect": "card_block_bonus", "amount": 1, "text": "+1 Block on this living wearer's cards that already grant Block; never on a card without Block."},
+	"frayfinder_mitt": {"slot": "ARM", "effect": "first_single_target_half_unravel_attack_bonus", "amount": 2, "minimum_unravel_numerator": 1, "minimum_unravel_denominator": 2, "once_per_player_turn": true, "hit_number": 1, "target_kind": "enemy_single", "text": "+2 attack damage once per player turn on this living wearer's first confirmed single-target hit against an enemy already at half its current Unravel threshold; no bonus on area or later hits."},
+	"borrowed_button": {"slot": "COAT", "effect": "other_hero_committed_heal_block", "heal_threshold": 1, "block": 3, "uses_per_combat": 1, "text": "Once per combat, when another living hero's committed card or stitched half restores at least 1 HP to this living wearer, gain 3 Block."},
+}
+
+
 ## Use the acquired patch through the next battle's real held-card input.
 func _acquired_attack_check(patch_id: String) -> void:
 	_check(app.party != null and app.enemies != null and not app._battle_closed
@@ -36,118 +67,50 @@ func _acquired_attack_check(patch_id: String) -> void:
 
 ## Search actual seeded stock, never replace its candidate pool or listings.
 func _attack_patch_purchases() -> void:
-	var retained_selection := Callable()
-	## Verified starting seeds are hints; catalog changes fall back to bounded live search.
-	var stock_seeds := {"stitched_badge": 68, "spare_spool": 52,
-		"quilted_coat": 61, "button_eye": 141, "pincushion_arm": 698,
-		"HEAD": 697, "ARM": 600, "COAT": 600}
-	var search_seed := 1
-	for patch_id in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm",
-		"HEAD", "ARM", "COAT"]:
-		var next_seed: int = stock_seeds.get(patch_id, search_seed)
-		var obtained := false
-		for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
-			var fixture := _sequence_fixture(["Shop", "Fight"], next_seed)
-			if not fixture.is_empty():
-				search_seed = maxi(search_seed, fixture.seed + 1)
-			_check(not fixture.is_empty(), "seeded Shop -> Fight route exists for " + patch_id)
+	var slots := RunAuthoredPatchDefinitions.load_definitions()
+	for target in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm", "HEAD", "ARM", "COAT"]:
+		var fixture: Dictionary = {}
+		var next_seed: int = {"stitched_badge": 2455, "spare_spool": 983, "quilted_coat": 29702, "button_eye": 2645, "pincushion_arm": 6503, "HEAD": 1060, "ARM": 838, "COAT": 1982}.get(target, 1)
+		var found := false
+		for attempt in range(240):
+			fixture = _sequence_fixture(["Shop", "Fight"], next_seed)
 			if fixture.is_empty() or not await _routed_win(fixture, false):
-				return
+				break
 			await _click(app.reward_buttons[3])
 			await _click(app.continue_button)
 			app.session_gold = 500
 			await _reach(fixture.paths[0], false)
-			wardrobe = app._shop_wardrobe
-			_candidate_contract_checks()
-			_check_preview()
-			if retained_selection.is_valid():
-				var fresh_text: String = app.shop_patch_preview.text
-				var fresh_state := _patch_state()
-				retained_selection.call(0)
-				_check(app.shop_patch_preview.text == fresh_text and _patch_state() == fresh_state,
-					"old Shop selection callback cannot change fresh preview or run")
-			var selected := -1
-			for i in range(app.shop_patch_offers.item_count):
-				var listed_id: String = app.shop_purchases.get_stock().trinkets[i].id
-				stock_seeds[listed_id] = fixture.seed
-				if listed_id not in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"]:
-					stock_seeds[PREVIEW_POWERS[listed_id].slot] = fixture.seed
-				if patch_id in RunPatchWardrobe.SLOTS and listed_id not in [
-					"stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"] \
-					and PREVIEW_POWERS[listed_id].slot == patch_id:
-					patch_id = listed_id
-				if listed_id == patch_id:
-					selected = i
-			if selected < 0:
-				await _click(app.shop_back_button)
-				next_seed = fixture.seed + 1
-				continue
-			_check(wardrobe != null and wardrobe.is_valid()
-				and wardrobe.get_snapshot().definitions.get(patch_id) == PREVIEW_POWERS[patch_id].slot,
-				"unbound Shop builds the real shared authored wardrobe")
-			for keyboard in [false, true]:
-				for i in range(app.shop_patch_offers.item_count):
-					var before := _patch_state()
-					await _pick(app.shop_patch_offers, i, keyboard)
-					_check_preview()
-					_check(_patch_state() == before, "physical selection only preserves every run ledger and RNG")
-			await _purchase(selected, false, 0)
-			var worn := wardrobe.get_snapshot()
-			var preview_ref: WeakRef = weakref(app.shop_patch_preview)
-			retained_selection = app.shop_patch_offers.item_selected.get_connections()[0].callable
-			await _click(app.shop_continue_button)
-			retained_selection.call(0)
-			_check(app.shop_patch_preview == null and preview_ref.get_ref() == null,
-				"Continue releases preview; retained selection callback stays inert")
-			await _reach(fixture.paths[1], false)
-			_check(app.party_carryover._wardrobe == wardrobe and wardrobe.get_snapshot().worn == worn.worn,
-				"paid attack patch assignment survives into next real Fight")
-			if patch_id in ["button_eye", "pincushion_arm"]:
-				await _acquired_attack_check(patch_id)
-			await _click(app.return_button)
-			retained_selection.call(0)
-			_check(app.shop_patch_preview == null and app.run_map == null,
-				"title leaves no preview or active old selection")
-			obtained = true
-			break
-		_check(obtained, "real seeded Shop previewed, bought and sewed " + patch_id)
-
-
-## Independent text oracle, grounded in authored slot/effect/amount records below.
-const PREVIEW_POWERS := {
-	"stitched_badge": {"slot": "HEAD", "effect": "opening_block_bonus", "amount": 3,
-		"text": "+3 opening Block for this living wearer (stacks with innate Block)"},
-	"spare_spool": {"slot": "ARM", "effect": "healing_card_bonus", "amount": 2,
-		"text": "+2 healing on positive-heal cards owned by this living wearer only"},
-	"quilted_coat": {"slot": "COAT", "max_hp_bonus": 6, "text": "+6 maximum HP"},
-	"button_eye": {"slot": "HEAD", "effect": "first_attack_exposed", "amount": 1,
-		"text": "first successful attack each combat also applies Exposed 1"},
-	"pincushion_arm": {"slot": "ARM", "effect": "card_attack_bonus", "amount": 1,
-		"text": "+1 damage on that wearer's damaging cards"},
-	"switchback_button": {"slot": "HEAD", "effect": "different_owner_followup_block", "amount": 2, "once_per_player_turn": true, "text": "Once per player turn, when a different living hero's committed card or stitched half (ordered first then second) immediately precedes this living wearer's committed card or half, this wearer gains 2 Block; same-owner repeats and rejected plays never set it up."},
-	"padded_vest": {"slot": "COAT", "max_hp_bonus": 4, "text": "+4 maximum HP"},
-	"double_quilt_coat": {"slot": "COAT", "max_hp_bonus": 8, "text": "+8 maximum HP"},
-	"scrap_lined_vest": {"slot": "COAT", "max_hp_bonus": 3, "text": "+3 maximum HP"},
-	"wool_patch_cloak": {"slot": "COAT", "max_hp_bonus": 5, "text": "+5 maximum HP"},
-	"chain_stitched_coat": {"slot": "COAT", "max_hp_bonus": 7, "text": "+7 maximum HP"},
-	"reinforced_patchcoat": {"slot": "COAT", "max_hp_bonus": 9, "text": "+9 maximum HP"},
-	"thick_felt_mantle": {"slot": "COAT", "max_hp_bonus": 10, "text": "+10 maximum HP"},
-	"bloodstitch_bonnet": {"slot": "HEAD", "effect": "card_bleed_bonus", "amount": 1, "text": "+1 Bleed on eligible Bleed cards owned by this living wearer only"},
-	"button_glass_visor": {"slot": "HEAD", "effect": "card_exposed_bonus", "amount": 1, "text": "+1 Exposed on eligible Exposed cards owned by this living wearer only"},
-	"stern_seam_cap": {"slot": "HEAD", "effect": "card_weak_bonus", "amount": 1, "text": "+1 Weak on eligible Weak cards owned by this living wearer only"},
-	"reinforced_browband": {"slot": "HEAD", "effect": "card_block_bonus", "amount": 2, "text": "+2 Block on eligible Block cards owned by this living wearer only"},
-	"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2, "text": "+2 Block on eligible Block cards owned by this living wearer only"},
-	"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1, "text": "+1 Bleed on eligible Bleed cards owned by this living wearer only"},
-	"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1, "text": "+1 Unravel on eligible Unravel cards owned by this living wearer only"},
-	"threadguard_wrap": {"slot": "ARM", "effect": "card_block_bonus", "amount": 1, "text": "+1 Block on this living wearer's cards that already grant Block; never on a card without Block."},
-	"frayfinder_mitt": {"slot": "ARM", "effect": "first_single_target_half_unravel_attack_bonus", "amount": 2, "minimum_unravel_numerator": 1, "minimum_unravel_denominator": 2, "once_per_player_turn": true, "hit_number": 1, "target_kind": "enemy_single", "text": "+2 attack damage once per player turn on this living wearer's first confirmed single-target hit against an enemy already at half its current Unravel threshold; no bonus on area or later hits."},
-	"borrowed_button": {"slot": "COAT", "effect": "other_hero_committed_heal_block", "heal_threshold": 1, "block": 3, "uses_per_combat": 1, "text": "Once per combat, when another living hero's committed card or stitched half restores at least 1 HP to this living wearer, gain 3 Block."},
-}
+			var id: String = app.peddler_visit.read_state().stock.trinkets[0].id
+			var slot: String = app._peddler_wardrobe.get_snapshot().definitions[id]
+			found = id == target or (target in RunPatchWardrobe.SLOTS and slot == target
+				and id not in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"])
+			if found:
+				break
+			next_seed = fixture.seed + 1
+			app._return_to_title()
+			await _frames()
+		_check(found, "genuine seeded Peddler stocks " + target)
+		if not found:
+			return
+		wardrobe = app._peddler_wardrobe
+		var id: String = app.peddler_visit.read_state().stock.trinkets[0].id
+		var callback: Callable = app.peddler_buttons[3].pressed.get_connections()[0].callable
+		_candidate_contract_checks()
+		_negative_inputs(callback)
+		await _purchase(0, target in ["ARM", "COAT", "button_eye"], 0)
+		await _reach(fixture.paths[1], false)
+		_check(app.party_carryover._wardrobe == wardrobe and app._current_carryover_fight(), "purchased patch reaches real next Fight")
+		if id in ["button_eye", "pincushion_arm"]:
+			await _acquired_attack_check(id)
+		app._return_to_title()
+		await _frames()
+		callback.call()
+		_check(app.peddler_visit == null and app._peddler_wardrobe == null and app.run_map == null, "title reset rejects old patch Buy")
 
 
 func _check_preview() -> void:
 	_check_patch_action()
-	var stock: Array = app.shop_purchases.get_stock().trinkets
+	var stock: Array = app.peddler_visit.read_state().stock.trinkets
 	var index: int = app.shop_patch_offers.selected
 	_check(not stock.is_empty() and index >= 0 and index < stock.size()
 		and is_instance_valid(app.shop_patch_preview), "preview has genuine selected stock and mounted label")
@@ -221,7 +184,7 @@ func _patch_state() -> Array:
 		app.session_gold, app.run_scraps, app.run_removal_count, app.run_rng.state,
 		app.run_map.get_route(), app.run_map.get_floors(), app.party_carryover.read_state(),
 		app.party_carryover.torn.read_state(), app.party_carryover._receipts.duplicate(true),
-		app.shop_visit.get_state(), app.shop_purchases.get_state(), app.shop_purchases.get_stock(),
+		app.peddler_visit.read_state(), app.peddler_receipt.duplicate(true), app.peddler_visit.read_state().stock,
 		wardrobe.get_snapshot(), app.party_carryover._wardrobe]
 
 
@@ -232,7 +195,7 @@ func _reject_buy(callback: Callable, reason: String) -> void:
 
 
 func _check_patch_labels() -> void:
-	var stock: Array = app.shop_purchases.get_stock().trinkets
+	var stock: Array = app.peddler_visit.read_state().stock.trinkets
 	var definitions: Dictionary = wardrobe.get_snapshot().definitions
 	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
 		"res://data/shop/initial_offers.json"))
@@ -258,7 +221,7 @@ func _check_patch_labels() -> void:
 
 
 func _check_patch_action() -> void:
-	var stock: Array = app.shop_purchases.get_stock().trinkets
+	var stock: Array = app.peddler_visit.read_state().stock.trinkets
 	var index: int = app.shop_patch_offers.selected
 	_check(index >= 0 and index < stock.size(), "action has an authentic selected offer")
 	if index < 0 or index >= stock.size():
@@ -323,7 +286,7 @@ func _check_equipment_layout() -> void:
 			"readable equipment child contained in local panel and viewport: " + control.name)
 	_check(Rect2(0, 0, 1280, 720).encloses(panel.get_global_rect())
 		and not panel.get_global_rect().intersects(app.shop_remove_button.get_global_rect())
-		and not panel.get_global_rect().intersects(app.shop_continue_button.get_global_rect()),
+		and not panel.get_global_rect().intersects(app.peddler_leave_button.get_global_rect()),
 		"local felt backing fits viewport clear of adjacent actions")
 	for i in range(3):
 		var control: Control = controls[i]
@@ -334,7 +297,7 @@ func _check_equipment_layout() -> void:
 		await _key(KEY_TAB)
 		_check(control.has_focus(), "physical Tab reaches each equipment action in order")
 	await _key(KEY_TAB)
-	_check(app.shop_continue_button.has_focus(), "physical Tab exits equipment to Continue")
+	_check(app.peddler_leave_button.has_focus(), "physical Tab exits equipment to Continue")
 	for control in [app.shop_patch_buy_button, app.shop_patch_heroes, app.shop_patch_offers, app.shop_remove_button]:
 		var event := InputEventKey.new()
 		event.keycode = KEY_TAB
@@ -379,58 +342,40 @@ func _settle_battle(keyboard: bool, down_position: int = 0, reward_index: int = 
 
 
 func _negative_inputs(callback: Callable) -> void:
-	var picker: OptionButton = app.shop_patch_offers
-	var heroes: OptionButton = app.shop_patch_heroes
-	for control in [app.shop_patch_buy_button, picker, heroes]:
+	var bound: Dictionary = app.peddler_visit.read_state()
+	var id: String = bound.stock.trinkets[0].id
+	var button: Button = app.peddler_buttons[3]
+	for control in [button, app.peddler_heroes]:
+		var disabled: bool = control.disabled
 		control.disabled = true
 		_reject_buy(callback, "disabled control")
-		control.disabled = false
+		control.disabled = disabled
 		control.hide()
 		_reject_buy(callback, "hidden control")
 		control.show()
-	var id: Variant = picker.get_item_metadata(0)
-	for forged in ["unstocked", app.shop_purchases.get_stock().trinkets[1].id, String(id).capitalize(), 12]:
-		picker.set_item_metadata(0, forged)
-		var unchanged := _patch_state()
-		app._refresh_shop_patch_preview()
-		_check(app.shop_patch_preview.text == "Patch preview unavailable." and _patch_state() == unchanged,
-			"malformed selection never advertises a power or mutates the run")
-		_reject_buy(callback, "forged stock selection")
-	picker.set_item_metadata(0, id)
-	var text := picker.get_item_text(0)
-	for forged in ["forged 1 gold quote", text.replace(String(id).capitalize(), "Counterfeit Patch"),
-		text.replace(String(wardrobe.get_snapshot().definitions[id]).capitalize(), "UNKNOWN"),
-		app.shop_patch_offers.get_item_text(1)]:
-		picker.set_item_text(0, forged)
-		_reject_buy(callback, "forged name, slot, price or other stock label")
-	picker.set_item_text(0, text)
-	var owner: Variant = heroes.get_item_metadata(0)
-	heroes.set_item_metadata(0, "foreign")
-	_reject_buy(callback, "wrong hero")
-	heroes.set_item_metadata(0, owner)
+	var text := button.text
+	button.text = "Counterfeit Patch 1 gold"
+	_reject_buy(callback, "forged name and quote")
+	button.text = text
+	for forged in ["unstocked", String(id).capitalize(), 12, null]:
+		button.set_meta("offer_id", forged)
+		_reject_buy(callback, "forged offer metadata")
+	button.set_meta("offer_id", id)
+	app.peddler_heroes.set_item_metadata(0, "foreign")
+	_reject_buy(callback, "foreign hero")
+	app.peddler_heroes.set_item_metadata(0, app.run_heroes[0].id)
+	app.peddler_heroes.select(-1)
+	_reject_buy(callback, "missing owner selection")
+	app.peddler_heroes.select(0)
 	var slot: String = wardrobe._definitions[id]
-	wardrobe._definitions[id] = "COAT" if slot != "COAT" else "HEAD"
-	app._refresh_shop_patch_preview()
-	_check(app.shop_patch_preview.text == "Patch preview unavailable.", "stale slot cannot advertise an effect")
-	_reject_buy(callback, "drifted authored slot")
+	for invalid in ["UNKNOWN", "COAT" if slot != "COAT" else "HEAD"]:
+		wardrobe._definitions[id] = invalid
+		_reject_buy(callback, "drifted authored slot")
+	wardrobe._definitions.erase(id)
+	_reject_buy(callback, "missing slot")
 	wardrobe._definitions[id] = slot
-	for invalid in [null, "UNKNOWN"]:
-		if invalid == null:
-			wardrobe._definitions.erase(id)
-		else:
-			wardrobe._definitions[id] = invalid
-		app._refresh_shop_patches()
-		_check(app.shop_patch_buy_button.disabled, "missing/unknown slot disables purchase")
-		_check(app.shop_patch_buy_button.text == "Patch unavailable", "missing/unknown slot has explicit unavailable action")
-		_check(app.shop_patch_preview.text == "Patch preview unavailable.", "unknown slot has no invented preview")
-		_reject_buy(callback, "missing/unknown slot")
-		app.shop_patch_buy_button.disabled = false
-		_reject_buy(callback, "forced enabled missing/unknown slot")
-	wardrobe._definitions[id] = slot
-	app._refresh_shop_patches()
-	_check_patch_labels()
 	app.session_gold += 1
-	_reject_buy(callback, "drifted purse cannot auto-repair")
+	_reject_buy(callback, "drifted wallet")
 	app.session_gold -= 1
 	app.run_scraps += 1
 	_reject_buy(callback, "drifted scraps")
@@ -441,24 +386,24 @@ func _negative_inputs(callback: Callable) -> void:
 	app.run_heroes[0].hp -= 1
 	_reject_buy(callback, "drifted roster")
 	app.run_heroes[0].hp += 1
-	app.shop_purchases._state.gold += 1
-	_reject_buy(callback, "drifted purchase ledger")
-	app.shop_purchases._state.gold -= 1
+	app.peddler_visit._purchases._state.gold += 1
+	_reject_buy(callback, "drifted paid ledger")
+	app.peddler_visit._purchases._state.gold -= 1
 	wardrobe._gold += 1
-	_reject_buy(callback, "drifted wardrobe cannot auto-repair")
+	_reject_buy(callback, "drifted wardrobe")
 	wardrobe._gold -= 1
-	wardrobe._operations.append("forged-operation")
-	_reject_buy(callback, "drifted operation history")
+	wardrobe._operations.append("foreign-operation")
+	_reject_buy(callback, "changed operation history")
 	wardrobe._operations.pop_back()
-	var rng_state: int = app.run_rng.state
+	var rng: int = app.run_rng.state
 	app.run_rng.randi()
-	_reject_buy(callback, "drifted run RNG")
-	app.run_rng.state = rng_state
+	_reject_buy(callback, "drifted RNG")
+	app.run_rng.state = rng
 	var map: RunMap = app.run_map
 	var other := RunMap.new()
 	other._floor_ids = map._floor_ids.duplicate(true)
 	other._nodes = map._nodes.duplicate(true)
-	other._route = map.get_route()
+	other._route.assign(map.get_route())
 	app.run_map = other
 	_reject_buy(callback, "foreign same-graph map")
 	app.run_map = map
@@ -478,59 +423,55 @@ func _negative_inputs(callback: Callable) -> void:
 	_reject_buy(callback, "replaced view")
 	app.shop_view = view
 	foreign_view.free()
-	_reject_buy(app._buy_shop_patch.bind(app.shop_visit, app.shop_purchases, app.shop_buy_button), "foreign action")
-	_reject_buy(app._buy_shop_patch.bind(RunShopVisit.new([], 0, 0), app.shop_purchases, app.shop_patch_buy_button), "foreign visit")
 	var carry: RunTornCarryover = app.party_carryover
 	var previous := carry._wardrobe
 	carry._wardrobe = RunPatchWardrobe.new()
-	_reject_buy(callback, "carryover cannot accept this wardrobe")
+	_reject_buy(callback, "incompatible carry binding")
 	carry._wardrobe = previous
 
 
 func _purchase(index: int, keyboard: bool, wearer: int = -1) -> void:
+	_check(index == 0 and app.peddler_visit != null and app.peddler_visit.is_open(), "single authentic patch offer is open")
 	if wearer < 0:
-		wearer = index
+		wearer = 0
+	var bound: Dictionary = app.peddler_visit.read_state()
+	var offer: Dictionary = bound.stock.trinkets[index]
 	var before := _patch_state()
-	var stock: Dictionary = app.shop_purchases.get_stock()
-	var offer: Dictionary = stock.trinkets[index]
-	_check_patch_labels()
-	_check(not offer.sold and offer.price > 0 and app.session_gold >= offer.price,
-		"selected genuine quoted offer is affordable and unsold")
-	await _pick(app.shop_patch_offers, index, keyboard)
-	await _pick(app.shop_patch_heroes, wearer, keyboard)
-	_check_patch_action()
-	_check(app.shop_patch_offers.selected == index and app.shop_patch_heroes.selected == wearer,
-		"refresh retains selected stock and wearer")
-	_check_preview()
+	var w := wardrobe.get_snapshot()
+	_check(not offer.sold and app.session_gold >= offer.price, "genuine patch offer is affordable and unsold")
+	await _pick(app.peddler_heroes, wearer, keyboard)
+	var button: Button = app.peddler_buttons[3]
+	var callback: Callable = button.pressed.get_connections()[0].callable
 	if keyboard:
-		app.shop_patch_heroes.grab_focus()
-		await _key(KEY_TAB)
-		_check(app.shop_patch_buy_button.has_focus(), "physical Tab reaches sew action from hero picker")
+		button.grab_focus()
 		await _key(KEY_ENTER)
 	else:
-		await _click(app.shop_patch_buy_button)
+		await _click(button)
 	var state := wardrobe.get_snapshot()
-	_check(state.worn[app.run_heroes[wearer].id][state.definitions[offer.id]] == offer.id,
-		"paid patch is immediately sewn into selected hero authored slot")
-	_check(app.session_gold == before[3] - offer.price and state.gold == app.session_gold
-		and app.run_deck == before[1] and app.run_rng.state == before[6]
-		and state.operation_ids.size() == before[15].operation_ids.size() + 1,
-		"exactly one charge and operation, unchanged deck and RNG")
-	stock.trinkets[index].sold = true
-	_check(app.shop_purchases.get_stock() == stock and app.party_carryover._wardrobe == wardrobe,
-		"only selected stock sold and same wardrobe bound")
-	_check_patch_labels()
-	_check_preview()
-	_check(app.shop_patch_buy_button.disabled, "selected sold stock disables purchase after refresh")
-	_check_patch_action()
-	_check(app.shop_visit.get_state().trinkets == state.owned
-		and app.shop_purchases.get_state().trinkets == state.owned and app.run_trinkets == state.owned
-		and app.shop_visit.get_state().gold == state.gold and app.shop_purchases.get_state().gold == state.gold,
-		"all complete ownership and gold ledgers agree")
-	_reject_buy(app.shop_patch_buy_button.pressed.get_connections()[0].callable, "sold offer replay")
-	app.shop_patch_buy_button.disabled = false
-	_reject_buy(app.shop_patch_buy_button.pressed.get_connections()[0].callable, "forced enabled sold offer")
-	app._refresh_shop()
+	var owner: String = app.run_heroes[wearer].id
+	var slot: String = state.definitions[offer.id]
+	var displaced: String = w.worn[owner][slot]
+	var expected_owned: Array = w.owned.duplicate() + [offer.id]
+	if displaced != "":
+		expected_owned.erase(displaced)
+	var expected_worn: Dictionary = w.worn.duplicate(true)
+	expected_worn[owner][slot] = offer.id
+	_check(state.worn == expected_worn and state.owned == expected_owned and app.run_trinkets == expected_owned
+		and state.scraps == w.scraps + (1 if displaced != "" else 0) and app.run_scraps == state.scraps,
+		"atomic sewing changes only recipient slot, destroys only displaced patch and grants exact scrap")
+	_check(app.session_gold == w.gold - offer.price and state.gold == app.session_gold
+		and app.run_deck == w.cards and app.run_rng.state == before[6]
+		and state.operation_ids == w.operation_ids + ["peddler:%s" % bound.node_id],
+		"one exact debit and fresh operation, unchanged deck and RNG")
+	var expected_stock: Dictionary = bound.stock.duplicate(true)
+	expected_stock.trinkets[0].sold = true
+	_check(app.peddler_receipt == {"ok": true, "node_id": bound.node_id, "decision": "buy",
+		"kind": "trinket", "id": offer.id, "price": offer.price, "stock": expected_stock,
+		"state": {"party_ids": bound.state.party_ids, "deck": w.cards,
+			"trinkets": expected_owned, "gold": state.gold}}, "exact settled service receipt publishes once")
+	_check(app.peddler_visit.is_consumed() and app.shop_view == null and app._can_choose_connected_route()
+		and app.party_carryover._wardrobe == wardrobe, "paid patch closes UI and authentic wardrobe admits onward route")
+	_reject_buy(callback, "retired patch Buy")
 
 
 func _pick(picker: OptionButton, index: int, keyboard: bool) -> void:
@@ -564,91 +505,50 @@ func _pick(picker: OptionButton, index: int, keyboard: bool) -> void:
 
 func _poor_and_replacement() -> void:
 	var fixture := _sequence_fixture(["Shop"])
-	_check(not fixture.is_empty(), "real opening Fight leads to replacement/poor Shop")
-	if fixture.is_empty():
-		return
+	_check(not fixture.is_empty(), "real route supports poor and replacement Peddler")
 	for funded in [false, true]:
-		if not await _routed_win(fixture, false):
+		if fixture.is_empty() or not await _routed_win(fixture, false):
 			return
 		await _click(app.reward_buttons[3])
 		await _click(app.continue_button)
 		var old_patch := ""
-		var target := 0
 		if funded:
 			app.session_gold = 500
 			var definitions := RunAuthoredPatchDefinitions.load_definitions()
 			for prior in definitions:
 				app.run_trinkets.assign([prior.id])
-				var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
-					"res://data/shop/initial_offers.json"))
-				var probe_rng := RandomNumberGenerator.new()
-				probe_rng.state = app.run_rng.state
-				var stock := RunShopStockOffers.generate(probe_rng,
-					["warden", "seamstress", "tinker"], authored.cards, authored.trinkets, app.run_trinkets)
-				_check(stock.ok, "owned prior patch admits genuine seeded replacement stock")
-				for i in range(2):
-					var offered: String = stock.trinkets[i].id
-					if offered != prior.id and PREVIEW_POWERS[offered].slot == prior.slot:
-						old_patch = prior.id
-						target = i
-						break
-				if not old_patch.is_empty():
+				var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+				var rng := RandomNumberGenerator.new()
+				rng.state = app.run_rng.state
+				var sample := RunShopStockOffers.generate_peddler_stock(rng, ["warden", "seamstress", "tinker"], authored.cards, authored.trinkets, app.run_trinkets)
+				if sample.ok and sample.patches[0].id != prior.id and PREVIEW_POWERS[sample.patches[0].id].slot == prior.slot:
+					old_patch = prior.id
 					break
-			_check(not old_patch.is_empty(), "real stock admits a distinct authored occupied-slot fixture")
-			wardrobe = RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, definitions,
-				app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
-			_check(wardrobe.sew(old_patch, app.run_heroes[target].id,
-				wardrobe.get_snapshot().definitions[old_patch], "fixture:prior-wear", wardrobe.get_snapshot()).ok,
-				"genuine authored old ownership is sewn before Shop")
-			_check(app.party_carryover.bind_wardrobe(wardrobe, app.party_carryover.torn, wardrobe.get_snapshot()),
-				"real carryover accepts existing worn fixture")
+			_check(not old_patch.is_empty(), "genuine sample offers distinct patch for occupied slot")
+			if old_patch.is_empty():
+				return
+			wardrobe = RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, definitions, app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+			_check(wardrobe.sew(old_patch, "warden", wardrobe.get_snapshot().definitions[old_patch], "prior-wear", wardrobe.get_snapshot()).ok, "prior owned patch is authentically sewn")
+			_check(app.party_carryover.bind_wardrobe(wardrobe, app.party_carryover.torn, wardrobe.get_snapshot()), "carryover binds prior sewing")
 		await _reach(fixture.paths[0], false)
-		wardrobe = app._shop_wardrobe
-		var callback: Callable = app.shop_patch_buy_button.pressed.get_connections()[0].callable
-		if not funded:
-			_check(app.session_gold < app.shop_purchases.get_stock().trinkets[0].price and app.shop_patch_buy_button.disabled,
-				"natural reward cannot afford paid patch")
-			for i in range(app.shop_patch_offers.item_count):
-				await _pick(app.shop_patch_offers, i, true)
-				_check_patch_action()
-			var before := _patch_state()
-			callback.call()
-			await _click(app.shop_patch_buy_button)
-			await _activate(app.shop_patch_buy_button, true)
-			app.shop_patch_buy_button.disabled = false
-			callback.call()
-			_check(_patch_state() == before, "unaffordable callback/mouse/keyboard/forced action cannot spend")
+		wardrobe = app._peddler_wardrobe
+		if funded:
+			await _purchase(0, true, 0)
+			_check(not wardrobe.get_snapshot().owned.has(old_patch) and not app.peddler_visit.read_state().state.trinkets.has(old_patch), "destroyed patch cannot resurrect from upstream ledger")
 		else:
-			var before := wardrobe.get_snapshot()
-			await _purchase(target, false)
-			var after := wardrobe.get_snapshot()
-			var expected_owned: Array = before.owned.duplicate()
-			expected_owned.erase(old_patch)
-			expected_owned.append(app.shop_purchases.get_stock().trinkets[target].id)
-			_check(after.owned == expected_owned and app.run_trinkets == expected_owned
-				and after.scraps == before.scraps + 1 and app.run_scraps == after.scraps,
-				"replacement destroys only displaced ownership and grants exactly one scrap")
-			var expected_worn: Dictionary = before.worn.duplicate(true)
-			var bought: String = app.shop_purchases.get_stock().trinkets[target].id
-			expected_worn[app.run_heroes[target].id][after.definitions[bought]] = bought
-			_check(after.worn == expected_worn and after.operation_ids.slice(0, -1) == before.operation_ids,
-				"replacement retains all other assignments and prior operation history")
-			await _purchase(1 - target, false)
-			var deck: Array = app.run_deck.duplicate()
-			deck.erase(deck[app.shop_cards.selected])
-			var gold: int = app.session_gold
-			await _click(app.shop_remove_button)
-			_check(app.run_deck == deck and app.session_gold == gold - 75
-				and wardrobe.get_snapshot().cards == deck and wardrobe.get_snapshot().gold == app.session_gold,
-				"patch-first removal synchronizes only committed wardrobe context")
-		var preview_ref: WeakRef = weakref(app.shop_patch_preview)
-		var selection: Callable = app.shop_patch_offers.item_selected.get_connections()[0].callable
-		await _click(app.shop_back_button)
-		selection.call(0)
-		_check(app.shop_patch_preview == null and preview_ref.get_ref() == null,
-			"Shop Return to title frees preview and rejects old selection callback")
-		callback.call()
-		_check(app.run_map == null and app.session_gold == 0, "Shop title discards retained purchase callback")
+			var button: Button = app.peddler_buttons[3]
+			var callback: Callable = button.pressed.get_connections()[0].callable
+			_check(button.disabled and app.session_gold < app.peddler_visit.read_state().stock.trinkets[0].price, "natural wallet cannot afford patch")
+			var before := _patch_state()
+			await _click(button)
+			button.grab_focus()
+			await _key(KEY_ENTER)
+			button.disabled = false
+			callback.call()
+			_check(_patch_state() == before and app.peddler_visit.is_open(), "shortfall refuses mouse, keyboard and forced callback with no mutation")
+			await _click(app.peddler_leave_button)
+		app._return_to_title()
+		await _frames()
 
 
 func _unsewn_elite_before_shop() -> void:
@@ -667,16 +567,15 @@ func _unsewn_elite_before_shop() -> void:
 		"prior Elite really offers sewing but player leaves it unbound")
 	await _click(app.continue_button)
 	await _reach(fixture.paths[1], false)
-	wardrobe = app._shop_wardrobe
+	wardrobe = app._peddler_wardrobe
 	var available := -1
-	for i in range(2):
-		if not app.shop_purchases.get_stock().trinkets[i].sold:
+	for i in range(1):
+		if not app.peddler_visit.read_state().stock.trinkets[i].sold:
 			available = i
 			break
 	_check(available >= 0, "later Shop has genuine unowned stock")
 	if available >= 0:
 		await _purchase(available, false)
-	await _click(app.shop_continue_button)
 	await _reach(fixture.paths[2], false)
 	await _settle_battle(false)
 	_check(sewing.wardrobe == wardrobe and sewing.hero_buttons.size() == 3
@@ -698,12 +597,12 @@ func _shop_fight_shop() -> void:
 	await _click(app.continue_button)
 	app.session_gold = 500 # Funding only; the route, stock and rewards are real.
 	await _reach(fixture.paths[0], false)
-	var bound: RunPatchWardrobe = app._shop_wardrobe
+	var bound: RunPatchWardrobe = app._peddler_wardrobe
 	wardrobe = bound
 	_check(bound != null and bound.is_valid(), "first Shop offers a real wardrobe")
 	if bound == null:
 		return
-	var first_id: String = app.shop_purchases.get_stock().trinkets[0].id
+	var first_id: String = app.peddler_visit.read_state().stock.trinkets[0].id
 	await _purchase(0, false)
 	_check(app.party_carryover._wardrobe == bound, "first paid patch binds that wardrobe to the run")
 	var sewn: Dictionary = bound.get_snapshot()
@@ -713,7 +612,6 @@ func _shop_fight_shop() -> void:
 	var scraps: int = app.run_scraps
 	var purse: int = app.session_gold
 	var deck: Array = app.run_deck.duplicate()
-	await _click(app.shop_continue_button)
 	await _reach(fixture.paths[1], false)
 	await _settle_battle(false, 0, 0)
 	var committed_gold: int = app.session_gold
@@ -730,7 +628,7 @@ func _shop_fight_shop() -> void:
 		"the committed reward synchronises the bound wardrobe before the next route")
 	await _click(app.continue_button)
 	await _reach(fixture.paths[2], false)
-	_check(app._shop_wardrobe == bound and app.party_carryover._wardrobe == bound,
+	_check(app._peddler_wardrobe == bound and app.party_carryover._wardrobe == bound,
 		"second Shop adopts the identical wardrobe object after the rewarded Fight")
 	var synced: Dictionary = bound.get_snapshot()
 	_check(synced.gold == committed_gold and synced.scraps == app.run_scraps
@@ -738,19 +636,19 @@ func _shop_fight_shop() -> void:
 		and synced.heroes == committed_heroes and synced.seed == sewn.seed
 		and synced.rest_id == "",
 		"reward synchronises the bound wardrobe's exact gold, scraps, deck, ownership and heroes")
-	_check(app._shop_patch_current(), "the committed reward keeps every second-Shop action current")
+	_check(app._peddler_context == app._sewing_context(), "the committed reward keeps every second-Shop action current")
 	_check(synced.worn == sewn.worn and synced.operation_ids == sewn.operation_ids
 		and synced.definitions == sewn.definitions,
 		"reward synchronisation preserves worn slots, definitions and sewing history")
 	var rng: int = app.run_rng.state
 	var remaining := -1
-	for i in range(2):
-		if not app.shop_purchases.get_stock().trinkets[i].sold:
+	for i in range(1):
+		if not app.peddler_visit.read_state().stock.trinkets[i].sold:
 			remaining = i
 			break
 	_check(remaining >= 0, "second Shop stocks a genuinely unsold patch")
 	if remaining >= 0:
-		var second_id: String = app.shop_purchases.get_stock().trinkets[remaining].id
+		var second_id: String = app.peddler_visit.read_state().stock.trinkets[remaining].id
 		# Stock position is not a wearer identity: two Shops can offer the same
 		# slot at index zero. Use another hero so this persistence scenario
 		# actually preserves the first sewn patch while adding the second.
@@ -762,35 +660,11 @@ func _shop_fight_shop() -> void:
 			and after_sew.operation_ids.size() == sewn.operation_ids.size() + 1
 			and after_sew.operation_ids.slice(0, sewn.operation_ids.size()) == sewn.operation_ids,
 			"second paid patch sews once after the Fight and appends to preserved history")
-	var card: Dictionary = app.shop_purchases.get_stock().cards[0]
-	var buying: Array = app.run_deck.duplicate()
-	purse = app.session_gold
-	app.shop_offers.select(0)
-	app.shop_offers.item_selected.emit(0)
-	_check(not card.sold and purse >= card.price and not app.shop_buy_button.disabled,
-		"second Shop still sells an affordable card after the Fight")
-	await _click(app.shop_buy_button)
-	_check(app.run_deck == buying + [card.id] and app.session_gold == purse - card.price
-		and bound.get_snapshot().cards == app.run_deck and bound.get_snapshot().gold == app.session_gold,
-		"ordinary card purchase charges once and synchronises the same wardrobe")
-	var removing: Array = app.run_deck.duplicate()
-	removing.erase(removing[app.shop_cards.selected])
-	purse = app.session_gold
-	_check(app.shop_visit.get_state().removal_available and not app.shop_remove_button.disabled,
-		"second Shop removal is genuinely available after the Fight")
-	await _click(app.shop_remove_button)
-	_check(app.run_deck == removing and app.session_gold == purse - 75
-		and bound.get_snapshot().cards == app.run_deck and bound.get_snapshot().gold == app.session_gold,
-		"single removal after the Fight charges 75 and synchronises the same wardrobe")
 	_check(app.run_rng.state == rng and app.party_carryover._wardrobe == bound,
-		"second-Shop paid actions consume no RNG and keep the same bound wardrobe")
-	await _click(app.shop_continue_button)
+		"second paid visit consumes no RNG and keeps same wardrobe")
 	await _click(app.route_back_button)
 
 
-## The enlarged normal Fight rotation changes the first seeded Shop stock.
-## Search genuine Fight -> Shop admissions until Quilted Coat is offered;
-## purchase it physically, with the same full wardrobe receipt checks.
 func _purchase_seeded_coat() -> bool:
 	var next_seed := 1
 	for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
@@ -802,14 +676,14 @@ func _purchase_seeded_coat() -> bool:
 		await _click(app.continue_button)
 		app.session_gold = 500
 		await _reach(fixture.paths[0], false)
-		wardrobe = app._shop_wardrobe
+		wardrobe = app._peddler_wardrobe
 		_check(wardrobe != null and wardrobe.is_valid()
 			and app.shop_purchases != null, "coat probe mounts genuine Shop and wardrobe")
 		if wardrobe == null or app.shop_purchases == null:
 			return false
 		var coat := -1
-		for i in range(app.shop_purchases.get_stock().trinkets.size()):
-			if app.shop_purchases.get_stock().trinkets[i].id == "quilted_coat":
+		for i in range(app.peddler_visit.read_state().stock.trinkets.size()):
+			if app.peddler_visit.read_state().stock.trinkets[i].id == "quilted_coat":
 				coat = i
 				break
 		if coat >= 0:
@@ -860,124 +734,10 @@ func _run() -> void:
 	await _frames()
 	presenter = app.get_node("LiveAttackPreview")
 	await _attack_patch_purchases()
-	var sewing = app.get_node("LiveElitePatchSewing")
-	var retained: Array[Callable] = []
-	var saw_coat := false
-	for elite_first in [false, true]:
-		var kinds := ["Elite", "Shop", "Fight"] if elite_first else ["Shop", "Fight", "Elite"]
-		var fixture := _sequence_fixture(kinds)
-		_check(not fixture.is_empty(), "generated real route supports order " + str(kinds))
-		if fixture.is_empty():
-			continue
-		var replay: Array = []
-		for session in range(2):
-			var keyboard := session == 1
-			seed(102102)
-			var global_next := randi()
-			seed(102102)
-			if not await _routed_win(fixture, false):
-				break
-			await _activate(app.reward_buttons[3], keyboard)
-			await _activate(app.continue_button, keyboard)
-			app.session_gold = 500 # Fund the real transaction before a wardrobe exists.
-			if elite_first:
-				await _reach(fixture.paths[0], keyboard)
-				await _settle_battle(keyboard)
-				_check(sewing.hero_buttons.size() == 3, "pre-Shop Elite has real sewing choices")
-				await _activate(sewing.hero_buttons[0], keyboard)
-				wardrobe = sewing.wardrobe
-				await _activate(app.continue_button, keyboard)
-			await _reach(fixture.paths[1 if elite_first else 0], keyboard)
-			_check(app.shop_view.is_visible_in_tree() and app.shop_patch_offers.item_count == 2,
-				"real routed entry mounts both actual offers")
-			wardrobe = app._shop_wardrobe
-			_check(wardrobe != null and wardrobe.is_valid(), "real wardrobe exists")
-			if wardrobe == null:
-				break
-			_check_patch_labels()
-			await _check_equipment_layout()
-			for control in [app.shop_view, app.shop_patch_offers, app.shop_patch_heroes,
-				app.shop_patch_buy_button, app.shop_continue_button, app.shop_back_button]:
-				_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()),
-					"all Shop controls fit 1280x720")
-			var callback: Callable = app.shop_patch_buy_button.pressed.get_connections()[0].callable
-			for old in retained:
-				_reject_buy(old, "prior run callback")
-			_negative_inputs(callback)
-			# Card/removal commit before patches; the opposite order is covered below.
-			await _activate(app.shop_buy_button, keyboard)
-			await _activate(app.shop_remove_button, keyboard)
-			for i in range(2):
-				var offer: Dictionary = app.shop_purchases.get_stock().trinkets[i]
-				if not offer.sold:
-					saw_coat = saw_coat or offer.id == "quilted_coat"
-					await _purchase(i, keyboard)
-			await _activate(app.shop_buy_button, keyboard) # sold card is harmless
-			app.shop_offers.select(1)
-			app.shop_offers.item_selected.emit(1)
-			var old_gold: int = app.session_gold
-			await _activate(app.shop_buy_button, keyboard)
-			_check(app.session_gold == old_gold - app.shop_purchases.get_stock().cards[1].price,
-				"card purchase remains usable after patch commits")
-			var worn: Dictionary = wardrobe.get_snapshot().worn
-			var observation := _patch_state()
-			# Object identities are deliberately omitted from deterministic replay.
-			observation.pop_back()
-			if session == 0:
-				replay = observation
-			else:
-				_check(observation == replay, "mouse/keyboard same-seed complete ledgers and RNG replay identically")
-			retained.append(callback)
-			await _activate(app.shop_continue_button, keyboard)
-			_reject_buy(callback, "Shop Continue retires action")
-			await _reach(fixture.paths[2 if elite_first else 1], keyboard)
-			_check(app.party_carryover._wardrobe == wardrobe and wardrobe.get_snapshot().worn == worn,
-				"same assignments persist into next routed Fight")
-			var base: Array = app.party_carryover.read_state().heroes
-			for hero in app.party.get_heroes():
-				var original: Dictionary = base.filter(func(h): return h.id == hero.id)[0]
-				var coat: String = worn[hero.id].COAT
-				var bonus: int = PREVIEW_POWERS.get(coat, {}).get("max_hp_bonus", 0)
-				_check(hero.max_hp == original.max_hp + bonus and hero.hp == original.hp,
-					"next Fight authored cap applies only to coat wearer without healing")
-			var down_position := 1
-			for hero in app.party.get_heroes():
-				if worn[hero.id].COAT == "quilted_coat":
-					down_position = hero.position
-			var down_owner: String = app.party.get_hero(down_position).id
-			_check(worn[down_owner].values().any(func(id): return id != ""), "tear fixture actually wears a purchased patch")
-			await _settle_battle(keyboard, down_position)
-			var active := wardrobe.project_active(app.party_carryover.torn.read_state())
-			_check(active.ok and active.active[down_owner].is_empty() and wardrobe.get_snapshot().worn == worn,
-				"genuine tear suppresses downed wearer's patches without deleting assignments")
-			var projected: CombatParty = app.party_carryover.create_next_fight_party()
-			_check(projected != null and projected.get_hero(down_position).hp == 0
-				and projected.get_hero(down_position).max_hp == app.run_heroes[down_position - 1].max_hp,
-				"torn wearer's next battle cap excludes the inactive coat bonus")
-			await _activate(app.continue_button, keyboard)
-			if not elite_first:
-				await _reach(fixture.paths[2], keyboard)
-				await _settle_battle(keyboard)
-				_check(sewing.wardrobe == wardrobe and sewing.hero_buttons.size() == 3,
-					"later Elite presenter reuses previously bound Shop wardrobe")
-				var gold: int = app.session_gold
-				await _activate(sewing.hero_buttons[2], keyboard)
-				_check(sewing.wardrobe == wardrobe and app.session_gold == gold
-					and wardrobe.get_snapshot().operation_ids.size() >= 3,
-					"later genuine Elite free sew retains Shop operation history")
-				await _activate(app.continue_button, keyboard)
-			_check(randi() == global_next, "UI, rejection and combat use no global randomness")
-			await _activate(app.route_back_button, keyboard)
-			for old in retained:
-				old.call()
-			_check(app.run_map == null and app._shop_wardrobe == null and app.run_trinkets.is_empty()
-				and app.session_gold == 0, "title/reset discards callbacks and wardrobe")
-	if not saw_coat:
-		saw_coat = await _purchase_seeded_coat()
-	_check(saw_coat, "real Shop routes actually purchased the authored coat")
 	await _poor_and_replacement()
 	await _unsewn_elite_before_shop()
 	await _shop_fight_shop()
+	await _elite_before_peddler()
 	await _badge_fights()
 	await _finish_patches()
 
@@ -1071,7 +831,7 @@ func _badge_fights() -> void:
 	var fixture := {}
 	# Current verified connected route; search its genuine stock and advance
 	# deterministically when the Badge is absent after authored pool/map changes.
-	var next_seed := 983
+	var next_seed := 5087
 	var badge := -1
 	# Find a real generated route whose real stock contains the Badge. Never
 	# replace stock or patch definitions to manufacture a positive case.
@@ -1084,11 +844,12 @@ func _badge_fights() -> void:
 		await _click(app.continue_button)
 		app.session_gold = 500
 		await _reach(fixture.paths[0], false)
-		for i in range(app.shop_patch_offers.item_count):
-			if app.shop_purchases.get_stock().trinkets[i].id == "stitched_badge":
+		for i in range(1):
+			if app.peddler_visit.read_state().stock.trinkets[i].id == "stitched_badge":
 				badge = i
 		next_seed = fixture.seed + 1
-		await _click(app.shop_back_button)
+		app._return_to_title()
+		await _frames()
 		if badge >= 0:
 			break
 	_check(badge >= 0, "real seeded Shop stock guarantees a purchasable Stitched Badge")
@@ -1103,11 +864,10 @@ func _badge_fights() -> void:
 			await _activate(app.continue_button, keyboard)
 			app.session_gold = 500
 			await _reach(fixture.paths[0], keyboard)
-			wardrobe = app._shop_wardrobe
+			wardrobe = app._peddler_wardrobe
 			await _purchase(badge, keyboard, wearer)
 			var paid := [app.run_heroes.duplicate(true), app.run_deck.duplicate(),
 				app.run_trinkets.duplicate(), app.session_gold, app.run_scraps]
-			await _activate(app.shop_continue_button, keyboard)
 			_check([app.run_heroes, app.run_deck, app.run_trinkets, app.session_gold, app.run_scraps] == paid,
 				"leaving a paid Shop preserves persistent heroes, deck, ownership and currency")
 			# The route callback must fail closed on a stale bound wardrobe.
@@ -1173,3 +933,38 @@ func _finish_patches() -> void:
 		printerr(failure)
 	print("live_shop_patch_sewing_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _elite_before_peddler() -> void:
+	var fixture := _sequence_fixture(["Elite", "Shop", "Fight"])
+	_check(not fixture.is_empty(), "real Elite -> Peddler -> Fight fixture exists")
+	if fixture.is_empty() or not await _routed_win(fixture, false):
+		return
+	await _click(app.reward_buttons[3])
+	await _click(app.continue_button)
+	app.session_gold = 500
+	await _reach(fixture.paths[0], false)
+	await _settle_battle(false)
+	var sewing = app.get_node("LiveElitePatchSewing")
+	_check(sewing.hero_buttons.size() == 3, "real earlier Elite offers three owners")
+	await _click(sewing.hero_buttons[0])
+	wardrobe = sewing.wardrobe
+	var worn: Dictionary = wardrobe.get_snapshot().worn
+	await _click(app.continue_button)
+	await _reach(fixture.paths[1], false)
+	_check(app._peddler_wardrobe == wardrobe and wardrobe.get_snapshot().worn == worn, "Peddler adopts exact bound Elite wardrobe")
+	await _purchase(0, false, 1)
+	worn = wardrobe.get_snapshot().worn
+	await _reach(fixture.paths[2], false)
+	_check(app.party_carryover._wardrobe == wardrobe and wardrobe.get_snapshot().worn == worn and app._current_carryover_fight(),
+		"prior Elite and Peddler sewing persist together into real Fight")
+	await _settle_battle(false, 2)
+	var active := wardrobe.project_active(app.party_carryover.torn.read_state())
+	_check(active.ok and active.active.seamstress.is_empty() and wardrobe.get_snapshot().worn == worn,
+		"genuine tear suppresses purchased wearer's powers while retaining assignments")
+	var projected: CombatParty = app.party_carryover.create_next_fight_party()
+	_check(projected != null and projected.get_hero(2).hp == 0
+		and projected.get_hero(2).max_hp == app.run_heroes[1].max_hp,
+		"next party excludes torn purchased wearer's coat cap bonus")
+	app._return_to_title()
+	await _frames()

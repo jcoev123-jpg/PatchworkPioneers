@@ -42,15 +42,30 @@ func _stock_oracle() -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.state = app.run_rng.state
 	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
-	var ids: Array[String] = []
+	var cards: Array = []
 	for hero in app.run_heroes:
-		ids.append(hero.id)
-	var expected := RunShopStockOffers.generate(rng, ids, authored.cards, authored.trinkets, [])
-	_check(expected.ok, "real authored pools produce oracle stock")
-	for category in ["cards", "trinkets"]:
-		for offer in expected[category]:
-			offer.sold = false
-	return {"stock": {"cards": expected.cards, "trinkets": expected.trinkets}, "state": rng.state}
+		var pool: Array = []
+		for candidate in authored.cards:
+			if RunPoolCardRewardOffers.resolve_reward_definition(candidate.id).get("owner") == hero.id:
+				pool.append(candidate.id)
+		pool.sort()
+		_check(not pool.is_empty(), "independent per-hero stock oracle has candidates")
+		var chosen: String = pool[rng.randi_range(0, pool.size() - 1)]
+		var quote: Dictionary = authored.cards.filter(func(c): return c.id == chosen)[0]
+		cards.append({"id": chosen, "owner": hero.id, "price": int(quote.price), "sold": false})
+	var patches: Array = []
+	for candidate in authored.trinkets:
+		if not app.run_trinkets.has(candidate.id):
+			patches.append(candidate.id)
+	if patches.is_empty():
+		for candidate in authored.trinkets:
+			patches.append(candidate.id)
+	patches.sort()
+	_check(not patches.is_empty(), "independent patch oracle has candidates")
+	var chosen: String = patches[rng.randi_range(0, patches.size() - 1)]
+	var quote: Dictionary = authored.trinkets.filter(func(c): return c.id == chosen)[0]
+	return {"stock": {"cards": cards, "trinkets": [{"id": chosen,
+		"price": int(quote.price), "sold": app.run_trinkets.has(chosen)}]}, "state": rng.state}
 
 
 ## Pick a reproducible genuine Shop RNG state for one mounted keyword-tooltip
@@ -99,7 +114,10 @@ func _fixture() -> Dictionary:
 
 
 func _shop_state() -> Array:
-	return [_persistent(), app.run_removal_count, app.shop_visit.get_state()]
+	return [app._sewing_context(), app.act_outcome.get_state(),
+		app.peddler_visit.read_state() if app.peddler_visit != null else {},
+		app._peddler_wardrobe.get_snapshot() if app._peddler_wardrobe != null else {},
+		app.peddler_receipt.duplicate(true), app._peddler_witnesses.duplicate(true)]
 
 
 ## The one passive gallery scene child that mounts sewn tiles beside a visit.
@@ -631,7 +649,7 @@ func _check_shop_backdrop() -> int:
 			"compact backing follows the laid-out rail inside the viewport")
 		for control in [app.shop_view.get_node("ShopTitle"), app.shop_label,
 				app.shop_buy_button, app.shop_remove_button, app.shop_patch_preview,
-				app.shop_continue_button, app.shop_back_button]:
+				app.peddler_leave_button, app.shop_back_button]:
 			_check(control.is_visible_in_tree() and rect.encloses(control.get_global_rect()),
 				"opaque rail covers every exposed title, wallet, action and preview")
 		var gallery: Control = _visit_tiles().gallery_panel()
@@ -904,7 +922,7 @@ func _run() -> void:
 		var before := _persistent()
 		for callback in stale:
 			callback.call()
-		_check(_persistent() == before and app.shop_visit == null, "old visit callbacks cannot spend or reopen in fresh combat")
+		_check(_persistent() == before and app.peddler_visit == null, "old visit callbacks cannot spend or reopen in fresh combat")
 		await _click(app.continue_button)
 		var shop: Button
 		var shown: Array[String] = []
@@ -945,19 +963,19 @@ func _run() -> void:
 		app.run_map._nodes[id].type = "Rest"
 		route_callback.call()
 		app.run_map._nodes[id].type = "Shop"
-		_check(_persistent() == before and app.shop_visit == null, "wrong identity, ID, route, disabled button and node type reject")
+		_check(_persistent() == before and app.peddler_visit == null, "wrong identity, ID, route, disabled button and node type reject")
 		var saved_gold: int = app.session_gold
 		app.session_gold = -1
 		var invalid_before := _persistent()
 		route_callback.call()
-		_check(_persistent() == invalid_before and app.shop_visit == null, "invalid ledger cannot commit a route choice")
+		_check(_persistent() == invalid_before and app.peddler_visit == null, "invalid ledger cannot commit a route choice")
 		app.session_gold = saved_gold
 		var saved_rng: RandomNumberGenerator = app.run_rng
 		app.run_rng = null
 		var missing_before := [app.run_heroes.duplicate(true), app.run_deck.duplicate(), app.session_gold,
 			app.run_removal_count, app.run_map.get_floors(), app.run_map.get_route()]
 		route_callback.call()
-		_check(app.run_rng == null and app.shop_visit == null and app.shop_purchases == null
+		_check(app.run_rng == null and app.peddler_visit == null and app.shop_purchases == null
 			and missing_before == [app.run_heroes, app.run_deck, app.session_gold,
 			app.run_removal_count, app.run_map.get_floors(), app.run_map.get_route()], "absent RNG rejects without partial entry")
 		app.run_rng = saved_rng
@@ -967,13 +985,13 @@ func _run() -> void:
 		_check(not app._can_choose_connected_route(), "published roster drift fails carryover admission")
 		invalid_before = _persistent()
 		route_callback.call()
-		_check(_persistent() == invalid_before and app.shop_visit == null, "roster drift cannot advance route or consume RNG")
+		_check(_persistent() == invalid_before and app.peddler_visit == null, "roster drift cannot advance route or consume RNG")
 		# Align the held fixture too so the original stock rejection remains reachable.
 		app.party_carryover._heroes[0].id = "unknown_shop_owner"
 		_check(app._can_choose_connected_route(), "unknown catalog owner passes roster admission before stock rejection")
 		invalid_before = _persistent()
 		route_callback.call()
-		_check(_persistent() == invalid_before and app.shop_visit == null and app.shop_purchases == null,
+		_check(_persistent() == invalid_before and app.peddler_visit == null and app.shop_purchases == null,
 			"rejected stock leaves roster, deck, gold, route and RNG untouched")
 		app.run_heroes = heroes
 		app.party_carryover._heroes = heroes.duplicate(true)
@@ -992,7 +1010,7 @@ func _run() -> void:
 		invalid_before = _persistent()
 		_check(not app._choose_shop_route(id, weakref(rejecting), prior, shop) and rejecting.attempts == 1,
 			"valid generated stock reaches rejecting map choice")
-		_check(_persistent() == invalid_before and app.shop_visit == null and app.shop_purchases == null,
+		_check(_persistent() == invalid_before and app.peddler_visit == null and app.shop_purchases == null,
 			"rejected map choice restores RNG and publishes no ledger or stock")
 		app.run_map = original_map
 		app._carryover_map = weakref(original_map)
@@ -1007,387 +1025,184 @@ func _run() -> void:
 		app._carryover_floors = original_map.get_floors()
 		shop.set_meta("route_id", " ")
 		_check(app._can_choose_connected_route() and original_map.get_legal_choices().has(" ")
-			and original_map.get_node(" ").type == "Shop" and _stock_oracle().stock.cards.size() == 5,
+			and original_map.get_node(" ").type == "Shop" and _stock_oracle().stock.cards.size() == 3,
 			"whitespace fixture admits connected Shop with valid generated stock before visit opening")
 		invalid_before = _persistent()
 		_check(not app._choose_shop_route(" ", weakref(original_map), prior, shop), "visit opening rejects whitespace ID")
-		_check(_persistent() == invalid_before and app.shop_visit == null and app.shop_purchases == null,
+		_check(_persistent() == invalid_before and app.peddler_visit == null and app.shop_purchases == null,
 			"failed visit opening rolls back committed map and generated RNG")
 		original_map._nodes.erase(" ")
 		original_map._nodes[parent].outgoing = outgoing
 		app._carryover_floors = original_map.get_floors()
 		shop.set_meta("route_id", id)
-		if session == 2:
-			var keyword_state: int = _keyword_shop_state()
-			_check(keyword_state != -1, "a seeded five-card/two-patch Shop can offer a status-keyword card")
-			if keyword_state != -1:
-				app.run_rng.state = keyword_state
 		if session in [1, 2]:
 			app.session_gold = 200
-			app.run_removal_count = 1 if session == 2 else 0
+		var oracle := _stock_oracle()
 		if session == 2:
 			shop.grab_focus()
 			await _key(KEY_ENTER)
 		else:
 			await _click(shop)
-		_check(app.shop_view != null and app.shop_visit != null, "physical Shop entry mounts real ledger and view")
-		if app.shop_view == null or app.shop_visit == null:
+		_check(app.peddler_visit != null and is_instance_valid(app.shop_view), "physical Shop opens authoritative Peddler")
+		if app.peddler_visit == null or not is_instance_valid(app.shop_view):
 			break
-		var bed_id: int = _check_shop_backdrop()
-		var backing: Control = app.visit_backdrop.get_node("ShopActionBacking")
-		var backing_id := backing.get_instance_id()
-		_check(backing_id != retired_backing_id and not is_instance_id_valid(retired_backing_id),
-			"fresh routed visit remounts a new backing without retaining its predecessor")
-		var presentation_before := _shop_state()
-		var stock_before: Dictionary = app.shop_purchases.get_stock().duplicate(true)
-		app.shop_view.position += Vector2(1, 1)
-		_check(backing.get_global_rect().is_equal_approx(app.shop_view.get_global_rect().grow(10.0)),
-			"backing follows actual view movement without a fixed layout guess")
-		app.shop_view.position -= Vector2(1, 1)
-		_check(_shop_state() == presentation_before and app.shop_purchases.get_stock() == stock_before,
-			"backing layout leaves wallet, deck, stock, route and seeded RNG unchanged")
-		_check_visit_actions(app.shop_view, [app.shop_buy_button, app.shop_remove_button,
-			app.shop_continue_button, app.shop_back_button], ["Buy", "Remove", "Continue", "Return"])
-		_check(not app.shop_continue_button.disabled and not app.shop_back_button.disabled,
-			"concise Shop navigation stays available")
-		var heading := app.shop_view.get_node_or_null("ShopTitle") as Label
-		_check(heading != null and heading.is_visible_in_tree()
-			and heading.text == "Shop - Floor %d" % app.run_map.get_node(id).floor
-			and not heading.text.contains(id) and heading.theme_type_variation == &"PatchHeading"
-			and _label_face_path(heading) == HEADING_FACE_PATH,
-			"real Shop names its committed floor with the inherited heading face and no raw ID")
-		var visit: RunShopVisit = app.shop_visit
-		var state := visit.get_state()
-		_check(app.run_map.get_route() == [fixture.fight, id] and state.visited_ids == [id]
-			and state.shop_node_id == id and state.removal_available, "Shop records exact ID and route once")
-		var price: int = 75 + 25 * app.run_removal_count
-		_check(app.shop_remove_button.disabled == not state.removal_available,
-			"concise Remove action follows the authoritative removal availability")
-		_check(app.shop_label.text == "Gold: %d | Removal: %d gold" % [app.session_gold, price], "visible gold and authoritative escalating quote")
-		_check(app.shop_cards.item_count == app.run_deck.size(), "compact OptionButton includes every owned copy")
-		for index in range(app.run_deck.size()):
-			var definition := RunRestStitchCards.resolve_card_definition(app.run_deck[index])
-			_check(not definition.is_empty() and app.shop_cards.get_item_text(index) ==
-				"Deck #%d: %s" % [index + 1, definition.display_name]
-				and app.shop_cards.get_item_metadata(index) == app.run_deck[index],
-				"owned canonical names identify each deck occurrence with exact ID metadata")
-		_check(app.shop_purchases.is_valid() and app.shop_offers.item_count == 5, "routed Shop includes valid card buying stock")
-		for control in [app.shop_view, app.shop_label, app.shop_offers, app.shop_buy_button, app.shop_cards, app.shop_remove_button, app.shop_continue_button, app.shop_back_button]:
-			_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), "Shop control fits 1280x720")
-		var gallery = _visit_tiles()
-		_check(gallery.is_gallery_mounted() and gallery.gallery_kind() == "Shop",
-			"real Shop mounts the passive visit card gallery")
-		var panel: Control = gallery.gallery_panel()
-		_check(is_instance_valid(panel) and panel.is_visible_in_tree()
-			and Rect2(0, 0, 1280, 720).encloses(panel.get_global_rect())
-			and is_instance_valid(gallery.gallery_scroll()),
-			"scrollable Shop gallery fits inside 1280x720")
-		_check(gallery.offer_tiles().size() == 5, "Shop gallery shows all five offer tiles")
-		_check(gallery.removal_tiles().size() == app.run_deck.size(),
-			"Shop gallery shows exactly one removal tile per owned occurrence")
-		_check_shop_gallery_labels(gallery)
-		var quoted_prices: Array = app.shop_purchases.get_stock().cards.map(
-			func(offer): return int(offer.price))
-		_check(app.shop_buy_button.disabled == (app.session_gold < quoted_prices[app.shop_offers.selected]),
-			"concise Buy action follows the canonical selected card price")
-		if session == 1:
-			_check(app.session_gold >= int(quoted_prices.max()),
-				"funded Shop visit can afford every quoted listing")
-		elif session in [0, 3]:
-			_check(app.session_gold < int(quoted_prices.min()),
-				"natural victory wallet is short of every quoted listing")
-		await _check_offer_hint(gallery)
-		var scroll: ScrollContainer = gallery.gallery_scroll()
-		var scroll_start: int = scroll.scroll_vertical
-		scroll.ensure_control_visible(gallery.removal_tiles().back())
-		await _frames()
-		_check(scroll.scroll_vertical > scroll_start
-			and Rect2(0, 0, 1280, 720).encloses(gallery.removal_tiles().back().get_global_rect()),
-			"the scrollable gallery reaches a lower owned card inside 1280x720")
-		for control in [app.shop_offers, app.shop_cards]:
-			_check(control.is_visible_in_tree() and not control.disabled and control.modulate.a == 0.0
-				and control.mouse_filter == Control.MOUSE_FILTER_IGNORE
-				and control.focus_mode == Control.FOCUS_NONE,
-				"masked Shop dropdown keeps its validated contract but takes no pointer or focus")
-		var layouts: Array = [gallery.masked_selector_layout("offer"),
-			gallery.masked_selector_layout("removal")]
-		for layout in layouts:
-			_check(not layout.is_empty() and layout.original_custom_minimum.y >= 48.0
-				and layout.masked_min_height <= LiveVisitCardTiles.MASKED_ROW_MIN_HEIGHT
-				and layout.visible_in_tree and not layout.disabled and layout.item_count > 0
-				and layout.selected >= 0 and layout.pointer_ignore and layout.focus_none,
-				"masked Shop dropdown keeps its data contract but takes no left-column dropdown row")
-		for button in [app.shop_buy_button, app.shop_remove_button,
-				app.shop_continue_button, app.shop_back_button]:
-			_check(button.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect())
-				and not app.shop_offers.get_global_rect().intersects(button.get_global_rect())
-				and not app.shop_cards.get_global_rect().intersects(button.get_global_rect()),
-				"real Shop action stays readable and clear of the collapsed selector rows")
-		if session == 0:
-			app.shop_view.visible = false
-			await _frames()
-			_check(not backing.is_visible_in_tree(), "backing hides with its original Shop view")
-			_check(app.shop_offers.custom_minimum_size == Vector2(440, 48)
-				and app.shop_offers.modulate.a == 1.0
-				and app.shop_offers.focus_mode != Control.FOCUS_NONE
-				and app.shop_offers.mouse_filter != Control.MOUSE_FILTER_IGNORE
-				and app.shop_offers.get_combined_minimum_size().y >= 24.0,
-				"tearing the gallery down restores the canonical Shop dropdown exactly")
-			app.shop_view.visible = true
-			await _frames()
-			_check(backing.is_visible_in_tree()
-				and backing.get_global_rect().is_equal_approx(app.shop_view.get_global_rect().grow(10.0))
-				and app.visit_backdrop.get_node("ShopActionBacking") == backing,
-				"re-entry reuses one backing and follows the restored rail layout")
-			_check(gallery.is_gallery_mounted() and gallery.gallery_kind() == "Shop"
-				and app.shop_offers.custom_minimum_size == Vector2.ZERO
-				and app.shop_offers.modulate.a == 0.0,
-				"a re-synced Shop visit masks and collapses its selectors again")
-		var stock: Array = app.shop_purchases.get_stock().cards
-		var keyword_offers := 0
-		for index in range(gallery.offer_tiles().size()):
-			var tile = gallery.offer_tiles()[index]
-			var details: Dictionary = gallery.tile_details(tile)
-			var listing: Dictionary = stock[index]
-			var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(listing.id)
-			_check(gallery.tile_row(tile) == index and details.card_id == listing.id
-				and details.title == String(definition.get("display_name", listing.id))
-				and details.meta.begins_with("%d gold" % int(listing.price)) and details.has_picture,
-				"offer tile shows its authored name, quoted price and art/emblem")
-			# The accepted reward face's own concise line, never the old block.
-			_check(details.effects == _concise_rules(definition)
-				and not details.effects.is_empty() and details.effects.ends_with(".")
-				and RETIRED_RULES_TEXT.all(func(token): return not details.effects.contains(token)),
-				"offer tile prints the accepted concise effect, not position prose: " + String(listing.id))
-			# AC1: a genuine offer tile explains its full authored record on hover.
-			_check(details.tooltip == tile.tooltip_text and not tile.tooltip_text.is_empty(),
-				"offer tile exposes its hover explanation on the mounted tile button")
-			_check_card_tooltip(tile, definition, "offer tile")
-			var effects: Dictionary = definition.get("effects", {})
-			if effects.has("pinned") or effects.has("unravel") or _unravel_conditional(effects):
-				keyword_offers += 1
-			if effects.has("pinned"):
-				_check(tile.tooltip_text.contains("one pin per enemy")
-					and tile.tooltip_text.contains("+5 damage BEFORE Weak/Exposed"),
-					"pinned offer tooltip explains the published pin rule")
-			if effects.has("unravel") or _unravel_conditional(effects):
-				_check(tile.tooltip_text.contains("Unravel N adds N to that enemy's gauge"),
-					"unravel offer tooltip explains the published gauge rule")
-		# The dedicated seeded visit exercises real mounted keyword tooltips;
-		# ordinary seeded stocks may legitimately omit Pinned/Unravel cards.
-		if session == 2:
-			_check(keyword_offers > 0, "seeded mounted Shop exercises an authored status-keyword offer")
-		for index in range(app.run_deck.size()):
-			var tile = gallery.removal_tiles()[index]
-			var details: Dictionary = gallery.tile_details(tile)
-			var owned: String = app.run_deck[index]
-			var definition: Dictionary = RunRestStitchCards.resolve_card_definition(owned)
-			_check(gallery.tile_row(tile) == index and details.card_id == owned
-				and details.title == String(definition.get("display_name", owned))
-				and details.meta.begins_with("Deck card #%d" % (index + 1)),
-				"removal tile carries the exact owned occurrence index and authored name")
-			# A real owned copy prints the accepted concise wording, and the
-			# independently authored sentence for that exact card ID.
-			_check(details.effects == _concise_rules(definition)
-				and not details.effects.is_empty() and details.effects.ends_with(".")
-				and RETIRED_RULES_TEXT.all(func(token): return not details.effects.contains(token)),
-				"removal tile prints the accepted concise rules wording, not position prose")
-			if STARTER_EFFECT_LINES.has(owned):
-				_check(details.effects == String(STARTER_EFFECT_LINES[owned]),
-					"removal tile prints the exact authored short effect for " + owned)
-			# AC1: the owned tile's hover is the same complete authored record.
-			_check(details.tooltip == tile.tooltip_text and not tile.tooltip_text.is_empty(),
-				"owned removal tile exposes its hover explanation on the mounted tile button")
-			_check_card_tooltip(tile, definition, "owned removal tile")
-		for known in ["warden_strike", "warden_brace", "seamstress_mend",
-				"seamstress_stitch_up", "tinker_scrap_bomb", "tinker_tune_up"]:
-			_check(app.run_deck.has(known) and STARTER_EFFECT_LINES.has(known),
-				"exact concise expectation is exercised by an owned copy: " + known)
-		# The mounted Shop faces keep their concise sentence readable inside the
-		# sewn frame at 1280x720 (both a priced offer and an owned copy).
-		for tile in [gallery.offer_tiles()[0], gallery.removal_tiles()[0]]:
-			var face_panel: Control = tile.get_parent()
-			var effects_label := face_panel.find_child("TileEffects", true, false) as Label
-			_check(effects_label != null and effects_label.text == gallery.tile_details(tile).effects
-				and effects_label.get_theme_font_size("font_size") >= 16
-				and face_panel.get_global_rect().encloses(effects_label.get_global_rect()),
-				"the concise effect stays legible inside its sewn Shop tile")
-		before = _shop_state()
-		var hover_selection: int = app.shop_offers.selected
-		await _hover(gallery.offer_tiles()[0])
-		gallery.gallery_scroll().ensure_control_visible(gallery.removal_tiles()[0])
-		await _frames()
-		await _hover(gallery.removal_tiles()[0])
-		_check(_shop_state() == before and app.shop_offers.selected == hover_selection,
-			"hovering Shop tiles explains them without selecting, spending or advancing")
-		await _check_shop_direction_keys(gallery)
-		before = _shop_state()
-		await _click_tile(_tile_for("offer", 2))
-		_check(_shop_state() == before and app.shop_offers.selected == 2,
-			"offer tile click selects that listing with zero ledger effect")
-		await _select_tile_by_key(_tile_for("offer", 1))
-		_check(_shop_state() == before and app.shop_offers.selected == 1,
-			"offer tile keyboard selection has zero ledger effect")
-		if session == 1:
-			await _check_offer_purchase_hint(gallery)
-		if session == 0:
-			await _check_tile_art(gallery)
-			await _check_selection_cue(gallery)
-			await _check_stitched_removal_tooltip(gallery)
-		before = _shop_state()
-		route_callback.call()
-		back_callback.call()
-		_check(_shop_state() == before and app.shop_view.visible, "duplicate entry and stale route Back cannot mutate or close Shop")
-		var remove_callback: Callable = app.shop_remove_button.pressed.get_connections()[0].callable
-		var live_map: RunMap = app.run_map
-		var other := RunMap.new()
-		var other_rng := RandomNumberGenerator.new()
-		other_rng.seed = fixture.seed
-		other.generate(other_rng)
-		_check(other.choose_node(fixture.fight) and other.choose_node(id), "replacement map has identical legal Shop route")
-		app.run_map = other
-		var wrong_before := _shop_state()
-		remove_callback.call()
-		_check(_shop_state() == wrong_before, "same-route replacement map cannot spend")
-		app.run_map = live_map
-		app._remove_at_shop(RunShopVisit.new(app.run_deck, app.session_gold, 0), app.shop_remove_button)
-		app._remove_at_shop(visit, app.shop_back_button)
-		app.session_gold += 1
-		var changed_before := _shop_state()
-		remove_callback.call()
-		_check(_shop_state() == changed_before, "gold mismatched with ledger cannot spend")
-		app.session_gold -= 1
-		app.run_removal_count += 1
-		changed_before = _shop_state()
-		remove_callback.call()
-		_check(_shop_state() == changed_before, "count mismatched with ledger cannot spend")
-		app.run_removal_count -= 1
-		app.run_deck.append("warden_strike")
-		changed_before = _shop_state()
-		remove_callback.call()
-		_check(_shop_state() == changed_before, "deck mismatched with ledger cannot spend")
-		app.run_deck.pop_back()
-		var selected: int = app.shop_cards.selected
-		var original_id: String = app.shop_cards.get_item_text(selected)
-		var different_id := ""
-		for owned in app.run_deck:
-			if owned != app.run_deck[selected]:
-				different_id = owned
-				break
-		_check(not different_id.is_empty(), "mismatched fixture is a different owned ID")
-		var selected_tile = _tile_for("removal", selected)
-		_check(selected_tile != null and gallery._tile_eligible({"button": selected_tile,
-			"group": "removal", "row": selected}), "authentic selected owned tile is eligible before forgery")
-		for invalid in ["unknown_card", different_id, app.shop_cards.get_item_text((selected + 1) % app.run_deck.size())]:
-			app.shop_cards.set_item_text(selected, invalid)
-			remove_callback.call()
-			_check(_shop_state() == before, "unknown or mismatched owned ID cannot spend")
-			_check(not gallery._tile_eligible({"button": selected_tile, "group": "removal", "row": selected}),
-				"gallery refuses forged or swapped occurrence label")
-		app.shop_cards.set_item_text(selected, original_id)
-		for invalid in [null, selected, "unknown_card", different_id]:
-			app.shop_cards.set_item_metadata(selected, invalid)
-			remove_callback.call()
-			_check(_shop_state() == before, "forged owned metadata cannot spend")
-			_check(not gallery._tile_eligible({"button": selected_tile,
-				"group": "removal", "row": selected}), "gallery refuses forged owned metadata")
-		app.shop_cards.set_item_metadata(selected, app.run_deck[selected])
+		var visit: RunPeddlerVisit = app.peddler_visit
+		var bound := visit.read_state()
+		_check(bound.stock == oracle.stock and app.run_rng.state == oracle.state,
+			"three per-owner sorted draws and one sorted patch draw match independent oracle")
+		_check(bound.state.deck == app.run_deck and bound.state.gold == app.session_gold
+			and bound.node_id == id and bound.status == RunPeddlerVisit.OPEN,
+			"one real node and complete inventory bind authentic service")
+		_check(app.peddler_buttons.size() == 4 and app.shop_cards == null and app.shop_remove_button == null
+			and app.shop_visit == null and app.shop_purchases == null,
+			"four choices replace retired routed removal and duplicate purchase authorities")
+		var controls: Array = [app.peddler_heroes] + app.peddler_buttons + [app.peddler_leave_button]
+		for control in controls:
+			_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()),
+				"each real choice fits viewport")
+		var navigation_before := _shop_state()
+		var enabled: Array = controls.filter(func(control): return not control.disabled)
+		enabled[0].grab_focus()
+		for control in enabled:
+			_check(control.has_focus(), "Tab reaches every enabled Peddler action in displayed order")
+			await _key(KEY_TAB)
+		_check(enabled[0].has_focus() and _shop_state() == navigation_before,
+			"Peddler focus wraps without spending or changing RNG")
+		for i in range(4):
+			var offer: Dictionary = (bound.stock.cards + bound.stock.trinkets)[i]
+			var label: String = RunPoolCardRewardOffers.resolve_reward_definition(offer.id).display_name if i < 3 else String(offer.id).capitalize()
+			var action: Button = app.peddler_buttons[i]
+			_check(action.text == "Buy %s \u00b7 %d gold" % [label, offer.price]
+				and action.get_meta("offer_id") == offer.id and action.pressed.get_connections().size() == 1
+				and action.theme_type_variation == &"PatchHeadingButton" and action.get_theme_font_size("font_size") == 20
+				and action.disabled == (offer.sold or app.session_gold < offer.price),
+				"every short sewn choice displays authentic identity, price and affordability")
+		var leave: Callable = app.peddler_leave_button.pressed.get_connections()[0].callable
+		var buys: Array[Callable] = []
+		for action in app.peddler_buttons:
+			buys.append(action.pressed.get_connections()[0].callable)
+		await _peddler_rejections(buys + [leave])
+		var unchanged := _shop_state()
 		if session in [0, 3]:
-			_check(app.session_gold < price, "natural victory gold cannot afford removal")
-			await _click(app.shop_remove_button)
-			app.shop_remove_button.grab_focus()
-			await _key(KEY_ENTER)
-			_check(_shop_state() == before and not app.shop_remove_button.disabled
-				and app.shop_cards.selected == selected, "insufficient funds retain selection, state and available option")
+			for callback in buys:
+				callback.call()
+			_check(_shop_state() == unchanged, "short wallet refuses every buy without RNG or ledger changes")
 			if session == 0:
-				replay = before.duplicate(true)
+				replay = [bound, app.run_rng.state, app.run_deck.duplicate(), app.run_heroes.duplicate(true)]
 			else:
-				_check(before == replay, "same-seed restart reproduces complete combat, inventory, ledger, route and RNG")
-		else:
-			# Later duplicate: every owned occurrence has its own sewn tile.
-			var duplicate_index := -1
-			for index in range(1, app.run_deck.size()):
-				if app.run_deck[index] == app.run_deck[0]:
-					duplicate_index = index
-			_check(duplicate_index > 0, "owned fixture contains duplicate copies")
-			if duplicate_index < 0:
-				break
-			var duplicate_tile = _tile_for("removal", duplicate_index)
-			before = _shop_state()
-			if session == 1:
-				await _click_tile(duplicate_tile)
-			else:
-				await _select_tile_by_key(duplicate_tile)
-			_check(app.shop_cards.selected == duplicate_index,
-				"physical tile input chooses the later duplicate occurrence")
-			_check(_shop_state() == before, "choosing the later duplicate spends nothing")
-			_check(gallery.tile_details(duplicate_tile).selected,
-				"the chosen owned occurrence is visibly selected")
-			var expected_deck: Array = app.run_deck.duplicate()
-			expected_deck.remove_at(0)
-			var gold: int = app.session_gold
-			var count: int = app.run_removal_count
-			if session == 1:
-				await _click(app.shop_remove_button)
-			else:
-				duplicate_tile.grab_focus()
-				var reach: int = gallery.removal_tiles().size() + 3
-				for step in range(reach):
-					if app.shop_remove_button.has_focus():
-						break
-					await _key(KEY_TAB)
-				_check(app.shop_remove_button.has_focus(), "Tab reaches Remove from the owned-card tiles")
-				await _key(KEY_ENTER)
-			_check(app.run_deck == expected_deck and app.session_gold == gold - price
-				and app.run_removal_count == count + 1, "funded input removes FIRST duplicate and charges exact quote once")
-			_check(visit.get_state().deck == expected_deck and visit.get_state().gold == app.session_gold
-				and visit.get_state().prior_removals == count + 1 and app.shop_remove_button.disabled,
-				"run mirrors used ledger exactly and disables removal")
-			await _frames()
-			_check(gallery.removal_tiles().all(func(tile): return tile.disabled),
-				"every owned-card tile disables with the spent Shop removal")
-			var after := _shop_state()
-			remove_callback.call()
-			app.shop_remove_button.pressed.emit()
-			await _click(app.shop_remove_button)
-			_check(_shop_state() == after, "repeat mouse and retained callback cannot remove or charge twice")
-			_check(after[0][0] == before[0][0] and after[0][3] == before[0][3]
-				and after[0][4] == before[0][4], "removal preserves heroes, seeded RNG and route")
-		var tile_callback: Callable = gallery.offer_tiles()[0].pressed.get_connections()[0].callable
-		stale = [route_callback, back_callback, remove_callback, tile_callback,
-			app.shop_continue_button.pressed.get_connections()[0].callable,
-			app.shop_back_button.pressed.get_connections()[0].callable]
+				_check([bound, app.run_rng.state, app.run_deck, app.run_heroes] == replay, "same seed reproduces entire Peddler stock, wallet, party and RNG")
+		var run_before: Dictionary = app._sewing_context()
 		if session == 2:
-			var continue_before := _persistent()
-			app.shop_continue_button.grab_focus()
-			await _key(KEY_ENTER)
-			_check(app.visit_backdrop == null and not is_instance_id_valid(backing_id)
-				and app.route_view.is_visible_in_tree() and _persistent() == continue_before,
-				"keyboard Continue retires rail and art without changing run state")
-			await _click(app.route_back_button)
-		elif session % 2 == 0:
-			app.shop_back_button.grab_focus()
+			app.peddler_leave_button.grab_focus()
 			await _key(KEY_ENTER)
 		else:
-			await _click(app.shop_back_button)
-		_check(app.visit_backdrop == null and not is_instance_id_valid(bed_id),
-			"Return releases the Shop art bed with its visit")
-		_check(not is_instance_id_valid(backing_id), "Return leaves no Shop rail backing behind")
-		retired_backing_id = backing_id
+			await _click(app.peddler_leave_button)
+		_check(visit.read_state().status == RunPeddlerVisit.LEFT and app.peddler_receipt.decision == "leave"
+			and app._sewing_context() == run_before and app.shop_view == null and app.visit_backdrop == null
+			and app._can_choose_connected_route(), "free Leave frees UI and art, witnesses consumed node, and admits connected route")
+		var after := _shop_state()
+		for callback in buys + [leave]:
+			callback.call()
+		_check(_shop_state() == after, "retained Buy and Leave reject after consumption")
+		stale.assign(buys + [leave, route_callback, back_callback])
+		await _click(app.route_back_button)
 		for callback in stale:
 			callback.call()
-		_check(visit.get_state().status == "closed" and app.title_view.visible and app.shop_visit == null
-			and app.shop_view == null and app.shop_cards == null and app.shop_remove_button == null
-			and app.shop_back_button == null and app.run_map == null and app.run_deck.is_empty()
-			and app.shop_continue_button == null
-			and app.shop_purchases == null and app.shop_offers == null and app.shop_buy_button == null
-			and app.session_gold == 0 and app.run_removal_count == 0, "skip/Return closes ledger, clears run and rejects stale inputs")
-		_check(not gallery.is_gallery_mounted() and not is_instance_valid(gallery.gallery_panel())
-			and gallery.offer_tiles().is_empty() and gallery.removal_tiles().is_empty()
-			and gallery.gallery_kind() == "",
-			"Return discards the Shop gallery, its tiles and its callbacks")
-		_check(randi() == global_next, "complete physical route/Shop leaves global RNG untouched")
+		_check(app.title_view.visible and app.peddler_visit == null and app.shop_view == null
+			and app._peddler_wardrobe == null and app._peddler_witnesses.is_empty()
+			and app.run_map == null and app.run_deck.is_empty() and app.session_gold == 0,
+			"title reset clears Peddler and witnesses; retired signals cannot revive it")
+		_check(randi() == global_next, "Peddler entry, refusal, Leave and title reset preserve global RNG")
 	_finish_shop()
+
+
+func _peddler_reject(callbacks: Array, label: String) -> void:
+	var before := _shop_state()
+	for callback in callbacks:
+		callback.call()
+	_check(_shop_state() == before and app.peddler_visit.is_open(), label + " rejects atomically and keeps Leave available")
+
+
+func _peddler_rejections(callbacks: Array) -> void:
+	var context: Dictionary = app._sewing_context()
+	var map: RunMap = app.run_map
+	var rng: RandomNumberGenerator = app.run_rng
+	var carry = app.party_carryover
+	app.shop_view.hide()
+	_peddler_reject(callbacks, "hidden source")
+	app.shop_view.show()
+	for action in app.peddler_buttons + [app.peddler_leave_button]:
+		var disabled: bool = action.disabled
+		action.disabled = true
+		_peddler_reject([action.pressed.get_connections()[0].callable], "disabled source")
+		action.disabled = disabled
+	var action: Button = app.peddler_buttons[0]
+	var text := action.text
+	var id = action.get_meta("offer_id")
+	action.text = "forged price"
+	_peddler_reject([callbacks[0]], "forged quote")
+	action.text = text
+	for invalid in [null, "unknown", app.peddler_visit.read_state().stock.cards[1].id]:
+		action.set_meta("offer_id", invalid)
+		_peddler_reject([callbacks[0]], "forged offer identity")
+	action.set_meta("offer_id", id)
+	app.session_gold += 1
+	_peddler_reject(callbacks, "drifted wallet")
+	app.session_gold -= 1
+	app.run_removal_count += 1
+	_peddler_reject(callbacks, "drifted removal history")
+	app.run_removal_count -= 1
+	app.run_deck.append("warden_strike")
+	_peddler_reject(callbacks, "drifted ordered deck")
+	app.run_deck.pop_back()
+	app.run_scraps += 1
+	_peddler_reject(callbacks, "drifted scraps")
+	app.run_scraps -= 1
+	app.run_heroes[0].hp -= 1
+	_peddler_reject(callbacks, "drifted heroes")
+	app.run_heroes = context.heroes.duplicate(true)
+	app.run_rng = RandomNumberGenerator.new()
+	app.run_rng.state = rng.state
+	_peddler_reject(callbacks, "foreign same-state RNG")
+	app.run_rng = rng
+	app.party_carryover = RunTornCarryover.new(app.run_heroes)
+	_peddler_reject(callbacks, "foreign carryover")
+	app.party_carryover = carry
+	var node: String = map.get_current_node_id()
+	map._nodes[node].type = "Rest"
+	_peddler_reject(callbacks, "wrong node type")
+	map._nodes[node].type = "Shop"
+	map._generation_revision += 1
+	_peddler_reject(callbacks, "regenerated graph")
+	map._generation_revision -= 1
+	var route: Array[String] = map.get_route()
+	map._route.pop_back()
+	_peddler_reject(callbacks, "changed route")
+	map._route.assign(route)
+	var foreign := RunMap.new()
+	var other_rng := RandomNumberGenerator.new()
+	other_rng.seed = app.run_seed
+	foreign.generate(other_rng)
+	for chosen in route:
+		_check(foreign.choose_node(chosen), "foreign map has same legal route")
+	app.run_map = foreign
+	_peddler_reject(callbacks, "foreign same-route map")
+	app.run_map = map
+	var w: RunPatchWardrobe = app._peddler_wardrobe
+	var foreign_wardrobe := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+		RunAuthoredPatchDefinitions.load_definitions(), app.run_scraps, app.session_gold,
+		app.run_deck, app.run_seed, true)
+	_check(foreign_wardrobe.get_snapshot() == w.get_snapshot(), "foreign wardrobe fixture has an identical authentic snapshot")
+	app._peddler_wardrobe = foreign_wardrobe
+	_peddler_reject(callbacks, "foreign same-snapshot wardrobe")
+	app._peddler_wardrobe = w
+	w._operations.append("foreign_operation")
+	_peddler_reject(callbacks, "changed complete wardrobe history")
+	w._operations.pop_back()
+	app.peddler_heroes.set_item_metadata(0, "unknown")
+	_peddler_reject(callbacks, "forged patch owner")
+	app.peddler_heroes.set_item_metadata(0, app.run_heroes[0].id)
+	_check(app._sewing_context() == context, "all negative fixtures restore authentic source")
 
 
 func _finish_shop() -> void:

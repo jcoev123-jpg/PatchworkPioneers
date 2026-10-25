@@ -18,6 +18,8 @@ const LEFT := "left"
 var _node_id: String = ""
 var _status: String = INVALID
 var _purchases: RunShopPurchases = null
+var _paid_patch: String = ""
+var _displacement_settled := false
 
 
 func _init(node_id: Variant = null, party_ids: Variant = null,
@@ -53,6 +55,12 @@ func is_open() -> bool:
 
 func is_consumed() -> bool:
 	return _status == USED or _status == LEFT
+
+
+## Route teardown retires an open generation without publishing a decision.
+func close() -> void:
+	if _status == OPEN:
+		_status = LEFT
 
 
 ## Complete detached visit: the node, its lifecycle status, the current run
@@ -91,7 +99,21 @@ func choose_purchase(node_id: Variant, expected_state: Variant,
 			or not (paid.get("price") is int) or paid["price"] < 0:
 		return _rejected()
 	_status = USED
+	_paid_patch = id if kind == "trinket" else ""
 	return _receipt("buy", kind, id, paid["price"])
+
+
+## The sewing bridge settles the destroyed occupied patch in this SAME paid
+## ledger. It cannot debit again or settle a different acquisition/replay.
+func settle_displaced_patch(displaced: String, acquired: String,
+		expected: Dictionary) -> bool:
+	if _status != USED or _displacement_settled or _paid_patch != acquired \
+		or expected != read_state():
+		return false
+	if not _purchases.settle_displaced_patch(displaced, acquired, expected.state):
+		return false
+	_displacement_settled = true
+	return true
 
 
 ## Leaves the Peddler without spending or changing any ledger. The same exact

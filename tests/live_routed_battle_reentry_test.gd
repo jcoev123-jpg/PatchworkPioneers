@@ -106,7 +106,7 @@ func _entry_state() -> Array:
 		app.party_carryover, app.party_carryover.read_state(), app.fight_selection,
 		app.fight_selection._bound_map, app.fight_selection._selected.duplicate(true),
 		app.act_outcome.get_state(), app.fight_rewards, app.fight_reward_claimed,
-		app.run_removal_count, app.shop_visit.get_state() if app.shop_visit != null else {},
+		app.run_removal_count, app.peddler_visit.read_state() if app.peddler_visit != null else {},
 		app.rest_recovery.is_consumed() if app.rest_recovery != null else false,
 		app.get_node("LiveEnemyRoster").panel, app.terminal_result_panel,
 		app.terminal_result_panel.get_presented_status() if app.terminal_result_panel != null else "",
@@ -267,7 +267,7 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 			"Shop":
 				_check(is_instance_valid(app.visit_backdrop) and app.visit_backdrop.visit_kind == "Shop",
 					"Shop visit mounts its own art bed")
-				await _click(app.shop_continue_button)
+				await _click(app.peddler_leave_button)
 				_check(app.visit_backdrop == null, "Shop continuation releases the visit art bed")
 		await _check_connected_book()
 		_check(app.route_view != null and app.route_view.is_visible_in_tree(), "completed visit keeps connected chooser live")

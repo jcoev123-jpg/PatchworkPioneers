@@ -120,7 +120,7 @@ func _expected_view(app, screen: String) -> bool:
 		"rest":
 			return _visible(app.rest_view) and app.rest_recovery != null
 		"shop":
-			return _visible(app.shop_view) and app.shop_visit != null
+			return _visible(app.shop_view) and app.peddler_visit != null and app.peddler_visit.is_open()
 		"event":
 			return _visible(app.quiet_spool_panel) and app.quiet_spool_panel.has_open_event()
 	return false

@@ -244,7 +244,7 @@ func _complete_node(kind: String, mode: int, step: int) -> void:
 			_check(not app._sewing_closed and not app.sewing_view.confirm_button.disabled, "Leave previews before explicit confirmation")
 			await _click(app.sewing_view.confirm_button)
 		"Shop":
-			await _click(app.shop_continue_button)
+			await _click(app.peddler_leave_button)
 		"Event":
 			if is_instance_valid(app.quiet_spool_panel):
 				_check(app.route_view == null and not app._can_choose_connected_route(),

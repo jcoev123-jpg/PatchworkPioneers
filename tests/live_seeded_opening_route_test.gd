@@ -77,7 +77,7 @@ func _projected_book(app) -> void:
 		if kind == "Rest":
 			_check(button.tooltip_text == "Campfire preview: opens the legacy Rest screen to heal or upgrade a card.", "honest legacy Rest help")
 		elif kind == "Shop":
-			_check(button.tooltip_text == "Peddler preview: opens the legacy Shop screen to buy cards or remove a card.", "honest legacy Shop help")
+			_check(button.tooltip_text == "Peddler: buy one of three cards or one patch, or Leave for free.", "honest one-choice Peddler help")
 		var font: Font = button.get_theme_font("font")
 		_check(font.get_string_size(button.text, HORIZONTAL_ALIGNMENT_LEFT, -1,
 			button.get_theme_font_size("font_size")).x <= button.size.x - 72,
@@ -633,14 +633,16 @@ func _run() -> void:
 					"expected_snapshot": source.duplicate(true)}))
 				await _activate(app.unpicker_leave_button, mode == 1)
 			elif kind == "Shop":
-				_check(app.shop_visit != null and app.shop_purchases != null and app.shop_view.is_visible_in_tree(),
+				_check(app.peddler_visit != null and app.peddler_visit.is_open() and app.shop_view.is_visible_in_tree(),
 					"real seeded Shop visit mounted before any battle")
-				stale.append(app.shop_back_button.pressed.get_connections()[0].callable)
+				stale.append(app.peddler_leave_button.pressed.get_connections()[0].callable)
 				var shop_before := _record(app)
-				app._buy_at_shop(app.shop_visit, app.shop_purchases, app.shop_buy_button)
-				app._remove_at_shop(app.shop_visit, app.shop_remove_button)
+				for choice in app.peddler_buttons:
+					choice.pressed.get_connections()[0].callable.call()
+				_check(app.shop_visit == null and app.shop_remove_button == null,
+					"Peddler exposes no legacy removal ledger or action")
 				_check(_record(app) == shop_before, "zero-gold Shop cannot spend or remove")
-				await _activate(app.shop_continue_button, mode == 1)
+				await _activate(app.peddler_leave_button, mode == 1)
 			elif kind in ["Event", "Treasure"]:
 				if kind == "Event":
 					_check(app.route_view == null and app.quiet_spool_panel != null, "first Event requires authored choice")
@@ -689,7 +691,9 @@ func _run() -> void:
 					await _activate(app.unpicker_leave_button, mode == 1)
 				if fixture[0] == "Event":
 					await _activate(app.quiet_spool_panel.get_choice_buttons()[1], mode == 1)
-				var back: Button = app.rest_back_button if fixture[0] == "Rest" else app.shop_back_button if fixture[0] == "Shop" else app.route_back_button
+				if fixture[0] == "Shop":
+					await _activate(app.peddler_leave_button, mode == 1)
+				var back: Button = app.rest_back_button if fixture[0] == "Rest" else app.route_back_button
 				await _activate(back, mode == 1)
 			else:
 				var cancelled_book: int = app.route_book_backdrop.get_instance_id()

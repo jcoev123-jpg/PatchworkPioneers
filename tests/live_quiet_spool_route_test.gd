@@ -196,8 +196,8 @@ func _effects() -> Array:
 		app.run_rng.state, carry.read_state(), carry.torn.read_state(),
 		carry._wardrobe.get_snapshot() if carry._wardrobe != null else {},
 		app.act_outcome.get_state(), _state() if app.deck != null else {},
-		app.shop_visit.get_state() if app.shop_visit != null else {},
-		app.shop_purchases.get_state() if app.shop_purchases != null else {}]
+		app.peddler_visit.read_state() if app.peddler_visit != null else {},
+		app.peddler_visit.read_state().state if app.peddler_visit != null else {}]
 
 
 func _event_state() -> Array:

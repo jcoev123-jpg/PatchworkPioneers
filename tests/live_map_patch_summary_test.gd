@@ -176,9 +176,9 @@ func _summary_negatives() -> void:
 ## The authored stock is drawn from the live run RNG, so the search widens past
 ## the first qualifying route instead of assuming one seed always stocks a coat.
 func _coat_fixture() -> Dictionary:
-	var first_seed := 4867 # Verified seven-kind route with a genuine coat listing.
+	var first_seed := 63267 # Verified seven-kind route with a genuine coat listing.
 	for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
-		var fixture := _continuation_fixture("Rest", first_seed, 30000)
+		var fixture := _continuation_fixture("Rest", first_seed, first_seed + 40000)
 		if fixture.is_empty() or not await _routed_win(fixture, true):
 			return {}
 		await _click(app.reward_buttons[3])
@@ -186,9 +186,10 @@ func _coat_fixture() -> Dictionary:
 		app.session_gold = 400
 		await _click(_route_action(fixture.shop))
 		var found := false
-		for offer in app.shop_purchases.get_stock().trinkets:
+		for offer in app.peddler_visit.read_state().stock.trinkets:
 			found = found or offer.id == "quilted_coat"
-		await _click(app.shop_back_button)
+		app._return_to_title()
+		await _frames()
 		if found:
 			return fixture
 		first_seed = fixture.seed + 1
@@ -200,9 +201,9 @@ func _coat_fixture() -> Dictionary:
 func _slot_fixture(downed: bool) -> Dictionary:
 	# Independently discovered seven-kind route starts; the real stock check
 	# below remains mandatory and can continue searching if the catalog grows.
-	var first_seed := 5056 if downed else 7252
+	var first_seed := 35902 if downed else 1790
 	for attempt in range(80):
-		var fixture := _continuation_fixture("Rest", first_seed, 30000)
+		var fixture := _continuation_fixture("Rest", first_seed, first_seed + 40000)
 		if fixture.is_empty():
 			return {}
 		if not await _routed_win(fixture, downed):
@@ -212,9 +213,10 @@ func _slot_fixture(downed: bool) -> Dictionary:
 		app.session_gold = 400
 		await _click(_route_action(fixture.shop))
 		var found := false
-		for offer in app.shop_purchases.get_stock().trinkets:
+		for offer in app.peddler_visit.read_state().stock.trinkets:
 			found = found or offer.id in ["stitched_badge", "spare_spool"]
-		await _click(app.shop_back_button)
+		app._return_to_title()
+		await _frames()
 		if found:
 			return fixture
 		first_seed = fixture.seed + 1
@@ -247,26 +249,23 @@ func _run() -> void:
 				_check(_summary_text() == ["No patches sewn"], "pre-Shop route has no invented ownership")
 				app.session_gold = 400 # Funding only; stock, sewing and route are real.
 				await _activate_summary(_route_action(fixture.shop), keyboard)
-				_check(app.shop_patch_offers.item_count > 0 and not app.shop_patch_buy_button.disabled, "real Shop offers affordable patch")
+				_check(app.peddler_visit.read_state().stock.trinkets.size() > 0 and not app.peddler_buttons[3].disabled, "real Shop offers affordable patch")
 				var slot_only := -1
-				for index in range(app.shop_patch_offers.item_count):
-					if app.shop_patch_offers.get_item_metadata(index) in ["stitched_badge", "spare_spool"]:
+				for index in range(app.peddler_visit.read_state().stock.trinkets.size()):
+					if app.peddler_visit.read_state().stock.trinkets[index].id in ["stitched_badge", "spare_spool"]:
 						slot_only = index
 				_check(slot_only >= 0, "real stock contains a slot-only patch")
 				if slot_only < 0:
 					break
-				app.shop_patch_offers.select(slot_only)
-				app.shop_patch_offers.item_selected.emit(slot_only)
-				var id: String = app.shop_patch_offers.get_item_metadata(slot_only)
-				app.shop_patch_heroes.select(2)
-				app.shop_patch_heroes.item_selected.emit(2)
-				await _activate_summary(app.shop_patch_buy_button, keyboard)
+				var id: String = app.peddler_visit.read_state().stock.trinkets[slot_only].id
+				app.peddler_heroes.select(2)
+				app.peddler_heroes.item_selected.emit(2)
+				await _activate_summary(app.peddler_buttons[3], keyboard)
 				var carry: RunTornCarryover = app.party_carryover
 				var wardrobe: RunPatchWardrobe = carry._wardrobe
 				_check(wardrobe != null and wardrobe.get_snapshot().owned.has(id), "legal transaction owns sewn stock ID")
 				var slot: String = wardrobe.get_snapshot().definitions[id]
 				_check(wardrobe.get_snapshot().worn.tinker[slot] == id, "transaction sews exact slot on Tinker")
-				await _activate_summary(app.shop_continue_button, keyboard)
 				_check(app.route_book_backdrop.get_node("FloorHint").text == "01 · Fight\n02 · Shop\nNext: Meadow · 03",
 					"real Shop completion adds the second committed stop")
 				var before := _summary_state()
@@ -334,26 +333,24 @@ func _run() -> void:
 			_check(_summary_text() == ["No patches sewn"], "legitimate pre-Shop coat run has no invented ownership")
 			app.session_gold = 400 # Funding only; stock, sewing and route are real.
 			await _activate_summary(_route_action(coat_fixture.shop), false)
-			var stock: Array = app.shop_purchases.get_stock().trinkets
+			var stock: Array = app.peddler_visit.read_state().stock.trinkets
 			var coat_index := -1
 			for index in range(stock.size()):
 				if stock[index].id == "quilted_coat":
 					coat_index = index
-			_check(coat_index >= 0 and app.shop_patch_offers.get_item_metadata(coat_index) == "quilted_coat",
+			_check(coat_index >= 0 and app.peddler_visit.read_state().stock.trinkets[coat_index].id == "quilted_coat",
 				"seeded Shop stock genuinely lists the authored coat patch")
 			if coat_index < 0:
-				await _activate_summary(app.shop_back_button, false)
+				app._return_to_title()
+				await _frames()
 			else:
-				app.shop_patch_offers.select(coat_index)
-				app.shop_patch_offers.item_selected.emit(coat_index)
-				app.shop_patch_heroes.select(2)
-				app.shop_patch_heroes.item_selected.emit(2)
-				await _activate_summary(app.shop_patch_buy_button, false)
+				app.peddler_heroes.select(2)
+				app.peddler_heroes.item_selected.emit(2)
+				await _activate_summary(app.peddler_buttons[3], false)
 				var carry: RunTornCarryover = app.party_carryover
 				var wardrobe: RunPatchWardrobe = carry._wardrobe
 				_check(wardrobe != null and wardrobe.get_snapshot().worn.tinker.COAT == "quilted_coat",
 					"legal transaction sews the coat on Tinker's COAT slot")
-				await _activate_summary(app.shop_continue_button, false)
 				var before := _summary_state()
 				var texts := _assert_summary()
 				_check(texts.size() == 3 and str(texts[2]).contains("COAT: quilted_coat (inactive) - +6 maximum HP"),

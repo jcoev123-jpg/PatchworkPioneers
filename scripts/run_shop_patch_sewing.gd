@@ -121,3 +121,74 @@ static func purchase_and_sew(purchases: RunShopPurchases, visit: RunShopVisit,
 
 static func _id(value: Variant) -> bool:
 	return value is String and not value.is_empty() and value == value.strip_edges()
+
+
+## Peddler adaptation: one authoritative paid ledger, with the same complete
+## wardrobe/ownership/operation preflight as the legacy Shop bridge above.
+static func purchase_peddler_and_sew(visit: RunPeddlerVisit,
+		wardrobe: RunPatchWardrobe, node_id: String, patch_id: String,
+		hero_id: String, slot: Variant, operation_id: String,
+		expected_visit: Dictionary, expected_wardrobe: Dictionary) -> Dictionary:
+	var rejected := {"ok": false}
+	if visit == null or not visit.is_open() or wardrobe == null or not wardrobe.is_valid() \
+		or expected_visit != visit.read_state() or expected_wardrobe != wardrobe.get_snapshot() \
+		or expected_visit.node_id != node_id or not _id(operation_id) \
+		or not slot is String or not SLOTS.has(slot):
+		return rejected
+	var p: Dictionary = expected_visit.state
+	var w := expected_wardrobe
+	var reconstructed := RunPatchWardrobe.new(w.heroes, w.owned, wardrobe._definition_records(),
+		w.scraps, w.gold, w.cards, w.seed, true)
+	if not reconstructed.is_valid():
+		return rejected
+	if w.cards != p.deck or w.owned != p.trinkets or w.gold != p.gold \
+		or w.rest_id != "" or w.operation_ids.has(operation_id) \
+		or w.heroes.size() != 3 or p.party_ids.size() != 3 \
+		or not p.party_ids.has(hero_id) or p.trinkets.has(patch_id) \
+		or w.definitions.get(patch_id) != slot:
+		return rejected
+	var seen := {}
+	if w.worn.size() != 3:
+		return rejected
+	for i in range(3):
+		var owner: String = p.party_ids[i]
+		if not w.heroes[i] is Dictionary or w.heroes[i].get("id") != owner or not w.worn.get(owner) is Dictionary \
+			or w.worn[owner].size() != 3:
+			return rejected
+		for named_slot in SLOTS:
+			var worn_id: Variant = w.worn[owner].get(named_slot)
+			if not worn_id is String:
+				return rejected
+			if worn_id == "":
+				continue
+			if seen.has(worn_id) or not p.trinkets.has(worn_id) \
+				or w.definitions.get(worn_id) != named_slot:
+				return rejected
+			seen[worn_id] = true
+	var displaced: String = w.worn[hero_id][slot]
+	if seen.has(patch_id) or not w.scraps is int or w.scraps < 0 \
+		or (displaced != "" and w.scraps == MAX_INT):
+		return rejected
+	var offer: Dictionary = {}
+	for listing in expected_visit.stock.trinkets:
+		if listing.id == patch_id:
+			offer = listing
+	if offer.is_empty() or offer.sold or p.gold < offer.price:
+		return rejected
+	# No mutation precedes this point. These exact snapshots guarantee all
+	# synchronous downstream steps, including replacement and fresh operation ID.
+	var paid := visit.choose_purchase(node_id, p, expected_visit.stock, "trinket", patch_id)
+	assert(paid.ok, "Preflight must guarantee Peddler purchase")
+	var refreshed := wardrobe.refresh_run_context(w.heroes, paid.state.trinkets,
+		w.scraps, paid.state.gold, paid.state.deck, w)
+	var sewn := wardrobe.sew(patch_id, hero_id, slot, operation_id, wardrobe.get_snapshot())
+	var settled := true
+	if displaced != "":
+		settled = visit.settle_displaced_patch(displaced, patch_id, visit.read_state())
+	assert(refreshed and sewn.ok and settled, "Peddler sewing preflight must fully commit")
+	# Publish the exact service receipt after ownership settlement, not the
+	# transient prefix that still owned the destroyed patch.
+	paid.state = visit.read_state().state
+	paid.stock = visit.read_state().stock
+	return {"ok": true, "receipt": paid, "sew_receipt": sewn.receipt,
+		"wardrobe_state": wardrobe.get_snapshot()}
