@@ -2,6 +2,11 @@ class_name CombatEnemyPhase
 extends RefCounted
 ## Stage every source in order, then publish once. No turn or RNG ownership.
 
+## Authored content flag: this enemy's own attack also inflicts Bleed 1 on the
+## hero who really loses HP to it. Strictly boolean or absent.
+const BLEED_ON_ATTACK_FIELD := "bleed_on_attack"
+const BLEED_ON_ATTACK_AMOUNT := 1
+
 func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		reactions: CombatWardenGuardReactions = null, policy_targets := false) -> Dictionary:
 	var failure := {"ok": false, "events": []}
@@ -9,6 +14,10 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		return failure
 	var heroes := party.get_heroes()
 	var roster := enemies.get_enemies()
+	# Malformed authored metadata fails the whole phase before any actor is
+	# staged or published; an absent flag stays valid.
+	if not _bleed_metadata_valid(roster):
+		return failure
 	var validator := CombatStatusTurnBatch.new()
 	if not validator.tick_side("heroes", heroes).ok or not validator.tick_side("enemies", roster).ok:
 		return failure
@@ -58,6 +67,12 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 					if not preview.get("ok", false):
 						return failure
 					actual_target = preview.actual_target_position
+				# The sting's status is judged by the recipient's real HP change,
+				# so Block and a Guard redirect decide it, not the announcement.
+				var sting: bool = _stings(staged_enemies, source)
+				var hp_before: int = -1
+				if sting and actual_target >= 1 and actual_target <= CombatParty.PARTY_SIZE:
+					hp_before = staged_party.get_hero(actual_target).get("hp", 0)
 				var damage := CombatStatuses.new().adjusted_attack_damage(effective.amount,
 					staged_enemies.get_enemy(source).get("statuses", {}),
 					staged_party.get_hero(actual_target).get("statuses", {}))
@@ -79,6 +94,11 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 					if not result.ok:
 						return failure
 					event.applied = result.events[0].applied
+				# A slain attacker (Thorns retaliation) never lands its sting, and
+				# the bonus status must not break the batch's atomicity.
+				if sting and not staged_enemies.is_slain(source) \
+						and not _sting_bleed(staged_party, actual_target, hp_before):
+					return failure
 			elif effective.type == "block":
 				var result := CombatEnemyBlocks.execute_blocks(staged_enemies, [effective])
 				if not result.ok:
@@ -122,3 +142,52 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		enemies._enemies[index].hp = staged_enemies._enemies[index].hp
 		enemies._enemies[index].block = staged_enemies._enemies[index].block
 	return {"ok": true, "events": events}
+
+
+## True only for a roster record that authors the boolean bleeding sting.
+static func _stings(enemies: CombatEnemies, source: int) -> bool:
+	if enemies == null or not enemies.is_valid():
+		return false
+	var value: Variant = enemies.get_enemy(source).get(BLEED_ON_ATTACK_FIELD, false)
+	return value is bool and value == true
+
+
+## The optional authored flag is content, never a number or a truthy string:
+## one malformed record fails the whole phase before any beat is staged.
+static func _bleed_metadata_valid(roster: Array) -> bool:
+	for enemy in roster:
+		if not enemy is Dictionary:
+			return false
+		if enemy.has(BLEED_ON_ATTACK_FIELD) \
+				and not (enemy[BLEED_ON_ATTACK_FIELD] is bool):
+			return false
+	return true
+
+
+## Add exactly one Bleed to the hero who actually lost HP to the sting, already
+## staged so it publishes with the rest of the phase. A fully blocked hit, a
+## downed recipient or a stale reading is a no-op; an overflowing counter fails.
+func _sting_bleed(staged_party: CombatParty, position: int, hp_before: int) -> bool:
+	if staged_party == null or not staged_party.is_valid():
+		return false
+	if position < 1 or position > CombatParty.PARTY_SIZE or hp_before < 0:
+		return true
+	var hero: Dictionary = staged_party._heroes[position - 1]
+	var hp_after: Variant = hero.get("hp")
+	if not hp_after is int:
+		return false
+	if hp_after <= 0 or hp_after >= hp_before:
+		return true
+	var raw_statuses: Variant = hero.get("statuses", {})
+	if not raw_statuses is Dictionary:
+		return false
+	var statuses: Dictionary = raw_statuses
+	var previous: Variant = statuses.get("bleed", 0)
+	if not previous is int or previous < 0:
+		return false
+	if previous >= CombatStatuses.MAX_INT:
+		return false
+	if not hero.has("statuses"):
+		hero["statuses"] = {}
+	hero["statuses"]["bleed"] = previous + BLEED_ON_ATTACK_AMOUNT
+	return true
