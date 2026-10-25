@@ -6,10 +6,12 @@ extends SceneTree
 ## mechanics (the different-owner +5, the Guard redirect, the Thorns return
 ## damage and their expiry) belong to CardKeywordGlossary's Help rows.
 ##
-## Every record below is read from the shipped Warden/Tinker pools; the only
-## hand-written records are the in-memory unknown/malformed probes, which must
-## stay honest instead of inventing mechanics. The six Rag Duelist variants are
-## read from their real V3 pool; their status effects are printed, not resolved.
+## Every record below is read from the shipped Warden/Tinker/Lantern Monk pools
+## and the V3 Rag Duelist and Lantern Monk catalogs; the only hand-written
+## records are the in-memory unknown/malformed probes, which must stay honest
+## instead of inventing mechanics. The six Rag Duelist variants plus the six
+## authored one-shot Dodge records are read from their real catalogs; their
+## effects are printed, not resolved.
 
 ## The exact short face each shipped base/'+' record must print.
 const FACE_CASES := [
@@ -41,8 +43,8 @@ const LEGACY_KEYWORD_ORDER := ["bleed", "weak", "exposed", "pinned", "unravel",
 	"guarding", "thorns"]
 ## The twelve Lantern Monk record variants that author a Blind: two starter and
 ## four reward-pool bases plus each real '+' variant. Looked up by named ID only,
-## so no catalog total or ordered ID list is asserted here. Moth Cloud keeps the
-## honest fallback for its unsupported `exhaust`, so only its Blind is named.
+## so no catalog total or ordered ID list is asserted here. Moth Cloud now names
+## its authentic `exhaust: true` beside the Blind, so its face is fully described.
 const LANTERN_MONK_FACE_CASES := [
 	{"id": "lantern_monk_wick_spark", "target": "enemy_single",
 		"line": "Deal 4. Blind."},
@@ -64,10 +66,30 @@ const LANTERN_MONK_FACE_CASES := [
 		"line": "Deal 3. Exposed 1. Blind."},
 	{"id": "lantern_monk_snuff_flame_plus", "target": "enemy_single",
 		"line": "Deal 4. Exposed 2. Blind."},
-	{"id": "lantern_monk_moth_cloud", "target": "enemy_all", "unknown": true,
-		"line": "Blind to all. " + UNKNOWN_FALLBACK},
-	{"id": "lantern_monk_moth_cloud_plus", "target": "enemy_all", "unknown": true,
-		"line": "Blind to all. " + UNKNOWN_FALLBACK},
+	{"id": "lantern_monk_moth_cloud", "target": "enemy_all",
+		"line": "Blind to all. Exhaust."},
+	{"id": "lantern_monk_moth_cloud_plus", "target": "enemy_all",
+		"line": "Blind to all. Exhaust."},
+]
+## AC1: the six authored one-shot Dodge records, looked up by named ID in their
+## real V3 catalog. The four Rag Duelist Cape cards keep their self recipient and
+## print the bare one-shot clause; the two Lantern Monk Moth Shroud records keep
+## their authored ally Block and join the same clause into one short sentence.
+const DODGE_FACE_CASES := [
+	{"catalog": "rag_duelist_starter", "id": "rag_duelist_cape_slip",
+		"owner": "rag_duelist", "target": "self", "line": "Dodge the next attack."},
+	{"catalog": "rag_duelist_starter", "id": "rag_duelist_cape_slip_plus",
+		"owner": "rag_duelist", "target": "self", "line": "Dodge the next attack."},
+	{"catalog": "rag_duelist_pool", "id": "rag_duelist_cape_flourish",
+		"owner": "rag_duelist", "target": "self", "line": "Dodge the next attack."},
+	{"catalog": "rag_duelist_pool", "id": "rag_duelist_cape_flourish_plus",
+		"owner": "rag_duelist", "target": "self", "line": "Dodge the next attack."},
+	{"catalog": "lantern_monk_pool", "id": "lantern_monk_moth_shroud",
+		"owner": "lantern_monk", "target": "ally_single", "block": 6,
+		"line": "Ally gains 6 Block and dodges the next attack."},
+	{"catalog": "lantern_monk_pool", "id": "lantern_monk_moth_shroud_plus",
+		"owner": "lantern_monk", "target": "ally_single", "block": 8,
+		"line": "Ally gains 8 Block and dodges the next attack."},
 ]
 
 var failures: Array[String] = []
@@ -75,6 +97,7 @@ var checks := 0
 var warden := WardenPoolCards.new()
 var tinker := TinkerPoolCards.new()
 var rag_duelist := RagDuelistPoolCards.new()
+var rag_duelist_starter := RagDuelistStarterCards.new()
 var lantern_monk_starter := LanternMonkStarterCards.new()
 var lantern_monk_pool := LanternMonkPoolCards.new()
 
@@ -92,6 +115,9 @@ func _initialize() -> void:
 	_test_rag_duelist_malformed()
 	_test_lantern_monk_faces()
 	_test_blind_malformed_fallbacks()
+	_test_dodge_faces()
+	_test_moth_cloud_exhaust()
+	_test_dodge_and_exhaust_malformed()
 	_check(randi() == expected_global, "short-line formatting draws no global RNG")
 	for failure in failures:
 		printerr(failure)
@@ -316,8 +342,9 @@ func _test_rag_duelist_faces() -> void:
 			"formatting never mutates the shipped record: " + card_id)
 		_check(CardShortRules.line(rag_duelist.get_definition(card_id)) == expected_line,
 			"repeated formatting is identical: " + card_id)
-	# The five other authored entries are not silently reinterpreted: the two that
-	# only use understood keys keep a complete face, and the three with a key this
+	# The remaining authored entries are not silently reinterpreted: the ones that
+	# only use understood keys keep a complete face (the Cape Flourish records are
+	# proven with the one-shot Dodge fixtures), and the ones with a key this
 	# formatter cannot read still say so instead of hiding it.
 	for card_id: String in ["rag_duelist_needle_prick", "rag_duelist_needle_prick_plus",
 			"rag_duelist_velvet_feint", "rag_duelist_velvet_feint_plus"]:
@@ -327,7 +354,6 @@ func _test_rag_duelist_faces() -> void:
 		_check(not line.contains("Riposte") and not line.contains("Tangled"),
 			"no Riposte/Tangled is invented for %s (%s)" % [card_id, line])
 	for card_id: String in ["rag_duelist_needle_lunge", "rag_duelist_needle_lunge_plus",
-			"rag_duelist_cape_flourish", "rag_duelist_cape_flourish_plus",
 			"rag_duelist_needle_barrage", "rag_duelist_needle_barrage_plus"]:
 		var line := CardShortRules.line(rag_duelist.get_definition(card_id))
 		_check(line.contains(UNKNOWN_FALLBACK),
@@ -647,4 +673,207 @@ func _test_blind_malformed_fallbacks() -> void:
 	CardShortRules.line(sibling)
 	_check(not snuff.is_empty() and snuff == snuff_before,
 		"malformed probes cannot alter a shipped Lantern Monk record")
+
+
+## One detached record from the real V3 catalog named by the fixture.
+func _authored_definition(catalog_id: String, card_id: String) -> Dictionary:
+	match catalog_id:
+		"rag_duelist_starter":
+			return rag_duelist_starter.get_definition(card_id)
+		"rag_duelist_pool":
+			return rag_duelist.get_definition(card_id)
+		"lantern_monk_pool":
+			return lantern_monk_pool.get_definition(card_id)
+	return {}
+
+
+## AC1: the six authored one-shot Dodge records print their exact terse face,
+## read from the real V3 catalogs by named ID (never a catalog total or ID list).
+## Each record's owner, recipient and descriptor are checked first, so an empty
+## or unrelated record cannot pass. The wording is proven to be a printed design
+## statement only: it claims no live enemy attack is cancelled.
+func _test_dodge_faces() -> void:
+	for entry in DODGE_FACE_CASES:
+		var catalog_id := str(entry["catalog"])
+		var card_id := str(entry["id"])
+		var expected_line := str(entry["line"])
+		var definition := _authored_definition(catalog_id, card_id)
+		_check(not definition.is_empty(),
+			"authored Dodge catalog record exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var effects: Dictionary = definition.get("effects", {})
+		_check(str(definition.get("owner", "")) == str(entry["owner"]),
+			"authored Dodge owner: " + card_id)
+		_check(str(definition.get("target_kind", "")) == str(entry["target"]),
+			"authored Dodge recipient: " + card_id)
+		_check(effects.get("dodge_next_attack") is int
+			and int(effects["dodge_next_attack"]) == 1,
+			"authored Dodge is exactly the integer one: " + card_id)
+		if effects.has("duration"):
+			_check(effects["duration"] is int and int(effects["duration"]) == 1,
+				"authored Dodge duration is the one-shot one: " + card_id)
+		if entry.has("block"):
+			_check(effects.get("block") is int
+				and int(effects["block"]) == int(entry["block"]),
+				"authored ally Block read from the catalog: " + card_id)
+		var before := definition.duplicate(true)
+		var described := CardShortRules.describe(definition)
+		var line := str(described.get("line", ""))
+		_check(described.get("known") == true, "face record is described: " + card_id)
+		_check(not bool(described.get("unknown", true))
+			and not CardShortRules.has_unknown(definition),
+			"a genuine Dodge needs no fallback: %s (%s)" % [card_id, line])
+		_check(line == expected_line,
+			"short face for %s: got '%s', want '%s'" % [card_id, line, expected_line])
+		_check(line.count("Dodge") + line.count("dodges") == 1,
+			"exactly one Dodge clause: %s (%s)" % [card_id, line])
+		_check(not line.to_lower().contains("turn"),
+			"the face invents no Dodge duration: %s (%s)" % [card_id, line])
+		for word in HELP_ONLY_WORDS:
+			_check(not line.contains(word),
+				"face omits Help-only wording '%s': %s (%s)" % [word, card_id, line])
+		var lowered := line.to_lower()
+		_check(not lowered.contains("cancel") and not lowered.contains("miss")
+			and not lowered.contains("pile") and not lowered.contains("discard"),
+			"the face claims no live Dodge rule: %s (%s)" % [card_id, line])
+		_check(definition == before
+			and _authored_definition(catalog_id, card_id) == before,
+			"formatting never mutates the shipped record: " + card_id)
+		_check(CardShortRules.line(_authored_definition(catalog_id, card_id))
+			== expected_line, "repeated formatting is identical: " + card_id)
+		_check(CardShortRules.line(definition) == expected_line,
+			"formatting the same record twice is identical: " + card_id)
+
+
+## AC2: the two real Moth Cloud records keep their one-shot Blind phrase and now
+## name their authentic `exhaust: true` honestly, yielding exactly
+## "Blind to all. Exhaust." The face claims no live discard or exhaust pile: the
+## sentence only prints the authored card descriptor.
+func _test_moth_cloud_exhaust() -> void:
+	for pair in [["lantern_monk_moth_cloud", 2], ["lantern_monk_moth_cloud_plus", 1]]:
+		var card_id := str(pair[0])
+		var definition := lantern_monk_pool.get_definition(card_id)
+		_check(not definition.is_empty(),
+			"Moth Cloud catalog record exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var effects: Dictionary = definition.get("effects", {})
+		_check(str(definition.get("owner", "")) == "lantern_monk",
+			"authored Moth Cloud owner: " + card_id)
+		_check(str(definition.get("target_kind", "")) == "enemy_all",
+			"authored Moth Cloud target stays every enemy: " + card_id)
+		_check(int(definition.get("cost", -1)) == int(pair[1]),
+			"authored Moth Cloud cost: " + card_id)
+		_check(effects.get("blind_next_attack") is bool
+			and bool(effects["blind_next_attack"]),
+			"authored Moth Cloud Blind is the boolean true: " + card_id)
+		_check(effects.get("exhaust") is bool and bool(effects["exhaust"]),
+			"authored Moth Cloud exhaust is the boolean true: " + card_id)
+		var before := definition.duplicate(true)
+		var line := CardShortRules.line(definition)
+		_check(line == "Blind to all. Exhaust.",
+			"short face for %s: got '%s'" % [card_id, line])
+		_check(line.find("Blind") < line.find("Exhaust"),
+			"Exhaust follows the Blind sentence: %s (%s)" % [card_id, line])
+		_check(not line.contains(UNKNOWN_FALLBACK)
+			and not CardShortRules.has_unknown(definition),
+			"the authored exhaust key is now described honestly: " + card_id)
+		var lowered := line.to_lower()
+		_check(not lowered.contains("pile") and not lowered.contains("discard")
+			and not lowered.contains("after use"),
+			"the face claims no live exhaust transaction: %s (%s)" % [card_id, line])
+		_check(definition == before
+			and lantern_monk_pool.get_definition(card_id) == before,
+			"formatting never mutates Moth Cloud: " + card_id)
+		_check(CardShortRules.line(lantern_monk_pool.get_definition(card_id))
+			== "Blind to all. Exhaust.", "repeated formatting is identical: " + card_id)
+
+
+## AC3: every unsupported Dodge/Exhaust shape keeps the honest fallback. Adding
+## the two keys to KNOWN_EFFECT_KEYS must not turn a malformed value or a wrong
+## recipient into a valid effect, so each probe still reports unknown and prints
+## no Dodge/Exhaust phrase. Nothing here promises a live evade or exhaust pile.
+func _test_dodge_and_exhaust_malformed() -> void:
+	# A genuine self Dodge is the positive control for every negative below.
+	var genuine := {"id": "card_short_rules_dodge_control", "target_kind": "self",
+		"effects": {"dodge_next_attack": 1}}
+	_check(CardShortRules.line(genuine) == "Dodge the next attack.",
+		"the duration-less self Dodge is the positive control")
+	for value: Variant in [0, 2, -1, true, false, "1", 1.0]:
+		var probe := {"id": "card_short_rules_bad_dodge", "target_kind": "self",
+			"effects": {"dodge_next_attack": value}}
+		var before := probe.duplicate(true)
+		var line := CardShortRules.line(probe)
+		_check(line == UNKNOWN_FALLBACK,
+			"a malformed Dodge %s falls back honestly: %s" % [str(value), line])
+		_check(not line.to_lower().contains("dodge"),
+			"no Dodge phrase is invented for %s" % str(value))
+		_check(bool(CardShortRules.describe(probe).get("unknown", false)),
+			"a known key with an unsupported shape still reports unknown: " + str(value))
+		_check(probe == before,
+			"the malformed Dodge probe is never mutated: " + str(value))
+	# A genuine integer one on the wrong recipient is not a self/ally Dodge.
+	for target: String in ["enemy_single", "enemy_all", "enemy_random", "party_all"]:
+		var probe := {"id": "card_short_rules_dodge_wrong_target",
+			"target_kind": target, "effects": {"dodge_next_attack": 1}}
+		var before := probe.duplicate(true)
+		var line := CardShortRules.line(probe)
+		_check(line == UNKNOWN_FALLBACK,
+			"a Dodge on %s falls back honestly: %s" % [target, line])
+		_check(not line.to_lower().contains("dodge"),
+			"no Dodge phrase is printed for a %s recipient" % target)
+		_check(probe == before,
+			"the wrong-target Dodge probe is never mutated: " + target)
+	# The optional duration must still be the authored one turn when present.
+	for case in [["integer 2", 2], ["integer 0", 0], ["text", "1"],
+			["float", 1.0], ["true", true]]:
+		var probe := {"id": "card_short_rules_dodge_bad_duration",
+			"target_kind": "self",
+			"effects": {"dodge_next_attack": 1, "duration": case[1]}}
+		var before := probe.duplicate(true)
+		var line := CardShortRules.line(probe)
+		_check(line == UNKNOWN_FALLBACK,
+			"a Dodge with a %s duration falls back honestly: %s" % [str(case[0]), line])
+		_check(not line.to_lower().contains("dodge"),
+			"no Dodge phrase is printed for a %s duration" % str(case[0]))
+		_check(probe == before,
+			"the %s duration probe is never mutated" % str(case[0]))
+	# Exhaust is only the boolean true, proven beside the real Moth Cloud context.
+	for value: Variant in [0, 1, -1, false, "true", 1.0]:
+		var probe := {"id": "card_short_rules_bad_exhaust", "owner": "lantern_monk",
+			"target_kind": "enemy_all",
+			"effects": {"blind_next_attack": true, "exhaust": value}}
+		var before := probe.duplicate(true)
+		var line := CardShortRules.line(probe)
+		_check(line == "Blind to all. " + UNKNOWN_FALLBACK,
+			"a malformed exhaust %s falls back honestly: %s" % [str(value), line])
+		_check(not line.contains("Exhaust"),
+			"no Exhaust sentence is invented for %s" % str(value))
+		_check(bool(CardShortRules.describe(probe).get("unknown", false)),
+			"a known exhaust key with an unsupported value still reports unknown: "
+			+ str(value))
+		_check(probe == before,
+			"the malformed exhaust probe is never mutated: " + str(value))
+	# Two genuine descriptors print two short sentences, in the fixed order.
+	var combined := {"id": "card_short_rules_dodge_exhaust_ok",
+		"target_kind": "self",
+		"effects": {"dodge_next_attack": 1, "duration": 1, "exhaust": true}}
+	var combined_before := combined.duplicate(true)
+	_check(CardShortRules.line(combined) == "Dodge the next attack. Exhaust.",
+		"a genuine Dodge and Exhaust print two short sentences")
+	_check(combined == combined_before, "the combined probe is never mutated")
+	# Formatting the malformed probes cannot reach into a shipped record.
+	var slip := rag_duelist_starter.get_definition("rag_duelist_cape_slip")
+	var slip_before := slip.duplicate(true)
+	var cloud := lantern_monk_pool.get_definition("lantern_monk_moth_cloud")
+	var cloud_before := cloud.duplicate(true)
+	CardShortRules.line(genuine)
+	CardShortRules.line(combined)
+	_check(not slip.is_empty() and slip == slip_before
+		and rag_duelist_starter.get_definition("rag_duelist_cape_slip") == slip_before,
+		"malformed probes cannot alter a shipped Cape Slip record")
+	_check(not cloud.is_empty() and cloud == cloud_before
+		and lantern_monk_pool.get_definition("lantern_monk_moth_cloud") == cloud_before,
+		"malformed probes cannot alter a shipped Moth Cloud record")
 
