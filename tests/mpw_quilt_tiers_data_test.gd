@@ -50,6 +50,7 @@ func _initialize() -> void:
 	_test_rounding_policy()
 	_test_validator_accepts_shipped_table()
 	_test_validator_rejects_broken_tables()
+	_test_service_contract()
 	_check(source_document == source_snapshot, "no validation flow mutates the shipped tiers document")
 	_report()
 
@@ -418,3 +419,142 @@ func _test_validator_rejects_broken_tables() -> void:
 	(non_object_record["tiers"] as Array).append("tier 3")
 	_rejected(non_object_record, "a non-object tier record")
 	_rejected("not a catalog", "a non-object document")
+
+func _test_service_contract() -> void:
+	var service := RunDifficulty.new()
+
+	# AC1: fresh state defaults and only tier 0 available.
+	var state := service.get_state()
+	_check(state.get("highest_cleared_tier") == -1, "service default highest_cleared_tier is -1")
+	_check(state.get("selected_tier") == 0, "service default selected_tier is 0")
+	var available := service.get_available_tiers()
+	_check(available.has(0), "tier 0 available on fresh state")
+	_check(not available.has(1), "tier 1 not available initially")
+	_check(not available.has(2), "tier 2 not available initially")
+
+	# Refuse unearned tier selection.
+	_check(service.select_tier(1) == false, "select_tier(1) refused on fresh state")
+	_check(service.select_tier(2) == false, "select_tier(2) refused on fresh state")
+	_check(service.get_selected_tier() == 0, "selection unchanged after refused choices")
+
+	# Modifier lookup for tier 0.
+	var mods0 := service.get_modifiers()
+	_check(mods0.get("max_hp_percent_bonus") == 0, "tier 0 modifier max_hp_percent_bonus is 0")
+	_check(mods0.get("attack_intent_bonus") == 0, "tier 0 modifier attack_intent_bonus is 0")
+
+	# AC2: positive progression through wins.
+	_check(service.select_tier(0) == true, "select_tier(0) accepted")
+	_check(service.complete_run(true) == true, "win on selected tier 0 succeeds")
+	_check(service.get_highest_cleared_tier() == 0, "highest_cleared_tier advances to 0 after win")
+
+	# After clearing 0, tier 1 unlocks; tier 2 remains locked.
+	available = service.get_available_tiers()
+	_check(available.has(0), "tier 0 still available after win")
+	_check(available.has(1), "tier 1 available after clearing 0")
+	_check(not available.has(2), "tier 2 still locked after only tier 0 cleared")
+
+	# Select tier 1, win again.
+	_check(service.select_tier(1) == true, "select_tier(1) accepted after unlock")
+	_check(service.complete_run(true) == true, "win on selected tier 1 succeeds")
+	_check(service.get_highest_cleared_tier() == 1, "highest_cleared_tier advances to 1")
+
+	# After clearing 1, tier 2 unlocks.
+	available = service.get_available_tiers()
+	_check(available.has(2), "tier 2 available after clearing 1")
+
+	_check(service.select_tier(2) == true, "select_tier(2) accepted after unlock")
+	_check(service.complete_run(true) == true, "win on tier 2 succeeds")
+	_check(service.get_highest_cleared_tier() == 2, "highest stays at 2 after top-tier win")
+
+	# Loss does not advance unlocks.
+	service.select_tier(0)
+	var before_highest := service.get_highest_cleared_tier()
+	_check(service.complete_run(false) == true, "loss call succeeds but does not advance")
+	_check(service.get_highest_cleared_tier() == before_highest, "highest unchanged after loss")
+
+	# Repeated lower-tier win does not skip ahead.
+	service.select_tier(0)
+	_check(service.complete_run(true) == true, "repeated tier-0 win succeeds")
+	_check(service.get_highest_cleared_tier() == 2, "repeated tier-0 win does not lower ceiling")
+
+	# AC3: detached modifier lookup for each tier without mutating JSON.
+	for tier_id in REQUIRED_TIER_IDS:
+		service.select_tier(tier_id)
+		var mods := service.get_modifiers()
+		var expected: Array = EXPECTED_MODIFIERS[tier_id]
+		_check(mods.get("max_hp_percent_bonus") == expected[0],
+			"tier %d max_hp_percent_bonus equals authored %d" % [tier_id, expected[0]])
+		_check(mods.get("attack_intent_bonus") == expected[1],
+			"tier %d attack_intent_bonus equals authored %d" % [tier_id, expected[1]])
+
+	# Prove the service does not touch the authored document.
+	_check(source_document == source_snapshot, "service queries do not mutate the authored JSON document")
+
+	# AC4: snapshot and restore.
+	service.select_tier(1)
+	service.complete_run(true)
+	var snapshot := service.get_state()
+
+	# Restore on a fresh service.
+	var fresh := RunDifficulty.new()
+	_check(fresh.restore_state(snapshot) == true, "valid snapshot restores precisely")
+	_check(fresh.get_highest_cleared_tier() == 2, "restored highest_cleared_tier is 2")
+	_check(fresh.get_selected_tier() == 1, "restored selected_tier is 1")
+	_check(fresh.get_available_tiers().has(1) and fresh.get_available_tiers().has(2),
+		"restored available tiers include 1 and 2")
+
+	# Invalid/nonintegral snapshot refused atomically.
+	_check(fresh.restore_state({"highest_cleared_tier": 1.5, "selected_tier": 1}) == false,
+		"fractional highest_cleared_tier refused")
+	_check(fresh.get_highest_cleared_tier() == 2, "invalid restore does not alter state (highest stays 2)")
+
+	var bad_unearned := {"highest_cleared_tier": 0, "selected_tier": 2}
+	_check(fresh.restore_state(bad_unearned) == false, "unearned tier 2 with only 0 cleared refused")
+	_check(fresh.get_selected_tier() == 1, "invalid restore does not alter selection")
+
+	# Out-of-range and extra-key snapshots refused.
+	_check(fresh.restore_state({"highest_cleared_tier": -2, "selected_tier": 0}) == false,
+		"negative highest beyond -1 refused")
+
+	# AC4 / P9 ceiling: highest_cleared_tier above the authored tier 2 is refused.
+	var before_high := fresh.get_state()
+	_check(fresh.restore_state({"highest_cleared_tier": 3, "selected_tier": 0}) == false,
+		"highest_cleared_tier 3 above the tier-2 ceiling refused")
+	_check(fresh.get_state() == before_high,
+		"rejected highest_cleared_tier 3 leaves state identical")
+	var before_float := fresh.get_state()
+	_check(fresh.restore_state({"highest_cleared_tier": 3.0, "selected_tier": 0}) == false,
+		"integral-float highest_cleared_tier 3.0 above the ceiling refused")
+	_check(fresh.get_state() == before_float,
+		"rejected integral-float highest_cleared_tier 3.0 leaves state identical")
+	var before_high_selected := fresh.get_state()
+	_check(fresh.restore_state({"highest_cleared_tier": 3, "selected_tier": 2}) == false,
+		"out-of-range highest_cleared_tier with selected tier 2 refused")
+	_check(fresh.get_state() == before_high_selected,
+		"rejected out-of-range highest with tier 2 leaves state identical")
+	_check(fresh.restore_state({"highest_cleared_tier": 0, "selected_tier": 0, "extra": true}) == false,
+		"extra key in snapshot refused")
+
+	# Invalid non-object/state with missing keys refused.
+	_check(fresh.restore_state([1, 2]) == false, "non-object restore refused")
+	_check(fresh.restore_state({"selected_tier": 0}) == false, "missing highest_cleared_tier refused")
+
+	# Determinism: independent RNG untouched; repeated identical inputs reproduce state.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 12345
+	var before := rng.state
+
+	var s1 := RunDifficulty.new()
+	var s2 := RunDifficulty.new()
+	s1.select_tier(0)
+	s1.complete_run(true)
+	s2.select_tier(0)
+	s2.complete_run(true)
+
+	var after := rng.state
+	_check(before == after, "independent RNG unchanged by service operations")
+	_check(s1.get_state() == s2.get_state(), "identical service inputs reproduce the same state")
+
+	# Confirm non-object tier selection is refused.
+	_check(service.select_tier(1.5) == false, "fractional tier selection refused")
+	_check(service.get_selected_tier() == 1, "fractional selection does not alter state")
