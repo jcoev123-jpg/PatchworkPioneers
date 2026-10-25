@@ -106,6 +106,23 @@ func get_torn() -> RunTornMending:
 
 func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 		target_position: int = 0) -> Dictionary:
+	return _resolve_card(deck, party, card_id, target_position, true)
+
+
+## Detached models only. The enclosing stitched transaction owns payment/piles.
+## Authenticate the complete half rather than trusting a normalized Block amount.
+func resolve_staged_half(deck: CombatDeck, party: CombatParty, half: Dictionary,
+		target_position: int = 0) -> Dictionary:
+	var id: Variant = half.get("id")
+	if typeof(id) != TYPE_STRING or id not in CombatStitchedTargetPreview.WARDEN_BLOCK_IDS:
+		return {"ok": false}
+	if half != WardenPoolCards.new().get_definition(id):
+		return {"ok": false}
+	return _resolve_card(deck, party, id, target_position, false)
+
+
+func _resolve_card(deck: CombatDeck, party: CombatParty, card_id: String,
+		target_position: int, consume_card: bool) -> Dictionary:
 	var rejected := {"ok": false}
 	if _binding_attempted and not is_patch_binding_valid():
 		return rejected
@@ -113,7 +130,7 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 		return rejected
 	if deck.combat_state == null or deck._rng == null or not deck.turn_active:
 		return rejected
-	if not deck.hand.has(card_id):
+	if consume_card and not deck.hand.has(card_id):
 		return rejected
 
 	var base_id: String = card_id.trim_suffix("_plus")
@@ -127,7 +144,9 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 	var to_positions = definition.get("to_positions")
 	var kind = definition.get("target_kind")
 	var effects = definition.get("effects")
-	if not cost is int or cost < 0 or cost > CombatState.TURN_ENERGY or cost > deck.energy:
+	if not cost is int or cost < 0 or cost > CombatState.TURN_ENERGY:
+		return rejected
+	if consume_card and cost > deck.energy:
 		return rejected
 	if not from_positions is Array or from_positions.is_empty() or not to_positions is Array:
 		return rejected
@@ -188,6 +207,13 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 		return rejected
 	if heroes[owner_position - 1]["hp"] == 0:
 		return rejected
+	var torn_ids: Array[String] = []
+	if _torn != null:
+		for hero in _torn.read_state().get("heroes", []):
+			if hero.get("hp", 0) <= 0:
+				torn_ids.append(hero["id"])
+	if not consume_card and torn_ids.has("warden"):
+		return rejected
 
 	var bonus := 0
 	if _binding_attempted:
@@ -218,7 +244,7 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 			recipients[owner_position] = final_block_amount
 			if base_id == "warden_hold_the_line":
 				for hero in heroes:
-					if hero["id"] != "warden" and hero["hp"] > 0:
+					if hero["id"] != "warden" and hero["hp"] > 0 and not torn_ids.has(hero["id"]):
 						recipients[hero["position"]] = other_amount
 		"ally_single":
 			if target_position < 1 or target_position > CombatParty.PARTY_SIZE:
@@ -230,7 +256,7 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 			if target_position != 0:
 				return rejected
 			for hero in heroes:
-				if hero["hp"] > 0:
+				if hero["hp"] > 0 and not torn_ids.has(hero["id"]):
 					recipients[hero["position"]] = final_block_amount
 		_:
 			return rejected
@@ -243,9 +269,10 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 
 	# These operations cannot fail after full preflight: exact hand copy,
 	# active turn, affordable cost and every living recipient were checked.
-	if not deck.try_spend_energy(cost):
-		return rejected
-	deck.discard_played(card_id)
+	if consume_card:
+		if not deck.try_spend_energy(cost):
+			return rejected
+		deck.discard_played(card_id)
 	for position in recipients:
 		party.gain_block(position, recipients[position])
 	return {"ok": true, "block_deltas": recipients.duplicate(true)}

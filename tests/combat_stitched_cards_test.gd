@@ -12,6 +12,8 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_warden_block_halves()
+	_test_warden_block_failures()
 	_test_pairs()
 	_test_all_authored_pairs()
 	_test_rejections()
@@ -36,6 +38,96 @@ func _initialize() -> void:
 		printerr(failure)
 	print("combat_stitched_cards_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_warden_block_halves() -> void:
+	for required in ["warden_hold_the_line", "warden_hold_the_line_plus", "warden_bastion_quilt", "warden_bastion_quilt_plus"]:
+		_check(CombatStitchedTargetPreview.WARDEN_BLOCK_IDS.has(required), "required canonical Warden admission " + required)
+	for id in CombatStitchedTargetPreview.WARDEN_BLOCK_IDS:
+		for reverse in [false, true]:
+			for position in [1, 2, 3]:
+				var c := _rest_fixture(POP if reverse else id, id if reverse else POP, 262)
+				for step in range(position - 1):
+					var moved := CombatPositionSwaps.preview_adjacent_swap(c.party, step + 1, 1)
+					_check(moved.ok, "move living Warden to current slot")
+					c.party._heroes.assign(moved.heroes)
+				if position == 3 and id.begins_with("warden_hold"):
+					_reject(c, 1 if reverse else 0, 0 if reverse else 1, "Hold illegal back slot")
+					continue
+				var before := _snapshot(c)
+				var result := _play(c, 1 if reverse else 0, 0 if reverse else 1)
+				_check(result.ok and result.halves.size() == 2, "both-order canonical Warden half commits")
+				var plus: bool = id.ends_with("_plus")
+				for hero in c.party.get_heroes():
+					var expected: int = (13 if plus else 10) if id.begins_with("warden_bastion") else ((7 if plus else 5) if hero.id == "warden" else (3 if plus else 2))
+					_check(hero.block == expected, "complete independent authored Block at current slot")
+				_check(c.deck.energy == (0 if id.begins_with("warden_bastion") else 1)
+					and c.deck.discard_pile == [c.id] and c.deck.hand.is_empty()
+					and c.deck._rng.state == before[5], "single capped charge/discard without RNG draws")
+				_reject(c, 0, 0, "discarded composite cannot replay")
+		for downed in [false, true]:
+			var c := _fixture(id, POP)
+			_bind_cuff(c)
+			if downed:
+				_check(c.party.apply_damage(2, 999) and c.party.is_downed(2), "non-owner is downed")
+			var result := _play(c, 0, 1)
+			_check(result.ok, "patched Warden half commits with living owners")
+			var expected: int = (13 if id.ends_with("_plus") else 10) if id.begins_with("warden_bastion") else (9 if id.ends_with("_plus") else 7)
+			_check(c.party.get_hero(1).block == expected, "Cuff adds two only to printed self Block")
+			_check(c.party.get_hero(2).block == (0 if downed else ((13 if id.ends_with("_plus") else 10) if id.begins_with("warden_bastion") else (3 if id.ends_with("_plus") else 2))), "living other ally gets authored amount; downed skipped")
+		var torn_case := _fixture(id, POP)
+		_bind_cuff(torn_case, "torn_divergent")
+		_check(not torn_case.party.is_downed(2) and torn_case.torn.read_state().heroes[1].hp == 0, "fresh battle ally lives but run ledger is Torn")
+		_check(_play(torn_case, 0, 1).ok and torn_case.party.get_hero(2).block == 0, "Torn other ally skipped")
+
+
+func _test_warden_block_failures() -> void:
+	for id in CombatStitchedTargetPreview.WARDEN_BLOCK_IDS:
+		var c := _fixture(id, POP)
+		_reject(c, 1, 1, "automatic Warden target must be zero")
+		_check(c.party.apply_damage(1, 999) and c.party.is_downed(1), "Warden owner genuinely downed")
+		_reject(c, 0, 1, "downed owner")
+		c = _fixture(id, POP)
+		_check(c.party.gain_block(2, CombatParty.MAX_INT), "other ally at Block capacity")
+		_reject(c, 0, 1, "other recipient overflow rolls back all")
+		c = _fixture(POP, id)
+		_check(c.party.gain_block(2, CombatParty.MAX_INT), "later Block half overflow precondition")
+		_reject(c, 1, 0, "earlier Tinker damage and latch rolled back on late Block failure")
+		c = _fixture("tinker_tune_up", id)
+		c.deck.discard_pile.assign(["warden_strike", PRICK, POP])
+		_check(c.deck.draw_pile.is_empty() and c.deck.discard_pile.size() == 3,
+			"earlier draw must reshuffle genuine discarded supply with seeded RNG")
+		_check(c.party.gain_block(2, CombatParty.MAX_INT), "Block overflow follows earlier seeded draw")
+		_reject(c, 0, 0, "later Warden failure rolls back seeded shuffle and every pile")
+		c = _fixture(id, PRICK)
+		_reject(c, 0, 99, "later attack target failure rolls back Block")
+		c = _fixture(id, POP)
+		_bind_cuff(c)
+		_check(c.wardrobe.start_rest("stale", c.wardrobe.get_snapshot()).ok, "genuine authority change after bind")
+		_reject(c, 0, 1, "stale bound wardrobe")
+		c = _fixture(id, POP)
+		_bind_cuff(c, "torn")
+		c.party = CombatParty.new(_definitions("res://data/heroes/starter_party.json"))
+		_check(not c.party.is_downed(1) and c.torn.read_state().heroes[0].hp == 0, "living battle Warden is still run-Torn")
+		_reject(c, 0, 1, "run-Torn owner cannot resolve staged Warden half")
+		c = _fixture(id, POP)
+		_bind_cuff(c)
+		_check(not c.service.bind_patch_wardrobe(c.wardrobe, c.torn, {"forged": true}), "forged optimistic binding receipt rejected")
+		_reject(c, 0, 1, "failed binding never falls back to unpatched play")
+		for field in ["effects", "owner", "from_positions", "cost"]:
+			c = _fixture(id, POP)
+			var half: Dictionary = c.rest._descriptors[c.id].first_half
+			match field:
+				"effects": half.effects["block"] = 999
+				"owner": half.owner = "seamstress"
+				"from_positions": half.from_positions = [1]
+				"cost": c.rest._descriptors[c.id].cost = 0
+			_reject(c, 0, 1, "forged full Rest descriptor " + field)
+		var first := _fixture(id, POP, 262)
+		var second := _fixture(id, POP, 262)
+		_reject(first, 0, 99, "deterministic failed attempt")
+		_check(_play(first, 0, 1) == _play(second, 0, 1)
+			and _snapshot(first) == _snapshot(second), "failed attempt then retry equals clean seeded play")
 
 
 func _check(ok: bool, label: String) -> void:

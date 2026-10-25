@@ -89,6 +89,13 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 	var preview := run_cards.preview_play(stitched_id, party.get_heroes())
 	if not preview.ok or deck.energy < preview.cost:
 		return failure
+	# Reauthenticate the full Rest descriptor, including its capped cost, before
+	# executing a half. is_valid() alone does not detect in-memory tampering.
+	var ledger := run_cards.get_snapshot()
+	var verified := RunRestStitchCards.new(ledger.deck, ledger.descriptors,
+		ledger.remaining_scraps, ledger.next_stitch_id)
+	if not verified.is_valid() or verified.get_snapshot() != ledger:
+		return failure
 	if not CombatStatusTurnBatch.new().tick_side("heroes", party.get_heroes()).ok:
 		return failure
 	if not enemies.can_apply_statuses({}):
@@ -133,6 +140,16 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 			if not pool_result.ok:
 				return failure
 			results.append(pool_result)
+		elif half.id in CombatStitchedTargetPreview.WARDEN_BLOCK_IDS:
+			var warden := CombatWardenPoolBlockCards.new()
+			if _support._wardrobe != null and not warden.bind_patch_wardrobe(
+					_support._wardrobe, _support._torn,
+					_support._wardrobe_snapshot, _support._torn_snapshot):
+				return failure
+			var block_result := warden.resolve_staged_half(staged_deck, staged_party, half, target)
+			if not block_result.get("ok", false):
+				return failure
+			results.append(block_result)
 		elif _energy.is_supported_card(half.id):
 			# Overclock and Tailor's Trance carry printed energy/draw/self-damage
 			# effects the generic draw/Block fallback would silently drop. The

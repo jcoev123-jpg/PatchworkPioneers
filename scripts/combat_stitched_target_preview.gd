@@ -9,6 +9,10 @@ const POOL_HEAL_IDS = [
 	"seamstress_thimble_tea", "seamstress_thimble_tea_plus",
 	"seamstress_field_mend", "seamstress_field_mend_plus",
 ]
+const WARDEN_BLOCK_IDS = [
+	"warden_hold_the_line", "warden_hold_the_line_plus",
+	"warden_bastion_quilt", "warden_bastion_quilt_plus",
+]
 
 var _catalog := StarterCards.new()
 var _pool := SeamstressPoolCards.new()
@@ -146,6 +150,8 @@ func _half_preview(half: Dictionary, index: int, party_slots: Array[Dictionary],
 	var authored := _catalog.get_definition(id)
 	if authored.is_empty() and id in POOL_HEAL_IDS:
 		authored = _pool.get_definition(id)
+	if authored.is_empty() and id in WARDEN_BLOCK_IDS:
+		authored = WardenPoolCards.new().get_definition(id)
 	if authored.is_empty() or authored != half:
 		return {}
 	var kind: String = authored["target_kind"]
@@ -192,7 +198,12 @@ func _half_preview(half: Dictionary, index: int, party_slots: Array[Dictionary],
 				return {}
 		"self":
 			side = "ally"
-			affected.append(owner_position)
+			if id in WARDEN_BLOCK_IDS:
+				for hero in party_slots:
+					if hero["hp"] > 0:
+						affected.append(hero["position"])
+			else:
+				affected.append(owner_position)
 		"none":
 			pass
 		_:

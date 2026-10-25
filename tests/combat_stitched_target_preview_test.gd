@@ -9,6 +9,7 @@ var catalog := StarterCards.new()
 
 
 func _initialize() -> void:
+	_test_warden_blocks()
 	_test_legal_halves()
 	_test_pool_healing_previews()
 	_test_positions_and_recipients()
@@ -19,6 +20,36 @@ func _initialize() -> void:
 	print("combat_stitched_target_preview_test: ", "PASS" if failures.is_empty() else "FAIL",
 			" (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_warden_blocks() -> void:
+	for id in CombatStitchedTargetPreview.WARDEN_BLOCK_IDS:
+		for reverse in [false, true]:
+			var c := _pair("tinker_pop_shot" if reverse else id, id if reverse else "tinker_pop_shot")
+			for position in [1, 2, 3]:
+				c.party = _party()
+				for step in range(position - 1):
+					var moved := CombatPositionSwaps.preview_adjacent_swap(c.party, step + 1, 1)
+					_check(moved.ok, "preview uses actual displaced Warden")
+					c.party._heroes.assign(moved.heroes)
+				var result := _guarded_call(c, "canonical Warden preview")
+				if position == 3 and id.begins_with("warden_hold"):
+					_check(not result.playable, "Hold rejects current illegal back slot")
+				else:
+					_check(result.playable and result.halves.size() == 2, "canonical pool Block admitted in both orders")
+					if result.playable:
+						var half: Dictionary = result.halves[1 if reverse else 0]
+						_check(half.card_id == id and half.owner == "warden" and not half.requires_selection
+							and half.target_positions.is_empty() and half.affected_positions == [1, 2, 3], "automatic zero-target includes all living Block recipients")
+			c.party = _party()
+			_check(c.party.apply_damage(2, 999) and c.party.is_downed(2), "preview non-owner downed")
+			var living := _guarded_call(c, "downed recipient")
+			_check(living.playable and living.halves[1 if reverse else 0].affected_positions == [1, 3], "preview omits downed recipient")
+			var forged: Dictionary = c.snapshot.duplicate(true)
+			forged.descriptors[c.id].cost = 0
+			_rejected(c, "forged Warden receipt", forged)
+	for id in ["warden_quick_darn", "warden_patch_guard", "warden_iron_hem", "warden_pinning_jab"]:
+		_rejected(_pair(id, "tinker_pop_shot"), "other unsupported pool halves stay rejected")
 
 
 func _check(ok: bool, message: String) -> void:

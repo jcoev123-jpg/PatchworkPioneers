@@ -15,6 +15,11 @@ var forecast := CombatStitchedEffectForecast.new()
 
 
 func _initialize() -> void:
+	_run.call_deferred()
+
+
+func _run() -> void:
+	_test_warden_block_forecasts()
 	_test_separate_targets()
 	_test_late_failure_and_retry()
 	_test_patches_and_both_orders()
@@ -26,11 +31,126 @@ func _initialize() -> void:
 	_test_borrowed_button_stitched_parity()
 	_test_borrowed_button_spent_latch()
 	_test_borrowed_button_negatives()
+	await _test_mounted_warden_blocks()
 	for failure in failures:
 		printerr(failure)
 	print("combat_stitched_effect_forecast_test: ",
 		"PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Real app, metadata, target preview, forecast and deferred commit callbacks.
+## Only the earned-card setup is supplied here; every battle model stays live.
+func _test_mounted_warden_blocks() -> void:
+	root.size = Vector2i(1280, 720)
+	for id in CombatStitchedTargetPreview.WARDEN_BLOCK_IDS:
+		for reverse in [false, true]:
+			var app = load("res://scenes/app.tscn").instantiate()
+			root.add_child(app)
+			await process_frame
+			_check(app._start_battle(), "real app mounts active battle for Warden stitch")
+			var rest := RunRestStitchCards.new([POP if reverse else id, id if reverse else POP], {}, 3)
+			var made := rest.choose_stitch(0, 1, rest.get_snapshot())
+			_check(made.ok and rest.is_consumed(), "mounted hand uses genuine cross-owner Rest receipt")
+			app.run_deck.assign(made.deck)
+			app.run_stitch_descriptors = made.descriptors.duplicate(true)
+			app.run_scraps = made.remaining_scraps
+			app.run_next_stitch_id = made.next_stitch_id
+			app.deck.hand.assign(made.deck)
+			app.deck.draw_pile.clear()
+			app.deck.discard_pile.clear()
+			app._refresh_hand()
+			await process_frame
+			await process_frame
+			var presenter = app.get_node("LiveAttackPreview")
+			var panel: Control = null
+			for child in app.hand_view.get_children():
+				if child.get_child(0).text == made.stitched_id:
+					panel = child
+			_check(panel != null and presenter._bindings.has(panel), "real held composite has a bound gameplay panel")
+			var admission: Dictionary = presenter._stitch_preview(made.stitched_id)
+			_check(admission.get("playable", false) and admission.halves.size() == 2, "production live preview admits canonical Warden pool half")
+			if panel != null and admission.get("playable", false):
+				if reverse:
+					# Run authorities precede battle-opening Block (Vanguard).
+					var bound := {"party": CombatParty.new(_authored("res://data/heroes/starter_party.json")),
+						"service": CombatStitchedCards.new()}
+					_bind_warden_blocks(bound)
+					_check(app.get_node("LiveSupportHand")._heal_cards.bind_patch_wardrobe(
+						bound.wardrobe, bound.torn), "mounted support authority carries genuine stacked Warden patches")
+				var metadata = app.get_node("LiveSupportHand")._metadata
+				_check(metadata.get_facts(panel).get("halves", []) == made.descriptor.half_ids,
+					"mounted metadata preserves genuine ordered halves")
+				var before := [app.party.get_heroes(), app.enemies.get_enemies(), app.deck.energy,
+					app.deck.hand.duplicate(), app.deck.discard_pile.duplicate(), app.run_rng.state]
+				presenter._armed = panel
+				presenter._selected = panel
+				presenter._arm_stitch()
+				presenter._choose_stitch(1, "enemy")
+				var projected: Dictionary = presenter.current_forecast.duplicate(true)
+				_check(projected.get("playable", false), "real chosen-target cue has complete forecast")
+				_check(before == [app.party.get_heroes(), app.enemies.get_enemies(), app.deck.energy,
+					app.deck.hand, app.deck.discard_pile, app.run_rng.state], "live forecast spends nothing before deferred commit")
+				await process_frame
+				await process_frame
+				_check(presenter.last_event.get("ok", false), "real deferred stitched commit succeeds")
+				if projected.get("playable", false):
+					_check(projected.projected.heroes == app.party.get_heroes()
+						and projected.projected.enemies == app.enemies.get_enemies()
+						and projected.projected.energy == app.deck.energy
+						and projected.projected.discard_pile == app.deck.discard_pile
+						and projected.projected.rng_state == app.run_rng.state, "mounted forecast exactly equals published battle state")
+				for hero in app.party.get_heroes():
+					var expected: int = (13 if id.ends_with("_plus") else 10) if id.begins_with("warden_bastion") else ((7 if id.ends_with("_plus") else 5) if hero.id == "warden" else (3 if id.ends_with("_plus") else 2))
+					if reverse and id.begins_with("warden_hold") and hero.id == "warden":
+						expected += 4
+					_check(hero.block == before[0][hero.position - 1].block + expected, "mounted commit grants every authored Block recipient")
+			app.queue_free()
+			await process_frame
+
+
+func _test_warden_block_forecasts() -> void:
+	for id in CombatStitchedTargetPreview.WARDEN_BLOCK_IDS:
+		for reverse in [false, true]:
+			var c := _fixture(POP if reverse else id, id if reverse else POP, 262)
+			var result := _compare(c, 1 if reverse else 0, 0 if reverse else 1, "Warden full Block forecast " + id)
+			if result.playable:
+				for hero in result.projected.heroes:
+					var expected: int = (13 if id.ends_with("_plus") else 10) if id.begins_with("warden_bastion") else ((7 if id.ends_with("_plus") else 5) if hero.id == "warden" else (3 if id.ends_with("_plus") else 2))
+					_check(hero.block == expected, "forecast preserves complete authored Block effects")
+		var c := _fixture(POP, id)
+		_check(c.party.gain_block(2, CombatParty.MAX_INT), "forecast later-half overflow exists")
+		_reject(c, 1, 0, "Warden overflow forecast discards earlier attack/latch")
+		var before := _whole(c)
+		_check(not _real(c, 1, 0).ok and _whole(c) == before, "real overflow matches forecast rollback")
+		c = _fixture(id, POP)
+		_check(c.party.apply_damage(2, 999), "forecast recipient downed")
+		var living := _compare(c, 0, 1, "Warden skips downed forecast")
+		_check(living.playable and living.projected.heroes[1].block == 0, "downed Block remains zero")
+		for reverse in [false, true]:
+			c = _fixture(POP if reverse else id, id if reverse else POP)
+			_bind_warden_blocks(c)
+			var patched := _compare(c, 1 if reverse else 0, 0 if reverse else 1, "stacked Warden patches forecast")
+			var expected: int = (13 if id.ends_with("_plus") else 10) if id.begins_with("warden_bastion") else (11 if id.ends_with("_plus") else 9)
+			_check(patched.playable and patched.projected.heroes[0].block == expected, "ARM and HEAD add four only to authored self Block")
+		c = _fixture(id, POP)
+		_bind_warden_blocks(c)
+		_check(c.wardrobe.start_rest("forecast-stale", c.wardrobe.get_snapshot()).ok, "forecast has genuinely changed wardrobe after binding")
+		_reject(c, 0, 1, "stale Warden patches refuse forecast")
+		var stale_before := _whole(c)
+		_check(not _real(c, 0, 1).ok and _whole(c) == stale_before, "stale Warden commit matches no-spend forecast refusal")
+
+
+func _bind_warden_blocks(c: Dictionary) -> void:
+	c.torn = RunTornMending.new(c.party.get_heroes())
+	c.wardrobe = RunPatchWardrobe.new(c.party.get_heroes(),
+		["hemguard_cuff", "reinforced_browband"],
+		[{"id": "hemguard_cuff", "slot": "ARM"}, {"id": "reinforced_browband", "slot": "HEAD"}], 5)
+	_check(c.torn.is_valid() and c.wardrobe.is_valid(), "valid Warden patch authorities")
+	for patch in [{"id": "hemguard_cuff", "slot": "ARM"}, {"id": "reinforced_browband", "slot": "HEAD"}]:
+		_check(c.wardrobe.sew(patch.id, "warden", patch.slot, "forecast-" + patch.id,
+			c.wardrobe.get_snapshot()).ok, "genuine sewn Warden Block patch")
+	_check(c.service.bind_patch_wardrobe(c.wardrobe, c.torn), "forecast uses real bound Block patches")
 
 
 func _check(yes: bool, message: String) -> void:

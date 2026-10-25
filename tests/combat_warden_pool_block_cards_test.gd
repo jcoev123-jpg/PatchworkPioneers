@@ -100,6 +100,7 @@ var service := CombatWardenPoolBlockCards.new()
 
 
 func _initialize() -> void:
+	_test_staged_block_contract()
 	_test_all_ten()
 	_test_targets_and_living()
 	_test_current_positions()
@@ -118,6 +119,30 @@ func _initialize() -> void:
 	print("combat_warden_pool_block_cards_test: ",
 		"PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_staged_block_contract() -> void:
+	for id in CombatStitchedTargetPreview.WARDEN_BLOCK_IDS:
+		var ordinary := _party()
+		var staged := _party()
+		var deck := _deck(id)
+		var svc := CombatWardenPoolBlockCards.new()
+		var played := svc.play_card(deck, ordinary, id)
+		_check(played.ok, "ordinary canonical Warden play succeeds")
+		while deck.hand.has(id):
+			_check(deck.discard_played(id), "remove every ordinary half copy before staging")
+		_check(not deck.hand.has(id), "staged canonical half is not itself held")
+		var before := _snapshot(deck, staged)
+		var half := WardenPoolCards.new().get_definition(id)
+		var result := svc.resolve_staged_half(deck, staged, half)
+		_check(result == played and staged.get_heroes() == ordinary.get_heroes(), "staged and ordinary share full authored recipients")
+		var after := _snapshot(deck, staged)
+		after.heroes = before.heroes
+		_check(after == before, "staged half does not need held ID, charge or discard")
+		half.effects["block"] = 999
+		before = _snapshot(deck, staged)
+		_check(not svc.resolve_staged_half(deck, staged, half).ok
+			and _snapshot(deck, staged) == before, "forged staged half fails without effects")
 
 
 func _check(condition: bool, label: String) -> void:
@@ -620,7 +645,7 @@ func _test_cuff_negative_and_stale_ac3() -> void:
 	party = _party()
 	deck = _deck("warden_hold_the_line")
 	_accepted_with(tm_svc, deck, party, "warden_hold_the_line", 1, 0,
-		[7, 2, 2], "AC3: play succeeds after rebind with cuff bonus")
+		[7, 0, 2], "AC3: play succeeds after rebind with cuff bonus and skips run-Torn ally")
 
 	# 7. Forged / failed bindings:
 	var bad_svc := CombatWardenPoolBlockCards.new()
@@ -946,7 +971,7 @@ func _test_head_negative_and_stale_ac3() -> void:
 	party = _party()
 	deck = _deck("warden_hold_the_line")
 	_accepted_with(tm_svc, deck, party, "warden_hold_the_line", 1, 0,
-		[7, 2, 2], "AC3: play succeeds after rebind with browband bonus")
+		[7, 0, 2], "AC3: play succeeds after rebind with browband bonus and skips run-Torn ally")
 	var downed_p := _party()
 	_check(downed_p.apply_damage(2, 30) and downed_p.is_downed(2), "AC3: Seamstress downed in combat party")
 	_accepted_with(tm_svc, _deck("warden_hold_the_line"), downed_p, "warden_hold_the_line", 1, 0,

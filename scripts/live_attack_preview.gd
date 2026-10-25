@@ -593,6 +593,18 @@ func _stitched_heals(app, deck: CombatDeck, party: CombatParty) -> CombatSeamstr
 	return support.stitched_heal_authority(deck, party, _battle)
 
 
+## Forecast and commit use the same battle-bound support receipts. An attempted
+## stale binding stays invalid, so neither path can silently drop its patches.
+func _stitched_transaction(app) -> CombatStitchedCards:
+	var transaction := CombatStitchedCards.new(_play)
+	var heals := _stitched_heals(app, _deck, app.party)
+	if heals != null and heals._wardrobe != null and heals._torn != null:
+		if transaction.bind_patch_wardrobe(heals._wardrobe, heals._torn,
+				heals._wardrobe_snapshot, heals._torn_snapshot):
+			transaction.bind_borrowed_button(heals)
+	return transaction
+
+
 func _commit_stitch(panel, id: String, token: int, session: Array, turn: int, choices: Array, ids: Array, receipt: Dictionary, deck, map) -> void:
 	var app = get_parent()
 	if not is_inside_tree() or app == null or app.get_node_or_null("LiveAttackPreview") != self or token != _token or not _queued:
@@ -627,11 +639,7 @@ func _commit_stitch(panel, id: String, token: int, session: Array, turn: int, ch
 	# wardrobe/torn authorities) so a genuinely held stitched half notifies the same
 	# once-per-combat COAT latch as an ordinary held heal. Without those bindings
 	# the composite keeps its current unpatched behavior.
-	var transaction := CombatStitchedCards.new(_play)
-	var heals: CombatSeamstressPoolHeals = _stitched_heals(app, deck, app.party)
-	if heals != null and heals._wardrobe != null and heals._torn != null \
-			and transaction.bind_patch_wardrobe(heals._wardrobe, heals._torn):
-		transaction.bind_borrowed_button(heals)
+	var transaction := _stitched_transaction(app)
 	last_event = transaction.play_stitched(deck, app.party, app.enemies,
 		_ledger(), id, choices[0], choices[1], _fray)
 	if last_event.ok:
@@ -1432,7 +1440,7 @@ func _refresh() -> void:
 			return
 		var names: PackedStringArray = []
 		for half in stitched.halves:
-			names.append(_catalog.get_definition(half.card_id).display_name)
+			names.append(RunRestStitchCards.resolve_card_definition(half.card_id).display_name)
 		var details: PackedStringArray = []
 		for index in range(2):
 			var half: Dictionary = stitched.halves[index]
@@ -1442,7 +1450,7 @@ func _refresh() -> void:
 			controls = "Enter / Space / click card: cast"
 		cue.text = "%s | %d energy | %s\n%s; Esc: cancel" % [" / ".join(names), stitched.cost, "; ".join(details), controls]
 		if _selected == _armed and _choices.size() == 2 and _receipt == app._stitch_snapshot() and _run_map == app.run_map:
-			current_forecast = CombatStitchedEffectForecast.new().get_forecast(_ledger(), _receipt, _deck, app.party, app.enemies, id, _choices[0], _choices[1], CombatStitchedCards.new(_play))
+			current_forecast = CombatStitchedEffectForecast.new().get_forecast(_ledger(), _receipt, _deck, app.party, app.enemies, id, _choices[0], _choices[1], _stitched_transaction(app))
 			if current_forecast.playable:
 				var outcomes: PackedStringArray = []
 				for index in range(2):
