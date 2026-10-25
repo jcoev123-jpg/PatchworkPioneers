@@ -34,6 +34,14 @@ const DETAILS_UNAVAILABLE := "Card details unavailable: this row has no canonica
 ## player's last pick is not a live card-for-sale offer (a removal tile, a sold
 ## listing, a stale row). It never quotes a price or a wallet.
 const SHOP_GUIDANCE := "Choose a card, then press Buy or Remove."
+## The Rest gallery's neutral guidance: printed under the Rest title on a fresh
+## visit. It names both real actions without quoting an amount.
+const REST_GUIDANCE := "Choose a card, then press Upgrade — or take Heal instead."
+## The published body-text minimum for mounted guidance (MILESTONES VIS V2).
+## The visit hint, every section prompt and every empty-state note are set at
+## this size so a player reads them as prose rather than fine print. Tile faces
+## keep their own card typography, and the action buttons their own size.
+const GALLERY_HINT_FONT_SIZE := 18
 
 ## U+2192, the arrow a Rest upgrade tile prints between its two authored halves
 ## (name and cost). Patrick Hand has no arrow glyph, so those two labels alone
@@ -780,14 +788,8 @@ func _mount_gallery() -> void:
 	title.add_theme_color_override("font_color", DARK_INK)
 	title.add_theme_font_size_override("font_size", 24)
 	column.add_child(title)
-	_summary = Label.new()
-	_summary.name = "GalleryHint"
-	_summary.text = (SHOP_GUIDANCE
-		if _kind == "Shop" else "Choose a card, then press Upgrade — or take Heal instead.")
-	_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_summary.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_summary.add_theme_color_override("font_color", HINT_INK)
-	_summary.add_theme_font_size_override("font_size", 15)
+	_summary = build_gallery_hint("GalleryHint", (SHOP_GUIDANCE
+		if _kind == "Shop" else REST_GUIDANCE))
 	column.add_child(_summary)
 
 	_scroll = ScrollContainer.new()
@@ -903,25 +905,38 @@ func _add_section(text: String, hint: String) -> void:
 	header.add_theme_color_override("font_color", DARK_INK)
 	header.add_theme_font_size_override("font_size", 19)
 	_list.add_child(header)
-	var subtitle := Label.new()
-	subtitle.name = "GallerySectionHint%d" % _section_index
-	subtitle.text = hint
-	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	subtitle.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	subtitle.add_theme_color_override("font_color", HINT_INK)
-	subtitle.add_theme_font_size_override("font_size", 15)
+	var subtitle := build_gallery_hint("GallerySectionHint%d" % _section_index, hint)
 	_list.add_child(subtitle)
+
+
+## One gallery guidance line: the visit hint, a section prompt or an empty-state
+## note. It keeps the complete published sentence, wraps instead of clipping,
+## prints dark ink on the gallery's cream paper and is inert for pointer and
+## keyboard. The mounted gallery and the detached label test both build through
+## here, so the typography a test checks is exactly the typography play shows.
+func build_gallery_hint(label_name: String, text: String) -> Label:
+	var label := Label.new()
+	label.name = label_name
+	label.text = text
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.clip_text = false
+	label.text_overrun_behavior = TextServer.OVERRUN_NO_TRIMMING
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.focus_mode = Control.FOCUS_NONE
+	label.add_theme_color_override("font_color", HINT_INK)
+	label.add_theme_font_size_override("font_size", GALLERY_HINT_FONT_SIZE)
+	return label
+
+
+## An empty-state note belongs to the same guidance family and takes the same
+## body treatment; only its node name marks it as a note for audits.
+func build_gallery_note(label_name: String, text: String) -> Label:
+	return build_gallery_hint(label_name, text)
 
 
 func _add_note(text: String) -> void:
 	_section_index += 1
-	var note := Label.new()
-	note.name = "GalleryNote%d" % _section_index
-	note.text = text
-	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	note.add_theme_color_override("font_color", HINT_INK)
-	note.add_theme_font_size_override("font_size", 15)
+	var note := build_gallery_note("GalleryNote%d" % _section_index, text)
 	_list.add_child(note)
 
 

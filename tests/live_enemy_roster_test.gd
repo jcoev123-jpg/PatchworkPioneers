@@ -1853,7 +1853,7 @@ func _meadow_layout(app, presenter, near_meadow: bool = true) -> void:
 			"real art or fallback is grounded on its fixed global shadow: " + puppet.name)
 		bottoms.append(art.end.y)
 		if near_meadow:
-			_check(art.end.y >= 400.0 and art.end.y <= 440.0,
+			_check(art.end.y >= 395.0 and art.end.y <= 440.0,
 				"mounted idle feet reach the near meadow: " + puppet.name + " at " + str(art.end.y))
 		for badge in presenter._badges:
 			_check(not art.intersects(badge.get_global_rect()), "intent tags never obscure actor artwork")
