@@ -85,6 +85,13 @@ func _run() -> void:
 	var seeded_next := randi()
 	seed(264)
 	await _test_layout()
+	_check(panel._effects({"z_other": 9, "bleed": 2, "damage": 3, "a_other": 4})
+		== "Deal 3 damage; apply Bleed 2; a other: 4; z other: 9",
+		"mixed known and unknown fields preserve values in deterministic reading order")
+	_check(panel._effects({"draw": 1, "weak": 1, "heal": 5, "block": 7})
+		== "Gain 7 Block; heal 5 HP; apply Weak 1; draw 1 card"
+		and panel._effects({}) == "No effects",
+		"authored non-damage effects are readable and an empty source stays neutral")
 	for keyboard in [false, true]:
 		await _test_upgrade(keyboard)
 		await _test_stitch(keyboard)
@@ -182,8 +189,34 @@ func _test_upgrade(keyboard: bool) -> void:
 	var visit := _make()
 	await _bind(visit)
 	var source := visit.read_state()
+	var starter := StarterCards.new()
+	var strike := starter.get_definition(STRIKE)
+	var strike_plus := starter.get_definition("warden_strike_plus")
+	var prick := starter.get_definition(PRICK)
+	var prick_plus := starter.get_definition("seamstress_prick_plus")
+	_check(strike.cost == 1 and strike.effects == {"damage": 6}
+		and strike_plus.cost == 1 and strike_plus.effects == {"damage": 7}
+		and prick.cost == 1 and prick.effects == {"damage": 3, "bleed": 2}
+		and prick_plus.effects == {"damage": 4, "bleed": 3},
+		"independent authored Strike, Strike+, Prick and Prick+ preconditions")
 	await _activate(panel.upgrade_button, keyboard)
 	_check(panel.option_buttons.size() == 3 and panel.confirm_button.disabled, "upgrade needs explicit occurrence")
+	_check(visit.upgrade_options()[1].effects == strike.effects
+		and visit.upgrade_options()[1].plus_effects == strike_plus.effects
+		and visit.upgrade_options()[2].effects == prick.effects
+		and visit.upgrade_options()[2].plus_effects == prick_plus.effects,
+		"authentic typed upgrade options carry independent authored effects")
+	_check(_card_ink(panel.option_buttons[2]).contains("Deal 3 damage; apply Bleed 2")
+		and _card_ink(panel.option_buttons[2]).contains("Deal 4 damage; apply Bleed 3"),
+		"real Prick option ink retains both damage and Bleed amounts")
+	panel.option_buttons[2].grab_focus()
+	await _settle_layout()
+	await _activate(panel.option_buttons[2], keyboard)
+	_check(panel.preview().index == 2 and panel.preview_label.text.contains("Before: Deal 3 damage; apply Bleed 2")
+		and panel.preview_label.text.contains("After: Deal 4 damage; apply Bleed 3"),
+		"real Prick preview explains damage and Bleed before and after")
+	panel.option_buttons[1].grab_focus()
+	await _settle_layout()
 	await _activate(panel.option_buttons[1], keyboard)
 	_check(panel.preview().index == 1 and panel.preview().effects == {"damage": 6}
 		and panel.preview().plus_effects == {"damage": 7}, "genuine upgrade preview for second duplicate")
@@ -191,10 +224,15 @@ func _test_upgrade(keyboard: bool) -> void:
 		"only the selected duplicate carries a sewn selection highlight")
 	var upgrade_ink := _card_ink(panel.option_buttons[1])
 	_check(upgrade_ink.contains("Warden") and upgrade_ink.contains(visit.upgrade_options()[1].display_name)
-		and upgrade_ink.contains(visit.upgrade_options()[1].plus_display_name) and upgrade_ink.contains("damage 6")
-		and upgrade_ink.contains("damage 7") and upgrade_ink.contains("1 energy"),
-		"real Warden occurrence physically shows its 1-energy 6-to-7 comparison")
-	_check(panel.preview_label.text.contains("damage 6") and panel.preview_label.text.contains("damage 7"), "visible before/after effects")
+		and upgrade_ink.contains(visit.upgrade_options()[1].plus_display_name)
+		and upgrade_ink.contains("BEFORE | 1 energy\nDeal 6 damage")
+		and upgrade_ink.contains("AFTER | Strike+ | 1 energy\nDeal 7 damage"),
+		"real Warden occurrence physically shows verb-led 1-energy 6-to-7 comparison")
+	_check(panel.preview_label.text.contains("Before: Deal 6 damage")
+		and panel.preview_label.text.contains("After: Deal 7 damage")
+		and panel.preview_label.text.contains("Energy: 1 -> 1")
+		and panel.preview_label.text.contains("Only copy #2 changes"),
+		"source-true verb-led 1-energy before/after comparison for one copy")
 	await _activate(panel.confirm_button, keyboard)
 	_check(intents.size() == 1 and visit.read_state() == source, "UI emits once and never settles")
 	if intents.size() != 1:
@@ -218,26 +256,49 @@ func _test_stitch(keyboard: bool) -> void:
 	await _bind(visit)
 	var source := visit.read_state()
 	var expected := visit.stitch_preview(1, 2)
-	_check(not expected.is_empty(), "authentic cross-owner preview prerequisite")
+	var starter := StarterCards.new()
+	var first_def := starter.get_definition(STRIKE)
+	var second_def := starter.get_definition(PRICK)
+	_check(not expected.is_empty() and first_def.owner == "warden"
+		and second_def.owner == "seamstress" and first_def.owner != second_def.owner
+		and first_def.cost == 1 and second_def.cost == 1
+		and first_def.effects == {"damage": 6}
+		and second_def.effects == {"damage": 3, "bleed": 2},
+		"genuine two-owner authored half preconditions")
+	_check(expected.first_half == first_def and expected.second_half == second_def
+		and expected.energy_cost == mini(3, maxi(first_def.cost, second_def.cost) + 1)
+		and expected.energy_cost == 2 and expected.scrap_cost == 3
+		and expected.remaining_scraps == 4 and expected.first_index == 1
+		and expected.second_index == 2, "independent source-bound Stitch projection, energy cap and spend")
 	await _activate(panel.stitch_button, keyboard)
 	_check(panel.option_buttons.size() == 3, "canonical first copies including duplicates")
+	_check(_card_ink(panel.option_buttons[1]).contains("Deal 6 damage"),
+		"first-stage source row displays Warden's actual effect")
 	for i in range(panel.option_buttons.size()):
 		_check(panel.option_buttons[i].get_meta("option") == visit.stitch_first_options()[i], "exact canonical stitch first occurrence metadata")
 	await _activate(panel.option_buttons[1], keyboard)
 	_check(panel.option_buttons.size() == 1 and panel.option_buttons[0].get_meta("option").index == 2, "second stage only different-owner occurrence")
 	_check(panel.option_buttons[0].get_meta("option") == visit.stitch_second_options(1)[0], "exact canonical stitch partner metadata")
-	_check(panel.preview_label.text.contains("Warden") and panel.preview_label.text.contains(visit.stitch_first_options()[1].name)
-		and panel.preview_label.text.contains("copy #2") and _card_ink(panel.option_buttons[0]).contains("Seamstress")
-		and _card_ink(panel.option_buttons[0]).contains(visit.stitch_second_options(1)[0].name),
-		"first owner is visible while the only legal second owner is selectable")
+	_check(panel.preview_label.text.contains("FIRST | Warden")
+		and panel.preview_label.text.contains(visit.stitch_first_options()[1].name)
+		and panel.preview_label.text.contains("copy #2 | 1 energy")
+		and panel.preview_label.text.contains("Deal 6 damage")
+		and panel.preview_label.text.contains("DIFFERENT owner")
+		and panel.preview_label.text.contains("each in their own legal FROM position")
+		and _card_ink(panel.option_buttons[0]).contains("Seamstress")
+		and _card_ink(panel.option_buttons[0]).contains(visit.stitch_second_options(1)[0].name)
+		and _card_ink(panel.option_buttons[0]).contains("Deal 3 damage; apply Bleed 2"),
+		"first source effects and legal FROM reminder remain visible beside actual second row effects")
 	_assert_decorations(panel.option_buttons[0])
 	await _activate(panel.option_buttons[0], keyboard)
 	_check(panel.preview() == expected and panel.preview_label.text.contains("Scraps: 7 -> 4"), "exact detached genuine stitch forecast")
-	_check(panel.option_buttons[0].get_meta("selected") and panel.preview_label.text.contains("cost 3")
-		and panel.preview_label.text.contains("THEN") and panel.preview_label.text.contains("damage 6")
-		and panel.preview_label.text.contains("damage 3")
-		and panel.preview_label.text.contains("legal FROM positions"),
-		"highlighted pair shows ordered authored halves and battle-owner caveat")
+	_check(panel.option_buttons[0].get_meta("selected")
+		and panel.preview_label.text.contains("FIRST | Warden | Strike | copy #2 | 1 energy\nDeal 6 damage")
+		and panel.preview_label.text.contains("THEN | Seamstress | Prick | copy #3 | 1 energy\nDeal 3 damage; apply Bleed 2")
+		and panel.preview_label.text.contains("Energy: 2 (max half + 1, capped at 3)")
+		and panel.preview_label.text.contains("Scraps: 7 -> 4 (cost 3)")
+		and panel.preview_label.text.contains("Both owners must be alive, each in their own legal FROM position"),
+		"highlighted ordered FIRST/THEN halves show actual owners, effects and living/FROM caveat")
 	_check(panel.preview_label.text.contains(expected.display_name)
 		and panel.preview_label.text.contains("Energy: %d" % expected.energy_cost)
 		and panel.preview_label.text.contains("Deck: %d -> %d cards" % [expected.deck_before_count, expected.deck_after_count]),
@@ -365,6 +426,9 @@ func _test_rejections() -> void:
 		await _bind(visit)
 		var source := visit.read_state()
 		_check(panel.stitch_button.disabled and not panel.upgrade_button.disabled and not panel.leave_button.disabled, "poor/no-pair keeps free decisions")
+		_check(panel.option_buttons.is_empty() and panel.preview().is_empty()
+			and panel.preview_label.text == "Choose Upgrade, Stitch or Leave, then confirm."
+			and panel.confirm_button.disabled, "unavailable Stitch has a neutral unselected preview")
 		_check(panel.status_label.text.contains("Insufficient") if fixture[0] == 2 else panel.status_label.text.contains("No different-owner"), "reason visibly explained")
 		panel.stitch_button.pressed.emit()
 		panel.confirm_button.pressed.emit()
