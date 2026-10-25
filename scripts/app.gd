@@ -3995,6 +3995,7 @@ var patch_stall_buttons: Array[Button] = []
 var patch_stall_heroes: OptionButton
 var patch_stall_leave: Button
 var patch_stall_visit: RunShopVisit
+var patch_stall_service: RunPatchStallVisit
 var patch_stall_purchases: RunShopPurchases
 var _patch_stall_wardrobe: RunPatchWardrobe
 var _patch_stall_original: Dictionary = {}
@@ -4008,7 +4009,8 @@ func _patch_stall_snapshot() -> Array:
 		patch_stall_visit.get_state(), patch_stall_purchases, patch_stall_purchases.get_state(),
 		patch_stall_purchases.get_stock(), patch_stall_purchases.patch_stall_choice_used(),
 		_patch_stall_wardrobe, _patch_stall_wardrobe.get_snapshot(), patch_stall_view,
-		patch_stall_buttons.duplicate(), patch_stall_heroes, patch_stall_leave]
+		patch_stall_buttons.duplicate(), patch_stall_heroes, patch_stall_leave,
+		patch_stall_service, patch_stall_service.read_state(), patch_stall_service.quote()]
 
 
 func _choose_patch_stall_route(id: String, source: WeakRef, prior: Array[String], button) -> bool:
@@ -4056,10 +4058,17 @@ func _choose_patch_stall_route(id: String, source: WeakRef, prior: Array[String]
 		run_map.undo_choice(id, prior)
 		run_rng.state = rng_before
 		return false
+	var service := RunPatchStallVisit.new(run_map.get_current_node_id(), ids,
+		run_deck, run_trinkets, session_gold, sampled.offers)
+	if not service.is_valid():
+		run_map.undo_choice(id, prior)
+		run_rng.state = rng_before
+		return false
 	_clear_route_view()
 	if is_instance_valid(patch_stall_view):
 		patch_stall_view.free()
 	patch_stall_visit = visit
+	patch_stall_service = service
 	patch_stall_purchases = purchases
 	_patch_stall_wardrobe = wardrobe
 	_patch_stall_closed = false
@@ -4080,7 +4089,7 @@ func _choose_patch_stall_route(id: String, source: WeakRef, prior: Array[String]
 		patch_stall_heroes.add_item(hero.id.capitalize())
 		patch_stall_heroes.set_item_metadata(patch_stall_heroes.item_count - 1, hero.id)
 	patch_stall_view.add_child(patch_stall_heroes)
-	for offer in purchases.get_stock().trinkets:
+	for offer in service.quote().offers:
 		var action := Button.new()
 		action.text = "%s (%s) - %d gold%s" % [String(offer.id).capitalize(),
 			w.definitions[offer.id], offer.price, " (insufficient gold)" if session_gold < offer.price else ""]
@@ -4110,11 +4119,16 @@ func _choose_patch_stall_route(id: String, source: WeakRef, prior: Array[String]
 
 func _patch_stall_action(button, view, visit: RunShopVisit) -> void:
 	if _patch_stall_closed or _patch_stall_context.is_empty() or visit == null or visit != patch_stall_visit \
+		or patch_stall_service == null or patch_stall_service.is_consumed() \
 		or not is_instance_valid(view) or view != patch_stall_view or view.get_parent() != self \
 		or not view.is_visible_in_tree() or not is_instance_valid(button) \
 		or button not in patch_stall_buttons + [patch_stall_leave] or button.get_parent() != view \
 		or button.disabled or not button.is_visible_in_tree() or _patch_stall_snapshot() != _patch_stall_context \
 		or run_map.get_node(run_map.get_current_node_id()).get("type") != "PatchStall":
+		return
+	var service_state := patch_stall_service.read_state()
+	var node_id := run_map.get_current_node_id()
+	if service_state.node_id != node_id or service_state.status != "available":
 		return
 	if button != patch_stall_leave:
 		if not is_instance_valid(patch_stall_heroes) or patch_stall_heroes.get_parent() != view \
@@ -4127,8 +4141,11 @@ func _patch_stall_action(button, view, visit: RunShopVisit) -> void:
 			or patch_stall_heroes.get_item_text(row) != String(run_heroes[row].id).capitalize():
 			return
 		var index := patch_stall_buttons.find(button)
-		var offer: Dictionary = patch_stall_purchases.get_stock().trinkets[index]
+		var offer: Dictionary = patch_stall_service.quote().offers[index]
 		if button.get_meta("patch_id", "") != offer.id:
+			return
+		var receipt := patch_stall_service.preview_purchase(offer.id, service_state.visit_id, node_id, service_state.snapshot)
+		if receipt.is_empty():
 			return
 		var carry := party_carryover as RunTornCarryover
 		var w := _patch_stall_wardrobe.get_snapshot()
@@ -4140,10 +4157,17 @@ func _patch_stall_action(button, view, visit: RunShopVisit) -> void:
 			patch_stall_purchases.get_stock(), visit.get_state(), w)
 		if not result.ok:
 			return
+		assert(result.purchase_receipt == receipt, "Atomic purchase must match service preflight")
+		var reconciled := patch_stall_service.reconcile_purchase(result.purchase_receipt,
+			service_state.visit_id, node_id, service_state.snapshot)
+		assert(reconciled, "Successful identical atomic receipt must consume the service")
 		run_trinkets.assign(result.wardrobe_state.owned)
 		run_scraps = result.wardrobe_state.scraps
 		session_gold = result.wardrobe_state.gold
 		carry.bind_wardrobe(_patch_stall_wardrobe, carry.torn, result.wardrobe_state)
+	else:
+		if not patch_stall_service.leave(service_state.visit_id, node_id, service_state.snapshot).ok:
+			return
 	visit.close_visit()
 	_patch_stall_closed = true
 	_patch_stall_original = _sewing_context()
@@ -6428,6 +6452,7 @@ func _return_to_title() -> void:
 		patch_stall_view.free()
 	patch_stall_view = null
 	patch_stall_visit = null
+	patch_stall_service = null
 	patch_stall_purchases = null
 	_patch_stall_wardrobe = null
 	patch_stall_buttons.clear()

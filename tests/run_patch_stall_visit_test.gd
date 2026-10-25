@@ -76,6 +76,25 @@ func _run() -> void:
 	var broke_state := broke_visit.read_state()
 	_check(not broke_visit.buy_patch(offers[0].id, "node_1", "node_1", broke_state.snapshot).ok, "insufficient gold purchase rejected")
 	_check(not broke_visit.is_consumed(), "failed purchase does not consume visit")
+	_check(broke_visit.preview_purchase(offers[0].id, "node_1", "node_1", broke_state.snapshot).is_empty(), "unaffordable preview refuses without consuming")
+
+	var atomic_visit := RunPatchStallVisit.new("node_1", party, deck, owned, gold, offers)
+	var atomic_source := atomic_visit.read_state()
+	var receipt := atomic_visit.preview_purchase(offers[0].id, "node_1", "node_1", snapshot)
+	_check(receipt == {"kind": "trinket", "id": offers[0].id, "price": offers[0].price}
+		and atomic_visit.read_state() == atomic_source, "preview is exact and read-only")
+	for bad in [{}, {"kind": "card", "id": offers[0].id, "price": offers[0].price},
+		{"kind": "trinket", "id": offers[0].id, "price": offers[0].price + 1},
+		{"kind": "trinket", "id": "forged", "price": offers[0].price},
+		{"kind": "trinket", "id": offers[0].id, "price": offers[0].price, "extra": true}]:
+		_check(not atomic_visit.reconcile_purchase(bad, "node_1", "node_1", snapshot)
+			and atomic_visit.read_state() == atomic_source, "nonidentical atomic receipt leaves service open")
+	_check(not atomic_visit.reconcile_purchase(receipt, "foreign", "node_1", snapshot)
+		and not atomic_visit.reconcile_purchase(receipt, "node_1", "foreign", snapshot)
+		and not atomic_visit.reconcile_purchase(receipt, "node_1", "node_1", bad_snapshot), "foreign and stale reconciliation refused")
+	_check(atomic_visit.reconcile_purchase(receipt, "node_1", "node_1", snapshot)
+		and atomic_visit.is_consumed(), "identical atomic receipt consumes service")
+	_check(not atomic_visit.reconcile_purchase(receipt, "node_1", "node_1", snapshot), "duplicate atomic receipt refused")
 	
 	# AC2: Successful Leave
 	var leave_visit := RunPatchStallVisit.new("node_1", party, deck, owned, gold, offers)
