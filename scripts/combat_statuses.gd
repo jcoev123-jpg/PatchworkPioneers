@@ -8,6 +8,8 @@ const MAX_INT := 9223372036854775807
 
 ## Invalid damage or status data fails closed to zero, never an unmodified attack.
 ## Integer quotient/remainder arithmetic floors ONCE and avoids overflow.
+## A positive-base attack adds Tangled's flat +2 after the Weak/Exposed floor,
+## once per attack regardless of the defender's stack count.
 func adjusted_attack_damage(base_damage: int, attacker_statuses: Dictionary, defender_statuses: Dictionary) -> int:
 	if base_damage < 0 or not _valid_statuses(attacker_statuses) or not _valid_statuses(defender_statuses):
 		return 0
@@ -33,11 +35,16 @@ func adjusted_attack_damage(base_damage: int, attacker_statuses: Dictionary, def
 	@warning_ignore("integer_division")
 	if whole > (MAX_INT - partial) / numerator:
 		return 0
-	return whole * numerator + partial
+	var adjusted: int = whole * numerator + partial
+	if base_damage > 0 and defender_statuses.get("tangled", 0) > 0:
+		if adjusted > MAX_INT - 2:
+			return 0
+		adjusted += 2
+	return adjusted
 
 
 ## One affected actor's turn ends. Bleed is direct HP loss, never Block damage.
-## Weak and Exposed expire at this boundary, after applying during this turn.
+## Weak, Exposed and Tangled expire at this boundary, after applying during this turn.
 ## Invalid state returns ok=false and an independent, unchanged deep snapshot.
 func end_owner_turn(hp: int, block: int, statuses: Dictionary) -> Dictionary:
 	var next_statuses: Dictionary = statuses.duplicate(true)
@@ -46,7 +53,7 @@ func end_owner_turn(hp: int, block: int, statuses: Dictionary) -> Dictionary:
 
 	var loss: int = mini(hp, statuses.get("bleed", 0))
 	next_statuses.clear()
-	for name in ["bleed", "weak", "exposed"]:
+	for name in ["bleed", "weak", "exposed", "tangled"]:
 		var remaining: int = statuses.get(name, 0)
 		if remaining > 1:
 			next_statuses[name] = remaining - 1
@@ -55,7 +62,7 @@ func end_owner_turn(hp: int, block: int, statuses: Dictionary) -> Dictionary:
 
 func _valid_statuses(statuses: Dictionary) -> bool:
 	for name in statuses:
-		if not name is String or name not in ["bleed", "weak", "exposed"]:
+		if not name is String or name not in ["bleed", "weak", "exposed", "tangled"]:
 			return false
 		var count = statuses[name]
 		if not count is int or count < 0:
