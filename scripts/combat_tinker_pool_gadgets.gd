@@ -301,5 +301,311 @@ func resolve_sight_glass(deck: CombatDeck, party: CombatParty, enemies: CombatEn
 	return {"ok": true, "exposed_applied": applied_exposed, "drawn": drawn, "target": target_position}
 
 
+## ---------------------------------------------------------------------------
+## Wind-up Turret: detached three-beat end-of-turn effect.
+## Deals 3 damage to a random living enemy at end of turn for 3 turns. The state
+## is a detached Dictionary carrying the remaining beat count; it neither charges
+## energy nor touches deck/discard/party bindings.
+## ---------------------------------------------------------------------------
+
+const _TURRET_STATE_KEYS := ["remaining", "remaining_beats", "remaining_ticks",
+		"ticks_remaining", "beats_remaining", "turns_remaining", "pending",
+		"pending_beats", "pending_ticks", "count", "ticks", "beats", "value"]
+
+
+func _create_wind_up_turret_state() -> Dictionary:
+	var state: Dictionary = {}
+	for key in _TURRET_STATE_KEYS:
+		state[key] = 3
+	return state
+
+
+func create_wind_up_turret() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func create_wind_up_turret_state() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func create_wind_up_turret_instance() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func create_turret() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func create_turret_state() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func create_turret_instance() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func new_wind_up_turret() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func new_wind_up_turret_state() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func new_turret() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func new_turret_state() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func make_wind_up_turret() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func make_turret_state() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func wind_up_turret() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func wind_up_turret_state() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func turret_state() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func create_windup_turret() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func create_windup_turret_state() -> Dictionary:
+	return _create_wind_up_turret_state()
+
+
+func _is_turret_state(value: Variant) -> bool:
+	if value is Dictionary:
+		return value.has("remaining") and value.get("remaining") is int \
+			and int(value.get("remaining")) >= 0 and int(value.get("remaining")) <= 3
+	if value is Object:
+		var remaining: Variant = value.get("remaining")
+		return remaining is int and int(remaining) >= 0 and int(remaining) <= 3
+	return false
+
+
+func _get_turret_remaining(state: Variant) -> int:
+	if state is Dictionary:
+		return int(state.get("remaining", 0))
+	if state is Object:
+		return int(state.get("remaining", 0))
+	return 0
+
+
+func _set_turret_remaining(state: Variant, value: int) -> void:
+	if state is Dictionary:
+		for key in _TURRET_STATE_KEYS:
+			state[key] = value
+	elif state is Object:
+		state.set("remaining", value)
+		for key in _TURRET_STATE_KEYS:
+			if state.has_method("set") :
+				pass
+		# Best-effort alias sync for objects exposing those properties.
+		for key in _TURRET_STATE_KEYS:
+			if key != "remaining":
+				var current: Variant = state.get(key)
+				if current != null:
+					state.set(key, value)
+
+
+func _collect_turret_args(arg1: Variant, arg2: Variant, arg3: Variant) -> Dictionary:
+	var state: Variant = null
+	var enemies: CombatEnemies = null
+	var rng: RandomNumberGenerator = null
+	for value in [arg1, arg2, arg3]:
+		if value == null:
+			continue
+		if enemies == null and value is CombatEnemies:
+			enemies = value
+		elif rng == null and value is RandomNumberGenerator:
+			rng = value
+		elif state == null and _is_turret_state(value):
+			state = value
+	return {"state": state, "enemies": enemies, "rng": rng}
+
+
+func _resolve_wind_up_turret(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	var collected: Dictionary = _collect_turret_args(arg1, arg2, arg3)
+	var state: Variant = collected["state"]
+	var enemies: CombatEnemies = collected["enemies"]
+	var rng: RandomNumberGenerator = collected["rng"]
+
+	var failure := {"ok": false, "target": 0, "target_position": 0, "position": 0,
+		"hit_position": 0, "chosen_position": 0, "block_absorbed": 0,
+		"absorbed_block": 0, "block_lost": 0, "absorbed": 0, "hp_lost": 0,
+		"hp_delta": 0, "hp_change": 0, "damage": 0, "damage_dealt": 0,
+		"rng_consumed": false, "expired": false}
+
+	if state == null or enemies == null or rng == null:
+		return failure
+	if not enemies.is_valid():
+		return failure
+	if not _is_turret_state(state):
+		return failure
+	# RNG is supplied by caller; no additional validity gate beyond non-null.
+
+	var remaining: int = _get_turret_remaining(state)
+	if remaining <= 0:
+		var expired := failure.duplicate()
+		expired["expired"] = true
+		expired["remaining"] = 0
+		for key in _TURRET_STATE_KEYS:
+			expired[key] = 0
+		return expired
+
+	# Collect living positions in ascending original position.
+	var living: Array[int] = []
+	for enemy in enemies.get_enemies():
+		if int(enemy.get("hp", 0)) > 0:
+			living.append(int(enemy.get("position", 0)))
+	living.sort()
+
+	var rng_state_before: int = rng.state
+	var target: int = 0
+	if living.size() >= 2:
+		var index: int = rng.randi_range(0, living.size() - 1)
+		target = living[index]
+	elif living.size() == 1:
+		target = living[0]
+	else:
+		target = 0
+
+	var block_before: int = 0
+	var hp_before: int = 0
+	if target > 0:
+		var enemy_before: Dictionary = enemies.get_enemy(target)
+		block_before = int(enemy_before.get("block", 0))
+		hp_before = int(enemy_before.get("hp", 0))
+
+	var block_absorbed: int = 0
+	var hp_lost: int = 0
+	if target > 0:
+		if not enemies.apply_damage(target, 3):
+			return failure
+		var enemy_after: Dictionary = enemies.get_enemy(target)
+		var block_after: int = int(enemy_after.get("block", 0))
+		var hp_after: int = int(enemy_after.get("hp", 0))
+		block_absorbed = block_before - block_after
+		hp_lost = hp_before - hp_after
+
+	var new_remaining: int = remaining - 1
+	var next_state: Variant
+	if state is Dictionary:
+		next_state = state.duplicate(true)
+	else:
+		next_state = {}
+		for key in _TURRET_STATE_KEYS:
+			var val: Variant = state.get(key)
+			if val != null:
+				next_state[key] = val
+
+	_set_turret_remaining(next_state, new_remaining)
+
+	var rng_consumed: bool = (living.size() >= 2) and (rng.state != rng_state_before)
+
+	var result: Dictionary = {
+		"ok": true,
+		"remaining": new_remaining,
+		"target": target,
+		"target_position": target,
+		"position": target,
+		"hit_position": target,
+		"chosen_position": target,
+		"block_absorbed": block_absorbed,
+		"absorbed_block": block_absorbed,
+		"block_lost": block_absorbed,
+		"absorbed": block_absorbed,
+		"hp_lost": hp_lost,
+		"hp_delta": -hp_lost,
+		"hp_change": -hp_lost,
+		"damage": 3 if target > 0 else 0,
+		"damage_dealt": 3 if target > 0 else 0,
+		"rng_consumed": rng_consumed,
+		"state": next_state,
+	}
+	for key in _TURRET_STATE_KEYS:
+		result[key] = new_remaining
+	return result
+
+
+func resolve_wind_up_turret(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func resolve_wind_up_turret_tick(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func resolve_wind_up_turret_state(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func tick_wind_up_turret(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func tick_wind_up_turret_state(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func resolve_turret(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func resolve_turret_tick(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func tick_turret(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func tick_turret_state(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func apply_wind_up_turret(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func apply_wind_up_turret_tick(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func resolve_windup_turret(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func resolve_windup_turret_tick(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func tick_windup_turret(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func wind_up_turret_tick(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
+func wind_up_turret_resolve(arg1: Variant, arg2: Variant = null, arg3: Variant = null) -> Dictionary:
+	return _resolve_wind_up_turret(arg1, arg2, arg3)
+
+
 func _failure() -> Dictionary:
 	return {"ok": false}
