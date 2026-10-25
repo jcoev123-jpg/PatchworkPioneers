@@ -14,7 +14,7 @@ extends SceneTree
 
 const EVENTS_PATH := "res://data/events/m04_events.json"
 
-## Independent copy of the seven named generic IDs; never read from the
+## Independent copy of the thirteen named generic IDs; never read from the
 ## production constant, so a shrink there is caught here.
 const REQUIRED_IDS := [
 	"button_trail",
@@ -24,6 +24,12 @@ const REQUIRED_IDS := [
 	"needle_gate",
 	"quilting_bee",
 	"estate_sale",
+	"lantern_moth_clearing",
+	"patchwork_ferry",
+	"spool_clocktower",
+	"ragpicker_cart",
+	"quilt_bridge",
+	"button_moon_festival",
 ]
 
 const SPECIAL_ID := "quiet_spool"
@@ -49,6 +55,7 @@ func _initialize() -> void:
 	_test_fixture_catalog_validation()
 	_test_future_catalog_additions()
 	_test_wallet_outcomes_of_selected_records()
+	_test_v3_wallet_event_batch()
 	_check(source_document == source_snapshot, "shipped catalog document unchanged by every flow")
 	_report()
 
@@ -482,6 +489,179 @@ func _test_wallet_outcomes_of_selected_records() -> void:
 
 	_check(rotation.get_generic_events() == pool_snapshot, "wallet flows never mutate the rotation listing")
 	_check(rng_guard.state == guard_state, "wallet preview and settlement never touch the run RNG")
+
+
+func _test_v3_wallet_event_batch() -> void:
+	## Table-driven verification of the six V3-4 wallet-only events.
+	## Each entry: id, title, description, choices array of {id, text, gold, scraps}.
+	var new_events: Array[Dictionary] = [
+		{
+			"id": "lantern_moth_clearing",
+			"title": "Lantern-Moth Clearing",
+			"description": "Moths orbit a quilted lantern; abandoned silk spools glimmer in the grass.",
+			"choices": [
+				{"id": "gather_spools", "text": "Gather loose silk (+1 scrap)", "gold": 0, "scraps": 1},
+				{"id": "buy_wick", "text": "Trade 14 gold for two wick spools (+2 scraps)", "gold": -14, "scraps": 2},
+				{"id": "move_on", "text": "Leave the moths undisturbed", "gold": 0, "scraps": 0},
+			],
+		},
+		{
+			"id": "patchwork_ferry",
+			"title": "The Patchwork Ferry",
+			"description": "A cloth-sailed ferry rocks at a riverbank lined with cast-off rope.",
+			"choices": [
+				{"id": "buy_passage", "text": "Pay 10 gold for a spare rope coil (+1 scrap)", "gold": -10, "scraps": 1},
+				{"id": "sell_rigging", "text": "Sell two scraps of salvaged rigging (+25 gold)", "gold": 25, "scraps": -2},
+				{"id": "walk_river", "text": "Take the long road", "gold": 0, "scraps": 0},
+			],
+		},
+		{
+			"id": "spool_clocktower",
+			"title": "The Spool Clocktower",
+			"description": "A crooked clock made of spools ticks above a deserted seamstress stall.",
+			"choices": [
+				{"id": "collect_coins", "text": "Untangle six fallen coins (+6 gold)", "gold": 6, "scraps": 0},
+				{"id": "repair_hand", "text": "Spend 1 scrap to fix the clock hand (+20 gold)", "gold": 20, "scraps": -1},
+				{"id": "ignore_chimes", "text": "Ignore the chimes", "gold": 0, "scraps": 0},
+			],
+		},
+		{
+			"id": "ragpicker_cart",
+			"title": "The Ragpicker's Cart",
+			"description": "A ragpicker sorts striped remnants into bundles beside a handcart.",
+			"choices": [
+				{"id": "buy_bundle", "text": "Buy a bundle for 20 gold (+3 scraps)", "gold": -20, "scraps": 3},
+				{"id": "sell_remnants", "text": "Sell two scraps of fine fabric (+29 gold)", "gold": 29, "scraps": -2},
+				{"id": "leave", "text": "Leave the cart", "gold": 0, "scraps": 0},
+			],
+		},
+		{
+			"id": "quilt_bridge",
+			"title": "The Quilt Bridge",
+			"description": "The river crossing is a suspended strip of embroidered quilt.",
+			"choices": [
+				{"id": "salvage_stitch", "text": "Pick up a fallen stitch (+1 scrap)", "gold": 0, "scraps": 1},
+				{"id": "repair_toll", "text": "Spend 1 scrap on the guardrail (+18 gold)", "gold": 18, "scraps": -1},
+				{"id": "barter_thread", "text": "Exchange 12 gold for two thread bundles (+2 scraps)", "gold": -12, "scraps": 2},
+			],
+		},
+		{
+			"id": "button_moon_festival",
+			"title": "The Button-Moon Festival",
+			"description": "Travellers celebrate beneath a moon stitched from silver buttons.",
+			"choices": [
+				{"id": "find_lucky_button", "text": "Find a dropped lucky coin (+5 gold)", "gold": 5, "scraps": 0},
+				{"id": "buy_ribbons", "text": "Buy two ribbon bundles for 16 gold (+2 scraps)", "gold": -16, "scraps": 2},
+				{"id": "sell_masks", "text": "Sell two scraps of festival fabric (+28 gold)", "gold": 28, "scraps": -2},
+			],
+		},
+	]
+
+	var rotation := RunM04EventRotation.new()
+	var pool_snapshot: Array = rotation.get_generic_events()
+
+	for event_def in new_events:
+		var event_id: String = event_def["id"]
+		# Verify the event appears exactly once in the generic rotation with exact authored fields.
+		var matches := _matches(pool_snapshot, event_id)
+		_check(matches.size() == 1, "exactly one generic record for new event " + event_id)
+		if matches.size() != 1:
+			continue
+		var record: Dictionary = matches[0]
+		_check(record.get("title") == event_def["title"], "authored title matches: " + event_id)
+		_check(record.get("description") == event_def["description"], "authored description matches: " + event_id)
+		# Verify each choice's text and outcome deltas.
+		var expected_choices: Array = event_def["choices"]
+		var actual_choices: Array = record.get("choices", [])
+		_check(actual_choices.size() == expected_choices.size(), "choice count matches: " + event_id)
+		for choice_def in expected_choices:
+			var found := false
+			for actual in actual_choices:
+				if actual is Dictionary and actual.get("id") == choice_def["id"]:
+					found = true
+					_check(actual.get("text") == choice_def["text"], "choice text matches: " + event_id + " / " + choice_def["id"])
+					var actual_outcome: Dictionary = actual.get("outcome", {})
+					var expected_gold: int = choice_def["gold"]
+					var expected_scraps: int = choice_def["scraps"]
+					var actual_gold: int = int(actual_outcome.get("gold", 0))
+					var actual_scraps: int = int(actual_outcome.get("scraps", 0))
+					_check(actual_gold == expected_gold and actual_scraps == expected_scraps, "choice outcome deltas match: " + event_id + " / " + choice_def["id"])
+					break
+			_check(found, "choice id present: " + event_id + " / " + choice_def["id"])
+
+		# Force selection via exclusions with a fixed seed and independent oracle.
+		var excluded: Array = rotation.get_generic_event_ids()
+		excluded.erase(event_id)
+		var seed_value: int = _event_seed(event_id)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = seed_value
+		# Since we excluded all OTHER IDs, the only eligible is event_id, so oracle.randi_range(0,0) = 0
+		oracle.randi_range(0, 0)
+		var result := rotation.select_event(rng, excluded)
+		_check(result.get("ok") == true, "forced selection succeeds: " + event_id)
+		_check(result.get("event", {}).get("id") == event_id, "forced selection returns correct event: " + event_id)
+		_check(rng.state == oracle.state, "forced selection consumes exactly one draw: " + event_id)
+
+		# Wallet preview and settlement for each choice.
+		var service := RunEventChoice.new(record)
+		_check(service.is_valid(), "selected record validates: " + event_id)
+		for choice_def in expected_choices:
+			var choice_id: String = choice_def["id"]
+			var preview: Dictionary = _preview_map(service.preview_wallet_choices({"gold": 100, "scraps": 10}))
+			_check(preview.has(choice_id), "preview has choice: " + event_id + " / " + choice_id)
+			var choice_preview: Dictionary = preview[choice_id]
+			_check(choice_preview.get("affordable") == true, "choice affordable at funded wallet: " + event_id + " / " + choice_id)
+			var expected_wallet: Dictionary = {"gold": 100 + choice_def["gold"], "scraps": 10 + choice_def["scraps"]}
+			_check(choice_preview.get("wallet") == expected_wallet, "preview wallet matches authored deltas: " + event_id + " / " + choice_id)
+
+			# Test insufficient funds for debit choices, then success after funding.
+			if choice_def["gold"] < 0 or choice_def["scraps"] < 0:
+				var poor_service := RunEventChoice.new(record)
+				var poor_preview := _preview_map(poor_service.preview_wallet_choices({"gold": 0, "scraps": 0}))
+				_check(poor_preview[choice_id].get("affordable") == false, "choice unaffordable at zero wallet: " + event_id + " / " + choice_id)
+				var denied := poor_service.choose_with_wallet(choice_id, {"gold": 0, "scraps": 0})
+				_check(denied.get("ok") == false, "debit choice refused at zero wallet: " + event_id + " / " + choice_id)
+				_check(denied.get("wallet") == {"gold": 0, "scraps": 0}, "refusal returns unchanged wallet: " + event_id + " / " + choice_id)
+				_check(not poor_service.is_claimed(), "refusal leaves claim unconsumed: " + event_id + " / " + choice_id)
+				# Now fund and succeed.
+				var funded_service := RunEventChoice.new(record)
+				var funded := funded_service.choose_with_wallet(choice_id, {"gold": 100, "scraps": 10})
+				_check(funded.get("ok") == true, "debit choice succeeds when funded: " + event_id + " / " + choice_id)
+				_check(funded.get("wallet") == {"gold": 100 + choice_def["gold"], "scraps": 10 + choice_def["scraps"]}, "funded settlement applies deltas: " + event_id + " / " + choice_id)
+				_check(funded_service.is_claimed(), "funded settlement consumes claim: " + event_id + " / " + choice_id)
+				# Replay rejected.
+				_check(funded_service.choose_with_wallet(choice_id, {"gold": 100, "scraps": 10}).get("ok") == false, "replay rejected: " + event_id + " / " + choice_id)
+			else:
+				# Non-debit options (zero or positive deltas) remain selectable at zero wallet.
+				var free_service := RunEventChoice.new(record)
+				var free := free_service.choose_with_wallet(choice_id, {"gold": 0, "scraps": 0})
+				_check(free.get("ok") == true, "non-debit choice succeeds at zero wallet: " + event_id + " / " + choice_id)
+				var free_wallet: Dictionary = free.get("wallet", {})
+				var free_gold: int = int(free_wallet.get("gold", 0))
+				var free_scraps: int = int(free_wallet.get("scraps", 0))
+				var expected_gold: int = max(0, choice_def["gold"])
+				var expected_scraps: int = max(0, choice_def["scraps"])
+				_check(free_gold == expected_gold and free_scraps == expected_scraps, "non-debit choice applies positive deltas: " + event_id + " / " + choice_id)
+				_check(free_service.is_claimed(), "non-debit choice consumes claim: " + event_id + " / " + choice_id)
+				_check(free_service.choose_with_wallet(choice_id, {"gold": 0, "scraps": 0}).get("ok") == false, "replay rejected: " + event_id + " / " + choice_id)
+
+		_check(service.is_valid(), "service stays usable after all settlements: " + event_id)
+
+	_check(rotation.get_generic_events() == pool_snapshot, "wallet flows never mutate the rotation listing")
+
+
+## Deterministic seed per new event id for forced selections.
+func _event_seed(event_id: String) -> int:
+	match event_id:
+		"lantern_moth_clearing": return 1001
+		"patchwork_ferry": return 1002
+		"spool_clocktower": return 1003
+		"ragpicker_cart": return 1004
+		"quilt_bridge": return 1005
+		"button_moon_festival": return 1006
+		_: return 9999
 
 
 func _force_selection(rotation: RunM04EventRotation, target_id: String, seed_value: int) -> Dictionary:
