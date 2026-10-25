@@ -25,6 +25,9 @@ var _mode := ""
 var _first := -1
 var _second := -1
 var _preview: Dictionary = {}
+## The one detached payload this session's own Confirm emitted, held until the
+## bound controller consumes it. Nothing outside _confirm may mint it.
+var _confirmed: Dictionary = {}
 ## This session's own button callbacks, by button. Only these are retired on a
 ## rebind or close, so any listener a recipient attached stays untouched.
 var _session: Dictionary = {}
@@ -129,6 +132,7 @@ func bind(visit: RunSewingCircleVisit) -> void:
 	_visit = visit
 	_source = visit.read_state() if visit != null else {}
 	_submitted = false
+	_confirmed.clear()
 	_reset_selection()
 	if is_node_ready():
 		_connect_session()
@@ -296,8 +300,23 @@ func _confirm(epoch: int) -> void:
 	var intent := {"action": _mode, "first_index": _first, "second_index": _second,
 		"visit_id": _source.visit_id, "node_id": _source.node_id,
 		"source_snapshot": _source.duplicate(true)}
+	# Capture the exact selection this physical Confirm owns before the panel
+	# forgets it, so a controller may settle only this one emitted decision.
+	_confirmed = intent.duplicate(true)
 	_submitted = true
 	_reset_selection()
 	_refresh()
 	# Each emission owns its nested snapshot; observers cannot alter the binding.
 	intent_requested.emit(intent.duplicate(true))
+
+
+## One-shot hand-off for the bound controller: the detached payload this panel's
+## own Confirm emitted, and only for that exact intent. A direct listener call, a
+## stale payload or an altered action/index gets nothing and consumes nothing.
+func take_confirmed(intent: Variant) -> Dictionary:
+	if not _submitted or _confirmed.is_empty() or typeof(intent) != TYPE_DICTIONARY \
+			or intent != _confirmed:
+		return {}
+	var confirmed := _confirmed.duplicate(true)
+	_confirmed.clear()
+	return confirmed

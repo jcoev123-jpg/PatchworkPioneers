@@ -241,6 +241,8 @@ func _complete_node(kind: String, mode: int, step: int) -> void:
 			await _click(app.patch_stall_leave)
 		"SewingCircle":
 			await _click(app.sewing_leave_button)
+			_check(not app._sewing_closed and not app.sewing_view.confirm_button.disabled, "Leave previews before explicit confirmation")
+			await _click(app.sewing_view.confirm_button)
 		"Shop":
 			await _click(app.shop_continue_button)
 		"Event":

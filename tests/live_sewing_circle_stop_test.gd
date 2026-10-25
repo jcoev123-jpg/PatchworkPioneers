@@ -26,7 +26,8 @@ func _fixture() -> Dictionary:
 
 func _ledger() -> Array:
 	return [app._sewing_context(), app.act_outcome.get_state(),
-		app._sewing_closed, app._sewing_visits.duplicate(true)]
+		app._sewing_closed, app._sewing_visits.duplicate(true),
+		app.sewing_visit.read_state() if app.sewing_visit != null else {}]
 
 
 func _button(id: String) -> Button:
@@ -94,23 +95,24 @@ func _enter(atlas: bool, keyboard: bool) -> void:
 		and app.run_map.get_route() == prior + [fixture.id], "physical input enters isolated Sewing Circle")
 	_check(not is_instance_valid(app.rest_view) and not is_instance_valid(app.rest_stitch_overlay),
 		"Rest gallery and guided picker are not mounted")
-	var actions: Array = []
-	for child in app.sewing_view.get_children():
-		if child is Button and not child is OptionButton:
-			actions.append(child.text)
-	_check(actions == ["Upgrade", "Stitch", "Leave"], "exactly three primary actions")
-	_check(app.sewing_stitch_button.tooltip_text.contains("3 scraps"), "three-scrap cost visible")
+	var panel: LiveSewingCirclePanel = app.sewing_view
+	_check(panel.get_parent() == app and panel.position == Vector2(170, 50)
+		and panel.size == Vector2(940, 620), "tested panel placement fits live viewport")
+	_check(panel.intent_requested.get_connections().size() == 1
+		and panel._visit == app.sewing_visit and app.sewing_visit.is_valid(), "one controller owns authentic visit")
+	_check(panel.stitch_button.text.contains("3 scraps") and panel.confirm_button.disabled,
+		"cost visible and explicit confirmation required")
 	var before := _ledger()
-	# Traverse every enabled control from the real initial focus, including selectors.
+	var controls := [panel.upgrade_button, panel.stitch_button, panel.leave_button]
 	var visited: Array = []
-	for i in range(7):
+	for i in range(4):
 		var focus := root.gui_get_focus_owner()
 		if not visited.has(focus):
 			visited.append(focus)
 		await _key(KEY_TAB)
-	for control in app._sewing_controls:
+	for control in controls:
 		if not control.disabled:
-			_check(visited.has(control), "Tab reaches " + control.get_class())
+			_check(visited.has(control), "Tab reaches primary action")
 	_check(_ledger() == before, "focus traversal consumes nothing")
 	for down in [true, false]:
 		var event := InputEventKey.new()
@@ -119,8 +121,24 @@ func _enter(atlas: bool, keyboard: bool) -> void:
 		event.pressed = down
 		root.push_input(event, true)
 	await _frames()
-	_check(app._sewing_controls.has(root.gui_get_focus_owner()) and _ledger() == before,
+	_check(controls.has(root.gui_get_focus_owner()) and _ledger() == before,
 		"reverse Tab stays within the mounted visit without spending")
+
+
+func _intent(action: String = "upgrade", first: int = 0, second: int = -1) -> Dictionary:
+	var source: Dictionary = app._sewing_source
+	return {"action": action, "first_index": first, "second_index": second,
+		"node_id": source.node_id, "visit_id": source.visit_id, "source_snapshot": source.duplicate(true)}
+
+
+func _activate(button: Button, keyboard: bool) -> void:
+	_check(is_instance_valid(button) and not button.disabled and button.is_visible_in_tree(), "real enabled panel action")
+	if keyboard:
+		button.grab_focus()
+		await _key(KEY_ENTER)
+	else:
+		await _click(button)
+	await _frames()
 
 
 func _inert(callback: Callable, label: String, arguments: Array = []) -> void:
@@ -130,7 +148,33 @@ func _inert(callback: Callable, label: String, arguments: Array = []) -> void:
 
 
 func _negative_actions() -> void:
-	var callback: Callable = app.sewing_upgrade_button.pressed.get_connections()[0].callable
+	var panel: LiveSewingCirclePanel = app.sewing_view
+	var visit: RunSewingCircleVisit = app.sewing_visit
+	var listener: Callable = panel.intent_requested.get_connections()[0].callable
+	# Nothing is selected or confirmed yet: even a complete, source-valid
+	# decision forwarded straight into the connected listener is not a player's
+	# choice, so every canonical action must fail closed.
+	_check(not panel._submitted and panel._confirmed.is_empty() and panel.confirm_button.disabled
+		and panel.preview().is_empty(), "authentication negatives start before any selection or Confirm")
+	_inert(listener, "unconfirmed Leave", [_intent("leave")])
+	var upgrades: Array = visit.upgrade_options()
+	_check(not upgrades.is_empty(), "an eligible unconfirmed Upgrade exists")
+	if not upgrades.is_empty():
+		_inert(listener, "unconfirmed eligible Upgrade", [_intent("upgrade", upgrades[0].index)])
+	var pair: Array = []
+	for first in visit.stitch_first_options():
+		var seconds: Array = visit.stitch_second_options(first.index)
+		if not seconds.is_empty():
+			pair = [first.index, seconds[0].index]
+			break
+	if app.run_scraps >= RunRestStitchCards.SCRAP_COST:
+		_check(not pair.is_empty(), "an affordable different-owner Stitch pair exists")
+		if not pair.is_empty():
+			_inert(listener, "unconfirmed affordable Stitch", [_intent("stitch", pair[0], pair[1])])
+	_check(not panel._submitted and panel.confirm_button.disabled and not panel.leave_button.disabled
+		and not visit.is_consumed() and app.run_map.get_current_node_id() == app._sewing_source.node_id,
+		"unconfirmed intents leave panel operable, visit open and route intact")
+	var callback: Callable = app.sewing_view.intent_requested.get_connections()[0].callable.bind(_intent())
 	var original: Dictionary = app._sewing_context()
 	app.run_heroes[0].hp -= 1
 	_inert(callback, "mismatched party")
@@ -182,31 +226,42 @@ func _negative_actions() -> void:
 	app.run_trinkets.append("forged_patch")
 	_inert(callback, "drifted patch inventory")
 	app.run_trinkets.pop_back()
-	var selector: OptionButton = app.sewing_upgrade_cards
-	var row: Dictionary = selector.get_item_metadata(0)
-	selector.set_item_metadata(0, {"index": 10000})
-	_inert(callback, "forged upgrade metadata")
-	selector.set_item_metadata(0, row)
-	var fake := Button.new()
-	app.sewing_view.add_child(fake)
-	_inert(app._sewing_action.bind(fake, app.sewing_view, app._sewing_controls.duplicate()), "forged action control")
+	var bound_source: Dictionary = panel._source.duplicate(true)
+	panel._source.node_id = "forged"
+	_inert(callback, "tampered panel binding")
+	panel._source = bound_source
+	app.sewing_visit._ledger.remaining_scraps += 1
+	_inert(callback, "tampered service ledger")
+	app.sewing_visit._ledger.remaining_scraps -= 1
+	for field in ["node_id", "visit_id", "source_snapshot", "action"]:
+		var forged := _intent()
+		forged[field] = {} if field == "source_snapshot" else "forged"
+		_inert(panel.intent_requested.get_connections()[0].callable, "forged " + field, [forged])
+	_inert(app._sewing_intent.bind(_intent(), panel, RunSewingCircleVisit.new(fixture.id,
+		app.run_deck, app.run_stitch_descriptors, app.run_scraps, app.run_next_stitch_id)), "foreign visit identity")
+	var fake := LiveSewingCirclePanel.new()
+	app.add_child(fake)
+	_inert(app._sewing_intent.bind(_intent(), fake, app.sewing_visit), "forged panel")
 	fake.free()
-	var stitch: Callable = app.sewing_stitch_button.pressed.get_connections()[0].callable
-	app.sewing_first.select(0)
-	app.sewing_second.select(0)
-	_inert(stitch, "same occurrence stitch")
-	var first_id: String = app.run_deck[app.sewing_first.get_item_metadata(0)]
-	var owner: String = RunRestStitchCards.resolve_card_definition(first_id).owner
-	for i in range(1, app.sewing_second.item_count):
-		var id: String = app.run_deck[app.sewing_second.get_item_metadata(i)]
-		if RunRestStitchCards.resolve_card_definition(id).owner == owner:
-			app.sewing_second.select(i)
-			_inert(stitch, "different occurrences, same owner")
+	panel.hide()
+	_inert(callback, "hidden panel")
+	panel.show()
+	app.remove_child(panel)
+	root.add_child(panel)
+	_inert(callback, "reparented panel")
+	root.remove_child(panel)
+	app.add_child(panel)
+	_inert(panel.intent_requested.get_connections()[0].callable, "forged upgrade index", [_intent("upgrade", 10000)])
+	_inert(panel.intent_requested.get_connections()[0].callable, "same occurrence stitch", [_intent("stitch", 0, 0)])
+	var owner: String = RunRestStitchCards.resolve_card_definition(app.run_deck[0]).owner
+	var found := false
+	for i in range(1, app.run_deck.size()):
+		if RunRestStitchCards.resolve_card_definition(app.run_deck[i]).owner == owner:
+			found = true
+			_inert(panel.intent_requested.get_connections()[0].callable, "different occurrences same owner", [_intent("stitch", 0, i)])
 			break
-	var second_meta: Variant = app.sewing_second.get_item_metadata(0)
-	app.sewing_second.set_item_metadata(0, -1)
-	_inert(stitch, "forged stitch index")
-	app.sewing_second.set_item_metadata(0, second_meta)
+	_check(found, "same-owner rejection has genuine distinct occurrences")
+	_inert(panel.intent_requested.get_connections()[0].callable, "forged stitch index", [_intent("stitch", 0, -1)])
 	if original.wardrobe != null:
 		original.wardrobe._scraps += 1
 		_inert(callback, "stale wardrobe snapshot")
@@ -215,16 +270,46 @@ func _negative_actions() -> void:
 		_inert(callback, "removed wardrobe identity")
 		carry._wardrobe = original.wardrobe
 	_check(app._sewing_context() == original, "negative fixtures restore exact original authority")
-
-
-func _pick(selector: OptionButton, index: int) -> void:
-	selector.select(0)
-	selector.grab_focus()
-	await _key(KEY_ENTER)
-	for i in range(index):
-		await _key(KEY_DOWN)
-	await _key(KEY_ENTER)
-	_check(selector.selected == index, "physical popup input selects exact occurrence")
+	# With a real preview selected and Confirm enabled, an alternate eligible
+	# index and an alternate action are still not the confirmed decision.
+	await _activate(panel.upgrade_button, false)
+	var eligible: Array = visit.upgrade_options()
+	_check(panel.option_buttons.size() == eligible.size() and eligible.size() >= 2,
+		"alternate-index rejection has genuine eligible copies")
+	var selected_index := -1
+	var alternate_index := -1
+	if not panel.option_buttons.is_empty():
+		selected_index = panel.option_buttons[0].get_meta("option").index
+	for option in eligible:
+		if option.index != selected_index:
+			alternate_index = option.index
+			break
+	_check(selected_index >= 0 and alternate_index >= 0, "a distinct eligible upgrade index exists")
+	if alternate_index >= 0:
+		await _activate(panel.option_buttons[0], false)
+		_check(not panel.confirm_button.disabled and panel.preview().index == selected_index,
+			"selected upgrade preview matches the chosen occurrence")
+		_inert(listener, "alternate unconfirmed upgrade index", [_intent("upgrade", alternate_index)])
+		_check(not panel._submitted and panel.preview().is_empty() and panel.confirm_button.disabled,
+			"alternate index never settles and retires the pending selection")
+	await _activate(panel.leave_button, false)
+	_check(not panel.confirm_button.disabled, "alternate-action rejection has a selected, confirmable preview")
+	var other_action: Array = visit.upgrade_options()
+	_check(not other_action.is_empty(), "alternate action is itself eligible")
+	if not other_action.is_empty():
+		_inert(listener, "alternate selected Upgrade", [_intent("upgrade", other_action[0].index)])
+	_check(not panel._submitted and panel.preview().is_empty() and panel.confirm_button.disabled
+		and not panel.leave_button.disabled, "mismatched forwarded action retires the pending selection")
+	# A real Confirm marks the panel submitted before controller preflight.
+	# Reject stale authority, then restore it and prove this visit remains usable.
+	await _activate(panel.leave_button, false)
+	app.session_gold += 1
+	var before := _ledger()
+	await _activate(panel.confirm_button, false)
+	_check(_ledger() == before and not panel._submitted and not panel.leave_button.disabled,
+		"rejected physical Confirm preserves service and restores usable panel")
+	app.session_gold -= 1
+	_check(app._sewing_context() == original, "recovery restores exact original authority")
 
 
 func _onward() -> void:
@@ -250,52 +335,55 @@ func _scenario(mode: String, atlas: bool, keyboard: bool) -> Array:
 	await _enter(atlas, keyboard)
 	await _negative_actions()
 	var before: Dictionary = app._sewing_context()
-	var button: Button = app.sewing_leave_button
+	var panel: LiveSewingCirclePanel = app.sewing_view
+	var visit: RunSewingCircleVisit = app.sewing_visit
 	var expected: Dictionary = {}
+	var submitted := _intent(mode)
+	await _activate(panel.upgrade_button if mode == "upgrade" else panel.stitch_button if mode == "stitch" else panel.leave_button, keyboard)
 	if mode == "upgrade":
-		button = app.sewing_upgrade_button
-		var selector: OptionButton = app.sewing_upgrade_cards
-		var duplicate := -1
-		for i in range(1, selector.item_count):
-			var row: Dictionary = selector.get_item_metadata(i)
+		var duplicate: Button
+		for option in panel.option_buttons:
+			var row: Dictionary = option.get_meta("option")
 			if before.deck.slice(0, row.index).has(row.base_id):
-				duplicate = i
+				duplicate = option
 				break
-		_check(duplicate > 0, "canonical selector contains indexed duplicate occurrence")
-		selector.select(duplicate)
-		if keyboard:
-			await _pick(selector, duplicate)
-		var chosen: Dictionary = selector.get_item_metadata(duplicate)
+		_check(duplicate != null, "canonical buttons contain indexed duplicate occurrence")
+		var chosen: Dictionary = duplicate.get_meta("option")
+		duplicate.set_meta("option", {"index": 10000})
+		await _activate(duplicate, keyboard)
+		_check(panel.preview() == chosen and panel.preview_label.text.contains(chosen.plus_display_name),
+			"tampered display metadata cannot redirect canonical upgrade callback or preview")
 		expected = {"deck": before.deck.duplicate()}
 		expected.deck[chosen.index] = chosen.plus_id
+		submitted = _intent(mode, chosen.index)
 	elif mode == "stitch":
-		button = app.sewing_stitch_button
-		var first: int = app.sewing_first.get_item_metadata(0)
-		var second := -1
-		for i in range(app.sewing_second.item_count):
-			var index: int = app.sewing_second.get_item_metadata(i)
-			if RunRestStitchCards.resolve_card_definition(before.deck[index]).owner != RunRestStitchCards.resolve_card_definition(before.deck[first]).owner:
-				second = index
-				app.sewing_second.select(i)
-				break
-		_check(second >= 0, "real different-owner stitch pair exists")
-		app.sewing_first.select(0)
-		if keyboard:
-			await _pick(app.sewing_first, 0)
-			await _pick(app.sewing_second, app.sewing_second.selected)
+		var first: int = panel.option_buttons[0].get_meta("option").index
+		await _activate(panel.option_buttons[0], keyboard)
+		_check(not panel.option_buttons.is_empty(), "real different-owner stitch pair exists")
+		var second: int = panel.option_buttons[0].get_meta("option").index
+		panel.option_buttons[0].set_meta("option", {"index": -1})
+		await _activate(panel.option_buttons[0], keyboard)
 		var oracle := RunRestStitchCards.new(before.deck, before.descriptors, before.scraps, before.cursor)
 		expected = oracle.choose_stitch(first, second, oracle.get_snapshot())
-		_check(expected.ok, "independent scene-free stitch receipt succeeds")
+		_check(expected.ok and panel.preview().first_index == first and panel.preview().second_index == second,
+			"independent stitch receipt and preview use chosen occurrences")
+		submitted = _intent(mode, first, second)
 	else:
-		_check(app.sewing_stitch_button.disabled and before.scraps == 0, "insufficient scraps disables Stitch")
-		_inert(app.sewing_stitch_button.pressed.get_connections()[0].callable, "insufficient scraps")
-	var callback: Callable = button.pressed.get_connections()[0].callable
-	if keyboard:
-		button.grab_focus()
-		await _key(KEY_SPACE)
-	else:
-		await _click(button)
-	await _frames()
+		_check(panel.stitch_button.disabled and before.scraps == 0, "insufficient scraps disables Stitch")
+		_check(RunRestStitchCards.resolve_card_definition(before.deck[0]).owner !=
+			RunRestStitchCards.resolve_card_definition(before.deck[4]).owner,
+			"unaffordable rejection uses a genuine different-owner pair")
+		_inert(panel.intent_requested.get_connections()[0].callable, "insufficient scraps", [_intent("stitch", 0, 4)])
+		await _activate(panel.leave_button, keyboard)
+	_check(app._sewing_context() == before and not visit.is_consumed() and not panel.confirm_button.disabled,
+		"preview never settles; Confirm is required")
+	var callback: Callable = panel.intent_requested.get_connections()[0].callable.bind(submitted)
+	await _activate(panel.confirm_button, keyboard)
+	_check(visit.is_consumed() and app._sewing_closed and panel._visit == null,
+		"controller consumes receipt and retires panel")
+	_check(visit.read_state().deck == app.run_deck and visit.read_state().descriptors == app.run_stitch_descriptors
+		and visit.read_state().remaining_scraps == app.run_scraps and visit.read_state().next_stitch_id == app.run_next_stitch_id,
+		"run authority exactly matches complete consumed controller receipt")
 	var after: Dictionary = app._sewing_context()
 	if mode == "leave":
 		_check(after == before, "Leave preserves the complete authoritative snapshot")
@@ -385,6 +473,7 @@ func _connected_visits() -> void:
 			await _key(KEY_ENTER)
 		else:
 			await _click(app.sewing_leave_button)
+		await _activate(app.sewing_view.confirm_button, keyboard)
 		await _frames()
 		_check(_ledger()[0] == before[0] and app._can_choose_connected_route(), "post-fight Leave preserves complete snapshot and admits onward route")
 		var witness: Array = app._sewing_visits[fixture.id]
@@ -423,35 +512,36 @@ func _composite_visit() -> void:
 	fixture = chain
 	await _boot(true, true)
 	await _enter(false, false)
-	app.sewing_first.select(0)
-	var owner: String = RunRestStitchCards.resolve_card_definition(app.run_deck[0]).owner
-	for i in range(app.sewing_second.item_count):
-		if RunRestStitchCards.resolve_card_definition(app.run_deck[app.sewing_second.get_item_metadata(i)]).owner != owner:
-			app.sewing_second.select(i)
-			break
-	var old: Callable = app.sewing_stitch_button.pressed.get_connections()[0].callable
-	await _click(app.sewing_stitch_button)
-	await _frames()
+	var panel: LiveSewingCirclePanel = app.sewing_view
+	await _activate(panel.stitch_button, false)
+	var first: int = panel.option_buttons[0].get_meta("option").index
+	await _activate(panel.option_buttons[0], false)
+	var second: int = panel.option_buttons[0].get_meta("option").index
+	await _activate(panel.option_buttons[0], false)
+	var old: Callable = panel.intent_requested.get_connections()[0].callable.bind(_intent("stitch", first, second))
+	var old_confirm: Callable = panel.confirm_button.pressed.get_connections()[0].callable
+	await _activate(panel.confirm_button, false)
 	_check(app.run_stitch_descriptors.size() == 1 and app.run_next_stitch_id == 2, "first real visit creates authenticated composite")
 	fixture.id = chain.second
 	await _enter(true, true)
 	_inert(old, "old control during a new mounted Sewing Circle")
 	var composite_index: int = app.run_deck.find("stitched_000001")
 	_check(composite_index >= 0, "real composite occurrence is present")
-	for selector in [app.sewing_first, app.sewing_second]:
-		for i in range(selector.item_count):
-			_check(selector.get_item_metadata(i) != composite_index, "composite is never an eligible stitch half")
-	var selector: OptionButton = app.sewing_first
-	var saved: Variant = selector.get_item_metadata(0)
-	selector.set_item_metadata(0, composite_index)
-	_inert(app.sewing_stitch_button.pressed.get_connections()[0].callable, "forged composite half")
-	selector.set_item_metadata(0, saved)
-	await _click(app.sewing_leave_button)
-	await _frames()
+	_inert(old_confirm, "old panel confirmation during new visit")
+	panel = app.sewing_view
+	await _activate(panel.stitch_button, true)
+	for option in panel.option_buttons:
+		_check(option.get_meta("option").index != composite_index, "composite is never an eligible stitch half")
+	_inert(panel.intent_requested.get_connections()[0].callable, "forged composite half", [_intent("stitch", composite_index, 0)])
+	await _activate(panel.leave_button, true)
+	await _activate(panel.confirm_button, true)
 	await _onward()
 	app._return_to_title()
 	await _frames()
-	_check(app.sewing_view == null and app._sewing_visits.is_empty(), "title clears Sewing Circle controls and receipts")
+	_check(app.sewing_view == null and app.sewing_visit == null and app._sewing_source.is_empty()
+		and app._sewing_original.is_empty() and app._sewing_visits.is_empty()
+		and app.sewing_upgrade_button == null and app.sewing_stitch_button == null
+		and app.sewing_leave_button == null, "title clears Sewing Circle controls, service and receipts")
 	app.free()
 	await _frames()
 
