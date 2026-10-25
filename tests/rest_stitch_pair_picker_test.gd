@@ -131,6 +131,19 @@ func _body_font_path(label: Control) -> String:
 	return font.resource_path if font != null else ""
 
 
+## Compute the expected tile tooltip for a real authored card definition.
+## Returns base FROM tooltip + "\nEffect: " + CardShortRules.line(definition) for valid cards,
+## or just the base FROM tooltip for invalid/unresolvable cards.
+func _expected_tile_tooltip(definition: Dictionary) -> String:
+	var base := LiveRestStitchPairPicker.from_positions_tooltip(definition.get("from_positions", []))
+	if definition.is_empty():
+		return base
+	var effect := CardShortRules.line(definition)
+	if effect.is_empty():
+		return base
+	return base + "\nEffect: " + effect
+
+
 ## The primary instruction and all three forecast readouts must resolve the
 ## inherited body face at sewing-table size (>=18 px), never a shrunken label.
 func _assert_preview_typography(p: LiveRestStitchPairPicker, label: String) -> void:
@@ -1864,8 +1877,8 @@ func _test_mixed_pool_picker() -> void:
 		var exp_from: Array = authored_def.get("from_positions", [])
 		_check(tile.get_meta("from_positions") == exp_from,
 			"mixed pool tile %s has exact resolved from_positions" % tile_id)
-		_check(tile.tooltip_text == LiveRestStitchPairPicker.from_positions_tooltip(exp_from),
-			"mixed pool tile %s has matching FROM tooltip" % tile_id)
+		_check(tile.tooltip_text == _expected_tile_tooltip(authored_def),
+			"mixed pool tile %s has matching FROM+Effect tooltip" % tile_id)
 		for pos in [1, 2, 3]:
 			var pip := tile.find_child("From%d" % pos, true, false) as Control
 			_check(pip != null and bool(pip.get_meta("active", false)) == exp_from.has(pos),
@@ -2550,9 +2563,9 @@ func _test_owner_position_pips() -> void:
 			and tile.get_meta("cost") == def["cost"],
 			"first tile %d preserves all original metadata for %s" % [i, id])
 
-		# Tooltip check: confirms owner FROM, never enemy TO
-		_check(tile.tooltip_text == LiveRestStitchPairPicker.from_positions_tooltip(canonical_from),
-			"first tile %d tooltip matches canonical from tooltip for %s" % [i, id])
+		# Tooltip check: confirms owner FROM, never enemy TO; includes Effect line for real cards
+		_check(tile.tooltip_text == _expected_tile_tooltip(def),
+			"first tile %d tooltip matches canonical from+effect tooltip for %s" % [i, id])
 		_check(tile.tooltip_text.begins_with("Owner FROM:") and not tile.tooltip_text.contains("TO:"),
 			"first tile %d tooltip quotes owner FROM and never enemy TO: %s" % [i, id])
 
@@ -2632,8 +2645,8 @@ func _test_owner_position_pips() -> void:
 
 		_check(s_tile.get_meta("from_positions") == canonical_from,
 			"second tile %d preserves canonical from_positions for %s" % [s_idx, s_id])
-		_check(s_tile.tooltip_text == LiveRestStitchPairPicker.from_positions_tooltip(canonical_from),
-			"second tile %d tooltip matches canonical from tooltip for %s" % [s_idx, s_id])
+		_check(s_tile.tooltip_text == _expected_tile_tooltip(s_def),
+			"second tile %d tooltip matches canonical from+effect tooltip for %s" % [s_idx, s_id])
 		_check(s_tile.tooltip_text.begins_with("Owner FROM:") and not s_tile.tooltip_text.contains("TO:"),
 			"second tile %d tooltip quotes owner FROM and never enemy TO: %s" % [s_idx, s_id])
 

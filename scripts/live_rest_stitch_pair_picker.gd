@@ -582,7 +582,14 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 		if typeof(raw_from) == TYPE_ARRAY:
 			from_positions = (raw_from as Array).duplicate()
 	tile.set_meta("from_positions", from_positions)
-	tile.tooltip_text = from_positions_tooltip(from_positions)
+	var base_tooltip := from_positions_tooltip(from_positions)
+	var effect_line: String = ""
+	if not def.is_empty():
+		effect_line = CardShortRules.line(def)
+	if not effect_line.is_empty():
+		tile.tooltip_text = base_tooltip + "\nEffect: " + effect_line
+	else:
+		tile.tooltip_text = base_tooltip
 
 	# Three small numbered sewn FROM pips (1, 2, 3)
 	var pips_row := HBoxContainer.new()

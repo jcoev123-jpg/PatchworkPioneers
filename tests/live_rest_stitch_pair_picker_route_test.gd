@@ -29,11 +29,17 @@ func _assert_tile_names(tiles: Array[Button], entries: Array[Dictionary]) -> voi
 		var entry := entries[i]
 		var authored := RunRestStitchCards.resolve_card_definition(entry["id"])
 		var from_positions: Array = authored.get("from_positions", []) if not authored.is_empty() else []
-		_check(not authored.is_empty() and entry["name"] == authored.get("display_name")
+		var effect_line := ""
+		if not authored.is_empty():
+			effect_line = CardShortRules.line(authored)
+		_check(not authored.is_empty() and not effect_line.is_empty()
+			and entry["name"] == authored.get("display_name")
 			and tile.get_meta("index") == entry["index"]
 			and tile.get_meta("id") == entry["id"]
 			and tile.get_meta("name") == entry["name"],
 			"tile identity and authored name match canonical entry")
+		_check(tile.tooltip_text == LiveRestStitchPairPicker.from_positions_tooltip(from_positions) + "\nEffect: " + effect_line,
+			"tile tooltip matches canonical FROM and authored effect")
 		_check(tile.tooltip_text.begins_with("Owner FROM:") and not tile.tooltip_text.contains("TO:"),
 			"tile tooltip describes owner FROM positions, not enemy TO")
 		for pos in [1, 2, 3]:
