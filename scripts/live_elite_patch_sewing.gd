@@ -325,8 +325,8 @@ func observe_claim(offering, result: Dictionary) -> void:
 	var power: String = first_preview["rules_text"]
 	if power.is_empty():
 		power = "power not documented"
-	_prompt.text = "%s (%s): %s. Choose a living wearer (free); focus a hero for slot consequences." % [
-		_friendly_label(drop), _friendly_label(state.definitions[drop]), power]
+	_prompt.text = "%s · %s\nPower: %s\nFree sew • Focus a living wearer for +0/+1 scrap." % [
+		_friendly_label(drop), str(state.definitions[drop]), power]
 	_choices = HBoxContainer.new()
 	column.add_child(_choices)
 	# Short chooser caption keeps its exact wording and takes only the display face.
@@ -402,7 +402,7 @@ func observe_claim(offering, result: Dictionary) -> void:
 		stitch.name = "StitchAccent"
 		button.add_child(stitch)
 		if previews.has(hero.id):
-			button.tooltip_text = _preview_line(previews[hero.id])
+			button.tooltip_text = _preview_tooltip(previews[hero.id])
 		else:
 			button.tooltip_text = "%s is torn; mend before sewing." % hero.id.capitalize()
 		_choices.add_child(button)
@@ -414,21 +414,34 @@ func observe_claim(offering, result: Dictionary) -> void:
 	_update_summary()
 
 
+## Short, scan-friendly sewn lines. All data comes from the validated preview,
+## including the old patch and the +0/+1 wallet consequence.
 static func _preview_line(preview: Dictionary) -> String:
 	if preview.get("ok") != true:
 		return ""
 	var power: String = preview["rules_text"]
 	if power.is_empty():
 		power = "power not documented"
-	var displaced: String = "empty %s slot; +0 scrap" % preview["slot"]
+	var old_name := "empty"
+	var old_fate := ""
 	if preview["displaced_id"] != "":
-		displaced = "replaces %s in %s slot (destroyed); +1 scrap" % [
-			_friendly_label(preview["displaced_id"]), preview["slot"]]
-		if not preview["displaced_rules_text"].is_empty():
-			displaced += " [old: %s]" % preview["displaced_rules_text"]
-	return "%s: %s (%s) - %s; %s" % [
-		preview["wearer"].capitalize(), _friendly_label(preview["patch_id"]),
-		preview["slot"], power, displaced]
+		old_name = _friendly_label(preview["displaced_id"])
+		old_fate = " (old patch destroyed)"
+	return "%s · %s · %s\nPower: %s\nSew: %s → %s%s • +%d scrap" % [
+		preview["wearer"].capitalize(), preview["slot"],
+		_friendly_label(preview["patch_id"]), power, old_name,
+		_friendly_label(preview["patch_id"]), old_fate, preview["scrap_delta"]]
+
+
+## Keep the complete new and displaced powers discoverable on every wearer tag.
+static func _preview_tooltip(preview: Dictionary) -> String:
+	if preview.get("ok") != true:
+		return ""
+	var explanation := _preview_line(preview)
+	if preview["displaced_id"] != "" and not preview["displaced_rules_text"].is_empty():
+		explanation += "\nOld power (%s): %s" % [
+			_friendly_label(preview["displaced_id"]), preview["displaced_rules_text"]]
+	return explanation
 
 
 func _show_preview(hero_id: String, token: int) -> void:

@@ -207,24 +207,46 @@ func _update_preview() -> void:
 	if typeof(current_scraps) != TYPE_INT or int(current_scraps) < int(estimate["cost"]):
 		_clear("Preview expired: refresh the Rest before trying again")
 		return
-	preview_label.text = String.chr(10).join([
-		"%s / %s / %s to %s / Cost: %d scrap / Scraps %d to %d" % [
-			_action_label(estimate["kind"]), _slot_label(estimate["slot"]),
-			_nice(estimate["source"]["hero_id"]),
-			_nice(estimate["destination"]["hero_id"]), estimate["cost"],
-			current_scraps, int(current_scraps) - int(estimate["cost"])],
-		_slot_change(estimate["source"], estimate["slot"]),
-		_slot_change(estimate["destination"], estimate["slot"])
-	])
-	preview_label.tooltip_text = preview_label.text
+	var action := "%s %s: %s to %s • Cost: %d scrap • Scraps: %d → %d" % [
+		_action_label(estimate["kind"]), estimate["slot"],
+		_nice(estimate["source"]["hero_id"]),
+		_nice(estimate["destination"]["hero_id"]), estimate["cost"],
+		current_scraps, int(current_scraps) - int(estimate["cost"])]
+	var source_line := _slot_change(estimate["source"], estimate["slot"], "Source")
+	var destination_line := _slot_change(
+		estimate["destination"], estimate["slot"], "Destination")
+	var no_heal := "Equipping does not heal • Rest action remains available."
+	preview_label.text = "\n".join([action, source_line, destination_line, no_heal])
+	# Complete, authoritative wearer powers belong to the tooltip; the visible
+	# before→after lines identify changes without long slash-separated clauses.
+	preview_label.tooltip_text = "\n".join([
+		action, _slot_detail(estimate["source"], estimate["slot"], "Source"),
+		_slot_detail(estimate["destination"], estimate["slot"], "Destination"), no_heal])
 	confirm_button.disabled = _pending
 
 
-static func _slot_change(wearer: Dictionary, slot: String) -> String:
+static func _slot_change(wearer: Dictionary, slot: String, role: String) -> String:
 	var before: Dictionary = wearer["before"]
 	var after: Dictionary = wearer["after"]
-	return "%s %s: %s to %s / HP %d/%d to %d/%d / effective cap %d to %d" % [
-		_nice(wearer["hero_id"]), _slot_label(slot),
+	return "%s %s %s: %s → %s • HP %d/%d → %d/%d • effective cap %d → %d" % [
+		role, _nice(wearer["hero_id"]), slot,
+		_brief_patch(before["slots"][slot]), _brief_patch(after["slots"][slot]),
+		before["hp"], before["base_max_hp"], after["hp"], after["base_max_hp"],
+		before["effective_max_hp"], after["effective_max_hp"]]
+
+
+static func _brief_patch(patch: Dictionary) -> String:
+	if patch["id"] == "":
+		return "empty"
+	return "%s%s" % [
+		_nice(patch["id"]), " (dormant; no power)" if not patch["active"] else ""]
+
+
+static func _slot_detail(wearer: Dictionary, slot: String, role: String) -> String:
+	var before: Dictionary = wearer["before"]
+	var after: Dictionary = wearer["after"]
+	return "%s %s %s\nBefore: %s\nAfter: %s\nHP %d/%d → %d/%d • effective cap %d → %d" % [
+		role, _nice(wearer["hero_id"]), slot,
 		_patch_state(before["slots"][slot]), _patch_state(after["slots"][slot]),
 		before["hp"], before["base_max_hp"], after["hp"], after["base_max_hp"],
 		before["effective_max_hp"], after["effective_max_hp"]]
