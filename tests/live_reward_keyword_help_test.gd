@@ -671,10 +671,10 @@ func _bleed_doubling_catalog_test(seamstress: SeamstressPoolCards) -> void:
 	_check(not mixed_names.has("Bleed doubling") and mixed_names.has("Bleed 2"),
 		"an extra effect key drops the doubling row and keeps the ordinary Bleed row")
 	_check(CardKeywordGlossary.KEYWORD_ORDER == ["bleed", "weak", "exposed", "pinned",
-		"unravel", "guarding", "thorns"]
+		"unravel", "guarding", "thorns", "riposte", "tangled"]
 		and CardKeywordGlossary.SPECIAL_ORDER == ["conditional_damage", "random_hit",
 			"energy_tradeoff", "bleed_doubling", "two_hits"],
-		"two hits is the last special row after the seven fixed keyword rows")
+		"two hits is the last special row after the legacy and Riposte/Tangled keyword rows")
 
 
 ## A detached Pin and Pound definition with the authored structural keys the

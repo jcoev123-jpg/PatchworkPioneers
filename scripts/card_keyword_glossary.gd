@@ -1,12 +1,14 @@
 class_name CardKeywordGlossary
 extends RefCounted
 ## Read-only explanations for authored card effects. No run, scene or RNG state.
-## The fixed order is independent of Dictionary insertion order: the seven
-## keyword rows first, then the authored special-rule rows in SPECIAL_ORDER.
+## The fixed order is independent of Dictionary insertion order: the nine keyword
+## rows first (the legacy seven, then Riposte and Tangled), then the authored
+## special-rule rows in SPECIAL_ORDER.
 ## Help is explanatory only; it never says an unheld card can be played.
 
-const KEYWORD_ORDER := ["bleed", "weak", "exposed", "pinned", "unravel", "guarding", "thorns"]
-## Non-keyword rules are explained after the seven keywords, always in this
+const KEYWORD_ORDER := ["bleed", "weak", "exposed", "pinned", "unravel", "guarding",
+	"thorns", "riposte", "tangled"]
+## Non-keyword rules are explained after the keyword rows, always in this
 ## order and only for the exact authored descriptor shape (never a guess).
 const SPECIAL_ORDER := ["conditional_damage", "random_hit", "energy_tradeoff", "bleed_doubling", "two_hits"]
 ## The Unravel thresholds the authored "current threshold" condition compares to.
@@ -99,6 +101,16 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 			if not raw is int or int(raw) <= 0:
 				continue
 			keyword = "%s %d" % [key.capitalize(), int(raw)]
+		elif key == "riposte":
+			# Riposte is only explained with a positive amount and the authored
+			# one-turn duration; any other shape gets no row.
+			if not raw is int or int(raw) <= 0 or not _one_turn(effects):
+				continue
+			keyword = "Riposte %d" % int(raw)
+		elif key == "tangled":
+			if not raw is int or int(raw) <= 0:
+				continue
+			keyword = "Tangled %d" % int(raw)
 		elif (key == "pinned" or key == "guarding") and ((raw is bool and raw) or (raw is Dictionary and not raw.is_empty())):
 			keyword = key.capitalize()
 		else:
@@ -118,6 +130,10 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 				explanation = "Warden's Draw Fire (1 energy, from position 1) redirects attacks aimed at other heroes to Warden until the next turn."
 			"thorns":
 				explanation = "Warden's Counter-stitch (1 energy, from positions 1-2) makes enemies that attack Warden take %d damage until the next turn." % int(raw)
+			"riposte":
+				explanation = "When the Rag Duelist is hit, she strikes back for %d damage. The authored Riposte lasts one turn. This Help explains the printed design rule only; combat does not yet apply Riposte." % int(raw)
+			"tangled":
+				explanation = "For %d turns, the Tangled unit cannot move or be moved by its own side, and attacks against it deal +2 damage. This Help explains the printed design rule only; combat does not yet apply Tangled." % int(raw)
 		lines.append({"keyword": keyword, "explanation": explanation})
 	for key: String in SPECIAL_ORDER:
 		var special := _special_line(key, definition, effects)
@@ -514,6 +530,13 @@ static func _darning_line(definition: Dictionary, effects: Dictionary) -> Dictio
 ## An authored empty target list, exactly as expected and nothing else.
 static func _empty_positions(value: Variant) -> bool:
 	return value is Array and (value as Array).is_empty()
+
+
+## The authored one-turn duration a Riposte is written for. Any other value (or
+## an absent one) is a shape this Help cannot explain, so no Riposte row appears.
+static func _one_turn(effects: Dictionary) -> bool:
+	var value: Variant = effects.get("duration")
+	return value is int and int(value) == 1
 
 
 ## The authored positions, exactly as expected in order and nothing else.

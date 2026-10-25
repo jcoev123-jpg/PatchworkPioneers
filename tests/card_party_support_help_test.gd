@@ -745,12 +745,13 @@ func _test_rejections() -> void:
 
 func _test_ordering_detachment_and_rng() -> void:
 	# The existing keyword and special rows keep their established content and
-	# order; only the new support row was appended after them.
+	# order; only the new support row was appended after them, and the two v3
+	# keyword rows (Riposte, Tangled) were appended after the legacy seven.
 	_check(CardKeywordGlossary.KEYWORD_ORDER == ["bleed", "weak", "exposed",
-		"pinned", "unravel", "guarding", "thorns"]
+		"pinned", "unravel", "guarding", "thorns", "riposte", "tangled"]
 		and CardKeywordGlossary.SPECIAL_ORDER == ["conditional_damage", "random_hit",
 			"energy_tradeoff", "bleed_doubling", "two_hits"],
-		"keyword and special order constants are unchanged")
+		"legacy keyword and special order constants are preserved")
 	var combined := {"id": "warden_strike", "effects": {
 		"bleed": 2, "weak": 1, "exposed": 1, "pinned": true, "unravel": 3,
 		"guarding": true, "thorns": 3, "junk": 4,
