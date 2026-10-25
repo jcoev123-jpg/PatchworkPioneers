@@ -3,6 +3,7 @@ extends SceneTree
 var failures: Array[String] = []
 var checks := 0
 var requests: Array[String] = []
+var seen_help_kinds: Dictionary = {}
 ## The six committed sewn tokens, written out independently of the view's own table so
 ## this regression cannot silently inherit an omission from the implementation.
 const TOKEN_PATHS := {
@@ -124,9 +125,37 @@ func _shipped_heading_face() -> Font:
 ## Independent player-facing wording for one real node record: authored floor, authored
 ## kind and the one-based branch row. Spelled out here so this regression cannot inherit
 ## a wording mistake from the view itself.
-func _hover_text(node: Dictionary) -> String:
-	return "Floor %02d · %s · Branch %d" % [
+## Independent authored stop guidance oracle; does not call the atlas presentation helper.
+const EXPECTED_HELP := {
+	"Fight": {"lead": "Win: 10–20 gold + 1 scrap",
+		"detail": "Choose 1 of 3 cards, or skip",
+		"tooltip": "On win: 10–20 gold + 1 scrap; choose 1 of 3 cards or skip"},
+	"Elite": {"lead": "Win: 25–35 gold + 2 scraps + patch",
+		"detail": "Choose 1 of 3 cards, or skip",
+		"tooltip": "On win: 25–35 gold + 2 scraps + patch; choose 1 of 3 cards or skip"},
+	"Rest": {"lead": "Choose one: heal, upgrade, stitch or re-sew",
+		"detail": "Heal 30% max HP; stitch 3 scraps; re-sew 1 scrap",
+		"tooltip": "One action: heal each hero 30% max HP (torn revives at 1 HP first), upgrade one card, stitch two different-owner cards for 3 scraps, or re-sew an equipped patch for 1 scrap"},
+	"Shop": {"lead": "Browse 5 cards + 2 patches",
+		"detail": "Remove card: 75 gold initially, +25 each time",
+		"tooltip": "5 cards + 2 patches; card removal starts at 75 gold, increasing 25 per removal"},
+	"Event": {"lead": "2–3 choices when visited",
+		"detail": "Outcomes shown on arrival; no guaranteed yield",
+		"tooltip": "2–3 choices; outcomes revealed on visit, no guaranteed yield"},
+	"Treasure": {"lead": "Treasure stop · contents not yet known",
+		"detail": "No fixed reward is specified by the route",
+		"tooltip": "Treasure stop; no predetermined reward amount is known"},
+	"Boss": {"lead": "Final floor-12 fight",
+		"detail": "The last stop on this route",
+		"tooltip": "Terminal floor-12 fight"},
+}
+
+func _hover_text(node: Dictionary, legal: bool = false) -> String:
+	var prefix := "Floor %02d · %s · Branch %d" % [
 		int(node["floor"]), str(node["type"]), int(node["position"]) + 1]
+	if legal:
+		return prefix + " · " + str(EXPECTED_HELP[str(node["type"])]["tooltip"])
+	return prefix
 
 
 # The mounted preview must always show a complete open book: owner art or drawing.
@@ -310,6 +339,61 @@ func _verify_next_area_tab(view: RunRouteAtlas, map: RunMap, tab: Control, label
 		label + ": next-area status tab keeps the body face, not a heading variation")
 
 
+## The single visible help ticket is attached to the real legal model record,
+## entirely inert, and spaced apart from the existing bookmark and twelve beads.
+func _verify_choice_ticket(view: RunRouteAtlas, map: RunMap, label: String) -> void:
+	var legal := map.get_legal_choices()
+	var ticket := view.choice_ticket()
+	if legal.is_empty():
+		_check(ticket == null and view.get_node_or_null("ChoiceTicket") == null,
+			label + ": completed map has no obsolete stop ticket")
+		return
+	_check(ticket != null and ticket is RunRouteAtlas.ChoiceTicket
+		and ticket.visible and ticket.is_visible_in_tree(),
+		label + ": one real readable left-page ticket for legal route choices")
+	if ticket == null:
+		return
+	var id := ticket.route_id
+	_check(legal.has(id) and map.get_route().has(id) == false,
+		label + ": ticket names only a genuine unvisited legal choice")
+	if not legal.has(id):
+		return
+	var node := map.get_node(id)
+	var kind := str(node["type"])
+	var fact: Dictionary = EXPECTED_HELP.get(kind, {})
+	_check(not fact.is_empty(), label + ": legal kind has independent authored consequence " + kind)
+	if fact.is_empty():
+		return
+	var heading := "%s · FLOOR %02d · BRANCH %d" % [
+		RunRouteAtlas.area_for_floor(int(node["floor"])).to_upper(),
+		int(node["floor"]), int(node["position"]) + 1]
+	_check(ticket.header_text == heading and ticket.lead_text == kind + " · " + str(fact["lead"])
+		and ticket.detail_text == str(fact["detail"])
+		and not ticket.header_text.contains(id) and not ticket.lead_text.contains(id)
+		and not ticket.detail_text.contains(id),
+		label + ": exact area/floor/branch and type-specific honest stop consequence " + kind)
+	var rect := Rect2(ticket.position, ticket.size)
+	var diary := view.get_node_or_null("JourneyJournal") as RunRouteAtlas.JourneyJournal
+	var tab := view.next_area_tab()
+	_check(_inside(rect, RunRouteAtlas.PAGE_LEFT)
+		and rect == RunRouteAtlas.CHOICE_TICKET_RECT
+		and diary != null and tab != null
+		and not rect.intersects(Rect2(diary.position, diary.size))
+		and not rect.intersects(Rect2(tab.position, tab.size))
+		and ticket.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and ticket.focus_mode == Control.FOCUS_NONE
+		and _keeps_body_face(ticket) and RunRouteAtlas.ChoiceTicket.FONT_SIZE >= 18,
+		label + ": cream stitched inert ticket clears the next-area tab and twelve-bead diary")
+	var face := ticket.get_theme_default_font()
+	if face != null:
+		for content in [ticket.header_text, ticket.lead_text, ticket.detail_text]:
+			_check(face.get_string_size(content, HORIZONTAL_ALIGNMENT_LEFT, -1,
+				RunRouteAtlas.ChoiceTicket.FONT_SIZE).x <= ticket.size.x - 28.0,
+				label + ": authored >=18px line is not clipped: " + kind)
+	_check(_state(map, _rng(1))["route"] == map.get_route(),
+		label + ": ticket inspection has no route effects")
+
+
 func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label: String) -> void:
 	var before := _state(map, rng)
 	var floors := map.get_floors()
@@ -368,6 +452,7 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 	var last_marker := -1
 	var journal_count := 0
 	var tab_count := 0
+	var ticket_count := 0
 	_check(view.is_inside_tree() and view.size == RunRouteAtlas.ATLAS_SIZE
 		and _inside(Rect2(view.position, view.size), Rect2(Vector2.ZERO, Vector2(1280, 720))),
 		label + ": actual 1240x600 selector fits 1280x720")
@@ -423,7 +508,7 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 			# Sewn-tag captions stay readable body-text tags, never chapter headings.
 			_check(_keeps_body_face(identity) and identity.get_theme_font_size("font_size") >= 18,
 				label + ": sewn tag identity caption keeps its >=18-point body tag " + id)
-			_check(marker.tooltip_text == _hover_text(all_nodes[id])
+			_check(marker.tooltip_text == _hover_text(all_nodes[id], legal.has(id))
 				and not marker.tooltip_text.contains(id)
 				and not marker.tooltip_text.contains("f0") and not marker.tooltip_text.contains("f1")
 				and not marker.tooltip_text.contains("_n"),
@@ -432,9 +517,10 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 			_check((action != null) == legal.has(id),
 				label + ": only currently reachable next floor has Action " + id)
 			if action != null:
+				seen_help_kinds[str(all_nodes[id]["type"])] = true
 				_check(action.focus_mode == Control.FOCUS_ALL and not action.disabled
 					and action.mouse_filter == Control.MOUSE_FILTER_STOP
-					and action.tooltip_text == "Choose " + _hover_text(all_nodes[id])
+					and action.tooltip_text == "Choose " + _hover_text(all_nodes[id], legal.has(id))
 						+ " (key %d)" % number
 					and not action.tooltip_text.contains(id)
 					and not action.tooltip_text.contains("f0") and not action.tooltip_text.contains("f1")
@@ -515,6 +601,8 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				label + ": both diary display headings take the real Londrina PatchHeading face")
 			_check(_font_path(diary) == BODY_FONT,
 				label + ": current, next and visited diary facts keep the Patrick Hand body face")
+		elif child is RunRouteAtlas.ChoiceTicket:
+			ticket_count += 1
 		elif child is RunRouteAtlas.NextAreaTab:
 			tab_count += 1
 			_verify_next_area_tab(view, map, child, label)
@@ -561,7 +649,8 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 		and seen_edges.size() == expected_edges.size()
 		and seen_headers.size() == visible_floors.size(),
 		label + ": exact visible window markers, connected links and floor headings")
-	_check(last_thread < first_marker and journal_count == 1 and tab_count == 1,
+	_check(last_thread < first_marker and journal_count == 1 and tab_count == 1
+		and ticket_count == (0 if legal.is_empty() else 1),
 		label + ": threads behind patches; one journey and status tab")
 	_check(seen_pins == ([] if current_id.is_empty() else [current_id]),
 		label + ": only current visited node wears a physical pin")
@@ -570,6 +659,7 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 		var pin := view.get_node("Pin_current") as RunRouteAtlas.CurrentPin
 		_check(Rect2(pin.position, pin.size).intersects(Rect2(marker.position, marker.size)),
 			label + ": pin follows the actual visited patch")
+	_verify_choice_ticket(view, map, label)
 	_verify_area_labels(view, visible_floors, label)
 	# The completed route has no upcoming column, so it must not keep stale headings.
 	if visible_floors.is_empty():
@@ -612,6 +702,11 @@ func _signature(view: RunRouteAtlas) -> Array:
 			result.append(["journey", journal.current_floor, journal.current_area,
 				journal.next_floor, journal.next_area, journal.complete, journal.visited.duplicate(),
 				journal.visited_kinds.duplicate(), journal.position, journal.size])
+		elif child is RunRouteAtlas.ChoiceTicket:
+			var ticket := child as RunRouteAtlas.ChoiceTicket
+			# Transient hovered/focused text is checked by _verify_choice_ticket instead;
+			# deterministic scene structure must not depend on pointer location.
+			result.append(["ticket", ticket.position, ticket.size])
 		elif child is RunRouteAtlas.NextAreaTab:
 			result.append(["next_area", (child as RunRouteAtlas.NextAreaTab).text,
 				child.position, child.size])
@@ -1468,6 +1563,9 @@ func _run() -> void:
 	await _exercise_reveal(6)
 	first.queue_free()
 	await process_frame
+	for kind in EXPECTED_HELP:
+		_check(seen_help_kinds.has(kind),
+			"real generated legal route exposed consequence guidance for " + kind)
 	if failures.is_empty():
 		print("run_route_atlas_test: PASS (", checks, " checks)")
 	else:
