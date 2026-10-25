@@ -6,6 +6,11 @@ const REQUIRED := ["button_trail", "loose_seam", "thimble_well", "frayed_signpos
 	"patchwork_ferry", "spool_clocktower", "ragpicker_cart", "quilt_bridge",
 	"button_moon_festival", "v3_raincoat_bridge", "v3_puppet_box_office",
 	"v3_mismatched_mittens", "v3_coil_and_crow", "v3_patchwork_lighthouse", "v3_button_orchard"]
+## The six V3-4 roadside stories that the shipped catalog always requires.
+## Later additive roadside records are optional: the live loader accepts them
+## when present (including a legal 2-choice form) and never requires them.
+const ORIGINAL_ROADSIDE := ["v3_raincoat_bridge", "v3_puppet_box_office",
+	"v3_mismatched_mittens", "v3_coil_and_crow", "v3_patchwork_lighthouse", "v3_button_orchard"]
 var gold_purchases := 0
 
 
@@ -38,14 +43,14 @@ func _fixtures() -> Dictionary:
 	# authentic Events rather than requiring a rare six-consecutive-Event route.
 	# Revalidate these known genuine seeds first; the bounded search remains a
 	# fallback when the generated route/pool changes.
-	var hints := [7756, 35510, 45517, 50329, 64084, 171871, 233942, 236527,
-		277144, 331198, 379017, 422169, 444032, 449809, 456282, 611184, 802796, 807198, 855041,
-		531535, 1012766, 2218200,
-		# Repinned genuine seeds after the V3-4 midnight-story batch grew the
-		# combined eligible pool: quilt_bridge, button_moon_festival,
-		# v3_coil_and_crow, estate_sale, frayed_signpost, v3_mismatched_mittens,
-		# patchwork_ferry and needle_gate.
-		529380, 610125, 696642, 775148, 946019, 1363210, 1433081, 449195]
+	# Repinned genuine seeds after the six stitched-roadside stories grew the
+	# combined eligible pool (one verified witness per required generic Event).
+	var hints := [7756, 35510, 45517, 50329, 171159, 277144, 309742, 331198,
+		366071, 379017, 449195, 456282, 549411, 610125, 1310530, 1363210,
+		1439241, 1478428, 1825487,
+		# Earlier genuine witnesses retained as fallbacks.
+		64084, 171871, 233942, 236527, 422169, 444032, 449809,
+		531535, 611184, 696642, 775148, 802796, 807198, 855041, 946019, 1012766, 1433081, 2218200]
 	for value in hints + range(1, 500000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
@@ -120,19 +125,30 @@ func _catalog_failures(entry: Callable) -> void:
 	app.roadside_event_catalog_path = path
 	var source: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(original))
 	var broken: Array = [null, {}, {"events": [null]}]
+	# Duplicated and malformed roadside records always fail closed, old or new.
+	# Deleting a record and reducing it to its legal 2-choice form are only
+	# malformed for the six ORIGINAL required roadside stories; later additive
+	# records follow the shipped additive contract (see below).
+	var additive_shapes: Array = []
 	for index in range(source.events.size()):
-		var missing := source.duplicate(true)
-		missing.events.remove_at(index)
-		broken.append(missing)
+		var record_id: String = source.events[index].get("id", "")
+		var original_required: bool = ORIGINAL_ROADSIDE.has(record_id)
+		if original_required:
+			var missing := source.duplicate(true)
+			missing.events.remove_at(index)
+			broken.append(missing)
+		else:
+			additive_shapes.append({"index": index, "id": record_id})
 		var duplicate := source.duplicate(true)
 		duplicate.events.append(source.events[index].duplicate(true))
 		broken.append(duplicate)
 		var malformed := source.duplicate(true)
 		malformed.events[index].choices[0].outcome.gold = "invalid"
 		broken.append(malformed)
-		var two_choices := source.duplicate(true)
-		two_choices.events[index].choices.pop_back()
-		broken.append(two_choices)
+		if original_required:
+			var two_choices := source.duplicate(true)
+			two_choices.events[index].choices.pop_back()
+			broken.append(two_choices)
 	var collision := source.duplicate(true)
 	collision.events.append(_combined_catalog().events[0].duplicate(true))
 	broken.append(collision)
@@ -144,6 +160,35 @@ func _catalog_failures(entry: Callable) -> void:
 		file.store_string(JSON.stringify(document))
 		file.close()
 		_reject_wallet(entry, "malformed, missing, duplicate or colliding roadside catalog")
+	for addition in additive_shapes:
+		var index: int = addition["index"]
+		var record_id: String = addition["id"]
+		var omitted := source.duplicate(true)
+		omitted.events.remove_at(index)
+		var file := FileAccess.open(path, FileAccess.WRITE)
+		_check(file != null, "optional roadside fixture opens outside repository")
+		if file == null:
+			break
+		file.store_string(JSON.stringify(omitted))
+		file.close()
+		var before := _wallet_state()
+		var omission_rotation := RunM04EventRotation.new(app._load_wallet_event_catalog())
+		_check(omission_rotation.is_catalog_valid()
+			and not omission_rotation.get_generic_event_ids().has(record_id),
+			"additive roadside record may be omitted without failing the catalog: " + record_id)
+		var trimmed := source.duplicate(true)
+		trimmed.events[index].choices.pop_back()
+		file = FileAccess.open(path, FileAccess.WRITE)
+		_check(file != null, "optional two-choice fixture opens outside repository")
+		if file == null:
+			break
+		file.store_string(JSON.stringify(trimmed))
+		file.close()
+		var trimmed_rotation := RunM04EventRotation.new(app._load_wallet_event_catalog())
+		_check(trimmed_rotation.is_catalog_valid()
+			and trimmed_rotation.get_generic_event_ids().count(record_id) == 1,
+			"additive roadside record keeps its legal 2-choice form: " + record_id)
+		_check(_wallet_state() == before, "additive roadside shapes consume no wallet, route or RNG")
 	var additive := source.duplicate(true)
 	var extra: Dictionary = source.events[0].duplicate(true)
 	extra.id = "future_roadside_event"
