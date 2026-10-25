@@ -148,6 +148,137 @@ func _assert_actor_art(app, presenter) -> void:
 		"missing or empty art paths load no texture and cannot crash presentation")
 
 
+
+## The five v3 IDs are presentation-only; no claim they can be admitted by the picker.
+## These names are semantic silhouette parts, not palette/slot aliases.
+const V3_HERO_PROPS := {
+	"lantern_monk": ["round_robe", "lantern_pole", "sewn_lantern", "first_moth", "second_moth"],
+	"rag_duelist": ["tattered_cape", "wide_hat_brim", "hat_feather", "needle_rapier"],
+	"scarecrow": ["sack_head", "head_straw", "shoulder_crow", "pitchfork_tines"],
+	"yarn_ranger": ["left_hood_ear", "right_hood_ear", "upper_bow_needle", "hip_yarn_bola"],
+	"button_golem": ["broad_button_body", "upper_button", "tiny_head", "left_button_fist", "right_button_fist"],
+}
+const V3_HERO_TONES := {
+	"lantern_monk": {"saffron": "e0a53a", "monk_plum": "6b3f6e", "monk_cream": "f1e6c8"},
+	"rag_duelist": {"crimson": "b5323a", "duelist_black": "2a2326", "gold": "d7b14a"},
+	"scarecrow": {"burlap": "b88f5a", "pumpkin": "d9752b", "denim": "3f5f8a"},
+	"yarn_ranger": {"moss": "5d7a3a", "teal": "2f7a7a", "wool": "efe9dc"},
+	"button_golem": {"walnut": "7a5236", "brass": "c49a3a", "golem_slate": "55606e"},
+}
+
+
+## Exercise actual mounted Puppet (no PNG prerequisite); verify canonical paths separately
+## from optional loaded textures, and inject a real texture to prove image priority.
+func _v3_hero_fallbacks(app, presenter) -> void:
+	_check(presenter._puppets.size() >= CombatParty.PARTY_SIZE
+		and app.party != null and app.deck != null and app.run_rng != null,
+		"a legitimate mounted live stage has three hero actors and gameplay authorities")
+	if presenter._puppets.size() < CombatParty.PARTY_SIZE:
+		return
+	var host = presenter._puppets[0]
+	var other = presenter._puppets[1]
+	var third = presenter._puppets[2]
+	var saved := []
+	for puppet in [host, other, third]:
+		saved.append({"id": puppet.actor_id, "idle": puppet.idle_texture,
+			"attack": puppet.attack_texture, "phase": puppet.idle_phase})
+	var state: Array = _snapshot(app)
+	var targets: Array = [host.get_global_rect(), other.get_global_rect(), third.get_global_rect()]
+	var tags: Array = []
+	for tag in presenter._hero_tags:
+		tags.append([tag.text, tag.get_global_rect()])
+	var signatures := {}
+	var body_widths := {}
+	for actor_id in V3_HERO_PROPS:
+		var paths: Dictionary = ROSTER_ART.art_paths(actor_id)
+		var prefix: String = "res://assets/paper/heroes/%s" % actor_id
+		_check(paths.get("idle") == prefix + ".png"
+			and paths.get("attack") == prefix + "_attack.png",
+			"canonical new hero idle/attack art paths follow authoritative ID: " + actor_id)
+		var loaded: Dictionary = presenter.art_for(actor_id)
+		_check((loaded.get("idle") == null or loaded.get("idle") is Texture2D)
+			and (loaded.get("attack") == null or loaded.get("attack") is Texture2D),
+			"optional future resources remain guarded without asserting their absence: " + actor_id)
+		host.bind_actor(actor_id, {})
+		var shapes: Array[Dictionary] = host.fallback_silhouettes()
+		var signature: Array[String] = []
+		var tones := {}
+		var inside := not shapes.is_empty()
+		for shape in shapes:
+			var name := String(shape.get("part", ""))
+			var tone := String(shape.get("tone", ""))
+			var points: PackedVector2Array = shape.get("points", PackedVector2Array())
+			signature.append(name)
+			tones[tone] = true
+			inside = inside and not name.is_empty() and points.size() >= 3
+			inside = inside and host.NAMED_TONES.has(tone)
+			for point in points:
+				inside = inside and host.FALLBACK_EXTENTS.grow(0.01).has_point(point)
+			if name == "broad_button_body" or name == "round_robe" or name == "lean_coat" \
+					or name == "stuffed_shirt" or name == "ranger_tunic":
+				var min_x := 1000.0
+				var max_x := -1000.0
+				for point in points:
+					min_x = minf(min_x, point.x)
+					max_x = maxf(max_x, point.x)
+				body_widths[actor_id] = max_x - min_x
+		_check(host.actor_id == actor_id and host.fallback_kind == actor_id
+			and ROSTER_ART.fallback_kind_for(actor_id) == actor_id
+			and host.current_texture() == null and host.pose_texture() == null
+			and not host.posed_fallback_rect().is_equal_approx(Rect2()),
+			"no-texture binding draws this hero's own nonempty procedural puppet: " + actor_id)
+		_check(inside, "named silhouette shapes fit exact fallback extents with valid tones: " + actor_id)
+		for prop in V3_HERO_PROPS[actor_id]:
+			_check(signature.has(prop), "recognisable silhouette prop " + prop + " for " + actor_id)
+		for tone in V3_HERO_TONES[actor_id]:
+			_check(tones.has(tone) and host.fallback_tone(tone) == Color(V3_HERO_TONES[actor_id][tone]),
+				"named v3 palette shade is exact and used in geometry: " + actor_id + "/" + tone)
+		signatures[actor_id] = shapes
+		for alternate in [other, third]:
+			alternate.bind_actor(actor_id, {})
+			_check(alternate.slot != host.slot and alternate.fallback_kind == actor_id
+				and alternate.fallback_silhouettes() == shapes,
+				"hero identity and every semantic shape are slot-independent: " + actor_id)
+	var ids := V3_HERO_PROPS.keys()
+	for left in range(ids.size()):
+		for right in range(left + 1, ids.size()):
+			_check(signatures[ids[left]] != signatures[ids[right]],
+				"five newcomer puppets have independently recognisable silhouettes")
+	_check(body_widths.has("button_golem") and body_widths.size() == ids.size(),
+		"all five have measurable authored torso silhouettes")
+	if body_widths.size() == ids.size():
+		for actor_id in ids:
+			if actor_id != "button_golem":
+				_check(body_widths["button_golem"] > body_widths[actor_id],
+					"button golem is visibly the broadest torso versus " + actor_id)
+	# A synthetic legitimate Texture2D wins over the procedurally drawn silhouette.
+	var image := Image.create(12, 18, false, Image.FORMAT_RGBA8)
+	image.fill(Color.WHITE)
+	var injected: ImageTexture = ImageTexture.create_from_image(image)
+	host.bind_actor("lantern_monk", {"idle": injected, "attack": injected})
+	_check(host.current_texture() == injected and host.pose_texture() == injected
+		and host.posed_image_rect().has_area() and host.image_rect().has_area(),
+		"provided Texture2D overrides the hero fallback on the live stage")
+	host.bind_actor("fabricated_v3_hero", {})
+	_check(host.fallback_kind == host.FALLBACK_KIND_GENERIC
+		and host.fallback_silhouettes().is_empty() and host.current_texture() == null
+		and ROSTER_ART.art_paths("fabricated_v3_hero").is_empty(),
+		"unrecognized actor IDs fail closed to the generic fallback, not a v3 hero")
+	for index in range(3):
+		var puppet = [host, other, third][index]
+		puppet.bind_actor(saved[index].id,
+			{"idle": saved[index].idle, "attack": saved[index].attack})
+		puppet.idle_phase = saved[index].phase
+		_check(puppet.actor_id == app.party.get_hero(puppet.slot).get("id"),
+			"restored live Puppet exactly follows original authoritative party ID")
+	var after_tags := []
+	for tag in presenter._hero_tags:
+		after_tags.append([tag.text, tag.get_global_rect()])
+	_check(_snapshot(app) == state and after_tags == tags
+		and [host.get_global_rect(), other.get_global_rect(), third.get_global_rect()] == targets,
+		"all v3 presentation-only art checks leave combat, RNG, tags and targets untouched")
+
+
 ## The source of one indented Puppet method, up to the next method, for draw-path inspection.
 func _function_body(source: String, signature: String) -> String:
 	var start := source.find(signature)
@@ -2051,6 +2182,7 @@ func _run() -> void:
 			_finish()
 			return
 		if session == 0:
+			_v3_hero_fallbacks(app, presenter)
 			_caption_legibility(app, presenter)
 		var tick_phase: float = presenter._puppets[0].idle_phase
 		await process_frame
