@@ -2864,6 +2864,9 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 ## stale or unselected record names no card at all.
 func _battle_path_card_ids() -> Array[String]:
 	var card_ids: Array[String] = []
+	var warden := RunWardenPathChoice.authenticate_receipt(run_warden_path_receipt)
+	if warden.get("ok", false):
+		card_ids.append(String(warden.card_id))
 	var seamstress := _seamstress_battle_card_id()
 	if not seamstress.is_empty():
 		card_ids.append(seamstress)

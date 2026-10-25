@@ -42,6 +42,52 @@ var _unravel: CombatUnravel
 ## deck, party, roster and the one gauge shared with the round flow.
 var _path_cards: CombatSeamstressPathCards
 var _path_card: Dictionary = {}
+var _warden_receipt: Dictionary = {}
+var _warden_card: Dictionary = {}
+var _warden_rules := CombatWardenPathCards.new()
+
+
+func _bind_warden_path(app) -> void:
+	_warden_receipt.clear()
+	_warden_card.clear()
+	var authenticated := RunWardenPathChoice.authenticate_receipt(app.run_warden_path_receipt)
+	if authenticated.get("ok", false):
+		_warden_receipt = authenticated.receipt
+		_warden_card = _warden_receipt.card.duplicate(true)
+
+
+func _is_warden_card(id: String) -> bool:
+	return not _warden_card.is_empty() and id == _warden_card.get("id", "")
+
+
+func warden_ready() -> bool:
+	var app = get_parent()
+	if app == null or _deck == null or app.deck != _deck or app._battle_closed \
+			or _pinned == null or app.run_warden_path_receipt != _warden_receipt \
+			or app.enemy_intents == null or _turn != app.enemy_intents._turn_index \
+			or not RunWardenPathChoice.authenticate_receipt(_warden_receipt).get("ok", false) \
+			or _session != [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents]:
+		return false
+	var copies := 0
+	for pile in [_deck.draw_pile, _deck.hand, _deck.discard_pile]:
+		for id in [CombatWardenPathCards.BULWARK_BRACE_ID, CombatWardenPathCards.LANCE_PIN_ID]:
+			if id != _warden_card.id and pile.has(id):
+				return false
+		copies += pile.count(_warden_card.id)
+	return copies == 1
+
+
+func warden_preview(id: String) -> Dictionary:
+	if not _is_warden_card(id) or not warden_ready():
+		return {"ok": false, "playable": false, "requires_selection": false, "target_positions": []}
+	var app = get_parent()
+	return _warden_rules.forecast(_deck, app.party, app.enemies, id, _warden_receipt, _pinned)
+
+
+func warden_path_playable(id: String) -> bool:
+	return warden_preview(id).get("playable", false)
+
+
 ## The one Tinker Path authority of THIS routed battle. It owns the selected
 ## card's commit, the per-turn Wind-up credit and Clockwork discount, and the
 ## first-attack/Scope bonuses reported by every successful Tinker play.
@@ -721,6 +767,8 @@ func _single(panel) -> bool:
 ## Starter, plain-strike, heavy-pool, Seamstress control attacks and this
 ## battle's selected Path card use separate authored catalogs.
 func _definition(card_id: String) -> Dictionary:
+	if _is_warden_card(card_id):
+		return _warden_card
 	if _is_path_card(card_id):
 		return _path_card
 	if _targeting.is_pool_strike(card_id):
@@ -762,6 +810,8 @@ func _select(event: InputEvent, panel) -> void:
 ## service itself validates each original enemy slot before it is offered.
 func _target_preview(id: String) -> Dictionary:
 	var app = get_parent()
+	if _is_warden_card(id):
+		return warden_preview(id)
 	if _is_path_card(id):
 		return path_preview(id)
 	# The battle's one Path authority prices a qualifying Tinker card BEFORE any
@@ -800,7 +850,7 @@ func _queue_attack(position: int) -> void:
 	if (_direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
 			or _targeting.is_seamstress_control(id) \
 			or _targeting.is_heavy_pool_attack(id) \
-			or _targeting.is_pool_combo_attack(id) or _is_path_card(id) \
+			or _targeting.is_pool_combo_attack(id) or _is_path_card(id) or _is_warden_card(id) \
 			or id in CombatAttackCards.ATTACK_IDS) and position > 0:
 		target_id = str(app.enemies.get_enemy(position).get("id", ""))
 	_commit.call_deferred(_armed, id, position, _token,
@@ -819,7 +869,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var direct := _direct_fire_preview.supports(id)
 	var control := _targeting.is_seamstress_control(id)
 	var combo := _targeting.is_pool_combo_attack(id)
-	var path := _is_path_card(id)
+	var path := _is_path_card(id) or _is_warden_card(id)
 	var heavy := _targeting.is_heavy_pool_attack(id)
 	var guarded := direct or control or combo or path or heavy or id in CombatAttackCards.ATTACK_IDS
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
@@ -840,8 +890,12 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 			or queued_pinned != _pinned or _direct_fire.get_pinned() != _pinned):
 		_reject_stitch()
 		return
+	if _is_warden_card(id) and queued_pinned != _pinned:
+		_reject_stitch()
+		return
 	var energy_before: int = _deck.energy
-	if (direct or combo or path or heavy) and (app._battle_closed or target_id.is_empty() \
+	if (direct or combo or path or heavy) and (app._battle_closed \
+			or (target_id.is_empty() and not (_is_warden_card(id) and position == 0)) \
 			or app.deck._rng != rng or (combo and not app._combo_battle_current())):
 		_reject_stitch()
 		return
@@ -869,6 +923,12 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 
 
 func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, position: int, forecast: bool = false) -> Dictionary:
+	if _is_warden_card(id):
+		if not warden_ready() or party != get_parent().party or enemies != get_parent().enemies:
+			return {"ok": false}
+		if forecast:
+			return warden_preview(id)
+		return _warden_rules.play(_deck, party, enemies, id, position, _warden_receipt, _pinned)
 	if _is_path_card(id):
 		if forecast:
 			return _path_quote(id, position)
@@ -1184,7 +1244,8 @@ func _eligible(panel) -> bool:
 			or not _control_ready(app.party, app.enemies, id)):
 		return false
 	var index: int = panel.get_index()
-	var path_ok: bool = _is_path_card(id) and not _path_positions(id).is_empty()
+	var path_ok: bool = (_is_path_card(id) and not _path_positions(id).is_empty()) \
+		or (_is_warden_card(id) and warden_preview(id).get("playable", false))
 	return (_targeting.supports(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
@@ -1264,6 +1325,7 @@ func _sync_battle() -> void:
 		# The selected Path card is bound only to this battle's genuine receipt,
 		# deck, party, roster and the one gauge shared with its round flow.
 		_bind_path_cards(app)
+		_bind_warden_path(app)
 		# The Tinker Path is bound the same way, from its own claimed setup and
 		# authenticated run receipt.
 		_bind_tinker_path(app)
@@ -1407,6 +1469,23 @@ func _refresh() -> void:
 	if definition.is_empty():
 		# Fail closed on an unrecognised record instead of formatting a partial card.
 		cue.text = "Unavailable card rules"
+		return
+	if _is_warden_card(id):
+		var quote := warden_preview(id)
+		current_forecast = quote.duplicate(true)
+		var effects := "Unavailable"
+		if quote.get("ok", false):
+			if definition.target_kind == "self":
+				effects = "Warden gains %d Block" % int(quote.expected_block)
+			else:
+				var readings: PackedStringArray = []
+				for target in quote.targets:
+					readings.append("%d: %d damage, Pin surviving enemy" % [target.position, target.expected_damage])
+				effects = "; ".join(readings)
+		cue.text = "%s | %d energy | P / click card; %s\n%s" % [
+			definition.display_name, definition.cost,
+			"1-2 / click enemy" if definition.target_kind == "enemy_single" else "Enter / Space",
+			effects]
 		return
 	if _is_path_card(id):
 		# The resolver's per-slot previews are the only Path forecast: no Bleed
@@ -1579,6 +1658,8 @@ func _clear() -> void:
 	_path_cards = null
 	_path_card.clear()
 	_tinker_path = null
+	_warden_receipt.clear()
+	_warden_card.clear()
 	_routed_gauge_shared = false
 	_fray = null
 	_heavy_attacks = CombatWardenPoolHeavyAttacks.new()

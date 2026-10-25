@@ -5,7 +5,7 @@ extends "res://tests/live_tinker_path_hand_test.gd"
 const HEAVIES := ["warden_heavy_thimble", "warden_pin_and_pound"]
 
 
-func _warden_fixture(id: String) -> Dictionary:
+func _warden_fixture(id: String, path: String) -> Dictionary:
 	var owners: Array[String] = ["warden", "seamstress", "tinker"]
 	for value in range(1, 600):
 		var rng := RandomNumberGenerator.new()
@@ -21,7 +21,8 @@ func _warden_fixture(id: String) -> Dictionary:
 				for third in map.get_node(second).outgoing:
 					if map.get_node(third).type != "Fight":
 						continue
-					var oracle := _oracle(value, first, [])
+					var oracle := _oracle(value, first,
+						["warden_lance_pin" if path == "vanguard" else "warden_bulwark_brace"])
 					if oracle.is_empty():
 						continue
 					var party := CombatParty.new(app._load_party_definitions())
@@ -120,8 +121,12 @@ func _entry(fixture: Dictionary, path: String) -> void:
 	presenter = app.get_node("LiveAttackPreview")
 	_check(app._combo_battle_current() and presenter._deck == app.deck, "genuine routed battle owns live models")
 	_check(app.party.get_hero(1).block == (0 if path == "vanguard" else 10), "distinct authored Path opening Block")
-	_check(not app.deck.hand.has("warden_lance_pin") and not app.deck.draw_pile.has("warden_lance_pin")
-		and not app.run_deck.has("warden_lance_pin"), "deferred Path card never enters hand or run deck")
+	var selected := "warden_lance_pin" if path == "vanguard" else "warden_bulwark_brace"
+	var other := "warden_bulwark_brace" if path == "vanguard" else "warden_lance_pin"
+	var battle_cards: Array = app.deck.hand + app.deck.draw_pile + app.deck.discard_pile
+	_check(battle_cards.count(selected) == 1 and not battle_cards.has(other)
+		and not app.run_deck.has(selected) and not app.run_deck.has(other),
+		"only the selected Path card enters the battle, never the run deck")
 
 
 func _sew_attack_patches() -> void:
@@ -141,7 +146,7 @@ func _case(id: String, path: String, patched: bool = false, lethal: bool = false
 	app = load(APP_SCENE).instantiate()
 	root.add_child(app)
 	await _frames()
-	var fixture := _warden_fixture(id)
+	var fixture := _warden_fixture(id, path)
 	_check(not fixture.is_empty(), "seeded three-Fight route genuinely offers " + id)
 	if fixture.is_empty():
 		await _dispose()
