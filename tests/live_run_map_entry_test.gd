@@ -2,6 +2,16 @@ extends SceneTree
 
 var failures: Array[String] = []
 var checks := 0
+## Exact mounted atlas facts: independent of RunRouteAtlas.stop_consequence().
+const ROUTE_HELP_TOOLTIPS := {
+	"Fight": "On win: 10–20 gold + 1 scrap; choose 1 of 3 cards or skip",
+	"Elite": "On win: 25–35 gold + 2 scraps + patch; choose 1 of 3 cards or skip",
+	"Rest": "One action: heal each hero 30% max HP (torn revives at 1 HP first), upgrade one card, stitch two different-owner cards for 3 scraps, or re-sew an equipped patch for 1 scrap",
+	"Shop": "5 cards + 2 patches; card removal starts at 75 gold, increasing 25 per removal",
+	"Event": "2–3 choices; outcomes revealed on visit, no guaranteed yield",
+	"Treasure": "Treasure stop; no predetermined reward amount is known",
+	"Boss": "Terminal floor-12 fight",
+}
 
 
 func _initialize() -> void:
@@ -229,11 +239,13 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 				and child.get_meta("route_id") == id
 				and child.get_meta("route_kind") == String(node.type)
 				and atlas.get_global_rect().encloses(child.get_global_rect()), "readable mounted identity: " + id)
+			var legal: bool = app.run_map.get_legal_choices().has(id)
 			var hover := "Floor %02d · %s · Branch %d" % [
 				int(node.floor), String(node.type), int(node.position) + 1]
+			if legal:
+				hover += " · " + str(ROUTE_HELP_TOOLTIPS[String(node.type)])
 			_check(child.tooltip_text == hover and not child.tooltip_text.contains(id),
 				"readable sewn route hover: " + id)
-			var legal: bool = app.run_map.get_legal_choices().has(id)
 			_check(child.get_meta("route_state") == ("legal" if legal else "other")
 				and child.get_theme_stylebox("panel").bg_color == (RunRouteAtlas.LEGAL_BG if legal else RunRouteAtlas.OTHER_BG),
 				"visible legal highlight: " + id)

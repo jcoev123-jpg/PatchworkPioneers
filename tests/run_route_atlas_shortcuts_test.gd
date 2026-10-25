@@ -6,6 +6,7 @@ var requests: Array[String] = []
 ## Real mounted states where the numeric shortcut N is NOT the branch row + 1, so the
 ## legal hover cannot be derived from the branch number. At least one must be checked.
 var shifted_branch_states := 0
+var distinct_kind_switches := 0
 const NUMBER_KEYS: Array[Key] = [KEY_1, KEY_2, KEY_3, KEY_4]
 
 
@@ -78,9 +79,37 @@ func _marker(view: RunRouteAtlas, id: String) -> PanelContainer:
 ## Independent player-facing wording for one real node record: authored floor, authored
 ## kind and the one-based branch row. Spelled out here so the mounted shortcuts regression
 ## cannot inherit a wording mistake from the view itself.
-func _hover_text(node: Dictionary) -> String:
-	return "Floor %02d · %s · Branch %d" % [
+## Independent authored stop guidance oracle; does not call the atlas presentation helper.
+const EXPECTED_HELP := {
+	"Fight": {"lead": "Win: 10–20 gold + 1 scrap",
+		"detail": "Choose 1 of 3 cards, or skip",
+		"tooltip": "On win: 10–20 gold + 1 scrap; choose 1 of 3 cards or skip"},
+	"Elite": {"lead": "Win: 25–35 gold + 2 scraps + patch",
+		"detail": "Choose 1 of 3 cards, or skip",
+		"tooltip": "On win: 25–35 gold + 2 scraps + patch; choose 1 of 3 cards or skip"},
+	"Rest": {"lead": "Choose one: heal, upgrade, stitch or re-sew",
+		"detail": "Heal 30% max HP; stitch 3 scraps; re-sew 1 scrap",
+		"tooltip": "One action: heal each hero 30% max HP (torn revives at 1 HP first), upgrade one card, stitch two different-owner cards for 3 scraps, or re-sew an equipped patch for 1 scrap"},
+	"Shop": {"lead": "Browse 5 cards + 2 patches",
+		"detail": "Remove card: 75 gold initially, +25 each time",
+		"tooltip": "5 cards + 2 patches; card removal starts at 75 gold, increasing 25 per removal"},
+	"Event": {"lead": "2–3 choices when visited",
+		"detail": "Outcomes shown on arrival; no guaranteed yield",
+		"tooltip": "2–3 choices; outcomes revealed on visit, no guaranteed yield"},
+	"Treasure": {"lead": "Treasure stop · contents not yet known",
+		"detail": "No fixed reward is specified by the route",
+		"tooltip": "Treasure stop; no predetermined reward amount is known"},
+	"Boss": {"lead": "Final floor-12 fight",
+		"detail": "The last stop on this route",
+		"tooltip": "Terminal floor-12 fight"},
+}
+
+func _hover_text(node: Dictionary, legal: bool = false) -> String:
+	var prefix := "Floor %02d · %s · Branch %d" % [
 		int(node["floor"]), str(node["type"]), int(node["position"]) + 1]
+	if legal:
+		return prefix + " · " + str(EXPECTED_HELP[str(node["type"])]["tooltip"])
+	return prefix
 
 
 func _verify_labels(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator,
@@ -127,7 +156,7 @@ func _verify_labels(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator
 		_check(marker.get_meta("route_state") == ("legal" if index >= 0 else
 			("chosen" if map.get_route().has(id) else "other")),
 			where + ": exact actual legal/chosen/inactive state " + id)
-		var hover := _hover_text(expected[id])
+		var hover := _hover_text(expected[id], index >= 0)
 		_check(marker.tooltip_text == hover and not marker.tooltip_text.contains(id),
 			where + ": sewn floor, kind and branch hover on the real patch " + id)
 		if index >= 0:
@@ -158,6 +187,11 @@ func _verify_labels(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator
 			and action.get_node_or_null(action.focus_next) == next
 			and action.get_node_or_null(action.focus_previous) == previous,
 			where + ": authored focus links exclude all inert patches at index %d" % i)
+	_check(view.choice_ticket() != null or ordered.is_empty(),
+		where + ": legal choices display an initial inert consequence ticket")
+	if not ordered.is_empty():
+		_assert_ticket(view, map, ordered[0] if view.choice_ticket().route_id == ordered[0] else view.choice_ticket().route_id,
+			where + ": initial ticket")
 	_check(button_count == ordered.size() and marker_count == expected.size(),
 		where + ": all and only N legal Action buttons, with no off-window node")
 	_check(_state(map, rng) == before,
@@ -216,6 +250,77 @@ func _mouse_press(button: Button) -> void:
 		await process_frame
 
 
+func _assert_ticket(view: RunRouteAtlas, map: RunMap, id: String, where: String) -> void:
+	var ticket := view.choice_ticket()
+	_check(ticket != null and map.get_legal_choices().has(id),
+		where + ": exact live legal choice has an inert ticket")
+	if ticket == null or not map.get_legal_choices().has(id):
+		return
+	var record := map.get_node(id)
+	var kind := str(record["type"])
+	var facts: Dictionary = EXPECTED_HELP.get(kind, {})
+	_check(not facts.is_empty(), where + ": legal kind is authored")
+	if facts.is_empty():
+		return
+	_check(ticket.route_id == id
+		and ticket.header_text == "%s · FLOOR %02d · BRANCH %d" % [
+			RunRouteAtlas.area_for_floor(int(record["floor"])).to_upper(),
+			int(record["floor"]), int(record["position"]) + 1]
+		and ticket.lead_text == kind + " · " + str(facts["lead"])
+		and ticket.detail_text == str(facts["detail"])
+		and not ticket.header_text.contains(id) and not ticket.lead_text.contains(id)
+		and ticket.visible and ticket.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and ticket.focus_mode == Control.FOCUS_NONE
+		and RunRouteAtlas.ChoiceTicket.FONT_SIZE >= 18,
+		where + ": exact real choice area, branch and truthful consequence with no raw ID")
+
+
+## Actual mouse motion selects a different legal kind without any map transaction.
+## When the pointer departs, the still-focused action regains the ticket.
+func _assert_pointer_switch(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator,
+		ordered: Array[String], where: String) -> void:
+	var source := ""
+	var target := ""
+	for first in ordered:
+		for second in ordered:
+			if first != second and map.get_node(first)["type"] != map.get_node(second)["type"]:
+				source = first
+				target = second
+				break
+		if not target.is_empty():
+			break
+	if target.is_empty():
+		return
+	distinct_kind_switches += 1
+	var before := _state(map, rng)
+	seed(98231)
+	var next_global := randi()
+	seed(98231)
+	requests.clear()
+	var focus_button := _action(view, source)
+	var hover_button := _action(view, target)
+	_check(focus_button != null and hover_button != null,
+		where + ": two distinct legal kinds really mounted")
+	if focus_button == null or hover_button == null:
+		return
+	focus_button.grab_focus()
+	_assert_ticket(view, map, source, where + ": focused initial kind")
+	var motion := InputEventMouseMotion.new()
+	motion.position = hover_button.get_global_rect().get_center()
+	root.push_input(motion, true)
+	await process_frame
+	_assert_ticket(view, map, target, where + ": pointer takes precedence over focus")
+	motion = InputEventMouseMotion.new()
+	motion.position = Vector2(10.0, 690.0)
+	root.push_input(motion, true)
+	await process_frame
+	_assert_ticket(view, map, source, where + ": pointer exit restores focused explanation")
+	_action(view, target).grab_focus()
+	_assert_ticket(view, map, target, where + ": new focus updates kind")
+	_check(requests.is_empty() and _state(map, rng) == before and randi() == next_global,
+		where + ": pointer and focus guidance consume no route or local/global RNG")
+
+
 func _assert_navigation(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator,
 		ordered: Array[String], unrelated: Button, close: Button, where: String) -> void:
 	_check(ordered.size() >= 2, where + ": real multi-patch navigation precondition")
@@ -249,10 +354,13 @@ func _assert_navigation(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGener
 		return
 	first.grab_focus()
 	_check(_focused_id(view) == ordered[0], where + ": first patch genuinely has keyboard focus")
+	_assert_ticket(view, map, ordered[0], where + ": keyboard ticket")
 	for i in range(ordered.size()):
 		await _key(KEY_DOWN)
 		_check(_focused_id(view) == ordered[(i + 1) % ordered.size()],
 			where + ": Down follows authored order, wrapping after the last patch %d" % i)
+		_assert_ticket(view, map, ordered[(i + 1) % ordered.size()],
+			where + ": Down ticket")
 		_check(requests.is_empty(), where + ": Down never emits a request")
 	await _key(KEY_UP)
 	_check(_focused_id(view) == ordered[ordered.size() - 1],
@@ -317,6 +425,7 @@ func _assert_focus_key(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenera
 	await _key(code, false, shifted)
 	_check(_focused_id(view) == expected_id,
 		where + ": focus follows real authored legal Action, expected " + expected_id)
+	_assert_ticket(view, map, expected_id, where + ": focus explanation")
 	_check(requests.is_empty(), where + ": motion never emits node_requested")
 	_check(_state(map, rng) == before, where + ": motion never commits map or draws run RNG")
 	_check(randi() == next_global, where + ": motion never draws global RNG")
@@ -431,6 +540,7 @@ func _run() -> void:
 			"mouse still clicks a legal round patch")
 		_action(view, first_legal.back()).grab_focus()
 		view.refresh()
+		_assert_ticket(view, map, first_legal.back(), "same-map focus ticket survives refresh")
 		_check(_focused_id(view) == first_legal.back(),
 			"same-map refresh restores legal focus by original ID, not old Button reference")
 		for i in range(first_legal.size()):
@@ -440,6 +550,8 @@ func _run() -> void:
 			await _assert_held_key(map, rng, first_legal[0])
 		await _assert_navigation(view, map, rng, first_legal, other_focus, close_focus,
 			"seed %d mounted opening" % seed_value)
+		await _assert_pointer_switch(view, map, rng, first_legal,
+			"seed %d pointer opening" % seed_value)
 		await _assert_key(view, map, rng, KEY_5, "", "unassigned key 5")
 		await _assert_key(view, map, rng, KEY_1, "", "auto-repeat suppressed", true)
 		if first_legal.size() < 4:
@@ -449,6 +561,8 @@ func _run() -> void:
 		var first_action := (_marker(view, first_legal[0]).get_node_or_null("Action") as Button) if not first_legal.is_empty() else null
 		_check(first_action != null, "callback fixture is a real opening button")
 		var stale: Callable = first_action.pressed.get_connections()[0].callable if first_action != null else Callable()
+		var stale_hover: Callable = first_action.mouse_entered.get_connections()[0].callable if first_action != null else Callable()
+		var stale_focus: Callable = first_action.focus_entered.get_connections()[1].callable if first_action != null else Callable()
 		view.hide()
 		await process_frame
 		_check(_focused_id(view).is_empty(),
@@ -476,9 +590,19 @@ func _run() -> void:
 			"retained marker callback rejects external move")
 
 		view.refresh()
+		var current_ticket := view.choice_ticket()
+		var current_ticket_id := current_ticket.route_id if current_ticket != null else ""
+		if stale_hover.is_valid():
+			stale_hover.call()
+		if stale_focus.is_valid():
+			stale_focus.call()
+		_check(view.choice_ticket() != null and view.choice_ticket().route_id == current_ticket_id,
+			"old hover and focus callbacks cannot rewrite advanced-map advice")
 		_check(_focused_id(view).is_empty() or _ordered_legal(map).has(_focused_id(view)),
 			"route refresh never preserves a newly nonlegal focused node")
 		var fresh := _verify_labels(view, map, rng, "seed %d advanced" % seed_value)
+		await _assert_pointer_switch(view, map, rng, fresh,
+			"seed %d pointer connected" % seed_value)
 		_check(not fresh.is_empty(), "new floor exposes real outgoing destinations")
 		if fresh.size() < 4:
 			saw_narrow = true
@@ -509,6 +633,14 @@ func _run() -> void:
 		_check(requests.is_empty() and _state(map, identical_rng) == regenerated,
 			"stale button callback rejected across same-seed regeneration")
 		view.refresh()
+		current_ticket = view.choice_ticket()
+		current_ticket_id = current_ticket.route_id if current_ticket != null else ""
+		if stale_hover.is_valid():
+			stale_hover.call()
+		if stale_focus.is_valid():
+			stale_focus.call()
+		_check(view.choice_ticket() != null and view.choice_ticket().route_id == current_ticket_id,
+			"old callbacks cannot rewrite regenerated-map advice")
 		_check(_focused_id(view).is_empty() or _ordered_legal(map).has(_focused_id(view)),
 			"regeneration restores only live legal focus")
 		var replay_legal := _verify_labels(view, map, identical_rng, "seed %d regenerated" % seed_value)
@@ -541,6 +673,8 @@ func _run() -> void:
 					"floor %d newly refreshed shortcut" % floor_number)
 			else:
 				_check(map.is_complete() and now.is_empty(), "boss completion has zero legal shortcuts")
+				_check(view.choice_ticket() == null and view.get_node_or_null("ChoiceTicket") == null,
+					"completed boss removes inert choice ticket")
 				_check(view._legal_actions.is_empty() and view._actions_by_id.is_empty()
 					and _focused_id(view).is_empty(),
 					"completed map has no focusable or actionable marker")
@@ -549,10 +683,13 @@ func _run() -> void:
 
 		var finished := _state(map, identical_rng)
 		view.bind_map(null)
+		_check(view.choice_ticket() == null and view.get_node_or_null("ChoiceTicket") == null,
+			"null binding removes read-only ticket")
 		await _assert_key(view, map, identical_rng, KEY_1, "", "null after completion")
 		_check(_state(map, identical_rng) == finished, "null binding leaves former map unchanged")
 
 	_check(saw_narrow, "at least one real connected state offers fewer than four destinations")
+	_check(distinct_kind_switches > 0, "real mouse/focus switches across distinct legal authored kinds")
 	_check(shifted_branch_states >= 1,
 		"real legal hover was checked where the shortcut differs from branch + 1 (%d states)" % shifted_branch_states)
 	view.queue_free()

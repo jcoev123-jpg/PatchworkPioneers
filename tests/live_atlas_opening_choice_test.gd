@@ -1,5 +1,59 @@
 extends "res://tests/live_run_map_entry_test.gd"
 
+## Independent, pinned design facts for the actual mounted player-facing atlas.
+const LIVE_HELP := {
+	"Fight": ["Win: 10–20 gold + 1 scrap", "Choose 1 of 3 cards, or skip",
+		"On win: 10–20 gold + 1 scrap; choose 1 of 3 cards or skip"],
+	"Elite": ["Win: 25–35 gold + 2 scraps + patch", "Choose 1 of 3 cards, or skip",
+		"On win: 25–35 gold + 2 scraps + patch; choose 1 of 3 cards or skip"],
+	"Rest": ["Choose one: heal, upgrade, stitch or re-sew",
+		"Heal 30% max HP; stitch 3 scraps; re-sew 1 scrap",
+		"One action: heal each hero 30% max HP (torn revives at 1 HP first), upgrade one card, stitch two different-owner cards for 3 scraps, or re-sew an equipped patch for 1 scrap"],
+	"Shop": ["Browse 5 cards + 2 patches",
+		"Remove card: 75 gold initially, +25 each time",
+		"5 cards + 2 patches; card removal starts at 75 gold, increasing 25 per removal"],
+	"Event": ["2–3 choices when visited",
+		"Outcomes shown on arrival; no guaranteed yield",
+		"2–3 choices; outcomes revealed on visit, no guaranteed yield"],
+	"Treasure": ["Treasure stop · contents not yet known",
+		"No fixed reward is specified by the route",
+		"Treasure stop; no predetermined reward amount is known"],
+	"Boss": ["Final floor-12 fight", "The last stop on this route",
+		"Terminal floor-12 fight"],
+}
+
+
+func _expected_hover(node: Dictionary, legal: bool) -> String:
+	var prefix := "Floor %02d · %s · Branch %d" % [
+		int(node["floor"]), String(node["type"]), int(node["position"]) + 1]
+	return prefix + (" · " + str(LIVE_HELP[str(node["type"])][2]) if legal else "")
+
+
+func _check_ticket(atlas: RunRouteAtlas, id: String, where: String) -> void:
+	var ticket := atlas.choice_ticket()
+	_check(ticket != null and atlas._map.get_legal_choices().has(id),
+		where + ": active ticket belongs to legal actual map node")
+	if ticket == null or not atlas._map.get_legal_choices().has(id):
+		return
+	var node := atlas._map.get_node(id)
+	var kind: String = node["type"]
+	var facts: Array = LIVE_HELP[kind]
+	_check(ticket.route_id == id
+		and ticket.header_text == "%s · FLOOR %02d · BRANCH %d" % [
+			RunRouteAtlas.area_for_floor(int(node["floor"])).to_upper(),
+			int(node["floor"]), int(node["position"]) + 1]
+		and ticket.lead_text == kind + " · " + str(facts[0])
+		and ticket.detail_text == str(facts[1])
+		and ticket.visible and ticket.is_visible_in_tree()
+		and ticket.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and ticket.focus_mode == Control.FOCUS_NONE
+		and not ticket.header_text.contains(id) and not ticket.lead_text.contains(id)
+		and RunRouteAtlas.ChoiceTicket.FONT_SIZE >= 18,
+		where + ": real area, floor, kind and truthfully limited cost/outcome")
+
+
+
+
 
 func _marker(app, id: String) -> Button:
 	var button := app.route_atlas.get_node_or_null("Node_" + id + "/Action") as Button
@@ -63,8 +117,7 @@ func _tokens(atlas: RunRouteAtlas) -> void:
 		else:
 			_check(art != null and art.token_texture == null,
 				"real app keeps drawn Treasure or unavailable-art fallback " + id)
-		var hover := "Floor %02d · %s · Branch %d" % [
-			int(actual.floor), String(actual.type), int(actual.position) + 1]
+		var hover := _expected_hover(actual, atlas._map.get_legal_choices().has(id))
 		_check(child.tooltip_text == hover and not child.tooltip_text.contains(id),
 			"real opening patch hover names its real floor, kind and branch " + id)
 		var action := child.get_node_or_null("Action") as Button
@@ -84,6 +137,10 @@ func _tokens(atlas: RunRouteAtlas) -> void:
 			node_count += 1
 			_check(actual_ids.has(node["id"]),
 				"every authored visible floor 1-3 patch appears on the mounted book")
+	var opening_legal := atlas._map.get_legal_choices()
+	_check(not opening_legal.is_empty(), "mounted opening has genuine legal patch choices")
+	if not opening_legal.is_empty():
+		_check_ticket(atlas, opening_legal[0], "opening ticket uses first authentic next stop")
 	_check(actual_ids.size() == node_count
 		and legal_buttons == atlas._map.get_legal_choices().size(),
 		"real app shows exactly the window and all 3-4 opening choices")
@@ -260,6 +317,22 @@ func _legal_openings(app) -> void:
 				var atlas: RunRouteAtlas = app.route_atlas
 				atlas.tree_exiting.connect(func(): cleared.append(atlas._map == null))
 				marker = _marker(app, fixture[2])
+				var explanation_before := _values(app)
+				if marker != null:
+					marker.grab_focus()
+					_check_ticket(atlas, fixture[2], "live " + kind + " keyboard help")
+					var motion := InputEventMouseMotion.new()
+					motion.position = marker.get_global_rect().get_center()
+					root.push_input(motion, true)
+					await process_frame
+					_check_ticket(atlas, fixture[2], "live " + kind + " pointer help")
+					motion = InputEventMouseMotion.new()
+					motion.position = Vector2(10.0, 690.0)
+					root.push_input(motion, true)
+					await process_frame
+					_check_ticket(atlas, fixture[2], "live " + kind + " mouse exit restores focus")
+					_check(_values(app) == explanation_before,
+						"live " + kind + " guidance leaves deck/wallet/map/RNG unspent")
 				_check(marker != null and marker.focus_mode == Control.FOCUS_ALL
 					and marker.mouse_filter == Control.MOUSE_FILTER_STOP
 					and marker.get_parent().get_meta("route_state") == "legal",
@@ -348,6 +421,28 @@ func _run() -> void:
 			_check(atlas.node_requested.get_connections().size() == 1, "exactly one app listener")
 			var callback: Callable = atlas.node_requested.get_connections()[0].callable
 			_tokens(atlas)
+			var opening_before := _values(app)
+			var actual_ids: Array[String] = app.run_map.get_legal_choices()
+			_check(actual_ids.size() >= 3, "real opening has three selectable kind-bearing markers")
+			if actual_ids.size() >= 2:
+				var a := _marker(app, actual_ids[0])
+				var b := _marker(app, actual_ids[1])
+				a.grab_focus()
+				_check_ticket(atlas, actual_ids[0], "mounted first focused stop")
+				b.grab_focus()
+				_check_ticket(atlas, actual_ids[1], "mounted other focused stop")
+				var pointer := InputEventMouseMotion.new()
+				pointer.position = a.get_global_rect().get_center()
+				root.push_input(pointer, true)
+				await process_frame
+				_check_ticket(atlas, actual_ids[0], "mounted pointer overrides different focus")
+				pointer = InputEventMouseMotion.new()
+				pointer.position = Vector2(10.0, 690.0)
+				root.push_input(pointer, true)
+				await process_frame
+				_check_ticket(atlas, actual_ids[1], "mounted pointer exit restores second focus")
+			_check(_values(app) == opening_before,
+				"real app guidance only changes displayed ticket; no wallet, deck or seeded RNG change")
 			for old in stale:
 				_inert(app, old, id, "old listener cannot affect new mounted overlay")
 			stale.append(callback)

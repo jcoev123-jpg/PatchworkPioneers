@@ -98,6 +98,8 @@ const AREA_LABEL_HEIGHT := 24.0
 ## Next-floor tab sits on the left page above the journey diary; it has no input.
 const NEXT_AREA_TAB_RECT := Rect2(46.0, 50.0, 500.0, 38.0)
 const NEXT_AREA_TAB_FONT_SIZE := 18
+## Space between the next-area bookmark and the pinned floor trail.
+const CHOICE_TICKET_RECT := Rect2(46.0, 94.0, 532.0, 74.0)
 ## The diary's two display headings speak the master Theme's display voice. A mounted
 ## Theme that really defines this variation supplies the face; the committed Londrina
 ## Solid file (already shipped for PatchHeading) stands in when none does.
@@ -116,6 +118,10 @@ var _rendered_shortcuts: Array[String] = []
 ## Only current mounted legal Action buttons; indexed in authored shortcut order.
 var _legal_actions: Array[Button] = []
 var _actions_by_id: Dictionary = {}
+## Read-only help for the genuine legal patch; all three IDs are transient UI state.
+var _choice_ticket: ChoiceTicket = null
+var _hovered_choice_id := ""
+var _focused_choice_id := ""
 ## Last map snapshot this view actually rendered, so a repeat refresh never replays.
 var _rendered_map: RunMap = null
 var _has_snapshot := false
@@ -283,6 +289,49 @@ class LegalPatchAction extends Button:
 				SEAM_LIGHT, 1.6, true)
 
 
+## One pointer- and focus-inert sewn paper ticket on the real left book page.
+## All facts are fixed by stop kind, never by an encounter, reward roll or future RNG.
+class ChoiceTicket extends Control:
+	const FONT_SIZE := 18
+	var route_id := ""
+	var header_text := ""
+	var lead_text := ""
+	var detail_text := ""
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		resized.connect(queue_redraw)
+
+	func set_choice(id: String, header: String, lead: String, detail: String) -> void:
+		route_id = id
+		header_text = header
+		lead_text = lead
+		detail_text = detail
+		queue_redraw()
+
+	func _draw() -> void:
+		if size.x <= 0.0 or size.y <= 0.0:
+			return
+		var rect := Rect2(Vector2.ZERO, size)
+		draw_rect(rect, Color("#eee4cb"))
+		draw_rect(rect, RunRouteAtlas.INK, false, 2.0)
+		draw_dashed_line(Vector2(7, 5), Vector2(size.x - 7, 5),
+			RunRouteAtlas.THREAD, 1.5, 7.0)
+		draw_dashed_line(Vector2(7, size.y - 5), Vector2(size.x - 7, size.y - 5),
+			RunRouteAtlas.THREAD, 1.5, 7.0)
+		var font := get_theme_default_font()
+		if font == null:
+			return
+		var width := size.x - 28.0
+		draw_string(font, Vector2(14, 23), header_text,
+			HORIZONTAL_ALIGNMENT_LEFT, width, FONT_SIZE, RunRouteAtlas.INK)
+		draw_string(font, Vector2(14, 45), lead_text,
+			HORIZONTAL_ALIGNMENT_LEFT, width, FONT_SIZE, RunRouteAtlas.INK)
+		draw_string(font, Vector2(14, 66), detail_text,
+			HORIZONTAL_ALIGNMENT_LEFT, width, FONT_SIZE, RunRouteAtlas.INK)
+
+
 ## Left-hand travel diary: an inert high-contrast sewn-paper journey and pinned
 ## twelve-floor progress trail. It never invents a route choice or reads RNG.
 class JourneyJournal extends Control:
@@ -294,13 +343,13 @@ class JourneyJournal extends Control:
 	const FOOTER_FONT_SIZE := 18
 	## Diary-local spacing. Three rows of four beads are spread so an 18-point kind caption
 	## and the current-floor pin still clear the neighbouring row and the progress footer.
-	const SECTION_HEADING_BASELINE := 176.0
-	const BEAD_FIRST := Vector2(59.0, 220.0)
+	const SECTION_HEADING_BASELINE := 139.0
+	const BEAD_FIRST := Vector2(59.0, 177.0)
 	const BEAD_COLUMN_STEP := 132.0
-	const BEAD_ROW_STEP := 76.0
+	const BEAD_ROW_STEP := 61.0
 	const BEAD_RADIUS := 17.0
 	## Baseline of a committed kind below its own bead, and the caption column it centres in.
-	const CAPTION_BASELINE := 37.0
+	const CAPTION_BASELINE := 34.0
 	const CAPTION_WIDTH := 116.0
 
 	var current_floor := 0
@@ -379,17 +428,17 @@ class JourneyJournal extends Control:
 		var heading := heading_font()
 		if heading == null:
 			heading = font
-		draw_string(heading, Vector2(22, 49), "THE SEWN JOURNEY",
+		draw_string(heading, Vector2(22, 35), "THE SEWN JOURNEY",
 			HORIZONTAL_ALIGNMENT_LEFT, 480.0, 25, RunRouteAtlas.INK)
 		var here := "Trailhead" if current_floor == 0 else current_area
-		draw_string(font, Vector2(22, 94),
+		draw_string(font, Vector2(22, 69),
 			"Current: %s  ·  Floor %d/12" % [here, current_floor],
 			HORIZONTAL_ALIGNMENT_LEFT, 495.0, 21, RunRouteAtlas.INK)
 		var next_text := "Route complete · The final stitch is tied" if complete else (
 			"Next: %s  ·  Floor %d/12" % [next_area, next_floor])
-		draw_string(font, Vector2(22, 133), next_text,
+		draw_string(font, Vector2(22, 101), next_text,
 			HORIZONTAL_ALIGNMENT_LEFT, 495.0, 18, RunRouteAtlas.INK)
-		draw_dashed_line(Vector2(22, 155), Vector2(size.x - 22, 155),
+		draw_dashed_line(Vector2(22, 120), Vector2(size.x - 22, 120),
 			RunRouteAtlas.THREAD, 2.0, 8.0)
 		draw_string(heading, Vector2(22, SECTION_HEADING_BASELINE), "PINNED FLOOR TRAIL",
 			HORIZONTAL_ALIGNMENT_LEFT, 490.0, SECTION_HEADING_FONT_SIZE, RunRouteAtlas.INK)
@@ -441,8 +490,8 @@ func _add_journal(current_floor: int, chosen: Array[String]) -> void:
 	for id in chosen:
 		kinds.append(str(_map.get_node(id).get("type", "")))
 	journal.visited_kinds = kinds
-	journal.position = Vector2(46.0, 102.0)
-	journal.size = Vector2(532.0, 460.0)
+	journal.position = Vector2(46.0, 174.0)
+	journal.size = Vector2(532.0, 400.0)
 	journal.custom_minimum_size = journal.size
 	_inert(journal)
 	add_child(journal)
@@ -488,8 +537,11 @@ func _ready() -> void:
 ## A map may be bound before the view enters the tree (the overlay does exactly that),
 ## so queued reveals start on the first processed frame instead of being dropped.
 func _process(_delta: float) -> void:
+	# External route progress/regeneration also removes obsolete advice before a refresh.
+	if is_instance_valid(_choice_ticket) and not _snapshot_is_current():
+		_choice_ticket.hide()
 	if _pending_reveals.is_empty():
-		set_process(false)
+		set_process(is_instance_valid(_choice_ticket))
 		return
 	if not is_inside_tree():
 		return
@@ -499,7 +551,7 @@ func _process(_delta: float) -> void:
 		var mask: Gradient = _reveal_masks.get(line)
 		if is_instance_valid(line) and mask != null:
 			_start_reveal_tween(line, mask)
-	set_process(false)
+	set_process(is_instance_valid(_choice_ticket))
 
 
 ## Leaving the tree releases every reveal: no tween may outlive its threads.
@@ -643,6 +695,9 @@ func refresh() -> void:
 	_rendered_shortcuts.clear()
 	_legal_actions.clear()
 	_actions_by_id.clear()
+	_choice_ticket = null
+	_hovered_choice_id = ""
+	_focused_choice_id = ""
 	_rendered_map = null
 	_has_snapshot = false
 	# Synchronous removal avoids stale, queued-for-deletion duplicates on repeated refresh.
@@ -712,6 +767,8 @@ func refresh() -> void:
 					_add_thread(source_id, target_id, positions, chosen, legal, reveal_keys)
 	_add_journal(current_floor, chosen)
 	_add_next_area_tab()
+	if not _rendered_shortcuts.is_empty():
+		_add_choice_ticket()
 	_add_area_labels(visible_floors)
 	for column in range(visible_floors.size()):
 		var floor_number := visible_floors[column]
@@ -738,6 +795,8 @@ func refresh() -> void:
 		_add_marker(current_id, String(current_node["type"]), positions[current_id],
 			chosen, legal, 0)
 		_add_pin(current_id, positions[current_id])
+	if _choice_ticket != null:
+		_show_choice_ticket(_rendered_shortcuts[0])
 	_rebuild_focus_chain(focused_id)
 
 
@@ -1051,11 +1110,147 @@ func _add_thread(source: String, target: String, positions: Dictionary,
 ## floor, kind and one-based branch row. The f##_n# ID is never read to guess either
 ## value, so a renamed ID could not change the words. A missing record keeps the
 ## authored kind alone, which is what a standalone marker without a bound map has.
-static func node_hover_text(node: Dictionary, fallback_kind: String = "") -> String:
+## Only deterministic, authored stop rules belong here. Unknown kinds have no advice.
+## The detailed Rest alternative is tooltip-only so the small ticket stays legible.
+static func stop_consequence(kind: String) -> Dictionary:
+	match kind:
+		"Fight":
+			return {"lead": "Win: 10–20 gold + 1 scrap",
+				"detail": "Choose 1 of 3 cards, or skip",
+				"tooltip": "On win: 10–20 gold + 1 scrap; choose 1 of 3 cards or skip"}
+		"Elite":
+			return {"lead": "Win: 25–35 gold + 2 scraps + patch",
+				"detail": "Choose 1 of 3 cards, or skip",
+				"tooltip": "On win: 25–35 gold + 2 scraps + patch; choose 1 of 3 cards or skip"}
+		"Rest":
+			return {"lead": "Choose one: heal, upgrade, stitch or re-sew",
+				"detail": "Heal 30% max HP; stitch 3 scraps; re-sew 1 scrap",
+				"tooltip": "One action: heal each hero 30% max HP (torn revives at 1 HP first), upgrade one card, stitch two different-owner cards for 3 scraps, or re-sew an equipped patch for 1 scrap"}
+		"Shop":
+			return {"lead": "Browse 5 cards + 2 patches",
+				"detail": "Remove card: 75 gold initially, +25 each time",
+				"tooltip": "5 cards + 2 patches; card removal starts at 75 gold, increasing 25 per removal"}
+		"Event":
+			return {"lead": "2–3 choices when visited",
+				"detail": "Outcomes shown on arrival; no guaranteed yield",
+				"tooltip": "2–3 choices; outcomes revealed on visit, no guaranteed yield"}
+		"Treasure":
+			return {"lead": "Treasure stop · contents not yet known",
+				"detail": "No fixed reward is specified by the route",
+				"tooltip": "Treasure stop; no predetermined reward amount is known"}
+		"Boss":
+			return {"lead": "Final floor-12 fight",
+				"detail": "The last stop on this route",
+				"tooltip": "Terminal floor-12 fight"}
+	return {}
+
+
+static func node_hover_text(node: Dictionary, fallback_kind: String = "",
+		show_consequence: bool = false) -> String:
 	if node.is_empty() or not (node.has("floor") and node.has("position")):
 		return fallback_kind
 	var kind := str(node.get("type", fallback_kind))
-	return "Floor %02d · %s · Branch %d" % [int(node["floor"]), kind, int(node["position"]) + 1]
+	var prefix := "Floor %02d · %s · Branch %d" % [
+		int(node["floor"]), kind, int(node["position"]) + 1]
+	if show_consequence:
+		var facts := stop_consequence(kind)
+		if not facts.is_empty():
+			return prefix + " · " + str(facts["tooltip"])
+	return prefix
+
+
+## The ticket is created once per snapshot; neither it nor its children accept input.
+func _add_choice_ticket() -> void:
+	var ticket := ChoiceTicket.new()
+	ticket.name = "ChoiceTicket"
+	ticket.position = CHOICE_TICKET_RECT.position
+	ticket.size = CHOICE_TICKET_RECT.size
+	ticket.custom_minimum_size = CHOICE_TICKET_RECT.size
+	_inert(ticket)
+	add_child(ticket)
+	_choice_ticket = ticket
+	set_process(true)
+
+
+## Exposed for read-only checks; never returns stale information as current.
+func choice_ticket() -> ChoiceTicket:
+	if not _snapshot_is_current() or _rendered_shortcuts.is_empty():
+		if is_instance_valid(_choice_ticket):
+			_choice_ticket.hide()
+		return null
+	return _choice_ticket if is_instance_valid(_choice_ticket) else null
+
+
+func _show_choice_ticket(id: String) -> void:
+	if not _snapshot_is_current() or not _rendered_shortcuts.has(id) \
+			or not is_instance_valid(_choice_ticket):
+		return
+	var record := _map.get_node(id)
+	if record.is_empty():
+		return
+	var kind := str(record.get("type", ""))
+	var facts := stop_consequence(kind)
+	if facts.is_empty():
+		return
+	var header := "%s · FLOOR %02d · BRANCH %d" % [
+		area_for_floor(int(record["floor"])).to_upper(), int(record["floor"]),
+		int(record["position"]) + 1]
+	_choice_ticket.set_choice(id, header, kind + " · " + str(facts["lead"]),
+		str(facts["detail"]))
+	_choice_ticket.show()
+
+
+## Callbacks retained from an old revision/map cannot change the new ticket.
+## If the live graph advanced without a refresh, its old help is hidden.
+func _choice_callback_valid(id: String, source_map: RunMap, revision: int) -> bool:
+	if source_map != _map or revision != _revision:
+		return false
+	if not _snapshot_is_current():
+		if is_instance_valid(_choice_ticket):
+			_choice_ticket.hide()
+		return false
+	return _rendered_shortcuts.has(id) and _actions_by_id.has(id)
+
+
+func _hover_choice(id: String, source_map: RunMap, revision: int) -> void:
+	if not _choice_callback_valid(id, source_map, revision):
+		return
+	_hovered_choice_id = id
+	_show_choice_ticket(id)
+
+
+func _leave_choice_hover(id: String, source_map: RunMap, revision: int) -> void:
+	if not _choice_callback_valid(id, source_map, revision):
+		return
+	if _hovered_choice_id == id:
+		_hovered_choice_id = ""
+	_restore_choice_ticket()
+
+
+func _focus_choice(id: String, source_map: RunMap, revision: int) -> void:
+	if not _choice_callback_valid(id, source_map, revision):
+		return
+	_focused_choice_id = id
+	if _hovered_choice_id.is_empty():
+		_show_choice_ticket(id)
+
+
+func _leave_choice_focus(id: String, source_map: RunMap, revision: int) -> void:
+	if not _choice_callback_valid(id, source_map, revision):
+		return
+	if _focused_choice_id == id:
+		_focused_choice_id = ""
+	_restore_choice_ticket()
+
+
+func _restore_choice_ticket() -> void:
+	if not _snapshot_is_current() or _rendered_shortcuts.is_empty():
+		return
+	var id := _hovered_choice_id
+	if id.is_empty():
+		id = _focused_choice_id if _rendered_shortcuts.has(_focused_choice_id) \
+			else _rendered_shortcuts[0]
+	_show_choice_ticket(id)
 
 
 func _add_marker(id: String, kind: String, at: Vector2,
@@ -1094,7 +1289,7 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	marker.custom_minimum_size = NODE_SIZE
 	marker.size = NODE_SIZE
 	var record: Dictionary = _map.get_node(id) if _map != null else {}
-	var hover := node_hover_text(record, kind)
+	var hover := node_hover_text(record, kind, state == "legal")
 	marker.tooltip_text = hover
 	_inert(marker)
 	var art := NodeToken.new()
@@ -1134,6 +1329,10 @@ func _add_marker(id: String, kind: String, at: Vector2,
 		action.tooltip_text = "Choose %s (key %d)" % [hover, shortcut]
 		action.set_meta("route_id", id)
 		action.pressed.connect(_request_node.bind(id, _map, _revision))
+		action.mouse_entered.connect(_hover_choice.bind(id, _map, _revision))
+		action.mouse_exited.connect(_leave_choice_hover.bind(id, _map, _revision))
+		action.focus_entered.connect(_focus_choice.bind(id, _map, _revision))
+		action.focus_exited.connect(_leave_choice_focus.bind(id, _map, _revision))
 		marker.add_child(action)
 		_actions_by_id[id] = action
 	add_child(marker)
@@ -1155,6 +1354,7 @@ func _rebuild_focus_chain(focused_id: String) -> void:
 		var restore: Button = _actions_by_id.get(focused_id, _legal_actions[0])
 		if is_instance_valid(restore):
 			restore.grab_focus()
+			_focus_choice(str(restore.get_meta("route_id")), _map, _revision)
 
 
 ## An arrow enters from the overlay's Close map button (or no focus), then
