@@ -10,6 +10,7 @@ func _initialize() -> void:
 	_test_rivet_order_and_duplicates()
 	_test_area_original_positions()
 	_test_scatter_bolts_lethal_area_victory()
+	_test_ricochet_route_quote()
 	_test_ricochet_replay()
 	_test_ricochet_hit2_finish()
 	_test_shared_first_attack()
@@ -378,6 +379,107 @@ func _ricochet_case(card_id: String, seed_value: int) -> Dictionary:
 			card_id + " each sequential hit has the same first-card bonus")
 	return {"result": result, "enemies": enemies.get_enemies(),
 		"rng": deck._rng.state, "start_rng": before["rng"], "early_death": early_death}
+
+
+
+## A quote must agree with independent genuine play on separate seeded combat
+## authorities, without ever spending, consuming a pin or advancing the RNG.
+func _test_ricochet_route_quote() -> void:
+	for card_id in ["tinker_ricochet", "tinker_ricochet_plus"]:
+		for scenario in ["one_kill", "one_block", "two", "three_hole", "three"]:
+			var hps: Array = [1] if scenario == "one_kill" else (
+				[7 if card_id == "tinker_ricochet" else 9] if scenario == "one_block"
+				else [5, 60] if scenario == "two" else [60, 1, 60]
+				if scenario == "three_hole" else [80, 80, 80])
+			var outcomes: Array = []
+			for independent in [false, true]:
+				var first := CombatTinkerFirstAttack.new()
+				if scenario == "three":
+					first.record_successful_attack("tinker_pop_shot")
+				var pin := CombatPinned.new()
+				var deck := _deck([card_id, "warden_brace"], 39)
+				var party := _party(["warden", "tinker", "seamstress"] if scenario == "two"
+					else ["warden", "seamstress", "tinker"])
+				var enemies := _enemies(hps)
+				if scenario == "one_block":
+					_check(enemies.gain_block(1, 4 if card_id == "tinker_ricochet" else 5),
+						"quote blocked lone survivor precondition")
+				if scenario == "three_hole":
+					_check(enemies.apply_damage(2, 1) and enemies.is_slain(2),
+						"quote fixture preserves the dead original slot 2")
+					party._heroes[2]["statuses"] = {"weak": 1}
+					_check(enemies.apply_statuses({3: {"exposed": 1}})
+						and pin.pin_enemy(enemies, 1, "warden"),
+						"quote fixture has Weak, Exposed and a foreign Pinned bonus")
+				var resolver := CombatTinkerPoolAttacks.new(first, pin)
+				if not independent:
+					var before := _snapshot(deck, party, enemies, first)
+					var pins_before: Dictionary = pin._pinner_by_position.duplicate(true)
+					var path_before: int = first.path_bonus()
+					var quote: Dictionary = resolver.preview_ricochet_route(
+						deck, party, enemies, card_id)
+					var again: Dictionary = resolver.preview_ricochet_route(
+						deck, party, enemies, card_id)
+					_check(quote.get("ok", false) and quote.positions is Array
+						and quote.positions.size() >= 1 and quote.positions.size() <= 3
+						and quote == again,
+						card_id + " " + scenario + ": repeated quote is legal and stable")
+					_check(_snapshot(deck, party, enemies, first) == before
+						and pin._pinner_by_position == pins_before
+						and first.path_bonus() == path_before,
+						card_id + " " + scenario + ": quote leaves all battle and pin state intact")
+					if quote.get("ok", false):
+						if scenario == "one_kill":
+							_check(quote.positions == [1], "terminal hit 1 quote truncates")
+						elif scenario == "one_block":
+							_check(quote.positions == [1, 1], "blocked terminal hit 2 quote truncates")
+						elif scenario == "three_hole":
+							_check(not quote.positions.has(2), "dead original slot 2 is never forecast")
+						elif scenario == "three":
+							_check(quote.positions.size() == 3, "three surviving targets keep all hits")
+					outcomes.append(quote.get("positions", []))
+				var played: Dictionary = resolver.play_attack(deck, party, enemies, card_id)
+				_check(played.get("ok", false) and not played.get("hits", []).is_empty(),
+					card_id + " " + scenario + ": genuine independent cast succeeded")
+				var positions: Array[int] = []
+				for hit in played.get("hits", []):
+					positions.append(hit["position"])
+				outcomes.append(positions)
+			_check(outcomes.size() == 3 and outcomes[0] == outcomes[1]
+				and outcomes[1] == outcomes[2],
+				card_id + " " + scenario + ": read-only quote equals two genuine seeded plays")
+
+	# Unheld/unsupported, affordability, dead-roster and inactive-turn refusals
+	# are as nondestructive as positive quotes.
+	for rejection in ["unsupported", "unheld", "energy", "dead", "inactive", "bad_slot"]:
+		var id := "tinker_ricochet"
+		var deck := _deck([id])
+		var party := _party()
+		var enemies := _enemies([30, 30])
+		var first := CombatTinkerFirstAttack.new()
+		var resolver := CombatTinkerPoolAttacks.new(first)
+		if rejection == "unheld":
+			_check(deck.discard_played(id), "unheld rejection actually removed card")
+		elif rejection == "energy":
+			deck.combat_state.energy = 0
+		elif rejection == "dead":
+			_check(enemies.apply_damage(1, 30) and enemies.apply_damage(2, 30),
+				"dead-roster rejection actually has no living target")
+		elif rejection == "inactive":
+			_check(deck.end_turn(), "inactive-turn rejection actually closed the turn")
+		elif rejection == "bad_slot":
+			var moved := CombatPositionSwaps.preview_adjacent_swap(party, 3, -1)
+			_check(moved.get("ok", false), "bad-slot fixture can move Tinker to slot 2")
+			party._heroes.assign(moved.heroes)
+			moved = CombatPositionSwaps.preview_adjacent_swap(party, 2, -1)
+			_check(moved.get("ok", false), "bad-slot fixture can move Tinker to slot 1")
+			party._heroes.assign(moved.heroes)
+		var before := _snapshot(deck, party, enemies, first)
+		var quote := resolver.preview_ricochet_route(deck, party, enemies,
+			"tinker_scatter_bolts" if rejection == "unsupported" else id)
+		_check(quote == {"ok": false, "positions": []}
+			and before == _snapshot(deck, party, enemies, first),
+			"failed Ricochet quote has no guessed hits and no state mutation: " + rejection)
 
 
 func _test_ricochet_replay() -> void:
