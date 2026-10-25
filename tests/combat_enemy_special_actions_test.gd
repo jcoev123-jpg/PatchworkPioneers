@@ -10,6 +10,7 @@ const MAX_INT := 9223372036854775807
 
 func _initialize() -> void:
 	_test_ordered_transaction()
+	_test_snip_transactions_and_rejections()
 	_test_bidirectional_swaps()
 	_test_status_additions_and_owner_turns()
 	_test_dead_sources_and_rejections()
@@ -100,6 +101,84 @@ func _rng_expected() -> int:
 	var result := randi()
 	seed(19840217)
 	return result
+
+
+
+func _snip(source: int, target: int) -> Dictionary:
+	return {"type": "snip_block", "enemy_position": source,
+		"amount": 0, "target_position": target}
+
+
+func _test_snip_transactions_and_rejections() -> void:
+	for initial_block in [0, 6]:
+		var party := _party()
+		var enemies := _enemies()
+		_check(party.gain_block(1, initial_block)
+			and party.gain_block(2, 3) and party.gain_block(3, 4)
+			and enemies.gain_block(2, 5),
+			"snip precondition: concrete Block on allies and enemies")
+		party._heroes[0]["statuses"] = {"weak": 2}
+		party._heroes[1]["statuses"] = {"exposed": 1}
+		var before := party.get_heroes()
+		var foes := enemies.get_enemies()
+		var identities := party._heroes.duplicate()
+		var input := [_snip(1, 1)]
+		var input_before := input.duplicate(true)
+		var expected := before.duplicate(true)
+		expected[0]["block"] = 0
+		var expected_rng := _rng_expected()
+		var result := rules.execute_actions(party, enemies, input)
+		_check(result == {"ok": true, "events": [
+			{"type": "snip_block", "enemy_position": 1, "applied": true, "target_position": 1}]},
+			"snip of zero or positive Block is a legal applied non-damaging beat")
+		_check(party.get_heroes() == expected and enemies.get_enemies() == foes
+			and input == input_before and randi() == expected_rng,
+			"snip changes only recipient Block, not HP, statuses, enemies, inputs or RNG")
+		_check(is_same(party._heroes[0], identities[0])
+			and is_same(party._heroes[1], identities[1])
+			and is_same(party._heroes[2], identities[2]),
+			"snip preserves each original live hero dictionary")
+	var party := _party()
+	var enemies := _enemies()
+	_check(party.gain_block(1, 6) and enemies.apply_damage(1, 12)
+		and enemies.is_slain(1), "slain-snipper precondition: source 1 is dead, Warden has 6 Block")
+	var before_state := _snapshot(party, enemies)
+	var dead_result := rules.execute_actions(party, enemies, [_snip(1, 1)])
+	_check(dead_result == {"ok": true, "events": [
+		{"type": "snip_block", "enemy_position": 1, "applied": false, "target_position": 1}]}
+		and _snapshot(party, enemies) == before_state,
+		"slain source emits inert snip beat and cannot remove Block")
+	for bad in [
+		{"type": "snip_block", "enemy_position": 2, "amount": 1, "target_position": 1},
+		{"type": "snip_block", "enemy_position": 2, "amount": -1, "target_position": 1},
+		{"type": "snip_block", "enemy_position": 2, "amount": 0, "target_position": 0},
+		{"type": "snip_block", "enemy_position": 2, "amount": 0, "target_position": 4},
+		{"type": "snip_block", "enemy_position": 2, "amount": 0, "target_position": true},
+		{"type": "snip_block", "enemy_position": 2, "amount": 0, "target_position": 1.0},
+		{"type": "snip_block", "enemy_position": 2, "amount": 0, "target_position": 1,
+			"status": "weak"},
+		{"type": "snip_block", "enemy_position": 2, "amount": 0, "target_position": 1,
+			"extra": "forbidden"},
+		{"type": "snip_block", "enemy_position": 2, "target_position": 1},
+		{"type": "unknown_snip", "enemy_position": 2, "amount": 0, "target_position": 1},
+		_snip(1, 1)]:
+		party = _party()
+		enemies = _enemies()
+		_check(party.gain_block(1, 6), "malformed mixed batch starts with six real Block")
+		_reject("late malformed snip preserves earlier staged Block removal " + str(bad),
+			[_snip(1, 1), bad], party, enemies)
+	party = _party()
+	enemies = _enemies()
+	_check(party.gain_block(1, 6) and party.apply_damage(2, 30)
+		and party.is_downed(2), "downed snip precondition: middle is genuinely Torn")
+	_reject("late snip on Torn hero rolls back earlier positive snip",
+		[_snip(1, 1), _snip(2, 2)], party, enemies)
+	party = _party()
+	enemies = _enemies()
+	_check(party.gain_block(1, 6) and party.apply_damage(2, 30)
+		and party.is_downed(2), "late mixed batch precondition: target genuinely downed")
+	_reject("late invalid debuff after staged snip is atomic",
+		[_snip(1, 1), _debuff(2, 2, "weak", 1)], party, enemies)
 
 
 func _test_ordered_transaction() -> void:

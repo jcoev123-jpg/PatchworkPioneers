@@ -205,7 +205,7 @@ static func weighted_action(raw: Variant) -> Dictionary:
 	if body.has("direction") and not _normalize_integral(body, "direction", -1):
 		return {}
 	var probe: Dictionary = body.duplicate(true)
-	if probe.get("type") in ["attack", "debuff", "shove"]:
+	if probe.get("type") in ["attack", "debuff", "shove", "snip_block"]:
 		probe["target_position"] = 2
 	if not valid_action(probe):
 		return {}
@@ -351,7 +351,7 @@ static func _draw_batch(slots: Array, party: CombatParty,
 					break
 		action["enemy_position"] = slot["enemy_position"]
 		var policy: String = slot["target"]
-		if action["type"] in ["attack", "debuff", "shove"]:
+		if action["type"] in ["attack", "debuff", "shove", "snip_block"]:
 			var target := _choose_target(party, policy, rng)
 			if target < 1:
 				return []
@@ -391,13 +391,15 @@ static func valid_action(action: Variant) -> bool:
 		return false
 	if kind in ["block", "buff"]:
 		return action.size() == 2 and (kind == "block" or amount > 0)
-	if kind not in ["attack", "shove", "debuff"]:
+	if kind not in ["attack", "shove", "debuff", "snip_block"]:
 		return false
 	var target = action.get("target_position")
 	if not target is int or target < 1 or target > 3:
 		return false
 	if kind == "attack":
 		return action.size() == 3
+	if kind == "snip_block":
+		return action.size() == 3 and amount == 0
 	if kind == "debuff":
 		return action.size() == 4 and amount > 0 and action.get("status") is String \
 			and action.status in ["bleed", "weak", "exposed"]

@@ -1,6 +1,6 @@
 class_name CombatEnemySpecialActions
 extends RefCounted
-## Scene-free transaction for announced shove, status debuff and self-Block buff.
+## Scene-free transaction for announced shove, status debuff, self-Block buff and Block snip.
 ## This service does not select intents, age statuses, spend cards or draw RNG.
 
 const MAX_INT := 9223372036854775807
@@ -32,13 +32,19 @@ func execute_actions(party: CombatParty, enemies: CombatEnemies, actions: Array)
 		var kind = action["type"]
 		var source = action["enemy_position"]
 		var amount = action["amount"]
-		if not kind is String or kind not in ["shove", "debuff", "buff"]:
+		if not kind is String or kind not in ["shove", "debuff", "buff", "snip_block"]:
 			return failure
 		if not source is int or source < 1 or source > staged_enemies.size() or source in seen:
 			return failure
 		if not amount is int:
 			return failure
 		match kind:
+			"snip_block":
+				if action.size() != 4 or amount != 0 or not action.has("target_position"):
+					return failure
+				var target = action["target_position"]
+				if not target is int or target < 1 or target > CombatParty.PARTY_SIZE:
+					return failure
 			"shove":
 				if action.size() != 5 or amount != 0 \
 						or not action.has("target_position") or not action.has("direction"):
@@ -77,7 +83,14 @@ func execute_actions(party: CombatParty, enemies: CombatEnemies, actions: Array)
 		var source: int = action["enemy_position"]
 		var applied: bool = staged_enemies[source - 1]["hp"] > 0
 		var event: Dictionary = {"type": kind, "enemy_position": source, "applied": applied}
-		if kind == "shove":
+		if kind == "snip_block":
+			event["target_position"] = action["target_position"]
+			if applied:
+				var hero: Dictionary = staged_party._heroes[action["target_position"] - 1]
+				if hero["hp"] == 0:
+					return failure
+				hero["block"] = 0
+		elif kind == "shove":
 			event["target_position"] = action["target_position"]
 			event["direction"] = action["direction"]
 			if applied:
@@ -117,6 +130,8 @@ func execute_actions(party: CombatParty, enemies: CombatEnemies, actions: Array)
 		var staged: Dictionary = staged_party._heroes[index]
 		var original: Dictionary = originals_by_id[staged["id"]]
 		original["position"] = index + 1
+		if staged["block"] != original["block"]:
+			original["block"] = staged["block"]
 		if staged.has("statuses") and staged["statuses"] != original.get("statuses", {}):
 			original["statuses"] = staged["statuses"].duplicate(true)
 		party._heroes[index] = original
