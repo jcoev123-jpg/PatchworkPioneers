@@ -515,6 +515,23 @@ func _test_service_contract() -> void:
 	# Out-of-range and extra-key snapshots refused.
 	_check(fresh.restore_state({"highest_cleared_tier": -2, "selected_tier": 0}) == false,
 		"negative highest beyond -1 refused")
+
+	# AC4 / P9 ceiling: highest_cleared_tier above the authored tier 2 is refused.
+	var before_high := fresh.get_state()
+	_check(fresh.restore_state({"highest_cleared_tier": 3, "selected_tier": 0}) == false,
+		"highest_cleared_tier 3 above the tier-2 ceiling refused")
+	_check(fresh.get_state() == before_high,
+		"rejected highest_cleared_tier 3 leaves state identical")
+	var before_float := fresh.get_state()
+	_check(fresh.restore_state({"highest_cleared_tier": 3.0, "selected_tier": 0}) == false,
+		"integral-float highest_cleared_tier 3.0 above the ceiling refused")
+	_check(fresh.get_state() == before_float,
+		"rejected integral-float highest_cleared_tier 3.0 leaves state identical")
+	var before_high_selected := fresh.get_state()
+	_check(fresh.restore_state({"highest_cleared_tier": 3, "selected_tier": 2}) == false,
+		"out-of-range highest_cleared_tier with selected tier 2 refused")
+	_check(fresh.get_state() == before_high_selected,
+		"rejected out-of-range highest with tier 2 leaves state identical")
 	_check(fresh.restore_state({"highest_cleared_tier": 0, "selected_tier": 0, "extra": true}) == false,
 		"extra key in snapshot refused")
 

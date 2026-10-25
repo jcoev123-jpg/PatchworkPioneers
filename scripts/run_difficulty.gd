@@ -51,6 +51,21 @@ func _is_integer_number(value: Variant) -> bool:
 	return false
 
 
+## The highest tier id the shipped catalog authors, or -1 if the catalog is empty.
+func _max_authored_tier() -> int:
+	var max_tier := -1
+	for raw: Variant in _tier_records():
+		if not raw is Dictionary:
+			continue
+		var tier_value: Variant = (raw as Dictionary).get("tier")
+		if not _is_integer_number(tier_value):
+			continue
+		var tier_id := int(tier_value)
+		if tier_id > max_tier:
+			max_tier = tier_id
+	return max_tier
+
+
 func get_state() -> Dictionary:
 	return {
 		"highest_cleared_tier": _highest_cleared_tier,
@@ -160,10 +175,15 @@ func restore_state(state: Variant) -> bool:
 	var highest_int := int(highest)
 	var selected_int := int(selected)
 
-	# Range checks.
+	# Range checks: -1 (no victory yet) through the authored tier ceiling of 2.
 	if highest_int < -1:
 		return false
-	if selected_int < 0:
+	var max_tier := _max_authored_tier()
+	if max_tier < 0:
+		return false
+	if highest_int > max_tier:
+		return false
+	if selected_int < 0 or selected_int > max_tier:
 		return false
 
 	# The selected tier must exist in the catalog and be earned/available.
