@@ -17,8 +17,8 @@ extends RefCounted
 const KNOWN_EFFECT_KEYS := [
 	"damage", "hits", "hit_count", "block", "other_ally_block", "block_all",
 	"heal", "exposed", "weak", "bleed", "unravel", "bleed_multiplier", "pinned",
-	"guarding", "thorns", "draw", "energy", "gain_energy", "self_hp_loss",
-	"conditional_damage", "random_target_each_hit", "rng_source",
+	"guarding", "thorns", "riposte", "tangled", "draw", "energy", "gain_energy",
+	"self_hp_loss", "conditional_damage", "random_target_each_hit", "rng_source",
 	"living_targets_only", "duration", "next_attack_damage_bonus",
 	"next_turn_energy", "expires",
 ]
@@ -112,7 +112,7 @@ static func _recipient(card: Dictionary) -> String:
 
 static func _has_enemy_effects(effects: Dictionary) -> bool:
 	for key in ["damage", "conditional_damage", "exposed", "weak", "bleed",
-			"unravel", "bleed_multiplier", "pinned"]:
+			"unravel", "bleed_multiplier", "pinned", "tangled"]:
 		if effects.has(key):
 			return true
 	return false
@@ -181,6 +181,15 @@ static func _enemy_sentence(card: Dictionary, effects: Dictionary,
 			unknown = true
 		else:
 			clauses.append("pin" + object_suffix)
+	# Tangled is an enemy-only status and needs no damage clause beside it. Only a
+	# positive authored count on an enemy cast is printed; anything else stays
+	# undescribed instead of inventing turns.
+	if effects.has("tangled"):
+		var tangled := _amount(effects["tangled"], -1)
+		if tangled > 0 and _is_enemy_target(card):
+			clauses.append("tangled %d%s" % [tangled, object_suffix])
+		else:
+			unknown = true
 	var phrases: Array[String] = []
 	for clause in clauses:
 		phrases.append(_capitalize(clause) + ".")
@@ -305,6 +314,16 @@ static func _self_sentence(card: Dictionary, effects: Dictionary) -> Dictionary:
 		var thorns := _amount(effects["thorns"], -1)
 		if thorns > 0:
 			clauses.append("gain %d Thorns" % thorns)
+		else:
+			unknown = true
+	# Riposte is a self effect: only a positive authored amount on the caster's own
+	# record with the authored one-turn duration is printed. The counterhit rule
+	# itself belongs to the Help glossary.
+	if effects.has("riposte"):
+		var riposte := _amount(effects["riposte"], -1)
+		if riposte > 0 and _one_turn(effects) \
+				and str(card.get("target_kind", "")) == "self":
+			clauses.append("gain %d Riposte" % riposte)
 		else:
 			unknown = true
 	if clauses.is_empty():
@@ -433,6 +452,18 @@ static func _hits(effects: Dictionary) -> int:
 	if effects.get("hit_count") is int:
 		return maxi(1, int(effects["hit_count"]))
 	return 1
+
+
+## The authored one-turn duration a Riposte is written for; anything else is not
+## described, so no amount is printed against a duration the record does not state.
+static func _one_turn(effects: Dictionary) -> bool:
+	var value: Variant = effects.get("duration")
+	return value is int and int(value) == 1
+
+
+## Tangled is applied to an enemy only; a self or ally cast never borrows its count.
+static func _is_enemy_target(card: Dictionary) -> bool:
+	return str(card.get("target_kind", "")).begins_with("enemy_")
 
 
 static func _amount(value: Variant, fallback: int) -> int:
