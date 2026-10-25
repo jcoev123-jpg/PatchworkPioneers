@@ -11,5 +11,17 @@
       {"type": "attack", "amount": 45, "weight": 3},
       {"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
       {"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
+    ]}},
+  {"id": "scissor_bailiff", "name": "Scissor Bailiff", "max_hp": 36, "art_path": "res://assets/paper/enemies/scissor_bailiff.png",
+    "intent": {"target": "front", "actions": [
+      {"type": "snip_block", "amount": 0, "weight": 2},
+      {"type": "debuff", "amount": 2, "status": "bleed", "weight": 2},
+      {"type": "attack", "amount": 9, "weight": 2}
+    ]}},
+  {"id": "zipper_hauler", "name": "Zipper Hauler", "max_hp": 38, "art_path": "res://assets/paper/enemies/zipper_hauler.png",
+    "intent": {"target": "front", "actions": [
+      {"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+      {"type": "debuff", "amount": 1, "status": "exposed", "weight": 2},
+      {"type": "attack", "amount": 8, "weight": 2}
     ]}}
 ]
