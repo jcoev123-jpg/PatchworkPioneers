@@ -1,10 +1,7 @@
 extends SceneTree
 ## Data-only contract for the two P8 rare patch records.
-##
-## This catalog is not registered in RunAuthoredPatchDefinitions.CATALOG_PATHS
-## yet, so neither record is live in the Shop, Elite drops, the wardrobe or
-## combat. A later wiring task registers the catalog, applies the 100-gold and
-## weighted-stock rules and implements the confirmed combat receipts.
+## This catalog is now registered in RunAuthoredPatchDefinitions.CATALOG_PATHS,
+## so both records are live in the authored definitions (not yet in Shop stock).
 ##
 ## Stock weight is relative to ONE ordinary eligible patch, whose weight is the
 ## 100% baseline below. A 10% weight therefore means one tenth of an ordinary
@@ -145,15 +142,15 @@ func _run() -> void:
 	_check(relay.get("slot") != hearth.get("slot"),
 		"the two P8 records occupy different wardrobe slots")
 
-	# Distinctness against every already loaded authored patch, by ID.
+	# The P8 catalog is now registered; its IDs are present in loaded catalogs.
 	var loaded := _loaded_slots()
 	_check(not loaded.is_empty(), "existing authored catalogs still load")
 	for id in ["relay_bobbin", "hearth_lining"]:
 		_check(counts.has(id), "P8 catalog still declares: " + id)
-		_check(not loaded.has(id), "P8 ID is not already an authored patch ID: " + id)
+		_check(loaded.has(id), "P8 ID is now in the authored catalogs: " + id)
 	for record_id in counts:
-		_check(not loaded.has(record_id),
-			"every P8 ID is absent from the seven authored catalogs: " + str(record_id))
+		_check(loaded.has(record_id),
+			"P8 ID is present in the authored catalogs: " + str(record_id))
 
 	# Earlier authored powers must keep loading and keep their slots.
 	var earlier := {
