@@ -9,7 +9,12 @@ var gold_purchases := 0
 func _fixtures() -> Dictionary:
 	var found := {}
 	var ids: Array = RunM04EventRotation.new().get_generic_event_ids()
-	for value in range(1, 500000):
+	# Six consecutive Events are rare. Revalidate known genuine seeds first;
+	# the bounded search remains a fallback when the generated route/pool changes.
+	# Needle Gate's first matching seed lies beyond the old search ceiling.
+	var hints := [2712, 10378, 16044, 36044, 41749, 41911, 44324,
+		54601, 71433, 103089, 133047, 133487, 743907]
+	for value in hints + range(1, 500000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()

@@ -2759,6 +2759,22 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 	if not run_map.choose_node(id):
 		return false
 	var entry := RunAuthoredBattleEntry.new().entry_current_battle(run_map, run_rng, fight_selection)
+	if entry.get("success", false) and entry.get("node_type") == "Fight":
+		# Start from this admission's fresh authored roster, never a prior battle's HP.
+		var definitions: Array = entry.enemies.get_enemies()
+		for definition in definitions:
+			var scaled := RunNormalAttackFloorScaling.scale_normal_max_hp(
+				definition.get("max_hp"), run_map.get_node(id).get("floor"))
+			if not scaled.get("ok", false):
+				entry.success = false
+				break
+			definition.max_hp = scaled.max_hp
+		if entry.success:
+			var scaled_enemies := CombatEnemies.new(definitions)
+			if not scaled_enemies.is_valid():
+				entry.success = false
+			else:
+				entry.enemies = scaled_enemies
 	var staged := false
 	var next_deck: CombatDeck
 	var next_result: CombatBattleResult

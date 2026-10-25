@@ -133,6 +133,14 @@ func _oracle(id: String) -> Dictionary:
 	_check(entry.get("success", false), "authored typed entry oracle succeeds")
 	if not entry.get("success", false):
 		return {}
+	if map.get_node(id).type == "Fight":
+		var definitions: Array = entry.enemies.get_enemies()
+		var floor_number: int = map.get_node(id).floor
+		for definition in definitions:
+			definition.max_hp = floori(float(definition.max_hp) * (
+				1.0 if floor_number <= 4 else (1.25 if floor_number <= 8 else 1.5)))
+		entry.enemies = CombatEnemies.new(definitions)
+		_check(entry.enemies.is_valid(), "independent floor-band roster is valid")
 	var party: CombatParty = app.party_carryover.create_next_fight_party()
 	var deck := CombatDeck.new(app.run_deck, rng)
 	# Mirror the real admission: shuffle first, then bind the weighted intents on
@@ -262,11 +270,10 @@ func _click(control: Control) -> void:
 			"routed mouse action fits viewport: %s %s" % [control.name, control.get_global_rect()])
 	await super._click(control)
 
-## A real routed Fight admitted on a later area floor (4-6, the woods) must mount that
-## floor's own landscape, not the opening meadow. Combat mechanics are covered above, so
-## this fixture only walks the real route and inspects the mounted stage.
+## A real routed Fight on floor 5-6 mounts the woods landscape and full band-scaled
+## HP in both the authoritative roster and its visible meters.
 func _deep_area_stage() -> void:
-	var fixture := _battle_fixture("Fight", 3, 5, 20000)
+	var fixture := _battle_fixture("Fight", 4, 5, 20000)
 	_check(not fixture.is_empty(), "seeded connected path reaches a woods-floor Fight")
 	if fixture.is_empty():
 		return
@@ -286,10 +293,33 @@ func _deep_area_stage() -> void:
 	var deep: String = transit.pop_back()
 	await _visit_path(transit, false)
 	var deep_floor: int = int(app.run_map.get_node(deep).get("floor", 0))
-	_check(app.run_map.get_node(deep).type == "Fight" and deep_floor >= 4 and deep_floor <= 6,
+	_check(app.run_map.get_node(deep).type == "Fight" and deep_floor >= 5 and deep_floor <= 6,
 		"deep fixture target is a genuine woods-floor Fight")
 	var expected: String = ROSTER_ART.fight_backdrop_path(deep_floor)
+	var expected_entry := _oracle(deep)
+	_check(not expected_entry.is_empty() and not expected_entry.enemies.is_empty(),
+		"later-floor scaling oracle contains actual enemies")
 	await _click(_route_action(deep))
+	_check(_mounted_state() == expected_entry, "later-floor mounted battle matches independent scaled oracle")
+	var meters = app.get_node("LiveCombatMeters")
+	_check(meters._enemies == app.enemies and is_instance_valid(meters.row),
+		"later-floor visible meters bind the authoritative roster")
+	for enemy in app.enemies.get_enemies():
+		var authored: Dictionary = {}
+		for path in RunAuthoredBattleEntry.CATALOG_PATHS:
+			for record in RunTypedBattleRoster._parse_catalog_text(FileAccess.get_file_as_string(path)):
+				if record.id == enemy.id:
+					authored = record
+		_check(not authored.is_empty(), "later-floor enemy has original authored HP")
+		if authored.is_empty():
+			continue
+		var hp := floori(float(authored.max_hp) * 5.0 / 4.0)
+		_check(enemy.hp == hp and enemy.max_hp == hp,
+			"later-floor enemy starts at exactly floor(authored HP * 5 / 4)")
+		var meter = meters.row.get_child(3 + enemy.position - 1)
+		_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "%d/%d" % [hp, hp]
+			and meter.hp_bar.value == hp and meter.hp_bar.max_value == hp,
+			"visible later-floor HP text and bar agree with full scaled authoritative HP")
 	var roster = app.get_node("LiveEnemyRoster")
 	_check(app.run_map.get_current_node_id() == deep and is_instance_valid(roster.backdrop)
 		and roster.backdrop.battle_kind == "Fight"
