@@ -1473,7 +1473,7 @@ func _route_choice_button(id: String, kind: String, opening: bool, choice: Dicti
 	button.set_meta("route_kind", kind)
 	button.set_meta("v3_kind", choice.v3_kind)
 	button.set_meta("route_label", label)
-	if kind in ["SewingCircle", "Campfire", "PatchStall", "Unpicker"] or _opening_rest(id, run_map.get_route()):
+	if kind in ["SewingCircle", "Campfire", "Rest", "PatchStall", "Unpicker"]:
 		button.set_meta("sewing_source", _sewing_context())
 	button.disabled = kind not in RunMap.NORMAL_TYPES and (opening or kind != "Boss")
 	if button.disabled:
@@ -2759,9 +2759,15 @@ func _unfought_run() -> bool:
 			var prefix := run_map.get_route().slice(0, run_map.get_route().find(id) + 1)
 			if _unpicker_visits.get(id, []) != [run_map, run_map.get_generation_revision(), run_map.get_floors(), prefix]:
 				return false
-		if run_map.get_node(id).get("type") == "Campfire" or _opening_rest(id, run_map.get_route().slice(0, run_map.get_route().find(id))):
+		if run_map.get_node(id).get("type") == "Campfire" or (run_map.get_node(id).get("type") == "Rest" \
+			and (_campfire_visits.has(id) or _opening_rest(id, run_map.get_route().slice(0, run_map.get_route().find(id))))):
 			var prefix := run_map.get_route().slice(0, run_map.get_route().find(id) + 1)
 			if _campfire_visits.get(id, []) != [run_map, run_map.get_generation_revision(), run_map.get_floors(), prefix]:
+				return false
+		elif run_map.get_node(id).get("type") == "Rest":
+			var prefix := run_map.get_route().slice(0, run_map.get_route().find(id) + 1)
+			if _legacy_rest_visits.get(id, []) != [run_map, run_map.get_generation_revision(), run_map.get_floors(), prefix] \
+				and not (run_map.get_current_node_id() == id and _current_completed_rest()):
 				return false
 		if run_map.get_node(id).get("type") == "SewingCircle":
 			var prefix := run_map.get_route().slice(0, run_map.get_route().find(id) + 1)
@@ -2807,7 +2813,8 @@ func _can_choose_connected_route() -> bool:
 	if run_map.get_node(run_map.get_current_node_id()).get("type") in ["Fight", "Elite"]:
 		return _can_leave_fight()
 	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Rest" \
-		and not _opening_rest(run_map.get_current_node_id(), run_map.get_route().slice(0, -1)):
+		and not _opening_rest(run_map.get_current_node_id(), run_map.get_route().slice(0, -1)) \
+		and not _campfire_visits.has(run_map.get_current_node_id()):
 		return _current_completed_rest() and is_instance_valid(rest_view) and not rest_view.visible \
 			and is_instance_valid(rest_continue_button) and rest_continue_button.disabled
 	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Unpicker":
@@ -2816,7 +2823,9 @@ func _can_choose_connected_route() -> bool:
 				run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()] \
 			and is_instance_valid(unpicker_view) and not unpicker_view.visible
 	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Campfire" \
-		or _opening_rest(run_map.get_current_node_id(), run_map.get_route().slice(0, -1)):
+		or (run_map.get_node(run_map.get_current_node_id()).get("type") == "Rest" \
+			and (_campfire_visits.has(run_map.get_current_node_id()) \
+				or _opening_rest(run_map.get_current_node_id(), run_map.get_route().slice(0, -1)))):
 		return _campfire_closed and _campfire_original == _sewing_context() \
 			and _campfire_visits.get(run_map.get_current_node_id(), []) == [run_map, \
 				run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()] \
@@ -4248,6 +4257,8 @@ var campfire_visit: RunCampfireVisit
 var _campfire_original: Dictionary = {}
 var _campfire_closed := false
 var _campfire_visits: Dictionary = {}
+## Historical legacy Upgrade/Stitch completions need a witness too: they do not heal.
+var _legacy_rest_visits: Dictionary = {}
 
 
 var unpicker_view: LiveUnpickerPanel
@@ -4361,7 +4372,7 @@ func _choose_campfire_route(id: String, source: WeakRef, prior: Array[String], b
 		or button.get_parent() != route_view or button.disabled or not button.is_visible_in_tree() \
 		or button.get_meta("route_id", "") != id or button.get_meta("route_kind", "") != run_map.get_node(id).get("type") \
 		or run_map.get_route() != prior or not run_map.get_legal_choices().has(id) \
-		or (run_map.get_node(id).get("type") != "Campfire" and not _opening_rest(id, prior)) \
+		or run_map.get_node(id).get("type") not in ["Campfire", "Rest"] \
 		or button.get_meta("sewing_source", {}) != _sewing_context():
 		return false
 	var carry := party_carryover as RunTornCarryover
@@ -4418,8 +4429,7 @@ func _commit_campfire_action(intent: Dictionary, view,
 		or view != campfire_view or view.get_parent() != self or not view.is_visible_in_tree() \
 		or not view._submitted or view._visit != visit or view._snapshot != snapshot \
 		or not view._display_current() or run_map == null \
-		or (run_map.get_node(run_map.get_current_node_id()).get("type") != "Campfire" \
-			and not _opening_rest(run_map.get_current_node_id(), run_map.get_route().slice(0, -1))):
+		or run_map.get_node(run_map.get_current_node_id()).get("type") not in ["Campfire", "Rest"]:
 		return false
 	var id := run_map.get_current_node_id()
 	if intent.size() != 4 or intent.get("action") not in ["heal", "leave"] \
@@ -5054,6 +5064,8 @@ func _continue_from_rest(visit: RunRestRecovery, source_map: WeakRef, prior: Arr
 			return
 		_clear_rest_patch_overlay()
 		_rest_patch_context = _rest_patch_snapshot()
+	_legacy_rest_visits[run_map.get_current_node_id()] = [run_map,
+		run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()]
 	button.disabled = true
 	_clear_rest_stitch_overlay()
 	_clear_visit_backdrop()
@@ -6661,6 +6673,7 @@ func _return_to_title() -> void:
 	_patch_stall_visits.clear()
 	_patch_stall_closed = false
 	_campfire_visits.clear()
+	_legacy_rest_visits.clear()
 	if shop_view is LivePeddlerPanel:
 		var panel := shop_view as LivePeddlerPanel
 		for connection in panel.intent_requested.get_connections():
