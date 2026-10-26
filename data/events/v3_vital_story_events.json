@@ -1,0 +1,64 @@
+{
+  "events": [
+    {
+      "id": "v3_lantern_quilt_infirmary",
+      "title": "The Lantern-Quilt Infirmary",
+      "description": "A round, button-eyed nurse hangs warm quilts beside a midnight-teal lantern.",
+      "choices": [
+        { "id": "buy_bandages", "text": "Pay 12 gold to dress one hero's wounds (+8 HP)", "outcome": { "gold": -12, "scraps": 0, "hp": 8, "max_hp": 0 } },
+        { "id": "blood_receipt", "text": "Donate 4 HP for a purse of 18 gold", "outcome": { "gold": 18, "scraps": 0, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the lantern burning", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_button_heart_shrine",
+      "title": "The Button-Heart Shrine",
+      "description": "A moss-cloaked doll tends a beating brass button stitched into a chapel wall.",
+      "choices": [
+        { "id": "reinforce_heart", "text": "Spend 2 scraps to sew a lasting heart seam (+3 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 3 } },
+        { "id": "surrender_button", "text": "Give up 2 max HP for 24 gold", "outcome": { "gold": 24, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Let the little heart keep ticking", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_needle_thorn_garden",
+      "title": "The Needle-Thorn Garden",
+      "description": "Oxblood roses made of fabric bristle with huge blunt sewing needles.",
+      "choices": [
+        { "id": "harvest_thorns", "text": "Endure 6 HP loss to salvage 3 scraps", "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 } },
+        { "id": "buy_rose_balm", "text": "Spend 10 gold on rose balm (+6 HP)", "outcome": { "gold": -10, "scraps": 0, "hp": 6, "max_hp": 0 } },
+        { "id": "leave", "text": "Slip through the unpricked path", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_thimble_moon_sanctuary",
+      "title": "The Thimble-Moon Sanctuary",
+      "description": "A bone-cream thimble glows above a congregation of velvet ragdolls.",
+      "choices": [
+        { "id": "moonblessing", "text": "Pay 16 gold to strengthen a hero's seams (+2 max HP)", "outcome": { "gold": -16, "scraps": 0, "hp": 0, "max_hp": 2 } },
+        { "id": "tend_candles", "text": "Lose 4 HP tending the candles; earn 20 gold", "outcome": { "gold": 20, "scraps": 0, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the sanctuary undisturbed", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_forgotten_straw_bed",
+      "title": "The Forgotten Straw Bed",
+      "description": "A short scarecrow sleeps under a mustard quilt, its straw spilling onto a velvet pillow.",
+      "choices": [
+        { "id": "mend_straw", "text": "Spend 2 scraps on fresh stuffing (+10 HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 10, "max_hp": 0 } },
+        { "id": "sell_straw", "text": "Give up 5 HP worth of straw for 22 gold", "outcome": { "gold": 22, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Tuck the quilt in and depart", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_oxblood_stitch_oracle",
+      "title": "The Oxblood Stitch Oracle",
+      "description": "A large-eyed doll reads the future in thread stretched across a crimson hoop.",
+      "choices": [
+        { "id": "surrender_seam", "text": "Lose 1 max HP to receive 2 scraps", "outcome": { "gold": 0, "scraps": 2, "hp": 0, "max_hp": -1 } },
+        { "id": "weave_fortune", "text": "Spend 30 gold to gain 4 lasting max HP", "outcome": { "gold": -30, "scraps": 0, "hp": 0, "max_hp": 4 } },
+        { "id": "leave", "text": "Refuse the prophecy and go", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    }
+  ]
+}

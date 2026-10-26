@@ -5,6 +5,8 @@ extends SceneTree
 ## Well, Frayed Signpost, Needle Gate and Quiet Spool wallets, detached snapshots,
 ## fail-closed invalid records and outcomes, recovery after failed preflight,
 ## replay rejection and zero RNG use.
+## Also covers the V3-4 vitality catalog (data/events/v3_vital_story_events.json, by ID)
+## and the separate preview_vital_choices / choose_with_vitals transaction.
 
 const EVENTS_PATH := "res://data/events/m04_events.json"
 
@@ -93,6 +95,11 @@ func _initialize() -> void:
 	_test_bad_choice_recovery_and_replay()
 	_test_no_rng_consumption()
 	_test_seeded_replay_and_wallet_rng()
+	_test_vital_catalog_content()
+	_test_vital_branch_settlement()
+	_test_vital_caps_and_bounds()
+	_test_vital_unaffordable_then_leave()
+	_test_vital_malformed_inputs()
 	_check(catalog == catalog_snapshot, "shared event catalog unchanged across all test flows")
 	for failure in failures:
 		printerr(failure)
@@ -2482,3 +2489,433 @@ func _test_wallet_preview_fail_closed() -> void:
 			and _wallet_exact_int(_preview_choice(gain_preview, "watch").get("wallet"), 4, RunEventChoice.MAX_INT)
 			and _preview_choice(gain_preview, "ignore").get("affordable") == true,
 			"scrap overflow denies gain without blocking no-op option")
+
+
+# ---------------------------------------------------------------------------
+# V3-4 vitality Events: data/events/v3_vital_story_events.json plus the separate
+# preview_vital_choices / choose_with_vitals transaction. Looked up by ID only.
+# ---------------------------------------------------------------------------
+
+const VITAL_EVENTS_PATH := "res://data/events/v3_vital_story_events.json"
+const ROADSIDE_EVENTS_PATH := "res://data/events/v3_roadside_events.json"
+
+# Independent authored expectations: choice rows are [id, text, gold, scraps, hp, max_hp].
+const VITAL_REQUIRED := {
+	"v3_lantern_quilt_infirmary": {
+		"title": "The Lantern-Quilt Infirmary",
+		"description": "A round, button-eyed nurse hangs warm quilts beside a midnight-teal lantern.",
+		"choices": [
+			["buy_bandages", "Pay 12 gold to dress one hero's wounds (+8 HP)", -12, 0, 8, 0],
+			["blood_receipt", "Donate 4 HP for a purse of 18 gold", 18, 0, -4, 0],
+			["leave", "Leave the lantern burning", 0, 0, 0, 0],
+		],
+	},
+	"v3_button_heart_shrine": {
+		"title": "The Button-Heart Shrine",
+		"description": "A moss-cloaked doll tends a beating brass button stitched into a chapel wall.",
+		"choices": [
+			["reinforce_heart", "Spend 2 scraps to sew a lasting heart seam (+3 max HP)", 0, -2, 0, 3],
+			["surrender_button", "Give up 2 max HP for 24 gold", 24, 0, 0, -2],
+			["leave", "Let the little heart keep ticking", 0, 0, 0, 0],
+		],
+	},
+	"v3_needle_thorn_garden": {
+		"title": "The Needle-Thorn Garden",
+		"description": "Oxblood roses made of fabric bristle with huge blunt sewing needles.",
+		"choices": [
+			["harvest_thorns", "Endure 6 HP loss to salvage 3 scraps", 0, 3, -6, 0],
+			["buy_rose_balm", "Spend 10 gold on rose balm (+6 HP)", -10, 0, 6, 0],
+			["leave", "Slip through the unpricked path", 0, 0, 0, 0],
+		],
+	},
+	"v3_thimble_moon_sanctuary": {
+		"title": "The Thimble-Moon Sanctuary",
+		"description": "A bone-cream thimble glows above a congregation of velvet ragdolls.",
+		"choices": [
+			["moonblessing", "Pay 16 gold to strengthen a hero's seams (+2 max HP)", -16, 0, 0, 2],
+			["tend_candles", "Lose 4 HP tending the candles; earn 20 gold", 20, 0, -4, 0],
+			["leave", "Leave the sanctuary undisturbed", 0, 0, 0, 0],
+		],
+	},
+	"v3_forgotten_straw_bed": {
+		"title": "The Forgotten Straw Bed",
+		"description": "A short scarecrow sleeps under a mustard quilt, its straw spilling onto a velvet pillow.",
+		"choices": [
+			["mend_straw", "Spend 2 scraps on fresh stuffing (+10 HP)", 0, -2, 10, 0],
+			["sell_straw", "Give up 5 HP worth of straw for 22 gold", 22, 0, -5, 0],
+			["leave", "Tuck the quilt in and depart", 0, 0, 0, 0],
+		],
+	},
+	"v3_oxblood_stitch_oracle": {
+		"title": "The Oxblood Stitch Oracle",
+		"description": "A large-eyed doll reads the future in thread stretched across a crimson hoop.",
+		"choices": [
+			["surrender_seam", "Lose 1 max HP to receive 2 scraps", 0, 2, 0, -1],
+			["weave_fortune", "Spend 30 gold to gain 4 lasting max HP", -30, 0, 0, 4],
+			["leave", "Refuse the prophecy and go", 0, 0, 0, 0],
+		],
+	},
+}
+
+var vital_catalog: Array = []
+
+
+func _vital_state(gold: int, scraps: int, hp: int, max_hp: int) -> Dictionary:
+	return {"gold": gold, "scraps": scraps, "hero": {"id": "warden", "hp": hp, "max_hp": max_hp}}
+
+
+func _vital_state_is(state: Variant, gold: int, scraps: int, hp: int, max_hp: int) -> bool:
+	if not state is Dictionary:
+		return false
+	var dict: Dictionary = state
+	if dict.size() != 3 or not dict.get("hero") is Dictionary:
+		return false
+	var hero: Dictionary = dict["hero"]
+	return (hero.size() == 3 and hero.get("id") == "warden"
+		and typeof(dict.get("gold")) == TYPE_INT and int(dict["gold"]) == gold
+		and typeof(dict.get("scraps")) == TYPE_INT and int(dict["scraps"]) == scraps
+		and typeof(hero.get("hp")) == TYPE_INT and int(hero["hp"]) == hp
+		and typeof(hero.get("max_hp")) == TYPE_INT and int(hero["max_hp"]) == max_hp)
+
+
+func _vital_record(event_id: String) -> Dictionary:
+	for entry in vital_catalog:
+		if entry is Dictionary and entry.get("id") == event_id:
+			return (entry as Dictionary).duplicate(true)
+	return {}
+
+
+func _load_events(path: String) -> Array:
+	var file := FileAccess.open(path, FileAccess.READ)
+	_check(file != null, "events file opens: " + path)
+	if file == null:
+		return []
+	var parser := JSON.new()
+	var parse_result := parser.parse(file.get_as_text())
+	file.close()
+	_check(parse_result == OK and parser.data is Dictionary and (parser.data as Dictionary).get("events") is Array,
+		"events file parses to {events: [...]}: " + path)
+	if parse_result != OK or not parser.data is Dictionary or not (parser.data as Dictionary).get("events") is Array:
+		return []
+	return (parser.data as Dictionary)["events"]
+
+
+func _test_vital_catalog_content() -> void:
+	vital_catalog = _load_events(VITAL_EVENTS_PATH)
+	_check(not vital_catalog.is_empty(), "vital story catalog is non-empty")
+	for event_id in VITAL_REQUIRED:
+		var found: Array = vital_catalog.filter(func(entry) -> bool:
+			return entry is Dictionary and entry.get("id") == event_id)
+		_check(found.size() == 1, "exactly one authored vital record: " + event_id)
+		if found.size() != 1:
+			continue
+		var record: Dictionary = found[0]
+		var expected: Dictionary = VITAL_REQUIRED[event_id]
+		_check(record.size() == 4 and record.has("title") and record.has("description") and record.has("choices"),
+			"vital record has exact top-level keys: " + event_id)
+		_check(record.get("title") == expected["title"], "vital title: " + event_id)
+		_check(record.get("description") == expected["description"], "vital description: " + event_id)
+		var choices: Variant = record.get("choices")
+		_check(choices is Array and (choices as Array).size() == 3, "vital record has three choices: " + event_id)
+		if not choices is Array:
+			continue
+		var wanted: Array = expected["choices"]
+		var seen := {}
+		for choice in choices:
+			_check(choice is Dictionary and choice.size() == 3 and choice.has("id") and choice.has("text")
+				and choice.has("outcome") and choice.get("outcome") is Dictionary
+				and choice["outcome"].size() == 4, "vital choice has id/text/four-key outcome: " + event_id)
+			if choice is Dictionary and choice.get("id") is String:
+				seen[choice["id"]] = choice
+		_check(seen.size() == wanted.size(), "vital choice IDs are distinct: " + event_id)
+		for row in wanted:
+			var tag: String = event_id + "/" + row[0]
+			_check(seen.has(row[0]), "vital choice present: " + tag)
+			if not seen.has(row[0]) or not seen[row[0]].get("outcome") is Dictionary:
+				continue
+			var outcome: Dictionary = seen[row[0]]["outcome"]
+			_check(seen[row[0]].get("text") == row[1], "vital choice text: " + tag)
+			var keys := ["gold", "scraps", "hp", "max_hp"]
+			for i in range(4):
+				var raw: Variant = outcome.get(keys[i])
+				_check(_is_integral_json_number(raw, true) and int(raw) == int(row[2 + i]),
+					"vital outcome " + keys[i] + ": " + tag)
+		var service := RunEventChoice.new(record)
+		_check(service.is_valid() and not service.is_claimed(), "vital record builds a valid selector: " + event_id)
+
+	# The vitality records stay out of the wallet-only rotation sources.
+	var roadside := _load_events(ROADSIDE_EVENTS_PATH)
+	for event_id in VITAL_REQUIRED:
+		_check(_matching(event_id).is_empty(), "vital record absent from m04_events.json: " + event_id)
+		_check(roadside.filter(func(entry) -> bool:
+			return entry is Dictionary and entry.get("id") == event_id).is_empty(),
+			"vital record absent from v3_roadside_events.json: " + event_id)
+	for anchor in ["button_trail", "needle_gate", "v3_stitched_fog_carousel"]:
+		_check(_matching(anchor).size() == 1, "legacy anchor still authored: " + anchor)
+	for anchor in ["v3_raincoat_bridge"]:
+		_check(roadside.filter(func(entry) -> bool:
+			return entry is Dictionary and entry.get("id") == anchor).size() == 1,
+			"roadside anchor still authored: " + anchor)
+
+
+func _test_vital_branch_settlement() -> void:
+	for event_id in VITAL_REQUIRED:
+		var record := _vital_record(event_id)
+		if record.is_empty():
+			_check(false, "vital record available for settlement: " + event_id)
+			continue
+		var rows: Array = VITAL_REQUIRED[event_id]["choices"]
+		var caller := _vital_state(40, 4, 25, 40)
+		var rng_expected := _rng_start(72000)
+		var preview_service := RunEventChoice.new(record.duplicate(true))
+		var preview := preview_service.preview_vital_choices(caller)
+		_check(preview.get("ok") == true and preview.get("event_id") == event_id
+			and (preview.get("choices") as Array).size() == 3, "vital preview lists three choices: " + event_id)
+		_check(preview_service.is_valid() and not preview_service.is_claimed() and caller == _vital_state(40, 4, 25, 40),
+			"vital preview consumes nothing and leaves caller state: " + event_id)
+		for row in rows:
+			var tag: String = event_id + "/" + row[0]
+			var exp_max: int = 40 + int(row[5])
+			var exp_hp: int = min(25 + int(row[4]), exp_max)
+			var entry := _preview_choice(preview, row[0])
+			_check(entry.size() == 7 and entry.get("gold_delta") == row[2] and entry.get("scraps_delta") == row[3]
+				and entry.get("hp_delta") == row[4] and entry.get("max_hp_delta") == row[5]
+				and entry.get("affordable") == true
+				and _vital_state_is(entry.get("state"), 40 + int(row[2]), 4 + int(row[3]), exp_hp, exp_max),
+				"funded vital forecast exact: " + tag)
+			var visit_record := _vital_record(event_id)
+			var service := RunEventChoice.new(visit_record)
+			var input := _vital_state(40, 4, 25, 40)
+			var result := service.choose_with_vitals(row[0], input)
+			_check(result.size() == 4 and result.get("ok") == true and result.get("event_id") == event_id
+				and result.get("choice_id") == row[0]
+				and _vital_state_is(result.get("state"), 40 + int(row[2]), 4 + int(row[3]), exp_hp, exp_max),
+				"funded vital commit exact: " + tag)
+			_check(result.get("state") == entry.get("state"), "commit matches forecast: " + tag)
+			_check(input == _vital_state(40, 4, 25, 40) and visit_record == _vital_record(event_id)
+				and service.get_event() == _vital_record(event_id), "commit leaves caller inputs untouched: " + tag)
+			_check(service.is_claimed() and not service.is_valid(), "vital commit consumes the visit: " + tag)
+			# Detached returns: scribbling on them reaches neither the service nor later receipts.
+			(result["state"] as Dictionary)["gold"] = 999
+			((entry["state"]) as Dictionary)["hero"]["hp"] = 999
+			var replay := service.choose_with_vitals(row[0], input)
+			_check(replay.size() == 4 and replay.get("ok") == false and replay.get("event_id") == ""
+				and replay.get("choice_id") == "" and replay.get("state") == _vital_state(40, 4, 25, 40),
+				"vital replay rejected with unchanged detached state: " + tag)
+			var other := service.choose_with_vitals("leave", input)
+			_check(other.get("ok") == false and service.preview_vital_choices(input).get("ok") == false
+				and service.choose(row[0]).get("ok") == false
+				and service.choose_with_wallet(row[0], {"gold": 40, "scraps": 4}).get("ok") == false,
+				"consumed visit rejects every other API: " + tag)
+			(replay["state"] as Dictionary)["gold"] = 1
+			_check(input == _vital_state(40, 4, 25, 40), "rejected state is detached from caller: " + tag)
+		_check(randi() == rng_expected, "vital preview and commits spend no RNG: " + event_id)
+		_check(RunEventChoice.new(_vital_record(event_id)).preview_vital_choices(caller)
+			== RunEventChoice.new(_vital_record(event_id)).preview_vital_choices(caller),
+			"vital previews are deterministic and detached from earlier scribbles: " + event_id)
+
+
+func _test_vital_caps_and_bounds() -> void:
+	var infirmary := RunEventChoice.new(_vital_record("v3_lantern_quilt_infirmary"))
+	var healed := infirmary.choose_with_vitals("buy_bandages", _vital_state(40, 4, 39, 40))
+	_check(healed.get("ok") == true and _vital_state_is(healed.get("state"), 28, 4, 40, 40),
+		"positive healing clamps to max HP (39/40 + 8 -> 40/40)")
+	var shrine := RunEventChoice.new(_vital_record("v3_button_heart_shrine"))
+	var sewn := shrine.choose_with_vitals("reinforce_heart", _vital_state(40, 4, 25, 40))
+	_check(sewn.get("ok") == true and _vital_state_is(sewn.get("state"), 40, 2, 25, 43),
+		"a max HP increase alone does not heal (25/40 -> 25/43)")
+	var cut := RunEventChoice.new(_vital_record("v3_button_heart_shrine")).choose_with_vitals(
+		"surrender_button", _vital_state(40, 4, 40, 40))
+	_check(cut.get("ok") == true and _vital_state_is(cut.get("state"), 64, 4, 38, 38),
+		"a max HP cut pulls current HP down to the new maximum (40/40 -> 38/38)")
+	var low_cut := RunEventChoice.new(_vital_record("v3_button_heart_shrine")).choose_with_vitals(
+		"surrender_button", _vital_state(40, 4, 25, 40))
+	_check(low_cut.get("ok") == true and _vital_state_is(low_cut.get("state"), 64, 4, 25, 38),
+		"a max HP cut leaves lower current HP alone (25/40 -> 25/38)")
+	var floor_cut := RunEventChoice.new(_vital_record("v3_oxblood_stitch_oracle")).choose_with_vitals(
+		"surrender_seam", _vital_state(0, 0, 11, 11))
+	_check(floor_cut.get("ok") == true and _vital_state_is(floor_cut.get("state"), 0, 2, 10, 10),
+		"max HP may fall exactly to 10 (11/11 -> 10/10)")
+	var straw_edge := _vital_record("v3_forgotten_straw_bed")
+	_check(RunEventChoice.new(straw_edge).choose_with_vitals("sell_straw", _vital_state(0, 0, 6, 40)).get("ok") == true
+		and RunEventChoice.new(straw_edge).choose_with_vitals("sell_straw", _vital_state(0, 0, 5, 40)).get("ok") == false,
+		"an HP debit may leave exactly 1 HP but never 0")
+	var thorns := RunEventChoice.new(_vital_record("v3_needle_thorn_garden")).choose_with_vitals(
+		"harvest_thorns", _vital_state(40, 4, 25, 40))
+	_check(thorns.get("ok") == true and _vital_state_is(thorns.get("state"), 40, 7, 19, 40),
+		"HP debit for scraps settles exactly (25 -> 19, +3 scraps)")
+	# Integer overflow is per-branch rejection, never wraparound.
+	var big := RunEventChoice.MAX_INT
+	var oracle := _vital_record("v3_thimble_moon_sanctuary")
+	var over_max := RunEventChoice.new(oracle).preview_vital_choices(
+		{"gold": 40, "scraps": 0, "hero": {"id": "warden", "hp": 5, "max_hp": big}})
+	_check(_preview_choice(over_max, "moonblessing").get("affordable") == false
+		and _preview_choice(over_max, "leave").get("affordable") == true,
+		"max HP overflow denies only that branch")
+	var over_hp := RunEventChoice.new(_vital_record("v3_forgotten_straw_bed")).preview_vital_choices(
+		{"gold": 0, "scraps": 4, "hero": {"id": "warden", "hp": big, "max_hp": big}})
+	_check(_preview_choice(over_hp, "mend_straw").get("affordable") == false
+		and _preview_choice(over_hp, "sell_straw").get("affordable") == true,
+		"HP overflow denies healing while a debit stays legal")
+	var over_gold := RunEventChoice.new(_vital_record("v3_lantern_quilt_infirmary")).preview_vital_choices(
+		{"gold": big, "scraps": 0, "hero": {"id": "warden", "hp": 5, "max_hp": 40}})
+	_check(_preview_choice(over_gold, "blood_receipt").get("affordable") == false,
+		"gold overflow denies the purse branch")
+
+
+func _test_vital_unaffordable_then_leave() -> void:
+	var cases := [
+		{"state": _vital_state(0, 4, 25, 40), "rejected": ["buy_bandages", "buy_rose_balm", "moonblessing", "weave_fortune"]},
+		{"state": _vital_state(40, 0, 25, 40), "rejected": ["reinforce_heart", "mend_straw"]},
+		{"state": _vital_state(40, 4, 1, 40), "rejected": ["blood_receipt", "harvest_thorns", "tend_candles", "sell_straw"]},
+		{"state": _vital_state(40, 4, 10, 10), "rejected": ["surrender_button", "surrender_seam"]},
+	]
+	for event_id in VITAL_REQUIRED:
+		var rows: Array = VITAL_REQUIRED[event_id]["choices"]
+		for case_data in cases:
+			var state: Dictionary = case_data["state"]
+			var rejected: Array = case_data["rejected"]
+			var original: Dictionary = state.duplicate(true)
+			var service := RunEventChoice.new(_vital_record(event_id))
+			var rng_expected := _rng_start(72100)
+			var preview := service.preview_vital_choices(state)
+			for row in rows:
+				var tag: String = event_id + "/" + row[0] + "/" + str(state)
+				var entry := _preview_choice(preview, row[0])
+				var expect_reject: bool = rejected.has(row[0])
+				_check(not entry.is_empty() and entry.get("affordable") == not expect_reject
+					and (not expect_reject or entry.get("state") == original), "affordability forecast: " + tag)
+				if not expect_reject:
+					continue
+				var refusal := service.choose_with_vitals(row[0], state)
+				_check(refusal.size() == 4 and refusal.get("ok") == false and refusal.get("event_id") == ""
+					and refusal.get("choice_id") == "" and refusal.get("state") == original
+					and state == original and service.is_valid() and not service.is_claimed(),
+					"unaffordable branch rejected without consuming: " + tag)
+			var leave := service.choose_with_vitals("leave", state)
+			_check(leave.get("ok") == true and leave.get("event_id") == event_id and leave.get("state") == original
+				and service.is_claimed(), "free leave still works on the same visit: " + event_id)
+			_check(randi() == rng_expected, "rejections and leave spend no RNG: " + event_id)
+
+
+func _test_vital_malformed_inputs() -> void:
+	var record := _vital_record("v3_lantern_quilt_infirmary")
+	var good := _vital_state(40, 4, 25, 40)
+	var denied := {"ok": false, "event_id": "", "choices": []}
+	var bad_states: Array = [
+		null, 5, "state", [good], {}, {"gold": 40, "scraps": 4},
+		{"gold": 40, "scraps": 4, "hero": {"id": "warden", "hp": 25, "max_hp": 40}, "extra": 1},
+		{"gold": 40, "scraps": 4, "hero": null}, {"gold": 40, "scraps": 4, "hero": "warden"},
+		{"gold": 40, "scraps": 4, "hero": {"id": "warden", "hp": 25}},
+		{"gold": 40, "scraps": 4, "hero": {"id": "warden", "hp": 25, "max_hp": 40, "mood": 1}},
+		{"gold": 40, "scraps": 4, "hero": {"id": "", "hp": 25, "max_hp": 40}},
+		{"gold": 40, "scraps": 4, "hero": {"id": "  ", "hp": 25, "max_hp": 40}},
+		{"gold": 40, "scraps": 4, "hero": {"id": 7, "hp": 25, "max_hp": 40}},
+		{"gold": 40, "scraps": 4, "hero": {"id": "warden", "hp": 0, "max_hp": 40}},
+		{"gold": 40, "scraps": 4, "hero": {"id": "warden", "hp": -3, "max_hp": 40}},
+		{"gold": 40, "scraps": 4, "hero": {"id": "warden", "hp": 41, "max_hp": 40}},
+		{"gold": 40, "scraps": 4, "hero": {"id": "warden", "hp": 9, "max_hp": 9}},
+		{"gold": 40, "scraps": 4, "hero": {"id": "warden", "hp": 25.0, "max_hp": 40}},
+		{"gold": 40, "scraps": 4, "hero": {"id": "warden", "hp": 25, "max_hp": 40.0}},
+		{"gold": 40, "scraps": 4, "hero": {"id": "warden", "hp": "25", "max_hp": 40}},
+		{"gold": 40, "scraps": 4, "hero": {"id": "warden", "hp": true, "max_hp": 40}},
+		{"gold": -1, "scraps": 4, "hero": {"id": "warden", "hp": 25, "max_hp": 40}},
+		{"gold": 40, "scraps": -1, "hero": {"id": "warden", "hp": 25, "max_hp": 40}},
+		{"gold": 40.0, "scraps": 4, "hero": {"id": "warden", "hp": 25, "max_hp": 40}},
+		{"gold": 40, "scraps": "4", "hero": {"id": "warden", "hp": 25, "max_hp": 40}},
+		{"gold": null, "scraps": 4, "hero": {"id": "warden", "hp": 25, "max_hp": 40}},
+	]
+	for bad in bad_states:
+		var before: Variant = bad.duplicate(true) if bad is Dictionary or bad is Array else bad
+		var service := RunEventChoice.new(record.duplicate(true))
+		var rng_expected := _rng_start(72200)
+		var refusal := service.choose_with_vitals("buy_bandages", bad)
+		_check(refusal.size() == 4 and refusal.get("ok") == false and refusal.get("event_id") == ""
+			and refusal.get("choice_id") == "" and refusal.get("state") == {},
+			"malformed snapshot rejected with empty state: " + str(bad))
+		_check(service.preview_vital_choices(bad) == denied and bad == before
+			and service.is_valid() and not service.is_claimed() and randi() == rng_expected,
+			"malformed snapshot preview denied without effects: " + str(bad))
+		_check(service.choose_with_vitals("leave", good).get("ok") == true,
+			"visit survives a malformed snapshot: " + str(bad))
+
+	# Blank, unknown and mistyped choice IDs reject with a detached valid state.
+	for bad_id in ["", "  ", "no_such_choice", "BUY_BANDAGES", null, 5, ["leave"]]:
+		var service := RunEventChoice.new(record.duplicate(true))
+		var refusal := service.choose_with_vitals(bad_id, good)
+		_check(refusal.get("ok") == false and refusal.get("event_id") == "" and refusal.get("choice_id") == ""
+			and refusal.get("state") == good and service.is_valid() and not service.is_claimed(),
+			"bad choice ID rejected without consuming: " + str(bad_id))
+		_check(service.choose_with_vitals("leave", good).get("ok") == true, "leave after bad ID: " + str(bad_id))
+
+	# Torn (0 HP) heroes cannot be acted on, even for a free Leave.
+	var torn := RunEventChoice.new(record.duplicate(true))
+	var torn_state := {"gold": 40, "scraps": 4, "hero": {"id": "warden", "hp": 0, "max_hp": 40}}
+	_check(torn.choose_with_vitals("leave", torn_state).get("ok") == false and torn.is_valid(),
+		"a Torn hero is never a valid target")
+
+	# Outcome shapes: the vitality API needs exactly the four keys; the wallet API exactly two.
+	var bad_outcomes: Array = [
+		{"gold": -12, "scraps": 0},
+		{"gold": -12, "scraps": 0, "hp": 8},
+		{"gold": -12, "scraps": 0, "hp": 8, "max_hp": 0, "extra": 0},
+		{"gold": -12, "scraps": 0, "hp": "8", "max_hp": 0},
+		{"gold": -12, "scraps": 0, "hp": 8.5, "max_hp": 0},
+		{"gold": -12, "scraps": 0, "hp": 8, "max_hp": null},
+		{"gold": -12, "scraps": 0, "hp": 8, "mx": 0},
+		"outcome",
+	]
+	for bad_outcome in bad_outcomes:
+		var broken := _vital_record("v3_lantern_quilt_infirmary")
+		broken["choices"][0]["outcome"] = bad_outcome
+		var service := RunEventChoice.new(broken)
+		var preview := service.preview_vital_choices(good)
+		var entry := _preview_choice(preview, "buy_bandages")
+		_check(preview.get("ok") == true and entry.get("affordable") == false and entry.get("hp_delta") == null
+			and entry.get("state") == good and _preview_choice(preview, "leave").get("affordable") == true,
+			"malformed outcome denies only its branch: " + str(bad_outcome))
+		var refusal := service.choose_with_vitals("buy_bandages", good)
+		_check(refusal.get("ok") == false and refusal.get("state") == good and not service.is_claimed(),
+			"malformed outcome never settles: " + str(bad_outcome))
+		_check(service.choose_with_vitals("leave", good).get("ok") == true, "leave after malformed outcome")
+	var float_record := _vital_record("v3_lantern_quilt_infirmary")
+	float_record["choices"][0]["outcome"] = {"gold": -12.0, "scraps": 0.0, "hp": 8.0, "max_hp": 0.0}
+	_check(RunEventChoice.new(float_record).choose_with_vitals("buy_bandages", good).get("state")
+		== _vital_state(28, 4, 33, 40), "integral JSON floats normalize to exact integers")
+
+	# Wallet-only records are rejected by the vitality API, and vitality records by the wallet API.
+	var wallet_only := RunEventChoice.new(_matching("needle_gate")[0])
+	var wallet_preview := wallet_only.preview_vital_choices(good)
+	_check(wallet_preview.get("ok") == true and (wallet_preview["choices"] as Array).size() == 3, "wallet-only event preview keeps slots")
+	for entry in wallet_preview["choices"]:
+		_check(entry.get("affordable") == false and entry.get("hp_delta") == null and entry.get("state") == good,
+			"wallet-only outcome is never padded into a vitality outcome: " + str(entry.get("choice_id")))
+	_check(wallet_only.choose_with_vitals("pass", good).get("ok") == false and not wallet_only.is_claimed(),
+		"wallet-only commit rejected by choose_with_vitals")
+	_check(wallet_only.choose_with_wallet("pass", {"gold": 4, "scraps": 0}).get("ok") == true,
+		"legacy wallet commit still works on the same visit")
+	var vital_for_wallet := RunEventChoice.new(record.duplicate(true))
+	var wallet_view := vital_for_wallet.preview_wallet_choices({"gold": 40, "scraps": 4})
+	for entry in wallet_view["choices"]:
+		_check(entry.get("affordable") == false and entry.get("gold_delta") == null,
+			"wallet preview rejects extra vitality outcome fields: " + str(entry.get("choice_id")))
+	_check(vital_for_wallet.choose_with_wallet("leave", {"gold": 40, "scraps": 4}).get("ok") == false
+		and not vital_for_wallet.is_claimed(), "wallet commit rejects extra vitality outcome fields")
+	_check(vital_for_wallet.choose("leave").get("ok") == true and vital_for_wallet.choose_with_vitals("leave", good).get("ok") == false,
+		"legacy choose shares the single visit latch with vitality commits")
+
+	# Caller/source isolation for the authored record and the snapshot.
+	var source := _vital_record("v3_lantern_quilt_infirmary")
+	var live := RunEventChoice.new(source)
+	source["choices"][0]["outcome"]["hp"] = 99
+	source["title"] = "scribble"
+	var scribbled := {"gold": 40, "scraps": 4, "hero": {"id": "warden", "hp": 25, "max_hp": 40}}
+	var scribble_preview := live.preview_vital_choices(scribbled)
+	scribbled["hero"]["hp"] = 1
+	_check(_vital_state_is(_preview_choice(scribble_preview, "buy_bandages").get("state"), 28, 4, 33, 40)
+		and live.get_event() == _vital_record("v3_lantern_quilt_infirmary"),
+		"source record and snapshot mutations never reach the service or earlier previews")
+	# Invalid construction fails closed.
+	var invalid := RunEventChoice.new({"id": "bad", "choices": []})
+	_check(invalid.preview_vital_choices(good) == denied and invalid.choose_with_vitals("leave", good).get("state") == good
+		and invalid.choose_with_vitals("leave", good).get("ok") == false, "invalid event fails closed on vitality APIs")

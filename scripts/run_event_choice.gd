@@ -12,6 +12,8 @@ extends RefCounted
 
 const MAX_INT := 9223372036854775807
 const MAX_SAFE_FLOAT_INT := 9007199254740992.0
+## A torn seam can never take a hero's maximum HP below this floor.
+const MIN_VITAL_MAX_HP := 10
 
 var _event: Dictionary = {}
 var _valid: bool = false
@@ -151,6 +153,187 @@ func preview_wallet_choices(wallet: Variant) -> Dictionary:
 			"wallet": balance,
 		})
 	return {"ok": true, "event_id": _event["id"], "choices": previews}
+
+
+## Vitality settlement (V3-4): a separate, additive transaction over a detached
+## snapshot {"gold", "scraps", "hero": {"id", "hp", "max_hp"}}. The caller picks
+## and authenticates the living hero; this service only validates the shape.
+## Choices must carry the exact four-key outcome {gold, scraps, hp, max_hp}; a
+## wallet-only outcome is never padded with zero HP fields. Like the wallet
+## preview, a malformed outcome keeps its slot with null deltas and cannot settle.
+## Each entry: {"choice_id", "gold_delta", "scraps_delta", "hp_delta",
+## "max_hp_delta", "affordable", "state"}; unaffordable entries keep the
+## unchanged snapshot. No RNG and no mutation of the argument or this instance.
+func preview_vital_choices(snapshot: Variant) -> Dictionary:
+	var denied := {"ok": false, "event_id": "", "choices": []}
+	if not _valid or _claimed:
+		return denied
+	var parsed_state: Dictionary = _parse_vital_snapshot(snapshot)
+	if not parsed_state.get("ok", false):
+		return denied
+	var base_state: Dictionary = parsed_state["state"]
+	var previews: Array = []
+	var choices: Array = _event.get("choices", [])
+	for choice in choices:
+		var parsed_outcome: Dictionary = _parse_vital_outcome(choice)
+		var affordable := false
+		var state: Dictionary = base_state.duplicate(true)
+		if parsed_outcome.get("ok", false):
+			var settlement: Dictionary = _project_vitals(base_state, parsed_outcome)
+			if settlement.get("ok", false):
+				affordable = true
+				state = settlement["state"]
+		previews.append({
+			"choice_id": choice["id"],
+			"gold_delta": parsed_outcome.get("gold"),
+			"scraps_delta": parsed_outcome.get("scraps"),
+			"hp_delta": parsed_outcome.get("hp"),
+			"max_hp_delta": parsed_outcome.get("max_hp"),
+			"affordable": affordable,
+			"state": state,
+		})
+	return {"ok": true, "event_id": _event["id"], "choices": previews}
+
+
+## Single allowed claim with vitality settlement, sharing the one-visit latch
+## with choose() and choose_with_wallet(). Validates the snapshot, selector
+## state, choice ID and four-key outcome before latching.
+## Returns {"ok": bool, "event_id": String, "choice_id": String, "state": Dictionary}
+## where success carries the exact projected snapshot and rejection carries a
+## detached unchanged valid snapshot (or an empty state for malformed input).
+func choose_with_vitals(choice_id: Variant, snapshot: Variant = null) -> Dictionary:
+	var parsed_state: Dictionary = _parse_vital_snapshot(snapshot)
+	if not parsed_state.get("ok", false):
+		return _vital_rejection({})
+	var base_state: Dictionary = parsed_state["state"]
+	if not _valid or _claimed:
+		return _vital_rejection(base_state)
+	if not _is_nonblank_string(choice_id):
+		return _vital_rejection(base_state)
+	var target_id: String = choice_id
+	var matched_choice: Variant = null
+	var choices: Array = _event.get("choices", [])
+	for choice in choices:
+		if choice is Dictionary and (choice as Dictionary).get("id") == target_id:
+			matched_choice = choice
+			break
+	if not matched_choice is Dictionary:
+		return _vital_rejection(base_state)
+	var parsed_outcome: Dictionary = _parse_vital_outcome(matched_choice)
+	if not parsed_outcome.get("ok", false):
+		return _vital_rejection(base_state)
+	var settlement: Dictionary = _project_vitals(base_state, parsed_outcome)
+	if not settlement.get("ok", false):
+		return _vital_rejection(base_state)
+	_claimed = true
+	return {
+		"ok": true,
+		"event_id": _event.get("id", ""),
+		"choice_id": target_id,
+		"state": settlement["state"],
+	}
+
+
+## Shared no-RNG, overflow-safe vitality arithmetic for preview and commit.
+## Max HP is projected first (result >= MIN_VITAL_MAX_HP), then current HP: a
+## debit must leave at least 1 HP, and the result is clamped to the new maximum
+## (so positive healing caps and a max-HP cut pulls HP down, while a max-HP
+## increase alone never heals). Call only after strict snapshot/outcome parsing.
+func _project_vitals(base_state: Dictionary, outcome: Dictionary) -> Dictionary:
+	var wallet: Dictionary = _project_wallet(base_state, outcome["gold"], outcome["scraps"])
+	if not wallet.get("ok", false):
+		return {"ok": false}
+	var hero: Dictionary = base_state["hero"]
+	var base_hp: int = hero["hp"]
+	var base_max: int = hero["max_hp"]
+	var max_delta: int = outcome["max_hp"]
+	var hp_delta: int = outcome["hp"]
+	if max_delta > 0 and max_delta > MAX_INT - base_max:
+		return {"ok": false}
+	# A valid max HP is >= 10, so adding any negative delta cannot underflow.
+	var new_max: int = base_max + max_delta
+	if new_max < MIN_VITAL_MAX_HP:
+		return {"ok": false}
+	if hp_delta > 0 and hp_delta > MAX_INT - base_hp:
+		return {"ok": false}
+	var new_hp: int = base_hp + hp_delta
+	if new_hp < 1:
+		return {"ok": false}
+	if new_hp > new_max:
+		new_hp = new_max
+	return {"ok": true, "state": {
+		"gold": wallet["wallet"]["gold"],
+		"scraps": wallet["wallet"]["scraps"],
+		"hero": {"id": hero["id"], "hp": new_hp, "max_hp": new_max},
+	}}
+
+
+func _vital_rejection(state: Dictionary) -> Dictionary:
+	return {
+		"ok": false,
+		"event_id": "",
+		"choice_id": "",
+		"state": state.duplicate(true),
+	}
+
+
+## Strict snapshot parse: exactly gold, scraps and one hero {id, hp, max_hp}
+## with native integers, gold/scraps >= 0, 1 <= hp <= max_hp, max_hp >= 10.
+## A Torn hero (hp 0) is therefore never a valid target.
+func _parse_vital_snapshot(snapshot: Variant) -> Dictionary:
+	if typeof(snapshot) != TYPE_DICTIONARY:
+		return {"ok": false}
+	var dict: Dictionary = snapshot
+	if dict.size() != 3 or not dict.has("gold") or not dict.has("scraps") or not dict.has("hero"):
+		return {"ok": false}
+	var wallet: Dictionary = _parse_wallet({"gold": dict.get("gold"), "scraps": dict.get("scraps")})
+	if not wallet.get("ok", false):
+		return {"ok": false}
+	if typeof(dict.get("hero")) != TYPE_DICTIONARY:
+		return {"ok": false}
+	var hero: Dictionary = dict.get("hero")
+	if hero.size() != 3 or not hero.has("id") or not hero.has("hp") or not hero.has("max_hp"):
+		return {"ok": false}
+	var hero_id: Variant = hero.get("id")
+	var hp: Variant = hero.get("hp")
+	var max_hp: Variant = hero.get("max_hp")
+	if not _is_nonblank_string(hero_id) or typeof(hp) != TYPE_INT or typeof(max_hp) != TYPE_INT:
+		return {"ok": false}
+	var hp_int: int = hp
+	var max_int: int = max_hp
+	if hp_int < 1 or max_int < MIN_VITAL_MAX_HP or hp_int > max_int:
+		return {"ok": false}
+	return {"ok": true, "state": {
+		"gold": wallet["wallet"]["gold"],
+		"scraps": wallet["wallet"]["scraps"],
+		"hero": {"id": hero_id, "hp": hp_int, "max_hp": max_int},
+	}}
+
+
+## Exactly {id, text, outcome} with an outcome of exactly the four integral keys
+## gold, scraps, hp and max_hp; anything else (including a wallet-only outcome)
+## is malformed.
+func _parse_vital_outcome(choice: Variant) -> Dictionary:
+	if typeof(choice) != TYPE_DICTIONARY:
+		return {"ok": false}
+	var record: Dictionary = choice
+	if record.size() != 3 or not record.has("id") or not record.has("text") or not record.has("outcome"):
+		return {"ok": false}
+	var raw_outcome: Variant = record.get("outcome")
+	if typeof(raw_outcome) != TYPE_DICTIONARY:
+		return {"ok": false}
+	var outcome: Dictionary = raw_outcome
+	if outcome.size() != 4:
+		return {"ok": false}
+	var parsed := {"ok": true}
+	for key in ["gold", "scraps", "hp", "max_hp"]:
+		if not outcome.has(key):
+			return {"ok": false}
+		var amount: Dictionary = _read_outcome_amount(outcome.get(key), true)
+		if not amount.get("ok", false):
+			return {"ok": false}
+		parsed[key] = amount["amount"]
+	return parsed
 
 
 ## Both preview and commit use this exact no-RNG, overflow-safe arithmetic.
