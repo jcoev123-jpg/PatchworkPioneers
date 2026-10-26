@@ -47,7 +47,8 @@
     {"id": "rag_duelist_velvet_feint", "owner": "rag_duelist", "price": 50},
     {"id": "scarecrow_re_stuff", "owner": "scarecrow", "price": 65},
     {"id": "yarn_ranger_unspool", "owner": "yarn_ranger", "price": 65},
-    {"id": "button_golem_pop_button", "owner": "button_golem", "price": 50}
+    {"id": "button_golem_pop_button", "owner": "button_golem", "price": 50},
+    {"id": "yarn_ranger_snare_net", "owner": "yarn_ranger", "price": 65}
   ],
   "trinkets": [
     {"id": "stitched_badge", "price": 100},
