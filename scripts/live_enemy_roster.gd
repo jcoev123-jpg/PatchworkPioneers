@@ -1850,9 +1850,7 @@ func _make_status_tag(position: int) -> PanelContainer:
 ## All displayed names, stacks and explanatory help come from the same live record.
 ## A malformed optional field is simply empty; rendering never normalizes gameplay data.
 func _status_copy(enemy: Dictionary) -> Dictionary:
-	var source: Variant = enemy.get("statuses")
-	if not source is Dictionary:
-		return {}
+	var source: Variant = enemy.get("statuses", {})
 	var visible: Array[String] = []
 	var help: Array[String] = []
 	var explanations := {
@@ -1864,6 +1862,8 @@ func _status_copy(enemy: Dictionary) -> Dictionary:
 	}
 	var row: Array[String] = []
 	for keyword in STATUS_NAMES:
+		if not source is Dictionary:
+			break
 		var amount: Variant = source.get(keyword)
 		if not amount is int or amount <= 0:
 			continue
@@ -1876,9 +1876,31 @@ func _status_copy(enemy: Dictionary) -> Dictionary:
 			row.clear()
 	if not row.is_empty():
 		visible.append("  ·  ".join(row))
+	var stacks := _enrage_stacks(enemy)
+	if stacks >= 0:
+		visible.append("Enrage %d/3  +%d ATK" % [stacks,
+			stacks * CombatEnemyKeywordRules.ENRAGE_ATTACK_BONUS_PER_STACK])
+		help.append("Enrage %d/%d: +%d outgoing attack power. Gain one stack per confirmed positive-damage hit (even through Block), max 3; +2 attack per stack before Weak/Exposed, hero Guard and Block." % [
+			stacks, CombatEnemyKeywordRules.ENRAGE_MAX_STACKS,
+			stacks * CombatEnemyKeywordRules.ENRAGE_ATTACK_BONUS_PER_STACK])
 	if visible.is_empty():
 		return {}
 	return {"caption": "\n".join(visible), "help": "\n".join(help)}
+
+
+## A validated, source-owned Enrage count, or -1 for absent/invalid metadata.
+## An absent count is zero only for the actual true-flagged living enemy.
+static func _enrage_stacks(enemy: Dictionary) -> int:
+	var hp: Variant = enemy.get("hp")
+	if not hp is int or hp <= 0:
+		return -1
+	var flag: Variant = enemy.get("enrage", false)
+	if not flag is bool or not flag:
+		return -1
+	var count: Variant = enemy.get("enrage_stacks", 0)
+	if not count is int or count < 0 or count > CombatEnemyKeywordRules.ENRAGE_MAX_STACKS:
+		return -1
+	return count
 
 
 ## Top-right in this puppet's art band, avoiding its separate Thorns and intent
@@ -1970,7 +1992,12 @@ func _refresh() -> void:
 			policy = CombatEnemyIntents.policy_for(enemies, position)
 		var badge := _badges[index]
 		_place_intent_ticket(badge.get_parent() as Puppet, badge)
-		badge.show_intent(action, enemies.is_slain(position), pending, policy)
+		var live_source: bool = position == index + 1 and enemy.get("hp") is int \
+			and enemy["hp"] > 0 and enemies == app.enemies and _battle == app.battle_view \
+			and roster.size() == _badges.size() and badge.source_position == position \
+			and action.get("enemy_position") == position
+		var enrage_stacks := _enrage_stacks(enemy) if live_source else -1
+		badge.show_intent(action, enemies.is_slain(position), pending, policy, enrage_stacks)
 		if status_tag.visible:
 			_place_status_tag(_puppets[CombatParty.PARTY_SIZE + index] as Puppet,
 				status_tag, tag, badge)
