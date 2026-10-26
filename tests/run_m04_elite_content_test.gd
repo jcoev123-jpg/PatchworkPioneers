@@ -72,6 +72,21 @@ const V3_2_ELITES := {
 			{"type": "attack", "amount": 8, "weight": 3}]}}
 ## Authored slot order for the two-record V3-2 roster fixtures.
 const V3_2_ORDER := ["needle_briar_guard", "spool_snarekeeper"]
+const KEYWORD_ELITES := {
+	"pincushion_matriarch": {
+		"name": "Pincushion Matriarch", "max_hp": 44, "thorns": 4,
+		"art_path": "res://assets/paper/enemies/pincushion_hedgehog.png",
+		"target": "front", "actions": [
+			{"type": "attack", "amount": 9, "weight": 3},
+			{"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
+			{"type": "block", "amount": 9, "weight": 2}]},
+	"spool_leech": {
+		"name": "Spool Leech", "max_hp": 42, "drain": true,
+		"art_path": "res://assets/paper/enemies/spool_hexer.png",
+		"target": "lowest_living_hp", "actions": [
+			{"type": "attack", "amount": 8, "weight": 4},
+			{"type": "debuff", "status": "weak", "amount": 2, "weight": 2},
+			{"type": "block", "amount": 6, "weight": 1}]}}
 const PATTERNS := {
 	"needle_marshal_elite": [
 		{"enemy_position":1,"pattern":[
@@ -99,6 +114,7 @@ func _initialize() -> void:
 	_test_live_weighted_elites()
 	_test_v3_elites()
 	_test_v3_2_elites()
+	_test_keyword_elites()
 	_test_rejections()
 	for failure in failures:
 		printerr(failure)
@@ -1399,3 +1415,168 @@ func _test_v3_2_elites() -> void:
 		"V3-2 checks never mutate the authored elite records")
 	_check(randi() == expected_rng,
 		"V3-2 catalog lookups, bound announcements and beats use no global RNG")
+
+
+## Independent weighted-draw oracle: both policies are deterministic and spend
+## exactly one draw per announcement, with no target-selection draw.
+func _keyword_trace(record: Dictionary) -> Array:
+	var fixture := _new_elite_fixture(record)
+	var party: CombatParty = fixture["party"]
+	var enemies: CombatEnemies = fixture["enemies"]
+	_check(party.apply_damage(2, 20) and party.get_hero(2).get("hp") == 10,
+		"middle hero is uniquely lowest living HP")
+	var rng := _rng(27701)
+	var oracle := _rng(27701)
+	var scheduler := CombatEnemyIntents.new([
+		{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+	_check(scheduler.is_valid() and scheduler.bind_battle(enemies, party, rng)
+		and scheduler.is_bound(), "authentic keyword elite binds weighted scheduler")
+	if not scheduler.is_bound():
+		return []
+	var spec: Dictionary = KEYWORD_ELITES[record["id"]]
+	var total := 0
+	for action in spec["actions"]:
+		total += action["weight"]
+	var trace: Array = []
+	var seen := {}
+	for turn in range(24):
+		var roll := oracle.randi_range(1, total)
+		var expected: Dictionary = {}
+		for action in spec["actions"]:
+			roll -= action["weight"]
+			if roll <= 0:
+				expected = action.duplicate(true)
+				break
+		expected.erase("weight")
+		expected["enemy_position"] = 1
+		if expected["type"] != "block":
+			expected["target_position"] = 1 if spec["target"] == "front" else 2
+		var announced := scheduler.get_intents()
+		_check(announced == [expected] and rng.state == oracle.state,
+			"exact weighted alternative, policy target and RNG at turn " + str(turn))
+		_check(scheduler.get_intents() == announced and rng.state == oracle.state,
+			"cached reads consume no RNG")
+		seen[expected["type"]] = true
+		trace.append([announced, rng.state])
+		if turn < 23:
+			_check(scheduler.advance_turn(), "advance bound keyword elite")
+	_check(seen.has("attack") and seen.has("debuff") and seen.has("block"),
+		"fixed seed exercises all three authored alternatives")
+	return trace
+
+
+func _keyword_beats(record: Dictionary) -> void:
+	var is_needle: bool = record["id"] == "pincushion_matriarch"
+	var target := 1 if is_needle else 2
+	for kind in ["debuff", "block", "attack"]:
+		var fixture := _new_elite_fixture(record)
+		var party: CombatParty = fixture["party"]
+		var enemies: CombatEnemies = fixture["enemies"]
+		_check(party.apply_damage(2, 20), "living lowest-HP middle hero for forced beat")
+		var beat := _authored_beat(record, 1, kind, target)
+		if beat.is_empty():
+			return
+		var heroes := party.get_heroes()
+		var foes := enemies.get_enemies()
+		var input := [beat.duplicate(true)]
+		var before := input.duplicate(true)
+		var result := CombatEnemyPhase.new().execute_phase(party, enemies, input)
+		_check(result == {"ok": true, "events": [_phase_event(beat)]}
+			and input == before, "forced genuine alternative executes without input mutation")
+		match kind:
+			"debuff":
+				heroes[target - 1]["statuses"] = {"bleed": 2} if is_needle else {"weak": 2}
+				_check(party.get_heroes() == heroes and enemies.get_enemies() == foes,
+					"exact status 2 only on selected hero, no immediate HP loss")
+				if not is_needle:
+					_check(CombatStatuses.new().adjusted_attack_damage(8,
+						party.get_hero(target)["statuses"], {}) == 6,
+						"Leech Weak reduces attacks by 25 percent")
+			"block":
+				foes[0]["block"] = 9 if is_needle else 6
+				_check(enemies.get_enemies() == foes and party.get_heroes() == heroes,
+					"exact authored Block on own slot only")
+			"attack":
+				heroes[target - 1]["hp"] -= 9 if is_needle else 8
+				_check(party.get_heroes() == heroes and enemies.get_enemies() == foes,
+					"exact authored attack hits policy target; full enemy cannot overheal")
+
+
+func _pincushion_thorns(record: Dictionary) -> void:
+	for damage in [3, 0]:
+		for block in [0, 2, 6]:
+			var fixture := _new_elite_fixture(record)
+			var party: CombatParty = fixture["party"]
+			var enemies: CombatEnemies = fixture["enemies"]
+			_check(party.gain_block(1, block), "authentic attacker Block precondition")
+			var pre_hit := enemies.get_enemy(1)
+			var receipt := CombatStatusAttacks.new().resolve_vs_enemy(enemies, 1, damage, {}, {})
+			_check(receipt == {"ok": true, "damage": damage, "block_absorbed": 0,
+				"hp_loss": damage}, "genuine positive/zero confirmed hero hit receipt")
+			var before := party.get_heroes()
+			var result := CombatEnemyKeywordRules.new().resolve_thorns_retaliation(
+				party, 1, pre_hit, receipt)
+			var absorbed := mini(block, 4) if damage > 0 else 0
+			var hp_loss := 4 - absorbed if damage > 0 else 0
+			_check(result == {"ok": true, "applied": damage > 0, "thorns": 4,
+				"block_absorbed": absorbed, "hp_loss": hp_loss},
+				"Thorns 4 exact receipt through Block; zero hit inert")
+			before[0]["block"] -= absorbed
+			before[0]["hp"] -= hp_loss
+			_check(party.get_heroes() == before and enemies.get_enemy(1)["hp"] == 44 - damage,
+				"retaliation changes only attacking hero, after genuine enemy HP loss")
+
+
+func _leech_drain(record: Dictionary) -> void:
+	# Missing HP, hero Block, hero HP, expected HP removed, expected healing.
+	for scenario in [[12, 0, 10, 8, 8], [12, 3, 10, 5, 5],
+			[12, 8, 10, 0, 0], [2, 0, 10, 8, 2], [12, 0, 3, 3, 3]]:
+		var fixture := _new_elite_fixture(record)
+		var party: CombatParty = fixture["party"]
+		var enemies: CombatEnemies = fixture["enemies"]
+		_check(enemies.apply_damage(1, scenario[0]) and party.apply_damage(2, 30 - scenario[2])
+			and party.gain_block(2, scenario[1]) and not party.is_downed(2)
+			and enemies.get_enemy(1)["hp"] == 42 - scenario[0],
+			"genuinely wounded Leech and living lowest-HP blocked hero")
+		var heroes := party.get_heroes()
+		var foes := enemies.get_enemies()
+		var beat := _authored_beat(record, 1, "attack", 2)
+		var result := CombatEnemyPhase.new().execute_phase(party, enemies, [beat])
+		heroes[1]["block"] = maxi(0, scenario[1] - 8)
+		heroes[1]["hp"] -= scenario[3]
+		foes[0]["hp"] += scenario[4]
+		_check(result == {"ok": true, "events": [_phase_event(beat)]}
+			and party.get_heroes() == heroes and enemies.get_enemies() == foes,
+			"phase Attack 8 drains actual HP only, fully blocked zero, capped at 42: " + str(scenario))
+
+
+func _test_keyword_elites() -> void:
+	var catalog := _catalog(ELITES)
+	var untouched := catalog.duplicate(true)
+	for id in KEYWORD_ELITES:
+		var expected: Dictionary = KEYWORD_ELITES[id]
+		var record := _authored_elite(catalog, id, expected)
+		if record.is_empty():
+			continue
+		var exact := expected.duplicate(true)
+		exact["id"] = id
+		exact["intent"] = {"target": exact["target"], "actions": exact["actions"]}
+		exact.erase("target")
+		exact.erase("actions")
+		_check(record.size() == exact.size(), "exact authored record fields " + id)
+		for field in exact:
+			if field != "intent":
+				_check(record.get(field) == exact[field]
+					and typeof(record.get(field)) == typeof(exact[field]),
+					"exact typed field including keyword metadata " + id + "/" + field)
+		var first := _keyword_trace(record)
+		_check(first.size() == 24 and first == _keyword_trace(record),
+			"complete fixed-seed keyword elite replay " + id)
+		_keyword_beats(record)
+		if id == "pincushion_matriarch":
+			_pincushion_thorns(record)
+		else:
+			_leech_drain(record)
+	# Earlier tests validate every field of all six earlier identities by ID.
+	_check(catalog == untouched and _catalog(ELITES) == untouched,
+		"keyword elite tests preserve the real catalog and parsed inputs")

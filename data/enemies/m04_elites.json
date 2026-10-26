@@ -36,4 +36,6 @@
       {"type": "debuff", "amount": 2, "status": "weak", "weight": 2},
       {"type": "attack", "amount": 8, "weight": 3}
     ]}}
+  ,{"id":"pincushion_matriarch","name":"Pincushion Matriarch","max_hp":44,"thorns":4,"art_path":"res://assets/paper/enemies/pincushion_hedgehog.png","intent":{"target":"front","actions":[{"type":"attack","amount":9,"weight":3},{"type":"debuff","status":"bleed","amount":2,"weight":2},{"type":"block","amount":9,"weight":2}]}}
+  ,{"id":"spool_leech","name":"Spool Leech","max_hp":42,"drain":true,"art_path":"res://assets/paper/enemies/spool_hexer.png","intent":{"target":"lowest_living_hp","actions":[{"type":"attack","amount":8,"weight":4},{"type":"debuff","status":"weak","amount":2,"weight":2},{"type":"block","amount":6,"weight":1}]}}
 ]
