@@ -1088,6 +1088,24 @@ func _run() -> void:
 				and action.get_theme_font_size("font_size") == 20
 				and action.disabled == (offer.sold or app.session_gold < offer.price),
 				"each mounted sewn choice displays authentic identity, price and affordability")
+		# The live mounted panel explains a real hovered offer from its own
+		# authored record before the player spends anything. Read-only: the
+		# ledger, visit and RNG stay exactly as the Shop left them.
+		var live_offer: Dictionary = bound.stock.cards[0]
+		var live_found := RunShopStockOffers._find_card_definition(String(live_offer.id),
+				RunShopStockOffers._peddler_catalogs())
+		var live_definition: Dictionary = live_found.get("def", {})
+		var live_line := CardShortRules.line(live_definition)
+		var live_caption: String = app.peddler_buttons[0].text
+		await _hover(app.peddler_buttons[0])
+		_check(not live_definition.is_empty() and not live_line.is_empty()
+			and app.shop_view.status_label.text.contains(String(live_offer.id))
+			and app.shop_view.status_label.text.contains(
+				"%d energy" % int(live_definition.get("cost", -1)))
+			and app.shop_view.status_label.text.contains(live_line)
+			and app.peddler_buttons[0].text == live_caption
+			and _shop_state() == navigation_before,
+			"live mounted Peddler previews the hovered offer's authored ability without changing the shop")
 		var leave: Callable = app.peddler_leave_button.pressed.get_connections()[0].callable
 		var buys: Array[Callable] = []
 		for action in app.peddler_buttons:

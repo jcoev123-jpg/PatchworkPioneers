@@ -4,14 +4,23 @@ extends SceneTree
 ## source-bound intents, and the authentic once-only card/patch/Leave receipts
 ## around the existing seeded stock sampler and purchase ledger.
 ##
-## The panel is intentionally NOT wired into the live route yet (a later task).
-## This test mounts it under a 1280x720 Control and proves the presentation and
-## intent contract; every settlement goes through RunPeddlerVisit itself.
+## It also proves the read-only ability preview: each offered card's exact ID,
+## authored owner, authored energy cost and CardShortRules sentences appear in
+## the existing status band (and stay complete in that card's tooltip) on hover
+## or keyboard focus, without changing a quote, minting an intent, spending gold
+## or consuming RNG. The panel mounts under a 1280x720 Control; every settlement
+## still goes through RunPeddlerVisit itself.
 
 const NODE := "v3_peddler_stop"
 const PARTY := ["warden", "seamstress", "tinker"]
 const DECK := ["warden_strike", "seamstress_prick", "tinker_pop_shot"]
+const PARTY_V3 := ["warden", "lantern_monk", "rag_duelist"]
+const DECK_V3 := ["warden_strike", "lantern_monk_moth_lure", "rag_duelist_velvet_feint"]
+const PARTY_V3_UNKNOWN := ["lantern_monk", "rag_duelist", "scarecrow"]
+const DECK_V3_UNKNOWN := ["lantern_monk_moth_lure", "rag_duelist_velvet_feint", "scarecrow_re_stuff"]
 const SEED := 2611790
+const V3_SEED := 90210
+const V3_UNKNOWN_SEED := 424242
 const GOLD := 500
 
 var checks := 0
@@ -25,6 +34,7 @@ var authored_patches: Array = []
 var card_authored: Dictionary = {}
 var patch_authored: Dictionary = {}
 var intents: Array[Dictionary] = []
+var preview_catalogs: Array = []
 
 
 class Controller:
@@ -163,6 +173,7 @@ func _run() -> void:
 	var expected_run := rng.state
 
 	await _layout(visit)
+	await _preview_cases()
 	for index in range(3):
 		await _buy_case(index, "card", index % 2 == 0)
 	await _buy_case(0, "trinket", true)
@@ -265,8 +276,16 @@ func _layout(visit: RunPeddlerVisit) -> void:
 			and actual.has(panel.patch_button) and actual.has(panel.leave_button),
 			"exactly three card buys, one patch buy and Leave (five buttons)")
 	_check(panel.title_label.text.contains("PEDDLER")
-			and panel.wallet_label.text.contains("500 gold")
-			and panel.status_label.text.contains("Leave"), "title, wallet and one-choice hint readable")
+			and panel.wallet_label.text.contains("500 gold"), "title and wallet are readable")
+	# The band opens on the neutral hint or on the genuine preview of the card
+	# that already holds focus; any other opening text would not be this stock.
+	var opening_status := panel.status_label.text
+	var opening_authentic := opening_status == LivePeddlerPanel.STATUS_OPEN
+	if panel._preview_index >= 0:
+		opening_authentic = opening_authentic \
+				or opening_status == panel._clamp_status(panel._card_preview(panel._preview_index))
+	_check(opening_authentic and _status_fits(),
+			"status band opens with the neutral hint or a fitted current-card preview")
 	var open := visit.read_state()
 	for index in range(3):
 		var button := panel.card_buttons[index]
@@ -320,6 +339,9 @@ func _layout(visit: RunPeddlerVisit) -> void:
 			if label.get_global_rect().intersects(rect):
 				heading_clear = false
 	_check(heading_clear, "headings stay clear of every action row")
+	_check(panel.status_label.size.x >= LivePeddlerPanel.STATUS_WIDTH
+			and panel.status_label.size.y >= 24,
+			"the status band really has its designed room at 1280x720")
 	# Every authored card and patch quote this panel can ever be handed must fit
 	# one measured line, not just this seed's four offers.
 	var caption_font := panel.card_buttons[0].get_theme_font("font")
@@ -353,6 +375,306 @@ func _layout(visit: RunPeddlerVisit) -> void:
 		_check(focus_seen.has(button), "Tab visits every one of the five actions")
 	_check(visit.read_state() == open and intents.is_empty(),
 			"focus and preview only: no intent and no service mutation")
+
+
+## Independently resolved authored definition for one genuine offer, through the
+## same catalogs the seeded stock generator validates candidates against.
+func _authored_definition(offer: Dictionary) -> Dictionary:
+	if preview_catalogs.is_empty():
+		preview_catalogs = RunShopStockOffers._peddler_catalogs()
+	var found: Dictionary = RunShopStockOffers._find_card_definition(
+			str(offer.get("id", "")), preview_catalogs)
+	if found.is_empty():
+		return {}
+	var definition: Variant = found.get("def", {})
+	return definition if definition is Dictionary else {}
+
+
+## The status band's measured readability: its shipped 18px face must fit the
+## width the band actually has at 1280x720.
+func _status_fits() -> bool:
+	var font := panel.status_label.get_theme_font("font")
+	if font == null or panel.status_label.text.is_empty():
+		return false
+	var size_px := panel.status_label.get_theme_font_size("font_size")
+	if size_px < 18:
+		return false
+	var width := font.get_string_size(panel.status_label.text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, size_px).x
+	var band: float = minf(LivePeddlerPanel.STATUS_WIDTH, panel.status_label.size.x)
+	return band > 0.0 and width <= band
+
+
+func _seeded_stock(party: Array, seed_value: int) -> Dictionary:
+	var local := RandomNumberGenerator.new()
+	local.seed = seed_value
+	return RunShopStockOffers.generate_peddler_stock(local, party, authored_cards,
+			authored_patches, [])
+
+
+func _party_visit(node: String, party: Array, deck: Array, stock: Dictionary,
+		gold: int = GOLD) -> RunPeddlerVisit:
+	return RunPeddlerVisit.new(node, party, deck, [], gold, stock)
+
+
+func _offer_owners(state: Dictionary) -> Array:
+	var owners: Array = []
+	for offer in state["stock"]["cards"]:
+		owners.append(str(offer["owner"]))
+	return owners
+
+
+func _all_tooltips_empty() -> bool:
+	for button in panel.card_buttons:
+		if not button.tooltip_text.is_empty():
+			return false
+	return true
+
+
+func _move_pointer(at: Vector2) -> void:
+	var motion := InputEventMouseMotion.new()
+	motion.position = at
+	root.push_input(motion)
+	await _frames()
+
+
+func _hover_card(index: int) -> void:
+	await _move_pointer(panel.card_buttons[index].get_global_rect().get_center())
+
+
+func _hover_none() -> void:
+	await _move_pointer(Vector2(2, 2))
+
+
+## One highlighted card's preview must state exactly who and what it is, from
+## that card's own authored record, and leave the priced caption untouched.
+func _check_preview(index: int, offer: Dictionary, definition: Dictionary,
+		label: String) -> void:
+	var described := CardShortRules.describe(definition)
+	var line := str(described.get("line", ""))
+	var cost := "%d energy" % int(definition.get("cost", -1))
+	var button := panel.card_buttons[index]
+	var status := panel.status_label.text
+	var tooltip := button.tooltip_text
+	_check(not definition.is_empty() and definition.get("owner") == offer["owner"]
+			and typeof(definition.get("cost")) == TYPE_INT
+			and described.get("known") == true and not line.is_empty(),
+			label + ": " + str(offer["id"]) + " resolves to a genuine authored definition and rule line")
+	_check(panel._preview_index == index and _status_fits(),
+			label + ": card row " + str(index) + " is previewed and the band fits its width")
+	_check(status.contains(str(offer["id"]))
+			and status.contains(str(offer["owner"]).capitalize()),
+			label + ": the preview names the exact offered ID and its authored owner")
+	_check(status.contains(cost), label + ": the preview shows the authored " + cost)
+	_check(status.contains(line), label + ": the preview itself carries the authored effect line")
+	_check(tooltip.contains(str(offer["id"])) and tooltip.contains(cost)
+			and tooltip.contains(line), label + ": the card tooltip keeps the complete ability text")
+	if bool(described.get("unknown", false)):
+		_check(status.contains(CardShortRules.UNKNOWN_SENTENCE)
+				or tooltip.contains(CardShortRules.UNKNOWN_SENTENCE),
+				label + ": an undescribed authored effect is labelled honestly, never guessed")
+	_check(button.text.ends_with("  ·  %d gold" % int(offer["price"])),
+			label + ": the priced caption is unchanged by the preview")
+
+
+## Hover and keyboard focus for each of the three genuine offers.
+func _assert_card_previews(context: String, before: Dictionary) -> void:
+	for index in range(3):
+		var offer: Dictionary = before["stock"]["cards"][index]
+		var definition := _authored_definition(offer)
+		await _hover_card(index)
+		_check_preview(index, offer, definition, context + " hover card " + str(index))
+		_check(intents.is_empty() and panel._source_current(),
+				context + " hover card " + str(index) + ": preview only, no intent and no source drift")
+	for index in range(3):
+		await _hover_none()
+		panel.card_buttons[index].grab_focus()
+		await _frames()
+		var offer: Dictionary = before["stock"]["cards"][index]
+		var definition := _authored_definition(offer)
+		_check(panel.card_buttons[index].has_focus(),
+				context + " keyboard card " + str(index) + " has real focus")
+		_check_preview(index, offer, definition, context + " focus card " + str(index))
+	_check(intents.is_empty() and panel._source_current(),
+			context + ": focused previews emit no intent and never mutate the source")
+
+
+func _preview_cases() -> void:
+	var run_state := rng.state
+	# --- one genuine main visit explains every card before any purchase ---
+	var visit := _visit(GOLD, "peddler_preview_main")
+	var before := visit.read_state()
+	_check(visit.is_open(), "preview fixture is a genuine open visit")
+	await _bind(visit)
+	await _assert_card_previews("main", before)
+	_check(intents.is_empty() and visit.read_state() == before,
+			"hovering and focusing cards changes no ledger and emits nothing")
+	# A shortened display is only a display: the unshortened sentence stays in
+	# the card's own tooltip.
+	var overlong := LivePeddlerPanel.STATUS_OPEN.repeat(4)
+	var shortened: String = panel._clamp_status(overlong)
+	var status_font := panel.status_label.get_theme_font("font")
+	var shortened_width := 0.0
+	if status_font != null:
+		shortened_width = status_font.get_string_size(shortened,
+				HORIZONTAL_ALIGNMENT_LEFT, -1,
+				panel.status_label.get_theme_font_size("font_size")).x
+	_check(status_font != null and shortened.ends_with(LivePeddlerPanel.ELLIPSIS)
+			and shortened.length() < overlong.length()
+			and shortened_width <= LivePeddlerPanel.STATUS_WIDTH,
+			"an overlong line is shortened to the status band's width")
+	_check(panel._card_tooltip(0).contains(str(before["stock"]["cards"][0]["id"]))
+			and panel._card_tooltip(0).contains(
+				CardShortRules.line(_authored_definition(before["stock"]["cards"][0]))),
+			"the complete ability text stays in the card tooltip, not only its display")
+
+	# --- patch/Leave focus returns the neutral hint ---
+	await _hover_none()
+	panel.patch_button.grab_focus()
+	await _frames()
+	_check(panel.status_label.text == LivePeddlerPanel.STATUS_OPEN and panel._preview_index == -1
+			and _status_fits(), "patch focus returns to the neutral Peddler hint")
+	panel.leave_button.grab_focus()
+	await _frames()
+	_check(panel.status_label.text == LivePeddlerPanel.STATUS_OPEN and panel._preview_index == -1
+			and _status_fits(), "Leave focus returns to the neutral Peddler hint")
+
+	# --- a different highlighted card replaces the earlier summary ---
+	panel.card_buttons[0].grab_focus()
+	await _frames()
+	var first := panel.status_label.text
+	await _hover_card(1)
+	_check(panel.status_label.text != first and panel._preview_index == 1
+			and _status_fits(), "hovering another card replaces the earlier preview")
+	await _hover_none()
+	_check(panel.status_label.text == first and panel._preview_index == 0,
+			"leaving the pointer returns to the focused card's preview")
+
+	# --- a second authentic visit (real V3 heroes) replaces every detail ---
+	var v3 := _party_visit("peddler_preview_v3", PARTY_V3, DECK_V3,
+			_seeded_stock(PARTY_V3, V3_SEED))
+	var v3_before := v3.read_state()
+	_check(v3.is_open() and _offer_owners(v3_before) == PARTY_V3
+			and v3_before["stock"]["trinkets"].size() == 1,
+			"authentic seeded stock offers one real card per V3 party hero and one patch")
+	await _bind(v3)
+	for index in range(3):
+		var offer: Dictionary = v3_before["stock"]["cards"][index]
+		var tooltip := panel.card_buttons[index].tooltip_text
+		_check(tooltip.contains(str(offer["id"])),
+				"rebind gives card " + str(index) + " the new source's tooltip")
+		for old in before["stock"]["cards"]:
+			if str(old["id"]) != str(offer["id"]):
+				_check(not tooltip.contains(str(old["id"])),
+						"rebind drops the previous visit's card " + str(old["id"]) + " from every tooltip")
+	if panel._preview_index >= 0:
+		_check(panel.status_label.text.contains(str(v3_before["stock"]["cards"][panel._preview_index]["id"])),
+				"rebind replaces the status summary with the new source")
+	else:
+		_check(panel.status_label.text == LivePeddlerPanel.STATUS_OPEN,
+				"rebind shows the neutral hint when no new card is highlighted")
+	await _assert_card_previews("v3", v3_before)
+
+	# --- V3 heroes carry their own authored (not guessed) rule text ---
+	for index in range(3):
+		var offer: Dictionary = v3_before["stock"]["cards"][index]
+		var definition := _authored_definition(offer)
+		_check(["lantern_monk", "rag_duelist"].has(str(offer["owner"]))
+				or str(offer["owner"]) == "warden",
+				"the V3 fixture really offers a V3 hero card: " + str(offer["id"]))
+		_check(str(definition.get("owner", "")) == str(offer["owner"]),
+				"the offered V3 card resolves to its own authored owner")
+
+	# --- an authored effect the formatter cannot describe stays honest ---
+	var unknown_visit := _party_visit("peddler_preview_unknown", PARTY_V3_UNKNOWN,
+			DECK_V3_UNKNOWN, _seeded_stock(PARTY_V3_UNKNOWN, V3_UNKNOWN_SEED))
+	var unknown_before := unknown_visit.read_state()
+	_check(unknown_visit.is_open(), "unknown-effect preview fixture is a genuine open visit")
+	var scarecrow_index := -1
+	for index in range(3):
+		if str(unknown_before["stock"]["cards"][index]["owner"]) == "scarecrow":
+			scarecrow_index = index
+	_check(scarecrow_index >= 0, "the V3 fixture genuinely offers Scarecrow's priced card")
+	await _bind(unknown_visit)
+	if scarecrow_index >= 0:
+		var scarecrow_offer: Dictionary = unknown_before["stock"]["cards"][scarecrow_index]
+		var scarecrow_definition := _authored_definition(scarecrow_offer)
+		var described := CardShortRules.describe(scarecrow_definition)
+		_check(described.get("known") == true and described.get("unknown") == true
+				and str(described.get("line", "")).contains(CardShortRules.UNKNOWN_SENTENCE),
+				"Scarecrow Re-Stuff authors an effect the formatter must not guess")
+		panel.card_buttons[scarecrow_index].grab_focus()
+		await _frames()
+		_check(panel.status_label.text.contains(CardShortRules.UNKNOWN_SENTENCE)
+				and panel.card_buttons[scarecrow_index].tooltip_text.contains(
+					CardShortRules.UNKNOWN_SENTENCE),
+				"the preview labels that undescribed authored effect honestly")
+		_check(not panel.status_label.text.contains("10")
+				and not panel.status_label.text.contains("HP"),
+				"the preview invents no heal or max-HP number for it")
+		_check(_status_fits(), "the honest preview still fits the band")
+		# A definition that is not exactly this offer can never describe it.
+		var authentic := panel._source.duplicate(true)
+		panel._source["stock"]["cards"][scarecrow_index]["owner"] = "warden"
+		var placeholder: String = panel._card_preview(scarecrow_index)
+		_check(placeholder.contains(LivePeddlerPanel.DETAILS_UNAVAILABLE)
+				and not placeholder.contains("Other authored effects"),
+				"a mismatched definition shows Card details unavailable, not a guessed effect")
+		panel._source = authentic
+
+	# --- invalid, consumed and externally closed sources clear the detail ---
+	var invalid := RunPeddlerVisit.new("", PARTY, DECK, [], GOLD, sampled)
+	_check(not invalid.is_valid(), "invalid preview fixture is genuinely rejected")
+	await _bind(invalid)
+	_check(panel.status_label.text == LivePeddlerPanel.STATUS_CLOSED and _all_tooltips_empty(),
+			"an invalid source clears every preview and tooltip")
+	var used := _visit(GOLD, "peddler_preview_used")
+	var used_open := used.read_state()
+	_check(used.leave(used_open["node_id"], used_open["state"], used_open["stock"]).get("ok") == true,
+			"preview fixture visit is really consumed")
+	await _bind(used)
+	_check(panel.status_label.text == LivePeddlerPanel.STATUS_CLOSED and _all_tooltips_empty(),
+			"a consumed source clears every preview and tooltip")
+	var closing := _visit(GOLD, "peddler_preview_closing")
+	await _bind(closing)
+	await _hover_card(0)
+	_check(panel._preview_index == 0 and not panel.card_buttons[0].tooltip_text.is_empty(),
+			"a genuine source previews before it closes")
+	var closing_open := closing.read_state()
+	_check(closing.leave(closing_open["node_id"], closing_open["state"],
+			closing_open["stock"]).get("ok") == true, "fixture visit closes while still bound")
+	await _hover_none()
+	_check(panel.status_label.text == LivePeddlerPanel.STATUS_CLOSED and _all_tooltips_empty(),
+			"a source closed while bound clears the detail on the next highlight change")
+
+	# --- previews are read-only for the ledger, intents and the seeded RNG ---
+	_check(intents.is_empty() and rng.state == run_state,
+			"every preview left the seeded run RNG and the intent log untouched")
+
+	# --- a real purchase after previews is still source-bound and once-only ---
+	var buy := _party_visit("peddler_preview_buy", PARTY_V3, DECK_V3,
+			_seeded_stock(PARTY_V3, V3_SEED))
+	var buy_before := buy.read_state()
+	await _bind(buy)
+	var target := 1
+	var offer: Dictionary = buy_before["stock"]["cards"][target]
+	await _hover_card(target)
+	_check(panel._preview_index == target, "the purchase target is previewed before the click")
+	await _act(panel.card_buttons[target], false)
+	_check(intents.size() == 1, "one previewed click emits exactly one intent")
+	if intents.size() == 1:
+		_check(intents[0] == {
+			"node_id": buy_before["node_id"], "kind": "card", "id": offer["id"],
+			"expected_state": buy_before["state"],
+			"expected_stock": buy_before["stock"],
+		}, "the intent still carries exactly the source-bound node, kind, ID and both snapshots")
+		var receipt := Controller.settle(buy, intents[0], buy_before)
+		_check(receipt.get("ok") == true and receipt.get("price") == int(offer["price"])
+				and receipt["state"]["gold"] == GOLD - int(offer["price"])
+				and receipt["state"]["deck"] == DECK_V3 + [offer["id"]],
+				"previews did not disturb the once-only authored-price purchase")
+		_check(buy.is_consumed() and Controller.settle(buy, intents[0], buy_before).get("ok") != true,
+				"replay after that purchase is still refused")
 
 
 func _expected_receipt(prior: Dictionary, kind: String, index: int) -> Dictionary:
@@ -626,6 +948,22 @@ func _affordability_cases() -> void:
 	await _frames()
 	_check(intents.is_empty() and broke.read_state() == broke_open,
 			"pressing disabled unaffordable buys emits nothing and spends nothing")
+	# An unaffordable offer still explains itself truthfully before the player
+	# has to choose between it and Leave.
+	await _hover_card(0)
+	var broke_offer: Dictionary = broke_open["stock"]["cards"][0]
+	var broke_definition := _authored_definition(broke_offer)
+	var broke_line := CardShortRules.line(broke_definition)
+	_check(not broke_definition.is_empty() and not broke_line.is_empty(),
+			"the unaffordable fixture card has a genuine authored rule line")
+	_check(panel.card_buttons[0].disabled and panel._preview_index == 0
+			and panel.status_label.text.contains(broke_line)
+			and panel.status_label.text.contains("%d energy" % int(broke_definition.get("cost", -1)))
+			and panel.status_label.text.contains(str(broke_offer["id"])) and _status_fits(),
+			"an unaffordable card still previews its authored cost and effect")
+	_check(intents.is_empty() and broke.read_state() == broke_open,
+			"the unfunded preview spends nothing and emits nothing")
+	await _hover_none()
 	_check(not panel.leave_button.disabled, "Leave stays enabled when nothing is affordable")
 	await _act(panel.leave_button, true, KEY_SPACE)
 	_check(intents.size() == 1 and Controller.settle(broke, intents[0], broke_open).get("ok") == true,
@@ -737,6 +1075,12 @@ func _fail_closed() -> void:
 	card_callback.call()
 	panel.card_buttons[0].disabled = false
 	_check(intents.is_empty(), "forged metadata and disabled state cannot emit")
+	panel.status_label.text = "Forged card preview  ·  deal 99 to every enemy"
+	card_callback.call()
+	_check(intents.is_empty(), "forged status preview text cannot authenticate a press")
+	panel._sync_preview()
+	_check(panel.status_label.text != "Forged card preview  ·  deal 99 to every enemy",
+			"the band is restored from the bound source, never the forged line")
 
 	# Hidden or detached panels refuse; a re-shown panel is honest again.
 	panel.hide()
