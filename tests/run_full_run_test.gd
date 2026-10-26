@@ -24,6 +24,12 @@ func _combined_wallet_catalog() -> Dictionary:
 	for path in ["res://data/events/m04_events.json", "res://data/events/v3_roadside_events.json"]:
 		var document: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
 		events.append_array(document.events.duplicate(true))
+	var ids: Array = []
+	for hero in app.run_heroes:
+		ids.append(hero.id)
+	var offers := RunV3HeroEventOffers.new(ids)
+	_check(offers.is_valid(), "wallet oracle has the genuine live three-hero party")
+	events.append_array(offers.get_offers())
 	return {"events": events}
 
 

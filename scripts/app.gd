@@ -3248,6 +3248,22 @@ func _load_wallet_event_catalog() -> Dictionary:
 	for required in REQUIRED_ROADSIDE_EVENT_IDS:
 		if not roadside_ids.has(required):
 			return {}
+	# Title-time catalog queries retain their existing generic/roadside contract.
+	# A live run admits only detached, service-authenticated stories for its party.
+	if run_map != null or not run_heroes.is_empty():
+		if run_map == null or not RunRestRecovery._is_valid_roster(run_heroes):
+			return {}
+		var ids: Array = []
+		for hero in run_heroes:
+			ids.append(hero.id)
+		var offers := RunV3HeroEventOffers.new(ids)
+		if not offers.is_valid():
+			return {}
+		for record in offers.get_offers():
+			if seen.has(record.id):
+				return {}
+			seen[record.id] = true
+			combined.events.append(record.duplicate(true))
 	return {"events": combined.events}
 
 

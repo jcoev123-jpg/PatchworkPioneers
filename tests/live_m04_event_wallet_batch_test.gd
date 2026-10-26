@@ -14,11 +14,28 @@ const ORIGINAL_ROADSIDE := ["v3_raincoat_bridge", "v3_puppet_box_office",
 var gold_purchases := 0
 
 
-func _combined_catalog() -> Dictionary:
+func _party_ids() -> Array:
+	var ids: Array = []
+	var heroes: Array = app.run_heroes if app.run_map != null else CombatParty.new(app._load_party_definitions()).get_heroes()
+	for hero in heroes:
+		ids.append(hero.id)
+	return ids
+
+
+func _required_ids() -> Array:
+	var ids := REQUIRED.duplicate()
+	for record in RunV3HeroEventOffers.new(_party_ids()).get_offers():
+		ids.append(record.id)
+	return ids
+
+
+func _combined_catalog(include_party: bool = true) -> Dictionary:
 	var events: Array = []
 	for path in ["res://data/events/m04_events.json", "res://data/events/v3_roadside_events.json"]:
 		var document: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
 		events.append_array(document.events.duplicate(true))
+	if include_party:
+		events.append_array(RunV3HeroEventOffers.new(_party_ids()).get_offers())
 	return {"events": events}
 
 
@@ -43,13 +60,11 @@ func _fixtures() -> Dictionary:
 	# authentic Events rather than requiring a rare six-consecutive-Event route.
 	# Revalidate these known genuine seeds first; the bounded search remains a
 	# fallback when the generated route/pool changes.
-	# Repinned genuine seeds after the six stitched-roadside stories, the six
-	# lantern-haunted stories, the six gothic story choices and then the six
-	# midnight roadside stories grew the combined eligible pool, so every
-	# required generic Event again has one verified one-draw witness here.
-	var hints := [233942, 292590, 379017, 558844, 610125, 680308, 723106,
-		931076, 1390606, 1405687, 1433081, 1592293, 1594971, 1667572,
-		1877221, 2049995, 2356714, 3014812, 3103369]
+	# Repinned against the actual title-start party's eligible hero stories;
+	# every hint is still checked through genuine map generation and toll draws.
+	var hints := [35510, 233942, 236527, 292590, 379017, 422169, 449195,
+		610125, 622337, 756725, 802796, 807198, 899240, 1223721,
+		1610275, 1658568, 1825487, 1892422, 2308951, 2440227, 3274715, 4969863]
 	for value in hints + range(1, 500000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
@@ -76,7 +91,7 @@ func _fixtures() -> Dictionary:
 					events.append(id)
 			found[event_id] = {"seed": value, "path": events.slice(0, 5), "next": events[5], "transit": transit}
 		var complete := true
-		for required in REQUIRED:
+		for required in _required_ids():
 			complete = complete and found.has(required)
 		if complete:
 			break
@@ -84,7 +99,7 @@ func _fixtures() -> Dictionary:
 
 
 func _catalog_contract() -> void:
-	var document := _combined_catalog()
+	var document := _combined_catalog(false)
 	var snapshot := document.duplicate(true)
 	var live: Dictionary = app._load_wallet_event_catalog()
 	_check(live == document, "live catalog preserves both detached authored catalogs")
@@ -151,6 +166,12 @@ func _catalog_failures(entry: Callable) -> void:
 	var collision := source.duplicate(true)
 	collision.events.append(_combined_catalog().events[0].duplicate(true))
 	broken.append(collision)
+	var hero_collision := source.duplicate(true)
+	var hero_offers := RunV3HeroEventOffers.new(_party_ids()).get_offers()
+	_check(not hero_offers.is_empty(), "collision fixture has eligible authored hero stories")
+	if not hero_offers.is_empty():
+		hero_collision.events.append(hero_offers[0])
+		broken.append(hero_collision)
 	for document in broken:
 		var file := FileAccess.open(path, FileAccess.WRITE)
 		_check(file != null, "negative roadside fixture opens outside repository")
@@ -241,6 +262,23 @@ func _reach(fixture: Dictionary, funded: bool = true) -> void:
 	app.run_seed = fixture.seed
 	await _click(app.start_button)
 	_check(app.run_map != null and app.run_rng != null, "real title Start creates seeded run")
+	var service := RunV3HeroEventOffers.new(_party_ids())
+	_check(service.is_valid(), "live three-hero party has a valid authored Event service")
+	var live: Dictionary = app._load_wallet_event_catalog()
+	_check(live == _combined_catalog(), "live catalog matches eligible actual party oracle")
+	var live_ids := RunM04EventRotation.new(live).get_generic_event_ids()
+	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(RunV3HeroEventOffers.CATALOG_PATH))
+	var absent := 0
+	for record in authored.events:
+		if _party_ids().has(record.required_hero):
+			_check(live_ids.count(record.id) == 1, "present hero story admitted once: " + record.id)
+		else:
+			absent += 1
+			_check(not live_ids.has(record.id), "absent hero story excluded: " + record.id)
+	_check(absent > 0, "live exclusion checks cover genuinely absent heroes")
+	var detached := live.duplicate(true)
+	live.events.clear()
+	_check(app._load_wallet_event_catalog() == detached, "live hero offers remain detached")
 	for index in range(3):
 		await _traverse_treasures(fixture, fixture.path[index])
 		await _click(_route_action(fixture.path[index]))
@@ -357,6 +395,10 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 		return []
 	var chosen: Dictionary = record.choices[selected]
 	var expected := {"gold": int(chosen.outcome.gold), "scraps": 2 + int(chosen.outcome.scraps)}
+	if event_id == "v3_seamstress_thread_cart":
+		_check(record.required_hero == "seamstress" and _party_ids().has("seamstress")
+			and chosen.id == "sew_bunting" and int(chosen.outcome.scraps) < 0,
+			"hero receipt exercises a genuine affordable scrap-cost authored choice")
 	var pressed: Callable = panel.get_choice_buttons()[selected].pressed.get_connections()[0].callable
 	if keyboard:
 		panel.get_choice_buttons()[selected].grab_focus()
@@ -422,6 +464,14 @@ func _failures(fixture: Dictionary) -> void:
 	_reject_wallet(entry, "missing catalog rejects without draw")
 	app.event_catalog_path = catalog_path
 	_catalog_failures(entry)
+	var heroes: Array = app.run_heroes.duplicate(true)
+	var unknown := heroes.duplicate(true)
+	unknown[0].id = "unknown_hero"
+	for invalid in [[], [null, null, null], [heroes[0], heroes[0], heroes[2]], unknown]:
+		app.run_heroes = invalid.duplicate(true)
+		_check(app._load_wallet_event_catalog().is_empty(), "malformed or duplicate live party rejects catalog")
+		_reject_wallet(entry, "malformed or duplicate live party")
+	app.run_heroes = heroes
 	app.session_gold = -1
 	_reject_wallet(entry, "failed wallet panel mount rolls back selection draw")
 	app.session_gold = 0
@@ -497,6 +547,35 @@ func _failures(fixture: Dictionary) -> void:
 	await _return_title()
 
 
+func _hero_leave(fixture: Dictionary, event_id: String) -> void:
+	await _reach(fixture, false)
+	await _click(_route_action(fixture.path[4]))
+	var panel: LiveEventChoicePanel = app.wallet_event_panel
+	_check(is_instance_valid(panel), "hero Leave has a real fifth-Event panel")
+	if not is_instance_valid(panel):
+		return
+	var record := panel._selector.get_event()
+	_check(record.id == event_id and _party_ids().has(record.get("required_hero")),
+		"hero Leave is bound to a present hero's authored story")
+	var leave := -1
+	for index in range(record.choices.size()):
+		if record.choices[index].id == "leave":
+			leave = index
+	_check(leave >= 0, "authored hero story provides Leave")
+	if leave < 0:
+		return
+	var before := [_wallet(), _other_ledgers(), app.run_rng.state]
+	await _key(KEY_1 + leave)
+	_check(app.wallet_event_panel == null and is_instance_valid(app.route_view)
+		and [_wallet(), _other_ledgers(), app.run_rng.state] == before,
+		"hero Leave settles zero receipt and restores connected route")
+	await _traverse_treasures(fixture, fixture.next)
+	await _click(_route_action(fixture.next))
+	_check(app.run_map.get_current_node_id() == fixture.next and is_instance_valid(app.wallet_event_panel),
+		"hero Leave permits genuine legal successor Event")
+	await _return_title()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -507,7 +586,7 @@ func _run() -> void:
 	var global_next := randi()
 	seed(227227)
 	var fixtures := _fixtures()
-	for id in REQUIRED:
+	for id in _required_ids():
 		_check(fixtures.has(id), "bounded genuine seeded route exists for " + id)
 		if not fixtures.has(id):
 			continue
@@ -518,6 +597,11 @@ func _run() -> void:
 		await _failures(fixtures.button_trail)
 	if fixtures.has("v3_mismatched_mittens"):
 		await _failures(fixtures.v3_mismatched_mittens)
+	var hero_id := "v3_seamstress_thread_cart"
+	_check(fixtures.has(hero_id), "hero paid/Leave/refusal witness exists")
+	if fixtures.has(hero_id):
+		await _failures(fixtures[hero_id])
+		await _hero_leave(fixtures[hero_id], hero_id)
 	_check(gold_purchases > 0, "real generic sales fund real gold-cost choices")
 	_check(randi() == global_next, "all selection, choices and rejections preserve global RNG")
 	app.free()
