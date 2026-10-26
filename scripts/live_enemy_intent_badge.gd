@@ -91,6 +91,13 @@ const POLICY_DESCRIPTIONS := {
 	"exposed": "prioritises an Exposed living hero",
 	"random": "uses the run-seeded target choice",
 }
+## Passive contact rules are supplementary help, never a second announced action.
+## These are deliberately conditional: Guard can change the recipient and Block can
+## absorb the entire hit. An announced Bleed debuff is a separate action.
+const CONTACT_HELP := {
+	"drain": "Drain: Only after this living enemy's confirmed attack removes HP from the actual recipient (after Guard redirection and hero Block), heal this enemy by the HP actually lost, up to its missing HP. Fully Blocked hits, skipped attacks, slain sources and previews cannot heal it.",
+	"bleed_on_attack": "Bleeding Sting: Only after this living enemy's confirmed attack removes HP from the actual recipient (after Guard redirection and hero Block), apply Bleed 1 to that recipient. Fully Blocked hits, skipped attacks, slain sources and previews cause no sting. This passive is separate from an announced Bleed debuff.",
+}
 
 
 static func rank_caption(pos: int) -> String:
@@ -440,7 +447,8 @@ static func load_icon_texture(path: String) -> Texture2D:
 
 
 func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
-		policy: String = "", source_enrage_stacks: int = -1) -> void:
+		policy: String = "", source_enrage_stacks: int = -1,
+		contact_traits: Dictionary = {}) -> void:
 	# Never affect or advance the scheduler: the caller passes a copied announcement.
 	# Only targeted, active, authored actions receive the small policy tag.
 	policy_cue = ""
@@ -533,6 +541,11 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		tip = "No action."
 	if not policy_cue.is_empty() and POLICY_DESCRIPTIONS.has(policy):
 		tip += "\nTarget policy (%s): %s." % [policy_cue.to_upper(), POLICY_DESCRIPTIONS[policy]]
+	if not slain:
+		for keyword in ["drain", "bleed_on_attack"]:
+			var enabled: Variant = contact_traits.get(keyword, false)
+			if enabled is bool and enabled == true:
+				tip += "\nPassive (not the announced action): " + String(CONTACT_HELP[keyword])
 	tooltip_text = tip
 	# A policy ticket shares this same sewn band, so the displayed action switches to its
 	# measured compact form; the tooltip above keeps the full amount, target and rule.

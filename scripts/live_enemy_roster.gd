@@ -106,6 +106,8 @@ var _badges: Array[LiveEnemyIntentBadge] = []
 var _thorns_tags: Array[PanelContainer] = []
 ## One read-only, enemy-slot-bound status plaque per mounted puppet.
 var _status_tags: Array[PanelContainer] = []
+## Identity admitted at mounting, not a mutable actor ID borrowed from a later fight.
+var _admitted_ids: Array[String] = []
 const STATUS_NAMES := ["bleed", "weak", "exposed", "tangled", "riposte"]
 var battle_row: HBoxContainer
 var _heroes: HBoxContainer
@@ -1679,6 +1681,7 @@ func _sync_battle() -> void:
 	rows.add_theme_constant_override("separation", 8)
 	panel.add_child(rows)
 	for enemy in enemies.get_enemies():
+		_admitted_ids.append(enemy.id)
 		var column := VBoxContainer.new()
 		column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1847,9 +1850,20 @@ func _make_status_tag(position: int) -> PanelContainer:
 	return tag
 
 
+## Two strictly boolean authored contact passives; the live view separately authenticates
+## which current actor record it may pass here. Never coerce a string or a number.
+static func _contact_traits(enemy: Dictionary) -> Dictionary:
+	var result := {}
+	for keyword in ["drain", "bleed_on_attack"]:
+		var flag: Variant = enemy.get(keyword, false)
+		if flag is bool and flag == true:
+			result[keyword] = true
+	return result
+
+
 ## All displayed names, stacks and explanatory help come from the same live record.
 ## A malformed optional field is simply empty; rendering never normalizes gameplay data.
-func _status_copy(enemy: Dictionary) -> Dictionary:
+func _status_copy(enemy: Dictionary, contact_traits: Dictionary = {}) -> Dictionary:
 	var source: Variant = enemy.get("statuses", {})
 	var visible: Array[String] = []
 	var help: Array[String] = []
@@ -1883,6 +1897,13 @@ func _status_copy(enemy: Dictionary) -> Dictionary:
 		help.append("Enrage %d/%d: +%d outgoing attack power. Gain one stack per confirmed positive-damage hit (even through Block), max 3; +2 attack per stack before Weak/Exposed, hero Guard and Block." % [
 			stacks, CombatEnemyKeywordRules.ENRAGE_MAX_STACKS,
 			stacks * CombatEnemyKeywordRules.ENRAGE_ATTACK_BONUS_PER_STACK])
+	var passive_row: Array[String] = []
+	for keyword in ["drain", "bleed_on_attack"]:
+		if contact_traits.get(keyword, false) == true:
+			passive_row.append("Drain" if keyword == "drain" else "Bleeding Sting")
+			help.append(String(LiveEnemyIntentBadge.CONTACT_HELP[keyword]))
+	if not passive_row.is_empty():
+		visible.append("  ·  ".join(passive_row))
 	if visible.is_empty():
 		return {}
 	return {"caption": "\n".join(visible), "help": "\n".join(help)}
@@ -1969,8 +1990,26 @@ func _refresh() -> void:
 			tag.show()
 		else:
 			tag.hide()
+		var badge := _badges[index]
+		var action: Dictionary = announcements.get(position, {})
+		var live_source: bool = position == index + 1 and enemy.get("hp") is int \
+			and enemy["hp"] > 0 and enemies == app.enemies and _battle == app.battle_view \
+			and roster.size() == _badges.size() and badge.source_position == position \
+			and action.get("enemy_position") == position
+		# Contact passives are allowed only from this current admitted battle flow,
+		# its weighted scheduler and the puppet bound to the same actual actor ID.
+		# A stale slot, replaced roster, closed fight or unbound preview gets no trait.
+		var puppet := _puppets[CombatParty.PARTY_SIZE + index] as Puppet
+		var trusted_contact: bool = live_source and unravel != null \
+			and app.enemy_intents != null and app.enemy_intents.is_bound() \
+			and app.enemy_intents._enemies == enemies \
+			and enemy.get("id") is String and not String(enemy["id"]).is_empty() \
+			and puppet.actor_id == enemy["id"] \
+			and _admitted_ids.size() == roster.size() \
+			and _admitted_ids[index] == enemy["id"]
+		var contact_traits: Dictionary = _contact_traits(enemy) if trusted_contact else {}
 		var status_tag := _status_tags[index]
-		var status_copy: Dictionary = _status_copy(enemy) if show_hazard or (
+		var status_copy: Dictionary = _status_copy(enemy, contact_traits) if show_hazard or (
 			position == index + 1 and enemy.get("hp") is int and enemy["hp"] > 0
 			and enemies == app.enemies and _battle == app.battle_view) else {}
 		var status_label := status_tag.get_node("Caption") as Label
@@ -1980,24 +2019,15 @@ func _refresh() -> void:
 		var pending := false
 		if unravel != null and not enemies.is_slain(position):
 			pending = unravel.get_snapshot(position).get("skip_pending", false)
-		# A read-only tag only for the actual battle-bound weighted scheduler,
-		# with one original source per badge. Legacy fixtures keep their old caption.
+		# Target policy and full action wording are unchanged by a contact passive.
 		var policy := ""
-		var action: Dictionary = announcements.get(position, {})
-		if unravel != null and app.enemy_intents != null and app.enemy_intents.is_bound() \
-				and enemies == app.enemies and _battle == app.battle_view \
-				and roster.size() == _badges.size() and position == index + 1 \
-				and _badges[index].source_position == position \
-				and action.get("enemy_position") == position:
+		if live_source and unravel != null and app.enemy_intents != null \
+				and app.enemy_intents.is_bound():
 			policy = CombatEnemyIntents.policy_for(enemies, position)
-		var badge := _badges[index]
-		_place_intent_ticket(badge.get_parent() as Puppet, badge)
-		var live_source: bool = position == index + 1 and enemy.get("hp") is int \
-			and enemy["hp"] > 0 and enemies == app.enemies and _battle == app.battle_view \
-			and roster.size() == _badges.size() and badge.source_position == position \
-			and action.get("enemy_position") == position
+		_place_intent_ticket(puppet, badge)
 		var enrage_stacks := _enrage_stacks(enemy) if live_source else -1
-		badge.show_intent(action, enemies.is_slain(position), pending, policy, enrage_stacks)
+		badge.show_intent(action, enemies.is_slain(position), pending, policy,
+			enrage_stacks, contact_traits)
 		if status_tag.visible:
 			_place_status_tag(_puppets[CombatParty.PARTY_SIZE + index] as Puppet,
 				status_tag, tag, badge)
@@ -2249,6 +2279,7 @@ func _clear() -> void:
 	_badges.clear()
 	_thorns_tags.clear()
 	_status_tags.clear()
+	_admitted_ids.clear()
 	if is_instance_valid(panel):
 		if panel.get_parent() != null:
 			panel.get_parent().remove_child(panel)
