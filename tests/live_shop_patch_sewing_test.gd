@@ -641,9 +641,17 @@ func _shop_fight_shop() -> void:
 	_check(app._peddler_wardrobe == bound and app.party_carryover._wardrobe == bound,
 		"second Shop adopts the identical wardrobe object after the rewarded Fight")
 	var synced: Dictionary = bound.get_snapshot()
+	# The route to the second Shop may pass a Rest or a healing Event, so the heroes the wardrobe must hold are the
+	# run's roster now: the same heroes in the same slots with the same max HP, none of them below their claimed HP.
+	var kept_roster: bool = app.run_heroes.size() == committed_heroes.size()
+	for i in range(mini(app.run_heroes.size(), committed_heroes.size())):
+		var now: Dictionary = app.run_heroes[i]
+		var then: Dictionary = committed_heroes[i]
+		kept_roster = kept_roster and now.id == then.id and now.max_hp == then.max_hp and now.hp >= then.hp
+	_check(kept_roster, "the route to the second Shop keeps the claimed roster and never lowers its HP")
 	_check(synced.gold == committed_gold and synced.scraps == app.run_scraps
 		and synced.cards == committed_deck and synced.owned == committed_owned
-		and synced.heroes == committed_heroes and synced.seed == sewn.seed
+		and synced.heroes == app.run_heroes and synced.seed == sewn.seed
 		and synced.rest_id == "",
 		"reward synchronises the bound wardrobe's exact gold, scraps, deck, ownership and heroes")
 	_check(app._peddler_context == app._sewing_context(), "the committed reward keeps every second-Shop action current")

@@ -19,6 +19,10 @@ func _initialize() -> void:
 	_test_needle_wasp_bleeding_sting()
 	_test_tough_normal_pair_live_catalog_and_bands()
 	_test_tough_normal_pair_phase_actions()
+	_test_crusher_harrier_doll_catalog_records()
+	_test_crusher_harrier_doll_seeded_announcements()
+	_test_crusher_harrier_doll_phase_actions()
+	_test_thistle_patch_doll_thorns()
 	_test_negative_fixtures()
 	if failures.is_empty():
 		print("v3_normal_enemy_catalog_test: PASS (", checks, " checks)")
@@ -919,7 +923,7 @@ func _alternative_shape_is_exact(raw: Variant) -> bool:
 		return false
 	var expected: Array = []
 	match String(raw.get("type", "")):
-		"attack", "snip_block":
+		"attack", "snip_block", "block":
 			expected = ["amount", "type", "weight"]
 		"shove":
 			expected = ["amount", "direction", "type", "weight"]
@@ -1842,3 +1846,470 @@ func _test_tough_normal_pair_phase_actions() -> void:
 		_check(slash_party.get_hero(1).get("hp") == 40
 			and slash_party.get_hero(2).get("hp") == 30,
 			"the Wraith slash touches no other hero")
+
+## The three harder look-driven normals of this V3-2 batch. Identity, HP and the
+## exact weighted intent are author-set; the design fixes each foe's look and the
+## 5-9 floor-1-4 normal attack band, not the individual weights. These records are
+## catalog content only: no encounter pool, floor band or route wiring is claimed.
+func _crusher_harrier_doll_expected() -> Dictionary:
+	return {
+		"clothespin_crusher": {"id": "clothespin_crusher", "name": "Clothespin Crusher",
+			"max_hp": 30, "art_path": "res://assets/paper/enemies/clothespin_crusher.png",
+			"intent": {"target": "front", "actions": [
+				{"type": "snip_block", "amount": 0, "weight": 2},
+				{"type": "attack", "amount": 8, "weight": 3},
+				{"type": "block", "amount": 7, "weight": 1}]}},
+		"crochet_hook_harrier": {"id": "crochet_hook_harrier",
+			"name": "Crochet Hook Harrier",
+			"max_hp": 26, "art_path": "res://assets/paper/enemies/crochet_hook_harrier.png",
+			"intent": {"target": "front", "actions": [
+				{"type": "shove", "amount": 0, "direction": -1, "weight": 2},
+				{"type": "attack", "amount": 7, "weight": 3},
+				{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1}]}},
+		"thistle_patch_doll": {"id": "thistle_patch_doll", "name": "Thistle Patch Doll",
+			"max_hp": 28, "thorns": 2,
+			"art_path": "res://assets/paper/enemies/thistle_patch_doll.png",
+			"intent": {"target": "front", "actions": [
+				{"type": "block", "amount": 8, "weight": 2},
+				{"type": "attack", "amount": 6, "weight": 3}]}}
+	}
+
+## Per-ID catalog validation for the appended batch: unique occurrence, exact
+## name/HP/art/target/weights and named earlier entries only. No total, ordered
+## ID list or guessed insertion index is asserted, so parallel appends stay legal.
+func _test_crusher_harrier_doll_catalog_records() -> void:
+	var parsed := _load_parsed()
+	var ids: Array[String] = []
+	for record in parsed:
+		if record is Dictionary:
+			ids.append(String(record.get("id", "")))
+	# Earlier normals named by the brief keep their exact authored records.
+	var earlier := _old_expected()
+	earlier.merge(_new_expected())
+	earlier.merge(_trio_expected())
+	earlier.merge(_harder_expected())
+	for named in ["scissor_crab", "zipper_snake", "pincushion_hedgehog", "moth_swarm",
+			"needle_wasp", "shearwing_mantis", "spoolback_hound", "inkbrush_imp"]:
+		_check(ids.has(named), "named earlier normal persists: " + named)
+		_check(_norm(_find(parsed, named)) == _norm(earlier[named]),
+			"named earlier normal record is unchanged: " + named)
+	var expected := _crusher_harrier_doll_expected()
+	for new_id in expected:
+		var occurrences := 0
+		for present in ids:
+			if present == String(new_id):
+				occurrences += 1
+		_check(occurrences == 1, "new normal is authored exactly once: " + String(new_id))
+		var record := _find(parsed, String(new_id))
+		_check(not record.is_empty(), "new normal record present: " + String(new_id))
+		if record.is_empty():
+			continue
+		_check(record.get("name") == expected[new_id]["name"],
+			"new normal keeps its exact authored name: " + String(new_id))
+		_check(record.get("max_hp") == expected[new_id]["max_hp"],
+			"new normal keeps its authored max HP: " + String(new_id))
+		_check(record.get("art_path") == expected[new_id]["art_path"]
+			and String(record.get("art_path", "")).begins_with(
+				"res://assets/paper/enemies/"),
+			"new normal keeps its placeholder-swappable art path: " + String(new_id))
+		_check(_norm(record) == _norm(expected[new_id]),
+			"new normal has its exact authored fields: " + String(new_id))
+		var spec: Variant = record.get("intent")
+		_check(spec is Dictionary and spec.get("target") == "front",
+			"new normal keeps its front target policy: " + String(new_id))
+		_check(not CombatEnemyIntents._weighted_slot(1, spec).is_empty(),
+			"new normal intent validates as a weighted slot: " + String(new_id))
+		var actions: Variant = spec.get("actions") if spec is Dictionary else null
+		_check(actions is Array and not actions.is_empty(),
+			"new normal authors weighted action alternatives: " + String(new_id))
+		if not actions is Array:
+			continue
+		_check(actions.size() == expected[new_id]["intent"]["actions"].size(),
+			"new normal keeps its authored alternative count: " + String(new_id))
+		for raw in actions:
+			_check(CombatEnemyIntents.weighted_action(raw) != {},
+				"new alternative validates through the weighted scheduler: %s %s"
+					% [new_id, str(raw)])
+			_check(_alternative_shape_is_exact(raw),
+				"new alternative uses supported mechanics and exact fields: %s %s"
+					% [new_id, str(raw)])
+			_check(int(raw.get("weight", 0)) > 0,
+				"new alternative keeps a positive authored weight: " + String(new_id))
+			if raw is Dictionary and raw.get("type") == "attack":
+				var amount := int(raw.get("amount", 0))
+				_check(amount >= 5 and amount <= 9,
+					"new normal attack stays inside the authored 5-9 band: " + String(new_id))
+	# Look-driven identity: every silhouette acts exactly the way it looks.
+	var crusher := _find(parsed, "clothespin_crusher")
+	_check(_has_alternative(crusher, "snip_block", 0)
+		and _has_alternative(crusher, "attack", 8)
+		and _has_alternative(crusher, "block", 7),
+		"Clothespin Crusher snips Block away, bites for 8 or clamps for 7 Block")
+	var harrier := _find(parsed, "crochet_hook_harrier")
+	_check(_has_alternative(harrier, "shove", 0)
+		and _has_alternative(harrier, "attack", 7)
+		and _has_alternative(harrier, "debuff", 1, "exposed"),
+		"Crochet Hook Harrier hooks a hero forward, strikes for 7 or marks Exposed 1")
+	_check(int(_authored_alternative(harrier, "shove", 0).get("direction", 0)) == -1,
+		"the Harrier's oversized hook pulls toward the front rather than pushing")
+	var doll := _find(parsed, "thistle_patch_doll")
+	_check(_has_alternative(doll, "block", 8) and _has_alternative(doll, "attack", 6),
+		"Thistle Patch Doll reinforces for 8 Block or swipes for 6")
+	_check(doll.get("thorns") is int and doll.get("thorns") == 2,
+		"Thistle Patch Doll exposes its authored Thorns 2 as a genuine int")
+
+## A genuine seeded three-enemy CombatEnemies roster of the appended records,
+## bound to the real weighted scheduler over a living Warden/Seamstress/Tinker
+## party. Forced alternatives come from the parsed records, never from guessed
+## seeds, so each authored move is announced and checked on its own.
+func _test_crusher_harrier_doll_seeded_announcements() -> void:
+	var parsed := _load_parsed()
+	var selected: Array = []
+	for id in ["clothespin_crusher", "crochet_hook_harrier", "thistle_patch_doll"]:
+		var record := _find(parsed, id)
+		_check(not record.is_empty(), "authentic new normal source present: " + id)
+		selected.append(record)
+	_check(selected.size() == 3 and not selected.has({}),
+		"precondition: all three authentic records loaded")
+	if selected.size() != 3 or selected.has({}):
+		return
+	var party := _party()
+	_check(party.is_valid() and party.get_heroes().size() == CombatParty.PARTY_SIZE,
+		"precondition: a valid three-hero CombatParty")
+	for position in range(1, CombatParty.PARTY_SIZE + 1):
+		_check(party.get_hero(position).get("hp", 0) > 0,
+			"precondition: hero slot %d is living" % position)
+	var first := _bind(774411, selected)
+	var second := _bind(774411, selected)
+	_check(first.get("ok") == true and second.get("ok") == true,
+		"the three new normals bind on identical seeds")
+	_check(first.scheduler.is_bound() and second.scheduler.is_bound(),
+		"both seeded bindings report the weighted mode")
+	var first_intents: Array = first.scheduler.get_intents()
+	var second_intents: Array = second.scheduler.get_intents()
+	_check(first_intents.size() == 3, "one announcement per new normal")
+	_check(first_intents == second_intents,
+		"same-seed first-turn announcements replay identically")
+	_check(first.rng.state == second.rng.state,
+		"same-seed bindings leave matching RNG state")
+	var state_before: int = first.rng.state
+	_check(first.scheduler.get_intents() == first_intents and first.rng.state == state_before,
+		"reading bound announcements neither changes them nor consumes RNG")
+	for index in range(first_intents.size()):
+		var announced: Dictionary = first_intents[index]
+		var source: Dictionary = selected[index]
+		_check(announced.get("enemy_position") == index + 1,
+			"announcement keeps its source slot: " + String(source.get("id", "")))
+		_check(_is_authored_alternative(source, announced),
+			"announcement is one of the authored alternatives: "
+				+ String(source.get("id", "")))
+		if announced.get("type") in ["attack", "debuff", "snip_block"]:
+			_check(announced.get("target_position") == 1,
+				"front policy announces the front hero: " + String(source.get("id", "")))
+		if announced.get("type") == "shove":
+			_check(announced.get("target_position") == 2
+				and announced.get("direction") == -1,
+				"the Harrier pull announces the middle hero dragged forward")
+	# Every authored alternative is forced from the genuine record, so no seed
+	# can hide one behind a lucky roll and production weights stay untouched.
+	var forced := [
+		{"id": "clothespin_crusher",
+			"action": {"type": "snip_block", "amount": 0, "weight": 1}},
+		{"id": "clothespin_crusher",
+			"action": {"type": "attack", "amount": 8, "weight": 1}},
+		{"id": "clothespin_crusher",
+			"action": {"type": "block", "amount": 7, "weight": 1}},
+		{"id": "crochet_hook_harrier",
+			"action": {"type": "shove", "amount": 0, "direction": -1, "weight": 1}},
+		{"id": "crochet_hook_harrier",
+			"action": {"type": "attack", "amount": 7, "weight": 1}},
+		{"id": "crochet_hook_harrier",
+			"action": {"type": "debuff", "amount": 1, "status": "exposed", "weight": 1}},
+		{"id": "thistle_patch_doll",
+			"action": {"type": "block", "amount": 8, "weight": 1}},
+		{"id": "thistle_patch_doll",
+			"action": {"type": "attack", "amount": 6, "weight": 1}}]
+	for case in forced:
+		var record := _find(parsed, String(case.id))
+		_check(not record.is_empty(), "forced alternative source present: " + String(case.id))
+		if record.is_empty():
+			continue
+		var forced_record: Dictionary = record.duplicate(true)
+		forced_record["intent"] = {"target": "front", "actions": [case.action]}
+		var forced_enemies := CombatEnemies.new([forced_record])
+		var forced_rng := RandomNumberGenerator.new()
+		forced_rng.seed = 774411
+		var forced_scheduler := CombatEnemyIntents.new(
+			[_enemy(1, [{"type": "block", "amount": 1}])])
+		var did_bind := forced_enemies.is_valid() \
+			and forced_scheduler.bind_battle(forced_enemies, party, forced_rng)
+		_check(did_bind, "forced alternative binds: %s %s" % [case.id, str(case.action)])
+		if not did_bind:
+			continue
+		var announced: Dictionary = forced_scheduler.get_intents()[0]
+		_check(announced.get("type") == case.action.type
+			and int(announced.get("amount", -1)) == int(case.action.amount),
+			"forced alternative announces its authored effect: %s %s"
+				% [case.id, str(case.action)])
+		if case.action.has("status"):
+			_check(announced.get("status") == case.action.status,
+				"forced debuff keeps its authored status: " + String(case.action.status))
+		if announced.get("type") == "shove":
+			_check(announced.get("target_position") == 2
+				and announced.get("direction") == -1,
+				"forced Harrier pull announces hero 2 toward the front")
+			_check(CombatEnemyIntents.shove_is_legal(party, 2, -1),
+				"precondition: the announced middle-to-front pull is legal")
+		elif announced.get("type") in ["attack", "debuff", "snip_block"]:
+			_check(announced.get("target_position") == 1,
+				"forced alternative honours the front policy: " + String(case.id))
+
+## The genuine announced special actions of the appended batch, executed by the
+## real CombatEnemyPhase: the Crusher clamp snips Block without HP loss, and the
+## Harrier hook drags the middle hero forward while exposing a living target.
+func _test_crusher_harrier_doll_phase_actions() -> void:
+	var parsed := _load_parsed()
+	var crusher := _find(parsed, "clothespin_crusher")
+	var harrier := _find(parsed, "crochet_hook_harrier")
+	_check(not crusher.is_empty() and not harrier.is_empty(),
+		"authentic Crusher and Harrier records present for the phase checks")
+	if crusher.is_empty() or harrier.is_empty():
+		return
+	# Clothespin Crusher: the giant clamp snips the front hero's Block cleanly.
+	var snip_party := _party()
+	_check(snip_party.gain_block(1, 5),
+		"precondition: the front hero really holds five Block")
+	_check(snip_party.get_hero(1).get("hp") == 40
+		and snip_party.get_hero(1).get("block") == 5
+		and snip_party.get_hero(2).get("block") == 0,
+		"precondition: only the front hero owns Block and everyone is at full HP")
+	var snip := _force_normal_alternative(crusher,
+		_authored_alternative(crusher, "snip_block", 0), snip_party)
+	if not snip.is_empty():
+		_check(snip.intents.size() == 1 and snip.intents[0].get("type") == "snip_block"
+			and int(snip.intents[0].get("amount", -1)) == 0
+			and snip.intents[0].get("target_position") == 1,
+			"Crusher snip announces a zero-amount Block strip on the front hero")
+		var receipt := CombatEnemyPhase.new().execute_phase(snip_party, snip.enemies,
+			snip.intents, null, true)
+		_check(receipt.get("ok") == true and receipt.get("events", []).size() == 1,
+			"the announced Crusher snip resolves through a real CombatEnemyPhase")
+		if receipt.get("ok", false) and receipt.get("events", []).size() == 1:
+			var event: Dictionary = receipt["events"][0]
+			_check(event == {"type": "snip_block", "enemy_position": 1, "applied": true,
+				"target_position": 1},
+				"the phase receipt keeps the existing applied snip shape")
+		_check(snip_party.get_hero(1).get("block") == 0
+			and snip_party.get_hero(1).get("hp") == 40,
+			"Crusher snip leaves the front hero at zero Block and unchanged HP")
+		_check(snip_party.get_hero(2).get("hp") == 30 and snip_party.get_hero(2).get("block") == 0
+			and snip_party.get_hero(3).get("hp") == 26,
+			"Crusher snip never touches the other heroes")
+	# Crochet Hook Harrier: the oversized hook snags the middle hero forward.
+	var pull_party := _party()
+	_check(pull_party.get_hero(1).get("id") == "warden"
+		and pull_party.get_hero(2).get("id") == "seamstress"
+		and pull_party.get_hero(3).get("id") == "tinker",
+		"precondition: Warden, Seamstress and Tinker fill slots 1-3")
+	_check(pull_party.apply_damage(1, 10) and pull_party.gain_block(1, 4)
+		and pull_party.apply_damage(2, 4) and pull_party.gain_block(2, 2)
+		and pull_party.apply_damage(3, 6),
+		"precondition: every hero carries distinct HP and Block")
+	pull_party._heroes[0]["statuses"] = {"weak": 2}
+	pull_party._heroes[1]["statuses"] = {"exposed": 1}
+	pull_party._heroes[2]["statuses"] = {"bleed": 3}
+	var before := {}
+	for hero in pull_party.get_heroes():
+		before[hero.id] = hero.duplicate(true)
+	_check(CombatEnemyIntents.shove_is_legal(pull_party, 2, -1),
+		"precondition: the middle-to-front pull is unobstructed and legal")
+	var pull := _force_normal_alternative(harrier,
+		_authored_alternative(harrier, "shove", 0), pull_party)
+	if not pull.is_empty():
+		_check(pull.intents.size() == 1 and pull.intents[0].get("type") == "shove"
+			and pull.intents[0].get("enemy_position") == 1
+			and pull.intents[0].get("target_position") == 2
+			and pull.intents[0].get("direction") == -1,
+			"the bound Harrier announces hero 2 pulled toward the front slot")
+		var committed: int = pull.rng.state
+		_check(pull.scheduler.get_intents() == pull.intents and pull.rng.state == committed,
+			"the genuine Harrier pull replays without spending run RNG")
+		var receipt := CombatEnemyPhase.new().execute_phase(pull_party, pull.enemies,
+			pull.intents, null, true)
+		_check(receipt.get("ok") == true and receipt.get("events", []).size() == 1,
+			"the genuine Harrier pull resolves through a real CombatEnemyPhase")
+		if receipt.get("ok", false) and receipt.get("events", []).size() == 1:
+			var event: Dictionary = receipt["events"][0]
+			_check(event.get("type") == "shove" and event.get("enemy_position") == 1
+				and event.get("target_position") == 2 and event.get("direction") == -1
+				and event.get("applied") == true,
+				"the phase applies exactly the authored -1 middle-to-front pull")
+		_check(pull_party.get_hero(1).get("id") == "seamstress"
+			and pull_party.get_hero(1).get("position") == 1,
+			"the Harrier hook drags Seamstress into the front slot")
+		_check(pull_party.get_hero(2).get("id") == "warden"
+			and pull_party.get_hero(2).get("position") == 2,
+			"Warden falls back to the middle slot")
+		_check(pull_party.get_hero(3).get("id") == "tinker"
+			and pull_party.get_hero(3).get("position") == 3,
+			"Tinker stays untouched in the back slot")
+		var after := {}
+		for hero in pull_party.get_heroes():
+			after[hero.id] = hero
+		for id in ["warden", "seamstress", "tinker"]:
+			_check(after.has(id) and before.has(id),
+				"the pull keeps the original actor " + id)
+			if not after.has(id) or not before.has(id):
+				continue
+			_check(after[id].get("hp") == before[id].get("hp")
+				and after[id].get("block") == before[id].get("block")
+				and after[id].get("statuses", {}) == before[id].get("statuses", {}),
+				"the pull preserves " + id + " HP, Block and statuses")
+	# Exposed 1 lands on the living front hero the policy really names.
+	var expose_party := _party()
+	_check(CombatEnemyIntents.priority_target(expose_party, "front") == 1
+		and not expose_party.is_downed(1),
+		"precondition: the front policy target is living")
+	var expose := _force_normal_alternative(harrier,
+		_authored_alternative(harrier, "debuff", 1), expose_party)
+	if not expose.is_empty():
+		_check(expose.intents.size() == 1 and expose.intents[0].get("type") == "debuff"
+			and expose.intents[0].get("status") == "exposed"
+			and int(expose.intents[0].get("amount", -1)) == 1
+			and expose.intents[0].get("target_position") == 1,
+			"the Harrier marks the living front hero with Exposed 1")
+		var receipt := CombatEnemyPhase.new().execute_phase(expose_party, expose.enemies,
+			expose.intents, null, true)
+		_check(receipt.get("ok") == true
+			and receipt.get("events", [{}])[0].get("applied") == true,
+			"the announced Exposed 1 resolves through a real CombatEnemyPhase")
+		_check(expose_party.get_hero(1).get("statuses", {}).get("exposed", 0) == 1,
+			"Exposed 1 lands on the living policy target")
+		_check(expose_party.get_hero(1).get("hp") == 40,
+			"the Exposed mark costs the target no HP")
+		for position in [2, 3]:
+			_check(expose_party.get_hero(position).get("statuses", {}).get("exposed", 0) == 0,
+				"unmarked hero %d gains no Exposed" % position)
+
+## The Thistle Patch Doll's genuine parsed integer-Thorns definition driven
+## through the real held-card CombatAttackCards route: a confirmed hit retaliates
+## against the card owner's Block before HP, and an unthorned or rejected hit
+## never does. Only Thorns 2 is authored here; no shared combat rules change.
+func _test_thistle_patch_doll_thorns() -> void:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(PATH))
+	_check(raw is Array, "raw enemy catalog JSON parses for the Doll Thorns precondition")
+	var raw_doll := _find(raw if raw is Array else [], "thistle_patch_doll")
+	_check(raw_doll.get("thorns") is float and raw_doll.get("thorns") == 2.0,
+		"precondition: the Doll's authored Thorns arrives from JSON as a double")
+	var parsed_doll := _find(_load_parsed(), "thistle_patch_doll")
+	_check(parsed_doll.get("thorns") is int,
+		"the strict catalog parser normalizes the Doll's Thorns to a genuine int")
+	var answer := _assemble(["thistle_patch_doll", "moth_swarm"])
+	_check(answer.get("ok") == true,
+		"the Doll roster assembles through the genuine typed-roster bridge")
+	if not answer.get("ok", false):
+		return
+	var enemies: Variant = answer.get("enemies")
+	_check(enemies is CombatEnemies and enemies.is_valid()
+		and enemies.get_enemies().size() == 2, "the bridge builds two real actors")
+	if not enemies is CombatEnemies or not enemies.is_valid():
+		return
+	var doll: Dictionary = enemies.get_enemy(1)
+	_check(doll.get("id") == "thistle_patch_doll" and doll.get("max_hp") == 28
+		and doll.get("hp") == 28 and doll.get("block") == 0,
+		"typed Doll starts at its authored 28 HP and zero Block")
+	_check(doll.get("thorns") is int and doll.get("thorns") == 2,
+		"typed roster exposes the Doll's Thorns as a genuine int 2")
+	_check(not enemies.get_enemy(2).has("thorns"),
+		"precondition: the ordinary Moth Swarm carries no Thorns metadata")
+	var party := _party()
+	var deck := _attack_deck("warden_strike")
+	_check(party.gain_block(1, 1), "Warden really owns one Block before the confirmed hit")
+	var party_before := party.get_heroes()
+	var enemies_before: Array = enemies.get_enemies()
+	var attacks := CombatAttackCards.new()
+	var forecast := attacks.forecast_attack(deck, party, enemies, "warden_strike")
+	_check(forecast.get("playable") == true and forecast.get("hits", []).size() == 2
+		and {"position": 1, "damage": 6} in forecast.get("hits", []),
+		"the real held Strike forecast offers the Doll at six damage")
+	_check(party.get_heroes() == party_before and enemies.get_enemies() == enemies_before,
+		"a pure forecast never triggers the Doll's Thorns nor damages any actor")
+	var result := attacks.play_attack(deck, party, enemies, "warden_strike", 1)
+	_check(result.get("ok") == true and result.get("hits", []).size() == 1,
+		"the real held-card attack against the Doll commits")
+	var hit: Dictionary = result.get("hits", [{}])[0]
+	_check(hit.get("position") == 1 and hit.get("damage") == 6
+		and hit.get("block_absorbed") == 0 and hit.get("hp_loss") == 6,
+		"the confirmed-hit receipt keeps the authored six damage and old schema")
+	_check(enemies.get_enemy(1).get("hp") == 22,
+		"the Doll takes the confirmed six damage")
+	var warden: Dictionary = party.get_hero(1)
+	_check(warden.get("block") == 0 and warden.get("hp") == 39,
+		"Thorns 2 consumes Warden's one Block and then one HP")
+	_check(party.get_hero(2).get("hp") == 30 and party.get_hero(2).get("block") == 0
+		and party.get_hero(3).get("hp") == 26 and party.get_hero(3).get("block") == 0,
+		"Thorns retaliation lands only on the attacking hero")
+	# Block fully absorbing the retaliation protects the attacker's HP.
+	var absorbed_party := _party()
+	var absorbed_deck := _attack_deck("warden_strike")
+	_check(absorbed_party.gain_block(1, 2),
+		"precondition: Warden really holds two Block")
+	var absorbed_answer := _assemble(["thistle_patch_doll"])
+	_check(absorbed_answer.get("ok") == true,
+		"single Doll roster assembles for the absorbed retaliation")
+	if not absorbed_answer.get("ok", false):
+		return
+	var absorbed_enemies: CombatEnemies = absorbed_answer["enemies"]
+	var absorbed := CombatAttackCards.new().play_attack(absorbed_deck, absorbed_party,
+		absorbed_enemies, "warden_strike", 1)
+	_check(absorbed.get("ok") == true and absorbed_party.get_hero(1).get("block") == 0
+		and absorbed_party.get_hero(1).get("hp") == 40,
+		"two Block absorb the whole Thorns 2 retaliation and leave Warden HP untouched")
+	_check(absorbed_enemies.get_enemy(1).get("hp") == 22,
+		"the absorbed retaliation still follows the confirmed six damage")
+	# Control: a confirmed hit on the non-thorned authored Moth Swarm never
+	# retaliates, so a green Doll hit cannot merely echo shared damage.
+	var control_party := _party()
+	var control_deck := _attack_deck("warden_strike")
+	var control_answer := _assemble(["thistle_patch_doll", "moth_swarm"])
+	_check(control_answer.get("ok") == true,
+		"control roster assembles for the no-Thorns hit")
+	if not control_answer.get("ok", false):
+		return
+	var control_enemies: CombatEnemies = control_answer["enemies"]
+	var control := CombatAttackCards.new().play_attack(control_deck, control_party,
+		control_enemies, "warden_strike", 2)
+	_check(control.get("ok") == true and control_party.get_hero(1).get("hp") == 40
+		and control_party.get_hero(1).get("block") == 0
+		and control_enemies.get_enemy(2).get("hp") == 15,
+		"a confirmed hit on the unthorned Moth Swarm costs the attacker nothing")
+	# Control: a rejected wrong-target attack is uncommitted, so it triggers no
+	# Thorns and changes no hero, enemy, hand, discard pile or energy.
+	var rejected_party := _party()
+	var rejected_deck := _attack_deck("warden_strike")
+	var rejected_answer := _assemble(["thistle_patch_doll"])
+	_check(rejected_answer.get("ok") == true,
+		"single Doll roster assembles for the rejection control")
+	if not rejected_answer.get("ok", false):
+		return
+	var rejected_enemies: CombatEnemies = rejected_answer["enemies"]
+	var hand_before: Array[String] = rejected_deck.hand.duplicate()
+	var discard_before: Array[String] = rejected_deck.discard_pile.duplicate()
+	var rejected := CombatAttackCards.new().play_attack(rejected_deck, rejected_party,
+		rejected_enemies, "warden_strike", 3)
+	_check(rejected == {"ok": false, "hits": []}
+		and rejected_party.get_hero(1).get("hp") == 40
+		and rejected_party.get_hero(1).get("block") == 0
+		and rejected_enemies.get_enemy(1).get("hp") == 28
+		and rejected_deck.energy == 3,
+		"a rejected zero-hit attack never triggers Thorns and mutates nothing")
+	_check(rejected_deck.hand == hand_before
+		and rejected_deck.discard_pile == discard_before,
+		"the rejected attack leaves the real held card and discard pile unchanged")
+	# Malformed Thorns on this exact record still fails the catalog closed.
+	var malformed_doll := parsed_doll.duplicate(true)
+	malformed_doll["thorns"] = 2.5
+	_check(RunTypedBattleRoster._parse_catalog_text(
+		JSON.stringify([malformed_doll])).is_empty(),
+		"a non-integral Doll Thorns value rejects the whole catalog")
+
