@@ -106,7 +106,7 @@ func _ready() -> void:
 	wallet_label = _label("", Vector2(39, 68), Vector2(822, 32), 22, CREAM)
 	status_label = _label("", Vector2(39, 102), Vector2(822, 30), 18, CREAM)
 	for i in range(CARD_COUNT):
-		card_buttons.append(_button("", Vector2(39, 142 + i * 88), Vector2(822, 78), OXBLOOD, 18))
+		card_buttons.append(_button("", Vector2(39, 142 + i * 88), Vector2(822, 78), OXBLOOD, 20))
 	patch_button = _button("", Vector2(39, 406), Vector2(822, 78), TEAL, 20)
 	leave_button = _button(LEAVE_TEXT, Vector2(39, 498), Vector2(822, 58), TEAL, 24)
 	_wire_previews()

@@ -1101,7 +1101,7 @@ func _run() -> void:
 				# The routed, real panel now prints the independent catalog's
 				# name/energy/effect on two measured lines, preserving the
 				# quoted price and the complete tooltip rather than a bare ID.
-				expected_font = 18
+				expected_font = 20
 				var found := RunShopStockOffers._find_card_definition(String(offer.id),
 						RunShopStockOffers._peddler_catalogs())
 				var definition: Dictionary = found.get("def", {})
