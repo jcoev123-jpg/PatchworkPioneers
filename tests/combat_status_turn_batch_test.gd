@@ -11,6 +11,7 @@ func _initialize() -> void:
 	_test_three_owner_turns()
 	_test_downed_and_slain()
 	_test_replay_and_copy_isolation()
+	_test_tangled_and_riposte_batches()
 	_test_invalid_atomicity()
 	if failures.is_empty():
 		print("combat_status_turn_batch_test: PASS (", checks, " checks)")
@@ -25,6 +26,16 @@ func _check(condition: bool, message: String) -> void:
 	checks += 1
 	if not condition:
 		failures.append(message)
+
+
+## A rejected or partial batch has no actor at that index; return an impossible
+## placeholder record so the assertion reports a failure instead of a script error.
+func _actor_at(result: Dictionary, index: int) -> Dictionary:
+	var actors: Array = result.get("actors", [])
+	if index >= 0 and index < actors.size() and actors[index] is Dictionary:
+		return actors[index]
+	return {"id": "<missing>", "position": -1, "hp": -1, "block": -1,
+		"statuses": {"<missing>": -1}}
 
 
 func _party() -> CombatParty:
@@ -210,6 +221,165 @@ func _test_replay_and_copy_isolation() -> void:
 		"authoritative readers remain available after replay")
 
 
+## Tangled and Riposte already age in CombatStatuses; the detached batch must
+## carry them through real roster snapshots without owning the aging rules.
+func _test_tangled_and_riposte_batches() -> void:
+	var party := _party()
+	var enemies := _enemies()
+	_check(party.apply_damage(1, 4) and party.gain_block(2, 5),
+		"precondition: real damaged Warden and shielded Seamstress")
+	_check(enemies.gain_block(1, 3) and enemies.apply_damage(2, 2),
+		"precondition: real shielded enemy 1 and damaged enemy 2")
+	var live_heroes := party.get_heroes()
+	var live_foes := enemies.get_enemies()
+	var heroes := party.get_heroes()
+	var foes := enemies.get_enemies()
+	heroes[0]["statuses"] = {"tangled": 2, "riposte": 4}
+	heroes[1]["statuses"] = {"tangled": 1}
+	heroes[2]["statuses"] = {"riposte": 7}
+	foes[0]["statuses"] = {"tangled": 1}
+	foes[1]["statuses"] = {"tangled": 2, "riposte": 4}
+	var hero_before := heroes.duplicate(true)
+	var foe_before := foes.duplicate(true)
+	_check(heroes.size() == CombatParty.PARTY_SIZE and foes.size() == 2
+		and heroes[0]["hp"] == 36 and heroes[1]["block"] == 5,
+		"precondition: non-vacuous three-hero snapshot with real HP and Block")
+
+	var hero_tick := batch.tick_side("heroes", heroes)
+	_check(hero_tick["ok"] and hero_tick == _expected("heroes", hero_before),
+		"hero Tangled/Riposte batch equals direct CombatStatuses.end_owner_turn")
+	var hero_states: Array = []
+	for actor in hero_tick["actors"]:
+		hero_states.append(actor["statuses"])
+	_check(hero_states == [{"tangled": 1}, {}, {}],
+		"hero Tangled 2 ages to 1 while Tangled 1 and Riposte 4/7 expire completely")
+	_check(_actor_at(hero_tick, 0)["hp"] == 36 and _actor_at(hero_tick, 0)["block"] == 0
+		and _actor_at(hero_tick, 1)["block"] == 5,
+		"Tangled and Riposte deal no direct HP or Block damage at the owner turn end")
+	_check(hero_tick["events"] == [
+		{"side": "heroes", "position": 1, "id": "warden", "bleed_hp_loss": 0},
+		{"side": "heroes", "position": 2, "id": "seamstress", "bleed_hp_loss": 0},
+		{"side": "heroes", "position": 3, "id": "tinker", "bleed_hp_loss": 0}],
+		"hero events preserve side, canonical slot, ID and zero Bleed loss")
+	_check(_actor_at(hero_tick, 0)["id"] == "warden"
+		and _actor_at(hero_tick, 2)["id"] == "tinker"
+		and _actor_at(hero_tick, 2)["position"] == 3,
+		"hero Tangled/Riposte batch keeps roster order and positions")
+	_check(heroes == hero_before and foes == foe_before
+		and party.get_heroes() == live_heroes and enemies.get_enemies() == live_foes,
+		"hero Tangled/Riposte tick mutates no caller snapshot or live roster")
+
+	var foe_tick := batch.tick_side("enemies", foes)
+	_check(foe_tick["ok"] and foe_tick == _expected("enemies", foe_before),
+		"enemy Tangled/Riposte batch equals direct CombatStatuses.end_owner_turn")
+	var foe_states: Array = []
+	for actor in foe_tick["actors"]:
+		foe_states.append(actor["statuses"])
+	_check(foe_states == [{}, {"tangled": 1}],
+		"enemy Tangled 1 expires and Tangled 2 ages once while Riposte 4 clears")
+	_check(_actor_at(foe_tick, 0)["hp"] == 12 and _actor_at(foe_tick, 0)["block"] == 3
+		and _actor_at(foe_tick, 1)["hp"] == 10,
+		"enemy Tangled/Riposte tick leaves HP and Block exactly as they were")
+	_check(foe_tick["events"] == [
+		{"side": "enemies", "position": 1, "id": "ragling", "bleed_hp_loss": 0},
+		{"side": "enemies", "position": 2, "id": "guard_ragling", "bleed_hp_loss": 0}],
+		"enemy events preserve side, canonical slot, ID and zero Bleed loss")
+	_check(foes == foe_before and heroes == hero_before,
+		"enemy Tangled/Riposte tick mutates neither caller snapshot")
+
+	# One and three enemy slots accept the same statuses as the starter two.
+	for count in [1, 3]:
+		var definitions: Array = []
+		for index in range(count):
+			definitions.append({"id": "v3_batch_enemy_%d" % index, "max_hp": 12})
+		var roster := CombatEnemies.new(definitions)
+		_check(roster.is_valid() and roster.get_enemies().size() == count,
+			"precondition: real %d-slot enemy roster" % count)
+		var state := roster.get_enemies()
+		var fixtures: Array = [{"tangled": 2, "riposte": 4}, {"tangled": 1}, {"riposte": 4}]
+		var pristine := state.duplicate(true)
+		for index in range(count):
+			state[index]["statuses"] = fixtures[index].duplicate(true)
+		var before := state.duplicate(true)
+		var result := batch.tick_side("enemies", state)
+		_check(result["ok"] and result == _expected("enemies", before),
+			"%d-slot enemy batch equals direct rules with Tangled and Riposte" % count)
+		var expected_states: Array = [{"tangled": 1}, {}, {}]
+		for index in range(count):
+			_check(_actor_at(result, index)["statuses"] == expected_states[index],
+				"%d-slot enemy %d ages Tangled once and clears Riposte once" % [count, index + 1])
+			_check(_actor_at(result, index)["id"] == "v3_batch_enemy_%d" % index
+				and _actor_at(result, index)["position"] == index + 1
+				and _actor_at(result, index)["hp"] == 12,
+				"%d-slot enemy %d keeps ID, slot and HP" % [count, index + 1])
+		_check(state == before and roster.get_enemies() == pristine,
+			"%d-slot enemy Tangled/Riposte tick mutates no input or roster" % count)
+
+	# Mixed statuses: only the selected side ages, Bleed ignores Block, replay holds.
+	var mix_party := _party()
+	var mix_enemies := _enemies()
+	_check(mix_party.apply_damage(1, 4) and mix_party.gain_block(1, 8),
+		"precondition: real Warden at 36 HP behind 8 Block")
+	_check(mix_enemies.gain_block(1, 3) and mix_enemies.apply_damage(2, 2)
+		and mix_enemies.gain_block(2, 4),
+		"precondition: real enemy 1 Block and bleedable enemy 2 with Block")
+	var live_mixed_heroes := mix_party.get_heroes()
+	var live_mixed_foes := mix_enemies.get_enemies()
+	var mixed_heroes := mix_party.get_heroes()
+	var mixed_foes := mix_enemies.get_enemies()
+	mixed_heroes[0]["statuses"] = {"bleed": 2, "weak": 2, "exposed": 1, "tangled": 2,
+		"riposte": 4}
+	mixed_heroes[1]["statuses"] = {"tangled": 1, "riposte": 2}
+	mixed_heroes[2]["statuses"] = {"bleed": 1, "tangled": 3, "riposte": 6}
+	mixed_foes[0]["statuses"] = {"weak": 1, "tangled": 2, "riposte": 4}
+	mixed_foes[1]["statuses"] = {"bleed": 3, "exposed": 2, "riposte": 5}
+	var mixed_hero_before := mixed_heroes.duplicate(true)
+	var mixed_foe_before := mixed_foes.duplicate(true)
+	var first := batch.tick_side("heroes", mixed_heroes)
+	var second := batch.tick_side("heroes", mixed_heroes)
+	var foe_first := batch.tick_side("enemies", mixed_foes)
+	var foe_second := batch.tick_side("enemies", mixed_foes)
+	_check(first == second and foe_first == foe_second
+		and first == _expected("heroes", mixed_hero_before)
+		and foe_first == _expected("enemies", mixed_foe_before),
+		"mixed status batches equal direct rules and repeat identically")
+	_check(_actor_at(first, 0)["hp"] == 34 and _actor_at(first, 0)["block"] == 8
+		and _actor_at(first, 0)["statuses"] == {"bleed": 1, "weak": 1, "tangled": 1},
+		"mixed Bleed 2 costs HP through Block while Exposed and Riposte clear once")
+	_check(_actor_at(first, 2)["hp"] == 25
+		and _actor_at(first, 2)["statuses"] == {"tangled": 2}
+		and _actor_at(first, 1)["statuses"] == {},
+		"mixed hero ally Bleed, Tangled and Riposte age independently")
+	_check(first["events"] == [
+		{"side": "heroes", "position": 1, "id": "warden", "bleed_hp_loss": 2},
+		{"side": "heroes", "position": 2, "id": "seamstress", "bleed_hp_loss": 0},
+		{"side": "heroes", "position": 3, "id": "tinker", "bleed_hp_loss": 1}],
+		"mixed hero events keep side, slot, ID and exact Bleed loss")
+	_check(_actor_at(foe_first, 1)["hp"] == 7 and _actor_at(foe_first, 1)["block"] == 4
+		and _actor_at(foe_first, 1)["statuses"] == {"bleed": 2, "exposed": 1},
+		"enemy Bleed 3 bypasses retained Block while Exposed ages and Riposte clears")
+	_check(foe_first["events"] == [
+		{"side": "enemies", "position": 1, "id": "ragling", "bleed_hp_loss": 0},
+		{"side": "enemies", "position": 2, "id": "guard_ragling", "bleed_hp_loss": 3}],
+		"mixed enemy events keep side, slot, ID and exact Bleed loss")
+	_check(mixed_heroes == mixed_hero_before and mixed_foes == mixed_foe_before
+		and mix_party.get_heroes() == live_mixed_heroes
+		and mix_enemies.get_enemies() == live_mixed_foes,
+		"mixed ticks change neither caller snapshot nor either live roster")
+	_check(not mix_party.get_hero(1).has("statuses")
+		and not mix_enemies.get_enemy(1).has("statuses"),
+		"mixed Tangled/Riposte fixtures never leak into authoritative state")
+	if first["actors"].size() == 3 and foe_first["actors"].size() == 2:
+		first["actors"][0]["statuses"]["tangled"] = 99
+		first["actors"][0]["metadata"]["tags"].append("changed")
+		foe_first["actors"][0]["statuses"]["riposte"] = 99
+		foe_first["actors"].clear()
+	_check(mixed_heroes == mixed_hero_before and mixed_foes == mixed_foe_before
+		and batch.tick_side("heroes", mixed_heroes) == second
+		and batch.tick_side("enemies", mixed_foes) == foe_second,
+		"mutating mixed Tangled/Riposte output cannot touch input or a replay")
+
+
 func _reject(side: String, input: Array, label: String,
 		party: CombatParty, enemies: CombatEnemies) -> void:
 	var before := input.duplicate(true)
@@ -261,6 +431,16 @@ func _test_invalid_atomicity() -> void:
 			["negative Bleed", {"bleed": -1}, "statuses"],
 			["negative Weak", {"weak": -1}, "statuses"],
 			["negative Exposed", {"exposed": -1}, "statuses"],
+			["negative Tangled", {"tangled": -1}, "statuses"],
+			["negative Riposte", {"riposte": -1}, "statuses"],
+			["Tangled float", {"tangled": 1.0}, "statuses"],
+			["Riposte float", {"riposte": 4.0}, "statuses"],
+			["Tangled string", {"tangled": "2"}, "statuses"],
+			["Riposte string", {"riposte": "4"}, "statuses"],
+			["Tangled bool", {"tangled": true}, "statuses"],
+			["Riposte bool", {"riposte": true}, "statuses"],
+			["unknown status beside Tangled", {"tangled": 2, "pinned": 1}, "statuses"],
+			["unknown status beside Riposte", {"riposte": 4, "poison": 1}, "statuses"],
 			["unsupported status", {"poison": 1}, "statuses"],
 			["status float", {"bleed": 1.0}, "statuses"],
 			["status string", {"weak": "1"}, "statuses"],
@@ -287,6 +467,21 @@ func _test_invalid_atomicity() -> void:
 		late_invalid[0]["statuses"] = {"bleed": 2}
 		late_invalid[-1]["statuses"] = {"exposed": -1}
 		_reject(side, late_invalid, side + " late invalid after earlier valid bleed", party, enemies)
+		var late_tangled := baseline.duplicate(true)
+		late_tangled[0]["statuses"] = {"tangled": 2, "riposte": 4}
+		late_tangled[-1]["statuses"] = {"tangled": 1.5}
+		_reject(side, late_tangled,
+			side + " late float Tangled after earlier valid Tangled/Riposte", party, enemies)
+		var late_riposte := baseline.duplicate(true)
+		late_riposte[0]["statuses"] = {"tangled": 1, "riposte": 4}
+		late_riposte[-1]["statuses"] = {"riposte": -1}
+		_reject(side, late_riposte,
+			side + " late negative Riposte after earlier valid Tangled/Riposte", party, enemies)
+		var late_unknown := baseline.duplicate(true)
+		late_unknown[0]["statuses"] = {"tangled": 1, "riposte": 4}
+		late_unknown[-1]["statuses"] = {"riposte": 4, "poison": 1}
+		_reject(side, late_unknown,
+			side + " late unknown status beside Riposte", party, enemies)
 	# Enemy APIs accept one or three slots as well as the two-slot starter roster.
 	for count in [1, 3]:
 		var definitions: Array = []
