@@ -31,6 +31,7 @@ var _catalog := StarterCards.new()
 var _toss := CombatWardenV3ShieldTossCards.new()
 var _helmet := CombatWardenV3HelmetCards.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
+var _feint := CombatRagDuelistFeintCards.new()
 var _re_stuff := CombatScarecrowReStuffCards.new()
 var _warden_pool := WardenPoolCards.new()
 var _tinker_pool := TinkerPoolCards.new()
@@ -77,6 +78,8 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if _feint.is_supported_card(card_id):
+		return _feint._catalog_definition(card_id)
 	if CombatScarecrowCrowCards.CARDS.has(card_id):
 		return CombatScarecrowCrowCards.new()._catalog_definition(card_id)
 	if card_id in CombatYarnRangerUnspoolCards.CARD_IDS:
@@ -1015,7 +1018,7 @@ func _update_visual(panel: Control) -> void:
 		if id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatScarecrowCrowCards.CARDS.has(id):
 			var area = _app.get_node_or_null("LiveAreaAttackAction")
 			playable = area != null and area._eligible(panel, id)
-		elif _re_stuff.is_supported_card(id):
+		elif _re_stuff.is_supported_card(id) or _feint.is_supported_card(id):
 			var support_presenter = _app.get_node_or_null("LiveSupportHand")
 			playable = support_presenter != null and support_presenter._eligible(
 				panel, id, _app.deck, _app.party, _app.battle_view)
@@ -1140,6 +1143,8 @@ func _center_text(panel: Control, value: String, rect: Rect2, preferred: int) ->
 ## keeps the ordinary and two-half sewn faces identical; applied amounts come
 ## from the same validated record the tooltip explains, never from a prediction.
 func _rules(id: String) -> String:
+	if _feint.is_supported_card(id):
+		return "Exposed 1; draw 1."
 	if CombatScarecrowCrowCards.CARDS.has(id):
 		return "Deal %d to backmost living enemy; bypass Block." % _definition(id).effects.damage
 	if id in CombatYarnRangerUnspoolCards.CARD_IDS:
