@@ -168,6 +168,7 @@ func _run() -> void:
 	await _buy_case(0, "trinket", true)
 	await _leave_case(false)
 	await _leave_case(true)
+	await _shortcut_cases()
 	await _affordability_cases()
 	await _sold_case()
 	await _fail_closed()
@@ -454,6 +455,140 @@ func _leave_case(keyboard: bool) -> void:
 	panel.leave_button.pressed.emit()
 	await _frames()
 	_check(intents.size() == 1, "retired Leave handler cannot emit after the one Leave")
+
+
+func _shortcut_cases() -> void:
+	# 1, 2, 3, 4, 0 keys
+	var scenarios := [
+		{"key": KEY_1, "index": 0, "kind": "card"},
+		{"key": KEY_2, "index": 1, "kind": "card"},
+		{"key": KEY_3, "index": 2, "kind": "card"},
+		{"key": KEY_4, "index": 0, "kind": "trinket"},
+		{"key": KEY_0, "index": -1, "kind": "leave"},
+	]
+	for scenario in scenarios:
+		var key: int = scenario["key"]
+		var index: int = scenario["index"]
+		var kind: String = scenario["kind"]
+		var visit := _visit(GOLD, "peddler_shortcut_" + str(key))
+		var before := visit.read_state()
+		await _bind(visit)
+		panel.card_buttons[0].grab_focus()
+		await _frames()
+		_check(panel.get_viewport().gui_get_focus_owner() != null, "panel button has focus")
+		var event := InputEventKey.new()
+		event.keycode = key
+		event.pressed = true
+		root.push_input(event)
+		await _frames()
+		_check(intents.size() == 1, "shortcut key " + str(key) + " emits exactly one intent")
+		if intents.size() == 1:
+			var receipt := Controller.settle(visit, intents[0], before)
+			_check(receipt.get("ok") == true and receipt.get("kind", "leave") == kind,
+					"shortcut key " + str(key) + " settles authentically")
+		var up_event := InputEventKey.new()
+		up_event.keycode = key
+		up_event.pressed = false
+		root.push_input(up_event)
+		await _frames()
+
+	# Zero gold
+	var broke := _visit(0, "peddler_shortcut_broke")
+	await _bind(broke)
+	panel.card_buttons[0].grab_focus()
+	for key in [KEY_1, KEY_2, KEY_3, KEY_4]:
+		var event := InputEventKey.new()
+		event.keycode = key
+		event.pressed = true
+		root.push_input(event)
+	await _frames()
+	_check(intents.is_empty(), "broke visit ignores 1-4 shortcuts")
+	var leave_event := InputEventKey.new()
+	leave_event.keycode = KEY_0
+	leave_event.pressed = true
+	root.push_input(leave_event)
+	await _frames()
+	_check(intents.size() == 1 and intents[0]["kind"] == "leave",
+			"broke visit still accepts 0 shortcut to Leave")
+
+	# Owned/SOLD patch
+	var patch_id: String = str(sampled["patches"][0]["id"])
+	var sold := _visit(GOLD, "peddler_shortcut_sold", [patch_id])
+	await _bind(sold)
+	panel.card_buttons[0].grab_focus()
+	var patch_event := InputEventKey.new()
+	patch_event.keycode = KEY_4
+	patch_event.pressed = true
+	root.push_input(patch_event)
+	await _frames()
+	_check(intents.is_empty(), "owned patch ignores 4 shortcut")
+	var card_event := InputEventKey.new()
+	card_event.keycode = KEY_1
+	card_event.pressed = true
+	root.push_input(card_event)
+	await _frames()
+	_check(intents.size() == 1 and intents[0]["kind"] == "card",
+			"available card still works with 1 shortcut after sold patch")
+
+	# Invalid states (focus away, stale, repeat, echo)
+	var guarded := _visit(GOLD, "peddler_shortcut_guarded")
+	await _bind(guarded)
+
+	# Unrelated key
+	var unrelated := InputEventKey.new()
+	unrelated.keycode = KEY_9
+	unrelated.pressed = true
+	root.push_input(unrelated)
+	await _frames()
+	_check(intents.is_empty(), "unrelated key does nothing")
+
+	# Focus away
+	var other_control := Control.new()
+	other_control.focus_mode = Control.FOCUS_ALL
+	host.add_child(other_control)
+	other_control.grab_focus()
+	await _frames()
+	var away_event := InputEventKey.new()
+	away_event.keycode = KEY_1
+	away_event.pressed = true
+	root.push_input(away_event)
+	await _frames()
+	_check(intents.is_empty(), "shortcut ignored when focus is away")
+	other_control.queue_free()
+	panel.card_buttons[0].grab_focus()
+	await _frames()
+
+	# Echo
+	var echo_event := InputEventKey.new()
+	echo_event.keycode = KEY_1
+	echo_event.pressed = true
+	echo_event.echo = true
+	root.push_input(echo_event)
+	await _frames()
+	_check(intents.is_empty(), "shortcut ignores echo events")
+
+	# Modifier
+	var mod_event := InputEventKey.new()
+	mod_event.keycode = KEY_1
+	mod_event.pressed = true
+	mod_event.shift_pressed = true
+	root.push_input(mod_event)
+	await _frames()
+	_check(intents.is_empty(), "shortcut ignores modifier keys")
+
+	# Already pending intent cannot be duplicated
+	var valid_event := InputEventKey.new()
+	valid_event.keycode = KEY_1
+	valid_event.pressed = true
+	root.push_input(valid_event)
+	await _frames()
+	_check(intents.size() == 1, "first valid shortcut emits")
+	var duplicate_event := InputEventKey.new()
+	duplicate_event.keycode = KEY_2
+	duplicate_event.pressed = true
+	root.push_input(duplicate_event)
+	await _frames()
+	_check(intents.size() == 1, "second valid shortcut cannot emit while pending")
 
 
 func _affordability_cases() -> void:

@@ -19,7 +19,7 @@ const PANEL_ART := "res://assets/paper/ui/reward_panel.png"
 const BUTTON_ART := "res://assets/paper/ui/reward_button.png"
 const THEME_PATH := "res://assets/fonts/patchwork_theme.tres"
 const TITLE_TEXT := "PEDDLER  ·  one purchase or Leave"
-const STATUS_OPEN := "Choose one offer, or Leave."
+const STATUS_OPEN := "Choose one offer, or Leave.  ·  1-3 cards · 4 patch · 0 Leave"
 const STATUS_CLOSED := "No open Peddler visit. No offer can be submitted."
 const WALLET_CLOSED := "Wallet unavailable"
 const LEAVE_TEXT := "Leave  ·  FREE"
@@ -92,6 +92,36 @@ func _ready() -> void:
 	leave_button = _button(LEAVE_TEXT, Vector2(39, 498), Vector2(822, 58), TEAL, 24)
 	_refresh()
 	_focus_initial()
+
+
+func _input(event: InputEvent) -> void:
+	if not _active():
+		return
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	if focus_owner != self and not is_ancestor_of(focus_owner):
+		return
+	var key_event := event as InputEventKey
+	if key_event == null or not key_event.is_pressed() or key_event.is_echo():
+		return
+	if key_event.shift_pressed or key_event.alt_pressed or key_event.ctrl_pressed or key_event.meta_pressed:
+		return
+
+	var button: Button = null
+	match key_event.keycode:
+		KEY_1, KEY_KP_1:
+			button = card_buttons[0]
+		KEY_2, KEY_KP_2:
+			button = card_buttons[1]
+		KEY_3, KEY_KP_3:
+			button = card_buttons[2]
+		KEY_4, KEY_KP_4:
+			button = patch_button
+		KEY_0, KEY_KP_0:
+			button = leave_button
+
+	if button != null:
+		get_viewport().set_input_as_handled()
+		button.pressed.emit()
 
 
 ## A detached copy of the master Theme so the panel never mutates the project
