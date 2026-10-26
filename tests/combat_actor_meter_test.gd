@@ -359,7 +359,12 @@ func _run() -> void:
 	var status_id := meter.status_text.get_instance_id()
 	var samples: Array[Dictionary] = [
 		{"statuses": {}, "text": "Statuses: none"},
-		{"statuses": {"bleed": 0, "weak": 0, "exposed": 0}, "text": "Statuses: none"},
+		{"statuses": {"bleed": 0, "weak": 0, "exposed": 0, "tangled": 0, "riposte": 0}, "text": "Statuses: none"},
+		{"statuses": {"tangled": 2}, "text": "Statuses: Tangled 2"},
+		{"statuses": {"riposte": 3}, "text": "Statuses: Riposte 3"},
+		{"statuses": {"tangled": 2, "riposte": 3}, "text": "Statuses: Tangled 2 · Riposte 3"},
+		{"statuses": {"bleed": 3, "weak": 1, "exposed": 2, "tangled": 2, "riposte": 3},
+			"text": "Statuses: Bleed 3 · Weak 1 · Exposed 2 · Tangled 2 · Riposte 3"},
 		{"statuses": {"bleed": 3}, "text": "Statuses: Bleed 3"},
 		{"statuses": {"weak": 1}, "text": "Statuses: Weak 1"},
 		{"statuses": {"exposed": 2}, "text": "Statuses: Exposed 2"},
@@ -429,29 +434,31 @@ func _run() -> void:
 	]
 	# Every malformed *present* status map clears even a previously positive label.
 	for bad_status in [null, [], 3, "bleed", {"bleed": -1}, {"weak": 1.0},
-		{"exposed": true}, {"bleed": "3"}, {"poison": 1},
+		{"exposed": true}, {"bleed": "3"}, {"tangled": -1}, {"riposte": -1},
+		{"tangled": 2.0}, {"riposte": "3"}, {"tangled": true}, {"riposte": null},
+		{"bleed": 1, "riposte": -1}, {"poison": 1},
 		{"bleed": 1, "poison": 0}, {1: 2}, {"exposed": null}]:
 		var malformed := valid.duplicate(true)
 		malformed["statuses"] = bad_status
 		invalids.append(malformed)
 	var positive := valid.duplicate(true)
-	positive["statuses"] = {"bleed": 3, "weak": 1, "exposed": 2}
+	positive["statuses"] = {"bleed": 3, "weak": 1, "exposed": 2, "tangled": 2, "riposte": 3}
 	var rng_before_invalid := rng.state
 	var party_before_invalid := party.get_heroes()
 	var enemy_before_invalid := enemies.get_enemies()
 	for invalid in invalids:
-		_check(meter.show_actor(positive, "hero") and meter.status_text.text == "Statuses: Bleed 3 · Weak 1 · Exposed 2"
+		_check(meter.show_actor(positive, "hero") and meter.status_text.text == "Statuses: Bleed 3 · Weak 1 · Exposed 2 · Tangled 2 · Riposte 3"
 			and not meter.bleed_warning.text.is_empty() and meter.modifier_explanation.visible,
 			"restore all positive stacks before negative case")
 		_check(not meter.show_actor(invalid, "hero"), "malformed source must fail closed: " + str(invalid))
 		_assert_cleared(meter, "malformed source")
 	for bad_side in ["", "ally", "HERO", "Enemy"]:
-		_check(meter.show_actor(positive, "hero") and meter.status_text.text == "Statuses: Bleed 3 · Weak 1 · Exposed 2"
+		_check(meter.show_actor(positive, "hero") and meter.status_text.text == "Statuses: Bleed 3 · Weak 1 · Exposed 2 · Tangled 2 · Riposte 3"
 			and not meter.bleed_warning.text.is_empty() and meter.modifier_explanation.visible,
 			"restore positive stacks before invalid side")
 		_check(not meter.show_actor(valid, bad_side), "unknown side must fail closed: " + bad_side)
 		_assert_cleared(meter, "unknown side")
-	_check(positive["statuses"] == {"bleed": 3, "weak": 1, "exposed": 2},
+	_check(positive["statuses"] == {"bleed": 3, "weak": 1, "exposed": 2, "tangled": 2, "riposte": 3},
 		"valid status source dictionary was never changed by presentation or rejection")
 	_check(party.get_heroes() == party_before_invalid
 		and enemies.get_enemies() == enemy_before_invalid

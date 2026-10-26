@@ -198,7 +198,7 @@ func _forecast(app) -> Dictionary:
 func _expected_status(actor: Dictionary) -> String:
 	var active: Array[String] = []
 	var statuses: Dictionary = actor.get("statuses", {})
-	for key in ["bleed", "weak", "exposed"]:
+	for key in ["bleed", "weak", "exposed", "tangled", "riposte"]:
 		var count: int = statuses.get(key, 0)
 		if count > 0:
 			active.append("%s %d" % [key.capitalize(), count])
@@ -243,10 +243,12 @@ func _expected_chips(actor: Dictionary, side: String) -> Array[String]:
 	if actor.hp == 0:
 		chips.append("DOWNED" if side == "hero" else "SLAIN")
 	var statuses: Dictionary = actor.get("statuses", {})
-	for key in ["bleed", "weak", "exposed"]:
+	for key in ["bleed", "weak", "exposed", "tangled", "riposte"]:
 		var count: int = statuses.get(key, 0)
 		if count > 0:
 			chips.append("%s %d" % [String(key).capitalize(), count])
+	if side == "enemy" and actor.hp > 0 and actor.get("thorns", 0) > 0:
+		chips.append("Thorns %d" % actor["thorns"])
 	return chips
 
 
@@ -262,6 +264,23 @@ func _expected_tooltip(actor: Dictionary, side: String, forecast: Dictionary) ->
 	if not bleed.is_empty():
 		lines.append(bleed)
 	return "\n".join(lines)
+
+
+## Independent exact rule oracles for only the two new chips. Existing status chips
+## retain the unchanged combined status/forecast/Bleed hover paragraphs.
+func _expected_chip_tooltip(actor: Dictionary, side: String, forecast: Dictionary,
+		chip: String) -> String:
+	if chip.begins_with("Thorns "):
+		var n: int = actor["thorns"]
+		return "Thorns %d: Each confirmed positive-damage hit on this enemy deals %d damage back to its attacking hero, even if enemy Block absorbs that hit. Hero Block absorbs the retaliation before HP. Misses, failed plays, zero-damage attacks and previews do not retaliate." % [n, n]
+	var full := _expected_tooltip(actor, side, forecast)
+	if chip.begins_with("Tangled "):
+		var n: int = actor["statuses"]["tangled"]
+		return full + "\nTangled %d: Cannot move or be moved by its own side for %d remaining owner turns. Takes +2 attack damage from each positive-base attack after Weak/Exposed adjustment, once per attack (not per Tangled stack)." % [n, n]
+	if chip.begins_with("Riposte "):
+		var n: int = actor["statuses"]["riposte"]
+		return full + "\nRiposte %d: Deals %d counterdamage on each confirmed hit while active. %d is damage per hit, not a turn count; Riposte expires completely at this actor's next owner-turn end." % [n, n, n]
+	return full
 
 
 func _incoming(app, position: int) -> String:
@@ -414,8 +433,7 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 		and buttons.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and buttons.focus_mode == Control.FOCUS_NONE,
 		"empty status row collapses; real statuses restore it without intercepting input: " + meter.name)
-	_check(buttons.get_child_count() == 4, "one reusable four-button pool: " + meter.name)
-	var expected_tooltip := _expected_tooltip(actor, side, forecast)
+	_check(buttons.get_child_count() == 6, "one reusable six-button pool: " + meter.name)
 	var texts: Array[String] = []
 	for child in buttons.get_children():
 		var button := child as Button
@@ -430,8 +448,8 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 		_check(button.is_visible_in_tree() and button.mouse_filter == Control.MOUSE_FILTER_STOP
 			and button.mouse_default_cursor_shape == Control.CURSOR_HELP,
 			"visible status chip is hoverable by pointer: " + meter.name)
-		_check(button.tooltip_text == expected_tooltip,
-			"exact combined hover text on '%s': %s" % [button.text, meter.name])
+		_check(button.tooltip_text == _expected_chip_tooltip(actor, side, forecast, button.text),
+			"exact independent hover text on '%s': %s" % [button.text, meter.name])
 		# Every normal 1280x720 slot keeps the complete name at the readable size; the
 		# flow may wrap, but it never narrows or truncates a mounted chip.
 		_check(button.get_theme_font_size("font_size") >= READABLE_CHIP_FONT,
@@ -487,7 +505,7 @@ func _assert_dense_chips(meter: CombatActorMeter, actor: Dictionary, side: Strin
 		expected: Array[String]) -> void:
 	var shown := _visible_buttons(meter)
 	var texts: Array[String] = []
-	_check(shown.size() == 4, "a fallen actor keeps all four status chips: " + meter.name)
+	_check(shown.size() == expected.size(), "a fallen actor keeps every status chip: " + meter.name)
 	for button in shown:
 		texts.append(button.text)
 		_check(not button.clip_text, "dense chip never clips its label: " + button.text)
@@ -504,7 +522,7 @@ func _assert_dense_chips(meter: CombatActorMeter, actor: Dictionary, side: Strin
 	_check(texts == _expected_chips(actor, side), "dense chips mirror the authoritative stacks: " + meter.name)
 	_check(not shown.is_empty() and shown[0].text in ["DOWNED", "SLAIN"],
 		"the fallen cue is the first dense chip: " + meter.name)
-	if shown.size() == 4:
+	if shown.size() >= 2:
 		var fallen_style := shown[0].get_theme_stylebox("normal") as StyleBoxFlat
 		var stack_style := shown[1].get_theme_stylebox("normal") as StyleBoxFlat
 		_check(fallen_style != null and stack_style != null
@@ -525,7 +543,9 @@ func _assert_no_duplicate_rule_tooltips(app) -> void:
 			"status rules live only on a visible chip, never a duplicate stage control")
 	var expected_carriers := 0
 	for meter in _meters(app):
-		expected_carriers += _visible_buttons(meter).size()
+		for chip in _visible_buttons(meter):
+			if chip.tooltip_text.contains("Statuses:"):
+				expected_carriers += 1
 	_check(carriers == expected_carriers,
 		"only real mounted status chips carry tooltips, with no neutral or duplicate controls")
 
@@ -647,8 +667,8 @@ func _exercise_status_row_transitions(app, presenter) -> void:
 	var control_ids: Array[int] = []
 	for child in buttons.get_children():
 		control_ids.append(child.get_instance_id())
-	_check(control_ids.size() == 4 and not buttons.visible and _visible_buttons(meter).is_empty(),
-		"authentic opening has a collapsed status row and four dormant buttons")
+	_check(control_ids.size() == 6 and not buttons.visible and _visible_buttons(meter).is_empty(),
+		"authentic opening has a collapsed status row and six dormant buttons")
 	_check(app.enemies.apply_statuses({1: {"exposed": 2}}),
 		"real enemy API applies Exposed 2 to an initially empty row")
 	await _frames()
@@ -681,8 +701,8 @@ func _exercise_status_row_transitions(app, presenter) -> void:
 		var actual_ids: Array[int] = []
 		for child in buttons.get_children():
 			actual_ids.append(child.get_instance_id())
-		_check(actual_ids == control_ids and buttons.get_child_count() == 4
-			and meter == _meters(app)[3], "status refresh reuses four original chips and mounted meter")
+		_check(actual_ids == control_ids and buttons.get_child_count() == 6
+			and meter == _meters(app)[3], "status refresh reuses six original chips and mounted meter")
 	_check(_state(app) == refreshed and randi() == global_draw,
 		"refresh never changes deck, statuses, intents, combat or seeded/global RNG")
 	var batch := CombatStatusTurnBatch.new()
@@ -722,6 +742,177 @@ func _exercise_status_row_transitions(app, presenter) -> void:
 	_check(_state(app) == before and _visible_buttons(meter).is_empty()
 		and not buttons.is_visible_in_tree(),
 		"status probe restores exact original roster, deck, intents and RNG with hidden row")
+
+
+## New V3-2 counters are supplied by authoritative roster slots, not by a
+## not-yet-wired card cast or by editing a presenter-only dictionary.
+func _exercise_new_status_ribbons(app, presenter) -> void:
+	var meters := _meters(app)
+	_check(meters.size() == 5 and app.party.get_hero(2)["hp"] > 0
+		and app.enemies.get_enemy(1)["hp"] > 0,
+		"V3-2 ribbon case starts with mounted living hero and enemy authorities")
+	if meters.size() != 5 or app.party.get_hero(2)["hp"] <= 0 or app.enemies.get_enemy(1)["hp"] <= 0:
+		return
+	var original_heroes: Array[Dictionary] = app.party.get_heroes()
+	var original_enemies: Array[Dictionary] = app.enemies.get_enemies()
+	var before := _state(app)
+	var hero_ids: Array[int] = []
+	var enemy_ids: Array[int] = []
+	for child in _buttons(meters[1]).get_children():
+		hero_ids.append(child.get_instance_id())
+	for child in _buttons(meters[3]).get_children():
+		enemy_ids.append(child.get_instance_id())
+	_check(hero_ids.size() == 6 and enemy_ids.size() == 6,
+		"both real status rows reserve six stable actionless controls")
+	app.party._heroes[1]["statuses"] = {"tangled": 2, "riposte": 3}
+	app.enemies._enemies[0]["statuses"] = {"bleed": 2, "weak": 1, "exposed": 2,
+		"tangled": 2, "riposte": 3}
+	app.enemies._enemies[0]["thorns"] = 2
+	var hero: Dictionary = app.party.get_hero(2)
+	var enemy: Dictionary = app.enemies.get_enemy(1)
+	_check(hero["statuses"] == {"tangled": 2, "riposte": 3}
+		and enemy["statuses"].size() == 5 and enemy["thorns"] == 2,
+		"living hero/enemy reader snapshots really own the new positive counters")
+	var model := _state(app)
+	seed(82913)
+	var global_next := randi()
+	seed(82913)
+	for iteration in range(3):
+		presenter._sync_battle()
+		await _frames()
+	_visible(app)
+	_check(_state(app) == model and randi() == global_next,
+		"V3-2 mounted refresh leaves all combat, status, intent, deck and both RNG ledgers intact")
+	var shown_hero := _visible_buttons(meters[1])
+	var shown_enemy := _visible_buttons(meters[3])
+	_check(shown_hero.size() == 2 and _expected_chips(hero, "hero") == ["Tangled 2", "Riposte 3"]
+		and shown_enemy.size() == 6
+		and _expected_chips(enemy, "enemy") == ["Bleed 2", "Weak 1", "Exposed 2",
+			"Tangled 2", "Riposte 3", "Thorns 2"],
+		"source-specific living ribbons hold two and six correctly ordered positive chips")
+	for index in [0, 2, 4]:
+		_check(_visible_buttons(meters[index]).is_empty(),
+			"unaffected actor never inherits hero/enemy Tangled or Riposte")
+	for details in [{"buttons": shown_hero, "actor": hero, "side": "hero"},
+			{"buttons": shown_enemy, "actor": enemy, "side": "enemy"}]:
+		var actor: Dictionary = details["actor"]
+		var side: String = details["side"]
+		for chip in details["buttons"]:
+			var button := chip as Button
+			await _hover(button)
+			_check(root.gui_get_hovered_control() == button and button.focus_mode == Control.FOCUS_NONE
+				and button.pressed.get_connections().is_empty()
+				and button.tooltip_text == _expected_chip_tooltip(actor, side, _forecast(app), button.text),
+				"actual %s '%s' hover matches the independent complete rule oracle" % [side, button.text])
+	var flow := _buttons(meters[3])
+	var dense_rows := _rendered_rows(shown_enemy)
+	var measured_rows := _measured_rows(_chip_widths(flow, shown_enemy.size()),
+		flow.size.x, float(flow.get_theme_constant("h_separation")))
+	var chip_height := shown_enemy[0].size.y if shown_enemy.size() == 6 else 0.0
+	var row_gap := float(flow.get_theme_constant("v_separation"))
+	_check(dense_rows >= 2 and dense_rows == measured_rows
+		and is_equal_approx(flow.custom_minimum_size.y,
+			dense_rows * chip_height + row_gap * float(dense_rows - 1))
+		and presenter.row.custom_minimum_size.y >= meters[3].get_combined_minimum_size().y,
+		"all six live dense chips wrap into precisely reserved, legible rows")
+	# The pure accepted owner-turn rules project status expiry on copied snapshots.
+	# Fixture-owned authority adopts those results; no unwired combat hook is invented.
+	var hero_tick := CombatStatuses.new().end_owner_turn(
+		hero["hp"], hero["block"], hero["statuses"].duplicate(true))
+	var enemy_tick := CombatStatuses.new().end_owner_turn(
+		enemy["hp"], enemy["block"], enemy["statuses"].duplicate(true))
+	_check(hero_tick["ok"] and enemy_tick["ok"]
+		and hero_tick["statuses"] == {"tangled": 1}
+		and enemy_tick["statuses"] == {"bleed": 1, "exposed": 1, "tangled": 1}
+		and enemy_tick["hp"] == enemy["hp"] - 2,
+		"copied owner-turn rule expires Riposte fully, decrements Tangled, and keeps Bleed damage")
+	if not hero_tick["ok"] or not enemy_tick["ok"]:
+		return
+	app.party._heroes[1]["statuses"] = hero_tick["statuses"].duplicate(true)
+	app.enemies._enemies[0]["statuses"] = enemy_tick["statuses"].duplicate(true)
+	app.enemies._enemies[0]["hp"] = enemy_tick["hp"]
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	_check(_expected_chips(app.party.get_hero(2), "hero") == ["Tangled 1"]
+		and _visible_buttons(meters[1]).size() == 1
+		and _visible_buttons(meters[1])[0].text == "Tangled 1"
+		and _expected_chips(app.enemies.get_enemy(1), "enemy")
+			== ["Bleed 1", "Exposed 1", "Tangled 1", "Thorns 2"]
+		and _visible_buttons(meters[3]).size() == 4
+		and _visible_buttons(meters[3])[2].text == "Tangled 1",
+		"owner-turn expiry clears Riposte completely without counting N turns and decrements Tangled")
+	# The maximum fallen case has six chips too: the fallen cue replaces Thorns.
+	var lethal_amount: int = app.enemies.get_enemy(1)["hp"] + app.enemies.get_enemy(1)["block"]
+	_check(app.enemies.apply_damage(1, lethal_amount),
+		"real combat authority slays the displayed enemy without fabricating a presenter death")
+	app.enemies._enemies[0]["statuses"] = {"bleed": 1, "weak": 1, "exposed": 1,
+		"tangled": 2, "riposte": 3}
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var dead: Dictionary = app.enemies.get_enemy(1)
+	_assert_dense_chips(meters[3], dead, "enemy",
+		["SLAIN", "Bleed 1", "Weak 1", "Exposed 1", "Tangled 2", "Riposte 3"])
+	_check(_visible_buttons(meters[3]).size() == 6
+		and not _expected_chips(dead, "enemy").has("Thorns 2")
+		and not meters[3].bleed_warning.visible,
+		"fallen source retains all five timed/status counts without a live Thorns chip")
+	# Malformed counts are rejected by the actual mounted meter; the next live
+	# refresh must recover solely from its valid authoritative roster snapshot.
+	var invalid_source: Dictionary = app.party.get_hero(2)
+	invalid_source["statuses"] = {"tangled": -1, "riposte": 3}
+	var model_before_reject := _state(app)
+	_check(not meters[1].show_actor(invalid_source, "hero")
+		and not meters[1].visible and meters[1].status_text.text.is_empty(),
+		"negative Tangled fails closed and clears even an already mounted status label")
+	presenter._sync_battle()
+	await _frames()
+	_check(_state(app) == model_before_reject and meters[1].visible
+		and meters[1].status_text.text == "Statuses: Tangled 1",
+		"live refresh restores valid actor-only statuses without persisting malformed input")
+	# A present zero is just as inactive as an absent counter.
+	app.party._heroes[1]["statuses"] = {"tangled": 0, "riposte": 0}
+	app.enemies._enemies[0]["statuses"] = {"tangled": 0, "riposte": 0}
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	_check(_visible_buttons(meters[1]).is_empty()
+		and _visible_buttons(meters[3]).size() == 1
+		and _visible_buttons(meters[3])[0].text == "SLAIN",
+		"zero-valued Tangled and Riposte produce no ghost chips on either side")
+	# Complete expiration removes labels AND tooltips, including the dormant pool.
+	app.party._heroes[1].erase("statuses")
+	app.enemies._enemies[0].erase("statuses")
+	app.enemies._enemies[0]["thorns"] = 0
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	_check(_visible_buttons(meters[1]).is_empty() and not _buttons(meters[1]).visible
+		and _visible_buttons(meters[3]).size() == 1
+		and _visible_buttons(meters[3])[0].text == "SLAIN",
+		"expired living stacks and dead stacks vanish, retaining only fallen state")
+	for meter in [meters[1], meters[3]]:
+		for button in _buttons(meter).get_children():
+			if not button.visible:
+				_check(button.tooltip_text.is_empty() and button.text.is_empty(),
+					"expired V3-2 chip has neither orphan tooltip nor stale count")
+	for index in range(3):
+		app.party._heroes[index] = original_heroes[index].duplicate(true)
+	for index in range(original_enemies.size()):
+		app.enemies._enemies[index] = original_enemies[index].duplicate(true)
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var final_hero_ids: Array[int] = []
+	var final_enemy_ids: Array[int] = []
+	for child in _buttons(meters[1]).get_children():
+		final_hero_ids.append(child.get_instance_id())
+	for child in _buttons(meters[3]).get_children():
+		final_enemy_ids.append(child.get_instance_id())
+	_check(_state(app) == before and hero_ids == final_hero_ids and enemy_ids == final_enemy_ids
+		and _visible_buttons(meters[1]).is_empty() and _visible_buttons(meters[3]).is_empty(),
+		"V3-2 fixture restores exact original state, original six controls and empty rows")
 
 
 func _exercise_live_bleed(app, presenter) -> void:
@@ -1137,6 +1328,7 @@ func _run() -> void:
 		_visible(app)
 		await _assert_hover(app)
 		await _exercise_status_row_transitions(app, presenter)
+		await _exercise_new_status_ribbons(app, presenter)
 		# Inject only into an existing mounted view: no invented live status persistence.
 		var model_before_status := _state(app)
 		var active_meters := _meters(app)
@@ -1271,6 +1463,18 @@ func _run() -> void:
 			"missing intent remains authoritative without inventing a neutral hover chip")
 		app.enemy_intents = valid_intents
 		presenter._sync_battle()
+		# Rebind while both original authorities STILL contain new status counts:
+		# replacing a party must clear its old hero chips, replacing enemies must
+		# clear the old enemy chips, and no new source may inherit their tooltips.
+		app.party._heroes[1]["statuses"] = {"tangled": 2, "riposte": 3}
+		app.enemies._enemies[0]["statuses"] = {"tangled": 2, "riposte": 3}
+		await _frames()
+		_visible(app)
+		_check(_expected_chips(app.party.get_hero(2), "hero")
+			== ["DOWNED", "Tangled 2", "Riposte 3"]
+			and _expected_chips(app.enemies.get_enemy(1), "enemy")
+			== ["SLAIN", "Tangled 2", "Riposte 3"],
+			"stale-rebind starts with genuine hero and enemy V3-2 status-bearing authorities")
 		# Each source identity change tears down the old presentation, even with identical values.
 		for source in ["party", "enemies", "deck"]:
 			var old_ids: Array[int] = []
@@ -1285,6 +1489,14 @@ func _run() -> void:
 				app.deck.start_turn()
 			await _frames()
 			_visible(app)
+			if source == "party":
+				_check(_visible_buttons(_meters(app)[1]).is_empty()
+					and _visible_buttons(_meters(app)[3]).size() == 3,
+					"party replacement drops Tangled/Riposte hero chips, preserving still-owned enemy counters")
+			elif source == "enemies":
+				_check(_visible_buttons(_meters(app)[1]).is_empty()
+					and _visible_buttons(_meters(app)[3]).is_empty(),
+					"enemy replacement cannot inherit old Tangled/Riposte counts or hover tooltips")
 			for id in old_ids:
 				_check(not is_instance_id_valid(id), "source replacement frees stale meters: " + source)
 		# Invalid/inactive sources clear synchronously; restoring a valid source rebuilds once.
