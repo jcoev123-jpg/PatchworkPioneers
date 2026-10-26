@@ -45,7 +45,9 @@ func _expected_hover(node: Dictionary, legal: bool) -> String:
 	var prefix := "Floor %02d · %s · Branch %d" % [
 		int(node["floor"]), shown, int(node["position"]) + 1]
 	var help_kind: String = "Campfire" if node.type == "Rest" else shown
-	return prefix + (" · " + str(LIVE_HELP[help_kind][2]) if legal else "")
+	var supplement := _normal_threat(node)
+	return prefix + (" · " + str(LIVE_HELP[help_kind][2])
+		+ (" · " + supplement if not supplement.is_empty() else "") if legal else "")
 
 
 func _check_ticket(atlas: RunRouteAtlas, id: String, where: String) -> void:
@@ -65,6 +67,7 @@ func _check_ticket(atlas: RunRouteAtlas, id: String, where: String) -> void:
 			int(node["floor"]), int(node["position"]) + 1]
 		and ticket.lead_text == shown + " · " + str(facts[0])
 		and ticket.detail_text == str(facts[1])
+			+ (" · " + _normal_threat(node) if not _normal_threat(node).is_empty() else "")
 		and ticket.visible and ticket.is_visible_in_tree()
 		and ticket.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and ticket.focus_mode == Control.FOCUS_NONE

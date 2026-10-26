@@ -21,6 +21,20 @@ const ROUTE_HELP_TOOLTIPS := {
 }
 
 
+## Test-owned design oracle; never read a presentation helper for expectations.
+func _normal_threat(node: Dictionary) -> String:
+	if node.get("type") != "Fight" or typeof(node.get("floor")) != TYPE_INT:
+		return ""
+	var floor_number: int = node["floor"]
+	if floor_number >= 1 and floor_number <= 4:
+		return "Normals x1.0 HP/ATK; hits 5-9"
+	if floor_number >= 5 and floor_number <= 8:
+		return "Normals x1.25 HP/ATK; hits 6-11"
+	if floor_number >= 9 and floor_number <= 11:
+		return "Normals x1.5 HP/ATK; hits 7-13"
+	return ""
+
+
 func _initialize() -> void:
 	call_deferred("_run")
 
@@ -253,6 +267,9 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 				int(node.floor), shown, int(node.position) + 1]
 			if legal:
 				hover += " · " + str(ROUTE_HELP_TOOLTIPS[shown])
+				var threat := _normal_threat(node)
+				if not threat.is_empty():
+					hover += " · " + threat
 			_check(child.tooltip_text == hover and not child.tooltip_text.contains(id),
 				"readable sewn route hover: " + id)
 			_check(child.get_meta("route_state") == ("legal" if legal else "other")
@@ -291,6 +308,59 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 	_check(nodes.size() == expected_nodes.size() and edges == expected_edges and not edges.is_empty(),
 		"all and only actual in-window nodes and links rendered")
 	_check(highlighted == app.run_map.get_legal_choices(), "exact legal opening IDs highlighted")
+	# The actual opening atlas, mounted by App, must show normal-Fight danger before
+	# admission. Focus, genuine pointer hover and leave all retain its old rewards.
+	var legal_fight := ""
+	for id in highlighted:
+		if String(app.run_map.get_node(id).get("type", "")) == "Fight":
+			legal_fight = id
+			break
+	_check(not legal_fight.is_empty(), "live generated opening has a real legal normal Fight")
+	if not legal_fight.is_empty():
+		var record: Dictionary = app.run_map.get_node(legal_fight)
+		var expected_threat := _normal_threat(record)
+		var action_button := (nodes[legal_fight] as Control).get_node_or_null("Action") as Button
+		_check(not expected_threat.is_empty() and action_button != null,
+			"source floor determines real legal Fight threat and reachable focus target")
+		if action_button != null:
+			var held := _snapshot(app)
+			action_button.grab_focus()
+			await process_frame
+			var ticket := atlas.choice_ticket()
+			_check(action_button.has_focus() and ticket != null and ticket.route_id == legal_fight,
+				"Tab-capable live Fight Action selects its authentic ticket")
+			if ticket != null:
+				_check(ticket.header_text == "MEADOW · FLOOR 01 · BRANCH %d" % (int(record["position"]) + 1)
+					and ticket.lead_text == "Fight · Win: 10–20 gold + 1 scrap"
+					and ticket.detail_text == "Choose 1 of 3 cards, or skip · " + expected_threat,
+					"live choice ticket retains original gold/card rewards and adds exact normal danger")
+				var bounds := Rect2(ticket.position, ticket.size)
+				var font := ticket.get_theme_default_font()
+				_check(bounds == RunRouteAtlas.CHOICE_TICKET_RECT
+					and RunRouteAtlas.PAGE_LEFT.encloses(bounds)
+					and RunRouteAtlas.ChoiceTicket.FONT_SIZE >= 18
+					and (font == null or font.get_string_size(ticket.detail_text,
+						HORIZONTAL_ALIGNMENT_LEFT, -1, RunRouteAtlas.ChoiceTicket.FONT_SIZE).x <= ticket.size.x - 28.0),
+					"live 1280x720 three-row choice copy fits its original stitched ticket")
+			var motion := InputEventMouseMotion.new()
+			motion.position = action_button.get_global_rect().get_center()
+			root.push_input(motion, true)
+			await process_frame
+			_check(atlas._hovered_choice_id == legal_fight
+				and atlas.choice_ticket() != null and atlas.choice_ticket().route_id == legal_fight
+				and action_button.tooltip_text.contains(expected_threat),
+				"live Fight mouse hover preserves threat and consequence alongside focus")
+			motion = InputEventMouseMotion.new()
+			motion.position = Vector2(5, 5)
+			root.push_input(motion, true)
+			await process_frame
+			_check(atlas._hovered_choice_id.is_empty()
+				and atlas.choice_ticket() != null and atlas.choice_ticket().route_id == legal_fight
+				and atlas.choice_ticket().detail_text.ends_with(expected_threat),
+				"live pointer leave restores focused Fight danger")
+			_check(_snapshot(app) == held and app.run_map.get_legal_choices().has(legal_fight),
+				"live Fight guidance never commits route, changes battle or draws run RNG")
+			app.route_atlas_close.grab_focus()
 	var hidden := _snapshot(app)
 	_check(hidden.slice(0, 6) == before.slice(0, 6), "opening spends no graph/route/legal/encounter/RNG/combat state")
 	for callback in stale:

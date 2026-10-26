@@ -1294,6 +1294,23 @@ static func stop_consequence(kind: String) -> Dictionary:
 	return {}
 
 
+## Normal Fight guidance only: use the same authoritative scaler as routed combat,
+## including its strict floor/type gates and truncated 5/9 attack bounds. The HP
+## multiplier is measured with a divisible base HP, not independently reimplemented.
+## Neither an encounter roster nor a route ID is involved in this preview.
+static func normal_fight_threat(node: Dictionary) -> String:
+	if node.get("type") != "Fight" or typeof(node.get("floor")) != TYPE_INT:
+		return ""
+	var floor_number: int = node["floor"]
+	var low := RunNormalAttackFloorScaling.scale_normal_attack(5, floor_number)
+	var high := RunNormalAttackFloorScaling.scale_normal_attack(9, floor_number)
+	var hp := RunNormalAttackFloorScaling.scale_normal_max_hp(4, floor_number)
+	if not low.get("ok", false) or not high.get("ok", false) or not hp.get("ok", false):
+		return ""
+	return "Normals x%s HP/ATK; hits %d-%d" % [
+		str(float(hp["max_hp"]) / 4.0), int(low["amount"]), int(high["amount"])]
+
+
 static func node_hover_text(node: Dictionary, fallback_kind: String = "",
 		show_consequence: bool = false) -> String:
 	if node.is_empty() or not (node.has("floor") and node.has("position")):
@@ -1304,7 +1321,8 @@ static func node_hover_text(node: Dictionary, fallback_kind: String = "",
 	if show_consequence:
 		var facts := stop_consequence(help_kind(kind))
 		if not facts.is_empty():
-			return prefix + " · " + str(facts["tooltip"])
+			var threat := normal_fight_threat(node)
+			return prefix + " · " + str(facts["tooltip"]) + (" · " + threat if not threat.is_empty() else "")
 	return prefix
 
 
@@ -1345,8 +1363,9 @@ func _show_choice_ticket(id: String) -> void:
 	var header := "%s · FLOOR %02d · BRANCH %d" % [
 		area_for_floor(int(record["floor"])).to_upper(), int(record["floor"]),
 		int(record["position"]) + 1]
+	var threat := normal_fight_threat(record)
 	_choice_ticket.set_choice(id, header, shown + " · " + str(facts["lead"]),
-		str(facts["detail"]))
+		str(facts["detail"]) + (" · " + threat if not threat.is_empty() else ""))
 	_choice_ticket.show()
 
 

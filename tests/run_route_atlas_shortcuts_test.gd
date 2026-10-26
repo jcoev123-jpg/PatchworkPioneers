@@ -134,12 +134,33 @@ func _help_kind(kind: String) -> String:
 	return "Campfire" if shown == "Rest" else shown
 
 
+## Independent authored normal-Fight floor-band oracle (the atlas never supplies it).
+func _normal_threat(node: Dictionary) -> String:
+	if node.get("type") != "Fight" or typeof(node.get("floor")) != TYPE_INT:
+		return ""
+	var floor_number: int = node["floor"]
+	if floor_number >= 1 and floor_number <= 4:
+		return "Normals x1.0 HP/ATK; hits 5-9"
+	if floor_number >= 5 and floor_number <= 8:
+		return "Normals x1.25 HP/ATK; hits 6-11"
+	if floor_number >= 9 and floor_number <= 11:
+		return "Normals x1.5 HP/ATK; hits 7-13"
+	return ""
+
+
+func _ticket_detail(node: Dictionary) -> String:
+	var detail: String = EXPECTED_HELP[_help_kind(str(node["type"]))]["detail"]
+	var threat := _normal_threat(node)
+	return detail + (" · " + threat if not threat.is_empty() else "")
+
+
 func _hover_text(node: Dictionary, legal: bool = false) -> String:
 	var shown := _display_kind(str(node["type"]))
 	var prefix := "Floor %02d · %s · Branch %d" % [
 		int(node["floor"]), shown, int(node["position"]) + 1]
 	if legal:
-		return prefix + " · " + str(EXPECTED_HELP[_help_kind(str(node["type"]))]["tooltip"])
+		var threat := _normal_threat(node)
+		return prefix + " · " + str(EXPECTED_HELP[_help_kind(str(node["type"]))]["tooltip"]) + (" · " + threat if not threat.is_empty() else "")
 	return prefix
 
 
@@ -300,7 +321,7 @@ func _assert_ticket(view: RunRouteAtlas, map: RunMap, id: String, where: String)
 			RunRouteAtlas.area_for_floor(int(record["floor"])).to_upper(),
 			int(record["floor"]), int(record["position"]) + 1]
 		and ticket.lead_text == shown + " · " + str(facts["lead"])
-		and ticket.detail_text == str(facts["detail"])
+		and ticket.detail_text == _ticket_detail(record)
 		and not ticket.header_text.contains(id) and not ticket.lead_text.contains(id)
 		and ticket.visible and ticket.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and ticket.focus_mode == Control.FOCUS_NONE
