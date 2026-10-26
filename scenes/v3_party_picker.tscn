@@ -61,12 +61,45 @@ horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="HeroGrid" type="GridContainer" parent="PaperPanel/Margins/Body"]
-custom_minimum_size = Vector2(0, 404)
+custom_minimum_size = Vector2(0, 386)
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/h_separation = 12
 theme_override_constants/v_separation = 10
 columns = 4
+
+[node name="InspectionPanel" type="PanelContainer" parent="PaperPanel/Margins/Body"]
+custom_minimum_size = Vector2(0, 70)
+layout_mode = 2
+mouse_filter = 2
+
+[node name="Inset" type="MarginContainer" parent="PaperPanel/Margins/Body/InspectionPanel"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/margin_left = 15
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 15
+theme_override_constants/margin_bottom = 4
+
+[node name="Stack" type="VBoxContainer" parent="PaperPanel/Margins/Body/InspectionPanel/Inset"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 1
+
+[node name="InspectionHeading" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack"]
+layout_mode = 2
+mouse_filter = 2
+text = "HOVER OR FOCUS A HERO TO INSPECT"
+horizontal_alignment = 1
+
+[node name="InspectionDetail" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack"]
+layout_mode = 2
+size_flags_vertical = 3
+mouse_filter = 2
+text = "Compare sewn looks and intended roles before choosing three."
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
 
 [node name="Foot" type="HBoxContainer" parent="PaperPanel/Margins/Body"]
 custom_minimum_size = Vector2(0, 60)
@@ -82,7 +115,7 @@ vertical_alignment = 1
 [node name="Hint" type="Label" parent="PaperPanel/Margins/Body/Foot"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "In picking order  ·  no positions assigned"
+text = "Kit preview only  ·  not live  ·  positions assigned later"
 horizontal_alignment = 1
 vertical_alignment = 1
 

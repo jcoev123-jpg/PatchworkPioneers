@@ -7,14 +7,14 @@ signal party_requested(ids: Array[String])
 signal cancel_requested()
 
 const HEROES := [
-	{"id": "warden", "name": "Warden", "motif": "POT HELMET  •  GIANT SHIELD", "tone": "#496b85", "thread": "#b0d4ee"},
-	{"id": "seamstress", "name": "Seamstress", "motif": "GIANT THREADED NEEDLE", "tone": "#73517c", "thread": "#e3b4e5"},
-	{"id": "tinker", "name": "Tinker", "motif": "GOGGLES  •  SCRAP PACK", "tone": "#8a673e", "thread": "#f0d28a"},
-	{"id": "lantern_monk", "name": "Lantern Monk", "motif": "RAISED LANTERN  •  MOTHS", "tone": "#466c65", "thread": "#c7e8ac"},
-	{"id": "rag_duelist", "name": "Rag Duelist", "motif": "NEEDLE RAPIER  •  RAG CAPE", "tone": "#823e62", "thread": "#f0b1c6"},
-	{"id": "scarecrow", "name": "Scarecrow", "motif": "BURLAP  •  FORK  •  CROW", "tone": "#77613d", "thread": "#ebd39a"},
-	{"id": "yarn_ranger", "name": "Yarn Ranger", "motif": "KNIT HOOD  •  NEEDLE BOW", "tone": "#426785", "thread": "#b3d8ee"},
-	{"id": "button_golem", "name": "Button Golem", "motif": "STACKED BUTTONS  •  FISTS", "tone": "#5c577e", "thread": "#ded0f0"},
+	{"id": "warden", "name": "Warden", "motif": "POT HELMET  •  GIANT SHIELD", "tone": "#496b85", "thread": "#b0d4ee", "role": "Bulwark", "signature": "Guard redirects the next allied hit; Shield Toss scales with own Block; Taunt draws attacks."},
+	{"id": "seamstress", "name": "Seamstress", "motif": "GIANT THREADED NEEDLE", "tone": "#73517c", "thread": "#e3b4e5", "role": "Stitch healer", "signature": "Bleed wounds; Tether shares 50% damage with a linked foe; Mend heals; Darn cleanses."},
+	{"id": "tinker", "name": "Tinker", "motif": "GOGGLES  •  SCRAP PACK", "tone": "#8a673e", "thread": "#f0d28a", "role": "Scrap engineer", "signature": "Build Scrap toward Overload; Wind-up Turret deals 3 random damage at turn end for 3 turns; Jury-rig copies the last card free once."},
+	{"id": "lantern_monk", "name": "Lantern Monk", "motif": "RAISED LANTERN  •  MOTHS", "tone": "#466c65", "thread": "#c7e8ac", "role": "Light keeper", "signature": "Blind makes the next enemy attack miss; lantern light heals and cleanses allies; Moth Cloud blinds all foes and Exhausts."},
+	{"id": "rag_duelist", "name": "Rag Duelist", "motif": "NEEDLE RAPIER  •  RAG CAPE", "tone": "#823e62", "thread": "#f0b1c6", "role": "Counterattacker", "signature": "Riposte on hit; Lunge advances; Feint applies Exposed and draws 1; dodge avoids a blow."},
+	{"id": "scarecrow", "name": "Scarecrow", "motif": "BURLAP  •  FORK  •  CROW", "tone": "#77613d", "thread": "#ebd39a", "role": "Fear harrier", "signature": "Fear brings Weak and blocks next-turn buffs; backmost Crow Peck ignores Block; Re-stuff trades 2 max HP for 10 healing."},
+	{"id": "yarn_ranger", "name": "Yarn Ranger", "motif": "KNIT HOOD  •  NEEDLE BOW", "tone": "#426785", "thread": "#b3d8ee", "role": "Tangle hunter", "signature": "Tangled prevents movement and adds 2 incoming attack damage; Reel In pulls forward 1; Unspool hits Tangled foes."},
+	{"id": "button_golem", "name": "Button Golem", "motif": "STACKED BUTTONS  •  FISTS", "tone": "#5c577e", "thread": "#ded0f0", "role": "Block bruiser", "signature": "Pop Button spends 5 Block to deal 9; Roll swaps position and gains Block; Sew On scales Block with popped buttons."},
 ]
 
 const INK := Color("#171e30")
@@ -26,6 +26,9 @@ const STITCH := Color("#efcba1")
 @onready var paper_panel: PanelContainer = $PaperPanel
 @onready var grid: GridContainer = $PaperPanel/Margins/Body/HeroGrid
 @onready var selection_count: Label = $PaperPanel/Margins/Body/Foot/SelectionCount
+@onready var inspection_panel: PanelContainer = $PaperPanel/Margins/Body/InspectionPanel
+@onready var inspection_heading: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/InspectionHeading
+@onready var inspection_detail: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/InspectionDetail
 @onready var continue_button: Button = $PaperPanel/Margins/Body/Foot/ContinueButton
 @onready var cancel_button: Button = $PaperPanel/Margins/Body/Foot/CancelButton
 
@@ -34,6 +37,8 @@ var _tiles: Dictionary = {}
 var _generation: int = 0
 var _open: bool = false
 var _latched: bool = false
+var _hovered_id: String = ""
+var _focused_id: String = ""
 
 
 ## A drawn stand-in for not-yet-delivered portraits. These five faces are
@@ -152,6 +157,8 @@ func open_picker() -> void:
 	_open = true
 	_latched = false
 	_ids.clear()
+	_hovered_id = ""
+	_focused_id = ""
 	for old in grid.get_children():
 		grid.remove_child(old)
 		old.queue_free()
@@ -160,8 +167,51 @@ func open_picker() -> void:
 		_mount_tile(definition, _generation)
 	visible = true
 	_refresh()
-	if not _tiles.is_empty():
-		(_tiles["warden"] as Button).grab_focus()
+	_update_inspection()  # Neutral until actual pointer motion or keyboard focus.
+
+
+
+## An input-transparent comparison readout. Pointer preview takes precedence
+## while over a tile; leaving it restores keyboard focus (if any).
+## Every callback carries the tile generation so retired buttons are inert.
+func _inspection_active(generation: int) -> bool:
+	return _open and not _latched and generation == _generation
+
+
+func _inspect_motion(event: InputEvent, hero_id: String, generation: int) -> void:
+	if not _inspection_active(generation) or not event is InputEventMouseMotion:
+		return
+	_hovered_id = hero_id
+	_update_inspection()
+
+
+func _inspect_mouse_exit(hero_id: String, generation: int) -> void:
+	if not _inspection_active(generation) or _hovered_id != hero_id:
+		return
+	_hovered_id = ""
+	_update_inspection()
+
+
+func _inspect_focus(hero_id: String, generation: int, entered: bool) -> void:
+	if not _inspection_active(generation):
+		return
+	if entered:
+		_focused_id = hero_id
+	elif _focused_id == hero_id:
+		_focused_id = ""
+	_update_inspection()
+
+
+func _update_inspection() -> void:
+	var chosen: String = _hovered_id if not _hovered_id.is_empty() else _focused_id
+	for hero in HEROES:
+		if hero["id"] == chosen:
+			inspection_heading.text = "%s  •  %s  /  %s" % [
+				hero["name"], hero["motif"], hero["role"]]
+			inspection_detail.text = hero["signature"]
+			return
+	inspection_heading.text = "HOVER OR FOCUS A HERO TO INSPECT"
+	inspection_detail.text = "Compare sewn looks and intended roles before choosing three."
 
 
 func selected_ids() -> Array[String]:
@@ -215,13 +265,17 @@ func _mount_tile(definition: Dictionary, generation: int) -> void:
 	var hero_id: String = definition["id"]
 	var tile := Button.new()
 	tile.name = "Hero_" + hero_id
-	tile.custom_minimum_size = Vector2(234, 192)
+	tile.custom_minimum_size = Vector2(234, 188)
 	tile.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tile.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tile.focus_mode = Control.FOCUS_ALL
 	tile.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	tile.clip_contents = true
 	tile.pressed.connect(_pressed_hero.bind(hero_id, generation))
+	tile.gui_input.connect(_inspect_motion.bind(hero_id, generation))
+	tile.mouse_exited.connect(_inspect_mouse_exit.bind(hero_id, generation))
+	tile.focus_entered.connect(_inspect_focus.bind(hero_id, generation, true))
+	tile.focus_exited.connect(_inspect_focus.bind(hero_id, generation, false))
 	grid.add_child(tile)
 	_tiles[hero_id] = tile
 
@@ -344,6 +398,16 @@ func _style_screen() -> void:
 		var label := get_node(node_path) as Label
 		label.add_theme_color_override("font_color", STITCH)
 		label.add_theme_font_size_override("font_size", 15)
+	var readout := StyleBoxFlat.new()
+	readout.bg_color = Color("#1d2639")
+	readout.border_color = STITCH
+	readout.set_border_width_all(2)
+	readout.set_corner_radius_all(9)
+	inspection_panel.add_theme_stylebox_override("panel", readout)
+	inspection_heading.add_theme_color_override("font_color", GOLD)
+	inspection_heading.add_theme_font_size_override("font_size", 18)
+	inspection_detail.add_theme_color_override("font_color", CREAM)
+	inspection_detail.add_theme_font_size_override("font_size", 16)
 	selection_count.add_theme_color_override("font_color", CREAM)
 	selection_count.add_theme_font_size_override("font_size", 24)
 	for button in [continue_button, cancel_button]:

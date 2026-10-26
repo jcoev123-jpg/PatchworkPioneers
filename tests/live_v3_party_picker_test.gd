@@ -10,6 +10,12 @@ const NAMES: Array[String] = [
 const MOTIFS: Array[String] = [
 	"HELMET", "NEEDLE", "GOGGLES", "LANTERN",
 	"RAPIER", "FORK", "HOOD", "BUTTONS"]
+const SIGNATURES: Array[String] = [
+	"Guard", "Tether", "Overload", "Moth Cloud",
+	"Riposte", "Crow Peck", "Tangled", "Pop Button"]
+const ROLES: Array[String] = [
+	"Bulwark", "Stitch healer", "Scrap engineer", "Light keeper",
+	"Counterattacker", "Fear harrier", "Tangle hunter", "Block bruiser"]
 
 var failures: Array[String] = []
 var checks := 0
@@ -51,6 +57,42 @@ func _mouse(button: Button) -> void:
 		e.pressed = down
 		root.push_input(e, true)
 	await _frames()
+
+
+func _move_to(target: Control) -> void:
+	_check(target != null and target.is_visible_in_tree(), "real pointer motion target")
+	if target == null or not target.is_visible_in_tree():
+		return
+	var move := InputEventMouseMotion.new()
+	move.position = target.get_global_rect().get_center()
+	root.push_input(move, true)
+	await _frames()
+
+
+func _readout(picker: Control) -> Array[String]:
+	var base := "PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/"
+	var heading: Label = picker.get_node(base + "InspectionHeading")
+	var detail: Label = picker.get_node(base + "InspectionDetail")
+	return [heading.text, detail.text]
+
+
+func _check_inspection(picker: Control, name: String, motif: String,
+		role: String, signature: String, note: String) -> void:
+	var rendered := _readout(picker)
+	_check(rendered[0].contains(name) and rendered[0].contains(motif)
+		and rendered[0].contains(role), note + " name / drawn motif / role")
+	_check(rendered[1].contains(signature), note + " intended signature")
+	_check(not rendered[1].contains("PLAY NOW"), note + " not falsely playable")
+
+
+func _key_focus(button: Button) -> void:
+	_check(button != null and button.focus_mode == Control.FOCUS_ALL,
+		"real keyboard-focus target exists")
+	if button == null:
+		return
+	button.grab_focus()
+	await _frames()
+	_check(button.has_focus(), "focus event reaches real tile")
 
 
 func _key(button: Button, code: Key) -> void:
@@ -164,6 +206,41 @@ func _run() -> void:
 	_check(input_bounds.encloses(action.get_global_rect()) and
 		input_bounds.encloses(cancel.get_global_rect()),
 		"Continue and Cancel reachable in viewport")
+	var inspection: PanelContainer = picker.get_node(
+		"PaperPanel/Margins/Body/InspectionPanel")
+	var heading: Label = inspection.get_node("Inset/Stack/InspectionHeading")
+	var detail: Label = inspection.get_node("Inset/Stack/InspectionDetail")
+	_check(inspection.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and heading.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and detail.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and inspection.focus_mode == Control.FOCUS_NONE,
+		"sewn readout never intercepts mouse or keyboard")
+	_check(heading.get_theme_font_size("font_size") >= 18
+		and detail.get_theme_font_size("font_size") >= 16,
+		"legible stitched heading and signature sizes")
+	_check(input_bounds.encloses(inspection.get_global_rect())
+		and panel.get_global_rect().encloses(inspection.get_global_rect()),
+		"stitched readout wholly visible at 1280x720")
+	_check(inspection.get_global_rect().encloses(heading.get_global_rect())
+		and inspection.get_global_rect().encloses(detail.get_global_rect())
+		and detail.get_visible_line_count() == detail.get_line_count(),
+		"readout fits all rendered text lines")
+	for i in range(8):
+		var tile := _tile(picker, ORDER[i])
+		if tile != null:
+			_check(not tile.get_global_rect().intersects(inspection.get_global_rect()),
+				"inspector does not overlap hero hit target " + ORDER[i])
+	for button in [cancel, action]:
+		_check(not button.get_global_rect().intersects(inspection.get_global_rect()),
+			"inspector does not overlap action " + button.name)
+	_check(not action.get_global_rect().intersects(cancel.get_global_rect()),
+		"action buttons have distinct footprints")
+	_check(_readout(picker)[0].contains("HOVER OR FOCUS")
+		and _readout(picker)[1].contains("before choosing three"),
+		"fresh open has neutral guidance, not an auto-focused hero")
+	var hint: Label = picker.get_node("PaperPanel/Margins/Body/Foot/Hint")
+	_check(hint.text.contains("not live") and hint.text.contains("positions assigned later"),
+		"screen labels signatures as preview and selection order as non-positional")
 	_check(not cancel.disabled and action.disabled, "fresh zero selection gate")
 	_check(picker.selected_ids().is_empty(), "fresh selection is empty")
 	var before_json := FileAccess.get_file_as_string("res://data/heroes/starter_party.json")
@@ -177,6 +254,32 @@ func _run() -> void:
 	seed(48109)
 	_check(randi() == first, "global RNG oracle established")
 
+	# Genuine pointer and focus transitions inspect without picking.
+	await _key_focus(_tile(picker, "lantern_monk"))
+	_check_inspection(picker, "Lantern Monk", "LANTERN", "Light keeper",
+		"Moth Cloud", "real Lantern Monk focus")
+	await _move_to(_tile(picker, "warden"))
+	_check_inspection(picker, "Warden", "HELMET", "Bulwark",
+		"Shield Toss", "hover overrides the different focused hero")
+	await _move_to(picker.get_node("PaperPanel/Margins/Body/SubTitle"))
+	_check_inspection(picker, "Lantern Monk", "LANTERN", "Light keeper",
+		"Blind", "mouse exit restores keyboard inspection")
+	await _move_to(_tile(picker, "scarecrow"))
+	_check_inspection(picker, "Scarecrow", "FORK", "Fear harrier",
+		"Crow Peck", "real Scarecrow pointer hover")
+	await _move_to(picker.get_node("PaperPanel/Margins/Body/SubTitle"))
+	await _key_focus(_tile(picker, "button_golem"))
+	_check_inspection(picker, "Button Golem", "BUTTONS", "Block bruiser",
+		"Pop Button", "real Button Golem focus")
+	for i in range(8):
+		await _move_to(_tile(picker, ORDER[i]))
+		_check_inspection(picker, NAMES[i], MOTIFS[i], ROLES[i],
+			SIGNATURES[i], "all eight distinct designed signatures: " + ORDER[i])
+		_check(detail.get_visible_line_count() == detail.get_line_count()
+			and inspection.get_global_rect().encloses(detail.get_global_rect()),
+			"inspected hero signature remains visible: " + ORDER[i])
+	await _move_to(picker.get_node("PaperPanel/Margins/Body/SubTitle"))
+	_ids(picker, [], "inspection never changes requested picks")
 	await _mouse(_tile(picker, "warden"))
 	_ids(picker, ["warden"], "mouse first")
 	await _key(_tile(picker, "seamstress"), KEY_SPACE)
@@ -212,13 +315,23 @@ func _run() -> void:
 	var stale := _tile(picker, "warden")
 	picker.open_picker()
 	stale.pressed.emit()
+	var stale_motion := InputEventMouseMotion.new()
+	stale_motion.position = stale.get_global_rect().get_center()
+	stale.gui_input.emit(stale_motion)
+	stale.focus_entered.emit()
+	stale.mouse_exited.emit()
 	_check(picker.selected_ids().is_empty(), "stale generation ignored")
+	_check(_readout(picker)[0].contains("HOVER OR FOCUS"),
+		"retired hovered / focused / pressed tile cannot overwrite fresh inspection")
 	await _frames()
 	_ids(picker, [], "reopened")
+	_check(_readout(picker)[0].contains("HOVER OR FOCUS"),
+		"neutral reset survives next mounted frame")
 	_check(not cancel.disabled and picker.is_visible_in_tree(),
 		"open_picker resets latch and visibility")
 	await _mouse(_tile(picker, "scarecrow"))
 	_ids(picker, ["scarecrow"], "fresh selection after reopen")
+	var cancelled_tile := _tile(picker, "scarecrow")
 	await _key(cancel, KEY_ENTER)
 	_check(cancels == 1 and requests.size() == 1,
 		"Cancel emits only cancel_requested")
@@ -228,8 +341,13 @@ func _run() -> void:
 	_check(cancels == 1 and picker.selected_ids() == ["scarecrow"],
 		"cancelled opening ignores stale actions")
 	picker.open_picker()
+	cancelled_tile.gui_input.emit(stale_motion)
+	cancelled_tile.focus_entered.emit()
+	cancelled_tile.pressed.emit()
 	await _frames()
 	_ids(picker, [], "reopen after cancel")
+	_check(_readout(picker)[0].contains("HOVER OR FOCUS"),
+		"cancelled tile callbacks cannot inspect newly opened chooser")
 	await _key(_tile(picker, "button_golem"), KEY_ENTER)
 	await _mouse(_tile(picker, "yarn_ranger"))
 	await _mouse(_tile(picker, "rag_duelist"))
