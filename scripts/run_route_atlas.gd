@@ -1172,6 +1172,26 @@ func _add_thread(source: String, target: String, positions: Dictionary,
 		_begin_reveal(line)
 
 
+## The stop the player actually enters for one authored route kind. A generated legacy
+## Shop patch opens the already-shipped Peddler visit, so its sewn marker, hover and
+## ticket read as Peddler while the authored RunMap record keeps its own type and ID.
+## Native kinds (including a genuine Peddler, Rest and Campfire) keep their own name.
+## The existing v3 alias rule supplies the projected name; this is presentation only,
+## never a node mutation or a second competing alias table.
+static func display_kind(kind: String) -> String:
+	if kind != "Shop":
+		return kind
+	return RunV3StopChoiceProjection.v3_kind_for(kind)
+
+
+## Kind whose deterministic stop guidance describes the visit actually entered. The
+## marker keeps its authored Rest identity, while Help already speaks Campfire; a
+## projected Shop reads the shipped Peddler rules.
+static func help_kind(kind: String) -> String:
+	var shown := display_kind(kind)
+	return "Campfire" if shown == "Rest" else shown
+
+
 ## Player-facing sewn route wording for one REAL RunMap node record: its authored
 ## floor, kind and one-based branch row. The f##_n# ID is never read to guess either
 ## value, so a renamed ID could not change the words. A missing record keeps the
@@ -1234,12 +1254,12 @@ static func stop_consequence(kind: String) -> Dictionary:
 static func node_hover_text(node: Dictionary, fallback_kind: String = "",
 		show_consequence: bool = false) -> String:
 	if node.is_empty() or not (node.has("floor") and node.has("position")):
-		return fallback_kind
+		return display_kind(fallback_kind)
 	var kind := str(node.get("type", fallback_kind))
 	var prefix := "Floor %02d · %s · Branch %d" % [
-		int(node["floor"]), kind, int(node["position"]) + 1]
+		int(node["floor"]), display_kind(kind), int(node["position"]) + 1]
 	if show_consequence:
-		var facts := stop_consequence("Campfire" if kind == "Rest" else kind)
+		var facts := stop_consequence(help_kind(kind))
 		if not facts.is_empty():
 			return prefix + " · " + str(facts["tooltip"])
 	return prefix
@@ -1275,13 +1295,14 @@ func _show_choice_ticket(id: String) -> void:
 	if record.is_empty():
 		return
 	var kind := str(record.get("type", ""))
-	var facts := stop_consequence("Campfire" if kind == "Rest" else kind)
+	var shown := display_kind(kind)
+	var facts := stop_consequence(help_kind(kind))
 	if facts.is_empty():
 		return
 	var header := "%s · FLOOR %02d · BRANCH %d" % [
 		area_for_floor(int(record["floor"])).to_upper(), int(record["floor"]),
 		int(record["position"]) + 1]
-	_choice_ticket.set_choice(id, header, kind + " · " + str(facts["lead"]),
+	_choice_ticket.set_choice(id, header, shown + " · " + str(facts["lead"]),
 		str(facts["detail"]))
 	_choice_ticket.show()
 
@@ -1344,7 +1365,11 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	var marker := RouteTag.new()
 	marker.name = "Node_" + id
 	marker.set_meta("route_id", id)
+	# Authored kind and ID stay the route protocol; only the player-facing face of a
+	# legacy Shop patch projects to the shipped Peddler stop it actually opens.
 	marker.set_meta("route_kind", kind)
+	var shown := display_kind(kind)
+	marker.set_meta("display_kind", shown)
 	var state := "chosen" if chosen.has(id) else ("legal" if legal.has(id) else "other")
 	marker.set_meta("route_state", state)
 	marker.set_meta("authored_position", int(_map.get_node(id).get("position", -1)) if _map != null else -1)
@@ -1380,10 +1405,11 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	_inert(marker)
 	var art := NodeToken.new()
 	art.name = "Art"
-	art.token_kind = kind
-	var token_path := node_token_path(kind)
+	art.token_kind = shown
+	var token_path := node_token_path(shown)
 	art.token_texture = node_token_texture(token_path)
 	art.set_meta("route_kind", kind)
+	art.set_meta("display_kind", shown)
 	art.set_meta("art_path", token_path)
 	art.position = Vector2(3.0, 3.0)
 	art.size = NODE_SIZE - Vector2(6.0, 6.0)
@@ -1391,7 +1417,7 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	marker.add_child(art)
 	var caption := Label.new()
 	caption.name = "Identity"
-	caption.text = (str(shortcut) + " " if state == "legal" and shortcut > 0 else "") + kind
+	caption.text = (str(shortcut) + " " if state == "legal" and shortcut > 0 else "") + shown
 	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	caption.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	caption.add_theme_font_size_override("font_size", 18)

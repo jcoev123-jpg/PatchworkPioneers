@@ -24,6 +24,9 @@ const LIVE_HELP := {
 	"Shop": ["Browse 5 cards + 2 patches",
 		"Remove card: 75 gold initially, +25 each time",
 		"5 cards + 2 patches; card removal starts at 75 gold, increasing 25 per removal"],
+	"Peddler": ["Choose one: buy 1 of 3 hero cards or 1 patch",
+		"All 4 priced on the stock; one purchase, or leave",
+		"Buy one of 3 priced party-hero cards (one per hero) or the one priced patch, one purchase per visit, or leave; actual prices appear on the stock"],
 	"Event": ["2–3 choices when visited",
 		"Outcomes shown on arrival; no guaranteed yield",
 		"2–3 choices; outcomes revealed on visit, no guaranteed yield"],
@@ -35,10 +38,13 @@ const LIVE_HELP := {
 }
 
 
+## A generated legacy Shop patch opens the shipped Peddler visit, so the mounted
+## player-facing text uses Peddler's facts while the RunMap record keeps its own type.
 func _expected_hover(node: Dictionary, legal: bool) -> String:
+	var shown: String = "Peddler" if String(node["type"]) == "Shop" else String(node["type"])
 	var prefix := "Floor %02d · %s · Branch %d" % [
-		int(node["floor"]), String(node["type"]), int(node["position"]) + 1]
-	var help_kind: String = "Campfire" if legal and node.type == "Rest" else str(node.type)
+		int(node["floor"]), shown, int(node["position"]) + 1]
+	var help_kind: String = "Campfire" if node.type == "Rest" else shown
 	return prefix + (" · " + str(LIVE_HELP[help_kind][2]) if legal else "")
 
 
@@ -50,19 +56,29 @@ func _check_ticket(atlas: RunRouteAtlas, id: String, where: String) -> void:
 		return
 	var node := atlas._map.get_node(id)
 	var kind: String = node["type"]
-	var facts: Array = LIVE_HELP["Campfire" if kind == "Rest" else kind]
+	var shown: String = "Peddler" if kind == "Shop" else kind
+	var help_kind: String = "Campfire" if kind == "Rest" else shown
+	var facts: Array = LIVE_HELP[help_kind]
 	_check(ticket.route_id == id
 		and ticket.header_text == "%s · FLOOR %02d · BRANCH %d" % [
 			RunRouteAtlas.area_for_floor(int(node["floor"])).to_upper(),
 			int(node["floor"]), int(node["position"]) + 1]
-		and ticket.lead_text == kind + " · " + str(facts[0])
+		and ticket.lead_text == shown + " · " + str(facts[0])
 		and ticket.detail_text == str(facts[1])
 		and ticket.visible and ticket.is_visible_in_tree()
 		and ticket.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and ticket.focus_mode == Control.FOCUS_NONE
 		and not ticket.header_text.contains(id) and not ticket.lead_text.contains(id)
 		and RunRouteAtlas.ChoiceTicket.FONT_SIZE >= 18,
-		where + ": real area, floor, kind and truthfully limited cost/outcome")
+		where + ": real area, floor, stop and truthfully limited cost/outcome")
+	if kind == "Shop":
+		_check(shown == "Peddler"
+			and not ticket.lead_text.contains("Browse")
+			and not ticket.detail_text.contains("Remove")
+			and not ticket.detail_text.contains("removal")
+			and not ticket.lead_text.contains("5 cards")
+			and not ticket.detail_text.contains("75 gold"),
+			where + ": legal Shop ticket never advertises the retired five-card shop or removal")
 
 
 
@@ -102,6 +118,7 @@ func _tokens(atlas: RunRouteAtlas) -> void:
 		"Elite": "res://assets/paper/ui/map_node_elite.png",
 		"Event": "res://assets/paper/ui/map_node_event.png",
 		"Shop": "res://assets/paper/ui/map_node_shop.png",
+		"Peddler": "res://assets/paper/ui/map_node_peddler.png",
 		"Rest": "res://assets/paper/ui/map_node_rest.png",
 		"Boss": "res://assets/paper/ui/map_node_boss.png",
 	}
@@ -119,17 +136,19 @@ func _tokens(atlas: RunRouteAtlas) -> void:
 			continue
 		var id: String = child.get_meta("route_id")
 		var actual := atlas._map.get_node(id)
+		var shown: String = "Peddler" if String(actual.type) == "Shop" else String(actual.type)
 		actual_ids[id] = true
 		_check(actual.floor >= 1 and actual.floor <= 3
 			and child.get_meta("route_kind") == actual.type
+			and child.get_meta("display_kind") == shown
 			and Rect2(child.position, child.size).intersects(RunRouteAtlas.PAGE_RIGHT),
 			"real app shows only next three floors on the right page " + id)
 		var art := child.get_node_or_null("Art") as RunRouteAtlas.NodeToken
-		_check(art != null and art.token_kind == actual.type
+		_check(art != null and art.token_kind == shown
 			and art.mouse_filter == Control.MOUSE_FILTER_IGNORE,
-			"real patch carries its sewn kind emblem " + id)
-		if expected.has(actual.type) and ResourceLoader.exists(expected[actual.type], "Texture2D"):
-			_check(art != null and art.token_texture == load(expected[actual.type]),
+			"real patch carries its sewn stop emblem " + id)
+		if expected.has(shown) and ResourceLoader.exists(expected[shown], "Texture2D"):
+			_check(art != null and art.token_texture == load(expected[shown]),
 				"real app uses original sewn token image for " + id)
 		else:
 			_check(art != null and art.token_texture == null,
@@ -419,10 +438,23 @@ func _legal_openings(app) -> void:
 					var panel := marker.get_parent() as PanelContainer
 					var art := panel.get_node_or_null("Art") as RunRouteAtlas.NodeToken
 					if kind in ["Fight", "Elite", "Event", "Shop", "Rest", "Boss"]:
-						_check(art != null and art.token_kind == kind
-							and art.token_texture == load("res://assets/paper/ui/map_node_"
-								+ kind.to_lower() + ".png"),
-							"live legal %s marker shows its committed sewn token" % kind)
+						var shown: String = "Peddler" if kind == "Shop" else kind
+						var art_path := "res://assets/paper/ui/map_node_" + shown.to_lower() + ".png"
+						var expected_texture: Texture2D = null
+						if ResourceLoader.exists(art_path, "Texture2D"):
+							expected_texture = load(art_path) as Texture2D
+						_check(art != null and art.token_kind == shown
+							and str(art.get_meta("art_path")) == art_path
+							and art.token_texture == expected_texture
+							and (expected_texture != null or shown == "Peddler"),
+							"live legal %s marker shows the %s stop's committed sewn token" % [kind, shown])
+						if kind == "Shop":
+							_check(panel.get_node("Identity").text.ends_with("Peddler")
+								and panel.get_meta("route_kind") == "Shop"
+								and panel.get_meta("display_kind") == "Peddler"
+								and (expected_texture != null
+									or RunRouteAtlas.NodeToken.fallback_plan("Peddler")["emblem"] == "purse"),
+								"live legal Shop marker keeps its authored type and wears Peddler art or purse")
 					else:
 						_check(panel.get_node_or_null("Identity") is Label,
 							"live legal %s marker keeps its readable drawn identity" % kind)
