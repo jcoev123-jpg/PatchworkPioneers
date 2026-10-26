@@ -2294,6 +2294,17 @@ func _spring_face_states() -> void:
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	var pop_meta = load(HAND_SCRIPT).new()
+	var pop_damage := {"button_golem_starter_loose_pop": 9, "button_golem_starter_loose_pop_plus": 11,
+		"button_golem_pop_button": 9, "button_golem_pop_button_plus": 12}
+	for id in pop_damage:
+		var facts: Dictionary = pop_meta.describe(id)
+		_check(facts.known and facts.owner_text == "Button Golem" and facts.cost == 1,
+			"Pop metadata authentic owner and cost: " + id)
+		_check(pop_meta.definition(id).from_positions == [1, 2] and pop_meta.definition(id).to_positions == [1, 2]
+			and pop_meta.short_line(id) == "Spend 5 own Block; deal %d; pop 1 button." % pop_damage[id],
+			"Pop exact slots, Block payment and printing damage: " + id)
+	_check(not pop_meta.describe("button_golem_pop_button_plus_plus").known, "spoofed Pop metadata fails closed")
 	_catalog_facts()
 	_art_resolution_check()
 	_source_check()

@@ -72,6 +72,7 @@ var _tinker_gadgets := CombatTinkerPoolGadgets.new()
 var _heal_cards := CombatSeamstressPoolHeals.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
+var _pop := CombatButtonGolemPopCards.new()
 var _re_stuff := CombatScarecrowReStuffCards.new()
 var cleanse_choices: HBoxContainer
 var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
@@ -483,7 +484,7 @@ func _on_help_input(event: InputEvent) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if not _pending.is_empty() and _feint.is_supported_card(_pending.id) \
+	if not _pending.is_empty() and _is_enemy_card(_pending.id) \
 			and _pending.get("choosing", false) and event is InputEventKey and event.pressed and not event.echo:
 		var slot: int = [KEY_1, KEY_2, KEY_3].find(event.keycode) + 1
 		if slot > 0:
@@ -516,7 +517,7 @@ func _input(event: InputEvent) -> void:
 			_cancel_pending()
 			return
 		_pending.panel.set_meta("aiming", false)
-		if _pending.id in ALLY_IDS or _feint.is_supported_card(_pending.id):
+		if _pending.id in ALLY_IDS or _is_enemy_card(_pending.id):
 			if not _pending.get("choosing", false):
 				_choose_target()
 			if event.position.distance_to(_drag_origin) > 10:
@@ -602,8 +603,16 @@ func _path_discount(card_id: String) -> int:
 	return 0 if presenter == null else int(presenter.tinker_cost_discount(card_id))
 
 
+func _is_enemy_card(card_id: String) -> bool:
+	return _feint.is_supported_card(card_id) or _pop.is_supported_card(card_id)
+
+
+func _enemy_service(card_id: String):
+	return _pop if _pop.is_supported_card(card_id) else _feint
+
+
 func _is_actionable(card_id: String) -> bool:
-	if _feint.is_supported_card(card_id):
+	if _is_enemy_card(card_id):
 		return true
 	if _re_stuff.is_supported_card(card_id):
 		return true
@@ -850,8 +859,10 @@ func _sync_battle() -> void:
 	var help_text: String = TABLE_HELP
 	if choosing:
 		help_text = "%s: choose a living ally | Esc: cancel" % _metadata.definition(_pending.id).get("display_name", _pending.id)
-		if _feint.is_supported_card(_pending.id):
+		if _is_enemy_card(_pending.id):
 			help_text = "%s: choose a living enemy (1-3) | Esc: cancel" % _metadata.definition(_pending.id).display_name
+		if _pop.is_supported_card(_pending.id):
+			help_text = "%s: choose a living enemy (1-2) | Esc: cancel" % _metadata.definition(_pending.id).display_name
 		if _cleansing.is_supported_card(_pending.id):
 			help_text = "%s: 1 energy; heal %d; %s | Esc: cancel" % [_metadata.definition(_pending.id).display_name,
 				_metadata.definition(_pending.id).effects.heal,
@@ -900,7 +911,7 @@ func _sync_battle() -> void:
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_card_input.bind(panel, label.text, _deck, _party, _battle)
 		_bindings[panel] = callback
-		if label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _feint.is_supported_card(label.text):
+		if label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text):
 			_move_context[panel] = _current_move_context(panel)
 		panel.gui_input.connect(callback)
 	# Keep the existing End/Return Tab cycle; Up enters the card row, Down exits it.
@@ -1091,7 +1102,7 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 		return false
 	if not panel.is_visible_in_tree() or not battle.is_visible_in_tree() or panel.get_parent() != app.hand_view:
 		return false
-	if _feint.is_supported_card(card_id):
+	if _is_enemy_card(card_id):
 		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
 				or _move_context.get(panel, []) != _current_move_context(panel):
 			return false
@@ -1100,7 +1111,7 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 			return false
 		var legal := false
 		for slot in [1, 2, 3]:
-			if _feint._prepare(deck, party, app.enemies, card_id, slot).get("ok", false):
+			if _enemy_service(card_id)._prepare(deck, party, app.enemies, card_id, slot).get("ok", false):
 				legal = true
 		if not legal:
 			return false
@@ -1167,7 +1178,7 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		return
 	_cancel_pending()
 	_pending = {"panel": panel, "id": card_id, "choosing": false, "queued": false, "context": _current_move_context(panel)}
-	if _cleansing.is_supported_card(card_id):
+	if _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id):
 		_pending.owner_roster = _party.get_heroes().map(func(hero): return [hero.id, hero.position])
 	if card_id in ALLY_IDS and not _selection_valid():
 		_cancel_pending()
@@ -1176,7 +1187,7 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		_dragging = true
 		_drag_origin = panel.get_global_transform() * event.position
 	# Ally selection can arm immediately; target-free mouse casts wait for release.
-	if accept or card_id in ALLY_IDS or _feint.is_supported_card(card_id):
+	if accept or card_id in ALLY_IDS or _is_enemy_card(card_id):
 		_activate.call_deferred(panel, card_id, deck, party, battle, _token)
 
 
@@ -1189,7 +1200,7 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 	if card_id in SPARE_PARTS_IDS and not _selection_valid():
 		_cancel_pending()
 		return
-	if card_id in ALLY_IDS or _feint.is_supported_card(card_id):
+	if card_id in ALLY_IDS or _is_enemy_card(card_id):
 		if _pending.get("choosing", false):
 			return
 		if _selection_valid():
@@ -1236,6 +1247,8 @@ func _selection_valid() -> bool:
 		return false
 	if _pending.get("context", []) != _current_move_context(_pending.panel):
 		return false
+	if _pop.is_supported_card(_pending.id) and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
+		return false
 	if _cleansing.is_supported_card(_pending.id):
 		if _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
 			return false
@@ -1254,7 +1267,7 @@ func _selection_valid() -> bool:
 
 
 func _enemy_selection() -> bool:
-	return not _pending.is_empty() and _feint.is_supported_card(_pending.id)
+	return not _pending.is_empty() and _is_enemy_card(_pending.id)
 
 
 func _target_panels() -> Array:
@@ -1286,7 +1299,7 @@ func _choose_target() -> void:
 	var app = get_parent()
 	for index in range(_target_panels().size()):
 		var panel: Control = _target_panels()[index]
-		if (_enemy_selection() and not _feint._prepare(_deck, _party, app.enemies, _pending.id, index + 1).get("ok", false)) or (not _enemy_selection() and _party.is_downed(index + 1)):
+		if (_enemy_selection() and not _enemy_service(_pending.id)._prepare(_deck, _party, app.enemies, _pending.id, index + 1).get("ok", false)) or (not _enemy_selection() and _party.is_downed(index + 1)):
 			continue
 		panels.append(panel)
 		panel.focus_mode = Control.FOCUS_ALL
@@ -1313,6 +1326,8 @@ func _choose_target() -> void:
 		_targets[panel] = {"callback": callback, "cue": cue,
 			"position": index + 1, "hero_id": _target_actor(index + 1).id,
 			"mouse_filter": previous_filter}
+		if _pop.is_supported_card(_pending.id):
+			_targets[panel].actor_ref = app.enemies._enemies[index]
 		panel.gui_input.connect(callback)
 	for index in range(panels.size()):
 		var panel := panels[index]
@@ -1331,6 +1346,8 @@ func _targets_valid() -> bool:
 			return false
 		var hero := _target_actor(target.position)
 		if hero.get("id") != target.hero_id or hero.get("hp", 0) <= 0:
+			return false
+		if target.has("actor_ref") and not is_same(target.actor_ref, get_parent().enemies._enemies[target.position - 1]):
 			return false
 	return true
 
@@ -1407,11 +1424,12 @@ func _resolve_target(position: int, token: int) -> void:
 	var id: String = _pending.id
 	if _enemy_selection():
 		var app = get_parent()
-		if not _feint._prepare(_deck, _party, app.enemies, id, position).get("ok", false):
+		if not _enemy_service(id)._prepare(_deck, _party, app.enemies, id, position).get("ok", false):
 			_cancel_pending()
 			return
 		_cancel_pending()
-		if _feint.play_card(_deck, _party, app.enemies, id, position).get("ok", false):
+		if _enemy_service(id).play_card(_deck, _party, app.enemies, id, position).get("ok", false):
+			app._refresh_party()
 			app._refresh_enemy_roster()
 			app._refresh_hand()
 			_sync_battle()

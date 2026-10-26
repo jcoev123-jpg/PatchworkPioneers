@@ -31,6 +31,7 @@ var _catalog := StarterCards.new()
 var _toss := CombatWardenV3ShieldTossCards.new()
 var _helmet := CombatWardenV3HelmetCards.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
+var _pop := CombatButtonGolemPopCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
 var _re_stuff := CombatScarecrowReStuffCards.new()
 var _warden_pool := WardenPoolCards.new()
@@ -78,6 +79,10 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if _pop.is_supported_card(card_id):
+		if _pop._authenticate(card_id).is_empty():
+			return {}
+		return ButtonGolemStarterCards.new().get_definition(card_id) if _pop.STARTER_PRINTINGS.has(card_id) else ButtonGolemPoolCards.new().get_definition(card_id)
 	if _feint.is_supported_card(card_id):
 		return _feint._catalog_definition(card_id)
 	if CombatScarecrowCrowCards.CARDS.has(card_id):
@@ -323,6 +328,11 @@ func get_faces(panel: Control) -> Dictionary:
 ## effect and keyword text without that legend; the default keeps the hand
 ## tooltip byte-for-byte unchanged and an unknown ID still fails closed.
 func base_effect_text(card_id: String, include_pips: bool = true) -> String:
+	if _pop.is_supported_card(card_id):
+		var card := _definition(card_id)
+		if card.is_empty():
+			return "Unknown card"
+		return "%s; Button Golem; 1 energy\nFrom %s; To one selected living enemy %s\nBASE spend 5 own Block; deal %d damage through Block before HP; gain 1 buttons_popped. Weak/Exposed/Tangled apply.\n%s" % [card.display_name, _positions(card.from_positions), _positions(card.to_positions), card.effects.damage, _pip_legend(card) if include_pips else ""]
 	if CombatScarecrowCrowCards.CARDS.has(card_id):
 		var card := _definition(card_id)
 		return "%s; Scarecrow; %s catalog; %d energy\nFrom %s; automatically target the backmost living enemy only\nBASE deal %d damage; bypass Block (Block remains). Weak/Exposed/Tangled apply; no target choice.\n%s" % [
@@ -1018,7 +1028,7 @@ func _update_visual(panel: Control) -> void:
 		if id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatScarecrowCrowCards.CARDS.has(id):
 			var area = _app.get_node_or_null("LiveAreaAttackAction")
 			playable = area != null and area._eligible(panel, id)
-		elif _re_stuff.is_supported_card(id) or _feint.is_supported_card(id):
+		elif _re_stuff.is_supported_card(id) or _feint.is_supported_card(id) or _pop.is_supported_card(id):
 			var support_presenter = _app.get_node_or_null("LiveSupportHand")
 			playable = support_presenter != null and support_presenter._eligible(
 				panel, id, _app.deck, _app.party, _app.battle_view)
@@ -1143,6 +1153,8 @@ func _center_text(panel: Control, value: String, rect: Rect2, preferred: int) ->
 ## keeps the ordinary and two-half sewn faces identical; applied amounts come
 ## from the same validated record the tooltip explains, never from a prediction.
 func _rules(id: String) -> String:
+	if _pop.is_supported_card(id) and not _definition(id).is_empty():
+		return "Spend 5 own Block; deal %d; pop 1 button." % _definition(id).effects.damage
 	if _feint.is_supported_card(id):
 		return "Exposed 1; draw 1."
 	if CombatScarecrowCrowCards.CARDS.has(id):
