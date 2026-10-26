@@ -5497,14 +5497,20 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	panel.bind(visit)
 	panel.intent_requested.connect(_peddler_intent.bind(visit, _peddler_view_source))
 	shop_label = panel.wallet_label
+	var wearer_label := panel._label("Patch wearer", Vector2(39, 406),
+		Vector2(240, 30), 20, LivePeddlerPanel.CREAM)
+	wearer_label.name = "PatchWearerLabel"
 	peddler_heroes = OptionButton.new()
-	peddler_heroes.position = Vector2(39, 560)
-	peddler_heroes.size = Vector2(822, 38)
+	peddler_heroes.position = Vector2(39, 440)
+	peddler_heroes.size = Vector2(240, 44)
 	for hero in run_heroes:
 		peddler_heroes.add_item(hero.id.capitalize())
 		peddler_heroes.set_item_metadata(peddler_heroes.item_count - 1, hero.id)
 	peddler_heroes.tooltip_text = "Patch wearer: sew onto this hero's matching slot."
 	panel.add_child(peddler_heroes)
+	panel.patch_button.position = Vector2(295, 406)
+	panel.patch_button.custom_minimum_size = Vector2(566, 78)
+	panel.patch_button.size = Vector2(566, 78)
 	peddler_buttons.assign(panel.card_buttons + [panel.patch_button])
 	peddler_leave_button = panel.leave_button
 	_wire_peddler_focus()
@@ -5514,10 +5520,13 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 
 
 func _wire_peddler_focus() -> void:
-	var actions: Array[Control] = [peddler_heroes]
-	for action in peddler_buttons:
+	var actions: Array[Control] = []
+	for action in peddler_buttons.slice(0, 3):
 		if not action.disabled:
 			actions.append(action)
+	actions.append(peddler_heroes)
+	if not peddler_buttons[3].disabled:
+		actions.append(peddler_buttons[3])
 	actions.append(peddler_leave_button)
 	for i in range(actions.size()):
 		actions[i].focus_next = actions[i].get_path_to(actions[(i + 1) % actions.size()])

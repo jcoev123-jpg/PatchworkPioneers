@@ -1059,7 +1059,21 @@ func _run() -> void:
 		_check(app.shop_view is LivePeddlerPanel and app.shop_view._visit == visit
 			and app.shop_view.intent_requested.get_connections().size() == 1,
 			"one sewn panel binds the real visit and one controller intent bridge")
-		var controls: Array = [app.peddler_heroes] + app.peddler_buttons + [app.peddler_leave_button]
+		var wearer_label := app.shop_view.get_node_or_null("PatchWearerLabel") as Label
+		_check(wearer_label != null and wearer_label.is_visible_in_tree()
+			and wearer_label.text == "Patch wearer"
+			and wearer_label.get_theme_font_size("font_size") == 20
+			and wearer_label.get_theme_color("font_color") == LivePeddlerPanel.CREAM
+			and wearer_label.get_theme_font("font") == app.shop_view.get_theme_font("font"),
+			"mounted selector has a readable label in the panel's sewn theme")
+		_check(app.peddler_heroes.get_parent() == app.shop_view and app.peddler_heroes.item_count == 3,
+			"wearer selector mounts the genuine three-member party")
+		for i in range(app.peddler_heroes.item_count):
+			_check(app.peddler_heroes.get_item_text(i) == String(app.run_heroes[i].id).capitalize()
+				and app.peddler_heroes.get_item_metadata(i) == app.run_heroes[i].id,
+				"wearer labels and metadata retain authentic party order and IDs")
+		var controls: Array = app.peddler_buttons.slice(0, 3) + [app.peddler_heroes,
+			app.peddler_buttons[3], app.peddler_leave_button]
 		for control in controls:
 			_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()),
 				"each real choice fits viewport")
