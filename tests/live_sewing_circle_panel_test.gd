@@ -51,6 +51,11 @@ func _activate(button: Button, keyboard: bool) -> void:
 			root.push_input(event)
 			await process_frame
 	else:
+		if panel.choices.is_ancestor_of(button):
+			panel.choice_scroll.ensure_control_visible(button)
+			await _settle_layout()
+			_check(panel.choice_scroll.get_global_rect().has_point(button.get_global_rect().get_center()),
+				"mouse target center is genuinely inside the clipped scroll")
 		var point := button.get_global_rect().get_center()
 		var motion := InputEventMouseMotion.new()
 		motion.position = point
@@ -103,6 +108,7 @@ func _run() -> void:
 	var seeded_next := randi()
 	seed(RNG_SEED)
 	await _test_layout()
+	await _test_owner_filters()
 	_check(panel._effects({"z_other": 9, "bleed": 2, "damage": 3, "a_other": 4})
 		== "Deal 3 damage; apply Bleed 2; a other: 4; z other: 9",
 		"mixed known and unknown fields preserve values in deterministic reading order")
@@ -213,6 +219,199 @@ func _test_layout() -> void:
 	await _settle_layout()
 	_check(panel.choice_scroll.scroll_vertical > 0, "keyboard focus reveals offscreen copy")
 	_check(visit.read_state() == source and intents.is_empty(), "browse does not change any ledger")
+
+
+func _filter_at(owner: String) -> Button:
+	for chip in panel.filter_buttons:
+		if chip.text == ("All" if owner.is_empty() else owner.capitalize()):
+			return chip
+	_check(false, "genuine stage must expose owner filter " + owner)
+	return null
+
+
+func _check_filtered(options: Array, owner: String = "") -> void:
+	_check(not options.is_empty(), "canonical eligible stage is nonempty")
+	var expected: Array = []
+	var owners: Array[String] = [""]
+	for option in options:
+		if not owners.has(option.owner):
+			owners.append(option.owner)
+		if owner.is_empty() or option.owner == owner:
+			expected.append(option)
+	_check(not expected.is_empty() and panel.option_buttons.size() == expected.size(),
+		"filtered nonempty rows have exact eligible occurrence count")
+	for i in range(mini(expected.size(), panel.option_buttons.size())):
+		_check(panel.option_buttons[i].get_meta("option") == expected[i]
+			and panel._row_indices[panel.option_buttons[i]] == expected[i].index,
+			"filtered duplicate keeps canonical metadata, order and original index")
+	_check(panel.filter_buttons.size() == owners.size(), "only stage owners plus All offered")
+	for i in range(mini(owners.size(), panel.filter_buttons.size())):
+		var chip := panel.filter_buttons[i]
+		_check(chip.text == ("All" if owners[i].is_empty() else owners[i].capitalize())
+			and chip.button_pressed == (owners[i] == owner), "authentic filter caption and selected state")
+		var clipped := chip.get_global_rect().intersection(panel.choice_scroll.get_global_rect())
+		_check(chip.size.x <= panel.choice_scroll.size.x
+			and chip.size.y <= 40 and panel.choice_scroll.get_global_rect().encloses(chip.get_global_rect())
+			and not clipped.intersects(panel.preview_scroll.get_global_rect())
+			and not clipped.intersects(panel.confirm_button.get_global_rect()),
+			"compact chips paint only inside existing choices column")
+
+
+func _test_owner_filters() -> void:
+	seed(RNG_SEED)
+	var seeded_next := randi()
+	seed(RNG_SEED)
+	var deck: Array = []
+	for i in range(30):
+		deck.append([STRIKE, PRICK, "tinker_pop_shot"][i % 3])
+	for keyboard in [false, true]:
+		var visit := _make(deck)
+		await _bind(visit)
+		var source := visit.read_state()
+		_check(panel.filter_buttons.is_empty() and panel._owner_filter.is_empty(), "fresh bind resets filters")
+		await _activate(panel.upgrade_button, keyboard)
+		_check_filtered(visit.upgrade_options())
+		_check(panel.option_buttons.size() == 30, "All retains full authentic 30-copy three-owner deck")
+		panel.leave_button.grab_focus()
+		await _key(KEY_TAB)
+		_check(_filter_at("").has_focus(), "Tab from third decision reaches All navigation")
+		await _key(KEY_TAB)
+		_check(_filter_at("warden").has_focus(), "Tab reaches first owner chip")
+		await _key(KEY_ENTER)
+		await _key(KEY_ENTER, false)
+		_check_filtered(visit.upgrade_options(), "warden")
+		_check(_filter_at("warden").has_focus(), "chip refresh preserves selected keyboard focus")
+		for owner in ["seamstress", "tinker", "warden"]:
+			await _activate(_filter_at(owner), keyboard)
+			_check_filtered(visit.upgrade_options(), owner)
+			_check(_filter_at(owner).has_focus(), "mouse and keyboard chip preserve focus")
+		await _activate(_filter_at(""), keyboard)
+		_check_filtered(visit.upgrade_options())
+		await _activate(_filter_at("warden"), keyboard)
+		var retired_chip: Callable = _filter_at("tinker").pressed.get_connections()[0].callable
+		var retired_row: Callable = panel.option_buttons[1].pressed.get_connections()[0].callable
+		await _activate(panel.option_buttons[1], keyboard)
+		_check(panel.preview().index == 3 and not panel.confirm_button.disabled,
+			"filtered second Warden duplicate previews source index 3")
+		await _activate(_filter_at("seamstress"), keyboard)
+		retired_chip.call()
+		retired_row.call()
+		await _key(KEY_3)
+		_check_filtered(visit.upgrade_options(), "seamstress")
+		_check(panel.preview().is_empty() and panel._first == -1 and panel.confirm_button.disabled
+			and intents.is_empty() and panel._confirmed.is_empty() and visit.read_state() == source,
+			"switch after preview retires rows/chips and Confirm without receipt or ledger drift")
+		await _activate(panel.option_buttons[1], keyboard)
+		_check(panel.preview().index == 4, "filtered duplicate retains index 4")
+		await _activate(panel.confirm_button, keyboard)
+		_check(intents.size() == 1, "filtered upgrade emits exactly once")
+		if intents.size() != 1:
+			return
+		var intent := intents[0]
+		_check(intent.first_index == 4 and intent.source_snapshot == source
+			and panel.take_confirmed(intent) == intent and panel.take_confirmed(intent).is_empty(),
+			"filtered upgrade exact source-bound one-shot receipt")
+		var result := Controller.submit(visit, intent)
+		_check(result.ok and result.deck[4] == "seamstress_prick_plus"
+			and result.deck[1] == PRICK, "only selected filtered duplicate upgrades")
+		_check_receipt(result, source, 0)
+		_check_replay(visit, intent)
+		retired_chip.call()
+		retired_row.call()
+		_check(intents.size() == 1 and panel.filter_buttons.is_empty(), "submitted filters remain retired")
+
+		visit = _make(deck)
+		await _bind(visit)
+		source = visit.read_state()
+		await _activate(panel.stitch_button, keyboard)
+		_check_filtered(visit.stitch_first_options())
+		await _activate(_filter_at("warden"), keyboard)
+		_check_filtered(visit.stitch_first_options(), "warden")
+		retired_chip = _filter_at("warden").pressed.get_connections()[0].callable
+		retired_row = panel.option_buttons[1].pressed.get_connections()[0].callable
+		await _activate(panel.option_buttons[1], keyboard)
+		_check(panel._first == 3 and panel._owner_filter.is_empty(), "FIRST to THEN resets to All")
+		_check_filtered(visit.stitch_second_options(3))
+		_check(panel.filter_buttons.size() == 3 and _filter_at("").button_pressed,
+			"THEN exposes All and only two genuine different-owner filters")
+		retired_chip.call()
+		retired_row.call()
+		_check(panel._first == 3 and panel._second == -1, "first-stage chip/row cannot select a THEN half")
+		await _activate(_filter_at("tinker"), keyboard)
+		_check_filtered(visit.stitch_second_options(3), "tinker")
+		await _activate(panel.option_buttons[1], keyboard)
+		var pair := visit.stitch_preview(3, 5)
+		_check(not pair.is_empty() and panel.preview() == pair, "filtered THEN uses authentic ordered preview")
+		await _activate(_filter_at("seamstress"), keyboard)
+		_check(panel._first == 3 and panel._second == -1 and panel.preview().is_empty()
+			and panel.confirm_button.disabled and intents.is_empty() and visit.read_state() == source,
+			"THEN filter clears pending partner and retains first half without spending")
+		await _activate(panel.option_buttons[1], keyboard)
+		pair = visit.stitch_preview(3, 4)
+		_check(not pair.is_empty() and panel.preview() == pair, "new filtered partner retains original source index")
+		await _activate(panel.confirm_button, keyboard)
+		_check(intents.size() == 1, "filtered Stitch emits once")
+		if intents.size() != 1:
+			return
+		intent = intents[0]
+		_check(intent.first_index == 3 and intent.second_index == 4 and intent.source_snapshot == source
+			and panel.take_confirmed(intent) == intent and panel.take_confirmed(intent).is_empty(),
+			"filtered Stitch has exact source-bound ordered one-shot receipt")
+		result = Controller.submit(visit, intent)
+		_check(result.ok and result.transaction == pair.projection, "filtered Stitch settles authentic projection")
+		_check_receipt(result, source, 3)
+		_check_replay(visit, intent)
+
+	var visit := _make([STRIKE, PRICK, "tinker_pop_shot"])
+	await _bind(visit)
+	await _activate(panel.stitch_button, false)
+	_check_filtered(visit.stitch_first_options())
+	await _activate(_filter_at("tinker"), false)
+	await _activate(panel.upgrade_button, false)
+	_check_filtered(visit.upgrade_options())
+	_check(panel._owner_filter.is_empty(), "entering another mode resets owner filter to All")
+	var chip_callback: Callable = _filter_at("tinker").pressed.get_connections()[0].callable
+	var row_callback: Callable = panel.option_buttons[0].pressed.get_connections()[0].callable
+	var source := visit.read_state()
+	panel.hide()
+	chip_callback.call()
+	row_callback.call()
+	_check(panel._owner_filter.is_empty() and panel._first == -1 and visit.read_state() == source,
+		"hidden chip and row callbacks cannot act")
+	panel.show()
+	await _activate(panel.leave_button, false)
+	chip_callback.call()
+	row_callback.call()
+	_check(panel._mode == "leave" and panel.filter_buttons.is_empty(), "Leave retires filters and rows")
+	var replacement := _make(deck, 2)
+	await _bind(replacement)
+	var replacement_source := replacement.read_state()
+	chip_callback.call()
+	row_callback.call()
+	await _key(KEY_2)
+	_check(panel._mode.is_empty() and panel.filter_buttons.is_empty() and panel.stitch_button.disabled
+		and panel.confirm_button.disabled and intents.is_empty() and replacement.read_state() == replacement_source,
+		"rebound chip and row cannot bypass low-scrap Stitch")
+	await _activate(panel.upgrade_button, false)
+	chip_callback = _filter_at("warden").pressed.get_connections()[0].callable
+	panel.close()
+	chip_callback.call()
+	_check(not panel.visible and panel.filter_buttons.is_empty() and intents.is_empty()
+		and replacement.read_state() == replacement_source, "closed chip callback is inert")
+	await _bind(visit)
+	await _activate(panel.upgrade_button, false)
+	chip_callback = _filter_at("tinker").pressed.get_connections()[0].callable
+	row_callback = panel.option_buttons[0].pressed.get_connections()[0].callable
+	var external := visit.leave(source.visit_id, source.node_id, source)
+	_check(external.ok, "genuine external settlement before inactive chip callback")
+	var settled := visit.read_state()
+	chip_callback.call()
+	row_callback.call()
+	_check(panel.filter_buttons.is_empty() and panel.option_buttons.is_empty()
+		and panel.preview().is_empty() and panel.confirm_button.disabled and intents.is_empty()
+		and visit.read_state() == settled, "externally consumed visit retires chips without forging an intent")
+	_check(randi() == seeded_next, "all owner filtering paths consume no global RNG")
+	seed(RNG_SEED)
 
 
 ## Expectations come directly from independently resolved cards, not the panel's
