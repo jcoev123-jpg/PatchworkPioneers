@@ -42,8 +42,11 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 
 ## Use the acquired patch through the next battle's real held-card input.
 func _acquired_attack_check(patch_id: String) -> void:
+	# An authored shove on the routed floor-band fight can move the Warden out of
+	# slot 1, so the patch's wearer is located by identity rather than slot; the
+	# per-owner attack checks below still require that living owner.
 	_check(app.party != null and app.enemies != null and not app._battle_closed
-		and app.party.get_hero(1).id == "warden" and not app.party.is_downed(1),
+		and app.party.get_heroes().any(func(hero): return hero.id == "warden" and hero.hp > 0),
 		"acquired patch reaches a living Warden in a real later battle")
 	for id in ["seamstress_prick", "warden_strike"]:
 		while not app.deck.hand.has(id) and not app.deck.draw_pile.is_empty():

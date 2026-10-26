@@ -7,9 +7,10 @@ extends "res://tests/live_stitched_hand_play_test.gd"
 ## The same earned-stitch route, now with a battle waiting after the stitched
 ## Fight so the mounted reward can be settled and the run can continue.
 func _hand_fixture() -> Dictionary:
-	# Seed 38812 is a verified ten-kind route in this bounded search band that
-	# wins its stronger weighted Elite with all three stitch owners alive.
-	for value in [38812] + range(1, 200001):
+	# Seed 3852 is a verified ten-kind route in this bounded search band that
+	# wins its stronger weighted Elite with all three stitch owners alive (the
+	# re-split floor bands moved the previous 38812 Elite witness).
+	for value in [3852] + range(1, 200001):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()

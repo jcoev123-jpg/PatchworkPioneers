@@ -268,6 +268,12 @@ func _routed_win(fixture: Dictionary, downed: bool, capped_survivor: bool = fals
 	for turn in range(20):
 		if app._battle_closed:
 			break
+		if not downed and not app.party.is_downed(3):
+			# The recovery fixture needs an untouched full-HP Tinker witness at the
+			# Rest, whatever roster the current floor band draws for this seed. This
+			# tops up combat state between genuine turns; it never injects an enemy
+			# action, a battle outcome or a Rest result.
+			_check(app.party.heal(3, 999), "fixture keeps the full-HP Tinker witness topped up")
 		if capped_survivor:
 			_check(app.party.heal(2, 999), "fixture tops up living survivor before final card inputs")
 			if not app.party.is_downed(1) and app.party.get_hero(1).hp == app.party.get_hero(1).max_hp:
