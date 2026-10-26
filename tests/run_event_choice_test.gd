@@ -99,6 +99,7 @@ func _initialize() -> void:
 	_test_vital_branch_settlement()
 	_test_vital_caps_and_bounds()
 	_test_vital_unaffordable_then_leave()
+	_test_vital_new_story_negatives()
 	_test_vital_malformed_inputs()
 	_check(catalog == catalog_snapshot, "shared event catalog unchanged across all test flows")
 	for failure in failures:
@@ -2555,6 +2556,60 @@ const VITAL_REQUIRED := {
 			["leave", "Refuse the prophecy and go", 0, 0, 0, 0],
 		],
 	},
+	"v3_lacebound_mirror": {
+		"title": "The Lacebound Mirror",
+		"description": "A plum-velvet mirror shows a button-eyed doll with one seam stronger and one button missing.",
+		"choices": [
+			["sew_reflection", "Spend 2 scraps; mend 4 HP and add 2 lasting max HP", 0, -2, 4, 2],
+			["break_reflection", "Break the reflection for 25 gold; lose 2 max HP", 25, 0, 0, -2],
+			["leave", "Cover the mirror and leave", 0, 0, 0, 0],
+		],
+	},
+	"v3_ashthread_balcony": {
+		"title": "The Ashthread Balcony",
+		"description": "Beneath a midnight-teal bell, dolls sing through seams filled with glowing ash.",
+		"choices": [
+			["sing_into_ash", "Lose 5 HP to gain 2 lasting max HP", 0, 0, -5, 2],
+			["cut_bell_cord", "Cut the bell cord for 19 gold; lose 3 HP", 19, 0, -3, 0],
+			["leave", "Leave the choir singing", 0, 0, 0, 0],
+		],
+	},
+	"v3_copper_moon_puppet": {
+		"title": "The Copper-Moon Puppet",
+		"description": "A giant round-headed marionette holds a warm copper moon between stitched hands.",
+		"choices": [
+			["take_moonlight", "Pay 18 gold; heal 6 HP and gain 1 max HP", -18, 0, 6, 1],
+			["unhook_strings", "Salvage 3 scraps but lose 7 HP", 0, 3, -7, 0],
+			["leave", "Let the puppet bow", 0, 0, 0, 0],
+		],
+	},
+	"v3_bone_cream_wardrobe": {
+		"title": "The Bone-Cream Wardrobe",
+		"description": "A moonlit wardrobe offers one soft lining and one permanent bone-cream hem.",
+		"choices": [
+			["borrow_lining", "Spend 1 scrap; heal 8 HP but lose 1 max HP", 0, -1, 8, -1],
+			["buy_permanent_hem", "Pay 25 gold for 3 lasting max HP", -25, 0, 0, 3],
+			["leave", "Close the wardrobe doors", 0, 0, 0, 0],
+		],
+	},
+	"v3_mosslit_seam_trial": {
+		"title": "The Mosslit Seam Trial",
+		"description": "A moss-clad ragdoll judge weighs thread against a glowing, stitched heart.",
+		"choices": [
+			["prove_courage", "Lose 6 HP; receive 2 scraps and 1 max HP", 0, 2, -6, 1],
+			["purchase_verdict", "Pay 16 gold for 2 lasting max HP", -16, 0, 0, 2],
+			["leave", "Decline the trial", 0, 0, 0, 0],
+		],
+	},
+	"v3_duskwoven_cocoon": {
+		"title": "The Duskwoven Cocoon",
+		"description": "An enormous quilted moth cocoon glows rose-gold beside the road.",
+		"choices": [
+			["rest_in_cocoon", "Spend 2 scraps; heal 7 HP and gain 1 max HP", 0, -2, 7, 1],
+			["harvest_silk", "Take 24 gold in silk; lose 1 max HP", 24, 0, 0, -1],
+			["leave", "Leave the cocoon untouched", 0, 0, 0, 0],
+		],
+	},
 }
 
 var vital_catalog: Array = []
@@ -2765,10 +2820,18 @@ func _test_vital_caps_and_bounds() -> void:
 
 func _test_vital_unaffordable_then_leave() -> void:
 	var cases := [
-		{"state": _vital_state(0, 4, 25, 40), "rejected": ["buy_bandages", "buy_rose_balm", "moonblessing", "weave_fortune"]},
-		{"state": _vital_state(40, 0, 25, 40), "rejected": ["reinforce_heart", "mend_straw"]},
-		{"state": _vital_state(40, 4, 1, 40), "rejected": ["blood_receipt", "harvest_thorns", "tend_candles", "sell_straw"]},
-		{"state": _vital_state(40, 4, 10, 10), "rejected": ["surrender_button", "surrender_seam"]},
+		{"state": _vital_state(0, 4, 25, 40), "rejected": [
+			"buy_bandages", "buy_rose_balm", "moonblessing", "weave_fortune",
+			"take_moonlight", "buy_permanent_hem", "purchase_verdict"]},
+		{"state": _vital_state(40, 0, 25, 40), "rejected": [
+			"reinforce_heart", "mend_straw",
+			"sew_reflection", "borrow_lining", "rest_in_cocoon"]},
+		{"state": _vital_state(40, 4, 1, 40), "rejected": [
+			"blood_receipt", "harvest_thorns", "tend_candles", "sell_straw",
+			"sing_into_ash", "cut_bell_cord", "unhook_strings", "prove_courage"]},
+		{"state": _vital_state(40, 4, 10, 10), "rejected": [
+			"surrender_button", "surrender_seam",
+			"break_reflection", "borrow_lining", "harvest_silk"]},
 	]
 	for event_id in VITAL_REQUIRED:
 		var rows: Array = VITAL_REQUIRED[event_id]["choices"]
@@ -2796,6 +2859,62 @@ func _test_vital_unaffordable_then_leave() -> void:
 			_check(leave.get("ok") == true and leave.get("event_id") == event_id and leave.get("state") == original
 				and service.is_claimed(), "free leave still works on the same visit: " + event_id)
 			_check(randi() == rng_expected, "rejections and leave spend no RNG: " + event_id)
+
+
+## The appended story Events each carry one genuinely unaffordable or dangerous
+## branch: an underfunded permanent hem, a lethal string salvage and a mirror
+## bargain that would tear past the max-HP floor. Every refusal must leave the
+## visit claimable so Leave still settles it.
+func _test_vital_new_story_negatives() -> void:
+	var cases := [
+		{"event": "v3_bone_cream_wardrobe", "choice": "buy_permanent_hem",
+			"state": _vital_state(24, 4, 25, 40)},
+		{"event": "v3_copper_moon_puppet", "choice": "unhook_strings",
+			"state": _vital_state(40, 4, 7, 40)},
+		{"event": "v3_lacebound_mirror", "choice": "break_reflection",
+			"state": _vital_state(40, 4, 10, 10)},
+	]
+	for case_data in cases:
+		var event_id: String = case_data["event"]
+		var choice_id: String = case_data["choice"]
+		var tag: String = event_id + "/" + choice_id
+		var record := _vital_record(event_id)
+		_check(not record.is_empty(), "new story negative has its authored record: " + event_id)
+		if record.is_empty():
+			continue
+		var state: Dictionary = case_data["state"]
+		var original: Dictionary = state.duplicate(true)
+		var record_before: Dictionary = record.duplicate(true)
+		var service := RunEventChoice.new(record)
+		var rng_expected := _rng_start(72300)
+		var preview := service.preview_vital_choices(state)
+		var entry := _preview_choice(preview, choice_id)
+		_check(preview.get("ok") == true and preview.get("event_id") == event_id
+			and not entry.is_empty() and entry.get("affordable") == false
+			and entry.get("state") == original,
+			"new story branch is unaffordable in preview: " + tag)
+		var refusal := service.choose_with_vitals(choice_id, state)
+		_check(refusal.size() == 4 and refusal.get("ok") == false
+			and refusal.get("event_id") == "" and refusal.get("choice_id") == ""
+			and refusal.get("state") == original,
+			"refused new story branch returns the unchanged detached snapshot: " + tag)
+		_check(state == original and record == record_before and service.get_event() == record_before
+			and service.is_valid() and not service.is_claimed(),
+			"refused new story branch consumes no visit or caller state: " + tag)
+		(refusal["state"] as Dictionary)["hero"]["hp"] = 999
+		var leave_entry := _preview_choice(service.preview_vital_choices(state), "leave")
+		_check(leave_entry.get("affordable") == true and leave_entry.get("state") == original,
+			"leave stays forecastable after the new story refusal: " + tag)
+		var leave := service.choose_with_vitals("leave", state)
+		_check(leave.get("ok") == true and leave.get("event_id") == event_id
+			and leave.get("choice_id") == "leave" and leave.get("state") == original
+			and service.is_claimed() and not service.is_valid(),
+			"leave settles the new story visit after the refusal: " + tag)
+		var replay := service.choose_with_vitals(choice_id, state)
+		_check(replay.get("ok") == false and replay.get("state") == original
+			and state == original,
+			"new story visit rejects replay after leave: " + tag)
+		_check(randi() == rng_expected, "new story refusal, leave and replay spend no RNG: " + tag)
 
 
 func _test_vital_malformed_inputs() -> void:
