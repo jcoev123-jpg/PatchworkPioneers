@@ -42,7 +42,12 @@
     {"id": "tinker_spool_launcher", "owner": "tinker", "price": 55},
     {"id": "tinker_snip_the_seam", "owner": "tinker", "price": 80},
     {"id": "tinker_rivet_shot", "owner": "tinker", "price": 50},
-    {"id": "tinker_scatter_bolts", "owner": "tinker", "price": 55}
+    {"id": "tinker_scatter_bolts", "owner": "tinker", "price": 55},
+    {"id": "lantern_monk_moth_lure", "owner": "lantern_monk", "price": 50},
+    {"id": "rag_duelist_velvet_feint", "owner": "rag_duelist", "price": 50},
+    {"id": "scarecrow_re_stuff", "owner": "scarecrow", "price": 65},
+    {"id": "yarn_ranger_unspool", "owner": "yarn_ranger", "price": 65},
+    {"id": "button_golem_pop_button", "owner": "button_golem", "price": 50}
   ],
   "trinkets": [
     {"id": "stitched_badge", "price": 100},
