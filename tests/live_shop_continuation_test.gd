@@ -134,7 +134,10 @@ func _check_connected_token(button: Button, projected: String) -> void:
 		and token.mouse_filter == Control.MOUSE_FILTER_IGNORE and token.focus_mode == Control.FOCUS_NONE,
 		"deliberate missing connected texture leaves readable inert fallback inside control")
 	if projected == "Campfire":
-		_check(token.fallback_plan().get("glyph") == "C", "projected Campfire fallback is its own badge")
+		var plan: Dictionary = token.fallback_plan()
+		_check(plan.get("emblem") == "flame_logs" and plan.get("glyph") == ""
+			and plan.get("art_bottom", 999.0) <= 52.0,
+			"projected Campfire fallback is its fitted flame and logs pictogram")
 	elif projected == "Peddler":
 		_check(token.fallback_plan().is_empty() and token.patch_colour == Color("#7d7150")
 			and token.thread_colour == Color("#e4d59a"), "projected Peddler fallback retains its felt and thread")

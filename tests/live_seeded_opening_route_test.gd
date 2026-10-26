@@ -132,20 +132,25 @@ func _token_fallback(button: Button, kind: String) -> void:
 	_check(not token.uses_drawn_fallback() and token.fallback_plan().is_empty(),
 		"present texture takes precedence for every mounted kind")
 	token.token_texture = null
-	var expected: String = {"Campfire": "C", "SewingCircle": "S", "Unpicker": "U", "PatchStall": "P"}.get(kind, "")
+	var expected: String = {"Campfire": "flame_logs", "SewingCircle": "needle_thread",
+		"Unpicker": "scissors", "PatchStall": "patch"}.get(kind, "")
 	var plan: Dictionary = token.fallback_plan()
 	_check(token.uses_drawn_fallback(), "explicit missing-texture probe selects fallback")
 	if expected.is_empty():
 		_check(plan.is_empty(), "legacy and non-stop kinds retain cross-stitch fallback")
 	else:
 		_check(plan == RunRouteAtlas.NodeToken.fallback_plan(kind)
-			and plan.emblem == "badge" and plan.glyph == expected, "distinct native atlas badge: " + kind)
-		var font: Font = token.get_theme_default_font()
-		var glyph_size := Vector2(font.get_string_size(expected, HORIZONTAL_ALIGNMENT_LEFT, -1, 27).x,
-			font.get_ascent(27) + font.get_descent(27))
+			and plan.emblem == expected and plan.glyph == "" and plan.art_bottom <= 52.0,
+			"distinct non-letter native atlas pictogram: " + kind)
 		var rect: Rect2 = token.token_rect()
-		_check(rect.grow(-2).encloses(Rect2(rect.get_center() - glyph_size * 0.5, glyph_size)),
-			"centered readable glyph fits within fabric border")
+		var contours := RunRouteAtlas.NodeToken.emblem_contours(expected)
+		_check(not contours.is_empty() and rect.grow(-2).has_area(), "native pictogram has actual fitted silhouettes")
+		for contour in contours:
+			_check(contour.size() >= 3, "sewn silhouette is nonempty")
+			for point in contour:
+				_check(rect.grow(-2).encloses(Rect2(rect.position + Vector2(2, 2)
+					+ point * rect.grow(-2).size / 48.0, Vector2.ZERO).grow(0.5)),
+					"sewn contour and stroke fit within fabric border")
 	var bounded: Rect2 = token.token_rect()
 	_check(bounded.has_area() and Rect2(Vector2.ZERO, button.size).encloses(bounded)
 		and bounded.end.x < 72 and token.mouse_filter == Control.MOUSE_FILTER_IGNORE

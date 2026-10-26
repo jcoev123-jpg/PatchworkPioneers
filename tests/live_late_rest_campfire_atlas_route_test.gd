@@ -37,8 +37,18 @@ func _campfire_marker(atlas: RunRouteAtlas, id: String) -> void:
 		and marker.tooltip_text.contains("Campfire") and not marker.tooltip_text.contains("Rest")
 		and art != null and art.token_kind == "Campfire" and art.get_meta("art_path") == path
 		and art.token_texture == texture
-		and (texture != null or RunRouteAtlas.NodeToken.fallback_plan("Campfire")["glyph"] == "C"),
+		and (texture != null or (RunRouteAtlas.NodeToken.fallback_plan("Campfire")["emblem"] == "flame_logs"
+			and RunRouteAtlas.NodeToken.fallback_plan("Campfire")["glyph"] == "")),
 		"mounted legal/future authored Rest wears Campfire caption, hover and art/fallback")
+	if art != null:
+		var original := art.token_texture
+		art.token_texture = null
+		_check(art.token_rect() == Rect2() and art.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and Rect2(Vector2.ZERO, art.size).encloses(Rect2(art.size.x * 0.5 - 24, 2, 48, 48))
+			and RunRouteAtlas.NodeToken.fallback_plan("Campfire").art_bottom <= 52,
+			"forced late Rest pictogram fits above caption and leaves mouse actions reachable")
+		art.token_texture = original
+		art.queue_redraw()
 
 
 func _atlas_scenario(heal: bool, mode: int) -> Array:

@@ -159,6 +159,14 @@ func _tokens(atlas: RunRouteAtlas) -> void:
 		_check(art != null and art.token_kind == shown
 			and art.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 			"real patch carries its sewn stop emblem " + id)
+		var emblem: String = {"Campfire": "flame_logs", "SewingCircle": "needle_thread",
+			"Unpicker": "scissors", "PatchStall": "patch"}.get(shown, "")
+		if art != null and not emblem.is_empty():
+			var plan := RunRouteAtlas.NodeToken.fallback_plan(shown)
+			_check(plan.emblem == emblem and plan.glyph == "" and plan.art_bottom <= 52
+				and Rect2(Vector2.ZERO, art.size).encloses(
+					Rect2(art.size.x * 0.5 - 24, 2, 48, 48)),
+				"mounted native pictogram is distinct and fits above its caption " + id)
 		if expected.has(shown) and ResourceLoader.exists(expected[shown], "Texture2D"):
 			_check(art != null and art.token_texture == load(expected[shown]),
 				"real app uses original sewn token image for " + id)
@@ -464,7 +472,8 @@ func _legal_openings(app) -> void:
 							and str(art.get_meta("art_path")) == art_path
 							and art.token_texture == expected_texture
 							and (expected_texture != null or shown == "Peddler"
-								or (shown == "Campfire" and RunRouteAtlas.NodeToken.fallback_plan(shown)["glyph"] == "C")),
+								or (shown == "Campfire" and RunRouteAtlas.NodeToken.fallback_plan(shown)["emblem"] == "flame_logs"
+									and RunRouteAtlas.NodeToken.fallback_plan(shown)["glyph"] == "")),
 							"live legal %s marker shows the %s stop's committed sewn token" % [kind, shown])
 						if kind == "Shop":
 							_check(panel.get_node("Identity").text.ends_with("Peddler")

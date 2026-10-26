@@ -276,10 +276,10 @@ func _verify_peddler_preview(view: RunRouteAtlas) -> void:
 	var stall_plan := RunRouteAtlas.NodeToken.fallback_plan("PatchStall")
 	var badge_plan := RunRouteAtlas.NodeToken.fallback_plan("Fight")
 	_check(peddler_plan.get("emblem") == "purse" and peddler_plan.get("glyph") == ""
-		and stall_plan.get("emblem") == "badge" and stall_plan.get("glyph") == "P"
+		and stall_plan.get("emblem") == "patch" and stall_plan.get("glyph") == ""
 		and badge_plan.get("emblem") == "badge" and badge_plan.get("glyph") == "?"
 		and peddler_plan != stall_plan,
-		"Peddler's drawn fallback is a coin purse, never PatchStall's P or the generic ?")
+		"Peddler's drawn fallback is distinct from PatchStall's patch and the generic ?")
 	_check(float(peddler_plan["art_bottom"]) > 0.0
 		and float(peddler_plan["art_bottom"]) <= 52.0,
 		"Peddler fallback art stops above the sewn tag's caption band")
@@ -608,6 +608,38 @@ func _verify_book(view: RunRouteAtlas, label: String) -> void:
 
 # Tokens remain image-backed when present; missing art and Treasure use the
 # same drawn patch emblem, with exact canonical kind and input independent.
+func _verify_native_pictogram(art: RunRouteAtlas.NodeToken, label: String) -> void:
+	var expected: String = {"Campfire": "flame_logs", "SewingCircle": "needle_thread",
+		"Unpicker": "scissors", "PatchStall": "patch"}.get(art.token_kind, "")
+	if expected.is_empty():
+		return
+	var plan := RunRouteAtlas.NodeToken.fallback_plan(art.token_kind)
+	_check(plan.emblem == expected and plan.glyph == "" and plan.art_bottom > 0
+		and plan.art_bottom <= 52, label + ": exact non-letter sewn identity")
+	var contours := RunRouteAtlas.NodeToken.emblem_contours(expected)
+	_check(not contours.is_empty(), label + ": pictogram contains real silhouettes")
+	var original := art.token_texture
+	art.token_texture = null
+	_check(art.token_rect() == Rect2() and art.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and art.focus_mode == Control.FOCUS_NONE, label + ": forced fallback remains input-inert")
+	var box := Rect2(art.size.x * 0.5 - 24.0, 2.0, 48.0, 48.0)
+	_check(Rect2(Vector2.ZERO, art.size).encloses(box) and box.end.y <= 52,
+		label + ": fallback drawing box fits above caption")
+	for contour in contours:
+		_check(contour.size() >= 3, label + ": silhouette is nonempty")
+		for point in contour:
+			var painted := Rect2(box.position + point, Vector2.ZERO).grow(0.8)
+			_check(box.encloses(painted) and painted.end.y <= plan.art_bottom,
+				label + ": silhouette stroke fits declared art bounds")
+	# Force a loadable texture branch even when this stop's optional PNG is unavailable.
+	art.token_texture = GradientTexture2D.new()
+	var rect := art.token_rect()
+	_check(rect.has_area() and Rect2(Vector2.ZERO, art.size).encloses(rect)
+		and rect.end.y <= 52, label + ": present texture wins and fits above caption")
+	art.token_texture = original
+	art.queue_redraw()
+
+
 func _verify_token_marker(marker: PanelContainer, id: String, view: RunRouteAtlas,
 		label: String) -> void:
 	var authored: String = marker.get_meta("route_kind")
@@ -620,6 +652,7 @@ func _verify_token_marker(marker: PanelContainer, id: String, view: RunRouteAtla
 		label + ": sewn emblem and readable kind caption " + id)
 	if art == null:
 		return
+	_verify_native_pictogram(art, label + " " + id)
 	if authored == "Rest":
 		if view._map != null and view._map is not PeddlerPreviewMap:
 			seeded_rest_states[str(marker.get_meta("route_state"))] = true
@@ -671,8 +704,9 @@ func _verify_token_sources(view: RunRouteAtlas, label: String) -> void:
 	campfire_fallback.token_kind = "Campfire"
 	campfire_fallback.token_texture = view.node_token_texture(failed_path)
 	_check(campfire_fallback.token_texture == null and campfire_fallback.token_rect() == Rect2()
-		and RunRouteAtlas.NodeToken.fallback_plan(campfire_fallback.token_kind)["glyph"] == "C",
-		label + ": missing Campfire art retains identifiable C fallback")
+		and RunRouteAtlas.NodeToken.fallback_plan(campfire_fallback.token_kind)["emblem"] == "flame_logs"
+		and RunRouteAtlas.NodeToken.fallback_plan("Campfire")["glyph"] == "",
+		label + ": missing Campfire art retains identifiable flame and logs")
 	campfire_fallback.free()
 	var none: Array[String] = []
 	var test_kinds := ["Fight", "Elite", "Event", "Shop", "Rest", "Treasure", "Boss", "SewingCircle", "Campfire", "PatchStall", "Unpicker", "Peddler"]

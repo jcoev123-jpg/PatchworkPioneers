@@ -205,26 +205,69 @@ class NodeToken extends Control:
 	const PAPER_FILL := Color("#d8c9a2")
 	const COIN_RADIUS := 6.5
 
-	## Drawn fallback for one authored kind. "badge" is the lettered paper disc; "purse" is
-	## Peddler's tied coin purse, whose neck, plump body and coins can never read as
-	## PatchStall's letter P. `art_bottom` is the lowest painted pixel of the emblem, so the
-	## readable caption band along the tag's lower edge stays clear of the art for every
-	## kind. A kind without an entry keeps the original neutral '?' paper badge.
+	## Native sewn pictograms share a 48px drawing box in both map views.
+	## art_bottom includes the contour stroke and stays above the atlas caption.
 	static func fallback_plan(kind: String) -> Dictionary:
 		match kind:
 			"Peddler":
 				return {"emblem": "purse", "glyph": "", "art_bottom": 49.0}
 			"Unpicker":
-				return {"emblem": "badge", "glyph": "U", "art_bottom": 49.0}
+				return {"emblem": "scissors", "glyph": "", "art_bottom": 49.0}
 			"PatchStall":
-				return {"emblem": "badge", "glyph": "P", "art_bottom": 49.0}
+				return {"emblem": "patch", "glyph": "", "art_bottom": 49.0}
 			"Campfire":
-				return {"emblem": "badge", "glyph": "C", "art_bottom": 49.0}
+				return {"emblem": "flame_logs", "glyph": "", "art_bottom": 49.0}
 			"SewingCircle":
-				return {"emblem": "badge", "glyph": "S", "art_bottom": 49.0}
+				return {"emblem": "needle_thread", "glyph": "", "art_bottom": 49.0}
 			"Treasure":
 				return {"emblem": "badge", "glyph": "▣", "art_bottom": 49.0}
 		return {"emblem": "badge", "glyph": "?", "art_bottom": 49.0}
+
+	## Closed felt silhouettes, in local 48x48 coordinates; shared with the connected book.
+	static func emblem_contours(emblem: String) -> Array[PackedVector2Array]:
+		match emblem:
+			"flame_logs":
+				return [PackedVector2Array([Vector2(8, 35), Vector2(39, 41), Vector2(40, 36), Vector2(9, 30)]),
+					PackedVector2Array([Vector2(8, 41), Vector2(39, 34), Vector2(38, 29), Vector2(7, 36)]),
+					PackedVector2Array([Vector2(15, 31), Vector2(12, 23), Vector2(21, 12), Vector2(25, 5),
+						Vector2(29, 18), Vector2(34, 14), Vector2(37, 25), Vector2(30, 33), Vector2(22, 34)])]
+			"needle_thread":
+				return [PackedVector2Array([Vector2(8, 41), Vector2(28, 8), Vector2(34, 5), Vector2(35, 12)])]
+			"scissors":
+				return [PackedVector2Array([Vector2(22, 27), Vector2(9, 6), Vector2(29, 23)]),
+					PackedVector2Array([Vector2(22, 23), Vector2(39, 6), Vector2(28, 29)])]
+			"patch":
+				return [PackedVector2Array([Vector2(7, 11), Vector2(35, 6), Vector2(42, 36), Vector2(13, 42)])]
+		return []
+
+	static func draw_emblem(canvas: CanvasItem, emblem: String, box: Rect2,
+			fill: Color, ink: Color, thread: Color) -> void:
+		canvas.draw_set_transform(box.position, 0.0, box.size / 48.0)
+		for contour in emblem_contours(emblem):
+			canvas.draw_colored_polygon(contour, fill)
+			var closed := contour.duplicate()
+			closed.append(contour[0])
+			canvas.draw_polyline(closed, ink, 1.6, true)
+			for i in range(contour.size()):
+				var from := contour[i].lerp(Vector2(24, 24), 0.12)
+				var to := contour[(i + 1) % contour.size()].lerp(Vector2(24, 24), 0.12)
+				canvas.draw_dashed_line(from, to, thread, 1.1, 3.0, true)
+		match emblem:
+			"needle_thread":
+				canvas.draw_line(Vector2(30, 12), Vector2(32, 9), ink, 1.6, true)
+				var cord := PackedVector2Array([Vector2(32, 10), Vector2(40, 16), Vector2(40, 28),
+					Vector2(32, 35), Vector2(24, 33), Vector2(23, 40), Vector2(34, 43)])
+				canvas.draw_polyline(cord, ink, 3.0, true)
+				canvas.draw_polyline(cord, thread, 1.3, true)
+			"scissors":
+				for center in [Vector2(15, 35), Vector2(34, 35)]:
+					canvas.draw_arc(center, 7.0, 0, TAU, 24, ink, 3.0, true)
+					canvas.draw_arc(center, 7.0, 0, TAU, 24, thread, 1.1, true)
+				canvas.draw_circle(Vector2(25, 25), 2.0, thread)
+			"patch":
+				canvas.draw_line(Vector2(17, 17), Vector2(32, 31), ink, 1.6, true)
+				canvas.draw_line(Vector2(30, 15), Vector2(19, 33), ink, 1.6, true)
+		canvas.draw_set_transform(Vector2.ZERO)
 
 	var token_kind := ""
 	var token_texture: Texture2D = null
@@ -253,6 +296,10 @@ class NodeToken extends Control:
 			draw_texture_rect(token_texture, rect, false)
 			return
 		var plan := fallback_plan(token_kind)
+		if not emblem_contours(str(plan["emblem"])).is_empty():
+			draw_emblem(self, str(plan["emblem"]), Rect2(size.x * 0.5 - 24.0, 2.0, 48.0, 48.0),
+				PAPER_FILL, RunRouteAtlas.INK, RunRouteAtlas.THREAD)
+			return
 		var middle := Vector2(size.x * 0.5, 26.0)
 		if str(plan["emblem"]) == "purse":
 			_draw_coin_purse(middle)
