@@ -191,12 +191,33 @@ func _help_kind(kind: String) -> String:
 	return "Campfire" if shown == "Rest" else shown
 
 
+## Independent authored normal-Fight floor-band oracle (the atlas never supplies it).
+func _normal_threat(node: Dictionary) -> String:
+	if node.get("type") != "Fight" or typeof(node.get("floor")) != TYPE_INT:
+		return ""
+	var floor_number: int = node["floor"]
+	if floor_number >= 1 and floor_number <= 4:
+		return "Normals x1.0 HP/ATK; hits 5-9"
+	if floor_number >= 5 and floor_number <= 8:
+		return "Normals x1.25 HP/ATK; hits 6-11"
+	if floor_number >= 9 and floor_number <= 11:
+		return "Normals x1.5 HP/ATK; hits 7-13"
+	return ""
+
+
+func _ticket_detail(node: Dictionary) -> String:
+	var detail: String = EXPECTED_HELP[_help_kind(str(node["type"]))]["detail"]
+	var threat := _normal_threat(node)
+	return detail + (" · " + threat if not threat.is_empty() else "")
+
+
 func _hover_text(node: Dictionary, legal: bool = false) -> String:
 	var shown := _display_kind(str(node["type"]))
 	var prefix := "Floor %02d · %s · Branch %d" % [
 		int(node["floor"]), shown, int(node["position"]) + 1]
 	if legal:
-		return prefix + " · " + str(EXPECTED_HELP[_help_kind(str(node["type"]))]["tooltip"])
+		var threat := _normal_threat(node)
+		return prefix + " · " + str(EXPECTED_HELP[_help_kind(str(node["type"]))]["tooltip"]) + (" · " + threat if not threat.is_empty() else "")
 	return prefix
 
 
@@ -817,7 +838,7 @@ func _verify_choice_ticket(view: RunRouteAtlas, map: RunMap, label: String) -> v
 		RunRouteAtlas.area_for_floor(int(node["floor"])).to_upper(),
 		int(node["floor"]), int(node["position"]) + 1]
 	_check(ticket.header_text == heading and ticket.lead_text == shown + " · " + str(fact["lead"])
-		and ticket.detail_text == str(fact["detail"])
+		and ticket.detail_text == _ticket_detail(node)
 		and not ticket.header_text.contains(id) and not ticket.lead_text.contains(id)
 		and not ticket.detail_text.contains(id),
 		label + ": exact area/floor/branch and type-specific honest stop consequence " + shown)
@@ -1800,6 +1821,190 @@ func _verify_journal_headings() -> void:
 	detached.free()
 
 
+## V3-2: compare both boundary floors of every band to the production scaler,
+## but derive the independently asserted words from the design, not the view.
+func _verify_normal_fight_scaler() -> void:
+	var edges := {1: [5, 9, "1.0"], 4: [5, 9, "1.0"],
+		5: [6, 11, "1.25"], 8: [6, 11, "1.25"],
+		9: [7, 13, "1.5"], 11: [7, 13, "1.5"]}
+	for floor_number in edges:
+		var row: Array = edges[floor_number]
+		var record := {"id": "unrelated-route-id", "type": "Fight",
+			"floor": floor_number, "position": 1}
+		var low := RunNormalAttackFloorScaling.scale_normal_attack(5, floor_number)
+		var high := RunNormalAttackFloorScaling.scale_normal_attack(9, floor_number)
+		var hp := RunNormalAttackFloorScaling.scale_normal_max_hp(4, floor_number)
+		var expected := _normal_threat(record)
+		_check(low.get("ok", false) and high.get("ok", false) and hp.get("ok", false)
+			and low.get("amount") == row[0] and high.get("amount") == row[1]
+			and str(float(hp["max_hp"]) / 4.0) == row[2],
+			"floor %d boundary's HP and attack scaler independently produce design values" % floor_number)
+		_check(RunRouteAtlas.normal_fight_threat(record) == expected
+			and expected == "Normals x%s HP/ATK; hits %d-%d" % [row[2], row[0], row[1]],
+			"floor %d Fight preview uses authoritative 5/9 bounds and HP multiplier" % floor_number)
+		var renamed: Dictionary = record.duplicate(true)
+		renamed.id = "f99_totally_different_label"
+		_check(RunRouteAtlas.normal_fight_threat(renamed) == expected
+			and RunRouteAtlas.node_hover_text(renamed, "", true).ends_with(expected)
+			and RunRouteAtlas.node_hover_text(record, "", true).ends_with(expected),
+			"floor %d Fight guidance ignores the arbitrary route identifier" % floor_number)
+	for wrong_floor in [-3, 0, 12, 13, 4.5, "5", null]:
+		var record := {"id": "f01_n0", "floor": wrong_floor, "position": 0, "type": "Fight"}
+		_check(RunRouteAtlas.normal_fight_threat(record).is_empty(),
+			"bad/noninteger/Boss floor does not invent normal-Fight danger: %s" % str(wrong_floor))
+	# Genuine RunMap kinds, with legacy and projected v3 aliases still isolated.
+	var non_fights := ["Boss", "Elite", "Campfire", "SewingCircle", "Peddler",
+		"PatchStall", "Unpicker", "Event", "Treasure", "Shop", "Rest"]
+	for kind in non_fights:
+		var node := {"id": "independent-id", "floor": 12 if kind == "Boss" else 6,
+			"position": 0, "type": kind}
+		var shown := _display_kind(kind)
+		var original := str(EXPECTED_HELP[_help_kind(kind)]["tooltip"])
+		var hover := RunRouteAtlas.node_hover_text(node, "", true)
+		_check(RunRouteAtlas.normal_fight_threat(node).is_empty()
+			and hover == "Floor %02d · %s · Branch 1 · %s" % [node.floor, shown, original]
+			and not hover.contains("Normals x") and not hover.contains("hits 6-11"),
+			"non-Fight %s keeps its unaltered authentic consequence and no normal attack claim" % kind)
+
+
+## A seed-backed, source-record legal Fight at each of the six band edges. No
+## authored type or route is forged; advancement only uses RunMap.choose_node().
+func _legal_fight_at_floor(floor_number: int) -> Dictionary:
+	for seed_value in range(1, 401):
+		var rng := _rng(seed_value)
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		while map.get_current_floor() < floor_number - 1:
+			var legal := map.get_legal_choices()
+			if legal.is_empty() or not map.choose_node(legal[0]):
+				break
+		if map.get_current_floor() != floor_number - 1:
+			continue
+		for id in map.get_legal_choices():
+			var record := map.get_node(id)
+			if record.get("type") == "Fight" and record.get("floor") == floor_number:
+				return {"map": map, "rng": rng, "id": id, "seed": seed_value}
+	return {}
+
+
+func _exercise_seeded_fight_danger(view: RunRouteAtlas) -> void:
+	for floor_number in [1, 4, 5, 8, 9, 11]:
+		var fixture := _legal_fight_at_floor(floor_number)
+		_check(not fixture.is_empty(), "floor %d has a reachable seeded legal normal Fight" % floor_number)
+		if fixture.is_empty():
+			continue
+		var map: RunMap = fixture["map"]
+		var rng: RandomNumberGenerator = fixture["rng"]
+		var id: String = fixture["id"]
+		var record := map.get_node(id)
+		var wanted := _normal_threat(record)
+		var expected_hover := _hover_text(record, true)
+		var before := _state(map, rng)
+		seed(93000 + floor_number)
+		var global_next := randi()
+		seed(93000 + floor_number)
+		view.bind_map(map)
+		var marker := view.get_node_or_null("Node_" + id) as PanelContainer
+		var action := _action(view, id)
+		_check(marker != null and action != null and not wanted.is_empty()
+			and map.get_legal_choices().has(id) and not map.get_route().has(id),
+			"floor %d has a mounted, actionable, unvisited Fight and a nonempty forecast" % floor_number)
+		if marker == null or action == null:
+			continue
+		_check(marker.tooltip_text == expected_hover
+			and action.tooltip_text == "Choose " + expected_hover
+				+ " (key %d)" % (view._rendered_shortcuts.find(id) + 1)
+			and marker.get_meta("route_kind") == "Fight",
+			"floor %d exact marker/action Help adds normal danger after unchanged Fight reward" % floor_number)
+		action.grab_focus()
+		await process_frame
+		var ticket := view.choice_ticket()
+		_check(action.has_focus() and ticket != null and ticket.route_id == id,
+			"floor %d keyboard focus selects legal Fight's existing ticket" % floor_number)
+		if ticket != null:
+			_check(ticket.header_text == "%s · FLOOR %02d · BRANCH %d" % [
+				RunRouteAtlas.area_for_floor(floor_number).to_upper(), floor_number, int(record.position) + 1]
+				and ticket.lead_text == "Fight · Win: 10–20 gold + 1 scrap"
+				and ticket.detail_text == "Choose 1 of 3 cards, or skip · " + wanted,
+				"floor %d real ticket preserves all original Fight rewards and exactly its danger" % floor_number)
+			var face := ticket.get_theme_default_font()
+			_check(ticket.position == RunRouteAtlas.CHOICE_TICKET_RECT.position
+				and ticket.size == RunRouteAtlas.CHOICE_TICKET_RECT.size
+				and _inside(Rect2(ticket.position, ticket.size), RunRouteAtlas.PAGE_LEFT)
+				and RunRouteAtlas.ChoiceTicket.FONT_SIZE == 18
+				and face != null
+				and face.get_string_size(ticket.detail_text,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x <= ticket.size.x - 28.0,
+				"floor %d Fight detail really fits 18px three-row sewn book ticket" % floor_number)
+		# Route action hover is the same actual mouse entrance callback used in play.
+		var enter := InputEventMouseMotion.new()
+		enter.position = action.get_global_rect().get_center()
+		root.push_input(enter, true)
+		await process_frame
+		_check(view._hovered_choice_id == id and view.choice_ticket() != null
+			and view.choice_ticket().route_id == id
+			and view.choice_ticket().detail_text.ends_with(wanted),
+			"floor %d mouse hover retains visible focused Fight danger" % floor_number)
+		var leave := InputEventMouseMotion.new()
+		leave.position = Vector2(2, 2)
+		root.push_input(leave, true)
+		await process_frame
+		_check(view._hovered_choice_id.is_empty() and view.choice_ticket() != null
+			and view.choice_ticket().route_id == id
+			and view.choice_ticket().detail_text.ends_with(wanted),
+			"floor %d pointer leave restores Fight's focused ticket" % floor_number)
+		requests.clear()
+		action.pressed.emit()
+		_check(requests == [id] and _state(map, rng) == before
+			and randi() == global_next,
+			"floor %d choice press requests source ID but never alters route or run/global RNG" % floor_number)
+		requests.clear()
+		var stale_hover: Callable = action.mouse_entered.get_connections()[0].callable
+		view.refresh()
+		_check(view.choice_ticket() != null and view.choice_ticket().route_id == id
+			and view.choice_ticket().detail_text.ends_with(wanted)
+			and _state(map, rng) == before,
+			"floor %d refresh restores focused source-bound legal Fight" % floor_number)
+		var prior_id: String = view.choice_ticket().route_id if view.choice_ticket() != null else ""
+		stale_hover.call()
+		_check(view.choice_ticket() != null and view.choice_ticket().route_id == prior_id
+			and _state(map, rng) == before,
+			"floor %d stale hover revision cannot rewrite ticket or map" % floor_number)
+		view.bind_map(null)
+		_check(view.choice_ticket() == null and _state(map, rng) == before,
+			"floor %d unbinding hides all Fight danger and leaves run untouched" % floor_number)
+	# Boss floor 12 is genuine, reachable and explicitly not a normal attack.
+	var boss_rng := _rng(6)
+	var boss_map := RunMap.new()
+	_check(boss_map.generate(boss_rng), "floor-12 non-Fight fixture uses a generated RunMap")
+	for i in range(11):
+		var legal := boss_map.get_legal_choices()
+		if legal.is_empty() or not boss_map.choose_node(legal[0]):
+			break
+	var boss_choices := boss_map.get_legal_choices()
+	_check(boss_map.get_current_floor() == 11 and not boss_choices.is_empty(),
+		"authentic map reaches legal floor-12 Boss")
+	if not boss_choices.is_empty():
+		view.bind_map(boss_map)
+		var boss_id: String = boss_choices[0]
+		var boss := boss_map.get_node(boss_id)
+		var boss_action := _action(view, boss_id)
+		_check(boss.get("type") == "Boss" and boss.get("floor") == 12
+			and boss_action != null, "Boss has actual legal mounted floor-12 Action")
+		if boss_action != null:
+			boss_action.grab_focus()
+			var ticket := view.choice_ticket()
+			var marker := view.get_node("Node_" + boss_id) as Control
+			_check(ticket != null and ticket.lead_text == "Boss · " + EXPECTED_HELP.Boss.lead
+				and ticket.detail_text == EXPECTED_HELP.Boss.detail
+				and marker.tooltip_text == _hover_text(boss, true)
+				and not marker.tooltip_text.contains("Normals x")
+				and _normal_threat(boss).is_empty(),
+				"real Boss remains an unforecast terminal battle with original copy")
+		view.bind_map(null)
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	_check(RunRouteAtlas.stop_consequence("Rest") == EXPECTED_HELP.Rest,
@@ -1832,6 +2037,8 @@ func _run() -> void:
 	first.node_requested.connect(_record_request)
 	await process_frame
 	_check(first.is_inside_tree(), "read-only Control actually mounted in window")
+	_verify_normal_fight_scaler()
+	await _exercise_seeded_fight_danger(first)
 
 	var empty := RunMap.new()
 	first.bind_map(empty)
