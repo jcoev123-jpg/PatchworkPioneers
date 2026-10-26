@@ -77,6 +77,10 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if CombatScarecrowCrowCards.CARDS.has(card_id):
+		return CombatScarecrowCrowCards.new()._catalog_definition(card_id)
+	if card_id in CombatYarnRangerUnspoolCards.CARD_IDS:
+		return YarnRangerPoolCards.new().get_definition(card_id)
 	if _re_stuff.is_supported_card(card_id):
 		return ScarecrowPoolCards.new().get_definition(card_id)
 	if _helmet.is_supported_card(card_id):
@@ -316,6 +320,16 @@ func get_faces(panel: Control) -> Dictionary:
 ## effect and keyword text without that legend; the default keeps the hand
 ## tooltip byte-for-byte unchanged and an unknown ID still fails closed.
 func base_effect_text(card_id: String, include_pips: bool = true) -> String:
+	if CombatScarecrowCrowCards.CARDS.has(card_id):
+		var card := _definition(card_id)
+		return "%s; Scarecrow; %s catalog; %d energy\nFrom %s; automatically target the backmost living enemy only\nBASE deal %d damage; bypass Block (Block remains). Weak/Exposed/Tangled apply; no target choice.\n%s" % [
+			card.display_name, CombatScarecrowCrowCards.CARDS[card_id].catalog,
+			card.cost, _positions(card.from_positions), card.effects.damage,
+			_pip_legend(card) if include_pips else ""]
+	if card_id in CombatYarnRangerUnspoolCards.CARD_IDS:
+		var card := _definition(card_id)
+		return "%s; Yarn Ranger; 2 energy\nFrom 2,3; living Tangled enemies 1,2,3 only\nBASE deal %d damage each; Weak/Exposed, Tangled +2 and Block apply. Requires a living Tangled target.\n%s" % [
+			card.display_name, card.effects.damage, _pip_legend(card) if include_pips else ""]
 	var definition: Dictionary = _definition(card_id)
 	if definition.is_empty():
 		return "Unknown card"
@@ -354,6 +368,8 @@ func _target_text(definition: Dictionary, precise: bool) -> String:
 	var to_positions: Array = definition.get("to_positions", [])
 	var positions: String = _positions(to_positions)
 	match target_kind:
+		"enemy_back":
+			return "Automatically hit the backmost living enemy only"
 		"enemy_single":
 			return ("To one selected enemy " if precise else "To enemy ") + positions
 		"enemy_all":
@@ -996,7 +1012,10 @@ func _update_visual(panel: Control) -> void:
 		if battle_preview != null and is_instance_valid(battle_preview) \
 				and battle_preview.has_method("tinker_cost_discount"):
 			discount = int(battle_preview.tinker_cost_discount(id))
-		if _re_stuff.is_supported_card(id):
+		if id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatScarecrowCrowCards.CARDS.has(id):
+			var area = _app.get_node_or_null("LiveAreaAttackAction")
+			playable = area != null and area._eligible(panel, id)
+		elif _re_stuff.is_supported_card(id):
 			var support_presenter = _app.get_node_or_null("LiveSupportHand")
 			playable = support_presenter != null and support_presenter._eligible(
 				panel, id, _app.deck, _app.party, _app.battle_view)
@@ -1121,6 +1140,10 @@ func _center_text(panel: Control, value: String, rect: Rect2, preferred: int) ->
 ## keeps the ordinary and two-half sewn faces identical; applied amounts come
 ## from the same validated record the tooltip explains, never from a prediction.
 func _rules(id: String) -> String:
+	if CombatScarecrowCrowCards.CARDS.has(id):
+		return "Deal %d to backmost living enemy; bypass Block." % _definition(id).effects.damage
+	if id in CombatYarnRangerUnspoolCards.CARD_IDS:
+		return "Deal %d to living Tangled enemies only." % _definition(id).effects.damage
 	if _re_stuff.is_supported_card(id):
 		return "Lose 2 max HP first; heal self %d HP, capped at new max HP." % _definition(id).effects.heal
 	if _cleansing.is_supported_card(id):
