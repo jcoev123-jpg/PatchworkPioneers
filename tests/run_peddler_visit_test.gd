@@ -6,6 +6,11 @@ extends SceneTree
 
 const PARTY := ["warden", "seamstress", "tinker"]
 const DECK := ["warden_strike", "seamstress_prick", "tinker_pop_shot"]
+## An authentic three-distinct-hero party that includes the Yarn Ranger, and
+## the shipped Yarn Ranger Snare Net quote this task stocks.
+const YARN_PARTY := ["scarecrow", "yarn_ranger", "button_golem"]
+const SNARE_ID := "yarn_ranger_snare_net"
+const SNARE_PRICE := 65
 const SEED := 2611790
 
 var failures: Array[String] = []
@@ -47,6 +52,7 @@ func _initialize() -> void:
 	_test_invalid_construction()
 	_test_replay_and_rng()
 	_test_atomic_sewing()
+	_test_yarn_ranger_snare_purchase()
 	_check(randi() == expected_global,
 		"all stock sampling, decisions, refusals and Leave consume no global RNG")
 	_finish()
@@ -149,6 +155,78 @@ func _test_atomic_sewing() -> void:
 func _sampled_stock(rng: RandomNumberGenerator) -> Dictionary:
 	return RunShopStockOffers.generate_peddler_stock(rng, PARTY, authored_cards,
 		authored_patches, [])
+
+
+## AC2: a genuine seeded Peddler stock that offers the shipped Yarn Ranger
+## Snare Net opens the real visit and debits exactly 65 gold once.
+func _test_yarn_ranger_snare_purchase() -> void:
+	var found_seed := -1
+	var found: Dictionary = {}
+	var found_state := 0
+	for offset in range(128):
+		var candidate_seed: int = SEED + 9000 + offset
+		var rng := _rng(candidate_seed)
+		var stock := RunShopStockOffers.generate_peddler_stock(rng, YARN_PARTY,
+			authored_cards, authored_patches, [])
+		if stock.get("ok") != true:
+			continue
+		var cards: Array = stock["cards"]
+		if cards.size() != 3 or cards[1].get("owner") != "yarn_ranger" \
+				or cards[1].get("id") != SNARE_ID:
+			continue
+		found_seed = candidate_seed
+		found = stock
+		found_state = rng.state
+		break
+	_check(found_seed >= 0,
+		"bounded deterministic sweep samples a genuine Snare Net Peddler offer")
+	if found_seed < 0:
+		return
+	var replay_rng := _rng(found_seed)
+	var replay := RunShopStockOffers.generate_peddler_stock(replay_rng, YARN_PARTY,
+		authored_cards, authored_patches, [])
+	_check(replay == found and replay_rng.state == found_state,
+		"the sampled Snare Net stock replays with identical four-draw state")
+	var ranger_offers := 0
+	for offer in found["cards"]:
+		if offer.get("owner") == "yarn_ranger":
+			ranger_offers += 1
+	_check(ranger_offers == 1,
+		"the sampled stock holds exactly one Yarn Ranger card")
+	_check(card_authored.has(SNARE_ID)
+		and card_authored[SNARE_ID]["owner"] == "yarn_ranger"
+		and card_authored[SNARE_ID]["price"] == SNARE_PRICE,
+		"the shipped Snare Net stock record is the authored Yarn Ranger 65-gold quote")
+
+	var visit := RunPeddlerVisit.new("peddler_snare", YARN_PARTY, DECK, [], 500, found)
+	_check(visit.is_open(), "the sampled Snare Net stock opens a real Peddler visit")
+	if not visit.is_open():
+		return
+	var open := visit.read_state()
+	var offer: Dictionary = open["stock"]["cards"][1]
+	_check(offer.get("id") == SNARE_ID and offer.get("owner") == "yarn_ranger"
+		and offer.get("price") == SNARE_PRICE and offer.get("sold") == false,
+		"the open visit lists the unsold 65-gold Snare Net offer")
+	var receipt := visit.choose_purchase("peddler_snare", open["state"], open["stock"],
+		"card", SNARE_ID)
+	_check(receipt.get("ok") == true and receipt.get("kind") == "card"
+		and receipt.get("id") == SNARE_ID and receipt.get("price") == SNARE_PRICE,
+		"Snare Net buys with the exact authored 65-gold receipt")
+	_check(receipt.get("state", {}).get("gold") == 500 - SNARE_PRICE
+		and receipt.get("state", {}).get("deck") == DECK + [SNARE_ID]
+		and receipt.get("state", {}).get("trinkets").is_empty(),
+		"Snare Net debits exactly 65 gold once and appends only that card")
+	_check(visit.is_consumed() and not visit.is_open(),
+		"the Snare Net purchase closes the one-decision visit")
+	var after := visit.read_state()
+	_check(after["state"]["gold"] == 500 - SNARE_PRICE,
+		"the wallet holds exactly one 65-gold debit")
+	_assert_refused(visit, open, "peddler_snare", "card", SNARE_ID,
+		"Snare Net: stale pre-buy replay")
+	_assert_refused(visit, after, "peddler_snare", "card", SNARE_ID,
+		"Snare Net: exact post-buy replay")
+	_check(visit.read_state() == after,
+		"refused Snare Net replays cannot debit again")
 
 
 func _state(gold: int, deck: Variant = null, trinkets: Variant = null) -> Dictionary:
