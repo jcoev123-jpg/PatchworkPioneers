@@ -60,12 +60,12 @@ func _initialize() -> void:
 ## The pinned 50-seed cohort keeps its original strategy and totals, so the one
 ## genuine unaffordable generic-Event refusal it used to reach is now pinned by
 ## its own witness seed instead of by the cohort sample. Adding the six
-## lantern-haunted stories and then the six gothic story choices to the shared
-## surviving pool changed which generic Event each cohort visit draws, so this
-## run is asserted separately (never folded into the cohort totals). Seed 1042 is
-## an authentic completed run whose generic Event offers one signed choice that
-## the visit wallet cannot fund.
-const EVENT_AFFORDABILITY_WITNESS_SEED := 1042
+## lantern-haunted stories, then the six gothic story choices and then the six
+## midnight roadside stories to the shared surviving pool changed which generic
+## Event each cohort visit draws, so this run is asserted separately (never folded
+## into the cohort totals). Seed 604 is an authentic completed run whose generic
+## Event offers one signed choice that the visit wallet cannot fund.
+const EVENT_AFFORDABILITY_WITNESS_SEED := 604
 
 
 func _test_generic_event_affordability_witness() -> void:

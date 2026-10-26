@@ -119,6 +119,66 @@
         { "id": "auction_trim", "text": "Auction rare trim (+24 gold, -2 scraps)", "outcome": { "gold": 24, "scraps": -2 } },
         { "id": "watch_parade", "text": "Watch the procession (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_blackthorn_silk_inn",
+      "title": "The Blackthorn Silk Inn",
+      "description": "A round, button-eyed innkeeper hangs moth-eaten plum blankets under the candlelit silk awning.",
+      "choices": [
+        { "id": "patch_guest_blankets", "text": "Patch the guest blankets (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "sell_spare_buttons", "text": "Trade a spool of buttons (spend 1 scrap; gain 18 gold)", "outcome": { "gold": 18, "scraps": -1 } },
+        { "id": "pass_inn", "text": "Pass the warm inn (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_copper_cicada_chapel",
+      "title": "The Copper Cicada Chapel",
+      "description": "Copper cicadas with stitched wings chime from a chapel roof of oxblood velvet.",
+      "choices": [
+        { "id": "recover_copper_wings", "text": "Collect fallen copper wings (+10 gold)", "outcome": { "gold": 10, "scraps": 0 } },
+        { "id": "purchase_incense_spools", "text": "Buy incense-thread spools (spend 14 gold; gain 2 scraps)", "outcome": { "gold": -14, "scraps": 2 } },
+        { "id": "leave_chapel", "text": "Leave the chiming chapel (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_inkglass_puppet_barge",
+      "title": "The Inkglass Puppet Barge",
+      "description": "A plump marionette ferryman guides a quilt-sailed barge through ink-black moonlit water.",
+      "choices": [
+        { "id": "sail_mail", "text": "Carry stitched letters across the river (+15 gold)", "outcome": { "gold": 15, "scraps": 0 } },
+        { "id": "stitch_river_sail", "text": "Repair the quilt sail (spend 2 scraps; gain 27 gold)", "outcome": { "gold": 27, "scraps": -2 } },
+        { "id": "stay_ashore", "text": "Stay on the shore (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_wool_wisp_observatory",
+      "title": "The Wool-Wisp Observatory",
+      "description": "An enormous brass telescope points through a ceiling of midnight-teal felt and floating wool stars.",
+      "choices": [
+        { "id": "gather_star_lint", "text": "Gather star-lit wool offcuts (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "buy_etched_spools", "text": "Buy three etched spools (spend 20 gold; gain 3 scraps)", "outcome": { "gold": -20, "scraps": 3 } },
+        { "id": "close_telescope", "text": "Close the observatory shutters (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_pumpkin_pincushion_stall",
+      "title": "The Pumpkin Pincushion Stall",
+      "description": "A grinning pumpkin-shaped pincushion displays bent silver pins beneath a moss-green canopy.",
+      "choices": [
+        { "id": "sort_bent_pins", "text": "Sort the pin jars (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "sell_thread_roll", "text": "Trade a wound thread roll (spend 1 scrap; gain 22 gold)", "outcome": { "gold": 22, "scraps": -1 } },
+        { "id": "walk_past", "text": "Walk past the pin stall (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_velvet_safety_pin_gate",
+      "title": "The Velvet Safety-Pin Gate",
+      "description": "Two huge safety-pin towers clasp a dusty-rose fabric gate watched by sleepy ragdoll sentries.",
+      "choices": [
+        { "id": "collect_fallen_clasps", "text": "Gather fallen clasps (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "pay_gatekeeper", "text": "Pay for gate-thread (spend 11 gold; gain 2 scraps)", "outcome": { "gold": -11, "scraps": 2 } },
+        { "id": "take_outer_path", "text": "Take the outer path (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
