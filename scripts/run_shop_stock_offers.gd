@@ -19,6 +19,12 @@ extends RefCounted
 ## {"id": String, "price": int} entries. owned_trinket_ids lists the trinkets
 ## the party already owns: those are fallback listings, sold on admission.
 ##
+## The shipped priced catalog covers all eight v3 heroes, so every candidate
+## is validated against its authored catalog first and a correctly authored
+## card owned by a hero outside the chosen party is then ignored for selection.
+## Malformed, unknown, duplicated, wrong-owner and upgrade candidates still
+## reject the whole call, never a silent skip.
+##
 ## Every rejection happens before the first RNG draw: a failed call returns
 ## empty offers, leaves the caller's arrays untouched and consumes no RNG.
 
@@ -37,37 +43,10 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 			or not (trinket_candidates is Array) or not (owned_trinket_ids is Array):
 		return rejected
 
-	# Build catalog references and known owners from all four catalogs.
-	var starter_catalog := StarterCards.new()
-	var warden_pool := WardenPoolCards.new()
-	var seamstress_pool := SeamstressPoolCards.new()
-	var tinker_pool := TinkerPoolCards.new()
-	var known_owners := {}
-	for catalog_id in starter_catalog.get_all_card_ids():
-		var definition: Dictionary = starter_catalog.get_definition(catalog_id)
-		if definition.get("owner") is String:
-			known_owners[definition["owner"]] = true
-	for catalog_id in warden_pool.get_all_card_ids():
-		var definition: Dictionary = warden_pool.get_definition(catalog_id)
-		if definition.get("owner") is String:
-			known_owners[definition["owner"]] = true
-	for catalog_id in seamstress_pool.get_all_card_ids():
-		var definition: Dictionary = seamstress_pool.get_definition(catalog_id)
-		if definition.get("owner") is String:
-			known_owners[definition["owner"]] = true
-	# TinkerPoolCards uses get_pool_card_ids() for base cards, but get_all_card_ids() doesn't exist.
-	# We need to check both base and upgrade cards for known owners.
-	for catalog_id in tinker_pool.get_pool_card_ids():
-		var definition: Dictionary = tinker_pool.get_definition(catalog_id)
-		if definition.get("owner") is String:
-			known_owners[definition["owner"]] = true
-	# Also check upgrade cards for owners (they have the same owner).
-	for base_id in tinker_pool.get_pool_card_ids():
-		var upgrade_id: String = tinker_pool.get_upgrade_id(base_id)
-		if upgrade_id:
-			var definition: Dictionary = tinker_pool.get_definition(upgrade_id)
-			if definition.get("owner") is String:
-				known_owners[definition["owner"]] = true
+	# Build catalog references and known owners from every authored hero
+	# catalog: StarterCards plus all eight v3 pool catalogs.
+	var catalogs: Array = _peddler_catalogs()
+	var known_owners: Dictionary = _build_known_owners(catalogs)
 
 	# The party is exactly three distinct heroes the authored catalogs know.
 	var party_set := {}
@@ -92,61 +71,28 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 			return rejected
 		owned[owned_id] = true
 
-	# Every supplied card candidate must be a known, party-owned catalog card
-	# with a whole non-negative price. Unknown, duplicated and wrong-owner
+	# Every supplied card candidate is validated against its authored catalog
+	# before any draw: unknown, duplicated, wrong-owner, upgrade and bad-price
 	# candidates fail the whole call instead of shrinking the pool silently.
+	# Only AFTER that check is a correctly authored card owned by a hero
+	# outside the chosen party skipped, because the Shop JSON carries priced
+	# cards for every hero while one visit offers only this party's stock.
 	# Pool upgrade cards (ending in _plus) are not valid Shop candidates.
 	# StarterCards upgrade cards (like warden_strike_plus) ARE valid.
 	var card_prices := {}
+	var card_owners := {}
+	var seen_card_ids := {}
 	var eligible_card_ids: Array[String] = []
 	for candidate in card_candidates:
-		if not (candidate is Dictionary):
+		var validated: Dictionary = _validate_card_candidate(candidate, catalogs,
+			known_owners, party_set, seen_card_ids)
+		if not validated.get("ok", false):
 			return rejected
-		var entry: Dictionary = candidate
-		if not entry.has("id") or not entry.has("price"):
-			return rejected
-		if not (entry["id"] is String):
-			return rejected
-		var card_id: String = entry["id"]
-		if card_id.strip_edges().is_empty() or card_prices.has(card_id):
-			return rejected
-		var price := _read_price(entry["price"])
-		if price < 0:
-			return rejected
-		# Look up the card definition across all four catalogs.
-		var definition: Dictionary = {}
-		var catalog_owner: String = ""
-		var is_pool_card: bool = false
-		if starter_catalog.has_card(card_id):
-			definition = starter_catalog.get_definition(card_id)
-			catalog_owner = definition.get("owner", "")
-		elif warden_pool.has_card(card_id):
-			definition = warden_pool.get_definition(card_id)
-			catalog_owner = definition.get("owner", "")
-			is_pool_card = true
-		elif seamstress_pool.has_card(card_id):
-			definition = seamstress_pool.get_definition(card_id)
-			catalog_owner = definition.get("owner", "")
-			is_pool_card = true
-		elif tinker_pool.has_card(card_id):
-			definition = tinker_pool.get_definition(card_id)
-			catalog_owner = definition.get("owner", "")
-			is_pool_card = true
-		else:
-			return rejected
-		if definition.is_empty() or catalog_owner.is_empty():
-			return rejected
-		# Pool upgrade cards (ending in _plus) are not valid Shop candidates.
-		# StarterCards upgrade cards ARE valid.
-		if is_pool_card and card_id.ends_with("_plus"):
-			return rejected
-		var owner: String = catalog_owner
-		if not party_set.has(owner):
-			return rejected
-		if entry.has("owner"):
-			if not (entry["owner"] is String) or entry["owner"] != owner:
-				return rejected
-		card_prices[card_id] = price
+		if not validated["in_party"]:
+			continue
+		var card_id: String = validated["id"]
+		card_prices[card_id] = validated["price"]
+		card_owners[card_id] = validated["owner"]
 		eligible_card_ids.append(card_id)
 	if eligible_card_ids.size() < CARD_OFFER_COUNT:
 		return rejected
@@ -189,17 +135,8 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 		var index: int = rng.randi_range(0, eligible_card_ids.size() - 1)
 		var card_id: String = eligible_card_ids[index]
 		eligible_card_ids.remove_at(index)
-		# Look up the card definition across all four catalogs to get the owner.
-		var owner: String = ""
-		if starter_catalog.has_card(card_id):
-			owner = starter_catalog.get_definition(card_id).get("owner", "")
-		elif warden_pool.has_card(card_id):
-			owner = warden_pool.get_definition(card_id).get("owner", "")
-		elif seamstress_pool.has_card(card_id):
-			owner = seamstress_pool.get_definition(card_id).get("owner", "")
-		elif tinker_pool.has_card(card_id):
-			owner = tinker_pool.get_definition(card_id).get("owner", "")
-		cards.append({"id": card_id, "owner": owner, "price": card_prices[card_id]})
+		cards.append({"id": card_id, "owner": card_owners[card_id],
+			"price": card_prices[card_id]})
 
 	var trinkets: Array = []
 	for _pick in range(TRINKET_OFFER_COUNT):
@@ -216,7 +153,8 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 
 ## Builds one seeded Peddler card stock: exactly one authored card offer for
 ## each of the three party heroes. Returns {"ok": false, "cards": []} for any
-## malformed input, leaving the caller's arrays and RNG untouched.
+## malformed input, leaving the caller's arrays and RNG untouched. Correctly
+## authored cards for heroes outside the party are validated and then skipped.
 static func generate_peddler_cards(rng: Variant, party_ids: Variant,
 		card_candidates: Variant) -> Dictionary:
 	var rejected: Dictionary = {"ok": false, "cards": []}
@@ -244,46 +182,25 @@ static func generate_peddler_cards(rng: Variant, party_ids: Variant,
 		return rejected
 
 	# Eligible card IDs grouped by their catalog owner, plus their prices.
+	# Every candidate is validated against its authored catalog first; only a
+	# correctly authored card for another hero is then skipped, so one Peddler
+	# visit still offers exactly this party's stock.
 	var card_prices := {}
 	var eligible_by_hero := {}
+	var seen_card_ids := {}
 	for hero_id in party_order:
 		eligible_by_hero[hero_id] = []
 
 	for candidate in card_candidates:
-		if not (candidate is Dictionary):
+		var validated: Dictionary = _validate_card_candidate(candidate, catalogs,
+			known_owners, party_set, seen_card_ids)
+		if not validated.get("ok", false):
 			return rejected
-		var entry: Dictionary = candidate
-		if not entry.has("id") or not entry.has("price"):
-			return rejected
-		if not (entry["id"] is String):
-			return rejected
-		var card_id: String = entry["id"]
-		if card_id.strip_edges().is_empty() or card_prices.has(card_id):
-			return rejected
-		var price := _read_price(entry["price"])
-		if price < 0:
-			return rejected
-
-		var found := _find_card_definition(card_id, catalogs)
-		if found.is_empty():
-			return rejected
-		var definition: Dictionary = found["def"]
-		var catalog_owner: String = definition.get("owner", "")
-		var is_pool_card: bool = found["is_pool"]
-		if definition.is_empty() or catalog_owner.is_empty():
-			return rejected
-		# Pool upgrade cards (ending in _plus) are not valid Peddler stock.
-		# StarterCards upgrade cards remain valid per the legacy rules.
-		if is_pool_card and card_id.ends_with("_plus"):
-			return rejected
-		var owner: String = catalog_owner
-		if not party_set.has(owner):
-			return rejected
-		if entry.has("owner"):
-			if not (entry["owner"] is String) or entry["owner"] != owner:
-				return rejected
-		card_prices[card_id] = price
-		eligible_by_hero[owner].append(card_id)
+		if not validated["in_party"]:
+			continue
+		var card_id: String = validated["id"]
+		card_prices[card_id] = validated["price"]
+		eligible_by_hero[validated["owner"]].append(card_id)
 
 	# Require at least one eligible card for each party hero.
 	for hero_id in party_order:
@@ -313,7 +230,9 @@ static func generate_peddler_cards(rng: Variant, party_ids: Variant,
 ## is the authored catalog owner, and a candidate that also carries "owner" must
 ## agree with that catalog. patch_candidates are {"id": String, "price": int}
 ## entries. owned_patch_ids lists the patches the party already owns: those are
-## fallback listings, sold on admission.
+## fallback listings, sold on admission. Correctly authored cards for heroes
+## outside the chosen party are validated and then skipped, so the shipped
+## eight-hero priced catalog can feed any three-hero party.
 ##
 ## Every rejection happens before the first RNG draw: a failed call returns
 ## empty offers, leaves the caller's arrays untouched and consumes no RNG.
@@ -387,46 +306,25 @@ static func generate_peddler_stock(rng: Variant, party_ids: Variant,
 
 	# --- CARD CANDIDATE VALIDATION (same as generate_peddler_cards) ---
 	# Eligible card IDs grouped by their catalog owner, plus their prices.
+	# Every candidate is validated against its authored catalog first; only a
+	# correctly authored card for another hero is then skipped, so one Peddler
+	# visit still offers exactly this party's stock.
 	var card_prices := {}
 	var eligible_by_hero := {}
+	var seen_card_ids := {}
 	for hero_id in party_order:
 		eligible_by_hero[hero_id] = []
 
 	for candidate in card_candidates:
-		if not (candidate is Dictionary):
+		var validated: Dictionary = _validate_card_candidate(candidate, catalogs,
+			known_owners, party_set, seen_card_ids)
+		if not validated.get("ok", false):
 			return rejected
-		var entry: Dictionary = candidate
-		if not entry.has("id") or not entry.has("price"):
-			return rejected
-		if not (entry["id"] is String):
-			return rejected
-		var card_id: String = entry["id"]
-		if card_id.strip_edges().is_empty() or card_prices.has(card_id):
-			return rejected
-		var price := _read_price(entry["price"])
-		if price < 0:
-			return rejected
-
-		var found := _find_card_definition(card_id, catalogs)
-		if found.is_empty():
-			return rejected
-		var definition: Dictionary = found["def"]
-		var catalog_owner: String = definition.get("owner", "")
-		var is_pool_card: bool = found["is_pool"]
-		if definition.is_empty() or catalog_owner.is_empty():
-			return rejected
-		# Pool upgrade cards (ending in _plus) are not valid Peddler stock.
-		# StarterCards upgrade cards remain valid per the legacy rules.
-		if is_pool_card and card_id.ends_with("_plus"):
-			return rejected
-		var owner: String = catalog_owner
-		if not party_set.has(owner):
-			return rejected
-		if entry.has("owner"):
-			if not (entry["owner"] is String) or entry["owner"] != owner:
-				return rejected
-		card_prices[card_id] = price
-		eligible_by_hero[owner].append(card_id)
+		if not validated["in_party"]:
+			continue
+		var card_id: String = validated["id"]
+		card_prices[card_id] = validated["price"]
+		eligible_by_hero[validated["owner"]].append(card_id)
 
 	# Require at least one eligible card for each party hero.
 	for hero_id in party_order:
@@ -482,7 +380,8 @@ static func _peddler_catalogs() -> Array:
 		LanternMonkPoolCards.new(),
 		RagDuelistPoolCards.new(),
 		ScarecrowPoolCards.new(),
-		YarnRangerPoolCards.new()
+		YarnRangerPoolCards.new(),
+		ButtonGolemPoolCards.new()
 	]
 
 
@@ -514,3 +413,49 @@ static func _find_card_definition(card_id: String, catalogs: Array) -> Dictionar
 		if catalog.has_card(card_id):
 			return {"def": catalog.get_definition(card_id), "is_pool": i > 0}
 	return {}
+
+
+## Validates one supplied priced card candidate against the authentically
+## authored catalogs, in this order: shape, non-empty unique ID, whole
+## non-negative quote, authored definition, known owner, base-only pool card
+## and (when supplied) the exact catalog owner. Only a fully valid record can
+## then be reported as out of party, and only then is it skipped for selection.
+## Returns {"ok": false} for any malformed candidate, so a partly valid list can
+## never publish a partial stock, and {"ok": true, "in_party": false} for a
+## correctly authored other-hero card. seen_ids accumulates the accepted IDs.
+static func _validate_card_candidate(candidate: Variant, catalogs: Array,
+		known_owners: Dictionary, party_set: Dictionary,
+		seen_ids: Dictionary) -> Dictionary:
+	var invalid: Dictionary = {"ok": false}
+	if not (candidate is Dictionary):
+		return invalid
+	var entry: Dictionary = candidate
+	if not entry.has("id") or not entry.has("price"):
+		return invalid
+	if not (entry["id"] is String):
+		return invalid
+	var card_id: String = entry["id"]
+	if card_id.strip_edges().is_empty() or seen_ids.has(card_id):
+		return invalid
+	var price := _read_price(entry["price"])
+	if price < 0:
+		return invalid
+	var found := _find_card_definition(card_id, catalogs)
+	if found.is_empty():
+		return invalid
+	var definition: Dictionary = found["def"]
+	if definition.is_empty():
+		return invalid
+	var owner: String = definition.get("owner", "")
+	if owner.is_empty() or not known_owners.has(owner):
+		return invalid
+	# Pool upgrade cards (ending in _plus) are never ordinary stock.
+	# StarterCards upgrade cards remain valid per the legacy rules.
+	if found["is_pool"] and card_id.ends_with("_plus"):
+		return invalid
+	if entry.has("owner"):
+		if not (entry["owner"] is String) or entry["owner"] != owner:
+			return invalid
+	seen_ids[card_id] = true
+	return {"ok": true, "id": card_id, "owner": owner, "price": price,
+		"in_party": party_set.has(owner)}
