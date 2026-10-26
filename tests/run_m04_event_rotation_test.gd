@@ -197,7 +197,7 @@ func _test_seeded_choice() -> void:
 	var third := RandomNumberGenerator.new()
 	third.seed = 424242
 	var third_result := rotation.select_event(third)
-	var source_record: Dictionary = source_by_id[expected_id]
+	var source_record: Dictionary = _shipped_record(expected_id)
 	_check(third_result.get("event", {}).get("title") == source_record["title"],
 		"a returned event is detached from the rotation")
 	_check(third_result.get("event", {}).get("choices") == source_record["choices"],
@@ -1240,6 +1240,17 @@ func _combined_events() -> Array:
 	if roadside is Array:
 		events.append_array((roadside as Array).duplicate(true))
 	return events
+
+
+## The authored record for a default-pool ID, from whichever shipped catalog
+## carries it: the generic M04 document or the standalone roadside pack. A
+## default selection may serve either source, so detached-record checks must
+## not assume the generic catalog alone.
+func _shipped_record(event_id: String) -> Dictionary:
+	for record in _combined_events():
+		if record is Dictionary and record.get("id") == event_id:
+			return record
+	return {}
 
 
 func _without(events: Array, drop_id: String) -> Array:
