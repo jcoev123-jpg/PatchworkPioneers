@@ -171,6 +171,19 @@ func _oracle(id: String) -> Dictionary:
 		for definition in definitions:
 			definition.max_hp = floori(float(definition.max_hp) * (
 				1.0 if floor_number <= 4 else (1.25 if floor_number <= 8 else 1.5)))
+			var spec: Dictionary = definition.intent.duplicate(true)
+			for option in spec.actions:
+				var parsed := CombatEnemyIntents.weighted_action(option)
+				_check(not parsed.is_empty(), "oracle reads a real valid authored alternative")
+				if parsed.is_empty():
+					return {}
+				var body: Dictionary = parsed.action
+				if body.type == "attack" and body.amount >= 5 and body.amount <= 9:
+					# Independent integer arithmetic, not the production scaler.
+					@warning_ignore("integer_division")
+					option.amount = body.amount if floor_number <= 4 else (
+						body.amount * 5 / 4 if floor_number <= 8 else body.amount * 3 / 2)
+			definition.intent = spec
 		entry.enemies = CombatEnemies.new(definitions)
 		_check(entry.enemies.is_valid(), "independent floor-band roster is valid")
 	var party: CombatParty = app.party_carryover.create_next_fight_party()
