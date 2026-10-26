@@ -1,8 +1,13 @@
 extends SceneTree
 ## V3-1 Yarn Ranger catalog contract. No live combat/reward/Rest behavior is assumed.
+## Extended with deterministic headless combat resolution for Unspool cards.
 
 const YarnRangerPoolCards = preload("res://data/cards/yarn_ranger_pool_cards.gd")
 const StarterCards = preload("res://data/cards/starter_cards.gd")
+const CombatYarnRangerUnspoolCards = preload("res://scripts/combat_yarn_ranger_unspool_cards.gd")
+const CombatParty = preload("res://scripts/combat_party.gd")
+const CombatEnemies = preload("res://scripts/combat_enemies.gd")
+const CombatDeck = preload("res://scripts/combat_deck.gd")
 
 var failures: Array[String] = []
 var checks: int = 0
@@ -14,6 +19,7 @@ func _initialize() -> void:
 	_test_detached_results()
 	_test_invalid_ids()
 	_test_starters_unchanged()
+	_test_unspool_combat_behavior()
 	if failures.is_empty():
 		print("v3_yarn_ranger_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -242,3 +248,153 @@ func _test_starters_unchanged() -> void:
 	for id: String in pool.get_all_card_ids():
 		_check(not starter.has_card(id), id + " has not entered StarterCards")
 		_check(not deck.has(id) and not parsed.has(id), id + " is absent from both starter decks")
+
+
+func _test_unspool_combat_behavior() -> void:
+	## AC1-AC4: Deterministic headless Unspool/Unspool+ combat behavior.
+	var resolver := CombatYarnRangerUnspoolCards.new()
+	var catalog := YarnRangerPoolCards.new()
+
+	# Catalog contract checks (AC1 descriptors).
+	for card_id in ["yarn_ranger_unspool", "yarn_ranger_unspool_plus"]:
+		var def: Dictionary = catalog.get_definition(card_id)
+		_check(not def.is_empty(), card_id + " definition exists")
+		_check(def.get("id") == card_id, card_id + " id exact")
+		_check(def.get("owner") == "yarn_ranger", card_id + " owner")
+		_check(def.get("cost") == 2, card_id + " cost 2")
+		_check(def.get("from_positions") == [2, 3], card_id + " from [2,3]")
+		_check(def.get("to_positions") == [1, 2, 3], card_id + " to [1,2,3]")
+		_check(def.get("target_kind") == "enemy_all", card_id + " enemy_all")
+		_check(def.get("effects").get("requires_target_status") == "tangled",
+			card_id + " requires tangled")
+		_check(def.get("effects").get("living_targets_only") == true,
+			card_id + " living only")
+
+	# Fixture helpers.
+	var party_yr_2 := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "yarn_ranger", "max_hp": 30},
+		{"id": "seamstress", "max_hp": 26}
+	])
+	var party_yr_3 := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 26},
+		{"id": "yarn_ranger", "max_hp": 30}
+	])
+
+	var enemies_tangled := CombatEnemies.new([
+		{"id": "fray_scavenger", "max_hp": 14, "statuses": {"tangled": 2}},
+		{"id": "needle_marshal", "max_hp": 28},
+		{"id": "patchwork_behemoth", "max_hp": 42, "statuses": {"tangled": 1}}
+	])
+
+	# AC1 positive: base card at position 2, eligible targets at 1 and 3.
+	var deck_base := CombatDeck.new(["yarn_ranger_unspool"], RandomNumberGenerator.new())
+	deck_base.combat_state.start_player_turn()
+	deck_base.hand.clear()
+	deck_base.hand.append("yarn_ranger_unspool")
+
+	var result_base: Dictionary = resolver.play_card(deck_base, party_yr_2, enemies_tangled, "yarn_ranger_unspool")
+	_check(result_base.get("ok") == true, "base Unspool legal cast ok")
+	_check(deck_base.energy == 1, "base energy 3 -> 1")
+	_check(not deck_base.hand.has("yarn_ranger_unspool"), "base card discarded")
+	var hits_base: Array = result_base.get("hits", [])
+	_check(hits_base.size() == 2, "base hits 2 eligible targets")
+	_check(hits_base[0].get("position") == 1, "base first hit position 1")
+	_check(hits_base[1].get("position") == 3, "base second hit position 3")
+	# Base damage 7 + Tangled 2 = 9, no Block on fixtures.
+	_check(hits_base[0].get("damage") == 9, "base damage 9 (7+2)")
+	_check(hits_base[0].get("block_absorbed") == 0, "base block 0")
+	_check(hits_base[0].get("hp_loss") == 9, "base hp loss 9")
+	_check(hits_base[1].get("damage") == 9, "base hit 3 damage 9")
+
+	# AC1 plus: position 3, same roster.
+	var deck_plus := CombatDeck.new(["yarn_ranger_unspool_plus"], RandomNumberGenerator.new())
+	deck_plus.combat_state.start_player_turn()
+	deck_plus.hand.clear()
+	deck_plus.hand.append("yarn_ranger_unspool_plus")
+
+	var result_plus: Dictionary = resolver.play_card(deck_plus, party_yr_3, enemies_tangled, "yarn_ranger_unspool_plus")
+	_check(result_plus.get("ok") == true, "plus Unspool legal cast ok")
+	var hits_plus: Array = result_plus.get("hits", [])
+	_check(hits_plus.size() == 2, "plus hits 2 eligible")
+	# Plus damage 10 + 2 = 12.
+	_check(hits_plus[0].get("damage") == 12, "plus damage 12")
+	_check(hits_plus[1].get("damage") == 12, "plus second damage 12")
+
+	# AC2 mixed status: attacker Weak, defender Exposed with Tangled.
+	# The existing CombatStatusAttacks applies Weak (-25%) and Exposed (+50%)
+	# floor-once before adding +2. With base 7: 7*3/4 = 5 (floor), then +2 = 7.
+	# Wait, base damage 7, weak attacker: (7*3)/4 = 5 (integer division). Then +2 = 7.
+	# But the brief says: "with attacker Weak or defender Exposed, reuse the existing
+	# CombatStatuses floor-once rule before the +2."
+	# Let's create a fixture with attacker status and defender status.
+	var party_weak := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "yarn_ranger", "max_hp": 30},
+		{"id": "seamstress", "max_hp": 26}
+	])
+	# We need to set the hero statuses. The party constructor creates heroes with no statuses.
+	# We can use apply_damage or modify? But party.get_heroes returns deep copy; we can't modify directly.
+	# Actually, the resolver reads statuses from the party hero at execution time.
+	# To test modifier interaction, we can pass a status dictionary through a custom mechanism?
+	# Wait, the brief says the attacker statuses come from the real hero. We can set hero statuses by creating the party with a statuses field.
+	# Let's check if `CombatParty` constructor preserves extra fields from the definition.
+	# From combat_party.gd: `hero = definitions[index].duplicate(true)` then adds position, hp, block. So yes, extra fields like "statuses" are preserved!
+	# Let's verify by reading the constructor code.
+	# Actually, the definition is duplicated, then `hero["position"] = ...`, `hero["hp"] = ...`, `hero["block"] = 0`. It does NOT remove "statuses" if present.
+	# So we can include `"statuses": {"weak": 1}` in the definition.
+
+	var party_weak_yr := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "yarn_ranger", "max_hp": 30, "statuses": {"weak": 1}},
+		{"id": "seamstress", "max_hp": 26}
+	])
+	var enemies_weak_tangled := CombatEnemies.new([
+		{"id": "patch_imp", "max_hp": 12, "statuses": {"tangled": 1, "exposed": 1}}
+	])
+
+	var deck_weak := CombatDeck.new(["yarn_ranger_unspool"], RandomNumberGenerator.new())
+	deck_weak.combat_state.start_player_turn()
+	deck_weak.hand.clear()
+	deck_weak.hand.append("yarn_ranger_unspool")
+
+	var weak_result: Dictionary = resolver.play_card(deck_weak, party_weak_yr, enemies_weak_tangled, "yarn_ranger_unspool")
+	_check(weak_result.get("ok") == true, "weak attacker + exposed tangled succeeds")
+	var weak_hits: Array = weak_result.get("hits", [])
+	_check(weak_hits.size() == 1, "weak fixture one eligible")
+	# Base 7, weak: floor to 5 (7*3/4 = 5.25 -> floor 5). Exposed: 7*3/2 = 10.5 -> floor 10.
+	# Combined: 7*9/8 = 7.875 -> floor 7. Then +2 = 9.
+	_check(weak_hits[0].get("damage") == 9, "weak+exposed+tangled = 9 (floor 7 + 2)")
+
+	# AC3 negative fixtures preserved.
+	var dead_enemies := CombatEnemies.new([
+		{"id": "fray_scavenger", "max_hp": 14},
+		{"id": "needle_marshal", "max_hp": 28}
+	])
+	dead_enemies.apply_damage(1, 14)
+	dead_enemies.apply_damage(2, 28)
+	_check(not dead_enemies.is_valid(), "dead fixture invalid roster rejected")
+
+	# AC2: Block before HP.
+	var enemies_block := CombatEnemies.new([
+		{"id": "patch_imp", "max_hp": 12, "statuses": {"tangled": 1}, "block": 4},
+		{"id": "stitch_foe", "max_hp": 17, "statuses": {"tangled": 1}}
+	])
+	var deck_block := CombatDeck.new(["yarn_ranger_unspool"], RandomNumberGenerator.new())
+	deck_block.combat_state.start_player_turn()
+	deck_block.hand.clear()
+	deck_block.hand.append("yarn_ranger_unspool")
+	var block_result: Dictionary = resolver.play_card(deck_block, party_yr_2, enemies_block, "yarn_ranger_unspool")
+	_check(block_result.get("ok") == true, "block fixture succeeds")
+	var block_hits: Array = block_result.get("hits", [])
+	_check(block_hits[0].get("position") == 1, "block first at 1")
+	_check(block_hits[0].get("block_absorbed") == 4, "block 4 absorbed")
+	_check(block_hits[0].get("hp_loss") == 3, "hp loss 3 = 9 - 4 (base 7+2=9, block 4)")
+	_check(block_hits[1].get("position") == 2, "second block hit at 2")
+
+	# Verify no status mutation or RNG consumption.
+	var before_statuses: Dictionary = enemies_tangled.get_enemy(1).get("statuses", {}).duplicate(true)
+	_check(enemies_tangled.get_enemy(1).get("statuses", {}).get("tangled") == 2,
+		"tangled counter unchanged after cast")
+
