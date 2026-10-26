@@ -29,6 +29,7 @@ const FRAME_SOURCE_EDGE := 34.0
 
 var _catalog := StarterCards.new()
 var _toss := CombatWardenV3ShieldTossCards.new()
+var _helmet := CombatWardenV3HelmetCards.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
 var _warden_pool := WardenPoolCards.new()
 var _tinker_pool := TinkerPoolCards.new()
@@ -75,6 +76,8 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if _helmet.is_supported_card(card_id):
+		return _helmet._catalog_definition(card_id)
 	if _cleansing.is_supported_card(card_id):
 		return _cleansing._catalog_definition(card_id)
 	if _toss.is_supported_card(card_id):
@@ -988,7 +991,7 @@ func _update_visual(panel: Control) -> void:
 		if battle_preview != null and is_instance_valid(battle_preview) \
 				and battle_preview.has_method("tinker_cost_discount"):
 			discount = int(battle_preview.tinker_cost_discount(id))
-		if id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id):
+		if id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
 			# The mounted battle owns both the legal picker and its shared pin.
 			# Catalog knowledge alone cannot enable Spring Trap.
 			playable = battle_preview != null and is_instance_valid(battle_preview) \
