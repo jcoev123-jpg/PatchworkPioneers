@@ -71,6 +71,7 @@ var _energy_cards := CombatPoolEnergyCards.new()
 var _tinker_gadgets := CombatTinkerPoolGadgets.new()
 var _heal_cards := CombatSeamstressPoolHeals.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
+var _re_stuff := CombatScarecrowReStuffCards.new()
 var cleanse_choices: HBoxContainer
 var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
 var _receipt_seq := 0
@@ -591,6 +592,8 @@ func _path_discount(card_id: String) -> int:
 
 
 func _is_actionable(card_id: String) -> bool:
+	if _re_stuff.is_supported_card(card_id):
+		return true
 	if _cleansing.is_supported_card(card_id):
 		return true
 	return card_id in SUPPORT_IDS or card_id in SPARE_PARTS_IDS or card_id in M02PositionCards.IDS or _is_block_card(card_id) or _is_energy_card(card_id) or _is_heal_card(card_id) or _is_path_card(card_id)
@@ -598,6 +601,8 @@ func _is_actionable(card_id: String) -> bool:
 
 ## One entry point keeps starter support and pool Block cards on the same commit path.
 func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position: int, debuff: String = "") -> bool:
+	if _re_stuff.is_supported_card(card_id):
+		return bool(_re_stuff.play_card(deck, party, card_id, 0).get("ok", false))
 	if _cleansing.is_supported_card(card_id):
 		return bool(_cleansing.play_card(deck, party, card_id, position, debuff).get("ok", false))
 	if _is_path_card(card_id):
@@ -880,7 +885,7 @@ func _sync_battle() -> void:
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_card_input.bind(panel, label.text, _deck, _party, _battle)
 		_bindings[panel] = callback
-		if label.text in M02PositionCards.IDS:
+		if label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text):
 			_move_context[panel] = _current_move_context(panel)
 		panel.gui_input.connect(callback)
 	# Keep the existing End/Return Tab cycle; Up enters the card row, Down exits it.
@@ -1071,6 +1076,16 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 		return false
 	if not panel.is_visible_in_tree() or not battle.is_visible_in_tree() or panel.get_parent() != app.hand_view:
 		return false
+	if _re_stuff.is_supported_card(card_id):
+		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
+				or _move_context.get(panel, []) != _current_move_context(panel):
+			return false
+		if app._battle_closed or app.battle_result == null or not app.battle_result.can_continue() \
+				or app.battle_result._party != party or app.battle_result._enemies != app.enemies \
+				or app.enemies == null or not app.enemies.is_valid() or app.enemies.is_victorious():
+			return false
+		if not _re_stuff._prepare(deck, party, card_id, 0).get("ok", false):
+			return false
 	if _is_block_card(card_id):
 		# Presentation preflight only: the pool resolver revalidates and commits.
 		if app._battle_closed or not deck.turn_active or app.battle_result == null \

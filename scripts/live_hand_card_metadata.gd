@@ -31,6 +31,7 @@ var _catalog := StarterCards.new()
 var _toss := CombatWardenV3ShieldTossCards.new()
 var _helmet := CombatWardenV3HelmetCards.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
+var _re_stuff := CombatScarecrowReStuffCards.new()
 var _warden_pool := WardenPoolCards.new()
 var _tinker_pool := TinkerPoolCards.new()
 var _seamstress_pool := SeamstressPoolCards.new()
@@ -76,6 +77,8 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if _re_stuff.is_supported_card(card_id):
+		return ScarecrowPoolCards.new().get_definition(card_id)
 	if _helmet.is_supported_card(card_id):
 		return _helmet._catalog_definition(card_id)
 	if _cleansing.is_supported_card(card_id):
@@ -450,6 +453,8 @@ func _recipient(definition: Dictionary) -> String:
 ## fields and the real confirmed-hit starter adapter are described, and any
 ## unrecognized effect key is flagged instead of being rendered as a number.
 func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[String]:
+	if _re_stuff.is_supported_card(card_id):
+		return ["This hero loses 2 max HP first (current HP capped to the new maximum), then heals %d HP, capped at the new max HP." % definition.effects.heal]
 	if _cleansing.is_supported_card(card_id):
 		return ["Heal %d HP to the chosen living ally, capped at max HP. Choose one present Bleed, Weak or Exposed to remove completely; heal alone if none are present." % definition.effects.heal]
 	var parts: Array[String] = []
@@ -991,7 +996,11 @@ func _update_visual(panel: Control) -> void:
 		if battle_preview != null and is_instance_valid(battle_preview) \
 				and battle_preview.has_method("tinker_cost_discount"):
 			discount = int(battle_preview.tinker_cost_discount(id))
-		if id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
+		if _re_stuff.is_supported_card(id):
+			var support_presenter = _app.get_node_or_null("LiveSupportHand")
+			playable = support_presenter != null and support_presenter._eligible(
+				panel, id, _app.deck, _app.party, _app.battle_view)
+		elif id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
 			# The mounted battle owns both the legal picker and its shared pin.
 			# Catalog knowledge alone cannot enable Spring Trap.
 			playable = battle_preview != null and is_instance_valid(battle_preview) \
@@ -1112,6 +1121,8 @@ func _center_text(panel: Control, value: String, rect: Rect2, preferred: int) ->
 ## keeps the ordinary and two-half sewn faces identical; applied amounts come
 ## from the same validated record the tooltip explains, never from a prediction.
 func _rules(id: String) -> String:
+	if _re_stuff.is_supported_card(id):
+		return "Lose 2 max HP first; heal self %d HP, capped at new max HP." % _definition(id).effects.heal
 	if _cleansing.is_supported_card(id):
 		return "Heal %d; choose Bleed/Weak/Exposed to remove all (if present)" % _definition(id).effects.heal
 	if _toss.is_supported_card(id):
