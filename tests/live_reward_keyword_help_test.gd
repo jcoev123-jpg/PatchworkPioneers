@@ -676,8 +676,8 @@ func _bleed_doubling_catalog_test(seamstress: SeamstressPoolCards) -> void:
 	_check(CardKeywordGlossary.KEYWORD_ORDER == ["bleed", "weak", "exposed", "pinned",
 		"unravel", "guarding", "thorns", "riposte", "tangled", "blind"]
 		and CardKeywordGlossary.SPECIAL_ORDER == ["conditional_damage", "random_hit",
-			"energy_tradeoff", "bleed_doubling", "two_hits"],
-		"Blind is the last keyword row after the legacy, Riposte and Tangled rows, and two hits is the last special row")
+			"energy_tradeoff", "bleed_doubling", "two_hits", "dodge", "exhaust"],
+		"Blind is the last keyword row after the legacy, Riposte and Tangled rows, and exhaust is the last special row after the new Dodge/Exhaust additions")
 
 
 ## A detached Pin and Pound definition with the authored structural keys the
@@ -954,10 +954,10 @@ func _blind_catalog_test(starters: LanternMonkStarterCards,
 			"rows": ["Exposed 2", "Blind"]},
 		{"catalog": pool, "id": "lantern_monk_moth_cloud", "target": "enemy_all",
 			"cost": 2, "damage": 0, "draw": 0, "exposed": 0, "spelling": "blind_next_attack",
-			"rows": ["Blind"]},
+			"rows": ["Blind", "Exhaust"]},
 		{"catalog": pool, "id": "lantern_monk_moth_cloud_plus", "target": "enemy_all",
 			"cost": 1, "damage": 0, "draw": 0, "exposed": 0, "spelling": "blind_next_attack",
-			"rows": ["Blind"]},
+			"rows": ["Blind", "Exhaust"]},
 	]
 	for case: Dictionary in cases:
 		var catalog: Variant = case["catalog"]

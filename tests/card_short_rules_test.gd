@@ -118,6 +118,9 @@ func _initialize() -> void:
 	_test_dodge_faces()
 	_test_moth_cloud_exhaust()
 	_test_dodge_and_exhaust_malformed()
+	_test_dodge_help()
+	_test_exhaust_help()
+	_test_dodge_exhaust_negative()
 	_check(randi() == expected_global, "short-line formatting draws no global RNG")
 	for failure in failures:
 		printerr(failure)
@@ -224,6 +227,16 @@ func _keyword_rows(definition: Dictionary) -> Dictionary:
 	for row: Dictionary in CardKeywordGlossary.describe(definition):
 		rows[str(row.get("keyword", ""))] = str(row.get("explanation", ""))
 	return rows
+
+
+## True when the glossary prints a row with exactly this keyword name. Used by
+## the fail-closed negatives: an unrelated keyword row (such as Blind) may still
+## appear, but the forbidden Dodge/Exhaust row must not.
+func _has_keyword_row(definition: Dictionary, keyword: String) -> bool:
+	for row: Dictionary in CardKeywordGlossary.describe(definition):
+		if str(row.get("keyword", "")) == keyword:
+			return true
+	return false
 
 
 func _test_help_keeps_full_mechanics() -> void:
@@ -876,4 +889,392 @@ func _test_dodge_and_exhaust_malformed() -> void:
 	_check(not cloud.is_empty() and cloud == cloud_before
 		and lantern_monk_pool.get_definition("lantern_monk_moth_cloud") == cloud_before,
 		"malformed probes cannot alter a shipped Moth Cloud record")
+
+
+## AC1: all six authored Dodge variants receive exactly one Dodge Help row
+## with the one-shot qualifier and the design-only disclaimer.
+func _test_dodge_help() -> void:
+	var cases := [
+		{"catalog": rag_duelist_starter, "id": "rag_duelist_cape_slip", "owner": "rag_duelist", "target": "self"},
+		{"catalog": rag_duelist_starter, "id": "rag_duelist_cape_slip_plus", "owner": "rag_duelist", "target": "self"},
+		{"catalog": rag_duelist, "id": "rag_duelist_cape_flourish", "owner": "rag_duelist", "target": "self"},
+		{"catalog": rag_duelist, "id": "rag_duelist_cape_flourish_plus", "owner": "rag_duelist", "target": "self"},
+		{"catalog": lantern_monk_pool, "id": "lantern_monk_moth_shroud", "owner": "lantern_monk", "target": "ally_single"},
+		{"catalog": lantern_monk_pool, "id": "lantern_monk_moth_shroud_plus", "owner": "lantern_monk", "target": "ally_single"},
+	]
+	for case: Dictionary in cases:
+		var catalog: Variant = case["catalog"]
+		var card_id: String = str(case["id"])
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(not definition.is_empty(), "Dodge Help catalog exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var effects: Dictionary = definition.get("effects", {})
+		_check(str(definition.get("owner", "")) == str(case["owner"])
+			and str(definition.get("target_kind", "")) == str(case["target"]),
+			"Dodge owner/target: " + card_id)
+		_check(effects.get("dodge_next_attack") is int
+			and int(effects["dodge_next_attack"]) == 1,
+			"authored Dodge descriptor: " + card_id)
+		var rows := CardKeywordGlossary.describe(definition)
+		var dodge_rows: Array[Dictionary] = []
+		for row: Dictionary in rows:
+			if str(row.get("keyword", "")) == "Dodge":
+				dodge_rows.append(row)
+		_check(dodge_rows.size() == 1,
+			"exactly one Dodge Help row for %s (got %d)" % [card_id, dodge_rows.size()])
+		if dodge_rows.size() == 1:
+			var text: String = str(dodge_rows[0].get("explanation", ""))
+			_check(text.contains("NEXT incoming attack"),
+				"Dodge Help mentions NEXT attack: " + card_id)
+			_check(text.contains("avoided once") or text.contains("one-shot"),
+				"Dodge Help states one-shot nature: " + card_id)
+			_check(text.contains("not permanent protection") or text.contains("not a stack"),
+				"Dodge Help denies permanent/stack: " + card_id)
+			_check(text.contains("live combat does not yet apply Dodge"),
+				"Dodge Help disclaims live combat: " + card_id)
+
+
+## AC2: both Moth Cloud variants keep Blind first, then exactly one Exhaust row.
+func _test_exhaust_help() -> void:
+	for pair in [["lantern_monk_moth_cloud", 2], ["lantern_monk_moth_cloud_plus", 1]]:
+		var card_id := str(pair[0])
+		var definition: Dictionary = lantern_monk_pool.get_definition(card_id)
+		_check(not definition.is_empty(), "Moth Cloud catalog exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var effects: Dictionary = definition.get("effects", {})
+		_check(str(definition.get("owner", "")) == "lantern_monk"
+			and str(definition.get("target_kind", "")) == "enemy_all",
+			"Moth Cloud owner/target: " + card_id)
+		_check(effects.get("blind_next_attack") is bool
+			and bool(effects["blind_next_attack"]),
+			"Moth Cloud has Blind: " + card_id)
+		_check(effects.get("exhaust") is bool and bool(effects["exhaust"]),
+			"Moth Cloud has Exhaust: " + card_id)
+		var rows := CardKeywordGlossary.describe(definition)
+		var names: Array[String] = []
+		for row: Dictionary in rows:
+			names.append(str(row.get("keyword", "")))
+		# Blind (keyword row) must come first, then Exhaust (special row).
+		_check(names.has("Blind"), "Moth Cloud has Blind keyword: " + card_id)
+		_check(names.has("Exhaust"), "Moth Cloud has Exhaust special: " + card_id)
+		if names.has("Blind") and names.has("Exhaust"):
+			var blind_idx := names.find("Blind")
+			var exhaust_idx := names.find("Exhaust")
+			_check(blind_idx < exhaust_idx,
+				"Blind comes before Exhaust for %s" % card_id)
+		var exhaust_rows: Array[Dictionary] = []
+		for row: Dictionary in rows:
+			if str(row.get("keyword", "")) == "Exhaust":
+				exhaust_rows.append(row)
+		_check(exhaust_rows.size() == 1,
+			"exactly one Exhaust Help row for %s" % card_id)
+		if exhaust_rows.size() == 1:
+			var text: String = str(exhaust_rows[0].get("explanation", ""))
+			_check(text.contains("one-play removal") or text.contains("draw/discard cycle"),
+				"Exhaust Help mentions removal cycle: " + card_id)
+			_check(text.contains("not a normal discard") or text.contains("redrawn"),
+				"Exhaust Help denies normal discard: " + card_id)
+			_check(text.contains("design-only") or text.contains("live combat does not yet apply"),
+				"Exhaust Help disclaims live combat: " + card_id)
+
+
+## AC3: invalid, mis-owned, partial and forged descriptors never borrow
+## a Dodge/Exhaust row; existing keyword/special order stays unchanged.
+func _test_dodge_exhaust_negative() -> void:
+	# Wrong ID / owner / target.
+	var bad_id := {"id": "rag_duelist_fake", "owner": "rag_duelist",
+		"cost": 1, "from_positions": [1, 2, 3], "to_positions": [],
+		"target_kind": "self", "effects": {"dodge_next_attack": 1, "duration": 1}}
+	_check(CardKeywordGlossary.describe(bad_id).is_empty(),
+		"forged Dodge ID stays silent")
+	var bad_owner := {"id": "rag_duelist_cape_slip", "owner": "seamstress",
+		"cost": 1, "from_positions": [1, 2, 3], "to_positions": [],
+		"target_kind": "self", "effects": {"dodge_next_attack": 1, "duration": 1}}
+	_check(CardKeywordGlossary.describe(bad_owner).is_empty(),
+		"mis-owned Dodge stays silent")
+	var bad_target := {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+		"cost": 1, "from_positions": [1, 2, 3], "to_positions": [],
+		"target_kind": "enemy_single", "effects": {"dodge_next_attack": 1, "duration": 1}}
+	_check(CardKeywordGlossary.describe(bad_target).is_empty(),
+		"wrong Dodge target stays silent")
+	# Wrong descriptor values.
+	var bad_value := {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+		"cost": 1, "from_positions": [1, 2, 3], "to_positions": [],
+		"target_kind": "self", "effects": {"dodge_next_attack": 0, "duration": 1}}
+	_check(CardKeywordGlossary.describe(bad_value).is_empty(),
+		"zero Dodge value stays silent")
+	var bad_bool := {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+		"cost": 1, "from_positions": [1, 2, 3], "to_positions": [],
+		"target_kind": "self", "effects": {"dodge_next_attack": true}}
+	_check(CardKeywordGlossary.describe(bad_bool).is_empty(),
+		"boolean Dodge value stays silent (missing duration)")
+	var bad_text := {"id": "lantern_monk_moth_shroud", "owner": "lantern_monk",
+		"cost": 1, "from_positions": [2, 3], "to_positions": [],
+		"target_kind": "ally_single", "effects": {"block": 6, "dodge_next_attack": "1"}}
+	_check(CardKeywordGlossary.describe(bad_text).is_empty(),
+		"text Dodge value stays silent")
+	var bad_duration := {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+		"cost": 1, "from_positions": [1, 2, 3], "to_positions": [],
+		"target_kind": "self", "effects": {"dodge_next_attack": 1, "duration": 2}}
+	_check(CardKeywordGlossary.describe(bad_duration).is_empty(),
+		"wrong Dodge duration stays silent")
+	# Partial Rag records: correct ID/owner/target but missing/altered duration.
+	var missing_duration := {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+		"cost": 1, "from_positions": [1, 2, 3], "to_positions": [],
+		"target_kind": "self", "effects": {"dodge_next_attack": 1}}
+	_check(CardKeywordGlossary.describe(missing_duration).is_empty(),
+		"Rag Dodge missing duration stays silent")
+	# Partial Rag records: wrong cost for base/plus.
+	var wrong_cost_base := {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+		"cost": 0, "from_positions": [1, 2, 3], "to_positions": [],
+		"target_kind": "self", "effects": {"dodge_next_attack": 1, "duration": 1}}
+	_check(CardKeywordGlossary.describe(wrong_cost_base).is_empty(),
+		"Rag base Dodge wrong cost stays silent")
+	var wrong_cost_plus := {"id": "rag_duelist_cape_slip_plus", "owner": "rag_duelist",
+		"cost": 1, "from_positions": [1, 2, 3], "to_positions": [],
+		"target_kind": "self", "effects": {"dodge_next_attack": 1, "duration": 1}}
+	_check(CardKeywordGlossary.describe(wrong_cost_plus).is_empty(),
+		"Rag plus Dodge wrong cost stays silent")
+	# Partial Rag records: wrong from_positions.
+	var wrong_from := {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+		"cost": 1, "from_positions": [2, 3], "to_positions": [],
+		"target_kind": "self", "effects": {"dodge_next_attack": 1, "duration": 1}}
+	_check(CardKeywordGlossary.describe(wrong_from).is_empty(),
+		"Rag Dodge wrong from_positions stays silent")
+	# Partial Rag records: non-empty to_positions.
+	var wrong_to := {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+		"cost": 1, "from_positions": [1, 2, 3], "to_positions": [1],
+		"target_kind": "self", "effects": {"dodge_next_attack": 1, "duration": 1}}
+	_check(CardKeywordGlossary.describe(wrong_to).is_empty(),
+		"Rag Dodge non-empty to_positions stays silent")
+	# Rag Dodge with an extra effect flag.
+	var extra_effect := {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+		"cost": 1, "from_positions": [1, 2, 3], "to_positions": [],
+		"target_kind": "self", "effects": {"dodge_next_attack": 1, "duration": 1, "block": 3}}
+	_check(CardKeywordGlossary.describe(extra_effect).is_empty(),
+		"Rag Dodge with an extra effect stays silent")
+	# Moth Shroud: missing block.
+	var missing_block := {"id": "lantern_monk_moth_shroud", "owner": "lantern_monk",
+		"cost": 1, "from_positions": [2, 3], "to_positions": [],
+		"target_kind": "ally_single", "effects": {"dodge_next_attack": 1}}
+	_check(CardKeywordGlossary.describe(missing_block).is_empty(),
+		"Moth Shroud Dodge missing block stays silent")
+	# Moth Shroud: wrong block value.
+	var wrong_block := {"id": "lantern_monk_moth_shroud", "owner": "lantern_monk",
+		"cost": 1, "from_positions": [2, 3], "to_positions": [],
+		"target_kind": "ally_single", "effects": {"block": 5, "dodge_next_attack": 1}}
+	_check(CardKeywordGlossary.describe(wrong_block).is_empty(),
+		"Moth Shroud wrong block value stays silent")
+	# Moth Shroud plus: wrong block value.
+	var wrong_block_plus := {"id": "lantern_monk_moth_shroud_plus", "owner": "lantern_monk",
+		"cost": 1, "from_positions": [2, 3], "to_positions": [],
+		"target_kind": "ally_single", "effects": {"block": 7, "dodge_next_attack": 1}}
+	_check(CardKeywordGlossary.describe(wrong_block_plus).is_empty(),
+		"Moth Shroud plus wrong block value stays silent")
+	# Moth Shroud: wrong cost.
+	var wrong_cost_shroud := {"id": "lantern_monk_moth_shroud", "owner": "lantern_monk",
+		"cost": 2, "from_positions": [2, 3], "to_positions": [],
+		"target_kind": "ally_single", "effects": {"block": 6, "dodge_next_attack": 1}}
+	_check(CardKeywordGlossary.describe(wrong_cost_shroud).is_empty(),
+		"Moth Shroud wrong cost stays silent")
+	# Moth Shroud: wrong from_positions.
+	var wrong_from_shroud := {"id": "lantern_monk_moth_shroud", "owner": "lantern_monk",
+		"cost": 1, "from_positions": [1, 2, 3], "to_positions": [],
+		"target_kind": "ally_single", "effects": {"block": 6, "dodge_next_attack": 1}}
+	_check(CardKeywordGlossary.describe(wrong_from_shroud).is_empty(),
+		"Moth Shroud wrong from_positions stays silent")
+	# Moth Shroud: non-empty to_positions.
+	var wrong_to_shroud := {"id": "lantern_monk_moth_shroud", "owner": "lantern_monk",
+		"cost": 1, "from_positions": [2, 3], "to_positions": [1],
+		"target_kind": "ally_single", "effects": {"block": 6, "dodge_next_attack": 1}}
+	_check(CardKeywordGlossary.describe(wrong_to_shroud).is_empty(),
+		"Moth Shroud non-empty to_positions stays silent")
+	# Moth Shroud: extra effect flag.
+	var extra_shroud := {"id": "lantern_monk_moth_shroud", "owner": "lantern_monk",
+		"cost": 1, "from_positions": [2, 3], "to_positions": [],
+		"target_kind": "ally_single", "effects": {"block": 6, "dodge_next_attack": 1, "duration": 1}}
+	_check(CardKeywordGlossary.describe(extra_shroud).is_empty(),
+		"Moth Shroud with an extra effect stays silent")
+	# Partial Dodge records: each required authored field omitted in turn.
+	var partial_dodges := [
+		{"label": "Rag Dodge without cost",
+			"record": {"id": "rag_duelist_cape_flourish", "owner": "rag_duelist",
+				"from_positions": [1, 2, 3], "to_positions": [], "target_kind": "self",
+				"effects": {"dodge_next_attack": 1, "duration": 1}}},
+		{"label": "Rag Dodge without from_positions",
+			"record": {"id": "rag_duelist_cape_flourish_plus", "owner": "rag_duelist",
+				"cost": 0, "to_positions": [], "target_kind": "self",
+				"effects": {"dodge_next_attack": 1, "duration": 1}}},
+		{"label": "Rag Dodge without to_positions",
+			"record": {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+				"cost": 1, "from_positions": [1, 2, 3], "target_kind": "self",
+				"effects": {"dodge_next_attack": 1, "duration": 1}}},
+		{"label": "Rag Dodge without target_kind",
+			"record": {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+				"cost": 1, "from_positions": [1, 2, 3], "to_positions": [],
+				"effects": {"dodge_next_attack": 1, "duration": 1}}},
+		{"label": "Rag Dodge with float dodge count",
+			"record": {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+				"cost": 1, "from_positions": [1, 2, 3], "to_positions": [],
+				"target_kind": "self", "effects": {"dodge_next_attack": 1.0, "duration": 1}}},
+		{"label": "Rag Dodge with float cost",
+			"record": {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+				"cost": 1.0, "from_positions": [1, 2, 3], "to_positions": [],
+				"target_kind": "self", "effects": {"dodge_next_attack": 1, "duration": 1}}},
+		{"label": "Moth Shroud without dodge",
+			"record": {"id": "lantern_monk_moth_shroud", "owner": "lantern_monk",
+				"cost": 1, "from_positions": [2, 3], "to_positions": [],
+				"target_kind": "ally_single", "effects": {"block": 6}}},
+		{"label": "Moth Shroud without cost",
+			"record": {"id": "lantern_monk_moth_shroud_plus", "owner": "lantern_monk",
+				"from_positions": [2, 3], "to_positions": [], "target_kind": "ally_single",
+				"effects": {"block": 8, "dodge_next_attack": 1}}},
+		{"label": "Moth Shroud without from_positions",
+			"record": {"id": "lantern_monk_moth_shroud", "owner": "lantern_monk",
+				"cost": 1, "to_positions": [], "target_kind": "ally_single",
+				"effects": {"block": 6, "dodge_next_attack": 1}}},
+		{"label": "Moth Shroud plus without to_positions",
+			"record": {"id": "lantern_monk_moth_shroud_plus", "owner": "lantern_monk",
+				"cost": 1, "from_positions": [2, 3], "target_kind": "ally_single",
+				"effects": {"block": 8, "dodge_next_attack": 1}}},
+		{"label": "Moth Shroud with StringName owner",
+			"record": {"id": "lantern_monk_moth_shroud", "owner": &"lantern_monk",
+				"cost": 1, "from_positions": [2, 3], "to_positions": [],
+				"target_kind": "ally_single", "effects": {"block": 6, "dodge_next_attack": 1}}},
+	]
+	for entry: Dictionary in partial_dodges:
+		var record: Dictionary = entry["record"]
+		var before_record := record.duplicate(true)
+		_check(not _has_keyword_row(record, "Dodge"), str(entry["label"]) + " stays silent")
+		_check(record == before_record, str(entry["label"]) + " is never mutated")
+	# Exhaust negatives.
+	var bad_exhaust_false := {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk",
+		"cost": 2, "from_positions": [2, 3], "to_positions": [1, 2, 3],
+		"target_kind": "enemy_all", "effects": {"blind_next_attack": true, "exhaust": false}}
+	var bad_exhaust_false_rows := CardKeywordGlossary.describe(bad_exhaust_false)
+	var bad_exhaust_false_has_exhaust := false
+	for row: Dictionary in bad_exhaust_false_rows:
+		if str(row.get("keyword", "")) == "Exhaust":
+			bad_exhaust_false_has_exhaust = true
+	_check(not bad_exhaust_false_has_exhaust, "false Exhaust stays silent")
+	var bad_exhaust_missing_blind := {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk",
+		"cost": 2, "from_positions": [2, 3], "to_positions": [1, 2, 3],
+		"target_kind": "enemy_all", "effects": {"exhaust": true}}
+	_check(CardKeywordGlossary.describe(bad_exhaust_missing_blind).is_empty(),
+		"missing Moth Cloud Blind stays silent")
+	var bad_exhaust_text := {"id": "lantern_monk_moth_cloud_plus", "owner": "lantern_monk",
+		"cost": 2, "from_positions": [2, 3], "to_positions": [1, 2, 3],
+		"target_kind": "enemy_all", "effects": {"blind_next_attack": true, "exhaust": "true"}}
+	var bad_exhaust_text_rows := CardKeywordGlossary.describe(bad_exhaust_text)
+	var bad_exhaust_text_has_exhaust := false
+	for row: Dictionary in bad_exhaust_text_rows:
+		if str(row.get("keyword", "")) == "Exhaust":
+			bad_exhaust_text_has_exhaust = true
+	_check(not bad_exhaust_text_has_exhaust, "text Exhaust value stays silent")
+	# Moth Cloud: wrong cost for base/plus. Blind is valid, so no row should be empty;
+	# instead, no Exhaust row is produced.
+	var wrong_cost_cloud_base := {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk",
+		"cost": 1, "from_positions": [2, 3], "to_positions": [1, 2, 3],
+		"target_kind": "enemy_all", "effects": {"blind_next_attack": true, "exhaust": true}}
+	var wrong_cost_cloud_base_has_exhaust := false
+	for row: Dictionary in CardKeywordGlossary.describe(wrong_cost_cloud_base):
+		if str(row.get("keyword", "")) == "Exhaust":
+			wrong_cost_cloud_base_has_exhaust = true
+	_check(not wrong_cost_cloud_base_has_exhaust, "Moth Cloud base wrong cost stays silent")
+	var wrong_cost_cloud_plus := {"id": "lantern_monk_moth_cloud_plus", "owner": "lantern_monk",
+		"cost": 2, "from_positions": [2, 3], "to_positions": [1, 2, 3],
+		"target_kind": "enemy_all", "effects": {"blind_next_attack": true, "exhaust": true}}
+	var wrong_cost_cloud_plus_has_exhaust := false
+	for row: Dictionary in CardKeywordGlossary.describe(wrong_cost_cloud_plus):
+		if str(row.get("keyword", "")) == "Exhaust":
+			wrong_cost_cloud_plus_has_exhaust = true
+	_check(not wrong_cost_cloud_plus_has_exhaust, "Moth Cloud plus wrong cost stays silent")
+	# Moth Cloud: wrong from_positions.
+	var wrong_from_cloud := {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk",
+		"cost": 2, "from_positions": [1, 2, 3], "to_positions": [1, 2, 3],
+		"target_kind": "enemy_all", "effects": {"blind_next_attack": true, "exhaust": true}}
+	var wrong_from_cloud_has_exhaust := false
+	for row: Dictionary in CardKeywordGlossary.describe(wrong_from_cloud):
+		if str(row.get("keyword", "")) == "Exhaust":
+			wrong_from_cloud_has_exhaust = true
+	_check(not wrong_from_cloud_has_exhaust, "Moth Cloud wrong from_positions stays silent")
+	# Moth Cloud: wrong to_positions.
+	var wrong_to_cloud := {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk",
+		"cost": 2, "from_positions": [2, 3], "to_positions": [1, 2],
+		"target_kind": "enemy_all", "effects": {"blind_next_attack": true, "exhaust": true}}
+	var wrong_to_cloud_has_exhaust := false
+	for row: Dictionary in CardKeywordGlossary.describe(wrong_to_cloud):
+		if str(row.get("keyword", "")) == "Exhaust":
+			wrong_to_cloud_has_exhaust = true
+	_check(not wrong_to_cloud_has_exhaust, "Moth Cloud wrong to_positions stays silent")
+	# Moth Cloud: wrong target_kind. Using a non-enemy target, so Blind also fails.
+	var bad_target_cloud := {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk",
+		"cost": 2, "from_positions": [2, 3], "to_positions": [1, 2, 3],
+		"target_kind": "self", "effects": {"blind_next_attack": true, "exhaust": true}}
+	_check(CardKeywordGlossary.describe(bad_target_cloud).is_empty(),
+		"Moth Cloud wrong target stays silent")
+	# Moth Cloud: extra effect flag.
+	var extra_cloud := {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk",
+		"cost": 2, "from_positions": [2, 3], "to_positions": [1, 2, 3],
+		"target_kind": "enemy_all", "effects": {"blind_next_attack": true, "exhaust": true, "draw": 1}}
+	var extra_cloud_has_exhaust := false
+	for row: Dictionary in CardKeywordGlossary.describe(extra_cloud):
+		if str(row.get("keyword", "")) == "Exhaust":
+			extra_cloud_has_exhaust = true
+	_check(not extra_cloud_has_exhaust, "Moth Cloud with an extra effect stays silent")
+	# Moth Cloud: conflicting duplicate Blind spelling.
+	var conflicting_blind := {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk",
+		"cost": 2, "from_positions": [2, 3], "to_positions": [1, 2, 3],
+		"target_kind": "enemy_all", "effects": {"blind_next_attack": true, "blind": 1, "exhaust": true}}
+	_check(CardKeywordGlossary.describe(conflicting_blind).is_empty(),
+		"Moth Cloud with conflicting Blind spelling stays silent")
+	var conflicting_blind_plus := {"id": "lantern_monk_moth_cloud_plus", "owner": "lantern_monk",
+		"cost": 1, "from_positions": [2, 3], "to_positions": [1, 2, 3],
+		"target_kind": "enemy_all", "effects": {"blind": 1, "exhaust": true}}
+	_check(not _has_keyword_row(conflicting_blind_plus, "Exhaust"),
+		"Moth Cloud plus with only the count Blind spelling stays silent")
+	# Partial Moth Cloud records: each required authored field omitted in turn.
+	var partial_clouds := [
+		{"label": "Moth Cloud without cost",
+			"record": {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk",
+				"from_positions": [2, 3], "to_positions": [1, 2, 3], "target_kind": "enemy_all",
+				"effects": {"blind_next_attack": true, "exhaust": true}}},
+		{"label": "Moth Cloud plus without from_positions",
+			"record": {"id": "lantern_monk_moth_cloud_plus", "owner": "lantern_monk",
+				"cost": 1, "to_positions": [1, 2, 3], "target_kind": "enemy_all",
+				"effects": {"blind_next_attack": true, "exhaust": true}}},
+		{"label": "Moth Cloud without to_positions",
+			"record": {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk",
+				"cost": 2, "from_positions": [2, 3], "target_kind": "enemy_all",
+				"effects": {"blind_next_attack": true, "exhaust": true}}},
+		{"label": "Moth Cloud without target_kind",
+			"record": {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk",
+				"cost": 2, "from_positions": [2, 3], "to_positions": [1, 2, 3],
+				"effects": {"blind_next_attack": true, "exhaust": true}}},
+		{"label": "Moth Cloud with StringName target",
+			"record": {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk",
+				"cost": 2, "from_positions": [2, 3], "to_positions": [1, 2, 3],
+				"target_kind": &"enemy_all",
+				"effects": {"blind_next_attack": true, "exhaust": true}}},
+		{"label": "Moth Cloud with extra Blind flag key",
+			"record": {"id": "lantern_monk_moth_cloud_plus", "owner": "lantern_monk",
+				"cost": 1, "from_positions": [2, 3], "to_positions": [1, 2, 3],
+				"target_kind": "enemy_all",
+				"effects": {"blind_next_attack": true, "exhaust": true, "blind": 1}}},
+	]
+	for entry: Dictionary in partial_clouds:
+		var record: Dictionary = entry["record"]
+		var before_record := record.duplicate(true)
+		_check(not _has_keyword_row(record, "Exhaust"), str(entry["label"]) + " stays silent")
+		_check(record == before_record, str(entry["label"]) + " is never mutated")
+	# Existing special-rule order is preserved.
+	_check(CardKeywordGlossary.SPECIAL_ORDER == ["conditional_damage", "random_hit",
+		"energy_tradeoff", "bleed_doubling", "two_hits", "dodge", "exhaust"],
+		"new special rules appended without reshuffling existing five")
+	# Existing keyword rows unchanged.
+	_check(CardKeywordGlossary.KEYWORD_ORDER == ["bleed", "weak", "exposed", "pinned",
+		"unravel", "guarding", "thorns", "riposte", "tangled", "blind"],
+		"keyword order unchanged")
 

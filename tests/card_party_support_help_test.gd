@@ -750,8 +750,8 @@ func _test_ordering_detachment_and_rng() -> void:
 	_check(CardKeywordGlossary.KEYWORD_ORDER == ["bleed", "weak", "exposed",
 		"pinned", "unravel", "guarding", "thorns", "riposte", "tangled", "blind"]
 		and CardKeywordGlossary.SPECIAL_ORDER == ["conditional_damage", "random_hit",
-			"energy_tradeoff", "bleed_doubling", "two_hits"],
-		"legacy keyword and special order constants are preserved")
+			"energy_tradeoff", "bleed_doubling", "two_hits", "dodge", "exhaust"],
+		"legacy keyword and special order constants are preserved with new Dodge/Exhaust rows")
 	var combined := {"id": "warden_strike", "effects": {
 		"bleed": 2, "weak": 1, "exposed": 1, "pinned": true, "unravel": 3,
 		"guarding": true, "thorns": 3, "junk": 4,
