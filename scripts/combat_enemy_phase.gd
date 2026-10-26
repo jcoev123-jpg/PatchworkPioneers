@@ -10,6 +10,10 @@ const BLEED_ON_ATTACK_AMOUNT := 1
 ## really removed, clamped to its missing HP. Block-absorbed damage is not
 ## Drain. Strictly boolean or absent, exactly like the bleeding sting.
 const DRAIN_FIELD := "drain"
+## Authored content flag: this enemy's own real attack first eats ALL Block on
+## the hero who will actually take it, so the full status-adjusted bite reaches
+## HP. Staged with the rest of the batch and strictly boolean or absent.
+const CHEW_BLOCK_ON_ATTACK_FIELD := "chew_block_on_attack"
 ## Authored content flag: this enemy's own executed attack gains +2 damage per
 ## stored Enrage stack. Strictly boolean or absent; non-Enrage sources gain
 ## nothing even when a stack count is left over.
@@ -79,6 +83,14 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 					if not preview.get("ok", false):
 						return failure
 					actual_target = preview.actual_target_position
+				# A living cloth-eater eats the real recipient's Block before its
+				# own bite resolves: the announced target, a Guard redirect and
+				# earlier staged swaps all matter here, never a merely previewed
+				# or already-skipped beat. Staged only, so a later rejection in
+				# this batch publishes none of it.
+				if _chews_block(staged_enemies, source) \
+						and not _eat_block(staged_party, actual_target):
+					return failure
 				# The sting's status is judged by the recipient's real HP change,
 				# so Block and a Guard redirect decide it, not the announcement.
 				var sting: bool = _stings(staged_enemies, source)
@@ -199,6 +211,14 @@ static func _drains(enemies: CombatEnemies, source: int) -> bool:
 	return value is bool and value == true
 
 
+## True only for a roster record that authors the boolean cloth-eating bite.
+static func _chews_block(enemies: CombatEnemies, source: int) -> bool:
+	if enemies == null or not enemies.is_valid():
+		return false
+	var value: Variant = enemies.get_enemy(source).get(CHEW_BLOCK_ON_ATTACK_FIELD, false)
+	return value is bool and value == true
+
+
 ## The stored Enrage attack bonus of one roster source, using the accepted
 ## keyword constants (2 damage per stack, at most 3 stacks). Only a source that
 ## authors `enrage: true` gains anything; an absent or explicit-false flag gains
@@ -233,6 +253,9 @@ static func _attack_metadata_valid(roster: Array) -> bool:
 			return false
 		if enemy.has(DRAIN_FIELD) and not (enemy[DRAIN_FIELD] is bool):
 			return false
+		if enemy.has(CHEW_BLOCK_ON_ATTACK_FIELD) \
+				and not (enemy[CHEW_BLOCK_ON_ATTACK_FIELD] is bool):
+			return false
 		if enemy.has(ENRAGE_FIELD) and not (enemy[ENRAGE_FIELD] is bool):
 			return false
 		if enemy.has(ENRAGE_STACKS_FIELD):
@@ -240,6 +263,27 @@ static func _attack_metadata_valid(roster: Array) -> bool:
 			if not stacks is int or stacks < 0 \
 					or stacks > CombatEnemyKeywordRules.ENRAGE_MAX_STACKS:
 				return false
+	return true
+
+
+## Strip every point of one staged recipient's Block for a living opted-in
+## attacker's real attack. A downed recipient simply keeps the beat inert; a
+## stale or malformed counter fails the batch closed instead of guessing.
+static func _eat_block(staged_party: CombatParty, position: int) -> bool:
+	if staged_party == null or not staged_party.is_valid():
+		return false
+	if position < 1 or position > CombatParty.PARTY_SIZE:
+		return false
+	var hero: Dictionary = staged_party._heroes[position - 1]
+	var hp: Variant = hero.get("hp")
+	if not hp is int:
+		return false
+	if hp <= 0:
+		return true
+	var block: Variant = hero.get("block", 0)
+	if not block is int or block < 0:
+		return false
+	hero["block"] = 0
 	return true
 
 

@@ -108,5 +108,9 @@ static func _parse_catalog_text(json_text: String) -> Array:
 		# catalog before any record is published.
 		if record.has("bleed_on_attack") and not (record["bleed_on_attack"] is bool):
 			return []
+		# Optional cloth-eating metadata is authored content too: absent or a
+		# genuine boolean only, never a number, string, null, array or object.
+		if record.has("chew_block_on_attack") and not (record["chew_block_on_attack"] is bool):
+			return []
 		seen.append(id)
 	return records
