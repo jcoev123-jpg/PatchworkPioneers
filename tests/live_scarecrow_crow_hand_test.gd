@@ -243,6 +243,8 @@ func _run() -> void:
 		for id in catalog.get_all_card_ids():
 			if id in CombatSupportCards.SCARECROW_STRAW_IDS:
 				_check(meta.definition(id) == catalog.get_definition(id), "straw face retains exact canonical catalog")
+			elif CombatScarecrowPitchforkCards.CARDS.has(id):
+				_check(meta.definition(id) == catalog.get_definition(id), "pitchfork face retains exact canonical catalog")
 			elif id not in IDS and id not in ["scarecrow_re_stuff", "scarecrow_re_stuff_plus"]:
 				_check(meta.definition(id).is_empty(), "unrelated Scarecrow IDs remain unwired")
 	for failure in failures:

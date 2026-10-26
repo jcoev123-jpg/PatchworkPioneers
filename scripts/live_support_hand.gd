@@ -74,6 +74,7 @@ var _tinker_gadgets := CombatTinkerPoolGadgets.new()
 var _heal_cards := CombatSeamstressPoolHeals.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
+var _pitchfork := CombatScarecrowPitchforkCards.new()
 var _pop := CombatButtonGolemPopCards.new()
 var _sew := CombatButtonGolemSewCards.new()
 var _roll := CombatButtonGolemRollCards.new()
@@ -614,10 +615,12 @@ func _path_discount(card_id: String) -> int:
 
 
 func _is_enemy_card(card_id: String) -> bool:
-	return _feint.is_supported_card(card_id) or _pop.is_supported_card(card_id)
+	return _feint.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _pitchfork.is_supported_card(card_id)
 
 
 func _enemy_service(card_id: String):
+	if _pitchfork.is_supported_card(card_id):
+		return _pitchfork
 	return _pop if _pop.is_supported_card(card_id) else _feint
 
 
@@ -884,7 +887,7 @@ func _sync_battle() -> void:
 		help_text = "%s: choose a living ally | Esc: cancel" % _metadata.definition(_pending.id).get("display_name", _pending.id)
 		if _is_enemy_card(_pending.id):
 			help_text = "%s: choose a living enemy (1-3) | Esc: cancel" % _metadata.definition(_pending.id).display_name
-		if _pop.is_supported_card(_pending.id):
+		if _pop.is_supported_card(_pending.id) or _pitchfork.is_supported_card(_pending.id):
 			help_text = "%s: choose a living enemy (1-2) | Esc: cancel" % _metadata.definition(_pending.id).display_name
 		if _cleansing.is_supported_card(_pending.id):
 			help_text = "%s: 1 energy; heal %d; %s | Esc: cancel" % [_metadata.definition(_pending.id).display_name,
@@ -1415,7 +1418,7 @@ func _choose_target() -> void:
 		_targets[panel] = {"callback": callback, "cue": cue,
 			"position": index + 1, "hero_id": _target_actor(index + 1).id,
 			"mouse_filter": previous_filter}
-		if _pop.is_supported_card(_pending.id):
+		if _pop.is_supported_card(_pending.id) or _pitchfork.is_supported_card(_pending.id):
 			_targets[panel].actor_ref = app.enemies._enemies[index]
 		if _roll.is_supported_card(_pending.id):
 			_targets[panel].actor_ref = _party._heroes[index]
