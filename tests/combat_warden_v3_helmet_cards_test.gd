@@ -401,12 +401,12 @@ func _test_ac3_rejections() -> void:
 		_rejected(_deck(BONK), _party(), enemies, BONK, 1, {}, bad_defender,
 			"malformed defender snapshot " + str(bad_defender))
 
-	# The Weak addition is preflighted against the authoritative roster: a corrupted enemy status
-	# record is rejected before any spend, discard or damage.
+	# The Weak addition is preflighted against the authoritative roster: an invalid
+	# status key is rejected before any spend, discard or damage.
 	var corrupted := _two_enemies()
-	corrupted._enemies[1]["statuses"] = {"tangled": 1}
+	corrupted._enemies[1]["statuses"] = {"unknown_status": 1}
 	_rejected(_deck(BONK), _party(), corrupted, BONK, 2, {}, {},
-		"enemy roster with a status shape the Weak addition cannot accept")
+		"enemy roster with an invalid status shape the Weak addition cannot accept")
 
 	_rejected(null, _party(), enemies, BONK, 1, {}, {}, "null deck")
 	_rejected(_deck(BONK), null, enemies, BONK, 1, {}, {}, "null party")
