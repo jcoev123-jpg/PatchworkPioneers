@@ -3,6 +3,43 @@ extends "res://tests/live_elite_reward_continuation_test.gd"
 
 var sewing
 
+
+## Later Rest nodes can retain the legacy recovery view. Drive whichever real
+## view the route mounted, keeping healing and completion as required steps.
+func _visit_path(path: Array, keyboard: bool) -> void:
+	for id in path:
+		if app.run_map.get_node(id).type != "Rest":
+			await super._visit_path([id], keyboard)
+			continue
+		var action := _route_action(id)
+		_check(is_instance_valid(action) and not action.disabled, "real transit Rest action exists")
+		if not is_instance_valid(action):
+			return
+		if keyboard:
+			action.grab_focus()
+			await _key(KEY_ENTER)
+		else:
+			await _click(action)
+		if is_instance_valid(app.campfire_view) and app.campfire_view.is_visible_in_tree():
+			_check(app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
+				"transit Campfire binds an open visit")
+			await _click(app.campfire_heal_button)
+			_check(not app.campfire_view.visible and app._campfire_closed,
+				"transit Campfire Heal completes its visit")
+		else:
+			_check(is_instance_valid(app.rest_view) and app.rest_view.is_visible_in_tree()
+				and app.rest_recovery != null and not app.rest_recovery.is_consumed(),
+				"legacy transit Rest binds an unconsumed recovery")
+			if not is_instance_valid(app.rest_view) or app.rest_recovery == null:
+				return
+			await _click(app.rest_heal_button)
+			_check(app.rest_recovery.is_consumed() and app.rest_heal_button.disabled
+				and not app.rest_continue_button.disabled, "legacy transit Heal commits once")
+			await _click(app.rest_continue_button)
+		await _check_connected_book()
+		_check(app.route_view != null and app.route_view.is_visible_in_tree()
+			and app._can_choose_connected_route(), "completed Rest keeps connected chooser live")
+
 ## Use the acquired patch through the next battle's real held-card input.
 func _acquired_attack_check(patch_id: String) -> void:
 	_check(app.party != null and app.enemies != null and not app._battle_closed
@@ -47,16 +84,40 @@ func _acquired_attack_check(patch_id: String) -> void:
 			"acquired patch attack spends and discards once without RNG")
 
 ## The production shared pool must naturally roll each new drop.
+## These claims need one Elite and an onward Fight; the separate two-Elite
+## replay below still requires its complete two-Elite/Shop topology.
+func _attack_fixture(first_seed: int, last_seed: int) -> Dictionary:
+	for value in range(first_seed, last_seed):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		map.generate(rng)
+		var opening_rng := rng.state
+		for id in map.get_legal_choices():
+			if map.get_node(id).type != "Fight":
+				continue
+			var path := _path_to(map, id, "Elite")
+			if path.is_empty() or _path_to(map, path.back(), "Fight").is_empty():
+				continue
+			rng.state = opening_rng
+			map.choose_node(id)
+			var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
+			if selected.get("encounter_id") == "starter_attacks":
+				return {"seed": value, "fight": id, "paths": [path]}
+			map.undo_choice(id, [])
+	return {}
+
+
 func _attack_patch_claims() -> void:
 	## Verified starting seeds are hints only; every offer is still rolled and checked live.
-	var drop_seeds := {"button_eye": 962, "pincushion_arm": 2998,
-		"HEAD": 61, "ARM": 1848, "COAT": 2010}
+	var drop_seeds := {"button_eye": 2896, "pincushion_arm": 10196,
+		"HEAD": 9971, "ARM": 8123, "COAT": 9914}
 	var search_seed := 1
 	for patch_id in ["button_eye", "pincushion_arm", "HEAD", "ARM", "COAT"]:
 		var next_seed: int = drop_seeds.get(patch_id, search_seed)
 		var obtained := false
 		for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
-			var fixture := _multi_fixture(next_seed, maxi(30000, next_seed + 10000))
+			var fixture := _attack_fixture(next_seed, maxi(30000, next_seed + 10000))
 			if not fixture.is_empty():
 				search_seed = maxi(search_seed, fixture.seed + 1)
 			_check(not fixture.is_empty(), "seeded Elite route exists for " + patch_id)
@@ -660,15 +721,16 @@ func _verify_worn_readout() -> void:
 
 
 func _coat_multi_fixture(reward_index: int = 0, prior_coat: bool = false) -> Dictionary:
-	var first_seed := 5052 if prior_coat else 1
+	var first_seed := 31189 if prior_coat else 4257
 	for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
 		var fixture := _multi_fixture(first_seed, maxi(30000, first_seed + 20000))
 		if fixture.is_empty() or not await _routed_win(fixture, false):
 			return {}
 		await _click(app.reward_buttons[reward_index])
-		await _click(app.continue_button)
 		if prior_coat:
 			app.run_trinkets.append("reinforced_patchcoat")
+		# Finish fixture inventory before Continue binds source-authenticated routes.
+		await _click(app.continue_button)
 		var path: Array = fixture.paths[0].duplicate()
 		var elite: String = path.pop_back()
 		await _visit_path(path, false)
@@ -1142,7 +1204,6 @@ func _test_displaced_name(fixture: Dictionary) -> void:
 	if not await _routed_win(fixture, false):
 		return
 	await _click(app.reward_buttons[3])
-	await _click(app.continue_button)
 	_check(app.run_trinkets.is_empty() and app.party_carryover._wardrobe == null,
 		"displacement run starts with no patch ownership or sewing ledger")
 	app.run_trinkets.append("reinforced_patchcoat")
@@ -1165,6 +1226,7 @@ func _test_displaced_name(fixture: Dictionary) -> void:
 		and app.party_carryover.bind_wardrobe(prior, app.party_carryover.torn,
 			prior.get_snapshot()),
 		"authored prior coat is sewn into an empty COAT and bound by the real services")
+	await _click(app.continue_button)
 	var path: Array = fixture.paths[0].duplicate()
 	var elite: String = path.pop_back()
 	await _visit_path(path, false)
@@ -1312,7 +1374,6 @@ func _test_authored_live_claims(fixture: Dictionary) -> void:
 		if not await _routed_win(fixture, false):
 			return
 		await _click(app.reward_buttons[3])
-		await _click(app.continue_button)
 		var prior: RunPatchWardrobe = null
 		var prior_id: String = case.prior
 		if prior_id != "":
@@ -1332,6 +1393,7 @@ func _test_authored_live_claims(fixture: Dictionary) -> void:
 			_check(old_sew.ok and old_sew.receipt.scrap_delta == 0
 				and app.party_carryover.bind_wardrobe(prior, app.party_carryover.torn,
 					prior.get_snapshot()), "prior wear and carryover binding are canonical")
+		await _click(app.continue_button)
 		var path: Array = fixture.paths[0].duplicate()
 		var elite: String = path.pop_back()
 		await _visit_path(path, false)
