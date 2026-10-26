@@ -2880,13 +2880,37 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 	if entry.get("success", false) and entry.get("node_type") == "Fight":
 		# Start from this admission's fresh authored roster, never a prior battle's HP.
 		var definitions: Array = entry.enemies.get_enemies()
+		var floor_number: Variant = run_map.get_node(id).get("floor")
 		for definition in definitions:
 			var scaled := RunNormalAttackFloorScaling.scale_normal_max_hp(
-				definition.get("max_hp"), run_map.get_node(id).get("floor"))
-			if not scaled.get("ok", false):
+				definition.get("max_hp"), floor_number)
+			var spec: Variant = definition.get("intent")
+			if not scaled.get("ok", false) or CombatEnemyIntents._weighted_slot(
+					1, spec).is_empty():
 				entry.success = false
 				break
+			# get_enemies() is detached; keep the authored weighted spec intact
+			# except eligible attack amounts, before the first RNG-bound announcement.
+			var next_spec: Dictionary = spec.duplicate(true)
+			var alternatives: Array = next_spec["actions"]
+			for index in range(alternatives.size()):
+				var parsed := CombatEnemyIntents.weighted_action(alternatives[index])
+				if parsed.is_empty():
+					entry.success = false
+					break
+				var action: Dictionary = parsed["action"]
+				if action.get("type") == "attack" and action["amount"] >= 5 \
+						and action["amount"] <= 9:
+					var attack := RunNormalAttackFloorScaling.scale_normal_attack(
+							action["amount"], floor_number)
+					if not attack.get("ok", false):
+						entry.success = false
+						break
+					alternatives[index]["amount"] = attack["amount"]
+			if not entry.success:
+				break
 			definition.max_hp = scaled.max_hp
+			definition.intent = next_spec
 		if entry.success:
 			var scaled_enemies := CombatEnemies.new(definitions)
 			if not scaled_enemies.is_valid():

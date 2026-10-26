@@ -78,6 +78,21 @@ func _canonical_oracle(id: String) -> Dictionary:
 			if not scaled.ok:
 				return {}
 			definition.max_hp = scaled.max_hp
+			# Rebuild the independent routed-Fight oracle with the same authored
+			# eligible attack bands; leave every other weighted alternative intact.
+			var spec: Dictionary = definition.intent.duplicate(true)
+			for option in spec.actions:
+				var parsed := CombatEnemyIntents.weighted_action(option)
+				_check(not parsed.is_empty(), "stitched admission oracle validates authored weighted options")
+				if parsed.is_empty():
+					return {}
+				var action: Dictionary = parsed.action
+				if action.type == "attack" and action.amount >= 5 and action.amount <= 9:
+					var base: int = action.amount
+					@warning_ignore("integer_division")
+					option.amount = base if map.get_node(id).floor <= 4 else (
+						base * 5 / 4 if map.get_node(id).floor <= 8 else base * 3 / 2)
+			definition.intent = spec
 		entry.enemies = CombatEnemies.new(definitions)
 	var receipt: Dictionary = app._stitch_snapshot()
 	var admitted := RunStitchedBattleHandEntry.new().admit_next_fight(
