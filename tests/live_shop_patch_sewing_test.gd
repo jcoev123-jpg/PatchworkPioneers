@@ -104,7 +104,7 @@ func _attack_patch_purchases() -> void:
 			await _acquired_attack_check(id)
 		app._return_to_title()
 		await _frames()
-		callback.call()
+		_retained_call(callback)
 		_check(app.peddler_visit == null and app._peddler_wardrobe == null and app.run_map == null, "title reset rejects old patch Buy")
 
 
@@ -190,7 +190,7 @@ func _patch_state() -> Array:
 
 func _reject_buy(callback: Callable, reason: String) -> void:
 	var before := _patch_state()
-	callback.call()
+	_retained_call(callback)
 	_check(_patch_state() == before, reason + " leaves all ledgers, history and RNG unchanged")
 
 
@@ -417,7 +417,7 @@ func _negative_inputs(callback: Callable) -> void:
 	app.shop_view.hide()
 	_reject_buy(callback, "hidden view")
 	app.shop_view.show()
-	var view: VBoxContainer = app.shop_view
+	var view: Control = app.shop_view
 	var foreign_view := VBoxContainer.new()
 	app.shop_view = foreign_view
 	_reject_buy(callback, "replaced view")
@@ -544,7 +544,7 @@ func _poor_and_replacement() -> void:
 			button.grab_focus()
 			await _key(KEY_ENTER)
 			button.disabled = false
-			callback.call()
+			_retained_call(callback)
 			_check(_patch_state() == before and app.peddler_visit.is_open(), "shortfall refuses mouse, keyboard and forced callback with no mutation")
 			await _click(app.peddler_leave_button)
 		app._return_to_title()

@@ -12,7 +12,7 @@ extends Control
 ## whose kind is "card", "trinket" or "leave". An external controller must
 ## re-read the visit and pass those values unchanged to
 ## RunPeddlerVisit.choose_purchase()/leave(), which stay the single purchase
-## and Leave authority. Live route wiring follows in a later task.
+## and Leave authority. The live Shop route mounts this view through app.gd.
 signal intent_requested(intent: Dictionary)
 
 const PANEL_ART := "res://assets/paper/ui/reward_panel.png"
@@ -66,6 +66,7 @@ var _visit: RunPeddlerVisit
 var _source: Dictionary = {}
 var _epoch := 0
 var _submitted := false
+var _pending_intent: Dictionary = {}
 var _connections: Dictionary = {} # Only view-owned Button.pressed -> Callable.
 
 
@@ -195,6 +196,7 @@ func bind(visit: RunPeddlerVisit) -> void:
 	_visit = null
 	_source = {}
 	_submitted = false
+	_pending_intent.clear()
 	if visit != null and visit.is_valid() and visit.is_open():
 		var state: Dictionary = visit.read_state()
 		if _valid_open_state(state):
@@ -442,13 +444,17 @@ func _auth(epoch: int, source: RunPeddlerVisit) -> bool:
 	for i in range(CARD_COUNT):
 		var button := card_buttons[i]
 		if not _attached(button) or button.text != _card_caption(i) \
-				or button.get_meta("offer_kind") != CARD_KIND \
-				or button.get_meta("offer_id") != str(_offer(i)["id"]) \
+				or not button.get_meta("offer_kind", "") is String \
+				or not button.get_meta("offer_id", "") is String \
+				or button.get_meta("offer_kind", "") != CARD_KIND \
+				or button.get_meta("offer_id", "") != str(_offer(i)["id"]) \
 				or button.disabled != (not _card_buyable(i)):
 			return false
 	if not _attached(patch_button) or patch_button.text != _patch_caption() \
-			or patch_button.get_meta("offer_kind") != PATCH_KIND \
-			or patch_button.get_meta("offer_id") != str(_patch_offer()["id"]) \
+			or not patch_button.get_meta("offer_kind", "") is String \
+			or not patch_button.get_meta("offer_id", "") is String \
+			or patch_button.get_meta("offer_kind", "") != PATCH_KIND \
+			or patch_button.get_meta("offer_id", "") != str(_patch_offer()["id"]) \
 			or patch_button.disabled != (not _patch_buyable()):
 		return false
 	return _attached(leave_button) and not leave_button.disabled
@@ -488,8 +494,24 @@ func _request_leave(epoch: int, source: RunPeddlerVisit) -> void:
 	})
 
 
+## Only the exact receipt from a genuine button press can reach the controller.
+func consume_intent(intent: Dictionary) -> bool:
+	if not _submitted or _pending_intent.is_empty() or intent != _pending_intent:
+		return false
+	_pending_intent.clear()
+	return true
+
+
+func retry_submission() -> void:
+	if not _pending_intent.is_empty():
+		return
+	_submitted = false
+	_refresh()
+
+
 func _submit(intent: Dictionary) -> void:
 	_submitted = true
+	_pending_intent = intent.duplicate(true)
 	for button in card_buttons + [patch_button, leave_button]:
 		button.disabled = true
 	_retire_callbacks()

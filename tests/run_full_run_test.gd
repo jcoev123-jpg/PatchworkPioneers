@@ -164,6 +164,18 @@ func _activate(button: Button, keyboard: bool = false) -> void:
 func _retained(button: Button) -> Callable:
 	var connections := button.pressed.get_connections()
 	_check(not connections.is_empty(), "mounted control has real callback")
+	if button.get_parent() is LivePeddlerPanel:
+		# Retain the app bridge: the presentation's own callbacks die with its panel.
+		var panel := button.get_parent() as LivePeddlerPanel
+		var bound := panel._visit.read_state()
+		var intent := {"kind": "leave", "node_id": bound.node_id,
+			"expected_state": bound.state, "expected_stock": bound.stock}
+		if button != panel.leave_button:
+			intent.kind = button.get_meta("offer_kind")
+			intent.id = button.get_meta("offer_id")
+		var bridges := panel.intent_requested.get_connections()
+		_check(bridges.size() == 1, "mounted Peddler has exactly one app-owned intent bridge")
+		return bridges[0].callable.bind(intent) if bridges.size() == 1 else Callable()
 	return connections[0].callable if not connections.is_empty() else Callable()
 
 

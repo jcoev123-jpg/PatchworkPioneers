@@ -204,7 +204,7 @@ func _run() -> void:
 			_check(app.peddler_visit.read_state().stock == oracle.stock and app.run_rng.state == oracle.state, "ongoing RNG matches independent oracle")
 			var before := _shop_state()
 			for callback in stale:
-				callback.call()
+				_retained_call(callback)
 			_check(_shop_state() == before, "old callbacks reject in fresh visit")
 			stale.clear()
 			for action in app.peddler_buttons + [app.peddler_leave_button]:
@@ -227,19 +227,19 @@ func _run() -> void:
 			await _check_connected_book()
 			before = _shop_state()
 			for callback in stale:
-				callback.call()
+				_retained_call(callback)
 			_check(_shop_state() == before, "consumed signals cannot alter route")
 			var entry: Button = _route_action(fixture.next)
 			var callback: Callable = entry.pressed.get_connections()[0].callable
 			app.session_gold += 1
 			var changed := _shop_state()
-			callback.call()
+			_retained_call(callback)
 			_check(_shop_state() == changed and app.route_view.is_visible_in_tree(), "drifted wallet refuses onward action")
 			app.session_gold -= 1
 			var witness: Array = app._peddler_witnesses[fixture.shop]
 			app._peddler_witnesses.erase(fixture.shop)
 			_check(not app._can_choose_connected_route(), "missing completion witness blocks route")
-			callback.call()
+			_retained_call(callback)
 			_check(app.run_map.get_current_node_id() == fixture.shop, "forged completion cannot enter next node")
 			app._peddler_witnesses[fixture.shop] = witness
 			_check(app._can_choose_connected_route(), "authentic completion remains retryable")
@@ -264,7 +264,7 @@ func _run() -> void:
 			app._return_to_title()
 			await _frames()
 			for old in stale:
-				old.call()
+				_retained_call(old)
 			_check(app.peddler_visit == null and app.run_map == null and app.run_deck.is_empty(), "title clears service and stale actions")
 	app.free()
 	await _frames()

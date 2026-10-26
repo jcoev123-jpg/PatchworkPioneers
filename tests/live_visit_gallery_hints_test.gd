@@ -197,12 +197,13 @@ func _check_peddler_labels(app) -> void:
 		return
 	var before: Dictionary = app._sewing_context()
 	var bound: Dictionary = app.peddler_visit.read_state()
-	var title := app.shop_view.get_child(0) as Label
-	_check(title != null and title.text == "Peddler — choose one purchase"
+	var panel: LivePeddlerPanel = app.shop_view
+	var title: Label = panel.title_label
+	_check(title != null and title.text == LivePeddlerPanel.TITLE_TEXT
 		and title.get_theme_font_size("font_size") >= MIN_BODY_SIZE,
 		"mounted Peddler guidance states the single-purchase rule at readable size")
 	var wallet: Label = app.shop_label
-	_check(wallet.text == "Gold: %d" % bound.state.gold and wallet.is_visible_in_tree()
+	_check(wallet.text == "Wallet  ·  %d gold" % bound.state.gold and wallet.is_visible_in_tree()
 		and wallet.get_theme_font_size("font_size") >= MIN_BODY_SIZE,
 		"mounted wallet prints the complete authoritative gold amount at body size")
 	for label: Label in [title, wallet]:
@@ -216,8 +217,7 @@ func _check_peddler_labels(app) -> void:
 	var offers: Array = bound.stock.cards + bound.stock.trinkets
 	for i in range(4):
 		var offer: Dictionary = offers[i]
-		var label: String = RunPoolCardRewardOffers.resolve_reward_definition(offer.id).display_name if i < 3 else String(offer.id).capitalize()
-		var expected := "Buy %s · %d gold" % [label, prices[offer.id]]
+		var expected: String = panel._card_caption(i) if i < 3 else panel._patch_caption()
 		var button: Button = app.peddler_buttons[i]
 		_check(button.text == expected and button.get_meta("offer_id") == offer.id
 			and offer.price == prices[offer.id] and button.disabled == (offer.sold or bound.state.gold < offer.price),
@@ -226,7 +226,7 @@ func _check_peddler_labels(app) -> void:
 		var measured := button.get_theme_font("font").get_string_size(expected, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
 		_check(size >= MIN_BODY_SIZE and measured.x + button.get_theme_stylebox("normal").get_minimum_size().x <= button.size.x,
 			"short Peddler price sentence fits its real sewn button without truncation")
-	_check(app.peddler_leave_button.text == "Leave · FREE" and not app.peddler_leave_button.disabled,
+	_check(app.peddler_leave_button.text == LivePeddlerPanel.LEAVE_TEXT and not app.peddler_leave_button.disabled,
 		"Peddler always prints an available free Leave")
 	for control in [app.shop_view, title, wallet] + app.peddler_buttons + [app.peddler_leave_button]:
 		_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).grow(0.5).encloses(control.get_global_rect()),

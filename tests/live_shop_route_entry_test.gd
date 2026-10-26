@@ -905,7 +905,7 @@ func _run() -> void:
 	var retired_backing_id := 0
 	# Normal insufficient funds, funded mouse, funded keyboard with escalated quote,
 	# and same-seed normal restart/skip.
-	for session in range(4):
+	for session in range(5):
 		seed(400040)
 		var global_next := randi()
 		seed(400040)
@@ -921,7 +921,7 @@ func _run() -> void:
 			break
 		var before := _persistent()
 		for callback in stale:
-			callback.call()
+			_retained_call(callback)
 		_check(_persistent() == before and app.peddler_visit == null, "old visit callbacks cannot spend or reopen in fresh combat")
 		await _click(app.continue_button)
 		var shop: Button
@@ -1056,6 +1056,9 @@ func _run() -> void:
 		_check(app.peddler_buttons.size() == 4 and app.shop_cards == null and app.shop_remove_button == null
 			and app.shop_visit == null and app.shop_purchases == null,
 			"four choices replace retired routed removal and duplicate purchase authorities")
+		_check(app.shop_view is LivePeddlerPanel and app.shop_view._visit == visit
+			and app.shop_view.intent_requested.get_connections().size() == 1,
+			"one sewn panel binds the real visit and one controller intent bridge")
 		var controls: Array = [app.peddler_heroes] + app.peddler_buttons + [app.peddler_leave_button]
 		for control in controls:
 			_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()),
@@ -1070,13 +1073,14 @@ func _run() -> void:
 			"Peddler focus wraps without spending or changing RNG")
 		for i in range(4):
 			var offer: Dictionary = (bound.stock.cards + bound.stock.trinkets)[i]
-			var label: String = RunPoolCardRewardOffers.resolve_reward_definition(offer.id).display_name if i < 3 else String(offer.id).capitalize()
 			var action: Button = app.peddler_buttons[i]
-			_check(action.text == "Buy %s \u00b7 %d gold" % [label, offer.price]
+			var expected: String = app.shop_view._card_caption(i) if i < 3 else app.shop_view._patch_caption()
+			_check(action.text == expected and action.text.contains(str(offer.price) + " gold")
+				and action.get_parent() == app.shop_view
 				and action.get_meta("offer_id") == offer.id and action.pressed.get_connections().size() == 1
-				and action.theme_type_variation == &"PatchHeadingButton" and action.get_theme_font_size("font_size") == 20
+				and action.get_theme_font_size("font_size") == 20
 				and action.disabled == (offer.sold or app.session_gold < offer.price),
-				"every short sewn choice displays authentic identity, price and affordability")
+				"each mounted sewn choice displays authentic identity, price and affordability")
 		var leave: Callable = app.peddler_leave_button.pressed.get_connections()[0].callable
 		var buys: Array[Callable] = []
 		for action in app.peddler_buttons:
@@ -1092,28 +1096,137 @@ func _run() -> void:
 			else:
 				_check([bound, app.run_rng.state, app.run_deck, app.run_heroes] == replay, "same seed reproduces entire Peddler stock, wallet, party and RNG")
 		var run_before: Dictionary = app._sewing_context()
-		if session == 2:
-			app.peddler_leave_button.grab_focus()
+		var panel: LivePeddlerPanel = app.shop_view
+		var panel_ref: WeakRef = weakref(panel)
+		var bridge: Callable = panel.intent_requested.get_connections()[0].callable
+		var wardrobe: RunPatchWardrobe = app._peddler_wardrobe
+		var wardrobe_before := wardrobe.get_snapshot()
+		if session == 4:
+			app._return_to_title()
+			_check(not panel.is_inside_tree() and not panel.visible and panel._visit == null
+				and panel.intent_requested.get_connections().is_empty() and panel._pending_intent.is_empty(),
+				"title reset detaches an unconsumed panel and erases all submission authority")
+			for callback in buys + [leave]:
+				_retained_call(callback)
+			bridge.call({"kind": "leave"})
+			_check(app.peddler_visit == null and app.shop_view == null and app.run_map == null,
+				"retained open-visit callbacks cannot resurrect Peddler at title")
+			app._start_run()
+			var fresh := _shop_state()
+			bridge.call({"kind": "leave"})
+			for callback in buys + [leave]:
+				_retained_call(callback)
+			_check(_shop_state() == fresh and app.peddler_visit == null,
+				"fresh run cannot inherit an unconsumed previous panel or submission")
+			app._return_to_title()
+			await _frames()
+			_check(randi() == global_next, "open-panel title reset and fresh start preserve global RNG")
+			continue
+		if session == 1:
+			var offer: Dictionary = bound.stock.cards[0]
+			panel.intent_requested.disconnect(bridge)
+			panel.intent_requested.connect(_tampered_peddler_submission.bind(bridge))
+			panel.intent_requested.connect(bridge)
+			_check(not app.peddler_buttons[0].disabled, "funded genuine card control is enabled")
+			await _click(app.peddler_buttons[0])
+			var expected_deck: Array = run_before.deck.duplicate()
+			expected_deck.append(offer.id)
+			_check(visit.is_consumed() and app.peddler_receipt.decision == "buy"
+				and app.peddler_receipt.kind == "card" and app.peddler_receipt.id == offer.id
+				and app.peddler_receipt.price == offer.price
+				and app.session_gold == run_before.gold - offer.price and app.run_deck == expected_deck
+				and visit.read_state().state == app.peddler_receipt.state
+				and app.run_trinkets == run_before.patches and app.run_scraps == run_before.scraps,
+				"physical card purchase commits once at exact quote with authoritative inventory receipt")
+		elif session == 2:
+			var offer: Dictionary = bound.stock.trinkets[0]
+			_check(not app.peddler_buttons[3].disabled, "funded genuine patch control is enabled")
+			app.peddler_heroes.grab_focus()
 			await _key(KEY_ENTER)
+			await _key(KEY_DOWN)
+			await _key(KEY_ENTER)
+			_check(app.peddler_heroes.selected == 1, "keyboard chooses the middle patch wearer")
+			var owner: String = app.run_heroes[1].id
+			var slot: String = wardrobe_before.definitions[offer.id]
+			var displaced: String = wardrobe_before.worn[owner][slot]
+			app.peddler_buttons[3].grab_focus()
+			await _key(KEY_ENTER)
+			var sewn := wardrobe.get_snapshot()
+			var expected_owned: Array = run_before.patches.duplicate()
+			expected_owned.append(offer.id)
+			if displaced != "":
+				expected_owned.erase(displaced)
+			_check(visit.is_consumed() and app.peddler_receipt.decision == "buy"
+				and app.peddler_receipt.kind == "trinket" and app.peddler_receipt.id == offer.id
+				and app.peddler_receipt.price == offer.price
+				and app.session_gold == run_before.gold - offer.price and app.run_deck == run_before.deck
+				and app.run_trinkets == expected_owned and sewn.worn[owner][slot] == offer.id
+				and app.run_scraps == run_before.scraps + (1 if displaced != "" else 0)
+				and visit.read_state().state == app.peddler_receipt.state
+				and app.peddler_receipt.state.trinkets == expected_owned,
+				"physical keyboard patch purchase sews selected wearer and settles exact quote and displaced ownership")
+			for other in run_before.heroes:
+				if other.id != owner:
+					_check(sewn.worn[other.id] == wardrobe_before.worn[other.id], "patch leaves other wearers unchanged")
 		else:
-			await _click(app.peddler_leave_button)
-		_check(visit.read_state().status == RunPeddlerVisit.LEFT and app.peddler_receipt.decision == "leave"
-			and app._sewing_context() == run_before and app.shop_view == null and app.visit_backdrop == null
-			and app._can_choose_connected_route(), "free Leave frees UI and art, witnesses consumed node, and admits connected route")
+			if session == 3:
+				app.peddler_leave_button.grab_focus()
+				await _key(KEY_ENTER)
+			else:
+				await _click(app.peddler_leave_button)
+			_check(visit.read_state().status == RunPeddlerVisit.LEFT and app.peddler_receipt.decision == "leave"
+				and app._sewing_context() == run_before, "mouse and keyboard Leave are free and preserve the entire run")
+		_check(app.shop_view == null and app.visit_backdrop == null and panel_ref.get_ref() == null and app._can_choose_connected_route()
+			and app._peddler_closed() and not app.route_buttons.is_empty()
+			and app.run_rng.state == run_before.rng_state and app.run_map.get_route() == run_before.route,
+			"every decision retires panel and art, witnesses the node and exposes legal continuation without RNG draws")
+		if session in [1, 2]:
+			_check(app.party_carryover._wardrobe == wardrobe
+				and app.party_carryover.can_bind_wardrobe(wardrobe, app.party_carryover.torn, wardrobe.get_snapshot())
+				and wardrobe.get_snapshot().gold == app.session_gold
+				and wardrobe.get_snapshot().cards == app.run_deck
+				and wardrobe.get_snapshot().owned == app.run_trinkets,
+				"authoritative wardrobe and torn carryover match the committed live receipt")
 		var after := _shop_state()
+		bridge.call({"kind": "leave"})
 		for callback in buys + [leave]:
-			callback.call()
+			_retained_call(callback)
 		_check(_shop_state() == after, "retained Buy and Leave reject after consumption")
-		stale.assign(buys + [leave, route_callback, back_callback])
-		await _click(app.route_back_button)
+		stale.assign(buys + [leave, bridge.bind({"kind": "leave"}), route_callback, back_callback])
+		if session == 1:
+			var next: Button
+			for choice in app.route_buttons:
+				if not choice.disabled:
+					next = choice
+					break
+			_check(next != null, "settled purchase exposes an enabled genuine next-node action")
+			if next != null:
+				var next_id: String = next.get_meta("route_id")
+				await _click(next)
+				_check(app.run_map.get_current_node_id() == next_id and app.run_map.get_route().size() == prior.size() + 2,
+					"physical next-node input advances the authentic route after purchase")
+				var advanced := _shop_state()
+				bridge.call({"kind": "leave"})
+				_check(_shop_state() == advanced, "old Peddler bridge stays inert in the next node")
+			app._return_to_title()
+			await _frames()
+		else:
+			await _click(app.route_back_button)
 		for callback in stale:
-			callback.call()
+			_retained_call(callback)
 		_check(app.title_view.visible and app.peddler_visit == null and app.shop_view == null
 			and app._peddler_wardrobe == null and app._peddler_witnesses.is_empty()
 			and app.run_map == null and app.run_deck.is_empty() and app.session_gold == 0,
 			"title reset clears Peddler and witnesses; retired signals cannot revive it")
 		_check(randi() == global_next, "Peddler entry, refusal, Leave and title reset preserve global RNG")
 	_finish_shop()
+
+
+func _retained_call(callback: Callable) -> void:
+	if callback.is_valid():
+		callback.call()
+	else:
+		_check(callback.get_object() == null, "freed panel callbacks have no surviving input receiver")
 
 
 func _peddler_reject(callbacks: Array, label: String) -> void:
@@ -1128,6 +1241,19 @@ func _peddler_rejections(callbacks: Array) -> void:
 	var map: RunMap = app.run_map
 	var rng: RandomNumberGenerator = app.run_rng
 	var carry = app.party_carryover
+	var panel: LivePeddlerPanel = app.shop_view
+	var bridge: Callable = panel.intent_requested.get_connections()[0].callable
+	var bound: Dictionary = app.peddler_visit.read_state()
+	var before := _shop_state()
+	for offer in bound.stock.cards + bound.stock.trinkets + [{"id": "", "leave": true}]:
+		var intent := {"node_id": bound.node_id, "kind": "leave" if offer.has("leave") else ("card" if offer.has("owner") else "trinket"),
+			"expected_state": bound.state.duplicate(true), "expected_stock": bound.stock.duplicate(true)}
+		if not offer.has("leave"):
+			intent.id = offer.id
+		bridge.call(intent)
+		panel.intent_requested.emit(intent)
+	_check(_shop_state() == before and not panel._submitted and panel._pending_intent.is_empty(),
+		"direct connected-listener calls and forged signals cannot buy or Leave before genuine input")
 	app.shop_view.hide()
 	_peddler_reject(callbacks, "hidden source")
 	app.shop_view.show()
@@ -1142,7 +1268,7 @@ func _peddler_rejections(callbacks: Array) -> void:
 	action.text = "forged price"
 	_peddler_reject([callbacks[0]], "forged quote")
 	action.text = text
-	for invalid in [null, "unknown", app.peddler_visit.read_state().stock.cards[1].id]:
+	for invalid in [null, 12, "unknown", app.peddler_visit.read_state().stock.cards[1].id]:
 		action.set_meta("offer_id", invalid)
 		_peddler_reject([callbacks[0]], "forged offer identity")
 	action.set_meta("offer_id", id)
@@ -1203,6 +1329,31 @@ func _peddler_rejections(callbacks: Array) -> void:
 	_peddler_reject(callbacks, "forged patch owner")
 	app.peddler_heroes.set_item_metadata(0, app.run_heroes[0].id)
 	_check(app._sewing_context() == context, "all negative fixtures restore authentic source")
+
+
+func _tampered_peddler_submission(intent: Dictionary, bridge: Callable) -> void:
+	var before := _shop_state()
+	var variants: Array[Dictionary] = []
+	var forged := intent.duplicate(true)
+	forged.node_id = "wrong_node"
+	variants.append(forged)
+	forged = intent.duplicate(true)
+	forged.id = app.peddler_visit.read_state().stock.cards[1].id
+	variants.append(forged)
+	forged = intent.duplicate(true)
+	forged.expected_state.gold += 1
+	variants.append(forged)
+	forged = intent.duplicate(true)
+	forged.expected_stock.cards[0].price = 1
+	variants.append(forged)
+	forged = intent.duplicate(true)
+	forged.extra = true
+	variants.append(forged)
+	for proposal in variants:
+		bridge.call(proposal)
+		_check(_shop_state() == before and app.peddler_visit.is_open()
+			and app.shop_view._pending_intent == intent,
+			"tampered issued intent refuses without consuming the genuine unchanged submission")
 
 
 func _finish_shop() -> void:

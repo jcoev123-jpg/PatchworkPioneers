@@ -720,7 +720,7 @@ var _rest_route: Array[String] = []
 var _rest_heroes: Array = []
 var _rest_committed_heroes: Array = []
 var _rest_map: WeakRef
-var shop_view: VBoxContainer
+var shop_view: Control
 var shop_cards: OptionButton
 var shop_remove_button: Button
 var shop_back_button: Button
@@ -5441,38 +5441,33 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	_peddler_bound = visit.read_state()
 	_peddler_wardrobe_bound = w
 	peddler_receipt = {}
-	shop_view = VBoxContainer.new()
+	shop_view = LivePeddlerPanel.new()
 	shop_view.name = "Peddler"
-	shop_view.position = Vector2(310, 60)
-	shop_view.custom_minimum_size.x = 660
-	shop_view.add_theme_constant_override("separation", 12)
+	shop_view.position = Vector2(190, 20)
 	add_child(shop_view)
-	_peddler_view_source = weakref(shop_view)
-	_mount_visit_backdrop("Shop", shop_view)
-	var title := Label.new()
-	title.text = "Peddler — choose one purchase"
-	title.theme_type_variation = &"PatchHeading"
-	shop_view.add_child(title)
-	shop_label = Label.new()
-	shop_label.text = "Gold: %d" % session_gold
-	shop_view.add_child(shop_label)
+	var panel := shop_view as LivePeddlerPanel
+	_peddler_view_source = weakref(panel)
+	_mount_visit_backdrop("Shop", panel)
+	panel.bind(visit)
+	panel.intent_requested.connect(_peddler_intent.bind(visit, _peddler_view_source))
+	shop_label = panel.wallet_label
 	peddler_heroes = OptionButton.new()
-	peddler_heroes.custom_minimum_size.y = 42
+	peddler_heroes.position = Vector2(39, 560)
+	peddler_heroes.size = Vector2(822, 38)
 	for hero in run_heroes:
 		peddler_heroes.add_item(hero.id.capitalize())
 		peddler_heroes.set_item_metadata(peddler_heroes.item_count - 1, hero.id)
-	peddler_heroes.tooltip_text = "Sew the patch onto this hero's matching slot."
-	shop_view.add_child(peddler_heroes)
-	peddler_buttons.clear()
-	for offer in _peddler_bound.stock.cards + _peddler_bound.stock.trinkets:
-		var kind := "card" if offer.has("owner") else "trinket"
-		var action := _peddler_button(_peddler_caption(offer, kind))
-		action.set_meta("offer_id", offer.id)
-		action.disabled = offer.sold or session_gold < offer.price
-		action.pressed.connect(_peddler_action.bind(visit, weakref(action), kind, offer.id, _peddler_bound))
-		peddler_buttons.append(action)
-	peddler_leave_button = _peddler_button("Leave · FREE")
-	peddler_leave_button.pressed.connect(_peddler_action.bind(visit, weakref(peddler_leave_button), "leave", "", _peddler_bound))
+	peddler_heroes.tooltip_text = "Patch wearer: sew onto this hero's matching slot."
+	panel.add_child(peddler_heroes)
+	peddler_buttons.assign(panel.card_buttons + [panel.patch_button])
+	peddler_leave_button = panel.leave_button
+	_wire_peddler_focus()
+	peddler_leave_button.grab_focus()
+	_peddler_context = _sewing_context()
+	return true
+
+
+func _wire_peddler_focus() -> void:
 	var actions: Array[Control] = [peddler_heroes]
 	for action in peddler_buttons:
 		if not action.disabled:
@@ -5481,64 +5476,24 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	for i in range(actions.size()):
 		actions[i].focus_next = actions[i].get_path_to(actions[(i + 1) % actions.size()])
 		actions[i].focus_previous = actions[i].get_path_to(actions[(i + actions.size() - 1) % actions.size()])
-	peddler_leave_button.grab_focus()
-	_peddler_context = _sewing_context()
-	return true
 
 
-func _peddler_button(caption: String) -> Button:
-	var action := Button.new()
-	action.text = caption
-	action.custom_minimum_size = Vector2(660, 54)
-	action.theme_type_variation = LiveVisitCardTiles.ACTION_VARIATION
-	action.add_theme_font_size_override("font_size", LiveVisitCardTiles.ACTION_FONT_SIZE)
-	var skin := LiveVisitCardTiles.new()
-	skin.apply_action_skin(action)
-	skin.free()
-	shop_view.add_child(action)
-	return action
-
-
-func _peddler_caption(offer: Dictionary, kind: String) -> String:
-	var label := String(offer.id).capitalize()
-	if kind == "card":
-		label = RunPoolCardRewardOffers.resolve_reward_definition(offer.id).get("display_name", label)
-	return "Buy %s · %d gold" % [label, offer.price]
-
-
-func _peddler_action(visit: RunPeddlerVisit, source: WeakRef, kind: String,
-		id: String, bound: Dictionary) -> void:
-	if visit == null or visit != peddler_visit or not visit.is_open() or source == null \
-		or not is_instance_valid(shop_view) or not shop_view.is_visible_in_tree() \
-		or _peddler_view_source == null or _peddler_view_source.get_ref() != shop_view \
-		or _peddler_wardrobe == null or _peddler_wardrobe != _peddler_wardrobe_source \
-		or peddler_buttons.size() != 4 \
-		or shop_view.get_parent() != self or _peddler_context != _sewing_context() \
-		or bound != visit.read_state() or bound != _peddler_bound \
-		or run_map.get_current_node_id() != bound.node_id \
-		or run_map.get_node(bound.node_id).get("type") != "Shop":
+func _peddler_intent(intent: Dictionary, visit: RunPeddlerVisit, source: WeakRef) -> void:
+	var panel := source.get_ref() as LivePeddlerPanel
+	if panel == null or not panel.consume_intent(intent):
 		return
-	var button = source.get_ref()
-	if not is_instance_valid(button) or button.get_parent() != shop_view \
-		or not button.is_visible_in_tree() or button.disabled \
-		or not is_instance_valid(peddler_heroes) or peddler_heroes.get_parent() != shop_view \
-		or peddler_heroes.disabled or not peddler_heroes.is_visible_in_tree() \
-		or peddler_heroes.item_count != 3 or shop_label.text != "Gold: %d" % session_gold:
+	if not _peddler_intent_current(visit, panel, intent):
+		_retry_peddler_submission(panel, visit)
 		return
-	for i in range(3):
-		if not peddler_heroes.get_item_metadata(i) is String \
-			or peddler_heroes.get_item_metadata(i) != run_heroes[i].id \
-			or peddler_heroes.get_item_text(i) != String(run_heroes[i].id).capitalize():
-			return
+	var bound := _peddler_bound
+	var kind: String = intent.get("kind", "")
+	var id: String = intent.get("id", "")
 	var w := _peddler_wardrobe.get_snapshot()
 	var carry := party_carryover as RunTornCarryover
-	if w != _peddler_wardrobe_bound or w.heroes != run_heroes or w.cards != run_deck or w.owned != run_trinkets \
-		or w.scraps != run_scraps or w.gold != session_gold or w.seed != run_seed \
-		or w.rest_id != "" or not carry.can_bind_wardrobe(_peddler_wardrobe, carry.torn, w):
-		return
 	var receipt: Dictionary
 	if kind == "leave":
-		if button != peddler_leave_button or button.text != "Leave · FREE":
+		if panel.leave_button != peddler_leave_button:
+			_retry_peddler_submission(panel, visit)
 			return
 		receipt = visit.leave(bound.node_id, bound.state, bound.stock)
 	else:
@@ -5547,18 +5502,19 @@ func _peddler_action(visit: RunPeddlerVisit, source: WeakRef, kind: String,
 		for i in range(offers.size()):
 			if offers[i].id == id:
 				index = i
-		if index < 0 or button != peddler_buttons[index if kind == "card" else 3] \
-			or not button.get_meta("offer_id", "") is String \
-			or button.get_meta("offer_id", "") != id or button.text != _peddler_caption(offers[index], kind):
+		if index < 0:
+			_retry_peddler_submission(panel, visit)
 			return
 		if kind == "trinket":
 			var owner := peddler_heroes.selected
 			if owner < 0 or owner >= 3:
+				_retry_peddler_submission(panel, visit)
 				return
 			var result := RunShopPatchSewing.purchase_peddler_and_sew(visit, _peddler_wardrobe,
 				bound.node_id, id, run_heroes[owner].id, w.definitions.get(id),
 				"peddler:%s" % bound.node_id, bound, w)
 			if not result.ok:
+				_retry_peddler_submission(panel, visit)
 				return
 			receipt = result.receipt
 		else:
@@ -5568,6 +5524,7 @@ func _peddler_action(visit: RunPeddlerVisit, source: WeakRef, kind: String,
 					run_scraps, receipt.state.gold, receipt.state.deck, w)
 				assert(refreshed, "Validated card purchase must refresh wardrobe")
 	if not receipt.get("ok", false):
+		_retry_peddler_submission(panel, visit)
 		return
 	if kind != "leave":
 		var state := _peddler_wardrobe.get_snapshot()
@@ -5578,10 +5535,8 @@ func _peddler_action(visit: RunPeddlerVisit, source: WeakRef, kind: String,
 		var reconciled := carry.bind_wardrobe(_peddler_wardrobe, carry.torn, state)
 		assert(reconciled, "Peddler preflight must preserve carryover binding")
 	peddler_receipt = receipt.duplicate(true)
-	for action in peddler_buttons + [peddler_leave_button]:
-		action.disabled = true
-		for connection in action.pressed.get_connections():
-			action.pressed.disconnect(connection.callable)
+	panel.intent_requested.disconnect(_peddler_intent.bind(visit, _peddler_view_source))
+	panel.close()
 	_clear_visit_backdrop()
 	remove_child(shop_view)
 	shop_view.queue_free()
@@ -5594,6 +5549,48 @@ func _peddler_action(visit: RunPeddlerVisit, source: WeakRef, kind: String,
 	_peddler_witnesses[bound.node_id] = [run_map, run_map.get_generation_revision(),
 		run_map.get_floors(), run_map.get_route(), visit, visit.read_state(), peddler_receipt.duplicate(true)]
 	_present_connected_route(weakref(run_map))
+
+
+func _retry_peddler_submission(panel: LivePeddlerPanel, visit: RunPeddlerVisit) -> void:
+	if panel._visit == visit and visit == peddler_visit and visit.is_open():
+		panel.retry_submission()
+		if is_instance_valid(peddler_heroes) and peddler_heroes.get_parent() == panel:
+			_wire_peddler_focus()
+
+
+func _peddler_intent_current(visit: RunPeddlerVisit, panel: LivePeddlerPanel, intent: Dictionary) -> bool:
+	var bound := _peddler_bound
+	var kind: String = intent.get("kind", "")
+	if visit == null or visit != peddler_visit or not visit.is_open() or panel != shop_view \
+		or not is_instance_valid(shop_view) or not shop_view.is_visible_in_tree() \
+		or _peddler_view_source == null or _peddler_view_source.get_ref() != shop_view \
+		or _peddler_wardrobe == null or _peddler_wardrobe != _peddler_wardrobe_source \
+		or peddler_buttons.size() != 4 \
+		or shop_view.get_parent() != self or _peddler_context != _sewing_context() \
+		or bound != visit.read_state() or bound != _peddler_bound \
+		or run_map.get_current_node_id() != bound.node_id \
+		or run_map.get_node(bound.node_id).get("type") != "Shop":
+		return false
+	if not is_instance_valid(peddler_heroes) or peddler_heroes.get_parent() != shop_view \
+		or peddler_heroes.disabled or not peddler_heroes.is_visible_in_tree() \
+		or peddler_heroes.item_count != 3 or panel._source != bound \
+		or intent.get("node_id") != bound.node_id or intent.get("expected_state") != bound.state \
+		or intent.get("expected_stock") != bound.stock or kind not in ["card", "trinket", "leave"]:
+		return false
+	if intent.size() != (4 if kind == "leave" else 5):
+		return false
+	for i in range(3):
+		if not peddler_heroes.get_item_metadata(i) is String \
+			or peddler_heroes.get_item_metadata(i) != run_heroes[i].id \
+			or peddler_heroes.get_item_text(i) != String(run_heroes[i].id).capitalize():
+			return false
+	var w := _peddler_wardrobe.get_snapshot()
+	var carry := party_carryover as RunTornCarryover
+	if w != _peddler_wardrobe_bound or w.heroes != run_heroes or w.cards != run_deck or w.owned != run_trinkets \
+		or w.scraps != run_scraps or w.gold != session_gold or w.seed != run_seed \
+		or w.rest_id != "" or not carry.can_bind_wardrobe(_peddler_wardrobe, carry.torn, w):
+		return false
+	return true
 
 
 func _shop_offer_text(offer: Dictionary) -> String:
@@ -6664,6 +6661,11 @@ func _return_to_title() -> void:
 	_patch_stall_visits.clear()
 	_patch_stall_closed = false
 	_campfire_visits.clear()
+	if shop_view is LivePeddlerPanel:
+		var panel := shop_view as LivePeddlerPanel
+		for connection in panel.intent_requested.get_connections():
+			panel.intent_requested.disconnect(connection.callable)
+		panel.close()
 	if peddler_visit != null:
 		peddler_visit.close()
 	peddler_visit = null

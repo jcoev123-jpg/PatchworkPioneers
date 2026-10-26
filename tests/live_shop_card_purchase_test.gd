@@ -40,7 +40,7 @@ func _run() -> void:
 		_check(bound.stock == oracle.stock and app.run_rng.state == oracle.state, "independent stock and RNG oracle matches")
 		var unchanged := _shop_state()
 		for callback in stale:
-			callback.call()
+			_retained_call(callback)
 		_check(_shop_state() == unchanged, "old-generation callbacks cannot buy from fresh visit")
 		var callbacks: Array[Callable] = []
 		for action in app.peddler_buttons + [app.peddler_leave_button]:
@@ -70,7 +70,7 @@ func _run() -> void:
 		_check(app.shop_view == null and visit.is_consumed() and app._can_choose_connected_route(), "purchase immediately closes Peddler and admits onward route")
 		var after := _shop_state()
 		for callback in callbacks:
-			callback.call()
+			_retained_call(callback)
 		_check(_shop_state() == after, "all retained choices and Leave refuse after one paid choice")
 		_check(not visit.choose_purchase(bound.node_id, bound.state, bound.stock, "card", offer.id).ok
 			and not visit.leave(bound.node_id, bound.state, bound.stock).ok, "direct stale service requests also refuse")
@@ -82,7 +82,7 @@ func _run() -> void:
 		stale = callbacks
 		await _click(app.route_back_button)
 		for callback in stale:
-			callback.call()
+			_retained_call(callback)
 		_check(app.title_view.visible and app.peddler_visit == null and app.peddler_receipt.is_empty()
 			and app.run_map == null and app.run_deck.is_empty(), "title reset rejects retained paid actions")
 	await _test_stocked_pool_buy("warden")
@@ -184,7 +184,7 @@ func _test_stocked_pool_buy(target: String) -> void:
 				and app.run_scraps == before.scraps and app.run_trinkets == before.patches
 				and app.run_removal_count == before.removals, "real pool Buy appends exact base ID once and preserves other ledgers")
 			var after := _shop_state()
-			callback.call()
+			_retained_call(callback)
 			_check(_shop_state() == after, "retired pool choice cannot charge twice")
 		if is_instance_valid(app.shop_view):
 			await _click(app.peddler_leave_button)

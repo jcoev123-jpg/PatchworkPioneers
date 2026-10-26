@@ -702,7 +702,10 @@ func _run() -> void:
 			elif kind == "Shop":
 				_check(app.peddler_visit != null and app.peddler_visit.is_open() and app.shop_view.is_visible_in_tree(),
 					"real seeded Shop visit mounted before any battle")
-				stale.append(app.peddler_leave_button.pressed.get_connections()[0].callable)
+				var peddler_source: Dictionary = app.peddler_visit.read_state()
+				stale.append(app.shop_view.intent_requested.get_connections()[0].callable.bind({
+					"kind": "leave", "node_id": peddler_source.node_id,
+					"expected_state": peddler_source.state, "expected_stock": peddler_source.stock}))
 				var shop_before := _record(app)
 				for choice in app.peddler_buttons:
 					choice.pressed.get_connections()[0].callable.call()

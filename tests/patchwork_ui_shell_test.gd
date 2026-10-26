@@ -209,7 +209,12 @@ func _run() -> void:
 		_check(not controls.is_empty(), "live screen has themed controls: " + screen)
 		var visible_buttons := 0
 		for control in controls:
-			_check(control.theme == null, "downstream controls retain inherited root Theme: " + screen)
+			if control is LivePeddlerPanel:
+				_check(control.theme != null and control.theme != app.theme
+					and control.get_theme_font("font", "Button") == app.get_theme_font("font", "Button"),
+					"Peddler uses a detached copy of the shipped master font theme")
+			else:
+				_check(control.theme == null, "downstream controls retain inherited root Theme: " + screen)
 			if control is Button and control.is_visible_in_tree():
 				visible_buttons += 1
 				# Existing authored reward/event/result overrides intentionally sit on this Theme.
@@ -300,7 +305,9 @@ func _check_visit_controls(app, screen: String) -> void:
 		_check(app.peddler_visit != null and app.peddler_visit.is_open() and app.peddler_buttons.size() == 4,
 			"Peddler mounts four authentic direct choices")
 		for button in app.peddler_buttons + [app.peddler_leave_button]:
-			_check(button.is_visible_in_tree() and button.get_theme_stylebox("normal") is StyleBoxTexture
+			_check(button.is_visible_in_tree() and button.get_theme_stylebox("normal") is StyleBoxFlat
+				and button.get_theme_stylebox("focus") is StyleBoxTexture
+				and button.get_theme_font_size("font_size") >= 20
 				and button.pressed.get_connections().size() == 1, "Peddler direct choice inherits sewn action skin and authentic callback")
 		_check(app.run_deck == deck and [app.session_gold, app.run_scraps] == wallet, "Peddler popup inspection leaves run inventory untouched")
 		return

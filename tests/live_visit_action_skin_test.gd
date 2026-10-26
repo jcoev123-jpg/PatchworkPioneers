@@ -978,14 +978,15 @@ func _check_peddler_rail(app) -> void:
 	var snapshots: Array = []
 	for i in range(actions.size()):
 		var button: Button = actions[i]
-		_check_face(button, true, "Peddler choice")
+		_check_peddler_face(button, "Peddler choice")
 		_check(button.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect())
 			and button.pressed.get_connections().size() == 1, "Peddler action fits viewport with one authentic callback")
-		var expected := "Leave \u00b7 FREE"
+		var expected := LivePeddlerPanel.LEAVE_TEXT
 		if i < 4:
 			var offer: Dictionary = (bound.stock.cards + bound.stock.trinkets)[i]
-			var label: String = RunPoolCardRewardOffers.resolve_reward_definition(offer.id).display_name if i < 3 else String(offer.id).capitalize()
-			expected = "Buy %s \u00b7 %d gold" % [label, offer.price]
+			expected = app.shop_view._card_caption(i) if i < 3 else app.shop_view._patch_caption()
+			_check(button.get_meta("offer_id") == offer.id and button.text.contains("%d gold" % offer.price),
+				"Peddler retains exact authored quote and offer identity")
 		_check(button.text == expected, "Peddler short price caption stays authentic")
 		snapshots.append([button.get_instance_id(), button.text, button.disabled, button.pressed.get_connections()[0].callable])
 	var bed: Control = app.visit_backdrop
@@ -1002,5 +1003,24 @@ func _check_peddler_rail(app) -> void:
 		var button: Button = actions[i]
 		_check([button.get_instance_id(), button.text, button.disabled, button.pressed.get_connections()[0].callable] == snapshots[i],
 			"layout and visibility retain exact labels, affordability, identities and callbacks")
-		_check_face(button, true, "Peddler retained choice")
+		_check_peddler_face(button, "Peddler retained choice")
 	_check(app._sewing_context() == before, "presentation inspection changes no run ledger or RNG")
+
+
+func _check_peddler_face(button: Button, label: String) -> void:
+	# The mounted panel owns plum/teal paper faces and an authored sewn focus ring.
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		var style := button.get_theme_stylebox(state) as StyleBoxFlat
+		_check(style != null, label + " uses the panel's stitched flat face: " + state)
+		if style != null:
+			_check(style.border_width_top >= 3 and style.border_color.a == 1.0
+				and style.bg_color.a == 1.0 and style.get_content_margin(SIDE_LEFT) >= 8,
+				label + " retains opaque face, stitched edge and readable inset: " + state)
+			var ink := button.get_theme_color("font_disabled_color" if state == "disabled" else "font_color")
+			_check(_contrast(ink, style.bg_color) >= 4.0, label + " text contrasts its face: " + state)
+	var focus := button.get_theme_stylebox("focus") as StyleBoxTexture
+	_check(focus != null and focus.texture != null and focus.texture.resource_path == LivePeddlerPanel.BUTTON_ART
+		and not focus.draw_center and focus.modulate_color == LivePeddlerPanel.GOLD,
+		label + " uses the authored gold sewn keyboard ring without covering its caption")
+	_check(button.focus_mode == Control.FOCUS_ALL and button.get_theme_font_size("font_size") >= 20,
+		label + " remains keyboard accessible at readable size")
