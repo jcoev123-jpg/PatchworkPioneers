@@ -66,9 +66,13 @@ func _fixtures() -> Dictionary:
 	# Buttonbone Aviary, Ashen Quilt Greenhouse, Ribbon-Shadow Circus, Velvet
 	# Patch Pier, Lullaby Stitch Chapel) grew the combined eligible pool: one
 	# verified witness seed per required generic Event.
-	var hints := [7756, 171871, 233942, 292590, 364891, 366071, 449195, 622337,
-		756725, 855041, 1375273, 1405687, 1517032, 1704534, 1710698, 1797991,
-		2017177, 2681473, 3656392, 4049314, 4809509, 4969863]
+	# Repinned once more after the six stormroad wallet stories (Stormglass Seam
+	# Survey ... Ragdoll Bell Foundry) grew the pool again; each hint is the first
+	# genuine witness for a required Event, found through the real map, toll and
+	# rotation RNG sequence.
+	var hints := [7756, 35510, 50329, 277144, 422169, 456282, 622337, 680308,
+		775148, 855041, 946019, 1310530, 1333364, 1382871, 1658568, 2171560,
+		2191238, 2803694, 3302493, 3757807, 3948847, 4058874]
 	for value in hints + range(1, 500000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
