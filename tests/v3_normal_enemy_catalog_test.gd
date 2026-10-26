@@ -17,6 +17,8 @@ func _initialize() -> void:
 	_test_harder_normal_seeded_announcements()
 	_test_harder_normal_phase_actions()
 	_test_needle_wasp_bleeding_sting()
+	_test_moth_swarm_block_chew_catalog()
+	_test_moth_swarm_block_chew_phase()
 	_test_thread_biter_lifesteal_catalog()
 	_test_thread_biter_lifesteal_phase()
 	_test_tough_normal_pair_live_catalog_and_bands()
@@ -385,6 +387,7 @@ func _trio_expected() -> Dictionary:
 				{"type": "attack", "amount": 6, "weight": 3},
 				{"type": "block", "amount": 6, "weight": 2}]}},
 		"moth_swarm": {"id": "moth_swarm", "name": "Moth Swarm", "max_hp": 21,
+			"chew_block_on_attack": true,
 			"art_path": "res://assets/paper/enemies/moth_swarm.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "snip_block", "amount": 0, "weight": 2},
@@ -2519,4 +2522,360 @@ func _test_thistle_patch_doll_thorns() -> void:
 	_check(RunTypedBattleRoster._parse_catalog_text(
 		JSON.stringify([malformed_doll])).is_empty(),
 		"a non-integral Doll Thorns value rejects the whole catalog")
+
+## AC1: the shipped Moth Swarm opts into its cloth-eating bite with exactly one
+## boolean metadata field; 21 HP, art, front target and the 0/7/Weak-1
+## alternatives with weights 2/3/1 stay untouched. The strict catalog parser
+## accepts only a genuine boolean (or an absent key) and rejects everything else.
+func _test_moth_swarm_block_chew_catalog() -> void:
+	var parsed := _load_parsed()
+	var moth := _find(parsed, "moth_swarm")
+	_check(not moth.is_empty(), "precondition: the shipped Moth Swarm record loads")
+	if moth.is_empty():
+		return
+	_check(moth.get("chew_block_on_attack") is bool
+		and moth.get("chew_block_on_attack") == true,
+		"AC1: the parsed Moth Swarm authors chew_block_on_attack as a genuine bool")
+	_check(_norm(moth) == _norm(_trio_expected()["moth_swarm"]),
+		"AC1: the exact Moth record keeps its authored fields and alternatives")
+	var established: Dictionary = _trio_expected()["moth_swarm"].duplicate(true)
+	established.erase("chew_block_on_attack")
+	var without_trait: Dictionary = moth.duplicate(true)
+	without_trait.erase("chew_block_on_attack")
+	_check(_norm(without_trait) == _norm(established),
+		"AC1: the new boolean is the only difference from the established Moth record")
+	_check(moth.get("intent", {}).get("target") == "front"
+		and int(moth.get("max_hp", 0)) == 21
+		and String(moth.get("art_path", "")) == "res://assets/paper/enemies/moth_swarm.png",
+		"AC1: Moth keeps its 21 HP, art path and front target")
+	var snip := _authored_alternative(moth, "snip_block", 0)
+	var bite := _authored_alternative(moth, "attack", 7)
+	var weaken := _authored_alternative(moth, "debuff", 1)
+	_check(not snip.is_empty() and not bite.is_empty() and not weaken.is_empty()
+		and weaken.get("status") == "weak",
+		"AC1: the authored 0 snip, 7 bite and Weak 1 alternatives stay authored")
+	_check(int(snip.get("weight", 0)) == 2 and int(bite.get("weight", 0)) == 3
+		and int(weaken.get("weight", 0)) == 1,
+		"AC1: the authored weights stay exactly 2/3/1")
+	var carriers: Array[String] = []
+	for record in parsed:
+		if record is Dictionary and record.get("chew_block_on_attack") is bool \
+				and record.get("chew_block_on_attack") == true:
+			carriers.append(String(record.get("id", "")))
+	_check(carriers == ["moth_swarm"],
+		"AC1: chew_block_on_attack=true is authored by Moth Swarm alone: " + str(carriers))
+	_check(RunTypedBattleRoster._parse_catalog_text(JSON.stringify([moth])).size() == 1,
+		"AC1: the genuine boolean trait keeps the whole catalog valid")
+	_check(RunTypedBattleRoster._parse_catalog_text(
+		JSON.stringify([without_trait])).size() == 1,
+		"AC4: an absent trait stays valid metadata")
+	var disabled: Dictionary = moth.duplicate(true)
+	disabled["chew_block_on_attack"] = false
+	_check(RunTypedBattleRoster._parse_catalog_text(JSON.stringify([disabled])).size() == 1,
+		"AC4: an explicit false stays valid metadata")
+	for invalid_value in ["true", 1, 1.0, null, [], {}]:
+		var malformed: Dictionary = moth.duplicate(true)
+		malformed["chew_block_on_attack"] = invalid_value
+		_check(RunTypedBattleRoster._parse_catalog_text(
+			JSON.stringify([malformed])).is_empty(),
+			"AC4: malformed chew metadata rejects the whole catalog: " + str(invalid_value))
+
+## Bind a genuine seeded multi-source encounter where every source announces
+## exactly one authored alternative. Production weights stay untouched and no
+## guessed seed chooses a beat, so an ordered shove-then-bite batch is real.
+func _force_normal_batch(sources: Array, actions: Array,
+		party: CombatParty) -> Dictionary:
+	if sources.is_empty() or sources.size() != actions.size() \
+			or sources.size() > CombatEnemies.MAX_ENEMIES or party == null:
+		return {}
+	var forced: Array = []
+	var definitions: Array = []
+	for index in range(sources.size()):
+		var source: Variant = sources[index]
+		var normalized := CombatEnemyIntents.weighted_action(actions[index])
+		_check(not normalized.is_empty(),
+			"forced batch alternative is a valid authored action: " + str(actions[index]))
+		if not source is Dictionary or source.is_empty() or normalized.is_empty():
+			return {}
+		var action: Dictionary = normalized["action"].duplicate(true)
+		action["weight"] = 1
+		var forced_record: Dictionary = source.duplicate(true)
+		forced_record["intent"] = {"target": source["intent"]["target"], "actions": [action]}
+		forced.append(forced_record)
+		definitions.append(_enemy(index + 1, [{"type": "block", "amount": 1}]))
+	var enemies := CombatEnemies.new(forced)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 2631
+	var scheduler := CombatEnemyIntents.new(definitions)
+	var bound := enemies.is_valid() and scheduler.bind_battle(enemies, party, rng)
+	_check(bound, "forced multi-source encounter binds")
+	if not bound:
+		return {}
+	return {"enemies": enemies, "intents": scheduler.get_intents(), "rng": rng,
+		"scheduler": scheduler}
+
+## AC2: a living opted-in Moth Swarm's real authored bite eats the actual
+## recipient's Block before its status-adjusted seven lands, including after a
+## Guard redirect and an earlier staged swap. AC3: non-attack, non-opted-in,
+## explicit-false, absent and slain cases keep the old behavior. AC4: malformed
+## metadata and rejected beats stay atomic and replay deterministically.
+func _test_moth_swarm_block_chew_phase() -> void:
+	var parsed := _load_parsed()
+	var moth := _find(parsed, "moth_swarm")
+	_check(not moth.is_empty() and moth.get("chew_block_on_attack") == true,
+		"precondition: the shipped Moth Swarm really authors the cloth-eating bite")
+	if moth.is_empty() or moth.get("chew_block_on_attack") != true:
+		return
+	var bite := _authored_alternative(moth, "attack", 7)
+	var snip := _authored_alternative(moth, "snip_block", 0)
+	var weaken := _authored_alternative(moth, "debuff", 1)
+	_check(not bite.is_empty() and not snip.is_empty() and not weaken.is_empty(),
+		"precondition: the authored Moth alternatives exist")
+	if bite.is_empty() or snip.is_empty() or weaken.is_empty():
+		return
+
+	# AC2: 6 Block and full 40 HP lose the Block first, then the full seven.
+	var party := _party()
+	_check(party.get_hero(1).get("hp") == 40 and party.gain_block(1, 6),
+		"AC2 precondition: the front hero really holds 40 HP and six Block")
+	var case := _force_normal_alternative(moth, bite, party)
+	_check(not case.is_empty(), "AC2: the shipped bite binds as a real announcement")
+	if case.is_empty():
+		return
+	_check(case.intents.size() == 1 and case.intents[0].get("type") == "attack"
+		and int(case.intents[0].get("amount", -1)) == 7
+		and case.intents[0].get("target_position") == 1,
+		"AC2: the real announcement is the authored seven-damage bite on the front hero")
+	var committed: int = case.rng.state
+	var receipt := CombatEnemyPhase.new().execute_phase(party, case.enemies,
+		case.intents, null, true)
+	_check(receipt == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 1, "applied": true}]},
+		"AC2: the cloth-eating bite keeps the ordinary attack event shape")
+	_check(party.get_hero(1).get("block") == 0 and party.get_hero(1).get("hp") == 33,
+		"AC2: 6 Block + 40 HP => 0 Block + 33 HP in that one bite")
+	_check(party.get_hero(2).get("hp") == 30 and party.get_hero(3).get("hp") == 26,
+		"AC2: the cloth-eating bite touches no other hero")
+	_check(case.rng.state == committed and case.scheduler.get_intents() == case.intents,
+		"AC4: the executed bite spends no extra run RNG and replays its announcement")
+
+	# AC2: Guard redirects the bite to the Warden's real slot after a staged
+	# forward swap; the Warden's six Block are eaten, the announced hero is not.
+	var guard_party := _party()
+	var guard_deck := _guard_deck(["warden_draw_fire", "warden_iron_hem",
+		"warden_hold_the_line", "warden_quick_darn", "warden_counter_stitch"])
+	var reactions := CombatWardenGuardReactions.new()
+	_check(reactions.play_from_hand(guard_deck, guard_party, "warden_draw_fire")
+		and reactions.is_guarding() and guard_party.get_hero(1).get("block") == 6,
+		"precondition: the real paid Draw Fire activates Guarding and six Block")
+	var leash_source := _find(parsed, "spoolback_hound")
+	_check(not leash_source.is_empty(), "precondition: an authentic authored shove source")
+	var leash := _authored_alternative(leash_source, "shove", 0)
+	_check(not leash_source.is_empty() and not leash.is_empty(),
+		"precondition: the authentic +1 leash alternative exists")
+	if not leash_source.is_empty() and not leash.is_empty():
+		var redirect_case := _force_normal_batch([leash_source, moth], [leash, bite],
+			guard_party)
+		_check(not redirect_case.is_empty(),
+			"AC2: the shove-then-bite pair binds as real announcements")
+		if not redirect_case.is_empty():
+			_check(redirect_case.intents.size() == 2
+				and redirect_case.intents[0].get("type") == "shove"
+				and redirect_case.intents[1].get("type") == "attack"
+				and redirect_case.intents[1].get("target_position") == 1,
+				"AC2: the batch announces the +1 shove then the bite on the front slot")
+			var redirect_receipt := CombatEnemyPhase.new().execute_phase(guard_party,
+				redirect_case.enemies, redirect_case.intents, reactions, true)
+			_check(redirect_receipt.get("ok") == true
+				and redirect_receipt.get("events", []).size() == 2,
+				"AC2: the redirected cloth-eating bite resolves through the real reactions")
+			if redirect_receipt.get("ok", false) \
+					and redirect_receipt.get("events", []).size() == 2:
+				var redirect_event: Dictionary = redirect_receipt["events"][1]
+				_check(redirect_event.get("target_position") == 1
+					and redirect_event.get("actual_target_position") == 2
+					and redirect_event.get("redirected") == true,
+					"AC2: the receipt keeps the front slot and reports the Warden recipient")
+			_check(guard_party.get_hero(2).get("id") == "warden"
+				and guard_party.get_hero(2).get("block") == 0
+				and guard_party.get_hero(2).get("hp") == 33,
+				"AC2: the redirected Warden eats the bite's six Block and loses seven HP")
+			_check(guard_party.get_hero(1).get("id") == "seamstress"
+				and guard_party.get_hero(1).get("hp") == 30
+				and guard_party.get_hero(1).get("block") == 0,
+				"AC2: the announced Seamstress is untouched by the redirected bite")
+
+	# AC3: the non-Moth control still blocks normally: six absorb six of seven.
+	var control_party := _party()
+	_check(control_party.gain_block(1, 6),
+		"AC3 precondition: the front hero really holds six Block")
+	var control_case := _force_normal_alternative(leash_source,
+		_authored_alternative(leash_source, "attack", 7), control_party)
+	_check(not control_case.is_empty(), "AC3: the non-Moth seven-damage control binds")
+	if not control_case.is_empty():
+		var control_receipt := CombatEnemyPhase.new().execute_phase(control_party,
+			control_case.enemies, control_case.intents, null, true)
+		_check(control_receipt.get("ok") == true, "AC3: the non-Moth attack resolves")
+		_check(control_party.get_hero(1).get("block") == 0
+			and control_party.get_hero(1).get("hp") == 39,
+			"AC3: a non-opted-in attack keeps 6 Block + 39 HP on the old Block-first path")
+
+	# AC3: an explicit false or absent trait keeps the old Block-first behavior.
+	var disabled_record: Dictionary = moth.duplicate(true)
+	disabled_record["chew_block_on_attack"] = false
+	var disabled_party := _party()
+	_check(disabled_party.gain_block(1, 6),
+		"AC3 precondition: six Block for the explicit-false Moth")
+	var disabled_case := _force_normal_alternative(disabled_record, bite, disabled_party)
+	if not disabled_case.is_empty():
+		var disabled_receipt := CombatEnemyPhase.new().execute_phase(disabled_party,
+			disabled_case.enemies, disabled_case.intents, null, true)
+		_check(disabled_receipt.get("ok") == true
+			and disabled_party.get_hero(1).get("block") == 0
+			and disabled_party.get_hero(1).get("hp") == 39,
+			"AC3: an explicit false Moth still blocks instead of chewing")
+	var absent_record: Dictionary = moth.duplicate(true)
+	absent_record.erase("chew_block_on_attack")
+	var absent_party := _party()
+	_check(absent_party.gain_block(1, 6),
+		"AC3 precondition: six Block for the trait-less Moth")
+	var absent_case := _force_normal_alternative(absent_record, bite, absent_party)
+	if not absent_case.is_empty():
+		var absent_receipt := CombatEnemyPhase.new().execute_phase(absent_party,
+			absent_case.enemies, absent_case.intents, null, true)
+		_check(absent_receipt.get("ok") == true
+			and absent_party.get_hero(1).get("block") == 0
+			and absent_party.get_hero(1).get("hp") == 39,
+			"AC3: a missing trait stays inert and blocks normally")
+
+	# AC3: a slain Moth's announced bite eats nothing and deals nothing.
+	var slain_party := _party()
+	_check(slain_party.gain_block(1, 6),
+		"AC3 precondition: six Block before the slain Moth's beat")
+	var slain_case := _force_normal_alternative(moth, bite, slain_party)
+	if not slain_case.is_empty():
+		_check(slain_case.enemies.apply_damage(1, 21) and slain_case.enemies.is_slain(1),
+			"AC3 precondition: the Moth is genuinely slain before its beat")
+		var slain_heroes: Array = slain_party.get_heroes()
+		var slain_roster: Array = slain_case.enemies.get_enemies()
+		var slain_receipt := CombatEnemyPhase.new().execute_phase(slain_party,
+			slain_case.enemies, slain_case.intents, null, true)
+		_check(slain_receipt == {"ok": true, "events": [
+			{"type": "attack", "enemy_position": 1, "target_position": 1, "applied": false}]},
+			"AC3: a slain Moth's announced bite resolves as one inert beat")
+		_check(slain_party.get_heroes() == slain_heroes
+			and slain_case.enemies.get_enemies() == slain_roster,
+			"AC3: a slain Moth eats no Block and deals no damage")
+
+	# AC3: the standalone authored snip stays a Block strip, with no extra bite.
+	var snip_party := _party()
+	_check(snip_party.gain_block(1, 6),
+		"AC3 precondition: six Block before the standalone snip")
+	var snip_case := _force_normal_alternative(moth, snip, snip_party)
+	if not snip_case.is_empty():
+		var snip_receipt := CombatEnemyPhase.new().execute_phase(snip_party,
+			snip_case.enemies, snip_case.intents, null, true)
+		_check(snip_receipt == {"ok": true, "events": [
+			{"type": "snip_block", "enemy_position": 1, "target_position": 1, "applied": true}]},
+			"AC3: the standalone snip is one ordered Block strip with no extra bite")
+		_check(snip_party.get_hero(1).get("block") == 0
+			and snip_party.get_hero(1).get("hp") == 40,
+			"AC3: the standalone snip zeroes Block and costs no HP")
+
+	# AC3: the standalone Weak 1 keeps the hero's Block and HP untouched.
+	var weak_party := _party()
+	_check(weak_party.gain_block(1, 6),
+		"AC3 precondition: six Block before the standalone Weak 1")
+	var weak_case := _force_normal_alternative(moth, weaken, weak_party)
+	if not weak_case.is_empty():
+		var weak_receipt := CombatEnemyPhase.new().execute_phase(weak_party,
+			weak_case.enemies, weak_case.intents, null, true)
+		_check(weak_receipt.get("ok") == true
+			and weak_receipt.get("events", []).size() == 1
+			and weak_receipt["events"][0].get("type") == "debuff",
+			"AC3: the standalone Weak 1 is one debuff, never an extra attack")
+		_check(weak_party.get_hero(1).get("block") == 6
+			and weak_party.get_hero(1).get("hp") == 40
+			and weak_party.get_hero(1).get("statuses", {}).get("weak", 0) == 1,
+			"AC3: Weak 1 leaves Block and HP alone and adds exactly one Weak")
+
+	# AC4: malformed trait metadata rejects the whole phase before staging.
+	for invalid_value in [1, "true", 1.0, null, [], {}]:
+		var malformed_record: Dictionary = moth.duplicate(true)
+		malformed_record["chew_block_on_attack"] = invalid_value
+		var malformed_party := _party()
+		_check(malformed_party.gain_block(1, 6),
+			"AC4 precondition: six Block on the malformed case")
+		var malformed_enemies := CombatEnemies.new([malformed_record])
+		_check(malformed_enemies.is_valid()
+			and malformed_enemies.get_enemy(1).has("chew_block_on_attack"),
+			"AC4 precondition: the malformed trait reaches a valid roster")
+		var heroes_before: Array = malformed_party.get_heroes()
+		var roster_before: Array = malformed_enemies.get_enemies()
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 7717
+		var state_before: int = rng.state
+		_check(CombatEnemyPhase.new().execute_phase(malformed_party, malformed_enemies,
+			[_raw_attack_intent(1)], null, true) == {"ok": false, "events": []},
+			"AC4: malformed chew metadata rejects the whole phase: " + str(invalid_value))
+		_check(malformed_party.get_heroes() == heroes_before
+			and malformed_enemies.get_enemies() == roster_before
+			and rng.state == state_before,
+			"AC4: a rejected malformed bite mutates neither roster and spends no RNG")
+	# A malformed trait on a source that never acts still fails the whole batch.
+	var mixed_party := _party()
+	_check(mixed_party.gain_block(1, 6),
+		"AC4 precondition: six Block before the mixed malformed batch")
+	var mixed_enemies := CombatEnemies.new([moth.duplicate(true),
+		{"id": "ragling-a", "max_hp": 15, "chew_block_on_attack": 1}])
+	_check(mixed_enemies.is_valid(),
+		"AC4 precondition: the mixed roster really constructs")
+	if mixed_enemies.is_valid():
+		var mixed_heroes: Array = mixed_party.get_heroes()
+		var mixed_roster: Array = mixed_enemies.get_enemies()
+		var mixed := CombatEnemyPhase.new().execute_phase(mixed_party, mixed_enemies,
+			[_raw_attack_intent(1)], null, true)
+		_check(mixed == {"ok": false, "events": []}
+			and mixed_party.get_heroes() == mixed_heroes
+			and mixed_enemies.get_enemies() == mixed_roster
+			and mixed_party.get_hero(1).get("block") == 6,
+			"AC4: a malformed second source rolls back the legal earlier bite")
+
+	# AC4: a rejected announced beat publishes nothing either.
+	var rejected_party := _party()
+	_check(rejected_party.gain_block(1, 6),
+		"AC4 precondition: six Block before the rejected announcement")
+	var rejected_case := _force_normal_alternative(moth, bite, rejected_party)
+	if not rejected_case.is_empty():
+		var rejected_heroes: Array = rejected_party.get_heroes()
+		var rejected_roster: Array = rejected_case.enemies.get_enemies()
+		var bad_intent: Dictionary = rejected_case.intents[0].duplicate(true)
+		bad_intent["target_position"] = 0
+		_check(CombatEnemyPhase.new().execute_phase(rejected_party, rejected_case.enemies,
+			[bad_intent], null, true) == {"ok": false, "events": []}
+			and rejected_party.get_heroes() == rejected_heroes
+			and rejected_case.enemies.get_enemies() == rejected_roster,
+			"AC4: an invalid announced bite rejects the phase without eating Block")
+
+	# AC4: identical seeded binding, announcements and execution replay exactly.
+	var replay_one := _force_normal_alternative(moth, bite, _party())
+	var replay_two := _force_normal_alternative(moth, bite, _party())
+	if not replay_one.is_empty() and not replay_two.is_empty():
+		_check(replay_one.intents == replay_two.intents
+			and replay_one.rng.state == replay_two.rng.state,
+			"AC4: identical seeds announce the identical cloth-eating bite")
+		var replay_party_one := _party()
+		var replay_party_two := _party()
+		_check(replay_party_one.gain_block(1, 6) and replay_party_two.gain_block(1, 6),
+			"AC4 precondition: both replay parties really hold six Block")
+		var replay_state: int = replay_one.rng.state
+		var replay_result_one := CombatEnemyPhase.new().execute_phase(replay_party_one,
+			replay_one.enemies, replay_one.intents, null, true)
+		var replay_result_two := CombatEnemyPhase.new().execute_phase(replay_party_two,
+			replay_two.enemies, replay_two.intents, null, true)
+		_check(replay_result_one == replay_result_two
+			and replay_party_one.get_heroes() == replay_party_two.get_heroes(),
+			"AC4: identical seeded bites reproduce events, Block and HP")
+		_check(replay_one.rng.state == replay_state,
+			"AC4: the replayed phase consumes no further run RNG")
 
