@@ -95,6 +95,8 @@ func _run() -> void:
 	for keyboard in [false, true]:
 		await _test_upgrade(keyboard)
 		await _test_stitch(keyboard)
+		await _test_pool_upgrade(keyboard)
+		await _test_pool_stitch(keyboard)
 		await _test_leave(keyboard)
 	await _test_confirmation_handoff()
 	await _test_rejections()
@@ -185,6 +187,32 @@ func _test_layout() -> void:
 	_check(visit.read_state() == source and intents.is_empty(), "browse does not change any ledger")
 
 
+## Expectations come directly from independently resolved cards, not the panel's
+## formatting helpers or loose choice.effects fields.
+func _expected_detail(card: Dictionary, index: int) -> String:
+	var recipient := ""
+	match str(card.target_kind):
+		"enemy_single": recipient = "ENEMY TO %s" % str(card.to_positions)
+		"enemy_all": recipient = "ALL ENEMIES TO %s" % str(card.to_positions)
+		"enemy_random": recipient = "RANDOM ENEMY TO %s" % str(card.to_positions)
+		"self": recipient = "TARGET: self"
+		"ally_single": recipient = "TARGET: chosen ally"
+		"party_all": recipient = "TARGET: all allies"
+		"none": recipient = "TARGET: no chosen target"
+		_: recipient = "TARGET: %s" % str(card.target_kind)
+	return "%s | %s | %s | copy #%d | %d energy\nFROM %s | %s\n%s" % [
+		str(card.owner).capitalize(), card.display_name, card.id, index + 1,
+		card.cost, str(card.from_positions), recipient, CardShortRules.line(card)]
+
+
+func _row_at(index: int) -> Button:
+	for button in panel.option_buttons:
+		if button.get_meta("option").index == index:
+			return button
+	_check(false, "a genuine catalog instance must have its own physical row #%d" % (index + 1))
+	return null
+
+
 func _test_upgrade(keyboard: bool) -> void:
 	var visit := _make()
 	await _bind(visit)
@@ -206,15 +234,18 @@ func _test_upgrade(keyboard: bool) -> void:
 		and visit.upgrade_options()[2].effects == prick.effects
 		and visit.upgrade_options()[2].plus_effects == prick_plus.effects,
 		"authentic typed upgrade options carry independent authored effects")
-	_check(_card_ink(panel.option_buttons[2]).contains("Deal 3 damage; apply Bleed 2")
-		and _card_ink(panel.option_buttons[2]).contains("Deal 4 damage; apply Bleed 3"),
-		"real Prick option ink retains both damage and Bleed amounts")
+	_check(_card_ink(panel.option_buttons[2]).contains(CardShortRules.line(prick))
+		and _card_ink(panel.option_buttons[2]).contains(CardShortRules.line(prick_plus))
+		and panel.option_buttons[2].tooltip_text.contains(_expected_detail(prick, 2))
+		and panel.option_buttons[2].tooltip_text.contains(_expected_detail(prick_plus, 2)),
+		"real Prick row Help derives both card lines and positions from catalog")
 	panel.option_buttons[2].grab_focus()
 	await _settle_layout()
 	await _activate(panel.option_buttons[2], keyboard)
-	_check(panel.preview().index == 2 and panel.preview_label.text.contains("Before: Deal 3 damage; apply Bleed 2")
-		and panel.preview_label.text.contains("After: Deal 4 damage; apply Bleed 3"),
-		"real Prick preview explains damage and Bleed before and after")
+	_check(panel.preview().index == 2
+		and panel.preview_label.text.contains("BEFORE | " + _expected_detail(prick, 2))
+		and panel.preview_label.text.contains("AFTER | " + _expected_detail(prick_plus, 2)),
+		"real Prick preview explains authentic before and after")
 	panel.option_buttons[1].grab_focus()
 	await _settle_layout()
 	await _activate(panel.option_buttons[1], keyboard)
@@ -225,14 +256,15 @@ func _test_upgrade(keyboard: bool) -> void:
 	var upgrade_ink := _card_ink(panel.option_buttons[1])
 	_check(upgrade_ink.contains("Warden") and upgrade_ink.contains(visit.upgrade_options()[1].display_name)
 		and upgrade_ink.contains(visit.upgrade_options()[1].plus_display_name)
-		and upgrade_ink.contains("BEFORE | 1 energy\nDeal 6 damage")
-		and upgrade_ink.contains("AFTER | Strike+ | 1 energy\nDeal 7 damage"),
-		"real Warden occurrence physically shows verb-led 1-energy 6-to-7 comparison")
-	_check(panel.preview_label.text.contains("Before: Deal 6 damage")
-		and panel.preview_label.text.contains("After: Deal 7 damage")
-		and panel.preview_label.text.contains("Energy: 1 -> 1")
+		and upgrade_ink.contains(CardShortRules.line(strike))
+		and upgrade_ink.contains(CardShortRules.line(strike_plus))
+		and panel.option_buttons[1].tooltip_text.contains(_expected_detail(strike, 1))
+		and panel.option_buttons[1].tooltip_text.contains(_expected_detail(strike_plus, 1)),
+		"real Warden occurrence displays independently authored energy, positions and 6-to-7 change")
+	_check(panel.preview_label.text.contains("BEFORE | " + _expected_detail(strike, 1))
+		and panel.preview_label.text.contains("AFTER | " + _expected_detail(strike_plus, 1))
 		and panel.preview_label.text.contains("Only copy #2 changes"),
-		"source-true verb-led 1-energy before/after comparison for one copy")
+		"source-true card line and legal slots for selected duplicate")
 	await _activate(panel.confirm_button, keyboard)
 	_check(intents.size() == 1 and visit.read_state() == source, "UI emits once and never settles")
 	if intents.size() != 1:
@@ -272,33 +304,30 @@ func _test_stitch(keyboard: bool) -> void:
 		and expected.second_index == 2, "independent source-bound Stitch projection, energy cap and spend")
 	await _activate(panel.stitch_button, keyboard)
 	_check(panel.option_buttons.size() == 3, "canonical first copies including duplicates")
-	_check(_card_ink(panel.option_buttons[1]).contains("Deal 6 damage"),
+	_check(_card_ink(panel.option_buttons[1]).contains(CardShortRules.line(first_def)),
 		"first-stage source row displays Warden's actual effect")
 	for i in range(panel.option_buttons.size()):
 		_check(panel.option_buttons[i].get_meta("option") == visit.stitch_first_options()[i], "exact canonical stitch first occurrence metadata")
 	await _activate(panel.option_buttons[1], keyboard)
 	_check(panel.option_buttons.size() == 1 and panel.option_buttons[0].get_meta("option").index == 2, "second stage only different-owner occurrence")
 	_check(panel.option_buttons[0].get_meta("option") == visit.stitch_second_options(1)[0], "exact canonical stitch partner metadata")
-	_check(panel.preview_label.text.contains("FIRST | Warden")
-		and panel.preview_label.text.contains(visit.stitch_first_options()[1].name)
-		and panel.preview_label.text.contains("copy #2 | 1 energy")
-		and panel.preview_label.text.contains("Deal 6 damage")
+	_check(panel.preview_label.text.contains("FIRST | " + _expected_detail(first_def, 1))
 		and panel.preview_label.text.contains("DIFFERENT owner")
 		and panel.preview_label.text.contains("each in their own legal FROM position")
 		and _card_ink(panel.option_buttons[0]).contains("Seamstress")
-		and _card_ink(panel.option_buttons[0]).contains(visit.stitch_second_options(1)[0].name)
-		and _card_ink(panel.option_buttons[0]).contains("Deal 3 damage; apply Bleed 2"),
-		"first source effects and legal FROM reminder remain visible beside actual second row effects")
+		and _card_ink(panel.option_buttons[0]).contains(CardShortRules.line(second_def))
+		and panel.option_buttons[0].tooltip_text.contains(_expected_detail(second_def, 2)),
+		"real FIRST preview and THEN row Help show full catalog rules")
 	_assert_decorations(panel.option_buttons[0])
 	await _activate(panel.option_buttons[0], keyboard)
 	_check(panel.preview() == expected and panel.preview_label.text.contains("Scraps: 7 -> 4"), "exact detached genuine stitch forecast")
 	_check(panel.option_buttons[0].get_meta("selected")
-		and panel.preview_label.text.contains("FIRST | Warden | Strike | copy #2 | 1 energy\nDeal 6 damage")
-		and panel.preview_label.text.contains("THEN | Seamstress | Prick | copy #3 | 1 energy\nDeal 3 damage; apply Bleed 2")
+		and panel.preview_label.text.contains("FIRST | " + _expected_detail(first_def, 1))
+		and panel.preview_label.text.contains("THEN | " + _expected_detail(second_def, 2))
 		and panel.preview_label.text.contains("Energy: 2 (max half + 1, capped at 3)")
 		and panel.preview_label.text.contains("Scraps: 7 -> 4 (cost 3)")
 		and panel.preview_label.text.contains("Both owners must be alive, each in their own legal FROM position"),
-		"highlighted ordered FIRST/THEN halves show actual owners, effects and living/FROM caveat")
+		"highlighted ordered FIRST/THEN full halves keep original owner and play caveat")
 	_check(panel.preview_label.text.contains(expected.display_name)
 		and panel.preview_label.text.contains("Energy: %d" % expected.energy_cost)
 		and panel.preview_label.text.contains("Deck: %d -> %d cards" % [expected.deck_before_count, expected.deck_after_count]),
@@ -319,6 +348,183 @@ func _test_stitch(keyboard: bool) -> void:
 		and result.descriptors == {expected.stitched_id: expected.descriptor}
 		and result.next_stitch_id == 2 and result.remaining_scraps == 4, "two selected copies consumed, duplicate preserved, exact payment and cursor")
 	_check_receipt(result, source, 3)
+	_check_replay(visit, intent)
+
+
+## Real reward-pool cards with distinct legal source and recipient positions.
+## Every occurrence is checked against the independent catalog resolver.
+func _test_pool_upgrade(keyboard: bool) -> void:
+	const PIN := "warden_pinning_jab"
+	const SNAG := "seamstress_snag"
+	const GUARD := "warden_patch_guard"
+	var visit := _make([PIN, SNAG, GUARD], 3)
+	await _bind(visit)
+	var source := visit.read_state()
+	var pin := RunRestStitchCards.resolve_card_definition(PIN)
+	var pin_plus := RunRestStitchCards.resolve_card_definition(PIN + "_plus")
+	var snag := RunRestStitchCards.resolve_card_definition(SNAG)
+	var snag_plus := RunRestStitchCards.resolve_card_definition(SNAG + "_plus")
+	var guard := RunRestStitchCards.resolve_card_definition(GUARD)
+	_check(visit.is_valid() and source.deck == [PIN, SNAG, GUARD]
+		and pin.owner == "warden" and snag.owner == "seamstress"
+		and pin.cost == 1 and pin_plus.cost == 1 and pin.from_positions == [1, 2]
+		and pin.to_positions == [1] and pin.target_kind == "enemy_single"
+		and pin.effects == {"damage": 4, "pinned": true}
+		and pin_plus.effects == {"damage": 6, "pinned": true}
+		and snag.cost == 1 and snag_plus.cost == 1 and snag.from_positions == [2, 3]
+		and snag.to_positions == [1, 2, 3] and snag.target_kind == "enemy_single"
+		and snag.effects == {"unravel": 3, "weak": 1}
+		and snag_plus.effects == {"unravel": 4, "weak": 1}
+		and guard.target_kind == "ally_single" and guard.to_positions.is_empty(),
+		"nonvacuous authored Pinning Jab, Snag and chosen-ally source preconditions")
+	await _activate(panel.upgrade_button, keyboard)
+	var upgrades := visit.upgrade_options()
+	_check(upgrades.size() >= 3 and panel.option_buttons.size() == upgrades.size()
+		and panel.confirm_button.disabled, "catalog-backed occurrence list requires an explicit upgrade choice")
+	for option in upgrades:
+		var row := _row_at(option.index)
+		if row == null:
+			return
+		var before := RunRestStitchCards.resolve_card_definition(option.source_id)
+		var after := RunRestStitchCards.resolve_card_definition(option.plus_id)
+		_check(not before.is_empty() and not after.is_empty()
+			and source.deck[option.index] == before.id and option.owner == before.owner
+			and option.cost == before.cost and option.plus_cost == after.cost
+			and option.effects == before.effects and option.plus_effects == after.effects,
+			"each authorized pool upgrade row binds exact authentic definitions")
+		_check(row.tooltip_text.contains("BEFORE | " + _expected_detail(before, option.index))
+			and row.tooltip_text.contains("AFTER | " + _expected_detail(after, option.index))
+			and _card_ink(row).contains(CardShortRules.line(before))
+			and _card_ink(row).contains(CardShortRules.line(after)),
+			"hover/focus Help and row ink carry both printed catalog action lines and positions")
+		row.grab_focus()
+		await _settle_layout()
+		var prior_preview := panel.preview()
+		var prior_confirm_disabled := panel.confirm_button.disabled
+		var hover := InputEventMouseMotion.new()
+		hover.position = row.get_global_rect().get_center()
+		root.push_input(hover)
+		await process_frame
+		_check(intents.is_empty() and visit.read_state() == source
+			and panel.preview() == prior_preview
+			and panel.confirm_button.disabled == prior_confirm_disabled,
+			"hover and keyboard focus on authentic Help are read-only and create no intents")
+		await _activate(row, keyboard)
+		_check(panel.preview().index == option.index
+			and panel.preview_label.text.contains("BEFORE | " + _expected_detail(before, option.index))
+			and panel.preview_label.text.contains("AFTER | " + _expected_detail(after, option.index))
+			and panel.preview_label.text.contains("Cost: free. Only copy #%d changes." % (option.index + 1)),
+			"selected BEFORE/AFTER is the two complete canonical card records")
+	_check(not panel.option_buttons[0].tooltip_text.contains("pinned: True")
+		and panel.option_buttons[0].tooltip_text.contains(CardShortRules.line(pin))
+		and panel.option_buttons[1].tooltip_text.contains(CardShortRules.line(snag)),
+		"Pin and Unravel are authored keywords, never raw booleans or invented turn durations")
+	_check(not panel.option_buttons[2].tooltip_text.contains("ENEMY TO")
+		and panel.option_buttons[2].tooltip_text.contains("TARGET: chosen ally"),
+		"support-target Help names the real recipient with no imaginary enemy slots")
+	var unknown := pin.duplicate(true)
+	unknown.effects["mystery_keyword"] = 19
+	_check(CardShortRules.line(unknown).contains(CardShortRules.UNKNOWN_SENTENCE)
+		and panel._card_detail(unknown, 0).contains(CardShortRules.UNKNOWN_SENTENCE),
+		"unrecognized effect keeps CardShortRules' honest unknown-effect fallback")
+	var pin_row := _row_at(0)
+	if pin_row == null:
+		return
+	pin_row.grab_focus()
+	await _settle_layout()
+	await _activate(pin_row, keyboard)
+	await _activate(panel.confirm_button, keyboard)
+	_check(intents.size() == 1 and visit.read_state() == source,
+		"pool Upgrade still sends one physical intent with no direct spend")
+	if intents.size() != 1:
+		return
+	var intent := intents[0]
+	var result := Controller.submit(visit, intent)
+	_check(intent.action == "upgrade" and intent.first_index == 0
+		and intent.source_snapshot == source and result.ok
+		and result.deck == [PIN + "_plus", SNAG, GUARD]
+		and result.charged_scraps == 0 and result.remaining_scraps == 3,
+		"free pool upgrade replaces only the selected original occurrence")
+	_check_receipt(result, source, 0)
+	_check_replay(visit, intent)
+
+
+func _test_pool_stitch(keyboard: bool) -> void:
+	const PIN := "warden_pinning_jab"
+	const SNAG := "seamstress_snag"
+	var visit := _make([PIN, SNAG], 3)
+	await _bind(visit)
+	var source := visit.read_state()
+	var first := RunRestStitchCards.resolve_card_definition(PIN)
+	var second := RunRestStitchCards.resolve_card_definition(SNAG)
+	var first_option: Dictionary = {}
+	var second_option: Dictionary = {}
+	for candidate in visit.stitch_first_options():
+		if candidate.id == PIN and candidate.owner == first.owner:
+			first_option = candidate
+			break
+	if not first_option.is_empty():
+		for candidate in visit.stitch_second_options(first_option.index):
+			if candidate.id == SNAG and candidate.owner == second.owner:
+				second_option = candidate
+				break
+	_check(visit.is_valid() and source.deck == [PIN, SNAG] and source.remaining_scraps == 3
+		and not first_option.is_empty() and not second_option.is_empty()
+		and first.owner != second.owner and first.cost == 1 and second.cost == 1
+		and first.from_positions == [1, 2] and first.to_positions == [1]
+		and second.from_positions == [2, 3] and second.to_positions == [1, 2, 3],
+		"payable source-authentic two-owner pool stitch and position preconditions")
+	if first_option.is_empty() or second_option.is_empty():
+		return
+	var pair := visit.stitch_preview(first_option.index, second_option.index)
+	_check(not pair.is_empty() and pair.first_half == first and pair.second_half == second
+		and pair.first_id == PIN and pair.second_id == SNAG
+		and pair.energy_cost == 2 and pair.scrap_cost == 3 and pair.remaining_scraps == 0
+		and pair.deck_after_count == pair.deck_before_count - 1,
+		"true visit projection gives exact 2-energy FIRST/THEN and 3-scrap cost")
+	await _activate(panel.stitch_button, keyboard)
+	var first_row := _row_at(first_option.index)
+	if first_row == null:
+		return
+	_check(first_row.tooltip_text.contains("FIRST | " + _expected_detail(first, first_option.index))
+		and panel.confirm_button.disabled, "FIRST Help shows real Warden positions and Pin")
+	first_row.grab_focus()
+	await _settle_layout()
+	await _activate(first_row, keyboard)
+	var second_row := _row_at(second_option.index)
+	if second_row == null:
+		return
+	_check(second_row.tooltip_text.contains("THEN | " + _expected_detail(second, second_option.index))
+		and panel.preview_label.text.contains("FIRST | " + _expected_detail(first, first_option.index))
+		and panel.confirm_button.disabled, "THEN Help preserves source-order and nonactionable half pair")
+	second_row.grab_focus()
+	await _settle_layout()
+	_check(intents.is_empty() and visit.read_state() == source,
+		"focus on THEN Help is read-only")
+	await _activate(second_row, keyboard)
+	_check(panel.preview() == pair and panel.option_buttons.has(second_row)
+		and panel.preview_label.text.contains("FIRST | " + _expected_detail(pair.first_half, first_option.index))
+		and panel.preview_label.text.contains("THEN | " + _expected_detail(pair.second_half, second_option.index))
+		and panel.preview_label.text.contains("Energy: 2 (max half + 1, capped at 3)")
+		and panel.preview_label.text.contains("Scraps: 3 -> 0 (cost 3)")
+		and panel.preview_label.text.contains("Deck: 2 -> 1 cards")
+		and not panel.confirm_button.disabled,
+		"selected fully ordered pool stitch quotes source-bound energy, currency and deck delta")
+	await _activate(panel.confirm_button, keyboard)
+	_check(intents.size() == 1 and visit.read_state() == source,
+		"physical Confirm emits a single source-backed composite intent")
+	if intents.size() != 1:
+		return
+	var intent := intents[0]
+	var receipt := Controller.submit(visit, intent)
+	_check(intent.action == "stitch" and intent.first_index == first_option.index
+		and intent.second_index == second_option.index and intent.source_snapshot == source
+		and receipt.ok and receipt.transaction == pair.projection
+		and receipt.deck == pair.resulting_deck and receipt.deck.size() == 1
+		and receipt.remaining_scraps == 0 and receipt.charged_scraps == 3
+		and receipt.descriptors == {pair.stitched_id: pair.descriptor},
+		"one real controller settlement preserves exactly ordered halves and single payment")
+	_check_receipt(receipt, source, 3)
 	_check_replay(visit, intent)
 
 
@@ -421,7 +627,7 @@ func _test_confirmation_handoff() -> void:
 
 
 func _test_rejections() -> void:
-	for fixture in [[2, [STRIKE, PRICK]], [7, [STRIKE, STRIKE]]]:
+	for fixture in [[0, [STRIKE, PRICK]], [2, [STRIKE, PRICK]], [7, [STRIKE, STRIKE]]]:
 		var visit := _make(fixture[1], fixture[0])
 		await _bind(visit)
 		var source := visit.read_state()
@@ -429,7 +635,7 @@ func _test_rejections() -> void:
 		_check(panel.option_buttons.is_empty() and panel.preview().is_empty()
 			and panel.preview_label.text == "Choose Upgrade, Stitch or Leave, then confirm."
 			and panel.confirm_button.disabled, "unavailable Stitch has a neutral unselected preview")
-		_check(panel.status_label.text.contains("Insufficient") if fixture[0] == 2 else panel.status_label.text.contains("No different-owner"), "reason visibly explained")
+		_check(panel.status_label.text.contains("Insufficient") if fixture[0] < 3 else panel.status_label.text.contains("No different-owner"), "reason visibly explained")
 		panel.stitch_button.pressed.emit()
 		panel.confirm_button.pressed.emit()
 		_check(intents.is_empty() and visit.read_state() == source, "disabled/forged activation no mutation")
@@ -439,10 +645,13 @@ func _test_rejections() -> void:
 	await _bind(visit)
 	var source := visit.read_state()
 	await _activate(panel.upgrade_button, false)
-	var retired_row: Callable = panel.option_buttons[1].pressed.get_connections()[0].callable
+	var prior_row: Button = panel.option_buttons[1]
+	var retired_row: Callable = prior_row.pressed.get_connections()[0].callable
 	await _activate(panel.stitch_button, false)
 	var stage_rows: int = panel._rows_epoch
 	retired_row.call()
+	_check(not is_instance_valid(prior_row) or (prior_row.get_parent() == null
+		and prior_row.is_queued_for_deletion()), "retired Help is detached from active scroll and focus")
 	_check(panel._rows_epoch == stage_rows and panel._first == -1 and panel.preview().is_empty()
 		and panel.confirm_button.disabled and visit.read_state() == source,
 		"mode switch retires old occurrence callback without substituting a legal stitch index")
@@ -498,7 +707,19 @@ func _test_rejections() -> void:
 	_check(external.ok, "genuine external settlement prerequisite")
 	var settled := replacement.read_state()
 	pending_confirm.call()
-	_check(intents.is_empty() and replacement.read_state() == settled, "authority drift rejects pending UI confirmation without spend")
+	_check(intents.is_empty() and replacement.read_state() == settled and panel.confirm_button.disabled
+		and panel.option_buttons.is_empty() and panel.preview().is_empty()
+		and panel.preview_label.text == "Choose Upgrade, Stitch or Leave, then confirm.",
+		"consumed authority retires stale preview and disables confirmation without spend")
+	var invalid := RunSewingCircleVisit.new("circle-invalid", ["not_a_card"], {}, 3, 1)
+	_check(not invalid.is_valid(), "malformed visit cannot produce genuine options")
+	panel.bind(invalid)
+	await _settle_layout()
+	_check(panel.option_buttons.is_empty() and panel.preview().is_empty()
+		and panel.confirm_button.disabled and panel.upgrade_button.disabled
+		and panel.stitch_button.disabled and panel.leave_button.disabled
+		and panel.preview_label.text == "Choose Upgrade, Stitch or Leave, then confirm.",
+		"invalid source binding retires all active choice Help and Confirm")
 
 
 ## Inspect visible label nodes, not the Button's retained accessibility text.
