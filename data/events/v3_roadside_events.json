@@ -239,6 +239,66 @@
         { "id": "trade_bells", "text": "Trade for thread bells (-12 gold, +2 scraps)", "outcome": { "gold": -12, "scraps": 2 } },
         { "id": "leave_chapel", "text": "Leave the humming chapel (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_silver_cobble_toll",
+      "title": "The Silver-Cobble Toll",
+      "description": "Stuffed crows perch on a silver-stitched toll bridge, their brass bells jingling whenever travellers pass.",
+      "choices": [
+        { "id": "rewind_bellcord", "text": "Rewind the bell cord (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "purchase_pass", "text": "Buy two spools of pass-thread (spend 15 gold; gain 2 scraps)", "outcome": { "gold": -15, "scraps": 2 } },
+        { "id": "cross_sidepath", "text": "Take the stitched sidepath (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_amber_thimble_loom",
+      "title": "The Amber-Thimble Loom",
+      "description": "A plump ragdoll weaver feeds copper thread through an enormous amber thimble beneath a velvet awning.",
+      "choices": [
+        { "id": "repair_looms", "text": "Repair the thimble loom (spend 2 scraps; gain 32 gold)", "outcome": { "gold": 32, "scraps": -2 } },
+        { "id": "untangle_bobbins", "text": "Untangle fallen bobbins (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "leave_loom", "text": "Leave the loom humming (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_midnight_moth_post",
+      "title": "The Midnight Moth Post",
+      "description": "Button-eyed moth couriers carry sealed plum-velvet letters from a crooked patchwork postbox.",
+      "choices": [
+        { "id": "sort_letters", "text": "Sort the wayward letters (+13 gold)", "outcome": { "gold": 13, "scraps": 0 } },
+        { "id": "buy_moth_stamps", "text": "Buy moth-wing stamps (spend 19 gold; gain 3 scraps)", "outcome": { "gold": -19, "scraps": 3 } },
+        { "id": "leave_post", "text": "Let the moths deliver their letters (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rosequilt_bridgekeeper",
+      "title": "The Rosequilt Bridgekeeper",
+      "description": "A stitched-X-eyed bridgekeeper polishes rosy brass buttons on a moss-green quilt railing.",
+      "choices": [
+        { "id": "barter_button", "text": "Barter a spare button (spend 1 scrap; gain 23 gold)", "outcome": { "gold": 23, "scraps": -1 } },
+        { "id": "buy_safety_pins", "text": "Buy safety pins (spend 12 gold; gain 2 scraps)", "outcome": { "gold": -12, "scraps": 2 } },
+        { "id": "leave_bridge", "text": "Cross without trading (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_starhook_washhouse",
+      "title": "The Starhook Washhouse",
+      "description": "Silver hooks hold dripping star-patterned quilts over a lantern-lit blackwater washhouse.",
+      "choices": [
+        { "id": "collect_frayed_trim", "text": "Collect the frayed trim (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "sell_copper_hooks", "text": "Sell two copper hooks (spend 2 scraps; gain 34 gold)", "outcome": { "gold": 34, "scraps": -2 } },
+        { "id": "leave_washhouse", "text": "Leave the quilts to dry (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_bellspool_masquerade",
+      "title": "The Bellspool Masquerade",
+      "description": "Round velvet dolls dance beneath hanging bobbin bells, wearing mismatched stitched masks.",
+      "choices": [
+        { "id": "sew_masks", "text": "Sew masks for the dancers (+18 gold)", "outcome": { "gold": 18, "scraps": 0 } },
+        { "id": "buy_masque_thread", "text": "Buy masque thread (spend 21 gold; gain 4 scraps)", "outcome": { "gold": -21, "scraps": 4 } },
+        { "id": "leave_masquerade", "text": "Slip away before the last bell (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
