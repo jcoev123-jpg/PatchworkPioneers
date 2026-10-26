@@ -18,6 +18,8 @@ const PARTY_V3 := ["warden", "lantern_monk", "rag_duelist"]
 const DECK_V3 := ["warden_strike", "lantern_monk_moth_lure", "rag_duelist_velvet_feint"]
 const PARTY_V3_UNKNOWN := ["lantern_monk", "rag_duelist", "scarecrow"]
 const DECK_V3_UNKNOWN := ["lantern_monk_moth_lure", "rag_duelist_velvet_feint", "scarecrow_re_stuff"]
+const PARTY_MORE := ["scarecrow", "yarn_ranger", "button_golem"]
+const DECK_MORE := ["scarecrow_fork_jab", "yarn_ranger_wool_bolas", "button_golem_starter_button_fist"]
 const SEED := 2611790
 const V3_SEED := 90210
 const V3_UNKNOWN_SEED := 424242
@@ -173,6 +175,8 @@ func _run() -> void:
 	var expected_run := rng.state
 
 	await _layout(visit)
+	_long_rule_case()
+	_sold_card_projection_case(visit)
 	await _preview_cases()
 	for index in range(3):
 		await _buy_case(index, "card", index % 2 == 0)
@@ -246,9 +250,8 @@ func _act(button: Button, keyboard: bool, key: Key = KEY_ENTER) -> void:
 	await _frames()
 
 
-## Measured readability: the shipped font's single-line width must fit the
-## button's inner width at the actual themed size, and the row must be tall
-## enough for that line.
+## Measure each actual rendered line, not the combined multi-line string:
+## Button autowrap must never be relied on to hide a long effect or price.
 func _fits(button: Button) -> bool:
 	var font := button.get_theme_font("font")
 	if font == null or button.text.is_empty():
@@ -256,8 +259,13 @@ func _fits(button: Button) -> bool:
 	var size_px := button.get_theme_font_size("font_size")
 	if size_px < 18:
 		return false
-	var width := font.get_string_size(button.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px).x
-	return width <= button.size.x - 16.0 and button.size.y >= font.get_height(size_px) * 1.4
+	var lines := button.text.split("\n")
+	var allowance := button.size.x - (32.0 if panel.card_buttons.has(button) else 16.0)
+	for line in lines:
+		if line.is_empty() or font.get_string_size(line,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, size_px).x > allowance:
+			return false
+	return button.size.y >= font.get_height(size_px) * lines.size() + 16.0
 
 
 func _expected_name(item_id: String) -> String:
@@ -265,6 +273,106 @@ func _expected_name(item_id: String) -> String:
 	for i in range(words.size()):
 		words[i] = words[i].left(1).to_upper() + words[i].substr(1)
 	return " ".join(words)
+
+
+## A separate catalog oracle checks the *mounted* two-line caption. Prices
+## come from the quoted visit, not the authored card's cost or the row builder.
+func _check_card_row(index: int, offer: Dictionary, context: String) -> void:
+	var definition := _authored_definition(offer)
+	var described := CardShortRules.describe(definition)
+	var button := panel.card_buttons[index]
+	var lines := button.text.split("\n")
+	var label := context + " card " + str(index)
+	_check(not definition.is_empty() and definition.get("id") == offer["id"]
+			and definition.get("owner") == offer["owner"]
+			and typeof(definition.get("cost")) == TYPE_INT
+			and described.get("known") == true and not str(described.get("line", "")).is_empty(),
+			label + ": oracle resolves genuine owner, cost and authored effect")
+	if lines.size() != 2 or definition.is_empty():
+		_check(false, label + ": exactly two informative lines")
+		return
+	var name := str(definition.get("display_name", "")).strip_edges()
+	if name.is_empty():
+		name = _expected_name(str(offer["id"]))
+	var prefix := str(offer["owner"]).capitalize() + "  ·  "
+	var suffix := "  ·  %d gold" % int(offer["price"])
+	var money := int(panel._source["state"]["gold"])
+	if bool(offer["sold"]):
+		suffix += "  ·  SOLD"
+	elif money < int(offer["price"]):
+		suffix += "  ·  short %d" % (int(offer["price"]) - money)
+	var actual_name := lines[0].substr(prefix.length(),
+			lines[0].length() - prefix.length() - suffix.length())
+	_check(lines[0].begins_with(prefix) and lines[0].ends_with(suffix)
+			and (actual_name == name or (actual_name.ends_with(LivePeddlerPanel.ELLIPSIS)
+			and name.begins_with(actual_name.trim_suffix(LivePeddlerPanel.ELLIPSIS).strip_edges())))
+			and not lines[0].contains(str(offer["id"])),
+			label + ": quote, sale/shortfall and catalog display name coexist")
+	var energy := "%d energy  ·  " % int(definition["cost"])
+	var effect := lines[1].substr(energy.length()) if lines[1].begins_with(energy) else ""
+	var full := str(described["line"])
+	var first_word := full.get_slice(" ", 0)
+	_check(lines[1].begins_with(energy) and not effect.is_empty()
+			and (effect == full or (effect.ends_with(LivePeddlerPanel.ELLIPSIS)
+			and effect.contains(first_word))) ,
+			label + ": measured row exposes real energy and recognisable authored mechanic")
+	_check(button.tooltip_text.contains(str(offer["id"]))
+			and button.tooltip_text.contains("%d energy" % int(definition["cost"]))
+			and button.tooltip_text.contains(full)
+			and button.tooltip_text.contains("%d gold" % int(offer["price"])),
+			label + ": full rule, ID and quote remain in tooltip")
+	_check(_fits(button) and button.size == Vector2(822, 78)
+			and button.get_theme_font_size("font_size") >= 18,
+			label + ": both lines fit the actual 822x78 font geometry")
+
+
+## Exercise the bounded rule formatter with the longest genuinely authored
+## priced description, without manufacturing an effect or a source card.
+func _long_rule_case() -> void:
+	var font := panel.card_buttons[0].get_theme_font("font")
+	var px := panel.card_buttons[0].get_theme_font_size("font_size")
+	var longest := ""
+	var longest_id := ""
+	for candidate in authored_cards:
+		var definition := _authored_definition(candidate)
+		if definition.is_empty():
+			continue
+		var described := CardShortRules.describe(definition)
+		var sentence := str(described.get("line", ""))
+		if described.get("known") == true and sentence.length() > longest.length():
+			longest = sentence
+			longest_id = str(candidate["id"])
+	_check(font != null and not longest_id.is_empty() and longest.length() > 30,
+			"the stress-rule source is a real, substantive authored catalog sentence")
+	if font == null or longest.is_empty():
+		return
+	var budget := 290.0
+	var fitted := panel._fit_card_rule(longest, budget, font, px)
+	_check(font.get_string_size(fitted, HORIZONTAL_ALIGNMENT_LEFT, -1, px).x <= budget
+			and fitted.ends_with(LivePeddlerPanel.ELLIPSIS)
+			and fitted.contains(longest.get_slice(" ", 0)),
+			"the longest priced authored rule is measurably abbreviated with a visible ellipsis")
+	_check(intents.is_empty(), "measuring the real authored rule emits no buy intent")
+
+
+## A purchased card closes its visit immediately: no real OPEN service can
+## quote it as SOLD. Check the sale badge on a detached source projection only,
+## and prove it does not enable a purchase against the unchanged service.
+func _sold_card_projection_case(visit: RunPeddlerVisit) -> void:
+	var original := panel._source.duplicate(true)
+	var button := panel.card_buttons[0]
+	var unchanged_caption := button.text
+	panel._source["stock"]["cards"][0]["sold"] = true
+	var sold_caption := panel._card_caption(0)
+	_check(sold_caption.split("\n").size() == 2 and
+			sold_caption.split("\n")[0].ends_with("  ·  SOLD") and
+			sold_caption.contains(" energy"),
+			"an explicitly sold card still presents its original priced energy/rule row")
+	_check(not panel._source_current() and visit.read_state() == original,
+			"a forged SOLD projection cannot become an authenticated live offer")
+	panel._source = original
+	_check(panel._card_caption(0) == unchanged_caption and intents.is_empty(),
+			"restored authentic card caption cannot generate an intent during inspection")
 
 
 func _layout(visit: RunPeddlerVisit) -> void:
@@ -292,14 +400,7 @@ func _layout(visit: RunPeddlerVisit) -> void:
 		var offer: Dictionary = open["stock"]["cards"][index]
 		_check(screen.encloses(button.get_global_rect()) and button.size.y >= 70,
 				"unclipped card action row " + str(index))
-		_check(button.text.begins_with(str(offer["owner"]).capitalize() + "  ·  "),
-				"card row starts with its proper owner")
-		_check(not button.text.contains(str(offer["id"])) and not button.text.contains("_"),
-				"card row hides the raw item ID")
-		_check(button.text.contains(_expected_name(str(offer["id"]))),
-				"card row shows independently readable authored name")
-		_check(button.text.ends_with("  ·  %d gold" % int(offer["price"])),
-				"card row shows exact authored quote")
+		_check_card_row(index, offer, "mounted main")
 		_check(not button.disabled and button.get_meta("offer_kind") == "card"
 				and button.get_meta("offer_id") == offer["id"],
 				"funded card row is actionable and source-tagged")
@@ -342,11 +443,11 @@ func _layout(visit: RunPeddlerVisit) -> void:
 	_check(panel.status_label.size.x >= LivePeddlerPanel.STATUS_WIDTH
 			and panel.status_label.size.y >= 24,
 			"the status band really has its designed room at 1280x720")
-	# Every authored card and patch quote this panel can ever be handed must fit
-	# one measured line, not just this seed's four offers.
-	var caption_font := panel.card_buttons[0].get_theme_font("font")
-	var caption_size := panel.card_buttons[0].get_theme_font_size("font_size")
-	var worst := 0.0
+	# _caption remains the exact one-line oracle for the unchanged patch and
+	# any legacy callers. Card rows instead use measured two-line projections.
+	var caption_font := panel.patch_button.get_theme_font("font")
+	var caption_size := panel.patch_button.get_theme_font_size("font_size")
+	var worst_patch := 0.0
 	if caption_font != null:
 		for entry in authored_cards + authored_patches:
 			var prefix := str(entry["owner"]).capitalize() if entry.has("owner") else "PATCH"
@@ -354,13 +455,14 @@ func _layout(visit: RunPeddlerVisit) -> void:
 					prefix, _expected_name(str(entry["id"])), int(entry["price"])]
 			_check(panel._caption(prefix, entry["id"], entry["price"], false) == line
 					and panel._caption(prefix, entry["id"], entry["price"], true) == line + "  ·  SOLD",
-					"every authored caption has exact readable name, prefix, price and sold suffix: " + entry["id"])
-			for caption in [line, line + "  ·  SOLD", line + "  ·  short %d" % int(entry["price"])]:
-				worst = maxf(worst, caption_font.get_string_size(caption,
-						HORIZONTAL_ALIGNMENT_LEFT, -1, caption_size).x)
-	_check(caption_font != null and not authored_cards.is_empty() and not authored_patches.is_empty()
-			and worst <= panel.card_buttons[0].size.x - 16.0,
-			"every authored Peddler quote fits one measured line at the shipped font size")
+					"legacy one-line caption keeps price and sold suffix: " + entry["id"])
+			if prefix == "PATCH":
+				for caption in [line, line + "  ·  SOLD", line + "  ·  short %d" % int(entry["price"])]:
+					worst_patch = maxf(worst_patch, caption_font.get_string_size(caption,
+							HORIZONTAL_ALIGNMENT_LEFT, -1, caption_size).x)
+	_check(caption_font != null and not authored_patches.is_empty()
+			and worst_patch <= panel.patch_button.size.x - 16.0,
+			"every unchanged patch quote fits one measured line at its font size")
 	# Keyboard traversal reaches every one of the five actions.
 	var focus_seen: Array = []
 	panel.card_buttons[0].grab_focus()
@@ -473,8 +575,8 @@ func _check_preview(index: int, offer: Dictionary, definition: Dictionary,
 		_check(status.contains(CardShortRules.UNKNOWN_SENTENCE)
 				or tooltip.contains(CardShortRules.UNKNOWN_SENTENCE),
 				label + ": an undescribed authored effect is labelled honestly, never guessed")
-	_check(button.text.ends_with("  ·  %d gold" % int(offer["price"])),
-			label + ": the priced caption is unchanged by the preview")
+	_check(button.text.split("\n")[0].ends_with("  ·  %d gold" % int(offer["price"])),
+			label + ": the quoted gold stays on line one after the preview")
 
 
 ## Hover and keyboard focus for each of the three genuine offers.
@@ -482,6 +584,7 @@ func _assert_card_previews(context: String, before: Dictionary) -> void:
 	for index in range(3):
 		var offer: Dictionary = before["stock"]["cards"][index]
 		var definition := _authored_definition(offer)
+		_check_card_row(index, offer, context + " pre-hover")
 		await _hover_card(index)
 		_check_preview(index, offer, definition, context + " hover card " + str(index))
 		_check(intents.is_empty() and panel._source_current(),
@@ -495,6 +598,7 @@ func _assert_card_previews(context: String, before: Dictionary) -> void:
 		_check(panel.card_buttons[index].has_focus(),
 				context + " keyboard card " + str(index) + " has real focus")
 		_check_preview(index, offer, definition, context + " focus card " + str(index))
+		_check_card_row(index, offer, context + " focus")
 	_check(intents.is_empty() and panel._source_current(),
 			context + ": focused previews emit no intent and never mutate the source")
 
@@ -585,6 +689,21 @@ func _preview_cases() -> void:
 		_check(str(definition.get("owner", "")) == str(offer["owner"]),
 				"the offered V3 card resolves to its own authored owner")
 
+	# --- a different authentic three-hero party exercises yarn and button
+	# motifs without inventing stock or borrowing another hero's card data. ---
+	var more_stock := _seeded_stock(PARTY_MORE, 78113)
+	_check(more_stock.get("ok") == true, "the Yarn/Button/Scarecrow generator supplies genuine priced stock")
+	if more_stock.get("ok") == true:
+		var more := _party_visit("peddler_more_motifs", PARTY_MORE, DECK_MORE, more_stock)
+		var more_before := more.read_state()
+		_check(more.is_open() and _offer_owners(more_before) == PARTY_MORE,
+				"the second v3 cohort opens with three correctly owned card offers")
+		if more.is_open():
+			await _bind(more)
+			await _assert_card_previews("more v3 motifs", more_before)
+			_check(more.read_state() == more_before and intents.is_empty(),
+					"the Yarn/Button/Scarecrow rows only read the quoted stock")
+
 	# --- an authored effect the formatter cannot describe stays honest ---
 	var unknown_visit := _party_visit("peddler_preview_unknown", PARTY_V3_UNKNOWN,
 			DECK_V3_UNKNOWN, _seeded_stock(PARTY_V3_UNKNOWN, V3_UNKNOWN_SEED))
@@ -617,9 +736,14 @@ func _preview_cases() -> void:
 		var authentic := panel._source.duplicate(true)
 		panel._source["stock"]["cards"][scarecrow_index]["owner"] = "warden"
 		var placeholder: String = panel._card_preview(scarecrow_index)
+		var bad_row: String = panel._card_caption(scarecrow_index)
 		_check(placeholder.contains(LivePeddlerPanel.DETAILS_UNAVAILABLE)
 				and not placeholder.contains("Other authored effects"),
 				"a mismatched definition shows Card details unavailable, not a guessed effect")
+		_check(bad_row.split("\n").size() == 2
+				and bad_row.contains(LivePeddlerPanel.DETAILS_UNAVAILABLE)
+				and not bad_row.contains(" energy"),
+				"a mismatched row cannot invent a mechanic or zero-energy eligibility")
 		panel._source = authentic
 
 	# --- invalid, consumed and externally closed sources clear the detail ---

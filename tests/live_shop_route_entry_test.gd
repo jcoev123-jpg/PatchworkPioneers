@@ -1095,13 +1095,59 @@ func _run() -> void:
 				expected += "  ·  SOLD"
 			elif app.session_gold < offer.price:
 				expected += "  ·  short %d" % (offer.price - app.session_gold)
-			_check(action.text == expected and not action.text.contains(str(offer.id))
+			var display_ok := action.text == expected
+			var expected_font := 20
+			if i < 3:
+				# The routed, real panel now prints the independent catalog's
+				# name/energy/effect on two measured lines, preserving the
+				# quoted price and the complete tooltip rather than a bare ID.
+				expected_font = 18
+				var found := RunShopStockOffers._find_card_definition(String(offer.id),
+						RunShopStockOffers._peddler_catalogs())
+				var definition: Dictionary = found.get("def", {})
+				var described := CardShortRules.describe(definition)
+				var lines := action.text.split("\n")
+				var font := action.get_theme_font("font")
+				display_ok = not definition.is_empty() and definition.get("id") == offer.id
+				display_ok = display_ok and definition.get("owner") == offer.owner
+				display_ok = display_ok and described.get("known") == true and lines.size() == 2
+				if display_ok:
+					var name := str(definition.get("display_name", "")).strip_edges()
+					if name.is_empty():
+						name = str(offer.id).replace("_", " ").capitalize()
+					var gold_suffix := "  ·  %d gold" % int(offer.price)
+					if offer.sold:
+						gold_suffix += "  ·  SOLD"
+					elif app.session_gold < offer.price:
+						gold_suffix += "  ·  short %d" % (offer.price - app.session_gold)
+					var start := prefix + "  ·  "
+					var actual_name := lines[0].substr(start.length(),
+							lines[0].length() - start.length() - gold_suffix.length())
+					var rule := String(described.get("line", ""))
+					var energy := "%d energy  ·  " % int(definition.get("cost", -1))
+					var effect := lines[1].substr(energy.length()) if lines[1].begins_with(energy) else ""
+					display_ok = lines[0].begins_with(start) and lines[0].ends_with(gold_suffix)
+					display_ok = display_ok and (actual_name == name or
+							(actual_name.ends_with(LivePeddlerPanel.ELLIPSIS) and
+							name.begins_with(actual_name.trim_suffix(LivePeddlerPanel.ELLIPSIS).strip_edges())))
+					display_ok = display_ok and not rule.is_empty() and lines[1].begins_with(energy)
+					display_ok = display_ok and (effect == rule or
+							(effect.ends_with(LivePeddlerPanel.ELLIPSIS) and
+							effect.contains(rule.get_slice(" ", 0))))
+					display_ok = display_ok and action.tooltip_text.contains(String(offer.id))
+					display_ok = display_ok and action.tooltip_text.contains(rule)
+					display_ok = display_ok and font != null and action.size == Vector2(822, 78)
+					if font != null:
+						for line in lines:
+							display_ok = display_ok and font.get_string_size(line,
+									HORIZONTAL_ALIGNMENT_LEFT, -1, expected_font).x <= action.size.x - 32
+			_check(display_ok and not action.text.contains(str(offer.id))
 				and not action.text.contains("_")
 				and action.get_parent() == app.shop_view
 				and action.get_meta("offer_id") == offer.id and action.pressed.get_connections().size() == 1
-				and action.get_theme_font_size("font_size") == 20
+				and action.get_theme_font_size("font_size") == expected_font
 				and action.disabled == (offer.sold or app.session_gold < offer.price),
-				"each mounted sewn choice displays authentic identity, price and affordability")
+				"each routed sewn choice displays authentic name, price, energy and ability")
 		# The live mounted panel explains a real hovered offer from its own
 		# authored record before the player spends anything. Read-only: the
 		# ledger, visit and RNG stay exactly as the Shop left them.
