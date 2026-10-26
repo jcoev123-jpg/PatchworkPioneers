@@ -217,7 +217,9 @@ func _run() -> void:
 		await _terminal_and_stale(id)
 	var meta = preload("res://scripts/live_hand_card_metadata.gd").new()
 	for id in YarnRangerPoolCards.new().get_all_card_ids():
-		if id not in IDS and id not in ["yarn_ranger_snare_net", "yarn_ranger_snare_net_plus"]:
+		if CombatYarnRangerKnitCards.CARDS.has(id):
+			_check(meta.definition(id) == CombatYarnRangerKnitCards.knit_definition(id), "knit IDs use authentic definitions")
+		elif id not in IDS and id not in ["yarn_ranger_snare_net", "yarn_ranger_snare_net_plus"]:
 			_check(meta.definition(id).is_empty(), "unrelated Yarn IDs remain unwired")
 	for failure in failures:
 		printerr("FAIL: " + failure)
