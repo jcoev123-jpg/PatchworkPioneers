@@ -77,7 +77,8 @@ func _projected_book(app) -> void:
 			and button.text == EXPECTED_ROUTE_LABELS.get(kind, kind)
 			and button.get_meta("route_label") == button.text, "source kind and independent projected caption/metadata")
 		if kind == "Rest":
-			_check(button.tooltip_text == "Campfire preview: opens the legacy Rest screen to heal or upgrade a card.", "honest legacy Rest help")
+			var expected_help := "Campfire: Heal each hero 30% max HP (torn revives at 1 HP first), or Leave unchanged." if node.floor == 1 and app.run_map.get_route().is_empty() else "Campfire preview: opens the legacy Rest screen to heal or upgrade a card."
+			_check(button.tooltip_text == expected_help, "honest source-specific Rest help")
 		elif kind == "Shop":
 			_check(button.tooltip_text == "Peddler: buy one of three cards or one patch, or Leave for free.", "honest one-choice Peddler help")
 		var font: Font = button.get_theme_font("font")
@@ -152,7 +153,7 @@ func _token_fallback(button: Button, kind: String) -> void:
 
 func _leave_native(app, kind: String, keyboard: bool) -> void:
 	match kind:
-		"Campfire":
+		"Campfire", "Rest":
 			await _activate(app.campfire_leave_button, keyboard)
 		"SewingCircle":
 			await _activate(app.sewing_leave_button, keyboard)
@@ -680,17 +681,17 @@ func _run() -> void:
 			if kind in ["Campfire", "SewingCircle", "PatchStall"]:
 				await _leave_native(app, kind, mode == 1)
 			elif kind == "Rest":
-				_check(app.rest_recovery != null and app.rest_view.is_visible_in_tree()
-					and app.rest_continue_button.disabled, "real Rest visit mounted before any battle")
-				stale.append(app.rest_back_button.pressed.get_connections()[0].callable)
-				if mode == 0:
-					await _activate(app.rest_upgrade_button, false)
-					cards[0] = "warden_strike_plus"
-				else:
-					await _activate(app.rest_heal_button, true)
-				_check(app.run_deck == cards and not app.rest_continue_button.disabled,
-					"existing Rest transaction commits exact deck/heal choice")
-				await _activate(app.rest_continue_button, mode == 1)
+				_check(app.campfire_view is LiveCampfirePanel and app.campfire_view.is_visible_in_tree()
+					and app.rest_view == null and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
+					"authentic opening Rest mounts sewn Campfire before any battle")
+				var camp_action: Button = app.campfire_leave_button if mode == 0 else app.campfire_heal_button
+				stale.append(app.campfire_view.decision_requested.get_connections()[0].callable.bind({
+					"action": "leave" if mode == 0 else "heal", "source_visit": app.campfire_visit,
+					"node_id": fixture[2], "expected_heroes": heroes.duplicate(true)}))
+				await _activate(camp_action, mode == 1)
+				_check(app.run_deck == cards and app.run_heroes == heroes and app._campfire_closed
+					and app.party_carryover.read_state().completed_rests == ([] if mode == 0 else [fixture[2]])
+					and shared.state == start_rng, "exact full-HP Heal/Leave receipt without deck or RNG drift")
 			elif kind == "Unpicker":
 				_check(app.unpicker_visit.is_valid() and app.unpicker_view.is_visible_in_tree(), "real seeded Unpicker mounted")
 				var source: Dictionary = app.unpicker_visit.read_state()
@@ -760,7 +761,7 @@ func _run() -> void:
 					await _activate(app.quiet_spool_panel.get_choice_buttons()[1], mode == 1)
 				if fixture[0] == "Shop":
 					await _activate(app.peddler_leave_button, mode == 1)
-				var back: Button = app.rest_back_button if fixture[0] == "Rest" else app.route_back_button
+				var back: Button = app.route_back_button
 				await _activate(back, mode == 1)
 			else:
 				var cancelled_book: int = app.route_book_backdrop.get_instance_id()

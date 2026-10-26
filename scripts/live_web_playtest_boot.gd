@@ -54,7 +54,7 @@ func enter_preview(app, screen: String) -> bool:
 			_busy = false
 			return false
 	elif screen != "title":
-		app.run_seed = {"rest": 10, "shop": 14, "event": 6}.get(screen, 1)
+		app.run_seed = {"rest": 14, "shop": 14, "event": 6}.get(screen, 1)
 		app.start_button.pressed.emit()
 		if app.run_map == null or not _visible(app.route_view):
 			_busy = false
@@ -64,11 +64,15 @@ func enter_preview(app, screen: String) -> bool:
 		app.run_scraps = SCRAPS
 		_preview_map = weakref(app.run_map)
 		if screen != "map":
-			var route: String = {"rest": "f01_n1", "shop": "f01_n3", "event": "f01_n1"}.get(screen, "f01_n0")
-			for button in app.route_buttons:
-				if button.get_meta("route_id") == route and not button.disabled:
-					button.pressed.emit()
-					break
+			var route: String = {"shop": "f01_n3", "event": "f01_n1"}.get(screen, "f01_n0")
+			# Floor-one Rest now opens Campfire. Preview the unchanged legacy Rest
+			# through a genuine Treasure -> floor-two Rest with no resource effects.
+			var steps: Array = ["f01_n2", "f02_n2"] if screen == "rest" else [route]
+			for id in steps:
+				for button in app.route_buttons:
+					if button.get_meta("route_id") == id and not button.disabled:
+						button.pressed.emit()
+						break
 		if screen in ["reward", "results"] and app.battle_result != null:
 			if screen == "reward":
 				for enemy in app.enemies.get_enemies():

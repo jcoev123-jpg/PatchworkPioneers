@@ -120,7 +120,7 @@ func _hover_text(node: Dictionary, legal: bool = false) -> String:
 	var prefix := "Floor %02d · %s · Branch %d" % [
 		int(node["floor"]), str(node["type"]), int(node["position"]) + 1]
 	if legal:
-		return prefix + " · " + str(EXPECTED_HELP[str(node["type"])]["tooltip"])
+		return prefix + " · " + str(EXPECTED_HELP["Campfire" if node.type == "Rest" and node.floor == 1 else str(node.type)]["tooltip"])
 	return prefix
 
 
@@ -270,7 +270,7 @@ func _assert_ticket(view: RunRouteAtlas, map: RunMap, id: String, where: String)
 		return
 	var record := map.get_node(id)
 	var kind := str(record["type"])
-	var facts: Dictionary = EXPECTED_HELP.get(kind, {})
+	var facts: Dictionary = EXPECTED_HELP.get("Campfire" if kind == "Rest" and record.floor == 1 else kind, {})
 	_check(not facts.is_empty(), where + ": legal kind is authored")
 	if facts.is_empty():
 		return

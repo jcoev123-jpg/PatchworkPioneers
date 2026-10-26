@@ -14,7 +14,9 @@ func _refuse(callback: Callable, reason: String) -> void:
 func _camp_enter(atlas: bool) -> void:
 	var prior: Array = app.run_map.get_route()
 	var route: Button = _button(fixture.id)
-	_check(route != null and not route.disabled and route.text == "Campfire", "genuine legal themed Campfire button")
+	var kind: String = app.run_map.get_node(fixture.id).type
+	_check(route != null and not route.disabled and route.text == ("Rest stop / Campfire" if kind == "Rest" else "Campfire")
+		and route.get_meta("route_kind") == kind, "genuine legal themed Campfire or source Rest button")
 	var before: Dictionary = app._sewing_context()
 	var callback: Callable = route.pressed.get_connections()[0].callable
 	var fake := Button.new()
@@ -31,6 +33,18 @@ func _camp_enter(atlas: bool) -> void:
 	app.run_scraps -= 1
 	if atlas:
 		await _click(app.route_map_button)
+		var atlas_callback: Callable = app.route_atlas.node_requested.get_connections()[0].callable
+		var saved_overlay = app.route_atlas_overlay
+		app.run_scraps += 1
+		atlas_callback.call(fixture.id)
+		_check(app.route_atlas_overlay == saved_overlay and app.campfire_visit == null
+			and app.run_map.get_route() == prior, "stale atlas source refuses before clearing overlay")
+		app.run_scraps -= 1
+		route.set_meta("route_kind", "foreign")
+		atlas_callback.call(fixture.id)
+		_check(app.route_atlas_overlay == saved_overlay and app.campfire_visit == null
+			and app.run_map.get_route() == prior, "forged atlas source kind refuses before clearing overlay")
+		route.set_meta("route_kind", kind)
 		var marker: Button = app.route_atlas.get_node("Node_" + fixture.id + "/Action")
 		_check(marker.tooltip_text.contains("One action: heal each hero 30% max HP (torn revives at 1 HP first), or leave unchanged"), "truthful atlas Help")
 		marker.grab_focus()
@@ -142,8 +156,8 @@ func _camp_negatives() -> void:
 	_check(app._sewing_context() == original, "negative fixtures restore exact authority")
 
 
-func _camp_scenario(connected: bool, heal: bool, keyboard: bool) -> Array:
-	fixture = _post_fight_fixture() if connected else _fixture()
+func _camp_scenario(connected: bool, heal: bool, keyboard: bool, opening_rest: bool = false) -> Array:
+	fixture = _post_fight_fixture() if connected else (_camp_fixture("Rest") if opening_rest else _fixture())
 	_check(not fixture.is_empty(), "bounded genuine seeded Campfire chain exists")
 	if fixture.is_empty():
 		return []
@@ -183,17 +197,25 @@ func _camp_scenario(connected: bool, heal: bool, keyboard: bool) -> Array:
 	_check(app.run_heroes == expected and app.party_carryover.read_state().heroes == expected
 		and app.party_carryover.torn.read_state().heroes == expected, "exact independent revive/30%-cap receipt committed to both ledgers")
 	var after: Dictionary = app._sewing_context()
+	_check(app.campfire_visit.read_state() == {"ok": true, "node_id": fixture.id,
+		"status": RunCampfireVisit.HEALED if heal else RunCampfireVisit.LEFT, "heroes": expected},
+		"exact authenticated service receipt retains the original source node ID")
 	for key in ["map", "revision", "floors", "route", "party", "live_heroes", "rng", "rng_state", "rng_seed", "seed", "gold", "scraps", "patches", "removals", "deck", "descriptors", "cursor"]:
 		_check(after[key] == before[key], "Campfire retains unrelated " + key)
 	if not heal:
 		_check(after == before, "Leave retains complete authority without spend or heal")
 	else:
 		_check(after.ledger.completed_rests == before.ledger.completed_rests + [fixture.id], "exactly one authenticated heal receipt")
+		_check(after.torn.completed_rests == before.torn.completed_rests + [fixture.id], "exactly one Torn-ledger heal receipt")
 	_refuse(callback, "duplicate action")
 	var replay: Array = [app.run_map.get_floors(), app.run_map.get_route(), expected, app.run_rng.state]
 	var witness: Array = app._campfire_visits[fixture.id]
 	app._campfire_visits.erase(fixture.id)
 	_check(not app._can_choose_connected_route(), "missing closure witness rejects onward play")
+	if not connected:
+		_check(not app._unfought_run(), "unfought prefix independently requires the Campfire witness")
+	app._campfire_visits[fixture.id] = witness.slice(0, 3) + [[]]
+	_check(not app._can_choose_connected_route(), "wrong prefix closure witness rejects onward play")
 	app._campfire_visits[fixture.id] = witness
 	var next := _button(fixture.next)
 	_check(next != null and not next.disabled, "real connected next Fight exists")
@@ -223,6 +245,10 @@ func _run() -> void:
 			var first := await _camp_scenario(connected, heal, false)
 			var second := await _camp_scenario(connected, heal, true)
 			_check(not first.is_empty() and first == second, "same seed mouse/keyboard atlas replay exactly")
+	for heal in [false, true]:
+		var first := await _camp_scenario(false, heal, false, true)
+		var second := await _camp_scenario(false, heal, true, true)
+		_check(not first.is_empty() and first == second, "opening source Rest exact book/atlas Heal/Leave replay")
 	_finish()
 
 
@@ -233,13 +259,17 @@ func _finish() -> void:
 	quit(0 if failures.is_empty() else 1)
 
 func _fixture() -> Dictionary:
+	return _camp_fixture("Campfire")
+
+
+func _camp_fixture(kind: String) -> Dictionary:
 	for value in range(1, 1000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
 		map.generate(rng)
 		for id in map.get_legal_choices():
-			if map.get_node(id).type != "Campfire":
+			if map.get_node(id).type != kind:
 				continue
 			for next in map.get_node(id).outgoing:
 				if map.get_node(next).type == "Fight":

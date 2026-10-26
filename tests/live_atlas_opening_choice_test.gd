@@ -38,7 +38,8 @@ const LIVE_HELP := {
 func _expected_hover(node: Dictionary, legal: bool) -> String:
 	var prefix := "Floor %02d · %s · Branch %d" % [
 		int(node["floor"]), String(node["type"]), int(node["position"]) + 1]
-	return prefix + (" · " + str(LIVE_HELP[str(node["type"])][2]) if legal else "")
+	var help_kind: String = "Campfire" if legal and node.type == "Rest" and node.floor == 1 else str(node.type)
+	return prefix + (" · " + str(LIVE_HELP[help_kind][2]) if legal else "")
 
 
 func _check_ticket(atlas: RunRouteAtlas, id: String, where: String) -> void:
@@ -49,7 +50,7 @@ func _check_ticket(atlas: RunRouteAtlas, id: String, where: String) -> void:
 		return
 	var node := atlas._map.get_node(id)
 	var kind: String = node["type"]
-	var facts: Array = LIVE_HELP[kind]
+	var facts: Array = LIVE_HELP["Campfire" if kind == "Rest" and node.floor == 1 else kind]
 	_check(ticket.route_id == id
 		and ticket.header_text == "%s · FLOOR %02d · BRANCH %d" % [
 			RunRouteAtlas.area_for_floor(int(node["floor"])).to_upper(),
@@ -236,18 +237,10 @@ func _assert_flow(app, kind: String, id: String, rng_state: int) -> void:
 			and app.unpicker_visit.is_valid() and app.run_rng.state == rng_state
 			and app.route_view == null, "Unpicker mounts authentic visit without RNG")
 		return
-	if kind == "Campfire":
+	if kind in ["Campfire", "Rest"]:
 		_check(app.campfire_view != null and app.campfire_view.is_visible_in_tree()
 			and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN
 			and app.run_rng.state == rng_state and app.route_view == null, "Campfire mounts two-choice visit without RNG")
-		return
-	if kind == "Rest":
-		_check(app.rest_view != null and app.rest_view.is_visible_in_tree()
-			and app.rest_recovery != null and is_instance_valid(app.rest_continue_button)
-			and app.rest_continue_button.disabled and app.route_view == null,
-			"Rest marker mounts its existing visit with no choice committed")
-		_check(app.run_rng.state == rng_state,
-			"Rest visit preserves the seeded run RNG")
 		return
 	if kind == "Shop":
 		_check(app.shop_view != null and app.shop_view.is_visible_in_tree()
@@ -330,16 +323,14 @@ func _leave_flow(app, kind: String) -> void:
 		await _click(app.sewing_view.confirm_button)
 	if kind == "Unpicker":
 		await _click(app.unpicker_leave_button)
-	if kind == "Campfire":
+	if kind in ["Campfire", "Rest"]:
 		await _click(app.campfire_leave_button)
 	if kind == "Shop":
 		await _click(app.peddler_leave_button)
 	var back: Button
-	if kind == "Rest":
-		back = app.rest_back_button
-	elif kind == "Shop":
+	if kind == "Shop":
 		back = app.route_back_button
-	elif kind in ["Event", "Treasure", "Campfire", "Unpicker", "PatchStall", "SewingCircle"]:
+	elif kind in ["Event", "Treasure", "Campfire", "Rest", "Unpicker", "PatchStall", "SewingCircle"]:
 		back = app.route_back_button
 	else:
 		back = app.return_button
