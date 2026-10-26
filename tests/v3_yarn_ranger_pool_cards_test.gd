@@ -289,13 +289,16 @@ func _test_unspool_combat_behavior() -> void:
 	])
 
 	# AC1 positive: base card at position 2, eligible targets at 1 and 3.
-	var deck_base := CombatDeck.new(["yarn_ranger_unspool"], RandomNumberGenerator.new())
+	var base_rng := _seeded_rng()
+	var deck_base := CombatDeck.new(["yarn_ranger_unspool"], base_rng)
 	deck_base.combat_state.start_player_turn()
 	deck_base.hand.clear()
 	deck_base.hand.append("yarn_ranger_unspool")
 
+	var base_rng_state := base_rng.state
 	var result_base: Dictionary = resolver.play_card(deck_base, party_yr_2, enemies_tangled, "yarn_ranger_unspool")
 	_check(result_base.get("ok") == true, "base Unspool legal cast ok")
+	_check(base_rng.state == base_rng_state, "base cast consumes no RNG")
 	_check(deck_base.energy == 1, "base energy 3 -> 1")
 	_check(not deck_base.hand.has("yarn_ranger_unspool"), "base card discarded")
 	var hits_base: Array = result_base.get("hits", [])
@@ -307,15 +310,28 @@ func _test_unspool_combat_behavior() -> void:
 	_check(hits_base[0].get("block_absorbed") == 0, "base block 0")
 	_check(hits_base[0].get("hp_loss") == 9, "base hp loss 9")
 	_check(hits_base[1].get("damage") == 9, "base hit 3 damage 9")
+	# Exactly one paid copy leaves the hand.
+	_check(deck_base.discard_pile == ["yarn_ranger_unspool"], "base cast discards exactly one copy")
+	_check(not deck_base.hand.has("yarn_ranger_unspool"), "base copy left the hand")
+	# The untangled slot 2 must not be struck by the all-enemy card.
+	_check(enemies_tangled.get_enemy(2).get("hp") == 28, "untangled slot 2 stays at full HP")
+	# A second attempt with the already-discarded copy must fail without another charge.
+	var base_replay: Dictionary = resolver.play_card(deck_base, party_yr_2, enemies_tangled, "yarn_ranger_unspool")
+	_check(base_replay.get("ok") == false, "paid copy cannot be replayed")
+	_check(deck_base.energy == 1, "replayed paid copy charges no energy")
+	_check(deck_base.discard_pile.size() == 1, "replayed paid copy discards nothing")
 
 	# AC1 plus: position 3, same roster.
-	var deck_plus := CombatDeck.new(["yarn_ranger_unspool_plus"], RandomNumberGenerator.new())
+	var plus_rng := _seeded_rng()
+	var deck_plus := CombatDeck.new(["yarn_ranger_unspool_plus"], plus_rng)
 	deck_plus.combat_state.start_player_turn()
 	deck_plus.hand.clear()
 	deck_plus.hand.append("yarn_ranger_unspool_plus")
 
+	var plus_rng_state := plus_rng.state
 	var result_plus: Dictionary = resolver.play_card(deck_plus, party_yr_3, enemies_tangled, "yarn_ranger_unspool_plus")
 	_check(result_plus.get("ok") == true, "plus Unspool legal cast ok")
+	_check(plus_rng.state == plus_rng_state, "plus cast consumes no RNG")
 	var hits_plus: Array = result_plus.get("hits", [])
 	_check(hits_plus.size() == 2, "plus hits 2 eligible")
 	# Plus damage 10 + 2 = 12.
@@ -323,28 +339,9 @@ func _test_unspool_combat_behavior() -> void:
 	_check(hits_plus[1].get("damage") == 12, "plus second damage 12")
 
 	# AC2 mixed status: attacker Weak, defender Exposed with Tangled.
-	# The existing CombatStatusAttacks applies Weak (-25%) and Exposed (+50%)
-	# floor-once before adding +2. With base 7: 7*3/4 = 5 (floor), then +2 = 7.
-	# Wait, base damage 7, weak attacker: (7*3)/4 = 5 (integer division). Then +2 = 7.
-	# But the brief says: "with attacker Weak or defender Exposed, reuse the existing
-	# CombatStatuses floor-once rule before the +2."
-	# Let's create a fixture with attacker status and defender status.
-	var party_weak := CombatParty.new([
-		{"id": "warden", "max_hp": 40},
-		{"id": "yarn_ranger", "max_hp": 30},
-		{"id": "seamstress", "max_hp": 26}
-	])
-	# We need to set the hero statuses. The party constructor creates heroes with no statuses.
-	# We can use apply_damage or modify? But party.get_heroes returns deep copy; we can't modify directly.
-	# Actually, the resolver reads statuses from the party hero at execution time.
-	# To test modifier interaction, we can pass a status dictionary through a custom mechanism?
-	# Wait, the brief says the attacker statuses come from the real hero. We can set hero statuses by creating the party with a statuses field.
-	# Let's check if `CombatParty` constructor preserves extra fields from the definition.
-	# From combat_party.gd: `hero = definitions[index].duplicate(true)` then adds position, hp, block. So yes, extra fields like "statuses" are preserved!
-	# Let's verify by reading the constructor code.
-	# Actually, the definition is duplicated, then `hero["position"] = ...`, `hero["hp"] = ...`, `hero["block"] = 0`. It does NOT remove "statuses" if present.
-	# So we can include `"statuses": {"weak": 1}` in the definition.
-
+	# CombatStatuses floors the Weak/Exposed combination once (base 7 * 9/8 = 7)
+	# and only then adds Tangled's +2, for 9. Statuses arrive through the real
+	# hero/enemy records, which preserve extra definition fields.
 	var party_weak_yr := CombatParty.new([
 		{"id": "warden", "max_hp": 40},
 		{"id": "yarn_ranger", "max_hp": 30, "statuses": {"weak": 1}},
@@ -374,13 +371,46 @@ func _test_unspool_combat_behavior() -> void:
 	])
 	dead_enemies.apply_damage(1, 14)
 	dead_enemies.apply_damage(2, 28)
-	_check(not dead_enemies.is_valid(), "dead fixture invalid roster rejected")
+	var dead_deck := CombatDeck.new(["yarn_ranger_unspool"], RandomNumberGenerator.new())
+	dead_deck.combat_state.start_player_turn()
+	dead_deck.hand.clear()
+	dead_deck.hand.append("yarn_ranger_unspool")
+	var dead_before_energy := dead_deck.energy
+	var dead_before_hand := dead_deck.hand.size()
+	_check(resolver.play_card(dead_deck, party_yr_2, dead_enemies, "yarn_ranger_unspool").get("ok") == false,
+		"dead fixture rejected before spend")
+	_check(dead_deck.energy == dead_before_energy, "dead fixture energy unchanged")
+	_check(dead_deck.hand.size() == dead_before_hand, "dead fixture hand unchanged")
+
+	# Zero hits on slain and untangled foes even when a living Tangled foe exists.
+	var mixed_enemies := CombatEnemies.new([
+		{"id": "mix_live", "max_hp": 14, "statuses": {"tangled": 1}},
+		{"id": "mix_dead", "max_hp": 12, "statuses": {"tangled": 2}},
+		{"id": "mix_plain", "max_hp": 12}
+	])
+	mixed_enemies.apply_damage(2, 12)
+	var mixed_deck := CombatDeck.new(["yarn_ranger_unspool"], RandomNumberGenerator.new())
+	mixed_deck.combat_state.start_player_turn()
+	mixed_deck.hand.clear()
+	mixed_deck.hand.append("yarn_ranger_unspool")
+	var mixed_result: Dictionary = resolver.play_card(mixed_deck, party_yr_2, mixed_enemies, "yarn_ranger_unspool")
+	_check(mixed_result.get("ok") == true, "mixed roster cast ok")
+	var mixed_hits: Array = mixed_result.get("hits", [])
+	_check(mixed_hits.size() == 1 and mixed_hits[0].get("position") == 1,
+		"only the living Tangled foe is struck")
+	_check(mixed_hits[0].get("damage") == 9 and mixed_hits[0].get("hp_loss") == 9,
+		"mixed hit is 9 (7+2)")
+	_check(mixed_enemies.get_enemy(2).get("hp") == 0
+		and mixed_enemies.get_enemy(2).get("statuses") == {"tangled": 2},
+		"slain Tangled foe is unchanged")
+	_check(mixed_enemies.get_enemy(3).get("hp") == 12, "untangled foe is unchanged")
 
 	# AC2: Block before HP.
 	var enemies_block := CombatEnemies.new([
-		{"id": "patch_imp", "max_hp": 12, "statuses": {"tangled": 1}, "block": 4},
+		{"id": "patch_imp", "max_hp": 12, "statuses": {"tangled": 1}},
 		{"id": "stitch_foe", "max_hp": 17, "statuses": {"tangled": 1}}
 	])
+	enemies_block.gain_block(1, 4)
 	var deck_block := CombatDeck.new(["yarn_ranger_unspool"], RandomNumberGenerator.new())
 	deck_block.combat_state.start_player_turn()
 	deck_block.hand.clear()
@@ -390,11 +420,130 @@ func _test_unspool_combat_behavior() -> void:
 	var block_hits: Array = block_result.get("hits", [])
 	_check(block_hits[0].get("position") == 1, "block first at 1")
 	_check(block_hits[0].get("block_absorbed") == 4, "block 4 absorbed")
-	_check(block_hits[0].get("hp_loss") == 3, "hp loss 3 = 9 - 4 (base 7+2=9, block 4)")
+	_check(block_hits[0].get("hp_loss") == 5, "hp loss 5 = 9 - 4 (base 7+2=9, block 4)")
 	_check(block_hits[1].get("position") == 2, "second block hit at 2")
 
 	# Verify no status mutation or RNG consumption.
-	var before_statuses: Dictionary = enemies_tangled.get_enemy(1).get("statuses", {}).duplicate(true)
 	_check(enemies_tangled.get_enemy(1).get("statuses", {}).get("tangled") == 2,
 		"tangled counter unchanged after cast")
+
+	# AC3 negative fixtures.
+	# No eligible target.
+	var no_target_deck := CombatDeck.new(["yarn_ranger_unspool"], RandomNumberGenerator.new())
+	no_target_deck.combat_state.start_player_turn()
+	no_target_deck.hand.clear()
+	no_target_deck.hand.append("yarn_ranger_unspool")
+	var no_target_result := resolver.play_card(no_target_deck, party_yr_2,
+		CombatEnemies.new([{"id": "f1", "max_hp": 10}]), "yarn_ranger_unspool")
+	_check(no_target_result.get("ok") == false, "no eligible target rejected")
+
+	# Wrong card ID.
+	var bad_id_result := resolver.play_card(CombatDeck.new(["bad"], RandomNumberGenerator.new()), party_yr_2,
+		enemies_tangled, "bad_id")
+	_check(bad_id_result.get("ok") == false, "invalid card id rejected")
+
+	# No genuine hand copy.
+	var no_hand := CombatDeck.new(["yarn_ranger_unspool"], RandomNumberGenerator.new())
+	no_hand.combat_state.start_player_turn()
+	no_hand.hand.clear()
+	var no_copy_result := resolver.play_card(no_hand, party_yr_2, enemies_tangled, "yarn_ranger_unspool")
+	_check(no_copy_result.get("ok") == false, "missing hand copy rejected")
+
+	# Invalid energy.
+	var low_energy := CombatDeck.new(["yarn_ranger_unspool"], RandomNumberGenerator.new())
+	low_energy.combat_state.start_player_turn()
+	low_energy.hand.append("yarn_ranger_unspool")
+	low_energy.combat_state.energy = 1
+	var low_e_result := resolver.play_card(low_energy, party_yr_2, enemies_tangled, "yarn_ranger_unspool")
+	_check(low_e_result.get("ok") == false, "low energy rejected")
+
+	# Replay after rejection must succeed.
+	var replay_deck := CombatDeck.new(["yarn_ranger_unspool"], RandomNumberGenerator.new())
+	replay_deck.combat_state.start_player_turn()
+	replay_deck.hand.clear()
+	replay_deck.hand.append("yarn_ranger_unspool")
+	var replay_result := resolver.play_card(replay_deck, party_yr_2, enemies_tangled, "yarn_ranger_unspool")
+	_check(replay_result.get("ok") == true, "valid retry succeeds after prior rejection")
+
+	# A consumed single copy cannot be replayed.
+	_check(not replay_deck.hand.has("yarn_ranger_unspool"), "consumed copy left the hand")
+	_check(resolver.play_card(replay_deck, party_yr_2, enemies_tangled,
+		"yarn_ranger_unspool").get("ok") == false, "consumed copy cannot be replayed")
+	_check(replay_deck.energy == 1, "consumed copy replay charges no energy")
+
+	# AC3: owner position, downed owner, inactive turn, invalid models and malformed
+	# status snapshots all reject with a complete no-mutation snapshot.
+	var fresh_enemies := CombatEnemies.new([{"id": "fresh", "max_hp": 10, "statuses": {"tangled": 1}}])
+	var front_party := CombatParty.new([
+		{"id": "yarn_ranger", "max_hp": 30},
+		{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 26}
+	])
+	var downed_party := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 26},
+		{"id": "yarn_ranger", "max_hp": 30}
+	])
+	downed_party.apply_damage(3, 30)
+	var inactive_deck := CombatDeck.new(["yarn_ranger_unspool"], _seeded_rng())
+	inactive_deck.hand.append("yarn_ranger_unspool")
+	var short_party := CombatParty.new([{"id": "warden", "max_hp": 40}])
+	var malformed_party := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "yarn_ranger", "max_hp": 30, "statuses": "bad"},
+		{"id": "seamstress", "max_hp": 26}
+	])
+	var malformed_enemies := CombatEnemies.new([
+		{"id": "bad_one", "max_hp": 10, "statuses": {"tangled": 1}},
+		{"id": "bad_two", "max_hp": 10, "statuses": "bad"}
+	])
+	var rejected_cases: Array[Dictionary] = [
+		{"label": "Yarn Ranger in position 1", "deck": _active_deck("yarn_ranger_unspool"),
+			"party": front_party, "enemies": fresh_enemies},
+		{"label": "downed Yarn Ranger", "deck": _active_deck("yarn_ranger_unspool"),
+			"party": downed_party, "enemies": fresh_enemies},
+		{"label": "inactive turn", "deck": inactive_deck,
+			"party": party_yr_2, "enemies": fresh_enemies},
+		{"label": "invalid party model", "deck": _active_deck("yarn_ranger_unspool"),
+			"party": short_party, "enemies": fresh_enemies},
+		{"label": "invalid enemy model", "deck": _active_deck("yarn_ranger_unspool"),
+			"party": party_yr_2, "enemies": CombatEnemies.new([])},
+		{"label": "malformed attacker statuses", "deck": _active_deck("yarn_ranger_unspool"),
+			"party": malformed_party, "enemies": fresh_enemies},
+		{"label": "malformed defender statuses", "deck": _active_deck("yarn_ranger_unspool"),
+			"party": party_yr_2, "enemies": malformed_enemies},
+	]
+	for entry: Dictionary in rejected_cases:
+		var before: Dictionary = _combat_snapshot(entry["deck"], entry["party"], entry["enemies"])
+		_check(resolver.play_card(entry["deck"], entry["party"], entry["enemies"],
+			"yarn_ranger_unspool").get("ok") == false, entry["label"] + " rejected")
+		_check(_combat_snapshot(entry["deck"], entry["party"], entry["enemies"]) == before,
+			entry["label"] + " leaves hand, discard, energy, party and enemies untouched")
+
+
+func _seeded_rng() -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20261026
+	return rng
+
+
+func _active_deck(card_id: String) -> CombatDeck:
+	var deck := CombatDeck.new([card_id], _seeded_rng())
+	deck.combat_state.start_player_turn()
+	deck.hand.clear()
+	deck.hand.append(card_id)
+	return deck
+
+
+func _combat_snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies) -> Dictionary:
+	return {
+		"turn": deck.turn_active,
+		"energy": deck.energy,
+		"hand": deck.hand.duplicate(),
+		"draw": deck.draw_pile.duplicate(),
+		"discard": deck.discard_pile.duplicate(),
+		"party": party.get_heroes(),
+		"enemies": enemies.get_enemies()
+	}
+
 

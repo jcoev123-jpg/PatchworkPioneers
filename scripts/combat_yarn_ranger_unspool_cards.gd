@@ -62,8 +62,12 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			if pos == 2 or pos == 3:
 				if not party.is_downed(pos):
 					yr_positions.append(pos)
-				# Read real status snapshot from the hero record.
-				yr_statuses = hero.get("statuses", {})
+				# Read real status snapshot from the hero record, failing closed on
+				# malformed data instead of letting a typed assignment abort.
+				var hero_statuses: Variant = hero.get("statuses", {})
+				if not hero_statuses is Dictionary:
+					return {"ok": false}
+				yr_statuses = hero_statuses
 	if yr_positions.size() != 1:
 		return {"ok": false}
 	var owner_position: int = yr_positions[0]
@@ -78,7 +82,10 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if not enemies.is_slain(pos):
 			var enemy_dict: Dictionary = enemies.get_enemy(pos)
 			if not enemy_dict.is_empty():
-				var statuses: Dictionary = enemy_dict.get("statuses", {})
+				var raw_statuses: Variant = _read_statuses(enemy_dict)
+				if not raw_statuses is Dictionary:
+					return {"ok": false}
+				var statuses: Dictionary = raw_statuses
 				var tangled_val: Variant = statuses.get("tangled", 0)
 				if tangled_val is int and tangled_val > 0:
 					eligible.append(pos)
@@ -92,7 +99,10 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return {"ok": false}
 	for pos in eligible:
 		var enemy_pre: Dictionary = enemies.get_enemy(pos)
-		var defender_statuses: Dictionary = enemy_pre.get("statuses", {})
+		var defender_raw: Variant = _read_statuses(enemy_pre)
+		if not defender_raw is Dictionary:
+			return {"ok": false}
+		var defender_statuses: Dictionary = defender_raw
 		if not _valid_statuses(defender_statuses):
 			return {"ok": false}
 
@@ -111,10 +121,14 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var hits: Array[Dictionary] = []
 	for pos in eligible:
 		var defender_dict: Dictionary = enemies.get_enemy(pos)
-		var defender_statuses: Dictionary = defender_dict.get("statuses", {})
+		var defender_raw: Variant = _read_statuses(defender_dict)
 		# Re-read attacker statuses from the real party hero.
 		var hero_dict: Dictionary = party.get_hero(owner_position)
-		var attacker_statuses: Dictionary = hero_dict.get("statuses", {})
+		var attacker_raw: Variant = _read_statuses(hero_dict)
+		if not defender_raw is Dictionary or not attacker_raw is Dictionary:
+			return {"ok": false, "hits": []}
+		var defender_statuses: Dictionary = defender_raw
+		var attacker_statuses: Dictionary = attacker_raw
 
 		var event: Dictionary = _attacks.resolve_vs_enemy(
 			enemies, pos, base_damage,
@@ -132,13 +146,21 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	return {"ok": true, "hits": hits}
 
 
+## Absent statuses mean "no counters". A present non-Dictionary value is
+## malformed and must be rejected, never coerced into {}.
+func _read_statuses(actor: Dictionary) -> Variant:
+	if not actor.has("statuses"):
+		return {}
+	return actor.get("statuses")
+
+
 ## Replicates CombatStatusAttacks' private validation exactly, without
 ## mutating any input dictionary.
 func _valid_statuses(statuses: Dictionary) -> bool:
 	if not statuses is Dictionary:
 		return false
 	for name in statuses:
-		if not name is String or name not in ["bleed", "weak", "exposed", "tangled", "riposte"]:
+		if not name is String or name not in ["bleed", "weak", "exposed", "tangled"]:
 			return false
 		var count = statuses[name]
 		if not count is int or count < 0:
