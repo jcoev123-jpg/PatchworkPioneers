@@ -177,7 +177,7 @@ func _hover_text(node: Dictionary, legal: bool = false) -> String:
 	var prefix := "Floor %02d · %s · Branch %d" % [
 		int(node["floor"]), str(node["type"]), int(node["position"]) + 1]
 	if legal:
-		return prefix + " · " + str(EXPECTED_HELP["Campfire" if node.type == "Rest" and node.floor == 1 else str(node.type)]["tooltip"])
+		return prefix + " · " + str(EXPECTED_HELP["Campfire" if node.type == "Rest" else str(node.type)]["tooltip"])
 	return prefix
 
 
@@ -591,7 +591,7 @@ func _verify_choice_ticket(view: RunRouteAtlas, map: RunMap, label: String) -> v
 		return
 	var node := map.get_node(id)
 	var kind := str(node["type"])
-	var fact: Dictionary = EXPECTED_HELP.get("Campfire" if kind == "Rest" and node.floor == 1 else kind, {})
+	var fact: Dictionary = EXPECTED_HELP.get("Campfire" if kind == "Rest" else kind, {})
 	_check(not fact.is_empty(), label + ": legal kind has independent authored consequence " + kind)
 	if fact.is_empty():
 		return
@@ -1559,13 +1559,13 @@ func _run() -> void:
 		"generic Rest facts retain the full legacy action set")
 	var rest_record := {"floor": 2, "position": 0, "type": "Rest"}
 	_check(RunRouteAtlas.node_hover_text(rest_record, "", true)
-		== "Floor 02 · Rest · Branch 1 · " + str(EXPECTED_HELP.Rest.tooltip),
-		"later-floor legal Rest keeps independent legacy Help")
+		== "Floor 02 · Rest · Branch 1 · " + str(EXPECTED_HELP.Campfire.tooltip),
+		"later-floor legal Rest offers Campfire Help while retaining Rest identity")
 	rest_record.floor = 1
 	_check(RunRouteAtlas.node_hover_text(rest_record) == "Floor 01 · Rest · Branch 1"
 		and RunRouteAtlas.node_hover_text(rest_record, "", true)
 		== "Floor 01 · Rest · Branch 1 · " + str(EXPECTED_HELP.Campfire.tooltip),
-		"only legal opening Rest advice names Heal or Leave while identity remains Rest")
+		"legal opening Rest advice names Heal or Leave while identity remains Rest")
 	# App mounts this view under PatchworkUIShell's installed master Theme, so install that
 	# same Theme here. A bare variation string would prove nothing: the mounted labels must
 	# resolve the genuine Londrina heading face through the inherited Theme.

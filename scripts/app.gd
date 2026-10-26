@@ -1688,14 +1688,19 @@ func _choose_atlas_opening(id: String, source_map: WeakRef, source_view: WeakRef
 		or button.disabled or not button.visible:
 		return false
 	if (run_map.get_node(id).get("type") in ["SewingCircle", "Campfire", "PatchStall", "Unpicker"] \
-		or _opening_rest(id, prior)) \
+		or run_map.get_node(id).get("type") == "Rest") \
 		and button.get_meta("sewing_source", {}) != _sewing_context():
+		return false
+	var rest: bool = run_map.get_node(id).get("type") == "Rest"
+	if rest and not _campfire_route_ready(id, source_map, prior, button, true):
 		return false
 	_clear_route_atlas()
 	route_view.show()
 	if is_instance_valid(route_book_backdrop):
 		route_book_backdrop.show()
 	button.grab_focus()
+	if rest:
+		return _choose_campfire_route(id, source_map, prior, button)
 	return _dispatch_route(id, source_map, prior, button)
 
 
@@ -4365,11 +4370,15 @@ func _unpicker_decision(intent: Dictionary, view, visit: RunUnpickerVisit) -> vo
 	_present_connected_route(weakref(run_map))
 
 
-func _choose_campfire_route(id: String, source: WeakRef, prior: Array[String], button) -> bool:
+## Atlas preflight uses the original mounted chooser while its parent is hidden.
+## All model and source checks run before the overlay is retired.
+func _campfire_route_ready(id: String, source: WeakRef, prior: Array[String], button,
+		atlas: bool = false) -> bool:
 	if not _can_choose_connected_route() or source == null or source.get_ref() != run_map \
-		or not is_instance_valid(route_view) or not route_view.is_visible_in_tree() \
+		or not is_instance_valid(route_view) or (not atlas and not route_view.is_visible_in_tree()) \
 		or not is_instance_valid(button) or button not in route_buttons \
-		or button.get_parent() != route_view or button.disabled or not button.is_visible_in_tree() \
+		or button.get_parent() != route_view or button.disabled or not button.visible \
+		or (not atlas and not button.is_visible_in_tree()) \
 		or button.get_meta("route_id", "") != id or button.get_meta("route_kind", "") != run_map.get_node(id).get("type") \
 		or run_map.get_route() != prior or not run_map.get_legal_choices().has(id) \
 		or run_map.get_node(id).get("type") not in ["Campfire", "Rest"] \
@@ -4385,6 +4394,12 @@ func _choose_campfire_route(id: String, source: WeakRef, prior: Array[String], b
 			or state.seed != run_seed or state.rest_id != "" \
 			or not carry.can_bind_wardrobe(carry._wardrobe, carry.torn, state):
 			return false
+	return RunCampfireVisit.new(id, run_heroes).read_state().ok
+
+
+func _choose_campfire_route(id: String, source: WeakRef, prior: Array[String], button) -> bool:
+	if not _campfire_route_ready(id, source, prior, button):
+		return false
 	var visit := RunCampfireVisit.new(id, run_heroes)
 	if not visit.read_state().ok or not run_map.choose_node(id):
 		return false

@@ -248,3 +248,31 @@ func _request(action: String, generation: int, source: RunCampfireVisit) -> void
 		"node_id": _snapshot["node_id"],
 		"expected_heroes": _snapshot["heroes"].duplicate(true),
 	})
+
+
+## Physical 1/2 hands the numbered action to the same generation-bound pressed
+## callback the mouse and focus paths use, so the bound visit, snapshot,
+## submission, visibility and disabled state still decide. Closed, hidden,
+## spent, disabled and unnumbered keys are inert.
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventKey):
+		return
+	var key: InputEventKey = event
+	if not key.pressed or key.echo:
+		return
+	if not is_inside_tree() or not is_visible_in_tree() or not _source_current() \
+			or not _display_current():
+		return
+	var button: Button = null
+	match key.keycode:
+		KEY_1:
+			button = heal_button
+		KEY_2:
+			button = leave_button
+	if button == null or button.disabled or not button.is_visible_in_tree():
+		return
+	var callback: Callable = _connections.get(button, Callable())
+	if not callback.is_valid() or not button.pressed.is_connected(callback):
+		return
+	get_viewport().set_input_as_handled()
+	callback.call()

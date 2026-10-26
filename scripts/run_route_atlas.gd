@@ -1239,7 +1239,7 @@ static func node_hover_text(node: Dictionary, fallback_kind: String = "",
 	var prefix := "Floor %02d · %s · Branch %d" % [
 		int(node["floor"]), kind, int(node["position"]) + 1]
 	if show_consequence:
-		var facts := stop_consequence("Campfire" if kind == "Rest" and node.get("floor") == 1 else kind)
+		var facts := stop_consequence("Campfire" if kind == "Rest" else kind)
 		if not facts.is_empty():
 			return prefix + " · " + str(facts["tooltip"])
 	return prefix
@@ -1275,8 +1275,7 @@ func _show_choice_ticket(id: String) -> void:
 	if record.is_empty():
 		return
 	var kind := str(record.get("type", ""))
-	var facts := stop_consequence("Campfire" if kind == "Rest" and record.get("floor") == 1 \
-		and _map.get_route().is_empty() else kind)
+	var facts := stop_consequence("Campfire" if kind == "Rest" else kind)
 	if facts.is_empty():
 		return
 	var header := "%s · FLOOR %02d · BRANCH %d" % [

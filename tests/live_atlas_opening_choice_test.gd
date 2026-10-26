@@ -38,7 +38,7 @@ const LIVE_HELP := {
 func _expected_hover(node: Dictionary, legal: bool) -> String:
 	var prefix := "Floor %02d · %s · Branch %d" % [
 		int(node["floor"]), String(node["type"]), int(node["position"]) + 1]
-	var help_kind: String = "Campfire" if legal and node.type == "Rest" and node.floor == 1 else str(node.type)
+	var help_kind: String = "Campfire" if legal and node.type == "Rest" else str(node.type)
 	return prefix + (" · " + str(LIVE_HELP[help_kind][2]) if legal else "")
 
 
@@ -50,7 +50,7 @@ func _check_ticket(atlas: RunRouteAtlas, id: String, where: String) -> void:
 		return
 	var node := atlas._map.get_node(id)
 	var kind: String = node["type"]
-	var facts: Array = LIVE_HELP["Campfire" if kind == "Rest" and node.floor == 1 else kind]
+	var facts: Array = LIVE_HELP["Campfire" if kind == "Rest" else kind]
 	_check(ticket.route_id == id
 		and ticket.header_text == "%s · FLOOR %02d · BRANCH %d" % [
 			RunRouteAtlas.area_for_floor(int(node["floor"])).to_upper(),
