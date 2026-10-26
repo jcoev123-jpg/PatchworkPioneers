@@ -11,7 +11,8 @@ const UNRAVEL_TINKER_IDS := ["tinker_shrapnel_seam", "tinker_shrapnel_seam_plus"
 const ENERGY_TINKER_IDS := ["tinker_overclock", "tinker_overclock_plus"]
 const ENERGY_SEAMSTRESS_IDS := ["seamstress_tailors_trance", "seamstress_tailors_trance_plus"]
 const ENERGY_IDS := ENERGY_TINKER_IDS + ENERGY_SEAMSTRESS_IDS
-const CARD_IDS := SEAMSTRESS_IDS + TINKER_IDS + UNRAVEL_TINKER_IDS + ENERGY_IDS
+const YARN_IDS := ["yarn_ranger_unspool", "yarn_ranger_unspool_plus"]
+const CARD_IDS := SEAMSTRESS_IDS + TINKER_IDS + UNRAVEL_TINKER_IDS + ENERGY_IDS + YARN_IDS
 const INSTRUCTION := "Click or focus and press Enter / Space to play"
 const CUE_NAME := "BlanketStitchCue"
 const CREAM := Color("#ece0c8")
@@ -155,6 +156,8 @@ func _is_card(card_id: String) -> bool:
 
 
 func _definition(card_id: String) -> Dictionary:
+	if card_id in YARN_IDS:
+		return YarnRangerPoolCards.new().get_definition(card_id)
 	return _tinker_catalog.get_definition(card_id) if card_id in TINKER_IDS \
 		or card_id in UNRAVEL_TINKER_IDS or card_id in ENERGY_TINKER_IDS \
 		else _catalog.get_definition(card_id)
@@ -408,6 +411,10 @@ func _rule_text(card_id: String) -> String:
 	if definition.get("id") != card_id:
 		return "Unknown card rules"
 	var effects: Dictionary = definition.get("effects", {})
+	if card_id in YARN_IDS:
+		return "%s | Yarn Ranger | %d energy | From %s\nLiving Tangled enemies %s only: %d base damage each (Weak/Exposed, Tangled +2 and Block apply); requires a living Tangled target, no target choice" % [
+			definition.display_name, definition.cost, _positions(definition.from_positions),
+			_positions(definition.to_positions), effects.damage]
 	if card_id in ENERGY_TINKER_IDS:
 		return "%s | Tinker | %d energy | From %s\nSelf: Gain %d energy; take %d self-damage (Block absorbs first), no target choice" % [
 			String(definition.get("display_name", card_id)), int(definition.get("cost", -1)),
@@ -462,6 +469,8 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 		or card_id in ENERGY_TINKER_IDS
 	var is_energy: bool = card_id in ENERGY_IDS
 	var owner_color: Color = TINKER if is_tinker else SEAMSTRESS
+	if card_id in YARN_IDS:
+		owner_color = INK
 	for existing in panel.get_children():
 		if existing.name == CUE_NAME:
 			panel.remove_child(existing)
@@ -546,6 +555,11 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 		effect_label.clip_text = false
 		effect_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		column.add_child(effect_label)
+		if card_id in YARN_IDS:
+			var owner_label := _cue_label("Yarn Ranger", 9, owner_color)
+			owner_label.name = "Owner"
+			column.add_child(owner_label)
+			labels["owner"] = owner_label
 		var pips := _pip_row(definition, owner_color)
 		pips.name = "Positions"
 		column.add_child(pips)
@@ -568,6 +582,8 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 ## resolver applies, printed without its arithmetic.
 func _short_effect(definition: Dictionary) -> String:
 	var effects: Dictionary = definition.get("effects", {})
+	if definition.get("id", "") in YARN_IDS:
+		return "Deal %d to living Tangled enemies only." % effects.damage
 	if str(definition.get("target_kind", "")) == "enemy_random":
 		return "Deal %d x%d, random." % [int(effects.get("damage", 0)),
 			int(effects.get("hit_count", 1))]
@@ -689,7 +705,7 @@ func face_text(panel) -> Dictionary:
 	var binding: Dictionary = _bindings[panel]
 	var text := {}
 	for key in ["cue_name", "cue_cost", "cue_variant", "cue_area", "cue_bleed",
-			"cue_target", "cue_effect"]:
+			"cue_target", "cue_effect", "cue_owner"]:
 		var label = binding.get(key)
 		if is_instance_valid(label):
 			text[key.trim_prefix("cue_")] = label.text
@@ -837,8 +853,43 @@ func _eligible(panel, card_id: String) -> bool:
 		return false
 	if not _enemies.is_valid() or _enemies.is_victorious():
 		return false
+	if card_id in YARN_IDS:
+		if not _receipt_valid(_receipt(panel, card_id)) or not _yarn_playable(card_id):
+			return false
 	return app.deck == _deck and app.party == _party and app.enemies == _enemies \
 		and app.battle_result == _result and app.run_rng == _rng and app.battle_view == _battle
+
+
+## Read-only admission; the existing resolver remains the paid rules authority.
+func _yarn_playable(card_id: String) -> bool:
+	var definition := _definition(card_id)
+	if _deck.energy < definition.cost or card_id not in _deck.hand:
+		return false
+	var owners := 0
+	var resolver := CombatYarnRangerUnspoolCards.new()
+	for hero in _party.get_heroes():
+		if hero.id == definition.owner:
+			if hero.position not in definition.from_positions or _party.is_downed(hero.position):
+				return false
+			var statuses: Variant = hero.get("statuses", {})
+			if not statuses is Dictionary or not resolver._valid_statuses(statuses):
+				return false
+			owners += 1
+	if owners != 1:
+		return false
+	var eligible := false
+	for enemy in _enemies.get_enemies():
+		if _enemies.is_slain(enemy.position):
+			continue
+		var statuses: Variant = enemy.get("statuses", {})
+		if not statuses is Dictionary:
+			return false
+		var tangled: Variant = statuses.get("tangled", 0)
+		if tangled is int and tangled > 0:
+			if not resolver._valid_statuses(statuses):
+				return false
+			eligible = true
+	return eligible
 
 
 func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
@@ -853,7 +904,10 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 	# The existing resolvers revalidate every condition before mutation.
 	var event: Dictionary
 	var energy_before: int = receipt.deck.energy
-	if card_id in ENERGY_IDS:
+	if card_id in YARN_IDS:
+		event = CombatYarnRangerUnspoolCards.new().play_card(
+			receipt.deck, receipt.party, receipt.enemies, card_id)
+	elif card_id in ENERGY_IDS:
 		if not CombatPoolEnergyCards.new().play_card(receipt.deck, receipt.party, card_id, 0):
 			_cancel()
 			return
