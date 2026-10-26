@@ -19,6 +19,8 @@ func _initialize() -> void:
 	_test_needle_wasp_bleeding_sting()
 	_test_moth_swarm_block_chew_catalog()
 	_test_moth_swarm_block_chew_phase()
+	_test_scissor_crab_block_snip_catalog()
+	_test_scissor_crab_block_snip_phase()
 	_test_thread_biter_lifesteal_catalog()
 	_test_thread_biter_lifesteal_phase()
 	_test_tough_normal_pair_live_catalog_and_bands()
@@ -118,7 +120,9 @@ func _old_expected() -> Dictionary:
 
 func _new_expected() -> Dictionary:
 	return {
-		"scissor_crab": {"id": "scissor_crab", "name": "Scissor Crab", "max_hp": 26, "art_path": "res://assets/paper/enemies/scissor_crab.png",
+		"scissor_crab": {"id": "scissor_crab", "name": "Scissor Crab", "max_hp": 26,
+			"chew_block_on_attack": true,
+			"art_path": "res://assets/paper/enemies/scissor_crab.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "snip_block", "amount": 0, "weight": 2},
 				{"type": "attack", "amount": 6, "weight": 3}]}},
@@ -2562,8 +2566,18 @@ func _test_moth_swarm_block_chew_catalog() -> void:
 		if record is Dictionary and record.get("chew_block_on_attack") is bool \
 				and record.get("chew_block_on_attack") == true:
 			carriers.append(String(record.get("id", "")))
-	_check(carriers == ["moth_swarm"],
-		"AC1: chew_block_on_attack=true is authored by Moth Swarm alone: " + str(carriers))
+	# The trait is shared authored content, so each named opt-in is checked on
+	# its own and the named non-carrier proves the per-ID checks still bite.
+	_check(carriers.has("moth_swarm"),
+		"AC1: chew_block_on_attack=true is authored by the Moth Swarm: " + str(carriers))
+	_check(carriers.has("scissor_crab"),
+		"AC1: chew_block_on_attack=true is authored by the Scissor Crab: " + str(carriers))
+	_check(not carriers.has("thimble_beetle"),
+		"AC1: the Thimble Beetle stays the unflagged named control: " + str(carriers))
+	_check(_find(parsed, "moth_swarm").get("chew_block_on_attack") == true
+		and _find(parsed, "scissor_crab").get("chew_block_on_attack") == true
+		and not _find(parsed, "thimble_beetle").has("chew_block_on_attack"),
+		"AC1: the named records carry exactly their own authored trait state")
 	_check(RunTypedBattleRoster._parse_catalog_text(JSON.stringify([moth])).size() == 1,
 		"AC1: the genuine boolean trait keeps the whole catalog valid")
 	_check(RunTypedBattleRoster._parse_catalog_text(
@@ -2878,4 +2892,220 @@ func _test_moth_swarm_block_chew_phase() -> void:
 			"AC4: identical seeded bites reproduce events, Block and HP")
 		_check(replay_one.rng.state == replay_state,
 			"AC4: the replayed phase consumes no further run RNG")
+
+## AC1: the shipped Scissor Crab keeps its identity and both original weighted
+## alternatives, and opts into the already-live Block-eating attack trait with
+## exactly one genuine boolean field. The Moth Swarm keeps its own flag and the
+## Thimble Beetle stays the unflagged named control.
+func _test_scissor_crab_block_snip_catalog() -> void:
+	var parsed := _load_parsed()
+	var crab := _find(parsed, "scissor_crab")
+	_check(not crab.is_empty(), "precondition: the shipped Scissor Crab record loads")
+	if crab.is_empty():
+		return
+	_check(crab.get("chew_block_on_attack") is bool
+		and crab.get("chew_block_on_attack") == true,
+		"AC1: the parsed Scissor Crab authors chew_block_on_attack as a genuine bool")
+	_check(_norm(crab) == _norm(_new_expected()["scissor_crab"]),
+		"AC1: the exact Scissor Crab record keeps its authored fields and alternatives")
+	var established: Dictionary = _new_expected()["scissor_crab"].duplicate(true)
+	established.erase("chew_block_on_attack")
+	var without_trait: Dictionary = crab.duplicate(true)
+	without_trait.erase("chew_block_on_attack")
+	_check(_norm(without_trait) == _norm(established),
+		"AC1: the new boolean is the only difference from the established Crab record")
+	_check(crab.get("name") == "Scissor Crab" and crab.get("max_hp") == 26
+		and crab.get("art_path") == "res://assets/paper/enemies/scissor_crab.png"
+		and crab.get("intent", {}).get("target") == "front",
+		"AC1: Scissor Crab keeps its name, 26 HP, art path and front target")
+	var snip := _authored_alternative(crab, "snip_block", 0)
+	var attack := _authored_alternative(crab, "attack", 6)
+	_check(not snip.is_empty() and int(snip.get("weight", 0)) == 2,
+		"AC1: the authored 0-amount snip keeps weight 2")
+	_check(not attack.is_empty() and int(attack.get("weight", 0)) == 3,
+		"AC1: the authored 6-damage attack keeps weight 3")
+	var moth := _find(parsed, "moth_swarm")
+	_check(moth.get("chew_block_on_attack") is bool
+		and moth.get("chew_block_on_attack") == true,
+		"AC1: the already-authored Moth Swarm keeps its own true trait")
+	_check(_norm(moth) == _norm(_trio_expected()["moth_swarm"]),
+		"AC1: the Moth Swarm record is untouched by the Crab opt-in")
+	var beetle := _find(parsed, "thimble_beetle")
+	_check(not beetle.is_empty() and not beetle.has("chew_block_on_attack"),
+		"AC1: the Thimble Beetle control authors no chew trait")
+	# AC4: the same record is already admitted by ID through the real live Fight
+	# catalog and floor-band derivation, with no new wiring or encounter.
+	var material := RunAuthoredBattleEntry._floor_band_material(null)
+	_check(material.get("ok") == true,
+		"AC4: live floor-band material builds from the shipped catalogs")
+	if material.get("ok", false):
+		var live: Dictionary = material.get("records", {}).get("scissor_crab", {})
+		_check(not live.is_empty() and live.get("chew_block_on_attack") == true
+			and live.get("max_hp") == 26
+			and live.get("intent", {}).get("target") == "front",
+			"AC4: the live Fight record keeps the Crab's trait, HP and target policy")
+		var band := _band_containing(material.get("pools", {}), "scissor_crab")
+		_check(not band.is_empty(),
+			"AC4: Scissor Crab is eligible in a derived live floor band")
+	_check(RunTypedBattleRoster._parse_catalog_text(JSON.stringify([crab])).size() == 1,
+		"AC1: the genuine boolean trait keeps the whole catalog valid")
+	_check(RunTypedBattleRoster._parse_catalog_text(
+		JSON.stringify([without_trait])).size() == 1,
+		"AC3: an absent Crab trait stays valid metadata")
+	var disabled: Dictionary = crab.duplicate(true)
+	disabled["chew_block_on_attack"] = false
+	_check(RunTypedBattleRoster._parse_catalog_text(JSON.stringify([disabled])).size() == 1,
+		"AC3: an explicit false Crab trait stays valid metadata")
+	for invalid_value in ["true", 1, 1.0, null, [], {}]:
+		var malformed: Dictionary = crab.duplicate(true)
+		malformed["chew_block_on_attack"] = invalid_value
+		_check(RunTypedBattleRoster._parse_catalog_text(
+			JSON.stringify([malformed])).is_empty(),
+			"AC3: malformed Crab chew metadata rejects the whole catalog: "
+				+ str(invalid_value))
+
+## AC2: a living opted-in Scissor Crab's genuine 6-damage attack snips all six
+## Block off the real recipient before the hit lands, through the real catalog
+## record, seeded weighted scheduler and CombatEnemyPhase. AC3: the separate
+## snip, an explicit-false/absent flag and a slain source keep the old
+## Block-first or inert behavior. AC4: invalid metadata and rejected beats stay
+## atomic, and the executed attack spends no extra run RNG.
+func _test_scissor_crab_block_snip_phase() -> void:
+	var parsed := _load_parsed()
+	var crab := _find(parsed, "scissor_crab")
+	_check(not crab.is_empty() and crab.get("chew_block_on_attack") == true,
+		"precondition: the shipped Scissor Crab really authors the snip trait")
+	if crab.is_empty() or crab.get("chew_block_on_attack") != true:
+		return
+	var attack := _authored_alternative(crab, "attack", 6)
+	var snip := _authored_alternative(crab, "snip_block", 0)
+	_check(not attack.is_empty() and not snip.is_empty(),
+		"precondition: the authored Crab attack and snip alternatives exist")
+	if attack.is_empty() or snip.is_empty():
+		return
+
+	# AC2: 6 Block and full 40 HP lose the Block first, then the full six.
+	var party := _party()
+	_check(party.get_hero(1).get("id") == "warden"
+		and party.get_hero(1).get("hp") == 40 and party.gain_block(1, 6),
+		"AC2 precondition: the living front Warden really holds 40 HP and six Block")
+	var case := _force_normal_alternative(crab, attack, party)
+	_check(not case.is_empty(), "AC2: the shipped Crab attack binds as a real announcement")
+	if case.is_empty():
+		return
+	_check(case.intents.size() == 1 and case.intents[0].get("type") == "attack"
+		and int(case.intents[0].get("amount", -1)) == 6
+		and case.intents[0].get("target_position") == 1,
+		"AC2: the real announcement is the authored six-damage attack on the front hero")
+	var committed: int = case.rng.state
+	var untouched: Array = [party.get_hero(2), party.get_hero(3)]
+	var receipt := CombatEnemyPhase.new().execute_phase(party, case.enemies,
+		case.intents, null, true)
+	_check(receipt == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 1, "applied": true}]},
+		"AC2: the snipping attack publishes exactly one ordinary attack event")
+	_check(party.get_hero(1).get("block") == 0 and party.get_hero(1).get("hp") == 34,
+		"AC2: 6 Block + 40 HP => 0 Block + 34 HP in that one attack")
+	_check([party.get_hero(2), party.get_hero(3)] == untouched,
+		"AC2: the snipping attack leaves the other two heroes exactly unchanged")
+	_check(case.rng.state == committed and case.scheduler.get_intents() == case.intents,
+		"AC4: the executed attack spends no extra run RNG and replays its announcement")
+
+	# AC3: the separate authored snip clears Block without any HP damage.
+	var snip_party := _party()
+	_check(snip_party.gain_block(1, 6),
+		"AC3 precondition: six Block before the standalone Crab snip")
+	var snip_case := _force_normal_alternative(crab, snip, snip_party)
+	if not snip_case.is_empty():
+		var snip_receipt := CombatEnemyPhase.new().execute_phase(snip_party,
+			snip_case.enemies, snip_case.intents, null, true)
+		_check(snip_receipt == {"ok": true, "events": [
+			{"type": "snip_block", "enemy_position": 1, "target_position": 1,
+				"applied": true}]},
+			"AC3: the standalone snip is one ordered Block strip with no extra attack")
+		_check(snip_party.get_hero(1).get("block") == 0
+			and snip_party.get_hero(1).get("hp") == 40,
+			"AC3: the standalone snip zeroes Block and costs no HP")
+
+	# AC3: an explicit false or an absent trait blocks all six damage in full.
+	for mode in ["explicit_false", "absent"]:
+		var control_record: Dictionary = crab.duplicate(true)
+		if mode == "explicit_false":
+			control_record["chew_block_on_attack"] = false
+		else:
+			control_record.erase("chew_block_on_attack")
+		var control_party := _party()
+		_check(control_party.gain_block(1, 6),
+			"AC3 precondition: six Block for the %s Crab control" % mode)
+		var control_case := _force_normal_alternative(control_record, attack, control_party)
+		if control_case.is_empty():
+			continue
+		var control_receipt := CombatEnemyPhase.new().execute_phase(control_party,
+			control_case.enemies, control_case.intents, null, true)
+		_check(control_receipt.get("ok") == true
+			and control_receipt.get("events", [{}])[0].get("applied") == true,
+			"AC3: the non-opted-in six-damage attack still resolves: " + mode)
+		_check(control_party.get_hero(1).get("block") == 0
+			and control_party.get_hero(1).get("hp") == 40,
+			"AC3: six Block absorb the whole non-opted-in attack: " + mode)
+		_check(control_party.get_hero(2).get("hp") == 30
+			and control_party.get_hero(3).get("hp") == 26,
+			"AC3: the blocked control attack touches no other hero: " + mode)
+
+	# AC3: a slain Crab neither snips nor hits.
+	var slain_party := _party()
+	_check(slain_party.gain_block(1, 6),
+		"AC3 precondition: six Block before the slain Crab's beat")
+	var slain_case := _force_normal_alternative(crab, attack, slain_party)
+	if not slain_case.is_empty():
+		_check(slain_case.enemies.apply_damage(1, 26) and slain_case.enemies.is_slain(1),
+			"AC3 precondition: the Crab is genuinely slain before its beat")
+		var slain_heroes: Array = slain_party.get_heroes()
+		var slain_roster: Array = slain_case.enemies.get_enemies()
+		var slain_receipt := CombatEnemyPhase.new().execute_phase(slain_party,
+			slain_case.enemies, slain_case.intents, null, true)
+		_check(slain_receipt == {"ok": true, "events": [
+			{"type": "attack", "enemy_position": 1, "target_position": 1,
+				"applied": false}]},
+			"AC3: a slain Crab's announced attack resolves as one inert beat")
+		_check(slain_party.get_heroes() == slain_heroes
+			and slain_case.enemies.get_enemies() == slain_roster,
+			"AC3: a slain Crab eats no Block and deals no damage")
+
+	# AC4: malformed trait metadata rejects the whole phase before staging.
+	var malformed_record: Dictionary = crab.duplicate(true)
+	malformed_record["chew_block_on_attack"] = 1
+	var malformed_party := _party()
+	_check(malformed_party.gain_block(1, 6),
+		"AC4 precondition: six Block on the malformed Crab case")
+	var malformed_enemies := CombatEnemies.new([malformed_record])
+	_check(malformed_enemies.is_valid()
+		and malformed_enemies.get_enemy(1).has("chew_block_on_attack"),
+		"AC4 precondition: the malformed Crab trait reaches a valid roster")
+	if malformed_enemies.is_valid():
+		var malformed_heroes: Array = malformed_party.get_heroes()
+		var malformed_roster: Array = malformed_enemies.get_enemies()
+		_check(CombatEnemyPhase.new().execute_phase(malformed_party, malformed_enemies,
+			[_raw_attack_intent(1)], null, true) == {"ok": false, "events": []},
+			"AC4: malformed Crab chew metadata rejects the whole phase")
+		_check(malformed_party.get_heroes() == malformed_heroes
+			and malformed_enemies.get_enemies() == malformed_roster,
+			"AC4: a rejected malformed Crab attack mutates neither roster")
+
+	# AC4: a rejected announced beat publishes nothing and keeps the Block.
+	var rejected_party := _party()
+	_check(rejected_party.gain_block(1, 6),
+		"AC4 precondition: six Block before the rejected Crab announcement")
+	var rejected_case := _force_normal_alternative(crab, attack, rejected_party)
+	if not rejected_case.is_empty():
+		var rejected_heroes: Array = rejected_party.get_heroes()
+		var rejected_roster: Array = rejected_case.enemies.get_enemies()
+		var bad_intent: Dictionary = rejected_case.intents[0].duplicate(true)
+		bad_intent["target_position"] = 0
+		_check(CombatEnemyPhase.new().execute_phase(rejected_party, rejected_case.enemies,
+			[bad_intent], null, true) == {"ok": false, "events": []}
+			and rejected_party.get_heroes() == rejected_heroes
+			and rejected_case.enemies.get_enemies() == rejected_roster
+			and rejected_party.get_hero(1).get("block") == 6,
+			"AC4: an invalid announced Crab attack rejects the phase without eating Block")
 
