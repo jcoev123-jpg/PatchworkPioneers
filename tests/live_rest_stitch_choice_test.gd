@@ -25,6 +25,22 @@ func _stitch_fixture() -> Dictionary:
 	return {}
 
 
+## The seeded opening reward can come from any hero's pool, so look cards up
+## across the starter catalog and every authored pool (bases and pluses).
+func _card_definition(card_id: String) -> Dictionary:
+	var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+	if definition.is_empty():
+		for pool in [WardenPoolCards.new(), SeamstressPoolCards.new(), TinkerPoolCards.new()]:
+			definition = pool.get_definition(card_id)
+			if not definition.is_empty():
+				break
+	return definition
+
+
+func _pool_upgrade_id(card_id: String) -> String:
+	return String(RunPoolCardRewardOffers.resolve_reward_definition(card_id).get("upgrade_id", ""))
+
+
 func _stitch_state() -> Array:
 	return [app._stitch_snapshot(), _persistent(), app.party_carryover.read_state(),
 		app.run_map.get_floors(), app.rest_stitch.get_snapshot(), app.rest_stitch.is_consumed(),
@@ -118,7 +134,7 @@ func _run() -> void:
 		if session == 4:
 			# Authentic canonical ledger with a pool upgrade and an issued composite;
 			# install it before transit so any intermediate Shop snapshots this deck.
-			var plus: String = WardenPoolCards.new().get_upgrade_id(earned_pool)
+			var plus: String = _pool_upgrade_id(earned_pool)
 			_check(RunRestStitchCards.is_authored_pool_plus(plus), "earned pool has an authored plus")
 			app.run_deck.append(plus)
 			app.run_deck.append("seamstress_prick_plus")
@@ -157,13 +173,11 @@ func _run() -> void:
 		_check(eligible.has(app.run_deck.find(earned_pool)), "earned pool occurrence inspected in both selectors")
 		if session == 4:
 			_check(app.run_stitch_descriptors.size() == 1 and eligible.size() == app.run_deck.size() - 1
-				and eligible.has(app.run_deck.find(WardenPoolCards.new().get_upgrade_id(earned_pool))), "nonempty authentic composite and pool plus fixture inspected")
+				and eligible.has(app.run_deck.find(_pool_upgrade_id(earned_pool))), "nonempty authentic composite and pool plus fixture inspected")
 		for item in range(eligible.size()):
 			var index: int = eligible[item]
 			_check(first.get_item_metadata(item) == index and second.get_item_metadata(item) == index, "selectors retain original indices across excluded composites")
-			var definition: Dictionary = catalog.get_definition(app.run_deck[index])
-			if definition.is_empty():
-				definition = WardenPoolCards.new().get_definition(app.run_deck[index])
+			var definition: Dictionary = _card_definition(app.run_deck[index])
 			_check(not definition.is_empty(), "selector has independent authored definition")
 			var suffix := "Deck #%d: %s - %s" % [index + 1, str(definition.owner).capitalize(), definition.display_name]
 			_check(first.get_item_text(item) == "First card: " + suffix
@@ -173,12 +187,10 @@ func _run() -> void:
 			and first.size.y == second.size.y, "closed selectors expose distinct roles without an extra row")
 		var default_first: int = first.get_item_metadata(first.selected)
 		var default_second: int = second.get_item_metadata(second.selected)
-		var default_owner: String = catalog.get_definition(app.run_deck[default_first]).owner
+		var default_owner: String = _card_definition(app.run_deck[default_first]).owner
 		var earliest_second := -1
 		for item in range(eligible.size()):
-			var definition: Dictionary = catalog.get_definition(app.run_deck[eligible[item]])
-			if definition.is_empty():
-				definition = WardenPoolCards.new().get_definition(app.run_deck[eligible[item]])
+			var definition: Dictionary = _card_definition(app.run_deck[eligible[item]])
 			if definition.owner != default_owner:
 				earliest_second = item
 				break

@@ -100,9 +100,10 @@ func _search(map: RunMap, choices: Array, path: Array, counts: Dictionary) -> Ar
 
 
 func _fixture() -> Dictionary:
-	# The expanded stop pool repins the retained fixture (now seed 1957) with a funded Shop,
-	# final recovery and a witnessed full win using the unchanged held-card pilot.
-	for value in [1957] + range(128, SEED_LIMIT + 1):
+	# The expanded stop pool repins the retained fixture with a funded Shop, final recovery and a
+	# witnessed full win using the unchanged held-card pilot. Repinned to seed 1550 when Clothespin
+	# Crusher, Crochet Hook Harrier and Thistle Patch Doll joined the normal floor bands.
+	for value in [1550] + range(128, SEED_LIMIT + 1):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()

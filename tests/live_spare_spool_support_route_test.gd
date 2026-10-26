@@ -66,6 +66,18 @@ func _mend(keyboard: bool, amount: int, damage: int = 12, reject: bool = false) 
 	_meter()
 
 
+func _route_visits(fixture: Dictionary, kind: String) -> bool:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = fixture.seed
+	var map := RunMap.new()
+	map.generate(rng)
+	for path in fixture.paths:
+		for node in path:
+			if map.get_node(node).type == kind:
+				return true
+	return false
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	root.gui_embed_subwindows = true
@@ -79,6 +91,10 @@ func _run() -> void:
 	for attempt in range(240):
 		fixture = _sequence_fixture(["Shop", "Fight", "Fight"], next_seed, true)
 		_check(not fixture.is_empty(), "genuine map has Shop and two connected Fights")
+		if not fixture.is_empty() and _route_visits(fixture, "Rest"):
+			# This fixture covers Shop -> Fight; Rest transit has its own tests.
+			next_seed = fixture.seed + 1
+			continue
 		if fixture.is_empty() or not await _routed_win(fixture, false):
 			await _finish_patches()
 			return
