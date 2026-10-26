@@ -5,6 +5,9 @@ const NODE := "unpicker-panel-route-265"
 const STRIKE := "warden_strike"
 const PRICK := "seamstress_prick"
 const POP := "tinker_pop_shot"
+## A genuine reward-pool base card and a genuine authored starter upgrade.
+const POOL := "warden_pinning_jab"
+const UPGRADED := "warden_strike_plus"
 var failures: Array[String] = []
 var checks := 0
 var intents: Array[Dictionary] = []
@@ -99,6 +102,88 @@ func _activate(button: Button, keyboard: bool, key: Key = KEY_ENTER) -> void:
 	await _settle()
 
 
+## Independent catalog-derived oracle for the ordinary-card tooltip, mirroring
+## only the presentation contract: owner/name, printed cost, legal slots and the
+## exact CardShortRules sentence. It never reads the mounted button's text.
+func _expected_tooltip(definition: Dictionary) -> String:
+	var named := str(definition.get("display_name", ""))
+	var owner := str(definition.get("owner", "")).capitalize()
+	var title := (owner + " " + named) if not owner.is_empty() else named
+	var lines: Array[String] = ["%s • %d energy" % [title, int(definition.get("cost", -1))]]
+	var movement := _movement(definition)
+	if not movement.is_empty():
+		lines.append(movement)
+	var rule := CardShortRules.line(definition)
+	if not rule.is_empty():
+		lines.append(rule)
+	return "\n".join(lines)
+
+
+func _movement(definition: Dictionary) -> String:
+	var parts: Array[String] = []
+	var from_text := _slots(definition.get("from_positions"))
+	if not from_text.is_empty():
+		parts.append("From " + from_text)
+	var to_text := _slots(definition.get("to_positions"))
+	if not to_text.is_empty():
+		parts.append("To " + to_text)
+	return " • ".join(parts)
+
+
+func _slots(value: Variant) -> String:
+	if not value is Array:
+		return ""
+	var parts: Array[String] = []
+	for slot in value:
+		parts.append(str(slot))
+	return ", ".join(parts)
+
+
+func _half_line(order: String, definition: Dictionary) -> String:
+	var named := str(definition.get("display_name", ""))
+	var owner := str(definition.get("owner", "")).capitalize()
+	var title := (owner + " " + named) if not owner.is_empty() else named
+	var parts: Array[String] = ["%s — %s" % [order, title],
+		"%d energy" % int(definition.get("cost", -1))]
+	var movement := _movement(definition)
+	if not movement.is_empty():
+		parts.append(movement)
+	return " • ".join(parts)
+
+
+## Independent oracle for a genuine stitched card: descriptor name and cost,
+## then both authored half_ids in order with owner, cost, slots and rule line.
+func _expected_stitched_tooltip(descriptor: Dictionary, first: Dictionary,
+		second: Dictionary) -> String:
+	var owners: Array[String] = []
+	for half in [first, second]:
+		owners.append(str(half.get("owner", "")).capitalize())
+	var title := " / ".join(owners)
+	var named := str(descriptor.get("display_name", ""))
+	if not named.is_empty():
+		title += (" — " if not title.is_empty() else "") + named
+	var cost: int = mini(3, maxi(int(first.get("cost", -1)), int(second.get("cost", -1))) + 1)
+	return "\n".join([
+		"Stitched card • %d energy (higher half cost + 1, capped at 3)" % cost,
+		title,
+		_half_line("FIRST", first),
+		CardShortRules.line(first),
+		_half_line("SECOND", second),
+		CardShortRules.line(second),
+		"Both owners must be alive and in their own FROM slots to play it. " \
+				+ "It cannot be stitched again or upgraded. " \
+				+ "Inspection only: Remove retires it without playing it.",
+	])
+
+
+func _unique_ids(deck: Array) -> Array[String]:
+	var result: Array[String] = []
+	for id in deck:
+		if not result.has(id):
+			result.append(id)
+	return result
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	panel = LiveUnpickerPanel.new()
@@ -113,6 +198,7 @@ func _run() -> void:
 	var global_next := randi()
 	seed(265)
 	await _test_layout()
+	await _test_card_tooltips()
 	for keyboard in [false, true]:
 		await _test_remove(keyboard)
 		await _test_leave(keyboard, 74)
@@ -169,6 +255,13 @@ func _test_layout() -> void:
 		var id: String = unique[i]
 		var first: int = source.deck.find(id)
 		var definition := RunRestStitchCards.resolve_card_definition(id)
+		_check(not definition.is_empty(), "authentic definition resolves for mounted row " + id)
+		if not definition.is_empty():
+			var rule := CardShortRules.line(definition)
+			_check(not rule.is_empty() and panel.card_buttons[i].tooltip_text == _expected_tooltip(definition),
+					"row tooltip is the exact authored owner/name/cost/slots/rule for " + id)
+			_check(panel.card_buttons[i].tooltip_text == LiveUnpickerPanel.card_tooltip(source, id),
+					"public tooltip formatter is source-detached and matches the mounted row for " + id)
 		var expected_name := str(definition.get("display_name", ""))
 		var expected_owner := str(definition.get("owner", "")).capitalize()
 		_check(not expected_name.is_empty() and panel.card_buttons[i].text.contains(expected_name)
@@ -193,6 +286,75 @@ func _test_layout() -> void:
 	_check(panel.card_buttons[1].has_focus(), "Tab moves to next card without pointer")
 	_check(visit.read_state() == source and intents.is_empty(),
 			"readability, scroll and keyboard browsing are view-only")
+
+
+func _test_card_tooltips() -> void:
+	var deck := _deck()
+	deck.append(POOL)
+	deck.append(UPGRADED)
+	var visit := _make(150, 0, deck)
+	await _bind(visit)
+	var source := visit.read_state()
+	var unique := _unique_ids(source.deck)
+	# Independent prerequisites: the fixture really is genuine pool stock and a
+	# genuine upgraded starter card, both already admitted to the visit ledger.
+	_check(WardenPoolCards.new().get_base_ids().has(POOL)
+			and not RunPoolCardRewardOffers.resolve_reward_definition(POOL).is_empty()
+			and source.deck.has(POOL), "genuine reward-pool card fixture prerequisite")
+	_check(StarterCards.new().has_card(UPGRADED)
+			and int(StarterCards.new().get_definition(UPGRADED).get("starting_copies", -1)) == 0
+			and source.deck.has(UPGRADED), "genuine upgraded starter card fixture prerequisite")
+	for id in [STRIKE, PRICK, POOL, UPGRADED]:
+		var definition := RunRestStitchCards.resolve_card_definition(id)
+		var row_index := unique.find(id)
+		_check(not definition.is_empty() and source.deck.has(id) and row_index >= 0,
+				"independent catalog, deck and canonical-row precondition for " + id)
+		if definition.is_empty() or row_index < 0:
+			continue
+		var rule := CardShortRules.line(definition)
+		var tooltip := panel.card_buttons[row_index].tooltip_text
+		_check(not rule.is_empty() and tooltip == _expected_tooltip(definition),
+				"tooltip derives owner/name/cost/slots and exact CardShortRules line for " + id)
+		_check(tooltip.contains(str(definition.get("owner", "")).capitalize())
+				and tooltip.contains(str(definition.get("display_name", "")))
+				and tooltip.contains("%d energy" % int(definition.get("cost", -1))),
+				"tooltip names the same authored owner and card with its true energy cost for " + id)
+		var movements := _movement(definition)
+		_check(movements.is_empty() or tooltip.contains(movements),
+				"tooltip carries the authored FROM/TO slots when applicable for " + id)
+		_check(tooltip == LiveUnpickerPanel.card_tooltip(source, id),
+				"tooltip is a pure detached projection of the authenticated source for " + id)
+	# Hovering the visible row is inspection only: no selection, intent, spend or
+	# state change, and affordability stays exactly what the visit quote says.
+	var strike_index := unique.find(STRIKE)
+	var row: Button = panel.card_buttons[strike_index]
+	var strike_tip: String = row.tooltip_text
+	var hover := InputEventMouseMotion.new()
+	hover.position = row.get_global_rect().get_center()
+	_check(Rect2(Vector2.ZERO, Vector2(root.size)).has_point(hover.position),
+			"hover target lies in the physical viewport")
+	root.push_input(hover)
+	await _settle()
+	var quote_before := visit.quote()
+	_check(row.tooltip_text == strike_tip and not row.text.begins_with("◆")
+			and panel.status_label.text == "Choose one card, then Remove it once. Or Leave."
+			and panel.remove_button.disabled and not panel.leave_button.disabled
+			and intents.is_empty() and visit.read_state() == source
+			and visit.quote() == quote_before and not visit.is_consumed(),
+			"hovering a card row only exposes its tooltip: no intent, spend or snapshot change")
+	# Inspection must not make an unaffordable visit actionable either.
+	var broke := _make(74, 0, deck)
+	await _bind(broke)
+	var broke_source := broke.read_state()
+	_check(not panel.card_buttons.is_empty()
+			and panel.card_buttons[0].tooltip_text != ""
+			and panel.remove_button.disabled and not panel.leave_button.disabled,
+			"unaffordable visit keeps inspectable rows while Remove stays disabled")
+	root.push_input(hover)
+	await _settle()
+	_check(intents.is_empty() and broke.read_state() == broke_source
+			and int(panel._source["gold"]) < int(panel._source["price"]),
+			"inspecting an unaffordable quote cannot enable or mutate a purchase")
 
 
 func _test_remove(keyboard: bool) -> void:
@@ -370,6 +532,39 @@ func _test_stitched() -> void:
 			and card_row.text.contains("%02d" % (first + 1))
 			and card_row.text.contains(owner1 + " / " + owner2 + " - "),
 			"descriptor names composite on canonical first-occurrence tile with ordered owners")
+	var first_half := RunRestStitchCards.resolve_card_definition(halves[0])
+	var second_half := RunRestStitchCards.resolve_card_definition(halves[1])
+	_check(not first_half.is_empty() and not second_half.is_empty()
+			and first_half.get("owner") != second_half.get("owner"),
+			"both authentic cross-owner half definitions resolve for the stitched fixture")
+	if first_half.is_empty() or second_half.is_empty():
+		return
+	_check(RunRestStitchCards.resolve_card_definition(id).is_empty(),
+			"a stitched composite is genuinely not a standalone catalog card")
+	var descriptor: Dictionary = source.descriptors[id]
+	var stitched_cost: int = mini(3, maxi(int(first_half.get("cost", -1)),
+			int(second_half.get("cost", -1))) + 1)
+	_check(int(descriptor.get("cost", -1)) == stitched_cost,
+			"descriptor cost is the authored higher half cost + 1, capped at 3")
+	var stitched_tip: String = card_row.tooltip_text
+	_check(stitched_tip == _expected_stitched_tooltip(descriptor, first_half, second_half),
+			"stitched tooltip exposes descriptor name, cost and both authored halves in order")
+	var first_at := stitched_tip.find("FIRST — ")
+	var second_at := stitched_tip.find("SECOND — ")
+	_check(first_at >= 0 and second_at > first_at
+			and stitched_tip.find(str(descriptor.get("display_name", ""))) >= 0
+			and stitched_tip.contains("%d energy" % stitched_cost)
+			and stitched_tip.substr(first_at, second_at - first_at).contains(
+					str(first_half.get("display_name", "")))
+			and stitched_tip.substr(first_at, second_at - first_at).contains(
+					CardShortRules.line(first_half))
+			and stitched_tip.substr(second_at).contains(
+					str(second_half.get("display_name", "")))
+			and stitched_tip.substr(second_at).contains(CardShortRules.line(second_half))
+			and stitched_tip.contains("Both owners must be alive and in their own FROM slots"),
+			"stitched tooltip names FIRST then SECOND with their owners, slots and exact rule lines")
+	_check(stitched_tip == LiveUnpickerPanel.card_tooltip(source, id),
+			"stitched tooltip is a pure projection of the authenticated descriptor ledger")
 	await _activate(card_row, false)
 	var copies: int = source.deck.count(id)
 	_check(panel.status_label.text.contains(expected_name)
@@ -455,6 +650,12 @@ func _test_rejections() -> void:
 	var newer := _make(100, 1)
 	await _bind(newer)
 	var after_new := newer.read_state()
+	var newer_ids := _unique_ids(after_new.deck)
+	var newer_definition := RunRestStitchCards.resolve_card_definition(newer_ids[0]) \
+			if not newer_ids.is_empty() else {}
+	_check(not newer_definition.is_empty() and not panel.card_buttons.is_empty()
+			and panel.card_buttons[0].tooltip_text == _expected_tooltip(newer_definition),
+			"rebind rebuilds mounted tooltips from the new authenticated deck")
 	retired_remove.call()
 	retired_leave.call()
 	_check(intents.is_empty() and old.read_state() == before
@@ -465,6 +666,7 @@ func _test_rejections() -> void:
 			"retired callbacks and rebind reset selection and forecast without touching either source")
 	var closed_before := newer.read_state()
 	panel.close()
+	_check(panel.card_buttons.is_empty(), "closed view keeps no reachable stale tooltip row")
 	panel.leave_button.pressed.emit()
 	_check(intents.is_empty() and newer.read_state() == closed_before,
 			"closed view cannot request Leave")

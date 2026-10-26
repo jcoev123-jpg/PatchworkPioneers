@@ -268,6 +268,144 @@ func _caption(id: String) -> String:
 	return "%02d  •  %s" % [first, _card_name(id)]
 
 
+## A detached, purely informational hover explanation of one authenticated row.
+## It reads only the supplied source snapshot and the authored card catalogs:
+## it never selects, removes, spends or draws randomness. A stitched composite
+## is described from its descriptor halves, always in authored FIRST/THEN order.
+static func card_tooltip(source: Dictionary, id: String) -> String:
+	var deck: Array = source.get("deck", [])
+	if id.is_empty() or not deck.has(id):
+		return ""
+	var descriptors: Dictionary = source.get("descriptors", {})
+	if descriptors.has(id):
+		var descriptor: Variant = descriptors[id]
+		if not descriptor is Dictionary:
+			return "Unknown stitched card: its descriptor is not authentic."
+		return _stitched_tooltip(descriptor)
+	return _definition_tooltip(RunRestStitchCards.resolve_card_definition(id))
+
+
+## An ordinary starter, pool or upgraded card: authored owner/name, printed
+## energy cost, the legal FROM/TO slots when the record carries them, and the
+## exact terse CardShortRules sentence. Nothing is inferred from button text.
+static func _definition_tooltip(definition: Dictionary) -> String:
+	if definition.is_empty():
+		return "Unknown card: no authentic authored definition resolves."
+	var lines: Array[String] = [
+		"%s • %s" % [_card_title(definition), _cost_text(definition.get("cost"))]]
+	var movement := _movement_text(definition)
+	if not movement.is_empty():
+		lines.append(movement)
+	var rule := CardShortRules.line(definition)
+	if not rule.is_empty():
+		lines.append(rule)
+	return "\n".join(lines)
+
+
+## A genuine stitched card is never a standalone catalog ID: both halves come
+## from the descriptor's canonical half_ids through the production resolver.
+static func _stitched_tooltip(descriptor: Dictionary) -> String:
+	var half_ids: Array = descriptor.get("half_ids", [])
+	var named := str(descriptor.get("display_name", "")).strip_edges()
+	if half_ids.size() != 2:
+		return ("Stitched card: " + named if not named.is_empty() else "Unknown stitched card") \
+				+ "\nIts authored half definitions do not resolve."
+	var first := RunRestStitchCards.resolve_card_definition(half_ids[0])
+	var second := RunRestStitchCards.resolve_card_definition(half_ids[1])
+	if first.is_empty() or second.is_empty():
+		return ("Stitched card: " + named if not named.is_empty() else "Unknown stitched card") \
+				+ "\nIts authored half definitions do not resolve."
+	var owners: Array[String] = []
+	for half in [first, second]:
+		var owner_id := str(half.get("owner", "")).strip_edges()
+		if not owner_id.is_empty():
+			owners.append(owner_id.capitalize())
+	var title := " / ".join(owners)
+	if not named.is_empty():
+		title += (" — " if not title.is_empty() else "") + named
+	var cost := _stitched_cost(descriptor, first, second)
+	var lines: Array[String] = [
+		"Stitched card • %s (higher half cost + 1, capped at 3)" % _cost_text(cost),
+		title,
+		_half_text("FIRST", first),
+	]
+	var first_rule := CardShortRules.line(first)
+	if not first_rule.is_empty():
+		lines.append(first_rule)
+	lines.append(_half_text("SECOND", second))
+	var second_rule := CardShortRules.line(second)
+	if not second_rule.is_empty():
+		lines.append(second_rule)
+	lines.append("Both owners must be alive and in their own FROM slots to play it. " \
+			+ "It cannot be stitched again or upgraded. " \
+			+ "Inspection only: Remove retires it without playing it.")
+	return "\n".join(lines)
+
+
+## The descriptor's validated cost; a malformed ledger falls back to the
+## authored stitched formula instead of inventing a price.
+static func _stitched_cost(descriptor: Dictionary, first: Dictionary,
+		second: Dictionary) -> int:
+	var authored: Variant = descriptor.get("cost")
+	if authored is int and int(authored) >= 0:
+		return int(authored)
+	var first_cost: Variant = first.get("cost")
+	var second_cost: Variant = second.get("cost")
+	if first_cost is int and second_cost is int:
+		return mini(3, maxi(int(first_cost), int(second_cost)) + 1)
+	return -1
+
+
+static func _half_text(order: String, definition: Dictionary) -> String:
+	var parts: Array[String] = [
+		"%s — %s" % [order, _card_title(definition)],
+		_cost_text(definition.get("cost")),
+	]
+	var movement := _movement_text(definition)
+	if not movement.is_empty():
+		parts.append(movement)
+	return " • ".join(parts)
+
+
+static func _card_title(definition: Dictionary) -> String:
+	var named := str(definition.get("display_name", "")).strip_edges()
+	if named.is_empty():
+		named = str(definition.get("id", "")).strip_edges()
+	if named.is_empty():
+		named = "Unknown card"
+	var owner_id := str(definition.get("owner", "")).strip_edges()
+	if owner_id.is_empty():
+		return named
+	return owner_id.capitalize() + " " + named
+
+
+static func _cost_text(value: Variant) -> String:
+	if value is int and int(value) >= 0:
+		return "%d energy" % int(value)
+	return "cost unknown"
+
+
+## The authored legal slots, spelled out only when the record authors them.
+static func _movement_text(definition: Dictionary) -> String:
+	var parts: Array[String] = []
+	var from_text := _slots_text(definition.get("from_positions"))
+	if not from_text.is_empty():
+		parts.append("From " + from_text)
+	var to_text := _slots_text(definition.get("to_positions"))
+	if not to_text.is_empty():
+		parts.append("To " + to_text)
+	return " • ".join(parts)
+
+
+static func _slots_text(value: Variant) -> String:
+	if not value is Array:
+		return ""
+	var parts: Array[String] = []
+	for slot in value:
+		parts.append(str(slot))
+	return ", ".join(parts)
+
+
 func _retire_callbacks() -> void:
 	for button in _connections:
 		if is_instance_valid(button) and button.pressed.is_connected(_connections[button]):
@@ -358,6 +496,8 @@ func _refresh() -> void:
 		choices.add_child(button)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_rows[button] = {"id": id, "first": first, "caption": label_text}
+		# Read-only authored explanation; rebuilding rows on rebind replaces it.
+		button.tooltip_text = LiveUnpickerPanel.card_tooltip(_source, id)
 		card_buttons.append(button)
 		_connect_button(button, _choose.bind(id, button, _epoch))
 		button.focus_entered.connect(choice_scroll.ensure_control_visible.bind(button))
