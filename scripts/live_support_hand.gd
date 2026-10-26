@@ -4,6 +4,7 @@ extends Node
 const SUPPORT_IDS := ["warden_brace", "warden_brace_plus", "tinker_tune_up", "tinker_tune_up_plus",
 	"seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up", "seamstress_stitch_up_plus"]
 const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
+const VIGIL_IDS := ["lantern_monk_vigil_ring", "lantern_monk_vigil_ring_plus"]
 const ALLY_IDS := ["seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up",
 	"scarecrow_straw_padding", "scarecrow_straw_padding_plus", "scarecrow_straw_wrap", "scarecrow_straw_wrap_plus",
 	"seamstress_v3_mending_knot", "seamstress_v3_mending_knot_plus",
@@ -79,6 +80,7 @@ var _pop := CombatButtonGolemPopCards.new()
 var _sew := CombatButtonGolemSewCards.new()
 var _roll := CombatButtonGolemRollCards.new()
 var _re_stuff := CombatScarecrowReStuffCards.new()
+var _vigil := CombatLanternMonkPartyCards.new()
 var cleanse_choices: HBoxContainer
 var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
 var _receipt_seq := 0
@@ -625,6 +627,8 @@ func _enemy_service(card_id: String):
 
 
 func _is_actionable(card_id: String) -> bool:
+	if card_id in VIGIL_IDS:
+		return _vigil.is_supported_card(card_id)
 	if _roll.is_supported_card(card_id) or _sew.is_supported_card(card_id):
 		return true
 	if card_id in CombatSupportCards.SCARECROW_STRAW_IDS:
@@ -640,6 +644,8 @@ func _is_actionable(card_id: String) -> bool:
 
 ## One entry point keeps starter support and pool Block cards on the same commit path.
 func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position: int, debuff: String = "") -> bool:
+	if card_id in VIGIL_IDS:
+		return bool(_vigil.play_card(deck, party, card_id, 0).get("ok", false))
 	if _roll.is_supported_card(card_id):
 		return bool(_roll.play_card(deck, party, card_id, position).get("ok", false))
 	if _sew.is_supported_card(card_id):
@@ -937,7 +943,7 @@ func _sync_battle() -> void:
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_card_input.bind(panel, label.text, _deck, _party, _battle)
 		_bindings[panel] = callback
-		if label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text):
+		if label.text in VIGIL_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text):
 			_move_context[panel] = _current_move_context(panel)
 		panel.gui_input.connect(callback)
 	# Keep the existing End/Return Tab cycle; Up enters the card row, Down exits it.
@@ -1160,6 +1166,16 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 				recipient = true
 		if owner == 0 or not recipient:
 			return false
+	if card_id in VIGIL_IDS:
+		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
+				or _move_context.get(panel, []) != _current_move_context(panel):
+			return false
+		if app._battle_closed or app.battle_result == null or not app.battle_result.can_continue() \
+				or app.battle_result._party != party or app.battle_result._enemies != app.enemies \
+				or app.enemies == null or not app.enemies.is_valid() or app.enemies.is_victorious():
+			return false
+		if not _vigil._prepare(deck, party, card_id, 0, {}).get("ok", false):
+			return false
 	if _is_enemy_card(card_id):
 		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
 				or _move_context.get(panel, []) != _current_move_context(panel):
@@ -1260,7 +1276,7 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		return
 	_cancel_pending()
 	_pending = {"panel": panel, "id": card_id, "choosing": false, "queued": false, "context": _current_move_context(panel)}
-	if card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id) or _roll.is_supported_card(card_id):
+	if card_id in VIGIL_IDS or card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id) or _roll.is_supported_card(card_id):
 		_pending.owner_roster = _party.get_heroes().map(func(hero): return [hero.id, hero.position])
 	if _roll.is_supported_card(card_id):
 		for hero in _party._heroes:
@@ -1283,7 +1299,7 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 	if not _eligible(panel, card_id, deck, party, battle):
 		_cancel_pending()
 		return
-	if (card_id in SPARE_PARTS_IDS or _sew.is_supported_card(card_id)) and not _selection_valid():
+	if (card_id in VIGIL_IDS or card_id in SPARE_PARTS_IDS or _sew.is_supported_card(card_id)) and not _selection_valid():
 		_cancel_pending()
 		return
 	if card_id in ALLY_IDS or _roll.is_supported_card(card_id) or _is_enemy_card(card_id):
@@ -1332,6 +1348,8 @@ func _selection_valid() -> bool:
 	if _pending.is_empty() or not _eligible(_pending.panel, _pending.id, _deck, _party, _battle):
 		return false
 	if _pending.get("context", []) != _current_move_context(_pending.panel):
+		return false
+	if _pending.id in VIGIL_IDS and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
 		return false
 	if _pending.id in CombatSupportCards.SCARECROW_STRAW_IDS and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
 		return false
