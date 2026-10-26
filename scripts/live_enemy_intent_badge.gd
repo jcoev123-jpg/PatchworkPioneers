@@ -77,6 +77,8 @@ var target_position := 0
 ## They are kept only so a relayout can rebuild the compact policy caption.
 var action_status := ""
 var shove_direction := 0
+## Presentation-only authenticated bonus for this particular attack; cleared on every call.
+var enrage_bonus := -1
 ## Empty unless a valid mounted weighted action supplies its real policy.
 var policy_cue := ""
 const POLICY_LABELS := {"front": "Front", "lowest_living_hp": "Aim low HP",
@@ -307,8 +309,13 @@ func compact_caption_forms() -> Array[String]:
 		return forms
 	match intent_type:
 		"attack":
-			forms.append("Hit %d → %d" % [amount, target_position])
-			forms.append("Hit %d→%d" % [amount, target_position])
+			if enrage_bonus >= 0:
+				forms.append("Hit %d+%d→%d" % [amount, enrage_bonus, target_position])
+				forms.append("Hit %d+%d" % [amount, enrage_bonus])
+				forms.append("%d+%d" % [amount, enrage_bonus])
+			else:
+				forms.append("Hit %d → %d" % [amount, target_position])
+				forms.append("Hit %d→%d" % [amount, target_position])
 		"debuff":
 			var label := action_status.capitalize()
 			forms.append("%s %d → %d" % [label, amount, target_position])
@@ -433,12 +440,13 @@ static func load_icon_texture(path: String) -> Texture2D:
 
 
 func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
-		policy: String = "") -> void:
+		policy: String = "", source_enrage_stacks: int = -1) -> void:
 	# Never affect or advance the scheduler: the caller passes a copied announcement.
 	# Only targeted, active, authored actions receive the small policy tag.
 	policy_cue = ""
 	action_status = ""
 	shove_direction = 0
+	enrage_bonus = -1
 	if not slain and not skip_pending and action.get("type") in ["attack", "debuff", "shove", "snip_block"] \
 			and action.get("target_position") in [1, 2, 3] and POLICY_LABELS.has(policy):
 		policy_cue = POLICY_LABELS[policy]
@@ -464,6 +472,12 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		target_position = action.get("target_position", 0)
 		readable_text = "Hit %d: %s" % [amount, rank_caption(target_position)]
 		tip = "%d damage aimed at %s." % [amount, hero_target_label(target_position)]
+		if source_enrage_stacks >= 0 and source_enrage_stacks <= CombatEnemyKeywordRules.ENRAGE_MAX_STACKS:
+			enrage_bonus = source_enrage_stacks * CombatEnemyKeywordRules.ENRAGE_ATTACK_BONUS_PER_STACK
+			readable_text = "Hit %d +%d Enrage" % [amount, enrage_bonus]
+			tip = "Base %d aimed at %s + %d Enrage (%d/3 stacks) = %d attack power BEFORE Weak/Exposed adjustment, Guard redirection and hero Block; not guaranteed HP loss." % [
+				amount, hero_target_label(target_position), enrage_bonus,
+				source_enrage_stacks, amount + enrage_bonus]
 	elif action.get("type") == "snip_block":
 		icon_mode = "snip_block"
 		intent_type = "snip_block"
