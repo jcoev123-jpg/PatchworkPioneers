@@ -8,14 +8,19 @@ var failures: Array[String] = []
 var checks := 0
 
 
-## Expanded normal roster repins early-defeat (99) and unaffordable generic-wallet (541) fixtures.
-## Keep 47 original seeds and the offered/acquired/played Blanket Stitch witness (267),
-## with the unchanged strategy; neither outcomes nor choices are injected.
+## Expanded normal rosters repin early-defeat (99) and unaffordable generic-wallet (541)
+## fixtures. Shipping Spindle Ram and Razor Ribbon Wraith into the live floor-band pool
+## turns seed 9's high-band fight into a genuine turn-cap stalemate, so the authentic
+## replacement seed 48 stands in for it. Keep 46 original seeds, the
+## offered/acquired/played Blanket Stitch witness (267) and the unchanged strategy;
+## neither outcomes nor choices are injected.
 func _cohort_seeds() -> Array[int]:
 	var values: Array[int] = []
 	for value in range(1, 48):
+		if value == 9:
+			continue
 		values.append(value)
-	values.append_array([99, 541, 267])
+	values.append_array([99, 541, 267, 48])
 	return values
 
 
