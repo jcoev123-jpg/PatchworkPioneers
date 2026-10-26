@@ -10,7 +10,7 @@ const KEYWORD_ORDER := ["bleed", "weak", "exposed", "pinned", "unravel", "guardi
 	"thorns", "riposte", "tangled", "blind"]
 ## Non-keyword rules are explained after the keyword rows, always in this
 ## order and only for the exact authored descriptor shape (never a guess).
-const SPECIAL_ORDER := ["conditional_damage", "random_hit", "energy_tradeoff", "bleed_doubling", "two_hits"]
+const SPECIAL_ORDER := ["conditional_damage", "random_hit", "energy_tradeoff", "bleed_doubling", "two_hits", "dodge", "exhaust"]
 ## The Unravel thresholds the authored "current threshold" condition compares to.
 const UNRAVEL_THRESHOLDS := "starts at 8 normal, 12 elite, 16 boss and rises by 4 after each break"
 ## The two energy-trading pool cards this Help knows, plus the exact authored
@@ -81,6 +81,16 @@ const DARNING_BASE_HEAL := 4
 const DARNING_BASE_BLOCK := 3
 const DARNING_PLUS_HEAL := 6
 const DARNING_PLUS_BLOCK := 4
+## The six authored one-shot Dodge variants: four Rag Duelist cape cards
+## (self target) and two Lantern Monk Moth Shroud cards (chosen ally, with Block).
+## Only these exact IDs with the integer one descriptor and correct owner/target
+## receive the Dodge Help row.
+const DODGE_SELF_IDS := ["rag_duelist_cape_slip", "rag_duelist_cape_slip_plus",
+	"rag_duelist_cape_flourish", "rag_duelist_cape_flourish_plus"]
+const DODGE_ALLY_IDS := ["lantern_monk_moth_shroud", "lantern_monk_moth_shroud_plus"]
+const DODGE_IDS := DODGE_SELF_IDS + DODGE_ALLY_IDS
+## The two Moth Cloud variants that carry both Blind and Exhaust.
+const EXHAUST_IDS := ["lantern_monk_moth_cloud", "lantern_monk_moth_cloud_plus"]
 
 
 static func describe(definition: Variant) -> Array[Dictionary]:
@@ -171,6 +181,10 @@ static func _special_line(rule_key: String, definition: Dictionary, effects: Dic
 			return _bleed_doubling_line(definition, effects)
 		"two_hits":
 			return _two_hits_line(definition, effects)
+		"dodge":
+			return _dodge_line(definition, effects)
+		"exhaust":
+			return _exhaust_line(definition, effects)
 	return {}
 
 
@@ -389,6 +403,64 @@ static func _two_hits_line(definition: Dictionary, effects: Dictionary) -> Dicti
 	var explanation := "Costs %d energy to play. Deals two hits of %d damage each, one after the other, to the same originally chosen enemy; if the first hit kills it, the second hit is skipped instead of moving to another enemy. A Pinned token placed by a DIFFERENT hero adds +5 damage to the first hit only, before Weak/Exposed, and is consumed then, so the second hit never gains it; a pin from the same hero does not apply. Pin and Pound itself creates no Pinned token." % [
 		int(cost_value), int(damage_value)]
 	return {"keyword": "Two hits", "explanation": explanation}
+
+
+## The six authored one-shot Dodge variants: only the exact IDs with the
+## integer one descriptor and the correct owner/target receive this Help.
+static func _dodge_line(definition: Dictionary, effects: Dictionary) -> Dictionary:
+	var id_value: Variant = definition.get("id")
+	if not id_value is String:
+		return {}
+	var card_id: String = id_value
+	if not DODGE_IDS.has(card_id):
+		return {}
+	var owner: String = String(definition.get("owner", ""))
+	var target: String = String(definition.get("target_kind", ""))
+	if card_id.begins_with("rag_duelist_"):
+		if owner != "rag_duelist" or target != "self":
+			return {}
+	elif card_id.begins_with("lantern_monk_"):
+		if owner != "lantern_monk" or target != "ally_single":
+			return {}
+	else:
+		return {}
+	var dodge: Variant = effects.get("dodge_next_attack")
+	if not dodge is int or int(dodge) != 1:
+		return {}
+	# The optional authored one-turn duration must be the exact integer 1 when present.
+	if effects.has("duration"):
+		var duration: Variant = effects.get("duration")
+		if not duration is int or int(duration) != 1:
+			return {}
+	var explanation := "Dodge is one-shot, never a stack or a number of turns: the target's NEXT incoming attack is avoided once, then the Dodge is spent. It applies to the caster (self) for the Rag Duelist's cape cards, or to a chosen ally (with the authored Block) for Moth Shroud. It is not permanent protection. This Help explains the authored design description only; live combat does not yet apply Dodge."
+	return {"keyword": "Dodge", "explanation": explanation}
+
+
+## The two Moth Cloud variants that carry both Blind (enemy_all) and Exhaust.
+## Only these exact IDs, with the true boolean for both descriptors, receive
+## the Exhaust Help row; missing Blind or any malformed flag stays silent.
+static func _exhaust_line(definition: Dictionary, effects: Dictionary) -> Dictionary:
+	var id_value: Variant = definition.get("id")
+	if not id_value is String:
+		return {}
+	var card_id: String = id_value
+	if not EXHAUST_IDS.has(card_id):
+		return {}
+	if String(definition.get("owner", "")) != "lantern_monk":
+		return {}
+	if String(definition.get("target_kind", "")) != "enemy_all":
+		return {}
+	var exhaust: Variant = effects.get("exhaust")
+	if not exhaust is bool or not bool(exhaust):
+		return {}
+	# Exhaust is only explained alongside its authored Blind companion.
+	if not effects.has("blind_next_attack"):
+		return {}
+	var blind_flag: Variant = effects.get("blind_next_attack")
+	if not blind_flag is bool or not bool(blind_flag):
+		return {}
+	var explanation := "Exhaust is an intended one-play removal from the remaining combat draw/discard cycle: the card is removed once, not normally discarded and redrawn. This Help explains the authored design description only; it is currently design-only and live combat does not yet apply Exhaust."
+	return {"keyword": "Exhaust", "explanation": explanation}
 
 
 ## The three D2-1 party-support families, dispatched only by exact identity.

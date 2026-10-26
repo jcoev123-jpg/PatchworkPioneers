@@ -118,6 +118,9 @@ func _initialize() -> void:
 	_test_dodge_faces()
 	_test_moth_cloud_exhaust()
 	_test_dodge_and_exhaust_malformed()
+	_test_dodge_help()
+	_test_exhaust_help()
+	_test_dodge_exhaust_negative()
 	_check(randi() == expected_global, "short-line formatting draws no global RNG")
 	for failure in failures:
 		printerr(failure)
@@ -876,4 +879,157 @@ func _test_dodge_and_exhaust_malformed() -> void:
 	_check(not cloud.is_empty() and cloud == cloud_before
 		and lantern_monk_pool.get_definition("lantern_monk_moth_cloud") == cloud_before,
 		"malformed probes cannot alter a shipped Moth Cloud record")
+
+
+## AC1: all six authored Dodge variants receive exactly one Dodge Help row
+## with the one-shot qualifier and the design-only disclaimer.
+func _test_dodge_help() -> void:
+	var cases := [
+		{"catalog": rag_duelist_starter, "id": "rag_duelist_cape_slip", "owner": "rag_duelist", "target": "self"},
+		{"catalog": rag_duelist_starter, "id": "rag_duelist_cape_slip_plus", "owner": "rag_duelist", "target": "self"},
+		{"catalog": rag_duelist, "id": "rag_duelist_cape_flourish", "owner": "rag_duelist", "target": "self"},
+		{"catalog": rag_duelist, "id": "rag_duelist_cape_flourish_plus", "owner": "rag_duelist", "target": "self"},
+		{"catalog": lantern_monk_pool, "id": "lantern_monk_moth_shroud", "owner": "lantern_monk", "target": "ally_single"},
+		{"catalog": lantern_monk_pool, "id": "lantern_monk_moth_shroud_plus", "owner": "lantern_monk", "target": "ally_single"},
+	]
+	for case: Dictionary in cases:
+		var catalog: Variant = case["catalog"]
+		var card_id: String = str(case["id"])
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(not definition.is_empty(), "Dodge Help catalog exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var effects: Dictionary = definition.get("effects", {})
+		_check(str(definition.get("owner", "")) == str(case["owner"])
+			and str(definition.get("target_kind", "")) == str(case["target"]),
+			"Dodge owner/target: " + card_id)
+		_check(effects.get("dodge_next_attack") is int
+			and int(effects["dodge_next_attack"]) == 1,
+			"authored Dodge descriptor: " + card_id)
+		var rows := CardKeywordGlossary.describe(definition)
+		var dodge_rows: Array[Dictionary] = []
+		for row: Dictionary in rows:
+			if str(row.get("keyword", "")) == "Dodge":
+				dodge_rows.append(row)
+		_check(dodge_rows.size() == 1,
+			"exactly one Dodge Help row for %s (got %d)" % [card_id, dodge_rows.size()])
+		if dodge_rows.size() == 1:
+			var text: String = str(dodge_rows[0].get("explanation", ""))
+			_check(text.contains("NEXT incoming attack"),
+				"Dodge Help mentions NEXT attack: " + card_id)
+			_check(text.contains("avoided once") or text.contains("one-shot"),
+				"Dodge Help states one-shot nature: " + card_id)
+			_check(text.contains("not permanent protection") or text.contains("not a stack"),
+				"Dodge Help denies permanent/stack: " + card_id)
+			_check(text.contains("live combat does not yet apply Dodge"),
+				"Dodge Help disclaims live combat: " + card_id)
+
+
+## AC2: both Moth Cloud variants keep Blind first, then exactly one Exhaust row.
+func _test_exhaust_help() -> void:
+	for pair in [["lantern_monk_moth_cloud", 2], ["lantern_monk_moth_cloud_plus", 1]]:
+		var card_id := str(pair[0])
+		var definition: Dictionary = lantern_monk_pool.get_definition(card_id)
+		_check(not definition.is_empty(), "Moth Cloud catalog exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var effects: Dictionary = definition.get("effects", {})
+		_check(str(definition.get("owner", "")) == "lantern_monk"
+			and str(definition.get("target_kind", "")) == "enemy_all",
+			"Moth Cloud owner/target: " + card_id)
+		_check(effects.get("blind_next_attack") is bool
+			and bool(effects["blind_next_attack"]),
+			"Moth Cloud has Blind: " + card_id)
+		_check(effects.get("exhaust") is bool and bool(effects["exhaust"]),
+			"Moth Cloud has Exhaust: " + card_id)
+		var rows := CardKeywordGlossary.describe(definition)
+		var names: Array[String] = []
+		for row: Dictionary in rows:
+			names.append(str(row.get("keyword", "")))
+		# Blind (keyword row) must come first, then Exhaust (special row).
+		_check(names.has("Blind"), "Moth Cloud has Blind keyword: " + card_id)
+		_check(names.has("Exhaust"), "Moth Cloud has Exhaust special: " + card_id)
+		if names.has("Blind") and names.has("Exhaust"):
+			var blind_idx := names.find("Blind")
+			var exhaust_idx := names.find("Exhaust")
+			_check(blind_idx < exhaust_idx,
+				"Blind comes before Exhaust for %s" % card_id)
+		var exhaust_rows: Array[Dictionary] = []
+		for row: Dictionary in rows:
+			if str(row.get("keyword", "")) == "Exhaust":
+				exhaust_rows.append(row)
+		_check(exhaust_rows.size() == 1,
+			"exactly one Exhaust Help row for %s" % card_id)
+		if exhaust_rows.size() == 1:
+			var text: String = str(exhaust_rows[0].get("explanation", ""))
+			_check(text.contains("one-play removal") or text.contains("draw/discard cycle"),
+				"Exhaust Help mentions removal cycle: " + card_id)
+			_check(text.contains("not a normal discard") or text.contains("redrawn"),
+				"Exhaust Help denies normal discard: " + card_id)
+			_check(text.contains("design-only") or text.contains("live combat does not yet apply"),
+				"Exhaust Help disclaims live combat: " + card_id)
+
+
+## AC3: invalid, mis-owned, partial and forged descriptors never borrow
+## a Dodge/Exhaust row; existing keyword/special order stays unchanged.
+func _test_dodge_exhaust_negative() -> void:
+	# Wrong ID / owner / target.
+	var bad_id := {"id": "rag_duelist_fake", "owner": "rag_duelist",
+		"target_kind": "self", "effects": {"dodge_next_attack": 1, "duration": 1}}
+	_check(CardKeywordGlossary.describe(bad_id).is_empty(),
+		"forged Dodge ID stays silent")
+	var bad_owner := {"id": "rag_duelist_cape_slip", "owner": "seamstress",
+		"target_kind": "self", "effects": {"dodge_next_attack": 1, "duration": 1}}
+	_check(CardKeywordGlossary.describe(bad_owner).is_empty(),
+		"mis-owned Dodge stays silent")
+	var bad_target := {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+		"target_kind": "enemy_single", "effects": {"dodge_next_attack": 1}}
+	_check(CardKeywordGlossary.describe(bad_target).is_empty(),
+		"wrong Dodge target stays silent")
+	# Wrong descriptor values.
+	var bad_value := {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+		"target_kind": "self", "effects": {"dodge_next_attack": 0, "duration": 1}}
+	_check(CardKeywordGlossary.describe(bad_value).is_empty(),
+		"zero Dodge value stays silent")
+	var bad_bool := {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+		"target_kind": "self", "effects": {"dodge_next_attack": true}}
+	_check(CardKeywordGlossary.describe(bad_bool).is_empty(),
+		"boolean Dodge value stays silent")
+	var bad_text := {"id": "lantern_monk_moth_shroud", "owner": "lantern_monk",
+		"target_kind": "ally_single", "effects": {"block": 6, "dodge_next_attack": "1"}}
+	_check(CardKeywordGlossary.describe(bad_text).is_empty(),
+		"text Dodge value stays silent")
+	var bad_duration := {"id": "rag_duelist_cape_slip", "owner": "rag_duelist",
+		"target_kind": "self", "effects": {"dodge_next_attack": 1, "duration": 2}}
+	_check(CardKeywordGlossary.describe(bad_duration).is_empty(),
+		"wrong Dodge duration stays silent")
+	# Exhaust negatives.
+	var bad_exhaust_false := {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk",
+		"target_kind": "enemy_all", "effects": {"blind_next_attack": true, "exhaust": false}}
+	var bad_exhaust_false_rows := CardKeywordGlossary.describe(bad_exhaust_false)
+	var bad_exhaust_false_has_exhaust := false
+	for row: Dictionary in bad_exhaust_false_rows:
+		if str(row.get("keyword", "")) == "Exhaust":
+			bad_exhaust_false_has_exhaust = true
+	_check(not bad_exhaust_false_has_exhaust, "false Exhaust stays silent")
+	var bad_exhaust_missing_blind := {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk",
+		"target_kind": "enemy_all", "effects": {"exhaust": true}}
+	_check(CardKeywordGlossary.describe(bad_exhaust_missing_blind).is_empty(),
+		"missing Moth Cloud Blind stays silent")
+	var bad_exhaust_text := {"id": "lantern_monk_moth_cloud_plus", "owner": "lantern_monk",
+		"target_kind": "enemy_all", "effects": {"blind_next_attack": true, "exhaust": "true"}}
+	var bad_exhaust_text_rows := CardKeywordGlossary.describe(bad_exhaust_text)
+	var bad_exhaust_text_has_exhaust := false
+	for row: Dictionary in bad_exhaust_text_rows:
+		if str(row.get("keyword", "")) == "Exhaust":
+			bad_exhaust_text_has_exhaust = true
+	_check(not bad_exhaust_text_has_exhaust, "text Exhaust value stays silent")
+	# Existing special-rule order is preserved.
+	_check(CardKeywordGlossary.SPECIAL_ORDER == ["conditional_damage", "random_hit",
+		"energy_tradeoff", "bleed_doubling", "two_hits", "dodge", "exhaust"],
+		"new special rules appended without reshuffling existing five")
+	# Existing keyword rows unchanged.
+	_check(CardKeywordGlossary.KEYWORD_ORDER == ["bleed", "weak", "exposed", "pinned",
+		"unravel", "guarding", "thorns", "riposte", "tangled", "blind"],
+		"keyword order unchanged")
 
