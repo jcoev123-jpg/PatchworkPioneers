@@ -1,11 +1,14 @@
 extends SceneTree
 ## V3-1 Yarn Ranger catalog contract. No live combat/reward/Rest behavior is assumed.
-## Extended with deterministic headless combat resolution for Unspool cards.
+## Extended with deterministic headless combat resolution for Unspool, Snare Net and the knitted
+## ally supports (Hood Knit and Knit Shield, base and "+").
 
 const YarnRangerPoolCards = preload("res://data/cards/yarn_ranger_pool_cards.gd")
+const YarnRangerStarterCards = preload("res://data/cards/yarn_ranger_starter_cards.gd")
 const StarterCards = preload("res://data/cards/starter_cards.gd")
 const CombatYarnRangerUnspoolCards = preload("res://scripts/combat_yarn_ranger_unspool_cards.gd")
 const CombatYarnRangerSnareCards = preload("res://scripts/combat_yarn_ranger_snare_cards.gd")
+const CombatYarnRangerKnitCards = preload("res://scripts/combat_yarn_ranger_knit_cards.gd")
 const CombatParty = preload("res://scripts/combat_party.gd")
 const CombatEnemies = preload("res://scripts/combat_enemies.gd")
 const CombatDeck = preload("res://scripts/combat_deck.gd")
@@ -15,6 +18,12 @@ const CombatStatusTurnBatch = preload("res://scripts/combat_status_turn_batch.gd
 const SNARE_BASE := "yarn_ranger_snare_net"
 const SNARE_PLUS := "yarn_ranger_snare_net_plus"
 const SNARE_IDS := [SNARE_BASE, SNARE_PLUS]
+
+const KNIT_HOOD := "yarn_ranger_hood_knit"
+const KNIT_HOOD_PLUS := "yarn_ranger_hood_knit_plus"
+const KNIT_SHIELD := "yarn_ranger_knit_shield"
+const KNIT_SHIELD_PLUS := "yarn_ranger_knit_shield_plus"
+const KNIT_IDS := [KNIT_HOOD, KNIT_HOOD_PLUS, KNIT_SHIELD, KNIT_SHIELD_PLUS]
 
 var failures: Array[String] = []
 var checks: int = 0
@@ -32,6 +41,10 @@ func _initialize() -> void:
 	_test_snare_net_living_slots_and_stacking()
 	_test_snare_net_tangled_lifecycle()
 	_test_snare_net_refusals()
+	_test_knit_catalog_contract()
+	_test_knit_paid_block_and_draw()
+	_test_knit_draw_supply()
+	_test_knit_refusals()
 	if failures.is_empty():
 		print("v3_yarn_ranger_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -1036,6 +1049,485 @@ func _rejected_snare(resolver: CombatYarnRangerSnareCards, deck: CombatDeck,
 		label + ": refusal reason is " + reason + " (got " + str(result.get("reason")) + ")")
 	_check(_snare_snapshot(deck, party, enemies) == before,
 		label + ": unchanged energy, hand, piles, turn, party, enemies, positions and RNG")
+
+
+## AC1: the four authentic knitted printings keep their exact authored line in the catalog that owns
+## them, resolve to that exact record and refuse every other ID or tampered definition.
+func _test_knit_catalog_contract() -> void:
+	var starter := YarnRangerStarterCards.new()
+	var pool := YarnRangerPoolCards.new()
+	var resolver := CombatYarnRangerKnitCards.new()
+	var expected := {
+		KNIT_HOOD: {"catalog": "starter", "block": 4},
+		KNIT_HOOD_PLUS: {"catalog": "starter", "block": 6},
+		KNIT_SHIELD: {"catalog": "pool", "block": 6},
+		KNIT_SHIELD_PLUS: {"catalog": "pool", "block": 8},
+	}
+	for card_id: String in KNIT_IDS:
+		var spec: Dictionary = expected[card_id]
+		var own_catalog: Dictionary = starter.get_definition(card_id) \
+			if spec["catalog"] == "starter" else pool.get_definition(card_id)
+		var other_catalog: Dictionary = pool.get_definition(card_id) \
+			if spec["catalog"] == "starter" else starter.get_definition(card_id)
+		_check(not own_catalog.is_empty(), card_id + " is authored by its own Yarn catalog")
+		_check(other_catalog.is_empty(), card_id + " is not duplicated in the other Yarn catalog")
+		_check(own_catalog.get("id") == card_id, card_id + " keeps its exact identifier")
+		_check(own_catalog.get("owner") == "yarn_ranger", card_id + " is owned by the Yarn Ranger")
+		_check(own_catalog.get("cost") == 1, card_id + " prints one energy")
+		_check(own_catalog.get("from_positions") == [1, 2, 3], card_id + " prints FROM seats 1-3")
+		_check(own_catalog.get("target_kind") == "ally_single", card_id + " prints a single-ally target")
+		_check(own_catalog.get("to_positions") == [], card_id + " prints an empty TO line")
+		var effects: Dictionary = own_catalog.get("effects", {})
+		_check(effects == {"block": spec["block"], "draw": 1},
+			card_id + " prints exactly " + str(spec["block"]) + " Block and one draw")
+		_check(effects.size() == 2, card_id + " carries no extra effect key")
+		_check(typeof(effects.get("block")) == TYPE_INT and typeof(effects.get("draw")) == TYPE_INT,
+			card_id + " prints integer Block and draw values")
+		if card_id.ends_with("_plus"):
+			_check(own_catalog.get("upgrade_of") == card_id.trim_suffix("_plus")
+				and not own_catalog.has("upgrade_id"),
+				card_id + " links back to its one base printing")
+		else:
+			_check(own_catalog.get("upgrade_id") == card_id + "_plus"
+				and not own_catalog.has("upgrade_of"),
+				card_id + " links forward to its one upgrade")
+		_check(resolver.is_supported_card(card_id), card_id + " is a supported knitted card")
+		_check(CombatYarnRangerKnitCards.is_authentic_definition(own_catalog, card_id),
+			card_id + " passes the definition authenticator")
+		var resolved := CombatYarnRangerKnitCards.knit_definition(card_id)
+		_check(resolved == own_catalog, card_id + " resolves to its exact detached catalog record")
+
+	# Detached: mutating a resolved record cannot rewrite what the next resolution returns.
+	var sample := CombatYarnRangerKnitCards.knit_definition(KNIT_HOOD)
+	_check(not sample.is_empty(), "knitted resolution fixture loaded")
+	if not sample.is_empty():
+		sample["effects"]["block"] = 900
+		sample["effects"]["draw"] = 9
+		sample["from_positions"].clear()
+		sample["cost"] = 0
+		_check(CombatYarnRangerKnitCards.knit_definition(KNIT_HOOD)
+			== starter.get_definition(KNIT_HOOD),
+			"a mutated knitted definition cannot poison later resolutions")
+
+	# Every other Yarn starter/pool card is unrelated, never a knitted card.
+	var unrelated: Array = []
+	unrelated.append_array(starter.get_all_card_ids())
+	unrelated.append_array(pool.get_all_card_ids())
+	for card_id: String in KNIT_IDS:
+		unrelated.erase(card_id)
+	for other_id: Variant in unrelated:
+		_check(CombatYarnRangerKnitCards.knit_definition(other_id).is_empty(),
+			str(other_id) + " does not resolve as a knitted card")
+		_check(not resolver.is_supported_card(other_id),
+			str(other_id) + " is not a supported knitted card")
+	var forged: Array = ["yarn_ranger_hood_knit+", "yarn_ranger_hood_knit_plus_plus",
+		"yarn_ranger_knit_shield_+", "hood_knit", "knit_shield",
+		" yarn_ranger_hood_knit", "yarn_ranger_hood_knit ", "KNIT_SHIELD", "",
+		"warden_strike", StringName(KNIT_HOOD), null, 0, 3.5, false, [], {}]
+	for other_id: Variant in forged:
+		_check(CombatYarnRangerKnitCards.knit_definition(other_id).is_empty(),
+			"forged or non-string ID never resolves as knitted: " + str(other_id))
+		_check(not CombatYarnRangerKnitCards.is_authentic_definition(
+			starter.get_definition(KNIT_HOOD), other_id),
+			"a knit record cannot authenticate under a forged ID: " + str(other_id))
+
+	# Adversarial copies of a real record: every altered contract field is refused.
+	var base_record: Dictionary = starter.get_definition(KNIT_HOOD)
+	_check(not base_record.is_empty()
+		and CombatYarnRangerKnitCards.is_authentic_definition(base_record, KNIT_HOOD),
+		"authenticator positive fixture really is the authored Hood Knit")
+	var mutations: Array[Callable] = [
+		func(record: Dictionary) -> void: record["effects"]["block"] = 5,
+		func(record: Dictionary) -> void: record["effects"]["block"] = 4.0,
+		func(record: Dictionary) -> void: record["effects"]["block"] = "4",
+		func(record: Dictionary) -> void: record["effects"]["draw"] = 2,
+		func(record: Dictionary) -> void: record["effects"]["draw"] = 1.0,
+		func(record: Dictionary) -> void: record["effects"].erase("draw"),
+		func(record: Dictionary) -> void: record["effects"]["heal"] = 1,
+		func(record: Dictionary) -> void: record["effects"] = "block",
+		func(record: Dictionary) -> void: record["cost"] = 0,
+		func(record: Dictionary) -> void: record["cost"] = 2,
+		func(record: Dictionary) -> void: record["cost"] = 1.0,
+		func(record: Dictionary) -> void: record["owner"] = "warden",
+		func(record: Dictionary) -> void: record["from_positions"] = [2, 3],
+		func(record: Dictionary) -> void: record["from_positions"] = ["1", "2", "3"],
+		func(record: Dictionary) -> void: record["from_positions"] = "1,2,3",
+		func(record: Dictionary) -> void: record["to_positions"] = [1],
+		func(record: Dictionary) -> void: record["target_kind"] = "enemy_single",
+		func(record: Dictionary) -> void: record["id"] = KNIT_SHIELD,
+		func(record: Dictionary) -> void: record.erase("upgrade_id"),
+		func(record: Dictionary) -> void: record["upgrade_of"] = KNIT_HOOD,
+		func(record: Dictionary) -> void: record.erase("to_positions"),
+		func(record: Dictionary) -> void: record.erase("effects"),
+	]
+	for index in range(mutations.size()):
+		var tampered: Dictionary = base_record.duplicate(true)
+		mutations[index].call(tampered)
+		_check(not CombatYarnRangerKnitCards.is_authentic_definition(tampered, KNIT_HOOD),
+			"tampered knitted record " + str(index) + " is refused")
+	_check(not CombatYarnRangerKnitCards.is_authentic_definition(
+		starter.get_definition(KNIT_HOOD_PLUS), KNIT_HOOD),
+		"an upgraded record cannot authenticate as its base ID")
+	_check(not CombatYarnRangerKnitCards.is_authentic_definition(
+		starter.get_definition(KNIT_HOOD), KNIT_HOOD_PLUS),
+		"a base record cannot authenticate as its upgraded ID")
+	_check(not CombatYarnRangerKnitCards.is_authentic_definition(
+		pool.get_definition(KNIT_SHIELD), KNIT_HOOD),
+		"a pool record cannot forge a starter identity")
+
+
+## AC1/AC2: a real held copy from any seat pays one energy, pads only the chosen living ally with
+## the exact printed Block, draws one real shared card and discards exactly one copy.
+func _test_knit_paid_block_and_draw() -> void:
+	var resolver := CombatYarnRangerKnitCards.new()
+	var cases := [
+		{"id": KNIT_HOOD, "block": 4, "seat": 1},
+		{"id": KNIT_HOOD_PLUS, "block": 6, "seat": 2},
+		{"id": KNIT_SHIELD, "block": 6, "seat": 3},
+		{"id": KNIT_SHIELD_PLUS, "block": 8, "seat": 1},
+	]
+	for index in range(cases.size()):
+		var entry: Dictionary = cases[index]
+		var card_id: String = entry["id"]
+		var seat: int = entry["seat"]
+		var expected_block: int = entry["block"]
+		var target: int = 1 if seat != 1 else 2
+		var label: String = card_id + " from seat " + str(seat) + " onto seat " + str(target)
+		var party := _knit_party(seat)
+		_check(party.gain_block(target, 2), label + ": fixture ally really carries Block")
+		var deck := _knit_deck(card_id, 20261101 + index)
+		_check(deck.hand.count(card_id) == 1, label + ": exactly one authentic copy is held")
+		_check(deck.energy == 3 and deck.turn_active, label + ": a real three-energy turn is active")
+		_check(deck.discard_pile.is_empty(), label + ": the fixture discard starts empty")
+		var expected_draw: String = deck.draw_pile.back()
+		var target_hp: int = int(party.get_hero(target).get("hp"))
+		var rng_before: int = deck._rng.state
+		var before := _knit_snapshot(deck, party)
+		var result: Dictionary = resolver.play_card(deck, party, card_id, target)
+		_check(result.get("ok") == true and result.get("reason") == "applied",
+			label + ": authorized paid play")
+		_check(result.get("card_id") == card_id and result.get("cost") == 1,
+			label + ": receipt names the authentic card and its one energy")
+		_check(result.get("owner_position") == seat, label + ": receipt reports the real owner seat")
+		_check(result.get("target_position") == target, label + ": receipt reports the chosen ally")
+		_check(result.get("block_gained") == expected_block,
+			label + ": receipt reports the printed Block")
+		_check(result.get("drawn") == 1, label + ": receipt reports one shared draw")
+		_check(deck.energy == 2, label + ": exactly one energy was paid")
+		_check(deck.hand.count(card_id) == 0, label + ": the held copy left the hand")
+		_check(deck.hand.has(expected_draw), label + ": the seeded shared draw reached the hand")
+		_check(deck.draw_pile.is_empty(), label + ": the single shared draw emptied the supply")
+		_check(deck.discard_pile == [card_id], label + ": exactly one played copy reached the discard")
+		_check(deck._rng.state == rng_before,
+			label + ": drawing from a nonempty supply consumes no RNG")
+		_check(party.get_hero(target).get("block") == 2 + expected_block,
+			label + ": the chosen ally gained exactly its printed Block on top of existing Block")
+		_check(party.get_hero(target).get("hp") == target_hp,
+			label + ": the chosen ally's HP is untouched")
+		for position in [1, 2, 3]:
+			if position == target:
+				continue
+			_check(party.get_hero(position).get("block") == 0,
+				label + ": seat " + str(position) + " gained no Block")
+		_check(party.get_hero(seat).get("id") == "yarn_ranger"
+			and party.get_hero(seat).get("hp") == 28,
+			label + ": the owner and its HP stay unchanged")
+		_check(_knit_snapshot(deck, party) == _expected_knit(before, card_id, target, expected_block),
+			label + ": exact hand, piles, energy, turn, party and RNG state")
+
+	# Self is a legal recipient for the knitted supports.
+	var self_party := _knit_party(2)
+	var self_deck := _knit_deck(KNIT_HOOD, 77123)
+	var self_result: Dictionary = resolver.play_card(self_deck, self_party, KNIT_HOOD, 2)
+	_check(self_result.get("ok") == true, "self-targeted Hood Knit is legal")
+	_check(self_party.get_hero(2).get("block") == 4, "self-targeted Hood Knit grants its four Block")
+	_check(self_party.get_hero(1).get("block") == 0 and self_party.get_hero(3).get("block") == 0,
+		"self-targeted Hood Knit pads nobody else")
+	_check(self_party.get_hero(2).get("hp") == 28, "self-targeted Hood Knit spends no HP")
+
+
+## AC2: an empty supply is a legal zero draw, and a genuine discard refill can never draw the played
+## copy back into its own hand.
+func _test_knit_draw_supply() -> void:
+	var resolver := CombatYarnRangerKnitCards.new()
+
+	# A one-card deck: the card is drawn at turn start, so the shared supply is genuinely empty.
+	var empty_party := _knit_party(1)
+	var empty_deck := CombatDeck.new([KNIT_HOOD], _knit_rng(5511))
+	_check(empty_deck.start_turn() and empty_deck.hand == [KNIT_HOOD],
+		"empty-supply fixture really holds the knitted card with no draw or discard left")
+	_check(empty_deck.draw_pile.is_empty() and empty_deck.discard_pile.is_empty(),
+		"empty-supply fixture really has empty piles")
+	var empty_rng: int = empty_deck._rng.state
+	var empty_result: Dictionary = resolver.play_card(empty_deck, empty_party, KNIT_HOOD, 1)
+	_check(empty_result.get("ok") == true and empty_result.get("drawn") == 0,
+		"an empty shared supply is a legal zero draw")
+	_check(empty_deck.energy == 2, "the empty-supply play still pays one energy")
+	_check(empty_deck.hand.is_empty(), "the empty-supply play leaves nothing undrawn")
+	_check(empty_deck.draw_pile.is_empty(), "the empty-supply play invents no draw pile")
+	_check(empty_deck.discard_pile == [KNIT_HOOD],
+		"the empty-supply play discards exactly the played copy")
+	_check(empty_deck._rng.state == empty_rng, "the empty-supply play consumes no RNG")
+	_check(empty_party.get_hero(1).get("block") == 4,
+		"the empty-supply play still grants the printed Block")
+
+	# Empty draw pile with two genuine discards: the refill reshuffles them, and the still-held
+	# played copy must not be swept into the reshuffle and drawn back.
+	var refill_party := _knit_party(3)
+	var refill_deck := CombatDeck.new([KNIT_SHIELD_PLUS, "knit_refill_a", "knit_refill_b"],
+		_knit_rng(6622))
+	_check(refill_deck.start_turn() and refill_deck.hand.size() == 3
+		and refill_deck.draw_pile.is_empty(),
+		"refill fixture drew all three cards into a real turn")
+	refill_deck.hand.clear()
+	refill_deck.hand.append(KNIT_SHIELD_PLUS)
+	refill_deck.discard_pile.append("knit_refill_a")
+	refill_deck.discard_pile.append("knit_refill_b")
+	_check(refill_deck.hand == [KNIT_SHIELD_PLUS] and refill_deck.discard_pile.size() == 2,
+		"refill fixture really leaves an empty draw pile and two discards")
+	var refill_rng: int = refill_deck._rng.state
+	var refill_result: Dictionary = resolver.play_card(refill_deck, refill_party,
+		KNIT_SHIELD_PLUS, 2)
+	_check(refill_result.get("ok") == true and refill_result.get("drawn") == 1,
+		"the discard refill supplies exactly one shared draw")
+	_check(not refill_deck.hand.has(KNIT_SHIELD_PLUS),
+		"the played copy cannot refill itself into its own draw")
+	_check(refill_deck.hand.size() == 1
+		and (refill_deck.hand[0] == "knit_refill_a" or refill_deck.hand[0] == "knit_refill_b"),
+		"the single drawn card is one of the genuine discards")
+	_check(refill_deck.draw_pile.size() == 1
+		and (refill_deck.draw_pile[0] == "knit_refill_a"
+			or refill_deck.draw_pile[0] == "knit_refill_b"),
+		"the other genuine discard stays in the reshuffled draw pile")
+	_check(refill_deck.discard_pile == [KNIT_SHIELD_PLUS],
+		"only the played copy reaches the discard after the draw")
+	_check(refill_deck.hand.size() + refill_deck.draw_pile.size()
+		+ refill_deck.discard_pile.size() == 3,
+		"the refill case conserves all three cards")
+	_check(refill_deck._rng.state != refill_rng,
+		"the genuine reshuffle is drawn through the already-seeded RNG")
+	_check(refill_deck.energy == 2, "the refill play pays one energy")
+	_check(refill_party.get_hero(2).get("block") == 8,
+		"the refill play grants Knit Shield+'s printed eight Block")
+	_check(refill_party.get_hero(1).get("block") == 0
+		and refill_party.get_hero(3).get("block") == 0,
+		"the refill play pads only the chosen ally")
+
+
+## AC3: every invalid request is inert, carries its reason and proves no mutation of deck, party,
+## piles or RNG.
+func _test_knit_refusals() -> void:
+	var resolver := CombatYarnRangerKnitCards.new()
+	var party := _knit_party(2)
+	var deck := _knit_deck(KNIT_HOOD, 8811)
+
+	_rejected_knit(resolver, null, party, KNIT_HOOD, 1, "invalid_request", "null deck")
+	_rejected_knit(resolver, deck, null, KNIT_HOOD, 1, "invalid_request", "null party")
+
+	# Wrong IDs: unrelated authentic cards, forged spellings and non-strings.
+	var wrong_ids: Array = ["yarn_ranger_needle_nock", "yarn_ranger_snare_net",
+		"yarn_ranger_hood_knit+", "yarn_ranger_hood_knit_plus_plus",
+		"yarn_ranger_knit_shield_plus_plus", "yarn_ranger_knit_shield ", "KNIT_SHIELD", "",
+		"warden_strike", StringName(KNIT_HOOD), null, 0, 3.5, false, [], {}]
+	for wrong_id: Variant in wrong_ids:
+		_rejected_knit(resolver, deck, party, wrong_id, 1, "unsupported_card",
+			"unsupported ID " + str(wrong_id))
+	# An authentic knitted printing the hand does not hold is still unheld.
+	_rejected_knit(resolver, deck, party, KNIT_SHIELD, 1, "card_not_held",
+		"authentic but unheld Knit Shield")
+	_rejected_knit(resolver, deck, party, KNIT_HOOD_PLUS, 1, "card_not_held",
+		"authentic but unheld Hood Knit+")
+
+	# An inactive turn is never paid, even with a real copy in hand.
+	var inactive := CombatDeck.new([KNIT_HOOD, "knit_filler_a"], _knit_rng(8812))
+	inactive.hand.append(KNIT_HOOD)
+	_check(not inactive.turn_active and inactive.hand.has(KNIT_HOOD),
+		"inactive fixture really holds a copy outside a turn")
+	_rejected_knit(resolver, inactive, party, KNIT_HOOD, 1, "inactive_turn", "inactive turn")
+
+	# A downed owner may not play.
+	var torn_owner := _knit_party(3)
+	_check(torn_owner.apply_damage(3, 28) and torn_owner.is_downed(3),
+		"torn-owner fixture really has a downed Yarn Ranger")
+	_rejected_knit(resolver, deck, torn_owner, KNIT_HOOD, 1, "owner_downed", "downed owner")
+
+	# A downed recipient may not be padded.
+	var torn_target := _knit_party(2)
+	_check(torn_target.apply_damage(1, 40) and torn_target.is_downed(1),
+		"torn-target fixture really has a downed front ally")
+	_rejected_knit(resolver, deck, torn_target, KNIT_HOOD, 1, "target_downed",
+		"downed recipient")
+
+	# An unaffordable copy is refused without a partial charge.
+	var poor := _knit_deck(KNIT_HOOD, 8813)
+	poor.combat_state.energy = 0
+	_check(poor.energy == 0 and poor.hand.has(KNIT_HOOD),
+		"short-energy fixture really holds a copy with no energy")
+	_rejected_knit(resolver, poor, party, KNIT_HOOD, 1, "insufficient_energy", "no energy")
+
+	# Illegal target slots: only seats 1-3 are real recipients.
+	for slot: int in [0, 4, -1, 99]:
+		_rejected_knit(resolver, deck, party, KNIT_HOOD, slot, "invalid_target",
+			"illegal recipient slot " + str(slot))
+
+	# Block overflow is refused before any payment.
+	var overflow := _knit_party(2)
+	overflow._heroes[1]["block"] = CombatParty.MAX_INT - 1
+	_check(overflow.get_hero(2).get("block") == CombatParty.MAX_INT - 1,
+		"overflow fixture really sits one Block below the integer limit")
+	_rejected_knit(resolver, deck, overflow, KNIT_HOOD, 2, "block_overflow", "Block overflow")
+
+	# Invalid or malformed rosters fail closed.
+	var short_party := CombatParty.new([{"id": "warden", "max_hp": 40}])
+	_rejected_knit(resolver, deck, short_party, KNIT_HOOD, 1, "invalid_roster",
+		"invalid one-hero party")
+	var absent_owner := CombatParty.new([{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30}, {"id": "tinker", "max_hp": 26}])
+	_check(absent_owner.is_valid() and absent_owner.get_hero(2).get("id") == "seamstress",
+		"absent-owner fixture is a valid party without a Yarn Ranger")
+	_rejected_knit(resolver, deck, absent_owner, KNIT_HOOD, 1, "owner_missing",
+		"absent Yarn Ranger")
+	var duplicate := _knit_party(2)
+	duplicate._heroes[2]["id"] = "yarn_ranger"
+	_check(duplicate.get_hero(2).get("id") == "yarn_ranger"
+		and duplicate.get_hero(3).get("id") == "yarn_ranger",
+		"duplicate-identity fixture really repeats the owner ID")
+	_rejected_knit(resolver, deck, duplicate, KNIT_HOOD, 1, "invalid_party",
+		"duplicate hero identity")
+	var bad_hp := _knit_party(2)
+	bad_hp._heroes[0]["hp"] = 999
+	_rejected_knit(resolver, deck, bad_hp, KNIT_HOOD, 1, "invalid_party", "malformed hero HP")
+	var bad_block := _knit_party(2)
+	bad_block._heroes[0]["block"] = -1
+	_rejected_knit(resolver, deck, bad_block, KNIT_HOOD, 1, "invalid_party",
+		"malformed hero Block")
+	var bad_position := _knit_party(2)
+	bad_position._heroes[0]["position"] = 3
+	_rejected_knit(resolver, deck, bad_position, KNIT_HOOD, 1, "invalid_party",
+		"malformed hero slot index")
+	var bad_identity := _knit_party(2)
+	bad_identity._heroes[0]["id"] = ""
+	_rejected_knit(resolver, deck, bad_identity, KNIT_HOOD, 1, "invalid_party",
+		"empty hero identity")
+
+	# A consumed copy cannot be played twice.
+	var repeat_party := _knit_party(3)
+	var repeat_deck := _knit_deck(KNIT_SHIELD, 8814)
+	_check(resolver.play_card(repeat_deck, repeat_party, KNIT_SHIELD, 1).get("ok") == true,
+		"duplicate-play fixture really casts once")
+	_check(repeat_deck.energy == 2 and repeat_deck.discard_pile == [KNIT_SHIELD],
+		"duplicate-play fixture really spent one energy and discarded the copy")
+	_rejected_knit(resolver, repeat_deck, repeat_party, KNIT_SHIELD, 1, "card_not_held",
+		"duplicate play of the consumed copy")
+
+	# A refused attempt never poisons the next authentic play on the same objects.
+	var retry_deck := _knit_deck(KNIT_HOOD_PLUS, 8815)
+	var retry_party := _knit_party(1)
+	_rejected_knit(resolver, retry_deck, retry_party, KNIT_SHIELD, 1, "card_not_held",
+		"retry: authentic but unheld first")
+	_rejected_knit(resolver, retry_deck, retry_party, KNIT_HOOD_PLUS, 0, "invalid_target",
+		"retry: illegal slot second")
+	var retry_result: Dictionary = resolver.play_card(retry_deck, retry_party,
+		KNIT_HOOD_PLUS, 3)
+	_check(retry_result.get("ok") == true and retry_deck.energy == 2
+		and retry_party.get_hero(3).get("block") == 6,
+		"retry: the authentic play then succeeds exactly once")
+
+
+func _knit_rng(seed_value: int) -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	return rng
+
+
+## A real three-hero party (distinct IDs, authored HP scale) with the Yarn Ranger in the named seat.
+func _knit_party(ranger_position: int) -> CombatParty:
+	var heroes: Array = [
+		{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26},
+	]
+	var ranger: Dictionary = heroes[ranger_position - 1]
+	ranger["id"] = "yarn_ranger"
+	ranger["max_hp"] = 28
+	var party := CombatParty.new(heroes)
+	_check(party.is_valid() and party.get_hero(ranger_position).get("id") == "yarn_ranger"
+		and party.get_hero(ranger_position).get("hp") == 28,
+		"valid three-hero party with a living Yarn Ranger in seat " + str(ranger_position))
+	return party
+
+
+## A genuine seeded six-card turn: five cards drawn and one left in the shared draw pile. The fixture
+## then guarantees the hand holds exactly one copy under test while keeping a real card to draw.
+func _knit_deck(card_id: String, seed_value: int) -> CombatDeck:
+	var ids: Array[String] = [card_id]
+	for index in range(5):
+		ids.append("knit_filler_" + str(index))
+	var deck := CombatDeck.new(ids, _knit_rng(seed_value))
+	_check(deck.start_turn() and deck.energy == 3,
+		card_id + ": starts a real three-energy shared turn")
+	_check(deck.draw_pile.size() == 1, card_id + ": one genuine shared card remains to draw")
+	if deck.hand.count(card_id) == 0:
+		var found: int = deck.draw_pile.find(card_id)
+		if found >= 0:
+			var replacement: String = deck.hand[0]
+			deck.draw_pile[found] = replacement
+			deck.hand[0] = card_id
+	_check(deck.hand.count(card_id) == 1,
+		card_id + ": the fixture hand genuinely holds exactly one copy")
+	return deck
+
+
+## The complete mutable knitted-play state, including the run RNG and null-safe presence flags.
+func _knit_snapshot(deck: CombatDeck, party: CombatParty) -> Dictionary:
+	var snapshot: Dictionary = {
+		"deck_present": deck != null, "party_present": party != null
+	}
+	if deck != null:
+		snapshot["turn"] = deck.turn_active
+		snapshot["energy"] = deck.energy
+		snapshot["state_energy"] = deck.combat_state.energy
+		snapshot["state_turn"] = deck.combat_state.player_turn_active
+		snapshot["hand"] = deck.hand.duplicate()
+		snapshot["draw"] = deck.draw_pile.duplicate()
+		snapshot["discard"] = deck.discard_pile.duplicate()
+		snapshot["rng_state"] = deck._rng.state if deck._rng != null else -1
+	if party != null:
+		snapshot["party"] = party.get_heroes()
+		snapshot["party_valid"] = party.is_valid()
+	return snapshot
+
+
+## The exact post-transaction state for a play that drew from a nonempty supply: one energy, the
+## held copy moved to discard, one card drawn and the printed Block on the chosen seat only.
+func _expected_knit(before: Dictionary, card_id: String, target: int,
+		block: int) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] = int(expected["energy"]) - 1
+	expected["state_energy"] = int(expected["state_energy"]) - 1
+	var hand: Array = expected["hand"]
+	_check(hand.count(card_id) == 1, "expected snapshot: exactly one played copy is held")
+	hand.remove_at(hand.find(card_id))
+	var draw: Array = expected["draw"]
+	_check(not draw.is_empty(), "expected snapshot: a genuine shared draw supply exists")
+	hand.append(draw.pop_back())
+	(expected["discard"] as Array).append(card_id)
+	var heroes: Array = expected["party"]
+	heroes[target - 1]["block"] = int(heroes[target - 1]["block"]) + block
+	return expected
+
+
+func _rejected_knit(resolver: CombatYarnRangerKnitCards, deck: CombatDeck,
+		party: CombatParty, card_id: Variant, target: int, reason: String,
+		label: String) -> void:
+	var before := _knit_snapshot(deck, party)
+	var result: Dictionary = resolver.play_card(deck, party, card_id, target)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("reason") == reason,
+		label + ": refusal reason is " + reason + " (got " + str(result.get("reason")) + ")")
+	_check(_knit_snapshot(deck, party) == before,
+		label + ": unchanged energy, hand, piles, turn, party, blocks, HP and RNG")
+
 
 
 
