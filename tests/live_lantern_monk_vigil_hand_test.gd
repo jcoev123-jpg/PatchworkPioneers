@@ -171,7 +171,7 @@ func _run() -> void:
 		for queued in [false, true]:
 			await _reject(mode, queued)
 	var panel := await _begin(IDS[0])
-	_check(panel != null and not presenter._is_actionable("lantern_monk_lantern_glow")
-		and not presenter._is_actionable("lantern_monk_lantern_glow_plus"), "Lantern Glow remains unwired")
+	_check(panel != null and presenter._is_actionable("lantern_monk_lantern_glow")
+		and presenter._is_actionable("lantern_monk_lantern_glow_plus"), "authentic Glow forms share party resolver wiring")
 	await _dispose()
 	_finish()

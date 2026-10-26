@@ -27,6 +27,7 @@ const ART_DIR := "res://assets/paper/"
 ## keep their detail on a landscape hand panel.
 const FRAME_SOURCE_EDGE := 34.0
 const VIGIL_IDS := ["lantern_monk_vigil_ring", "lantern_monk_vigil_ring_plus"]
+const GLOW_IDS := ["lantern_monk_lantern_glow", "lantern_monk_lantern_glow_plus"]
 
 var _catalog := StarterCards.new()
 var _toss := CombatWardenV3ShieldTossCards.new()
@@ -84,7 +85,7 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
-	if card_id in VIGIL_IDS and _vigil.is_supported_card(card_id):
+	if (card_id in VIGIL_IDS or card_id in GLOW_IDS) and _vigil.is_supported_card(card_id):
 		return _vigil._catalog.get_definition(card_id)
 	if _pitchfork.is_supported_card(card_id):
 		return _pitchfork._catalog_definition(card_id)
@@ -515,6 +516,8 @@ func _recipient(definition: Dictionary) -> String:
 ## fields and the real confirmed-hit starter adapter are described, and any
 ## unrecognized effect key is flagged instead of being rendered as a number.
 func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[String]:
+	if card_id in GLOW_IDS:
+		return ["Heal each living hero %d HP, capped at max HP. For each living hero choose one present Bleed, Weak or Exposed to remove completely; heal alone if none are present. No Block; Torn heroes are excluded." % definition.effects.heal_all]
 	if card_id in VIGIL_IDS:
 		return ["Heal each living hero %d HP, capped at max HP; each gains %d Block. Torn heroes are excluded; no debuffs are removed." % [definition.effects.heal_all, definition.effects.block_all]]
 	if _re_stuff.is_supported_card(card_id):
@@ -1063,7 +1066,7 @@ func _update_visual(panel: Control) -> void:
 		if id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatYarnRangerSnareCards.CARDS.has(id) or CombatScarecrowCrowCards.CARDS.has(id):
 			var area = _app.get_node_or_null("LiveAreaAttackAction")
 			playable = area != null and area._eligible(panel, id)
-		elif id in VIGIL_IDS or id in CombatSupportCards.SCARECROW_STRAW_IDS or _re_stuff.is_supported_card(id) or _feint.is_supported_card(id) or _pitchfork.is_supported_card(id) or _pop.is_supported_card(id) or _sew.is_supported_card(id) or _roll.is_supported_card(id):
+		elif id in VIGIL_IDS or id in GLOW_IDS or id in CombatSupportCards.SCARECROW_STRAW_IDS or _re_stuff.is_supported_card(id) or _feint.is_supported_card(id) or _pitchfork.is_supported_card(id) or _pop.is_supported_card(id) or _sew.is_supported_card(id) or _roll.is_supported_card(id):
 			var support_presenter = _app.get_node_or_null("LiveSupportHand")
 			playable = support_presenter != null and support_presenter._eligible(
 				panel, id, _app.deck, _app.party, _app.battle_view)
@@ -1188,6 +1191,8 @@ func _center_text(panel: Control, value: String, rect: Rect2, preferred: int) ->
 ## keeps the ordinary and two-half sewn faces identical; applied amounts come
 ## from the same validated record the tooltip explains, never from a prediction.
 func _rules(id: String) -> String:
+	if id in GLOW_IDS and not _definition(id).is_empty():
+		return "Each living hero: heal %d HP; choose Bleed/Weak/Exposed to remove all (if present)." % _definition(id).effects.heal_all
 	if id in VIGIL_IDS and not _definition(id).is_empty():
 		var effects: Dictionary = _definition(id).effects
 		return "Each living hero: heal %d HP; gain %d Block." % [effects.heal_all, effects.block_all]

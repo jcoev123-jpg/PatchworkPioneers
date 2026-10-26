@@ -5,6 +5,7 @@ const SUPPORT_IDS := ["warden_brace", "warden_brace_plus", "tinker_tune_up", "ti
 	"seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up", "seamstress_stitch_up_plus"]
 const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
 const VIGIL_IDS := ["lantern_monk_vigil_ring", "lantern_monk_vigil_ring_plus"]
+const GLOW_IDS := ["lantern_monk_lantern_glow", "lantern_monk_lantern_glow_plus"]
 const ALLY_IDS := ["seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up",
 	"scarecrow_straw_padding", "scarecrow_straw_padding_plus", "scarecrow_straw_wrap", "scarecrow_straw_wrap_plus",
 	"seamstress_v3_mending_knot", "seamstress_v3_mending_knot_plus",
@@ -627,7 +628,7 @@ func _enemy_service(card_id: String):
 
 
 func _is_actionable(card_id: String) -> bool:
-	if card_id in VIGIL_IDS:
+	if card_id in VIGIL_IDS or card_id in GLOW_IDS:
 		return _vigil.is_supported_card(card_id)
 	if _roll.is_supported_card(card_id) or _sew.is_supported_card(card_id):
 		return true
@@ -899,6 +900,8 @@ func _sync_battle() -> void:
 			help_text = "%s: 1 energy; heal %d; %s | Esc: cancel" % [_metadata.definition(_pending.id).display_name,
 				_metadata.definition(_pending.id).effects.heal,
 				"choose Bleed / Weak / Exposed below (Tab, Enter / Space)" if is_instance_valid(cleanse_choices) else "choose a living ally, then a debuff"]
+		if _pending.id in GLOW_IDS:
+			help_text = "Lantern Glow: %s; choose a debuff (Tab, Enter / Space) | Esc: cancel" % _party.get_hero(_pending.choice_position).name
 	if help_label.text != help_text:
 		help_label.text = help_text
 	# The same patch keeps the sewn frame; only its face changes: idle Help in the shipped
@@ -943,7 +946,7 @@ func _sync_battle() -> void:
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_card_input.bind(panel, label.text, _deck, _party, _battle)
 		_bindings[panel] = callback
-		if label.text in VIGIL_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text):
+		if label.text in VIGIL_IDS or label.text in GLOW_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text):
 			_move_context[panel] = _current_move_context(panel)
 		panel.gui_input.connect(callback)
 	# Keep the existing End/Return Tab cycle; Up enters the card row, Down exits it.
@@ -1166,7 +1169,7 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 				recipient = true
 		if owner == 0 or not recipient:
 			return false
-	if card_id in VIGIL_IDS:
+	if card_id in VIGIL_IDS or card_id in GLOW_IDS:
 		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
 				or _move_context.get(panel, []) != _current_move_context(panel):
 			return false
@@ -1174,7 +1177,9 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 				or app.battle_result._party != party or app.battle_result._enemies != app.enemies \
 				or app.enemies == null or not app.enemies.is_valid() or app.enemies.is_victorious():
 			return false
-		if not _vigil._prepare(deck, party, card_id, 0, {}).get("ok", false):
+		var plan: Dictionary = _vigil._prepare(deck, party, card_id, 0, {})
+		# A missing explicit choice is the only admissible incomplete preflight.
+		if not plan.get("ok", false) and not (card_id in GLOW_IDS and plan.get("reason") == "cleanse_required"):
 			return false
 	if _is_enemy_card(card_id):
 		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
@@ -1276,6 +1281,10 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		return
 	_cancel_pending()
 	_pending = {"panel": panel, "id": card_id, "choosing": false, "queued": false, "context": _current_move_context(panel)}
+	if card_id in GLOW_IDS:
+		_pending.heroes = party.get_heroes()
+		_pending.hand = deck.hand.duplicate()
+		_pending.selections = {}
 	if card_id in VIGIL_IDS or card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id) or _roll.is_supported_card(card_id):
 		_pending.owner_roster = _party.get_heroes().map(func(hero): return [hero.id, hero.position])
 	if _roll.is_supported_card(card_id):
@@ -1298,6 +1307,13 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 		return
 	if not _eligible(panel, card_id, deck, party, battle):
 		_cancel_pending()
+		return
+	if card_id in GLOW_IDS:
+		if not _selection_valid():
+			_cancel_pending()
+		elif not _pending.get("choosing", false):
+			_pending.choosing = true
+			_advance_glow(_token)
 		return
 	if (card_id in VIGIL_IDS or card_id in SPARE_PARTS_IDS or _sew.is_supported_card(card_id)) and not _selection_valid():
 		_cancel_pending()
@@ -1349,6 +1365,9 @@ func _selection_valid() -> bool:
 		return false
 	if _pending.get("context", []) != _current_move_context(_pending.panel):
 		return false
+	if _pending.id in GLOW_IDS:
+		if _pending.heroes != _party.get_heroes() or _pending.hand != _deck.hand:
+			return false
 	if _pending.id in VIGIL_IDS and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
 		return false
 	if _pending.id in CombatSupportCards.SCARECROW_STRAW_IDS and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
@@ -1517,6 +1536,69 @@ func _on_target_input(event: InputEvent, panel, position: int, token: int) -> vo
 			return
 		_pending.debuff = ""
 	_resolve_target.call_deferred(position, token)
+
+
+## Collect explicit choices without paying. Only the existing party resolver commits.
+func _advance_glow(token: int) -> void:
+	if token != _token or _pending.is_empty():
+		return
+	if not _selection_valid():
+		_cancel_pending()
+		return
+	if is_instance_valid(cleanse_choices):
+		cleanse_choices.free()
+	cleanse_choices = null
+	for hero in _pending.heroes:
+		if hero.hp == 0 or _pending.selections.has(hero.position):
+			continue
+		var options: Array[String] = _vigil._present_debuffs(hero)
+		if options.is_empty():
+			continue
+		_pending.choice_position = hero.position
+		cleanse_choices = HBoxContainer.new()
+		cleanse_choices.name = "LanternGlowDebuffChoices"
+		help_disclosure.hide()
+		_help_slot.add_child(cleanse_choices)
+		cancel_button.show()
+		for debuff in options:
+			var button := Button.new()
+			button.name = debuff.capitalize()
+			button.text = "Remove all %s (%d)" % [debuff.capitalize(), hero.statuses[debuff]]
+			button.add_theme_font_size_override("font_size", 18)
+			button.pressed.connect(_choose_glow_debuff.bind(debuff, hero.position, token))
+			cleanse_choices.add_child(button)
+		for index in range(cleanse_choices.get_child_count()):
+			var button: Button = cleanse_choices.get_child(index)
+			button.focus_next = button.get_path_to(cleanse_choices.get_child((index + 1) % cleanse_choices.get_child_count()))
+			button.focus_previous = button.get_path_to(cleanse_choices.get_child((index - 1 + cleanse_choices.get_child_count()) % cleanse_choices.get_child_count()))
+		cleanse_choices.get_child(0).grab_focus()
+		_sync_battle()
+		return
+	var id: String = _pending.id
+	var selections: Dictionary = _pending.selections.duplicate()
+	_cancel_pending()
+	if _vigil.play_card(_deck, _party, id, 0, selections).get("ok", false):
+		_forward_switchback_ordinary_play(id)
+		var app = get_parent()
+		app._refresh_party()
+		app._refresh_hand()
+		_sync_battle()
+		app.end_turn_button.grab_focus()
+
+
+func _choose_glow_debuff(debuff: String, position: int, token: int) -> void:
+	if token != _token or _pending.is_empty() or _pending.id not in GLOW_IDS:
+		return
+	if not _selection_valid():
+		_cancel_pending()
+		return
+	if _pending.get("choice_position", 0) != position or _pending.selections.has(position):
+		return
+	if not is_instance_valid(cleanse_choices) or not cleanse_choices.is_visible_in_tree() \
+			or not _vigil._present_debuffs(_party.get_hero(position)).has(debuff):
+		return
+	_pending.selections[position] = debuff
+	_advance_glow.call_deferred(token)
 
 
 func _choose_debuff(debuff: String, position: int, token: int) -> void:
