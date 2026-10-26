@@ -206,11 +206,16 @@ func _test_layout() -> void:
 			and _card_ink(panel.option_buttons[i]).contains("%d energy" % canonical_upgrades[i].plus_cost),
 			"sewn ink exposes original, upgraded name, costs and canonical copy")
 		_assert_decorations(panel.option_buttons[i])
+	_check(panel.size == Vector2(940, 620) and panel.option_buttons.size() >= 2,
+		"real mounted panel has at least two upgrade rows to measure")
+	for i in range(2):
+		_check(panel.choice_scroll.get_global_rect().encloses(panel.option_buttons[i].get_global_rect()),
+			"two complete upgrade rows fit the 350-pixel viewport including owner filters")
 	_check(viewport.encloses(panel.option_buttons[0].get_global_rect()), "first fully shown mini-card fits viewport")
 	for button in panel.option_buttons:
 		var clipped := button.get_global_rect().intersection(panel.choice_scroll.get_global_rect())
 		_check(not clipped.intersects(panel.confirm_button.get_global_rect())
-			and button.size.x <= panel.choice_scroll.size.x and button.size.y >= 100,
+			and button.size.x <= panel.choice_scroll.size.x and button.size.y >= 110 and button.size.y <= 120,
 			"even offscreen copies only paint inside the choice scroll, never Confirm")
 	_check(panel.choice_scroll.clip_contents and panel.choice_scroll.size == Vector2(440, 350)
 		and panel.preview_scroll.size == Vector2(428, 350), "fixed clipped two-column layout")
@@ -461,11 +466,10 @@ func _test_upgrade(keyboard: bool) -> void:
 		and visit.upgrade_options()[2].effects == prick.effects
 		and visit.upgrade_options()[2].plus_effects == prick_plus.effects,
 		"authentic typed upgrade options carry independent authored effects")
-	_check(_card_ink(panel.option_buttons[2]).contains(CardShortRules.line(prick))
-		and _card_ink(panel.option_buttons[2]).contains(CardShortRules.line(prick_plus))
+	_check(_compact_ink(panel.option_buttons[2], prick, 2, prick_plus)
 		and panel.option_buttons[2].tooltip_text.contains(_expected_detail(prick, 2))
 		and panel.option_buttons[2].tooltip_text.contains(_expected_detail(prick_plus, 2)),
-		"real Prick row Help derives both card lines and positions from catalog")
+		"compact Prick identity retains full canonical before/after Help")
 	panel.option_buttons[2].grab_focus()
 	await _settle_layout()
 	await _activate(panel.option_buttons[2], keyboard)
@@ -483,11 +487,10 @@ func _test_upgrade(keyboard: bool) -> void:
 	var upgrade_ink := _card_ink(panel.option_buttons[1])
 	_check(upgrade_ink.contains("Warden") and upgrade_ink.contains(visit.upgrade_options()[1].display_name)
 		and upgrade_ink.contains(visit.upgrade_options()[1].plus_display_name)
-		and upgrade_ink.contains(CardShortRules.line(strike))
-		and upgrade_ink.contains(CardShortRules.line(strike_plus))
+		and _compact_ink(panel.option_buttons[1], strike, 1, strike_plus)
 		and panel.option_buttons[1].tooltip_text.contains(_expected_detail(strike, 1))
 		and panel.option_buttons[1].tooltip_text.contains(_expected_detail(strike_plus, 1)),
-		"real Warden occurrence displays independently authored energy, positions and 6-to-7 change")
+		"compact Warden occurrence retains independently authored rules in Help")
 	_check(panel.preview_label.text.contains("BEFORE | " + _expected_detail(strike, 1))
 		and panel.preview_label.text.contains("AFTER | " + _expected_detail(strike_plus, 1))
 		and panel.preview_label.text.contains("Only copy #2 changes"),
@@ -531,8 +534,10 @@ func _test_stitch(keyboard: bool) -> void:
 		and expected.second_index == 2, "independent source-bound Stitch projection, energy cap and spend")
 	await _activate(panel.stitch_button, keyboard)
 	_check(panel.option_buttons.size() == 3, "canonical first copies including duplicates")
-	_check(_card_ink(panel.option_buttons[1]).contains(CardShortRules.line(first_def)),
-		"first-stage source row displays Warden's actual effect")
+	_check(_compact_ink(panel.option_buttons[1], first_def, 1)
+		and _card_ink(panel.option_buttons[1]).contains("FIRST")
+		and panel.option_buttons[1].tooltip_text.contains("FIRST | " + _expected_detail(first_def, 1)),
+		"compact FIRST identity keeps Warden's full canonical Help")
 	for i in range(panel.option_buttons.size()):
 		_check(panel.option_buttons[i].get_meta("option") == visit.stitch_first_options()[i], "exact canonical stitch first occurrence metadata")
 	await _activate(panel.option_buttons[1], keyboard)
@@ -542,7 +547,8 @@ func _test_stitch(keyboard: bool) -> void:
 		and panel.preview_label.text.contains("DIFFERENT owner")
 		and panel.preview_label.text.contains("each in their own legal FROM position")
 		and _card_ink(panel.option_buttons[0]).contains("Seamstress")
-		and _card_ink(panel.option_buttons[0]).contains(CardShortRules.line(second_def))
+		and _compact_ink(panel.option_buttons[0], second_def, 2)
+		and _card_ink(panel.option_buttons[0]).contains("THEN")
 		and panel.option_buttons[0].tooltip_text.contains(_expected_detail(second_def, 2)),
 		"real FIRST preview and THEN row Help show full catalog rules")
 	_assert_decorations(panel.option_buttons[0])
@@ -621,9 +627,8 @@ func _test_pool_upgrade(keyboard: bool) -> void:
 			"each authorized pool upgrade row binds exact authentic definitions")
 		_check(row.tooltip_text.contains("BEFORE | " + _expected_detail(before, option.index))
 			and row.tooltip_text.contains("AFTER | " + _expected_detail(after, option.index))
-			and _card_ink(row).contains(CardShortRules.line(before))
-			and _card_ink(row).contains(CardShortRules.line(after)),
-			"hover/focus Help and row ink carry both printed catalog action lines and positions")
+			and _compact_ink(row, before, option.index, after),
+			"compact pool identity retains both full canonical definitions in hover/focus Help")
 		row.grab_focus()
 		await _settle_layout()
 		var prior_preview := panel.preview()
@@ -1221,6 +1226,13 @@ func _card_ink(button: Button) -> String:
 	return "\n".join(lines)
 
 
+func _compact_ink(button: Button, card: Dictionary, index: int, after: Dictionary = {}) -> bool:
+	var summary := "Free upgrade: %s | %d energy" % [after.display_name, after.cost] if not after.is_empty() else \
+		"%s | Stitch pair: %d scraps" % ["FIRST" if panel._first < 0 else "THEN", RunRestStitchCards.SCRAP_COST]
+	return not card.is_empty() and _card_ink(button) == "%s | copy #%d\n%s\n%d energy\n%s" % [
+		str(card.owner).capitalize(), index + 1, card.display_name, card.cost, summary]
+
+
 func _assert_decorations(button: Button) -> void:
 	_check(button.focus_mode == Control.FOCUS_ALL and button.mouse_filter == Control.MOUSE_FILTER_STOP,
 		"canonical option Button alone owns click and keyboard focus")
@@ -1232,3 +1244,14 @@ func _assert_decorations(button: Button) -> void:
 			"every decorative descendant ignores pointer and cannot take focus")
 		_check(Rect2(Vector2.ZERO, button.size).has_point(control.position) or control.get_parent() != button,
 			"each top-level ink decoration starts within its canonical card")
+	var labels := button.find_children("*", "Label", true, false)
+	_check(labels.size() == 4, "compact identity, name, cost and summary replace repeated rules")
+	for label: Label in labels:
+		var font_size := label.get_theme_font_size("font_size")
+		_check(font_size >= 16 and button.get_global_rect().encloses(label.get_global_rect())
+			and label.get_line_count() * label.get_theme_font("font").get_height(font_size) <= label.size.y,
+			"essential ink is at least 16-point and fits inside the compact row")
+		for other: Label in labels:
+			if other != label:
+				_check(not label.get_global_rect().intersects(other.get_global_rect()),
+					"compact identity, title, cost and summary never overlap")

@@ -636,7 +636,7 @@ func _option_row(option: Dictionary, upgrade: bool) -> Button:
 	else:
 		detail = "%s | %s\nStitch: %d scraps for a different-owner pair. Both owners alive and at their legal FROM positions." % [
 			stage, _card_detail(before, option.index), RunRestStitchCards.SCRAP_COST]
-	var height := 192 if upgrade else 148
+	var height := 116
 	var button := _button(caption, Vector2.ZERO, Vector2(414, height))
 	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	button.tooltip_text = detail
@@ -654,11 +654,11 @@ func _option_row(option: Dictionary, upgrade: bool) -> Button:
 	stripe.focus_mode = Control.FOCUS_NONE
 	button.add_child(stripe)
 	_card_label(button, "%s | copy #%d" % [owner.capitalize(), option.index + 1],
-		Vector2(24, 8), Vector2(292, 22), 15)
-	_card_label(button, name, Vector2(24, 32), Vector2(288, 37), 17)
+		Vector2(24, 8), Vector2(292, 22), 16)
+	_card_label(button, name, Vector2(24, 32), Vector2(276, 37), 17)
 	var coin := Panel.new()
-	coin.position = Vector2(322, 34)
-	coin.size = Vector2(82, 32)
+	coin.position = Vector2(306, 34)
+	coin.size = Vector2(98, 32)
 	coin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	coin.focus_mode = Control.FOCUS_NONE
 	var coin_style: StyleBox
@@ -676,19 +676,14 @@ func _option_row(option: Dictionary, upgrade: bool) -> Button:
 	coin.add_theme_stylebox_override("panel", coin_style)
 	button.add_child(coin)
 	var cost_label := _card_label(coin, "%d energy" % option.get("cost", 0),
-		Vector2(2, 3), Vector2(78, 25), 14)
+		Vector2(2, 3), Vector2(94, 25), 16)
 	cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	if upgrade:
-		_card_label(button, "BEFORE | %d energy\n%s\n%s" % [
-			before.cost, _positions(before), CardShortRules.line(before)],
-			Vector2(24, 72), Vector2(375, 54), 14)
-		_card_label(button, "AFTER | %s | %d energy\n%s\n%s" % [
-			after.display_name, after.cost, _positions(after), CardShortRules.line(after)],
-			Vector2(24, 128), Vector2(375, 60), 14)
+		_card_label(button, "Free upgrade: %s | %d energy" % [after.display_name, after.cost],
+			Vector2(24, 72), Vector2(375, 40), 16)
 	else:
-		_card_label(button, "%s | %s\n%s" % [
-			stage, _positions(before), CardShortRules.line(before)],
-			Vector2(24, 72), Vector2(375, 70), 14)
+		_card_label(button, "%s | Stitch pair: %d scraps" % [stage, RunRestStitchCards.SCRAP_COST],
+			Vector2(24, 72), Vector2(375, 40), 16)
 	button.set_meta("option", option.duplicate(true))
 	button.set_meta("selected", false)
 	button.set_meta("normal_style", button.get_theme_stylebox("normal"))
