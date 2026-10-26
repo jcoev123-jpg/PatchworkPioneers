@@ -139,7 +139,7 @@ func _play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			"hp_loss": before["hp"] - after["hp"],
 			"statuses": applications[target_position]
 		}]
-		_retaliate_hits(party, plan.owner_position, hits, pre_hits)
+		_retaliate_hits(party, enemies, plan.owner_position, hits, pre_hits)
 		return {"ok": true, "hits": hits}
 	# All downstream operations are now guaranteed by the real models and
 	# immutable preflight. The existing status bridge owns final-floor rounding.
@@ -169,14 +169,14 @@ func _play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	_tinker.record_successful_attack(card_id)
 	if _patches != null:
 		_patches.record_successful_attack(owner_id)
-	_retaliate_hits(party, plan.owner_position, hits, pre_hits)
+	_retaliate_hits(party, enemies, plan.owner_position, hits, pre_hits)
 	return {"ok": true, "hits": hits}
 
 
 ## Reconstruct the authentic bridge receipt without changing public hit rows.
 ## Resolve after every confirmed enemy hit: an attacker downed by an earlier
 ## Thorns defender must never cancel later Bomb hits, status or card payment.
-func _retaliate_hits(party: CombatParty, owner_position: int,
+func _retaliate_hits(party: CombatParty, enemies: CombatEnemies, owner_position: int,
 		hits: Array[Dictionary], pre_hits: Dictionary) -> void:
 	var keywords := CombatEnemyKeywordRules.new()
 	for hit in hits:
@@ -184,6 +184,10 @@ func _retaliate_hits(party: CombatParty, owner_position: int,
 			continue
 		var receipt := {"ok": true, "damage": hit["damage"],
 			"block_absorbed": hit["block_absorbed"], "hp_loss": hit["hp_loss"]}
+		var enrage := keywords.quote_enrage_after_hit(pre_hits[hit["position"]], receipt)
+		if enrage.applied:
+			# Preserve the original slot and all damage, statuses and other metadata.
+			enemies._enemies[hit["position"] - 1]["enrage_stacks"] = enrage.enrage_stacks
 		keywords.resolve_thorns_retaliation(party, owner_position,
 			pre_hits[hit["position"]], receipt)
 
@@ -291,6 +295,11 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		# recipient before energy, discard, damage, statuses or latches mutate.
 		var thorns: Variant = enemy.get("thorns", 0)
 		if not thorns is int or thorns < 0:
+			return _failure()
+		var enrage: Variant = enemy.get("enrage", false)
+		var stacks: Variant = enemy.get("enrage_stacks", 0)
+		if not enrage is bool or not stacks is int or stacks < 0 \
+				or stacks > CombatEnemyKeywordRules.ENRAGE_MAX_STACKS:
 			return _failure()
 		target_statuses[position] = enemy.get("statuses", {})
 

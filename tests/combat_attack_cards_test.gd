@@ -10,6 +10,10 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_enrage_starter_hits()
+	_test_enrage_bomb_and_replay()
+	_test_enrage_rejections()
+	_test_enrage_zero_damage()
 	_test_strike_plus()
 	_test_thorns_starter_attacks()
 	_test_thorns_bomb_and_downed_owner()
@@ -1901,7 +1905,7 @@ func _test_red_bobbin_cuff() -> void:
 func _thorns_check_play(service: CombatAttackCards, deck: CombatDeck,
 		party: CombatParty, foes: CombatEnemies, id: String, target: int,
 		hits: Array, cost: int, owner_position: int, owner_hp: int,
-		owner_block: int, label: String) -> void:
+		owner_block: int, label: String, earned_stacks: Dictionary = {}) -> void:
 	var before := _snapshot(deck, party, foes)
 	var owner_id: String = StarterCards.new().get_definition(id).owner
 	_check(before.hand.has(id) and before.active and before.energy >= cost,
@@ -1925,6 +1929,8 @@ func _thorns_check_play(service: CombatAttackCards, deck: CombatDeck,
 				entry["statuses"] = {}
 			entry["statuses"][status] = entry["statuses"].get(status, 0) + hit.statuses[status]
 	var expected_heroes: Array = expected["party"]
+	for position in earned_stacks:
+		expected_enemies[position - 1]["enrage_stacks"] = earned_stacks[position]
 	var owner: Dictionary = expected_heroes[owner_position - 1]
 	owner["hp"] = owner_hp
 	owner["block"] = owner_block
@@ -1937,7 +1943,8 @@ func _thorns_check_play(service: CombatAttackCards, deck: CombatDeck,
 	var next_global := randi()
 	seed(13840)
 	var forecast := service.forecast_attack(deck, party, foes, id)
-	_check(forecast.playable and forecast.hits.size() == hits.size(),
+	var preview := CombatAttackTargeting.new().get_preview(deck, party, foes, id)
+	_check(forecast.playable and forecast.hits.size() == preview.target_positions.size(),
 		label + ": pure forecast covers real hit recipients")
 	for hit in hits:
 		_check({"position": hit.position, "damage": hit.damage} in forecast.hits,
@@ -2089,6 +2096,175 @@ func _test_thorns_rejections() -> void:
 	_thorns_check_play(resolver, bomb_deck, valid, bad, "tinker_scrap_bomb", 0,
 		[_hit(1, 7, 0, 7), _hit(2, 7, 0, 7)], 2, 3, 23, 0,
 		"subsequent valid Bomb retains first-attack bonus after rejected batch")
+
+
+## The same full-snapshot helper checks Enrage alongside authentic Thorns hits.
+func _test_enrage_starter_hits() -> void:
+	for id in CombatAttackCards.ATTACK_IDS:
+		if id == "tinker_scrap_bomb":
+			continue
+		for blocked in [false, true]:
+			var deck := _plus_deck() if id == "warden_strike_plus" else _deck([id])
+			var party := _party()
+			var foes := _enemies([40, 40, 40])
+			var target := 1 if id == "warden_shield_bash" else 2
+			for enemy in foes._enemies:
+				enemy["enrage"] = true
+				enemy["tag"] = {"preserved": [1, 2]}
+			foes._enemies[target - 1]["thorns"] = 2
+			var definition: Dictionary = StarterCards.new().get_definition(id)
+			var damage: int = definition.effects.damage + (3 if id == "tinker_pop_shot" else 0)
+			var statuses := {}
+			if id == "warden_shield_bash":
+				statuses = {"weak": 1}
+			elif id == "seamstress_prick":
+				statuses = {"bleed": 3}
+			if blocked:
+				_check(foes.gain_block(target, damage + 1), "fully blocked Enrage fixture")
+			var owner: int = 3 if id == "tinker_pop_shot" else (2 if id == "seamstress_prick" else 1)
+			var owner_hp: int = party.get_hero(owner).hp - 2
+			_thorns_check_play(CombatAttackCards.new(), deck, party, foes, id, target,
+				[_hit(target, damage, damage if blocked else 0, 0 if blocked else damage, statuses)],
+				definition.cost, owner, owner_hp, 0, id + ": Enrage on original target slot", {target: 1})
+			_check(not foes.get_enemy(2 if target == 1 else 1).has("enrage_stacks")
+				and not foes.get_enemy(3).has("enrage_stacks"), "untouched Enrage slots stay absent")
+			# Real persisted stack is read before Weak/Exposed rounding and hero Block.
+			_check(party.gain_block(1, 2), "phase recipient gains real Block")
+			party._heroes[0]["statuses"] = {"exposed": 1}
+			var before := _snapshot(deck, party, foes)
+			var intents := [{"type": "attack", "enemy_position": target, "amount": 5, "target_position": 1}]
+			var phase := CombatEnemyPhase.new().execute_phase(party, foes, intents)
+			var expected := before.duplicate(true)
+			var phase_damage := 7 if id == "warden_shield_bash" else 10
+			expected.party[0].block = 0
+			expected.party[0].hp -= phase_damage - 2
+			_check(phase == {"ok": true, "events": [{"type": "attack", "enemy_position": target,
+				"target_position": 1, "applied": true}]}
+				and _snapshot(deck, party, foes) == expected,
+				"earned +2 precedes status modifiers/Block; exact phase snapshot preserves everything else")
+	# Two held copies earn one stack per hit, including the transition to cap.
+	var deck := _deck(["warden_strike", "warden_strike"])
+	var party := _party()
+	var foes := _enemies([40])
+	foes._enemies[0].enrage = true
+	foes._enemies[0].enrage_stacks = 1
+	var attacks := CombatAttackCards.new()
+	for stacks in [2, 3]:
+		_thorns_check_play(attacks, deck, party, foes, "warden_strike", 1,
+			[_hit(1, 6, 0, 6)], 1, 1, 40, 0, "each real Strike earns one stack", {1: stacks})
+
+
+func _enrage_bomb_replay(seed_value: int, slain_middle: bool) -> Dictionary:
+	var deck := _deck(["tinker_scrap_bomb"], seed_value)
+	var party := _party()
+	var foes := _enemies([40, 40, 40])
+	foes._enemies[0].enrage = true
+	foes._enemies[0].thorns = 3
+	foes._enemies[1].enrage = true
+	foes._enemies[1].enrage_stacks = 3
+	foes._enemies[2].enrage = false
+	foes._enemies[2].enrage_stacks = 2
+	_check(foes.gain_block(1, 8), "Bomb fully blocked Enrage target")
+	if slain_middle:
+		_check(foes.apply_damage(2, 40), "Bomb retains slain capped original middle slot")
+	var attacks := CombatAttackCards.new()
+	var hits: Array = [_hit(1, 7, 7, 0)]
+	if not slain_middle:
+		hits.append(_hit(2, 7, 0, 7))
+	hits.append(_hit(3, 7, 0, 7))
+	_thorns_check_play(attacks, deck, party, foes, "tinker_scrap_bomb", 0,
+		hits, 2, 3, 23, 0, "Bomb: blocked Enrage, capped/slain, false flag", {1: 1})
+	_reject(attacks, deck, party, foes, "tinker_scrap_bomb", 0, "spent Bomb cannot earn stacks again")
+	var before := _snapshot(deck, party, foes)
+	var intents: Array = []
+	for position in [1, 2, 3]:
+		intents.append({"type": "attack", "enemy_position": position, "amount": 2, "target_position": position})
+	var phase := CombatEnemyPhase.new().execute_phase(party, foes, intents)
+	var expected := before.duplicate(true)
+	expected.party[0].hp -= 4
+	if not slain_middle:
+		expected.party[1].hp -= 8
+	expected.party[2].hp -= 2
+	_check(phase.ok and phase.events.size() == 3
+		and phase.events[1].applied == not slain_middle
+		and _snapshot(deck, party, foes) == expected,
+		"Bomb-earned stack, cap, false flag and slain source feed exact next phase")
+	return {"before": before, "phase": phase, "after": _snapshot(deck, party, foes),
+		"latch": attacks._tinker._consumed}
+
+
+func _test_enrage_bomb_and_replay() -> void:
+	for slain_middle in [false, true]:
+		_check(_enrage_bomb_replay(76291, slain_middle) == _enrage_bomb_replay(76291, slain_middle),
+			"same seed replays entire Enrage hit/phase sequence, piles, receipts, latch and RNG")
+	for metadata in [{}, {"enrage": false}, {"enrage_stacks": 2},
+			{"enrage": false, "enrage_stacks": 2}, {"enrage": true, "enrage_stacks": 3}]:
+		var foes := _enemies([40])
+		foes._enemies[0].merge(metadata)
+		_thorns_check_play(CombatAttackCards.new(), _deck(["warden_strike"]), _party(), foes,
+			"warden_strike", 1, [_hit(1, 6, 0, 6)], 1, 1, 40, 0,
+			"non-Enrage/capped metadata remains exactly unchanged " + str(metadata))
+
+
+func _test_enrage_rejections() -> void:
+	var malformed: Array = []
+	for value in [null, 0, 1, "true", [], {}]:
+		malformed.append({"enrage": value})
+	for value in [null, -1, 4, 1.0, "1", true, [], {}]:
+		for flag in [true, false]:
+			malformed.append({"enrage": flag, "enrage_stacks": value})
+	for metadata in malformed:
+		for id in ["seamstress_prick", "tinker_scrap_bomb"]:
+			var deck := _deck([id])
+			var party := _party()
+			var foes := _enemies([40, 40, 40])
+			foes._enemies[2].merge(metadata)
+			var attacks := CombatAttackCards.new()
+			_check(attacks._tinker.arm_path_bonus(2), "rejection fixture has unspent Path latch")
+			var before := _snapshot(deck, party, foes)
+			_check(not attacks.forecast_attack(deck, party, foes, id).playable
+				and _snapshot(deck, party, foes) == before, "malformed Enrage forecast is pure refusal")
+			_reject(attacks, deck, party, foes, id, 3 if id == "seamstress_prick" else 0,
+				"malformed late Enrage recipient " + str(metadata))
+			_check(attacks._tinker.path_bonus() == 2, "refusal also preserves armed Path bonus")
+			foes._enemies[2].enrage = true
+			foes._enemies[2].enrage_stacks = 0
+			var accepted := attacks.play_attack(deck, party, foes, id, 3 if id == "seamstress_prick" else 0)
+			_check(accepted.ok and foes.get_enemy(3).enrage_stacks == 1,
+				"corrected same request succeeds once and earns exactly one stack")
+	var foes := _enemies([40])
+	foes._enemies[0].enrage = true
+	var deck := _deck(["tinker_scrap_bomb"])
+	var party := _party()
+	var attacks := CombatAttackCards.new()
+	_reject(attacks, deck, party, foes, "tinker_scrap_bomb", 1, "unplayable selected Bomb with Enrage")
+	_check(deck.try_spend_energy(3), "Enrage unaffordable fixture spends real energy")
+	_reject(attacks, deck, party, foes, "tinker_scrap_bomb", 0, "unaffordable Enrage hit")
+	_check(deck.end_turn(), "Enrage stale-turn fixture ends actual turn")
+	_reject(attacks, deck, party, foes, "tinker_scrap_bomb", 0, "stale-turn Enrage hit")
+
+
+func _test_enrage_zero_damage() -> void:
+	# Authored starter attacks all deal positive damage even under Weak. Exercise
+	# the shared confirmed-hit seam with a real zero-damage bridge receipt instead
+	# of changing authored balance or fabricating a successful receipt.
+	var party := _party()
+	var foes := _enemies([40])
+	foes._enemies[0].enrage = true
+	foes._enemies[0].thorns = 3
+	var before := foes.get_enemy(1)
+	var heroes := party.get_heroes()
+	var receipt := CombatStatusAttacks.new().resolve_vs_enemy(foes, 1, 0, {}, {})
+	_check(receipt == {"ok": true, "damage": 0, "block_absorbed": 0, "hp_loss": 0},
+		"real bridge confirms a zero-damage hit")
+	CombatAttackCards.new()._retaliate_hits(party, foes, 1, [_hit(1, receipt.damage,
+		receipt.block_absorbed, receipt.hp_loss)], {1: before})
+	_check(foes.get_enemy(1) == before and party.get_heroes() == heroes,
+		"zero damage cannot award stacks or trigger Thorns")
+	var phase := CombatEnemyPhase.new().execute_phase(party, foes,
+		[{"type": "attack", "enemy_position": 1, "amount": 5, "target_position": 1}])
+	_check(phase.ok and party.get_hero(1).hp == 35 and foes.get_enemy(1) == before,
+		"next phase after zero hit reads no bonus and does not publish a stack")
 
 
 func _thorns_replay(seed_value: int) -> Dictionary:
