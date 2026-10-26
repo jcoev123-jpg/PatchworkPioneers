@@ -17,6 +17,8 @@ func _initialize() -> void:
 	_test_harder_normal_seeded_announcements()
 	_test_harder_normal_phase_actions()
 	_test_needle_wasp_bleeding_sting()
+	_test_thread_biter_lifesteal_catalog()
+	_test_thread_biter_lifesteal_phase()
 	_test_tough_normal_pair_live_catalog_and_bands()
 	_test_tough_normal_pair_phase_actions()
 	_test_crusher_harrier_doll_catalog_records()
@@ -105,7 +107,7 @@ func _old_expected() -> Dictionary:
 				{"type": "attack", "amount": 2, "weight": 4},
 				{"type": "shove", "amount": 0, "direction": 1, "weight": 1},
 				{"type": "block", "amount": 1, "weight": 1}]}},
-		"thread_biter": {"id": "thread_biter", "name": "Thread Biter", "max_hp": 15, "art_path": "res://assets/paper/enemies/thread_biter.png",
+		"thread_biter": {"id": "thread_biter", "name": "Thread Biter", "max_hp": 15, "drain": true, "art_path": "res://assets/paper/enemies/thread_biter.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
 				{"type": "attack", "amount": 3, "weight": 3},
 				{"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
@@ -1531,6 +1533,211 @@ func _test_needle_wasp_bleeding_sting() -> void:
 			"AC4: an identical seeded sting reproduces actors, statuses and receipts")
 		_check(replay_one.rng.state == replay_two.rng.state,
 			"AC4: an identical seeded sting leaves matching RNG state")
+
+## AC1: the shipped Thread Biter record opts into Drain without changing its
+## identity, HP, target policy or weighted alternatives, and the genuine
+## floor-band roster that live Fights consume keeps that metadata.
+func _test_thread_biter_lifesteal_catalog() -> void:
+	var parsed := _load_parsed()
+	var biter := _find(parsed, "thread_biter")
+	_check(not biter.is_empty(), "precondition: shipped Thread Biter record loads")
+	if biter.is_empty():
+		return
+	_check(biter.get("drain") is bool and biter.get("drain") == true,
+		"AC1: the parsed Thread Biter authors drain as a genuine bool")
+	_check(_norm(biter) == _norm(_old_expected()["thread_biter"]),
+		"AC1: Drain is the only change to the shipped Thread Biter record")
+	_check(biter.get("max_hp") is int and biter.get("max_hp") == 15,
+		"AC1: Thread Biter keeps its authored 15 max HP")
+	var spec: Variant = biter.get("intent")
+	_check(spec is Dictionary and spec.get("target") == "lowest_living_hp",
+		"AC1: Thread Biter keeps its lowest-living target policy")
+	var bite := _authored_alternative(biter, "attack", 3)
+	_check(not bite.is_empty() and int(bite.get("weight", 0)) == 3,
+		"AC1: the authored 3-damage bite keeps weight 3")
+	var bleed := _authored_alternative(biter, "debuff", 1)
+	_check(not bleed.is_empty() and bleed.get("status") == "bleed"
+		and int(bleed.get("weight", 0)) == 1,
+		"AC1: the authored Bleed 1 alternative keeps weight 1")
+	var block := _authored_alternative(biter, "block", 2)
+	_check(not block.is_empty() and int(block.get("weight", 0)) == 1,
+		"AC1: the authored Block 2 alternative keeps weight 1")
+	var slot := CombatEnemyIntents._weighted_slot(1, spec)
+	_check(not slot.is_empty() and slot.get("actions", []).size() == 3,
+		"AC1: the intent still validates as exactly three weighted alternatives")
+	# The live entry service derives the ordinary normal records and the three
+	# HP-sorted floor bands from the shipped catalogs.
+	var material := RunAuthoredBattleEntry._floor_band_material(null)
+	_check(material.get("ok") == true,
+		"AC1: live floor-band material builds from the shipped catalogs")
+	if not material.get("ok", false):
+		return
+	var records: Dictionary = material.get("records", {})
+	var pools: Dictionary = material.get("pools", {})
+	var live: Dictionary = records.get("thread_biter", {})
+	_check(not live.is_empty() and live.get("drain") == true
+		and live.get("max_hp") == 15
+		and live.get("intent", {}).get("target") == "lowest_living_hp",
+		"AC1: the live floor-band record keeps Drain, 15 HP and lowest-living targeting")
+	var band := _band_containing(pools, "thread_biter")
+	_check(not band.is_empty(), "AC1: Thread Biter is eligible in a derived floor band")
+	if band.is_empty():
+		return
+	var floor_number := _floor_in_band(band)
+	var witness := 0
+	for value in range(1, 401):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var probe := RunV3FloorBandRoster.new().pick(floor_number, 2, rng, pools)
+		if probe.get("ok", false) and probe.get("enemy_ids", []).has("thread_biter"):
+			witness = value
+			break
+	_check(witness > 0,
+		"AC1: a deterministic sampled band group really contains Thread Biter")
+	if witness == 0:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = witness
+	var picked := RunV3FloorBandRoster.new().pick(floor_number, 2, rng, pools)
+	var group: Array = picked.get("enemy_ids", [])
+	var ordered: Array = []
+	for enemy_id in group:
+		_check(records.has(enemy_id),
+			"AC1: every sampled band actor has an authentic record: " + String(enemy_id))
+		if records.has(enemy_id):
+			ordered.append(records[enemy_id].duplicate(true))
+	var roster := CombatEnemies.new(ordered)
+	_check(roster.is_valid() and roster.get_enemies().size() == 2,
+		"AC1: the sampled authentic band group builds a real CombatEnemies roster")
+	if not roster.is_valid():
+		return
+	var index: int = group.find("thread_biter")
+	_check(index >= 0, "AC1: the sampled roster really contains Thread Biter")
+	if index < 0:
+		return
+	var selected: Dictionary = roster.get_enemy(index + 1)
+	_check(selected.get("id") == "thread_biter" and selected.get("drain") == true
+		and selected.get("max_hp") == 15 and selected.get("hp") == 15
+		and selected.get("block") == 0,
+		"AC1: the selected authentic roster slot keeps Drain and its full 15 HP")
+
+## AC2/AC3: the shipped record's real announced bite heals exactly the HP it
+## removes, never Block-absorbed damage, never past its cap, and heals nothing
+## on a non-attack or skipped beat.
+func _test_thread_biter_lifesteal_phase() -> void:
+	var parsed := _load_parsed()
+	var biter := _find(parsed, "thread_biter")
+	_check(not biter.is_empty() and biter.get("drain") == true,
+		"precondition: the shipped Thread Biter really authors Drain")
+	if biter.is_empty():
+		return
+	var bite := _authored_alternative(biter, "attack", 3)
+	var bleed := _authored_alternative(biter, "debuff", 1)
+	_check(not bite.is_empty() and not bleed.is_empty(),
+		"precondition: the shipped bite and Bleed alternatives exist")
+	if bite.is_empty() or bleed.is_empty():
+		return
+	# AC2: a wounded 8/15 biter restores exactly the 3 HP its real bite removes.
+	var party := _party()
+	_check(party.get_hero(1).get("hp") == 40 and party.get_hero(2).get("hp") == 30
+		and party.get_hero(3).get("hp") == 26,
+		"AC2 precondition: authentic Warden 40 / Seamstress 30 / Tinker 26 party")
+	_check(CombatEnemyIntents.priority_target(party, "lowest_living_hp") == 3,
+		"AC2 precondition: the authored policy announces Tinker at slot 3")
+	var case := _force_normal_alternative(biter, bite, party)
+	_check(not case.is_empty(), "AC2: the shipped bite binds as a real announcement")
+	if case.is_empty():
+		return
+	_check(case.enemies.apply_damage(1, 7)
+		and case.enemies.get_enemy(1).get("hp") == 8,
+		"AC2 precondition: the Thread Biter really stands at 8 of 15 HP")
+	_check(case.intents.size() == 1 and case.intents[0].get("type") == "attack"
+		and int(case.intents[0].get("amount", -1)) == 3
+		and case.intents[0].get("target_position") == 3,
+		"AC2: the real announcement is the authored 3-damage bite on Tinker")
+	var receipt := CombatEnemyPhase.new().execute_phase(party, case.enemies,
+		case.intents, null, true)
+	_check(receipt == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 3, "applied": true}]},
+		"AC2: the genuine bite keeps the ordinary attack event shape")
+	_check(party.get_hero(3).get("hp") == 23 and party.get_hero(3).get("block") == 0,
+		"AC2: the unblocked bite removes exactly three Tinker HP")
+	_check(case.enemies.get_enemy(1).get("hp") == 11,
+		"AC2: the real after-state heals exactly three HP back to 11 of 15")
+	_check(case.enemies.get_enemy(1).get("drain") == true
+		and case.enemies.get_enemy(1).get("max_hp") == 15
+		and case.enemies.get_enemy(1).get("position") == 1,
+		"AC2: the heal preserves the attacker's Drain flag, cap and slot")
+	_check(party.get_hero(1).get("hp") == 40 and party.get_hero(2).get("hp") == 30,
+		"AC2: the other two heroes keep their HP")
+	# AC3: three Block absorb the whole bite, so there is no HP loss to drain.
+	var blocked_party := _party()
+	_check(blocked_party.gain_block(3, 3),
+		"AC3 precondition: Tinker really holds three Block")
+	var blocked := _force_normal_alternative(biter, bite, blocked_party)
+	if not blocked.is_empty():
+		_check(blocked.enemies.apply_damage(1, 7)
+			and blocked.enemies.get_enemy(1).get("hp") == 8,
+			"AC3 precondition: the blocked case starts at 8 of 15 HP")
+		var blocked_receipt := CombatEnemyPhase.new().execute_phase(blocked_party,
+			blocked.enemies, blocked.intents, null, true)
+		_check(blocked_receipt.get("ok") == true
+			and blocked_receipt.get("events", [{}])[0].get("applied") == true,
+			"AC3: the fully blocked bite still resolves as one applied attack")
+		_check(blocked_party.get_hero(3).get("hp") == 26
+			and blocked_party.get_hero(3).get("block") == 0
+			and blocked.enemies.get_enemy(1).get("hp") == 8,
+			"AC3: Block absorbs all three damage and Drain heals nothing")
+	# AC3: an attacker already at its cap cannot overheal.
+	var capped_party := _party()
+	var capped := _force_normal_alternative(biter, bite, capped_party)
+	if not capped.is_empty():
+		_check(capped.enemies.get_enemy(1).get("hp") == 15,
+			"AC3 precondition: the attacker really stands at full 15 HP")
+		var capped_receipt := CombatEnemyPhase.new().execute_phase(capped_party,
+			capped.enemies, capped.intents, null, true)
+		_check(capped_receipt.get("ok") == true
+			and capped_party.get_hero(3).get("hp") == 23
+			and capped.enemies.get_enemy(1).get("hp") == 15,
+			"AC3: a full-HP Thread Biter cannot overheal past 15")
+	# AC3: the authored non-attack Bleed beat heals nothing.
+	var debuff_party := _party()
+	var debuff := _force_normal_alternative(biter, bleed, debuff_party)
+	if not debuff.is_empty():
+		_check(debuff.enemies.apply_damage(1, 7)
+			and debuff.enemies.get_enemy(1).get("hp") == 8,
+			"AC3 precondition: the debuff case starts at 8 of 15 HP")
+		_check(debuff.intents.size() == 1 and debuff.intents[0].get("type") == "debuff"
+			and debuff.intents[0].get("status") == "bleed"
+			and int(debuff.intents[0].get("amount", -1)) == 1
+			and debuff.intents[0].get("target_position") == 3,
+			"AC3: the announcement is the authored Bleed 1 on Tinker")
+		var debuff_receipt := CombatEnemyPhase.new().execute_phase(debuff_party,
+			debuff.enemies, debuff.intents, null, true)
+		_check(debuff_receipt.get("ok") == true
+			and debuff_receipt.get("events", [{}])[0].get("applied") == true,
+			"AC3: the authored Bleed beat resolves through the real phase")
+		_check(debuff_party.get_hero(3).get("hp") == 26
+			and debuff_party.get_hero(3).get("statuses", {}).get("bleed", 0) == 1
+			and debuff.enemies.get_enemy(1).get("hp") == 8,
+			"AC3: a non-attack beat inflicts no HP loss and heals nothing")
+	# AC3: a skipped beat cannot fabricate damage or a Drain heal.
+	var skipped_party := _party()
+	_check(skipped_party.apply_damage(3, 26) and skipped_party.is_downed(3),
+		"AC3 precondition: the announced Tinker is already downed")
+	var skipped_enemies := CombatEnemies.new([biter.duplicate(true)])
+	_check(skipped_enemies.is_valid()
+		and skipped_enemies.apply_damage(1, 7)
+		and skipped_enemies.get_enemy(1).get("hp") == 8,
+		"AC3 precondition: a real wounded Thread Biter at 8 of 15 HP")
+	var skipped_before: Array = skipped_party.get_heroes()
+	var skipped_receipt := CombatEnemyPhase.new().execute_phase(skipped_party,
+		skipped_enemies, [_raw_attack_intent(3)])
+	_check(skipped_receipt == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 3, "applied": false}]}
+		and skipped_party.get_heroes() == skipped_before
+		and skipped_enemies.get_enemy(1).get("hp") == 8,
+		"AC3: a skipped bite deals no damage and heals nothing")
 
 ## The two harder normals shipped into the live catalog by this batch, exactly as
 ## their accepted authoring source records them.

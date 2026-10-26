@@ -18,6 +18,7 @@ const NEW := {
 			{"type": "shove", "amount": 0, "direction": 1, "weight": 1},
 			{"type": "block", "amount": 1, "weight": 1}]},
 	"thread_biter": {"name": "Thread Biter", "max_hp": 15, "target": "lowest_living_hp",
+		"drain": true,
 		"actions": [{"type": "attack", "amount": 3, "weight": 3},
 			{"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
 			{"type": "block", "amount": 2, "weight": 1}]},
@@ -129,9 +130,14 @@ func _catalog_and_bindings() -> void:
 		if not catalog.has(id):
 			continue
 		var record: Dictionary = catalog[id]
-		_check(record == {"id": id, "name": expected.name, "max_hp": expected.max_hp,
+		var expected_record := {"id": id, "name": expected.name, "max_hp": expected.max_hp,
 			"art_path": "res://assets/paper/enemies/" + id + ".png",
-			"intent": {"target": expected.target, "actions": expected.actions}},
+			"intent": {"target": expected.target, "actions": expected.actions}}
+		# Authored keyword metadata lives beside the intent and only the records
+		# that genuinely carry it may add it to the exact record oracle.
+		if expected.has("drain"):
+			expected_record["drain"] = expected.drain
+		_check(record == expected_record,
 			"exact new identity, HP, art, policy and ordered weighted actions " + id)
 		for raw in expected.actions:
 			_check(CombatEnemyIntents.positive_weight(raw.weight) > 0
