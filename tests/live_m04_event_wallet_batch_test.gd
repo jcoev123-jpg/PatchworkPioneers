@@ -53,22 +53,17 @@ func _event_path(map: RunMap, choices: Array, remaining: int) -> Array:
 	return []
 
 
+const EVENT_WALLET_HINTS := preload("res://tests/event_wallet_hints.gd")
+
+
 func _fixtures() -> Dictionary:
 	var found := {}
 	var ids: Array = RunM04EventRotation.new(_combined_catalog()).get_generic_event_ids()
 	# Treasure traversal consumes no RNG or wallet; allow it between the six
 	# authentic Events rather than requiring a rare six-consecutive-Event route.
-	# Revalidate these known genuine seeds first; the bounded search remains a
-	# fallback when the generated route/pool changes.
-	# Repinned against the actual title-start party's eligible hero stories;
-	# every hint is still checked through genuine map generation and toll draws.
-	# Repinned again after the six gothic roadside stories (Mothlace Clock,
-	# Buttonbone Aviary, Ashen Quilt Greenhouse, Ribbon-Shadow Circus, Velvet
-	# Patch Pier, Lullaby Stitch Chapel) grew the combined eligible pool: one
-	# verified witness seed per required generic Event.
-	var hints := [7756, 171871, 233942, 292590, 364891, 366071, 449195, 622337,
-		756725, 855041, 1375273, 1405687, 1517032, 1704534, 1710698, 1797991,
-		2017177, 2681473, 3656392, 4049314, 4809509, 4969863]
+	# Revalidate the known genuine witness seeds first (tests/event_wallet_hints.gd,
+	# append-only); the bounded search remains a fallback when the route/pool changes.
+	var hints: Array = EVENT_WALLET_HINTS.SEEDS.duplicate()
 	for value in hints + range(1, 500000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
