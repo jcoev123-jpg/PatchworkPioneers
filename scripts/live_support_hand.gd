@@ -76,6 +76,7 @@ var _cleansing := CombatSeamstressV3CleansingCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
 var _pop := CombatButtonGolemPopCards.new()
 var _sew := CombatButtonGolemSewCards.new()
+var _roll := CombatButtonGolemRollCards.new()
 var _re_stuff := CombatScarecrowReStuffCards.new()
 var cleanse_choices: HBoxContainer
 var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
@@ -487,13 +488,19 @@ func _on_help_input(event: InputEvent) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if not _pending.is_empty() and _is_enemy_card(_pending.id) \
+	if not _pending.is_empty() and (_is_enemy_card(_pending.id) or _roll.is_supported_card(_pending.id)) \
 			and _pending.get("choosing", false) and event is InputEventKey and event.pressed and not event.echo:
 		var slot: int = [KEY_1, KEY_2, KEY_3].find(event.keycode) + 1
 		if slot > 0:
 			for panel in _targets:
 				if _targets[panel].position == slot:
-					_queue_feint_target(panel, slot, _token)
+					if _roll.is_supported_card(_pending.id):
+						var press := InputEventMouseButton.new()
+						press.button_index = MOUSE_BUTTON_LEFT
+						press.pressed = true
+						_on_target_input(press, panel, slot, _token)
+					else:
+						_queue_feint_target(panel, slot, _token)
 					break
 			get_viewport().set_input_as_handled()
 			return
@@ -520,7 +527,7 @@ func _input(event: InputEvent) -> void:
 			_cancel_pending()
 			return
 		_pending.panel.set_meta("aiming", false)
-		if _pending.id in ALLY_IDS or _is_enemy_card(_pending.id):
+		if _pending.id in ALLY_IDS or _roll.is_supported_card(_pending.id) or _is_enemy_card(_pending.id):
 			if not _pending.get("choosing", false):
 				_choose_target()
 			if event.position.distance_to(_drag_origin) > 10:
@@ -615,7 +622,7 @@ func _enemy_service(card_id: String):
 
 
 func _is_actionable(card_id: String) -> bool:
-	if _sew.is_supported_card(card_id):
+	if _roll.is_supported_card(card_id) or _sew.is_supported_card(card_id):
 		return true
 	if card_id in CombatSupportCards.SCARECROW_STRAW_IDS:
 		return true
@@ -630,6 +637,8 @@ func _is_actionable(card_id: String) -> bool:
 
 ## One entry point keeps starter support and pool Block cards on the same commit path.
 func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position: int, debuff: String = "") -> bool:
+	if _roll.is_supported_card(card_id):
+		return bool(_roll.play_card(deck, party, card_id, position).get("ok", false))
 	if _sew.is_supported_card(card_id):
 		return bool(_sew.play_card(deck, party, card_id, 0).get("ok", false))
 	if card_id in CombatSupportCards.SCARECROW_STRAW_IDS:
@@ -925,7 +934,7 @@ func _sync_battle() -> void:
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_card_input.bind(panel, label.text, _deck, _party, _battle)
 		_bindings[panel] = callback
-		if label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text):
+		if label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text):
 			_move_context[panel] = _current_move_context(panel)
 		panel.gui_input.connect(callback)
 	# Keep the existing End/Return Tab cycle; Up enters the card row, Down exits it.
@@ -1161,6 +1170,20 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 				legal = true
 		if not legal:
 			return false
+	if _roll.is_supported_card(card_id):
+		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
+				or _move_context.get(panel, []) != _current_move_context(panel):
+			return false
+		if app._battle_closed or app.battle_result == null or not app.battle_result.can_continue() \
+				or app.battle_result._party != party or app.battle_result._enemies != app.enemies \
+				or app.enemies == null or not app.enemies.is_valid() or app.enemies.is_victorious():
+			return false
+		var legal := false
+		for slot in [1, 2, 3]:
+			if _roll._prepare(deck, party, card_id, slot).get("ok", false):
+				legal = true
+		if not legal:
+			return false
 	if _sew.is_supported_card(card_id):
 		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
 				or _move_context.get(panel, []) != _current_move_context(panel):
@@ -1234,8 +1257,12 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		return
 	_cancel_pending()
 	_pending = {"panel": panel, "id": card_id, "choosing": false, "queued": false, "context": _current_move_context(panel)}
-	if card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id):
+	if card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id) or _roll.is_supported_card(card_id):
 		_pending.owner_roster = _party.get_heroes().map(func(hero): return [hero.id, hero.position])
+	if _roll.is_supported_card(card_id):
+		for hero in _party._heroes:
+			if hero.id == _roll.OWNER_ID:
+				_pending.owner_ref = hero
 	if card_id in ALLY_IDS and not _selection_valid():
 		_cancel_pending()
 		return
@@ -1243,7 +1270,7 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		_dragging = true
 		_drag_origin = panel.get_global_transform() * event.position
 	# Ally selection can arm immediately; target-free mouse casts wait for release.
-	if accept or card_id in ALLY_IDS or _is_enemy_card(card_id):
+	if accept or card_id in ALLY_IDS or _roll.is_supported_card(card_id) or _is_enemy_card(card_id):
 		_activate.call_deferred(panel, card_id, deck, party, battle, _token)
 
 
@@ -1256,7 +1283,7 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 	if (card_id in SPARE_PARTS_IDS or _sew.is_supported_card(card_id)) and not _selection_valid():
 		_cancel_pending()
 		return
-	if card_id in ALLY_IDS or _is_enemy_card(card_id):
+	if card_id in ALLY_IDS or _roll.is_supported_card(card_id) or _is_enemy_card(card_id):
 		if _pending.get("choosing", false):
 			return
 		if _selection_valid():
@@ -1305,7 +1332,9 @@ func _selection_valid() -> bool:
 		return false
 	if _pending.id in CombatSupportCards.SCARECROW_STRAW_IDS and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
 		return false
-	if (_pop.is_supported_card(_pending.id) or _sew.is_supported_card(_pending.id)) and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
+	if (_pop.is_supported_card(_pending.id) or _sew.is_supported_card(_pending.id) or _roll.is_supported_card(_pending.id)) and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
+		return false
+	if _roll.is_supported_card(_pending.id) and not is_same(_pending.owner_ref, _party._heroes[_pending.owner_ref.position - 1]):
 		return false
 	if _cleansing.is_supported_card(_pending.id):
 		if _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
@@ -1357,6 +1386,8 @@ func _choose_target() -> void:
 	var app = get_parent()
 	for index in range(_target_panels().size()):
 		var panel: Control = _target_panels()[index]
+		if _roll.is_supported_card(_pending.id) and not _roll._prepare(_deck, _party, _pending.id, index + 1).get("ok", false):
+			continue
 		if (_enemy_selection() and not _enemy_service(_pending.id)._prepare(_deck, _party, app.enemies, _pending.id, index + 1).get("ok", false)) or (not _enemy_selection() and _party.is_downed(index + 1)):
 			continue
 		panels.append(panel)
@@ -1386,6 +1417,8 @@ func _choose_target() -> void:
 			"mouse_filter": previous_filter}
 		if _pop.is_supported_card(_pending.id):
 			_targets[panel].actor_ref = app.enemies._enemies[index]
+		if _roll.is_supported_card(_pending.id):
+			_targets[panel].actor_ref = _party._heroes[index]
 		panel.gui_input.connect(callback)
 	for index in range(panels.size()):
 		var panel := panels[index]
@@ -1405,7 +1438,8 @@ func _targets_valid() -> bool:
 		var hero := _target_actor(target.position)
 		if hero.get("id") != target.hero_id or hero.get("hp", 0) <= 0:
 			return false
-		if target.has("actor_ref") and not is_same(target.actor_ref, get_parent().enemies._enemies[target.position - 1]):
+		var actors: Array = get_parent().enemies._enemies if _enemy_selection() else _party._heroes
+		if target.has("actor_ref") and not is_same(target.actor_ref, actors[target.position - 1]):
 			return false
 	return true
 
@@ -1494,6 +1528,9 @@ func _resolve_target(position: int, token: int) -> void:
 			app.end_turn_button.grab_focus()
 		return
 	var debuff: String = _pending.get("debuff", "")
+	if _roll.is_supported_card(id) and not _roll._prepare(_deck, _party, id, position).get("ok", false):
+		_cancel_pending()
+		return
 	if _cleansing.is_supported_card(id) and not _cleansing._prepare(_deck, _party, id, position, debuff).get("ok", false):
 		_cancel_pending()
 		return
@@ -1502,6 +1539,8 @@ func _resolve_target(position: int, token: int) -> void:
 		_forward_switchback_ordinary_play(id)
 		var app = get_parent()
 		app._refresh_party()
+		if _roll.is_supported_card(id):
+			app._refresh_intents()
 		app._refresh_hand()
 		_sync_battle()
 		app.end_turn_button.grab_focus()

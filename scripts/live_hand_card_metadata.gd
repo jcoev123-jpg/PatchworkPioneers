@@ -33,6 +33,7 @@ var _helmet := CombatWardenV3HelmetCards.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
 var _pop := CombatButtonGolemPopCards.new()
 var _sew := CombatButtonGolemSewCards.new()
+var _roll := CombatButtonGolemRollCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
 var _re_stuff := CombatScarecrowReStuffCards.new()
 var _warden_pool := WardenPoolCards.new()
@@ -80,6 +81,10 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if _roll.is_supported_card(card_id):
+		if _roll._authenticate(card_id).is_empty():
+			return {}
+		return ButtonGolemStarterCards.new().get_definition(card_id) if _roll.STARTER_PRINTINGS.has(card_id) else ButtonGolemPoolCards.new().get_definition(card_id)
 	if _sew.is_supported_card(card_id):
 		if _sew._authenticate(card_id).is_empty():
 			return {}
@@ -335,6 +340,9 @@ func get_faces(panel: Control) -> Dictionary:
 ## effect and keyword text without that legend; the default keeps the hand
 ## tooltip byte-for-byte unchanged and an unknown ID still fails closed.
 func base_effect_text(card_id: String, include_pips: bool = true) -> String:
+	if _roll.is_supported_card(card_id) and not _definition(card_id).is_empty():
+		var card := _definition(card_id)
+		return "%s; Button Golem; 1 energy\nFrom %s; To one selected living other ally in any hero slot\n%s Tangled on either participant prevents the swap.\n%s" % [card.display_name, _positions(card.from_positions), _rules(card_id), _pip_legend(card) if include_pips else ""]
 	if _sew.is_supported_card(card_id):
 		var card := _definition(card_id)
 		if card.is_empty():
@@ -393,6 +401,8 @@ func base_effect_text(card_id: String, include_pips: bool = true) -> String:
 ## precise tooltip. A target kind this formatter does not know stays "Unknown
 ## target" rather than guessing at legal recipients.
 func _target_text(definition: Dictionary, precise: bool) -> String:
+	if _roll.is_supported_card(definition.get("id", "")):
+		return "Choose one living other ally in any hero slot" if precise else "Living other ally"
 	var target_kind: String = str(definition.get("target_kind", ""))
 	var to_positions: Array = definition.get("to_positions", [])
 	var positions: String = _positions(to_positions)
@@ -1044,7 +1054,7 @@ func _update_visual(panel: Control) -> void:
 		if id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatYarnRangerSnareCards.CARDS.has(id) or CombatScarecrowCrowCards.CARDS.has(id):
 			var area = _app.get_node_or_null("LiveAreaAttackAction")
 			playable = area != null and area._eligible(panel, id)
-		elif id in CombatSupportCards.SCARECROW_STRAW_IDS or _re_stuff.is_supported_card(id) or _feint.is_supported_card(id) or _pop.is_supported_card(id) or _sew.is_supported_card(id):
+		elif id in CombatSupportCards.SCARECROW_STRAW_IDS or _re_stuff.is_supported_card(id) or _feint.is_supported_card(id) or _pop.is_supported_card(id) or _sew.is_supported_card(id) or _roll.is_supported_card(id):
 			var support_presenter = _app.get_node_or_null("LiveSupportHand")
 			playable = support_presenter != null and support_presenter._eligible(
 				panel, id, _app.deck, _app.party, _app.battle_view)
@@ -1169,6 +1179,8 @@ func _center_text(panel: Control, value: String, rect: Rect2, preferred: int) ->
 ## keeps the ordinary and two-half sewn faces identical; applied amounts come
 ## from the same validated record the tooltip explains, never from a prediction.
 func _rules(id: String) -> String:
+	if _roll.is_supported_card(id) and not _definition(id).is_empty():
+		return "Swap with a living other ally; gain %d Block on self." % _roll._authenticate(id).block
 	if _sew.is_supported_card(id) and not _definition(id).is_empty():
 		var effects: Dictionary = _definition(id).effects
 		return "Gain %d Block per button popped%s; self only." % [effects.block_per_button_popped,
