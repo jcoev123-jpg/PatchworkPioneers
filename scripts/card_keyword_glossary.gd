@@ -405,8 +405,11 @@ static func _two_hits_line(definition: Dictionary, effects: Dictionary) -> Dicti
 	return {"keyword": "Two hits", "explanation": explanation}
 
 
-## The six authored one-shot Dodge variants: only the exact IDs with the
-## integer one descriptor and the correct owner/target receive this Help.
+## The six authored one-shot Dodge variants. Only a complete authored catalog
+## shape earns the row: the named ID, a real String owner and recipient, the
+## per-ID cost, the authored source and target slots and the whole effect
+## descriptor. A partial, altered or extended record gets no row rather than
+## borrowing the explanation.
 static func _dodge_line(definition: Dictionary, effects: Dictionary) -> Dictionary:
 	var id_value: Variant = definition.get("id")
 	if not id_value is String:
@@ -414,31 +417,63 @@ static func _dodge_line(definition: Dictionary, effects: Dictionary) -> Dictiona
 	var card_id: String = id_value
 	if not DODGE_IDS.has(card_id):
 		return {}
-	var owner: String = String(definition.get("owner", ""))
-	var target: String = String(definition.get("target_kind", ""))
-	if card_id.begins_with("rag_duelist_"):
-		if owner != "rag_duelist" or target != "self":
+	var owner_value: Variant = definition.get("owner")
+	var target_value: Variant = definition.get("target_kind")
+	var cost_value: Variant = definition.get("cost")
+	if typeof(cost_value) != TYPE_INT:
+		return {}
+	var cost: int = int(cost_value)
+	var is_plus: bool = card_id.ends_with("_plus")
+	if DODGE_SELF_IDS.has(card_id):
+		if not owner_value is String or String(owner_value) != "rag_duelist":
 			return {}
-	elif card_id.begins_with("lantern_monk_"):
-		if owner != "lantern_monk" or target != "ally_single":
+		if not target_value is String or String(target_value) != "self":
+			return {}
+		if cost != (0 if is_plus else 1):
+			return {}
+		if not _exact_positions(definition.get("from_positions", null), [1, 2, 3]):
+			return {}
+		if not _empty_positions(definition.get("to_positions", null)):
+			return {}
+		# Rag cape cards author exactly {dodge_next_attack: 1, duration: 1}.
+		if effects.size() != 2 or not effects.has("dodge_next_attack") \
+				or not effects.has("duration"):
+			return {}
+		if typeof(effects["dodge_next_attack"]) != TYPE_INT \
+				or int(effects["dodge_next_attack"]) != 1:
+			return {}
+		if typeof(effects["duration"]) != TYPE_INT or int(effects["duration"]) != 1:
 			return {}
 	else:
-		return {}
-	var dodge: Variant = effects.get("dodge_next_attack")
-	if not dodge is int or int(dodge) != 1:
-		return {}
-	# The optional authored one-turn duration must be the exact integer 1 when present.
-	if effects.has("duration"):
-		var duration: Variant = effects.get("duration")
-		if not duration is int or int(duration) != 1:
+		if not owner_value is String or String(owner_value) != "lantern_monk":
+			return {}
+		if not target_value is String or String(target_value) != "ally_single":
+			return {}
+		if cost != 1:
+			return {}
+		if not _exact_positions(definition.get("from_positions", null), [2, 3]):
+			return {}
+		if not _empty_positions(definition.get("to_positions", null)):
+			return {}
+		# Moth Shroud authors exactly {block: 6 (8 upgraded), dodge_next_attack: 1}.
+		if effects.size() != 2 or not effects.has("block") \
+				or not effects.has("dodge_next_attack"):
+			return {}
+		if typeof(effects["block"]) != TYPE_INT \
+				or int(effects["block"]) != (8 if is_plus else 6):
+			return {}
+		if typeof(effects["dodge_next_attack"]) != TYPE_INT \
+				or int(effects["dodge_next_attack"]) != 1:
 			return {}
 	var explanation := "Dodge is one-shot, never a stack or a number of turns: the target's NEXT incoming attack is avoided once, then the Dodge is spent. It applies to the caster (self) for the Rag Duelist's cape cards, or to a chosen ally (with the authored Block) for Moth Shroud. It is not permanent protection. This Help explains the authored design description only; live combat does not yet apply Dodge."
 	return {"keyword": "Dodge", "explanation": explanation}
 
 
-## The two Moth Cloud variants that carry both Blind (enemy_all) and Exhaust.
-## Only these exact IDs, with the true boolean for both descriptors, receive
-## the Exhaust Help row; missing Blind or any malformed flag stays silent.
+## The two Moth Cloud variants that carry both Blind and Exhaust.
+## Only these exact IDs, with the true boolean for both descriptors and the exact
+## authored cost, source slots and target slots, receive the Exhaust Help row;
+## missing Blind, any extra/altered effect, conflicting Blind flags, wrong cost
+## or wrong positions all stay silent.
 static func _exhaust_line(definition: Dictionary, effects: Dictionary) -> Dictionary:
 	var id_value: Variant = definition.get("id")
 	if not id_value is String:
@@ -446,18 +481,32 @@ static func _exhaust_line(definition: Dictionary, effects: Dictionary) -> Dictio
 	var card_id: String = id_value
 	if not EXHAUST_IDS.has(card_id):
 		return {}
-	if String(definition.get("owner", "")) != "lantern_monk":
+	var owner_value: Variant = definition.get("owner")
+	if not owner_value is String or String(owner_value) != "lantern_monk":
 		return {}
-	if String(definition.get("target_kind", "")) != "enemy_all":
+	var target_value: Variant = definition.get("target_kind")
+	if not target_value is String or String(target_value) != "enemy_all":
 		return {}
-	var exhaust: Variant = effects.get("exhaust")
-	if not exhaust is bool or not bool(exhaust):
+	# Moth Cloud base costs 2, plus costs 1.
+	var cost_value: Variant = definition.get("cost")
+	if typeof(cost_value) != TYPE_INT:
 		return {}
-	# Exhaust is only explained alongside its authored Blind companion.
-	if not effects.has("blind_next_attack"):
+	var expected_cost := 1 if card_id.ends_with("_plus") else 2
+	if int(cost_value) != expected_cost:
 		return {}
-	var blind_flag: Variant = effects.get("blind_next_attack")
-	if not blind_flag is bool or not bool(blind_flag):
+	if not _exact_positions(definition.get("from_positions", null), [2, 3]):
+		return {}
+	if not _exact_positions(definition.get("to_positions", null), [1, 2, 3]):
+		return {}
+	# Effects must be exactly {blind_next_attack:true, exhaust:true}, nothing more,
+	# nothing less, nothing in a conflicting or altered spelling.
+	if effects.size() != 2 or not effects.has("blind_next_attack") \
+			or not effects.has("exhaust"):
+		return {}
+	if typeof(effects["exhaust"]) != TYPE_BOOL or not bool(effects["exhaust"]):
+		return {}
+	if typeof(effects["blind_next_attack"]) != TYPE_BOOL \
+			or not bool(effects["blind_next_attack"]):
 		return {}
 	var explanation := "Exhaust is an intended one-play removal from the remaining combat draw/discard cycle: the card is removed once, not normally discarded and redrawn. This Help explains the authored design description only; it is currently design-only and live combat does not yet apply Exhaust."
 	return {"keyword": "Exhaust", "explanation": explanation}
