@@ -206,7 +206,10 @@ func _run() -> void:
 			await _refusal(mode, false, id)
 	var metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
 	for id in ScarecrowPoolCards.new().get_all_card_ids():
-		if not id in RESTUFF:
+		if CombatScarecrowCrowCards.CARDS.has(id):
+			_check(metadata.definition(id) == ScarecrowPoolCards.new().get_definition(id),
+				"live crow definitions retain their exact pool catalog: " + id)
+		elif not id in RESTUFF:
 			_check(metadata.definition(id).is_empty(), "unrelated Scarecrow definitions stay unregistered: " + id)
 	_finish()
 
