@@ -1,6 +1,6 @@
 extends SceneTree
-## V3-1 Scarecrow catalog contract. Printed descriptors only: nothing here proves the abilities
-## already resolve in live combat, the shared hand, rewards or the starter deck.
+## V3-1 Scarecrow catalog contract plus scene-free paid Re-Stuff resolution.
+## This does not prove mounted hand/reward integration or live combat availability.
 
 const ScriptClass = preload("res://data/cards/scarecrow_pool_cards.gd")
 
@@ -16,6 +16,8 @@ func _initialize() -> void:
 	_test_invalid_ids()
 	_test_starters_unchanged()
 	_test_rng_state()
+	_test_re_stuff_paid()
+	_test_re_stuff_refusals()
 	if failures.is_empty():
 		print("v3_scarecrow_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -332,3 +334,121 @@ func _test_rng_state() -> void:
 	catalog.get_upgrade_id("scarecrow_crow_peck")
 	catalog.get_definition("unknown_scarecrow_card")
 	_check(rng.state == initial_state, "constructing and enumerating the catalog consumes no run RNG")
+
+
+func _re_stuff_fixture(card_id: String, seat: int = 3, max_hp: int = 30,
+		damage: int = 20) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 279
+	var cards: Array[String] = [card_id, "warden_strike", "warden_brace",
+		"tinker_pop_shot", "tinker_tune_up"]
+	var deck := CombatDeck.new(cards, rng)
+	_check(deck.start_turn(), "fixture starts genuine shared turn")
+	_check(deck.energy == 3 and deck.hand.size() == 5 and deck.hand.count(card_id) == 1,
+		"fixture genuinely holds sole requested card at three energy")
+	var heroes: Array = [{"id": "warden", "max_hp": 40},
+		{"id": "tinker", "max_hp": 25}]
+	heroes.insert(seat - 1, {"id": "scarecrow", "max_hp": max_hp,
+		"statuses": {"weak": 2, "bleed": 1}, "scraps": 17,
+		"metadata": {"seams": ["straw", "felt"]}})
+	var party := CombatParty.new(heroes)
+	_check(party.is_valid() and party.get_hero(seat).get("id") == "scarecrow",
+		"fixture has three distinct heroes and Scarecrow in requested seat")
+	_check(party.apply_damage(seat, damage), "fixture damages authoritative hero")
+	_check(party.gain_block(seat, 7) == not party.is_downed(seat),
+		"fixture grants Block only to a living Scarecrow")
+	_check(party.gain_block(2 if seat != 2 else 1, 4), "fixture grants ally Block")
+	return {"deck": deck, "party": party, "rng": rng, "seat": seat}
+
+
+func _re_stuff_snapshot(f: Dictionary) -> Dictionary:
+	var deck: CombatDeck = f["deck"]
+	var party: CombatParty = f["party"]
+	return {"hand": deck.hand.duplicate(), "draw": deck.draw_pile.duplicate(),
+		"discard": deck.discard_pile.duplicate(), "energy": deck.energy,
+		"active": deck.turn_active, "heroes": party.get_heroes(), "rng": f["rng"].state}
+
+
+func _re_stuff_refused(f: Dictionary, card_id: Variant, reason: String,
+		target: int = 0) -> void:
+	var before := _re_stuff_snapshot(f)
+	var result := CombatScarecrowReStuffCards.new().play_card(f["deck"], f["party"], card_id, target)
+	_check(not result.get("ok", true) and result.get("reason") == reason,
+		"Re-Stuff refuses " + reason)
+	_check(_re_stuff_snapshot(f) == before, reason + " preserves all authorities and RNG")
+	result["hp_after"] = -999
+	_check(_re_stuff_snapshot(f) == before, reason + " receipt is detached")
+
+
+func _test_re_stuff_paid() -> void:
+	for id: String in ["scarecrow_re_stuff", "scarecrow_re_stuff_plus"]:
+		for seat: int in [1, 2, 3]:
+			var f := _re_stuff_fixture(id, seat)
+			var before := _re_stuff_snapshot(f)
+			var expected: Array = before["heroes"].duplicate(true)
+			var heal := 13 if id.ends_with("_plus") else 10
+			expected[seat - 1]["max_hp"] = 28
+			expected[seat - 1]["hp"] = 10 + heal
+			var result := CombatScarecrowReStuffCards.new().play_card(f["deck"], f["party"], id)
+			_check(result.get("ok", false), id + " paid play succeeds in seat " + str(seat))
+			_check(result.get("card_id") == id and result.get("cost") == 2
+				and result.get("owner_position") == seat, "receipt authenticates paid card and owner")
+			_check(result.get("max_hp_before") == 30 and result.get("max_hp_after") == 28
+				and result.get("hp_before") == 10 and result.get("hp_after") == 10 + heal,
+				"receipt proves independent base/+ max HP and healing amounts")
+			_check(f["party"].get_heroes() == expected,
+				"only Scarecrow HP/cap change; identities, allies, Block, statuses and metadata retained")
+			var deck: CombatDeck = f["deck"]
+			var expected_hand: Array = before["hand"].duplicate()
+			expected_hand.erase(id)
+			_check(deck.energy == 1 and deck.hand == expected_hand and deck.discard_pile == [id],
+				"exactly one held copy discarded for two shared energy")
+			_check(deck.draw_pile == before["draw"] and f["rng"].state == before["rng"],
+				"successful play does not draw, shuffle or advance RNG")
+			result["hp_after"] = -999
+			_check(f["party"].get_heroes() == expected, "success receipt is detached")
+			# Restore affordability so replay is rejected specifically for the missing held copy.
+			deck.combat_state.energy = 3
+			_re_stuff_refused(f, id, "card_not_held")
+		# Full HP must clamp first, and damaged healing must stop at the reduced cap.
+		for damage: int in [0, 3]:
+			var f := _re_stuff_fixture(id, 2, 30, damage)
+			var result := CombatScarecrowReStuffCards.new().play_card(f["deck"], f["party"], id)
+			_check(result.get("ok", false) and f["party"].get_hero(2)["hp"] == 28
+				and f["party"].get_hero(2)["max_hp"] == 28, "clamp/heal respects reduced cap")
+	# Positive remaining cap is legal even below ten; no arbitrary minimum.
+	var tiny := _re_stuff_fixture("scarecrow_re_stuff", 3, 3, 1)
+	var paid := CombatScarecrowReStuffCards.new().play_card(tiny["deck"], tiny["party"], "scarecrow_re_stuff")
+	_check(paid.get("ok", false) and tiny["party"].get_hero(3)["max_hp"] == 1
+		and tiny["party"].get_hero(3)["hp"] == 1, "max HP three can legally pay two")
+
+
+func _test_re_stuff_refusals() -> void:
+	var id := "scarecrow_re_stuff"
+	var f := _re_stuff_fixture(id)
+	_re_stuff_refused(f, "scarecrow_re_stuff_plus", "card_not_held")
+	for invalid: Variant in [null, {}, StringName("scarecrow_re_stuff"), "missing", "warden_strike", "scarecrow_crow_peck"]:
+		_re_stuff_refused(f, invalid, "unsupported_card")
+	for target: int in [-1, 1, 2, 3, 4]:
+		_re_stuff_refused(f, id, "invalid_target", target)
+	_check(f["deck"].try_spend_energy(2) and f["deck"].energy == 1,
+		"insufficient-energy fixture is genuine")
+	_re_stuff_refused(f, id, "insufficient_energy")
+	f = _re_stuff_fixture(id)
+	_check(f["deck"].combat_state.end_player_turn() and f["deck"].hand.has(id),
+		"inactive fixture retains held card")
+	_re_stuff_refused(f, id, "inactive_turn")
+	f = _re_stuff_fixture(id, 3, 30, 30)
+	_check(f["party"].is_downed(3), "downed fixture has zero HP")
+	_re_stuff_refused(f, id, "owner_downed")
+	f = _re_stuff_fixture(id)
+	f["party"] = CombatParty.new([{"id": "warden", "max_hp": 40},
+		{"id": "tinker", "max_hp": 25}, {"id": "seamstress", "max_hp": 30}])
+	_check(f["party"].is_valid() and f["party"].get_hero(3)["id"] == "seamstress",
+		"foreign roster is valid, living and lacks Scarecrow")
+	_re_stuff_refused(f, id, "owner_missing")
+	for cap: int in [1, 2]:
+		f = _re_stuff_fixture(id, 3, cap, 0)
+		_check(not f["party"].is_downed(3) and f["party"].get_hero(3)["max_hp"] == cap,
+			"max-HP-cost fixture is alive with insufficient cap")
+		_re_stuff_refused(f, id, "max_hp_cost")
