@@ -378,6 +378,66 @@
         { "id": "sweep_ribbons", "text": "Sweep up brass ribbons (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
         { "id": "leave_foundry", "text": "Leave the foundry before nightfall", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_ember_needle_smithy",
+      "title": "The Ember-Needle Smithy",
+      "description": "An amber-lit ragdoll smith draws glowing copper needles through a midnight-plum quilt.",
+      "choices": [
+        { "id": "polish_bent_needles", "text": "Polish a tray of bent needles (spend 1 scrap; gain 20 gold)", "outcome": { "gold": 20, "scraps": -1 } },
+        { "id": "buy_ember_thread", "text": "Buy three spools of ember thread (spend 17 gold; gain 3 scraps)", "outcome": { "gold": -17, "scraps": 3 } },
+        { "id": "leave_smithy", "text": "Leave the needles cooling", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_gloamveil_laundry",
+      "title": "The Gloamveil Laundry",
+      "description": "Button-eyed washer dolls hang oxblood velvet veils across lines of silver running-stitch.",
+      "choices": [
+        { "id": "gather_soft_lint", "text": "Gather discarded soft lint (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "buy_dye_cord", "text": "Buy two bundles of dyed cord (spend 14 gold; gain 2 scraps)", "outcome": { "gold": -14, "scraps": 2 } },
+        { "id": "leave_laundry", "text": "Leave the veils to dry", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_bellflower_patch_barge",
+      "title": "The Bellflower Patch Barge",
+      "description": "A quilt-sailed barge floats among enormous sewn bellflowers, its ferryman counting copper bells.",
+      "choices": [
+        { "id": "mend_torn_sail", "text": "Mend the torn sail (spend 2 scraps; earn 34 gold)", "outcome": { "gold": 34, "scraps": -2 } },
+        { "id": "carry_ferry_parcels", "text": "Carry the sealed parcels (+10 gold)", "outcome": { "gold": 10, "scraps": 0 } },
+        { "id": "leave_barge", "text": "Wave the barge onward", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rosebutton_oracle",
+      "title": "The Rosebutton Oracle",
+      "description": "A plump button-eyed oracle lays mismatched rose-shaped buttons on a star-patterned tablecloth.",
+      "choices": [
+        { "id": "trade_rose_button", "text": "Trade a rare rose button (spend 1 scrap; gain 23 gold)", "outcome": { "gold": 23, "scraps": -1 } },
+        { "id": "buy_fortune_thread", "text": "Buy three fortune-thread spools (spend 19 gold; gain 3 scraps)", "outcome": { "gold": -19, "scraps": 3 } },
+        { "id": "leave_oracle", "text": "Keep your fortune unspoken", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_saffron_thimble_observatory",
+      "title": "The Saffron Thimble Observatory",
+      "description": "A brass thimble telescope peers through quilted midnight skies stitched with tiny stars.",
+      "choices": [
+        { "id": "chart_moon_seams", "text": "Chart the moon seams for the keeper (+13 gold)", "outcome": { "gold": 13, "scraps": 0 } },
+        { "id": "purchase_star_silk", "text": "Purchase four star-silk offcuts (spend 22 gold; gain 4 scraps)", "outcome": { "gold": -22, "scraps": 4 } },
+        { "id": "leave_stars", "text": "Close the observatory hatch", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_hushthread_gatehouse",
+      "title": "The Hushthread Gatehouse",
+      "description": "A sleepy patchwork gatekeeper counts stitches along a moss-green arch of giant safety pins.",
+      "choices": [
+        { "id": "gather_lock_cuttings", "text": "Gather loose lock cuttings (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "repair_pin_lock", "text": "Repair the pin lock (spend 2 scraps; gain 30 gold)", "outcome": { "gold": 30, "scraps": -2 } },
+        { "id": "walk_round_gate", "text": "Walk around the silent gate", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
