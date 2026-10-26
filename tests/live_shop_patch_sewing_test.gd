@@ -80,7 +80,7 @@ func _attack_patch_purchases() -> void:
 	var slots := RunAuthoredPatchDefinitions.load_definitions()
 	for target in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm", "HEAD", "ARM", "COAT"]:
 		var fixture: Dictionary = {}
-		var next_seed: int = {"stitched_badge": 2455, "spare_spool": 983, "quilted_coat": 29702, "button_eye": 2645, "pincushion_arm": 6503, "HEAD": 1060, "ARM": 838, "COAT": 1982}.get(target, 1)
+		var next_seed: int = {"stitched_badge": 3841, "spare_spool": 2927, "quilted_coat": 40281, "button_eye": 4640, "pincushion_arm": 8845, "HEAD": 4752, "ARM": 1060, "COAT": 2255}.get(target, 1)
 		var found := false
 		for attempt in range(240):
 			fixture = _sequence_fixture(["Shop", "Fight"], next_seed)
