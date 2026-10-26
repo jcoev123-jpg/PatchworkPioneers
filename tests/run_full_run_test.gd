@@ -651,6 +651,7 @@ func _win(fixture: Dictionary) -> Array:
 			return []
 		var kind: String = app.run_map.get_node(fixture.path[index]).type
 		if kind in ["Fight", "Elite", "Boss"]:
+			var started: Array = app.run_heroes.duplicate(true)
 			if not await _battle():
 				return []
 			battles += 1
@@ -666,8 +667,21 @@ func _win(fixture: Dictionary) -> Array:
 				await _return_terminal("Victory")
 				break
 			await _reward(battles == 2)
-			_check(app.run_heroes == carried and app.run_heroes == app.party_carryover.read_state().heroes,
-				"claim publishes exact combat HP/status/positions, clearing only transient Block")
+			# Claim publishes the exact combat roster: HP, statuses and positions
+			# survive while transient Block is cleared. A hero who genuinely fell
+			# in this fight is the one documented exception: the torn carryover
+			# lowers that hero's maximum HP by the authored tear loss, floored at
+			# the authored minimum, and nothing else may change.
+			var started_hp := {}
+			for hero in started:
+				started_hp[String(hero.id)] = int(hero.get("hp", 0))
+			var expected_claim: Array = carried.duplicate(true)
+			for hero in expected_claim:
+				if int(started_hp.get(String(hero.id), 0)) > 0 and int(hero.get("hp", 0)) == 0:
+					hero.max_hp = maxi(RunTornMending.MIN_MAX_HP,
+						int(hero.max_hp) - RunTornMending.TEAR_LOSS)
+			_check(app.run_heroes == expected_claim and app.run_heroes == app.party_carryover.read_state().heroes,
+				"claim publishes exact combat HP/status/positions, clearing only transient Block and tearing only a hero who fell")
 		elif kind == "PatchStall":
 			var before := _inventory()
 			var source: Dictionary = app.patch_stall_service.read_state()
