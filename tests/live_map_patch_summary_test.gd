@@ -311,9 +311,9 @@ func _run() -> void:
 					replay = trace
 				await _summary_negatives()
 				await _activate_summary(_route_action(fixture.next), keyboard)
-				_check(app.rest_view != null and app.run_map.get_current_node_id() == fixture.next, "existing next-route callback still works")
-				await _activate_summary(app.rest_heal_button, keyboard)
-				await _activate_summary(app.rest_continue_button, keyboard)
+				_check(app.campfire_view != null and app.run_map.get_current_node_id() == fixture.next, "existing next-route callback still works")
+				await _activate_summary(app.campfire_heal_button, keyboard)
+				_check(app._campfire_closed and app._can_choose_connected_route(), "Campfire Heal closes and refreshes the connected book")
 				_assert_summary()
 				_check(not str(_summary_text()).contains("inactive"), "later visit refreshes healed wearer activation")
 				_summary_bounds(app.route_view)

@@ -3,6 +3,16 @@ extends "res://tests/live_elite_reward_continuation_test.gd"
 
 var wardrobe: RunPatchWardrobe
 
+
+func _fund_shop_fixture() -> void:
+	app.session_gold = 500
+	# Capture the explicit test wallet in genuine route controls before transit.
+	# Campfire, like the other sewn visits, rejects stale source snapshots.
+	app._clear_route_view()
+	app._present_connected_route(weakref(app.run_map))
+	_check(not app.route_buttons.is_empty() and app._can_choose_connected_route(),
+		"funded fixture has a fresh authenticated connected chooser")
+
 const PREVIEW_POWERS := {
 	"stitched_badge": {"slot": "HEAD", "effect": "opening_block_bonus", "amount": 3,
 		"text": "+3 opening Block for this living wearer (stacks with innate Block)"},
@@ -78,7 +88,7 @@ func _attack_patch_purchases() -> void:
 				break
 			await _click(app.reward_buttons[3])
 			await _click(app.continue_button)
-			app.session_gold = 500
+			_fund_shop_fixture()
 			await _reach(fixture.paths[0], false)
 			var id: String = app.peddler_visit.read_state().stock.trinkets[0].id
 			var slot: String = app._peddler_wardrobe.get_snapshot().definitions[id]
@@ -513,7 +523,7 @@ func _poor_and_replacement() -> void:
 		await _click(app.continue_button)
 		var old_patch := ""
 		if funded:
-			app.session_gold = 500
+			_fund_shop_fixture()
 			var definitions := RunAuthoredPatchDefinitions.load_definitions()
 			for prior in definitions:
 				app.run_trinkets.assign([prior.id])
@@ -558,7 +568,7 @@ func _unsewn_elite_before_shop() -> void:
 		return
 	await _click(app.reward_buttons[3])
 	await _click(app.continue_button)
-	app.session_gold = 500
+	_fund_shop_fixture()
 	await _reach(fixture.paths[0], false)
 	await _settle_battle(false)
 	var sewing = app.get_node("LiveElitePatchSewing")
@@ -595,7 +605,7 @@ func _shop_fight_shop() -> void:
 		return
 	await _click(app.reward_buttons[3])
 	await _click(app.continue_button)
-	app.session_gold = 500 # Funding only; the route, stock and rewards are real.
+	_fund_shop_fixture() # Funding only; the route, stock and rewards are real.
 	await _reach(fixture.paths[0], false)
 	var bound: RunPatchWardrobe = app._peddler_wardrobe
 	wardrobe = bound
@@ -674,7 +684,7 @@ func _purchase_seeded_coat() -> bool:
 			return false
 		await _click(app.reward_buttons[3])
 		await _click(app.continue_button)
-		app.session_gold = 500
+		_fund_shop_fixture()
 		await _reach(fixture.paths[0], false)
 		wardrobe = app._peddler_wardrobe
 		_check(wardrobe != null and wardrobe.is_valid()
@@ -842,7 +852,7 @@ func _badge_fights() -> void:
 			return
 		await _click(app.reward_buttons[3])
 		await _click(app.continue_button)
-		app.session_gold = 500
+		_fund_shop_fixture()
 		await _reach(fixture.paths[0], false)
 		for i in range(1):
 			if app.peddler_visit.read_state().stock.trinkets[i].id == "stitched_badge":
@@ -862,7 +872,7 @@ func _badge_fights() -> void:
 				return
 			await _activate(app.reward_buttons[3], keyboard)
 			await _activate(app.continue_button, keyboard)
-			app.session_gold = 500
+			_fund_shop_fixture()
 			await _reach(fixture.paths[0], keyboard)
 			wardrobe = app._peddler_wardrobe
 			await _purchase(badge, keyboard, wearer)
@@ -942,7 +952,7 @@ func _elite_before_peddler() -> void:
 		return
 	await _click(app.reward_buttons[3])
 	await _click(app.continue_button)
-	app.session_gold = 500
+	_fund_shop_fixture()
 	await _reach(fixture.paths[0], false)
 	await _settle_battle(false)
 	var sewing = app.get_node("LiveElitePatchSewing")

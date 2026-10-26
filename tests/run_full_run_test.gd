@@ -164,6 +164,16 @@ func _activate(button: Button, keyboard: bool = false) -> void:
 func _retained(button: Button) -> Callable:
 	var connections := button.pressed.get_connections()
 	_check(not connections.is_empty(), "mounted control has real callback")
+	if button.get_parent() is LiveCampfirePanel:
+		# As for Peddler, retain the app bridge beyond disposal of the panel.
+		var panel := button.get_parent() as LiveCampfirePanel
+		var bound := panel._visit.read_state()
+		var intent := {"action": "heal" if button == panel.heal_button else "leave",
+			"source_visit": panel._visit, "node_id": bound.node_id,
+			"expected_heroes": bound.heroes.duplicate(true)}
+		var bridges := panel.decision_requested.get_connections()
+		_check(bridges.size() == 1, "mounted Campfire has exactly one app-owned decision bridge")
+		return bridges[0].callable.bind(intent) if bridges.size() == 1 else Callable()
 	if button.get_parent() is LivePeddlerPanel:
 		# Retain the app bridge: the presentation's own callbacks die with its panel.
 		var panel := button.get_parent() as LivePeddlerPanel
@@ -688,8 +698,8 @@ func _win(fixture: Dictionary) -> Array:
 			var gold: int = app.session_gold
 			var scraps: int = app.run_scraps
 			var rng: int = app.run_rng.state
-			var callback := _retained(app.rest_heal_button)
-			await _activate(app.rest_heal_button)
+			var callback := _retained(app.campfire_heal_button)
+			await _activate(app.campfire_heal_button)
 			for hero in app.run_heroes:
 				var prior: Dictionary = before.filter(func(h): return h.id == hero.id)[0]
 				_check(hero.hp == mini(hero.max_hp, maxi(1, prior.hp) + floori(hero.max_hp * 0.3)), "Rest exact authored recovery")
@@ -698,9 +708,8 @@ func _win(fixture: Dictionary) -> Array:
 			stale.append(callback)
 			await _reject_stale()
 			_record(["rest"])
-			callback = _retained(app.rest_continue_button)
-			await _activate(app.rest_continue_button, true)
-			stale.append(callback)
+			_check(app._campfire_closed and not app.campfire_view.visible
+				and app._can_choose_connected_route(), "one-action Rest receipt admits the next route")
 		elif kind == "Shop":
 			var stock: Array = app.peddler_visit.read_state().stock.cards
 			# Buy the cheapest affordable card from the genuine three-owner

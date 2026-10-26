@@ -65,13 +65,18 @@ func enter_preview(app, screen: String) -> bool:
 		_preview_map = weakref(app.run_map)
 		if screen != "map":
 			var route: String = {"shop": "f01_n3", "event": "f01_n1"}.get(screen, "f01_n0")
-			# Floor-one Rest now opens Campfire. Preview the unchanged legacy Rest
+			# Ordinary Rest now opens Campfire. Explicitly preview retained legacy Rest
 			# through a genuine Treasure -> floor-two Rest with no resource effects.
 			var steps: Array = ["f01_n2", "f02_n2"] if screen == "rest" else [route]
 			for id in steps:
 				for button in app.route_buttons:
 					if button.get_meta("route_id") == id and not button.disabled:
-						button.pressed.emit()
+						if screen == "rest" and app.run_map.get_node(id).type == "Rest":
+							if not app._choose_rest_route(id, weakref(app.run_map), app.run_map.get_route(), button):
+								_busy = false
+								return false
+						else:
+							button.pressed.emit()
 						break
 		if screen in ["reward", "results"] and app.battle_result != null:
 			if screen == "reward":

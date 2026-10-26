@@ -77,7 +77,7 @@ func _projected_book(app) -> void:
 			and button.text == EXPECTED_ROUTE_LABELS.get(kind, kind)
 			and button.get_meta("route_label") == button.text, "source kind and independent projected caption/metadata")
 		if kind == "Rest":
-			var expected_help := "Campfire: Heal each hero 30% max HP (torn revives at 1 HP first), or Leave unchanged." if node.floor == 1 and app.run_map.get_route().is_empty() else "Campfire preview: opens the legacy Rest screen to heal or upgrade a card."
+			var expected_help := "Campfire: Heal each hero 30% max HP (torn revives at 1 HP first), or Leave unchanged for free."
 			_check(button.tooltip_text == expected_help, "honest source-specific Rest help")
 		elif kind == "Shop":
 			_check(button.tooltip_text == "Peddler: buy one of three cards or one patch, or Leave for free.", "honest one-choice Peddler help")

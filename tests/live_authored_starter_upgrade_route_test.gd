@@ -31,7 +31,7 @@ func _run() -> void:
 		_check(app.run_deck == starting + [earned_id] and app.fight_reward_claimed,
 			base_id + ": genuine Fight reward is earned into the run ledger")
 		await _click(app.continue_button)
-		await _click(_route_action(fixture.rest))
+		await _click(_legacy_rest_control(_route_action(fixture.rest)))
 		_check(app.rest_upgrade != null and is_instance_valid(app.rest_upgrade_cards)
 			and app.rest_view.is_visible_in_tree(), base_id + ": connected Rest is mounted")
 		if app.rest_upgrade == null or not is_instance_valid(app.rest_upgrade_cards):

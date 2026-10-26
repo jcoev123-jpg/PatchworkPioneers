@@ -134,7 +134,7 @@ func _run() -> void:
 			await _click(app.continue_button)
 			# Carry a nonzero prior-removal count; no removal transaction is bypassed.
 			app.run_removal_count = 2
-			var entry := _route_action(fixture.rest)
+			var entry := _legacy_rest_control(_route_action(fixture.rest))
 			if entry == null:
 				break
 			await _click(entry)
@@ -234,6 +234,8 @@ func _run() -> void:
 			var next := _route_action(fixture.next)
 			if next == null:
 				break
+			if kind == "Rest":
+				_legacy_rest_control(next)
 			var choose: Callable = next.pressed.get_connections()[0].callable
 			var edges: Array = map._nodes[fixture.rest].outgoing.duplicate()
 			map._nodes[fixture.rest].outgoing.erase(fixture.next)

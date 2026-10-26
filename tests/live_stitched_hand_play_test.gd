@@ -234,7 +234,7 @@ func _earn(fixture: Dictionary, pair: Array, keyboard: bool,
 	await _click(app.reward_buttons[3])
 	await _click(app.continue_button)
 	await _visit_path(fixture.rest.slice(0, -1), keyboard)
-	await _click(_route_action(fixture.rest.back()))
+	await _click(_legacy_rest_control(_route_action(fixture.rest.back())))
 	_check(app.run_scraps == 3 and app.rest_stitch != null and app.rest_stitch.is_valid(), "earned three scraps at connected Rest")
 	if app.rest_stitch == null or not app.rest_stitch.is_valid():
 		return ""

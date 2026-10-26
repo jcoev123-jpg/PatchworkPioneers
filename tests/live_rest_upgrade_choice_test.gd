@@ -121,7 +121,7 @@ func _run() -> void:
 		_check(app.run_deck == catalog.get_starting_deck() and app.run_deck.size() == 12,
 			"skip retains exact initial twelve-card starter deck")
 		await _click(app.continue_button)
-		await _click(_route_action(fixture.rest))
+		await _click(_legacy_rest_control(_route_action(fixture.rest)))
 		_check(app.rest_upgrade != null and is_instance_valid(app.rest_upgrade_cards)
 			and is_instance_valid(app.rest_upgrade_button), "real connected Rest mounts upgrade service and controls")
 		if app.rest_upgrade == null or not is_instance_valid(app.rest_upgrade_cards):

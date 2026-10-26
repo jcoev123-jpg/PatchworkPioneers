@@ -252,9 +252,9 @@ func _run() -> void:
 				_check(app.peddler_visit.is_open() and app.peddler_visit.read_state().state.deck == expected, "next Peddler is fresh")
 				await _click(app.peddler_leave_button)
 			else:
-				_check(app.rest_recovery != null and app.rest_view.is_visible_in_tree(), "next Rest has real actions")
-				await _click(app.rest_heal_button)
-				await _click(app.rest_continue_button)
+				_check(app.campfire_visit != null and app.campfire_view.is_visible_in_tree(), "next Rest has real Campfire actions")
+				await _click(app.campfire_heal_button)
+				_check(app._campfire_closed and app._can_choose_connected_route(), "next Rest Heal closes and admits onward play")
 			var observation := [app.run_map.get_route(), app.run_deck.duplicate(), app.session_gold,
 				app.run_rng.state, app.run_heroes.duplicate(true), app.run_trinkets.duplicate()]
 			if session == 0:

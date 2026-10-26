@@ -1,5 +1,5 @@
 extends "res://tests/live_campfire_stop_test.gd"
-## Preparatory opt-in only: normal later-Rest input still dispatches to legacy Rest.
+## Real settled-Fight book inputs enter the existing one-action Campfire.
 
 
 func _late_fixture() -> Dictionary:
@@ -56,17 +56,17 @@ func _late_scenario(heal: bool, keyboard: bool) -> Array:
 	var prior: Array[String] = map.get_route()
 	var original: Dictionary = app._sewing_context()
 	_check(button.get_meta("route_kind") == "Rest" and button.get_meta("sewing_source") == original
-		and button.tooltip_text == "Campfire preview: opens the legacy Rest screen to heal or upgrade a card.",
-		"later Rest captures source context but retains accurate legacy tooltip")
-	var admit: Callable = app._choose_campfire_route.bind(fixture.id, weakref(map), prior, button)
+		and button.tooltip_text == "Campfire: Heal each hero 30% max HP (torn revives at 1 HP first), or Leave unchanged for free.",
+		"later Rest retains source identity and advertises the exact free Heal/Leave choices")
+	var admit: Callable = button.pressed.get_connections()[0].callable
 	var fake := Button.new()
 	app.route_view.add_child(fake)
 	for key in ["route_id", "route_kind", "v3_kind", "sewing_source"]:
 		fake.set_meta(key, button.get_meta(key))
-	_check(not app._choose_campfire_route(fixture.id, weakref(map), prior, fake), "copied authentic metadata cannot authorize forged control")
+	_check(not app._dispatch_route(fixture.id, weakref(map), prior, fake), "copied authentic metadata cannot authorize forged control")
 	fake.free()
 	var foreign := RunMap.new()
-	_check(not app._choose_campfire_route(fixture.id, weakref(foreign), prior, button), "foreign map refuses genuine control")
+	_check(not app._dispatch_route(fixture.id, weakref(foreign), prior, button), "foreign map refuses genuine control")
 	app.run_scraps += 1
 	_check(not admit.call(), "stale source wallet refuses admission")
 	app.run_scraps -= 1
@@ -78,17 +78,34 @@ func _late_scenario(heal: bool, keyboard: bool) -> Array:
 	_check(not admit.call(), "removed legal edge refuses admission")
 	map._nodes[fixture.fight].outgoing = edges
 	_check(app._sewing_context() == original and app.campfire_visit == null, "rejected admissions preserve exact authorities and RNG")
-	_check(admit.call(), "explicit guarded Campfire admission accepts authentic later Rest")
+	if keyboard:
+		button.grab_focus()
+		await _key(KEY_ENTER)
+	else:
+		await _click(button)
 	await _frames()
 	_check(app.campfire_view is LiveCampfirePanel and app.campfire_view.is_visible_in_tree()
 		and app.run_map.get_route() == prior + [fixture.id] and not is_instance_valid(app.rest_view),
-		"opt-in mounts real sewn panel and advances exactly once")
+		"physical book input mounts real sewn panel and advances exactly once")
 	if not is_instance_valid(app.campfire_view):
 		app.free()
 		return []
+	var actions: Array = []
+	for child in app.campfire_view.get_children():
+		if child is Button:
+			actions.append(child.text)
+	_check(actions == ["Heal", "Leave"], "later Rest mounts only Heal and Leave")
+	var admitted: Dictionary = app._sewing_context()
+	for key in original:
+		if key != "route":
+			_check(admitted[key] == original[key], "book admission preserves exact " + key)
+	_check(not admit.call() and app._sewing_context() == admitted, "accepted book callback replay is inert")
 	_check(not app._can_choose_connected_route() and not app._campfire_visits.has(fixture.id), "open Rest cannot continue without completion witness")
 	await _camp_negatives()
 	var before: Dictionary = app._sewing_context()
+	_check(before.heroes.size() == 3 and before.heroes.any(func(hero): return hero.hp == 0)
+		and before.heroes.any(func(hero): return hero.hp > 0 and hero.hp < hero.max_hp),
+		"settled Fight supplies genuine Torn revival and damaged living heal cases")
 	var expected: Array = before.heroes.duplicate(true)
 	if heal:
 		for hero in expected:
@@ -135,6 +152,13 @@ func _late_scenario(heal: bool, keyboard: bool) -> Array:
 		_check(app._sewing_context() == state, "replayed onward control is inert")
 	_refuse(retired, "old decision after onward battle")
 	var replay: Array = [map.get_route(), app.run_heroes.duplicate(true), app.party_carryover.read_state(), app.run_rng.state, app.deck.hand.duplicate()]
+	app._return_to_title()
+	_check(app._campfire_visits.is_empty() and app.campfire_visit == null
+		and app.campfire_view == null and app.run_map == null, "title clears Campfire session and witnesses")
+	var title: Dictionary = app._sewing_context()
+	admit.call()
+	retired.call()
+	_check(app._sewing_context() == title and app.title_view.visible, "post-title book and action callbacks are inert")
 	app.free()
 	await _frames()
 	return replay
@@ -178,7 +202,8 @@ func _unfought_late_rest(legacy: bool = false) -> void:
 		app.free()
 		return
 	if legacy:
-		await _click(button)
+		_check(app._choose_rest_route(found.id, weakref(app.run_map), app.run_map.get_route(), button),
+			"explicit retained legacy entry accepts the authentic control")
 		_check(not app._unfought_run(), "uncompleted legacy Rest cannot authorize prefix")
 		await _click(app.rest_upgrade_button)
 		_check(app._current_completed_rest() and app.party_carryover.read_state().completed_rests.is_empty(),
@@ -199,7 +224,8 @@ func _unfought_late_rest(legacy: bool = false) -> void:
 		app.free()
 		await _frames()
 		return
-	_check(app._choose_campfire_route(found.id, weakref(app.run_map), app.run_map.get_route(), button), "unfought later Rest admits authentic control")
+	await _click(button)
+	_check(app.campfire_visit != null and app.run_map.get_current_node_id() == found.id, "unfought book enters later Rest Campfire")
 	_check(not app._unfought_run() and not app._can_choose_connected_route(), "uncompleted later Rest rejects unfought continuation")
 	await _click(app.campfire_leave_button)
 	_check(app._unfought_run() and app._can_choose_connected_route(), "authenticated later Rest Leave supports unfought continuation")
@@ -221,16 +247,6 @@ func _run() -> void:
 			var first := await _late_scenario(heal, false)
 			var second := await _late_scenario(heal, true)
 			_check(not first.is_empty() and first == second, "same seed mouse/keyboard receipt and onward RNG replay exactly")
-		if await _late_boot():
-			var button := _button(fixture.id)
-			_check(button != null, "normal-dispatch Rest button exists")
-			if button != null:
-				await _click(button)
-				_check(is_instance_valid(app.rest_view) and app.rest_view.is_visible_in_tree()
-					and app.rest_recovery != null and app.campfire_visit == null,
-					"public later-Rest dispatch still mounts legacy Rest")
-		app.free()
-		await _frames()
 	await _unfought_late_rest()
 	await _unfought_late_rest(true)
 	for failure in failures:

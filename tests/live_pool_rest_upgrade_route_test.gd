@@ -192,7 +192,7 @@ func _pool_route_session(chosen: Dictionary, reward_index: int, keyboard: bool) 
 	var gold_after_reward: int = app.session_gold
 	var scraps_after_reward: int = app.run_scraps
 	await _click(app.continue_button)
-	var rest_button := _route_action(chosen.rest)
+	var rest_button := _legacy_rest_control(_route_action(chosen.rest))
 	_check(rest_button != null and not rest_button.disabled, "connected Rest remains actionable after the earned reward")
 	if rest_button == null:
 		return []

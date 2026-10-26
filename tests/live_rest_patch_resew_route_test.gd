@@ -151,7 +151,8 @@ func _run() -> void:
 		_check(not patch.is_empty(), "actual Elite drops include head/arm patch")
 		if patch.is_empty():
 			break
-		await _reach(fixture.paths[2], keyboard)
+		await _visit_path(fixture.paths[2].slice(0, -1), keyboard)
+		await _activate(_legacy_rest_control(_route_action(fixture.paths[2].back())), keyboard)
 		_check(app._rest_wardrobe == wardrobe and wardrobe.get_snapshot().rest_id == app.run_map.get_current_node_id(), "legal Rest opens identical bound wardrobe")
 		for control in [app.rest_view, app.rest_patch_button, app.rest_back_button, app.rest_continue_button]:
 			_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), "Rest actions fit viewport")

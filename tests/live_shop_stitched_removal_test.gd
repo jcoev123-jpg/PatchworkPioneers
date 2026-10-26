@@ -20,7 +20,7 @@ func _prepare_shop_receipt(fixture: Dictionary, keyboard: bool, upgrade: bool = 
 	app.session_gold = fixture_gold
 	app.run_removal_count = fixture_count
 	await _click(app.continue_button)
-	await _click(_route_action(fixture.rest.back()))
+	await _click(_legacy_rest_control(_route_action(fixture.rest.back())))
 	_check(app.rest_stitch != null and app.rest_stitch.is_valid() and not app.rest_stitch_button.disabled,
 		"connected Rest offers genuine funded stitch")
 	if app.rest_stitch == null or app.rest_stitch_button.disabled:
@@ -273,7 +273,7 @@ func _run() -> void:
 		stale.assign([view.decision_requested.get_connections()[0].callable.bind({
 			"action": "remove_card", "visit_id": source.visit_id, "node_id": source.node_id,
 			"expected_snapshot": source.duplicate(true), "selected_card_id": target})])
-		await _click(_route_action(fixture.later))
+		await _click(_legacy_rest_control(_route_action(fixture.later)))
 		_check(app.rest_stitch != null and app.rest_stitch.is_valid() and app.rest_stitch.get_snapshot() == app._stitch_snapshot(), "later Rest accepts surviving authenticated ledger")
 		await _click(app.rest_heal_button)
 		await _click(app.rest_continue_button)

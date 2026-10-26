@@ -4,6 +4,21 @@ extends "res://tests/live_legal_starter_fight_test.gd"
 const VISIT_ART := preload("res://scripts/live_enemy_roster.gd")
 
 
+## Explicit retained legacy entry for Upgrade/Stitch/recovery regressions.
+## Public book dispatch is exercised separately by the Campfire route tests.
+func _legacy_rest_control(button: Button) -> Button:
+	_check(is_instance_valid(button) and button in app.route_buttons
+		and button.get_meta("route_kind", "") == "Rest",
+		"legacy fixture uses a genuine connected Rest control")
+	if not is_instance_valid(button):
+		return null
+	for connection in button.pressed.get_connections():
+		button.pressed.disconnect(connection.callable)
+	button.pressed.connect(app._choose_rest_route.bind(str(button.get_meta("route_id")),
+		weakref(app.run_map), app.run_map.get_route(), button))
+	return button
+
+
 func _check_visit_actions(view: Control, actions: Array, captions: Array) -> void:
 	_check(actions.size() == captions.size() and not actions.is_empty(),
 		"live action audit has canonical buttons and expected captions")
@@ -391,6 +406,7 @@ func _run() -> void:
 		_check(rest != null and _persistent() == before, "disabled controls and duplicate Continue mutate nothing")
 		if rest == null:
 			break
+		_legacy_rest_control(rest)
 		old_route = rest.pressed.get_connections()[0].callable
 		old_back = app.route_back_button.pressed.get_connections()[0].callable
 		var parent_id: String = app.run_map.get_current_node_id()

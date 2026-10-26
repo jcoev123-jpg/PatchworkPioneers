@@ -41,7 +41,7 @@ func _run() -> void:
 			break
 		await _click(app.reward_buttons[3])
 		await _click(app.continue_button)
-		await _click(_route_action(fixture.rest))
+		await _click(_legacy_rest_control(_route_action(fixture.rest)))
 		_check(app.rest_upgrade != null and app.rest_view.is_visible_in_tree(), "real connected Rest has upgrade authority")
 		if app.rest_upgrade == null:
 			break

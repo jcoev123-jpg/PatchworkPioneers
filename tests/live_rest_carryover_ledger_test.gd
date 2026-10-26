@@ -43,7 +43,7 @@ func _run() -> void:
 		_check(rest != null, "mounted connected Rest control exists")
 		if rest == null:
 			break
-		await _click(rest)
+		await _click(_legacy_rest_control(rest))
 		_check(app.rest_recovery != null and is_instance_valid(app.rest_continue_button), "real Rest visitor and Continue mounted")
 		if app.rest_recovery == null or not is_instance_valid(app.rest_continue_button):
 			break

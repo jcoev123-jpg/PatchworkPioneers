@@ -259,11 +259,12 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 						break
 					_check(settled, "generic transit has an actual affordable choice")
 			"Rest":
-				_check(is_instance_valid(app.visit_backdrop) and app.visit_backdrop.visit_kind == "Rest",
-					"Rest visit mounts its own art bed")
-				await _click(app.rest_heal_button)
-				await _click(app.rest_continue_button)
-				_check(app.visit_backdrop == null, "Rest continuation releases the visit art bed")
+				_check(app.campfire_view is LiveCampfirePanel and app.campfire_view.is_visible_in_tree()
+					and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
+					"Rest transit mounts its own live Campfire panel")
+				await _click(app.campfire_heal_button)
+				_check(not app.campfire_view.visible and app._campfire_closed
+					and app._can_choose_connected_route(), "Rest Heal closes its panel and permits continuation")
 			"Shop":
 				_check(is_instance_valid(app.visit_backdrop) and app.visit_backdrop.visit_kind == "Shop",
 					"Shop visit mounts its own art bed")

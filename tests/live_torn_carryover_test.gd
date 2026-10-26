@@ -256,10 +256,10 @@ func _mounted_warden_carryover_opening() -> void:
 	await _activate(app.reward_buttons[3], false)
 	await _activate(app.continue_button, false)
 	await _activate(_route_action(fixture.rest), false)
-	await _activate(app.rest_heal_button, false)
+	await _activate(app.campfire_heal_button, false)
 	_check(app.run_heroes[0].max_hp == 37 and app.run_heroes[0].hp > 0,
 		"physical Rest revives Warden without undoing the tear cap")
-	await _activate(app.rest_continue_button, false)
+	_check(app._campfire_closed and app._can_choose_connected_route(), "revived Campfire receipt admits onward play")
 	await _activate(_route_action(fixture.last), false)
 	_check(app.party.get_hero(1).id == "warden"
 		and app.party.get_hero(1).max_hp == 37
@@ -331,9 +331,9 @@ func _run() -> void:
 			await _activate(app.continue_button, keyboard)
 			await _activate(_route_action(fixture.rest), keyboard)
 			var healed := RunRestRecovery.new(expected).choose_heal()
-			await _activate(app.rest_heal_button, keyboard)
+			await _activate(app.campfire_heal_button, keyboard)
 			_check(app.run_heroes == healed.heroes and app.run_heroes[2].hp == 7 and app.run_heroes[2].max_hp == 23 and app.party_carryover.torn.read_state().heroes == healed.heroes, "actual Rest preserves reduced maximum and synchronizes observers")
-			await _activate(app.rest_continue_button, keyboard)
+			_check(app._campfire_closed and app._can_choose_connected_route(), "Torn Campfire receipt admits onward play")
 			await _activate(_route_action(fixture.last), keyboard)
 			mounted = healed.heroes.duplicate(true)
 			mounted[1].block = 6

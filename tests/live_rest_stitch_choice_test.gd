@@ -137,7 +137,7 @@ func _run() -> void:
 			app.run_scraps = issued.remaining_scraps
 			app.run_next_stitch_id = issued.next_stitch_id
 		await _visit_path(fixture.rest_path.slice(0, -1), false)
-		await _click(_route_action(fixture.rest_path.back()))
+		await _click(_legacy_rest_control(_route_action(fixture.rest_path.back())))
 		_check(app.rest_stitch != null and app.rest_stitch.is_valid() and not app.rest_stitch_button.disabled, "earned purse admits real Rest stitch")
 		if app.rest_stitch == null:
 			break

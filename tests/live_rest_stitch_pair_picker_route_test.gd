@@ -199,7 +199,7 @@ func _run() -> void:
 			await _click(sewing.hero_buttons[0])
 		await _click(app.continue_button)
 		await _visit_path(fixture.rest_path.slice(0, -1), false)
-		await _click(_route_action(fixture.rest_path.back()))
+		await _click(_legacy_rest_control(_route_action(fixture.rest_path.back())))
 		_check(app.rest_stitch != null and app.rest_stitch.is_valid() and not app.rest_stitch_button.disabled, "earned purse admits real Rest stitch")
 		if app.rest_stitch == null:
 			break
@@ -408,7 +408,7 @@ func _run() -> void:
 			_reject_stitch(opener, "opening after Continue")
 
 			await _visit_path(fixture.later_rest.slice(0, -1), false)
-			await _click(_route_action(fixture.later_rest.back()))
+			await _click(_legacy_rest_control(_route_action(fixture.later_rest.back())))
 			_check(app.rest_view.visible and app.run_map.get_current_node_id() == fixture.later_rest.back(), "later Rest reached through real map controls")
 			_check(app.rest_stitch_guided_button.disabled, "zero scraps disables later guided entry")
 			_reject_stitch(request, "prior visit confirmation at later Rest")

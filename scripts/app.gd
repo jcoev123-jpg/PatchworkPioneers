@@ -1481,7 +1481,7 @@ func _route_choice_button(id: String, kind: String, opening: bool, choice: Dicti
 	else:
 		button.tooltip_text = "Choose this %s" % label.to_lower()
 		if kind == "Rest":
-			button.tooltip_text = "Campfire: Heal each hero 30% max HP (torn revives at 1 HP first), or Leave unchanged." if _opening_rest(id, run_map.get_route()) else "Campfire preview: opens the legacy Rest screen to heal or upgrade a card."
+			button.tooltip_text = "Campfire: Heal each hero 30% max HP (torn revives at 1 HP first), or Leave unchanged for free."
 		elif kind == "Shop":
 			button.tooltip_text = "Peddler: buy one of three cards or one patch, or Leave for free."
 	_style_route_button(button, ROUTE_KIND_THREAD.get(kind, ROUTE_BOOK_THREAD), true)
@@ -1608,9 +1608,7 @@ func _dispatch_route(id: String, source: WeakRef, prior: Array[String], button) 
 		"Fight", "Elite", "Boss":
 			return _choose_battle_route(id, source, prior, button)
 		"Rest":
-			if _opening_rest(id, prior):
-				return _choose_campfire_route(id, source, prior, button)
-			return _choose_rest_route(id, source, prior, button)
+			return _choose_campfire_route(id, source, prior, button)
 		"Shop":
 			return _choose_shop_route(id, source, prior, button)
 		"Event", "Treasure":

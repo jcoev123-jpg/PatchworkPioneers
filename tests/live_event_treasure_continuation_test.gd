@@ -122,10 +122,10 @@ func _run() -> void:
 						_reject_placeholder(premature.pressed.get_connections()[0].callable, "unfinished " + visit)
 					app._clear_route_view()
 					if visit == "Rest":
-						_check(app.rest_recovery != null and app.rest_continue_button.disabled, "real Rest requires completion")
-						await _click(app.rest_heal_button)
-						_check(app.rest_recovery.is_consumed(), "real Rest healed")
-						await _click(app.rest_continue_button)
+						_check(app.campfire_visit != null and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN, "real Rest requires completion")
+						await _click(app.campfire_heal_button)
+						_check(app.campfire_visit.read_state().status == RunCampfireVisit.HEALED, "real Rest healed")
+						_check(app._campfire_closed and app._can_choose_connected_route(), "completed Campfire admits onward route")
 					else:
 						_check(app.peddler_visit != null, "real Shop visit mounted")
 						await _click(app.peddler_leave_button)
@@ -192,9 +192,9 @@ func _run() -> void:
 					await _click(next)
 					_check(app.run_map.get_current_node_id() == final_visit, "completed placeholder admits next real visit")
 					if kind == "Event":
-						_check(app.rest_view.is_visible_in_tree() and not app.rest_recovery.is_consumed(), "Rest after placeholder is fresh")
-						await _click(app.rest_heal_button)
-						await _click(app.rest_continue_button)
+						_check(app.campfire_view.is_visible_in_tree() and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN, "Rest after placeholder is fresh")
+						await _click(app.campfire_heal_button)
+						_check(app._campfire_closed and app._can_choose_connected_route(), "completed Campfire admits onward route")
 					else:
 						_check(app.shop_view.is_visible_in_tree() and app.peddler_visit.read_state().status == RunPeddlerVisit.OPEN, "Shop after placeholder is fresh")
 						await _click(app.peddler_leave_button)

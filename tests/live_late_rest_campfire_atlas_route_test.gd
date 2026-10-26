@@ -34,8 +34,8 @@ func _atlas_scenario(heal: bool, mode: int) -> Array:
 	var prior: Array[String] = map.get_route()
 	var original: Dictionary = app._sewing_context()
 	_check(button.get_meta("route_kind") == "Rest" and button.get_meta("sewing_source") == original
-		and button.tooltip_text == "Campfire preview: opens the legacy Rest screen to heal or upgrade a card.",
-		"later Rest captures source context but retains accurate legacy tooltip")
+		and button.tooltip_text == "Campfire: Heal each hero 30% max HP (torn revives at 1 HP first), or Leave unchanged for free.",
+		"later Rest captures source context and advertises the same Heal/Leave visit")
 	await _click(app.route_map_button)
 	var atlas: RunRouteAtlas = app.route_atlas
 	_check(atlas != null and atlas._map == map, "live atlas binds original generated map")

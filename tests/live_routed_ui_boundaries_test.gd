@@ -231,17 +231,11 @@ func _complete_node(kind: String, mode: int, step: int) -> void:
 			await _click(app.continue_button)
 			_check(app.reward_choice_panel == null and app.reward_buttons.is_empty(), "Continue clears reward bindings")
 		"Rest":
-			if mode > 0 or app.run_map.get_current_floor() == 1:
-				_check(app.campfire_view is LiveCampfirePanel and app.campfire_view.is_visible_in_tree()
-					and not is_instance_valid(app.rest_view), "atlas Rest mounts Campfire; opening alias remains Campfire")
-				await _click(app.campfire_heal_button)
-				_check(app._campfire_closed and app.campfire_visit.read_state().status == RunCampfireVisit.HEALED,
-					"atlas Rest completes an authenticated Heal matching legacy recovery")
-			else:
-				_check(is_instance_valid(app.rest_view) and app.rest_view.is_visible_in_tree()
-					and app.campfire_visit == null, "direct later Rest retains legacy recovery")
-				await _click(app.rest_heal_button)
-				await _click(app.rest_continue_button)
+			_check(app.campfire_view is LiveCampfirePanel and app.campfire_view.is_visible_in_tree()
+				and not is_instance_valid(app.rest_view), "book and atlas Rest mount only Campfire")
+			await _click(app.campfire_heal_button)
+			_check(app._campfire_closed and app.campfire_visit.read_state().status == RunCampfireVisit.HEALED
+				and app._can_choose_connected_route(), "Rest completes an authenticated Heal and admits onward play")
 		"Unpicker":
 			await _click(app.unpicker_leave_button)
 		"Campfire":
