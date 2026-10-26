@@ -45,16 +45,16 @@ const HERO_PHASES := {
 	"marshal_frontpin_bastion": [
 		[["warden", 1, 40, 0, {"exposed": 1}], ["seamstress", 2, 30, 0, {}], ["tinker", 3, 26, 0, {}]],
 		[["warden", 1, 40, 0, {}], ["seamstress", 2, 27, 0, {}], ["tinker", 3, 26, 0, {}]],
-		[["warden", 1, 40, 0, {}], ["seamstress", 2, 23, 0, {}], ["tinker", 3, 26, 0, {}]],
-		[["warden", 1, 40, 0, {}], ["seamstress", 2, 23, 0, {}], ["tinker", 3, 24, 0, {}]],
-		[["warden", 1, 34, 0, {"exposed": 1}], ["seamstress", 2, 23, 0, {}], ["tinker", 3, 24, 0, {}]],
+		[["warden", 1, 40, 0, {}], ["seamstress", 2, 23, 0, {"bleed": 1}], ["tinker", 3, 26, 0, {}]],
+		[["warden", 1, 40, 0, {}], ["seamstress", 2, 22, 0, {}], ["tinker", 3, 24, 0, {}]],
+		[["warden", 1, 34, 0, {"exposed": 1}], ["seamstress", 2, 22, 0, {}], ["tinker", 3, 24, 0, {}]],
 	],
 	"marshal_midline_tumble": [
 		[["warden", 1, 40, 6, {}], ["tinker", 2, 23, 0, {}], ["seamstress", 3, 30, 0, {}]],
 		[["warden", 1, 40, 0, {}], ["tinker", 2, 23, 0, {}], ["seamstress", 3, 30, 0, {"weak": 1}]],
-		[["warden", 1, 40, 0, {}], ["tinker", 2, 19, 0, {}], ["seamstress", 3, 28, 0, {}]],
-		[["warden", 1, 38, 0, {}], ["tinker", 2, 19, 0, {}], ["seamstress", 3, 28, 0, {}]],
-		[["warden", 1, 38, 0, {}], ["seamstress", 2, 25, 0, {}], ["tinker", 3, 19, 0, {}]],
+		[["warden", 1, 40, 0, {}], ["tinker", 2, 19, 0, {"bleed": 1}], ["seamstress", 3, 28, 0, {}]],
+		[["warden", 1, 38, 0, {}], ["tinker", 2, 18, 0, {}], ["seamstress", 3, 28, 0, {}]],
+		[["warden", 1, 38, 0, {}], ["seamstress", 2, 25, 0, {}], ["tinker", 3, 18, 0, {}]],
 	],
 }
 # Enemy state [id, slot, HP, Block, statuses], keyed independently of global catalogs.
@@ -344,11 +344,20 @@ func _phases(value: int) -> void:
 					var expected_tick := before_tick.duplicate(true)
 					for hero in expected_tick:
 						hero["statuses"] = {}
+					# The sting's Bleed 1 is a real owner-turn HP loss, paid by the
+					# hero that truly lost HP to the Marshal, then it expires.
+					var expected_losses := [0, 0, 0]
+					if id == "marshal_frontpin_bastion" and beat == 3:
+						expected_tick[1]["hp"] = 22
+						expected_losses = [0, 1, 0]
+					elif id == "marshal_midline_tumble" and beat == 3:
+						expected_tick[1]["hp"] = 18
+						expected_losses = [0, 1, 0]
 					_check(tick.actors == expected_tick
 						and tick.events.map(func(e: Dictionary) -> int:
-							return e.bleed_hp_loss) == [0, 0, 0]
+							return e.bleed_hp_loss) == expected_losses
 						and party.get_heroes() == before_tick,
-						"owner-tick is detached; Exposed/Weak expire, no invented Bleed " + id)
+						"owner-tick is detached; Exposed/Weak expire, the sting's Bleed takes exactly one " + id)
 					for index in range(3):
 						party._heroes[index]["hp"] = tick.actors[index].hp
 						party._heroes[index]["statuses"] = tick.actors[index].statuses

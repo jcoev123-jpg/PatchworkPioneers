@@ -44,15 +44,15 @@ const HERO_PHASES := {
 	"marshal_frayblood_watch": [
 		[["warden", 1, 40, 6, {"bleed": 1}], ["seamstress", 2, 27, 0, {}], ["tinker", 3, 26, 0, {}]],
 		[["warden", 1, 39, 0, {}], ["seamstress", 2, 27, 0, {}], ["tinker", 3, 24, 0, {}]],
-		[["warden", 1, 39, 0, {"exposed": 1}], ["seamstress", 2, 23, 0, {}], ["tinker", 3, 24, 0, {}]],
-		[["warden", 1, 36, 0, {}], ["seamstress", 2, 23, 0, {}], ["tinker", 3, 24, 0, {}]],
-		[["warden", 1, 36, 0, {"bleed": 1}], ["seamstress", 2, 20, 0, {}], ["tinker", 3, 24, 0, {}]]],
+		[["warden", 1, 39, 0, {"exposed": 1}], ["seamstress", 2, 23, 0, {"bleed": 1}], ["tinker", 3, 24, 0, {}]],
+		[["warden", 1, 36, 0, {}], ["seamstress", 2, 22, 0, {}], ["tinker", 3, 24, 0, {}]],
+		[["warden", 1, 36, 0, {"bleed": 1}], ["seamstress", 2, 19, 0, {}], ["tinker", 3, 24, 0, {}]]],
 	"marshal_frontbutton_relay": [
 		[["seamstress", 1, 30, 0, {}], ["warden", 2, 40, 6, {}], ["tinker", 3, 24, 0, {}]],
 		[["seamstress", 1, 30, 0, {"weak": 1}], ["warden", 2, 40, 0, {}], ["tinker", 3, 24, 0, {}]],
-		[["seamstress", 1, 26, 0, {}], ["warden", 2, 37, 0, {}], ["tinker", 3, 24, 0, {}]],
-		[["seamstress", 1, 24, 0, {}], ["warden", 2, 37, 0, {}], ["tinker", 3, 24, 0, {}]],
-		[["warden", 1, 37, 0, {}], ["seamstress", 2, 24, 0, {}], ["tinker", 3, 22, 0, {}]]],
+		[["seamstress", 1, 26, 0, {"bleed": 1}], ["warden", 2, 37, 0, {}], ["tinker", 3, 24, 0, {}]],
+		[["seamstress", 1, 23, 0, {}], ["warden", 2, 37, 0, {}], ["tinker", 3, 24, 0, {}]],
+		[["warden", 1, 37, 0, {}], ["seamstress", 2, 23, 0, {}], ["tinker", 3, 22, 0, {}]]],
 }
 const ENEMY_PHASES := {
 	"marshal_frayblood_watch": [
@@ -283,14 +283,28 @@ func _replay(id: String, value: int) -> void:
 					break
 				var losses: Array = tick.events.map(func(e: Dictionary) -> int:
 					return e.bleed_hp_loss)
-				_check(losses == ([1, 0, 0] if id == "marshal_frayblood_watch"
-					and beat == 1 else [0, 0, 0]),
+				# Beat 1 pays the authored Bleed 1; beat 3 pays the sting's own
+				# Bleed 1 on the hero that really lost HP to the Marshal.
+				var expected_losses := [0, 0, 0]
+				if id == "marshal_frayblood_watch" and beat == 1:
+					expected_losses = [1, 0, 0]
+				elif id == "marshal_frayblood_watch" and beat == 3:
+					expected_losses = [0, 1, 0]
+				elif id == "marshal_frontbutton_relay" and beat == 3:
+					expected_losses = [1, 0, 0]
+				_check(losses == expected_losses,
 					"Bleed goes through preserved Block exactly at owner end " + id)
 				_check(party.get_heroes() == before, "detached owner tick does not auto-publish")
 				if id == "marshal_frayblood_watch" and beat == 1:
 					_check(tick.actors[0].hp == 39 and tick.actors[0].block == 6
 						and tick.actors[0].statuses == {},
 						"Bleed 1 bypasses six Warden Block, then expires")
+				if beat == 3:
+					var stung: Dictionary = tick.actors[1] \
+						if id == "marshal_frayblood_watch" else tick.actors[0]
+					_check(stung.hp == (22 if id == "marshal_frayblood_watch" else 25)
+						and stung.statuses == {},
+						"the sting's Bleed 1 takes exactly one HP then expires " + id)
 				for i in range(3):
 					party._heroes[i].hp = tick.actors[i].hp
 					party._heroes[i].statuses = tick.actors[i].statuses

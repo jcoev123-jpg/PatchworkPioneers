@@ -304,7 +304,16 @@ func _expected_beat(heroes: Array, enemies: Array, action: Dictionary,
 				damage = (damage * 3) / 2
 			var absorbed: int = mini(damage, target["block"])
 			target["block"] -= absorbed
+			var hp_before: int = target["hp"]
 			target["hp"] = maxi(0, target["hp"] - (damage - absorbed))
+			# The authored confirmed-hit sting: only a source whose record carries
+			# the boolean flag and that really removed HP adds one Bleed to the
+			# hero who lost it. A fully Blocked hit stays clean.
+			var stings: Variant = enemies[source - 1].get("bleed_on_attack", false)
+			if stings is bool and stings == true and target["hp"] < hp_before:
+				var stung: Dictionary = target.get("statuses", {}).duplicate(true)
+				stung["bleed"] = stung.get("bleed", 0) + 1
+				target["statuses"] = stung
 	return event
 
 

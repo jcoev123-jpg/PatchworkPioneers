@@ -112,6 +112,7 @@ func _initialize() -> void:
 	_test_cycles()
 	_test_selection()
 	_test_live_weighted_elites()
+	_test_marshal_sting()
 	_test_v3_elites()
 	_test_v3_2_elites()
 	_test_keyword_elites()
@@ -247,7 +248,13 @@ func _expected_beat(id: String, step: int, heroes: Array, enemies: Array) -> voi
 			2:
 				_swap(heroes)
 			3:
+				# The Marshal's authored 4 lands on the living slot-2 hero, which
+				# holds no Block here, so the confirmed-hit sting adds exactly one
+				# Bleed alongside the original HP loss.
 				heroes[1]["hp"] -= 4
+				var stung: Dictionary = heroes[1].get("statuses", {})
+				stung["bleed"] = stung.get("bleed", 0) + 1
+				heroes[1]["statuses"] = stung
 		if step % 2 == 0:
 			enemies[1]["block"] += 2
 		else:
@@ -695,6 +702,239 @@ func _test_live_weighted_elites() -> void:
 			else:
 				_check(replay_history == trace,
 					"identical real typed Elite entry, bound weighted attack, phase and RNG replay " + encounter_id)
+
+
+## A genuine two-source roster built from the shipped catalog whose Marshal
+## authors exactly one real weighted alternative and the guard ragling keeps its
+## own authored beat. Binding a seeded scheduler announces those real actions.
+func _forced_marshal(alternative: Dictionary, seed_value: int,
+		party: CombatParty, stings := true) -> Dictionary:
+	var records := _all_catalogs()
+	var marshal := _record(records, "needle_marshal")
+	var escort := _record(records, "ragling_guard")
+	if marshal.is_empty() or escort.is_empty():
+		return {}
+	var weighted := CombatEnemyIntents.weighted_action(alternative)
+	var action: Dictionary = weighted.get("action", {}).duplicate(true)
+	_check(not action.is_empty(),
+		"forced Marshal alternative is a valid authored action " + str(alternative))
+	action["weight"] = 1
+	var forced: Dictionary = marshal.duplicate(true)
+	forced["intent"] = {"target": "front", "actions": [action]}
+	if not stings:
+		forced.erase("bleed_on_attack")
+	var enemies := CombatEnemies.new([forced, escort])
+	var scheduler := CombatEnemyIntents.new([
+		{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]},
+		{"enemy_position": 2, "pattern": [{"type": "block", "amount": 1}]}])
+	var bound: bool = enemies.is_valid() and scheduler.is_valid() \
+		and scheduler.bind_battle(enemies, party, _rng(seed_value))
+	_check(bound and enemies.get_enemies().size() == 2,
+		"real Marshal/ragling roster binds seeded weighted intents " + str(alternative))
+	if not bound:
+		return {}
+	return {"enemies": enemies, "scheduler": scheduler, "intents": scheduler.get_intents()}
+
+
+## AC1/AC2/AC3: the shipped Needle Marshal now authors the confirmed-hit
+## bleeding sting, and only a real HP-losing Marshal attack applies it.
+func _test_marshal_sting() -> void:
+	var elites := _catalog(ELITES)
+	var catalog := _record(elites, "needle_marshal")
+	_check(not catalog.is_empty(), "precondition: the shipped Marshal record loads")
+	if catalog.is_empty():
+		return
+	_check(catalog.get("bleed_on_attack") is bool and catalog.get("bleed_on_attack") == true,
+		"AC1: needle_marshal authors bleed_on_attack as a genuine bool true")
+	_check(catalog.get("name") == "Needle Marshal" and catalog.get("max_hp") == 28
+		and catalog.get("max_hp") is int
+		and catalog.get("art_path") == "res://assets/paper/enemies/needle_marshal.png"
+		and catalog.get("intent", {}).get("target") == "front",
+		"AC1: the stinging Marshal keeps its exact name, HP, art and front policy")
+	var carriers := elites.filter(func(record: Dictionary) -> bool:
+		return record.get("bleed_on_attack") is bool and record.get("bleed_on_attack") == true)
+	_check(carriers.size() == 1 and carriers[0].get("id") == "needle_marshal",
+		"AC1: the shipped Elite catalog authors the sting on the Marshal alone")
+	for id in ["spool_hexer", "scissor_bailiff", "zipper_hauler", "needle_briar_guard",
+			"spool_snarekeeper", "pincushion_matriarch", "spool_leech"]:
+		var companion := _record(elites, id)
+		_check(not companion.is_empty() and not companion.has("bleed_on_attack"),
+			"AC1: no fabricated sting flag on the unchanged elite " + id)
+	var escort_record := _record(_all_catalogs(), "ragling_guard")
+	var escort_actions: Array = []
+	for raw in escort_record.get("intent", {}).get("actions", []):
+		var normalized := CombatEnemyIntents.weighted_action(raw)
+		var body: Dictionary = normalized.get("action", {}).duplicate(true)
+		body["weight"] = normalized.get("weight", 0)
+		escort_actions.append(body)
+	_check(not escort_record.is_empty() and not escort_record.has("bleed_on_attack")
+		and escort_actions == [{"type": "block", "amount": 1, "weight": 3}],
+		"AC1: the ragling escort authors only its own Block 1 and no sting")
+	var roster := _roster("needle_marshal_elite")
+	_check(roster.get_enemy(1).get("bleed_on_attack") is bool
+		and roster.get_enemy(1).get("bleed_on_attack") == true
+		and not roster.get_enemy(2).has("bleed_on_attack"),
+		"AC1: the real needle_marshal_elite roster carries the flag on the Marshal only")
+	var assembled := RunTypedBattleRoster.new().assemble(
+		{"success": true, "node_type": "Elite", "encounter_id": "needle_marshal_elite",
+		"definitions": _schedule("needle_marshal_elite")}, ROSTERS, [ELITES, STARTER, RUN])
+	_check(assembled.get("ok", false)
+		and assembled.enemies.get_enemy(1).get("bleed_on_attack") == true
+		and not assembled.enemies.get_enemy(2).has("bleed_on_attack"),
+		"AC1: production typed assembly propagates the flag to the live roster")
+
+	var attack5 := {"type": "attack", "amount": 5, "weight": 2}
+	# AC2: the authored Attack 5 over two Block removes real HP and stings.
+	var party := _party()
+	_check(party.get_hero(1).get("hp") == 40 and party.gain_block(1, 2)
+		and party.get_hero(1).get("block") == 2,
+		"AC2 precondition: the real Warden holds 40 HP and two Block")
+	var case := _forced_marshal(attack5, 51007, party)
+	if case.is_empty():
+		return
+	var untouched: Array = [party.get_hero(2), party.get_hero(3)]
+	var announced: Array = case.intents
+	var input_before := announced.duplicate(true)
+	_check(announced.size() == 2
+		and announced[0] == {"type": "attack", "amount": 5, "enemy_position": 1,
+			"target_position": 1}
+		and announced[1] == {"type": "block", "amount": 1, "enemy_position": 2},
+		"AC2: the bound Marshal announces its authored Attack 5 on the front hero")
+	var settled: Dictionary = CombatEnemyPhase.new().execute_phase(
+		party, case.enemies, announced)
+	_check(settled.get("ok", false) and settled.get("events", []).size() == 2
+		and settled.events[0] == {"type": "attack", "enemy_position": 1,
+			"applied": true, "target_position": 1},
+		"AC2: the sting keeps the pre-existing applied attack event shape")
+	_check(party.get_hero(1).get("hp") == 37 and party.get_hero(1).get("block") == 0,
+		"AC2: five damage absorbs the two Block then removes exactly three HP")
+	_check(party.get_hero(1).get("statuses", {}).get("bleed", 0) == 1,
+		"AC2: the hero who really lost HP gains exactly Bleed 1")
+	_check([party.get_hero(2), party.get_hero(3)] == untouched,
+		"AC2: the other heroes keep their HP, Block and statuses")
+	_check(announced == input_before,
+		"AC2: the announced sting input is never rewritten")
+	# AC2: a second genuine hit stacks instead of replacing the status.
+	var second := _forced_marshal(attack5, 51007, party)
+	if not second.is_empty():
+		var second_settled: Dictionary = CombatEnemyPhase.new().execute_phase(
+			party, second.enemies, second.intents)
+		_check(second_settled.get("ok", false)
+			and party.get_hero(1).get("hp") == 32
+			and party.get_hero(1).get("statuses", {}).get("bleed", 0) == 2,
+			"AC2: a second confirmed sting stacks Bleed to 2 and removes five HP")
+	# Bleed N is an end-of-owner-turn HP loss of N, then N decreases by 1.
+	var tick := CombatStatusTurnBatch.new().tick_side("heroes", party.get_heroes())
+	var ticked: Array = tick.get("actors", [])
+	_check(tick.get("ok", false) and ticked.size() == 3
+		and ticked[0].get("hp") == 30
+		and ticked[0].get("statuses", {}).get("bleed", 0) == 1,
+		"AC2: the owner turn removes exactly Bleed N HP then keeps N-1")
+	_check(party.get_hero(1).get("hp") == 32,
+		"AC2: the owner tick stays detached until the caller publishes it")
+
+	# AC3: full Block soaks the whole sting, so no HP and no Bleed.
+	var blocked_party := _party()
+	_check(blocked_party.gain_block(1, 5),
+		"AC3 precondition: the Warden really holds five Block")
+	var blocked := _forced_marshal(attack5, 51008, blocked_party)
+	if not blocked.is_empty():
+		var blocked_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+			blocked_party, blocked.enemies, blocked.intents)
+		_check(blocked_result.get("ok", false)
+			and blocked_result.get("events", [{}])[0].get("applied") == true
+			and blocked_party.get_hero(1).get("hp") == 40
+			and blocked_party.get_hero(1).get("block") == 0
+			and blocked_party.get_hero(1).get("statuses", {}).get("bleed", 0) == 0,
+			"AC3: five Block absorb the whole sting and grant no Bleed")
+	# AC3: the authored Marshal Buff 3 is not an attack and never stings.
+	var buff_party := _party()
+	var buff := _forced_marshal({"type": "buff", "amount": 3, "weight": 1}, 51009,
+		buff_party)
+	if not buff.is_empty():
+		var buff_heroes := buff_party.get_heroes()
+		var buff_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+			buff_party, buff.enemies, buff.intents)
+		_check(buff_result.get("ok", false) and buff.enemies.get_enemy(1).get("block") == 3
+			and buff_party.get_heroes() == buff_heroes,
+			"AC3: the authored Marshal Buff 3 only adds enemy Block and never stings")
+	# AC3: the authored Marshal shove is not damage either.
+	var shove_party := _party()
+	var shove := _forced_marshal({"type": "shove", "amount": 0, "direction": 1,
+		"weight": 1}, 51010, shove_party)
+	if not shove.is_empty():
+		var shove_heroes := shove_party.get_heroes()
+		var shove_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+			shove_party, shove.enemies, shove.intents)
+		_check(shove_result.get("ok", false)
+			and shove_party.get_hero(1).get("id") == "seamstress"
+			and shove_party.get_hero(2).get("id") == "warden"
+			and shove_party.get_hero(1).get("hp") == shove_heroes[1].get("hp")
+			and shove_party.get_hero(2).get("hp") == shove_heroes[0].get("hp")
+			and shove_party.get_hero(1).get("statuses", {}).is_empty()
+			and shove_party.get_hero(2).get("statuses", {}).is_empty()
+			and shove_party.get_hero(3).get("statuses", {}).is_empty(),
+			"AC3: the authored Marshal shove moves heroes without any sting")
+	# AC3: a slain Marshal's announced sting stays inert.
+	var slain_party := _party()
+	_check(slain_party.gain_block(1, 2), "AC3 precondition: real Warden Block before a slain beat")
+	var slain := _forced_marshal(attack5, 51011, slain_party)
+	if not slain.is_empty():
+		_check(slain.enemies.apply_damage(1, 28) and slain.enemies.is_slain(1),
+			"AC3 precondition: the stinging Marshal is genuinely slain")
+		var slain_heroes := slain_party.get_heroes()
+		var slain_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+			slain_party, slain.enemies, slain.intents)
+		_check(slain_result.get("ok", false)
+			and slain_result.get("events", [{}])[0].get("applied") == false
+			and slain_party.get_heroes() == slain_heroes,
+			"AC3: a slain Marshal deals no damage and grants no Bleed")
+	# AC3: an escort-only phase never fabricates Bleed on any hero.
+	var escort_party := _party()
+	_check(escort_party.gain_block(1, 2), "AC3 precondition: real Warden Block for an escort beat")
+	var escort := _forced_marshal(attack5, 51012, escort_party)
+	if not escort.is_empty():
+		_check(escort.enemies.apply_damage(1, 28) and escort.enemies.is_slain(1),
+			"AC3 precondition: only the ragling escort can still act")
+		var escort_heroes := escort_party.get_heroes()
+		var escort_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+			escort_party, escort.enemies, escort.intents)
+		_check(escort_result.get("ok", false)
+			and escort.enemies.get_enemy(2).get("block") == 1
+			and escort_party.get_heroes() == escort_heroes,
+			"AC3: the escort's own Block 1 touches no hero and applies no Bleed")
+	# AC3: the same authored hit without the flag still damages but never stings.
+	var plain_party := _party()
+	var plain := _forced_marshal(attack5, 51013, plain_party, false)
+	if not plain.is_empty():
+		_check(not plain.enemies.get_enemy(1).has("bleed_on_attack"),
+			"AC3 precondition: the control Marshal roster carries no sting flag")
+		var plain_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+			plain_party, plain.enemies, plain.intents)
+		_check(plain_result.get("ok", false)
+			and plain_party.get_hero(1).get("hp") == 35
+			and plain_party.get_hero(1).get("statuses", {}).get("bleed", 0) == 0,
+			"AC3: real HP damage without the flag fabricates no Bleed")
+	# AC3: a forged attack input is rejected without any state or RNG change.
+	var reject_party := _party()
+	_check(reject_party.gain_block(1, 3), "AC3 precondition: real Warden Block before a forgery")
+	var reject := _forced_marshal(attack5, 51014, reject_party)
+	if not reject.is_empty():
+		var reject_heroes := reject_party.get_heroes()
+		var reject_enemies: Array = reject.enemies.get_enemies()
+		var forged: Array = reject.intents.duplicate(true)
+		forged[0]["target_position"] = 0
+		seed(93331)
+		var expected_rng := randi()
+		seed(93331)
+		var rejected: Dictionary = CombatEnemyPhase.new().execute_phase(
+			reject_party, reject.enemies, forged)
+		_check(rejected == {"ok": false, "events": []}
+			and reject_party.get_heroes() == reject_heroes
+			and reject.enemies.get_enemies() == reject_enemies,
+			"AC3: a forged Marshal sting target rejects the whole phase")
+		_check(randi() == expected_rng,
+			"AC3: the rejected sting leaves hero HP, Block, statuses and RNG unchanged")
 
 
 ## One authored Elite record checked by ID against its independent expectation:
