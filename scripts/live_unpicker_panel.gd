@@ -75,13 +75,34 @@ func _ready() -> void:
 	choices.add_theme_constant_override("separation", 9)
 	choice_scroll.add_child(choices)
 
-	remove_button = _button("Remove", Vector2(30, 510), Vector2(390, 62))
-	leave_button = _button("Leave · free", Vector2(450, 510), Vector2(400, 62))
+	remove_button = _button("1 Remove", Vector2(30, 510), Vector2(390, 62))
+	leave_button = _button("0 Leave · free", Vector2(450, 510), Vector2(400, 62))
 	_refresh()
 	if _active() and not card_buttons.is_empty():
 		card_buttons[0].grab_focus()
 	elif _active():
 		leave_button.grab_focus()
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	if key.ctrl_pressed or key.alt_pressed or key.shift_pressed or key.meta_pressed:
+		return
+	var button: Button
+	match key.keycode:
+		KEY_1, KEY_KP_1: button = remove_button
+		KEY_0, KEY_KP_0: button = leave_button
+	if button == null or not is_visible_in_tree() or not _active():
+		return
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	if focus_owner == null or (focus_owner != self and not is_ancestor_of(focus_owner)):
+		return
+	if button.disabled or not button.is_visible_in_tree():
+		return
+	get_viewport().set_input_as_handled()
+	button.pressed.emit()
 
 
 func _panel_style() -> StyleBox:
