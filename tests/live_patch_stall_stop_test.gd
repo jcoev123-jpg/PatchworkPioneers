@@ -139,7 +139,8 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 	var ids: Array = []
 	for hero in app.run_heroes:
 		ids.append(hero.id)
-	_check(service_state.node_id == fixture.id and service_state.visit_id == fixture.id
+	_check(service_state.node_id == fixture.id and not service_state.visit_id.is_empty()
+		and service.read_state().visit_id == service_state.visit_id
 		and service_state.snapshot == {"party_ids": ids, "deck_ids": app.run_deck,
 			"owned_trinkets": app.run_trinkets, "gold": app.session_gold}, "service binds confirmed node and exact live ledger")
 	_check(service.quote() == {"offers": expected, "decisions": ["buy_patch", "leave"]}, "service authentic quote matches independent seeded oracle")
@@ -206,7 +207,10 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 	for offer in expected:
 		prepared.append({"id": offer.id, "price": offer.price})
 	var foreign := RunPatchStallVisit.new(fixture.id, ids, app.run_deck, app.run_trinkets, app.session_gold, prepared)
-	_check(foreign.is_valid() and foreign.read_state() == service_state and foreign.quote() == service.quote(),
+	_check(foreign.is_valid() and foreign.read_state().node_id == service_state.node_id
+		and foreign.read_state().snapshot == service_state.snapshot
+		and foreign.read_state().status == service_state.status
+		and foreign.read_state().visit_id != service_state.visit_id and foreign.quote() == service.quote(),
 		"foreign identity fixture has genuinely identical valid source and quote")
 	app.patch_stall_service = foreign
 	_stall_refuse(callback, "foreign service with identical quote")

@@ -23,13 +23,14 @@ func _init(node_id: Variant, party_ids: Variant, deck_ids: Variant, owned_trinke
 		return
 		
 	_node_id = node_id.strip_edges()
-	_visit_id = _node_id
 	_snapshot = {
 		"party_ids": party_ids.duplicate(true),
 		"deck_ids": deck_ids.duplicate(true),
 		"owned_trinkets": owned_trinkets.duplicate(true),
 		"gold": gold
 	}
+	# Bind callbacks to this exact service, even when a node and ledger recur.
+	_visit_id = var_to_str([get_instance_id(), _node_id, _snapshot, _purchases.get_stock()]).sha256_text()
 	_status = "available"
 
 
