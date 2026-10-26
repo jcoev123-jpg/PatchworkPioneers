@@ -3,17 +3,46 @@ extends SceneTree
 ##
 ## Checks the eight named Lantern Monk base reward cards and their eight '+' upgrades field by
 ## field against independent expected records, plus the look-driven Blind / Lantern Glow / Moth
-## Cloud descriptors. The catalog is deliberately NOT wired into combat, rewards, the map or shops
-## yet, so nothing here drives a live card. It also proves caller copies are detached, invalid IDs
-## fail closed, catalog enumeration consumes no run RNG, and the existing Rag Duelist pool and
-## StarterCards stay unchanged.
+## Cloud descriptors. It also drives the scene-free CombatLanternMonkPartyCards service over real
+## seeded CombatDeck/CombatParty fixtures for the four Lantern Glow / Vigil Ring printings, so the
+## party-wide heal, Block and explicit per-ally cleanse transactions are covered here too. The
+## catalog stays deliberately unwired from the live hand, rewards, map and shops, so no live card
+## is claimed. It also proves caller copies are detached, invalid IDs fail closed, catalog
+## enumeration consumes no run RNG, and the existing Rag Duelist pool and StarterCards stay
+## unchanged.
 
 const CatalogScript = preload("res://data/cards/lantern_monk_pool_cards.gd")
 const RagDuelistScript = preload("res://data/cards/rag_duelist_pool_cards.gd")
 const StarterCardsScript = preload("res://data/cards/starter_cards.gd")
 
+## Paid party-wide Lantern Glow / Vigil Ring fixtures. These literals are independent expectations
+## copied from the v3 design, never read back from the service or its catalog.
+const PARTY_GLOW := "lantern_monk_lantern_glow"
+const PARTY_GLOW_PLUS := "lantern_monk_lantern_glow_plus"
+const PARTY_VIGIL := "lantern_monk_vigil_ring"
+const PARTY_VIGIL_PLUS := "lantern_monk_vigil_ring_plus"
+const PARTY_CARD_IDS := [PARTY_GLOW, PARTY_GLOW_PLUS, PARTY_VIGIL, PARTY_VIGIL_PLUS]
+const PARTY_COST := {PARTY_GLOW: 1, PARTY_GLOW_PLUS: 1, PARTY_VIGIL: 2, PARTY_VIGIL_PLUS: 2}
+const PARTY_HEAL := {PARTY_GLOW: 2, PARTY_GLOW_PLUS: 3, PARTY_VIGIL: 4, PARTY_VIGIL_PLUS: 6}
+const PARTY_BLOCK := {PARTY_GLOW: 0, PARTY_GLOW_PLUS: 0, PARTY_VIGIL: 4, PARTY_VIGIL_PLUS: 6}
+const PARTY_FROM := {
+	PARTY_GLOW: [1, 2, 3], PARTY_GLOW_PLUS: [1, 2, 3],
+	PARTY_VIGIL: [2, 3], PARTY_VIGIL_PLUS: [2, 3],
+}
+const PARTY_EFFECTS := {
+	PARTY_GLOW: {"heal_all": 2, "cleanse_one_debuff_each_ally": 1},
+	PARTY_GLOW_PLUS: {"heal_all": 3, "cleanse_one_debuff_each_ally": 1},
+	PARTY_VIGIL: {"heal_all": 4, "block_all": 4},
+	PARTY_VIGIL_PLUS: {"heal_all": 6, "block_all": 6},
+}
+const PARTY_FILLERS := ["filler_wax_a", "filler_wax_b", "filler_wax_c", "filler_wax_d"]
+const PARTY_HEROES_PATH := "res://data/heroes/starter_party.json"
+## The Lantern Monk has no authored run-party record in this slice; the fixture picks a stable max HP.
+const MONK_MAX_HP := 34
+
 var failures: Array[String] = []
 var checks: int = 0
+var party_service := CombatLanternMonkPartyCards.new()
 
 
 func _initialize() -> void:
@@ -23,6 +52,14 @@ func _initialize() -> void:
 	_test_invalid_ids()
 	_test_rng_state()
 	_test_existing_catalogs_unchanged()
+	_test_party_cards_authored()
+	_test_party_ac1_paid_play()
+	_test_party_ac1_downed_and_cap()
+	_test_party_ac2_glow_cleanse()
+	_test_party_ac2_vigil_no_cleanse()
+	_test_party_ac3_rejections()
+	_test_party_ac3_retry_and_replay()
+	_test_party_seeded_invariance()
 	if failures.is_empty():
 		print("v3_lantern_monk_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -513,3 +550,614 @@ func _test_existing_catalogs_unchanged() -> void:
 		_check(not rag_duelist.has_card(id), "Rag Duelist pool does not contain " + id)
 		_check(not starter_cards.has_card(id), "StarterCards does not contain " + id)
 		_check(not starting_deck.has(id), "starting deck does not contain " + id)
+
+
+## --- Paid party-wide Lantern Glow / Vigil Ring resolution --------------------------------
+##
+## These cases drive the scene-free CombatLanternMonkPartyCards service over a real seeded
+## CombatDeck and CombatParty. They claim callable rules-layer behaviour only: no live hand,
+## reward, app or run-deck wiring is asserted here.
+
+## Each of the four authentic printings must still carry its authored line, and nothing else is
+## supported: not the Monk's other pool cards, not another hero's card, not an upgrade of an upgrade.
+func _test_party_cards_authored() -> void:
+	var catalog: RefCounted = CatalogScript.new()
+	for card_id: String in PARTY_CARD_IDS:
+		var record: Dictionary = catalog.get_definition(card_id)
+		_check(not record.is_empty(), card_id + ": authored pool record exists")
+		if record.is_empty():
+			continue
+		_check(record.get("owner") == "lantern_monk",
+			card_id + ": authored owner is the Lantern Monk")
+		_check(record.get("cost") == PARTY_COST[card_id],
+			card_id + ": authored cost is " + str(PARTY_COST[card_id]))
+		_check(record.get("from_positions") == PARTY_FROM[card_id], card_id + ": authored FROM seats")
+		_check(record.get("target_kind") == "party_all", card_id + ": targets the whole party")
+		_check(record.get("to_positions") == [], card_id + ": names no single target slot")
+		_check(record.get("effects") == PARTY_EFFECTS[card_id], card_id + ": exact authored effects")
+		_check(party_service.is_supported_card(card_id), card_id + ": service authenticates the ID")
+	_check(catalog.get_upgrade_id(PARTY_GLOW) == PARTY_GLOW_PLUS
+			and catalog.get_upgrade_id(PARTY_GLOW_PLUS) == ""
+			and catalog.get_upgrade_id(PARTY_VIGIL) == PARTY_VIGIL_PLUS
+			and catalog.get_upgrade_id(PARTY_VIGIL_PLUS) == "",
+		"both paid pairs still link base and '+' in the pool catalog")
+	for unsupported in ["lantern_monk_wick_flicker", "lantern_monk_wick_flicker_plus",
+			"lantern_monk_wax_ward", "lantern_monk_moth_shroud", "lantern_monk_snuff_flame",
+			"lantern_monk_moth_cloud", "lantern_monk_moth_cloud_plus",
+			"warden_v3_rim_toss", "seamstress_mend", "tinker_pop_shot",
+			"lantern_monk_lantern_glow_ultra", ""]:
+		_check(not party_service.is_supported_card(unsupported),
+			unsupported + ": not a party-wide paid support card for this service")
+	_check(not party_service.is_supported_card(null)
+			and not party_service.is_supported_card(7)
+			and not party_service.is_supported_card(StringName(PARTY_GLOW)),
+		"non-string IDs are never supported")
+	# The authenticated lookup alone consumes no seeded run RNG.
+	var rng := _party_rng(8191)
+	var state_before: int = rng.state
+	for card_id: String in PARTY_CARD_IDS:
+		party_service.is_supported_card(card_id)
+	party_service.is_supported_card("lantern_monk_unknown")
+	_check(rng.state == state_before and not PARTY_CARD_IDS.is_empty(),
+		"supported-card queries consume no run RNG (non-empty precondition)")
+
+
+## AC1: a genuine held copy is charged once, discarded once and resolves only the printed effect on
+## every living hero. Glow heals and cleanses; Vigil Ring heals and grants Block.
+func _test_party_ac1_paid_play() -> void:
+	for card_id: String in PARTY_CARD_IDS:
+		var monk_seat := 1 if card_id in [PARTY_GLOW, PARTY_GLOW_PLUS] else 2
+		var party := _monk_party(monk_seat)
+		_check(party.apply_damage(1, 10) and party.apply_damage(2, 12)
+				and party.apply_damage(3, 8),
+			card_id + ": every living hero is genuinely wounded")
+		var deck := _party_deck(card_id)
+		var held_before: int = deck.hand.count(card_id)
+		var energy_before: int = deck.energy
+		var before := _party_snapshot(deck, party)
+		var result: Dictionary = party_service.play_card(deck, party, card_id, 0)
+		_check(result.get("ok") == true and result.get("reason") == "applied",
+			card_id + ": authorized paid party play")
+		_check(result.get("card_id") == card_id and result.get("cost") == PARTY_COST[card_id],
+			card_id + ": receipt names the authentic card and its printed cost")
+		_check(result.get("owner_position") == monk_seat and result.get("target_position") == 0
+				and result.get("target_kind") == "party_all",
+			card_id + ": party-wide play reports the owner seat and no single target")
+		_check(result.get("energy_before") == energy_before
+				and result.get("energy_after") == energy_before - PARTY_COST[card_id],
+			card_id + ": receipt reports exactly one charge")
+		var allies: Array = result.get("allies", [])
+		_check(allies.size() == CombatParty.PARTY_SIZE,
+			card_id + ": receipt covers every living ally")
+		for position in range(1, CombatParty.PARTY_SIZE + 1):
+			var entry: Dictionary = allies[position - 1]
+			_check(entry.get("position") == position, card_id + ": receipt ally " + str(position))
+			_check(entry.get("healed") == PARTY_HEAL[card_id],
+				card_id + ": ally " + str(position) + " received the printed heal")
+			_check(entry.get("block_gained") == PARTY_BLOCK[card_id],
+				card_id + ": ally " + str(position) + " received the printed Block")
+			_check(party.get_hero(position)["hp"] == int(entry["hp_after"]),
+				card_id + ": ally " + str(position) + " HP matches the receipt")
+			_check(party.get_hero(position)["block"] == PARTY_BLOCK[card_id],
+				card_id + ": ally " + str(position) + " Block is the printed amount")
+		_check(_party_snapshot(deck, party) == _party_expected_success(before, card_id, {}),
+			card_id + ": exact party, piles, energy and untouched injected RNG")
+		_check(deck.hand.count(card_id) == held_before - 1
+				and deck.discard_pile.count(card_id) == 1
+				and deck.hand.size() == 4 and deck.discard_pile.size() == 1
+				and deck.draw_pile.size() == 1,
+			card_id + ": exactly one held copy moved to the discard with no extra draw")
+		_check(deck.energy == energy_before - PARTY_COST[card_id],
+			card_id + ": exactly the printed energy was charged")
+		_check(_party_snapshot(deck, party)["rng_state"] == before["rng_state"],
+			card_id + ": no run-RNG draw during resolution")
+		# The returned receipt is detached from the live party.
+		var first_entry: Dictionary = allies[0]
+		first_entry["hp_after"] = 999
+		_check(party.get_hero(1)["hp"] != 999,
+			card_id + ": mutating a receipt entry cannot change the authoritative party")
+
+
+## AC1/AC2: healing caps at max HP, never revives a torn hero, and a torn hero is not a recipient.
+func _test_party_ac1_downed_and_cap() -> void:
+	for card_id: String in PARTY_CARD_IDS:
+		var monk_seat := 1 if card_id in [PARTY_GLOW, PARTY_GLOW_PLUS] else 2
+		var party := _monk_party(monk_seat)
+		var front_max: int = party.get_hero(1)["max_hp"]
+		_check(party.apply_damage(1, 1) and party.get_hero(1)["hp"] == front_max - 1,
+			card_id + ": front ally sits one below max HP")
+		_check(party.apply_damage(3, 26) and party.is_downed(3),
+			card_id + ": rear ally is genuinely torn at zero HP")
+		party._heroes[2]["statuses"] = {"bleed": 3, "tangled": 1}
+		_check(party.get_hero(3)["statuses"] == {"bleed": 3, "tangled": 1},
+			card_id + ": torn ally really carries statuses")
+		var deck := _party_deck(card_id)
+		var before := _party_snapshot(deck, party)
+		var result: Dictionary = party_service.play_card(deck, party, card_id, 0)
+		_check(result.get("ok") == true, card_id + ": paid play succeeds with a torn ally")
+		var allies: Array = result.get("allies", [])
+		_check(allies.size() == 2 and allies[0].get("position") == 1
+				and allies[1].get("position") == 2,
+			card_id + ": only the two living allies are recipients")
+		_check(allies[0].get("healed") == 1 and allies[0].get("hp_after") == front_max,
+			card_id + ": heal caps at the front ally's max HP")
+		_check(allies[1].get("healed") == 0
+				and allies[1].get("hp_after") == allies[1].get("hp_before"),
+			card_id + ": a full-HP ally gains no HP")
+		_check(allies[0].get("block_gained") == PARTY_BLOCK[card_id],
+			card_id + ": living allies gain the printed Block")
+		var torn: Dictionary = party.get_hero(3)
+		_check(torn["hp"] == 0 and torn["block"] == 0,
+			card_id + ": the torn ally is not healed, blocked or revived")
+		_check(torn["statuses"] == {"bleed": 3, "tangled": 1},
+			card_id + ": the torn ally's statuses are untouched")
+		_check(_party_snapshot(deck, party) == _party_expected_success(before, card_id, {}),
+			card_id + ": exact transaction with a torn ally")
+
+
+## AC2: one explicitly selected present debuff kind loses its whole counter on each eligible ally;
+## every other debuff, Tangled/Riposte and every other hero field stay exact.
+func _test_party_ac2_glow_cleanse() -> void:
+	for card_id: String in [PARTY_GLOW, PARTY_GLOW_PLUS]:
+		for chosen: String in ["weak", "bleed"]:
+			var label := "%s cleanse %s" % [card_id, chosen]
+			var party := _monk_party(1)
+			_check(party.apply_damage(1, 4) and party.apply_damage(2, 10)
+					and party.apply_damage(3, 6),
+				label + ": all three allies genuinely wounded")
+			party._heroes[0]["statuses"] = {"bleed": 3, "weak": 2, "riposte": 4}
+			party._heroes[1]["statuses"] = {"exposed": 5, "tangled": 2}
+			party._heroes[2]["statuses"] = {"bleed": 0, "tangled": 1}
+			_check(party.get_hero(1)["statuses"] == {"bleed": 3, "weak": 2, "riposte": 4}
+					and party.get_hero(2)["statuses"] == {"exposed": 5, "tangled": 2}
+					and party.get_hero(3)["statuses"] == {"bleed": 0, "tangled": 1},
+				label + ": independent debuffs and unrelated statuses really stored")
+			var selections := {1: chosen, 2: "exposed"}
+			var deck := _party_deck(card_id)
+			var before := _party_snapshot(deck, party)
+			var result: Dictionary = party_service.play_card(
+				deck, party, card_id, 0, selections)
+			_check(result.get("ok") == true, label + ": explicit selections accepted")
+			var monk_remaining: Dictionary = {"bleed": 3, "weak": 2, "riposte": 4}
+			monk_remaining.erase(chosen)
+			_check(party.get_hero(1)["statuses"] == monk_remaining,
+				label + ": the selected kind is fully gone; Riposte and the other debuff stay")
+			_check(party.get_hero(2)["statuses"] == {"tangled": 2},
+				label + ": Exposed loses its whole five counters and Tangled is preserved")
+			_check(party.get_hero(3)["statuses"] == {"bleed": 0, "tangled": 1},
+				label + ": an ally with no positive eligible counter is untouched")
+			_check(party.get_hero(1)["hp"] == 30 + PARTY_HEAL[card_id]
+					and party.get_hero(2)["hp"] == 30 + PARTY_HEAL[card_id]
+					and party.get_hero(3)["hp"] == 20 + PARTY_HEAL[card_id],
+				label + ": the printed heal lands on every living ally")
+			var allies: Array = result.get("allies", [])
+			_check(allies.size() == 3, label + ": receipt covers all living allies")
+			_check(allies[0].get("cleansed_debuff") == chosen
+					and allies[0].get("cleansed_count") == int({"bleed": 3, "weak": 2}[chosen]),
+				label + ": the Monk reports the whole selected counter")
+			_check(allies[1].get("cleansed_debuff") == "exposed"
+					and allies[1].get("cleansed_count") == 5,
+				label + ": the ally reports the whole Exposed counter")
+			_check(allies[2].get("cleansed_debuff") == ""
+					and allies[2].get("cleansed_count") == 0,
+				label + ": no implicit cleanse is invented for an ineligible ally")
+			_check(_party_snapshot(deck, party) == _party_expected_success(before, card_id, selections),
+				label + ": exact party, piles, energy and RNG state")
+
+	# A torn ally is not an eligible cleanse recipient: its counters stay and it needs no choice.
+	var guarded := _monk_party(1)
+	_check(guarded.apply_damage(2, 40) and guarded.is_downed(2),
+		"cleanse-skip fixture really has a torn Warden")
+	guarded._heroes[1]["statuses"] = {"bleed": 4, "weak": 2}
+	guarded._heroes[2]["statuses"] = {"weak": 3}
+	_check(guarded.get_hero(2)["statuses"] == {"bleed": 4, "weak": 2}
+			and guarded.get_hero(3)["statuses"] == {"weak": 3},
+		"cleanse-skip fixture really stores downed and living debuffs")
+	var guarded_deck := _party_deck(PARTY_GLOW)
+	var guarded_before := _party_snapshot(guarded_deck, guarded)
+	var guarded_result: Dictionary = party_service.play_card(
+		guarded_deck, guarded, PARTY_GLOW, 0, {3: "weak"})
+	_check(guarded_result.get("ok") == true,
+		"a living ally with one present debuff accepts its explicit selection")
+	_check(guarded.get_hero(2)["statuses"] == {"bleed": 4, "weak": 2},
+		"the torn ally keeps every counter and is never cleansed")
+	_check(guarded.get_hero(3)["statuses"] == {},
+		"the living ally's whole selected Weak counter is removed")
+	_check(_party_snapshot(guarded_deck, guarded)
+			== _party_expected_success(guarded_before, PARTY_GLOW, {3: "weak"}),
+		"downed-ally cleansing skips exactly the torn seat")
+
+
+## AC2: Vigil Ring heals and blocks the living party and cleanses nothing at all.
+func _test_party_ac2_vigil_no_cleanse() -> void:
+	for card_id: String in [PARTY_VIGIL, PARTY_VIGIL_PLUS]:
+		var party := _monk_party(2)
+		_check(party.apply_damage(1, 9) and party.apply_damage(2, 10)
+				and party.apply_damage(3, 10),
+			card_id + ": all three allies genuinely wounded")
+		party._heroes[0]["statuses"] = {"bleed": 2}
+		party._heroes[1]["statuses"] = {"weak": 1, "tangled": 3}
+		party._heroes[2]["statuses"] = {"exposed": 3, "riposte": 2}
+		var deck := _party_deck(card_id)
+		var before := _party_snapshot(deck, party)
+		var result: Dictionary = party_service.play_card(deck, party, card_id, 0)
+		_check(result.get("ok") == true and result.get("block_all") == PARTY_BLOCK[card_id],
+			card_id + ": authorized Vigil Ring play reports its printed Block")
+		_check(party.get_hero(1)["statuses"] == {"bleed": 2}
+				and party.get_hero(2)["statuses"] == {"weak": 1, "tangled": 3}
+				and party.get_hero(3)["statuses"] == {"exposed": 3, "riposte": 2},
+			card_id + ": Vigil Ring cleanses nothing and preserves every status")
+		_check(party.get_hero(1)["block"] == PARTY_BLOCK[card_id]
+				and party.get_hero(2)["block"] == PARTY_BLOCK[card_id]
+				and party.get_hero(3)["block"] == PARTY_BLOCK[card_id],
+			card_id + ": every living ally gains the printed Block")
+		_check(_party_snapshot(deck, party) == _party_expected_success(before, card_id, {}),
+			card_id + ": exact Vigil Ring transaction")
+
+
+## AC3: every invalid request fails closed and leaves the whole transaction untouched.
+func _test_party_ac3_rejections() -> void:
+	var party := _monk_party(2)
+
+	var inactive := CombatDeck.new(
+		[PARTY_GLOW, PARTY_GLOW, PARTY_GLOW, PARTY_FILLERS[0], PARTY_FILLERS[1], PARTY_FILLERS[2]],
+		_party_rng(991))
+	_check(not inactive.turn_active and inactive.hand.is_empty(),
+		"inactive-turn fixture really has no active turn")
+	_party_rejected(inactive, party, PARTY_GLOW, 0, {}, "inactive turn")
+
+	var deck := _party_deck(PARTY_GLOW)
+	_check(deck.hand.has(PARTY_GLOW) and not deck.hand.has(PARTY_VIGIL),
+		"absent-card fixture holds Lantern Glow only")
+	_party_rejected(deck, party, PARTY_VIGIL, 0, {}, "card absent from hand")
+	for unknown in ["", "lantern_monk_missing_party_card", "lantern_monk_moth_cloud",
+			"lantern_monk_wax_ward", "warden_v3_rim_toss", "seamstress_mend", 7, null,
+			StringName(PARTY_GLOW)]:
+		_party_rejected(deck, party, unknown, 0, {}, "unsupported card ID " + str(unknown))
+
+	var short := _party_deck(PARTY_GLOW)
+	_check(short.try_spend_energy(3) and short.energy == 0 and short.hand.has(PARTY_GLOW),
+		"energy-short fixture is genuinely broke and still holds the card")
+	_party_rejected(short, party, PARTY_GLOW, 0, {}, "insufficient energy")
+
+	for bad_target in [1, 2, 3, -1, 4, 99]:
+		_party_rejected(_party_deck(PARTY_GLOW), party, PARTY_GLOW, bad_target, {},
+			"selected single target " + str(bad_target))
+
+	var front_monk := _monk_party(1)
+	_check(front_monk.get_hero(1)["id"] == "lantern_monk",
+		"illegal-FROM fixture really has the living Monk in seat 1")
+	_party_rejected(_party_deck(PARTY_VIGIL), front_monk, PARTY_VIGIL, 0, {},
+		"Vigil Ring from the Monk's illegal seat 1")
+
+	var torn_owner := _monk_party(2)
+	_check(torn_owner.apply_damage(2, MONK_MAX_HP) and torn_owner.is_downed(2),
+		"torn-caster fixture has a genuinely downed Monk")
+	_party_rejected(_party_deck(PARTY_GLOW), torn_owner, PARTY_GLOW, 0, {},
+		"torn (downed) Monk")
+
+	var no_owner := CombatParty.new([
+		{"id": "warden", "name": "Warden", "max_hp": 40},
+		{"id": "tinker", "name": "Tinker", "max_hp": 26},
+		{"id": "mender", "name": "Mender", "max_hp": 20},
+	])
+	_check(no_owner.is_valid() and no_owner.get_hero(3)["id"] == "mender",
+		"missing-owner fixture is a valid three-hero party with no Monk")
+	_party_rejected(_party_deck(PARTY_GLOW), no_owner, PARTY_GLOW, 0, {},
+		"party with no Lantern Monk owner")
+
+	var duplicated := _monk_party(2)
+	duplicated._heroes[0]["id"] = "lantern_monk"
+	_check(duplicated.get_hero(1)["id"] == "lantern_monk"
+			and duplicated.get_hero(2)["id"] == "lantern_monk",
+		"duplicate-identity fixture really repeats the owner ID")
+	_party_rejected(_party_deck(PARTY_GLOW), duplicated, PARTY_GLOW, 0, {},
+		"duplicate hero identity")
+
+	var above_max := _monk_party(2)
+	above_max._heroes[0]["hp"] = int(above_max._heroes[0]["max_hp"]) + 1
+	_check(above_max.get_hero(1)["hp"] > above_max.get_hero(1)["max_hp"],
+		"malformed-roster fixture really has HP above max")
+	_party_rejected(_party_deck(PARTY_GLOW), above_max, PARTY_GLOW, 0, {}, "HP above max")
+
+	var bad_block := _monk_party(2)
+	bad_block._heroes[2]["block"] = -1
+	_check(bad_block.get_hero(3)["block"] == -1, "negative-Block fixture really stores -1")
+	_party_rejected(_party_deck(PARTY_GLOW), bad_block, PARTY_GLOW, 0, {}, "negative Block")
+
+	var bad_position := _monk_party(2)
+	bad_position._heroes[0]["position"] = 3
+	_check(bad_position.get_hero(1)["position"] == 3,
+		"wrong-position fixture really stores the wrong slot")
+	_party_rejected(_party_deck(PARTY_GLOW), bad_position, PARTY_GLOW, 0, {},
+		"wrong stored hero position")
+
+	for bad_statuses in ["bleed", null, {"bleed": -1}, {"bleed": "3"}, {"bleed": 1.5},
+			{"weak": true}, {1: 2}, {"": 1}]:
+		var broken := _monk_party(2)
+		broken._heroes[2]["statuses"] = bad_statuses
+		_check(broken.get_hero(3)["statuses"] == bad_statuses,
+			"malformed-status fixture really stores " + str(bad_statuses))
+		_party_rejected(_party_deck(PARTY_GLOW), broken, PARTY_GLOW, 0, {},
+			"malformed statuses " + str(bad_statuses))
+
+	var huge_block := _monk_party(2)
+	huge_block._heroes[0]["block"] = CombatParty.MAX_INT
+	_check(huge_block.get_hero(1)["block"] == CombatParty.MAX_INT,
+		"Block-overflow fixture really stores MAX_INT Block")
+	_party_rejected(_party_deck(PARTY_VIGIL), huge_block, PARTY_VIGIL, 0, {},
+		"unrepresentable Block gain")
+
+	var mixed := _monk_party(2)
+	mixed._heroes[0]["statuses"] = {"bleed": 3, "weak": 2}
+	mixed._heroes[2]["statuses"] = {"exposed": 2}
+	_check(mixed.get_hero(1)["statuses"] == {"bleed": 3, "weak": 2}
+			and mixed.get_hero(3)["statuses"] == {"exposed": 2},
+		"cleanse-rejection fixture really stores two eligible allies")
+	var mixed_deck := _party_deck(PARTY_GLOW)
+	_party_rejected(mixed_deck, mixed, PARTY_GLOW, 0, {}, "missing cleanse selection")
+	_party_rejected(mixed_deck, mixed, PARTY_GLOW, 0, {1: "weak"},
+		"selection still missing for the second eligible ally")
+	_party_rejected(mixed_deck, mixed, PARTY_GLOW, 0, {1: "exposed"},
+		"absent selected debuff on the first ally")
+	_party_rejected(mixed_deck, mixed, PARTY_GLOW, 0, {1: "weak", 2: ""},
+		"empty selection while a debuff is present")
+	_party_rejected(mixed_deck, mixed, PARTY_GLOW, 0, {1: "weak", 2: "exposed", 4: "bleed"},
+		"selection key outside 1-3")
+	_party_rejected(mixed_deck, mixed, PARTY_GLOW, 0, {1: "weak", 2: "exposed", "3": "exposed"},
+		"non-int selection key")
+	_party_rejected(mixed_deck, mixed, PARTY_GLOW, 0, {1: 2, 2: "exposed"},
+		"non-string cleanse selection")
+	_party_rejected(mixed_deck, mixed, PARTY_GLOW, 0, [], "array cleanse selections")
+	_party_rejected(mixed_deck, mixed, PARTY_GLOW, 0, "weak", "string cleanse selections")
+	_party_rejected(mixed_deck, mixed, PARTY_GLOW, 0, null, "null cleanse selections")
+
+	var clean := _monk_party(2)
+	_check(clean.get_hero(3).get("statuses", {}) == {},
+		"no-debuff fixture really has no eligible counter")
+	_party_rejected(_party_deck(PARTY_GLOW), clean, PARTY_GLOW, 0, {3: "bleed"},
+		"debuff named but absent")
+
+	var torn_ally := _monk_party(2)
+	_check(torn_ally.apply_damage(3, 26) and torn_ally.is_downed(3),
+		"torn-selection fixture really has a downed ally")
+	torn_ally._heroes[2]["statuses"] = {"bleed": 3}
+	_party_rejected(_party_deck(PARTY_GLOW), torn_ally, PARTY_GLOW, 0, {3: "bleed"},
+		"cleanse selection for a torn ally")
+
+	var expired := _monk_party(2)
+	expired._heroes[2]["statuses"] = {"bleed": 0}
+	_check(expired.get_hero(3)["statuses"] == {"bleed": 0},
+		"zero-counter fixture really stores an expired counter")
+	_party_rejected(_party_deck(PARTY_GLOW), expired, PARTY_GLOW, 0, {3: "bleed"},
+		"expired zero counter is not a positive present debuff")
+
+	_party_rejected(_party_deck(PARTY_VIGIL), _monk_party(2), PARTY_VIGIL, 0, {1: "bleed"},
+		"Vigil Ring cleanse selection")
+
+	_party_rejected(null, party, PARTY_GLOW, 0, {}, "null deck")
+	_party_rejected(_party_deck(PARTY_GLOW), null, PARTY_GLOW, 0, {}, "null party")
+	_party_rejected(_party_deck(PARTY_GLOW), CombatParty.new([]), PARTY_GLOW, 0, {},
+		"invalid party roster")
+
+
+## AC3: a rejected attempt never poisons the next authentic one; one copy plays once.
+func _test_party_ac3_retry_and_replay() -> void:
+	var party := _monk_party(2)
+	_check(party.apply_damage(2, 8) and party.get_hero(2)["hp"] == MONK_MAX_HP - 8,
+		"retry fixture really has a wounded Monk")
+	party._heroes[2]["statuses"] = {"bleed": 3, "weak": 2}
+	var deck := _party_deck(PARTY_GLOW)
+	_party_rejected(deck, party, PARTY_GLOW, 0, {},
+		"retry: missing selection with present debuffs")
+	_party_rejected(deck, party, PARTY_GLOW, 2, {3: "weak"}, "retry: nonzero target")
+	_party_rejected(deck, party, PARTY_GLOW, 0, {3: "exposed"}, "retry: absent debuff")
+	var before := _party_snapshot(deck, party)
+	var result: Dictionary = party_service.play_card(deck, party, PARTY_GLOW, 0, {3: "weak"})
+	_check(result.get("ok") == true, "retry: the authentic play then succeeds")
+	_check(party.get_hero(3)["statuses"] == {"bleed": 3},
+		"retry: only the selected Weak counter is removed")
+	_check(party.get_hero(2)["hp"] == MONK_MAX_HP - 8 + PARTY_HEAL[PARTY_GLOW],
+		"retry: the printed heal lands on the wounded Monk")
+	_check(_party_snapshot(deck, party) == _party_expected_success(before, PARTY_GLOW, {3: "weak"}),
+		"retry: exactly one charge, one discard and an untouched RNG")
+
+	var replay_party := _monk_party(2)
+	var single := CombatDeck.new([PARTY_GLOW, PARTY_FILLERS[0], PARTY_FILLERS[1],
+		PARTY_FILLERS[2], PARTY_FILLERS[3]], _party_rng(5150))
+	_check(single.start_turn() and single.hand.count(PARTY_GLOW) == 1 and single.energy == 3,
+		"single-copy fixture draws its one genuine copy")
+	var first: Dictionary = party_service.play_card(single, replay_party, PARTY_GLOW, 0)
+	_check(first.get("ok") == true and not single.hand.has(PARTY_GLOW),
+		"the single copy plays once and leaves the hand")
+	var replay_at := _party_snapshot(single, replay_party)
+	var replay: Dictionary = party_service.play_card(single, replay_party, PARTY_GLOW, 0)
+	_check(replay.get("ok") == false and replay.get("reason") == "card_not_held",
+		"a second play of the same ID fails once the copy is discarded")
+	_check(_party_snapshot(single, replay_party) == replay_at,
+		"the replay refusal leaves the deck, roster and RNG untouched")
+
+	var many := CombatDeck.new([PARTY_GLOW, PARTY_GLOW, PARTY_GLOW, PARTY_GLOW,
+		PARTY_GLOW, PARTY_FILLERS[0]], _party_rng(2710))
+	_check(many.start_turn() and many.hand.count(PARTY_GLOW) >= 4 and many.energy == 3,
+		"repeat fixture draws a hand holding several genuine copies")
+	var many_party := _monk_party(2)
+	for play_index in range(3):
+		var play: Dictionary = party_service.play_card(many, many_party, PARTY_GLOW, 0)
+		_check(play.get("ok") == true and many.energy == 2 - play_index,
+			"repeat play %d charges one energy" % (play_index + 1))
+		_check(many.hand.size() == 4 - play_index
+				and many.discard_pile.size() == play_index + 1,
+			"repeat play %d discards exactly one copy" % (play_index + 1))
+	_check(many.energy == 0 and many.hand.count(PARTY_GLOW) >= 1,
+		"repeat fixture still holds a copy but has no energy left")
+	var before_empty := _party_snapshot(many, many_party)
+	var refused: Dictionary = party_service.play_card(many, many_party, PARTY_GLOW, 0)
+	_check(refused.get("ok") == false and refused.get("reason") == "insufficient_energy",
+		"a held copy cannot be played at zero energy")
+	_check(_party_snapshot(many, many_party) == before_empty,
+		"the energy refusal changes no pile, energy, hero or RNG")
+
+
+## The same seed and request sequence produce identical outcomes and consume no run RNG draws.
+func _test_party_seeded_invariance() -> void:
+	var first := _party_replay_run(424242)
+	var second := _party_replay_run(424242)
+	var results: Array = first.get("results", [])
+	_check(results.size() == 4, "seeded run covers all four printings (precondition)")
+	_check(first == second, "same seed and requests produce identical final state and receipts")
+	for result in results:
+		_check(result.get("ok") == true, "seeded run accepts every authentic printing")
+	var rng_states: Array = first.get("rng_states", [])
+	var rng_start_states: Array = first.get("rng_start_states", [])
+	_check(rng_states.size() == 4 and rng_start_states.size() == 4,
+		"seeded run captured the RNG state around all four plays")
+	for index in range(rng_states.size()):
+		_check(rng_states[index] == rng_start_states[index],
+			"seeded play %d consumes no run-RNG draw" % (index + 1))
+	for snapshot in first.get("snapshots", []):
+		_check(snapshot.get("hand", []).size() == 4,
+			"seeded play grants no free extra draw")
+
+
+func _party_replay_run(seed_value: int) -> Dictionary:
+	var results: Array = []
+	var snapshots: Array = []
+	var rng_states: Array = []
+	var rng_start_states: Array = []
+	for card_id: String in PARTY_CARD_IDS:
+		var monk_seat := 1 if card_id in [PARTY_GLOW, PARTY_GLOW_PLUS] else 2
+		var party := _monk_party(monk_seat)
+		_check(party.apply_damage(1, 4) and party.apply_damage(2, 6)
+				and party.apply_damage(3, 5),
+			card_id + ": replay fixture wounds every ally")
+		var selections: Dictionary = {}
+		if card_id in [PARTY_GLOW, PARTY_GLOW_PLUS]:
+			party._heroes[0]["statuses"] = {"bleed": 2, "weak": 1}
+			selections = {1: "bleed"}
+		var deck := _party_deck(card_id, seed_value)
+		rng_start_states.append(deck._rng.state)
+		results.append(party_service.play_card(deck, party, card_id, 0, selections))
+		snapshots.append(_party_snapshot(deck, party))
+		rng_states.append(deck._rng.state)
+	return {
+		"results": results,
+		"snapshots": snapshots,
+		"rng_states": rng_states,
+		"rng_start_states": rng_start_states,
+	}
+
+
+## A real seeded five-card hand from six cards, so at least two copies of the named ID are held.
+func _party_deck(card_id: String, seed_value: int = 7311) -> CombatDeck:
+	var ids: Array[String] = [card_id, card_id, card_id, PARTY_FILLERS[0], PARTY_FILLERS[1],
+		PARTY_FILLERS[2]]
+	var deck := CombatDeck.new(ids, _party_rng(seed_value))
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3
+			and deck.hand.size() == 5 and deck.hand.count(card_id) >= 2,
+		card_id + ": real seeded five-card hand holding duplicate copies")
+	return deck
+
+
+## A real party with the unique Lantern Monk in the requested seat and two authored allies.
+func _monk_party(monk_seat: int) -> CombatParty:
+	var monk := {"id": "lantern_monk", "name": "Lantern Monk", "max_hp": MONK_MAX_HP}
+	var warden := _authored_ally("warden")
+	var tinker := _authored_ally("tinker")
+	_check(not warden.is_empty() and not tinker.is_empty(),
+		"authored starter party supplies the two ally records")
+	var definitions: Array = []
+	if monk_seat == 1:
+		definitions = [monk, warden, tinker]
+	elif monk_seat == 3:
+		definitions = [warden, tinker, monk]
+	else:
+		definitions = [warden, monk, tinker]
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid() and party.get_hero(monk_seat)["id"] == "lantern_monk"
+			and party.get_hero(monk_seat)["max_hp"] == MONK_MAX_HP,
+		"valid party with the unique living Monk in seat " + str(monk_seat))
+	return party
+
+
+func _authored_ally(hero_id: String) -> Dictionary:
+	var raw: String = FileAccess.get_file_as_string(PARTY_HEROES_PATH)
+	var parsed: Variant = JSON.parse_string(raw)
+	_check(not raw.is_empty() and parsed is Array,
+		"real authored starter party file parses")
+	if not parsed is Array:
+		return {}
+	for record in parsed:
+		if not record is Dictionary:
+			continue
+		if str(record.get("id", "")) != hero_id:
+			continue
+		var hero: Dictionary = record.duplicate(true)
+		if hero.get("max_hp") is float:
+			hero["max_hp"] = int(hero["max_hp"])
+		return hero
+	_check(false, "authored starter party contains " + hero_id)
+	return {}
+
+
+func _party_rng(seed_value: int) -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	return rng
+
+
+## The full observable state plus the injected RNG state, for exact no-mutation comparisons.
+func _party_snapshot(deck: CombatDeck, party: CombatParty) -> Dictionary:
+	var result: Dictionary = {}
+	if party != null:
+		result["heroes"] = party.get_heroes()
+		result["party_valid"] = party.is_valid()
+	if deck != null:
+		result["hand"] = deck.hand.duplicate(true)
+		result["draw"] = deck.draw_pile.duplicate(true)
+		result["discard"] = deck.discard_pile.duplicate(true)
+		result["energy"] = deck.energy
+		result["turn"] = deck.turn_active
+		if deck.combat_state != null:
+			result["state_energy"] = deck.combat_state.energy
+			result["state_turn"] = deck.combat_state.player_turn_active
+		if deck._rng != null:
+			result["rng_state"] = deck._rng.state
+			result["rng_seed"] = deck._rng.seed
+	return result
+
+
+## The single-transaction expected state for a party-wide play: one cost, one discard and the
+## printed heal/Block/cleanse on every living hero.
+func _party_expected_success(before: Dictionary, card_id: String,
+		selections: Dictionary) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] -= int(PARTY_COST[card_id])
+	expected["state_energy"] -= int(PARTY_COST[card_id])
+	var hand: Array = expected["hand"]
+	hand.remove_at(hand.find(card_id))
+	var discard: Array = expected["discard"]
+	discard.append(card_id)
+	for index in range(CombatParty.PARTY_SIZE):
+		var hero: Dictionary = expected["heroes"][index]
+		if int(hero["hp"]) == 0:
+			continue
+		hero["hp"] = mini(int(hero["max_hp"]), int(hero["hp"]) + int(PARTY_HEAL[card_id]))
+		hero["block"] = int(hero["block"]) + int(PARTY_BLOCK[card_id])
+		if selections.has(index + 1):
+			var statuses: Dictionary = hero.get("statuses", {})
+			statuses.erase(str(selections[index + 1]))
+			hero["statuses"] = statuses
+	return expected
+
+
+func _party_rejected(deck: CombatDeck, party: CombatParty, card_id: Variant,
+		target_position: int, cleanse_selections: Variant, label: String) -> void:
+	var before := _party_snapshot(deck, party)
+	var result: Dictionary = party_service.play_card(
+		deck, party, card_id, target_position, cleanse_selections)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("reason") is String and not (result.get("reason") as String).is_empty(),
+		label + ": refusal carries a reason")
+	_check(_party_snapshot(deck, party) == before,
+		label + ": unchanged party, hand, draw, discard, energy, turn and RNG")
