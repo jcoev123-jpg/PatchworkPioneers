@@ -318,6 +318,66 @@
         { "id": "buy_lantern_wick", "text": "Buy two spare lantern wicks (spend 15 gold; gain 2 scraps)", "outcome": { "gold": -15, "scraps": 2 } },
         { "id": "offer_respect", "text": "Offer a respectful bow (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_stormglass_seam_survey",
+      "title": "The Stormglass Seam Survey",
+      "description": "A one-eyed ragdoll surveyor pins weathered maps beneath a lamp of midnight glass.",
+      "choices": [
+        { "id": "copy_atlas", "text": "Copy a storm atlas for the road (+11 gold)", "outcome": { "gold": 11, "scraps": 0 } },
+        { "id": "buy_waterproof_thread", "text": "Buy waterproof seam thread (-14 gold, +2 scraps)", "outcome": { "gold": -14, "scraps": 2 } },
+        { "id": "shelter", "text": "Shelter from the storm and leave", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_ironbutton_tidepool",
+      "title": "The Ironbutton Tidepool",
+      "description": "Tin-button shells rattle against a quilted seawall beneath a cold button moon.",
+      "choices": [
+        { "id": "gather_seathread", "text": "Gather washed-up sea-thread (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "sell_rigging", "text": "Trade one spare rigging scrap (+17 gold, -1 scrap)", "outcome": { "gold": 17, "scraps": -1 } },
+        { "id": "leave_shore", "text": "Leave the tidepool undisturbed", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_needle_moon_bakery",
+      "title": "The Needle-Moon Bakery",
+      "description": "A velvet ragdoll baker pulls bread-shaped pincushions from a glowing thimble oven.",
+      "choices": [
+        { "id": "carry_baskets", "text": "Carry the quilted bread baskets (+12 gold)", "outcome": { "gold": 12, "scraps": 0 } },
+        { "id": "buy_oven_twines", "text": "Buy oven-proof twine (-13 gold, +2 scraps)", "outcome": { "gold": -13, "scraps": 2 } },
+        { "id": "walk_on", "text": "Walk past the warm windows", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_velvet_kite_roost",
+      "title": "The Velvet Kite Roost",
+      "description": "Button-eyed cloth kites snag in a blackthorn tree beside the candlelit road.",
+      "choices": [
+        { "id": "retie_kites", "text": "Retie two kite tails (-2 scraps, +29 gold)", "outcome": { "gold": 29, "scraps": -2 } },
+        { "id": "salvage_knots", "text": "Gather fallen kite knots (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "leave_kites", "text": "Leave the kites to the wind", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_mossbutton_weather_station",
+      "title": "The Mossbutton Weather Station",
+      "description": "A moss-green button-doll keeps a storm vane spinning atop a patched roof.",
+      "choices": [
+        { "id": "repair_vane", "text": "Repair the wind vane (-1 scrap, +19 gold)", "outcome": { "gold": 19, "scraps": -1 } },
+        { "id": "buy_stormward", "text": "Buy stormward thread (-16 gold, +2 scraps)", "outcome": { "gold": -16, "scraps": 2 } },
+        { "id": "pass_station", "text": "Leave the weather station", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_ragdoll_bell_foundry",
+      "title": "The Ragdoll Bell Foundry",
+      "description": "Toy foundry workers hammer tiny brass bells in a furnace-lit felt workshop.",
+      "choices": [
+        { "id": "polish_clappers", "text": "Polish the bell clappers (-2 scraps, +31 gold)", "outcome": { "gold": 31, "scraps": -2 } },
+        { "id": "sweep_ribbons", "text": "Sweep up brass ribbons (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "leave_foundry", "text": "Leave the foundry before nightfall", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
