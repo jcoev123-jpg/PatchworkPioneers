@@ -1,12 +1,13 @@
 extends SceneTree
-## V3-1 Button Golem starter-card catalog contract plus the callable Block-paid Pop Button
-## resolver. The catalogs stay descriptor-only and nothing here claims live hand, party-picker,
-## reward or map wiring: these cases drive the scene-free combat rules layer directly with real
-## CombatDeck/CombatParty/CombatEnemies state.
+## V3-1 Button Golem starter-card catalog contract plus the callable Block-paid Pop Button and
+## counted-button Sew resolvers. The catalogs stay descriptor-only and nothing here claims live
+## hand, party-picker, reward or map wiring: these cases drive the scene-free combat rules layer
+## directly with real CombatDeck/CombatParty/CombatEnemies state.
 
 const ButtonGolemStarterCards = preload("res://data/cards/button_golem_starter_cards.gd")
 const ButtonGolemRewardCards = preload("res://data/cards/button_golem_pool_cards.gd")
 const PopResolver = preload("res://scripts/combat_button_golem_pop_cards.gd")
+const SewResolver = preload("res://scripts/combat_button_golem_sew_cards.gd")
 const StarterCards = preload("res://data/cards/starter_cards.gd")
 
 ## The four authentic Pop Button printings, each with its own catalog and printed damage.
@@ -15,6 +16,14 @@ const POP_PRINTINGS := {
 	"button_golem_starter_loose_pop_plus": {"catalog": "starter", "damage": 11},
 	"button_golem_pop_button": {"catalog": "pool", "damage": 9},
 	"button_golem_pop_button_plus": {"catalog": "pool", "damage": 12},
+}
+
+## The four authentic Sew printings: Block per earlier pop plus any flat Block.
+const SEW_PRINTINGS := {
+	"button_golem_starter_seam_resew": {"catalog": "starter", "per_button": 1, "flat": 0},
+	"button_golem_starter_seam_resew_plus": {"catalog": "starter", "per_button": 1, "flat": 2},
+	"button_golem_sew_on": {"catalog": "pool", "per_button": 1, "flat": 0},
+	"button_golem_sew_on_plus": {"catalog": "pool", "per_button": 2, "flat": 0},
 }
 
 var failures: Array[String] = []
@@ -35,6 +44,11 @@ func _initialize() -> void:
 	_test_pop_status_adjusted_hit()
 	_test_pop_refusals()
 	_test_pop_replay()
+	_test_sew_printings()
+	_test_sew_paid_resolution()
+	_test_sew_pop_synergy()
+	_test_sew_refusals()
+	_test_sew_replay()
 	if failures.is_empty():
 		print("v3_button_golem_starter_cards_test: PASS (", checks, " checks)")
 	else:
@@ -877,3 +891,403 @@ func _pop_snapshot(deck: CombatDeck, party: CombatParty,
 		snapshot["foes"] = enemies.get_enemies()
 		snapshot["victory"] = enemies.is_victorious()
 	return snapshot
+
+
+# ---------------------------------------------------------------------------------------------
+# Sew On / Seam Re-Sew: paid self-Block from the authentic per-combat popped-button count.
+# ---------------------------------------------------------------------------------------------
+
+## AC1/AC3: the four authentic Sew printings, each authenticated through its own catalog, with
+## authored metadata, exact effects and base/plus links read back by ID (never a catalog total).
+func _test_sew_printings() -> void:
+	var resolver := SewResolver.new()
+	var candidates := ["button_golem_starter_seam_resew",
+		"button_golem_starter_seam_resew_plus", "button_golem_sew_on",
+		"button_golem_sew_on_plus"]
+	_check(SEW_PRINTINGS.size() == 4, "four distinct Sew printings are enumerated")
+	for card_id: String in candidates:
+		_check(SEW_PRINTINGS.has(card_id) and resolver.is_supported_card(card_id),
+			card_id + " is a resolver-supported Sew printing")
+	for card_id: String in SEW_PRINTINGS:
+		var spec: Dictionary = SEW_PRINTINGS[card_id]
+		var definition: Dictionary = _sew_definition(card_id)
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			card_id + " is authentically authored in its own catalog")
+		_check(definition.get("owner") == "button_golem", card_id + " is owned by the Golem")
+		_check(definition.get("cost") == 1, card_id + " costs exactly one energy")
+		_check(definition.get("target_kind") == "self", card_id + " targets its own caster")
+		_check(definition.get("from_positions") == [1, 2, 3],
+			card_id + " plays from any hero seat 1-3")
+		_check(definition.get("to_positions") == [], card_id + " authors no slot target")
+		var expected_effects: Dictionary = {
+			"block_per_button_popped": int(spec["per_button"])}
+		if int(spec["flat"]) > 0:
+			expected_effects["block"] = int(spec["flat"])
+		_check(definition.get("effects") == expected_effects,
+			card_id + " prints exactly " + str(expected_effects))
+		var base_id: String = card_id.trim_suffix("_plus")
+		var plus_id: String = base_id + "_plus"
+		_check(_sew_definition(base_id).get("upgrade_id") == plus_id,
+			base_id + " still links to its authored upgrade")
+		_check(_sew_definition(plus_id).get("upgrade_of") == base_id,
+			plus_id + " still points back at its base")
+	_check(_sew_definition("button_golem_starter_seam_resew").get("effects")
+		== {"block_per_button_popped": 1}, "base Seam Re-Sew prints no flat Block")
+	_check(_sew_definition("button_golem_starter_seam_resew_plus").get("effects")
+		== {"block_per_button_popped": 1, "block": 2},
+		"Seam Re-Sew+ adds exactly two flat Block")
+	_check(_sew_definition("button_golem_sew_on").get("effects")
+		== {"block_per_button_popped": 1}, "base Sew On pays one Block per pop")
+	_check(_sew_definition("button_golem_sew_on_plus").get("effects")
+		== {"block_per_button_popped": 2}, "Sew On+ pays two Block per pop")
+	# Pop printings, other Golem cards, other heroes, aliases and malformed values are not Sew cards.
+	for rejected in ["button_golem_starter_loose_pop", "button_golem_pop_button_plus",
+			"button_golem_starter_button_fist", "button_golem_button_roll",
+			"button_golem_eyelet_guard", "button_golem_seam_resew", "button_golem_sew_on_plus_plus",
+			"button_golem_starter_seam_resew_plus_plus", "warden_strike", ""]:
+		_check(not resolver.is_supported_card(rejected),
+			str(rejected) + " is not a Sew printing")
+	for malformed in [null, 0, 3.5, false, [], {}, StringName("button_golem_sew_on")]:
+		_check(not resolver.is_supported_card(malformed),
+			"malformed card id is not a Sew printing: " + str(malformed))
+
+
+## AC1: one paid play per printing, seat and popped-button count. Real deck, real party, real
+## enemy roster; every other field is compared so a stray write cannot hide behind the Block.
+func _test_sew_paid_resolution() -> void:
+	var cases := 0
+	for card_id: String in SEW_PRINTINGS:
+		for seat in [1, 2, 3]:
+			for button_count in [0, 1, 2]:
+				_play_sew_success(card_id, seat, button_count, 3)
+				cases += 1
+	_check(cases == 36,
+		"every Sew printing is exercised in all three seats at zero, one and two popped buttons")
+	# Recasting uses genuine held copies and never consumes the authoritative count.
+	var deck := _pop_deck(["button_golem_sew_on_plus", "button_golem_sew_on_plus"])
+	_check(deck.hand.count("button_golem_sew_on_plus") == 2, "two genuine copies are held")
+	var party := _sew_party(2)
+	party._heroes[1]["buttons_popped"] = 2
+	_check(party.gain_block(2, 1), "recast fixture holds one Block")
+	var resolver := SewResolver.new()
+	var first := resolver.play_card(deck, party, "button_golem_sew_on_plus", 0)
+	var second := resolver.play_card(deck, party, "button_golem_sew_on_plus", 0)
+	_check(first.get("ok") == true and second.get("ok") == true,
+		"both held copies resolve in the same turn")
+	_check(first.get("block_gained") == 4 and second.get("block_gained") == 4,
+		"each recast pays two Block for each of the two pops")
+	_check(party.get_hero(2).get("block") == 9, "recasting stacks Block on the same Golem")
+	_check(party.get_hero(2).get("buttons_popped") == 2,
+		"recasting never consumes the popped-button count")
+	_check(deck.energy == 1 and deck.hand.is_empty() and deck.discard_pile.size() == 2,
+		"each recast spends one energy and discards one copy")
+
+
+func _play_sew_success(card_id: String, seat: int, button_count: int,
+		starting_block: int) -> void:
+	var label := "%s at seat %d with %d popped" % [card_id, seat, button_count]
+	var deck := _pop_deck([card_id])
+	_check(deck.hand.has(card_id), label + ": the exact ID is genuinely held")
+	var party := _sew_party(seat)
+	if starting_block > 0:
+		_check(party.gain_block(seat, starting_block),
+			label + ": the Golem starts with real Block")
+	party._heroes[seat - 1]["buttons_popped"] = button_count
+	var enemies := _pop_enemies([40, 40])
+	var before := _pop_snapshot(deck, party, enemies)
+	var foes_before: Array = enemies.get_enemies()
+	var block_before: int = party.get_hero(seat).get("block")
+	var expected_gain := _sew_expected_gain(card_id, button_count)
+	var receipt := SewResolver.new().play_card(deck, party, card_id, 0)
+	_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+		label + ": the paid play resolves")
+	_check(receipt.get("card_id") == card_id and receipt.get("cost") == 1,
+		label + ": the receipt reports the printed card and cost")
+	_check(receipt.get("owner_position") == seat,
+		label + ": the receipt reports the Golem's actual seat")
+	_check(receipt.get("buttons_popped") == button_count,
+		label + ": the receipt reports the authoritative count")
+	_check(receipt.get("block_gained") == expected_gain,
+		label + ": it gains exactly " + str(expected_gain) + " Block")
+	_check(receipt.get("block_after") == block_before + expected_gain,
+		label + ": the receipt reports the resulting Block")
+	_check(deck.energy == before["energy"] - 1
+		and deck.combat_state.energy == before["state_energy"] - 1,
+		label + ": exactly one energy left the deck state")
+	_check(deck.hand.is_empty() and deck.discard_pile == [card_id] and deck.draw_pile.is_empty(),
+		label + ": exactly one held copy moved to the discard pile")
+	_check(deck.turn_active, label + ": the turn stays active")
+	var golem: Dictionary = party.get_hero(seat)
+	_check(golem.get("block") == block_before + expected_gain,
+		label + ": only the caster's Block rose by the exact amount")
+	_check(golem.get("buttons_popped") == button_count,
+		label + ": the counter is read, never consumed or increased")
+	var expected_golem: Dictionary = before["heroes"][seat - 1].duplicate(true)
+	expected_golem["block"] = block_before + expected_gain
+	_check(golem == expected_golem, label + ": only Block changed on the Golem record")
+	for other in [1, 2, 3]:
+		if other == seat:
+			continue
+		_check(party.get_hero(other) == before["heroes"][other - 1],
+			label + ": hero in seat " + str(other) + " is untouched")
+	_check(enemies.get_enemies() == foes_before, label + ": the enemy roster is untouched")
+	_check(deck._rng.state == before["rng_state"]
+		and deck._rng.seed == before["rng_seed"],
+		label + ": the paid play consumes no seeded RNG draw")
+
+
+## AC2: authentic Pop Button plays drive the count, then a held Sew reads it.
+func _test_sew_pop_synergy() -> void:
+	# A fresh party has no counter and a Sew on it gains exactly zero while still paying.
+	var fresh := _sew_party(1)
+	_check(not fresh.get_hero(1).has("buttons_popped"),
+		"a fresh CombatParty carries no popped-button count")
+	var fresh_deck := _pop_deck(["button_golem_starter_seam_resew"])
+	var fresh_receipt := SewResolver.new().play_card(fresh_deck, fresh,
+		"button_golem_starter_seam_resew", 0)
+	_check(fresh_receipt.get("ok") == true and fresh_receipt.get("block_gained") == 0
+		and fresh_receipt.get("buttons_popped") == 0,
+		"a zero-pop Sew is legal and reads an absent counter as zero")
+	_check(fresh_deck.energy == 2 and fresh_deck.discard_pile.size() == 1,
+		"a zero-pop Sew still pays its energy and discards its copy")
+
+	# Two absorbed Pops count twice, then Sew On+ reads exactly two.
+	var deck := _pop_deck(["button_golem_starter_loose_pop", "button_golem_pop_button",
+		"button_golem_sew_on_plus"])
+	var party := _sew_party(1)
+	_check(party.gain_block(1, 10), "synergy Golem starts with ten Block")
+	var enemies := _pop_enemies([40])
+	_check(enemies.gain_block(1, 30), "the enemy holds enough Block to absorb both Pops")
+	var pop := PopResolver.new()
+	var first_pop := pop.play_card(deck, party, enemies,
+		"button_golem_starter_loose_pop", 1)
+	var second_pop := pop.play_card(deck, party, enemies, "button_golem_pop_button", 1)
+	_check(first_pop.get("ok") == true and second_pop.get("ok") == true,
+		"two authentic Pop Button plays resolve")
+	_check(first_pop.get("block_absorbed") == 9 and second_pop.get("block_absorbed") == 9
+		and enemies.get_enemy(1).get("hp") == 40,
+		"enemy Block absorbs both hits, so no damage reaches HP")
+	_check(party.get_hero(1).get("buttons_popped") == 2,
+		"two fully absorbed Pops still count two buttons")
+	var golem_block: int = party.get_hero(1).get("block")
+	var sew := SewResolver.new().play_card(deck, party, "button_golem_sew_on_plus", 0)
+	_check(sew.get("ok") == true and sew.get("buttons_popped") == 2
+		and sew.get("block_gained") == 4,
+		"Sew On+ reads the authentic count of two as four Block")
+	_check(party.get_hero(1).get("block") == golem_block + 4,
+		"the Block lands only on the casting Golem")
+	_check(party.get_hero(1).get("buttons_popped") == 2,
+		"the Sew never consumes the count")
+	_check(party.start_player_turn() and party.get_hero(1).get("buttons_popped") == 2,
+		"an ordinary turn reset leaves the per-combat count unchanged")
+
+	# A refused Pop counts nothing, so a later Sew gains nothing.
+	var refused_deck := _pop_deck(["button_golem_starter_loose_pop",
+		"button_golem_starter_seam_resew"])
+	var refused_party := _sew_party(2)
+	var refused_enemies := _pop_enemies([30])
+	var refused := PopResolver.new().play_card(refused_deck, refused_party,
+		refused_enemies, "button_golem_starter_loose_pop", 1)
+	_check(refused.get("ok") == false and refused.get("reason") == "insufficient_block",
+		"a Pop without its own five Block is refused")
+	_check(not refused_party.get_hero(2).has("buttons_popped"),
+		"a refused Pop counts no button")
+	var refused_sew := SewResolver.new().play_card(refused_deck, refused_party,
+		"button_golem_starter_seam_resew", 0)
+	_check(refused_sew.get("ok") == true and refused_sew.get("block_gained") == 0,
+		"a later Sew gains no Block from a refused Pop")
+	_check(refused_party.get_hero(2).get("block") == 0,
+		"the refused-Pop Sew leaves the Golem's Block at zero")
+
+	# One successful Pop in the middle seat pays exactly one Block to a pool Sew On.
+	var one_deck := _pop_deck(["button_golem_pop_button", "button_golem_sew_on"])
+	var one_party := _sew_party(2)
+	_check(one_party.gain_block(2, 5), "single-pop Golem holds exactly five Block")
+	var one_enemies := _pop_enemies([30])
+	var one_pop := PopResolver.new().play_card(one_deck, one_party, one_enemies,
+		"button_golem_pop_button", 1)
+	_check(one_pop.get("ok") == true and one_party.get_hero(2).get("buttons_popped") == 1,
+		"one authentic Pop counts exactly one button")
+	var one_sew := SewResolver.new().play_card(one_deck, one_party, "button_golem_sew_on", 0)
+	_check(one_sew.get("ok") == true and one_sew.get("block_gained") == 1
+		and one_sew.get("block_after") == 1 and one_party.get_hero(2).get("block") == 1,
+		"Sew On pays exactly the one real pop to the middle-seat Golem")
+
+
+## AC3: every malformed or unpayable request refuses with a complete before/after snapshot.
+func _test_sew_refusals() -> void:
+	_expect_sew_refusal("non-Sew starter card held", _pop_deck(["warden_strike"]),
+		_sew_party(1), _pop_enemies([30, 30]), "warden_strike", 0, "unsupported_card")
+	_expect_sew_refusal("other Button Golem starter held",
+		_pop_deck(["button_golem_starter_button_fist"]), _sew_party(1),
+		_pop_enemies([30, 30]), "button_golem_starter_button_fist", 0, "unsupported_card")
+	_expect_sew_refusal("Pop printing is not a Sew printing",
+		_pop_deck(["button_golem_pop_button"]), _sew_party(1), _pop_enemies([30, 30]),
+		"button_golem_pop_button", 0, "unsupported_card")
+	for malformed_id in [null, 0, 3.5, false, [], {}, StringName("button_golem_sew_on")]:
+		_expect_sew_refusal("malformed card id " + str(malformed_id),
+			_pop_deck(["button_golem_sew_on"]), _sew_party(1), _pop_enemies([30, 30]),
+			malformed_id, 0, "unsupported_card")
+	_expect_sew_refusal("supported Sew not in hand", _pop_deck(["button_golem_sew_on"]),
+		_sew_party(1), _pop_enemies([30, 30]), "button_golem_starter_seam_resew", 0,
+		"card_not_held")
+	var inactive := _pop_inactive_deck("button_golem_sew_on")
+	_expect_sew_refusal("inactive turn", inactive, _sew_party(1), _pop_enemies([30, 30]),
+		"button_golem_sew_on", 0, "inactive_turn")
+	var broke := _pop_deck(["button_golem_sew_on"])
+	_check(broke.try_spend_energy(3) and broke.energy == 0 and broke.hand.size() == 1,
+		"energy-short fixture is genuinely broke and still holds the card")
+	_expect_sew_refusal("insufficient energy", broke, _sew_party(1), _pop_enemies([30, 30]),
+		"button_golem_sew_on", 0, "insufficient_energy")
+	for bad_target in [1, 3, -1, 99]:
+		_expect_sew_refusal("non-self target " + str(bad_target),
+			_pop_deck(["button_golem_sew_on"]), _sew_party(1), _pop_enemies([30, 30]),
+			"button_golem_sew_on", bad_target, "invalid_target")
+	_expect_sew_refusal("no Button Golem in the party", _pop_deck(["button_golem_sew_on"]),
+		_pop_party(["warden", "seamstress", "tinker"]), _pop_enemies([30, 30]),
+		"button_golem_sew_on", 0, "owner_missing")
+	var torn := _sew_party(2)
+	_check(torn.apply_damage(2, 400) and torn.is_downed(2),
+		"torn-Golem fixture has a genuinely downed Golem")
+	_expect_sew_refusal("downed Golem", _pop_deck(["button_golem_sew_on"]), torn,
+		_pop_enemies([30, 30]), "button_golem_sew_on", 0, "owner_torn")
+	var duplicate := _sew_party(1)
+	duplicate._heroes[1]["id"] = "button_golem"
+	_check(duplicate.get_hero(2).get("id") == "button_golem",
+		"duplicate-Golem fixture really carries a second Golem record")
+	_expect_sew_refusal("two Button Golems", _pop_deck(["button_golem_sew_on"]), duplicate,
+		_pop_enemies([30, 30]), "button_golem_sew_on", 0, "duplicate_owner")
+	var duplicate_hero := _sew_party(1)
+	duplicate_hero._heroes[2]["id"] = "warden"
+	_check(duplicate_hero.get_hero(2).get("id") == duplicate_hero.get_hero(3).get("id"),
+		"duplicate-hero fixture really repeats a non-Golem id")
+	_expect_sew_refusal("duplicate non-Golem hero id",
+		_pop_deck(["button_golem_sew_on"]), duplicate_hero, _pop_enemies([30, 30]),
+		"button_golem_sew_on", 0, "invalid_roster")
+	_expect_sew_refusal("invalid party", _pop_deck(["button_golem_sew_on"]),
+		CombatParty.new([]), _pop_enemies([30, 30]), "button_golem_sew_on", 0,
+		"invalid_roster")
+	_expect_sew_refusal("missing deck", null, _sew_party(1), _pop_enemies([30, 30]),
+		"button_golem_sew_on", 0, "invalid_request")
+	for bad_count in ["3", 3.0, -1, null, true]:
+		var malformed_count := _sew_party(1)
+		malformed_count._heroes[0]["buttons_popped"] = bad_count
+		_check(malformed_count.get_hero(1).get("buttons_popped") == bad_count,
+			"malformed-count fixture really stores " + str(bad_count))
+		_expect_sew_refusal("malformed popped count " + str(bad_count),
+			_pop_deck(["button_golem_sew_on"]), malformed_count, _pop_enemies([30, 30]),
+			"button_golem_sew_on", 0, "malformed_button_count")
+	var malformed_block := _sew_party(1)
+	malformed_block._heroes[0]["block"] = "5"
+	_expect_sew_refusal("malformed own Block", _pop_deck(["button_golem_sew_on"]),
+		malformed_block, _pop_enemies([30, 30]), "button_golem_sew_on", 0,
+		"malformed_block")
+
+	# Checked arithmetic: multiplication, flat addition and the resulting Block all fail closed.
+	var doubled := _sew_party(1)
+	doubled._heroes[0]["buttons_popped"] = 4611686018427387904
+	_expect_sew_refusal("Sew On+ doubled count overflow",
+		_pop_deck(["button_golem_sew_on_plus"]), doubled, _pop_enemies([30, 30]),
+		"button_golem_sew_on_plus", 0, "arithmetic_overflow")
+	var flat := _sew_party(1)
+	flat._heroes[0]["buttons_popped"] = CombatParty.MAX_INT
+	_expect_sew_refusal("Seam Re-Sew+ flat addition overflow",
+		_pop_deck(["button_golem_starter_seam_resew_plus"]), flat, _pop_enemies([30, 30]),
+		"button_golem_starter_seam_resew_plus", 0, "arithmetic_overflow")
+	var full := _sew_party(2)
+	_check(full.gain_block(2, CombatParty.MAX_INT - 3),
+		"near-cap fixture holds MAX_INT - 3 Block")
+	full._heroes[1]["buttons_popped"] = 5
+	_expect_sew_refusal("resulting Block above MAX_INT",
+		_pop_deck(["button_golem_sew_on"]), full, _pop_enemies([30, 30]),
+		"button_golem_sew_on", 0, "block_overflow")
+	var exact := _sew_party(2)
+	exact._heroes[1]["buttons_popped"] = CombatParty.MAX_INT
+	var exact_deck := _pop_deck(["button_golem_starter_seam_resew"])
+	var exact_receipt := SewResolver.new().play_card(exact_deck, exact,
+		"button_golem_starter_seam_resew", 0)
+	_check(exact_receipt.get("ok") == true
+		and exact_receipt.get("block_gained") == CombatParty.MAX_INT,
+		"the legitimate sum of exactly MAX_INT succeeds")
+	_check(exact.get_hero(2).get("block") == CombatParty.MAX_INT,
+		"exactly MAX_INT Block is committed")
+	_check(exact.get_hero(2).get("buttons_popped") == CombatParty.MAX_INT,
+		"the exact-MAX_INT play leaves the counter untouched")
+	_check(exact_deck.energy == 2
+		and exact_deck.discard_pile == ["button_golem_starter_seam_resew"],
+		"the exact-MAX_INT play still pays and discards")
+
+
+func _expect_sew_refusal(label: String, deck: CombatDeck, party: CombatParty,
+		enemies: CombatEnemies, card_id: Variant, target_position: int,
+		reason: String) -> void:
+	var before := _pop_snapshot(deck, party, enemies)
+	var receipt := SewResolver.new().play_card(deck, party, card_id, target_position)
+	_check(receipt.get("ok") == false, label + ": refused")
+	_check(receipt.get("reason") == reason,
+		label + ": refusal reason is " + reason + " (got " + str(receipt.get("reason")) + ")")
+	for key: String in ["ok", "reason", "card_id", "cost", "owner_position",
+			"buttons_popped", "block_gained", "block_after"]:
+		_check(receipt.has(key), label + ": refusal receipt carries " + key)
+	_check(receipt.get("block_gained") == 0 and receipt.get("block_after") == 0,
+		label + ": refusal reports no Block")
+	_check(_pop_snapshot(deck, party, enemies) == before,
+		label + ": hand, piles, energy, party, enemies and seeded RNG are unchanged")
+
+
+## AC1: the same seeded sequence replays byte-for-byte through the Sew resolver.
+func _test_sew_replay() -> void:
+	var first := _sew_scenario(2951793)
+	var second := _sew_scenario(2951793)
+	_check(first == second, "identical seeds replay the entire Sew sequence exactly")
+	for receipt: Dictionary in first["receipts"]:
+		_check(receipt.get("ok") == true and receipt.get("buttons_popped") == 2,
+			"each replayed Sew resolves against the same authentic count")
+	_check(first["heroes"][0].get("block") == 8,
+		"replay gains two, two and four Block from two earlier pops")
+	_check(first["heroes"][0].get("buttons_popped") == 2,
+		"replay never consumes the count")
+	_check(first["energy"] == 0 and first["hand"].is_empty()
+		and first["discard"].size() == 3,
+		"replay spends three energy and discards three copies")
+
+
+func _sew_scenario(seed_value: int) -> Dictionary:
+	var deck := _pop_deck(["button_golem_starter_seam_resew", "button_golem_sew_on",
+		"button_golem_sew_on_plus"], seed_value)
+	var party := _sew_party(1)
+	party._heroes[0]["buttons_popped"] = 2
+	var resolver := SewResolver.new()
+	var receipts: Array = []
+	receipts.append(resolver.play_card(deck, party, "button_golem_starter_seam_resew", 0))
+	receipts.append(resolver.play_card(deck, party, "button_golem_sew_on", 0))
+	receipts.append(resolver.play_card(deck, party, "button_golem_sew_on_plus", 0))
+	var snapshot := _pop_snapshot(deck, party, _pop_enemies([40, 40]))
+	snapshot["receipts"] = receipts
+	return snapshot
+
+
+func _sew_definition(card_id: String) -> Dictionary:
+	var spec: Dictionary = SEW_PRINTINGS.get(card_id, {})
+	if spec.is_empty():
+		return {}
+	if spec["catalog"] == "starter":
+		return ButtonGolemStarterCards.new().get_definition(card_id)
+	return ButtonGolemRewardCards.new().get_definition(card_id)
+
+
+## The printed Block gain: N per earlier pop, plus any flat Block.
+func _sew_expected_gain(card_id: String, button_count: int) -> int:
+	var spec: Dictionary = SEW_PRINTINGS[card_id]
+	return button_count * int(spec["per_button"]) + int(spec["flat"])
+
+
+## A real three-hero party with the Button Golem genuinely sitting in the requested seat.
+func _sew_party(seat: int) -> CombatParty:
+	var order: Array = ["warden", "tinker"]
+	order.insert(seat - 1, "button_golem")
+	var party := _pop_party(order)
+	_check(party.get_hero(seat).get("id") == "button_golem"
+		and party.get_hero(seat).get("position") == seat,
+		"fixture has the Golem living in seat " + str(seat))
+	return party
