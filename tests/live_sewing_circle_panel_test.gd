@@ -2,6 +2,8 @@ extends SceneTree
 
 const STRIKE := "warden_strike"
 const PRICK := "seamstress_prick"
+## The one seed this mounted session uses for its global-RNG purity check.
+const RNG_SEED := 264
 var failures: Array[String] = []
 var checks := 0
 var intents: Array[Dictionary] = []
@@ -63,6 +65,22 @@ func _activate(button: Button, keyboard: bool) -> void:
 	await _settle_layout()
 
 
+## A genuine physical key press pushed through the mounted SceneTree, exactly as
+## a player's keyboard would: no direct callback calls and no view-side service.
+func _key(keycode: int, pressed: bool = true, echo: bool = false,
+		modified: Dictionary = {}) -> void:
+	var event := InputEventKey.new()
+	event.keycode = keycode
+	event.pressed = pressed
+	event.echo = echo
+	event.ctrl_pressed = modified.get("ctrl", false)
+	event.alt_pressed = modified.get("alt", false)
+	event.shift_pressed = modified.get("shift", false)
+	event.meta_pressed = modified.get("meta", false)
+	root.push_input(event)
+	await _settle_layout()
+
+
 func _bind(visit: RunSewingCircleVisit) -> void:
 	intents.clear()
 	panel.bind(visit)
@@ -81,9 +99,9 @@ func _run() -> void:
 	_check(panel.upgrade_button.has_focus(), "mount makes the first primary action the keyboard stop")
 	# Cosmetic mounts are done: from here the panel may only present state, so a
 	# seeded global RNG must read the same after every browse and decision.
-	seed(264)
+	seed(RNG_SEED)
 	var seeded_next := randi()
-	seed(264)
+	seed(RNG_SEED)
 	await _test_layout()
 	_check(panel._effects({"z_other": 9, "bleed": 2, "damage": 3, "a_other": 4})
 		== "Deal 3 damage; apply Bleed 2; a other: 4; z other: 9",
@@ -98,6 +116,7 @@ func _run() -> void:
 		await _test_pool_upgrade(keyboard)
 		await _test_pool_stitch(keyboard)
 		await _test_leave(keyboard)
+	await _test_shortcuts()
 	await _test_confirmation_handoff()
 	await _test_rejections()
 	_check(randi() == seeded_next, "mounted browsing and decisions consume no global RNG")
@@ -131,6 +150,15 @@ func _test_layout() -> void:
 		"all three actions are live on a genuine open visit")
 	_check(panel.status_label.text.contains("3 scraps") and panel.upgrade_button.text.contains("free")
 		and panel.stitch_button.text.contains("3 scraps") and panel.leave_button.text.contains("free"), "visible canonical costs")
+	# The shortcut mapping is printed on the same four existing actions, and each
+	# caption still fits its sewn button at 1280x720.
+	_check(panel.upgrade_button.text.contains("1 ") and panel.upgrade_button.text.contains("Upgrade")
+		and panel.stitch_button.text.contains("2 ") and panel.stitch_button.text.contains("Stitch")
+		and panel.leave_button.text.contains("0 ") and panel.leave_button.text.contains("Leave")
+		and panel.confirm_button.text.contains("3 ") and panel.confirm_button.text.contains("Confirm"),
+		"number-key mapping is printed on the four existing actions")
+	for action in [panel.upgrade_button, panel.stitch_button, panel.leave_button, panel.confirm_button]:
+		_check(_fits(action), "shortcut caption fits its existing button at 1280x720")
 	# Every interaction state of a sewn action keeps dark, readable ink instead of
 	# the shared theme's near-white defaults on this cream felt.
 	for ink_state in ["font_color", "font_hover_color", "font_pressed_color",
@@ -626,6 +654,257 @@ func _test_confirmation_handoff() -> void:
 		and panel.take_confirmed(before_close) == {}, "close retires the pending confirmed payload")
 
 
+## Physical number keys are only an alias for the four mounted Buttons. A valid
+## press must land on the very same Button.pressed path as a mouse or Tab/Enter
+## press, so each confirmed action below is compared with the authenticated
+## source-bound intent and the real controller receipt.
+func _test_shortcuts() -> void:
+	seed(RNG_SEED)
+	var seeded_next := randi()
+	seed(RNG_SEED)
+	# Keys 1/2/0 open the existing modes and never commit anything themselves.
+	var visit := _make()
+	await _bind(visit)
+	var source := visit.read_state()
+	panel.upgrade_button.grab_focus()
+	await _settle_layout()
+	_check(panel.upgrade_button.has_focus() and panel._active(),
+		"authentic open visit on a focused mounted panel precedes the shortcuts")
+	await _key(KEY_1)
+	_check(panel._mode == "upgrade" and not panel.option_buttons.is_empty()
+		and panel.confirm_button.disabled and intents.is_empty()
+		and visit.read_state() == source, "key 1 opens Upgrade only and never commits")
+	await _key(KEY_2)
+	_check(panel._mode == "stitch" and panel._first == -1
+		and panel.confirm_button.disabled and intents.is_empty()
+		and visit.read_state() == source, "key 2 opens Stitch only and never commits")
+	await _key(KEY_0)
+	_check(panel._mode == "leave" and not panel.confirm_button.disabled
+		and intents.is_empty() and visit.read_state() == source,
+		"key 0 opens Leave only and never commits")
+
+	# Upgrade: 1 selects the mode, the existing row navigation picks the exact
+	# duplicate, and 3 presses the same Confirm the mouse/Enter route uses.
+	visit = _make()
+	await _bind(visit)
+	source = visit.read_state()
+	panel.upgrade_button.grab_focus()
+	await _settle_layout()
+	await _key(KEY_1)
+	_check(panel._mode == "upgrade" and panel.option_buttons.size() == 3
+		and panel.confirm_button.disabled, "key 1 still requires an exact occurrence")
+	var row := _row_at(1)
+	if row == null:
+		return
+	await _activate(row, true)
+	_check(panel.preview().index == 1 and not panel.confirm_button.disabled,
+		"existing Tab/Enter row navigation still selects the real duplicate")
+	await _key(KEY_3)
+	_check(intents.size() == 1 and visit.read_state() == source,
+		"key 3 confirms the chosen occurrence once without settling")
+	if intents.size() != 1:
+		return
+	var upgrade_intent := intents[0]
+	_check(upgrade_intent == {"action": "upgrade", "first_index": 1, "second_index": -1,
+		"visit_id": source.visit_id, "node_id": source.node_id, "source_snapshot": source},
+		"key 3 emits the same source-bound upgrade intent as mouse/Enter")
+	_check(panel.take_confirmed(upgrade_intent) == upgrade_intent
+		and panel.take_confirmed(upgrade_intent) == {},
+		"key 3 mints the same one-shot Confirm hand-off as mouse/Enter")
+	var upgrade := Controller.submit(visit, upgrade_intent)
+	var oracle := RunRestCardUpgrade.new(source.deck, {STRIKE: "warden_strike_plus"}, {}, 1).choose_upgrade(1)
+	_check(upgrade.ok and upgrade.action == "upgrade" and upgrade.transaction == oracle
+		and upgrade.deck == [STRIKE, "warden_strike_plus", PRICK],
+		"key 3 yields one authorized upgrade receipt")
+	_check_receipt(upgrade, source, 0)
+	_check_replay(visit, upgrade_intent)
+	for key in [KEY_1, KEY_2, KEY_0, KEY_3]:
+		await _key(key)
+	_check(intents.size() == 1 and visit.is_consumed(),
+		"no further key acts on the consumed visit")
+
+	# Stitch: 2 opens the canonical FIRST list, the existing rows pick the ordered
+	# different-owner pair, and 3 confirms exactly that pair for 3 scraps.
+	visit = _make()
+	await _bind(visit)
+	source = visit.read_state()
+	var pair := visit.stitch_preview(1, 2)
+	_check(not pair.is_empty() and pair.energy_cost == 2 and pair.scrap_cost == 3,
+		"independent payable ordered-pair prerequisite")
+	panel.upgrade_button.grab_focus()
+	await _settle_layout()
+	await _key(KEY_2)
+	_check(panel._mode == "stitch" and panel.option_buttons.size() == 3
+		and panel.confirm_button.disabled, "key 2 opens the canonical FIRST list")
+	var first_row := _row_at(1)
+	if first_row == null:
+		return
+	await _activate(first_row, true)
+	var second_row := _row_at(2)
+	if second_row == null:
+		return
+	await _activate(second_row, true)
+	_check(panel.preview() == pair and not panel.confirm_button.disabled,
+		"existing rows still select the ordered different-owner pair")
+	await _key(KEY_3)
+	_check(intents.size() == 1 and visit.read_state() == source,
+		"key 3 confirms the shown pair once without spending")
+	if intents.size() != 1:
+		return
+	var stitch_intent := intents[0]
+	_check(stitch_intent.action == "stitch" and stitch_intent.first_index == 1
+		and stitch_intent.second_index == 2 and stitch_intent.source_snapshot == source,
+		"key 3 emits the exact ordered source-bound stitch intent")
+	var stitch := Controller.submit(visit, stitch_intent)
+	_check(stitch.ok and stitch.transaction == pair.projection
+		and stitch.deck == pair.resulting_deck and stitch.remaining_scraps == 4
+		and stitch.charged_scraps == 3,
+		"keyboard stitch pays 3 scraps for exactly the shown authenticated halves")
+	_check_receipt(stitch, source, 3)
+	_check_replay(visit, stitch_intent)
+
+	# Leave: 0 stages it and 3 commits the free one-use visit.
+	visit = _make()
+	await _bind(visit)
+	source = visit.read_state()
+	panel.upgrade_button.grab_focus()
+	await _settle_layout()
+	await _key(KEY_0)
+	_check(panel._mode == "leave" and not panel.confirm_button.disabled
+		and intents.is_empty(), "key 0 stages free Leave")
+	await _key(KEY_3)
+	_check(intents.size() == 1 and visit.read_state() == source, "key 3 confirms Leave once")
+	if intents.size() != 1:
+		return
+	var expected := source.duplicate(true)
+	expected.consumed = true
+	expected.merge({"ok": true, "action": "leave", "transaction": {}, "source_snapshot": source,
+		"source_receipt": source.receipt, "charged_scraps": 0})
+	var leave := Controller.submit(visit, intents[0])
+	_check(leave == expected and leave.deck == source.deck
+		and leave.remaining_scraps == source.remaining_scraps,
+		"free one-use Leave keeps the deck and scraps unchanged")
+	_check_replay(visit, intents[0])
+
+	# 3 before a valid selection does nothing at all.
+	visit = _make()
+	await _bind(visit)
+	source = visit.read_state()
+	panel.upgrade_button.grab_focus()
+	await _settle_layout()
+	await _key(KEY_3)
+	_check(intents.is_empty() and panel.confirm_button.disabled
+		and visit.read_state() == source, "3 with no mode selected does nothing")
+	await _key(KEY_1)
+	await _key(KEY_3)
+	_check(intents.is_empty() and panel.preview().is_empty()
+		and panel.confirm_button.disabled and visit.read_state() == source,
+		"3 before an upgrade row is selected does nothing")
+	await _key(KEY_2)
+	await _key(KEY_3)
+	_check(intents.is_empty() and panel._first == -1 and panel._second == -1
+		and panel.confirm_button.disabled and visit.read_state() == source,
+		"3 before a Stitch pair is selected does nothing")
+
+	# A disabled action keeps its disabled shortcut: 2 under 3 scraps, and 2 with
+	# no different-owner pair, while the free decisions stay reachable.
+	visit = _make([STRIKE, STRIKE, PRICK], 2)
+	await _bind(visit)
+	source = visit.read_state()
+	_check(panel.stitch_button.disabled, "two scraps leave Stitch disabled")
+	panel.upgrade_button.grab_focus()
+	await _settle_layout()
+	await _key(KEY_2)
+	_check(panel._mode == "" and panel.option_buttons.is_empty() and intents.is_empty()
+		and visit.read_state() == source, "an unaffordable Stitch ignores key 2")
+	await _key(KEY_1)
+	_check(panel._mode == "upgrade", "free Upgrade still opens under key 1")
+	await _key(KEY_0)
+	_check(panel._mode == "leave" and not panel.confirm_button.disabled,
+		"free Leave still opens under key 0 beside the disabled Stitch")
+	await _key(KEY_3)
+	_check(intents.size() == 1 and Controller.submit(visit, intents[0]).get("ok") == true,
+		"a disabled Stitch does not block the genuine Leave receipt")
+	var no_pair := _make([STRIKE, STRIKE], 7)
+	await _bind(no_pair)
+	_check(panel.stitch_button.disabled, "no different-owner pair leaves Stitch disabled")
+	await _key(KEY_2)
+	_check(panel._mode == "" and intents.is_empty(),
+		"no-pair Stitch ignores key 2")
+
+	# Hidden panel, another panel's focus, releases, echo and modified keys are
+	# all inert, and a real press still works afterwards.
+	visit = _make()
+	await _bind(visit)
+	source = visit.read_state()
+	panel.upgrade_button.grab_focus()
+	await _settle_layout()
+	panel.hide()
+	await _settle_layout()
+	await _key(KEY_1)
+	_check(not panel.visible and panel._mode == "" and intents.is_empty()
+		and visit.read_state() == source, "a hidden panel ignores its shortcuts")
+	panel.show()
+	await _settle_layout()
+	var outside := Control.new()
+	outside.focus_mode = Control.FOCUS_ALL
+	root.add_child(outside)
+	await _settle_layout()
+	outside.grab_focus()
+	await _settle_layout()
+	_check(root.gui_get_focus_owner() == outside, "another panel genuinely owns GUI focus")
+	for key in [KEY_1, KEY_2, KEY_0, KEY_3]:
+		await _key(key)
+	_check(panel._mode == "" and intents.is_empty() and visit.read_state() == source,
+		"shortcuts never take keyboard input from another panel")
+	outside.queue_free()
+	await _settle_layout()
+	panel.upgrade_button.grab_focus()
+	await _settle_layout()
+	_check(panel.upgrade_button.has_focus() and not panel.upgrade_button.disabled,
+		"the panel is genuinely keyboard-live before the event guards")
+	for key in [KEY_1, KEY_2, KEY_0, KEY_3]:
+		await _key(key, false)
+	_check(panel._mode == "" and intents.is_empty() and visit.read_state() == source,
+		"key releases do nothing")
+	await _key(KEY_1, true, true)
+	_check(panel._mode == "" and intents.is_empty(), "auto-repeat echo does nothing")
+	for modified in [{"ctrl": true}, {"alt": true}, {"shift": true}, {"meta": true}]:
+		await _key(KEY_0, true, false, modified)
+	_check(panel._mode == "" and intents.is_empty() and visit.read_state() == source,
+		"modified keys do nothing")
+	for key in [KEY_9, KEY_4, KEY_5, KEY_MINUS]:
+		await _key(key)
+	_check(panel._mode == "" and intents.is_empty() and visit.read_state() == source,
+		"unmapped keys do nothing")
+	await _key(KEY_1)
+	_check(panel._mode == "upgrade" and not panel.option_buttons.is_empty(),
+		"a real key press still works after the ignored events")
+
+	# A rebind retires a staged shortcut selection, and the old payload cannot
+	# settle the replacement visit.
+	var pending := _make()
+	await _bind(pending)
+	var pending_source := pending.read_state()
+	await _key(KEY_0)
+	_check(panel._mode == "leave" and not panel.confirm_button.disabled,
+		"a genuine staged Leave precedes the rebind")
+	var rebound := _make()
+	await _bind(rebound)
+	var rebound_source := rebound.read_state()
+	await _key(KEY_3)
+	_check(intents.is_empty() and panel.confirm_button.disabled and panel.preview().is_empty()
+		and rebound.read_state() == rebound_source, "rebind retires the staged Leave for key 3")
+	var retired := {"action": "leave", "first_index": -1, "second_index": -1,
+		"visit_id": pending_source.visit_id, "node_id": pending_source.node_id,
+		"source_snapshot": pending_source}
+	_check(Controller.submit(rebound, retired) == {"ok": false}
+		and rebound.read_state() == rebound_source,
+		"the rebound visit rejects the retired shortcut payload")
+	_check(randi() == seeded_next, "keyboard routes consume no global RNG")
+	seed(RNG_SEED)
+
+
 func _test_rejections() -> void:
 	for fixture in [[0, [STRIKE, PRICK]], [2, [STRIKE, PRICK]], [7, [STRIKE, STRIKE]]]:
 		var visit := _make(fixture[1], fixture[0])
@@ -720,6 +999,19 @@ func _test_rejections() -> void:
 		and panel.stitch_button.disabled and panel.leave_button.disabled
 		and panel.preview_label.text == "Choose Upgrade, Stitch or Leave, then confirm.",
 		"invalid source binding retires all active choice Help and Confirm")
+
+
+## Measured against the shipped font: a printed shortcut must fit the sewn
+## button it names, at the same 18px size the screen uses.
+func _fits(button: Button) -> bool:
+	var font := button.get_theme_font("font")
+	if font == null or button.text.is_empty():
+		return false
+	var font_size := button.get_theme_font_size("font_size")
+	if font_size < 18:
+		return false
+	var width := font.get_string_size(button.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+	return width <= button.size.x - 16.0 and button.size.y >= font.get_height(font_size) * 1.4
 
 
 ## Inspect visible label nodes, not the Button's retained accessibility text.

@@ -7,6 +7,12 @@ const BUTTON_ART := "res://assets/paper/ui/reward_button.png"
 const INK := Color("#28313c")
 ## Readable, visibly duller ink for an action the visit cannot pay for.
 const DISABLED_INK := Color("#7a7267")
+## Printed shortcuts. Each caption names the physical key that activates the
+## very same Button, so the mapping stays visible on the shipped screen.
+const UPGRADE_TEXT := "1 Upgrade - free"
+const STITCH_TEXT := "2 Stitch - %d scraps"
+const LEAVE_TEXT := "0 Leave - free"
+const CONFIRM_TEXT := "3 Confirm choice"
 var upgrade_button: Button
 var stitch_button: Button
 var leave_button: Button
@@ -52,9 +58,9 @@ func _ready() -> void:
 	var title := _label("SEWING CIRCLE - choose once", Vector2(24, 16), Vector2(890, 36))
 	title.theme_type_variation = "PatchHeading"
 	title.add_theme_font_size_override("font_size", 26)
-	upgrade_button = _button("Upgrade - free", Vector2(24, 62), Vector2(280, 48))
-	stitch_button = _button("Stitch - %d scraps" % RunRestStitchCards.SCRAP_COST, Vector2(330, 62), Vector2(280, 48))
-	leave_button = _button("Leave - free", Vector2(636, 62), Vector2(280, 48))
+	upgrade_button = _button(UPGRADE_TEXT, Vector2(24, 62), Vector2(280, 48))
+	stitch_button = _button(STITCH_TEXT % RunRestStitchCards.SCRAP_COST, Vector2(330, 62), Vector2(280, 48))
+	leave_button = _button(LEAVE_TEXT, Vector2(636, 62), Vector2(280, 48))
 	status_label = _label("", Vector2(24, 120), Vector2(892, 54))
 	choice_scroll = ScrollContainer.new()
 	choice_scroll.position = Vector2(24, 184)
@@ -76,13 +82,47 @@ func _ready() -> void:
 	preview_label.add_theme_color_override("font_color", INK)
 	preview_label.add_theme_font_size_override("font_size", 18)
 	preview_scroll.add_child(preview_label)
-	confirm_button = _button("Confirm choice", Vector2(24, 556), Vector2(892, 44))
+	confirm_button = _button(CONFIRM_TEXT, Vector2(24, 556), Vector2(892, 44))
 	_connect_session()
 	_refresh()
 	# A visit bound before this panel was mounted becomes keyboard-ready here:
 	# the first primary action takes focus, exactly as a rebind does.
 	if _active():
 		upgrade_button.grab_focus()
+
+
+## The physical number keys are an alias for the four mounted Buttons. A valid
+## press only forwards to that Button's own `pressed` signal, so keyboard, mouse,
+## Tab and Enter keep one authenticated path: the handler never calls the visit,
+## spends scraps or mints an intent of its own. It stays inert when the panel is
+## hidden, the visit is closed/stale/rebound, the GUI focus already belongs to
+## another panel, the event is a release/echo/modified key, or the addressed
+## action is disabled.
+func _unhandled_key_input(event: InputEvent) -> void:
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	if key.ctrl_pressed or key.alt_pressed or key.shift_pressed or key.meta_pressed:
+		return
+	var button := _shortcut_action(key.keycode)
+	if button == null or not is_visible_in_tree() or not _active():
+		return
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	if focus_owner == null or (focus_owner != self and not is_ancestor_of(focus_owner)):
+		return
+	if button.disabled or not button.is_visible_in_tree():
+		return
+	get_viewport().set_input_as_handled()
+	button.pressed.emit()
+
+
+func _shortcut_action(keycode: int) -> Button:
+	match keycode:
+		KEY_1, KEY_KP_1: return upgrade_button
+		KEY_2, KEY_KP_2: return stitch_button
+		KEY_0, KEY_KP_0: return leave_button
+		KEY_3, KEY_KP_3: return confirm_button
+	return null
 
 
 func _label(text: String, at: Vector2, dimensions: Vector2) -> Label:
