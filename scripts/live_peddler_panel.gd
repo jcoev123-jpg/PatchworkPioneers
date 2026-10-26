@@ -385,10 +385,79 @@ func _caption(prefix: String, item_id: String, price: int, sold: bool) -> String
 	return line
 
 
+## Preserve the entire source-quoted price and state on line one. Only the
+## catalog display name and the catalog effect may be shortened. Both lines are
+## measured against the real Button font rather than left to autowrap/clipping.
 func _card_caption(index: int) -> String:
 	var offer := _offer(index)
-	return _caption(str(offer["owner"]).capitalize(), str(offer["id"]),
-			int(offer["price"]), bool(offer["sold"]))
+	var details := _card_details(index)
+	var button := card_buttons[index]
+	var font := button.get_theme_font("font")
+	var px := button.get_theme_font_size("font_size")
+	var width := maxf(0.0, button.size.x - 32.0)
+	var prefix := "%s  ·  " % str(offer["owner"]).capitalize()
+	var suffix := "  ·  %d gold" % int(offer["price"])
+	if bool(offer["sold"]):
+		suffix += "  ·  SOLD"
+	elif _gold() < int(offer["price"]):
+		suffix += "  ·  short %d" % (int(offer["price"]) - _gold())
+	var name := str(details.get("name", DETAILS_UNAVAILABLE))
+	var available_name := width - _row_width(font, prefix + suffix, px)
+	var first := prefix + _fit_row_text(name, available_name, font, px) + suffix
+	if details.is_empty():
+		return first + "\n" + DETAILS_UNAVAILABLE
+	var energy := "%d energy  ·  " % int(details["cost"])
+	var rule_width := width - _row_width(font, energy, px)
+	var rule := _fit_card_rule(str(details["line"]), rule_width, font, px)
+	return first + "\n" + energy + rule
+
+
+func _row_width(font: Font, value: String, px: int) -> float:
+	if font == null:
+		return 0.0
+	return font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1, px).x
+
+
+## The on-row projection is intentionally lossy, but a visible ellipsis
+## distinguishes it from the complete, unmodified authored tooltip.
+func _fit_row_text(value: String, width: float, font: Font, px: int) -> String:
+	if font == null or _row_width(font, value, px) <= width:
+		return value
+	if width <= _row_width(font, ELLIPSIS, px):
+		return ELLIPSIS
+	var low := 0
+	var high := value.length()
+	while low < high:
+		var middle := int((low + high + 1) / 2)
+		if _row_width(font, value.substr(0, middle).strip_edges() + ELLIPSIS, px) <= width:
+			low = middle
+		else:
+			high = middle - 1
+	var head := value.substr(0, low).strip_edges()
+	var word_end := head.rfind(" ")
+	if word_end > 0:
+		head = head.substr(0, word_end)
+	return head.strip_edges() + ELLIPSIS
+
+
+## When an authored rule ends in a condition, retain that qualifier alongside
+## the mechanic rather than turning conditional damage/Block into an unconditional
+## claim. No numbers or effects are reconstructed from the offer's ID.
+func _fit_card_rule(line: String, width: float, font: Font, px: int) -> String:
+	if font == null or _row_width(font, line, px) <= width:
+		return line
+	for marker in [" if ", " when ", " while ", " after ", " unless ", " per "]:
+		var split := line.find(marker)
+		if split > 0:
+			var qualification := line.substr(split)
+			if _row_width(font, qualification, px) < width:
+				var lead := _fit_row_text(line.substr(0, split), width -
+						_row_width(font, qualification, px) -
+						_row_width(font, ELLIPSIS, px), font, px)
+				var result := lead + qualification
+				if _row_width(font, result, px) <= width:
+					return result
+	return _fit_row_text(line, width, font, px)
 
 
 func _patch_caption() -> String:
