@@ -7,6 +7,10 @@ var seen_help_kinds: Dictionary = {}
 ## Kinds whose authored advice was proved by the synthetic mounted Peddler preview instead
 ## of a seeded generated map, kept apart so a real-map omission can never hide there.
 var preview_help_kinds: Dictionary = {}
+## Genuine seeded coverage below: authored Shop markers rendered as Peddler, and whether a
+## currently legal Shop was admitted through the mounted atlas. Both fail closed if absent.
+var seeded_shop_markers := 0
+var seeded_legal_shop := false
 ## The committed sewn tokens, written out independently of the view's own table so
 ## this regression cannot silently inherit an omission from the implementation.
 const TOKEN_PATHS := {
@@ -173,11 +177,24 @@ const EXPECTED_HELP := {
 		"tooltip": "Terminal floor-12 fight"},
 }
 
+## Independent presentation oracle: a generated legacy Shop patch shows the shipped
+## Peddler stop; every other authored kind (including a native Peddler) keeps its name.
+func _display_kind(kind: String) -> String:
+	return "Peddler" if kind == "Shop" else kind
+
+
+## Authored guidance kind for one displayed stop: later Rest already speaks Campfire.
+func _help_kind(kind: String) -> String:
+	var shown := _display_kind(kind)
+	return "Campfire" if shown == "Rest" else shown
+
+
 func _hover_text(node: Dictionary, legal: bool = false) -> String:
+	var shown := _display_kind(str(node["type"]))
 	var prefix := "Floor %02d · %s · Branch %d" % [
-		int(node["floor"]), str(node["type"]), int(node["position"]) + 1]
+		int(node["floor"]), shown, int(node["position"]) + 1]
 	if legal:
-		return prefix + " · " + str(EXPECTED_HELP["Campfire" if node.type == "Rest" else str(node.type)]["tooltip"])
+		return prefix + " · " + str(EXPECTED_HELP[_help_kind(str(node["type"]))]["tooltip"])
 	return prefix
 
 
@@ -289,6 +306,20 @@ func _verify_peddler_preview(view: RunRouteAtlas) -> void:
 		and RunRouteAtlas.node_hover_text({"floor": 4, "position": 1, "type": "Unknown"},
 			"", true) == "Floor 04 · Unknown · Branch 2",
 		"an unknown kind still receives no invented Peddler help")
+	# The historical direct Shop rule and token stay intact for other callers; only the
+	# rendered Shop patch projects to the shipped Peddler stop.
+	var shop_record := {"floor": 3, "position": 1, "type": "Shop", "outgoing": []}
+	_check(RunRouteAtlas.stop_consequence("Shop") == EXPECTED_HELP.Shop
+		and RunRouteAtlas.node_token_path("Shop") == TOKEN_PATHS["Shop"],
+		"the direct historical Shop guidance and token path remain available")
+	_check(RunRouteAtlas.display_kind("Shop") == "Peddler"
+		and RunRouteAtlas.display_kind("Peddler") == "Peddler"
+		and RunRouteAtlas.display_kind("Rest") == "Rest"
+		and RunRouteAtlas.display_kind("Campfire") == "Campfire"
+		and RunRouteAtlas.node_hover_text(shop_record, "Shop", true)
+			== "Floor 03 · Peddler · Branch 2 · " + str(EXPECTED_HELP.Peddler.tooltip)
+		and not RunRouteAtlas.node_hover_text(shop_record, "Shop", true).contains("5 cards"),
+		"a rendered Shop record projects to Peddler spelling and Peddler-only advice")
 	# AC3: mount the real preview on the synthetic authored map. The seeded guard map and
 	# its RNG prove the probe changes no model, route or randomness.
 	var token_path: String = TOKEN_PATHS["Peddler"]
@@ -389,6 +420,142 @@ func _verify_peddler_preview(view: RunRouteAtlas) -> void:
 	preview_help_kinds["Peddler"] = true
 
 
+## Bounded deterministic witness for a genuinely generated legal Shop opening. Shop is one
+## authored kind among the seeded normal kinds, so a bounded advancing search is stable and
+## needs no pinned map or absolute catalog count.
+func _opening_shop_fixture() -> Dictionary:
+	for seed_value in range(1, 201):
+		var rng := _rng(seed_value)
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		for id in map.get_legal_choices():
+			if str(map.get_node(id).get("type", "")) == "Shop":
+				return {"map": map, "rng": rng, "id": id, "seed": seed_value}
+	return {}
+
+
+## AC1/AC2/AC3 on a genuine seeded legal Shop patch: the authored Shop record keeps its ID
+## and type, the sewn patch shows Peddler with the Peddler token or coin-purse fallback,
+## hover/ticket promise one purchase from three hero cards or one patch plus Leave, and
+## mouse/keyboard emit the unchanged original ID exactly once without route/RNG change.
+func _exercise_shop_alias(view: RunRouteAtlas) -> void:
+	var fixture := _opening_shop_fixture()
+	_check(not fixture.is_empty(), "bounded seed search finds a genuine legal opening Shop")
+	if fixture.is_empty():
+		return
+	var map: RunMap = fixture["map"]
+	var rng: RandomNumberGenerator = fixture["rng"]
+	var shop_id: String = fixture["id"]
+	var before := _state(map, rng)
+	seed(34721)
+	var expected_global := randi()
+	seed(34721)
+	view.bind_map(map)
+	var marker := view.get_node_or_null("Node_" + shop_id) as PanelContainer
+	_check(marker != null and marker.get_meta("route_id") == shop_id
+		and marker.get_meta("route_kind") == "Shop"
+		and marker.get_meta("display_kind") == "Peddler"
+		and marker.get_meta("route_state") == "legal"
+		and map.get_node(shop_id).get("type") == "Shop",
+		"seeded legal Shop patch keeps its authored ID/type and displays Peddler")
+	_check(_state(map, rng) == before and view._rendered_generation == map.get_generation_revision(),
+		"binding the seeded Shop map changes no route, revision or RNG")
+	if marker == null:
+		view.bind_map(null)
+		return
+	_verify_token_marker(marker, shop_id, view, "seeded legal Shop")
+	var art := marker.get_node_or_null("Art") as RunRouteAtlas.NodeToken
+	var caption := marker.get_node_or_null("Identity") as Label
+	var action := marker.get_node_or_null("Action") as Button
+	var facts: Dictionary = EXPECTED_HELP["Peddler"]
+	var index := view._rendered_shortcuts.find(shop_id)
+	_check(index >= 0 and index < 4 and caption != null
+		and caption.text == "%d Peddler" % (index + 1)
+		and not caption.text.contains("Shop"),
+		"seeded legal Shop patch wears its real shortcut and the Peddler caption")
+	var expected_texture: Texture2D = null
+	if ResourceLoader.exists(TOKEN_PATHS["Peddler"], "Texture2D"):
+		expected_texture = load(TOKEN_PATHS["Peddler"]) as Texture2D
+	_check(art != null and art.token_kind == "Peddler"
+		and str(art.get_meta("art_path")) == TOKEN_PATHS["Peddler"]
+		and art.token_texture == expected_texture
+		and (expected_texture != null
+			or RunRouteAtlas.NodeToken.fallback_plan("Peddler")["emblem"] == "purse"),
+		"seeded Shop patch uses Peddler token art or its drawn coin-purse fallback")
+	_check(marker.tooltip_text == _hover_text(map.get_node(shop_id), true)
+		and marker.tooltip_text.contains("Peddler")
+		and not marker.tooltip_text.contains("Shop")
+		and not marker.tooltip_text.contains("5 cards")
+		and not marker.tooltip_text.contains("removal"),
+		"seeded legal Shop hover names Peddler and never the retired shop")
+	_check(action != null and action.tooltip_text == "Choose " + marker.tooltip_text
+		+ " (key %d)" % (index + 1),
+		"seeded Shop action advertises the Peddler visit and its real key")
+	if action == null:
+		view.bind_map(null)
+		return
+	action.grab_focus()
+	await process_frame
+	var ticket := view.choice_ticket()
+	_check(ticket != null and ticket.route_id == shop_id
+		and ticket.lead_text == "Peddler · " + str(facts["lead"])
+		and ticket.detail_text == str(facts["detail"])
+		and not ticket.lead_text.contains("Browse")
+		and not ticket.detail_text.contains("Remove"),
+		"seeded Shop focus ticket promises three hero cards or one patch, one buy or Leave")
+	# Physical number key, mouse and keyboard activation all emit the original ID once.
+	requests.clear()
+	var down := InputEventKey.new()
+	down.keycode = (KEY_1 + index) as Key
+	down.physical_keycode = down.keycode
+	down.pressed = true
+	root.push_input(down, true)
+	await process_frame
+	var up := InputEventKey.new()
+	up.keycode = down.keycode
+	up.physical_keycode = down.keycode
+	up.pressed = false
+	root.push_input(up, true)
+	await process_frame
+	_check(requests == [shop_id],
+		"seeded Shop number key emits its unchanged original ID exactly once")
+	_check(_state(map, rng) == before, "seeded Shop shortcut spends no route or seeded RNG")
+	requests.clear()
+	await _click_action(action)
+	_check(requests == [shop_id], "seeded Shop mouse click emits the same original ID once")
+	requests.clear()
+	await _key_action(action, KEY_ENTER)
+	_check(requests == [shop_id], "seeded Shop keyboard activation emits the same ID once")
+	_check(_state(map, rng) == before and randi() == expected_global,
+		"all seeded Shop preview inputs leave route, revision and global RNG unchanged")
+	# External progression invalidates the retained Shop callback and stale shortcut.
+	var callback: Callable = Callable()
+	if action.pressed.get_connections().size() > 0:
+		callback = action.pressed.get_connections()[0].callable
+	var prior_route := map.get_route()
+	_check(map.choose_node(shop_id), "seeded Shop is a real legal route step")
+	var advanced := _state(map, rng)
+	requests.clear()
+	root.push_input(down, true)
+	await process_frame
+	root.push_input(up, true)
+	await process_frame
+	_check(requests.is_empty(), "stale seeded Shop shortcut emits nothing after external progression")
+	if callback.is_valid():
+		callback.call()
+	_check(requests.is_empty() and _state(map, rng) == advanced,
+		"retained seeded Shop callback rejects the externally advanced map")
+	view.refresh()
+	_check(not view._rendered_shortcuts.has(shop_id)
+		and map.get_route() == prior_route + [shop_id],
+		"refresh removes the visited Shop shortcut without rewriting its original ID")
+	view.bind_map(null)
+	_check(view.get_child_count() == 0 and _state(map, rng) == advanced,
+		"teardown leaves the externally progressed seeded Shop map untouched")
+	seeded_legal_shop = true
+
+
 # The mounted preview must always show a complete open book: owner art or drawing.
 func _verify_book(view: RunRouteAtlas, label: String) -> void:
 	if view.uses_board_texture():
@@ -441,10 +608,12 @@ func _verify_book(view: RunRouteAtlas, label: String) -> void:
 # same drawn patch emblem, with exact canonical kind and input independent.
 func _verify_token_marker(marker: PanelContainer, id: String, view: RunRouteAtlas,
 		label: String) -> void:
-	var kind: String = marker.get_meta("route_kind")
+	var authored: String = marker.get_meta("route_kind")
+	var kind: String = _display_kind(authored)
 	var art := marker.get_node_or_null("Art") as RunRouteAtlas.NodeToken
 	var caption := marker.get_node_or_null("Identity") as Label
 	_check(art != null and caption != null and art.token_kind == kind
+		and marker.get_meta("display_kind") == kind
 		and art.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 		label + ": sewn emblem and readable kind caption " + id)
 	if art == null:
@@ -510,7 +679,7 @@ func _verify_token_sources(view: RunRouteAtlas, label: String) -> void:
 			var caption := marker.get_node_or_null("Identity") as Label
 			_check(caption != null and caption.get_theme_font_size("font_size") >= 18
 				and _keeps_body_face(caption)
-				and caption.text == (str(shortcut) + " " if shortcut > 0 else "") + kind
+				and caption.text == (str(shortcut) + " " if shortcut > 0 else "") + _display_kind(kind)
 				and not caption.text.contains(id)
 				and not caption.text.contains("f01_n")
 				and caption.get_combined_minimum_size().x <= marker.size.x
@@ -591,18 +760,27 @@ func _verify_choice_ticket(view: RunRouteAtlas, map: RunMap, label: String) -> v
 		return
 	var node := map.get_node(id)
 	var kind := str(node["type"])
-	var fact: Dictionary = EXPECTED_HELP.get("Campfire" if kind == "Rest" else kind, {})
+	var shown := _display_kind(kind)
+	var fact: Dictionary = EXPECTED_HELP.get(_help_kind(kind), {})
 	_check(not fact.is_empty(), label + ": legal kind has independent authored consequence " + kind)
 	if fact.is_empty():
 		return
 	var heading := "%s · FLOOR %02d · BRANCH %d" % [
 		RunRouteAtlas.area_for_floor(int(node["floor"])).to_upper(),
 		int(node["floor"]), int(node["position"]) + 1]
-	_check(ticket.header_text == heading and ticket.lead_text == kind + " · " + str(fact["lead"])
+	_check(ticket.header_text == heading and ticket.lead_text == shown + " · " + str(fact["lead"])
 		and ticket.detail_text == str(fact["detail"])
 		and not ticket.header_text.contains(id) and not ticket.lead_text.contains(id)
 		and not ticket.detail_text.contains(id),
-		label + ": exact area/floor/branch and type-specific honest stop consequence " + kind)
+		label + ": exact area/floor/branch and type-specific honest stop consequence " + shown)
+	if kind == "Shop":
+		_check(shown == "Peddler"
+			and not ticket.lead_text.contains("Browse")
+			and not ticket.detail_text.contains("Remove")
+			and not ticket.detail_text.contains("removal")
+			and not ticket.lead_text.contains("5 cards")
+			and not ticket.detail_text.contains("75 gold"),
+			label + ": legal Shop ticket never advertises the retired five-card shop or removal")
 	var rect := Rect2(ticket.position, ticket.size)
 	var diary := view.get_node_or_null("JourneyJournal") as RunRouteAtlas.JourneyJournal
 	var tab := view.next_area_tab()
@@ -718,7 +896,10 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				label + ": legible sewn tag fully on right page, away from spine " + id)
 			var style := marker.get_theme_stylebox("panel") as StyleBoxFlat
 			var state := "chosen" if map.get_route().has(id) else ("legal" if legal.has(id) else "other")
-			_check(marker.get_meta("route_kind") == all_nodes[id]["type"]
+			var authored := str(all_nodes[id]["type"])
+			var shown := _display_kind(authored)
+			_check(marker.get_meta("route_kind") == authored
+				and marker.get_meta("display_kind") == shown
 				and marker.get_meta("route_state") == state
 				and marker.get_meta("authored_position") == all_nodes[id]["position"]
 				and style.bg_color == _expected_style(state)
@@ -726,10 +907,10 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				and marker is RunRouteAtlas.RouteTag
 				and style.corner_radius_top_left >= 0 and style.corner_radius_top_left <= 8
 				and style.corner_radius_bottom_right <= 8,
-				label + ": angular sewn tag shows exact kind, authored row and state " + id)
+				label + ": angular sewn tag shows exact authored kind, row and state " + id)
 			var identity := marker.get_node("Identity") as Label
 			var number := shortcuts.find(id) + 1
-			var caption := (str(number) + " " if number > 0 else "") + str(all_nodes[id]["type"])
+			var caption := (str(number) + " " if number > 0 else "") + shown
 			_check(identity.text == caption and not identity.text.contains(id)
 				and not identity.text.contains("f0") and not identity.text.contains("f1")
 				and not identity.text.contains("_n")
@@ -743,7 +924,7 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				and not marker.tooltip_text.contains(id)
 				and not marker.tooltip_text.contains("f0") and not marker.tooltip_text.contains("f1")
 				and not marker.tooltip_text.contains("_n"),
-				label + ": sewn hover names the real floor, kind and branch " + id)
+				label + ": sewn hover names the real floor, stop and branch " + id)
 			var action := marker.get_node_or_null("Action") as Button
 			_check((action != null) == legal.has(id),
 				label + ": only currently reachable next floor has Action " + id)
@@ -758,6 +939,24 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 					and not action.tooltip_text.contains("_n")
 					and action.get_meta("route_id") == id,
 					label + ": exact legal Choose hover and real shortcut " + id)
+			if authored == "Shop":
+				seeded_shop_markers += 1
+				var shop_art := marker.get_node_or_null("Art") as RunRouteAtlas.NodeToken
+				_check(shown == "Peddler" and identity.text.ends_with("Peddler")
+					and not identity.text.contains("Shop")
+					and shop_art != null and shop_art.token_kind == "Peddler"
+					and str(shop_art.get_meta("art_path")) == TOKEN_PATHS["Peddler"]
+					and (shop_art.token_texture != null
+						or RunRouteAtlas.NodeToken.fallback_plan("Peddler")["emblem"] == "purse"),
+					label + ": authentic Shop patch shows Peddler and its own token/fallback: " + id)
+				if not legal.has(id):
+					_check(not marker.tooltip_text.contains("gold")
+						and not marker.tooltip_text.contains("price")
+						and not marker.tooltip_text.contains("buy")
+						and not marker.tooltip_text.contains("patch")
+						and not marker.tooltip_text.contains("stock")
+						and not marker.tooltip_text.contains("card"),
+						label + ": future Shop patch reveals no stock, price or purchase: " + id)
 			_verify_token_marker(marker, id, view, label)
 		elif child is RunRouteAtlas.JourneyJournal:
 			journal_count += 1
@@ -1595,6 +1794,8 @@ func _run() -> void:
 	_verify_token_sources(first, "token sources")
 	# AC1/AC2/AC3: Peddler's distinct tag, fallback and one-visit advice, mounted synthetically.
 	_verify_peddler_preview(first)
+	# AC1/AC2/AC3: a genuine seeded legal Shop patch rendered and admitted as Peddler.
+	await _exercise_shop_alias(first)
 
 	for seed_value in [6, 42]:
 		var rng := _rng(seed_value)
@@ -1812,6 +2013,10 @@ func _run() -> void:
 			"real generated legal route or the mounted Peddler preview exposed consequence guidance for " + kind)
 	_check(preview_help_kinds == {"Peddler": true},
 		"only Peddler relies on the synthetic preview; every other kind came from a seeded route")
+	_check(seeded_shop_markers > 0,
+		"seeded generated maps rendered authored Shop patches as the Peddler stop")
+	_check(seeded_legal_shop,
+		"a genuine legal Shop patch was mounted, hovered, ticketed and admitted")
 	for kind in seen_help_kinds:
 		_check(EXPECTED_HELP.has(kind),
 			"every generated route kind was vetted by the independent advice oracle: " + kind)

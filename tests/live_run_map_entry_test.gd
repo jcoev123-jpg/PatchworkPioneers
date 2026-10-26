@@ -14,6 +14,7 @@ const ROUTE_HELP_TOOLTIPS := {
 	"Elite": "On win: 25–35 gold + 2 scraps + patch; choose 1 of 3 cards or skip",
 	"Rest": "One action: heal each hero 30% max HP (torn revives at 1 HP first), upgrade one card, stitch two different-owner cards for 3 scraps, or re-sew an equipped patch for 1 scrap",
 	"Shop": "5 cards + 2 patches; card removal starts at 75 gold, increasing 25 per removal",
+	"Peddler": "Buy one of 3 priced party-hero cards (one per hero) or the one priced patch, one purchase per visit, or leave; actual prices appear on the stock",
 	"Event": "2–3 choices; outcomes revealed on visit, no guaranteed yield",
 	"Treasure": "Treasure stop; no predetermined reward amount is known",
 	"Boss": "Terminal floor-12 fight",
@@ -238,18 +239,20 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 				continue
 			var node: Dictionary = expected_nodes[id]
 			var number := numbered_legal.find(id)
-			var expected_caption := (str(number + 1) + " " if number >= 0 else "") + String(node.type)
+			var shown: String = "Peddler" if String(node.type) == "Shop" else String(node.type)
+			var expected_caption := (str(number + 1) + " " if number >= 0 else "") + shown
 			var identity_label: Label = child.get_node("Identity") as Label
 			_check(identity_label.text == expected_caption
 				and not identity_label.text.contains(id)
 				and child.get_meta("route_id") == id
 				and child.get_meta("route_kind") == String(node.type)
+				and child.get_meta("display_kind") == shown
 				and atlas.get_global_rect().encloses(child.get_global_rect()), "readable mounted identity: " + id)
 			var legal: bool = app.run_map.get_legal_choices().has(id)
 			var hover := "Floor %02d · %s · Branch %d" % [
-				int(node.floor), String(node.type), int(node.position) + 1]
+				int(node.floor), shown, int(node.position) + 1]
 			if legal:
-				hover += " · " + str(ROUTE_HELP_TOOLTIPS[String(node.type)])
+				hover += " · " + str(ROUTE_HELP_TOOLTIPS[shown])
 			_check(child.tooltip_text == hover and not child.tooltip_text.contains(id),
 				"readable sewn route hover: " + id)
 			_check(child.get_meta("route_state") == ("legal" if legal else "other")

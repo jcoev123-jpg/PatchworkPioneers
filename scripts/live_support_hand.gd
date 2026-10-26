@@ -71,6 +71,7 @@ var _energy_cards := CombatPoolEnergyCards.new()
 var _tinker_gadgets := CombatTinkerPoolGadgets.new()
 var _heal_cards := CombatSeamstressPoolHeals.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
+var _feint := CombatRagDuelistFeintCards.new()
 var _re_stuff := CombatScarecrowReStuffCards.new()
 var cleanse_choices: HBoxContainer
 var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
@@ -482,6 +483,16 @@ func _on_help_input(event: InputEvent) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if not _pending.is_empty() and _feint.is_supported_card(_pending.id) \
+			and _pending.get("choosing", false) and event is InputEventKey and event.pressed and not event.echo:
+		var slot: int = [KEY_1, KEY_2, KEY_3].find(event.keycode) + 1
+		if slot > 0:
+			for panel in _targets:
+				if _targets[panel].position == slot:
+					_queue_feint_target(panel, slot, _token)
+					break
+			get_viewport().set_input_as_handled()
+			return
 	if event is InputEventKey and event.pressed and not event.echo \
 			and is_instance_valid(help_disclosure) and is_instance_valid(_battle) \
 			and _battle.is_visible_in_tree():
@@ -505,7 +516,7 @@ func _input(event: InputEvent) -> void:
 			_cancel_pending()
 			return
 		_pending.panel.set_meta("aiming", false)
-		if _pending.id in ALLY_IDS:
+		if _pending.id in ALLY_IDS or _feint.is_supported_card(_pending.id):
 			if not _pending.get("choosing", false):
 				_choose_target()
 			if event.position.distance_to(_drag_origin) > 10:
@@ -592,6 +603,8 @@ func _path_discount(card_id: String) -> int:
 
 
 func _is_actionable(card_id: String) -> bool:
+	if _feint.is_supported_card(card_id):
+		return true
 	if _re_stuff.is_supported_card(card_id):
 		return true
 	if _cleansing.is_supported_card(card_id):
@@ -837,6 +850,8 @@ func _sync_battle() -> void:
 	var help_text: String = TABLE_HELP
 	if choosing:
 		help_text = "%s: choose a living ally | Esc: cancel" % _metadata.definition(_pending.id).get("display_name", _pending.id)
+		if _feint.is_supported_card(_pending.id):
+			help_text = "%s: choose a living enemy (1-3) | Esc: cancel" % _metadata.definition(_pending.id).display_name
 		if _cleansing.is_supported_card(_pending.id):
 			help_text = "%s: 1 energy; heal %d; %s | Esc: cancel" % [_metadata.definition(_pending.id).display_name,
 				_metadata.definition(_pending.id).effects.heal,
@@ -885,7 +900,7 @@ func _sync_battle() -> void:
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_card_input.bind(panel, label.text, _deck, _party, _battle)
 		_bindings[panel] = callback
-		if label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text):
+		if label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _feint.is_supported_card(label.text):
 			_move_context[panel] = _current_move_context(panel)
 		panel.gui_input.connect(callback)
 	# Keep the existing End/Return Tab cycle; Up enters the card row, Down exits it.
@@ -1076,6 +1091,19 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 		return false
 	if not panel.is_visible_in_tree() or not battle.is_visible_in_tree() or panel.get_parent() != app.hand_view:
 		return false
+	if _feint.is_supported_card(card_id):
+		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
+				or _move_context.get(panel, []) != _current_move_context(panel):
+			return false
+		if app._battle_closed or app.battle_result == null or not app.battle_result.can_continue() \
+				or app.battle_result._party != party or app.battle_result._enemies != app.enemies:
+			return false
+		var legal := false
+		for slot in [1, 2, 3]:
+			if _feint._prepare(deck, party, app.enemies, card_id, slot).get("ok", false):
+				legal = true
+		if not legal:
+			return false
 	if _re_stuff.is_supported_card(card_id):
 		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
 				or _move_context.get(panel, []) != _current_move_context(panel):
@@ -1148,7 +1176,7 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		_dragging = true
 		_drag_origin = panel.get_global_transform() * event.position
 	# Ally selection can arm immediately; target-free mouse casts wait for release.
-	if accept or card_id in ALLY_IDS:
+	if accept or card_id in ALLY_IDS or _feint.is_supported_card(card_id):
 		_activate.call_deferred(panel, card_id, deck, party, battle, _token)
 
 
@@ -1161,7 +1189,7 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 	if card_id in SPARE_PARTS_IDS and not _selection_valid():
 		_cancel_pending()
 		return
-	if card_id in ALLY_IDS:
+	if card_id in ALLY_IDS or _feint.is_supported_card(card_id):
 		if _pending.get("choosing", false):
 			return
 		if _selection_valid():
@@ -1225,22 +1253,51 @@ func _selection_valid() -> bool:
 	return false
 
 
+func _enemy_selection() -> bool:
+	return not _pending.is_empty() and _feint.is_supported_card(_pending.id)
+
+
+func _target_panels() -> Array:
+	return get_parent().get_node("LiveEnemyRoster")._labels if _enemy_selection() else get_parent().hero_panels
+
+
+func _target_actor(position: int) -> Dictionary:
+	return get_parent().enemies.get_enemy(position) if _enemy_selection() else _party.get_hero(position)
+
+
+func _queue_feint_target(panel, position: int, token: int) -> void:
+	if token != _token or not _enemy_selection() or _pending.get("queued", false) or not _targets.has(panel):
+		return
+	if not _selection_valid() or not _targets_valid():
+		_cancel_pending()
+		return
+	if not panel.is_visible_in_tree():
+		return
+	_pending.queued = true
+	_pending.target = {"position": position, "hero_id": _targets[panel].hero_id}
+	_resolve_target.call_deferred(position, token)
+
+
 func _choose_target() -> void:
 	_help_slot.hide()
 	_pending.choosing = true
 	cancel_button.show()
 	var panels: Array[Control] = []
 	var app = get_parent()
-	for index in range(app.hero_panels.size()):
-		var panel: Control = app.hero_panels[index]
-		if _party.is_downed(index + 1):
+	for index in range(_target_panels().size()):
+		var panel: Control = _target_panels()[index]
+		if (_enemy_selection() and not _feint._prepare(_deck, _party, app.enemies, _pending.id, index + 1).get("ok", false)) or (not _enemy_selection() and _party.is_downed(index + 1)):
 			continue
 		panels.append(panel)
 		panel.focus_mode = Control.FOCUS_ALL
 		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		panel.get_child(0).mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if not _enemy_selection():
+			panel.get_child(0).mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var previous_filter: int = panel.mouse_filter
+		if _enemy_selection():
+			panel.mouse_filter = Control.MOUSE_FILTER_STOP
 		var cue := Label.new()
-		cue.text = "Choose ally"
+		cue.text = "Choose enemy (%d)" % (index + 1) if _enemy_selection() else "Choose ally"
 		# A caption above the existing actor never expands or overprints its state.
 		cue.top_level = true
 		cue.add_theme_font_size_override("font_size", 12)
@@ -1254,7 +1311,8 @@ func _choose_target() -> void:
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_target_input.bind(panel, index + 1, _token)
 		_targets[panel] = {"callback": callback, "cue": cue,
-			"position": index + 1, "hero_id": _party.get_hero(index + 1).id}
+			"position": index + 1, "hero_id": _target_actor(index + 1).id,
+			"mouse_filter": previous_filter}
 		panel.gui_input.connect(callback)
 	for index in range(panels.size()):
 		var panel := panels[index]
@@ -1269,9 +1327,9 @@ func _choose_target() -> void:
 func _targets_valid() -> bool:
 	for panel in _targets:
 		var target: Dictionary = _targets[panel]
-		if not is_instance_valid(panel) or get_parent().hero_panels.find(panel) + 1 != target.position:
+		if not is_instance_valid(panel) or _target_panels().find(panel) + 1 != target.position:
 			return false
-		var hero := _party.get_hero(target.position)
+		var hero := _target_actor(target.position)
 		if hero.get("id") != target.hero_id or hero.get("hp", 0) <= 0:
 			return false
 	return true
@@ -1283,7 +1341,14 @@ func _on_target_input(event: InputEvent, panel, position: int, token: int) -> vo
 	if not _selection_valid() or not _targets_valid():
 		_cancel_pending()
 		return
-	if get_parent().hero_panels.find(panel) + 1 != position:
+	if _target_panels().find(panel) + 1 != position:
+		return
+	if _enemy_selection():
+		var enemy_click: bool = event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed
+		var enemy_accept: bool = event is InputEventKey and panel.has_focus() and event.is_action_pressed("ui_accept") and not event.echo
+		if panel.is_visible_in_tree() and (enemy_click or enemy_accept):
+			panel.accept_event()
+			_queue_feint_target(panel, position, token)
 		return
 	if _pending.get("queued", false) or not panel.is_visible_in_tree() or _party.is_downed(position):
 		return
@@ -1336,10 +1401,22 @@ func _resolve_target(position: int, token: int) -> void:
 		return
 	if not _selection_valid() or not _targets_valid() \
 		or _pending.target.position != position \
-		or _party.get_hero(position).get("id") != _pending.target.hero_id:
+		or _target_actor(position).get("id") != _pending.target.hero_id:
 		_cancel_pending()
 		return
 	var id: String = _pending.id
+	if _enemy_selection():
+		var app = get_parent()
+		if not _feint._prepare(_deck, _party, app.enemies, id, position).get("ok", false):
+			_cancel_pending()
+			return
+		_cancel_pending()
+		if _feint.play_card(_deck, _party, app.enemies, id, position).get("ok", false):
+			app._refresh_enemy_roster()
+			app._refresh_hand()
+			_sync_battle()
+			app.end_turn_button.grab_focus()
+		return
 	var debuff: String = _pending.get("debuff", "")
 	if _cleansing.is_supported_card(id) and not _cleansing._prepare(_deck, _party, id, position, debuff).get("ok", false):
 		_cancel_pending()
@@ -1376,6 +1453,7 @@ func _cancel_pending() -> void:
 				panel.release_focus()
 			panel.focus_mode = Control.FOCUS_NONE
 			panel.mouse_default_cursor_shape = Control.CURSOR_ARROW
+			panel.mouse_filter = _targets[panel].mouse_filter
 			panel.focus_next = NodePath()
 			panel.focus_previous = NodePath()
 			panel.focus_neighbor_bottom = NodePath()

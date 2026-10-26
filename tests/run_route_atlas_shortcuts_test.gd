@@ -7,6 +7,8 @@ var requests: Array[String] = []
 ## legal hover cannot be derived from the branch number. At least one must be checked.
 var shifted_branch_states := 0
 var distinct_kind_switches := 0
+## A genuine seeded legal Shop patch was mounted and admitted as the Peddler stop.
+var seeded_legal_shop := false
 const NUMBER_KEYS: Array[Key] = [KEY_1, KEY_2, KEY_3, KEY_4]
 
 
@@ -105,6 +107,9 @@ const EXPECTED_HELP := {
 	"Shop": {"lead": "Browse 5 cards + 2 patches",
 		"detail": "Remove card: 75 gold initially, +25 each time",
 		"tooltip": "5 cards + 2 patches; card removal starts at 75 gold, increasing 25 per removal"},
+	"Peddler": {"lead": "Choose one: buy 1 of 3 hero cards or 1 patch",
+		"detail": "All 4 priced on the stock; one purchase, or leave",
+		"tooltip": "Buy one of 3 priced party-hero cards (one per hero) or the one priced patch, one purchase per visit, or leave; actual prices appear on the stock"},
 	"Event": {"lead": "2–3 choices when visited",
 		"detail": "Outcomes shown on arrival; no guaranteed yield",
 		"tooltip": "2–3 choices; outcomes revealed on visit, no guaranteed yield"},
@@ -116,11 +121,24 @@ const EXPECTED_HELP := {
 		"tooltip": "Terminal floor-12 fight"},
 }
 
+## Independent presentation oracle: a generated legacy Shop patch shows the shipped
+## Peddler stop; every other authored kind (including a native Peddler) keeps its name.
+func _display_kind(kind: String) -> String:
+	return "Peddler" if kind == "Shop" else kind
+
+
+## Authored guidance kind for one displayed stop: later Rest already speaks Campfire.
+func _help_kind(kind: String) -> String:
+	var shown := _display_kind(kind)
+	return "Campfire" if shown == "Rest" else shown
+
+
 func _hover_text(node: Dictionary, legal: bool = false) -> String:
+	var shown := _display_kind(str(node["type"]))
 	var prefix := "Floor %02d · %s · Branch %d" % [
-		int(node["floor"]), str(node["type"]), int(node["position"]) + 1]
+		int(node["floor"]), shown, int(node["position"]) + 1]
 	if legal:
-		return prefix + " · " + str(EXPECTED_HELP["Campfire" if node.type == "Rest" and node.floor == 1 else str(node.type)]["tooltip"])
+		return prefix + " · " + str(EXPECTED_HELP[_help_kind(str(node["type"]))]["tooltip"])
 	return prefix
 
 
@@ -160,11 +178,12 @@ func _verify_labels(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator
 		var identity := marker.get_node("Identity") as Label
 		var action := marker.get_node_or_null("Action") as Button
 		var index := ordered.find(id)
-		var expected_caption := (str(index + 1) + " " if index >= 0 else "") + String(expected[id]["type"])
+		var shown := _display_kind(String(expected[id]["type"]))
+		var expected_caption := (str(index + 1) + " " if index >= 0 else "") + shown
 		_check(identity.text == expected_caption and not identity.text.contains(id)
 			and identity.get_combined_minimum_size().x <= marker.size.x
 			and identity.get_combined_minimum_size().y <= marker.size.y,
-			where + ": next-floor number and kind fit round patch " + id)
+			where + ": next-floor number and stop name fit round patch " + id)
 		_check(marker.get_meta("route_state") == ("legal" if index >= 0 else
 			("chosen" if map.get_route().has(id) else "other")),
 			where + ": exact actual legal/chosen/inactive state " + id)
@@ -186,7 +205,7 @@ func _verify_labels(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator
 			if index != int(expected[id]["position"]):
 				shifted_branch_states += 1
 		else:
-			_check(action == null and identity.text == String(expected[id]["type"]),
+			_check(action == null and identity.text == shown,
 				where + ": future and current patches cannot request a choice " + id)
 	_check(view._legal_actions.size() == ordered.size()
 		and view._actions_by_id.size() == ordered.size(),
@@ -270,7 +289,8 @@ func _assert_ticket(view: RunRouteAtlas, map: RunMap, id: String, where: String)
 		return
 	var record := map.get_node(id)
 	var kind := str(record["type"])
-	var facts: Dictionary = EXPECTED_HELP.get("Campfire" if kind == "Rest" and record.floor == 1 else kind, {})
+	var shown := _display_kind(kind)
+	var facts: Dictionary = EXPECTED_HELP.get(_help_kind(kind), {})
 	_check(not facts.is_empty(), where + ": legal kind is authored")
 	if facts.is_empty():
 		return
@@ -278,13 +298,21 @@ func _assert_ticket(view: RunRouteAtlas, map: RunMap, id: String, where: String)
 		and ticket.header_text == "%s · FLOOR %02d · BRANCH %d" % [
 			RunRouteAtlas.area_for_floor(int(record["floor"])).to_upper(),
 			int(record["floor"]), int(record["position"]) + 1]
-		and ticket.lead_text == kind + " · " + str(facts["lead"])
+		and ticket.lead_text == shown + " · " + str(facts["lead"])
 		and ticket.detail_text == str(facts["detail"])
 		and not ticket.header_text.contains(id) and not ticket.lead_text.contains(id)
 		and ticket.visible and ticket.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and ticket.focus_mode == Control.FOCUS_NONE
 		and RunRouteAtlas.ChoiceTicket.FONT_SIZE >= 18,
 		where + ": exact real choice area, branch and truthful consequence with no raw ID")
+	if kind == "Shop":
+		_check(shown == "Peddler"
+			and not ticket.lead_text.contains("Browse")
+			and not ticket.detail_text.contains("Remove")
+			and not ticket.detail_text.contains("removal")
+			and not ticket.lead_text.contains("5 cards")
+			and not ticket.detail_text.contains("75 gold"),
+			where + ": legal Shop ticket never advertises the retired five-card shop or removal")
 
 
 ## Actual mouse motion selects a different legal kind without any map transaction.
@@ -478,6 +506,113 @@ func _assert_mouse_action(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGen
 		await process_frame
 	_check(requests == [id], where + ": mouse click presses original legal node once")
 	_check(_state(map, rng) == before, where + ": mouse request is presentation-only")
+
+
+## Bounded deterministic witness for a genuinely generated legal Shop opening.
+func _opening_shop_fixture() -> Dictionary:
+	for seed_value in range(1, 201):
+		var rng := _rng(seed_value)
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		for id in map.get_legal_choices():
+			if str(map.get_node(id).get("type", "")) == "Shop":
+				return {"map": map, "rng": rng, "id": id}
+	return {}
+
+
+## AC2/AC3: a genuine legal Shop patch is presented as the Peddler stop and keeps the
+## physical shortcut, click and focus paths, while its original ID is emitted once and
+## stale/replayed controls stay inert.
+func _exercise_shop_alias(view: RunRouteAtlas) -> void:
+	var fixture := _opening_shop_fixture()
+	_check(not fixture.is_empty(), "bounded seed search finds a genuine legal opening Shop")
+	if fixture.is_empty():
+		return
+	var map: RunMap = fixture["map"]
+	var rng: RandomNumberGenerator = fixture["rng"]
+	var shop_id: String = fixture["id"]
+	view.bind_map(map)
+	var ordered := _verify_labels(view, map, rng, "seeded legal Shop opening")
+	_check(ordered.has(shop_id), "legal Shop keeps its authored-position shortcut slot")
+	if not ordered.has(shop_id):
+		return
+	var index := ordered.find(shop_id)
+	var marker := _marker(view, shop_id)
+	var identity := marker.get_node("Identity") as Label
+	var art := marker.get_node_or_null("Art") as RunRouteAtlas.NodeToken
+	var record := map.get_node(shop_id)
+	_check(marker.get_meta("route_kind") == "Shop"
+		and marker.get_meta("display_kind") == "Peddler"
+		and record.get("type") == "Shop"
+		and identity.text == "%d Peddler" % (index + 1)
+		and not identity.text.contains("Shop"),
+		"seeded legal Shop patch keeps its authored type/ID and shows Peddler")
+	var expected_texture: Texture2D = null
+	var peddler_path := "res://assets/paper/ui/map_node_peddler.png"
+	if ResourceLoader.exists(peddler_path, "Texture2D"):
+		expected_texture = load(peddler_path) as Texture2D
+	_check(art != null and art.token_kind == "Peddler"
+		and str(art.get_meta("art_path")) == peddler_path
+		and art.token_texture == expected_texture
+		and (expected_texture != null
+			or RunRouteAtlas.NodeToken.fallback_plan("Peddler")["emblem"] == "purse"),
+		"seeded Shop patch uses Peddler token art or its coin-purse fallback")
+	_check(marker.tooltip_text == _hover_text(record, true)
+		and marker.tooltip_text.contains("Peddler")
+		and not marker.tooltip_text.contains("Shop")
+		and not marker.tooltip_text.contains("5 cards")
+		and not marker.tooltip_text.contains("removal"),
+		"seeded legal Shop hover names Peddler and never the retired shop")
+	_action(view, shop_id).grab_focus()
+	_assert_ticket(view, map, shop_id, "seeded legal Shop focus")
+	# A future Shop beyond the legal window shows identity only, never offers or prices.
+	var future_shops := 0
+	for floor_nodes in map.get_floors():
+		for node in floor_nodes:
+			if node.type != "Shop" or map.get_legal_choices().has(node.id):
+				continue
+			var future := _marker(view, node.id)
+			if future == null:
+				continue
+			future_shops += 1
+			_check(future.tooltip_text == _hover_text(node, false)
+				and not future.tooltip_text.contains("gold")
+				and not future.tooltip_text.contains("price")
+				and not future.tooltip_text.contains("buy")
+				and not future.tooltip_text.contains("patch")
+				and not future.tooltip_text.contains("stock")
+				and not future.tooltip_text.contains("card")
+				and future.get_node_or_null("Action") == null,
+				"future Shop patch reveals no stock, price or purchase: " + node.id)
+	_check(future_shops > 0, "seeded atlas exercises nonlegal future Shop identity")
+	await _assert_key(view, map, rng, NUMBER_KEYS[index], shop_id,
+		"seeded Shop physical shortcut")
+	await _assert_mouse_action(view, map, rng, shop_id, "seeded Shop mouse")
+	_action(view, shop_id).grab_focus()
+	await _assert_activate_focus(view, map, rng, KEY_ENTER, shop_id,
+		"seeded Shop focused Enter")
+	# External progression invalidates the retained Shop action and shortcut.
+	var action := _action(view, shop_id)
+	var callback: Callable = action.pressed.get_connections()[0].callable
+	var prior := map.get_route()
+	_check(map.choose_node(shop_id), "seeded Shop is a real legal route step")
+	var advanced := _state(map, rng)
+	await _assert_key(view, map, rng, NUMBER_KEYS[index], "",
+		"stale seeded Shop shortcut")
+	requests.clear()
+	callback.call()
+	_check(requests.is_empty() and _state(map, rng) == advanced,
+		"retained seeded Shop callback rejects the externally advanced map")
+	view.refresh()
+	_check(map.get_route() == prior + [shop_id]
+		and not view._rendered_shortcuts.has(shop_id)
+		and view.get_node_or_null("Node_" + shop_id) != null,
+		"refresh shows the visited Shop as a committed patch without its request")
+	view.bind_map(null)
+	_check(view.get_child_count() == 0 and _state(map, rng) == advanced,
+		"seeded Shop teardown leaves the original progressed map untouched")
+	seeded_legal_shop = true
 
 
 func _run() -> void:
@@ -700,7 +835,11 @@ func _run() -> void:
 		await _assert_key(view, map, identical_rng, KEY_1, "", "null after completion")
 		_check(_state(map, identical_rng) == finished, "null binding leaves former map unchanged")
 
+	# AC2/AC3: a genuine legal Shop patch presented and admitted as the Peddler stop.
+	await _exercise_shop_alias(view)
+
 	_check(saw_narrow, "at least one real connected state offers fewer than four destinations")
+	_check(seeded_legal_shop, "a genuine legal Shop patch was mounted and admitted as Peddler")
 	_check(distinct_kind_switches > 0, "real mouse/focus switches across distinct legal authored kinds")
 	_check(shifted_branch_states >= 1,
 		"real legal hover was checked where the shortcut differs from branch + 1 (%d states)" % shifted_branch_states)
