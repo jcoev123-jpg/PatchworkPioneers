@@ -1585,7 +1585,19 @@ func _test_real_mounted_hand() -> void:
 	await _frames()
 
 	_check(app.party.get_hero(2).hp == seamstress_hp_before_next - 1, "AC3: following turn has NO redirect (Seamstress took damage)")
-	_check(app.enemies.get_enemy(1).hp == e1_hp_before_next, "AC3: following turn has NO retaliation (Enemy 1 took no damage)")
+	# The attacking ordinary floor-band actor may author Drain (the shipped Thread
+	# Biter now does): the only HP it may regain is the HP its own bite really
+	# removed, capped at its missing HP. A leaked Thorns retaliation would still
+	# lower its HP and fail this exact expectation.
+	var next_attacker: Dictionary = app.enemies.get_enemy(1)
+	var next_drains: bool = next_attacker.get("drain") is bool \
+		and next_attacker.get("drain") == true
+	var next_missing: int = int(next_attacker.max_hp) - e1_hp_before_next
+	var next_hero_loss: int = seamstress_hp_before_next - int(app.party.get_hero(2).hp)
+	var expected_next_hp: int = e1_hp_before_next + (
+		mini(next_hero_loss, next_missing) if next_drains else 0)
+	_check(int(app.enemies.get_enemy(1).hp) == expected_next_hp,
+		"AC3: following turn has NO retaliation; only an authored Drain bite restores HP")
 
 	await _return_to_title(app)
 	app.run_seed = 123
