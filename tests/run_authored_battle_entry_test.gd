@@ -128,6 +128,7 @@ func _initialize() -> void:
     _test_twelve_floor_elite_boss_replay()
     _test_atomic_rejection_and_retry()
     _test_floor_band_groups_across_floors()
+    _test_new_tough_normals_in_real_fights()
     _test_stale_cached_group_rejection()
     _test_injected_band_pool_rejection()
     _test_wrong_selector_binding()
@@ -1723,6 +1724,110 @@ func _test_floor_band_groups_across_floors() -> void:
     if covered.size() == BAND_KEYS.size():
         _check(covered["1-4"] != covered["9-11"],
             "the low and high floor bands admit different authored actors")
+
+
+## The first announced beat of a parsed positional schedule, in source order.
+func _first_schedule_beat(definitions: Array) -> Array:
+    var beat: Array = []
+    for definition in definitions:
+        if not definition is Dictionary:
+            return []
+        var pattern: Variant = definition.get("pattern")
+        if not pattern is Array or pattern.is_empty():
+            return []
+        var action: Dictionary = pattern[0].duplicate(true)
+        action["enemy_position"] = int(definition.get("enemy_position", 0))
+        beat.append(action)
+    return beat
+
+
+## AC1/AC3: the two newly shipped tougher normals are admitted by real seeded
+## floor-band Fights. Each ID is witnessed through genuine generated routes, and
+## the mounted group, actor identity, announced schedule and RNG must match the
+## separate encounter + band oracle derived from the shipped catalogs.
+func _test_new_tough_normals_in_real_fights() -> void:
+    var material := RunAuthoredBattleEntry._floor_band_material(null)
+    _check(material.get("ok") == true and material.get("pools") is Dictionary
+        and material.get("records") is Dictionary,
+        "the live entry service derives its floor-band material from shipped catalogs")
+    if not material.get("ok", false):
+        return
+    var wanted := ["spindle_ram", "razor_ribbon_wraith"]
+    for id in wanted:
+        var band := ""
+        for key in BAND_KEYS:
+            if material["pools"].get(key, []).has(id):
+                band = key
+        _check(not band.is_empty(),
+            "the live HP-sorted bands make %s eligible for an ordinary Fight" % id)
+        _check(material["records"].has(id),
+            "the live entry records carry the authored actor %s" % id)
+    var found := {}
+    for value in range(1, 801):
+        if found.size() == wanted.size():
+            break
+        var rng := _rng(value)
+        var map := RunMap.new()
+        if not map.generate(rng):
+            continue
+        # Choice never draws, so the oracle starts from the post-generation state.
+        var oracle := RandomNumberGenerator.new()
+        oracle.state = rng.state
+        var selector := RunFightEncounterSelection.new()
+        var entered := {}
+        var floor_number := 0
+        var expected := {}
+        while true:
+            var legal := map.get_legal_choices()
+            if legal.is_empty():
+                break
+            var chosen: String = legal[0]
+            for candidate in legal:
+                var candidate_node: Dictionary = map.get_node(candidate)
+                if candidate_node.get("type") == "Fight" \
+                        and int(candidate_node.get("floor", 0)) >= 9:
+                    chosen = candidate
+                    break
+            if not map.choose_node(chosen):
+                break
+            var node: Dictionary = map.get_node(chosen)
+            floor_number = int(node.get("floor", 0))
+            if node.get("type") == "Fight" and floor_number >= 9 and floor_number <= 11:
+                expected = _oracle_fight(oracle, floor_number, _registry()["Fight"].keys())
+                entered = RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
+                break
+        if expected.is_empty() or not entered.get("success", false):
+            continue
+        var group: Array = entered["enemies"].get_enemies().map(
+            func(enemy): return enemy["id"])
+        _check(group == expected["group"] and rng.state == oracle.state,
+            "real seed %d floor %d group matches the independent encounter + band oracle"
+                % [value, floor_number])
+        for id in wanted:
+            if found.has(id) or not group.has(id):
+                continue
+            found[id] = true
+            var slot: int = group.find(id) + 1
+            var actors: Array = entered["enemies"].get_enemies()
+            var authored := _group_actor(id)
+            _check(slot >= 1 and slot <= actors.size()
+                and actors[slot - 1].get("id") == id
+                and actors[slot - 1].get("name") == authored.get("name")
+                and actors[slot - 1].get("max_hp") == int(authored["max_hp"])
+                and actors[slot - 1].get("hp") == int(authored["max_hp"])
+                and actors[slot - 1].get("block") == 0
+                and actors[slot - 1].get("art_path") == authored.get("art_path"),
+                "real seed %d mounts %s with its exact authored identity and fresh state"
+                    % [value, id])
+            _check(entered["intents"].is_valid()
+                and entered["intents"].get_intents() == _first_schedule_beat(
+                    entered["definitions"]),
+                "real seed %d reuses the declared schedule beside %s" % [value, id])
+            _check(_floor_bands()[_band_key(floor_number)].has(id),
+                "real seed %d drew %s from the floor's own HP-sorted band"
+                    % [value, id])
+    for id in wanted:
+        _check(found.has(id), "a genuine seeded route admits live normal " + id)
 
 
 ## AC1: inspect per-ID Elite bindings, schedules and four-catalog enemy records

@@ -17,6 +17,8 @@ func _initialize() -> void:
 	_test_harder_normal_seeded_announcements()
 	_test_harder_normal_phase_actions()
 	_test_needle_wasp_bleeding_sting()
+	_test_tough_normal_pair_live_catalog_and_bands()
+	_test_tough_normal_pair_phase_actions()
 	_test_negative_fixtures()
 	if failures.is_empty():
 		print("v3_normal_enemy_catalog_test: PASS (", checks, " checks)")
@@ -1525,3 +1527,318 @@ func _test_needle_wasp_bleeding_sting() -> void:
 			"AC4: an identical seeded sting reproduces actors, statuses and receipts")
 		_check(replay_one.rng.state == replay_two.rng.state,
 			"AC4: an identical seeded sting leaves matching RNG state")
+
+## The two harder normals shipped into the live catalog by this batch, exactly as
+## their accepted authoring source records them.
+func _tough_pair_expected() -> Dictionary:
+	return {
+		"spindle_ram": {"id": "spindle_ram", "name": "Spindle Ram", "max_hp": 30,
+			"art_path": "res://assets/paper/enemies/spindle_ram.png",
+			"intent": {"target": "front", "actions": [
+				{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+				{"type": "block", "amount": 7, "weight": 2},
+				{"type": "attack", "amount": 8, "weight": 3}]}},
+		"razor_ribbon_wraith": {"id": "razor_ribbon_wraith", "name": "Razor Ribbon Wraith",
+			"max_hp": 27, "art_path": "res://assets/paper/enemies/razor_ribbon_wraith.png",
+			"intent": {"target": "lowest_living_hp", "actions": [
+				{"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
+				{"type": "debuff", "status": "exposed", "amount": 1, "weight": 1},
+				{"type": "attack", "amount": 9, "weight": 3}]}}
+	}
+
+## The live band that owns an ID, derived from the validated pools rather than a
+## fixed slot or position.
+func _band_containing(pools: Dictionary, id: String) -> String:
+	for band in RunV3FloorBandRoster.BAND_KEYS:
+		if pools.get(band, []).has(id):
+			return band
+	return ""
+
+func _floor_in_band(band: String) -> int:
+	if band == RunV3FloorBandRoster.BAND_LOW:
+		return 2
+	if band == RunV3FloorBandRoster.BAND_MID:
+		return 6
+	if band == RunV3FloorBandRoster.BAND_HIGH:
+		return 10
+	return 0
+
+## Independent oracle for one sampled group: sorted band candidates, then one
+## shrinking-array draw per requested actor on the supplied generator.
+func _sampled_band_group(pools: Dictionary, band: String, count: int,
+		rng: RandomNumberGenerator) -> Array:
+	var remaining: Array = pools.get(band, []).duplicate()
+	remaining.sort()
+	var group: Array = []
+	for _draw in range(count):
+		if remaining.is_empty():
+			return []
+		var index: int = rng.randi_range(0, remaining.size() - 1)
+		group.append(remaining[index])
+		remaining.remove_at(index)
+	return group
+
+## AC1/AC3: both accepted records ship in the live normal catalog, survive the
+## real HP-sorted band admission, and replay through deterministic sampled groups.
+func _test_tough_normal_pair_live_catalog_and_bands() -> void:
+	var parsed := _load_parsed()
+	var expected := _tough_pair_expected()
+	var ids: Array[String] = []
+	for record in parsed:
+		if record is Dictionary:
+			ids.append(String(record.get("id", "")))
+	var source := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/v3_tough_normals.json"))
+	_check(not source.is_empty(), "the authored tough-normal source still parses")
+	for id in expected:
+		var occurrences := 0
+		for present in ids:
+			if present == String(id):
+				occurrences += 1
+		_check(occurrences == 1, "shipped harder normal is authored exactly once: " + String(id))
+		var live := _find(parsed, String(id))
+		_check(not live.is_empty(), "shipped harder normal record present: " + String(id))
+		if live.is_empty():
+			continue
+		_check(_norm(live) == _norm(expected[id]),
+			"shipped harder normal has its exact authored fields: " + String(id))
+		_check(_norm(live) == _norm(_find(source, String(id))),
+			"shipped harder normal is field-equivalent to its authored source: " + String(id))
+		_check(live.get("max_hp") is int,
+			"shipped harder normal max_hp is a genuine int: " + String(id))
+		var spec: Variant = live.get("intent")
+		_check(spec is Dictionary and spec.get("target") == expected[id]["intent"]["target"],
+			"shipped harder normal keeps its authored target policy: " + String(id))
+		var slot := CombatEnemyIntents._weighted_slot(1, spec)
+		_check(not slot.is_empty(),
+			"shipped harder normal intent validates as a weighted slot: " + String(id))
+		var actions: Array = slot.get("actions", [])
+		_check(actions.size() == 3,
+			"shipped harder normal authors exactly its three alternatives: " + String(id))
+		for entry in actions:
+			_check(int(entry.get("weight", 0)) > 0,
+				"shipped harder normal alternative has a positive weight: " + String(id))
+	# Earlier named records survive the append.
+	for earlier in ["fray_scavenger", "scissor_crab", "pincushion_hedgehog", "needle_wasp"]:
+		_check(ids.has(earlier) and not _find(parsed, earlier).is_empty(),
+			"earlier normal survives the append: " + earlier)
+	# The real entry service derives the ordinary Fight records and the three
+	# contiguous HP-sorted bands from the shipped normal catalogs.
+	var material := RunAuthoredBattleEntry._floor_band_material(null)
+	_check(material.get("ok") == true, "live floor-band material builds from shipped catalogs")
+	if not material.get("ok", false):
+		return
+	var records: Dictionary = material.get("records", {})
+	var pools: Dictionary = material.get("pools", {})
+	_check(not records.is_empty() and pools.size() == RunV3FloorBandRoster.BAND_KEYS.size(),
+		"live material carries ordinary Fight records and all three floor bands")
+	var elite := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/m04_elites.json"))
+	var boss := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/boss.json"))
+	_check(not elite.is_empty() and not boss.is_empty(),
+		"the Elite and Boss catalogs still parse beside the appended normals")
+	for id in expected:
+		_check(records.has(String(id)), "live Fight records contain " + String(id))
+		var band := _band_containing(pools, String(id))
+		_check(not band.is_empty(), "new normal is eligible in a derived floor band: " + String(id))
+		if band.is_empty():
+			continue
+		_check(pools[band].has(String(id)) and records[String(id)].get("max_hp")
+			== expected[id]["max_hp"],
+			"new normal sits in the band its authored HP sorted into: " + String(id))
+		_check(_find(elite, String(id)).is_empty() and _find(boss, String(id)).is_empty(),
+			"new normal never enters an Elite or Boss roster: " + String(id))
+		var floor_number := _floor_in_band(band)
+		_check(floor_number > 0, "derived band maps to an ordinary Fight floor: " + String(id))
+		if floor_number == 0:
+			continue
+		var witness := 0
+		for value in range(1, 401):
+			var rng := RandomNumberGenerator.new()
+			rng.seed = value
+			var picked := RunV3FloorBandRoster.new().pick(floor_number, 4, rng, pools)
+			if picked.get("ok", false) and picked.get("enemy_ids", []).has(String(id)):
+				witness = value
+				break
+		_check(witness > 0, "a deterministic sampled group contains " + String(id))
+		if witness == 0:
+			continue
+		var first_rng := RandomNumberGenerator.new()
+		first_rng.seed = witness
+		var replay_rng := RandomNumberGenerator.new()
+		replay_rng.seed = witness
+		var oracle_rng := RandomNumberGenerator.new()
+		oracle_rng.seed = witness
+		var first := RunV3FloorBandRoster.new().pick(floor_number, 4, first_rng, pools)
+		var replay := RunV3FloorBandRoster.new().pick(floor_number, 4, replay_rng, pools)
+		var oracle := _sampled_band_group(pools, band, 4, oracle_rng)
+		_check(first == replay, "same-seed sampled band group replays exactly: " + String(id))
+		_check(first.get("band") == band and first.get("enemy_ids", []) == oracle
+			and first_rng.state == oracle_rng.state,
+			"sampled group matches the independent shrinking-array oracle: " + String(id))
+		var sampled: Array = first.get("enemy_ids", [])
+		_check(sampled.size() == 4 and sampled.has(String(id)),
+			"sampled group really selects " + String(id))
+		var distinct := {}
+		var in_band := true
+		for sampled_id in sampled:
+			distinct[sampled_id] = true
+			in_band = in_band and pools[band].has(sampled_id)
+		_check(distinct.size() == sampled.size() and in_band,
+			"sampled group is distinct and band-safe: " + String(id))
+
+## AC2: both shipped look-driven kits execute through the genuine weighted
+## scheduler and enemy phase, bound to the real catalog records.
+func _test_tough_normal_pair_phase_actions() -> void:
+	var parsed := _load_parsed()
+	var ram := _find(parsed, "spindle_ram")
+	var wraith := _find(parsed, "razor_ribbon_wraith")
+	_check(not ram.is_empty() and not wraith.is_empty(),
+		"precondition: both shipped harder normals load for the phase checks")
+	if ram.is_empty() or wraith.is_empty():
+		return
+	# Spindle Ram: the charging bobbin shoves the front hero into the next spot.
+	var shove_party := _party()
+	var shove_before: Array = shove_party.get_heroes()
+	var shove := _force_normal_alternative(ram, _authored_alternative(ram, "shove", 0),
+		shove_party)
+	_check(not shove.is_empty(), "the shipped Ram shove alternative binds")
+	if not shove.is_empty():
+		_check(shove.intents.size() == 1 and shove.intents[0].get("type") == "shove"
+			and shove.intents[0].get("amount") == 0
+			and shove.intents[0].get("target_position") == 1
+			and shove.intents[0].get("direction") == 1,
+			"the Ram announces its authored +1 shove from the front hero")
+		var receipt := CombatEnemyPhase.new().execute_phase(shove_party, shove.enemies,
+			shove.intents, null, true)
+		_check(receipt.get("ok") == true and receipt.get("events", []).size() == 1,
+			"the shipped Ram shove resolves through a real CombatEnemyPhase")
+		if receipt.get("ok", false) and receipt.get("events", []).size() == 1:
+			var event: Dictionary = receipt["events"][0]
+			_check(event.get("type") == "shove" and event.get("applied") == true
+				and event.get("target_position") == 1 and event.get("direction") == 1,
+				"the phase reports the applied +1 shove")
+		_check(shove_party.get_hero(1).get("id") == "seamstress"
+			and shove_party.get_hero(2).get("id") == "warden"
+			and shove_party.get_hero(3).get("id") == "tinker",
+			"the Ram shove swaps only the two front-line positions")
+		var before_by_id := {}
+		for hero in shove_before:
+			before_by_id[hero.id] = hero
+		var hp_block_kept := true
+		for hero in shove_party.get_heroes():
+			var prior: Dictionary = before_by_id.get(hero.id, {})
+			hp_block_kept = hp_block_kept and not prior.is_empty() \
+				and hero.get("hp") == prior.get("hp") \
+				and hero.get("block") == prior.get("block") \
+				and hero.get("statuses", {}) == prior.get("statuses", {})
+		_check(hp_block_kept, "the shove preserves every hero's HP, Block and statuses")
+	# Spindle Ram: the padded body gains exactly its authored 7 Block.
+	var block_party := _party()
+	var blocked := _force_normal_alternative(ram, _authored_alternative(ram, "block", 7),
+		block_party)
+	_check(not blocked.is_empty(), "the shipped Ram Block alternative binds")
+	if not blocked.is_empty():
+		_check(blocked.intents.size() == 1 and blocked.intents[0].get("type") == "block"
+			and blocked.intents[0].get("amount") == 7,
+			"the Ram announces its authored 7 Block")
+		var receipt := CombatEnemyPhase.new().execute_phase(block_party, blocked.enemies,
+			blocked.intents, null, true)
+		_check(receipt.get("ok") == true,
+			"the shipped Ram Block resolves through a real CombatEnemyPhase")
+		_check(blocked.enemies.get_enemy(1).get("block") == 7
+			and blocked.enemies.get_enemy(1).get("hp") == 30,
+			"the Ram really holds 7 Block at its authored 30 HP")
+		_check(block_party.get_heroes() == _party().get_heroes(),
+			"a self Block changes no hero")
+	# Spindle Ram: its 8-damage charge spends hero Block before HP.
+	var attack_party := _party()
+	_check(attack_party.gain_block(1, 5),
+		"precondition: the front hero really holds five Block")
+	var ram_attack := _force_normal_alternative(ram, _authored_alternative(ram, "attack", 8),
+		attack_party)
+	_check(not ram_attack.is_empty(), "the shipped Ram attack alternative binds")
+	if not ram_attack.is_empty():
+		_check(ram_attack.intents.size() == 1 and ram_attack.intents[0].get("type") == "attack"
+			and int(ram_attack.intents[0].get("amount", -1)) == 8
+			and ram_attack.intents[0].get("target_position") == 1,
+			"the Ram announces its authored 8 damage on the front hero")
+		var receipt := CombatEnemyPhase.new().execute_phase(attack_party, ram_attack.enemies,
+			ram_attack.intents, null, true)
+		_check(receipt.get("ok") == true,
+			"the announced 8-damage charge resolves through a real CombatEnemyPhase")
+		_check(attack_party.get_hero(1).get("block") == 0
+			and attack_party.get_hero(1).get("hp") == 37,
+			"five Block absorb five and the remaining three reach the front hero")
+		_check(attack_party.get_hero(2).get("hp") == 30
+			and attack_party.get_hero(3).get("hp") == 26,
+			"the Ram charge touches no other hero")
+	# Razor Ribbon Wraith: the razored ribbon ticks Bleed onto the lowest-living hero.
+	var bleed_party := _party()
+	_check(bleed_party.apply_damage(3, 10),
+		"precondition: the Tinker really loses HP and becomes the lowest living")
+	var bleed := _force_normal_alternative(wraith, _authored_alternative(wraith, "debuff", 2),
+		bleed_party)
+	_check(not bleed.is_empty(), "the shipped Wraith Bleed 2 alternative binds")
+	if not bleed.is_empty():
+		_check(bleed.intents.size() == 1 and bleed.intents[0].get("type") == "debuff"
+			and bleed.intents[0].get("status") == "bleed"
+			and int(bleed.intents[0].get("amount", -1)) == 2
+			and bleed.intents[0].get("target_position") == 3,
+			"the Wraith announces its authored Bleed 2 on the lowest-living hero")
+		var receipt := CombatEnemyPhase.new().execute_phase(bleed_party, bleed.enemies,
+			bleed.intents, null, true)
+		_check(receipt.get("ok") == true,
+			"the announced Wraith Bleed resolves through a real CombatEnemyPhase")
+		_check(bleed_party.get_hero(3).get("statuses", {}).get("bleed", 0) == 2
+			and bleed_party.get_hero(3).get("hp") == 16,
+			"the Wraith's Bleed 2 lands without costing its target HP")
+		for position in [1, 2]:
+			_check(bleed_party.get_hero(position).get("statuses", {}).get("bleed", 0) == 0,
+				"unaffected hero %d gains no Wraith Bleed" % position)
+	# Razor Ribbon Wraith: the exposed seams take one Exposed counter.
+	var exposed_party := _party()
+	_check(exposed_party.apply_damage(3, 10),
+		"precondition: the Tinker is the Wraith's lowest-living target")
+	var exposed := _force_normal_alternative(wraith, _authored_alternative(wraith, "debuff", 1),
+		exposed_party)
+	_check(not exposed.is_empty(), "the shipped Wraith Exposed 1 alternative binds")
+	if not exposed.is_empty():
+		_check(exposed.intents.size() == 1 and exposed.intents[0].get("type") == "debuff"
+			and exposed.intents[0].get("status") == "exposed"
+			and int(exposed.intents[0].get("amount", -1)) == 1
+			and exposed.intents[0].get("target_position") == 3,
+			"the Wraith announces its authored Exposed 1 on the lowest-living hero")
+		var receipt := CombatEnemyPhase.new().execute_phase(exposed_party, exposed.enemies,
+			exposed.intents, null, true)
+		_check(receipt.get("ok") == true,
+			"the announced Wraith Exposed resolves through a real CombatEnemyPhase")
+		_check(exposed_party.get_hero(3).get("statuses", {}).get("exposed", 0) == 1
+			and exposed_party.get_hero(3).get("hp") == 16,
+			"the Wraith's Exposed 1 lands without costing its target HP")
+		for position in [1, 2]:
+			_check(exposed_party.get_hero(position).get("statuses", {}).get("exposed", 0) == 0,
+				"unaffected hero %d gains no Wraith Exposed" % position)
+	# Razor Ribbon Wraith: its 9-damage slash also passes through hero Block first.
+	var slash_party := _party()
+	_check(slash_party.apply_damage(3, 10) and slash_party.gain_block(3, 4),
+		"precondition: the lowest-living Tinker really holds four Block")
+	var slash := _force_normal_alternative(wraith, _authored_alternative(wraith, "attack", 9),
+		slash_party)
+	_check(not slash.is_empty(), "the shipped Wraith attack alternative binds")
+	if not slash.is_empty():
+		_check(slash.intents.size() == 1 and slash.intents[0].get("type") == "attack"
+			and int(slash.intents[0].get("amount", -1)) == 9
+			and slash.intents[0].get("target_position") == 3,
+			"the Wraith announces its authored 9 damage on the lowest-living hero")
+		var receipt := CombatEnemyPhase.new().execute_phase(slash_party, slash.enemies,
+			slash.intents, null, true)
+		_check(receipt.get("ok") == true,
+			"the announced 9-damage slash resolves through a real CombatEnemyPhase")
+		_check(slash_party.get_hero(3).get("block") == 0
+			and slash_party.get_hero(3).get("hp") == 11,
+			"four Block absorb four and the remaining five reach the back hero")
+		_check(slash_party.get_hero(1).get("hp") == 40
+			and slash_party.get_hero(2).get("hp") == 30,
+			"the Wraith slash touches no other hero")
