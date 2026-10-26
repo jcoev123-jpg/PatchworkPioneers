@@ -318,7 +318,11 @@ func _phases() -> void:
 				"second actual phase actions in source order " + id)
 			var expected_enemies := start_enemies.duplicate(true)
 			if id == "marshal_reel_reversal":
+				# The authored Marshal Attack 4 lands on the living front Warden
+				# with no Block, so its confirmed-hit sting adds exactly Bleed 1
+				# alongside the unchanged 4 HP loss.
 				expected_ticked[0]["hp"] = 36
+				expected_ticked[0]["statuses"] = {"bleed": 1}
 				expected_enemies[1]["block"] = 2
 			else:
 				expected_ticked[1]["statuses"] = {"weak": 1}

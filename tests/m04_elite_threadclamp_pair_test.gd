@@ -35,10 +35,10 @@ const HEXER := [
 ## and enemy Block. Owner-turn tick and player Block reset precede each next beat.
 const MARSHAL_STATES := [
 	[["seamstress","warden","tinker"], [30,40,26], [0,6,0], [{},{},{}], [0,2]],
-	[["seamstress","warden","tinker"], [30,36,23], [0,0,0], [{},{},{}], [0,2]],
-	[["seamstress","warden","tinker"], [28,36,23], [0,0,0], [{},{},{}], [3,2]],
-	[["seamstress","warden","tinker"], [28,34,23], [0,0,0], [{},{},{"weak":1}], [3,2]],
-	[["warden","seamstress","tinker"], [34,28,23], [0,0,0], [{},{},{}], [3,4]],
+	[["seamstress","warden","tinker"], [30,36,23], [0,0,0], [{},{"bleed":1},{}], [0,2]],
+	[["seamstress","warden","tinker"], [28,35,23], [0,0,0], [{},{},{}], [3,2]],
+	[["seamstress","warden","tinker"], [28,33,23], [0,0,0], [{},{},{"weak":1}], [3,2]],
+	[["warden","seamstress","tinker"], [33,28,23], [0,0,0], [{},{},{}], [3,4]],
 ]
 const HEXER_STATES := [
 	[["warden","seamstress","tinker"], [40,30,26], [6,0,0], [{},{"exposed":1},{}], [0,3]],
@@ -196,6 +196,10 @@ func _trace(encounter_id: String) -> Dictionary:
 					_check(tick.events[2].bleed_hp_loss == 1
 						and tick.actors[2].hp == 25 and tick.actors[2].statuses.is_empty(),
 						"Hexer: Bleed 1 directly takes Tinker HP then expires")
+			elif beat == 2:
+				_check(tick.events[1].bleed_hp_loss == 1
+					and tick.actors[1].hp == 35 and tick.actors[1].statuses.is_empty(),
+					"Marshal: the sting's Bleed 1 takes 1 HP at the owner boundary then expires")
 			elif beat == 4:
 				_check(tick.actors[2].statuses.is_empty(),
 					"Marshal: Weak expires at Tinker's next owner boundary")
