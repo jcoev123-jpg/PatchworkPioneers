@@ -104,6 +104,9 @@ var _hero_tags: Array[Label] = []
 var _badges: Array[LiveEnemyIntentBadge] = []
 ## One passive contact-hazard label per mounted enemy, separate from its intent.
 var _thorns_tags: Array[PanelContainer] = []
+## One read-only, enemy-slot-bound status plaque per mounted puppet.
+var _status_tags: Array[PanelContainer] = []
+const STATUS_NAMES := ["bleed", "weak", "exposed", "tangled", "riposte"]
 var battle_row: HBoxContainer
 var _heroes: HBoxContainer
 var _hero_parent: Node
@@ -1722,6 +1725,9 @@ func _sync_battle() -> void:
 		var thorns_tag := _make_thorns_tag(enemy.position)
 		puppet.add_child(thorns_tag)
 		_thorns_tags.append(thorns_tag)
+		var status_tag := _make_status_tag(enemy.position)
+		puppet.add_child(status_tag)
+		_status_tags.append(status_tag)
 	panel.custom_minimum_size.x = 300
 	battle_row.add_child(panel)
 	# One deterministic stage behind both lineups: the authored scene of this fight when
@@ -1810,6 +1816,99 @@ func _place_thorns_tag(puppet: Puppet, tag: PanelContainer) -> void:
 	tag.size = Vector2(width, height)
 
 
+## A cold blue sewn plaque, distinct from the rusty Thorns hazard and paper intent.
+## PASS permits hover help while the stage's existing selection listener still sees clicks.
+func _make_status_tag(position: int) -> PanelContainer:
+	var tag := PanelContainer.new()
+	tag.name = "EnemyStatuses%d" % position
+	tag.mouse_filter = Control.MOUSE_FILTER_PASS
+	tag.focus_mode = Control.FOCUS_NONE
+	var felt := StyleBoxFlat.new()
+	felt.bg_color = Color("283c49")
+	felt.border_color = Color("a9c8d0")
+	felt.set_border_width_all(1)
+	felt.set_corner_radius_all(3)
+	felt.content_margin_left = 5.0
+	felt.content_margin_right = 5.0
+	felt.content_margin_top = 2.0
+	felt.content_margin_bottom = 2.0
+	tag.add_theme_stylebox_override("panel", felt)
+	var caption := Label.new()
+	caption.name = "Caption"
+	caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	caption.focus_mode = Control.FOCUS_NONE
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	caption.add_theme_font_size_override("font_size", 11)
+	caption.add_theme_color_override("font_color", Color("f1e9d3"))
+	caption.add_theme_constant_override("outline_size", 2)
+	caption.add_theme_color_override("font_outline_color", Color("111a25"))
+	tag.add_child(caption)
+	tag.hide()
+	return tag
+
+
+## All displayed names, stacks and explanatory help come from the same live record.
+## A malformed optional field is simply empty; rendering never normalizes gameplay data.
+func _status_copy(enemy: Dictionary) -> Dictionary:
+	var source: Variant = enemy.get("statuses")
+	if not source is Dictionary:
+		return {}
+	var visible: Array[String] = []
+	var help: Array[String] = []
+	var explanations := {
+		"bleed": "deals {n} direct HP loss at owner-turn end, then decreases by 1",
+		"weak": "outgoing attack damage is reduced by 25%",
+		"exposed": "incoming attack damage increases by 50%",
+		"tangled": "cannot move or be moved by its own side; adds +2 to attacks with positive base damage for its remaining owner turns",
+		"riposte": "returns {n} counterdamage on each confirmed hit; expires at this owner's turn end ({n} is damage, not turn duration)",
+	}
+	var row: Array[String] = []
+	for keyword in STATUS_NAMES:
+		var amount: Variant = source.get(keyword)
+		if not amount is int or amount <= 0:
+			continue
+		var title: String = keyword.capitalize()
+		row.append("%s %d" % [title, amount])
+		help.append("%s %d: %s." % [title, amount,
+			String(explanations[keyword]).replace("{n}", str(amount))])
+		if row.size() == 2:
+			visible.append("  ·  ".join(row))
+			row.clear()
+	if not row.is_empty():
+		visible.append("  ·  ".join(row))
+	if visible.is_empty():
+		return {}
+	return {"caption": "\n".join(visible), "help": "\n".join(help)}
+
+
+## Top-right in this puppet's art band, avoiding its separate Thorns and intent
+## badges. The plaque stays inside the actor column and never covers the name/HP hem.
+func _place_status_tag(puppet: Puppet, tag: PanelContainer, thorns: PanelContainer, badge: LiveEnemyIntentBadge) -> void:
+	if not is_instance_valid(puppet) or not is_instance_valid(tag):
+		return
+	var band := puppet.art_band()
+	var width := tag.get_combined_minimum_size().x
+	var height := tag.get_combined_minimum_size().y
+	if not band.has_area() or width > band.size.x or height > band.size.y:
+		tag.hide()
+		return
+	var x := band.end.x - width - 2.0
+	var y := band.position.y + 2.0
+	if is_instance_valid(thorns) and thorns.visible:
+		var thorn_rect := thorns.get_rect()
+		if Rect2(x, y, width, height).intersects(thorn_rect):
+			y = thorn_rect.end.y + 3.0
+	if is_instance_valid(badge) and badge.visible:
+		var ticket := badge.get_rect()
+		if Rect2(x, y, width, height).intersects(ticket):
+			y = ticket.end.y + 3.0
+	if y + height > band.end.y:
+		tag.hide()
+		return
+	tag.position = Vector2(x, y)
+	tag.size = Vector2(width, height)
+
+
 func _refresh() -> void:
 	if enemies == null or not is_instance_valid(panel):
 		return
@@ -1848,6 +1947,14 @@ func _refresh() -> void:
 			tag.show()
 		else:
 			tag.hide()
+		var status_tag := _status_tags[index]
+		var status_copy: Dictionary = _status_copy(enemy) if show_hazard or (
+			position == index + 1 and enemy.get("hp") is int and enemy["hp"] > 0
+			and enemies == app.enemies and _battle == app.battle_view) else {}
+		var status_label := status_tag.get_node("Caption") as Label
+		status_label.text = String(status_copy.get("caption", ""))
+		status_tag.tooltip_text = String(status_copy.get("help", ""))
+		status_tag.visible = not status_copy.is_empty()
 		var pending := false
 		if unravel != null and not enemies.is_slain(position):
 			pending = unravel.get_snapshot(position).get("skip_pending", false)
@@ -1864,6 +1971,9 @@ func _refresh() -> void:
 		var badge := _badges[index]
 		_place_intent_ticket(badge.get_parent() as Puppet, badge)
 		badge.show_intent(action, enemies.is_slain(position), pending, policy)
+		if status_tag.visible:
+			_place_status_tag(_puppets[CombatParty.PARTY_SIZE + index] as Puppet,
+				status_tag, tag, badge)
 
 
 ## Presentation only: seat one already-mounted ticket on its own source's resting artwork.
@@ -2111,6 +2221,7 @@ func _clear() -> void:
 	_hero_tags.clear()
 	_badges.clear()
 	_thorns_tags.clear()
+	_status_tags.clear()
 	if is_instance_valid(panel):
 		if panel.get_parent() != null:
 			panel.get_parent().remove_child(panel)

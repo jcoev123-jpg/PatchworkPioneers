@@ -77,7 +77,7 @@ func _visible(app, target: int = -1) -> void:
 	var presenter = app.get_node("LiveEnemyRoster")
 	_check(presenter.enemies == app.enemies and is_instance_valid(presenter.panel), "one shared mounted enemy roster")
 	if is_instance_valid(presenter.panel):
-		var labels: Array[Node] = presenter.panel.find_children("*", "Label", true, false)
+		var labels: Array[Node] = presenter.panel.find_children("EnemyState*", "Label", true, false)
 		_check(labels.size() == 2, "both enemy controls mounted")
 		for index in range(labels.size()):
 			var enemy: Dictionary = app.enemies.get_enemy(index + 1)
@@ -419,7 +419,7 @@ func _slain_sources(app) -> void:
 		var presenter = app.get_node("LiveEnemyRoster")
 		_check(presenter.enemies == app.enemies and is_instance_valid(presenter.panel), "slain source remains in mounted shared roster")
 		if is_instance_valid(presenter.panel):
-			var labels: Array[Node] = presenter.panel.find_children("*", "Label", true, false)
+			var labels: Array[Node] = presenter.panel.find_children("EnemyState*", "Label", true, false)
 			_check(labels.size() == 2
 				and labels[slain - 1].text == String(app.enemies.get_enemy(slain).name)
 				and presenter._badges[slain - 1].icon_mode == "slain",
