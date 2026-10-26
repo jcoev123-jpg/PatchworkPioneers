@@ -174,6 +174,12 @@ class RouteToken extends Control:
 	func uses_drawn_fallback() -> bool:
 		return token_texture == null
 
+	## Only native stops reuse the atlas badge; legacy and other tokens keep their cross stitch.
+	func fallback_plan() -> Dictionary:
+		if uses_drawn_fallback() and token_kind in ["Campfire", "SewingCircle", "Unpicker", "PatchStall"]:
+			return RunRouteAtlas.NodeToken.fallback_plan(token_kind)
+		return {}
+
 	## Aspect-preserved destination of the token inside the button's left column.
 	func token_rect() -> Rect2:
 		if size.x <= 0.0 or size.y <= 0.0:
@@ -195,9 +201,19 @@ class RouteToken extends Control:
 		if not uses_drawn_fallback():
 			draw_texture_rect(token_texture, rect, false)
 			return
-		# Drawn no-art fallback: a sewn felt patch with a cross stitch.
+		# Drawn no-art fallback: keep the fabric border around the atlas's native badge.
 		draw_rect(rect, patch_colour)
 		draw_rect(rect, thread_colour, false, 2.0)
+		var plan := fallback_plan()
+		if not plan.is_empty():
+			var font := get_theme_default_font()
+			var glyph := str(plan["glyph"])
+			var font_size := 27
+			var width := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+			var baseline := rect.get_center() + Vector2(-width * 0.5,
+				(font.get_ascent(font_size) - font.get_descent(font_size)) * 0.5)
+			draw_string(font, baseline, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, thread_colour)
+			return
 		draw_line(rect.position + Vector2(10.0, 10.0), rect.end - Vector2(10.0, 10.0),
 			thread_colour, 2.0, true)
 		draw_line(Vector2(rect.position.x + 10.0, rect.end.y - 10.0),

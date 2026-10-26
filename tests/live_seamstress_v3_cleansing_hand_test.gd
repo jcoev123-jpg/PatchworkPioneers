@@ -55,6 +55,9 @@ func _play_case(id: String, keyboard: bool, selected: String, capped: bool) -> v
 	var before := _pool_state()
 	await _arm(id, keyboard)
 	_check(_pool_state() == before, "arming spends nothing including RNG")
+	_check(presenter._targets.has(app.hero_panels[0]), "real target callback exists before commit")
+	var target_callback: Callable = presenter._targets[app.hero_panels[0]].callback
+	var cleanse_callback := Callable()
 	await _ally(keyboard)
 	if selected != "":
 		_check(is_instance_valid(presenter.cleanse_choices) and presenter.cleanse_choices.get_child_count() == 3,
@@ -62,6 +65,7 @@ func _play_case(id: String, keyboard: bool, selected: String, capped: bool) -> v
 		_check(_pool_state() == before and presenter.help_label.text.contains("Tab, Enter / Space"), "choice remains read only and explains keys")
 		var button: Button = presenter.cleanse_choices.get_node(selected.capitalize())
 		_check(button.is_visible_in_tree() and button.text.contains("Remove all"), "real visible choice button")
+		cleanse_callback = button.pressed.get_connections()[0].callable
 		for choice in presenter.cleanse_choices.get_children():
 			_check(root.get_visible_rect().encloses(choice.get_global_rect())
 				and choice.get_minimum_size().x <= choice.size.x
@@ -84,7 +88,13 @@ func _play_case(id: String, keyboard: bool, selected: String, capped: bool) -> v
 	_check(_pool_state() == expected, "exact capped heal, entire chosen counter, one payment/copy, other state and RNG untouched: " + id)
 	_check(presenter._pending.is_empty() and not is_instance_valid(presenter.cleanse_choices), "successful commit cleans targeting")
 	_check(app.hero_panels[0].get_child(0).text.contains("HP: %d/" % expected[5][0].hp), "success refreshes real HP HUD")
-	await _keyboard(KEY_ENTER)
+	# Successful play focuses End Turn; Enter there is a new legitimate turn action.
+	# Replay the actual retired target/cleanse inputs to check one-shot payment instead.
+	_check(app.end_turn_button.has_focus(), "successful play restores End Turn focus")
+	target_callback.call(_press())
+	if cleanse_callback.is_valid():
+		cleanse_callback.call()
+	await _frames()
 	_check(_pool_state() == expected, "no repeated payment")
 	await _pool_return()
 

@@ -16,6 +16,8 @@ const EXPECTED_ROUTE_LABELS := {
 	"Boss": "Boss fight",
 }
 
+var fallback_kinds_by_stage := {"opening": {}, "continued": {}}
+
 
 func _record(app) -> Array:
 	var carry := app.party_carryover as RunTornCarryover
@@ -82,6 +84,9 @@ func _projected_book(app) -> void:
 		_check(font.get_string_size(button.text, HORIZONTAL_ALIGNMENT_LEFT, -1,
 			button.get_theme_font_size("font_size")).x <= button.size.x - 72,
 			"full projected caption fits beside original token")
+		_token_fallback(button, kind)
+		var stage := "opening" if app.run_map.get_route().is_empty() else "continued"
+		fallback_kinds_by_stage[stage][kind] = true
 	_check(shown == legal, "projected chooser preserves legal source order")
 	var projected := RunV3StopChoiceProjection.project_legal_choices(app.run_map)
 	_check(app._authenticated_route_choices(app.run_map, projected) == projected, "real projection authenticates")
@@ -100,6 +105,60 @@ func _projected_book(app) -> void:
 		reordered.reverse()
 		_check(app._authenticated_route_choices(app.run_map, reordered).is_empty(), "reordered projection rejected")
 	_check(_record(app) == before, "projection reads and rejections preserve every authority and RNG")
+
+
+func _token_fallback(button: Button, kind: String) -> void:
+	var token = button.get_node_or_null("Token")
+	_check(token != null, "authentic projected choice has a mounted token")
+	if token == null:
+		return
+	var path := RunRouteAtlas.node_token_path(kind)
+	_check(token.token_kind == kind and token.art_path == path and token.get_meta("art_path") == path,
+		"continued and opening tokens retain authentic source kind and art metadata")
+	var original: Texture2D = token.token_texture
+	if not path.is_empty() and ResourceLoader.exists(path, "Texture2D"):
+		_check(original == load(path), "present authentic art is loaded first")
+	# Force both branches, independently of what the art pipeline has shipped.
+	var image := GradientTexture2D.new()
+	token.token_texture = image
+	_check(not token.uses_drawn_fallback() and token.fallback_plan().is_empty(),
+		"present texture takes precedence for every mounted kind")
+	token.token_texture = null
+	var expected: String = {"Campfire": "C", "SewingCircle": "S", "Unpicker": "U", "PatchStall": "P"}.get(kind, "")
+	var plan: Dictionary = token.fallback_plan()
+	_check(token.uses_drawn_fallback(), "explicit missing-texture probe selects fallback")
+	if expected.is_empty():
+		_check(plan.is_empty(), "legacy and non-stop kinds retain cross-stitch fallback")
+	else:
+		_check(plan == RunRouteAtlas.NodeToken.fallback_plan(kind)
+			and plan.emblem == "badge" and plan.glyph == expected, "distinct native atlas badge: " + kind)
+		var font: Font = token.get_theme_default_font()
+		var glyph_size := Vector2(font.get_string_size(expected, HORIZONTAL_ALIGNMENT_LEFT, -1, 27).x,
+			font.get_ascent(27) + font.get_descent(27))
+		var rect: Rect2 = token.token_rect()
+		_check(rect.grow(-2).encloses(Rect2(rect.get_center() - glyph_size * 0.5, glyph_size)),
+			"centered readable glyph fits within fabric border")
+	var bounded: Rect2 = token.token_rect()
+	_check(bounded.has_area() and Rect2(Vector2.ZERO, button.size).encloses(bounded)
+		and bounded.end.x < 72 and token.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and token.focus_mode == Control.FOCUS_NONE, "fallback stays in inert token column clear of route caption")
+	for unchanged in ["unknown", "Rest", "Shop", "Peddler", "Fight", "Elite", "Event", "Treasure", "Boss"]:
+		token.token_kind = unchanged
+		_check(token.fallback_plan().is_empty(), "non-native source keeps original cross stitch: " + unchanged)
+	token.token_kind = kind
+	token.token_texture = original
+	token.queue_redraw()
+
+
+func _leave_native(app, kind: String, keyboard: bool) -> void:
+	match kind:
+		"Campfire":
+			await _activate(app.campfire_leave_button, keyboard)
+		"SewingCircle":
+			await _activate(app.sewing_leave_button, keyboard)
+			await _activate(app.sewing_view.confirm_button, keyboard)
+		"PatchStall":
+			await _activate(app.patch_stall_view.leave_button, keyboard)
 
 
 func _clean(app) -> void:
@@ -479,7 +538,7 @@ func _run() -> void:
 	await process_frame
 	await _invalid_starts(app)
 	var cases: Array = []
-	for kind in ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "Unpicker"]:
+	for kind in ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "Unpicker", "Campfire", "SewingCircle", "PatchStall"]:
 		var found: Array = []
 		for value in range(1, 1000):
 			var rng := RandomNumberGenerator.new()
@@ -488,6 +547,11 @@ func _run() -> void:
 			map.generate(rng)
 			for id in map.get_legal_choices():
 				if map.get_node(id).type != kind:
+					continue
+				# Require a genuine continued Sewing Circle as well as the onward Fight;
+				# the other seeded fixtures cover the remaining continued native badges.
+				if kind == "SewingCircle" and not map.get_node(id).outgoing.any(
+					func(next): return map.get_node(next).type == "SewingCircle"):
 					continue
 				if kind in ["Fight", "Elite"]:
 					found = [kind, value, id, ""]
@@ -503,7 +567,7 @@ func _run() -> void:
 		_check(not found.is_empty(), "bounded genuine connected Fight fixture for " + kind)
 		if not found.is_empty():
 			cases.append(found)
-	for required in ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "Unpicker"]:
+	for required in ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "Unpicker", "Campfire", "SewingCircle", "PatchStall"]:
 		_check(cases.any(func(row): return row[0] == required), "required opening fixture exists: " + required)
 	var stale: Array[Callable] = []
 	for fixture in cases:
@@ -613,7 +677,9 @@ func _run() -> void:
 			await process_frame
 			_check(book_id != 0 and not is_instance_id_valid(book_id), "the disposed opening book is freed")
 			_check(not is_instance_id_valid(slate_id), "route choice frees the opening party slate")
-			if kind == "Rest":
+			if kind in ["Campfire", "SewingCircle", "PatchStall"]:
+				await _leave_native(app, kind, mode == 1)
+			elif kind == "Rest":
 				_check(app.rest_recovery != null and app.rest_view.is_visible_in_tree()
 					and app.rest_continue_button.disabled, "real Rest visit mounted before any battle")
 				stale.append(app.rest_back_button.pressed.get_connections()[0].callable)
@@ -689,6 +755,7 @@ func _run() -> void:
 				await _activate(_button(app, fixture[2]), mode == 0)
 				if fixture[0] == "Unpicker":
 					await _activate(app.unpicker_leave_button, mode == 1)
+				await _leave_native(app, fixture[0], mode == 1)
 				if fixture[0] == "Event":
 					await _activate(app.quiet_spool_panel.get_choice_buttons()[1], mode == 1)
 				if fixture[0] == "Shop":
@@ -702,6 +769,9 @@ func _run() -> void:
 				_check(not is_instance_id_valid(cancelled_book) and not is_instance_id_valid(cancelled_slate),
 					"Back frees the book and its party slate")
 			_clean(app)
+	for stage in ["opening", "continued"]:
+		for kind in ["Campfire", "SewingCircle", "Unpicker", "PatchStall"]:
+			_check(fallback_kinds_by_stage[stage].has(kind), "genuine mounted fallback coverage: " + stage + " " + kind)
 	app.free()
 	_finish()
 
