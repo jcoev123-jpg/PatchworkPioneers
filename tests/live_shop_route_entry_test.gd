@@ -1074,8 +1074,15 @@ func _run() -> void:
 		for i in range(4):
 			var offer: Dictionary = (bound.stock.cards + bound.stock.trinkets)[i]
 			var action: Button = app.peddler_buttons[i]
-			var expected: String = app.shop_view._card_caption(i) if i < 3 else app.shop_view._patch_caption()
-			_check(action.text == expected and action.text.contains(str(offer.price) + " gold")
+			var prefix: String = str(offer.owner).capitalize() if i < 3 else "PATCH"
+			var expected := "%s  ·  %s  ·  %d gold" % [prefix,
+				str(offer.id).replace("_", " ").capitalize(), offer.price]
+			if offer.sold:
+				expected += "  ·  SOLD"
+			elif app.session_gold < offer.price:
+				expected += "  ·  short %d" % (offer.price - app.session_gold)
+			_check(action.text == expected and not action.text.contains(str(offer.id))
+				and not action.text.contains("_")
 				and action.get_parent() == app.shop_view
 				and action.get_meta("offer_id") == offer.id and action.pressed.get_connections().size() == 1
 				and action.get_theme_font_size("font_size") == 20

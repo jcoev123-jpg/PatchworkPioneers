@@ -249,6 +249,13 @@ func _fits(button: Button) -> bool:
 	return width <= button.size.x - 16.0 and button.size.y >= font.get_height(size_px) * 1.4
 
 
+func _expected_name(item_id: String) -> String:
+	var words: PackedStringArray = item_id.split("_")
+	for i in range(words.size()):
+		words[i] = words[i].left(1).to_upper() + words[i].substr(1)
+	return " ".join(words)
+
+
 func _layout(visit: RunPeddlerVisit) -> void:
 	var screen := Rect2(host.get_global_rect().position, host.size)
 	_check(screen.encloses(panel.get_global_rect()) and panel.size == LivePeddlerPanel.PANEL_SIZE,
@@ -266,11 +273,14 @@ func _layout(visit: RunPeddlerVisit) -> void:
 		var offer: Dictionary = open["stock"]["cards"][index]
 		_check(screen.encloses(button.get_global_rect()) and button.size.y >= 70,
 				"unclipped card action row " + str(index))
-		_check(button.text.contains(str(offer["owner"]).capitalize())
-				and button.text.contains(str(offer["id"]))
-				and button.text.contains(LivePeddlerPanel.readable_id(str(offer["id"])))
-				and button.text.contains(str(int(offer["price"])) + " gold"),
-				"card row shows owner, readable authored ID and exact authored quote")
+		_check(button.text.begins_with(str(offer["owner"]).capitalize() + "  ·  "),
+				"card row starts with its proper owner")
+		_check(not button.text.contains(str(offer["id"])) and not button.text.contains("_"),
+				"card row hides the raw item ID")
+		_check(button.text.contains(_expected_name(str(offer["id"]))),
+				"card row shows independently readable authored name")
+		_check(button.text.ends_with("  ·  %d gold" % int(offer["price"])),
+				"card row shows exact authored quote")
 		_check(not button.disabled and button.get_meta("offer_kind") == "card"
 				and button.get_meta("offer_id") == offer["id"],
 				"funded card row is actionable and source-tagged")
@@ -279,11 +289,16 @@ func _layout(visit: RunPeddlerVisit) -> void:
 	var patch_button := panel.patch_button
 	var patch_offer: Dictionary = open["stock"]["trinkets"][0]
 	_check(screen.encloses(patch_button.get_global_rect())
-			and patch_button.text.contains(str(patch_offer["id"]))
-			and patch_button.text.contains(LivePeddlerPanel.readable_id(str(patch_offer["id"])))
-			and patch_button.text.contains(str(int(patch_offer["price"])) + " gold")
+			and patch_button.get_meta("offer_id") == patch_offer["id"]
 			and patch_button.get_meta("offer_kind") == "trinket" and not patch_button.disabled,
-			"patch row shows authored ID, name and exact quote and is actionable")
+			"patch row retains authored ID metadata and is actionable")
+	_check(patch_button.text.begins_with("PATCH  ·  "), "patch row starts with PATCH")
+	_check(not patch_button.text.contains(str(patch_offer["id"]))
+			and not patch_button.text.contains("_"), "patch row hides the raw item ID")
+	_check(patch_button.text.contains(_expected_name(str(patch_offer["id"]))),
+			"patch row shows independently readable authored name")
+	_check(patch_button.text.ends_with("  ·  %d gold" % int(patch_offer["price"])),
+			"patch row shows exact authored quote")
 	_check(_fits(patch_button) and patch_button.get_theme_stylebox("focus") != null,
 			"patch row text fits its sewn button and has a focus ring")
 	_check(screen.encloses(panel.leave_button.get_global_rect())
@@ -311,19 +326,17 @@ func _layout(visit: RunPeddlerVisit) -> void:
 	var caption_size := panel.card_buttons[0].get_theme_font_size("font_size")
 	var worst := 0.0
 	if caption_font != null:
-		for entry in authored_cards:
-			var line := "%s  ·  %s  ·  %s  ·  %d gold" % [
-					str(entry["owner"]).capitalize(), LivePeddlerPanel.readable_id(str(entry["id"])),
-					str(entry["id"]), int(entry["price"])]
-			worst = maxf(worst, caption_font.get_string_size(line,
-					HORIZONTAL_ALIGNMENT_LEFT, -1, caption_size).x)
-		for entry in authored_patches:
-			var line := "PATCH  ·  %s  ·  %s  ·  %d gold" % [
-					LivePeddlerPanel.readable_id(str(entry["id"])), str(entry["id"]),
-					int(entry["price"])]
-			worst = maxf(worst, caption_font.get_string_size(line,
-					HORIZONTAL_ALIGNMENT_LEFT, -1, caption_size).x)
-	_check(caption_font != null and not authored_cards.is_empty()
+		for entry in authored_cards + authored_patches:
+			var prefix := str(entry["owner"]).capitalize() if entry.has("owner") else "PATCH"
+			var line := "%s  ·  %s  ·  %d gold" % [
+					prefix, _expected_name(str(entry["id"])), int(entry["price"])]
+			_check(panel._caption(prefix, entry["id"], entry["price"], false) == line
+					and panel._caption(prefix, entry["id"], entry["price"], true) == line + "  ·  SOLD",
+					"every authored caption has exact readable name, prefix, price and sold suffix: " + entry["id"])
+			for caption in [line, line + "  ·  SOLD", line + "  ·  short %d" % int(entry["price"])]:
+				worst = maxf(worst, caption_font.get_string_size(caption,
+						HORIZONTAL_ALIGNMENT_LEFT, -1, caption_size).x)
+	_check(caption_font != null and not authored_cards.is_empty() and not authored_patches.is_empty()
 			and worst <= panel.card_buttons[0].size.x - 16.0,
 			"every authored Peddler quote fits one measured line at the shipped font size")
 	# Keyboard traversal reaches every one of the five actions.

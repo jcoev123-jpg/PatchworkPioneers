@@ -354,8 +354,8 @@ func _patch_offer() -> Dictionary:
 
 
 func _caption(prefix: String, item_id: String, price: int, sold: bool) -> String:
-	var line := "%s  ·  %s  ·  %s  ·  %d gold" % [
-			prefix, readable_id(item_id), item_id, price]
+	var line := "%s  ·  %s  ·  %d gold" % [
+			prefix, readable_id(item_id), price]
 	if sold:
 		return line + "  ·  SOLD"
 	if _gold() < price:

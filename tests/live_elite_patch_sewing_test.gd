@@ -666,9 +666,10 @@ func _coat_multi_fixture(reward_index: int = 0, prior_coat: bool = false) -> Dic
 		if fixture.is_empty() or not await _routed_win(fixture, false):
 			return {}
 		await _click(app.reward_buttons[reward_index])
-		await _click(app.continue_button)
 		if prior_coat:
 			app.run_trinkets.append("reinforced_patchcoat")
+		# Finish fixture inventory before Continue binds source-authenticated routes.
+		await _click(app.continue_button)
 		var path: Array = fixture.paths[0].duplicate()
 		var elite: String = path.pop_back()
 		await _visit_path(path, false)
@@ -1142,7 +1143,6 @@ func _test_displaced_name(fixture: Dictionary) -> void:
 	if not await _routed_win(fixture, false):
 		return
 	await _click(app.reward_buttons[3])
-	await _click(app.continue_button)
 	_check(app.run_trinkets.is_empty() and app.party_carryover._wardrobe == null,
 		"displacement run starts with no patch ownership or sewing ledger")
 	app.run_trinkets.append("reinforced_patchcoat")
@@ -1165,6 +1165,7 @@ func _test_displaced_name(fixture: Dictionary) -> void:
 		and app.party_carryover.bind_wardrobe(prior, app.party_carryover.torn,
 			prior.get_snapshot()),
 		"authored prior coat is sewn into an empty COAT and bound by the real services")
+	await _click(app.continue_button)
 	var path: Array = fixture.paths[0].duplicate()
 	var elite: String = path.pop_back()
 	await _visit_path(path, false)
@@ -1312,7 +1313,6 @@ func _test_authored_live_claims(fixture: Dictionary) -> void:
 		if not await _routed_win(fixture, false):
 			return
 		await _click(app.reward_buttons[3])
-		await _click(app.continue_button)
 		var prior: RunPatchWardrobe = null
 		var prior_id: String = case.prior
 		if prior_id != "":
@@ -1332,6 +1332,7 @@ func _test_authored_live_claims(fixture: Dictionary) -> void:
 			_check(old_sew.ok and old_sew.receipt.scrap_delta == 0
 				and app.party_carryover.bind_wardrobe(prior, app.party_carryover.torn,
 					prior.get_snapshot()), "prior wear and carryover binding are canonical")
+		await _click(app.continue_button)
 		var path: Array = fixture.paths[0].duplicate()
 		var elite: String = path.pop_back()
 		await _visit_path(path, false)
