@@ -9,8 +9,7 @@ const EXPECTED_ROUTE_LABELS := {
 	"Unpicker": "Unpicker",
 	"Fight": "Fight",
 	"Elite": "Elite fight",
-	"Rest": "Rest stop / Campfire",
-	"Shop": "Shop / Peddler",
+	"Peddler": "Peddler",
 	"Event": "Event",
 	"Treasure": "Treasure",
 	"Boss": "Boss fight",
@@ -74,7 +73,7 @@ func _projected_book(app) -> void:
 		var expected: String = {"Rest": "Campfire", "Shop": "Peddler"}.get(kind, kind)
 		shown.append(id)
 		_check(button.get_meta("route_kind") == kind and button.get_meta("v3_kind") == expected
-			and button.text == EXPECTED_ROUTE_LABELS.get(kind, kind)
+			and button.text == EXPECTED_ROUTE_LABELS.get(expected, expected)
 			and button.get_meta("route_label") == button.text, "source kind and independent projected caption/metadata")
 		if kind == "Rest":
 			var expected_help := "Campfire: Heal each hero 30% max HP (torn revives at 1 HP first), or Leave unchanged for free."
@@ -84,8 +83,8 @@ func _projected_book(app) -> void:
 		var font: Font = button.get_theme_font("font")
 		_check(font.get_string_size(button.text, HORIZONTAL_ALIGNMENT_LEFT, -1,
 			button.get_theme_font_size("font_size")).x <= button.size.x - 72,
-			"full projected caption fits beside original token")
-		_token_fallback(button, kind)
+			"full projected caption fits beside projected token")
+		_token_fallback(button, expected)
 		var stage := "opening" if app.run_map.get_route().is_empty() else "continued"
 		fallback_kinds_by_stage[stage][kind] = true
 	_check(shown == legal, "projected chooser preserves legal source order")
@@ -113,9 +112,17 @@ func _token_fallback(button: Button, kind: String) -> void:
 	_check(token != null, "authentic projected choice has a mounted token")
 	if token == null:
 		return
-	var path := RunRouteAtlas.node_token_path(kind)
+	var path: String = {"Campfire": "res://assets/paper/ui/map_node_campfire.png",
+		"Peddler": "res://assets/paper/ui/map_node_peddler.png"}.get(kind, RunRouteAtlas.node_token_path(kind))
 	_check(token.token_kind == kind and token.art_path == path and token.get_meta("art_path") == path,
-		"continued and opening tokens retain authentic source kind and art metadata")
+		"continued and opening tokens show independently projected kind and art metadata")
+	var thread: Color = {"Campfire": Color("#f1c38f"), "Peddler": Color("#e4d59a")}.get(kind, token.thread_colour)
+	var felt: Color = {"Campfire": Color("#965a39"), "Peddler": Color("#7d7150")}.get(kind, token.patch_colour)
+	_check(token.thread_colour == thread and token.patch_colour == felt
+		and button.get_node("Stitch").thread_colour == thread
+		and button.get_node("Stitch").get_meta("route_kind") == kind
+		and button.get_theme_stylebox("normal").border_color == thread,
+		"projected palette agrees across felt token, button border and stitch")
 	var original: Texture2D = token.token_texture
 	if not path.is_empty() and ResourceLoader.exists(path, "Texture2D"):
 		_check(original == load(path), "present authentic art is loaded first")
@@ -368,7 +375,8 @@ func _opening_book(app) -> void:
 		var kind: String = button.get_meta("route_kind")
 		var id: String = button.get_meta("route_id")
 		var node: Dictionary = app.run_map.get_node(id)
-		var path := RunRouteAtlas.node_token_path(kind)
+		var projected: String = {"Rest": "Campfire", "Shop": "Peddler"}.get(kind, kind)
+		var path := RunRouteAtlas.node_token_path(projected)
 		var token = button.get_node_or_null("Token")
 		var stitch = button.get_node_or_null("Stitch")
 		seen.append(id)
@@ -389,7 +397,7 @@ func _opening_book(app) -> void:
 			_check(not placed.intersects(button.get_global_rect()),
 				"sewn patches never overlap: " + id)
 		patch_rects.append(button.get_global_rect())
-		_check(button.text == EXPECTED_ROUTE_LABELS.get(kind, kind) and not button.text.contains(id),
+		_check(button.text == EXPECTED_ROUTE_LABELS.get(projected, projected) and not button.text.contains(id),
 			"readable kind label on the patch: " + id)
 		_check(token != null and token.get_parent() == button
 			and token.mouse_filter == Control.MOUSE_FILTER_IGNORE and token.focus_mode == Control.FOCUS_NONE,
@@ -401,7 +409,7 @@ func _opening_book(app) -> void:
 		if token == null:
 			continue
 		_check(token.art_path == path and token.get_meta("art_path") == path
-			and token.token_kind == kind, "token keeps its authored kind and art path: " + id)
+			and token.token_kind == projected, "token shows its projected kind and art path: " + id)
 		var token_rect: Rect2 = token.token_rect()
 		_check(token_rect.size.x > 0.0 and button.get_global_rect().encloses(
 			Rect2(token.global_position + token_rect.position, token_rect.size)),
@@ -774,8 +782,9 @@ func _run() -> void:
 					"Back frees the book and its party slate")
 			_clean(app)
 	for stage in ["opening", "continued"]:
-		for kind in ["Campfire", "SewingCircle", "Unpicker", "PatchStall"]:
+		for kind in ["Rest", "Campfire", "SewingCircle", "Unpicker", "PatchStall"]:
 			_check(fallback_kinds_by_stage[stage].has(kind), "genuine mounted fallback coverage: " + stage + " " + kind)
+	_check(fallback_kinds_by_stage.opening.has("Shop"), "genuine opening Peddler fallback coverage; connected Shop is exercised by continuation tests")
 	app.free()
 	_finish()
 

@@ -15,7 +15,7 @@ func _camp_enter(atlas: bool) -> void:
 	var prior: Array = app.run_map.get_route()
 	var route: Button = _button(fixture.id)
 	var kind: String = app.run_map.get_node(fixture.id).type
-	_check(route != null and not route.disabled and route.text == ("Rest stop / Campfire" if kind == "Rest" else "Campfire")
+	_check(route != null and not route.disabled and route.text == "Campfire"
 		and route.get_meta("route_kind") == kind, "genuine legal themed Campfire or source Rest button")
 	var before: Dictionary = app._sewing_context()
 	var callback: Callable = route.pressed.get_connections()[0].callable

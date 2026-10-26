@@ -1,6 +1,10 @@
 extends "res://tests/live_shop_route_entry_test.gd"
 ## Real seeded Fight -> reward -> Shop -> connected noncombat visit.
 
+const PROJECTED_LABELS := {"Campfire": "Campfire", "Peddler": "Peddler",
+	"SewingCircle": "Sewing Circle", "PatchStall": "Patch Stall", "Unpicker": "Unpicker",
+	"Fight": "Fight", "Elite": "Elite fight", "Boss": "Boss fight", "Event": "Event", "Treasure": "Treasure"}
+
 ## A deliberately tall autowrapped equipment preview, used only to exercise the
 ## bounded Shop rail. It never enters game data; it stands in for the longest
 ## authored conditional patch preview, the content that used to push Return below
@@ -77,11 +81,13 @@ func _check_connected_book() -> void:
 	for button in app.route_buttons:
 		var id: String = button.get_meta("route_id")
 		var kind: String = app.run_map.get_node(id).type
+		var projected: String = {"Rest": "Campfire", "Shop": "Peddler"}.get(kind, kind)
 		ids.append(id)
 		_check(button.get_parent() == app.route_view and button.get_meta("route_kind") == kind
-			and button.text == {"Rest": "Rest stop / Campfire", "Shop": "Shop / Peddler"}.get(kind, app.route_kind_label(kind))
-			and button.get_meta("v3_kind") == {"Rest": "Campfire", "Shop": "Peddler"}.get(kind, kind)
+			and button.text == PROJECTED_LABELS.get(projected, projected)
+			and button.get_meta("v3_kind") == projected
 			and button.get_child_count() == 2, "friendly sewn node keeps exact legal identity, projected kind and token/stitches")
+		_check_connected_token(button, projected)
 		if not button.disabled:
 			actions.append(button)
 	_check(not ids.is_empty() and ids == app.run_map.get_legal_choices(), "book shows precisely the real legal choices")
@@ -107,6 +113,40 @@ func _check_connected_book() -> void:
 	await _frames()
 	_check(actions.back().has_focus(), "reverse Tab reaches title exit")
 	_check(_continuation_state() == before, "focus traversal preserves route, ledgers and RNG")
+
+
+func _check_connected_token(button: Button, projected: String) -> void:
+	var token = button.get_node_or_null("Token")
+	var stitch = button.get_node_or_null("Stitch")
+	_check(token != null and stitch != null, "connected choice mounts token and stitch")
+	if token == null or stitch == null:
+		return
+	var path: String = {"Campfire": "res://assets/paper/ui/map_node_campfire.png",
+		"Peddler": "res://assets/paper/ui/map_node_peddler.png"}.get(projected, RunRouteAtlas.node_token_path(projected))
+	_check(token.token_kind == projected and token.art_path == path and token.get_meta("art_path") == path
+		and stitch.get_meta("route_kind") == projected, "connected token art and stitch use independent projected kind")
+	var texture: Texture2D = token.token_texture
+	if not path.is_empty() and ResourceLoader.exists(path, "Texture2D"):
+		_check(texture == load(path), "connected choice loads matching present art")
+	token.token_texture = null
+	_check(token.uses_drawn_fallback() and button.is_visible_in_tree()
+		and token.token_rect().has_area() and Rect2(Vector2.ZERO, button.size).encloses(token.token_rect())
+		and token.mouse_filter == Control.MOUSE_FILTER_IGNORE and token.focus_mode == Control.FOCUS_NONE,
+		"deliberate missing connected texture leaves readable inert fallback inside control")
+	if projected == "Campfire":
+		_check(token.fallback_plan().get("glyph") == "C", "projected Campfire fallback is its own badge")
+	elif projected == "Peddler":
+		_check(token.fallback_plan().is_empty() and token.patch_colour == Color("#7d7150")
+			and token.thread_colour == Color("#e4d59a"), "projected Peddler fallback retains its felt and thread")
+	_check(stitch.thread_colour == token.thread_colour
+		and button.get_theme_stylebox("normal").border_color == token.thread_colour,
+		"connected projected thread agrees on patch, stitch and token")
+	var font: Font = button.get_theme_font("font")
+	_check(font.get_string_size(button.text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		button.get_theme_font_size("font_size")).x <= button.size.x - 72
+		and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect()), "projected connected caption and patch fit viewport")
+	token.token_texture = texture
+	token.queue_redraw()
 
 
 func _bounds(view: Control) -> void:

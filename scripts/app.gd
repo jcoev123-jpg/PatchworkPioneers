@@ -91,6 +91,7 @@ const ROUTE_KIND_LABELS := {
 ## Felt patch and thread colours of each kind's sewn route token, reused by the drawn
 ## no-art fallback (Treasure owns no committed token image yet).
 const ROUTE_KIND_FELT := {
+	"Peddler": Color("#7d7150"),
 	"SewingCircle": Color("#795e78"),
 	"Campfire": Color("#965a39"),
 	"PatchStall": Color("#546b5f"),
@@ -104,6 +105,7 @@ const ROUTE_KIND_FELT := {
 	"Boss": Color("#8a4a4a"),
 }
 const ROUTE_KIND_THREAD := {
+	"Peddler": Color("#e4d59a"),
 	"SewingCircle": Color("#ead0e7"),
 	"Campfire": Color("#f1c38f"),
 	"PatchStall": Color("#dbe6c2"),
@@ -1457,11 +1459,11 @@ func _authenticated_route_choices(source_map: RunMap, projected: Array) -> Array
 	return projected.duplicate(true)
 
 
-## Keep the authenticated source kind for token art, availability and dispatch.
+## Project the visit's presentation; retain the authenticated source for availability and dispatch.
 func _route_choice_button(id: String, kind: String, opening: bool, choice: Dictionary) -> Button:
-	var label := route_kind_label(kind)
-	if kind in ["Rest", "Shop"]:
-		label += " / " + str(choice.v3_kind)
+	# The descriptor is authenticated before mounting; source kind still owns admission.
+	var presentation_kind := str(choice.v3_kind)
+	var label := route_kind_label(presentation_kind)
 	var button := Button.new()
 	button.name = "Opening_" + id
 	button.text = label
@@ -1484,9 +1486,9 @@ func _route_choice_button(id: String, kind: String, opening: bool, choice: Dicti
 			button.tooltip_text = "Campfire: Heal each hero 30% max HP (torn revives at 1 HP first), or Leave unchanged for free."
 		elif kind == "Shop":
 			button.tooltip_text = "Peddler: buy one of three cards or one patch, or Leave for free."
-	_style_route_button(button, ROUTE_KIND_THREAD.get(kind, ROUTE_BOOK_THREAD), true)
-	button.add_child(_route_token(kind))
-	button.add_child(_route_patch_stitch(kind))
+	_style_route_button(button, ROUTE_KIND_THREAD.get(presentation_kind, ROUTE_BOOK_THREAD), true)
+	button.add_child(_route_token(presentation_kind))
+	button.add_child(_route_patch_stitch(presentation_kind))
 	if opening:
 		button.pressed.connect(_choose_route.bind(id, weakref(run_map)))
 	return button
