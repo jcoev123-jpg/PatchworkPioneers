@@ -62,9 +62,13 @@ func _fixtures() -> Dictionary:
 	# fallback when the generated route/pool changes.
 	# Repinned against the actual title-start party's eligible hero stories;
 	# every hint is still checked through genuine map generation and toll draws.
-	var hints := [35510, 233942, 236527, 292590, 379017, 422169, 449195,
-		610125, 622337, 756725, 802796, 807198, 899240, 1223721,
-		1610275, 1658568, 1825487, 1892422, 2308951, 2440227, 3274715, 4969863]
+	# Repinned again after the six gothic roadside stories (Mothlace Clock,
+	# Buttonbone Aviary, Ashen Quilt Greenhouse, Ribbon-Shadow Circus, Velvet
+	# Patch Pier, Lullaby Stitch Chapel) grew the combined eligible pool: one
+	# verified witness seed per required generic Event.
+	var hints := [7756, 171871, 233942, 292590, 364891, 366071, 449195, 622337,
+		756725, 855041, 1375273, 1405687, 1517032, 1704534, 1710698, 1797991,
+		2017177, 2681473, 3656392, 4049314, 4809509, 4969863]
 	for value in hints + range(1, 500000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value

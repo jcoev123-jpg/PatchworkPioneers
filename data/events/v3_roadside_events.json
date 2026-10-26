@@ -179,6 +179,66 @@
         { "id": "pay_gatekeeper", "text": "Pay for gate-thread (spend 11 gold; gain 2 scraps)", "outcome": { "gold": -11, "scraps": 2 } },
         { "id": "take_outer_path", "text": "Take the outer path (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_mothlace_clock",
+      "title": "The Mothlace Clock",
+      "description": "A stitched clock ticks beneath a guttering candle, its moth-shaped hands shedding dusty lace.",
+      "choices": [
+        { "id": "wind_bell", "text": "Wind the brass bell (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "buy_cog_thread", "text": "Buy cog-thread (-18 gold, +2 scraps)", "outcome": { "gold": -18, "scraps": 2 } },
+        { "id": "ignore_clock", "text": "Ignore the ticking clock (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_buttonbone_aviary",
+      "title": "The Buttonbone Aviary",
+      "description": "Velvet-winged button-eyed birds hop along brass perches, hoarding shiny ribbons in their stitched nest.",
+      "choices": [
+        { "id": "sort_feathers", "text": "Sort fallen feathers (+11 gold)", "outcome": { "gold": 11, "scraps": 0 } },
+        { "id": "trade_gilded_feather", "text": "Trade a gilded feather (+21 gold, -1 scrap)", "outcome": { "gold": 21, "scraps": -1 } },
+        { "id": "leave_aviary", "text": "Leave the aviary (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_ashen_quilt_greenhouse",
+      "title": "The Ashen Quilt Greenhouse",
+      "description": "Needle-leaf sprouts glow through moonlit sewn glass while pale ash drifts between the quilted beds.",
+      "choices": [
+        { "id": "gather_shoots", "text": "Gather glowing shoots (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "sell_lantern_soil", "text": "Sell lantern soil (+27 gold, -2 scraps)", "outcome": { "gold": 27, "scraps": -2 } },
+        { "id": "close_gate", "text": "Close the greenhouse gate (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_ribbon_shadow_circus",
+      "title": "The Ribbon-Shadow Circus",
+      "description": "Rag puppets cast giant shadows against a damask tent while their trailing ribbons stir the candle smoke.",
+      "choices": [
+        { "id": "mend_marquee", "text": "Mend the striped marquee (+14 gold)", "outcome": { "gold": 14, "scraps": 0 } },
+        { "id": "buy_curtain_thread", "text": "Buy curtain thread (-20 gold, +3 scraps)", "outcome": { "gold": -20, "scraps": 3 } },
+        { "id": "pass_circus", "text": "Pass the silent circus (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_velvet_patch_pier",
+      "title": "The Velvet Patch Pier",
+      "description": "A lopsided pier creaks under patchwork lanterns, its velvet planks stitched to a swelling ink-black tide.",
+      "choices": [
+        { "id": "collect_hooks", "text": "Collect loose hooks (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "repair_moorings", "text": "Repair the moorings (+23 gold, -1 scrap)", "outcome": { "gold": 23, "scraps": -1 } },
+        { "id": "walk_from_pier", "text": "Walk back from the pier (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_lullaby_stitch_chapel",
+      "title": "The Lullaby Stitch Chapel",
+      "description": "Tiny thread bells hum under moss-green stitched rafters while wax candles gutter in the draft.",
+      "choices": [
+        { "id": "clean_lanterns", "text": "Clean the tiny lanterns (+9 gold)", "outcome": { "gold": 9, "scraps": 0 } },
+        { "id": "trade_bells", "text": "Trade for thread bells (-12 gold, +2 scraps)", "outcome": { "gold": -12, "scraps": 2 } },
+        { "id": "leave_chapel", "text": "Leave the humming chapel (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }

@@ -10,12 +10,18 @@ extends SceneTree
 ##
 ## Selector coverage proves the shipped admission end to end: a fresh uninjected
 ## RunM04EventRotation serves the generic M04 records, every merged lantern tale
-## and all twelve roadside tales exactly once while quiet_spool stays special;
+## and every roadside tale exactly once while quiet_spool stays special;
 ## the eligible pool equals an independently derived sorted oracle of both
 ## shipped catalogs; a seeded selection consumes exactly one range draw and
 ## replays; excluding every other ID selects a named roadside record; an
 ## exhausted or malformed call consumes no RNG; and a broken roadside source
 ## rejects the whole default merge instead of offering a partial pool.
+##
+## The gothic batch section below adds an independent per-ID table for the six
+## newest roadside tales (verbatim story, captions and signed deltas), then drives
+## funded previews and claims, an empty-purse debit refusal followed by the legal
+## free Leave, replay refusal, and a one-draw forced selection through the default
+## selector. It never asserts a catalog total or a full ordered ID list.
 
 const EVENTS_PATH := "res://data/events/v3_roadside_events.json"
 const M04_EVENTS_PATH := "res://data/events/m04_events.json"
@@ -236,6 +242,87 @@ const NEW_EVENT_IDS := [
 	"v3_dreaming_quilt_fair",
 ]
 
+## The six gothic roadside tales appended by this task. This is an independent
+## copy of the authored story, captions and signed outcomes; it never reads the
+## production catalog or the selector's constants back as its oracle, and it
+## asserts per-ID membership rather than a catalog total or a full ID list.
+const GOTHIC_EXPECTED := {
+	"v3_mothlace_clock": {
+		"title": "The Mothlace Clock",
+		"description": "A stitched clock ticks beneath a guttering candle, its moth-shaped hands shedding dusty lace.",
+		"choices": [
+			{"id": "wind_bell", "text": "Wind the brass bell (+1 scrap)", "gold": 0, "scraps": 1},
+			{"id": "buy_cog_thread", "text": "Buy cog-thread (-18 gold, +2 scraps)", "gold": -18, "scraps": 2},
+			{"id": "ignore_clock", "text": "Ignore the ticking clock (Leave)", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_buttonbone_aviary": {
+		"title": "The Buttonbone Aviary",
+		"description": "Velvet-winged button-eyed birds hop along brass perches, hoarding shiny ribbons in their stitched nest.",
+		"choices": [
+			{"id": "sort_feathers", "text": "Sort fallen feathers (+11 gold)", "gold": 11, "scraps": 0},
+			{"id": "trade_gilded_feather", "text": "Trade a gilded feather (+21 gold, -1 scrap)", "gold": 21, "scraps": -1},
+			{"id": "leave_aviary", "text": "Leave the aviary (Leave)", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_ashen_quilt_greenhouse": {
+		"title": "The Ashen Quilt Greenhouse",
+		"description": "Needle-leaf sprouts glow through moonlit sewn glass while pale ash drifts between the quilted beds.",
+		"choices": [
+			{"id": "gather_shoots", "text": "Gather glowing shoots (+2 scraps)", "gold": 0, "scraps": 2},
+			{"id": "sell_lantern_soil", "text": "Sell lantern soil (+27 gold, -2 scraps)", "gold": 27, "scraps": -2},
+			{"id": "close_gate", "text": "Close the greenhouse gate (Leave)", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_ribbon_shadow_circus": {
+		"title": "The Ribbon-Shadow Circus",
+		"description": "Rag puppets cast giant shadows against a damask tent while their trailing ribbons stir the candle smoke.",
+		"choices": [
+			{"id": "mend_marquee", "text": "Mend the striped marquee (+14 gold)", "gold": 14, "scraps": 0},
+			{"id": "buy_curtain_thread", "text": "Buy curtain thread (-20 gold, +3 scraps)", "gold": -20, "scraps": 3},
+			{"id": "pass_circus", "text": "Pass the silent circus (Leave)", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_velvet_patch_pier": {
+		"title": "The Velvet Patch Pier",
+		"description": "A lopsided pier creaks under patchwork lanterns, its velvet planks stitched to a swelling ink-black tide.",
+		"choices": [
+			{"id": "collect_hooks", "text": "Collect loose hooks (+1 scrap)", "gold": 0, "scraps": 1},
+			{"id": "repair_moorings", "text": "Repair the moorings (+23 gold, -1 scrap)", "gold": 23, "scraps": -1},
+			{"id": "walk_from_pier", "text": "Walk back from the pier (Leave)", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_lullaby_stitch_chapel": {
+		"title": "The Lullaby Stitch Chapel",
+		"description": "Tiny thread bells hum under moss-green stitched rafters while wax candles gutter in the draft.",
+		"choices": [
+			{"id": "clean_lanterns", "text": "Clean the tiny lanterns (+9 gold)", "gold": 9, "scraps": 0},
+			{"id": "trade_bells", "text": "Trade for thread bells (-12 gold, +2 scraps)", "gold": -12, "scraps": 2},
+			{"id": "leave_chapel", "text": "Leave the humming chapel (Leave)", "gold": 0, "scraps": 0},
+		],
+	},
+}
+
+const GOTHIC_EVENT_IDS := [
+	"v3_mothlace_clock",
+	"v3_buttonbone_aviary",
+	"v3_ashen_quilt_greenhouse",
+	"v3_ribbon_shadow_circus",
+	"v3_velvet_patch_pier",
+	"v3_lullaby_stitch_chapel",
+]
+
+## Independent per-ID seeds for the forced single-eligible selection replay.
+## With one eligible ID the seed cannot pin a catalog position.
+const GOTHIC_SEEDS := {
+	"v3_mothlace_clock": 1020261,
+	"v3_buttonbone_aviary": 1020262,
+	"v3_ashen_quilt_greenhouse": 1020263,
+	"v3_ribbon_shadow_circus": 1020264,
+	"v3_velvet_patch_pier": 1020265,
+	"v3_lullaby_stitch_chapel": 1020266,
+}
+
 var failures: Array[String] = []
 var checks := 0
 
@@ -449,10 +536,315 @@ func _run_tests() -> void:
 			else:
 				_check(is_affordable, "Free choice is affordable at zero: " + cid)
 
+	_check_gothic_roadside_batch()
 	_check_injected_selector()
 	_check_default_admission()
 	_check_default_selection_contract()
 	_check_default_merge_failures()
+
+## AC1/AC2/AC3 for the six gothic roadside tales: verbatim authored records with
+## three uniquely identified choices and one third-position free Leave, exact
+## funded preview and one-shot settlement, a refused signed debit at an empty
+## purse followed by its legal free Leave, replay refusal, unchanged definitions,
+## wallets and RNG, and admission plus a one-draw seeded selection through the
+## default shipped selector. Every assertion is per ID: no catalog total and no
+## full ordered list.
+func _check_gothic_roadside_batch() -> void:
+	var roadside: Dictionary = _read_document(EVENTS_PATH)
+	var m04: Dictionary = _read_document(M04_EVENTS_PATH)
+	if roadside.is_empty() or m04.is_empty():
+		return
+	var roadside_snapshot: Dictionary = roadside.duplicate(true)
+	var m04_snapshot: Dictionary = m04.duplicate(true)
+	var roadside_events: Array = _source_events(roadside)
+	var generic_events: Array = _source_events(m04)
+	var source_by_id: Dictionary = _records_by_id(roadside_events)
+	var rotation := RunM04EventRotation.new()
+	_check(rotation.is_catalog_valid(), "the default selector validates for the gothic roadside batch")
+	if not rotation.is_catalog_valid():
+		return
+	var listing_snapshot: Array = rotation.get_generic_events()
+	var ids: Array = rotation.get_generic_event_ids()
+	_check(ids.size() > GOTHIC_EVENT_IDS.size(),
+		"the default pool holds more than the gothic batch, so exclusions are meaningful")
+	# The earlier shipped roadside examples stay, and the generic and special
+	# anchors keep their own homes.
+	for anchor_id in ["v3_raincoat_bridge", "v3_velvet_safety_pin_gate"]:
+		_check(_matches(roadside_events, anchor_id).size() == 1,
+			"the earlier authored roadside anchor stays in the source once: " + anchor_id)
+		_check(ids.count(anchor_id) == 1,
+			"the earlier authored roadside anchor stays eligible once: " + anchor_id)
+	_check(_matches(generic_events, "button_trail").size() == 1,
+		"the generic button_trail record stays in its own source catalog")
+	_check(ids.count("button_trail") == 1, "the generic button_trail stays eligible once")
+	_check(_matches(generic_events, QUIET_SPOOL_ID).size() == 1,
+		"the special quiet_spool record stays in its own source catalog")
+	_check(not ids.has(QUIET_SPOOL_ID) and _matches(listing_snapshot, QUIET_SPOOL_ID).is_empty(),
+		"quiet_spool never joins the gothic default rotation")
+	var settlements := 0
+	var refusals := 0
+	var guard := RandomNumberGenerator.new()
+	guard.seed = 181818
+	var guard_state: int = guard.state
+	for event_id in GOTHIC_EVENT_IDS:
+		var contract: Dictionary = GOTHIC_EXPECTED[event_id]
+		_check(_matches(roadside_events, event_id).size() == 1,
+			"exactly one sourced gothic record for " + event_id)
+		var source_record: Dictionary = source_by_id.get(event_id, {})
+		var record_snapshot: Dictionary = source_record.duplicate(true)
+		_check_gothic_record(source_record, event_id, contract, "source")
+		# AC3: the no-argument shipped selector admits the record exactly once and
+		# serves the verbatim authored copy.
+		var admitted: Array = _matches(listing_snapshot, event_id)
+		_check(admitted.size() == 1 and ids.count(event_id) == 1,
+			"the default selector admits the gothic tale exactly once: " + event_id)
+		if admitted.size() == 1:
+			_check(admitted[0] == source_record,
+				"the default selector serves the verbatim authored gothic record: " + event_id)
+		# AC3: each-ID exclusions force the named tale through the real selector,
+		# which must consume exactly one documented range draw.
+		var excluded: Array = ids.duplicate()
+		excluded.erase(event_id)
+		_check(not excluded.has(event_id) and excluded.size() == ids.size() - 1,
+			"only the named gothic tale stays eligible: " + event_id)
+		var seed_value: int = GOTHIC_SEEDS[event_id]
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = seed_value
+		oracle.randi_range(0, 0)
+		var picked := rotation.select_event(rng, excluded)
+		_check(picked.get("ok") == true, "the forced gothic selection succeeds: " + event_id)
+		var selected: Dictionary = picked.get("event", {})
+		_check(selected.get("id") == event_id,
+			"the forced gothic selection is the named tale: " + event_id)
+		_check(selected == source_record,
+			"the forced gothic selection is the authentic authored record: " + event_id)
+		_check(rng.state == oracle.state,
+			"a gothic selection consumes exactly one range draw: " + event_id)
+		var replay_rng := RandomNumberGenerator.new()
+		replay_rng.seed = seed_value
+		var replay := rotation.select_event(replay_rng, excluded)
+		_check(replay.get("ok") == true and replay.get("event") == selected
+			and replay_rng.state == rng.state,
+			"the same seed and exclusions replay " + event_id)
+		var selected_snapshot: Dictionary = selected.duplicate(true)
+		selected["title"] = "MUTATED"
+		selected["choices"] = []
+		selected["injected"] = true
+		var detached_rng := RandomNumberGenerator.new()
+		detached_rng.seed = seed_value
+		var detached := rotation.select_event(detached_rng, excluded)
+		_check(detached.get("event") == selected_snapshot and detached.get("event") == source_record,
+			"the selected gothic record is a detached authored copy: " + event_id)
+		# AC2: wallet play starts from the record the shipped selector handed back.
+		var wallet_record: Dictionary = detached.get("event", {})
+		_check(wallet_record == source_record,
+			"the gothic selector hands back the authentic record for wallet play: " + event_id)
+		var funded := {"gold": 100, "scraps": 5}
+		var funded_snapshot: Dictionary = funded.duplicate(true)
+		var zero := {"gold": 0, "scraps": 0}
+		var zero_snapshot: Dictionary = zero.duplicate(true)
+		var forecast := RunEventChoice.new(wallet_record)
+		_check(forecast.is_valid() and not forecast.is_claimed(),
+			"the admitted gothic record is a fresh valid choice service: " + event_id)
+		var preview: Dictionary = forecast.preview_wallet_choices(funded)
+		_check(preview.get("ok") == true and preview.get("event_id") == event_id,
+			"a funded gothic preview succeeds: " + event_id)
+		var rows: Dictionary = _gothic_preview_rows(preview)
+		_check(rows.size() == 3, "a funded gothic preview lists all three choices: " + event_id)
+		_check(guard.state == guard_state,
+			"a funded gothic preview never touches the run RNG: " + event_id)
+		var free_def: Dictionary = {}
+		var free_ids: Array = []
+		var debit_ids: Array = []
+		for choice_def in contract["choices"]:
+			var definition: Dictionary = choice_def
+			if int(definition["gold"]) == 0 and int(definition["scraps"]) == 0:
+				free_def = definition
+				free_ids.append(definition["id"])
+			if int(definition["gold"]) < 0 or int(definition["scraps"]) < 0:
+				debit_ids.append(definition["id"])
+		_check(free_ids.size() == 1 and free_ids[0] == contract["choices"][2]["id"],
+			"the third gothic choice is the only free Leave: " + event_id)
+		_check(debit_ids.size() == 1, "the gothic tale prices exactly one choice: " + event_id)
+		for choice_def in contract["choices"]:
+			var definition: Dictionary = choice_def
+			var choice_id: String = definition["id"]
+			var gold_delta: int = definition["gold"]
+			var scraps_delta: int = definition["scraps"]
+			var after := {"gold": 100 + gold_delta, "scraps": 5 + scraps_delta}
+			var row: Dictionary = rows.get(choice_id, {})
+			_check(row.get("gold_delta") == gold_delta and row.get("scraps_delta") == scraps_delta,
+				"the gothic preview reports the authored deltas: " + event_id + " / " + choice_id)
+			_check(row.get("affordable") == true and row.get("wallet") == after,
+				"the gothic preview forecasts the exact funded balance: " + event_id + " / " + choice_id)
+			var committed := RunEventChoice.new(wallet_record)
+			var receipt := committed.choose_with_wallet(choice_id, funded)
+			_check(receipt == {
+				"ok": true, "event_id": event_id, "choice_id": choice_id, "wallet": after,
+			}, "the funded gothic claim settles the authored deltas once: " + event_id + " / " + choice_id)
+			settlements += 1
+			_check(committed.is_claimed() and not committed.is_valid(),
+				"the funded gothic claim latches and closes the visit: " + event_id + " / " + choice_id)
+			var replay_claim := committed.choose_with_wallet(choice_id, funded)
+			_check(replay_claim == {
+				"ok": false, "event_id": "", "choice_id": "", "wallet": funded,
+			}, "the settled gothic claim cannot be replayed: " + event_id + " / " + choice_id)
+			var alternate_id := choice_id
+			for other_def in contract["choices"]:
+				var alternate: Dictionary = other_def
+				if alternate["id"] != choice_id:
+					alternate_id = alternate["id"]
+					break
+			_check(committed.choose_with_wallet(alternate_id, funded).get("ok") == false,
+				"no alternate gothic choice claims a spent visit: " + event_id + " / " + choice_id)
+			_check(committed.preview_wallet_choices(funded).get("ok") == false,
+				"a spent gothic visit offers no further preview: " + event_id + " / " + choice_id)
+		# AC2: an unfunded signed debit is refused without consuming the visit, and
+		# the same visit still settles its actual free Leave exactly once.
+		var scarce := RunEventChoice.new(wallet_record)
+		var scarce_rows: Dictionary = _gothic_preview_rows(scarce.preview_wallet_choices(zero))
+		_check(scarce_rows.size() == 3,
+			"an empty-purse gothic preview lists all three choices: " + event_id)
+		for choice_def in contract["choices"]:
+			var definition: Dictionary = choice_def
+			var choice_id: String = definition["id"]
+			var paid := int(definition["gold"]) < 0 or int(definition["scraps"]) < 0
+			_check(scarce_rows.get(choice_id, {}).get("affordable") == (not paid),
+				"zero-purse gothic affordability matches the signed outcome: "
+				+ event_id + " / " + choice_id)
+		var debit_id: String = debit_ids[0]
+		var denied := scarce.choose_with_wallet(debit_id, zero)
+		_check(denied == {
+			"ok": false, "event_id": "", "choice_id": "", "wallet": zero,
+		}, "an unfunded gothic debit is refused: " + event_id)
+		refusals += 1
+		_check(not scarce.is_claimed() and scarce.is_valid(),
+			"the refused gothic debit leaves the visit open: " + event_id)
+		_check(guard.state == guard_state,
+			"a refused gothic debit never touches the run RNG: " + event_id)
+		var leave_id: String = free_def["id"]
+		var leave := scarce.choose_with_wallet(leave_id, zero)
+		_check(leave == {
+			"ok": true, "event_id": event_id, "choice_id": leave_id, "wallet": zero,
+		}, "the same gothic visit still settles its free Leave: " + event_id)
+		_check(scarce.is_claimed() and not scarce.is_valid(),
+			"the free Leave consumes the gothic visit: " + event_id)
+		var leave_replay := scarce.choose_with_wallet(leave_id, zero)
+		_check(leave_replay == {
+			"ok": false, "event_id": "", "choice_id": "", "wallet": zero,
+		}, "the settled gothic free Leave cannot be replayed: " + event_id)
+		var swapped := scarce.choose_with_wallet(debit_id, zero)
+		_check(swapped.get("ok") == false and swapped.get("wallet") == zero,
+			"no debit claims a spent gothic visit: " + event_id)
+		_check(funded == funded_snapshot and zero == zero_snapshot,
+			"the caller's wallets are unchanged by gothic wallet play: " + event_id)
+		_check(source_record == record_snapshot,
+			"the authored gothic definition is unchanged by wallet play: " + event_id)
+		_check(guard.state == guard_state,
+			"gothic previews, claims and refusals never touch the run RNG: " + event_id)
+	# A non-vacuous batch: six events, eighteen authored choices, one price each.
+	_check(GOTHIC_EXPECTED.size() == 6 and GOTHIC_EVENT_IDS.size() == 6,
+		"the independent gothic table covers six events")
+	_check(settlements == 18, "every gothic choice settles once when funded")
+	_check(refusals == 6, "every gothic priced choice is refused at an empty purse")
+	_check(guard.state == guard_state, "the gothic batch never touches the run RNG")
+	_check(rotation.get_generic_events() == listing_snapshot,
+		"gothic wallet play never mutates the selector listing")
+	_check(roadside == roadside_snapshot and m04 == m04_snapshot,
+		"gothic flows never mutate either shipped source catalog")
+
+## Verbatim presentation, choice shape and signed deltas against the independent
+## gothic table. `origin` only labels failure messages.
+func _check_gothic_record(record: Dictionary, event_id: String, contract: Dictionary,
+		origin: String) -> void:
+	_check(record.size() == 4 and record.has("id") and record.has("title")
+		and record.has("description") and record.has("choices"),
+		"the " + origin + " gothic record carries exactly id/title/description/choices: " + event_id)
+	_check(record.get("id") == event_id, "authored gothic ID: " + origin + " / " + event_id)
+	_check(record.get("title") == contract["title"],
+		"authored gothic title: " + origin + " / " + event_id)
+	_check(record.get("description") == contract["description"],
+		"authored gothic description: " + origin + " / " + event_id)
+	var choices: Variant = record.get("choices")
+	_check(choices is Array, "authored gothic choices array: " + origin + " / " + event_id)
+	if not choices is Array:
+		return
+	_check((choices as Array).size() == 3,
+		"exactly three gothic choices: " + origin + " / " + event_id)
+	var by_id: Dictionary = {}
+	for choice in (choices as Array):
+		_check(choice is Dictionary,
+			"every gothic choice is an object: " + origin + " / " + event_id)
+		if not choice is Dictionary:
+			continue
+		var entry: Dictionary = choice
+		var choice_id: Variant = entry.get("id")
+		_check(choice_id is String and not (choice_id as String).strip_edges().is_empty(),
+			"every gothic choice has a nonblank string ID: " + origin + " / " + event_id)
+		if not choice_id is String:
+			continue
+		_check(not by_id.has(choice_id),
+			"gothic choice IDs are distinct: " + origin + " / " + event_id + " / " + str(choice_id))
+		by_id[choice_id] = entry
+	_check(by_id.size() == 3,
+		"three distinct gothic choice IDs: " + origin + " / " + event_id)
+	for choice_def in contract["choices"]:
+		var definition: Dictionary = choice_def
+		var choice_id: String = definition["id"]
+		_check(by_id.has(choice_id),
+			"authored gothic choice present: " + origin + " / " + event_id + " / " + choice_id)
+		if not by_id.has(choice_id):
+			continue
+		var entry: Dictionary = by_id[choice_id]
+		_check(entry.size() == 3 and entry.has("id") and entry.has("text")
+			and entry.has("outcome"),
+			"exactly id/text/outcome with no extra mechanics: "
+			+ origin + " / " + event_id + " / " + choice_id)
+		_check(entry.get("text") == definition["text"],
+			"authored gothic caption: " + origin + " / " + event_id + " / " + choice_id)
+		var outcome: Variant = entry.get("outcome")
+		_check(outcome is Dictionary,
+			"gothic outcome is an object: " + origin + " / " + event_id + " / " + choice_id)
+		if not outcome is Dictionary:
+			continue
+		var wallet_outcome: Dictionary = outcome
+		_check(wallet_outcome.size() == 2 and wallet_outcome.has("gold")
+			and wallet_outcome.has("scraps"),
+			"exactly signed gold/scraps outcome keys: "
+			+ origin + " / " + event_id + " / " + choice_id)
+		# JSON may deliver whole numbers as floats; the authored contract is a
+		# whole signed amount either way.
+		var gold_amount: Variant = _signed_whole(wallet_outcome.get("gold"))
+		var scraps_amount: Variant = _signed_whole(wallet_outcome.get("scraps"))
+		_check(gold_amount != null and scraps_amount != null,
+			"whole-number gothic outcome amounts: " + origin + " / " + event_id + " / " + choice_id)
+		_check(gold_amount == definition["gold"] and scraps_amount == definition["scraps"],
+			"authored gothic signed outcome: " + origin + " / " + event_id + " / " + choice_id)
+
+## The ordered preview rows keyed by choice ID, or an empty map for a rejected
+## preview. Independent of the selector and the authored source.
+func _gothic_preview_rows(preview: Dictionary) -> Dictionary:
+	var out: Dictionary = {}
+	var entries: Variant = preview.get("choices")
+	if not entries is Array:
+		return out
+	for entry in entries:
+		if entry is Dictionary:
+			out[entry["choice_id"]] = entry
+	return out
+
+## The authored signed amount as an int, or null when the JSON value is not a
+## finite whole number.
+func _signed_whole(value: Variant) -> Variant:
+	if typeof(value) == TYPE_INT:
+		return value
+	if typeof(value) == TYPE_FLOAT:
+		var number: float = value
+		if is_finite(number) and floor(number) == number and absf(number) <= 9007199254740992.0:
+			return int(number)
+	return null
 
 ## An injected catalog is used exactly as passed. The synthetic combination below
 ## is a genuine injection, and the generic-only injection proves the selector
