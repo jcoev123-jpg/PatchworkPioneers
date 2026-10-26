@@ -223,19 +223,14 @@ func _refresh() -> void:
 			preview_label.text = "Leave without changing your deck or spending scraps."
 			confirm_button.disabled = false
 	for option in options:
-		option_buttons.append(_option_row(option, _mode == "upgrade"))
-	if _mode == "stitch" and _first >= 0:
-		var chosen_first: Dictionary = {}
-		for candidate in _visit.stitch_first_options():
-			if candidate.index == _first:
-				chosen_first = candidate
-				break
-		if not chosen_first.is_empty() and not options.is_empty():
-			var pair: Dictionary = _visit.stitch_preview(_first, options[0].index)
-			if not pair.is_empty():
-				preview_label.text = "FIRST | %s | %s | copy #%d | %d energy\n%s\nChoose a DIFFERENT owner's card for THEN.\nBoth owners must be alive, each in their own legal FROM position to play.\nPress Stitch again to change the first card." % [
-					pair.first_owner.capitalize(), pair.first_name, _first + 1,
-					pair.first_cost, _effects(pair.first_half.effects)]
+		var row := _option_row(option, _mode == "upgrade")
+		if row != null:
+			option_buttons.append(row)
+	if _mode == "stitch" and _first >= 0 and not option_buttons.is_empty():
+		var pair := _stitch_projection(_first, _row_indices[option_buttons[0]])
+		if not pair.is_empty():
+			preview_label.text = "FIRST | %s\nChoose a DIFFERENT owner's card for THEN.\nBoth owners must be alive, each in their own legal FROM position to play.\nPress Stitch again to change the first card." % [
+				_card_detail(pair.first_half, _first)]
 	_wire_focus()
 
 
@@ -250,7 +245,11 @@ func _wire_focus() -> void:
 
 
 func _choose_mode(mode: String, epoch: int) -> void:
-	if epoch != _epoch or not _active() or not is_visible_in_tree():
+	if epoch != _epoch or not is_visible_in_tree():
+		return
+	if not _active():
+		_reset_selection()
+		_refresh()
 		return
 	var action: Button = upgrade_button if mode == "upgrade" else stitch_button if mode == "stitch" else leave_button if mode == "leave" else null
 	if action == null or action.disabled or not action.is_visible_in_tree():
@@ -266,8 +265,12 @@ func _choose_mode(mode: String, epoch: int) -> void:
 
 
 func _select(index: int, epoch: int, rows_epoch: int = -1, row: Variant = null) -> void:
-	if epoch != _epoch or not _active() or not is_visible_in_tree() \
+	if epoch != _epoch or not is_visible_in_tree() \
 			or (rows_epoch >= 0 and rows_epoch != _rows_epoch):
+		return
+	if not _active():
+		_reset_selection()
+		_refresh()
 		return
 	if rows_epoch >= 0 and (not is_instance_valid(row) or not option_buttons.has(row)
 			or _row_indices.get(row, -1) != index or row.disabled or not row.is_visible_in_tree()):
@@ -278,30 +281,36 @@ func _select(index: int, epoch: int, rows_epoch: int = -1, row: Variant = null) 
 		if option.index != index:
 			continue
 		if _mode == "upgrade":
+			var definitions := _upgrade_definitions(option)
+			if definitions.is_empty():
+				return
 			_first = index
 			_mark_selected(index, option.owner)
 			_preview = option.duplicate(true)
-			preview_label.text = "%s | copy #%d\n%s -> %s\nEnergy: %d -> %d\nBefore: %s\nAfter: %s\nCost: free. Only copy #%d changes." % [option.owner.capitalize(), index + 1, option.display_name, option.plus_display_name, option.cost, option.plus_cost, _effects(option.effects), _effects(option.plus_effects), index + 1]
+			preview_label.text = "Upgrade ONE original card\nBEFORE | %s\nAFTER | %s\nCost: free. Only copy #%d changes." % [
+				_card_detail(definitions.before, index),
+				_card_detail(definitions.after, index), index + 1]
 		elif _mode == "stitch" and _first < 0:
+			var partners := _visit.stitch_second_options(index)
+			if partners.is_empty() or _stitch_projection(index, partners[0].index).is_empty():
+				return
 			_first = index
 			_refresh()
 			if not option_buttons.is_empty():
 				option_buttons[0].grab_focus()
 			return
 		elif _mode == "stitch":
-			_second = index
-			_preview = _visit.stitch_preview(_first, _second)
-			if _preview.is_empty():
+			var pair := _stitch_projection(_first, index)
+			if pair.is_empty():
 				return
+			_second = index
+			_preview = pair.duplicate(true)
 			_mark_selected(index, option.owner)
-			preview_label.text = "%s\nFIRST | %s | %s | copy #%d | %d energy\n%s\nTHEN | %s | %s | copy #%d | %d energy\n%s\nEnergy: %d (max half + 1, capped at 3). Scraps: %d -> %d (cost %d)\nDeck: %d -> %d cards. Consumes copies #%d and #%d in this order.\nBoth owners must be alive, each in their own legal FROM position to play." % [
-				_preview.display_name, _preview.first_owner.capitalize(), _preview.first_name,
-				_first + 1, _preview.first_cost, _effects(_preview.first_half.effects),
-				_preview.second_owner.capitalize(), _preview.second_name, _second + 1,
-				_preview.second_cost, _effects(_preview.second_half.effects),
-				_preview.energy_cost, _source.remaining_scraps, _preview.remaining_scraps,
-				_preview.scrap_cost, _preview.deck_before_count, _preview.deck_after_count,
-				_first + 1, _second + 1]
+			preview_label.text = "%s\nFIRST | %s\nTHEN | %s\nEnergy: %d (max half + 1, capped at 3). Scraps: %d -> %d (cost %d)\nDeck: %d -> %d cards. Consumes copies #%d and #%d in this order.\nBoth owners must be alive, each in their own legal FROM position to play." % [
+				pair.display_name, _card_detail(pair.first_half, _first),
+				_card_detail(pair.second_half, _second), pair.energy_cost,
+				_source.remaining_scraps, pair.remaining_scraps, pair.scrap_cost,
+				pair.deck_before_count, pair.deck_after_count, _first + 1, _second + 1]
 		else:
 			return
 		confirm_button.disabled = false
@@ -349,8 +358,13 @@ func preview() -> Dictionary:
 
 
 func _confirm(epoch: int) -> void:
-	if epoch != _epoch or not _active() or confirm_button.disabled \
-			or not is_visible_in_tree() or not confirm_button.is_visible_in_tree():
+	if epoch != _epoch or not is_visible_in_tree() or not confirm_button.is_visible_in_tree():
+		return
+	if not _active():
+		_reset_selection()
+		_refresh()
+		return
+	if confirm_button.disabled:
 		return
 	var intent := {"action": _mode, "first_index": _first, "second_index": _second,
 		"visit_id": _source.visit_id, "node_id": _source.node_id,
@@ -377,37 +391,131 @@ func take_confirmed(intent: Variant) -> Dictionary:
 	return confirmed
 
 
+## Display only a resolved authored definition, never an option's loose effect
+## dictionary. The option's exact original occurrence and both catalog records
+## must agree before its Help or Confirm becomes available.
+func _upgrade_definitions(option: Dictionary) -> Dictionary:
+	var index: Variant = option.get("index")
+	var deck: Array = _source.get("deck", [])
+	if typeof(index) != TYPE_INT or index < 0 or index >= deck.size() \
+			or deck[index] != option.get("source_id"):
+		return {}
+	var before := RunRestStitchCards.resolve_card_definition(option.get("source_id"))
+	var after := RunRestStitchCards.resolve_card_definition(option.get("plus_id"))
+	if before.is_empty() or after.is_empty() or before.get("id") != option.get("source_id") \
+			or after.get("id") != option.get("plus_id"):
+		return {}
+	for field in ["owner", "display_name", "cost", "effects"]:
+		if before.get(field) != option.get(field):
+			return {}
+	if after.get("owner") != before.get("owner") \
+			or after.get("display_name") != option.get("plus_display_name") \
+			or after.get("cost") != option.get("plus_cost") \
+			or after.get("effects") != option.get("plus_effects"):
+		return {}
+	return {"before": before, "after": after}
+
+
+## A pair may come only from the live visit's authentic index-bound projection.
+## Its two FULL authored halves are already provided in FIRST/THEN order.
+func _stitch_projection(first_index: int, second_index: int) -> Dictionary:
+	if not _active():
+		return {}
+	var pair := _visit.stitch_preview(first_index, second_index)
+	var deck: Array = _source.get("deck", [])
+	# The visit augments its Rest snapshot with node/visit identity and
+	# consumed/valid flags; the stitch projection carries only the Rest ledger.
+	var rest_source := _source.duplicate(true)
+	for key in ["valid", "consumed", "node_id", "visit_id"]:
+		rest_source.erase(key)
+	if pair.is_empty() or first_index < 0 or second_index < 0 \
+			or first_index >= deck.size() or second_index >= deck.size() \
+			or first_index == second_index or pair.get("source_snapshot") != rest_source:
+		return {}
+	var first: Dictionary = pair.get("first_half", {})
+	var second: Dictionary = pair.get("second_half", {})
+	if first.is_empty() or second.is_empty() \
+			or first.get("id") != deck[first_index] or second.get("id") != deck[second_index] \
+			or first.get("owner") == second.get("owner") \
+			or pair.get("first_id") != first.get("id") \
+			or pair.get("second_id") != second.get("id") \
+			or pair.get("first_owner") != first.get("owner") \
+			or pair.get("second_owner") != second.get("owner") \
+			or pair.get("first_name") != first.get("display_name") \
+			or pair.get("second_name") != second.get("display_name") \
+			or pair.get("first_cost") != first.get("cost") \
+			or pair.get("second_cost") != second.get("cost"):
+		return {}
+	return pair
+
+
+func _positions(definition: Dictionary) -> String:
+	var target: String = str(definition.get("target_kind", ""))
+	var recipient := ""
+	match target:
+		"enemy_single": recipient = "ENEMY TO %s" % str(definition.get("to_positions", []))
+		"enemy_all": recipient = "ALL ENEMIES TO %s" % str(definition.get("to_positions", []))
+		"enemy_random": recipient = "RANDOM ENEMY TO %s" % str(definition.get("to_positions", []))
+		"self": recipient = "TARGET: self"
+		"ally_single": recipient = "TARGET: chosen ally"
+		"party_all": recipient = "TARGET: all allies"
+		"none": recipient = "TARGET: no chosen target"
+		_: recipient = "TARGET: %s" % target
+	return "FROM %s | %s" % [str(definition.get("from_positions", [])), recipient]
+
+
+func _card_detail(definition: Dictionary, index: int) -> String:
+	return "%s | %s | %s | copy #%d | %d energy\n%s\n%s" % [
+		str(definition.get("owner", "")).capitalize(),
+		str(definition.get("display_name", "")), str(definition.get("id", "")),
+		index + 1, int(definition.get("cost", 0)), _positions(definition),
+		CardShortRules.line(definition)]
+
+
 ## Every option remains a single source-index Button; decorations cannot
 ## intercept input or become independent focus/activation targets.
 func _option_row(option: Dictionary, upgrade: bool) -> Button:
 	var owner: String = option.get("owner", "")
 	var name: String = option.get("display_name", option.get("name", ""))
-	var stitch_effects := "Unavailable"
-	if not upgrade:
-		var projection: Dictionary = {}
+	var before: Dictionary = {}
+	var after: Dictionary = {}
+	var stage := "FIRST" if _first < 0 else "THEN"
+	if upgrade:
+		var definitions := _upgrade_definitions(option)
+		if definitions.is_empty():
+			return null
+		before = definitions.before
+		after = definitions.after
+	else:
+		var pair: Dictionary = {}
 		if _first < 0:
-			var partners: Array = _visit.stitch_second_options(option.index)
+			var partners := _visit.stitch_second_options(option.index)
 			if not partners.is_empty():
-				projection = _visit.stitch_preview(option.index, partners[0].index)
-			if not projection.is_empty():
-				stitch_effects = _effects(projection.first_half.effects)
+				pair = _stitch_projection(option.index, partners[0].index)
+			if not pair.is_empty():
+				before = pair.first_half
 		else:
-			projection = _visit.stitch_preview(_first, option.index)
-			if not projection.is_empty():
-				stitch_effects = _effects(projection.second_half.effects)
+			pair = _stitch_projection(_first, option.index)
+			if not pair.is_empty():
+				before = pair.second_half
+		if before.is_empty() or before.get("id") != option.get("id") \
+				or before.get("owner") != owner or before.get("cost") != option.get("cost") \
+				or before.get("display_name") != name:
+			return null
 	var caption := "%s | %s | copy #%d | %d energy" % [
 		name, owner, option.index + 1, option.get("cost", 0)]
+	var detail := ""
 	if upgrade:
-		caption += " | Before: %s | After: %s | %d energy | %s" % [
-			_effects(option.effects), option.plus_display_name, option.plus_cost,
-			_effects(option.plus_effects)]
+		detail = "BEFORE | %s\nAFTER | %s\nUpgrade: free. Only this original copy changes." % [
+			_card_detail(before, option.index), _card_detail(after, option.index)]
 	else:
-		caption += " | Effects: %s" % stitch_effects
-	var height := 192 if upgrade else 132
+		detail = "%s | %s\nStitch: %d scraps for a different-owner pair. Both owners alive and at their legal FROM positions." % [
+			stage, _card_detail(before, option.index), RunRestStitchCards.SCRAP_COST]
+	var height := 192 if upgrade else 148
 	var button := _button(caption, Vector2.ZERO, Vector2(414, height))
 	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	# Preserve the complete canonical accessible caption while placed ink labels
-	# render its lines without the Button's text being painted twice.
+	button.tooltip_text = detail
+	# Preserve the complete accessible caption and full hover/focus Help.
 	for state in ["font_color", "font_hover_color", "font_pressed_color",
 			"font_hover_pressed_color", "font_focus_color", "font_disabled_color"]:
 		button.add_theme_color_override(state, Color.TRANSPARENT)
@@ -446,14 +554,16 @@ func _option_row(option: Dictionary, upgrade: bool) -> Button:
 		Vector2(2, 3), Vector2(78, 25), 14)
 	cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	if upgrade:
-		_card_label(button, "BEFORE | %d energy\n%s" % [option.cost, _effects(option.effects)],
-			Vector2(24, 72), Vector2(375, 51), 15)
-		_card_label(button, "AFTER | %s | %d energy\n%s" % [
-			option.plus_display_name, option.plus_cost, _effects(option.plus_effects)],
-			Vector2(24, 126), Vector2(375, 61), 15)
+		_card_label(button, "BEFORE | %d energy\n%s\n%s" % [
+			before.cost, _positions(before), CardShortRules.line(before)],
+			Vector2(24, 72), Vector2(375, 54), 14)
+		_card_label(button, "AFTER | %s | %d energy\n%s\n%s" % [
+			after.display_name, after.cost, _positions(after), CardShortRules.line(after)],
+			Vector2(24, 128), Vector2(375, 60), 14)
 	else:
-		_card_label(button, "EFFECTS | %s" % stitch_effects,
-			Vector2(24, 72), Vector2(375, 54), 15)
+		_card_label(button, "%s | %s\n%s" % [
+			stage, _positions(before), CardShortRules.line(before)],
+			Vector2(24, 72), Vector2(375, 70), 14)
 	button.set_meta("option", option.duplicate(true))
 	button.set_meta("selected", false)
 	button.set_meta("normal_style", button.get_theme_stylebox("normal"))
