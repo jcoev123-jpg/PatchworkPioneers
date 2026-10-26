@@ -59,6 +59,66 @@
         { "id": "weave_fortune", "text": "Spend 30 gold to gain 4 lasting max HP", "outcome": { "gold": -30, "scraps": 0, "hp": 0, "max_hp": 4 } },
         { "id": "leave", "text": "Refuse the prophecy and go", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_lacebound_mirror",
+      "title": "The Lacebound Mirror",
+      "description": "A plum-velvet mirror shows a button-eyed doll with one seam stronger and one button missing.",
+      "choices": [
+        { "id": "sew_reflection", "text": "Spend 2 scraps; mend 4 HP and add 2 lasting max HP", "outcome": { "gold": 0, "scraps": -2, "hp": 4, "max_hp": 2 } },
+        { "id": "break_reflection", "text": "Break the reflection for 25 gold; lose 2 max HP", "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Cover the mirror and leave", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_ashthread_balcony",
+      "title": "The Ashthread Balcony",
+      "description": "Beneath a midnight-teal bell, dolls sing through seams filled with glowing ash.",
+      "choices": [
+        { "id": "sing_into_ash", "text": "Lose 5 HP to gain 2 lasting max HP", "outcome": { "gold": 0, "scraps": 0, "hp": -5, "max_hp": 2 } },
+        { "id": "cut_bell_cord", "text": "Cut the bell cord for 19 gold; lose 3 HP", "outcome": { "gold": 19, "scraps": 0, "hp": -3, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the choir singing", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_copper_moon_puppet",
+      "title": "The Copper-Moon Puppet",
+      "description": "A giant round-headed marionette holds a warm copper moon between stitched hands.",
+      "choices": [
+        { "id": "take_moonlight", "text": "Pay 18 gold; heal 6 HP and gain 1 max HP", "outcome": { "gold": -18, "scraps": 0, "hp": 6, "max_hp": 1 } },
+        { "id": "unhook_strings", "text": "Salvage 3 scraps but lose 7 HP", "outcome": { "gold": 0, "scraps": 3, "hp": -7, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the puppet bow", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_bone_cream_wardrobe",
+      "title": "The Bone-Cream Wardrobe",
+      "description": "A moonlit wardrobe offers one soft lining and one permanent bone-cream hem.",
+      "choices": [
+        { "id": "borrow_lining", "text": "Spend 1 scrap; heal 8 HP but lose 1 max HP", "outcome": { "gold": 0, "scraps": -1, "hp": 8, "max_hp": -1 } },
+        { "id": "buy_permanent_hem", "text": "Pay 25 gold for 3 lasting max HP", "outcome": { "gold": -25, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "leave", "text": "Close the wardrobe doors", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_mosslit_seam_trial",
+      "title": "The Mosslit Seam Trial",
+      "description": "A moss-clad ragdoll judge weighs thread against a glowing, stitched heart.",
+      "choices": [
+        { "id": "prove_courage", "text": "Lose 6 HP; receive 2 scraps and 1 max HP", "outcome": { "gold": 0, "scraps": 2, "hp": -6, "max_hp": 1 } },
+        { "id": "purchase_verdict", "text": "Pay 16 gold for 2 lasting max HP", "outcome": { "gold": -16, "scraps": 0, "hp": 0, "max_hp": 2 } },
+        { "id": "leave", "text": "Decline the trial", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_duskwoven_cocoon",
+      "title": "The Duskwoven Cocoon",
+      "description": "An enormous quilted moth cocoon glows rose-gold beside the road.",
+      "choices": [
+        { "id": "rest_in_cocoon", "text": "Spend 2 scraps; heal 7 HP and gain 1 max HP", "outcome": { "gold": 0, "scraps": -2, "hp": 7, "max_hp": 1 } },
+        { "id": "harvest_silk", "text": "Take 24 gold in silk; lose 1 max HP", "outcome": { "gold": 24, "scraps": 0, "hp": 0, "max_hp": -1 } },
+        { "id": "leave", "text": "Leave the cocoon untouched", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
