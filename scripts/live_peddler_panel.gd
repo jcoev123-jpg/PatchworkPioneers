@@ -13,6 +13,15 @@ extends Control
 ## re-read the visit and pass those values unchanged to
 ## RunPeddlerVisit.choose_purchase()/leave(), which stay the single purchase
 ## and Leave authority. The live Shop route mounts this view through app.gd.
+##
+## Read-only ability preview: hovering or focusing one offered card repeats its
+## authored energy cost and CardShortRules sentence in the existing status band
+## and leaves the complete sentences in that card Button's tooltip. The preview
+## is resolved from the offered ID in the same authored catalogs the seeded
+## stock generator validates against, only while the definition's owner matches
+## the offer; anything unresolvable reads "Card details unavailable" instead of
+## a guessed number. It never changes a quoted price, the five actions, the
+## purchase intent or the visit state.
 signal intent_requested(intent: Dictionary)
 
 const PANEL_ART := "res://assets/paper/ui/reward_panel.png"
@@ -21,6 +30,8 @@ const THEME_PATH := "res://assets/fonts/patchwork_theme.tres"
 const TITLE_TEXT := "PEDDLER  ·  one purchase or Leave"
 const STATUS_OPEN := "Choose one offer, or Leave.  ·  1-3 cards · 4 patch · 0 Leave"
 const STATUS_CLOSED := "No open Peddler visit. No offer can be submitted."
+const DETAILS_UNAVAILABLE := "Card details unavailable"
+const ELLIPSIS := "..."
 const WALLET_CLOSED := "Wallet unavailable"
 const LEAVE_TEXT := "Leave  ·  FREE"
 const CARD_KIND := "card"
@@ -28,6 +39,11 @@ const PATCH_KIND := "trinket"
 const LEAVE_KIND := "leave"
 const CARD_COUNT := 3
 const PANEL_SIZE := Vector2(900, 600)
+## The status band's designed inner width at 1280x720: the compact single-line
+## preview is kept inside it at the shipped 18px face, whatever a Label's own
+## minimum-size growth would allow, so a long line can never spill over the
+## sewn panel.
+const STATUS_WIDTH := 822.0
 const CREAM := Color("#f3e6cf")
 const GOLD := Color("#e9c47d")
 const THREAD := Color("#b9a58d")
@@ -68,6 +84,9 @@ var _epoch := 0
 var _submitted := false
 var _pending_intent: Dictionary = {}
 var _connections: Dictionary = {} # Only view-owned Button.pressed -> Callable.
+var _preview_index := -1 # Card row whose read-only preview fills the status band.
+var _hover_index := -1 # Card row under the pointer; -1 when no card is hovered.
+var _catalogs: Array = [] # Read-only authored catalogs for the preview, built once.
 
 
 func _ready() -> void:
@@ -90,6 +109,7 @@ func _ready() -> void:
 		card_buttons.append(_button("", Vector2(39, 142 + i * 88), Vector2(822, 78), OXBLOOD, 20))
 	patch_button = _button("", Vector2(39, 406), Vector2(822, 78), TEAL, 20)
 	leave_button = _button(LEAVE_TEXT, Vector2(39, 498), Vector2(822, 58), TEAL, 24)
+	_wire_previews()
 	_refresh()
 	_focus_initial()
 
@@ -98,7 +118,9 @@ func _input(event: InputEvent) -> void:
 	if not _active():
 		return
 	var focus_owner := get_viewport().gui_get_focus_owner()
-	if focus_owner != self and not is_ancestor_of(focus_owner):
+	# is_ancestor_of() needs a real node: with nothing focused (or focus on a
+	# control outside this panel) no shortcut belongs to the Peddler.
+	if focus_owner == null or (focus_owner != self and not is_ancestor_of(focus_owner)):
 		return
 	var key_event := event as InputEventKey
 	if key_event == null or not key_event.is_pressed() or key_event.is_echo():
@@ -378,6 +400,205 @@ func _wallet_caption() -> String:
 	return "Wallet  ·  %d gold" % _gold()
 
 
+## One-shot signal wiring for the display-only preview. These listeners only
+## repaint the status band and never mint an intent, so they carry no epoch:
+## each recomputes from the currently bound source and silently does nothing
+## once that source is gone.
+func _wire_previews() -> void:
+	for i in range(CARD_COUNT):
+		var button := card_buttons[i]
+		button.mouse_entered.connect(_on_card_hover.bind(i, true))
+		button.mouse_exited.connect(_on_card_hover.bind(i, false))
+		button.focus_entered.connect(_on_card_focus.bind(i))
+		button.focus_exited.connect(_on_preview_refresh)
+	for button in [patch_button, leave_button]:
+		button.mouse_entered.connect(_on_plain_hover)
+		button.focus_entered.connect(_on_preview_refresh)
+		button.focus_exited.connect(_on_preview_refresh)
+
+
+func _on_card_hover(index: int, entered: bool) -> void:
+	if index < 0 or index >= CARD_COUNT:
+		return
+	if entered:
+		_hover_index = index
+	elif _hover_index == index:
+		_hover_index = -1
+	_sync_preview()
+
+
+func _on_plain_hover() -> void:
+	_hover_index = -1
+	_sync_preview()
+
+
+func _on_card_focus(index: int) -> void:
+	if index < 0 or index >= CARD_COUNT:
+		return
+	_sync_preview()
+
+
+## focus_exited fires before the next control receives focus, so the recompute
+## waits a frame for the new focus owner instead of flashing the wrong row.
+func _on_preview_refresh() -> void:
+	_sync_preview.call_deferred()
+
+
+## The card row the preview currently describes: the pointer wins while it is
+## over an offer, otherwise the keyboard focus ring decides, otherwise none.
+func _focused_card() -> int:
+	for i in range(CARD_COUNT):
+		if is_instance_valid(card_buttons[i]) and card_buttons[i].has_focus():
+			return i
+	return -1
+
+
+func _sync_preview() -> void:
+	if status_label == null:
+		return
+	if not _active():
+		_hover_index = -1
+		_preview_index = -1
+		for button in card_buttons:
+			if is_instance_valid(button):
+				button.tooltip_text = ""
+		if not _source_current():
+			status_label.text = STATUS_CLOSED
+		return
+	var index := _hover_index
+	if index < 0:
+		index = _focused_card()
+	_apply_preview(index)
+
+
+func _apply_preview(index: int) -> void:
+	_preview_index = index if index >= 0 and index < CARD_COUNT else -1
+	if status_label == null:
+		return
+	if _preview_index < 0:
+		status_label.text = STATUS_OPEN
+		return
+	status_label.text = _clamp_status(_card_preview(_preview_index))
+
+
+## The authored catalogs the seeded Peddler stock generator itself validates
+## candidate offers against. They are immutable authored data, so one instance
+## is reused for every preview on this panel.
+func _preview_catalogs() -> Array:
+	if _catalogs.is_empty():
+		_catalogs = RunShopStockOffers._peddler_catalogs()
+	return _catalogs
+
+
+## The offered card's own authored record, or {} when the exact offered ID has
+## no definition, the definition's owner is not the verified offer owner, or
+## the record cannot be stated truthfully (non-integer cost, no effect line).
+func _card_details(index: int) -> Dictionary:
+	if _source.is_empty() or index < 0 or index >= CARD_COUNT:
+		return {}
+	var offer := _offer(index)
+	var offer_id := str(offer.get("id", ""))
+	var offer_owner := str(offer.get("owner", ""))
+	if offer_id.is_empty() or offer_owner.is_empty():
+		return {}
+	var found := RunShopStockOffers._find_card_definition(offer_id, _preview_catalogs())
+	if found.is_empty():
+		return {}
+	var definition: Variant = found.get("def")
+	if typeof(definition) != TYPE_DICTIONARY or (definition as Dictionary).is_empty():
+		return {}
+	var card: Dictionary = definition
+	if typeof(card.get("id")) != TYPE_STRING or str(card["id"]) != offer_id:
+		return {}
+	if typeof(card.get("owner")) != TYPE_STRING or str(card["owner"]) != offer_owner:
+		return {}
+	if typeof(card.get("cost")) != TYPE_INT or int(card["cost"]) < 0:
+		return {}
+	var described := CardShortRules.describe(card)
+	if described.get("known") != true:
+		return {}
+	var line := str(described.get("line", "")).strip_edges()
+	if line.is_empty():
+		return {}
+	var display_name := str(card.get("display_name", "")).strip_edges()
+	return {
+		"id": offer_id,
+		"owner": offer_owner,
+		"name": display_name if not display_name.is_empty() else readable_id(offer_id),
+		"cost": int(card["cost"]),
+		"line": line,
+		"unknown": described.get("unknown") == true,
+	}
+
+
+## The complete single-line preview: exact offered ID, its authored owner, its
+## authored energy cost and the CardShortRules sentences that print the real
+## effects (including the honest "other effects not described" sentence).
+func _card_preview(index: int) -> String:
+	if _source.is_empty() or index < 0 or index >= CARD_COUNT:
+		return DETAILS_UNAVAILABLE
+	var offer := _offer(index)
+	var details := _card_details(index)
+	if details.is_empty():
+		return "%s  ·  %s  ·  %s" % [str(offer.get("owner", "")).capitalize(),
+				readable_id(str(offer.get("id", ""))), DETAILS_UNAVAILABLE]
+	return "%s  ·  %s  ·  %s  ·  %d energy  ·  %s" % [
+			str(details["owner"]).capitalize(), str(details["name"]), str(details["id"]),
+			int(details["cost"]), str(details["line"])]
+
+
+## The full ability text for one offered card, kept in that card Button's
+## tooltip even when the status band can only show a shortened display line.
+func _card_tooltip(index: int) -> String:
+	if _source.is_empty() or index < 0 or index >= CARD_COUNT:
+		return ""
+	var offer := _offer(index)
+	var details := _card_details(index)
+	if details.is_empty():
+		return "%s  ·  %s\n%s" % [str(offer.get("owner", "")).capitalize(),
+				readable_id(str(offer.get("id", ""))), DETAILS_UNAVAILABLE]
+	return "%s  ·  %s\n%s card  ·  %d energy  ·  %d gold\n%s" % [
+			str(details["name"]), str(details["id"]), str(details["owner"]).capitalize(),
+			int(details["cost"]), int(offer.get("price", 0)), str(details["line"])]
+
+
+## Shortens only the on-screen display when the status band is too narrow for
+## the complete preview at its shipped 18px face. The unshortened text stays in
+## the card's tooltip, so a cut line is never the only description a player gets.
+func _clamp_status(text: String) -> String:
+	if status_label == null:
+		return text
+	var font := status_label.get_theme_font("font")
+	if font == null:
+		return text
+	var width := STATUS_WIDTH
+	if status_label.size.x > 0.0:
+		width = minf(STATUS_WIDTH, status_label.size.x)
+	var font_size := status_label.get_theme_font_size("font_size")
+	if _status_width(font, text, font_size) <= width:
+		return text
+	var low := 0
+	var high := text.length()
+	while low < high:
+		var mid := int((low + high + 1) / 2)
+		var candidate := text.substr(0, mid).strip_edges() + ELLIPSIS
+		if _status_width(font, candidate, font_size) <= width:
+			low = mid
+		else:
+			high = mid - 1
+	if low <= 0:
+		return ELLIPSIS
+	var head := text.substr(0, low)
+	var last_space := head.rfind(" ")
+	if last_space > 0:
+		head = head.substr(0, last_space)
+	return head.strip_edges() + ELLIPSIS
+
+
+func _status_width(font: Font, text: String, font_size: int) -> float:
+	return font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+
+
 func _card_buyable(index: int) -> bool:
 	var offer := _offer(index)
 	return not bool(offer["sold"]) and _gold() >= int(offer["price"])
@@ -409,6 +630,8 @@ func _refresh() -> void:
 	if title_label == null:
 		return
 	_retire_callbacks()
+	_hover_index = -1
+	_preview_index = -1
 	var open := _source_current()
 	title_label.text = TITLE_TEXT
 	wallet_label.text = _wallet_caption() if open else WALLET_CLOSED
@@ -419,6 +642,10 @@ func _refresh() -> void:
 		button.disabled = true if not open else not _card_buyable(i)
 		button.set_meta("offer_kind", CARD_KIND if open else "")
 		button.set_meta("offer_id", str(_offer(i)["id"]) if open else "")
+		# The complete authored ability belongs to the card's own tooltip, so a
+		# shortened on-panel line never hides an effect. A closed binding and a
+		# fresh rebind drop the previous visit's text instead of keeping it.
+		button.tooltip_text = _card_tooltip(i) if open else ""
 		button.add_theme_stylebox_override("normal", _style(
 				OXBLOOD if open else PLUM, GOLD if open and not button.disabled else INK))
 		if open:
@@ -436,6 +663,9 @@ func _refresh() -> void:
 	if open:
 		_attach(leave_button, _request_leave.bind(_epoch, _visit))
 	_wire_focus()
+	# Re-derive the band from the current source only: neutral unless a card of
+	# this exact generation is still hovered or focused.
+	_sync_preview()
 
 
 func _focusables() -> Array[Button]:
@@ -463,13 +693,29 @@ func _focus_initial() -> void:
 		focusables[0].grab_focus()
 
 
+## The band may show the neutral hint or a preview computed from THIS source.
+## Any other text (a forged or stale line) is refused, so a mutable label can
+## never authenticate a press.
+func _status_authentic() -> bool:
+	if status_label == null:
+		return false
+	if status_label.text == STATUS_OPEN:
+		return true
+	if _source.is_empty() or not _valid_open_state(_source):
+		return false
+	for i in range(CARD_COUNT):
+		if status_label.text == _clamp_status(_card_preview(i)):
+			return true
+	return false
+
+
 ## Every displayed control must still be a mounted, honestly labelled projection
 ## of THIS exact open generation before any press may leave the view.
 func _auth(epoch: int, source: RunPeddlerVisit) -> bool:
 	if epoch != _epoch or source == null or not is_same(source, _visit) or not _active():
 		return false
 	if title_label.text != TITLE_TEXT or wallet_label.text != _wallet_caption() \
-			or status_label.text != STATUS_OPEN or leave_button.text != LEAVE_TEXT:
+			or not _status_authentic() or leave_button.text != LEAVE_TEXT:
 		return false
 	for i in range(CARD_COUNT):
 		var button := card_buttons[i]
