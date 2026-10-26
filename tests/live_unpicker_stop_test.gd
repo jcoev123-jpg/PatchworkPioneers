@@ -33,6 +33,79 @@ func _reject_action(callback: Callable, reason: String) -> void:
 	_check(_unpicker_state() == before, reason + " preserves run, visit, route and RNG")
 
 
+func _reject_number(code: Key, reason: String, changes: Dictionary = {}) -> void:
+	var panel: LiveUnpickerPanel = app.unpicker_view
+	var emissions := {"count": 0}
+	var observe := func(_intent): emissions.count += 1
+	panel.decision_requested.connect(observe)
+	var before := _unpicker_state()
+	var submitted := panel._submitted
+	var event := InputEventKey.new()
+	event.keycode = code
+	event.physical_keycode = code
+	event.pressed = true
+	for property in changes:
+		event.set(property, changes[property])
+	root.push_input(event, true)
+	await _frames()
+	_check(_unpicker_state() == before and panel._submitted == submitted
+		and emissions.count == 0, reason + " emits nothing and preserves complete state")
+	panel.decision_requested.disconnect(observe)
+
+
+func _number_guards() -> void:
+	var panel: LiveUnpickerPanel = app.unpicker_view
+	panel.card_buttons[0].grab_focus()
+	_check(panel._selected_id != "" and panel.card_buttons[0].has_focus(),
+		"number guard fixture owns a real selection and panel focus")
+	for code in [KEY_1, KEY_KP_1, KEY_0, KEY_KP_0]:
+		for changes in [{"echo": true}, {"pressed": false}, {"ctrl_pressed": true},
+			{"alt_pressed": true}, {"shift_pressed": true}, {"meta_pressed": true}]:
+			await _reject_number(code, "echo/release/modified number", changes)
+		var action := panel.remove_button if code in [KEY_1, KEY_KP_1] else panel.leave_button
+		var disabled := action.disabled
+		action.disabled = true
+		await _reject_number(code, "disabled number action")
+		action.disabled = disabled
+		action.hide()
+		panel.card_buttons[0].grab_focus()
+		await _reject_number(code, "hidden number action")
+		action.show()
+		panel.hide()
+		await _reject_number(code, "hidden panel number")
+		panel.show()
+		var outside := Button.new()
+		app.add_child(outside)
+		outside.grab_focus()
+		_check(outside.has_focus(), "focus belongs outside Unpicker")
+		await _reject_number(code, "unfocused panel number")
+		outside.free()
+		panel.card_buttons[0].grab_focus()
+	var old_remove: Callable = panel.remove_button.pressed.get_connections()[0].callable
+	var old_leave: Callable = panel.leave_button.pressed.get_connections()[0].callable
+	panel.bind(null)
+	for code in [KEY_1, KEY_KP_1, KEY_0, KEY_KP_0]:
+		await _reject_number(code, "invalid rebound source")
+	panel.bind(app.unpicker_visit)
+	_reject_action(old_remove, "old Remove callback after rebind")
+	_reject_action(old_leave, "old Leave callback after rebind")
+	_check(panel._selected_id.is_empty() and panel.remove_button.disabled,
+		"valid rebind clears selection and disables Remove")
+	for code in [KEY_1, KEY_KP_1]:
+		await _reject_number(code, "rebound no-selection Remove")
+	await _click(panel.card_buttons[0])
+
+
+func _number_key(code: Key) -> void:
+	for pressed in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = code
+		event.physical_keycode = code
+		event.pressed = pressed
+		root.push_input(event, true)
+	await _frames()
+
+
 func _negative_actions() -> void:
 	var callback := _held_request()
 	var original: Dictionary = app._sewing_context()
@@ -194,6 +267,12 @@ func _enter_unpicker(atlas: bool) -> void:
 	_check(app.unpicker_visit.read_state() == app._unpicker_source and app._unpicker_source.deck == before.deck, "visit binds exact deck source")
 	_check(Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(app.unpicker_view.get_global_rect()), "compact visit fits viewport")
 	var panel: LiveUnpickerPanel = app.unpicker_view
+	_check(panel.remove_button.text == "1 Remove" and panel.leave_button.text == "0 Leave · free"
+		and panel.remove_button.is_visible_in_tree() and panel.leave_button.is_visible_in_tree(),
+		"mounted action captions advertise number shortcuts and free Leave")
+	_check(panel.position == Vector2(200, 60) and panel.size == Vector2(880, 600)
+		and panel.remove_button.size == Vector2(390, 62) and panel.leave_button.size == Vector2(400, 62),
+		"shortcut captions retain authored panel and action geometry")
 	_check(panel.wallet_label.text.contains("Wallet: %d gold" % before.gold)
 		and panel.wallet_label.text.contains("Remove: %d gold" % (75 + 25 * before.removals)),
 		"sewn panel displays authentic wallet and escalating quote")
@@ -208,12 +287,19 @@ func _enter_unpicker(atlas: bool) -> void:
 			"tile maps to exact first owned occurrence")
 	_check(panel.choice_scroll.is_visible_in_tree() and panel.choice_scroll.get_v_scroll_bar().visible,
 		"owned cards have a visible scroll")
+	panel.card_buttons[0].grab_focus()
+	_check(panel.card_buttons[0].has_focus() and panel._selected_id.is_empty()
+		and panel.remove_button.disabled, "real unselected row owns GUI focus")
+	for code in [KEY_1, KEY_KP_1]:
+		await _reject_number(code, "no-selection number Remove")
 	await _activate(panel.card_buttons[0], atlas)
 
 
-func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bool) -> Array:
+func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bool, shortcut: int = 0) -> Array:
 	await _unpicker_boot(stitched, funded)
 	await _enter_unpicker(keyboard)
+	if shortcut == 1:
+		await _number_guards()
 	await _negative_actions()
 	var callback := _held_request()
 	var original: Dictionary = app._sewing_context()
@@ -243,7 +329,11 @@ func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bo
 		_reject_action(callback, "unaffordable removal")
 		app.unpicker_remove_button.disabled = false
 		_reject_action(callback, "forced unaffordable action still refuses")
+		for code in [KEY_1, KEY_KP_1]:
+			await _reject_number(code, "forced enabled short-wallet number Remove")
 		app.unpicker_remove_button.disabled = true
+		for code in [KEY_1, KEY_KP_1]:
+			await _reject_number(code, "short-wallet number Remove")
 	var panel: LiveUnpickerPanel = app.unpicker_view
 	var selected := 0
 	if stitched:
@@ -306,12 +396,20 @@ func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bo
 		swapped.selected_card_id = alternate
 		_reject_action(listener.bind(swapped), "owned but unselected card")
 	panel._submitted = false
-	if keyboard:
+	var emissions := {"count": 0}
+	panel.decision_requested.connect(func(_intent): emissions.count += 1)
+	if shortcut != 0:
+		tile.grab_focus()
+		_check(tile.has_focus() and not action.disabled and action.is_visible_in_tree(),
+			"real selected row owns focus and intended shortcut action is enabled")
+		await _number_key((KEY_1 if remove else KEY_0) if shortcut == 1 else (KEY_KP_1 if remove else KEY_KP_0))
+	elif keyboard:
 		action.grab_focus()
-		await _key(KEY_SPACE)
+		await _key(KEY_ENTER)
 	else:
 		await _click(action)
 	await _frames()
+	_check(emissions.count == 1, "physical action emits exactly one connected decision")
 	_check(app._unpicker_closed and not app.unpicker_view.visible and app._can_choose_connected_route(), "decision closes once and permits onward routing")
 	_check(app.unpicker_visit.read_state() == oracle.read_state(), "mounted service exactly matches independent receipt")
 	_check(app.run_deck == expected.deck and app.session_gold == expected.gold and app.run_removal_count == expected.prior_removals
@@ -337,6 +435,8 @@ func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bo
 	_check(wardrobe.cards == app.run_deck and wardrobe.gold == app.session_gold, "connected-map wardrobe stays synchronized")
 	_reject_action(saved, "replayed consumed callback")
 	_reject_action(listener.bind(saved_intent), "stale intent after panel closure")
+	for code in [KEY_1, KEY_KP_1, KEY_0, KEY_KP_0]:
+		await _reject_number(code, "closed panel number")
 	var witness: Array = app._unpicker_visits[fixture.id]
 	app._unpicker_visits.erase(fixture.id)
 	_check(not app._can_choose_connected_route(), "closure witness required")
@@ -365,10 +465,14 @@ func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bo
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
-	for scenario in [[false, true, true], [true, true, true], [false, false, false], [false, true, false]]:
+	for scenario in [[false, true, true], [true, true, true], [false, false, false], [false, true, false], [true, true, false]]:
 		var mouse := await _unpicker_scenario(scenario[0], scenario[1], scenario[2], false)
 		var keyboard := await _unpicker_scenario(scenario[0], scenario[1], scenario[2], true)
 		_check(not mouse.is_empty() and mouse == keyboard, "same seed mouse and atlas/keyboard replay")
+		var main := await _unpicker_scenario(scenario[0], scenario[1], scenario[2], false, 1)
+		var keypad := await _unpicker_scenario(scenario[0], scenario[1], scenario[2], true, 2)
+		_check(not main.is_empty() and main == keypad and main == mouse,
+			"same quoted transaction mouse, Enter, main number and keypad replay")
 	_finish()
 
 

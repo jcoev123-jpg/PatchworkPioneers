@@ -1518,7 +1518,7 @@ func _visible(app, presenter) -> void:
 		"enemy panel visibly mounted inside battle")
 	var labels: Array[Label] = presenter._labels
 	_check(labels.size() == presenter.enemies.get_enemies().size(), "every roster entry has one pinned name tag")
-	_check(presenter.panel.find_children("*", "Label", true, false).size() == labels.size(),
+	_check(presenter.panel.find_children("EnemyState*", "Label", true, false).size() == labels.size(),
 		"pinned tags stay the only Labels under the enemy roster")
 	_check(not labels.is_empty(), "enemy text exists")
 	if not labels.is_empty():
@@ -2140,6 +2140,119 @@ func _mouse_attack(app, reference, presenter) -> void:
 	_check(_snapshot(app) == _snapshot(reference), "mouse attack preserves complete reference HP/Block, piles, energy and RNG")
 
 
+## Exercise the actual app-mounted puppet plaques; the test only seeds CombatEnemies
+## records and never substitutes a mocked presenter or changes any status rules.
+func _status_ribbons(app, presenter) -> void:
+	var originals: Array = _snapshot(app)
+	var record: Dictionary = app.enemies.get_enemy(1)
+	_check(record.get("hp", 0) > 0 and record.get("position") == 1
+		and presenter.enemies == app.enemies and presenter._status_tags.size() == 2,
+		"status coverage starts with a living authoritative enemy and two mounted plaques")
+	if record.get("hp", 0) <= 0 or presenter._status_tags.size() != 2:
+		return
+	var plaque: PanelContainer = presenter._status_tags[0]
+	var other: PanelContainer = presenter._status_tags[1]
+	_check(plaque.get_parent() == presenter._puppets[3]
+		and plaque.name == "EnemyStatuses1" and other.name == "EnemyStatuses2"
+		and not plaque.visible and not other.visible,
+		"empty statuses mount one hidden plaque per actual enemy puppet")
+	var source: Dictionary = app.enemies._enemies[0]
+	source["statuses"] = {"bleed": 2, "weak": 3, "exposed": 4, "tangled": 5, "riposte": 7}
+	var before: Array = _snapshot(app)
+	presenter._refresh()
+	var face := plaque.get_node("Caption") as Label
+	var lines: String = face.text
+	var help: String = plaque.tooltip_text
+	for entry in ["Bleed 2", "Weak 3", "Exposed 4", "Tangled 5", "Riposte 7"]:
+		_check(lines.contains(entry) and help.contains(entry),
+			"mounted enemy plaque visibly names and explains exactly " + entry)
+	_check(plaque.is_visible_in_tree() and not other.visible
+		and plaque.get_parent() == presenter._puppets[3]
+		and presenter._thorns_tags[0].name == "EnemyThorns1",
+		"all five statuses belong to source one and stay separate from Thorns")
+	for meaning in ["Bleed 2: deals 2 direct HP loss at owner-turn end", "decreases by 1",
+			"outgoing attack damage is reduced by 25%",
+			"incoming attack damage increases by 50%",
+			"cannot move or be moved by its own side", "adds +2",
+			"positive base damage", "Riposte 7: returns 7 counterdamage on each confirmed hit",
+			"expires at this owner's turn end", "7 is damage, not turn duration"]:
+		_check(help.contains(meaning), "mounted hover explains shipped rule: " + meaning)
+	_check(plaque.mouse_filter == Control.MOUSE_FILTER_PASS
+		and plaque.focus_mode == Control.FOCUS_NONE
+		and face.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and face.focus_mode == Control.FOCUS_NONE,
+		"status plaque allows nonblocking hover and takes no keyboard focus")
+	var viewport := Rect2(0, 0, 1280, 720)
+	var face_rect := plaque.get_global_rect()
+	var tag_rect: Rect2 = presenter._labels[0].get_global_rect()
+	var art_band: Rect2 = presenter._puppets[3].art_band()
+	var art_rect: Rect2 = presenter._puppets[3].get_global_transform() * presenter._puppets[3].rest_drawn_rect()
+	_check(not face_rect.intersects(art_rect), "status plaque clears its puppet artwork")
+	_check(viewport.encloses(face_rect) and face_rect.has_area()
+		and face_rect.size.x <= art_band.size.x and face_rect.size.y <= art_band.size.y
+		and not face_rect.intersects(presenter._badges[0].get_global_rect())
+		and not face_rect.intersects(presenter._thorns_tags[0].get_global_rect())
+		and not face_rect.intersects(Rect2(tag_rect.position + presenter._puppets[3].tag_band().position,
+			presenter._puppets[3].tag_band().size)),
+		"stitched status plaque is bounded and clear of its intent, Thorns and name hem")
+	# The shipped Thorns hazard stays separately tagged when statuses are also active.
+	source["thorns"] = 4
+	presenter._refresh()
+	var thorns: PanelContainer = presenter._thorns_tags[0]
+	_check(thorns.visible and (thorns.get_node("Caption") as Button).text == "Thorns 4"
+		and plaque.visible and not plaque.get_global_rect().intersects(thorns.get_global_rect())
+		and not plaque.get_global_rect().intersects(art_rect),
+		"simultaneous Thorns and status plaques stay separate from each other and the art")
+	source.erase("thorns")
+	presenter._refresh()
+	for repeat in range(4):
+		presenter._refresh()
+	_check(_snapshot(app) == before and face.text == lines and plaque.tooltip_text == help,
+		"repeated live reads leave deck, party, enemy, intents and RNG unchanged")
+	await _input_mouse(plaque)
+	_check(_snapshot(app) == before,
+		"pointer over a status plaque cannot spend a card, move a target or mutate combat")
+	source["statuses"] = {"bleed": 0, "weak": 1, "exposed": 0, "tangled": 2,
+		"riposte": 0, "unrecognized": 9, "extra": -4}
+	presenter._refresh()
+	_check(plaque.visible and face.text.contains("Weak 1") and face.text.contains("Tangled 2")
+		and not face.text.contains("Bleed") and not face.text.contains("Exposed")
+		and not face.text.contains("Riposte") and not face.text.contains("unrecognized")
+		and not plaque.tooltip_text.contains("Riposte"),
+		"live positive-to-zero expiry and unknown keys disappear without invented cues")
+	for bad in [null, 3, "bleed", {"bleed": 0, "weak": -1,
+			"tangled": 1.5, "exposed": "2", "riposte": true, "strange": 4}]:
+		source["statuses"] = bad
+		presenter._refresh()
+		_check(not plaque.visible and face.text.is_empty() and plaque.tooltip_text.is_empty(),
+			"absent, non-dictionary and bad optional status metadata is silent")
+	source.erase("statuses")
+	presenter._refresh()
+	_check(not plaque.visible and not other.visible,
+		"removing optional statuses hides the whole status view")
+	source["statuses"] = {"bleed": 3}
+	presenter._refresh()
+	_check(plaque.visible and face.text == "Bleed 3", "fresh value reappears immediately")
+	_check(app.enemies.apply_damage(1, 999), "real CombatEnemies damage slays ribbon owner")
+	presenter._refresh()
+	_check(app.enemies.is_slain(1) and not plaque.visible and face.text.is_empty()
+		and plaque.tooltip_text.is_empty(), "slain source removes its status immediately")
+	# Restore the authentic fight before the fixture's deterministic reference trace.
+	source["hp"] = record["hp"]
+	source.erase("statuses")
+	_check(_snapshot(app) == originals, "test restores unchanged authoritative battle after its status cases")
+	var old_id: int = plaque.get_instance_id()
+	presenter._clear()
+	_check(presenter._status_tags.is_empty(), "battle teardown detaches every status control")
+	presenter._sync_battle()
+	await process_frame
+	_check(not is_instance_id_valid(old_id) and presenter._status_tags.size() == 2
+		and not presenter._status_tags[0].visible and not presenter._status_tags[1].visible
+		and presenter.panel.find_children("EnemyStatuses*", "PanelContainer", true, false).size() == 2
+		and _snapshot(app) == originals,
+		"fresh battle mount owns one clean plaque per slot, with no stale labels or game mutation")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load("res://scenes/app.tscn") as PackedScene
@@ -2185,6 +2298,7 @@ func _run() -> void:
 			_finish()
 			return
 		if session == 0:
+			await _status_ribbons(app, presenter)
 			_v3_hero_fallbacks(app, presenter)
 			_caption_legibility(app, presenter)
 		var tick_phase: float = presenter._puppets[0].idle_phase
@@ -2247,6 +2361,8 @@ func _run() -> void:
 		_check(app.battle_view.find_children("EnemyRosterPanel", "PanelContainer", true, false).size() == 1,
 			"exactly one presenter panel per battle")
 		_check(presenter._badges.size() == 2, "duplicate Start Run cannot add intent badges")
+		_check(presenter._status_tags.size() == 2 and not presenter._status_tags[0].visible,
+			"duplicate Start Run cannot add or resurrect status plaques")
 		_check(backdrop_id != 0 and is_instance_valid(presenter.backdrop)
 			and presenter.backdrop.get_instance_id() == backdrop_id
 			and app.battle_view.find_children("BattleStageBackdrop", "Control", true, false).size() == 1,
@@ -2310,7 +2426,8 @@ func _run() -> void:
 		reference.return_button.pressed.emit()
 		app.return_button.pressed.emit()
 		_check(presenter.enemies == null and presenter.panel == null and roster_ref.get_ref() == null and
-			presenter._badges.is_empty(), "Return immediately releases roster, panel and badges")
+			presenter._badges.is_empty() and presenter._status_tags.is_empty(),
+			"Return immediately releases roster, panel, badges and statuses")
 		_check(presenter._puppets.is_empty(), "Return removes every animated puppet with no surviving idle loop")
 		await process_frame
 		_check(not is_instance_id_valid(panel_id), "old panel freed")
@@ -2336,7 +2453,7 @@ func _run() -> void:
 		"complete valid list creates later enemy")
 	_check(is_instance_valid(presenter.panel) and presenter._labels.size() == 2 and
 		presenter._badges.size() == 2 and
-		presenter.panel.find_children("*", "Label", true, false).size() == 2,
+		presenter.panel.find_children("EnemyState*", "Label", true, false).size() == 2,
 		"multi-entry fixture mounts both original labels and both drawn intent badges")
 	_check(presenter.enemies.get_enemy(1).get("id") == "first"
 		and presenter.enemies.get_enemy(2).get("id") == "second",
