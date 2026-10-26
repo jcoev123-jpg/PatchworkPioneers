@@ -23,6 +23,9 @@ var choice_scroll: ScrollContainer
 var preview_scroll: ScrollContainer
 var choices: VBoxContainer
 var option_buttons: Array[Button] = []
+var filter_buttons: Array[Button] = []
+var _owner_filter := ""
+var _filter_owners: Dictionary = {}
 var _visit: RunSewingCircleVisit
 var _source: Dictionary = {}
 var _epoch := 0
@@ -198,6 +201,7 @@ func _active() -> bool:
 
 func _reset_selection() -> void:
 	_mode = ""
+	_owner_filter = ""
 	_first = -1
 	_second = -1
 	_preview = {}
@@ -229,6 +233,8 @@ func _retire_session() -> void:
 func _clear_options() -> void:
 	_rows_epoch += 1
 	_row_indices.clear()
+	_filter_owners.clear()
+	filter_buttons.clear()
 	option_buttons.clear()
 	for child in choices.get_children():
 		choices.remove_child(child)
@@ -262,7 +268,11 @@ func _refresh() -> void:
 		"leave":
 			preview_label.text = "Leave without changing your deck or spending scraps."
 			confirm_button.disabled = false
+	if not options.is_empty():
+		_add_filters(options)
 	for option in options:
+		if not _owner_filter.is_empty() and option.owner != _owner_filter:
+			continue
 		var row := _option_row(option, _mode == "upgrade")
 		if row != null:
 			option_buttons.append(row)
@@ -274,9 +284,83 @@ func _refresh() -> void:
 	_wire_focus()
 
 
+## Navigation is derived from this stage's genuine options, never a hero catalog.
+## Chips and rows share the same generation, so refreshing either retires both.
+func _add_filters(options: Array) -> void:
+	var owners: Array[String] = [""]
+	for option in options:
+		if not owners.has(option.owner):
+			owners.append(option.owner)
+	var strip := HFlowContainer.new()
+	strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	strip.add_theme_constant_override("h_separation", 4)
+	strip.add_theme_constant_override("v_separation", 4)
+	choices.add_child(strip)
+	for owner in owners:
+		var chip := _button("All" if owner.is_empty() else owner.capitalize(),
+			Vector2.ZERO, Vector2(0, 32))
+		chip.add_theme_font_size_override("font_size", 14)
+		var sewn := chip.get_theme_stylebox("normal").duplicate() as StyleBox
+		if sewn is StyleBoxTexture:
+			sewn.set_texture_margin_all(8)
+		if not ResourceLoader.exists(BUTTON_ART, "Texture2D"):
+			var flat := StyleBoxFlat.new()
+			flat.bg_color = Color("#e5d6b6")
+			flat.border_color = INK
+			flat.set_border_width_all(1)
+			sewn = flat
+		sewn.content_margin_left = 6
+		sewn.content_margin_right = 6
+		sewn.content_margin_top = 4
+		sewn.content_margin_bottom = 4
+		chip.add_theme_stylebox_override("normal", sewn)
+		chip.add_theme_stylebox_override("hover", sewn)
+		var selected := StyleBoxFlat.new()
+		selected.bg_color = Color("#e5d6b6")
+		selected.border_color = INK
+		selected.set_border_width_all(2)
+		selected.content_margin_left = 6
+		selected.content_margin_right = 6
+		selected.content_margin_top = 4
+		selected.content_margin_bottom = 4
+		chip.add_theme_stylebox_override("pressed", selected)
+		chip.add_theme_stylebox_override("hover_pressed", selected)
+		chip.toggle_mode = true
+		chip.set_pressed_no_signal(owner == _owner_filter)
+		remove_child(chip)
+		strip.add_child(chip)
+		filter_buttons.append(chip)
+		_filter_owners[chip] = owner
+		chip.pressed.connect(_choose_filter.bind(owner, _epoch, _rows_epoch, chip))
+		chip.focus_entered.connect(choice_scroll.ensure_control_visible.bind(chip))
+
+
+func _choose_filter(owner: String, epoch: int, rows_epoch: int, chip: Variant) -> void:
+	if epoch != _epoch or rows_epoch != _rows_epoch or not is_visible_in_tree():
+		return
+	if not _active():
+		_reset_selection()
+		_refresh()
+		return
+	if not is_instance_valid(chip) or not filter_buttons.has(chip) \
+			or _filter_owners.get(chip) != owner or chip.disabled or not chip.is_visible_in_tree():
+		return
+	_owner_filter = owner
+	if _mode == "upgrade":
+		_first = -1
+	_second = -1
+	_preview.clear()
+	_confirmed.clear()
+	_refresh()
+	for button in filter_buttons:
+		if _filter_owners[button] == owner:
+			button.grab_focus()
+			break
+
+
 func _wire_focus() -> void:
 	var chain: Array[Button] = []
-	for button in [upgrade_button, stitch_button, leave_button] + option_buttons + [confirm_button]:
+	for button in [upgrade_button, stitch_button, leave_button] + filter_buttons + option_buttons + [confirm_button]:
 		if not button.disabled:
 			chain.append(button)
 	for i in range(chain.size()):
@@ -335,6 +419,7 @@ func _select(index: int, epoch: int, rows_epoch: int = -1, row: Variant = null) 
 			if partners.is_empty() or _stitch_projection(index, partners[0].index).is_empty():
 				return
 			_first = index
+			_owner_filter = ""
 			_refresh()
 			if not option_buttons.is_empty():
 				option_buttons[0].grab_focus()

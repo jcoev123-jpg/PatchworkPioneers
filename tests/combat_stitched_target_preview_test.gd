@@ -12,6 +12,7 @@ func _initialize() -> void:
 	_test_warden_blocks()
 	_test_legal_halves()
 	_test_pool_healing_previews()
+	_test_pool_self_previews()
 	_test_positions_and_recipients()
 	_test_refusals()
 	_test_replay_and_isolation()
@@ -534,11 +535,11 @@ func _test_pool_healing_previews() -> void:
 				_rejected(s, id + ": Tinker owner down fails closed")
 	# An unrelated pool card has an authentic Rest receipt but no supported preview.
 	for reversed in [false, true]:
-		var unsupported := _pair("warden_brace" if reversed else "seamstress_tailors_trance",
-				"seamstress_tailors_trance" if reversed else "warden_brace")
+		var unsupported := _pair("warden_brace" if reversed else "seamstress_needle_pin",
+				"seamstress_needle_pin" if reversed else "warden_brace")
 		_check(not unsupported.is_empty() and unsupported["rest"].is_valid(),
 				"unsupported pool half still genuinely authored and stitched")
-		_rejected(unsupported, "nonhealing pool energy/draw must remain unsupported")
+		_rejected(unsupported, "unrelated pool half remains unsupported")
 	var field := _pair("seamstress_field_mend", "warden_brace")
 	_check(field["party"].apply_damage(3, 26), "real downed Tinker with living Field Mend owner")
 	_accepted(field, _half(0, "seamstress_field_mend", [], [1, 2]),
@@ -548,3 +549,36 @@ func _test_pool_healing_previews() -> void:
 	field["party"] = _party(["warden", "tinker", "seamstress"])
 	_accepted(field, _half(0, "seamstress_field_mend", [], [1, 2, 3]),
 			_half(1, "warden_brace", [], [1]), "Field Mend legal from back")
+
+
+func _test_pool_self_previews() -> void:
+	for id in CombatPoolEnergyCards.SUPPORTED_IDS + CombatStitchedCards.SPARE_PARTS_IDS:
+		var authored := RunRestStitchCards.resolve_card_definition(id)
+		_check(not authored.is_empty() and authored.target_kind == "self", "authored self half " + id)
+		for reverse in [false, true]:
+			var s := _pair("warden_brace" if reverse else id, id if reverse else "warden_brace")
+			for order in [["warden", "seamstress", "tinker"], ["warden", "tinker", "seamstress"],
+					["tinker", "warden", "seamstress"], ["seamstress", "warden", "tinker"]]:
+				var typed_order: Array[String] = []
+				typed_order.assign(order)
+				s.party = _party(typed_order)
+				var position: int = order.find(authored.owner) + 1
+				if not authored.from_positions.has(position):
+					_rejected(s, id + ": current owner slot illegal")
+				else:
+					var own := _half(1 if reverse else 0, id, [], [position])
+					var brace := _half(0 if reverse else 1, "warden_brace", [], [order.find("warden") + 1])
+					_accepted(s, brace if reverse else own, own if reverse else brace, id + ": owner-only both orders")
+				s.party = _party(typed_order)
+				_check(s.party.apply_damage(position, 999) and s.party.is_downed(position), "real self owner downed")
+				_rejected(s, id + ": downed owner")
+			s.party = _party()
+			var forged: Dictionary = s.snapshot.duplicate(true)
+			forged.descriptors[s.id]["second_half" if reverse else "first_half"].effects["draw"] = 99
+			_rejected(s, id + ": forged effects receipt", forged)
+			s.rest._descriptors[s.id]["second_half" if reverse else "first_half"].effects["draw"] = 99
+			s.snapshot = s.rest.get_snapshot()
+			_rejected(s, id + ": forged internal canonical descriptor")
+			var poor := _pair("warden_brace" if reverse else id, id if reverse else "warden_brace")
+			_check(poor.deck.try_spend_energy(3), "spend actual shared energy")
+			_rejected(poor, id + ": no advance credit from energy half")

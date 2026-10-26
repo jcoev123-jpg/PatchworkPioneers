@@ -647,7 +647,7 @@ func _run() -> void:
 		"button_golem_pop_button", "button_golem_pop_button_plus"]:
 		_check(presenter._is_actionable(id) and presenter._enemy_service(id) is CombatButtonGolemPopCards,
 			"Pop uses its sole paid resolver through support picker: " + id)
-	for id in ["button_golem_sew_on", "button_golem_pop_button_plus_plus", "button_golem_starter_loose_look"]:
+	for id in ["button_golem_eyelet_guard", "button_golem_pop_button_plus_plus", "button_golem_starter_loose_look"]:
 		_check(not presenter._is_actionable(id), "other Golem cards remain outside support wiring: " + id)
 	_check(app.deck == null and presenter._bindings.is_empty(), "title has no support bindings")
 	# Find a deterministic opening with Brace, so it must stack atop the real passive.
