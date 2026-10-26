@@ -12,9 +12,10 @@ const ENERGY_TINKER_IDS := ["tinker_overclock", "tinker_overclock_plus"]
 const ENERGY_SEAMSTRESS_IDS := ["seamstress_tailors_trance", "seamstress_tailors_trance_plus"]
 const ENERGY_IDS := ENERGY_TINKER_IDS + ENERGY_SEAMSTRESS_IDS
 const YARN_IDS := ["yarn_ranger_unspool", "yarn_ranger_unspool_plus"]
+const SNARE_IDS := ["yarn_ranger_snare_net", "yarn_ranger_snare_net_plus"]
 const CROW_IDS := ["scarecrow_crow_dive", "scarecrow_crow_dive_plus",
 	"scarecrow_crow_peck", "scarecrow_crow_peck_plus"]
-const CARD_IDS := SEAMSTRESS_IDS + TINKER_IDS + UNRAVEL_TINKER_IDS + ENERGY_IDS + YARN_IDS + CROW_IDS
+const CARD_IDS := SEAMSTRESS_IDS + TINKER_IDS + UNRAVEL_TINKER_IDS + ENERGY_IDS + YARN_IDS + SNARE_IDS + CROW_IDS
 const INSTRUCTION := "Click or focus and press Enter / Space to play"
 const CUE_NAME := "BlanketStitchCue"
 const CREAM := Color("#ece0c8")
@@ -160,7 +161,7 @@ func _is_card(card_id: String) -> bool:
 func _definition(card_id: String) -> Dictionary:
 	if card_id in CROW_IDS:
 		return CombatScarecrowCrowCards.new()._catalog_definition(card_id)
-	if card_id in YARN_IDS:
+	if card_id in YARN_IDS or card_id in SNARE_IDS:
 		return YarnRangerPoolCards.new().get_definition(card_id)
 	return _tinker_catalog.get_definition(card_id) if card_id in TINKER_IDS \
 		or card_id in UNRAVEL_TINKER_IDS or card_id in ENERGY_TINKER_IDS \
@@ -415,6 +416,10 @@ func _rule_text(card_id: String) -> String:
 	if definition.get("id") != card_id:
 		return "Unknown card rules"
 	var effects: Dictionary = definition.get("effects", {})
+	if card_id in SNARE_IDS:
+		return "%s | Yarn Ranger | %d energy | From %s\nAll living enemies %s: Tangled %d; prevents own-side movement and shoves, +2 damage taken from attacks; no target choice" % [
+			definition.display_name, definition.cost, _positions(definition.from_positions),
+			_positions(definition.to_positions), effects.tangled]
 	if card_id in CROW_IDS:
 		return "%s | Scarecrow | %s catalog | %d energy | From %s\nAutomatically hit the backmost living enemy only: %d base damage; bypass Block (Block remains). Weak/Exposed/Tangled apply; no target choice" % [
 			definition.display_name, CombatScarecrowCrowCards.CARDS[card_id].catalog,
@@ -477,7 +482,7 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 		or card_id in ENERGY_TINKER_IDS
 	var is_energy: bool = card_id in ENERGY_IDS
 	var owner_color: Color = TINKER if is_tinker else SEAMSTRESS
-	if card_id in YARN_IDS or card_id in CROW_IDS:
+	if card_id in YARN_IDS or card_id in SNARE_IDS or card_id in CROW_IDS:
 		owner_color = INK
 	for existing in panel.get_children():
 		if existing.name == CUE_NAME:
@@ -563,7 +568,7 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 		effect_label.clip_text = false
 		effect_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		column.add_child(effect_label)
-		if card_id in YARN_IDS or card_id in CROW_IDS:
+		if card_id in YARN_IDS or card_id in SNARE_IDS or card_id in CROW_IDS:
 			var owner_label := _cue_label("Scarecrow" if card_id in CROW_IDS else "Yarn Ranger", 9, owner_color)
 			owner_label.name = "Owner"
 			column.add_child(owner_label)
@@ -590,6 +595,8 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 ## resolver applies, printed without its arithmetic.
 func _short_effect(definition: Dictionary) -> String:
 	var effects: Dictionary = definition.get("effects", {})
+	if definition.get("id", "") in SNARE_IDS:
+		return "Tangled %d to all living enemies." % effects.tangled
 	if definition.get("id", "") in CROW_IDS:
 		return "Deal %d to backmost living enemy; bypass Block." % effects.damage
 	if definition.get("id", "") in YARN_IDS:
@@ -869,6 +876,10 @@ func _eligible(panel, card_id: String) -> bool:
 	if card_id in YARN_IDS:
 		if not _receipt_valid(_receipt(panel, card_id)) or not _yarn_playable(card_id):
 			return false
+	if card_id in SNARE_IDS:
+		if not _receipt_valid(_receipt(panel, card_id)) or not CombatYarnRangerSnareCards.new()._prepare(
+				_deck, _party, _enemies, card_id).get("ok", false):
+			return false
 	return app.deck == _deck and app.party == _party and app.enemies == _enemies \
 		and app.battle_result == _result and app.run_rng == _rng and app.battle_view == _battle
 
@@ -935,6 +946,9 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 			receipt.deck, receipt.party, receipt.enemies, card_id, _crow_backmost())
 	elif card_id in YARN_IDS:
 		event = CombatYarnRangerUnspoolCards.new().play_card(
+			receipt.deck, receipt.party, receipt.enemies, card_id)
+	elif card_id in SNARE_IDS:
+		event = CombatYarnRangerSnareCards.new().play_card(
 			receipt.deck, receipt.party, receipt.enemies, card_id)
 	elif card_id in ENERGY_IDS:
 		if not CombatPoolEnergyCards.new().play_card(receipt.deck, receipt.party, card_id, 0):

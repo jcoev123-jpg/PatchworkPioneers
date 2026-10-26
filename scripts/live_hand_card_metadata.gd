@@ -87,7 +87,7 @@ func _definition(card_id: String) -> Dictionary:
 		return _feint._catalog_definition(card_id)
 	if CombatScarecrowCrowCards.CARDS.has(card_id):
 		return CombatScarecrowCrowCards.new()._catalog_definition(card_id)
-	if card_id in CombatYarnRangerUnspoolCards.CARD_IDS:
+	if card_id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatYarnRangerSnareCards.CARDS.has(card_id):
 		return YarnRangerPoolCards.new().get_definition(card_id)
 	if _re_stuff.is_supported_card(card_id):
 		return ScarecrowPoolCards.new().get_definition(card_id)
@@ -339,6 +339,10 @@ func base_effect_text(card_id: String, include_pips: bool = true) -> String:
 			card.display_name, CombatScarecrowCrowCards.CARDS[card_id].catalog,
 			card.cost, _positions(card.from_positions), card.effects.damage,
 			_pip_legend(card) if include_pips else ""]
+	if CombatYarnRangerSnareCards.CARDS.has(card_id):
+		var card := _definition(card_id)
+		return "%s; Yarn Ranger; 2 energy\nFrom 2,3; all living enemies 1,2,3\nTangled %d; prevents own-side movement and shoves; +2 damage taken from attacks. No target choice.\n%s" % [
+			card.display_name, card.effects.tangled, _pip_legend(card) if include_pips else ""]
 	if card_id in CombatYarnRangerUnspoolCards.CARD_IDS:
 		var card := _definition(card_id)
 		return "%s; Yarn Ranger; 2 energy\nFrom 2,3; living Tangled enemies 1,2,3 only\nBASE deal %d damage each; Weak/Exposed, Tangled +2 and Block apply. Requires a living Tangled target.\n%s" % [
@@ -1025,7 +1029,7 @@ func _update_visual(panel: Control) -> void:
 		if battle_preview != null and is_instance_valid(battle_preview) \
 				and battle_preview.has_method("tinker_cost_discount"):
 			discount = int(battle_preview.tinker_cost_discount(id))
-		if id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatScarecrowCrowCards.CARDS.has(id):
+		if id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatYarnRangerSnareCards.CARDS.has(id) or CombatScarecrowCrowCards.CARDS.has(id):
 			var area = _app.get_node_or_null("LiveAreaAttackAction")
 			playable = area != null and area._eligible(panel, id)
 		elif _re_stuff.is_supported_card(id) or _feint.is_supported_card(id) or _pop.is_supported_card(id):
@@ -1153,6 +1157,8 @@ func _center_text(panel: Control, value: String, rect: Rect2, preferred: int) ->
 ## keeps the ordinary and two-half sewn faces identical; applied amounts come
 ## from the same validated record the tooltip explains, never from a prediction.
 func _rules(id: String) -> String:
+	if CombatYarnRangerSnareCards.CARDS.has(id):
+		return "Tangled %d to all living enemies." % _definition(id).effects.tangled
 	if _pop.is_supported_card(id) and not _definition(id).is_empty():
 		return "Spend 5 own Block; deal %d; pop 1 button." % _definition(id).effects.damage
 	if _feint.is_supported_card(id):
