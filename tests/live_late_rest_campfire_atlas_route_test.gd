@@ -20,6 +20,27 @@ func _atlas_refuse(callback: Callable, reason: String) -> void:
 		reason + " preserves chooser and overlay visibility")
 
 
+func _campfire_marker(atlas: RunRouteAtlas, id: String) -> void:
+	var marker := atlas.get_node_or_null("Node_" + id) as Control
+	_check(marker != null, "authentic Rest marker exists in mounted atlas")
+	if marker == null:
+		return
+	var art := marker.get_node_or_null("Art") as RunRouteAtlas.NodeToken
+	var caption := marker.get_node_or_null("Identity") as Label
+	var path := "res://assets/paper/ui/map_node_campfire.png"
+	var texture: Texture2D = null
+	if ResourceLoader.exists(path, "Texture2D"):
+		texture = load(path) as Texture2D
+	_check(atlas._map.get_node(id).type == "Rest" and marker.get_meta("route_kind") == "Rest"
+		and marker.get_meta("display_kind") == "Campfire"
+		and caption != null and caption.text.ends_with("Campfire")
+		and marker.tooltip_text.contains("Campfire") and not marker.tooltip_text.contains("Rest")
+		and art != null and art.token_kind == "Campfire" and art.get_meta("art_path") == path
+		and art.token_texture == texture
+		and (texture != null or RunRouteAtlas.NodeToken.fallback_plan("Campfire")["glyph"] == "C"),
+		"mounted legal/future authored Rest wears Campfire caption, hover and art/fallback")
+
+
 func _atlas_scenario(heal: bool, mode: int) -> Array:
 	if not await _late_boot():
 		app.free()
@@ -51,10 +72,11 @@ func _atlas_scenario(heal: bool, mode: int) -> Array:
 	if marker == null:
 		app.free()
 		return []
+	_campfire_marker(atlas, fixture.id)
 	marker.grab_focus()
 	var help := "One action: heal each hero 30% max HP (torn revives at 1 HP first), or leave unchanged"
 	_check(marker.tooltip_text.contains(help) and atlas._choice_ticket.route_id == fixture.id
-		and atlas._choice_ticket.lead_text == "Rest · Choose one: heal or leave"
+		and atlas._choice_ticket.lead_text == "Campfire · Choose one: heal or leave"
 		and atlas._choice_ticket.detail_text == "Heal 30% max HP; torn revives at 1 HP first",
 		"legal Rest focus ticket and hover promise exactly Campfire actions")
 	var motion := InputEventMouseMotion.new()
@@ -62,7 +84,7 @@ func _atlas_scenario(heal: bool, mode: int) -> Array:
 	root.push_input(motion, true)
 	await _frames()
 	_check(atlas._choice_ticket.route_id == fixture.id
-		and atlas._choice_ticket.lead_text == "Rest · Choose one: heal or leave",
+		and atlas._choice_ticket.lead_text == "Campfire · Choose one: heal or leave",
 		"physical pointer selects truthful later Rest ticket")
 	_check(map.get_node(fixture.id).type == "Rest" and app._sewing_context() == original,
 		"guidance preserves source kind and every run authority")
@@ -73,6 +95,7 @@ func _atlas_scenario(heal: bool, mode: int) -> Array:
 				future_rests += 1
 				var future := atlas.get_node_or_null("Node_" + node.id) as Control
 				_check(future != null and not future.tooltip_text.contains("One action:"), "nonlegal Rest keeps identity-only guidance")
+				_campfire_marker(atlas, node.id)
 	_check(future_rests > 0, "seeded atlas exercises nonlegal future Rest guidance")
 	# A closed overlay's saved listener must fail even after reopening on the same sources.
 	await _click(app.route_atlas_close)

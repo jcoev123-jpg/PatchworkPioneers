@@ -1173,23 +1173,19 @@ func _add_thread(source: String, target: String, positions: Dictionary,
 
 
 ## The stop the player actually enters for one authored route kind. A generated legacy
-## Shop patch opens the already-shipped Peddler visit, so its sewn marker, hover and
-## ticket read as Peddler while the authored RunMap record keeps its own type and ID.
-## Native kinds (including a genuine Peddler, Rest and Campfire) keep their own name.
+## Shop/Rest patches open Peddler/Campfire visits, so their sewn markers, hover and
+## tickets use those names while authored RunMap records keep their own type and ID.
+## Native kinds keep their own name.
 ## The existing v3 alias rule supplies the projected name; this is presentation only,
 ## never a node mutation or a second competing alias table.
 static func display_kind(kind: String) -> String:
-	if kind != "Shop":
-		return kind
 	return RunV3StopChoiceProjection.v3_kind_for(kind)
 
 
 ## Kind whose deterministic stop guidance describes the visit actually entered. The
-## marker keeps its authored Rest identity, while Help already speaks Campfire; a
-## projected Shop reads the shipped Peddler rules.
+## marker keeps its authored identity in metadata; Help uses the projected rules.
 static func help_kind(kind: String) -> String:
-	var shown := display_kind(kind)
-	return "Campfire" if shown == "Rest" else shown
+	return display_kind(kind)
 
 
 ## Player-facing sewn route wording for one REAL RunMap node record: its authored
@@ -1366,7 +1362,7 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	marker.name = "Node_" + id
 	marker.set_meta("route_id", id)
 	# Authored kind and ID stay the route protocol; only the player-facing face of a
-	# legacy Shop patch projects to the shipped Peddler stop it actually opens.
+	# legacy Shop/Rest patch projects to the Peddler/Campfire stop it actually opens.
 	marker.set_meta("route_kind", kind)
 	var shown := display_kind(kind)
 	marker.set_meta("display_kind", shown)

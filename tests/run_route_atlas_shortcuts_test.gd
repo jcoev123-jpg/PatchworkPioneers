@@ -121,9 +121,10 @@ const EXPECTED_HELP := {
 		"tooltip": "Terminal floor-12 fight"},
 }
 
-## Independent presentation oracle: a generated legacy Shop patch shows the shipped
-## Peddler stop; every other authored kind (including a native Peddler) keeps its name.
+## Independent presentation oracle for the visits entered by legacy map kinds.
 func _display_kind(kind: String) -> String:
+	if kind == "Rest":
+		return "Campfire"
 	return "Peddler" if kind == "Shop" else kind
 
 

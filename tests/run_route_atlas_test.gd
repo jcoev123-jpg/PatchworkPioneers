@@ -11,6 +11,7 @@ var preview_help_kinds: Dictionary = {}
 ## currently legal Shop was admitted through the mounted atlas. Both fail closed if absent.
 var seeded_shop_markers := 0
 var seeded_legal_shop := false
+var seeded_rest_states: Dictionary = {}
 ## The committed sewn tokens, written out independently of the view's own table so
 ## this regression cannot silently inherit an omission from the implementation.
 const TOKEN_PATHS := {
@@ -177,9 +178,10 @@ const EXPECTED_HELP := {
 		"tooltip": "Terminal floor-12 fight"},
 }
 
-## Independent presentation oracle: a generated legacy Shop patch shows the shipped
-## Peddler stop; every other authored kind (including a native Peddler) keeps its name.
+## Independent presentation oracle for the visits entered by legacy map kinds.
 func _display_kind(kind: String) -> String:
+	if kind == "Rest":
+		return "Campfire"
 	return "Peddler" if kind == "Shop" else kind
 
 
@@ -314,7 +316,7 @@ func _verify_peddler_preview(view: RunRouteAtlas) -> void:
 		"the direct historical Shop guidance and token path remain available")
 	_check(RunRouteAtlas.display_kind("Shop") == "Peddler"
 		and RunRouteAtlas.display_kind("Peddler") == "Peddler"
-		and RunRouteAtlas.display_kind("Rest") == "Rest"
+		and RunRouteAtlas.display_kind("Rest") == "Campfire"
 		and RunRouteAtlas.display_kind("Campfire") == "Campfire"
 		and RunRouteAtlas.node_hover_text(shop_record, "Shop", true)
 			== "Floor 03 · Peddler · Branch 2 · " + str(EXPECTED_HELP.Peddler.tooltip)
@@ -618,6 +620,11 @@ func _verify_token_marker(marker: PanelContainer, id: String, view: RunRouteAtla
 		label + ": sewn emblem and readable kind caption " + id)
 	if art == null:
 		return
+	if authored == "Rest":
+		if view._map != null and view._map is not PeddlerPreviewMap:
+			seeded_rest_states[str(marker.get_meta("route_state"))] = true
+		_check(kind == "Campfire" and marker.tooltip_text.contains("Campfire")
+			and not caption.text.contains("Rest"), label + ": Rest presents only Campfire")
 	var path: String = TOKEN_PATHS.get(kind, "")
 	_check(art.get_meta("art_path") == path and art.token_texture == view.node_token_texture(path),
 		label + ": canonical art path and cached texture for " + id)
@@ -660,6 +667,13 @@ func _verify_token_sources(view: RunRouteAtlas, label: String) -> void:
 	_check(view.node_token_texture(failed_path) == null
 		and view.has_cached_node_token(failed_path), label + ": missing texture cached as null")
 	var probe := RunRouteAtlas.new()
+	var campfire_fallback := RunRouteAtlas.NodeToken.new()
+	campfire_fallback.token_kind = "Campfire"
+	campfire_fallback.token_texture = view.node_token_texture(failed_path)
+	_check(campfire_fallback.token_texture == null and campfire_fallback.token_rect() == Rect2()
+		and RunRouteAtlas.NodeToken.fallback_plan(campfire_fallback.token_kind)["glyph"] == "C",
+		label + ": missing Campfire art retains identifiable C fallback")
+	campfire_fallback.free()
 	var none: Array[String] = []
 	var test_kinds := ["Fight", "Elite", "Event", "Shop", "Rest", "Treasure", "Boss", "SewingCircle", "Campfire", "PatchStall", "Unpicker", "Peddler"]
 	for i in range(test_kinds.size()):
@@ -1758,13 +1772,13 @@ func _run() -> void:
 		"generic Rest facts retain the full legacy action set")
 	var rest_record := {"floor": 2, "position": 0, "type": "Rest"}
 	_check(RunRouteAtlas.node_hover_text(rest_record, "", true)
-		== "Floor 02 · Rest · Branch 1 · " + str(EXPECTED_HELP.Campfire.tooltip),
-		"later-floor legal Rest offers Campfire Help while retaining Rest identity")
+		== "Floor 02 · Campfire · Branch 1 · " + str(EXPECTED_HELP.Campfire.tooltip),
+		"later-floor legal Rest presents Campfire and its Help")
 	rest_record.floor = 1
-	_check(RunRouteAtlas.node_hover_text(rest_record) == "Floor 01 · Rest · Branch 1"
+	_check(RunRouteAtlas.node_hover_text(rest_record) == "Floor 01 · Campfire · Branch 1"
 		and RunRouteAtlas.node_hover_text(rest_record, "", true)
-		== "Floor 01 · Rest · Branch 1 · " + str(EXPECTED_HELP.Campfire.tooltip),
-		"legal opening Rest advice names Heal or Leave while identity remains Rest")
+		== "Floor 01 · Campfire · Branch 1 · " + str(EXPECTED_HELP.Campfire.tooltip),
+		"legal opening Rest presents Campfire and Heal or Leave")
 	# App mounts this view under PatchworkUIShell's installed master Theme, so install that
 	# same Theme here. A bare variation string would prove nothing: the mounted labels must
 	# resolve the genuine Londrina heading face through the inherited Theme.
@@ -2017,6 +2031,8 @@ func _run() -> void:
 		"seeded generated maps rendered authored Shop patches as the Peddler stop")
 	_check(seeded_legal_shop,
 		"a genuine legal Shop patch was mounted, hovered, ticketed and admitted")
+	_check(seeded_rest_states.has("legal") and seeded_rest_states.has("other"),
+		"seeded Rest markers exercise both legal and future Campfire presentation")
 	for kind in seen_help_kinds:
 		_check(EXPECTED_HELP.has(kind),
 			"every generated route kind was vetted by the independent advice oracle: " + kind)
