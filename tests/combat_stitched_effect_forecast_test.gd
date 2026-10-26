@@ -28,10 +28,12 @@ func _run() -> void:
 	_test_rejections()
 	_test_real_torn_and_mend()
 	_test_pool_heal_forecasts()
+	_test_pool_self_forecasts()
 	_test_borrowed_button_stitched_parity()
 	_test_borrowed_button_spent_latch()
 	_test_borrowed_button_negatives()
 	await _test_mounted_warden_blocks()
+	await _test_mounted_pool_self()
 	for failure in failures:
 		printerr(failure)
 	print("combat_stitched_effect_forecast_test: ",
@@ -107,6 +109,113 @@ func _test_mounted_warden_blocks() -> void:
 					_check(hero.block == before[0][hero.position - 1].block + expected, "mounted commit grants every authored Block recipient")
 			app.queue_free()
 			await process_frame
+
+
+func _test_mounted_pool_self() -> void:
+	for id in CombatPoolEnergyCards.SUPPORTED_IDS + CombatStitchedCards.SPARE_PARTS_IDS:
+		for reverse in [false, true]:
+			var app = load("res://scenes/app.tscn").instantiate()
+			root.add_child(app)
+			await process_frame
+			_check(app._start_battle(), "mounted self stitch active battle")
+			var rest := RunRestStitchCards.new([BRACE if reverse else id, id if reverse else BRACE], {}, 3)
+			var made := rest.choose_stitch(0, 1, rest.get_snapshot())
+			_check(made.ok and rest.is_consumed(), "mounted self stitch genuine receipt")
+			app.run_deck.assign(made.deck)
+			app.run_stitch_descriptors = made.descriptors.duplicate(true)
+			app.run_scraps = made.remaining_scraps
+			app.run_next_stitch_id = made.next_stitch_id
+			app.deck.hand.assign(made.deck)
+			app.deck.draw_pile.assign([POP, PRICK, MEND, TUNE])
+			app.deck.discard_pile.clear()
+			app._refresh_hand()
+			await process_frame
+			await process_frame
+			var presenter = app.get_node("LiveAttackPreview")
+			var panel: Control = null
+			for child in app.hand_view.get_children():
+				if child.get_child(0).text == made.stitched_id:
+					panel = child
+			_check(panel != null and presenter._bindings.has(panel), "new self stitch bound to real hand")
+			var admission: Dictionary = presenter._stitch_preview(made.stitched_id)
+			_check(admission.get("playable", false), "mounted gate admits " + id)
+			if panel != null and admission.get("playable", false):
+				var before := [app.party.get_heroes(), app.deck.energy, app.deck.hand.duplicate(), app.run_rng.state]
+				presenter._armed = panel
+				presenter._selected = panel
+				presenter._arm_stitch()
+				_check(presenter._choices == [0, 0], "mounted halves automatically choose target zero")
+				presenter._choose_stitch(0)
+				var projected: Dictionary = presenter.current_forecast.duplicate(true)
+				_check(projected.get("playable", false) and before == [app.party.get_heroes(), app.deck.energy, app.deck.hand, app.run_rng.state],
+					"mounted complete forecast spends nothing")
+				await process_frame
+				await process_frame
+				_check(presenter.last_event.get("ok", false), "mounted deferred self stitch commits")
+				if projected.get("playable", false):
+					_check(projected.projected.heroes == app.party.get_heroes() and projected.projected.energy == app.deck.energy
+						and projected.projected.hand == app.deck.hand and projected.projected.discard_pile == app.deck.discard_pile
+						and projected.projected.rng_state == app.run_rng.state, "mounted self effects equal forecast")
+			app.queue_free()
+			await process_frame
+
+
+func _test_pool_self_forecasts() -> void:
+	for id in CombatPoolEnergyCards.SUPPORTED_IDS + CombatStitchedCards.SPARE_PARTS_IDS:
+		var overclock: bool = id in CombatPoolEnergyCards.OVERCLOCK_IDS
+		var trance: bool = id in CombatPoolEnergyCards.TRANCE_IDS
+		var draws: int = (3 if id.ends_with("_plus") else 2) if trance else (0 if overclock else 1)
+		for reverse in [false, true]:
+			for seed_value in [0, 101, 9527]:
+				var outcomes: Array = []
+				for replay in range(2):
+					var c := _fixture(BRACE if reverse else id, id if reverse else BRACE, seed_value)
+					c.deck.discard_pile.assign([POP, PRICK, MEND, TUNE])
+					var before := _state(c)
+					# Independent Fisher-Yates and draw oracle, including exact RNG state.
+					var oracle := RandomNumberGenerator.new()
+					oracle.seed = c.deck._rng.seed
+					oracle.state = c.deck._rng.state
+					var pile: Array = before.discard_pile.duplicate()
+					var expected_hand: Array = []
+					if draws > 0:
+						for index in range(pile.size() - 1, 0, -1):
+							var other := oracle.randi_range(0, index)
+							var saved: String = pile[index]
+							pile[index] = pile[other]
+							pile[other] = saved
+						for index in range(draws):
+							expected_hand.append(pile.pop_back())
+					var result := _compare(c, 0, 0, id + ": self forecast both orders")
+					if not result.playable:
+						continue
+					_check(result.cost == 2 and result.projected.energy == (2 if overclock or trance else 1),
+						"one composite charge plus authored energy gain")
+					_check(result.projected.heroes[0].block == 7
+						and result.projected.heroes[2].hp == (23 if overclock else 26)
+						and result.projected.heroes[2].block == (0 if overclock or trance else (4 if id.ends_with("_plus") else 3)),
+						"exact Brace, owner self-damage and Spare Parts Block")
+					_check(result.projected.hand == expected_hand and result.projected.rng_state == oracle.state
+						and result.projected.draw_pile == (pile if draws > 0 else [])
+						and result.projected.discard_pile == ([c.id] if draws > 0 else [POP, PRICK, MEND, TUNE, c.id]),
+						"exact authored draw, seeded shuffle and single composite discard")
+					outcomes.append(result)
+				_check(outcomes.size() == 2 and outcomes[0] == outcomes[1], "nonvacuous independent seeded replay")
+			var bad := _fixture(BRACE if reverse else id, id if reverse else BRACE)
+			_reject(bad, 1 if not reverse else 0, 1 if reverse else 0, "nonzero self target")
+			var before_bad := _whole(bad)
+			_check(not _real(bad, 1 if not reverse else 0, 1 if reverse else 0).ok and _whole(bad) == before_bad,
+				"bad target commit also atomic")
+			_check(bad.deck.try_spend_energy(2), "authentic insufficient composite payment")
+			_reject(bad, 0, 0, "insufficient energy despite printed gain")
+			before_bad = _whole(bad)
+			_check(not _real(bad, 0, 0).ok and _whole(bad) == before_bad, "unaffordable commit atomic")
+		var late := _fixture(id, BRACE)
+		late.deck.discard_pile.assign([POP, PRICK, MEND, TUNE])
+		_check(late.party.gain_block(1, CombatParty.MAX_INT), "real second-half Brace overflow")
+		_reject(late, 0, 0, "rollback earlier energy/damage/Block/draw and shuffle")
+		var before_late := _whole(late)
+		_check(not _real(late, 0, 0).ok and _whole(late) == before_late, "real late overflow rolls back all authorities")
 
 
 func _test_warden_block_forecasts() -> void:

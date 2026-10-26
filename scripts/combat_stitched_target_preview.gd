@@ -152,6 +152,11 @@ func _half_preview(half: Dictionary, index: int, party_slots: Array[Dictionary],
 		authored = _pool.get_definition(id)
 	if authored.is_empty() and id in WARDEN_BLOCK_IDS:
 		authored = WardenPoolCards.new().get_definition(id)
+	if authored.is_empty() and id in CombatPoolEnergyCards.TRANCE_IDS:
+		authored = _pool.get_definition(id)
+	if authored.is_empty() and (id in CombatPoolEnergyCards.OVERCLOCK_IDS
+			or id in CombatStitchedCards.SPARE_PARTS_IDS):
+		authored = TinkerPoolCards.new().get_definition(id)
 	if authored.is_empty() or authored != half:
 		return {}
 	var kind: String = authored["target_kind"]
