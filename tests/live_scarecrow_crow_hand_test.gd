@@ -241,7 +241,9 @@ func _run() -> void:
 	var meta = preload("res://scripts/live_hand_card_metadata.gd").new()
 	for catalog in [ScarecrowStarterCards.new(), ScarecrowPoolCards.new()]:
 		for id in catalog.get_all_card_ids():
-			if id not in IDS and id not in ["scarecrow_re_stuff", "scarecrow_re_stuff_plus"]:
+			if id in CombatSupportCards.SCARECROW_STRAW_IDS:
+				_check(meta.definition(id) == catalog.get_definition(id), "straw face retains exact canonical catalog")
+			elif id not in IDS and id not in ["scarecrow_re_stuff", "scarecrow_re_stuff_plus"]:
 				_check(meta.definition(id).is_empty(), "unrelated Scarecrow IDs remain unwired")
 	for failure in failures:
 		printerr("FAIL: " + failure)
