@@ -124,11 +124,14 @@ func open_needle_toll(outcome: RunNeedleToll) -> bool:
 		return false
 	var record := outcome.get_event()
 	var captions: Array[String] = []
+	var card_tooltips: Array[String] = []
 	if outcome.is_paid():
 		record.choices = []
 		for id in outcome.get_offered_ids():
 			var card := RunPoolCardRewardOffers.resolve_reward_definition(id)
 			var caption := "Claim %s (%s, rare)" % [card.get("display_name", id), card.get("owner", "")]
+			caption += "\nCost %d energy · %s" % [card.cost, CardShortRules.line(card)]
+			card_tooltips.append(caption + "\n" + _needle_position_legend(card))
 			record.choices.append({"id": id, "text": caption})
 			captions.append(caption)
 		record.choices.append({"id": "skip", "text": "Skip - take no card"})
@@ -140,6 +143,11 @@ func open_needle_toll(outcome: RunNeedleToll) -> bool:
 	for index in range(_choice_buttons.size()):
 		_choice_buttons[index].text = captions[index]
 		_choice_buttons[index].tooltip_text = captions[index]
+		if index < card_tooltips.size():
+			_choice_buttons[index].tooltip_text = card_tooltips[index]
+			_choice_buttons[index].autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_choice_buttons[index].custom_minimum_size.y = 96
+			_choice_buttons[index].add_theme_font_size_override("font_size", 20)
 	if outcome.is_open():
 		needle_payer = OptionButton.new()
 		needle_payer.name = "NeedlePayer"
@@ -165,6 +173,28 @@ func open_needle_toll(outcome: RunNeedleToll) -> bool:
 		controls[index].focus_previous = controls[index].get_path_to(controls[(index - 1 + controls.size()) % controls.size()])
 	controls[0].grab_focus()
 	return true
+
+
+## Detached authored positions only; empty target slots never mean all targets.
+func _needle_position_legend(card: Dictionary) -> String:
+	var source: Array[String] = []
+	for position in card.from_positions:
+		source.append(str(position))
+	var targets: Array[String] = []
+	for position in card.to_positions:
+		targets.append(str(position))
+	var target: String
+	match card.target_kind:
+		"self": target = "self (the acting hero)"
+		"ally_single": target = "one ally"
+		"party_all": target = "every hero in the party"
+		"enemy_single": target = "one enemy"
+		"enemy_all": target = "every enemy"
+		_: target = str(card.target_kind)
+	target += "; target positions: " + (", ".join(targets) if not targets.is_empty() else "none specified")
+	return "Source positions: %s\nTarget: %s" % [", ".join(source), target]
+
+
 var _generation: int = 0
 var _is_open: bool = false
 var _choice_buttons: Array[Button] = []

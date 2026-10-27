@@ -891,6 +891,7 @@ func _run() -> void:
 			_check(randi() == global_next, "earned route and cast preserve global RNG")
 	await _coat_cases(fixture)
 	await _pool_case()
+	await _knit_case(fixture)
 	await _finish_hand()
 
 
@@ -972,6 +973,103 @@ func _pool_case() -> void:
 			_check(trace == replay, "seeded mouse/keyboard pool composite replay")
 		await _return()
 		_check(randi() == global_next, "earned pool route and cast preserve global RNG")
+
+
+func _knit_case(fixture: Dictionary) -> void:
+	var replay: Array = []
+	for keyboard in [false, true]:
+		app.run_seed = fixture.seed
+		await _click(app.start_button)
+		preload("res://tests/party_choice.gd").choose(app, ["warden", "seamstress", "yarn_ranger"])
+		await _frames()
+		_check(app.run_map != null and app.run_rng != null and app.run_heroes[2].id == "yarn_ranger"
+			and app.run_deck.has("yarn_ranger_hood_knit"), "real pick-three admits Ranger and authored starting deck")
+		if app.run_map == null:
+			return
+		# Earn the same three-scrap purse from genuine mounted Fight/Elite rewards.
+		for node_id in [fixture.fight, fixture.elite.back()]:
+			await _click(_route_action(node_id))
+			_check(app.deck != null and app.battle_result.can_continue(), "Ranger route mounts a real battle")
+			for enemy in app.enemies.get_enemies():
+				_check(app.enemies.apply_damage(enemy.position, 9999), "settle mounted Ranger fixture battle")
+			app._observe_battle_result()
+			await _frames()
+			await _click(app.reward_buttons[3])
+			await _click(app.continue_button)
+		await _click(_legacy_rest_control(_route_action(fixture.rest.back())))
+		_check(app.rest_stitch != null and app.run_scraps == 3, "Ranger reaches legitimate earned Rest stitch")
+		if app.rest_stitch == null:
+			return
+		await _select_stitch(app.rest_stitch_first, app.run_deck.find("yarn_ranger_hood_knit"), keyboard)
+		await _select_stitch(app.rest_stitch_second, app.run_deck.find("warden_brace"), keyboard)
+		await _click(app.rest_stitch_button)
+		_check(app.run_stitch_descriptors.size() == 1 and app.run_scraps == 0, "Rest sews genuine cross-owner knit composite")
+		if app.run_stitch_descriptors.is_empty():
+			return
+		var id: String = app.run_stitch_descriptors.keys()[0]
+		var receipt: Dictionary = app._stitch_snapshot().duplicate(true)
+		await _click(app.rest_continue_button)
+		await _click(_route_action(fixture.next))
+		_check(app.deck != null and app.battle_result.can_continue() and app._stitch_snapshot() == receipt, "next routed Fight retains exact knit ledger")
+		while not app.deck.hand.has(id) and not app.deck.draw_pile.is_empty():
+			_check(app.deck.draw_extra(1) == 1, "draw genuinely sewn Ranger composite")
+		app._refresh_hand()
+		await _frames()
+		_check(app.deck.hand.has(id) and _panel(id) != null, "knit composite actually mounted in shared hand")
+		var ledger := RunRestStitchCards.new(app.run_deck, app.run_stitch_descriptors, app.run_scraps, app.run_next_stitch_id)
+		var preview := CombatStitchedTargetPreview.new().get_preview(ledger, receipt, app.deck, app.party, app.enemies, id)
+		_check(preview.playable and preview.first_half.side == "ally" and preview.first_half.target_positions == [1, 2, 3], "mounted knit offers each living ally")
+		if not preview.playable:
+			return
+		_check(not app.deck.draw_pile.is_empty() or not app.deck.discard_pile.is_empty(), "knit witness has a real shared draw available")
+		await _arm(id, keyboard)
+		app.run_scraps += 1
+		var stale_before := _complete_state()
+		await _pick(2, "ally", keyboard)
+		_check(_complete_state() == stale_before, "stale knit receipt refuses Block, draw, spend and RNG atomically")
+		app.run_scraps -= 1
+		app._refresh_hand()
+		await _frames()
+		var before := _complete_state()
+		var hand_before: Array = app.deck.hand.duplicate()
+		var block_before: Array = [app.party.get_hero(1).block, app.party.get_hero(2).block, app.party.get_hero(3).block]
+		var energy_before: int = app.deck.energy
+		var oracle := _knit_draw_oracle(app.deck)
+		await _arm(id, keyboard)
+		_check(_complete_state() == before, "arming knit spends nothing")
+		await _pick(2, "ally", keyboard)
+		_check(presenter.last_event == {"ok": true, "halves": [
+			{"ok": true, "effect": "block_and_draw", "amount": 4, "draw": 1, "drawn": 1},
+			{"ok": true, "effect": "self_block", "amount": 7}]}, "physical knit ally selection commits both complete ordered halves")
+		hand_before.erase(id)
+		hand_before.append_array(oracle.drawn)
+		_check(app.deck.hand == hand_before and app.deck.draw_pile == oracle.draw and app.deck.discard_pile == oracle.discard + [id]
+			and app.run_rng.state == oracle.rng and app.deck.energy == energy_before - 2, "mounted knit draws one real card and pays/discards composite once")
+		_check([app.party.get_hero(1).block, app.party.get_hero(2).block, app.party.get_hero(3).block]
+			== [block_before[0] + 7, block_before[1] + 4, block_before[2]] and app._stitch_snapshot() == receipt, "only chosen ally gains knit Block; other half and retained ledger exact")
+		var trace := [_snapshot(), presenter.last_event.duplicate(true), receipt]
+		replay.append(trace)
+		await _return()
+	_check(replay[0] == replay[1], "mounted knit mouse/keyboard seeded replay")
+
+
+func _knit_draw_oracle(deck: CombatDeck) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.state = deck._rng.state
+	var draw: Array = deck.draw_pile.duplicate()
+	var discard: Array = deck.discard_pile.duplicate()
+	if draw.is_empty():
+		draw = discard.duplicate()
+		discard.clear()
+		for index in range(draw.size() - 1, 0, -1):
+			var other := rng.randi_range(0, index)
+			var saved = draw[index]
+			draw[index] = draw[other]
+			draw[other] = saved
+	var drawn: Array = []
+	if not draw.is_empty():
+		drawn.append(draw.pop_back())
+	return {"draw": draw, "discard": discard, "drawn": drawn, "rng": rng.state}
 
 
 func _finish_hand() -> void:
