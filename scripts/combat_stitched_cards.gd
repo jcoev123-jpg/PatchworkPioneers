@@ -116,6 +116,8 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 	var staged_enemies := CombatEnemies.new(enemies.get_enemies())
 	staged_enemies._enemies = enemies.get_enemies()
 	var attacks := _attacks.stage_transaction()
+	# Pool direct-fire halves read and spend the very same staged latches.
+	var direct_fire := CombatTinkerPoolAttacks.stage_for_stitch(attacks)
 	var results: Array[Dictionary] = []
 	var committed_heals: Array[Dictionary] = []
 	var targets := [first_target, second_target]
@@ -129,7 +131,17 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 			return failure
 		if kind in ["enemy_single", "ally_single"] and not half.to_positions.is_empty() and not half.to_positions.has(target):
 			return failure
-		if kind in ["enemy_single", "enemy_all"]:
+		if half.id in CombatTinkerPoolAttacks.STITCHED_IDS:
+			# Authenticate the canonical Tinker pool record itself; its own
+			# resolver owns Rivet's after-hit Exposed and the shared latches.
+			if half != _tinker_pool.get_definition(half.id) or kind != "enemy_single":
+				return failure
+			var pool_attack := direct_fire.resolve_staged_half(staged_party,
+				staged_enemies, half.id, target, bonuses[index])
+			if not pool_attack.get("ok", false):
+				return failure
+			results.append(pool_attack)
+		elif kind in ["enemy_single", "enemy_all"]:
 			var result := attacks.resolve_staged_half(staged_party, staged_enemies,
 				half.id, target, bonuses[index])
 			if not result.ok:

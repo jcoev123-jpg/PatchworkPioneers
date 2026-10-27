@@ -7,6 +7,13 @@ const BASE_IDS := [
 	"tinker_rivet_shot", "tinker_spring_trap", "tinker_scatter_bolts",
 	"tinker_long_barrel", "tinker_ricochet", "tinker_bobbin_cannon"
 ]
+## The exact single-target printings a Rest stitch may carry into combat. Every
+## other pool attack (Spring Trap's Pinned, area and random routes) stays closed.
+const STITCHED_IDS: Array[String] = [
+	"tinker_rivet_shot", "tinker_rivet_shot_plus",
+	"tinker_long_barrel", "tinker_long_barrel_plus",
+	"tinker_bobbin_cannon", "tinker_bobbin_cannon_plus",
+]
 
 var _first_attack: CombatTinkerFirstAttack
 var _pinned: CombatPinned
@@ -93,7 +100,43 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		active_pinned, cost_discount)
 	if not plan.get("ok", false):
 		return _failure()
+	return _resolve(deck, enemies, card_id, plan, active_pinned)
 
+
+## Detached resolver for one Rest-stitched half, sharing a composite transaction's
+## staged starter state: the SAME first-attack latch, wearer patch latches and
+## HEAD projection the staged CombatAttackCards owns, so a starter half and a
+## pool half spend one Tinker +3 and one Button Eye between them.
+static func stage_for_stitch(attacks: CombatAttackCards) -> CombatTinkerPoolAttacks:
+	var staged := CombatTinkerPoolAttacks.new(attacks._tinker)
+	staged._patches = attacks._patches
+	staged._head_patches = attacks._head_rules
+	return staged
+
+
+## Resolve one canonical stitched half on detached rosters. Its eligibility deck
+## holds only this half, so the real composite is never charged or discarded here
+## and the run RNG never moves; the enclosing transaction owns the single cost,
+## discard and publication. base_bonus is only the stitched resolver's validated
+## per-half authorization (0 or 2), exactly as for starter halves.
+func resolve_staged_half(party: CombatParty, enemies: CombatEnemies,
+		card_id: String, target_position: int, base_bonus: int = 0) -> Dictionary:
+	if card_id not in STITCHED_IDS or base_bonus not in [0, 2]:
+		return _failure()
+	if _patches != null and not _patches.is_current():
+		return _failure()
+	var eligibility := CombatDeck.new([], RandomNumberGenerator.new())
+	eligibility.hand.append(card_id)
+	eligibility.combat_state.start_player_turn()
+	var plan: Dictionary = _prepare(eligibility, party, enemies, card_id,
+		target_position, null, 0, base_bonus)
+	if not plan.get("ok", false):
+		return _failure()
+	return _resolve(eligibility, enemies, card_id, plan, null)
+
+
+func _resolve(deck: CombatDeck, enemies: CombatEnemies, card_id: String,
+		plan: Dictionary, active_pinned: CombatPinned) -> Dictionary:
 	# Preflight has checked every downstream operation, including every future
 	# Ricochet recipient against a detached roster and cloned run RNG.
 	deck.try_spend_energy(plan["cost"])
@@ -152,8 +195,10 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 
 func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, active_pinned: CombatPinned,
-		cost_discount: int = 0) -> Dictionary:
+		cost_discount: int = 0, base_bonus: int = 0) -> Dictionary:
 	if deck == null or party == null or enemies == null or deck._rng == null:
+		return _failure()
+	if base_bonus not in [0, 2]:
 		return _failure()
 	if _patches != null and not _patches.is_valid():
 		return _failure()
@@ -262,9 +307,9 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var patch_exposed: int = patch_first_status.get("exposed", 0)
 	var bonus: int = _first_attack.bonus_for_attack(card_id)
 	# Reserve both Pinned's possible +5 and the bound wearer bonus.
-	if damage_value > CombatStatuses.MAX_INT - bonus - 5 - patch_damage:
+	if damage_value > CombatStatuses.MAX_INT - bonus - 5 - patch_damage - base_bonus:
 		return _failure()
-	var base_damage: int = damage_value + bonus + patch_damage
+	var base_damage: int = damage_value + bonus + patch_damage + base_bonus
 
 	var roster: Array[Dictionary] = enemies.get_enemies()
 	for index in range(roster.size()):

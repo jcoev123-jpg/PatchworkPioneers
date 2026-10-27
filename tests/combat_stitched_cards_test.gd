@@ -34,6 +34,9 @@ func _initialize() -> void:
 	_test_borrowed_button_halves()
 	_test_borrowed_button_rejections_and_latch()
 	_test_borrowed_button_party_and_torn()
+	_test_tinker_pool_attack_halves()
+	_test_tinker_pool_attack_latches()
+	_test_tinker_pool_attack_failures()
 	for failure in failures:
 		printerr(failure)
 	print("combat_stitched_cards_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
@@ -1829,3 +1832,211 @@ func _test_borrowed_button_party_and_torn() -> void:
 		"genuine different-owner stitched Mend heals torn-ledger wearer by 5")
 	_check(c.party.get_hero(1).block == 7 and _button_state(c).awards == 0,
 		"run-torn COAT remains suspended even when battle party is alive")
+
+
+## Independent single-card oracle: the pool resolver's own public play on a
+## separate one-card deck and fresh authored rosters, with a fresh latch.
+func _pool_oracle(card_id: String, target: int, wardrobe: Variant = null) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 99
+	var deck := CombatDeck.new([card_id], rng)
+	_check(deck.start_turn() and deck.hand == [card_id], card_id + ": oracle holds the printing")
+	var party := CombatParty.new(_definitions("res://data/heroes/starter_party.json"))
+	var enemies := CombatEnemies.new(_definitions("res://data/enemies/starter_enemies.json"))
+	var pool := CombatTinkerPoolAttacks.new()
+	if wardrobe != null:
+		_check(pool.bind_patch_wardrobe(wardrobe, RunTornMending.new(party.get_heroes())),
+			card_id + ": oracle binds the same wardrobe")
+	var result: Dictionary = pool.play_attack(deck, party, enemies, card_id, target)
+	return {"result": result, "enemies": enemies.get_enemies(), "party": party.get_heroes()}
+
+
+## All six single-target Tinker pool printings in both half orders, beside the
+## authored Brace: the exact pool hit, one capped charge, one discard, the
+## published first-attack latch and a fully unchanged RNG/draw pile.
+func _test_tinker_pool_attack_halves() -> void:
+	var pool := TinkerPoolCards.new()
+	for id in CombatTinkerPoolAttacks.STITCHED_IDS:
+		var authored: Dictionary = pool.get_definition(id)
+		_check(not authored.is_empty() and authored == RunRestStitchCards.resolve_card_definition(id),
+			id + ": authentic authored Tinker pool half")
+		var printed: int = int(authored.get("cost", -1))
+		for reverse in [false, true]:
+			var label: String = id + (" after Brace" if reverse else " before Brace")
+			var c := _rest_fixture(SUPPORT_HALF if reverse else id, id if reverse else SUPPORT_HALF, 7301)
+			_check(_position_of(c.party, "tinker") == 3 and _position_of(c.party, "warden") == 1,
+				label + ": authored party positions")
+			c.deck.draw_pile.assign([PRICK, "warden_strike"])
+			c.deck.discard_pile.assign([BOMB])
+			var cost: int = int(c.rest.get_snapshot()["descriptors"][c.id]["cost"])
+			_check(cost == mini(3, maxi(printed, 1) + 1), label + ": Rest-capped composite cost")
+			var oracle := _pool_oracle(id, 2)
+			_check(oracle.result.get("ok", false) and oracle.result.hits.size() == 1
+				and oracle.result.hits[0].position == 2, label + ": oracle single hit")
+			var before := _snapshot(c)
+			var expected := before.duplicate(true)
+			expected[1] = []
+			expected[2] = [BOMB, c.id]
+			expected[3] = before[3] - cost
+			expected[6][0]["block"] += 7
+			expected[7] = oracle.enemies
+			expected[8] = true
+			var result := _play(c, 0 if reverse else 2, 2 if reverse else 0)
+			var brace := {"ok": true, "effect": "self_block", "amount": 7}
+			var halves := [oracle.result, brace]
+			if reverse:
+				halves.reverse()
+			_check(result == {"ok": true, "halves": halves}, label + ": exact authored pool hit and Brace")
+			_check(_snapshot(c) == expected, label + ": exact HP, Block, piles, energy, RNG and latch")
+			_check(c.deck.discard_pile.count(c.id) == 1 and not c.deck.hand.has(c.id),
+				label + ": composite discarded once, no loose half in any pile")
+			_check(c.attacks._tinker.bonus_for_attack(POP) == 0, label + ": real Tinker +3 already spent")
+			# The composite never sneaks either printed half into the real piles.
+			for pile in [c.deck.draw_pile, c.deck.hand, c.deck.discard_pile]:
+				_check(not pile.has(id) and not pile.has(SUPPORT_HALF), label + ": no half leaks into piles")
+		# The Rivet hit lands before its own Exposed, so its printed damage is unboosted.
+		if id.begins_with("tinker_rivet_shot"):
+			var hit: Dictionary = _pool_oracle(id, 1).result.hits[0]
+			var printed_damage: int = 6 if id.ends_with("_plus") else 4
+			_check(hit == _expected_hit(1, printed_damage + 3, 0, {"exposed": 1}),
+				id + ": +3 first attack then Exposed after the hit")
+
+
+## A Rest stitch always joins two owners, so the shared Tinker latches are
+## proven by the published state a later starter attack reads; Rivet's
+## Exposed lands after its own hit and boosts only the later half.
+func _test_tinker_pool_attack_latches() -> void:
+	for reverse in [false, true]:
+		var c := _rest_fixture("tinker_rivet_shot" if reverse else PRICK, PRICK if reverse else "tinker_rivet_shot", 7411)
+		_check(int(c.rest.get_snapshot()["descriptors"][c.id]["cost"]) == 2, "Prick/Rivet capped two")
+		var result := _play(c, 1, 1)
+		var prick_hit := {"ok": true, "hits": [_expected_hit(1, 4 if reverse else 3, 0, {"bleed": 3})]}
+		var rivet_hit := {"ok": true, "hits": [_expected_hit(1, 7, 0, {"exposed": 1})]}
+		var expected: Array = [rivet_hit, prick_hit] if reverse else [prick_hit, rivet_hit]
+		var label := "Rivet then Prick" if reverse else "Prick then Rivet"
+		_check(result == {"ok": true, "halves": expected},
+			label + ": Rivet unboosted by its own Exposed; a later half reads it: floor(3 * 1.5)")
+		_check(c.enemies.get_enemy(1).hp == 12 - 7 - (4 if reverse else 3)
+			and c.enemies.get_enemy(1).statuses == {"bleed": 3, "exposed": 1}
+			and c.attacks._tinker._consumed and c.deck.energy == 1 and c.deck.discard_pile == [c.id],
+			label + ": exact HP, statuses, published latch and one charge")
+		c.deck.hand.append(POP)
+		_check(c.attacks.play_attack(c.deck, c.party, c.enemies, POP, 2)
+			== {"ok": true, "hits": [_expected_hit(2, 5)]}, label + ": later starter Pop gets no second +3")
+
+	# Rivet+ on a Blocked slot: Block absorbs the unboosted hit, then Exposed.
+	var blocked := _rest_fixture(SUPPORT_HALF, "tinker_rivet_shot_plus", 7523)
+	_check(blocked.enemies.gain_block(1, 10), "Rivet+ Block precondition")
+	_check(_play(blocked, 0, 1) == {"ok": true, "halves": [{"ok": true, "effect": "self_block", "amount": 7},
+		{"ok": true, "hits": [_expected_hit(1, 9, 9, {"exposed": 1})]}]}
+		and blocked.enemies.get_enemy(1).block == 1 and blocked.enemies.get_enemy(1).hp == 12,
+		"Rivet+ 6+3 fully Blocked, Exposed still applied after the hit")
+
+	# Patch owner semantics through the same staged wearer latches.
+	var c := _rest_fixture(SUPPORT_HALF, "tinker_rivet_shot", 7639)
+	var wardrobe := RunPatchWardrobe.new(c.party.get_heroes(), ["button_eye", "pincushion_arm"],
+		[{"id": "button_eye", "slot": "HEAD"}, {"id": "pincushion_arm", "slot": "ARM"}], 10)
+	_check(wardrobe.sew("button_eye", "tinker", "HEAD", "pool-stitch-eye", wardrobe.get_snapshot()).ok
+		and wardrobe.sew("pincushion_arm", "tinker", "ARM", "pool-stitch-arm", wardrobe.get_snapshot()).ok,
+		"Tinker wears Button Eye and Pincushion")
+	_check(c.attacks.bind_patch_wardrobe(wardrobe, RunTornMending.new(c.party.get_heroes())), "Tinker patch binding")
+	var ledger := wardrobe.get_snapshot()
+	_reject(c, 0, 0, "patched pool half without a target")
+	var oracle := _pool_oracle("tinker_rivet_shot", 2, wardrobe)
+	var result := _play(c, 0, 2)
+	_check(oracle.result.get("ok", false) and result.ok and result.halves[1] == oracle.result,
+		"Tinker-worn patches price the stitched pool half exactly as the pool resolver")
+	_check(result.ok and result.halves[1].hits[0].damage == 4 + 3 + 1
+		and result.halves[1].hits[0].statuses.get("exposed", 0) >= 2,
+		"wearer +1, first-attack +3, Rivet Exposed plus Button Eye")
+	_check(c.attacks._patches.latch_snapshot().get("tinker", false) and wardrobe.get_snapshot() == ledger,
+		"Tinker Button Eye latch published, run ledger unchanged")
+
+	# The pool half spent the one Button Eye and +3: a later starter Pop keeps only the ARM.
+	c.deck.hand.append(POP)
+	_check(c.attacks.play_attack(c.deck, c.party, c.enemies, POP, 1)
+		== {"ok": true, "hits": [_expected_hit(1, 5 + 1)]}, "later Pop: no second Button Eye or +3")
+
+	# Patches on other heroes never price Tinker's pool half.
+	c = _rest_fixture(SUPPORT_HALF, "tinker_rivet_shot", 7639)
+	var others := RunPatchWardrobe.new(c.party.get_heroes(), ["button_eye", "pincushion_arm"],
+		[{"id": "button_eye", "slot": "HEAD"}, {"id": "pincushion_arm", "slot": "ARM"}], 10)
+	_check(others.sew("button_eye", "seamstress", "HEAD", "pool-stitch-eye-2", others.get_snapshot()).ok
+		and others.sew("pincushion_arm", "warden", "ARM", "pool-stitch-arm-2", others.get_snapshot()).ok,
+		"patches worn by other heroes")
+	_check(c.attacks.bind_patch_wardrobe(others, RunTornMending.new(c.party.get_heroes())), "other wearer binding")
+	result = _play(c, 0, 2)
+	_check(result == {"ok": true, "halves": [{"ok": true, "effect": "self_block", "amount": 7},
+		{"ok": true, "hits": [_expected_hit(2, 7, 0, {"exposed": 1})]}]}
+		and not c.attacks._patches.latch_snapshot().get("seamstress", false),
+		"other wearers' patches neither boost nor spend on Tinker's pool half")
+
+
+## Illegal owner/target, counterfeit records and late failures roll back
+## everything; a legal retry then succeeds and same-seed replays agree.
+func _test_tinker_pool_attack_failures() -> void:
+	var c := _rest_fixture(SUPPORT_HALF, "tinker_long_barrel", 7741)
+	_reject(c, 0, 0, "pool half needs a target")
+	_reject(c, 0, 3, "pool half unoccupied slot")
+	_reject(c, 0, 4, "pool half off-board slot")
+	_reject(c, 0, -1, "pool half negative slot")
+	_reject(c, 2, 2, "Brace before pool half forbids a target")
+	c.enemies.apply_damage(2, 12)
+	_reject(c, 0, 2, "pool half slain target")
+	_check(_play(c, 0, 1).ok and c.enemies.get_enemy(1).hp == 0, "legal retry after rejected slain target")
+
+	c = _rest_fixture(SUPPORT_HALF, "tinker_long_barrel", 7741)
+	_check(c.party.apply_damage(3, c.party.get_hero(3).hp), "downed Tinker precondition")
+	_reject(c, 0, 1, "downed Tinker owner")
+	for id in ["tinker_long_barrel", "tinker_long_barrel_plus", "tinker_bobbin_cannon", "tinker_bobbin_cannon_plus"]:
+		c = _rest_fixture(SUPPORT_HALF, id, 7741)
+		var heroes: Array = c.party.get_heroes()
+		c.party = CombatParty.new([heroes[0], heroes[2], heroes[1]])
+		_check(_position_of(c.party, "tinker") == 2 and _position_of(c.party, "warden") == 1,
+			id + ": Tinker displaced to slot two, Brace owner still legal")
+		_reject(c, 0, 1, id + ": Tinker outside authored FROM [3]")
+	c = _rest_fixture(SUPPORT_HALF, "tinker_rivet_shot", 7741)
+	var defs: Array = c.party.get_heroes()
+	c.party = CombatParty.new([defs[0], defs[2], defs[1]])
+	_check(_position_of(c.party, "tinker") == 2 and _play(c, 0, 1).ok, "Rivet from slot two stays legal")
+
+	c = _rest_fixture(SUPPORT_HALF, "tinker_bobbin_cannon", 7741)
+	c.deck.try_spend_energy(1)
+	_reject(c, 0, 1, "insufficient energy for the capped composite")
+	c = _rest_fixture(SUPPORT_HALF, "tinker_bobbin_cannon", 7741)
+	c.deck.discard_played(c.id)
+	_reject(c, 0, 1, "unheld pool composite")
+	c = _rest_fixture(SUPPORT_HALF, "tinker_rivet_shot", 7741)
+	var forged: Dictionary = c.rest.get_snapshot()
+	forged.descriptors[c.id].second_half.effects.exposed = 9
+	c.rest = RunRestStitchCards.new(forged.deck, forged.descriptors, 0, 2)
+	_reject(c, 0, 1, "counterfeit pool half descriptor")
+	c = _rest_fixture(SUPPORT_HALF, "tinker_rivet_shot", 7741)
+	forged = c.rest.get_snapshot()
+	forged.descriptors[c.id].second_half.id = "tinker_spring_trap"
+	c.rest = RunRestStitchCards.new(forged.deck, forged.descriptors, 0, 2)
+	_reject(c, 0, 1, "relabelled pool half stays closed")
+	c = _rest_fixture(SUPPORT_HALF, "tinker_rivet_shot", 7741)
+	c.rest._descriptors[c.id]["second_half"]["effects"]["damage"] = 40
+	_reject(c, 0, 1, "in-memory tampered pool half")
+
+	# A late second-half failure after a staged pool hit, Exposed and latch.
+	for pair in [["tinker_rivet_shot_plus", SUPPORT_HALF, 1, 3], ["tinker_long_barrel", "warden_strike", 2, 3],
+			[PRICK, "tinker_bobbin_cannon", 1, 0]]:
+		c = _rest_fixture(pair[0], pair[1], 7853)
+		var label: String = str(pair[0]) + "/" + str(pair[1])
+		var before := _snapshot(c)
+		_reject(c, pair[2], pair[3], label + ": late failure after staged pool damage")
+		_check(_snapshot(c) == before and not c.attacks._tinker._consumed
+			and c.enemies.get_enemy(1).get("statuses", {}).is_empty(), label + ": latch, HP and Exposed rolled back")
+		var retry := _play(c, pair[2], 0 if pair[1] == SUPPORT_HALF else 1)
+		_check(retry.ok and c.attacks._tinker._consumed and c.deck.discard_pile == [c.id], label + ": legal retry commits once")
+
+	# Same-seed replay agrees exactly, including the untouched RNG.
+	var runs: Array = []
+	for attempt in range(2):
+		c = _rest_fixture("tinker_rivet_shot", PRICK, 7967)
+		c.deck.draw_pile.assign([PRICK, BOMB, "warden_strike"])
+		var outcome := _play(c, 1, 1)
+		runs.append([outcome, _snapshot(c)])
+	_check(runs[0][0].ok and runs[0] == runs[1], "same-seed pool stitch replay is identical")

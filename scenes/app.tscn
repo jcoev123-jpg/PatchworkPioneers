@@ -1,4 +1,4 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://scripts/app.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/live_enemy_roster.gd" id="2"]
@@ -9,6 +9,7 @@
 [ext_resource type="Script" path="res://scripts/patchwork_ui_shell.gd" id="7"]
 [ext_resource type="Script" path="res://scripts/live_warden_reaction_hand.gd" id="8"]
 [ext_resource type="Script" path="res://scripts/live_visit_card_tiles.gd" id="9"]
+[ext_resource type="Script" path="res://scripts/live_lantern_monk_pole_shelter_hand.gd" id="10"]
 
 [node name="App" type="Control"]
 layout_mode = 3
@@ -37,6 +38,9 @@ script = ExtResource("3")
 
 [node name="LiveWardenReactionHand" type="Node" parent="."]
 script = ExtResource("8")
+
+[node name="LiveLanternMonkPoleShelterHand" type="Node" parent="."]
+script = ExtResource("10")
 
 [node name="LiveCombatMeters" type="Node" parent="."]
 script = ExtResource("4")

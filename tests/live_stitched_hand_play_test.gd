@@ -214,10 +214,21 @@ func _hand_fixture() -> Dictionary:
 
 
 func _earn(fixture: Dictionary, pair: Array, keyboard: bool,
-		sew_wearer: String = "", sew_patch: bool = true) -> String:
+		sew_wearer: String = "", sew_patch: bool = true, claim_offer: String = "") -> String:
 	if not await _routed_win(fixture, false):
 		return ""
-	await _click(app.reward_buttons[3])
+	# `claim_offer` takes that seeded pool card through the actual opening reward
+	# button instead of Skip; both mint exactly the one opening scrap.
+	var offered := -1
+	for index in range(app.fight_reward_offers.size()):
+		if app.fight_reward_offers[index].id == claim_offer:
+			offered = index
+	_check(claim_offer.is_empty() or offered >= 0, "seeded opening Fight offers the pool card " + claim_offer)
+	if not claim_offer.is_empty() and offered < 0:
+		return ""
+	await _click(app.reward_buttons[3 if claim_offer.is_empty() else offered])
+	_check(claim_offer.is_empty() or (app.run_deck.back() == claim_offer and app.run_deck.count(claim_offer) == 1
+		and app.run_scraps == 1), "real reward input acquires exactly one pool card and one scrap")
 	await _click(app.continue_button)
 	# The opening reward closes before a genuine run-owned COAT receipt is sewn
 	# through the actual wardrobe transaction, so every later visit (Elite pass,
@@ -879,7 +890,88 @@ func _run() -> void:
 				await _return()
 			_check(randi() == global_next, "earned route and cast preserve global RNG")
 	await _coat_cases(fixture)
+	await _pool_case()
 	await _finish_hand()
+
+
+## Seed 2005's opening Fight offers the authored Tinker pool Rivet Shot. It is
+## claimed by the real reward button, stitched ahead of the Seamstress's Prick at
+## the connected Rest, drawn in the next routed Fight and cast by mouse or keys.
+const POOL_FIXTURE := {"seed": 2005, "fight": "f01_n0", "elite": ["f02_n0"], "rest": ["f03_n0"], "next": "f04_n1"}
+
+
+func _pool_case() -> void:
+	var pair := ["tinker_rivet_shot", "seamstress_prick"]
+	var replay: Array = []
+	for keyboard in [false, true]:
+		print("pool stitched pair: ", pair, " keyboard=", keyboard)
+		seed(105105)
+		var global_next := randi()
+		seed(105105)
+		var id := await _earn(POOL_FIXTURE, pair, keyboard, "", true, pair[0])
+		if id.is_empty():
+			return
+		_check(app.run_stitch_descriptors[id].cost == 2 and app.deck.hand.has(id), "earned pool composite is held at its capped shared cost")
+		var ledger := RunRestStitchCards.new(app.run_deck, app.run_stitch_descriptors, app.run_scraps, app.run_next_stitch_id)
+		var preview := CombatStitchedTargetPreview.new().get_preview(ledger, app._stitch_snapshot(), app.deck, app.party, app.enemies, id)
+		_check(preview.playable and preview.halves.size() == 2 and preview.halves[0].requires_selection
+			and preview.halves[1].requires_selection, "pool half and Prick both need real enemy targets")
+		if not preview.playable:
+			return
+		var first: int = preview.halves[0].target_positions[0]
+		var second: int = first if preview.halves[1].target_positions.has(first) else preview.halves[1].target_positions[0]
+		_check(second == first and app.enemies.get_enemy(first).hp > 11 and app.enemies.get_enemy(first).block == 0,
+			"both halves can strike the same unblocked enemy, which survives them")
+		var rng := RandomNumberGenerator.new()
+		rng.state = app.run_rng.state
+		var deck := CombatDeck.new([], rng)
+		deck.hand.assign(app.deck.hand)
+		deck.draw_pile.assign(app.deck.draw_pile)
+		deck.discard_pile.assign(app.deck.discard_pile)
+		deck.combat_state.energy = app.deck.energy
+		deck.combat_state.player_turn_active = true
+		var party := CombatParty.new(app.party.get_heroes())
+		party._heroes = app.party.get_heroes()
+		var enemies := CombatEnemies.new(app.enemies.get_enemies())
+		enemies._enemies = app.enemies.get_enemies()
+		var attacks := CombatAttackCards.new()
+		attacks.start_player_turn()
+		var expected := CombatStitchedCards.new(attacks).play_stitched(deck, party, enemies, ledger, id, first, second)
+		_check(expected.ok and expected.halves.size() == 2, "independent scene-free pool composite succeeds")
+		if not expected.ok:
+			return
+		# Rivet Shot: printed 4 + the unspent Tinker first-attack 3, then Exposed 1;
+		# Prick then reads that Exposed for 4 and adds Bleed.
+		var rivet: Dictionary = expected.halves[0].hits[0]
+		var prick: Dictionary = expected.halves[1].hits[0]
+		_check(rivet.position == first and rivet.damage == 7 and rivet.statuses.get("exposed", 0) == 1,
+			"pool half lands its authored hit, first-attack bonus and Exposed")
+		_check(prick.position == first and prick.damage == 4, "second half reads the pool half's Exposed")
+		var hand_before: Array = app.deck.hand.duplicate()
+		var energy_before: int = app.deck.energy
+		var discard_before: Array = app.deck.discard_pile.duplicate()
+		var shared_service = presenter._play
+		_check(not shared_service._tinker._consumed, "Tinker bonus is unspent before the physical cast")
+		await _arm(id, keyboard)
+		await _pick(first, "enemy", keyboard)
+		await _pick(second, "enemy", keyboard)
+		_check(presenter.last_event == expected, "physical pool composite event equals the exact oracle")
+		_check([app.deck.hand, app.deck.draw_pile, app.deck.discard_pile, app.deck.energy, app.party.get_heroes(), app.enemies.get_enemies(), app.run_rng.state]
+			== [deck.hand, deck.draw_pile, deck.discard_pile, deck.energy, party.get_heroes(), enemies.get_enemies(), rng.state], "complete pool composite transition equals oracle")
+		_check(app.deck.energy == energy_before - 2 and app.deck.hand.size() == hand_before.size() - 1 and not app.deck.hand.has(id)
+			and app.deck.discard_pile.back() == id and app.deck.discard_pile.slice(0, -1) == discard_before, "one energy charge and exactly one composite discard")
+		_check(presenter._play == shared_service and shared_service._tinker._consumed, "the live attack service spent the Tinker bonus once")
+		var after := _complete_state()
+		await _key(KEY_1 + first - 1)
+		await _key(KEY_1 + first - 1)
+		_check(_complete_state() == after, "repeated input after the cast is inert")
+		var trace := [_snapshot(), presenter.last_event.duplicate(true), app._stitch_snapshot()]
+		if replay.is_empty():
+			replay = trace
+		else:
+			_check(trace == replay, "seeded mouse/keyboard pool composite replay")
+		await _return()
+		_check(randi() == global_next, "earned pool route and cast preserve global RNG")
 
 
 func _finish_hand() -> void:
