@@ -62,6 +62,8 @@ func _initialize() -> void:
 	_test_area_storm_paid_resolution()
 	_test_area_storm_replay()
 	_test_area_storm_reads_pop_counter()
+	_test_area_dodge_token_applied()
+	_test_area_dodge_token_refusals()
 	_test_area_refusals()
 	_test_area_forged_catalog()
 	if failures.is_empty():
@@ -1123,6 +1125,195 @@ func _test_area_storm_reads_pop_counter() -> void:
 		"the two plays spend three energy and discard their own held copies only")
 	_check(deck._rng.state == before["rng_state"] and deck._rng.seed == before["rng_seed"],
 		"the Pop and the storm consume no seeded RNG draw")
+
+
+## AC1/AC2 (Dodge token): an authoritative `dodge_next_attack` token on the Golem (as the Lantern
+## Monk's Moth Shroud grants) is not a damage modifier for these area attacks. A genuine held copy
+## still lands every normal per-hit status-adjusted hit, spends exactly two energy, discards exactly
+## one copy, and leaves the token and the seeded RNG untouched.
+func _test_area_dodge_token_applied() -> void:
+	for card_id: String in ["button_golem_popping_volley", "button_golem_popping_volley_plus"]:
+		_play_volley_with_dodge(card_id, 2, 1)
+	# An explicit zero token is equally valid authoritative state.
+	_play_volley_with_dodge("button_golem_popping_volley", 1, 0)
+	for card_id: String in ["button_golem_buttonstorm", "button_golem_buttonstorm_plus"]:
+		_play_storm_with_dodge(card_id, 1)
+
+
+func _play_volley_with_dodge(card_id: String, seat: int, dodge: int) -> void:
+	var label := "%s from seat %d with Dodge %d" % [card_id, seat, dodge]
+	var base: int = int(AREA_PRINTINGS[card_id]["magnitude"])
+	var deck := _area_deck(card_id)
+	var party := _roll_party(seat)
+	party._heroes[seat - 1]["statuses"] = {"weak": 1, "dodge_next_attack": dodge}
+	party._heroes[seat - 1]["buttons_popped"] = 2
+	_check(party.get_hero(seat).get("statuses") == {"weak": 1, "dodge_next_attack": dodge},
+		label + ": the Golem really carries the authoritative Dodge token")
+	_check(party.gain_block(seat, 4), label + ": the Golem starts with four Block")
+	var enemies := _volley_enemies()
+	var before := _area_snapshot(deck, party, enemies)
+	var receipt: Dictionary = AreaResolverScript.new().play_card(deck, party, enemies, card_id, 0)
+
+	# Independent expectations from the shared status rules: Dodge is no damage modifier, so the
+	# attack statuses that matter here are exactly the Golem's Weak.
+	var rules := CombatStatuses.new()
+	var attacker := {"weak": 1}
+	var exposed_hit: int = rules.adjusted_attack_damage(base, attacker, {"exposed": 1})
+	var weak_hit: int = rules.adjusted_attack_damage(base, attacker, {})
+	var tangled_hit: int = rules.adjusted_attack_damage(base, attacker, {"tangled": 1})
+
+	_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+		label + ": the Dodge-bearing Golem's paid volley resolves")
+	_check(receipt.get("card_id") == card_id and receipt.get("cost") == 2
+		and receipt.get("energy_spent") == 2, label + ": it charges exactly two energy")
+	_check(receipt.get("owner_position") == seat and receipt.get("target_position") == 0,
+		label + ": the receipt binds the real Golem seat and no selected enemy slot")
+	_check(receipt.get("buttons_popped") == 2 and receipt.get("base_damage") == base
+		and receipt.get("hit_count") == 2,
+		label + ": the receipt reports the read counter and printed per-hit base")
+	_check(receipt.get("targets") == [1, 2, 3],
+		label + ": every living slot is targeted with no slot chosen for enemy_all")
+
+	var expected_calls: Array = [[1, 1], [1, 2], [2, 1], [3, 1], [3, 2]]
+	var hits: Array = receipt.get("hits", [])
+	_check(hits.size() == expected_calls.size(),
+		label + ": " + str(expected_calls.size()) + " independent hits are reported")
+	for index in range(mini(hits.size(), expected_calls.size())):
+		var hit: Dictionary = hits[index]
+		var position: int = expected_calls[index][0]
+		var hit_index: int = expected_calls[index][1]
+		var expected_damage: int = weak_hit
+		if position == 1:
+			expected_damage = exposed_hit
+		elif position == 3:
+			expected_damage = tangled_hit
+		var expected_absorbed := 0
+		if position == 3 and hit_index == 1:
+			expected_absorbed = 2
+		var expected_hp_loss: int = expected_damage - expected_absorbed
+		if position == 2:
+			expected_hp_loss = mini(2, expected_hp_loss)
+		_check(hit.get("position") == position and hit.get("hit") == hit_index
+			and hit.get("base_damage") == base and hit.get("damage") == expected_damage,
+			label + ": hit " + str(index + 1) + " is slot " + str(position) + " hit "
+			+ str(hit_index) + " status-adjusted on its own to " + str(expected_damage))
+		_check(hit.get("block_absorbed") == expected_absorbed
+			and hit.get("hp_loss") == expected_hp_loss,
+			label + ": hit " + str(index + 1) + " absorbs " + str(expected_absorbed)
+			+ " Block and loses " + str(expected_hp_loss) + " HP")
+
+	var slot_one: Dictionary = enemies.get_enemy(1)
+	_check(slot_one.get("hp") == 20 - 2 * exposed_hit and slot_one.get("block") == 0,
+		label + ": the Exposed slot really took two separate adjusted hits")
+	var slot_three: Dictionary = enemies.get_enemy(3)
+	_check(slot_three.get("hp") == 20 - 2 * tangled_hit + 2 and slot_three.get("block") == 0,
+		label + ": the Blocked Tangled slot absorbs Block per hit")
+	_check(enemies.is_slain(2) and enemies.get_enemy(2).get("position") == 2,
+		label + ": the two-HP foe dies on its first hit and keeps its slot")
+
+	var expected_hand: Array = before["hand"].duplicate()
+	expected_hand.erase(card_id)
+	_check(deck.energy == 1 and deck.energy == before["energy"] - 2,
+		label + ": exactly two energy left the shared turn")
+	_check(deck.hand == expected_hand and deck.discard_pile == before["discard"] + [card_id],
+		label + ": exactly one genuinely held copy moved to the discard pile")
+	_check(deck.draw_pile == before["draw"] and deck.draw_pile.size() == 2,
+		label + ": the draw pile is untouched and nothing was drawn or shuffled")
+	_check(deck._rng.state == before["rng_state"] and deck._rng.seed == before["rng_seed"],
+		label + ": resolution consumes no seeded RNG draw")
+	_check(party.get_hero(seat).get("statuses") == {"weak": 1, "dodge_next_attack": dodge},
+		label + ": the Dodge token survives the attack unchanged")
+	_check(party.get_heroes() == before["heroes"],
+		label + ": no hero HP, Block, status or popped-button record changed")
+
+
+func _play_storm_with_dodge(card_id: String, counter: int) -> void:
+	var label := "%s with %d popped buttons and a Dodge token" % [card_id, counter]
+	var per_pop: int = int(AREA_PRINTINGS[card_id]["magnitude"])
+	var deck := _area_deck(card_id)
+	var party := _roll_party(1)
+	party._heroes[0]["buttons_popped"] = counter
+	party._heroes[0]["statuses"] = {"dodge_next_attack": 1}
+	_check(party.get_hero(1).get("statuses") == {"dodge_next_attack": 1},
+		label + ": the Golem really carries the authoritative Dodge token")
+	_check(party.gain_block(1, 4), label + ": the Golem starts with four Block")
+	var enemies := _storm_enemies()
+	var before := _area_snapshot(deck, party, enemies)
+	var receipt: Dictionary = AreaResolverScript.new().play_card(deck, party, enemies, card_id, 0)
+
+	var base: int = per_pop * counter
+	var rules := CombatStatuses.new()
+	var exposed_damage: int = rules.adjusted_attack_damage(base, {}, {"exposed": 1})
+	var tangled_damage: int = rules.adjusted_attack_damage(base, {}, {"tangled": 1})
+	var absorbed: int = mini(2, exposed_damage)
+	_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+		label + ": the Dodge-bearing Golem's paid storm resolves")
+	_check(receipt.get("card_id") == card_id and receipt.get("cost") == 2
+		and receipt.get("energy_spent") == 2, label + ": it charges exactly two energy")
+	_check(receipt.get("owner_position") == 1 and receipt.get("target_position") == 0,
+		label + ": the receipt binds the Golem in seat 1 and no selected enemy slot")
+	_check(receipt.get("buttons_popped") == counter and receipt.get("base_damage") == base
+		and receipt.get("hit_count") == 1,
+		label + ": one hit of the printed " + str(per_pop) + " per prior pop")
+	_check(receipt.get("targets") == [1, 3],
+		label + ": only the living enemy slots are targeted")
+
+	var hits: Array = receipt.get("hits", [])
+	_check(hits.size() == 2, label + ": the two living enemies take exactly one hit each")
+	if hits.size() == 2:
+		_check(hits[0].get("position") == 1 and hits[0].get("hit") == 1
+			and hits[0].get("base_damage") == base and hits[0].get("damage") == exposed_damage
+			and hits[0].get("block_absorbed") == absorbed
+			and hits[0].get("hp_loss") == exposed_damage - absorbed,
+			label + ": the Exposed slot takes one adjusted Block-before-HP hit")
+		_check(hits[1].get("position") == 3 and hits[1].get("hit") == 1
+			and hits[1].get("base_damage") == base and hits[1].get("damage") == tangled_damage
+			and hits[1].get("block_absorbed") == 0 and hits[1].get("hp_loss") == tangled_damage,
+			label + ": the Tangled slot takes one adjusted hit")
+	_check(enemies.get_enemy(1).get("hp") == 40 - exposed_damage + absorbed
+		and enemies.get_enemy(1).get("block") == 2 - absorbed,
+		label + ": the first slot's Block absorbs before its HP loss")
+	_check(enemies.get_enemy(3).get("hp") == 40 - tangled_damage
+		and enemies.get_enemy(3).get("block") == 0,
+		label + ": the third slot loses exactly its adjusted damage in HP")
+	_check(enemies.get_enemy(2) == before["enemies"][1],
+		label + ": the already-dead middle slot is never hit and keeps its record")
+
+	var expected_hand: Array = before["hand"].duplicate()
+	expected_hand.erase(card_id)
+	_check(deck.energy == 1 and deck.energy == before["energy"] - 2,
+		label + ": exactly two energy left the shared turn")
+	_check(deck.hand == expected_hand and deck.discard_pile == before["discard"] + [card_id],
+		label + ": exactly one genuinely held copy moved to the discard pile")
+	_check(deck.draw_pile == before["draw"] and deck.draw_pile.size() == 2,
+		label + ": the draw pile is untouched and nothing was drawn or shuffled")
+	_check(deck._rng.state == before["rng_state"] and deck._rng.seed == before["rng_seed"],
+		label + ": resolution consumes no seeded RNG draw")
+	_check(party.get_hero(1).get("statuses") == {"dodge_next_attack": 1}
+		and party.get_hero(1).get("buttons_popped") == counter,
+		label + ": the Dodge token and the popped-button count are read but never spent")
+	_check(party.get_heroes() == before["heroes"],
+		label + ": no hero HP, Block or status record changed")
+
+
+## AC3 (Dodge token): a malformed Dodge token on either side is refused before ANY spend, discard,
+## damage, Block, counter or RNG change.
+func _test_area_dodge_token_refusals() -> void:
+	for bad in [2, -1, "1", 1.0, true, null]:
+		var party := _roll_party(1)
+		party._heroes[0]["statuses"] = {"dodge_next_attack": bad}
+		_check(party.get_hero(1).get("statuses") == {"dodge_next_attack": bad},
+			"malformed Dodge fixture really stores " + str(bad) + " on the Golem")
+		for card_id: String in ["button_golem_popping_volley", "button_golem_buttonstorm"]:
+			_expect_area_refusal("malformed Dodge token " + str(bad) + " for " + card_id,
+				_area_deck(card_id), party, _area_targets(), card_id, 0, "malformed_statuses")
+	var enemy_dodge := _area_targets()
+	enemy_dodge._enemies[0]["statuses"] = {"dodge_next_attack": 2}
+	_check(enemy_dodge.get_enemy(1).get("statuses") == {"dodge_next_attack": 2},
+		"malformed enemy Dodge fixture really stores the out-of-range token")
+	var volley := "button_golem_popping_volley"
+	_expect_area_refusal("malformed Dodge token on an enemy", _area_deck(volley),
+		_roll_party(1), enemy_dodge, volley, 0, "malformed_statuses")
 
 
 ## AC3: every unsupported, forged, unpayable or unlawful area play refuses with a complete

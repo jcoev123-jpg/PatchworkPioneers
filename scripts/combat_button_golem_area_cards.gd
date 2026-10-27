@@ -27,10 +27,21 @@ extends RefCounted
 ##
 ## Every failing precondition is refused by a complete read-only preflight BEFORE the energy charge,
 ## and no resolution path draws seeded RNG.
+##
+## Authoritative status maps may legitimately carry a Dodge token (`dodge_next_attack: 0|1`, e.g.
+## from the Lantern Monk's Moth Shroud). Dodge never modifies this attack's damage and the shared
+## CombatStatusAttacks bridge does not model it, so such a play must still land: every authoritative
+## map is validated in full (including the Dodge token), then only the damage-status subset is
+## handed to the shared validators and the bridge. The real tokens are never mutated or spent.
 
 const OWNER_ID := "button_golem"
 const COST := 2
 const BUTTONS_KEY := "buttons_popped"
+## The status keys whose counts modify one attack, exactly as CombatStatusAttacks accepts them.
+const ATTACK_STATUS_KEYS: Array[String] = ["bleed", "weak", "exposed", "tangled", "riposte"]
+## An authoritative one-attack Dodge token: one unspent Dodge, or an explicit zero. It is not a
+## damage modifier for this attack, so it is validated here and omitted from bridge-bound maps.
+const DODGE_STATUS_KEY := "dodge_next_attack"
 ## `enemy_all` selects no slot at all; the catalog's TO list is the whole living roster.
 const NO_TARGET_SLOT := 0
 const TO_POSITIONS: Array[int] = [1, 2, 3]
@@ -74,6 +85,7 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var base_damage: int = int(plan["base_damage"])
 	var hit_count: int = int(plan["hit_count"])
 	var targets: Array[int] = plan["targets"]
+	var owner_statuses: Variant = _attack_statuses(owner.get("statuses", {}))
 	var hits: Array[Dictionary] = []
 	for position: int in targets:
 		for hit_index in range(1, hit_count + 1):
@@ -82,8 +94,20 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			if enemies.is_slain(position):
 				break
 			var target: Dictionary = enemies.get_enemy(position)
-			var event: Dictionary = attacks.resolve_vs_enemy(enemies, position, base_damage,
-				owner.get("statuses", {}), target.get("statuses", {}))
+			var target_statuses: Variant = _attack_statuses(target.get("statuses", {}))
+			var event: Dictionary = {}
+			if owner_statuses != null and target_statuses != null:
+				# Detached attack-status maps: preflight already validated the authoritative maps,
+				# including a Dodge token the damage bridge deliberately never sees.
+				event = attacks.resolve_vs_enemy(enemies, position, base_damage, owner_statuses,
+					target_statuses)
+			if not event.get("ok", false):
+				# Preflight proves every bridge call can succeed; if one still refuses, report the
+				# truth (the energy is already spent) instead of claiming a resolved attack.
+				plan["hits"] = hits
+				plan["ok"] = false
+				plan["reason"] = "bridge_rejected"
+				return plan
 			hits.append({
 				"position": position,
 				"hit": hit_index,
@@ -153,8 +177,13 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if not _distinct_hero_ids(party):
 		plan["reason"] = "invalid_roster"
 		return plan
-	# The shared turn-batch validator applies the exact CombatStatuses keys and counts.
+	# The shared turn-batch validator applies the exact CombatStatuses keys and counts, over the
+	# damage-status subset of every authoritative map (Dodge is validated separately, never lost).
 	if not _valid_statuses(party, enemies):
+		plan["reason"] = "malformed_statuses"
+		return plan
+	var owner_statuses: Variant = _attack_statuses(owner.get("statuses", {}))
+	if owner_statuses == null:
 		plan["reason"] = "malformed_statuses"
 		return plan
 	# The counter is authoritative state: malformed or negative values refuse the play outright,
@@ -199,8 +228,11 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		var rules := CombatStatuses.new()
 		for position: int in targets:
 			var target: Dictionary = enemies.get_enemy(position)
-			if rules.adjusted_attack_damage(base, owner.get("statuses", {}),
-					target.get("statuses", {})) <= 0:
+			var target_statuses: Variant = _attack_statuses(target.get("statuses", {}))
+			if target_statuses == null:
+				plan["reason"] = "malformed_statuses"
+				return plan
+			if rules.adjusted_attack_damage(base, owner_statuses, target_statuses) <= 0:
 				plan["reason"] = "arithmetic_overflow"
 				return plan
 	plan["base_damage"] = base
@@ -386,9 +418,53 @@ func _valid_enemies(enemies: CombatEnemies) -> bool:
 	return true
 
 
-## Fail closed on a malformed authoritative status map on either side.
+## Fail closed on a malformed authoritative status map on either side. Every status is validated
+## against the shared rules (the turn batch's exact key set), then the Dodge token is checked as
+## exactly the int 0 or 1; only the damage-status subset is handed to the shared batch, which must
+## accept every authoritative map the same way.
 func _valid_statuses(party: CombatParty, enemies: CombatEnemies) -> bool:
-	var batch := CombatStatusTurnBatch.new()
-	if not batch.tick_side("heroes", party.get_heroes()).get("ok", false):
+	var heroes: Variant = _attack_actors(party.get_heroes())
+	var roster: Variant = _attack_actors(enemies.get_enemies())
+	if heroes == null or roster == null:
 		return false
-	return batch.tick_side("enemies", enemies.get_enemies()).get("ok", false)
+	var batch := CombatStatusTurnBatch.new()
+	if not batch.tick_side("heroes", heroes).get("ok", false):
+		return false
+	return batch.tick_side("enemies", roster).get("ok", false)
+
+
+## Actor records reduced to their bridge-valid attack statuses; null when any map is malformed.
+func _attack_actors(actors: Array[Dictionary]) -> Variant:
+	var reduced: Array = []
+	for actor: Dictionary in actors:
+		var attack: Variant = _attack_statuses(actor.get("statuses", {}))
+		if attack == null:
+			return null
+		var record: Dictionary = actor.duplicate(true)
+		record["statuses"] = attack
+		reduced.append(record)
+	return reduced
+
+
+## A detached copy of one authoritative status map holding only the counts that modify attack
+## damage. Returns null for a non-Dictionary map, an unknown key, a non-int or negative count, or a
+## Dodge token that is not exactly 0 or 1. The authoritative map itself is never modified.
+func _attack_statuses(statuses: Variant) -> Variant:
+	if not statuses is Dictionary:
+		return null
+	var authoritative: Dictionary = statuses
+	var detached := {}
+	for name in authoritative:
+		if not name is String:
+			return null
+		var count: Variant = authoritative[name]
+		if not count is int:
+			return null
+		if name == DODGE_STATUS_KEY:
+			if count != 0 and count != 1:
+				return null
+			continue
+		if name not in ATTACK_STATUS_KEYS or count < 0:
+			return null
+		detached[name] = count
+	return detached
