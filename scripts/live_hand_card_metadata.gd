@@ -42,6 +42,7 @@ var _sew := CombatButtonGolemSewCards.new()
 var _roll := CombatButtonGolemRollCards.new()
 var _thread := CombatButtonGolemThreadCards.new()
 var _lunge := CombatRagDuelistLungeCards.new()
+var _barrage := CombatRagDuelistNeedleBarrageCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
 var _pitchfork := CombatScarecrowPitchforkCards.new()
 var _bolas := CombatYarnRangerBolasCards.new()
@@ -99,6 +100,8 @@ func _definition(card_id: String) -> Dictionary:
 		return _rag_dodge._catalog_definition(card_id)
 	if _riposte.is_supported_card(card_id):
 		return _riposte._catalog_definition(card_id)
+	if _barrage.is_supported_card(card_id):
+		return _barrage._catalog_definition(card_id)
 	if _lunge.is_supported_card(card_id):
 		var card := _lunge._catalog_definition(card_id)
 		return card if _lunge._authentic(card, card_id) else {}
@@ -1115,7 +1118,7 @@ func _update_visual(panel: Control) -> void:
 			var support_presenter = _app.get_node_or_null("LiveSupportHand")
 			playable = support_presenter != null and support_presenter._eligible(
 				panel, id, _app.deck, _app.party, _app.battle_view)
-		elif _lunge.is_supported_card(id) or _thread.is_supported_card(id) or id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
+		elif _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _thread.is_supported_card(id) or id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
 			# The mounted battle owns both the legal picker and its shared pin.
 			# Catalog knowledge alone cannot enable Spring Trap.
 			playable = battle_preview != null and is_instance_valid(battle_preview) \
@@ -1266,6 +1269,8 @@ func _rules(id: String) -> String:
 		return "Tangled %d to all living enemies." % _definition(id).effects.tangled
 	if _pop.is_supported_card(id) and not _definition(id).is_empty():
 		return "Spend 5 own Block; deal %d; pop 1 button." % _definition(id).effects.damage
+	if _barrage.is_supported_card(id) and not _definition(id).is_empty():
+		return "3 separate hits x %d damage on one enemy." % int(_definition(id).effects.damage)
 	if _lunge.is_supported_card(id) and not _definition(id).is_empty():
 		return "Deal %d damage; move self forward 1." % _definition(id).effects.damage
 	if _feint.is_supported_card(id):
