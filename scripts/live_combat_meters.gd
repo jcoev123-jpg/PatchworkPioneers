@@ -402,7 +402,8 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 		scrap.add_theme_color_override("font_color", CombatActorMeter.INK)
 		scrap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		scrap.autowrap_mode = TextServer.AUTOWRAP_OFF
-		content.add_child(scrap)
+		scrap.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		content.get_node("LossRow").add_child(scrap)
 		scrap.hide()
 		var patches := HBoxContainer.new()
 		patches.name = "PatchButtons"
@@ -837,7 +838,7 @@ func _sync_patch_buttons(meter: CombatActorMeter, hero: Dictionary, worn: Dictio
 
 ## Read the living battle party each refresh; Combat Scrap is never a run-wallet balance.
 func _sync_combat_scrap(meter: CombatActorMeter, hero: Dictionary) -> void:
-	var label := meter.get_node("Padding/Content/CombatScrap") as Label
+	var label := meter.get_node("Padding/Content/LossRow/CombatScrap") as Label
 	var shown: bool = hero.get("id", "") == "tinker"
 	label.visible = shown
 	if not shown:

@@ -357,7 +357,7 @@ func _v3_meter(expected: int) -> void:
 	_check(slot > 0, "Tinker has an actual party slot for Combat Scrap HUD")
 	if slot == 0:
 		return
-	var label := meters.row.get_node_or_null("hero%d/Padding/Content/CombatScrap" % slot) as Label
+	var label := meters.row.get_node_or_null("hero%d/Padding/Content/LossRow/CombatScrap" % slot) as Label
 	_check(label != null and label.is_visible_in_tree()
 		and label.text == "Combat Scrap: %d" % expected
 		and label.tooltip_text.contains("Not run-wallet scraps"),
@@ -367,7 +367,7 @@ func _v3_meter(expected: int) -> void:
 	for other in range(1, 4):
 		if other == slot:
 			continue
-		var other_label := meters.row.get_node_or_null("hero%d/Padding/Content/CombatScrap" % other) as Label
+		var other_label := meters.row.get_node_or_null("hero%d/Padding/Content/LossRow/CombatScrap" % other) as Label
 		_check(other_label != null and not other_label.visible,
 			"Combat Scrap appears on Tinker only, not another actor")
 
