@@ -1,0 +1,12 @@
+[
+  {"id": "lantern_monk", "name": "Lantern Monk", "max_hp": 30, "default_position": 2, "starter_cards": "res://data/cards/lantern_monk_starter_cards.gd", "art_path": "",
+   "passive": {"id": "lantern_glow", "text": "End of your turn: heal the most-hurt living ally 2.", "trigger": "end_of_player_turn", "effects": {"heal_most_hurt_ally": 2}}},
+  {"id": "rag_duelist", "name": "Rag Duelist", "max_hp": 32, "default_position": 1, "starter_cards": "res://data/cards/rag_duelist_starter_cards.gd", "art_path": "",
+   "passive": {"id": "en_garde", "text": "Start of combat: gain Riposte 2 for the first enemy turn.", "trigger": "start_of_combat", "effects": {"riposte": 2, "duration": 1}}},
+  {"id": "scarecrow", "name": "Scarecrow", "max_hp": 34, "default_position": 2, "starter_cards": "res://data/cards/scarecrow_starter_cards.gd", "art_path": "",
+   "passive": {"id": "frightful", "text": "Start of combat: apply Weak 1 to every enemy.", "trigger": "start_of_combat", "effects": {"weak_all_enemies": 1}}},
+  {"id": "yarn_ranger", "name": "Yarn Ranger", "max_hp": 27, "default_position": 3, "starter_cards": "res://data/cards/yarn_ranger_starter_cards.gd", "art_path": "",
+   "passive": {"id": "snare_shot", "text": "Her first attack each combat also applies Tangled 1.", "trigger": "first_attack_of_combat", "effects": {"tangled": 1}}},
+  {"id": "button_golem", "name": "Button Golem", "max_hp": 48, "default_position": 1, "starter_cards": "res://data/cards/button_golem_starter_cards.gd", "art_path": "",
+   "passive": {"id": "button_plating", "text": "Start of each of your turns: gain 2 Block.", "trigger": "start_of_player_turn", "effects": {"block": 2}}}
+]
