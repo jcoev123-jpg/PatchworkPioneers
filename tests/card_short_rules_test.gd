@@ -1486,6 +1486,10 @@ func _test_scarecrow_fear_faces() -> void:
 ## the NEXT enemy turn and then expires, the separate Weak carries the authored
 ## stacks, and upgrades raise Weak rather than the lock. The keyword order keeps
 ## every existing row in place with Fear appended last.
+## AC1: the same row never repeats the obsolete claim that the Scarecrow cannot
+## be in a live party; it names the Scarecrow as one of the eight selectable
+## heroes that may join any three-hero party, while still stating that no held
+## card resolves Fear in battle yet.
 func _test_scarecrow_fear_help() -> void:
 	var keyword_order := CardKeywordGlossary.KEYWORD_ORDER
 	_check(keyword_order.count("fear") == 1
@@ -1547,6 +1551,15 @@ func _test_scarecrow_fear_help() -> void:
 				"Fear Help is not extra damage, Bleed or Blind: " + card_id)
 			_check(text.contains("no held card resolves Fear in battle yet"),
 				"Fear Help claims no already-live held-hand action: " + card_id)
+			_check(not text.contains("not yet part of a live party")
+				and not text.contains("not part of a live party")
+				and not text.contains("not yet in a live party"),
+				"Fear Help never calls the Scarecrow unavailable to a live party: "
+				+ card_id)
+			_check(text.contains("one of the eight selectable heroes")
+				and text.contains("any three-hero party"),
+				"Fear Help names the Scarecrow as a selectable party hero: "
+				+ card_id)
 			_check(not text.contains("buff lock for 2")
 				and not text.contains("2 turns"),
 				"Fear Help never turns the lock into a duration: " + card_id)
@@ -1563,6 +1576,13 @@ func _test_scarecrow_fear_help() -> void:
 				== ["Weak %d" % int(entry["weak"]), "Fear"],
 				"Fear Help rows are detached from the caller's record: " + card_id)
 	_check(not shared_text.is_empty(), "the Fear Help row was really inspected")
+	# AC1: the shared explanation itself carries the corrected live-party fact
+	# and keeps the honest held-card limitation.
+	_check(not CardKeywordGlossary.FEAR_EXPLANATION.contains("not yet part of a live party")
+		and not CardKeywordGlossary.FEAR_EXPLANATION.contains("not part of a live party"),
+		"the Fear explanation carries no unselectable-live-party claim")
+	_check(CardKeywordGlossary.FEAR_EXPLANATION.contains("no held card resolves Fear in battle yet"),
+		"the Fear explanation still names the unwired held-card limitation")
 	# The base and '+' halves differ only in the authored Weak (and Harvest
 	# Fright's damage): the one-turn lock is never the upgraded number.
 	for pair in [["scarecrow_sack_glare", "scarecrow_sack_glare_plus"],

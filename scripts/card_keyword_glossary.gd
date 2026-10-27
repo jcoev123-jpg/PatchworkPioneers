@@ -94,9 +94,10 @@ const EXHAUST_IDS := ["lantern_monk_moth_cloud", "lantern_monk_moth_cloud_plus"]
 ## Fear is the Scarecrow's authored one-turn buff lock, printed as one compact
 ## Help row. Only the eight authentic catalog printings that CardShortRules
 ## authenticates receive it, so no same-shaped forged or mis-owned record can
-## borrow the rule. The row states the authored design only: the Scarecrow is not
-## yet part of a live party and no held card resolves Fear in battle.
-const FEAR_EXPLANATION := "Fear is the authored Scarecrow keyword: the affected enemy cannot buff on its NEXT enemy turn, and the buff lock then expires at the end of that turn, so it never covers a second turn. Upgrades never lengthen the lock. Fear is applied together with a separate Weak, which reduces the enemy's outgoing attack damage by 25% (rounded down) for its authored Weak turns: Sack Glare, Sack Grin and Crow Flock author Weak 1 on the base card and Weak 2 on the upgraded card, while Harvest Fright authors Weak 2 on the base card and Weak 3 on the upgraded card. Fear adds no damage, Bleed or Blind of its own. This Help explains the authored design rule only: the Scarecrow is not yet part of a live party, so no held card resolves Fear in battle yet."
+## borrow the rule. The Scarecrow is a selectable live party hero (any three of
+## the eight heroes form a run), but the row states the authored design only:
+## no held card resolves Fear in battle yet.
+const FEAR_EXPLANATION := "Fear is the authored Scarecrow keyword: the affected enemy cannot buff on its NEXT enemy turn, and the buff lock then expires at the end of that turn, so it never covers a second turn. Upgrades never lengthen the lock. Fear is applied together with a separate Weak, which reduces the enemy's outgoing attack damage by 25% (rounded down) for its authored Weak turns: Sack Glare, Sack Grin and Crow Flock author Weak 1 on the base card and Weak 2 on the upgraded card, while Harvest Fright authors Weak 2 on the base card and Weak 3 on the upgraded card. Fear adds no damage, Bleed or Blind of its own. This Help explains the authored design rule only: the Scarecrow is one of the eight selectable heroes and can join any three-hero party, but no held card resolves Fear in battle yet."
 
 
 static func describe(definition: Variant) -> Array[Dictionary]:
