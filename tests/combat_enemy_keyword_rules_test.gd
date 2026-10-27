@@ -2,6 +2,11 @@ extends SceneTree
 ## Scene-free Enemy keyword regressions: the Enrage confirmed-hit quote and the
 ## unchanged Thorns N retaliation contract it shares validation helpers with.
 
+const ELITE_CATALOG_PATH := "res://data/enemies/m04_elites.json"
+const STARTER_CATALOG_PATH := "res://data/enemies/starter_enemies.json"
+const TYPED_POOLS_PATH := "res://data/encounters/m03_typed_battle_pools.json"
+const MARSHAL_ENCOUNTER_PATH := "res://data/encounters/needle_marshal_elite.json"
+
 var failures: Array[String] = []
 var checks := 0
 var rules := CombatEnemyKeywordRules.new()
@@ -16,6 +21,7 @@ func _initialize() -> void:
 	_test_invalid_enemy_snapshots()
 	_test_immutability_replay_and_rng()
 	_test_thorns_contract_unchanged()
+	_test_needle_marshal_thorns()
 	if failures.is_empty():
 		print("combat_enemy_keyword_rules_test: PASS (", checks, " checks)")
 	else:
@@ -88,12 +94,57 @@ func _expect_failure(enemy: Dictionary, receipt: Dictionary, label: String) -> v
 
 
 ## One genuine confirmed hit through the real bridge for a living recipient.
-func _confirmed(enemies: CombatEnemies, damage: int, label: String) -> Array:
-	var pre := enemies.get_enemy(1)
-	var receipt := attacks.resolve_vs_enemy(enemies, 1, damage, {}, {})
+func _confirmed(enemies: CombatEnemies, damage: int, label: String,
+		position: int = 1) -> Array:
+	var pre := enemies.get_enemy(position)
+	var receipt := attacks.resolve_vs_enemy(enemies, position, damage, {}, {})
 	_check(receipt.get("ok", false) and receipt.get("damage") == damage,
 		label + ": authentic confirmed CombatStatusAttacks receipt")
 	return [pre, receipt]
+
+
+## Strict on-disk catalog lookup through the shipped parser. Exactly one record
+## must carry this ID; the returned dictionary is detached from the parse.
+func _catalog_record(path: String, id: String) -> Dictionary:
+	var records := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string(path))
+	_check(not records.is_empty(), "fixture: shipped catalog parses " + path)
+	var matches: Array = records.filter(func(record: Dictionary) -> bool:
+		return record.get("id") == id)
+	_check(matches.size() == 1,
+		"fixture: exactly one on-disk record %s in %s" % [id, path])
+	if matches.size() != 1:
+		return {}
+	var found: Dictionary = matches[0]
+	return found.duplicate(true)
+
+
+## A real Marshal/escort roster built only from the shipped catalog records.
+func _marshal_roster(marshal: Dictionary, escort: Dictionary) -> CombatEnemies:
+	var enemies := CombatEnemies.new([marshal.duplicate(true), escort.duplicate(true)])
+	_check(enemies.is_valid() and enemies.get_enemies().size() == 2
+		and enemies.get_enemy(1).get("id") == "needle_marshal"
+		and enemies.get_enemy(2).get("id") == "ragling_guard",
+		"fixture: living Marshal/escort CombatEnemies roster")
+	return enemies
+
+
+## A real seeded starter deck that genuinely holds the authored Warden Strike.
+func _real_deck() -> CombatDeck:
+	var starting := StarterCards.new().get_starting_deck()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 9137
+	var deck := CombatDeck.new(starting, rng)
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3
+		and deck.hand.size() == 5, "fixture: real seeded starter deck starts a turn")
+	var draws := 0
+	while not deck.hand.has("warden_strike") and not deck.draw_pile.is_empty() \
+			and draws < starting.size():
+		deck.draw_extra(1)
+		draws += 1
+	_check(deck.hand.has("warden_strike") and deck.turn_active and deck.energy == 3,
+		"fixture: the real Warden Strike stays held and affordable")
+	return deck
 
 
 func _test_contract_and_single_hit_quotes() -> void:
@@ -311,3 +362,93 @@ func _test_thorns_contract_unchanged() -> void:
 		== {"ok": false, "applied": false, "thorns": 0, "block_absorbed": 0, "hp_loss": 0}
 		and party.get_heroes() == before,
 		"failed Thorns receipts still fail closed without hero mutation")
+
+
+func _test_needle_marshal_thorns() -> void:
+	# AC1: the real on-disk Elite record carries exactly Thorns 3.
+	var marshal := _catalog_record(ELITE_CATALOG_PATH, "needle_marshal")
+	_check(not marshal.is_empty(), "AC1: needle_marshal record exists in m04_elites.json")
+	_check(marshal.get("id") == "needle_marshal"
+		and marshal.get("name") == "Needle Marshal"
+		and marshal.get("max_hp") == 28
+		and marshal.get("thorns") == 3
+		and marshal.get("bleed_on_attack") == true
+		and marshal.get("art_path") == "res://assets/paper/enemies/needle_marshal.png",
+		"AC1: authored Needle Marshal fields intact with thorns 3 and bleed_on_attack true")
+	# Existing companions remain untouched.
+	_check(_catalog_record(ELITE_CATALOG_PATH, "spool_hexer").get("max_hp") == 24
+		and not _catalog_record(ELITE_CATALOG_PATH, "spool_hexer").has("thorns"),
+		"AC1: spool_hexer unchanged (no thorns)")
+	_check(_catalog_record(ELITE_CATALOG_PATH, "scissor_bailiff").get("max_hp") == 36,
+		"AC1: scissor_bailiff unchanged")
+	# AC1: typed pool and encounter routing intact.
+	var typed_text := FileAccess.get_file_as_string(TYPED_POOLS_PATH)
+	_check(typed_text.contains("needle_marshal_elite"),
+		"AC1: typed battle pool contains needle_marshal_elite route")
+	var encounter_text := FileAccess.get_file_as_string(MARSHAL_ENCOUNTER_PATH)
+	_check(encounter_text.contains("["),
+		"AC1: needle_marshal_elite encounter file parses")
+	# Real roster and party fixtures from shipped records.
+	var escort := _catalog_record("res://data/enemies/starter_enemies.json", "ragling_guard")
+	_check(escort.get("id") == "ragling_guard" and escort.get("max_hp") == 12,
+		"fixture: ragling_guard companion from starter catalog")
+	var enemies := _marshal_roster(marshal, escort)
+	var party := _party()
+	# AC2: confirmed positive hit retaliates exactly 3, with hero block first.
+	var pre := enemies.get_enemy(1)
+	_check(pre.get("id") == "needle_marshal" and pre.get("thorns") == 3
+		and pre.get("bleed_on_attack") == true,
+		"fixture: living Marshal pre-hit snapshot has thorns 3 and bleed flag")
+	var result := rules.resolve_thorns_retaliation(party, 1, pre, _receipt(5, 0, 5))
+	_check(result == {"ok": true, "applied": true, "thorns": 3,
+		"block_absorbed": 0, "hp_loss": 3},
+		"AC2: confirmed positive hit retaliates exactly Thorns 3 to attacking hero")
+	# AC2: fully enemy-Block-absorbed hit still retaliates 3.
+	var blocked_result := rules.resolve_thorns_retaliation(party, 1, pre,
+		_receipt(5, 5, 0))
+	_check(blocked_result == {"ok": true, "applied": true, "thorns": 3,
+		"block_absorbed": 0, "hp_loss": 3},
+		"AC2: fully blocked positive hit still retaliates 3")
+	# AC2: partial hero Block absorbs retaliation first.
+	var partial_party := _party()
+	partial_party.gain_block(1, 1)
+	var partial_before := partial_party.get_hero(1)
+	var partial_result := rules.resolve_thorns_retaliation(partial_party, 1, pre,
+		_receipt(5, 0, 5))
+	_check(partial_result == {"ok": true, "applied": true, "thorns": 3,
+		"block_absorbed": 1, "hp_loss": 2},
+		"AC2: hero partial block (1) absorbs retaliation before HP (3 -> 1 block + 2 hp)")
+	# AC3: zero-damage receipt does not retaliate.
+	var zero_result := rules.resolve_thorns_retaliation(party, 1, pre, _receipt(0, 0, 0))
+	_check(zero_result == {"ok": true, "applied": false, "thorns": 3,
+		"block_absorbed": 0, "hp_loss": 0},
+		"AC3: zero-damage receipt produces no retaliation")
+	# AC3: failed receipt fails closed.
+	var fail_before := party.get_heroes()
+	var fail_result := rules.resolve_thorns_retaliation(party, 1, pre,
+		{"ok": false, "damage": 5, "block_absorbed": 0, "hp_loss": 5})
+	_check(fail_result == {"ok": false, "applied": false, "thorns": 0,
+		"block_absorbed": 0, "hp_loss": 0}
+		and party.get_heroes() == fail_before,
+		"AC3: failed receipt fails closed without mutation")
+	# AC3: non-Thorns neighbor does not invent retaliation.
+	var plain_result := rules.resolve_thorns_retaliation(party, 1,
+		{"id": "spool_hexer", "hp": 24, "block": 0}, _receipt(5, 0, 5))
+	_check(plain_result == {"ok": true, "applied": false, "thorns": 0,
+		"block_absorbed": 0, "hp_loss": 0},
+		"AC3: non-Thorns enemy produces no retaliation")
+	# AC3: RNG/state untouched by non-hit probes.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 12345
+	var state_before := rng.state
+	seed(99999)
+	var global_before := randi()
+	rules.resolve_thorns_retaliation(party, 1, pre, _receipt(0, 0, 0))
+	_check(rng.state == state_before,
+		"AC3: zero-thorns receipt consumes no local RNG state")
+	seed(99999)
+	_check(randi() == global_before,
+		"AC3: non-hit probe consumes no global RNG")
+	# AC1: existing bleed-on-attack preserved in authored record.
+	_check(pre.get("bleed_on_attack") == true,
+		"AC1: Marshal retains bleed_on_attack true for bleeding sting")
