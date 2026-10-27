@@ -27,7 +27,7 @@ const CLEANSE_COUNT := 1
 ## eligible and are always left exactly as they were.
 const ELIGIBLE_DEBUFFS: Array[String] = ["bleed", "weak", "exposed"]
 
-## The four authentic IDs and the exact catalog line each one must still carry.
+## The six authentic IDs and the exact catalog line each one must still carry.
 ## `heal_all` is the only difference between a printing and its "+"; Vigil Ring additionally
 ## prints `block_all` and Lantern Glow prints the one-per-ally cleanse.
 const CARDS := {
@@ -49,9 +49,23 @@ const CARDS := {
 		"cost": 2, "from_positions": [2, 3], "heal_all": 6, "block_all": 6,
 		"upgrade_of": "lantern_monk_vigil_ring",
 	},
+	# Cycle 346: the Lantern Monk's own starter Lamplight Wash shares Lantern Glow's party heal
+	# and per-ally explicit cleanse. It is authenticated against LanternMonkStarterCards, whose
+	# record prints `heal` / `cleanse_debuff` rather than the pool's `heal_all` wording.
+	"lantern_monk_lamplight_wash": {
+		"cost": 2, "from_positions": [2, 3], "heal_all": 2,
+		"cleanse_one_debuff_each_ally": 1, "starter": true,
+		"upgrade_id": "lantern_monk_lamplight_wash_plus",
+	},
+	"lantern_monk_lamplight_wash_plus": {
+		"cost": 2, "from_positions": [2, 3], "heal_all": 3,
+		"cleanse_one_debuff_each_ally": 1, "starter": true,
+		"upgrade_of": "lantern_monk_lamplight_wash",
+	},
 }
 
 var _catalog := LanternMonkPoolCards.new()
+var _starters := LanternMonkStarterCards.new()
 
 
 ## The single paid transaction: authenticate, preflight every input, then charge the printed
@@ -135,7 +149,7 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: Variant,
 	}
 
 
-## True only for the four authentic catalog printings. Pure lookup; nothing is charged or
+## True only for the six authentic catalog printings. Pure lookup; nothing is charged or
 ## mutated and no RNG is touched.
 func is_supported_card(card_id: Variant) -> bool:
 	if typeof(card_id) != TYPE_STRING:
@@ -308,14 +322,15 @@ func _present_debuffs(hero: Dictionary) -> Array[String]:
 ## pair still carry their authored line, so a rewritten catalog (extra effect, another seat,
 ## target or cost) can never be paid for as this effect.
 func _authentic_pair(card_id: String, card: Dictionary) -> bool:
-	var definition: Dictionary = _catalog.get_definition(card_id)
+	var catalog: RefCounted = _catalog_for(card_id)
+	var definition: Dictionary = catalog.get_definition(card_id)
 	if not _authentic_record(definition, card_id, card):
 		return false
 	if card.has("upgrade_id"):
 		var plus_id: String = str(card["upgrade_id"])
 		if not CARDS.has(plus_id):
 			return false
-		var plus: Dictionary = _catalog.get_definition(plus_id)
+		var plus: Dictionary = catalog.get_definition(plus_id)
 		if plus.get("upgrade_of") != card_id or plus.get("upgrade_id") != null:
 			return false
 		var plus_card: Dictionary = CARDS[plus_id]
@@ -323,7 +338,7 @@ func _authentic_pair(card_id: String, card: Dictionary) -> bool:
 	var base_id: String = str(card["upgrade_of"])
 	if not CARDS.has(base_id):
 		return false
-	var base: Dictionary = _catalog.get_definition(base_id)
+	var base: Dictionary = catalog.get_definition(base_id)
 	if base.get("upgrade_id") != card_id or base.get("upgrade_of") != null:
 		return false
 	var base_card: Dictionary = CARDS[base_id]
@@ -343,7 +358,10 @@ func _authentic_record(definition: Dictionary, card_id: String, card: Dictionary
 	if not to_positions is Array or not (to_positions as Array).is_empty():
 		return false
 	var expected_effects: Dictionary = {"heal_all": int(card["heal_all"])}
-	if card.has("cleanse_one_debuff_each_ally"):
+	if card.get("starter", false):
+		# The starter catalog's exact Lamplight Wash line: heal N each, cleanse one each.
+		expected_effects = {"heal": int(card["heal_all"]), "cleanse_debuff": CLEANSE_COUNT}
+	elif card.has("cleanse_one_debuff_each_ally"):
 		expected_effects["cleanse_one_debuff_each_ally"] = CLEANSE_COUNT
 	if card.has("block_all"):
 		expected_effects["block_all"] = int(card["block_all"])
@@ -356,6 +374,19 @@ func _authentic_record(definition: Dictionary, card_id: String, card: Dictionary
 			and not definition.has("upgrade_of")
 	return definition.get("upgrade_of") == card["upgrade_of"] \
 		and not definition.has("upgrade_id")
+
+
+## The one catalog that authors this printing: the starter set for Lamplight Wash, the pool
+## for Lantern Glow and Vigil Ring.
+func _catalog_for(card_id: String) -> RefCounted:
+	return _starters if CARDS.get(card_id, {}).get("starter", false) else _catalog
+
+
+## The authenticated authored record for a supported printing, or {} otherwise.
+func catalog_definition(card_id: Variant) -> Dictionary:
+	if not is_supported_card(card_id):
+		return {}
+	return _catalog_for(card_id).get_definition(card_id)
 
 
 func _refusal(reason: String) -> Dictionary:

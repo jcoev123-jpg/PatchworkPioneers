@@ -5,7 +5,10 @@ const SUPPORT_IDS := ["warden_brace", "warden_brace_plus", "tinker_tune_up", "ti
 	"seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up", "seamstress_stitch_up_plus"]
 const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
 const VIGIL_IDS := ["lantern_monk_vigil_ring", "lantern_monk_vigil_ring_plus"]
-const GLOW_IDS := ["lantern_monk_lantern_glow", "lantern_monk_lantern_glow_plus"]
+## Party heal plus one explicit whole-debuff cleanse per living ally: the pool Lantern Glow
+## and (cycle 346) the Lantern Monk starter Lamplight Wash share one choice flow.
+const GLOW_IDS := ["lantern_monk_lantern_glow", "lantern_monk_lantern_glow_plus",
+	"lantern_monk_lamplight_wash", "lantern_monk_lamplight_wash_plus"]
 const ALLY_IDS := ["seamstress_v3_shielding_hem", "seamstress_v3_shielding_hem_plus",
 	"seamstress_v3_patchwork_poultice", "seamstress_v3_patchwork_poultice_plus",
 	"seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up",
@@ -921,7 +924,7 @@ func _sync_battle() -> void:
 				_metadata.definition(_pending.id).effects.heal,
 				"choose Bleed / Weak / Exposed below (Tab, Enter / Space)" if is_instance_valid(cleanse_choices) else "choose a living ally, then a debuff"]
 		if _pending.id in GLOW_IDS:
-			help_text = "Lantern Glow: %s; choose a debuff (Tab, Enter / Space) | Esc: cancel" % _party.get_hero(_pending.choice_position).name
+			help_text = "%s: %s; choose a debuff (Tab, Enter / Space) | Esc: cancel" % [_metadata.definition(_pending.id).get("display_name", _pending.id), _party.get_hero(_pending.choice_position).name]
 	if help_label.text != help_text:
 		help_label.text = help_text
 	# The same patch keeps the sewn frame; only its face changes: idle Help in the shipped

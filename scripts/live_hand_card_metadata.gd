@@ -27,7 +27,10 @@ const ART_DIR := "res://assets/paper/"
 ## keep their detail on a landscape hand panel.
 const FRAME_SOURCE_EDGE := 34.0
 const VIGIL_IDS := ["lantern_monk_vigil_ring", "lantern_monk_vigil_ring_plus"]
-const GLOW_IDS := ["lantern_monk_lantern_glow", "lantern_monk_lantern_glow_plus"]
+## Party heal plus one explicit whole-debuff cleanse per living ally: the pool Lantern Glow
+## and (cycle 346) the Lantern Monk starter Lamplight Wash share one choice flow.
+const GLOW_IDS := ["lantern_monk_lantern_glow", "lantern_monk_lantern_glow_plus",
+	"lantern_monk_lamplight_wash", "lantern_monk_lamplight_wash_plus"]
 
 var _catalog := StarterCards.new()
 var _toss := CombatWardenV3ShieldTossCards.new()
@@ -106,7 +109,7 @@ func _definition(card_id: String) -> Dictionary:
 	if CombatYarnRangerKnitCards.CARDS.has(card_id):
 		return CombatYarnRangerKnitCards.knit_definition(card_id)
 	if (card_id in VIGIL_IDS or card_id in GLOW_IDS) and _vigil.is_supported_card(card_id):
-		return _vigil._catalog.get_definition(card_id)
+		return _vigil.catalog_definition(card_id)
 	if _pitchfork.is_supported_card(card_id):
 		return _pitchfork._catalog_definition(card_id)
 	if _roll.is_supported_card(card_id):
@@ -554,7 +557,7 @@ func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[Str
 			return ["Gain %d Block to living Tinker (self) and gain %d Combat Scrap; Combat Scrap is not run-wallet scraps." % [effects.block, effects.combat_scrap_gain]]
 		return ["Gain %d Combat Scrap (not run-wallet scraps); draw %d card from the shared deck before discarding this card, if any are available." % [effects.combat_scrap_gain, effects.draw]]
 	if card_id in GLOW_IDS:
-		return ["Heal each living hero %d HP, capped at max HP. For each living hero choose one present Bleed, Weak or Exposed to remove completely; heal alone if none are present. No Block; Torn heroes are excluded." % definition.effects.heal_all]
+		return ["Heal each living hero %d HP, capped at max HP. For each living hero choose one present Bleed, Weak or Exposed to remove completely; heal alone if none are present. No Block; Torn heroes are excluded." % _party_heal(definition)]
 	if card_id in VIGIL_IDS:
 		return ["Heal each living hero %d HP, capped at max HP; each gains %d Block. Torn heroes are excluded; no debuffs are removed." % [definition.effects.heal_all, definition.effects.block_all]]
 	if _re_stuff.is_supported_card(card_id):
@@ -1232,6 +1235,13 @@ func _center_text(panel: Control, value: String, rect: Rect2, preferred: int) ->
 ## The terse authored effect line drawn on every hand face. One shared formatter
 ## keeps the ordinary and two-half sewn faces identical; applied amounts come
 ## from the same validated record the tooltip explains, never from a prediction.
+## Pool party cards print `heal_all`; the starter Lamplight Wash prints `heal` for the same
+## each-living-hero heal.
+func _party_heal(definition: Dictionary) -> int:
+	var effects: Dictionary = definition.get("effects", {})
+	return int(effects.get("heal_all", effects.get("heal", 0)))
+
+
 func _rules(id: String) -> String:
 	if _bolas.is_supported_card(id):
 		var card := _definition(id)
@@ -1242,7 +1252,7 @@ func _rules(id: String) -> String:
 			return "Gain %d Block; +%d Combat Scrap." % [effects.block, effects.combat_scrap_gain]
 		return "+%d Combat Scrap; draw %d." % [effects.combat_scrap_gain, effects.draw]
 	if id in GLOW_IDS and not _definition(id).is_empty():
-		return "Each living hero: heal %d HP; choose Bleed/Weak/Exposed to remove all (if present)." % _definition(id).effects.heal_all
+		return "Each living hero: heal %d HP; choose Bleed/Weak/Exposed to remove all (if present)." % _party_heal(_definition(id))
 	if id in VIGIL_IDS and not _definition(id).is_empty():
 		var effects: Dictionary = _definition(id).effects
 		return "Each living hero: heal %d HP; gain %d Block." % [effects.heal_all, effects.block_all]
