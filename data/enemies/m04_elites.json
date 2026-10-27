@@ -12,7 +12,7 @@
       {"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
       {"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
     ]}},
-  {"id": "scissor_bailiff", "name": "Scissor Bailiff", "max_hp": 36, "bleed_on_attack": true, "art_path": "res://assets/paper/enemies/scissor_bailiff.png",
+  {"id": "scissor_bailiff", "name": "Scissor Bailiff", "max_hp": 36, "bleed_on_attack": true, "chew_block_on_attack": true, "art_path": "res://assets/paper/enemies/scissor_bailiff.png",
     "intent": {"target": "front", "actions": [
       {"type": "snip_block", "amount": 0, "weight": 2},
       {"type": "debuff", "amount": 2, "status": "bleed", "weight": 2},
