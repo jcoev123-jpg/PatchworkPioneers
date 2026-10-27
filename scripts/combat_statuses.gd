@@ -91,6 +91,10 @@ func dodge_project_for_attempt(statuses: Dictionary, attempt_made: bool) -> Dict
 ## Weak, Exposed and Tangled expire at this boundary, after applying during this turn.
 ## Riposte is removed completely after this one owner turn, whatever its N was.
 ## An unspent one-turn Dodge token (0 or 1) also disappears at this boundary.
+## Blind is a one-shot "next attack misses" marker, never an N-turn counter: an
+## active Blind 1 is copied unchanged to the next state, an inert Blind 0 is
+## discarded, and merely ending an owner turn never spends it. Only a later
+## attack-attempt resolver may consume the token.
 ## Invalid state returns ok=false and an independent, unchanged deep snapshot.
 func end_owner_turn(hp: int, block: int, statuses: Dictionary) -> Dictionary:
 	var next_statuses: Dictionary = statuses.duplicate(true)
@@ -103,14 +107,18 @@ func end_owner_turn(hp: int, block: int, statuses: Dictionary) -> Dictionary:
 		var remaining: int = statuses.get(name, 0)
 		if remaining > 1:
 			next_statuses[name] = remaining - 1
+	if statuses.get("blind_next_attack", 0) == 1:
+		next_statuses["blind_next_attack"] = 1
 	return {"ok": true, "hp": hp - loss, "block": block, "statuses": next_statuses, "bleed_hp_loss": loss}
 
 
+## Blind shares Dodge's canonical one-shot shape: an integer token 0 (inert) or 1
+## (active). No stack, duration or boolean form is accepted.
 func _valid_statuses(statuses: Dictionary) -> bool:
 	for name in statuses:
 		if not name is String:
 			return false
-		if name == "dodge_next_attack":
+		if name == "dodge_next_attack" or name == "blind_next_attack":
 			var count = statuses[name]
 			if not count is int or (count != 0 and count != 1):
 				return false

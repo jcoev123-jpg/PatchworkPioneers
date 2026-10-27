@@ -19,6 +19,7 @@ func _initialize() -> void:
 	_test_unravel_consume_skip_and_threshold_rise()
 	_test_unravel_invalid_and_isolation()
 	_test_dodge_project()
+	_test_blind_next_attack()
 	if failures.is_empty():
 		print("combat_statuses_test: PASS (", checks, " checks)")
 	else:
@@ -782,3 +783,223 @@ func _test_dodge_project() -> void:
 		"identical Dodge inputs reproduce same receipt")
 	_check(replay_input == {"dodge_next_attack": 1},
 		"replay never changes caller input")
+
+
+func _test_blind_next_attack() -> void:
+	# AC1 - an unspent Blind token survives owner turns; it is never a duration.
+	var source := {"blind_next_attack": 1, "bleed": 2, "weak": 2, "tangled": 2}
+	var snapshot: Dictionary = source.duplicate(true)
+	var first := rules.end_owner_turn(10, 7, source)
+	_check(first == {"ok": true, "hp": 8, "block": 7,
+		"statuses": {"blind_next_attack": 1, "bleed": 1, "weak": 1, "tangled": 1},
+		"bleed_hp_loss": 2},
+		"active Blind 1 survives one owner turn while Bleed costs HP through Block and the rest age once")
+	_check(source == snapshot, "Blind owner-turn transition never mutates the caller's statuses")
+	var second := rules.end_owner_turn(first["hp"], first["block"], first["statuses"])
+	_check(second == {"ok": true, "hp": 7, "block": 7,
+		"statuses": {"blind_next_attack": 1}, "bleed_hp_loss": 1},
+		"active Blind 1 survives a second owner turn and is never decremented")
+	var third := rules.end_owner_turn(second["hp"], second["block"], second["statuses"])
+	_check(third == {"ok": true, "hp": 7, "block": 7,
+		"statuses": {"blind_next_attack": 1}, "bleed_hp_loss": 0},
+		"Blind outlives every expiring counter as the one-shot token 1")
+	_check(source == snapshot, "the full Blind trace preserves the original dictionary")
+	var inert := rules.end_owner_turn(9, 4, {"blind_next_attack": 0, "weak": 2})
+	_check(inert == {"ok": true, "hp": 9, "block": 4, "statuses": {"weak": 1}, "bleed_hp_loss": 0},
+		"inert Blind 0 is discarded at the owner turn end")
+	var shielded := rules.end_owner_turn(10, 6, {"blind_next_attack": 1})
+	_check(shielded == {"ok": true, "hp": 10, "block": 6,
+		"statuses": {"blind_next_attack": 1}, "bleed_hp_loss": 0},
+		"a quiet Block-only owner turn never spends Blind and keeps HP/Block")
+	_check(rules.end_owner_turn(10, 7,
+		{"dodge_next_attack": 1, "blind_next_attack": 1})["statuses"] == {"blind_next_attack": 1},
+		"Blind and Dodge coexist; Dodge still expires while Blind persists")
+
+	# The authored Lantern Monk descriptors keep printing Blind unchanged.
+	var starters := LanternMonkStarterCards.new()
+	var pool := LanternMonkPoolCards.new()
+	var wick: Dictionary = starters.get_definition("lantern_monk_wick_spark")
+	var moth_lure: Dictionary = pool.get_definition("lantern_monk_moth_lure")
+	var moth_cloud: Dictionary = pool.get_definition("lantern_monk_moth_cloud")
+	_check(wick.get("effects", {}).get("blind") == 1
+		and moth_lure.get("effects", {}).get("blind_next_attack") == true
+		and moth_cloud.get("effects", {}).get("blind_next_attack") == true,
+		"precondition: authored Lantern Monk cards still print their Blind descriptors")
+
+	# AC2 - the detached owner-side batch admits and preserves Blind for both sides.
+	# Both fixtures start from the real roster shapes, with HP and Block applied
+	# through the models' own APIs, then attach the canonical runtime statuses.
+	var batch := CombatStatusTurnBatch.new()
+	var party := CombatParty.new([
+		{"id": "warden", "max_hp": 40, "metadata": {"tags": ["front"]}},
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26}])
+	_check(party.is_valid() and party.apply_damage(1, 4) and party.gain_block(1, 6)
+		and party.get_hero(1)["hp"] == 36 and party.get_hero(1)["block"] == 6,
+		"precondition: real three-hero CombatParty with Warden at 36 HP behind 6 Block")
+	var live_heroes := party.get_heroes()
+	var heroes := party.get_heroes()
+	heroes[0]["statuses"] = {"blind_next_attack": 1, "dodge_next_attack": 1,
+		"bleed": 2, "weak": 2}
+	heroes[1]["statuses"] = {"tangled": 2}
+	heroes[2]["statuses"] = {"riposte": 3}
+	var heroes_before: Array = heroes.duplicate(true)
+	_check(heroes.size() == CombatParty.PARTY_SIZE and heroes[0]["position"] == 1
+		and heroes[2]["position"] == 3,
+		"precondition: non-vacuous canonical three-position hero snapshot")
+	var hero_batch := batch.tick_side("heroes", heroes)
+	_check(hero_batch["ok"] == true and hero_batch["actors"].size() == 3
+		and hero_batch["events"].size() == 3,
+		"three-hero batch containing a Blind bearer succeeds")
+	if hero_batch["ok"] == true and hero_batch["actors"].size() == 3:
+		var hero_states: Array = []
+		for actor in hero_batch["actors"]:
+			hero_states.append(actor["statuses"])
+		_check(hero_states == [{"blind_next_attack": 1, "bleed": 1, "weak": 1},
+			{"tangled": 1}, {}],
+			"only the Blind bearer keeps Blind 1 while allies' statuses age as before")
+		_check(not hero_batch["actors"][0]["statuses"].has("dodge_next_attack"),
+			"the same batch still expires an unspent Dodge beside the surviving Blind")
+		for index in range(heroes_before.size()):
+			var direct := rules.end_owner_turn(heroes_before[index]["hp"],
+				heroes_before[index]["block"], heroes_before[index]["statuses"])
+			var batched: Dictionary = hero_batch["actors"][index]
+			_check(direct["ok"] and batched["hp"] == direct["hp"]
+				and batched["block"] == direct["block"]
+				and batched["statuses"] == direct["statuses"]
+				and batched["id"] == heroes_before[index]["id"]
+				and batched["position"] == heroes_before[index]["position"],
+				"hero batch position %d agrees with direct end_owner_turn" % (index + 1))
+		_check(hero_batch["actors"][0]["hp"] == 34 and hero_batch["actors"][0]["block"] == 6,
+			"Blind bearer still takes direct Bleed HP loss behind unchanged Block")
+		_check(hero_batch["events"] == [
+			{"side": "heroes", "position": 1, "id": "warden", "bleed_hp_loss": 2},
+			{"side": "heroes", "position": 2, "id": "seamstress", "bleed_hp_loss": 0},
+			{"side": "heroes", "position": 3, "id": "tinker", "bleed_hp_loss": 0}],
+			"hero batch keeps the existing side/position/ID/Bleed event contract")
+	_check(heroes == heroes_before and party.get_heroes() == live_heroes,
+		"hero batch with Blind leaves the caller snapshot and live party untouched")
+
+	# One to three real enemy slots, each with a single Blind bearer.
+	for count in [1, 2, 3]:
+		var bearer := 0 if count == 1 else 1
+		var definitions: Array = []
+		for index in range(count):
+			definitions.append({"id": "v3_blind_enemy_%d" % index, "max_hp": 12})
+		var enemies := CombatEnemies.new(definitions)
+		_check(enemies.is_valid() and enemies.get_enemies().size() == count,
+			"precondition: real %d-slot CombatEnemies roster" % count)
+		if not enemies.is_valid() or enemies.get_enemies().size() != count:
+			continue
+		for index in range(count):
+			_check(enemies.gain_block(index + 1, index + 1),
+				"precondition: %d-slot enemy %d gains Block through its API" % [count, index + 1])
+		var live_foes := enemies.get_enemies()
+		var roster := enemies.get_enemies()
+		for index in range(count):
+			if index == bearer:
+				roster[index]["statuses"] = {"blind_next_attack": 1, "exposed": 2}
+			elif index == 0:
+				roster[index]["statuses"] = {"bleed": 2, "tangled": 2}
+			else:
+				roster[index]["statuses"] = {"riposte": 4}
+		var foes_before: Array = roster.duplicate(true)
+		_check(roster[bearer]["hp"] == 12 and roster[bearer]["block"] == bearer + 1,
+			"precondition: %d-slot Blind bearer is a real live enemy slot" % count)
+		var foe_batch := batch.tick_side("enemies", roster)
+		_check(foe_batch["ok"] == true and foe_batch["actors"].size() == count
+			and foe_batch["events"].size() == count,
+			"%d-enemy batch containing a Blind bearer succeeds" % count)
+		_check(roster == foes_before and enemies.get_enemies() == live_foes,
+			"%d-enemy Blind batch leaves the caller snapshot and live roster untouched" % count)
+		if foe_batch["ok"] == true and foe_batch["actors"].size() == count:
+			for index in range(count):
+				var direct := rules.end_owner_turn(foes_before[index]["hp"],
+					foes_before[index]["block"], foes_before[index]["statuses"])
+				var batched: Dictionary = foe_batch["actors"][index]
+				_check(direct["ok"] and batched["hp"] == direct["hp"]
+					and batched["block"] == direct["block"]
+					and batched["statuses"] == direct["statuses"],
+					"%d-enemy position %d agrees with direct end_owner_turn" % [count, index + 1])
+				_check(batched["statuses"].has("blind_next_attack") == (index == bearer),
+					"%d-enemy position %d keeps Blind only on the bearer" % [count, index + 1])
+				if index == bearer:
+					_check(batched["statuses"].get("blind_next_attack") == 1,
+						"%d-enemy Blind bearer keeps the one-shot token 1" % count)
+		var replay := batch.tick_side("enemies", roster)
+		_check(replay == foe_batch,
+			"%d-enemy Blind batch replays identically and consumes nothing" % count)
+
+	# AC3 - invalid Blind data still rejects atomically at both layers.
+	var base_enemies := CombatEnemies.new([
+		{"id": "ragling", "max_hp": 12},
+		{"id": "guard_ragling", "max_hp": 12}])
+	_check(base_enemies.is_valid() and base_enemies.gain_block(1, 2),
+		"precondition: real two-enemy rejection baseline with Block")
+	var live_rejects := base_enemies.get_enemies()
+	var foes := base_enemies.get_enemies()
+	foes[0]["statuses"] = {"blind_next_attack": 1}
+	foes[1]["statuses"] = {"weak": 2}
+	for bad_value in [2, -1, true, 1.0, "1"]:
+		var bad_statuses := {"blind_next_attack": bad_value}
+		var prior: Dictionary = bad_statuses.duplicate(true)
+		_check(rules.end_owner_turn(10, 7, bad_statuses)
+			== {"ok": false, "hp": 10, "block": 7, "statuses": prior, "bleed_hp_loss": 0},
+			"direct owner turn rejects Blind outside integer 0/1: " + str(bad_value))
+		_check(bad_statuses == prior,
+			"rejected direct Blind input is unchanged: " + str(bad_value))
+
+		var bad_heroes: Array = heroes_before.duplicate(true)
+		bad_heroes[0]["statuses"] = {"blind_next_attack": 1}
+		bad_heroes[-1]["statuses"] = {"blind_next_attack": bad_value}
+		var bad_hero_snapshot: Array = bad_heroes.duplicate(true)
+		var hero_rejected := batch.tick_side("heroes", bad_heroes)
+		_check(hero_rejected == {"ok": false, "actors": [], "events": []},
+			"hero batch rejects a late invalid Blind after an earlier valid bearer: " + str(bad_value))
+		_check(bad_heroes == bad_hero_snapshot,
+			"rejected hero Blind batch leaves the snapshot unchanged: " + str(bad_value))
+
+		var bad_foes: Array = foes.duplicate(true)
+		bad_foes[-1]["statuses"] = {"blind_next_attack": bad_value}
+		var bad_foe_snapshot: Array = bad_foes.duplicate(true)
+		var foe_rejected := batch.tick_side("enemies", bad_foes)
+		_check(foe_rejected == {"ok": false, "actors": [], "events": []},
+			"enemy batch rejects invalid Blind on a later actor: " + str(bad_value))
+		_check(bad_foes == bad_foe_snapshot,
+			"rejected enemy Blind batch leaves the snapshot unchanged: " + str(bad_value))
+
+		var first_invalid: Array = heroes_before.duplicate(true)
+		first_invalid[0]["statuses"] = {"blind_next_attack": bad_value}
+		var first_snapshot: Array = first_invalid.duplicate(true)
+		var first_rejected := batch.tick_side("heroes", first_invalid)
+		_check(first_rejected == {"ok": false, "actors": [], "events": []}
+			and first_invalid == first_snapshot,
+			"hero batch rejects invalid Blind on the first actor without partial results: "
+			+ str(bad_value))
+
+		var first_bad_foes: Array = foes.duplicate(true)
+		first_bad_foes[0]["statuses"] = {"blind_next_attack": bad_value}
+		var first_foe_snapshot: Array = first_bad_foes.duplicate(true)
+		var first_foe_rejected := batch.tick_side("enemies", first_bad_foes)
+		_check(first_foe_rejected == {"ok": false, "actors": [], "events": []}
+			and first_bad_foes == first_foe_snapshot,
+			"enemy batch rejects invalid Blind on the first actor without partial results: "
+			+ str(bad_value))
+		_check(base_enemies.get_enemies() == live_rejects,
+			"rejected Blind batches never touch the live enemy roster: " + str(bad_value))
+
+	_check(not rules.end_owner_turn(10, 7, {"blind_next_attack": 1, "poison": 1})["ok"],
+		"unknown status beside Blind is still rejected")
+	_check(rules.end_owner_turn(10, 7, {"blind_next_attack": 0})["ok"],
+		"inert Blind 0 alone is a valid status shape")
+	var valid_foes: Array = foes.duplicate(true)
+	var valid_before: Array = valid_foes.duplicate(true)
+	var valid_batch := batch.tick_side("enemies", valid_foes)
+	_check(valid_batch["ok"] == true and valid_foes == valid_before
+		and base_enemies.get_enemies() == live_rejects
+		and valid_batch["actors"][0]["statuses"] == {"blind_next_attack": 1}
+		and valid_batch["actors"][1]["statuses"] == {"weak": 1},
+		"a valid Blind enemy roster still ticks, ages other statuses and leaves the live roster")
+	_check(rules.end_owner_turn(10, 7, {"blind_next_attack": 0, "bleed": 2})
+		== {"ok": true, "hp": 8, "block": 7, "statuses": {"bleed": 1}, "bleed_hp_loss": 2},
+		"inert Blind 0 clears while mixed Bleed still costs HP through retained Block")
