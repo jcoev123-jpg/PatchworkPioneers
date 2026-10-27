@@ -265,6 +265,72 @@ const EVENTS := {
 			"leave": {"text": "Let the bridge settle and go", "gold": 0, "scraps": 0},
 		},
 	},
+	"v3_lantern_monk_mothglass_chapel": {
+		"title": "The Mothglass Chapel",
+		"description": "A round saffron-robed doll tends an amber lantern under stained button-glass; moths circle a cracked wick.",
+		"required_hero": "lantern_monk",
+		"hero_choice_ids": ["relight_saffron_wick", "collect_fallen_wax"],
+		"choices": {
+			"relight_saffron_wick": {"text": "Relight the saffron wick (spend 1 scrap; earn 22 gold)", "gold": 22, "scraps": -1},
+			"collect_fallen_wax": {"text": "Gather the fallen lantern wax (+1 scrap)", "gold": 0, "scraps": 1},
+			"leave": {"text": "Leave the chapel's moths undisturbed", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_rag_duelist_velvet_rapier_stage": {
+		"title": "The Velvet Rapier Stage",
+		"description": "A caped puppet challenges the Duelist to match his crimson ribbon against a blunted needle rapier.",
+		"required_hero": "rag_duelist",
+		"hero_choice_ids": ["win_velvet_purse", "buy_fencing_silk"],
+		"choices": {
+			"win_velvet_purse": {"text": "Win the velvet purse in a ribbon duel (+14 gold)", "gold": 14, "scraps": 0},
+			"buy_fencing_silk": {"text": "Buy fencing silk (spend 13 gold; gain 2 scraps)", "gold": -13, "scraps": 2},
+			"leave": {"text": "Leave the puppet to bow alone", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_tinker_brass_moth_clinic": {
+		"title": "The Brass-Moth Clinic",
+		"description": "A bent-wing clockwork moth ticks on a gear-backed stool beneath a warm mustard lamp.",
+		"required_hero": "tinker",
+		"hero_choice_ids": ["repair_bent_wing", "salvage_clock_springs"],
+		"choices": {
+			"repair_bent_wing": {"text": "Repair the moth's wing (spend 2 scraps; earn 27 gold)", "gold": 27, "scraps": -2},
+			"salvage_clock_springs": {"text": "Gather discarded clock springs (+1 scrap)", "gold": 0, "scraps": 1},
+			"leave": {"text": "Leave the brass moth resting", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_scarecrow_pumpkin_seam_census": {
+		"title": "The Pumpkin-Seam Census",
+		"description": "A plump burlap registrar counts pumpkin buttons while the Scarecrow's crow perches on a stitched ledger.",
+		"required_hero": "scarecrow",
+		"hero_choice_ids": ["register_harvest", "gather_hay_offcuts"],
+		"choices": {
+			"register_harvest": {"text": "Register the harvest (spend 1 scrap; earn 18 gold)", "gold": 18, "scraps": -1},
+			"gather_hay_offcuts": {"text": "Gather loose hay offcuts (+2 scraps)", "gold": 0, "scraps": 2},
+			"leave": {"text": "Leave the census table", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_yarn_ranger_tangled_willow": {
+		"title": "The Tangled Willow",
+		"description": "Knitting-needle branches cradle teal yarn above a lantern-lit river; the Ranger's bolas can reel it down.",
+		"required_hero": "yarn_ranger",
+		"hero_choice_ids": ["retrieve_wool_cache", "buy_moss_bolas"],
+		"choices": {
+			"retrieve_wool_cache": {"text": "Retrieve the fallen wool cache (+10 gold)", "gold": 10, "scraps": 0},
+			"buy_moss_bolas": {"text": "Buy moss-green bolas cord (spend 17 gold; gain 3 scraps)", "gold": -17, "scraps": 3},
+			"leave": {"text": "Leave the willow undisturbed", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_button_golem_brass_keyhole": {
+		"title": "The Brass Keyhole",
+		"description": "A huge moss-green door opens only when giant button fists press its rusted rivets.",
+		"required_hero": "button_golem",
+		"hero_choice_ids": ["push_rivet_door", "gather_loose_buttons"],
+		"choices": {
+			"push_rivet_door": {"text": "Push the rivet door (spend 2 scraps; earn 29 gold)", "gold": 29, "scraps": -2},
+			"gather_loose_buttons": {"text": "Gather loose button shanks (+1 scrap)", "gold": 0, "scraps": 1},
+			"leave": {"text": "Leave the door closed", "gold": 0, "scraps": 0},
+		},
+	},
 }
 
 var failures: Array[String] = []
