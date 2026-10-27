@@ -39,7 +39,7 @@ theme_override_constants/margin_bottom = 10
 
 [node name="Body" type="VBoxContainer" parent="PaperPanel/Margins"]
 layout_mode = 2
-theme_override_constants/separation = 6
+theme_override_constants/separation = 4
 
 [node name="TopStitches" type="Label" parent="PaperPanel/Margins/Body"]
 layout_mode = 2
@@ -47,21 +47,21 @@ text = "×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    
 horizontal_alignment = 1
 
 [node name="Title" type="Label" parent="PaperPanel/Margins/Body"]
-custom_minimum_size = Vector2(0, 42)
+custom_minimum_size = Vector2(0, 38)
 layout_mode = 2
 text = "SEW YOUR COMPANY"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="SubTitle" type="Label" parent="PaperPanel/Margins/Body"]
-custom_minimum_size = Vector2(0, 25)
+custom_minimum_size = Vector2(0, 23)
 layout_mode = 2
-text = "Eight threadbound souls. Choose exactly three. The journey will decide their places."
+text = "Eight threadbound souls. Choose exactly three. Preview their combat seats below."
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="HeroGrid" type="GridContainer" parent="PaperPanel/Margins/Body"]
-custom_minimum_size = Vector2(0, 386)
+custom_minimum_size = Vector2(0, 358)
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/h_separation = 12
@@ -69,7 +69,7 @@ theme_override_constants/v_separation = 10
 columns = 4
 
 [node name="InspectionPanel" type="PanelContainer" parent="PaperPanel/Margins/Body"]
-custom_minimum_size = Vector2(0, 70)
+custom_minimum_size = Vector2(0, 104)
 layout_mode = 2
 mouse_filter = 2
 
@@ -92,6 +92,12 @@ mouse_filter = 2
 text = "HOVER OR FOCUS A HERO TO INSPECT"
 horizontal_alignment = 1
 
+[node name="InspectionFacts" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack"]
+layout_mode = 2
+mouse_filter = 2
+text = "Inspect max HP, preferred position and passive."
+horizontal_alignment = 1
+
 [node name="InspectionDetail" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack"]
 layout_mode = 2
 size_flags_vertical = 3
@@ -102,7 +108,7 @@ vertical_alignment = 1
 autowrap_mode = 2
 
 [node name="Foot" type="HBoxContainer" parent="PaperPanel/Margins/Body"]
-custom_minimum_size = Vector2(0, 60)
+custom_minimum_size = Vector2(0, 58)
 layout_mode = 2
 theme_override_constants/separation = 15
 
@@ -115,7 +121,7 @@ vertical_alignment = 1
 [node name="Hint" type="Label" parent="PaperPanel/Margins/Body/Foot"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Continue in authored positions"
+text = "Choose three to preview battle seats"
 horizontal_alignment = 1
 vertical_alignment = 1
 

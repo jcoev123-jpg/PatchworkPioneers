@@ -16,11 +16,21 @@ const SIGNATURES: Array[String] = [
 const ROLES: Array[String] = [
 	"Bulwark", "Stitch healer", "Scrap engineer", "Light keeper",
 	"Counterattacker", "Fear harrier", "Tangle hunter", "Block bruiser"]
+## Independent Starting heroes oracle: exact GAME_DESIGN.md authored wording.
+const LEGACY_PASSIVES := {
+	"warden": "Start of combat: gain 6 Block.",
+	"seamstress": "When she applies Bleed, apply 1 more.",
+	"tinker": "Her first attack each turn deals +3.",
+}
+const LEGACY_HP := {"warden": 40, "seamstress": 30, "tinker": 26}
+const POSITION_NAMES := ["Front", "Middle", "Back"]
 
 var failures: Array[String] = []
 var checks := 0
 var requests: Array = []
 var cancels := 0
+var canonical_roster: Array = []
+var canonical_legacy: Array = []
 
 
 func _initialize() -> void:
@@ -72,8 +82,75 @@ func _move_to(target: Control) -> void:
 func _readout(picker: Control) -> Array[String]:
 	var base := "PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/"
 	var heading: Label = picker.get_node(base + "InspectionHeading")
+	var facts: Label = picker.get_node(base + "InspectionFacts")
 	var detail: Label = picker.get_node(base + "InspectionDetail")
-	return [heading.text, detail.text]
+	return [heading.text, detail.text, facts.text]
+
+
+func _read_hero_records(path: String) -> Array:
+	var parser := JSON.new()
+	if parser.parse(FileAccess.get_file_as_string(path)) != OK or not parser.data is Array:
+		return []
+	return parser.data
+
+
+func _canonical_facts(hero_id: String) -> Dictionary:
+	for index in range(canonical_legacy.size()):
+		var record: Dictionary = canonical_legacy[index]
+		if record.get("id") == hero_id:
+			return {"hp": record.get("max_hp"), "position": index + 1,
+				"passive": LEGACY_PASSIVES.get(hero_id, "")}
+	for record in canonical_roster:
+		if record.get("id") == hero_id:
+			return {"hp": record.get("max_hp"),
+				"position": record.get("default_position"),
+				"passive": record.get("passive", {}).get("text", "")}
+	return {}
+
+
+func _check_canonical_inspection(picker: LiveV3PartyPicker, hero_id: String, note: String) -> void:
+	var expected := _canonical_facts(hero_id)
+	_check(not expected.is_empty() and expected.get("passive", "") != "",
+		note + " independent authentic hero record found")
+	if expected.is_empty():
+		return
+	var position: int = int(expected["position"])
+	_check(position in [1, 2, 3], note + " canonical preferred position valid")
+	if position not in [1, 2, 3]:
+		return
+	var rendered := _readout(picker)[2]
+	_check(rendered == "Max HP: %d  •  Preferred: %s (%d)  •  Passive: %s" % [
+		expected["hp"], POSITION_NAMES[position - 1], position, expected["passive"]],
+		note + " exact canonical HP / preferred position / passive")
+	var facts: Label = picker.get_node(
+		"PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/InspectionFacts")
+	var text_width := facts.get_theme_font("font").get_string_size(
+		facts.text, HORIZONTAL_ALIGNMENT_LEFT, -1, facts.get_theme_font_size("font_size")).x
+	_check(text_width <= facts.size.x + 1.0, note + " all authored passive text fits at 1280x720")
+	_check(picker.selected_ids().is_empty(), note + " inspection is read-only")
+
+
+func _check_seats(picker: LiveV3PartyPicker, picks: Array[String], note: String) -> void:
+	var hint: Label = picker.get_node("PaperPanel/Margins/Body/Foot/Hint")
+	var admitted := RunV3PartyAdmission.admit(picks)
+	_check(admitted.get("ok", false) and admitted.get("party", []).size() == 3,
+		note + " authentic admission result")
+	if not admitted.get("ok", false):
+		return
+	var expected: Array[String] = []
+	for index in range(3):
+		_check(admitted["hero_ids"][index] == admitted["party"][index]["id"],
+			note + " admitted seat identity %d" % (index + 1))
+		expected.append("%d %s" % [index + 1, admitted["party"][index]["name"]])
+	_check(hint.text == "Seats: " + "  |  ".join(expected),
+		note + " displayed combat seats exactly match admission")
+	_check(picker.selected_ids() == picks, note + " seat projection retains click order")
+	var width := hint.get_theme_font("font").get_string_size(
+		hint.text, HORIZONTAL_ALIGNMENT_LEFT, -1, hint.get_theme_font_size("font_size")).x
+	_check(width <= hint.size.x + 1.0
+		and hint.get_visible_line_count() == hint.get_line_count()
+		and picker.get_node("PaperPanel/Margins/Body/Foot").get_global_rect().encloses(hint.get_global_rect()),
+		note + " every seat label remains visible in footer")
 
 
 func _check_inspection(picker: Control, name: String, motif: String,
@@ -133,6 +210,16 @@ func _ids(picker: LiveV3PartyPicker, expected: Array[String], note: String, latc
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	canonical_roster = _read_hero_records("res://data/heroes/v3_party_roster.json")
+	canonical_legacy = _read_hero_records("res://data/heroes/starter_party.json")
+	_check(canonical_roster.size() >= 5 and canonical_legacy.size() == 3,
+		"both shipped canonical hero records are loaded")
+	for id in ORDER:
+		_check(not _canonical_facts(id).is_empty(),
+			"all eight IDs resolve to the authentic hero records: " + id)
+	for id in LEGACY_HP:
+		_check(_canonical_facts(id).get("hp") == LEGACY_HP[id],
+			"legacy HP matches GAME_DESIGN.md: " + id)
 	var packed := load(SCENE) as PackedScene
 	_check(packed != null, "actual .tscn resource loads")
 	if packed == null:
@@ -210,19 +297,25 @@ func _run() -> void:
 		"PaperPanel/Margins/Body/InspectionPanel")
 	var heading: Label = inspection.get_node("Inset/Stack/InspectionHeading")
 	var detail: Label = inspection.get_node("Inset/Stack/InspectionDetail")
+	var facts: Label = inspection.get_node("Inset/Stack/InspectionFacts")
 	_check(inspection.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and heading.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and detail.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and facts.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and inspection.focus_mode == Control.FOCUS_NONE,
 		"sewn readout never intercepts mouse or keyboard")
 	_check(heading.get_theme_font_size("font_size") >= 18
-		and detail.get_theme_font_size("font_size") >= 16,
+		and detail.get_theme_font_size("font_size") >= 16
+		and facts.get_theme_font_size("font_size") >= 16,
 		"legible stitched heading and signature sizes")
 	_check(input_bounds.encloses(inspection.get_global_rect())
 		and panel.get_global_rect().encloses(inspection.get_global_rect()),
 		"stitched readout wholly visible at 1280x720")
 	_check(inspection.get_global_rect().encloses(heading.get_global_rect())
 		and inspection.get_global_rect().encloses(detail.get_global_rect())
+		and inspection.get_global_rect().encloses(facts.get_global_rect())
+		and not facts.get_global_rect().intersects(heading.get_global_rect())
+		and not facts.get_global_rect().intersects(detail.get_global_rect())
 		and detail.get_visible_line_count() == detail.get_line_count(),
 		"readout fits all rendered text lines")
 	for i in range(8):
@@ -239,8 +332,8 @@ func _run() -> void:
 		and _readout(picker)[1].contains("before choosing three"),
 		"fresh open has neutral guidance, not an auto-focused hero")
 	var hint: Label = picker.get_node("PaperPanel/Margins/Body/Foot/Hint")
-	_check(hint.text.contains("Continue") and hint.text.contains("positions"),
-		"screen explains live continuation and authored positions")
+	_check(hint.text.contains("Choose three") and hint.text.contains("preview"),
+		"empty opening gives guidance instead of fictitious combat seats")
 	_check(not cancel.disabled and action.disabled, "fresh zero selection gate")
 	_check(picker.selected_ids().is_empty(), "fresh selection is empty")
 	var before_json := FileAccess.get_file_as_string("res://data/heroes/starter_party.json")
@@ -275,9 +368,17 @@ func _run() -> void:
 		await _move_to(_tile(picker, ORDER[i]))
 		_check_inspection(picker, NAMES[i], MOTIFS[i], ROLES[i],
 			SIGNATURES[i], "all eight distinct designed signatures: " + ORDER[i])
+		_check_canonical_inspection(picker, ORDER[i], "pointer " + ORDER[i])
 		_check(detail.get_visible_line_count() == detail.get_line_count()
-			and inspection.get_global_rect().encloses(detail.get_global_rect()),
-			"inspected hero signature remains visible: " + ORDER[i])
+			and facts.get_visible_line_count() == facts.get_line_count()
+			and inspection.get_global_rect().encloses(detail.get_global_rect())
+			and inspection.get_global_rect().encloses(facts.get_global_rect()),
+			"inspected hero signature / canonical facts fully visible: " + ORDER[i])
+		await _move_to(picker.get_node("PaperPanel/Margins/Body/SubTitle"))
+		await _key_focus(_tile(picker, ORDER[i]))
+		_check_inspection(picker, NAMES[i], MOTIFS[i], ROLES[i],
+			SIGNATURES[i], "keyboard signature: " + ORDER[i])
+		_check_canonical_inspection(picker, ORDER[i], "keyboard " + ORDER[i])
 	await _move_to(picker.get_node("PaperPanel/Margins/Body/SubTitle"))
 	_ids(picker, [], "inspection never changes requested picks")
 	await _mouse(_tile(picker, "warden"))
@@ -286,13 +387,18 @@ func _run() -> void:
 	_ids(picker, ["warden", "seamstress"], "Space second")
 	await _mouse(_tile(picker, "tinker"))
 	_ids(picker, ["warden", "seamstress", "tinker"], "mouse third")
+	_check_seats(picker, ["warden", "seamstress", "tinker"], "legacy trio")
 	await _mouse(_tile(picker, "lantern_monk"))
 	_ids(picker, ["warden", "seamstress", "tinker"], "fourth blocked")
 	await _key(_tile(picker, "seamstress"), KEY_ENTER)
 	_ids(picker, ["warden", "tinker"], "Enter unpicks second")
+	_check(not hint.text.contains("Seats:") and action.disabled,
+		"deselection removes prospective seats and closes Continue gate")
 	await _key(_tile(picker, "lantern_monk"), KEY_SPACE)
 	_ids(picker, ["warden", "tinker", "lantern_monk"],
 		"re-pick appends to order")
+	_check_seats(picker, ["warden", "tinker", "lantern_monk"],
+		"replacement selection sorted independent of click order")
 	var snapshot: Array[String] = picker.selected_ids()
 	snapshot.clear()
 	_ids(picker, ["warden", "tinker", "lantern_monk"],
@@ -310,6 +416,7 @@ func _run() -> void:
 	_check(requests.size() == 1 and cancels == 0,
 		"duplicate, canceled and mutation presses ignored after Continue")
 	_ids(picker, ["warden", "tinker", "lantern_monk"], "latched snapshot", true)
+	_check(not hint.text.contains("Seats:"), "latched view no longer advertises an active seat projection")
 
 	# Reopening replaces the actual buttons; an old generation cannot inject.
 	var stale := _tile(picker, "warden")
@@ -325,12 +432,14 @@ func _run() -> void:
 		"retired hovered / focused / pressed tile cannot overwrite fresh inspection")
 	await _frames()
 	_ids(picker, [], "reopened")
+	_check(not hint.text.contains("Seats:"), "full reopen retires previous party preview")
 	_check(_readout(picker)[0].contains("HOVER OR FOCUS"),
 		"neutral reset survives next mounted frame")
 	_check(not cancel.disabled and picker.is_visible_in_tree(),
 		"open_picker resets latch and visibility")
 	await _mouse(_tile(picker, "scarecrow"))
 	_ids(picker, ["scarecrow"], "fresh selection after reopen")
+	_check(not hint.text.contains("Seats:"), "one picked hero has no invented seat order")
 	var cancelled_tile := _tile(picker, "scarecrow")
 	await _key(cancel, KEY_ENTER)
 	_check(cancels == 1 and requests.size() == 1,
@@ -346,6 +455,7 @@ func _run() -> void:
 	cancelled_tile.pressed.emit()
 	await _frames()
 	_ids(picker, [], "reopen after cancel")
+	_check(not hint.text.contains("Seats:"), "cancel and reopen never retain a stale party")
 	_check(_readout(picker)[0].contains("HOVER OR FOCUS"),
 		"cancelled tile callbacks cannot inspect newly opened chooser")
 	await _key(_tile(picker, "button_golem"), KEY_ENTER)
@@ -353,6 +463,8 @@ func _run() -> void:
 	await _mouse(_tile(picker, "rag_duelist"))
 	_ids(picker, ["button_golem", "yarn_ranger", "rag_duelist"],
 		"second ordered full party")
+	_check_seats(picker, ["button_golem", "yarn_ranger", "rag_duelist"],
+		"two preferred-front heroes retain their pick-order tie")
 	await _key(action, KEY_SPACE)
 	_check(requests.size() == 2 and
 		requests[1] == ["button_golem", "yarn_ranger", "rag_duelist"],
@@ -362,6 +474,33 @@ func _run() -> void:
 		"signal payload detached from stored selection")
 	_check(requests[0] == ["warden", "tinker", "lantern_monk"],
 		"first request unchanged by subsequent opening")
+	# Show the exact two-front tie example without emitting a third request.
+	picker.open_picker()
+	await _mouse(_tile(picker, "button_golem"))
+	await _mouse(_tile(picker, "rag_duelist"))
+	await _mouse(_tile(picker, "lantern_monk"))
+	_ids(picker, ["button_golem", "rag_duelist", "lantern_monk"], "front tie example")
+	_check_seats(picker, ["button_golem", "rag_duelist", "lantern_monk"],
+		"both preferred front heroes occupy actual seats 1 and 2")
+	await _mouse(_tile(picker, "rag_duelist"))
+	_ids(picker, ["button_golem", "lantern_monk"], "tie example deselection")
+	_check(not hint.text.contains("Seats:"), "two heroes cannot display admitted positions")
+	await _mouse(_tile(picker, "scarecrow"))
+	_ids(picker, ["button_golem", "lantern_monk", "scarecrow"],
+		"replacement hero joins in click order")
+	_check_seats(picker, ["button_golem", "lantern_monk", "scarecrow"],
+		"middle-position tie retains click order")
+	# A malformed internal request models a failed admission: no fabricated
+	# seats, no enabled Continue, and no detached party emission.
+	picker._ids.assign(["warden", "warden", "scarecrow"])
+	picker._refresh()
+	_check(hint.text == "Party admission unavailable" and action.disabled,
+		"invalid canonical admission produces no authoritative seating")
+	action.pressed.emit()
+	_check(requests.size() == 2, "failed admission cannot emit party_requested")
+	picker.open_picker()
+	_ids(picker, [], "failed admission full reopen")
+	_check(not hint.text.contains("Seats:"), "invalid party cannot survive reopen")
 	_check(randi() == second, "all input/reopen operations consume no global RNG")
 	_check(FileAccess.get_file_as_string(
 		"res://data/heroes/starter_party.json") == before_json,

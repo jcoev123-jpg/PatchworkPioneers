@@ -17,6 +17,15 @@ const HEROES := [
 	{"id": "button_golem", "name": "Button Golem", "motif": "STACKED BUTTONS  •  FISTS", "tone": "#5c577e", "thread": "#ded0f0", "role": "Block bruiser", "signature": "Pop Button spends 5 Block to deal 9; Roll swaps position and gains Block; Sew On scales Block with popped buttons."},
 ]
 
+## The legacy roster has HP/position records but no passive field; these are the
+## exact Starting heroes passives in GAME_DESIGN.md (not tile signatures).
+const LEGACY_PASSIVES := {
+	"warden": "Start of combat: gain 6 Block.",
+	"seamstress": "When she applies Bleed, apply 1 more.",
+	"tinker": "Her first attack each turn deals +3.",
+}
+const POSITION_NAMES := ["Front", "Middle", "Back"]
+
 const INK := Color("#171e30")
 const CREAM := Color("#fff0d8")
 const SOFT := Color("#d4c4ad")
@@ -29,6 +38,8 @@ const STITCH := Color("#efcba1")
 @onready var inspection_panel: PanelContainer = $PaperPanel/Margins/Body/InspectionPanel
 @onready var inspection_heading: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/InspectionHeading
 @onready var inspection_detail: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/InspectionDetail
+@onready var inspection_facts: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/InspectionFacts
+@onready var seat_preview: Label = $PaperPanel/Margins/Body/Foot/Hint
 @onready var continue_button: Button = $PaperPanel/Margins/Body/Foot/ContinueButton
 @onready var cancel_button: Button = $PaperPanel/Margins/Body/Foot/CancelButton
 
@@ -39,6 +50,8 @@ var _open: bool = false
 var _latched: bool = false
 var _hovered_id: String = ""
 var _focused_id: String = ""
+var _canonical_heroes: Dictionary = {}
+var _seat_receipt: Dictionary = {}
 
 
 ## A drawn stand-in for not-yet-delivered portraits. These five faces are
@@ -157,6 +170,8 @@ func open_picker() -> void:
 	_open = true
 	_latched = false
 	_ids.clear()
+	_canonical_heroes = RunV3PartyAdmission._canonical_records()
+	_seat_receipt = {}
 	_hovered_id = ""
 	_focused_id = ""
 	for old in grid.get_children():
@@ -209,8 +224,22 @@ func _update_inspection() -> void:
 			inspection_heading.text = "%s  •  %s  /  %s" % [
 				hero["name"], hero["motif"], hero["role"]]
 			inspection_detail.text = hero["signature"]
+			inspection_facts.text = "Canonical hero details unavailable."
+			if not _canonical_heroes.has(chosen):
+				return
+			var record: Dictionary = _canonical_heroes[chosen]
+			var definition: Dictionary = record["definition"]
+			var position: int = record["position"]
+			var passive: String = LEGACY_PASSIVES.get(chosen, "")
+			if definition.has("passive"):
+				passive = definition["passive"]["text"]
+			if position not in [1, 2, 3] or passive.is_empty():
+				return
+			inspection_facts.text = "Max HP: %d  •  Preferred: %s (%d)  •  Passive: %s" % [
+				definition["max_hp"], POSITION_NAMES[position - 1], position, passive]
 			return
 	inspection_heading.text = "HOVER OR FOCUS A HERO TO INSPECT"
+	inspection_facts.text = "Inspect max HP, preferred position and passive."
 	inspection_detail.text = "Compare sewn looks and intended roles before choosing three."
 
 
@@ -219,7 +248,7 @@ func selected_ids() -> Array[String]:
 
 
 func _pressed_hero(hero_id: String, generation: int) -> void:
-	if not _open or _latched or generation != _generation:
+	if not _open or _latched or generation != _generation or not _tiles.has(hero_id):
 		return
 	if _ids.has(hero_id):
 		_ids.erase(hero_id)
@@ -229,7 +258,7 @@ func _pressed_hero(hero_id: String, generation: int) -> void:
 
 
 func _continue_pressed() -> void:
-	if not _open or _latched or _ids.size() != 3:
+	if not _open or _latched or _ids.size() != 3 or not _seat_receipt.get("ok", false):
 		return
 	_latched = true
 	_open = false
@@ -249,7 +278,19 @@ func _cancel_pressed() -> void:
 
 func _refresh() -> void:
 	selection_count.text = "Selected %d/3" % _ids.size()
-	continue_button.disabled = not _open or _latched or _ids.size() != 3
+	_seat_receipt = {}
+	seat_preview.text = "Choose three to preview battle seats"
+	if _open and not _latched and _ids.size() == 3:
+		var admitted := RunV3PartyAdmission.admit(_ids)
+		if admitted.get("ok", false) and admitted["party"].size() == 3:
+			_seat_receipt = admitted
+			var seats: Array[String] = []
+			for index in range(3):
+				seats.append("%d %s" % [index + 1, admitted["party"][index]["name"]])
+			seat_preview.text = "Seats: " + "  |  ".join(seats)
+		else:
+			seat_preview.text = "Party admission unavailable"
+	continue_button.disabled = not _open or _latched or not _seat_receipt.get("ok", false)
 	cancel_button.disabled = not _open or _latched
 	for definition in HEROES:
 		var hero_id: String = definition["id"]
@@ -265,7 +306,7 @@ func _mount_tile(definition: Dictionary, generation: int) -> void:
 	var hero_id: String = definition["id"]
 	var tile := Button.new()
 	tile.name = "Hero_" + hero_id
-	tile.custom_minimum_size = Vector2(234, 188)
+	tile.custom_minimum_size = Vector2(234, 174)
 	tile.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tile.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tile.focus_mode = Control.FOCUS_ALL
@@ -306,7 +347,7 @@ func _mount_tile(definition: Dictionary, generation: int) -> void:
 
 	var face := Control.new()
 	face.name = "Face"
-	face.custom_minimum_size = Vector2(0, 100)
+	face.custom_minimum_size = Vector2(0, 88)
 	face.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	stack.add_child(face)
@@ -408,6 +449,10 @@ func _style_screen() -> void:
 	inspection_heading.add_theme_font_size_override("font_size", 18)
 	inspection_detail.add_theme_color_override("font_color", CREAM)
 	inspection_detail.add_theme_font_size_override("font_size", 16)
+	inspection_facts.add_theme_color_override("font_color", SOFT)
+	inspection_facts.add_theme_font_size_override("font_size", 16)
+	seat_preview.add_theme_color_override("font_color", GOLD)
+	seat_preview.add_theme_font_size_override("font_size", 15)
 	selection_count.add_theme_color_override("font_color", CREAM)
 	selection_count.add_theme_font_size_override("font_size", 24)
 	for button in [continue_button, cancel_button]:
