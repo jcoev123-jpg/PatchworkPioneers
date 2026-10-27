@@ -1,10 +1,14 @@
 extends SceneTree
 ## V3-1 Lantern Monk starter-card catalog contract.
-## Catalog data only: no live party, reward, hand, deck or combat behavior is assumed or claimed here.
-## Blind, Lamplight Wash and cleanse_debuff are printed descriptors until a later wiring task.
+## Catalog contracts and scene-free Pole Shelter transactions; live hand wiring is separate.
 
 const LanternMonkStarterCards = preload("res://data/cards/lantern_monk_starter_cards.gd")
 const StarterCards = preload("res://data/cards/starter_cards.gd")
+
+class ForgedShelter extends CombatLanternMonkPoleShelterCards:
+	var forged: Dictionary = {}
+	func _catalog_definition(_id: String) -> Dictionary:
+		return forged.duplicate(true)
 
 var failures: Array[String] = []
 var checks: int = 0
@@ -18,6 +22,8 @@ func _initialize() -> void:
 	_test_invalid_and_upgraded_ids()
 	_test_deterministic_and_rng_free()
 	_test_existing_catalogs_unchanged()
+	_test_paid_shelter()
+	_test_shelter_refusals()
 	if failures.is_empty():
 		print("v3_lantern_monk_starter_cards_test: PASS (", checks, " checks)")
 	else:
@@ -78,6 +84,133 @@ func _expected_record(base_id: String, spec: Dictionary, upgraded: bool) -> Dict
 	else:
 		expected["upgrade_id"] = base_id + "_plus"
 	return expected
+
+
+func _shelter_fixture(id: String, owner_position: int = 2) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 316027
+	var deck := CombatDeck.new([id, id, "warden_strike", "tinker_pop_shot"], rng)
+	_check(deck.start_turn() and deck.hand.count(id) == 2, "active real hand holds two copies")
+	var definitions: Array = []
+	for position in range(1, 4):
+		definitions.append({"id": "lantern_monk" if position == owner_position else "ally_%d" % position,
+			"max_hp": 30, "statuses": {"tangled": 2, "riposte": 3}})
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid() and not party.is_downed(owner_position), "real living three-hero party")
+	return {"deck": deck, "party": party, "rng": rng}
+
+
+func _shelter_snapshot(f: Dictionary) -> Array:
+	return [f.deck.hand.duplicate(), f.deck.draw_pile.duplicate(), f.deck.discard_pile.duplicate(),
+		f.deck.energy, f.deck.turn_active, f.party.get_heroes(), f.rng.state]
+
+
+func _test_paid_shelter() -> void:
+	var resolver := CombatLanternMonkPoleShelterCards.new()
+	for suffix: String in ["", "_plus"]:
+		var id := "lantern_monk_pole_shelter" + suffix
+		for owner_position in range(1, 4):
+			for target in [owner_position, owner_position % 3 + 1]:
+				for selection: String in ["bleed", "weak", "exposed", ""]:
+					var f := _shelter_fixture(id, owner_position)
+					var party: CombatParty = f.party
+					var deck: CombatDeck = f.deck
+					if selection != "":
+						party._heroes[target - 1].statuses.merge({"bleed": 4, "weak": 2, "exposed": 3})
+					_check(party.gain_block(target, 2), "pre-existing Block applied")
+					var expected := party.get_heroes()
+					var amount := 5 if suffix == "" else 7
+					expected[target - 1].block += amount
+					var cleared: int = expected[target - 1].statuses.get(selection, 0)
+					expected[target - 1].statuses.erase(selection)
+					var hand := deck.hand.duplicate()
+					hand.remove_at(hand.find(id))
+					var energy := deck.energy
+					var rng_before: int = f.rng.state
+					var draw := deck.draw_pile.duplicate()
+					var receipt := resolver.play_card(deck, party, id, target, selection)
+					_check(receipt.get("ok", false), "authentic paid Shelter succeeds")
+					_check(receipt.get("owner_position") == owner_position and receipt.get("target_position") == target
+						and receipt.get("block") == amount and receipt.get("cleansed_count") == cleared,
+						"receipt identifies exact owner, target, Block and cleared counter")
+					_check(deck.energy == energy - 1 and deck.hand == hand and deck.hand.count(id) == 1
+						and deck.discard_pile == [id] and deck.draw_pile == draw and deck.turn_active,
+						"one energy and one held copy paid, other deck state preserved")
+					_check(party.get_heroes() == expected, "only target Block and selected kind change; HP, allies and other statuses preserved")
+					_check(f.rng.state == rng_before, "paid play consumes no run RNG")
+
+
+func _test_shelter_refusals() -> void:
+	var id := "lantern_monk_pole_shelter"
+	var resolver := CombatLanternMonkPoleShelterCards.new()
+	for scenario: String in ["energy", "hand", "inactive", "target_zero", "target_four", "target_downed",
+		"owner_downed", "owner_missing", "duplicate_owner", "cleanse_empty", "cleanse_missing",
+		"cleanse_tangled", "cleanse_benefit", "cleanse_type", "unsupported", "id_type", "overflow", "statuses"]:
+		var f := _shelter_fixture(id)
+		var target := 1
+		var selection: Variant = "bleed"
+		var request: Variant = id
+		f.party._heroes[0].statuses.merge({"bleed": 4, "weak": 2})
+		match scenario:
+			"energy": f.deck.try_spend_energy(f.deck.energy)
+			"hand": f.deck.hand.clear()
+			"inactive": f.deck.end_turn()
+			"target_zero": target = 0
+			"target_four": target = 4
+			"target_downed": f.party.apply_damage(1, 30)
+			"owner_downed": f.party.apply_damage(2, 30)
+			"owner_missing": f.party._heroes[1].id = "other"
+			"duplicate_owner": f.party._heroes[2].id = "lantern_monk"
+			"cleanse_empty": selection = ""
+			"cleanse_missing": selection = "exposed"
+			"cleanse_tangled": selection = "tangled"
+			"cleanse_benefit": selection = "riposte"
+			"cleanse_type": selection = StringName("bleed")
+			"unsupported": request = "lantern_monk_lamplight_wash"
+			"id_type": request = StringName(id)
+			"overflow": f.party._heroes[0].block = CombatParty.MAX_INT - 4
+			"statuses": f.party._heroes[0].statuses = {"bleed": -1}
+		var before := _shelter_snapshot(f)
+		_check(not resolver.play_card(f.deck, f.party, request, target, selection).get("ok", false), scenario + " refuses")
+		_check(_shelter_snapshot(f) == before, scenario + " leaves full deck, party and RNG unchanged")
+		if scenario.begins_with("cleanse") or scenario in ["target_zero", "target_four", "unsupported", "id_type"]:
+			_check(resolver.play_card(f.deck, f.party, id, 1, "bleed").get("ok", false), "valid retry after " + scenario)
+	var empty := _shelter_fixture(id)
+	var empty_before := _shelter_snapshot(empty)
+	_check(not resolver.play_card(empty.deck, empty.party, id, 1, "bleed").ok, "cannot name absent debuff")
+	_check(_shelter_snapshot(empty) == empty_before, "absent cleanse rejection inert")
+	_check(resolver.play_card(empty.deck, empty.party, id, 1, "").ok, "empty selection valid retry without eligible statuses")
+	for suffix: String in ["", "_plus"]:
+		var card_id := id + suffix
+		var authentic := LanternMonkStarterCards.new().get_definition(card_id)
+		var mutations: Array = []
+		for field in ["id", "owner", "cost", "from_positions", "to_positions", "target_kind", "effects", "upgrade_of" if suffix != "" else "upgrade_id", "reward_eligible", "starting_copies"]:
+			var omitted := authentic.duplicate(true)
+			omitted.erase(field)
+			mutations.append(omitted)
+			var altered := authentic.duplicate(true)
+			altered[field] = {"id": "fake", "owner": "warden", "cost": 1.0, "from_positions": [1, 2],
+				"to_positions": [1], "target_kind": "party_all", "effects": {"block": 99, "cleanse_debuff": 1},
+				"upgrade_id": "fake", "upgrade_of": "fake", "reward_eligible": true, "starting_copies": 9}[field]
+			mutations.append(altered)
+		var extra := authentic.duplicate(true)
+		extra.effects["heal"] = 1
+		mutations.append(extra)
+		var typed := authentic.duplicate(true)
+		typed.effects.block = float(typed.effects.block)
+		mutations.append(typed)
+		var relinked := authentic.duplicate(true)
+		relinked["upgrade_id" if suffix != "" else "upgrade_of"] = "fake"
+		mutations.append(relinked)
+		var forged_resolver := ForgedShelter.new()
+		var f := _shelter_fixture(card_id)
+		for forged: Dictionary in mutations:
+			forged_resolver.forged = forged
+			var before := _shelter_snapshot(f)
+			_check(not forged_resolver.play_card(f.deck, f.party, card_id, 1).ok, "forged catalog rejected")
+			_check(_shelter_snapshot(f) == before and forged_resolver.forged == forged, "forgery rejection leaves inputs and all state unchanged")
+		forged_resolver.forged = authentic
+		_check(forged_resolver.play_card(f.deck, f.party, card_id, 1).ok, "restored authentic catalog retries successfully")
 
 
 func _test_each_base_and_upgrade() -> void:
