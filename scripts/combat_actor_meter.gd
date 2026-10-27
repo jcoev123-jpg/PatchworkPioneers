@@ -23,6 +23,10 @@ const STATUS_KEYS := ["bleed", "weak", "exposed", "tangled", "riposte"]
 const BLIND_KEY := "blind_next_attack"
 ## Dodge is likewise a one-shot integer token, never a timed counter.
 const DODGE_KEY := "dodge_next_attack"
+## Fear is the Scarecrow's buff lock, the opposite shape to the one-shot tokens: a
+## boolean flag whose only accepted value is literal `true`, absent when inactive.
+## It never carries a count or duration, so it reads as one unnumbered word.
+const FEAR_KEY := "cannot_buff_next_turn"
 
 var actor_heading: Label
 var hp_text: Label
@@ -281,6 +285,11 @@ func show_actor(snapshot: Dictionary, side: String) -> bool:
 		active.append("Blind")
 	if statuses.get(DODGE_KEY, 0) == 1:
 		active.append("Dodge")
+	# Fear is the one-turn buff lock, so it reads as one word after every counted
+	# status and one-shot token: no "1", no duration.
+	var fear: Variant = statuses.get(FEAR_KEY, false)
+	if fear is bool and bool(fear):
+		active.append("Fear")
 	status_text.text = "Statuses: none" if active.is_empty() else "Statuses: " + " · ".join(active)
 
 	# Presentation-only rules: counters and damage math remain owned by CombatStatuses.
@@ -351,6 +360,12 @@ func _valid_snapshot(snapshot: Dictionary, side: String) -> bool:
 			# Blind is a one-shot 0/1 marker: any other count or type fails closed.
 			if key in [BLIND_KEY, DODGE_KEY]:
 				if not count is int or (count != 0 and count != 1):
+					return false
+				continue
+			# Fear is the canonical true-only buff lock: `false`, an integer, a float,
+			# a string, null or any container is malformed rather than inactive.
+			if key == FEAR_KEY:
+				if not (count is bool) or not bool(count):
 					return false
 				continue
 			if key not in STATUS_KEYS:
