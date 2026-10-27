@@ -12,6 +12,8 @@ func _initialize() -> void:
 	_test_invalid_rosters_and_targets()
 	_test_status_validation()
 	_test_riposte_compatibility()
+	_test_blind_dodge_role_tokens()
+	_test_fear_compatibility()
 	_test_immutable_snapshots_and_replay()
 	_test_tangled_bonus_and_ageing()
 	_test_thorns_retaliation()
@@ -213,13 +215,22 @@ func _test_status_validation() -> void:
 		{"weak": "1"}, {"exposed": null}, {"bleed": true},
 		{"weak": []}, {"bleed": {"nested": [1, 2]}},
 		{"riposte": -1}, {"riposte": 2.0}, {"riposte": true}, {"riposte": "3"},
-		{"riposte": null}, {"riposte": []}, {"Riposte": 1}, {"riposte": 1, "poison": 1}
+		{"riposte": null}, {"riposte": []}, {"Riposte": 1}, {"riposte": 1, "poison": 1},
+		{"cannot_buff_next_turn": false}, {"cannot_buff_next_turn": 0},
+		{"cannot_buff_next_turn": 1}, {"cannot_buff_next_turn": 1.0},
+		{"cannot_buff_next_turn": "true"}, {"cannot_buff_next_turn": null},
+		{"cannot_buff_next_turn": true, "poison": 1}
 	]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 314159265
+	var rng_before := rng.state
 	for bad in invalid_statuses:
 		_reject_enemy(enemies, 1, 6, bad, {}, "malformed enemy attacker: " + str(bad))
 		_reject_enemy(enemies, 1, 6, {}, bad, "malformed enemy defender: " + str(bad))
 		_reject_hero(party, 1, 8, bad, {}, "malformed hero attacker: " + str(bad))
 		_reject_hero(party, 1, 8, {}, bad, "malformed hero defender: " + str(bad))
+	_check(rng.state == rng_before,
+		"every malformed-status refusal leaves the run RNG untouched")
 	# Zeros and valid counters are legal and still never tick in this service.
 	_check(attacks.resolve_vs_enemy(enemies, 1, 0,
 		{"bleed": 0, "weak": 0, "exposed": 0}, {"bleed": 1}) == _event(0, 0, 0),
@@ -537,6 +548,189 @@ func _test_tangled_bonus_and_ageing() -> void:
 		"downed hero fixture for Tangled is genuinely downed")
 	_reject_hero(downed_party, 2, 8, {}, {"tangled": 2},
 		"downed hero cannot receive a Tangled-boosted hit")
+
+
+## AC3 (V3-2): canonical Blind/Dodge roles stay untouched, with or without Fear
+## beside them. An ATTACKER may carry the integer Dodge 0|1, a DEFENDER may carry
+## integer Blind 0|1; the opposite role is still refused by the bridge, and adding
+## canonical Fear to the same map never widens or narrows those role rules.
+func _test_blind_dodge_role_tokens() -> void:
+	var enemies := _enemies()
+	var party := _party()
+	_check(enemies.gain_block(1, 4) and party.gain_block(1, 6),
+		"role-token fixtures have living targets and Block")
+	# Wrong-role refusals stay refusals even with Fear alongside them.
+	var role_refusals: Array[Dictionary] = [
+		{"blind_next_attack": 1},
+		{"blind_next_attack": 0},
+		{"blind_next_attack": 1, "cannot_buff_next_turn": true},
+	]
+	for bad in role_refusals:
+		_reject_enemy(enemies, 1, 6, bad, {}, "attacker blind role refused: " + str(bad))
+		_reject_hero(party, 1, 8, bad, {}, "attacker blind role refused (hero): " + str(bad))
+	var defender_refusals: Array[Dictionary] = [
+		{"dodge_next_attack": 1},
+		{"dodge_next_attack": 0},
+		{"dodge_next_attack": 1, "cannot_buff_next_turn": true},
+	]
+	for bad in defender_refusals:
+		_reject_enemy(enemies, 1, 6, {}, bad, "defender dodge role refused: " + str(bad))
+		_reject_hero(party, 1, 8, {}, bad, "defender dodge role refused (hero): " + str(bad))
+	# Right-role tokens are legal, and Fear beside them never changes the receipt.
+	for token in [0, 1]:
+		var attacker_dodge := {"dodge_next_attack": token}
+		var attacker_fear := {"dodge_next_attack": token, "cannot_buff_next_turn": true}
+		var defender_blind := {"blind_next_attack": token}
+		var defender_fear := {"blind_next_attack": token, "cannot_buff_next_turn": true}
+		var control_enemies := _enemies()
+		var control_party := _party()
+		_check(control_enemies.gain_block(1, 4) and control_party.gain_block(1, 6),
+			"role-token control Block prepared")
+		var control_enemy := attacks.resolve_vs_enemy(control_enemies, 1, 6, {}, {})
+		var control_hero := attacks.resolve_vs_hero(control_party, 1, 8, {}, {})
+		_check(control_enemy == _event(6, 4, 2) and control_hero == _event(8, 6, 2),
+			"role-token control receipts are the plain floor hits")
+		var e1 := _enemies()
+		var p1 := _party()
+		_check(e1.gain_block(1, 4) and p1.gain_block(1, 6), "role-token fixtures Block")
+		_check(attacks.resolve_vs_enemy(e1, 1, 6, attacker_dodge, defender_blind) == control_enemy
+			and attacks.resolve_vs_hero(p1, 1, 8, attacker_dodge, defender_blind) == control_hero,
+			"integer Dodge attacker + Blind defender token %d keep the plain receipt" % token)
+		var e2 := _enemies()
+		var p2 := _party()
+		_check(e2.gain_block(1, 4) and p2.gain_block(1, 6), "role-token Fear fixtures Block")
+		_check(attacks.resolve_vs_enemy(e2, 1, 6, attacker_fear, defender_fear) == control_enemy
+			and attacks.resolve_vs_hero(p2, 1, 8, attacker_fear, defender_fear) == control_hero,
+			"Fear beside integer Dodge/Blind %d keeps the plain receipt" % token)
+
+
+## AC1-AC3 (V3-2): the Scarecrow's canonical Fear (`cannot_buff_next_turn: true`)
+## on the attacker, defender or both is a harmless non-damage marker for an
+## ordinary confirmed hit. It changes no receipt, Block absorption, HP loss or
+## status dictionary on real CombatEnemies/CombatParty fixtures, alongside the
+## normal damage counters, and it is never consumed or aged here.
+func _test_fear_compatibility() -> void:
+	var fear := {"cannot_buff_next_turn": true}
+	# Distinct real bases, each with a matching Fear-free control.
+	var bases: Array[Dictionary] = [
+		{"attack": {}, "defend": {}},
+		{"attack": {"weak": 1}, "defend": {}},
+		{"attack": {}, "defend": {"exposed": 1}},
+		{"attack": {}, "defend": {"exposed": 2}},
+		{"attack": {"weak": 1}, "defend": {"exposed": 1}},
+		{"attack": {"weak": 2}, "defend": {"exposed": 1, "tangled": 1}},
+		{"attack": {"bleed": 1}, "defend": {"bleed": 2}},
+		{"attack": {"weak": 1}, "defend": {"exposed": 1, "tangled": 2}},
+	]
+	for base in bases:
+		var base_attack: Dictionary = base["attack"].duplicate(true)
+		var base_defend: Dictionary = base["defend"].duplicate(true)
+		var control_enemies := _enemies()
+		var control_party := _party()
+		_check(control_enemies.gain_block(1, 4) and control_party.gain_block(1, 6),
+			"fear control fixtures have real Block")
+		var expected_enemy := attacks.resolve_vs_enemy(
+			control_enemies, 1, 6, base_attack, base_defend)
+		var expected_hero := attacks.resolve_vs_hero(
+			control_party, 1, 8, base_attack, base_defend)
+		_check(expected_enemy["ok"] and expected_hero["ok"],
+			"fear control receipts succeed on living real targets")
+		_check(expected_enemy["block_absorbed"] == 4 and expected_hero["block_absorbed"] == 6,
+			"fear control hits absorb the full real Block fixture")
+		for placement in ["attacker", "defender", "both"]:
+			var attack: Dictionary = base_attack.duplicate(true)
+			var defend: Dictionary = base_defend.duplicate(true)
+			if placement != "defender":
+				attack.merge(fear, true)
+			if placement != "attacker":
+				defend.merge(fear, true)
+			var attack_before := attack.duplicate(true)
+			var defend_before := defend.duplicate(true)
+			var enemies := _enemies()
+			var party := _party()
+			_check(enemies.gain_block(1, 4) and party.gain_block(1, 6),
+				"fear fixtures repeat the control Block")
+			var enemy_result := attacks.resolve_vs_enemy(enemies, 1, 6, attack, defend)
+			var hero_result := attacks.resolve_vs_hero(party, 1, 8, attack, defend)
+			_check(enemy_result == expected_enemy and hero_result == expected_hero,
+				"fear on %s leaves both receipts identical to the fear-free control" % placement)
+			_check(enemies.get_enemies() == control_enemies.get_enemies()
+				and party.get_heroes() == control_party.get_heroes(),
+				"fear on %s produces the same rosters as the control" % placement)
+			_check(attack == attack_before and defend == defend_before,
+				"fear on %s is neither consumed nor mutated" % placement)
+			_check(attack.get("cannot_buff_next_turn") == true or not attack.has("cannot_buff_next_turn"),
+				"fear stays exactly boolean true on the attacker: " + placement)
+			_check(defend.get("cannot_buff_next_turn") == true or not defend.has("cannot_buff_next_turn"),
+				"fear stays exactly boolean true on the defender: " + placement)
+
+	# AC2 combined arithmetic, 6 base with Weak 1, Exposed 1 and Tangled 2 -> 8.
+	var combined_enemies := _enemies()
+	var combined_party := _party()
+	_check(combined_enemies.gain_block(1, 4) and combined_party.gain_block(1, 6),
+		"combined fear fixtures have real Block")
+	var combined_attack := {"weak": 1, "cannot_buff_next_turn": true}
+	var combined_defend := {"exposed": 1, "tangled": 2, "cannot_buff_next_turn": true}
+	var combined_attack_before := combined_attack.duplicate(true)
+	var combined_defend_before := combined_defend.duplicate(true)
+	_check(attacks.resolve_vs_enemy(combined_enemies, 1, 6,
+		combined_attack, combined_defend) == _event(8, 4, 4),
+		"6 base, Weak 1, Exposed 1, Tangled 2 and Fear floors to 6 then adds 2 = 8 (enemy)")
+	_check(attacks.resolve_vs_hero(combined_party, 1, 6,
+		combined_attack, combined_defend) == _event(8, 6, 2),
+		"same combined maths spends six hero Block before two HP (hero)")
+	_check(combined_attack == combined_attack_before and combined_defend == combined_defend_before,
+		"combined Fear hit leaves both status dictionaries unchanged")
+	_check(combined_enemies.get_enemy(1)["hp"] == 8
+		and combined_enemies.get_enemy(1)["block"] == 0
+		and combined_party.get_hero(1)["hp"] == 38
+		and combined_party.get_hero(1)["block"] == 0,
+		"combined Fear hit updates authoritative HP and Block exactly like the control")
+
+	# AC2: real roster records bearing canonical Fear survive the bridge unchanged in
+	# both roles: the attacking actor's full record is untouched by its own outgoing
+	# hit, and the Fear-locked defender loses only the receipt's Block and HP.
+	var record_enemies := _enemies()
+	var record_party := _party()
+	record_enemies._enemies[0]["statuses"] = {"weak": 1, "cannot_buff_next_turn": true}
+	record_party._heroes[0]["statuses"] = {"exposed": 1, "cannot_buff_next_turn": true}
+	_check(record_enemies.gain_block(1, 4) and record_party.gain_block(1, 6),
+		"record-backed Fear fixtures hold real Block")
+	var fear_attacker_before := record_party.get_hero(1)
+	var fear_enemy_before := record_enemies.get_enemy(1)
+	var record_enemy_hit := attacks.resolve_vs_enemy(record_enemies, 1, 6,
+		fear_attacker_before["statuses"], fear_enemy_before["statuses"])
+	_check(record_enemy_hit == _event(6, 4, 2),
+		"record-backed Fear hit keeps the plain floor-rounded receipt")
+	_check(record_party.get_hero(1) == fear_attacker_before,
+		"the Fear-bearing attacking hero keeps its full HP/Block/status record")
+	var fear_enemy_after := record_enemies.get_enemy(1)
+	_check(fear_enemy_after["hp"] == fear_enemy_before["hp"] - record_enemy_hit["hp_loss"]
+		and fear_enemy_after["block"] == fear_enemy_before["block"] - record_enemy_hit["block_absorbed"]
+		and fear_enemy_after["statuses"] == fear_enemy_before["statuses"],
+		"the Fear-locked defender changes only the receipt's HP and Block")
+	var fear_hero_before := record_party.get_hero(1)
+	var record_hero_hit := attacks.resolve_vs_hero(record_party, 1, 8,
+		fear_hero_before["statuses"], fear_enemy_after["statuses"])
+	_check(record_hero_hit == _event(8, 6, 2),
+		"record-backed Fear hero hit keeps the plain floor-rounded receipt")
+	_check(record_enemies.get_enemy(1) == fear_enemy_after,
+		"the attacking enemy roster is untouched by the hero hit")
+	_check(record_party.get_hero(1)["hp"] == 38 and record_party.get_hero(1)["block"] == 0
+		and record_party.get_hero(1)["statuses"] == {"exposed": 1, "cannot_buff_next_turn": true},
+		"the Fear-locked hero loses Block then HP and keeps its counters")
+	# AC2: the confirmed hit neither consumes nor expires the separate buff lock.
+	_check(CombatStatuses.new().can_apply_buff(fear_enemy_after["statuses"])
+		== {"ok": true, "allowed": false},
+		"a confirmed hit through this bridge leaves the defender's Fear buff lock active")
+
+	# AC2: the printed Sack Glare base/plus still carry the separate buff lock.
+	var starter := ScarecrowStarterCards.new()
+	var glare := starter.get_definition("scarecrow_sack_glare")
+	var glare_plus := starter.get_definition("scarecrow_sack_glare_plus")
+	_check(glare.get("effects") == {"weak": 1, "cannot_buff_next_turn": true}
+		and glare_plus.get("effects") == {"weak": 2, "cannot_buff_next_turn": true},
+		"Sack Glare base and + keep Weak 1/2 beside the separate Fear lock")
 
 
 func _thorns_result(thorns: int, absorbed: int, loss: int) -> Dictionary:
