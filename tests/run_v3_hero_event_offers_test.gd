@@ -10,6 +10,23 @@ const NEW_CHOICES := {
 	"v3_rag_duelist_cape_tribunal": {"mend_judges_cape": [23, -1], "buy_gilt_rapier_guard": [-19, 3], "leave": [0, 0]},
 	"v3_scarecrow_raven_orchard": {"guard_raven_harvest": [0, 2], "trade_pitchfork_twine": [29, -2], "leave": [0, 0]},
 }
+## The six gothic hero stories appended by THIS task. Kept in their own
+## task-local matrix (the earlier NEW_CHOICES matrix above is not reused or
+## changed) and keyed by authored IDs only.
+const BATCH_CHOICES := {
+	"v3_warden_pincushion_gate": {
+		"hold_pincushion_gate": [22, 0], "buy_quilted_shield_lacing": [-14, 2], "leave": [0, 0]},
+	"v3_seamstress_crimson_bell_cord": {
+		"rethread_crimson_bell": [27, -2], "salvage_red_bell_thread": [0, 2], "leave": [0, 0]},
+	"v3_lantern_monk_mothveil_passage": {
+		"guide_mothveil_pilgrims": [18, 0], "buy_amber_lantern_wicks": [-16, 3], "leave": [0, 0]},
+	"v3_rag_duelist_cape_windmill": {
+		"free_cape_blades": [24, -1], "gather_ribbon_offcuts": [0, 2], "leave": [0, 0]},
+	"v3_yarn_ranger_bolas_mooring": {
+		"recover_knotted_bolas": [0, 2], "sell_spare_knitting_knots": [20, -1], "leave": [0, 0]},
+	"v3_button_golem_buttonlift": {
+		"haul_buttonlift": [23, 0], "buy_brass_button_shanks": [-17, 3], "leave": [0, 0]},
+}
 const CASES := {
 	"v3_warden_shield_menders": ["warden", "sell_spare_rivets", 17, -1],
 	"v3_seamstress_thread_cart": ["seamstress", "buy_red_thread", -12, 2],
@@ -45,6 +62,12 @@ const CASES := {
 	"v3_lantern_monk_mothlight_ferry": ["lantern_monk", "buy_glowing_wicks", -12, 2],
 	"v3_rag_duelist_cape_tribunal": ["rag_duelist", "mend_judges_cape", 23, -1],
 	"v3_scarecrow_raven_orchard": ["scarecrow", "trade_pitchfork_twine", 29, -2],
+	"v3_warden_pincushion_gate": ["warden", "buy_quilted_shield_lacing", -14, 2],
+	"v3_seamstress_crimson_bell_cord": ["seamstress", "rethread_crimson_bell", 27, -2],
+	"v3_lantern_monk_mothveil_passage": ["lantern_monk", "buy_amber_lantern_wicks", -16, 3],
+	"v3_rag_duelist_cape_windmill": ["rag_duelist", "free_cape_blades", 24, -1],
+	"v3_yarn_ranger_bolas_mooring": ["yarn_ranger", "sell_spare_knitting_knots", 20, -1],
+	"v3_button_golem_buttonlift": ["button_golem", "buy_brass_button_shanks", -17, 3],
 }
 
 var failures: Array[String] = []
@@ -63,6 +86,7 @@ func _initialize() -> void:
 	var state := run_rng.state
 	_test_parties_and_receipts()
 	_test_new_choice_receipts()
+	_test_batch_choice_receipts()
 	_test_invalid_parties()
 	_test_invalid_catalogs()
 	_test_isolation()
@@ -176,6 +200,95 @@ func _test_new_choice_receipts() -> void:
 			continue
 		var forged := record.duplicate(true)
 		forged.choices[0].outcome.gold = 999
+		_reject_catalog({"events": [forged]})
+
+
+func _test_batch_choice_receipts() -> void:
+	# Admission, detached-offer, reordered-source and per-choice receipt matrix
+	# for the six gothic stories appended by this task. Each party covers both
+	# present (admitted) and absent (excluded) batch heroes.
+	var listed := {}
+	for event_id in BATCH_CHOICES:
+		_check(not listed.has(event_id), "batch offer case is listed once: " + event_id)
+		listed[event_id] = true
+		_check(CASES.has(event_id), "batch offer case has a party anchor: " + event_id)
+	var reversed := catalog.duplicate(true)
+	reversed["events"].reverse()
+	for party in [PARTY_A, PARTY_B, ["scarecrow", "yarn_ranger", "button_golem"]]:
+		var service := RunV3HeroEventOffers.new(party)
+		var reordered := RunV3HeroEventOffers.new(party, reversed)
+		_check(service.is_valid() and reordered.is_valid(),
+			"batch admission has a valid canonical and reordered service: " + str(party))
+		for event_id in BATCH_CHOICES:
+			var spec: Array = CASES[event_id]
+			var eligible: bool = party.has(spec[0])
+			var offer := _by_id(service.get_offers(), event_id)
+			_check(not offer.is_empty() == eligible,
+				"batch hero gate admits iff the required hero is present: " + event_id + str(party))
+			_check(_by_id(reordered.get_offers(), event_id) == offer,
+				"reversed source leaves the batch offer unchanged: " + event_id)
+			if eligible:
+				_check(offer == _by_id(catalog["events"], event_id),
+					"batch detached offer equals the authored record: " + event_id)
+			var visit := service.enter(event_id)
+			if not eligible:
+				_check(visit == null, "batch absent hero denies entry: " + event_id + str(party))
+				continue
+			_check(visit is RunEventChoice and visit.is_valid() and not visit.is_claimed(),
+				"batch present hero opens a real unclaimed visit: " + event_id + str(party))
+			if visit == null:
+				continue
+			_check(visit.get_event() == _by_id(catalog["events"], event_id),
+				"batch visit carries the authentic authored snapshot: " + event_id)
+			for choice_id in BATCH_CHOICES[event_id]:
+				var delta: Array = BATCH_CHOICES[event_id][choice_id]
+				var choice_visit := service.enter(event_id)
+				_check(choice_visit != null and choice_visit.is_valid(),
+					"batch option has an independent fresh visit: " + event_id)
+				if choice_visit == null:
+					continue
+				var wallet := {"gold": 40, "scraps": 4}
+				var wallet_before: Dictionary = wallet.duplicate(true)
+				var projected := {"gold": 40 + int(delta[0]), "scraps": 4 + int(delta[1])}
+				var preview := choice_visit.preview_wallet_choices(wallet)
+				var quote := {}
+				for entry in preview.get("choices", []):
+					if entry.get("choice_id") == choice_id:
+						quote = entry
+				_check(quote == {"choice_id": choice_id, "gold_delta": delta[0],
+					"scraps_delta": delta[1], "affordable": true, "wallet": projected},
+					"batch option previews its exact signed delta: " + event_id + "/" + str(choice_id))
+				var receipt := choice_visit.choose_with_wallet(choice_id, wallet)
+				_check(receipt == {"ok": true, "event_id": event_id, "choice_id": choice_id,
+					"wallet": projected} and wallet == wallet_before
+					and choice_visit.is_claimed() and not choice_visit.is_valid(),
+					"batch option settles exactly once: " + event_id + "/" + str(choice_id))
+				receipt.wallet.gold = 999
+				_check(choice_visit.choose_with_wallet(choice_id, projected) == {"ok": false,
+					"event_id": "", "choice_id": "", "wallet": projected},
+					"batch option cannot be claimed twice: " + event_id + "/" + str(choice_id))
+	# Stale/forged batch records never authorize entry, even when the required
+	# hero is present in the authenticating party.
+	for event_id in BATCH_CHOICES:
+		var record := _by_id(catalog["events"], event_id)
+		_check(not record.is_empty(), "batch forgery fixture exists: " + event_id)
+		if record.is_empty():
+			continue
+		var altered := record.duplicate(true)
+		altered.choices[0].outcome.gold = 999
+		_reject_catalog({"events": [altered]})
+		var renamed := record.duplicate(true)
+		renamed["id"] = event_id + "_stale"
+		_reject_catalog({"events": [renamed]})
+		var swapped_hero := record.duplicate(true)
+		swapped_hero["required_hero"] = "tinker"
+		if record["required_hero"] != "tinker":
+			_reject_catalog({"events": [swapped_hero]})
+		var trimmed := record.duplicate(true)
+		trimmed["choices"].pop_back()
+		_reject_catalog({"events": [trimmed]})
+		var forged := record.duplicate(true)
+		forged["choices"][0]["outcome"]["scraps"] = 500
 		_reject_catalog({"events": [forged]})
 
 

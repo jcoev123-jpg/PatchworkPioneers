@@ -27,6 +27,82 @@ const NEW_EVENT_IDS := ["v3_warden_copper_chain_ferry", "v3_seamstress_needle_or
 const FUNDED_GOLD := 40
 const FUNDED_SCRAPS := 4
 
+## The six gothic V3-4 hero stories appended by THIS task. They are kept in
+## their own task-local expectation table (independent of the production
+## catalog and of the older EVENTS map above) and are always looked up by
+## authored ID, never by catalog index or catalog total.
+const BATCH_EVENT_IDS := ["v3_warden_pincushion_gate", "v3_seamstress_crimson_bell_cord",
+	"v3_lantern_monk_mothveil_passage", "v3_rag_duelist_cape_windmill",
+	"v3_yarn_ranger_bolas_mooring", "v3_button_golem_buttonlift"]
+const BATCH_EVENTS := {
+	"v3_warden_pincushion_gate": {
+		"title": "The Pincushion Gate",
+		"description": "A dented-pot-helmet Warden braces a huge slate patch shield against a moonlit gate bristling with brass sewing pins.",
+		"required_hero": "warden",
+		"hero_choice_ids": ["hold_pincushion_gate", "buy_quilted_shield_lacing"],
+		"choices": {
+			"hold_pincushion_gate": {"text": "Hold the gate for the night watch (gain 22 gold)", "gold": 22, "scraps": 0},
+			"buy_quilted_shield_lacing": {"text": "Buy quilted shield lacing (spend 14 gold; gain 2 scraps)", "gold": -14, "scraps": 2},
+			"leave": {"text": "Walk away from the gate", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_seamstress_crimson_bell_cord": {
+		"title": "The Crimson Bell Cord",
+		"description": "An oversized sewing needle has pinned a frayed scarlet thread-rope beneath a plum velvet bell tower.",
+		"required_hero": "seamstress",
+		"hero_choice_ids": ["rethread_crimson_bell", "salvage_red_bell_thread"],
+		"choices": {
+			"rethread_crimson_bell": {"text": "Rethread the bell (spend 2 scraps; gain 27 gold)", "gold": 27, "scraps": -2},
+			"salvage_red_bell_thread": {"text": "Collect loose red thread (gain 2 scraps)", "gold": 0, "scraps": 2},
+			"leave": {"text": "Let the bell sleep", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_lantern_monk_mothveil_passage": {
+		"title": "The Mothveil Passage",
+		"description": "A stout robed lantern keeper and round stitched moths illuminate a dark quilted passage in saffron and teal.",
+		"required_hero": "lantern_monk",
+		"hero_choice_ids": ["guide_mothveil_pilgrims", "buy_amber_lantern_wicks"],
+		"choices": {
+			"guide_mothveil_pilgrims": {"text": "Guide lost travellers by lantern (gain 18 gold)", "gold": 18, "scraps": 0},
+			"buy_amber_lantern_wicks": {"text": "Pay 16 gold for three scraps of spare wick thread", "gold": -16, "scraps": 3},
+			"leave": {"text": "Pass the lantern arch", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_rag_duelist_cape_windmill": {
+		"title": "The Cape Windmill",
+		"description": "A tattered oxblood cape catches in the sails of a storybook windmill; a slender needle rapier glints beneath the brass hub.",
+		"required_hero": "rag_duelist",
+		"hero_choice_ids": ["free_cape_blades", "gather_ribbon_offcuts"],
+		"choices": {
+			"free_cape_blades": {"text": "Free the trapped sails using 1 scrap and earn 24 gold", "gold": 24, "scraps": -1},
+			"gather_ribbon_offcuts": {"text": "Gather the fallen cape ribbons (gain 2 scraps)", "gold": 0, "scraps": 2},
+			"leave": {"text": "Leave the mill to the wind", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_yarn_ranger_bolas_mooring": {
+		"title": "The Yarn-Bolas Mooring",
+		"description": "Two giant knitting needles mark a river mooring tangled with moss-green wool bolas and teal bowstring.",
+		"required_hero": "yarn_ranger",
+		"hero_choice_ids": ["recover_knotted_bolas", "sell_spare_knitting_knots"],
+		"choices": {
+			"recover_knotted_bolas": {"text": "Untangle two useful thread bundles (gain 2 scraps)", "gold": 0, "scraps": 2},
+			"sell_spare_knitting_knots": {"text": "Spend 1 scrap and earn 20 gold trading knots", "gold": 20, "scraps": -1},
+			"leave": {"text": "Cross without touching the wool", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_button_golem_buttonlift": {
+		"title": "The Buttonlift",
+		"description": "A towering button-bodied doll stands beneath a dangling brass-button lift over a stitched ravine.",
+		"required_hero": "button_golem",
+		"hero_choice_ids": ["haul_buttonlift", "buy_brass_button_shanks"],
+		"choices": {
+			"haul_buttonlift": {"text": "Raise the stranded lift with giant button fists (gain 23 gold)", "gold": 23, "scraps": 0},
+			"buy_brass_button_shanks": {"text": "Buy brass button fittings (spend 17 gold; gain 3 scraps)", "gold": -17, "scraps": 3},
+			"leave": {"text": "Let the lift settle", "gold": 0, "scraps": 0},
+		},
+	},
+}
+
 ## Independent task-local mapping of the authored records. It is never read from
 ## the production catalog, so a missing field or a reworded choice is caught.
 ## Only the named records are listed: the catalog may be appended to by other
@@ -422,6 +498,8 @@ func _initialize() -> void:
 	_test_priced_rejections_and_recovery()
 	_test_unoffered_choice_ids()
 	_test_new_event_funded_receipts()
+	_test_batch_event_records()
+	_test_batch_event_receipts()
 	_test_hero_metadata()
 	_test_fixed_seed_replay()
 	_check(catalog == catalog_snapshot, "shared event catalog unchanged across all test flows")
@@ -1088,6 +1166,319 @@ func _test_new_event_funded_receipts() -> void:
 			and _wallet_exact_int(late.get("wallet"), FUNDED_GOLD, FUNDED_SCRAPS)
 			and visit.is_claimed() and not visit.is_valid(),
 			"a settled Leave cannot be replayed or re-claimed: " + event_id)
+
+
+func _test_batch_event_records() -> void:
+	# Focused schema/choice-text/delta/collision proof for the six gothic
+	# hero stories appended by this task. Expected values come only from the
+	# independent BATCH_EVENTS table above, and every lookup is by authored ID.
+	_check(BATCH_EVENT_IDS.size() == 6, "batch table lists six authored story IDs")
+	var listed := {}
+	for event_id in BATCH_EVENT_IDS:
+		_check(not listed.has(event_id), "batch story ID is listed once: " + event_id)
+		listed[event_id] = true
+		_check(BATCH_EVENTS.has(event_id), "batch story has its own expected record: " + event_id)
+		_check(not EVENTS.has(event_id), "batch story does not replace an older expected record: " + event_id)
+	# Named earlier anchors stay present and unchanged in the shipped catalog.
+	for anchor_id in ["v3_warden_shield_menders", "v3_yarn_ranger_knit_ford",
+		"v3_button_golem_button_press", "v3_warden_copper_chain_ferry",
+		"v3_seamstress_needle_oracle", "v3_tinker_spring_marionette",
+		"v3_lantern_monk_mothlight_ferry", "v3_rag_duelist_cape_tribunal",
+		"v3_scarecrow_raven_orchard"]:
+		_check(_matching(anchor_id).size() == 1, "named earlier anchor still authored once: " + anchor_id)
+		if EVENTS.has(anchor_id):
+			var anchor_matches := _matching(anchor_id)
+			if anchor_matches.size() == 1:
+				_check(_anchor_view(anchor_matches[0]) == _authored_anchor(anchor_id),
+					"named earlier anchor record is unchanged: " + anchor_id)
+	# Catalog-wide collision counts: each batch event ID and non-Leave choice ID
+	# must appear exactly once across every authored record.
+	var catalog_ids := {}
+	var catalog_choices := {}
+	for record in catalog:
+		if not record is Dictionary:
+			continue
+		var record_id: Variant = record.get("id")
+		if record_id is String:
+			catalog_ids[record_id] = int(catalog_ids.get(record_id, 0)) + 1
+		for choice in record.get("choices", []):
+			if choice is Dictionary and choice.get("id") is String:
+				var choice_id: String = choice.get("id")
+				catalog_choices[choice_id] = int(catalog_choices.get(choice_id, 0)) + 1
+	for event_id in BATCH_EVENT_IDS:
+		var expected: Dictionary = BATCH_EVENTS[event_id]
+		var matches := _matching(event_id)
+		_check(matches.size() == 1, "exactly one authored batch record: " + event_id)
+		_check(int(catalog_ids.get(event_id, 0)) == 1, "batch event ID is catalog-unique: " + event_id)
+		if matches.size() != 1:
+			continue
+		var record: Dictionary = matches[0]
+		_check(
+			record.size() == 6
+			and record.has("id") and record.has("title") and record.has("description")
+			and record.has("required_hero") and record.has("hero_choice_ids")
+			and record.has("choices"),
+			"batch record has the exact six authored keys: " + event_id)
+		_check(record.get("id") == event_id, "batch authored id: " + event_id)
+		_check(record.get("title") == expected["title"], "batch authored title: " + event_id)
+		var description = record.get("description")
+		_check(description is String and not (description as String).strip_edges().is_empty(),
+			"batch description is nonblank themed story text: " + event_id)
+		_check(description == expected["description"], "batch authored description: " + event_id)
+		_check(record.get("required_hero") == expected["required_hero"],
+			"batch authored required_hero: " + event_id)
+		_check(RunV3HeroEventOffers.HERO_IDS.has(record.get("required_hero")),
+			"batch required_hero is a canonical roster hero: " + event_id)
+
+		var raw_hero_ids: Variant = record.get("hero_choice_ids")
+		_check(raw_hero_ids is Array, "batch hero_choice_ids is an array: " + event_id)
+		if not raw_hero_ids is Array:
+			continue
+		var hero_choice_ids: Array = raw_hero_ids
+		_check(hero_choice_ids == expected["hero_choice_ids"],
+			"batch hero_choice_ids are the exact two authored choices: " + event_id)
+		var listed_choices := {}
+		for choice_id in hero_choice_ids:
+			_check(choice_id is String, "batch hero choice ID is a string: " + event_id)
+			if not choice_id is String:
+				continue
+			_check(choice_id != "leave", "batch hero_choice_ids excludes Leave: " + event_id)
+			_check(not listed_choices.has(choice_id),
+				"batch hero_choice_ids are distinct: " + event_id + "/" + choice_id)
+			listed_choices[choice_id] = true
+			_check(int(catalog_choices.get(choice_id, 0)) == 1,
+				"batch hero choice ID is catalog-unique: " + event_id + "/" + choice_id)
+			_check(BATCH_EVENTS[event_id]["choices"].has(choice_id),
+				"batch hero choice is independently authored: " + event_id + "/" + choice_id)
+
+		var raw_choices: Variant = record.get("choices")
+		_check(raw_choices is Array, "batch choices is an array: " + event_id)
+		if not raw_choices is Array:
+			continue
+		var choices: Array = raw_choices
+		_check(choices.size() == 3, "batch record has exactly three choices: " + event_id)
+		var by_id := {}
+		for choice in choices:
+			_check(choice is Dictionary, "batch choice is an object: " + event_id)
+			if not choice is Dictionary:
+				continue
+			var choice_id: Variant = choice.get("id")
+			_check(choice_id is String and not (choice_id as String).strip_edges().is_empty(),
+				"batch choice ID is a nonblank string: " + event_id)
+			if not choice_id is String:
+				continue
+			_check(not by_id.has(choice_id), "batch choice IDs are distinct: " + event_id)
+			by_id[choice_id] = choice
+		var wanted: Dictionary = BATCH_EVENTS[event_id]["choices"]
+		_check(by_id.size() == wanted.size(), "batch record has no unstated choices: " + event_id)
+		_check(by_id.has("leave"), "batch record authors a Leave choice: " + event_id)
+		var non_leave := {}
+		for choice_id in by_id:
+			if choice_id != "leave":
+				non_leave[choice_id] = true
+		_check(non_leave == listed_choices,
+			"batch hero_choice_ids equal exactly the authored non-Leave choices: " + event_id)
+		for choice_id in wanted:
+			var want: Dictionary = wanted[choice_id]
+			_check(by_id.has(choice_id), "batch required choice present: " + event_id + "/" + choice_id)
+			if not by_id.has(choice_id):
+				continue
+			var choice: Dictionary = by_id[choice_id]
+			_check(
+				choice.size() == 3 and choice.has("id") and choice.has("text")
+				and choice.has("outcome"),
+				"batch choice has the exact id/text/outcome keys: " + event_id + "/" + choice_id)
+			_check(choice.get("text") == want["text"],
+				"batch choice text states the exact signed trade: " + event_id + "/" + choice_id)
+			var raw_outcome: Variant = choice.get("outcome")
+			_check(raw_outcome is Dictionary, "batch outcome is an object: " + event_id + "/" + choice_id)
+			if not raw_outcome is Dictionary:
+				continue
+			var outcome: Dictionary = raw_outcome
+			_check(outcome.size() == 2 and outcome.has("gold") and outcome.has("scraps"),
+				"batch outcome has exact gold/scraps keys: " + event_id + "/" + choice_id)
+			var raw_gold: Variant = outcome.get("gold")
+			var raw_scraps: Variant = outcome.get("scraps")
+			_check(_is_integral(raw_gold) and _is_integral(raw_scraps),
+				"batch outcome amounts are integral: " + event_id + "/" + choice_id)
+			if _is_integral(raw_gold) and _is_integral(raw_scraps):
+				_check(int(raw_gold) == int(want["gold"]) and int(raw_scraps) == int(want["scraps"]),
+					"batch exact signed delta " + _signed(str(choice_id), want)
+						+ ": " + event_id + "/" + choice_id)
+		if by_id.has("leave"):
+			var leave_outcome: Variant = (by_id["leave"] as Dictionary).get("outcome")
+			_check(leave_outcome is Dictionary
+				and int(leave_outcome.get("gold", 1)) == 0
+				and int(leave_outcome.get("scraps", 1)) == 0,
+				"batch Leave is a zero-delta departure: " + event_id)
+		# The authored record is a genuine, unclaimed RunEventChoice visit.
+		var service := RunEventChoice.new(record)
+		_check(service.is_valid() and not service.is_claimed(),
+			"batch authored record builds a fresh valid visit: " + event_id)
+		_check(service.get_event() == record,
+			"batch visit keeps the authored metadata: " + event_id)
+
+
+func _anchor_view(record: Dictionary) -> Dictionary:
+	# Normalize JSON numeric outcomes to native integers so an unchanged old
+	# anchor compares by value instead of by parsed number type.
+	var choices: Array = []
+	for choice in record.get("choices", []):
+		if not choice is Dictionary:
+			continue
+		var outcome: Variant = choice.get("outcome")
+		choices.append({
+			"id": choice.get("id"),
+			"text": choice.get("text"),
+			"outcome": {
+				"gold": int(outcome.get("gold", 0)) if outcome is Dictionary else 0,
+				"scraps": int(outcome.get("scraps", 0)) if outcome is Dictionary else 0,
+			},
+		})
+	return {
+		"id": record.get("id"),
+		"title": record.get("title"),
+		"description": record.get("description"),
+		"required_hero": record.get("required_hero"),
+		"hero_choice_ids": (record.get("hero_choice_ids", []) as Array).duplicate(),
+		"choices": choices,
+	}
+
+
+func _authored_anchor(event_id: String) -> Dictionary:
+	# Rebuild the named old anchor from the EVENTS expectation map so the
+	# comparison above stays independent of the production catalog.
+	var expected: Dictionary = EVENTS[event_id]
+	var choices: Array = []
+	for choice_id in expected["choices"]:
+		var current: Dictionary = expected["choices"][choice_id]
+		choices.append({
+			"id": choice_id,
+			"text": current["text"],
+			"outcome": {"gold": int(current["gold"]), "scraps": int(current["scraps"])},
+		})
+	return {
+		"id": event_id,
+		"title": expected["title"],
+		"description": expected["description"],
+		"required_hero": expected["required_hero"],
+		"hero_choice_ids": (expected["hero_choice_ids"] as Array).duplicate(),
+		"choices": choices,
+	}
+
+
+func _test_batch_event_receipts() -> void:
+	# Independent funded/zero-wallet receipt matrix for the six new stories,
+	# one fresh RunEventChoice visit per event and choice.
+	var listed := {}
+	for event_id in BATCH_EVENT_IDS:
+		_check(not listed.has(event_id), "batch receipt ID is listed once: " + event_id)
+		listed[event_id] = true
+	for event_id in BATCH_EVENT_IDS:
+		var matches := _matching(event_id)
+		_check(matches.size() == 1, "batch receipt has one authored record: " + event_id)
+		if matches.size() != 1:
+			continue
+		var record: Dictionary = matches[0].duplicate(true)
+		var original: Dictionary = record.duplicate(true)
+		var expected: Dictionary = BATCH_EVENTS[event_id]
+		var expected_choices: Dictionary = expected["choices"]
+		_check(record.get("required_hero") == expected["required_hero"]
+			and record.get("hero_choice_ids") == expected["hero_choice_ids"],
+			"batch receipt keeps the exact hero metadata: " + event_id)
+		for choice_id in expected_choices:
+			var delta: Dictionary = expected_choices[choice_id]
+			var label: String = event_id + "/" + _signed(str(choice_id), delta)
+			var expected_gold: int = FUNDED_GOLD + int(delta["gold"])
+			var expected_scraps: int = FUNDED_SCRAPS + int(delta["scraps"])
+			var wallet := {"gold": FUNDED_GOLD, "scraps": FUNDED_SCRAPS}
+			var wallet_before: Dictionary = wallet.duplicate(true)
+			var local_rng := RandomNumberGenerator.new()
+			local_rng.seed = 81500
+			var local_state: int = local_rng.state
+			var expected_global := _rng_start(81500)
+			var service := RunEventChoice.new(record)
+			var preview := service.preview_wallet_choices(wallet)
+			var entry := _preview_choice(preview, str(choice_id))
+			_check(preview.get("ok") == true and preview.get("event_id") == event_id
+				and entry.size() == 5 and entry.get("choice_id") == choice_id
+				and entry.get("affordable") == true,
+				"batch funded preview offers the authored choice: " + label)
+			_check(typeof(entry.get("gold_delta")) == TYPE_INT
+				and typeof(entry.get("scraps_delta")) == TYPE_INT
+				and int(entry.get("gold_delta")) == int(delta["gold"])
+				and int(entry.get("scraps_delta")) == int(delta["scraps"])
+				and _wallet_exact_int(entry.get("wallet"), expected_gold, expected_scraps),
+				"batch funded preview quotes the exact signed delta: " + label)
+			var claim := service.choose_with_wallet(choice_id, wallet)
+			_check(_wallet_shape_ok(claim) and claim.get("ok") == true
+				and claim.get("event_id") == event_id and claim.get("choice_id") == choice_id
+				and _wallet_exact_int(claim.get("wallet"), expected_gold, expected_scraps),
+				"batch funded claim settles the exact authored wallet: " + label)
+			_check(_wallet_exact_int(wallet, FUNDED_GOLD, FUNDED_SCRAPS)
+				and wallet == wallet_before and service.get_event() == original,
+				"batch funded claim leaves caller inputs untouched: " + label)
+			_check(service.is_claimed() and not service.is_valid()
+				and service.preview_wallet_choices(wallet) == {"ok": false, "event_id": "", "choices": []},
+				"batch funded claim latches the single visit: " + label)
+			var replay := service.choose_with_wallet(choice_id,
+				{"gold": expected_gold, "scraps": expected_scraps})
+			_check(_wallet_shape_ok(replay) and replay.get("ok") == false
+				and replay.get("event_id") == "" and replay.get("choice_id") == ""
+				and _wallet_exact_int(replay.get("wallet"), expected_gold, expected_scraps),
+				"batch settled choice cannot be claimed twice: " + label)
+			_check(service.is_claimed() and service.get_event() == original
+				and local_rng.state == local_state and randi() == expected_global,
+				"batch preview, claim and replay spend no RNG: " + label)
+		# A fresh zero wallet refuses every authored price without spending the
+		# visit or the wallet, then the neutral Leave still works on that visit.
+		var zero_wallet := {"gold": 0, "scraps": 0}
+		var zero_before: Dictionary = zero_wallet.duplicate(true)
+		var first_priced := ""
+		for choice_id in expected_choices:
+			var delta: Dictionary = expected_choices[choice_id]
+			var priced: bool = int(delta["gold"]) < 0 or int(delta["scraps"]) < 0
+			var label: String = event_id + "/" + _signed(str(choice_id), delta)
+			if priced and first_priced.is_empty():
+				first_priced = choice_id
+			var probe := RunEventChoice.new(record)
+			var probe_entry := _preview_choice(probe.preview_wallet_choices(zero_wallet), str(choice_id))
+			_check(not probe_entry.is_empty() and probe_entry.get("affordable") == (not priced),
+				"batch zero-wallet affordability follows the authored price: " + label)
+			if not priced:
+				var free := probe.choose_with_wallet(choice_id, zero_wallet)
+				_check(free.get("ok") == true
+					and _wallet_exact_int(free.get("wallet"), int(delta["gold"]), int(delta["scraps"])),
+					"batch free/gain choice still settles from a zero wallet: " + label)
+				continue
+			var refused := probe.choose_with_wallet(choice_id, zero_wallet)
+			_check(_wallet_shape_ok(refused) and refused.get("ok") == false
+				and refused.get("event_id") == "" and refused.get("choice_id") == ""
+				and _wallet_exact_int(refused.get("wallet"), 0, 0) and not probe.is_claimed()
+				and probe.is_valid() and probe.get_event() == original,
+				"batch unaffordable price is refused without consuming the visit: " + label)
+		_check(not first_priced.is_empty(), "batch story authors a priced choice: " + event_id)
+		if first_priced.is_empty():
+			continue
+		var visit := RunEventChoice.new(record)
+		var refusal := visit.choose_with_wallet(first_priced, zero_wallet)
+		_check(_wallet_shape_ok(refusal) and refusal.get("ok") == false
+			and refusal.get("event_id") == "" and refusal.get("choice_id") == "",
+			"batch priced refusal returns empty IDs: " + event_id + "/" + first_priced)
+		_check(visit.is_valid() and not visit.is_claimed() and zero_wallet == zero_before,
+			"batch priced refusal consumes neither visit nor wallet: " + event_id)
+		var recovered := visit.choose_with_wallet("leave", zero_wallet)
+		_check(_wallet_shape_ok(recovered) and recovered.get("ok") == true
+			and recovered.get("event_id") == event_id and recovered.get("choice_id") == "leave"
+			and _wallet_exact_int(recovered.get("wallet"), 0, 0),
+			"batch Leave still succeeds at a zero wallet on that visit: " + event_id)
+		var late := visit.choose_with_wallet(first_priced,
+			{"gold": FUNDED_GOLD, "scraps": FUNDED_SCRAPS})
+		_check(_wallet_shape_ok(late) and late.get("ok") == false
+			and late.get("event_id") == "" and late.get("choice_id") == ""
+			and _wallet_exact_int(late.get("wallet"), FUNDED_GOLD, FUNDED_SCRAPS)
+			and visit.is_claimed() and not visit.is_valid(),
+			"batch settled Leave refuses any second claim: " + event_id)
 
 
 func _test_hero_metadata() -> void:
