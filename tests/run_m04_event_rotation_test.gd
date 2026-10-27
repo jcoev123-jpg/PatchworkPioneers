@@ -11,11 +11,15 @@ extends SceneTree
 ## invalid/missing/duplicated required catalog fixtures with no RNG drift,
 ## forward-compatible future additions, detached return values, and the existing
 ## RunEventChoice wallet preview/settlement of selected records.
-## The V3-4 batches (six roadside and six midnight-story wallet Events) are each
-## verified by per-ID tables of exact authored text and signed outcomes.
+## The V3-4 batches (six roadside, six midnight-story, six lantern-haunted and
+## six promoted Candlelit Bargain wallet Events) are each verified by per-ID
+## tables of exact authored text and signed outcomes.
 
 const EVENTS_PATH := "res://data/events/m04_events.json"
 const ROADSIDE_EVENTS_PATH := "res://data/events/v3_roadside_events.json"
+## Canonical source of the six promoted Candlelit Bargain records; it stays
+## outside the rotation and is only used here as the verbatim reference.
+const CANDLELIT_EVENTS_PATH := "res://data/events/v3_candlelit_bargains.json"
 
 ## Independent copy of the thirteen named generic IDs; never read from the
 ## production constant, so a shrink there is caught here.
@@ -61,6 +65,7 @@ func _initialize() -> void:
 	_test_v3_wallet_event_batch()
 	_test_midnight_story_event_batch()
 	_test_lantern_haunted_event_batch()
+	_test_candlelit_bargain_event_batch()
 	_check(source_document == source_snapshot, "shipped catalog document unchanged by every flow")
 	_report()
 
@@ -1188,6 +1193,286 @@ func _test_lantern_haunted_event_batch() -> void:
 		"the lantern-haunted batch never mutates the rotation listing")
 	_check(rng_guard.state == guard_state,
 		"selections, previews and claims never touch an unrelated run RNG")
+
+
+## Table-driven verification of the six Candlelit Bargain wallet Events promoted
+## from the separate authored source into the generic M04 rotation. The expected
+## contract below is an independent copy of the authored story and signed
+## outcomes; the canonical candlelit file is also parsed and compared by ID.
+## Only per-ID membership is asserted: no catalog total and no ordered ID list,
+## so peer batches can land in the same catalog without clashing.
+func _test_candlelit_bargain_event_batch() -> void:
+	var expected: Dictionary = {
+		"lantern_bobbin_ferry": {
+			"title": "The Lantern Bobbin Ferry",
+			"description": "A bobbin boat rocks beneath hanging lanterns, its ragdoll ferryman winding loose thread in the amber hush.",
+			"choices": [
+				{"id": "buy_passage", "text": "Pay the ferryman 12 gold for loose thread (+2 scraps)", "gold": -12, "scraps": 2},
+				{"id": "ferry_parcels", "text": "Trade a thread bundle for parcel wages (spend 1 scrap; gain 18 gold)", "gold": 18, "scraps": -1},
+				{"id": "walk_bank", "text": "Walk along the bank (no cost or gain)", "gold": 0, "scraps": 0},
+			],
+		},
+		"thimble_star_reading": {
+			"title": "The Thimble Star Reading",
+			"description": "A felt fortune-reader peers through a silver thimble at stitched constellations, their frame trailing pale starlint.",
+			"choices": [
+				{"id": "offer_thread", "text": "Sell a spool to the reader (spend 1 scrap; gain 16 gold)", "gold": 16, "scraps": -1},
+				{"id": "gather_starlint", "text": "Collect thread caught in the frame (+1 scrap)", "gold": 0, "scraps": 1},
+				{"id": "pass_by", "text": "Pass by (no cost or gain)", "gold": 0, "scraps": 0},
+			],
+		},
+		"moonpatch_archway": {
+			"title": "The Moonpatch Archway",
+			"description": "Tiny cloth patches line a crescent arch; dangling price tags whisper against its candlelit seams.",
+			"choices": [
+				{"id": "purchase_two_spools", "text": "Purchase two spools (spend 15 gold; gain 2 scraps)", "gold": -15, "scraps": 2},
+				{"id": "sell_two_spools", "text": "Sell two spools (spend 2 scraps; gain 27 gold)", "gold": 27, "scraps": -2},
+				{"id": "keep_walking", "text": "Keep walking (no cost or gain)", "gold": 0, "scraps": 0},
+			],
+		},
+		"blacklace_swap_table": {
+			"title": "The Blacklace Swap Table",
+			"description": "Small button-eyed puppets barter ribbons over an ink-black lace tablecloth, their stitched smiles lit by candle stubs.",
+			"choices": [
+				{"id": "take_small_bundle", "text": "Buy a small ribbon bundle (spend 8 gold; gain 1 scrap)", "gold": -8, "scraps": 1},
+				{"id": "trade_own_bundle", "text": "Sell your own bundle (spend 1 scrap; gain 14 gold)", "gold": 14, "scraps": -1},
+				{"id": "decline_trade", "text": "Decline the trade (no cost or gain)", "gold": 0, "scraps": 0},
+			],
+		},
+		"crooked_marionette": {
+			"title": "The Crooked Marionette",
+			"description": "A wooden puppet dangles crookedly above a candle, offering a little coin purse for rethreading its frayed strings.",
+			"choices": [
+				{"id": "retie_strings", "text": "Rethread the puppet's strings (spend 2 scraps; earn 30 gold)", "gold": 30, "scraps": -2},
+				{"id": "gather_cuttings", "text": "Gather discarded thread cuttings (+1 scrap)", "gold": 0, "scraps": 1},
+				{"id": "leave_puppet", "text": "Leave the puppet (no cost or gain)", "gold": 0, "scraps": 0},
+			],
+		},
+		"dusk_post_bobbin": {
+			"title": "The Dusk Post Bobbin",
+			"description": "A patchwork postbox totters on a walking spindle, accepting thread-wrapped letters through a softly glowing slot.",
+			"choices": [
+				{"id": "send_letter", "text": "Pay postage and receive spare wrapping thread (spend 10 gold; gain 1 scrap)", "gold": -10, "scraps": 1},
+				{"id": "deliver_letters", "text": "Wrap letters for delivery wages (spend 1 scrap; earn 17 gold)", "gold": 17, "scraps": -1},
+				{"id": "ignore_post", "text": "Pass the postbox (no cost or gain)", "gold": 0, "scraps": 0},
+			],
+		},
+	}
+	## Independent per-ID seeds for the forced single-eligible selection replay.
+	var seeds: Dictionary = {
+		"lantern_bobbin_ferry": 82001,
+		"thimble_star_reading": 82002,
+		"moonpatch_archway": 82003,
+		"blacklace_swap_table": 82004,
+		"crooked_marionette": 82005,
+		"dusk_post_bobbin": 82006,
+	}
+	var reference: Dictionary = _load_candlelit_by_id()
+	var rotation := RunM04EventRotation.new()
+	_check(rotation.is_catalog_valid(), "the promoted candlelit batch keeps the shipped rotation valid")
+	var listing: Array = rotation.get_generic_events()
+	var ids: Array = rotation.get_generic_event_ids()
+	var listing_snapshot: Array = listing.duplicate(true)
+	var rng_guard := RandomNumberGenerator.new()
+	rng_guard.seed = 919191
+	var guard_state := rng_guard.state
+	# Earlier named generic anchors stay eligible and the separately routed
+	# special never joins the generic pool.
+	for anchor in REQUIRED_IDS:
+		_check(ids.count(anchor) == 1, "the promoted batch keeps the earlier anchor eligible: " + anchor)
+	_check(_matches(_source_events(), SPECIAL_ID).size() == 1,
+		"the special quiet_spool record stays in the source catalog")
+	_check(_matches(listing, SPECIAL_ID).is_empty() and not ids.has(SPECIAL_ID),
+		"the promoted candlelit batch never pulls quiet_spool into the rotation")
+	for event_id in expected:
+		var contract: Dictionary = expected[event_id]
+		var candlelit: Dictionary = reference.get(event_id, {})
+		_check(not candlelit.is_empty(), "the authored candlelit source still carries " + event_id)
+		if candlelit.is_empty():
+			continue
+		_check(candlelit.get("title") == contract["title"], "authored candlelit title: " + event_id)
+		_check(candlelit.get("description") == contract["description"],
+			"authored candlelit description: " + event_id)
+		# Exactly one promoted M04 source record, one generic rotation record and
+		# one eligible ID, all verbatim copies of the candlelit source record.
+		var sourced_matches := _matches(_source_events(), event_id)
+		_check(sourced_matches.size() == 1, "exactly one promoted M04 source record for " + event_id)
+		var listed_matches := _matches(listing, event_id)
+		_check(listed_matches.size() == 1, "exactly one generic rotation record for " + event_id)
+		_check(ids.count(event_id) == 1, "the generic ID listing carries " + event_id + " exactly once")
+		if sourced_matches.size() != 1 or listed_matches.size() != 1:
+			continue
+		var authored: Dictionary = sourced_matches[0]
+		var listed: Dictionary = listed_matches[0]
+		_check(authored == candlelit, "the promoted M04 record is verbatim: " + event_id)
+		_check(listed == candlelit, "the rotation copies the authored candlelit record: " + event_id)
+		_check(authored.size() == 4 and authored.has("id") and authored.has("title")
+			and authored.has("description") and authored.has("choices"),
+			"authored record carries exactly id/title/description/choices: " + event_id)
+		_check(authored.get("title") == contract["title"], "promoted authored title: " + event_id)
+		_check(authored.get("description") == contract["description"],
+			"promoted authored description: " + event_id)
+		var choices: Array = authored.get("choices", [])
+		_check(choices.size() == 3, "three authored choices: " + event_id)
+		var expected_choices: Array = contract["choices"]
+		for index in range(expected_choices.size()):
+			var choice_def: Dictionary = expected_choices[index]
+			var choice_id: String = choice_def["id"]
+			_check(index < choices.size(), "authored choice slot exists: " + event_id + " / " + choice_id)
+			if index >= choices.size():
+				continue
+			var choice: Variant = choices[index]
+			_check(choice is Dictionary, "every choice is an object: " + event_id + " / " + choice_id)
+			if not choice is Dictionary:
+				continue
+			_check(choice.get("id") == choice_id,
+				"authored ordered choice ID: " + event_id + " / " + choice_id)
+			_check(choice.get("text") == choice_def["text"],
+				"authored choice text: " + event_id + " / " + choice_id)
+			var outcome: Variant = choice.get("outcome")
+			_check(outcome is Dictionary, "choice outcome is an object: " + event_id + " / " + choice_id)
+			if not outcome is Dictionary:
+				continue
+			var outcome_dict: Dictionary = outcome
+			_check(outcome_dict.size() == 2 and outcome_dict.has("gold") and outcome_dict.has("scraps"),
+				"exact signed outcome keys: " + event_id + " / " + choice_id)
+			# JSON parsing may deliver whole numbers as floats; the authored
+			# contract is a whole signed amount either way.
+			_check(_signed_amount(outcome_dict.get("gold")) == choice_def["gold"]
+				and _signed_amount(outcome_dict.get("scraps")) == choice_def["scraps"],
+				"authored signed outcome: " + event_id + " / " + choice_id)
+		# Excluding every other currently eligible ID leaves only this event, which
+		# the real no-argument selector must return after exactly one draw.
+		var excluded: Array = ids.duplicate()
+		excluded.erase(event_id)
+		var seed_value: int = seeds[event_id]
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = seed_value
+		oracle.randi_range(0, 0)
+		var picked := rotation.select_event(rng, excluded)
+		_check(picked.get("ok") == true, "forced selection succeeds: " + event_id)
+		var selected: Dictionary = picked.get("event", {})
+		_check(selected.get("id") == event_id, "forced selection returns " + event_id)
+		_check(rng.state == oracle.state, "forced selection consumes exactly one range draw: " + event_id)
+		var replay_rng := RandomNumberGenerator.new()
+		replay_rng.seed = seed_value
+		var replay := rotation.select_event(replay_rng, excluded)
+		_check(replay.get("ok") == true and replay.get("event") == selected
+			and replay_rng.state == rng.state,
+			"identical seed and exclusions replay " + event_id)
+		_check(selected == candlelit, "the selector hands back the authored candlelit record: " + event_id)
+		if selected.is_empty():
+			continue
+		# Wallet preview and one-shot settlement for all three authored choices.
+		var funded := {"gold": 50, "scraps": 5}
+		var funded_snapshot: Dictionary = funded.duplicate(true)
+		var zero := {"gold": 0, "scraps": 0}
+		var zero_snapshot: Dictionary = zero.duplicate(true)
+		var forecast_service := RunEventChoice.new(selected)
+		_check(forecast_service.is_valid(), "authored record is a valid RunEventChoice: " + event_id)
+		var preview := forecast_service.preview_wallet_choices(funded)
+		_check(preview.get("ok") == true and preview.get("event_id") == event_id,
+			"funded preview succeeds: " + event_id)
+		var rows := _preview_map(preview)
+		_check(rows.size() == 3, "funded preview lists all three choices: " + event_id)
+		var free_choice_ids: Array = []
+		for choice_def in expected_choices:
+			var choice_id: String = choice_def["id"]
+			var gold_delta: int = choice_def["gold"]
+			var scraps_delta: int = choice_def["scraps"]
+			var after := {"gold": 50 + gold_delta, "scraps": 5 + scraps_delta}
+			var row: Dictionary = rows.get(choice_id, {})
+			_check(row.get("gold_delta") == gold_delta and row.get("scraps_delta") == scraps_delta,
+				"funded preview reports authored deltas: " + event_id + " / " + choice_id)
+			_check(row.get("affordable") == true and row.get("wallet") == after,
+				"funded preview forecasts the exact balance: " + event_id + " / " + choice_id)
+			var service := RunEventChoice.new(selected)
+			var receipt := service.choose_with_wallet(choice_id, funded)
+			_check(receipt.get("ok") == true and receipt.get("event_id") == event_id
+				and receipt.get("choice_id") == choice_id,
+				"exact authored claim: " + event_id + " / " + choice_id)
+			_check(receipt.get("wallet") == after,
+				"the claim applies the authored deltas once: " + event_id + " / " + choice_id)
+			_check(service.is_claimed() and not service.is_valid(),
+				"the claim latches and closes the visit: " + event_id + " / " + choice_id)
+			var replay_claim := service.choose_with_wallet(choice_id, funded)
+			_check(replay_claim.get("ok") == false and replay_claim.get("wallet") == funded,
+				"the settled claim cannot be replayed: " + event_id + " / " + choice_id)
+			if gold_delta == 0 and scraps_delta == 0:
+				free_choice_ids.append(choice_id)
+			# Signed debits at an empty wallet: refused without consuming the visit.
+			var paid := gold_delta < 0 or scraps_delta < 0
+			var scarce := RunEventChoice.new(selected)
+			var scarce_rows := _preview_map(scarce.preview_wallet_choices(zero))
+			_check(scarce_rows.get(choice_id, {}).get("affordable") == (not paid),
+				"zero-wallet affordability matches the signed outcome: "
+				+ event_id + " / " + choice_id)
+			if paid:
+				var denied := scarce.choose_with_wallet(choice_id, zero)
+				_check(denied.get("ok") == false and denied.get("wallet") == zero,
+					"a signed debit is refused at an empty wallet: " + event_id + " / " + choice_id)
+				_check(not scarce.is_claimed() and scarce.is_valid(),
+					"a refused debit keeps the visit open: " + event_id + " / " + choice_id)
+			else:
+				var granted := scarce.choose_with_wallet(choice_id, zero)
+				_check(granted.get("ok") == true and granted.get("wallet") == {
+					"gold": gold_delta, "scraps": scraps_delta},
+					"a nonnegative choice settles at an empty wallet: " + event_id + " / " + choice_id)
+				_check(scarce.is_claimed() and scarce.choose_with_wallet(choice_id, zero).get("ok") == false,
+					"the empty-wallet claim cannot be replayed: " + event_id + " / " + choice_id)
+		# The authored free leave still settles a clean (0, 0) transaction.
+		_check(free_choice_ids.size() == 1, "each promoted event keeps exactly one free leave: " + event_id)
+		for free_id in free_choice_ids:
+			var leave_service := RunEventChoice.new(selected)
+			var leave := leave_service.choose_with_wallet(free_id, zero)
+			_check(leave.get("ok") == true and leave.get("wallet") == zero,
+				"the free leave settles (0,0): " + event_id + " / " + free_id)
+			_check(leave_service.is_claimed()
+				and leave_service.choose_with_wallet(free_id, zero).get("ok") == false,
+				"the free leave claim is single: " + event_id + " / " + free_id)
+		# An unknown choice ID is denied without consuming the visit.
+		var stranger := RunEventChoice.new(selected)
+		var unknown_claim := stranger.choose_with_wallet("unlisted_choice", zero)
+		_check(unknown_claim.get("ok") == false and unknown_claim.get("wallet") == zero
+			and not stranger.is_claimed() and stranger.is_valid(),
+			"an unknown choice ID is denied without consuming the visit: " + event_id)
+		_check(forecast_service.is_valid(), "previews never consume the visit: " + event_id)
+		_check(funded == funded_snapshot and zero == zero_snapshot,
+			"the caller's funded and empty wallets are unchanged: " + event_id)
+	_check(rotation.get_generic_events() == listing_snapshot,
+		"the candlelit batch never mutates the rotation listing")
+	_check(rng_guard.state == guard_state,
+		"selections, previews and claims never touch an unrelated run RNG")
+
+
+## The separate authored candlelit catalog, parsed once per test run and keyed by
+## ID. It is a reference fixture here; the rotation never reads it.
+func _load_candlelit_by_id() -> Dictionary:
+	var out: Dictionary = {}
+	var file := FileAccess.open(CANDLELIT_EVENTS_PATH, FileAccess.READ)
+	_check(file != null, "v3_candlelit_bargains.json opens as the canonical promoted source")
+	if file == null:
+		return out
+	var text := file.get_as_text()
+	file.close()
+	var parser := JSON.new()
+	var parsed := parser.parse(text)
+	_check(parsed == OK, "v3_candlelit_bargains.json parses as the canonical promoted source")
+	if parsed != OK or not parser.data is Dictionary:
+		return out
+	var events: Variant = (parser.data as Dictionary).get("events")
+	_check(events is Array, "v3_candlelit_bargains.json carries its events array")
+	if not events is Array:
+		return out
+	for record in events:
+		if not record is Dictionary:
+			continue
+		var raw_id: Variant = (record as Dictionary).get("id")
+		if raw_id is String and not out.has(raw_id):
+			out[raw_id] = (record as Dictionary).duplicate(true)
+	return out
 
 
 ## Deterministic seed per new event id for forced selections.
