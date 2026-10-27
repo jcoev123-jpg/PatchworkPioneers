@@ -13,6 +13,12 @@ const CASES := {
 	"v3_button_golem_button_press": ["button_golem", "stamp_brass", 31, -2],
 	"v3_lantern_monk_evening_beacon": ["lantern_monk", "trim_evening_wick", 16, -1],
 	"v3_rag_duelist_scarlet_fair": ["rag_duelist", "buy_fencing_ribbon", -13, 2],
+	"v3_warden_moonshield_watch": ["warden", "sell_guard_stitch", 21, -1],
+	"v3_seamstress_scarlet_loom": ["seamstress", "trade_loom_thread", 24, -2],
+	"v3_tinker_gearhouse_midnight": ["tinker", "tune_gearhouse", 27, -2],
+	"v3_scarecrow_blackcrow_post": ["scarecrow", "buy_straw_twines", -13, 2],
+	"v3_yarn_ranger_bolas_bridge": ["yarn_ranger", "sell_needlespool", 18, -1],
+	"v3_button_golem_bell_foundry": ["button_golem", "buy_brass_thread", -19, 3],
 }
 
 var failures: Array[String] = []

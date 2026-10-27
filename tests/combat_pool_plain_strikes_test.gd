@@ -298,6 +298,8 @@ func _test_status_damage() -> void:
 			"defend": {"exposed": 1}, "damage": 9, "block": 0},
 		{"id": "seamstress_thread_whip_plus", "attack": {"weak": 1},
 			"defend": {"exposed": 1}, "damage": 9, "block": 0},
+		{"id": "warden_brass_buckle", "attack": {"riposte": 2},
+			"defend": {"riposte": 3}, "damage": 5, "block": 4},
 	]
 	for scenario in cases:
 		var id: String = scenario["id"]
@@ -317,6 +319,31 @@ func _test_status_damage() -> void:
 		_check(foes.get_enemy(1)["statuses"] == scenario["defend"]
 			and party.get_hero(owner_pos)["statuses"] == scenario["attack"],
 			"no status application, passive Bleed, or status aging")
+
+	# AC2: the authentic held Brass Buckle with Warden Riposte 2, enemy Riposte 3
+	# and two Block lands the printed 5-damage hit (2 absorbed, 3 HP lost), awards
+	# 4 Block, spends one energy and discards just that copy; both Riposte values
+	# persist. The same seed replays the identical full state.
+	var replay: Array[Dictionary] = []
+	for repeat in range(2):
+		var deck := _deck(["warden_brass_buckle"], 77123)
+		var party := _party()
+		var foes := _enemies()
+		party._heroes[0]["statuses"] = {"riposte": 2}
+		foes._enemies[0]["statuses"] = {"riposte": 3}
+		_check(foes.gain_block(1, 2), "riposte replay target holds two Block")
+		_check(deck.energy == 3 and deck.hand.has("warden_brass_buckle"),
+			"riposte replay holds an affordable one-energy Brass Buckle")
+		_play(deck, party, foes, "warden_brass_buckle", 1, 5, 2, 3, 4, 1,
+			"Brass Buckle strike with Warden Riposte 2 and enemy Riposte 3")
+		_check(party.get_hero(1)["statuses"] == {"riposte": 2}
+			and foes.get_enemy(1)["statuses"] == {"riposte": 3},
+			"both Riposte values persist untouched after the pool strike")
+		_check(deck.energy == 2 and deck.discard_pile.count("warden_brass_buckle") == 1,
+			"riposte strike spends exactly one energy and discards one copy")
+		replay.append(_snapshot(deck, party, foes))
+	_check(replay[0] == replay[1],
+		"same-seed Riposte pool strike replays the identical full state")
 
 
 func _test_pinned_brass_buckle() -> void:
@@ -627,6 +654,22 @@ func _test_rejections() -> void:
 	_check(downed.apply_damage(2, 30), "Seamstress truly downed")
 	_reject(whip, downed, _enemies(), "seamstress_thread_whip", 1,
 		"downed Seamstress cannot play")
+
+	# AC3: malformed Riposte on a real held actor's record fails the preflight
+	# before energy, hand, discard, roster or RNG changes.
+	for bad_status in [{"riposte": -1}, {"riposte": 2.0}, {"riposte": true},
+			{"riposte": "3"}, {"riposte": 2, "poison": 1}, {"riposte": 2, "Riposte": 1}]:
+		var bad_deck := _deck(["warden_brass_buckle"])
+		var bad_party := _party()
+		var bad_foes := _enemies()
+		bad_party._heroes[0]["statuses"] = bad_status.duplicate(true)
+		bad_foes._enemies[0]["statuses"] = {"riposte": 3}
+		_check(bad_foes.gain_block(1, 2), "malformed Riposte fixture has enemy Block")
+		_reject(bad_deck, bad_party, bad_foes, "warden_brass_buckle", 1,
+			"malformed Warden Riposte " + str(bad_status))
+		_check(bad_party.get_hero(1)["statuses"] == bad_status
+			and bad_foes.get_enemy(1)["statuses"] == {"riposte": 3},
+			"malformed Riposte maps preserved verbatim after rejection: " + str(bad_status))
 
 
 func _test_replay() -> void:

@@ -133,6 +133,7 @@ func _test_rest_inputs() -> void:
 			replay = _persistent()
 		await _click(app.route_back_button)
 
+
 ## Use the acquired patch through the next battle's real held-card input.
 func _acquired_attack_check(patch_id: String) -> void:
 	# An authored shove on the routed floor-band fight can move the Warden out of

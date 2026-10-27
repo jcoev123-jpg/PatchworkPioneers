@@ -13,6 +13,52 @@ const OXBLOOD := Color("#713544")
 const INK := Color("#191b2a")
 const DIM := Color("#b6a9a2")
 const PANEL_SIZE := Vector2(900, 630)
+const DETAILS_UNAVAILABLE := "Power details unavailable"
+# Compact second lines only: long, authenticated conditions appear in tooltips.
+const SHORT_RULES := {
+	"button_eye": "First successful attack/combat also gives Exposed 1",
+	"pincushion_arm": "+1 damage on wearer's damaging cards",
+	"switchback_button": "+2 Block once/turn after a different living hero's play",
+	"quilted_coat": "+6 maximum HP",
+	"padded_vest": "+4 maximum HP",
+	"double_quilt_coat": "+8 maximum HP",
+	"scrap_lined_vest": "+3 maximum HP",
+	"wool_patch_cloak": "+5 maximum HP",
+	"chain_stitched_coat": "+7 maximum HP",
+	"reinforced_patchcoat": "+9 maximum HP",
+	"thick_felt_mantle": "+10 maximum HP",
+	"bloodstitch_bonnet": "+1 Bleed on wearer's eligible Bleed cards",
+	"button_glass_visor": "+1 Exposed on wearer's eligible Exposed cards",
+	"stern_seam_cap": "+1 Weak on wearer's eligible Weak cards",
+	"reinforced_browband": "+2 Block on wearer's eligible Block cards",
+	"hemguard_cuff": "+2 Block on wearer's eligible Block cards",
+	"threadguard_wrap": "+1 Block on wearer's cards already granting Block",
+	"red_bobbin_cuff": "+1 Bleed on wearer's eligible Bleed cards",
+	"loose_thread_glove": "+1 Unravel on wearer's eligible Unravel cards",
+	"frayfinder_mitt": "+2 first single-target hit at half Unravel, once/turn",
+	"borrowed_button": "Ally's healing play gives wearer 3 Block once/combat",
+}
+# Identity and trigger fields are required before a rare preview can be shown.
+# Stock price is still exclusively the service's quoted price.
+const RARE_IDENTITIES := {
+	"relay_bobbin": {
+		"slot": "HEAD", "rarity": "rare",
+		"effect": "different_hero_pinned_token_shared_energy",
+		"trigger": "different_living_hero_consumes_pin_placed_by_wearer",
+		"pin_must_be_placed_by_wearer": true, "consumer_must_be_living": true,
+		"consumer_must_differ_from_wearer": true, "wearer_must_be_living": true,
+		"wearer_must_be_untorn": true, "requires_confirmed_receipt": true,
+		"shared_energy": 1, "shared_energy_cap": 3, "uses_per_combat": 1,
+	},
+	"hearth_lining": {
+		"slot": "COAT", "rarity": "rare",
+		"effect": "earned_quilt_bonus_wearer_heal",
+		"trigger": "first_earned_quilt_bonus_in_combat",
+		"requires_earned_bonus": true, "wearer_must_be_living": true,
+		"wearer_must_be_untorn": true, "heal": 2,
+		"heal_cap": "max_hp", "uses_per_combat": 1,
+	},
+}
 
 class SewnBorder extends Control:
 	func _ready() -> void:
@@ -41,6 +87,7 @@ var _visit: RunPatchStallVisit
 var _source: Dictionary = {}
 var _quoted: Dictionary = {}
 var _slots: Dictionary = {}
+var _descriptions: Dictionary = {}
 var _epoch := 0
 var _submitted := false
 var _wearer_index := 0
@@ -62,7 +109,7 @@ func _ready() -> void:
 	for i in range(3):
 		wearer_buttons.append(_button("", Vector2(43 + i * 278, 165), Vector2(264, 57), TEAL, 22))
 	for i in range(3):
-		offer_buttons.append(_button("", Vector2(43, 239 + i * 99), Vector2(814, 90), OXBLOOD, 23))
+		offer_buttons.append(_button("", Vector2(43, 239 + i * 99), Vector2(814, 90), OXBLOOD, 20))
 	leave_button = _button("Leave  ·  FREE", Vector2(43, 545), Vector2(814, 60), TEAL, 26)
 	status_label = _label("", Vector2(43, 612), Vector2(814, 15), 12, DIM)
 	_refresh()
@@ -135,6 +182,7 @@ func bind(visit: RunPatchStallVisit) -> void:
 	_source = {}
 	_quoted = {}
 	_slots = {}
+	_descriptions = {}
 	_submitted = false
 	_wearer_index = 0
 	if visit != null and visit.is_valid() and not visit.is_consumed():
@@ -150,6 +198,7 @@ func bind(visit: RunPatchStallVisit) -> void:
 			_source = state.duplicate(true)
 			_quoted = quote.duplicate(true)
 			_slots = slots.duplicate(true)
+			_descriptions = _trusted_power_previews(_slots)
 	if is_node_ready():
 		show()
 		_refresh()
@@ -213,13 +262,76 @@ func _wearer_caption(i: int) -> String:
 	var id: String = _source["snapshot"]["party_ids"][i]
 	return ("✕  " if _wearer_index == i else "·  ") + _name(id)
 
+## Only publish text after both the power-only ID/slot projection and the
+## existing per-effect catalog audit agree. Unknown future powers remain neutral.
+## The optional inputs allow tests to supply contradictory records without
+## editing the shipped files or undermining source quote validation.
+func _trusted_power_previews(slots: Dictionary, catalogs: Dictionary = {},
+		rare_source: Variant = null) -> Dictionary:
+	var verified: Dictionary = RunPatchWearerSummary._authority(catalogs)
+	var known_slots: Dictionary = verified.get("slots", {})
+	var previews: Dictionary = {}
+	for id in slots:
+		if RARE_IDENTITIES.has(id) or not SHORT_RULES.has(id) 				or not known_slots.has(id) or slots[id] != known_slots[id]:
+			continue
+		var full: String = RunPatchWearerSummary._resolve_rules_text(id, known_slots)
+		if not full.is_empty():
+			previews[id] = {"short": SHORT_RULES[id], "full": full}
+
+	var rares: Variant = rare_source
+	if rares == null:
+		rares = JSON.parse_string(FileAccess.get_file_as_string(
+				"res://data/patches/mpw_synergy_patches.json"))
+	if typeof(rares) != TYPE_ARRAY:
+		return previews
+	var matched := {}
+	var duplicates := {}
+	for record in rares:
+		if typeof(record) != TYPE_DICTIONARY:
+			continue
+		var id: Variant = record.get("id")
+		if typeof(id) != TYPE_STRING or not RARE_IDENTITIES.has(id):
+			continue
+		if matched.has(id):
+			duplicates[id] = true
+			continue
+		matched[id] = record
+	for id in RARE_IDENTITIES:
+		if duplicates.has(id) or not slots.has(id) or not matched.has(id) 				or slots[id] != RARE_IDENTITIES[id]["slot"]:
+			continue
+		var record: Dictionary = matched[id]
+		var consistent := true
+		for key in RARE_IDENTITIES[id]:
+			if not record.has(key) or record[key] != RARE_IDENTITIES[id][key]:
+				consistent = false
+				break
+		if not consistent:
+			continue
+		if id == "relay_bobbin":
+			previews[id] = {
+				"short": "+1 shared energy (cap 3) when ally uses your Pin, 1/combat",
+				"full": "Once per combat, if a different living hero consumes a Pinned token placed by this living, untorn wearer (confirmed receipt), gain +1 shared energy, capped at 3."
+			}
+		elif id == "hearth_lining":
+			previews[id] = {
+				"short": "First earned Quilt bonus/combat heals wearer 2 HP",
+				"full": "Once per combat, at the first EARNED Quilt bonus, heal this living, untorn wearer 2 HP, up to maximum HP."
+			}
+	return previews
+
 func _offer_caption(i: int) -> String:
 	var offer: Dictionary = _quoted["offers"][i]
 	var id: String = offer["id"]
 	var price: int = offer["price"]
 	var shortfall: int = maxi(0, price - int(_source["snapshot"]["gold"]))
 	var cost := "%d gold" % price if shortfall == 0 else "%d gold  ·  short %d" % [price, shortfall]
-	return "%s  [%s]    ✕ %s    ·    %s" % [_name(id), id, _slots[id], cost]
+	var power: String = _descriptions.get(id, {}).get("short", DETAILS_UNAVAILABLE)
+	return "%s  [%s]    ✕ %s    ·    %s\n%s" % [_name(id), id, _slots[id], cost, power]
+
+func _offer_tooltip(i: int) -> String:
+	var id: String = _quoted["offers"][i]["id"]
+	var full: String = _descriptions.get(id, {}).get("full", DETAILS_UNAVAILABLE)
+	return "%s [%s]\n%s\nPatch powers do not work while the wearer is Torn." % [_name(id), id, full]
 
 func _retire_callbacks() -> void:
 	for button in _connections:
@@ -247,6 +359,7 @@ func _refresh() -> void:
 		pin.set_meta("wearer_id", _source["snapshot"]["party_ids"][i] if open else "")
 		pin.add_theme_stylebox_override("normal", _style(OXBLOOD if open and i == _wearer_index else TEAL, GOLD if open and i == _wearer_index else INK))
 		offer_button.text = _offer_caption(i) if open else ""
+		offer_button.tooltip_text = _offer_tooltip(i) if open else ""
 		offer_button.set_meta("patch_id", _quoted["offers"][i]["id"] if open else "")
 		offer_button.disabled = not open or int(_source["snapshot"]["gold"]) < int(_quoted["offers"][i]["price"]) if open else true
 		if open:
@@ -286,6 +399,7 @@ func _auth(epoch: int, source: RunPatchStallVisit) -> bool:
 			return false
 		if not _attached(offer_buttons[i]) or offer_buttons[i].text != _offer_caption(i) \
 				or offer_buttons[i].get_meta("patch_id") != _quoted["offers"][i]["id"] \
+				or offer_buttons[i].tooltip_text != _offer_tooltip(i) \
 				or offer_buttons[i].disabled != (int(_source["snapshot"]["gold"]) < int(_quoted["offers"][i]["price"])):
 			return false
 	return _attached(leave_button) and not leave_button.disabled
