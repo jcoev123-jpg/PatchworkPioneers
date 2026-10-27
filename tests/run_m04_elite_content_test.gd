@@ -47,7 +47,7 @@ const LEGACY_ELITES := {
 		"art_path": "res://assets/paper/enemies/spool_hexer.png",
 		"target": "random",
 		"actions": [
-			{"type": "attack", "amount": 45, "weight": 3},
+			{"type": "attack", "amount": 9, "weight": 3},
 			{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
 			{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}]}}
 ## V3-2 appends two further harder Elites that reuse existing needle and spool
@@ -120,6 +120,7 @@ func _initialize() -> void:
 	_test_selection()
 	_test_live_weighted_elites()
 	_test_marshal_sting()
+	_test_hexer_lash()
 	_test_v3_elites()
 	_test_v3_2_elites()
 	_test_briar_guard_thorns(_catalog(ELITES))
@@ -582,7 +583,7 @@ func _test_live_weighted_elites() -> void:
 			{"type": "buff", "amount": 3, "weight": 1},
 			{"type": "shove", "amount": 0, "direction": 1, "weight": 1}]},
 		"spool_hexer": {"target": "random", "actions": [
-			{"type": "attack", "amount": 45, "weight": 3},
+			{"type": "attack", "amount": 9, "weight": 3},
 			{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
 			{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}]}}
 	var elites := _catalog(ELITES)
@@ -675,7 +676,7 @@ func _test_live_weighted_elites() -> void:
 			var escort := announced[1]
 			_check(attack.get("type") == "attack"
 				and escort.get("type") in ["block", "buff"]
-				and attack.get("amount") in ([5, 4] if source_id == "needle_marshal" else [45])
+				and attack.get("amount") in ([5, 4] if source_id == "needle_marshal" else [9])
 				and attack.get("enemy_position") == 1 and escort.get("enemy_position") == 2,
 				"exact strengthened attack and harmless companion weighted beat " + encounter_id)
 			var target: int = attack.get("target_position", 0)
@@ -943,6 +944,195 @@ func _test_marshal_sting() -> void:
 			"AC3: a forged Marshal sting target rejects the whole phase")
 		_check(randi() == expected_rng,
 			"AC3: the rejected sting leaves hero HP, Block, statuses and RNG unchanged")
+
+
+## A genuine single-source Hexer fight built from the shipped catalog record,
+## narrowed to exactly one real authored alternative. The record keeps its own
+## identity, HP and authored random target policy; only the alternative list is
+## reduced so a fixed seed can force one genuine beat.
+func _forced_hexer(alternative: Dictionary, seed_value: int,
+		party: CombatParty) -> Dictionary:
+	var hexer := _record(_all_catalogs(), "spool_hexer")
+	if hexer.is_empty():
+		return {}
+	var weighted := CombatEnemyIntents.weighted_action(alternative)
+	var action: Dictionary = weighted.get("action", {}).duplicate(true)
+	_check(not action.is_empty(),
+		"forced Hexer alternative is a valid authored action " + str(alternative))
+	if action.is_empty():
+		return {}
+	action["weight"] = 1
+	var forced: Dictionary = hexer.duplicate(true)
+	forced["intent"] = {"target": hexer.get("intent", {}).get("target", ""),
+		"actions": [action]}
+	var enemies := CombatEnemies.new([forced])
+	var scheduler := CombatEnemyIntents.new([
+		{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+	var bound: bool = enemies.is_valid() and enemies.get_enemies().size() == 1 \
+		and scheduler.is_valid() and scheduler.bind_battle(enemies, party, _rng(seed_value))
+	_check(bound, "real Hexer record binds seeded weighted intents " + str(alternative))
+	if not bound:
+		return {}
+	return {"enemies": enemies, "scheduler": scheduler, "intents": scheduler.get_intents()}
+
+
+## AC1/AC2/AC3: the shipped Spool Hexer's lone elite lash is the established
+## 9-point size instead of the historical 45 outlier, and only that amount
+## changed. Identity, 24 HP, random targeting, both one-point status alternatives
+## and all three weights stay exactly as authored.
+func _test_hexer_lash() -> void:
+	seed(64717)
+	var expected_rng := randi()
+	seed(64717)
+	var elites := _catalog(ELITES)
+	var untouched := elites.duplicate(true)
+	var catalog := _record(elites, "spool_hexer")
+	_check(not catalog.is_empty(), "AC1 precondition: the shipped Hexer record loads")
+	if catalog.is_empty():
+		return
+	_check(catalog.get("name") == "Spool Hexer" and catalog.get("max_hp") is int
+		and catalog.get("max_hp") == 24
+		and catalog.get("art_path") == "res://assets/paper/enemies/spool_hexer.png"
+		and catalog.get("intent", {}).get("target") == "random",
+		"AC1: Spool Hexer keeps its exact name, 24 HP, art and random policy")
+	var alternatives: Array = []
+	for raw in catalog.get("intent", {}).get("actions", []):
+		var weighted := CombatEnemyIntents.weighted_action(raw)
+		var body: Dictionary = weighted.get("action", {}).duplicate(true)
+		body["weight"] = weighted.get("weight", 0)
+		alternatives.append(body)
+	_check(alternatives == [
+		{"type": "attack", "amount": 9, "weight": 3},
+		{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
+		{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}],
+		"AC1: the three authored alternatives are attack 9/3, Exposed 1/1 and Weak 1/1")
+	# Read by ID, never as a catalog total: the correction is bounded to the one
+	# outlier, so every other shipped elite keeps its own authored attack sizes.
+	var peers := {
+		"needle_marshal": [5, 4], "scissor_bailiff": [9], "zipper_hauler": [8],
+		"needle_briar_guard": [9], "spool_snarekeeper": [8],
+		"pincushion_matriarch": [9], "spool_leech": [8]}
+	for id in peers:
+		var peer := _record(elites, id)
+		var amounts: Array = []
+		for raw in peer.get("intent", {}).get("actions", []):
+			if not raw is Dictionary or raw.get("type") != "attack":
+				continue
+			amounts.append(CombatEnemyIntents.weighted_action(raw).get("action", {}).get("amount"))
+		_check(not peer.is_empty() and amounts == peers[id],
+			"AC1: the unchanged elite keeps its authored attack sizes " + id)
+	if alternatives.size() != 3:
+		return
+
+	# AC2: the source-owned 9 resolved by the real enemy phase through Block then HP.
+	var party := _party()
+	_check(party.get_hero(1).get("hp") == 40 and party.gain_block(1, 4),
+		"AC2 precondition: the real Warden holds 40 HP and four Block")
+	var case := _forced_hexer(alternatives[0], 64719, party)
+	if case.is_empty():
+		return
+	var announced: Array = case.intents
+	var input_before := announced.duplicate(true)
+	_check(announced.size() == 1 and announced[0].get("type") == "attack"
+		and announced[0].get("amount") == 9
+		and announced[0].get("enemy_position") == 1
+		and announced[0].get("target_position") in [1, 2, 3],
+		"AC2: the bound Hexer announces its authored 9-point lash on a living hero")
+	var target: int = announced[0].get("target_position", 0)
+	if target not in [1, 2, 3]:
+		return
+	var heroes_before := party.get_heroes()
+	var foes_before: Array = case.enemies.get_enemies()
+	var settled: Dictionary = CombatEnemyPhase.new().execute_phase(
+		party, case.enemies, announced)
+	var expected_heroes := heroes_before.duplicate(true)
+	var block_before := int(expected_heroes[target - 1].get("block", 0))
+	var absorbed := mini(9, block_before)
+	expected_heroes[target - 1]["block"] = block_before - absorbed
+	expected_heroes[target - 1]["hp"] = int(expected_heroes[target - 1].get("hp", 0)) \
+		- (9 - absorbed)
+	_check(settled == {"ok": true, "events": [{"type": "attack", "enemy_position": 1,
+			"applied": true, "target_position": target}]},
+		"AC2: the 9-point lash publishes one applied attack event")
+	_check(party.get_heroes() == expected_heroes
+		and case.enemies.get_enemies() == foes_before,
+		"AC2: the real phase spends the target's Block then removes exactly the source 9")
+	_check(announced == input_before,
+		"AC2: the announced lash input is never rewritten")
+
+	# AC2: the authored 9 stays the source amount before the defender's own
+	# Exposed multiplier and Block resolution.
+	var exposed_party := _party()
+	for position in [1, 2, 3]:
+		exposed_party._heroes[position - 1]["statuses"] = {"exposed": 1}
+	_check(CombatStatuses.new().adjusted_attack_damage(9, {},
+		exposed_party.get_hero(1).get("statuses", {})) == 13,
+		"AC2: Exposed turns the authored 9 into 13 incoming damage")
+	var exposed_case := _forced_hexer(alternatives[0], 64721, exposed_party)
+	if not exposed_case.is_empty():
+		var exposed_heroes: Array = exposed_party.get_heroes()
+		var exposed_target: int = exposed_case.intents[0].get("target_position", 0)
+		var exposed_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+			exposed_party, exposed_case.enemies, exposed_case.intents)
+		_check(exposed_target in [1, 2, 3] and exposed_result.get("ok", false),
+			"AC2: the same authored 9 is announced against a living Exposed hero")
+		if exposed_target in [1, 2, 3]:
+			var exposed_expected := exposed_heroes.duplicate(true)
+			var exposed_block := int(exposed_expected[exposed_target - 1].get("block", 0))
+			var exposed_absorbed := mini(13, exposed_block)
+			exposed_expected[exposed_target - 1]["block"] = exposed_block - exposed_absorbed
+			exposed_expected[exposed_target - 1]["hp"] = \
+				int(exposed_expected[exposed_target - 1].get("hp", 0)) - (13 - exposed_absorbed)
+			_check(exposed_party.get_heroes() == exposed_expected,
+				"AC2: the authored 9 is multiplied by Exposed before Block resolves")
+
+	# AC2: both untouched status alternatives remain available and deal no damage.
+	for index in [1, 2]:
+		var alternative: Dictionary = alternatives[index]
+		var status_party := _party()
+		var status_case := _forced_hexer(alternative, 64725 + index, status_party)
+		if status_case.is_empty():
+			continue
+		var status_target: int = status_case.intents[0].get("target_position", 0)
+		var status_before: Array = status_party.get_heroes()
+		var status_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+			status_party, status_case.enemies, status_case.intents)
+		_check(status_target in [1, 2, 3] and status_result.get("ok", false)
+			and status_result.get("events", []).size() == 1,
+			"AC2: the authored " + str(alternative["status"]) + " "
+				+ str(alternative["amount"]) + " remains available and resolves")
+		if status_target not in [1, 2, 3]:
+			continue
+		var status_expected := status_before.duplicate(true)
+		var landed := {}
+		landed[alternative["status"]] = alternative["amount"]
+		status_expected[status_target - 1]["statuses"] = landed
+		_check(status_party.get_heroes() == status_expected,
+			"AC2: the authored " + str(alternative["status"]) + " "
+				+ str(alternative["amount"]) + " lands on exactly one hero without damage")
+
+	# AC3: the same seed reproduces the announcement, and a forged target still
+	# fails closed without touching any actor or spending a random number.
+	var replay_party := _party()
+	_check(replay_party.gain_block(1, 4),
+		"AC3 precondition: a fresh Warden really holds four Block")
+	var replay := _forced_hexer(alternatives[0], 64719, replay_party)
+	if not replay.is_empty():
+		_check(replay.intents == input_before,
+			"AC3: a same-seed bound Hexer replays the identical lash announcement")
+		var replay_heroes: Array = replay_party.get_heroes()
+		var replay_foes: Array = replay.enemies.get_enemies()
+		var forged: Array = replay.intents.duplicate(true)
+		forged[0]["target_position"] = 0
+		_check(CombatEnemyPhase.new().execute_phase(
+				replay_party, replay.enemies, forged) == {"ok": false, "events": []}
+			and replay_party.get_heroes() == replay_heroes
+			and replay.enemies.get_enemies() == replay_foes,
+			"AC3: a forged Hexer lash target fails closed with no mutation or RNG spend")
+	_check(elites == untouched and _catalog(ELITES) == untouched,
+		"AC3: the shipped elite catalog and its parsed source stay untouched")
+	_check(randi() == expected_rng,
+		"AC3: the Hexer lash checks use no global RNG")
 
 
 ## One authored Elite record checked by ID against its independent expectation:
