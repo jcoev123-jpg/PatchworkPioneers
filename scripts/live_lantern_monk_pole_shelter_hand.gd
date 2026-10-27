@@ -2,8 +2,12 @@ extends Node
 ## Scene-mounted, presentation-only Pole Shelter chooser. The paid rules live exclusively
 ## in CombatLanternMonkPoleShelterCards; this node never mutates a roster to preview.
 const IDS := ["lantern_monk_pole_shelter", "lantern_monk_pole_shelter_plus"]
+const WAX_IDS := ["lantern_monk_wax_ward", "lantern_monk_wax_ward_plus"]
 const DEBUFFS := ["bleed", "weak", "exposed"]
 var _service := CombatLanternMonkPoleShelterCards.new()
+var _wax_service := CombatLanternMonkWaxWardCards.new()
+var _bind_serial := 0
+var _wax_finishing := false
 var _bindings: Dictionary = {}
 var _pending: Dictionary = {}
 var _epoch := 0
@@ -44,12 +48,14 @@ func _panel_id(panel: Variant) -> String:
 	if index < 0 or index >= app.deck.hand.size():
 		return ""
 	var id: String = app.deck.hand[index]
-	if id not in IDS or panel.get_child(0).text != id:
+	if (id not in IDS and id not in WAX_IDS) or panel.get_child(0).text != id:
 		return ""
 	return id
 
 
 func _sync_battle() -> void:
+	if _wax_finishing:
+		return
 	if not _current():
 		_cancel(false)
 		_unbind_all()
@@ -65,15 +71,22 @@ func _sync_battle() -> void:
 		var id := _panel_id(panel)
 		if id.is_empty():
 			continue
-		var callback := _card_input.bind(panel, id, panel.get_index())
-		_bindings[panel] = {"id": id, "index": panel.get_index(), "callback": callback}
+		_bind_serial += 1
+		var callback := _card_input.bind(panel, id, panel.get_index(), _bind_serial)
+		_bindings[panel] = {"id": id, "index": panel.get_index(), "callback": callback,
+			"token": _bind_serial, "context": _snapshot() if id in WAX_IDS else {}}
 		panel.gui_input.connect(callback)
 		panel.focus_mode = Control.FOCUS_ALL
 		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		panel.get_child(0).mouse_filter = Control.MOUSE_FILTER_IGNORE
-		panel.tooltip_text = "%s | Cost 1 | Block %d | Choose living ally; remove one chosen present Bleed, Weak or Exposed" % [
-			"Pole Shelter+" if id.ends_with("_plus") else "Pole Shelter",
-			7 if id.ends_with("_plus") else 5]
+		if id in WAX_IDS:
+			panel.tooltip_text = "%s | Cost 1 | Block %d | self" % [
+				"Wax Ward+" if id.ends_with("_plus") else "Wax Ward",
+				7 if id.ends_with("_plus") else 5]
+		else:
+			panel.tooltip_text = "%s | Cost 1 | Block %d | Choose living ally; remove one chosen present Bleed, Weak or Exposed" % [
+				"Pole Shelter+" if id.ends_with("_plus") else "Pole Shelter",
+				7 if id.ends_with("_plus") else 5]
 	if not _pending.is_empty() and not _pending_valid():
 		_cancel()
 
@@ -161,8 +174,8 @@ func _pending_valid() -> bool:
 	return true
 
 
-func _card_input(event: InputEvent, panel: Variant, id: String, index: int) -> void:
-	if not _source_valid(panel, id, index):
+func _card_input(event: InputEvent, panel: Variant, id: String, index: int, token: int) -> void:
+	if _wax_finishing or not _source_valid(panel, id, index) or _bindings[panel].token != token:
 		return
 	var click: bool = event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed
 	var key: bool = event is InputEventKey and panel.has_focus() \
@@ -172,6 +185,9 @@ func _card_input(event: InputEvent, panel: Variant, id: String, index: int) -> v
 	panel.accept_event()
 	if not _pending.is_empty():
 		return
+	if id in WAX_IDS:
+		_play_wax(panel, id, index, token)
+		return
 	var possible := false
 	for position in range(1, 4):
 		if _can_target(id, position):
@@ -179,6 +195,43 @@ func _card_input(event: InputEvent, panel: Variant, id: String, index: int) -> v
 	if not possible:
 		return
 	_open(panel, id, index)
+
+
+## Wax Ward is a self-only card: no target chooser and no explicit seat argument.
+## A binding's original context and token cannot be reused after a redraw or turn.
+func _play_wax(panel: Variant, id: String, index: int, token: int) -> void:
+	if not _source_valid(panel, id, index) or _bindings[panel].token != token:
+		return
+	if _bindings[panel].context != _snapshot():
+		_focus_action()
+		return
+	var app = get_parent()
+	if not _wax_service._prepare(app.deck, app.party, id, 0).get("ok", false):
+		_focus_action()
+		return
+	# Retire this listener before the paid service. Duplicate presses and old
+	# callbacks cannot inherit another copy in the newly drawn hand.
+	_unbind(panel)
+	var receipt: Dictionary = _wax_service.play_card(app.deck, app.party, id)
+	if receipt.get("ok", false):
+		# A panel cannot be freed while Godot is delivering its gui_input.
+		# Settle the UI once, on the deferred frame, with replay blocked meanwhile.
+		_wax_finishing = true
+		call_deferred("_finish_wax_play")
+	else:
+		_focus_action()
+
+
+func _finish_wax_play() -> void:
+	if not _wax_finishing:
+		return
+	var app = get_parent()
+	app._refresh_party()
+	app._refresh_hand()
+	app._refresh_intents()
+	app._observe_battle_result()
+	_wax_finishing = false
+	_focus_action()
 
 
 func _style() -> StyleBoxFlat:
