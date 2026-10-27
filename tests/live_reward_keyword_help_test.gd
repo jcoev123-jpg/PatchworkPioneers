@@ -674,10 +674,10 @@ func _bleed_doubling_catalog_test(seamstress: SeamstressPoolCards) -> void:
 	_check(not mixed_names.has("Bleed doubling") and mixed_names.has("Bleed 2"),
 		"an extra effect key drops the doubling row and keeps the ordinary Bleed row")
 	_check(CardKeywordGlossary.KEYWORD_ORDER == ["bleed", "weak", "exposed", "pinned",
-		"unravel", "guarding", "thorns", "riposte", "tangled", "blind"]
+		"unravel", "guarding", "thorns", "riposte", "tangled", "blind", "fear"]
 		and CardKeywordGlossary.SPECIAL_ORDER == ["conditional_damage", "random_hit",
 			"energy_tradeoff", "bleed_doubling", "two_hits", "dodge", "exhaust"],
-		"Blind is the last keyword row after the legacy, Riposte and Tangled rows, and exhaust is the last special row after the new Dodge/Exhaust additions")
+		"Fear is the last keyword row after the legacy, Riposte, Tangled and Blind rows, and exhaust is the last special row after the new Dodge/Exhaust additions")
 
 
 ## A detached Pin and Pound definition with the authored structural keys the
@@ -1112,11 +1112,11 @@ func _blind_catalog_test(starters: LanternMonkStarterCards,
 		and random_with_draw == _blind_definition("enemy_random",
 			{"blind_next_attack": true, "draw": 1}),
 		"negative cases never mutate the positive Blind fixtures")
-	_check(CardKeywordGlossary.KEYWORD_ORDER[CardKeywordGlossary.KEYWORD_ORDER.size() - 1]
-		== "blind"
-		and CardKeywordGlossary.KEYWORD_ORDER[CardKeywordGlossary.KEYWORD_ORDER.size() - 2]
-		== "tangled",
-		"Blind is appended after Tangled as the last keyword row")
+	var keyword_order := CardKeywordGlossary.KEYWORD_ORDER
+	_check(keyword_order[keyword_order.size() - 1] == "fear"
+		and keyword_order[keyword_order.size() - 2] == "blind"
+		and keyword_order.find("blind") > keyword_order.find("tangled"),
+		"Fear is appended after Blind, which is appended after Tangled")
 
 
 func _help_in_fixture(fixture: Dictionary, kind: String) -> void:

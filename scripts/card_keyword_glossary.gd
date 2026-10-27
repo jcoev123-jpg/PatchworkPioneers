@@ -1,13 +1,13 @@
 class_name CardKeywordGlossary
 extends RefCounted
 ## Read-only explanations for authored card effects. No run, scene or RNG state.
-## The fixed order is independent of Dictionary insertion order: the ten keyword
-## rows first (the legacy seven, then Riposte, Tangled and Blind), then the
+## The fixed order is independent of Dictionary insertion order: the keyword
+## rows first (the legacy seven, then Riposte, Tangled, Blind and Fear), then the
 ## authored special-rule rows in SPECIAL_ORDER.
 ## Help is explanatory only; it never says an unheld card can be played.
 
 const KEYWORD_ORDER := ["bleed", "weak", "exposed", "pinned", "unravel", "guarding",
-	"thorns", "riposte", "tangled", "blind"]
+	"thorns", "riposte", "tangled", "blind", "fear"]
 ## Non-keyword rules are explained after the keyword rows, always in this
 ## order and only for the exact authored descriptor shape (never a guess).
 const SPECIAL_ORDER := ["conditional_damage", "random_hit", "energy_tradeoff", "bleed_doubling", "two_hits", "dodge", "exhaust"]
@@ -91,6 +91,12 @@ const DODGE_ALLY_IDS := ["lantern_monk_moth_shroud", "lantern_monk_moth_shroud_p
 const DODGE_IDS := DODGE_SELF_IDS + DODGE_ALLY_IDS
 ## The two Moth Cloud variants that carry both Blind and Exhaust.
 const EXHAUST_IDS := ["lantern_monk_moth_cloud", "lantern_monk_moth_cloud_plus"]
+## Fear is the Scarecrow's authored one-turn buff lock, printed as one compact
+## Help row. Only the eight authentic catalog printings that CardShortRules
+## authenticates receive it, so no same-shaped forged or mis-owned record can
+## borrow the rule. The row states the authored design only: the Scarecrow is not
+## yet part of a live party and no held card resolves Fear in battle.
+const FEAR_EXPLANATION := "Fear is the authored Scarecrow keyword: the affected enemy cannot buff on its NEXT enemy turn, and the buff lock then expires at the end of that turn, so it never covers a second turn. Upgrades never lengthen the lock. Fear is applied together with a separate Weak, which reduces the enemy's outgoing attack damage by 25% (rounded down) for its authored Weak turns: Sack Glare, Sack Grin and Crow Flock author Weak 1 on the base card and Weak 2 on the upgraded card, while Harvest Fright authors Weak 2 on the base card and Weak 3 on the upgraded card. Fear adds no damage, Bleed or Blind of its own. This Help explains the authored design rule only: the Scarecrow is not yet part of a live party, so no held card resolves Fear in battle yet."
 
 
 static func describe(definition: Variant) -> Array[Dictionary]:
@@ -102,7 +108,12 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 		return lines
 	var effects: Dictionary = effects_value
 	for key: String in KEYWORD_ORDER:
-		if key == "blind":
+		if key == "fear":
+			# Fear is authored under its own flag key, so its presence is the
+			# strict authenticated Scarecrow check rather than one plain lookup.
+			if not _authored_fear(definition):
+				continue
+		elif key == "blind":
 			# Blind is authored under two different keys, so its presence is the
 			# strict two-spelling check rather than one plain key lookup.
 			if not _authored_blind(definition, effects):
@@ -116,6 +127,10 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 			if not raw is int or int(raw) <= 0:
 				continue
 			keyword = "%s %d" % [key.capitalize(), int(raw)]
+		elif key == "fear":
+			# Fear is a bare keyword with no authored count; it never prints the
+			# buff-lock duration or the separate Weak stacks as a second number.
+			keyword = "Fear"
 		elif key == "riposte":
 			# Riposte is only explained with a positive amount and the authored
 			# one-turn duration; any other shape gets no row.
@@ -155,6 +170,8 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 				explanation = "For %d turns, the Tangled unit cannot move or be moved by its own side, and attacks against it deal +2 damage, applied once per positive-base status-aware attack after Weak and Exposed rounding down, regardless of the Tangled count. Tangled decrements at owner-turn end. The combat status rules apply this effect; not every live own-side movement route is wired." % int(raw)
 			"blind":
 				explanation = "Blind is one-shot, never a stack or a number of turns: the affected enemy's NEXT attack misses, and after that attack the Blind is spent. This Help explains the printed design rule only; live combat does not yet cancel the attack."
+			"fear":
+				explanation = FEAR_EXPLANATION
 		lines.append({"keyword": keyword, "explanation": explanation})
 	for key: String in SPECIAL_ORDER:
 		var special := _special_line(key, definition, effects)
@@ -657,6 +674,16 @@ static func _darning_line(definition: Dictionary, effects: Dictionary) -> Dictio
 	var explanation := "Heals a chosen living ally %d HP and grants that ally %d Block. Costs %d energy and is playable by the Seamstress from positions 1-3. Healing is capped by the chosen living ally's missing HP, while the Block portion still applies even if the ally is already at full HP. A downed hero cannot be chosen and is not revived." % [
 		int(heal_value), int(block_value), int(cost_value)]
 	return {"keyword": "Mixed rescue", "explanation": explanation}
+
+
+## Fear is the Scarecrow's authored one-turn buff lock. Its single authority is
+## CardShortRules' strict printing check, which re-reads the exact ID, owner,
+## recipient, cost, slots, Weak amount and the whole effect descriptor. Delegating
+## keeps the sewn face and Help from disagreeing, and a Boolean false, a numeric
+## one, a null, a rebuilt same-shaped card or a self/ally recipient never earns
+## the row.
+static func _authored_fear(definition: Dictionary) -> bool:
+	return CardShortRules.is_authored_fear(definition)
 
 
 ## Blind is the Lantern Monk's look-driven one-shot status, authored in exactly
