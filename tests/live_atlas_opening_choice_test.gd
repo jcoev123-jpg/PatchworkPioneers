@@ -319,12 +319,22 @@ func _assert_flow(app, kind: String, id: String, rng_state: int) -> void:
 				return
 			var chosen: Dictionary = pool[rng.randi_range(0, pool.size() - 1)]
 			expected_cards.append({"id": chosen.id, "owner": owner, "price": int(chosen.price), "sold": false})
+		var power_ids := {}
+		for definition in RunAuthoredPatchDefinitions.load_power_definitions():
+			if definition is Dictionary and definition.get("id") is String:
+				power_ids[definition["id"]] = true
+		_check(power_ids.has("quilted_coat"), "independent Peddler oracle knows the authored power patches")
 		var patch_pool: Array = []
 		for candidate in authored.trinkets:
-			if not app.run_trinkets.has(candidate.id):
+			if power_ids.has(candidate.id) and not app.run_trinkets.has(candidate.id):
 				patch_pool.append(candidate)
+		if patch_pool.is_empty():
+			# Only authored power patches are priced; the owned tier is fallback.
+			for candidate in authored.trinkets:
+				if power_ids.has(candidate.id):
+					patch_pool.append(candidate)
 		patch_pool.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.id < b.id)
-		_check(not patch_pool.is_empty(), "independent Peddler oracle has an unowned patch candidate")
+		_check(not patch_pool.is_empty(), "independent Peddler oracle has an unowned power patch candidate")
 		if patch_pool.is_empty():
 			return
 		var patch_tickets: Array = []

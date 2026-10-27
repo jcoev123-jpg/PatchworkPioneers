@@ -78,9 +78,12 @@ func _acquired_attack_check(patch_id: String) -> void:
 ## Search actual seeded stock, never replace its candidate pool or listings.
 func _attack_patch_purchases() -> void:
 	var slots := RunAuthoredPatchDefinitions.load_definitions()
-	for target in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm", "HEAD", "ARM", "COAT"]:
+	# The two inert starter-slot fixtures (stitched_badge, spare_spool) are
+	# wardrobe records, never a Peddler power offer; the genuine powers below
+	# and the three slot targets cover the live purchase/sew/effect path.
+	for target in ["quilted_coat", "button_eye", "pincushion_arm", "HEAD", "ARM", "COAT"]:
 		var fixture: Dictionary = {}
-		var next_seed: int = {"stitched_badge": 3841, "spare_spool": 2927, "quilted_coat": 40281, "button_eye": 4640, "pincushion_arm": 18695, "HEAD": 4752, "ARM": 1060, "COAT": 2255}.get(target, 1)
+		var next_seed: int = {"quilted_coat": 40281, "button_eye": 4640, "pincushion_arm": 18695, "HEAD": 4752, "ARM": 1060, "COAT": 2255}.get(target, 1)
 		var found := false
 		for attempt in range(240):
 			fixture = _sequence_fixture(["Shop", "Fight"], next_seed)
@@ -856,15 +859,15 @@ func _badge_flow_state(f: Dictionary) -> Array:
 func _badge_fights() -> void:
 	_badge_service_checks()
 	var fixture := {}
-	# Current verified connected route; search its genuine stock and advance
-	# deterministically when the Badge is absent after authored pool/map changes.
+	# A Peddler patch is always an authored POWER record, so the inert starter
+	# Badge can no longer be its offer. Search genuine seeded stock for the real
+	# quilted_coat power (+6 maximum HP) and advance deterministically through
+	# real routes. Never replace stock or definitions to manufacture a case.
 	var next_seed := 5087
-	var badge := -1
-	# Find a real generated route whose real stock contains the Badge. Never
-	# replace stock or patch definitions to manufacture a positive case.
+	var coat := -1
 	for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
 		fixture = _sequence_fixture(["Shop", "Fight", "Fight"], next_seed, true)
-		_check(not fixture.is_empty(), "generated route supports Badge and inactive follow-up Fight")
+		_check(not fixture.is_empty(), "generated route supports a bought coat and inactive follow-up Fight")
 		if fixture.is_empty() or not await _routed_win(fixture, false):
 			return
 		await _click(app.reward_buttons[3])
@@ -872,16 +875,17 @@ func _badge_fights() -> void:
 		_fund_shop_fixture()
 		await _reach(fixture.paths[0], false)
 		for i in range(1):
-			if app.peddler_visit.read_state().stock.trinkets[i].id == "stitched_badge":
-				badge = i
+			if app.peddler_visit.read_state().stock.trinkets[i].id == "quilted_coat":
+				coat = i
 		next_seed = fixture.seed + 1
 		app._return_to_title()
 		await _frames()
-		if badge >= 0:
+		if coat >= 0:
 			break
-	_check(badge >= 0, "real seeded Shop stock guarantees a purchasable Stitched Badge")
-	if badge < 0:
+	_check(coat >= 0, "real seeded Shop stock guarantees a purchasable quilted_coat power")
+	if coat < 0:
 		return
+	var coat_bonus := 6
 	for wearer in [0, 1]:
 		var replay: Array = []
 		for keyboard in [false, true]:
@@ -892,7 +896,7 @@ func _badge_fights() -> void:
 			_fund_shop_fixture()
 			await _reach(fixture.paths[0], keyboard)
 			wardrobe = app._peddler_wardrobe
-			await _purchase(badge, keyboard, wearer)
+			await _purchase(coat, keyboard, wearer)
 			var paid := [app.run_heroes.duplicate(true), app.run_deck.duplicate(),
 				app.run_trinkets.duplicate(), app.session_gold, app.run_scraps]
 			_check([app.run_heroes, app.run_deck, app.run_trinkets, app.session_gold, app.run_scraps] == paid,
@@ -901,7 +905,7 @@ func _badge_fights() -> void:
 			var transit: Array = fixture.paths[1].duplicate()
 			var destination: String = transit.pop_back()
 			await _visit_path(transit, keyboard)
-			# A transit Rest or Event may legitimately heal or pay before the Badge fight.
+			# A transit Rest or Event may legitimately heal or pay before the coat fight.
 			var persistent := [app.run_heroes.duplicate(true), app.run_deck.duplicate(),
 				app.run_trinkets.duplicate(), app.session_gold, app.run_scraps]
 			var action: Button = _route_action(destination)
@@ -916,36 +920,42 @@ func _badge_fights() -> void:
 			await _activate(action, keyboard)
 			_check(app.party != null and app.round_flow._started and _mounted_state() == oracle,
 				"real mounted Fight starts with exact seeded entry state")
+			var base_heroes: Array = persistent[0]
 			for hero in app.party.get_heroes():
-				var expected := (6 if hero.id == "warden" else 0) + (3 if hero.position == wearer + 1 else 0)
-				_check(hero.block == expected, "Badge adds exactly 3 only to its wearer at first entry")
+				var base: Dictionary = base_heroes.filter(func(entry): return entry.id == hero.id)[0]
+				var expected_max: int = base.max_hp + (coat_bonus if hero.position == wearer + 1 else 0)
+				_check(hero.max_hp == expected_max,
+					"the bought coat adds exactly +6 maximum HP to its living wearer")
+				_check(hero.block == (6 if hero.id == "warden" else 0),
+					"opening Block stays the authored base beside a bought coat")
 			_check([app.run_heroes, app.run_deck, app.run_trinkets, app.session_gold, app.run_scraps] == persistent,
-				"opening Badge preserves persistent heroes, deck, ownership and currency")
+				"opening coat preserves persistent heroes, deck, ownership and currency")
 			var live := {"party": app.party, "enemies": app.enemies, "deck": app.deck,
 				"rng": app.run_rng, "intents": app.enemy_intents, "result": app.battle_result,
 				"flow": app.round_flow}
 			var trace := [_badge_flow_state(live)]
 			var duplicate := _badge_flow_state(live)
 			_check(not app.round_flow.begin_fight() and _badge_flow_state(live) == duplicate,
-				"duplicate begin cannot stack Badge, change actors or consume RNG")
-			_check(app.round_flow.end_turn(), "real Badge battle advances through enemy phase")
+				"duplicate begin cannot stack the coat, change actors or consume RNG")
+			_check(app.round_flow.end_turn(), "real coat battle advances through enemy phase")
 			for hero in app.party.get_heroes():
 				_check(hero.block == 0, "normal next-turn reset removes all opening Block")
 			trace.append(_badge_flow_state(live))
-			var badge_owner: String = persistent[0][wearer].id
-			var current_wearer: Dictionary = app.party.get_heroes().filter(func(hero): return hero.id == badge_owner)[0]
+			var coat_owner: String = persistent[0][wearer].id
+			var current_wearer: Dictionary = app.party.get_heroes().filter(func(hero): return hero.id == coat_owner)[0]
 			await _settle_battle(keyboard, current_wearer.position)
 			await _activate(app.continue_button, keyboard)
 			await _reach(fixture.paths[2], keyboard)
-			var down: Dictionary = app.party.get_heroes().filter(func(hero): return hero.id == badge_owner)[0]
-			_check(down.hp == 0 and down.block == 0
-				and wardrobe.get_snapshot().worn[down.id].HEAD == "stitched_badge",
-				"next mounted Fight grants zero to genuinely downed inactive Badge wearer")
+			var down: Dictionary = app.party.get_heroes().filter(func(hero): return hero.id == coat_owner)[0]
+			var torn_hero: Dictionary = app.party_carryover.torn.read_state().heroes[wearer]
+			_check(down.hp == 0 and down.block == 0 and down.max_hp == torn_hero.max_hp
+				and wardrobe.get_snapshot().worn[down.id].COAT == "quilted_coat",
+				"next mounted Fight grants no coat cap bonus to a genuinely downed wearer")
 			trace.append(_mounted_state())
 			trace.append([app.run_heroes.duplicate(true), app.run_deck.duplicate(), app.run_trinkets.duplicate(),
 				app.session_gold, app.run_scraps, wardrobe.get_snapshot()])
 			if keyboard:
-				_check(trace == replay, "Badge mouse/keyboard replay agrees on full combat and persistent state")
+				_check(trace == replay, "coat mouse/keyboard replay agrees on full combat and persistent state")
 			else:
 				replay = trace
 			await _settle_battle(keyboard)

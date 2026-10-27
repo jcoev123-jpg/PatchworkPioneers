@@ -54,14 +54,21 @@ func _stock_oracle() -> Dictionary:
 		var quote: Dictionary = authored.cards.filter(func(c): return c.id == chosen)[0]
 		cards.append({"id": chosen, "owner": hero.id, "price": int(quote.price), "sold": false})
 	var patches: Array = []
+	# The Peddler prices only authored POWER patches: the inert starter-slot
+	# records shipped beside them are never a payable offer.
+	var power_ids := {}
+	for definition in RunAuthoredPatchDefinitions.load_power_definitions():
+		if definition is Dictionary and definition.get("id") is String:
+			power_ids[definition["id"]] = true
 	for candidate in authored.trinkets:
-		if not app.run_trinkets.has(candidate.id):
+		if power_ids.has(candidate.id) and not app.run_trinkets.has(candidate.id):
 			patches.append(candidate.id)
 	if patches.is_empty():
 		for candidate in authored.trinkets:
-			patches.append(candidate.id)
+			if power_ids.has(candidate.id):
+				patches.append(candidate.id)
 	patches.sort()
-	_check(not patches.is_empty(), "independent patch oracle has candidates")
+	_check(not patches.is_empty(), "independent patch oracle has authored power candidates")
 	var tickets: Array[String] = []
 	for patch_id in patches:
 		for ticket in range(10 if patch_id in ["relay_bobbin", "hearth_lining"] else 100):

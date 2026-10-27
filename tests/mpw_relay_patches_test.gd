@@ -77,8 +77,21 @@ func _stock_weights() -> void:
 	for owner in party:
 		pools[owner].sort()
 	var ids: Array[String] = []
+	# Only authored POWER patches can be priced. The two inert starter-slot
+	# wardrobe fixtures are shipped candidates but never paid patch stock, so
+	# the independent ticket oracle excludes them exactly like the supplier.
+	var power_ids := {}
+	for definition in RunAuthoredPatchDefinitions.load_power_definitions():
+		if definition is Dictionary and typeof(definition.get("id")) == TYPE_STRING:
+			power_ids[definition["id"]] = true
+	_check(power_ids.has("relay_bobbin") and power_ids.has("hearth_lining")
+			and power_ids.has("quilted_coat"),
+		"the authored power projection carries the P8 and ordinary patches")
+	_check(not power_ids.has("stitched_badge") and not power_ids.has("spare_spool"),
+		"the starter-slot wardrobe fixtures are not authored power patches")
 	for patch in source.trinkets:
-		ids.append(patch.id)
+		if power_ids.has(patch.id):
+			ids.append(patch.id)
 	ids.sort()
 	for id in ["relay_bobbin", "hearth_lining"]:
 		var quotes: Array = source.trinkets.filter(func(entry): return entry.id == id)
