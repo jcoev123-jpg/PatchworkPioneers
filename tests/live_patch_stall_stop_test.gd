@@ -174,6 +174,17 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 	_check(panel.offer_buttons.size() == 3 and panel.wearer_buttons.size() == 3
 		and panel.leave_button.text == "Leave  \u00b7  FREE" and not is_instance_valid(app.shop_view),
 		"only patch choices, three recipients and Leave")
+	_check(panel.wearer_label.is_visible_in_tree()
+		and panel.wearer_label.text == LivePatchStallPanel.WEARER_WARNING
+		and panel.wearer_label.text.contains("+1 scrap"),
+		"live Patch Stall always shows the same-slot destruction warning")
+	for index in range(3):
+		var live_slot: String = power_ids[expected[index].id]
+		_check(panel.offer_buttons[index].tooltip_text.contains(
+				"%s slot: a patch already worn in this slot is destroyed for exactly +1 scrap." % live_slot)
+			and panel.offer_buttons[index].tooltip_text.contains(
+				"A free %s slot destroys nothing and gains no scrap." % live_slot),
+			"live tooltip names the offer's own %s slot and both replacement outcomes" % live_slot)
 	var controls: Array = panel.wearer_buttons + panel.offer_buttons + [panel.leave_button]
 	for control in controls:
 		_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), "visible controls fit viewport")
