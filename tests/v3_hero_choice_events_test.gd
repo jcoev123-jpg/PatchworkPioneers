@@ -199,6 +199,72 @@ const EVENTS := {
 			"leave": {"text": "Leave the foundry ringing", "gold": 0, "scraps": 0},
 		},
 	},
+	"v3_warden_buckle_checkpoint": {
+		"title": "The Buckle Checkpoint",
+		"description": "A shield-wide patchwork watchtower guards the threadbare road while brass buckles rattle in the wind.",
+		"required_hero": "warden",
+		"hero_choice_ids": ["brace_caravan", "sell_buckle_wire"],
+		"choices": {
+			"brace_caravan": {"text": "Brace the caravan for a 16-gold watchman's wage", "gold": 16, "scraps": 0},
+			"sell_buckle_wire": {"text": "Trade two spare buckle scraps for 27 gold", "gold": 27, "scraps": -2},
+			"leave": {"text": "Lower the shield and continue", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_seamstress_crimson_mending_queue": {
+		"title": "The Crimson Mending Queue",
+		"description": "A long row of button-eyed dolls waits beneath a giant red needle for a fresh hem.",
+		"required_hero": "seamstress",
+		"hero_choice_ids": ["sew_crimson_hem", "buy_moon_thread"],
+		"choices": {
+			"sew_crimson_hem": {"text": "Sew the queue's frayed hems for two scraps", "gold": 0, "scraps": 2},
+			"buy_moon_thread": {"text": "Spend 16 gold on three moonlit thread scraps", "gold": -16, "scraps": 3},
+			"leave": {"text": "Fold the needle away and leave", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_tinker_gear_sideshow": {
+		"title": "The Clockwork Sideshow",
+		"description": "A hunched goggle-maker's blunderbuss gears turn a little mechanical puppet stage.",
+		"required_hero": "tinker",
+		"hero_choice_ids": ["repair_sideshow_cog", "buy_spring_caps"],
+		"choices": {
+			"repair_sideshow_cog": {"text": "Repair the clockwork cog for a 20-gold fee", "gold": 20, "scraps": 0},
+			"buy_spring_caps": {"text": "Pay 12 gold for two spring-cap scraps", "gold": -12, "scraps": 2},
+			"leave": {"text": "Let the puppet stage go quiet", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_scarecrow_crow_lantern_post": {
+		"title": "The Crow-Lantern Post",
+		"description": "A black crow guards a lantern-lit granary where loose straw spills from stitched sacks.",
+		"required_hero": "scarecrow",
+		"hero_choice_ids": ["gather_nest_straw", "sell_woven_straw"],
+		"choices": {
+			"gather_nest_straw": {"text": "Gather one bundle of loose straw scraps", "gold": 0, "scraps": 1},
+			"sell_woven_straw": {"text": "Trade two straw scraps for 23 gold", "gold": 23, "scraps": -2},
+			"leave": {"text": "Leave the crow on its post", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_yarn_ranger_wool_signal_station": {
+		"title": "The Wool Signal Station",
+		"description": "Knitting-needle signal masts span a misty ridge, hung with moss-green yarn bolas.",
+		"required_hero": "yarn_ranger",
+		"hero_choice_ids": ["retrieve_signal_wool", "sell_bolas_knots"],
+		"choices": {
+			"retrieve_signal_wool": {"text": "Reel in two scraps of loose signal wool", "gold": 0, "scraps": 2},
+			"sell_bolas_knots": {"text": "Trade two bolas-knot scraps for 24 gold", "gold": 24, "scraps": -2},
+			"leave": {"text": "Cross beneath the silent wool signals", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_button_golem_rivet_bridge": {
+		"title": "The Rivet Bridge",
+		"description": "A giant button-bodied porter holds a brass-riveted bridge steady in the dusk.",
+		"required_hero": "button_golem",
+		"hero_choice_ids": ["brace_rivet_bridge", "buy_brass_bobbins"],
+		"choices": {
+			"brace_rivet_bridge": {"text": "Hold the bridge for an 18-gold porter's wage", "gold": 18, "scraps": 0},
+			"buy_brass_bobbins": {"text": "Spend 17 gold on three brass-thread scraps", "gold": -17, "scraps": 3},
+			"leave": {"text": "Let the bridge settle and go", "gold": 0, "scraps": 0},
+		},
+	},
 }
 
 var failures: Array[String] = []

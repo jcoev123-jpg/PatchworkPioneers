@@ -19,6 +19,12 @@ const CASES := {
 	"v3_scarecrow_blackcrow_post": ["scarecrow", "buy_straw_twines", -13, 2],
 	"v3_yarn_ranger_bolas_bridge": ["yarn_ranger", "sell_needlespool", 18, -1],
 	"v3_button_golem_bell_foundry": ["button_golem", "buy_brass_thread", -19, 3],
+	"v3_warden_buckle_checkpoint": ["warden", "sell_buckle_wire", 27, -2],
+	"v3_seamstress_crimson_mending_queue": ["seamstress", "buy_moon_thread", -16, 3],
+	"v3_tinker_gear_sideshow": ["tinker", "buy_spring_caps", -12, 2],
+	"v3_scarecrow_crow_lantern_post": ["scarecrow", "sell_woven_straw", 23, -2],
+	"v3_yarn_ranger_wool_signal_station": ["yarn_ranger", "sell_bolas_knots", 24, -2],
+	"v3_button_golem_rivet_bridge": ["button_golem", "buy_brass_bobbins", -17, 3],
 }
 
 var failures: Array[String] = []
@@ -214,7 +220,7 @@ func _replay(value: int) -> Array:
 	var receipts: Array = [service.get_offers()]
 	var wallet := {"gold": 30, "scraps": 3}
 	for event_id in ["v3_lantern_monk_moth_vigil", "v3_rag_duelist_needle_fair", "v3_tinker_clockwork_wagon",
-		"v3_lantern_monk_evening_beacon", "v3_rag_duelist_scarlet_fair"]:
+		"v3_lantern_monk_evening_beacon", "v3_rag_duelist_scarlet_fair", "v3_tinker_gear_sideshow"]:
 		var visit := service.enter(event_id)
 		_check(visit != null and visit.is_valid(), "replay has genuine admitted visit")
 		if visit == null:
