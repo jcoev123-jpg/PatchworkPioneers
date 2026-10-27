@@ -88,6 +88,10 @@ func _check_rest_direction_keys() -> void:
 		and scroll.get_global_rect().encloses(tiles.back().get_global_rect())
 		and tiles.back().get_node("FocusStitch").is_stitching(),
 		"last Rest upgrade scrolls full sewn focus frame into view")
+	var bar := scroll.get_v_scroll_bar()
+	_check(scroll.scroll_vertical >= int(bar.max_value - bar.page) - 1
+		and scroll.get_global_rect().end.y - _tile_frame(gallery, tiles.back()).get_global_rect().end.y > 0.0,
+		"keyboard focus on the last Rest card scrolls to the bottom with clearance under its frame")
 	await _key(KEY_DOWN)
 	_check(tiles.back().has_focus(), "Rest Down at end does not wrap into Heal or Upgrade")
 	tiles[0].grab_focus()
@@ -106,6 +110,119 @@ func _check_rest_direction_keys() -> void:
 	_check(app.rest_upgrade_cards.selected == 2 and emitted == [1]
 		and gallery.tile_details(tiles[2]).selected and _rest_state() == before,
 		"Enter selects one focused Rest row via OptionButton without upgrading")
+
+
+## The sewn card around a tile button: the tile list's direct child.
+func _tile_frame(gallery, tile: Control) -> Control:
+	var tiles_list: Control = gallery.gallery_scroll().get_node("GalleryInset/GalleryTiles")
+	var frame: Control = tile
+	while frame != null and frame.get_parent() != tiles_list:
+		frame = frame.get_parent() as Control
+	return frame if frame != null else tile
+
+
+## Mouse wheel reaches the last mended card with paper beneath its sewn frame
+## and a gap beside the scrollbar; clicking it picks its canonical row, and the
+## original Upgrade button replaces exactly that one owned copy.
+func _check_rest_pointer_upgrade() -> void:
+	var gallery = _visit_tiles()
+	var tiles: Array[Button] = gallery.upgrade_tiles()
+	var choices: OptionButton = app.rest_upgrade_cards
+	var scroll: ScrollContainer = gallery.gallery_scroll()
+	_check(gallery.is_gallery_mounted() and gallery.gallery_kind() == "Rest" and tiles.size() >= 4
+		and choices.item_count == tiles.size() and not app.rest_upgrade_button.disabled,
+		"pointer Rest test has a real mounted multi-upgrade gallery")
+	if tiles.size() < 4 or choices.item_count != tiles.size():
+		return
+	var inset := scroll.get_child(0) as MarginContainer
+	_check(scroll.get_child_count() == 1 and inset != null and inset.name == "GalleryInset"
+		and inset.get_child_count() == 1 and inset.get_child(0).name == "GalleryTiles"
+		and inset.mouse_filter == Control.MOUSE_FILTER_IGNORE and inset.focus_mode == Control.FOCUS_NONE
+		and inset.get_theme_constant("margin_right") > 0 and inset.get_theme_constant("margin_bottom") > 0,
+		"Rest tiles sit in one passive inset with right and bottom margins inside the scroll")
+	var metadata: Array = []
+	for item in range(choices.item_count):
+		metadata.append(choices.get_item_metadata(item))
+	for index in range(tiles.size()):
+		_check(gallery.tile_row(tiles[index]) == index and tiles[index] != inset,
+			"inset adds no card and keeps tile %d on its canonical row" % index)
+	var source: Array = app.run_deck.duplicate()
+	var canonical := RunRestCardUpgrade.list_authored_choices(source, app.run_stitch_descriptors, app.run_next_stitch_id)
+	var rows: Array = canonical.get("choices", [])
+	_check(canonical.get("ok") == true and rows.size() == tiles.size(), "independent canonical rows match the tiles")
+	if rows.size() != tiles.size():
+		return
+	var wallet := [app.session_gold, app.run_scraps, app.run_removal_count, app.run_rng.state]
+	var heroes: Array = app.run_heroes.duplicate(true)
+	var bar := scroll.get_v_scroll_bar()
+	var bottom := int(bar.max_value - bar.page)
+	var point := scroll.get_global_rect().get_center()
+	for step in range(60):
+		if scroll.scroll_vertical >= bottom - 1:
+			break
+		for pressed in [true, false]:
+			var wheel := InputEventMouseButton.new()
+			wheel.position = point
+			wheel.global_position = point
+			wheel.button_index = MOUSE_BUTTON_WHEEL_DOWN
+			wheel.factor = 1.0
+			wheel.pressed = pressed
+			root.push_input(wheel, true)
+		await _frames()
+	var last: Button = tiles.back()
+	var view := scroll.get_global_rect()
+	var face := _tile_frame(gallery, last).get_global_rect()
+	_check(bar.visible and bottom > 0 and scroll.scroll_vertical >= bottom - 1
+		and view.encloses(face) and view.end.y - face.end.y > 0.0,
+		"mouse wheel reaches the bottom with the final card's whole sewn face and clearance beneath it")
+	_check(bar.get_global_rect().position.x - face.end.x >= 4.0,
+		"the scrollbar no longer touches the card content")
+	await _click(last)
+	var row: Dictionary = rows.back()
+	_check(choices.selected == tiles.size() - 1 and choices.get_item_metadata(choices.selected) == int(row["index"])
+		and gallery.tile_details(last).selected and app.run_deck == source
+		and [app.session_gold, app.run_scraps, app.run_removal_count, app.run_rng.state] == wallet,
+		"clicking the last card selects its canonical row without upgrading or paying")
+	var after_metadata: Array = []
+	for item in range(choices.item_count):
+		after_metadata.append(choices.get_item_metadata(item))
+	_check(after_metadata == metadata, "pointer scrolling and selection keep the OptionButton metadata")
+	var upgrade: Callable = app.rest_upgrade_button.pressed.get_connections()[0].callable
+	var expected: Array = source.duplicate()
+	expected[int(row["index"])] = String(row["plus_id"])
+	await _click(app.rest_upgrade_button)
+	var changed := 0
+	for index in range(source.size()):
+		if index < app.run_deck.size() and app.run_deck[index] != source[index]:
+			changed += 1
+	_check(app.run_deck == expected and changed == 1 and app.run_heroes == heroes
+		and [app.session_gold, app.run_scraps, app.run_removal_count, app.run_rng.state] == wallet
+		and app.rest_upgrade_button.disabled and not app.rest_continue_button.disabled,
+		"one Upgrade press replaces exactly the last card's copy with no payment or extra selection")
+	_reject_rest(upgrade, "repeated Upgrade after the last-card commit")
+	app.rest_upgrade_button.pressed.emit()
+	_check(app.run_deck == expected, "replayed Upgrade signal stays inert")
+
+
+## A separate real run reaches the same seeded Rest and commits the Upgrade.
+func _pointer_upgrade_run(fixture: Dictionary) -> void:
+	seed(620062)
+	if not await _routed_win(fixture, false):
+		return
+	await _click(app.reward_buttons[0])
+	await _click(app.continue_button)
+	var entry := _legacy_rest_control(_route_action(fixture.rest))
+	if entry == null:
+		return
+	await _click(entry)
+	_check(app.rest_recovery != null and is_instance_valid(app.rest_upgrade_button),
+		"pointer upgrade run mounts the real Rest")
+	if app.rest_recovery == null or not is_instance_valid(app.rest_upgrade_button):
+		return
+	await _check_rest_pointer_upgrade()
+	await _click(app.rest_back_button)
+	_check(app.title_view.visible and app.run_map == null and app.rest_recovery == null,
+		"pointer upgrade run returns fully to the title")
 
 
 func _run() -> void:
@@ -288,6 +405,8 @@ func _run() -> void:
 				_reject_rest(callback, "post-title input")
 			_check(app.run_map == null and app.run_rng == null and app.title_view.visible, "post-title callbacks inert")
 			_check(randi() == global_next, "entire continued run consumes no global RNG")
+		if kind == "Rest":
+			await _pointer_upgrade_run(fixture)
 	_check(app._start_battle(), "explicit standalone M01 fixture starts")
 	await _frames()
 	_check(app.deck != null and app.run_map == null and app.rest_recovery == null, "standalone M01 fixture mounts independent battle")
