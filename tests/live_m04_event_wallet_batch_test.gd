@@ -13,6 +13,7 @@ const ORIGINAL_ROADSIDE := ["v3_raincoat_bridge", "v3_puppet_box_office",
 	"v3_mismatched_mittens", "v3_coil_and_crow", "v3_patchwork_lighthouse", "v3_button_orchard"]
 var gold_purchases := 0
 var new_hero_receipts := {}
+var fixture_fallback_used := false
 
 
 func _party_ids() -> Array:
@@ -55,25 +56,13 @@ func _event_path(map: RunMap, choices: Array, remaining: int) -> Array:
 
 
 const EVENT_WALLET_HINTS := preload("res://tests/event_wallet_hints.gd")
-## Revalidated witnesses for the current authentic eligible hero/Event pool:
-## real map generation, the same toll draw sequence and the same single sorted
-## pool draw. The pairs are re-derived from the shipped catalog and run RNG (not
-## a frozen pool total, order or list), so an unintended selector change fails
-## here while the bounded search below still covers every required ID. The
-## appended pairs were found by scanning seeds for a genuine six-Event route and
-## taking whatever the authentic single pool draw then returned; they restore
-## the required IDs whose former witnesses shifted each time the Event pool grew,
-## most recently when the six hero-gated V3-4 stories joined it. Every pair still
-## names its owed Event; only the seed that reaches it was re-derived.
-const OWED_WITNESSES := {
-	449195: "v3_warden_shield_menders", 807198: "v3_saffron_button_harvest",
-	4045188: "v3_frosted_pincushion", 723106: "v3_stone_button_forge",
-	1634832: "v3_seamstress_crimson_mending_queue", 9848435: "button_trail",
-	1405687: "v3_tinker_gearhouse_midnight", 12876289: "v3_mossbutton_weather_station",
-	611184: "estate_sale", 1333364: "thimble_star_reading",
-	1390606: "v3_seamstress_thread_cart", 2017177: "v3_copper_bell_choir",
-	292590: "v3_briar_pin_checkpoint", 2431350: "thimble_well",
-	5158685: "ragpicker_cart", 7959444: "v3_patchwork_lighthouse"}
+## Historical seeds are candidates, not permanent Event assignments: both map
+## generation and sorted-pool appends can change what a seed genuinely reaches.
+## Rebuild each witness through the real map/toll and an independent one-draw
+## oracle; the mounted panel below must agree with that oracle's ID and RNG.
+const HISTORICAL_WITNESS_SEEDS := [449195, 807198, 4045188, 723106,
+	1634832, 9848435, 1405687, 12876289, 611184, 1333364, 1390606,
+	2017177, 292590, 2431350, 5158685, 7959444]
 ## The hero-tied stories added by this batch: each must reach the real routed
 ## panel through the ordinary required-ID loop below and settle its authored
 ## signed wallet change at least once.
@@ -88,12 +77,18 @@ const PROMOTED_CANDLELIT := ["lantern_bobbin_ferry", "thimble_star_reading",
 func _fixtures() -> Dictionary:
 	var found := {}
 	var ids: Array = RunM04EventRotation.new(_combined_catalog()).get_generic_event_ids()
+	_check(not ids.is_empty(), "fixture oracle has a genuine eligible Event pool")
+	if ids.is_empty():
+		return found
+	ids.sort()
+	var required_ids := _required_ids()
+	fixture_fallback_used = false
 	# Treasure traversal consumes no RNG or wallet; allow it between the six
 	# authentic Events rather than requiring a rare six-consecutive-Event route.
 	# Revalidate the known genuine witness seeds first (tests/event_wallet_hints.gd,
 	# append-only); the bounded search remains a fallback when the route/pool changes.
 	var hints: Array = EVENT_WALLET_HINTS.SEEDS.duplicate()
-	hints.append_array(OWED_WITNESSES.keys())
+	hints.append_array(HISTORICAL_WITNESS_SEEDS)
 	# Accepted genuine witnesses from the earlier lane, retained alongside the
 	# newer append-only helper so both sets remain available after the rebase.
 	# The final six were re-derived after the Candlelit Bargain batch joined the
@@ -110,7 +105,13 @@ func _fixtures() -> Dictionary:
 	# joined the roadside pool, so every required ID keeps a real route without
 	# relying on the bounded fallback search.
 	hints.append_array([576647, 822958, 883989, 2535428, 3023381, 4388231])
-	for value in hints + range(1, 500000):
+	for candidate_index in range(hints.size() + 499999):
+		var value: int
+		if candidate_index < hints.size():
+			value = hints[candidate_index]
+		else:
+			fixture_fallback_used = true
+			value = candidate_index - hints.size() + 1
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
@@ -121,10 +122,12 @@ func _fixtures() -> Dictionary:
 			continue
 		var toll := RunNeedleToll.new({"heroes": CombatParty.new(app._load_party_definitions()).get_heroes(),
 			"wallet": {"gold": 0, "scraps": 0}, "deck": app._load_starter_deck()}, rng)
-		_check(toll.pay_toll("warden").ok, "fixture stages real paid toll draws")
+		var paid: bool = toll.pay_toll("warden").ok
+		_check(paid, "fixture stages real paid toll draws")
+		if not paid:
+			continue
+		var before_draw := rng.state
 		var event_id: String = ids[rng.randi_range(0, ids.size() - 1)]
-		if OWED_WITNESSES.has(value):
-			_check(event_id == OWED_WITNESSES[value], "owed witness replays the actual map/toll Event draw")
 		if not found.has(event_id):
 			var events: Array = []
 			var transit := {}
@@ -136,9 +139,10 @@ func _fixtures() -> Dictionary:
 					transit[id] = treasures.duplicate()
 					treasures.clear()
 					events.append(id)
-			found[event_id] = {"seed": value, "path": events.slice(0, 5), "next": events[5], "transit": transit}
+			found[event_id] = {"seed": value, "path": events.slice(0, 5), "next": events[5], "transit": transit,
+				"before_draw": before_draw, "after_draw": rng.state}
 		var complete := true
-		for required in _required_ids():
+		for required in required_ids:
 			complete = complete and found.has(required)
 		if complete:
 			break
@@ -385,8 +389,10 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 	var button := _route_action(fixture.path[4])
 	var entry: Callable = button.pressed.get_connections()[0].callable
 	var rng := RandomNumberGenerator.new()
-	rng.state = app.run_rng.state
+	rng.state = fixture.before_draw
+	_check(app.run_rng.state == rng.state, "live seeded map and paid toll match independent fixture RNG")
 	var ids := RunM04EventRotation.new(_combined_catalog()).get_generic_event_ids()
+	ids.sort()
 	var expected_id: String = ids[rng.randi_range(0, ids.size() - 1)]
 	var before: Array = _other_ledgers()
 	await _click(button)
@@ -404,6 +410,7 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 		_check(paper_style is StyleBoxFlat, "real routed Event retains flat fallback")
 	var record := panel._selector.get_event()
 	_check(record.id == event_id and record.id == expected_id and app.run_rng.state == rng.state
+		and rng.state == fixture.after_draw
 		and app._wallet_event_history == [event_id], "named Event uses exactly one deterministic draw: " + event_id)
 	before[10] = rng.state
 	_check(_other_ledgers() == before and _wallet() == {"gold": 0, "scraps": 2},
@@ -654,6 +661,7 @@ func _run() -> void:
 	var global_next := randi()
 	seed(227227)
 	var fixtures := _fixtures()
+	_check(not fixture_fallback_used, "shipped seed hints cover every required Event without bounded fallback")
 	for id in _required_ids():
 		_check(fixtures.has(id), "bounded genuine seeded route exists for " + id)
 		if not fixtures.has(id):
