@@ -116,6 +116,13 @@ func execute_actions(party: CombatParty, enemies: CombatEnemies, actions: Array)
 		else:  # buff
 			if applied:
 				var enemy: Dictionary = staged_enemies[source - 1]
+				var permission := CombatStatuses.new().can_apply_buff(enemy.get("statuses", {}))
+				if not permission["ok"]:
+					return failure
+				if not permission["allowed"]:
+					event["applied"] = false
+					events.append(event)
+					continue
 				if action["amount"] > MAX_INT - enemy["block"]:
 					return failure
 				enemy["block"] += action["amount"]

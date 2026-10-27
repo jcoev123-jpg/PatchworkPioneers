@@ -8,6 +8,7 @@ var phase := CombatEnemyPhase.new()
 func _initialize() -> void:
 	_test_two_hits_and_blind()
 	_test_ordered_specials()
+	_test_fear_buff_dispatch()
 	_test_status_sensitive_attacks()
 	_test_two_turn_mixed_phase()
 	_test_dead_sources_and_downed_targets()
@@ -83,6 +84,30 @@ func _scheduler() -> CombatEnemyIntents:
 	_check(scheduler.is_valid() and scheduler.get_intents().size() == 2,
 		"precondition: two genuine independently cycling enemy intents")
 	return scheduler
+
+
+func _test_fear_buff_dispatch() -> void:
+	var party := _party()
+	var enemies := _enemies()
+	_check(enemies.gain_block(1, 2) and party.gain_block(1, 2),
+		"Fear phase starts with real enemy and hero Block")
+	enemies._enemies[0]["statuses"] = {"cannot_buff_next_turn": true, "weak": 2}
+	var expected_enemies := enemies.get_enemies()
+	var expected_party := party.get_heroes()
+	expected_party[0]["block"] = 0
+	expected_party[0]["hp"] = 37
+	var actions := [_attack(2, 5, 1), {"type": "buff", "enemy_position": 1, "amount": 3}]
+	var before_actions := actions.duplicate(true)
+	seed(353)
+	var expected_rng := randi()
+	seed(353)
+	var result := phase.execute_phase(party, enemies, actions)
+	_check(result == {"ok": true, "events": [
+		_event("buff", 1, false), _event("attack", 2, true, 1)]},
+		"real phase dispatch skips feared self-buff and executes later attack in source order")
+	_check(party.get_heroes() == expected_party and enemies.get_enemies() == expected_enemies
+		and actions == before_actions and randi() == expected_rng,
+		"phase attack consumes two Block and three HP; Fear/Weak, enemy Block and other actors stay intact")
 
 
 func _test_two_turn_mixed_phase() -> void:

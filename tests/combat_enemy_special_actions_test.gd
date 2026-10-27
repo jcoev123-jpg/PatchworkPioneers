@@ -10,6 +10,7 @@ const MAX_INT := 9223372036854775807
 
 func _initialize() -> void:
 	_test_ordered_transaction()
+	_test_fear_buff_gate()
 	_test_snip_transactions_and_rejections()
 	_test_bidirectional_swaps()
 	_test_status_additions_and_owner_turns()
@@ -235,6 +236,78 @@ func _test_ordered_transaction() -> void:
 	_check(enemies.apply_damage(3, 3) and enemies.get_enemy(3)["hp"] == 16
 		and enemies.get_enemy(3)["block"] == 5,
 		"AC1: gained enemy Block absorbs later attack damage before HP")
+
+
+func _test_fear_buff_gate() -> void:
+	for feared in [true, false]:
+		var party := _party()
+		var enemies := _enemies()
+		_check(enemies.gain_block(1, 2), "Fear fixture starts with two real Block")
+		enemies._enemies[0]["statuses"] = {"weak": 1}
+		if feared:
+			enemies._enemies[0]["statuses"]["cannot_buff_next_turn"] = true
+		var before_party := party.get_heroes()
+		var expected := enemies.get_enemies()
+		var original: Dictionary = enemies._enemies[0]
+		if not feared:
+			expected[0]["block"] = 5
+		var rng_expected := _rng_expected()
+		var result := rules.execute_actions(party, enemies, [_buff(1, 3)])
+		_check(result == {"ok": true, "events": [_event("buff", 1, not feared)]}
+			and party.get_heroes() == before_party and enemies.get_enemies() == expected
+			and is_same(enemies._enemies[0], original) and randi() == rng_expected,
+			"Fear alone skips buff without aging statuses; unlocked buff adds exactly three, preserving rosters/identity/RNG")
+
+	var party := _party()
+	var enemies := _enemies()
+	_check(enemies.gain_block(1, 2), "expiry fixture has measurable prior Block")
+	enemies._enemies[0]["statuses"] = {"cannot_buff_next_turn": true, "weak": 2}
+	var expected := enemies.get_enemies()
+	expected[1]["block"] = 3
+	var before_party := party.get_heroes()
+	var rng_expected := _rng_expected()
+	var result := rules.execute_actions(party, enemies, [_buff(2, 3), _buff(1, 3)])
+	_check(result == {"ok": true, "events": [
+		_event("buff", 1, false), _event("buff", 2, true)]}
+		and enemies.get_enemies() == expected and party.get_heroes() == before_party
+		and randi() == rng_expected,
+		"feared skip preserves Fear/Weak and allows separate later source in position order")
+	var detached := enemies.get_enemies()
+	var tick := CombatStatusTurnBatch.new().tick_side("enemies", detached)
+	expected[0]["statuses"] = {"weak": 1}
+	expected[1]["statuses"] = {}
+	expected[2]["statuses"] = {}
+	_check(tick["ok"] and tick["actors"] == expected
+		and enemies.get_enemies() == detached,
+		"only detached owner-turn tick removes Fear and independently ages Weak two to one")
+	var fresh := CombatEnemies.new(tick["actors"])
+	fresh._enemies = tick["actors"].duplicate(true)
+	_check(fresh.is_valid() and fresh.get_enemies() == expected,
+		"rehydrated valid enemy roster preserves exact post-owner-turn state")
+	expected[0]["block"] = 5
+	result = rules.execute_actions(party, fresh, [_buff(1, 3)])
+	_check(result == {"ok": true, "events": [_event("buff", 1, true)]}
+		and fresh.get_enemies() == expected and party.get_heroes() == before_party,
+		"identical buff after owner-turn expiry grants full three Block")
+
+	enemies = _enemies()
+	enemies._enemies[0]["statuses"] = {"cannot_buff_next_turn": true, "weak": 1}
+	_check(enemies.apply_damage(1, 12) and enemies.is_slain(1), "feared source genuinely slain")
+	var stable := _snapshot(party, enemies)
+	rng_expected = _rng_expected()
+	_check(rules.execute_actions(party, enemies, [_buff(1, 3)]) == {
+		"ok": true, "events": [_event("buff", 1, false)]}
+		and _snapshot(party, enemies) == stable and randi() == rng_expected,
+		"slain feared source remains inert without status or RNG changes")
+	for malformed in [false, 1, 1.0, "true"]:
+		enemies = _enemies()
+		enemies._enemies[1]["statuses"] = {"cannot_buff_next_turn": malformed}
+		_reject("malformed Fear rejects earlier staged buff", [_buff(1, 3), _buff(2, 3)], party, enemies)
+	enemies = _enemies()
+	enemies._enemies[0]["statuses"] = {"cannot_buff_next_turn": true, "weak": 1}
+	_reject("malformed later action after feared skip", [_buff(1, 3), _buff(2, 0)], party, enemies)
+	enemies._enemies[2]["statuses"] = {"weak": "1"}
+	_reject("unrelated malformed Weak rejects feared batch", [_buff(1, 3)], party, enemies)
 
 
 func _test_bidirectional_swaps() -> void:
