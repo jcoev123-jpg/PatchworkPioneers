@@ -7,7 +7,11 @@ extends Control
 ## spacer). open_event() preserves the legacy ID-only signal.
 ## open_event_with_wallet() displays an opt-in, detached affordability forecast
 ## and emits an uncommitted wallet receipt for the run owner to validate.
-## Neither mode updates the live run, owns RNG, or completes routed Events.
+## open_event_with_vitals() adds a third, opt-in presentation: one already
+## authenticated living hero's vitality snapshot beside the service's signed
+## gold, scraps, HP and max HP deltas, emitting an uncommitted vital receipt for
+## the run owner. None of these modes updates the live run, owns RNG, or
+## completes routed Events.
 ## Every mounted choice carries read-only hover text built from the authored
 ## action and the service-parsed outcome: exact signed gold/scraps, the zero
 ## change wording, or an honest unavailable placeholder. A wallet offering also
@@ -58,6 +62,11 @@ signal choice_committed(event_id: String, choice_id: String)
 ## selection: {ok: true, event_id: String, choice_id: String,
 ## wallet: {gold: int, scraps: int}}. This is NOT a live run commit.
 signal wallet_choice_committed(result: Dictionary)
+## Emits exactly one detached RunEventChoice receipt on a successful opt-in
+## vitality selection: {ok: true, event_id: String, choice_id: String,
+## state: {gold: int, scraps: int, hero: {id: String, hp: int, max_hp: int}}}.
+## The caller owns that hero and settles it; this is NOT a live run commit.
+signal vital_choice_committed(result: Dictionary)
 
 @onready var paper_panel: PanelContainer = $PaperPanel
 @onready var backdrop_art: TextureRect = $EventBackdrop
@@ -129,6 +138,10 @@ var _wallet_mode: bool = false
 var _offered_wallet: Dictionary = {}
 var _wallet_previews: Dictionary = {}
 var _wallet_label: Label = null
+var _vital_mode: bool = false
+var _offered_snapshot: Dictionary = {}
+var _vital_previews: Dictionary = {}
+var _vital_label: Label = null
 
 
 func _ready() -> void:
@@ -206,6 +219,190 @@ func open_event_with_wallet(event_record: Dictionary, wallet: Variant) -> bool:
 	return true
 
 
+## Opt-in vitality-aware opening for one caller-authenticated living hero.
+## The snapshot must be exactly {gold, scraps, hero: {id, hp, max_hp}} with
+## native nonnegative gold/scraps and 1 <= hp <= max_hp, max_hp >= 10; the
+## service's preview is the only authority for affordability, deltas and
+## projections. A malformed snapshot or preview fails before any button, hero
+## caption or latched state exists.
+func open_event_with_vitals(event_record: Dictionary, snapshot: Variant) -> bool:
+	if _is_open:
+		return false
+	var offered := RunEventChoice.new(event_record)
+	if not offered.is_valid():
+		return false
+	var preview: Dictionary = offered.preview_vital_choices(snapshot)
+	if not preview.get("ok", false) or preview.get("event_id") != event_record.get("id"):
+		return false
+	var entries: Variant = preview.get("choices")
+	var mounted: Dictionary = offered.get_event()
+	if not entries is Array or (entries as Array).size() != (mounted["choices"] as Array).size():
+		return false
+	for i in range((entries as Array).size()):
+		var row: Variant = (entries as Array)[i]
+		if not row is Dictionary or row.get("choice_id") != mounted["choices"][i]["id"]:
+			return false
+		if typeof(row.get("affordable")) != TYPE_BOOL or not (row.get("state") is Dictionary):
+			return false
+	var clean_snapshot := _clean_vital_snapshot(snapshot)
+	if clean_snapshot.is_empty():
+		return false
+	_mount_vital_offering(offered, clean_snapshot, entries)
+	return true
+
+
+## A detached exact three-key snapshot copy, rebuilt only after the service has
+## strictly parsed it. Never keeps a reference into the caller's dictionary.
+func _clean_vital_snapshot(snapshot: Variant) -> Dictionary:
+	if typeof(snapshot) != TYPE_DICTIONARY:
+		return {}
+	var dict: Dictionary = snapshot
+	if dict.size() != 3 or not dict.has("gold") or not dict.has("scraps") or not dict.has("hero"):
+		return {}
+	var gold: Variant = dict.get("gold")
+	var scraps: Variant = dict.get("scraps")
+	var hero: Variant = dict.get("hero")
+	if typeof(gold) != TYPE_INT or typeof(scraps) != TYPE_INT or not hero is Dictionary:
+		return {}
+	var actor: Dictionary = hero
+	if actor.size() != 3 or not actor.has("id") or not actor.has("hp") or not actor.has("max_hp"):
+		return {}
+	var hero_id: Variant = actor.get("id")
+	var hp: Variant = actor.get("hp")
+	var max_hp: Variant = actor.get("max_hp")
+	if not hero_id is String or (hero_id as String).strip_edges().is_empty():
+		return {}
+	if typeof(hp) != TYPE_INT or typeof(max_hp) != TYPE_INT:
+		return {}
+	return {
+		"gold": int(gold),
+		"scraps": int(scraps),
+		"hero": {"id": String(hero_id), "hp": int(hp), "max_hp": int(max_hp)},
+	}
+
+
+## Mounts the vitality presentation: the same sewn parchment and tickets, one
+## short hero heading, and all four signed service deltas plus the service
+## projected after-state (or the honest required-resource note) per ticket.
+func _mount_vital_offering(offered: RunEventChoice, snapshot: Dictionary, previews: Array) -> void:
+	var mounted: Dictionary = offered.get_event()
+	_generation += 1
+	_selector = offered
+	_is_open = true
+	_wallet_mode = false
+	_vital_mode = true
+	_offered_wallet.clear()
+	_wallet_previews.clear()
+	_offered_snapshot = snapshot.duplicate(true)
+	_vital_previews.clear()
+	title_label.text = mounted["title"]
+	description_label.text = mounted["description"]
+	_vital_label = Label.new()
+	_vital_label.name = "VitalHero"
+	_vital_label.text = _vital_heading(_offered_snapshot)
+	_vital_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_vital_label.theme_type_variation = DISPLAY_VARIATION
+	_vital_label.add_theme_color_override("font_color", Color("#343c3c"))
+	_vital_label.add_theme_font_size_override("font_size", 20)
+	choices_container.get_parent().add_child(_vital_label)
+	choices_container.get_parent().move_child(_vital_label, choices_container.get_index())
+	for i in range(mounted["choices"].size()):
+		var choice: Dictionary = mounted["choices"][i]
+		var choice_id: String = choice["id"]
+		var forecast: Dictionary = (previews[i] as Dictionary).duplicate(true)
+		_vital_previews[choice_id] = forecast
+		var can_take: bool = forecast["affordable"]
+		var button := Button.new()
+		button.name = "Choice_%d" % _choice_buttons.size()
+		button.text = choice["text"] + "\n" + _vital_delta_line(forecast) + "\n" \
+			+ _vital_forecast_line(forecast, _offered_snapshot)
+		button.tooltip_text = button.text
+		button.custom_minimum_size = Vector2(0.0, 78.0)
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.focus_mode = Control.FOCUS_ALL if can_take else Control.FOCUS_NONE
+		button.mouse_filter = Control.MOUSE_FILTER_STOP
+		_style_choice_button(button)
+		button.add_theme_font_size_override("font_size", 18)
+		button.disabled = not can_take
+		_add_choice_cue(button, i)
+		choices_container.add_child(button)
+		_choice_buttons.append(button)
+		_bound_choices[button] = choice_id
+		button.pressed.connect(_on_choice_pressed.bind(offered, choice_id, _generation, button))
+	visible = true
+
+
+## Short hero heading: the offered hero's ID, current/maximum HP and wallet.
+func _vital_heading(snapshot: Dictionary) -> String:
+	var hero: Dictionary = snapshot["hero"]
+	return "%s  •  %d / %d HP   |   %d gold   /   %d scraps" % [
+		String(hero["id"]).capitalize(), hero["hp"], hero["max_hp"],
+		snapshot["gold"], snapshot["scraps"],
+	]
+
+
+## All four signed service deltas for one vitality ticket. Unknown amounts print
+## the neutral dash instead of an invented number.
+func _vital_delta_line(forecast: Dictionary) -> String:
+	return "Gold %s   |   Scraps %s   |   HP %s   |   Max HP %s" % [
+		_delta_label(forecast.get("gold_delta")),
+		_delta_label(forecast.get("scraps_delta")),
+		_delta_label(forecast.get("hp_delta")),
+		_delta_label(forecast.get("max_hp_delta")),
+	]
+
+
+## The service-projected after-state for an affordable vitality choice, or the
+## honest resources the snapshot still needs. Never derives affordability from
+## the printed text: only the preview row's own flag and projection are used.
+func _vital_forecast_line(forecast: Dictionary, snapshot: Dictionary) -> String:
+	if forecast.get("affordable", false) == true:
+		var after: Variant = forecast.get("state")
+		if after is Dictionary:
+			var state: Dictionary = after
+			var hero: Variant = state.get("hero")
+			if hero is Dictionary and typeof(state.get("gold")) == TYPE_INT \
+				and typeof(state.get("scraps")) == TYPE_INT \
+				and typeof((hero as Dictionary).get("hp")) == TYPE_INT \
+				and typeof((hero as Dictionary).get("max_hp")) == TYPE_INT:
+				return "After: %d gold | %d scraps | %d/%d HP" % [
+					state["gold"], state["scraps"],
+					(hero as Dictionary)["hp"], (hero as Dictionary)["max_hp"],
+				]
+		return "UNAVAILABLE"
+	var needs := _vital_needs(forecast, snapshot)
+	return "UNAVAILABLE" if needs.is_empty() else "   •   ".join(needs)
+
+
+## Exact required resources for one unaffordable preview row, from the caller's
+## snapshot and the row's own deltas: positive gold/scraps to add, and for HP the
+## current/maximum needed to clear the service's 1 HP / 10 max HP floors.
+func _vital_needs(forecast: Dictionary, snapshot: Dictionary) -> Array[String]:
+	var needs: Array[String] = []
+	var hero: Dictionary = snapshot["hero"]
+	var gold_delta: Variant = forecast.get("gold_delta")
+	if typeof(gold_delta) == TYPE_INT:
+		var missing_gold: int = -(int(snapshot["gold"]) + int(gold_delta))
+		if missing_gold > 0:
+			needs.append("Need %d gold" % missing_gold)
+	var scraps_delta: Variant = forecast.get("scraps_delta")
+	if typeof(scraps_delta) == TYPE_INT:
+		var missing_scraps: int = -(int(snapshot["scraps"]) + int(scraps_delta))
+		if missing_scraps > 0:
+			needs.append("Need %d scraps" % missing_scraps)
+	var hp_delta: Variant = forecast.get("hp_delta")
+	if typeof(hp_delta) == TYPE_INT:
+		var missing_hp: int = 1 - (int(hero["hp"]) + int(hp_delta))
+		if missing_hp > 0:
+			needs.append("Need %d HP" % missing_hp)
+	var max_hp_delta: Variant = forecast.get("max_hp_delta")
+	if typeof(max_hp_delta) == TYPE_INT:
+		var missing_max: int = RunEventChoice.MIN_VITAL_MAX_HP - (int(hero["max_hp"]) + int(max_hp_delta))
+		if missing_max > 0:
+			needs.append("Need %d max HP" % missing_max)
+	return needs
+
+
 func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Dictionary, previews: Array) -> void:
 	var snapshot: Dictionary = offered.get_event()
 	# Legacy offerings parse their authored outcomes through the same service,
@@ -215,6 +412,9 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 	_selector = offered
 	_is_open = true
 	_wallet_mode = wallet_mode
+	_vital_mode = false
+	_offered_snapshot.clear()
+	_vital_previews.clear()
 	_offered_wallet = wallet.duplicate(true)
 	_wallet_previews.clear()
 	title_label.text = snapshot["title"]
@@ -412,8 +612,11 @@ func close_event() -> void:
 	_is_open = false
 	_selector = null
 	_wallet_mode = false
+	_vital_mode = false
 	_offered_wallet.clear()
 	_wallet_previews.clear()
+	_offered_snapshot.clear()
+	_vital_previews.clear()
 	visible = false
 	if is_node_ready():
 		title_label.text = ""
@@ -437,6 +640,10 @@ func close_event() -> void:
 		_wallet_label.get_parent().remove_child(_wallet_label)
 		_wallet_label.queue_free()
 	_wallet_label = null
+	if is_instance_valid(_vital_label):
+		_vital_label.get_parent().remove_child(_vital_label)
+		_vital_label.queue_free()
+	_vital_label = null
 
 
 func has_open_event() -> bool:
@@ -499,7 +706,12 @@ func _on_choice_pressed(offered: RunEventChoice, choice_id: String, generation: 
 	if button.get_parent() != choices_container:
 		return
 	var result: Dictionary
-	if _wallet_mode:
+	if _vital_mode:
+		var forecast: Dictionary = _vital_previews.get(choice_id, {})
+		if forecast.get("affordable", false) != true:
+			return
+		result = offered.choose_with_vitals(choice_id, _offered_snapshot.duplicate(true))
+	elif _wallet_mode:
 		var forecast: Dictionary = _wallet_previews.get(choice_id, {})
 		if forecast.get("affordable", false) != true:
 			return
@@ -512,7 +724,9 @@ func _on_choice_pressed(offered: RunEventChoice, choice_id: String, generation: 
 	for current in _choice_buttons:
 		current.disabled = true
 		current.release_focus()
-	if _wallet_mode:
+	if _vital_mode:
+		vital_choice_committed.emit(result.duplicate(true))
+	elif _wallet_mode:
 		wallet_choice_committed.emit(result.duplicate(true))
 	else:
 		choice_committed.emit(result["event_id"], result["choice_id"])
