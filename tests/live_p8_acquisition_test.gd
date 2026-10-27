@@ -94,6 +94,11 @@ func _p8_combat(patch_id: String, wearer: String) -> Array:
 	else:
 		if not await _draw_owned(["warden_brace", "seamstress_prick", "tinker_pop_shot"]):
 			return []
+		# The Quilt award draws one genuine card. Keep a real card in the draw
+		# pile so that draw cannot need a reshuffle, which would legitimately
+		# advance the run RNG and mask the passive's no-RNG contract below.
+		if app.deck.draw_pile.is_empty():
+			app.deck.draw_pile.append("warden_strike")
 		var quilt: CombatQuiltBonus = app._quilt_bonus
 		_check(quilt._hearth_wardrobe == wardrobe, "Hearth binds actual carried wardrobe")
 		var position := 0

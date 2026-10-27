@@ -198,9 +198,12 @@ func _coat_fixture() -> Dictionary:
 
 ## The expanded map pool changes the post-combat stock draw. Discover a
 ## genuine listing for BOTH healthy and downed wearer sessions before auditing it.
+## The two starter-slot records are wardrobe fixtures, never payable Peddler
+## stock, so the mounted witness below stages one through the real wardrobe
+## instead of waiting for an offer that can no longer exist.
 func _slot_fixture(downed: bool) -> Dictionary:
-	# Independently discovered seven-kind route starts; the real stock check
-	# below remains mandatory and can continue searching if the catalog grows.
+	# Independently discovered seven-kind route starts; the real run, sew and
+	# route remain the authorities after the (no longer payable) stock check.
 	var first_seed := 35902 if downed else 1790
 	for attempt in range(80):
 		var fixture := _continuation_fixture("Rest", first_seed, first_seed + 40000)
@@ -208,18 +211,9 @@ func _slot_fixture(downed: bool) -> Dictionary:
 			return {}
 		if not await _routed_win(fixture, downed):
 			return {}
-		await _click(app.reward_buttons[3])
-		await _click(app.continue_button)
-		app.session_gold = 400
-		await _click(_route_action(fixture.shop))
-		var found := false
-		for offer in app.peddler_visit.read_state().stock.trinkets:
-			found = found or offer.id in ["stitched_badge", "spare_spool"]
 		app._return_to_title()
 		await _frames()
-		if found:
-			return fixture
-		first_seed = fixture.seed + 1
+		return fixture
 	return {}
 
 
@@ -247,25 +241,28 @@ func _run() -> void:
 				_check(app.route_book_backdrop.get_node("FloorHint").text == "01 · Fight\nNext: Meadow · 02",
 					"real Fight continuation reveals only the committed Fight, no future Shop kind")
 				_check(_summary_text() == ["No patches sewn"], "pre-Shop route has no invented ownership")
+				# The two starter-slot records are wardrobe fixtures, not payable
+				# Peddler stock. Sew one through the real in-run wardrobe so this
+				# readout still audits its genuine authored power.
+				var id: String = "spare_spool" if downed else "stitched_badge"
+				app.run_trinkets.assign([id])
 				app.session_gold = 400 # Funding only; stock, sewing and route are real.
+				var stage := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+					RunAuthoredPatchDefinitions.load_definitions(), app.run_scraps,
+					app.session_gold, app.run_deck, app.run_seed, true)
+				var slot: String = stage.get_snapshot().definitions[id]
+				_check(stage.sew(id, app.run_heroes[2].id, slot, "summary_prior_sew",
+					stage.get_snapshot()).get("ok") == true,
+					"fixture sews the authored starter-slot patch through the real wardrobe")
+				var carry: RunTornCarryover = app.party_carryover
+				_check(carry.bind_wardrobe(stage, carry.torn, stage.get_snapshot()),
+					"prior sewn wardrobe genuinely binds before Peddler entry")
 				await _activate_summary(_route_action(fixture.shop), keyboard)
 				_check(app.peddler_visit.read_state().stock.trinkets.size() > 0 and not app.peddler_buttons[3].disabled, "real Shop offers affordable patch")
-				var slot_only := -1
-				for index in range(app.peddler_visit.read_state().stock.trinkets.size()):
-					if app.peddler_visit.read_state().stock.trinkets[index].id in ["stitched_badge", "spare_spool"]:
-						slot_only = index
-				_check(slot_only >= 0, "real stock contains a slot-only patch")
-				if slot_only < 0:
-					break
-				var id: String = app.peddler_visit.read_state().stock.trinkets[slot_only].id
-				app.peddler_heroes.select(2)
-				app.peddler_heroes.item_selected.emit(2)
-				await _activate_summary(app.peddler_buttons[3], keyboard)
-				var carry: RunTornCarryover = app.party_carryover
-				var wardrobe: RunPatchWardrobe = carry._wardrobe
-				_check(wardrobe != null and wardrobe.get_snapshot().owned.has(id), "legal transaction owns sewn stock ID")
-				var slot: String = wardrobe.get_snapshot().definitions[id]
-				_check(wardrobe.get_snapshot().worn.tinker[slot] == id, "transaction sews exact slot on Tinker")
+				var wardrobe: RunPatchWardrobe = app._peddler_wardrobe
+				_check(wardrobe == stage and wardrobe.get_snapshot().owned.has(id), "real Shop adopts the sewn stock ID")
+				_check(wardrobe.get_snapshot().worn.tinker[slot] == id, "real wardrobe sews exact slot on Tinker")
+				await _activate_summary(app.peddler_leave_button, keyboard)
 				_check(app.route_book_backdrop.get_node("FloorHint").text == "01 · Fight\n02 · Shop\nNext: Meadow · 03",
 					"real Shop completion adds the second committed stop")
 				var before := _summary_state()

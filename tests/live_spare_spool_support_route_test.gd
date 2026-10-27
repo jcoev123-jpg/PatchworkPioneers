@@ -86,32 +86,19 @@ func _run() -> void:
 	await _frames()
 	presenter = app.get_node("LiveAttackPreview")
 	var fixture := {}
-	var spool := -1
 	var next_seed := 983
 	for attempt in range(240):
 		fixture = _sequence_fixture(["Shop", "Fight", "Fight"], next_seed, true)
 		_check(not fixture.is_empty(), "genuine map has Shop and two connected Fights")
-		if not fixture.is_empty() and _route_visits(fixture, "Rest"):
+		if fixture.is_empty():
+			break
+		if _route_visits(fixture, "Rest"):
 			# This fixture covers Shop -> Fight; Rest transit has its own tests.
 			next_seed = fixture.seed + 1
 			continue
-		if fixture.is_empty() or not await _routed_win(fixture, false):
-			await _finish_patches()
-			return
-		await _click(app.reward_buttons[3])
-		await _click(app.continue_button)
-		app.session_gold = 500
-		await _reach(fixture.paths[0], false)
-		for i in range(1):
-			if app.peddler_visit.read_state().stock.trinkets[i].id == "spare_spool":
-				spool = i
-		next_seed = fixture.seed + 1
-		app._return_to_title()
-		await _frames()
-		if spool >= 0:
-			break
-	_check(spool >= 0, "real generated Shop stocks Spare Spool")
-	if spool < 0:
+		break
+	_check(not fixture.is_empty(), "genuine route supports a sewn Spare Spool witness")
+	if fixture.is_empty():
 		await _finish_patches()
 		return
 	var retired: Callable
@@ -126,23 +113,35 @@ func _run() -> void:
 			await _activate(app.reward_buttons[3], keyboard)
 			await _activate(app.continue_button, keyboard)
 			app.session_gold = 500
-			if mode == "unsewn":
+			# The inert starter Spool is never payable Peddler stock. Own it and
+			# sew it through the real in-run wardrobe instead; the Peddler visit
+			# below is still entered and left for real.
+			if mode == "no_purchase":
+				app.run_trinkets.clear()
+				wardrobe = null
+			else:
 				app.run_trinkets.assign(["spare_spool"])
-				wardrobe = RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, RunAuthoredPatchDefinitions.load_definitions(),
-					app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
-				_check(app.party_carryover.bind_wardrobe(wardrobe, app.party_carryover.torn, wardrobe.get_snapshot()),
+				wardrobe = RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+					RunAuthoredPatchDefinitions.load_definitions(), app.run_scraps,
+					app.session_gold, app.run_deck, app.run_seed, true)
+				if mode != "unsewn":
+					var owner: String = app.run_heroes[0].id if mode == "warden" else app.run_heroes[1].id
+					var slot: String = wardrobe.get_snapshot().definitions["spare_spool"]
+					_check(wardrobe.sew("spare_spool", owner, slot, "route_prior_spool",
+						wardrobe.get_snapshot()).get("ok") == true
+						and wardrobe.get_snapshot().worn[owner].ARM == "spare_spool",
+						"fixture sews the authored Spare Spool through the real wardrobe")
+				_check(app.party_carryover.bind_wardrobe(wardrobe, app.party_carryover.torn,
+					wardrobe.get_snapshot()),
 					"prior-owned unsewn wardrobe genuinely binds before Peddler entry")
 			await _reach(fixture.paths[0], keyboard)
 			wardrobe = app._peddler_wardrobe
-			if mode in ["no_purchase", "unsewn"]:
-				await _activate(app.peddler_leave_button, keyboard)
-			else:
-				await _purchase(spool, keyboard, 0 if mode == "warden" else 1)
+			await _activate(app.peddler_leave_button, keyboard)
 			await _reach(fixture.paths[1], keyboard)
 			var support = app.get_node("LiveSupportHand")
 			_check(app.party != null and app.round_flow._started and app._current_carryover_fight(), "real authoritative routed Fight is running")
 			_check(app.party_carryover._wardrobe == (null if mode == "no_purchase" else wardrobe),
-				"Fight uses genuine purchased wardrobe or absent legacy binding")
+				"Fight uses the genuine bound wardrobe or the absent legacy binding")
 			var adapter = support._play
 			var panel := await _held_mend()
 			if retired.is_valid():

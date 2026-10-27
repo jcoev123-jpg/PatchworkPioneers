@@ -270,6 +270,7 @@ func _initialize() -> void:
 		_test_tinker_attack_shop_stock(party, deck, catalog)
 		_test_peddler_cards(party, deck, catalog)
 		_test_peddler_stock(party, deck, catalog)
+		_test_peddler_power_patch_stock(deck, catalog)
 		_test_v3_peddler_party_stock(deck, catalog)
 		_test_yarn_ranger_peddler_stock(deck, catalog)
 	else:
@@ -524,6 +525,28 @@ func _all_party_catalogs() -> Array:
 		YarnRangerPoolCards.new(),
 		ButtonGolemPoolCards.new(),
 	]
+
+
+## The authored power-only patch IDs from the shared projection. Used only as a
+## catalog reference; the draw oracles below stay independent implementations.
+func _power_patch_ids() -> Dictionary:
+	var ids := {}
+	for definition in RunAuthoredPatchDefinitions.load_power_definitions():
+		if definition is Dictionary and definition.get("id") is String:
+			ids[definition["id"]] = true
+	return ids
+
+
+## The inert starter-slot records: real wardrobe fixtures the power projection
+## validates in full but withholds, so they are never payable patch stock.
+func _inert_patch_ids() -> Array[String]:
+	var power := _power_patch_ids()
+	var inert: Array[String] = []
+	for definition in RunAuthoredPatchDefinitions.load_definitions():
+		if definition is Dictionary and not power.has(definition.get("id")):
+			inert.append(definition["id"])
+	inert.sort()
+	return inert
 
 
 ## Resolves a card ID against every authored catalog without assuming a hero.
@@ -2992,15 +3015,16 @@ func _test_peddler_cards(party: Array[String], deck: Array[String], catalog: Sta
 
 
 ## Peddler v3-3: one priced card per party hero plus one priced patch.
-## Uses real initial_offers.json patch IDs (stitched_badge, spare_spool, quilted_coat = 100g).
+## Uses authored POWER patch records from initial_offers.json (all 100g); the
+## inert stitched_badge/spare_spool starter fixtures are never payable stock.
 func _test_peddler_stock(party: Array[String], deck: Array[String], catalog: StarterCards) -> void:
 	var authored := _authored_shop_offers()
 	var card_pool := _card_pool(catalog, party, authored)
-	# Use the three real patch IDs from initial_offers.json at their authored 100g price.
+	# Use three real authored power patches at their authored 100g price.
 	var real_patches: Array = [
-		{"id": "stitched_badge", "price": 100},
-		{"id": "spare_spool", "price": 100},
 		{"id": "quilted_coat", "price": 100},
+		{"id": "button_eye", "price": 100},
+		{"id": "pincushion_arm", "price": 100},
 	]
 	var owned_patches: Array[String] = []
 
@@ -3106,11 +3130,12 @@ func _test_peddler_stock(party: Array[String], deck: Array[String], catalog: Sta
 		_check(offer.get("price") == _pool_price(v3_peddler_cards_2, card_id), "offer keeps the supplied price: " + card_id)
 
 	var v3_rng_owned := _rng(SEED + 10502)
-	var v3_res_owned := RunShopStockOffers.generate_peddler_stock(v3_rng_owned, v3_party_2, v3_peddler_cards_2, real_patches, ["stitched_badge", "spare_spool", "quilted_coat"])
+	var v3_all_owned: Array[String] = ["quilted_coat", "button_eye", "pincushion_arm"]
+	var v3_res_owned := RunShopStockOffers.generate_peddler_stock(v3_rng_owned, v3_party_2, v3_peddler_cards_2, real_patches, v3_all_owned)
 	_check(v3_res_owned.get("ok", false), "v3 peddler stock generates when all patches owned")
 	_check(v3_res_owned.get("patches", []).size() == 1, "v3 peddler stock offers one patch from owned fallback")
 	var v3_offered_patch_id: String = v3_res_owned["patches"][0]["id"]
-	_check(["stitched_badge", "spare_spool", "quilted_coat"].has(v3_offered_patch_id), "v3 offered patch is from owned fallback pool")
+	_check(v3_all_owned.has(v3_offered_patch_id), "v3 offered patch is from owned fallback pool")
 
 	var v3_stock_reject_plus = v3_peddler_cards.duplicate(true)
 	v3_stock_reject_plus.append({"id": "lantern_monk_wick_flicker_plus", "owner": "lantern_monk", "price": 50})
@@ -3158,7 +3183,7 @@ func _test_peddler_stock(party: Array[String], deck: Array[String], catalog: Sta
 	_reject_peddler_stock("v3 peddler stock malformed price", _rng(SEED), v3_party, v3_stock_reject_malformed, real_patches, owned_patches)
 
 	var v3_stock_reject_patch = real_patches.duplicate(true)
-	v3_stock_reject_patch[0] = {"id": "stitched_badge", "price": -5}
+	v3_stock_reject_patch[0] = {"id": "quilted_coat", "price": -5}
 	_reject_peddler_stock("v3 peddler stock invalid patch", _rng(SEED), v3_party, v3_peddler_cards, v3_stock_reject_patch, owned_patches)
 
 	var oracle_rng := _rng(SEED + 10000)
@@ -3181,7 +3206,7 @@ func _test_peddler_stock(party: Array[String], deck: Array[String], catalog: Sta
 	# AC2: unowned-patch preference, then owned fallback.
 	# First test with unowned patches available (already tested above).
 	# Now test with all patches owned - should fall back to owned.
-	var all_owned := ["stitched_badge", "spare_spool", "quilted_coat"]
+	var all_owned := ["quilted_coat", "button_eye", "pincushion_arm"]
 	var rng_owned := _rng(SEED + 10001)
 	var result_owned := RunShopStockOffers.generate_peddler_stock(rng_owned, party, card_pool, real_patches, all_owned)
 	_check(result_owned.get("ok", false), "peddler stock generates when all patches owned")
@@ -3200,7 +3225,7 @@ func _test_peddler_stock(party: Array[String], deck: Array[String], catalog: Sta
 
 	# AC3: duplicate patch IDs fail closed.
 	var dup_patches := real_patches.duplicate(true)
-	dup_patches.append({"id": "stitched_badge", "price": 100})
+	dup_patches.append({"id": "quilted_coat", "price": 100})
 	var rng_dup := _rng(SEED + 10003)
 	state_before = rng_dup.state
 	var result_dup := RunShopStockOffers.generate_peddler_stock(rng_dup, party, card_pool, dup_patches, owned_patches)
@@ -3209,7 +3234,7 @@ func _test_peddler_stock(party: Array[String], deck: Array[String], catalog: Sta
 
 	# AC3: malformed patch price (negative) fails closed.
 	var neg_patches := real_patches.duplicate(true)
-	neg_patches[0] = {"id": "stitched_badge", "price": -1}
+	neg_patches[0] = {"id": "quilted_coat", "price": -1}
 	var rng_neg := _rng(SEED + 10004)
 	state_before = rng_neg.state
 	var result_neg := RunShopStockOffers.generate_peddler_stock(rng_neg, party, card_pool, neg_patches, owned_patches)
@@ -3218,7 +3243,7 @@ func _test_peddler_stock(party: Array[String], deck: Array[String], catalog: Sta
 
 	# AC3: malformed patch price (fractional) fails closed.
 	var frac_patches := real_patches.duplicate(true)
-	frac_patches[0] = {"id": "stitched_badge", "price": 12.5}
+	frac_patches[0] = {"id": "quilted_coat", "price": 12.5}
 	var rng_frac := _rng(SEED + 10005)
 	state_before = rng_frac.state
 	var result_frac := RunShopStockOffers.generate_peddler_stock(rng_frac, party, card_pool, frac_patches, owned_patches)
@@ -3265,6 +3290,243 @@ func _test_peddler_stock(party: Array[String], deck: Array[String], catalog: Sta
 	_check(card_pool == _card_pool(catalog, party, authored), "card pool unchanged")
 	_check(real_patches.size() == 3, "patch pool unchanged")
 	_check(owned_patches.is_empty(), "owned patches unchanged")
+
+
+## V3-3 AC1/AC2/AC3: the real seeded Peddler supplier prices only authored
+## POWER patches. The shipped superset candidate list is accepted whole, but its
+## two inert starter-slot fixtures (stitched_badge, spare_spool) are filtered out
+## of BOTH the unowned and the owned fallback pool before any draw.
+func _test_peddler_power_patch_stock(deck: Array[String], catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var candidates: Array = authored.get("cards", [])
+	var patches: Array = []
+	for entry in authored.get("trinkets", []):
+		if entry is Dictionary and entry.get("id") is String:
+			patches.append({"id": entry["id"], "price": _whole_price(entry.get("price"))})
+	var power_ids := _power_patch_ids()
+	var inert_ids := _inert_patch_ids()
+	_check(power_ids.has("quilted_coat") and power_ids.has("button_eye")
+		and power_ids.has("pincushion_arm") and power_ids.has("relay_bobbin")
+		and power_ids.has("hearth_lining"),
+		"the authored power projection carries ordinary and P8 patches")
+	_check(inert_ids.has("stitched_badge") and inert_ids.has("spare_spool"),
+		"the two starter-slot wardrobe fixtures are not power patches")
+	var shipped_ids: Array = patches.map(func(entry): return entry["id"])
+	_check(shipped_ids.has("stitched_badge") and shipped_ids.has("spare_spool")
+		and shipped_ids.has("quilted_coat") and shipped_ids.has("button_eye")
+		and shipped_ids.has("pincushion_arm") and shipped_ids.has("relay_bobbin")
+		and shipped_ids.has("hearth_lining"),
+		"the shipped candidate list is the superset of inert records and real powers")
+	if not power_ids.has("quilted_coat") or not inert_ids.has("stitched_badge") \
+			or not shipped_ids.has("quilted_coat"):
+		return
+
+	# AC1: multi-seed sweep over the shipped catalog. Every selected patch is an
+	# authored power at its authored quote, never either starter-slot fixture;
+	# each party card keeps its owner and quote, and the four-draw oracle and
+	# post-generation RNG state match.
+	var parties: Array = [
+		["warden", "seamstress", "tinker"],
+		["warden", "lantern_monk", "rag_duelist"],
+		["scarecrow", "yarn_ranger", "button_golem"],
+		["tinker", "scarecrow", "button_golem"],
+	]
+	var sweep := 24
+	var sampled := 0
+	for party_index in range(parties.size()):
+		var party_ids: Array[String] = []
+		party_ids.assign(parties[party_index])
+		for offset in range(sweep):
+			var seed_value: int = SEED + 40000 + party_index * 1000 + offset
+			var rng := _rng(seed_value)
+			var oracle_rng := _rng(seed_value)
+			var stock := RunShopStockOffers.generate_peddler_stock(rng, party_ids,
+				candidates, patches, [])
+			var expected := _peddler_stock_oracle(catalog, party_ids, candidates,
+				patches, [], oracle_rng)
+			_check(stock.get("ok", false),
+				"power patch sweep seed " + str(seed_value) + ": stock generates")
+			if not stock.get("ok", false):
+				continue
+			sampled += 1
+			var cards: Array = stock.get("cards", [])
+			var offered: Array = stock.get("patches", [])
+			_check(cards.size() == 3 and offered.size() == 1,
+				"power patch sweep seed " + str(seed_value) + ": three cards and one patch")
+			_check(cards == expected.get("cards", []) and offered == expected.get("patches", []),
+				"power patch sweep seed " + str(seed_value) + ": stock matches the independent oracle")
+			_check(rng.state == oracle_rng.state,
+				"power patch sweep seed " + str(seed_value) + ": same four RNG draws")
+			if offered.is_empty():
+				continue
+			var patch_id: String = str(offered[0].get("id", ""))
+			_check(power_ids.has(patch_id),
+				"power patch sweep seed " + str(seed_value) + ": offered patch is an authored power")
+			_check(not inert_ids.has(patch_id)
+				and patch_id != "stitched_badge" and patch_id != "spare_spool",
+				"power patch sweep seed " + str(seed_value) + ": inert starter record is never offered")
+			_check(_pool_has_id(patches, patch_id)
+				and int(offered[0].get("price")) == _pool_price(patches, patch_id)
+				and int(offered[0].get("price")) == 100,
+				"power patch sweep seed " + str(seed_value) + ": patch keeps its authored quote")
+			for position in range(cards.size()):
+				var offer: Dictionary = cards[position]
+				var card_id: String = str(offer.get("id", ""))
+				_check(offer.get("owner") == party_ids[position]
+					and _catalog_definition(card_id, _all_party_catalogs())
+						.get("owner") == offer.get("owner")
+					and _pool_has_id(candidates, card_id)
+					and int(offer.get("price")) == _pool_price(candidates, card_id),
+					"power patch sweep seed " + str(seed_value) + ": card " + str(position)
+						+ " keeps its party owner and authored quote")
+	_check(sampled == sweep * parties.size(),
+		"every power patch sweep seed samples genuine 3+1 stock")
+
+	# AC2/AC3: a mixed inert + power fixture replays identically across reordered
+	# inputs, keeps its inputs unchanged and still only prices a power patch.
+	var fixture_party: Array[String] = []
+	fixture_party.assign(parties[0])
+	var fixture_cards := _card_pool(catalog, fixture_party, authored)
+	var fixture_patches: Array = [
+		{"id": "stitched_badge", "price": 100},
+		{"id": "quilted_coat", "price": 100},
+		{"id": "spare_spool", "price": 100},
+		{"id": "button_eye", "price": 100},
+		{"id": "pincushion_arm", "price": 100},
+		{"id": "relay_bobbin", "price": 100},
+	]
+	var fixture_cards_before := fixture_cards.duplicate(true)
+	var fixture_patches_before := fixture_patches.duplicate(true)
+	var rng_a := _rng(SEED + 41000)
+	var rng_b := _rng(SEED + 41000)
+	var ordered := RunShopStockOffers.generate_peddler_stock(rng_a, fixture_party,
+		fixture_cards, fixture_patches, [])
+	var reordered := RunShopStockOffers.generate_peddler_stock(rng_b, fixture_party,
+		_reversed(fixture_cards), _reversed(fixture_patches), [])
+	_check(ordered.get("ok", false) and ordered == reordered
+		and rng_a.state == rng_b.state,
+		"mixed inert/power candidates replay identically across reordered inputs")
+	_check(ordered.get("patches", []).size() == 1
+		and power_ids.has(ordered["patches"][0]["id"]),
+		"mixed candidate list still prices exactly one authored power")
+	_check(fixture_cards == fixture_cards_before
+		and fixture_patches == fixture_patches_before,
+		"mixed candidate inputs survive generation unchanged")
+
+	# AC2: unowned POWER patches are preferred over owned powers; an owned inert
+	# record never becomes the fallback offer, and all-owned powers fall back to
+	# an owned POWER patch.
+	var mixed_pool: Array = [
+		{"id": "stitched_badge", "price": 100},
+		{"id": "spare_spool", "price": 100},
+		{"id": "quilted_coat", "price": 100},
+		{"id": "button_eye", "price": 100},
+		{"id": "pincushion_arm", "price": 100},
+	]
+	var unowned_power_ids := ["button_eye", "pincushion_arm"]
+	var owned_with_inert: Array[String] = ["stitched_badge", "spare_spool", "quilted_coat"]
+	var unowned_seen := {}
+	var mixed_oracle_failures := 0
+	for offset in range(24):
+		var seed_value: int = SEED + 42000 + offset
+		var rng := _rng(seed_value)
+		var oracle_rng := _rng(seed_value)
+		var stock := RunShopStockOffers.generate_peddler_stock(rng, fixture_party,
+			fixture_cards, mixed_pool, owned_with_inert)
+		var expected := _peddler_stock_oracle(catalog, fixture_party, fixture_cards,
+			mixed_pool, owned_with_inert, oracle_rng)
+		_check(stock.get("ok", false) and stock.get("patches", []).size() == 1
+			and stock.get("patches", []) == expected.get("patches", [])
+			and rng.state == oracle_rng.state,
+			"mixed ownership seed " + str(seed_value) + ": stock matches the independent oracle")
+		if not stock.get("ok", false) or stock.get("patches", []).is_empty():
+			mixed_oracle_failures += 1
+			continue
+		var patch_id: String = str(stock["patches"][0]["id"])
+		_check(unowned_power_ids.has(patch_id),
+			"mixed ownership seed " + str(seed_value)
+				+ ": an unowned power is preferred over the owned power")
+		_check(not inert_ids.has(patch_id),
+			"mixed ownership seed " + str(seed_value) + ": an owned inert record is never offered")
+		unowned_seen[patch_id] = true
+	_check(mixed_oracle_failures == 0, "every mixed ownership seed publishes one power patch")
+	_check(unowned_seen.has("button_eye") and unowned_seen.has("pincushion_arm"),
+		"the bounded mixed ownership sweep reaches both unowned powers")
+
+	var all_powers_owned: Array[String] = ["stitched_badge", "spare_spool",
+		"quilted_coat", "button_eye", "pincushion_arm"]
+	var owned_fallback_seen := {}
+	for offset in range(12):
+		var seed_value: int = SEED + 42500 + offset
+		var rng := _rng(seed_value)
+		var oracle_rng := _rng(seed_value)
+		var stock := RunShopStockOffers.generate_peddler_stock(rng, fixture_party,
+			fixture_cards, mixed_pool, all_powers_owned)
+		var expected := _peddler_stock_oracle(catalog, fixture_party, fixture_cards,
+			mixed_pool, all_powers_owned, oracle_rng)
+		_check(stock.get("ok", false) and stock.get("patches", []) == expected.get("patches", [])
+			and rng.state == oracle_rng.state,
+			"all-power-owned seed " + str(seed_value) + ": owned fallback matches the oracle")
+		if not stock.get("ok", false) or stock.get("patches", []).is_empty():
+			continue
+		var patch_id: String = str(stock["patches"][0]["id"])
+		_check(["quilted_coat", "button_eye", "pincushion_arm"].has(patch_id),
+			"all-power-owned seed " + str(seed_value) + ": fallback offers an owned power patch")
+		_check(not inert_ids.has(patch_id),
+			"all-power-owned seed " + str(seed_value)
+				+ ": even a fully owned inert record is never offered")
+		owned_fallback_seen[patch_id] = true
+	_check(owned_fallback_seen.size() == 3,
+		"the bounded all-owned sweep reaches every owned power as a fallback")
+
+	# AC2: a candidate list with only inert (or unknown) records refuses whole,
+	# before any card draw: no partial stock and no run RNG consumed.
+	var refusal_lists := {
+		"inert only": [{"id": "stitched_badge", "price": 100},
+			{"id": "spare_spool", "price": 100}],
+		"unknown only": [{"id": "__unknown_patch__", "price": 100}],
+		"inert and unknown": [{"id": "stitched_badge", "price": 100},
+			{"id": "__unknown_patch__", "price": 100}],
+	}
+	for label in refusal_lists:
+		var refusal_pool: Array = refusal_lists[label]
+		for owned in [[], ["stitched_badge"], ["quilted_coat"]]:
+			var rng := _rng(SEED + 43000)
+			var state_before: int = rng.state
+			var cards_before := fixture_cards.duplicate(true)
+			var pool_before := refusal_pool.duplicate(true)
+			var result := RunShopStockOffers.generate_peddler_stock(rng, fixture_party,
+				fixture_cards, refusal_pool, owned)
+			_check(not result.get("ok", true) and result.get("cards", []).is_empty()
+				and result.get("patches", []).is_empty(),
+				label + " candidate list is refused whole")
+			_check(rng.state == state_before, label + " refusal consumes no run RNG")
+			_check(fixture_cards == cards_before and refusal_pool == pool_before,
+				label + " refusal leaves the candidate inputs unchanged")
+
+	# AC3: the sampled power patch supports exactly one paid purchase at its
+	# authored quote through the real Peddler visit.
+	var visit_stock := RunShopStockOffers.generate_peddler_stock(_rng(SEED + 44000),
+		fixture_party, candidates, patches, [])
+	_check(visit_stock.get("ok", false), "real catalog stock samples for the paid patch visit")
+	if visit_stock.get("ok", false):
+		var visit := RunPeddlerVisit.new("peddler_power_patch", fixture_party, deck, [],
+			500, visit_stock)
+		_check(visit.is_open(), "the sampled stock opens a real Peddler visit")
+		if visit.is_open():
+			var open := visit.read_state()
+			var patch_offer: Dictionary = open["stock"]["trinkets"][0]
+			var bought := visit.choose_purchase("peddler_power_patch", open["state"],
+				open["stock"], "trinket", patch_offer["id"])
+			_check(bought.get("ok", false) and bought.get("price") == 100
+				and bought.get("state", {}).get("gold") == 500 - 100
+				and bought.get("state", {}).get("trinkets") == [patch_offer["id"]],
+				"the single paid patch purchase charges its authored quote once")
+			var spent := visit.read_state()
+			_check(not visit.choose_purchase("peddler_power_patch", spent["state"],
+				spent["stock"], "trinket", patch_offer["id"]).get("ok", true)
+				and visit.read_state() == spent,
+				"the paid patch cannot be bought a second time")
 
 
 ## V3-3: the shipped priced catalog now prices one base card for every one of
@@ -3752,7 +4014,10 @@ func _peddler_stock_oracle(catalog: StarterCards, party: Array[String], card_poo
 	for hero_id in party:
 		eligible_by_hero[hero_id].sort()
 
-	# Build patch pools.
+	# Build patch pools. Only authored POWER patches can be priced: the two
+	# inert starter-slot records (and any unknown ID) are accepted candidates
+	# but filtered out of both the unowned and the owned fallback pool.
+	var power_ids := _power_patch_ids()
 	var patch_prices := {}
 	var eligible_patches: Array[String] = []
 	var owned_patches: Array[String] = []
@@ -3760,6 +4025,8 @@ func _peddler_stock_oracle(catalog: StarterCards, party: Array[String], card_poo
 		var patch_id: String = entry["id"]
 		var price: int = entry["price"]
 		patch_prices[patch_id] = price
+		if not power_ids.has(patch_id):
+			continue
 		if owned.has(patch_id):
 			owned_patches.append(patch_id)
 		else:

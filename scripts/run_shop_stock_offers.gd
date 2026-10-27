@@ -234,6 +234,13 @@ static func generate_peddler_cards(rng: Variant, party_ids: Variant,
 ## outside the chosen party are validated and then skipped, so the shipped
 ## eight-hero priced catalog can feed any three-hero party.
 ##
+## Only authored POWER patches are payable stock: the shared power-only
+## projection still validates every catalog in full but withholds the inert
+## starter-slot records, so a priced starter record is accepted as a candidate
+## and then filtered out of both the unowned and the owned fallback pool
+## instead of being offered as a powerless purchase. An ID that projection does
+## not know is never promoted to a payable power either.
+##
 ## Every rejection happens before the first RNG draw: a failed call returns
 ## empty offers, leaves the caller's arrays untouched and consumes no RNG.
 static func generate_peddler_stock(rng: Variant, party_ids: Variant,
@@ -275,6 +282,13 @@ static func generate_peddler_stock(rng: Variant, party_ids: Variant,
 		owned[owned_id] = true
 
 	# --- PATCH CANDIDATE PREVALIDATION (before any RNG draw) ---
+	# Only authored power patches are payable stock. The shared power-only
+	# projection validates every authored catalog in full but withholds the
+	# inert starter-slot records, so the shipped superset candidate list is
+	# accepted whole while its two powerless starter records are filtered out
+	# of BOTH draw pools. An unknown or inert candidate is never promoted to a
+	# payable power.
+	var power_patch_ids := _power_patch_ids()
 	var patch_prices := {}
 	var eligible_patch_ids: Array[String] = []
 	var owned_candidate_patch_ids: Array[String] = []
@@ -293,11 +307,17 @@ static func generate_peddler_stock(rng: Variant, party_ids: Variant,
 		if price < 0:
 			return rejected
 		patch_prices[patch_id] = price
+		if not power_patch_ids.has(patch_id):
+			continue
 		if owned.has(patch_id):
 			owned_candidate_patch_ids.append(patch_id)
 			continue
 		eligible_patch_ids.append(patch_id)
+	# No candidate record at all, or none with a real authored power, refuses
+	# the whole visit before any draw: a partial 3+1 stock is never published.
 	if patch_prices.is_empty():
+		return rejected
+	if eligible_patch_ids.is_empty() and owned_candidate_patch_ids.is_empty():
 		return rejected
 
 	# Sort patch pools so candidate order cannot affect the draw.
@@ -385,6 +405,19 @@ static func _read_price(value: Variant) -> int:
 			return -1
 		return int(value)
 	return -1
+
+
+## The authored power-only patch IDs from the shared projection. Its validation
+## pass still covers the whole starter catalog (including records authored
+## there later) but withholds every entry of it, so an inert starter-slot
+## record can never be priced as a patch offer. An unreadable catalog yields an
+## empty set, which refuses the visit instead of offering a powerless patch.
+static func _power_patch_ids() -> Dictionary:
+	var ids := {}
+	for definition in RunAuthoredPatchDefinitions.load_power_definitions():
+		if definition is Dictionary and definition.get("id") is String:
+			ids[definition["id"]] = true
+	return ids
 
 
 static func _peddler_catalogs() -> Array:
