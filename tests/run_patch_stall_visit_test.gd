@@ -55,7 +55,9 @@ func _run() -> void:
 	_check(quote.offers.size() == 3, "quotes exactly three distinct offers")
 	
 	var prices_match := true
-	for offer in quote.offers:
+	var exact_stock := true
+	for i in range(quote.offers.size()):
+		var offer: Dictionary = quote.offers[i]
 		var found := false
 		for a in authored.trinkets:
 			if a.id == offer.id and int(a.price) == int(offer.price):
@@ -63,7 +65,16 @@ func _run() -> void:
 				break
 		if not found:
 			prices_match = false
+		# The open quote is exactly the seeded three-offer stock in source order.
+		exact_stock = exact_stock and i < offers.size() and offer.id == offers[i].id \
+			and int(offer.price) == int(offers[i].price) and offer.sold == false
 	_check(prices_match, "prices match authored initial_offers.json exactly")
+	_check(exact_stock, "open quote retains the exact three sampled priced power patches")
+	var expected_quote: Array = []
+	for offer in offers:
+		expected_quote.append({"id": offer.id, "price": offer.price, "sold": false})
+	_check(not visit.is_consumed() and quote == {"offers": expected_quote,
+		"decisions": ["buy_patch", "leave"]}, "open quote is the authentic source stock and both decisions")
 	
 	# AC3: Negatives and rejection
 	var bad_visit := RunPatchStallVisit.new("", party, deck, owned, gold, offers)
@@ -92,6 +103,7 @@ func _run() -> void:
 
 	var atomic_visit := RunPatchStallVisit.new("node_1", party, deck, owned, gold, offers)
 	var atomic_source := atomic_visit.read_state()
+	var atomic_open_quote := atomic_visit.quote()
 	_check_stale_requests(old_source.visit_id, atomic_visit, offers[0].id)
 	var receipt := atomic_visit.preview_purchase(offers[0].id, atomic_source.visit_id, "node_1", snapshot)
 	_check(receipt == {"kind": "trinket", "id": offers[0].id, "price": offers[0].price}
@@ -105,14 +117,20 @@ func _run() -> void:
 	_check(not atomic_visit.reconcile_purchase(receipt, "foreign", "node_1", snapshot)
 		and not atomic_visit.reconcile_purchase(receipt, atomic_source.visit_id, "foreign", snapshot)
 		and not atomic_visit.reconcile_purchase(receipt, atomic_source.visit_id, "node_1", bad_snapshot), "foreign and stale reconciliation refused")
+	_check(atomic_visit.quote() == atomic_open_quote and not atomic_visit.is_consumed(),
+		"refused reconciliation keeps the open three-offer quote")
 	_check(atomic_visit.reconcile_purchase(receipt, atomic_source.visit_id, "node_1", snapshot)
 		and atomic_visit.is_consumed(), "identical atomic receipt consumes service")
 	_check(not atomic_visit.reconcile_purchase(receipt, atomic_source.visit_id, "node_1", snapshot), "duplicate atomic receipt refused")
 	_check(atomic_visit.read_state().visit_id == atomic_source.visit_id, "atomic close preserves visit identity")
+	_check(atomic_visit.preview_purchase(offers[1].id, atomic_source.visit_id, "node_1", snapshot).is_empty(),
+		"closed atomic visit previews no further patch")
+	_check_closed_quote(atomic_visit, atomic_open_quote, atomic_source, "authenticated paid-and-sewn reconciliation")
 	
 	# AC2: Successful Leave
 	var leave_visit := RunPatchStallVisit.new("node_1", party, deck, owned, gold, offers)
 	var leave_source := leave_visit.read_state()
+	var leave_open_quote := leave_visit.quote()
 	_check_stale_requests(old_source.visit_id, leave_visit, offers[0].id)
 	var leave_receipt := leave_visit.leave(leave_source.visit_id, "node_1", leave_source.snapshot)
 	_check(leave_receipt.ok and leave_receipt.decision == "leave", "successful leave receipt")
@@ -122,8 +140,10 @@ func _run() -> void:
 	_check(not leave_visit.leave(leave_source.visit_id, "node_1", leave_source.snapshot).ok, "leave latches once")
 	_check(leave_visit.read_state().visit_id == leave_source.visit_id, "Leave preserves visit identity")
 	_check(not leave_visit.buy_patch(offers[0].id, leave_source.visit_id, "node_1", leave_visit.read_state().snapshot).ok, "cannot buy after leave")
+	_check_closed_quote(leave_visit, leave_open_quote, leave_source, "Leave")
 	
 	# AC2: Successful Buy
+	var buy_open_quote := visit.quote()
 	var buy_receipt := visit.buy_patch(offers[0].id, state.visit_id, "node_1", snapshot)
 	_check(buy_receipt.ok and buy_receipt.decision == "buy_patch", "successful buy receipt")
 	_check(buy_receipt.receipt.id == offers[0].id, "receipt matches chosen patch")
@@ -133,9 +153,32 @@ func _run() -> void:
 	_check(visit.is_consumed(), "buy closes the visit")
 	_check(visit.read_state().visit_id == state.visit_id, "paid close preserves visit identity")
 	_check(not visit.buy_patch(offers[1].id, state.visit_id, "node_1", snapshot).ok, "cannot buy second patch after closing")
+	_check_closed_quote(visit, buy_open_quote, state, "direct buy")
 	
 	# AC4: Global/Run RNG isolation
 	_check(rng.state == rng_state, "visit creation and actions do not consume global or run RNG")
+
+
+## Every terminal route (direct buy, atomic paid-and-sewn reconcile, Leave) must
+## close the visit without erasing its authentic source, and must stop
+## advertising both the three priced patches and the two decisions.
+func _check_closed_quote(visit: RunPatchStallVisit, open_quote: Dictionary, source: Dictionary, label: String) -> void:
+	_check(open_quote.offers.size() == 3 and open_quote.decisions == ["buy_patch", "leave"],
+		label + " fixture quoted a genuine open decision")
+	_check(visit.is_valid() and visit.is_consumed(), label + " closes the one-decision visit")
+	var closed_state := visit.read_state()
+	_check(closed_state.status == "closed" and not closed_state.visit_id.is_empty() \
+		and closed_state.node_id == source.node_id and closed_state.visit_id == source.visit_id \
+		and closed_state.snapshot == source.snapshot,
+		label + " keeps an authentic valid closed identity and source")
+	var closed_quote := visit.quote()
+	_check(closed_quote.get("offers") is Array and closed_quote.offers.is_empty() \
+		and closed_quote.get("decisions") is Array and closed_quote.decisions.is_empty(),
+		label + " advertises neither stock nor decisions")
+	_check(closed_quote != open_quote and not open_quote.offers.is_empty(),
+		label + " cannot keep advertising the consumed three-offer quote")
+	_check(visit.quote() == closed_quote and visit.read_state() == closed_state,
+		label + " closed quote and identity are stable on repeated reads")
 
 
 func _check_stale_requests(old_id: String, current: RunPatchStallVisit, patch_id: String) -> void:

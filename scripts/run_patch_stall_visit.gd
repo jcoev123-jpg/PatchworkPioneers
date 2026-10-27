@@ -53,9 +53,14 @@ func read_state() -> Dictionary:
 	}
 
 
+## Only an available visit advertises its three priced patches and the two
+## decisions. A consumed visit stays authentic (is_valid()/read_state()) but
+## advertises neither stock nor actions, so a finished stall cannot be replayed.
 func quote() -> Dictionary:
 	if not is_valid():
 		return {}
+	if _status != "available":
+		return {"offers": [], "decisions": []}
 	return {
 		"offers": _purchases.get_stock().trinkets,
 		"decisions": ["buy_patch", "leave"]
