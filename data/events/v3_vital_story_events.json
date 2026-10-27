@@ -179,6 +179,66 @@
         { "id": "hire_nurse", "text": "Pay 18 gold to recover 9 HP", "outcome": { "gold": -18, "scraps": 0, "hp": 9, "max_hp": 0 } },
         { "id": "leave", "text": "Leave the moon ward in peace", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_midnight_thimble_bath",
+      "title": "The Midnight Thimble Bath",
+      "description": "A round-eyed bathkeeper hangs damp plum quilts above a copper tub warmed by a little lantern.",
+      "choices": [
+        { "id": "borrow_lining", "text": "Trade one lasting seam for a warm bath (heal 10 HP; lose 1 max HP)", "outcome": { "gold": 0, "scraps": 0, "hp": 10, "max_hp": -1 } },
+        { "id": "pay_attendant", "text": "Pay 15 gold for warm thread towels (+6 HP)", "outcome": { "gold": -15, "scraps": 0, "hp": 6, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the copper tub steaming", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_bellglass_menders",
+      "title": "The Bellglass Menders",
+      "description": "Three button-eyed dolls stitch cracks in an enormous oxblood glass bell.",
+      "choices": [
+        { "id": "hold_shards", "text": "Lose 6 HP to earn 9 gold and 3 scraps", "outcome": { "gold": 9, "scraps": 3, "hp": -6, "max_hp": 0 } },
+        { "id": "buy_bell_seam", "text": "Spend 3 scraps to gain 3 lasting max HP", "outcome": { "gold": 0, "scraps": -3, "hp": 0, "max_hp": 3 } },
+        { "id": "leave", "text": "Leave the bell unstruck", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_crowfeather_bobbin_mill",
+      "title": "The Crowfeather Bobbin Mill",
+      "description": "A stuffed crow turns a towering bobbin mill beneath moss-coloured quilt sails.",
+      "choices": [
+        { "id": "sell_own_hem", "text": "Surrender 2 max HP for 22 gold", "outcome": { "gold": 22, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "buy_strong_thread", "text": "Pay 17 gold and 1 scrap to gain 2 max HP", "outcome": { "gold": -17, "scraps": -1, "hp": 0, "max_hp": 2 } },
+        { "id": "leave", "text": "Let the turning mill pass", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_oxblood_moth_quilt",
+      "title": "The Oxblood Moth Quilt",
+      "description": "A lantern-lit moth ragdoll unfurls a warm quilt patched with glowing rose cloth.",
+      "choices": [
+        { "id": "lie_under_quilt", "text": "Spend 2 scraps; heal 7 HP and gain 1 max HP", "outcome": { "gold": 0, "scraps": -2, "hp": 7, "max_hp": 1 } },
+        { "id": "sell_quilt_warmth", "text": "Lose 7 HP and receive 25 gold", "outcome": { "gold": 25, "scraps": 0, "hp": -7, "max_hp": 0 } },
+        { "id": "leave", "text": "Fold the quilt without a bargain", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_silver_pin_census",
+      "title": "The Silver Pin Census",
+      "description": "A watchful plush clerk counts silver pins in a midnight-teal stitched ledger.",
+      "choices": [
+        { "id": "donate_thread", "text": "Lose 4 HP to gain 1 scrap and 13 gold", "outcome": { "gold": 13, "scraps": 1, "hp": -4, "max_hp": 0 } },
+        { "id": "purchase_seam", "text": "Spend 18 gold to gain 2 lasting max HP", "outcome": { "gold": -18, "scraps": 0, "hp": 0, "max_hp": 2 } },
+        { "id": "leave", "text": "Close the silver ledger", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_mossbutton_medicine_chest",
+      "title": "The Mossbutton Medicine Chest",
+      "description": "A squat stitched apothecary opens a button-latched chest of soft bandages.",
+      "choices": [
+        { "id": "buy_bandage_bundle", "text": "Pay 12 gold and 1 scrap to heal 11 HP", "outcome": { "gold": -12, "scraps": -1, "hp": 11, "max_hp": 0 } },
+        { "id": "pawn_stuffing", "text": "Lose 3 max HP for 33 gold", "outcome": { "gold": 33, "scraps": 0, "hp": 0, "max_hp": -3 } },
+        { "id": "leave", "text": "Latch the medicine chest shut", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
