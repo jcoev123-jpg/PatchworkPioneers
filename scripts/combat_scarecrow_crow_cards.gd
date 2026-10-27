@@ -49,10 +49,6 @@ const CARDS := {
 	},
 }
 
-## CombatStatuses owns this vocabulary; a status map with any other key, type or negative count is
-## malformed and refuses the play instead of being coerced into a legal stack.
-const STATUS_KEYS: Array[String] = ["bleed", "weak", "exposed", "tangled", "riposte"]
-
 var _statuses := CombatStatuses.new()
 
 
@@ -295,13 +291,7 @@ func _live_statuses(record: Dictionary) -> Dictionary:
 func _valid_status_map(statuses: Variant) -> bool:
 	if not statuses is Dictionary:
 		return false
-	for name in statuses:
-		if not name is String or not STATUS_KEYS.has(name):
-			return false
-		var count = statuses[name]
-		if not count is int or count < 0:
-			return false
-	return true
+	return _statuses._valid_statuses(statuses)
 
 
 func _refusal(reason: String) -> Dictionary:

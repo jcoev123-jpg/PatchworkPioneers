@@ -35,6 +35,7 @@ var _authored: Dictionary = {}
 func _initialize() -> void:
 	_test_authentic_catalog_and_api()
 	_test_ac1_four_printings_pierce_block()
+	_test_canonical_mixed_status_hits()
 	_test_ac1_partial_and_lethal_hp()
 	_test_ac2_backmost_priority_after_deaths()
 	_test_ac2_status_rounding()
@@ -135,6 +136,27 @@ func _test_ac1_four_printings_pierce_block() -> void:
 		result["damage"] = 999
 		_check(enemies.get_enemy(3)["hp"] == 14 - damage,
 			card_id + ": a mutated receipt cannot change the enemy")
+
+
+## All four real held printings accept canonical ancillary tokens without consuming them.
+func _test_canonical_mixed_status_hits() -> void:
+	var losses := {DIVE: 5, DIVE_PLUS: 7, PECK: 6, PECK_PLUS: 8}
+	for card_id: String in CARD_IDS:
+		var party := _party()
+		party._heroes[1]["statuses"] = {"weak": 1, "dodge_next_attack": 1}
+		var enemies := _enemies([{"max_hp": 20, "hp": 20},
+			{"max_hp": 20, "hp": 20}, {"max_hp": 20, "hp": 20, "block": 20}])
+		enemies._enemies[2]["statuses"] = {"exposed": 1, "tangled": 1,
+			"blind_next_attack": 1, "cannot_buff_next_turn": true}
+		var deck := _deck(card_id)
+		var before := _snapshot(deck, party, enemies)
+		var hit: Dictionary = service.play_card(deck, party, enemies, card_id, 3)
+		_check(hit.get("ok") == true and hit.get("damage") == losses[card_id]
+			and hit.get("hp_loss") == losses[card_id], card_id + ": canonical mixed-status HP loss")
+		_check(hit.get("block_before") == 20 and hit.get("block_after") == 20,
+			card_id + ": mixed-status hit leaves Block 20")
+		_check(_snapshot(deck, party, enemies) == _expected(before, card_id, 3, losses[card_id]),
+			card_id + ": one payment/discard, unchanged tokens, other actors and RNG")
 
 
 ## AC1: a partial hit leaves HP, a lethal hit floors at zero and still reports the full damage.
@@ -271,16 +293,18 @@ func _test_ac2_status_rounding() -> void:
 ## AC2/AC3: caller snapshots are assertions; the owner is bound by ID, not a fixed seat.
 func _test_ac2_snapshots_and_owner_seats() -> void:
 	var party := _party()
-	party._heroes[1]["statuses"] = {"weak": 1}
+	party._heroes[1]["statuses"] = {"weak": 1, "dodge_next_attack": 1}
 	var enemies := _enemies([{"max_hp": 20, "hp": 20}, {"max_hp": 20, "hp": 20}])
-	enemies._enemies[1]["statuses"] = {"exposed": 1}
+	enemies._enemies[1]["statuses"] = {"exposed": 1, "tangled": 1,
+		"blind_next_attack": 1, "cannot_buff_next_turn": true}
 	var deck := _deck(DIVE)
 	var before := _snapshot(deck, party, enemies)
 	var matching: Dictionary = service.play_card(deck, party, enemies, DIVE, 2,
-		{"weak": 1}, {2: {"exposed": 1}})
-	_check(matching.get("ok") == true and matching.get("damage") == 3,
-		"matching caller snapshots are accepted and keep the nine-eighths result")
-	_check(_snapshot(deck, party, enemies) == _expected(before, DIVE, 2, 3),
+		{"weak": 1, "dodge_next_attack": 1}, {2: {"exposed": 1, "tangled": 1,
+			"blind_next_attack": 1, "cannot_buff_next_turn": true}})
+	_check(matching.get("ok") == true and matching.get("damage") == 5,
+		"matching canonical snapshots keep nine-eighths rounding plus Tangled")
+	_check(_snapshot(deck, party, enemies) == _expected(before, DIVE, 2, 5),
 		"matching snapshots change nothing beyond the hit")
 
 	for seat in [1, 3]:
@@ -338,6 +362,37 @@ func _test_ac3_refusals() -> void:
 			"malformed defender snapshot " + str(bad_map))
 	_rejected(deck, party, enemies, DIVE, 3, {}, {9: {}}, "snapshot for an absent enemy")
 	_rejected(deck, party, enemies, DIVE, 3, {}, {"three": {}}, "non-integer snapshot key")
+	var malformed_maps: Array = []
+	for key in ["blind_next_attack", "dodge_next_attack"]:
+		for value in [true, "1", 2, -1]:
+			malformed_maps.append({key: value})
+	for value in [false, 1, "true"]:
+		malformed_maps.append({"cannot_buff_next_turn": value})
+	for key in ["weak", "exposed", "tangled"]:
+		for value in [-1, 1.5, "1", true]:
+			malformed_maps.append({key: value})
+	for malformed: Dictionary in malformed_maps:
+		_rejected(deck, party, enemies, DIVE, 3, malformed, {},
+			"invalid canonical attacker snapshot " + str(malformed))
+		_rejected(deck, party, enemies, DIVE, 3, {}, {3: malformed},
+			"invalid canonical defender snapshot " + str(malformed))
+		# Check both selected and unrelated actors: validation covers the complete roster.
+		for index in [0, 1]:
+			var broken_party := _party()
+			broken_party._heroes[index]["statuses"] = malformed.duplicate(true)
+			_rejected(_deck(DIVE), broken_party, enemies, DIVE, 3, {}, {},
+				"invalid hero status " + str(index) + str(malformed))
+		for index in [0, 2]:
+			var broken_enemies := _enemies([{"max_hp": 12, "hp": 12},
+				{"max_hp": 12, "hp": 12}, {"max_hp": 12, "hp": 12}])
+			broken_enemies._enemies[index]["statuses"] = malformed.duplicate(true)
+			_rejected(_deck(DIVE), party, broken_enemies, DIVE, 3, {}, {},
+				"invalid enemy status " + str(index) + str(malformed))
+	_rejected(deck, party, enemies, DIVE, 3, {"dodge_next_attack": 1}, {},
+		"valid but stale Dodge snapshot")
+	_rejected(deck, party, enemies, DIVE, 3, {},
+		{3: {"blind_next_attack": 1, "cannot_buff_next_turn": true}},
+		"valid but forged Blind/Fear snapshot")
 
 	var no_energy := _deck(DIVE)
 	_check(no_energy.try_spend_energy(3) and no_energy.energy == 0,

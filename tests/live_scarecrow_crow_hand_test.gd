@@ -5,7 +5,8 @@ const IDS := ["scarecrow_crow_dive", "scarecrow_crow_dive_plus",
 	"scarecrow_crow_peck", "scarecrow_crow_peck_plus"]
 
 
-func _begin(id: String, seat: int = 2, rear_alive: bool = false) -> Control:
+func _begin(id: String, seat: int = 2, rear_alive: bool = false,
+		mixed_statuses: bool = false) -> Control:
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await _frames()
@@ -35,6 +36,10 @@ func _begin(id: String, seat: int = 2, rear_alive: bool = false) -> Control:
 		app.enemies._enemies[2].statuses.clear()
 	else:
 		_check(app.enemies.apply_damage(3, 50), "rear is slain")
+	if mixed_statuses:
+		app.party._heroes[seat - 1].statuses = {"weak": 1, "dodge_next_attack": 1}
+		app.enemies._enemies[1].statuses = {"exposed": 1, "tangled": 1,
+			"blind_next_attack": 1, "cannot_buff_next_turn": true}
 	_check(app.party.get_hero(seat).id == "scarecrow" and app.enemies.get_enemy(2).block == 20,
 		"non-vacuous owner seat and real Block preconditions")
 	app.battle_result = CombatBattleResult.new(app.party, app.enemies)
@@ -58,8 +63,9 @@ func _dispose() -> void:
 	await _frames()
 
 
-func _success(id: String, keyboard: bool, seat: int, rear_alive: bool) -> void:
-	var panel := await _begin(id, seat, rear_alive)
+func _success(id: String, keyboard: bool, seat: int, rear_alive: bool,
+		mixed_statuses: bool = false) -> void:
+	var panel := await _begin(id, seat, rear_alive, mixed_statuses)
 	if panel == null:
 		await _dispose()
 		return
@@ -89,7 +95,15 @@ func _success(id: String, keyboard: bool, seat: int, rear_alive: bool) -> void:
 	# Rear slot is slain, so slot 2 is now backmost. Weak floors; Block is bypassed.
 	var base: int = definition.effects.damage
 	var damage := base if rear_alive else int(floor(base * 0.75))
+	if mixed_statuses:
+		damage = 5 # Crow Dive: floor(3 * 9/8) + 2, with canonical tokens retained.
+		_check(app.party.get_hero(seat).statuses == {"weak": 1, "dodge_next_attack": 1}
+			and app.enemies.get_enemy(2).statuses == {"exposed": 1, "tangled": 1,
+				"blind_next_attack": 1, "cannot_buff_next_turn": true},
+			"canonical mixed statuses exist before actual enabled input")
 	var target := 3 if rear_alive else 2
+	var support = app.get_node("LiveSupportHand")
+	var selection_before: Array = [support._pending.duplicate(true), support._targets.duplicate(true)]
 	expected[0][5][target - 1].hp -= damage
 	var callback: Callable = presenter._bindings[panel].callback
 	if keyboard:
@@ -101,6 +115,8 @@ func _success(id: String, keyboard: bool, seat: int, rear_alive: bool) -> void:
 	else:
 		await _mouse(panel)
 	_check(_state() == expected, "exact full state: one payment/discard, adjusted hit, untouched statuses/other slots/intents/RNG")
+	_check([support._pending, support._targets] == selection_before,
+		"automatic crow hit preserves target selection")
 	_check(presenter.last_event.get("ok", false) and presenter.last_event.target_position == target
 		and presenter.last_event.damage == damage and presenter.last_event.block_after == 20, "resolver event forwarded")
 	callback.call(_press())
@@ -228,6 +244,8 @@ func _retarget_at_commit(id: String) -> void:
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	for keyboard in [false, true]:
+		await _success(IDS[0], keyboard, 2, false, true)
 	for id: String in IDS:
 		for keyboard in [false, true]:
 			for seat in [1, 2, 3]:
