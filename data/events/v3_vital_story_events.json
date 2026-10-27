@@ -119,6 +119,66 @@
         { "id": "harvest_silk", "text": "Take 24 gold in silk; lose 1 max HP", "outcome": { "gold": 24, "scraps": 0, "hp": 0, "max_hp": -1 } },
         { "id": "leave", "text": "Leave the cocoon untouched", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_wakeful_darning_house",
+      "title": "The Wakeful Darning House",
+      "description": "A round button-eyed tailor keeps a bone-cream darning room lit until dawn, with warm quilts stacked at the door.",
+      "choices": [
+        { "id": "buy_warm_seam", "text": "Pay 14 gold for a warm seam (+9 HP)", "outcome": { "gold": -14, "scraps": 0, "hp": 9, "max_hp": 0 } },
+        { "id": "unpick_old_hem", "text": "Trade 2 max HP for 20 gold", "outcome": { "gold": 20, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the darning room asleep", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_silver_bobbin_oath",
+      "title": "The Silver Bobbin Oath",
+      "description": "A little brass-eyed vowkeeper winds silver thread around a carved spool beneath an amber lamp.",
+      "choices": [
+        { "id": "pledge_thread", "text": "Spend 2 scraps to gain 2 max HP and mend 3 HP", "outcome": { "gold": 0, "scraps": -2, "hp": 3, "max_hp": 2 } },
+        { "id": "sell_silver", "text": "Sell one scrap of silver thread for 17 gold", "outcome": { "gold": 17, "scraps": -1, "hp": 0, "max_hp": 0 } },
+        { "id": "leave", "text": "Keep your promises for another night", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_crowshade_hearth",
+      "title": "The Crowshade Hearth",
+      "description": "Beneath a moss-green quilt awning, a plush crow tends a kettle on a tiny lantern stove.",
+      "choices": [
+        { "id": "offer_stuffing", "text": "Give 5 HP of stuffing for 2 scraps", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
+        { "id": "buy_broth", "text": "Pay 11 gold for a bowl of stitched broth (+7 HP)", "outcome": { "gold": -11, "scraps": 0, "hp": 7, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the kettle simmering", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_briar_button_sentinel",
+      "title": "The Briar Button Sentinel",
+      "description": "A stout velvet guardian guards a gate of blunt thorn-pins, one golden button shining in its chest.",
+      "choices": [
+        { "id": "press_button", "text": "Lose 4 HP to gain 1 max HP and 1 scrap", "outcome": { "gold": 0, "scraps": 1, "hp": -4, "max_hp": 1 } },
+        { "id": "buy_pin", "text": "Buy a lasting safety seam for 19 gold (+2 max HP)", "outcome": { "gold": -19, "scraps": 0, "hp": 0, "max_hp": 2 } },
+        { "id": "leave", "text": "Pass the guardian without touching its pins", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_mossveil_patch_auditor",
+      "title": "The Mossveil Patch Auditor",
+      "description": "A broad patch-covered doll stamps every seam in a midnight-teal ledger with a giant thimble.",
+      "choices": [
+        { "id": "trade_margin", "text": "Give up 2 max HP for 28 gold", "outcome": { "gold": 28, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "reinforce_ledger", "text": "Spend 2 scraps to restore 8 HP", "outcome": { "gold": 0, "scraps": -2, "hp": 8, "max_hp": 0 } },
+        { "id": "leave", "text": "Close the ledger and go", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_velvet_moon_ward",
+      "title": "The Velvet Moon Ward",
+      "description": "A rounded lantern-bearing ragdoll nurses a crescent quilt under a plum-coloured button moon.",
+      "choices": [
+        { "id": "share_oil", "text": "Spend 1 scrap and lose 3 HP for 2 max HP", "outcome": { "gold": 0, "scraps": -1, "hp": -3, "max_hp": 2 } },
+        { "id": "hire_nurse", "text": "Pay 18 gold to recover 9 HP", "outcome": { "gold": -18, "scraps": 0, "hp": 9, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the moon ward in peace", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
