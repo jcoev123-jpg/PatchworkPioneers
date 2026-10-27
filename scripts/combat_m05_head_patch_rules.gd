@@ -65,7 +65,7 @@ func bind_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
 		if typeof(hero) != TYPE_DICTIONARY:
 			return false
 		var hero_id: Variant = hero.get("id")
-		if typeof(hero_id) != TYPE_STRING or not HERO_IDS.has(hero_id):
+		if typeof(hero_id) != TYPE_STRING or not RunV3PartyAdmission.HERO_IDS.has(hero_id):
 			return false
 		var slots: Variant = worn.get(hero_id)
 		if typeof(slots) != TYPE_DICTIONARY or slots.size() != SLOTS.size():

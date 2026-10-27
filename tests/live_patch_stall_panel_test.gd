@@ -223,6 +223,7 @@ func _layout(visit: RunPatchStallVisit) -> void:
 			"exactly three purchase buttons, three compact pins and Leave")
 	_check(panel.wallet_label.text.contains("240 gold") and panel.title_label.text.contains("PATCH STALL"),
 			"wallet and title readable")
+	_check_warning(visit, "seeded authentic quote")
 	for i in range(3):
 		var pin := panel.wearer_buttons[i]
 		var button := panel.offer_buttons[i]
@@ -307,6 +308,7 @@ func _named_power_cases(power_slots: Dictionary) -> void:
 		await _bind(visit)
 		_check(panel.offer_buttons.size() == 3 and panel.wearer_buttons.size() == 3,
 				"named genuine visit has three purchase and wearer controls")
+		_check_warning(visit, "named trio %d" % start)
 		for i in range(3):
 			var id: String = trio[i]
 			var action := panel.offer_buttons[i]
@@ -391,6 +393,57 @@ func slot_map_for(id: String) -> String:
 			return record["slot"]
 	return ""
 
+## Independently authored copy of the irreversibility warning. The panel states
+## the rule, not any hero's live loadout, because a visit carries no wardrobe.
+func _slot_warning(slot: String) -> String:
+	return "%s slot: a patch already worn in this slot is destroyed for exactly +1 scrap.\nA free %s slot destroys nothing and gains no scrap." % [slot, slot]
+
+## The warning must be always visible AND truthful for every offered patch, in
+## the quote's own order: each tooltip names only that patch's authored slot and
+## explains both the occupied-slot (+1 scrap, destruction) and free-slot outcomes.
+func _check_warning(visit: RunPatchStallVisit, tag: String) -> void:
+	var header: Label = panel.wearer_label
+	var header_text: String = header.text if header != null else ""
+	_check(header != null and header.is_visible_in_tree()
+			and header_text == LivePatchStallPanel.WEARER_WARNING
+			and header_text.contains("same-slot") and header_text.contains("destroyed")
+			and header_text.contains("+1 scrap")
+			and header.get_theme_font_size("font_size") >= 20
+			and header.get_theme_color("font_color").get_luminance() > 0.6,
+			"always-visible readable header warns of same-slot destruction for +1 scrap: " + tag)
+	for hero in PARTY:
+		_check(header_text.find(hero.capitalize()) < 0,
+				"header states the sewing rule, not a guessed live wearer: " + tag)
+	if header != null:
+		var font: Font = header.get_theme_font("font")
+		var measured := font.get_string_size(header_text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+				header.get_theme_font_size("font_size"))
+		_check(measured.x <= header.size.x - 4,
+				"compact header warning is not clipped at 1280x720: " + tag)
+		_check(Rect2(Vector2.ZERO, Vector2(root.size)).encloses(header.get_global_rect()),
+				"header warning lies inside the mounted panel: " + tag)
+	var quote := visit.quote()
+	_check(quote.get("offers", []).size() == 3 and panel.offer_buttons.size() == 3,
+			"warning fixture is a genuine three-offer quote: " + tag)
+	for i in range(quote.get("offers", []).size()):
+		var id: String = quote["offers"][i]["id"]
+		var slot := slot_map_for(id)
+		var text: String = panel.offer_buttons[i].tooltip_text
+		var warning := _slot_warning(slot)
+		var lines := text.split("\n")
+		_check(slot in ["HEAD", "ARM", "COAT"] and text.contains("[%s]" % id) and text.contains("Torn")
+				and text.ends_with("Patch powers do not work while the wearer is Torn.\n" + warning)
+				and lines[0].begins_with(id.replace("_", " ").capitalize())
+				and not lines[1].is_empty(),
+				"tooltip keeps patch ID, authored power and Torn caveat, then the quoted %s slot rule: %s" % [slot, id])
+		_check(warning.contains("destroyed for exactly +1 scrap") and warning.contains("destroys nothing")
+				and warning.contains("gains no scrap") and warning.contains(slot),
+				"warning states destruction, exactly +1 scrap and empty-slot non-replacement: " + id)
+		for other in ["HEAD", "ARM", "COAT"]:
+			if other != slot:
+				_check(not text.contains("%s slot:" % other),
+						"tooltip warning names only its own %s slot, never %s: %s" % [slot, other, id])
+
 func _buy_case(wearer: int, index: int, keyboard: bool) -> void:
 	var visit := _visit("patch_%d_%d" % [wearer, index])
 	var before := visit.read_state()
@@ -401,10 +454,18 @@ func _buy_case(wearer: int, index: int, keyboard: bool) -> void:
 	_check(panel.wearer_buttons[wearer].text.begins_with("✕") \
 			and panel.wearer_buttons[wearer].get_meta("wearer_id") == PARTY[wearer],
 			"real input selects exact source wearer")
+	_check_warning(visit, "after choosing wearer %d" % wearer)
 	var old_quote := visit.quote()
 	var old_state := visit.read_state()
 	await _act(panel.offer_buttons[index], not keyboard, KEY_ENTER)
 	_check(intents.size() == 1, "exactly one quoted button intent")
+	_check_warning(visit, "after patch activation %d" % index)
+	_check(panel.wearer_label.text == LivePatchStallPanel.WEARER_WARNING
+			and panel.wearer_label.is_visible_in_tree(),
+			"same-slot warning still shown once the intent is sent")
+	_check(not visit.read_state()["snapshot"]["owned_trinkets"].has(quote["offers"][index]["id"])
+			and visit.quote()["offers"][index]["sold"] == false,
+			"view activation is an intent only, never a direct purchase")
 	_check(visit.read_state() == old_state and visit.quote() == old_quote and not visit.is_consumed(),
 			"panel emits without any service mutation or settlement")
 	if intents.size() != 1:
@@ -576,6 +637,7 @@ func _fail_closed() -> void:
 			"already consumed visit cannot reopen")
 	var fresh := _visit("fresh_node")
 	await _bind(fresh)
+	_check_warning(fresh, "after rebind")
 	var fresh_state := fresh.read_state()
 	callback.call()
 	pin_callback.call()
@@ -585,6 +647,10 @@ func _fail_closed() -> void:
 	await _act(panel.offer_buttons[1], false)
 	_check(observers[0] == 1 and intents.size() == 1,
 			"independently attached observer preserved across rebind")
+	_check_warning(fresh, "after rebind activation")
+	_check(fresh.read_state() == fresh_state and not fresh.is_consumed() \
+			and not fresh_state["snapshot"]["owned_trinkets"].has(fresh.quote()["offers"][1]["id"]),
+			"rebound warning plus physical click emits only the source-bound intent")
 	# That was a permitted real signal on mounted Button; controller still
 	# authenticates it, and only it can settle.
 	var good := Controller.settle(fresh, intents[0], fresh_state, fresh.quote()) if intents.size() == 1 else {}

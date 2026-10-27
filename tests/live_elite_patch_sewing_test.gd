@@ -52,7 +52,8 @@ func _rest_action_ready(button) -> bool:
 
 
 func _rest_panel_ready(id: String) -> bool:
-	if app.run_map.get_current_node_id() != id:
+	if app.run_map == null or app.run_map.get_current_node_id() != id \
+		or app.run_map.get_node(id).get("type") != "Rest":
 		return false
 	var campfire: bool = is_instance_valid(app.campfire_view) and app.campfire_view.is_visible_in_tree()
 	var legacy: bool = is_instance_valid(app.rest_view) and app.rest_view.is_visible_in_tree()
@@ -63,12 +64,23 @@ func _rest_panel_ready(id: String) -> bool:
 			and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN \
 			and not app._campfire_closed and _rest_action_ready(app.campfire_heal_button)
 	return app.rest_recovery != null and not app.rest_recovery.is_consumed() \
+		and app._rest_map != null and app._rest_map.get_ref() == app.run_map \
+		and app._rest_route == app.run_map.get_route() \
+		and is_instance_valid(app.rest_continue_button) \
+		and not app.rest_continue_button.is_queued_for_deletion() \
+		and app.rest_continue_button.is_visible_in_tree() \
 		and _rest_action_ready(app.rest_heal_button)
 
 
 func _rest_connected(id: String) -> bool:
-	return app.run_map.get_current_node_id() == id and is_instance_valid(app.route_view) \
-		and app.route_view.is_visible_in_tree() and app._can_choose_connected_route()
+	if app.run_map == null or app.run_map.get_current_node_id() != id \
+		or not is_instance_valid(app.route_view) or not app.route_view.is_visible_in_tree() \
+		or not app._can_choose_connected_route():
+		return false
+	for next_id in app.run_map.get_legal_choices():
+		if _rest_action_ready(_find_route_action(next_id)):
+			return true
+	return false
 
 
 func _find_route_action(id: String):
@@ -87,12 +99,29 @@ func _ready_route_action(id: String) -> Button:
 
 
 func _rest_input(button: Button, keyboard: bool) -> void:
-	await _await_rest_state("", "enabled input", func(): return _rest_action_ready(button))
+	# A retained control must still be the live action at dispatch, not merely
+	# become visible during some later visit. Never retry a physical action.
+	if not _rest_action_ready(button):
+		await _stop_admission("", "invalid input target %s" % _rest_button_state(button))
+	var route_id: String = button.get_meta("route_id", "")
+	var presses := {"count": 0}
+	var observe := func(): presses.count += 1
+	button.pressed.connect(observe)
 	if keyboard:
 		button.grab_focus()
+		if not _rest_action_ready(button) or not button.has_focus():
+			await _stop_admission(route_id, "keyboard focus %s" % _rest_button_state(button))
 		await _key(KEY_ENTER)
 	else:
 		await _click(button)
+	if is_instance_valid(button):
+		button.pressed.disconnect(observe)
+	if presses.count != 1:
+		await _stop_admission(route_id, "expected one physical action, observed %d" % presses.count)
+	_check(presses.count == 1, "legal Rest/route button receives exactly one physical action")
+	if route_id != "":
+		await _await_rest_state(route_id, "route admitted after one input", func(): return (
+			app.run_map != null and app.run_map.get_current_node_id() == route_id))
 
 
 ## Later Rest nodes can retain the legacy recovery view. Drive whichever real
@@ -110,15 +139,22 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 		await _rest_input(action, keyboard)
 		await _await_rest_state(id, "mounted Heal", func(): return _rest_panel_ready(id))
 		_check(app.run_map.get_current_node_id() == id, "requested connected Rest is current before recovery")
+		_check(not _rest_panel_ready(id + ":wrong"), "another node cannot admit this Rest panel")
+		var completed: Array = app.party_carryover.read_state().completed_rests
+		_check(not completed.has(id), "admitted Rest has no earlier Heal receipt")
+		completed.append(id)
 		if is_instance_valid(app.campfire_view) and app.campfire_view.is_visible_in_tree():
 			_check(app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
 				"transit Campfire binds an open visit")
 			var stale_heal: Button = app.campfire_heal_button
 			await _rest_input(stale_heal, keyboard)
 			await _await_rest_state(id, "Campfire healed", func(): return (app._campfire_closed
+				and app.campfire_visit != null
+				and app.campfire_visit.read_state().node_id == id
 				and app.campfire_visit.read_state().status == RunCampfireVisit.HEALED
-				and not app.campfire_view.is_visible_in_tree() and _rest_connected(id)))
-			_check(not app.campfire_view.visible and app._campfire_closed,
+				and (not is_instance_valid(app.campfire_view) or not app.campfire_view.is_visible_in_tree())
+				and _rest_connected(id)))
+			_check((not is_instance_valid(app.campfire_view) or not app.campfire_view.visible) and app._campfire_closed,
 				"transit Campfire Heal completes its visit")
 			var healed: Array = _persistent()
 			if is_instance_valid(stale_heal):
@@ -142,20 +178,24 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 				and not app.rest_recovery.is_consumed(),
 				"premature legacy Continue before Heal is inert")
 			await _rest_input(heal, keyboard)
-			await _await_rest_state(id, "legacy healed", func(): return (app.rest_recovery.is_consumed()
-				and app.rest_heal_button.disabled and _rest_action_ready(app.rest_continue_button)))
+			await _await_rest_state(id, "legacy healed", func(): return (app.rest_recovery != null
+				and app.rest_recovery.is_consumed()
+				and is_instance_valid(app.rest_heal_button) and app.rest_heal_button.disabled
+				and _rest_action_ready(app.rest_continue_button)))
 			_check(app.rest_recovery.is_consumed() and app.rest_heal_button.disabled
 				and not app.rest_continue_button.disabled, "legacy transit Heal commits once")
 			_check(app.party_carryover.read_state().completed_rests.has(id),
 				"legacy transit Heal records exactly this Rest in the party ledger")
 			var healed: Array = _persistent()
-			heal.pressed.emit()
+			if is_instance_valid(heal):
+				heal.pressed.emit()
 			await process_frame
 			_check(_persistent() == healed and app.rest_view.is_visible_in_tree(),
 				"repeated legacy Heal after commit is inert")
 			await _rest_input(leave, keyboard)
 			await _await_rest_state(id, "legacy closed", func(): return (
-				not app.rest_view.is_visible_in_tree() and _rest_connected(id)))
+				(not is_instance_valid(app.rest_view) or not app.rest_view.is_visible_in_tree())
+				and _rest_connected(id)))
 			var settled: Array = _persistent()
 			if is_instance_valid(leave):
 				leave.pressed.emit()
@@ -164,10 +204,35 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 			await process_frame
 			_check(_persistent() == settled and _rest_connected(id),
 				"stale legacy Heal and Continue after leaving are inert")
+		_check(app.party_carryover.read_state().completed_rests == completed,
+			"one physical Heal adds exactly this Rest receipt once")
 		await _check_connected_book()
 		_check(app.route_view != null and app.route_view.is_visible_in_tree()
 			and app._can_choose_connected_route(), "completed Rest keeps connected chooser live")
 		rest_transits[keyboard] += 1
+
+
+func _test_input_preconditions() -> void:
+	_check(not _rest_action_ready(null), "missing input target is rejected")
+	var button := Button.new()
+	button.position = Vector2(10, 10)
+	button.size = Vector2(100, 40)
+	root.add_child(button)
+	await _frames()
+	_check(_rest_action_ready(button), "mounted enabled input guard has a positive control")
+	button.hide()
+	_check(not _rest_action_ready(button), "hidden input target is rejected")
+	button.show()
+	button.disabled = true
+	_check(not _rest_action_ready(button), "disabled input target is rejected")
+	button.disabled = false
+	button.position.x = 1300
+	_check(not _rest_action_ready(button), "offscreen input target is rejected")
+	button.position.x = 10
+	button.queue_free()
+	_check(not _rest_action_ready(button), "queued input target is rejected before deletion")
+	await process_frame
+	_check(not _rest_action_ready(button), "freed input target is rejected without dereference")
 
 
 ## Keep the earned-coat witnesses unchanged: their current paths need not contain
@@ -489,9 +554,9 @@ func _test_literal_names() -> void:
 
 
 func _click(control: Control) -> void:
-	# The inherited helper moves the pointer, yields four frames, then presses.
-	# Visibility alone can precede container sorting (reward/sew reparenting),
-	# so admit input only after the mounted target's geometry has settled.
+	if not is_instance_valid(control) or control.is_queued_for_deletion():
+		await _stop_admission("", "missing physical target")
+	# Visibility can precede container sorting (reward/sew reparenting).
 	var layout := {"previous": Rect2(), "settled": 0}
 	await _await_rest_state("", "physical target " + str(control), func():
 		if not _rest_action_ready(control):
@@ -504,7 +569,25 @@ func _click(control: Control) -> void:
 	var route_id: String = control.get_meta("route_id", "")
 	_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()),
 		"physical input bounds: %s %s" % [control.name, control.get_global_rect()])
-	await super._click(control)
+	# The inherited click yields after pointer motion and then dereferences its
+	# retained control unconditionally. Revalidate at that exact input boundary.
+	var rect: Rect2 = control.get_global_rect()
+	var motion := InputEventMouseMotion.new()
+	motion.position = rect.get_center()
+	root.push_input(motion, true)
+	await _frames()
+	if not _rest_action_ready(control):
+		await _stop_admission(route_id, "stale physical target %s" % _rest_button_state(control))
+	if control.get_global_rect() != rect:
+		await _stop_admission(route_id, "physical target moved after hover %s" % _rest_button_state(control))
+	# One press/release pair, with no yield or second attempt between them.
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = rect.get_center()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = pressed
+		root.push_input(event, true)
+	await _frames()
 	if route_id != "":
 		await _await_rest_state(route_id, "route admitted after one click", func(): return (
 			app.run_map != null and app.run_map.get_current_node_id() == route_id))
@@ -1126,6 +1209,7 @@ func _run() -> void:
 	await _frames()
 	presenter = app.get_node("LiveAttackPreview")
 	sewing = app.get_node("LiveElitePatchSewing")
+	await _test_input_preconditions()
 	await _test_rest_inputs()
 	await _attack_patch_claims()
 	_test_literal_names()

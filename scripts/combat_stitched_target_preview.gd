@@ -109,7 +109,7 @@ func _valid_party(slots: Array[Dictionary]) -> bool:
 		var position: Variant = hero.get("position")
 		var hp: Variant = hero.get("hp")
 		var max_hp: Variant = hero.get("max_hp")
-		if typeof(id) != TYPE_STRING or not id in ["warden", "seamstress", "tinker"] or ids.has(id):
+		if typeof(id) != TYPE_STRING or not id in RunV3PartyAdmission.HERO_IDS or ids.has(id):
 			return false
 		if typeof(position) != TYPE_INT or position != index + 1:
 			return false
@@ -148,6 +148,8 @@ func _half_preview(half: Dictionary, index: int, party_slots: Array[Dictionary],
 	# The Rest validator already checked the full descriptor; read target
 	# shape from the real authored card, never from a caller-supplied half.
 	var authored := _catalog.get_definition(id)
+	if CombatYarnRangerKnitCards.CARDS.has(id):
+		authored = CombatYarnRangerKnitCards.knit_definition(id)
 	if authored.is_empty() and id in POOL_HEAL_IDS:
 		authored = _pool.get_definition(id)
 	if authored.is_empty() and id in WARDEN_BLOCK_IDS:

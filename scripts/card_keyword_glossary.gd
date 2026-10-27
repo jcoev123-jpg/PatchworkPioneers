@@ -169,7 +169,7 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 			"tangled":
 				explanation = "For %d turns, the Tangled unit cannot move or be moved by its own side, and attacks against it deal +2 damage, applied once per positive-base status-aware attack after Weak and Exposed rounding down, regardless of the Tangled count. Tangled decrements at owner-turn end. The combat status rules apply this effect; not every live own-side movement route is wired." % int(raw)
 			"blind":
-				explanation = "Blind is one-shot, never a stack or a number of turns: the affected enemy's NEXT attack misses, and after that attack the Blind is spent. This Help explains the printed design rule only; live combat does not yet cancel the attack."
+				explanation = "Blind is one-shot, never a stack and never a number of turns: the affected enemy's NEXT attempted attack misses in full, including every hit of a multi-hit sequence, and the Blind is spent once on that attempt. An enemy buff or debuff is not an attack, so an enemy turn that ends without attacking keeps the unspent Blind until a real attack is attempted. Live combat already resolves this: the enemy phase spends the Blind before any hit of that attack lands."
 			"fear":
 				explanation = FEAR_EXPLANATION
 		lines.append({"keyword": keyword, "explanation": explanation})
@@ -482,7 +482,7 @@ static func _dodge_line(definition: Dictionary, effects: Dictionary) -> Dictiona
 		if typeof(effects["dodge_next_attack"]) != TYPE_INT \
 				or int(effects["dodge_next_attack"]) != 1:
 			return {}
-	var explanation := "Dodge is one-shot, never a stack or a number of turns: the target's NEXT incoming attack is avoided once, then the Dodge is spent. It applies to the caster (self) for the Rag Duelist's cape cards, or to a chosen ally (with the authored Block) for Moth Shroud. It is not permanent protection. This Help explains the authored design description only; live combat does not yet apply Dodge."
+	var explanation := "Dodge is one-shot, never a stack and never a number of turns: the next incoming attack HIT against the living hero who actually receives it misses once, and that hero's Dodge is spent on it. It goes to the caster for the Rag Duelist's cape cards, or to a chosen ally (with the authored Block) for Moth Shroud. Warden Guard redirection decides who really receives the attack, so the receiving hero's Dodge is the one spent, while a skipped or downed target keeps its own. A multi-hit attack is several separate hit attempts, so one Dodge avoids one of those hits, not all of them. An unused Dodge expires at that hero's owner-turn end. Live combat already applies this: the attack rules spend the token for the real recipient before any damage lands."
 	return {"keyword": "Dodge", "explanation": explanation}
 
 

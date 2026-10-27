@@ -206,15 +206,12 @@ static func _valid_roster(roster: Array, require_living: bool) -> bool:
 		var statuses: Variant = hero.get("statuses", {})
 		if typeof(statuses) != TYPE_DICTIONARY:
 			return false
-		for name in statuses:
-			if typeof(name) != TYPE_STRING or not name in ["bleed", "weak", "exposed"]:
-				return false
-			if typeof(statuses[name]) != TYPE_INT or statuses[name] < 0:
-				return false
 		ids[id] = true
 		if hp > 0:
 			living += 1
-	return not require_living or living > 0
+	# Validate the same authoritative token vocabulary as actual combat turns.
+	# tick_side returns a detached proposal; no status is advanced on the roster.
+	return (not require_living or living > 0) and CombatStatusTurnBatch.new().tick_side("heroes", roster).ok
 
 
 static func _rejected() -> Dictionary:
