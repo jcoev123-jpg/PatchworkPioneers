@@ -1722,8 +1722,6 @@ func _sync_battle() -> void:
 		badge.name = "EnemyIntent%d" % enemy.position
 		badge.source_position = enemy.position
 		puppet.add_child(badge)
-		# Containers settle after mounting; resize and normal refresh both use resting art.
-		puppet.resized.connect(_place_intent_ticket.bind(puppet, badge))
 		_badges.append(badge)
 		var thorns_tag := _make_thorns_tag(enemy.position)
 		puppet.add_child(thorns_tag)
@@ -1731,6 +1729,8 @@ func _sync_battle() -> void:
 		var status_tag := _make_status_tag(enemy.position)
 		puppet.add_child(status_tag)
 		_status_tags.append(status_tag)
+		# Refresh current content as well as geometry; a hidden plaque can fit again.
+		puppet.resized.connect(_refresh)
 	panel.custom_minimum_size.x = 300
 	battle_row.add_child(panel)
 	# One deterministic stage behind both lineups: the authored scene of this fight when
@@ -1803,20 +1803,8 @@ func _make_thorns_tag(position: int) -> PanelContainer:
 
 ## Within its own puppet art band, below the intent band, above the
 ## name tag and outside the HP ribbon; target geometry is never changed.
-func _place_thorns_tag(puppet: Puppet, tag: PanelContainer) -> void:
-	if not is_instance_valid(puppet) or not is_instance_valid(tag):
-		return
-	var band := puppet.art_band()
-	var width := tag.get_combined_minimum_size().x
-	var height := tag.get_combined_minimum_size().y
-	if not band.has_area() or width > band.size.x or height + 3.0 > band.size.y:
-		tag.hide()
-		return
-	var art := puppet.rest_drawn_rect()
-	var left := clampf(art.position.x - width - 3.0, band.position.x,
-		band.end.x - width)
-	tag.position = Vector2(left, band.position.y + 3.0)
-	tag.size = Vector2(width, height)
+func _place_thorns_tag(puppet: Puppet, tag: PanelContainer, occupied: Array[Rect2]) -> void:
+	_place_secondary_tag(puppet, tag, occupied, false)
 
 
 ## A cold blue sewn plaque, distinct from the rusty Thorns hazard and paper intent.
@@ -1926,30 +1914,60 @@ static func _enrage_stacks(enemy: Dictionary) -> int:
 
 ## Top-right in this puppet's art band, avoiding its separate Thorns and intent
 ## badges. The plaque stays inside the actor column and never covers the name/HP hem.
-func _place_status_tag(puppet: Puppet, tag: PanelContainer, thorns: PanelContainer, badge: LiveEnemyIntentBadge) -> void:
-	if not is_instance_valid(puppet) or not is_instance_valid(tag):
+func _place_status_tag(puppet: Puppet, tag: PanelContainer, occupied: Array[Rect2]) -> void:
+	_place_secondary_tag(puppet, tag, occupied, true)
+
+
+## All bounds are in the source puppet's coordinates, clipped to the visible viewport.
+func _visible_slot(puppet: Puppet) -> Rect2:
+	var viewport := puppet.get_global_transform().affine_inverse() * puppet.get_viewport_rect()
+	return Rect2(Vector2.ZERO, puppet.size).intersection(viewport)
+
+
+## Intent owns its seat first. Secondary plaques fit around it and the unposed art;
+## none may escape the source slot or cover the pinned name or meters below it.
+func _reflow_plaques(puppet: Puppet, badge: LiveEnemyIntentBadge,
+		thorns: PanelContainer, status: PanelContainer) -> void:
+	_place_intent_ticket(puppet, badge)
+	var occupied: Array[Rect2] = [puppet.rest_drawn_rect()]
+	if badge.visible:
+		occupied.append(badge.get_rect())
+	_place_thorns_tag(puppet, thorns, occupied)
+	_place_status_tag(puppet, status, occupied)
+
+
+func _place_secondary_tag(puppet: Puppet, tag: PanelContainer,
+		occupied: Array[Rect2], align_right: bool) -> void:
+	if not tag.visible:
 		return
-	var band := puppet.art_band()
-	var width := tag.get_combined_minimum_size().x
-	var height := tag.get_combined_minimum_size().y
-	if not band.has_area() or width > band.size.x or height > band.size.y:
-		tag.hide()
-		return
-	var x := band.end.x - width - 2.0
-	var y := band.position.y + 2.0
-	if is_instance_valid(thorns) and thorns.visible:
-		var thorn_rect := thorns.get_rect()
-		if Rect2(x, y, width, height).intersects(thorn_rect):
-			y = thorn_rect.end.y + 3.0
-	if is_instance_valid(badge) and badge.visible:
-		var ticket := badge.get_rect()
-		if Rect2(x, y, width, height).intersects(ticket):
-			y = ticket.end.y + 3.0
-	if y + height > band.end.y:
-		tag.hide()
-		return
-	tag.position = Vector2(x, y)
-	tag.size = Vector2(width, height)
+	var band := puppet.art_band().intersection(_visible_slot(puppet))
+	var extent := tag.get_combined_minimum_size()
+	# Shrink from the previous content's size as well as growing for new text.
+	tag.size = extent
+	var xs: Array[float] = [band.position.x + 2.0, band.end.x - extent.x - 2.0]
+	if align_right:
+		xs.reverse()
+	var ys: Array[float] = [band.position.y + 3.0]
+	for rect in occupied:
+		xs.append(rect.position.x - extent.x - 3.0)
+		xs.append(rect.end.x + 3.0)
+		ys.append(rect.end.y + 3.0)
+		ys.append(rect.position.y - extent.y - 3.0)
+	for y in ys:
+		for x in xs:
+			var candidate := Rect2(Vector2(x, y), extent)
+			if not band.has_area() or not band.encloses(candidate):
+				continue
+			var clear := true
+			for rect in occupied:
+				if candidate.intersects(rect.grow(2.0)):
+					clear = false
+					break
+			if clear:
+				tag.position = candidate.position
+				occupied.append(candidate)
+				return
+	tag.hide()
 
 
 func _refresh() -> void:
@@ -1985,11 +2003,7 @@ func _refresh() -> void:
 			and enemies == app.enemies and _battle == app.battle_view
 		var caption := tag.get_node("Caption") as Button
 		caption.text = "Thorns %d" % amount if show_hazard else ""
-		if show_hazard:
-			_place_thorns_tag(_puppets[CombatParty.PARTY_SIZE + index] as Puppet, tag)
-			tag.show()
-		else:
-			tag.hide()
+		tag.visible = show_hazard
 		var badge := _badges[index]
 		var action: Dictionary = announcements.get(position, {})
 		var live_source: bool = position == index + 1 and enemy.get("hp") is int \
@@ -2024,13 +2038,10 @@ func _refresh() -> void:
 		if live_source and unravel != null and app.enemy_intents != null \
 				and app.enemy_intents.is_bound():
 			policy = CombatEnemyIntents.policy_for(enemies, position)
-		_place_intent_ticket(puppet, badge)
 		var enrage_stacks := _enrage_stacks(enemy) if live_source else -1
 		badge.show_intent(action, enemies.is_slain(position), pending, policy,
 			enrage_stacks, contact_traits)
-		if status_tag.visible:
-			_place_status_tag(_puppets[CombatParty.PARTY_SIZE + index] as Puppet,
-				status_tag, tag, badge)
+		_reflow_plaques(puppet, badge, tag, status_tag)
 
 
 ## Presentation only: seat one already-mounted ticket on its own source's resting artwork.
@@ -2044,8 +2055,12 @@ func _place_intent_ticket(puppet: Puppet, badge: LiveEnemyIntentBadge) -> void:
 	# Before the container lays the column out (or while the source is off-screen) there is
 	# no resting art to pin to: hide the ticket for that frame instead of drawing it loose.
 	var viewport := puppet.get_global_transform().affine_inverse() * puppet.get_viewport_rect()
-	var slot := Rect2(Vector2.ZERO, puppet.size).intersection(viewport)
-	badge.visible = art.has_area() and slot.has_area()
+	var slot := _visible_slot(puppet).intersection(
+		Rect2(0.0, 0.0, puppet.size.x, puppet.tag_band().position.y))
+	var top := maxf(slot.position.y, viewport.position.y + STAGE_INTENT_SAFE_MARGIN)
+	badge.visible = art.has_area() and slot.has_area() \
+		and slot.size.x >= badge.custom_minimum_size.x \
+		and slot.end.y - top >= badge.custom_minimum_size.y
 	if not badge.visible:
 		return
 	var width := maxf(badge.custom_minimum_size.x, slot.size.x)
@@ -2055,7 +2070,6 @@ func _place_intent_ticket(puppet: Puppet, badge: LiveEnemyIntentBadge) -> void:
 	# where the column crosses the edge) and above that art with its animation clearance.
 	var left := slot.position.x
 	var right := maxf(left, slot.end.x - width)
-	var top := maxf(slot.position.y, viewport.position.y + STAGE_INTENT_SAFE_MARGIN)
 	var bottom := maxf(top, slot.end.y - height)
 	badge.position = Vector2(clampf(art.get_center().x - width * 0.5, left, right),
 		clampf(art.position.y - clearance - height, top, bottom))

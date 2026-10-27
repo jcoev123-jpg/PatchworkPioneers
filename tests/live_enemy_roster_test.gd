@@ -2478,6 +2478,7 @@ func _run() -> void:
 	await _typed_stage(app, presenter)
 	await _m05_fallbacks(app, presenter)
 	await _expanded_meadow_layout(scene)
+	await _mounted_plaque_reflow(scene)
 	app.free()
 	reference.free()
 	_finish()
@@ -3417,6 +3418,155 @@ func _ticket_at_rest(badge: LiveEnemyIntentBadge) -> void:
 		and puppet.get_viewport_rect().encloses(badge.get_global_rect())
 		and Rect2(Vector2.ZERO, badge.size).encloses(badge.patch_rect()),
 		"complete sewn ticket sits above resting art within its source and viewport")
+
+
+## Check the actual mounted rectangles, including the visible viewport intersection.
+func _plaque_bounds(app, presenter) -> void:
+	var meters = app.get_node("LiveCombatMeters").row
+	_check(presenter._badges.size() == 2 and meters.get_child_count() == 5,
+		"plaque geometry has two real enemies and their mounted HP meters")
+	for index in range(2):
+		var puppet = presenter._puppets[3 + index]
+		var neighbor = presenter._puppets[4 - index]
+		var slot: Rect2 = puppet.get_global_rect().intersection(puppet.get_viewport_rect())
+		var name_rect: Rect2 = puppet.get_global_transform() * puppet.tag_band()
+		var occupied: Array[Rect2] = []
+		for plaque in [presenter._badges[index], presenter._thorns_tags[index], presenter._status_tags[index]]:
+			if not plaque.is_visible_in_tree():
+				continue
+			var local: Rect2 = plaque.get_rect()
+			var world: Rect2 = plaque.get_global_rect()
+			_check(world.has_area() and slot.grow(0.01).encloses(world)
+				and (puppet.get_global_transform() * local).is_equal_approx(world)
+				and not world.intersects(neighbor.get_global_rect())
+				and not world.intersects(name_rect)
+				and not world.intersects(meters.get_child(3 + index).get_global_rect()),
+				"visible plaque belongs to its current source in local/global space, clear of neighbor/name/HP")
+			for previous in occupied:
+				_check(not world.intersects(previous), "all visible source plaques are mutually separate")
+			occupied.append(world)
+
+
+func _mounted_plaque_reflow(scene: PackedScene) -> void:
+	var catalog: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/enemies/m04_elites.json"))
+	var records: Array = []
+	for id in ["spool_leech", "pincushion_matriarch"]:
+		for record in catalog:
+			if record.id == id:
+				records.append(record)
+	_check(records.size() == 2 and records[0].get("drain") == true
+		and records[1].get("thorns", 0) > 0, "fixture loads genuine Drain and Thorns actors")
+	if records.size() != 2:
+		return
+	var file := FileAccess.open(FIXTURE, FileAccess.WRITE)
+	file.store_string(JSON.stringify(records))
+	file.close()
+	var app = scene.instantiate()
+	root.add_child(app)
+	await process_frame
+	app.starter_enemies_path = FIXTURE
+	app.run_seed = 101
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	var presenter = app.get_node("LiveEnemyRoster")
+	_check(app.enemies != null and app.round_flow != null and presenter._badges.size() == 2,
+		"seeded fixture admitted real models and two mounted source actors")
+	if app.enemies == null or app.round_flow == null or presenter._badges.size() != 2:
+		app.free()
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
+		return
+	var gauge := CombatUnravel.new()
+	_check(gauge.bind_roster(app.enemies, {1: "elite", 2: "elite"}),
+		"mounted fixture binds the real roster's optional Unravel service")
+	app.round_flow._unravel = gauge
+	presenter._refresh()
+	_check(app.enemies != null and presenter._badges.size() == 2
+		and presenter._bound_unravel(app) != null and app.enemy_intents.is_bound(),
+		"real seeded app battle authenticates both source puppets, flow and scheduler")
+	if presenter._bound_unravel(app) == null or not app.enemy_intents.is_bound():
+		app.free()
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
+		return
+	_check(app.enemies.apply_statuses({1: {"weak": 2}, 2: {"bleed": 3}}),
+		"real roster accepts current status updates")
+	# Exercise all three plaques on one actor, as a contact/status layout stress case.
+	app.enemies._enemies[0]["thorns"] = 4
+	presenter._refresh()
+	var before: Array = _snapshot(app)
+	var status: PanelContainer = presenter._status_tags[0]
+	var badge: LiveEnemyIntentBadge = presenter._badges[0]
+	_check(status.visible and presenter._status_tags[1].visible
+		and presenter._thorns_tags[0].visible and app.enemies.get_enemy(2).get("thorns", 0) > 0
+		and badge.visible and not badge.policy_cue.is_empty()
+		and status.tooltip_text.contains(LiveEnemyIntentBadge.CONTACT_HELP.drain)
+		and (status.get_node("Caption") as Label).text.contains("Drain")
+		and badge.tooltip_text.contains("Target policy (AIM LOW HP)"),
+		"mounted Drain/status, policy help and all three source plaques are actually visible beside a hazard actor")
+	_plaque_bounds(app, presenter)
+	var puppet = presenter._puppets[3]
+	var original_size: Vector2 = puppet.size
+	var original_target: Rect2 = presenter._labels[0].get_global_rect()
+	# Synchronous Control resize exercises the real signal before a container settles again.
+	var original_minimum: Vector2 = puppet.custom_minimum_size
+	puppet.custom_minimum_size = Vector2.ZERO
+	puppet.size = Vector2(original_size.x, 65)
+	_check(badge.visible and not status.visible and not presenter._thorns_tags[0].visible,
+		"shrunken source hides nonfitting secondary plaques and retains available intent")
+	_plaque_bounds(app, presenter)
+	puppet.size = original_size
+	puppet.custom_minimum_size = original_minimum
+	_check(status.visible and presenter._thorns_tags[0].visible
+		and presenter._labels[0].get_global_rect().is_equal_approx(original_target),
+		"resize signal restores both plaques and unchanged full-actor target area")
+	_plaque_bounds(app, presenter)
+	root.size = Vector2i(1100, 680)
+	await process_frame
+	await process_frame
+	_plaque_bounds(app, presenter)
+	root.size = Vector2i(1280, 720)
+	await process_frame
+	await process_frame
+	_check(status.visible and badge.visible and _snapshot(app) == before,
+		"viewport shrink/restore changes no party/enemy/card/deck/turn/cache/RNG state")
+	_plaque_bounds(app, presenter)
+	var old_action: Dictionary = app.enemy_intents.get_intents()[0]
+	_check(app.enemies.apply_statuses({1: {"weak": 1, "exposed": 3}}),
+		"authentic status counts update through the live model")
+	for turn in range(12):
+		_check(app.enemy_intents.advance_turn(), "authentic weighted scheduler advances cached intent")
+		if app.enemy_intents.get_intents()[0] != old_action:
+			break
+	_check(app.enemy_intents.get_intents()[0] != old_action,
+		"updated intent fixture really differs from its previous cached action")
+	presenter._refresh()
+	var current: Array = _snapshot(app)
+	_check(status.tooltip_text.contains("Exposed 3") and not status.tooltip_text.contains("Weak 2")
+		and badge.intent_type == app.enemy_intents.get_intents()[0].type,
+		"fresh authentic status and action replace old caption/help before reflow")
+	_plaque_bounds(app, presenter)
+	presenter._refresh()
+	_check(_snapshot(app) == current, "reflow of updated content is state-inert")
+	var old_ids := [status.get_instance_id(), badge.get_instance_id()]
+	app.return_button.pressed.emit()
+	app.starter_enemies_path = SOURCE
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	_check(not is_instance_id_valid(old_ids[0]) and not is_instance_id_valid(old_ids[1])
+		and presenter.enemies == app.enemies and presenter._status_tags.size() == 2,
+		"different real roster frees all old Drain and policy presentation nodes")
+	for plaque in presenter._status_tags:
+		_check(not plaque.visible and plaque.tooltip_text.is_empty()
+			and (plaque.get_node("Caption") as Label).text.is_empty(),
+			"rebound starter actors retain no stale status/contact caption or help")
+	for ticket in presenter._badges:
+		_check(not ticket.tooltip_text.contains("AIM LOW HP") and not ticket.tooltip_text.contains("Drain"),
+			"replacement intent has no previous actor's policy or passive help")
+	_plaque_bounds(app, presenter)
+	app.free()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
+	await process_frame
 
 
 func _finish() -> void:
