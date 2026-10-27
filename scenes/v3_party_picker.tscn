@@ -69,7 +69,7 @@ theme_override_constants/v_separation = 10
 columns = 4
 
 [node name="InspectionPanel" type="PanelContainer" parent="PaperPanel/Margins/Body"]
-custom_minimum_size = Vector2(0, 104)
+custom_minimum_size = Vector2(0, 126)
 layout_mode = 2
 mouse_filter = 2
 
@@ -105,6 +105,13 @@ mouse_filter = 2
 text = "Compare sewn looks and intended roles before choosing three."
 horizontal_alignment = 1
 vertical_alignment = 1
+autowrap_mode = 2
+
+[node name="InspectionStarters" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack"]
+layout_mode = 2
+mouse_filter = 2
+text = ""
+horizontal_alignment = 1
 autowrap_mode = 2
 
 [node name="Foot" type="HBoxContainer" parent="PaperPanel/Margins/Body"]
