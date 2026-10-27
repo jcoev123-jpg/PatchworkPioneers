@@ -13,7 +13,7 @@ const NEW := {
 		"actions": [{"type": "attack", "amount": 5, "weight": 3},
 			{"type": "debuff", "amount": 1, "status": "weak", "weight": 2},
 			{"type": "block", "amount": 2, "weight": 1}]},
-	"pin_skitter": {"name": "Pin Skitter", "max_hp": 13, "target": "random",
+	"pin_skitter": {"name": "Pin Skitter", "max_hp": 13, "target": "random", "thorns": 2,
 		"actions": [{"type": "attack", "amount": 5, "weight": 4},
 			{"type": "shove", "amount": 0, "direction": 1, "weight": 1},
 			{"type": "block", "amount": 1, "weight": 1}]},
@@ -140,6 +140,8 @@ func _catalog_and_bindings() -> void:
 		# that genuinely carry it may add it to the exact record oracle.
 		if expected.has("drain"):
 			expected_record["drain"] = expected.drain
+		if expected.has("thorns"):
+			expected_record["thorns"] = expected.thorns
 		_check(record == expected_record,
 			"exact new identity, HP, art, policy and ordered weighted actions " + id)
 		for raw in expected.actions:
