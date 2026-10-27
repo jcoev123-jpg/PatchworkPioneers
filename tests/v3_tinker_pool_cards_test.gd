@@ -10,17 +10,28 @@ extends SceneTree
 ## cards (Gear Brace and Spare Screws, base and '+') through CombatTinkerV3ScrapSupportCards:
 ## printed energy, held-copy proof, self Block, the Tinker-only combat_scrap counter, the real
 ## seeded shared draw and inert refusals.
+##
+## Extended again with the paid Overload / Overload+ resolver (CombatTinkerV3OverloadCards): the
+## printed 2 + 3 / 3 + 4 per-Combat-Scrap raw damage, spending the whole counter, enemy Block before
+## HP, and fail-closed preflight.
 
 const CombatDeck = preload("res://scripts/combat_deck.gd")
 const CombatParty = preload("res://scripts/combat_party.gd")
+const CombatEnemies = preload("res://scripts/combat_enemies.gd")
 const CombatTinkerV3ScrapSupportCards = preload(
 	"res://scripts/combat_tinker_v3_scrap_support_cards.gd")
+const CombatTinkerV3OverloadCards = preload(
+	"res://scripts/combat_tinker_v3_overload_cards.gd")
 
 const SCRAP_GEAR := "tinker_v3_gear_brace"
 const SCRAP_GEAR_PLUS := "tinker_v3_gear_brace_plus"
 const SCRAP_SCREWS := "tinker_v3_spare_screws"
 const SCRAP_SCREWS_PLUS := "tinker_v3_spare_screws_plus"
 const SCRAP_IDS: Array[String] = [SCRAP_GEAR, SCRAP_GEAR_PLUS, SCRAP_SCREWS, SCRAP_SCREWS_PLUS]
+
+const OVERLOAD := "tinker_v3_overload"
+const OVERLOAD_PLUS := "tinker_v3_overload_plus"
+const OVERLOAD_IDS: Array[String] = [OVERLOAD, OVERLOAD_PLUS]
 
 var failures: Array[String] = []
 var checks: int = 0
@@ -58,6 +69,9 @@ func _initialize() -> void:
 	_test_scrap_draw_supply()
 	_test_scrap_accumulation_and_fresh_party()
 	_test_scrap_refusals()
+	_test_overload_catalog_contract()
+	_test_overload_paid_plays()
+	_test_overload_refusals()
 	_finish()
 
 
@@ -1230,3 +1244,499 @@ func _rejected_scrap(resolver: CombatTinkerV3ScrapSupportCards, deck: CombatDeck
 		label + ": refusal reason is " + reason + " (got " + str(result.get("reason")) + ")")
 	_check(_scrap_snapshot(deck, party) == before,
 		label + ": unchanged energy, hand, piles, turn, party, counters and RNG")
+
+
+## Independent expected raw damage for the two Overload printings: {base, per scrap, exact totals}.
+func _overload_table(card_id: String) -> Dictionary:
+	if card_id == OVERLOAD:
+		return {"base": 2, "per": 3, "scrap": {0: 2, 1: 5, 3: 11}}
+	return {"base": 3, "per": 4, "scrap": {0: 3, 1: 7, 3: 15}}
+
+
+## AC1: the resolver authenticates exactly the authored Overload pair and nothing else.
+func _test_overload_catalog_contract() -> void:
+	var catalog := V3TinkerPoolCards.new()
+	var resolver := CombatTinkerV3OverloadCards.new()
+	var expected := {
+		OVERLOAD: {
+			"display": "Overload", "cost": 1, "from": [2, 3], "kind": "enemy_single",
+			"to": [1, 2, 3], "is_upgrade": false,
+			"effects": {"damage": 2, "damage_per_combat_scrap": 3,
+				"consume_all_combat_scrap": true},
+		},
+		OVERLOAD_PLUS: {
+			"display": "Overload+", "cost": 1, "from": [2, 3], "kind": "enemy_single",
+			"to": [1, 2, 3], "is_upgrade": true,
+			"effects": {"damage": 3, "damage_per_combat_scrap": 4,
+				"consume_all_combat_scrap": true},
+		},
+	}
+	# Independent arithmetic (fixed totals, not a formula copied from the resolver).
+	var base_table := _overload_table(OVERLOAD)
+	var plus_table := _overload_table(OVERLOAD_PLUS)
+	_check(base_table["scrap"] == {0: 2, 1: 5, 3: 11},
+		"Overload totals are 2 / 5 / 11 at 0 / 1 / 3 Combat Scrap")
+	_check(plus_table["scrap"] == {0: 3, 1: 7, 3: 15},
+		"Overload+ totals are 3 / 7 / 15 at 0 / 1 / 3 Combat Scrap")
+
+	for card_id: String in OVERLOAD_IDS:
+		var row: Dictionary = expected[card_id]
+		var record: Dictionary = catalog.get_definition(card_id)
+		_check(not record.is_empty(), card_id + " is authored in the v3 Tinker catalog")
+		if record.is_empty():
+			continue
+		_check(record.get("display_name") == row["display"], card_id + " display name")
+		_check(record.get("owner") == "tinker", card_id + " is owned by Tinker")
+		_check(record.get("cost") == row["cost"], card_id + " prints cost 1")
+		_check(record.get("from_positions") == row["from"], card_id + " prints FROM 2-3")
+		_check(record.get("target_kind") == row["kind"], card_id + " targets one enemy")
+		_check(record.get("to_positions") == row["to"], card_id + " prints TO 1-3")
+		_check(record.get("effects") == row["effects"], card_id + " prints its exact effects")
+		_check(not record.get("effects", {}).has("scraps")
+			and not record.get("effects", {}).has("scrap_cost"),
+			card_id + " never reads or spends wallet scraps")
+		_check(not record.has("upgrade_of"), card_id + " links with base_id/upgrade_id/is_upgrade")
+		_check(record.get("base_id") == OVERLOAD
+			and record.get("upgrade_id") == OVERLOAD_PLUS
+			and record.get("is_upgrade") == row["is_upgrade"],
+			card_id + " preserves the base/+ link")
+		_check(resolver.is_supported_card(card_id), card_id + " is a supported Overload card")
+		_check(CombatTinkerV3OverloadCards.is_authentic_definition(record, card_id),
+			card_id + " passes the definition authenticator")
+		_check(CombatTinkerV3OverloadCards.overload_definition(card_id) == record,
+			card_id + " resolves to its exact detached catalog record")
+
+	# Detached: mutating a resolved record cannot rewrite what the next resolution returns.
+	var sample: Dictionary = CombatTinkerV3OverloadCards.overload_definition(OVERLOAD)
+	_check(not sample.is_empty(), "overload resolution fixture loaded")
+	if not sample.is_empty():
+		sample["effects"]["damage"] = 900
+		sample["effects"]["damage_per_combat_scrap"] = 90
+		sample["from_positions"].clear()
+		sample["cost"] = 0
+		_check(CombatTinkerV3OverloadCards.overload_definition(OVERLOAD)
+			== catalog.get_definition(OVERLOAD),
+			"a mutated Overload definition cannot poison later resolutions")
+
+	# Every other v3 Tinker card (base and plus) is unrelated to this service.
+	var unrelated: Array[String] = []
+	for base_id in catalog.get_pool_card_ids():
+		if not OVERLOAD_IDS.has(base_id):
+			unrelated.append(base_id)
+		var upgrade_id: String = catalog.get_upgrade_id(base_id)
+		if not upgrade_id.is_empty() and not OVERLOAD_IDS.has(upgrade_id):
+			unrelated.append(upgrade_id)
+	_check(unrelated.has("tinker_v3_brass_casing") and unrelated.has("tinker_v3_scrapstorm_plus"),
+		"unrelated-card fixture really contains other authentic v3 Tinker cards (precondition)")
+	for other_id: String in unrelated:
+		_check(CombatTinkerV3OverloadCards.overload_definition(other_id).is_empty(),
+			other_id + " does not resolve as Overload")
+		_check(not resolver.is_supported_card(other_id),
+			other_id + " is not a supported Overload card")
+
+	# The v2 Tinker pool and foreign spellings are never Overload.
+	var forged: Array = ["tinker_spare_parts", "tinker_overclock", "tinker_v3_overload+",
+		"tinker_v3_overload_plus_plus", "tinker_v3_overload_", "overload",
+		"TINKER_V3_OVERLOAD", "", "tinker_v3_missing_card", StringName(OVERLOAD),
+		null, 0, 3.5, false, [], {}]
+	for other_id: Variant in forged:
+		_check(CombatTinkerV3OverloadCards.overload_definition(other_id).is_empty(),
+			"forged or non-string ID never resolves as Overload: " + str(other_id))
+		_check(not resolver.is_supported_card(other_id),
+			"forged or non-string ID is never a supported Overload: " + str(other_id))
+
+	# Adversarial copies of the real Overload record: each altered contract field is refused.
+	var base_record: Dictionary = catalog.get_definition(OVERLOAD)
+	_check(not base_record.is_empty()
+		and CombatTinkerV3OverloadCards.is_authentic_definition(base_record, OVERLOAD),
+		"authenticator positive fixture really is the authored Overload")
+	var mutations: Array[Callable] = [
+		func(record: Dictionary) -> void: record["effects"]["damage"] = 5,
+		func(record: Dictionary) -> void: record["effects"]["damage"] = 2.0,
+		func(record: Dictionary) -> void: record["effects"]["damage_per_combat_scrap"] = 4,
+		func(record: Dictionary) -> void: record["effects"]["damage_per_combat_scrap"] = "3",
+		func(record: Dictionary) -> void: record["effects"]["consume_all_combat_scrap"] = false,
+		func(record: Dictionary) -> void: record["effects"]["consume_all_combat_scrap"] = 1,
+		func(record: Dictionary) -> void: record["effects"].erase("consume_all_combat_scrap"),
+		func(record: Dictionary) -> void: record["effects"]["scraps"] = 1,
+		func(record: Dictionary) -> void: record["cost"] = 0,
+		func(record: Dictionary) -> void: record["cost"] = 1.0,
+		func(record: Dictionary) -> void: record["owner"] = "warden",
+		func(record: Dictionary) -> void: record["from_positions"] = [1, 2, 3],
+		func(record: Dictionary) -> void: record["to_positions"] = [],
+		func(record: Dictionary) -> void: record["target_kind"] = "self",
+		func(record: Dictionary) -> void: record["is_upgrade"] = true,
+		func(record: Dictionary) -> void: record["upgrade_of"] = OVERLOAD,
+		func(record: Dictionary) -> void: record.erase("upgrade_id"),
+		func(record: Dictionary) -> void: record.erase("effects"),
+	]
+	for index in range(mutations.size()):
+		var tampered: Dictionary = base_record.duplicate(true)
+		mutations[index].call(tampered)
+		_check(not CombatTinkerV3OverloadCards.is_authentic_definition(tampered, OVERLOAD),
+			"tampered Overload record " + str(index) + " is refused")
+	_check(not CombatTinkerV3OverloadCards.is_authentic_definition(
+		catalog.get_definition(OVERLOAD_PLUS), OVERLOAD),
+		"an upgraded record cannot authenticate as its base ID")
+	_check(not CombatTinkerV3OverloadCards.is_authentic_definition(
+		catalog.get_definition(OVERLOAD), OVERLOAD_PLUS),
+		"a base record cannot authenticate as its upgraded ID")
+
+
+## AC2: one real held play pays 1, spends the whole Tinker-only counter, discards exactly one copy
+## and lands the printed raw damage through enemy Block before HP, at 0 / 1 / 3 Combat Scrap.
+func _test_overload_paid_plays() -> void:
+	var resolver := CombatTinkerV3OverloadCards.new()
+	var seed_value := 401000
+	for card_id: String in OVERLOAD_IDS:
+		var table := _overload_table(card_id)
+		for scrap: int in [0, 1, 3]:
+			var raw: int = table["scrap"][scrap]
+			_check(raw == table["base"] + table["per"] * scrap,
+				card_id + " independently computes " + str(raw) + " at " + str(scrap) + " scrap")
+			var seat := 3 if scrap == 1 else 2
+			var label := card_id + " from seat " + str(seat) + " with " + str(scrap) + " scrap"
+			# A Block recipient: 20 Block absorbs the whole raw hit, so no HP is lost.
+			_overload_case(resolver, card_id, seat, scrap, 1, 20, 24, seed_value, label + ", blocked")
+			seed_value += 1
+			# An HP-loss recipient: only 1 Block, so the rest reaches HP.
+			_overload_case(resolver, card_id, seat, scrap, 2, 1, 24, seed_value,
+				label + ", partial Block")
+			seed_value += 1
+		# HP cap: a frail elf cannot lose more HP than it has.
+		_overload_case(resolver, card_id, 3, 3, 2, 0, 6, seed_value, card_id + " HP cap")
+		seed_value += 1
+
+	# A fresh party has no stored counter at all: absent reads as zero, and the confirmed play still
+	# spends it (writing an explicit zero on the Tinker's own record).
+	var fresh_party := _scrap_party(2)
+	_check(not fresh_party.get_hero(2).has("combat_scrap"),
+		"absent-counter fixture really has no stored Combat Scrap")
+	var fresh_deck := _scrap_deck([OVERLOAD], 409900, 5)
+	var fresh_enemies := _overload_enemies()
+	var fresh_result: Dictionary = resolver.play_card(fresh_deck, fresh_party, fresh_enemies,
+		OVERLOAD, 1)
+	_check(fresh_result.get("ok") == true and fresh_result.get("raw_damage") == 2
+		and fresh_result.get("combat_scrap_before") == 0
+		and fresh_result.get("combat_scrap_spent") == 0
+		and fresh_result.get("combat_scrap_after") == 0,
+		"an absent counter plays as zero and spends an explicit zero")
+	_check(fresh_party.get_hero(2).get("combat_scrap") == 0
+		and fresh_enemies.get_enemy(1).get("hp") == 28,
+		"the absent-counter play deals its printed 2 damage and stores a spent zero")
+
+
+## One funded Overload transaction on real fixtures, plus an identical same-seed replay.
+func _overload_case(resolver: CombatTinkerV3OverloadCards, card_id: String, seat: int,
+		scrap: int, target: int, target_blocks: int, second_max_hp: int, seed_value: int,
+		label: String) -> void:
+	var table := _overload_table(card_id)
+	var raw: int = table["scrap"][scrap]
+	var party := _overload_party(seat, scrap)
+	var deck := _scrap_deck([card_id], seed_value, 5)
+	var enemies := _overload_enemies(second_max_hp)
+	_check(enemies.gain_block(target, target_blocks),
+		label + ": the fixture really grants the chosen enemy Block")
+	var enemy_before: Dictionary = enemies.get_enemy(target)
+	var block_absorbed: int = mini(int(enemy_before["block"]), raw)
+	var hp_loss: int = mini(int(enemy_before["hp"]), raw - block_absorbed)
+	if target_blocks >= raw:
+		_check(block_absorbed == raw and hp_loss == 0,
+			label + ": the Block fixture really absorbs the whole raw hit")
+	else:
+		_check(block_absorbed == int(enemy_before["block"]) and hp_loss > 0,
+			label + ": the Block fixture really lets HP loss through")
+	var wallet := {"gold": 9, "scraps": 4}
+	var wallet_before: Dictionary = wallet.duplicate(true)
+	var rng_before: int = deck._rng.state
+	var before := _battle_snapshot(deck, party, enemies)
+	# The pure preflight accepts the same request and changes nothing.
+	var plan: Dictionary = resolver.preflight(deck, party, enemies, card_id, target)
+	_check(plan.get("ok") == true and plan.get("reason") == "legal",
+		label + ": read-only preflight accepts the funded play")
+	_check(plan.get("raw_damage") == raw and plan.get("combat_scrap_before") == scrap,
+		label + ": preflight reports the independent raw damage and the counter")
+	_check(_battle_snapshot(deck, party, enemies) == before,
+		label + ": preflight changed no battle state")
+	var result: Dictionary = resolver.play_card(deck, party, enemies, card_id, target)
+	_check(result.get("ok") == true and result.get("reason") == "applied",
+		label + ": authorized paid play")
+	_check(result.get("card_id") == card_id and result.get("cost") == 1,
+		label + ": receipt names the authentic card and its one energy")
+	_check(result.get("owner_position") == seat and result.get("target_position") == target,
+		label + ": receipt reports the real owner seat and the chosen enemy")
+	_check(result.get("combat_scrap_before") == scrap and result.get("combat_scrap_spent") == scrap
+		and result.get("combat_scrap_after") == 0,
+		label + ": receipt reports every held Combat Scrap spent")
+	_check(result.get("base_damage") == table["base"]
+		and result.get("damage_per_combat_scrap") == table["per"]
+		and result.get("damage_from_combat_scrap") == table["per"] * scrap,
+		label + ": receipt reports the printed base and per-scrap arithmetic")
+	_check(result.get("raw_damage") == raw and result.get("damage") == raw,
+		label + ": exactly " + str(raw) + " raw damage before any modifier")
+	_check(result.get("block_absorbed") == block_absorbed and result.get("hp_loss") == hp_loss,
+		label + ": Block absorbed " + str(block_absorbed) + " before " + str(hp_loss) + " HP")
+	_check(result.get("energy_before") == 3 and result.get("energy_after") == 2,
+		label + ": receipt reports the exact energy change")
+	_check(not result.has("scraps") and not result.has("wallet"),
+		label + ": receipt carries no wallet state")
+	_check(deck.energy == 2, label + ": exactly one energy was paid")
+	_check(deck.hand.count(card_id) == 0 and deck.discard_pile == [card_id],
+		label + ": exactly the held copy reached the discard")
+	_check(deck._rng.state == rng_before, label + ": no RNG was consumed")
+	_check(party.get_hero(seat).get("combat_scrap") == 0
+		and party._heroes[seat - 1].get("combat_scrap") == 0,
+		label + ": the Tinker's whole counter is spent on his own record")
+	for position: int in [1, 2, 3]:
+		if position == seat:
+			continue
+		_check(party.get_hero(position).get("combat_scrap") == 2,
+			label + ": teammate seat " + str(position) + " keeps its own counter")
+	_check(party.get_hero(seat).get("hp") == 26 and party.get_hero(seat).get("block") == 0,
+		label + ": the Tinker's HP and Block are untouched")
+	_check(wallet == wallet_before, label + ": the run wallet's scraps are never modified")
+	_check(enemies.get_enemy(target).get("hp") == int(enemy_before["hp"]) - hp_loss
+		and enemies.get_enemy(target).get("block") == int(enemy_before["block"]) - block_absorbed,
+		label + ": only the chosen enemy's Block and HP changed")
+	for position: int in range(1, enemies.get_enemies().size() + 1):
+		if position == target:
+			continue
+		_check(enemies.get_enemy(position).get("hp")
+			== before["enemies"][position - 1].get("hp"),
+			label + ": enemy " + str(position) + " was not hit")
+	_check(_battle_snapshot(deck, party, enemies)
+		== _expected_overload(before, card_id, seat, target, scrap, raw),
+		label + ": exact hand, piles, energy, turn, party, counters, enemy and RNG state")
+
+	# The consumed copy cannot be claimed a second time (aim at a living slot so only the held copy
+	# stands between the request and a second hit).
+	var after := _battle_snapshot(deck, party, enemies)
+	var replay_target: int = target if int(enemies.get_enemy(target)["hp"]) > 0 else (2 if target == 1 else 1)
+	var replay: Dictionary = resolver.play_card(deck, party, enemies, card_id, replay_target)
+	_check(replay.get("ok") == false and replay.get("reason") == "card_not_held",
+		label + ": a second claim of the consumed copy is refused")
+	_check(_battle_snapshot(deck, party, enemies) == after,
+		label + ": the refused replay changed nothing")
+
+	# Same seed, same fixtures: an identical replay of the whole transaction.
+	var replay_party := _overload_party(seat, scrap)
+	var replay_deck := _scrap_deck([card_id], seed_value, 5)
+	var replay_enemies := _overload_enemies(second_max_hp)
+	_check(replay_enemies.gain_block(target, target_blocks), label + ": replay fixture Block")
+	var replay_result: Dictionary = resolver.play_card(replay_deck, replay_party, replay_enemies,
+		card_id, target)
+	_check(replay_result == result, label + ": the same seed replays the identical receipt")
+	_check(_battle_snapshot(replay_deck, replay_party, replay_enemies)
+		== _battle_snapshot(deck, party, enemies),
+		label + ": the same seed replays the identical battle and RNG state")
+
+
+## AC3: every failed identity, turn, owner, seat, energy, held-copy, target, roster or counter
+## precondition is refused with its reason and mutates no deck, party, enemy, counter or RNG state.
+func _test_overload_refusals() -> void:
+	var resolver := CombatTinkerV3OverloadCards.new()
+	var party := _overload_party(2, 3)
+	var deck := _scrap_deck([OVERLOAD], 402100, 5)
+	var enemies := _overload_enemies()
+
+	_rejected_overload(resolver, null, party, enemies, OVERLOAD, 1, "invalid_request", "null deck")
+	_rejected_overload(resolver, deck, null, enemies, OVERLOAD, 1, "invalid_request", "null party")
+	_rejected_overload(resolver, deck, party, null, OVERLOAD, 1, "invalid_request",
+		"null enemies")
+
+	# An inactive turn is never paid, even with a real copy in hand.
+	var inactive := CombatDeck.new([OVERLOAD], _scrap_rng(402101))
+	inactive.hand.append(OVERLOAD)
+	_check(not inactive.turn_active and inactive.hand.has(OVERLOAD),
+		"inactive fixture really holds a copy outside a turn")
+	_rejected_overload(resolver, inactive, party, enemies, OVERLOAD, 1, "inactive_turn",
+		"inactive turn")
+
+	# Unsupported card identities: other authentic Tinker cards, v2 cards, forged spellings.
+	var wrong_ids: Array = ["tinker_v3_brass_casing", "tinker_v3_brass_casing_plus",
+		"tinker_v3_spring_clamp", "tinker_v3_gear_brace", "tinker_v3_spare_screws",
+		"tinker_v3_scrapstorm", "tinker_spare_parts", "tinker_v3_overload+",
+		"tinker_v3_overload_plus_plus", "tinker_v3_overload_", "overload",
+		"TINKER_V3_OVERLOAD", "", StringName(OVERLOAD), null, 0, 3.5, false, [], {}]
+	for wrong_id: Variant in wrong_ids:
+		_rejected_overload(resolver, deck, party, enemies, wrong_id, 1, "unsupported_card",
+			"unsupported ID " + str(wrong_id))
+	# An authentic Overload+ the hand does not hold is still unheld.
+	_rejected_overload(resolver, deck, party, enemies, OVERLOAD_PLUS, 1, "card_not_held",
+		"authentic but unheld Overload+")
+
+	# An unaffordable copy is refused without a partial charge.
+	var poor := _scrap_deck([OVERLOAD], 402102, 5)
+	poor.combat_state.energy = 0
+	_check(poor.energy == 0 and poor.hand.has(OVERLOAD),
+		"short-energy fixture really holds a copy with no energy")
+	_rejected_overload(resolver, poor, party, enemies, OVERLOAD, 1, "insufficient_energy",
+		"no energy")
+
+	# Overload prints FROM 2-3: the front seat is not a legal owner.
+	var front_party := _overload_party(1, 3)
+	var front_deck := _scrap_deck([OVERLOAD], 402103, 5)
+	_rejected_overload(resolver, front_deck, front_party, enemies, OVERLOAD, 1,
+		"owner_illegal_position", "Overload from seat 1")
+
+	# A party without Tinker never authorizes the play.
+	var absent_owner := CombatParty.new([{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30}, {"id": "yarn_ranger", "max_hp": 28}])
+	_check(absent_owner.is_valid() and absent_owner.get_hero(2).get("id") == "seamstress",
+		"absent-owner fixture is a valid party without a Tinker")
+	_rejected_overload(resolver, deck, absent_owner, enemies, OVERLOAD, 1, "owner_missing",
+		"absent Tinker")
+
+	# A second Tinker identity is a malformed roster, never a second owner.
+	var duplicate := _overload_party(2, 3)
+	duplicate._heroes[0]["id"] = "tinker"
+	_check(duplicate.get_hero(1).get("id") == "tinker"
+		and duplicate.get_hero(2).get("id") == "tinker",
+		"duplicate-identity fixture really repeats the owner ID")
+	_rejected_overload(resolver, deck, duplicate, enemies, OVERLOAD, 1, "invalid_party",
+		"duplicate Tinker identity")
+	var bad_hp := _overload_party(2, 3)
+	bad_hp._heroes[0]["hp"] = 999
+	_rejected_overload(resolver, deck, bad_hp, enemies, OVERLOAD, 1, "invalid_party",
+		"malformed hero HP")
+	var short_party := CombatParty.new([{"id": "tinker", "max_hp": 26}])
+	_rejected_overload(resolver, deck, short_party, enemies, OVERLOAD, 1, "invalid_party",
+		"invalid one-hero party")
+
+	# A torn (downed) owner may not play.
+	var torn_owner := _overload_party(3, 3)
+	_check(torn_owner.apply_damage(3, 26) and torn_owner.is_downed(3),
+		"torn-owner fixture really has a downed Tinker")
+	_rejected_overload(resolver, deck, torn_owner, enemies, OVERLOAD, 2, "owner_downed",
+		"downed Tinker")
+
+	# A slain enemy and out-of-range slots are never hit.
+	var slain_targets := _overload_enemies()
+	_check(slain_targets.apply_damage(1, 30) and slain_targets.is_slain(1),
+		"slain-target fixture really has a dead front enemy")
+	_rejected_overload(resolver, deck, party, slain_targets, OVERLOAD, 1, "target_slain",
+		"slain enemy")
+	for slot: int in [0, 4, -1, 99, 3]:
+		_rejected_overload(resolver, deck, party, enemies, OVERLOAD, slot, "invalid_target",
+			"illegal target slot " + str(slot))
+
+	# A malformed stored counter is never coerced into a legal number.
+	var text_counter := _overload_party(2, 3)
+	text_counter._heroes[1]["combat_scrap"] = "3"
+	_rejected_overload(resolver, deck, text_counter, enemies, OVERLOAD, 1,
+		"malformed_combat_scrap", "string Combat Scrap")
+	var negative_counter := _overload_party(2, 3)
+	negative_counter._heroes[1]["combat_scrap"] = -1
+	_rejected_overload(resolver, deck, negative_counter, enemies, OVERLOAD, 1,
+		"malformed_combat_scrap", "negative Combat Scrap")
+	var float_counter := _overload_party(2, 3)
+	float_counter._heroes[1]["combat_scrap"] = 1.0
+	_rejected_overload(resolver, deck, float_counter, enemies, OVERLOAD, 1,
+		"malformed_combat_scrap", "float Combat Scrap")
+
+	# The printed formula must stay representable.
+	var overflow_counter := _overload_party(2, 3)
+	overflow_counter._heroes[1]["combat_scrap"] = CombatParty.MAX_INT
+	_rejected_overload(resolver, deck, overflow_counter, enemies, OVERLOAD, 1,
+		"damage_overflow", "Combat Scrap damage overflow")
+
+	# Invalid or malformed enemy rosters fail closed.
+	var empty_roster := CombatEnemies.new([])
+	_check(not empty_roster.is_valid(), "empty-roster fixture really is invalid")
+	_rejected_overload(resolver, deck, party, empty_roster, OVERLOAD, 1, "invalid_enemies",
+		"empty enemy roster")
+	var bad_enemy_hp := _overload_enemies()
+	bad_enemy_hp._enemies[0]["hp"] = 999
+	_rejected_overload(resolver, deck, party, bad_enemy_hp, OVERLOAD, 1, "invalid_enemies",
+		"malformed enemy HP")
+
+	# The shared fixture deck, party and roster survived every refusal untouched.
+	_check(deck.energy == 3 and deck.hand.has(OVERLOAD) and deck.discard_pile.is_empty()
+		and party.get_hero(2).get("combat_scrap") == 3
+		and enemies.get_enemy(1).get("hp") == 30 and enemies.get_enemy(1).get("block") == 0
+		and enemies.get_enemy(2).get("hp") == 24,
+		"every refusal left the shared fixture deck, party and enemies untouched")
+
+	# A refused attempt never poisons the next authentic play on the same objects.
+	var retry: Dictionary = resolver.play_card(deck, party, enemies, OVERLOAD, 2)
+	_check(retry.get("ok") == true and retry.get("raw_damage") == 11,
+		"the authentic play then succeeds once with 11 raw damage")
+	_check(deck.energy == 2 and deck.discard_pile == [OVERLOAD]
+		and party.get_hero(2).get("combat_scrap") == 0
+		and enemies.get_enemy(2).get("hp") == 13 and enemies.get_enemy(1).get("hp") == 30,
+		"the retry paid once, spent the counter and hit only the chosen enemy")
+	_rejected_overload(resolver, deck, party, enemies, OVERLOAD, 2, "card_not_held",
+		"a second claim of the same copy")
+
+
+func _overload_enemies(second_max_hp: int = 24) -> CombatEnemies:
+	var enemies := CombatEnemies.new([
+		{"id": "straw_dummy", "max_hp": 30},
+		{"id": "quilt_hog", "max_hp": second_max_hp},
+	])
+	_check(enemies.is_valid() and enemies.get_enemies().size() == 2,
+		"two-enemy fixture really is a valid living roster")
+	return enemies
+
+
+## A real three-hero party with the Tinker in the named seat and the optional counters set: the
+## Tinker holds `scrap`, teammates hold a distinct non-zero counter of their own.
+func _overload_party(tinker_position: int, scrap: int) -> CombatParty:
+	var party := _scrap_party(tinker_position)
+	party._heroes[tinker_position - 1]["combat_scrap"] = scrap
+	for index in range(3):
+		if index + 1 != tinker_position:
+			party._heroes[index]["combat_scrap"] = 2
+	_check(party.get_hero(tinker_position).get("combat_scrap") == scrap
+		and party._heroes[tinker_position - 1].get("combat_scrap") == scrap,
+		"the Tinker fixture really holds " + str(scrap) + " Combat Scrap")
+	return party
+
+
+func _battle_snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies) -> Dictionary:
+	var snapshot := _scrap_snapshot(deck, party)
+	snapshot["enemies"] = []
+	snapshot["enemies_valid"] = false
+	if enemies != null:
+		snapshot["enemies"] = enemies.get_enemies()
+		snapshot["enemies_valid"] = enemies.is_valid()
+	return snapshot
+
+
+## The exact Overload outcome: one energy, the held copy moved to discard, the whole Tinker counter
+## spent and the raw hit applied through Block to the chosen enemy only.
+func _expected_overload(before: Dictionary, card_id: String, seat: int, target: int,
+		scrap: int, raw: int) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] = int(expected["energy"]) - 1
+	expected["state_energy"] = int(expected["state_energy"]) - 1
+	var hand: Array = expected["hand"]
+	_check(hand.count(card_id) == 1, "expected snapshot: exactly one played copy is held")
+	hand.remove_at(hand.find(card_id))
+	(expected["discard"] as Array).append(card_id)
+	var hero: Dictionary = expected["party"][seat - 1]
+	_check(int(hero.get("combat_scrap", -1)) == scrap,
+		"expected snapshot: the Tinker really holds " + str(scrap) + " Combat Scrap")
+	hero["combat_scrap"] = 0
+	var enemy: Dictionary = expected["enemies"][target - 1]
+	var absorbed: int = mini(int(enemy["block"]), raw)
+	enemy["block"] = int(enemy["block"]) - absorbed
+	enemy["hp"] = maxi(0, int(enemy["hp"]) - (raw - absorbed))
+	return expected
+
+
+func _rejected_overload(resolver: CombatTinkerV3OverloadCards, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, card_id: Variant, target: int,
+		reason: String, label: String) -> void:
+	var before := _battle_snapshot(deck, party, enemies)
+	var plan: Dictionary = resolver.preflight(deck, party, enemies, card_id, target)
+	_check(plan.get("ok") == false and plan.get("reason") == reason,
+		label + ": pure preflight also refuses with " + reason)
+	_check(_battle_snapshot(deck, party, enemies) == before,
+		label + ": preflight itself changed no state")
+	var result: Dictionary = resolver.play_card(deck, party, enemies, card_id, target)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("reason") == reason,
+		label + ": refusal reason is " + reason + " (got " + str(result.get("reason")) + ")")
+	_check(_battle_snapshot(deck, party, enemies) == before,
+		label + ": unchanged energy, hand, piles, turn, party, counters, enemies and RNG")
