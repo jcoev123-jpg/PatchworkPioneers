@@ -3,6 +3,7 @@ extends "res://tests/live_elite_reward_continuation_test.gd"
 
 var sewing
 var rest_transits := {false: 0, true: 0}
+signal admission_stopped
 
 
 ## Bound frame polling observes UI state, never retries an input or substitutes a visit.
@@ -11,31 +12,41 @@ func _await_rest_state(id: String, phase: String, ready: Callable) -> void:
 		if ready.call():
 			return
 		await process_frame
-	var message := "Rest %s requested=%s current=%s route=%s campfire=%s legacy=%s campfire_heal=%s legacy_heal=%s continue=%s" % [
-		phase, id, app.run_map.get_current_node_id(), app.run_map.get_route(),
+	await _stop_admission(id, phase)
+
+
+## quit() schedules shutdown; awaiting a frame here would resume every caller
+## in that frame. Park the entire input chain on a signal we never emit instead.
+func _stop_admission(id: String, phase: String) -> void:
+	var message := "Admission %s requested=%s current=%s route=%s campfire=%s legacy=%s campfire_heal=%s legacy_heal=%s continue=%s routes=%s rewards=%s wearers=%s" % [
+		phase, id, app.run_map.get_current_node_id() if app.run_map != null else "",
+		app.run_map.get_route() if app.run_map != null else [],
 		{"visit": app.campfire_visit.read_state() if app.campfire_visit != null else {},
 			"panel": is_instance_valid(app.campfire_view) and app.campfire_view.is_visible_in_tree(),
 			"closed": app._campfire_closed},
 		{"panel": is_instance_valid(app.rest_view) and app.rest_view.is_visible_in_tree(),
 			"consumed": app.rest_recovery.is_consumed() if app.rest_recovery != null else false},
 		_rest_button_state(app.campfire_heal_button), _rest_button_state(app.rest_heal_button),
-		_rest_button_state(app.rest_continue_button)]
+		_rest_button_state(app.rest_continue_button),
+		app.route_buttons.map(_rest_button_state), app.reward_buttons.map(_rest_button_state),
+		sewing.hero_buttons.map(_rest_button_state)]
 	_check(false, message)
 	printerr(message)
-	# Stop this SceneTree before a caller can cascade into missing battle controls.
 	quit(1)
-	await process_frame
+	await admission_stopped
 
 
 func _rest_button_state(button) -> Dictionary:
 	if not is_instance_valid(button):
 		return {"valid": false}
-	return {"valid": true, "visible": button.is_visible_in_tree(),
-		"disabled": button.disabled, "rect": button.get_global_rect()}
+	return {"valid": true, "node": button.get_path(), "visible": button.is_visible_in_tree(),
+		"disabled": button.disabled if button is BaseButton else false,
+		"rect": button.get_global_rect(), "route_id": button.get_meta("route_id", "")}
 
 
 func _rest_action_ready(button) -> bool:
-	return is_instance_valid(button) and button.is_visible_in_tree() and not button.disabled \
+	return is_instance_valid(button) and not button.is_queued_for_deletion() \
+		and button.is_visible_in_tree() and (not button is BaseButton or not button.disabled) \
 		and button.size.x > 0 and button.size.y > 0 \
 		and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect())
 
@@ -60,7 +71,23 @@ func _rest_connected(id: String) -> bool:
 		and app.route_view.is_visible_in_tree() and app._can_choose_connected_route()
 
 
+func _find_route_action(id: String):
+	for button in app.route_buttons:
+		if is_instance_valid(button) and button.get_meta("route_id", "") == id:
+			return button
+	return null
+
+
+func _ready_route_action(id: String) -> Button:
+	await _await_rest_state(id, "connected route action", func(): return (
+		app.run_map != null and app.run_map.get_legal_choices().has(id)
+		and _rest_action_ready(_find_route_action(id))
+		and (app.run_map.get_route().is_empty() or app._can_choose_connected_route())))
+	return _find_route_action(id)
+
+
 func _rest_input(button: Button, keyboard: bool) -> void:
+	await _await_rest_state("", "enabled input", func(): return _rest_action_ready(button))
 	if keyboard:
 		button.grab_focus()
 		await _key(KEY_ENTER)
@@ -73,9 +100,11 @@ func _rest_input(button: Button, keyboard: bool) -> void:
 func _visit_path(path: Array, keyboard: bool) -> void:
 	for id in path:
 		if app.run_map.get_node(id).type != "Rest":
+			await _ready_route_action(id)
 			await super._visit_path([id], keyboard)
+			await _await_rest_state(id, "completed transit", func(): return _rest_connected(id))
 			continue
-		var action := _route_action(id)
+		var action: Button = await _ready_route_action(id)
 		await _await_rest_state(id, "route action", func(): return (_rest_action_ready(action)
 			and app.run_map.get_legal_choices().has(id) and app._can_choose_connected_route()))
 		await _rest_input(action, keyboard)
@@ -265,7 +294,7 @@ func _attack_patch_claims() -> void:
 			var path: Array = fixture.paths[0].duplicate()
 			var elite: String = path.pop_back()
 			await _visit_path(path, false)
-			await _click(_route_action(elite))
+			await _click(await _ready_route_action(elite))
 			var rng: int = app.run_rng.state
 			var ids: Array = app._catalog_trinket_ids()
 			for definition in RunAuthoredPatchDefinitions.load_definitions():
@@ -341,7 +370,7 @@ func _attack_patch_claims() -> void:
 			if not fight_path.is_empty():
 				var fight: String = fight_path.pop_back()
 				await _visit_path(fight_path, false)
-				await _click(_route_action(fight))
+				await _click(await _ready_route_action(fight))
 				_check(app.party != null and app.enemies != null and not app._battle_closed
 					and app.run_map.get_current_node_id() == fight
 					and app.party_carryover._wardrobe == sewing.wardrobe
@@ -460,10 +489,32 @@ func _test_literal_names() -> void:
 
 
 func _click(control: Control) -> void:
-	if is_instance_valid(control):
-		_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()),
-			"physical input bounds: %s %s" % [control.name, control.get_global_rect()])
+	# The inherited helper moves the pointer, yields four frames, then presses.
+	# Visibility alone can precede container sorting (reward/sew reparenting),
+	# so admit input only after the mounted target's geometry has settled.
+	var layout := {"previous": Rect2(), "settled": 0}
+	await _await_rest_state("", "physical target " + str(control), func():
+		if not _rest_action_ready(control):
+			layout.settled = 0
+			return false
+		var rect: Rect2 = control.get_global_rect()
+		layout.settled = layout.settled + 1 if rect == layout.previous else 0
+		layout.previous = rect
+		return layout.settled >= 2)
+	var route_id: String = control.get_meta("route_id", "")
+	_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()),
+		"physical input bounds: %s %s" % [control.name, control.get_global_rect()])
 	await super._click(control)
+	if route_id != "":
+		await _await_rest_state(route_id, "route admitted after one click", func(): return (
+			app.run_map != null and app.run_map.get_current_node_id() == route_id))
+		if app.run_map.get_node(route_id).type in ["Fight", "Elite", "Boss"]:
+			await _await_rest_state(route_id, "bound live battle", func(): return (
+				app.party != null and app.party.is_valid() and app.enemies != null
+				and app.enemies.is_valid() and not app.enemies.is_defeated()
+				and app.battle_result != null and app.battle_result._party == app.party
+				and app.battle_result._enemies == app.enemies and not app._battle_closed
+				and is_instance_valid(app.battle_view) and app.battle_view.is_visible_in_tree()))
 
 
 func _hover(control: Control) -> void:
@@ -860,7 +911,7 @@ func _coat_multi_fixture(reward_index: int = 0, prior_coat: bool = false) -> Dic
 		var path: Array = fixture.paths[0].duplicate()
 		var elite: String = path.pop_back()
 		await _visit_path(path, false)
-		await _click(_route_action(elite))
+		await _click(await _ready_route_action(elite))
 		for enemy in app.enemies.get_enemies():
 			_check(app.enemies.apply_damage(enemy.position, 9999), "discover coat using real Elite roster")
 		app._observe_battle_result()
@@ -903,7 +954,7 @@ func _torn_focus_fixture() -> Dictionary:
 func _torn_warden_opening_win(fixture: Dictionary) -> bool:
 	app.run_seed = fixture.seed
 	await _click(app.route_button)
-	await _click(_route_action(fixture.fight))
+	await _click(await _ready_route_action(fixture.fight))
 	_check(app.party != null and app.party.is_valid()
 		and app.party.get_hero(1).id == "warden", "opening Fight mounts the actual Warden")
 	if app.party == null:
@@ -942,7 +993,7 @@ func _test_torn_warden_focus(fixture: Dictionary) -> void:
 		var path: Array = fixture.paths[0].duplicate()
 		var elite: String = path.pop_back()
 		await _visit_path(path, false)
-		await _click(_route_action(elite))
+		await _click(await _ready_route_action(elite))
 		_check(app.run_map.get_node(elite).type == "Elite" and not app._battle_closed
 			and app.party.get_hero(1).id == "warden" and app.party.is_downed(1)
 			and app.party.get_hero(2).hp > 0 and app.party.get_hero(3).hp > 0,
@@ -1102,7 +1153,7 @@ func _run() -> void:
 			var path: Array = fixture.paths[index].duplicate()
 			var elite: String = path.pop_back()
 			await _visit_path(path, session == 1)
-			await _click(_route_action(elite))
+			await _click(await _ready_route_action(elite))
 			_check(app.run_map.get_node(elite).type == "Elite" and not app._battle_closed,
 				"genuine connected Elite is mounted")
 			if index == 1:
@@ -1357,7 +1408,7 @@ func _test_displaced_name(fixture: Dictionary) -> void:
 	var path: Array = fixture.paths[0].duplicate()
 	var elite: String = path.pop_back()
 	await _visit_path(path, false)
-	await _click(_route_action(elite))
+	await _click(await _ready_route_action(elite))
 	_check(app.run_map.get_node(elite).type == "Elite" and not app._battle_closed,
 		"genuine connected Elite mounts over the bound wear")
 	for enemy in app.enemies.get_enemies():
@@ -1524,7 +1575,7 @@ func _test_authored_live_claims(fixture: Dictionary) -> void:
 		var path: Array = fixture.paths[0].duplicate()
 		var elite: String = path.pop_back()
 		await _visit_path(path, false)
-		await _click(_route_action(elite))
+		await _click(await _ready_route_action(elite))
 		_check(app.run_map.get_current_node_id() == elite and not app._battle_closed,
 			"real Elite was entered through the connected route")
 		for enemy in app.enemies.get_enemies():
