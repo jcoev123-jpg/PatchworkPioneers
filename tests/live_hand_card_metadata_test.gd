@@ -2294,6 +2294,18 @@ func _spring_face_states() -> void:
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	var dodge_meta = load(HAND_SCRIPT).new()
+	for id in CombatRagDuelistDodgeCards.CARDS:
+		var catalog = RagDuelistStarterCards.new() if id.contains("cape_slip") else RagDuelistPoolCards.new()
+		var canonical: Dictionary = catalog.get_definition(id)
+		_check(not canonical.is_empty() and dodge_meta.definition(id) == canonical,
+			"Dodge metadata matches authentic catalog: " + id)
+		var facts: Dictionary = dodge_meta.describe(id)
+		_check(facts.known and facts.owner_text == "Rag Duelist" and facts.cost == (0 if id.ends_with("_plus") else 1)
+			and facts.target_text == "Self", "Dodge authored owner, cost and self target: " + id)
+		_check(dodge_meta.short_line(id) == "Dodge the next attack.", "Dodge short face: " + id)
+	_check(not dodge_meta.describe("rag_duelist_cape_slip_plus_plus").known,
+		"forged Dodge printing remains unknown")
 	var riposte_meta = load(HAND_SCRIPT).new()
 	for id in CombatRagDuelistRiposteCards.CARDS:
 		var catalog = RagDuelistStarterCards.new() if id.contains("cape_parry") else RagDuelistPoolCards.new()

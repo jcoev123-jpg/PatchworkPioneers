@@ -1,10 +1,11 @@
 class_name LiveRagDuelistRiposteHand
 extends Node
-## Battle-scoped paid self-card adapter. CombatRagDuelistRiposteCards owns all effects.
+## Battle-scoped paid self-card adapter. The Riposte and Dodge services own all effects.
 
-const ALLOWED_CARD_IDS := CombatRagDuelistRiposteCards.CARDS
+var _allowed_card_ids: Array = CombatRagDuelistRiposteCards.CARDS.keys() + CombatRagDuelistDodgeCards.CARDS.keys()
 
 var _service := CombatRagDuelistRiposteCards.new()
+var _dodge := CombatRagDuelistDodgeCards.new()
 var last_event: Dictionary = {}
 
 var _battle: Control
@@ -49,7 +50,7 @@ func _valid_panel(app, panel: Variant) -> bool:
 	if not _bindings.has(panel):
 		return false
 	var card_id: String = str(_bindings[panel]["id"])
-	if not ALLOWED_CARD_IDS.has(card_id):
+	if not _allowed_card_ids.has(card_id):
 		return false
 	var index: int = c.get_index()
 	if index != int(_bindings[panel]["index"]):
@@ -107,7 +108,7 @@ func _sync_battle() -> void:
 			continue
 		var label := panel.get_child(0) as Label
 		var card_id: String = label.text
-		if not ALLOWED_CARD_IDS.has(card_id):
+		if not _allowed_card_ids.has(card_id):
 			continue
 		var index: int = (panel as Control).get_index()
 		if index < 0 or index >= _deck.hand.size() or _deck.hand[index] != card_id:
@@ -299,7 +300,7 @@ func _eligible(panel: Variant, card_id: String) -> bool:
 	if _deck == null or _party == null or _enemies == null \
 			or _result == null or _round_flow == null or not is_instance_valid(_battle):
 		return false
-	if not ALLOWED_CARD_IDS.has(card_id):
+	if not _allowed_card_ids.has(card_id):
 		return false
 	if not _valid_panel(app, panel):
 		return false
@@ -318,10 +319,16 @@ func _eligible(panel: Variant, card_id: String) -> bool:
 		return false
 	return _rng != null and _deck._rng == _rng and _turn == _turn_index(app) \
 		and app.get_node_or_null("LiveRagDuelistRiposteHand") == self \
-		and bool(_service._prepare(_deck, _party, card_id).get("ok", false)) \
+		and _can_pay(card_id) \
 		and app.deck == _deck and app.party == _party and app.enemies == _enemies \
 		and app.battle_result == _result and app.run_rng == _rng and app.battle_view == _battle \
 		and app.round_flow == _round_flow
+
+
+func _can_pay(card_id: String) -> bool:
+	if CombatRagDuelistDodgeCards.CARDS.has(card_id):
+		return bool(_dodge._prepare(_deck, _party, card_id, 0).get("ok", false))
+	return bool(_service._prepare(_deck, _party, card_id).get("ok", false))
 
 
 func _commit(panel: Variant, card_id: String, token: int, receipt: Dictionary) -> void:
@@ -335,7 +342,10 @@ func _commit(panel: Variant, card_id: String, token: int, receipt: Dictionary) -
 	var app = get_parent()
 	if app == null or app.round_flow == null:
 		return
-	last_event = _service.play_card(_deck, _party, card_id)
+	if CombatRagDuelistDodgeCards.CARDS.has(card_id):
+		last_event = _dodge.play_card(_deck, _party, card_id)
+	else:
+		last_event = _service.play_card(_deck, _party, card_id)
 	if not last_event.get("ok", false):
 		_cancel_pending()
 		return

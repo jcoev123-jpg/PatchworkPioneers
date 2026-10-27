@@ -227,8 +227,32 @@ func _session_replay() -> void:
 	await _dispose()
 
 
+func _mixed_dodge_riposte() -> void:
+	await _begin(BASE)
+	var dodge_id := "rag_duelist_cape_slip_plus"
+	app.deck.hand[app.deck.hand.find("warden_strike")] = dodge_id
+	app._refresh_hand()
+	await _frames()
+	var dodge_panel := _pool_panel(dodge_id)
+	var riposte_panel := _pool_panel(BASE)
+	_check(dodge_panel != null and riposte_panel != null
+		and presenter._bindings.has(dodge_panel) and presenter._bindings.has(riposte_panel),
+		"shared adapter binds Dodge and Riposte together in the actual hand")
+	if dodge_panel != null and riposte_panel != null:
+		await _cast(dodge_panel, false)
+		_check(app.party.get_hero(2).statuses.get("dodge_next_attack") == 1,
+			"mixed hand first routes Dodge to its paid service")
+		riposte_panel = _pool_panel(BASE)
+		_check(riposte_panel != null and presenter._eligible(riposte_panel, BASE),
+			"Dodge redraw leaves genuine Riposte eligible")
+		if riposte_panel != null:
+			await _assert_cast(riposte_panel, BASE, 2, true)
+	await _dispose()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	await _mixed_dodge_riposte()
 	for id in FORMS:
 		for keyboard in [false, true]:
 			var panel := await _begin(id)

@@ -45,6 +45,7 @@ var _bolas := CombatYarnRangerBolasCards.new()
 var _vigil := CombatLanternMonkPartyCards.new()
 var _re_stuff := CombatScarecrowReStuffCards.new()
 var _riposte := CombatRagDuelistRiposteCards.new()
+var _rag_dodge := CombatRagDuelistDodgeCards.new()
 var _warden_pool := WardenPoolCards.new()
 var _tinker_pool := TinkerPoolCards.new()
 var _v3_tinker_scrap := CombatTinkerV3ScrapSupportCards.new()
@@ -91,6 +92,8 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if _rag_dodge.is_supported_card(card_id):
+		return _rag_dodge._catalog_definition(card_id)
 	if _riposte.is_supported_card(card_id):
 		return _riposte._catalog_definition(card_id)
 	if _lunge.is_supported_card(card_id):
@@ -543,6 +546,8 @@ func _recipient(definition: Dictionary) -> String:
 ## fields and the real confirmed-hit starter adapter are described, and any
 ## unrecognized effect key is flagged instead of being rendered as a number.
 func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[String]:
+	if _rag_dodge.is_supported_card(card_id):
+		return [_rules(card_id)]
 	if _v3_tinker_scrap.is_supported_card(card_id):
 		var effects: Dictionary = definition.effects
 		if effects.has("block"):
@@ -1097,7 +1102,7 @@ func _update_visual(panel: Control) -> void:
 		if battle_preview != null and is_instance_valid(battle_preview) \
 				and battle_preview.has_method("tinker_cost_discount"):
 			discount = int(battle_preview.tinker_cost_discount(id))
-		if CombatRagDuelistRiposteCards.CARDS.has(id):
+		if CombatRagDuelistRiposteCards.CARDS.has(id) or CombatRagDuelistDodgeCards.CARDS.has(id):
 			var riposte_presenter = _app.get_node_or_null("LiveRagDuelistRiposteHand")
 			playable = riposte_presenter != null and riposte_presenter._eligible(panel, id)
 		elif id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatYarnRangerSnareCards.CARDS.has(id) or CombatScarecrowCrowCards.CARDS.has(id):
