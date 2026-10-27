@@ -14,6 +14,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+    _test_frayed_debt_removal()
     _test_authored_open_and_quotes()
     _test_first_copy_and_replay()
     _test_real_stitched_and_survivors()
@@ -27,6 +28,50 @@ func _initialize() -> void:
             printerr(failure)
         print("run_unpicker_visit_test: FAIL (", failures.size(), " failures)")
     quit(0 if failures.is_empty() else 1)
+
+
+func _test_frayed_debt_removal() -> void:
+    var curse := MpwFrayedDebt.CARD_ID
+    _check(MpwFrayedDebt.new().get_definition(curse).get("removable") == true, "authored curse is removable")
+    var fixture := _two_composites()
+    if fixture.is_empty():
+        return
+    var deck: Array = fixture["deck"].duplicate()
+    deck.append(curse)
+    deck.append(curse)
+    var original := deck.duplicate()
+    var registry: Dictionary = fixture["descriptors"].duplicate(true)
+    for prior in [0, 1, 2]:
+        var price: int = RunShopCardRemoval.BASE_PRICE + RunShopCardRemoval.PRICE_STEP * prior
+        var visit := _make_visit(deck, price + 50, prior, registry, fixture["cursor"])
+        _check(visit.is_valid(), "curse and mixed ledger open real Unpicker")
+        var source := visit.read_state()
+        var stale := source.duplicate(true)
+        stale["gold"] += 1
+        _reject(visit, curse, source["visit_id"], NODE, stale, "stale curse removal")
+        var poor := _make_visit(deck, price - 1, prior, registry, fixture["cursor"])
+        _check(poor.is_valid(), "poor curse visit valid before payment refusal")
+        var poor_source := poor.read_state()
+        _reject(poor, curse, poor_source["visit_id"], NODE, poor_source, "poor curse removal")
+        seed(354)
+        var next_draw := randi()
+        seed(354)
+        var paid := _remove(visit, curse, source)
+        var expected := deck.duplicate()
+        expected.remove_at(expected.find(curse))
+        _check(paid.get("ok") == true and paid.get("deck") == expected
+                and paid.get("deck", []).count(curse) == 1 and paid.get("removed_card_id") == curse,
+                "real paid helper removes exactly one canonical curse")
+        _check(paid.get("charged_gold") == price and paid.get("gold") == 50
+                and paid.get("prior_removals") == prior + 1 and visit.is_consumed(), "canonical progressive debit and one-use receipt")
+        _check(paid.get("descriptors") == registry and paid.get("next_stitch_id") == fixture["cursor"]
+                and RunRestStitchCards.new(paid["deck"], registry, 0, fixture["cursor"]).is_valid(),
+                "curse removal preserves composites and allocator")
+        _reject(visit, curse, source["visit_id"], NODE, source, "replayed curse removal")
+        var replay := _make_visit(deck, price + 50, prior, registry, fixture["cursor"])
+        _check(_remove(replay, curse, replay.read_state()) == paid and randi() == next_draw,
+                "identical removal receipt replay consumes no randomness")
+        _check(deck == original and registry == fixture["descriptors"], "curse removal leaves caller containers intact")
 
 
 func _check(condition: bool, message: String) -> void:

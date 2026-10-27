@@ -193,7 +193,8 @@ func _validate_input(deck_ids: Array, registry: Dictionary, next_stitch_id: int)
 			return false
 		# Starter cards, pool base cards, and canonical pool plus cards can live
 		# beside existing stitched cards in the deck.
-		if not registry.has(id) and resolve_card_definition(id).is_empty():
+		# The canonical curse is deck-only: never expose it as a stitch half.
+		if not registry.has(id) and id != MpwFrayedDebt.CARD_ID and resolve_card_definition(id).is_empty():
 			return false
 		counts[id] = counts.get(id, 0) + 1
 	for id in registry:

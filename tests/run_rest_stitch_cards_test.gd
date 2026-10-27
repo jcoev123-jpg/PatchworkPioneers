@@ -11,6 +11,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_frayed_debt_deck_only()
 	_test_pool_plus_mixed_ledger_continuity()
 	_test_original_transaction_and_rng()
 	_test_eligibility_order_and_isolation()
@@ -27,6 +28,44 @@ func _initialize() -> void:
 			printerr(failure)
 		print("run_rest_stitch_cards_test: FAIL (", failures.size(), " failures)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_frayed_debt_deck_only() -> void:
+	var curse := MpwFrayedDebt.CARD_ID
+	var definition := MpwFrayedDebt.new().get_definition(curse)
+	_check(definition.get("owner") == "" and definition.get("can_stitch") == false
+		and definition.get("playable") == false, "real curse definition is non-owner and nonplayable")
+	_check(RunRestStitchCards.resolve_card_definition(curse).is_empty(), "curse never resolves as a half")
+	var deck := _deck()
+	deck.append(curse)
+	var service := RunRestStitchCards.new(deck, {}, 6)
+	_check(service.is_valid(), "canonical curse admitted beside real starters")
+	var snapshot := service.get_snapshot()
+	_reject(service, deck.size() - 1, deck.find(PRICK), snapshot, "curse first half")
+	_reject(service, deck.find(POP), deck.size() - 1, snapshot, "curse second half")
+	var made := service.choose_stitch(deck.find(PRICK), deck.find(POP), snapshot)
+	_check(made.get("ok") == true and made.get("deck", []).count(curse) == 1, "normal stitch retains curse")
+	if made.get("ok") != true:
+		return
+	var mixed := RunRestStitchCards.new(made["deck"], made["descriptors"], 3, made["next_stitch_id"])
+	_check(mixed.is_valid(), "curse reloads with authentic composite and cursor")
+	var mixed_deck: Array = made["deck"]
+	_reject(mixed, mixed_deck.find(curse), mixed_deck.find(STRIKE), mixed.get_snapshot(), "mixed curse half")
+	var replay := RunRestStitchCards.new(deck, {}, 6)
+	_check(replay.choose_stitch(deck.find(PRICK), deck.find(POP), replay.get_snapshot()) == made,
+		"curse stitch receipt replays exactly")
+	for forged in [curse + "_plus", curse + "_fake", "curse_unknown"]:
+		var bad := mixed_deck.duplicate()
+		bad[bad.find(curse)] = forged
+		_check(not RunRestStitchCards.new(bad, made["descriptors"], 3, 2).is_valid(), "forged curse rejected: " + forged)
+	var registry: Dictionary = made["descriptors"].duplicate(true)
+	registry[curse] = definition
+	_check(not RunRestStitchCards.new(mixed_deck, registry, 3, 2).is_valid(), "curse cannot be registered as composite")
+	registry = made["descriptors"].duplicate(true)
+	registry[made["stitched_id"]]["half_ids"][0] = curse
+	registry[made["stitched_id"]]["first_half"] = definition
+	_check(not RunRestStitchCards.new(mixed_deck, registry, 3, 2).is_valid(), "curse descriptor half rejected")
+	_check(not RunRestStitchCards.new(mixed_deck, made["descriptors"], 3, 1).is_valid(), "curse cannot excuse stale cursor")
 
 
 func _check(condition: bool, message: String) -> void:

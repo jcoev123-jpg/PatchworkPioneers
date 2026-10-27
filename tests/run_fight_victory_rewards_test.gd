@@ -53,6 +53,10 @@ func _initialize() -> void:
 		_test_weighted_one_survivor(definitions, ids, deck, true)
 		_test_weighted_one_survivor_warden(definitions, ids, deck)
 		_test_stitched_rewards(definitions, ids, deck)
+		var cursed_deck := deck.duplicate()
+		cursed_deck.append(MpwFrayedDebt.CARD_ID)
+		_test_stitched_rewards(definitions, ids, cursed_deck)
+		_test_frayed_debt_rejections(definitions, ids, cursed_deck, candidates)
 		_test_rejections(definitions, ids, deck, candidates)
 	else:
 		_check(false, "reward suite cannot run vacuously without valid authored fixtures")
@@ -63,6 +67,23 @@ func _initialize() -> void:
 			printerr(failure)
 		print("run_fight_victory_rewards_test: FAIL (", failures.size(), " failures)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_frayed_debt_rejections(definitions: Array, ids: Array[String], deck: Array[String],
+		candidates: Array[String]) -> void:
+	var fight := _fight(definitions)
+	_win(fight)
+	var bad_candidates := candidates.duplicate()
+	bad_candidates.append(MpwFrayedDebt.CARD_ID)
+	_reject("canonical curse cannot be a reward candidate", fight, _rng(), ids, bad_candidates, deck, 100)
+	var records := _pool_records()
+	var curse_definition := MpwFrayedDebt.new().get_definition(MpwFrayedDebt.CARD_ID)
+	records.append({"id": curse_definition["id"], "owner": curse_definition["owner"], "rarity": "common"})
+	_reject("canonical non-owner curse cannot be a weighted reward", fight, _rng(), ids, records, deck, 100)
+	for bad_id in [MpwFrayedDebt.CARD_ID + "_plus", "unknown_curse", "button_golem_pop_button"]:
+		var bad_deck := deck.duplicate()
+		bad_deck[bad_deck.find(MpwFrayedDebt.CARD_ID)] = bad_id
+		_reject("no exemption for forged curse or non-party card " + bad_id, fight, _rng(), ids, candidates, bad_deck, 100)
 
 
 func _check(value: bool, description: String) -> void:
@@ -1043,6 +1064,10 @@ func _test_stitched_rewards(definitions: Array, ids: Array[String], deck: Array[
 		var published := service.prepare()
 		_check(published.get("ok", false),
 			label + ": authentic composite prepares the normal seeded reward")
+		if published.get("ok") != true:
+			continue
+		_check(not service.choose(MpwFrayedDebt.CARD_ID).get("ok") and rng.state == oracle["rng_state"],
+			label + ": curse selection cannot claim or draw")
 		_check(published.get("gold_award") == oracle["gold"]
 			and published.get("offers") == oracle["offers"]
 			and published.get("trinket_drop_id", "") == oracle["trinket_drop_id"],
@@ -1063,6 +1088,8 @@ func _test_stitched_rewards(definitions: Array, ids: Array[String], deck: Array[
 			label + ": composite deck still claims one offered card and one award")
 		_check(claimed.get("deck").count(composite) == 1,
 			label + ": claimed deck keeps the composite exactly once")
+		_check(RunRestStitchCards.new(claimed["deck"], ledger["descriptors"], 0, ledger["next_stitch_id"]).is_valid(),
+			label + ": claimed deck remains a valid ledger")
 		_check(not service.choose(offered).get("ok") and not service.choose("").get("ok"),
 			label + ": composite reward cannot pay twice")
 		_check(service.prepare() == published and rng.state == held_state,
@@ -1079,6 +1106,8 @@ func _test_stitched_rewards(definitions: Array, ids: Array[String], deck: Array[
 			skip_service = _session(skip_fight, skip_rng, ids, records, ledger["deck"], 64, false,
 				ledger["descriptors"], ledger["next_stitch_id"])
 		var skip_published := skip_service.prepare()
+		_check(skip_published == published and skip_rng.state == held_state,
+			label + ": independent seeded replay has identical offers and RNG")
 		var skipped := skip_service.choose("")
 		var expected_skip_trinkets: Array = OWNED_TRINKETS.duplicate() if elite else []
 		if elite:
@@ -1091,6 +1120,9 @@ func _test_stitched_rewards(definitions: Array, ids: Array[String], deck: Array[
 			label + ": explicit Skip keeps the composite once and pays exactly once")
 		_check(ledger["deck"] == source_deck and ledger["descriptors"] == source_descriptors,
 			label + ": settlements never rewrite the source run ledger")
+		_check(not skip_service.choose("").get("ok") and not skip_service.choose(offered).get("ok")
+			and skip_service.prepare() == skip_published and skip_rng.state == held_state,
+			label + ": Skip cannot pay or reroll twice")
 
 	# Malformed ledgers must reject before any draw, payout or ledger edit.
 	var win := _fight(definitions)

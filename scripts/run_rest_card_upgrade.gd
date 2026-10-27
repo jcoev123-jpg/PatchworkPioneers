@@ -207,7 +207,8 @@ static func _is_valid_deck(deck: Array) -> bool:
 		if card_id.is_empty():
 			return false
 		if RunPoolCardRewardOffers.resolve_reward_definition(card_id).is_empty() \
-				and not RunRestStitchCards.is_authored_pool_plus(card_id):
+				and not RunRestStitchCards.is_authored_pool_plus(card_id) \
+				and card_id != MpwFrayedDebt.CARD_ID:
 			return false
 	return true
 

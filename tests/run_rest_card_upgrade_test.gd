@@ -20,6 +20,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_frayed_debt_upgrades()
 	_test_authored_pool_upgrade_cases()
 	_test_pool_mapping_and_membership_rejections()
 	_test_pool_plus_in_stitched_upgrade_ledger()
@@ -43,6 +44,37 @@ func _initialize() -> void:
 	_test_choice_map_integration_and_canonical_authoring()
 	_test_list_authored_choices_negative_and_isolation()
 	_finish()
+
+
+func _test_frayed_debt_upgrades() -> void:
+	var curse := MpwFrayedDebt.CARD_ID
+	var earned := _earned_mixed_ledger()
+	if earned.get("ok") != true:
+		return
+	for mixed in [false, true]:
+		var deck: Array = earned["deck"].duplicate() if mixed else _load_starter_deck()
+		deck.append(curse)
+		var registry: Variant = earned["descriptors"] if mixed else null
+		var cursor: Variant = earned["next_stitch_id"] if mixed else null
+		var before := deck.duplicate(true)
+		var projection := RunRestCardUpgrade.list_authored_choices(deck, registry, cursor)
+		_check(projection.get("ok") == true, "curse plain/mixed upgrade projection admitted")
+		var permitted: Dictionary = projection.get("permitted_upgrades", {}).duplicate()
+		_check(not permitted.has(curse) and permitted.get(STRIKE_ID) == "warden_strike_plus", "curse excluded while real upgrade available")
+		for choice in projection.get("choices", []):
+			_check(choice.get("source_id") != curse, "curse absent from authored choices")
+		permitted[curse] = "warden_strike_plus"
+		var visit := RunRestCardUpgrade.new(deck, permitted, registry, cursor)
+		_assert_rejected(visit, deck.find(curse), deck, "forged curse upgrade is atomic")
+		var result := visit.choose_upgrade(deck.find(STRIKE_ID))
+		_check(result.get("ok") == true and result.get("deck", []).count(curse) == 1,
+			"real upgrade succeeds after refused curse upgrade")
+		var replay := RunRestCardUpgrade.new(deck, permitted, registry, cursor)
+		_check(replay.choose_upgrade(deck.find(STRIKE_ID)) == result and deck == before, "curse upgrade seeded-independent replay and source isolation")
+		_assert_rejected_while_used(visit, deck.find(STRIKE_ID), deck, "curse deck upgrade is single-use")
+		var forged := deck.duplicate()
+		forged[forged.find(curse)] = curse + "_plus"
+		_check(RunRestCardUpgrade.list_authored_choices(forged, registry, cursor).get("ok") == false, "forged curse ID fails projection")
 
 
 func _finish() -> void:

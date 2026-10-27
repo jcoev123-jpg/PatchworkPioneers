@@ -120,6 +120,9 @@ func prepare() -> Dictionary:
 					or not _party_ids.has(first_owner) or not _party_ids.has(second_owner):
 				return rejected
 			continue
+		# Full ledger admission above authenticates this one non-owner deck card.
+		if card_id == MpwFrayedDebt.CARD_ID:
+			continue
 		var definition: Dictionary = RunRestStitchCards.resolve_card_definition(card_id)
 		if definition.is_empty() or not _party_ids.has(definition.get("owner")):
 			return rejected
