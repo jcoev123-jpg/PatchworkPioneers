@@ -1541,6 +1541,7 @@ func _test_needle_wasp_bleeding_sting() -> void:
 		_check(replay_one.rng.state == replay_two.rng.state,
 			"AC4: an identical seeded sting leaves matching RNG state")
 
+
 ## AC1: the shipped Thread Biter record opts into Drain without changing its
 ## identity, HP, target policy or weighted alternatives, and the genuine
 ## floor-band roster that live Fights consume keeps that metadata.

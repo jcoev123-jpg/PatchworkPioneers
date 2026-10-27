@@ -40,6 +40,7 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 		_check(app.route_view != null and app.route_view.is_visible_in_tree()
 			and app._can_choose_connected_route(), "completed Rest keeps connected chooser live")
 
+
 ## Use the acquired patch through the next battle's real held-card input.
 func _acquired_attack_check(patch_id: String) -> void:
 	_check(app.party != null and app.enemies != null and not app._battle_closed

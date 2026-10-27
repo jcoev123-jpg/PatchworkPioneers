@@ -52,6 +52,8 @@ func _ready() -> void:
 			Vector2(740, 70), 26, CREAM))
 	heal_button = _button("Heal", Vector2(48, 498), Vector2(373, 72), OXBLOOD)
 	leave_button = _button("Leave", Vector2(459, 498), Vector2(373, 72), TEAL)
+	heal_button.tooltip_text = "1 → Heal"
+	leave_button.tooltip_text = "2 → Leave"
 	_refresh()
 	if _source_current():
 		heal_button.grab_focus()
@@ -230,15 +232,15 @@ func _refresh() -> void:
 		_connections[leave_button] = leave_callback
 
 
-func _request(action: String, generation: int, source: RunCampfireVisit) -> void:
+func _request(action: String, generation: int, source: RunCampfireVisit) -> bool:
 	if generation != _epoch or source == null or not is_same(_visit, source) \
 			or not is_inside_tree() or not is_visible_in_tree() \
 			or not _source_current() or not _display_current() \
 			or (action != "heal" and action != "leave"):
-		return
+		return false
 	var button := heal_button if action == "heal" else leave_button
 	if button.disabled or not button.is_visible_in_tree():
-		return
+		return false
 	_submitted = true
 	heal_button.disabled = true
 	leave_button.disabled = true
@@ -248,31 +250,34 @@ func _request(action: String, generation: int, source: RunCampfireVisit) -> void
 		"node_id": _snapshot["node_id"],
 		"expected_heroes": _snapshot["heroes"].duplicate(true),
 	})
+	return true
 
 
 ## Physical 1/2 hands the numbered action to the same generation-bound pressed
 ## callback the mouse and focus paths use, so the bound visit, snapshot,
 ## submission, visibility and disabled state still decide. Closed, hidden,
-## spent, disabled and unnumbered keys are inert.
+## spent, disabled, modified and unnumbered keys are inert.
 func _input(event: InputEvent) -> void:
-	if not (event is InputEventKey):
+	if not event is InputEventKey or event.echo or not event.pressed:
 		return
-	var key: InputEventKey = event
-	if not key.pressed or key.echo:
+	var key := event as InputEventKey
+	if key.shift_pressed or key.alt_pressed or key.ctrl_pressed or key.meta_pressed:
 		return
-	if not is_inside_tree() or not is_visible_in_tree() or not _source_current() \
-			or not _display_current():
-		return
-	var button: Button = null
-	match key.keycode:
-		KEY_1:
-			button = heal_button
-		KEY_2:
-			button = leave_button
-	if button == null or button.disabled or not button.is_visible_in_tree():
-		return
-	var callback: Callable = _connections.get(button, Callable())
-	if not callback.is_valid() or not button.pressed.is_connected(callback):
-		return
-	get_viewport().set_input_as_handled()
-	callback.call()
+	if key.keycode == KEY_1 or key.keycode == KEY_KP_1:
+		if not is_inside_tree() or not is_visible_in_tree():
+			return
+		if _submitted or _visit == null or _snapshot.is_empty() or not _source_current() or not _display_current():
+			return
+		if heal_button.disabled or not heal_button.is_visible_in_tree():
+			return
+		if _request("heal", _epoch, _visit):
+			get_viewport().set_input_as_handled()
+	elif key.keycode == KEY_2 or key.keycode == KEY_KP_2:
+		if not is_inside_tree() or not is_visible_in_tree():
+			return
+		if _submitted or _visit == null or _snapshot.is_empty() or not _source_current() or not _display_current():
+			return
+		if leave_button.disabled or not leave_button.is_visible_in_tree():
+			return
+		if _request("leave", _epoch, _visit):
+			get_viewport().set_input_as_handled()

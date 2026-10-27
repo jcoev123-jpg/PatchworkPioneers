@@ -11,6 +11,7 @@ func _initialize() -> void:
 	_test_zero_overkill_and_bleed()
 	_test_invalid_rosters_and_targets()
 	_test_status_validation()
+	_test_riposte_compatibility()
 	_test_immutable_snapshots_and_replay()
 	_test_tangled_bonus_and_ageing()
 	_test_thorns_retaliation()
@@ -210,7 +211,9 @@ func _test_status_validation() -> void:
 		{"weak": -1}, {"exposed": -1}, {"bleed": -1},
 		{"weak": 1.5}, {"exposed": 1.0}, {"bleed": 0.5},
 		{"weak": "1"}, {"exposed": null}, {"bleed": true},
-		{"weak": []}, {"bleed": {"nested": [1, 2]}}
+		{"weak": []}, {"bleed": {"nested": [1, 2]}},
+		{"riposte": -1}, {"riposte": 2.0}, {"riposte": true}, {"riposte": "3"},
+		{"riposte": null}, {"riposte": []}, {"Riposte": 1}, {"riposte": 1, "poison": 1}
 	]
 	for bad in invalid_statuses:
 		_reject_enemy(enemies, 1, 6, bad, {}, "malformed enemy attacker: " + str(bad))
@@ -224,6 +227,117 @@ func _test_status_validation() -> void:
 	_check(attacks.resolve_vs_hero(party, 1, 0,
 		{"bleed": 3, "weak": 0}, {"exposed": 0}) == _event(0, 0, 0),
 		"legal status counters accepted on hero")
+	# Canonical nonnegative Riposte is now legal on either side and never adds
+	# damage; every value resolves to the same zero-damage receipt.
+	for riposte_value in [0, 2, 3]:
+		var riposte_map := {"riposte": riposte_value}
+		_check(attacks.resolve_vs_enemy(enemies, 1, 0, riposte_map, {}) == _event(0, 0, 0),
+			"valid enemy attacker riposte %d accepted" % riposte_value)
+		_check(attacks.resolve_vs_enemy(enemies, 1, 0, {}, riposte_map) == _event(0, 0, 0),
+			"valid enemy defender riposte %d accepted" % riposte_value)
+		_check(attacks.resolve_vs_hero(party, 1, 0, riposte_map, {}) == _event(0, 0, 0),
+			"valid hero attacker riposte %d accepted" % riposte_value)
+		_check(attacks.resolve_vs_hero(party, 1, 0, {}, riposte_map) == _event(0, 0, 0),
+			"valid hero defender riposte %d accepted" % riposte_value)
+		_check(attacks.resolve_vs_enemy(enemies, 1, 0, riposte_map, riposte_map) == _event(0, 0, 0),
+			"valid enemy both-side riposte %d accepted" % riposte_value)
+		_check(attacks.resolve_vs_hero(party, 1, 0, riposte_map, riposte_map) == _event(0, 0, 0),
+			"valid hero both-side riposte %d accepted" % riposte_value)
+
+
+## AC1: Riposte is not an attack modifier on this bridge. A canonical nonnegative
+## counter on the attacker, the defender, or both (beside Weak/Exposed/Tangled)
+## changes no receipt, Block absorption or HP loss, and neither supplied status
+## map is consumed or mutated. Both directions use the real authoritative rosters.
+func _test_riposte_compatibility() -> void:
+	var bases: Array[Dictionary] = [
+		{"attack": {"weak": 1}, "defend": {}},
+		{"attack": {}, "defend": {"exposed": 1}},
+		{"attack": {"weak": 1}, "defend": {"exposed": 1, "tangled": 2}},
+	]
+	for base in bases:
+		var base_attack: Dictionary = base["attack"].duplicate(true)
+		var base_defend: Dictionary = base["defend"].duplicate(true)
+		var control_enemies := _enemies()
+		var control_party := _party()
+		_check(control_enemies.gain_block(1, 4) and control_party.gain_block(1, 6),
+			"riposte control fixtures have real Block")
+		var expected_enemy := attacks.resolve_vs_enemy(
+			control_enemies, 1, 6, base_attack, base_defend)
+		var expected_hero := attacks.resolve_vs_hero(
+			control_party, 1, 8, base_attack, base_defend)
+		_check(expected_enemy["ok"] and expected_hero["ok"],
+			"riposte control receipts succeed on living real targets")
+		_check(expected_enemy["block_absorbed"] == 4 and expected_hero["block_absorbed"] == 6,
+			"riposte control hits absorb the full real Block fixture")
+		for placement in ["attacker", "defender", "both"]:
+			var attack: Dictionary = base_attack.duplicate(true)
+			var defend: Dictionary = base_defend.duplicate(true)
+			if placement != "defender":
+				attack["riposte"] = 2
+			if placement != "attacker":
+				defend["riposte"] = 3
+			var attack_before := attack.duplicate(true)
+			var defend_before := defend.duplicate(true)
+			var enemies := _enemies()
+			var party := _party()
+			_check(enemies.gain_block(1, 4) and party.gain_block(1, 6),
+				"riposte fixtures repeat the control Block")
+			var enemy_result := attacks.resolve_vs_enemy(enemies, 1, 6, attack, defend)
+			var hero_result := attacks.resolve_vs_hero(party, 1, 8, attack, defend)
+			_check(enemy_result == expected_enemy and hero_result == expected_hero,
+				"riposte on %s leaves both receipts identical to the riposte-free control" % placement)
+			_check(enemies.get_enemies() == control_enemies.get_enemies()
+				and party.get_heroes() == control_party.get_heroes(),
+				"riposte on %s produces the same rosters as the control" % placement)
+			_check(attack == attack_before and defend == defend_before,
+				"riposte on %s is neither consumed nor mutated" % placement)
+
+	# The canonical counters also live on the real roster records themselves, not
+	# only in caller-supplied maps: both directions read the records' own status
+	# dictionaries and leave those counters intact after the hit.
+	var record_enemies := _enemies()
+	var record_party := _party()
+	record_enemies._enemies[0]["statuses"] = {"riposte": 3}
+	record_party._heroes[0]["statuses"] = {"riposte": 2}
+	_check(record_enemies.gain_block(1, 4) and record_party.gain_block(1, 6),
+		"record-backed Riposte fixtures hold real Block")
+	var record_enemy_hit := attacks.resolve_vs_enemy(record_enemies, 1, 6,
+		record_party.get_hero(1)["statuses"], record_enemies.get_enemy(1)["statuses"])
+	var record_hero_hit := attacks.resolve_vs_hero(record_party, 1, 8,
+		record_party.get_hero(1)["statuses"], record_enemies.get_enemy(1)["statuses"])
+	_check(record_enemy_hit == _event(6, 4, 2) and record_hero_hit == _event(8, 6, 2),
+		"record-backed Riposte hits keep the plain floor-rounded receipts")
+	_check(record_party.get_hero(1)["statuses"] == {"riposte": 2}
+		and record_enemies.get_enemy(1)["statuses"] == {"riposte": 3},
+		"both roster records keep their Riposte counters after the hits")
+	_check(record_party.get_hero(1)["hp"] == 38 and record_party.get_hero(1)["block"] == 0
+		and record_enemies.get_enemy(1)["hp"] == 10 and record_enemies.get_enemy(1)["block"] == 0,
+		"record-backed Riposte hits spend Block before HP on both rosters")
+
+	# Deterministic replay in two independent, freshly built fixtures.
+	var enemy_receipts: Array[Dictionary] = []
+	var hero_receipts: Array[Dictionary] = []
+	var enemy_rosters: Array = []
+	var hero_rosters: Array = []
+	for repeat in range(2):
+		var replay_enemies := _enemies()
+		var replay_party := _party()
+		_check(replay_enemies.gain_block(1, 4) and replay_party.gain_block(1, 6),
+			"riposte replay fixtures prepared identically")
+		var replay_attack := {"riposte": 2, "bleed": 1}
+		var replay_defend := {"riposte": 3, "tangled": 1}
+		enemy_receipts.append(attacks.resolve_vs_enemy(
+			replay_enemies, 1, 6, replay_attack, replay_defend))
+		enemy_rosters.append(replay_enemies.get_enemies())
+		hero_receipts.append(attacks.resolve_vs_hero(
+			replay_party, 1, 8, replay_attack, replay_defend))
+		hero_rosters.append(replay_party.get_heroes())
+	_check(enemy_receipts[0] == _event(8, 4, 4) and hero_receipts[0] == _event(10, 6, 4),
+		"Riposte beside Tangled keeps Tangled's +2 and unchanged Block absorption")
+	_check(enemy_receipts[0] == enemy_receipts[1] and hero_receipts[0] == hero_receipts[1]
+		and enemy_rosters[0] == enemy_rosters[1] and hero_rosters[0] == hero_rosters[1],
+		"independent identical Riposte fixtures replay receipts and rosters")
 
 
 func _test_immutable_snapshots_and_replay() -> void:

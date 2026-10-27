@@ -4,6 +4,33 @@ const NODE := "f02_patch_stall"
 const PARTY := ["warden", "seamstress", "tinker"]
 const DECK := ["warden_strike", "tinker_pop_shot"]
 const OWNED := ["quilted_coat"]
+# Explicit authentic, unowned preview witnesses. Do not pin the power catalog's
+# size or order; each tested ID is verified against the actual power projection.
+const EXPECTED_SHORT := {
+	"button_eye": "First successful attack/combat also gives Exposed 1",
+	"pincushion_arm": "+1 damage on wearer's damaging cards",
+	"switchback_button": "+2 Block once/turn after a different living hero's play",
+	"quilted_coat": "+6 maximum HP",
+	"padded_vest": "+4 maximum HP",
+	"double_quilt_coat": "+8 maximum HP",
+	"scrap_lined_vest": "+3 maximum HP",
+	"wool_patch_cloak": "+5 maximum HP",
+	"chain_stitched_coat": "+7 maximum HP",
+	"reinforced_patchcoat": "+9 maximum HP",
+	"thick_felt_mantle": "+10 maximum HP",
+	"bloodstitch_bonnet": "+1 Bleed on wearer's eligible Bleed cards",
+	"button_glass_visor": "+1 Exposed on wearer's eligible Exposed cards",
+	"stern_seam_cap": "+1 Weak on wearer's eligible Weak cards",
+	"reinforced_browband": "+2 Block on wearer's eligible Block cards",
+	"hemguard_cuff": "+2 Block on wearer's eligible Block cards",
+	"threadguard_wrap": "+1 Block on wearer's cards already granting Block",
+	"red_bobbin_cuff": "+1 Bleed on wearer's eligible Bleed cards",
+	"loose_thread_glove": "+1 Unravel on wearer's eligible Unravel cards",
+	"frayfinder_mitt": "+2 first single-target hit at half Unravel, once/turn",
+	"borrowed_button": "Ally's healing play gives wearer 3 Block once/combat",
+	"relay_bobbin": "+1 shared energy (cap 3) when ally uses your Pin, 1/combat",
+	"hearth_lining": "First earned Quilt bonus/combat heals wearer 2 HP",
+}
 var checks := 0
 var failures: Array[String] = []
 var panel: LivePatchStallPanel
@@ -173,6 +200,7 @@ func _run() -> void:
 	seed(268)
 	var expected_run := rng.state
 	await _layout(valid)
+	await _named_power_cases(slot_map)
 	for chosen in range(3):
 		for option in range(3):
 			await _buy_case(chosen, option, (chosen + option) % 2 == 0)
@@ -207,9 +235,25 @@ func _layout(visit: RunPatchStallVisit) -> void:
 				and button.text.contains(slot_map_for(offer["id"])) \
 				and button.text.contains(str(offer["price"]) + " gold") and not button.disabled,
 				"source ID/name, authored HEAD/ARM/COAT slot, exact gold and affordability")
+		var lines := button.text.split("\n")
+		_check(lines.size() == 2 and not lines[1].is_empty() 				and button.tooltip_text.contains("Torn") 				and button.tooltip_text.contains(offer["id"]),
+				"real sampled quote shows an effect second line and a wearer-aware tooltip")
+		if EXPECTED_SHORT.has(offer["id"]):
+			_check(lines.size() == 2 and lines[1] == EXPECTED_SHORT[offer["id"]],
+					"seeded offered ID uses the exact authored short power " + offer["id"])
 		_check(button.get_theme_font_size("font_size") >= 20 and
 				button.get_theme_color("font_color").get_luminance() > 0.6 and
 				button.get_theme_stylebox("focus") != null, "readable focusable sewn choice")
+		var font: Font = button.get_theme_font("font")
+		var measured := font.get_multiline_string_size(
+				button.text, HORIZONTAL_ALIGNMENT_CENTER, button.size.x - 24,
+				button.get_theme_font_size("font_size"))
+		_check(measured.x <= button.size.x - 24 and measured.y <= button.size.y - 14,
+				"both text lines fit the sewn 90px action at 1280x720: " + offer["id"])
+		if i > 0:
+			_check(not button.get_global_rect().intersects(
+					panel.offer_buttons[i - 1].get_global_rect()),
+					"power-bearing patch buttons do not overlap")
 	_check(screen.encloses(panel.leave_button.get_global_rect()) and
 			panel.leave_button.text.contains("FREE") and not panel.leave_button.disabled,
 			"free Leave is reachable")
@@ -226,6 +270,120 @@ func _layout(visit: RunPatchStallVisit) -> void:
 		_check(focus_seen.has(button), "Tab visits all enabled pins and decisions")
 	_check(visit.read_state().get("status") == "available" and intents.is_empty(),
 		"mere preview/focus has no transaction")
+
+## Bind every named, authored power as a genuine three-offer service quote,
+## with prices deliberately different from ordinary stock's 100. The quote's
+## order and wallet, never test position or catalog counts, govern the UI.
+func _named_power_cases(power_slots: Dictionary) -> void:
+	var names: Array = EXPECTED_SHORT.keys()
+	names.sort()
+	var rare_source: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/mpw_synergy_patches.json"))
+	_check(typeof(rare_source) == TYPE_ARRAY and rare_source.size() >= 2,
+			"authored P8 rare power catalog exists")
+	_check(not power_slots.has("stitched_badge") and not power_slots.has("spare_spool"),
+			"Shop-only starter slot modifiers are not Patch Stall power stock")
+	for id in names:
+		_check(power_slots.has(id) and power_slots[id] in ["HEAD", "ARM", "COAT"],
+				"named power fixture belongs to real validated power catalog: " + id)
+	for start in range(0, names.size(), 3):
+		var trio: Array = []
+		for offset in range(3):
+			trio.append(names[(start + offset) % names.size()])
+		var records := [
+			{"id": trio[0], "price": 61},
+			{"id": trio[1], "price": 82},
+			{"id": trio[2], "price": 113},
+		]
+		var visit := RunPatchStallVisit.new("named_powers_%d" % start,
+				PARTY, DECK, [], 70, records)
+		var before := visit.read_state()
+		var quote := visit.quote()
+		_check(visit.is_valid() and quote.get("offers", []).size() == 3
+				and quote.get("decisions") == ["buy_patch", "leave"],
+				"three genuine unsold named offers for " + str(start))
+		if not visit.is_valid():
+			continue
+		await _bind(visit)
+		_check(panel.offer_buttons.size() == 3 and panel.wearer_buttons.size() == 3,
+				"named genuine visit has three purchase and wearer controls")
+		for i in range(3):
+			var id: String = trio[i]
+			var action := panel.offer_buttons[i]
+			var quoted: Dictionary = quote["offers"][i]
+			var lines := action.text.split("\n")
+			_check(quoted["id"] == id and not quoted["sold"] and
+					quote["offers"][i]["price"] == records[i]["price"],
+					"genuine quote retains named ID, order and unique authored fixture price")
+			_check(lines.size() == 2 and lines[0].contains(id) 					and lines[0].contains(id.replace("_", " ").capitalize()) 					and lines[0].contains(power_slots[id]) 					and lines[0].contains(str(quoted["price"]) + " gold") 					and lines[1] == EXPECTED_SHORT[id],
+					"authentic slot, quote price, and exact power second line: " + id)
+			_check(action.disabled == (quoted["price"] > 70) and
+					(action.text.contains("short %d" % (quoted["price"] - 70)) 						if quoted["price"] > 70 else not action.text.contains("short ")),
+					"independent dynamic shortfall and affordability for " + id)
+			var tooltip: String = action.tooltip_text
+			_check(tooltip.contains(id) and tooltip.contains("Torn") 					and not tooltip.contains(panel.DETAILS_UNAVAILABLE),
+					"known power has actual conditions rather than unavailable copy: " + id)
+			if RunPatchWearerSummary.KNOWN_TEXTS.has(id):
+				_check(tooltip.contains(RunPatchWearerSummary.KNOWN_TEXTS[id]),
+						"full audited catalog description unabridged: " + id)
+			elif CombatShopPatchRules.EFFECTS.has(id):
+				var authority: Dictionary = RunPatchWearerSummary._authority({})
+				var full := RunPatchWearerSummary._resolve_rules_text(id, authority["slots"])
+				_check(not full.is_empty() and tooltip.contains(full),
+						"shop modifier uses authoritative amount, owner and living restrictions")
+			elif id == "relay_bobbin":
+				_check(tooltip.contains("Once per combat") and tooltip.contains("different living hero")
+						and tooltip.contains("Pinned") and tooltip.contains("living, untorn")
+						and tooltip.contains("confirmed receipt") and tooltip.contains("+1 shared energy")
+						and tooltip.contains("capped at 3"),
+						"P8 Relay trigger, source, receipt, cap and per-combat limit")
+			elif id == "hearth_lining":
+				_check(tooltip.contains("Once per combat") and tooltip.contains("first EARNED Quilt")
+						and tooltip.contains("living, untorn") and tooltip.contains("2 HP")
+						and tooltip.contains("maximum HP"),
+						"P8 Hearth earned-only, living/untorn, max-capped once/combat heal")
+			var font: Font = action.get_theme_font("font")
+			var size_text := font.get_multiline_string_size(
+					action.text, HORIZONTAL_ALIGNMENT_CENTER, action.size.x - 24,
+					action.get_theme_font_size("font_size"))
+			_check(size_text.x <= action.size.x - 24 and size_text.y <= action.size.y - 14,
+					"named source text actually fits 90px button: " + id)
+		_check(panel.leave_button.text.contains("FREE") and not panel.leave_button.disabled,
+				"Leave remains free alongside mixed-price previews")
+		_check(visit.read_state() == before and visit.quote() == quote and intents.is_empty(),
+				"named preview and disabled options do not mutate ledger or emit")
+	# Deliberately inconsistent source records must not claim any known power.
+	var attack: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/m04_attack_patches.json"))
+	_check(attack is Array and attack.size() > 0, "real attack fixture available to corrupt")
+	if attack is Array and not attack.is_empty():
+		attack[0]["amount"] = 99
+		var wrong := panel._trusted_power_previews(power_slots, {"attack": attack})
+		_check(not wrong.has("button_eye") and not wrong.has("pincushion_arm") 				and not wrong.has("switchback_button"),
+				"contradictory authored amount refuses all unauthenticated M04 powers")
+	var wrong_slots := panel._trusted_power_previews({"button_eye": "ARM",
+			"relay_bobbin": "COAT", "invented_patch": "HEAD"})
+	_check(not wrong_slots.has("button_eye") and not wrong_slots.has("relay_bobbin") 			and not wrong_slots.has("invented_patch"),
+			"unsupported or slot-contradictory IDs receive no made-up effect")
+	if rare_source is Array:
+		var corrupted: Array = rare_source.duplicate(true)
+		for record in corrupted:
+			if record.get("id") == "relay_bobbin":
+				record["shared_energy_cap"] = 8
+			if record.get("id") == "hearth_lining":
+				record["requires_earned_bonus"] = false
+		var wrong_rares := panel._trusted_power_previews(power_slots, {}, corrupted)
+		_check(not wrong_rares.has("relay_bobbin") and not wrong_rares.has("hearth_lining"),
+				"rare wrong energy cap or unearned Quilt condition cannot be advertised")
+	# A real quoted visit with unknown power stock fails at bind rather than
+	# creating a fictitious click or hiding its authoritative identity.
+	var unknown := RunPatchStallVisit.new("unsupported_patch", PARTY, DECK, [], 70,
+			[{"id": "unpublished_power", "price": 20},
+				{"id": "button_eye", "price": 82}, {"id": "relay_bobbin", "price": 113}])
+	_check(unknown.is_valid(), "synthetic unknown source still a valid shop service")
+	await _bind(unknown)
+	_check(panel.offer_buttons.all(func(b: Button): return b.disabled) 			and panel.leave_button.disabled and intents.is_empty(),
+			"unknown unauthenticated power cannot produce a clickable quote")
 
 func slot_map_for(id: String) -> String:
 	for record in RunAuthoredPatchDefinitions.load_power_definitions():
@@ -358,6 +516,16 @@ func _fail_closed() -> void:
 	callback.call()
 	_check(intents.is_empty(), "forged offer metadata rejected")
 	offer_button.set_meta("patch_id", quote["offers"][0]["id"])
+	var saved_caption := offer_button.text
+	offer_button.text += "  +999 damage"
+	callback.call()
+	_check(intents.is_empty(), "forged effect-bearing caption rejected by auth")
+	offer_button.text = saved_caption
+	var saved_tooltip := offer_button.tooltip_text
+	offer_button.tooltip_text = "+999 damage on every card"
+	callback.call()
+	_check(intents.is_empty(), "forged full-power tooltip rejected by auth")
+	offer_button.tooltip_text = saved_tooltip
 	panel.wearer_buttons[0].set_meta("wearer_id", "impostor")
 	callback.call()
 	pin_callback.call()
