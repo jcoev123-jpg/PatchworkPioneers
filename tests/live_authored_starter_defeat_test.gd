@@ -1,5 +1,7 @@
 extends SceneTree
 
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
+
 const SEED := 45045
 var failures: Array[String] = []
 var checks := 0
@@ -43,16 +45,16 @@ func _state() -> Array:
 		app.session_gold, app.victory_gold.is_claimed()]
 
 
-func _announced(target: int) -> void:
-	var expected := [
-		{"enemy_position": 1, "type": "attack", "amount": 5, "target_position": target},
-		{"enemy_position": 2, "type": "block", "amount": 1}]
-	_check(app.enemy_attacks == expected and app.enemy_intents.get_intents() == expected,
-		"current authored announcement targets slot %d" % target)
-	_check(not app.intent_label.visible and app.intent_label.text ==
-		"Intent: Enemy 1 -> Hero %d (%s): 5 damage; Enemy 2: 1 Block" %
-		[target, ["Warden", "Seamstress", "Tinker"][target - 1]],
-		"visible announcement includes exact target and unchanged amounts")
+func _announced() -> void:
+	var announcements: Array = app.enemy_intents.get_intents()
+	var hero_names: Array = []
+	for index in range(3):
+		hero_names.append(String(app.party.get_hero(index + 1).get("name", "")))
+	_check(app.enemy_attacks == announcements,
+		"cached announcement matches the live authored scheduler")
+	_check(not app.intent_label.visible
+		and app.intent_label.text == STARTER_ORACLE.intent_text(announcements, hero_names),
+		"visible announcement names the exact authored actions and heroes")
 
 
 func _party_visible() -> void:
@@ -102,60 +104,43 @@ func _session() -> Array:
 		"real starter enemies remain alive at authored HP")
 	var cards: Array[String] = []
 	cards.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
-	var rng := RandomNumberGenerator.new()
-	rng.seed = SEED
-	var oracle := CombatDeck.new(cards, rng)
-	_check(oracle.start_turn() and _deck_state(app.deck) == _deck_state(oracle),
-		"opening exact hand, piles, energy and RNG match independently seeded deck")
+	var oracle := STARTER_ORACLE.build(SEED)
+	_check(oracle.get("ok", false), "independent oracle rebuilds the seeded authored starter fight")
+	if not oracle.get("ok", false):
+		return []
+	_check(_deck_state(app.deck) == _deck_state(oracle.deck)
+		and app.run_rng.state == oracle.rng.state
+		and app.enemy_attacks == oracle.intents.get_intents(),
+		"opening exact hand, piles, energy, RNG and authored batch match the oracle")
 	var trace: Array = [_state()]
 	var turns := 0
 	while app.battle_result.can_continue() and turns < 160:
-		# Authored front policy: the announced target is the front living hero.
-		var target := 1
-		for index in range(3):
-			if app.party.get_hero(index + 1).hp > 0:
-				target = index + 1
-				break
-		_announced(target)
+		_announced()
 		_party_visible()
 		_check(app.enemy_intents._turn_index == turns and app.deck.energy == 3
 			and app.deck.hand.size() == 5 and app.deck.turn_active
 			and not app.end_turn_button.disabled and app.end_turn_button.is_visible_in_tree(),
 			"legal End Turn has full energy/hand and correct turn index")
 		var before := _state()
-		var heroes: Array = before[0].duplicate(true)
-		var victim: Dictionary = heroes[target - 1]
-		if victim.hp > 0:
-			var absorbed := mini(victim.block, 5)
-			victim.block -= absorbed
-			victim.hp = maxi(0, victim.hp - (5 - absorbed))
-		var defeated := true
-		for hero in heroes:
-			defeated = defeated and hero.hp == 0
-		if not defeated:
-			for hero in heroes:
-				hero.block = 0
-		var enemies: Array = before[1].duplicate(true)
-		enemies[1].block += 1
-		_check(oracle.end_turn(), "oracle discards exactly the current unplayed hand")
-		if not defeated:
-			_check(oracle.start_turn(), "oracle draws only for a surviving party")
 		app.end_turn_button.grab_focus()
 		await _key(KEY_SPACE)
 		turns += 1
-		_check(app.party.get_heroes() == heroes and app.enemies.get_enemies() == enemies,
-			"turn %d exact HP/Block; only announced target and Guard change" % turns)
-		_check(_deck_state(app.deck) == _deck_state(oracle),
+		_check(STARTER_ORACLE.end_turn(oracle), "oracle advances the authored fight")
+		_check(app.party.get_heroes() == oracle.party.get_heroes()
+			and app.enemies.get_enemies() == oracle.enemies.get_enemies(),
+			"turn %d exact party and enemy state from the authored batch" % turns)
+		_check(_deck_state(app.deck) == _deck_state(oracle.deck),
 			"turn %d exact hand/discard/draw, energy and RNG, including terminal no-draw" % turns)
-		_check(app.enemy_intents._turn_index == (turns - 1 if defeated else turns),
-			"advance announcements only for an active battle")
-		if defeated:
+		_check(app.enemy_intents.get_intents() == oracle.intents.get_intents()
+			and app.enemy_intents._turn_index == oracle.intents._turn_index,
+			"turn %d cached announcement and advance match the oracle" % turns)
+		if app.battle_result.get_outcome() != CombatBattleResult.ACTIVE:
 			_check(app.enemy_attacks == before[4] and app.enemy_intents.get_intents() == before[3]
 				and app.run_rng.state == before[2][7], "terminal phase freezes announcement and RNG")
 		trace.append(_state())
-	_check(turns == 21 and app.party.is_defeated()
+	_check(turns < 160 and app.party.is_defeated()
 		and app.battle_result.get_outcome() == CombatBattleResult.DEFEAT,
-		"unmodified authored front-target battle defeats all three heroes on End Turn %d" % turns)
+		"unmodified authored weighted starter battle defeats all three heroes on End Turn %d" % turns)
 	_party_visible()
 	_check(app.result_label.is_visible_in_tree() and app.result_label.text == "Battle result: DEFEAT"
 		and app.end_turn_button.disabled and not app.deck.turn_active
@@ -204,8 +189,8 @@ func _run() -> void:
 			and app.starter_deck_path == app.STARTER_DECK_PATH, "all shipped data paths used")
 		var first := await _session()
 		var second := await _session()
-		_check(first.size() == 22 and second.size() == 22 and first == second,
-			"same seed after Return reproduces complete 21-turn party/enemy/deck/energy/RNG trace")
+		_check(first.size() > 1 and first.size() == second.size() and first == second,
+			"same seed after Return reproduces the complete party/enemy/deck/energy/RNG trace")
 		app.free()
 	if failures.is_empty():
 		print("live_authored_starter_defeat_test: PASS (", checks, " checks)")

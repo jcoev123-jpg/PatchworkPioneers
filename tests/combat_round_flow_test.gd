@@ -959,11 +959,18 @@ func _test_mounted_enemy_status_turn() -> void:
 		and not app.end_turn_button.disabled
 	_check(bound, "mounted Start binds real coordinator, enemy roster, deck and reachable End Turn")
 	if bound:
+		# The authored Guard Ragling now announces a weighted Block 5, shield rush
+		# or 6-point hit, so the Block it keeps after the beat is whatever its own
+		# cached announcement grants rather than a fixed one.
+		var guard_block := 0
+		for announced in app.enemy_intents.get_intents():
+			if announced.get("enemy_position") == 2 and announced.get("type") == "block":
+				guard_block = int(announced.get("amount", 0))
 		app.enemies._enemies[1]["statuses"] = {"bleed": 3, "weak": 2, "exposed": 1}
 		app.end_turn_button.pressed.emit()
 		await process_frame
 		_check(app.enemies.get_enemy(2)["hp"] == 9
-			and app.enemies.get_enemy(2)["block"] == 1
+			and app.enemies.get_enemy(2)["block"] == guard_block
 			and app.enemies.get_enemy(2)["statuses"] == {"bleed": 2, "weak": 1}
 			and app.deck.turn_active and app.enemy_intents._turn_index == 1,
 			"mounted End Turn applies post-action enemy tick through authoritative coordinator")

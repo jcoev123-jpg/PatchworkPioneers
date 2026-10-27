@@ -15,6 +15,7 @@ func _initialize() -> void:
 	_test_no_combat_mutation()
 	_test_invalid_schedules()
 	_test_authored_catalog_intents()
+	_test_guard_ragling_shield_rush()
 	_test_weighted_binding_and_policies()
 	_test_weighted_announcement_reads_and_rerolls()
 	_test_weighted_dead_slots_and_legacy_isolation()
@@ -565,6 +566,292 @@ func _test_authored_catalog_intents() -> void:
 				"the original roster slot keeps its authored policy")
 		else:
 			_check(not action.has("target_position"), "self action announces no hero target")
+
+
+## V3-2: the shipped Guard Ragling fights with a forward shield rush, a real
+## six-point hit and five self Block, still behind the same front policy.
+const GUARD_STARTER_PATH := "res://data/enemies/starter_enemies.json"
+const GUARD_RUSH_INTENT := {
+	"target": "front",
+	"actions": [
+		{"type": "block", "amount": 5, "weight": 3},
+		{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+		{"type": "attack", "amount": 6, "weight": 2},
+	],
+}
+
+
+## JSON decodes whole numbers as floats; mirror the app's numeric normalization
+## so authored records can be compared with exact integer dictionaries.
+func _normalize_ints(value: Variant) -> Variant:
+	if value is Dictionary:
+		var record := {}
+		for key in value:
+			record[key] = _normalize_ints(value[key])
+		return record
+	if value is Array:
+		var items: Array = []
+		for item in value:
+			items.append(_normalize_ints(item))
+		return items
+	if value is float and is_finite(value) and floorf(value) == value:
+		return int(value)
+	return value
+
+
+## One authority-bound fight against the on-disk Guard record, optionally with a
+## single authored alternative. The real roster, party and run generator are
+## passed through CombatEnemyIntents.bind_battle, never a shortcut state.
+func _bind_authored_guard(record: Dictionary, party: CombatParty, seed_value: int,
+		label: String) -> Dictionary:
+	var enemies := CombatEnemies.new([record])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var scheduler := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+	var bound: bool = enemies.is_valid() and party != null and party.is_valid() \
+		and scheduler.bind_battle(enemies, party, rng)
+	_check(bound, label + ": the on-disk Guard record binds a weighted announcement")
+	return {"enemies": enemies, "rng": rng, "scheduler": scheduler}
+
+
+## The authored Guard record with exactly one of its own alternatives bound.
+func _guard_with_option(record: Dictionary, index: int) -> Dictionary:
+	var authored: Dictionary = record.duplicate(true)
+	var intent: Dictionary = authored.get("intent", {}).duplicate(true)
+	var actions: Array = intent.get("actions", [])
+	if actions.size() <= index:
+		_check(false, "precondition: authored Guard alternative %d exists" % index)
+		return {}
+	intent["actions"] = [actions[index].duplicate(true)]
+	authored["intent"] = intent
+	return authored
+
+
+func _test_guard_ragling_shield_rush() -> void:
+	# AC1: the disk record keeps its identity and authors exactly three
+	# alternatives; each validates as an executable weighted slot on its own.
+	var record := _authored_enemy(GUARD_STARTER_PATH, "ragling_guard")
+	_check(record.get("name") == "Guard Ragling" and record.get("max_hp") == 12,
+		"on-disk Guard Ragling keeps its authored name and 12 integer HP")
+	_check(record.get("art_path") == "res://assets/paper/enemies/ragling_guard.png",
+		"on-disk Guard Ragling keeps its authored shield art path")
+	var intent = record.get("intent")
+	_check(intent is Dictionary and intent.size() == 2 and intent.get("target") == "front",
+		"on-disk Guard Ragling keeps exactly the front target policy")
+	_check(_normalize_ints(intent) == GUARD_RUSH_INTENT,
+		"on-disk Guard Ragling authors exactly Block 5/3, right shove 0/2 and Attack 6/2")
+	var actions: Array = intent.get("actions", []) if intent is Dictionary else []
+	_check(actions.size() == 3, "the Guard authors exactly three weighted alternatives")
+	var expected_options := [
+		{"weight": 3, "action": {"type": "block", "amount": 5}},
+		{"weight": 2, "action": {"type": "shove", "amount": 0, "direction": 1}},
+		{"weight": 2, "action": {"type": "attack", "amount": 6}}]
+	for index in range(mini(actions.size(), expected_options.size())):
+		_check(CombatEnemyIntents.weighted_action(actions[index]) == expected_options[index],
+			"authored Guard alternative %d normalizes to its exact executable action" % index)
+		_check(not CombatEnemyIntents._weighted_slot(1, {
+			"target": "front", "actions": [actions[index].duplicate(true)]}).is_empty(),
+			"authored Guard alternative %d validates as a whole weighted slot" % index)
+	_check(not CombatEnemyIntents._weighted_slot(1, intent).is_empty(),
+		"the complete authored Guard intent validates as one weighted slot")
+	var ragling := _authored_enemy(GUARD_STARTER_PATH, "ragling")
+	_check(ragling.get("name") == "Ragling" and ragling.get("max_hp") == 12
+		and ragling.get("art_path") == "res://assets/paper/enemies/ragling.png",
+		"the plain Ragling keeps its identity, 12 HP and art")
+	_check(_normalize_ints(ragling.get("intent")) == {"target": "front", "actions": [
+		{"type": "attack", "amount": 5, "weight": 3}]},
+		"the plain Ragling keeps its single Attack 5/3 alternative")
+	if actions.size() != 3:
+		return
+
+	# AC2: a bound shove from a living three-slot party swaps slots 1 and 2
+	# through the real phase, carrying HP, Block and statuses, and damaging nobody.
+	var party := _party_fixture()
+	_check(party.get_hero(1).get("id") == "warden"
+		and party.get_hero(2).get("id") == "seamstress"
+		and party.get_hero(3).get("id") == "tinker",
+		"precondition: living Warden, Seamstress and Tinker fill slots 1-3")
+	party._heroes[0]["statuses"] = {"weak": 1}
+	party._heroes[1]["statuses"] = {"exposed": 2}
+	_check(party.gain_block(2, 3), "precondition: the middle hero holds three Block")
+	var before := party.get_heroes()
+	var shove_fixture := _bind_authored_guard(_guard_with_option(record, 1), party,
+		33601, "shield rush")
+	var shove_announced: Array = shove_fixture.scheduler.get_intents()
+	_check(shove_announced == [{"type": "shove", "amount": 0, "direction": 1,
+		"target_position": 1, "enemy_position": 1}],
+		"the bound shield rush announces a right push of the front hero")
+	var shove_foes: Array = shove_fixture.enemies.get_enemies()
+	var shove_result := CombatEnemyPhase.new().execute_phase(party,
+		shove_fixture.enemies, shove_announced, null, true)
+	_check(shove_result == {"ok": true, "events": [{"type": "shove", "enemy_position": 1,
+		"target_position": 1, "direction": 1, "applied": true}]},
+		"CombatEnemyPhase applies exactly one announced shield rush")
+	var after := party.get_heroes()
+	_check(after[0].get("id") == "seamstress" and after[1].get("id") == "warden"
+		and after[2].get("id") == "tinker",
+		"the shield rush swaps the living front and middle heroes")
+	_check(after[0].get("position") == 1 and after[1].get("position") == 2
+		and after[2].get("position") == 3,
+		"swapped heroes carry positions matching their new slots")
+	_check(after[0].get("hp") == 30 and after[0].get("block") == 3
+		and after[0].get("statuses") == {"exposed": 2}
+		and after[1].get("hp") == 40 and after[1].get("block") == 0
+		and after[1].get("statuses") == {"weak": 1},
+		"the rush carries HP, Block and statuses with each hero instead of damaging them")
+	_check(after[2] == before[2], "the back hero is untouched by the shield rush")
+	_check(shove_fixture.enemies.get_enemies() == shove_foes,
+		"a shield rush changes no enemy HP, Block or metadata")
+	_check(shove_fixture.scheduler.get_intents() == shove_announced,
+		"executing the rush leaves the cached announcement unchanged")
+
+	# AC3: the real six-point hit spends hero Block before HP, five Block lands on
+	# the Guard and keeps absorbing until it is gone.
+	var hit_party := _party_fixture()
+	_check(hit_party.gain_block(1, 4), "precondition: the front hero holds four Block")
+	var hit_fixture := _bind_authored_guard(_guard_with_option(record, 2), hit_party,
+		33602, "six-point hit")
+	var hit_announced: Array = hit_fixture.scheduler.get_intents()
+	_check(hit_announced == [{"type": "attack", "amount": 6, "target_position": 1,
+		"enemy_position": 1}],
+		"the bound Guard announces a real six-point hit on the front hero")
+	var hit_result := CombatEnemyPhase.new().execute_phase(hit_party,
+		hit_fixture.enemies, hit_announced, null, true)
+	_check(hit_result == {"ok": true, "events": [{"type": "attack", "enemy_position": 1,
+		"target_position": 1, "applied": true}]},
+		"CombatEnemyPhase lands the announced six-point hit")
+	_check(hit_party.get_hero(1).get("block") == 0 and hit_party.get_hero(1).get("hp") == 38,
+		"six damage spends the hero's four Block before two HP")
+	_check(hit_party.get_hero(2).get("hp") == 30 and hit_party.get_hero(3).get("hp") == 26,
+		"the Guard's hit never reaches the other heroes")
+	_check(hit_fixture.enemies.get_enemy(1).get("hp") == 12
+		and hit_fixture.enemies.get_enemy(1).get("block") == 0,
+		"the attacking Guard is unchanged by its own hit")
+
+	var block_party := _party_fixture()
+	var block_fixture := _bind_authored_guard(_guard_with_option(record, 0), block_party,
+		33603, "five Block")
+	var block_announced: Array = block_fixture.scheduler.get_intents()
+	_check(block_announced == [{"type": "block", "amount": 5, "enemy_position": 1}],
+		"the bound Guard announces five Block with no hero target")
+	var block_heroes: Array = block_party.get_heroes()
+	var block_result := CombatEnemyPhase.new().execute_phase(block_party,
+		block_fixture.enemies, block_announced, null, true)
+	_check(block_result == {"ok": true, "events": [{"type": "block",
+		"enemy_position": 1, "applied": true}]},
+		"CombatEnemyPhase grants the announced Block to the Guard")
+	_check(block_fixture.enemies.get_enemy(1).get("block") == 5
+		and block_party.get_heroes() == block_heroes,
+		"five Block lands on the Guard and leaves every hero untouched")
+	_check(block_fixture.enemies.apply_damage(1, 3)
+		and block_fixture.enemies.get_enemy(1).get("block") == 2
+		and block_fixture.enemies.get_enemy(1).get("hp") == 12,
+		"the Guard's Block absorbs a later three-point hit without losing HP")
+	_check(block_fixture.enemies.apply_damage(1, 4)
+		and block_fixture.enemies.get_enemy(1).get("block") == 0
+		and block_fixture.enemies.get_enemy(1).get("hp") == 10,
+		"the Guard's Block persists until spent, then HP takes the remaining two")
+
+	# AC3: two seeded weighted runs over the authentic three-way record replay
+	# exactly, and reading the cached announcement never advances the run RNG.
+	var weighted_party := _party_fixture()
+	var weighted_fixture := _bind_authored_guard(record, weighted_party, 33604,
+		"weighted guard")
+	var oracle := RandomNumberGenerator.new()
+	oracle.seed = 33604
+	oracle.randi_range(1, 7)
+	_check(weighted_fixture.rng.state == oracle.state,
+		"binding the authentic Guard intent spends exactly one weighted choice draw")
+	var weighted_first: Array = weighted_fixture.scheduler.get_intents()
+	_check(weighted_first.size() == 1
+		and weighted_first[0].get("enemy_position") == 1,
+		"the authentic Guard announces one action in its own slot")
+	var executable: Dictionary = weighted_first[0].duplicate(true)
+	executable.erase("enemy_position")
+	_check(CombatEnemyIntents.valid_action(executable),
+		"the weighted Guard announcement is an executable authored action")
+	for attempt in range(4):
+		_check(weighted_fixture.scheduler.get_intents() == weighted_first,
+			"reading the cached Guard announcement never rerolls it")
+	_check(weighted_fixture.rng.state == oracle.state,
+		"cached Guard announcement reads never spend the run RNG")
+	var sequence: Array = [weighted_first]
+	for turn in range(5):
+		_check(weighted_fixture.scheduler.advance_turn(),
+			"the Guard commits one new weighted batch per advance")
+		sequence.append(weighted_fixture.scheduler.get_intents())
+	var replay := _bind_authored_guard(record, _party_fixture(), 33604,
+		"weighted guard replay")
+	var replay_sequence: Array = [replay.scheduler.get_intents()]
+	for turn in range(5):
+		_check(replay.scheduler.advance_turn(),
+			"the replay Guard commits one new weighted batch per advance")
+		replay_sequence.append(replay.scheduler.get_intents())
+	_check(sequence == replay_sequence
+		and replay.rng.state == weighted_fixture.rng.state,
+		"two same-seed Guard fights replay identical batches and RNG states")
+	var kinds := {}
+	for batch in sequence:
+		var action: Dictionary = batch[0].duplicate(true)
+		action.erase("enemy_position")
+		_check(CombatEnemyIntents.valid_action(action),
+			"every weighted Guard batch stays an executable authored action")
+		kinds[action.get("type")] = true
+	_check(kinds.size() >= 2,
+		"the weighted Guard rotates through more than one authored alternative")
+
+	# AC4: illegal, slain and malformed beats stay fail-closed and atomic.
+	var downed_party := _party_fixture()
+	_check(downed_party.apply_damage(2, 30) and downed_party.is_downed(2),
+		"precondition: the middle hero is downed before the rush")
+	var downed_fixture := _bind_authored_guard(_guard_with_option(record, 1),
+		downed_party, 33605, "illegal rush")
+	var downed_announced: Array = downed_fixture.scheduler.get_intents()
+	var downed_before: Array = downed_party.get_heroes()
+	var downed_result := CombatEnemyPhase.new().execute_phase(downed_party,
+		downed_fixture.enemies, downed_announced, null, true)
+	_check(downed_result == {"ok": true, "events": [{"type": "shove",
+		"enemy_position": 1, "target_position": 1, "direction": 1, "applied": false}]},
+		"a rush toward a downed neighbour stays inert instead of failing the phase")
+	_check(downed_party.get_heroes() == downed_before,
+		"an inert shield rush changes no hero HP, Block, status or slot")
+
+	var slain_party := _party_fixture()
+	var slain_fixture := _bind_authored_guard(_guard_with_option(record, 1),
+		slain_party, 33606, "slain rush")
+	var slain_announced: Array = slain_fixture.scheduler.get_intents()
+	_check(slain_fixture.enemies.apply_damage(1, 12)
+		and slain_fixture.enemies.is_slain(1),
+		"precondition: the Guard is slain after announcing its rush")
+	var slain_before: Array = slain_party.get_heroes()
+	var slain_result := CombatEnemyPhase.new().execute_phase(slain_party,
+		slain_fixture.enemies, slain_announced, null, true)
+	_check(slain_result == {"ok": true, "events": [{"type": "shove",
+		"enemy_position": 1, "target_position": 1, "direction": 1, "applied": false}]},
+		"a slain Guard never executes its announced shield rush")
+	_check(slain_party.get_heroes() == slain_before,
+		"a slain Guard's announcement changes no hero state")
+
+	var bad_party := _party_fixture()
+	var bad_enemies := CombatEnemies.new([record])
+	var bad_heroes: Array = bad_party.get_heroes()
+	var bad_foes: Array = bad_enemies.get_enemies()
+	for bad in [
+		{"type": "shove", "enemy_position": 1, "amount": 1, "target_position": 1, "direction": 1},
+		{"type": "shove", "enemy_position": 1, "amount": 0, "target_position": 1},
+		{"type": "shove", "enemy_position": 1, "amount": 0, "target_position": 1, "direction": 0},
+		{"type": "attack", "enemy_position": 1, "amount": 6.0, "target_position": 1},
+		{"type": "attack", "enemy_position": 1, "amount": 6, "target_position": 4},
+		{"type": "block", "enemy_position": 1, "amount": 5, "target_position": 1},
+		{"type": "attack", "enemy_position": 2, "amount": 6, "target_position": 1}]:
+		var bad_copy: Dictionary = bad.duplicate(true)
+		_check(CombatEnemyPhase.new().execute_phase(bad_party, bad_enemies, [bad],
+			null, true) == {"ok": false, "events": []},
+			"a malformed Guard action fails the whole phase closed: " + str(bad))
+		_check(bad == bad_copy, "phase rejection leaves the caller's Guard action unchanged")
+	_check(bad_party.get_heroes() == bad_heroes
+		and bad_enemies.get_enemies() == bad_foes,
+		"rejected Guard actions publish no hero or enemy change")
 
 
 func _party_fixture(warden_hp: int = 40, seamstress_hp: int = 30,

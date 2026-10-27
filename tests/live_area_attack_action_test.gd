@@ -1,5 +1,7 @@
 extends SceneTree
 
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
+
 const ID := CombatAreaAttacks.SCRAP_BOMB_ID
 var failures: Array[String] = []
 var checks := 0
@@ -207,10 +209,17 @@ func _run() -> void:
 		var rng := RandomNumberGenerator.new()
 		rng.seed = chosen
 		var deck := CombatDeck.new(cards, rng)
-		_check(deck.start_turn(), "independent seeded deck starts")
 		var party := CombatParty.new(app._load_party_definitions())
-		CombatStartingBlock.new(party).apply()
 		var enemies := CombatEnemies.new(app._load_enemy_definitions())
+		# The mounted start caches the authored weighted batch before dealing,
+		# so the independent deck/bind/deal sequence must spend the same draws.
+		var oracle_intents := CombatEnemyIntents.new(
+			RunFightEncounterSelection._parse_schedule_text(
+				FileAccess.get_file_as_string(app.starter_attacks_path)))
+		_check(oracle_intents.bind_battle(enemies, party, rng),
+			"independent oracle binds the authored weighted starter intents")
+		_check(deck.start_turn(), "independent seeded deck starts")
+		CombatStartingBlock.new(party).apply()
 		app.party._heroes[2]["statuses"] = {"weak": 1}
 		party._heroes[2]["statuses"] = {"weak": 1}
 		_check(app.enemies.apply_statuses({1: {"exposed": 1}}) and enemies.apply_statuses({1: {"exposed": 1}}), "Bomb recipients have different authoritative Exposed")
@@ -267,14 +276,24 @@ func _run() -> void:
 		await _mouse(_panel())
 		_check(_live()[0] == expected and _live().slice(1) == before.slice(1)
 			and app.session_gold == 0, "Guard survivor bomb preserves complete expected state, statuses, intents and RNG")
+		var guard_announced: Dictionary = {}
+		for action in app.enemy_intents.get_intents():
+			if action.get("enemy_position") == 2:
+				guard_announced = action
 		_check(app.enemies.is_slain(1) and not app.enemies.is_slain(2)
-			and app.intent_label.text == "Intent: Enemy 2: 1 Block", "living Guard alone retains exact Block intent")
+			and app.intent_label.text == STARTER_ORACLE.intent_text([guard_announced],
+				["Warden", "Seamstress", "Tinker"]),
+			"living Guard alone keeps its exact authored intent")
 		var roster = app.get_node("LiveEnemyRoster")
 		_check(roster._badges.size() == 2, "both source badges mounted")
 		if roster._badges.size() == 2:
-			_check(roster._badges[1].is_visible_in_tree() and roster._badges[1].icon_mode == "block"
-				and roster._badges[1].readable_text == "Block +1"
-				and roster._badges[0].icon_mode == "slain", "surviving Guard badge retains exact Block; Ragling badge slain")
+			_check(roster._badges[1].is_visible_in_tree()
+				and roster._badges[1].intent_type == String(guard_announced.get("type", ""))
+				and roster._badges[1].amount == int(guard_announced.get("amount", 0))
+				and not roster._badges[1].readable_text.is_empty()
+				and roster._badges[1].readable_text != "NO ACTION"
+				and roster._badges[0].icon_mode == "slain",
+				"surviving Guard badge keeps its authored intent; Ragling badge slain")
 		_visible()
 		app.return_button.pressed.emit()
 		await _frames()

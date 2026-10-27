@@ -1,5 +1,7 @@
 extends SceneTree
 
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
+
 var failures: Array[String] = []
 var checks := 0
 const SOURCE := "res://data/enemies/starter_enemies.json"
@@ -78,8 +80,23 @@ func _input_mouse(control: Control) -> void:
 		await process_frame
 
 
-func _snapshot(app) -> Array:
-	return [app.party.get_heroes(), app.deck.draw_pile.duplicate(), app.deck.hand.duplicate(),
+## Sewn badge caption for one authoritative announcement; the three authored
+## Guard alternatives (Block 5, right shove, Attack 6) all keep their own text.
+func _badge_caption(action: Dictionary) -> String:
+	var rank := {1: "Front", 2: "Middle", 3: "Back"}
+	var target := int(action.get("target_position", 0))
+	match String(action.get("type", "")):
+		"attack":
+			return "Hit %d: %s" % [int(action.get("amount", 0)), rank.get(target, "")]
+		"block":
+			return "Block +%d" % int(action.get("amount", 0))
+		"shove":
+			return "Shove %s %s" % [rank.get(target, ""),
+				"back" if int(action.get("direction", 0)) == 1 else "forward"]
+	return ""
+
+
+func _snapshot(app) -> Array:	return [app.party.get_heroes(), app.deck.draw_pile.duplicate(), app.deck.hand.duplicate(),
 		app.deck.discard_pile.duplicate(), app.deck.energy, app.deck.turn_active,
 		app.run_rng.state, app.enemy_intents.get_intents(), app.enemies.get_enemies()]
 
@@ -1209,8 +1226,10 @@ func _caption_legibility(app, presenter) -> void:
 	var styles: Array[String] = []
 	for mounted in presenter._badges:
 		styles.append(mounted.icon_mode)
-	_check(styles == ["attack", "block"],
-		"the mounted battle really announces an attack and a Block intent")
+	_check(styles.size() == 2 and styles[0] == "attack"
+		and styles[1] == String(STARTER_ORACLE.guard_action(
+			app.enemy_intents.get_intents()).get("type", "")),
+		"the mounted battle really announces its authored intents")
 	for badge in presenter._badges:
 		# The attack and Block tags the player reads: dark backing, cream ink and the
 		# theme's own body size instead of the old floating 14 px caption.
@@ -1469,7 +1488,7 @@ func _assert_badges(app, presenter, expected_target: int = -1, expected_amount: 
 			var kind: String = announced["type"]
 			var amount: int = announced["amount"]
 			var target: int = announced.get("target_position", 0)
-			var message := "Hit %d: %s" % [amount, {1: "Front", 2: "Middle", 3: "Back"}.get(target, "")] if kind == "attack" else "Block +%d" % amount
+			var message := _badge_caption(announced)
 			_check(badge.icon_mode == kind and badge.intent_type == kind and badge.amount == amount and
 				badge.target_position == target and badge.readable_text == message,
 				"badge mode, text, damage/Block and target equal authoritative copied intent")
@@ -1478,13 +1497,15 @@ func _assert_badges(app, presenter, expected_target: int = -1, expected_amount: 
 					badge.readable_text == "Hit %d: %s" % [expected_amount, {1: "Front", 2: "Middle", 3: "Back"}[expected_target]],
 					"ragling next announced target follows real End Turn scheduler")
 			if position == 2:
-				_check(kind == "block" and amount == 1 and target == 0 and
-					badge.readable_text == "Block +1",
-					"living Guard always announces upcoming +1 Block, not accumulated Block")
+				var body := announced.duplicate(true)
+				body.erase("enemy_position")
+				_check(CombatEnemyIntents.valid_action(body),
+					"living Guard announces one complete executable action, never accumulated Block")
 		modes.append(badge.icon_mode)
 	_check(positions == [1, 2], "two unique badges preserve authored enemy source positions")
 	if not app.enemies.is_slain(1):
-		_check("attack" in modes and "block" in modes and modes[0] != modes[1],
+		_check("attack" in modes and LiveEnemyIntentBadge.icon_path_for("attack")
+			!= LiveEnemyIntentBadge.icon_path_for("block"),
 			"attack spear and Block shield use visibly distinct modes")
 	var before: Array = _snapshot(app)
 	presenter._refresh()
@@ -1507,7 +1528,8 @@ func _visible(app, presenter) -> void:
 	_check(guard.get("id") == "ragling_guard" and guard.get("name") == "Guard Ragling"
 		and guard.get("hp") == 12 and guard.get("max_hp") == 12 and guard.get("block") == 0,
 		"authored position-two Guard Ragling starts at 12 HP and zero Block")
-	_check(app.intent_label.text == "Intent: Enemy 1 -> Hero 1 (Warden): 5 damage; Enemy 2: 1 Block",
+	_check(app.intent_label.text == STARTER_ORACLE.intent_text(
+		app.enemy_intents.get_intents(), ["Warden", "Seamstress", "Tinker"]),
 		"real start announces both authored intents")
 	var ragling := presenter.enemies.get_enemy(1) as Dictionary
 	_check(ragling.get("id") == "ragling" and ragling.get("position") == 1 and
@@ -2091,7 +2113,13 @@ func _expanded_meadow_layout(scene: PackedScene) -> void:
 	for frame in range(6):
 		await process_frame
 	_check(app.enemy_buff_forecast_label.is_visible_in_tree()
-		and not app.enemy_buff_forecast_label.text.is_empty(), "real guard intent expands the buff forecast")
+		== (not LiveEnemyBuffForecast.new().forecast(app.party, app.enemies,
+			app.enemy_intents.get_intents()).is_empty()),
+		"real enemy intent expands or clears the buff forecast exactly")
+	if String(STARTER_ORACLE.guard_action(app.enemy_intents.get_intents()).get("type", "")) == "block":
+		_check(app.enemy_buff_forecast_label.is_visible_in_tree()
+			and not app.enemy_buff_forecast_label.text.is_empty(),
+			"real Guard Block intent expands the buff forecast")
 	var chips := 0
 	for meter in app.get_node("LiveCombatMeters").row.get_children():
 		for button in meter.find_child("StatusButtons", true, false).get_children():
@@ -2372,6 +2400,9 @@ func _run() -> void:
 			"duplicate Start retains exactly one horizontal wrapper")
 		_check(_snapshot(app) == before, "duplicate Start Run preserves all gameplay state")
 		var trace: Array = []
+		# Blocks the Guard really announced and kept; hero cards never damage the
+		# roster in this presentation timeline.
+		var guard_blocks := 0
 		for turn in range(12):
 			# Keep the long presentation/replay timeline alive after Ragling's +4 damage.
 			_check(app.party.gain_block(1, 4) and reference.party.gain_block(1, 4),
@@ -2380,10 +2411,14 @@ func _run() -> void:
 			_check(presenter.enemies == app.enemies and app.enemies.get_enemies() == reference.enemies.get_enemies(),
 				"observed roster matches battle without presenter")
 			_check(app.enemies.get_enemy(1).hp == 12 and app.enemies.get_enemy(2).hp == 12
-				and app.enemies.get_enemy(1).block == 0 and app.enemies.get_enemy(2).block == turn,
-				"only Guard's announced Block changes the live roster")
+				and app.enemies.get_enemy(1).block == 0
+				and app.enemies.get_enemy(2).block == guard_blocks,
+				"only the announced enemy actions change the live roster")
 			_assert_badges(app, presenter, _front_target(app))
 			trace.append([_snapshot(app), presenter.enemies.get_enemies() if presenter.enemies != null else []])
+			var announced_guard := STARTER_ORACLE.guard_action(app.enemy_intents.get_intents())
+			if announced_guard.get("type") == "block":
+				guard_blocks += int(announced_guard.get("amount", 0))
 			_check(app.deck.try_spend_energy(2) and reference.deck.try_spend_energy(2), "real shared energy spend")
 			if turn == 0:
 				await _input_mouse(app.end_turn_button)
@@ -2505,8 +2540,9 @@ func _bound_skip_badges(app, presenter) -> void:
 	var initial_state := _snapshot(app)
 	presenter._refresh()
 	_check(_snapshot(app) == initial_state and presenter._badges[0].icon_mode == "attack"
-		and presenter._badges[1].icon_mode == "block",
-		"zero-gauge sourced original attacks and Block keep their old badge semantics")
+		and presenter._badges[1].icon_mode == String(
+			STARTER_ORACLE.guard_action(announced).get("type", "")),
+		"zero-gauge sourced original announcements keep their exact badge modes")
 	_check(service.apply_unravel(app.enemies, 1, 3) and service.apply_unravel(app.enemies, 1, 5)
 		and service.get_snapshot(1).skip_pending, "genuinely roster-bound threshold queues one pending skip")
 	presenter._refresh()
@@ -2514,9 +2550,13 @@ func _bound_skip_badges(app, presenter) -> void:
 	_check(badge.readable_text == "UNRAVELLED" and badge.icon_mode == "unravelled"
 		and badge.intent_type == "" and badge.amount == 0 and badge.target_position == 0,
 		"scheduled attack/target is suppressed only in pending skip presentation")
-	_check(presenter._badges[1].icon_mode == "block"
-		and presenter._badges[1].readable_text == "Block +1",
-		"unskipped second source retains real block intent")
+	var guard_announced := STARTER_ORACLE.guard_action(announced)
+	_check(presenter._badges[1].icon_mode == String(guard_announced.get("type", ""))
+		and presenter._badges[1].intent_type == String(guard_announced.get("type", ""))
+		and presenter._badges[1].amount == int(guard_announced.get("amount", 0))
+		and not presenter._badges[1].readable_text.is_empty()
+		and presenter._badges[1].readable_text != "NO ACTION",
+		"unskipped second source retains its real authored intent")
 	var pending_model := _snapshot(app)
 	for step in range(5):
 		presenter._refresh()

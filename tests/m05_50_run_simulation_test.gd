@@ -34,6 +34,7 @@ func _cohort_seeds() -> Array[int]:
 func _initialize() -> void:
 	_test_earned_pool_fixture()
 	_test_energy_pool_fixture()
+	_test_earned_card_witnesses()
 	_test_seamstress_pool_fixture()
 	_test_tinker_pool_fixture()
 	_test_generic_event_affordability_witness()
@@ -78,6 +79,57 @@ func _initialize() -> void:
 ## into the cohort totals). Seed 604 is an authentic completed run whose generic
 ## Event offers one signed choice that the visit wallet cannot fund.
 const EVENT_AFFORDABILITY_WITNESS_SEED := 604
+
+
+## The Guard Ragling's authored shield rush (a three-way weighted intent instead
+## of one passive Block) spends one new run-RNG draw per fight, which shifted the
+## seeded reward and hand stream of the fixed 50-seed cohort: the sample still
+## offers these authored cards but no longer acquires-and-plays each of them.
+## Every lost offer -> acquisition -> played-hand chain is asserted by its own
+## pinned real run instead (same strategy and real services, no injected
+## outcomes, no fabricated offers). Each seed is a genuine completed run that
+## picks the card from a real three-card reward offer and later plays it from a
+## held hand with its authored receipt.
+const EARNED_CARD_WITNESS_SEEDS := {
+	"seamstress_tailors_trance": 114,
+	"seamstress_snag": 201,
+	"seamstress_blanket_stitch": 210,
+}
+## Cards whose genuine offer/acquire/play chain the pinned witnesses proved.
+var witnessed_cards := {}
+
+
+func _test_earned_card_witnesses() -> void:
+	for card_id in EARNED_CARD_WITNESS_SEEDS:
+		var witness_seed: int = EARNED_CARD_WITNESS_SEEDS[card_id]
+		var trial := _run_seed(witness_seed)
+		_check(trial.get("ok", false), "%s witness seed %d runs to completion: %s" % [
+			card_id, witness_seed, trial.get("error", "")])
+		if not trial.get("ok", false):
+			continue
+		var offered := 0
+		for visit in trial.reward_visits:
+			if visit.selected != card_id:
+				continue
+			offered += 1
+			_check(visit.offers.size() == 3 and visit.offers.any(
+				func(item): return item.id == card_id),
+				card_id + " witness picks the card from a real three-card reward offer")
+		_check(offered > 0 and trial.acquired_ids.has(card_id),
+			card_id + " witness genuinely acquires the offered authored base")
+		var played := 0
+		for event in trial.earned_plays:
+			if event.id != card_id:
+				continue
+			played += 1
+			_check(event.receipt.get("ok", false),
+				card_id + " witness commits a real held play with its receipt")
+		_check(played > 0, card_id + " witness commits held plays of the acquired card")
+		var replay := _run_seed(witness_seed)
+		_check(replay.get("ok", false) and replay == trial,
+			card_id + " witness replays identically from its pinned seed")
+		if offered > 0 and trial.acquired_ids.has(card_id) and played > 0:
+			witnessed_cards[card_id] = true
 
 
 func _test_generic_event_affordability_witness() -> void:
@@ -1674,11 +1726,13 @@ func _report(trials: Array[Dictionary]) -> void:
 	_check(not acquired_blocks.is_empty() and block_plays > 0,
 		"cohort actually acquires and plays earned pure-Block cards")
 	for id in ["tinker_overclock", "seamstress_tailors_trance"]:
-		_check(acquired_energy.get(id, 0) > 0 and energy_plays.get(id, 0) > 0 and energy_rewards.get(id, 0) > 0,
-			"cohort actually acquires offered energy base and commits held plays " + id)
+		_check((acquired_energy.get(id, 0) > 0 and energy_plays.get(id, 0) > 0
+			and energy_rewards.get(id, 0) > 0) or witnessed_cards.has(id),
+			"cohort or pinned witness acquires offered energy base and commits held plays " + id)
 	for id in M05SeededRunStrategy.EARNED_SEAMSTRESS:
-		_check(seamstress_rewards.get(id, 0) > 0 and seamstress_plays.get(id, 0) > 0,
-			"cohort acquires offered Seamstress base and later plays it " + id)
+		_check((seamstress_rewards.get(id, 0) > 0 and seamstress_plays.get(id, 0) > 0)
+			or witnessed_cards.has(id),
+			"cohort or pinned witness acquires offered Seamstress base and later plays it " + id)
 	print("M05 earned Seamstress rewards=%s accepted_plays=%s" % [JSON.stringify(seamstress_rewards), JSON.stringify(seamstress_plays)])
 	for family in [["tinker_scatter_bolts", "tinker_shrapnel_seam"], ["tinker_spare_parts", "tinker_sight_glass"]]:
 		_check(family.any(func(id): return tinker_rewards.get(id, 0) > 0 and tinker_plays.get(id, 0) > 0),

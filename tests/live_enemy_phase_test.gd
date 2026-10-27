@@ -25,6 +25,51 @@ func _snapshot(app) -> Array:
 		app.enemies.get_enemies(), app.enemy_intents._turn_index, app.battle_result.get_outcome()]
 
 
+## The Guard Ragling now authors Block 5, a right shield rush and a real
+## six-point hit. This mounted phase suite pins the fight to the Guard's own
+## authored Block alternative so every End Turn stays deterministic; the shipped
+## record is asserted to really carry all three alternatives before narrowing it.
+func _pin_authored_guard(app) -> bool:
+	var source: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string(app.STARTER_ENEMIES_PATH))
+	_check(source is Array and not source.is_empty(), "shipped starter enemy catalog parses")
+	if not source is Array:
+		return false
+	var records: Array = []
+	var guard_block: Dictionary = {}
+	for record in source:
+		if not record is Dictionary:
+			_check(false, "shipped starter enemy records are dictionaries")
+			return false
+		var copy: Dictionary = record.duplicate(true)
+		if copy.get("id") == "ragling_guard":
+			var actions = copy.get("intent", {}).get("actions", [])
+			_check(actions is Array and actions.size() == 3,
+				"shipped Guard Ragling still authors exactly three weighted alternatives")
+			if not actions is Array:
+				return false
+			for raw in actions:
+				if CombatEnemyIntents.weighted_action(raw).get("action", {}).get("type") == "block":
+					guard_block = raw.duplicate(true)
+			_check(int(guard_block.get("amount", 0)) == 5,
+				"the Guard's own Block alternative is exactly five")
+			if guard_block.is_empty():
+				return false
+			copy["intent"] = {"target": "front", "actions": [guard_block]}
+		records.append(copy)
+	_check(records.size() == source.size() and not guard_block.is_empty(),
+		"pinned catalog keeps every shipped enemy record")
+	var path := "user://live_enemy_phase_guard.json"
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	_check(file != null, "pinned catalog opens outside the repository")
+	if file == null:
+		return false
+	file.store_string(JSON.stringify(records))
+	file.close()
+	app.starter_enemies_path = path
+	return app._load_enemy_definitions().size() == records.size()
+
+
 ## The authored front policy sends the Ragling at the front living hero.
 func _front_target(app) -> int:
 	for index in range(CombatParty.PARTY_SIZE):
@@ -33,7 +78,7 @@ func _front_target(app) -> int:
 	return 1
 
 
-func _visible(app, target: int = -1, expected_amount: int = 5) -> void:
+func _visible(app, target: int = -1, expected_amount: int = 5, guard_block: int = 5) -> void:
 	if target < 1:
 		target = _front_target(app)
 	app.get_node("LiveCombatMeters")._sync_battle()
@@ -41,13 +86,15 @@ func _visible(app, target: int = -1, expected_amount: int = 5) -> void:
 	if is_instance_valid(app.intent_label):
 		_check(not app.intent_label.visible and app.battle_view.is_ancestor_of(app.intent_label),
 			"legacy intent source remains mounted without a duplicate sentence")
-		_check(app.intent_label.text == "Intent: Enemy 1 -> Hero %d (%s): %d damage; Enemy 2: 1 Block" % [
-			target, ["Warden", "Seamstress", "Tinker"][target - 1], expected_amount],
-			"visible intent accurately describes authored source, target and damage")
+		_check(app.intent_label.text == "Intent: Enemy 1 -> Hero %d (%s): %d damage; Enemy 2: %d Block" % [
+			target, ["Warden", "Seamstress", "Tinker"][target - 1], expected_amount, guard_block],
+			"visible intent accurately describes authored source, target and damage: "
+			+ app.intent_label.text)
 	_check(app.enemy_attacks == [{"enemy_position": 1, "type": "attack", "amount": expected_amount,
-		"target_position": target}, {"enemy_position": 2, "type": "block", "amount": 1}]
+		"target_position": target}, {"enemy_position": 2, "type": "block", "amount": guard_block}]
 		and app.enemy_attacks == app.enemy_intents.get_intents(),
-		"retained snapshot matches current selector and expected step")
+		"retained snapshot matches current selector and expected step: "
+		+ str(app.enemy_attacks))
 	_check(app.hero_panels.size() == 3, "all hero panels mounted")
 	for index in range(app.hero_panels.size()):
 		var panel = app.hero_panels[index]
@@ -198,6 +245,8 @@ func _run() -> void:
 		app.free()
 		_finish()
 		return
+	_check(_pin_authored_guard(app),
+		"mounted starter fight is pinned to the Guard's own authored Block alternative")
 	_invalid_sources(app)
 	var source: Array[String] = []
 	source.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
@@ -272,7 +321,7 @@ func _run() -> void:
 			_check(CombatEnemyAttacks.new().execute_attacks(reference_party, [{"enemy_position": 1,
 				"target_position": target, "amount": 5}]).ok, "reference resolves announced Ragling hit first")
 			_check(CombatEnemyBlocks.execute_blocks(reference_enemies, [{"type": "block",
-				"enemy_position": 2, "amount": 1}]).ok, "reference resolves Guard Block second")
+				"enemy_position": 2, "amount": 5}]).ok, "reference resolves Guard Block second")
 			_check(reference.end_turn(), "reference ends hand after successful enemy actions")
 			_check(reference.start_turn() and reference_party.start_player_turn(), "reference deck and party advance")
 			app.end_turn_button.pressed.emit()
@@ -282,8 +331,8 @@ func _run() -> void:
 			await process_frame
 			_check(app.party.get_heroes() == reference_party.get_heroes()
 				and app.enemies.get_enemies() == reference_enemies.get_enemies(), "complete party and enemy transition matches merged services")
-			_check(app.enemies.get_enemy(2).block == turn + 1 and app.enemies.get_enemy(1).block == 0,
-				"living Guard gains exactly one Block per phase; Ragling gains none")
+			_check(app.enemies.get_enemy(2).block == (turn + 1) * 5 and app.enemies.get_enemy(1).block == 0,
+				"living Guard gains exactly its five authored Block per phase; Ragling gains none")
 			_check(app.party.get_hero(target).hp == maxi(0, heroes[target - 1].hp - maxi(0, 5 - heroes[target - 1].block)), "front living target takes exactly one hit using Block before HP")
 			for position in range(1, 4):
 				_check(app.party.get_hero(position).block == 0, "next player turn clears all Block")
@@ -367,6 +416,8 @@ func _run() -> void:
 	await _status_damage(app)
 	await _mounted_blind(app)
 	await _mixed_rejection_replay(app)
+	app.starter_enemies_path = app.STARTER_ENEMIES_PATH
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://live_enemy_phase_guard.json"))
 	app.free()
 	_finish()
 
@@ -383,7 +434,7 @@ func _slain_sources(app) -> void:
 		await process_frame
 		_check(is_instance_valid(app.intent_label) and not app.intent_label.visible,
 			"slain-source intent remains mounted before End Turn")
-		_check(app.intent_label.text == ("Intent: Enemy 2: 1 Block" if slain == 1
+		_check(app.intent_label.text == ("Intent: Enemy 2: 5 Block" if slain == 1
 			else "Intent: Enemy 1 -> Hero 1 (Warden): 5 damage"),
 			"slain source disappears on rendered frame before End Turn")
 		var after_frame := _snapshot(app)
@@ -397,7 +448,7 @@ func _slain_sources(app) -> void:
 			expected_heroes[0].hp -= 5
 		var expected_enemies: Array = app.enemies.get_enemies()
 		if slain != 2:
-			expected_enemies[1].block += 1
+			expected_enemies[1].block += 5
 		var rng := RandomNumberGenerator.new()
 		rng.seed = app.run_seed
 		var cards: Array[String] = []
@@ -410,10 +461,10 @@ func _slain_sources(app) -> void:
 			"slain-source full models, draw/discard, hand, energy and RNG match expected transition")
 		_check(app.enemy_intents._turn_index == 1 and app.enemy_attacks == app.enemy_intents.get_intents()
 			and app.enemy_attacks[0].target_position == 1, "slain-source turn advances intent exactly once")
-		_check(app.intent_label.text == ("Intent: Enemy 2: 1 Block" if slain == 1
+		_check(app.intent_label.text == ("Intent: Enemy 2: 5 Block" if slain == 1
 			else "Intent: Enemy 1 -> Hero 1 (Warden): 5 damage"), "living source displays exact next intent")
 		_check(app.party.get_hero(1).hp == heroes[0].hp - (0 if slain == 1 else 5), "only living Ragling attacks")
-		_check(app.enemies.get_enemy(2).block == (0 if slain == 2 else 1), "only living Guard gains Block")
+		_check(app.enemies.get_enemy(2).block == (0 if slain == 2 else 5), "only living Guard gains its five Block")
 		_check(app.enemies.get_enemy(slain).hp == 0 and app.enemies.get_enemy(slain).position == slain,
 			"slain source retains its original slot")
 		_check(not app.intent_label.text.contains("Enemy %d" % slain), "slain source no longer announces an action")
@@ -617,7 +668,7 @@ func _mixed_rejection_replay(app) -> void:
 			and app.enemy_intents._turn_index == 1,
 			"legal mixed End Turn after both rejections attacks and grants Block exactly once")
 		await process_frame
-		_visible(app, -1, 1)
+		_visible(app, -1, 1, 1)
 		trace.append(_snapshot(app))
 		if session == 0:
 			replay = trace.duplicate(true)

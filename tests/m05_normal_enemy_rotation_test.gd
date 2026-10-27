@@ -25,7 +25,10 @@ const NEW := {
 }
 const OLD := {
 	"ragling": ["Ragling", 12, "front", [{"type": "attack", "amount": 5, "weight": 3}]],
-	"ragling_guard": ["Guard Ragling", 12, "front", [{"type": "block", "amount": 1, "weight": 3}]],
+	"ragling_guard": ["Guard Ragling", 12, "front",
+		[{"type": "block", "amount": 5, "weight": 3},
+			{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+			{"type": "attack", "amount": 6, "weight": 2}]],
 	"fray_scavenger": ["Fray Scavenger", 14, "lowest_living_hp",
 		[{"type": "attack", "amount": 5, "weight": 3}, {"type": "block", "amount": 2, "weight": 2},
 			{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1}]],
