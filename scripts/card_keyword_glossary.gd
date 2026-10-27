@@ -150,9 +150,9 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 			"thorns":
 				explanation = "Warden's Counter-stitch (1 energy, from positions 1-2) makes enemies that attack Warden take %d damage until the next turn." % int(raw)
 			"riposte":
-				explanation = "When the Rag Duelist is hit, she strikes back for %d damage. The authored Riposte lasts one turn. This Help explains the printed design rule only; combat does not yet apply Riposte." % int(raw)
+				explanation = "When the Rag Duelist is hit, she strikes back for %d damage. This is counterdamage, not a number of turns: Riposte lasts one turn and expires fully at that turn's end. The combat status rules apply this counter on each confirmed hit; this Help states the printed design, and not every live confirmed-hit route reaches the retaliation." % int(raw)
 			"tangled":
-				explanation = "For %d turns, the Tangled unit cannot move or be moved by its own side, and attacks against it deal +2 damage. This Help explains the printed design rule only; combat does not yet apply Tangled." % int(raw)
+				explanation = "For %d turns, the Tangled unit cannot move or be moved by its own side, and attacks against it deal +2 damage, applied once per positive-base status-aware attack after Weak and Exposed rounding down, regardless of the Tangled count. Tangled decrements at owner-turn end. The combat status rules apply this effect; not every live own-side movement route is wired." % int(raw)
 			"blind":
 				explanation = "Blind is one-shot, never a stack or a number of turns: the affected enemy's NEXT attack misses, and after that attack the Blind is spent. This Help explains the printed design rule only; live combat does not yet cancel the attack."
 		lines.append({"keyword": keyword, "explanation": explanation})

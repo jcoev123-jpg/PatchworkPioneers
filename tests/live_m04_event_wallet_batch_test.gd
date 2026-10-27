@@ -64,6 +64,14 @@ func _fixtures() -> Dictionary:
 	# Revalidate the known genuine witness seeds first (tests/event_wallet_hints.gd,
 	# append-only); the bounded search remains a fallback when the route/pool changes.
 	var hints: Array = EVENT_WALLET_HINTS.SEEDS.duplicate()
+	# Accepted genuine witnesses from the earlier lane, retained alongside the
+	# newer append-only helper so both sets remain available after the rebase.
+	hints.append_array([35510, 233942, 236527, 292590, 379017, 422169,
+		449195, 529380, 610125, 622337, 756725, 802796, 807198, 899240,
+		1223721, 1333364, 1363210, 1433081, 1463887, 1610275,
+		1634509, 1658568, 1825487, 1892422, 2308951, 2356714,
+		2440227, 2757529, 3274715, 3525463, 3933498, 4969863,
+		696642, 2703008, 3782438, 5142127, 5281000])
 	for value in hints + range(1, 500000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
