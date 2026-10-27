@@ -1125,6 +1125,12 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				and pin.focus_mode == Control.FOCUS_NONE
 				and _inside(Rect2(pin.position, pin.size), RunRouteAtlas.PAGE_RIGHT),
 				label + ": real current pin rests over right-page origin")
+		elif child is Button and child.name == "CompareToggle":
+			_check(not legal.is_empty() and child == view.get_node_or_null("CompareToggle")
+				and child.text == "Compare choices" and child.focus_mode == Control.FOCUS_NONE
+				and child.mouse_filter == Control.MOUSE_FILTER_STOP
+				and _inside(Rect2(child.position, child.size), RunRouteAtlas.PAGE_LEFT),
+				label + ": only a legal map mounts an inert-focus mouse Compare control on the left page")
 		else:
 			_check(false, label + ": unexpected atlas child " + child.name)
 	for id in seen_nodes:
