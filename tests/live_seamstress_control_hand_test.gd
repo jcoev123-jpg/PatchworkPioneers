@@ -616,6 +616,27 @@ func _unpick_cases() -> void:
 		"Unpick+ charges seven toward the normal threshold")
 
 
+## The authored Guard Ragling now chooses between five Block, a right shield
+## rush and a real six-point hit; the gauge tests only need one genuine authored
+## second-slot action, never a fixed passive Block.
+func _authored_guard_action(announcements: Array) -> bool:
+	for action in announcements:
+		if not action is Dictionary or action.get("enemy_position") != 2:
+			continue
+		match String(action.get("type", "")):
+			"block":
+				return int(action.get("amount", 0)) == 5 and not action.has("target_position")
+			"shove":
+				return int(action.get("amount", -1)) == 0 \
+					and int(action.get("direction", 0)) == 1 \
+					and action.get("target_position") in [1, 2, 3]
+			"attack":
+				return int(action.get("amount", 0)) == 6 \
+					and action.get("target_position") in [1, 2, 3]
+		return false
+	return false
+
+
 ## AC2: one real turn fills the battle's normal-tier gauge, then the announced
 ## enemy action is skipped and the shared gauge reset with a higher threshold.
 func _shared_gauge_turn() -> void:
@@ -624,10 +645,15 @@ func _shared_gauge_turn() -> void:
 		return
 	_check(int(app.enemies.get_enemy(2).get("block", 0)) == 0,
 		"the second original enemy starts with no Block")
+	var guard_announced: Dictionary = {}
+	for action in app.enemy_intents.get_intents():
+		if action.get("enemy_position") == 2:
+			guard_announced = action
 	await _mouse(app.end_turn_button)
 	_check(app.enemy_intents._turn_index == 1
-		and int(app.enemies.get_enemy(2).get("block", 0)) == 1,
-		"without a pending skip the announced Block action executes")
+		and int(app.enemies.get_enemy(2).get("block", 0)) == (
+			int(guard_announced.get("amount", 0)) if guard_announced.get("type") == "block" else 0),
+		"without a pending skip the announced Guard action executes")
 	await _return()
 
 	# Fill the second original slot's gauge with the two authored control casts.
@@ -651,17 +677,21 @@ func _shared_gauge_turn() -> void:
 		"both authored cost-one casts spent exactly once")
 
 	var pre := _state()
-	_check(app.enemy_intents.get_intents()[1].get("type") == "block"
-		and int(app.enemy_intents.get_intents()[1].get("amount", 0)) == 1,
-		"the second original enemy has a genuine announced one-Block action")
+	_check(_authored_guard_action(app.enemy_intents.get_intents()),
+		"the second original enemy has a genuine authored shield action")
 	var hero_hp: Array = []
 	for hero in pre["heroes"]:
 		hero_hp.append(int(hero.get("hp", 0)))
 	await _mouse(app.end_turn_button)
 	_check(app.enemy_intents._turn_index == 1 and app.deck.turn_active and app.deck.energy == 3,
 		"the real End Turn opens the next player turn")
-	_check(int(app.enemies.get_enemy(2).get("block", 0)) == 0,
-		"the full gauge skips the announced enemy Block action")
+	var order_kept := true
+	for index in range(app.party.get_heroes().size()):
+		order_kept = order_kept and app.party.get_hero(index + 1).get("id") \
+			== String(pre["heroes"][index].get("id"))
+	_check(int(app.enemies.get_enemy(2).get("block", 0))
+		== int(pre["enemies"][1].get("block", 0)) and order_kept,
+		"the full gauge skips the announced enemy action without Block or shove")
 	_check(app.enemies.get_enemy(1)["hp"] == int(pre["enemies"][0]["hp"]),
 		"the skipped source never damages or replaces any enemy")
 	var hp_kept := true

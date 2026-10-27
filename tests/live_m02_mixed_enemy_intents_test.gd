@@ -6,6 +6,26 @@ var checks := 0
 func _initialize() -> void:
 	_run.call_deferred()
 
+## Unticketed badge caption for one authoritative announcement.
+func _badge_caption(action: Dictionary) -> String:
+	var rank := {1: "Front", 2: "Middle", 3: "Back"}
+	var target := int(action.get("target_position", 0))
+	match String(action.get("type", "")):
+		"attack":
+			return "Hit %d: %s" % [int(action.get("amount", 0)), rank.get(target, "")]
+		"block":
+			return "Block +%d" % int(action.get("amount", 0))
+		"buff":
+			return "Buff +%d Block" % int(action.get("amount", 0))
+		"debuff":
+			return "%s %d: %s" % [String(action.get("status", "")).capitalize(),
+				int(action.get("amount", 0)), rank.get(target, "")]
+		"shove":
+			return "Shove %s %s" % [rank.get(target, ""),
+				"back" if int(action.get("direction", 0)) == 1 else "forward"]
+	return ""
+
+
 func _check(value: bool, message: String) -> void:
 	checks += 1
 	if not value:
@@ -812,12 +832,17 @@ func _policy_badges(app) -> void:
 		["exposed", {"type": "debuff", "amount": 2, "status": "exposed"},
 			"Exposed 2 → %d", "+50% incoming attack damage"],
 		["random", {"type": "shove", "amount": 0, "direction": 1}, "Shove %d back", "Push back"]]
-	var full_block := "Block +1"
+	var full_block := ""
 	for row in cases:
 		var policy: String = row[0]
 		var body: Dictionary = row[1].duplicate(true)
 		body["weight"] = 1
 		app.enemies._enemies[0]["intent"] = {"target": policy, "actions": [body]}
+		# The unticketed source needs a genuine non-target action to show a full
+		# caption beside the ticket: the Guard's own authored five Block binds as
+		# one alternative, exactly like its real weighted Block choice.
+		app.enemies._enemies[1]["intent"] = {"target": "front",
+			"actions": [{"type": "block", "amount": 5, "weight": 1}]}
 		var schedule := CombatEnemyIntents.new(old_intents._definitions.duplicate(true))
 		_check(schedule.bind_battle(app.enemies, app.party, app.run_rng),
 			"test-authored %s weighted schedule binds the real mounted roster" % policy)
@@ -834,8 +859,19 @@ func _policy_badges(app) -> void:
 		var unticketed = presenter._badges[1]
 		var announced: Dictionary = cached[0]
 		var target: int = announced.get("target_position", 0)
+		# The forced unticketed Guard alternative the mounted roster carries.
+		var unticketed_action: Dictionary = {}
+		for action in cached:
+			if action.get("enemy_position") == 2:
+				unticketed_action = action
+		full_block = _badge_caption(unticketed_action)
 		var label: String = LiveEnemyIntentBadge.POLICY_LABELS[policy]
 		var expected := String(row[2]) % target
+		var rule := String(row[3])
+		if String(body["type"]) == "shove":
+			var dir := "back" if int(announced.get("direction", 0)) == 1 else "forward"
+			expected = "Shove %d %s" % [target, dir]
+			rule = "Push %s" % ("back" if int(announced.get("direction", 0)) == 1 else "front")
 		_check(presenter._bound_unravel(app) == gauge,
 			"the mounted %s fight exposes its bound gauge and weighted scheduler" % policy)
 		_check(schedule.is_bound() and announced.get("enemy_position") == 1
@@ -865,7 +901,7 @@ func _policy_badges(app) -> void:
 		var mentions_amount: bool = body["type"] == "shove" or tip.contains(str(body.amount))
 		_check(tip.contains(LiveEnemyIntentBadge.hero_target_label(target))
 			and mentions_amount and tip.contains("Target policy (%s)" % label.to_upper())
-			and tip.contains(String(row[3])),
+			and tip.contains(rule),
 			"compact %s caption keeps the full amount, target, rule and policy hover" % policy)
 		# The block source beside it has no ticket, so it keeps its exact full caption.
 		_check(unticketed.policy_cue.is_empty() and unticketed.policy_rect() == Rect2()

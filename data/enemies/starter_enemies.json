@@ -5,6 +5,8 @@
     ]}},
   {"id": "ragling_guard", "name": "Guard Ragling", "max_hp": 12, "art_path": "res://assets/paper/enemies/ragling_guard.png",
     "intent": {"target": "front", "actions": [
-      {"type": "block", "amount": 1, "weight": 3}
+      {"type": "block", "amount": 5, "weight": 3},
+      {"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+      {"type": "attack", "amount": 6, "weight": 2}
     ]}}
 ]

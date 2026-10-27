@@ -1,5 +1,7 @@
 extends SceneTree
 
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
+
 ## Independent authored-normal admission arithmetic, including x1 integer typing.
 func _normal_floor_record(source: Dictionary, floor_number: int) -> Dictionary:
 	var record := source.duplicate(true)
@@ -830,17 +832,14 @@ func _run() -> void:
 	_check(app._start_battle(), "explicit standalone M01 fixture starts")
 	_check(app.deck != null and app.run_map == null and app.route_view == null, "original direct start preserved")
 	if app.deck != null:
-		var starter: Array = [{"enemy_position": 1, "type": "attack", "amount": 5, "target_position": 1},
-			{"enemy_position": 2, "type": "block", "amount": 1}]
-		_check(app.enemy_attacks == starter and app.fight_selection == null
-			and app.encounter_id == "", "direct start keeps starter schedule without routed selector")
+		var direct := STARTER_ORACLE.build(fixture_seed)
+		_check(direct.get("ok", false), "independent starter oracle rebuilds the direct start")
+		_check(app.enemy_attacks == direct.intents.get_intents() and app.fight_selection == null
+			and app.encounter_id == "", "direct start keeps the authored starter fight without routed selector")
 		_check(app.enemies.get_enemies() == CombatEnemies.new(app._load_enemy_definitions()).get_enemies(),
 			"direct Start run retains original starter pair")
-		var rng := RandomNumberGenerator.new()
-		rng.seed = fixture_seed
-		var direct := CombatDeck.new(app._load_starter_deck(), rng)
-		_check(direct.start_turn(), "direct reference starts")
-		_check(app.deck.hand == direct.hand and app.run_rng.state == rng.state, "direct start retains original seeded hand")
+		_check(app.deck.hand == direct.deck.hand and app.run_rng.state == direct.rng.state,
+			"direct start retains original seeded hand")
 		await _click(app.return_button)
 	app.free()
 	_finish()

@@ -154,10 +154,12 @@ func _test_normal_attack_minimum() -> void:
 		{"id": "ragling_guard", "name": "Guard Ragling", "max_hp": 12,
 			"art_path": "res://assets/paper/enemies/ragling_guard.png",
 			"intent": {"target": "front", "actions": [
-				{"type": "block", "amount": 1, "weight": 3}]}}
+				{"type": "block", "amount": 5, "weight": 3},
+				{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+				{"type": "attack", "amount": 6, "weight": 2}]}}
 	]:
 		_check(_norm(_find(starter, expected.id)) == expected,
-			"starter record preserves all fields and the block-only Guard: " + expected.id)
+			"starter record preserves all fields and the shield-rush Guard: " + expected.id)
 	for record in starter + _load_parsed():
 		for raw in record.intent.actions:
 			var parsed := CombatEnemyIntents.weighted_action(raw)

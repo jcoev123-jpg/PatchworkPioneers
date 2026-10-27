@@ -1,5 +1,7 @@
 extends SceneTree
 
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
+
 var failures: Array[String] = []
 var checks := 0
 
@@ -25,7 +27,7 @@ func _snapshot(app) -> Array:
 		app.enemies.get_enemies()]
 
 
-func _visible(app, hp: Array, block: Array, target: int) -> void:
+func _visible(app, expected: Array, announcements: Array) -> void:
 	var meters = app.get_node("LiveCombatMeters")
 	meters._sync_battle()
 	_check(is_instance_valid(meters.row) and meters.row.get_child_count() >= 3, "real hero meters mounted")
@@ -40,9 +42,15 @@ func _visible(app, hp: Array, block: Array, target: int) -> void:
 				"visible meter retains exact authoritative HP and Block")
 
 	_check(app.hero_panels.size() == 3, "three mounted hero panels")
+	var hero_names: Array = []
+	for hero in expected:
+		hero_names.append(String(hero.get("name", "")))
 	for index in range(3):
 		var hero: Dictionary = app.party.get_hero(index + 1)
-		_check(hero.hp == hp[index] and hero.block == block[index], "exact live HP and Block")
+		var want: Dictionary = expected[index]
+		_check(hero.hp == int(want.get("hp", -1)) and hero.block == int(want.get("block", -1))
+			and hero.id == String(want.get("id", "")),
+			"exact live HP, Block and hero identity")
 		if index >= app.hero_panels.size():
 			continue
 		var panel = app.hero_panels[index]
@@ -53,15 +61,15 @@ func _visible(app, hp: Array, block: Array, target: int) -> void:
 		_check(label is Label and not label.visible, "mounted hero label visible")
 		if label is Label:
 			_check(label.text == "%d - %s\nHP: %d/%d | Block: %d" % [
-				index + 1, hero.name, hp[index], hero.max_hp, block[index]], "mounted text matches expected HP and Block")
+				index + 1, hero.name, hero.hp, hero.max_hp, hero.block],
+				"mounted text matches expected HP and Block")
 	_check(is_instance_valid(app.intent_label), "mounted intent exists")
 	if is_instance_valid(app.intent_label):
 		_check(not app.intent_label.visible and app.battle_view.is_ancestor_of(app.intent_label), "intent mounted and visible")
-		_check(app.intent_label.text == "Intent: Enemy 1 -> Hero %d (%s): 5 damage; Enemy 2: 1 Block" % [
-			target, ["Warden", "Seamstress", "Tinker"][target - 1]], "authored rotating intent text")
-	_check(app.enemy_attacks == [{"enemy_position": 1, "type": "attack", "amount": 5,
-		"target_position": target}, {"enemy_position": 2, "type": "block", "amount": 1}],
-		"authored attack cycle and Guard Block schedule")
+		_check(app.intent_label.text == STARTER_ORACLE.intent_text(announcements, hero_names),
+			"authored rotating intent text")
+	_check(app.enemy_attacks == announcements and app.enemy_intents.get_intents() == announcements,
+		"authored weighted announcement batch")
 
 
 func _ready_session(app) -> bool:
@@ -166,8 +174,6 @@ func _run() -> void:
 		return
 	_check(app.start_button.is_visible_in_tree() and app.start_button.has_focus(), "real Start Run available and focused")
 	_party_fixtures(app)
-	var source: Array[String] = []
-	source.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
 	var first_trace: Array = []
 	for session in range(2):
 		_check(app._start_battle(), "standalone M01 opening-Block fixture starts successfully")
@@ -182,27 +188,35 @@ func _run() -> void:
 			app.hero_panels[0].get_child(0).text = "wrong"
 		if "--inject-missing-panel" in OS.get_cmdline_user_args():
 			app.hero_panels.pop_back().free()
-		_visible(app, [40, 30, 26], [6, 0, 0], 1)
-		var rng := RandomNumberGenerator.new()
-		rng.seed = app.run_seed
-		var reference := CombatDeck.new(source, rng)
-		_check(reference.start_turn(), "reference initial turn starts")
-		_check(_deck(app.deck) == _deck(reference) and app.run_rng.state == rng.state
+		var oracle := STARTER_ORACLE.build(app.run_seed)
+		_check(oracle.get("ok", false), "independent starter oracle rebuilds the seeded fight")
+		if not oracle.get("ok", false):
+			app.free()
+			_finish()
+			return
+		_visible(app, oracle.party.get_heroes(), oracle.intents.get_intents())
+		_check(app.party.get_heroes() == oracle.party.get_heroes()
+			and app.enemies.get_enemies() == oracle.enemies.get_enemies(),
+			"mounted opening actors equal the seeded authored oracle")
+		_check(_deck(app.deck) == _deck(oracle.deck) and app.run_rng.state == oracle.rng.state
 			and app.deck.energy == 3, "opening grant does not spend energy, change deck or consume RNG")
 		var trace: Array = [_snapshot(app)]
 		_duplicate(app)
 		app._refresh_party()
 		_check(_snapshot(app) == trace[0], "refresh cannot reapply opening grant")
 		for turn in range(3):
-			_check(app.deck.try_spend_energy(2) and reference.try_spend_energy(2), "spend shared energy before real End Turn")
+			_check(app.deck.try_spend_energy(2) and oracle.deck.try_spend_energy(2),
+				"spend shared energy before real End Turn")
 			app.end_turn_button.pressed.emit()
 			await process_frame
-			_check(reference.end_turn() and reference.start_turn(), "reference advances")
-			# The authored front policy always sends the Ragling at the front
-			# living hero; the opening Block absorbs the first hit exactly.
-			_visible(app, [[40, 30, 26], [35, 30, 26], [30, 30, 26]][turn], [0, 0, 0], 1)
-			_check(_deck(app.deck) == _deck(reference) and app.run_rng.state == rng.state
-				and app.deck.energy == 3, "enemy attack and Block reset preserve deterministic deck, RNG and energy")
+			_check(STARTER_ORACLE.end_turn(oracle), "oracle advances the authored fight")
+			_visible(app, oracle.party.get_heroes(), oracle.intents.get_intents())
+			_check(app.party.get_heroes() == oracle.party.get_heroes()
+				and app.enemies.get_enemies() == oracle.enemies.get_enemies(),
+				"real enemy phase applies exactly the announced authored batch")
+			_check(_deck(app.deck) == _deck(oracle.deck) and app.run_rng.state == oracle.rng.state
+				and app.deck.energy == 3,
+				"enemy attack and Block reset preserve deterministic deck, RNG and energy")
 			_duplicate(app)
 			trace.append(_snapshot(app))
 		if session == 0:

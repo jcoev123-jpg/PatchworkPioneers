@@ -1,5 +1,6 @@
 extends SceneTree
 
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
 const EXPECTED := {
 	"warden_strike": 2, "warden_brace": 1, "warden_shield_bash": 1,
 	"seamstress_prick": 2, "seamstress_mend": 1, "seamstress_stitch_up": 1,
@@ -82,6 +83,8 @@ func _run() -> void:
 	_check(app.deck == null and app.run_rng == null and app.battle_view == null, "initial session empty")
 	app.start_run_requested.connect(func(): starts += 1)
 	app.run_seed = 42
+	_check(STARTER_ORACLE.pin_guard_block(app, "user://live_hand_guard.json"),
+		"shipped Guard Ragling pinned to its own authored Block alternative")
 	var first_trace: Array = []
 	for session in range(2):
 		_fixture_start(app)

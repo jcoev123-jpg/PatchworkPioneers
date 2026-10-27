@@ -9,6 +9,7 @@ const COMBOS: Array[String] = [
 	"tinker_snip_the_seam", "tinker_snip_the_seam_plus",
 ]
 const GODOT_SEED := 183707
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
 var failures: Array[String] = []
 var checks := 0
 var app
@@ -183,6 +184,8 @@ func _start(ids: Array[String], seed_value: int = GODOT_SEED) -> bool:
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await _frames()
+	_check(STARTER_ORACLE.pin_guard_block(app, "user://live_pool_combo_guard.json"),
+		"shipped Guard Ragling pinned to its own authored Block alternative")
 	app.run_seed = seed_value
 	var started: bool = app._start_battle()
 	await _frames()

@@ -177,6 +177,10 @@ func _reject(id: String, mode: String, stage: int) -> void:
 		"rebuild": app._refresh_hand()
 		"cancel": presenter.cancel_button.pressed.emit()
 		"escape": root.push_input(_key(KEY_ESCAPE), true)
+	# Settle the HUD's legitimate response to the changed fixture before input:
+	# the mounted label always re-reads the authoritative announcement, while the
+	# armed selection's captured turn context is what must invalidate it.
+	app._refresh_intents()
 	var before := _state()
 	if stage == 0:
 		callback.call(_press())

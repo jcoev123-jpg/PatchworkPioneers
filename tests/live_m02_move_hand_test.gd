@@ -1,5 +1,7 @@
 extends SceneTree
 
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
+
 var failures: Array[String] = []
 var checks := 0
 var app
@@ -184,7 +186,7 @@ func _status_backstep_turn() -> void:
 			and app.party.get_hero(1).block == 6 and app.party.get_hero(2).id == "seamstress"
 			and app.enemy_intents._turn_index == 0 and app.enemy_intents.get_intents() == [
 				{"enemy_position": 1, "type": "attack", "amount": 5, "target_position": 1},
-				{"enemy_position": 2, "type": "block", "amount": 1}],
+				{"enemy_position": 2, "type": "block", "amount": 5}],
 			"authored living formation, opening passive and front attack really present")
 		app.party._heroes[0].hp = 32
 		app.party._heroes[0].block = 4
@@ -203,7 +205,7 @@ func _status_backstep_turn() -> void:
 		expected[5][1].statuses = {"bleed": 2, "weak": 1}
 		for hero in expected[5]:
 			hero.block = 0
-		expected[6][1].block = 1
+		expected[6][1].block = 5
 		expected[2].append_array(expected[0])
 		expected[0] = []
 		_check(expected[1].size() >= 5, "next hand needs no refill or RNG")
@@ -212,7 +214,7 @@ func _status_backstep_turn() -> void:
 		expected[3] = 3
 		expected[7] = [
 			{"enemy_position": 1, "type": "attack", "amount": 5, "target_position": 1},
-			{"enemy_position": 2, "type": "block", "amount": 1}]
+			{"enemy_position": 2, "type": "block", "amount": 5}]
 		expected[8] = expected[7].duplicate(true)
 		expected[9] = 1
 		seed(51050)
@@ -234,6 +236,8 @@ func _run() -> void:
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await _frames()
+	_check(STARTER_ORACLE.pin_guard_block(app, "user://live_m02_move_guard.json"),
+		"shipped Guard Ragling pinned to its own authored Block alternative")
 	_catalog_checks()
 	await _status_backstep_turn()
 	var replay: Array = []

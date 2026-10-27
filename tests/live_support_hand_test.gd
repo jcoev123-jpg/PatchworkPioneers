@@ -1,5 +1,7 @@
 extends SceneTree
 
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
+
 var failures: Array[String] = []
 var checks := 0
 var app
@@ -7,6 +9,7 @@ var presenter
 var reference: CombatDeck
 var reference_party: CombatParty
 var reference_enemies: CombatEnemies
+var reference_intents: CombatEnemyIntents
 var reference_rng: RandomNumberGenerator
 var service := CombatStarterSupportPlay.new()
 var table_instance := 0
@@ -94,6 +97,14 @@ func _snapshot(deck: CombatDeck, party: CombatParty, rng: RandomNumberGenerator)
 func _live() -> Array:
 	return [_snapshot(app.deck, app.party, app.run_rng), app.enemy_attacks.duplicate(true),
 		app.enemy_intents.get_intents(), app.intent_label.text, app.run_seed, app.enemies.get_enemies()]
+
+
+## The living hero names in their authoritative slot order, for the intent label.
+func _live_hero_names() -> Array:
+	var names: Array = []
+	for index in range(app.party.get_heroes().size()):
+		names.append(String(app.party.get_hero(index + 1).get("name", "")))
+	return names
 
 
 func _visible() -> void:
@@ -537,10 +548,7 @@ func _missing_art_case() -> void:
 		and button.focus_mode == Control.FOCUS_ALL and button.text == "End Turn",
 		"fallback keeps the exact counts, the focus and the original press signal")
 	# The unchanged real button still resolves a full turn while the art is missing.
-	_check(reference.end_turn(), "reference ends an art-free turn")
-	_reference_enemy_phase()
-	_check(reference.start_turn() and reference_party.start_player_turn(),
-		"reference starts an art-free turn")
+	_reference_turn()
 	await _mouse(button)
 	_check(_snapshot(app.deck, app.party, app.run_rng) == _snapshot(reference, reference_party, reference_rng),
 		"End Turn keeps its real transaction while the authored art is missing")
@@ -582,9 +590,13 @@ func _start(seed_value: int) -> bool:
 	reference_rng = RandomNumberGenerator.new()
 	reference_rng.seed = seed_value
 	reference = CombatDeck.new(cards, reference_rng)
-	reference.start_turn()
 	reference_party = CombatParty.new(app._load_party_definitions())
 	reference_enemies = CombatEnemies.new(app._load_enemy_definitions())
+	reference_intents = CombatEnemyIntents.new(RunFightEncounterSelection._parse_schedule_text(
+		FileAccess.get_file_as_string(app.starter_attacks_path)))
+	_check(reference_intents.bind_battle(reference_enemies, reference_party, reference_rng),
+		"independent reference binds the authored weighted starter intents")
+	reference.start_turn()
 	CombatStartingBlock.new(reference_party).apply()
 	_check(_snapshot(app.deck, app.party, app.run_rng) == _snapshot(reference, reference_party, reference_rng),
 		"no support action before activation; independent opening matches")
@@ -594,23 +606,50 @@ func _start(seed_value: int) -> bool:
 
 
 func _turn() -> void:
-	_check(reference.end_turn(), "reference ends turn")
-	_reference_enemy_phase()
-	_check(reference.start_turn() and reference_party.start_player_turn(), "reference starts turn")
+	_reference_turn()
 	await _mouse(app.end_turn_button)
-	_check(_snapshot(app.deck, app.party, app.run_rng) == _snapshot(reference, reference_party, reference_rng),
-		"actual End Turn matches reference, including enemy damage and RNG")
+	var live := _snapshot(app.deck, app.party, app.run_rng)
+	var ref := _snapshot(reference, reference_party, reference_rng)
+	if live != ref:
+		var diffs: Array[String] = []
+		for i in range(mini(live.size(), ref.size())):
+			if live[i] != ref[i]:
+				diffs.append("%d:%s|%s" % [i, str(live[i]), str(ref[i])])
+		_check(false, "actual End Turn matches reference, including enemy damage and RNG " + ", ".join(diffs))
+	else:
+		_check(true, "actual End Turn matches reference, including enemy damage and RNG")
 	_visible()
+
+
+## One authentic End Turn on the independent reference: the live cached batch
+## executes through the real phase, then announcements advance and a hand deals.
+func _reference_turn() -> void:
+	var batch: Array = reference_intents.get_intents().duplicate(true)
+	_check(batch == app.enemy_attacks, "reference announcement matches the executed live batch")
+	_check(reference.end_turn(), "reference ends turn")
+	_check(CombatEnemyPhase.new().execute_phase(reference_party, reference_enemies, batch,
+		null, true).ok, "reference enemy phase executes the authored batch")
+	if reference_party.is_defeated() or reference_enemies.is_victorious():
+		return
+	# Live order: advance announcements, reset owner Block, then deal the hand,
+	# so the same seeded draws feed the same consumers.
+	_check(reference_intents.advance_turn(), "reference advances announcements")
+	_check(reference_party.start_player_turn() and reference.start_turn(),
+		"reference starts turn")
 
 
 func _reference_enemy_phase() -> void:
 	for action in app.enemy_attacks:
 		if reference_enemies.is_slain(action.enemy_position):
 			continue
-		if action.type == "attack":
-			_check(CombatEnemyAttacks.new().execute_attacks(reference_party, [action]).ok, "reference enemy attack")
-		else:
-			_check(CombatEnemyBlocks.execute_blocks(reference_enemies, [action]).ok, "reference enemy Block")
+		match String(action.get("type", "")):
+			"attack":
+				_check(CombatEnemyAttacks.new().execute_attacks(reference_party, [action]).ok, "reference enemy attack")
+			"block":
+				_check(CombatEnemyBlocks.execute_blocks(reference_enemies, [action]).ok, "reference enemy Block")
+			_:
+				_check(CombatEnemySpecialActions.new().execute_actions(reference_party,
+					reference_enemies, [action]).ok, "reference enemy special action")
 
 
 func _play_card(id: String, keyboard: bool) -> void:
@@ -862,8 +901,18 @@ func _negative_cases() -> void:
 	await _mouse(panel)
 	_check(_live() == before, "inactive player turn cannot act")
 	deck.combat_state.player_turn_active = true
-	_check(party.apply_damage(1, 10000), "downed owner fixture applied")
-	_check(party.is_downed(1), "owner really downed")
+	# The authored Guard Ragling's shield rush can move the Warden out of the
+	# front slot, so the Brace owner is located by identity, never by slot one.
+	var owner_position := 0
+	for index in range(party.get_heroes().size()):
+		if party.get_hero(index + 1).get("id") == "warden":
+			owner_position = index + 1
+			break
+	_check(owner_position >= 1 and owner_position <= 3
+		and party.get_hero(owner_position).get("id") == "warden",
+		"precondition: the live party really holds the Brace owner")
+	_check(party.apply_damage(owner_position, 10000), "downed owner fixture applied")
+	_check(party.is_downed(owner_position), "owner really downed")
 	before = _live()
 	await _mouse(panel)
 	_check(_live() == before, "downed owner cannot act")
@@ -915,6 +964,7 @@ func _stale_restart(seed_value: int) -> void:
 		presenter._bindings[panel].call(_key(KEY_ENTER))
 		_check(reference.end_turn(), "queued-turn reference ends")
 		_reference_enemy_phase()
+		_check(reference_intents.advance_turn(), "queued-turn reference advances announcements")
 		_check(reference.start_turn() and reference_party.start_player_turn(), "queued-turn reference starts")
 		app.end_turn_button.pressed.emit()
 		await _frames()
@@ -1181,7 +1231,10 @@ func _ally_cases() -> void:
 			_check(app.party.get_hero(position).id == "seamstress", "actual owner at authored position fixture")
 			# Settle the view after replacing the party, before checking input is inert.
 			app._refresh_intents()
-			_check(app.intent_label.text == "Intent: Enemy 1 -> Hero 1 (%s): 5 damage; Enemy 2: 1 Block" % app.party.get_hero(1).name,
+			_check(app.enemy_intents.get_intents()[0].get("target_position") == 1,
+				"reordered fixture still announces the authored front target")
+			_check(app.intent_label.text == STARTER_ORACLE.intent_text(
+				app.enemy_intents.get_intents(), _live_hero_names()),
 				"reordered fixture announces the actual hero at the authored target")
 			var before := _live()
 			if id == "seamstress_mend" and position == 1:

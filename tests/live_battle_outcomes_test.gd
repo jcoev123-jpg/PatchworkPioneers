@@ -1,5 +1,7 @@
 extends SceneTree
 
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
+
 var failures: Array[String] = []
 var checks := 0
 var app
@@ -312,7 +314,7 @@ func _status_turns() -> void:
 		app.end_turn_button.pressed.emit()
 		await _frames()
 		_check(app.party.get_heroes() == expected and hero == expected[0]
-			and app.enemy_intents._turn_index == 1 and app.enemies.get_enemy(2)["block"] == 1
+			and app.enemy_intents._turn_index == 1 and app.enemies.get_enemy(2)["block"] == 5
 			and app.deck.energy == 3 and app.deck.hand.size() == 5,
 			"mounted End Turn commits one hero tick and retains enemy/hand cadence")
 		app.get_node("LiveCombatMeters")._sync_battle()
@@ -383,6 +385,8 @@ func _run() -> void:
 			and app.victory_gold == null and app.session_gold == 0
 			and not app.start_button.disabled, "rejected Start remains actionable without partial result")
 		app.starter_party_path = app.STARTER_PARTY_PATH
+		_check(STARTER_ORACLE.pin_guard_block(app, "user://live_battle_outcomes_guard.json"),
+			"shipped Guard Ragling pinned to its own authored Block alternative")
 		# Pick a deterministic authored hand with both ally and immediate support inputs.
 		var cards: Array[String] = []
 		cards.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))

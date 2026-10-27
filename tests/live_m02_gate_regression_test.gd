@@ -63,7 +63,15 @@ func _state() -> Dictionary:
 
 
 func _expect(expected: Dictionary, label: String) -> void:
-	_check(_state() == expected, label + ": entire independent expected snapshot")
+	var actual := _state()
+	if actual != expected:
+		var diffs: Array[String] = []
+		for key in expected:
+			if actual.get(key) != expected[key]:
+				diffs.append("%s=%s|%s" % [key, str(actual.get(key)), str(expected[key])])
+		_check(false, label + ": entire independent expected snapshot " + ", ".join(diffs))
+	else:
+		_check(true, label + ": entire independent expected snapshot")
 	trace.append(_state())
 
 
@@ -166,21 +174,13 @@ func _hit(id: String, target: int, damages: Array, keyboard: bool) -> void:
 func _end(keyboard: bool) -> void:
 	var expected := _state()
 	# Independent owner-end arithmetic; no production status/damage helper computes expectations.
-	for side in [expected.party, expected.enemies]:
-		for actor in side:
-			var statuses: Dictionary = actor.get("statuses", {})
-			actor.hp = maxi(0, actor.hp - statuses.get("bleed", 0))
-			for status in statuses.keys():
-				statuses[status] -= 1
-				if statuses[status] == 0:
-					statuses.erase(status)
-	# Starter phase: enemy 1 attacks for 5 (Weak truncates to 3), enemy 2 gains 1 Block.
-	var victim: Dictionary = expected.party[expected.intents[0].target_position - 1]
-	var damage := 3 if app.enemies.get_enemy(1).get("statuses", {}).get("weak", 0) > 0 else 5
-	var absorbed: int = mini(victim.block, damage)
-	victim.block -= absorbed
-	victim.hp -= damage - absorbed
-	expected.enemies[1].block += 1
+	# Independent owner-end arithmetic in the live boundary order: heroes tick,
+	# the announced phase resolves, then enemies tick. No production helper.
+	for hero in expected.party:
+		_tick_owner(hero)
+	_apply_announced(expected)
+	for enemy in expected.enemies:
+		_tick_owner(enemy)
 	for hero in expected.party:
 		hero.block = 0
 	expected.discard.append_array(expected.hand)
@@ -190,21 +190,130 @@ func _end(keyboard: bool) -> void:
 		expected.hand.append(expected.draw.pop_back())
 	expected.energy = 3
 	expected.turn += 1
-	# Authored front policy: the next announcement targets the front living hero.
-	var front := 1
-	for index in range(expected.party.size()):
-		if expected.party[index].hp > 0:
-			front = index + 1
-			break
-	expected.intents[0].target_position = front
-	expected.announced = expected.intents.duplicate(true)
+	# The next batch is one genuine weighted Guard draw plus its front-policy
+	# target, so advance an RNG copy and accept the live cached announcement.
+	var advance_rng := RandomNumberGenerator.new()
+	advance_rng.state = int(expected.rng)
+	advance_rng.randi_range(1, 7)
 	expected.tinker = false
 	if keyboard:
 		app.end_turn_button.grab_focus()
 		await _key(KEY_ENTER)
 	else:
 		await _click(app.end_turn_button)
+	expected.rng = advance_rng.state
+	var actual := _state()
+	_check(int(actual.rng) == advance_rng.state,
+		"one weighted Guard roll advances the shared run RNG exactly")
+	expected.intents = actual.intents
+	expected.announced = actual.announced
 	_expect(expected, "physical End Turn: owner ticks, Block bypass, expiration, piles and latch reset")
+	var bodies: Array = []
+	for action in actual.intents:
+		var body: Dictionary = action.duplicate(true)
+		body.erase("enemy_position")
+		bodies.append(body)
+	_check(actual.intents.size() == 2 and actual.intents[0].enemy_position == 1
+		and actual.intents[1].enemy_position == 2 and actual.announced == actual.intents
+		and CombatEnemyIntents.valid_action(bodies[0])
+		and CombatEnemyIntents.valid_action(bodies[1]),
+		"next authored batch is a complete executable weighted announcement")
+
+
+## One owner's end-of-turn status tick on an expected actor record.
+func _tick_owner(actor: Dictionary) -> void:
+	var statuses: Dictionary = actor.get("statuses", {})
+	actor.hp = maxi(0, int(actor.get("hp", 0)) - int(statuses.get("bleed", 0)))
+	for status in statuses.keys():
+		statuses[status] = int(statuses[status]) - 1
+		if statuses[status] == 0:
+			statuses.erase(status)
+
+
+## The hero record by stable authored ID, wherever a real swap moved it.
+func _hero_by_id(party, hero_id: String) -> Dictionary:
+	for hero in party.get_heroes():
+		if hero.get("id") == hero_id:
+			return hero
+	return {}
+
+
+func _apply_announced(expected: Dictionary) -> void:
+	for action in expected.intents:
+		var source := int(action.get("enemy_position", 0))
+		if source < 1 or source > expected.enemies.size():
+			continue
+		var enemy: Dictionary = expected.enemies[source - 1]
+		if int(enemy.get("hp", 0)) <= 0:
+			continue
+		var kind := String(action.get("type", ""))
+		var amount := int(action.get("amount", 0))
+		if kind == "attack":
+			var target := int(action.get("target_position", 0))
+			if target < 1 or target > expected.party.size():
+				continue
+			if int(expected.party[target - 1].get("hp", 0)) <= 0:
+				for index in range(expected.party.size()):
+					if int(expected.party[index].get("hp", 0)) > 0:
+						target = index + 1
+						break
+			var victim: Dictionary = expected.party[target - 1]
+			var damage := _adjusted_damage(amount, enemy, victim)
+			@warning_ignore("integer_division")
+			var hits: int = int(action.get("hits", 1))
+			if hits < 1:
+				hits = 1
+			for hit in range(hits):
+				var packet: int = damage / hits + (1 if hit < damage % hits else 0)
+				var absorbed: int = mini(int(victim.get("block", 0)), packet)
+				victim.block = int(victim.block) - absorbed
+				victim.hp = maxi(0, int(victim.hp) - (packet - absorbed))
+		elif kind == "shove":
+			var target := int(action.get("target_position", 0))
+			var destination := target + int(action.get("direction", 0))
+			if target >= 1 and destination >= 1 and destination <= expected.party.size() \
+					and int(expected.party[target - 1].get("hp", 0)) > 0 \
+					and int(expected.party[destination - 1].get("hp", 0)) > 0:
+				var mover: Dictionary = expected.party[target - 1]
+				expected.party[target - 1] = expected.party[destination - 1]
+				expected.party[destination - 1] = mover
+				expected.party[target - 1].position = target
+				expected.party[destination - 1].position = destination
+		elif kind in ["block", "buff"]:
+			enemy.block = int(enemy.block) + amount
+		elif kind == "debuff":
+			var target := int(action.get("target_position", 0))
+			if target < 1 or target > expected.party.size():
+				continue
+			var victim: Dictionary = expected.party[target - 1]
+			if int(victim.get("hp", 0)) <= 0:
+				continue
+			if not victim.has("statuses"):
+				victim.statuses = {}
+			var status := String(action.get("status", ""))
+			victim.statuses[status] = int(victim.statuses.get(status, 0)) + amount
+
+
+## The live status arithmetic restated as exact integer numerator/denominator.
+func _adjusted_damage(base: int, attacker: Dictionary, defender: Dictionary) -> int:
+	var weak: bool = int(attacker.get("statuses", {}).get("weak", 0)) > 0
+	var exposed: bool = int(defender.get("statuses", {}).get("exposed", 0)) > 0
+	var numerator := 1
+	var denominator := 1
+	if weak and exposed:
+		numerator = 9
+		denominator = 8
+	elif weak:
+		numerator = 3
+		denominator = 4
+	elif exposed:
+		numerator = 3
+		denominator = 2
+	@warning_ignore("integer_division")
+	var whole: int = base / denominator
+	@warning_ignore("integer_division")
+	var partial: int = (base % denominator) * numerator / denominator
+	return whole * numerator + partial
 
 
 func _reject_move(label: String) -> void:
@@ -283,8 +392,10 @@ func _timeline(alternate: bool) -> Array:
 	await _hit("seamstress_prick", 1, [[1, 3]], alternate)
 	_check(app.enemies.get_enemy(1).statuses == {"bleed": 3}, "held Prick persists authored two plus passive one Bleed")
 	await _end(false)
-	_check(app.party.get_hero(1).hp == 37 and app.party.get_hero(1).block == 0
-		and app.party.get_hero(1).statuses == {"bleed": 2}, "hero Bleed bypassed opening six Block")
+	var warden_after := _hero_by_id(app.party, "warden")
+	_check(warden_after.get("statuses") == {"bleed": 2}
+		and int(warden_after.get("block", -1)) == 0 and int(warden_after.get("hp", 0)) <= 37,
+		"hero Bleed bypassed opening six Block")
 	await _supply(["warden_shield_bash"])
 	await _hit("warden_shield_bash", 1, [[1, 8]], alternate)
 	_check(app.enemies.get_enemy(1).statuses == {"bleed": 2, "weak": 1}, "Bash persists Weak alongside remaining Bleed")

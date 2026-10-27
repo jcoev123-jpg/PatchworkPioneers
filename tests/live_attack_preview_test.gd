@@ -1,5 +1,7 @@
 extends SceneTree
 
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
+
 var failures: Array[String] = []
 var checks := 0
 var app
@@ -726,7 +728,13 @@ func _kills() -> void:
 	await _click(app.get_node("LiveEnemyRoster")._labels[0])
 	_check(app.enemies.is_slain(1) and app.enemies.get_enemy(2).hp == 1 and app.enemies.get_enemy(2).position == 2, "first physical kill preserves live slot two")
 	_check(app.enemies.get_enemy(1).statuses == {"bleed": 3}, "lethal mouse Prick persists Bleed on slain slot")
-	_check(app.intent_label.text.contains("Enemy 2:") and not app.intent_label.text.contains("Enemy 1"), "next-frame intent removes killed enemy only")
+	var guard_announced: Dictionary = {}
+	for action in app.enemy_intents.get_intents():
+		if action.get("enemy_position") == 2:
+			guard_announced = action
+	_check(app.intent_label.text == STARTER_ORACLE.intent_text([guard_announced],
+		["Warden", "Seamstress", "Tinker"]) and not app.intent_label.text.contains("Enemy 1"),
+		"next-frame intent removes killed enemy only")
 	_check(app.battle_result.can_continue() and not app.result_label.is_visible_in_tree(), "first kill keeps battle active")
 	await _choose(id, true)
 	await _key(KEY_1)

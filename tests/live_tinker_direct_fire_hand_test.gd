@@ -8,6 +8,7 @@ const IDS := [
 	"tinker_bobbin_cannon", "tinker_bobbin_cannon_plus"
 ]
 const SEED := 13906
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
 
 var app
 var view
@@ -738,6 +739,8 @@ func _run() -> void:
 		app.free()
 		_finish()
 		return
+	_check(STARTER_ORACLE.pin_guard_block(app, "user://live_tinker_direct_fire_guard.json"),
+		"shipped Guard Ragling pinned to its own authored Block alternative")
 	for id in IDS:
 		_check(TinkerPoolCards.new().get_definition(id).get("id") == id
 			and not CombatAttackTargeting.ATTACK_IDS.has(id)

@@ -12,6 +12,8 @@ const HEXER := "res://data/encounters/spool_hexer_elite.json"
 const ROSTERS := {
 	"needle_marshal_elite": ["needle_marshal", "ragling_guard"],
 	"spool_hexer_elite": ["spool_hexer", "spool_stalker"]}
+## The ragling escort's authored self Block, proven by AC1 below.
+const ESCORT_BLOCK := 5
 ## V3-2 appends two harder look-driven elites. Their authored alternatives are
 ## checked by ID only, never by catalog total or position.
 const V3_ELITES := {
@@ -735,7 +737,24 @@ func _forced_marshal(alternative: Dictionary, seed_value: int,
 	forced["intent"] = {"target": "front", "actions": [action]}
 	if not stings:
 		forced.erase("bleed_on_attack")
-	var enemies := CombatEnemies.new([forced, escort])
+	# The escort now authors Block 5, a right shield rush and a real six-point
+	# hit. Narrow it to its own authored Block alternative so this sting suite
+	# binds a genuine, deterministic non-damaging escort beat instead of
+	# assuming the old passive one-Block schedule.
+	var escort_intent: Dictionary = escort.get("intent", {}).duplicate(true)
+	var escort_block: Dictionary = {}
+	for raw in escort_intent.get("actions", []):
+		if CombatEnemyIntents.weighted_action(raw).get("action", {}).get("type") == "block":
+			escort_block = raw.duplicate(true)
+			break
+	_check(int(escort_block.get("amount", 0)) == ESCORT_BLOCK,
+		"the shipped ragling escort still authors its own five Block alternative")
+	if escort_block.is_empty():
+		return {}
+	escort_intent["actions"] = [escort_block]
+	var narrowed: Dictionary = escort.duplicate(true)
+	narrowed["intent"] = escort_intent
+	var enemies := CombatEnemies.new([forced, narrowed])
 	var scheduler := CombatEnemyIntents.new([
 		{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]},
 		{"enemy_position": 2, "pattern": [{"type": "block", "amount": 1}]}])
@@ -789,8 +808,11 @@ func _test_marshal_sting() -> void:
 		body["weight"] = normalized.get("weight", 0)
 		escort_actions.append(body)
 	_check(not escort_record.is_empty() and not escort_record.has("bleed_on_attack")
-		and escort_actions == [{"type": "block", "amount": 1, "weight": 3}],
-		"AC1: the ragling escort authors only its own Block 1 and no sting")
+		and escort_actions == [
+			{"type": "block", "amount": 5, "weight": 3},
+			{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+			{"type": "attack", "amount": 6, "weight": 2}],
+		"AC1: the ragling escort keeps its own shield Rush/Block/Hit alternatives and no sting")
 	var roster := _roster("needle_marshal_elite")
 	_check(roster.get_enemy(1).get("bleed_on_attack") is bool
 		and roster.get_enemy(1).get("bleed_on_attack") == true
@@ -825,7 +847,7 @@ func _test_marshal_sting() -> void:
 	_check(announced.size() == 2
 		and announced[0] == {"type": "attack", "amount": 5, "enemy_position": 1,
 			"target_position": 1}
-		and announced[1] == {"type": "block", "amount": 1, "enemy_position": 2},
+		and announced[1] == {"type": "block", "amount": ESCORT_BLOCK, "enemy_position": 2},
 		"AC2: the bound Marshal announces its authored Attack 5 on the front hero")
 	var settled: Dictionary = CombatEnemyPhase.new().execute_phase(
 		party, case.enemies, announced)
@@ -927,9 +949,9 @@ func _test_marshal_sting() -> void:
 		var escort_result: Dictionary = CombatEnemyPhase.new().execute_phase(
 			escort_party, escort.enemies, escort.intents)
 		_check(escort_result.get("ok", false)
-			and escort.enemies.get_enemy(2).get("block") == 1
+			and escort.enemies.get_enemy(2).get("block") == ESCORT_BLOCK
 			and escort_party.get_heroes() == escort_heroes,
-			"AC3: the escort's own Block 1 touches no hero and applies no Bleed")
+			"AC3: the escort's own five Block touches no hero and applies no Bleed")
 	# AC3: the same authored hit without the flag still damages but never stings.
 	var plain_party := _party()
 	var plain := _forced_marshal(attack5, 51013, plain_party, false)
