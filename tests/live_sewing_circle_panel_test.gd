@@ -330,6 +330,13 @@ func _test_owner_filters() -> void:
 		source = visit.read_state()
 		await _activate(panel.stitch_button, keyboard)
 		_check_filtered(visit.stitch_first_options())
+		for owner in ["seamstress", "tinker", ""]:
+			await _activate(_filter_at(owner), keyboard)
+			_check_filtered(visit.stitch_first_options(), owner)
+			_check(_filter_at(owner).has_focus() and panel._first == -1 and panel._second == -1
+				and panel.preview().is_empty() and panel._confirmed.is_empty()
+				and panel.confirm_button.disabled and intents.is_empty() and visit.read_state() == source,
+				"FIRST filtering restores only chip focus without selecting, spending or emitting")
 		await _activate(_filter_at("warden"), keyboard)
 		_check_filtered(visit.stitch_first_options(), "warden")
 		retired_chip = _filter_at("warden").pressed.get_connections()[0].callable
@@ -347,10 +354,17 @@ func _test_owner_filters() -> void:
 		await _activate(panel.option_buttons[1], keyboard)
 		var pair := visit.stitch_preview(3, 5)
 		_check(not pair.is_empty() and panel.preview() == pair, "filtered THEN uses authentic ordered preview")
+		retired_chip = _filter_at("tinker").pressed.get_connections()[0].callable
+		retired_row = panel.option_buttons[1].pressed.get_connections()[0].callable
 		await _activate(_filter_at("seamstress"), keyboard)
+		retired_chip.call()
+		retired_row.call()
+		await _key(KEY_3)
+		_check_filtered(visit.stitch_second_options(3), "seamstress")
 		_check(panel._first == 3 and panel._second == -1 and panel.preview().is_empty()
+			and panel._confirmed.is_empty() and _filter_at("seamstress").has_focus()
 			and panel.confirm_button.disabled and intents.is_empty() and visit.read_state() == source,
-			"THEN filter clears pending partner and retains first half without spending")
+			"THEN filter retires partner callbacks and Confirm, keeping FIRST and only chip focus without spending")
 		await _activate(panel.option_buttons[1], keyboard)
 		pair = visit.stitch_preview(3, 4)
 		_check(not pair.is_empty() and panel.preview() == pair, "new filtered partner retains original source index")
@@ -363,7 +377,9 @@ func _test_owner_filters() -> void:
 			and panel.take_confirmed(intent) == intent and panel.take_confirmed(intent).is_empty(),
 			"filtered Stitch has exact source-bound ordered one-shot receipt")
 		result = Controller.submit(visit, intent)
-		_check(result.ok and result.transaction == pair.projection, "filtered Stitch settles authentic projection")
+		_check(result.ok and result.transaction == pair.projection and result.deck == pair.resulting_deck
+			and result.remaining_scraps == source.remaining_scraps - 3 and result.charged_scraps == 3,
+			"filtered Stitch settles the exact original occurrences for exactly three scraps")
 		_check_receipt(result, source, 3)
 		_check_replay(visit, intent)
 

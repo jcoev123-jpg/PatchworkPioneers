@@ -348,6 +348,9 @@ func _choose_filter(owner: String, epoch: int, rows_epoch: int, chip: Variant) -
 	_owner_filter = owner
 	if _mode == "upgrade":
 		_first = -1
+	# Both modes rebuild below. Stitch keeps its FIRST occurrence so _refresh
+	# asks the visit for that occurrence's authoritative THEN options; browsing
+	# either stage must retire the old partner, preview and confirmation.
 	_second = -1
 	_preview.clear()
 	_confirmed.clear()
