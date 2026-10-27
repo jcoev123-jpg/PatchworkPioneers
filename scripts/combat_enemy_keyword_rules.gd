@@ -20,6 +20,12 @@ extends RefCounted
 ## for that hit. It heals only the hero HP loss of that hit, so Block-absorbed
 ## damage never heals, and it is clamped to the source's missing HP. Nothing in
 ## the live enemy phase calls it yet; that hookup is a separate task.
+## Charge is a pure two-beat projection and holds no state: one call telegraphs a
+## wind-up for an ordinary attack amount, the next turns that same amount into the
+## real strike for floor(amount * 5 / 2). The caller's combat admission has
+## already floor-scaled the amount, so no band scaling is applied here. The live
+## enemy phase does not call it yet; the armed bit and its telegraph are a
+## separate task.
 
 ## Enrage caps at three stacks; each stack adds +2 attack (0, +2, +4, +6).
 const ENRAGE_MAX_STACKS := 3
@@ -208,6 +214,35 @@ func resolve_drain_after_hit(enemies: CombatEnemies, source_position: int,
 	if not enemies.heal(source_position, amount):
 		return _drain_failure()
 	return {"ok": true, "applied": true, "healed": amount}
+
+
+## Project ONE beat of a Charge keyword for a look-driven charging foe.
+## attack_amount: the enemy action's attack amount as the caller's combat
+##   admission already floor-scaled it. Never band-scale it again here.
+## armed: the authoritative per-enemy Charge bit owned by the caller, strictly a
+##   bool. false projects the telegraph, true projects the committed strike.
+## Returns a detached {ok, kind, damage, armed_next} receipt. A not-yet-charged
+## actor telegraphs {kind: "wind_up", damage: 0, armed_next: true}, so that
+## action deals no damage and skips itself while reporting the armed state for its
+## next action. An armed actor strikes with {kind: "attack",
+## damage: floor(attack_amount * 5 / 2), armed_next: false}, computed with whole
+## integers only, so 5/6/7/8/9 become 12/15/17/20/22. A negative amount or a
+## non-boolean `armed` fails closed to {ok: false, kind: "", damage: 0,
+## armed_next: false} without side effects. This is a deterministic rule
+## projection, never an enemy intent or a second action: it keeps no Charge state,
+## mutates nothing, rolls no RNG and leaves Thorns, Enrage and Drain untouched.
+func project_charge_step(attack_amount: int, armed: Variant) -> Dictionary:
+	if attack_amount < 0 or not armed is bool:
+		return _charge_failure()
+	if not armed:
+		return {"ok": true, "kind": "wind_up", "damage": 0, "armed_next": true}
+	@warning_ignore("integer_division")
+	var damage: int = attack_amount * 5 / 2
+	return {"ok": true, "kind": "attack", "damage": damage, "armed_next": false}
+
+
+func _charge_failure() -> Dictionary:
+	return {"ok": false, "kind": "", "damage": 0, "armed_next": false}
 
 
 ## A full snapshot of a living slot with valid, explicitly boolean Drain metadata.
