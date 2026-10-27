@@ -370,6 +370,24 @@ func _reach(fixture: Dictionary, funded: bool = true) -> void:
 	_check(is_instance_valid(app.needle_toll_panel) and app._needle_toll_outcome.is_paid(),
 		"paid toll preserves the wallet before generic affordability tests")
 	if is_instance_valid(app.needle_toll_panel):
+		var offers: Array = app._needle_toll_outcome.get_offered_ids()
+		var buttons: Array = app.needle_toll_panel.get_choice_buttons()
+		_check(offers.size() == 2 and buttons.size() == 3,
+			"real paid visit mounts both rare tickets and Skip")
+		if offers.size() != 2 or buttons.size() != 3:
+			return
+		for index in range(2):
+			var card := RunPoolCardRewardOffers.resolve_reward_definition(offers[index])
+			_check(not card.is_empty(), "routed paid offer resolves to an authored card")
+			if card.is_empty():
+				return
+			_check(buttons[index].text == "Claim %s (%s, rare)\nCost %d energy · %s" % [
+				card.display_name, card.owner, card.cost, CardShortRules.line(card)]
+				and app.needle_toll_panel._bound_choices[buttons[index]] == offers[index]
+				and buttons[index].tooltip_text.begins_with(buttons[index].text + "\nSource positions: ")
+				and buttons[index].is_visible_in_tree()
+				and Rect2(0, 0, 1280, 720).encloses(buttons[index].get_global_rect()),
+				"real app payment exposes the exact offered card powers before selection")
 		await _click(app.needle_toll_panel.get_choice_buttons()[2])
 	_check(app.needle_toll_panel == null and app._needle_toll_completed
 		and _wallet() == {"gold": 0, "scraps": 2 if funded else 0},
