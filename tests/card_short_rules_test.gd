@@ -946,8 +946,12 @@ func _test_dodge_and_exhaust_malformed() -> void:
 		"malformed probes cannot alter a shipped Moth Cloud record")
 
 
-## AC1: all six authored Dodge variants receive exactly one Dodge Help row
-## with the one-shot qualifier and the design-only disclaimer.
+## AC1: all six authored Dodge variants receive exactly one Dodge Help row that
+## states the shipped one-shot rule: the next incoming attack HIT against the real
+## living recipient misses once, Warden Guard redirection picks that recipient, a
+## skipped or downed target keeps its own token, one of several multi-hits is
+## avoided, and an unused Dodge expires at the hero's owner-turn end. The row must
+## not claim live Dodge is unwired, nor that every hit or turn is negated.
 func _test_dodge_help() -> void:
 	var cases := [
 		{"catalog": rag_duelist_starter, "id": "rag_duelist_cape_slip", "owner": "rag_duelist", "target": "self"},
@@ -957,6 +961,7 @@ func _test_dodge_help() -> void:
 		{"catalog": lantern_monk_pool, "id": "lantern_monk_moth_shroud", "owner": "lantern_monk", "target": "ally_single"},
 		{"catalog": lantern_monk_pool, "id": "lantern_monk_moth_shroud_plus", "owner": "lantern_monk", "target": "ally_single"},
 	]
+	var shared_text := ""
 	for case: Dictionary in cases:
 		var catalog: Variant = case["catalog"]
 		var card_id: String = str(case["id"])
@@ -971,6 +976,12 @@ func _test_dodge_help() -> void:
 		_check(effects.get("dodge_next_attack") is int
 			and int(effects["dodge_next_attack"]) == 1,
 			"authored Dodge descriptor: " + card_id)
+		# Moth Shroud keeps its own authored ally Block beside the Dodge.
+		if str(case["target"]) == "ally_single":
+			var expected_block := 8 if card_id.ends_with("_plus") else 6
+			_check(effects.get("block") is int
+				and int(effects["block"]) == expected_block,
+				"Moth Shroud keeps its authored ally Block %d: %s" % [expected_block, card_id])
 		var rows := CardKeywordGlossary.describe(definition)
 		var dodge_rows: Array[Dictionary] = []
 		for row: Dictionary in rows:
@@ -980,14 +991,39 @@ func _test_dodge_help() -> void:
 			"exactly one Dodge Help row for %s (got %d)" % [card_id, dodge_rows.size()])
 		if dodge_rows.size() == 1:
 			var text: String = str(dodge_rows[0].get("explanation", ""))
-			_check(text.contains("NEXT incoming attack"),
-				"Dodge Help mentions NEXT attack: " + card_id)
-			_check(text.contains("avoided once") or text.contains("one-shot"),
-				"Dodge Help states one-shot nature: " + card_id)
-			_check(text.contains("not permanent protection") or text.contains("not a stack"),
-				"Dodge Help denies permanent/stack: " + card_id)
-			_check(text.contains("live combat does not yet apply Dodge"),
-				"Dodge Help disclaims live combat: " + card_id)
+			if shared_text.is_empty():
+				shared_text = text
+			_check(not shared_text.is_empty() and text == shared_text,
+				"one canonical Dodge explanation serves every authored variant: " + card_id)
+			_check(text.contains("next incoming attack HIT")
+				and text.contains("misses once"),
+				"Dodge Help states one next incoming attack HIT misses once: " + card_id)
+			_check(text.contains("who actually receives it")
+				and text.contains("that hero's Dodge is spent on it"),
+				"Dodge Help spends the real recipient's token: " + card_id)
+			_check(text.contains("one-shot") and text.contains("never a stack")
+				and text.contains("never a number of turns"),
+				"Dodge Help keeps the one-shot versus duration distinction: " + card_id)
+			_check(text.contains("Warden Guard redirection decides who really receives")
+				and text.contains("receiving hero's Dodge is the one spent"),
+				"Dodge Help states Guard redirection selects the spent token: " + card_id)
+			_check(text.contains("skipped or downed target keeps its own"),
+				"Dodge Help keeps a bypassed hero's token armed: " + card_id)
+			_check(text.contains("several separate hit attempts")
+				and text.contains("one Dodge avoids one of those hits")
+				and text.contains("not all of them"),
+				"Dodge Help limits a Dodge to one of several multi-hits: " + card_id)
+			_check(text.contains("expires at that hero's owner-turn end"),
+				"Dodge Help states the owner-turn expiry of an unused token: " + card_id)
+			_check(text.contains("Live combat already applies this")
+				and text.contains("before any damage lands"),
+				"Dodge Help states the shipped live attack consumption: " + card_id)
+			_check(not text.contains("does not yet") and not text.contains("not yet apply")
+				and not text.contains("design description only"),
+				"Dodge Help drops the false unwired disclaimer: " + card_id)
+			_check(not text.contains("avoids every hit") and not text.contains("all hits"),
+				"Dodge Help never claims every multi-hit or turn is negated: " + card_id)
+	_check(not shared_text.is_empty(), "the Dodge Help row was really inspected")
 
 
 ## AC2: both Moth Cloud variants keep Blind first, then exactly one Exhaust row.

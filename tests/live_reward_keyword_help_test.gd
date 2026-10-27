@@ -895,18 +895,30 @@ func _blind_definition(target_kind: Variant, effects: Variant) -> Dictionary:
 	return definition
 
 
-## The row a Blind card must print: one-shot, no stack and no duration, the next
-## attack missing and the Blind spent, plus the honest note that live combat does
-## not cancel the attack yet. No digit can appear because Blind has no amount.
+## The row a Blind card must print: one-shot, no stack and no duration, the NEXT
+## attempted attack missing in full (a whole multi-hit sequence), the Blind spent
+## once on that attempt, and the unspent marker kept through an enemy turn that
+## never attacks. The row must state the shipped live enemy-phase consumption
+## instead of the old "live combat does not yet cancel" disclaimer, and Blind has
+## no amount to print.
 func _check_blind_text(text: String, card_id: String) -> void:
-	_check(text.contains("NEXT attack") and text.contains("misses"),
-		"Blind Help states the affected enemy's NEXT attack misses for " + card_id)
-	_check(text.contains("after that attack") and text.contains("spent"),
-		"Blind Help states the Blind is spent after that attack for " + card_id)
-	_check(text.contains("never a stack or a number of turns"),
+	_check(text.contains("NEXT attempted attack") and text.contains("misses in full"),
+		"Blind Help states the affected enemy's NEXT attempted attack misses in full for " + card_id)
+	_check(text.contains("including every hit of a multi-hit sequence"),
+		"Blind Help covers one whole attempted attack, multi-hit included, for " + card_id)
+	_check(text.contains("spent once on that attempt"),
+		"Blind Help states the Blind is spent once on that attempted attack for " + card_id)
+	_check(text.contains("never a stack") and text.contains("never a number of turns"),
 		"Blind Help invents no duration or stack for " + card_id)
-	_check(text.contains("live combat does not yet cancel"),
-		"Blind Help makes no live-play claim for " + card_id)
+	_check(text.contains("An enemy buff or debuff is not an attack")
+		and text.contains("ends without attacking keeps the unspent Blind"),
+		"Blind Help keeps unspent Blind through a non-attacking enemy turn for " + card_id)
+	_check(text.contains("Live combat already resolves this")
+		and text.contains("enemy phase spends the Blind"),
+		"Blind Help states the shipped live enemy-phase consumption for " + card_id)
+	_check(not text.contains("does not yet") and not text.contains("design rule only")
+		and not text.contains("cannot cancel"),
+		"Blind Help drops the false live-play disclaimer for " + card_id)
 	var no_amount := true
 	for digit: String in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]:
 		if text.contains(digit):
@@ -1700,6 +1712,132 @@ func _energy_help(fixture: Dictionary, kind: String) -> void:
 		"energy Help closes with its receipt")
 
 
+## A genuine V3 Fight reward prepared through the shipped party admission and
+## RunFightVictoryRewards, with exactly one authentic base candidate per living
+## hero, so the real weighted selector must offer a real Blind and a real Dodge
+## card. The receipt is produced once by prepare() and never edited afterwards.
+func _prepared_status_help() -> Dictionary:
+	var admitted := RunV3PartyAdmission.admit(["lantern_monk", "rag_duelist", "scarecrow"])
+	_check(admitted.get("ok", false) and (admitted.get("party", []) as Array).size() == 3,
+		"real V3 party admission accepts lantern_monk, rag_duelist and scarecrow")
+	if not admitted.get("ok", false) or (admitted.get("party", []) as Array).size() != 3:
+		return {}
+	var party := CombatParty.new(admitted["party"])
+	var enemies := CombatEnemies.new(_defs(ENEMIES))
+	_check(party.is_valid() and enemies.is_valid(), "genuine V3 combat roster is valid")
+	var result := CombatBattleResult.new(party, enemies)
+	_check(result.get_outcome() == CombatBattleResult.ACTIVE, "V3 combat starts active")
+	for slot in range(1, enemies.get_enemies().size() + 1):
+		_check(enemies.apply_damage(slot, enemies.get_enemy(slot).get("hp", 0)),
+			"kill real enemy to witness V3 victory")
+	_check(result.evaluate() == CombatBattleResult.VICTORY, "witnessed V3 victory")
+	var wanted_cards := ["lantern_monk_wick_flicker", "rag_duelist_cape_flourish",
+		"scarecrow_sack_grin"]
+	var candidates: Array = []
+	for record: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+		if wanted_cards.has(String(record.get("id", ""))):
+			candidates.append(record)
+	_check(candidates.size() == 3,
+		"the three named authored base cards are real reward candidates")
+	var party_ids: Array[String] = []
+	for hero_id: String in admitted["hero_ids"]:
+		party_ids.append(hero_id)
+	var deck: Array[String] = []
+	for card_id: String in admitted["deck"]:
+		deck.append(card_id)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 18420
+	var service := RunFightVictoryRewards.new(result, rng, party_ids, candidates, deck, 97,
+		false, ["button_charm", "thread_token"], ["button_charm"])
+	var receipt: Dictionary = service.prepare()
+	_check(receipt.get("ok", false) and receipt.get("offers", []).size() == 3,
+		"genuine prepared V3 status Fight receipt with three offers")
+	return {"rng": rng, "deck": deck, "party": party, "enemies": enemies,
+		"result": result, "service": service, "receipt": receipt, "wallet": 97,
+		"scraps": 0, "trinkets": ["button_charm"]}
+
+
+## The live Help tab of a genuine V3 reward that offers a real Blind card and a
+## real Dodge card: each popup must show exactly the catalog rows with the shipped
+## one-shot wording, open by mouse and keyboard, and change nothing.
+func _status_help(fixture: Dictionary) -> void:
+	var receipt: Dictionary = fixture["receipt"]
+	if not receipt.get("ok", false):
+		return
+	var node_id := "reward_status_help"
+	_check(panel.open_rewards(node_id, "Fight", receipt),
+		"mounted genuine V3 status receipt")
+	await _frames()
+	if not panel.has_open_rewards():
+		return
+	var before := _snapshot(fixture)
+	for case: Dictionary in [
+			{"id": "lantern_monk_wick_flicker", "keyword": "Blind"},
+			{"id": "rag_duelist_cape_flourish", "keyword": "Dodge"}]:
+		var card_id: String = String(case["id"])
+		var keyword: String = String(case["keyword"])
+		var slot := _slot_for(receipt, card_id)
+		_check(slot >= 0, "genuine V3 receipt offers " + card_id)
+		if slot < 0:
+			continue
+		var definition := RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+		_check(definition.get("id") == card_id,
+			"offered card resolves the authored base record " + card_id)
+		var entries := CardKeywordGlossary.describe(definition)
+		var keyword_rows: Array[Dictionary] = []
+		for row: Dictionary in entries:
+			if String(row.get("keyword", "")) == keyword:
+				keyword_rows.append(row)
+		_check(keyword_rows.size() == 1,
+			"catalog-backed single %s row for offered %s" % [keyword, card_id])
+		var card := panel.choices_container.get_child(slot) as PanelContainer
+		var help := card.get_node_or_null(
+			"CardMargin/CardContent/CardHeader/HelpButton") as Button
+		_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
+			"offered %s gains the real Help tab" % card_id)
+		if help == null or keyword_rows.size() != 1:
+			continue
+		await _mouse(help)
+		var overlay := panel.get_node_or_null("KeywordHelpOverlay") as PanelContainer
+		_check(overlay != null and panel._help_overlay == overlay,
+			"mouse Help opens the %s popup" % card_id)
+		if overlay == null:
+			continue
+		var list := overlay.get_node("HelpContent/KeywordScroll/KeywordLines") as VBoxContainer
+		_check(entries.size() > 0 and list.get_child_count() == entries.size(),
+			"%s Help lists exactly its catalog rows" % card_id)
+		var shown := ""
+		for index in range(list.get_child_count()):
+			shown += (list.get_child(index) as Label).text + "\n"
+		_check(shown.contains(keyword)
+			and shown.contains(String(keyword_rows[0]["explanation"])),
+			"live %s Help repeats the glossary explanation" % card_id)
+		if keyword == "Blind":
+			_check(shown.contains("NEXT attempted attack")
+				and shown.contains("spent once on that attempt")
+				and shown.contains("multi-hit sequence")
+				and not shown.contains("does not yet")
+				and not shown.contains("design rule only"),
+				"live Blind Help states the shipped consumption, not the old disclaimer")
+		else:
+			_check(shown.contains("next incoming attack HIT")
+				and shown.contains("Warden Guard redirection")
+				and shown.contains("skipped or downed target keeps its own")
+				and shown.contains("owner-turn end")
+				and not shown.contains("does not yet")
+				and not shown.contains("not yet apply"),
+				"live Dodge Help states the real recipient, one of several hits and expiry")
+		_check(_snapshot(fixture) == before and requests.is_empty()
+			and not panel._awaiting_ack and not panel._accepted,
+			"opening %s Help changes no receipt, deck, wallet, party or RNG" % card_id)
+		await _key(KEY_ESCAPE)
+		_check(panel._help_overlay == null and help.has_focus(),
+			"Escape closes %s Help and restores its tab" % card_id)
+	panel.close_rewards()
+	_check(not panel.has_open_rewards() and panel._help_overlay == null,
+		"status Help closes with its receipt")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	_catalog_test()
@@ -1813,6 +1951,20 @@ func _run() -> void:
 		"constrained Fight reward really offers base Pin and Pound")
 	await _pin_and_pound_help(pin_and_pound)
 	_check(requests.is_empty(), "Pin and Pound Help never requests a reward")
+	requests.clear()
+	# The genuine V3 reward that offers a real Lantern Monk Blind card and a real
+	# Rag Duelist Dodge card explains the shipped one-shot rules in that same live
+	# Help surface. Help only: this case ends without emitting any reward choice.
+	var status_fixture := _prepared_status_help()
+	if not status_fixture.is_empty():
+		var status_ids: Array[String] = []
+		for offer: Dictionary in status_fixture["receipt"].get("offers", []):
+			status_ids.append(String(offer.get("id", "")))
+		_check(status_ids.has("lantern_monk_wick_flicker")
+			and status_ids.has("rag_duelist_cape_flourish"),
+			"constrained V3 Fight reward really offers the Blind and Dodge cards")
+		await _status_help(status_fixture)
+	_check(requests.is_empty(), "status Help never requests a reward")
 	requests.clear()
 	_finish()
 
