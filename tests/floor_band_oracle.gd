@@ -27,6 +27,11 @@ static func records() -> Dictionary:
 			var copy: Dictionary = record.duplicate(true)
 			if copy.get("max_hp") is float:
 				copy["max_hp"] = int(copy["max_hp"])
+			# The production catalog parser normalizes integral Thorns metadata to
+			# a genuine int, so this independent restatement must do the same: a
+			# raw-JSON 2.0 would otherwise compare unequal to the live authored 2.
+			if copy.get("thorns") is float:
+				copy["thorns"] = int(copy["thorns"])
 			_records[copy["id"]] = copy
 	return _records
 

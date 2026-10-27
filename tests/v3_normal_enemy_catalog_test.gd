@@ -31,6 +31,7 @@ func _initialize() -> void:
 	_test_crusher_harrier_doll_seeded_announcements()
 	_test_crusher_harrier_doll_phase_actions()
 	_test_thistle_patch_doll_thorns()
+	_test_pin_skitter_thorns()
 	_test_bobbin_bat_quilt_termite_catalog()
 	_test_bobbin_bat_quilt_termite_seeded_announcements()
 	_test_bobbin_bat_drain_phase()
@@ -113,7 +114,7 @@ func _old_expected() -> Dictionary:
 				{"type": "attack", "amount": 5, "weight": 3},
 				{"type": "debuff", "amount": 1, "status": "weak", "weight": 2},
 				{"type": "block", "amount": 2, "weight": 1}]}},
-		"pin_skitter": {"id": "pin_skitter", "name": "Pin Skitter", "max_hp": 13, "art_path": "res://assets/paper/enemies/pin_skitter.png",
+		"pin_skitter": {"id": "pin_skitter", "name": "Pin Skitter", "max_hp": 13, "thorns": 2, "art_path": "res://assets/paper/enemies/pin_skitter.png",
 			"intent": {"target": "random", "actions": [
 				{"type": "attack", "amount": 5, "weight": 4},
 				{"type": "shove", "amount": 0, "direction": 1, "weight": 1},
@@ -2818,6 +2819,188 @@ func _test_thistle_patch_doll_thorns() -> void:
 	_check(RunTypedBattleRoster._parse_catalog_text(
 		JSON.stringify([malformed_doll])).is_empty(),
 		"a non-integral Doll Thorns value rejects the whole catalog")
+
+## AC1-AC3: Pin Skitter's pin-prick. The shipped 13 HP normal keeps its random
+## policy and its three weighted alternatives and adds only integer Thorns 2,
+## which the existing CombatAttackCards contact reaction reads for ONE confirmed
+## held-card hit. Previews, rejected plays and its unthorned Fight partner never
+## retaliate; no shared combat rule, encounter or balance value changes here.
+func _test_pin_skitter_thorns() -> void:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(PATH))
+	_check(raw is Array, "raw enemy catalog JSON parses for the Pin Skitter Thorns precondition")
+	var raw_skitter := _find(raw if raw is Array else [], "pin_skitter")
+	_check(raw_skitter.get("thorns") is float and raw_skitter.get("thorns") == 2.0,
+		"AC1: authored Pin Skitter Thorns arrives from JSON as a double")
+	var parsed := _load_parsed()
+	var skitter := _find(parsed, "pin_skitter")
+	_check(not skitter.is_empty(), "AC1: the shipped Pin Skitter record loads")
+	if skitter.is_empty():
+		return
+	_check(skitter.get("thorns") is int and skitter.get("thorns") == 2,
+		"AC1: the strict catalog parser normalizes Pin Skitter Thorns to a genuine int 2")
+	_check(_norm(skitter) == _norm(_old_expected()["pin_skitter"]),
+		"AC1: the exact Pin Skitter record keeps every authored field and alternative")
+	_check(skitter.get("name") == "Pin Skitter" and int(skitter.get("max_hp", 0)) == 13
+		and skitter.get("intent", {}).get("target") == "random"
+		and String(skitter.get("art_path", "")) == "res://assets/paper/enemies/pin_skitter.png",
+		"AC1: Pin Skitter keeps its name, 13 HP, random hero target and existing art path")
+	var pinned := _authored_alternative(skitter, "attack", 5)
+	var shoved := _authored_alternative(skitter, "shove", 0)
+	var clamped := _authored_alternative(skitter, "block", 1)
+	_check(not pinned.is_empty() and not shoved.is_empty() and not clamped.is_empty()
+		and int(pinned.get("weight", 0)) == 4 and int(shoved.get("weight", 0)) == 1
+		and int(shoved.get("direction", 0)) == 1 and int(clamped.get("weight", 0)) == 1,
+		"AC1: the existing attack 5 / shove +1 / Block 1 alternatives keep weights 4/1/1")
+	_check(skitter.get("intent", {}).get("actions", []).size() == 3,
+		"AC1: the new keyword adds no weighted alternative to Pin Skitter")
+	# The authored keyword must be the only new field, never a rewritten record.
+	var without_thorns: Dictionary = skitter.duplicate(true)
+	without_thorns.erase("thorns")
+	var established: Dictionary = _old_expected()["pin_skitter"].duplicate(true)
+	established.erase("thorns")
+	_check(_norm(without_thorns) == _norm(established),
+		"AC1: Thorns 2 is the only difference from the established Pin Skitter record")
+	_check(RunTypedBattleRoster._parse_catalog_text(JSON.stringify(
+		[without_thorns])).size() == 1,
+		"AC1: Thorns metadata stays optional, so the prior record still parses")
+	# AC1: Pin Skitter stays in its existing authored Fight with Thread Biter.
+	var pools: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/encounters/m03_typed_battle_pools.json"))
+	var fight: Variant = pools.get("Fight") if pools is Dictionary else null
+	var crossfire: Variant = fight.get("pin_thread_crossfire") if fight is Dictionary else null
+	var crossfire_ids: Variant = crossfire.get("enemy_ids") if crossfire is Dictionary else null
+	_check(crossfire_ids is Array and "pin_skitter" in crossfire_ids
+		and "thread_biter" in crossfire_ids,
+		"AC1: Pin Skitter stays admitted in the existing pin_thread_crossfire Fight with Thread Biter")
+	_check(crossfire is Dictionary
+		and FileAccess.file_exists(String(crossfire.get("schedule", ""))),
+		"AC1: that existing Fight still points at a shipped schedule file")
+	# AC2: the authentic pair admitted through the real typed-roster bridge.
+	var answer := _assemble(["pin_skitter", "thread_biter"])
+	_check(answer.get("ok") == true,
+		"AC2: the Pin Skitter Fight assembles through the genuine typed-roster bridge")
+	if not answer.get("ok", false):
+		return
+	var enemies: Variant = answer.get("enemies")
+	_check(enemies is CombatEnemies and enemies.is_valid()
+		and enemies.get_enemies().size() == 2, "AC2: the bridge builds two real actors")
+	if not enemies is CombatEnemies or not enemies.is_valid():
+		return
+	var typed: Dictionary = enemies.get_enemy(1)
+	_check(typed.get("id") == "pin_skitter" and typed.get("max_hp") == 13
+		and typed.get("hp") == 13 and typed.get("block") == 0,
+		"AC2: typed Pin Skitter starts at its authored 13 HP and zero Block")
+	_check(typed.get("thorns") is int and typed.get("thorns") == 2,
+		"AC2: the typed roster exposes Pin Skitter Thorns as a genuine int 2")
+	_check(not enemies.get_enemy(2).has("thorns"),
+		"AC3: precondition: its authored Fight partner Thread Biter carries no Thorns")
+	var party := _party()
+	var deck := _attack_deck("warden_strike")
+	_check(party.gain_block(1, 1), "AC2: Warden really owns one Block before the confirmed hit")
+	var party_before := party.get_heroes()
+	var enemies_before: Array = enemies.get_enemies()
+	var deck_rng_before: int = deck._rng.state
+	var attacks := CombatAttackCards.new()
+	var forecast := attacks.forecast_attack(deck, party, enemies, "warden_strike")
+	_check(forecast.get("playable") == true and forecast.get("hits", []).size() == 2
+		and {"position": 1, "damage": 6} in forecast.get("hits", []),
+		"AC2: the real held Strike forecast offers Pin Skitter at its six damage")
+	_check(party.get_heroes() == party_before and enemies.get_enemies() == enemies_before
+		and deck._rng.state == deck_rng_before and deck.hand.has("warden_strike")
+		and deck.energy == 3,
+		"AC3: a pure forecast never retaliates, spends or draws from the real deck")
+	var result := attacks.play_attack(deck, party, enemies, "warden_strike", 1)
+	_check(result.get("ok") == true and result.get("hits", []).size() == 1,
+		"AC2: the real held-card attack against Pin Skitter commits")
+	var hit: Dictionary = result.get("hits", [{}])[0]
+	_check(hit.get("position") == 1 and hit.get("damage") == 6
+		and hit.get("block_absorbed") == 0 and hit.get("hp_loss") == 6,
+		"AC2: the confirmed-hit receipt keeps the authored six damage and old schema")
+	_check(enemies.get_enemy(1).get("hp") == 7,
+		"AC2: Pin Skitter loses exactly six HP to the confirmed hit")
+	var warden: Dictionary = party.get_hero(1)
+	_check(warden.get("block") == 0 and warden.get("hp") == 39,
+		"AC2: Thorns 2 costs Warden two points once: one Block then exactly one HP")
+	_check(deck.energy == 2 and deck.discard_pile.has("warden_strike")
+		and not deck.hand.has("warden_strike"),
+		"AC2: the genuine attack pays its cost and discards the held card")
+	_check(party.get_hero(2).get("hp") == 30 and party.get_hero(2).get("block") == 0
+		and party.get_hero(3).get("hp") == 26 and party.get_hero(3).get("block") == 0,
+		"AC3: the pin-prick lands only on the attacking hero, never on an ally")
+	# AC2: two Block absorb the whole Thorns 2 retaliation and protect Warden HP.
+	var absorbed_party := _party()
+	var absorbed_deck := _attack_deck("warden_strike")
+	_check(absorbed_party.gain_block(1, 2), "precondition: Warden really holds two Block")
+	var absorbed_answer := _assemble(["pin_skitter"])
+	_check(absorbed_answer.get("ok") == true,
+		"single Pin Skitter roster assembles for the absorbed retaliation")
+	if not absorbed_answer.get("ok", false):
+		return
+	var absorbed_enemies: CombatEnemies = absorbed_answer["enemies"]
+	var absorbed := CombatAttackCards.new().play_attack(absorbed_deck, absorbed_party,
+		absorbed_enemies, "warden_strike", 1)
+	_check(absorbed.get("ok") == true and absorbed_party.get_hero(1).get("block") == 0
+		and absorbed_party.get_hero(1).get("hp") == 40,
+		"two Block absorb the whole Thorns 2 retaliation and leave Warden HP untouched")
+	_check(absorbed_enemies.get_enemy(1).get("hp") == 7,
+		"the absorbed retaliation still follows the confirmed six damage")
+	# AC3: a confirmed hit on the unthorned Fight partner never retaliates, so a
+	# green Pin Skitter hit cannot merely echo shared damage.
+	var control_party := _party()
+	var control_deck := _attack_deck("warden_strike")
+	var control := CombatAttackCards.new().play_attack(control_deck, control_party,
+		enemies, "warden_strike", 2)
+	_check(control.get("ok") == true and control_party.get_hero(1).get("hp") == 40
+		and control_party.get_hero(1).get("block") == 0
+		and enemies.get_enemy(2).get("hp") == 9,
+		"a confirmed hit on the unthorned Thread Biter costs the attacker nothing")
+	# AC3: a wrong-target play is uncommitted, so no Thorns, HP, hand, discard,
+	# energy or deck RNG changes at all.
+	var rejected_party := _party()
+	var rejected_deck := _attack_deck("warden_strike")
+	var rejected_answer := _assemble(["pin_skitter"])
+	_check(rejected_answer.get("ok") == true,
+		"single Pin Skitter roster assembles for the rejection control")
+	if not rejected_answer.get("ok", false):
+		return
+	var rejected_enemies: CombatEnemies = rejected_answer["enemies"]
+	var hero_before := rejected_party.get_heroes()
+	var enemy_before: Array = rejected_enemies.get_enemies()
+	var hand_before: Array[String] = rejected_deck.hand.duplicate()
+	var discard_before: Array[String] = rejected_deck.discard_pile.duplicate()
+	var rejected_rng: int = rejected_deck._rng.state
+	var rejected := CombatAttackCards.new().play_attack(rejected_deck, rejected_party,
+		rejected_enemies, "warden_strike", 3)
+	_check(rejected == {"ok": false, "hits": []}
+		and rejected_party.get_heroes() == hero_before
+		and rejected_enemies.get_enemies() == enemy_before
+		and rejected_deck.hand == hand_before
+		and rejected_deck.discard_pile == discard_before
+		and rejected_deck.energy == 3 and rejected_deck._rng.state == rejected_rng,
+		"AC3: a wrong-target attack never triggers Thorns and mutates nothing")
+	_check(rejected_enemies.get_enemy(1).get("hp") == 13
+		and rejected_party.get_hero(1).get("hp") == 40,
+		"AC3: both the unhit Pin Skitter and the uncharged Warden stay untouched")
+	# AC3: with no valid held card the same service fails closed and spends nothing.
+	var empty_deck := CombatDeck.new(StarterCards.new().get_starting_deck(),
+		RandomNumberGenerator.new())
+	_check(empty_deck.hand.is_empty() and empty_deck.energy == 0,
+		"precondition: a fresh deck really holds no card yet")
+	var unheld_party := _party()
+	var unheld_enemies: CombatEnemies = rejected_answer["enemies"]
+	var unheld_before: Array = unheld_enemies.get_enemies()
+	var unheld := CombatAttackCards.new().play_attack(empty_deck, unheld_party,
+		unheld_enemies, "warden_strike", 1)
+	_check(unheld == {"ok": false, "hits": []}
+		and unheld_party.get_hero(1).get("hp") == 40
+		and unheld_enemies.get_enemies() == unheld_before and empty_deck.energy == 0,
+		"AC3: an unheld card never triggers Thorns and mutates nothing")
+	# A malformed Thorns value on this exact record still fails the catalog closed.
+	var malformed_skitter := skitter.duplicate(true)
+	malformed_skitter["thorns"] = 2.5
+	_check(RunTypedBattleRoster._parse_catalog_text(
+		JSON.stringify([malformed_skitter])).is_empty(),
+		"AC3: a non-integral Pin Skitter Thorns value rejects the whole catalog")
 
 ## AC1: the shipped Moth Swarm opts into its cloth-eating bite with exactly one
 ## boolean metadata field; 21 HP, art, front target and the 0/7/Weak-1

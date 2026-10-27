@@ -38,7 +38,7 @@
       {"type": "debuff", "amount": 1, "status": "weak", "weight": 2},
       {"type": "block", "amount": 2, "weight": 1}
     ]}},
-  {"id": "pin_skitter", "name": "Pin Skitter", "max_hp": 13, "art_path": "res://assets/paper/enemies/pin_skitter.png",
+  {"id": "pin_skitter", "name": "Pin Skitter", "max_hp": 13, "thorns": 2, "art_path": "res://assets/paper/enemies/pin_skitter.png",
     "intent": {"target": "random", "actions": [
       {"type": "attack", "amount": 5, "weight": 4},
       {"type": "shove", "amount": 0, "direction": 1, "weight": 1},
