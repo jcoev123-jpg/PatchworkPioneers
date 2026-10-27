@@ -241,10 +241,14 @@ static func resolve_card_definition(card_id: Variant) -> Dictionary:
 	var reward_def: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(id)
 	if not reward_def.is_empty():
 		return reward_def
-	if is_authored_pool_plus(id):
-		for pool in [WardenPoolCards.new(), SeamstressPoolCards.new(), TinkerPoolCards.new()]:
-			var def: Dictionary = pool.get_definition(id)
-			if not def.is_empty():
+	for pool in [
+		WardenPoolCards.new(), SeamstressPoolCards.new(), TinkerPoolCards.new(),
+		LanternMonkPoolCards.new(), RagDuelistPoolCards.new(), ScarecrowPoolCards.new(),
+		YarnRangerPoolCards.new(), ButtonGolemPoolCards.new()
+	]:
+		var def: Dictionary = pool.get_definition(id)
+		if not def.is_empty():
+			if def.get("reward_eligible") == true or is_authored_pool_plus(id):
 				return def
 	return {}
 
@@ -252,7 +256,11 @@ static func resolve_card_definition(card_id: Variant) -> Dictionary:
 ## A pool plus is a legal deck member and stitch half only when BOTH catalog records
 ## and the authored base-to-plus link agree.
 static func is_authored_pool_plus(card_id: String) -> bool:
-	for pool in [WardenPoolCards.new(), SeamstressPoolCards.new(), TinkerPoolCards.new()]:
+	for pool in [
+		WardenPoolCards.new(), SeamstressPoolCards.new(), TinkerPoolCards.new(),
+		LanternMonkPoolCards.new(), RagDuelistPoolCards.new(), ScarecrowPoolCards.new(),
+		YarnRangerPoolCards.new(), ButtonGolemPoolCards.new()
+	]:
 		var upgraded: Dictionary = pool.get_definition(card_id)
 		if upgraded.is_empty():
 			continue
