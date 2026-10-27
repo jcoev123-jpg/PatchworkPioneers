@@ -43,6 +43,7 @@ func _boot(wallet: bool = false, wardrobe: bool = false) -> void:
 	await _frames()
 	app.run_seed = fixture.seed
 	await _click(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()
 	_check(app.run_map.get_node(fixture.id).type == "SewingCircle"
 		and app.run_map.get_legal_choices().has(fixture.id), "genuine seeded legal Sewing Circle")

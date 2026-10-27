@@ -381,7 +381,13 @@ func _screen_root(app, screen: String) -> Control:
 	var node = null
 	match screen:
 		"title":
+			# The pick-three screen opens from the title before any run exists, so it
+			# belongs to the title: Start -> picker is no transition, picker -> map is one.
 			node = app.get("title_view")
+			var picker = app.get("party_picker")
+			if is_instance_valid(node) and node is Control and is_instance_valid(picker) \
+					and picker is Control and picker.is_visible_in_tree():
+				return node
 		"map":
 			node = app.get("route_view")
 		"battle":

@@ -235,9 +235,11 @@ static func resolve_card_definition(card_id: Variant) -> Dictionary:
 	var id: String = card_id
 	if id.is_empty():
 		return {}
-	var starter := StarterCards.new()
-	if starter.has_card(id):
-		return starter.get_definition(id)
+	for starter in [StarterCards.new(), LanternMonkStarterCards.new(), RagDuelistStarterCards.new(),
+		ScarecrowStarterCards.new(), YarnRangerStarterCards.new(), ButtonGolemStarterCards.new()]:
+		var definition: Dictionary = starter.get_definition(id)
+		if not definition.is_empty():
+			return definition
 	var reward_def: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(id)
 	if not reward_def.is_empty():
 		return reward_def

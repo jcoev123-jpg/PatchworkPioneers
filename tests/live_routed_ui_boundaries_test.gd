@@ -296,6 +296,7 @@ func _run() -> void:
 		for mode in range(3):
 			app.run_seed = fixture.seed
 			await _click(app.start_button)
+			preload("res://tests/party_choice.gd").choose(app)
 			var observations: Array = []
 			for step in range(fixture.path.size()):
 				var id: String = fixture.path[step]
@@ -349,6 +350,7 @@ func _four_keys() -> void:
 		for mode in [0, 2]:
 			app.run_seed = value
 			await _click(app.start_button)
+			preload("res://tests/party_choice.gd").choose(app)
 			await _enter_node(id, mode)
 			if mode == 0:
 				replay = _values(app)

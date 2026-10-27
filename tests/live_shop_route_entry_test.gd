@@ -1201,6 +1201,7 @@ func _run() -> void:
 			_check(app.peddler_visit == null and app.shop_view == null and app.run_map == null,
 				"retained open-visit callbacks cannot resurrect Peddler at title")
 			app._start_run()
+			preload("res://tests/party_choice.gd").choose(app)
 			var fresh := _shop_state()
 			bridge.call({"kind": "leave"})
 			for callback in buys + [leave]:

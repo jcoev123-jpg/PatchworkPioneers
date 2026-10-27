@@ -135,6 +135,7 @@ func _enter_fight(seed_value: int = 0) -> bool:
 		app.run_seed = int(candidate)
 		await _reset_to_title()
 		await _mouse(app.start_button)
+		preload("res://tests/party_choice.gd").choose(app)
 		await _frames()
 		if app.run_map == null or not is_instance_valid(app.route_view):
 			_check(false, "physical Start mounts the opening route")
@@ -1835,6 +1836,7 @@ func _screen_fades() -> void:
 	# Title -> map.
 	var fades_before: int = juice.fade_history.size()
 	await _mouse(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()
 	_check(app.run_map != null and is_instance_valid(app.route_view)
 		and app.route_view.is_visible_in_tree() and not app.title_view.is_visible_in_tree(),

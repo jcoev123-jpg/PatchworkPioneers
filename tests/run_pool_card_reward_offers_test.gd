@@ -15,6 +15,7 @@ func _initialize() -> void:
 	_test_fail_closed_rejections()
 	_test_authored_candidate_aggregation()
 	_test_authored_pool_roll()
+	_test_v3_pools()
 
 	if failures.is_empty():
 		print("run_pool_card_reward_offers_test: PASS (", checks, " checks)")
@@ -29,6 +30,47 @@ func _check(condition: bool, description: String) -> void:
 	checks += 1
 	if not condition:
 		failures.append(description)
+
+
+func _test_v3_pools() -> void:
+	var candidates := RunPoolCardRewardOffers.get_authored_base_candidates()
+	var before := candidates.duplicate(true)
+	for pool in [LanternMonkPoolCards.new(), RagDuelistPoolCards.new(), ScarecrowPoolCards.new(),
+		YarnRangerPoolCards.new(), ButtonGolemPoolCards.new()]:
+		var owner := ""
+		for id in pool.get_base_ids():
+			var definition: Dictionary = pool.get_definition(id)
+			owner = definition.owner
+			var required := {"id": id, "owner": owner, "rarity": definition.rarity}
+			_check(candidates.count(required) == 1, "required V3 base candidate exactly once: " + id)
+			_check(RunPoolCardRewardOffers.resolve_reward_definition(id) == definition,
+				"V3 reward resolves full authored metadata: " + id)
+			_check(RunRestStitchCards.resolve_card_definition(id) == definition,
+				"V3 base stays legal in run/Rest ledger: " + id)
+			var plus: String = pool.get_upgrade_id(id)
+			_check(not plus.is_empty() and RunPoolCardRewardOffers.resolve_reward_definition(plus).is_empty(),
+				"V3 pool upgrade never resolves as reward: " + plus)
+			_check(RunRestStitchCards.resolve_card_definition(plus) == pool.get_definition(plus),
+				"authored V3 pool upgrade remains legal earned deck card: " + plus)
+		var party: Array[String] = [owner, "warden", "tinker"]
+		var rng := _rng()
+		var oracle_rng := _rng()
+		var result := RunPoolCardRewardOffers.generate_from_authored_pools(rng, party)
+		_check(result.ok and result.offers == _oracle(party, candidates, oracle_rng)
+			and rng.state == oracle_rng.state, "V3 weighted sorted-pool oracle and exact RNG: " + owner)
+		var living_rng := _rng()
+		var living := RunPoolCardRewardOffers.generate_for_living_from_authored(living_rng, party, party)
+		_check(living.ok and living.offers.size() == 3, "V3 living balanced reward is nonempty: " + owner)
+		if living.ok:
+			for i in range(3):
+				_check(living.offers[i].owner == party[i], "living V3 offer preserves party order")
+		var invalid := candidates.duplicate(true)
+		invalid.append({"id": pool.get_upgrade_id(pool.get_base_ids()[0]), "owner": owner, "rarity": "common"})
+		_assert_rejected("new V3 upgrade cannot enter candidate pool", _rng(), party, invalid)
+		var admission := RunV3PartyAdmission.admit(party)
+		_check(admission.ok and RunRestStitchCards.new(admission.deck, {}, 0).is_valid(),
+			"V3 admitted four-per-owner starters all resolve in legal run ledger")
+	_check(candidates == before, "V3 generation/resolution leaves authored candidates unchanged")
 
 
 func _rng(seed_value: int = TEST_SEED) -> RandomNumberGenerator:

@@ -212,6 +212,7 @@ func _start(fixture: Dictionary) -> void:
 		"fresh title has no previous run")
 	app.run_seed = fixture.seed
 	await _activate(app.start_button, true)
+	preload("res://tests/party_choice.gd").choose(app)
 	_check(app.run_map != null and app.route_view != null, "physical title Start mounts route")
 	_check(app.run_map.get_floors() == fixture.graph and app.run_map.get_route().is_empty(),
 		"Start uses searched seeded graph without selecting a node")

@@ -493,6 +493,7 @@ func _three_enemy_case() -> void:
 		return
 	app.run_seed = int(candidate.seed)
 	app.start_button.pressed.emit()
+	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()
 	var route: Button
 	for button in app.route_buttons:

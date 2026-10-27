@@ -272,6 +272,18 @@ static func _valid_projection(state: Dictionary, torn_state: Dictionary, project
 
 
 static func _valid_heroes(heroes: Variant, counts: Variant) -> bool:
+	var caps := {}
+	if heroes is Array:
+		var ids: Array = []
+		for hero in heroes:
+			if not hero is Dictionary:
+				return false
+			ids.append(hero.get("id"))
+		var admission := RunV3PartyAdmission.admit(ids)
+		if not admission.ok:
+			return false
+		for definition in admission.party:
+			caps[definition.id] = definition.max_hp
 	if typeof(heroes) != TYPE_ARRAY or heroes.size() != RunPatchWardrobe.HERO_IDS.size():
 		return false
 	if typeof(counts) != TYPE_DICTIONARY or counts.size() != RunPatchWardrobe.HERO_IDS.size():
@@ -282,7 +294,7 @@ static func _valid_heroes(heroes: Variant, counts: Variant) -> bool:
 		if typeof(hero) != TYPE_DICTIONARY:
 			return false
 		var id: Variant = hero.get("id")
-		if typeof(id) != TYPE_STRING or not STARTING_HP.has(id) or seen.has(id):
+		if typeof(id) != TYPE_STRING or not caps.has(id) or seen.has(id):
 			return false
 		seen[id] = true
 		for field in ["position", "hp", "max_hp", "block"]:
@@ -303,7 +315,7 @@ static func _valid_heroes(heroes: Variant, counts: Variant) -> bool:
 		var count: Variant = counts.get(id)
 		if typeof(count) != TYPE_INT or count < 0:
 			return false
-		var starting: int = STARTING_HP[id]
+		var starting: int = caps[id]
 		var turns_to_floor: int = ceili(float(starting - MIN_MAX_HP) / float(TEAR_LOSS))
 		var expected_max: int = MIN_MAX_HP if count >= turns_to_floor else starting - TEAR_LOSS * count
 		if hero["max_hp"] != expected_max:

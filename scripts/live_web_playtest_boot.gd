@@ -56,6 +56,10 @@ func enter_preview(app, screen: String) -> bool:
 	elif screen != "title":
 		app.run_seed = {"rest": 14, "shop": 14, "event": 6}.get(screen, 1)
 		app.start_button.pressed.emit()
+		if is_instance_valid(app.party_picker):
+			for id in ["warden", "seamstress", "tinker"]:
+				app.party_picker._tiles[id].pressed.emit()
+			app.party_picker.continue_button.pressed.emit()
 		if app.run_map == null or not _visible(app.route_view):
 			_busy = false
 			return false

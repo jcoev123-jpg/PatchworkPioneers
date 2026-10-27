@@ -116,6 +116,7 @@ func _run() -> void:
 		await process_frame
 		app.run_seed = fixture.seed
 		await _activate(app.start_button, mode == 1)
+		preload("res://tests/party_choice.gd").choose(app)
 		_check(app.run_map != null and app.route_view != null and app.deck == null,
 			"real title input initializes chooser before any encounter")
 		if app.run_map == null or app.route_view == null:
