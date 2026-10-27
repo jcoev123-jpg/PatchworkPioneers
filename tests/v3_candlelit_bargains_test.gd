@@ -72,7 +72,7 @@ const NEW_RECORDS := {
 		"choices": [
 			["buy_trial_thread", "Pay 40 gold for five prize-thread bundles (+5 scraps)", -40, 5],
 			["sell_spool_braid", "Sell two scrap bundles for 31 gold", 31, -2],
-			["leave", "Decline the spool-keeper's trial", 0, 0],
+			["leave", "Decline the spool-keeper’s trial", 0, 0],
 		],
 	},
 }

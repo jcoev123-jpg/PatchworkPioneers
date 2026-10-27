@@ -117,7 +117,7 @@
       "choices": [
         {"id": "buy_trial_thread", "text": "Pay 40 gold for five prize-thread bundles (+5 scraps)", "outcome": {"gold": -40, "scraps": 5}},
         {"id": "sell_spool_braid", "text": "Sell two scrap bundles for 31 gold", "outcome": {"gold": 31, "scraps": -2}},
-        {"id": "leave", "text": "Decline the spool-keeper's trial", "outcome": {"gold": 0, "scraps": 0}}
+        {"id": "leave", "text": "Decline the spool-keeper’s trial", "outcome": {"gold": 0, "scraps": 0}}
       ]
     }
   ]
