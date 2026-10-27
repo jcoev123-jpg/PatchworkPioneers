@@ -23,12 +23,14 @@ const V3_ELITES := {
 			{"type": "snip_block", "amount": 0, "weight": 2},
 			{"type": "debuff", "amount": 2, "status": "bleed", "weight": 2},
 			{"type": "attack", "amount": 9, "weight": 2}]},
+	## The Zipper Hauler looks like a hook: its shove is a forward pull (direction
+	## -1) that yanks the living middle hero in front of its partner.
 	"zipper_hauler": {
 		"name": "Zipper Hauler", "max_hp": 38,
 		"art_path": "res://assets/paper/enemies/zipper_hauler.png",
 		"target": "front",
 		"actions": [
-			{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+			{"type": "shove", "amount": 0, "direction": -1, "weight": 2},
 			{"type": "debuff", "amount": 1, "status": "exposed", "weight": 2},
 			{"type": "attack", "amount": 8, "weight": 2}]}}
 ## The two earlier Elite records must survive the append unchanged.
@@ -122,6 +124,7 @@ func _initialize() -> void:
 	_test_marshal_sting()
 	_test_hexer_lash()
 	_test_v3_elites()
+	_test_zipper_pull_rng()
 	_test_v3_2_elites()
 	_test_briar_guard_thorns(_catalog(ELITES))
 	_test_keyword_elites()
@@ -1334,39 +1337,69 @@ func _test_scissor_beats(record: Dictionary) -> void:
 		"authored Scissor attack 9 absorbs four Block then deals exactly five HP")
 
 
+## AC1/AC2/AC3: the shipped Zipper Hauler looks like a hook, so its authored
+## shove is a forward pull (direction -1). A real CombatEnemyPhase yanks the
+## living middle hero in slot 2 forward into slot 1 instead of shoving the front
+## hero back, exchanging exactly those two actors.
 func _test_zipper_beats(record: Dictionary) -> void:
 	var fixture := _new_elite_fixture(record)
 	var party: CombatParty = fixture["party"]
 	var enemies: CombatEnemies = fixture["enemies"]
-	var shove := {"type": "shove", "enemy_position": 1, "amount": 0,
-		"target_position": 1, "direction": 1}
+	var authored_pulls: Array = []
+	for raw in record.get("intent", {}).get("actions", []):
+		if raw is Dictionary and raw.get("type") == "shove":
+			var weighted := CombatEnemyIntents.weighted_action(raw)
+			var body: Dictionary = weighted.get("action", {}).duplicate(true)
+			body["weight"] = weighted.get("weight", 0)
+			authored_pulls.append(body)
+	_check(authored_pulls == [{"type": "shove", "amount": 0, "direction": -1,
+			"weight": 2}],
+		"AC1: the shipped Zipper Hauler authors one pull: shove 0 direction -1 weight 2")
+	var pull := {"type": "shove", "enemy_position": 1, "amount": 0,
+		"target_position": 2, "direction": -1}
 	_check(party.apply_damage(1, 4) and party.gain_block(1, 2)
 		and party.apply_damage(2, 3) and party.gain_block(2, 1),
-		"shove precondition: both front heroes live with distinct HP and Block")
+		"pull precondition: the front and middle heroes live with distinct HP and Block")
+	_check(party.get_hero(1).get("id") == "warden"
+		and party.get_hero(2).get("id") == "seamstress"
+		and not party.is_downed(1) and not party.is_downed(2),
+		"pull precondition: the hooked middle hero stands behind a living front hero")
 	party._heroes[1]["statuses"] = {"exposed": 1}
 	var heroes_before := party.get_heroes()
 	var foes_before := enemies.get_enemies()
-	var input := [shove.duplicate(true)]
+	var input := [pull.duplicate(true)]
 	var input_before := input.duplicate(true)
 	var result: Dictionary = CombatEnemyPhase.new().execute_phase(party, enemies, input)
-	_check(result == {"ok": true, "events": [_phase_event(shove)]},
-		"announced Zipper shove +1 resolves as one applied beat")
+	_check(result == {"ok": true, "events": [_phase_event(pull)]},
+		"announced Zipper pull -1 resolves as one applied beat")
 	var expected := heroes_before.duplicate(true)
 	expected[0] = heroes_before[1].duplicate(true)
 	expected[1] = heroes_before[0].duplicate(true)
 	expected[0]["position"] = 1
 	expected[1]["position"] = 2
 	_check(party.get_heroes() == expected,
-		"shove +1 exchanges the living heroes in positions 1/2 with every other field kept")
+		"a -1 pull exchanges the living heroes in positions 2 and 1 with every other field kept")
 	_check(party.get_hero(1).get("id") == "seamstress"
 		and party.get_hero(2).get("id") == "warden"
 		and party.get_hero(1).get("hp") == heroes_before[1]["hp"]
 		and party.get_hero(2).get("hp") == heroes_before[0]["hp"]
 		and party.get_hero(1).get("block") == heroes_before[1]["block"]
 		and party.get_hero(2).get("block") == heroes_before[0]["block"],
-		"swapped heroes keep their current HP, Block and statuses")
+		"the pulled heroes keep their identity, current HP, Block and statuses")
+	_check(party.get_hero(1).get("statuses") == {"exposed": 1}
+		and party.get_hero(3) == heroes_before[2],
+		"the pulled hero keeps its Exposed stack and the rear hero stays in slot 3")
 	_check(enemies.get_enemies() == foes_before and input == input_before,
-		"a shove is not a damaging move and leaves the authored input untouched")
+		"a pull is not a damaging move and leaves the enemy roster and input untouched")
+
+	# AC3: a forward pull whose front partner is genuinely downed fails closed.
+	fixture = _new_elite_fixture(record)
+	party = fixture["party"]
+	enemies = fixture["enemies"]
+	_check(party.apply_damage(1, 40) and party.is_downed(1) and not party.is_downed(2),
+		"AC3 precondition: the front partner of the pull is genuinely downed")
+	_reject_beat("forward pull into a downed front partner", party, enemies,
+		pull.duplicate(true))
 
 	fixture = _new_elite_fixture(record)
 	party = fixture["party"]
@@ -1396,6 +1429,32 @@ func _test_zipper_beats(record: Dictionary) -> void:
 		and after.get("block") == 0 and after.get("hp") == 25
 		and enemies.get_enemies() == foes_before,
 		"authored Zipper attack 8 absorbs three Block then deals exactly five HP")
+
+
+## AC3: the legitimate pull is a pure state exchange. Its own seeded global
+## stream is checked here, outside _test_v3_elites, so the enclosing v3
+## no-global-RNG witness keeps its exact seed.
+func _test_zipper_pull_rng() -> void:
+	var record := _record(_catalog(ELITES), "zipper_hauler")
+	if record.is_empty():
+		return
+	var fixture := _new_elite_fixture(record)
+	var party: CombatParty = fixture["party"]
+	var enemies: CombatEnemies = fixture["enemies"]
+	var pull := {"type": "shove", "enemy_position": 1, "amount": 0,
+		"target_position": 2, "direction": -1}
+	_check(not party.is_downed(1) and not party.is_downed(2),
+		"AC3 precondition: the seeded pull has a living middle-to-front pair")
+	seed(52499)
+	var expected_rng := randi()
+	seed(52499)
+	var result: Dictionary = CombatEnemyPhase.new().execute_phase(party, enemies, [pull])
+	_check(result.get("ok", false)
+		and party.get_hero(1).get("id") == "seamstress"
+		and party.get_hero(2).get("id") == "warden",
+		"AC3: the seeded pull really resolves both living heroes")
+	_check(randi() == expected_rng,
+		"AC3: a resolved legitimate pull consumes no random number")
 
 
 ## A rejected beat must leave both rosters and the announced input byte-identical.
@@ -1439,6 +1498,14 @@ func _test_v3_phase_rejections(records: Dictionary) -> void:
 		_reject_beat("shove past the back slot " + id, party, fixture["enemies"],
 			{"type": "shove", "enemy_position": 1, "amount": 0,
 			"target_position": 3, "direction": 1})
+
+		fixture = _new_elite_fixture(record)
+		party = fixture["party"]
+		_check(party.gain_block(1, 3) and party.gain_block(2, 4),
+			"rejection precondition: front and middle Block must survive " + id)
+		_reject_beat("forward pull from the front slot " + id, party, fixture["enemies"],
+			{"type": "shove", "enemy_position": 1, "amount": 0,
+			"target_position": 1, "direction": -1})
 
 		fixture = _new_elite_fixture(record)
 		party = fixture["party"]
