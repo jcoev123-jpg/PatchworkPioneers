@@ -37,6 +37,22 @@ var card_authored: Dictionary = {}
 var patch_authored: Dictionary = {}
 var intents: Array[Dictionary] = []
 var preview_catalogs: Array = []
+var observer: KeyObserver
+var presses: Dictionary = {}
+
+
+## Event-observation hook: a key that reaches the unhandled stage was NOT
+## consumed by the Peddler's shortcut handler, so the rest of the game could
+## still act on it. A handled shortcut never appears here.
+class KeyObserver:
+	extends Node
+
+	var seen: Array = []
+
+	func _unhandled_key_input(event: InputEvent) -> void:
+		var key := event as InputEventKey
+		if key != null and key.pressed:
+			seen.append(key.keycode)
 
 
 class Controller:
@@ -165,6 +181,15 @@ func _run() -> void:
 	panel.bind(visit) # Pre-mount bind is permitted and must be honored.
 	host.add_child(panel)
 	panel.intent_requested.connect(func(intent: Dictionary): intents.append(intent))
+	observer = KeyObserver.new()
+	root.add_child(observer)
+	# Independent Button.pressed spies: they count real signal emissions on the
+	# mounted controls, separate from the panel's own view-owned callbacks.
+	_spy("card0", panel.card_buttons[0])
+	_spy("card1", panel.card_buttons[1])
+	_spy("card2", panel.card_buttons[2])
+	_spy("patch", panel.patch_button)
+	_spy("leave", panel.leave_button)
 	await _frames()
 	_check(host.size == Vector2(1280, 720) and panel.get_parent() == host,
 			"panel is mounted under a 1280x720 Control")
@@ -917,138 +942,229 @@ func _leave_case(keyboard: bool) -> void:
 	_check(intents.size() == 1, "retired Leave handler cannot emit after the one Leave")
 
 
+## Independent spies on the mounted controls: they count real Button.pressed
+## emissions without passing through the panel's own intent callbacks.
+func _spy(name: String, button: Button) -> void:
+	presses[name] = 0
+	button.pressed.connect(_count_press.bind(name))
+
+
+func _count_press(name: String) -> void:
+	presses[name] = int(presses[name]) + 1
+
+
+func _press_totals() -> Dictionary:
+	return presses.duplicate()
+
+
+## Exactly the named spy (or no spy at all, for a refused shortcut) gained one
+## press and every other mounted control stayed silent.
+func _pressed_only(name: String, before: Dictionary) -> bool:
+	for key in presses:
+		var expected := int(before[key]) + (1 if key == name else 0)
+		if int(presses[key]) != expected:
+			return false
+	return true
+
+
+## One genuine physical number key through the real viewport. Returns true when
+## the event reached the unhandled stage, i.e. the Peddler did NOT consume it.
+func _push_shortcut(key: Key, echo: bool = false, shift: bool = false) -> bool:
+	observer.seen.clear()
+	var event := InputEventKey.new()
+	event.keycode = key
+	event.pressed = true
+	event.echo = echo
+	event.shift_pressed = shift
+	root.push_input(event)
+	await _frames()
+	var passed_on := observer.seen.has(key)
+	var release := InputEventKey.new()
+	release.keycode = key
+	release.pressed = false
+	release.echo = echo
+	release.shift_pressed = shift
+	root.push_input(release)
+	await _frames()
+	return passed_on
+
+
 func _shortcut_cases() -> void:
-	# 1, 2, 3, 4, 0 keys
+	# --- enabled offers: 1/2/3 cards, 4 patch, 0 Leave, each pressed once ---
 	var scenarios := [
-		{"key": KEY_1, "index": 0, "kind": "card"},
-		{"key": KEY_2, "index": 1, "kind": "card"},
-		{"key": KEY_3, "index": 2, "kind": "card"},
-		{"key": KEY_4, "index": 0, "kind": "trinket"},
-		{"key": KEY_0, "index": -1, "kind": "leave"},
+		{"key": KEY_1, "index": 0, "kind": "card", "spy": "card0"},
+		{"key": KEY_2, "index": 1, "kind": "card", "spy": "card1"},
+		{"key": KEY_3, "index": 2, "kind": "card", "spy": "card2"},
+		{"key": KEY_4, "index": 0, "kind": "trinket", "spy": "patch"},
+		{"key": KEY_0, "index": -1, "kind": "leave", "spy": "leave"},
 	]
 	for scenario in scenarios:
 		var key: int = scenario["key"]
 		var index: int = scenario["index"]
 		var kind: String = scenario["kind"]
+		var spy_name: String = scenario["spy"]
 		var visit := _visit(GOLD, "peddler_shortcut_" + str(key))
 		var before := visit.read_state()
 		await _bind(visit)
 		panel.card_buttons[0].grab_focus()
 		await _frames()
-		_check(panel.get_viewport().gui_get_focus_owner() != null, "panel button has focus")
-		var event := InputEventKey.new()
-		event.keycode = key
-		event.pressed = true
-		root.push_input(event)
-		await _frames()
+		_check(panel.get_viewport().gui_get_focus_owner() == panel.card_buttons[0],
+				"panel button has focus before shortcut " + str(key))
+		var counts := _press_totals()
+		var passed_on := await _push_shortcut(key)
+		_check(not passed_on, "enabled shortcut " + str(key) + " is handled, not passed on")
+		_check(_pressed_only(spy_name, counts),
+				"shortcut " + str(key) + " presses exactly its own enabled button once")
 		_check(intents.size() == 1, "shortcut key " + str(key) + " emits exactly one intent")
-		if intents.size() == 1:
-			var receipt := Controller.settle(visit, intents[0], before)
-			_check(receipt.get("ok") == true and receipt.get("kind", "leave") == kind,
-					"shortcut key " + str(key) + " settles authentically")
-		var up_event := InputEventKey.new()
-		up_event.keycode = key
-		up_event.pressed = false
-		root.push_input(up_event)
-		await _frames()
+		if intents.size() != 1:
+			continue
+		var receipt := Controller.settle(visit, intents[0], before)
+		_check(receipt.get("ok") == true and receipt.get("kind", "leave") == kind,
+				"shortcut key " + str(key) + " settles authentically")
+		if kind == "leave":
+			_check(receipt.get("state") == before["state"]
+					and receipt.get("stock") == before["stock"],
+					"the Leave shortcut spends nothing and changes no quote")
+		else:
+			var expected := _expected_receipt(before, kind, index)
+			_check(receipt.get("price") == expected["price"]
+					and receipt.get("state") == expected["state"]
+					and receipt.get("stock") == expected["stock"],
+					"the " + kind + " shortcut charges the authored quote exactly once")
+		_check(visit.is_consumed() and visit.read_state().get("status") != "open",
+				"shortcut key " + str(key) + " closes the visit exactly once")
+		_check(Controller.settle(visit, intents[0], before).get("ok") != true,
+				"replaying the settled shortcut intent is refused")
+		var replay_counts := _press_totals()
+		await _push_shortcut(key)
+		_check(_pressed_only("", replay_counts) and intents.size() == 1,
+				"replaying shortcut key " + str(key) + " presses no control")
 
-	# Zero gold
+	# --- zero gold: all four paid offers disabled, the free Leave intact ---
 	var broke := _visit(0, "peddler_shortcut_broke")
+	var broke_before := broke.read_state()
 	await _bind(broke)
-	panel.card_buttons[0].grab_focus()
+	_check(panel.leave_button.has_focus(),
+			"the zero-gold panel focuses its only enabled action")
 	for key in [KEY_1, KEY_2, KEY_3, KEY_4]:
-		var event := InputEventKey.new()
-		event.keycode = key
-		event.pressed = true
-		root.push_input(event)
-	await _frames()
-	_check(intents.is_empty(), "broke visit ignores 1-4 shortcuts")
-	var leave_event := InputEventKey.new()
-	leave_event.keycode = KEY_0
-	leave_event.pressed = true
-	root.push_input(leave_event)
-	await _frames()
+		var counts := _press_totals()
+		var passed_on := await _push_shortcut(key)
+		_check(_pressed_only("", counts),
+				"broke visit: disabled shortcut " + str(key) + " presses no button")
+		_check(passed_on, "broke visit: disabled shortcut " + str(key) + " is not consumed")
+		_check(intents.is_empty() and broke.read_state() == broke_before,
+				"broke visit: disabled shortcut " + str(key) + " emits no intent and spends nothing")
+	var leave_counts := _press_totals()
+	var leave_passed_on := await _push_shortcut(KEY_0)
+	_check(not leave_passed_on and _pressed_only("leave", leave_counts),
+			"broke visit: 0 still presses the one free Leave and is handled")
 	_check(intents.size() == 1 and intents[0]["kind"] == "leave",
-			"broke visit still accepts 0 shortcut to Leave")
+			"broke visit: 0 shortcut emits one Leave intent")
+	if intents.size() == 1:
+		var leave_receipt := Controller.settle(broke, intents[0], broke_before)
+		_check(leave_receipt.get("ok") == true and leave_receipt.get("decision") == "leave"
+				and leave_receipt["state"] == broke_before["state"]
+				and leave_receipt["stock"] == broke_before["stock"],
+				"broke visit: that Leave settles free against the real service")
 
-	# Owned/SOLD patch
+	# --- owned/SOLD patch: key 4 inert, an enabled card still authentic ---
 	var patch_id: String = str(sampled["patches"][0]["id"])
 	var sold := _visit(GOLD, "peddler_shortcut_sold", [patch_id])
+	var sold_before := sold.read_state()
 	await _bind(sold)
+	_check(panel.patch_button.disabled and sold_before["stock"]["trinkets"][0]["sold"],
+			"owned-patch fixture really disables the patch offer")
 	panel.card_buttons[0].grab_focus()
-	var patch_event := InputEventKey.new()
-	patch_event.keycode = KEY_4
-	patch_event.pressed = true
-	root.push_input(patch_event)
 	await _frames()
-	_check(intents.is_empty(), "owned patch ignores 4 shortcut")
-	var card_event := InputEventKey.new()
-	card_event.keycode = KEY_1
-	card_event.pressed = true
-	root.push_input(card_event)
-	await _frames()
+	var patch_counts := _press_totals()
+	var patch_passed_on := await _push_shortcut(KEY_4)
+	_check(_pressed_only("", patch_counts) and intents.is_empty(),
+			"owned patch: key 4 makes zero patch presses and no intent")
+	_check(patch_passed_on and sold.read_state() == sold_before,
+			"owned patch: key 4 is not consumed and changes no quote")
+	var card_counts := _press_totals()
+	var card_passed_on := await _push_shortcut(KEY_1)
+	_check(not card_passed_on and _pressed_only("card0", card_counts),
+			"owned patch: enabled key 1 still presses exactly one card")
 	_check(intents.size() == 1 and intents[0]["kind"] == "card",
-			"available card still works with 1 shortcut after sold patch")
+			"owned patch: enabled key 1 still sends a valid card intent")
+	if intents.size() == 1:
+		var card_receipt := Controller.settle(sold, intents[0], sold_before)
+		_check(card_receipt.get("ok") == true
+				and card_receipt["state"]["trinkets"] == [patch_id]
+				and card_receipt["state"]["deck"] == DECK
+				+ [str(sold_before["stock"]["cards"][0]["id"])]
+				and card_receipt["price"] == int(sold_before["stock"]["cards"][0]["price"]),
+				"owned patch: the card shortcut still settles at its authored quote")
 
-	# Invalid states (focus away, stale, repeat, echo)
+	# --- refusals: unrelated, focus away, echo, modifier, hidden, stale, closed ---
 	var guarded := _visit(GOLD, "peddler_shortcut_guarded")
+	var guarded_before := guarded.read_state()
 	await _bind(guarded)
-
-	# Unrelated key
-	var unrelated := InputEventKey.new()
-	unrelated.keycode = KEY_9
-	unrelated.pressed = true
-	root.push_input(unrelated)
+	panel.card_buttons[0].grab_focus()
 	await _frames()
-	_check(intents.is_empty(), "unrelated key does nothing")
 
-	# Focus away
+	var unrelated_counts := _press_totals()
+	_check(await _push_shortcut(KEY_9) and _pressed_only("", unrelated_counts)
+			and intents.is_empty(), "unrelated key does nothing and stays unconsumed")
+
 	var other_control := Control.new()
 	other_control.focus_mode = Control.FOCUS_ALL
 	host.add_child(other_control)
 	other_control.grab_focus()
 	await _frames()
-	var away_event := InputEventKey.new()
-	away_event.keycode = KEY_1
-	away_event.pressed = true
-	root.push_input(away_event)
-	await _frames()
-	_check(intents.is_empty(), "shortcut ignored when focus is away")
+	var away_counts := _press_totals()
+	_check(await _push_shortcut(KEY_1) and _pressed_only("", away_counts)
+			and intents.is_empty(), "shortcut ignored when focus is away")
 	other_control.queue_free()
 	panel.card_buttons[0].grab_focus()
 	await _frames()
 
-	# Echo
-	var echo_event := InputEventKey.new()
-	echo_event.keycode = KEY_1
-	echo_event.pressed = true
-	echo_event.echo = true
-	root.push_input(echo_event)
-	await _frames()
-	_check(intents.is_empty(), "shortcut ignores echo events")
+	var echo_counts := _press_totals()
+	_check(await _push_shortcut(KEY_1, true) and _pressed_only("", echo_counts)
+			and intents.is_empty(), "shortcut ignores echo events and does not consume them")
 
-	# Modifier
-	var mod_event := InputEventKey.new()
-	mod_event.keycode = KEY_1
-	mod_event.pressed = true
-	mod_event.shift_pressed = true
-	root.push_input(mod_event)
-	await _frames()
-	_check(intents.is_empty(), "shortcut ignores modifier keys")
+	var mod_counts := _press_totals()
+	_check(await _push_shortcut(KEY_1, false, true) and _pressed_only("", mod_counts)
+			and intents.is_empty(), "shortcut ignores modifier keys and does not consume them")
 
-	# Already pending intent cannot be duplicated
-	var valid_event := InputEventKey.new()
-	valid_event.keycode = KEY_1
-	valid_event.pressed = true
-	root.push_input(valid_event)
+	panel.hide()
+	var hidden_counts := _press_totals()
+	_check(await _push_shortcut(KEY_1) and _pressed_only("", hidden_counts)
+			and intents.is_empty(), "hidden panel presses nothing for a shortcut")
+	panel.show()
 	await _frames()
-	_check(intents.size() == 1, "first valid shortcut emits")
-	var duplicate_event := InputEventKey.new()
-	duplicate_event.keycode = KEY_2
-	duplicate_event.pressed = true
-	root.push_input(duplicate_event)
+	panel.card_buttons[0].grab_focus()
 	await _frames()
-	_check(intents.size() == 1, "second valid shortcut cannot emit while pending")
+
+	guarded._purchases._state["gold"] += 1
+	var stale_counts := _press_totals()
+	_check(await _push_shortcut(KEY_1) and _pressed_only("", stale_counts)
+			and intents.is_empty(), "stale bound source presses nothing for a shortcut")
+	guarded._purchases._state["gold"] -= 1
+	_check(guarded.read_state() == guarded_before,
+			"restored source is still the unchanged open visit")
+
+	var closing := _visit(GOLD, "peddler_shortcut_closed")
+	var closing_before := closing.read_state()
+	await _bind(closing)
+	_check(closing.leave(closing_before["node_id"], closing_before["state"],
+			closing_before["stock"]).get("ok") == true, "shortcut fixture really closes")
+	var closed_counts := _press_totals()
+	_check(await _push_shortcut(KEY_1) and _pressed_only("", closed_counts)
+			and intents.is_empty(), "closed visit presses nothing for a shortcut")
+
+	# --- one accepted shortcut retires every control and refuses a replay ---
+	await _bind(guarded)
+	panel.card_buttons[0].grab_focus()
+	await _frames()
+	var first_counts := _press_totals()
+	_check(not await _push_shortcut(KEY_1) and _pressed_only("card0", first_counts)
+			and intents.size() == 1, "first valid shortcut presses once and emits once")
+	var second_counts := _press_totals()
+	await _push_shortcut(KEY_2)
+	_check(_pressed_only("", second_counts) and intents.size() == 1,
+			"second valid shortcut cannot press or emit while pending")
 
 
 func _affordability_cases() -> void:
