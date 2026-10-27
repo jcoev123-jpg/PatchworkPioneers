@@ -74,6 +74,13 @@ func _valid_roster(side: String, actors: Array) -> bool:
 				if not one_shot_count is int or (one_shot_count != 0 and one_shot_count != 1):
 					return false
 				continue
+			# Fear is admitted in exactly the same canonical shape CombatStatuses
+			# validates: the literal boolean true, absent when inactive.
+			if name == "cannot_buff_next_turn":
+				var fear = statuses[name]
+				if not fear is bool or not bool(fear):
+					return false
+				continue
 			if name not in ["bleed", "weak", "exposed", "tangled", "riposte"]:
 				return false
 			var count = statuses[name]

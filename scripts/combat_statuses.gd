@@ -4,6 +4,8 @@ extends RefCounted
 ## Bleed, Weak, Exposed and Tangled counts represent remaining *owner* turns,
 ## including the current turn. Riposte is not an N-turn counter: N is the
 ## counterdamage returned by each confirmed hit during its single owner turn.
+## Fear is the literal boolean `cannot_buff_next_turn: true`: a one-owner-turn
+## buff lock with no count, never created or aged by the Weak authored beside it.
 
 const MAX_INT := 9223372036854775807
 
@@ -87,6 +89,21 @@ func dodge_project_for_attempt(statuses: Dictionary, attempt_made: bool) -> Dict
 		return {"ok": true, "miss": false, "statuses": next_statuses}
 
 
+## Fear is the Scarecrow's authored `cannot_buff_next_turn: true` flag, stored on
+## the affected enemy as a status whose single accepted value is the literal
+## boolean true. This pure query answers whether that enemy's own announced
+## self-buff may run during its next enemy turn. It never ages, consumes or
+## rewrites the lock: only that actor's owner-turn end removes it. The future
+## enemy-phase caller owns hit confirmation, enemy actions and the actual buff;
+## this projection only reports permission and changes nothing.
+## Absent means "no lock". Any present value other than boolean true, or any
+## unsupported status key beside it, is malformed and fails closed.
+func can_apply_buff(statuses: Dictionary) -> Dictionary:
+	if not _valid_statuses(statuses):
+		return {"ok": false, "allowed": false}
+	return {"ok": true, "allowed": not statuses.has("cannot_buff_next_turn")}
+
+
 ## One affected actor's turn ends. Bleed is direct HP loss, never Block damage.
 ## Weak, Exposed and Tangled expire at this boundary, after applying during this turn.
 ## Riposte is removed completely after this one owner turn, whatever its N was.
@@ -95,6 +112,10 @@ func dodge_project_for_attempt(statuses: Dictionary, attempt_made: bool) -> Dict
 ## active Blind 1 is copied unchanged to the next state, an inert Blind 0 is
 ## discarded, and merely ending an owner turn never spends it. Only a later
 ## attack-attempt resolver may consume the token.
+## Fear (`cannot_buff_next_turn: true`) is deliberately not carried into the
+## next state: it covers only the affected enemy's next enemy turn, so this same
+## owner-turn boundary is where it expires. Weak is authored and aged separately
+## and is never created, doubled or cleared by Fear.
 ## Invalid state returns ok=false and an independent, unchanged deep snapshot.
 func end_owner_turn(hp: int, block: int, statuses: Dictionary) -> Dictionary:
 	var next_statuses: Dictionary = statuses.duplicate(true)
@@ -114,6 +135,9 @@ func end_owner_turn(hp: int, block: int, statuses: Dictionary) -> Dictionary:
 
 ## Blind shares Dodge's canonical one-shot shape: an integer token 0 (inert) or 1
 ## (active). No stack, duration or boolean form is accepted.
+## Fear's `cannot_buff_next_turn` is the opposite shape: only the literal boolean
+## true is accepted, and it is absent when inactive. `false`, `1`, `1.0` and
+## `"true"` are malformed rather than inactive.
 func _valid_statuses(statuses: Dictionary) -> bool:
 	for name in statuses:
 		if not name is String:
@@ -121,6 +145,11 @@ func _valid_statuses(statuses: Dictionary) -> bool:
 		if name == "dodge_next_attack" or name == "blind_next_attack":
 			var count = statuses[name]
 			if not count is int or (count != 0 and count != 1):
+				return false
+			continue
+		if name == "cannot_buff_next_turn":
+			var fear = statuses[name]
+			if not fear is bool or not bool(fear):
 				return false
 			continue
 		if name not in ["bleed", "weak", "exposed", "tangled", "riposte"]:
