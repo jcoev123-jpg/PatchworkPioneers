@@ -112,6 +112,18 @@ func heal(position: int, amount: int) -> bool:
 	return true
 
 
+## Persist the authored Enrage stack counter on one existing slot. Only the
+## `enrage_stacks` key is written: HP, Block, position, statuses and every other
+## authored field stay exactly as they were, and a slain slot stays slain.
+## The keyword's cap belongs to CombatEnemyKeywordRules; this model only refuses
+## an invalid slot or a negative counter.
+func set_enrage_stacks(position: int, stacks: int) -> bool:
+	if not _valid_position(position) or stacks < 0:
+		return false
+	_enemies[position - 1]["enrage_stacks"] = stacks
+	return true
+
+
 func is_slain(position: int) -> bool:
 	return _valid_position(position) and _enemies[position - 1]["hp"] == 0
 
