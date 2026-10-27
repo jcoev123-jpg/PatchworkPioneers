@@ -130,6 +130,10 @@ var _focused_choice_id := ""
 ## Last map snapshot this view actually rendered, so a repeat refresh never replays.
 var _rendered_map: RunMap = null
 var _has_snapshot := false
+## Optional left-page comparison; never part of the legal Action focus circuit.
+var _comparison_sheet: Panel = null
+var _compare_button: Button = null
+var _comparison_open := false
 ## Running stitch reveals only; every entry is released by the next refresh or teardown.
 var _reveal_masks: Dictionary = {}
 var _reveal_tweens: Array[Tween] = []
@@ -645,6 +649,7 @@ func _init() -> void:
 
 func _ready() -> void:
 	resized.connect(queue_redraw)
+	visibility_changed.connect(_on_atlas_visibility_changed)
 
 
 ## A map may be bound before the view enters the tree (the overlay does exactly that),
@@ -653,6 +658,10 @@ func _process(_delta: float) -> void:
 	# External route progress/regeneration also removes obsolete advice before a refresh.
 	if is_instance_valid(_choice_ticket) and not _snapshot_is_current():
 		_choice_ticket.hide()
+	if _comparison_open and (not is_visible_in_tree() or not _snapshot_is_current()):
+		_clear_comparison()
+		if is_instance_valid(_compare_button) and not _snapshot_is_current():
+			_compare_button.hide()
 	if _pending_reveals.is_empty():
 		set_process(is_instance_valid(_choice_ticket))
 		return
@@ -669,7 +678,13 @@ func _process(_delta: float) -> void:
 
 ## Leaving the tree releases every reveal: no tween may outlive its threads.
 func _exit_tree() -> void:
+	_clear_comparison()
 	_teardown_reveal()
+
+
+func _on_atlas_visibility_changed() -> void:
+	if not is_visible_in_tree():
+		_clear_comparison()
 
 
 ## Presentation-only switch: the same reveal settles in 0.15 s instead of 0.6 s.
@@ -799,6 +814,9 @@ func refresh() -> void:
 	var focus_owner := get_viewport().gui_get_focus_owner() if is_inside_tree() else null
 	if focus_owner != null and _legal_actions.has(focus_owner):
 		focused_id = str(focus_owner.get_meta("route_id"))
+	# Retire any open comparison and its old generation before replacing the UI.
+	_clear_comparison()
+	_compare_button = null
 	# Kill and release every prior reveal before its threads are removed.
 	_teardown_reveal()
 	_rendered_graph = []
@@ -911,6 +929,8 @@ func refresh() -> void:
 	if _choice_ticket != null:
 		_show_choice_ticket(_rendered_shortcuts[0])
 	_rebuild_focus_chain(focused_id)
+	if not _rendered_shortcuts.is_empty():
+		_add_compare_button()
 
 
 ## A missing owner image leaves the complete drawn book instead of failing the preview.
@@ -1173,6 +1193,174 @@ func _add_next_area_tab() -> void:
 	tab.custom_minimum_size = NEXT_AREA_TAB_RECT.size
 	_inert(tab)
 	add_child(tab)
+
+
+## Mouse-only compare control: focus stays with Close map or the selected legal tag.
+## The sole signal connection is guarded by the exact map object and view revision.
+func _add_compare_button() -> void:
+	var button := Button.new()
+	button.name = "CompareToggle"
+	button.text = "Compare choices"
+	button.tooltip_text = "Compare all legal next stops (C)"
+	button.position = Vector2(431.0, 187.0)
+	button.size = Vector2(139.0, 32.0)
+	button.focus_mode = Control.FOCUS_NONE
+	button.mouse_filter = Control.MOUSE_FILTER_STOP
+	var paper := StyleBoxFlat.new()
+	paper.bg_color = PAPER
+	paper.border_color = INK
+	paper.set_border_width_all(2)
+	paper.set_corner_radius_all(5)
+	for state_name in ["normal", "hover", "pressed", "hover_pressed"]:
+		button.add_theme_stylebox_override(state_name, paper)
+	button.add_theme_color_override("font_color", INK)
+	button.add_theme_color_override("font_hover_color", INK)
+	button.add_theme_color_override("font_pressed_color", INK)
+	button.add_theme_font_size_override("font_size", 16)
+	button.pressed.connect(_toggle_comparison.bind(_map, _revision))
+	add_child(button)
+	_compare_button = button
+
+
+## A retained mouse callback from a previous refresh/generation is forever inert.
+## No comparison control calls _request_node or emits node_requested.
+func _toggle_comparison(source_map: RunMap, revision: int) -> bool:
+	if source_map == null or source_map != _map or revision != _revision:
+		return false
+	if not is_inside_tree() or not is_visible_in_tree() \
+			or not _snapshot_is_current() or _rendered_shortcuts.is_empty() \
+			or not is_instance_valid(_compare_button):
+		_clear_comparison()
+		return false
+	if _comparison_open:
+		_clear_comparison()
+	else:
+		_open_comparison()
+	return true
+
+
+func comparison_is_open() -> bool:
+	return _comparison_open and is_instance_valid(_comparison_sheet) \
+		and _comparison_sheet.visible and is_visible_in_tree() and _snapshot_is_current()
+
+
+## Retire rows synchronously, not queue_free: a same-frame stale hover or click
+## cannot find them, and repeated openings never accumulate sheets or callbacks.
+func _clear_comparison() -> void:
+	_comparison_open = false
+	if is_instance_valid(_comparison_sheet):
+		if _comparison_sheet.get_parent() == self:
+			remove_child(_comparison_sheet)
+		_comparison_sheet.free()
+	_comparison_sheet = null
+	var journal := get_node_or_null("JourneyJournal") as Control
+	if journal != null:
+		journal.show()
+	if is_instance_valid(_compare_button):
+		_compare_button.text = "Compare choices"
+		_compare_button.tooltip_text = "Compare all legal next stops (C)"
+
+
+## Only text already authored for legal nodes is shown. Longer lines visibly offer
+## their full deterministic rules in the row tooltip instead of silently clipping.
+static func _compare_excerpt(value: String, limit: int = 49) -> String:
+	if value.length() <= limit:
+		return value
+	return value.substr(0, limit - 11).strip_edges() + "… (hover)"
+
+
+func _compare_label(parent: Control, title: String, value: String,
+		at: Vector2, dimensions: Vector2, font_size: int) -> Label:
+	var label := Label.new()
+	label.name = title
+	label.text = value
+	label.position = at
+	label.size = dimensions
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", INK)
+	_inert(label)
+	parent.add_child(label)
+	return label
+
+
+## The left-page sheet contains at most four inert rows, in exactly the marker
+## shortcut order. Every fact comes from get_node() and the existing ticket helpers;
+## no off-route node, encounter/reward roll or persistent party data is consulted.
+func _open_comparison() -> void:
+	_clear_comparison()
+	if not _snapshot_is_current() or _rendered_shortcuts.size() > 4:
+		return
+	var sheet := Panel.new()
+	sheet.name = "CompareChoices"
+	sheet.position = Vector2(46.0, 174.0)
+	sheet.size = Vector2(532.0, 400.0)
+	sheet.custom_minimum_size = sheet.size
+	sheet.focus_mode = Control.FOCUS_NONE
+	sheet.mouse_filter = Control.MOUSE_FILTER_STOP
+	var paper := StyleBoxFlat.new()
+	paper.bg_color = Color("#eee4cb")
+	paper.border_color = INK
+	paper.set_border_width_all(2)
+	sheet.add_theme_stylebox_override("panel", paper)
+	# Reuse the diary's existing stitched-paper drawing (no generated art).
+	var sewn_backing := NextAreaTab.new()
+	sewn_backing.name = "StitchedPaper"
+	sewn_backing.size = sheet.size
+	_inert(sewn_backing)
+	sheet.add_child(sewn_backing)
+	_compare_label(sheet, "Heading", "COMPARE NEXT STOPS",
+		Vector2(16, 12), Vector2(355, 31), 24)
+	_compare_label(sheet, "Hint", "Read only · select on the right page (1–4)",
+		Vector2(16, 42), Vector2(495, 19), 15)
+	for index in range(_rendered_shortcuts.size()):
+		var id := _rendered_shortcuts[index]
+		var record := _map.get_node(id)
+		if record.is_empty():
+			sheet.free()
+			return
+		var kind := str(record.get("type", ""))
+		var shown := display_kind(kind)
+		var facts := stop_consequence(help_kind(kind))
+		var lead := str(facts.get("lead", "No fixed stop outcome"))
+		var detail := str(facts.get("detail", "Visit to learn more"))
+		var threat := normal_fight_threat(record)
+		if not threat.is_empty():
+			detail += " · " + threat
+		var row := Panel.new()
+		row.name = "ComparisonRow%d" % (index + 1)
+		row.position = Vector2(12, 67 + index * 81)
+		row.size = Vector2(508, 77)
+		row.custom_minimum_size = row.size
+		row.focus_mode = Control.FOCUS_NONE
+		row.mouse_filter = Control.MOUSE_FILTER_STOP
+		row.set_meta("route_id", id)
+		row.set_meta("authored_kind", kind)
+		var row_paper := StyleBoxFlat.new()
+		row_paper.bg_color = Color("#f6edd8") if index % 2 == 0 else Color("#e6d7b8")
+		row_paper.border_color = THREAD
+		row_paper.set_border_width_all(1)
+		row.add_theme_stylebox_override("panel", row_paper)
+		var header := "%d · FLOOR %02d · BRANCH %d · %s" % [
+			index + 1, int(record["floor"]), int(record["position"]) + 1, shown]
+		_compare_label(row, "Identity", header,
+			Vector2(10, 2), Vector2(485, 24), 18)
+		_compare_label(row, "Lead", _compare_excerpt(lead),
+			Vector2(10, 26), Vector2(485, 23), 16)
+		_compare_label(row, "Detail", _compare_excerpt(detail),
+			Vector2(10, 48), Vector2(485, 24), 15)
+		row.tooltip_text = "%s\n%s\n%s\n%s" % [
+			header, lead, detail, str(facts.get("tooltip", ""))]
+		sheet.add_child(row)
+	add_child(sheet)
+	_comparison_sheet = sheet
+	_comparison_open = true
+	var journal := get_node_or_null("JourneyJournal") as Control
+	if journal != null:
+		journal.hide()
+	_compare_button.text = "Back to diary"
+	_compare_button.tooltip_text = "Restore the sewn journey (C or Escape)"
+	# The floating mouse button stays reachable above the comparison paper.
+	move_child(_compare_button, get_child_count() - 1)
 
 
 func _node_position(floor_index: int, row_index: int) -> Vector2:
@@ -1550,7 +1738,8 @@ func _step_legal_focus(step: int) -> bool:
 
 
 func _snapshot_is_current() -> bool:
-	return _map != null and _map.is_generated() and not _map.is_complete() \
+	return _has_snapshot and _rendered_map == _map \
+		and _map != null and _map.is_generated() and not _map.is_complete() \
 		and _map.get_generation_revision() == _rendered_generation \
 		and _map.get_floors() == _rendered_graph \
 		and _map.get_route() == _rendered_route \
@@ -1576,6 +1765,15 @@ func _input(event: InputEvent) -> void:
 		return
 	var key: InputEventKey = event
 	if not key.pressed or key.echo or not is_inside_tree() or not is_visible_in_tree():
+		return
+	if key.keycode == KEY_C:
+		if not (key.shift_pressed or key.ctrl_pressed or key.alt_pressed or key.meta_pressed) \
+				and _toggle_comparison(_map, _revision):
+			get_viewport().set_input_as_handled()
+		return
+	if key.keycode == KEY_ESCAPE and _comparison_open:
+		_clear_comparison()
+		get_viewport().set_input_as_handled()
 		return
 	if key.keycode == KEY_UP or key.keycode == KEY_DOWN:
 		if _step_legal_focus(-1 if key.keycode == KEY_UP else 1):
