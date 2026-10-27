@@ -29,6 +29,7 @@ var _overload := CombatTinkerV3OverloadCards.new()
 var _pool_strikes := CombatPoolPlainStrikes.new()
 var _heavy_attacks := CombatWardenPoolHeavyAttacks.new()
 var _toss := CombatWardenV3ShieldTossCards.new()
+var _lunge := CombatRagDuelistLungeCards.new()
 var _helmet := CombatWardenV3HelmetCards.new()
 var _vanguard: CombatWardenVanguardPassive
 var _warden_turn := -1
@@ -779,6 +780,9 @@ func _single(panel) -> bool:
 ## Starter, plain-strike, heavy-pool, Seamstress control attacks and this
 ## battle's selected Path card use separate authored catalogs.
 func _definition(card_id: String) -> Dictionary:
+	if _lunge.is_supported_card(card_id):
+		var card := _lunge._catalog_definition(card_id)
+		return card if _lunge._authentic(card, card_id) else {}
 	if _overload.is_supported_card(card_id):
 		return _overload.overload_definition(card_id)
 	if _helmet.is_supported_card(card_id):
@@ -828,6 +832,8 @@ func _select(event: InputEvent, panel) -> void:
 ## service itself validates each original enemy slot before it is offered.
 func _target_preview(id: String) -> Dictionary:
 	var app = get_parent()
+	if _lunge.is_supported_card(id):
+		return _lunge_forecast(app.party, app.enemies, id)
 	if _overload.is_supported_card(id):
 		return _overload_forecast(app.party, app.enemies, id)
 	if _helmet.is_supported_card(id):
@@ -871,7 +877,7 @@ func _queue_attack(position: int) -> void:
 	# A single-target target ID plus the held panel's original hand index
 	# prevent an enemy replacement or equivalent-copy panel swap at commit.
 	var target_id := ""
-	if (_overload.is_supported_card(id) or _direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
+	if (_lunge.is_supported_card(id) or _overload.is_supported_card(id) or _direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
 			or _targeting.is_seamstress_control(id) \
 			or _targeting.is_heavy_pool_attack(id) \
 			or _toss.is_supported_card(id) \
@@ -899,7 +905,8 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var heavy := _targeting.is_heavy_pool_attack(id)
 	var toss := _toss.is_supported_card(id) or _helmet.is_supported_card(id)
 	var overload := _overload.is_supported_card(id)
-	var guarded := direct or control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS
+	var lunge := _lunge.is_supported_card(id)
+	var guarded := lunge or direct or control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -922,7 +929,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		_reject_stitch()
 		return
 	var energy_before: int = _deck.energy
-	if (direct or combo or path or heavy or toss or overload) and (app._battle_closed \
+	if (lunge or direct or combo or path or heavy or toss or overload) and (app._battle_closed \
 			or (target_id.is_empty() and not (_is_warden_card(id) and position == 0)) \
 			or app.deck._rng != rng or (combo and not app._combo_battle_current())):
 		_reject_stitch()
@@ -931,7 +938,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
 			or (((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id)) \
-			or ((control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS) \
+			or ((lunge or control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS) \
 				and position > 0 and (app._battle_closed or target_id.is_empty() \
 				or app.enemies.get_enemy(position).get("id") != target_id))):
 		if guarded or _targeting.is_sight_glass(id):
@@ -957,6 +964,10 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 
 
 func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, position: int, forecast: bool = false) -> Dictionary:
+	if _lunge.is_supported_card(id):
+		if forecast:
+			return _lunge_forecast(party, enemies, id)
+		return _lunge.play_card(_deck, party, enemies, id, position)
 	if _overload.is_supported_card(id):
 		if forecast:
 			return _overload_forecast(party, enemies, id)
@@ -1373,7 +1384,7 @@ func _eligible(panel) -> bool:
 	var index: int = panel.get_index()
 	var path_ok: bool = (_is_path_card(id) and not _path_positions(id).is_empty()) \
 		or (_is_warden_card(id) and warden_preview(id).get("playable", false))
-	return (_overload.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
+	return (_lunge.is_supported_card(id) or _overload.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
 func _sync_battle() -> void:
@@ -1649,6 +1660,18 @@ func _refresh() -> void:
 			definition.display_name, definition.cost, _key_hint(path_slots), path_reading]
 		return
 	var preview := _resolve_attack(app.party, app.enemies, id, 0, true)
+	if _lunge.is_supported_card(id):
+		current_forecast = preview.duplicate(true)
+		var details: PackedStringArray = []
+		for hit in preview.hits:
+			details.append("%d: %d damage" % [hit.position, hit.damage])
+		var reading := "Unavailable: no legal target, energy or forward swap"
+		if preview.playable:
+			reading = "Choose one enemy slot: %s; move forward %d -> %d" % [
+				"; ".join(details), preview.owner_position, preview.destination_position]
+		cue.text = "%s | %d energy | P / click card; %s / click enemy; Esc: cancel\n%s" % [
+			definition.display_name, definition.cost, _key_hint(preview.target_positions), reading]
+		return
 	if _overload.is_supported_card(id) or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
 		current_forecast = preview.duplicate(true)
 	if _targeting.is_pool_combo_attack(id):
@@ -1945,3 +1968,43 @@ func _forward_switchback_stitched_play(stitched_id: String, preview: Dictionary)
 	var first_receipt := "stitched_%d_0" % _receipt_seq
 	var second_receipt := "stitched_%d_1" % _receipt_seq
 	quilt.observe_confirmed_stitched_play(first_receipt, first_owner, second_receipt, second_owner)
+
+
+## Read-only mirror of the Lunge authority's preflight; mutation stays in play_card.
+func _lunge_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> Dictionary:
+	var unavailable := {"playable": false, "requires_selection": true, "target_positions": [], "hits": []}
+	var app = get_parent()
+	if app == null or _deck == null or app.deck != _deck or app._battle_closed \
+			or app.enemy_intents == null or _turn != app.enemy_intents._turn_index \
+			or _deck._rng != app.run_rng or party != app.party or enemies != app.enemies \
+			or _session != [party, enemies, app.battle_result, app.run_rng, app.enemy_intents]:
+		return unavailable
+	if _deck == null or _deck.combat_state == null or _deck._rng == null \
+			or not _deck.turn_active or not _deck.hand.has(id) or _deck.energy < 1 \
+			or party == null or enemies == null or not party.is_valid() or not enemies.is_valid() \
+			or not _lunge._authentic(_lunge._catalog_definition(id), id) \
+			or not _lunge._valid_actors(party.get_heroes()) \
+			or not _lunge._valid_actors(enemies.get_enemies()):
+		return unavailable
+	var seat := 0
+	for hero in party.get_heroes():
+		if hero.id == "rag_duelist":
+			seat = hero.position
+	if seat not in [2, 3] or not CombatPositionSwaps.preview_adjacent_swap(party, seat, -1).ok:
+		return unavailable
+	var mover := party.get_hero(seat)
+	if CombatPositionSwaps._tangled_blocks(mover) \
+			or CombatPositionSwaps._tangled_blocks(party.get_hero(seat - 1)):
+		return unavailable
+	var positions: Array[int] = []
+	var hits: Array[Dictionary] = []
+	for position in [1, 2]:
+		var enemy := enemies.get_enemy(position)
+		if enemy.is_empty() or enemies.is_slain(position):
+			continue
+		positions.append(position)
+		hits.append({"position": position, "damage": _statuses.adjusted_attack_damage(
+			_lunge.CARDS[id], mover.get("statuses", {}), enemy.get("statuses", {}))})
+	return {"playable": not positions.is_empty(), "requires_selection": true,
+		"target_positions": positions, "hits": hits, "owner_position": seat,
+		"destination_position": seat - 1}

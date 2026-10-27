@@ -37,6 +37,7 @@ var _cleansing := CombatSeamstressV3CleansingCards.new()
 var _pop := CombatButtonGolemPopCards.new()
 var _sew := CombatButtonGolemSewCards.new()
 var _roll := CombatButtonGolemRollCards.new()
+var _lunge := CombatRagDuelistLungeCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
 var _pitchfork := CombatScarecrowPitchforkCards.new()
 var _bolas := CombatYarnRangerBolasCards.new()
@@ -88,6 +89,9 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if _lunge.is_supported_card(card_id):
+		var card := _lunge._catalog_definition(card_id)
+		return card if _lunge._authentic(card, card_id) else {}
 	if _bolas.is_supported_card(card_id):
 		return CombatYarnRangerBolasCards.bolas_definition(card_id)
 	if _v3_tinker_scrap.is_supported_card(card_id):
@@ -1094,7 +1098,7 @@ func _update_visual(panel: Control) -> void:
 			var support_presenter = _app.get_node_or_null("LiveSupportHand")
 			playable = support_presenter != null and support_presenter._eligible(
 				panel, id, _app.deck, _app.party, _app.battle_view)
-		elif id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
+		elif _lunge.is_supported_card(id) or id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
 			# The mounted battle owns both the legal picker and its shared pin.
 			# Catalog knowledge alone cannot enable Spring Trap.
 			playable = battle_preview != null and is_instance_valid(battle_preview) \
@@ -1238,6 +1242,8 @@ func _rules(id: String) -> String:
 		return "Tangled %d to all living enemies." % _definition(id).effects.tangled
 	if _pop.is_supported_card(id) and not _definition(id).is_empty():
 		return "Spend 5 own Block; deal %d; pop 1 button." % _definition(id).effects.damage
+	if _lunge.is_supported_card(id) and not _definition(id).is_empty():
+		return "Deal %d damage; move self forward 1." % _definition(id).effects.damage
 	if _feint.is_supported_card(id):
 		return "Exposed 1; draw 1."
 	if CombatScarecrowCrowCards.CARDS.has(id):
