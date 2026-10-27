@@ -124,6 +124,7 @@ func _initialize() -> void:
 	_test_selection()
 	_test_live_weighted_elites()
 	_test_marshal_sting()
+	_test_scissor_sting()
 	_test_hexer_lash()
 	_test_v3_elites()
 	_test_zipper_pull_rng()
@@ -768,7 +769,9 @@ func _forced_marshal(alternative: Dictionary, seed_value: int,
 
 
 ## AC1/AC2/AC3: the shipped Needle Marshal now authors the confirmed-hit
-## bleeding sting, and only a real HP-losing Marshal attack applies it.
+## bleeding sting, and only a real HP-losing Marshal attack applies it. The
+## Scissor Bailiff is the other named true carrier; its own focused checks
+## follow in _test_scissor_sting.
 func _test_marshal_sting() -> void:
 	var elites := _catalog(ELITES)
 	var catalog := _record(elites, "needle_marshal")
@@ -793,9 +796,12 @@ func _test_marshal_sting() -> void:
 		"AC1: the shipped Elite catalog authors Enrage on the Marshal alone")
 	var carriers := elites.filter(func(record: Dictionary) -> bool:
 		return record.get("bleed_on_attack") is bool and record.get("bleed_on_attack") == true)
-	_check(carriers.size() == 1 and carriers[0].get("id") == "needle_marshal",
-		"AC1: the shipped Elite catalog authors the sting on the Marshal alone")
-	for id in ["spool_hexer", "scissor_bailiff", "zipper_hauler", "needle_briar_guard",
+	var carrier_ids: Array = carriers.map(func(record: Dictionary) -> String:
+		return String(record.get("id", "")))
+	_check(carrier_ids.size() == 2 and carrier_ids.has("needle_marshal")
+		and carrier_ids.has("scissor_bailiff"),
+		"AC1: the shipped Elite catalog authors the sting on the two named carriers only")
+	for id in ["spool_hexer", "zipper_hauler", "needle_briar_guard",
 			"spool_snarekeeper", "pincushion_matriarch", "spool_leech"]:
 		var companion := _record(elites, id)
 		_check(not companion.is_empty() and not companion.has("bleed_on_attack"),
@@ -1357,6 +1363,172 @@ func _test_scissor_beats(record: Dictionary) -> void:
 		and after.get("block") == 0 and after.get("hp") == 21
 		and enemies.get_enemies() == foes_before,
 		"authored Scissor attack 9 absorbs four Block then deals exactly five HP")
+
+
+## One fresh authentic Scissor Bailiff actor, built from the shipped catalog
+## record as the real CombatEnemies roster carries it, facing the real party.
+func _bailiff_fixture() -> Dictionary:
+	var record := _record(_catalog(ELITES), "scissor_bailiff")
+	if record.is_empty():
+		return {}
+	var party := _party()
+	var enemies := CombatEnemies.new([record])
+	_check(enemies.is_valid() and enemies.get_enemies().size() == 1
+		and enemies.get_enemy(1).get("id") == "scissor_bailiff"
+		and enemies.get_enemy(1).get("hp") == 36
+		and enemies.get_enemy(1).get("bleed_on_attack") is bool
+		and enemies.get_enemy(1).get("bleed_on_attack") == true,
+		"the real Bailiff actor carries its authored sting flag")
+	_check(party.is_valid(), "three living heroes face the real Bailiff")
+	return {"party": party, "enemies": enemies}
+
+
+## The legal front-target scissor cut announced by the authentic slot 1.
+func _bailiff_cut() -> Dictionary:
+	return {"type": "attack", "enemy_position": 1, "amount": 9, "target_position": 1}
+
+
+## AC1/AC2/AC3: the shipped Scissor Bailiff's existing nine-point scissor cut
+## also stings the hero who really loses HP, using the already-shipped
+## CombatEnemyPhase bleed_on_attack rule. Only a genuine, unblocked cut by a
+## living source stings; the fully blocked, slain-source and non-attack
+## alternatives stay clean, and each authored alternative remains its own act.
+func _test_scissor_sting() -> void:
+	seed(64519)
+	var expected_rng := randi()
+	seed(64519)
+	var catalog := _record(_catalog(ELITES), "scissor_bailiff")
+	_check(not catalog.is_empty(), "AC1 precondition: the shipped Bailiff record loads")
+	if catalog.is_empty():
+		return
+	# AC1: only the authored boolean flag is new; every other field is untouched.
+	_check(catalog.get("bleed_on_attack") is bool
+		and catalog.get("bleed_on_attack") == true,
+		"AC1: scissor_bailiff authors bleed_on_attack as a genuine bool true")
+	_check(catalog.get("name") == "Scissor Bailiff" and catalog.get("max_hp") is int
+		and catalog.get("max_hp") == 36
+		and catalog.get("art_path") == "res://assets/paper/enemies/scissor_bailiff.png"
+		and catalog.get("intent", {}).get("target") == "front",
+		"AC1: the Bailiff keeps its name, 36 HP, scissor art and front policy")
+	var actions: Array = []
+	for raw in catalog.get("intent", {}).get("actions", []):
+		var weighted := CombatEnemyIntents.weighted_action(raw)
+		var body: Dictionary = weighted.get("action", {}).duplicate(true)
+		body["weight"] = weighted.get("weight", 0)
+		actions.append(body)
+	_check(actions == V3_ELITES["scissor_bailiff"]["actions"],
+		"AC1: the three authored actions stay snip 0/2, Bleed 2/2 and attack 9/2")
+	var cut := _bailiff_cut()
+	_check(cut.get("amount") == 9, "AC1 precondition: the authored scissor cut is 9")
+
+	# AC2: the authored cut over two Block removes real HP and stings once.
+	var first := _bailiff_fixture()
+	if first.is_empty():
+		return
+	var party: CombatParty = first["party"]
+	var enemies: CombatEnemies = first["enemies"]
+	_check(party.get_hero(1).get("hp") == 40 and party.gain_block(1, 2)
+		and party.get_hero(1).get("block") == 2,
+		"AC2 precondition: the front Warden holds 40 HP and two Block")
+	var input := [cut.duplicate(true)]
+	var input_before := input.duplicate(true)
+	var heroes_before := party.get_heroes()
+	var foes_before := enemies.get_enemies()
+	var settled: Dictionary = CombatEnemyPhase.new().execute_phase(party, enemies, input)
+	_check(settled == {"ok": true, "events": [{"type": "attack", "enemy_position": 1,
+			"applied": true, "target_position": 1}]},
+		"AC2: the real phase publishes one applied nine-point scissor cut")
+	var after := party.get_hero(1)
+	_check(after.get("block") == 0 and after.get("hp") == 33,
+		"AC2: nine pays the two Block first, then removes exactly seven HP")
+	_check(after.get("statuses") == {"bleed": 1},
+		"AC2: the hero who really lost HP gains exactly one Bleed")
+	_check(party.get_hero(2) == heroes_before[1] and party.get_hero(3) == heroes_before[2]
+		and enemies.get_enemies() == foes_before and input == input_before,
+		"AC2: other heroes, the roster and the announcement stay untouched")
+	# AC2: an equal same-input replay publishes and lands identically.
+	var replay := _bailiff_fixture()
+	if replay.is_empty():
+		return
+	var replay_party: CombatParty = replay["party"]
+	var replay_enemies: CombatEnemies = replay["enemies"]
+	_check(replay_party.gain_block(1, 2), "AC2 replay precondition: two Block")
+	var replay_input := [cut.duplicate(true)]
+	var replayed: Dictionary = CombatEnemyPhase.new().execute_phase(
+		replay_party, replay_enemies, replay_input)
+	_check(replayed == settled and replay_party.get_heroes() == party.get_heroes()
+		and replay_enemies.get_enemies() == enemies.get_enemies()
+		and replay_input == input_before,
+		"AC2: the same nine-point cut on equal inputs replays identically")
+
+	# AC3: nine Block soak the whole cut, so no HP is lost and no sting lands.
+	var soaked := _bailiff_fixture()
+	if soaked.is_empty():
+		return
+	var soaked_party: CombatParty = soaked["party"]
+	_check(soaked_party.get_hero(1).get("hp") == 40
+		and soaked_party.gain_block(1, 9)
+		and soaked_party.get_hero(1).get("block") == 9,
+		"AC3 precondition: the front Warden really holds nine Block")
+	var soaked_heroes := soaked_party.get_heroes()
+	var soaked_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+		soaked_party, soaked["enemies"], [_bailiff_cut()])
+	_check(soaked_result.get("ok", false)
+		and soaked_result.get("events", [{}])[0].get("applied") == true
+		and soaked_party.get_hero(1).get("block") == 0
+		and soaked_party.get_hero(1).get("hp") == soaked_heroes[0]["hp"]
+		and not soaked_party.get_hero(1).get("statuses", {}).has("bleed"),
+		"AC3: nine Block absorb the whole cut and grant no attack-sting Bleed")
+
+	# AC3: a slain Bailiff cannot sting even with a Block-free front hero.
+	var dead := _bailiff_fixture()
+	if dead.is_empty():
+		return
+	var dead_party: CombatParty = dead["party"]
+	var dead_enemies: CombatEnemies = dead["enemies"]
+	_check(dead_party.gain_block(1, 2) and dead_enemies.apply_damage(1, 36)
+		and dead_enemies.is_slain(1),
+		"AC3 precondition: the Bailiff is genuinely slain")
+	var dead_heroes := dead_party.get_heroes()
+	var dead_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+		dead_party, dead_enemies, [_bailiff_cut()])
+	_check(dead_result.get("ok", false)
+		and dead_result.get("events", [{}])[0].get("applied") == false
+		and dead_party.get_heroes() == dead_heroes,
+		"AC3: a slain Bailiff deals no damage and grants no Bleed")
+
+	# AC3: its own snip only removes Block and never stings.
+	var snip_fixture := _bailiff_fixture()
+	if snip_fixture.is_empty():
+		return
+	var snip_party: CombatParty = snip_fixture["party"]
+	_check(snip_party.gain_block(1, 5),
+		"AC3 precondition: the front hero holds five Block for the snip")
+	var snip := {"type": "snip_block", "enemy_position": 1, "amount": 0,
+		"target_position": 1}
+	var snip_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+		snip_party, snip_fixture["enemies"], [snip.duplicate(true)])
+	_check(snip_result == {"ok": true, "events": [_phase_event(snip)]}
+		and snip_party.get_hero(1).get("block") == 0
+		and snip_party.get_hero(1).get("hp") == 40
+		and not snip_party.get_hero(1).get("statuses", {}).has("bleed"),
+		"AC3: the authored snip removes Block only and never stings")
+
+	# AC3: its own Bleed 2 debuff stays exactly two, with no extra attack sting.
+	var debuff_fixture := _bailiff_fixture()
+	if debuff_fixture.is_empty():
+		return
+	var debuff_party: CombatParty = debuff_fixture["party"]
+	var debuff := {"type": "debuff", "enemy_position": 1, "amount": 2,
+		"status": "bleed", "target_position": 1}
+	var debuff_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+		debuff_party, debuff_fixture["enemies"], [debuff.duplicate(true)])
+	_check(debuff_result == {"ok": true, "events": [_phase_event(debuff)]}
+		and debuff_party.get_hero(1).get("statuses") == {"bleed": 2}
+		and debuff_party.get_hero(1).get("hp") == 40,
+		"AC3: the authored Bleed 2 debuff stays its own action with no extra sting")
+	_check(randi() == expected_rng,
+		"AC1/AC2/AC3: the Bailiff catalog and phase checks use no global RNG")
 
 
 ## AC1/AC2/AC3: the shipped Zipper Hauler looks like a hook, so its authored
