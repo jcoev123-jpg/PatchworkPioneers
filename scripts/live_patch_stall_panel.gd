@@ -14,6 +14,11 @@ const INK := Color("#191b2a")
 const DIM := Color("#b6a9a2")
 const PANEL_SIZE := Vector2(900, 630)
 const DETAILS_UNAVAILABLE := "Power details unavailable"
+# Always-visible wearer header: sewing into an occupied authored slot destroys
+# the patch already worn there. The visit carries no wardrobe, so this states
+# the rule (and its +1 scrap) rather than guessing any hero's live loadout.
+const WEARER_WARNING := "Choose wearer  ·  worn same-slot patch is destroyed (+1 scrap)"
+const SLOT_WARNING := "%s slot: a patch already worn in this slot is destroyed for exactly +1 scrap.\nA free %s slot destroys nothing and gains no scrap."
 # Compact second lines only: long, authenticated conditions appear in tooltips.
 const SHORT_RULES := {
 	"button_eye": "First successful attack/combat also gives Exposed 1",
@@ -105,7 +110,7 @@ func _ready() -> void:
 	backing.add_child(SewnBorder.new())
 	title_label = _label("PATCH STALL    ✕    sewn power patches", Vector2(40, 24), Vector2(820, 48), 32, GOLD)
 	wallet_label = _label("", Vector2(43, 76), Vector2(808, 36), 25, CREAM)
-	wearer_label = _label("Pin the patch to:", Vector2(43, 128), Vector2(760, 31), 22, GOLD)
+	wearer_label = _label(WEARER_WARNING, Vector2(43, 128), Vector2(760, 31), 22, GOLD)
 	for i in range(3):
 		wearer_buttons.append(_button("", Vector2(43 + i * 278, 165), Vector2(264, 57), TEAL, 22))
 	for i in range(3):
@@ -331,7 +336,8 @@ func _offer_caption(i: int) -> String:
 func _offer_tooltip(i: int) -> String:
 	var id: String = _quoted["offers"][i]["id"]
 	var full: String = _descriptions.get(id, {}).get("full", DETAILS_UNAVAILABLE)
-	return "%s [%s]\n%s\nPatch powers do not work while the wearer is Torn." % [_name(id), id, full]
+	return "%s [%s]\n%s\nPatch powers do not work while the wearer is Torn.\n%s" % [
+		_name(id), id, full, SLOT_WARNING % [_slots[id], _slots[id]]]
 
 func _retire_callbacks() -> void:
 	for button in _connections:
@@ -349,7 +355,7 @@ func _refresh() -> void:
 	_retire_callbacks()
 	var open := _source_current()
 	wallet_label.text = _wallet_caption() if open else "Wallet unavailable"
-	wearer_label.text = "Pin the patch to:" if open else "Patch Stall unavailable"
+	wearer_label.text = WEARER_WARNING if open else "Patch Stall unavailable"
 	status_label.text = "Choose one patch or Leave." if open else "No open quote."
 	for i in range(3):
 		var pin := wearer_buttons[i]
@@ -389,7 +395,7 @@ func _auth(epoch: int, source: RunPatchStallVisit) -> bool:
 	if epoch != _epoch or source == null or not is_same(source, _visit) or not _active():
 		return false
 	if title_label.text != "PATCH STALL    ✕    sewn power patches" \
-			or wallet_label.text != _wallet_caption() or wearer_label.text != "Pin the patch to:" \
+			or wallet_label.text != _wallet_caption() or wearer_label.text != WEARER_WARNING \
 			or leave_button.text != "Leave  ·  FREE":
 		return false
 	for i in range(3):
