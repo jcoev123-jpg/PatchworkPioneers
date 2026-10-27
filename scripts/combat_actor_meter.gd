@@ -21,6 +21,8 @@ const STATUS_KEYS := ["bleed", "weak", "exposed", "tangled", "riposte"]
 ## One-shot Blind is an integer 0/1 marker: 1 arms the actor's next attempted attack
 ## to miss, and the token is spent afterwards. It is never a stack or a turn counter.
 const BLIND_KEY := "blind_next_attack"
+## Dodge is likewise a one-shot integer token, never a timed counter.
+const DODGE_KEY := "dodge_next_attack"
 
 var actor_heading: Label
 var hp_text: Label
@@ -277,6 +279,8 @@ func show_actor(snapshot: Dictionary, side: String) -> bool:
 	# Blind is one-shot, so it reads as one word: no count, stack or duration.
 	if statuses.get(BLIND_KEY, 0) == 1:
 		active.append("Blind")
+	if statuses.get(DODGE_KEY, 0) == 1:
+		active.append("Dodge")
 	status_text.text = "Statuses: none" if active.is_empty() else "Statuses: " + " · ".join(active)
 
 	# Presentation-only rules: counters and damage math remain owned by CombatStatuses.
@@ -345,7 +349,7 @@ func _valid_snapshot(snapshot: Dictionary, side: String) -> bool:
 				return false
 			var count = statuses[key]
 			# Blind is a one-shot 0/1 marker: any other count or type fails closed.
-			if key == BLIND_KEY:
+			if key in [BLIND_KEY, DODGE_KEY]:
 				if not count is int or (count != 0 and count != 1):
 					return false
 				continue

@@ -21,11 +21,10 @@ const RIBBON_HEIGHT := 64.0
 ## outside the stitched fill.
 const RIBBON_HP_BAR_HEIGHT := 22.0
 const RIBBON_SLOT_INSET := 4.0
-## Seven reusable slots: three legacy stacks, Tangled, Riposte, one-shot Blind and
-## fallen/Thorns. A living enemy can carry five timed statuses, Thorns and Blind at
-## once, so six slots could not show everything without dropping a real state.
+## Seven reusable slots: a living hero can carry five counters, Blind and Dodge;
+## a living enemy can carry the five counters, Blind and Thorns.
 const STATUS_BUTTONS := 7
-const STATUS_ORDER := ["bleed", "weak", "exposed", "tangled", "riposte", "blind_next_attack"]
+const STATUS_ORDER := ["bleed", "weak", "exposed", "tangled", "riposte", "blind_next_attack", "dodge_next_attack"]
 ## Readable chip text: at every normal 1280x720 actor width the complete "Bleed 3"
 ## style name is drawn at 14 px, and the chips wrap onto a second row only when the
 ## actor's own slot is too narrow for the whole row. The compact names survive only as
@@ -170,6 +169,9 @@ func _sync_battle() -> void:
 			_sync_next_hit(meter, snapshot, forecast, position, incoming, width)
 		if shown:
 			_sync_status_buttons(meter, snapshot, side, incoming, width)
+		else:
+			# Wipe the reused chip controls when validation rejects the fresh snapshot.
+			_sync_status_buttons(meter, {"hp": 1}, side, null, width)
 		if side == "hero":
 			_sync_combat_scrap(meter, snapshot)
 			_sync_patch_buttons(meter, snapshot, patches.get(snapshot.get("id", ""), {}))
@@ -877,12 +879,18 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 		entries.append({"kind": "fallen", "full": fallen, "short": fallen})
 	var statuses: Dictionary = snapshot.get("statuses", {})
 	for key in STATUS_ORDER:
+		# Fallen actors cannot evade an incoming attack. Their fallen cue uses
+		# the seventh slot while the existing counters and Blind remain dimmed.
+		if key == "dodge_next_attack" and snapshot.get("hp", 0) == 0:
+			continue
 		var count: int = statuses.get(key, 0)
 		if count > 0:
 			# One-shot Blind reads as a single word, never "Blind 1" or a duration.
 			if key == "blind_next_attack":
 				entries.append({"kind": key, "full": BLIND_LABEL,
 					"short": STATUS_SHORT[key]})
+			elif key == "dodge_next_attack":
+				entries.append({"kind": key, "full": "Dodge", "short": "Dodge"})
 			else:
 				entries.append({"kind": key,
 					"full": "%s %d" % [String(key).capitalize(), count],
@@ -916,6 +924,8 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 					rule += "\n" + riposte_tooltip(int(statuses["riposte"]))
 				elif kind == "blind_next_attack":
 					rule += "\n" + blind_tooltip()
+				elif kind == "dodge_next_attack":
+					rule += "\n" + dodge_tooltip()
 		if button.visible != active:
 			button.visible = active
 		if button.text != text:
@@ -960,6 +970,10 @@ static func riposte_tooltip(damage: int) -> String:
 ## so it has no stack count, no turn duration and no repeated effect.
 static func blind_tooltip() -> String:
 	return "Blind: this actor's next attempted attack misses; then Blind is spent. It does not stack and has no turn duration."
+
+
+static func dodge_tooltip() -> String:
+	return "Dodge: the next incoming attempted attack on this actor misses once, then Dodge is spent. After Guard redirection, the actual recipient's Dodge applies. If unused, it expires at this actor's owner-turn end. It does not stack or grant Block or HP."
 
 
 ## Height of one sewn chip at a font size: the text box plus the 1 px stitched border.

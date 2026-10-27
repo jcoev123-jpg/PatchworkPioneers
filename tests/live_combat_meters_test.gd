@@ -205,6 +205,8 @@ func _expected_status(actor: Dictionary) -> String:
 	# One-shot Blind is one word with no count or duration.
 	if statuses.get("blind_next_attack", 0) == 1:
 		active.append("Blind")
+	if statuses.get("dodge_next_attack", 0) == 1:
+		active.append("Dodge")
 	return "Statuses: none" if active.is_empty() else "Statuses: " + " · ".join(active)
 
 
@@ -252,6 +254,8 @@ func _expected_chips(actor: Dictionary, side: String) -> Array[String]:
 			chips.append("%s %d" % [String(key).capitalize(), count])
 	if statuses.get("blind_next_attack", 0) == 1:
 		chips.append("Blind")
+	if actor.hp > 0 and statuses.get("dodge_next_attack", 0) == 1:
+		chips.append("Dodge")
 	if side == "enemy" and actor.hp > 0 and actor.get("thorns", 0) > 0:
 		chips.append("Thorns %d" % actor["thorns"])
 	return chips
@@ -287,6 +291,8 @@ func _expected_chip_tooltip(actor: Dictionary, side: String, forecast: Dictionar
 		return full + "\nRiposte %d: Deals %d counterdamage on each confirmed hit while active. %d is damage per hit, not a turn count; Riposte expires completely at this actor's next owner-turn end." % [n, n, n]
 	if chip == "Blind":
 		return full + "\nBlind: this actor's next attempted attack misses; then Blind is spent. It does not stack and has no turn duration."
+	if chip == "Dodge":
+		return full + "\nDodge: the next incoming attempted attack on this actor misses once, then Dodge is spent. After Guard redirection, the actual recipient's Dodge applies. If unused, it expires at this actor's owner-turn end. It does not stack or grant Block or HP."
 	return full
 
 
@@ -1702,6 +1708,8 @@ func _run() -> void:
 	await _worn_coat_ribbons_test(app, presenter)
 	await _m05_patch_ribbons_test(app, presenter)
 	await _switchback_threadguard_ribbons_test(app, presenter)
+	for replay_index in range(2):
+		await _exercise_dodge_ribbon(app, presenter)
 	app.free()
 	await _frames()
 	_finish()
@@ -3467,6 +3475,128 @@ func _next_hit_cases(app, presenter) -> void:
 		_assert_next_hit(_meters(app)[index], actor, side, _forecast(app))
 	await _mouse(app.return_button)
 	await _frames()
+
+
+## Use the real picker and routed battle, then exercise fresh real-party snapshots.
+func _exercise_dodge_ribbon(app, presenter) -> void:
+	app.run_seed = 338
+	app._start_run()
+	preload("res://tests/party_choice.gd").choose(app, ["rag_duelist", "warden", "tinker"])
+	await _frames()
+	_check(app.run_map != null and app.run_rng != null, "Dodge fixture admits a genuine picked run")
+	if app.run_map == null or app.run_rng == null:
+		return
+	for button in app.route_buttons:
+		if app.run_map.get_node(button.get_meta("route_id")).type == "Fight":
+			button.pressed.emit()
+			break
+	await _frames()
+	_check(app.party is CombatParty and app.deck != null and _meters(app).size() >= 4,
+		"Dodge fixture opens the real mounted routed battle")
+	if app.party == null or app.deck == null or _meters(app).size() < 4:
+		return
+	var hero := app.party.get_hero(1) as Dictionary
+	_check(hero.id == "rag_duelist" and hero.hp > 0 and hero.max_hp == 32,
+		"living canonical 32-HP Rag Duelist is the displayed owner")
+	var meter := _meters(app)[0]
+	var buttons := _buttons(meter)
+	var ids: Array[int] = []
+	for child in buttons.get_children():
+		ids.append(child.get_instance_id())
+	_check(ids.size() == 7, "Dodge reuses the seven-control pool")
+	# Fixture authority changes only statuses; rendering must not change any model.
+	for status_case in [{"dodge_next_attack": 1}, {"dodge_next_attack": 0}, {},
+			{"dodge_next_attack": 1}, {"blind_next_attack": 1, "dodge_next_attack": 1},
+			{"bleed": 1, "weak": 1, "exposed": 1, "tangled": 1, "riposte": 2,
+				"blind_next_attack": 1, "dodge_next_attack": 1}]:
+		if status_case.is_empty():
+			app.party._heroes[0].erase("statuses")
+		else:
+			app.party._heroes[0]["statuses"] = status_case.duplicate(true)
+		var snapshot: Dictionary = app.party.get_hero(1)
+		var snapshot_before := snapshot.duplicate(true)
+		var before := _state(app)
+		var seed_before: int = app.run_rng.seed
+		seed(340)
+		var global_next := randi()
+		seed(340)
+		_check(meter.show_actor(snapshot, "hero") and meter.status_text.text == _expected_status(snapshot),
+			"real party Dodge snapshot validates and labels each one-shot word exactly")
+		presenter._sync_battle()
+		await _frames()
+		var expected := _expected_chips(snapshot, "hero")
+		var shown := _visible_buttons(meter)
+		_check(shown.size() == expected.size() and meter.is_visible_in_tree(),
+			"mounted Dodge refresh shows exactly the authoritative active chips")
+		for index in range(mini(shown.size(), expected.size())):
+			_check(shown[index].text == expected[index]
+				and shown[index].tooltip_text == _expected_chip_tooltip(snapshot, "hero", _forecast(app), expected[index]),
+				"Dodge coexists in stable order with exact unchanged legacy Help")
+			if expected[index] == "Dodge":
+				await _hover(shown[index])
+				_check(root.gui_get_hovered_control() == shown[index]
+					and shown[index].pressed.get_connections().is_empty()
+					and shown[index].focus_mode == Control.FOCUS_NONE,
+					"real Dodge pointer hover is passive and actionless")
+		for index in range(buttons.get_child_count()):
+			var chip := buttons.get_child(index) as Button
+			_check(chip.get_instance_id() == ids[index], "Dodge refresh retains the same sewn controls")
+			if not chip.visible:
+				_check(chip.text.is_empty() and chip.tooltip_text.is_empty(), "zero/absent Dodge wipes dormant text and Help")
+		if status_case.size() == 7:
+			_check(shown.size() == 7 and _rendered_rows(shown) >= 2,
+				"all five counters plus Blind and Dodge wrap within the seven-chip bound")
+		_assert_chip_geometry(app)
+		_check(snapshot == snapshot_before and _state(app) == before
+			and app.run_rng.seed == seed_before and randi() == global_next,
+			"Dodge renders/hover preserve snapshots, HP, Block, deck, energy, seed and both RNGs")
+	# Malformed tokens fail closed through the actual polling path on both sides.
+	for side in ["hero", "enemy"]:
+		var source: Dictionary = app.party._heroes[0] if side == "hero" else app.enemies._enemies[0]
+		var original := source.duplicate(true)
+		var target: CombatActorMeter = _meters(app)[0 if side == "hero" else 3]
+		for bad in [2, -1, true, 1.0, "1", null]:
+			source["statuses"] = {"dodge_next_attack": bad}
+			var before := _state(app)
+			var malformed := app.party.get_hero(1) as Dictionary if side == "hero" else app.enemies.get_enemy(1) as Dictionary
+			_check(not target.show_actor(malformed, side) and target.status_text.text.is_empty(),
+				"malformed Dodge type/count clears the actor text")
+			presenter._sync_battle()
+			await _frames()
+			_check(_visible_buttons(target).is_empty() and target.status_text.text.is_empty(),
+				"malformed authoritative Dodge paints no phantom chip on either side")
+			for chip in _buttons(target).get_children():
+				_check(chip.text.is_empty() and chip.tooltip_text.is_empty(), "rejected Dodge clears pooled Help")
+			_check(_state(app) == before, "malformed Dodge rendering leaves authoritative state unchanged")
+			if side == "hero":
+				source["statuses"] = {"dodge_next_attack": 1}
+			else:
+				source.erase("statuses")
+			presenter._sync_battle()
+			await _frames()
+			_check(target.status_text.text == ("Statuses: Dodge" if side == "hero" else "Statuses: none"),
+				"fresh valid authority restores only its own status after rejection")
+			source["statuses"] = original.get("statuses", {}).duplicate(true)
+	# An unrelated invalid snapshot must still fail closed with an armed token.
+	var invalid: Dictionary = app.party.get_hero(1)
+	invalid["hp"] = -1
+	_check(not meter.show_actor(invalid, "hero") and meter.status_text.text.is_empty(),
+		"Dodge never legitimizes an otherwise invalid actor snapshot")
+	app.party._heroes[0]["statuses"] = {"bleed": 1, "weak": 1, "exposed": 1,
+		"tangled": 1, "riposte": 2, "blind_next_attack": 1, "dodge_next_attack": 1}
+	_check(app.party.apply_damage(1, 999) and app.party.is_downed(1),
+		"real damage downs the densely armed Dodge owner")
+	var fallen_before := _state(app)
+	presenter._sync_battle()
+	await _frames()
+	var fallen := _visible_buttons(meter)
+	_check(fallen.size() == 7 and fallen[0].text == "DOWNED" and fallen[6].text == "Blind",
+		"fallen cue replaces inactive Dodge within seven slots, preserving the other statuses")
+	_check(_state(app) == fallen_before, "fallen Dodge rendering never spends the authoritative token")
+	_assert_chip_geometry(app)
+	await _mouse(app.return_button)
+	await _frames()
+	_check(presenter.row == null, "Dodge replay frees the old battle ribbon and pooled Help")
 
 
 func _finish() -> void:
