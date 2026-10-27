@@ -19,6 +19,16 @@ extends RefCounted
 ## this same Snag adds never boosts it. Block-before-HP, the status vocabulary and the Pinned
 ## rule stay owned by the shared combat models.
 ##
+## Authoritative status maps may legitimately carry the one-shot Dodge token
+## (`dodge_next_attack: 0|1`, e.g. a Rag Duelist cape) on the Golem or the one-shot Blind token
+## (`blind_next_attack: 0|1`, e.g. a Lantern Monk Moth Cloud) on the chosen enemy. Both maps are
+## validated in full here, then ONLY the damage-status subset is handed to CombatStatusAttacks,
+## which models neither token. A legal token can therefore never turn a paid Knuckle or Snag into
+## a phantom turn: the strike still lands and neither token is mutated, spent or dropped from its
+## actor. Neither token is an attack-miss marker for THIS card either: Dodge protects its bearer
+## against an incoming attack and Blind makes its bearer's own next attack miss, so the Golem's
+## strike still connects and both tokens stay in place for the resolvers that own them.
+##
 ## Every refusal is a pure no-op: no energy, hand, pile, party record, enemy record, pin token,
 ## status or seeded RNG change. Live hand, reward and app wiring is a later, separately owned
 ## task; this is the callable combat rules layer only.
@@ -26,6 +36,11 @@ extends RefCounted
 const OWNER_ID := "button_golem"
 const TARGET_KIND := "enemy_single"
 const FROM_POSITIONS: Array[int] = [1, 2]
+## The status keys whose counts modify one attack, exactly as CombatStatusAttacks accepts them.
+const ATTACK_STATUS_KEYS: Array[String] = ["bleed", "weak", "exposed", "tangled", "riposte"]
+## The authoritative one-shot tokens (integer 0 = inert, 1 = active). Neither modifies this
+## attack's damage, so both are validated here and omitted from bridge-bound maps.
+const ONE_SHOT_STATUS_KEYS: Array[String] = ["dodge_next_attack", "blind_next_attack"]
 
 ## The four authentic pool printings, each with the exact catalog line it must still carry.
 ## `effects` is the complete printed descriptor set (no extra keys), `to_positions` the printed
@@ -93,15 +108,26 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	# Every operation below is guaranteed by the complete preflight above, and nothing here
 	# draws a seeded RNG value.
 	var authority: CombatPinned = pinned
-	var pin_bonus: int = authority.bonus_for_attack(enemies, target_position, OWNER_ID)
+	var pin_bonus: int = int(plan["pin_bonus"])
 	deck.try_spend_energy(plan["cost"])
+	plan["energy_spent"] = int(plan["cost"])
 	deck.discard_played(plan["card_id"])
 	var hit: Dictionary = _attacks.resolve_vs_enemy(enemies, target_position,
-		plan["printed_damage"] + pin_bonus, plan["attacker_statuses"],
-		plan["defender_statuses"])
+		plan["base_damage"], plan["attacker_statuses"], plan["defender_statuses"])
 	if not hit.get("ok", false):
-		# Unreachable after preflight; refuse to publish a receipt no hit backs.
-		return _refused(plan, "invalid_target")
+		# Preflight proves the bridge accepts these detached maps; if a model change still
+		# refuses, never publish an applied receipt for a hit no event backs. Report the truth:
+		# the energy and the held copy were already paid above.
+		plan["ok"] = false
+		plan["reason"] = "bridge_rejected"
+		plan["damage"] = 0
+		plan["pin_bonus"] = 0
+		plan["block_absorbed"] = 0
+		plan["hp_loss"] = 0
+		plan["pinned"] = false
+		plan["tangled_added"] = 0
+		plan["applies_pinned"] = false
+		return plan
 	# Consume the pre-existing shared token exactly once, before this card lays its own rider.
 	authority.consume_after_attack(target_position, OWNER_ID, true)
 	plan["damage"] = int(hit["damage"])
@@ -134,7 +160,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"ok": false, "reason": "unsupported_card",
 		"card_id": card_id if typeof(card_id) == TYPE_STRING else "",
 		"cost": 0, "owner_position": 0, "target_position": target_position,
-		"printed_damage": 0, "pin_bonus": 0, "damage": 0,
+		"printed_damage": 0, "base_damage": 0, "pin_bonus": 0, "damage": 0,
+		"energy_spent": 0,
 		"block_absorbed": 0, "hp_loss": 0, "pinned": false, "tangled_added": 0,
 		"applies_pinned": false,
 	}
@@ -208,22 +235,42 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		plan["reason"] = "invalid_target"
 		return plan
 
-	# Reserve the shared Pinned's possible +5 before any payment.
-	if int(printed["damage"]) > CombatStatuses.MAX_INT - 5:
-		plan["reason"] = "arithmetic_overflow"
+	# Reserve the shared Pinned's possible +5 before any payment, then project the exact
+	# bridge-compatible damage-status maps the paid hit will use: the authoritative maps are
+	# already validated in full above (including any Dodge/Blind one-shot token), while
+	# CombatStatusAttacks admits only the damage-status subset.
+	var attacker_statuses: Variant = _attack_statuses(owner.get("statuses", {}))
+	if attacker_statuses == null:
+		plan["reason"] = "malformed_statuses"
 		return plan
 	var defender: Dictionary = enemies.get_enemy(target_position)
-	var defender_statuses: Dictionary = defender.get("statuses", {})
-	var current_tangled: int = int(defender_statuses.get("tangled", 0))
+	var defender_statuses: Variant = _attack_statuses(defender.get("statuses", {}))
+	if defender_statuses == null:
+		plan["reason"] = "malformed_statuses"
+		return plan
+	var pin_bonus: int = pinned.bonus_for_attack(enemies, target_position, OWNER_ID)
+	if int(printed["damage"]) > CombatStatuses.MAX_INT - pin_bonus:
+		plan["reason"] = "arithmetic_overflow"
+		return plan
+	var base_damage: int = int(printed["damage"]) + pin_bonus
+	var current_tangled: int = int((defender_statuses as Dictionary).get("tangled", 0))
 	if int(printed["tangled"]) > CombatStatuses.MAX_INT - current_tangled:
 		plan["reason"] = "status_overflow"
 		return plan
+	# Size the exact hit before payment: a positive-base attack the shared status rules collapse
+	# to zero is an overflow, never a silent free hit, and the bridge cannot refuse later.
+	if base_damage > 0 and CombatStatuses.new().adjusted_attack_damage(base_damage,
+			attacker_statuses, defender_statuses) <= 0:
+		plan["reason"] = "arithmetic_overflow"
+		return plan
 
 	plan["printed_damage"] = int(printed["damage"])
+	plan["base_damage"] = base_damage
+	plan["pin_bonus"] = pin_bonus
 	plan["tangled_added"] = int(printed["tangled"])
 	plan["applies_pinned"] = bool(printed["pinned"])
-	plan["attacker_statuses"] = owner.get("statuses", {}).duplicate(true)
-	plan["defender_statuses"] = defender_statuses.duplicate(true)
+	plan["attacker_statuses"] = attacker_statuses
+	plan["defender_statuses"] = defender_statuses
 	plan["ok"] = true
 	plan["reason"] = "ready"
 	return plan
@@ -311,7 +358,9 @@ func _distinct_hero_ids(party: CombatParty) -> bool:
 
 
 ## Fail closed on a malformed authoritative status map on either side, using the shared
-## turn-batch validator so preflight and resolution accept exactly the same vocabulary.
+## turn-batch validator over the COMPLETE authoritative rosters (unknown keys, wrong Variant
+## types, negative counters and a non-0/1 Dodge or Blind token all refuse here), so preflight
+## accepts exactly the vocabulary the status owners define.
 func _valid_status_rosters(party: CombatParty, enemies: CombatEnemies) -> bool:
 	var batch := CombatStatusTurnBatch.new()
 	if not batch.tick_side("heroes", party.get_heroes()).get("ok", false):
@@ -319,15 +368,26 @@ func _valid_status_rosters(party: CombatParty, enemies: CombatEnemies) -> bool:
 	return batch.tick_side("enemies", enemies.get_enemies()).get("ok", false)
 
 
-func _refused(plan: Dictionary, reason: String) -> Dictionary:
-	# A defensive post-payment refusal publishes nothing applied and reports no payment.
-	plan["ok"] = false
-	plan["reason"] = reason
-	plan["printed_damage"] = 0
-	plan["damage"] = 0
-	plan["pin_bonus"] = 0
-	plan["block_absorbed"] = 0
-	plan["hp_loss"] = 0
-	plan["pinned"] = false
-	plan["tangled_added"] = 0
-	return plan
+## A detached copy of one authoritative status map holding only the counts that modify attack
+## damage. Returns null for a non-Dictionary map, a non-String key, a non-int count, an unknown
+## key, a negative counter or a one-shot token that is not exactly 0 or 1. The authoritative map
+## itself is never modified, so a valid Dodge/Blind token stays on its actor.
+func _attack_statuses(statuses: Variant) -> Variant:
+	if not statuses is Dictionary:
+		return null
+	var authoritative: Dictionary = statuses
+	var detached := {}
+	for name in authoritative:
+		if not name is String:
+			return null
+		var count: Variant = authoritative[name]
+		if not count is int:
+			return null
+		if name in ONE_SHOT_STATUS_KEYS:
+			if count != 0 and count != 1:
+				return null
+			continue
+		if name not in ATTACK_STATUS_KEYS or count < 0:
+			return null
+		detached[name] = count
+	return detached

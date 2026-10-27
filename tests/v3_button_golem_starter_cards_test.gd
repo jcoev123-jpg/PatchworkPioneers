@@ -71,6 +71,7 @@ func _initialize() -> void:
 	_test_thread_paid_resolution()
 	_test_thread_pin_relay()
 	_test_thread_tangled_rider()
+	_test_thread_one_shot_tokens()
 	_test_thread_refusals()
 	_test_thread_replay()
 	if failures.is_empty():
@@ -1611,6 +1612,146 @@ func _test_thread_tangled_rider() -> void:
 	_check(relay_pins.pinner_for_enemy(1) == "", "the cross-hero token is consumed")
 	_check(relay_enemies.get_enemy(1).get("statuses", {}).get("tangled") == 3,
 		"the rider is added on top of the pre-existing Tangled 1")
+
+
+## AC2/AC3: a legal one-shot token on either actor is authoritative state, not damage math.
+## Dodge on the attacking Golem (`dodge_next_attack`) and Blind on the chosen enemy
+## (`blind_next_attack`) pass the full authoritative validators but are never handed to the
+## narrow damage bridge, so the paid strike still commits and both tokens stay exactly where
+## they were. Neither token is an attack-miss marker for this card: Dodge protects its bearer
+## against an incoming attack and Blind makes its bearer's own next attack miss.
+func _test_thread_one_shot_tokens() -> void:
+	var cases := [
+		{"card": "button_golem_button_knuckle", "attacker": {"dodge_next_attack": 1},
+			"defender": {"blind_next_attack": 1}, "block": 0, "damage": 5},
+		{"card": "button_golem_button_knuckle_plus", "attacker": {"dodge_next_attack": 0},
+			"defender": {"blind_next_attack": 0}, "block": 0, "damage": 7},
+		{"card": "button_golem_buttonhole_snag", "attacker": {"dodge_next_attack": 1},
+			"defender": {"blind_next_attack": 1}, "block": 0, "damage": 3},
+		{"card": "button_golem_buttonhole_snag_plus", "attacker": {"dodge_next_attack": 0},
+			"defender": {"blind_next_attack": 0}, "block": 3, "damage": 4},
+		{"card": "button_golem_buttonhole_snag",
+			"attacker": {"dodge_next_attack": 1, "weak": 1},
+			"defender": {"blind_next_attack": 1, "tangled": 2}, "block": 0, "damage": 4},
+	]
+	var committed := 0
+	for entry: Dictionary in cases:
+		_play_thread_with_tokens(entry["card"], entry["attacker"], entry["defender"],
+			int(entry["block"]), int(entry["damage"]))
+		committed += 1
+	_check(committed == 5,
+		"all four printings plus a damage-status mix were really played with legal one-shot tokens")
+	# A malformed one-shot token refuses before any payment, with the entire state intact.
+	var refused := 0
+	for malformed in [2, -1, true, false, "1", 1.5, null]:
+		var bad_owner := _sew_party(1)
+		bad_owner._heroes[0]["statuses"] = {"dodge_next_attack": malformed}
+		_check(bad_owner.get_hero(1).get("statuses") == {"dodge_next_attack": malformed},
+			"malformed-Dodge fixture really stores " + str(malformed))
+		_expect_thread_refusal("malformed Dodge token " + str(malformed),
+			_pop_deck(["button_golem_button_knuckle"]), bad_owner, _pop_enemies([30, 30]),
+			"button_golem_button_knuckle", 1, CombatPinned.new(), "malformed_statuses")
+		var bad_enemy := _pop_enemies([30, 30])
+		bad_enemy._enemies[0]["statuses"] = {"blind_next_attack": malformed}
+		_check(bad_enemy.get_enemy(1).get("statuses") == {"blind_next_attack": malformed},
+			"malformed-Blind fixture really stores " + str(malformed))
+		_expect_thread_refusal("malformed Blind token " + str(malformed),
+			_pop_deck(["button_golem_buttonhole_snag"]), _sew_party(1), bad_enemy,
+			"button_golem_buttonhole_snag", 1, CombatPinned.new(), "malformed_statuses")
+		refused += 2
+	_check(refused == 14, "every malformed one-shot token shape was really refused")
+	# Roster-wide validation: a malformed token on an UNselected enemy still refuses.
+	var bystander := _pop_enemies([30, 30])
+	bystander._enemies[1]["statuses"] = {"blind_next_attack": 2}
+	_check(bystander.get_enemy(2).get("statuses") == {"blind_next_attack": 2},
+		"bystander fixture really stores an out-of-range Blind token")
+	_expect_thread_refusal("malformed token on the unselected enemy",
+		_pop_deck(["button_golem_button_knuckle"]), _sew_party(1), bystander,
+		"button_golem_button_knuckle", 1, CombatPinned.new(), "malformed_statuses")
+	# A legal token never licenses an unknown status key beside it.
+	var unknown_key := _sew_party(1)
+	unknown_key._heroes[0]["statuses"] = {"dodge_next_attack": 1, "poison": 1}
+	_check(unknown_key.get_hero(1).get("statuses").has("poison"),
+		"unknown-key fixture really stores an unrelated status")
+	_expect_thread_refusal("Dodge beside an unknown status key",
+		_pop_deck(["button_golem_button_knuckle"]), unknown_key, _pop_enemies([30, 30]),
+		"button_golem_button_knuckle", 1, CombatPinned.new(), "malformed_statuses")
+
+
+func _play_thread_with_tokens(card_id: String, attacker: Dictionary, defender: Dictionary,
+		enemy_block: int, expected_damage: int) -> void:
+	var label := "%s with %s / %s vs %d Block" % [card_id, str(attacker), str(defender),
+		enemy_block]
+	var spec: Dictionary = THREAD_PRINTINGS[card_id]
+	var deck := _pop_deck([card_id])
+	_check(deck.hand.has(card_id), label + ": the exact ID is genuinely held")
+	var party := _sew_party(1)
+	party._heroes[0]["statuses"] = attacker.duplicate(true)
+	var enemies := _pop_enemies([40, 40])
+	enemies._enemies[0]["statuses"] = defender.duplicate(true)
+	if enemy_block > 0:
+		_check(enemies.gain_block(1, enemy_block), label + ": the target holds real Block")
+	_check(party.get_hero(1).get("statuses") == attacker,
+		label + ": the Golem really bears those authoritative statuses")
+	_check(enemies.get_enemy(1).get("statuses") == defender,
+		label + ": the target really bears those authoritative statuses")
+	var pins := CombatPinned.new()
+	var before := _thread_snapshot(deck, party, enemies, pins)
+	var expected: int = CombatStatuses.new().adjusted_attack_damage(int(spec["damage"]),
+		_thread_damage_statuses(attacker), _thread_damage_statuses(defender))
+	_check(expected == expected_damage,
+		label + ": shared arithmetic gives the expected " + str(expected_damage))
+	_check(expected > 0, label + ": the legal-token case sizes a real hit")
+	var absorbed: int = mini(enemy_block, expected)
+	var receipt := ThreadResolver.new().play_card(deck, party, enemies, card_id, 1, pins)
+	_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+		label + ": a legal one-shot token never turns the paid attack into a phantom turn")
+	_check(receipt.get("damage") == expected_damage and receipt.get("block_absorbed") == absorbed
+		and receipt.get("hp_loss") == expected_damage - absorbed,
+		label + ": only the damage-status subset sizes the committed hit")
+	_check(receipt.get("pin_bonus") == 0, label + ": no cross-hero bonus was invented")
+	_check(deck.energy == before["energy"] - 1
+		and deck.combat_state.energy == before["state_energy"] - 1,
+		label + ": exactly one energy was charged")
+	_check(deck.hand.is_empty() and deck.discard_pile == [card_id] and deck.draw_pile.is_empty()
+		and deck.turn_active, label + ": exactly one held copy moved to the discard pile")
+	var expected_defender: Dictionary = defender.duplicate(true)
+	if int(spec["tangled"]) > 0:
+		expected_defender["tangled"] = int(expected_defender.get("tangled", 0)) \
+			+ int(spec["tangled"])
+	var remaining_hand: Array = before["hand"].duplicate()
+	remaining_hand.erase(card_id)
+	var expected_discard: Array = before["discard"].duplicate()
+	expected_discard.append(card_id)
+	var expected_after: Dictionary = before.duplicate(true)
+	expected_after["energy"] = before["energy"] - 1
+	expected_after["state_energy"] = before["state_energy"] - 1
+	expected_after["hand"] = remaining_hand
+	expected_after["discard"] = expected_discard
+	expected_after["foes"][0]["hp"] = 40 - (expected_damage - absorbed)
+	expected_after["foes"][0]["block"] = enemy_block - absorbed
+	expected_after["foes"][0]["statuses"] = expected_defender
+	expected_after["pins"][1] = "button_golem" if bool(spec["pinned"]) else ""
+	var after := _thread_snapshot(deck, party, enemies, pins)
+	_check(after == expected_after,
+		label + ": only the spend, the hit, its printed rider and the Pin changed")
+	_check(after["heroes"][0]["statuses"] == attacker,
+		label + ": the Golem's own one-shot token is retained, never spent")
+	_check(after["foes"][0]["statuses"].get("blind_next_attack", -1) \
+		== defender.get("blind_next_attack", -1),
+		label + ": the target's Blind token is never consumed by being struck")
+	_check(after["rng_state"] == before["rng_state"] and after["rng_seed"] == before["rng_seed"],
+		label + ": the paid play consumes no seeded RNG draw")
+
+
+## The damage-status subset of one authoritative map, derived here independently of the
+## resolver: the five counts CombatStatusAttacks admits, and neither one-shot token.
+func _thread_damage_statuses(statuses: Dictionary) -> Dictionary:
+	var subset := {}
+	for key: String in ["bleed", "weak", "exposed", "tangled", "riposte"]:
+		if statuses.has(key):
+			subset[key] = statuses[key]
+	return subset
 
 
 ## AC3: every missing, invalid, unaffordable, foreign or dead prerequisite refuses with a
