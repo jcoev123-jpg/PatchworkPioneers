@@ -1,11 +1,37 @@
 extends SceneTree
 ## V3-1 Seamstress starter-card catalog contract.
-## Catalog data only: no live party, reward, hand, deck or combat behavior is assumed or claimed
-## here. Tether, cleanse, heal and stitched Block are printed descriptors until a later wiring task.
+## The catalog half keeps this hero's authored data authoritative (no live party, reward, hand, deck
+## or run wiring is assumed there). The appended suite drives the scene-free paid Block-and-heal
+## resolver for Shielding Hem and Patchwork Poultice against real seeded CombatDeck/CombatParty
+## state; live hand and app integration remain a later task.
 
 const V3SeamstressStarterCards = preload("res://data/cards/v3_seamstress_starter_cards.gd")
 const StarterCards = preload("res://data/cards/starter_cards.gd")
 const V3SeamstressPoolCards = preload("res://data/cards/v3_seamstress_pool_cards.gd")
+const V3SeamstressHemCards = preload("res://scripts/combat_seamstress_v3_hem_cards.gd")
+const SeamstressCleansingCards = preload("res://scripts/combat_seamstress_v3_cleansing_cards.gd")
+
+## A catalog source that serves one caller-supplied record, so a rewritten field or a relinked
+## upgrade can be proven inert before any energy, hand, Block, HP or RNG state moves.
+class ForgedHem extends "res://scripts/combat_seamstress_v3_hem_cards.gd":
+	var forged: Dictionary = {}
+
+	func _catalog_definition(_id: String) -> Dictionary:
+		return forged.duplicate(true)
+
+const HEM := "seamstress_v3_shielding_hem"
+const HEM_PLUS := "seamstress_v3_shielding_hem_plus"
+const POULTICE := "seamstress_v3_patchwork_poultice"
+const POULTICE_PLUS := "seamstress_v3_patchwork_poultice_plus"
+const HEM_CARD_IDS := [HEM, HEM_PLUS, POULTICE, POULTICE_PLUS]
+
+## Independent literal expectations copied from the v3 design and the authored catalogs, never read
+## back from the resolver under test.
+const HEM_BLOCK := {HEM: 4, HEM_PLUS: 6, POULTICE: 3, POULTICE_PLUS: 4}
+const HEM_HEAL := {HEM: 2, HEM_PLUS: 3, POULTICE: 3, POULTICE_PLUS: 4}
+const HEM_FROM := {HEM: [1, 2, 3], HEM_PLUS: [1, 2, 3], POULTICE: [2, 3], POULTICE_PLUS: [2, 3]}
+const HEM_FILLERS := ["filler_hem", "filler_patch", "filler_thread", "filler_needle",
+	"filler_bobbin", "filler_scrap"]
 
 ## Effect keys these four look-driven starters may print. Anything else would be an invented
 ## status, resource or combat-state descriptor.
@@ -28,6 +54,7 @@ const EXPECTED_LEGACY_STARTERS: Dictionary = {
 
 var failures: Array[String] = []
 var checks: int = 0
+var _hem_records: Array = []
 
 
 func _initialize() -> void:
@@ -39,6 +66,13 @@ func _initialize() -> void:
 	_test_deterministic_and_rng_free()
 	_test_existing_catalogs_unchanged()
 	_test_not_reward_offered()
+	_test_hem_catalog_contracts()
+	_test_hem_paid_play()
+	_test_hem_cap_and_full_hp()
+	_test_hem_repeat_and_no_draw()
+	_test_hem_refusals()
+	_test_hem_tampered_catalog()
+	_test_hem_seeded_replay()
 	if failures.is_empty():
 		print("v3_seamstress_starter_cards_test: PASS (", checks, " checks)")
 	else:
@@ -633,3 +667,566 @@ func _test_not_reward_offered() -> void:
 				"starter is not reward-resolvable yet: " + card_id)
 	_check(not RunPoolCardRewardOffers.resolve_reward_definition("seamstress_running_stitch").is_empty(),
 		"an existing Seamstress reward card is still reward-resolvable (precondition)")
+
+# ---------------------------------------------------------------------------------------------
+# V3-1 Shielding Hem / Patchwork Poultice: authentic paid Block-and-heal resolution
+# ---------------------------------------------------------------------------------------------
+
+## The four exact authored contracts as independent literal expectations.
+func _hem_cases() -> Dictionary:
+	return {
+		HEM: {"catalog": "starter", "name": "Shielding Hem", "cost": 1, "block": 4, "heal": 2,
+			"from": [1, 2, 3], "copies": 1, "reward": false},
+		HEM_PLUS: {"catalog": "starter", "name": "Shielding Hem+", "cost": 1, "block": 6,
+			"heal": 3, "from": [1, 2, 3], "copies": 0, "reward": false},
+		POULTICE: {"catalog": "pool", "name": "Patchwork Poultice", "cost": 1, "block": 3,
+			"heal": 3, "from": [2, 3], "copies": 0, "reward": true},
+		POULTICE_PLUS: {"catalog": "pool", "name": "Patchwork Poultice+", "cost": 1, "block": 4,
+			"heal": 4, "from": [2, 3], "copies": 0, "reward": false},
+	}
+
+
+## AC1: every printing's authored ID/cost/FROM/effect/upgrade contract, read independently.
+func _test_hem_catalog_contracts() -> void:
+	var starter := V3SeamstressStarterCards.new()
+	var pool := V3SeamstressPoolCards.new()
+	var service := V3SeamstressHemCards.new()
+	var cases: Dictionary = _hem_cases()
+	_check(cases.size() == 4, "hem/poultice fixture enumerates exactly four printings")
+	for card_id: String in HEM_CARD_IDS:
+		var spec: Dictionary = cases[card_id]
+		var source: Variant = starter if spec["catalog"] == "starter" else pool
+		var other: Variant = pool if spec["catalog"] == "starter" else starter
+		var record: Dictionary = source.get_definition(card_id)
+		_check(not record.is_empty(), card_id + ": authored record exists in its own catalog")
+		_check(record.get("id") == card_id, card_id + ": authored id")
+		_check(record.get("display_name") == spec["name"], card_id + ": authored display name")
+		_check(record.get("owner") == "seamstress", card_id + ": authored owner")
+		_check(record.get("cost") == spec["cost"], card_id + ": authored cost")
+		_check(record.get("target_kind") == "ally_single", card_id + ": one living ally target")
+		_check(record.get("from_positions") == spec["from"], card_id + ": authored FROM seats")
+		_check(record.get("to_positions") == [], card_id + ": no enemy TO slot")
+		_check(record.get("effects") == {"block": spec["block"], "heal": spec["heal"]},
+			card_id + ": authored Block and heal only")
+		_check(record.get("starting_copies") == spec["copies"],
+			card_id + ": authored starting copies")
+		_check(record.get("reward_eligible") == spec["reward"], card_id + ": authored reward flag")
+		_check(not other.has_card(card_id), card_id + ": owned by exactly one catalog")
+		if card_id.ends_with("_plus"):
+			_check(record.get("upgrade_of") == card_id.trim_suffix("_plus"),
+				card_id + ": points back at its base")
+			_check(not record.has("upgrade_id"), card_id + ": terminal upgrade link")
+		else:
+			_check(record.get("upgrade_id") == card_id + "_plus",
+				card_id + ": points at its + printing")
+			_check(not record.has("upgrade_of"), card_id + ": the base is not an upgrade")
+		_check(service.is_supported_card(card_id), card_id + ": resolver authenticates the ID")
+	# Only these four printings: no other Seamstress card, no forged link, no coercion.
+	for unsupported: Variant in [
+		"seamstress_v3_thread_prick", "seamstress_v3_tether_loop", "seamstress_v3_mending_knot",
+		"seamstress_v3_mending_knot_plus", "seamstress_v3_needle_rain", "seamstress_v3_scarlet_knot",
+		"seamstress_v3_bobbin_snag", "seamstress_v3_tether_stitch", "seamstress_v3_darn_the_tear",
+		"seamstress_v3_blanket_of_barbs", "seamstress_v3_midnight_loom", "seamstress_mend",
+		"seamstress_mend_plus", "seamstress_stitch_up", "seamstress_running_stitch",
+		"warden_v3_pot_helm_bonk", "tinker_pop_shot",
+		HEM + "_plus_plus", POULTICE + "_plus_plus", HEM.to_upper(), HEM + " ", "", null, 7,
+		StringName(HEM)]:
+		_check(not service.is_supported_card(unsupported),
+			"resolver rejects unsupported id: " + str(unsupported))
+	# The existing cleansing helper still owns only Mending Knot / Darn the Tear and rejects these.
+	var cleansing := SeamstressCleansingCards.new()
+	for card_id: String in HEM_CARD_IDS:
+		_check(not cleansing.is_supported_card(card_id),
+			card_id + ": the cleansing helper still rejects it")
+	_check(cleansing.is_supported_card("seamstress_v3_mending_knot")
+		and cleansing.is_supported_card("seamstress_v3_darn_the_tear"),
+		"the cleansing helper still owns its own two card families (precondition)")
+
+
+## AC1: each printing pays exactly one energy and discards one copy to Block+heal the selected ally.
+func _test_hem_paid_play() -> void:
+	var service := V3SeamstressHemCards.new()
+	for card_id: String in HEM_CARD_IDS:
+		for seat in HEM_FROM[card_id]:
+			for recipient in [seat, seat % 3 + 1]:
+				var label := "%s owner=%d target=%d" % [card_id, seat, recipient]
+				var party := _hem_party(seat)
+				for position in range(1, 4):
+					_check(party.apply_damage(position, 7),
+						label + ": every hero really lost seven HP")
+				party._heroes[recipient - 1]["statuses"] = {"bleed": 2, "weak": 1}
+				party._heroes[recipient % 3]["statuses"] = {"tangled": 3}
+				_check(party.get_hero(recipient)["statuses"] == {"bleed": 2, "weak": 1}
+					and party.get_hero(recipient % 3 + 1)["statuses"] == {"tangled": 3},
+					label + ": real status maps stored on the recipient and a neighbor")
+				var deck := _hem_deck(card_id)
+				var before := _hem_snapshot(deck, party)
+				var held_before: int = deck.hand.count(card_id)
+				var hp_before: int = party.get_hero(recipient)["hp"]
+				var result: Dictionary = service.play_card(deck, party, card_id, recipient)
+				_check(result.get("ok") == true and result.get("reason") == "applied",
+					label + ": authorized paid play")
+				_check(result.get("card_id") == card_id and result.get("cost") == 1,
+					label + ": receipt names the card and its one energy")
+				_check(result.get("owner_position") == seat
+					and result.get("target_position") == recipient,
+					label + ": receipt reports the real owner and recipient seats")
+				_check(result.get("block") == HEM_BLOCK[card_id]
+					and result.get("block_before") == 0
+					and result.get("block_after") == HEM_BLOCK[card_id],
+					label + ": exactly the printed Block landed on that ally")
+				_check(result.get("heal") == HEM_HEAL[card_id]
+					and result.get("healed") == HEM_HEAL[card_id]
+					and result.get("hp_before") == hp_before
+					and result.get("hp_after") == hp_before + HEM_HEAL[card_id],
+					label + ": exactly the printed heal was reported and applied")
+				_check(_hem_snapshot(deck, party) == _hem_expected(before, card_id, recipient),
+					label + ": exact hand/piles/energy/turn/heroes and untouched injected RNG")
+				_check(deck.hand.count(card_id) == held_before - 1
+					and deck.discard_pile == [card_id] and deck.hand.size() == 4,
+					label + ": precisely one held copy moved to the discard pile")
+				_check(deck.energy == CombatState.TURN_ENERGY - 1,
+					label + ": exactly one energy was charged")
+				_check(party.get_hero(recipient)["statuses"] == {"bleed": 2, "weak": 1},
+					label + ": the recipient's status map is untouched")
+				_check(_hem_snapshot(deck, party)["rng_state"] == before["rng_state"],
+					label + ": no run-RNG draw during resolution")
+				result["block_after"] = 999
+				result["hp_after"] = 999
+				_check(party.get_hero(recipient)["block"] == HEM_BLOCK[card_id]
+					and party.get_hero(recipient)["hp"] == hp_before + HEM_HEAL[card_id],
+					label + ": a mutated receipt cannot change the ally")
+
+
+## AC2: full-HP and near-max recipients, pre-existing Block, and a genuine second copy.
+func _test_hem_cap_and_full_hp() -> void:
+	var service := V3SeamstressHemCards.new()
+	for card_id: String in HEM_CARD_IDS:
+		var full := _hem_party(2)
+		_check(full.gain_block(2, 5) and full.get_hero(2)["block"] == 5
+			and full.get_hero(2)["hp"] == full.get_hero(2)["max_hp"],
+			card_id + ": fixture really is a full-HP ally with pre-existing Block")
+		var full_deck := _hem_deck(card_id)
+		var full_before := _hem_snapshot(full_deck, full)
+		var full_result: Dictionary = service.play_card(full_deck, full, card_id, 2)
+		_check(full_result.get("ok") == true and full_result.get("healed") == 0
+			and full_result.get("hp_before") == 30 and full_result.get("hp_after") == 30,
+			card_id + ": a full-HP ally is healed for nothing")
+		_check(full_result.get("block_before") == 5
+			and full_result.get("block_after") == 5 + HEM_BLOCK[card_id],
+			card_id + ": the printed Block still stacks onto existing Block")
+		_check(_hem_snapshot(full_deck, full) == _hem_expected(full_before, card_id, 2),
+			card_id + ": the full-HP play pays once and changes only that ally")
+
+		var near := _hem_party(2)
+		_check(near.apply_damage(2, 1) and near.get_hero(2)["hp"] == 29,
+			card_id + ": fixture really sits one HP below max")
+		var near_deck := _hem_deck(card_id)
+		var near_before := _hem_snapshot(near_deck, near)
+		var near_result: Dictionary = service.play_card(near_deck, near, card_id, 2)
+		_check(near_result.get("ok") == true and near_result.get("healed") == 1
+			and near_result.get("hp_before") == 29 and near_result.get("hp_after") == 30,
+			card_id + ": the heal caps at max HP and reports the real gain")
+		_check(_hem_snapshot(near_deck, near) == _hem_expected(near_before, card_id, 2),
+			card_id + ": a capped heal still pays and discards exactly once")
+
+	# A legitimate second copy held: each play moves exactly one copy and applies once.
+	var twin := _hem_party(2)
+	_check(twin.apply_damage(3, 10) and twin.get_hero(3)["hp"] == 16,
+		"second-copy fixture really has a wounded Tinker")
+	var twin_deck := _hem_deck(HEM_PLUS)
+	var twin_held: int = twin_deck.hand.count(HEM_PLUS)
+	_check(twin_held >= 2, "second-copy fixture really holds at least two copies")
+	for play_index in range(2):
+		var before := _hem_snapshot(twin_deck, twin)
+		var result: Dictionary = service.play_card(twin_deck, twin, HEM_PLUS, 3)
+		_check(result.get("ok") == true and result.get("healed") == HEM_HEAL[HEM_PLUS]
+			and result.get("block_after") == HEM_BLOCK[HEM_PLUS] * (play_index + 1),
+			"second-copy play %d applies the printed Block and heal once" % (play_index + 1))
+		_check(twin_deck.hand.count(HEM_PLUS) == twin_held - play_index - 1,
+			"second-copy play %d leaves the other copies in hand" % (play_index + 1))
+		_check(_hem_snapshot(twin_deck, twin) == _hem_expected(before, HEM_PLUS, 3),
+			"second-copy play %d matches the single-transaction oracle" % (play_index + 1))
+		_check(twin_deck.discard_pile.count(HEM_PLUS) == play_index + 1,
+			"second-copy play %d adds exactly one discarded copy" % (play_index + 1))
+
+
+## AC1/AC2: no draw pile or injected RNG movement, and one accepted copy cannot be replayed.
+func _test_hem_repeat_and_no_draw() -> void:
+	var party := _hem_party(3)
+	_check(party.apply_damage(1, 10) and party.get_hero(1)["hp"] == 30,
+		"no-draw fixture really has a wounded front ally")
+	var deck := CombatDeck.new(
+		[HEM, HEM_FILLERS[0], HEM_FILLERS[1], HEM_FILLERS[2], HEM_FILLERS[3]], _hem_rng(5150))
+	_check(deck.start_turn() and deck.hand.count(HEM) == 1 and deck.energy == 3,
+		"single-copy fixture draws its one genuine copy")
+	var rng_before: int = deck._rng.state
+	var draw_before: Array = deck.draw_pile.duplicate(true)
+	var first: Dictionary = _hem_service_play(deck, party, HEM, 1)
+	_check(first.get("ok") == true and first.get("healed") == HEM_HEAL[HEM],
+		"the single copy plays once and heals the front ally")
+	_check(deck.draw_pile == draw_before and deck._rng.state == rng_before,
+		"the paid play draws no card and advances no seeded RNG")
+	_check(not deck.hand.has(HEM) and deck.discard_pile == [HEM],
+		"the played copy alone moved to the discard pile")
+	var replayed_at := _hem_snapshot(deck, party)
+	var replay: Dictionary = _hem_service_play(deck, party, HEM, 1)
+	_check(replay.get("ok") == false and replay.get("reason") == "card_not_held",
+		"a second play of the same ID fails once the copy is discarded")
+	_check(_hem_snapshot(deck, party) == replayed_at and deck._rng.state == rng_before,
+		"the double-play refusal leaves the deck, roster and RNG untouched")
+
+
+## AC3: every invalid request fails closed before any payment, Block, heal or discard.
+func _test_hem_refusals() -> void:
+	var party := _hem_party(2)
+
+	var inactive := CombatDeck.new(
+		[HEM, HEM, HEM, HEM_FILLERS[0], HEM_FILLERS[1], HEM_FILLERS[2]], _hem_rng(414))
+	_check(not inactive.turn_active and inactive.hand.is_empty(),
+		"inactive-turn fixture really has no active turn")
+	_hem_rejected(inactive, party, HEM, 2, "inactive turn")
+
+	var other_deck := _hem_deck(POULTICE)
+	_check(other_deck.hand.has(POULTICE) and not other_deck.hand.has(HEM),
+		"absent-card fixture holds the other genuine ID only")
+	_hem_rejected(other_deck, party, HEM, 2, "card absent from hand")
+	_hem_rejected(other_deck, party, "seamstress_v3_missing_hem", 2, "unknown card ID")
+	_hem_rejected(other_deck, party, "", 2, "empty card ID")
+	_hem_rejected(other_deck, party, 7, 2, "non-string card ID")
+	_hem_rejected(other_deck, party, StringName(HEM), 2, "StringName card ID")
+	_hem_rejected(other_deck, party, HEM + "_plus_plus", 2, "forged plus-of-plus ID")
+
+	var broke := _hem_deck(HEM)
+	_check(broke.try_spend_energy(CombatState.TURN_ENERGY) and broke.energy == 0
+		and broke.hand.has(HEM), "energy-short fixture is genuinely broke and holds the card")
+	_hem_rejected(broke, party, HEM, 2, "zero energy")
+
+	var no_owner := _hem_party_without_owner()
+	_check(no_owner.is_valid() and no_owner.get_hero(1)["id"] == "warden"
+		and no_owner.get_hero(2)["id"] == "tinker" and no_owner.get_hero(3)["id"] == "mender",
+		"missing-owner fixture is a valid three-distinct-hero party with no Seamstress")
+	_hem_rejected(_hem_deck(HEM), no_owner, HEM, 2, "party without the Seamstress")
+
+	var downed_owner := _hem_party(2)
+	_check(downed_owner.apply_damage(2, 30) and downed_owner.is_downed(2),
+		"torn-caster fixture has a genuinely downed Seamstress")
+	_hem_rejected(_hem_deck(HEM), downed_owner, HEM, 2, "downed Seamstress")
+
+	var front := _hem_party(1)
+	_check(front.get_hero(1)["id"] == "seamstress" and front.get_hero(1)["position"] == 1,
+		"illegal-FROM fixture really seats the living Seamstress in slot 1")
+	_hem_rejected(_hem_deck(POULTICE), front, POULTICE, 2,
+		"Patchwork Poultice from its illegal FROM seat 1")
+	_hem_rejected(_hem_deck(POULTICE_PLUS), front, POULTICE_PLUS, 2,
+		"Patchwork Poultice+ from its illegal FROM seat 1")
+
+	var downed_target := _hem_party(2)
+	_check(downed_target.apply_damage(3, 26) and downed_target.is_downed(3),
+		"torn-recipient fixture has a genuinely downed Tinker")
+	_hem_rejected(_hem_deck(HEM), downed_target, HEM, 3, "downed recipient")
+
+	for bad_target in [0, -1, 4, 99]:
+		_hem_rejected(_hem_deck(HEM), _hem_party(2), HEM, bad_target,
+			"target outside 1-3: " + str(bad_target))
+
+	var broken_roster := _hem_party(2)
+	broken_roster._heroes[1]["hp"] = 31
+	_check(broken_roster.get_hero(2)["hp"] == 31 and broken_roster.get_hero(2)["max_hp"] == 30,
+		"malformed-roster fixture really has HP above max")
+	_hem_rejected(_hem_deck(HEM), broken_roster, HEM, 2, "malformed party HP")
+
+	var duplicate := _hem_party(2)
+	duplicate._heroes[0]["id"] = "seamstress"
+	_check(duplicate.get_hero(1)["id"] == "seamstress"
+		and duplicate.get_hero(2)["id"] == "seamstress",
+		"duplicate-identity fixture really repeats the owner ID")
+	_hem_rejected(_hem_deck(HEM), duplicate, HEM, 2, "duplicate hero identity")
+
+	var malformed := _hem_party(2)
+	malformed._heroes[2]["statuses"] = {"bleed": -1}
+	_check(malformed.get_hero(3)["statuses"] == {"bleed": -1},
+		"malformed-status fixture really stores a negative counter")
+	_hem_rejected(_hem_deck(HEM), malformed, HEM, 2, "malformed neighbor statuses")
+
+	var overflow := _hem_party(2)
+	overflow._heroes[2]["block"] = CombatParty.MAX_INT - HEM_BLOCK[HEM] + 1
+	_check(overflow.get_hero(3)["block"] == CombatParty.MAX_INT - HEM_BLOCK[HEM] + 1,
+		"Block-overflow fixture really sits one Block short of the ceiling")
+	_hem_rejected(_hem_deck(HEM), overflow, HEM, 3, "Block overflow")
+
+	_hem_rejected(null, _hem_party(2), HEM, 2, "null deck")
+	_hem_rejected(_hem_deck(HEM), null, HEM, 2, "null party")
+	_hem_rejected(_hem_deck(HEM), CombatParty.new([]), HEM, 2, "invalid party roster")
+
+	# The cleansing helper must refuse these IDs at play time without touching anything either.
+	var cleansing := SeamstressCleansingCards.new()
+	for card_id: String in HEM_CARD_IDS:
+		var deck := _hem_deck(card_id)
+		var before := _hem_snapshot(deck, party)
+		var result: Dictionary = cleansing.play_card(deck, party, card_id, 2, "")
+		_check(result.get("ok") == false and result.get("reason") == "unsupported_card",
+			card_id + ": the cleansing helper still refuses this paid Block-and-heal play")
+		_check(_hem_snapshot(deck, party) == before,
+			card_id + ": the cleansing refusal changes no hand, pile, energy, hero or RNG")
+
+	# A rejected attempt never poisons the next authentic one on the same objects.
+	var retry_party := _hem_party(2)
+	_check(retry_party.apply_damage(3, 8) and retry_party.get_hero(3)["hp"] == 18,
+		"retry fixture really has a wounded Tinker")
+	var retry_deck := _hem_deck(POULTICE)
+	_hem_rejected(retry_deck, retry_party, POULTICE, 0, "retry: invalid target first")
+	_hem_rejected(retry_deck, retry_party, HEM, 3, "retry: wrong-card ID second")
+	var retry_before := _hem_snapshot(retry_deck, retry_party)
+	var retry_result: Dictionary = _hem_service_play(retry_deck, retry_party, POULTICE, 3)
+	_check(retry_result.get("ok") == true and retry_result.get("healed") == HEM_HEAL[POULTICE]
+		and retry_result.get("block_after") == HEM_BLOCK[POULTICE],
+		"retry: the authentic play then succeeds")
+	_check(_hem_snapshot(retry_deck, retry_party)
+		== _hem_expected(retry_before, POULTICE, 3),
+		"retry: exactly one charge, one discard, one Block/heal and an untouched RNG")
+
+
+## AC3: a rewritten or relinked catalog record is inert before any state changes.
+func _test_hem_tampered_catalog() -> void:
+	var forged := ForgedHem.new()
+	var starter := V3SeamstressStarterCards.new()
+	var pool := V3SeamstressPoolCards.new()
+	for card_id: String in HEM_CARD_IDS:
+		var authentic: Dictionary = starter.get_definition(card_id)
+		if authentic.is_empty():
+			authentic = pool.get_definition(card_id)
+		_check(not authentic.is_empty(), card_id + ": authentic catalog record loaded")
+		var link := "upgrade_of" if card_id.ends_with("_plus") else "upgrade_id"
+		var fields: Array = ["id", "owner", "cost", "from_positions", "to_positions",
+			"target_kind", "effects", "starting_copies", "reward_eligible", link]
+		var replacements: Dictionary = {
+			"id": "seamstress_forged_hem", "owner": "warden", "cost": 2,
+			"from_positions": [1], "to_positions": [1], "target_kind": "enemy_single",
+			"effects": {"block": 99, "heal": 99},
+			"upgrade_id": "seamstress_forged_hem", "upgrade_of": "seamstress_forged_hem",
+		}
+		replacements["starting_copies"] = int(authentic.get("starting_copies", 0)) + 1
+		replacements["reward_eligible"] = not bool(authentic.get("reward_eligible", false))
+		var mutations: Array = []
+		for field: String in fields:
+			var omitted: Dictionary = authentic.duplicate(true)
+			omitted.erase(field)
+			mutations.append(omitted)
+			var altered: Dictionary = authentic.duplicate(true)
+			altered[field] = replacements[field]
+			mutations.append(altered)
+		var extra_effect: Dictionary = authentic.duplicate(true)
+		extra_effect["effects"]["cleanse_debuff"] = 1
+		mutations.append(extra_effect)
+		var typed_cost: Dictionary = authentic.duplicate(true)
+		typed_cost["cost"] = float(typed_cost["cost"])
+		mutations.append(typed_cost)
+		var typed_block: Dictionary = authentic.duplicate(true)
+		typed_block["effects"]["block"] = float(typed_block["effects"]["block"])
+		mutations.append(typed_block)
+		var relinked: Dictionary = authentic.duplicate(true)
+		relinked["upgrade_of" if link == "upgrade_id" else "upgrade_id"] = "seamstress_forged_hem"
+		mutations.append(relinked)
+
+		var party := _hem_party(2)
+		var deck := _hem_deck(card_id)
+		for mutation: Dictionary in mutations:
+			forged.forged = mutation
+			var before := _hem_snapshot(deck, party)
+			var result: Dictionary = forged.play_card(deck, party, card_id, 2)
+			_check(result.get("ok") == false and result.get("reason") == "catalog_mismatch",
+				card_id + ": a tampered catalog record is refused")
+			_check(_hem_snapshot(deck, party) == before and forged.forged == mutation,
+				card_id + ": the forgery refusal spends, discards and heals nothing")
+		forged.forged = authentic
+		var before_ok := _hem_snapshot(deck, party)
+		var accepted: Dictionary = forged.play_card(deck, party, card_id, 2)
+		_check(accepted.get("ok") == true and accepted.get("block") == HEM_BLOCK[card_id]
+			and accepted.get("heal") == HEM_HEAL[card_id],
+			card_id + ": the restored authentic record still plays")
+		_check(_hem_snapshot(deck, party) == _hem_expected(before_ok, card_id, 2),
+			card_id + ": the restored record resolves exactly one paid transaction")
+
+
+## AC2: identical seeds and request sequences replay identically, with no RNG movement.
+func _test_hem_seeded_replay() -> void:
+	var first := _hem_replay(51842)
+	var second := _hem_replay(51842)
+	_check(first["results"].size() == 4, "seeded replay covers all four printings")
+	_check(first == second, "same-seed replay produces an identical snapshot and receipts")
+	_check(first["rng_state"] == second["rng_state"],
+		"seeded replay consumes no run RNG at any step")
+	_check(first["results"][0].get("ok") == true and first["results"][1].get("ok") == true
+		and first["results"][2].get("ok") == true and first["results"][3].get("ok") == false,
+		"seeded replay keeps three legal plays and the zero-energy refusal")
+	_check(first["results"][3].get("reason") == "insufficient_energy",
+		"seeded replay's last refusal is the spent-energy rejection")
+	_check(first["hp"] == {"warden": 32, "tinker": 26, "seamstress": 26},
+		"seeded replay lands the exact capped heals on the right heroes")
+	_check(first["block"] == {"warden": 4, "tinker": 0, "seamstress": 10},
+		"seeded replay grants the printed Block only to the chosen allies")
+	_check(first["statuses"] == {"bleed": 2},
+		"seeded replay invents no status and preserves the untouched map")
+	_check(first["discard"] == [HEM, POULTICE_PLUS, HEM_PLUS],
+		"seeded replay discards exactly the three paid copies in order")
+
+
+func _hem_replay(seed_value: int) -> Dictionary:
+	var service := V3SeamstressHemCards.new()
+	# Real adjacent move: the Seamstress ends in the back seat 3, where both cards are legal.
+	var party := _hem_party(3)
+	_check(party.apply_damage(1, 12) and party.get_hero(1)["hp"] == 28,
+		"replay fixture damages the front Warden to twenty-eight HP")
+	_check(party.apply_damage(3, 9) and party.get_hero(3)["hp"] == 21,
+		"replay fixture damages the back Seamstress to twenty-one HP")
+	party._heroes[0]["statuses"] = {"bleed": 2}
+	var deck := CombatDeck.new(
+		[HEM, HEM_PLUS, POULTICE, POULTICE_PLUS, HEM_FILLERS[0]], _hem_rng(seed_value))
+	_check(deck.start_turn() and deck.hand.size() == 5 and deck.energy == 3,
+		"replay deck starts the real five-draw three-energy turn")
+	for card_id: String in HEM_CARD_IDS:
+		_check(deck.hand.has(card_id), "replay fixture holds " + card_id)
+	var results: Array = []
+	results.append(service.play_card(deck, party, HEM, 3))
+	results.append(service.play_card(deck, party, POULTICE_PLUS, 1))
+	results.append(service.play_card(deck, party, HEM_PLUS, 3))
+	results.append(service.play_card(deck, party, POULTICE, 1))
+	var snapshot := _hem_snapshot(deck, party)
+	snapshot["results"] = results
+	snapshot["hp"] = {}
+	snapshot["block"] = {}
+	for index in range(1, CombatParty.PARTY_SIZE + 1):
+		var hero: Dictionary = party.get_hero(index)
+		snapshot["hp"][hero["id"]] = hero["hp"]
+		snapshot["block"][hero["id"]] = hero["block"]
+	snapshot["statuses"] = party.get_hero(1)["statuses"]
+	return snapshot
+
+
+func _hem_service_play(deck: CombatDeck, party: CombatParty, card_id: String,
+		target_position: int) -> Dictionary:
+	return V3SeamstressHemCards.new().play_card(deck, party, card_id, target_position)
+
+
+func _hem_rejected(deck: CombatDeck, party: CombatParty, card_id: Variant, target_position: int,
+		label: String) -> void:
+	var before := _hem_snapshot(deck, party)
+	var result: Dictionary = V3SeamstressHemCards.new().play_card(
+		deck, party, card_id, target_position)
+	_check(result.get("ok") == false, label + ": refused")
+	_check(result.get("reason") is String and not (result.get("reason") as String).is_empty(),
+		label + ": refusal carries a reason")
+	_check(_hem_snapshot(deck, party) == before,
+		label + ": unchanged party, hand, draw, discard, energy, turn and RNG")
+
+
+## The single-transaction expected state: one energy, one discarded held copy, one Block and heal.
+func _hem_expected(before: Dictionary, card_id: String, target_position: int) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] -= 1
+	expected["state_energy"] -= 1
+	var hand: Array = expected["hand"]
+	hand.remove_at(hand.find(card_id))
+	var discard: Array = expected["discard"]
+	discard.append(card_id)
+	var hero: Dictionary = expected["heroes"][target_position - 1]
+	hero["hp"] = mini(int(hero["max_hp"]), int(hero["hp"]) + int(HEM_HEAL[card_id]))
+	hero["block"] = int(hero["block"]) + int(HEM_BLOCK[card_id])
+	return expected
+
+
+func _hem_snapshot(deck: CombatDeck, party: CombatParty) -> Dictionary:
+	var result: Dictionary = {}
+	if party != null:
+		result["heroes"] = party.get_heroes()
+		result["party_valid"] = party.is_valid()
+	if deck != null:
+		result["hand"] = deck.hand.duplicate(true)
+		result["draw"] = deck.draw_pile.duplicate(true)
+		result["discard"] = deck.discard_pile.duplicate(true)
+		result["energy"] = deck.energy
+		result["turn"] = deck.turn_active
+		if deck.combat_state != null:
+			result["state_energy"] = deck.combat_state.energy
+			result["state_turn"] = deck.combat_state.player_turn_active
+		if deck._rng != null:
+			result["rng_state"] = deck._rng.state
+			result["rng_seed"] = deck._rng.seed
+	return result
+
+
+func _hem_rng(seed_value: int) -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	return rng
+
+
+## A real five-card hand from six cards, so at least two copies of the named ID are held.
+func _hem_deck(card_id: String, seed_value: int = 7312) -> CombatDeck:
+	var ids: Array[String] = [card_id, card_id, card_id, HEM_FILLERS[0], HEM_FILLERS[1],
+		HEM_FILLERS[2]]
+	var deck := CombatDeck.new(ids, _hem_rng(seed_value))
+	_check(deck.start_turn() and deck.turn_active and deck.energy == CombatState.TURN_ENERGY
+		and deck.hand.size() == 5 and deck.hand.count(card_id) >= 2,
+		card_id + ": real seeded five-card hand holding duplicate copies")
+	return deck
+
+
+func _hem_hero_records() -> Array:
+	if not _hem_records.is_empty():
+		return _hem_records
+	var raw: String = FileAccess.get_file_as_string("res://data/heroes/starter_party.json")
+	var parsed: Variant = JSON.parse_string(raw)
+	_check(parsed is Array and parsed.size() == CombatParty.PARTY_SIZE,
+		"real authored starter party file supplies all three heroes")
+	if not parsed is Array or parsed.size() != CombatParty.PARTY_SIZE:
+		return []
+	for record in parsed:
+		var hero: Dictionary = record.duplicate(true)
+		if hero.get("max_hp") is float:
+			hero["max_hp"] = int(hero["max_hp"])
+		_hem_records.append(hero)
+	return _hem_records
+
+
+func _hem_base_party() -> CombatParty:
+	var definitions: Array = []
+	for record: Dictionary in _hem_hero_records():
+		definitions.append(record.duplicate(true))
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid() and party.get_hero(1).get("id") == "warden"
+		and party.get_hero(1).get("max_hp") == 40 and party.get_hero(2).get("id") == "seamstress"
+		and party.get_hero(2).get("max_hp") == 30 and party.get_hero(3).get("id") == "tinker"
+		and party.get_hero(3).get("max_hp") == 26,
+		"valid real CombatParty with the 40/30/26-HP Warden, Seamstress and Tinker")
+	return party
+
+
+## A valid three-distinct-hero party without the Seamstress, for the missing-owner refusal.
+func _hem_party_without_owner() -> CombatParty:
+	var definitions: Array = []
+	for record: Dictionary in _hem_hero_records():
+		if record.get("id") != "seamstress":
+			definitions.append(record.duplicate(true))
+	definitions.append({"id": "mender", "name": "Mender", "max_hp": 20})
+	return CombatParty.new(definitions)
+
+
+## A genuine adjacent swap through the real position rules puts the Seamstress in `seat`.
+func _hem_party(seat: int) -> CombatParty:
+	var party := _hem_base_party()
+	if seat == 2:
+		return party
+	var move_id := "fixture_hem_shift"
+	var moving := CombatDeck.new([move_id, move_id], _hem_rng(345))
+	_check(moving.start_turn(), "hem seat fixture begins a legitimate shared turn")
+	var direction := -1 if seat < 2 else 1
+	var definition := {"id": move_id, "owner": "seamstress", "cost": 0,
+		"from_positions": [1, 2, 3], "action_kind": "adjacent_swap", "direction": direction}
+	_check(CombatPositionSwaps.play_move_card(moving, party, move_id, definition),
+		"actual adjacent move shifts the Seamstress toward slot " + str(seat))
+	_check(party.get_hero(seat).get("id") == "seamstress"
+		and party.get_hero(seat).get("position") == seat,
+		"Seamstress identity is really at actual slot " + str(seat))
+	return party
