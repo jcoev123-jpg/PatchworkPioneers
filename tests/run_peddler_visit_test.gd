@@ -13,6 +13,48 @@ const SNARE_ID := "yarn_ranger_snare_net"
 const SNARE_PRICE := 65
 const SEED := 2611790
 
+## The four already-implemented look-driven common bases this task stocks at the
+## Peddler, with the rules copied from their own pool catalogs
+## (lantern_monk/scarecrow/yarn_ranger/button_golem _pool_cards.gd) and the
+## established 50-gold common-card candidate quote.
+const LOOK_DRIVEN_STOCK_SPECS := {
+	"lantern_monk_lantern_glow": {
+		"owner": "lantern_monk", "price": 50, "cost": 1, "target": "party_all",
+		"from": [1, 2, 3], "to": [],
+		"effects": {"heal_all": 2, "cleanse_one_debuff_each_ally": 1},
+		"plus_effects": {"heal_all": 3, "cleanse_one_debuff_each_ally": 1},
+	},
+	"scarecrow_crow_peck": {
+		"owner": "scarecrow", "price": 50, "cost": 1, "target": "enemy_back",
+		"from": [1, 2, 3], "to": [1, 2, 3],
+		"effects": {"damage": 4, "ignore_block": true},
+		"plus_effects": {"damage": 6, "ignore_block": true},
+	},
+	"yarn_ranger_knit_shield": {
+		"owner": "yarn_ranger", "price": 50, "cost": 1, "target": "ally_single",
+		"from": [1, 2, 3], "to": [],
+		"effects": {"block": 6, "draw": 1}, "plus_effects": {"block": 8, "draw": 1},
+	},
+	"button_golem_button_roll": {
+		"owner": "button_golem", "price": 50, "cost": 1, "target": "ally_single",
+		"from": [1, 2, 3], "to": [],
+		"effects": {"swap_with_target_ally": true, "block": 5},
+		"plus_effects": {"swap_with_target_ally": true, "block": 8},
+	},
+}
+
+## One authentic three-distinct-hero party per new card, each including that
+## card's owner, so the seeded witness proves a genuine mixed-party 3+1 stock.
+const LOOK_DRIVEN_WITNESS_PARTIES := {
+	"lantern_monk_lantern_glow": ["lantern_monk", "scarecrow", "button_golem"],
+	"scarecrow_crow_peck": ["scarecrow", "yarn_ranger", "button_golem"],
+	"yarn_ranger_knit_shield": ["lantern_monk", "yarn_ranger", "rag_duelist"],
+	"button_golem_button_roll": ["rag_duelist", "button_golem", "lantern_monk"],
+}
+## Bounded per-card seed sweep for the witness: every seat draws between two and
+## three candidates, so a shipped offer appears within a few dozen seeds.
+const LOOK_DRIVEN_SWEEP := 160
+
 var failures: Array[String] = []
 var checks: int = 0
 var authored_cards: Array = []
@@ -53,6 +95,7 @@ func _initialize() -> void:
 	_test_replay_and_rng()
 	_test_atomic_sewing()
 	_test_yarn_ranger_snare_purchase()
+	_test_look_driven_peddler_stock()
 	_check(randi() == expected_global,
 		"all stock sampling, decisions, refusals and Leave consume no global RNG")
 	_finish()
@@ -227,6 +270,221 @@ func _test_yarn_ranger_snare_purchase() -> void:
 		"Snare Net: exact post-buy replay")
 	_check(visit.read_state() == after,
 		"refused Snare Net replays cannot debit again")
+
+
+## The authored pool catalog that owns each v3 hero, as separate instances of
+## the same shipped catalogs the stock sampler validates against.
+func _owner_catalogs() -> Dictionary:
+	return {
+		"lantern_monk": LanternMonkPoolCards.new(),
+		"rag_duelist": RagDuelistPoolCards.new(),
+		"scarecrow": ScarecrowPoolCards.new(),
+		"yarn_ranger": YarnRangerPoolCards.new(),
+		"button_golem": ButtonGolemPoolCards.new(),
+	}
+
+
+## AC1/AC2: the four proven look-driven base cards this task stocks. Each shipped
+## record is checked by ID against the real initial_offers.json and its own pool
+## catalog (never a catalog total or a full ordered list), then a bounded seeded
+## sweep must reach it as its owner's ONE Peddler card offer beside two other
+## party cards and one patch, and the real visit must buy it for exactly 50 gold
+## once, append only that ID, keep the other offerings and supplied stock intact
+## and still allow a free Leave on a different fresh visit.
+func _test_look_driven_peddler_stock() -> void:
+	var catalogs := _owner_catalogs()
+	var starter := StarterCards.new()
+	var authored_before := authored_cards.duplicate(true)
+	var patches_before := authored_patches.duplicate(true)
+	var deck_before := DECK.duplicate()
+
+	# AC1: exactly one shipped record per new ID, each an authentic unupgraded
+	# common base resolved in its own authored pool catalog.
+	for card_id in LOOK_DRIVEN_STOCK_SPECS:
+		var spec: Dictionary = LOOK_DRIVEN_STOCK_SPECS[card_id]
+		var matches: Array = authored_cards.filter(
+			func(entry): return entry is Dictionary and entry.get("id") == card_id)
+		_check(matches.size() == 1,
+			"shipped Peddler stock lists " + card_id + " exactly once")
+		if matches.size() != 1:
+			continue
+		var record: Dictionary = matches[0]
+		var quoted: float = float(record.get("price", -1.0))
+		_check(record.get("owner") == spec["owner"] and quoted == float(spec["price"])
+			and record.size() == 3,
+			card_id + ": authored owner and the exact 50-gold quote, with no extra field")
+		_check(not card_authored.has(card_id + "_plus"),
+			card_id + ": the + upgrade is never priced stock")
+
+		var catalog: Variant = catalogs.get(spec["owner"])
+		if catalog == null:
+			_check(false, card_id + ": owns an authored pool catalog")
+			continue
+		_check(catalog.has_card(card_id) and not starter.has_card(card_id)
+			and catalog.get_base_ids().has(card_id),
+			card_id + ": a genuine pool base in its own hero catalog, not a starter card")
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(definition.get("id") == card_id and definition.get("owner") == spec["owner"]
+			and definition.get("cost") == spec["cost"]
+			and definition.get("target_kind") == spec["target"]
+			and definition.get("from_positions") == spec["from"]
+			and definition.get("to_positions") == spec["to"]
+			and definition.get("effects") == spec["effects"]
+			and definition.get("rarity") == "common"
+			and definition.get("reward_eligible") == true
+			and definition.get("starting_copies") == 0
+			and not definition.has("upgrade_of")
+			and definition.get("upgrade_id") == card_id + "_plus",
+			card_id + ": authentic unupgraded common base with its authored rules")
+		_check(definition.get("illustration_path")
+			== "res://assets/paper/cards/" + card_id + ".png",
+			card_id + ": keeps its pre-existing card art path")
+		var plus: Dictionary = catalog.get_definition(card_id + "_plus")
+		_check(plus.get("id") == card_id + "_plus" and plus.get("owner") == spec["owner"]
+			and plus.get("effects") == spec["plus_effects"]
+			and plus.get("upgrade_of") == card_id
+			and plus.get("reward_eligible") == false
+			and plus.get("starting_copies") == 0,
+			card_id + ": the authored + stays Rest-only and unpriced")
+
+	# AC1: every pre-existing candidate this task must not disturb survives.
+	var listed_ids := {}
+	for entry in authored_cards:
+		listed_ids[entry["id"]] = int(listed_ids.get(entry["id"], 0)) + 1
+	_check(listed_ids.size() == authored_cards.size(),
+		"the shipped card catalog lists every ID at most once")
+	for required in ["lantern_monk_moth_lure", "scarecrow_re_stuff",
+			"yarn_ranger_unspool", "yarn_ranger_snare_net", "button_golem_pop_button"]:
+		_check(card_authored.has(required) and listed_ids.get(required) == 1,
+			"the earlier authored card survives exactly once: " + required)
+	_check(card_authored.get(SNARE_ID, {}).get("price") == SNARE_PRICE,
+		"yarn_ranger_snare_net keeps its authored 65-gold quote")
+	for patch_id in ["relay_bobbin", "hearth_lining"]:
+		_check(patch_prices.has(patch_id) and patch_prices[patch_id] == 100,
+			"the P8 patch candidate survives as authored: " + patch_id)
+
+	# AC2: a bounded seeded sweep per new card, then the real paid visit.
+	var card_index := 0
+	for card_id in LOOK_DRIVEN_STOCK_SPECS:
+		var spec: Dictionary = LOOK_DRIVEN_STOCK_SPECS[card_id]
+		var party: Array = LOOK_DRIVEN_WITNESS_PARTIES[card_id]
+		var owner_seat: int = party.find(spec["owner"])
+		_check(party.size() == 3 and owner_seat >= 0
+			and party.find(party[0], 1) == -1 and party.find(party[1], 2) == -1,
+			card_id + ": witness party is three distinct heroes including the owner")
+		var seed_base: int = SEED + 40000 + card_index * 1000
+		card_index += 1
+
+		var witness_seed := -1
+		var witness: Dictionary = {}
+		var witness_state := 0
+		for offset in range(LOOK_DRIVEN_SWEEP):
+			var candidate_seed: int = seed_base + offset
+			var rng := _rng(candidate_seed)
+			var stock := RunShopStockOffers.generate_peddler_stock(rng, party,
+				authored_cards, authored_patches, [])
+			if stock.get("ok") != true:
+				continue
+			var sampled: Array = stock["cards"]
+			if sampled.size() != 3 or sampled[owner_seat].get("owner") != spec["owner"] \
+					or sampled[owner_seat].get("id") != card_id:
+				continue
+			witness_seed = candidate_seed
+			witness = stock
+			witness_state = rng.state
+			break
+		_check(witness_seed >= 0,
+			card_id + ": bounded deterministic sweep samples it as its owner's Peddler offer")
+		if witness_seed < 0:
+			continue
+
+		var replay_rng := _rng(witness_seed)
+		var replay := RunShopStockOffers.generate_peddler_stock(replay_rng, party,
+			authored_cards, authored_patches, [])
+		_check(replay == witness and replay_rng.state == witness_state,
+			card_id + ": the witnessed stock replays with identical four-draw state")
+
+		var witness_before := witness.duplicate(true)
+		var offers: Array = witness["cards"]
+		var offered_ids := {}
+		for position in range(offers.size()):
+			var offer: Dictionary = offers[position]
+			offered_ids[offer.get("id")] = true
+			_check(offer.get("owner") == party[position],
+				card_id + ": offer " + str(position) + " fills its own party seat")
+			_check(card_authored.has(offer.get("id"))
+				and card_authored[offer.get("id")]["owner"] == offer.get("owner")
+				and card_authored[offer.get("id")]["price"] == offer.get("price"),
+				card_id + ": companion offer " + str(offer.get("id"))
+					+ " is an authored party card at its quote")
+		_check(offered_ids.size() == 3,
+			card_id + ": the three card offers are distinct")
+		_check(int(offers[owner_seat].get("price")) == int(spec["price"])
+			and offers[owner_seat].get("owner") == spec["owner"],
+			card_id + ": the owner's seat carries it at exactly 50 gold")
+		var patches: Array = witness["patches"]
+		_check(patches.size() == 1 and patch_prices.has(patches[0].get("id"))
+			and patches[0].get("price") == patch_prices[patches[0].get("id")],
+			card_id + ": one authored patch is offered beside the three cards")
+
+		var node: String = "peddler_" + card_id
+		var visit := RunPeddlerVisit.new(node, party, DECK, [], 500, witness)
+		_check(visit.is_open(),
+			card_id + ": the witnessed stock opens a real Peddler visit")
+		if not visit.is_open():
+			continue
+		var open := visit.read_state()
+		var listing: Dictionary = open["stock"]["cards"][owner_seat]
+		_check(listing.get("id") == card_id and listing.get("price") == spec["price"]
+			and listing.get("sold") == false,
+			card_id + ": the open visit lists it unsold at the authored 50-gold quote")
+		var receipt := visit.choose_purchase(node, open["state"], open["stock"],
+			"card", card_id)
+		_check(receipt.get("ok") == true and receipt.get("kind") == "card"
+			and receipt.get("id") == card_id and receipt.get("price") == spec["price"],
+			card_id + ": buys with the exact authored 50-gold receipt")
+		_check(receipt.get("state", {}).get("gold") == 500 - int(spec["price"])
+			and receipt.get("state", {}).get("deck") == DECK + [card_id]
+			and receipt.get("state", {}).get("trinkets").is_empty(),
+			card_id + ": debits exactly 50 gold once and appends only that ID")
+		var after_stock: Dictionary = receipt.get("stock", {})
+		var others_unsold := true
+		for position in range(after_stock.get("cards", []).size()):
+			if position != owner_seat and after_stock["cards"][position]["sold"]:
+				others_unsold = false
+		_check(after_stock.get("cards", []).size() == 3
+			and after_stock["cards"][owner_seat]["sold"] == true and others_unsold
+			and after_stock.get("trinkets", [{}])[0].get("sold") == false,
+			card_id + ": only that card is sold; the other three offers are unchanged")
+		_check(visit.is_consumed() and not visit.is_open(),
+			card_id + ": the paid buy closes the one-decision visit")
+		_check(witness == witness_before,
+			card_id + ": the visit never mutates the supplied seeded stock")
+
+		# Negative coverage stays: neither a stale nor a repeat buy can debit.
+		_assert_refused(visit, open, node, "card", card_id,
+			card_id + ": stale pre-buy replay")
+		var after := visit.read_state()
+		_assert_refused(visit, after, node, "card", card_id,
+			card_id + ": second buy with the current snapshot")
+		_assert_leave_refused(visit, after, node, card_id + ": Leave after the buy")
+		_check(visit.read_state() == after,
+			card_id + ": refused replays cannot debit again")
+
+		var leaving := RunPeddlerVisit.new(node + "_leave", party, DECK, [], 500,
+			witness)
+		var leave_open := leaving.read_state()
+		var left := leaving.leave(node + "_leave", leave_open["state"],
+			leave_open["stock"])
+		_check(left.get("ok") == true and left.get("decision") == "leave"
+			and left.get("state", {}).get("gold") == 500
+			and left.get("state", {}).get("deck") == DECK
+			and left.get("state", {}).get("trinkets").is_empty(),
+			card_id + ": a different fresh visit from the same stock Leaves free")
+
+	_check(DECK == deck_before, "no witness visit mutates the supplied deck")
+	_check(authored_cards == authored_before and authored_patches == patches_before,
+		"the shipped candidate arrays survive every witness visit unchanged")
 
 
 func _state(gold: int, deck: Variant = null, trinkets: Variant = null) -> Dictionary:

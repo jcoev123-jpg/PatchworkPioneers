@@ -206,10 +206,12 @@ const V3_PEDDLER_STOCK_SPECS := {
 	"yarn_ranger_snare_net": {"owner": "yarn_ranger", "price": 65, "rarity": "uncommon"},
 }
 
-## The two shipped Yarn Ranger Peddler bases, with their authored pool rules.
-## Both are cost-2 uncommon enemy_all cards from seats 2-3; Snare Net applies
-## Tangled 1 (+2 as +) and Unspool deals 7 (10 as +) to Tangled enemies. Only
-## the base IDs are priced stock; the + upgrades stay Rest-only.
+## The shipped Yarn Ranger Peddler bases, with their authored pool rules.
+## All are cost-1/2 commons or uncommons; Snare Net applies Tangled 1 (+2 as +)
+## and Unspool deals 7 (10 as +) to Tangled enemies, both as cost-2 enemy_all
+## cards from seats 2-3. Knit Shield is the cost-1 ally Block-and-draw base
+## stocked by the look-driven Peddler task. Only the base IDs are priced stock;
+## the + upgrades stay Rest-only.
 const YARN_RANGER_PEDDLER_SPECS := {
 	"yarn_ranger_snare_net": {
 		"owner": "yarn_ranger", "price": 65, "rarity": "uncommon",
@@ -226,6 +228,13 @@ const YARN_RANGER_PEDDLER_SPECS := {
 			"living_targets_only": true},
 		"plus_effects": {"damage": 10, "requires_target_status": "tangled",
 			"living_targets_only": true},
+	},
+	"yarn_ranger_knit_shield": {
+		"owner": "yarn_ranger", "price": 50, "rarity": "common",
+		"cost": 1, "plus_cost": 1, "from": [1, 2, 3], "to": [],
+		"target": "ally_single",
+		"effects": {"block": 6, "draw": 1},
+		"plus_effects": {"block": 8, "draw": 1},
 	},
 }
 
@@ -3413,6 +3422,23 @@ func _test_v3_peddler_party_stock(deck: Array[String], catalog: StarterCards) ->
 				and short.get("trinkets", []).is_empty() and shop_rng.state == short_state,
 				label + ": legacy 5+2 fails closed without five priced party cards")
 
+	# AC3: with the three-plus priced cards each v3 hero now carries, a mixed
+	# new-hero party can reach the legacy five-card Shop. The fail-closed path is
+	# still exercised explicitly from a genuinely authored lean pool of one
+	# priced card per party hero: no stock, no offers and no RNG draw.
+	var lean_party: Array[String] = ["scarecrow", "yarn_ranger", "button_golem"]
+	var lean_ids := ["scarecrow_re_stuff", "yarn_ranger_snare_net",
+		"button_golem_pop_button"]
+	var lean_cards: Array = candidates.filter(
+		func(entry): return entry is Dictionary and lean_ids.has(entry.get("id")))
+	var lean_rng := _rng(SEED + 21000)
+	var lean_state: int = lean_rng.state
+	var lean := RunShopStockOffers.generate(lean_rng, lean_party, lean_cards, patches, [])
+	_check(lean_cards.size() == lean_ids.size()
+		and not lean.get("ok", true) and lean.get("cards", []).is_empty()
+		and lean.get("trinkets", []).is_empty() and lean_rng.state == lean_state,
+		"legacy 5+2 still fails closed on three priced party cards without a draw")
+
 	# AC2: a real RunPeddlerVisit opens from the sampled mixed-party 3+1 stock
 	# and keeps one paid choice or a free Leave.
 	var mixed_party: Array[String] = ["scarecrow", "yarn_ranger", "button_golem"]
@@ -3477,8 +3503,8 @@ func _test_v3_peddler_party_stock(deck: Array[String], catalog: StarterCards) ->
 ## AC1/AC2: the shipped Yarn Ranger Peddler stock. Each base is checked against
 ## its own authored pool catalog and the shipped JSON by ID (never a catalog
 ## total or list order), then an authentic three-hero party including the Yarn
-## Ranger samples genuine 3+1 visits across a bounded fixed seed sweep: both
-## Snare Net and Unspool must be reachable, each visit holds exactly one Yarn
+## Ranger samples genuine 3+1 visits across a bounded fixed seed sweep: every
+## shipped Yarn Ranger base must be reachable, each visit holds exactly one Yarn
 ## Ranger card, and every visit matches the independent four-draw oracle.
 func _test_yarn_ranger_peddler_stock(deck: Array[String], catalog: StarterCards) -> void:
 	var authored := _authored_shop_offers()
@@ -3495,8 +3521,8 @@ func _test_yarn_ranger_peddler_stock(deck: Array[String], catalog: StarterCards)
 	if candidates.is_empty() or patches.size() < 2:
 		return
 
-	# AC1: per-ID facts only. Both Yarn Ranger bases are listed exactly once at
-	# their 65-gold quote and resolve to their genuine unupgraded pool card.
+	# AC1: per-ID facts only. Every shipped Yarn Ranger base is listed exactly
+	# once at its authored quote and resolves to its genuine unupgraded pool card.
 	for card_id in YARN_RANGER_PEDDLER_SPECS:
 		var spec: Dictionary = YARN_RANGER_PEDDLER_SPECS[card_id]
 		var upgrade_id: String = card_id + "_plus"
@@ -3507,7 +3533,7 @@ func _test_yarn_ranger_peddler_stock(deck: Array[String], catalog: StarterCards)
 		if matches.size() == 1:
 			_check(matches[0].get("owner") == spec["owner"]
 				and _whole_price(matches[0].get("price")) == int(spec["price"]),
-				card_id + ": shipped Yarn Ranger owner and exact 65-gold quote")
+				card_id + ": shipped Yarn Ranger owner and exact authored quote")
 			_check(matches[0].size() == 3,
 				card_id + ": shipped record carries only id, owner and price")
 		_check(not _pool_has_id(candidates, upgrade_id),
@@ -3541,7 +3567,7 @@ func _test_yarn_ranger_peddler_stock(deck: Array[String], catalog: StarterCards)
 			and plus.get("upgrade_of") == card_id
 			and plus.get("reward_eligible") == false
 			and plus.get("starting_copies") == 0,
-			card_id + ": the authored + is Tangled 2 or 10 damage but Rest-only")
+			card_id + ": the authored + stays Rest-only")
 
 	# AC2: a bounded fixed seed sweep over one authentic three-hero party that
 	# includes the Yarn Ranger. Every visit is checked against the existing
@@ -3588,26 +3614,29 @@ func _test_yarn_ranger_peddler_stock(deck: Array[String], catalog: StarterCards)
 				"Yarn Ranger sweep seed " + str(seed_value)
 					+ ": the Yarn Ranger card fills its own party seat")
 			var ranger_id: String = str(offer.get("id", ""))
-			_check(ranger_id == "yarn_ranger_snare_net"
-				or ranger_id == "yarn_ranger_unspool",
+			# ID-presence, never a fixed card list: any authored, priced Yarn
+			# Ranger base may reach the seat, and nothing else may.
+			_check(_pool_has_id(candidates, ranger_id)
+				and _catalog_definition(ranger_id, _all_party_catalogs())
+					.get("owner") == "yarn_ranger",
 				"Yarn Ranger sweep seed " + str(seed_value)
-					+ ": the seat offers a shipped Yarn Ranger base")
-			_check(offer.get("price") == 65,
-				"Yarn Ranger sweep seed " + str(seed_value) + ": the offered base is 65 gold")
-			_check(_catalog_definition(ranger_id, _all_party_catalogs())
-				.get("owner") == "yarn_ranger",
+					+ ": the seat offers an authored priced Yarn Ranger base")
+			_check(int(offer.get("price")) == _pool_price(candidates, ranger_id)
+				and int(offer.get("price")) > 0,
 				"Yarn Ranger sweep seed " + str(seed_value)
-					+ ": the offer resolves to the Yarn Ranger catalog")
+					+ ": the offered base keeps its authored quote")
 			reached[ranger_id] = true
 		_check(ranger_cards == 1,
 			"Yarn Ranger sweep seed " + str(seed_value)
-				+ ": exactly one Yarn Ranger card, never both")
+				+ ": exactly one Yarn Ranger card, never two")
 	_check(sampled_visits == sweep,
 		"every bounded Yarn Ranger sweep seed samples genuine stock")
 	_check(reached.has("yarn_ranger_snare_net"),
 		"the bounded sweep reaches the shipped Snare Net offer")
 	_check(reached.has("yarn_ranger_unspool"),
 		"the bounded sweep reaches the shipped Unspool offer")
+	_check(reached.has("yarn_ranger_knit_shield"),
+		"the bounded sweep reaches the shipped Knit Shield offer")
 	_check(candidates == candidates_before and patches == patches_before,
 		"the shipped candidate arrays survive the Yarn Ranger sweep unchanged")
 
