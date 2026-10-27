@@ -44,6 +44,64 @@ const ANCHOR_RECORDS := {
 	},
 }
 
+## Independent authored specification; never built from the shipping JSON.
+const VITALITY_BATCH := {
+	"v3_cindersilk_ledger": {
+		"title": "The Cindersilk Ledger",
+		"description": "A stout ink-eyed tax doll records lost stitches by candlelight.",
+		"choices": [
+			["redeem_cinders", "Burn 5 HP of worn stuffing for 14 gold and 1 scrap", 14, 1, -5, 0],
+			["sew_credit", "Pay 22 gold to reinforce your seams (+3 max HP)", -22, 0, 0, 3],
+			["leave", "Close the ledger and pass", 0, 0, 0, 0],
+		],
+	},
+	"v3_starlit_needle_mill": {
+		"title": "The Starlit Needle Mill",
+		"description": "Round night workers wind silver needles into a towering velvet bobbin.",
+		"choices": [
+			["stitch_splint", "Spend 2 scraps to heal 8 HP and gain 1 max HP", 0, -2, 8, 1],
+			["sell_strand", "Lose 2 max HP for 25 gold", 25, 0, 0, -2],
+			["leave", "Leave the needle mill turning", 0, 0, 0, 0],
+		],
+	},
+	"v3_rosewindow_sickroom": {
+		"title": "The Rosewindow Sickroom",
+		"description": "A button-eyed nurse warms stitched rose petals beside a painted glass window.",
+		"choices": [
+			["pay_poultice", "Pay 15 gold for a rose-petal poultice (+10 HP)", -15, 0, 10, 0],
+			["donate_warmth", "Give 4 HP of warm stuffing for 2 scraps", 0, 2, -4, 0],
+			["leave", "Leave the petals undisturbed", 0, 0, 0, 0],
+		],
+	},
+	"v3_bronze_pin_oath": {
+		"title": "The Bronze Pin Oath",
+		"description": "A short velvet oathkeeper offers a glowing pin over a folded midnight quilt.",
+		"choices": [
+			["swear_oath", "Spend 6 gold, 1 scrap and 2 HP for 2 lasting max HP", -6, -1, -2, 2],
+			["break_oath", "Surrender 1 max HP for 23 gold", 23, 0, 0, -1],
+			["leave", "Refuse the bronze pin", 0, 0, 0, 0],
+		],
+	},
+	"v3_velvet_stitchwell": {
+		"title": "The Velvet Stitchwell",
+		"description": "Beneath a moss-green canopy, a moonlit well is lined with neat cloth stitches.",
+		"choices": [
+			["drink_threadwater", "Offer 1 scrap; heal 6 HP and gain 2 max HP", 0, -1, 6, 2],
+			["haul_quilt_rope", "Lose 5 HP hauling the quilt rope; earn 18 gold", 18, 0, -5, 0],
+			["leave", "Leave the moonlit well untouched", 0, 0, 0, 0],
+		],
+	},
+	"v3_owlsilk_apothecary": {
+		"title": "The Owlsilk Apothecary",
+		"description": "A round owl-faced ragdoll doles out amber lantern oil from damask pockets.",
+		"choices": [
+			["borrow_oil", "Pay 12 gold to mend 8 HP with warm lantern oil", -12, 0, 8, 0],
+			["unpick_binding", "Unpick 1 max HP to salvage 1 scrap", 0, 1, 0, -1],
+			["leave", "Fold the damask pockets and go", 0, 0, 0, 0],
+		],
+	},
+}
+
 const DENIED_PREVIEW := {"ok": false, "event_id": "", "choices": []}
 
 var failures: Array[String] = []
@@ -72,6 +130,7 @@ func _initialize() -> void:
 	_test_needle_thorn_garden_settlement()
 	_test_button_heart_shrine_settlement()
 	_test_infirmary_and_shared_validation()
+	_test_vitality_batch()
 	_check(source_document == source_snapshot, "the shipped vitality document is unchanged by every flow")
 	_report()
 
@@ -723,6 +782,130 @@ func _test_future_addition() -> void:
 	_check(service.choose_with_vitals("drink", _vital_state(10, 0, 20, 20)).get("ok") == true,
 		"a future vitality record settles through RunEventChoice")
 	_check(source_document == source_snapshot, "future catalog fixtures never mutate the shipped source")
+
+
+func _test_vitality_batch() -> void:
+	for event_id in VITALITY_BATCH:
+		var spec: Dictionary = VITALITY_BATCH[event_id]
+		var expected := {"id": event_id, "title": spec["title"],
+			"description": spec["description"], "choices": []}
+		for row in spec["choices"]:
+			expected["choices"].append({"id": row[0], "text": row[1],
+				# Godot JSON parses authored numbers as floats; previews below
+				# independently require the service's native integer deltas.
+				"outcome": {"gold": float(row[2]), "scraps": float(row[3]),
+					"hp": float(row[4]), "max_hp": float(row[5])}})
+		_check(_matches(source_events, event_id).size() == 1,
+			"batch ID occurs exactly once in the shipped source: " + event_id)
+		_check(_record_copy(event_id) == expected, "batch authored record is exact: " + event_id)
+		var rotation := RunV3VitalEventRotation.new()
+		_check(rotation.is_catalog_valid() and rotation.get_vital_event_ids().has(event_id),
+			"shipping rotation admits batch ID: " + event_id)
+		var record := _force_selected(rotation, event_id, 34201)
+		_check(not record.is_empty() and record == expected, "forced batch record is exact: " + event_id)
+		if record.is_empty():
+			continue
+		record["title"] = "MUTATED"
+		record["choices"][0]["outcome"]["hp"] = 999
+		var replay := _force_selected(rotation, event_id, 34201)
+		_check(replay == expected and _record_copy(event_id) == expected,
+			"same-seed replay and nested offer detachment: " + event_id)
+		record = replay
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 34202
+		var rng_before := rng.state
+		for exclusions in [[event_id, null], rotation.get_vital_event_ids()]:
+			var before: Array = exclusions.duplicate(true)
+			_check(rotation.select_event(rng, exclusions) == {"ok": false, "event": {}},
+				"batch malformed/exhausted selection fails closed: " + event_id)
+			_check(exclusions == before and rng.state == rng_before,
+				"batch selection rejection preserves exclusions and RNG: " + event_id)
+		var global_next := _global_rng_start(34203)
+		for row in spec["choices"]:
+			# Every authored branch, including Leave, gets a fresh one-visit service.
+			_batch_success(record, row, _vital_state(40, 5, 20, 30))
+			# Full health exercises healing against the projected maximum, maximum
+			# reductions clamping current HP, and growth alone granting no healing.
+			_batch_success(record, row, _vital_state(40, 5, 30, 30))
+			if row[2] < 0:
+				_batch_refusal(record, row, _vital_state(0, 5, 20, 30))
+			if row[3] < 0:
+				_batch_refusal(record, row, _vital_state(40, 0, 20, 30))
+			if row[4] < 0:
+				_batch_refusal(record, row, _vital_state(40, 5, -int(row[4]), 30))
+				_batch_success(record, row, _vital_state(40, 5, 1 - int(row[4]), 30))
+			if row[5] < 0:
+				_batch_refusal(record, row, _vital_state(40, 5, 10, 10))
+				_batch_success(record, row, _vital_state(40, 5, 10, 10 - int(row[5])))
+			if row[2] < 0 or row[3] < 0 or row[4] < 0 or row[5] < 0:
+				_batch_refusal(record, row, _vital_state(0, 0, 1, 10))
+		_check(rng.state == rng_before and randi() == global_next,
+			"batch transactions consume neither caller nor global RNG: " + event_id)
+		_check(record == expected, "batch transactions preserve the selected record: " + event_id)
+
+
+func _batch_success(record: Dictionary, row: Array, state: Dictionary) -> void:
+	var tag: String = record["id"] + "/" + row[0] + " " + str(state)
+	var before := state.duplicate(true)
+	var service := RunEventChoice.new(record)
+	_check(service.is_valid() and not service.is_claimed(), "fresh batch visit: " + tag)
+	var expected := _vital_state(state["gold"] + int(row[2]), state["scraps"] + int(row[3]),
+		mini(state["hero"]["hp"] + int(row[4]), state["hero"]["max_hp"] + int(row[5])),
+		state["hero"]["max_hp"] + int(row[5]))
+	var preview := service.preview_vital_choices(state)
+	_check(preview.get("ok") == true and preview.get("event_id") == record["id"]
+		and preview.get("choices", []).size() == 3, "batch preview contains all choices: " + tag)
+	var entry := _preview_choice(preview, row[0])
+	_check(entry == {"choice_id": row[0], "gold_delta": row[2], "scraps_delta": row[3],
+		"hp_delta": row[4], "max_hp_delta": row[5], "affordable": true, "state": expected},
+		"batch exact independent preview deltas and projection: " + tag)
+	_check(service.is_valid() and not service.is_claimed() and state == before,
+		"batch preview does not claim or mutate input: " + tag)
+	# Mutate a nested forecast before settling to demonstrate detachment.
+	if entry.get("state") is Dictionary:
+		entry["state"]["hero"]["hp"] = 999
+	var receipt := service.choose_with_vitals(row[0], state)
+	_check(receipt == {"ok": true, "event_id": record["id"], "choice_id": row[0], "state": expected},
+		"batch exact settlement receipt: " + tag)
+	_check(state == before and service.is_claimed() and not service.is_valid(),
+		"batch settlement preserves input and claims once: " + tag)
+	for next_id in [row[0], "leave", record["choices"][0]["id"], record["choices"][1]["id"]]:
+		_check(service.choose_with_vitals(next_id, state) ==
+			{"ok": false, "event_id": "", "choice_id": "", "state": before},
+			"batch repeat and alternate choices cannot settle: " + tag)
+	_check(service.preview_vital_choices(state) == DENIED_PREVIEW,
+		"batch claimed preview is denied: " + tag)
+	if receipt.get("state") is Dictionary:
+		receipt["state"]["hero"]["max_hp"] = 999
+	_check(state == before, "batch receipt is detached from caller: " + tag)
+
+
+func _batch_refusal(record: Dictionary, row: Array, state: Dictionary) -> void:
+	var tag: String = record["id"] + "/" + row[0] + " " + str(state)
+	var before := state.duplicate(true)
+	var service := RunEventChoice.new(record)
+	_check(service.is_valid(), "batch refusal has a valid authentic visit: " + tag)
+	var preview := service.preview_vital_choices(state)
+	_check(preview.get("ok") == true, "batch poor living hero can preview: " + tag)
+	var entry := _preview_choice(preview, row[0])
+	_check(entry == {"choice_id": row[0], "gold_delta": row[2], "scraps_delta": row[3],
+		"hp_delta": row[4], "max_hp_delta": row[5], "affordable": false, "state": before},
+		"batch unaffordable preview keeps exact deltas and unchanged state: " + tag)
+	var refusal := service.choose_with_vitals(row[0], state)
+	_check(refusal == {"ok": false, "event_id": "", "choice_id": "", "state": before},
+		"batch costly choice refuses atomically: " + tag)
+	_check(service.is_valid() and not service.is_claimed() and state == before,
+		"batch refusal consumes nothing: " + tag)
+	_check(_preview_choice(service.preview_vital_choices(state), "leave").get("affordable") == true,
+		"batch free Leave remains available: " + tag)
+	_check(service.choose_with_vitals("leave", state) ==
+		{"ok": true, "event_id": record["id"], "choice_id": "leave", "state": before},
+		"batch Leave settles after refusal: " + tag)
+	_check(service.is_claimed() and not service.is_valid() and state == before,
+		"batch Leave claims once without changing input: " + tag)
+	_check(service.choose_with_vitals("leave", state) ==
+		{"ok": false, "event_id": "", "choice_id": "", "state": before},
+		"batch poor Leave cannot repeat: " + tag)
 
 
 func _test_needle_thorn_garden_settlement() -> void:

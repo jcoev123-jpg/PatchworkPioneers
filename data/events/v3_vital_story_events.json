@@ -299,6 +299,66 @@
         { "id": "cash_oath", "text": "Surrender 2 max HP to take 23 gold", "outcome": { "gold": 23, "scraps": 0, "hp": 0, "max_hp": -2 } },
         { "id": "leave", "text": "Keep your own button-heart", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_cindersilk_ledger",
+      "title": "The Cindersilk Ledger",
+      "description": "A stout ink-eyed tax doll records lost stitches by candlelight.",
+      "choices": [
+        { "id": "redeem_cinders", "text": "Burn 5 HP of worn stuffing for 14 gold and 1 scrap", "outcome": { "gold": 14, "scraps": 1, "hp": -5, "max_hp": 0 } },
+        { "id": "sew_credit", "text": "Pay 22 gold to reinforce your seams (+3 max HP)", "outcome": { "gold": -22, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "leave", "text": "Close the ledger and pass", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_starlit_needle_mill",
+      "title": "The Starlit Needle Mill",
+      "description": "Round night workers wind silver needles into a towering velvet bobbin.",
+      "choices": [
+        { "id": "stitch_splint", "text": "Spend 2 scraps to heal 8 HP and gain 1 max HP", "outcome": { "gold": 0, "scraps": -2, "hp": 8, "max_hp": 1 } },
+        { "id": "sell_strand", "text": "Lose 2 max HP for 25 gold", "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the needle mill turning", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rosewindow_sickroom",
+      "title": "The Rosewindow Sickroom",
+      "description": "A button-eyed nurse warms stitched rose petals beside a painted glass window.",
+      "choices": [
+        { "id": "pay_poultice", "text": "Pay 15 gold for a rose-petal poultice (+10 HP)", "outcome": { "gold": -15, "scraps": 0, "hp": 10, "max_hp": 0 } },
+        { "id": "donate_warmth", "text": "Give 4 HP of warm stuffing for 2 scraps", "outcome": { "gold": 0, "scraps": 2, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the petals undisturbed", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_bronze_pin_oath",
+      "title": "The Bronze Pin Oath",
+      "description": "A short velvet oathkeeper offers a glowing pin over a folded midnight quilt.",
+      "choices": [
+        { "id": "swear_oath", "text": "Spend 6 gold, 1 scrap and 2 HP for 2 lasting max HP", "outcome": { "gold": -6, "scraps": -1, "hp": -2, "max_hp": 2 } },
+        { "id": "break_oath", "text": "Surrender 1 max HP for 23 gold", "outcome": { "gold": 23, "scraps": 0, "hp": 0, "max_hp": -1 } },
+        { "id": "leave", "text": "Refuse the bronze pin", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_velvet_stitchwell",
+      "title": "The Velvet Stitchwell",
+      "description": "Beneath a moss-green canopy, a moonlit well is lined with neat cloth stitches.",
+      "choices": [
+        { "id": "drink_threadwater", "text": "Offer 1 scrap; heal 6 HP and gain 2 max HP", "outcome": { "gold": 0, "scraps": -1, "hp": 6, "max_hp": 2 } },
+        { "id": "haul_quilt_rope", "text": "Lose 5 HP hauling the quilt rope; earn 18 gold", "outcome": { "gold": 18, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the moonlit well untouched", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_owlsilk_apothecary",
+      "title": "The Owlsilk Apothecary",
+      "description": "A round owl-faced ragdoll doles out amber lantern oil from damask pockets.",
+      "choices": [
+        { "id": "borrow_oil", "text": "Pay 12 gold to mend 8 HP with warm lantern oil", "outcome": { "gold": -12, "scraps": 0, "hp": 8, "max_hp": 0 } },
+        { "id": "unpick_binding", "text": "Unpick 1 max HP to salvage 1 scrap", "outcome": { "gold": 0, "scraps": 1, "hp": 0, "max_hp": -1 } },
+        { "id": "leave", "text": "Fold the damask pockets and go", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
