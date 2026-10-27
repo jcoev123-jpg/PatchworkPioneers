@@ -21,10 +21,14 @@ const RIBBON_HEIGHT := 64.0
 ## outside the stitched fill.
 const RIBBON_HP_BAR_HEIGHT := 22.0
 const RIBBON_SLOT_INSET := 4.0
-## Seven reusable slots: a living hero can carry five counters, Blind and Dodge;
-## a living enemy can carry the five counters, Blind and Thorns.
-const STATUS_BUTTONS := 7
-const STATUS_ORDER := ["bleed", "weak", "exposed", "tangled", "riposte", "blind_next_attack", "dodge_next_attack"]
+## Eight reusable slots: a living hero can carry five counters, Blind and Dodge;
+## the densest living enemy carries the five counters, Blind, Fear and a Thorns badge.
+## The pool is preallocated once per mounted ribbon and never grows during a refresh.
+const STATUS_BUTTONS := 8
+## Stable chip order: the counted owner-turn statuses, the one-shot tokens, the
+## Scarecrow's Fear buff lock, then the separately appended enemy Thorns badge.
+const STATUS_ORDER := ["bleed", "weak", "exposed", "tangled", "riposte",
+	"blind_next_attack", "dodge_next_attack", "cannot_buff_next_turn"]
 ## Readable chip text: at every normal 1280x720 actor width the complete "Bleed 3"
 ## style name is drawn at 14 px, and the chips wrap onto a second row only when the
 ## actor's own slot is too narrow for the whole row. The compact names survive only as
@@ -33,6 +37,8 @@ const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp",
 	"tangled": "Tan", "riposte": "Rip", "blind_next_attack": "Bli", "thorns": "Thr"}
 ## One-shot Blind is one word: never "Blind 1" and never a turn duration.
 const BLIND_LABEL := "Blind"
+## Fear is the literal boolean buff lock too: one unnumbered word, no count or duration.
+const FEAR_LABEL := "Fear"
 const READABLE_CHIP_FONT := 14
 const CHIP_FONT_SIZES := [14, 12, 11]
 const CHIP_SEPARATION := 2
@@ -880,8 +886,17 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 	var statuses: Dictionary = snapshot.get("statuses", {})
 	for key in STATUS_ORDER:
 		# Fallen actors cannot evade an incoming attack. Their fallen cue uses
-		# the seventh slot while the existing counters and Blind remain dimmed.
+		# the eighth slot while the existing counters and Blind remain dimmed.
 		if key == "dodge_next_attack" and snapshot.get("hp", 0) == 0:
+			continue
+		# Fear is the literal boolean buff lock, not a counted stack: it reads as one
+		# unnumbered word after the counted statuses and one-shot tokens, and only the
+		# canonical boolean true is an active lock (`false`, 1, 1.0, a string or a
+		# missing value never fabricate it).
+		if key == CombatActorMeter.FEAR_KEY:
+			var fear: Variant = statuses.get(key, false)
+			if fear is bool and bool(fear):
+				entries.append({"kind": key, "full": FEAR_LABEL, "short": FEAR_LABEL})
 			continue
 		var count: int = statuses.get(key, 0)
 		if count > 0:
@@ -926,6 +941,8 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 					rule += "\n" + blind_tooltip()
 				elif kind == "dodge_next_attack":
 					rule += "\n" + dodge_tooltip()
+				elif kind == CombatActorMeter.FEAR_KEY:
+					rule += "\n" + fear_tooltip()
 		if button.visible != active:
 			button.visible = active
 		if button.text != text:
@@ -974,6 +991,15 @@ static func blind_tooltip() -> String:
 
 static func dodge_tooltip() -> String:
 	return "Dodge: the next incoming attempted attack on this actor misses once, then Dodge is spent. After Guard redirection, the actual recipient's Dodge applies. If unused, it expires at this actor's owner-turn end. It does not stack or grant Block or HP."
+
+
+## Fear is the Scarecrow's buff lock, exactly as CombatStatuses.can_apply_buff reads it:
+## the affected enemy cannot run its own buff on its next owner turn, and
+## end_owner_turn removes the flag at that same boundary. It is one owner-turn lock
+## with no count or longer duration, and it never touches ordinary attacks; the
+## authored Weak counter beside it ages on its own.
+static func fear_tooltip() -> String:
+	return "Fear: this enemy cannot buff itself on its next own turn. Fear is a one owner-turn buff lock with no count and no longer duration; it never makes this enemy's ordinary attacks miss and never stops them. Weak is separate and expires by its own counter."
 
 
 ## Height of one sewn chip at a font size: the text box plus the 1 px stitched border.
