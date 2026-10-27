@@ -23,10 +23,9 @@ extends RefCounted
 ## with that enemy's Block absorbing before HP. The receipt reports the independent arithmetic
 ## (`base` + `per` * `combat_scrap_before`) and the real absorption.
 ##
-## This slice resolves the card's UNMODIFIED raw damage in neutral-status fixtures. It is callable
-## rules-layer behaviour only: registering these IDs in the live hand or reward flow, and the existing
-## first-attack, Weak/Exposed, Pinned/patch and other attack hooks, belong to a later separately owned
-## live integration. Nothing here seeds or draws the run RNG, and no other hero's counter is touched.
+## This slice resolves the card's UNMODIFIED raw damage. The live hand uses this same transaction
+## and forwards its successful receipt through the existing outcome/ordinary-play observers without
+## layering starter bonuses onto it. Nothing seeds or draws the run RNG or touches another counter.
 
 const OWNER := "tinker"
 const TARGET_KIND := "enemy_single"
@@ -296,6 +295,10 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"damage_from_combat_scrap": int(plan["damage_from_combat_scrap"]),
 		"raw_damage": raw_damage,
 		"damage": raw_damage,
+		"hits": [{"position": target_position_value, "damage": raw_damage,
+			"block_absorbed": int(plan["enemy_block_before"]) - int(after["block"]),
+			"hp_loss": int(plan["enemy_hp_before"]) - int(after["hp"]),
+			"statuses": {}}],
 		"enemy_block_before": int(plan["enemy_block_before"]),
 		"enemy_block_after": int(after["block"]),
 		"block_absorbed": int(plan["enemy_block_before"]) - int(after["block"]),

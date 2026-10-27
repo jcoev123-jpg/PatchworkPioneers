@@ -13,6 +13,7 @@ const ENEMY_TIER_CATALOGS := [
 ]
 
 var cue: Label
+var _overload_hud: Label
 var _battle: Control
 var _deck: CombatDeck
 var _bindings: Dictionary = {}
@@ -24,6 +25,7 @@ var _play := CombatAttackCards.new()
 var _fray: CombatFrayfinderMitt
 var _direct_fire := CombatTinkerPoolAttacks.new()
 var _direct_fire_preview := CombatTinkerDirectFirePreview.new()
+var _overload := CombatTinkerV3OverloadCards.new()
 var _pool_strikes := CombatPoolPlainStrikes.new()
 var _heavy_attacks := CombatWardenPoolHeavyAttacks.new()
 var _toss := CombatWardenV3ShieldTossCards.new()
@@ -777,6 +779,8 @@ func _single(panel) -> bool:
 ## Starter, plain-strike, heavy-pool, Seamstress control attacks and this
 ## battle's selected Path card use separate authored catalogs.
 func _definition(card_id: String) -> Dictionary:
+	if _overload.is_supported_card(card_id):
+		return _overload.overload_definition(card_id)
 	if _helmet.is_supported_card(card_id):
 		return _helmet._catalog_definition(card_id)
 	if _toss.is_supported_card(card_id):
@@ -824,6 +828,8 @@ func _select(event: InputEvent, panel) -> void:
 ## service itself validates each original enemy slot before it is offered.
 func _target_preview(id: String) -> Dictionary:
 	var app = get_parent()
+	if _overload.is_supported_card(id):
+		return _overload_forecast(app.party, app.enemies, id)
 	if _helmet.is_supported_card(id):
 		return _helmet_forecast(app.party, app.enemies, id)
 	if _toss.is_supported_card(id):
@@ -865,7 +871,7 @@ func _queue_attack(position: int) -> void:
 	# A single-target target ID plus the held panel's original hand index
 	# prevent an enemy replacement or equivalent-copy panel swap at commit.
 	var target_id := ""
-	if (_direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
+	if (_overload.is_supported_card(id) or _direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
 			or _targeting.is_seamstress_control(id) \
 			or _targeting.is_heavy_pool_attack(id) \
 			or _toss.is_supported_card(id) \
@@ -892,7 +898,8 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var path := _is_path_card(id) or _is_warden_card(id)
 	var heavy := _targeting.is_heavy_pool_attack(id)
 	var toss := _toss.is_supported_card(id) or _helmet.is_supported_card(id)
-	var guarded := direct or control or combo or path or heavy or toss or id in CombatAttackCards.ATTACK_IDS
+	var overload := _overload.is_supported_card(id)
+	var guarded := direct or control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -915,7 +922,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		_reject_stitch()
 		return
 	var energy_before: int = _deck.energy
-	if (direct or combo or path or heavy or toss) and (app._battle_closed \
+	if (direct or combo or path or heavy or toss or overload) and (app._battle_closed \
 			or (target_id.is_empty() and not (_is_warden_card(id) and position == 0)) \
 			or app.deck._rng != rng or (combo and not app._combo_battle_current())):
 		_reject_stitch()
@@ -924,7 +931,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
 			or (((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id)) \
-			or ((control or combo or path or heavy or toss or id in CombatAttackCards.ATTACK_IDS) \
+			or ((control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS) \
 				and position > 0 and (app._battle_closed or target_id.is_empty() \
 				or app.enemies.get_enemy(position).get("id") != target_id))):
 		if guarded or _targeting.is_sight_glass(id):
@@ -932,7 +939,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		return
 	var definition := _definition(id)
 	_pinned.begin_confirmed_cast(id, str(definition.get("owner", "")),
-		maxi(0, int(definition.get("cost", 0)) - tinker_cost_discount(id)))
+		int(definition.cost) if _overload.is_supported_card(id) else maxi(0, int(definition.get("cost", 0)) - tinker_cost_discount(id)))
 	last_event = _resolve_attack(party, enemies, id, position)
 	if last_event.ok:
 		# Every real Tinker play feeds the battle's one Path authority, so its
@@ -950,6 +957,10 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 
 
 func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, position: int, forecast: bool = false) -> Dictionary:
+	if _overload.is_supported_card(id):
+		if forecast:
+			return _overload_forecast(party, enemies, id)
+		return _overload.play_card(_deck, party, enemies, id, position)
 	if _helmet.is_supported_card(id):
 		if forecast:
 			return _helmet_forecast(party, enemies, id)
@@ -1196,6 +1207,27 @@ func _pool_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> D
 	return {"playable": true, "requires_selection": true, "hits": hits}
 
 
+## Each offered slot passes the same authenticated, read-only plan as the paid cast.
+func _overload_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> Dictionary:
+	var preview := {"playable": false, "requires_selection": true,
+		"target_positions": [], "hits": []}
+	var app = get_parent()
+	if app == null or _deck == null or app.deck != _deck or app._battle_closed \
+			or app.enemy_intents == null or _turn != app.enemy_intents._turn_index \
+			or _deck._rng != app.run_rng or party != app.party or enemies != app.enemies \
+			or _session != [party, enemies, app.battle_result, app.run_rng, app.enemy_intents]:
+		return preview
+	for position in CombatTinkerV3OverloadCards.TO_POSITIONS:
+		var plan := _overload.preflight(_deck, party, enemies, id, position)
+		if not plan.get("ok", false):
+			continue
+		preview.target_positions.append(position)
+		preview.hits.append({"position": position, "damage": plan.raw_damage,
+			"combat_scrap_spent": plan.combat_scrap_before})
+	preview.playable = not preview.target_positions.is_empty()
+	return preview
+
+
 ## Read live snapshots without coercion; the paid service validates their contents.
 func _toss_statuses(party: CombatParty, enemies: CombatEnemies, position: int) -> Dictionary:
 	if party == null or enemies == null:
@@ -1341,7 +1373,7 @@ func _eligible(panel) -> bool:
 	var index: int = panel.get_index()
 	var path_ok: bool = (_is_path_card(id) and not _path_positions(id).is_empty()) \
 		or (_is_warden_card(id) and warden_preview(id).get("playable", false))
-	return (_targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
+	return (_overload.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
 func _sync_battle() -> void:
@@ -1439,6 +1471,23 @@ func _sync_battle() -> void:
 		var column: Node = app.hand_view.get_parent()
 		column.add_child(cue)
 		column.move_child(cue, app.hand_view.get_index())
+		_overload_hud = Label.new()
+		_overload_hud.name = "OverloadCombatScrap"
+		_overload_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_overload_hud.add_theme_font_size_override("font_size", 18)
+		column.add_child(_overload_hud)
+		column.move_child(_overload_hud, cue.get_index())
+	var held_overload := false
+	for held_id in _deck.hand:
+		if _overload.is_supported_card(held_id):
+			held_overload = true
+	var overload_receipt: bool = _overload.is_supported_card(last_event.get("card_id", "")) and last_event.get("ok", false)
+	_overload_hud.visible = held_overload or overload_receipt
+	if _overload_hud.visible:
+		var scrap: Variant = _tinker_hero().get("combat_scrap", 0)
+		_overload_hud.text = "Tinker Combat Scrap: %s" % str(scrap)
+		if overload_receipt:
+			_overload_hud.text += " | Overload: %d damage, spent %d Combat Scrap" % [last_event.damage, last_event.combat_scrap_spent]
 	if _session != [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents]:
 		_cancel_choice()
 		_session = [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents]
@@ -1600,7 +1649,7 @@ func _refresh() -> void:
 			definition.display_name, definition.cost, _key_hint(path_slots), path_reading]
 		return
 	var preview := _resolve_attack(app.party, app.enemies, id, 0, true)
-	if _toss.is_supported_card(id) or _helmet.is_supported_card(id):
+	if _overload.is_supported_card(id) or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
 		current_forecast = preview.duplicate(true)
 	if _targeting.is_pool_combo_attack(id):
 		current_forecast = preview.duplicate(true)
@@ -1658,7 +1707,7 @@ func _refresh() -> void:
 	# Only attach on-hit counters to starter attacks. Reward-pool strikes have
 	# no starter passive or worn-patch hook of their own.
 	var additions_by_position: Dictionary = {}
-	if not is_pool and not is_heavy and not is_direct and not _toss.is_supported_card(id) and not _helmet.is_supported_card(id) and preview.playable:
+	if not is_pool and not is_heavy and not is_direct and not _overload.is_supported_card(id) and not _toss.is_supported_card(id) and not _helmet.is_supported_card(id) and preview.playable:
 		# This is the same pure status preflight as the confirmed attack, including
 		# the authored passive, HEAD bonus, M04 rider and capacity eligibility.
 		var status_plan := _play._prepare(_deck, app.party, app.enemies, id, 0,
@@ -1699,7 +1748,7 @@ func _refresh() -> void:
 	var controls: String
 	if not _single(_selected):
 		controls = "P: select; Enter / Space / click card: cast"
-	elif is_pool or is_heavy or is_direct or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
+	elif is_pool or is_heavy or is_direct or _overload.is_supported_card(id) or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
 		# Report exactly the slots this forecast offers, never a wider key row.
 		var legal: Array[int] = []
 		for hit in preview.hits:
@@ -1712,7 +1761,9 @@ func _refresh() -> void:
 	# The one Path authority may already have discounted this cast: the strip
 	# reports the energy that will really be charged, never a printed price the
 	# resolver no longer asks for.
-	var shown_cost: int = maxi(0, int(definition.cost) - tinker_cost_discount(id))
+	if _overload.is_supported_card(id) and preview.playable:
+		description += " | Combat Scrap %d -> 0" % int(preview.hits[0].combat_scrap_spent)
+	var shown_cost: int = int(definition.cost) if _overload.is_supported_card(id) else maxi(0, int(definition.cost) - tinker_cost_discount(id))
 	cue.text = "%s | %d energy | %s\n%s" % [definition.display_name, shown_cost, controls, description]
 
 
@@ -1746,6 +1797,9 @@ func _clear() -> void:
 	if is_instance_valid(cue):
 		cue.queue_free()
 	cue = null
+	if is_instance_valid(_overload_hud):
+		_overload_hud.queue_free()
+	_overload_hud = null
 	_battle = null
 	_deck = null
 	_session = []
