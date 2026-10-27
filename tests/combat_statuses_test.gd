@@ -20,6 +20,7 @@ func _initialize() -> void:
 	_test_unravel_invalid_and_isolation()
 	_test_dodge_project()
 	_test_blind_next_attack()
+	_test_scarecrow_fear_buff_lock()
 	if failures.is_empty():
 		print("combat_statuses_test: PASS (", checks, " checks)")
 	else:
@@ -309,7 +310,12 @@ func _test_invalid_and_snapshots() -> void:
 		{"bleed": -1}, {"weak": -2}, {"exposed": -1}, {"bleed": 1.0},
 		{"weak": "1"}, {"exposed": null}, {"bleed": true}, {"weak": []},
 		{"bleed": {"nested": [1, 2]}}, {"Bleed": 2}, {"poison": 1},
-		{1: 2}, {&"weak": 1}
+		{1: 2}, {&"weak": 1},
+		# Fear is only the literal boolean true; false and its look-alikes are
+		# malformed here too, exactly like an unsupported key beside it.
+		{"cannot_buff_next_turn": false}, {"cannot_buff_next_turn": 1},
+		{"cannot_buff_next_turn": "true"}, {"cannot_buff_next_turn": null},
+		{"cannot_buff_next_turn": true, "poison": 1},
 	]
 	for bad in bad_statuses:
 		var prior: Dictionary = bad.duplicate(true)
@@ -366,6 +372,16 @@ func _test_replay() -> void:
 		_check(rules.adjusted_attack_damage(11, a, b) == rules.adjusted_attack_damage(11, a, b),
 			"identical attacker and defender inputs reproduce same damage")
 		_check(a == a_before and b == b_before, "replay leaves both original dictionaries intact")
+	# Fear joins the replay: the permission query and the owner-turn expiry are
+	# both reproducible and neither consumes the lock.
+	var fear := {"cannot_buff_next_turn": true, "weak": 2, "bleed": 1}
+	var fear_before: Dictionary = fear.duplicate(true)
+	for unused in range(3):
+		_check(rules.can_apply_buff(fear) == rules.can_apply_buff(fear),
+			"identical Fear status inputs reproduce the same buff permission")
+		_check(rules.end_owner_turn(9, 3, fear) == rules.end_owner_turn(9, 3, fear),
+			"identical Fear owner turns reproduce the same expiry result")
+	_check(fear == fear_before, "Fear replay leaves the original status dictionary intact")
 
 
 func _make_enemies_fixture() -> CombatEnemies:
@@ -1003,3 +1019,270 @@ func _test_blind_next_attack() -> void:
 	_check(rules.end_owner_turn(10, 7, {"blind_next_attack": 0, "bleed": 2})
 		== {"ok": true, "hp": 8, "block": 7, "statuses": {"bleed": 1}, "bleed_hp_loss": 2},
 		"inert Blind 0 clears while mixed Bleed still costs HP through retained Block")
+
+
+## V3-2 Fear: the Scarecrow's authored `cannot_buff_next_turn: true` marker locks
+## only the affected enemy's NEXT enemy turn. The service stores it as one
+## status and answers a pure permission query; the future enemy-phase caller owns
+## the real announced buff. Nothing here casts a card or claims live combat.
+func _test_scarecrow_fear_buff_lock() -> void:
+	_check(rules.has_method("can_apply_buff"),
+		"scene-free Fear buff-permission query exists")
+
+	# The authored fixture is the real catalog record: the literal boolean flag
+	# beside its separately authored Weak, never a guessed count or duration.
+	var starters := ScarecrowStarterCards.new()
+	var pool := ScarecrowPoolCards.new()
+	var glare: Dictionary = starters.get_definition("scarecrow_sack_glare")
+	var glare_plus: Dictionary = starters.get_definition("scarecrow_sack_glare_plus")
+	var fright: Dictionary = pool.get_definition("scarecrow_harvest_fright")
+	_check(not glare.is_empty() and not glare_plus.is_empty() and not fright.is_empty(),
+		"precondition: authored Scarecrow Fear cards load from their own catalogs")
+	var glare_effects: Dictionary = glare.get("effects", {})
+	var plus_effects: Dictionary = glare_plus.get("effects", {})
+	var fright_effects: Dictionary = fright.get("effects", {})
+	_check(glare_effects == {"weak": 1, "cannot_buff_next_turn": true}
+		and plus_effects == {"weak": 2, "cannot_buff_next_turn": true},
+		"authored Sack Glare and Sack Glare+ print the boolean Fear flag beside Weak")
+	_check(fright_effects.get("cannot_buff_next_turn") is bool
+		and bool(fright_effects["cannot_buff_next_turn"])
+		and fright_effects.get("weak") is int and int(fright_effects["weak"]) > 0,
+		"the rare Harvest Fright printing authors the same literal boolean flag")
+
+	# --- AC1: a real enemy whose statuses are the authored Fear shape ---------
+	# The upgraded printing is a complete status map, so it is attached verbatim.
+	var enemies := CombatEnemies.new([
+		{"id": "v3_fear_bearer", "max_hp": 20},
+		{"id": "v3_fear_bystander", "max_hp": 16},
+		{"id": "v3_fear_quiet", "max_hp": 12}])
+	_check(enemies.is_valid() and enemies.get_enemies().size() == 3,
+		"precondition: real three-slot CombatEnemies roster")
+	_check(enemies.gain_block(1, 4) and enemies.apply_damage(2, 3),
+		"precondition: distinct enemy HP and Block applied through the model APIs")
+	var live_foes := enemies.get_enemies()
+	var foes := enemies.get_enemies()
+	foes[0]["statuses"] = plus_effects.duplicate(true)
+	foes[1]["statuses"] = {"bleed": 2, "blind_next_attack": 1}
+	foes[2]["statuses"] = {"tangled": 2}
+	_check(foes[0]["statuses"] == {"weak": 2, "cannot_buff_next_turn": true}
+		and foes[0]["hp"] == 20 and foes[0]["block"] == 4,
+		"precondition: the live Fear bearer carries the authored shape, HP and Block")
+	var foes_before: Array = foes.duplicate(true)
+
+	var locked := rules.can_apply_buff(foes[0]["statuses"])
+	_check(locked == {"ok": true, "allowed": false},
+		"an enemy bearing the authored Fear may not self-buff on its next enemy turn")
+	_check(locked.size() == 2 and locked.has("ok") and locked.has("allowed"),
+		"the permission receipt keeps exactly its published keys")
+	_check(rules.can_apply_buff({}) == {"ok": true, "allowed": true},
+		"an enemy with no status map may self-buff")
+	_check(rules.can_apply_buff({}) == {"ok": true, "allowed": true}
+		and rules.can_apply_buff({"weak": 1}) == {"ok": true, "allowed": true}
+		and rules.can_apply_buff({"bleed": 2, "blind_next_attack": 1})
+			== {"ok": true, "allowed": true},
+		"a separate Weak, Bleed or Blind without Fear still permits buffing")
+
+	# Querying is pure: repeated calls never consume, age or rewrite the lock.
+	var fear_snapshot: Dictionary = foes[0]["statuses"].duplicate(true)
+	for unused in range(3):
+		_check(rules.can_apply_buff(foes[0]["statuses"])["allowed"] == false,
+			"repeated buff queries keep reporting the active Fear lock")
+	_check(foes[0]["statuses"] == fear_snapshot,
+		"querying buff permission never consumes or ages the caller's Fear")
+	_check(foes == foes_before and enemies.get_enemies() == live_foes,
+		"querying buff permission never changes the roster snapshot or live enemies")
+	var receipt := rules.can_apply_buff(foes[0]["statuses"])
+	receipt["allowed"] = true
+	receipt["ok"] = false
+	receipt["statuses"] = {}
+	_check(rules.can_apply_buff(foes[0]["statuses"]) == {"ok": true, "allowed": false},
+		"editing a returned permission receipt cannot unlock or consume Fear")
+	var fear_only := {"cannot_buff_next_turn": true}
+	_check(rules.adjusted_attack_damage(8, {}, fear_only) == 8
+		and rules.adjusted_attack_damage(8, fear_only, {}) == 8,
+		"Fear adds no damage modifier of its own")
+	_check(rules.adjusted_attack_damage(8, foes[0]["statuses"], {}) == 6
+		and rules.adjusted_attack_damage(8, {"weak": 2}, {}) == 6,
+		"the authored Weak still floors the attack exactly as it did without Fear")
+
+	# --- AC2: expiry belongs to the affected enemy's own owner-turn end ------
+	# A real three-hero party ticks first and must leave the enemy lock frozen.
+	var party := CombatParty.new([
+		{"id": "warden", "max_hp": 40, "metadata": {"tags": ["front"]}},
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26}])
+	_check(party.is_valid() and party.apply_damage(1, 5) and party.gain_block(2, 3),
+		"precondition: real three-hero party with distinct HP and Block")
+	var live_heroes := party.get_heroes()
+	var heroes := party.get_heroes()
+	heroes[0]["statuses"] = {"bleed": 2, "weak": 2}
+	heroes[1]["statuses"] = {"blind_next_attack": 1}
+	heroes[2]["statuses"] = {"tangled": 2}
+	var heroes_before: Array = heroes.duplicate(true)
+	_check(heroes.size() == CombatParty.PARTY_SIZE
+		and heroes[0]["hp"] == 35 and heroes[1]["block"] == 3,
+		"precondition: non-vacuous canonical three-position hero snapshot")
+
+	var batch := CombatStatusTurnBatch.new()
+	var hero_batch := batch.tick_side("heroes", heroes)
+	_check(hero_batch["ok"] == true and hero_batch["actors"].size() == 3
+		and hero_batch["events"].size() == 3,
+		"the player-side transition succeeds beside a Fear-locked enemy")
+	if hero_batch["ok"] == true and hero_batch["actors"].size() == 3:
+		var hero_states: Array = []
+		for actor in hero_batch["actors"]:
+			hero_states.append(actor["statuses"])
+		_check(hero_states == [{"bleed": 1, "weak": 1}, {"blind_next_attack": 1},
+			{"tangled": 1}],
+			"hero statuses still age and Blind still persists on the player side")
+	_check(foes == foes_before and enemies.get_enemies() == live_foes,
+		"the player's turn end leaves the untouched enemy snapshot frozen")
+	_check(rules.can_apply_buff(foes[0]["statuses"]) == {"ok": true, "allowed": false},
+		"the enemy is still Fear-locked after the player's turn ends")
+	_check(heroes == heroes_before and party.get_heroes() == live_heroes,
+		"the player-side batch never mutates its snapshot or the live party")
+
+	# One enemy-side transition expires Fear only for the bearer, at that
+	# actor's owner-turn end.
+	var foe_batch := batch.tick_side("enemies", foes)
+	_check(foe_batch["ok"] == true and foe_batch["actors"].size() == 3
+		and foe_batch["events"].size() == 3,
+		"the enemy-side transition admits the authored Fear marker")
+	if foe_batch["ok"] == true and foe_batch["actors"].size() == 3:
+		var bearer_end: Dictionary = foe_batch["actors"][0]
+		_check(not bearer_end["statuses"].has("cannot_buff_next_turn"),
+			"one enemy-side tick_side expires the bearer's Fear at its owner-turn end")
+		_check(bearer_end["statuses"] == {"weak": 1},
+			"the separately authored Weak 2 ages to 1 while Fear adds and removes no count")
+		_check(bearer_end["hp"] == 20 and bearer_end["block"] == 4,
+			"Fear expiry touches neither the bearer's HP nor its Block")
+		_check(rules.can_apply_buff(bearer_end["statuses"]) == {"ok": true, "allowed": true},
+			"the next enemy turn permits the buff again once Fear has expired")
+		_check(foe_batch["actors"][1]["statuses"] == {"bleed": 1, "blind_next_attack": 1}
+			and foe_batch["actors"][1]["hp"] == 11,
+			"the bystander keeps its Blind token and pays only its own Bleed")
+		_check(foe_batch["actors"][2]["statuses"] == {"tangled": 1}
+			and foe_batch["actors"][2]["hp"] == 12,
+			"the quiet enemy's Tangled simply ages once")
+		for index in range(foes_before.size()):
+			var direct := rules.end_owner_turn(foes_before[index]["hp"],
+				foes_before[index]["block"], foes_before[index]["statuses"])
+			var batched: Dictionary = foe_batch["actors"][index]
+			_check(direct["ok"] and batched["hp"] == direct["hp"]
+				and batched["block"] == direct["block"]
+				and batched["statuses"] == direct["statuses"]
+				and batched["id"] == foes_before[index]["id"]
+				and batched["position"] == foes_before[index]["position"],
+				"enemy batch position %d agrees with direct end_owner_turn" % (index + 1))
+	_check(foes == foes_before and enemies.get_enemies() == live_foes,
+		"the enemy batch leaves the caller snapshot and live roster untouched")
+	_check(heroes == heroes_before and party.get_heroes() == live_heroes,
+		"the enemy batch never ages or clears a hero")
+	var bearer_direct := rules.end_owner_turn(foes_before[0]["hp"], foes_before[0]["block"],
+		foes_before[0]["statuses"])
+	_check(bearer_direct == {"ok": true, "hp": 20, "block": 4,
+		"statuses": {"weak": 1}, "bleed_hp_loss": 0},
+		"a direct owner turn removes Fear completely and keeps HP, Block and Weak")
+
+	# A second enemy turn keeps buffing permitted and never resurrects Fear.
+	var second := rules.end_owner_turn(bearer_direct["hp"], bearer_direct["block"],
+		bearer_direct["statuses"])
+	_check(second["statuses"] == {} and second["hp"] == 20
+		and rules.can_apply_buff(second["statuses"]) == {"ok": true, "allowed": true},
+		"expired Fear never reappears and the following turn still permits buffing")
+
+	# --- AC3: fail-closed validation, immutability and replay ----------------
+	# The service has no RNG dependency: a seeded generator is untouched by the
+	# query, the malformed rejection and the owner-turn expiry.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 424242
+	var rng_state := rng.state
+	# Only the literal boolean true is active. `false`, numeric, string and
+	# collection spellings are malformed, not an inert or active variant.
+	var malformed_values: Array = [false, 1, 0, -1, 1.0, 0.0, "true", "false", null,
+		[], {}, &"true"]
+	for bad_value in malformed_values:
+		var bad_statuses := {"cannot_buff_next_turn": bad_value}
+		var bad_before: Dictionary = bad_statuses.duplicate(true)
+		_check(rules.can_apply_buff(bad_statuses) == {"ok": false, "allowed": false},
+			"malformed Fear fails the buff query closed: " + str(bad_value))
+		_check(bad_statuses == bad_before,
+			"rejected Fear query leaves its input unchanged: " + str(bad_value))
+		var bad_turn := rules.end_owner_turn(10, 7, bad_statuses)
+		_check(bad_turn == {"ok": false, "hp": 10, "block": 7,
+			"statuses": bad_before, "bleed_hp_loss": 0},
+			"malformed Fear fails the owner-turn transition closed: " + str(bad_value))
+		_check(rules.adjusted_attack_damage(8, bad_statuses, {}) == 0
+			and rules.adjusted_attack_damage(8, {}, bad_statuses) == 0,
+			"malformed Fear fails the attack projection closed: " + str(bad_value))
+		_check(bad_statuses == bad_before,
+			"rejected Fear attack input is unchanged: " + str(bad_value))
+
+	# Unsupported or malformed companions beside a valid Fear also fail closed.
+	var bad_companions: Array[Dictionary] = [
+		{"cannot_buff_next_turn": true, "poison": 1},
+		{"cannot_buff_next_turn": true, "pinned": 1},
+		{"cannot_buff_next_turn": true, "weak": -1},
+		{"cannot_buff_next_turn": true, "weak": 1.5},
+		{"cannot_buff_next_turn": true, "blind_next_attack": 2},
+		{"cannot_buff_next_turn": true, "dodge_next_attack": true},
+		{"Fear": true}, {&"cannot_buff_next_turn": true}, {1: true},
+	]
+	for bad in bad_companions:
+		var prior: Dictionary = bad.duplicate(true)
+		_check(rules.can_apply_buff(bad) == {"ok": false, "allowed": false},
+			"unsupported or malformed status fails the Fear query closed: " + str(bad))
+		_check(rules.end_owner_turn(9, 5, bad)["ok"] == false,
+			"unsupported or malformed status fails the owner turn closed: " + str(bad))
+		_check(bad == prior, "rejected Fear companions are unchanged: " + str(bad))
+
+	# The batch validator admits the same canonical flag only; a later invalid
+	# actor rejects the whole side without partial results.
+	for bad_value in [false, 1, 0, 1.0, "true", null, [], {}]:
+		var late_foes: Array = foes_before.duplicate(true)
+		late_foes[1]["statuses"] = {"cannot_buff_next_turn": true}
+		late_foes[-1]["statuses"] = {"cannot_buff_next_turn": bad_value}
+		var late_foes_snapshot: Array = late_foes.duplicate(true)
+		var foe_rejected := batch.tick_side("enemies", late_foes)
+		_check(foe_rejected == {"ok": false, "actors": [], "events": []},
+			"enemy batch rejects a late malformed Fear after a valid one: " + str(bad_value))
+		_check(late_foes == late_foes_snapshot,
+			"rejected late Fear batch leaves the enemy snapshot unchanged: " + str(bad_value))
+		var first_foes: Array = foes_before.duplicate(true)
+		first_foes[0]["statuses"] = {"cannot_buff_next_turn": bad_value}
+		var first_foes_snapshot: Array = first_foes.duplicate(true)
+		var first_rejected := batch.tick_side("enemies", first_foes)
+		_check(first_rejected == {"ok": false, "actors": [], "events": []}
+			and first_foes == first_foes_snapshot,
+			"enemy batch rejects malformed Fear on the first actor: " + str(bad_value))
+		var bad_heroes: Array = heroes_before.duplicate(true)
+		bad_heroes[0]["statuses"] = {"cannot_buff_next_turn": true}
+		bad_heroes[-1]["statuses"] = {"cannot_buff_next_turn": bad_value}
+		var bad_heroes_snapshot: Array = bad_heroes.duplicate(true)
+		var hero_rejected := batch.tick_side("heroes", bad_heroes)
+		_check(hero_rejected == {"ok": false, "actors": [], "events": []}
+			and bad_heroes == bad_heroes_snapshot,
+			"hero batch rejects malformed Fear on a later actor: " + str(bad_value))
+		_check(enemies.get_enemies() == live_foes and party.get_heroes() == live_heroes,
+			"rejected Fear batches never touch the live rosters: " + str(bad_value))
+
+	# Replay: identical inputs reproduce identical receipts and consume nothing.
+	_check(rules.can_apply_buff(foes_before[0]["statuses"])
+		== rules.can_apply_buff(foes_before[0]["statuses"]),
+		"identical Fear queries reproduce the same permission receipt")
+	var replay_a := batch.tick_side("enemies", foes_before)
+	var replay_b := batch.tick_side("enemies", foes_before)
+	_check(replay_a == replay_b and replay_a == foe_batch,
+		"identical Fear enemy batches replay identically")
+	_check(foes == foes_before and enemies.get_enemies() == live_foes,
+		"Fear replay consumes nothing from the snapshot or the live roster")
+	_check(rules.end_owner_turn(9, 3, {"cannot_buff_next_turn": true, "weak": 2})
+		== rules.end_owner_turn(9, 3, {"cannot_buff_next_turn": true, "weak": 2})
+		and rules.end_owner_turn(9, 3, {"cannot_buff_next_turn": true, "weak": 2})["statuses"]
+			== {"weak": 1},
+		"identical Fear owner turns reproduce the same expiry result")
+	_check(rules.can_apply_buff({"cannot_buff_next_turn": true}) == {"ok": true, "allowed": false}
+		and rules.can_apply_buff({}) == {"ok": true, "allowed": true},
+		"the bare marker is active and its absence is not: one owner turn, no count")
+	_check(rng.state == rng_state,
+		"Fear queries, rejections and expiry never advance a caller's RNG")
