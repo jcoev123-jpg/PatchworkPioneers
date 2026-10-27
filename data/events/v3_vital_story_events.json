@@ -239,6 +239,66 @@
         { "id": "pawn_stuffing", "text": "Lose 3 max HP for 33 gold", "outcome": { "gold": 33, "scraps": 0, "hp": 0, "max_hp": -3 } },
         { "id": "leave", "text": "Latch the medicine chest shut", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_crowfeather_sickbay",
+      "title": "The Crowfeather Sickbay",
+      "description": "A plush midnight crow tends tiny quilts beneath a warm brass lantern while patched travellers shelter from rain.",
+      "choices": [
+        { "id": "pay_crow_nurse", "text": "Pay 13 gold for crow-feather bandages (+8 HP)", "outcome": { "gold": -13, "scraps": 0, "hp": 8, "max_hp": 0 } },
+        { "id": "trade_warm_stuffing", "text": "Give 3 HP worth of stuffing for 2 scraps", "outcome": { "gold": 0, "scraps": 2, "hp": -3, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the quilts folded", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_copper_spine_shrine",
+      "title": "The Copper-Spine Shrine",
+      "description": "A round ragdoll sentinel holds a copper-thread backbone across an oxblood altar of soft sewn cushions.",
+      "choices": [
+        { "id": "brace_spine", "text": "Spend 3 scraps for a lasting copper brace (+3 max HP)", "outcome": { "gold": 0, "scraps": -3, "hp": 0, "max_hp": 3 } },
+        { "id": "unpick_ribs", "text": "Trade 2 max HP for 20 gold", "outcome": { "gold": 20, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the copper brace untouched", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_bellmoth_hospice",
+      "title": "The Bell-Moth Hospice",
+      "description": "A broad button-eyed moth nurse rings a bone-cream bell above a bedside lit by amber lantern oil.",
+      "choices": [
+        { "id": "borrow_glow", "text": "Pay 15 gold for glow treatment (+7 HP, +1 max HP)", "outcome": { "gold": -15, "scraps": 0, "hp": 7, "max_hp": 1 } },
+        { "id": "barter_wick", "text": "Give 4 HP for 19 gold worth of lantern wicks", "outcome": { "gold": 19, "scraps": 0, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the hospice bell fall silent", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_strawbell_keeper",
+      "title": "The Straw-Bell Keeper",
+      "description": "A squat pumpkin-faced keeper gathers fallen straw beneath a moss-coloured bell stitched into the road's canopy.",
+      "choices": [
+        { "id": "stuff_hem", "text": "Spend 2 scraps to restuff a wound (+5 HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 5, "max_hp": 0 } },
+        { "id": "sell_straw_core", "text": "Trade 1 max HP of stuffing for 12 gold", "outcome": { "gold": 12, "scraps": 0, "hp": 0, "max_hp": -1 } },
+        { "id": "leave", "text": "Pass beneath the hanging straw bell", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_teal_dye_washhouse",
+      "title": "The Teal-Dye Washhouse",
+      "description": "Round apron-wearing dolls wring indigo quilts above a midnight-teal basin warmed by little copper lamps.",
+      "choices": [
+        { "id": "purchase_cloth", "text": "Pay 11 gold for a healing cloth wrap (+7 HP)", "outcome": { "gold": -11, "scraps": 0, "hp": 7, "max_hp": 0 } },
+        { "id": "rinse_threads", "text": "Give 3 HP of effort to salvage 1 scrap", "outcome": { "gold": 0, "scraps": 1, "hp": -3, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the indigo quilts to dry", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_oxblood_button_rite",
+      "title": "The Oxblood Button Rite",
+      "description": "A patched button priestess sews a shining brass heart into a velvet cushion as the candle wax drips.",
+      "choices": [
+        { "id": "sew_rite", "text": "Spend 1 scrap and 4 HP to gain 2 max HP", "outcome": { "gold": 0, "scraps": -1, "hp": -4, "max_hp": 2 } },
+        { "id": "cash_oath", "text": "Surrender 2 max HP to take 23 gold", "outcome": { "gold": 23, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Keep your own button-heart", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
