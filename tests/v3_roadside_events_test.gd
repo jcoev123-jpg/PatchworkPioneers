@@ -22,6 +22,10 @@ extends SceneTree
 ## funded previews and claims, an empty-purse debit refusal followed by the legal
 ## free Leave, replay refusal, and a one-draw forced selection through the default
 ## selector. It never asserts a catalog total or a full ordered ID list.
+##
+## The wallet-dilemma batch repeats that contract for the six newest roadside
+## wallet tales from a funded {50,5} and an empty {0,0} purse, adding an unknown
+## choice-ID refusal and one gold-short and one scrap-short debit per-ID case.
 
 const EVENTS_PATH := "res://data/events/v3_roadside_events.json"
 const M04_EVENTS_PATH := "res://data/events/m04_events.json"
@@ -409,6 +413,89 @@ const TRADE_SEEDS := {
 	"v3_saffron_button_harvest": 1020276,
 }
 
+## The six roadside wallet dilemmas appended by this task. As with the earlier
+## batches this is an independent verbatim copy of the authored story, captions
+## and signed outcomes: it never reads the shipped catalog or the selector's
+## constants back as its oracle, and it asserts per-ID membership rather than a
+## catalog total or a full ordered ID list. Every tale prices at least one choice
+## in gold or in scraps and closes on a third-position free Leave.
+const WALLET_EXPECTED := {
+	"v3_nightjar_ribbon_exchange": {
+		"title": "The Nightjar Ribbon Exchange",
+		"description": "A round button-eyed nightjar doll sorts velvet ribbon parcels beneath a saffron lantern and an oxblood quilt awning.",
+		"choices": [
+			{"id": "sort_delivery_ribbons", "text": "Sort the tangled delivery ribbons (gain 2 scraps)", "gold": 0, "scraps": 2},
+			{"id": "buy_waxproof_ribbon", "text": "Buy waxproof ribbon bundles (spend 21 gold; gain 4 scraps)", "gold": -21, "scraps": 4},
+			{"id": "leave_exchange", "text": "Leave the sleeping ribbon exchange", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_clockwork_rookery": {
+		"title": "The Clockwork Rookery",
+		"description": "Brass-beaked stuffed rooks perch on enormous spool-gears while a plump clockmaker winds their embroidered wings.",
+		"choices": [
+			{"id": "repair_rook_wings", "text": "Repair the rook wings (spend 2 scraps; gain 32 gold)", "gold": 32, "scraps": -2},
+			{"id": "buy_riveted_feathers", "text": "Buy riveted metal feathers (spend 16 gold; gain 3 scraps)", "gold": -16, "scraps": 3},
+			{"id": "leave_rookery", "text": "Let the clockwork rooks rest", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_cinder_needle_forge": {
+		"title": "The Cinder-Needle Forge",
+		"description": "A squat soot-grey ragdoll smith hammers bent silver needles on a brass-button anvil lit by a warm red coal.",
+		"choices": [
+			{"id": "sort_cold_rivets", "text": "Sort the cold rivets (gain 1 scrap)", "gold": 0, "scraps": 1},
+			{"id": "sell_bent_needle_bundle", "text": "Sell a bundle of bent needles (spend 3 scraps; gain 43 gold)", "gold": 43, "scraps": -3},
+			{"id": "leave_forge", "text": "Leave the forge embers glowing", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_snowquilt_waystation": {
+		"title": "The Snowquilt Waystation",
+		"description": "A plush doll in a thick midnight-teal quilt coat tends a stitched road sign as bone-cream snow patches cover the path.",
+		"choices": [
+			{"id": "guide_lost_parcels", "text": "Guide the lost parcel train (gain 14 gold)", "gold": 14, "scraps": 0},
+			{"id": "buy_storm_seams", "text": "Buy stormproof seam thread (spend 18 gold; gain 3 scraps)", "gold": -18, "scraps": 3},
+			{"id": "leave_waystation", "text": "Follow the quiet snow road", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_ghostlight_parcel_tower": {
+		"title": "The Ghostlight Parcel Tower",
+		"description": "A rounded lantern-eyed post keeper stacks cloth-wrapped parcels in a leaning plum tower stitched with tiny gold stars.",
+		"choices": [
+			{"id": "deliver_lantern_parcels", "text": "Deliver the lit parcels (gain 11 gold)", "gold": 11, "scraps": 0},
+			{"id": "trade_parcel_seals", "text": "Trade wax-stamped parcel seals (spend 2 scraps; gain 36 gold)", "gold": 36, "scraps": -2},
+			{"id": "leave_tower", "text": "Leave the parcel lights burning", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_lullaby_button_fountain": {
+		"title": "The Lullaby Button Fountain",
+		"description": "Three rosy round ragdolls hum beside a midnight-blue fountain where brass buttons bob in embroidered waves.",
+		"choices": [
+			{"id": "collect_odd_buttons", "text": "Collect fallen buttons (gain 2 scraps)", "gold": 0, "scraps": 2},
+			{"id": "buy_wish_buttons", "text": "Buy four wish buttons (spend 23 gold; gain 4 scraps)", "gold": -23, "scraps": 4},
+			{"id": "leave_fountain", "text": "Leave the fountain to its song", "gold": 0, "scraps": 0},
+		],
+	},
+}
+
+const WALLET_EVENT_IDS := [
+	"v3_nightjar_ribbon_exchange",
+	"v3_clockwork_rookery",
+	"v3_cinder_needle_forge",
+	"v3_snowquilt_waystation",
+	"v3_ghostlight_parcel_tower",
+	"v3_lullaby_button_fountain",
+]
+
+## Independent per-ID seeds for the forced single-eligible selection replay.
+## With one eligible ID the seed cannot pin a catalog position.
+const WALLET_SEEDS := {
+	"v3_nightjar_ribbon_exchange": 1020281,
+	"v3_clockwork_rookery": 1020282,
+	"v3_cinder_needle_forge": 1020283,
+	"v3_snowquilt_waystation": 1020284,
+	"v3_ghostlight_parcel_tower": 1020285,
+	"v3_lullaby_button_fountain": 1020286,
+}
+
 var failures: Array[String] = []
 var checks := 0
 
@@ -624,6 +711,7 @@ func _run_tests() -> void:
 
 	_check_gothic_roadside_batch()
 	_check_trade_roadside_batch()
+	_check_wallet_roadside_batch()
 	_check_injected_selector()
 	_check_default_admission()
 	_check_default_selection_contract()
@@ -1047,6 +1135,272 @@ func _check_trade_roadside_batch() -> void:
 		"trade wallet play never mutates the selector listing")
 	_check(roadside == roadside_snapshot and m04 == m04_snapshot,
 		"trade flows never mutate either shipped source catalog")
+
+## AC1-AC4 for the six roadside wallet dilemmas appended by this task. Every
+## record is checked against the independent table above (verbatim story,
+## captions and signed deltas), admitted exactly once by the default selector,
+## and forced through it with every other eligible ID excluded, which must
+## consume exactly one range draw. Wallet play uses a funded {50,5} snapshot and
+## an empty {0,0} snapshot with a fresh service per choice: exact preview
+## deltas/balances, one-shot settlement, refused replay and swap, an unknown
+## choice ID that leaves the visit open, an empty-purse debit refusal for both a
+## gold-short and a scrap-short tale followed by the legal free Leave, and no
+## mutation of the caller wallets, the sources or the run RNG. Every assertion is
+## per ID: no catalog total and no full ordered ID list.
+func _check_wallet_roadside_batch() -> void:
+	var roadside: Dictionary = _read_document(EVENTS_PATH)
+	var m04: Dictionary = _read_document(M04_EVENTS_PATH)
+	if roadside.is_empty() or m04.is_empty():
+		return
+	var roadside_snapshot: Dictionary = roadside.duplicate(true)
+	var m04_snapshot: Dictionary = m04.duplicate(true)
+	var roadside_events: Array = _source_events(roadside)
+	var generic_by_id: Dictionary = _records_by_id(_source_events(m04))
+	var source_by_id: Dictionary = _records_by_id(roadside_events)
+	var rotation := RunM04EventRotation.new()
+	_check(rotation.is_catalog_valid(), "the default selector validates for the six wallet dilemmas")
+	if not rotation.is_catalog_valid():
+		return
+	var listing_snapshot: Array = rotation.get_generic_events()
+	var ids: Array = rotation.get_generic_event_ids()
+	_check(ids.size() > WALLET_EVENT_IDS.size(),
+		"the default pool holds more than the wallet batch, so exclusions are meaningful")
+	# Earlier authored roadside tales and the generic/special anchors stay put.
+	for anchor_id in ["v3_raincoat_bridge", "v3_saffron_button_harvest"]:
+		_check(_matches(roadside_events, anchor_id).size() == 1,
+			"the earlier authored roadside record stays in the source once: " + anchor_id)
+		_check(ids.count(anchor_id) == 1,
+			"the earlier authored roadside record stays eligible once: " + anchor_id)
+	_check(generic_by_id.has("button_trail") and ids.count("button_trail") == 1,
+		"the generic button_trail anchor stays eligible once")
+	_check(generic_by_id.has(QUIET_SPOOL_ID) and not ids.has(QUIET_SPOOL_ID)
+		and _matches(listing_snapshot, QUIET_SPOOL_ID).is_empty(),
+		"quiet_spool stays on its separate special route")
+	var guard := RandomNumberGenerator.new()
+	guard.seed = 515151
+	var guard_state: int = guard.state
+	var settlements := 0
+	var refusals := 0
+	var gold_short_events := 0
+	var scrap_short_events := 0
+	for event_id in WALLET_EVENT_IDS:
+		var contract: Dictionary = WALLET_EXPECTED[event_id]
+		_check(not generic_by_id.has(event_id),
+			"the wallet dilemma never reuses a generic event ID: " + event_id)
+		_check(_matches(roadside_events, event_id).size() == 1,
+			"exactly one sourced wallet record for " + event_id)
+		var source_record: Dictionary = source_by_id.get(event_id, {})
+		var record_snapshot: Dictionary = source_record.duplicate(true)
+		_check_gothic_record(source_record, event_id, contract, "wallet")
+		# AC2: the no-argument shipped selector admits the record exactly once.
+		var admitted: Array = _matches(listing_snapshot, event_id)
+		_check(admitted.size() == 1 and ids.count(event_id) == 1,
+			"the default selector admits the wallet dilemma exactly once: " + event_id)
+		if admitted.size() == 1:
+			_check(admitted[0] == source_record,
+				"the default selector serves the verbatim authored wallet record: " + event_id)
+		# AC2: excluding every other eligible ID forces the named tale through the
+		# real seeded selector, which consumes exactly one documented range draw.
+		var excluded: Array = ids.duplicate()
+		excluded.erase(event_id)
+		_check(not excluded.has(event_id) and excluded.size() == ids.size() - 1,
+			"only the named wallet dilemma stays eligible: " + event_id)
+		var seed_value: int = WALLET_SEEDS[event_id]
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = seed_value
+		oracle.randi_range(0, 0)
+		var picked := rotation.select_event(rng, excluded)
+		_check(picked.get("ok") == true, "the forced wallet selection succeeds: " + event_id)
+		var selected: Dictionary = picked.get("event", {})
+		_check(selected.get("id") == event_id,
+			"the forced wallet selection is the named dilemma: " + event_id)
+		_check(selected == source_record,
+			"the forced wallet selection is the authentic authored record: " + event_id)
+		_check(rng.state == oracle.state,
+			"a wallet selection consumes exactly one range draw: " + event_id)
+		var replay_rng := RandomNumberGenerator.new()
+		replay_rng.seed = seed_value
+		var replay := rotation.select_event(replay_rng, excluded)
+		_check(replay.get("ok") == true and replay.get("event") == selected
+			and replay_rng.state == rng.state,
+			"the same seed and exclusions replay " + event_id)
+		var selected_snapshot: Dictionary = selected.duplicate(true)
+		selected["title"] = "MUTATED"
+		selected["choices"] = []
+		selected["injected"] = true
+		var detached_rng := RandomNumberGenerator.new()
+		detached_rng.seed = seed_value
+		var detached := rotation.select_event(detached_rng, excluded)
+		_check(detached.get("event") == selected_snapshot and detached.get("event") == source_record,
+			"the selected wallet record is a detached authored copy: " + event_id)
+		var wallet_record: Dictionary = detached.get("event", {})
+		_check(wallet_record == source_record,
+			"the wallet selector hands back the authentic record for wallet play: " + event_id)
+		# AC3: funded preview and one-shot settlement, fresh service per choice.
+		var funded := {"gold": 50, "scraps": 5}
+		var funded_snapshot: Dictionary = funded.duplicate(true)
+		var zero := {"gold": 0, "scraps": 0}
+		var zero_snapshot: Dictionary = zero.duplicate(true)
+		var forecast := RunEventChoice.new(wallet_record)
+		_check(forecast.is_valid() and not forecast.is_claimed(),
+			"the admitted wallet record is a fresh valid choice service: " + event_id)
+		var preview: Dictionary = forecast.preview_wallet_choices(funded)
+		_check(preview.get("ok") == true and preview.get("event_id") == event_id,
+			"a funded wallet preview succeeds: " + event_id)
+		var rows: Dictionary = _gothic_preview_rows(preview)
+		_check(rows.size() == 3, "a funded wallet preview lists all three choices: " + event_id)
+		_check(guard.state == guard_state,
+			"a funded wallet preview never touches the run RNG: " + event_id)
+		var free_def: Dictionary = {}
+		var free_ids: Array = []
+		var debit_ids: Array = []
+		var needs_gold := false
+		var needs_scraps := false
+		for choice_def in contract["choices"]:
+			var definition: Dictionary = choice_def
+			if int(definition["gold"]) == 0 and int(definition["scraps"]) == 0:
+				free_def = definition
+				free_ids.append(definition["id"])
+			if int(definition["gold"]) < 0 or int(definition["scraps"]) < 0:
+				debit_ids.append(definition["id"])
+			if int(definition["gold"]) < 0:
+				needs_gold = true
+			if int(definition["scraps"]) < 0:
+				needs_scraps = true
+		_check(free_ids.size() == 1 and free_ids[0] == contract["choices"][2]["id"],
+			"the third wallet choice is the only free Leave: " + event_id)
+		_check(debit_ids.size() >= 1, "the wallet dilemma prices at least one choice: " + event_id)
+		if needs_gold:
+			gold_short_events += 1
+		if needs_scraps:
+			scrap_short_events += 1
+		for choice_def in contract["choices"]:
+			var definition: Dictionary = choice_def
+			var choice_id: String = definition["id"]
+			var gold_delta: int = definition["gold"]
+			var scraps_delta: int = definition["scraps"]
+			var after := {"gold": 50 + gold_delta, "scraps": 5 + scraps_delta}
+			var row: Dictionary = rows.get(choice_id, {})
+			_check(row.get("gold_delta") == gold_delta and row.get("scraps_delta") == scraps_delta,
+				"the wallet preview reports the authored deltas: " + event_id + " / " + choice_id)
+			_check(row.get("affordable") == true and row.get("wallet") == after,
+				"the wallet preview forecasts the exact funded balance: "
+				+ event_id + " / " + choice_id)
+			var committed := RunEventChoice.new(wallet_record)
+			var receipt := committed.choose_with_wallet(choice_id, funded)
+			_check(receipt == {
+				"ok": true, "event_id": event_id, "choice_id": choice_id, "wallet": after,
+			}, "the funded wallet claim settles the authored deltas once: "
+				+ event_id + " / " + choice_id)
+			settlements += 1
+			_check(committed.is_claimed() and not committed.is_valid(),
+				"the funded wallet claim latches and closes the visit: "
+				+ event_id + " / " + choice_id)
+			var replay_claim := committed.choose_with_wallet(choice_id, funded)
+			_check(replay_claim == {
+				"ok": false, "event_id": "", "choice_id": "", "wallet": funded,
+			}, "the settled wallet claim cannot be replayed: " + event_id + " / " + choice_id)
+			var alternate_id := choice_id
+			for other_def in contract["choices"]:
+				var alternate: Dictionary = other_def
+				if alternate["id"] != choice_id:
+					alternate_id = alternate["id"]
+					break
+			_check(committed.choose_with_wallet(alternate_id, funded).get("ok") == false,
+				"no alternate wallet choice claims a spent visit: "
+				+ event_id + " / " + choice_id)
+			_check(committed.preview_wallet_choices(funded).get("ok") == false,
+				"a spent wallet visit offers no further preview: "
+				+ event_id + " / " + choice_id)
+			_check(guard.state == guard_state,
+				"a wallet claim never touches the run RNG: " + event_id + " / " + choice_id)
+		# AC4: at an empty purse every signed debit is unaffordable and refused
+		# without consuming the visit; an unknown choice ID is refused as well, and
+		# the same visit then settles its actual free Leave exactly once.
+		var scarce := RunEventChoice.new(wallet_record)
+		var scarce_rows: Dictionary = _gothic_preview_rows(scarce.preview_wallet_choices(zero))
+		_check(scarce_rows.size() == 3,
+			"an empty-purse wallet preview lists all three choices: " + event_id)
+		for choice_def in contract["choices"]:
+			var definition: Dictionary = choice_def
+			var choice_id: String = definition["id"]
+			var paid := int(definition["gold"]) < 0 or int(definition["scraps"]) < 0
+			_check(scarce_rows.get(choice_id, {}).get("affordable") == (not paid),
+				"zero-purse wallet affordability matches the signed outcome: "
+				+ event_id + " / " + choice_id)
+		var debit_id: String = debit_ids[0]
+		for paid_id in debit_ids:
+			var denied := scarce.choose_with_wallet(paid_id, zero)
+			_check(denied == {
+				"ok": false, "event_id": "", "choice_id": "", "wallet": zero,
+			}, "an unfunded wallet debit is refused: " + event_id + " / " + paid_id)
+			refusals += 1
+			_check(not scarce.is_claimed() and scarce.is_valid(),
+				"the refused wallet debit leaves the visit open: " + event_id + " / " + paid_id)
+			_check(guard.state == guard_state,
+				"a refused wallet debit never touches the run RNG: " + event_id + " / " + paid_id)
+		var unknown := scarce.choose_with_wallet("v3_unknown_wallet_choice", zero)
+		_check(unknown == {"ok": false, "event_id": "", "choice_id": "", "wallet": zero},
+			"an unknown wallet choice ID is refused: " + event_id)
+		_check(not scarce.is_claimed() and scarce.is_valid(),
+			"an unknown wallet choice leaves the visit open: " + event_id)
+		_check(guard.state == guard_state,
+			"an unknown wallet choice never touches the run RNG: " + event_id)
+		var leave_id: String = free_def["id"]
+		var leave := scarce.choose_with_wallet(leave_id, zero)
+		_check(leave == {
+			"ok": true, "event_id": event_id, "choice_id": leave_id, "wallet": zero,
+		}, "the same wallet visit still settles its free Leave: " + event_id)
+		_check(scarce.is_claimed() and not scarce.is_valid(),
+			"the free Leave consumes the wallet visit: " + event_id)
+		var leave_replay := scarce.choose_with_wallet(leave_id, zero)
+		_check(leave_replay == {
+			"ok": false, "event_id": "", "choice_id": "", "wallet": zero,
+		}, "the settled wallet free Leave cannot be replayed: " + event_id)
+		var swapped := scarce.choose_with_wallet(debit_id, zero)
+		_check(swapped.get("ok") == false and swapped.get("wallet") == zero,
+			"no debit claims a spent wallet visit: " + event_id)
+		_check(funded == funded_snapshot and zero == zero_snapshot,
+			"the caller's wallets are unchanged by wallet play: " + event_id)
+		_check(source_record == record_snapshot,
+			"the authored wallet definition is unchanged by wallet play: " + event_id)
+		_check(guard.state == guard_state,
+			"wallet previews, claims, refusals and unknowns never touch the run RNG: "
+			+ event_id)
+	# A non-vacuous batch: six events, eighteen authored choices, and at least one
+	# signed price per tale, including a gold-priced and a scraps-priced tale.
+	var expected_prices := 0
+	for event_id in WALLET_EVENT_IDS:
+		for choice_def in WALLET_EXPECTED[event_id]["choices"]:
+			var priced: Dictionary = choice_def
+			if int(priced["gold"]) < 0 or int(priced["scraps"]) < 0:
+				expected_prices += 1
+	_check(WALLET_EXPECTED.size() == 6 and WALLET_EVENT_IDS.size() == 6,
+		"the independent wallet table covers six events")
+	_check(settlements == WALLET_EVENT_IDS.size() * 3,
+		"every wallet choice settles once when funded")
+	_check(expected_prices == refusals and refusals >= WALLET_EVENT_IDS.size(),
+		"every signed wallet price is refused at an empty purse")
+	_check(gold_short_events >= 1 and scrap_short_events >= 1,
+		"the batch exercises both a gold-short and a scrap-short dilemma")
+	# Exhausted and malformed exclusions still reject without an RNG draw.
+	var none_result := rotation.select_event(guard, ids)
+	_check(none_result.get("ok") == false and (none_result.get("event") as Dictionary).is_empty(),
+		"excluding every eligible wallet event rejects with no event")
+	_check(guard.state == guard_state, "an exhausted wallet pool consumes no RNG")
+	for bad_list in [7, "button_trail", [1], [""], [null]]:
+		var bad_result := rotation.select_event(guard, bad_list)
+		_check(bad_result.get("ok") == false
+			and (bad_result.get("event") as Dictionary).is_empty(),
+			"a malformed wallet exclusion list rejects: " + str(bad_list))
+		_check(guard.state == guard_state,
+			"a malformed wallet exclusion list consumes no RNG: " + str(bad_list))
+	_check(rotation.get_generic_events() == listing_snapshot,
+		"wallet play never mutates the selector listing")
+	_check(roadside == roadside_snapshot and m04 == m04_snapshot,
+		"wallet flows never mutate either shipped source catalog")
 
 ## Verbatim presentation, choice shape and signed deltas against the independent
 ## gothic table. `origin` only labels failure messages.

@@ -359,6 +359,66 @@
         { "id": "trade_harvest", "text": "Trade the button harvest (spend 2 scraps, gain 29 gold)", "outcome": { "gold": 29, "scraps": -2 } },
         { "id": "leave_harvest", "text": "Leave the harvest (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_nightjar_ribbon_exchange",
+      "title": "The Nightjar Ribbon Exchange",
+      "description": "A round button-eyed nightjar doll sorts velvet ribbon parcels beneath a saffron lantern and an oxblood quilt awning.",
+      "choices": [
+        { "id": "sort_delivery_ribbons", "text": "Sort the tangled delivery ribbons (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "buy_waxproof_ribbon", "text": "Buy waxproof ribbon bundles (spend 21 gold; gain 4 scraps)", "outcome": { "gold": -21, "scraps": 4 } },
+        { "id": "leave_exchange", "text": "Leave the sleeping ribbon exchange", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_clockwork_rookery",
+      "title": "The Clockwork Rookery",
+      "description": "Brass-beaked stuffed rooks perch on enormous spool-gears while a plump clockmaker winds their embroidered wings.",
+      "choices": [
+        { "id": "repair_rook_wings", "text": "Repair the rook wings (spend 2 scraps; gain 32 gold)", "outcome": { "gold": 32, "scraps": -2 } },
+        { "id": "buy_riveted_feathers", "text": "Buy riveted metal feathers (spend 16 gold; gain 3 scraps)", "outcome": { "gold": -16, "scraps": 3 } },
+        { "id": "leave_rookery", "text": "Let the clockwork rooks rest", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_cinder_needle_forge",
+      "title": "The Cinder-Needle Forge",
+      "description": "A squat soot-grey ragdoll smith hammers bent silver needles on a brass-button anvil lit by a warm red coal.",
+      "choices": [
+        { "id": "sort_cold_rivets", "text": "Sort the cold rivets (gain 1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "sell_bent_needle_bundle", "text": "Sell a bundle of bent needles (spend 3 scraps; gain 43 gold)", "outcome": { "gold": 43, "scraps": -3 } },
+        { "id": "leave_forge", "text": "Leave the forge embers glowing", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_snowquilt_waystation",
+      "title": "The Snowquilt Waystation",
+      "description": "A plush doll in a thick midnight-teal quilt coat tends a stitched road sign as bone-cream snow patches cover the path.",
+      "choices": [
+        { "id": "guide_lost_parcels", "text": "Guide the lost parcel train (gain 14 gold)", "outcome": { "gold": 14, "scraps": 0 } },
+        { "id": "buy_storm_seams", "text": "Buy stormproof seam thread (spend 18 gold; gain 3 scraps)", "outcome": { "gold": -18, "scraps": 3 } },
+        { "id": "leave_waystation", "text": "Follow the quiet snow road", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_ghostlight_parcel_tower",
+      "title": "The Ghostlight Parcel Tower",
+      "description": "A rounded lantern-eyed post keeper stacks cloth-wrapped parcels in a leaning plum tower stitched with tiny gold stars.",
+      "choices": [
+        { "id": "deliver_lantern_parcels", "text": "Deliver the lit parcels (gain 11 gold)", "outcome": { "gold": 11, "scraps": 0 } },
+        { "id": "trade_parcel_seals", "text": "Trade wax-stamped parcel seals (spend 2 scraps; gain 36 gold)", "outcome": { "gold": 36, "scraps": -2 } },
+        { "id": "leave_tower", "text": "Leave the parcel lights burning", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_lullaby_button_fountain",
+      "title": "The Lullaby Button Fountain",
+      "description": "Three rosy round ragdolls hum beside a midnight-blue fountain where brass buttons bob in embroidered waves.",
+      "choices": [
+        { "id": "collect_odd_buttons", "text": "Collect fallen buttons (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "buy_wish_buttons", "text": "Buy four wish buttons (spend 23 gold; gain 4 scraps)", "outcome": { "gold": -23, "scraps": 4 } },
+        { "id": "leave_fountain", "text": "Leave the fountain to its song", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }

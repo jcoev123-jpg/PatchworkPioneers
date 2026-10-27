@@ -107,4 +107,20 @@ const SEEDS := [
 	3782438,
 	5142127,
 	5281000,
+	# Witness seeds re-derived after the six roadside wallet dilemmas joined the
+	# shipped pool (genuine map/toll/event-rotation sequences, verified live).
+	1478428,
+	1877221,
+	2629084,
+	3400053,
+	4278308,
+	5799851,
+	5966835,
+	7747073,
+	64084,
+	331198,
+	444032,
+	610125,
+	1667572,
+	3703755,
 ]
