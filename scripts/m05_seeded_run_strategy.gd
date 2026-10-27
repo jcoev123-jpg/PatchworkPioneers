@@ -29,6 +29,59 @@ const EARNED_TINKER := [
 ## family the baseline must exercise; the pilot takes at most two authored cards.
 const PICK_LIMIT := 2
 
+## Deliberately bounded to existing paid rules. Missing starters are reported by
+## the V3 cohort, never approximated by a generic damage/support descriptor.
+const V3_SERVICES := {
+	"lantern_monk_lamplight_wash": "party_heal",
+	"lantern_monk_pole_shelter": "shelter",
+	"rag_duelist_rapier_lunge": "lunge",
+	"rag_duelist_cape_parry": "riposte",
+	"rag_duelist_feather_feint": "feint",
+	"rag_duelist_cape_slip": "dodge",
+	"scarecrow_fork_jab": "fork",
+	"scarecrow_sack_glare": "fear",
+	"scarecrow_crow_dive": "crow",
+	"yarn_ranger_wool_bolas": "bolas",
+	"yarn_ranger_hood_knit": "knit",
+	"button_golem_starter_loose_pop": "pop",
+	"button_golem_starter_threadwheel_roll": "roll",
+	"button_golem_starter_seam_resew": "sew",
+}
+
+
+## Pure candidate selection. The paid service still authenticates every effect,
+## payment and target; a refusal is latched by ID for this turn by the harness.
+func choose_v3_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		rejected: Array) -> Dictionary:
+	if not deck.turn_active or party.is_defeated() or enemies.is_victorious():
+		return {}
+	for id in deck.hand:
+		if id in rejected or not V3_SERVICES.has(id):
+			continue
+		var definition := RunRestStitchCards.resolve_card_definition(id)
+		if definition.is_empty() or definition.cost > deck.energy \
+				or not _living_owner_in_from(party.get_heroes(), definition):
+			continue
+		var targets := []
+		match definition.target_kind:
+			"enemy_single", "enemy_back":
+				for enemy in enemies.get_enemies():
+					if enemy.hp > 0 and definition.to_positions.has(enemy.position):
+						targets.append(enemy.position)
+				# Clear the rear target before it accumulates Block: the legacy
+				# front-only attacks cannot finish that slot after the Ranger falls.
+				if definition.target_kind == "enemy_back" or V3_SERVICES[id] == "bolas":
+					targets.reverse()
+			"ally_single":
+				for hero in party.get_heroes():
+					if hero.hp > 0 and (V3_SERVICES[id] != "roll" or hero.id != definition.owner):
+						targets.append(hero.position)
+			_:
+				targets.append(0)
+		if not targets.is_empty():
+			return {"kind": "v3", "id": id, "target": targets[0], "service": V3_SERVICES[id]}
+	return {}
+
 
 func choose_route(map: RunMap, heroes: Array, scraps: int, stitched: int,
 		fights: int, elites: int, gold: int, card_candidates: Array) -> String:
@@ -154,8 +207,8 @@ func choose_sew(wardrobe: RunPatchWardrobe, heroes: Array) -> Dictionary:
 		if not slot in RunPatchWardrobe.SLOTS:
 			continue
 		var already_worn := false
-		for wearer_id in RunPatchWardrobe.HERO_IDS:
-			if snapshot.worn[wearer_id][slot] == patch_id:
+		for wearer in heroes:
+			if snapshot.worn[wearer.id][slot] == patch_id:
 				already_worn = true
 				break
 		if already_worn:

@@ -68,7 +68,7 @@ func bind_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
 	for hero in torn_state.get("heroes", []):
 		if typeof(hero) == TYPE_DICTIONARY and hero.has("id") and hero.has("hp"):
 			_living[hero["id"]] = hero["hp"] > 0
-	for owner in RunPatchWardrobe.HERO_IDS:
+	for owner in _living:
 		_consumed[owner] = false
 	_valid = true
 	_wardrobe = wardrobe
@@ -320,7 +320,7 @@ func _valid_projection(state: Dictionary, torn_state: Dictionary, projection: Di
 		if typeof(hero) != TYPE_DICTIONARY:
 			return false
 		var owner: Variant = hero.get("id")
-		if typeof(owner) != TYPE_STRING or not RunPatchWardrobe.HERO_IDS.has(owner) or seen.has(owner):
+		if typeof(owner) != TYPE_STRING or not RunV3PartyAdmission.HERO_IDS.has(owner) or seen.has(owner):
 			return false
 		seen[owner] = true
 		var slots: Variant = worn.get(owner)
