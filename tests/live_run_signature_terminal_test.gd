@@ -105,7 +105,13 @@ func _settle(ctx: Dictionary, fight: Dictionary, victory: bool) -> void:
 			_check(hp > 0 and party.apply_damage(i, hp), "actual party member downed")
 		_check(party.is_defeated() and fight.result.evaluate() == CombatBattleResult.DEFEAT,
 			"CombatBattleResult witnesses defeat")
-	_check(latch.settle_current_battle(), "witnessed battle settles in RunActBattleOutcome")
+	if not victory:
+		app.act_outcome = latch
+		app.run_map = ctx.map
+		app.party = fight.party
+		app.battle_result = fight.result
+	_check(latch.settle_current_battle() if victory else app._settle_act_battle(),
+		"witnessed battle settles in RunActBattleOutcome")
 
 
 func _victory() -> Dictionary:
@@ -141,7 +147,8 @@ func _defeat() -> Dictionary:
 	if opening.is_empty():
 		return ctx
 	_check(map.choose_node(opening), "real Fight route selected")
-	_settle(ctx, _battle(FIGHT), false)
+	var battle := _battle(FIGHT)
+	_settle(ctx, battle, false)
 	_check(ctx.latch.get_state().run_status == RunActBattleOutcome.DEFEAT,
 		"genuine settled party defeat")
 	return ctx
@@ -213,7 +220,7 @@ func _show(ctx: Dictionary, title: String, expected: Dictionary) -> void:
 			# count is zero; the terminal ribbon states it explicitly. Only worn
 			# patches are named, each with its own slot, and an empty wearer says
 			# so instead of printing empty slot placeholders.
-			var parts: Array[String] = ["%d/%d HP" % [hp, hp], "0 tears"]
+			var parts: Array[String] = ["%d/%d HP" % [0 if title == "Defeat" else hp, hp], "0 tears"]
 			var worn: Array[String] = []
 			for slot in ["HEAD", "ARM", "COAT"]:
 				var id: String = hero.slots[slot]
@@ -234,6 +241,8 @@ func _show(ctx: Dictionary, title: String, expected: Dictionary) -> void:
 		for i in range(mini(ribbons.size(), expected_heroes.size())):
 			_check(_hero_text(ribbons[i] as Control) == expected_heroes[i],
 				"mounted hero ribbon %d matches the independent oracle" % i)
+			_check((ribbons[i].get_node_or_null("RowInset/RowLine/TornBadge") != null) == (title == "Defeat"),
+				"witnessed defeat alone adds the TORN badge to this initially living ledger")
 		var recap_text := "\n".join(expected_heroes)
 		_check(not value.contains("HEAD -") and not value.contains("ARM -")
 			and not value.contains("COAT -") and not value.contains("Tears:")

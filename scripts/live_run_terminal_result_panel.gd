@@ -2,7 +2,7 @@ class_name LiveRunTerminalResultPanel
 extends Control
 ## Standalone M03 terminal presentation. An external host owns mounting and
 ## title/new-run navigation; this view only requests the return action.
-## Never observes combat or advances, settles or mutates a run.
+## Never evaluates combat or advances, settles or mutates a run.
 ## The settled result keeps its genuine counters and adds one portrait ticket per
 ## hero, so the party's HP, permanent tears and worn patch names are readable.
 ## The same counters also state the reached floor, but only when the settled
@@ -132,6 +132,8 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 		else "The party has fallen. The run has ended.")
 	var battles_resolved: int = (settled as Array).size()
 	var signature: Dictionary = _validated_signature()
+	if status == RunActBattleOutcome.DEFEAT:
+		signature = _with_defeat_hp(signature, latch, state)
 	_can_return = signature.get("ok") == true
 	# One successful signature fills both the counters and the three hero
 	# ribbons: no second read, and no row is published from a partial result.
@@ -172,13 +174,60 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 	return true
 
 
+## Defeat never commits combat HP to carryover. Require the exact combat witness
+## captured by the App's settlement boundary before overlaying display-only HP.
+func _with_defeat_hp(summary: Dictionary, latch: RunActBattleOutcome, state: Dictionary) -> Dictionary:
+	var app: Variant = get_parent()
+	if summary.get("ok") != true or app == null or app.get_script() == null \
+		or app.get_script().resource_path != "res://scripts/app.gd":
+		return {}
+	var witness: Array = app._terminal_combat_witness
+	if witness.size() != 9 or app.act_outcome != latch or app.run_map != latch._map \
+		or witness[0] != latch or witness[1] != app.run_map \
+		or witness[2] != app.battle_result or witness[3] != app.party \
+		or app.battle_result == null or app.party == null \
+		or app.battle_result._party != app.party \
+		or app.battle_result.get_outcome() != CombatBattleResult.DEFEAT \
+		or not app.party.is_valid() or not app.party.is_defeated() \
+		or app.battle_result._enemies == null or not app.battle_result._enemies.is_valid() \
+		or app.battle_result._enemies.is_victorious() \
+		or witness[4] != app.run_map.get_generation_revision() \
+		or witness[5] != app.run_map.get_route() or witness[6] != app.run_map.get_floors() \
+		or witness[7] != app.party.get_heroes() or witness[8] != state \
+		or _verified_floor_reached(latch, state) < 1:
+		return {}
+	if not witness[7] is Array or witness[7].size() != CombatParty.PARTY_SIZE:
+		return {}
+	# Read only the copied, settled combat snapshot; position order can differ
+	# from the canonical tickets. Every other field stays ledger-derived.
+	var hp_by_id: Dictionary = {}
+	var position := 0
+	for hero in witness[7]:
+		position += 1
+		if not hero is Dictionary:
+			return {}
+		var id: Variant = hero.get("id")
+		var hp: Variant = hero.get("hp")
+		var cap: Variant = hero.get("max_hp")
+		var block: Variant = hero.get("block")
+		if not id is String or id.is_empty() or hp_by_id.has(id) \
+			or not hp is int or hp != 0 or not cap is int or cap <= 0 \
+			or not block is int or block < 0 or not hero.get("position") is int \
+			or hero.position != position:
+			return {}
+		hp_by_id[id] = hp
+	if hp_by_id.size() != summary.get("heroes", []).size():
+		return {}
+	for row in summary.get("heroes", []):
+		if not hp_by_id.has(row.get("hero_id")):
+			return {}
+		row["hp"] = hp_by_id[row.hero_id]
+	return summary
+
+
 ## Lay the authenticated result down the parchment: the title plaque, the three
-## party tickets, the run ledger and the sole Return action read top to bottom,
-## and the tickets and ledger share the paper's spare height, so the composition
-## uses its lower space instead of leaving a blank field under a centred block.
-## A fail-closed result has no tickets to fill that space, so its compact block
-## stays centred rather than stretching the ledger into one empty panel.
-## Presentation only: no counter, ticket or action depends on this arrangement.
+## party tickets, the run ledger and the sole Return action read top to bottom.
+## A fail-closed result keeps its compact block centred without empty tickets.
 func _fit_result_height() -> void:
 	if not is_node_ready():
 		return

@@ -290,7 +290,11 @@ func _check_hero_rows(expected: Array[String], label: String) -> void:
 
 ## Independent hero-row oracle built straight from the authoritative summary
 ## fields, never from the panel's own formatter.
-func _oracle_hero_lines(summary: Dictionary) -> Array[String]:
+func _oracle_hero_lines(summary: Dictionary, defeated: bool = false) -> Array[String]:
+	summary = summary.duplicate(true)
+	if defeated:
+		for hero in summary.get("heroes", []):
+			hero["hp"] = 0
 	var lines: Array[String] = []
 	for hero in summary.get("heroes", []):
 		var parts: Array[String] = ["%d/%d HP" % [int(hero.hp), int(hero.max_hp)]]
@@ -453,6 +457,14 @@ func _victory() -> Dictionary:
 	return {"ctx": ctx, "battle": battle}
 
 
+func _settle_defeat(ctx: Dictionary, battle: Dictionary) -> bool:
+	app.act_outcome = ctx["latch"]
+	app.run_map = ctx["map"]
+	app.party = battle["party"]
+	app.battle_result = battle["result"]
+	return app._settle_act_battle()
+
+
 func _defeat() -> Dictionary:
 	var ctx := _context(8722)
 	var map: RunMap = ctx["map"]
@@ -479,7 +491,7 @@ func _defeat() -> Dictionary:
 		"party damage not yet combat-observed")
 	_check(battle["result"].evaluate() == CombatBattleResult.DEFEAT,
 		"CombatBattleResult observes party DEFEAT")
-	_check(latch.settle_current_battle(), "observed Fight defeat settles")
+	_check(_settle_defeat(ctx, battle), "observed Fight defeat settles")
 	_check(latch.get_state() == {"run_status": "DEFEAT",
 		"pending_node_id": "", "settled_node_ids": [opening]},
 		"settled party defeat does not invent Boss victory")
@@ -1128,7 +1140,7 @@ func _mounted_composites(ledger: Dictionary, wardrobe: RunPatchWardrobe,
 	_check(panel.stitched_section.visible == not cards.is_empty()
 		and panel.stitched_rows.get_child_count() == cards.size(),
 		label + " detail visibility and exact retained count")
-	var hero_oracle := _oracle_hero_lines(expected)
+	var hero_oracle := _oracle_hero_lines(expected, true)
 	_check(hero_oracle.size() == 3 and _hero_rows_text() == PackedStringArray(hero_oracle),
 		label + " three mounted hero ribbons match the independent oracle")
 	for i in range(cards.size()):
@@ -1411,7 +1423,7 @@ func _audit_result_readability(status: String, expected: Dictionary,
 	for index in range(mini(lines.size(), expected_lines.size())):
 		_check(lines[index] == expected_lines[index],
 			label + ": signed counter line %d is unchanged" % index)
-	var hero_lines := _oracle_hero_lines(expected)
+	var hero_lines := _oracle_hero_lines(expected, status == "Defeat")
 	_check(hero_lines.size() == 3, label + ": hero oracle is non-vacuous")
 	_check_hero_rows(hero_lines, label)
 	var detail_text := "\n".join(_hero_rows_text())
@@ -1642,9 +1654,9 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	_check(def_lines[3] == "Crafted: Strike / Prick", "AC3: Defeat preserves crafted card name")
 	_check(def_lines.size() == 4, "AC1: Defeat counters hold exactly the battles, stitched, worn and craft lines")
 	_check_hero_rows([
-		"Warden 18/37 HP · 1 tear · HEAD Button Eye",
-		"Seamstress 22/30 HP · 0 tears · ARM Pincushion Arm",
-		"Tinker 12/26 HP · 0 tears · COAT Quilted Coat",
+		"Warden TORN 0/37 HP · 1 tear · HEAD Button Eye",
+		"Seamstress TORN 0/30 HP · 0 tears · ARM Pincushion Arm",
+		"Tinker TORN 0/26 HP · 0 tears · COAT Quilted Coat",
 	], "AC2: Defeat hero ribbons")
 	panel.close_result()
 	_check(_app_snapshot() == snap_before_def, "AC1: Defeat open/close leaves wallet, seed, deck and heroes completely unchanged")
@@ -1759,12 +1771,12 @@ func _test_terminal_tears(victory: Dictionary, defeat: Dictionary) -> void:
 	_check(zero_rows.size() == 3,
 		"AC1: an untorn ledger keeps its wallet line plus the two genuine count lines")
 	_check_hero_rows([
-		"Warden 40/40 HP · 0 tears · no patches",
-		"Seamstress 30/30 HP · 0 tears · no patches",
-		"Tinker 26/26 HP · 0 tears · no patches",
+		"Warden TORN 0/40 HP · 0 tears · no patches",
+		"Seamstress TORN 0/30 HP · 0 tears · no patches",
+		"Tinker TORN 0/26 HP · 0 tears · no patches",
 	], "AC1: fresh run ribbons")
-	_check(not "\n".join(_hero_rows_text()).contains("TORN"),
-		"AC1: living heroes are never named TORN")
+	_check(panel.find_children("TornBadge", "", true, false).size() == 3,
+		"AC1: witnessed fallen heroes are TORN although carryover still lives")
 	_check(_app_snapshot() == zero_app and _snapshot(defeat["ctx"], defeat["battle"]) == zero_run,
 		"AC1: reading zero tears changes no hero, deck, purse, wardrobe or RNG")
 	panel.close_result()
@@ -2080,7 +2092,7 @@ func _test_compact_hero_recap(defeat: Dictionary) -> void:
 	for index in range(mini(rows.size() - 1, expected.size())):
 		_check(rows[index + 1] == expected[index],
 			"AC1: mounted count line %d matches the independent oracle" % (index + 1))
-	_check_hero_rows(expected_heroes, "AC1: fully worn party ribbons")
+	_check_hero_rows(_oracle_hero_lines(summary, true), "AC1: fully worn fallen party ribbons")
 	_validate_view("Defeat", "fully worn portrait tickets")
 	var recap_text := "\n".join(_hero_rows_text())
 	_check(not recap_text.contains("HEAD -")
@@ -2145,9 +2157,9 @@ func _test_reopen_resets_recap(defeat: Dictionary) -> void:
 	_check(panel.open_result(defeat["ctx"]["latch"]), "AC3: a worn run opens the settled defeat")
 	await _frames()
 	_check_hero_rows([
-		"Warden 40/40 HP · 0 tears · HEAD Button Eye",
-		"Seamstress 30/30 HP · 0 tears · ARM Pincushion Arm",
-		"Tinker 26/26 HP · 0 tears · no patches",
+		"Warden TORN 0/40 HP · 0 tears · HEAD Button Eye",
+		"Seamstress TORN 0/30 HP · 0 tears · ARM Pincushion Arm",
+		"Tinker TORN 0/26 HP · 0 tears · no patches",
 	], "AC3: first worn open")
 	panel.close_result()
 	_check(panel.hero_rows.get_child_count() == 0 and not panel.hero_recap.visible
@@ -2163,14 +2175,14 @@ func _test_reopen_resets_recap(defeat: Dictionary) -> void:
 		"AC3: the same settled defeat reopens on the fresh run")
 	await _frames()
 	_check_hero_rows([
-		"Warden 40/40 HP · 0 tears · no patches",
-		"Seamstress 30/30 HP · 0 tears · no patches",
-		"Tinker 26/26 HP · 0 tears · no patches",
+		"Warden TORN 0/40 HP · 0 tears · no patches",
+		"Seamstress TORN 0/30 HP · 0 tears · no patches",
+		"Tinker TORN 0/26 HP · 0 tears · no patches",
 	], "AC3: reopened fresh run")
 	var reopened := "\n".join(_hero_rows_text())
 	_check(not reopened.contains("Button Eye") and not reopened.contains("Pincushion Arm")
-		and not reopened.contains("TORN"),
-		"AC3: no stale patch name or torn badge survives a close and reopen")
+		and panel.find_children("TornBadge", "", true, false).size() == 3,
+		"AC3: fresh patch names and three witnessed torn badges replace closed rows")
 	panel.close_result()
 	_check(panel.hero_rows.get_child_count() == 0 and _app_snapshot() == fresh_before,
 		"AC3: the reopened recap closes without mutation")
@@ -2466,8 +2478,8 @@ func _greedy_path(map: RunMap) -> Array[String]:
 
 
 ## AC3: an unproven map relationship never invents a depth. A genuinely settled
-## defeat whose route has moved on, or whose graph was regenerated, keeps its
-## authentic counters and its one authorized Return without claiming "N/12".
+## defeat whose route has moved on, or whose graph was regenerated, must refuse
+## the recap and Return without claiming "N/12" or stale carryover HP.
 func _test_unverified_floor() -> void:
 	var ctx := _context(3141)
 	var map: RunMap = ctx["map"]
@@ -2490,7 +2502,7 @@ func _test_unverified_floor() -> void:
 			"AC3: the real party is downed at slot %d" % slot)
 	_check(battle["result"].evaluate() == CombatBattleResult.DEFEAT,
 		"AC3: the opening Fight is genuinely lost")
-	_check(latch.settle_current_battle(),
+	_check(_settle_defeat(ctx, battle),
 		"AC3: the witnessed defeat settles for the stale-map probe")
 	_check(map.get_current_floor() == 1 and map.get_current_node_id() == opening,
 		"AC3: the fresh settled defeat stands on floor 1")
@@ -2540,18 +2552,18 @@ func _test_unverified_floor() -> void:
 		"AC3: closing the verified result clears its floor claim")
 	_check(panel.open_result(latch), "AC3: the stale-map result still opens")
 	await _frames()
-	_check(panel.summary_label.text.begins_with("Battles resolved: 1 · Gold: 0 · Scraps: 0\n"),
-		"AC3: an unverifiable map keeps the genuine battle and currency facts")
+	_check(panel.summary_label.text.ends_with("Summary unavailable"),
+		"AC2: an untrusted map cannot publish the terminal ledger")
 	_check(not panel.summary_label.text.contains("Floor reached"),
 		"AC3: a route that moved past the witnessed battle claims no depth")
-	_check(not panel.return_button.disabled
-		and panel.return_button.focus_mode == Control.FOCUS_ALL,
-		"AC3: the preserved Return authorization survives an unverified depth")
+	_check(panel.return_button.disabled
+		and panel.hero_rows.get_child_count() == 0,
+		"AC3: stale-map defeat fails closed without recap or Return")
 	_check(_snapshot(ctx, battle) == stale_state and _app_snapshot() == app_before,
 		"AC3: presenting an unverified depth moves no map node, actor, latch or RNG")
 	await _key(KEY_ENTER)
-	_check(returns == earlier + 1 and panel.return_button.disabled,
-		"AC3: the unverified result still returns exactly once by keyboard")
+	_check(returns == earlier and panel.return_button.disabled,
+		"AC3: the unverified result refuses keyboard replay")
 	_check(_snapshot(ctx, battle) == stale_state,
 		"AC3: that Return leaves the stale map and the latch untouched")
 	panel.close_result()
@@ -2564,12 +2576,12 @@ func _test_unverified_floor() -> void:
 	var app_after := _app_snapshot()
 	_check(panel.open_result(latch), "AC3: the closed-map result still opens")
 	await _frames()
-	_check(panel.summary_label.text.begins_with("Battles resolved: 1 · Gold: 0 · Scraps: 0\n"),
-		"AC3: a regenerated map keeps the genuine counters")
+	_check(panel.summary_label.text.ends_with("Summary unavailable"),
+		"AC2: an untrusted map cannot publish the terminal ledger")
 	_check(not panel.summary_label.text.contains("Floor reached"),
 		"AC3: a fresh empty route can never claim the old run's depth")
-	_check(not panel.return_button.disabled,
-		"AC3: Return stays authorized after a map regeneration")
+	_check(panel.return_button.disabled and panel.hero_rows.get_child_count() == 0,
+		"AC3: regenerated-map defeat fails closed")
 	_check(_snapshot(ctx, battle) == regenerated and _app_snapshot() == app_after,
 		"AC3: the regenerated-map refusal mutates no run state or RNG")
 	panel.close_result()
@@ -2631,7 +2643,7 @@ func _test_depth_beyond_battle_count() -> void:
 			"AC1: the deeper party is downed at slot %d" % slot)
 	_check(losing["result"].evaluate() == CombatBattleResult.DEFEAT,
 		"AC1: the deeper battle is genuinely lost")
-	_check(latch.settle_current_battle(), "AC1: the deeper defeat settles")
+	_check(_settle_defeat(ctx, losing), "AC1: the deeper defeat settles")
 	settled_battles += 1
 	var reached: int = map.get_current_floor()
 	_check(reached == target + 1 and reached > settled_battles,
@@ -2710,8 +2722,8 @@ func _test_sewn_torn_badges(victory: Dictionary, defeat: Dictionary) -> void:
 	app.run_trinkets.assign(wardrobe.get_snapshot().owned)
 
 	var before := _app_snapshot()
-	var state := _snapshot(defeat["ctx"], defeat["battle"])
-	_check(panel.open_result(defeat["ctx"]["latch"]), "AC1/AC2: opens mixed party defeat result")
+	var state := _snapshot(victory["ctx"], victory["battle"])
+	_check(panel.open_result(victory["ctx"]["latch"]), "AC1/AC2: opens mixed party Victory result")
 	await _frames()
 	_check(panel.has_open_result() and panel.is_visible_in_tree(), "AC1/AC2: panel is open and visible")
 
@@ -2760,19 +2772,115 @@ func _test_sewn_torn_badges(victory: Dictionary, defeat: Dictionary) -> void:
 		"AC3: close clears result and removes all hero rows")
 	_check(panel.find_children("TornBadge", "", true, false).is_empty(),
 		"AC3: no TornBadge survives close")
-	_check(_app_snapshot() == before and _snapshot(defeat["ctx"], defeat["battle"]) == state,
+	_check(_app_snapshot() == before and _snapshot(victory["ctx"], victory["battle"]) == state,
 		"AC3: presentation and close leave app and run ledgers unchanged")
 
 	_install_run({"deck": starter, "descriptors": {}, "next_stitch_id": 1})
-	_check(panel.open_result(defeat["ctx"]["latch"]), "AC3: reopen with fresh untorn run")
+	_check(panel.open_result(victory["ctx"]["latch"]), "AC3: reopen with fresh untorn run")
 	await _frames()
 	_check(panel.find_children("TornBadge", "", true, false).is_empty(),
 		"AC3: reopened living run contains zero TornBadges")
 	panel.close_result()
 
 
+func _test_live_lethal_fight() -> Dictionary:
+	var live: Variant = load(APP_SCENE).instantiate()
+	root.add_child(live)
+	live.run_seed = 8722
+	live.start_button.pressed.emit()
+	preload("res://tests/party_choice.gd").choose(live)
+	await _frames()
+	_check(live.run_map != null and live.run_rng != null, "AC1: live Start admits party and seeded map")
+	if live.run_map == null:
+		live.queue_free()
+		return {}
+	var chosen := ""
+	for id in live.run_map.get_legal_choices():
+		if live.run_map.get_node(id).get("type") == "Fight":
+			chosen = id
+			break
+	_check(not chosen.is_empty() and live._choose_route(chosen), "AC1: live legal Fight route mounts combat")
+	if live.party == null:
+		live.queue_free()
+		return {}
+	var carried: Array = live.run_heroes.duplicate(true)
+	_check(carried.size() == 3 and carried.all(func(h): return h.hp > 0),
+		"AC1: carryover genuinely starts with three living heroes")
+	for turn in range(100):
+		if live._battle_closed:
+			break
+		live.end_turn_button.pressed.emit()
+		await _frames()
+	_check(live.party.is_defeated() and live.battle_result.get_outcome() == CombatBattleResult.DEFEAT,
+		"AC1: actual enemy phases down the full live party")
+	var recap: LiveRunTerminalResultPanel = live.terminal_result_panel
+	var replay: Dictionary = {}
+	_check(is_instance_valid(recap) and recap.is_visible_in_tree(), "AC1: settled live Defeat auto-mounts recap")
+	if is_instance_valid(recap):
+		_check(recap.hero_rows.get_child_count() == 3, "AC1: live recap has three tickets")
+		for index in range(recap.hero_rows.get_child_count()):
+			var row: Control = recap.hero_rows.get_child(index)
+			var ledger: Dictionary = carried[index]
+			var text := _hero_row_text(row)
+			_check(text == "%s TORN 0/%d HP · 0 tears · no patches" % [ledger.id.capitalize(), ledger.max_hp]
+				and row.get_node_or_null("RowInset/RowLine/TornBadge") != null,
+				"AC1: exact live witnessed HP, cap and TORN ticket " + ledger.id)
+		replay = {"heroes": live.party.get_heroes(), "rng": live.run_rng.state,
+			"summary": recap.summary_label.text, "state": live.act_outcome.get_state()}
+		_check(live.run_heroes == carried and live.party_carryover.read_state().heroes == carried,
+			"AC1: display leaves uncommitted living carryover unchanged")
+		recap.return_button.pressed.emit()
+		await _frames()
+		_check(live.title_view.is_visible_in_tree() and live.run_map == null
+			and live.party == null and live._terminal_combat_witness.is_empty(),
+			"AC3: actual terminal Return clears run and combat witness")
+	live.queue_free()
+	await _frames()
+	return replay
+
+
+func _test_defeat_witness_rejections(defeat: Dictionary) -> void:
+	var latch: RunActBattleOutcome = defeat.ctx.latch
+	var witness: Array = app._terminal_combat_witness.duplicate(true)
+	var actual_party: CombatParty = app.party
+	var actual_result: CombatBattleResult = app.battle_result
+	var actual_map: RunMap = app.run_map
+	var before := _snapshot(defeat.ctx, defeat.battle)
+	for kind in ["missing", "latch", "party", "battle", "map", "identity", "hp", "block", "position", "snapshot", "revision"]:
+		app._terminal_combat_witness = witness.duplicate(true)
+		match kind:
+			"missing": app._terminal_combat_witness = []
+			"latch": app.act_outcome = RunActBattleOutcome.new(actual_map)
+			"party": app.party = CombatParty.new(_definitions(HEROES))
+			"battle": app.battle_result = CombatBattleResult.new(actual_party, defeat.battle.enemies)
+			"map": app.run_map = RunMap.new()
+			"identity": actual_party._heroes[0]["id"] = "forged_hero"
+			"hp": actual_party._heroes[0]["hp"] = -1
+			"block": actual_party._heroes[0]["block"] = -1
+			"position": actual_party._heroes[0]["position"] = 2
+			"snapshot": actual_party._heroes[0]["block"] += 1
+			"revision": app._terminal_combat_witness[4] += 1
+		# Also tamper with the copy: matching malformed actors are still invalid.
+		if kind in ["identity", "hp", "block", "position"]:
+			app._terminal_combat_witness[7] = actual_party.get_heroes()
+		_expect_unavailable(latch, "AC2: rejects " + kind + " combat witness")
+		actual_party._heroes.assign(witness[7].duplicate(true))
+		app.act_outcome = latch
+		app.run_map = actual_map
+		app.party = actual_party
+		app.battle_result = actual_result
+	app._terminal_combat_witness = witness.duplicate(true)
+	_check(_snapshot(defeat.ctx, defeat.battle) == before, "AC2: refusals preserve combat, latch, map and RNG")
+	_check(panel.open_result(latch) and not panel.return_button.disabled
+		and panel.hero_rows.get_child_count() == 3, "AC2: restored genuine witness reopens after rejection")
+	panel.close_result()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	var replay := await _test_live_lethal_fight()
+	var repeated := await _test_live_lethal_fight()
+	_check(not replay.is_empty() and repeated == replay, "AC1/AC2: real lethal Fight and terminal recap replay exactly, including RNG")
 	var scene := load(PANEL_SCENE) as PackedScene
 	var app_scene := load(APP_SCENE) as PackedScene
 	_check(scene != null and app_scene != null, "dedicated terminal and App scenes load")
@@ -2800,10 +2908,11 @@ func _run() -> void:
 	var victory := _victory()
 	var defeat := _defeat()
 	if not defeat.is_empty():
+		_test_defeat_witness_rejections(defeat)
 		await _test_terminal_interactions(victory, defeat)
 		await _test_crafted_recap(defeat)
 		await _test_compact_hero_recap(defeat)
-		await _test_torn_wearer_keeps_patches(defeat)
+		await _test_torn_wearer_keeps_patches(victory)
 		await _test_reopen_resets_recap(defeat)
 		_test_reordered_heroes()
 		_test_global_rng(defeat)

@@ -870,6 +870,25 @@ func _input(event: InputEvent) -> void:
 		_combo_cycle()
 
 
+## Detached terminal evidence, captured only at the pending-to-settled boundary.
+var _terminal_combat_witness: Array = []
+
+
+func _settle_act_battle() -> bool:
+	if act_outcome == null or run_map == null or party == null or battle_result == null \
+		or act_outcome._map != run_map or act_outcome._pending_result != battle_result \
+		or battle_result._party != party:
+		return false
+	var witness := [act_outcome, run_map, battle_result, party,
+		run_map.get_generation_revision(), run_map.get_route(), run_map.get_floors(),
+		party.get_heroes()]
+	if not act_outcome.settle_current_battle():
+		return false
+	witness.append(act_outcome.get_state())
+	_terminal_combat_witness = witness
+	return true
+
+
 ## Single observation boundary for live updates and resolved phases.
 func _observe_battle_result() -> bool:
 	if battle_result == null:
@@ -885,7 +904,7 @@ func _observe_battle_result() -> bool:
 		if not _commit_fight_carryover():
 			return false
 	if not _battle_closed and act_outcome != null:
-		if not act_outcome.settle_current_battle():
+		if not _settle_act_battle():
 			return false
 	if is_instance_valid(enemy_buff_forecast_label):
 		enemy_buff_forecast_label.text = ""
@@ -7101,6 +7120,7 @@ func _return_to_title() -> void:
 	enemy_buff_forecast_label = null
 	result_label = null
 	battle_result = null
+	_terminal_combat_witness.clear()
 	act_outcome = null
 	victory_gold = null
 	card_reward = null
