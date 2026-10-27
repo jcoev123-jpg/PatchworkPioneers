@@ -101,6 +101,8 @@ var backdrop: Control
 var _battle: Control
 var _labels: Array[Label] = []
 var _hero_tags: Array[Label] = []
+## One Warden-owned, read-only sewn cue per hero seat; hidden on every other actor.
+var _hero_reaction_tags: Array[PanelContainer] = []
 var _badges: Array[LiveEnemyIntentBadge] = []
 ## One passive contact-hazard label per mounted enemy, separate from its intent.
 var _thorns_tags: Array[PanelContainer] = []
@@ -1658,6 +1660,9 @@ func _sync_battle() -> void:
 		var tag := _make_name_tag("HeroNameTag%d" % puppet.slot)
 		puppet.add_child(tag)
 		_hero_tags.append(tag)
+		var reaction_tag := _make_warden_reaction_tag(puppet.slot)
+		puppet.add_child(reaction_tag)
+		_hero_reaction_tags.append(reaction_tag)
 	battle_row = HBoxContainer.new()
 	battle_row.name = "BattleActorSides"
 	battle_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1770,6 +1775,53 @@ func _make_name_tag(tag_name: String) -> Label:
 	tag.offset_top = -STAGE_TAG_HEIGHT
 	tag.offset_bottom = 0.0
 	return tag
+
+
+## One compact stitched shield-blue label in the heroes' unused intent band.
+## It belongs to the mounted actor, never the app-owned HP/Block ribbon or name.
+## PASS keeps ordinary battle click/keyboard routing intact while offering hover help.
+func _make_warden_reaction_tag(position: int) -> PanelContainer:
+	var tag := PanelContainer.new()
+	tag.name = "WardenReactions%d" % position
+	tag.mouse_filter = Control.MOUSE_FILTER_PASS
+	tag.focus_mode = Control.FOCUS_NONE
+	var felt := StyleBoxFlat.new()
+	felt.bg_color = Color("293d49")
+	felt.border_color = Color("c9b996")
+	felt.set_border_width_all(1)
+	felt.set_corner_radius_all(3)
+	felt.content_margin_left = 4.0
+	felt.content_margin_right = 4.0
+	felt.content_margin_top = 1.0
+	felt.content_margin_bottom = 1.0
+	tag.add_theme_stylebox_override("panel", felt)
+	var caption := Label.new()
+	caption.name = "Caption"
+	caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	caption.theme_type_variation = NAME_TAG_VARIATION
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	caption.add_theme_font_size_override("font_size", 14)
+	caption.add_theme_color_override("font_color", Color("fff0d8"))
+	caption.add_theme_constant_override("outline_size", 2)
+	caption.add_theme_color_override("font_outline_color", Color("171d23"))
+	tag.add_child(caption)
+	tag.hide()
+	return tag
+
+
+## Place reaction words in the reserved hero intent band, away from the drawn
+## actor, its sewn name and the app-owned meter. No additional stage height.
+func _place_warden_reaction_tag(puppet: Puppet, tag: PanelContainer) -> void:
+	if not tag.visible:
+		return
+	var band := Rect2(0.0, 0.0, puppet.size.x, puppet.intent_band).intersection(_visible_slot(puppet))
+	var extent := tag.get_combined_minimum_size()
+	tag.size = extent
+	if not band.encloses(Rect2(band.position, extent)):
+		tag.hide()
+		return
+	tag.position = Vector2(band.position.x + (band.size.x - extent.x) * 0.5,
+		band.position.y + (band.size.y - extent.y) * 0.5)
 
 
 ## Sewn rust-felt contact-hazard tag, built once per enemy and input-inert. The
@@ -1977,6 +2029,7 @@ func _refresh() -> void:
 	var announcements: Dictionary = {}
 	var app = get_parent()
 	var unravel := _bound_unravel(app)
+	var reactions := _bound_reactions(app)
 	if is_instance_valid(app.intent_label):
 		app.intent_label.hide()
 	for puppet in _puppets:
@@ -1988,6 +2041,25 @@ func _refresh() -> void:
 	for index in range(_hero_tags.size()):
 		var hero: Dictionary = app.party.get_hero(index + 1)
 		_hero_tags[index].text = String(hero.get("name", "")) if hero.get("name") is String else ""
+		var reaction_tag := _hero_reaction_tags[index]
+		var cue := reaction_tag.get_node("Caption") as Label
+		var warden_here: bool = hero.get("id") == "warden" and hero.get("hp") is int \
+			and hero["hp"] > 0 and not app.party.is_downed(index + 1) \
+			and _battle == app.battle_view and _heroes == app.hero_view
+		var names: Array[String] = []
+		var help: Array[String] = []
+		if warden_here and reactions != null:
+			if reactions.is_guarding():
+				names.append("GUARD")
+				help.append("Guard: enemy attacks aimed at another living hero redirect to this living Warden, then normal Block and HP apply. An already downed announced target is skipped, not redirected.")
+			if reactions.get_thorns() > 0:
+				names.append("THORNS %d" % reactions.get_thorns())
+				help.append("Counter-stitch Thorns %d: retaliates once when an enemy attack genuinely lands on Warden (including a Guard redirect). Missed, skipped or other-hero attacks do not trigger retaliation. Expires at the next player turn." % reactions.get_thorns())
+		cue.add_theme_font_size_override("font_size", 12 if names.size() > 1 else 14)
+		cue.text = "\n".join(names)
+		reaction_tag.tooltip_text = "\n".join(help)
+		reaction_tag.visible = not names.is_empty()
+		_place_warden_reaction_tag(_puppets[index] as Puppet, reaction_tag)
 	if app.enemy_intents != null:
 		for action in app.enemy_intents.get_intents():
 			announcements[action["enemy_position"]] = action
@@ -2041,6 +2113,23 @@ func _refresh() -> void:
 		var enrage_stacks := _enrage_stacks(enemy) if live_source else -1
 		badge.show_intent(action, enemies.is_slain(position), pending, policy,
 			enrage_stacks, contact_traits)
+		# Only a live, source-owned, already-announced attack can preview an actual
+		# redirect. Keep the printed target, amount and policy ticket untouched.
+		if reactions != null and live_source and not pending \
+				and app.enemy_intents != null and app.enemy_intents.is_bound() \
+				and app.enemy_intents._enemies == enemies \
+				and _admitted_ids.size() == roster.size() \
+				and _admitted_ids[index] == enemy.get("id") and puppet.actor_id == enemy.get("id") \
+				and action.get("type") == "attack" and badge.intent_type == "attack":
+			var announced: Variant = action.get("target_position")
+			if announced is int and announced >= 1 and announced <= CombatParty.PARTY_SIZE:
+				var recipient: Dictionary = reactions.preview_actual_recipient(app.party, announced)
+				if recipient.get("ok") == true and recipient.get("eligible") == true \
+						and recipient.get("redirected") == true:
+					var actual: int = recipient.get("actual_target_position", 0)
+					if actual >= 1 and actual <= CombatParty.PARTY_SIZE \
+							and app.party.get_hero(actual).get("id") == "warden":
+						badge.tooltip_text += "\nGuard → Warden (hero %d): this announced attack is redirected from hero %d; normal Block/HP apply." % [actual, announced]
 		_reflow_plaques(puppet, badge, tag, status_tag)
 
 
@@ -2094,6 +2183,33 @@ func _bound_unravel(app) -> CombatUnravel:
 	var service: CombatUnravel = flow._unravel
 	if service == null or not is_instance_valid(service) \
 			or service._bound_enemies != app.enemies or not flow._valid_unravel_binding():
+		return null
+	return service
+
+
+## Only the admitted current round flow owns the live reaction service.
+## Use the same immutable deck/party/enemy/intent/result identity gates as
+## _bound_unravel: no fallback service, copied flag or hero.statuses proxy.
+func _bound_reactions(app) -> CombatWardenGuardReactions:
+	if app._battle_closed or app.deck == null or app.party == null or app.enemies == null \
+			or app.enemy_intents == null or app.battle_result == null \
+			or not is_instance_valid(_battle) or _battle != app.battle_view \
+			or enemies != app.enemies or _heroes != app.hero_view:
+		return null
+	var flow: CombatRoundFlow = app.round_flow
+	if flow == null or not is_instance_valid(flow) or not flow._started \
+			or flow._deck != app.deck or flow._party != app.party \
+			or flow._enemies != app.enemies or flow._intents != app.enemy_intents \
+			or flow._result != app.battle_result \
+			or flow._battle_deck != app.deck or flow._battle_party != app.party \
+			or flow._battle_enemies != app.enemies or flow._battle_intents != app.enemy_intents \
+			or flow._battle_result != app.battle_result \
+			or app.battle_result._party != app.party or app.battle_result._enemies != app.enemies \
+			or not app.battle_result.can_continue():
+		return null
+	var service: CombatWardenGuardReactions = flow._reactions
+	if service == null or not is_instance_valid(service) \
+			or not flow._valid_reactions_binding() or not service.is_patch_binding_valid():
 		return null
 	return service
 
@@ -2290,6 +2406,7 @@ func _clear() -> void:
 	enemies = null
 	_labels.clear()
 	_hero_tags.clear()
+	_hero_reaction_tags.clear()
 	_badges.clear()
 	_thorns_tags.clear()
 	_status_tags.clear()
