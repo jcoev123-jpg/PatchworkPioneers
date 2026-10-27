@@ -81,6 +81,7 @@ var _coat_bonuses: Dictionary = {}
 ## keeps the drawn shield instead of failing, and repaints the same mounted icon.
 var art_root := UI_ART_DIR
 var _art_cache: Dictionary = {}
+var _ticket_focus_anchor: Control
 
 
 func _ready() -> void:
@@ -89,6 +90,19 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	_sync_battle()
+
+
+## A dedicated inspection shortcut preserves the battle's existing hand navigation.
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not event is InputEventKey or not event.pressed or event.echo or event.keycode != KEY_F8 \
+			or not is_instance_valid(row):
+		return
+	for meter in row.get_children():
+		var ticket := meter.get_node_or_null("Padding/Content/LossRow/NextHit") as Button
+		if ticket != null and ticket.is_visible_in_tree():
+			ticket.grab_focus()
+			get_viewport().set_input_as_handled()
+			return
 
 
 ## Resolved path of the committed Block icon under the current presentation-only root.
@@ -148,12 +162,15 @@ func _sync_battle() -> void:
 			incoming.hide()
 		var slot := _slot_control(app, side, position)
 		var width := _ribbon_width(slot)
+		if side == "hero":
+			_sync_next_hit(meter, snapshot, forecast, position, incoming, width)
 		if shown:
 			_sync_status_buttons(meter, snapshot, side, incoming, width)
 		if side == "hero":
 			_sync_patch_buttons(meter, snapshot, patches.get(snapshot.get("id", ""), {}))
 		needed_height = maxf(needed_height, meter.get_combined_minimum_size().y)
 		_place(meter, slot, width)
+	_sync_ticket_focus()
 	# VBox siblings (including the shared-hand pile counts) must be laid out BELOW
 	# the full optional patch row, not across its hover area.
 	var target_min := Vector2(0, needed_height + 2.0)
@@ -362,6 +379,7 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 		incoming.autowrap_mode = TextServer.AUTOWRAP_OFF
 		incoming.add_theme_color_override("font_color", CombatActorMeter.INK)
 		content.add_child(incoming)
+		_make_next_hit(content, meter)
 	var buttons := HFlowContainer.new()
 	buttons.name = "StatusButtons"
 	buttons.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -386,10 +404,122 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 			patches.add_child(chip)
 
 
+## One reusable, sewn ticket per hero; inspection has no gameplay callback.
+func _make_next_hit(content: VBoxContainer, meter: CombatActorMeter) -> void:
+	var losses := HBoxContainer.new()
+	losses.name = "LossRow"
+	losses.add_theme_constant_override("separation", 4)
+	losses.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(losses)
+	content.move_child(losses, meter.block_badge.get_index())
+	meter.block_badge.reparent(losses)
+	var ticket := Button.new()
+	ticket.name = "NextHit"
+	ticket.focus_mode = Control.FOCUS_ALL
+	ticket.mouse_default_cursor_shape = Control.CURSOR_HELP
+	ticket.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ticket.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ticket.add_theme_font_size_override("font_size", READABLE_CHIP_FONT)
+	for state in ["normal", "hover", "pressed", "focus", "disabled"]:
+		ticket.add_theme_stylebox_override(state, _chip_style(state in ["hover", "focus"], false, true))
+	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		ticket.add_theme_color_override(state, CombatActorMeter.INK)
+	losses.add_child(ticket)
+	var stitch := CombatActorMeter.BarStitch.new()
+	stitch.name = "TicketStitch"
+	ticket.add_child(stitch)
+	var explanation := PanelContainer.new()
+	explanation.name = "FocusExplanation"
+	explanation.top_level = true
+	explanation.z_index = 100
+	explanation.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var felt := _chip_style(false, false, true)
+	felt.set_content_margin_all(8)
+	explanation.add_theme_stylebox_override("panel", felt)
+	ticket.add_child(explanation)
+	var words := Label.new()
+	words.name = "Words"
+	words.custom_minimum_size.x = 264
+	words.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	words.add_theme_font_size_override("font_size", READABLE_CHIP_FONT)
+	words.add_theme_color_override("font_color", CombatActorMeter.INK)
+	words.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	explanation.add_child(words)
+	explanation.hide()
+	ticket.focus_entered.connect(_show_next_hit_explanation.bind(ticket))
+	ticket.focus_exited.connect(explanation.hide)
+	ticket.hide()
+
+
+## Focus exposes the same complete explanation as mouse hover, without an action.
+func _show_next_hit_explanation(ticket: Button) -> void:
+	var panel := ticket.get_node("FocusExplanation") as PanelContainer
+	if not ticket.is_visible_in_tree() or ticket.tooltip_text.is_empty():
+		panel.hide()
+		return
+	panel.reset_size()
+	var rect := ticket.get_global_rect()
+	var viewport := get_viewport().get_visible_rect()
+	panel.global_position = Vector2(
+		clampf(rect.position.x, 0, maxf(0, viewport.size.x - panel.size.x)),
+		clampf(rect.position.y - panel.size.y - 4, 0, maxf(0, viewport.size.y - panel.size.y)))
+	panel.show()
+
+
+## F8 enters inspection; Left/Right switch heroes and Down returns to End Turn.
+func _sync_ticket_focus() -> void:
+	if not is_instance_valid(_ticket_focus_anchor):
+		return
+	var tickets: Array[Button] = []
+	for meter in row.get_children():
+		var ticket := meter.get_node_or_null("Padding/Content/LossRow/NextHit") as Button
+		if ticket != null and ticket.is_visible_in_tree():
+			tickets.append(ticket)
+	for index in range(tickets.size()):
+		var ticket := tickets[index]
+		ticket.focus_neighbor_bottom = _ticket_focus_anchor.get_path()
+		ticket.focus_neighbor_left = tickets[(index + tickets.size() - 1) % tickets.size()].get_path()
+		ticket.focus_neighbor_right = tickets[(index + 1) % tickets.size()].get_path()
+
+
+## Use only the current authenticated forecast; never infer loss from intent captions.
+func _sync_next_hit(meter: CombatActorMeter, hero: Dictionary, forecast: Dictionary,
+		position: int, incoming: Label, width: float) -> void:
+	var ticket := meter.get_node("Padding/Content/LossRow/NextHit") as Button
+	var panel := ticket.get_node("FocusExplanation") as PanelContainer
+	var words := panel.get_node("Words") as Label
+	var losses: Array[String] = []
+	var next: Dictionary = {}
+	if hero.get("hp", 0) > 0 and forecast.get("ok", false):
+		next = forecast["heroes"][position - 1]
+		if next["block_absorbed"] > 0:
+			losses.append("Lost Block: %d" % next["block_absorbed"])
+		if next["hp_lost"] > 0:
+			losses.append("Lost HP: %d" % next["hp_lost"])
+	if not losses.is_empty() and next["incoming"] > 0 and next["hp_remaining"] == 0:
+		losses.append("LETHAL")
+	var caption := " / ".join(losses)
+	if ticket.text != caption:
+		ticket.text = caption
+	ticket.tooltip_text = "" if losses.is_empty() else incoming.text + "\nAttack losses only; Bleed is separate.\nF8: inspect; Left/Right: hero; Down: End Turn."
+	words.text = ticket.tooltip_text
+	# Button wrapping measures height against the same inner width as the ribbon.
+	ticket.custom_minimum_size.x = 0
+	var block_width := meter.block_badge.get_combined_minimum_size().x + 4 if meter.block_badge.visible else 0.0
+	ticket.size.x = maxf(1, width - 4 - block_width)
+	if losses.is_empty():
+		ticket.release_focus()
+		ticket.hide()
+		panel.hide()
+	else:
+		ticket.show()
+		if ticket.has_focus():
+			_show_next_hit_explanation(ticket)
+
+
 ## Small sewn chip: pointer-hoverable for its rules, never focusable or activating.
 ## The label takes its own measured width inside the wrapping row, so the chip never
-## squeezes or clips its text; the layout below only ever shortens or shrinks the text
-## when a single complete chip cannot fit the actor's slot at all.
+## squeezes or clips its text; only a slot narrower than a complete chip uses fallback.
 func _make_status_button(index: int) -> Button:
 	var button := Button.new()
 	button.name = "StatusButton%d" % (index + 1)
@@ -447,6 +577,7 @@ func _mount(app) -> void:
 	_deck = app.deck
 	_party = app.party
 	_enemies = app.enemies
+	_ticket_focus_anchor = app.end_turn_button
 	_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 	row = Control.new()
 	row.name = "CombatMeters"
@@ -916,6 +1047,7 @@ func _place(meter: CombatActorMeter, slot: Control, width: float) -> void:
 
 
 func _clear() -> void:
+	_ticket_focus_anchor = null
 	if is_instance_valid(_battle) and _battle.tree_exiting.is_connected(_clear):
 		_battle.tree_exiting.disconnect(_clear)
 	if is_instance_valid(row):

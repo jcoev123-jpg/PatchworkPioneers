@@ -401,11 +401,14 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 		and content.find_children("PatchButtons", "HBoxContainer", false, false).size() == (1 if side == "hero" else 0),
 		"one of each named snapshot child per mounted ribbon: " + meter.name)
 	_check(content.find_children("HPText", "Label", false, false).is_empty()
-		and content.find_children("BlockBadge", "HBoxContainer", false, false).size() == 1
+		and content.find_children("BlockBadge", "HBoxContainer", true, false).size() == 1
 		and meter.hp_text.get_parent() == meter.hp_bar,
 		"the ribbon has one bar-borne HP number and one Block badge, never a second HP row: " + meter.name)
+	_assert_next_hit(meter, actor, side, forecast)
+	_check(content.find_children("LossRow", "HBoxContainer", false, false).size() == (1 if side == "hero" else 0),
+		"one hero loss row replaces the direct Block badge; enemies keep their existing structure")
 	_check(content.get_child_count() == (10 if side == "hero" else 9),
-		"only enemy ribbons gain exactly one UnravelThread directly below HP: " + meter.name)
+		"hero loss row and enemy UnravelThread preserve bounded ribbon child counts: " + meter.name)
 	_assert_thread(app, meter, actor, side)
 	var patches := meter.get_node_or_null("Padding/Content/PatchButtons") as HBoxContainer
 	if side == "hero":
@@ -1532,6 +1535,7 @@ func _run() -> void:
 			_check(not is_instance_id_valid(id), "Return frees old meter")
 	await _unravel_bound_fight(app, presenter)
 	await _status_end_turns(app, presenter)
+	await _next_hit_cases(app, presenter)
 	await _three_enemy_stage(app, presenter)
 	await _block_art_case(app, presenter)
 	await _worn_coat_ribbons_test(app, presenter)
@@ -2588,6 +2592,8 @@ func _m05_worn_fixture(app, presenter, sewn: Array) -> Dictionary:
 	_check(meters.size() >= 5, "M05 worn case: mounted hero ribbons exist")
 	if meters.size() < 5:
 		return {}
+	for index in range(3):
+		_assert_next_hit(meters[index], app.party.get_hero(index + 1), "hero", _forecast(app))
 	return {"meters": meters, "carry": carry, "wardrobe": wardrobe, "party": combat_party}
 
 
@@ -3096,6 +3102,209 @@ func _switchback_threadguard_ribbons_test(app, presenter) -> void:
 	await _frames()
 	_check(app.title_view.is_visible_in_tree() and presenter.row == null,
 		"Switchback/Threadguard case cleans up and returns to title")
+
+
+func _assert_next_hit(meter: CombatActorMeter, actor: Dictionary, side: String,
+		forecast: Dictionary) -> void:
+	var ticket := meter.get_node_or_null("Padding/Content/LossRow/NextHit") as Button
+	_check((ticket != null) == (side == "hero"), "exactly one hero-only next-hit ticket")
+	if ticket == null:
+		return
+	var expected: Array[String] = []
+	if actor.hp > 0 and forecast["ok"]:
+		var next: Dictionary = forecast["heroes"][actor.position - 1]
+		if next["block_absorbed"] > 0:
+			expected.append("Lost Block: %d" % next["block_absorbed"])
+		if next["hp_lost"] > 0:
+			expected.append("Lost HP: %d" % next["hp_lost"])
+		if not expected.is_empty() and next["incoming"] > 0 and next["hp_remaining"] == 0:
+			expected.append("LETHAL")
+	_check(ticket.visible == not expected.is_empty() and ticket.text == " / ".join(expected),
+		"ticket exact positive Block/HP losses and attack-authenticated lethal match independent forecast")
+	var tooltip := "" if expected.is_empty() else _expected_incoming(actor, forecast) + "\nAttack losses only; Bleed is separate.\nF8: inspect; Left/Right: hero; Down: End Turn."
+	_check(ticket.tooltip_text == tooltip
+		and ticket.get_node("FocusExplanation/Words").text == tooltip,
+		"ticket overwrites complete hover/focus explanation, including empty invalid/downed states")
+	if expected.is_empty():
+		_check(not ticket.get_node("FocusExplanation").visible, "collapsed ticket clears focused explanation")
+		return
+	var rect := ticket.get_global_rect()
+	_check(rect.has_area() and meter.get_global_rect().grow(1).encloses(rect)
+		and Rect2(Vector2.ZERO, Vector2(root.size)).encloses(rect)
+		and ticket.get_minimum_size().y <= ticket.size.y + 0.5
+		and ticket.get_theme_font_size("font_size") >= 14,
+		"readable wrapped ticket stays inside rendered ribbon and viewport")
+	_check(not meter.block_badge.visible or not rect.intersects(meter.block_badge.get_global_rect()),
+		"ticket and current Block share a row without overlapping")
+	for sibling in meter.get_node("Padding/Content").get_children():
+		if sibling != ticket.get_parent() and sibling is Control and sibling.is_visible_in_tree():
+			_check(not rect.intersects(sibling.get_global_rect()), "ticket never intersects HP, Block, statuses or patches")
+	for other in meter.get_parent().get_children():
+		if other != meter and other is Control and other.is_visible_in_tree():
+			_check(not rect.intersects(other.get_global_rect()), "ticket never intersects neighboring actor ribbon")
+
+
+func _next_hit_cases(app, presenter) -> void:
+	_fixture_start(app)
+	await _frames()
+	_check(app.party != null and _meters(app).size() == 5, "next-hit cases start authentic mounted battle")
+	if app.party == null or _meters(app).size() != 5:
+		return
+	var phase_prediction := _forecast(app)
+	_check(phase_prediction["ok"], "real phase begins with valid independent projection")
+	await _mouse(app.end_turn_button)
+	_check(app.enemy_intents._turn_index == 1
+		and app.party.get_hero(1).hp == phase_prediction["heroes"][0]["hp_remaining"],
+		"actual End Turn commits projected attack and publishes the next announcement")
+	_assert_next_hit(_meters(app)[0], app.party.get_hero(1), "hero", _forecast(app))
+	_check(app.party.gain_block(1, 6), "real Block gain prepares all-Block bound announcement")
+	# Bind genuine weighted announcements to this live roster, with a hit large
+	# enough to distinguish mixed absorption from the legacy one-point opener.
+	app.enemies._enemies[0]["intent"] = {"target": "front",
+		"actions": [{"type": "attack", "amount": 5, "weight": 1}]}
+	app.enemies._enemies[1]["intent"] = {"target": "front",
+		"actions": [{"type": "block", "amount": 1, "weight": 1}]}
+	var schedule := CombatEnemyIntents.new(app.enemy_intents._definitions)
+	_check(schedule.bind_battle(app.enemies, app.party, app.run_rng), "next-hit fixture binds real intent service")
+	app.enemy_intents = schedule
+	app.round_flow._intents = schedule
+	app.round_flow._battle_intents = schedule
+	var unravel := CombatUnravel.new()
+	_check(unravel.bind_roster(app.enemies, {1: "normal", 2: "normal"}),
+		"next-hit fixture binds real foe-count authority")
+	app.round_flow._unravel = unravel
+	presenter._sync_battle()
+	await _frames()
+	var meter := _meters(app)[0]
+	var ticket := meter.get_node("Padding/Content/LossRow/NextHit") as Button
+	var ticket_id := ticket.get_instance_id()
+	var pin := meter.hp_bar.get_node("ThreatPin/Count") as Label
+	var original_pin := pin.text
+	_check(pin.is_visible_in_tree() and original_pin == "1 FOE",
+		"loss comparisons begin with a nonempty authenticated foe-count pin")
+	# Real Block state APIs, with a current genuine attack announcement in every case.
+	_check(_forecast(app)["ok"] and _forecast(app)["heroes"][0]["incoming"] > 0,
+		"positive announced attack precondition")
+	for scenario in ["all_block", "all_hp", "mixed", "lethal"]:
+		if scenario == "all_hp":
+			_check(app.party.apply_damage(1, app.party.get_hero(1).block), "remove Block through genuine absorption")
+		if scenario == "mixed":
+			_check(app.party.gain_block(1, 1), "gain genuine Block for mixed hit")
+			app.party._heroes[0]["statuses"] = {"exposed": 2, "bleed": 1}
+		if scenario == "lethal":
+			_check(app.party.apply_damage(1, app.party.get_hero(1).block + app.party.get_hero(1).hp - 1),
+				"real damage leaves living one-HP attack target")
+			app.party._heroes[0].erase("statuses")
+		presenter._sync_battle()
+		await _frames()
+		var forecast := _forecast(app)
+		_check(forecast["ok"], scenario + " valid forecast")
+		var next: Dictionary = forecast["heroes"][0]
+		_check(next["block_absorbed"] > 0 if scenario == "all_block" else next["hp_lost"] > 0,
+			scenario + " non-vacuous loss")
+		if scenario == "mixed":
+			_check(next["block_absorbed"] > 0 and next["hp_lost"] > 0, "mixed forecast loses both resources")
+		if scenario == "all_block":
+			_check(next["hp_lost"] == 0, "all-Block case loses no HP")
+		if scenario == "all_hp":
+			_check(next["block_absorbed"] == 0, "all-HP case loses no Block")
+		if scenario == "lethal":
+			_check(next["incoming"] > 0 and next["hp_remaining"] == 0 and ticket.text.contains("LETHAL"),
+				"living hero has authenticated lethal attack ticket")
+		_assert_next_hit(meter, app.party.get_hero(1), "hero", forecast)
+		_check(pin.text == original_pin, "loss changes preserve separate foe-count tag")
+		var before := _state(app)
+		seed(31490)
+		var global_next := randi()
+		seed(31490)
+		for repeat in range(4):
+			presenter._sync_battle()
+		await _hover(ticket)
+		_check(root.gui_get_hovered_control() == ticket and ticket.tooltip_text.begins_with(_incoming(app, 1)),
+			"real hover offers full existing IncomingForecast")
+		app.end_turn_button.grab_focus()
+		await _key(KEY_F8)
+		await _frames()
+		_check(ticket.has_focus() and ticket.get_node("FocusExplanation").is_visible_in_tree()
+			and ticket.get_node("FocusExplanation/Words").text == ticket.tooltip_text,
+			"F8 reveals complete forecast through keyboard focus")
+		var explanation := ticket.get_node("FocusExplanation") as PanelContainer
+		_check(Rect2(Vector2.ZERO, Vector2(root.size)).encloses(explanation.get_global_rect())
+			and explanation.size.y >= explanation.get_node("Words").get_minimum_size().y,
+			"complete keyboard explanation fits within viewport without clipping its text")
+		await _key(KEY_SPACE)
+		_check(_state(app) == before and randi() == global_next
+			and ticket.get_instance_id() == ticket_id and ticket.pressed.get_connections().is_empty(),
+			"repeated sync, hover, focus and Space reuse ticket without mutation or RNG")
+		await _key(KEY_DOWN)
+		_check(app.end_turn_button.has_focus(), "Down returns from ticket inspection to End Turn")
+		if scenario == "mixed":
+			var mixed_slot := _slot(app, "hero", 1)
+			var mixed_size := mixed_slot.size
+			var mixed_min := mixed_slot.custom_minimum_size
+			var mixed_flags := mixed_slot.size_flags_horizontal
+			mixed_slot.custom_minimum_size.x = 104
+			mixed_slot.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+			mixed_slot.size.x = 104
+			for frame in range(4):
+				presenter._sync_battle()
+				await process_frame
+			_check(meter.size.x <= 96.5 and ticket.size.x <= 92.5,
+				"mixed ticket and Bleed chips use actual narrow stage slot")
+			_assert_next_hit(meter, app.party.get_hero(1), "hero", _forecast(app))
+			_assert_chip_geometry(app)
+			mixed_slot.size = mixed_size
+			mixed_slot.custom_minimum_size = mixed_min
+			mixed_slot.size_flags_horizontal = mixed_flags
+			await _frames()
+	# A real narrower stage slot, with automatic live placement and wrapping enabled.
+	var slot := _slot(app, "hero", 1)
+	var slot_size := slot.size
+	slot.size.x = 104
+	presenter._sync_battle()
+	await process_frame
+	presenter._sync_battle()
+	await process_frame
+	_check(meter.size.x <= 96.5 and ticket.size.x <= 92.5, "actual narrow stage slot constrains ticket width")
+	_assert_next_hit(meter, app.party.get_hero(1), "hero", _forecast(app))
+	slot.size = slot_size
+	await _frames()
+	var intents = app.enemy_intents
+	ticket.grab_focus()
+	app.enemy_intents = null
+	presenter._sync_battle()
+	_assert_next_hit(meter, app.party.get_hero(1), "hero", {"ok": false})
+	app.enemy_intents = CombatEnemyIntents.new([])
+	presenter._sync_battle()
+	_check(not app.enemy_intents.is_valid() and not _forecast(app)["ok"], "unbound invalid intent has no forecast authority")
+	_assert_next_hit(meter, app.party.get_hero(1), "hero", {"ok": false})
+	app.enemy_intents = intents
+	await _frames()
+	_check(ticket.visible, "valid authority restores ticket after unavailable intent")
+	_check(app.party.apply_damage(1, 999) and app.party.is_downed(1), "real API downs ticket owner")
+	await _frames()
+	_assert_next_hit(meter, app.party.get_hero(1), "hero", _forecast(app))
+	var living_meter := _meters(app)[1]
+	_check(app.party.get_hero(2).hp > 0 and _forecast(app)["heroes"][1]["incoming"] > 0,
+		"fallen front hero redirects the genuine announcement to a living ticket owner")
+	_assert_next_hit(living_meter, app.party.get_hero(2), "hero", _forecast(app))
+	_check(app.enemies.apply_damage(1, 999) and app.enemies.is_slain(1),
+		"real damage removes the sole announced attacking source")
+	await _frames()
+	_check(_forecast(app)["ok"] and _forecast(app)["heroes"][1]["incoming"] == 0,
+		"living former target now has a valid no-attack projection")
+	_assert_next_hit(living_meter, app.party.get_hero(2), "hero", _forecast(app))
+	await _mouse(app.return_button)
+	await _frames()
+	_fixture_start(app)
+	await _frames()
+	_check(not is_instance_id_valid(ticket_id), "new fight frees old ticket and focused tooltip")
+	for index in range(_meters(app).size()):
+		var side := "hero" if index < 3 else "enemy"
+		var actor: Dictionary = app.party.get_hero(index + 1) if index < 3 else app.enemies.get_enemy(index - 2)
+		_assert_next_hit(_meters(app)[index], actor, side, _forecast(app))
+	await _mouse(app.return_button)
+	await _frames()
 
 
 func _finish() -> void:
