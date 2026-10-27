@@ -43,10 +43,14 @@ func _stock_oracle() -> Dictionary:
 	rng.state = app.run_rng.state
 	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
 	var cards: Array = []
+	var catalogs: Array = RunShopStockOffers._peddler_catalogs()
 	for hero in app.run_heroes:
 		var pool: Array = []
 		for candidate in authored.cards:
-			if RunPoolCardRewardOffers.resolve_reward_definition(candidate.id).get("owner") == hero.id:
+			var found: Dictionary = RunShopStockOffers._find_card_definition(
+				str(candidate.id), catalogs)
+			var authored_owner: String = str(found.get("def", {}).get("owner", ""))
+			if authored_owner == hero.id:
 				pool.append(candidate.id)
 		pool.sort()
 		_check(not pool.is_empty(), "independent per-hero stock oracle has candidates")

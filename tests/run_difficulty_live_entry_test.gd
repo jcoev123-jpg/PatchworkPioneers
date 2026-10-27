@@ -101,7 +101,11 @@ func _run() -> void:
 				# The Guard Ragling's authored shield rush makes the old 979/309
 				# witnesses lose the final Boss from 32 HP; the same genuine legal
 				# seed and full-route policy wins every tier and its replay.
-				var witness_seed := 1550
+				# Repinned to seed 3012 when the Peddler began pricing the Warden,
+				# Seamstress and Tinker look-driven v3 printings: the expanded
+				# party stock changes that route's cheapest genuine Shop purchase,
+				# so the old 1550 witness no longer wins the tier-2 Boss.
+				var witness_seed := 3012
 				rng.seed = witness_seed
 				var map := RunMap.new()
 				_check(map.generate(rng), "higher-tier witness generates the actual map")

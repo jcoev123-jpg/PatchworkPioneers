@@ -44,7 +44,8 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 		return rejected
 
 	# Build catalog references and known owners from every authored hero
-	# catalog: StarterCards plus all eight v3 pool catalogs.
+	# catalog: StarterCards, all eight v3 pool catalogs and the three
+	# look-driven raw v3 printings.
 	var catalogs: Array = _peddler_catalogs()
 	var known_owners: Dictionary = _build_known_owners(catalogs)
 
@@ -420,6 +421,10 @@ static func _power_patch_ids() -> Dictionary:
 	return ids
 
 
+## Every authored card catalog a priced Shop/Peddler candidate may come from:
+## the starter catalog, the eight live hero pools and the three look-driven v3
+## printings (Warden, Seamstress, Tinker). Adding a v3 raw print here only makes
+## its authored owner resolvable; selection still offers one card per party hero.
 static func _peddler_catalogs() -> Array:
 	return [
 		StarterCards.new(),
@@ -430,7 +435,10 @@ static func _peddler_catalogs() -> Array:
 		RagDuelistPoolCards.new(),
 		ScarecrowPoolCards.new(),
 		YarnRangerPoolCards.new(),
-		ButtonGolemPoolCards.new()
+		ButtonGolemPoolCards.new(),
+		V3WardenPoolCards.new(),
+		V3SeamstressPoolCards.new(),
+		V3TinkerPoolCards.new()
 	]
 
 
