@@ -1606,13 +1606,13 @@ func _test_patch_stall_sampling() -> void:
 	var power_slots := _power_slots()
 	var unowned: Array = []
 	# The two shipped rares are registered catalog powers in their authored
-	# slots, and are absent from the ordinary priced candidate data.
+	# slots, and now also have the same 100-gold quote in shared priced stock.
 	for record in rare:
 		_check(power_slots.get(record.id) == record.slot,
 			"registered P8 power slot matches " + str(record.id))
 		var listed := candidates.filter(func(offer): return offer.get("id") == record.id)
-		_check(listed.is_empty(),
-			"rare is stocked from its own catalog, not ordinary data: " + str(record.id))
+		_check(listed.size() == 1 and listed[0].price == record.shop_price_gold,
+			"rare has one shared price matching its own authored catalog: " + str(record.id))
 	for id in RARE_PATCH_IDS:
 		_check(power_slots.has(id), "shipped rare is a registered power: " + id)
 

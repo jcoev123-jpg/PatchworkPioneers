@@ -62,7 +62,11 @@ func _stock_oracle() -> Dictionary:
 			patches.append(candidate.id)
 	patches.sort()
 	_check(not patches.is_empty(), "independent patch oracle has candidates")
-	var chosen: String = patches[rng.randi_range(0, patches.size() - 1)]
+	var tickets: Array[String] = []
+	for patch_id in patches:
+		for ticket in range(10 if patch_id in ["relay_bobbin", "hearth_lining"] else 100):
+			tickets.append(patch_id)
+	var chosen: String = tickets[rng.randi_range(0, tickets.size() - 1)]
 	var quote: Dictionary = authored.trinkets.filter(func(c): return c.id == chosen)[0]
 	return {"stock": {"cards": cards, "trinkets": [{"id": chosen,
 		"price": int(quote.price), "sold": app.run_trinkets.has(chosen)}]}, "state": rng.state}

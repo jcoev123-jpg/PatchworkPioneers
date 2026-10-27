@@ -128,7 +128,12 @@ func _reward_oracle() -> Dictionary:
 			eligible.append(entry.id)
 	eligible.sort()
 	_check(not eligible.is_empty(), "independent oracle has an unowned catalog drop")
-	var drop: String = eligible[rng.randi_range(0, eligible.size() - 1)]
+	# Independent expanded tickets: each P8 rare has ten to an ordinary's 100.
+	var tickets: Array[String] = []
+	for patch_id in eligible:
+		for ticket in range(10 if patch_id in ["relay_bobbin", "hearth_lining"] else 100):
+			tickets.append(patch_id)
+	var drop: String = tickets[rng.randi_range(0, tickets.size() - 1)]
 	return {"offers": offers, "award": award, "rng": rng.state, "drop": drop}
 
 

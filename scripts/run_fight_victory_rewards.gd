@@ -184,7 +184,7 @@ func prepare() -> Dictionary:
 		return rejected
 	var trinket_drop_id := ""
 	if _elite:
-		var index: int = staged_rng.randi_range(0, eligible_trinkets.size() - 1)
+		var index: int = RunShopStockOffers.draw_patch_index(staged_rng, eligible_trinkets)
 		trinket_drop_id = eligible_trinkets[index]
 
 	_gold_service = gold_service

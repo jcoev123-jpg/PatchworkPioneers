@@ -187,6 +187,7 @@ func _run() -> void:
 	await _affordability_cases()
 	await _sold_case()
 	await _fail_closed()
+	await _rare_patch_panels()
 	_check(rng.state == expected_run, "all panel previews, intents and refusals preserve seeded run RNG")
 	_check(randi() == expected_global, "all mounted actions preserve global RNG")
 	panel.queue_free()
@@ -1290,3 +1291,37 @@ func _act_noop(visit: RunPeddlerVisit) -> void:
 	await _frames()
 	_check(intents.is_empty() and visit.read_state() == before,
 			"closed binding emits nothing and changes nothing")
+
+
+func _rare_patch_panels() -> void:
+	for patch_id in ["relay_bobbin", "hearth_lining"]:
+		var stock := {}
+		for value in range(1, 10000):
+			var seeded := RandomNumberGenerator.new()
+			seeded.seed = value
+			var candidate := RunShopStockOffers.generate_peddler_stock(seeded, PARTY,
+				authored_cards, authored_patches, [])
+			if candidate.ok and candidate.patches[0].id == patch_id:
+				stock = candidate
+				break
+		_check(not stock.is_empty(), "real seeded Peddler sample reaches " + patch_id)
+		if stock.is_empty():
+			continue
+		var visit := RunPeddlerVisit.new(NODE, PARTY, DECK, [], GOLD, stock)
+		_check(visit.is_valid() and visit.is_open(), "rare mounted panel has genuine open service")
+		await _bind(visit)
+		var before := visit.read_state()
+		_check(panel.patch_button.text.contains(patch_id.replace("_", " ").capitalize())
+			and panel.patch_button.text.contains("100 gold") and panel.card_buttons.size() == 3,
+			"rare uses existing readable priced patch row without extra offer")
+		await _act(panel.patch_button, patch_id == "hearth_lining")
+		_check(intents.size() == 1 and intents[0].get("id") == patch_id,
+			"rare mouse/keyboard action emits genuine source-bound selection")
+		if intents.size() != 1:
+			continue
+		var receipt := Controller.settle(visit, intents[0], before)
+		_check(receipt.ok and receipt.state.gold == GOLD - 100
+			and receipt.state.trinkets.has(patch_id), "rare actual service receipt pays 100 exactly once")
+		var settled := visit.read_state()
+		_check(not Controller.settle(visit, intents[0], before).ok and visit.read_state() == settled,
+			"rare panel receipt replay cannot spend again")

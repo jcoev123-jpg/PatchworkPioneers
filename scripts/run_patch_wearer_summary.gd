@@ -81,6 +81,8 @@ const KNOWN_M05_COAT_POWERS := {
 ## Shop catalogs author slot identity alone; CombatShopPatchRules owns their powers.
 ## Descriptions of the already authored rules, never new effect calculations.
 const KNOWN_TEXTS := {
+	"relay_bobbin": "Once per combat, if a different living hero consumes a Pinned token placed by this living, untorn wearer (confirmed receipt), gain +1 shared energy, capped at 3.",
+	"hearth_lining": "Once per combat, at the first EARNED Quilt bonus, heal this living, untorn wearer 2 HP, up to maximum HP.",
 	"button_eye": "first successful attack each combat also applies Exposed 1",
 	"pincushion_arm": "+1 damage on that wearer's damaging cards",
 	"switchback_button": "Once per player turn, when a different living hero's committed card or stitched half (ordered first then second) immediately precedes this living wearer's committed card or half, this wearer gains 2 Block; same-owner repeats and rejected plays never set it up.",
@@ -391,6 +393,23 @@ static func _authority(catalogs: Variant) -> Dictionary:
 			or typeof(m05_coat) != TYPE_ARRAY:
 		return {}
 	var slots: Dictionary = {}
+	var p8: Variant = _catalog_array(catalogs, "p8", "res://data/patches/mpw_synergy_patches.json")
+	if not p8 is Array:
+		return {}
+	for record in p8:
+		if not record is Dictionary:
+			return {}
+		var id: String = record.get("id", "")
+		var expected := {"relay_bobbin": "HEAD", "hearth_lining": "COAT"}
+		if not expected.has(id):
+			continue
+		if slots.has(id) or record.get("slot") != expected[id] \
+				or record.get("uses_per_combat") != 1 or record.get("shop_price_gold") != 100 \
+				or record.get("stock_weight_percent") != 10:
+			return {}
+		slots[id] = expected[id]
+	if not slots.has("relay_bobbin") or not slots.has("hearth_lining"):
+		return {}
 	if not _collect(attack, "attack", slots):
 		return {}
 	if not _collect(coat, "coat", slots):

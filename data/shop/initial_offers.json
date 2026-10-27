@@ -73,6 +73,8 @@
     {"id": "loose_thread_glove", "price": 100},
     {"id": "threadguard_wrap", "price": 100},
     {"id": "frayfinder_mitt", "price": 100},
-    {"id": "borrowed_button", "price": 100}
+    {"id": "borrowed_button", "price": 100},
+    {"id": "relay_bobbin", "price": 100},
+    {"id": "hearth_lining", "price": 100}
   ]
 }

@@ -930,6 +930,9 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
 		return
+	var definition := _definition(id)
+	_pinned.begin_confirmed_cast(id, str(definition.get("owner", "")),
+		maxi(0, int(definition.get("cost", 0)) - tinker_cost_discount(id)))
 	last_event = _resolve_attack(party, enemies, id, position)
 	if last_event.ok:
 		# Every real Tinker play feeds the battle's one Path authority, so its
@@ -937,10 +940,13 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		# A non-Tinker card fails closed inside the authority.
 		if _tinker_path != null:
 			report_tinker_play(id, energy_before)
+		_pinned.finish_confirmed_cast(last_event)
 		_forward_switchback_ordinary_play(id)
 		_after_attack()
-	elif guarded:
-		_reject_stitch()
+	else:
+		_pinned.finish_confirmed_cast(last_event)
+		if guarded:
+			_reject_stitch()
 
 
 func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, position: int, forecast: bool = false) -> Dictionary:
@@ -1011,7 +1017,7 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 		# be layered onto them.
 		if forecast:
 			return _pool_forecast(party, enemies, id)
-		return _pool_strikes.play_card(_deck, party, enemies, id, position)
+		return _pool_strikes.play_card(_deck, party, enemies, id, position, _pinned)
 	if _targeting.is_heavy_pool_attack(id):
 		if forecast:
 			return _heavy_forecast(party, enemies, id)
@@ -1184,8 +1190,9 @@ func _pool_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> D
 		if enemy.is_empty() or enemies.is_slain(position) \
 				or not defender is Dictionary or not _valid_statuses(defender):
 			return unavailable
+		var pin_bonus := _pinned.bonus_for_attack(enemies, position, str(owner)) if _pinned != null else 0
 		hits.append({"position": position,
-			"damage": _statuses.adjusted_attack_damage(damage, owner_statuses, defender)})
+			"damage": _statuses.adjusted_attack_damage(damage + pin_bonus, owner_statuses, defender)})
 	return {"playable": true, "requires_selection": true, "hits": hits}
 
 
@@ -1384,6 +1391,9 @@ func _sync_battle() -> void:
 		# One Pinned set and one Unravel gauge live for this whole battle session.
 		# They are created here and never recreated or reset by a hand refresh.
 		_pinned = CombatPinned.new()
+		if carry != null and carry._wardrobe != null and _play._patches != null \
+				and _play._patches.is_valid():
+			_pinned.bind_relay(_deck, app.party, app.enemies, carry._wardrobe, carry.torn)
 		_direct_fire.set_pinned(_pinned)
 		_unravel = CombatUnravel.new()
 		_routed_gauge_shared = false

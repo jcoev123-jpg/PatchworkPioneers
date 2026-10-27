@@ -6073,6 +6073,14 @@ func _quilt_bind() -> void:
 	if deck == null or party == null or deck.combat_state == null or not party.is_valid():
 		return
 	_quilt_bonus = CombatQuiltBonus.new(party, deck)
+	var carry := party_carryover as RunTornCarryover
+	if carry != null and carry._wardrobe != null:
+		var state := carry._wardrobe.get_snapshot()
+		if carry.can_bind_wardrobe(carry._wardrobe, carry.torn, state) \
+				and state.heroes == run_heroes and state.owned == run_trinkets \
+				and state.cards == run_deck and state.scraps == run_scraps \
+				and state.gold == session_gold and state.seed == run_seed:
+			_quilt_bonus.bind_hearth(carry._wardrobe, carry.torn)
 	_quilt_deck = deck
 	_quilt_party = party
 	_quilt_turn_open = deck.turn_active and not _battle_closed \
@@ -6101,7 +6109,11 @@ func _quilt_snapshot_piles() -> void:
 ## Called only from a real End Turn that committed a fresh player turn. A new
 ## hand must never inherit the previous turn's receipts or award latch.
 func _quilt_advance_turn() -> void:
-	_quilt_bind()
+	if _quilt_bonus == null or _quilt_deck != deck or _quilt_party != party:
+		_quilt_bind()
+		return
+	_quilt_turn_open = _quilt_bonus.advance_confirmed_turn()
+	_quilt_snapshot_piles()
 
 
 ## Compare the hand with this turn's last receipt snapshot. Only a transaction

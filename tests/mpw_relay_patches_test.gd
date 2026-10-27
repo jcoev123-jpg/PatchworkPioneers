@@ -1,12 +1,10 @@
 extends SceneTree
-## Data-only contract for the two P8 rare patch records.
-## This catalog is now registered in RunAuthoredPatchDefinitions.CATALOG_PATHS,
-## so both records are live in the authored definitions (not yet in Shop stock).
+## Authored P8 records and independent seeded existing-slot stock contract.
 ##
 ## Stock weight is relative to ONE ordinary eligible patch, whose weight is the
 ## 100% baseline below. A 10% weight therefore means one tenth of an ordinary
-## patch's weight; it is not a share of the whole Shop stock. No live stock
-## algorithm is asserted or invented here.
+## patch's weight; it is not a share of the whole Shop stock. The independent
+## ticket oracle below also checks the actual seeded four-draw stream.
 
 const CATALOG_PATH := "res://data/patches/mpw_synergy_patches.json"
 const ORDINARY_PATCH_WEIGHT_BASELINE := 100
@@ -19,6 +17,7 @@ var checks := 0
 
 func _initialize() -> void:
 	_run()
+	_stock_weights()
 	for failure in failures:
 		printerr(failure)
 	print("mpw_relay_patches_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -63,6 +62,59 @@ func _loaded_slots() -> Dictionary:
 		if entry is Dictionary and typeof(entry.get("id")) == TYPE_STRING:
 			slots[entry["id"]] = entry.get("slot")
 	return slots
+
+
+func _stock_weights() -> void:
+	var source: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	var frozen := source.duplicate(true)
+	var party := ["warden", "seamstress", "tinker"]
+	var pools := {}
+	for owner in party:
+		pools[owner] = []
+	for card in source.cards:
+		if pools.has(card.owner):
+			pools[card.owner].append(card.id)
+	for owner in party:
+		pools[owner].sort()
+	var ids: Array[String] = []
+	for patch in source.trinkets:
+		ids.append(patch.id)
+	ids.sort()
+	for id in ["relay_bobbin", "hearth_lining"]:
+		var quotes: Array = source.trinkets.filter(func(entry): return entry.id == id)
+		_check(quotes.size() == 1 and quotes[0].price == 100, "P8 has one authored 100 gold price: " + id)
+	var tickets: Array[String] = []
+	for id in ids:
+		for ticket in range(10 if id in ["relay_bobbin", "hearth_lining"] else 100):
+			tickets.append(id)
+	var seen := {}
+	for seed_value in range(1, 1025):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var reference := RandomNumberGenerator.new()
+		reference.seed = seed_value
+		for owner in party:
+			reference.randi_range(0, pools[owner].size() - 1)
+		var expected: String = tickets[reference.randi_range(0, tickets.size() - 1)]
+		var result := RunShopStockOffers.generate_peddler_stock(rng, party, source.cards, source.trinkets, [])
+		_check(result.ok and result.cards.size() == 3 and result.patches.size() == 1
+			and result.patches[0].id == expected and rng.state == reference.state,
+			"P8 full-catalog independent 10:100 ticket oracle and exact four-draw state: " + str(seed_value))
+		if result.ok:
+			seen[result.patches[0].id] = true
+	for id in ["relay_bobbin", "hearth_lining"]:
+		_check(seen.has(id), "seeded existing slot actually reaches " + id)
+		for invalid in [{"id": id, "price": -1}, {"id": id, "price": 0.5}, {"id": id}]:
+			var bad: Array = source.trinkets.duplicate(true)
+			bad = bad.filter(func(entry): return entry.id != id)
+			bad.append(invalid)
+			var rng := RandomNumberGenerator.new()
+			rng.seed = 317
+			var before := rng.state
+			var rejected := RunShopStockOffers.generate_peddler_stock(rng, party, source.cards, bad, [])
+			_check(rejected == {"ok": false, "cards": [], "patches": []} and rng.state == before,
+				"malformed rare candidate rejects before any draw: " + id)
+	_check(source == frozen, "weighted stock leaves entire authored supplier source unchanged")
 
 
 func _run() -> void:

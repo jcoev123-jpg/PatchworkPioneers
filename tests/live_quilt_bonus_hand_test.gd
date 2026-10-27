@@ -1158,6 +1158,7 @@ func _scenario_switchback_negatives() -> void:
 
 
 func _run() -> void:
+	_hearth_rule_cases()
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
@@ -1212,3 +1213,61 @@ func _finish() -> void:
 	print("live_quilt_bonus_hand_test: ", "PASS" if failures.is_empty() else "FAIL",
 		" (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Supplement mounted acquisition coverage with explicit ineligible and failed
+## Quilt transactions. Only successful support plays are reported to the rule.
+func _hearth_rule_cases() -> void:
+	for mode in ["live", "dead", "torn", "stale", "unworn", "overflow"]:
+		var party := CombatParty.new([{"id": "warden", "max_hp": 40},
+			{"id": "seamstress", "max_hp": 30}, {"id": "tinker", "max_hp": 26}])
+		var torn := RunTornMending.new(party.get_heroes())
+		var wardrobe := RunPatchWardrobe.new(party.get_heroes(), ["hearth_lining"],
+			RunAuthoredPatchDefinitions.load_definitions(), 0)
+		_check(wardrobe.is_valid() and torn.is_valid(), "Hearth authorities genuinely admitted: " + mode)
+		if mode != "unworn":
+			_check(wardrobe.sew("hearth_lining", "warden", "COAT", "hearth", wardrobe.get_snapshot()).ok,
+				"Hearth actual worn COAT: " + mode)
+		if mode == "torn":
+			torn._tear_counts.warden = 1
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 317
+		var deck := CombatDeck.new(["warden_brace", "seamstress_stitch_up", "tinker_tune_up"], rng)
+		_check(deck.start_turn(), "Hearth real turn starts")
+		var quilt := CombatQuiltBonus.new(party, deck)
+		quilt.bind_hearth(wardrobe, torn)
+		_check(quilt.begin_player_turn(), "Hearth quota opens")
+		_check(party.apply_damage(1, 6), "Hearth living wearer wounded by six")
+		if mode == "dead":
+			_check(party.apply_damage(1, 999), "Hearth wearer actually downed")
+		if mode == "stale":
+			_check(wardrobe.refresh_run_context(wardrobe.get_snapshot().heroes, ["hearth_lining"],
+				0, 1, [], wardrobe.get_snapshot()), "Hearth context changed after admission")
+		var hp: int = party.get_hero(1).hp
+		_check(not quilt.record_confirmed_play("unknown").ok and party.get_hero(1).hp == hp,
+			"invalid attempted owner never earns Hearth")
+		for id in ["warden_brace", "seamstress_stitch_up", "tinker_tune_up"]:
+			var definition := catalog.get_definition(id)
+			var target := 3 if id == "seamstress_stitch_up" else 0
+			if CombatStarterSupportPlay.new().play_card(deck, party, id, target):
+				if mode == "overflow" and id == "tinker_tune_up":
+					party._heroes[2].block = CombatParty.MAX_INT
+				quilt.record_confirmed_play(definition.owner)
+		_check(party.get_hero(1).hp == (hp + 2 if mode == "live" else hp),
+			"only genuine earned Quilt and living untorn current wearer heals exactly two: " + mode)
+		_check(quilt._hearth_used == (mode != "overflow"), "failed Quilt does not spend Hearth: " + mode)
+		if mode == "live":
+			_check(deck.end_turn() and deck.start_turn() and quilt.advance_confirmed_turn(),
+				"next actual turn refreshes the same quota")
+			_check(party.apply_damage(1, party.get_hero(1).block + 4), "wound wearer again next turn")
+			var next_hp: int = party.get_hero(1).hp
+			for owner in ["warden", "seamstress", "tinker"]:
+				quilt.record_confirmed_play(owner)
+			_check(quilt.get_patch_progress().awarded and party.get_hero(1).hp == next_hp,
+				"later genuinely earned Quilt cannot repeat Hearth heal")
+			var next_fight := CombatQuiltBonus.new(party, deck)
+			next_fight.bind_hearth(wardrobe, torn)
+			_check(next_fight.begin_player_turn(), "new battle admits fresh Hearth latch")
+			for owner in ["warden", "seamstress", "tinker"]:
+				next_fight.record_confirmed_play(owner)
+			_check(party.get_hero(1).hp == next_hp + 2, "new fight resets Hearth eligibility")

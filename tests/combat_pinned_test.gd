@@ -7,6 +7,8 @@ var attacks := CombatStatusAttacks.new()
 
 
 func _initialize() -> void:
+	_test_relay_committed_hits()
+	_test_relay_energy_cap()
 	_test_ac1_basic_pin_and_replace()
 	_test_ac1_independent_slots_and_slain_block()
 	_test_ac2_cross_hero_bonus_and_preview()
@@ -36,6 +38,109 @@ func _enemies(count: int = 3) -> CombatEnemies:
 	for index in range(count):
 		definitions.append({"id": "fixture_%d" % index, "max_hp": 11 + index})
 	return CombatEnemies.new(definitions)
+
+
+func _test_relay_committed_hits() -> void:
+	for mode in ["live", "dead", "torn", "stale", "failed", "same", "preview", "unworn", "simulated"]:
+		var party := CombatParty.new([{"id": "warden", "max_hp": 40},
+			{"id": "seamstress", "max_hp": 30}, {"id": "tinker", "max_hp": 26}])
+		var wardrobe := RunPatchWardrobe.new(party.get_heroes(), ["relay_bobbin"],
+			RunAuthoredPatchDefinitions.load_definitions(), 0)
+		_check(wardrobe.is_valid(), mode + ": real wardrobe admitted")
+		if mode != "unworn":
+			_check(wardrobe.sew("relay_bobbin", "tinker", "HEAD", "relay", wardrobe.get_snapshot()).ok,
+				mode + ": Relay Bobbin sewn to Tinker")
+		var torn := RunTornMending.new(party.get_heroes())
+		if mode == "torn":
+			torn._tear_counts.tinker = 1
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 317
+		var deck := CombatDeck.new(["tinker_spring_trap", "warden_brass_buckle",
+			"tinker_spring_trap", "warden_brass_buckle"], rng)
+		_check(deck.start_turn(), mode + ": actual active seeded hand")
+		var foes := CombatEnemies.new([{"id": "training_target", "max_hp": 200}])
+		var authority := CombatPinned.new()
+		authority.bind_relay(deck, party, foes, wardrobe, torn)
+		var trap := CombatTinkerPoolAttacks.new()
+		var pin_receipt := trap.play_attack(deck, party, foes, "tinker_spring_trap", 1, authority)
+		_check(pin_receipt.ok and authority.pinner_for_enemy(1) == "tinker",
+			mode + ": a paid actual Spring Trap placed the token")
+		if mode == "dead":
+			_check(party.apply_damage(3, 999), "down actual wearer after pin")
+		if mode == "stale":
+			_check(wardrobe.refresh_run_context(party.get_heroes(), ["relay_bobbin"], 0, 1,
+				[], wardrobe.get_snapshot()), "change bound wardrobe context")
+		if mode == "preview":
+			var energy := deck.energy
+			_check(authority.bonus_for_attack(foes, 1, "warden") == 5
+				and deck.energy == energy and not authority._relay_used,
+				"preview quotes damage without consumption or energy")
+			continue
+		if mode == "simulated":
+			authority.begin_confirmed_cast("warden_brass_buckle")
+			_check(deck.try_spend_energy(1) and deck.discard_played("warden_brass_buckle")
+				and authority.consume_after_attack(1, "warden", true), "simulate a paid cast without a real hit")
+			_check(not authority.finish_confirmed_cast({"ok": true, "hits": [{"position": 1,
+				"damage": 5, "hp_loss": 0, "block_absorbed": 0}]}) and not authority._relay_used,
+				"simulated consumption without enemy HP/Block change cannot award energy")
+			continue
+		var id := "tinker_spring_trap" if mode == "same" else "warden_brass_buckle"
+		if mode == "failed":
+			deck.combat_state.energy = 0
+		var before := deck.energy
+		authority.begin_confirmed_cast(id)
+		var receipt: Dictionary
+		if mode == "same":
+			receipt = trap.play_attack(deck, party, foes, id, 1, authority)
+		else:
+			receipt = CombatPoolPlainStrikes.new().play_card(deck, party, foes, id, 1, authority)
+		var awarded := authority.finish_confirmed_cast(receipt)
+		_check(awarded == (mode == "live"), mode + ": only living untorn cross-owner consumption awards")
+		_check(deck.energy == (before if mode in ["live", "failed"] else before - 1),
+			mode + ": exact paid energy and optional one-energy refund")
+		var settled := deck.energy
+		_check(not authority.finish_confirmed_cast(receipt) and deck.energy == settled,
+			mode + ": stale duplicate receipt awards zero")
+		if mode == "live":
+			_check(authority._relay_used, "combat latch consumed")
+			_check(deck.end_turn() and deck.start_turn(), "real next turn")
+			_check(authority._relay_used, "turn refresh preserves once-per-combat latch")
+			_check(trap.play_attack(deck, party, foes, "tinker_spring_trap", 1, authority).ok,
+				"real next turn wearer places another pin")
+			authority.begin_confirmed_cast("warden_brass_buckle")
+			var later := CombatPoolPlainStrikes.new().play_card(deck, party, foes,
+				"warden_brass_buckle", 1, authority)
+			_check(later.ok and not authority.finish_confirmed_cast(later) and deck.energy == 1,
+				"real consumed cross-owner pin next turn grants zero after combat latch")
+			authority.reset_combat()
+			_check(not authority._relay_used and authority.pinner_for_enemy(1).is_empty(),
+				"new fight reset clears latch and tokens")
+
+
+func _test_relay_energy_cap() -> void:
+	var party := CombatParty.new([{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30}, {"id": "tinker", "max_hp": 26}])
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), ["relay_bobbin"],
+		RunAuthoredPatchDefinitions.load_definitions(), 0)
+	_check(wardrobe.sew("relay_bobbin", "seamstress", "HEAD", "cap", wardrobe.get_snapshot()).ok,
+		"cap fixture sews actual pinning wearer")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 317
+	var deck := CombatDeck.new(["seamstress_needle_pin", "tinker_spring_trap"], rng)
+	var enemies := CombatEnemies.new([{"id": "cap_target", "max_hp": 200}])
+	var pins := CombatPinned.new()
+	pins.bind_relay(deck, party, enemies, wardrobe, RunTornMending.new(party.get_heroes()))
+	_check(deck.start_turn(), "cap fixture starts actual turn")
+	_check(CombatSeamstressPoolControl.new().play_card(deck, party, enemies, pins,
+		CombatUnravel.new(), "seamstress_needle_pin", 1).get("ok", false),
+		"actual paid Needle Pin places wearer's token")
+	_check(pins.pinner_for_enemy(1) == "seamstress" and deck.end_turn() and deck.start_turn(),
+		"token persists into fresh three-energy hand")
+	pins.begin_confirmed_cast("tinker_spring_trap", "tinker", 1)
+	var hit := CombatTinkerPoolAttacks.new().play_attack(deck, party, enemies,
+		"tinker_spring_trap", 1, pins)
+	_check(hit.ok and pins.finish_confirmed_cast(hit) and deck.energy == 3,
+		"genuine paid confirmed hit consumes entitlement, shared energy returns to capped three")
 
 
 func _test_ac1_basic_pin_and_replace() -> void:

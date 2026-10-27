@@ -71,6 +71,9 @@ func _authored() -> Dictionary:
 	for i in range(mini(3, starters.size())):
 		_check(starters[i].get("id") == PARTY_IDS[i] 			and starters[i].get("max_hp") == hp[PARTY_IDS[i]],
 			"authored named starting hero and max HP " + str(i))
+	# The shared priced pool can offer any registered patch, including P8.
+	defs = RunAuthoredPatchDefinitions.load_definitions()
+	_check(not defs.is_empty(), "complete authored wardrobe metadata is available")
 	return {"offers": offers, "starters": starters, "definitions": defs, "coats": coats}
 
 
@@ -289,8 +292,9 @@ func _test_replacement() -> void:
 	for listing in f.shop.get_stock().trinkets:
 		if listing.id != "stitched_badge":
 			other = listing.id
-	_check(other != "" and IDS.has(other), "second actual offered patch exists")
-	var other_slot: String = {"spare_spool": "ARM", "quilted_coat": "COAT"}.get(other, "")
+	var definitions: Dictionary = f.wardrobe.get_snapshot().definitions
+	_check(other != "" and definitions.has(other), "second actual offered authored patch exists")
+	var other_slot: String = definitions.get(other, "")
 	var second := _act(f, other, "tinker", other_slot, "second-paid")
 	_check(second.ok and second.purchase_receipt.price == 100
 		and f.shop.get_state().gold == 0 and f.visit.get_state().gold == 0

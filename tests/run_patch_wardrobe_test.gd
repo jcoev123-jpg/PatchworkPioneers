@@ -5,6 +5,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_p8_slots()
 	_test_authored_switchback()
 	_test_slots_and_replacement()
 	_test_rest_moves_and_swaps()
@@ -24,6 +25,23 @@ func _check(ok: bool, label: String) -> void:
 	checks += 1
 	if not ok:
 		failures.append(label)
+
+
+func _test_p8_slots() -> void:
+	var heroes := _party()
+	var wardrobe := RunPatchWardrobe.new(heroes, ["relay_bobbin", "hearth_lining"],
+		RunAuthoredPatchDefinitions.load_definitions(), 0)
+	_check(wardrobe.is_valid(), "P8 owned definitions admit an actual wardrobe")
+	_check(wardrobe.sew("relay_bobbin", "tinker", "HEAD", "p8-head", wardrobe.get_snapshot()).ok,
+		"Relay Bobbin sews into existing HEAD")
+	_check(wardrobe.sew("hearth_lining", "warden", "COAT", "p8-coat", wardrobe.get_snapshot()).ok,
+		"Hearth Lining sews into existing COAT")
+	var torn := RunTornMending.new(heroes)
+	var summary := RunPatchWearerSummary.summarize(wardrobe, torn.read_state())
+	_check(summary.get("ok", false), "both P8 wearers retain authenticated summary")
+	var snapshot := wardrobe.get_snapshot()
+	_check(not wardrobe.sew("relay_bobbin", "warden", "ARM", "bad-p8", snapshot).ok
+		and wardrobe.get_snapshot() == snapshot, "P8 wrong-slot refusal leaves all state intact")
 
 
 func _party() -> Array:

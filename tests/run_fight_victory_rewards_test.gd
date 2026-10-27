@@ -42,6 +42,8 @@ func _initialize() -> void:
 	if ids == HERO_IDS and definitions.size() == 3 and deck.size() == 12 and valid_deck and candidates.size() >= 3:
 		_test_prepare(definitions, ids, deck, candidates, false, 1, [], [])
 		_test_prepare(definitions, ids, deck, candidates, true, 2, TRINKET_POOL, OWNED_TRINKETS)
+		_test_prepare(definitions, ids, deck, candidates, true, 2,
+			["relay_bobbin", "hearth_lining", "button_eye"], [])
 		_test_choices(definitions, ids, deck, candidates)
 		_test_weighted_records(definitions, ids, deck)
 		_test_weighted_two_survivors(definitions, ids, deck, false)
@@ -67,6 +69,16 @@ func _check(value: bool, description: String) -> void:
 	checks += 1
 	if not value:
 		failures.append(description)
+
+
+func _p8_drop_oracle(rng: RandomNumberGenerator, ids: Array) -> String:
+	if not ids.has("relay_bobbin") and not ids.has("hearth_lining"):
+		return ids[rng.randi_range(0, ids.size() - 1)]
+	var tickets: Array[String] = []
+	for id in ids:
+		for ticket in range(10 if id in ["relay_bobbin", "hearth_lining"] else 100):
+			tickets.append(id)
+	return tickets[rng.randi_range(0, tickets.size() - 1)]
 
 
 func _load_array(path: String) -> Array:
@@ -168,7 +180,7 @@ func _oracle(catalog: StarterCards, ids: Array[String], candidates: Array[String
 				trinket_ids.append(trinket_id)
 		trinket_ids.sort()
 		if not trinket_ids.is_empty():
-			drop = trinket_ids[reference.randi_range(0, trinket_ids.size() - 1)]
+			drop = _p8_drop_oracle(reference, trinket_ids)
 	return {
 		"gold": gold, "offers": offers, "trinket_drop_id": drop,
 		"rng_state": reference.state, "next": reference.randi()
@@ -548,7 +560,7 @@ func _weighted_oracle(party: Array[String], records: Array[Dictionary], seed_val
 				trinket_ids.append(trinket_id)
 		trinket_ids.sort()
 		if not trinket_ids.is_empty():
-			drop = trinket_ids[reference.randi_range(0, trinket_ids.size() - 1)]
+			drop = _p8_drop_oracle(reference, trinket_ids)
 
 	return {
 		"gold": gold, "offers": offers, "trinket_drop_id": drop,

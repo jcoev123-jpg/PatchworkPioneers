@@ -327,7 +327,11 @@ func _assert_flow(app, kind: String, id: String, rng_state: int) -> void:
 		_check(not patch_pool.is_empty(), "independent Peddler oracle has an unowned patch candidate")
 		if patch_pool.is_empty():
 			return
-		var patch: Dictionary = patch_pool[rng.randi_range(0, patch_pool.size() - 1)]
+		var patch_tickets: Array = []
+		for candidate in patch_pool:
+			for ticket in range(10 if candidate.id in ["relay_bobbin", "hearth_lining"] else 100):
+				patch_tickets.append(candidate)
+		var patch: Dictionary = patch_tickets[rng.randi_range(0, patch_tickets.size() - 1)]
 		var expected_stock := {"cards": expected_cards,
 			"trinkets": [{"id": patch.id, "price": int(patch.price), "sold": false}]}
 		var state: Dictionary = app.peddler_visit.read_state()

@@ -3753,11 +3753,22 @@ func _peddler_stock_oracle(catalog: StarterCards, party: Array[String], card_poo
 		patch_pool_draw = owned_patches
 	var patches: Array = []
 	if not patch_pool_draw.is_empty():
-		var patch_index: int = rng.randi_range(0, patch_pool_draw.size() - 1)
+		var patch_index: int = _p8_oracle_index(rng, patch_pool_draw)
 		var chosen_patch: String = patch_pool_draw[patch_index]
 		patches.append({"id": chosen_patch, "price": patch_prices[chosen_patch]})
 
 	return {"ok": true, "cards": cards, "patches": patches}
+
+
+## Independent ticket expansion rather than the production cumulative draw.
+func _p8_oracle_index(rng: RandomNumberGenerator, ids: Array) -> int:
+	if not ids.has("relay_bobbin") and not ids.has("hearth_lining"):
+		return rng.randi_range(0, ids.size() - 1)
+	var tickets: Array[int] = []
+	for i in range(ids.size()):
+		for ticket in range(10 if ids[i] in ["relay_bobbin", "hearth_lining"] else 100):
+			tickets.append(i)
+	return tickets[rng.randi_range(0, tickets.size() - 1)]
 
 
 ## Rejection helper for peddler stock tests.

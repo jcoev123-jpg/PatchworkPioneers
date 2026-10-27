@@ -16,6 +16,34 @@ var _deck: CombatDeck
 var _active := false
 var _awarded := false
 var _played: Dictionary = {}
+var _hearth_used := false
+var _hearth_wardrobe: RunPatchWardrobe
+var _hearth_torn: RunTornMending
+var _hearth_wardrobe_state: Dictionary = {}
+var _hearth_torn_state: Dictionary = {}
+
+
+func bind_hearth(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> void:
+	_hearth_wardrobe = wardrobe
+	_hearth_torn = torn
+	_hearth_wardrobe_state = wardrobe.get_snapshot()
+	_hearth_torn_state = torn.read_state()
+
+
+func _earned_hearth() -> void:
+	if _hearth_used:
+		return
+	_hearth_used = true
+	for hero in _party.get_heroes():
+		if CombatPinned.active_wearer(_party, _hearth_wardrobe, _hearth_torn,
+				_hearth_wardrobe_state, _hearth_torn_state, hero.id, "hearth_lining"):
+			_party.heal(hero.position, 2)
+
+
+## RoundFlow has already ended the old hand and started a genuine new one.
+func advance_confirmed_turn() -> bool:
+	_active = false
+	return begin_player_turn()
 
 # Opt-in Switchback Button transition tracking
 var _switchback_active := false
@@ -83,6 +111,7 @@ func record_confirmed_play(owner_id: String) -> Dictionary:
 		_party.gain_block(hero["position"], BLOCK_REWARD)
 	var drawn: int = _deck.draw_extra(1)
 	_awarded = true
+	_earned_hearth()
 	return {"ok": true, "triggered": true, "drawn": drawn}
 
 
@@ -139,6 +168,7 @@ func record_confirmed_stitched_play(first_owner_id: String, second_owner_id: Str
 		_party.gain_block(hero["position"], BLOCK_REWARD)
 	var drawn: int = _deck.draw_extra(1)
 	_awarded = true
+	_earned_hearth()
 	return {"ok": true, "triggered": true, "drawn": drawn}
 
 

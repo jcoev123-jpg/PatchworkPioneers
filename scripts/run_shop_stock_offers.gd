@@ -351,11 +351,27 @@ static func generate_peddler_stock(rng: Variant, party_ids: Variant,
 		patch_pool = owned_candidate_patch_ids
 	if patch_pool.is_empty():
 		return rejected
-	var patch_index: int = rng.randi_range(0, patch_pool.size() - 1)
+	var patch_index: int = draw_patch_index(rng, patch_pool)
 	var chosen_patch: String = patch_pool[patch_index]
 	var patches: Array = [{"id": chosen_patch, "price": patch_prices[chosen_patch]}]
 
 	return {"ok": true, "cards": cards, "patches": patches}
+
+
+## One existing-slot draw, with P8 weighted 10 against each ordinary 100.
+## Preserve legacy streams when a supplied pool contains no P8 candidates.
+static func draw_patch_index(rng: RandomNumberGenerator, ids: Array) -> int:
+	if not ids.has("relay_bobbin") and not ids.has("hearth_lining"):
+		return rng.randi_range(0, ids.size() - 1)
+	var total := 0
+	for id in ids:
+		total += 10 if id in ["relay_bobbin", "hearth_lining"] else 100
+	var roll := rng.randi_range(0, total - 1)
+	for index in range(ids.size()):
+		roll -= 10 if ids[index] in ["relay_bobbin", "hearth_lining"] else 100
+		if roll < 0:
+			return index
+	return -1
 
 
 ## Reads a supplied price. JSON numbers arrive as floats, so a whole float is

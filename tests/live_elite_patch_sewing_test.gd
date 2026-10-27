@@ -207,8 +207,8 @@ func _attack_fixture(first_seed: int, last_seed: int) -> Dictionary:
 
 func _attack_patch_claims() -> void:
 	## Verified starting seeds are hints only; every offer is still rolled and checked live.
-	var drop_seeds := {"button_eye": 2896, "pincushion_arm": 10196,
-		"HEAD": 9971, "ARM": 8123, "COAT": 9914}
+	var drop_seeds := {"button_eye": 11440, "pincushion_arm": 12128,
+		"HEAD": 10196, "ARM": 6767, "COAT": 5467}
 	var search_seed := 1
 	for patch_id in ["button_eye", "pincushion_arm", "HEAD", "ARM", "COAT"]:
 		var next_seed: int = drop_seeds.get(patch_id, search_seed)
@@ -238,8 +238,6 @@ func _attack_patch_claims() -> void:
 			var rng: int = app.run_rng.state
 			var ids: Array = app._catalog_trinket_ids()
 			for definition in RunAuthoredPatchDefinitions.load_definitions():
-				if definition.id in ["relay_bobbin", "hearth_lining"]:
-					continue # P8 rare patches use a separate stock mechanism (deferred)
 				_check(ids.count(definition.id) == 1, "real Elite pool retains candidate once: " + definition.id)
 			_check(app.run_rng.state == rng, "reading shared Elite catalog consumes no RNG")
 			for enemy in app.enemies.get_enemies():
@@ -818,7 +816,7 @@ func _verify_worn_readout() -> void:
 
 
 func _coat_multi_fixture(reward_index: int = 0, prior_coat: bool = false) -> Dictionary:
-	var first_seed := 31189 if prior_coat else 4257
+	var first_seed := 48840 if prior_coat else (51088 if reward_index == 0 else 4257)
 	for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
 		var fixture := _multi_fixture(first_seed, maxi(30000, first_seed + 20000))
 		if fixture.is_empty() or not await _routed_win(fixture, false):
