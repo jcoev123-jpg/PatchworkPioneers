@@ -8,6 +8,7 @@ const POP := "tinker_pop_shot"
 ## A genuine reward-pool base card and a genuine authored starter upgrade.
 const POOL := "warden_pinning_jab"
 const UPGRADED := "warden_strike_plus"
+const V3_CARD := "button_golem_pop_button"
 var failures: Array[String] = []
 var checks := 0
 var intents: Array[Dictionary] = []
@@ -202,6 +203,7 @@ func _run() -> void:
 	for keyboard in [false, true]:
 		await _test_remove(keyboard)
 		await _test_leave(keyboard, 74)
+		await _test_remove_v3(keyboard)
 	await _test_price_boundaries()
 	await _test_stitched()
 	await _test_rejections()
@@ -421,6 +423,41 @@ func _test_remove(keyboard: bool) -> void:
 	_check(intents.size() == 1 and visit.read_state() == after, "view also blocks repeated pressed callbacks")
 	intent.expected_snapshot.deck.clear()
 	_check(visit.read_state() == after, "intent snapshot detached from service")
+
+
+func _test_remove_v3(keyboard: bool) -> void:
+	var deck := _deck()
+	deck.append(V3_CARD)
+	var visit := _make(150, 0, deck)
+	await _bind(visit)
+	var source := visit.read_state()
+	var row: Button = null
+	for button in panel.card_buttons:
+		if panel._rows[button].id == V3_CARD:
+			row = button
+	_check(row != null and source.deck.count(V3_CARD) == 1,
+			"Peddler-listed v3 hero card is listed as a removable row")
+	if row == null:
+		return
+	# The 13th row sits below the fold: scroll it into view as a player would.
+	var scroll := row.get_parent()
+	while scroll != null and not scroll is ScrollContainer:
+		scroll = scroll.get_parent()
+	if scroll != null:
+		(scroll as ScrollContainer).ensure_control_visible(row)
+	await _settle()
+	await _activate(row, keyboard, KEY_SPACE if keyboard else KEY_ENTER)
+	_check(not panel.remove_button.disabled and panel.status_label.text.contains("deck %d→%d" % [
+			deck.size(), deck.size() - 1]), "v3 card selection previews the removal")
+	await _activate(panel.remove_button, keyboard, KEY_ENTER)
+	_check(intents.size() == 1, "physical Remove emits one intent for the v3 card")
+	if intents.size() != 1:
+		return
+	var receipt := Controller.apply(visit, intents[0])
+	_check(receipt.get("ok") == true and receipt.removed_card_id == V3_CARD
+			and receipt.charged_gold == 75 and not receipt.deck.has(V3_CARD)
+			and receipt.deck.size() == deck.size() - 1,
+			"controller removes the authentic v3 card for the 75-gold quote")
 
 
 func _test_leave(keyboard: bool, gold: int) -> void:

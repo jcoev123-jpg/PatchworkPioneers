@@ -37,9 +37,14 @@ func _check(condition: bool, message: String) -> void:
 
 func _deck() -> Array[String]:
     var deck := StarterCards.new().get_starting_deck()
-    _check(deck.size() >= 12 and deck.count(STRIKE) == 2
-            and deck.count(PRICK) == 2 and deck.count(POP) == 2,
-            "authored real three-owner starter deck and duplicate copies")
+    deck.append("button_golem_pop_button")
+    deck.append("button_golem_pop_button")
+    deck.append("rag_duelist_velvet_feint_plus")
+    _check(deck.size() >= 15 and deck.count(STRIKE) == 2
+            and deck.count(PRICK) == 2 and deck.count(POP) == 2
+            and deck.count("button_golem_pop_button") == 2
+            and deck.count("rag_duelist_velvet_feint_plus") == 1,
+            "authored real three-owner starter deck, duplicate new v3 cards, and genuine v3 plus")
     return deck
 
 
