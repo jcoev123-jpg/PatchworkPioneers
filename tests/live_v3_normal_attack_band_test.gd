@@ -15,6 +15,8 @@ var phase_bands: Dictionary = {}
 var eligible_mid := 0
 var eligible_high := 0
 var phase_hits := 0
+var wasp_hits := 0
+var wasp_blind := false
 
 
 func _target_path(map: RunMap, current: String, path: Array, middle: bool) -> Array:
@@ -170,6 +172,9 @@ func _actual_attack_phases(floor_number: int) -> void:
 	if selected == 0:
 		return
 	for actor in app.enemies.get_enemies():
+		if actor.id == "needle_wasp":
+			selected = actor.position
+	for actor in app.enemies.get_enemies():
 		if actor.position != selected:
 			_check(app.enemies.apply_damage(actor.position, 99999),
 				"other real sources slain to isolate authoritative damage")
@@ -194,7 +199,19 @@ func _actual_attack_phases(floor_number: int) -> void:
 			var amount: int = announced.amount
 			if floor_number <= 4:
 				_check(amount == 5, "formerly weak early actor announces exactly five damage")
-			var shield := 0 if not unblocked else 3
+			var is_wasp: bool = app.enemies.get_enemy(selected).id == "needle_wasp"
+			if is_wasp and not wasp_blind:
+				_check(floor_number >= 5 and floor_number <= 8 and amount == 10
+					and announced.get("hits") == 2, "routed Wasp announces total ten and two hits")
+				app.enemies._enemies[selected - 1].statuses = {"blind_next_attack": 1}
+				var protected: Array = app.party.get_heroes()
+				await _click(app.end_turn_button)
+				_check(app.party.get_heroes() == protected
+					and not app.enemies.get_enemy(selected).statuses.has("blind_next_attack"),
+					"mounted next Wasp attack entirely misses and consumes Blind")
+				wasp_blind = true
+				continue
+			var shield := 0 if not unblocked else (5 if is_wasp else 3)
 			if shield > 0:
 				_check(app.party.gain_block(target, shield),
 					"authentic CombatParty gains mitigating Block")
@@ -209,6 +226,11 @@ func _actual_attack_phases(floor_number: int) -> void:
 			_check(hero.hp == first_hp - maxi(0, amount - first_block)
 				and hero.block == maxi(0, first_block - amount),
 				"current real enemy phase loses exact announced HP after Block absorbs first")
+			if is_wasp:
+				_check(amount == 10 and announced.get("hits") == 2
+					and hero.get("statuses", {}).get("bleed", 0) == (2 if shield == 0 else 1),
+					"mounted Wasp deals 5+5: exact first-hit Block prevents only first Bleed")
+				wasp_hits += 1
 			phase_hits += 1
 			if shield == 0:
 				unblocked = true
@@ -286,6 +308,7 @@ func _run() -> void:
 		"first, middle and high genuine Fights covered, with eligible authored high-band actions")
 	_check(phase_hits >= 6 and phase_bands.has(1) and phase_bands.has(5) and phase_bands.has(9),
 		"actual normal-Fight damage and Block mitigation exercised in every band")
+	_check(wasp_hits == 2 and wasp_blind, "bounded genuine route exercised Wasp two hits and Blind")
 	if failures.is_empty():
 		print("live_v3_normal_attack_band_test: PASS (", checks, " checks)")
 	else:

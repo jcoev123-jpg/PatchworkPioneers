@@ -5,6 +5,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_two_hit_schema()
 	_test_special_schema()
 	_test_snip_schema()
 	_test_snip_bound_phases_and_badge()
@@ -1018,3 +1019,40 @@ func _test_behemoth_phase_fail_closed() -> void:
 			and rng.state == initial_rng and enemies.get_enemies() == initial_enemies
 			and party.get_heroes() == initial_party,
 			variant + ": rejection publishes no cache, RNG draw or combat mutation")
+
+
+func _test_two_hit_schema() -> void:
+	var raw := {"type": "attack", "amount": 8, "hits": 2, "weight": 3}
+	_check(CombatEnemyIntents.weighted_action(raw).action ==
+		{"type": "attack", "amount": 8, "hits": 2}, "two hits retain a TOTAL of eight")
+	for value in [0, 1, 3, -2, true, "2", null, [], {}, 2.5]:
+		var bad := raw.duplicate(true)
+		bad.hits = value
+		_reject_bind("malformed two-hit " + str(value), {"target": "random", "actions": [bad]})
+	for value in [2.0, true, "2", 1, 3]:
+		_check(not CombatEnemyIntents.valid_action({"type": "attack", "amount": 8,
+			"hits": value, "target_position": 1}), "phase hits must be integer two")
+	for kind in ["block", "buff", "debuff", "snip_block", "shove"]:
+		var bad := raw.duplicate(true)
+		bad.type = kind
+		_check(CombatEnemyIntents.weighted_action(bad).is_empty(), "hits only legal on attack")
+	var traces: Array = []
+	for multi in [false, true]:
+		var authored := raw.duplicate(true)
+		if not multi:
+			authored.erase("hits")
+		var enemy := CombatEnemies.new([{"id": "probe", "max_hp": 22,
+			"intent": {"target": "random", "actions": [authored]}}])
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 331
+		var scheduler := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+		_check(scheduler.bind_battle(enemy, _party_fixture(), rng), "bind RNG comparison")
+		var trace: Array = []
+		for turn in range(5):
+			var announced: Dictionary = scheduler.get_intents()[0]
+			_check(announced.get("hits", 1) == (2 if multi else 1), "cached hits retained")
+			announced.erase("hits")
+			trace.append([announced, rng.state])
+			_check(scheduler.advance_turn(), "advance RNG comparison")
+		traces.append(trace)
+	_check(traces[0] == traces[1], "two hits use same weighted and random target draws, reentry cache")

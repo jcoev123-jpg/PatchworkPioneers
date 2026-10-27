@@ -6,6 +6,7 @@ var phase := CombatEnemyPhase.new()
 
 
 func _initialize() -> void:
+	_test_two_hits_and_blind()
 	_test_ordered_specials()
 	_test_status_sensitive_attacks()
 	_test_two_turn_mixed_phase()
@@ -957,3 +958,100 @@ func _test_drain_inert_and_fail_closed() -> void:
 			"AC4: malformed metadata fails before any beat is staged: " + str(invalid))
 
 
+
+
+func _test_two_hits_and_blind() -> void:
+	var action := {"enemy_position": 1, "type": "attack", "amount": 8,
+		"hits": 2, "target_position": 3}
+	var parsed := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var wasp: Dictionary = {}
+	for actor in parsed:
+		if actor.id == "needle_wasp":
+			wasp = actor
+	_check(not wasp.is_empty() and wasp.intent.actions[1].hits == 2,
+		"genuine Wasp authors a two-hit attack")
+	if wasp.is_empty():
+		return
+	for floor_number in [1, 5, 9]:
+		var total: int = RunNormalAttackFloorScaling.scale_normal_attack(8, floor_number).amount
+		_check(total == {1: 8, 5: 10, 9: 12}[floor_number], "fixed expected scaled total")
+		var party := _party()
+		var enemies := CombatEnemies.new([wasp])
+		var hit := action.duplicate(true)
+		hit.amount = total
+		_check(party.gain_block(3, total / 2), "first hit has exact absorbing Block")
+		var result := phase.execute_phase(party, enemies, [hit])
+		_check(result.ok and result.events.size() == 2 and result.events[0].applied
+			and result.events[1].applied and party.get_hero(3).hp == 26 - total / 2
+			and party.get_hero(3).block == 0 and party.get_hero(3).statuses == {"bleed": 1},
+			"floor %d splits total once; only second HP-losing hit bleeds" % floor_number)
+	var party := _party()
+	var enemies := CombatEnemies.new([wasp])
+	enemies._enemies[0].statuses = {"blind_next_attack": 1, "weak": 2}
+	var source: Dictionary = enemies._enemies[0]
+	for nonattack in [{"enemy_position": 1, "type": "block", "amount": 1},
+		{"enemy_position": 1, "type": "buff", "amount": 1},
+		{"enemy_position": 1, "type": "debuff", "amount": 1, "status": "bleed", "target_position": 1}]:
+		_check(phase.execute_phase(party, enemies, [nonattack]).ok
+			and enemies.get_enemy(1).statuses.has("blind_next_attack"), "nonattacks preserve Blind")
+	_check(CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies()).actors[0].statuses
+		== {"blind_next_attack": 1, "weak": 1}, "owner tick preserves armed Blind")
+	var before := party.get_heroes()
+	var result := phase.execute_phase(party, enemies, [action])
+	_check(result.ok and result.events.size() == 1 and not result.events[0].applied
+		and party.get_heroes() == before and enemies.get_enemy(1).statuses == {"weak": 2}
+		and is_same(source, enemies._enemies[0]), "Blind misses entire attack and publishes once")
+	_check(phase.execute_phase(party, enemies, [action]).ok and party.get_hero(3).hp == 20
+		and party.get_hero(3).statuses.bleed == 2, "next two-hit attack lands under Weak")
+	for value in [true, 1.0, "1", -1, 2, null, [], {}]:
+		party = _party()
+		enemies = CombatEnemies.new([wasp])
+		enemies._enemies[0].statuses = {"blind_next_attack": value}
+		var snapshot := [party.get_heroes(), enemies.get_enemies()]
+		_check(phase.execute_phase(party, enemies, [action]) == {"ok": false, "events": []}
+			and snapshot == [party.get_heroes(), enemies.get_enemies()], "malformed Blind is atomic")
+	# A later runtime overflow must roll back both earlier hits and Blind spend.
+	party = _party()
+	enemies = _enemies()
+	enemies._enemies[0].statuses = {"blind_next_attack": 1}
+	party._heroes[0].statuses = {"bleed": CombatStatuses.MAX_INT}
+	var snapshot := [party.get_heroes(), enemies.get_enemies()]
+	_check(phase.execute_phase(party, enemies, [action, {"enemy_position": 2,
+		"type": "debuff", "amount": 1, "status": "bleed", "target_position": 1}])
+		== {"ok": false, "events": []} and snapshot == [party.get_heroes(), enemies.get_enemies()],
+		"later overflow rolls back earlier Blind consumption")
+	for value in [1, 3, true, 2.0, "2", null]:
+		var malformed := action.duplicate(true)
+		malformed.hits = value
+		_check(phase.execute_phase(party, enemies, [malformed]) == {"ok": false, "events": []}
+			and snapshot == [party.get_heroes(), enemies.get_enemies()], "malformed hits roll back")
+	party = _party()
+	enemies = CombatEnemies.new([wasp])
+	_check(party.apply_damage(3, 26), "down announced hero before policy fallback")
+	var result_fallback := phase.execute_phase(party, enemies, [action], null, true)
+	_check(result_fallback.ok and result_fallback.events.size() == 2
+		and result_fallback.events[0].target_position == 2
+		and result_fallback.events[1].target_position == 2 and party.get_hero(2).hp == 22,
+		"two hits preserve lowest-living fallback target")
+	for skipped in ["slain", "downed"]:
+		party = _party()
+		enemies = CombatEnemies.new([wasp])
+		enemies._enemies[0].statuses = {"blind_next_attack": 1}
+		if skipped == "slain":
+			_check(enemies.apply_damage(1, 22), "slay source before skipped beat")
+		else:
+			_check(party.apply_damage(3, 26), "down target before legacy skipped beat")
+		var skipped_before := [party.get_heroes(), enemies.get_enemies()]
+		_check(phase.execute_phase(party, enemies, [action]).ok
+			and skipped_before == [party.get_heroes(), enemies.get_enemies()],
+			"inert " + skipped + " beat preserves Blind")
+	# Without Blind the same late failure also rolls back both landed strikes.
+	party = _party()
+	enemies = _enemies()
+	party._heroes[0].statuses = {"bleed": CombatStatuses.MAX_INT}
+	snapshot = [party.get_heroes(), enemies.get_enemies()]
+	_check(phase.execute_phase(party, enemies, [action, {"enemy_position": 2,
+		"type": "debuff", "amount": 1, "status": "bleed", "target_position": 1}])
+		== {"ok": false, "events": []} and snapshot == [party.get_heroes(), enemies.get_enemies()],
+		"later overflow rolls back both earlier landed hits")

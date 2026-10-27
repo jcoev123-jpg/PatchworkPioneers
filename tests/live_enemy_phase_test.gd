@@ -365,6 +365,7 @@ func _run() -> void:
 	await _slain_sources(app)
 	await _cue_refresh(app)
 	await _status_damage(app)
+	await _mounted_blind(app)
 	await _mixed_rejection_replay(app)
 	app.free()
 	_finish()
@@ -640,3 +641,27 @@ func _fixture_start(target) -> void:
 		return
 	var started: bool = target._start_battle()
 	_check(started == (target.deck != null), "standalone fixture reports admission consistently")
+
+
+func _mounted_blind(app) -> void:
+	_fixture_start(app)
+	await process_frame
+	_check(app.enemy_intents.is_bound() and app.enemies.get_enemy(1).hp > 0,
+		"mounted living attacker and bound announcements")
+	app.enemies._enemies[0].statuses = {"blind_next_attack": 1}
+	var hp_before: Array = app.party.get_heroes().map(func(h): return h.hp)
+	app.end_turn_button.pressed.emit()
+	_check(app.party.get_heroes().map(func(h): return h.hp) == hp_before
+		and app.enemies.get_enemy(1).statuses == {} and app.enemy_intents._turn_index == 1,
+		"actual End Turn consumes source Blind and misses entire single-hit attack")
+	await process_frame
+	var before := _snapshot(app)
+	app.enemies._enemies[0].statuses = {"blind_next_attack": 2}
+	var malformed := _snapshot(app)
+	app.end_turn_button.pressed.emit()
+	_check(_snapshot(app) == malformed, "mounted malformed Blind rejects without turn/RNG/actor mutation")
+	app.enemies._enemies[0].statuses = {}
+	_check(app.enemy_intents._turn_index == before[7], "malformed Blind never advanced cache")
+	await process_frame
+	app.return_button.pressed.emit()
+	await process_frame

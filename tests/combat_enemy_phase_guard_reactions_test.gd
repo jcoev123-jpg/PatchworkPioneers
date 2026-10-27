@@ -7,6 +7,7 @@ var phase := CombatEnemyPhase.new()
 
 
 func _initialize() -> void:
+	_test_two_hit_reactions()
 	_test_draw_fire_variants()
 	_test_counter_stitch_variants()
 	_test_joint_modes_and_turn_boundary()
@@ -750,3 +751,43 @@ func _test_dodge_invalid_and_replay() -> void:
 		"AC6: identical seed replays the same Dodge miss and landing hit, RNG untouched")
 
 
+
+
+func _test_two_hit_reactions() -> void:
+	var party := _party()
+	var enemies := CombatEnemies.new([{"id": "wasp", "max_hp": 22, "bleed_on_attack": true}])
+	var deck := _deck(["warden_draw_fire", "warden_counter_stitch",
+		"warden_iron_hem", "warden_hold_the_line", "warden_quick_darn"])
+	var reactions := CombatWardenGuardReactions.new()
+	_check(reactions.play_from_hand(deck, party, "warden_draw_fire")
+		and reactions.play_from_hand(deck, party, "warden_counter_stitch"), "paid Guard and Thorns")
+	party._heroes[0].block = 5
+	var rng_before: int = deck._rng.state
+	var action := {"enemy_position": 1, "type": "attack", "amount": 10, "hits": 2, "target_position": 3}
+	var result := phase.execute_phase(party, enemies, [action], reactions)
+	_check(result.ok and result.events == [_hit(1, 3, true, 1, true, 3),
+		_hit(1, 3, true, 1, true, 3)] and party.get_hero(1).hp == 35
+		and party.get_hero(1).block == 0 and party.get_hero(1).statuses == {"bleed": 1}
+		and party.get_hero(3).hp == 26 and enemies.get_enemy(1).hp == 16
+		and deck._rng.state == rng_before, "both hits redirect/react; only HP-losing hit bleeds")
+	# Thorns kills the source after hit one, preventing the second hit.
+	party = _party()
+	enemies = CombatEnemies.new([{"id": "wasp", "max_hp": 3, "bleed_on_attack": true}])
+	reactions.guarding = true
+	reactions.thorns = 3
+	_check(party.start_player_turn(), "clear opening Block for lethal Thorns case")
+	result = phase.execute_phase(party, enemies, [action], reactions)
+	_check(result.ok and result.events.size() == 2 and result.events[0].applied
+		and not result.events[1].applied and party.get_hero(1).hp == 35
+		and enemies.is_slain(1), "Thorns can stop second strike by killing attacker")
+	# Blind prevents Guard, Block, Dodge and Thorns from seeing either strike.
+	party = _party()
+	enemies = CombatEnemies.new([{"id": "wasp", "max_hp": 22}])
+	enemies._enemies[0].statuses = {"blind_next_attack": 1}
+	party._heroes[0].statuses = {"dodge_next_attack": 1}
+	_check(party.gain_block(1, 5), "real Block before Blind miss")
+	var before := party.get_heroes()
+	result = phase.execute_phase(party, enemies, [action], reactions)
+	_check(result.ok and result.events.size() == 1 and not result.events[0].applied
+		and party.get_heroes() == before and enemies.get_enemy(1).hp == 22
+		and enemies.get_enemy(1).statuses == {}, "Blind misses whole attack before defensive reactions")

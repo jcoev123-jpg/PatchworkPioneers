@@ -70,121 +70,143 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 			if policy_targets else ""
 		if not staged_enemies.is_slain(source) and not policy.is_empty():
 			effective = CombatEnemyIntents.resolve_announced_action(staged_party, action, staged_enemies)
-		var event := {"type": effective.type, "enemy_position": source, "applied": false}
-		for field in ["target_position", "status", "direction"]:
-			if effective.has(field):
-				event[field] = effective[field]
-		if not staged_enemies.is_slain(source):
-			if effective.type == "attack":
-				var actual_target: int = effective.target_position
-				if reactions != null:
-					var preview: Dictionary = reactions.preview_actual_recipient(
-						staged_party, effective.target_position)
-					if not preview.get("ok", false):
+		var hit_count: int = effective.get("hits", 1) if effective.type == "attack" else 1
+		# Blind belongs to the entire attempted attack, before mitigation or reactions.
+		# All writes remain on the detached roster until every beat succeeds.
+		if effective.type == "attack" and not staged_enemies.is_slain(source) \
+				and not staged_party.is_downed(effective.target_position) \
+				and staged_enemies._enemies[source - 1].get("statuses", {}).get("blind_next_attack", 0) == 1:
+			staged_enemies._enemies[source - 1].statuses.erase("blind_next_attack")
+			var miss := {"type": "attack", "enemy_position": source,
+				"target_position": effective.target_position, "applied": false}
+			if reactions != null:
+				miss.merge({"actual_target_position": effective.target_position,
+					"redirected": false, "retaliation_damage": 0, "retaliatory_damage": 0})
+			events.append(miss)
+			continue
+		# One cached choice/target, independently resolved hits; no RNG per strike.
+		for hit_index in range(hit_count):
+			var event := {"type": effective.type, "enemy_position": source, "applied": false}
+			for field in ["target_position", "status", "direction"]:
+				if effective.has(field):
+					event[field] = effective[field]
+			if not staged_enemies.is_slain(source):
+				if effective.type == "attack":
+					var actual_target: int = effective.target_position
+					if reactions != null:
+						var preview: Dictionary = reactions.preview_actual_recipient(
+							staged_party, effective.target_position)
+						if not preview.get("ok", false):
+							return failure
+						actual_target = preview.actual_target_position
+					# A living cloth-eater eats the real recipient's Block before its
+					# own bite resolves: the announced target, a Guard redirect and
+					# earlier staged swaps all matter here, never a merely previewed
+					# or already-skipped beat. Staged only, so a later rejection in
+					# this batch publishes none of it.
+					if _chews_block(staged_enemies, source) \
+							and not _eat_block(staged_party, actual_target):
 						return failure
-					actual_target = preview.actual_target_position
-				# A living cloth-eater eats the real recipient's Block before its
-				# own bite resolves: the announced target, a Guard redirect and
-				# earlier staged swaps all matter here, never a merely previewed
-				# or already-skipped beat. Staged only, so a later rejection in
-				# this batch publishes none of it.
-				if _chews_block(staged_enemies, source) \
-						and not _eat_block(staged_party, actual_target):
-					return failure
-				# The sting's status is judged by the recipient's real HP change,
-				# so Block and a Guard redirect decide it, not the announcement.
-				var sting: bool = _stings(staged_enemies, source)
-				var drains: bool = _drains(staged_enemies, source)
-				var hp_before: int = -1
-				if sting and actual_target >= 1 and actual_target <= CombatParty.PARTY_SIZE:
-					hp_before = staged_party.get_hero(actual_target).get("hp", 0)
-				# Drain quotes only this single confirmed hit, so the real
-				# recipient's pre-hit record is captured before it is dispatched.
-				var recipient_before: Dictionary = staged_party.get_hero(actual_target)
-				var hit_target: int = actual_target
-				# The source's stored Enrage stacks add their authored bonus ONCE
-				# to its own announced amount, before any status adjustment and
-				# therefore before Guard/Block handling. The roster's count is only
-				# read here: no stack is awarded or rewritten by this beat.
-				var enrage_bonus := _enrage_attack_bonus(staged_enemies, source)
-				var announced: int = effective.amount
-				if enrage_bonus < 0 or announced > CombatParty.MAX_INT - enrage_bonus:
-					return failure
-				var damage := CombatStatuses.new().adjusted_attack_damage(announced + enrage_bonus,
-					staged_enemies.get_enemy(source).get("statuses", {}),
-					staged_party.get_hero(actual_target).get("statuses", {}))
-				var attack: Dictionary = effective.duplicate(true)
-				attack.erase("type")
-				attack.amount = damage
-				if reactions != null:
-					var reaction_result: Dictionary = reactions.resolve_enemy_attack(
-						staged_party, staged_enemies, attack)
-					if not reaction_result.get("ok", false):
+					# The sting's status is judged by the recipient's real HP change,
+					# so Block and a Guard redirect decide it, not the announcement.
+					var sting: bool = _stings(staged_enemies, source)
+					var drains: bool = _drains(staged_enemies, source)
+					var hp_before: int = -1
+					if sting and actual_target >= 1 and actual_target <= CombatParty.PARTY_SIZE:
+						hp_before = staged_party.get_hero(actual_target).get("hp", 0)
+					# Drain quotes only this single confirmed hit, so the real
+					# recipient's pre-hit record is captured before it is dispatched.
+					var recipient_before: Dictionary = staged_party.get_hero(actual_target)
+					var hit_target: int = actual_target
+					# The source's stored Enrage stacks add their authored bonus ONCE
+					# to its own announced amount, before any status adjustment and
+					# therefore before Guard/Block handling. The roster's count is only
+					# read here: no stack is awarded or rewritten by this beat.
+					var enrage_bonus := _enrage_attack_bonus(staged_enemies, source)
+					if enrage_bonus < 0 or effective.amount > CombatParty.MAX_INT - enrage_bonus:
 						return failure
-					event.applied = reaction_result.applied
-					event.actual_target_position = reaction_result.actual_target_position
-					event.redirected = reaction_result.redirected
-					event.retaliation_damage = reaction_result.retaliation_damage
-					event.retaliatory_damage = reaction_result.retaliatory_damage
-					hit_target = reaction_result.actual_target_position
-				else:
-					var result := CombatEnemyAttacks.new().execute_attacks(staged_party, [attack])
+					var total: int = effective.amount + enrage_bonus
+					@warning_ignore("integer_division")
+					var announced: int = total / hit_count
+					# Preserve every point when a scaled total is odd.
+					if hit_index < total % hit_count:
+						announced += 1
+					var damage := CombatStatuses.new().adjusted_attack_damage(announced,
+						staged_enemies.get_enemy(source).get("statuses", {}),
+						staged_party.get_hero(actual_target).get("statuses", {}))
+					var attack: Dictionary = effective.duplicate(true)
+					attack.erase("type")
+					attack.erase("hits")
+					attack.amount = damage
+					if reactions != null:
+						var reaction_result: Dictionary = reactions.resolve_enemy_attack(
+							staged_party, staged_enemies, attack)
+						if not reaction_result.get("ok", false):
+							return failure
+						event.applied = reaction_result.applied
+						event.actual_target_position = reaction_result.actual_target_position
+						event.redirected = reaction_result.redirected
+						event.retaliation_damage = reaction_result.retaliation_damage
+						event.retaliatory_damage = reaction_result.retaliatory_damage
+						hit_target = reaction_result.actual_target_position
+					else:
+						var result := CombatEnemyAttacks.new().execute_attacks(staged_party, [attack])
+						if not result.ok:
+							return failure
+						event.applied = result.events[0].applied
+					# Drain is the source's own reward for that one confirmed hit: it
+					# heals the actor that really lost HP (after Guard and Block), not
+					# the announced slot, and a skipped beat or a source slain by
+					# Thorns in the same resolution can never heal or revive anything.
+					if drains and event.applied and not staged_enemies.is_slain(source):
+						if hit_target != actual_target:
+							return failure
+						var receipt := _hit_receipt(recipient_before,
+							staged_party.get_hero(hit_target), damage)
+						if not receipt.get("ok", false) \
+								or not CombatEnemyKeywordRules.new().resolve_drain_after_hit(
+									staged_enemies, source, receipt).get("ok", false):
+							return failure
+					# A slain attacker (Thorns retaliation) never lands its sting, and
+					# the bonus status must not break the batch's atomicity.
+					if sting and not staged_enemies.is_slain(source) \
+							and not _sting_bleed(staged_party, actual_target, hp_before):
+						return failure
+				elif effective.type == "block":
+					var result := CombatEnemyBlocks.execute_blocks(staged_enemies, [effective])
 					if not result.ok:
 						return failure
 					event.applied = result.events[0].applied
-				# Drain is the source's own reward for that one confirmed hit: it
-				# heals the actor that really lost HP (after Guard and Block), not
-				# the announced slot, and a skipped beat or a source slain by
-				# Thorns in the same resolution can never heal or revive anything.
-				if drains and event.applied and not staged_enemies.is_slain(source):
-					if hit_target != actual_target:
-						return failure
-					var receipt := _hit_receipt(recipient_before,
-						staged_party.get_hero(hit_target), damage)
-					if not receipt.get("ok", false) \
-							or not CombatEnemyKeywordRules.new().resolve_drain_after_hit(
-								staged_enemies, source, receipt).get("ok", false):
-						return failure
-				# A slain attacker (Thorns retaliation) never lands its sting, and
-				# the bonus status must not break the batch's atomicity.
-				if sting and not staged_enemies.is_slain(source) \
-						and not _sting_bleed(staged_party, actual_target, hp_before):
-					return failure
-			elif effective.type == "block":
-				var result := CombatEnemyBlocks.execute_blocks(staged_enemies, [effective])
-				if not result.ok:
-					return failure
-				event.applied = result.events[0].applied
-			else:
-				# A policy shove announced before a neighbour fell cannot be
-				# executed; its beat stays inert instead of failing the batch.
-				if effective.type == "shove" and not policy.is_empty() \
-						and not CombatEnemyIntents.shove_is_legal(staged_party,
-							effective.target_position, effective.direction):
-					event.applied = false
-				# An earlier beat of this same batch can down the party's last
-				# living hero. The fight is already decided then, so a remaining
-				# hero-targeted beat has nothing left to change: it stays inert
-				# instead of rejecting an authentic lethal/Block-snipping batch
-				# and locking the turn. A downed target beside a living ally still
-				# fails closed below.
-				elif effective.type in ["snip_block", "debuff"] \
-						and _party_has_no_living_hero(staged_party):
-					event.applied = false
 				else:
-					var result := CombatEnemySpecialActions.new().execute_actions(
-						staged_party, staged_enemies, [effective])
-					if not result.ok:
-						return failure
-					event.applied = result.events[0].applied
-		if reactions != null and effective.type == "attack" and not event.has("actual_target_position"):
-			# A slain source never enters the resolver, but still has a useful
-			# skipped beat in the reaction-mode trace.
-			event.actual_target_position = effective.target_position
-			event.redirected = false
-			event.retaliation_damage = 0
-			event.retaliatory_damage = 0
-		events.append(event)
+					# A policy shove announced before a neighbour fell cannot be
+					# executed; its beat stays inert instead of failing the batch.
+					if effective.type == "shove" and not policy.is_empty() \
+							and not CombatEnemyIntents.shove_is_legal(staged_party,
+								effective.target_position, effective.direction):
+						event.applied = false
+					# An earlier beat of this same batch can down the party's last
+					# living hero. The fight is already decided then, so a remaining
+					# hero-targeted beat has nothing left to change: it stays inert
+					# instead of rejecting an authentic lethal/Block-snipping batch
+					# and locking the turn. A downed target beside a living ally still
+					# fails closed below.
+					elif effective.type in ["snip_block", "debuff"] \
+							and _party_has_no_living_hero(staged_party):
+						event.applied = false
+					else:
+						var result := CombatEnemySpecialActions.new().execute_actions(
+							staged_party, staged_enemies, [effective])
+						if not result.ok:
+							return failure
+						event.applied = result.events[0].applied
+			if reactions != null and effective.type == "attack" and not event.has("actual_target_position"):
+				# A slain source never enters the resolver, but still has a useful
+				# skipped beat in the reaction-mode trace.
+				event.actual_target_position = effective.target_position
+				event.redirected = false
+				event.retaliation_damage = 0
+				event.retaliatory_damage = 0
+			events.append(event)
 	# Preserve dictionaries and unrelated metadata; actor identity follows swaps.
 	var originals: Dictionary = {}
 	for hero in party._heroes:
@@ -201,6 +223,8 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		# sources must remain in the same original enemy slot/dictionary.
 		enemies._enemies[index].hp = staged_enemies._enemies[index].hp
 		enemies._enemies[index].block = staged_enemies._enemies[index].block
+		if staged_enemies._enemies[index].has("statuses"):
+			enemies._enemies[index].statuses = staged_enemies._enemies[index].statuses
 	return {"ok": true, "events": events}
 
 

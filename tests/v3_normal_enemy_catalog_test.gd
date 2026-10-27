@@ -432,7 +432,7 @@ func _trio_expected() -> Dictionary:
 			"art_path": "res://assets/paper/enemies/needle_wasp.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
 				{"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
-				{"type": "attack", "amount": 8, "weight": 3}]}}
+				{"type": "attack", "amount": 8, "hits": 2, "weight": 3}]}}
 	}
 
 ## True when the record really authors this action alternative.
@@ -1583,17 +1583,17 @@ func _test_needle_wasp_bleeding_sting() -> void:
 	var without_bleed: Dictionary = party.get_hero(3)
 	var receipt := CombatEnemyPhase.new().execute_phase(party, sting_case.enemies,
 		sting_case.intents, null, true)
-	_check(receipt.get("ok") == true and receipt.get("events", []).size() == 1,
+	_check(receipt.get("ok") == true and receipt.get("events", []).size() == 2,
 		"AC2: the announced sting resolves through a real CombatEnemyPhase")
-	if receipt.get("ok", false) and receipt.get("events", []).size() == 1:
+	if receipt.get("ok", false) and receipt.get("events", []).size() == 2:
 		var event: Dictionary = receipt["events"][0]
 		_check(event == {"type": "attack", "enemy_position": 1, "applied": true,
 			"target_position": 3},
 			"AC2: the phase receipt keeps its exact pre-existing attack shape")
 	_check(party.get_hero(3).get("hp") == 18 and party.get_hero(3).get("block") == 0,
 		"AC2: the unblocked 8-damage sting drops Tinker from 26 to 18 HP")
-	_check(party.get_hero(3).get("statuses", {}).get("bleed", 0) == 1,
-		"AC2: the hero who really lost HP gains exactly Bleed 1")
+	_check(party.get_hero(3).get("statuses", {}).get("bleed", 0) == 2,
+		"AC2: the hero who really lost HP gains Bleed 1 per hit")
 	_check(int(without_bleed.get("statuses", {}).get("bleed", 0)) == 0,
 		"precondition: Tinker held no Bleed before the sting")
 	_check([party.get_hero(1), party.get_hero(2)] == untouched,
@@ -1607,8 +1607,8 @@ func _test_needle_wasp_bleeding_sting() -> void:
 			second.intents, null, true)
 		_check(second_receipt.get("ok") == true, "the second sting resolves through the real phase")
 		_check(party.get_hero(3).get("hp") == 10
-			and party.get_hero(3).get("statuses", {}).get("bleed", 0) == 2,
-			"AC2: a second confirmed sting stacks Bleed to 2 and drops Tinker to 10 HP")
+			and party.get_hero(3).get("statuses", {}).get("bleed", 0) == 4,
+			"AC2: a second confirmed sting stacks Bleed to 4 and drops Tinker to 10 HP")
 	# AC3: the separate authored Bleed 2 debuff stays exactly Bleed 2.
 	var debuff_party := _party()
 	var debuff_case := _force_normal_alternative(wasp, bleed_2, debuff_party)
@@ -1723,9 +1723,9 @@ func _test_needle_wasp_bleeding_sting() -> void:
 			"the guard case announces Tinker before any redirect")
 		var guard_receipt := CombatEnemyPhase.new().execute_phase(guard_party,
 			guard_case.enemies, guard_case.intents, reactions)
-		_check(guard_receipt.get("ok") == true and guard_receipt.get("events", []).size() == 1,
+		_check(guard_receipt.get("ok") == true and guard_receipt.get("events", []).size() == 2,
 			"AC3: the redirected sting resolves through the real reaction path")
-		if guard_receipt.get("ok", false) and guard_receipt.get("events", []).size() == 1:
+		if guard_receipt.get("ok", false) and guard_receipt.get("events", []).size() == 2:
 			var guard_event: Dictionary = guard_receipt["events"][0]
 			_check(guard_event.get("target_position") == 3
 				and guard_event.get("actual_target_position") == 1

@@ -212,6 +212,8 @@ static func weighted_action(raw: Variant) -> Dictionary:
 		body[key] = raw[key]
 	if not _normalize_integral(body, "amount", 0):
 		return {}
+	if body.has("hits") and not _normalize_integral(body, "hits", 2):
+		return {}
 	if body.has("direction") and not _normalize_integral(body, "direction", -1):
 		return {}
 	var probe: Dictionary = body.duplicate(true)
@@ -430,6 +432,8 @@ static func valid_action(action: Variant) -> bool:
 	if not target is int or target < 1 or target > 3:
 		return false
 	if kind == "attack":
+		if action.has("hits"):
+			return action.size() == 4 and action.hits is int and action.hits == 2
 		return action.size() == 3
 	if kind == "snip_block":
 		return action.size() == 3 and amount == 0
