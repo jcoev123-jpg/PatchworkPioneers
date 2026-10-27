@@ -84,26 +84,57 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 		if is_instance_valid(app.campfire_view) and app.campfire_view.is_visible_in_tree():
 			_check(app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
 				"transit Campfire binds an open visit")
-			await _rest_input(app.campfire_heal_button, keyboard)
+			var stale_heal: Button = app.campfire_heal_button
+			await _rest_input(stale_heal, keyboard)
 			await _await_rest_state(id, "Campfire healed", func(): return (app._campfire_closed
 				and app.campfire_visit.read_state().status == RunCampfireVisit.HEALED
 				and not app.campfire_view.is_visible_in_tree() and _rest_connected(id)))
 			_check(not app.campfire_view.visible and app._campfire_closed,
 				"transit Campfire Heal completes its visit")
+			var healed: Array = _persistent()
+			if is_instance_valid(stale_heal):
+				stale_heal.pressed.emit()
+			await process_frame
+			_check(_persistent() == healed and app.campfire_visit.read_state().status == RunCampfireVisit.HEALED
+				and _rest_connected(id), "stale Campfire Heal after completion is inert")
 		else:
 			_check(is_instance_valid(app.rest_view) and app.rest_view.is_visible_in_tree()
 				and app.rest_recovery != null and not app.rest_recovery.is_consumed(),
 				"legacy transit Rest binds an unconsumed recovery")
 			if not is_instance_valid(app.rest_view) or app.rest_recovery == null:
 				return
-			await _rest_input(app.rest_heal_button, keyboard)
+			var heal: Button = app.rest_heal_button
+			var leave: Button = app.rest_continue_button
+			var opened: Array = _persistent()
+			# Premature Continue before Heal reaches the real handler and must not settle the visit.
+			leave.pressed.emit()
+			await process_frame
+			_check(_persistent() == opened and app.rest_view.is_visible_in_tree()
+				and not app.rest_recovery.is_consumed(),
+				"premature legacy Continue before Heal is inert")
+			await _rest_input(heal, keyboard)
 			await _await_rest_state(id, "legacy healed", func(): return (app.rest_recovery.is_consumed()
 				and app.rest_heal_button.disabled and _rest_action_ready(app.rest_continue_button)))
 			_check(app.rest_recovery.is_consumed() and app.rest_heal_button.disabled
 				and not app.rest_continue_button.disabled, "legacy transit Heal commits once")
-			await _rest_input(app.rest_continue_button, keyboard)
+			_check(app.party_carryover.read_state().completed_rests.has(id),
+				"legacy transit Heal records exactly this Rest in the party ledger")
+			var healed: Array = _persistent()
+			heal.pressed.emit()
+			await process_frame
+			_check(_persistent() == healed and app.rest_view.is_visible_in_tree(),
+				"repeated legacy Heal after commit is inert")
+			await _rest_input(leave, keyboard)
 			await _await_rest_state(id, "legacy closed", func(): return (
 				not app.rest_view.is_visible_in_tree() and _rest_connected(id)))
+			var settled: Array = _persistent()
+			if is_instance_valid(leave):
+				leave.pressed.emit()
+			if is_instance_valid(heal):
+				heal.pressed.emit()
+			await process_frame
+			_check(_persistent() == settled and _rest_connected(id),
+				"stale legacy Heal and Continue after leaving are inert")
 		await _check_connected_book()
 		_check(app.route_view != null and app.route_view.is_visible_in_tree()
 			and app._can_choose_connected_route(), "completed Rest keeps connected chooser live")
