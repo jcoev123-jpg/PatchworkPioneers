@@ -153,7 +153,8 @@ func _actual_attack_phases() -> void:
 			continue
 		for option in raw.intent.actions:
 			var parsed := CombatEnemyIntents.weighted_action(option)
-			if not parsed.is_empty() and parsed.action.type == "attack" 					and parsed.action.amount in BASE_TO_BAND:
+			if not parsed.is_empty() and parsed.action.type == "attack" 					and parsed.action.amount in BASE_TO_BAND \
+					and (not raw.has("chew_block_on_attack") or raw.get("chew_block_on_attack", false) != true):
 				selected = actor.position
 				break
 		if selected > 0:

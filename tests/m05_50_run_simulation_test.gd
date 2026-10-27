@@ -20,10 +20,10 @@ var checks := 0
 func _cohort_seeds() -> Array[int]:
 	var values: Array[int] = []
 	for value in range(1, 48):
-		if value == 9:
+		if value == 9 or value == 10:
 			continue
 		values.append(value)
-	values.append_array([99, 541, 249, 48])
+	values.append_array([99, 541, 249, 48, 50])
 	return values
 
 
