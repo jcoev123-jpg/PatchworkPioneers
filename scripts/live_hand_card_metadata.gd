@@ -38,6 +38,7 @@ var _sew := CombatButtonGolemSewCards.new()
 var _roll := CombatButtonGolemRollCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
 var _pitchfork := CombatScarecrowPitchforkCards.new()
+var _bolas := CombatYarnRangerBolasCards.new()
 var _vigil := CombatLanternMonkPartyCards.new()
 var _re_stuff := CombatScarecrowReStuffCards.new()
 var _warden_pool := WardenPoolCards.new()
@@ -86,6 +87,8 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if _bolas.is_supported_card(card_id):
+		return CombatYarnRangerBolasCards.bolas_definition(card_id)
 	if _v3_tinker_scrap.is_supported_card(card_id):
 		return CombatTinkerV3ScrapSupportCards.scrap_support_definition(card_id)
 	if CombatYarnRangerKnitCards.CARDS.has(card_id):
@@ -353,6 +356,11 @@ func get_faces(panel: Control) -> Dictionary:
 ## effect and keyword text without that legend; the default keeps the hand
 ## tooltip byte-for-byte unchanged and an unknown ID still fails closed.
 func base_effect_text(card_id: String, include_pips: bool = true) -> String:
+	if _bolas.is_supported_card(card_id):
+		var card := _definition(card_id)
+		if card.is_empty():
+			return "Unknown card"
+		return "%s; Yarn Ranger; %d energy\nFrom %s; To one selected living enemy %s\nDeal %d attack damage through Block before HP; THEN apply NEW Tangled %d to that same slot. Pre-existing Tangled adds +2 damage to this hit (Weak/Exposed also apply); the new Tangled does not boost its own hit.\n%s" % [card.display_name, card.cost, _positions(card.from_positions), _positions(card.to_positions), card.effects.damage, card.effects.tangled, _pip_legend(card) if include_pips else ""]
 	if _roll.is_supported_card(card_id) and not _definition(card_id).is_empty():
 		var card := _definition(card_id)
 		return "%s; Button Golem; 1 energy\nFrom %s; To one selected living other ally in any hero slot\n%s Tangled on either participant prevents the swap.\n%s" % [card.display_name, _positions(card.from_positions), _rules(card_id), _pip_legend(card) if include_pips else ""]
@@ -1076,7 +1084,7 @@ func _update_visual(panel: Control) -> void:
 		if id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatYarnRangerSnareCards.CARDS.has(id) or CombatScarecrowCrowCards.CARDS.has(id):
 			var area = _app.get_node_or_null("LiveAreaAttackAction")
 			playable = area != null and area._eligible(panel, id)
-		elif CombatYarnRangerKnitCards.CARDS.has(id) or id in VIGIL_IDS or id in GLOW_IDS or id in CombatSupportCards.SCARECROW_STRAW_IDS or _re_stuff.is_supported_card(id) or _feint.is_supported_card(id) or _pitchfork.is_supported_card(id) or _pop.is_supported_card(id) or _sew.is_supported_card(id) or _roll.is_supported_card(id) or _v3_tinker_scrap.is_supported_card(id):
+		elif CombatYarnRangerKnitCards.CARDS.has(id) or id in VIGIL_IDS or id in GLOW_IDS or id in CombatSupportCards.SCARECROW_STRAW_IDS or _re_stuff.is_supported_card(id) or _feint.is_supported_card(id) or _pitchfork.is_supported_card(id) or _bolas.is_supported_card(id) or _pop.is_supported_card(id) or _sew.is_supported_card(id) or _roll.is_supported_card(id) or _v3_tinker_scrap.is_supported_card(id):
 			var support_presenter = _app.get_node_or_null("LiveSupportHand")
 			playable = support_presenter != null and support_presenter._eligible(
 				panel, id, _app.deck, _app.party, _app.battle_view)
@@ -1201,6 +1209,9 @@ func _center_text(panel: Control, value: String, rect: Rect2, preferred: int) ->
 ## keeps the ordinary and two-half sewn faces identical; applied amounts come
 ## from the same validated record the tooltip explains, never from a prediction.
 func _rules(id: String) -> String:
+	if _bolas.is_supported_card(id):
+		var card := _definition(id)
+		return "" if card.is_empty() else "Deal %d; then apply Tangled %d." % [card.effects.damage, card.effects.tangled]
 	if _v3_tinker_scrap.is_supported_card(id):
 		var effects: Dictionary = _definition(id).effects
 		if effects.has("block"):
