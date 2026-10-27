@@ -7,6 +7,14 @@ extends SceneTree
 ## confirmed-hit projection, one owner-turn expiry, and fail-closed rejection snapshots. Like the
 ## Feint helper, this is callable rules-layer behaviour only: no live hand, reward, app or run-deck
 ## wiring is asserted here.
+##
+## The real seeded deck, party and CombatEnemies rosters additionally drive the scene-free
+## CombatRagDuelistNeedleBarrageCards service for the rare Needle Barrage / Needle Barrage+
+## printings: one paid play, three SEPARATE strikes of the printed base damage, per-strike
+## Block-before-HP accounting against the current defender state, legal Weak/Exposed/Tangled
+## adjustment, a mid-barrage kill that stops the remaining strikes without retargeting, seeded
+## replay, and fail-closed refusal/forgery snapshots. It too is callable rules-layer behaviour
+## only: no live hand, reward, app or run-deck wiring is asserted here.
 
 const ScriptClass = preload("res://data/cards/rag_duelist_pool_cards.gd")
 
@@ -38,6 +46,15 @@ const RIPOSTE_FILLERS := ["filler_stitch", "filler_thread", "filler_needle"]
 const HEROES_PATH := "res://data/heroes/v3_party_roster.json"
 const ALLY_PATH := "res://data/heroes/starter_party.json"
 
+## The rare pool printing this task resolves, and the per-strike damage each one prints (never
+## read back from the service).
+const BARRAGE := "rag_duelist_needle_barrage"
+const BARRAGE_PLUS := "rag_duelist_needle_barrage_plus"
+const BARRAGE_IDS := [BARRAGE, BARRAGE_PLUS]
+const BARRAGE_COST := 2
+const BARRAGE_HITS := 3
+const BARRAGE_DAMAGE := {BARRAGE: 3, BARRAGE_PLUS: 4}
+
 ## Catalog seam double: only Riposte authentication reads it, so a forged record proves the paid
 ## service fails closed on a rewritten catalog. Every other case uses the real catalogs.
 class ForgedRiposte extends CombatRagDuelistRiposteCards:
@@ -49,9 +66,21 @@ class ForgedRiposte extends CombatRagDuelistRiposteCards:
 			return forged.duplicate(true)
 		return super(card_id)
 
+## The same seam for the Needle Barrage resolver: one exact printing is rewritten, the other stays
+## authentic, so both directions of the base/'+' link are exercised.
+class ForgedBarrage extends CombatRagDuelistNeedleBarrageCards:
+	var forged_id: String = ""
+	var forged: Dictionary = {}
+
+	func _catalog_definition(card_id: String) -> Dictionary:
+		if card_id == forged_id:
+			return forged.duplicate(true)
+		return super(card_id)
+
 var failures: Array[String] = []
 var checks: int = 0
 var riposte_service := CombatRagDuelistRiposteCards.new()
+var barrage_service := CombatRagDuelistNeedleBarrageCards.new()
 
 
 func _initialize() -> void:
@@ -65,6 +94,12 @@ func _initialize() -> void:
 	_test_riposte_ac2_projection_and_expiry()
 	_test_riposte_ac3_rejections()
 	_test_riposte_seeded_replay()
+	_test_barrage_cards_authored()
+	_test_barrage_ac1_paid_play()
+	_test_barrage_ac2_accounting()
+	_test_barrage_ac3_rejections()
+	_test_barrage_forged_catalog()
+	_test_barrage_seeded_replay()
 	if failures.is_empty():
 		print("v3_rag_duelist_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -851,4 +886,723 @@ func _authored_record(path: String, hero_id: String) -> Dictionary:
 		return {"id": hero_id, "name": str(entry.get("name", "")), "max_hp": int(max_hp)}
 	_check(false, path + " contains " + hero_id)
 	return {}
+
+
+## --- Paid three-strike Needle Barrage cards (rare pool) ---------------------------------------
+##
+## These cases drive the scene-free CombatRagDuelistNeedleBarrageCards service over the same real
+## seeded CombatDeck and CombatParty fixtures plus real CombatEnemies rosters. Like the Feint and
+## Riposte helpers they claim callable rules-layer behaviour only: no live hand, reward, app or
+## run-deck wiring is asserted here.
+
+## The exact authored line the pool must still carry for both printings, and the service's own
+## authentication of that pair. Fails closed on any rewritten, relinked or mistyped record.
+func _test_barrage_cards_authored() -> void:
+	var pool := RagDuelistPoolCards.new()
+	for card_id: String in BARRAGE_IDS:
+		var record: Dictionary = pool.get_definition(card_id)
+		_check(not record.is_empty() and record.get("id") == card_id,
+			card_id + ": authored catalog record exists")
+		if record.is_empty():
+			continue
+		_check(record.get("owner") == "rag_duelist", card_id + ": owned by the Rag Duelist")
+		_check(record.get("cost") == BARRAGE_COST,
+			card_id + ": cost is " + str(BARRAGE_COST))
+		_check(record.get("from_positions") == [1], card_id + ": prints only hero seat 1")
+		_check(record.get("target_kind") == "enemy_single", card_id + ": targets one enemy")
+		_check(record.get("to_positions") == [1, 2], card_id + ": prints enemy slots 1-2")
+		_check(record.get("effects") == {"damage": int(BARRAGE_DAMAGE[card_id]),
+			"hit_count": BARRAGE_HITS, "independent_hits": true},
+			card_id + ": exact independent line of " + str(BARRAGE_DAMAGE[card_id]) + " x 3")
+		_check(record.get("starting_copies") == 0,
+			card_id + ": authored starting copies untouched")
+		_check(record.get("reward_eligible") == (card_id == BARRAGE),
+			card_id + ": authored reward eligibility untouched")
+		_check(barrage_service.is_supported_card(card_id),
+			card_id + ": the service authenticates the ID")
+	_check(pool.get_upgrade_id(BARRAGE) == BARRAGE_PLUS
+		and pool.get_definition(BARRAGE_PLUS).get("upgrade_of") == BARRAGE,
+		"Needle Barrage base-to-+ link is intact")
+	# Real Rag Duelist pool cards this resolver must not play, plus aliases of the pair.
+	for unsupported: String in ["rag_duelist_needle_prick", "rag_duelist_needle_prick_plus",
+			"rag_duelist_needle_lunge", "rag_duelist_needle_lunge_plus",
+			"rag_duelist_cape_guard", "rag_duelist_cape_guard_plus",
+			"rag_duelist_velvet_feint", "rag_duelist_velvet_feint_plus",
+			"rag_duelist_duelist_reprise", "rag_duelist_duelist_reprise_plus",
+			"rag_duelist_cape_flourish", "rag_duelist_cape_flourish_plus",
+			"rag_duelist_tattered_snare", "rag_duelist_tattered_snare_plus",
+			"rag_duelist_needle_barrage_plus_plus", "rag_duelist_needle_barrage+",
+			"rag_duelist_needle_barrage ", "RAG_DUELIST_NEEDLE_BARRAGE", ""]:
+		_check(not barrage_service.is_supported_card(unsupported),
+			unsupported + ": not a Needle Barrage printing for this service")
+	for malformed: Variant in [null, 0, 3.5, false, [], {}, StringName(BARRAGE)]:
+		_check(not barrage_service.is_supported_card(malformed),
+			"non-string or forged ID is never supported: " + str(malformed))
+	var rng := _rng(8242)
+	var state_before: int = rng.state
+	for card_id: String in BARRAGE_IDS:
+		barrage_service.is_supported_card(card_id)
+	barrage_service.is_supported_card("rag_duelist_unknown")
+	_check(rng.state == state_before and not BARRAGE_IDS.is_empty(),
+		"supported-card queries consume no run RNG (non-empty precondition)")
+
+
+## AC1: both authentic printings, from the one printed hero seat onto enemy slot 1 or 2, charge
+## exactly two energy, discard exactly one genuinely held copy and land three SEPARATE strikes of
+## the printed base damage - never one pooled 9/12-damage blow.
+func _test_barrage_ac1_paid_play() -> void:
+	for card_id: String in BARRAGE_IDS:
+		var base: int = int(BARRAGE_DAMAGE[card_id])
+		for target_position in [1, 2]:
+			_play_barrage_survivor(card_id, base, target_position)
+
+
+func _play_barrage_survivor(card_id: String, base: int, target_position: int) -> void:
+	var label := "%s onto enemy %d" % [card_id, target_position]
+	var deck := _barrage_deck(card_id, 6100 + 10 * target_position)
+	var party := _riposte_party(1)
+	var enemies := _barrage_enemies(60, target_position)
+	var held_before: int = deck.hand.count(card_id)
+	var before := _barrage_snapshot(deck, party, enemies)
+	_check(deck.energy == BARRAGE_COST and held_before >= 1,
+		label + ": the fixture holds the printing with exactly its printed cost")
+	var receipt: Dictionary = barrage_service.play_card(deck, party, enemies, card_id,
+		target_position)
+	_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+		label + ": authorized paid play")
+	_check(receipt.get("card_id") == card_id and receipt.get("cost") == BARRAGE_COST
+		and receipt.get("energy_spent") == BARRAGE_COST,
+		label + ": the receipt names the printing and its printed cost")
+	_check(receipt.get("energy_before") == BARRAGE_COST and receipt.get("energy_after") == 0,
+		label + ": exactly the shared two energy was charged")
+	_check(receipt.get("owner_position") == 1 and receipt.get("owner_id") == "rag_duelist",
+		label + ": the owning seat is the real living Rag Duelist in seat 1")
+	_check(receipt.get("target_position") == target_position,
+		label + ": the chosen enemy slot is reported")
+	_check(receipt.get("base_damage") == base
+		and receipt.get("printed_hit_count") == BARRAGE_HITS
+		and receipt.get("hit_count") == BARRAGE_HITS,
+		label + ": three printed strikes of base " + str(base))
+	_check(receipt.get("target_hp_before") == 60
+		and receipt.get("target_hp_after") == 60 - BARRAGE_HITS * base,
+		label + ": the survivor lost exactly three separate printed strikes")
+	var hits: Array = receipt.get("hits", [])
+	_check(hits.size() == BARRAGE_HITS, label + ": every strike has its own receipt")
+	for index in range(mini(hits.size(), BARRAGE_HITS)):
+		var hit: Dictionary = hits[index]
+		_check(hit.get("hit") == index + 1 and hit.get("position") == target_position,
+			label + ": strike " + str(index + 1) + " is the chosen enemy slot")
+		_check(hit.get("base_damage") == base and hit.get("damage") == base,
+			label + ": strike " + str(index + 1) + " is the printed base " + str(base)
+			+ ", never a pooled " + str(BARRAGE_HITS * base))
+		_check(hit.get("block_absorbed") == 0 and hit.get("hp_loss") == base,
+			label + ": unblocked strike " + str(index + 1) + " loses exactly " + str(base) + " HP")
+		_check(hit.get("target_hp_after") == 60 - (index + 1) * base,
+			label + ": strike " + str(index + 1) + " reports the real remaining HP")
+	var expected_hand: Array = before["hand"].duplicate()
+	expected_hand.erase(card_id)
+	_check(deck.hand == expected_hand and deck.discard_pile == before["discard"] + [card_id]
+		and deck.hand.count(card_id) == held_before - 1,
+		label + ": exactly one held copy moved to the discard with no extra draw")
+	_check(deck.draw_pile == before["draw"],
+		label + ": the draw pile keeps its exact order and nothing is drawn")
+	_check(deck.energy == before["energy"] - BARRAGE_COST,
+		label + ": exactly one two-energy payment left the shared turn")
+	_check(deck._rng.state == before["rng_state"] and deck._rng.seed == before["rng_seed"],
+		label + ": resolution consumes no seeded RNG draw")
+	_check(party.get_heroes() == before["heroes"], label + ": no hero record changed")
+	var target: Dictionary = enemies.get_enemy(target_position)
+	_check(target.get("hp") == 60 - BARRAGE_HITS * base and target.get("block") == 0
+		and target.get("position") == target_position,
+		label + ": the target keeps its slot and took all three strikes")
+	for slot in [1, 2]:
+		if slot != target_position:
+			_check(enemies.get_enemy(slot) == before["enemies"][slot - 1],
+				label + ": the untargeted enemy in slot " + str(slot) + " is untouched")
+	# Receipts are detached: mutating one cannot change the real roster.
+	hits[0]["damage"] = -99
+	_check(enemies.get_enemy(target_position).get("hp") == 60 - BARRAGE_HITS * base,
+		label + ": a mutated receipt cannot change the enemy")
+
+
+## AC2: every strike is resolved against the CURRENT defender state (Block absorbed before HP,
+## recalculated each strike), legal Weak/Exposed/Tangled modifiers apply to each separate strike,
+## an enemy slain by an early strike stops the barrage without retargeting, and the same seed
+## replays the exact receipts.
+func _test_barrage_ac2_accounting() -> void:
+	for card_id: String in BARRAGE_IDS:
+		var base: int = int(BARRAGE_DAMAGE[card_id])
+		_barrage_block_strikes(card_id, base)
+		_barrage_status_adjusted(card_id, base)
+		for kill_after in [1, 2]:
+			_barrage_mid_kill(card_id, base, kill_after)
+
+
+## Four Block against three separate strikes: strike one empties the remaining Block and strike two
+## lands on HP, which a single pooled blow can never show in its per-strike record.
+func _barrage_block_strikes(card_id: String, base: int) -> void:
+	var label := "%s against four Block" % card_id
+	var deck := _barrage_deck(card_id, 6200)
+	var party := _riposte_party(1)
+	var enemies := _barrage_enemies(60, 1)
+	_check(enemies.gain_block(1, 4), label + ": the target starts with four Block")
+	var receipt: Dictionary = barrage_service.play_card(deck, party, enemies, card_id, 1)
+	_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+		label + ": the paid barrage resolves")
+
+	# Independent per-strike expectation: Block first, then HP, recomputed every strike.
+	var expected_hits: Array = []
+	var block := 4
+	var hp := 60
+	for _index in range(BARRAGE_HITS):
+		var absorbed: int = mini(block, base)
+		block -= absorbed
+		var loss: int = mini(hp, base - absorbed)
+		hp -= loss
+		expected_hits.append({"damage": base, "block_absorbed": absorbed,
+			"hp_loss": loss, "target_hp_after": hp, "target_block_after": block})
+	var hits: Array = receipt.get("hits", [])
+	_check(hits.size() == BARRAGE_HITS, label + ": three strikes are reported")
+	for index in range(mini(hits.size(), expected_hits.size())):
+		var hit: Dictionary = hits[index]
+		var expected: Dictionary = expected_hits[index]
+		_check(hit.get("damage") == expected["damage"], label + ": strike " + str(index + 1)
+			+ " deals its own printed " + str(expected["damage"]))
+		_check(hit.get("block_absorbed") == expected["block_absorbed"],
+			label + ": strike " + str(index + 1) + " absorbs "
+			+ str(expected["block_absorbed"]) + " of the remaining Block")
+		_check(hit.get("hp_loss") == expected["hp_loss"], label + ": strike " + str(index + 1)
+			+ " takes " + str(expected["hp_loss"]) + " HP after that Block")
+		_check(hit.get("target_hp_after") == expected["target_hp_after"]
+			and hit.get("target_block_after") == expected["target_block_after"],
+			label + ": strike " + str(index + 1) + " reports the real HP and Block left")
+	# Hand-derived values for both printings, so the shared rules and this oracle cannot drift.
+	var absorbed_series: Array = []
+	var loss_series: Array = []
+	for hit: Dictionary in hits:
+		absorbed_series.append(hit.get("block_absorbed"))
+		loss_series.append(hit.get("hp_loss"))
+	if base == 3:
+		_check(absorbed_series == [3, 1, 0] and loss_series == [0, 2, 3],
+			label + ": 3/3/3 recomputes Block strike by strike (3, 1, 0 absorbed)")
+		_check(receipt.get("target_hp_after") == 55,
+			label + ": three 3-damage strikes through four Block cost exactly 5 HP")
+	else:
+		_check(absorbed_series == [4, 0, 0] and loss_series == [0, 4, 4],
+			label + ": 4/4/4 recomputes Block strike by strike (4, 0, 0 absorbed)")
+		_check(receipt.get("target_hp_after") == 52,
+			label + ": three 4-damage strikes through four Block cost exactly 8 HP")
+	_check(receipt.get("target_hp_before") == 60 and receipt.get("target_block_before") == 4,
+		label + ": the receipt reports the pre-barrage HP and Block")
+	_check(receipt.get("target_block_after") == 0
+		and enemies.get_enemy(1).get("block") == 0,
+		label + ": the target's Block is spent exactly once, strike by strike")
+
+
+## Weak on the owner, Exposed and Tangled on the defender: each of the three strikes is adjusted on
+## its own (Tangled's flat +2 applies per strike, not once), and no status or token is consumed.
+func _barrage_status_adjusted(card_id: String, base: int) -> void:
+	var label := "%s with legal Weak/Exposed/Tangled" % card_id
+	var deck := _barrage_deck(card_id, 6300)
+	var party := _riposte_party(1)
+	party._heroes[0]["statuses"] = {"weak": 1, "bleed": 2, "riposte": 2,
+		"dodge_next_attack": 1}
+	var enemies := _barrage_enemies(80, 1)
+	enemies._enemies[0]["statuses"] = {"exposed": 2, "tangled": 1}
+	var before := _barrage_snapshot(deck, party, enemies)
+	var rules := CombatStatuses.new()
+	var per_strike: int = rules.adjusted_attack_damage(base, {"weak": 1},
+		{"exposed": 2, "tangled": 1})
+	var pooled: int = rules.adjusted_attack_damage(base * BARRAGE_HITS, {"weak": 1},
+		{"exposed": 2, "tangled": 1})
+	_check(per_strike > 0 and per_strike * BARRAGE_HITS != pooled,
+		label + ": three separately adjusted strikes differ from one pooled "
+		+ str(base * BARRAGE_HITS) + " strike")
+	var receipt: Dictionary = barrage_service.play_card(deck, party, enemies, card_id, 1)
+	_check(receipt.get("ok") == true and receipt.get("hit_count") == BARRAGE_HITS,
+		label + ": all three status-adjusted strikes resolve")
+	var hits: Array = receipt.get("hits", [])
+	for index in range(mini(hits.size(), BARRAGE_HITS)):
+		var hit: Dictionary = hits[index]
+		_check(hit.get("damage") == per_strike, label + ": strike " + str(index + 1)
+			+ " is adjusted on its own to " + str(per_strike))
+		_check(hit.get("hp_loss") == per_strike and hit.get("block_absorbed") == 0,
+			label + ": unblocked adjusted strike " + str(index + 1) + " takes "
+			+ str(per_strike) + " HP")
+	_check(enemies.get_enemy(1).get("hp") == 80 - per_strike * BARRAGE_HITS,
+		label + ": the target took every adjusted strike separately")
+	# Hand-derived cross-check of the shared rules used above.
+	var weak_only: int = rules.adjusted_attack_damage(base, {"weak": 1}, {})
+	var exposed_only: int = rules.adjusted_attack_damage(base, {}, {"exposed": 1})
+	var tangled_only: int = rules.adjusted_attack_damage(base, {}, {"tangled": 1})
+	_check(weak_only == (2 if base == 3 else 3),
+		label + ": Weak floors one " + str(base) + "-damage strike to " + str(weak_only))
+	_check(exposed_only == (4 if base == 3 else 6),
+		label + ": Exposed raises one " + str(base) + "-damage strike to " + str(exposed_only))
+	_check(tangled_only == base + 2, label + ": Tangled adds its flat +2 to one strike")
+	# The authoritative status maps are untouched: no token consumed, no rider applied.
+	_check(party.get_hero(1).get("statuses") == {"weak": 1, "bleed": 2, "riposte": 2,
+		"dodge_next_attack": 1},
+		label + ": the owner keeps every counter and its unspent Dodge token")
+	_check(enemies.get_enemy(1).get("statuses") == {"exposed": 2, "tangled": 1},
+		label + ": the target keeps its counters and gains no invented status")
+	_check(party.get_heroes() == before["heroes"],
+		label + ": no hero HP or Block changed")
+	_check(_barrage_snapshot(deck, party, enemies)["rng_state"] == before["rng_state"],
+		label + ": a status-adjusted barrage consumes no seeded RNG draw")
+
+
+## A foe slain by strike one or two stops the barrage: no corpse hit, no retargeting, no slot
+## compaction and no RNG advancement.
+func _barrage_mid_kill(card_id: String, base: int, kill_after: int) -> void:
+	var label := "%s slaying on strike %d" % [card_id, kill_after]
+	var deck := _barrage_deck(card_id, 6400 + kill_after)
+	var party := _riposte_party(1)
+	var enemies := _barrage_enemies(base * kill_after, 1)
+	var before := _barrage_snapshot(deck, party, enemies)
+	var receipt: Dictionary = barrage_service.play_card(deck, party, enemies, card_id, 1)
+	_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+		label + ": the paid barrage resolves")
+	var hits: Array = receipt.get("hits", [])
+	_check(hits.size() == kill_after and receipt.get("hit_count") == kill_after,
+		label + ": exactly " + str(kill_after) + " strikes land, never a corpse hit")
+	for index in range(hits.size()):
+		var hit: Dictionary = hits[index]
+		_check(hit.get("hit") == index + 1 and hit.get("position") == 1,
+			label + ": strike " + str(index + 1) + " stays on the chosen enemy")
+	_check(int(receipt.get("target_hp_after")) == 0 and enemies.is_slain(1),
+		label + ": the chosen enemy is slain")
+	_check(enemies.get_enemy(1).get("position") == 1,
+		label + ": the slain slot never compacts")
+	_check(enemies.get_enemy(2) == before["enemies"][1],
+		label + ": no other enemy is targeted or damaged after the kill")
+	_check(deck.energy == before["energy"] - BARRAGE_COST
+		and deck.discard_pile == before["discard"] + [card_id],
+		label + ": the payment and the one discard happen exactly once")
+	_check(deck._rng.state == before["rng_state"] and deck._rng.seed == before["rng_seed"],
+		label + ": a mid-barrage kill consumes no seeded RNG draw")
+
+
+## AC3: bad payment, forged/unknown/absent printings, invalid actors, malformed status maps,
+## illegal or slain enemy seats and invalid combat state all fail closed and leave hand, draw,
+## discard, energy, party, enemy roster, status maps and the seeded RNG exactly as they were.
+func _test_barrage_ac3_rejections() -> void:
+	var party := _riposte_party(1)
+
+	# Missing inputs and an invalid combat state.
+	_barrage_rejected("null deck", null, party, _barrage_enemies(30, 1), BARRAGE, 1,
+		"invalid_request")
+	_barrage_rejected("null party", _barrage_deck(BARRAGE, 7002), null,
+		_barrage_enemies(30, 1), BARRAGE, 1, "invalid_request")
+	_barrage_rejected("null enemies", _barrage_deck(BARRAGE, 7003), party, null, BARRAGE, 1,
+		"invalid_request")
+	var broken := _barrage_deck(BARRAGE, 7004)
+	broken.combat_state = null
+	_check(broken.combat_state == null and broken.hand.has(BARRAGE),
+		"broken-deck fixture really has no combat state and still holds the card")
+	_barrage_rejected("deck without combat state", broken, party, _barrage_enemies(30, 1),
+		BARRAGE, 1, "invalid_deck")
+	var rngless := _barrage_deck(BARRAGE, 7005)
+	rngless._rng = null
+	_check(rngless._rng == null and rngless.turn_active,
+		"rngless-deck fixture really has no seeded generator and an active turn")
+	_barrage_rejected("deck without a seeded generator", rngless, party,
+		_barrage_enemies(30, 1), BARRAGE, 1, "invalid_deck")
+
+	# Turn, hold and card identity.
+	var inactive := _barrage_deck(BARRAGE, 7006, BARRAGE_COST, false)
+	_check(not inactive.turn_active and inactive.hand.is_empty(),
+		"inactive-turn fixture really has no active turn")
+	_barrage_rejected("inactive turn", inactive, party, _barrage_enemies(30, 1), BARRAGE, 1,
+		"inactive_turn")
+	var held := _barrage_deck(BARRAGE, 7007)
+	_check(held.hand.has(BARRAGE) and not held.hand.has(BARRAGE_PLUS),
+		"absent-card fixture holds the base Needle Barrage only")
+	_barrage_rejected("authentic '+' absent from the hand", held, party,
+		_barrage_enemies(30, 1), BARRAGE_PLUS, 1, "card_not_held")
+	var foreign := _barrage_deck("rag_duelist_needle_prick", 7008)
+	_check(foreign.hand.has("rag_duelist_needle_prick"),
+		"foreign-card fixture really holds another Rag Duelist card")
+	_barrage_rejected("another Rag Duelist card held in its place", foreign, party,
+		_barrage_enemies(30, 1), BARRAGE, 1, "card_not_held")
+	for unsupported: Variant in ["", "rag_duelist_needle_barrage_plus_plus",
+			"rag_duelist_needle_barrage ", "RAG_DUELIST_NEEDLE_BARRAGE",
+			"rag_duelist_needle_prick", "rag_duelist_needle_prick_plus",
+			"rag_duelist_needle_lunge_plus", 7, null, true, StringName(BARRAGE)]:
+		_barrage_rejected("unsupported or forged printing " + str(unsupported),
+			_barrage_deck(BARRAGE, 7009), party, _barrage_enemies(30, 1), unsupported, 1,
+			"unsupported_card")
+
+	# Payment.
+	for energy in [0, 1]:
+		var broke := _barrage_deck(BARRAGE, 7010 + energy, energy)
+		_check(broke.energy == energy and broke.hand.has(BARRAGE),
+			"energy-short fixture really holds " + str(energy)
+			+ " energy and still holds the card")
+		_barrage_rejected(str(energy) + " energy is short of the printed cost", broke, party,
+			_barrage_enemies(30, 1), BARRAGE, 1, "insufficient_energy")
+
+	# Owner seat, presence and health.
+	var rear := _riposte_party(2)
+	_check(rear.get_hero(2).get("id") == "rag_duelist",
+		"rear-slot fixture really seats the Rag Duelist in slot 2")
+	_barrage_rejected("Needle Barrage from its unprinted seat 2",
+		_barrage_deck(BARRAGE, 7012), rear, _barrage_enemies(30, 1), BARRAGE, 1,
+		"invalid_owner_position")
+	var downed := _riposte_party(1)
+	_check(downed.apply_damage(1, 400) and downed.is_downed(1),
+		"downed-owner fixture really has a downed Rag Duelist")
+	_barrage_rejected("downed Rag Duelist", _barrage_deck(BARRAGE, 7013), downed,
+		_barrage_enemies(30, 1), BARRAGE, 1, "owner_torn")
+	var no_owner := CombatParty.new([
+		{"id": "warden", "max_hp": 40}, {"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26},
+	])
+	_check(no_owner.is_valid() and no_owner.get_hero(1).get("id") != "rag_duelist"
+		and no_owner.get_hero(2).get("id") != "rag_duelist"
+		and no_owner.get_hero(3).get("id") != "rag_duelist",
+		"absent-owner fixture is a valid party without a Rag Duelist")
+	_barrage_rejected("party with no Rag Duelist owner", _barrage_deck(BARRAGE, 7014),
+		no_owner, _barrage_enemies(30, 1), BARRAGE, 1, "owner_missing")
+	var duplicated := _riposte_party(1)
+	duplicated._heroes[1]["id"] = "rag_duelist"
+	_check(duplicated.get_hero(1).get("id") == "rag_duelist"
+		and duplicated.get_hero(2).get("id") == "rag_duelist",
+		"duplicate-identity fixture really repeats the owner ID")
+	_barrage_rejected("duplicate Rag Duelist identity", _barrage_deck(BARRAGE, 7015),
+		duplicated, _barrage_enemies(30, 1), BARRAGE, 1, "duplicate_owner")
+
+	# Target seat.
+	for bad_target in [0, 3, -1, 99]:
+		_barrage_rejected("enemy slot " + str(bad_target) + " is outside the printed TO line",
+			_barrage_deck(BARRAGE, 7016), party, _barrage_enemies(30, 1), BARRAGE, bad_target,
+			"invalid_target")
+	var single := CombatEnemies.new([{"id": "barrage_solo", "max_hp": 30}])
+	_check(single.is_valid() and not single.is_slain(1),
+		"single-enemy fixture has one living slot")
+	_barrage_rejected("printed slot 2 with only one enemy", _barrage_deck(BARRAGE, 7017),
+		party, single, BARRAGE, 2, "invalid_target")
+	var dead_target := _barrage_enemies(30, 1)
+	_check(dead_target.apply_damage(1, 30) and dead_target.is_slain(1),
+		"slain-target fixture really has a dead first slot")
+	_barrage_rejected("slain target", _barrage_deck(BARRAGE, 7018), party, dead_target,
+		BARRAGE, 1, "target_slain")
+
+	# Rosters.
+	_barrage_rejected("invalid party roster", _barrage_deck(BARRAGE, 7019),
+		CombatParty.new([]), _barrage_enemies(30, 1), BARRAGE, 1, "invalid_roster")
+	_barrage_rejected("invalid enemy roster", _barrage_deck(BARRAGE, 7020), party,
+		CombatEnemies.new([]), BARRAGE, 1, "invalid_roster")
+	var bad_position := _riposte_party(1)
+	bad_position._heroes[1]["position"] = 3
+	_check(bad_position.get_hero(2).get("position") == 3,
+		"wrong-position fixture really stores the wrong hero seat")
+	_barrage_rejected("wrong stored hero position", _barrage_deck(BARRAGE, 7021),
+		bad_position, _barrage_enemies(30, 1), BARRAGE, 1, "invalid_roster")
+	var above_max := _riposte_party(1)
+	above_max._heroes[0]["hp"] = int(above_max._heroes[0]["max_hp"]) + 1
+	_check(above_max.get_hero(1).get("hp") > above_max.get_hero(1).get("max_hp"),
+		"malformed-roster fixture really has HP above max")
+	_barrage_rejected("hero HP above max", _barrage_deck(BARRAGE, 7022), above_max,
+		_barrage_enemies(30, 1), BARRAGE, 1, "invalid_roster")
+	var bad_block := _riposte_party(1)
+	bad_block._heroes[0]["block"] = -1
+	_check(bad_block.get_hero(1).get("block") == -1,
+		"negative-Block fixture really stores -1")
+	_barrage_rejected("negative hero Block", _barrage_deck(BARRAGE, 7023), bad_block,
+		_barrage_enemies(30, 1), BARRAGE, 1, "invalid_roster")
+	var bad_enemy_position := _barrage_enemies(30, 1)
+	bad_enemy_position._enemies[0]["position"] = 2
+	_check(bad_enemy_position.get_enemy(1).get("position") == 2,
+		"wrong-enemy-position fixture really stores the wrong enemy seat")
+	_barrage_rejected("wrong stored enemy position", _barrage_deck(BARRAGE, 7024), party,
+		bad_enemy_position, BARRAGE, 1, "invalid_roster")
+	var above_max_enemy := _barrage_enemies(30, 1)
+	above_max_enemy._enemies[0]["hp"] = 31
+	_check(above_max_enemy.get_enemy(1).get("hp") > above_max_enemy.get_enemy(1).get("max_hp"),
+		"malformed-enemy fixture really has HP above max")
+	_barrage_rejected("enemy HP above max", _barrage_deck(BARRAGE, 7025), party,
+		above_max_enemy, BARRAGE, 1, "invalid_roster")
+	var bad_enemy_block := _barrage_enemies(30, 1)
+	bad_enemy_block._enemies[0]["block"] = -1
+	_check(bad_enemy_block.get_enemy(1).get("block") == -1,
+		"negative-enemy-Block fixture really stores -1")
+	_barrage_rejected("negative enemy Block", _barrage_deck(BARRAGE, 7026), party,
+		bad_enemy_block, BARRAGE, 1, "invalid_roster")
+
+	# Status maps, on the owner and on the target.
+	for bad_statuses: Variant in ["bleed", [], null, {"bleed": -1}, {"bleed": "3"},
+			{"bleed": 1.5}, {"weak": true}, {1: 2}, {"": 1}, {"unknown_status": 1},
+			{"dodge_next_attack": 2}, {"blind_next_attack": -1}, {"riposte": -1}]:
+		var broken_owner := _riposte_party(1)
+		broken_owner._heroes[0]["statuses"] = bad_statuses
+		_check(broken_owner.get_hero(1).get("statuses") == bad_statuses,
+			"malformed owner status fixture really stores " + str(bad_statuses))
+		_barrage_rejected("malformed owner statuses " + str(bad_statuses),
+			_barrage_deck(BARRAGE, 7027), broken_owner, _barrage_enemies(30, 1), BARRAGE, 1,
+			"malformed_statuses")
+	for bad_enemy_statuses: Variant in [{"tangled": -2}, {"exposed": "2"},
+			{"unknown_status": 1}, {"blind_next_attack": 2}]:
+		var broken_target := _barrage_enemies(30, 1)
+		broken_target._enemies[0]["statuses"] = bad_enemy_statuses
+		_check(broken_target.get_enemy(1).get("statuses") == bad_enemy_statuses,
+			"malformed target status fixture really stores " + str(bad_enemy_statuses))
+		_barrage_rejected("malformed target statuses " + str(bad_enemy_statuses),
+			_barrage_deck(BARRAGE, 7028), party, broken_target, BARRAGE, 1,
+			"malformed_statuses")
+	var bad_ally_statuses := _riposte_party(1)
+	bad_ally_statuses._heroes[2]["statuses"] = {"poison": 1}
+	_check(bad_ally_statuses.get_hero(3).get("statuses") == {"poison": 1},
+		"malformed-ally fixture really stores an unknown status")
+	_barrage_rejected("malformed statuses on a non-owner hero", _barrage_deck(BARRAGE, 7029),
+		bad_ally_statuses, _barrage_enemies(30, 1), BARRAGE, 1, "malformed_statuses")
+
+	# Defense tokens this resolver must never silently skip: an armed Blind on the attacker (the
+	# miss path) and a Dodge on the defender (the evasion path) refuse before payment instead.
+	var blinded := _riposte_party(1)
+	blinded._heroes[0]["statuses"] = {"blind_next_attack": 1}
+	_check(blinded.get_hero(1).get("statuses") == {"blind_next_attack": 1},
+		"blinded-owner fixture really carries an armed Blind")
+	_barrage_rejected("armed Blind on the attacker", _barrage_deck(BARRAGE, 7030), blinded,
+		_barrage_enemies(30, 1), BARRAGE, 1, "owner_blinded")
+	var dodging_target := _barrage_enemies(30, 1)
+	dodging_target._enemies[0]["statuses"] = {"dodge_next_attack": 1}
+	_check(dodging_target.get_enemy(1).get("statuses") == {"dodge_next_attack": 1},
+		"dodging-target fixture really carries an armed Dodge")
+	_barrage_rejected("armed Dodge on the defender", _barrage_deck(BARRAGE, 7031), party,
+		dodging_target, BARRAGE, 1, "target_dodging")
+	# An inert token (0) is not an armed state: it neither refuses nor is consumed.
+	var inert_parties := _riposte_party(1)
+	inert_parties._heroes[0]["statuses"] = {"blind_next_attack": 0, "dodge_next_attack": 0}
+	var inert_enemies := _barrage_enemies(40, 1)
+	inert_enemies._enemies[0]["statuses"] = {"dodge_next_attack": 0, "blind_next_attack": 0}
+	var inert_deck := _barrage_deck(BARRAGE, 7032)
+	var inert_before := _barrage_snapshot(inert_deck, inert_parties, inert_enemies)
+	var inert_receipt: Dictionary = barrage_service.play_card(inert_deck, inert_parties,
+		inert_enemies, BARRAGE, 1)
+	_check(inert_receipt.get("ok") == true and inert_receipt.get("hit_count") == BARRAGE_HITS,
+		"inert 0 defense tokens do not refuse a genuine barrage")
+	_check(inert_parties.get_hero(1).get("statuses")
+		== {"blind_next_attack": 0, "dodge_next_attack": 0}
+		and inert_enemies.get_enemy(1).get("statuses")
+		== {"dodge_next_attack": 0, "blind_next_attack": 0},
+		"inert 0 defense tokens are neither consumed nor rewritten")
+	_check(inert_enemies.get_enemy(1).get("hp") == 40 - int(BARRAGE_DAMAGE[BARRAGE]) * 3,
+		"an inert token never changes the three printed strikes")
+	_check(inert_deck.energy == inert_before["energy"] - BARRAGE_COST,
+		"the inert-token play still charges exactly its printed cost")
+
+	# A refused attempt never poisons the next authentic one.
+	var retry_deck := _barrage_deck(BARRAGE, 7033)
+	var retry_party := _riposte_party(1)
+	var retry_enemies := _barrage_enemies(40, 1)
+	var retry_before := _barrage_snapshot(retry_deck, retry_party, retry_enemies)
+	_barrage_rejected("retry: absent '+' printing", retry_deck, retry_party, retry_enemies,
+		BARRAGE_PLUS, 1, "card_not_held")
+	var retried: Dictionary = barrage_service.play_card(retry_deck, retry_party, retry_enemies,
+		BARRAGE, 1)
+	_check(retried.get("ok") == true and retried.get("reason") == "applied",
+		"retry: the authentic play then succeeds")
+	_check(retry_deck.energy == retry_before["energy"] - BARRAGE_COST
+		and retry_deck.discard_pile == retry_before["discard"] + [BARRAGE]
+		and retry_deck._rng.state == retry_before["rng_state"],
+		"retry: exactly one charge, one discard and an untouched RNG")
+
+
+func _barrage_rejected(label: String, deck: CombatDeck, party: CombatParty,
+		enemies: CombatEnemies, card_id: Variant, target_position: int,
+		reason: String) -> void:
+	var before := _barrage_snapshot(deck, party, enemies)
+	var receipt: Dictionary = barrage_service.play_card(deck, party, enemies, card_id,
+		target_position)
+	_check(receipt.get("ok") == false, label + ": refused")
+	_check(receipt.get("reason") == reason,
+		label + ": refusal reason is " + reason + " (got " + str(receipt.get("reason")) + ")")
+	for key: String in ["ok", "reason", "card_id", "cost", "owner_position", "owner_id",
+			"target_position", "printed_hit_count", "hit_count", "base_damage", "energy_before",
+			"energy_after", "energy_spent", "target_hp_before", "target_hp_after",
+			"target_block_before", "target_block_after", "attacker_statuses", "hits"]:
+		_check(receipt.has(key), label + ": refusal receipt carries " + key)
+	_check(receipt.get("energy_spent") == 0 and receipt.get("hits") == [],
+		label + ": refusal reports no spend and no strikes")
+	_check(_barrage_snapshot(deck, party, enemies) == before,
+		label + ": deck, party, enemy roster, status maps and seeded RNG are unchanged")
+
+
+## AC3: a rewritten, relinked or mistyped pool record is refused as catalog_mismatch before any
+## energy, card, HP, Block or RNG state moves, while the same seam serving the authentic records
+## still plays the paid card.
+func _test_barrage_forged_catalog() -> void:
+	var pool := RagDuelistPoolCards.new()
+	for card_id: String in BARRAGE_IDS:
+		var authentic: Dictionary = pool.get_definition(card_id)
+		_check(not authentic.is_empty(),
+			card_id + ": authentic record available (forgery precondition)")
+		if authentic.is_empty():
+			continue
+		var link_key := "upgrade_of" if card_id.ends_with("_plus") else "upgrade_id"
+		var fields: Array[String] = ["id", "owner", "cost", "from_positions", "to_positions",
+			"target_kind", "effects", "starting_copies", "reward_eligible", link_key]
+		var replacements: Dictionary = {
+			"id": "rag_duelist_forged_barrage", "owner": "warden", "cost": 1,
+			"from_positions": [1, 2], "to_positions": [1], "target_kind": "self",
+			"effects": {"damage": 9, "hit_count": 1},
+			"starting_copies": 1,
+			"reward_eligible": not bool(authentic.get("reward_eligible", false)),
+			"upgrade_id": "rag_duelist_forged_barrage",
+			"upgrade_of": "rag_duelist_forged_barrage",
+		}
+		var mutations: Array = []
+		for field: String in fields:
+			var omitted: Dictionary = authentic.duplicate(true)
+			omitted.erase(field)
+			mutations.append(omitted)
+			var altered: Dictionary = authentic.duplicate(true)
+			altered[field] = replacements[field]
+			mutations.append(altered)
+		var extra_effect: Dictionary = authentic.duplicate(true)
+		extra_effect["effects"]["bleed"] = 2
+		mutations.append(extra_effect)
+		var typed_damage: Dictionary = authentic.duplicate(true)
+		typed_damage["effects"]["damage"] = float(typed_damage["effects"]["damage"])
+		mutations.append(typed_damage)
+		var typed_hit_count: Dictionary = authentic.duplicate(true)
+		typed_hit_count["effects"]["hit_count"] = float(BARRAGE_HITS)
+		mutations.append(typed_hit_count)
+		var merged_hits: Dictionary = authentic.duplicate(true)
+		merged_hits["effects"]["hit_count"] = 1
+		merged_hits["effects"]["damage"] = int(BARRAGE_DAMAGE[card_id]) * BARRAGE_HITS
+		mutations.append(merged_hits)
+		var not_independent: Dictionary = authentic.duplicate(true)
+		not_independent["effects"]["independent_hits"] = 1
+		mutations.append(not_independent)
+		_check(not mutations.is_empty(), card_id + ": forgery fixtures are non-empty (precondition)")
+
+		var forged_service := ForgedBarrage.new()
+		forged_service.forged_id = card_id
+		var forged_deck := _barrage_deck(card_id, 7100)
+		var forged_party := _riposte_party(1)
+		var forged_enemies := _barrage_enemies(40, 1)
+		for forged: Dictionary in mutations:
+			forged_service.forged = forged
+			var forged_before := _barrage_snapshot(forged_deck, forged_party, forged_enemies)
+			var receipt: Dictionary = forged_service.play_card(forged_deck, forged_party,
+				forged_enemies, card_id, 1)
+			_check(receipt.get("ok") == false
+				and receipt.get("reason") == "catalog_mismatch",
+				card_id + ": a forged catalog record is refused as catalog_mismatch")
+			_check(_barrage_snapshot(forged_deck, forged_party, forged_enemies)
+				== forged_before,
+				card_id + ": a forged record spends, discards and damages nothing")
+			_check(not forged_service.is_supported_card(card_id),
+				card_id + ": the forged pair is not an authenticated printing")
+		forged_service.forged_id = ""
+		var restored: Dictionary = forged_service.play_card(forged_deck, forged_party,
+			forged_enemies, card_id, 1)
+		_check(restored.get("ok") == true and restored.get("reason") == "applied",
+			card_id + ": the restored authentic record plays")
+		_check(forged_deck.energy == 0 and forged_deck.discard_pile == [card_id],
+			card_id + ": the restored record spends exactly two energy and one held copy")
+		_check(forged_enemies.get_enemy(1).get("hp")
+			== 40 - int(BARRAGE_DAMAGE[card_id]) * BARRAGE_HITS,
+			card_id + ": the restored record lands all three printed strikes")
+
+
+## The same seed replays every per-strike receipt and the final state exactly, and resolution
+## reseeds neither the injected generator nor the global RNG.
+func _test_barrage_seeded_replay() -> void:
+	for card_id: String in BARRAGE_IDS:
+		var first := _barrage_replay_run(card_id, 6501)
+		var second := _barrage_replay_run(card_id, 6501)
+		_check(first["receipt"].get("ok") == true and not first["snapshot"].is_empty(),
+			card_id + ": the seeded replay fixture really plays (non-empty precondition)")
+		_check(second["snapshot"] == first["snapshot"]
+			and second["receipt"] == first["receipt"],
+			card_id + ": the same seed replays the exact receipts and final state")
+		_check((first["receipt"].get("hits", []) as Array).size() == BARRAGE_HITS,
+			card_id + ": the replay really resolved three strikes")
+		_check(first["rng_state"] == first["rng_start"]
+			and first["rng_seed"] == first["rng_seed_start"],
+			card_id + ": the barrage consumes no injected RNG state")
+
+	seed(24680)
+	var expected_next: int = randi()
+	seed(24680)
+	var played := _barrage_replay_run(BARRAGE, 6502)
+	_check(played["receipt"].get("ok") == true, "global-RNG fixture really plays")
+	_check(randi() == expected_next, "resolving the barrage never draws from the global RNG")
+
+
+func _barrage_replay_run(card_id: String, seed_value: int) -> Dictionary:
+	var deck := _barrage_deck(card_id, seed_value)
+	var party := _riposte_party(1)
+	party._heroes[0]["statuses"] = {"weak": 1}
+	var enemies := _barrage_enemies(60, 2)
+	_check(enemies.gain_block(2, 2), "replay fixture gives the second slot two Block")
+	var rng_start: int = deck._rng.state
+	var rng_seed: int = deck._rng.seed
+	var receipt: Dictionary = barrage_service.play_card(deck, party, enemies, card_id, 2)
+	return {"receipt": receipt, "snapshot": _barrage_snapshot(deck, party, enemies),
+		"rng_start": rng_start, "rng_state": deck._rng.state,
+		"rng_seed_start": rng_seed, "rng_seed": deck._rng.seed}
+
+
+## A real seeded roster with a living target in the requested slot and one untouched decoy.
+func _barrage_enemies(target_hp: int, target_position: int,
+		decoy_hp: int = 40) -> CombatEnemies:
+	var definitions: Array = []
+	for index in range(2):
+		var slot := index + 1
+		var is_target: bool = slot == target_position
+		definitions.append({
+			"id": "barrage_target" if is_target else "barrage_decoy",
+			"max_hp": target_hp if is_target else decoy_hp,
+		})
+	var enemies := CombatEnemies.new(definitions)
+	_check(enemies.is_valid() and not enemies.is_slain(target_position)
+		and enemies.get_enemy(target_position).get("max_hp") == target_hp,
+		"barrage fixture has a living target in slot " + str(target_position))
+	return enemies
+
+
+## A real seeded five-card hand holding the exact printing, with exactly its printed cost left.
+func _barrage_deck(card_id: String, seed_value: int, energy: int = BARRAGE_COST,
+		start_turn: bool = true) -> CombatDeck:
+	var deck := _riposte_deck(card_id, seed_value, energy, start_turn)
+	if start_turn:
+		_check(deck.hand.has(card_id) and deck.energy == energy,
+			card_id + ": seeded hand holds the printing with exactly " + str(energy)
+			+ " energy")
+	return deck
+
+
+## Detached before/after state for refusals: piles, turn, energy, seeded RNG and actor records,
+## tolerant of a deck whose combat state or generator is missing.
+func _barrage_snapshot(deck: CombatDeck, party: CombatParty,
+		enemies: CombatEnemies) -> Dictionary:
+	var snapshot: Dictionary = {}
+	if deck != null:
+		snapshot["draw"] = deck.draw_pile.duplicate(true)
+		snapshot["hand"] = deck.hand.duplicate(true)
+		snapshot["discard"] = deck.discard_pile.duplicate(true)
+		if deck.combat_state != null:
+			snapshot["turn"] = deck.turn_active
+			snapshot["energy"] = deck.energy
+			snapshot["state_turn"] = deck.combat_state.player_turn_active
+			snapshot["state_energy"] = deck.combat_state.energy
+		else:
+			snapshot["combat_state"] = "missing"
+		if deck._rng != null:
+			snapshot["rng_state"] = deck._rng.state
+			snapshot["rng_seed"] = deck._rng.seed
+		else:
+			snapshot["rng"] = "missing"
+	if party != null:
+		snapshot["party_valid"] = party.is_valid()
+		snapshot["heroes"] = party.get_heroes()
+	if enemies != null:
+		snapshot["enemies_valid"] = enemies.is_valid()
+		snapshot["enemies"] = enemies.get_enemies()
+	return snapshot
+
 
