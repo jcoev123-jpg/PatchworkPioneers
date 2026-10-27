@@ -306,6 +306,10 @@ func _reject_wallet(callback: Callable, label: String) -> void:
 func _reach(fixture: Dictionary, funded: bool = true) -> void:
 	app.run_seed = fixture.seed
 	await _click(app.start_button)
+	# Title Start mounts the real pick-three screen first (cycle 332); admit the
+	# ordinary three-hero party through its tiles and Continue before expecting a map.
+	preload("res://tests/party_choice.gd").choose(app)
+	await _frames()
 	_check(app.run_map != null and app.run_rng != null, "real title Start creates seeded run")
 	var service := RunV3HeroEventOffers.new(_party_ids())
 	_check(service.is_valid(), "live three-hero party has a valid authored Event service")
