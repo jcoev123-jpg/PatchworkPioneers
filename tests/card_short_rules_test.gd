@@ -7,11 +7,13 @@ extends SceneTree
 ## damage and their expiry) belong to CardKeywordGlossary's Help rows.
 ##
 ## Every record below is read from the shipped Warden/Tinker/Lantern Monk pools
-## and the V3 Rag Duelist and Lantern Monk catalogs; the only hand-written
-## records are the in-memory unknown/malformed probes, which must stay honest
-## instead of inventing mechanics. The six Rag Duelist variants plus the six
-## authored one-shot Dodge records are read from their real catalogs; their
-## effects are printed, not resolved.
+## and the V3 Rag Duelist, Lantern Monk and Scarecrow catalogs; the only
+## hand-written records are the in-memory unknown/malformed probes, which must
+## stay honest instead of inventing mechanics. The six Rag Duelist variants plus
+## the six authored one-shot Dodge records are read from their real catalogs;
+## their effects are printed, not resolved. The eight Scarecrow Fear printings are
+## read from the real starter and pool catalogs: the face names the keyword and
+## the separate Weak, while Help owns the one-turn buff lock.
 
 ## The exact short face each shipped base/'+' record must print.
 const FACE_CASES := [
@@ -91,6 +93,36 @@ const DODGE_FACE_CASES := [
 		"owner": "lantern_monk", "target": "ally_single", "block": 8,
 		"line": "Ally gains 8 Block and dodges the next attack."},
 ]
+## AC1/AC2: the eight authentic Scarecrow `cannot_buff_next_turn: true` printings,
+## looked up by named ID in their real V3 catalogs (never a catalog total or an
+## ordered ID list). The expected sentence is the authored Weak (and Harvest
+## Fright's damage) followed by one Fear keyword for one enemy or every enemy.
+const SCARECROW_FEAR_CASES := [
+	{"catalog": "starter", "id": "scarecrow_sack_glare", "owner": "scarecrow",
+		"cost": 1, "target": "enemy_single", "weak": 1, "damage": 0,
+		"line": "Weak 1. Fear."},
+	{"catalog": "starter", "id": "scarecrow_sack_glare_plus", "owner": "scarecrow",
+		"cost": 1, "target": "enemy_single", "weak": 2, "damage": 0,
+		"line": "Weak 2. Fear."},
+	{"catalog": "pool", "id": "scarecrow_sack_grin", "owner": "scarecrow",
+		"cost": 1, "target": "enemy_single", "weak": 1, "damage": 0,
+		"line": "Weak 1. Fear."},
+	{"catalog": "pool", "id": "scarecrow_sack_grin_plus", "owner": "scarecrow",
+		"cost": 1, "target": "enemy_single", "weak": 2, "damage": 0,
+		"line": "Weak 2. Fear."},
+	{"catalog": "pool", "id": "scarecrow_crow_flock", "owner": "scarecrow",
+		"cost": 2, "target": "enemy_all", "weak": 1, "damage": 0,
+		"line": "Weak 1 to all. Fear to all."},
+	{"catalog": "pool", "id": "scarecrow_crow_flock_plus", "owner": "scarecrow",
+		"cost": 2, "target": "enemy_all", "weak": 2, "damage": 0,
+		"line": "Weak 2 to all. Fear to all."},
+	{"catalog": "pool", "id": "scarecrow_harvest_fright", "owner": "scarecrow",
+		"cost": 3, "target": "enemy_all", "weak": 2, "damage": 4,
+		"line": "Deal 4 to all. Weak 2 to all. Fear to all."},
+	{"catalog": "pool", "id": "scarecrow_harvest_fright_plus", "owner": "scarecrow",
+		"cost": 3, "target": "enemy_all", "weak": 3, "damage": 6,
+		"line": "Deal 6 to all. Weak 3 to all. Fear to all."},
+]
 
 var failures: Array[String] = []
 var checks := 0
@@ -100,6 +132,8 @@ var rag_duelist := RagDuelistPoolCards.new()
 var rag_duelist_starter := RagDuelistStarterCards.new()
 var lantern_monk_starter := LanternMonkStarterCards.new()
 var lantern_monk_pool := LanternMonkPoolCards.new()
+var scarecrow_starter := ScarecrowStarterCards.new()
+var scarecrow_pool := ScarecrowPoolCards.new()
 
 
 func _initialize() -> void:
@@ -121,6 +155,9 @@ func _initialize() -> void:
 	_test_dodge_help()
 	_test_exhaust_help()
 	_test_dodge_exhaust_negative()
+	_test_scarecrow_fear_faces()
+	_test_scarecrow_fear_help()
+	_test_scarecrow_fear_negative()
 	_check(randi() == expected_global, "short-line formatting draws no global RNG")
 	for failure in failures:
 		printerr(failure)
@@ -381,9 +418,9 @@ func _test_rag_duelist_faces() -> void:
 func _test_rag_duelist_help() -> void:
 	var legacy_size := LEGACY_KEYWORD_ORDER.size()
 	_check(CardKeywordGlossary.KEYWORD_ORDER.slice(0, legacy_size) == LEGACY_KEYWORD_ORDER
-		and CardKeywordGlossary.KEYWORD_ORDER.size() == legacy_size + 3
-		and CardKeywordGlossary.KEYWORD_ORDER.slice(legacy_size) == ["riposte", "tangled", "blind"],
-		"Riposte, Tangled and Blind follow the seven legacy keyword rows: "
+		and CardKeywordGlossary.KEYWORD_ORDER.size() == legacy_size + 4
+		and CardKeywordGlossary.KEYWORD_ORDER.slice(legacy_size) == ["riposte", "tangled", "blind", "fear"],
+		"Riposte, Tangled, Blind and Fear follow the seven legacy keyword rows: "
 		+ str(CardKeywordGlossary.KEYWORD_ORDER))
 	for pair in [["rag_duelist_cape_guard", 3], ["rag_duelist_cape_guard_plus", 4],
 			["rag_duelist_duelist_reprise", 5], ["rag_duelist_duelist_reprise_plus", 7]]:
@@ -1293,6 +1330,377 @@ func _test_dodge_exhaust_negative() -> void:
 		"new special rules appended without reshuffling existing five")
 	# Existing keyword rows unchanged.
 	_check(CardKeywordGlossary.KEYWORD_ORDER == ["bleed", "weak", "exposed", "pinned",
-		"unravel", "guarding", "thorns", "riposte", "tangled", "blind"],
+		"unravel", "guarding", "thorns", "riposte", "tangled", "blind", "fear"],
 		"keyword order unchanged")
+
+
+## One detached record from the real Scarecrow catalogs named by a fixture.
+func _scarecrow_definition(catalog_id: String, card_id: String) -> Dictionary:
+	match catalog_id:
+		"starter":
+			return scarecrow_starter.get_definition(card_id)
+		"pool":
+			return scarecrow_pool.get_definition(card_id)
+	return {}
+
+
+## The same lookup without naming the catalog, for the base/'+' pair checks.
+func _scarecrow_any_definition(card_id: String) -> Dictionary:
+	if scarecrow_starter.has_card(card_id):
+		return scarecrow_starter.get_definition(card_id)
+	if scarecrow_pool.has_card(card_id):
+		return scarecrow_pool.get_definition(card_id)
+	return {}
+
+
+func _row_names(rows: Array[Dictionary]) -> Array[String]:
+	var names: Array[String] = []
+	for row: Dictionary in rows:
+		names.append(str(row.get("keyword", "")))
+	return names
+
+
+func _rows_named(rows: Array[Dictionary], keyword: String) -> Array[Dictionary]:
+	var found: Array[Dictionary] = []
+	for row: Dictionary in rows:
+		if str(row.get("keyword", "")) == keyword:
+			found.append(row)
+	return found
+
+
+## The one Fear Help explanation, or "" when the record earns no Fear row.
+func _fear_text(definition: Dictionary) -> String:
+	var rows := _rows_named(CardKeywordGlossary.describe(definition), "Fear")
+	return str(rows[0].get("explanation", "")) if rows.size() == 1 else ""
+
+
+## AC1: the eight authentic Scarecrow Fear printings show their authored Weak
+## (and Harvest Fright's damage) with exactly one Fear keyword for one enemy or
+## every enemy, and no generic unknown sentence. Read from the real starter and
+## pool catalogs by named ID, never a catalog total or an ordered ID list.
+func _test_scarecrow_fear_faces() -> void:
+	for entry in SCARECROW_FEAR_CASES:
+		var catalog := str(entry["catalog"])
+		var card_id := str(entry["id"])
+		var expected_line := str(entry["line"])
+		var definition := _scarecrow_definition(catalog, card_id)
+		_check(not definition.is_empty(),
+			"Scarecrow Fear catalog record exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var effects: Dictionary = definition.get("effects", {})
+		_check(str(definition.get("owner", "")) == "scarecrow",
+			"authored Scarecrow owner: " + card_id)
+		_check(int(definition.get("cost", -1)) == int(entry["cost"]),
+			"authored Fear cost: " + card_id)
+		_check(str(definition.get("target_kind", "")) == str(entry["target"]),
+			"authored Fear recipient: " + card_id)
+		_check(effects.get("cannot_buff_next_turn") is bool
+			and bool(effects["cannot_buff_next_turn"]),
+			"authored Fear flag is the boolean true: " + card_id)
+		_check(effects.get("weak") is int
+			and int(effects["weak"]) == int(entry["weak"]),
+			"authored Weak read from the catalog: " + card_id)
+		if int(entry["damage"]) > 0:
+			_check(effects.get("damage") is int
+				and int(effects["damage"]) == int(entry["damage"]),
+				"authored Fear damage read from the catalog: " + card_id)
+		else:
+			_check(not effects.has("damage"),
+				"a no-damage Fear card prints none: " + card_id)
+		var before := definition.duplicate(true)
+		var described := CardShortRules.describe(definition)
+		var line := str(described.get("line", ""))
+		_check(described.get("known") == true, "face record is described: " + card_id)
+		_check(not bool(described.get("unknown", true))
+			and not CardShortRules.has_unknown(definition),
+			"a genuine Fear needs no fallback: %s (%s)" % [card_id, line])
+		_check(line == expected_line,
+			"short face for %s: got '%s', want '%s'" % [card_id, line, expected_line])
+		_check(line.count("Fear") == 1,
+			"exactly one Fear keyword: %s (%s)" % [card_id, line])
+		_check(line.count("Weak") == 1,
+			"exactly one Weak clause: %s (%s)" % [card_id, line])
+		_check(line.find("Weak") < line.find("Fear"),
+			"Fear is printed after Weak: %s (%s)" % [card_id, line])
+		if int(entry["damage"]) > 0:
+			_check(line.begins_with("Deal %d" % int(entry["damage"]))
+				and line.find("Deal") < line.find("Weak"),
+				"the authored damage leads the face: %s (%s)" % [card_id, line])
+		if str(entry["target"]) == "enemy_all":
+			_check(line.contains("Fear to all."),
+				"area Fear names every enemy: " + card_id)
+		else:
+			_check(not line.contains("to all") and line.ends_with("Fear."),
+				"single-enemy Fear names one enemy only: " + card_id)
+		_check(not line.to_lower().contains("turn")
+			and not line.contains("buff") and not line.contains("25%"),
+			"the face leaves the buff lock to Help: %s (%s)" % [card_id, line])
+		for word in HELP_ONLY_WORDS:
+			_check(not line.contains(word),
+				"face omits Help-only wording '%s': %s (%s)" % [word, card_id, line])
+		_check(definition == before
+			and _scarecrow_definition(catalog, card_id) == before,
+			"formatting never mutates the shipped record: " + card_id)
+		_check(CardShortRules.line(_scarecrow_definition(catalog, card_id))
+			== expected_line, "repeated formatting is identical: " + card_id)
+
+
+## AC2: Help explains Fear once per authentic record: the buff lock covers only
+## the NEXT enemy turn and then expires, the separate Weak carries the authored
+## stacks, and upgrades raise Weak rather than the lock. The keyword order keeps
+## every existing row in place with Fear appended last.
+func _test_scarecrow_fear_help() -> void:
+	var keyword_order := CardKeywordGlossary.KEYWORD_ORDER
+	_check(keyword_order.count("fear") == 1
+		and keyword_order[keyword_order.size() - 1] == "fear"
+		and keyword_order.slice(0, keyword_order.size() - 1) == ["bleed", "weak",
+			"exposed", "pinned", "unravel", "guarding", "thorns", "riposte",
+			"tangled", "blind"],
+		"Fear is one appended keyword row after the existing rows: "
+		+ str(keyword_order))
+	var shared_text := ""
+	for entry in SCARECROW_FEAR_CASES:
+		var catalog := str(entry["catalog"])
+		var card_id := str(entry["id"])
+		var definition := _scarecrow_definition(catalog, card_id)
+		_check(not definition.is_empty(), "Fear Help catalog record exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var effects: Dictionary = definition.get("effects", {})
+		_check(str(definition.get("owner", "")) == "scarecrow"
+			and int(definition.get("cost", -1)) == int(entry["cost"])
+			and str(definition.get("target_kind", "")) == str(entry["target"])
+			and effects.get("cannot_buff_next_turn") is bool
+			and bool(effects["cannot_buff_next_turn"]),
+			"Fear Help only reads an authentic printing: " + card_id)
+		_check(CardShortRules.is_authored_fear(definition),
+			"the face and Help share one Fear authority: " + card_id)
+		var before := definition.duplicate(true)
+		var rows := CardKeywordGlossary.describe(definition)
+		var names := _row_names(rows)
+		_check(names == ["Weak %d" % int(entry["weak"]), "Fear"],
+			"Help keeps the Weak row then one Fear row: %s (%s)"
+			% [card_id, str(names)])
+		var fear_rows := _rows_named(rows, "Fear")
+		_check(fear_rows.size() == 1,
+			"exactly one Fear Help row for %s (got %d)" % [card_id, fear_rows.size()])
+		if fear_rows.size() == 1:
+			var text := str(fear_rows[0].get("explanation", ""))
+			if shared_text.is_empty():
+				shared_text = text
+			_check(text == shared_text,
+				"one compact Fear row serves every authentic printing: " + card_id)
+			_check(text.contains("cannot buff on its NEXT enemy turn"),
+				"Fear Help states the next-turn buff lock: " + card_id)
+			_check(text.contains("expires at the end of that turn")
+				and text.contains("never covers a second turn"),
+				"Fear Help states the one-turn expiry: " + card_id)
+			_check(text.contains("never lengthen"),
+				"Fear Help says upgrades never lengthen the lock: " + card_id)
+			_check(text.contains("separate Weak") and text.contains("25%"),
+				"Fear Help states Weak is an independent 25 percent reduction: "
+				+ card_id)
+			_check(text.contains("Sack Glare, Sack Grin and Crow Flock author "
+				+ "Weak 1 on the base card and Weak 2 on the upgraded card"),
+				"Fear Help states the authored Weak 1/2: " + card_id)
+			_check(text.contains("Harvest Fright authors Weak 2 on the base card "
+				+ "and Weak 3 on the upgraded card"),
+				"Fear Help states Harvest Fright's Weak 2/3: " + card_id)
+			_check(text.contains("adds no damage, Bleed or Blind"),
+				"Fear Help is not extra damage, Bleed or Blind: " + card_id)
+			_check(text.contains("no held card resolves Fear in battle yet"),
+				"Fear Help claims no already-live held-hand action: " + card_id)
+			_check(not text.contains("buff lock for 2")
+				and not text.contains("2 turns"),
+				"Fear Help never turns the lock into a duration: " + card_id)
+		_check(CardKeywordGlossary.describe(definition) == rows,
+			"repeated Fear Help reads are identical: " + card_id)
+		_check(definition == before
+			and _scarecrow_definition(catalog, card_id) == before,
+			"Help never mutates the shipped Fear record: " + card_id)
+		var detached := CardKeywordGlossary.describe(definition)
+		if detached.size() == 2:
+			detached[1]["keyword"] = "Tampered"
+			detached[1]["explanation"] = "Tampered"
+			_check(_row_names(CardKeywordGlossary.describe(definition))
+				== ["Weak %d" % int(entry["weak"]), "Fear"],
+				"Fear Help rows are detached from the caller's record: " + card_id)
+	_check(not shared_text.is_empty(), "the Fear Help row was really inspected")
+	# The base and '+' halves differ only in the authored Weak (and Harvest
+	# Fright's damage): the one-turn lock is never the upgraded number.
+	for pair in [["scarecrow_sack_glare", "scarecrow_sack_glare_plus"],
+			["scarecrow_sack_grin", "scarecrow_sack_grin_plus"],
+			["scarecrow_crow_flock", "scarecrow_crow_flock_plus"],
+			["scarecrow_harvest_fright", "scarecrow_harvest_fright_plus"]]:
+		var base_id := str(pair[0])
+		var plus_id := str(pair[1])
+		var base := _scarecrow_any_definition(base_id)
+		var plus := _scarecrow_any_definition(plus_id)
+		_check(not base.is_empty() and not plus.is_empty(),
+			"both Fear variants exist: " + base_id)
+		if base.is_empty() or plus.is_empty():
+			continue
+		var weak_base := int(base.get("effects", {}).get("weak", -1))
+		var weak_plus := int(plus.get("effects", {}).get("weak", -1))
+		_check(weak_plus == weak_base + 1 and weak_plus > 0,
+			"the upgrade raises only the authored Weak: " + base_id)
+		_check(not _fear_text(base).is_empty() and _fear_text(base) == _fear_text(plus),
+			"the upgrade never changes the one-turn Fear rule: " + base_id)
+
+
+## AC3: false, wrong-type and misplaced Fear flags, forged owner/ID, altered
+## structure and unsupported companion effects never invent Fear on the face or in
+## Help. The honest unknown fallback and the preexisting Blind/Dodge/Exhaust
+## behaviour stay exactly as they were.
+func _test_scarecrow_fear_negative() -> void:
+	var glare := _scarecrow_definition("starter", "scarecrow_sack_glare")
+	var fright := _scarecrow_definition("pool", "scarecrow_harvest_fright")
+	_check(not glare.is_empty() and not fright.is_empty()
+		and CardShortRules.line(glare) == "Weak 1. Fear."
+		and CardShortRules.line(fright) == "Deal 4 to all. Weak 2 to all. Fear to all.",
+		"the authentic Fear records are the positive controls")
+	for case in [["boolean false", false], ["numeric one", 1], ["null", null],
+			["text", "true"], ["float", 1.0]]:
+		var probe := glare.duplicate(true)
+		var probe_effects: Dictionary = probe["effects"]
+		probe_effects["cannot_buff_next_turn"] = case[1]
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_fear(probe),
+			"a %s Fear flag is not an authored Fear" % str(case[0]))
+		var line := CardShortRules.line(probe)
+		_check(not line.contains("Fear"),
+			"no Fear keyword is invented for a %s flag: %s" % [str(case[0]), line])
+		_check(line.ends_with(UNKNOWN_FALLBACK),
+			"a %s flag keeps the honest fallback: %s" % [str(case[0]), line])
+		_check(not _has_keyword_row(probe, "Fear"),
+			"no Fear Help row for a %s flag" % str(case[0]))
+		_check(probe == before, "the %s flag probe is never mutated" % str(case[0]))
+	for target: String in ["self", "ally_single", "party_all"]:
+		var probe := glare.duplicate(true)
+		probe["target_kind"] = target
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_fear(probe),
+			"a true Fear flag on %s is not the authored enemy printing" % target)
+		var line := CardShortRules.line(probe)
+		_check(not line.contains("Fear"),
+			"no Fear is printed for a %s recipient: %s" % [target, line])
+		_check(line.ends_with(UNKNOWN_FALLBACK),
+			"a %s recipient keeps the honest fallback: %s" % [target, line])
+		_check(not _has_keyword_row(probe, "Fear"),
+			"no Fear Help row for a %s recipient" % target)
+		_check(probe == before, "the %s recipient probe is never mutated" % target)
+	for owner: Variant in ["warden", &"scarecrow", null]:
+		var probe := glare.duplicate(true)
+		probe["owner"] = owner
+		var before := probe.duplicate(true)
+		var line := CardShortRules.line(probe)
+		_check(not CardShortRules.is_authored_fear(probe)
+			and not line.contains("Fear")
+			and line.ends_with(UNKNOWN_FALLBACK)
+			and not _has_keyword_row(probe, "Fear"),
+			"a %s owner never borrows Fear: %s" % [str(owner), line])
+		_check(probe == before, "the %s owner probe is never mutated" % str(owner))
+	# Forged ID, altered structure and altered authored amounts.
+	var structural := [
+		["forged ID", "id", "scarecrow_forged_glare"],
+		["wrong cost", "cost", 2],
+	]
+	for case in structural:
+		var probe := glare.duplicate(true)
+		probe[case[1]] = case[2]
+		var before := probe.duplicate(true)
+		var line := CardShortRules.line(probe)
+		_check(not CardShortRules.is_authored_fear(probe)
+			and not line.contains("Fear") and line.ends_with(UNKNOWN_FALLBACK),
+			"a %s never borrows Fear: %s" % [str(case[0]), line])
+		_check(not _has_keyword_row(probe, "Fear"),
+			"a %s adds no Fear Help row" % str(case[0]))
+		_check(probe == before, "the %s probe is never mutated" % str(case[0]))
+	for case in [["from_positions", [1, 2]], ["to_positions", [1, 2]],
+			["from_positions", null], ["to_positions", null]]:
+		var probe := glare.duplicate(true)
+		probe[case[0]] = case[1]
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_fear(probe)
+			and not CardShortRules.line(probe).contains("Fear")
+			and not _has_keyword_row(probe, "Fear"),
+			"a Fear record with %s %s stays silent"
+			% [str(case[0]), str(case[1])])
+		_check(probe == before,
+			"the %s %s probe is never mutated" % [str(case[0]), str(case[1])])
+	var wrong_weak := glare.duplicate(true)
+	var wrong_weak_effects: Dictionary = wrong_weak["effects"]
+	wrong_weak_effects["weak"] = 3
+	var wrong_damage := fright.duplicate(true)
+	var wrong_damage_effects: Dictionary = wrong_damage["effects"]
+	wrong_damage_effects["damage"] = 5
+	var missing_weak := glare.duplicate(true)
+	var missing_weak_effects: Dictionary = missing_weak["effects"]
+	missing_weak_effects.erase("weak")
+	for probe: Dictionary in [wrong_weak, wrong_damage, missing_weak]:
+		var before := probe.duplicate(true)
+		var line := CardShortRules.line(probe)
+		_check(not CardShortRules.is_authored_fear(probe)
+			and not line.contains("Fear") and line.ends_with(UNKNOWN_FALLBACK),
+			"an altered authored amount never borrows Fear: " + line)
+		_check(not _has_keyword_row(probe, "Fear"),
+			"an altered authored amount adds no Fear Help row: " + line)
+		_check(probe == before, "an altered amount probe is never mutated: " + line)
+	# A genuine Fear beside an unsupported extra effect (or a supported extra
+	# that the authentic printing does not author) keeps the honest fallback.
+	for extra in [["unsupported", "mystery_status", 9, ""], ["supported", "draw", 1, "Draw 1."]]:
+		var sibling := glare.duplicate(true)
+		var sibling_effects: Dictionary = sibling["effects"]
+		sibling_effects[str(extra[1])] = extra[2]
+		var before := sibling.duplicate(true)
+		var line := CardShortRules.line(sibling)
+		_check(not CardShortRules.is_authored_fear(sibling)
+			and not line.contains("Fear") and line.ends_with(UNKNOWN_FALLBACK),
+			"a Fear sibling with an extra %s effect stays honest: %s"
+			% [str(extra[0]), line])
+		if str(extra[3]).is_empty():
+			_check(not line.contains(str(extra[2])),
+				"the extra %s effect's amount never leaks: %s" % [str(extra[0]), line])
+		else:
+			_check(not line.contains("Fear") and line.contains(str(extra[3])),
+				"the extra %s effect prints only its own clause: %s"
+				% [str(extra[0]), line])
+		_check(not _has_keyword_row(sibling, "Fear"),
+			"the extra %s effect adds no Fear Help row" % str(extra[0]))
+		_check(sibling == before,
+			"the extra %s effect probe is never mutated" % str(extra[0]))
+	# The flag alone, without the authored printing, is still an honest unknown
+	# rather than a quietly empty face.
+	var bare := {"id": "scarecrow_sack_glare", "owner": "scarecrow", "cost": 1,
+		"target_kind": "enemy_single", "from_positions": [1, 2, 3],
+		"to_positions": [1, 2, 3], "effects": {"cannot_buff_next_turn": true}}
+	_check(CardShortRules.has_unknown(bare)
+		and CardShortRules.line(bare) == UNKNOWN_FALLBACK
+		and not CardShortRules.is_authored_fear(bare),
+		"a bare Fear flag stays honestly undescribed")
+	# The existing keyword rows are untouched by the new flag.
+	var cloud := lantern_monk_pool.get_definition("lantern_monk_moth_cloud")
+	_check(CardShortRules.line(cloud) == "Blind to all. Exhaust."
+		and _has_keyword_row(cloud, "Blind") and _has_keyword_row(cloud, "Exhaust")
+		and not _has_keyword_row(cloud, "Fear"),
+		"the existing Moth Cloud Blind/Exhaust Help is unchanged")
+	var slip := rag_duelist_starter.get_definition("rag_duelist_cape_slip")
+	_check(CardShortRules.line(slip) == "Dodge the next attack."
+		and _has_keyword_row(slip, "Dodge") and not _has_keyword_row(slip, "Fear"),
+		"the existing Cape Slip Dodge Help is unchanged")
+	for entry in SCARECROW_FEAR_CASES:
+		var card_id := str(entry["id"])
+		var definition := _scarecrow_definition(str(entry["catalog"]), card_id)
+		var names := _row_names(CardKeywordGlossary.describe(definition))
+		_check(not definition.is_empty()
+			and not names.has("Blind") and not names.has("Dodge")
+			and not names.has("Exhaust"),
+			"a genuine Fear card borrows no other keyword Help row: " + card_id)
+	# Malformed probes cannot reach into the shipped catalogs.
+	var glare_after := _scarecrow_definition("starter", "scarecrow_sack_glare")
+	var fright_after := _scarecrow_definition("pool", "scarecrow_harvest_fright")
+	_check(glare_after == glare and fright_after == fright
+		and CardShortRules.line(glare_after) == "Weak 1. Fear.",
+		"the malformed probes cannot alter the shipped Scarecrow records")
 
