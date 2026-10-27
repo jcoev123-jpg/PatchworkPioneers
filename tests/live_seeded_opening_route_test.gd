@@ -212,6 +212,10 @@ func _invalid_starts(app) -> void:
 		var expected := randi()
 		seed(950095)
 		await _activate(app.start_button, true)
+		_check(is_instance_valid(app.party_picker) and app.run_map == null, "invalid-data Start still requires explicit party")
+		for id in ["warden", "seamstress", "tinker"]:
+			await _activate(app.party_picker._tiles[id], true)
+		await _activate(app.party_picker.continue_button, true)
 		_check(randi() == expected, "rejected Start does not consume the actual global RNG")
 		_clean(app)
 		app.set(field, previous)
@@ -220,6 +224,10 @@ func _invalid_starts(app) -> void:
 		var previous: String = app.get(field)
 		app.set(field, path)
 		await _activate(app.start_button, false)
+		_check(is_instance_valid(app.party_picker) and app.run_map == null, "missing-data Start still requires explicit party")
+		for id in ["warden", "seamstress", "tinker"]:
+			await _activate(app.party_picker._tiles[id], false)
+		await _activate(app.party_picker.continue_button, false)
 		_clean(app)
 		app.set(field, previous)
 
@@ -591,6 +599,10 @@ func _run() -> void:
 		for mode in range(2):
 			app.run_seed = fixture[1]
 			await _activate(app.start_button, mode == 1)
+			_check(is_instance_valid(app.party_picker) and app.run_map == null, "physical Start mounts picker before allocating run")
+			for id in ["warden", "seamstress", "tinker"]:
+				await _activate(app.party_picker._tiles[id], mode == 1)
+			await _activate(app.party_picker.continue_button, mode == 1)
 			_check(app.run_map != null and app.route_view != null, "physical Start opens initialized chooser")
 			if app.run_map == null:
 				continue
@@ -769,6 +781,10 @@ func _run() -> void:
 			_clean(app)
 			# Return directly from a no-battle visit, then replay the same seeded title.
 			await _activate(app.start_button, mode == 0)
+			_check(is_instance_valid(app.party_picker) and app.run_map == null, "replayed Start first mounts picker")
+			for id in ["warden", "seamstress", "tinker"]:
+				await _activate(app.party_picker._tiles[id], mode == 0)
+			await _activate(app.party_picker.continue_button, mode == 0)
 			if fixture[0] not in ["Fight", "Elite"]:
 				await _activate(_button(app, fixture[2]), mode == 0)
 				if fixture[0] == "Unpicker":

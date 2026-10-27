@@ -121,6 +121,18 @@ static func _valid_authored(records: Variant) -> bool:
 
 
 static func _valid_heroes(heroes: Variant, counts: Variant) -> bool:
+	var caps := {}
+	if heroes is Array:
+		var ids: Array = []
+		for hero in heroes:
+			if not hero is Dictionary:
+				return false
+			ids.append(hero.get("id"))
+		var admission := RunV3PartyAdmission.admit(ids)
+		if not admission.ok:
+			return false
+		for definition in admission.party:
+			caps[definition.id] = definition.max_hp
 	if typeof(heroes) != TYPE_ARRAY or heroes.size() != 3 \
 			or typeof(counts) != TYPE_DICTIONARY or counts.size() != 3:
 		return false
@@ -130,7 +142,7 @@ static func _valid_heroes(heroes: Variant, counts: Variant) -> bool:
 		if typeof(hero) != TYPE_DICTIONARY:
 			return false
 		var id: Variant = hero.get("id")
-		if typeof(id) != TYPE_STRING or not STARTING_HP.has(id) or seen.has(id):
+		if typeof(id) != TYPE_STRING or not caps.has(id) or seen.has(id):
 			return false
 		seen[id] = true
 		for field in ["position", "hp", "max_hp", "block"]:
@@ -149,7 +161,7 @@ static func _valid_heroes(heroes: Variant, counts: Variant) -> bool:
 		var count: Variant = counts.get(id)
 		if typeof(count) != TYPE_INT or count < 0:
 			return false
-		var starting: int = STARTING_HP[id]
+		var starting: int = caps[id]
 		# Saturate before multiplication, avoiding overflow from forged counts.
 		var turns_to_floor: int = ceili(float(starting - 10) / 3.0)
 		var expected: int = 10 if count >= turns_to_floor else starting - 3 * count

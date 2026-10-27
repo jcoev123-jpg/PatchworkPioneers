@@ -74,7 +74,7 @@ func _warden_position() -> int:
 	var warden_position := 0
 	for position in range(1, CombatParty.PARTY_SIZE + 1):
 		var hero: Dictionary = _party.get_hero(position)
-		if hero["id"] not in ["warden", "seamstress", "tinker"] or hero["id"] in ids:
+		if hero["id"] not in RunV3PartyAdmission.HERO_IDS or hero["id"] in ids:
 			return 0
 		ids.append(hero["id"])
 		if hero["id"] == WARDEN_ID:

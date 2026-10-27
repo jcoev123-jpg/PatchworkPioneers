@@ -43,6 +43,7 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 	else:
 		app.run_seed = fixture.seed
 		await _click(app.start_button)
+		preload("res://tests/party_choice.gd").choose(app)
 		await _frames()
 	if funded:
 		# Use the shipped preview's explicit opening wallet authority.
@@ -380,6 +381,7 @@ func _open_title_teardown() -> void:
 	await _frames()
 	app.run_seed = fixture.seed
 	await _click(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
 	await _click(_button(fixture.id))
 	var panel: LivePatchStallPanel = app.patch_stall_view
 	_check(is_instance_valid(panel) and panel.is_visible_in_tree(), "title teardown starts with open mounted panel")
@@ -400,6 +402,7 @@ func _open_title_teardown() -> void:
 	handler.call()
 	_check(app.run_map == null and service.read_state() == source, "retired open intent cannot consume visit at title")
 	await _click(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()
 	var before: Dictionary = app._sewing_context()
 	_check(app.run_map != null and not before.is_empty(), "real new run exists before stale replay")

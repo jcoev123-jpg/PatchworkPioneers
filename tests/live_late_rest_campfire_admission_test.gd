@@ -189,6 +189,7 @@ func _unfought_late_rest(legacy: bool = false) -> void:
 	await _frames()
 	app.run_seed = found.seed
 	await _click(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
 	var opening := _button(found.opening)
 	_check(opening != null, "unfought opening control exists")
 	if opening == null:

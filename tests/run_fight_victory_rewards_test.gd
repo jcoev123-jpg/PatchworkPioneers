@@ -441,7 +441,11 @@ func _base_pool_ids(owner: String) -> Array[String]:
 		return SeamstressPoolCards.new().get_base_ids()
 	if owner == "tinker":
 		return TinkerPoolCards.new().get_pool_card_ids()
-	return []
+	var ids: Array[String] = []
+	var pool: Variant = _v3_pool(owner)
+	if pool != null:
+		ids.assign(pool.get_base_ids())
+	return ids
 
 
 func _pool_definition(owner: String, card_id: String) -> Dictionary:
@@ -451,7 +455,19 @@ func _pool_definition(owner: String, card_id: String) -> Dictionary:
 		return SeamstressPoolCards.new().get_definition(card_id)
 	if owner == "tinker":
 		return TinkerPoolCards.new().get_definition(card_id)
-	return {}
+	var pool: Variant = _v3_pool(owner)
+	return pool.get_definition(card_id) if pool != null else {}
+
+
+## Cycle 332: the five V3 heroes' authored pools are reward candidates too.
+func _v3_pool(owner: String) -> Variant:
+	match owner:
+		"lantern_monk": return LanternMonkPoolCards.new()
+		"rag_duelist": return RagDuelistPoolCards.new()
+		"scarecrow": return ScarecrowPoolCards.new()
+		"yarn_ranger": return YarnRangerPoolCards.new()
+		"button_golem": return ButtonGolemPoolCards.new()
+	return null
 
 
 ## Independent oracle for the weighted path: one gold draw, then three picks of

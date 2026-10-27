@@ -1,5 +1,5 @@
 [
-  {"id": "needle_marshal", "name": "Needle Marshal", "max_hp": 28, "thorns": 3, "bleed_on_attack": true, "art_path": "res://assets/paper/enemies/needle_marshal.png",
+  {"id": "needle_marshal", "name": "Needle Marshal", "max_hp": 28, "thorns": 3, "bleed_on_attack": true, "enrage": true, "art_path": "res://assets/paper/enemies/needle_marshal.png",
     "intent": {"target": "front", "actions": [
       {"type": "attack", "amount": 5, "weight": 2},
       {"type": "attack", "amount": 4, "weight": 2},

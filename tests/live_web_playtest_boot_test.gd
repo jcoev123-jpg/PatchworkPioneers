@@ -131,6 +131,10 @@ func _run() -> void:
 				_check(not await boot.enter_preview(app, "battle") and _snapshot(app) == snapshot, "active run reentry rejected without spending")
 				app._return_to_title()
 				app.start_button.pressed.emit()
+				_check(is_instance_valid(app.party_picker) and app.run_map == null, "restart first mounts picker")
+				for id in ["warden", "seamstress", "tinker"]:
+					app.party_picker._tiles[id].pressed.emit()
+				app.party_picker.continue_button.pressed.emit()
 				_check(app.run_map != null and app.session_gold == 0 and app.run_scraps == 0
 					and app._unfought_run(), "ordinary restart on same app restores zero wallet")
 				app.session_gold = 100
@@ -147,8 +151,9 @@ func _run() -> void:
 			app.starter_deck_path = "res://missing-preview-deck.json"
 		else:
 			app.start_run_requested.connect(func():
-				for button in app.route_buttons:
-					button.disabled = true)
+				app.party_picker.party_requested.connect(func(_ids):
+					for button in app.route_buttons:
+						button.disabled = true))
 		_check(not await boot.enter_preview(app, "battle") and not boot.preview_ready, "failed admission never ready: " + broken)
 		_check(app.deck == null and app.battle_result == null, "failed admission creates no combat")
 		app.free()

@@ -3,11 +3,14 @@ extends RefCounted
 ## Scene-free receipt tracker. Only callers of successfully committed card plays
 ## may record an owner; stitched plays report each of their two owners afterward.
 
-const HERO_IDS: Array[String] = ["warden", "seamstress", "tinker"]
+const HERO_IDS: Array[String] = ["warden", "seamstress", "tinker", "lantern_monk",
+	"rag_duelist", "scarecrow", "yarn_ranger", "button_golem"]
 const FELT_COLORS := {
 	"warden": "#4a5d73",
 	"seamstress": "#6e4f6b",
 	"tinker": "#c49a3a",
+	"lantern_monk": "#466c65", "rag_duelist": "#823e62", "scarecrow": "#77613d",
+	"yarn_ranger": "#426785", "button_golem": "#5c577e",
 }
 const BLOCK_REWARD := 3
 
@@ -186,7 +189,7 @@ func get_patch_progress() -> Dictionary:
 			if hero.get("hp", 0) > 0 and hero.get("id") in HERO_IDS:
 				living_ids.append(hero["id"])
 	var patches := {}
-	for id in HERO_IDS:
+	for id in _played:
 		patches[id] = {
 			"living": id in living_ids,
 			"played": _played.get(id, false),
@@ -196,7 +199,11 @@ func get_patch_progress() -> Dictionary:
 
 
 func _clear_progress() -> void:
-	_played = {"warden": false, "seamstress": false, "tinker": false}
+	_played = {}
+	if _party != null and _party.is_valid():
+		for hero in _party.get_heroes():
+			if hero.id in HERO_IDS:
+				_played[hero.id] = false
 
 
 func _bindings_valid() -> bool:
@@ -209,12 +216,12 @@ func _bindings_valid() -> bool:
 	for index in range(CombatParty.PARTY_SIZE):
 		var hero: Dictionary = heroes[index]
 		var id = hero.get("id")
-		if not id is String or not id in HERO_IDS or id in ids:
+		if not id is String or not id in HERO_IDS or id in ids or not _played.has(id):
 			return false
 		if hero.get("position") != index + 1 or not hero.get("hp") is int:
 			return false
 		ids.append(id)
-	return ids.size() == HERO_IDS.size()
+	return ids.size() == CombatParty.PARTY_SIZE
 
 
 func _living_heroes() -> Array[Dictionary]:

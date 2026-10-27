@@ -195,6 +195,7 @@ func _unpicker_boot(stitched: bool, funded: bool) -> void:
 	await _frames()
 	app.run_seed = fixture.seed
 	await _click(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()
 	if funded:
 		app.session_gold = 100

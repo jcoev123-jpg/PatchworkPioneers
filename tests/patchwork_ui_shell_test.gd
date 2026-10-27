@@ -170,6 +170,7 @@ func _run() -> void:
 	_check(app.base_button.has_focus(), "Tab reaches Quilt village on the sewn title")
 	app.start_button.grab_focus()
 	await _click(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
 	_check(app.route_view != null and not app.route_buttons.is_empty() and not shell.visible, "physical Start reaches real map")
 	var fight: Button
 	for button in app.route_buttons:

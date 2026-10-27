@@ -1284,6 +1284,7 @@ func _routed_three() -> void:
 		return
 	app.run_seed = fixture.seed
 	app.start_button.pressed.emit()
+	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()
 	var button: Button = null
 	for candidate in app.route_buttons:

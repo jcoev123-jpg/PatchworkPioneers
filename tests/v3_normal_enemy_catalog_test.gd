@@ -132,7 +132,7 @@ func _new_expected() -> Dictionary:
 			"art_path": "res://assets/paper/enemies/scissor_crab.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "snip_block", "amount": 0, "weight": 2},
-				{"type": "attack", "amount": 6, "weight": 3}]}},
+				{"type": "attack", "amount": 6, "hits": 2, "weight": 3}]}},
 		"thimble_beetle": {"id": "thimble_beetle", "name": "Thimble Beetle", "max_hp": 29, "art_path": "res://assets/paper/enemies/thimble_beetle.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "block", "amount": 9, "weight": 3},
@@ -1140,6 +1140,18 @@ func _authored_alternative(record: Dictionary, kind: String, amount: int) -> Dic
 		if raw is Dictionary and raw.get("type") == kind and int(raw.get("amount", -1)) == amount:
 			return raw.duplicate(true)
 	return {}
+
+## True when the authored alternative itself requests multiple hits, so a named
+## control's single-hit shape is proven from its own record rather than assumed.
+func _alternative_carries_hits(raw: Variant) -> bool:
+	return raw is Dictionary and raw.has("hits")
+
+## An authored action body shaped exactly as the phase's live announcement, so
+## validity is proven through the shared contract instead of a copied assertion.
+func _announced_from(action: Dictionary, target: int) -> Dictionary:
+	var announced: Dictionary = action.duplicate(true)
+	announced["target_position"] = target
+	return announced
 
 ## Bind a valid one-source encounter carrying exactly one authored alternative,
 ## so an executed beat never depends on a lucky weighted roll.
@@ -3182,10 +3194,34 @@ func _test_scissor_crab_block_snip_catalog() -> void:
 		"AC1: Scissor Crab keeps its name, 26 HP, art path and front target")
 	var snip := _authored_alternative(crab, "snip_block", 0)
 	var attack := _authored_alternative(crab, "attack", 6)
-	_check(not snip.is_empty() and int(snip.get("weight", 0)) == 2,
-		"AC1: the authored 0-amount snip keeps weight 2")
+	_check(not snip.is_empty() and int(snip.get("weight", 0)) == 2
+		and not snip.has("hits"),
+		"AC1: the independent authored 0-amount snip keeps weight 2 and stays one hit")
 	_check(not attack.is_empty() and int(attack.get("weight", 0)) == 3,
 		"AC1: the authored 6-damage attack keeps weight 3")
+	# The authored attack now announces a genuine two-hit strike: amount 6 split
+	# by the phase, not an extra action and not a raised total.
+	var normalized_attack := CombatEnemyIntents.weighted_action(attack)
+	_check(not normalized_attack.is_empty()
+		and normalized_attack.action.get("hits") is int
+		and int(normalized_attack.action.get("hits", 0)) == 2,
+		"AC1: the parsed Crab attack authors hits 2 as a genuine int")
+	_check(not normalized_attack.is_empty()
+		and int(normalized_attack.action.get("amount", 0)) == 6
+		and int(normalized_attack.get("weight", 0)) == 3,
+		"AC1: the two-hit Crab attack keeps its authored six total and weight 3")
+	_check(not normalized_attack.is_empty()
+		and CombatEnemyIntents.valid_action(_announced_from(normalized_attack.action, 1)),
+		"AC1: the two-hit Crab attack validates through the live action contract")
+	var crab_actions: Variant = crab.get("intent", {}).get("actions")
+	_check(crab_actions is Array and crab_actions.size() == 2,
+		"AC1: the Crab still authors exactly its attack and snip, never a third action")
+	var moth_bite := _authored_alternative(_find(parsed, "moth_swarm"), "attack", 7)
+	var beetle_attack := _authored_alternative(_find(parsed, "thimble_beetle"), "attack", 5)
+	_check(not moth_bite.is_empty() and not _alternative_carries_hits(moth_bite),
+		"AC1: the Moth Swarm's authored bite stays a single hit")
+	_check(not beetle_attack.is_empty() and not _alternative_carries_hits(beetle_attack),
+		"AC1: the Thimble Beetle's authored attack stays a single hit")
 	var moth := _find(parsed, "moth_swarm")
 	_check(moth.get("chew_block_on_attack") is bool
 		and moth.get("chew_block_on_attack") == true,
@@ -3206,6 +3242,11 @@ func _test_scissor_crab_block_snip_catalog() -> void:
 			and live.get("max_hp") == 26
 			and live.get("intent", {}).get("target") == "front",
 			"AC4: the live Fight record keeps the Crab's trait, HP and target policy")
+		var live_attack := _authored_alternative(live, "attack", 6)
+		_check(not live_attack.is_empty()
+			and int(live_attack.get("hits", 0)) == 2
+			and int(live_attack.get("weight", 0)) == 3,
+			"AC4: the live Fight record really carries the authored two-hit attack")
 		var band := _band_containing(material.get("pools", {}), "scissor_crab")
 		_check(not band.is_empty(),
 			"AC4: Scissor Crab is eligible in a derived live floor band")
@@ -3226,12 +3267,14 @@ func _test_scissor_crab_block_snip_catalog() -> void:
 			"AC3: malformed Crab chew metadata rejects the whole catalog: "
 				+ str(invalid_value))
 
-## AC2: a living opted-in Scissor Crab's genuine 6-damage attack snips all six
-## Block off the real recipient before the hit lands, through the real catalog
-## record, seeded weighted scheduler and CombatEnemyPhase. AC3: the separate
-## snip, an explicit-false/absent flag and a slain source keep the old
-## Block-first or inert behavior. AC4: invalid metadata and rejected beats stay
-## atomic, and the executed attack spends no extra run RNG.
+## AC2: a living opted-in Scissor Crab's genuine authored two-hit attack splits its
+## six total into two 3-damage strikes (integer division; an odd scaled remainder
+## goes to the first strike), snips all six Block off the real recipient before the
+## opening hit lands, and publishes two ordered confirmed events. AC3: the separate
+## snip, armed Blind, an explicit-false/absent flag and a slain source keep the
+## old zero-HP, whole-attack-miss, Block-first or inert behavior. AC4: invalid
+## metadata and rejected beats stay atomic, and the executed attack spends no
+## extra run RNG.
 func _test_scissor_crab_block_snip_phase() -> void:
 	var parsed := _load_parsed()
 	var crab := _find(parsed, "scissor_crab")
@@ -3245,8 +3288,10 @@ func _test_scissor_crab_block_snip_phase() -> void:
 		"precondition: the authored Crab attack and snip alternatives exist")
 	if attack.is_empty() or snip.is_empty():
 		return
+	_check(int(attack.get("hits", 0)) == 2,
+		"precondition: the shipped Crab attack really authors two hits")
 
-	# AC2: 6 Block and full 40 HP lose the Block first, then the full six.
+	# AC2: 6 Block and full 40 HP lose the Block to the opening snip, then 3 + 3.
 	var party := _party()
 	_check(party.get_hero(1).get("id") == "warden"
 		and party.get_hero(1).get("hp") == 40 and party.gain_block(1, 6),
@@ -3257,21 +3302,86 @@ func _test_scissor_crab_block_snip_phase() -> void:
 		return
 	_check(case.intents.size() == 1 and case.intents[0].get("type") == "attack"
 		and int(case.intents[0].get("amount", -1)) == 6
+		and int(case.intents[0].get("hits", 0)) == 2
 		and case.intents[0].get("target_position") == 1,
-		"AC2: the real announcement is the authored six-damage attack on the front hero")
+		"AC2: the real announcement is the authored six-total two-hit attack on the front hero")
 	var committed: int = case.rng.state
 	var untouched: Array = [party.get_hero(2), party.get_hero(3)]
 	var receipt := CombatEnemyPhase.new().execute_phase(party, case.enemies,
 		case.intents, null, true)
 	_check(receipt == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 1, "applied": true},
 		{"type": "attack", "enemy_position": 1, "target_position": 1, "applied": true}]},
-		"AC2: the snipping attack publishes exactly one ordinary attack event")
+		"AC2: the two-snip attack publishes two ordered confirmed attack events")
 	_check(party.get_hero(1).get("block") == 0 and party.get_hero(1).get("hp") == 34,
-		"AC2: 6 Block + 40 HP => 0 Block + 34 HP in that one attack")
+		"AC2: 6 Block eaten, then 3 + 3 HP => 0 Block at 34 HP in that one announcement")
 	_check([party.get_hero(2), party.get_hero(3)] == untouched,
-		"AC2: the snipping attack leaves the other two heroes exactly unchanged")
+		"AC2: the two-snip attack leaves the other two heroes exactly unchanged")
 	_check(case.rng.state == committed and case.scheduler.get_intents() == case.intents,
-		"AC4: the executed attack spends no extra run RNG and replays its announcement")
+		"AC4: the executed two-hit attack spends no extra run RNG and replays its announcement")
+
+	# AC4: a live floor-scaled total is still one announcement split in two:
+	# 6 x1.25 = 7 => 4+3 and 6 x1.5 = 9 => 5+4, keeping the odd point first.
+	var base := int(CombatEnemyIntents.weighted_action(attack).action.get("amount", 0))
+	_check(base == 6, "AC4 precondition: the Crab attack's authored base total is six")
+	for floor_number in [1, 5, 9]:
+		var scaled := RunNormalAttackFloorScaling.scale_normal_attack(base, floor_number)
+		var total: int = int(scaled.get("amount", 0))
+		_check(scaled.get("ok") == true and total == {1: 6, 5: 7, 9: 9}[floor_number],
+			"AC4: normal floor scaling scales the whole Crab total, never each hit")
+		var scaled_attack: Dictionary = attack.duplicate(true)
+		scaled_attack["amount"] = total
+		var scaled_party := _party()
+		_check(scaled_party.gain_block(1, 6),
+			"AC4 precondition: six Block before the floor %d scaled strike" % floor_number)
+		var scaled_case := _force_normal_alternative(crab, scaled_attack, scaled_party)
+		if scaled_case.is_empty():
+			continue
+		var scaled_receipt := CombatEnemyPhase.new().execute_phase(scaled_party,
+			scaled_case.enemies, scaled_case.intents, null, true)
+		_check(scaled_receipt.get("ok") == true
+			and scaled_receipt.get("events", []).size() == 2
+			and scaled_receipt["events"][0].get("applied") == true
+			and scaled_receipt["events"][1].get("applied") == true,
+			"AC4: the floor %d scaled Crab strike stays two ordered confirmed hits" % floor_number)
+		@warning_ignore("integer_division")
+		var second_hit: int = total / 2
+		var first_hit: int = total - second_hit
+		_check(scaled_party.get_hero(1).get("block") == 0
+			and scaled_party.get_hero(1).get("hp") == 40 - first_hit - second_hit,
+			"AC4: the floor %d total of %d splits %d+%d" % [floor_number, total, first_hit, second_hit])
+
+	# AC3: armed Blind is consumed once and prevents the entire two-hit attack.
+	var blind_party := _party()
+	_check(blind_party.gain_block(1, 6),
+		"AC3 precondition: six Block before the blinded two-hit attack")
+	var blind_case := _force_normal_alternative(crab, attack, blind_party)
+	if not blind_case.is_empty():
+		blind_case.enemies._enemies[0].statuses = {"blind_next_attack": 1}
+		var blind_heroes: Array = blind_party.get_heroes()
+		var blind_state: int = blind_case.rng.state
+		var blind_receipt := CombatEnemyPhase.new().execute_phase(blind_party,
+			blind_case.enemies, blind_case.intents, null, true)
+		_check(blind_receipt == {"ok": true, "events": [
+			{"type": "attack", "enemy_position": 1, "target_position": 1,
+				"applied": false}]},
+			"AC3: armed Blind misses the whole two-hit attack as one attempt")
+		_check(not blind_case.enemies.get_enemy(1).get("statuses", {}).has("blind_next_attack")
+			and blind_party.get_heroes() == blind_heroes
+			and blind_party.get_hero(1).get("block") == 6,
+			"AC3: Blind is consumed once and eats no Block and no HP")
+		_check(blind_case.rng.state == blind_state,
+			"AC4: the blinded attack spends no extra run RNG")
+		# The following unblinded announcement of the same authored attack lands
+		# both strikes, so the miss really spent the single armed Blind.
+		var after_blind := CombatEnemyPhase.new().execute_phase(blind_party,
+			blind_case.enemies, blind_case.intents, null, true)
+		_check(after_blind.get("ok") == true and after_blind.get("events", []).size() == 2
+			and after_blind["events"][0].get("applied") == true
+			and after_blind["events"][1].get("applied") == true
+			and blind_party.get_hero(1).get("hp") == 34
+			and blind_party.get_hero(1).get("block") == 0,
+			"AC3: the next unblinded two-hit attack confirms both strikes")
 
 	# AC3: the separate authored snip clears Block without any HP damage.
 	var snip_party := _party()
@@ -3289,7 +3399,7 @@ func _test_scissor_crab_block_snip_phase() -> void:
 			and snip_party.get_hero(1).get("hp") == 40,
 			"AC3: the standalone snip zeroes Block and costs no HP")
 
-	# AC3: an explicit false or an absent trait blocks all six damage in full.
+	# AC3: an explicit false or an absent trait shields the full six across hits.
 	for mode in ["explicit_false", "absent"]:
 		var control_record: Dictionary = crab.duplicate(true)
 		if mode == "explicit_false":
@@ -3305,16 +3415,18 @@ func _test_scissor_crab_block_snip_phase() -> void:
 		var control_receipt := CombatEnemyPhase.new().execute_phase(control_party,
 			control_case.enemies, control_case.intents, null, true)
 		_check(control_receipt.get("ok") == true
-			and control_receipt.get("events", [{}])[0].get("applied") == true,
-			"AC3: the non-opted-in six-damage attack still resolves: " + mode)
+			and control_receipt.get("events", []).size() == 2
+			and control_receipt["events"][0].get("applied") == true
+			and control_receipt["events"][1].get("applied") == true,
+			"AC3: the non-opted-in two-hit attack still resolves both hits: " + mode)
 		_check(control_party.get_hero(1).get("block") == 0
 			and control_party.get_hero(1).get("hp") == 40,
-			"AC3: six Block absorb the whole non-opted-in attack: " + mode)
+			"AC3: six Block shield the whole six total across both hits: " + mode)
 		_check(control_party.get_hero(2).get("hp") == 30
 			and control_party.get_hero(3).get("hp") == 26,
 			"AC3: the blocked control attack touches no other hero: " + mode)
 
-	# AC3: a slain Crab neither snips nor hits.
+	# AC3: a slain Crab's two skipped hits are both inert.
 	var slain_party := _party()
 	_check(slain_party.gain_block(1, 6),
 		"AC3 precondition: six Block before the slain Crab's beat")
@@ -3328,8 +3440,10 @@ func _test_scissor_crab_block_snip_phase() -> void:
 			slain_case.enemies, slain_case.intents, null, true)
 		_check(slain_receipt == {"ok": true, "events": [
 			{"type": "attack", "enemy_position": 1, "target_position": 1,
+				"applied": false},
+			{"type": "attack", "enemy_position": 1, "target_position": 1,
 				"applied": false}]},
-			"AC3: a slain Crab's announced attack resolves as one inert beat")
+			"AC3: a slain Crab's announced attack resolves as two inert skipped hits")
 		_check(slain_party.get_heroes() == slain_heroes
 			and slain_case.enemies.get_enemies() == slain_roster,
 			"AC3: a slain Crab eats no Block and deals no damage")
@@ -3370,6 +3484,14 @@ func _test_scissor_crab_block_snip_phase() -> void:
 			and rejected_case.enemies.get_enemies() == rejected_roster
 			and rejected_party.get_hero(1).get("block") == 6,
 			"AC4: an invalid announced Crab attack rejects the phase without eating Block")
+		var bad_hits: Dictionary = rejected_case.intents[0].duplicate(true)
+		bad_hits["hits"] = 3
+		_check(CombatEnemyPhase.new().execute_phase(rejected_party, rejected_case.enemies,
+			[bad_hits], null, true) == {"ok": false, "events": []}
+			and rejected_party.get_heroes() == rejected_heroes
+			and rejected_case.enemies.get_enemies() == rejected_roster
+			and rejected_party.get_hero(1).get("block") == 6,
+			"AC4: a malformed three-hit Crab announcement rejects the phase atomically")
 
 ## The two look-driven normal enemies of this batch: the bobbin-beaked Bat sucks
 ## life back through the already-live Drain trait and the Quilt Termite bites

@@ -1270,6 +1270,7 @@ func _start_battle_in_app(app: Control, target_fight_id: String = "") -> bool:
 	await _mouse_click(app.start_button)
 	if not is_instance_valid(app.route_view) or not app.route_view.is_visible_in_tree():
 		app.start_button.pressed.emit()
+		preload("res://tests/party_choice.gd").choose(app)
 		await _frames()
 	_check(is_instance_valid(app.route_view) and app.route_view.is_visible_in_tree(),
 		"opening route view is mounted and visible after Start run")
