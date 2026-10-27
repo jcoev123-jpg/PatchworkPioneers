@@ -202,5 +202,9 @@ static func active_wearer(party: CombatParty, wardrobe: RunPatchWardrobe,
 	return false
 
 
+## The authored hero identities allowed to place or consume a token. The V3-1 Button Golem
+## owns a Pin rider (Button Knuckle), so it is admitted beside the original trio; every other
+## unknown id still fails closed. Later V3 heroes join this list with their own Pin cards.
 func _valid_pinner_id(pinner_id: String) -> bool:
-	return pinner_id is String and not pinner_id.is_empty() and pinner_id in ["warden", "seamstress", "tinker"]
+	return pinner_id is String and not pinner_id.is_empty() \
+		and pinner_id in ["warden", "seamstress", "tinker", "button_golem"]
