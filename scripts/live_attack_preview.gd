@@ -31,6 +31,7 @@ var _heavy_attacks := CombatWardenPoolHeavyAttacks.new()
 var _toss := CombatWardenV3ShieldTossCards.new()
 var _lunge := CombatRagDuelistLungeCards.new()
 var _barrage := CombatRagDuelistNeedleBarrageCards.new()
+var _needle := CombatYarnRangerNeedleCards.new()
 ## Button Golem's Knuckle/Snag resolver. It keeps no token store: every cast
 ## and forecast reads this battle's one shared _pinned set.
 var _thread := CombatButtonGolemThreadCards.new()
@@ -785,6 +786,8 @@ func _single(panel) -> bool:
 ## Starter, plain-strike, heavy-pool, Seamstress control attacks and this
 ## battle's selected Path card use separate authored catalogs.
 func _definition(card_id: String) -> Dictionary:
+	if _needle.is_supported_card(card_id):
+		return CombatYarnRangerNeedleCards.needle_definition(card_id)
 	if _barrage.is_supported_card(card_id):
 		return _barrage._catalog_definition(card_id)
 	if _lunge.is_supported_card(card_id):
@@ -841,6 +844,8 @@ func _select(event: InputEvent, panel) -> void:
 ## service itself validates each original enemy slot before it is offered.
 func _target_preview(id: String) -> Dictionary:
 	var app = get_parent()
+	if _needle.is_supported_card(id):
+		return _needle_forecast(app.party, app.enemies, id)
 	if _barrage.is_supported_card(id):
 		return _barrage_forecast(app.party, app.enemies, id)
 	if _lunge.is_supported_card(id):
@@ -890,7 +895,7 @@ func _queue_attack(position: int) -> void:
 	# A single-target target ID plus the held panel's original hand index
 	# prevent an enemy replacement or equivalent-copy panel swap at commit.
 	var target_id := ""
-	if (_barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
+	if (_needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
 			or _targeting.is_seamstress_control(id) \
 			or _targeting.is_heavy_pool_attack(id) \
 			or _toss.is_supported_card(id) \
@@ -900,13 +905,13 @@ func _queue_attack(position: int) -> void:
 		target_id = str(app.enemies.get_enemy(position).get("id", ""))
 	_commit.call_deferred(_armed, id, position, _token,
 		app.party, app.enemies, app.battle_result, app.run_rng, _turn, target_id,
-		_armed.get_index(), _deck, _deck.hand.duplicate(), app.run_map, _pinned)
+		_armed.get_index(), _deck, _deck.hand.duplicate(), app.run_map, _pinned, _unravel)
 
 
 func _commit(panel, id: String, position: int, token: int, party, enemies, result, rng,
 		turn: int, target_id: String = "", panel_index: int = -1,
 		queued_deck = null, queued_hand: Array = [], queued_map = null,
-		queued_pinned: CombatPinned = null) -> void:
+		queued_pinned: CombatPinned = null, queued_unravel: CombatUnravel = null) -> void:
 	var app = get_parent()
 	if not is_inside_tree() or app == null or app.get_node_or_null("LiveAttackPreview") != self or token != _token or not _queued:
 		return
@@ -920,8 +925,9 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var overload := _overload.is_supported_card(id)
 	var lunge := _lunge.is_supported_card(id)
 	var barrage := _barrage.is_supported_card(id)
+	var needle := _needle.is_supported_card(id)
 	var thread := _thread.is_supported_card(id)
-	var guarded := barrage or lunge or thread or direct or control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS
+	var guarded := needle or barrage or lunge or thread or direct or control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -947,8 +953,11 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	if thread and (_pinned == null or queued_pinned != _pinned):
 		_reject_stitch()
 		return
+	if needle and (queued_unravel != _unravel or not _needle_binding_ready(party, enemies)):
+		_reject_stitch()
+		return
 	var energy_before: int = _deck.energy
-	if (barrage or lunge or thread or direct or combo or path or heavy or toss or overload) and (app._battle_closed \
+	if (needle or barrage or lunge or thread or direct or combo or path or heavy or toss or overload) and (app._battle_closed \
 			or (target_id.is_empty() and not (_is_warden_card(id) and position == 0)) \
 			or app.deck._rng != rng or (combo and not app._combo_battle_current())):
 		_reject_stitch()
@@ -957,7 +966,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
 			or (((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id)) \
-			or ((barrage or lunge or thread or control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS) \
+			or ((needle or barrage or lunge or thread or control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS) \
 				and position > 0 and (app._battle_closed or target_id.is_empty() \
 				or app.enemies.get_enemy(position).get("id") != target_id))):
 		if guarded or _targeting.is_sight_glass(id):
@@ -983,6 +992,13 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 
 
 func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, position: int, forecast: bool = false) -> Dictionary:
+	if _needle.is_supported_card(id):
+		if forecast:
+			return _needle_forecast(party, enemies, id)
+		# Never pay unless the round flow accepts this battle's existing gauge.
+		if not _share_path_gauge():
+			return {"ok": false, "reason": "unbound_unravel"}
+		return _needle.play_card(_deck, party, enemies, _unravel, id, position)
 	if _barrage.is_supported_card(id):
 		if forecast:
 			return _barrage_forecast(party, enemies, id)
@@ -1416,7 +1432,7 @@ func _eligible(panel) -> bool:
 	var index: int = panel.get_index()
 	var path_ok: bool = (_is_path_card(id) and not _path_positions(id).is_empty()) \
 		or (_is_warden_card(id) and warden_preview(id).get("playable", false))
-	return (_barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
+	return (_needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
 func _sync_battle() -> void:
@@ -1692,6 +1708,19 @@ func _refresh() -> void:
 			definition.display_name, definition.cost, _key_hint(path_slots), path_reading]
 		return
 	var preview := _resolve_attack(app.party, app.enemies, id, 0, true)
+	if _needle.is_supported_card(id):
+		current_forecast = preview.duplicate(true)
+		var choices: PackedStringArray = []
+		for hit in preview.hits:
+			choices.append("%d: %d damage, then Unravel +%d if alive (gauge %d/%d)" % [
+				int(hit.position), int(hit.damage), int(hit.unravel),
+				int(hit.gauge), int(hit.threshold)])
+		var reading := "Unavailable: no held/affordable needle, living target or shared gauge"
+		if preview.playable:
+			reading = "Choose one enemy slot: " + "; ".join(choices)
+		cue.text = "%s | %d energy | P / click card; %s / click enemy; Esc: cancel\n%s" % [
+			definition.display_name, definition.cost, _key_hint(preview.target_positions), reading]
+		return
 	if _barrage.is_supported_card(id):
 		current_forecast = preview.duplicate(true)
 		var choices: PackedStringArray = []
@@ -2060,6 +2089,44 @@ func _thread_forecast(party: CombatParty, enemies: CombatEnemies, id: String) ->
 		return unavailable
 	return {"playable": true, "requires_selection": true, "target_positions": positions,
 		"hits": hits, "owner_position": seat}
+
+
+## A needle preview is read-only and uses the paid resolver's exact preflight
+## for each ORIGINAL enemy seat. No alternate damage or gauge mutator is used.
+func _needle_binding_ready(party: CombatParty, enemies: CombatEnemies) -> bool:
+	var app = get_parent()
+	if app == null or _unravel == null or _pinned == null or _deck == null \
+			or app.deck != _deck or app.party != party or app.enemies != enemies \
+			or _unravel._bound_enemies != enemies or app._battle_closed:
+		return false
+	var flow := _matching_flow(app, party, enemies)
+	return flow != null and (flow._unravel == null or flow._unravel == _unravel)
+
+
+func _needle_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> Dictionary:
+	var unavailable := {"playable": false, "requires_selection": true,
+		"target_positions": [], "hits": []}
+	var app = get_parent()
+	if not _needle.is_supported_card(id) or not _needle_binding_ready(party, enemies) \
+			or app.enemy_intents == null or _turn != app.enemy_intents._turn_index \
+			or _deck._rng != app.run_rng \
+			or _session != [party, enemies, app.battle_result, app.run_rng, app.enemy_intents]:
+		return unavailable
+	var positions: Array[int] = []
+	var hits: Array[Dictionary] = []
+	for position in CombatYarnRangerNeedleCards.TO_POSITIONS:
+		var plan: Dictionary = _needle._prepare(_deck, party, enemies, _unravel, id, position)
+		if not plan.get("ok", false):
+			continue
+		var gauge := _unravel.get_snapshot(position)
+		positions.append(position)
+		hits.append({"position": position,
+			"damage": _statuses.adjusted_attack_damage(int(plan.damage),
+				plan.attacker_statuses, plan.defender_statuses),
+			"unravel": int(plan.unravel), "gauge": int(gauge.gauge),
+			"threshold": int(gauge.threshold)})
+	return {"playable": not positions.is_empty(), "requires_selection": true,
+		"target_positions": positions, "hits": hits}
 
 
 ## The paid Needle Barrage resolver owns both admission and every sequential strike.
