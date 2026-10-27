@@ -760,6 +760,15 @@ func _test_marshal_sting() -> void:
 		and catalog.get("art_path") == "res://assets/paper/enemies/needle_marshal.png"
 		and catalog.get("intent", {}).get("target") == "front",
 		"AC1: the stinging Marshal keeps its exact name, HP, art and front policy")
+	# AC1 (Enrage): the same shipped record newly authors a genuine boolean flag
+	# and still starts with no committed stack counter of its own.
+	_check(catalog.get("enrage") is bool and catalog.get("enrage") == true
+		and not catalog.has("enrage_stacks"),
+		"AC1: needle_marshal authors boolean enrage true at zero stacks")
+	var enraged := elites.filter(func(record: Dictionary) -> bool:
+		return record.get("enrage") is bool and record.get("enrage") == true)
+	_check(enraged.size() == 1 and enraged[0].get("id") == "needle_marshal",
+		"AC1: the shipped Elite catalog authors Enrage on the Marshal alone")
 	var carriers := elites.filter(func(record: Dictionary) -> bool:
 		return record.get("bleed_on_attack") is bool and record.get("bleed_on_attack") == true)
 	_check(carriers.size() == 1 and carriers[0].get("id") == "needle_marshal",
@@ -784,12 +793,18 @@ func _test_marshal_sting() -> void:
 		and roster.get_enemy(1).get("bleed_on_attack") == true
 		and not roster.get_enemy(2).has("bleed_on_attack"),
 		"AC1: the real needle_marshal_elite roster carries the flag on the Marshal only")
+	_check(roster.get_enemy(1).get("enrage") is bool
+		and roster.get_enemy(1).get("enrage") == true
+		and not roster.get_enemy(2).has("enrage"),
+		"AC1: the real needle_marshal_elite roster carries Enrage on the Marshal only")
 	var assembled := RunTypedBattleRoster.new().assemble(
 		{"success": true, "node_type": "Elite", "encounter_id": "needle_marshal_elite",
 		"definitions": _schedule("needle_marshal_elite")}, ROSTERS, [ELITES, STARTER, RUN])
 	_check(assembled.get("ok", false)
 		and assembled.enemies.get_enemy(1).get("bleed_on_attack") == true
-		and not assembled.enemies.get_enemy(2).has("bleed_on_attack"),
+		and assembled.enemies.get_enemy(1).get("enrage") == true
+		and not assembled.enemies.get_enemy(2).has("bleed_on_attack")
+		and not assembled.enemies.get_enemy(2).has("enrage"),
 		"AC1: production typed assembly propagates the flag to the live roster")
 
 	var attack5 := {"type": "attack", "amount": 5, "weight": 2}

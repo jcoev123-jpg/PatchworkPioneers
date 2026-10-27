@@ -10,8 +10,11 @@ extends RefCounted
 ## hits from one card. Retaliation goes through CombatParty.apply_damage, so hero
 ## Block absorbs it before HP. Inputs are never mutated and no RNG is used.
 ## N comes from content; this class assigns no production value.
-## Enrage is a pure quote: it reports the stacks and additive attack bonus after
-## one confirmed hit without touching the roster or any live attack intent.
+## Enrage is a quote plus an opt-in commit: the quote reports the stacks and
+## additive attack bonus after one confirmed hit without touching anything, and
+## the commit persists exactly that quote's `enrage_stacks` onto the same
+## authoritative roster slot (nothing else on the enemy changes). No live attack
+## intent reads it here; runtime attack scaling is a separate task.
 ## Drain is an opt-in service: the battle caller invokes it once per CONFIRMED
 ## enemy hit, passing the authentic CombatStatusAttacks.resolve_vs_hero receipt
 ## for that hit. It heals only the hero HP loss of that hit, so Block-absorbed
@@ -77,6 +80,96 @@ func quote_enrage_after_hit(pre_hit_enemy: Dictionary, receipt: Dictionary) -> D
 	if receipt["damage"] <= 0 or stacks >= ENRAGE_MAX_STACKS:
 		return _enrage_no_op(stacks)
 	return _enrage_applied(stacks + 1)
+
+
+## Commit the Enrage stack gain of ONE confirmed hit onto the authoritative
+## roster, reusing quote_enrage_after_hit for every decision.
+## enemies: the authoritative CombatEnemies roster that owns the defender.
+## enemy_position: the 1-3 slot the authentic receipt was resolved against.
+## pre_hit_enemy: the detached CombatEnemies.get_enemy snapshot of that same
+##   slot taken BEFORE the hit; its id/position/max_hp/Enrage metadata and stack
+##   count must still match the authoritative enemy, so a stale snapshot or
+##   another slot's record fails closed.
+## receipt: the authentic CombatStatusAttacks.resolve_vs_enemy result for that
+##   hit. It must be a genuine confirmed hit on this frozen snapshot: the
+##   reported Block absorption and HP loss have to equal what that damage would
+##   do to the pre-hit Block and HP, and the authoritative slot must show exactly
+##   that change. Overkill is genuine: HP loss clamps at the pre-hit HP.
+## Returns a detached {ok, applied, enrage_stacks, attack_bonus}. A newly applied
+## Enrage hit writes ONLY `enrage_stacks` on that same slot; the damage, Block,
+## statuses, position and every other authored field stay untouched, and a slot
+## slain by a lethal hit stays slain (Enrage never heals or revives). A valid
+## non-Enrage source, a confirmed zero-damage hit or an already capped source is
+## inert (ok=true, applied=false) with no write. Malformed metadata, flag, stack
+## count, receipt, slot, identity or a mismatched/stale snapshot fail closed to
+## ok=false before any write. Inputs are never mutated and no RNG is used.
+func commit_enrage_after_hit(enemies: CombatEnemies, enemy_position: int,
+		pre_hit_enemy: Dictionary, receipt: Dictionary) -> Dictionary:
+	if enemies == null or not enemies.is_valid():
+		return _enrage_failure()
+	if enemy_position < 1 or enemy_position > CombatEnemies.MAX_ENEMIES:
+		return _enrage_failure()
+	var live: Dictionary = enemies.get_enemy(enemy_position)
+	if live.is_empty() or not _matching_enrage_source(live, enemy_position, pre_hit_enemy):
+		return _enrage_failure()
+	if not _confirmed_enrage_hit(live, pre_hit_enemy, receipt):
+		return _enrage_failure()
+	var quote := quote_enrage_after_hit(pre_hit_enemy, receipt)
+	if not quote["ok"]:
+		return _enrage_failure()
+	if not quote["applied"]:
+		return quote
+	if not enemies.set_enrage_stacks(enemy_position, quote["enrage_stacks"]):
+		return _enrage_failure()
+	return quote
+
+
+## The authoritative slot must still be the exact source the caller snapshotted.
+## A lethal hit is compatible: the slot may be slain, but it is never revived and
+## still has to carry the same identity and the same (uncommitted) stack count.
+func _matching_enrage_source(live: Dictionary, enemy_position: int,
+		pre_hit_enemy: Dictionary) -> bool:
+	if not _valid_enrage_enemy(pre_hit_enemy):
+		return false
+	var live_id: Variant = live.get("id")
+	if not live_id is String or live_id != pre_hit_enemy.get("id"):
+		return false
+	var live_hp: Variant = live.get("hp")
+	var live_max_hp: Variant = live.get("max_hp")
+	if not live_hp is int or not live_max_hp is int:
+		return false
+	if live_hp < 0 or live_max_hp <= 0 or live_hp > live_max_hp:
+		return false
+	if live_max_hp != pre_hit_enemy.get("max_hp"):
+		return false
+	if pre_hit_enemy.has("position") and pre_hit_enemy["position"] != enemy_position:
+		return false
+	if live.has("position") and live["position"] != enemy_position:
+		return false
+	if live.get("enrage", false) != pre_hit_enemy.get("enrage", false):
+		return false
+	return live.get("enrage_stacks", 0) == pre_hit_enemy.get("enrage_stacks", 0)
+
+
+## Recompute what this damage does to the frozen pre-hit snapshot and require the
+## receipt and the authoritative slot to agree with it exactly. This binds the
+## receipt to this defender, so a forged, other-target or already-committed hit
+## fails closed instead of silently granting a stack.
+func _confirmed_enrage_hit(live: Dictionary, pre_hit_enemy: Dictionary,
+		receipt: Dictionary) -> bool:
+	if not _valid_receipt(receipt) or not receipt["ok"]:
+		return false
+	var pre_hp: int = pre_hit_enemy["hp"]
+	var pre_block: int = pre_hit_enemy.get("block", 0)
+	var absorbed: int = mini(pre_block, receipt["damage"])
+	if receipt["block_absorbed"] != absorbed:
+		return false
+	var hp_loss: int = mini(pre_hp, receipt["damage"] - absorbed)
+	if receipt["hp_loss"] != hp_loss:
+		return false
+	if live.get("hp") != pre_hp - hp_loss:
+		return false
+	return live.get("block", 0) == pre_block - absorbed
 
 
 ## Heal the attacking enemy after ONE confirmed hit.
