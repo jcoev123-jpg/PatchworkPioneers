@@ -438,6 +438,66 @@
         { "id": "repair_pin_lock", "text": "Repair the pin lock (spend 2 scraps; gain 30 gold)", "outcome": { "gold": 30, "scraps": -2 } },
         { "id": "walk_round_gate", "text": "Walk around the silent gate", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_briar_pin_checkpoint",
+      "title": "The Briar-Pin Checkpoint",
+      "description": "Two round ragdoll guards weigh spare pins beneath a moonlit gate stitched from blackthorn velvet.",
+      "choices": [
+        { "id": "sell_pin_cache", "text": "Surrender two pin bundles (spend 2 scraps; gain 29 gold)", "outcome": { "gold": 29, "scraps": -2 } },
+        { "id": "buy_gate_thread", "text": "Buy the guarded gate thread (spend 14 gold; gain 2 scraps)", "outcome": { "gold": -14, "scraps": 2 } },
+        { "id": "leave_checkpoint", "text": "Take the bramble bypass (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_mothlamp_tannery",
+      "title": "The Mothlamp Tannery",
+      "description": "A button-eyed tanner hangs patterned moth-wing leather beside a glowing honey-coloured lamp.",
+      "choices": [
+        { "id": "mend_tanner_apron", "text": "Mend the tanner's apron (spend 1 scrap; gain 18 gold)", "outcome": { "gold": 18, "scraps": -1 } },
+        { "id": "purchase_wing_lining", "text": "Buy three moth-wing linings (spend 22 gold; gain 3 scraps)", "outcome": { "gold": -22, "scraps": 3 } },
+        { "id": "leave_tannery", "text": "Leave the lamp burning (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_crooked_bobbin_bell",
+      "title": "The Crooked Bobbin Bell",
+      "description": "A giant crooked brass bell hangs over a velvet-clad village of stuffed button-faced dolls.",
+      "choices": [
+        { "id": "brace_bell_tower", "text": "Brace the leaning bell (spend 3 scraps; gain 41 gold)", "outcome": { "gold": 41, "scraps": -3 } },
+        { "id": "buy_chime_cord", "text": "Buy a replacement chime cord (spend 11 gold; gain 1 scrap)", "outcome": { "gold": -11, "scraps": 1 } },
+        { "id": "leave_bell", "text": "Let the bell sleep (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_velvet_valise_station",
+      "title": "The Velvet Valise Station",
+      "description": "A sleepy doll porter stacks enormous quilted suitcases beneath a clock with mismatched button hands.",
+      "choices": [
+        { "id": "mend_valises", "text": "Repair two torn valises (spend 2 scraps; gain 34 gold)", "outcome": { "gold": 34, "scraps": -2 } },
+        { "id": "buy_spare_straps", "text": "Buy spare suitcase straps (spend 16 gold; gain 2 scraps)", "outcome": { "gold": -16, "scraps": 2 } },
+        { "id": "leave_station", "text": "Board no train (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_straw_crown_auction",
+      "title": "The Straw-Crown Auction",
+      "description": "A plump scarecrow auctioneer raises a straw crown above a candlelit dais of stitched plum cloth.",
+      "choices": [
+        { "id": "polish_crown_buttons", "text": "Polish the crown buttons (spend 1 scrap; gain 17 gold)", "outcome": { "gold": 17, "scraps": -1 } },
+        { "id": "purchase_straw_braid", "text": "Buy four coils of straw braid (spend 24 gold; gain 4 scraps)", "outcome": { "gold": -24, "scraps": 4 } },
+        { "id": "leave_auction", "text": "Decline the final bid (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_quilt_reef_lighthouse",
+      "title": "The Quilt-Reef Lighthouse",
+      "description": "A round lantern keeper patches a midnight-teal lighthouse above a sea of patterned quilt reefs.",
+      "choices": [
+        { "id": "stitch_beacon_sail", "text": "Stitch the beacon's sail (spend 2 scraps; gain 30 gold)", "outcome": { "gold": 30, "scraps": -2 } },
+        { "id": "buy_lighthouse_wick", "text": "Buy three coils of wick (spend 18 gold; gain 3 scraps)", "outcome": { "gold": -18, "scraps": 3 } },
+        { "id": "leave_lighthouse", "text": "Follow the dark shoreline (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
