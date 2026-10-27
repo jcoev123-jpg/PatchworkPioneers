@@ -54,6 +54,8 @@ const BARRAGE_IDS := [BARRAGE, BARRAGE_PLUS]
 const BARRAGE_COST := 2
 const BARRAGE_HITS := 3
 const BARRAGE_DAMAGE := {BARRAGE: 3, BARRAGE_PLUS: 4}
+## The Scarecrow's authored Fear flag, copied from the data rather than read back from the service.
+const FEAR := "cannot_buff_next_turn"
 
 ## Catalog seam double: only Riposte authentication reads it, so a forged record proves the paid
 ## service fails closed on a rewritten catalog. Every other case uses the real catalogs.
@@ -97,6 +99,8 @@ func _initialize() -> void:
 	_test_barrage_cards_authored()
 	_test_barrage_ac1_paid_play()
 	_test_barrage_ac2_accounting()
+	_test_barrage_fear_statuses()
+	_test_barrage_fear_rejections()
 	_test_barrage_ac3_rejections()
 	_test_barrage_forged_catalog()
 	_test_barrage_seeded_replay()
@@ -1181,6 +1185,94 @@ func _barrage_mid_kill(card_id: String, base: int, kill_after: int) -> void:
 		label + ": the payment and the one discard happen exactly once")
 	_check(deck._rng.state == before["rng_state"] and deck._rng.seed == before["rng_seed"],
 		label + ": a mid-barrage kill consumes no seeded RNG draw")
+
+
+## Fear (`cannot_buff_next_turn: true`) is the Scarecrow's already-merged authored status: a legal
+## non-damage buff lock that the narrower CombatStatusAttacks bridge never accepts. Both printings
+## must still resolve their three independent strikes against a feared+weakened target with a feared
+## bystander, leaving every authoritative status map and the seeded RNG exactly as they were.
+func _test_barrage_fear_statuses() -> void:
+	for card_id: String in BARRAGE_IDS:
+		var base: int = int(BARRAGE_DAMAGE[card_id])
+		for target_position in [1, 2]:
+			_barrage_fear_survivor(card_id, base, target_position)
+
+
+func _barrage_fear_survivor(card_id: String, base: int, target_position: int) -> void:
+	var label := "%s with authored Fear on enemy %d" % [card_id, target_position]
+	var other_position: int = 1 if target_position == 2 else 2
+	var deck := _barrage_deck(card_id, 6600 + 10 * target_position)
+	var party := _riposte_party(1)
+	var enemies := _barrage_enemies(60, target_position)
+	enemies._enemies[target_position - 1]["statuses"] = {"weak": 1, FEAR: true}
+	enemies._enemies[other_position - 1]["statuses"] = {FEAR: true}
+	var before := _barrage_snapshot(deck, party, enemies)
+	_check(deck.energy == BARRAGE_COST and deck.hand.has(card_id),
+		label + ": the fixture holds the printing with exactly its printed cost")
+	_check(enemies.get_enemy(target_position).get("statuses") == {"weak": 1, FEAR: true}
+		and enemies.get_enemy(other_position).get("statuses") == {FEAR: true},
+		label + ": the fixture really stores authored Fear plus Weak and a feared bystander")
+
+	var receipt: Dictionary = barrage_service.play_card(deck, party, enemies, card_id,
+		target_position)
+	_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+		label + ": a feared target does not make a legal Needle Barrage malformed")
+	_check(receipt.get("energy_before") == BARRAGE_COST and receipt.get("energy_after") == 0,
+		label + ": exactly the shared two energy was charged")
+	var hits: Array = receipt.get("hits", [])
+	_check(hits.size() == BARRAGE_HITS and receipt.get("hit_count") == BARRAGE_HITS,
+		label + ": all three independent strikes land")
+	for index in range(mini(hits.size(), BARRAGE_HITS)):
+		var hit: Dictionary = hits[index]
+		_check(hit.get("hit") == index + 1 and hit.get("position") == target_position,
+			label + ": strike " + str(index + 1) + " stays on the chosen enemy slot")
+		_check(hit.get("damage") == base and hit.get("base_damage") == base,
+			label + ": strike " + str(index + 1) + " keeps the printed base " + str(base))
+		_check(hit.get("block_absorbed") == 0 and hit.get("hp_loss") == base,
+			label + ": Fear never absorbs strike " + str(index + 1))
+		_check(hit.get("target_hp_after") == 60 - (index + 1) * base,
+			label + ": strike " + str(index + 1) + " reports the real remaining HP")
+	_check(receipt.get("target_hp_before") == 60
+		and receipt.get("target_hp_after") == 60 - BARRAGE_HITS * base
+		and enemies.get_enemy(target_position).get("hp") == 60 - BARRAGE_HITS * base,
+		label + ": the feared target took the three separate printed strikes")
+	# The authoritative maps are neither rewritten nor consumed by the detached bridge copy.
+	_check(enemies.get_enemy(target_position).get("statuses") == {"weak": 1, FEAR: true},
+		label + ": the target keeps its authored Fear and Weak exactly")
+	_check(enemies.get_enemy(other_position).get("statuses") == {FEAR: true},
+		label + ": the feared bystander keeps its status map exactly")
+	_check(enemies.get_enemy(other_position) == before["enemies"][other_position - 1],
+		label + ": the feared bystander takes no strike")
+	_check(party.get_heroes() == before["heroes"], label + ": no hero record changed")
+	var expected_hand: Array = before["hand"].duplicate()
+	expected_hand.erase(card_id)
+	_check(deck.hand == expected_hand and deck.discard_pile == before["discard"] + [card_id]
+		and deck.energy == before["energy"] - BARRAGE_COST,
+		label + ": exactly one held copy is discarded after one two-energy payment")
+	_check(deck._rng.state == before["rng_state"] and deck._rng.seed == before["rng_seed"],
+		label + ": an accepted barrage against Fear consumes no seeded RNG draw")
+
+
+## Fail closed on any non-true Fear value: `false`, numbers, strings and containers are malformed
+## rather than inactive, on the target and on an untargeted enemy alike, and nothing is spent.
+func _test_barrage_fear_rejections() -> void:
+	var invalid_fear: Array = [false, 0, 1, 1.0, "true", 0.0, ["true"], {}]
+	for card_id: String in BARRAGE_IDS:
+		for bad_value: Variant in invalid_fear:
+			var target := _barrage_enemies(40, 1)
+			target._enemies[0]["statuses"] = {"weak": 1, FEAR: bad_value}
+			_check(target.get_enemy(1).get("statuses") == {"weak": 1, FEAR: bad_value},
+				card_id + ": malformed-Fear target fixture really stores " + str(bad_value))
+			_barrage_rejected(card_id + ": invalid target Fear " + str(bad_value),
+				_barrage_deck(card_id, 6700), _riposte_party(1), target, card_id, 1,
+				"malformed_statuses")
+			var bystander := _barrage_enemies(40, 1)
+			bystander._enemies[1]["statuses"] = {FEAR: bad_value}
+			_check(bystander.get_enemy(2).get("statuses") == {FEAR: bad_value},
+				card_id + ": malformed-Fear bystander fixture really stores " + str(bad_value))
+			_barrage_rejected(card_id + ": invalid bystander Fear " + str(bad_value),
+				_barrage_deck(card_id, 6701), _riposte_party(1), bystander, card_id, 1,
+				"malformed_statuses")
 
 
 ## AC3: bad payment, forged/unknown/absent printings, invalid actors, malformed status maps,

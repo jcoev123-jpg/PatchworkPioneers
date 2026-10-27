@@ -50,6 +50,12 @@ const ATTACK_STATUS_KEYS: Array[String] = ["bleed", "weak", "exposed", "tangled"
 const DODGE_STATUS_KEY := "dodge_next_attack"
 const BLIND_STATUS_KEY := "blind_next_attack"
 const ONE_SHOT_STATUS_KEYS: Array[String] = [DODGE_STATUS_KEY, BLIND_STATUS_KEY]
+## Fear is the Scarecrow's authored `cannot_buff_next_turn: true`: a one-owner-turn buff lock with
+## no count. Only the literal boolean true is a legal value (it is absent when inactive, so `false`,
+## numbers and strings are malformed). It never modifies a strike, so it is validated here and then
+## omitted from the detached damage-status map the shared bridge receives, leaving the authoritative
+## map exactly as it was.
+const FEAR_STATUS_KEY := "cannot_buff_next_turn"
 
 var _attacks := CombatStatusAttacks.new()
 var _statuses := CombatStatuses.new()
@@ -390,7 +396,8 @@ func _valid_enemies(enemies: CombatEnemies) -> bool:
 
 
 ## Every authoritative status map on both sides must be well formed before any hit is sized: named
-## N-turn counters with non-negative int counts and the two one-shot tokens as integer 0 or 1.
+## N-turn counters with non-negative int counts, the two one-shot tokens as integer 0 or 1, and the
+## authored Fear flag as exactly the literal boolean true.
 func _valid_authoritative_statuses_roster(party: CombatParty, enemies: CombatEnemies) -> bool:
 	for hero: Dictionary in party.get_heroes():
 		if not _valid_authoritative_statuses(hero.get("statuses", {})):
@@ -409,6 +416,12 @@ func _valid_authoritative_statuses(statuses: Variant) -> bool:
 		if not name is String or (name as String).is_empty():
 			return false
 		var count: Variant = values[name]
+		if name == FEAR_STATUS_KEY:
+			# Fear is authored as `cannot_buff_next_turn: true`; any other value is malformed
+			# rather than an inactive flag.
+			if not count is bool or not bool(count):
+				return false
+			continue
 		if not count is int:
 			return false
 		if name in ONE_SHOT_STATUS_KEYS:
@@ -422,7 +435,9 @@ func _valid_authoritative_statuses(statuses: Variant) -> bool:
 
 ## A detached copy of one authoritative status map holding only what the damage bridge accepts for
 ## that role: the five attack counters plus the role's own one-shot token (Dodge for an attacker,
-## Blind for a defender). Returns null for a malformed map or for an ARMED opposite-role token,
+## Blind for a defender). Fear (`cannot_buff_next_turn: true`) is a legal non-damage flag that the
+## narrower bridge does not accept, so it is omitted from the copy while the authoritative map
+## itself keeps it untouched. Returns null for a malformed map or for an ARMED opposite-role token,
 ## which the shared bridge refuses so a miss/evasion path is never skipped silently; an inert 0
 ## token is simply omitted. The authoritative map itself is never modified and its tokens are never
 ## consumed.
@@ -437,6 +452,10 @@ func _attack_statuses(statuses: Variant, role: String) -> Variant:
 		if not name is String:
 			return null
 		var count: Variant = authoritative[name]
+		if name == FEAR_STATUS_KEY:
+			if not count is bool or not bool(count):
+				return null
+			continue
 		if not count is int:
 			return null
 		if name == refused_token:
