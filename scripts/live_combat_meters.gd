@@ -21,15 +21,19 @@ const RIBBON_HEIGHT := 64.0
 ## outside the stitched fill.
 const RIBBON_HP_BAR_HEIGHT := 22.0
 const RIBBON_SLOT_INSET := 4.0
-## Six reusable slots: three legacy stacks, Tangled, Riposte and fallen/Thorns.
-const STATUS_BUTTONS := 6
-const STATUS_ORDER := ["bleed", "weak", "exposed", "tangled", "riposte"]
+## Seven reusable slots: three legacy stacks, Tangled, Riposte, one-shot Blind and
+## fallen/Thorns. A living enemy can carry five timed statuses, Thorns and Blind at
+## once, so six slots could not show everything without dropping a real state.
+const STATUS_BUTTONS := 7
+const STATUS_ORDER := ["bleed", "weak", "exposed", "tangled", "riposte", "blind_next_attack"]
 ## Readable chip text: at every normal 1280x720 actor width the complete "Bleed 3"
 ## style name is drawn at 14 px, and the chips wrap onto a second row only when the
 ## actor's own slot is too narrow for the whole row. The compact names survive only as
 ## the fallback for a slot narrower than one complete chip; the hover text stays whole.
 const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp",
-	"tangled": "Tan", "riposte": "Rip", "thorns": "Thr"}
+	"tangled": "Tan", "riposte": "Rip", "blind_next_attack": "Bli", "thorns": "Thr"}
+## One-shot Blind is one word: never "Blind 1" and never a turn duration.
+const BLIND_LABEL := "Blind"
 const READABLE_CHIP_FONT := 14
 const CHIP_FONT_SIZES := [14, 12, 11]
 const CHIP_SEPARATION := 2
@@ -875,9 +879,14 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 	for key in STATUS_ORDER:
 		var count: int = statuses.get(key, 0)
 		if count > 0:
-			entries.append({"kind": key,
-				"full": "%s %d" % [String(key).capitalize(), count],
-				"short": "%s %d" % [STATUS_SHORT[key], count]})
+			# One-shot Blind reads as a single word, never "Blind 1" or a duration.
+			if key == "blind_next_attack":
+				entries.append({"kind": key, "full": BLIND_LABEL,
+					"short": STATUS_SHORT[key]})
+			else:
+				entries.append({"kind": key,
+					"full": "%s %d" % [String(key).capitalize(), count],
+					"short": "%s %d" % [STATUS_SHORT[key], count]})
 	# Passive contact hazard: not a timed status or a scheduled intent.
 	var thorns = snapshot.get("thorns", 0)
 	if side == "enemy" and snapshot.get("hp", 0) is int and snapshot["hp"] > 0 \
@@ -905,6 +914,8 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 					rule += "\n" + tangled_tooltip(int(statuses["tangled"]))
 				elif kind == "riposte":
 					rule += "\n" + riposte_tooltip(int(statuses["riposte"]))
+				elif kind == "blind_next_attack":
+					rule += "\n" + blind_tooltip()
 		if button.visible != active:
 			button.visible = active
 		if button.text != text:
@@ -943,6 +954,12 @@ static func tangled_tooltip(turns: int) -> String:
 ## Riposte N is counterdamage per confirmed hit, never an N-turn duration.
 static func riposte_tooltip(damage: int) -> String:
 	return "Riposte %d: Deals %d counterdamage on each confirmed hit while active. %d is damage per hit, not a turn count; Riposte expires completely at this actor's next owner-turn end." % [damage, damage, damage]
+
+
+## Blind is the one-shot "next attack misses" marker: spending it is the whole rule,
+## so it has no stack count, no turn duration and no repeated effect.
+static func blind_tooltip() -> String:
+	return "Blind: this actor's next attempted attack misses; then Blind is spent. It does not stack and has no turn duration."
 
 
 ## Height of one sewn chip at a font size: the text box plus the 1 px stitched border.

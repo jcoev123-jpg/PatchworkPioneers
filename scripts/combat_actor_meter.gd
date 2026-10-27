@@ -16,6 +16,11 @@ const HP_ENEMY := Color("b78373")
 const BLOCK := Color("c6aa76")
 const THREAD := Color("c9b996")
 const TROUGH := Color("17242c")
+## Status keys that carry a remaining owner-turn count, in stable display order.
+const STATUS_KEYS := ["bleed", "weak", "exposed", "tangled", "riposte"]
+## One-shot Blind is an integer 0/1 marker: 1 arms the actor's next attempted attack
+## to miss, and the token is spent afterwards. It is never a stack or a turn counter.
+const BLIND_KEY := "blind_next_attack"
 
 var actor_heading: Label
 var hp_text: Label
@@ -265,10 +270,13 @@ func show_actor(snapshot: Dictionary, side: String) -> bool:
 	block_badge.visible = protection > 0
 	var statuses: Dictionary = snapshot.get("statuses", {})
 	var active: Array[String] = []
-	for key in ["bleed", "weak", "exposed", "tangled", "riposte"]:
+	for key in STATUS_KEYS:
 		var count: int = statuses.get(key, 0)
 		if count > 0:
 			active.append("%s %d" % [key.capitalize(), count])
+	# Blind is one-shot, so it reads as one word: no count, stack or duration.
+	if statuses.get(BLIND_KEY, 0) == 1:
+		active.append("Blind")
 	status_text.text = "Statuses: none" if active.is_empty() else "Statuses: " + " · ".join(active)
 
 	# Presentation-only rules: counters and damage math remain owned by CombatStatuses.
@@ -333,9 +341,16 @@ func _valid_snapshot(snapshot: Dictionary, side: String) -> bool:
 		if not statuses is Dictionary:
 			return false
 		for key in statuses:
-			if not key is String or key not in ["bleed", "weak", "exposed", "tangled", "riposte"]:
+			if not key is String:
 				return false
 			var count = statuses[key]
+			# Blind is a one-shot 0/1 marker: any other count or type fails closed.
+			if key == BLIND_KEY:
+				if not count is int or (count != 0 and count != 1):
+					return false
+				continue
+			if key not in STATUS_KEYS:
+				return false
 			if not count is int or count < 0:
 				return false
 	return true
