@@ -11,6 +11,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_stage_only_contract()
 	_test_catalog_contract()
 	_test_brass_buckle()
 	_test_thread_whip()
@@ -41,6 +42,28 @@ func _initialize() -> void:
 	print("combat_pool_plain_strikes_test: ", "PASS" if failures.is_empty() else "FAIL",
 		" (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_stage_only_contract() -> void:
+	for id in IDS:
+		var party := _party()
+		var enemies := _enemies()
+		var attacks := CombatAttackCards.new()
+		var stage := CombatPoolPlainStrikes.stage_for_stitch(attacks)
+		var half := _definition(id)
+		_check(not half.is_empty(), "stage has authentic pool definition")
+		var before := [party.get_heroes(), enemies.get_enemies(), attacks._tinker._consumed]
+		var forged := half.duplicate(true)
+		forged.effects.damage += 1
+		_check(not stage.resolve_staged_half(party, enemies, forged, 1).ok
+			and not stage.resolve_staged_half(party, enemies, half, 1, 3).ok,
+			"stage rejects forged effects and unauthorized bonus")
+		_check([party.get_heroes(), enemies.get_enemies(), attacks._tinker._consumed] == before, "stage refusal leaves rosters/latch untouched")
+		var result := stage.resolve_staged_half(party, enemies, half, 1, 2)
+		_check(result.ok and result.hits.size() == 1 and result.hits[0].damage == half.effects.damage + 2,
+			"stage resolves canonical printed hit plus authorized bonus without a deck")
+		_check(party.get_hero(1).block == half.effects.get("block", 0)
+			and not attacks._tinker._consumed, "stage keeps Buckle Block and unrelated Tinker latch")
 
 
 func _check(condition: bool, label: String) -> void:

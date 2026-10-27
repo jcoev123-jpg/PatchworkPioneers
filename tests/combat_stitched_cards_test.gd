@@ -12,6 +12,8 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_plain_pool_halves()
+	_test_plain_pool_failures()
 	_test_warden_block_halves()
 	_test_warden_block_failures()
 	_test_pairs()
@@ -41,6 +43,96 @@ func _initialize() -> void:
 		printerr(failure)
 	print("combat_stitched_cards_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_plain_pool_halves() -> void:
+	for buckle in ["warden_brass_buckle", "warden_brass_buckle_plus"]:
+		for whip in ["seamstress_thread_whip", "seamstress_thread_whip_plus"]:
+			for reverse in [false, true]:
+				var c := _rest_fixture(whip if reverse else buckle, buckle if reverse else whip, 327)
+				# Keep original slot two after slot one dies; no roster compaction.
+				_check(c.enemies.apply_damage(1, 99) and c.enemies.gain_block(2, 30), "plain pair has slain front and Blocked second slot")
+				var wardrobe := RunPatchWardrobe.new(c.party.get_heroes(), ["button_eye", "pincushion_arm"],
+					[{"id": "button_eye", "slot": "HEAD"}, {"id": "pincushion_arm", "slot": "ARM"}], 10)
+				_check(wardrobe.sew("button_eye", "warden", "HEAD", "plain-eye", wardrobe.get_snapshot()).ok
+					and wardrobe.sew("pincushion_arm", "warden", "ARM", "plain-arm", wardrobe.get_snapshot()).ok, "real Warden patch receipts")
+				var torn := RunTornMending.new(c.party.get_heroes())
+				_check(c.attacks.bind_patch_wardrobe(wardrobe, torn), "plain staged patch authority bound")
+				c.party._heroes[0]["statuses"] = {"weak": 1}
+				_check(c.party.get_hero(1).statuses == {"weak": 1}, "plain Warden genuinely Weak")
+				var before := _snapshot(c)
+				# Independent ordinary plays against the same pre-state, in authored order.
+				var oracle_party := CombatParty.new(c.party.get_heroes())
+				oracle_party._heroes = c.party.get_heroes()
+				var oracle_enemies := CombatEnemies.new(c.enemies.get_enemies())
+				oracle_enemies._enemies = c.enemies.get_enemies()
+				var ordinary := CombatPoolPlainStrikes.new()
+				_check(ordinary.bind_patch_wardrobe(wardrobe, torn), "ordinary oracle authentic patch binding")
+				var halves: Array = []
+				for id in ([whip, buckle] if reverse else [buckle, whip]):
+					var rng := RandomNumberGenerator.new()
+					rng.seed = 327
+					var deck := CombatDeck.new([id], rng)
+					_check(deck.start_turn() and deck.hand == [id], "ordinary oracle really holds half")
+					var hit := ordinary.play_card(deck, oracle_party, oracle_enemies, id, 2)
+					_check(hit.ok, "ordinary oracle hit succeeds")
+					halves.append(hit)
+				var result := _play(c, 2, 2)
+				_check(result == {"ok": true, "halves": halves}, "all base/+ pair orders equal ordinary rules including second-half Exposed")
+				_check(c.party.get_heroes() == oracle_party.get_heroes() and c.enemies.get_enemies() == oracle_enemies.get_enemies(), "exact printed damage, wearer bonuses, Block and statuses")
+				_check(c.party.get_hero(1).block == (6 if buckle.ends_with("_plus") else 4), "Brass Buckle retains printed Block")
+				_check(c.deck.energy == 1 and c.deck.hand.is_empty() and c.deck.discard_pile == [c.id]
+					and c.deck._rng.state == before[5] and not c.attacks._tinker._consumed
+					and c.attacks._patches.latch_snapshot() == ordinary.get_patches().latch_snapshot(), "one capped charge/discard, unchanged RNG, exact shared latches")
+				_reject(c, 2, 2, "played plain composite cannot replay")
+	# Block bonuses are owner-only and additive across ARM and HEAD.
+	for wearer in ["warden", "seamstress", "tinker"]:
+		var c := _rest_fixture("warden_brass_buckle_plus", "seamstress_thread_whip_plus", 328)
+		var wardrobe := RunPatchWardrobe.new(c.party.get_heroes(), ["hemguard_cuff", "reinforced_browband"],
+			[{"id": "hemguard_cuff", "slot": "ARM"}, {"id": "reinforced_browband", "slot": "HEAD"}], 10)
+		_check(wardrobe.sew("hemguard_cuff", wearer, "ARM", "plain-cuff", wardrobe.get_snapshot()).ok
+			and wardrobe.sew("reinforced_browband", wearer, "HEAD", "plain-brow", wardrobe.get_snapshot()).ok, "real dual Block patch receipts")
+		var torn := RunTornMending.new(c.party.get_heroes())
+		var heads := CombatM05HeadPatchRules.new()
+		_check(c.attacks.bind_patch_wardrobe(wardrobe, torn) and heads.bind_wardrobe(wardrobe, torn)
+			and c.attacks.bind_head_patch_rules(heads), "dual Block authority")
+		_check(_play(c, 1, 2).ok and c.party.get_hero(1).block == (10 if wearer == "warden" else 6), "only Buckle owner's ARM/HEAD increase Block")
+
+
+func _test_plain_pool_failures() -> void:
+	for first in CombatPoolPlainStrikes.SUPPORTED_IDS:
+		var second := "seamstress_thread_whip_plus" if first.begins_with("warden") else "warden_brass_buckle_plus"
+		for mode in ["late_target", "energy", "downed", "position", "forged", "stale", "lethal"]:
+			var c := _rest_fixture(first, second, 329)
+			var owner := 1 if second.begins_with("warden") else 2
+			match mode:
+				"energy":
+					_check(c.deck.try_spend_energy(2), "plain insufficient energy setup")
+				"downed":
+					_check(c.party.apply_damage(owner, 99), "plain second owner downed")
+				"position":
+					var heroes: Array = c.party.get_heroes()
+					c.party = CombatParty.new([heroes[2], heroes[1], heroes[0]])
+				"forged":
+					c.rest._descriptors[c.id].second_half.effects.damage = 999
+				"stale":
+					c.rest._deck.clear()
+				"lethal":
+					_check(c.enemies.apply_damage(1, 11), "first half will slay shared target")
+			_reject(c, 1, 0 if mode == "late_target" else 1, "plain pair rollback " + mode + first)
+	# A failed later half rolls back a staged hit, Block, Exposed and Button Eye latch.
+	var c := _rest_fixture("warden_brass_buckle_plus", "seamstress_thread_whip", 330)
+	var wardrobe := RunPatchWardrobe.new(c.party.get_heroes(), ["button_eye"], [{"id": "button_eye", "slot": "HEAD"}], 10)
+	_check(wardrobe.sew("button_eye", "warden", "HEAD", "plain-rollback", wardrobe.get_snapshot()).ok, "rollback real eye")
+	_check(c.attacks.bind_patch_wardrobe(wardrobe, RunTornMending.new(c.party.get_heroes())), "rollback eye bound")
+	_reject(c, 1, 0, "plain late failure preserves full authoritative state and eye latch")
+	_check(not c.attacks._patches.latch_snapshot().get("warden", false) and _play(c, 1, 2).ok
+		and c.attacks._patches.latch_snapshot().get("warden", false), "legal retry consumes rolled-back eye once")
+	var runs: Array = []
+	for attempt in range(2):
+		c = _rest_fixture("warden_brass_buckle", "seamstress_thread_whip_plus", 331)
+		runs.append([_play(c, 1, 2), _snapshot(c)])
+	_check(runs[0][0].ok and runs[0] == runs[1], "plain pair same-seed replay exact")
 
 
 func _test_warden_block_halves() -> void:

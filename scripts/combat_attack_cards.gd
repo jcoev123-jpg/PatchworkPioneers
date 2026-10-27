@@ -55,6 +55,8 @@ func stage_transaction() -> CombatAttackCards:
 		staged._patches = CombatPatchAttackRules.new()
 		staged._patches._valid = _patches._valid
 		staged._patches._active = _patches._active.duplicate(true)
+		staged._patches._worn = _patches._worn.duplicate(true)
+		staged._patches._living = _patches._living.duplicate(true)
 		staged._patches._consumed = _patches._consumed.duplicate(true)
 		# The staged half must authenticate against the same live receipts.
 		staged._patches._wardrobe = _patches._wardrobe

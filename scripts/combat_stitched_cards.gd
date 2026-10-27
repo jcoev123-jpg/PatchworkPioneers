@@ -118,6 +118,7 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 	var attacks := _attacks.stage_transaction()
 	# Pool direct-fire halves read and spend the very same staged latches.
 	var direct_fire := CombatTinkerPoolAttacks.stage_for_stitch(attacks)
+	var plain_strikes := CombatPoolPlainStrikes.stage_for_stitch(attacks)
 	var results: Array[Dictionary] = []
 	var committed_heals: Array[Dictionary] = []
 	var targets := [first_target, second_target]
@@ -141,6 +142,12 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 			if not pool_attack.get("ok", false):
 				return failure
 			results.append(pool_attack)
+		elif half.id in CombatPoolPlainStrikes.SUPPORTED_IDS:
+			var strike := plain_strikes.resolve_staged_half(staged_party,
+				staged_enemies, half, target, bonuses[index])
+			if not strike.get("ok", false):
+				return failure
+			results.append(strike)
 		elif kind in ["enemy_single", "enemy_all"]:
 			var result := attacks.resolve_staged_half(staged_party, staged_enemies,
 				half.id, target, bonuses[index])

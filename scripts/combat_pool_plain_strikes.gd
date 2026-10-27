@@ -114,6 +114,36 @@ func get_head_patches() -> CombatM05HeadPatchRules:
 func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, pinned: Variant = null,
 		patches: Variant = null, mitt: Variant = null, quote: Dictionary = {}) -> Dictionary:
+	return _play_card(deck, party, enemies, card_id, target_position,
+		pinned, patches, mitt, quote)
+
+
+## Share only the enclosing transaction's detached wearer latches/projection.
+static func stage_for_stitch(attacks: CombatAttackCards) -> CombatPoolPlainStrikes:
+	var staged := CombatPoolPlainStrikes.new()
+	staged._patches = attacks._patches
+	staged._head_patches = attacks._head_rules
+	return staged
+
+
+## Canonical half only; no ordinary play, payment, discard or run RNG access.
+func resolve_staged_half(party: CombatParty, enemies: CombatEnemies,
+		half: Dictionary, target_position: int, base_bonus: int = 0) -> Dictionary:
+	var card_id: String = half.get("id", "")
+	if card_id not in SUPPORTED_IDS or base_bonus not in [0, 2]:
+		return _failure()
+	var authored: Dictionary = (WardenPoolCards.new().get_definition(card_id)
+		if card_id.begins_with("warden_") else SeamstressPoolCards.new().get_definition(card_id))
+	if half != authored:
+		return _failure()
+	return _play_card(null, party, enemies, card_id, target_position,
+		null, null, null, {}, true, base_bonus)
+
+
+func _play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		card_id: String, target_position: int, pinned: Variant = null,
+		patches: Variant = null, mitt: Variant = null, quote: Dictionary = {},
+		staged: bool = false, base_bonus: int = 0) -> Dictionary:
 	var active_pinned: CombatPinned = _pinned
 	var active_patches: CombatPatchAttackRules = _patches
 	var active_mitt: CombatFrayfinderMitt = _mitt
@@ -129,15 +159,17 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		elif arg is Dictionary and active_quote.is_empty():
 			active_quote = (arg as Dictionary).duplicate(true)
 
-	if deck == null or party == null or enemies == null or not SUPPORTED_IDS.has(card_id):
+	if (deck == null and not staged) or party == null or enemies == null or not SUPPORTED_IDS.has(card_id):
 		return _failure()
 	if not is_patch_binding_valid():
 		return _failure()
-	if active_patches != null and not active_patches.is_valid():
+	if active_patches != null and not active_patches.is_current():
 		return _failure()
-	if deck.combat_state == null or deck._rng == null or not deck.turn_active:
+	if _head_patches != null and not _head_patches.read_projection().get("ok", false):
 		return _failure()
-	if not party.is_valid() or not enemies.is_valid() or not deck.hand.has(card_id):
+	if not staged and (deck.combat_state == null or deck._rng == null or not deck.turn_active or not deck.hand.has(card_id)):
+		return _failure()
+	if not party.is_valid() or not enemies.is_valid():
 		return _failure()
 
 	var warden_card: bool = card_id.begins_with("warden_")
@@ -150,7 +182,9 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var from_positions: Variant = definition.get("from_positions")
 	var to_positions: Variant = definition.get("to_positions")
 	var effects: Variant = definition.get("effects")
-	if not cost is int or cost < 0 or cost > CombatState.TURN_ENERGY or cost > deck.energy:
+	if not cost is int or cost < 0 or cost > CombatState.TURN_ENERGY:
+		return _failure()
+	if not staged and cost > deck.energy:
 		return _failure()
 	if not from_positions is Array or not to_positions is Array:
 		return _failure()
@@ -166,7 +200,7 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var patch_first_status: Dictionary = {} if active_patches == null else active_patches.exposed_for_first_hit(owner_id)
 	var patch_exposed: int = int(patch_first_status.get("exposed", 0))
 
-	var mitt_bonus := 0
+	var mitt_bonus := base_bonus
 	if active_mitt != null:
 		if not active_mitt.is_valid():
 			return _failure()
@@ -229,6 +263,9 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var target: Dictionary = foes[target_position - 1]
 	if target["hp"] == 0 or target["position"] != target_position:
 		return _failure()
+	if not _attacks._valid_statuses(owner.get("statuses", {})) \
+			or not _attacks._valid_statuses(target.get("statuses", {})):
+		return _failure()
 	if owner["block"] > CombatParty.MAX_INT or target["block"] > CombatEnemies.MAX_INT:
 		return _failure()
 	# Brass Buckle's full gain (printed plus worn Block patches) must fit
@@ -240,15 +277,18 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 
 	# Every mutator is now guaranteed to accept its operation.
 	# No shuffle, extra draw, or RNG read occurs on this path.
-	if not deck.try_spend_energy(cost):
-		return _failure()
-	deck.discard_played(card_id)
+	if not staged:
+		if not deck.try_spend_energy(cost):
+			return _failure()
+		deck.discard_played(card_id)
 	var pin_bonus: int = 0
 	if active_pinned != null:
 		pin_bonus = active_pinned.bonus_for_attack(enemies, target_position, owner_id)
 	var hit: Dictionary = _attacks.resolve_vs_enemy(enemies, target_position,
 		damage + pin_bonus + patch_damage + mitt_bonus,
 		owner.get("statuses", {}), target.get("statuses", {}))
+	if not hit.get("ok", false):
+		return _failure()
 	var hit_statuses: Dictionary = {}
 	if hit.get("ok", false):
 		if active_pinned != null:
