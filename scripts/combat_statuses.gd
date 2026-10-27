@@ -61,10 +61,6 @@ func riposte_damage_for_confirmed_hit(statuses: Dictionary, hit_confirmed: bool)
 	return riposte
 
 
-## One affected actor's turn ends. Bleed is direct HP loss, never Block damage.
-## Weak, Exposed and Tangled expire at this boundary, after applying during this turn.
-## Riposte is removed completely after this one owner turn, whatever its N was.
-## Invalid state returns ok=false and an independent, unchanged deep snapshot.
 ## Projected receipt for an attempted incoming attack on a hero that may bear
 ## an active one-turn Dodge token. Returns an independent receipt; never touches
 ## the caller's original dictionary, actual HP, Block, RNG, cards or intents.
@@ -91,6 +87,11 @@ func dodge_project_for_attempt(statuses: Dictionary, attempt_made: bool) -> Dict
 		return {"ok": true, "miss": false, "statuses": next_statuses}
 
 
+## One affected actor's turn ends. Bleed is direct HP loss, never Block damage.
+## Weak, Exposed and Tangled expire at this boundary, after applying during this turn.
+## Riposte is removed completely after this one owner turn, whatever its N was.
+## An unspent one-turn Dodge token (0 or 1) also disappears at this boundary.
+## Invalid state returns ok=false and an independent, unchanged deep snapshot.
 func end_owner_turn(hp: int, block: int, statuses: Dictionary) -> Dictionary:
 	var next_statuses: Dictionary = statuses.duplicate(true)
 	if hp < 0 or block < 0 or not _valid_statuses(statuses):

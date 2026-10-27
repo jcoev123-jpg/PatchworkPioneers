@@ -748,6 +748,31 @@ func _test_dodge_project() -> void:
 		"hero 3: Bleed 1 expires at turn end")
 	_check(not result["actors"][0]["statuses"].has("dodge_next_attack"),
 		"batch result removes expired Dodge 1")
+	for index in range(3):
+		var before: Dictionary = heroes[index]
+		var after: Dictionary = result["actors"][index]
+		_check(after["id"] == before["id"] and after["position"] == before["position"]
+			and after["max_hp"] == before["max_hp"],
+			"batch preserves hero %d identity, position and maximum HP" % (index + 1))
+		_check(after["block"] == before["block"], "batch preserves hero %d Block" % (index + 1))
+	_check(result["actors"][0]["hp"] == 36 and result["actors"][1]["hp"] == 30
+		and result["actors"][2]["hp"] == 25,
+		"batch applies only the real Bleed loss and preserves other HP")
+	_check(result["events"] == [
+		{"side": "heroes", "position": 1, "id": "warden", "bleed_hp_loss": 0},
+		{"side": "heroes", "position": 2, "id": "seamstress", "bleed_hp_loss": 0},
+		{"side": "heroes", "position": 3, "id": "tinker", "bleed_hp_loss": 1},
+	], "batch emits one bleed receipt per hero in position order")
+	_check(heroes[0]["statuses"] == {"dodge_next_attack": 1, "tangled": 2}
+		and heroes[2]["hp"] == 26 and heroes[2]["statuses"] == {"bleed": 1},
+		"batch never mutates the caller roster snapshot")
+	for bad_dodge in [2, true, -1, "1"]:
+		var bad_batch := heroes.duplicate(true)
+		bad_batch[0]["statuses"] = {"dodge_next_attack": bad_dodge}
+		var rejected := batch.tick_side("heroes", bad_batch)
+		_check(rejected["ok"] == false and rejected["actors"].is_empty()
+			and rejected["events"].is_empty(),
+			"batch roster validator rejects Dodge outside 0/1: " + str(bad_dodge))
 
 	# Replay isolation: same input produces same receipt.
 	var replay_input := {"dodge_next_attack": 1}
