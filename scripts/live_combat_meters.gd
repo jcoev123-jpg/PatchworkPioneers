@@ -167,6 +167,7 @@ func _sync_battle() -> void:
 		if shown:
 			_sync_status_buttons(meter, snapshot, side, incoming, width)
 		if side == "hero":
+			_sync_combat_scrap(meter, snapshot)
 			_sync_patch_buttons(meter, snapshot, patches.get(snapshot.get("id", ""), {}))
 		needed_height = maxf(needed_height, meter.get_combined_minimum_size().y)
 		_place(meter, slot, width)
@@ -391,6 +392,18 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 	for index in range(STATUS_BUTTONS):
 		buttons.add_child(_make_status_button(index))
 	if side == "hero":
+		# One passive resource line in the existing actor ribbon; no separate HUD bar.
+		var scrap := Label.new()
+		scrap.name = "CombatScrap"
+		scrap.mouse_filter = Control.MOUSE_FILTER_STOP
+		scrap.focus_mode = Control.FOCUS_NONE
+		scrap.mouse_default_cursor_shape = Control.CURSOR_HELP
+		scrap.add_theme_font_size_override("font_size", 13)
+		scrap.add_theme_color_override("font_color", CombatActorMeter.INK)
+		scrap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		scrap.autowrap_mode = TextServer.AUTOWRAP_OFF
+		content.add_child(scrap)
+		scrap.hide()
 		var patches := HBoxContainer.new()
 		patches.name = "PatchButtons"
 		patches.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -820,6 +833,20 @@ func _sync_patch_buttons(meter: CombatActorMeter, hero: Dictionary, worn: Dictio
 		button.tooltip_text = tooltip
 		_set_chip_style(button, not active)
 	buttons.visible = any_worn
+
+
+## Read the living battle party each refresh; Combat Scrap is never a run-wallet balance.
+func _sync_combat_scrap(meter: CombatActorMeter, hero: Dictionary) -> void:
+	var label := meter.get_node("Padding/Content/CombatScrap") as Label
+	var shown: bool = hero.get("id", "") == "tinker"
+	label.visible = shown
+	if not shown:
+		label.text = ""
+		label.tooltip_text = ""
+		return
+	var counter: Variant = hero.get("combat_scrap", 0)
+	label.text = "Combat Scrap: %d" % counter if counter is int and counter >= 0 else "Combat Scrap: ?"
+	label.tooltip_text = "Tinker's Combat Scrap (this fight only). Gear Brace gains 1; Spare Screws gains 2. Not run-wallet scraps."
 
 
 func _incoming_text(hero: Dictionary, forecast: Dictionary, position: int) -> String:

@@ -73,6 +73,7 @@ var _straw := CombatSupportCards.new()
 var _block_cards := CombatWardenPoolBlockCards.new()
 var _energy_cards := CombatPoolEnergyCards.new()
 var _tinker_gadgets := CombatTinkerPoolGadgets.new()
+var _v3_tinker_scrap := CombatTinkerV3ScrapSupportCards.new()
 var _heal_cards := CombatSeamstressPoolHeals.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
@@ -628,6 +629,8 @@ func _enemy_service(card_id: String):
 
 
 func _is_actionable(card_id: String) -> bool:
+	if _v3_tinker_scrap.is_supported_card(card_id):
+		return true
 	if CombatYarnRangerKnitCards.CARDS.has(card_id):
 		return true
 	if card_id in VIGIL_IDS or card_id in GLOW_IDS:
@@ -647,6 +650,8 @@ func _is_actionable(card_id: String) -> bool:
 
 ## One entry point keeps starter support and pool Block cards on the same commit path.
 func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position: int, debuff: String = "") -> bool:
+	if _v3_tinker_scrap.is_supported_card(card_id):
+		return bool(_v3_tinker_scrap.play_card(deck, party, card_id, 0).get("ok", false))
 	if CombatYarnRangerKnitCards.CARDS.has(card_id):
 		return bool(CombatYarnRangerKnitCards.new().play_card(deck, party, card_id, position).get("ok", false))
 	if card_id in VIGIL_IDS:
@@ -728,6 +733,7 @@ func _sync_battle() -> void:
 		_block_cards = CombatWardenPoolBlockCards.new()
 		_energy_cards = CombatPoolEnergyCards.new()
 		_tinker_gadgets = CombatTinkerPoolGadgets.new()
+		_v3_tinker_scrap = CombatTinkerV3ScrapSupportCards.new()
 		_heal_cards = CombatSeamstressPoolHeals.new()
 		var carry = app.party_carryover
 		if carry is RunTornCarryover and carry._wardrobe != null:
@@ -1143,6 +1149,10 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 		return false
 	if not panel.is_visible_in_tree() or not battle.is_visible_in_tree() or panel.get_parent() != app.hand_view:
 		return false
+	if _v3_tinker_scrap.is_supported_card(card_id):
+		# Authoritative paid service preflight; stale or forged panels never charge.
+		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] 				or app._battle_closed or app.battle_result == null 				or not app.battle_result.can_continue() or app.battle_result._party != party 				or app.battle_result._enemies != app.enemies or app.enemies == null 				or not app.enemies.is_valid() or app.enemies.is_victorious() 				or party.is_defeated() 				or not _v3_tinker_scrap._prepare(deck, party, card_id, 0).get("ok", false):
+			return false
 	if card_id in CombatSupportCards.SCARECROW_STRAW_IDS or CombatYarnRangerKnitCards.CARDS.has(card_id):
 		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
 				or _move_context.get(panel, []) != _current_move_context(panel):
@@ -1752,6 +1762,7 @@ func _clear() -> void:
 	_block_cards = null
 	_energy_cards = null
 	_tinker_gadgets = null
+	_v3_tinker_scrap = null
 	_heal_cards = null
 
 
