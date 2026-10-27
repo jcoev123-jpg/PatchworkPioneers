@@ -1,0 +1,18 @@
+{
+  "id": "fate_pin_auction",
+  "title": "The Fate-Pin Auction",
+  "description": "Two power patches hang from the auctioneer's pins. Choose a patch and a living payer, or pocket a loose scrap and leave.",
+  "hp_cost": 4,
+  "minimum_hp": 5,
+  "gold_cost": 65,
+  "exit_scraps": 1,
+  "offer_count": 2,
+  "rarity": "ordinary",
+  "once_per_run": true,
+  "visit_weight": 1,
+  "choices": [
+    {"id": "patch_0", "text": "Buy the first patch", "outcome": {"gold": 0, "scraps": 0}},
+    {"id": "patch_1", "text": "Buy the second patch", "outcome": {"gold": 0, "scraps": 0}},
+    {"id": "safe_exit", "text": "Leave safely (+1 scrap)", "outcome": {"gold": 0, "scraps": 1}}
+  ]
+}

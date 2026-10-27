@@ -78,6 +78,44 @@ signal vital_choice_committed(result: Dictionary)
 
 var _selector: RunEventChoice = null
 var needle_payer: OptionButton
+var auction_payer: OptionButton
+
+
+func open_fate_pin_auction(outcome: RunFatePinAuction) -> bool:
+	if outcome == null or not outcome.is_valid() or not open_event(outcome.get_event()):
+		return false
+	var record := outcome.get_event()
+	var offers := outcome.get_offers()
+	for index in range(2):
+		var caption := "%s (%s, %s): -%d HP, -%d gold; sew on payer" % [
+			String(offers[index].id).capitalize(), offers[index].slot, record.rarity, record.hp_cost, record.gold_cost]
+		_choice_buttons[index].text = caption
+		_choice_buttons[index].tooltip_text = caption + "\nReplacement destroys the old patch for +1 scrap."
+	_choice_buttons[2].text = "Leave safely (+%d scrap)" % record.exit_scraps
+	_choice_buttons[2].tooltip_text = _choice_buttons[2].text
+	auction_payer = OptionButton.new()
+	auction_payer.name = "AuctionPayer"
+	auction_payer.custom_minimum_size.y = 44
+	auction_payer.add_theme_font_size_override("font_size", 21)
+	for hero in outcome.get_source().heroes:
+		if outcome.eligible_payers().has(hero.id):
+			auction_payer.add_item("%s: %d HP" % [String(hero.id).capitalize(), hero.hp])
+			auction_payer.set_item_metadata(auction_payer.item_count - 1, hero.id)
+	choices_container.get_parent().add_child(auction_payer)
+	choices_container.get_parent().move_child(auction_payer, choices_container.get_index())
+	auction_payer.disabled = auction_payer.item_count == 0
+	var controls: Array[Control] = []
+	if not auction_payer.disabled:
+		controls.append(auction_payer)
+	for index in range(3):
+		_choice_buttons[index].disabled = index < 2 and (auction_payer.disabled or outcome.get_source().gold < record.gold_cost)
+		if not _choice_buttons[index].disabled:
+			controls.append(_choice_buttons[index])
+	for index in range(controls.size()):
+		controls[index].focus_next = controls[index].get_path_to(controls[(index + 1) % controls.size()])
+		controls[index].focus_previous = controls[index].get_path_to(controls[(index - 1 + controls.size()) % controls.size()])
+	controls[0].grab_focus()
+	return true
 
 
 ## Render detached rules state; only the app may publish a transaction.
@@ -603,6 +641,10 @@ func _forecast_line(forecast: Dictionary, wallet: Dictionary) -> String:
 ## Discards selector, previews and any wallet snapshot, and invalidates
 ## all prior callback generations before another event can be opened.
 func close_event() -> void:
+	if is_instance_valid(auction_payer):
+		auction_payer.get_parent().remove_child(auction_payer)
+		auction_payer.queue_free()
+	auction_payer = null
 	if is_instance_valid(needle_payer):
 		needle_payer.get_parent().remove_child(needle_payer)
 		needle_payer.queue_free()

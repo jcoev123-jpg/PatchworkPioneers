@@ -38,6 +38,11 @@ func _combined_catalog(include_party: bool = true) -> Dictionary:
 		events.append_array(document.events.duplicate(true))
 	if include_party:
 		events.append_array(RunV3HeroEventOffers.new(_party_ids()).get_offers())
+		if not app._fate_pin_seen:
+			var auction: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/events/mpw_fate_pin_auction.json"))
+			for key in ["hp_cost", "minimum_hp", "gold_cost", "exit_scraps", "offer_count", "visit_weight"]:
+				auction[key] = int(auction[key])
+			events.append(auction)
 	return {"events": events}
 
 
@@ -105,6 +110,9 @@ func _fixtures() -> Dictionary:
 	# joined the roadside pool, so every required ID keeps a real route without
 	# relying on the bounded fallback search.
 	hints.append_array([576647, 822958, 883989, 2535428, 3023381, 4388231])
+	# Genuine six-Event witnesses re-derived with the once/run Auction candidate.
+	hints.append_array([1571440, 2266626, 2453554, 3103369, 4080424,
+		4932458, 5100312, 7382439, 8719337, 9036654])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():

@@ -1937,6 +1937,48 @@ func _test_needle_toll() -> void:
 	_check(denied.is_open() and rng.state == state, "abandoning the open view consumes no rules or RNG")
 
 
+func _test_fate_pin_auction() -> void:
+	var heroes := CombatParty.new([{"id": "warden", "max_hp": 40}, {"id": "seamstress", "max_hp": 30}, {"id": "tinker", "max_hp": 26}]).get_heroes()
+	heroes[0].hp = 4
+	heroes[1].hp = 5
+	var w := RunPatchWardrobe.new(heroes, [], RunAuthoredPatchDefinitions.load_definitions(), 0, 65, [], 343, true)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 343
+	var outcome := RunFatePinAuction.new(w, rng)
+	var before := w.get_snapshot()
+	var before_rng := rng.state
+	_check(outcome.is_valid() and panel.open_fate_pin_auction(outcome), "auction mounts on actual Event parchment")
+	await _frames()
+	var picker := panel.auction_payer
+	_check(is_instance_valid(picker) and picker.item_count == 2 and picker.get_item_metadata(0) == "seamstress", "living HP >=5 payer choices")
+	_check(panel.get_choice_buttons().size() == 3 and panel.get_choice_cues().size() == 3, "two power tickets and safe exit")
+	_check(panel.get_choice_buttons()[0].text.contains("-4 HP, -65 gold") \
+		and panel.get_choice_buttons()[0].tooltip_text.contains("+1 scrap"), "exact payment and displacement copy")
+	for button in panel.get_choice_buttons():
+		_check(button.get_global_rect().position.y >= 0 and button.get_global_rect().end.y <= 720, "auction actions fit viewport")
+	var count := committed.size()
+	await _key(KEY_2)
+	_check(committed.size() == count + 1 and committed.back() == {"event_id": "fate_pin_auction", "choice_id": "patch_1"}, "number key emits selected patch identity")
+	var receipt := outcome.prepare(w, "patch_1", picker.get_item_metadata(picker.selected), outcome.get_offers()[1].slot, before)
+	_check(receipt.ok and receipt.state.heroes[1].hp == 1 and receipt.state.gold == 0, "mounted selected payer yields exact receipt")
+	await _key(KEY_3)
+	_check(committed.size() == count + 1 and w.get_snapshot() == before and rng.state == before_rng, "panel commits one intent without mutating rules")
+	var old := panel.get_choice_buttons()[0]
+	panel.close_event()
+	old.pressed.emit()
+	_check(committed.size() == count + 1 and panel.auction_payer == null, "closed auction controls inert and payer removed")
+	_check(panel.open_fate_pin_auction(outcome), "reopen detached unclaimed service")
+	await _frames()
+	await _mouse(panel.get_choice_buttons()[2])
+	_check(committed.back().choice_id == "safe_exit", "mouse safe exit mounted")
+	panel.close_event()
+	var poor := RunPatchWardrobe.new(heroes, [], RunAuthoredPatchDefinitions.load_definitions(), 0, 64, [], 343, true)
+	_check(panel.open_fate_pin_auction(RunFatePinAuction.new(poor, rng)), "poor player still sees safe auction")
+	_check(panel.get_choice_buttons()[0].disabled and panel.get_choice_buttons()[1].disabled \
+		and not panel.get_choice_buttons()[2].disabled, "unaffordable paid choices disabled; safe enabled")
+	panel.close_event()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(PANEL_SCENE) as PackedScene
@@ -1954,6 +1996,7 @@ func _run() -> void:
 	panel.wallet_choice_committed.connect(_on_wallet_choice_committed)
 	await _frames()
 	_check(not panel.visible and not panel.has_open_event(), "initially closed")
+	await _test_fate_pin_auction()
 	_check(panel.has_method("open_event") and panel.has_method("close_event"),
 		"required public lifecycle methods exist")
 	_read_authored()

@@ -30,6 +30,8 @@ func _combined_wallet_catalog() -> Dictionary:
 	var offers := RunV3HeroEventOffers.new(ids)
 	_check(offers.is_valid(), "wallet oracle has the genuine live three-hero party")
 	events.append_array(offers.get_offers())
+	if not app._fate_pin_seen:
+		events.append(JSON.parse_string(FileAccess.get_file_as_string("res://data/events/mpw_fate_pin_auction.json")))
 	return {"events": events}
 
 
@@ -1010,11 +1012,182 @@ func _needle_visits(fixture: Dictionary, branch: String, keyboard: bool) -> Arra
 	return result
 
 
+func _auction_path(map: RunMap, choices: Array, remaining: int) -> Array:
+	for id in choices:
+		var node := map.get_node(id)
+		if node.type not in ["Event", "Treasure"]:
+			continue
+		var needed := remaining - (1 if node.type == "Event" else 0)
+		if needed == 0:
+			return [id]
+		var tail := _auction_path(map, node.outgoing, needed)
+		if not tail.is_empty():
+			return [id] + tail
+	return []
+
+
+func _auction_fixture() -> Dictionary:
+	var events := RunM04EventRotation.new().get_generic_events()
+	events.append_array(RunV3HeroEventOffers.new(["warden", "seamstress", "tinker"]).get_offers())
+	events.append(JSON.parse_string(FileAccess.get_file_as_string("res://data/events/mpw_fate_pin_auction.json")))
+	var rotation := RunM04EventRotation.new({"events": events})
+	var hints: Array = preload("res://tests/event_wallet_hints.gd").SEEDS.duplicate()
+	hints.push_front(422169)
+	hints.append_array(range(1, 200000))
+	for value in hints:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		var path := _auction_path(map, map.get_legal_choices(), 6)
+		if path.is_empty():
+			continue
+		var toll := RunNeedleToll.new({"heroes": CombatParty.new(app._load_party_definitions()).get_heroes(),
+			"wallet": {"gold": 0, "scraps": 0}, "deck": app._load_starter_deck()}, rng)
+		if not toll.pay_toll("warden").ok:
+			continue
+		var selection := rotation.select_event(rng)
+		if selection.ok and selection.event.id == "fate_pin_auction":
+			var events_path: Array = []
+			var transit: Dictionary = {}
+			var treasures: Array = []
+			for id in path:
+				if map.get_node(id).type == "Treasure":
+					treasures.append(id)
+				else:
+					transit[id] = treasures.duplicate()
+					treasures.clear()
+					events_path.append(id)
+			return {"seed": value, "path": events_path, "transit": transit, "graph": map.get_floors()}
+	return {}
+
+
+func _auction_visits(fixture: Dictionary, paid: bool, keyboard: bool) -> Array:
+	await _start(fixture)
+	for index in range(4):
+		for treasure in fixture.transit[fixture.path[index]]:
+			await _activate(_needle_button(treasure), keyboard)
+		await _activate(_needle_button(fixture.path[index]), keyboard)
+		var panel: LiveEventChoicePanel = [app.quiet_spool_panel, app.moth_panel, app.dye_vat_panel, app.needle_toll_panel][index]
+		_check(is_instance_valid(panel), "auction witness traverses actual prior special")
+		if not is_instance_valid(panel):
+			return []
+		await _activate(panel.get_choice_buttons()[[1, 2, 2, 0][index]], keyboard)
+		if index == 3:
+			_check(is_instance_valid(app.needle_toll_panel) and app.needle_toll_panel != panel, "paid toll resolves before auction candidate")
+			await _activate(app.needle_toll_panel.get_choice_buttons()[2], keyboard)
+	# Supply an earned-wallet/wardrobe fixture only after valid opening admission.
+	app.session_gold = 65
+	var carry: RunTornCarryover = app.party_carryover
+	var w := RunPatchWardrobe.new(app.run_heroes, [], RunAuthoredPatchDefinitions.load_definitions(), app.run_scraps, 65, app.run_deck, app.run_seed, true)
+	var oracle_rng := RandomNumberGenerator.new()
+	oracle_rng.state = app.run_rng.state
+	var rotation := RunM04EventRotation.new(_combined_wallet_catalog()).select_event(oracle_rng)
+	_check(rotation.ok and rotation.event.id == "fate_pin_auction", "independent connected selection actually picks auction")
+	var oracle := RunFatePinAuction.new(w, oracle_rng)
+	var offer: Dictionary = oracle.get_offers()[1]
+	# Seed an existing patch of the same slot through the real wardrobe API.
+	var displaced := ""
+	for d in RunAuthoredPatchDefinitions.load_definitions():
+		if d.slot == offer.slot and d.id != offer.id and not oracle.get_offers().has(d):
+			displaced = d.id
+			break
+	_check(not displaced.is_empty(), "real displaced patch fixture exists")
+	app.run_trinkets.assign([displaced])
+	_check(w.refresh_run_context(app.run_heroes, app.run_trinkets, app.run_scraps, 65, app.run_deck, w.get_snapshot()), "existing wardrobe context")
+	_check(w.sew(displaced, "seamstress", offer.slot, "before_auction", w.get_snapshot()).ok, "existing payer slot occupied")
+	_check(carry.bind_wardrobe(w, carry.torn, w.get_snapshot()), "real carryover binds existing wardrobe")
+	# Rebuild the independent draw for the actual owned inventory.
+	oracle_rng.state = app.run_rng.state
+	RunM04EventRotation.new(_combined_wallet_catalog()).select_event(oracle_rng)
+	oracle = RunFatePinAuction.new(w, oracle_rng)
+	var before := w.get_snapshot()
+	for treasure in fixture.transit[fixture.path[4]]:
+		await _activate(_needle_button(treasure), keyboard)
+	var entry := _retained(_needle_button(fixture.path[4]))
+	await _activate(_needle_button(fixture.path[4]), keyboard)
+	var panel: LiveEventChoicePanel = app.fate_pin_panel
+	_check(is_instance_valid(panel) and app.wallet_event_panel == null and app.route_view == null, "actual connected Event mounts Auction and blocks route")
+	if not is_instance_valid(panel):
+		return []
+	_check(app._fate_pin_outcome.get_offers() == oracle.get_offers() and app.run_rng.state == oracle_rng.state \
+		and w.get_snapshot() == before, "mounted seeded offers and exact detached RNG replay")
+	var callback: Callable = panel.choice_committed.get_connections()[0].callable
+	_needle_reject(callback.bind("fate_pin_auction", "patch_1"), "auction forged signal before claim")
+	panel.auction_payer.select(1)
+	var choice := "patch_1" if paid else "safe_exit"
+	var payer := "seamstress" if paid else ""
+	var expected := oracle.prepare(w, choice, payer, oracle.get_offers()[1].slot if paid else "", before)
+	_check(expected.ok, "actual offer has payable receipt")
+	# Retain authentic claimed intent, then exercise stale guards before publication.
+	panel.choice_committed.disconnect(callback)
+	await _activate(panel.get_choice_buttons()[1 if paid else 2], keyboard)
+	var pending := callback.bind("fate_pin_auction", choice)
+	panel.hide()
+	_needle_reject(pending, "auction hidden panel")
+	panel.show()
+	app.session_gold += 1
+	_needle_reject(pending, "auction stale wallet")
+	app.session_gold -= 1
+	w._operations.append("drift")
+	_needle_reject(pending, "auction stale wardrobe")
+	w._operations.pop_back()
+	var saved_route: Array[String] = app.run_map._route.duplicate()
+	app.run_map._route.pop_back()
+	_needle_reject(pending, "auction stale route")
+	app.run_map._route.assign(saved_route)
+	var saved_offers: Array = app._fate_pin_outcome._offers.duplicate(true)
+	app._fate_pin_outcome._offers.reverse()
+	_needle_reject(pending, "auction stale offer")
+	app._fate_pin_outcome._offers = saved_offers
+	panel.auction_payer.set_item_metadata(1, "foreign")
+	_needle_reject(pending, "auction forged payer")
+	panel.auction_payer.set_item_metadata(1, "seamstress")
+	pending.call()
+	await _frames()
+	_check(app.fate_pin_panel == null and app.route_view != null and app._fate_pin_seen, "authoritative receipt closes auction and restores route")
+	_check(app._fate_pin_receipt == expected and w.get_snapshot() == expected.state \
+		and app.run_trinkets == expected.state.owned and app.run_heroes == expected.state.heroes \
+		and app.session_gold == expected.state.gold and app.run_scraps == expected.state.scraps, "run wardrobe wallet and receipt commit together")
+	_check(carry._observer() != null and carry.create_next_fight_party() != null, "auction HP survives authoritative replay and next battle projection")
+	if paid:
+		_check(expected.sewing.displaced_id == displaced and expected.sewing.scrap_delta == 1 \
+			and expected.state.heroes[1].hp == before.heroes[1].hp - 4 and expected.state.gold == 0, "live payment and replacement exact")
+	else:
+		_check(expected.state.heroes == before.heroes and expected.state.gold == before.gold \
+			and expected.state.scraps == before.scraps + 1, "live safe exit exact")
+	_needle_reject(pending, "auction second claim")
+	_needle_reject(entry, "auction route reentry")
+	_check(not RunM04EventRotation.new(app._load_wallet_event_catalog()).get_generic_event_ids().has("fate_pin_auction"), "once/run auction excluded after visit")
+	for treasure in fixture.transit[fixture.path[5]]:
+		await _activate(_needle_button(treasure), keyboard)
+	await _activate(_needle_button(fixture.path[5]), keyboard)
+	_check(is_instance_valid(app.wallet_event_panel) and app.fate_pin_panel == null, "next Event is normal rotation, no duplicate auction")
+	if is_instance_valid(app.wallet_event_panel):
+		for button in app.wallet_event_panel.get_choice_buttons():
+			if not button.disabled:
+				await _activate(button, keyboard)
+				break
+	var result: Array = [app.run_heroes.duplicate(true), app.session_gold, app.run_scraps, app.run_trinkets.duplicate(), app.run_rng.state, w.get_snapshot()]
+	await _activate(app.route_back_button, keyboard)
+	_check(not app._fate_pin_seen and app._fate_pin_outcome == null, "new run clears auction history")
+	return result
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await _frames()
+	var auction_fixture := _auction_fixture()
+	_check(not auction_fixture.is_empty(), "genuine seeded six-Event auction witness exists")
+	if not auction_fixture.is_empty():
+		print("Auction witness: ", auction_fixture.seed)
+		for paid in [false, true]:
+			var pointer := await _auction_visits(auction_fixture, paid, false)
+			var keys := await _auction_visits(auction_fixture, paid, true)
+			_check(not pointer.is_empty() and pointer == keys, "mounted Auction mouse and keyboard seeded replay")
 	seed(980098)
 	var global_next := randi()
 	seed(980098)

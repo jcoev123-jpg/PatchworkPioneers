@@ -129,7 +129,19 @@ func commit_victory(node_id: Variant, result: CombatBattleResult, party: CombatP
 func _observer() -> RunTornMending:
 	var proposal := RunTornMending.new(_initial)
 	for receipt in _receipts:
-		if receipt.has("vital"):
+		if receipt.has("fate_pin"):
+			if proposal.read_state().heroes != receipt.before:
+				return null
+			var heroes: Array = proposal.read_state().heroes.duplicate(true)
+			for hero in heroes:
+				if hero.id == receipt.fate_pin:
+					if hero.hp < RunFatePinAuction.load_record().minimum_hp:
+						return null
+					hero.hp -= RunFatePinAuction.load_record().hp_cost
+			if heroes != receipt.after:
+				return null
+			proposal._heroes = heroes
+		elif receipt.has("vital"):
 			if not proposal.apply_vital_event(receipt.node, receipt.record, receipt.vital,
 				receipt.snapshot, proposal.read_state()).ok:
 				return null
@@ -160,6 +172,29 @@ func _observer() -> RunTornMending:
 
 
 ## Publish an authenticated paid toll without inventing a battle or a tear.
+func apply_fate_pin_auction(outcome: RunFatePinAuction, wardrobe: RunPatchWardrobe,
+		receipt: Dictionary, expected: Dictionary) -> bool:
+	if outcome == null or wardrobe == null or expected != read_state() \
+		or not can_bind_wardrobe(wardrobe, torn, wardrobe.get_snapshot()) \
+		or outcome.get_source().heroes != _heroes \
+		or (_node != "" and not torn.read_state().completed_battles.has(_node)):
+		return false
+	for old in _receipts:
+		if old.has("fate_pin"):
+			return false
+	var proposal := _observer()
+	if proposal == null or not outcome.commit(wardrobe, receipt):
+		return false
+	var before := _heroes.duplicate(true)
+	_heroes = receipt.state.heroes.duplicate(true)
+	proposal._heroes = _heroes.duplicate(true)
+	torn = proposal
+	_wardrobe = wardrobe
+	_receipts.append({"fate_pin": receipt.payer if receipt.choice_id != "safe_exit" else "",
+		"before": before, "after": _heroes.duplicate(true)})
+	return true
+
+
 func apply_needle_toll(outcome: RunNeedleToll, expected: Dictionary) -> bool:
 	if outcome == null or not outcome.is_paid() or expected != read_state():
 		return false

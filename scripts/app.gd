@@ -809,6 +809,12 @@ var _needle_toll_context: Array = []
 var _needle_toll_completed := false
 var _needle_toll_node := ""
 var _needle_toll_rng_start: int = 0
+var fate_pin_panel: LiveEventChoicePanel
+var _fate_pin_outcome: RunFatePinAuction
+var _fate_pin_wardrobe: RunPatchWardrobe
+var _fate_pin_context: Array = []
+var _fate_pin_seen := false
+var _fate_pin_receipt: Dictionary = {}
 var card_reward: RunCardRewardChoice
 var fight_rewards: RunFightVictoryRewards
 var multi_fight_rewards: RunMultiFightRewards
@@ -2933,6 +2939,8 @@ func _unfought_run() -> bool:
 
 
 func _can_choose_connected_route() -> bool:
+	if is_instance_valid(fate_pin_panel):
+		return false
 	if is_instance_valid(needle_toll_panel):
 		return false
 	if is_instance_valid(quiet_spool_panel) or is_instance_valid(moth_panel) \
@@ -3463,7 +3471,127 @@ func _load_wallet_event_catalog() -> Dictionary:
 				return {}
 			seen[record.id] = true
 			combined.events.append(record.duplicate(true))
+	if run_map != null and not _fate_pin_seen:
+		var wardrobe := _fate_pin_candidate_wardrobe()
+		var auction := RunFatePinAuction.load_record()
+		if wardrobe != null and not auction.is_empty() \
+			and RunFatePinAuction.eligible_definitions(wardrobe.get_snapshot()).size() >= auction.offer_count:
+			combined.events.append(auction)
 	return {"events": combined.events}
+
+
+func _fate_pin_candidate_wardrobe() -> RunPatchWardrobe:
+	var carry := party_carryover as RunTornCarryover
+	if carry == null:
+		return null
+	var wardrobe := carry._wardrobe
+	if wardrobe == null:
+		wardrobe = RunPatchWardrobe.new(run_heroes, run_trinkets,
+			RunAuthoredPatchDefinitions.load_definitions(), run_scraps, session_gold, run_deck, run_seed, true)
+	var w := wardrobe.get_snapshot()
+	if not wardrobe.is_valid() or w.heroes != run_heroes or w.owned != run_trinkets \
+		or w.cards != run_deck or w.gold != session_gold or w.scraps != run_scraps \
+		or w.seed != run_seed or w.rest_id != "" or not carry.can_bind_wardrobe(wardrobe, carry.torn, w):
+		return null
+	return wardrobe
+
+
+func _fate_pin_snapshot() -> Array:
+	var carry := party_carryover as RunTornCarryover
+	if run_map == null or run_rng == null or carry == null or act_outcome == null \
+		or not is_instance_valid(fate_pin_panel) or fate_pin_panel._selector == null \
+		or _fate_pin_outcome == null or _fate_pin_wardrobe == null:
+		return []
+	# Payer selection itself may change; the control and its authenticated rows may not.
+	var picker := fate_pin_panel.auction_payer
+	var rows: Array = []
+	if is_instance_valid(picker):
+		for index in range(picker.item_count):
+			rows.append([picker.get_item_text(index), picker.get_item_metadata(index), picker.is_item_disabled(index)])
+	return [run_map, run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route(),
+		run_rng, run_rng.state, run_seed, run_heroes.duplicate(true), run_deck.duplicate(),
+		run_trinkets.duplicate(), session_gold, run_scraps, run_removal_count,
+		run_stitch_descriptors.duplicate(true), run_next_stitch_id, carry, carry.read_state(),
+		carry.torn, carry.torn.read_state(), carry._wardrobe,
+		_fate_pin_wardrobe, _fate_pin_wardrobe.get_snapshot(), act_outcome, act_outcome.get_state(),
+		fate_pin_panel, fate_pin_panel._selector, fate_pin_panel._selector.get_event(),
+		_fate_pin_outcome, _fate_pin_outcome.get_event(), _fate_pin_outcome.get_source(),
+		_fate_pin_outcome.get_offers(), _fate_pin_seen, picker, rows,
+		_wallet_event_history.duplicate(), _vital_event_history.duplicate()]
+
+
+func _open_fate_pin_auction(id: String, source: WeakRef, staged_rng: RandomNumberGenerator) -> bool:
+	if _fate_pin_seen or is_instance_valid(fate_pin_panel) or not _can_choose_connected_route() \
+		or source == null or source.get_ref() != run_map or staged_rng == null \
+		or not run_map.get_legal_choices().has(id) or run_map.get_node(id).get("type") != "Event":
+		return false
+	var wardrobe := _fate_pin_candidate_wardrobe()
+	var outcome := RunFatePinAuction.new(wardrobe, staged_rng)
+	var panel := preload("res://scenes/event_choice_panel.tscn").instantiate() as LiveEventChoicePanel
+	add_child(panel)
+	if not panel.open_fate_pin_auction(outcome):
+		panel.free()
+		return false
+	if not run_map.choose_node(id):
+		panel.free()
+		return false
+	_mount_event_backdrop(panel)
+	fate_pin_panel = panel
+	_fate_pin_outcome = outcome
+	_fate_pin_wardrobe = wardrobe
+	_fate_pin_seen = true
+	run_rng.state = staged_rng.state
+	_clear_route_view()
+	_fate_pin_context = _fate_pin_snapshot()
+	panel.choice_committed.connect(_commit_fate_pin_auction.bind(panel, source))
+	return true
+
+
+func _commit_fate_pin_auction(event_id: String, choice_id: String, panel, source: WeakRef) -> void:
+	if not is_instance_valid(panel) or panel != fate_pin_panel or panel.get_parent() != self \
+		or not panel.is_visible_in_tree() or not panel.has_open_event() \
+		or source == null or source.get_ref() != run_map or _fate_pin_context.is_empty() \
+		or _fate_pin_snapshot() != _fate_pin_context \
+		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Event" \
+		or event_id != RunFatePinAuction.EVENT_ID or not panel._selector.is_claimed() \
+		or panel._committed_choice != {"ok": true, "event_id": event_id, "choice_id": choice_id}:
+		return
+	var payer: Variant = ""
+	var slot: Variant = ""
+	if choice_id != "safe_exit":
+		var picker: OptionButton = panel.auction_payer
+		if not is_instance_valid(picker) or picker.get_parent() != panel.choices_container.get_parent() \
+			or not picker.is_visible_in_tree() or picker.disabled or picker.selected < 0 \
+			or picker.is_item_disabled(picker.selected):
+			return
+		payer = picker.get_item_metadata(picker.selected)
+		var index := ["patch_0", "patch_1"].find(choice_id)
+		if index < 0:
+			return
+		slot = _fate_pin_outcome.get_offers()[index].slot
+	var receipt := _fate_pin_outcome.prepare(_fate_pin_wardrobe, choice_id, payer, slot,
+		_fate_pin_outcome.get_source())
+	var carry := party_carryover as RunTornCarryover
+	if not receipt.ok or not carry.apply_fate_pin_auction(_fate_pin_outcome, _fate_pin_wardrobe, receipt, carry.read_state()):
+		return
+	run_heroes = receipt.state.heroes.duplicate(true)
+	run_trinkets.assign(receipt.state.owned)
+	session_gold = receipt.state.gold
+	run_scraps = receipt.state.scraps
+	_fate_pin_receipt = receipt.duplicate(true)
+	_placeholder_map = source
+	_placeholder_route = run_map.get_route()
+	_clear_fate_pin_panel()
+	_present_connected_route(source)
+
+
+func _clear_fate_pin_panel() -> void:
+	_fate_pin_context.clear()
+	if is_instance_valid(fate_pin_panel):
+		fate_pin_panel.close_event()
+		remove_child(fate_pin_panel)
+		fate_pin_panel.queue_free()
+	fate_pin_panel = null
 
 
 func _open_wallet_event(id: String, source: WeakRef) -> bool:
@@ -3501,6 +3629,8 @@ func _open_wallet_event(id: String, source: WeakRef) -> bool:
 	if not selection.ok:
 		return false
 	var record: Dictionary = selection.event
+	if record.id == RunFatePinAuction.EVENT_ID:
+		return _open_fate_pin_auction(id, source, staged_rng)
 	var panel := preload("res://scenes/event_choice_panel.tscn").instantiate() as LiveEventChoicePanel
 	add_child(panel)
 	var mounted := panel.open_event_with_vitals(record, snapshot) if vital else \
@@ -7010,6 +7140,11 @@ func _return_to_title() -> void:
 	_dye_vat_completed = false
 	_clear_needle_toll()
 	_needle_toll_completed = false
+	_clear_fate_pin_panel()
+	_fate_pin_outcome = null
+	_fate_pin_wardrobe = null
+	_fate_pin_seen = false
+	_fate_pin_receipt.clear()
 	_clear_wallet_event()
 	_wallet_event_history.clear()
 	_vital_event_history.clear()
