@@ -16,6 +16,7 @@ func _initialize() -> void:
 	_test_harder_normal_catalog_records()
 	_test_harder_normal_seeded_announcements()
 	_test_harder_normal_phase_actions()
+	_test_hound_enrage()
 	_test_needle_wasp_bleeding_sting()
 	_test_moth_swarm_block_chew_catalog()
 	_test_moth_swarm_block_chew_phase()
@@ -920,7 +921,7 @@ func _harder_expected() -> Dictionary:
 				{"type": "snip_block", "amount": 0, "weight": 2},
 				{"type": "attack", "amount": 8, "weight": 3}]}},
 		"spoolback_hound": {"id": "spoolback_hound", "name": "Spoolback Hound",
-			"max_hp": 28, "art_path": "res://assets/paper/enemies/spoolback_hound.png",
+			"max_hp": 28, "enrage": true, "art_path": "res://assets/paper/enemies/spoolback_hound.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
 				{"type": "attack", "amount": 7, "weight": 3}]}},
@@ -1138,6 +1139,175 @@ func _force_normal_alternative(source: Dictionary, raw: Variant,
 		return {}
 	return {"enemies": enemies, "intents": scheduler.get_intents(), "rng": rng,
 		"scheduler": scheduler}
+
+func _test_hound_enrage() -> void:
+	var parsed := _load_parsed()
+	var hound := _find(parsed, "spoolback_hound")
+	_check(_norm(hound) == _norm(_harder_expected().spoolback_hound)
+		and hound.get("enrage") is bool and not hound.has("enrage_stacks"),
+		"Hound authors only boolean Enrage, with exact identity and fresh zero stacks")
+	var carriers: Array = []
+	for record in parsed:
+		if record.get("enrage", false) == true:
+			carriers.append(record.id)
+	_check(carriers == ["spoolback_hound"], "only the shipped Hound activates Enrage")
+	var material := RunAuthoredBattleEntry._floor_band_material(null)
+	_check(material.get("ok") == true, "Hound live Fight catalog loads")
+	if not material.get("ok", false) or hound.is_empty():
+		return
+	_check(_norm(material.records.get("spoolback_hound", {})) == _norm(hound),
+		"live Fight loader retains the authentic Enrage Hound")
+	var oracle = preload("res://tests/floor_band_oracle.gd")
+	var owning_bands := 0
+	for floor_number in [1, 5, 9]:
+		var band: String = oracle.band_for_floor(floor_number)
+		_check(material.pools.get(band, []) == oracle.band_ids(floor_number),
+			"live eligible IDs retain independent HP/ID band ordering: " + band)
+		if oracle.band_ids(floor_number).has("spoolback_hound"):
+			owning_bands += 1
+	_check(owning_bands == 1, "Hound remains eligible in exactly one ordinary floor band")
+	var first := _hound_paid_sequence(parsed, 326)
+	_check(not first.is_empty() and first == _hound_paid_sequence(parsed, 326),
+		"paid Hound hits, phases, piles and shared RNG replay exactly")
+	# Starter Strike cannot deal zero. Use the real status bridge's zero receipt,
+	# then the same confirmed-hit callback used by paid attacks (no invented hit).
+	var foes := CombatEnemies.new([hound])
+	var party := _party()
+	var before := foes.get_enemy(1)
+	var zero := CombatStatusAttacks.new().resolve_vs_enemy(foes, 1, 0, {}, {})
+	_check(zero == {"ok": true, "damage": 0, "block_absorbed": 0, "hp_loss": 0},
+		"authentic Hound zero-damage bridge confirms no HP or Block loss")
+	CombatAttackCards.new()._retaliate_hits(party, foes, 1,
+		[{"position": 1, "damage": zero.damage, "block_absorbed": zero.block_absorbed,
+		"hp_loss": zero.hp_loss}], {1: before})
+	_check(foes.get_enemy(1) == before and party.get_heroes() == _party().get_heroes(),
+		"zero-damage confirmation grants no stack or retaliation")
+	for flag in [null, false]:
+		var sibling := _find(parsed, "inkbrush_imp")
+		if flag != null:
+			sibling.enrage = flag
+		var control := CombatEnemies.new([hound, sibling])
+		var deck := _attack_deck("warden_strike")
+		var rng_before: int = deck._rng.state
+		var hit := CombatAttackCards.new().play_attack(deck, _party(), control, "warden_strike", 2)
+		_check(hit.ok and control.get_enemy(2).hp == 17 and deck.energy == 2
+			and not control.get_enemy(2).has("enrage_stacks")
+			and not control.get_enemy(1).has("enrage_stacks") and deck._rng.state == rng_before,
+			"paid hit on absent/false sibling empowers neither source and uses no RNG")
+	# Malformed metadata and slain targets reject before spending or publishing.
+	for invalid in ["true", 1, -1]:
+		var bad := CombatEnemies.new([hound])
+		bad._enemies[0].enrage = invalid
+		_hound_reject(bad)
+	var slain := CombatEnemies.new([hound])
+	_check(slain.apply_damage(1, 28) and slain.is_slain(1), "Hound is genuinely slain")
+	_hound_reject(slain)
+	var dead_party := _party()
+	var dead_before := slain.get_enemies()
+	var skipped := CombatEnemyPhase.new().execute_phase(dead_party, slain,
+		[{"enemy_position": 1, "type": "attack", "amount": 7, "target_position": 1}])
+	_check(skipped.ok and not skipped.events[0].applied and slain.get_enemies() == dead_before
+		and dead_party.get_heroes() == _party().get_heroes(), "slain Hound never bites or gains stacks")
+
+func _hound_reject(foes: CombatEnemies) -> void:
+	var deck := _attack_deck("warden_strike")
+	var party := _party()
+	var before := [foes.get_enemies(), party.get_heroes(), deck.hand.duplicate(),
+		deck.draw_pile.duplicate(), deck.discard_pile.duplicate(), deck.energy, deck._rng.state]
+	var result := CombatAttackCards.new().play_attack(deck, party, foes, "warden_strike", 1)
+	_check(result == {"ok": false, "hits": []} and before == [foes.get_enemies(),
+		party.get_heroes(), deck.hand, deck.draw_pile, deck.discard_pile, deck.energy, deck._rng.state],
+		"invalid/slain Hound rejects paid attack with complete no-spend actor/pile/RNG snapshot")
+	if not foes.is_slain(1):
+		var phase := CombatEnemyPhase.new().execute_phase(party, foes,
+			[{"enemy_position": 1, "type": "attack", "amount": 7, "target_position": 1}])
+		_check(not phase.ok and phase.events.is_empty() and foes.get_enemies() == before[0]
+			and party.get_heroes() == before[1], "invalid Enrage rejects whole phase atomically")
+
+func _hound_paid_sequence(parsed: Array, seed_value: int) -> Dictionary:
+	var hound := _find(parsed, "spoolback_hound")
+	var imp := _find(parsed, "inkbrush_imp")
+	_check(not hound.is_empty() and not imp.is_empty(), "authentic paid sequence sources exist")
+	if hound.is_empty() or imp.is_empty():
+		return {}
+	var enemies := CombatEnemies.new([hound, imp])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var deck := CombatDeck.new(StarterCards.new().get_starting_deck(), rng)
+	var party := _party()
+	var attacks := CombatAttackCards.new()
+	# Force only authored attack alternatives for deterministic announcements;
+	# execute those announcements against the original, unmodified live actors.
+	var forced: Array = []
+	for source in [hound, imp]:
+		var copy: Dictionary = source.duplicate(true)
+		copy.intent.actions = [_authored_alternative(source, "attack", 7 if source.id == hound.id else 6)]
+		forced.append(copy)
+	var scheduler := CombatEnemyIntents.new([
+		_enemy(1, [{"type": "block", "amount": 1}]),
+		_enemy(2, [{"type": "block", "amount": 1}])])
+	_check(enemies.is_valid() and party.is_valid() and party.get_hero(1).id == "warden"
+		and scheduler.bind_battle(CombatEnemies.new(forced), party, rng),
+		"real Hound and unflagged Imp bind authored bite announcements on shared seeded RNG")
+	var intents := scheduler.get_intents()
+	_check(intents.size() == 2 and intents[0].amount == 7 and intents[1].amount == 6,
+		"announcements retain base seven and six, never pre-add Enrage")
+	if not scheduler.is_bound() or intents.size() != 2:
+		return {}
+	var trace: Array = []
+	for hits in range(5):
+		var stacks := mini(hits, 3)
+		_check(enemies.get_enemy(1).get("enrage_stacks", 0) == stacks
+			and enemies.get_enemy(1).id == "spoolback_hound"
+			and enemies.get_enemy(2).id == "inkbrush_imp", "stacks stay on original Hound source")
+		var recipient := _party()
+		_check(recipient.gain_block(1, 5), "bite recipient starts with five real Block")
+		var before_phase := enemies.get_enemies()
+		var state: int = rng.state
+		var phase := CombatEnemyPhase.new().execute_phase(recipient, enemies, intents, null, true)
+		_check(phase.ok and phase.events.size() == 2 and phase.events[0].applied
+			and phase.events[1].applied and recipient.get_hero(1).block == 0
+			and recipient.get_hero(1).hp == 40 - (7 + stacks * 2 - 5)
+			and recipient.get_hero(2).hp == 30 and recipient.get_hero(3).hp == 20,
+			"real Hound bite is 7/9/11/13 through Block before HP; unflagged Imp stays six")
+		_check(enemies.get_enemies() == before_phase and rng.state == state
+			and scheduler.get_intents() == intents, "phase reads stacks without rerolling or changing sources")
+		trace.append([phase, recipient.get_heroes(), enemies.get_enemies()])
+		if hits == 4:
+			break
+		_check(deck.start_turn(), "legal next player turn starts")
+		attacks.start_player_turn()
+		for draw in range(StarterCards.new().get_starting_deck().size()):
+			if deck.hand.has("warden_strike"):
+				break
+			_check(deck.draw_extra(1) == 1, "real shared deck draws to a held Strike")
+		_check(deck.hand.has("warden_strike") and deck.energy == 3
+			and party.get_hero(1).hp > 0, "living front Warden owns a drawn affordable Strike")
+		if hits == 1:
+			_check(enemies.gain_block(1, 6), "second confirmed hit is fully enemy-Block absorbed")
+		var before := enemies.get_enemies()
+		state = rng.state
+		var hand := deck.hand.duplicate()
+		var forecast := attacks.forecast_attack(deck, party, enemies, "warden_strike")
+		var rejected := attacks.play_attack(deck, party, enemies, "warden_strike", 3)
+		_check(forecast.playable and rejected == {"ok": false, "hits": []}
+			and enemies.get_enemies() == before and deck.hand == hand and deck.energy == 3
+			and rng.state == state, "preview and rejected absent target grant no stacks, payment or RNG")
+		var discard_count := deck.discard_pile.size()
+		var hit := attacks.play_attack(deck, party, enemies, "warden_strike", 1)
+		_check(hit.ok and hit.hits.size() == 1 and hit.hits[0].damage == 6
+			and hit.hits[0].block_absorbed == (6 if hits == 1 else 0)
+			and hit.hits[0].hp_loss == (0 if hits == 1 else 6), "paid Strike produces genuine six-damage receipt")
+		_check(deck.energy == 2 and deck.hand.size() == hand.size() - 1
+			and deck.discard_pile.size() == discard_count + 1 and deck.discard_pile.back() == "warden_strike"
+			and rng.state == state, "Strike pays/discards exactly once without RNG")
+		_check(enemies.get_enemy(1).get("enrage_stacks") == mini(hits + 1, 3)
+			and enemies.get_enemy(1).hp == 28 - 6 * (hits + 1 - (1 if hits >= 1 else 0))
+			and enemies.get_enemy(1).block == 0 and enemies.get_enemy(2) == before[1],
+			"living Hound gains 1/2/3/capped-three stacks, including absorbed hit; neighbor untouched")
+		_check(deck.end_turn(), "legal turn ends before next paid Strike")
+	return {"trace": trace, "rng": rng.state, "draw": deck.draw_pile,
+		"discard": deck.discard_pile, "hand": deck.hand}
 
 func _test_harder_normal_phase_actions() -> void:
 	var parsed := _load_parsed()
