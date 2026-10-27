@@ -1,8 +1,9 @@
 extends SceneTree
-## V3-1 Scarecrow catalog contract plus scene-free paid Re-Stuff and pitchfork resolution.
-## The pitchfork suites cover Fork Jab and Pitchfork Prick (base and "+") as callable
-## rules-layer transactions only: they do not prove mounted hand/reward integration, live
-## combat availability or any later dispatcher/UI wiring.
+## V3-1 Scarecrow catalog contract plus scene-free paid Re-Stuff, pitchfork and sack-face Fear
+## resolution. The pitchfork suites cover Fork Jab and Pitchfork Prick (base and "+") and the Fear
+## suites cover Sack Glare and Sack Grin (base and "+") as callable rules-layer transactions only:
+## they do not prove mounted hand/reward integration, live combat availability or any later
+## dispatcher/UI wiring, and no live enemy-intent suppression is claimed.
 
 const ScriptClass = preload("res://data/cards/scarecrow_pool_cards.gd")
 
@@ -27,6 +28,12 @@ func _initialize() -> void:
 	_test_pitchfork_refusals()
 	_test_pitchfork_once_only_payment()
 	_test_pitchfork_seeded_replay()
+	_test_fear_authentic_records()
+	_test_fear_paid_plays()
+	_test_fear_owner_turn_expiry()
+	_test_fear_refusals()
+	_test_fear_once_only_payment()
+	_test_fear_seeded_replay()
 	if failures.is_empty():
 		print("v3_scarecrow_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -1017,3 +1024,647 @@ func _pitchfork_refused(f: Dictionary, card_id: Variant, target_position: int,
 	result["reason"] = "tampered"
 	result["damage"] = 999
 	_check(_pitchfork_snapshot(f) == before, reason + ": refusal receipt is detached")
+
+
+# --- Scarecrow sack-face Fear: Sack Glare and Sack Grin (base and "+") -------------------------
+## Authentic printings, stated independently of the resolver. `catalog` is the one authored catalog
+## allowed to own each ID (starter for Sack Glare, reward pool for Sack Grin); `weak` is the printed
+## stack and `starting_copies` the authored multiplicity.
+
+const FEAR_IDS := [
+	"scarecrow_sack_glare", "scarecrow_sack_glare_plus",
+	"scarecrow_sack_grin", "scarecrow_sack_grin_plus",
+]
+
+const FEAR_CARDS := {
+	"scarecrow_sack_glare": {"catalog": "starter", "weak": 1, "starting_copies": 1},
+	"scarecrow_sack_glare_plus": {"catalog": "starter", "weak": 2, "starting_copies": 0},
+	"scarecrow_sack_grin": {"catalog": "pool", "weak": 1, "starting_copies": 0},
+	"scarecrow_sack_grin_plus": {"catalog": "pool", "weak": 2, "starting_copies": 0},
+}
+
+## Fixture enemies: slot 1 already carries Weak 1, slot 2 is damaged behind Block with Weak 2 and
+## slot 3 is status-free, so a fresh base/plus Fear can be aged on its own.
+const FEAR_ENEMY_SPECS := [
+	{"max_hp": 20, "hp": 20, "statuses": {"weak": 1}},
+	{"max_hp": 18, "hp": 14, "block": 2, "statuses": {"weak": 2}},
+	{"max_hp": 14, "hp": 14},
+]
+
+
+## AC1: all four printings are catalog-authenticated from the one catalog that owns each ID, with
+## exactly one energy, every seat/position, single-enemy targeting, the printed Weak count and
+## Fear as the literal boolean true.
+func _test_fear_authentic_records() -> void:
+	var starter := ScarecrowStarterCards.new()
+	var pool = ScriptClass.new()
+	var service := CombatScarecrowFearCards.new()
+	for card_id: String in FEAR_IDS:
+		var spec: Dictionary = FEAR_CARDS[card_id]
+		var owner_catalog: Variant = starter if spec["catalog"] == "starter" else pool
+		var other_catalog: Variant = pool if spec["catalog"] == "starter" else starter
+		var record: Dictionary = owner_catalog.get_definition(card_id)
+		_check(not record.is_empty(), card_id + " has an authored record")
+		_check(record.get("id") == card_id and record.get("owner") == "scarecrow",
+			card_id + " is the Scarecrow record for its own ID")
+		_check(record.get("cost") == 1, card_id + " prints one energy")
+		_check(record.get("target_kind") == "enemy_single", card_id + " frightens one enemy")
+		_check(record.get("from_positions") == [1, 2, 3] and record.get("to_positions") == [1, 2, 3],
+			card_id + " reaches every enemy slot from every hero seat")
+		var effects: Dictionary = record.get("effects", {})
+		_check(effects == {"weak": spec["weak"], "cannot_buff_next_turn": true},
+			card_id + " prints exactly its Weak count plus the Fear flag")
+		_check(effects.get("weak") is int and int(effects["weak"]) == spec["weak"],
+			card_id + " states Weak as an integer count")
+		_check(effects.get("cannot_buff_next_turn") is bool
+				and bool(effects["cannot_buff_next_turn"]),
+			card_id + " states Fear as the literal boolean true")
+		_check(not other_catalog.has_card(card_id),
+			card_id + " is owned by only one Scarecrow catalog")
+		_check(record.get("starting_copies") == spec["starting_copies"],
+			card_id + " keeps its authored copy count")
+		_check(service.is_supported_card(card_id), card_id + ": service authenticates the ID")
+		if spec["catalog"] == "pool":
+			_check(record.get("rarity") == "common" and record.get("starting_copies") == 0,
+				card_id + " stays a common non-starter reward record")
+			_check(record.get("reward_eligible") == not card_id.ends_with("_plus"),
+				card_id + " keeps base-only reward eligibility")
+		else:
+			_check(record.get("reward_eligible") == false, card_id + " stays a non-reward starter")
+	_check(starter.get_upgrade_id("scarecrow_sack_glare") == "scarecrow_sack_glare_plus"
+		and starter.get_upgrade_id("scarecrow_sack_glare_plus") == "",
+		"Sack Glare keeps its one-way starter upgrade link")
+	_check(pool.get_upgrade_id("scarecrow_sack_grin") == "scarecrow_sack_grin_plus"
+		and pool.get_upgrade_id("scarecrow_sack_grin_plus") == "",
+		"Sack Grin keeps its one-way pool upgrade link")
+	for unsupported: Variant in ["scarecrow_fork_jab", "scarecrow_fork_jab_plus",
+			"scarecrow_pitchfork_prick", "scarecrow_pitchfork_prick_plus",
+			"scarecrow_crow_peck", "scarecrow_crow_dive", "scarecrow_crow_flock",
+			"scarecrow_harvest_fright", "scarecrow_re_stuff", "scarecrow_straw_padding",
+			"scarecrow_straw_wrap", "scarecrow_pitchfork_hook",
+			"scarecrow_sack_glare_plus_plus", "scarecrow_sack_grin_plus_plus",
+			"sack_glare", "sack_grin", "SCARECROW_SACK_GLARE", " scarecrow_sack_glare",
+			"scarecrow_sack_glare ", "", "warden_strike", "seamstress_prick", "tinker_pop_shot"]:
+		_check(not service.is_supported_card(unsupported),
+			str(unsupported) + ": not a supported sack-face Fear printing")
+	_check(not service.is_supported_card(null) and not service.is_supported_card(5)
+		and not service.is_supported_card(3.5) and not service.is_supported_card(true)
+		and not service.is_supported_card(StringName("scarecrow_sack_glare"))
+		and not service.is_supported_card({}) and not service.is_supported_card([]),
+		"non-string IDs are never supported")
+
+
+## AC1: on a genuine three-energy turn each printing pays once and lands its exact printed Weak
+## stack plus the literal Fear flag on a living enemy in slot 1-3, from a Scarecrow in seat 1-3.
+func _test_fear_paid_plays() -> void:
+	for card_id: String in FEAR_IDS:
+		var spec: Dictionary = FEAR_CARDS[card_id]
+		for seat: int in [1, 2, 3]:
+			for target: int in [1, 2, 3]:
+				var f := _fear_fixture(card_id, seat)
+				var before := _fear_snapshot(f)
+				_check(int(before["hand"].count(card_id)) == 1 and int(before["energy"]) == 3,
+					card_id + ": fixture really holds one copy at three energy")
+				_check(f["party"].get_hero(seat).get("id") == "scarecrow"
+						and f["party"].get_hero(seat).get("position") == seat,
+					card_id + ": the authoritative Scarecrow is in seat " + str(seat))
+				var target_before: Dictionary = before["enemies"][target - 1]
+				var weak_before: int = int(
+					(target_before.get("statuses", {}) as Dictionary).get("weak", 0))
+				var result := _fear_paid(f, card_id, target)
+				_check(result.get("owner_position") == seat,
+					card_id + ": receipt reports the actual owner seat " + str(seat))
+				_check(result.get("weak_before") == weak_before
+						and result.get("weak_applied") == spec["weak"]
+						and result.get("weak_after") == weak_before + int(spec["weak"]),
+					card_id + ": receipt proves the printed Weak added to the existing counter")
+				var after: Dictionary = f["enemies"].get_enemy(target)
+				var statuses: Dictionary = after.get("statuses", {})
+				_check(statuses.get("cannot_buff_next_turn") is bool
+						and bool(statuses["cannot_buff_next_turn"]),
+					card_id + ": the target carries literal boolean Fear")
+				_check(int(statuses.get("weak", 0)) == weak_before + int(spec["weak"]),
+					card_id + ": the target's Weak stack is the only status count that moved")
+				_check(after["hp"] == int(target_before["hp"])
+						and after["block"] == int(target_before["block"]),
+					card_id + ": Fear deals no damage and removes no Block")
+				_check(f["deck"].energy == 2 and f["deck"].hand.count(card_id) == 0
+						and f["deck"].discard_pile == [card_id],
+					card_id + ": exactly one copy charged and discarded for one energy")
+				_check(f["rng"].state == before["rng"], card_id + ": Fear never advances the seeded run RNG")
+				_check(f["deck"].draw_pile == before["draw"], card_id + ": Fear never draws or reshuffles")
+				_check(f["party"].get_heroes() == before["heroes"],
+					card_id + ": no hero HP, Block, status, seat or identity changed")
+				for other: int in [1, 2, 3]:
+					if other == target:
+						continue
+					_check(f["enemies"].get_enemy(other) == before["enemies"][other - 1],
+						card_id + ": unselected enemy " + str(other) + " keeps its exact record")
+
+
+## AC2: after a successful play the real status rules lock the affected enemy's next buff and the
+## real owner-turn batch expires that Fear while independently ageing the Weak printed beside it.
+func _test_fear_owner_turn_expiry() -> void:
+	var rules := CombatStatuses.new()
+	# Status-free fixture slots, so the aging of unrelated counters cannot mask a Fear defect.
+	var plain_specs: Array = [
+		{"max_hp": 20, "hp": 20}, {"max_hp": 18, "hp": 18}, {"max_hp": 14, "hp": 14},
+	]
+	for card_id: String in FEAR_IDS:
+		var spec: Dictionary = FEAR_CARDS[card_id]
+		var f := _fear_fixture(card_id, 2, plain_specs)
+		_check(f["enemies"].get_enemy(3).get("statuses", {}) == {},
+			card_id + ": the selected target really starts status-free")
+		var before := _fear_snapshot(f)
+		_fear_paid(f, card_id, 3)
+		var statuses: Dictionary = f["enemies"].get_enemy(3).get("statuses", {})
+		_check(statuses.get("cannot_buff_next_turn") is bool
+				and bool(statuses["cannot_buff_next_turn"]),
+			card_id + ": canonical literal boolean Fear is stored on the target")
+		_check(int(statuses.get("weak", 0)) == int(spec["weak"]),
+			card_id + ": the printed Weak is still full at card-play time (no owner-turn tick yet)")
+		_check(rules.can_apply_buff(statuses) == {"ok": true, "allowed": false},
+			card_id + ": the real status rules lock the target's next buff")
+		_check(rules.can_apply_buff({}) == {"ok": true, "allowed": true},
+			card_id + ": an unaffected enemy remains free to buff")
+		var roster_before: Array[Dictionary] = f["enemies"].get_enemies()
+		var tick := CombatStatusTurnBatch.new().tick_side("enemies", f["enemies"].get_enemies())
+		_check(tick.get("ok") == true and (tick["actors"] as Array).size() == 3,
+			card_id + ": the real owner-turn batch ticks the enemy side")
+		_check(f["enemies"].get_enemies() == roster_before,
+			card_id + ": asking for the tick never mutates the authoritative roster")
+		var ticked: Array = tick["actors"]
+		var ticked_statuses: Dictionary = ticked[2]["statuses"]
+		_check(not ticked_statuses.has("cannot_buff_next_turn"),
+			card_id + ": Fear expires at that enemy's own owner-turn end")
+		if int(spec["weak"]) == 1:
+			_check(not ticked_statuses.has("weak"),
+				card_id + ": base Weak 1 expires at the same boundary, independently of Fear")
+		else:
+			_check(int(ticked_statuses.get("weak", 0)) == int(spec["weak"]) - 1,
+				card_id + ": upgraded Weak 2 becomes Weak 1, independently of Fear")
+		_check(rules.can_apply_buff(ticked_statuses) == {"ok": true, "allowed": true},
+			card_id + ": the very next owner turn may buff again")
+		_check(int(ticked[2]["hp"]) == int(roster_before[2]["hp"]),
+			card_id + ": ending that turn loses no HP with no Bleed on the bearer")
+		for other: int in [0, 1]:
+			_check(ticked[other]["id"] == roster_before[other]["id"]
+					and int(ticked[other]["hp"]) == int(roster_before[other]["hp"])
+					and int(ticked[other]["block"]) == int(roster_before[other]["block"])
+					and (ticked[other].get("statuses", {}) as Dictionary).is_empty(),
+				card_id + ": uninvolved enemy " + str(other + 1) + " is unchanged by the tick")
+		# A second owner-turn end cannot extend Fear, and the play itself never consumed run RNG.
+		var second := CombatStatusTurnBatch.new().tick_side("enemies", tick["actors"])
+		_check(second.get("ok") == true
+				and not ((second["actors"] as Array)[2]["statuses"] as Dictionary).has(
+					"cannot_buff_next_turn"),
+			card_id + ": Fear never adds a second, longer lock")
+		_check(f["rng"].state == before["rng"],
+			card_id + ": consulting the status rules consumes no run RNG")
+
+
+## AC1/AC3: the detached post-play state must contain only the intended change, proven through the
+## shared fixture snapshot, and a fifth play on the same turn is refused without any mutation.
+func _test_fear_once_only_payment() -> void:
+	var f := _fear_fixture("scarecrow_sack_glare_plus", 2, [{"max_hp": 30, "hp": 30}])
+	var before := _fear_snapshot(f)
+	_check((before["discard"] as Array).is_empty()
+			and int(before["hand"].count("scarecrow_sack_glare_plus")) == 1,
+		"the single-copy premise is genuine before the play")
+	_fear_paid(f, "scarecrow_sack_glare_plus", 1)
+	_check(f["deck"].energy == 2
+			and f["deck"].discard_pile.count("scarecrow_sack_glare_plus") == 1,
+		"one copy costs exactly one energy and moves to discard once")
+	var after := _fear_snapshot(f)
+	_fear_refused(f, "scarecrow_sack_glare_plus", 1, "card_not_held")
+	f["deck"].combat_state.energy = 3
+	_fear_refused(f, "scarecrow_sack_glare_plus", 1, "card_not_held")
+	_check(_fear_snapshot(f)["enemies"] == after["enemies"],
+		"replay attempts never re-stack Weak or touch the Fear lock")
+
+	# Two genuine held copies can each be paid once on the same turn, and the second play adds its
+	# own Weak stack while leaving exactly one canonical Fear flag on the enemy.
+	var twin_rng := RandomNumberGenerator.new()
+	twin_rng.seed = 6207
+	var twin_ids: Array[String] = ["scarecrow_sack_grin", "scarecrow_sack_grin",
+		PITCHFORK_FILLERS[0], PITCHFORK_FILLERS[1], PITCHFORK_FILLERS[2]]
+	var twin_deck := CombatDeck.new(twin_ids, twin_rng)
+	_check(twin_deck.start_turn() and twin_deck.hand.size() == 5
+			and twin_deck.hand.count("scarecrow_sack_grin") == 2,
+		"the twin-copy fixture really holds two genuine copies at three energy")
+	var twin_party := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "scarecrow", "max_hp": 34},
+		{"id": "tinker", "max_hp": 25},
+	])
+	var twin_enemies := _fear_enemies([{"max_hp": 20, "hp": 20}])
+	var service := CombatScarecrowFearCards.new()
+	var first_copy := service.play_card(twin_deck, twin_party, twin_enemies,
+		"scarecrow_sack_grin", 1)
+	var second_copy := service.play_card(twin_deck, twin_party, twin_enemies,
+		"scarecrow_sack_grin", 1)
+	_check(first_copy.get("ok") == true and second_copy.get("ok") == true,
+		"each of two genuine held copies can be paid once")
+	_check(twin_deck.energy == 1
+			and twin_deck.hand.count("scarecrow_sack_grin") == 0
+			and twin_deck.discard_pile.count("scarecrow_sack_grin") == 2,
+		"two plays charge two energy and discard exactly two copies")
+	var twin_statuses: Dictionary = twin_enemies.get_enemy(1).get("statuses", {})
+	_check(twin_statuses == {"weak": 2, "cannot_buff_next_turn": true},
+		"two plays stack Weak twice and leave exactly one literal Fear flag")
+
+
+## AC3: every invalid request is refused before payment and leaves every authority untouched.
+func _test_fear_refusals() -> void:
+	var service := CombatScarecrowFearCards.new()
+
+	var f := _fear_fixture("scarecrow_sack_glare", 2)
+	var before := _fear_snapshot(f)
+	for broken in [null, 5, 3.5, true, [], {},
+			StringName("scarecrow_sack_glare"), "", "scarecrow_sack_glare_plus_plus",
+			"scarecrow_sack_grin_plus_plus", "SCARECROW_SACK_GLARE",
+			" scarecrow_sack_glare", "scarecrow_sack_glare ",
+			"scarecrow_crow_flock", "scarecrow_fork_jab", "scarecrow_harvest_fright",
+			"warden_strike"]:
+		var result := service.play_card(f["deck"], f["party"], f["enemies"], broken, 1)
+		_check(result.get("ok") == false and result.get("reason") == "unsupported_card",
+			"unsupported card refuses: " + str(broken))
+	_check(_fear_snapshot(f) == before, "unsupported cards preserve every authority")
+
+	_check(service.play_card(null, f["party"], f["enemies"], "scarecrow_sack_glare", 1)
+			.get("reason") == "invalid_request", "null deck refused")
+	_check(service.play_card(f["deck"], null, f["enemies"], "scarecrow_sack_glare", 1)
+			.get("reason") == "invalid_request", "null party refused")
+	_check(service.play_card(f["deck"], f["party"], null, "scarecrow_sack_glare", 1)
+			.get("reason") == "invalid_request", "null enemies refused")
+	_check(_fear_snapshot(f) == before, "null authorities preserve every authority")
+
+	var inactive := _fear_fixture("scarecrow_sack_glare", 2)
+	_check(inactive["deck"].end_turn(), "inactive fixture really ends the shared turn")
+	_fear_refused(inactive, "scarecrow_sack_glare", 1, "inactive_turn")
+
+	var unheld := _fear_fixture("scarecrow_sack_grin_plus", 2)
+	_fear_refused(unheld, "scarecrow_sack_grin", 1, "card_not_held")
+	_fear_refused(unheld, "scarecrow_sack_glare", 1, "card_not_held")
+
+	var poor := _fear_fixture("scarecrow_sack_grin", 2)
+	_check(poor["deck"].try_spend_energy(3) and poor["deck"].energy == 0,
+		"insufficient-energy fixture really spent the whole budget")
+	_fear_refused(poor, "scarecrow_sack_grin", 1, "insufficient_energy")
+
+	var no_owner := _fear_fixture("scarecrow_sack_glare", 2)
+	no_owner["party"] = CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 25},
+	])
+	_check(no_owner["party"].is_valid()
+			and no_owner["party"].get_hero(2).get("id") == "seamstress",
+		"missing-owner fixture is a valid living party without a Scarecrow")
+	_fear_refused(no_owner, "scarecrow_sack_glare", 1, "owner_missing")
+
+	var torn := _fear_fixture("scarecrow_sack_glare", 1)
+	_check(torn["party"].apply_damage(1, 32) and torn["party"].is_downed(1),
+		"torn-owner fixture really has zero HP on the Scarecrow")
+	_fear_refused(torn, "scarecrow_sack_glare", 1, "owner_downed")
+
+	var duplicate := _fear_fixture("scarecrow_sack_glare", 2)
+	duplicate["party"]._heroes[0]["id"] = "scarecrow"
+	_check(duplicate["party"].get_hero(1).get("id") == "scarecrow"
+			and duplicate["party"].get_hero(2).get("id") == "scarecrow",
+		"duplicate-identity fixture really repeats the owner ID")
+	_fear_refused(duplicate, "scarecrow_sack_glare", 1, "invalid_party")
+
+	var short_party := _fear_fixture("scarecrow_sack_glare", 2)
+	short_party["party"] = CombatParty.new([{"id": "scarecrow", "max_hp": 34},
+		{"id": "warden", "max_hp": 40}])
+	_check(not short_party["party"].is_valid(), "short-party fixture is really invalid")
+	_fear_refused(short_party, "scarecrow_sack_glare", 1, "invalid_party")
+
+	var bad_hp := _fear_fixture("scarecrow_sack_glare", 2)
+	bad_hp["party"]._heroes[1]["hp"] = 99
+	_fear_refused(bad_hp, "scarecrow_sack_glare", 1, "invalid_party")
+
+	var bad_hero_status := _fear_fixture("scarecrow_sack_glare", 2)
+	bad_hero_status["party"]._heroes[0]["statuses"] = {"forged": 1}
+	_fear_refused(bad_hero_status, "scarecrow_sack_glare", 1, "malformed_statuses")
+
+	var empty_roster := _fear_fixture("scarecrow_sack_glare", 2)
+	empty_roster["enemies"] = CombatEnemies.new([])
+	_check(not empty_roster["enemies"].is_valid(), "empty-roster fixture is really invalid")
+	_fear_refused(empty_roster, "scarecrow_sack_glare", 1, "invalid_enemies")
+
+	var bad_enemy := _fear_fixture("scarecrow_sack_glare", 2)
+	bad_enemy["enemies"]._enemies[1]["hp"] = 99
+	_fear_refused(bad_enemy, "scarecrow_sack_glare", 2, "invalid_enemies")
+
+	var bad_slot := _fear_fixture("scarecrow_sack_glare", 2)
+	bad_slot["enemies"]._enemies[0]["position"] = 2
+	_fear_refused(bad_slot, "scarecrow_sack_glare", 2, "invalid_enemies")
+
+	var target_f := _fear_fixture("scarecrow_sack_glare", 2)
+	for bad_target: int in [0, 4, -1]:
+		_fear_refused(target_f, "scarecrow_sack_glare", bad_target, "invalid_target")
+	var two_slots := _fear_fixture("scarecrow_sack_glare", 2, [
+		{"max_hp": 10, "hp": 10}, {"max_hp": 10, "hp": 10},
+	])
+	_fear_refused(two_slots, "scarecrow_sack_glare", 3, "invalid_target")
+	var slain := _fear_fixture("scarecrow_sack_glare", 2, [
+		{"max_hp": 10, "hp": 10}, {"max_hp": 10, "hp": 10}, {"max_hp": 10, "hp": 10},
+	])
+	_check(slain["enemies"].apply_damage(2, 10) and slain["enemies"].is_slain(2),
+		"slain-target fixture really killed the selected enemy slot")
+	_fear_refused(slain, "scarecrow_sack_glare", 2, "invalid_target")
+
+	# Malformed or unsupported status records on the selected enemy refuse before payment: a
+	# lowercase/renamed key, a numeric or false Fear, a negative or fractional counter and an
+	# out-of-range one-shot token are all malformed rather than silently inactive.
+	var malformed_statuses: Array = [
+		{"weak": "2"}, {"weak": -1}, {"weak": 1.5}, {"forged": 1}, {"fear": true},
+		{"Fear": true}, {"cannot_buff_next_turn": 1}, {"cannot_buff_next_turn": false},
+		{"cannot_buff_next_turn": "true"}, {"cannot_buff_next_turn": 1.0},
+		{"dodge_next_attack": 2}, {"blind_next_attack": -1},
+		{"cannot_buff_next_turn": true, "poison": 1},
+	]
+	for bad_statuses: Dictionary in malformed_statuses:
+		var malformed := _fear_fixture("scarecrow_sack_glare", 2)
+		malformed["enemies"]._enemies[1]["statuses"] = bad_statuses.duplicate(true)
+		_fear_refused(malformed, "scarecrow_sack_glare", 2, "malformed_statuses")
+	var malformed_roster := _fear_fixture("scarecrow_sack_glare", 2)
+	malformed_roster["enemies"]._enemies[0]["statuses"] = {"weak": "1"}
+	_fear_refused(malformed_roster, "scarecrow_sack_glare", 2, "malformed_statuses")
+
+	# The Weak addition itself is preflighted: an overflowing counter refuses unpaid, while the
+	# exact final legal count is accepted.
+	var overflow := _fear_fixture("scarecrow_sack_glare", 2)
+	overflow["enemies"]._enemies[1]["statuses"] = {"weak": CombatEnemies.MAX_INT}
+	_fear_refused(overflow, "scarecrow_sack_glare", 2, "malformed_statuses")
+	var near_overflow := _fear_fixture("scarecrow_sack_glare_plus", 2)
+	near_overflow["enemies"]._enemies[1]["statuses"] = {"weak": CombatEnemies.MAX_INT - 1}
+	_fear_refused(near_overflow, "scarecrow_sack_glare_plus", 2, "malformed_statuses")
+	var exact_overflow := _fear_fixture("scarecrow_sack_glare", 2)
+	exact_overflow["enemies"]._enemies[1]["statuses"] = {"weak": CombatEnemies.MAX_INT - 1}
+	var exact := CombatScarecrowFearCards.new().play_card(exact_overflow["deck"],
+		exact_overflow["party"], exact_overflow["enemies"], "scarecrow_sack_glare", 2)
+	_check(exact.get("ok") == true
+			and int(exact_overflow["enemies"].get_enemy(2)["statuses"]["weak"])
+				== CombatEnemies.MAX_INT,
+		"the final legal Weak count is paid, not refused as overflow")
+
+	# A refused attempt never poisons the next authentic play on the same objects.
+	var retry := _fear_fixture("scarecrow_sack_glare", 2)
+	_fear_refused(retry, "scarecrow_sack_glare", 4, "invalid_target")
+	_fear_refused(retry, "scarecrow_sack_grin", 1, "card_not_held")
+	_fear_paid(retry, "scarecrow_sack_glare", 1)
+	_check(retry["deck"].energy == 2 and retry["deck"].discard_pile == ["scarecrow_sack_glare"],
+		"retry: the authentic play then charges and discards exactly once")
+
+	# A forged catalog record (a rewritten magnitude, a numeric Fear, an extra effect, the wrong
+	# owner, a free cost, narrowed seating or a broken upgrade link) is never paid for under the
+	# real ID: the service authenticates the authored record instead of trusting the lookup.
+	var probe := ForgedFearCards.new()
+	_check(probe.is_supported_card("scarecrow_sack_glare")
+			and probe.is_supported_card("scarecrow_sack_grin_plus"),
+		"the forged-catalog probe itself authenticates an unmutated record")
+	for mutation: String in ["weak", "fear_int", "extra", "owner", "cost", "seats", "unlink"]:
+		var forged_service := ForgedFearCards.new()
+		forged_service.mutation = mutation
+		var forged := _fear_fixture("scarecrow_sack_glare", 2)
+		var forged_before := _fear_snapshot(forged)
+		_check(not forged_service.is_supported_card("scarecrow_sack_glare"),
+			"forged catalog record is not supported: " + mutation)
+		var forged_result := forged_service.play_card(forged["deck"], forged["party"],
+			forged["enemies"], "scarecrow_sack_glare", 1)
+		_check(forged_result.get("ok") == false
+				and forged_result.get("reason") == "catalog_mismatch",
+			"forged catalog record refuses catalog_mismatch: " + mutation)
+		_check(_fear_snapshot(forged) == forged_before,
+			"forged catalog record mutates nothing: " + mutation)
+
+
+## Deterministic replay: the same seed and the same request order produce identical state, the
+## three-energy turn pays exactly three Fear printings and the fourth is refused, and no play
+## consumes a run RNG draw.
+func _test_fear_seeded_replay() -> void:
+	var first := _fear_replay(90210)
+	var second := _fear_replay(90210)
+	_check(not (first["results"] as Array).is_empty(), "seeded Fear replay ran real plays")
+	_check(first == second, "seeded Fear replay produces identical final state")
+	_check(first["rng"] == second["rng"], "seeded Fear replay consumes no run RNG draws")
+	_check((first["results"] as Array).size() == 4
+			and first["results"][0].get("ok") == true and first["results"][1].get("ok") == true
+			and first["results"][2].get("ok") == true
+			and first["results"][3].get("ok") == false,
+		"seeded Fear replay keeps three paid Fear plays and the final refusal")
+	_check(first["results"][3].get("reason") == "insufficient_energy",
+		"the spent three-energy turn refuses the fourth Fear play")
+	_check(first["weak"] == [1, 2, 1] and first["fear"] == [true, true, true],
+		"seeded Fear replay stacks the exact printed Weak and locks each selected enemy")
+	_check(first["hp"] == [20, 18, 14] and first["energy"] == 0
+			and (first["discard"] as Array).size() == 3,
+		"seeded Fear replay deals no damage and charges and discards exactly three copies")
+
+
+func _fear_replay(seed_value: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var ids: Array[String] = ["scarecrow_sack_glare", "scarecrow_sack_glare_plus",
+		"scarecrow_sack_grin", "scarecrow_sack_grin_plus", PITCHFORK_FILLERS[1]]
+	var deck := CombatDeck.new(ids, rng)
+	_check(deck.start_turn() and deck.hand.size() == 5 and deck.energy == 3,
+		"replay deck starts the real five-draw three-energy turn")
+	for card_id: String in FEAR_IDS:
+		_check(deck.hand.has(card_id), "replay fixture holds " + card_id)
+	var party := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "scarecrow", "max_hp": 34},
+		{"id": "tinker", "max_hp": 25},
+	])
+	var enemies := _fear_enemies([
+		{"max_hp": 20, "hp": 20},
+		{"max_hp": 18, "hp": 18},
+		{"max_hp": 14, "hp": 14},
+	])
+	var service := CombatScarecrowFearCards.new()
+	var results: Array = []
+	results.append(service.play_card(deck, party, enemies, "scarecrow_sack_glare", 1))
+	results.append(service.play_card(deck, party, enemies, "scarecrow_sack_glare_plus", 2))
+	results.append(service.play_card(deck, party, enemies, "scarecrow_sack_grin", 3))
+	results.append(service.play_card(deck, party, enemies, "scarecrow_sack_grin_plus", 1))
+	var snapshot: Dictionary = {"rng": rng.state, "energy": deck.energy,
+		"hand": deck.hand.duplicate(), "draw": deck.draw_pile.duplicate(),
+		"discard": deck.discard_pile.duplicate(), "heroes": party.get_heroes(),
+		"enemies": enemies.get_enemies(), "results": results}
+	snapshot["hp"] = [enemies.get_enemy(1)["hp"], enemies.get_enemy(2)["hp"],
+		enemies.get_enemy(3)["hp"]]
+	snapshot["weak"] = [int(enemies.get_enemy(1).get("statuses", {}).get("weak", 0)),
+		int(enemies.get_enemy(2).get("statuses", {}).get("weak", 0)),
+		int(enemies.get_enemy(3).get("statuses", {}).get("weak", 0))]
+	snapshot["fear"] = [enemies.get_enemy(1).get("statuses", {}).get("cannot_buff_next_turn") == true,
+		enemies.get_enemy(2).get("statuses", {}).get("cannot_buff_next_turn") == true,
+		enemies.get_enemy(3).get("statuses", {}).get("cannot_buff_next_turn") == true]
+	return snapshot
+
+
+## A real seeded five-card hand holding exactly one genuine copy of `card_id`, with the Scarecrow
+## seated where the test asks and a real enemy roster.
+func _fear_fixture(card_id: String, seat: int = 2, enemy_specs: Array = [],
+		seed_value: int = 5150, neighbour_ids: Array = ["warden", "tinker"]) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var ids: Array[String] = [card_id]
+	for filler: String in PITCHFORK_FILLERS:
+		ids.append(filler)
+	var deck := CombatDeck.new(ids, rng)
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3
+			and deck.hand.size() == 5 and deck.hand.count(card_id) == 1,
+		card_id + ": real seeded five-card hand holding exactly one genuine copy")
+	var hero_ids: Array[String] = []
+	for neighbour: String in neighbour_ids:
+		hero_ids.append(str(neighbour))
+	hero_ids.insert(seat - 1, "scarecrow")
+	var definitions: Array = []
+	for hero_id: String in hero_ids:
+		definitions.append({"id": hero_id, "max_hp": int(PITCHFORK_MAX_HP[hero_id])})
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid() and party.get_hero(seat).get("id") == "scarecrow"
+			and party.get_hero(seat).get("position") == seat,
+		card_id + ": valid real party with the Scarecrow in seat " + str(seat))
+	var specs: Array = enemy_specs
+	if specs.is_empty():
+		specs = FEAR_ENEMY_SPECS
+	return {"deck": deck, "party": party, "enemies": _fear_enemies(specs), "rng": rng}
+
+
+## Real enemy slots: HP loss and Block through the model's own state APIs, integer status stacks
+## through apply_statuses, and only the non-integer markers (Fear, Dodge, Blind) written directly.
+func _fear_enemies(specs: Array) -> CombatEnemies:
+	var definitions: Array = []
+	for index in range(specs.size()):
+		definitions.append({"id": "fixture_fear_enemy_" + str(index + 1),
+			"max_hp": int(specs[index]["max_hp"])})
+	var enemies := CombatEnemies.new(definitions)
+	_check(enemies.is_valid() and enemies.get_enemies().size() == specs.size(),
+		"fixture builds a real indexed enemy roster")
+	for index in range(specs.size()):
+		var spec: Dictionary = specs[index]
+		var lost: int = int(spec["max_hp"]) - int(spec.get("hp", spec["max_hp"]))
+		if lost > 0:
+			_check(enemies.apply_damage(index + 1, lost),
+				"fixture enemy " + str(index + 1) + " really lost HP")
+		var block := int(spec.get("block", 0))
+		if block > 0:
+			_check(enemies.gain_block(index + 1, block),
+				"fixture enemy " + str(index + 1) + " really gained Block")
+		var statuses: Dictionary = spec.get("statuses", {})
+		if statuses.is_empty():
+			continue
+		var stacks: Dictionary = {}
+		for name in statuses:
+			if typeof(statuses[name]) == TYPE_INT:
+				stacks[name] = statuses[name]
+		if not stacks.is_empty():
+			_check(enemies.apply_statuses({index + 1: stacks}),
+				"fixture enemy " + str(index + 1) + " really gained its status stacks")
+		for name in statuses:
+			if typeof(statuses[name]) == TYPE_INT:
+				continue
+			if not enemies._enemies[index].has("statuses"):
+				enemies._enemies[index]["statuses"] = {}
+			enemies._enemies[index]["statuses"][name] = statuses[name]
+	return enemies
+
+
+## The full authoritative state used by the Fear suites, in the same shape as the pitchfork
+## snapshot: hand, both piles, energy, turn, heroes, the complete enemy roster and the run RNG.
+func _fear_snapshot(f: Dictionary) -> Dictionary:
+	return _pitchfork_snapshot(f)
+
+
+## Independent oracle: one energy, one discarded held copy, the printed Weak added to the existing
+## counter and literal boolean Fear stamped on that one enemy; every other field is untouched.
+func _fear_expected(before: Dictionary, card_id: String, target_position: int) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] = int(expected["energy"]) - 1
+	expected["state_energy"] = int(expected["state_energy"]) - 1
+	var hand: Array = expected["hand"]
+	hand.remove_at(hand.find(card_id))
+	(expected["discard"] as Array).append(card_id)
+	var enemy: Dictionary = expected["enemies"][target_position - 1]
+	var statuses: Dictionary = enemy.get("statuses", {})
+	statuses["weak"] = int(statuses.get("weak", 0)) + int(FEAR_CARDS[card_id]["weak"])
+	statuses["cannot_buff_next_turn"] = true
+	enemy["statuses"] = statuses
+	return expected
+
+
+func _fear_paid(f: Dictionary, card_id: String, target_position: int) -> Dictionary:
+	var before := _fear_snapshot(f)
+	var result := CombatScarecrowFearCards.new().play_card(f["deck"], f["party"],
+		f["enemies"], card_id, target_position)
+	_check(result.get("ok") == true and result.get("reason") == "applied",
+		card_id + ": authorized paid Fear play on slot " + str(target_position))
+	_check(result.get("card_id") == card_id and result.get("cost") == 1,
+		card_id + ": receipt names the authentic card and its one energy")
+	_check(result.get("target_position") == target_position,
+		card_id + ": receipt reports the selected enemy slot")
+	_check(result.get("fear_applied") == true and result.get("cannot_buff_next_turn") == true,
+		card_id + ": receipt reports the applied one-turn Fear lock")
+	_check(result.get("energy_before") == int(before["energy"])
+			and result.get("energy_after") == int(before["energy"]) - 1,
+		card_id + ": receipt proves exactly one energy spent")
+	var expected := _fear_expected(before, card_id, target_position)
+	_check(_fear_snapshot(f) == expected,
+		card_id + ": exact hand/piles/energy/party/enemy-status/RNG state")
+	var receipt: Dictionary = result.duplicate(true)
+	result["weak_after"] = -999
+	result["fear_applied"] = false
+	_check(_fear_snapshot(f) == expected, card_id + ": receipt is detached from state")
+	return receipt
+
+
+func _fear_refused(f: Dictionary, card_id: Variant, target_position: int,
+		reason: String) -> void:
+	var before := _fear_snapshot(f)
+	var result := CombatScarecrowFearCards.new().play_card(f["deck"], f["party"],
+		f["enemies"], card_id, target_position)
+	_check(result.get("ok") == false and result.get("reason") == reason,
+		str(card_id) + ": refuses " + reason)
+	_check(_fear_snapshot(f) == before,
+		reason + ": preserves hand, draw, discard, energy, party, enemies, turn and RNG")
+	result["reason"] = "tampered"
+	result["weak_applied"] = 999
+	_check(_fear_snapshot(f) == before, reason + ": refusal receipt is detached")
+
+
+## A resolver whose catalog lookup serves one rewritten record, so a forged magnitude, a numeric
+## Fear, an extra effect, the wrong owner, a free cost, narrowed seating or a broken upgrade link
+## can be proven inert before any energy, hand or status state moves.
+class ForgedFearCards extends CombatScarecrowFearCards:
+	var mutation: String = ""
+
+	func _catalog_definition(card_id: String, catalog: String) -> Dictionary:
+		var record: Dictionary = super._catalog_definition(card_id, catalog)
+		if record.is_empty() or not record.get("effects") is Dictionary:
+			return record
+		var effects: Dictionary = record["effects"]
+		match mutation:
+			"weak":
+				effects["weak"] = 9
+			"fear_int":
+				effects["cannot_buff_next_turn"] = 1
+			"extra":
+				effects["damage"] = 3
+			"owner":
+				record["owner"] = "warden"
+			"cost":
+				record["cost"] = 0
+			"seats":
+				record["from_positions"] = [1]
+			"unlink":
+				if record.has("upgrade_id"):
+					record["upgrade_id"] = "scarecrow_sack_glare_plus_plus"
+				else:
+					record["upgrade_of"] = "scarecrow_sack_glare_plus"
+		return record
+
