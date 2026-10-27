@@ -13,6 +13,10 @@ func _initialize() -> void:
 	_test_guard_redirect_drain()
 	_test_guard_redirect_enrage_bonus()
 	_test_skips_and_rollback()
+	_test_dodge_direct_one_shot()
+	_test_dodge_guard_redirect()
+	_test_dodge_untouched_tokens()
+	_test_dodge_invalid_and_replay()
 	if failures.is_empty():
 		print("combat_enemy_phase_guard_reactions_test: PASS (", checks, " checks)")
 	else:
@@ -506,4 +510,243 @@ func _test_guard_redirect_enrage_bonus() -> void:
 		"AC2: the status adjustment scales the already-boosted base exactly once")
 	_check(deck._rng.state == rng_before and enemies.get_enemy(1).hp == 18,
 		"AC2: the Exposed redirect consumes no RNG and takes no Thorns")
+
+
+## AC1/AC3: a living fixed-slot hero's armed one-shot Dodge makes exactly one
+## legal incoming attack miss through the real no-Guard helper, spending that
+## token and leaving HP, Block and unrelated statuses alone; the next hit lands
+## through ordinary Block-before-HP. No token, zero damage and a malformed token
+## keep their old contract.
+func _test_dodge_direct_one_shot() -> void:
+	var party := _party()
+	party._heroes[1]["statuses"] = {"dodge_next_attack": 1, "bleed": 2}
+	_check(party.gain_block(2, 4), "AC1 precondition: protected ally really has four Block")
+	var seamstress: Dictionary = party._heroes[1]
+	var warden_before: Dictionary = party.get_hero(1)
+	var tinker_before: Dictionary = party.get_hero(3)
+	var resolver := CombatEnemyAttacks.new()
+	var result: Dictionary = resolver.execute_attacks(party,
+		[_attack(1, 7, 2), _attack(2, 9, 2)])
+	_check(result == {"ok": true, "events": [
+		{"enemy_position": 1, "target_position": 2, "applied": false},
+		{"enemy_position": 2, "target_position": 2, "applied": true}]},
+		"AC1: the first fixed-slot hit misses on Dodge, the second hit lands")
+	_check(party.get_hero(2)["statuses"] == {"bleed": 2},
+		"AC1: the miss spends exactly one Dodge and keeps its unrelated Bleed")
+	_check(party.get_hero(2)["hp"] == 25 and party.get_hero(2)["block"] == 0,
+		"AC1: the miss keeps four Block, then the second hit absorbs it before HP")
+	_check(party.get_hero(1) == warden_before and party.get_hero(3) == tinker_before,
+		"AC1: no other hero's HP, Block or statuses change")
+	_check(is_same(party._heroes[1], seamstress),
+		"AC1: the spent token is erased from the authoritative hero record")
+
+	# A legal zero-damage attempt still spends the armed one-shot token.
+	party = _party()
+	party._heroes[2]["statuses"] = {"dodge_next_attack": 1}
+	result = resolver.execute_attacks(party, [_attack(1, 0, 3)])
+	_check(result == {"ok": true, "events": [
+		{"enemy_position": 1, "target_position": 3, "applied": false}]}
+		and not party.get_hero(3)["statuses"].has("dodge_next_attack")
+		and party.get_hero(3)["hp"] == 26 and party.get_hero(3)["block"] == 0,
+		"AC3: a valid zero-damage attempt consumes the one-shot Dodge")
+	result = resolver.execute_attacks(party, [_attack(1, 0, 3)])
+	_check(result == {"ok": true, "events": [
+		{"enemy_position": 1, "target_position": 3, "applied": true}]},
+		"AC3: without a token the same zero-damage attempt applies as before")
+
+	# A hero with no Dodge keeps the ordinary hit and its own statuses.
+	var plain := _party()
+	plain._heroes[1]["statuses"] = {"weak": 2}
+	result = resolver.execute_attacks(plain, [_attack(1, 7, 2)])
+	_check(result == {"ok": true, "events": [
+		{"enemy_position": 1, "target_position": 2, "applied": true}]}
+		and plain.get_hero(2)["hp"] == 23
+		and plain.get_hero(2)["statuses"] == {"weak": 2},
+		"AC3: a hero without a Dodge token takes the ordinary hit and keeps its statuses")
+
+	# An empty status map is the same ordinary hit, with nothing invented.
+	var empty := _party()
+	empty._heroes[2]["statuses"] = {}
+	result = resolver.execute_attacks(empty, [_attack(1, 3, 3)])
+	_check(result == {"ok": true, "events": [
+		{"enemy_position": 1, "target_position": 3, "applied": true}]}
+		and empty.get_hero(3)["hp"] == 23 and empty.get_hero(3)["statuses"] == {},
+		"AC3: an empty-status fixture takes the ordinary hit and stays empty")
+
+	# A malformed token fails the whole batch before any hit lands.
+	var bad_party := _party()
+	bad_party._heroes[0]["statuses"] = {"dodge_next_attack": 2, "weak": 1}
+	var bad_before: Array = bad_party.get_heroes()
+	_check(resolver.execute_attacks(bad_party, [_attack(1, 5, 1), _attack(2, 5, 2)])
+		== {"ok": false, "events": []} and bad_party.get_heroes() == bad_before,
+		"AC3: a malformed Dodge token rejects the batch without collateral damage")
+
+
+## AC2/AC3: with a real paid Guard redirect the one-shot Dodge belongs to the
+## hero who actually takes the hit. A missed redirected beat is neither a Thorns
+## trigger nor a Bleed/Drain hit, and a bypassed ally's token stays armed.
+func _test_dodge_guard_redirect() -> void:
+	var party := _party()
+	var enemies := _drain_enemies([12, 15], [true, false])
+	enemies._enemies[0]["bleed_on_attack"] = true
+	_check(enemies.apply_damage(1, 8) and enemies.get_enemy(1).hp == 4
+		and enemies.get_enemy(1).get("drain") == true
+		and enemies.get_enemy(1).get("bleed_on_attack") == true,
+		"AC2 precondition: living wounded source authors Drain and Bleed")
+	var deck := _deck(["warden_draw_fire", "warden_counter_stitch",
+		"warden_iron_hem", "warden_hold_the_line", "warden_quick_darn"])
+	var reactions := CombatWardenGuardReactions.new()
+	_check(reactions.play_from_hand(deck, party, "warden_draw_fire")
+		and reactions.play_from_hand(deck, party, "warden_counter_stitch")
+		and party.get_hero(1).block == 17 and reactions.is_guarding()
+		and reactions.get_thorns() == 3 and deck.energy == 1,
+		"AC2 precondition: authentic paid Guarding, Thorns 3 and 17 Block")
+	party._heroes[0]["statuses"] = {"dodge_next_attack": 1}
+	party._heroes[1]["statuses"] = {"dodge_next_attack": 1}
+	var rng_before: int = deck._rng.state
+	var source_one: Dictionary = enemies._enemies[0]
+	var result: Dictionary = phase.execute_phase(party, enemies,
+		[_attack(1, 18, 2), _attack(2, 6, 3)], reactions)
+	_check(result == {"ok": true, "events": [
+		_hit(1, 2, false, 1, true, 0),
+		_hit(2, 3, true, 1, true, 3)]},
+		"AC2: the redirected Dodge beat misses, the next redirect lands with Thorns")
+	_check(party.get_hero(1)["statuses"] == {} and party.get_hero(1)["hp"] == 40
+		and party.get_hero(1)["block"] == 11,
+		"AC2: the real recipient spends her Dodge, takes no HP or Block loss to the miss, and no Bleed")
+	_check(party.get_hero(2)["statuses"] == {"dodge_next_attack": 1}
+		and party.get_hero(2)["hp"] == 30,
+		"AC2: the bypassed announced ally never loses her armed Dodge")
+	_check(enemies.get_enemy(1).hp == 4 and enemies.get_enemy(2).hp == 12
+		and is_same(enemies._enemies[0], source_one),
+		"AC2: a missed Drain/Bleed bite neither heals nor damages its source")
+	_check(deck._rng.state == rng_before and reactions.is_guarding()
+		and reactions.get_thorns() == 3,
+		"AC2: the Dodge miss draws no RNG and consumes no reaction mode")
+
+	# An unguarded ally who is the announced target dodges for herself.
+	party = _party()
+	party._heroes[2]["statuses"] = {"dodge_next_attack": 1}
+	enemies = _drain_enemies([12], [true])
+	_check(enemies.apply_damage(1, 4) and enemies.get_enemy(1).hp == 8,
+		"AC2 precondition: wounded Drain source for the unguarded ally")
+	deck = _deck(["warden_counter_stitch", "warden_draw_fire",
+		"warden_iron_hem", "warden_hold_the_line", "warden_quick_darn"])
+	reactions = CombatWardenGuardReactions.new()
+	_check(reactions.play_from_hand(deck, party, "warden_counter_stitch")
+		and not reactions.is_guarding() and reactions.get_thorns() == 3,
+		"AC2 precondition: paid Thorns without Guarding")
+	rng_before = deck._rng.state
+	result = phase.execute_phase(party, enemies, [_attack(1, 9, 3)], reactions)
+	_check(result == {"ok": true, "events": [_hit(1, 3, false, 3, false, 0)]},
+		"AC2: an unguarded Dodge-armed ally evades the enemy hit herself")
+	_check(party.get_hero(3)["statuses"] == {} and party.get_hero(3)["hp"] == 26
+		and enemies.get_enemy(1).hp == 8 and deck._rng.state == rng_before,
+		"AC2: her own token is spent and no Thorns or Drain follows the miss")
+
+
+## AC3/AC4: Guard moves the attempted hit away from the armed ally without
+## spending her token, and skipped beats keep every token exactly as armed.
+func _test_dodge_untouched_tokens() -> void:
+	var party := _party()
+	party._heroes[1]["statuses"] = {"dodge_next_attack": 1}
+	var enemies := _enemies([12, 9])
+	var deck := _deck(["warden_draw_fire", "warden_counter_stitch",
+		"warden_iron_hem", "warden_hold_the_line", "warden_quick_darn"])
+	var reactions := CombatWardenGuardReactions.new()
+	_check(reactions.play_from_hand(deck, party, "warden_draw_fire")
+		and reactions.is_guarding() and party.get_hero(1).block == 12,
+		"AC3 precondition: authentic paid Guard with twelve Block")
+	var result: Dictionary = phase.execute_phase(party, enemies, [_attack(1, 8, 2)], reactions)
+	_check(result == {"ok": true, "events": [_hit(1, 2, true, 1, true, 0)]},
+		"AC3: Guard redirects the hit away from the armed ally")
+	_check(party.get_hero(2)["statuses"] == {"dodge_next_attack": 1}
+		and party.get_hero(2)["hp"] == 30,
+		"AC3: the bypassed ally's one-shot Dodge stays armed")
+	_check(party.get_hero(1)["block"] == 4 and party.get_hero(1)["hp"] == 40,
+		"AC3: the Warden takes the redirected hit normally (12 -> 4 Block)")
+
+	# A slain source never resolves its beat, so an armed token is untouched.
+	party = _party()
+	party._heroes[1]["statuses"] = {"dodge_next_attack": 1}
+	enemies = _enemies([5])
+	_check(enemies.apply_damage(1, 5) and enemies.is_slain(1),
+		"AC4 precondition: the attacking source is genuinely slain")
+	reactions = CombatWardenGuardReactions.new()
+	var before: Array = party.get_heroes()
+	result = phase.execute_phase(party, enemies, [_attack(1, 12, 2)], reactions)
+	_check(result == {"ok": true, "events": [_hit(1, 2, false, 2, false, 0)]}
+		and party.get_heroes() == before,
+		"AC4: a slain source's skipped attack cannot spend the armed Dodge")
+
+	# A downed recipient's beat is skipped with her token intact.
+	party = _party()
+	party._heroes[2]["statuses"] = {"dodge_next_attack": 1}
+	_check(party.apply_damage(3, 26) and party.is_downed(3),
+		"AC4 precondition: the armed Tinker is genuinely downed")
+	enemies = _enemies([9])
+	before = party.get_heroes()
+	result = phase.execute_phase(party, enemies, [_attack(1, 9, 3)], reactions)
+	_check(result == {"ok": true, "events": [_hit(1, 3, false, 3, false, 0)]}
+		and party.get_heroes() == before,
+		"AC4: a downed recipient's skipped attack keeps her Dodge armed")
+	_check(CombatEnemyAttacks.new().execute_attacks(party, [_attack(1, 4, 3)]) ==
+		{"ok": true, "events": [
+			{"enemy_position": 1, "target_position": 3, "applied": false}]}
+		and party.get_hero(3)["statuses"] == {"dodge_next_attack": 1},
+		"AC4: the direct helper also skips a downed recipient without spending Dodge")
+
+
+## AC3/AC6: invalid late input spends nothing, and the identical seed replays
+## the exact same ordered miss/landing trace with untouched RNG.
+func _test_dodge_invalid_and_replay() -> void:
+	# A malformed later attack leaves an earlier armed Dodge unspent.
+	var direct_party := _party()
+	direct_party._heroes[1]["statuses"] = {"dodge_next_attack": 1}
+	var direct_before: Array = direct_party.get_heroes()
+	_check(CombatEnemyAttacks.new().execute_attacks(direct_party,
+		[_attack(1, 5, 2), _attack(1, 3, 2)]) == {"ok": false, "events": []}
+		and direct_party.get_heroes() == direct_before,
+		"AC3: a duplicate late source rejects before the legal Dodge miss is spent")
+
+	var party := _party()
+	party._heroes[1]["statuses"] = {"dodge_next_attack": 1}
+	var enemies := _enemies([12, 9])
+	var deck := _deck(["warden_draw_fire", "warden_counter_stitch",
+		"warden_iron_hem", "warden_hold_the_line", "warden_quick_darn"])
+	var reactions := CombatWardenGuardReactions.new()
+	_check(reactions.play_from_hand(deck, party, "warden_draw_fire")
+		and reactions.is_guarding(),
+		"AC3 precondition: authentic paid Guard before the invalid batch")
+	var before: Array = [party.get_heroes(), enemies.get_enemies(), deck._rng.state,
+		deck.hand.duplicate(), deck.energy, reactions.is_guarding(), reactions.get_thorns()]
+	var rejected: Dictionary = phase.execute_phase(party, enemies,
+		[_attack(1, 8, 2), _attack(2, 4, 4)], reactions)
+	_check(rejected == {"ok": false, "events": []}
+		and [party.get_heroes(), enemies.get_enemies(), deck._rng.state,
+			deck.hand, deck.energy, reactions.is_guarding(), reactions.get_thorns()] == before
+		and party.get_hero(2)["statuses"] == {"dodge_next_attack": 1},
+		"AC3: a malformed late attack rejects atomically and never spends Dodge")
+
+	var traces: Array = []
+	for repetition: int in range(2):
+		var replay_party := _party()
+		replay_party._heroes[0]["statuses"] = {"dodge_next_attack": 1}
+		var replay_enemies := _enemies([12, 9])
+		var replay_deck := _deck(["warden_draw_fire", "warden_counter_stitch",
+			"warden_iron_hem", "warden_hold_the_line", "warden_quick_darn"])
+		var replay_reactions := CombatWardenGuardReactions.new()
+		_check(replay_reactions.play_from_hand(replay_deck, replay_party, "warden_draw_fire"),
+			"AC6 precondition: identical seeded Guard fixture")
+		var replay_rng: int = replay_deck._rng.state
+		var replay_result: Dictionary = phase.execute_phase(replay_party, replay_enemies,
+			[_attack(1, 8, 2), _attack(2, 6, 3)], replay_reactions)
+		traces.append([replay_result, replay_party.get_heroes(), replay_enemies.get_enemies(),
+			replay_deck._rng.state, replay_rng])
+	_check(traces.size() == 2 and traces[0] == traces[1]
+		and traces[0][0] == {"ok": true, "events": [
+			_hit(1, 2, false, 1, true, 0), _hit(2, 3, true, 1, true, 0)]}
+		and traces[0][4] == traces[0][3],
+		"AC6: identical seed replays the same Dodge miss and landing hit, RNG untouched")
+
 
