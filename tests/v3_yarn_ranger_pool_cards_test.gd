@@ -1,7 +1,8 @@
 extends SceneTree
 ## V3-1 Yarn Ranger catalog contract. No live combat/reward/Rest behavior is assumed.
-## Extended with deterministic headless combat resolution for Unspool, Snare Net and the knitted
-## ally supports (Hood Knit and Knit Shield, base and "+").
+## Extended with deterministic headless combat resolution for Unspool, Snare Net, the knitted
+## ally supports (Hood Knit and Knit Shield, base and "+") and the look-driven bolas families
+## (Wool Bolas and Tangle Bolas, base and "+").
 
 const YarnRangerPoolCards = preload("res://data/cards/yarn_ranger_pool_cards.gd")
 const YarnRangerStarterCards = preload("res://data/cards/yarn_ranger_starter_cards.gd")
@@ -9,6 +10,7 @@ const StarterCards = preload("res://data/cards/starter_cards.gd")
 const CombatYarnRangerUnspoolCards = preload("res://scripts/combat_yarn_ranger_unspool_cards.gd")
 const CombatYarnRangerSnareCards = preload("res://scripts/combat_yarn_ranger_snare_cards.gd")
 const CombatYarnRangerKnitCards = preload("res://scripts/combat_yarn_ranger_knit_cards.gd")
+const CombatYarnRangerBolasCards = preload("res://scripts/combat_yarn_ranger_bolas_cards.gd")
 const CombatParty = preload("res://scripts/combat_party.gd")
 const CombatEnemies = preload("res://scripts/combat_enemies.gd")
 const CombatDeck = preload("res://scripts/combat_deck.gd")
@@ -24,6 +26,12 @@ const KNIT_HOOD_PLUS := "yarn_ranger_hood_knit_plus"
 const KNIT_SHIELD := "yarn_ranger_knit_shield"
 const KNIT_SHIELD_PLUS := "yarn_ranger_knit_shield_plus"
 const KNIT_IDS := [KNIT_HOOD, KNIT_HOOD_PLUS, KNIT_SHIELD, KNIT_SHIELD_PLUS]
+
+const BOLAS_WOOL := "yarn_ranger_wool_bolas"
+const BOLAS_WOOL_PLUS := "yarn_ranger_wool_bolas_plus"
+const BOLAS_TANGLE := "yarn_ranger_tangle_bolas"
+const BOLAS_TANGLE_PLUS := "yarn_ranger_tangle_bolas_plus"
+const BOLAS_IDS := [BOLAS_WOOL, BOLAS_WOOL_PLUS, BOLAS_TANGLE, BOLAS_TANGLE_PLUS]
 
 var failures: Array[String] = []
 var checks: int = 0
@@ -45,6 +53,11 @@ func _initialize() -> void:
 	_test_knit_paid_block_and_draw()
 	_test_knit_draw_supply()
 	_test_knit_refusals()
+	_test_bolas_catalog_contract()
+	_test_bolas_paid_play()
+	_test_bolas_tangled_bonus_and_block()
+	_test_bolas_lethal_slot()
+	_test_bolas_refusals()
 	if failures.is_empty():
 		print("v3_yarn_ranger_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -1527,6 +1540,675 @@ func _rejected_knit(resolver: CombatYarnRangerKnitCards, deck: CombatDeck,
 		label + ": refusal reason is " + reason + " (got " + str(result.get("reason")) + ")")
 	_check(_knit_snapshot(deck, party) == before,
 		label + ": unchanged energy, hand, piles, turn, party, blocks, HP and RNG")
+
+
+## AC1: the four authentic bolas printings keep their exact authored line in the catalog that owns
+## them, resolve to that exact record, and refuse every other ID or tampered definition.
+func _test_bolas_catalog_contract() -> void:
+	var starter := YarnRangerStarterCards.new()
+	var pool := YarnRangerPoolCards.new()
+	var resolver := CombatYarnRangerBolasCards.new()
+	var expected := {
+		BOLAS_WOOL: {"catalog": "starter", "name": "Wool Bolas", "damage": 2, "tangled": 1},
+		BOLAS_WOOL_PLUS: {"catalog": "starter", "name": "Wool Bolas+", "damage": 3, "tangled": 2},
+		BOLAS_TANGLE: {"catalog": "pool", "name": "Tangle Bolas", "damage": 2, "tangled": 2},
+		BOLAS_TANGLE_PLUS: {"catalog": "pool", "name": "Tangle Bolas+", "damage": 3, "tangled": 3},
+	}
+	for card_id: String in BOLAS_IDS:
+		var spec: Dictionary = expected[card_id]
+		var own_catalog: Dictionary = starter.get_definition(card_id) \
+			if spec["catalog"] == "starter" else pool.get_definition(card_id)
+		var other_catalog: Dictionary = pool.get_definition(card_id) \
+			if spec["catalog"] == "starter" else starter.get_definition(card_id)
+		_check(not own_catalog.is_empty(), card_id + " is authored by its own Yarn catalog")
+		_check(other_catalog.is_empty(), card_id + " is not duplicated in the other Yarn catalog")
+		_check(own_catalog.get("id") == card_id, card_id + " keeps its exact identifier")
+		_check(own_catalog.get("display_name") == spec["name"], card_id + " keeps its printed name")
+		_check(own_catalog.get("owner") == "yarn_ranger", card_id + " is owned by the Yarn Ranger")
+		_check(own_catalog.get("cost") == 1, card_id + " prints one energy")
+		_check(own_catalog.get("from_positions") == [2, 3], card_id + " prints FROM seats 2-3")
+		_check(own_catalog.get("target_kind") == "enemy_single",
+			card_id + " prints a single-enemy target")
+		_check(own_catalog.get("to_positions") == [1, 2, 3], card_id + " prints TO slots 1-3")
+		var effects: Dictionary = own_catalog.get("effects", {})
+		_check(effects == {"damage": spec["damage"], "tangled": spec["tangled"]},
+			card_id + " prints exactly " + str(spec["damage"]) + " damage and Tangled "
+			+ str(spec["tangled"]))
+		_check(effects.size() == 2, card_id + " carries no extra effect key")
+		_check(typeof(effects.get("damage")) == TYPE_INT
+			and typeof(effects.get("tangled")) == TYPE_INT,
+			card_id + " prints integer damage and Tangled values")
+		if card_id.ends_with("_plus"):
+			_check(own_catalog.get("upgrade_of") == card_id.trim_suffix("_plus")
+				and not own_catalog.has("upgrade_id"),
+				card_id + " links back to its one base printing")
+		else:
+			_check(own_catalog.get("upgrade_id") == card_id + "_plus"
+				and not own_catalog.has("upgrade_of"),
+				card_id + " links forward to its one upgrade")
+		_check(resolver.is_supported_card(card_id), card_id + " is a supported bolas card")
+		_check(CombatYarnRangerBolasCards.is_authentic_definition(own_catalog, card_id),
+			card_id + " passes the definition authenticator")
+		_check(CombatYarnRangerBolasCards.bolas_definition(card_id) == own_catalog,
+			card_id + " resolves to its exact detached catalog record")
+
+	# The resolver accepts exactly the four authored IDs; a stray key cannot sneak in.
+	for card_id: Variant in CombatYarnRangerBolasCards.CARDS:
+		_check(BOLAS_IDS.has(card_id), str(card_id) + " is one of the four authored bolas IDs")
+
+	# Detached: mutating a resolved record cannot rewrite what the next resolution returns.
+	var sample := CombatYarnRangerBolasCards.bolas_definition(BOLAS_WOOL)
+	_check(not sample.is_empty(), "bolas resolution fixture loaded")
+	if not sample.is_empty():
+		sample["effects"]["damage"] = 900
+		sample["effects"]["tangled"] = 900
+		sample["from_positions"].clear()
+		sample["cost"] = 0
+		sample["display_name"] = "Forged Bolas"
+		_check(CombatYarnRangerBolasCards.bolas_definition(BOLAS_WOOL)
+			== starter.get_definition(BOLAS_WOOL),
+			"a mutated bolas definition cannot poison later resolutions")
+
+	# Every other Yarn starter/pool card is unrelated, never a bolas card.
+	var unrelated: Array = []
+	unrelated.append_array(starter.get_all_card_ids())
+	unrelated.append_array(pool.get_all_card_ids())
+	for card_id: String in BOLAS_IDS:
+		unrelated.erase(card_id)
+	for other_id: Variant in unrelated:
+		_check(CombatYarnRangerBolasCards.bolas_definition(other_id).is_empty(),
+			str(other_id) + " does not resolve as a bolas card")
+		_check(not resolver.is_supported_card(other_id),
+			str(other_id) + " is not a supported bolas card")
+	var forged: Array = ["yarn_ranger_wool_bolas+", "yarn_ranger_wool_bolas_plus_plus",
+		"yarn_ranger_tangle_bolas_+", "wool_bolas", "tangle_bolas",
+		" yarn_ranger_wool_bolas", "yarn_ranger_wool_bolas ", "WOOL_BOLAS", "",
+		"warden_strike", StringName(BOLAS_WOOL), null, 0, 3.5, false, [], {}]
+	for other_id: Variant in forged:
+		_check(CombatYarnRangerBolasCards.bolas_definition(other_id).is_empty(),
+			"forged or non-string ID never resolves as bolas: " + str(other_id))
+		_check(not CombatYarnRangerBolasCards.is_authentic_definition(
+			starter.get_definition(BOLAS_WOOL), other_id),
+			"a bolas record cannot authenticate under a forged ID: " + str(other_id))
+
+	# Adversarial copies of a real record: every altered contract field is refused.
+	var base_record: Dictionary = starter.get_definition(BOLAS_WOOL)
+	_check(not base_record.is_empty()
+		and CombatYarnRangerBolasCards.is_authentic_definition(base_record, BOLAS_WOOL),
+		"authenticator positive fixture really is the authored Wool Bolas")
+	var mutations: Array[Callable] = [
+		func(record: Dictionary) -> void: record["effects"]["damage"] = 3,
+		func(record: Dictionary) -> void: record["effects"]["damage"] = 2.0,
+		func(record: Dictionary) -> void: record["effects"]["damage"] = "2",
+		func(record: Dictionary) -> void: record["effects"]["tangled"] = 2,
+		func(record: Dictionary) -> void: record["effects"]["tangled"] = 1.0,
+		func(record: Dictionary) -> void: record["effects"]["tangled"] = true,
+		func(record: Dictionary) -> void: record["effects"].erase("tangled"),
+		func(record: Dictionary) -> void: record["effects"]["unravel"] = 1,
+		func(record: Dictionary) -> void: record["effects"] = "damage",
+		func(record: Dictionary) -> void: record["cost"] = 0,
+		func(record: Dictionary) -> void: record["cost"] = 2,
+		func(record: Dictionary) -> void: record["cost"] = 1.0,
+		func(record: Dictionary) -> void: record["owner"] = "warden",
+		func(record: Dictionary) -> void: record["display_name"] = "Wool Bolas+",
+		func(record: Dictionary) -> void: record["from_positions"] = [1, 2, 3],
+		func(record: Dictionary) -> void: record["from_positions"] = ["2", "3"],
+		func(record: Dictionary) -> void: record["from_positions"] = "2,3",
+		func(record: Dictionary) -> void: record["to_positions"] = [1, 2],
+		func(record: Dictionary) -> void: record["target_kind"] = "enemy_all",
+		func(record: Dictionary) -> void: record["id"] = BOLAS_TANGLE,
+		func(record: Dictionary) -> void: record.erase("upgrade_id"),
+		func(record: Dictionary) -> void: record["upgrade_of"] = BOLAS_WOOL,
+		func(record: Dictionary) -> void: record.erase("to_positions"),
+		func(record: Dictionary) -> void: record.erase("effects"),
+		func(record: Dictionary) -> void: record.erase("display_name"),
+	]
+	for index in range(mutations.size()):
+		var tampered: Dictionary = base_record.duplicate(true)
+		mutations[index].call(tampered)
+		_check(not CombatYarnRangerBolasCards.is_authentic_definition(tampered, BOLAS_WOOL),
+			"tampered bolas record " + str(index) + " is refused")
+	_check(not CombatYarnRangerBolasCards.is_authentic_definition(
+		starter.get_definition(BOLAS_WOOL_PLUS), BOLAS_WOOL),
+		"an upgraded record cannot authenticate as its base ID")
+	_check(not CombatYarnRangerBolasCards.is_authentic_definition(
+		starter.get_definition(BOLAS_WOOL), BOLAS_WOOL_PLUS),
+		"a base record cannot authenticate as its upgraded ID")
+	_check(not CombatYarnRangerBolasCards.is_authentic_definition(
+		pool.get_definition(BOLAS_TANGLE), BOLAS_WOOL),
+		"a pool record cannot forge a starter identity")
+	_check(not CombatYarnRangerBolasCards.is_authentic_definition(
+		starter.get_definition(BOLAS_WOOL), BOLAS_TANGLE),
+		"a starter record cannot forge a pool identity")
+
+
+## AC1: a genuinely held base/+ Wool or Tangle Bolas from seat 2 or 3 pays exactly one energy,
+## resolves the printed damage against the target's pre-hit statuses and adds the printed Tangled.
+func _test_bolas_paid_play() -> void:
+	var resolver := CombatYarnRangerBolasCards.new()
+	var cases := [
+		{"id": BOLAS_WOOL, "seat": 2, "target": 1, "damage": 2, "tangled": 1},
+		{"id": BOLAS_WOOL_PLUS, "seat": 3, "target": 3, "damage": 3, "tangled": 2},
+		{"id": BOLAS_TANGLE, "seat": 3, "target": 2, "damage": 2, "tangled": 2},
+		{"id": BOLAS_TANGLE_PLUS, "seat": 2, "target": 1, "damage": 3, "tangled": 3},
+	]
+	for index in range(cases.size()):
+		var entry: Dictionary = cases[index]
+		var card_id: String = entry["id"]
+		var seat: int = entry["seat"]
+		var target: int = entry["target"]
+		var damage: int = entry["damage"]
+		var added: int = entry["tangled"]
+		var label: String = card_id + " from seat " + str(seat) + " onto foe " + str(target)
+		var party := _snare_party(seat)
+		var enemies := _bolas_enemies([
+			{"max_hp": 30, "hp": 30}, {"max_hp": 30, "hp": 30}, {"max_hp": 30, "hp": 30},
+		])
+		var deck := _bolas_deck(card_id, 20261110 + index)
+		_check(deck.hand.count(card_id) == 1, label + ": exactly one authentic copy is held")
+		_check(deck.energy == 3 and deck.turn_active, label + ": a real three-energy turn is active")
+		var rng_before: int = deck._rng.state
+		var draw_before: Array = deck.draw_pile.duplicate()
+		var before := _bolas_snapshot(deck, party, enemies)
+		var result: Dictionary = resolver.play_card(deck, party, enemies, card_id, target)
+		_check(result.get("ok") == true and result.get("reason") == "applied",
+			label + ": authorized paid play")
+		_check(result.get("card_id") == card_id and result.get("cost") == 1,
+			label + ": receipt names the authentic card and its one energy")
+		_check(result.get("owner_position") == seat, label + ": receipt reports the real owner seat")
+		_check(result.get("target_position") == target, label + ": receipt reports the chosen foe")
+		_check(result.get("damage") == damage,
+			label + ": printed damage " + str(damage) + " (no pre-hit Tangled)")
+		_check(result.get("block_absorbed") == 0, label + ": an unblocked hit absorbs nothing")
+		_check(result.get("hp_loss") == damage, label + ": the printed damage reaches HP")
+		_check(result.get("tangled_added") == added,
+			label + ": receipt reports the printed Tangled count")
+		_check(deck.energy == 2, label + ": exactly one of the three energy was spent")
+		_check(deck.hand.count(card_id) == 0, label + ": the held copy left the hand")
+		_check(deck.discard_pile == [card_id], label + ": exactly one played copy reached discard")
+		_check(deck.draw_pile == draw_before, label + ": the shared draw supply is untouched")
+		_check(deck.hand.size() == before["hand"].size() - 1,
+			label + ": no extra card was drawn into the shared hand")
+		_check(deck._rng.state == rng_before, label + ": the play consumes no RNG")
+		_check(deck.turn_active, label + ": the shared turn is still active")
+		_check(enemies.get_enemy(target).get("hp") == 30 - damage,
+			label + ": the target lost exactly the printed damage")
+		_check(enemies.get_enemy(target).get("block") == 0, label + ": the target gained no Block")
+		_check(enemies.get_enemy(target).get("statuses") == {"tangled": added},
+			label + ": the target gained exactly its printed Tangled")
+		_check(enemies.get_enemy(target).get("position") == target,
+			label + ": the target kept its original slot")
+		for position in [1, 2, 3]:
+			if position == target:
+				continue
+			_check(enemies.get_enemy(position).get("hp") == 30
+				and not enemies.get_enemy(position).has("statuses"),
+				label + ": non-target foe " + str(position) + " is untouched")
+		_check(party.get_hero(seat).get("id") == "yarn_ranger"
+			and party.get_hero(seat).get("hp") == 28,
+			label + ": the owner and its HP stay unchanged")
+		_check(_bolas_snapshot(deck, party, enemies)
+			== _expected_bolas(before, card_id, target, damage, added),
+			label + ": exact hand, piles, energy, turn, party, enemy and RNG state")
+		# A detached receipt is never authority for later state.
+		result["damage"] = 99
+		result["tangled_added"] = 99
+		result["target_position"] = 3
+		_check(enemies.get_enemy(target).get("statuses") == {"tangled": added},
+			label + ": a mutated receipt cannot change the target")
+		# A replay of the spent copy fails without another charge.
+		var replay_before := _bolas_snapshot(deck, party, enemies)
+		var replay: Dictionary = resolver.play_card(deck, party, enemies, card_id, target)
+		_check(replay.get("ok") == false and replay.get("reason") == "card_not_held",
+			label + ": a replayed spent copy is refused")
+		_check(_bolas_snapshot(deck, party, enemies) == replay_before,
+			label + ": the refused replay changes nothing")
+
+
+## AC2: the +2 bonus comes only from the PRE-HIT Tangled counter, the cast always adds its own
+## printed Tangled afterwards, and fully Blocked damage still applies it.
+func _test_bolas_tangled_bonus_and_block() -> void:
+	var resolver := CombatYarnRangerBolasCards.new()
+
+	# 1. Wool Bolas from the back seat onto a middle foe already Tangled 2: 2 printed + flat 2.
+	var party := _snare_party(3)
+	var enemies := _bolas_enemies([
+		{"max_hp": 30, "hp": 30},
+		{"max_hp": 20, "hp": 20, "statuses": {"tangled": 2, "bleed": 3}},
+		{"max_hp": 20, "hp": 20},
+	])
+	var deck := _bolas_deck(BOLAS_WOOL, 20261121)
+	var before := _bolas_snapshot(deck, party, enemies)
+	var tangled_result: Dictionary = resolver.play_card(deck, party, enemies, BOLAS_WOOL, 2)
+	_check(tangled_result.get("ok") == true, "existing Tangled: the authentic play succeeds")
+	_check(tangled_result.get("damage") == 4,
+		"existing Tangled 2 confers its flat +2 exactly once (2 printed + 2)")
+	_check(tangled_result.get("block_absorbed") == 0
+		and tangled_result.get("hp_loss") == 4,
+		"existing Tangled: the boosted damage reaches HP")
+	_check(tangled_result.get("tangled_added") == 1,
+		"existing Tangled: the cast still adds its own printed one")
+	_check(enemies.get_enemy(2).get("hp") == 16, "existing Tangled: the target lost four HP")
+	_check(enemies.get_enemy(2).get("statuses") == {"tangled": 3, "bleed": 3},
+		"existing Tangled: the counter stacks to three and Bleed survives untouched")
+	_check(enemies.get_enemy(1).get("hp") == 30
+		and not enemies.get_enemy(1).has("statuses"),
+		"existing Tangled: a non-target foe is untouched")
+	_check(_bolas_snapshot(deck, party, enemies)
+		== _expected_bolas(before, BOLAS_WOOL, 2, 4, 1),
+		"existing Tangled: exact deck, party, enemy and RNG state")
+
+	# 2. Tangle Bolas+ onto a front foe already Tangled 2: 3 printed + flat 2, then +3 Tangled.
+	var plus_party := _snare_party(2)
+	var plus_enemies := _bolas_enemies([
+		{"max_hp": 30, "hp": 30, "statuses": {"tangled": 2}},
+		{"max_hp": 30, "hp": 30},
+	])
+	var plus_deck := _bolas_deck(BOLAS_TANGLE_PLUS, 20261122)
+	var plus_before := _bolas_snapshot(plus_deck, plus_party, plus_enemies)
+	var plus_result: Dictionary = resolver.play_card(plus_deck, plus_party, plus_enemies,
+		BOLAS_TANGLE_PLUS, 1)
+	_check(plus_result.get("ok") == true and plus_result.get("damage") == 5,
+		"upgraded Tangle Bolas: 3 printed + Tangled 2 = 5")
+	_check(plus_result.get("hp_loss") == 5, "upgraded Tangle Bolas: five HP really left")
+	_check(plus_enemies.get_enemy(1).get("statuses") == {"tangled": 5},
+		"upgraded Tangle Bolas: the existing two stack with its printed three")
+	_check(plus_enemies.get_enemy(2).get("hp") == 30
+		and not plus_enemies.get_enemy(2).has("statuses"),
+		"upgraded Tangle Bolas: the unselected rear foe is untouched")
+	_check(_bolas_snapshot(plus_deck, plus_party, plus_enemies)
+		== _expected_bolas(plus_before, BOLAS_TANGLE_PLUS, 1, 5, 3),
+		"upgraded Tangle Bolas: exact state apart from the paid hit and Tangled")
+
+	# 3. Wool Bolas+ fully absorbed by Block while the target is already Tangled 2.
+	var block_party := _snare_party(3)
+	var block_enemies := _bolas_enemies([
+		{"max_hp": 20, "hp": 20},
+		{"max_hp": 20, "hp": 20},
+		{"max_hp": 15, "hp": 15, "block": 9, "statuses": {"tangled": 2}},
+	])
+	var block_deck := _bolas_deck(BOLAS_WOOL_PLUS, 20261123)
+	var block_before := _bolas_snapshot(block_deck, block_party, block_enemies)
+	var block_result: Dictionary = resolver.play_card(block_deck, block_party, block_enemies,
+		BOLAS_WOOL_PLUS, 3)
+	_check(block_result.get("ok") == true, "fully blocked: the authentic play still succeeds")
+	_check(block_result.get("damage") == 5,
+		"fully blocked: existing Tangled still confers +2 on the absorbed hit")
+	_check(block_result.get("block_absorbed") == 5 and block_result.get("hp_loss") == 0,
+		"fully blocked: five damage is absorbed and no HP is lost")
+	_check(block_result.get("tangled_added") == 2,
+		"fully blocked: the cast still adds its printed Tangled")
+	_check(block_enemies.get_enemy(3).get("hp") == 15
+		and block_enemies.get_enemy(3).get("block") == 4,
+		"fully blocked: the target keeps its HP and only Block is spent")
+	_check(block_enemies.get_enemy(3).get("statuses") == {"tangled": 4},
+		"fully blocked: the printed Tangled lands after the hit")
+	_check(block_enemies.get_enemy(1).get("hp") == 20
+		and block_enemies.get_enemy(1).get("block") == 0,
+		"fully blocked: a non-target foe keeps HP and Block")
+	_check(_bolas_snapshot(block_deck, block_party, block_enemies)
+		== _expected_bolas(block_before, BOLAS_WOOL_PLUS, 3, 5, 2),
+		"fully blocked: exact deck, party, enemy and RNG state")
+
+	# 4. Tangle Bolas fully blocked with NO existing Tangled: the new Tangled must not self-boost.
+	var fresh_party := _snare_party(2)
+	var fresh_enemies := _bolas_enemies([
+		{"max_hp": 12, "hp": 12, "block": 2},
+		{"max_hp": 12, "hp": 12},
+	])
+	var fresh_deck := _bolas_deck(BOLAS_TANGLE, 20261124)
+	var fresh_before := _bolas_snapshot(fresh_deck, fresh_party, fresh_enemies)
+	var fresh_result: Dictionary = resolver.play_card(fresh_deck, fresh_party, fresh_enemies,
+		BOLAS_TANGLE, 1)
+	_check(fresh_result.get("ok") == true and fresh_result.get("damage") == 2,
+		"no pre-hit Tangled: the printed two is not boosted by the Tangled it adds")
+	_check(fresh_result.get("block_absorbed") == 2 and fresh_result.get("hp_loss") == 0,
+		"no pre-hit Tangled: two damage is fully absorbed")
+	_check(fresh_enemies.get_enemy(1).get("hp") == 12
+		and fresh_enemies.get_enemy(1).get("block") == 0,
+		"no pre-hit Tangled: HP is untouched and Block is spent")
+	_check(fresh_enemies.get_enemy(1).get("statuses") == {"tangled": 2},
+		"no pre-hit Tangled: the printed Tangled two is added after the hit")
+	_check(_bolas_snapshot(fresh_deck, fresh_party, fresh_enemies)
+		== _expected_bolas(fresh_before, BOLAS_TANGLE, 1, 2, 2),
+		"no pre-hit Tangled: exact state apart from the paid hit and Tangled")
+
+	# 5. A Weak Yarn Ranger: the pre-hit ATTACKER statuses also feed the shared damage rules.
+	var weak_party := _snare_party(2)
+	weak_party._heroes[1]["statuses"] = {"weak": 1}
+	_check(weak_party.get_hero(2).get("statuses") == {"weak": 1},
+		"weak fixture really marks the Yarn Ranger Weak")
+	var weak_enemies := _bolas_enemies([
+		{"max_hp": 20, "hp": 20, "statuses": {"tangled": 1}},
+		{"max_hp": 20, "hp": 20},
+	])
+	var weak_deck := _bolas_deck(BOLAS_WOOL, 20261125)
+	var weak_before := _bolas_snapshot(weak_deck, weak_party, weak_enemies)
+	var weak_result: Dictionary = resolver.play_card(weak_deck, weak_party, weak_enemies,
+		BOLAS_WOOL, 1)
+	_check(weak_result.get("ok") == true and weak_result.get("damage") == 3,
+		"weak attacker: two printed floors to one, then the target's Tangled adds two")
+	_check(weak_result.get("hp_loss") == 3, "weak attacker: three damage reaches HP")
+	_check(weak_enemies.get_enemy(1).get("hp") == 17,
+		"weak attacker: the target lost exactly three HP")
+	_check(weak_enemies.get_enemy(1).get("statuses") == {"tangled": 2},
+		"weak attacker: the printed Tangled one stacks onto the existing one")
+	_check(weak_party.get_hero(2).get("statuses") == {"weak": 1},
+		"weak attacker: the attacker's own Weak counter is not spent or ticked")
+	_check(_bolas_snapshot(weak_deck, weak_party, weak_enemies)
+		== _expected_bolas(weak_before, BOLAS_WOOL, 1, 3, 1),
+		"weak attacker: exact state apart from the paid hit and Tangled")
+
+
+## AC2: a confirmed lethal hit keeps its Tangled on the nonmoving original slot, other foes and
+## later legal plays are unaffected, and the spent copy cannot be replayed.
+func _test_bolas_lethal_slot() -> void:
+	var resolver := CombatYarnRangerBolasCards.new()
+	var party := _snare_party(2)
+	var enemies := _bolas_enemies([
+		{"max_hp": 30, "hp": 30},
+		{"max_hp": 2, "hp": 2},
+		{"max_hp": 30, "hp": 30},
+	])
+	var deck := _bolas_deck(BOLAS_WOOL, 77123)
+	var before := _bolas_snapshot(deck, party, enemies)
+	var result: Dictionary = resolver.play_card(deck, party, enemies, BOLAS_WOOL, 2)
+	_check(result.get("ok") == true and result.get("hp_loss") == 2,
+		"lethal: the printed two damage resolves")
+	_check(enemies.is_slain(2), "lethal: the middle foe is really slain")
+	_check(enemies.get_enemy(2).get("hp") == 0, "lethal: the middle foe drops to zero HP")
+	_check(enemies.get_enemy(2).get("position") == 2,
+		"lethal: the slain foe keeps its original nonmoving slot")
+	_check(enemies.get_enemy(2).get("statuses") == {"tangled": 1},
+		"lethal: the confirmed kill still keeps its printed Tangled on that slot")
+	_check(enemies.get_enemy(2).get("block") == 0, "lethal: the slain foe spends no Block")
+	_check(enemies.get_enemy(1).get("hp") == 30 and enemies.get_enemy(3).get("hp") == 30,
+		"lethal: the other two foes keep full HP")
+	_check(not enemies.is_defeated(), "lethal: the roster is not defeated while two foes live")
+	_check(_bolas_snapshot(deck, party, enemies)
+		== _expected_bolas(before, BOLAS_WOOL, 2, 2, 1),
+		"lethal: exact deck, party, enemy and RNG state")
+	var replay: Dictionary = resolver.play_card(deck, party, enemies, BOLAS_WOOL, 2)
+	_check(replay.get("ok") == false and replay.get("reason") == "card_not_held",
+		"lethal: the spent copy cannot be replayed onto the slain slot")
+
+	# A fresh held copy cannot re-target the slain slot, but a living far slot still works.
+	var second := _bolas_deck(BOLAS_WOOL, 77124)
+	var second_before := _bolas_snapshot(second, party, enemies)
+	var downed: Dictionary = resolver.play_card(second, party, enemies, BOLAS_WOOL, 2)
+	_check(downed.get("ok") == false and downed.get("reason") == "target_downed",
+		"lethal: a slain slot is refused as a target")
+	_check(_bolas_snapshot(second, party, enemies) == second_before,
+		"lethal: the refused targeting of a slain slot changes nothing")
+	var survivor: Dictionary = resolver.play_card(second, party, enemies, BOLAS_WOOL, 3)
+	_check(survivor.get("ok") == true and survivor.get("target_position") == 3,
+		"lethal: a fresh copy still hits a living far slot")
+	_check(enemies.get_enemy(3).get("hp") == 28
+		and enemies.get_enemy(3).get("statuses") == {"tangled": 1},
+		"lethal: the surviving slot takes its own printed damage and Tangled")
+	_check(enemies.get_enemy(2).get("hp") == 0
+		and enemies.get_enemy(2).get("statuses") == {"tangled": 1},
+		"lethal: the earlier slain slot keeps its status after later plays")
+
+
+## AC3: every invalid owner/seat/target/hand/turn/energy/catalog/status request is inert and
+## carries its reason; a refusal never poisons the next authentic play.
+func _test_bolas_refusals() -> void:
+	var resolver := CombatYarnRangerBolasCards.new()
+	var party := _snare_party(2)
+	var enemies := _bolas_enemies([
+		{"max_hp": 12, "hp": 12}, {"max_hp": 12, "hp": 12}, {"max_hp": 12, "hp": 12},
+	])
+	var deck := _bolas_deck(BOLAS_WOOL, 4455)
+
+	_rejected_bolas(resolver, null, party, enemies, BOLAS_WOOL, 1, "invalid_request", "null deck")
+	_rejected_bolas(resolver, deck, null, enemies, BOLAS_WOOL, 1, "invalid_request", "null party")
+	_rejected_bolas(resolver, deck, party, null, BOLAS_WOOL, 1, "invalid_request", "null enemies")
+
+	# Inactive turn.
+	var inactive := CombatDeck.new([BOLAS_WOOL, "bolas_filler_a"], _bolas_rng(12))
+	inactive.hand.append(BOLAS_WOOL)
+	_check(not inactive.turn_active and inactive.hand.has(BOLAS_WOOL),
+		"inactive fixture really holds a copy outside a turn")
+	_rejected_bolas(resolver, inactive, party, enemies, BOLAS_WOOL, 1, "inactive_turn",
+		"inactive turn")
+
+	# Wrong IDs: unrelated authentic cards, forged spellings and non-strings.
+	var unsupported: Array = [BOLAS_TANGLE + "_plus_plus", BOLAS_WOOL_PLUS + "_plus",
+		"yarn_ranger_wool_bolas+", "yarn_ranger_wool_bolas_ ", "wool_bolas", "TANGLE_BOLAS",
+		"yarn_ranger_needle_arrow", "yarn_ranger_snare_net", "warden_strike", "",
+		StringName(BOLAS_WOOL), null, 0, 3.5, false, [], {}]
+	for wrong_id: Variant in unsupported:
+		_rejected_bolas(resolver, deck, party, enemies, wrong_id, 1, "unsupported_card",
+			"unsupported ID " + str(wrong_id))
+
+	# Authentic printings the hand does not hold are still unheld.
+	_rejected_bolas(resolver, deck, party, enemies, BOLAS_WOOL_PLUS, 1, "card_not_held",
+		"authentic but unheld Wool Bolas+")
+	_rejected_bolas(resolver, deck, party, enemies, BOLAS_TANGLE, 1, "card_not_held",
+		"authentic but unheld Tangle Bolas")
+	var no_copy := CombatDeck.new(["bolas_filler_a", "bolas_filler_b", "bolas_filler_c",
+		"bolas_filler_d", "bolas_filler_e"], _bolas_rng(77))
+	_check(no_copy.start_turn() and not no_copy.hand.has(BOLAS_WOOL),
+		"missing-copy fixture really lacks the card")
+	_rejected_bolas(resolver, no_copy, party, enemies, BOLAS_WOOL, 1, "card_not_held",
+		"missing held copy")
+
+	# No energy.
+	var poor := _bolas_deck(BOLAS_WOOL, 5566)
+	poor.combat_state.energy = 0
+	_check(poor.energy == 0 and poor.hand.has(BOLAS_WOOL),
+		"short-energy fixture really holds a copy with no energy")
+	_rejected_bolas(resolver, poor, party, enemies, BOLAS_WOOL, 1, "insufficient_energy",
+		"no energy")
+
+	# Illegal target slots: only enemies 1-3 are real recipients.
+	for slot: int in [0, 4, -1, 99]:
+		_rejected_bolas(resolver, deck, party, enemies, BOLAS_WOOL, slot, "invalid_target",
+			"illegal target slot " + str(slot))
+	var dead_target := _bolas_enemies([
+		{"max_hp": 12, "hp": 12}, {"max_hp": 12, "hp": 0}, {"max_hp": 12, "hp": 12},
+	])
+	_rejected_bolas(resolver, deck, party, dead_target, BOLAS_WOOL, 2, "target_downed",
+		"slain target slot")
+
+	# Invalid rosters.
+	var short_party := CombatParty.new([{"id": "warden", "max_hp": 40}])
+	_rejected_bolas(resolver, deck, short_party, enemies, BOLAS_WOOL, 1, "invalid_roster",
+		"invalid one-hero party")
+	_rejected_bolas(resolver, deck, party, CombatEnemies.new([]), BOLAS_WOOL, 1,
+		"invalid_roster", "invalid empty enemy roster")
+
+	# Owner absent, Torn, or in the front seat grants no authority.
+	var no_owner := CombatParty.new([{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30}, {"id": "tinker", "max_hp": 26}])
+	_check(no_owner.is_valid() and no_owner.get_hero(2).get("id") == "seamstress",
+		"absent-owner fixture is a valid three-hero party with no Yarn Ranger")
+	_rejected_bolas(resolver, deck, no_owner, enemies, BOLAS_WOOL, 1, "owner_missing",
+		"absent Yarn Ranger")
+	var front := _snare_party(1)
+	_check(front.get_hero(1).get("id") == "yarn_ranger" and not front.is_downed(1),
+		"front-seat fixture really has a living Yarn Ranger in seat 1")
+	_rejected_bolas(resolver, deck, front, enemies, BOLAS_WOOL, 1, "owner_illegal_position",
+		"Yarn Ranger in seat 1")
+	var torn := _snare_party(3)
+	_check(torn.apply_damage(3, 28) and torn.is_downed(3),
+		"torn-owner fixture really has a downed Yarn Ranger")
+	_rejected_bolas(resolver, deck, torn, enemies, BOLAS_WOOL, 1, "owner_downed",
+		"downed owner")
+
+	# Malformed party/enemy models and status maps fail closed.
+	var duplicate := _snare_party(2)
+	duplicate._heroes[2]["id"] = "yarn_ranger"
+	_check(duplicate.get_hero(2).get("id") == "yarn_ranger"
+		and duplicate.get_hero(3).get("id") == "yarn_ranger",
+		"duplicate-identity fixture really repeats the owner ID")
+	_rejected_bolas(resolver, deck, duplicate, enemies, BOLAS_WOOL, 1, "invalid_party",
+		"duplicate hero identity")
+	var bad_hp := _snare_party(2)
+	bad_hp._heroes[0]["hp"] = 999
+	_rejected_bolas(resolver, deck, bad_hp, enemies, BOLAS_WOOL, 1, "invalid_party",
+		"malformed hero HP")
+	var bad_party_statuses := _snare_party(2)
+	bad_party_statuses._heroes[1]["statuses"] = "bad"
+	_rejected_bolas(resolver, deck, bad_party_statuses, enemies, BOLAS_WOOL, 1,
+		"invalid_party", "malformed party status map")
+	var bad_attacker := _snare_party(3)
+	bad_attacker._heroes[2]["statuses"] = {"forged": 1}
+	_rejected_bolas(resolver, deck, bad_attacker, enemies, BOLAS_WOOL, 1, "invalid_party",
+		"unsupported attacker status map")
+
+	for malformed: Variant in ["bad", 4, {"tangled": -1}, {"tangled": "2"}, {"forged": 1},
+			{"tangled": 1.5}, {"tangled": true}, {1: 2}]:
+		var broken := _bolas_enemies([
+			{"max_hp": 10, "hp": 10}, {"max_hp": 10, "hp": 10}, {"max_hp": 10, "hp": 10},
+		])
+		broken._enemies[1]["statuses"] = malformed
+		_rejected_bolas(resolver, deck, party, broken, BOLAS_WOOL, 1, "invalid_enemies",
+			"malformed target status map " + str(malformed))
+
+	var bad_enemy_hp := _bolas_enemies([{"max_hp": 10, "hp": 10}])
+	bad_enemy_hp._enemies[0]["hp"] = 99
+	_rejected_bolas(resolver, deck, party, bad_enemy_hp, BOLAS_WOOL, 1, "invalid_enemies",
+		"malformed enemy HP")
+	var bad_enemy_position := _bolas_enemies([{"max_hp": 10, "hp": 10}])
+	bad_enemy_position._enemies[0]["position"] = 2
+	_rejected_bolas(resolver, deck, party, bad_enemy_position, BOLAS_WOOL, 1,
+		"invalid_enemies", "malformed enemy slot index")
+
+	# Tangled overflow is refused before any payment.
+	var overflow := _bolas_enemies([
+		{"max_hp": 10, "hp": 10, "statuses": {"tangled": CombatStatuses.MAX_INT}},
+		{"max_hp": 10, "hp": 10},
+	])
+	var overflow_deck := _bolas_deck(BOLAS_TANGLE_PLUS, 6121)
+	var overflow_before := _bolas_snapshot(overflow_deck, party, overflow)
+	var overflow_result: Dictionary = resolver.play_card(overflow_deck, party, overflow,
+		BOLAS_TANGLE_PLUS, 1)
+	_check(overflow_result.get("ok") == false
+		and overflow_result.get("reason") == "status_overflow",
+		"overflow: the maximum Tangled count refuses the cast")
+	_check(_bolas_snapshot(overflow_deck, party, overflow) == overflow_before,
+		"overflow: no energy, card, damage, status or RNG was touched")
+	_check(overflow.get_enemy(2).get("hp") == 10
+		and not overflow.get_enemy(2).has("statuses"),
+		"overflow: the other foe was not partially bound")
+
+	# A consumed copy cannot be played twice.
+	var repeat_enemies := _bolas_enemies([{"max_hp": 14, "hp": 14}])
+	var repeat_deck := _bolas_deck(BOLAS_WOOL_PLUS, 8814)
+	var repeat_party := _snare_party(2)
+	_check(resolver.play_card(repeat_deck, repeat_party, repeat_enemies,
+		BOLAS_WOOL_PLUS, 1).get("ok") == true,
+		"duplicate-play fixture really casts once")
+	_check(repeat_deck.energy == 2 and repeat_deck.discard_pile == [BOLAS_WOOL_PLUS],
+		"duplicate-play fixture really spent one energy and discarded the copy")
+	_rejected_bolas(resolver, repeat_deck, repeat_party, repeat_enemies, BOLAS_WOOL_PLUS, 1,
+		"card_not_held", "replay of the consumed copy")
+
+	# A refused attempt never poisons the next authentic play on the same objects.
+	var retry_deck := _bolas_deck(BOLAS_TANGLE_PLUS, 6123)
+	var retry_party := _snare_party(3)
+	var retry_enemies := _bolas_enemies([{"max_hp": 14, "hp": 14}])
+	_rejected_bolas(resolver, retry_deck, retry_party, retry_enemies, "yarn_ranger_snare_net",
+		1, "unsupported_card", "retry: wrong card first")
+	_rejected_bolas(resolver, retry_deck, retry_party, retry_enemies, BOLAS_TANGLE_PLUS, 0,
+		"invalid_target", "retry: illegal slot second")
+	var retry_result: Dictionary = resolver.play_card(retry_deck, retry_party, retry_enemies,
+		BOLAS_TANGLE_PLUS, 1)
+	_check(retry_result.get("ok") == true and retry_deck.energy == 2
+		and retry_enemies.get_enemy(1).get("statuses") == {"tangled": 3},
+		"retry: the authentic play then succeeds exactly once")
+
+
+func _bolas_rng(seed_value: int) -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	return rng
+
+
+## Real enemy slots built through the model's own state APIs; HP loss and Block come from the model.
+func _bolas_enemies(specs: Array) -> CombatEnemies:
+	var definitions: Array = []
+	for index in range(specs.size()):
+		var definition := {"id": "bolas_fixture_foe_" + str(index + 1),
+			"max_hp": int(specs[index]["max_hp"])}
+		if specs[index].has("statuses"):
+			definition["statuses"] = specs[index]["statuses"]
+		definitions.append(definition)
+	var enemies := CombatEnemies.new(definitions)
+	_check(enemies.is_valid() and enemies.get_enemies().size() == specs.size(),
+		"bolas fixture builds a real indexed enemy roster")
+	for index in range(specs.size()):
+		var lost: int = int(specs[index]["max_hp"]) - int(specs[index]["hp"])
+		if lost > 0:
+			_check(enemies.apply_damage(index + 1, lost),
+				"bolas fixture foe " + str(index + 1) + " really lost HP")
+		var block := int(specs[index].get("block", 0))
+		if block > 0:
+			_check(enemies.gain_block(index + 1, block),
+				"bolas fixture foe " + str(index + 1) + " really gained Block")
+	return enemies
+
+
+## A genuine seeded six-card turn: five cards drawn and one left in the shared draw pile. The
+## fixture guarantees exactly one held copy so a replay of the spent copy is provably refused.
+func _bolas_deck(card_id: String, seed_value: int) -> CombatDeck:
+	var ids: Array[String] = [card_id]
+	for index in range(5):
+		ids.append("bolas_filler_" + str(index))
+	var deck := CombatDeck.new(ids, _bolas_rng(seed_value))
+	_check(deck.start_turn() and deck.energy == 3,
+		card_id + ": starts a real three-energy shared turn")
+	_check(deck.draw_pile.size() == 1, card_id + ": one genuine shared card remains to draw")
+	if deck.hand.count(card_id) == 0:
+		var found: int = deck.draw_pile.find(card_id)
+		if found >= 0:
+			var replacement: String = deck.hand[0]
+			deck.draw_pile[found] = replacement
+			deck.hand[0] = card_id
+	_check(deck.hand.count(card_id) == 1,
+		card_id + ": the fixture hand genuinely holds exactly one copy")
+	return deck
+
+
+## The complete mutable combat snapshot (deck, party, enemies and the run RNG), shared with the
+## Snare Net coverage in this file.
+func _bolas_snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies) -> Dictionary:
+	return _snare_snapshot(deck, party, enemies)
+
+
+## The exact post-transaction state: one energy, one discarded copy, Block-before-HP damage and the
+## printed Tangled addition on the chosen foe only.
+func _expected_bolas(before: Dictionary, card_id: String, target: int, damage: int,
+		added: int) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] = int(expected["energy"]) - 1
+	expected["state_energy"] = int(expected["state_energy"]) - 1
+	var hand: Array = expected["hand"]
+	_check(hand.count(card_id) == 1, "expected snapshot: exactly one played copy is held")
+	hand.remove_at(hand.find(card_id))
+	(expected["discard"] as Array).append(card_id)
+	var enemy: Dictionary = expected["enemies"][target - 1]
+	var absorbed: int = mini(int(enemy["block"]), damage)
+	enemy["block"] = int(enemy["block"]) - absorbed
+	enemy["hp"] = maxi(0, int(enemy["hp"]) - (damage - absorbed))
+	if not enemy.has("statuses"):
+		enemy["statuses"] = {}
+	enemy["statuses"]["tangled"] = int(enemy["statuses"].get("tangled", 0)) + added
+	return expected
+
+
+func _rejected_bolas(resolver: CombatYarnRangerBolasCards, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, card_id: Variant, target: int,
+		reason: String, label: String) -> void:
+	var before := _bolas_snapshot(deck, party, enemies)
+	var result: Dictionary = resolver.play_card(deck, party, enemies, card_id, target)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("reason") == reason,
+		label + ": refusal reason is " + reason + " (got " + str(result.get("reason")) + ")")
+	_check(_bolas_snapshot(deck, party, enemies) == before,
+		label + ": unchanged energy, hand, piles, turn, party, enemies and RNG")
 
 
 
