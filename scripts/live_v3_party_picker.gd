@@ -39,6 +39,7 @@ const STITCH := Color("#efcba1")
 @onready var inspection_heading: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/InspectionHeading
 @onready var inspection_detail: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/InspectionDetail
 @onready var inspection_facts: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/InspectionFacts
+@onready var inspection_starters: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/InspectionStarters
 @onready var seat_preview: Label = $PaperPanel/Margins/Body/Foot/Hint
 @onready var continue_button: Button = $PaperPanel/Margins/Body/Foot/ContinueButton
 @onready var cancel_button: Button = $PaperPanel/Margins/Body/Foot/CancelButton
@@ -218,12 +219,15 @@ func _inspect_focus(hero_id: String, generation: int, entered: bool) -> void:
 
 
 func _update_inspection() -> void:
-	var chosen: String = _hovered_id if not _hovered_id.is_empty() else _focused_id
+	var chosen: String = ""
+	if _open and not _latched:
+		chosen = _hovered_id if not _hovered_id.is_empty() else _focused_id
 	for hero in HEROES:
 		if hero["id"] == chosen:
 			inspection_heading.text = "%s  •  %s  /  %s" % [
 				hero["name"], hero["motif"], hero["role"]]
 			inspection_detail.text = hero["signature"]
+			inspection_starters.text = _starter_caption(chosen)
 			inspection_facts.text = "Canonical hero details unavailable."
 			if not _canonical_heroes.has(chosen):
 				return
@@ -241,6 +245,37 @@ func _update_inspection() -> void:
 	inspection_heading.text = "HOVER OR FOCUS A HERO TO INSPECT"
 	inspection_facts.text = "Inspect max HP, preferred position and passive."
 	inspection_detail.text = "Compare sewn looks and intended roles before choosing three."
+	inspection_starters.text = ""
+
+
+## Inspect only the four authenticated base occurrences owned by this hero.
+## This is presentation data; never construct or allocate a run or reward deck.
+func _starter_caption(hero_id: String) -> String:
+	if not hero_id in RunV3PartyAdmission.HERO_IDS:
+		return "STARTER CARDS: Unavailable."
+	var ids: Array[String] = RunV3PartyAdmission._starters(hero_id, null)
+	if ids.size() != RunV3PartyAdmission.STARTERS_PER_HERO:
+		return "STARTER CARDS: Unavailable."
+	var order: Array[String] = []
+	var copies: Dictionary = {}
+	var labels: Dictionary = {}
+	for id in ids:
+		var card: Dictionary = RunRestStitchCards.resolve_card_definition(id)
+		if card.is_empty() or card.get("id") != id or card.get("owner") != hero_id \
+				or id.ends_with("_plus") or card.has("upgrade_of") \
+				or typeof(card.get("display_name")) != TYPE_STRING \
+				or String(card["display_name"]).is_empty() \
+				or typeof(card.get("cost")) != TYPE_INT or card["cost"] < 0:
+			return "STARTER CARDS: Unavailable."
+		if not copies.has(id):
+			order.append(id)
+			copies[id] = 0
+			labels[id] = "%d EN %s" % [card["cost"], card["display_name"]]
+		copies[id] += 1
+	var entries: Array[String] = []
+	for id in order:
+		entries.append(labels[id] + (" x%d" % copies[id] if copies[id] > 1 else ""))
+	return "STARTER CARDS (4)  •  " + "   |   ".join(entries)
 
 
 func selected_ids() -> Array[String]:
@@ -263,6 +298,7 @@ func _continue_pressed() -> void:
 	_latched = true
 	_open = false
 	_refresh()
+	_update_inspection()
 	party_requested.emit(_ids.duplicate())
 
 
@@ -272,6 +308,7 @@ func _cancel_pressed() -> void:
 	_latched = true
 	_open = false
 	_refresh()
+	_update_inspection()
 	visible = false
 	cancel_requested.emit()
 
@@ -451,6 +488,8 @@ func _style_screen() -> void:
 	inspection_detail.add_theme_font_size_override("font_size", 16)
 	inspection_facts.add_theme_color_override("font_color", SOFT)
 	inspection_facts.add_theme_font_size_override("font_size", 16)
+	inspection_starters.add_theme_color_override("font_color", GOLD)
+	inspection_starters.add_theme_font_size_override("font_size", 14)
 	seat_preview.add_theme_color_override("font_color", GOLD)
 	seat_preview.add_theme_font_size_override("font_size", 15)
 	selection_count.add_theme_color_override("font_color", CREAM)
