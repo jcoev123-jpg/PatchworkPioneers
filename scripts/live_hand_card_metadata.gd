@@ -44,6 +44,7 @@ var _pitchfork := CombatScarecrowPitchforkCards.new()
 var _bolas := CombatYarnRangerBolasCards.new()
 var _vigil := CombatLanternMonkPartyCards.new()
 var _re_stuff := CombatScarecrowReStuffCards.new()
+var _riposte := CombatRagDuelistRiposteCards.new()
 var _warden_pool := WardenPoolCards.new()
 var _tinker_pool := TinkerPoolCards.new()
 var _v3_tinker_scrap := CombatTinkerV3ScrapSupportCards.new()
@@ -90,6 +91,8 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if _riposte.is_supported_card(card_id):
+		return _riposte._catalog_definition(card_id)
 	if _lunge.is_supported_card(card_id):
 		var card := _lunge._catalog_definition(card_id)
 		return card if _lunge._authentic(card, card_id) else {}
@@ -1094,7 +1097,10 @@ func _update_visual(panel: Control) -> void:
 		if battle_preview != null and is_instance_valid(battle_preview) \
 				and battle_preview.has_method("tinker_cost_discount"):
 			discount = int(battle_preview.tinker_cost_discount(id))
-		if id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatYarnRangerSnareCards.CARDS.has(id) or CombatScarecrowCrowCards.CARDS.has(id):
+		if CombatRagDuelistRiposteCards.CARDS.has(id):
+			var riposte_presenter = _app.get_node_or_null("LiveRagDuelistRiposteHand")
+			playable = riposte_presenter != null and riposte_presenter._eligible(panel, id)
+		elif id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatYarnRangerSnareCards.CARDS.has(id) or CombatScarecrowCrowCards.CARDS.has(id):
 			var area = _app.get_node_or_null("LiveAreaAttackAction")
 			playable = area != null and area._eligible(panel, id)
 		elif _hem.is_supported_card(id) or CombatYarnRangerKnitCards.CARDS.has(id) or id in VIGIL_IDS or id in GLOW_IDS or id in CombatSupportCards.SCARECROW_STRAW_IDS or _re_stuff.is_supported_card(id) or _feint.is_supported_card(id) or _pitchfork.is_supported_card(id) or _bolas.is_supported_card(id) or _pop.is_supported_card(id) or _sew.is_supported_card(id) or _roll.is_supported_card(id) or _v3_tinker_scrap.is_supported_card(id):

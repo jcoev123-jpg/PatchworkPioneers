@@ -2294,6 +2294,17 @@ func _spring_face_states() -> void:
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	var riposte_meta = load(HAND_SCRIPT).new()
+	for id in CombatRagDuelistRiposteCards.CARDS:
+		var catalog = RagDuelistStarterCards.new() if id.contains("cape_parry") else RagDuelistPoolCards.new()
+		var canonical: Dictionary = catalog.get_definition(id)
+		_check(not canonical.is_empty() and riposte_meta.definition(id) == canonical,
+			"Riposte metadata canonical starter/pool definition: " + id)
+		var facts: Dictionary = riposte_meta.describe(id)
+		_check(facts.known and facts.owner_text == "Rag Duelist" and facts.cost == 1
+			and facts.target_text == "Self", "Riposte honest self-card metadata: " + id)
+	_check(not riposte_meta.describe("rag_duelist_cape_parry_plus_plus").known,
+		"forged Riposte remains unknown")
 	var pop_meta = load(HAND_SCRIPT).new()
 	var pop_damage := {"button_golem_starter_loose_pop": 9, "button_golem_starter_loose_pop_plus": 11,
 		"button_golem_pop_button": 9, "button_golem_pop_button_plus": 12}

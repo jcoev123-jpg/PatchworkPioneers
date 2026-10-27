@@ -836,6 +836,9 @@ func _ready() -> void:
 	attack_preview.name = "LiveAttackPreview"
 	attack_preview.set_script(preload("res://scripts/live_attack_preview.gd"))
 	add_child(attack_preview)
+	var riposte_hand := preload("res://scripts/live_rag_duelist_riposte_hand.gd").new()
+	riposte_hand.name = "LiveRagDuelistRiposteHand"
+	add_child(riposte_hand)
 	# One battle-independent listener presents committed HP/Block changes (VIS V5).
 	var combat_juice := Node.new()
 	combat_juice.name = "LiveCombatJuice"
