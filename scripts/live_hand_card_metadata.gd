@@ -43,6 +43,7 @@ var _roll := CombatButtonGolemRollCards.new()
 var _thread := CombatButtonGolemThreadCards.new()
 var _lunge := CombatRagDuelistLungeCards.new()
 var _barrage := CombatRagDuelistNeedleBarrageCards.new()
+var _needle := CombatYarnRangerNeedleCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
 var _pitchfork := CombatScarecrowPitchforkCards.new()
 var _bolas := CombatYarnRangerBolasCards.new()
@@ -100,6 +101,8 @@ func _definition(card_id: String) -> Dictionary:
 		return _rag_dodge._catalog_definition(card_id)
 	if _riposte.is_supported_card(card_id):
 		return _riposte._catalog_definition(card_id)
+	if _needle.is_supported_card(card_id):
+		return CombatYarnRangerNeedleCards.needle_definition(card_id)
 	if _barrage.is_supported_card(card_id):
 		return _barrage._catalog_definition(card_id)
 	if _lunge.is_supported_card(card_id):
@@ -1118,7 +1121,7 @@ func _update_visual(panel: Control) -> void:
 			var support_presenter = _app.get_node_or_null("LiveSupportHand")
 			playable = support_presenter != null and support_presenter._eligible(
 				panel, id, _app.deck, _app.party, _app.battle_view)
-		elif _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _thread.is_supported_card(id) or id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
+		elif _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _thread.is_supported_card(id) or id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
 			# The mounted battle owns both the legal picker and its shared pin.
 			# Catalog knowledge alone cannot enable Spring Trap.
 			playable = battle_preview != null and is_instance_valid(battle_preview) \
@@ -1246,6 +1249,10 @@ func _party_heal(definition: Dictionary) -> int:
 
 
 func _rules(id: String) -> String:
+	if _needle.is_supported_card(id):
+		var card := _definition(id)
+		return "" if card.is_empty() else "Deal %d; then Unravel %d if target survives." % [
+			int(card.effects.damage), int(card.effects.unravel)]
 	if _bolas.is_supported_card(id):
 		var card := _definition(id)
 		return "" if card.is_empty() else "Deal %d; then apply Tangled %d." % [card.effects.damage, card.effects.tangled]

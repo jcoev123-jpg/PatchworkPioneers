@@ -84,6 +84,7 @@ var _hem := CombatSeamstressV3HemCards.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
 var _pitchfork := CombatScarecrowPitchforkCards.new()
+var _fear := CombatScarecrowFearCards.new()
 var _bolas := CombatYarnRangerBolasCards.new()
 var _pop := CombatButtonGolemPopCards.new()
 var _sew := CombatButtonGolemSewCards.new()
@@ -626,10 +627,17 @@ func _path_discount(card_id: String) -> int:
 
 
 func _is_enemy_card(card_id: String) -> bool:
-	return _feint.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _pitchfork.is_supported_card(card_id) or _bolas.is_supported_card(card_id)
+	return _is_fear_card(card_id) or _feint.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _pitchfork.is_supported_card(card_id) or _bolas.is_supported_card(card_id)
+
+
+## The battle-bound Scarecrow Fear resolver owns these four printings; none after teardown.
+func _is_fear_card(card_id: String) -> bool:
+	return _fear != null and _fear.is_supported_card(card_id)
 
 
 func _enemy_service(card_id: String):
+	if _is_fear_card(card_id):
+		return _fear
 	if _bolas.is_supported_card(card_id):
 		return _bolas
 	if _pitchfork.is_supported_card(card_id):
@@ -742,6 +750,7 @@ func _sync_battle() -> void:
 		_deck = app.deck
 		_party = app.party
 		_play = CombatStarterSupportPlay.new()
+		_fear = CombatScarecrowFearCards.new()
 		_straw = CombatSupportCards.new()
 		_block_cards = CombatWardenPoolBlockCards.new()
 		_energy_cards = CombatPoolEnergyCards.new()
@@ -916,7 +925,10 @@ func _sync_battle() -> void:
 	if choosing:
 		help_text = "%s: choose a living ally | Esc: cancel" % _metadata.definition(_pending.id).get("display_name", _pending.id)
 		if _is_enemy_card(_pending.id):
-			help_text = "%s: choose a living enemy (1-3) | Esc: cancel" % _metadata.definition(_pending.id).display_name
+			var definition: Dictionary = _metadata.definition(_pending.id)
+			if _is_fear_card(_pending.id):
+				definition = _fear._catalog_definition(_pending.id, _fear.CARDS[_pending.id].catalog)
+			help_text = "%s: choose a living enemy (1-3) | Esc: cancel" % definition.get("display_name", _pending.id)
 		if _pop.is_supported_card(_pending.id) or _pitchfork.is_supported_card(_pending.id):
 			help_text = "%s: choose a living enemy (1-2) | Esc: cancel" % _metadata.definition(_pending.id).display_name
 		if _cleansing.is_supported_card(_pending.id):
@@ -1325,6 +1337,11 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		return
 	_cancel_pending()
 	_pending = {"panel": panel, "id": card_id, "choosing": false, "queued": false, "context": _current_move_context(panel)}
+	if _is_fear_card(card_id):
+		_pending.fear_state = _fear_selection_state()
+		_pending.hero_refs = _party._heroes.duplicate()
+		_pending.enemy_refs = get_parent().enemies._enemies.duplicate()
+		_pending.enemy_panels = get_parent().get_node("LiveEnemyRoster")._labels.duplicate()
 	if card_id in GLOW_IDS:
 		_pending.heroes = party.get_heroes()
 		_pending.hand = deck.hand.duplicate()
@@ -1404,11 +1421,26 @@ func _report_path_play(card_id: String, energy_before: int) -> void:
 		presenter.report_tinker_play(card_id, energy_before)
 
 
+func _fear_selection_state() -> Array:
+	return [_deck.hand.duplicate(), _deck.draw_pile.duplicate(), _deck.discard_pile.duplicate(),
+		_deck.energy, _party.get_heroes(), get_parent().enemies.get_enemies(), _deck._rng.state]
+
+
 func _selection_valid() -> bool:
 	if _pending.is_empty() or not _eligible(_pending.panel, _pending.id, _deck, _party, _battle):
 		return false
 	if _pending.get("context", []) != _current_move_context(_pending.panel):
 		return false
+	if _is_fear_card(_pending.id):
+		if _pending.fear_state != _fear_selection_state() \
+				or _pending.enemy_panels != get_parent().get_node("LiveEnemyRoster")._labels:
+			return false
+		for index in range(_pending.hero_refs.size()):
+			if not is_same(_pending.hero_refs[index], _party._heroes[index]):
+				return false
+		for index in range(_pending.enemy_refs.size()):
+			if not is_same(_pending.enemy_refs[index], get_parent().enemies._enemies[index]):
+				return false
 	if _pending.id in GLOW_IDS:
 		if _pending.heroes != _party.get_heroes() or _pending.hand != _deck.hand:
 			return false
@@ -1503,7 +1535,7 @@ func _choose_target() -> void:
 		_targets[panel] = {"callback": callback, "cue": cue,
 			"position": index + 1, "hero_id": _target_actor(index + 1).id,
 			"mouse_filter": previous_filter}
-		if _pop.is_supported_card(_pending.id) or _pitchfork.is_supported_card(_pending.id) or _bolas.is_supported_card(_pending.id):
+		if _pop.is_supported_card(_pending.id) or _pitchfork.is_supported_card(_pending.id) or _bolas.is_supported_card(_pending.id) or _is_fear_card(_pending.id):
 			_targets[panel].actor_ref = app.enemies._enemies[index]
 		if _roll.is_supported_card(_pending.id) or _hem.is_supported_card(_pending.id):
 			_targets[panel].actor_ref = _party._heroes[index]
@@ -1789,6 +1821,7 @@ func _clear() -> void:
 	_deck = null
 	_party = null
 	_play = null
+	_fear = null
 	_straw = null
 	_block_cards = null
 	_energy_cards = null

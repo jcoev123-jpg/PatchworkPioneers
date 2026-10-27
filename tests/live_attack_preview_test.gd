@@ -233,6 +233,7 @@ func _run() -> void:
 			_assert_preview(id)
 			_check(_snapshot() == before, "rebuild and stale callback preserve rules state")
 			await _return()
+	await _needle_mount_cases()
 	await _combo_route_case()
 	await _combo_precast_bleed()
 	await _combo_three_slots()
@@ -806,6 +807,176 @@ func _controls() -> void:
 	await _key(KEY_P)
 	_check(presenter._selected != null, "new turn attacks reachable by P")
 	await _return()
+
+
+
+## Mount the actual app hand and the battle-owned ledger, not a direct resolver
+## fixture. All chosen enemy IDs occur in the shipped enemy tier catalogs.
+func _needle_mount(id: String, seat: int = 2, mode: String = "") -> bool:
+	if not await _start(_seed_for("warden_strike")):
+		return false
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 5127
+	app.run_rng = rng
+	app.deck = CombatDeck.new([id, "warden_strike", "warden_brace",
+		"tinker_pop_shot", "tinker_tune_up"], rng)
+	_check(app.deck.start_turn() and app.deck.hand.has(id) and app.deck.energy == 3,
+		"needle fixture starts a real seeded 5-card / 3-energy hand: " + id)
+	var heroes: Array = [{"id": "warden", "name": "Warden", "max_hp": 40},
+		{"id": "tinker", "name": "Tinker", "max_hp": 25}]
+	heroes.insert(seat - 1, {"id": "yarn_ranger", "name": "Yarn Ranger", "max_hp": 27})
+	app.party = CombatParty.new(heroes)
+	app.enemies = CombatEnemies.new([
+		{"id": "ragling", "name": "Ragling", "max_hp": 30},
+		{"id": "ragling_guard", "name": "Guard Ragling", "max_hp": 30},
+		{"id": "fray_scavenger", "name": "Fray Scavenger", "max_hp": 30}])
+	if mode == "block":
+		_check(app.enemies.gain_block(1, 50), "needle nonlethal foe has real Block")
+	elif mode == "lethal":
+		_check(app.enemies.apply_damage(1, 29), "needle lethal foe starts at 1 HP")
+	elif mode == "statuses":
+		app.party._heroes[seat - 1]["statuses"] = {"weak": 1}
+		app.enemies._enemies[0]["statuses"] = {"exposed": 1, "tangled": 1}
+		_check(app.enemies.gain_block(1, 2), "needle status case has Block")
+	app.battle_result = CombatBattleResult.new(app.party, app.enemies)
+	app.round_flow = CombatRoundFlow.new(app.deck, app.party, app.enemies,
+		app.enemy_intents, app.battle_result)
+	app._refresh_party()
+	app._refresh_enemy_roster()
+	app._refresh_hand()
+	await _frames()
+	var panel: Control = _panel(id)
+	var ready: bool = panel != null and panel.is_visible_in_tree() \
+		and presenter._bindings.has(panel) and presenter._unravel != null \
+		and presenter._unravel._bound_enemies == app.enemies \
+		and app.round_flow._enemies == app.enemies
+	_check(ready, "needle held panel and real round-bound battle models: " + id)
+	return ready
+
+
+func _needle_state() -> Array:
+	return [_snapshot(), presenter._unravel._gauges.duplicate(true),
+		app.round_flow._unravel, presenter.last_event.duplicate(true),
+		app.run_rng.state]
+
+
+func _needle_arm(panel: Control, keyboard: bool) -> void:
+	if keyboard:
+		for i in range(9):
+			await _key(KEY_P)
+			if presenter._armed == panel:
+				break
+	else:
+		await _click(panel)
+	_check(presenter._armed == panel, "needle physical P / click binds exact panel")
+
+
+func _needle_mount_cases() -> void:
+	var damages := {"yarn_ranger_needle_nock": 4, "yarn_ranger_needle_nock_plus": 6,
+		"yarn_ranger_needle_arrow": 5, "yarn_ranger_needle_arrow_plus": 7}
+	for id in damages:
+		for mode in ["plain", "block", "lethal", "statuses"]:
+			if not await _needle_mount(id, 3 if id.ends_with("_plus") else 2, mode):
+				await _return()
+				continue
+			var panel: Control = _panel(id)
+			var quoted: Dictionary = presenter._target_preview(id)
+			var original_gauge: CombatUnravel = presenter._unravel
+			_check(quoted.playable and quoted.requires_selection and quoted.target_positions == [1, 2, 3]
+				and quoted.hits.size() == 3 and quoted.hits[0].unravel == (2 if id.ends_with("_plus") else 1),
+				"service preflight offers only three living printed needle targets: " + id)
+			var before := _needle_state()
+			var keyboard: bool = id.ends_with("_plus")
+			await _needle_arm(panel, keyboard)
+			_check(_needle_state() == before and presenter.current_forecast.get("hits", []).size() == 3
+				and presenter.cue.text.contains("Unravel") and presenter.cue.text.contains("P / click"),
+				"real P / mouse input gives honest per-slot forecast without charging")
+			presenter._queue_attack(4)
+			_check(not presenter._queued and _needle_state() == before,
+				"never offer or queue enemy seat four")
+			var first: Dictionary = app.enemies.get_enemy(1)
+			var other: Array = app.enemies.get_enemies()
+			var party_before: Array = app.party.get_heroes()
+			var rng_before: int = app.run_rng.state
+			var amount: int = damages[id]
+			if mode == "statuses":
+				amount = CombatStatuses.new().adjusted_attack_damage(amount,
+					{"weak": 1}, {"exposed": 1, "tangled": 1})
+			var absorbed: int = mini(first.block, amount)
+			var loss: int = mini(first.hp, amount - absorbed)
+			if keyboard:
+				await _key(KEY_1)
+			else:
+				await _click(app.get_node("LiveEnemyRoster")._labels[0])
+			var receipt: Dictionary = presenter.last_event
+			var new_gauge: Dictionary = original_gauge.get_snapshot(1)
+			var added: int = 0 if loss == first.hp else (2 if id.ends_with("_plus") else 1)
+			_check(receipt.get("ok", false) and receipt.get("damage") == amount
+				and receipt.get("block_absorbed") == absorbed
+				and receipt.get("hp_loss") == loss and receipt.get("unravel_added") == added,
+				"one authentic paid needle status/Block hit and post-hit Unravel: " + id + " " + mode)
+			_check(app.enemies.get_enemy(1).hp == first.hp - loss
+				and app.enemies.get_enemy(1).block == first.block - absorbed
+				and new_gauge.gauge == added and new_gauge.threshold == 8
+				and app.round_flow._unravel == original_gauge,
+				"same live round ledger, original HP/Block and unmodified threshold")
+			_check(app.enemies.get_enemy(2) == other[1] and app.enemies.get_enemy(3) == other[2]
+				and app.party.get_heroes() == party_before and app.run_rng.state == rng_before,
+				"no other actors or random draw touched by needle hit")
+			_check(app.deck.energy == 2 and not app.deck.hand.has(id)
+				and app.deck.discard_pile == [id] and app.deck.draw_pile.is_empty()
+				and app.hand_view.get_child_count() == 4
+				and app.get_node("LiveSupportHand").energy_label.text == "2",
+				"one hand copy paid and discarded; live hand/energy refresh")
+			var settled := _needle_state()
+			await _key(KEY_1)
+			_check(_needle_state() == settled, "consumed needle selection cannot replay")
+			await _return()
+
+	for scenario in ["seat1", "downed", "energy", "unheld", "missing_owner", "target_dead",
+			"foreign_gauge", "replaced_target", "spoofed_id", "stale_panel",
+			"switched_turn", "switched_battle", "cancelled"]:
+		if not await _needle_mount("yarn_ranger_needle_arrow_plus"):
+			await _return()
+			continue
+		var panel: Control = _panel("yarn_ranger_needle_arrow_plus")
+		if scenario in ["replaced_target", "spoofed_id", "stale_panel", "switched_turn",
+				"switched_battle", "foreign_gauge", "unheld", "missing_owner", "cancelled"]:
+			await _needle_arm(panel, false)
+			presenter._queue_attack(1)
+			_check(presenter._queued, "real needle target has exactly one deferred callback: " + scenario)
+		match scenario:
+			"seat1":
+				var a: Dictionary = app.party._heroes[0]
+				app.party._heroes[0] = app.party._heroes[1]
+				app.party._heroes[1] = a
+				app.party._heroes[0].position = 1
+				app.party._heroes[1].position = 2
+			"downed": app.party.apply_damage(2, 999)
+			"energy": app.deck.combat_state.energy = 0
+			"unheld": app.deck.hand.erase("yarn_ranger_needle_arrow_plus")
+			"missing_owner": app.party._heroes[1].id = "seamstress"
+			"target_dead": app.enemies.apply_damage(1, 999)
+			"foreign_gauge": presenter._unravel = CombatUnravel.new()
+			"replaced_target":
+				var old_id: String = app.enemies._enemies[0].id
+				app.enemies._enemies[0].id = app.enemies._enemies[2].id
+				app.enemies._enemies[2].id = old_id
+			"spoofed_id": panel.get_child(0).text = "yarn_ranger_needle_arrow_plus_plus"
+			"stale_panel": app._refresh_hand()
+			"cancelled": presenter._cancel_choice()
+			"switched_turn": app.enemy_intents._turn_index += 1
+			"switched_battle": app.battle_result = CombatBattleResult.new(app.party, app.enemies)
+		var before := _needle_state()
+		var quote: Dictionary = presenter._target_preview("yarn_ranger_needle_arrow_plus")
+		if scenario in ["seat1", "downed", "energy", "unheld", "missing_owner", "foreign_gauge"]:
+			_check(not quote.playable, "invalid needle source, energy, victim or ledger dims preview: " + scenario)
+		if scenario == "target_dead":
+			_check(not quote.target_positions.has(1), "slain needle target omitted from mounted picker")
+		await _frames()
+		_check(_needle_state() == before and app.deck.discard_pile.is_empty(),
+			"stale/illegal needle callback has no cost, hit, gauge or RNG mutation: " + scenario)
+		await _return()
 
 
 func _finish() -> void:
