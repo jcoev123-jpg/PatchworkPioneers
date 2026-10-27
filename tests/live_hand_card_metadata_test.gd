@@ -2420,8 +2420,118 @@ func _run() -> void:
 		_check(presenter._metadata._bindings.is_empty() and app.start_button.has_focus(),
 			"Title remains focusable and no stale panel survives")
 	await _spring_face_states()
+	await _needle_card_faces()
 	app.free()
 	_finish()
+
+
+
+## Read the same authentic needle face the mounted paid hand uses. Catalog
+## knowledge alone cannot enable a card without the real battle/gauge adapter.
+func _needle_card_faces() -> void:
+	var amounts := {"yarn_ranger_needle_nock": [4, 1],
+		"yarn_ranger_needle_nock_plus": [6, 2],
+		"yarn_ranger_needle_arrow": [5, 1],
+		"yarn_ranger_needle_arrow_plus": [7, 2]}
+	var metadata = presenter._metadata
+	for id in amounts:
+		var record: Dictionary = CombatYarnRangerNeedleCards.needle_definition(id)
+		var facts: Dictionary = metadata.describe(id)
+		_check(not record.is_empty() and metadata.definition(id) == record
+			and facts.known and facts.display_name == record.display_name
+			and facts.owner == "yarn_ranger" and facts.cost == 1
+			and facts.from_text == "From 2–3"
+			and facts.target_text == "To enemy 1–3"
+			and record.from_positions == [2, 3] and record.to_positions == [1, 2, 3],
+			"needle exact starter/pool base/+ owner, name, cost and printed seat pips: " + id)
+		_check(metadata.short_line(id) == "Deal %d; then Unravel %d if target survives." % amounts[id],
+			"needle face prints only authored damage and surviving-target Unravel: " + id)
+	_check(not metadata.describe("yarn_ranger_needle_arrow_plus_plus").known
+		and metadata.definition("yarn_ranger_needle_impostor").is_empty(),
+		"unsupported or altered needle spellings cannot acquire a card face")
+	for id in amounts:
+		if not await _start():
+			return
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 4599
+		app.run_rng = rng
+		app.deck = CombatDeck.new([id, "warden_strike", "warden_brace",
+			"tinker_pop_shot", "tinker_tune_up"], rng)
+		_check(app.deck.start_turn() and app.deck.hand.has(id),
+			"authentic needle actually held in a live five-card hand: " + id)
+		app.party = CombatParty.new([{"id": "warden", "name": "Warden", "max_hp": 40},
+			{"id": "yarn_ranger", "name": "Yarn Ranger", "max_hp": 27},
+			{"id": "tinker", "name": "Tinker", "max_hp": 25}])
+		app.enemies = CombatEnemies.new([
+			{"id": "ragling", "name": "Ragling", "max_hp": 30},
+			{"id": "ragling_guard", "name": "Guard Ragling", "max_hp": 30},
+			{"id": "fray_scavenger", "name": "Fray Scavenger", "max_hp": 30}])
+		app.battle_result = CombatBattleResult.new(app.party, app.enemies)
+		app.round_flow = CombatRoundFlow.new(app.deck, app.party, app.enemies,
+			app.enemy_intents, app.battle_result)
+		app._refresh_party()
+		app._refresh_enemy_roster()
+		app._refresh_hand()
+		await _frames()
+		var panel: Control = _find(id)
+		var attack = app.get_node_or_null("LiveAttackPreview")
+		_check(panel != null and attack != null and attack._bindings.has(panel)
+			and attack._unravel._bound_enemies == app.enemies,
+			"needle art-backed hand panel is bound to the combat preview and gauge: " + id)
+		if panel == null or attack == null:
+			app.return_button.pressed.emit()
+			await _frames()
+			continue
+		metadata._update_visual(panel)
+		var face: Dictionary = metadata.get_facts(panel)
+		_check(metadata.visual_state(panel).playable and panel.self_modulate == Color.WHITE
+			and face.known and face.cost == 1 and face.from_text == "From 2–3"
+			and face.target_text == "To enemy 1–3"
+			and panel.tooltip_text.contains("UNRAVEL:")
+			and panel.tooltip_text.contains("PIPS:")
+			and panel.tooltip_text.contains("add %d Unravel" % amounts[id][1])
+			and metadata.get_geometry(panel).size() > 0,
+			"real illustrated needle face and tooltip stay legible and enabled: " + id)
+		_check(attack._eligible(panel) and attack._target_preview(id).target_positions == [1, 2, 3],
+			"metadata enabling depends on legal targets from genuine mounted needle preflight")
+		for mode in ["energy", "seat1", "downed", "targets", "foreign_gauge", "no_binding"]:
+			var energy_before: int = app.deck.energy
+			var old_heroes: Array = app.party.get_heroes()
+			var old_enemies: Array = app.enemies.get_enemies()
+			var gauge = attack._unravel
+			var binding: Dictionary = attack._bindings.get(panel, {}).duplicate()
+			match mode:
+				"energy": app.deck.combat_state.energy = 0
+				"seat1":
+					var first: Dictionary = app.party._heroes[0]
+					app.party._heroes[0] = app.party._heroes[1]
+					app.party._heroes[1] = first
+					app.party._heroes[0].position = 1
+					app.party._heroes[1].position = 2
+				"downed": app.party.apply_damage(2, 999)
+				"targets":
+					for position in range(1, 4):
+						app.enemies.apply_damage(position, 999)
+				"foreign_gauge": attack._unravel = CombatUnravel.new()
+				"no_binding": panel.gui_input.disconnect(binding.input)
+			metadata._update_visual(panel)
+			_check(not metadata.visual_state(panel).playable
+				and panel.self_modulate != Color.WHITE,
+				"no energy/owner/foe/ledger/panel connection dims needle: " + id + " " + mode)
+			_check(app.deck.energy == (0 if mode == "energy" else energy_before)
+				and app.deck.hand.has(id) and app.deck.discard_pile.is_empty(),
+				"needle read-only metadata never pays a card: " + mode)
+			app.deck.combat_state.energy = energy_before
+			app.party._heroes.assign(old_heroes)
+			app.enemies._enemies.assign(old_enemies)
+			attack._unravel = gauge
+			if mode == "no_binding":
+				panel.gui_input.connect(binding.input)
+			metadata._update_visual(panel)
+			_check(metadata.visual_state(panel).playable,
+				"restoring genuine legal state re-enables exact held needle: " + mode)
+		app.return_button.pressed.emit()
+		await _frames()
 
 
 func _finish() -> void:
