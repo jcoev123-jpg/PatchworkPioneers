@@ -253,15 +253,27 @@ func _request(action: String, generation: int, source: RunCampfireVisit) -> bool
 	return true
 
 
+## Numbered shortcuts belong to this Campfire only while one of its own controls
+## owns keyboard focus, so a key typed into another screen's focused control is
+## never stolen. The panel itself stays a valid owner if it ever takes focus.
+func _owns_focus() -> bool:
+	if not is_inside_tree():
+		return false
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	return focus_owner != null and (focus_owner == self or is_ancestor_of(focus_owner))
+
+
 ## Physical 1/2 hands the numbered action to the same generation-bound pressed
 ## callback the mouse and focus paths use, so the bound visit, snapshot,
 ## submission, visibility and disabled state still decide. Closed, hidden,
-## spent, disabled, modified and unnumbered keys are inert.
+## spent, disabled, modified, unfocused and unnumbered keys are inert.
 func _input(event: InputEvent) -> void:
 	if not event is InputEventKey or event.echo or not event.pressed:
 		return
 	var key := event as InputEventKey
 	if key.shift_pressed or key.alt_pressed or key.ctrl_pressed or key.meta_pressed:
+		return
+	if not _owns_focus():
 		return
 	if key.keycode == KEY_1 or key.keycode == KEY_KP_1:
 		if not is_inside_tree() or not is_visible_in_tree():

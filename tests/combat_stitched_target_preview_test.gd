@@ -9,6 +9,7 @@ var catalog := StarterCards.new()
 
 
 func _initialize() -> void:
+	_test_knit_previews()
 	_test_warden_blocks()
 	_test_legal_halves()
 	_test_pool_healing_previews()
@@ -22,6 +23,48 @@ func _initialize() -> void:
 	print("combat_stitched_target_preview_test: ", "PASS" if failures.is_empty() else "FAIL",
 			" (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_knit_previews() -> void:
+	for id in ["yarn_ranger_hood_knit", "yarn_ranger_hood_knit_plus", "yarn_ranger_knit_shield", "yarn_ranger_knit_shield_plus"]:
+		for reverse in [false, true]:
+			var c := _pair("warden_brace" if reverse else id, id if reverse else "warden_brace")
+			var heroes := _json("res://data/heroes/starter_party.json")
+			for hero in _json("res://data/heroes/v3_party_roster.json"):
+				if hero.id == "yarn_ranger":
+					heroes[2] = hero
+			for hero in heroes:
+				hero.max_hp = int(hero.max_hp)
+			c.party = CombatParty.new(heroes)
+			_check(c.party.is_valid() and c.party.get_hero(3).id == "yarn_ranger", "authored living Ranger roster")
+			var preview := _guarded_call(c, "knit canonical preview")
+			_check(preview.playable and preview.halves.size() == 2, "all four knit printings in either half")
+			if preview.playable:
+				var half: Dictionary = preview.halves[1 if reverse else 0]
+				_check(half.owner == "yarn_ranger" and half.side == "ally" and half.requires_selection and half.target_positions == [1, 2, 3], "selectable living allies including other owner and self")
+			_check(c.party.apply_damage(2, 999), "nonowner downed preview precondition")
+			preview = _guarded_call(c, "knit downed recipient")
+			_check(preview.playable and preview.halves[1 if reverse else 0].target_positions == [1, 3], "knit excludes downed ally")
+			var stale: Dictionary = c.snapshot.duplicate(true)
+			stale.remaining_scraps += 1
+			_rejected(c, "knit stale receipt", stale)
+			_check(c.party.apply_damage(3, 999), "knit owner downed precondition")
+			_rejected(c, "knit owner downed")
+			c.party = _party()
+			_rejected(c, "knit foreign party missing owner")
+			c.party = CombatParty.new(heroes)
+			var canonical: Dictionary = c.snapshot.duplicate(true)
+			for field in ["owner", "effects", "from_positions", "id"]:
+				var forged: Dictionary = canonical.duplicate(true)
+				var half: Dictionary = forged.descriptors[c.id]["second_half" if reverse else "first_half"]
+				match field:
+					"owner": half.owner = "warden"
+					"effects": half.effects.draw = 2
+					"from_positions": half.from_positions = [4]
+					"id": half.id = "yarn_ranger_fake_knit"
+				c.rest = RunRestStitchCards.new(forged.deck, forged.descriptors, forged.remaining_scraps, forged.next_stitch_id)
+				c.snapshot = c.rest.get_snapshot()
+				_rejected(c, "altered knit " + field)
 
 
 func _test_warden_blocks() -> void:

@@ -12,6 +12,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_knit_halves()
 	_test_plain_pool_halves()
 	_test_plain_pool_failures()
 	_test_warden_block_halves()
@@ -43,6 +44,61 @@ func _initialize() -> void:
 		printerr(failure)
 	print("combat_stitched_cards_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_knit_halves() -> void:
+	var ids := ["yarn_ranger_hood_knit", "yarn_ranger_hood_knit_plus",
+		"yarn_ranger_knit_shield", "yarn_ranger_knit_shield_plus"]
+	var blocks := [4, 6, 6, 8]
+	for i in range(ids.size()):
+		for reverse in [false, true]:
+			for supply in ["draw", "reshuffle", "empty"]:
+				var replay: Array = []
+				for attempt in range(2):
+					var c := _fixture("warden_brace" if reverse else ids[i], ids[i] if reverse else "warden_brace", 351, true)
+					_check(c.party.get_hero(3).id == "yarn_ranger", "knit owner genuinely present")
+					if supply == "draw":
+						c.deck.draw_pile.assign([PRICK, POP])
+					elif supply == "reshuffle":
+						c.deck.discard_pile.assign([PRICK, POP, BOMB])
+					var before := _snapshot(c)
+					var oracle := _oracle_draw(c.deck.draw_pile, c.deck.discard_pile, 1, c.deck._rng.state)
+					var result := _play(c, 0 if reverse else 2, 2 if reverse else 0)
+					var knit := {"ok": true, "effect": "block_and_draw", "amount": blocks[i], "draw": 1, "drawn": oracle.drawn.size()}
+					var brace := {"ok": true, "effect": "self_block", "amount": 7}
+					_check(result == {"ok": true, "halves": [brace, knit] if reverse else [knit, brace]}, "all knit printings retain both effects in order")
+					var expected := before.duplicate(true)
+					expected[0] = oracle.draw
+					expected[1] = oracle.drawn
+					expected[2] = oracle.discard + [c.id]
+					expected[3] = 1
+					expected[5] = oracle.rng
+					expected[6][0].block = 7
+					expected[6][1].block = blocks[i]
+					_check(_snapshot(c) == expected, "exact Block, shared draw, single payment/discard, RNG and unchanged enemies/ledger")
+					_check(not c.deck.hand.has(c.id) and c.deck.discard_pile.count(c.id) == 1, "held composite never draws itself")
+					replay.append([result, _snapshot(c)])
+				_check(replay[0] == replay[1], "knit seeded replay including reshuffle")
+		for mode in ["target", "offboard", "negative", "downed_target", "downed_owner", "missing_owner", "energy", "corrupt", "owner", "foreign", "impossible", "stale", "overflow", "late"]:
+			var c := _fixture(ids[i], "warden_strike", 352, true)
+			c.deck.discard_pile.assign([PRICK, POP, BOMB])
+			match mode:
+				"downed_target": _check(c.party.apply_damage(2, 999), "downed knit target")
+				"downed_owner": _check(c.party.apply_damage(3, 999), "downed knit owner")
+				"missing_owner": c.party = CombatParty.new(_definitions("res://data/heroes/starter_party.json"))
+				"energy": _check(c.deck.try_spend_energy(2), "unaffordable knit composite")
+				"corrupt": c.rest._descriptors[c.id].first_half.effects.draw = 2
+				"owner": c.rest._descriptors[c.id].first_half.owner = "seamstress"
+				"foreign": c.rest._descriptors[c.id].first_half.id = "yarn_ranger_foreign_knit"
+				"impossible": c.rest._descriptors[c.id].first_half.from_positions = [4]
+				"stale": c.rest._deck.clear()
+				"overflow": _check(c.party.gain_block(2, CombatParty.MAX_INT), "knit overflow precondition")
+			var target: int = {"target": 0, "offboard": 4, "negative": -1}.get(mode, 2)
+			_reject(c, target, 3 if mode == "late" else 1, "knit full rollback " + mode)
+		# Every living seat, including self, is a real recipient.
+		for seat in [1, 2, 3]:
+			var c := _fixture(ids[i], "warden_strike", 353, true)
+			_check(_play(c, seat, 1).ok and c.party.get_hero(seat).block == blocks[i], "knit targets any living ally including self")
 
 
 func _test_plain_pool_halves() -> void:
@@ -241,17 +297,23 @@ func _definitions(path: String) -> Array:
 	return records
 
 
-func _fixture(first: String, second: String, seed_value: int = 83) -> Dictionary:
+func _fixture(first: String, second: String, seed_value: int = 83,
+		with_ranger: bool = false) -> Dictionary:
+	var definitions := _definitions("res://data/heroes/starter_party.json")
+	if with_ranger:
+		for hero in _definitions("res://data/heroes/v3_party_roster.json"):
+			if hero.id == "yarn_ranger":
+				definitions[2] = hero
 	var rest := RunRestStitchCards.new([first, second], {}, 3)
 	_check(rest.is_valid(), "valid Rest inputs")
 	var chosen := rest.choose_stitch(0, 1, rest.get_snapshot())
 	_check(chosen.ok and rest.preview_play(chosen.stitched_id,
-		CombatParty.new(_definitions("res://data/heroes/starter_party.json")).get_heroes()).ok, "authentic playable Rest composite")
+		CombatParty.new(definitions).get_heroes()).ok, "authentic playable Rest composite")
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 	var deck := CombatDeck.new([chosen.stitched_id], rng)
 	_check(deck.start_turn() and deck.energy == 3 and deck.hand == [chosen.stitched_id], "held composite, active three energy")
-	var party := CombatParty.new(_definitions("res://data/heroes/starter_party.json"))
+	var party := CombatParty.new(definitions)
 	var enemies := CombatEnemies.new(_definitions("res://data/enemies/starter_enemies.json"))
 	_check(party.is_valid() and enemies.is_valid(), "real rosters valid")
 	var attacks := CombatAttackCards.new()

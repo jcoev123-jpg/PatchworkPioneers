@@ -179,6 +179,11 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 			if not energy_result.get("ok", false):
 				return failure
 			results.append(energy_result)
+		elif half.id in CombatYarnRangerKnitCards.CARDS:
+			var knit_result := _resolve_knit_half(staged_deck, staged_party, half, target)
+			if not knit_result.get("ok", false):
+				return failure
+			results.append(knit_result)
 		elif half.id in SPARE_PARTS_IDS:
 			# Spare Parts prints Block AND a draw; the generic single-effect
 			# fallback would keep only the Block. Authenticate the canonical
@@ -235,6 +240,37 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 			_button_heals._notify_borrowed_button(party, healed_half.owner,
 				healed_half.observations, "stitched_half_%d" % healed_half.index)
 	return {"ok": true, "halves": results}
+
+
+## Knit halves retain both printed effects without a separate payment or discard.
+## The enclosing transaction keeps the composite held until all draws finish.
+func _resolve_knit_half(deck: CombatDeck, party: CombatParty,
+		half: Dictionary, target: int) -> Dictionary:
+	var authored := CombatYarnRangerKnitCards.knit_definition(half.get("id"))
+	if authored.is_empty() or authored != half:
+		return {"ok": false}
+	var owner_position := 0
+	for hero in party.get_heroes():
+		if hero.id == authored.owner:
+			owner_position = hero.position
+	if owner_position == 0 or party.is_downed(owner_position) \
+			or not authored.from_positions.has(owner_position):
+		return {"ok": false}
+	if _support._torn != null:
+		for hero in _support._torn.read_state().get("heroes", []):
+			if hero.get("id") == authored.owner and int(hero.get("hp", 0)) <= 0:
+				return {"ok": false}
+	if target < 1 or target > CombatParty.PARTY_SIZE or party.is_downed(target):
+		return {"ok": false}
+	var block: int = authored.effects.block
+	if block > CombatParty.MAX_INT - int(party.get_hero(target).block) \
+			or not party.gain_block(target, block):
+		return {"ok": false}
+	var drawn := deck.draw_extra(1)
+	if drawn < 0:
+		return {"ok": false}
+	return {"ok": true, "effect": "block_and_draw", "amount": block,
+		"draw": 1, "drawn": drawn}
 
 
 ## Stage exactly the six authorized authored pool heals, including Darning's
