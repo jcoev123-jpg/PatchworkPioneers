@@ -479,6 +479,9 @@ func _focus_loop(view: BaseScreen) -> void:
 	loop.append_array(view.tinker_buttons)
 	loop.append_array(view.warden_buttons)
 	loop.append(view.set_out_button)
+	for button in view.difficulty_buttons:
+		if not button.disabled:
+			loop.append(button)
 	view.back_button.grab_focus()
 	await process_frame
 	for index in loop.size():
@@ -486,7 +489,7 @@ func _focus_loop(view: BaseScreen) -> void:
 		_check(loop[index].focus_next == loop[index].get_path_to(loop[(index + 1) % loop.size()]),
 			"next focus path wraps in authored board order")
 		await _key(KEY_TAB)
-	_check(view.back_button.has_focus(), "Tab wraps from Set out to Back")
+	_check(view.back_button.has_focus(), "Tab wraps from the last offered action to Back")
 
 
 func _fresh_case(chosen: Dictionary, offered: Array, use_mouse: bool) -> void:
@@ -495,6 +498,8 @@ func _fresh_case(chosen: Dictionary, offered: Array, use_mouse: bool) -> void:
 	back_count = 0
 	var view := BaseScreen.new()
 	root.add_child(view)
+	_check(view.difficulty_buttons.all(func(button): return button.disabled),
+		"unbound village offers no difficulty before the authority supplies earned tiers")
 	view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	await process_frame
 	view.warden_path_choice_requested.connect(_requested)

@@ -54,6 +54,11 @@ func _event_path(map: RunMap, choices: Array, remaining: int) -> Array:
 
 
 const EVENT_WALLET_HINTS := preload("res://tests/event_wallet_hints.gd")
+## Revalidated cycle-318 witnesses: real map generation, toll draw and current
+## eligible hero/Event catalog. Keep the dynamic required set and fallback below.
+const OWED_WITNESSES := {529380: "frayed_signpost", 5281000: "quilting_bee",
+	2703008: "estate_sale", 696642: "lantern_moth_clearing",
+	5142127: "v3_tinker_clockwork_wagon", 3782438: "v3_seamstress_scarlet_loom"}
 
 
 func _fixtures() -> Dictionary:
@@ -64,6 +69,7 @@ func _fixtures() -> Dictionary:
 	# Revalidate the known genuine witness seeds first (tests/event_wallet_hints.gd,
 	# append-only); the bounded search remains a fallback when the route/pool changes.
 	var hints: Array = EVENT_WALLET_HINTS.SEEDS.duplicate()
+	hints.append_array(OWED_WITNESSES.keys())
 	# Accepted genuine witnesses from the earlier lane, retained alongside the
 	# newer append-only helper so both sets remain available after the rebase.
 	hints.append_array([35510, 233942, 236527, 292590, 379017, 422169,
@@ -85,6 +91,8 @@ func _fixtures() -> Dictionary:
 			"wallet": {"gold": 0, "scraps": 0}, "deck": app._load_starter_deck()}, rng)
 		_check(toll.pay_toll("warden").ok, "fixture stages real paid toll draws")
 		var event_id: String = ids[rng.randi_range(0, ids.size() - 1)]
+		if OWED_WITNESSES.has(value):
+			_check(event_id == OWED_WITNESSES[value], "owed witness replays the actual map/toll Event draw")
 		if not found.has(event_id):
 			var events: Array = []
 			var transit := {}

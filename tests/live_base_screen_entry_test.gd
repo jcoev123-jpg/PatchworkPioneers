@@ -845,6 +845,9 @@ func _run() -> void:
 	var focus_global := randi()
 	seed(171173)
 	await _key(KEY_TAB)
+	_check(view.difficulty_buttons[0].has_focus() and view.difficulty_buttons[1].disabled
+		and view.difficulty_buttons[2].disabled, "Tab reaches earned tier and skips locked tiers")
+	await _key(KEY_TAB)
 	_check(view.back_button.has_focus(), "Tab reaches Back to title")
 	await _key(KEY_TAB)
 	_check(view.path_buttons[0].has_focus()
@@ -880,7 +883,7 @@ func _run() -> void:
 		"leaving all boards restores their prompts")
 	for control in [view.warden_buttons[1], view.warden_buttons[0],
 			view.tinker_buttons[1], view.tinker_buttons[0], view.path_buttons[1],
-			view.path_buttons[0], view.back_button, view.set_out_button]:
+			view.path_buttons[0], view.back_button, view.difficulty_buttons[0], view.set_out_button]:
 		for down in [true, false]:
 			var reverse := InputEventKey.new()
 			reverse.keycode = KEY_TAB
@@ -935,6 +938,8 @@ func _run() -> void:
 		"repeated or alternate Path callbacks cannot overwrite the pick")
 	# The confirmed Seamstress Path narrows the sewn loop to Back, the still-open
 	# Tinker and Warden options and Set out.
+	await _key(KEY_TAB)
+	_check(view.difficulty_buttons[0].has_focus(), "Tier remains reachable after Path selection")
 	await _key(KEY_TAB)
 	_check(view.back_button.has_focus(), "Tab reaches Back to title")
 	await _key(KEY_TAB)

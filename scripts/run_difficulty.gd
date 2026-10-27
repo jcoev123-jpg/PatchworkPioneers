@@ -107,7 +107,11 @@ func get_highest_cleared_tier() -> int:
 
 
 func get_modifiers() -> Dictionary:
-	var record := _find_tier_record(_selected_tier)
+	return modifiers_for_tier(_selected_tier)
+
+
+func modifiers_for_tier(tier: int) -> Dictionary:
+	var record := _find_tier_record(tier)
 	if record.is_empty():
 		return {"max_hp_percent_bonus": 0, "attack_intent_bonus": 0}
 	var hp_bonus: Variant = record.get("max_hp_percent_bonus")
@@ -122,6 +126,29 @@ func get_modifiers() -> Dictionary:
 		"max_hp_percent_bonus": hp_int,
 		"attack_intent_bonus": intent_int,
 	}
+
+
+## Detached fresh-entry transformation. Call once after floor scaling, before
+## binding intents. It never touches RNG, the source definitions or actor state.
+func scale_definitions(definitions: Array) -> Array:
+	var scaled := definitions.duplicate(true)
+	if _selected_tier == 0:
+		return scaled
+	var modifiers := get_modifiers()
+	for definition in scaled:
+		definition.max_hp += int(ceil(definition.max_hp * modifiers.max_hp_percent_bonus / 100.0))
+		definition.intent = scale_intent(definition.intent, modifiers.attack_intent_bonus)
+	return scaled
+
+
+static func scale_intent(intent: Dictionary, bonus: int) -> Dictionary:
+	var scaled := intent.duplicate(true)
+	if bonus == 0:
+		return scaled
+	for action in scaled.actions:
+		if action.get("type") == "attack":
+			action.amount = int(action.amount) + bonus
+	return scaled
 
 
 func select_tier(tier: Variant) -> bool:
@@ -160,7 +187,7 @@ func restore_state(state: Variant) -> bool:
 	if state.has("highest_cleared_tier") and state.has("selected_tier"):
 		# Check for extra unexpected keys.
 		var expected_keys := ["highest_cleared_tier", "selected_tier"]
-		for key: String in state.keys():
+		for key: Variant in state.keys():
 			if not expected_keys.has(key):
 				return false
 	else:

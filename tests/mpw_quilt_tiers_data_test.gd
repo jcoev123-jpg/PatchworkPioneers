@@ -51,8 +51,28 @@ func _initialize() -> void:
 	_test_validator_accepts_shipped_table()
 	_test_validator_rejects_broken_tables()
 	_test_service_contract()
+	_test_entry_scaling()
 	_check(source_document == source_snapshot, "no validation flow mutates the shipped tiers document")
 	_report()
+
+
+func _test_entry_scaling() -> void:
+	var source := [{"id": "rounding_probe", "max_hp": 17, "intent": {
+		"target": "front", "actions": [{"type": "attack", "amount": 5, "weight": 4},
+			{"type": "block", "amount": 3, "weight": 2}]}}]
+	var snapshot := source.duplicate(true)
+	var service := RunDifficulty.new()
+	for tier in REQUIRED_TIER_IDS:
+		_check(service.restore_state({"selected_tier": tier, "highest_cleared_tier": tier - 1}), "scaling uses earned tier")
+		var scaled := service.scale_definitions(source)
+		_check(scaled[0].max_hp == [17, 19, 21][tier], "HP rounds added percentage upward")
+		_check(scaled[0].intent.actions[0].amount == 5 + tier
+			and scaled[0].intent.actions[1].amount == 3, "only attack intents gain the flat bonus")
+		_check(source == snapshot and service.scale_definitions(source) == scaled,
+			"fresh entry replays without changing or double scaling authored definitions")
+	var before := service.get_state()
+	_check(not service.restore_state({7: 1, "selected_tier": 0, "highest_cleared_tier": 0})
+		and service.get_state() == before, "nonstring save keys reject atomically")
 
 
 func _report() -> void:

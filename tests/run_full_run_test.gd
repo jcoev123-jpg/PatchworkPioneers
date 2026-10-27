@@ -165,6 +165,15 @@ func _activate(button: Button, keyboard: bool = false) -> void:
 func _retained(button: Button) -> Callable:
 	var connections := button.pressed.get_connections()
 	_check(not connections.is_empty(), "mounted control has real callback")
+	if button == app.unpicker_leave_button and is_instance_valid(app.unpicker_view):
+		# Retain the host listener, whose stale-source guard remains callable
+		# after the visit view is disposed, just as for Campfire and Peddler.
+		var panel: LiveUnpickerPanel = app.unpicker_view
+		var bound: Dictionary = panel._source.duplicate(true)
+		var bridges := panel.decision_requested.get_connections()
+		_check(bridges.size() == 1, "mounted Unpicker has one app-owned decision bridge")
+		return bridges[0].callable.bind({"action": "leave", "visit_id": bound.visit_id,
+			"node_id": bound.node_id, "expected_snapshot": bound}) if bridges.size() == 1 else Callable()
 	if button.get_parent() is LiveCampfirePanel:
 		# As for Peddler, retain the app bridge beyond disposal of the panel.
 		var panel := button.get_parent() as LiveCampfirePanel
@@ -597,6 +606,11 @@ func _reward(pick: bool) -> void:
 
 
 func _return_terminal(status: String) -> void:
+	var difficulty_before: Dictionary = app.difficulty_state()
+	_check(difficulty_before.selected_tier == app._run_tier, "terminal retains the run's chosen tier")
+	if status == "Victory":
+		_check(difficulty_before.highest_cleared_tier >= app._run_tier,
+			"authenticated final Boss victory records its cleared tier")
 	var panel: LiveRunTerminalResultPanel = app.terminal_result_panel
 	_check(panel != null and panel.has_open_result() and panel.is_visible_in_tree()
 		and panel.title_label.text == status and panel.return_button.has_focus(), "real mounted terminal: " + status)
@@ -634,6 +648,7 @@ func _return_terminal(status: String) -> void:
 	_check(callback.is_valid(), "terminal has app-owned return connection")
 	await _activate(panel.return_button, true)
 	stale.append(callback)
+	_check(app.difficulty_state() == difficulty_before, "terminal Return preserves the two-field difficulty state")
 	_check(app.title_view.is_visible_in_tree() and app.start_button.has_focus()
 		and app.run_map == null and app.run_rng == null and app.deck == null
 		and app.party_carryover == null and app.act_outcome == null and app.terminal_result_panel == null
@@ -1004,6 +1019,7 @@ func _run() -> void:
 		var first := await _win(fixture)
 		if app.run_map == null:
 			# Independent loss starts healthy from title and uses enemy phases only.
+			var earned_before_loss: Dictionary = app.difficulty_state()
 			trace = []
 			await _start(fixture)
 			await _node(fixture.path[0], 0)
@@ -1017,6 +1033,7 @@ func _run() -> void:
 					and app.run_heroes == initial_ledger.heroes,
 					"independent loss cannot commit victory carryover")
 				await _return_terminal("Defeat")
+				_check(app.difficulty_state() == earned_before_loss, "real run loss cannot advance or change earned tiers")
 		if app.run_map == null:
 			# Reset only observation counters, never gameplay state.
 			attacks = 0

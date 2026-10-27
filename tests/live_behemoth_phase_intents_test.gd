@@ -16,6 +16,7 @@ func _initialize() -> void:
 	_test_round_bleed_delayed_skip()
 	_test_round_down_target_fallback()
 	_test_round_rejections_and_replay()
+	_test_quilt_phases()
 	for failure in failures:
 		printerr(failure)
 	print("live_behemoth_phase_intents_test: ",
@@ -29,7 +30,7 @@ func _check(ok: bool, label: String) -> void:
 		failures.append(label)
 
 
-func _start_boss(seed_value: int, with_round_flow := false) -> Dictionary:
+func _start_boss(seed_value: int, with_round_flow := false, tier: int = 0) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 	var map := RunMap.new()
@@ -56,6 +57,11 @@ func _start_boss(seed_value: int, with_round_flow := false) -> Dictionary:
 		hero["max_hp"] = int(hero["max_hp"])
 	var party := CombatParty.new(heroes)
 	var enemies: CombatEnemies = entry.enemies
+	var difficulty := RunDifficulty.new()
+	if not difficulty.restore_state({"selected_tier": tier, "highest_cleared_tier": tier - 1}):
+		return {}
+	if tier > 0:
+		enemies = CombatEnemies.new(difficulty.scale_definitions(enemies.get_enemies()))
 	var selector: CombatEnemyIntents = entry.intents
 	# Genuine rounds shuffle the shared deck before the first weighted draw.
 	var deck: CombatDeck = null
@@ -63,8 +69,8 @@ func _start_boss(seed_value: int, with_round_flow := false) -> Dictionary:
 		deck = CombatDeck.new(StarterCards.new().get_starting_deck(), rng)
 	if not party.is_valid() or not enemies.is_valid() \
 			or enemies.get_enemy(1).get("id") != "patchwork_behemoth" \
-			or enemies.get_enemy(1).get("hp") != 84 \
-			or not selector.bind_battle(enemies, party, rng):
+			or enemies.get_enemy(1).get("hp") != 84 + int(ceil(84 * [0, 10, 20][tier] / 100.0)) \
+			or not selector.bind_battle(enemies, party, rng, difficulty):
 		return {}
 	var battle := {"map": map, "rng": rng, "party": party,
 		"enemies": enemies, "intents": selector}
@@ -79,6 +85,33 @@ func _start_boss(seed_value: int, with_round_flow := false) -> Dictionary:
 		battle["flow"] = CombatRoundFlow.new(deck, party, enemies, selector,
 			result, gauge)
 	return battle
+
+
+func _test_quilt_phases() -> void:
+	for tier in [0, 1, 2]:
+		var battle := _start_boss(184006, false, tier)
+		var replay := _start_boss(184006, false, tier)
+		_check(not battle.is_empty() and not replay.is_empty(), "earned tier binds genuine routed Boss: %d" % tier)
+		if battle.is_empty() or replay.is_empty():
+			continue
+		var baseline := _start_boss(184006)
+		_check(battle.rng.state == baseline.rng.state, "tier bonuses add no Boss RNG draws")
+		for intent in battle.enemies.get_enemy(1).intent.actions:
+			if intent.type == "attack":
+				_check(intent.amount == 34 + tier, "phase one adds the tier exactly once")
+		for current in [battle, replay]:
+			var hp: int = current.enemies.get_enemy(1).hp
+			_check(current.enemies.apply_damage(1, hp - 21) and current.intents.advance_turn(),
+				"scaled Boss crosses authored phase threshold through real enemy state")
+		_check(battle.rng.state == replay.rng.state and battle.intents.get_intents() == replay.intents.get_intents(),
+			"same tier and seed reproduce phase-two announcement and RNG")
+		var maximum: int = battle.enemies.get_enemy(1).max_hp
+		for turn in range(3):
+			for intent in battle.enemies.get_enemy(1).intent.actions:
+				if intent.type == "attack":
+					_check(intent.amount == 40 + tier, "phase two retains exactly one bonus across turns")
+			_check(battle.enemies.get_enemy(1).max_hp == maximum and battle.intents.advance_turn(),
+				"phase changes and repeated announcements never scale HP again")
 
 
 func _hurt_to_phase_two(battle: Dictionary) -> bool:

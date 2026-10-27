@@ -27,6 +27,7 @@ var _boss_slot := 0
 var _boss_phase := 0
 var _boss_definition: Dictionary = {}
 var _phase_two_record: Variant = null
+var _quilt_tier := 0
 
 
 func _init(definitions: Array = []) -> void:
@@ -61,7 +62,7 @@ func _init(definitions: Array = []) -> void:
 ## is touched, then exactly one announcement per original slot is cached. The
 ## caller must supply the genuine roster, party and run generator.
 func bind_battle(enemies: CombatEnemies, party: CombatParty,
-		rng: RandomNumberGenerator) -> bool:
+		rng: RandomNumberGenerator, difficulty: RunDifficulty = null) -> bool:
 	if enemies == null or not is_instance_valid(enemies) or not enemies.is_valid():
 		return false
 	var has_behemoth := false
@@ -83,13 +84,14 @@ func bind_battle(enemies: CombatEnemies, party: CombatParty,
 		return false
 	var phase_data: Variant = JSON.parse_string(phase_file.get_as_text())
 	phase_file.close()
-	return _bind_battle_with_phase_data(enemies, party, rng, boss_data, phase_data)
+	return _bind_battle_with_phase_data(enemies, party, rng, boss_data, phase_data,
+		difficulty.get_selected_tier() if difficulty != null else 0)
 
 
 ## All validation (including both boss records) happens before the first draw
 ## or any publication. Inputs and authentic actor dictionaries stay detached.
 func _bind_battle_with_phase_data(enemies: CombatEnemies, party: CombatParty,
-		rng: RandomNumberGenerator, boss_data: Variant, phase_data: Variant) -> bool:
+		rng: RandomNumberGenerator, boss_data: Variant, phase_data: Variant, tier: int = 0) -> bool:
 	if not _valid or _bound or enemies == null or party == null or rng == null:
 		return false
 	if not is_instance_valid(enemies) or not is_instance_valid(party) \
@@ -118,16 +120,23 @@ func _bind_battle_with_phase_data(enemies: CombatEnemies, party: CombatParty,
 			canonical = boss_data[0]
 		if not canonical is Dictionary:
 			return false
+		if tier not in [0, 1, 2]:
+			return false
+		var authority := RunDifficulty.new()
+		var modifiers := authority.modifiers_for_tier(tier)
+		var scaled: Dictionary = canonical.duplicate(true)
+		scaled.max_hp = int(scaled.max_hp) + int(ceil(scaled.max_hp * modifiers.max_hp_percent_bonus / 100.0))
+		scaled.intent = RunDifficulty.scale_intent(scaled.intent, modifiers.attack_intent_bonus)
 		# The Boss roster must carry the catalog's canonical identity and
 		# phase-one intent. HP/Block are mutable battle state, not definitions.
 		for field in ["id", "name", "max_hp", "art_path", "intent"]:
-			if roster[index].get(field) != canonical.get(field):
+			if roster[index].get(field) != scaled.get(field):
 				return false
 		boss_slot = index + 1
 		boss_definition = canonical.duplicate(true)
 		phase_two = phase_data.duplicate(true)
 		var selection := CombatBehemothPhaseRules.select_phase(
-			boss_definition, roster[index].get("hp"), phase_two)
+			boss_definition, roster[index].get("hp"), phase_two, tier)
 		if not selection.get("ok", false):
 			return false
 		boss_phase = selection["phase"]
@@ -151,6 +160,7 @@ func _bind_battle_with_phase_data(enemies: CombatEnemies, party: CombatParty,
 	_boss_phase = boss_phase
 	_boss_definition = boss_definition
 	_phase_two_record = phase_two
+	_quilt_tier = tier
 	if boss_slot > 0:
 		_enemies._enemies[boss_slot - 1]["intent"] = boss_intent.duplicate(true)
 	_bound = true
@@ -466,7 +476,7 @@ func advance_turn() -> bool:
 				return false
 			if hp > 0:
 				var choice := CombatBehemothPhaseRules.select_phase(
-					_boss_definition, hp, _phase_two_record)
+					_boss_definition, hp, _phase_two_record, _quilt_tier)
 				if not choice.get("ok", false):
 					return false
 				# Phase two is sticky within the fight; a cached announcement
@@ -474,7 +484,7 @@ func advance_turn() -> bool:
 				if _boss_phase == CombatBehemothPhaseRules.PHASE_TWO \
 						and choice["phase"] == CombatBehemothPhaseRules.PHASE_ONE:
 					choice = CombatBehemothPhaseRules.select_phase(_boss_definition,
-						CombatBehemothPhaseRules.PHASE_TWO_THRESHOLD, _phase_two_record)
+						CombatBehemothPhaseRules.PHASE_TWO_THRESHOLD, _phase_two_record, _quilt_tier)
 				if not choice.get("ok", false):
 					return false
 				next_phase = choice["phase"]

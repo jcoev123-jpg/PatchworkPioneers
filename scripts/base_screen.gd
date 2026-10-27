@@ -18,6 +18,11 @@ signal tinker_path_choice_requested(path_id: String)
 signal warden_path_choice_requested(path_id: String)
 signal set_out_requested
 signal back_requested
+signal difficulty_choice_requested(tier: int)
+
+var difficulty_buttons: Array[Button] = []
+var _difficulty_request := -1
+var _difficulty_row: HBoxContainer
 
 const BASE_BACKDROP := "res://assets/paper/backgrounds/base_village.png"
 const DESIGN_SIZE := Vector2(1280.0, 720.0)
@@ -134,6 +139,7 @@ func _ready() -> void:
 	_build_tinker_choice()
 	_build_warden_choice()
 	_build_actions()
+	_build_difficulty()
 	_wire_focus()
 	resized.connect(queue_redraw)
 	_apply_closed_state()
@@ -1052,12 +1058,53 @@ func _wire_focus() -> void:
 			loop.append(button)
 	if is_instance_valid(set_out_button) and not set_out_button.disabled:
 		loop.append(set_out_button)
+	for button in difficulty_buttons:
+		if not button.disabled and button.is_visible_in_tree():
+			loop.append(button)
 	if loop.is_empty():
 		return
 	for index in range(loop.size()):
 		var node := loop[index]
 		node.focus_next = node.get_path_to(loop[(index + 1) % loop.size()])
 		node.focus_previous = node.get_path_to(loop[(index - 1 + loop.size()) % loop.size()])
+
+
+func _build_difficulty() -> void:
+	_difficulty_row = HBoxContainer.new()
+	_difficulty_row.position = Vector2(420, 112)
+	_difficulty_row.add_theme_constant_override("separation", 12)
+	add_child(_difficulty_row)
+	var label := Label.new()
+	label.text = "Steeper Quilt"
+	label.add_theme_font_size_override("font_size", 20)
+	_difficulty_row.add_child(label)
+	for tier in range(3):
+		var button := Button.new()
+		button.disabled = true
+		button.text = "Tier %d" % tier
+		button.custom_minimum_size = Vector2(130, 44)
+		button.add_theme_font_size_override("font_size", 20)
+		button.pressed.connect(_request_difficulty.bind(tier))
+		_difficulty_row.add_child(button)
+		difficulty_buttons.append(button)
+
+
+func present_difficulty(available: Array[int], selected: int) -> void:
+	for tier in range(difficulty_buttons.size()):
+		var button := difficulty_buttons[tier]
+		button.disabled = not available.has(tier)
+		button.text = "Tier %d%s" % [tier, " (selected)" if tier == selected else (" (locked)" if button.disabled else "")]
+		button.tooltip_text = "Win the preceding tier to unlock" if button.disabled else "Choose Tier %d for the next run" % tier
+	_wire_focus()
+
+
+func _request_difficulty(tier: int) -> void:
+	if not _open or _set_out_pending or _back_pending or not is_visible_in_tree() \
+		or tier < 0 or tier >= difficulty_buttons.size() or difficulty_buttons[tier].disabled:
+		return
+	_difficulty_request = tier
+	difficulty_choice_requested.emit(tier)
+	_difficulty_request = -1
 
 
 func _path_button(path_id: String) -> Button:

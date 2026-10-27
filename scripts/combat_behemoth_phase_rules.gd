@@ -24,7 +24,7 @@ func _init(boss_definition: Variant = null, phase_two_record: Variant = null) ->
 
 ## Main public selector. Evaluates detached boss definition, current integer HP,
 ## and parsed phase-two record. Returns explicit detached {ok, phase, intent}.
-static func select_phase(boss_definition: Variant, current_hp: Variant, phase_two_record: Variant) -> Dictionary:
+static func select_phase(boss_definition: Variant, current_hp: Variant, phase_two_record: Variant, tier: int = 0) -> Dictionary:
 	if not validate_boss_definition(boss_definition):
 		return {"ok": false, "phase": 0, "intent": {}}
 	if not validate_phase_two_record(phase_two_record):
@@ -32,13 +32,18 @@ static func select_phase(boss_definition: Variant, current_hp: Variant, phase_tw
 	if typeof(current_hp) != TYPE_INT:
 		return {"ok": false, "phase": 0, "intent": {}}
 	var hp := int(current_hp)
-	if hp < 1 or hp > BOSS_MAX_HP:
+	if tier not in [0, 1, 2]:
+		return {"ok": false, "phase": 0, "intent": {}}
+	var modifiers := RunDifficulty.new().modifiers_for_tier(tier)
+	var maximum := BOSS_MAX_HP + int(ceil(BOSS_MAX_HP * modifiers.max_hp_percent_bonus / 100.0))
+	if hp < 1 or hp > maximum:
 		return {"ok": false, "phase": 0, "intent": {}}
 
 	if hp > PHASE_TWO_THRESHOLD:
 		var boss := _extract_boss_dict(boss_definition)
 		var intent: Dictionary = boss["intent"].duplicate(true)
 		_normalize_intent_numbers(intent)
+		intent = RunDifficulty.scale_intent(intent, modifiers.attack_intent_bonus)
 		return {
 			"ok": true,
 			"phase": PHASE_ONE,
@@ -48,6 +53,7 @@ static func select_phase(boss_definition: Variant, current_hp: Variant, phase_tw
 		var p2 := _extract_phase_two_dict(phase_two_record)
 		var intent: Dictionary = p2["intent"].duplicate(true)
 		_normalize_intent_numbers(intent)
+		intent = RunDifficulty.scale_intent(intent, modifiers.attack_intent_bonus)
 		return {
 			"ok": true,
 			"phase": PHASE_TWO,

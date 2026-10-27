@@ -1,4 +1,40 @@
 extends Control
+
+var run_difficulty := RunDifficulty.new()
+var _run_tier := 0
+var _difficulty_completed_map: RunMap
+@export var difficulty_save_path := "user://quilt_difficulty.json"
+
+
+func difficulty_state() -> Dictionary:
+	return run_difficulty.get_state()
+
+
+## Save/profile boundary: only idle title state can restore this two-field record.
+func restore_difficulty_state(state: Variant) -> bool:
+	if run_map != null or deck != null or is_instance_valid(base_screen) \
+		or not is_instance_valid(title_view) or not title_view.is_visible_in_tree():
+		return false
+	return run_difficulty.restore_state(state)
+
+
+## Only the running game's root owns the profile file. Embedded app views
+## (including previews) retain their own state without writing the profile.
+func _load_difficulty_progress() -> void:
+	if get_tree().current_scene != self or difficulty_save_path.is_empty() \
+		or not FileAccess.file_exists(difficulty_save_path):
+		return
+	var file := FileAccess.open(difficulty_save_path, FileAccess.READ)
+	if file != null:
+		restore_difficulty_state(JSON.parse_string(file.get_as_text()))
+
+
+func _save_difficulty_progress() -> void:
+	if get_tree().current_scene != self or difficulty_save_path.is_empty():
+		return
+	var file := FileAccess.open(difficulty_save_path, FileAccess.WRITE)
+	if file != null:
+		file.store_string(JSON.stringify(difficulty_state()))
 ## Root of the game. The hand view delegates all card movement to CombatDeck.
 
 signal start_run_requested
@@ -792,6 +828,7 @@ var action_corner_row: HBoxContainer
 
 func _ready() -> void:
 	_build_title()
+	_load_difficulty_progress.call_deferred()
 	start_run_requested.connect(_start_run)
 	var attack_preview := Node.new()
 	attack_preview.name = "LiveAttackPreview"
@@ -903,6 +940,10 @@ func _terminal_result_is_current() -> bool:
 func _mount_terminal_result() -> void:
 	if is_instance_valid(terminal_result_panel) or not _terminal_result_is_current():
 		return
+	if _difficulty_completed_map != run_map and run_difficulty.get_selected_tier() == _run_tier:
+		run_difficulty.complete_run(act_outcome.get_state().run_status == RunActBattleOutcome.VICTORY)
+		_difficulty_completed_map = run_map
+		_save_difficulty_progress()
 	var panel := load("res://scenes/run_terminal_result_panel.tscn").instantiate() as LiveRunTerminalResultPanel
 	if panel == null:
 		return
@@ -1065,9 +1106,30 @@ func _open_base() -> bool:
 	view.present_warden_path_options(warden_options)
 	view.warden_path_choice_requested.connect(_base_warden_path_choice.bind(weakref(view)))
 	view.set_out_requested.connect(_base_set_out.bind(weakref(view)))
+	_present_base_difficulty(view)
+	view.difficulty_choice_requested.connect(_base_difficulty_choice.bind(weakref(view)))
 	view.back_requested.connect(_base_back.bind(weakref(view)))
 	title_view.hide()
 	return true
+
+
+func _base_difficulty_choice(tier: int, source: WeakRef) -> void:
+	var view := _live_base(source)
+	if view == null or view._set_out_pending or view._back_pending \
+		or view._difficulty_request != tier:
+		return
+	view._difficulty_request = -1
+	if run_difficulty.select_tier(tier):
+		_save_difficulty_progress()
+		_present_base_difficulty(view)
+
+
+func _present_base_difficulty(view: BaseScreen) -> void:
+	view.present_difficulty(run_difficulty.get_available_tiers(), run_difficulty.get_selected_tier())
+	for tier in range(view.difficulty_buttons.size()):
+		var modifiers := run_difficulty.modifiers_for_tier(tier)
+		view.difficulty_buttons[tier].tooltip_text += "\nEnemies: +%d%% max HP (round up), +%d attack intent damage" % [
+			modifiers.max_hp_percent_bonus, modifiers.attack_intent_bonus]
 
 
 ## Detached presentation records for the two authored Paths, in authored order.
@@ -1305,6 +1367,7 @@ func _open_route() -> void:
 	run_rng = RandomNumberGenerator.new()
 	run_rng.seed = run_seed
 	run_map = RunMap.new()
+	_run_tier = run_difficulty.get_selected_tier()
 	run_map.generate(run_rng)
 	fight_selection = RunFightEncounterSelection.new()
 	run_deck = cards.duplicate()
@@ -2844,6 +2907,8 @@ func _can_choose_connected_route() -> bool:
 ## Stage every combat model before replacing the last mounted battle. The entry
 ## service shares the run selector/RNG; restore both if later admission fails.
 func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String], button) -> bool:
+	if run_difficulty.get_selected_tier() != _run_tier:
+		return false
 	if not _can_choose_connected_route() or source_map == null or source_map.get_ref() != run_map \
 		or run_map.get_route() != prior or not is_instance_valid(route_view) \
 		or not route_view.is_visible_in_tree() or not is_instance_valid(button) \
@@ -2917,6 +2982,8 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 				entry.success = false
 			else:
 				entry.enemies = scaled_enemies
+	if entry.get("success", false):
+		entry.enemies = CombatEnemies.new(run_difficulty.scale_definitions(entry.enemies.get_enemies()))
 	var staged := false
 	var next_deck: CombatDeck
 	var next_result: CombatBattleResult
@@ -2941,7 +3008,7 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 			var battle_intents: CombatEnemyIntents = candidate_intents \
 				if candidate_intents is CombatEnemyIntents else null
 			if next_deck == null or battle_intents == null \
-					or not battle_intents.bind_battle(entry.enemies, next_party, run_rng):
+					or not battle_intents.bind_battle(entry.enemies, next_party, run_rng, run_difficulty):
 				next_deck = null
 			else:
 				next_result = CombatBattleResult.new(next_party, entry.enemies)
