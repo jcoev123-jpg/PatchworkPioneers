@@ -11,16 +11,19 @@ var checks := 0
 ## Expanded normal rosters repin early-defeat (99) and unaffordable generic-wallet (541)
 ## fixtures. Shipping Spindle Ram and Razor Ribbon Wraith into the live floor-band pool
 ## turns seed 9's high-band fight into a genuine turn-cap stalemate, so the authentic
-## replacement seed 48 stands in for it. Keep 46 original seeds, the
-## offered/acquired/played Blanket Stitch witness (267) and the unchanged strategy;
-## neither outcomes nor choices are injected.
+## replacement seed 48 stands in for it. Shipping Bobbin Bat and Quilt Termite re-splits
+## the same floor bands, so seed 267's Blanket Stitch witness no longer acquires that
+## card; authentic replacement seed 249 (another genuine floor-12 nonwin under the same
+## strategy, which real reward offers hand the Blanket Stitch) stands in for it. Keep 46
+## original seeds, the offered/acquired/played Blanket Stitch witness (249) and the
+## unchanged strategy; neither outcomes nor choices are injected.
 func _cohort_seeds() -> Array[int]:
 	var values: Array[int] = []
 	for value in range(1, 48):
 		if value == 9:
 			continue
 		values.append(value)
-	values.append_array([99, 541, 267, 48])
+	values.append_array([99, 541, 249, 48])
 	return values
 
 

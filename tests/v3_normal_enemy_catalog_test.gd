@@ -29,6 +29,11 @@ func _initialize() -> void:
 	_test_crusher_harrier_doll_seeded_announcements()
 	_test_crusher_harrier_doll_phase_actions()
 	_test_thistle_patch_doll_thorns()
+	_test_bobbin_bat_quilt_termite_catalog()
+	_test_bobbin_bat_quilt_termite_seeded_announcements()
+	_test_bobbin_bat_drain_phase()
+	_test_quilt_termite_chew_phase()
+	_test_bobbin_bat_quilt_termite_live_bands()
 	_test_negative_fixtures()
 	if failures.is_empty():
 		print("v3_normal_enemy_catalog_test: PASS (", checks, " checks)")
@@ -3108,4 +3113,640 @@ func _test_scissor_crab_block_snip_phase() -> void:
 			and rejected_case.enemies.get_enemies() == rejected_roster
 			and rejected_party.get_hero(1).get("block") == 6,
 			"AC4: an invalid announced Crab attack rejects the phase without eating Block")
+
+## The two look-driven normal enemies of this batch: the bobbin-beaked Bat sucks
+## life back through the already-live Drain trait and the Quilt Termite bites
+## through the already-live cloth-eating trait. HP, target policy and the full
+## 4/1/1 weighted intent are authored in data/enemies/run_enemies.json.
+func _bobbin_quilt_expected() -> Dictionary:
+	return {
+		"bobbin_bat": {"id": "bobbin_bat", "name": "Bobbin Bat", "max_hp": 27,
+			"drain": true,
+			"art_path": "res://assets/paper/enemies/bobbin_bat.png",
+			"intent": {"target": "lowest_living_hp", "actions": [
+				{"type": "attack", "amount": 7, "weight": 4},
+				{"type": "debuff", "status": "weak", "amount": 1, "weight": 1},
+				{"type": "block", "amount": 4, "weight": 1}]}},
+		"quilt_termite": {"id": "quilt_termite", "name": "Quilt Termite", "max_hp": 26,
+			"chew_block_on_attack": true,
+			"art_path": "res://assets/paper/enemies/quilt_termite.png",
+			"intent": {"target": "front", "actions": [
+				{"type": "attack", "amount": 6, "weight": 4},
+				{"type": "block", "amount": 5, "weight": 1},
+				{"type": "debuff", "status": "exposed", "amount": 1, "weight": 1}]}}
+	}
+
+## AC1: both records ship exactly once in the live normal catalog with their
+## authored identity, target policy, flags and 4/1/1 weighted alternatives, and
+## every earlier named normal stays byte-for-byte equivalent. No catalog total,
+## ordered ID list or insertion slot is asserted, so parallel appends stay legal.
+func _test_bobbin_bat_quilt_termite_catalog() -> void:
+	var parsed := _load_parsed()
+	var ids: Array[String] = []
+	for record in parsed:
+		if record is Dictionary:
+			ids.append(String(record.get("id", "")))
+	# Every earlier named record from the batches this file already knows about.
+	var earlier := _old_expected()
+	earlier.merge(_new_expected())
+	earlier.merge(_trio_expected())
+	earlier.merge(_harder_expected())
+	earlier.merge(_tough_pair_expected())
+	earlier.merge(_crusher_harrier_doll_expected())
+	for kept_id in earlier:
+		_check(ids.has(String(kept_id)),
+			"named earlier normal still present after this append: " + String(kept_id))
+		_check(_norm(_find(parsed, String(kept_id))) == _norm(earlier[kept_id]),
+			"named earlier normal record is unchanged: " + String(kept_id))
+	var expected := _bobbin_quilt_expected()
+	for new_id in expected:
+		var occurrences := 0
+		for present in ids:
+			if present == String(new_id):
+				occurrences += 1
+		_check(occurrences == 1, "new normal is authored exactly once: " + String(new_id))
+		var record := _find(parsed, String(new_id))
+		_check(not record.is_empty(), "new normal record present: " + String(new_id))
+		if record.is_empty():
+			continue
+		_check(_norm(record) == _norm(expected[new_id]),
+			"new normal has its exact authored fields: " + String(new_id))
+		_check(record.get("name") == expected[new_id]["name"]
+			and record.get("max_hp") is int
+			and record.get("max_hp") == expected[new_id]["max_hp"],
+			"new normal keeps its authored name and genuine int HP: " + String(new_id))
+		_check(record.get("art_path") == expected[new_id]["art_path"]
+			and String(record.get("art_path", "")).begins_with(
+				"res://assets/paper/enemies/"),
+			"new normal keeps its placeholder-swappable art path: " + String(new_id))
+		var spec: Variant = record.get("intent")
+		_check(spec is Dictionary
+			and spec.get("target") == expected[new_id]["intent"]["target"],
+			"new normal keeps its authored target policy: " + String(new_id))
+		_check(not CombatEnemyIntents._weighted_slot(1, spec).is_empty(),
+			"new normal intent validates as a weighted slot: " + String(new_id))
+		var actions: Variant = spec.get("actions") if spec is Dictionary else null
+		_check(actions is Array and actions.size() == 3,
+			"new normal authors exactly its three weighted alternatives: " + String(new_id))
+		if not actions is Array:
+			continue
+		var weights: Array[int] = []
+		for raw in actions:
+			_check(CombatEnemyIntents.weighted_action(raw) != {},
+				"new alternative validates through the weighted scheduler: %s %s"
+					% [new_id, str(raw)])
+			_check(_alternative_shape_is_exact(raw),
+				"new alternative uses supported mechanics and exact fields: %s %s"
+					% [new_id, str(raw)])
+			var weight := int(raw.get("weight", 0))
+			weights.append(weight)
+			_check(weight > 0,
+				"new alternative keeps a positive authored weight: " + String(new_id))
+			if raw is Dictionary and raw.get("type") == "attack":
+				var amount := int(raw.get("amount", 0))
+				_check(amount >= 5 and amount <= 9,
+					"new normal attack stays inside the authored 5-9 band: " + String(new_id))
+		_check(weights == [4, 1, 1],
+			"new normal keeps its shipped 4/1/1 weights: " + String(new_id))
+		_check(RunTypedBattleRoster._parse_catalog_text(
+			JSON.stringify([record])).size() == 1,
+			"the shipped record survives the strict catalog parser: " + String(new_id))
+	# Look-driven identity: each silhouette acts the way it looks.
+	var bat := _find(parsed, "bobbin_bat")
+	_check(bat.get("drain") is bool and bat.get("drain") == true,
+		"Bobbin Bat authors Drain as a genuine boolean")
+	_check(_has_alternative(bat, "attack", 7) and _has_alternative(bat, "debuff", 1, "weak")
+		and _has_alternative(bat, "block", 4),
+		"Bobbin Bat bites for 7, leaves Weak 1 or wraps itself in 4 Block")
+	_check(bat.get("intent", {}).get("target") == "lowest_living_hp",
+		"Bobbin Bat hunts the lowest-living hero")
+	var termite := _find(parsed, "quilt_termite")
+	_check(termite.get("chew_block_on_attack") is bool
+		and termite.get("chew_block_on_attack") == true,
+		"Quilt Termite authors the cloth-eating bite as a genuine boolean")
+	_check(_has_alternative(termite, "attack", 6) and _has_alternative(termite, "block", 5)
+		and _has_alternative(termite, "debuff", 1, "exposed"),
+		"Quilt Termite bites for 6, boards up 5 Block or marks Exposed 1")
+	_check(termite.get("intent", {}).get("target") == "front",
+		"Quilt Termite bites the front hero")
+	# Named controls: the two new flags stay per-record, not catalog-wide.
+	var beetle := _find(parsed, "thimble_beetle")
+	_check(not beetle.is_empty() and not beetle.has("drain"),
+		"the named Thimble Beetle control authors no Drain")
+	var ram := _find(parsed, "spindle_ram")
+	_check(not ram.is_empty() and not ram.has("chew_block_on_attack"),
+		"the named Spindle Ram control authors no cloth-eating bite")
+
+## Up to three real sources in their catalog order, bound to one genuine
+## scheduler so a two-enemy group binds without borrowing an unrelated actor.
+func _bind_records(seed_value: int, selected: Array) -> Dictionary:
+	var enemies := CombatEnemies.new(selected.duplicate(true))
+	var party := _party()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var definitions: Array = []
+	for index in range(selected.size()):
+		definitions.append(_enemy(index + 1, [{"type": "block", "amount": 1}]))
+	var scheduler := CombatEnemyIntents.new(definitions)
+	var ok := scheduler.bind_battle(enemies, party, rng)
+	return {"ok": ok, "enemies": enemies, "party": party, "rng": rng, "scheduler": scheduler}
+
+## AC2: two independent real weighted schedulers over the three living heroes
+## announce only authored alternatives, replay on the same seed, advance a turn
+## identically and never consume RNG on a read. Each authored attack is then
+## forced from the parsed record and executed by the real CombatEnemyPhase.
+func _test_bobbin_bat_quilt_termite_seeded_announcements() -> void:
+	var parsed := _load_parsed()
+	var selected: Array = []
+	for id in ["bobbin_bat", "quilt_termite"]:
+		var record := _find(parsed, id)
+		_check(not record.is_empty(), "authentic new normal source present: " + id)
+		selected.append(record)
+	_check(selected.size() == 2 and not selected.has({}),
+		"precondition: both authentic new normal records loaded")
+	if selected.size() != 2 or selected.has({}):
+		return
+	var party := _party()
+	_check(party.is_valid() and party.get_heroes().size() == CombatParty.PARTY_SIZE,
+		"precondition: a valid three-hero CombatParty")
+	for position in range(1, CombatParty.PARTY_SIZE + 1):
+		_check(party.get_hero(position).get("hp", 0) > 0,
+			"precondition: hero slot %d is living" % position)
+	_check(party.get_hero(1).get("hp") == 40 and party.get_hero(2).get("hp") == 30
+		and party.get_hero(3).get("hp") == 26,
+		"precondition: the back hero is the unique lowest-living target")
+	_check(CombatEnemyIntents.priority_target(party, "lowest_living_hp") == 3
+		and CombatEnemyIntents.priority_target(party, "front") == 1,
+		"precondition: the two authored policies name different heroes")
+	var snapshot: Array = selected.duplicate(true)
+	var first := _bind_records(61027, selected)
+	var second := _bind_records(61027, selected)
+	_check(first.get("ok") == true and second.get("ok") == true,
+		"both new normals bind on identical seeds")
+	_check(first.scheduler.is_bound() and second.scheduler.is_bound(),
+		"both seeded bindings report the weighted mode")
+	var first_intents: Array = first.scheduler.get_intents()
+	var second_intents: Array = second.scheduler.get_intents()
+	_check(first_intents.size() == 2, "one announcement per new normal")
+	_check(first_intents == second_intents,
+		"same-seed first-turn announcements replay identically")
+	_check(first.rng.state == second.rng.state,
+		"same-seed bindings leave matching RNG state")
+	var state_before: int = first.rng.state
+	_check(first.scheduler.get_intents() == first_intents and first.rng.state == state_before,
+		"reading bound announcements neither changes them nor consumes RNG")
+	for index in range(first_intents.size()):
+		var announced: Dictionary = first_intents[index]
+		var source: Dictionary = selected[index]
+		var enemy_id := String(source.get("id", ""))
+		_check(announced.get("enemy_position") == index + 1,
+			"announcement keeps its source slot: " + enemy_id)
+		_check(_is_authored_alternative(source, announced),
+			"announcement is one of the authored alternatives: " + enemy_id)
+		_check(String(announced.get("type", "")) in ["attack", "debuff", "block"],
+			"announcement uses only an existing authored action type: " + enemy_id)
+		if announced.get("type") in ["attack", "debuff"]:
+			var expected_target := 1 \
+				if String(source.get("intent", {}).get("target", "")) == "front" else 3
+			_check(announced.get("target_position") == expected_target,
+				"announcement applies the authored target policy: " + enemy_id)
+	_check(first.scheduler.advance_turn(), "the first seeded schedule advances a turn")
+	_check(second.scheduler.advance_turn(), "the second seeded schedule advances a turn")
+	_check(first.scheduler.get_intents() == second.scheduler.get_intents()
+		and first.rng.state == second.rng.state,
+		"successive announced turns replay identically on equal seeds")
+	_check(selected == snapshot, "weighted binding never mutates the parsed source records")
+	# Force every authored alternative from the genuine record, so no guessed
+	# seed can hide one and production weights stay 4/1/1.
+	var forced := [
+		{"id": "bobbin_bat", "action": {"type": "attack", "amount": 7, "weight": 1}},
+		{"id": "bobbin_bat",
+			"action": {"type": "debuff", "status": "weak", "amount": 1, "weight": 1}},
+		{"id": "bobbin_bat", "action": {"type": "block", "amount": 4, "weight": 1}},
+		{"id": "quilt_termite", "action": {"type": "attack", "amount": 6, "weight": 1}},
+		{"id": "quilt_termite", "action": {"type": "block", "amount": 5, "weight": 1}},
+		{"id": "quilt_termite",
+			"action": {"type": "debuff", "status": "exposed", "amount": 1, "weight": 1}}]
+	for case in forced:
+		var record := _find(parsed, String(case.id))
+		_check(not record.is_empty(), "forced alternative source present: " + String(case.id))
+		if record.is_empty():
+			continue
+		var policy := String(record.get("intent", {}).get("target", ""))
+		var expected_target := 1 if policy == "front" else 3
+		var forced_record: Dictionary = record.duplicate(true)
+		forced_record["intent"] = {"target": policy, "actions": [case.action]}
+		var forced_enemies := CombatEnemies.new([forced_record])
+		var forced_rng := RandomNumberGenerator.new()
+		forced_rng.seed = 61027
+		var forced_scheduler := CombatEnemyIntents.new(
+			[_enemy(1, [{"type": "block", "amount": 1}])])
+		var did_bind := forced_enemies.is_valid() \
+			and forced_scheduler.bind_battle(forced_enemies, party, forced_rng)
+		_check(did_bind, "forced alternative binds: %s %s" % [case.id, str(case.action)])
+		if not did_bind:
+			continue
+		var announced: Dictionary = forced_scheduler.get_intents()[0]
+		_check(announced.get("type") == case.action.type
+			and int(announced.get("amount", -1)) == int(case.action.amount),
+			"forced alternative announces its authored effect: %s %s"
+				% [case.id, str(case.action)])
+		if case.action.has("status"):
+			_check(announced.get("status") == case.action.status,
+				"forced debuff keeps its authored status: " + String(case.action.status))
+		if announced.get("type") in ["attack", "debuff"]:
+			_check(announced.get("target_position") == expected_target,
+				"forced alternative honours the authored target policy: " + String(case.id))
+		# Every forced beat resolves through the genuine phase on fresh actors.
+		var live_party := _party()
+		var receipt := CombatEnemyPhase.new().execute_phase(live_party, forced_enemies,
+			forced_scheduler.get_intents(), null, true)
+		_check(receipt.get("ok") == true and receipt.get("events", []).size() == 1
+			and receipt["events"][0].get("applied") == true,
+			"forced alternative executes through the real CombatEnemyPhase: %s %s"
+				% [case.id, str(case.action)])
+		if announced.get("type") == "attack":
+			_check(live_party.get_hero(expected_target).get("hp")
+				== _party().get_hero(expected_target).get("hp") - int(case.action.amount),
+				"the real phase applies the authored attack damage: " + String(case.id))
+		elif announced.get("type") == "block":
+			_check(forced_enemies.get_enemy(1).get("block") == int(case.action.amount),
+				"the real phase grants the authored Block: " + String(case.id))
+		elif announced.get("type") == "debuff":
+			_check(live_party.get_hero(expected_target).get("statuses", {}).get(
+				String(case.action.status), 0) == int(case.action.amount),
+				"the real phase applies the authored status: " + String(case.id))
+
+## AC3: the shipped Bat's real 7-damage bite heals exactly the hero HP it removes,
+## capped by its own missing HP and never by Block-absorbed damage. Non-attack
+## turns and a slain Bat heal nothing.
+func _test_bobbin_bat_drain_phase() -> void:
+	var parsed := _load_parsed()
+	var bat := _find(parsed, "bobbin_bat")
+	_check(not bat.is_empty() and bat.get("drain") is bool and bat.get("drain") == true,
+		"precondition: the shipped Bobbin Bat really authors Drain")
+	if bat.is_empty():
+		return
+	var bite := _authored_alternative(bat, "attack", 7)
+	var weaken := _authored_alternative(bat, "debuff", 1)
+	var wing := _authored_alternative(bat, "block", 4)
+	_check(not bite.is_empty() and not weaken.is_empty() and not wing.is_empty(),
+		"precondition: the shipped bite, Weak 1 and 4 Block alternatives exist")
+	if bite.is_empty() or weaken.is_empty() or wing.is_empty():
+		return
+	# AC3: a wounded 8/27 Bat restores exactly the 7 HP its real bite removes.
+	var party := _party()
+	var case := _force_normal_alternative(bat, bite, party)
+	_check(not case.is_empty(), "AC3: the shipped bite binds as a real announcement")
+	if case.is_empty():
+		return
+	_check(case.enemies.apply_damage(1, 19)
+		and case.enemies.get_enemy(1).get("hp") == 8,
+		"AC3 precondition: the Bat really stands at 8 of its authored 27 HP")
+	_check(case.intents.size() == 1 and case.intents[0].get("type") == "attack"
+		and int(case.intents[0].get("amount", -1)) == 7
+		and case.intents[0].get("target_position") == 3,
+		"AC3: the real announcement is the authored 7-damage bite on Tinker")
+	var receipt := CombatEnemyPhase.new().execute_phase(party, case.enemies,
+		case.intents, null, true)
+	_check(receipt == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 3, "applied": true}]},
+		"AC3: the draining bite keeps the ordinary attack event shape")
+	_check(party.get_hero(3).get("hp") == 19 and party.get_hero(3).get("block") == 0,
+		"AC3: the unblocked bite removes exactly seven Tinker HP")
+	_check(case.enemies.get_enemy(1).get("hp") == 15,
+		"AC3: Drain heals exactly the seven HP the bite really removed")
+	_check(case.enemies.get_enemy(1).get("drain") == true
+		and case.enemies.get_enemy(1).get("max_hp") == 27,
+		"AC3: the heal preserves the Bat's Drain flag and its authored cap")
+	_check(party.get_hero(1).get("hp") == 40 and party.get_hero(2).get("hp") == 30,
+		"AC3: the other two heroes keep their HP")
+	# AC3: a Bat missing only 2 HP heals only those 2, never the full seven.
+	var capped_party := _party()
+	var capped := _force_normal_alternative(bat, bite, capped_party)
+	if not capped.is_empty():
+		_check(capped.enemies.apply_damage(1, 2)
+			and capped.enemies.get_enemy(1).get("hp") == 25,
+			"AC3 precondition: the Bat is only two HP below its cap")
+		var capped_receipt := CombatEnemyPhase.new().execute_phase(capped_party,
+			capped.enemies, capped.intents, null, true)
+		_check(capped_receipt.get("ok") == true
+			and capped_party.get_hero(3).get("hp") == 19
+			and capped.enemies.get_enemy(1).get("hp") == 27,
+			"AC3: Drain is clamped to the two missing HP and never overheals")
+	# AC3: seven Block absorb the whole bite, so there is no hero HP loss to drain.
+	var blocked_party := _party()
+	_check(blocked_party.gain_block(3, 7),
+		"AC3 precondition: Tinker really holds seven Block")
+	var blocked := _force_normal_alternative(bat, bite, blocked_party)
+	if not blocked.is_empty():
+		_check(blocked.enemies.apply_damage(1, 19)
+			and blocked.enemies.get_enemy(1).get("hp") == 8,
+			"AC3 precondition: the blocked case starts at 8 of 27 HP")
+		var blocked_receipt := CombatEnemyPhase.new().execute_phase(blocked_party,
+			blocked.enemies, blocked.intents, null, true)
+		_check(blocked_receipt.get("ok") == true
+			and blocked_receipt.get("events", [{}])[0].get("applied") == true,
+			"AC3: the fully blocked bite still resolves as one applied attack")
+		_check(blocked_party.get_hero(3).get("hp") == 26
+			and blocked_party.get_hero(3).get("block") == 0
+			and blocked.enemies.get_enemy(1).get("hp") == 8,
+			"AC3: seven Block absorb all seven damage and Drain heals nothing")
+	# AC3: only the HP that really got through partial Block drains.
+	var partial_party := _party()
+	_check(partial_party.gain_block(3, 3),
+		"AC3 precondition: Tinker really holds three Block")
+	var partial := _force_normal_alternative(bat, bite, partial_party)
+	if not partial.is_empty():
+		_check(partial.enemies.apply_damage(1, 19)
+			and partial.enemies.get_enemy(1).get("hp") == 8,
+			"AC3 precondition: the partially blocked case starts at 8 of 27 HP")
+		var partial_receipt := CombatEnemyPhase.new().execute_phase(partial_party,
+			partial.enemies, partial.intents, null, true)
+		_check(partial_receipt.get("ok") == true
+			and partial_party.get_hero(3).get("hp") == 22
+			and partial_party.get_hero(3).get("block") == 0,
+			"AC3: three Block absorb three and four HP really reach Tinker")
+		_check(partial.enemies.get_enemy(1).get("hp") == 12,
+			"AC3: a partial Block drains exactly the four HP that got through")
+	# AC3: the authored non-attack Weak turn heals nothing.
+	var weak_party := _party()
+	var weak := _force_normal_alternative(bat, weaken, weak_party)
+	if not weak.is_empty():
+		_check(weak.enemies.apply_damage(1, 19)
+			and weak.enemies.get_enemy(1).get("hp") == 8,
+			"AC3 precondition: the Weak case starts at 8 of 27 HP")
+		_check(weak.intents.size() == 1 and weak.intents[0].get("type") == "debuff"
+			and weak.intents[0].get("status") == "weak"
+			and int(weak.intents[0].get("amount", -1)) == 1
+			and weak.intents[0].get("target_position") == 3,
+			"AC3: the second alternative announces Weak 1 on Tinker")
+		var weak_receipt := CombatEnemyPhase.new().execute_phase(weak_party,
+			weak.enemies, weak.intents, null, true)
+		_check(weak_receipt.get("ok") == true
+			and weak_party.get_hero(3).get("hp") == 26
+			and weak_party.get_hero(3).get("statuses", {}).get("weak", 0) == 1
+			and weak.enemies.get_enemy(1).get("hp") == 8,
+			"AC3: a non-attack Weak turn damages nobody and heals the Bat nothing")
+	# AC3: the authored Block turn heals nothing either.
+	var wing_party := _party()
+	var wing_case := _force_normal_alternative(bat, wing, wing_party)
+	if not wing_case.is_empty():
+		_check(wing_case.enemies.apply_damage(1, 19)
+			and wing_case.enemies.get_enemy(1).get("hp") == 8,
+			"AC3 precondition: the Block case starts at 8 of 27 HP")
+		var wing_receipt := CombatEnemyPhase.new().execute_phase(wing_party,
+			wing_case.enemies, wing_case.intents, null, true)
+		_check(wing_receipt.get("ok") == true
+			and wing_case.enemies.get_enemy(1).get("block") == 4
+			and wing_case.enemies.get_enemy(1).get("hp") == 8
+			and wing_party.get_heroes() == _party().get_heroes(),
+			"AC3: a self-Block turn grants 4 Block, hits nobody and heals nothing")
+	# AC3: a slain Bat never drains, never revives and never damages a hero.
+	var slain_party := _party()
+	var slain := _force_normal_alternative(bat, bite, slain_party)
+	if not slain.is_empty():
+		_check(slain.enemies.apply_damage(1, 27) and slain.enemies.is_slain(1),
+			"AC3 precondition: the draining Bat is genuinely slain before its beat")
+		var slain_heroes: Array = slain_party.get_heroes()
+		var slain_roster: Array = slain.enemies.get_enemies()
+		var slain_receipt := CombatEnemyPhase.new().execute_phase(slain_party,
+			slain.enemies, slain.intents, null, true)
+		_check(slain_receipt == {"ok": true, "events": [
+			{"type": "attack", "enemy_position": 1, "target_position": 3,
+				"applied": false}]},
+			"AC3: a slain Bat's announced bite resolves as one inert beat")
+		_check(slain_party.get_heroes() == slain_heroes
+			and slain.enemies.get_enemies() == slain_roster
+			and slain.enemies.get_enemy(1).get("hp") == 0,
+			"AC3: a slain Bat deals no damage and is never healed back to life")
+
+## AC3: the shipped Termite's real 6-damage bite eats ALL the front hero's Block
+## before the hit, so the full six reaches HP. Its standalone Block and Exposed
+## alternatives never chew, and a slain Termite neither chews nor bites.
+func _test_quilt_termite_chew_phase() -> void:
+	var parsed := _load_parsed()
+	var termite := _find(parsed, "quilt_termite")
+	_check(not termite.is_empty() and termite.get("chew_block_on_attack") is bool
+		and termite.get("chew_block_on_attack") == true,
+		"precondition: the shipped Quilt Termite really authors the cloth-eating bite")
+	if termite.is_empty() or termite.get("chew_block_on_attack") != true:
+		return
+	var bite := _authored_alternative(termite, "attack", 6)
+	var shell := _authored_alternative(termite, "block", 5)
+	var mark := _authored_alternative(termite, "debuff", 1)
+	_check(not bite.is_empty() and not shell.is_empty() and not mark.is_empty(),
+		"precondition: the authored Termite alternatives exist")
+	if bite.is_empty() or shell.is_empty() or mark.is_empty():
+		return
+	# AC3: six Block and full 40 HP lose the Block, then the full six HP.
+	var party := _party()
+	_check(party.get_hero(1).get("id") == "warden"
+		and party.get_hero(1).get("hp") == 40 and party.gain_block(1, 6),
+		"AC3 precondition: the living front Warden really holds 40 HP and six Block")
+	var case := _force_normal_alternative(termite, bite, party)
+	_check(not case.is_empty(), "AC3: the shipped bite binds as a real announcement")
+	if case.is_empty():
+		return
+	_check(case.intents.size() == 1 and case.intents[0].get("type") == "attack"
+		and int(case.intents[0].get("amount", -1)) == 6
+		and case.intents[0].get("target_position") == 1,
+		"AC3: the real announcement is the authored six-damage bite on the front hero")
+	var committed: int = case.rng.state
+	var untouched: Array = [party.get_hero(2), party.get_hero(3)]
+	var receipt := CombatEnemyPhase.new().execute_phase(party, case.enemies,
+		case.intents, null, true)
+	_check(receipt == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 1, "applied": true}]},
+		"AC3: the cloth-eating bite publishes exactly one ordinary attack event")
+	_check(party.get_hero(1).get("block") == 0 and party.get_hero(1).get("hp") == 34,
+		"AC3: six Block are eaten first and the full six still reach Warden HP")
+	_check([party.get_hero(2), party.get_hero(3)] == untouched,
+		"AC3: the cloth-eating bite leaves the other two heroes exactly unchanged")
+	_check(case.rng.state == committed and case.scheduler.get_intents() == case.intents,
+		"AC3: the executed bite spends no extra run RNG and replays its announcement")
+	# AC3: more Block than damage is still eaten whole, not merely offset.
+	var heavy_party := _party()
+	_check(heavy_party.gain_block(1, 9),
+		"AC3 precondition: the front hero really holds nine Block")
+	var heavy := _force_normal_alternative(termite, bite, heavy_party)
+	if not heavy.is_empty():
+		var heavy_receipt := CombatEnemyPhase.new().execute_phase(heavy_party,
+			heavy.enemies, heavy.intents, null, true)
+		_check(heavy_receipt.get("ok") == true
+			and heavy_party.get_hero(1).get("block") == 0
+			and heavy_party.get_hero(1).get("hp") == 34,
+			"AC3: all nine Block are eaten and the full six still reach HP")
+	# AC3: the authored Block alternative never chews the hero's Block.
+	var shell_party := _party()
+	_check(shell_party.gain_block(1, 6),
+		"AC3 precondition: six Block before the standalone Block turn")
+	var shell_case := _force_normal_alternative(termite, shell, shell_party)
+	if not shell_case.is_empty():
+		var shell_receipt := CombatEnemyPhase.new().execute_phase(shell_party,
+			shell_case.enemies, shell_case.intents, null, true)
+		_check(shell_receipt.get("ok") == true and shell_receipt.get("events", []).size() == 1
+			and shell_receipt["events"][0].get("type") == "block"
+			and shell_receipt["events"][0].get("applied") == true,
+			"AC3: the standalone Block turn is one self-Block, never an attack")
+		_check(shell_case.enemies.get_enemy(1).get("block") == 5
+			and shell_party.get_hero(1).get("block") == 6
+			and shell_party.get_hero(1).get("hp") == 40,
+			"AC3: the Block turn grants 5 enemy Block and keeps the hero's six")
+	# AC3: the authored Exposed alternative never chews either.
+	var mark_party := _party()
+	_check(mark_party.gain_block(1, 6),
+		"AC3 precondition: six Block before the standalone Exposed turn")
+	var mark_case := _force_normal_alternative(termite, mark, mark_party)
+	if not mark_case.is_empty():
+		_check(mark_case.intents.size() == 1 and mark_case.intents[0].get("type") == "debuff"
+			and mark_case.intents[0].get("status") == "exposed"
+			and int(mark_case.intents[0].get("amount", -1)) == 1
+			and mark_case.intents[0].get("target_position") == 1,
+			"AC3: the Exposed alternative announces Exposed 1 on the front hero")
+		var mark_receipt := CombatEnemyPhase.new().execute_phase(mark_party,
+			mark_case.enemies, mark_case.intents, null, true)
+		_check(mark_receipt.get("ok") == true
+			and mark_receipt.get("events", [{}])[0].get("applied") == true,
+			"AC3: the Exposed turn resolves through the real phase")
+		_check(mark_party.get_hero(1).get("statuses", {}).get("exposed", 0) == 1
+			and mark_party.get_hero(1).get("block") == 6
+			and mark_party.get_hero(1).get("hp") == 40,
+			"AC3: an Exposed turn costs no Block and no HP")
+	# AC3: a slain Termite with a pending attack neither chews nor bites.
+	var slain_party := _party()
+	_check(slain_party.gain_block(1, 6),
+		"AC3 precondition: six Block before the slain Termite's beat")
+	var slain := _force_normal_alternative(termite, bite, slain_party)
+	if not slain.is_empty():
+		_check(slain.enemies.apply_damage(1, 26) and slain.enemies.is_slain(1),
+			"AC3 precondition: the Termite is genuinely slain before its beat")
+		var slain_heroes: Array = slain_party.get_heroes()
+		var slain_roster: Array = slain.enemies.get_enemies()
+		var slain_receipt := CombatEnemyPhase.new().execute_phase(slain_party,
+			slain.enemies, slain.intents, null, true)
+		_check(slain_receipt == {"ok": true, "events": [
+			{"type": "attack", "enemy_position": 1, "target_position": 1,
+				"applied": false}]},
+			"AC3: a slain Termite's announced bite resolves as one inert beat")
+		_check(slain_party.get_heroes() == slain_heroes
+			and slain.enemies.get_enemies() == slain_roster
+			and slain_party.get_hero(1).get("block") == 6,
+			"AC3: a slain Termite eats no Block and deals no damage")
+
+## AC4: both appended records reach the live ordinary-Fight catalog exactly once
+## through unmodified floor-band admission, inside a band the documented 1-4,
+## 5-8 and 9-11 rule owns, with no special-case reordering of the HP sort.
+func _test_bobbin_bat_quilt_termite_live_bands() -> void:
+	var material := RunAuthoredBattleEntry._floor_band_material(null)
+	_check(material.get("ok") == true,
+		"AC4: live floor-band material builds from the shipped catalogs")
+	if not material.get("ok", false):
+		return
+	var records: Dictionary = material.get("records", {})
+	var pools: Dictionary = material.get("pools", {})
+	_check(pools.size() == RunV3FloorBandRoster.BAND_KEYS.size(),
+		"AC4: live material carries exactly the three documented floor bands")
+	# The documented ordering is the only rule: HP ascending, ID as the tiebreak.
+	for band in RunV3FloorBandRoster.BAND_KEYS:
+		var candidates: Array = pools.get(band, [])
+		_check(candidates.size() >= RunV3FloorBandRoster.MIN_IDS_PER_BAND,
+			"AC4: band keeps the authored minimum candidate count: " + String(band))
+		var ordered := true
+		var distinct := {}
+		for index in range(candidates.size()):
+			var enemy_id: String = candidates[index]
+			distinct[enemy_id] = true
+			_check(records.has(enemy_id),
+				"AC4: every band candidate has a live record: " + enemy_id)
+			if not records.has(enemy_id) or index == 0 \
+					or not records.has(String(candidates[index - 1])):
+				continue
+			var previous: Dictionary = records[candidates[index - 1]]
+			var current: Dictionary = records[enemy_id]
+			if int(previous.get("max_hp", 0)) > int(current.get("max_hp", 0)):
+				ordered = false
+			elif int(previous.get("max_hp", 0)) == int(current.get("max_hp", 0)) \
+					and String(previous.get("id", "")) > String(current.get("id", "")):
+				ordered = false
+		_check(ordered, "AC4: band keeps the authored HP-then-ID order: " + String(band))
+		_check(distinct.size() == candidates.size(),
+			"AC4: band candidates are distinct: " + String(band))
+	for index in range(1, RunV3FloorBandRoster.BAND_KEYS.size()):
+		var earlier_band: String = RunV3FloorBandRoster.BAND_KEYS[index - 1]
+		var later_band: String = RunV3FloorBandRoster.BAND_KEYS[index]
+		var earlier_max := 0
+		for enemy_id in pools.get(earlier_band, []):
+			earlier_max = maxi(earlier_max, int(records.get(enemy_id, {}).get("max_hp", 0)))
+		var later_min := 0
+		var seeded := false
+		for enemy_id in pools.get(later_band, []):
+			var hp := int(records.get(enemy_id, {}).get("max_hp", 0))
+			later_min = hp if not seeded else mini(later_min, hp)
+			seeded = true
+		_check(seeded and earlier_max <= later_min,
+			"AC4: floor bands stay contiguous in authored HP order: %s -> %s"
+				% [earlier_band, later_band])
+	var expected := _bobbin_quilt_expected()
+	for id in expected:
+		var enemy_id := String(id)
+		_check(records.has(enemy_id), "AC4: live Fight records contain " + enemy_id)
+		if not records.has(enemy_id):
+			continue
+		_check(_norm(records[enemy_id]) == _norm(expected[id]),
+			"AC4: the live Fight record keeps every authored field: " + enemy_id)
+		var bands: Array[String] = []
+		for band in RunV3FloorBandRoster.BAND_KEYS:
+			if pools.get(band, []).has(enemy_id):
+				bands.append(band)
+		_check(bands.size() == 1,
+			"AC4: the new normal is eligible exactly once across the bands: " + enemy_id)
+		if bands.size() != 1:
+			continue
+		var band: String = bands[0]
+		var floor_number := _floor_in_band(band)
+		_check(floor_number > 0 and RunV3FloorBandRoster._band_for_floor(floor_number) == band,
+			"AC4: the owning band keeps its documented 1-4/5-8/9-11 floors: " + enemy_id)
+		if floor_number == 0:
+			continue
+		# A deterministic sampled group really mounts the new actor in its band.
+		var witness := 0
+		for value in range(1, 401):
+			var rng := RandomNumberGenerator.new()
+			rng.seed = value
+			var picked := RunV3FloorBandRoster.new().pick(floor_number, 2, rng,
+				material["pools"])
+			if picked.get("ok", false) and picked.get("enemy_ids", []).has(enemy_id):
+				witness = value
+				break
+		_check(witness > 0, "AC4: a deterministic sampled group contains " + enemy_id)
+		if witness == 0:
+			continue
+		var replay_rng := RandomNumberGenerator.new()
+		replay_rng.seed = witness
+		var first := RunV3FloorBandRoster.new().pick(floor_number, 2, replay_rng,
+			material["pools"])
+		var oracle_rng := RandomNumberGenerator.new()
+		oracle_rng.seed = witness
+		var oracle := _sampled_band_group(pools, band, 2, oracle_rng)
+		_check(first.get("ok") == true and first.get("band") == band
+			and first.get("enemy_ids", []) == oracle and replay_rng.state == oracle_rng.state,
+			"AC4: the sampled group matches the independent band oracle: " + enemy_id)
+		_check(oracle.has(enemy_id) and oracle.size() == 2,
+			"AC4: the sampled group really selects " + enemy_id)
+		# The selected authentic records build a real, executable roster.
+		var ordered_records: Array = []
+		for sampled_id in oracle:
+			ordered_records.append(records[sampled_id].duplicate(true))
+		var roster := CombatEnemies.new(ordered_records)
+		var index := oracle.find(enemy_id)
+		_check(roster.is_valid() and roster.get_enemies().size() == 2 and index >= 0,
+			"AC4: the sampled band group builds a real CombatEnemies roster: " + enemy_id)
+		if not roster.is_valid() or index < 0:
+			continue
+		var selected := roster.get_enemy(index + 1)
+		_check(selected.get("id") == enemy_id
+			and selected.get("hp") == int(expected[id]["max_hp"])
+			and selected.get("block") == 0,
+			"AC4: the selected slot keeps its authored full HP and zero Block: " + enemy_id)
 

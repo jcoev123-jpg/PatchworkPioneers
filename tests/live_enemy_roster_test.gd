@@ -2863,7 +2863,7 @@ func _mount_m05_pair(app, presenter, pool: Dictionary, target_id: String) -> Arr
 ## image: each exact ID maps to its own sewn fallback kind, binds no texture, keeps its
 ## authentic record, and the generic fallback stays for a fabricated ID. Presentation only.
 ## Take only legal connected Fight edges; no map graph, roster or run RNG is forged.
-## A genuine five-Fight route reaches the mid band where Felt Bulwark belongs.
+## A genuine route of connected Fights reaches the band where Felt Bulwark belongs.
 func _next_fight_chain(map: RunMap, origin: String, remaining: int) -> Array:
 	if remaining == 0:
 		return []
@@ -2876,7 +2876,9 @@ func _next_fight_chain(map: RunMap, origin: String, remaining: int) -> Array:
 	return []
 
 
-func _midband_m05_seed(first_seed: int = 1) -> Dictionary:
+func _band_m05_seed(first_seed: int, target_floor: int) -> Dictionary:
+	if target_floor < 1:
+		return {}
 	for value in range(first_seed, 30000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
@@ -2886,26 +2888,43 @@ func _midband_m05_seed(first_seed: int = 1) -> Dictionary:
 		for first in map.get_legal_choices():
 			if map.get_node(first).get("type") != "Fight":
 				continue
-			var tail := _next_fight_chain(map, first, 4)
-			if tail.size() == 4:
+			var tail := _next_fight_chain(map, first, target_floor - 1)
+			if tail.size() == target_floor - 1:
 				return {"seed": value, "nodes": [first] + tail}
 	return {}
 
 
-## Drive real title, node controls, Fight wins and Skip/Continue until floor 5,
-## and check the unillustrated mid-band actor on its actual mounted stage.
-func _midband_felt_bulwark(app, presenter, first_seed: int = 1, attempts: int = 0) -> void:
-	var seed_info := _midband_m05_seed(first_seed)
+## Felt Bulwark's own live floor band, read from the shared authored catalog
+## split instead of pinning one floor: ordinary normals are a shared catalog, so
+## another accepted enemy can legitimately move a record between bands.
+func _felt_bulwark_floor() -> int:
+	var oracle := preload("res://tests/floor_band_oracle.gd")
+	for key in oracle.bands():
+		if oracle.bands()[key].has("felt_bulwark"):
+			return int(String(key).split("-")[0])
+	return 0
+
+
+## Drive real title, node controls, Fight wins and Skip/Continue until Felt
+## Bulwark's own band floor, and check the unillustrated actor on its actual
+## mounted stage.
+func _band_felt_bulwark(app, presenter, first_seed: int = 1, attempts: int = 0) -> void:
+	var target_floor := _felt_bulwark_floor()
+	_check(target_floor >= 1 and target_floor <= 11,
+		"Felt Bulwark belongs to one legal normal floor band")
+	if target_floor < 1:
+		return
+	var seed_info := _band_m05_seed(first_seed, target_floor)
 	var found := false
-	_check(not seed_info.is_empty() and seed_info.get("nodes", []).size() == 5,
-		"a seed has five genuinely connected Fight choices through floor five")
+	_check(not seed_info.is_empty() and seed_info.get("nodes", []).size() == target_floor,
+		"a seed has %d genuinely connected Fight choices through floor %d" % [target_floor, target_floor])
 	if seed_info.is_empty():
 		return
 	app.run_seed = int(seed_info.seed)
 	app.route_button.pressed.emit()
 	await process_frame
 	var reached := true
-	for floor_index in range(5):
+	for floor_index in range(target_floor):
 		var node_id: String = seed_info.nodes[floor_index]
 		var route_control: Button = null
 		for candidate in app.route_buttons:
@@ -2927,7 +2946,7 @@ func _midband_felt_bulwark(app, presenter, first_seed: int = 1, attempts: int = 
 		if app.enemies == null:
 			reached = false
 			break
-		if floor_index == 4:
+		if floor_index == target_floor - 1:
 			break
 		# Victory fixture uses authentic CombatEnemies damage APIs, not an
 		# injected Fight group, outcome or test-only selector.
@@ -2943,26 +2962,26 @@ func _midband_felt_bulwark(app, presenter, first_seed: int = 1, attempts: int = 
 		await process_frame
 		app.continue_button.pressed.emit()
 		await process_frame
-	if reached and app.enemies != null and app.run_map.get_current_floor() == 5:
+	if reached and app.enemies != null and app.run_map.get_current_floor() == target_floor:
 		var current_ids: Array = app.enemies.get_enemies().map(
 			func(record): return record.id)
 		var records: Dictionary = preload("res://tests/floor_band_oracle.gd").records()
-		_check(preload("res://tests/floor_band_oracle.gd").legal_group(current_ids, 5),
-			"floor-five mounted actors are distinct members of the authored mid band")
+		_check(preload("res://tests/floor_band_oracle.gd").legal_group(current_ids, target_floor),
+			"floor-%d mounted actors are distinct members of the authored band" % target_floor)
 		_check(current_ids.size() == app.enemy_intents._definitions.size()
 			and presenter._puppets.size() == CombatParty.PARTY_SIZE + current_ids.size(),
-			"floor-five group preserves its independent typed encounter arity and mounted controls")
+			"floor-%d group preserves its independent typed encounter arity and mounted controls" % target_floor)
 		# Test every actually selected actor's authentic record. M05's Felt
 		# Bulwark has an identifiable art-free puppet when it is drawn.
 		for i in range(current_ids.size()):
 			var record: Dictionary = app.enemies.get_enemy(i + 1)
 			var authored: Dictionary = records[current_ids[i]]
 			_check(record.id == authored.id and record.max_hp == int(
-				RunNormalAttackFloorScaling.scale_normal_max_hp(int(authored.max_hp), 5).max_hp)
+				RunNormalAttackFloorScaling.scale_normal_max_hp(int(authored.max_hp), target_floor).max_hp)
 				and record.name == authored.name and record.position == i + 1
 				and record.hp == int(RunNormalAttackFloorScaling.scale_normal_max_hp(
-					int(authored.max_hp), 5).max_hp),
-				"mid-band actor keeps authenticated catalog stats and source slot: " + str(record) + " versus " + str(authored))
+					int(authored.max_hp), target_floor).max_hp),
+				"band actor keeps authenticated catalog stats and source slot: " + str(record) + " versus " + str(authored))
 			if current_ids[i] == "felt_bulwark":
 				var host = presenter._puppets[CombatParty.PARTY_SIZE + i]
 				var before := _snapshot(app)
@@ -2991,11 +3010,11 @@ func _midband_felt_bulwark(app, presenter, first_seed: int = 1, attempts: int = 
 		await process_frame
 	if not found:
 		if attempts < 20:
-			await _midband_felt_bulwark(app, presenter, int(seed_info.seed) + 1, attempts + 1)
+			await _band_felt_bulwark(app, presenter, int(seed_info.seed) + 1, attempts + 1)
 		else:
-			_check(false, "bounded distinct seeded connected floor-five Fights mount Felt Bulwark")
+			_check(false, "bounded distinct seeded connected band Fights mount Felt Bulwark")
 	else:
-		_check(found, "authentic routed floor-five group includes and mounts Felt Bulwark")
+		_check(found, "authentic routed band group includes and mounts Felt Bulwark")
 
 
 func _m05_fallbacks(app, presenter) -> void:
@@ -3036,7 +3055,7 @@ func _m05_fallbacks(app, presenter) -> void:
 			var admitted: Array = await _mount_m05_pair(app, presenter, pool, actor_id)
 			if admitted.has(actor_id):
 				mounted[actor_id] = true
-	await _midband_felt_bulwark(app, presenter)
+	await _band_felt_bulwark(app, presenter)
 	for actor_id in M05_NORMALS:
 		if preload("res://tests/floor_band_oracle.gd").band_ids(1).has(actor_id):
 			_check(mounted.has(actor_id),

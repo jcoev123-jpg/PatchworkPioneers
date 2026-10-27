@@ -80,12 +80,21 @@ func _attack_patch_purchases() -> void:
 	var slots := RunAuthoredPatchDefinitions.load_definitions()
 	for target in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm", "HEAD", "ARM", "COAT"]:
 		var fixture: Dictionary = {}
-		var next_seed: int = {"stitched_badge": 3841, "spare_spool": 2927, "quilted_coat": 40281, "button_eye": 4640, "pincushion_arm": 8845, "HEAD": 4752, "ARM": 1060, "COAT": 2255}.get(target, 1)
+		var next_seed: int = {"stitched_badge": 3841, "spare_spool": 2927, "quilted_coat": 40281, "button_eye": 4640, "pincushion_arm": 18695, "HEAD": 4752, "ARM": 1060, "COAT": 2255}.get(target, 1)
 		var found := false
 		for attempt in range(240):
 			fixture = _sequence_fixture(["Shop", "Fight"], next_seed)
-			if fixture.is_empty() or not await _routed_win(fixture, false):
+			if fixture.is_empty():
 				break
+			if not await _routed_win(fixture, false):
+				# A re-split floor band can make one authentic seed's opening
+				# fight unwinnable for this fixture; move to the next genuine
+				# seed instead of abandoning the target. Outcomes are never
+				# injected: the stock below is still rolled by the real service.
+				next_seed = fixture.seed + 1
+				app._return_to_title()
+				await _frames()
+				continue
 			await _click(app.reward_buttons[3])
 			await _click(app.continue_button)
 			_fund_shop_fixture()
