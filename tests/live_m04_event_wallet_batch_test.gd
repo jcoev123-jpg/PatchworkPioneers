@@ -59,17 +59,21 @@ const EVENT_WALLET_HINTS := preload("res://tests/event_wallet_hints.gd")
 ## real map generation, the same toll draw sequence and the same single sorted
 ## pool draw. The pairs are re-derived from the shipped catalog and run RNG (not
 ## a frozen pool total, order or list), so an unintended selector change fails
-## here while the bounded search below still covers every required ID. The seven
+## here while the bounded search below still covers every required ID. The
 ## appended pairs were found by scanning seeds for a genuine six-Event route and
 ## taking whatever the authentic single pool draw then returned; they restore
-## the required IDs whose former witnesses shifted when the hero pack grew, and
-## were re-derived once more after the six gothic trade tales joined the pool.
-const OWED_WITNESSES := {1825487: "v3_warden_shield_menders", 8131558: "v3_saffron_button_harvest",
-	1517032: "v3_frosted_pincushion", 680308: "v3_stone_button_forge",
-	7946489: "v3_seamstress_crimson_mending_queue", 775148: "button_trail",
-	8432984: "v3_tinker_gearhouse_midnight", 8482256: "v3_mossbutton_weather_station",
-	8551107: "estate_sale", 8718701: "thimble_star_reading", 9109934: "v3_seamstress_thread_cart",
-	9248794: "v3_copper_bell_choir", 9848435: "v3_briar_pin_checkpoint"}
+## the required IDs whose former witnesses shifted each time the Event pool grew,
+## most recently when the six hero-gated V3-4 stories joined it. Every pair still
+## names its owed Event; only the seed that reaches it was re-derived.
+const OWED_WITNESSES := {
+	449195: "v3_warden_shield_menders", 807198: "v3_saffron_button_harvest",
+	4045188: "v3_frosted_pincushion", 723106: "v3_stone_button_forge",
+	1634832: "v3_seamstress_crimson_mending_queue", 9848435: "button_trail",
+	1405687: "v3_tinker_gearhouse_midnight", 12876289: "v3_mossbutton_weather_station",
+	611184: "estate_sale", 1333364: "thimble_star_reading",
+	1390606: "v3_seamstress_thread_cart", 2017177: "v3_copper_bell_choir",
+	292590: "v3_briar_pin_checkpoint", 2431350: "thimble_well",
+	5158685: "ragpicker_cart", 7959444: "v3_patchwork_lighthouse"}
 ## The hero-tied stories added by this batch: each must reach the real routed
 ## panel through the ordinary required-ID loop below and settle its authored
 ## signed wallet change at least once.
