@@ -5,6 +5,9 @@ extends RefCounted
 ## and enemy attack reactions.
 
 const WARDEN_ID := "warden"
+## One-shot Dodge is an integer token on the hero's statuses: 1 is armed, 0 is
+## inert. Spending it removes the key, exactly like CombatStatuses does.
+const DODGE_STATUS_KEY := "dodge_next_attack"
 const ALLOWED_CARD_IDS: Array[String] = [
 	"warden_draw_fire",
 	"warden_draw_fire_plus",
@@ -522,7 +525,27 @@ func resolve_enemy_attack(party_val: Variant, enemies_val: Variant, attack_val: 
 	var actual_target: int = preview["actual_target_position"]
 	var redirected: bool = preview["redirected"]
 
-	# 4. Apply damage to actual target
+	# 4. A genuine one-shot Dodge on the real recipient makes this attempt miss.
+	# The token is spent on the authoritative hero record only after the actual
+	# recipient (Guard redirect included) is known: no HP, Block or retarget
+	# change, and no Thorns retaliation for a hit that never landed. A malformed
+	# token fails closed, exactly like a malformed attack.
+	var dodge_token: int = _dodge_token(party, actual_target)
+	if dodge_token < 0:
+		return fail_res
+	if dodge_token == 1 and _spend_dodge(party, actual_target):
+		return {
+			"ok": true,
+			"success": true,
+			"applied": false,
+			"target_position": actual_target,
+			"actual_target_position": actual_target,
+			"redirected": redirected,
+			"retaliation_damage": 0,
+			"retaliatory_damage": 0,
+		}
+
+	# 5. Apply damage to actual target
 	var applied: bool = party.apply_damage(actual_target, amount)
 	if not applied:
 		return {
@@ -536,7 +559,7 @@ func resolve_enemy_attack(party_val: Variant, enemies_val: Variant, attack_val: 
 			"retaliatory_damage": 0,
 		}
 
-	# 5. Retaliate with Thorns if Warden was hit
+	# 6. Retaliate with Thorns if the Warden's own hit really landed
 	var retaliatory_damage: int = 0
 	if actual_target == warden_pos and thorns > 0:
 		retaliatory_damage = thorns
@@ -562,3 +585,31 @@ func _find_warden_position(party: CombatParty) -> int:
 		if hero.get("id") == WARDEN_ID:
 			return int(hero.get("position", 0))
 	return 0
+
+
+## 1 when the fixed-slot hero really carries an armed one-shot Dodge, 0 when it
+## carries none (absent or inert), -1 when the token is malformed. Read-only.
+static func _dodge_token(party: CombatParty, position: int) -> int:
+	if party == null or not party.is_valid() \
+			or position < 1 or position > CombatParty.PARTY_SIZE:
+		return -1
+	var raw_statuses: Variant = party._heroes[position - 1].get("statuses", {})
+	if not raw_statuses is Dictionary:
+		return -1
+	var raw_token: Variant = (raw_statuses as Dictionary).get(DODGE_STATUS_KEY, 0)
+	if not raw_token is int:
+		return -1
+	var token: int = raw_token as int
+	if token != 0 and token != 1:
+		return -1
+	return token
+
+
+## Spends exactly one armed token on the authoritative hero record, so the
+## consumed Dodge publishes with the rest of the attack.
+static func _spend_dodge(party: CombatParty, position: int) -> bool:
+	if _dodge_token(party, position) != 1:
+		return false
+	var statuses: Dictionary = party._heroes[position - 1]["statuses"]
+	statuses.erase(DODGE_STATUS_KEY)
+	return true
