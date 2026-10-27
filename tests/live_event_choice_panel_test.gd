@@ -1857,7 +1857,7 @@ func _test_needle_carryover() -> void:
 		and carry.create_next_fight_party() != null, "later rest and fight hydration replay toll history successfully")
 
 
-func _test_needle_toll() -> void:
+func _test_needle_toll(seed_value: int = 245, require_empty_targets: bool = false) -> void:
 	var heroes: Array = CombatParty.new([
 		{"id": "warden", "max_hp": 40}, {"id": "seamstress", "max_hp": 30},
 		{"id": "tinker", "max_hp": 26}]).get_heroes()
@@ -1867,7 +1867,7 @@ func _test_needle_toll() -> void:
 	var context := {"heroes": heroes, "wallet": {"gold": 0, "scraps": 0},
 		"deck": ["warden_strike"]}
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 245
+	rng.seed = seed_value
 	var outcome := RunNeedleToll.new(context, rng)
 	var state: int = rng.state
 	_check(outcome.is_open() and panel.open_needle_toll(outcome), "real toll contract mounts")
@@ -1877,6 +1877,8 @@ func _test_needle_toll() -> void:
 		"only the living hero at the exact 7 HP boundary is presented")
 	_check(panel.get_choice_buttons()[1].text == outcome.get_event().choices[1].text,
 		"safe exit keeps the authored +1 scrap wording")
+	_check(panel.get_choice_buttons()[0].text == "Pay toll with selected hero: -6 HP; choose a rare card",
+		"first-stage payment caption stays exact")
 	var old: Callable = panel.get_choice_buttons()[0].pressed.get_connections()[0].callable
 	var count := committed.size()
 	panel.hide()
@@ -1901,18 +1903,83 @@ func _test_needle_toll() -> void:
 	_check(not panel._selector.is_claimed(), "old generation cannot commit reopened toll")
 	panel.close_event()
 	var paid := outcome.pay_toll("tinker")
+	var paid_rng: int = rng.state
+	var paid_snapshot := outcome.get_snapshot()
+	var caller_snapshot := context.duplicate(true)
+	var offered := outcome.get_offered_ids()
 	_check(paid.ok and paid.heroes[2].hp == 1 and paid.offered_ids.size() == 2,
 		"boundary payer pays exactly six and supplies two real rare cards")
+	if not paid.ok or offered.size() != 2:
+		return
+	_check(offered.size() == 2 and offered[0] != offered[1] and offered == paid.offered_ids,
+		"paid service supplies two distinct authoritative IDs")
 	_check(panel.open_needle_toll(outcome), "paid rare offers mount")
 	await _frames()
 	_check(panel.needle_payer == null and panel.get_choice_buttons().size() == 3,
 		"paid offering has two cards and Skip without stale payer")
+	if panel.get_choice_buttons().size() != 3 or panel.get_choice_cues().size() != 3:
+		_check(false, "paid offer requires three actual mounted tickets and cues")
+		return
+	var saw_empty_targets := false
 	for index in range(2):
-		_check(panel._bound_choices[panel.get_choice_buttons()[index]] == paid.offered_ids[index]
-			and panel.get_choice_buttons()[index].text.contains("rare")
-			and Rect2(0, 0, 1280, 720).encloses(panel.get_choice_buttons()[index].get_global_rect()),
-			"rare offer identity is bound to a visible control that fits")
+		# Query the authored catalogs directly, independently of the UI resolver.
+		var definition: Dictionary = {}
+		for catalog in [WardenPoolCards.new(), SeamstressPoolCards.new(), TinkerPoolCards.new()]:
+			var candidate: Dictionary = catalog.get_definition(offered[index])
+			if not candidate.is_empty():
+				definition = candidate
+		_check(RunPoolCardRewardOffers.resolve_reward_definition(offered[index]) == definition,
+			"offered ID resolver matches the independent authored catalog")
+		_check(not definition.is_empty() and definition.get("rarity") == "rare",
+			"independent definition exists and is rare")
+		if definition.is_empty():
+			return
+		_check(not definition.display_name.is_empty() and not definition.owner.is_empty(),
+			"resolved card name and owner are nonempty")
+		var button := panel.get_choice_buttons()[index]
+		_check(panel._bound_choices[button] == offered[index]
+			and button.text.contains(definition.display_name)
+			and button.text.contains(definition.owner) and button.text.contains("rare")
+			and button.text.contains("Cost %d energy" % definition.cost)
+			and not CardShortRules.line(definition).is_empty()
+			and button.text.contains(CardShortRules.line(definition)),
+			"mounted ticket prints independently resolved name, owner, rarity, cost and rules")
+		var sources: Array[String] = []
+		for position in definition.from_positions:
+			sources.append(str(position))
+		var targets: Array[String] = []
+		for position in definition.to_positions:
+			targets.append(str(position))
+		saw_empty_targets = saw_empty_targets or targets.is_empty()
+		var meanings := {"self": "self (the acting hero)", "ally_single": "one ally",
+			"party_all": "every hero in the party", "enemy_single": "one enemy", "enemy_all": "every enemy"}
+		_check(meanings.has(definition.target_kind), "actual target kind has an explicit semantic oracle")
+		var legend := "Source positions: %s\nTarget: %s; target positions: %s" % [
+			", ".join(sources), meanings.get(definition.target_kind, "INVALID"),
+			", ".join(targets) if not targets.is_empty() else "none specified"]
+		_check(button.tooltip_text == button.text + "\n" + legend,
+			"tooltip uses exact authored sources and target semantics, including empty slots")
+		var style := button.get_theme_stylebox("normal")
+		var text_size := button.get_theme_font("font").get_multiline_string_size(button.text,
+			HORIZONTAL_ALIGNMENT_CENTER, button.size.x - style.get_minimum_size().x,
+			button.get_theme_font_size("font_size"))
+		_check(text_size.y <= button.size.y - style.get_minimum_size().y,
+			"wrapped authored ticket text fits inside its styled content area")
+	if require_empty_targets:
+		_check(saw_empty_targets, "paid fixture exercises an authored empty target-position legend")
+	for index in range(3):
+		var button := panel.get_choice_buttons()[index]
+		var cue := panel.get_choice_cues()[index]
+		_check(button.is_visible_in_tree() and cue.is_visible_in_tree() and cue.text == str(index + 1)
+			and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect())
+			and button.get_global_rect().encloses(cue.get_global_rect()),
+			"both rare tickets, Skip and their sewn cues fit the viewport")
+	_check(panel.get_choice_buttons()[2].text == "Skip - take no card" and rng.state == paid_rng,
+		"opening and inspecting the paid cards preserves Skip and post-payment RNG")
+	count = committed.size()
 	await _mouse(panel.get_choice_buttons()[1])
+	await _key(KEY_1)
+	_check(committed.size() == count + 1, "paid mouse and repeated key emit at most one intent")
 	_check(committed.back().choice_id == paid.offered_ids[1] and outcome.is_paid(),
 		"mouse chooses exactly the second offered card without mutating rules")
 	panel.close_event()
@@ -1920,6 +1987,22 @@ func _test_needle_toll() -> void:
 	await _frames()
 	await _key(KEY_3)
 	_check(committed.back().choice_id == "skip", "physical third key reaches Skip")
+	for key in [KEY_1, KEY_2, KEY_ENTER, KEY_SPACE]:
+		panel.close_event()
+		_check(panel.open_needle_toll(outcome), "same authentic paid offer reopens for card keyboard input")
+		await _frames()
+		var index := 0 if key == KEY_1 else 1
+		if key == KEY_ENTER or key == KEY_SPACE:
+			await _key(KEY_TAB)
+			_check(panel.get_choice_buttons()[1].has_focus(), "Tab reaches second paid rare ticket")
+		count = committed.size()
+		await _key(key)
+		await _key(key)
+		_check(committed.size() == count + 1 and committed.back().choice_id == offered[index],
+			"physical card key or focused activation selects exact offered ID once")
+	_check(rng.state == paid_rng and outcome.get_snapshot() == paid_snapshot
+		and context == caller_snapshot and outcome.get_offered_ids() == offered,
+		"opening, inspection, card selection, replay and Skip consume no RNG or ledger state")
 	panel.close_event()
 	heroes[2].hp = 6
 	var denied := RunNeedleToll.new(context, rng)
@@ -2023,6 +2106,7 @@ func _run() -> void:
 	await _test_backdrop_fallback()
 	await _test_wallet_rejection_and_generation()
 	await _test_needle_toll()
+	await _test_needle_toll(1, true)
 	_test_needle_carryover()
 	_finish()
 
