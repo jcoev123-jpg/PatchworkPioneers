@@ -394,38 +394,81 @@ func _test_needle_marshal_thorns() -> void:
 		"fixture: ragling_guard companion from starter catalog")
 	var enemies := _marshal_roster(marshal, escort)
 	var party := _party()
-	# AC2: confirmed positive hit retaliates exactly 3, with hero block first.
-	var pre := enemies.get_enemy(1)
-	_check(pre.get("id") == "needle_marshal" and pre.get("thorns") == 3
-		and pre.get("bleed_on_attack") == true,
-		"fixture: living Marshal pre-hit snapshot has thorns 3 and bleed flag")
-	var result := rules.resolve_thorns_retaliation(party, 1, pre, _receipt(5, 0, 5))
+	# AC2: real confirmed positive hit via resolve_vs_enemy on authored Marshal.
+	var hit_enemies := _marshal_roster(marshal.duplicate(true), escort.duplicate(true))
+	var hit_pre := hit_enemies.get_enemy(1)
+	var hit_receipt := attacks.resolve_vs_enemy(hit_enemies, 1, 5, {}, {})
+	_check(hit_receipt.get("ok", false) and hit_receipt.get("damage") == 5,
+		"AC2: authentic positive-damage receipt from real marshal hit")
+	var hit_before_heroes := party.get_heroes()
+	var result := rules.resolve_thorns_retaliation(party, 1, hit_pre, hit_receipt)
 	_check(result == {"ok": true, "applied": true, "thorns": 3,
 		"block_absorbed": 0, "hp_loss": 3},
-		"AC2: confirmed positive hit retaliates exactly Thorns 3 to attacking hero")
+		"AC2: confirmed positive hit retaliates exactly Thorns 3")
+	# Assert precise enemy state change: Marshal lost 5 HP, no block.
+	_check(hit_enemies.get_enemy(1).get("hp") == 23,
+		"AC2: real marshal HP dropped from 28 to 23 after 5 damage")
+	# Assert actual hero state change from retaliation.
+	var attacker_after := party.get_hero(1)
+	_check(attacker_after.get("hp") == 37,
+		"AC2: attacking hero lost 3 HP from retaliation")
+	# Assert untouched other heroes.
+	_check(party.get_hero(2) == hit_before_heroes[1] and party.get_hero(3) == hit_before_heroes[2],
+		"AC2: other heroes untouched by retaliation")
+	# Assert pre-hit snapshot and receipt are immutable.
+	_check(hit_pre.get("id") == "needle_marshal" and hit_pre.get("hp") == 28
+		and hit_pre.get("thorns") == 3,
+		"AC2: pre-hit marshal snapshot unchanged after retaliation")
+	_check(hit_receipt.get("ok") == true and hit_receipt.get("damage") == 5,
+		"AC2: original receipt unchanged after retaliation")
 	# AC2: fully enemy-Block-absorbed hit still retaliates 3.
-	var blocked_result := rules.resolve_thorns_retaliation(party, 1, pre,
-		_receipt(5, 5, 0))
+	var blocked_enemies := _marshal_roster(marshal.duplicate(true), escort.duplicate(true))
+	blocked_enemies.gain_block(1, 10)
+	var blocked_pre := blocked_enemies.get_enemy(1)
+	var blocked_receipt := attacks.resolve_vs_enemy(blocked_enemies, 1, 5, {}, {})
+	_check(blocked_receipt.get("ok", false) and blocked_receipt.get("damage") == 5
+		and blocked_receipt.get("block_absorbed") == 5 and blocked_receipt.get("hp_loss") == 0,
+		"AC2: fully blocked positive hit produces authentic receipt")
+	var blocked_result := rules.resolve_thorns_retaliation(party, 1, blocked_pre, blocked_receipt)
 	_check(blocked_result == {"ok": true, "applied": true, "thorns": 3,
 		"block_absorbed": 0, "hp_loss": 3},
 		"AC2: fully blocked positive hit still retaliates 3")
+	# Assert blocked marshal still at 28 HP; retaliation hits attacker.
+	_check(blocked_enemies.get_enemy(1).get("hp") == 28,
+		"AC2: blocked marshal HP unchanged at 28")
 	# AC2: partial hero Block absorbs retaliation first.
 	var partial_party := _party()
 	partial_party.gain_block(1, 1)
 	var partial_before := partial_party.get_hero(1)
-	var partial_result := rules.resolve_thorns_retaliation(partial_party, 1, pre,
-		_receipt(5, 0, 5))
+	# Build fresh marshal for partial-block case.
+	var partial_enemies := _marshal_roster(marshal.duplicate(true), escort.duplicate(true))
+	var partial_pre := partial_enemies.get_enemy(1)
+	var partial_receipt := attacks.resolve_vs_enemy(partial_enemies, 1, 5, {}, {})
+	var partial_result := rules.resolve_thorns_retaliation(partial_party, 1, partial_pre, partial_receipt)
 	_check(partial_result == {"ok": true, "applied": true, "thorns": 3,
 		"block_absorbed": 1, "hp_loss": 2},
 		"AC2: hero partial block (1) absorbs retaliation before HP (3 -> 1 block + 2 hp)")
-	# AC3: zero-damage receipt does not retaliate.
-	var zero_result := rules.resolve_thorns_retaliation(party, 1, pre, _receipt(0, 0, 0))
+	var partial_attacker_after := partial_party.get_hero(1)
+	_check(partial_attacker_after.get("block") == 0 and partial_attacker_after.get("hp") == 38,
+		"AC2: partial block hero: 1 block + 2 hp lost = 3 retaliation")
+	# AC3: zero-damage receipt generated through the real bridge.
+	var zero_enemies := _marshal_roster(marshal.duplicate(true), escort.duplicate(true))
+	var zero_pre := zero_enemies.get_enemy(1)
+	var zero_receipt := attacks.resolve_vs_enemy(zero_enemies, 1, 0, {}, {})
+	_check(zero_receipt.get("ok", false) and zero_receipt.get("damage") == 0,
+		"AC3: zero-damage receipt generated through real resolve_vs_enemy bridge")
+	# Verify no mutation by zero-damage retaliation.
+	var zero_before_heroes := party.get_heroes()
+	var zero_result := rules.resolve_thorns_retaliation(party, 1, zero_pre, zero_receipt)
 	_check(zero_result == {"ok": true, "applied": false, "thorns": 3,
 		"block_absorbed": 0, "hp_loss": 0},
 		"AC3: zero-damage receipt produces no retaliation")
+	# Verify no mutation by zero-damage retaliation.
+	_check(party.get_heroes() == zero_before_heroes,
+		"AC3: party unchanged after zero-damage retaliation")
 	# AC3: failed receipt fails closed.
 	var fail_before := party.get_heroes()
-	var fail_result := rules.resolve_thorns_retaliation(party, 1, pre,
+	var fail_result := rules.resolve_thorns_retaliation(party, 1, zero_pre,
 		{"ok": false, "damage": 5, "block_absorbed": 0, "hp_loss": 5})
 	_check(fail_result == {"ok": false, "applied": false, "thorns": 0,
 		"block_absorbed": 0, "hp_loss": 0}
@@ -443,12 +486,12 @@ func _test_needle_marshal_thorns() -> void:
 	var state_before := rng.state
 	seed(99999)
 	var global_before := randi()
-	rules.resolve_thorns_retaliation(party, 1, pre, _receipt(0, 0, 0))
+	rules.resolve_thorns_retaliation(party, 1, hit_pre, _receipt(0, 0, 0))
 	_check(rng.state == state_before,
 		"AC3: zero-thorns receipt consumes no local RNG state")
 	seed(99999)
 	_check(randi() == global_before,
 		"AC3: non-hit probe consumes no global RNG")
 	# AC1: existing bleed-on-attack preserved in authored record.
-	_check(pre.get("bleed_on_attack") == true,
+	_check(marshal.get("bleed_on_attack") == true,
 		"AC1: Marshal retains bleed_on_attack true for bleeding sting")
