@@ -115,7 +115,7 @@ vertical_alignment = 1
 [node name="Hint" type="Label" parent="PaperPanel/Margins/Body/Foot"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Kit preview only  ·  not live  ·  positions assigned later"
+text = "Continue in authored positions"
 horizontal_alignment = 1
 vertical_alignment = 1
 

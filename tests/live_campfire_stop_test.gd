@@ -177,6 +177,7 @@ func _camp_scenario(connected: bool, heal: bool, keyboard: bool, opening_rest: b
 	else:
 		app.run_seed = fixture.seed
 		await _click(app.start_button)
+		preload("res://tests/party_choice.gd").choose(app)
 		await _frames()
 	await _camp_enter(keyboard)
 	await _camp_negatives()

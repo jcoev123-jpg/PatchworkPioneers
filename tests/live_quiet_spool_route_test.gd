@@ -441,6 +441,7 @@ func _moth_outcomes() -> void:
 	seed(720074)
 	app.run_seed = 8
 	await _click(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
 	var opening := _route_action("f01_n1")
 	_check(app.run_map.get_node("f01_n1").get("type") == "Event" and is_instance_valid(opening),
 		"zero-scrap opening has a real first Event")
@@ -565,6 +566,7 @@ func _run() -> void:
 				else:
 					app.run_seed = fixture.seed
 					await _click(app.start_button)
+					preload("res://tests/party_choice.gd").choose(app)
 				var before_stale := _event_state()
 				for callback in stale:
 					if callback.is_valid():
@@ -725,6 +727,7 @@ func _run() -> void:
 	# Abandon an unresolved visit, then prove its live callbacks cannot reach a new one.
 	app.run_seed = 6
 	await _click(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
 	await _click(_route_action("f01_n1"))
 	var old_panel: LiveEventChoicePanel = app.quiet_spool_panel
 	var abandoned: Callable = old_panel.choice_committed.get_connections()[0].callable
@@ -736,6 +739,7 @@ func _run() -> void:
 	_check(app.find_children("EventBackdrop", "Control", true, false).is_empty(),
 		"title return releases the abandoned Event art bed")
 	await _click(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
 	await _click(_route_action("f01_n1"))
 	_reject_event(abandoned.bind("quiet_spool", "watch"), "abandoned signal in fresh seeded visit")
 	_reject_event(abandoned_click, "abandoned choice in fresh seeded visit")
@@ -751,6 +755,7 @@ func _run() -> void:
 	app._return_to_title()
 	await _frames()
 	await _click(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
 	await _click(_route_action("f01_n1"))
 	await _click(app.quiet_spool_panel.get_choice_buttons()[1])
 	_check(app.run_scraps == 0, "fresh Ignore has independent outcome")

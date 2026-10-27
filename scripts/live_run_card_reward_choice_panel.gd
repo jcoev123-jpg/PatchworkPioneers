@@ -9,6 +9,11 @@ const OWNER_COLORS := {
 	"warden": Color("#4a5d73"),
 	"seamstress": Color("#6e4f6b"),
 	"tinker": Color("#c49a3a"),
+	"lantern_monk": Color("#466c65"),
+	"rag_duelist": Color("#823e62"),
+	"scarecrow": Color("#77613d"),
+	"yarn_ranger": Color("#426785"),
+	"button_golem": Color("#5c577e"),
 }
 
 const RARITY_COLORS := {

@@ -239,8 +239,8 @@ func _run() -> void:
 		and _readout(picker)[1].contains("before choosing three"),
 		"fresh open has neutral guidance, not an auto-focused hero")
 	var hint: Label = picker.get_node("PaperPanel/Margins/Body/Foot/Hint")
-	_check(hint.text.contains("not live") and hint.text.contains("positions assigned later"),
-		"screen labels signatures as preview and selection order as non-positional")
+	_check(hint.text.contains("Continue") and hint.text.contains("positions"),
+		"screen explains live continuation and authored positions")
 	_check(not cancel.disabled and action.disabled, "fresh zero selection gate")
 	_check(picker.selected_ids().is_empty(), "fresh selection is empty")
 	var before_json := FileAccess.get_file_as_string("res://data/heroes/starter_party.json")
@@ -368,7 +368,229 @@ func _run() -> void:
 		"view changed no authoritative authored hero data")
 	picker.queue_free()
 	await _frames()
+	await _live_start_checks()
 	_finish()
+
+
+func _opening_state(app) -> Array:
+	return [app.run_map, app.run_rng, app.run_deck.duplicate(), app.run_heroes.duplicate(true),
+		app.session_gold, app.run_scraps, app.party_carryover, app.deck]
+
+
+func _journey() -> Dictionary:
+	for value in range(1, 2500):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		map.generate(rng)
+		for rest in map.get_legal_choices():
+			if map.get_node(rest).type != "Rest":
+				continue
+			for shop in map.get_node(rest).outgoing:
+				if map.get_node(shop).type != "Shop":
+					continue
+				for first in map.get_node(shop).outgoing:
+					if map.get_node(first).type != "Fight":
+						continue
+					for second in map.get_node(first).outgoing:
+						if map.get_node(second).type in ["Fight", "Elite"]:
+							return {"seed": value, "nodes": [rest, shop, first, second]}
+	return {}
+
+
+func _route_button(app, id: String) -> Button:
+	for button in app.route_buttons:
+		if button.get_meta("route_id") == id:
+			return button
+	return null
+
+
+func _live_start_checks() -> void:
+	var app = load("res://scenes/app.tscn").instantiate()
+	root.add_child(app)
+	await _frames()
+	var idle := _opening_state(app)
+	seed(17931)
+	var expected := randi()
+	seed(17931)
+	await _mouse(app.start_button)
+	var view: LiveV3PartyPicker = app.party_picker
+	_check(is_instance_valid(view) and view.grid.get_child_count() == 8,
+		"real title Start mounts all eight selectable heroes")
+	if not is_instance_valid(view):
+		app.free()
+		return
+	var old_request: Callable = view.party_requested.get_connections()[0].callable
+	var old_cancel: Callable = view.cancel_requested.get_connections()[0].callable
+	for raw in [["warden", "tinker"], ["warden", "tinker", "seamstress", "scarecrow"],
+		["warden", "warden", "tinker"], ["warden", "seamstress", "tinker"]]:
+		var forged: Array[String] = []
+		forged.assign(raw)
+		view.party_requested.emit(forged)
+		old_request.call(forged)
+		view.cancel_requested.emit()
+		_check(_opening_state(app) == idle and app.party_picker == view,
+			"forged valid/invalid request and cancel allocate and spend nothing")
+	await _mouse(_tile(view, "warden"))
+	await _key(_tile(view, "tinker"), KEY_SPACE)
+	view.continue_button.pressed.emit()
+	_check(_opening_state(app) == idle and view.continue_button.disabled,
+		"two picks cannot Continue")
+	await _key(view.cancel_button, KEY_ENTER)
+	_check(app.party_picker == null and _opening_state(app) == idle and app.title_view.visible,
+		"authentic Cancel retires picker without creating run")
+	_check(randi() == expected, "picker failures, inputs and Cancel consume no global RNG")
+	await _mouse(app.start_button)
+	var legacy: Array[String] = ["warden", "seamstress", "tinker"]
+	old_request.call(legacy)
+	old_cancel.call()
+	_check(app.run_map == null and is_instance_valid(app.party_picker), "retired opening callbacks cannot start or cancel fresh picker")
+	app._return_to_title()
+	var fixture := _journey()
+	_check(not fixture.is_empty(), "authentic Rest-Shop-Fight-next-Fight/Elite path found")
+	if fixture.is_empty():
+		app.free()
+		return
+	for trio in [["scarecrow", "rag_duelist", "lantern_monk"], ["yarn_ranger", "tinker", "button_golem"]]:
+		var replay: Array = []
+		for attempt in range(3):
+			app.run_seed = fixture.seed
+			await _mouse(app.start_button)
+			view = app.party_picker
+			var retired: Callable = view.party_requested.get_connections()[0].callable
+			for id in trio:
+				await _key(_tile(view, id), KEY_SPACE)
+			var admission := RunV3PartyAdmission.admit(trio)
+			_check(admission.ok and view.selected_ids().size() == 3, "nondefault request is canonically admitted")
+			await _key(view.continue_button, KEY_ENTER)
+			_check(app.run_map != null and app.party_picker == null and app.run_rng != null,
+				"real Continue publishes legal seeded run and retires picker")
+			if app.run_map == null:
+				app._return_to_title()
+				continue
+			var initial := CombatParty.new(admission.party).get_heroes()
+			_check(app.run_heroes == initial and app.run_deck == admission.deck and app.run_deck.size() == 12,
+				"authored canonical order, HP, passive metadata and exactly four starters per hero")
+			var state := _opening_state(app)
+			retired.call(legacy)
+			old_request.call(legacy)
+			app._start_run()
+			_check(_opening_state(app) == state, "repeated Continue and all stale openings preserve run identity")
+			var cards: Array = app.run_deck.duplicate()
+			app.run_deck[0] = "unknown"
+			_check(not app._unfought_run(), "tampered initial deck cannot borrow valid opening wallet admission")
+			app.run_deck.assign(cards)
+			if attempt == 2:
+				# Use the shipped preview's explicit wallet fixture before entering visits.
+				# The ordinary replay pair retains zero resources and twelve cards.
+				var boot = root.get_node("LiveWebPlaytestBoot")
+				boot._preview_map = weakref(app.run_map)
+				app.session_gold = boot.GOLD
+				app.run_scraps = boot.SCRAPS
+				app._clear_route_view()
+				app._present_connected_route(weakref(app.run_map))
+			var trace: Array = [app.run_map.get_floors(), app.run_heroes.duplicate(true), app.run_deck.duplicate(), app.run_rng.state]
+			var torn_id := ""
+			for index in range(fixture.nodes.size()):
+				var id: String = fixture.nodes[index]
+				var button := _route_button(app, id)
+				_check(button != null and not button.disabled, "authentic connected choice is present and enabled")
+				if button == null:
+					break
+				if index == 2:
+					var before := [app.run_map.get_route(), app.run_rng.state, app.session_gold, app.run_scraps]
+					app.run_deck.append("warden_strike")
+					button.pressed.emit()
+					_check(app.deck == null and [app.run_map.get_route(), app.run_rng.state, app.session_gold, app.run_scraps] == before,
+						"foreign starter rejected before map or RNG mutation after visits")
+					app.run_deck.pop_back()
+					var carry: RunTornCarryover = app.party_carryover
+					var hero_id: String = initial[0].id
+					carry.torn._tear_counts[hero_id] = 1
+					button.pressed.emit()
+					_check(app.deck == null and [app.run_map.get_route(), app.run_rng.state, app.session_gold, app.run_scraps] == before,
+						"invalid torn ledger rejected atomically before first battle")
+					carry.torn._tear_counts[hero_id] = 0
+				var carried: Array = app.run_heroes.duplicate(true)
+				await _mouse(button)
+				if index == 0:
+					_check(is_instance_valid(app.campfire_view), "chosen trio reaches real Campfire from Rest source")
+					if is_instance_valid(app.campfire_view):
+						await _mouse(app.campfire_leave_button)
+				elif index == 1:
+					_check(is_instance_valid(app.shop_view), "chosen trio reaches real Peddler")
+					if is_instance_valid(app.shop_view):
+						if attempt == 2:
+							var gold_before: int = app.session_gold
+							var price: int = app.peddler_visit.read_state().stock.cards[0].price
+							await _mouse(app.peddler_buttons[0])
+							_check(app.party_carryover._wardrobe != null and app.session_gold == gold_before - price
+								and app.run_deck.size() == 13, "real chosen card purchase binds wardrobe and spends exact service quote")
+						else:
+							await _mouse(app.peddler_leave_button)
+				else:
+					_check(app.deck != null and app.party != null and app.party_carryover is RunTornCarryover,
+						"chosen party enters actual routed battle")
+					if app.deck == null:
+						break
+					var hydrated: Array = app.party.get_heroes()
+					for hero in hydrated:
+						hero.block = 0
+					_check(hydrated == carried and app.deck.energy == 3 and app.deck.hand.size() == 5,
+						"authoritative party hydration, energy three and opening draw five")
+					var dealt: Array = app.deck.hand + app.deck.draw_pile + app.deck.discard_pile
+					var wanted: Array = app.run_deck.duplicate()
+					dealt.sort()
+					wanted.sort()
+					_check(dealt == wanted, "single run deck deals every starter/claimed occurrence exactly once")
+					_check(app._quilt_bonus != null and app._quilt_turn_open, "real battle begins chosen-party Quilt tracking")
+					for card in app.deck.hand:
+						var definition := RunRestStitchCards.resolve_card_definition(card)
+						_check(not definition.is_empty() and app._quilt_owners_of(card) == [definition.owner],
+							"real held V3 card resolves its chosen Quilt owner")
+					if index == 2:
+						torn_id = app.party.get_hero(1).id
+						_check(app.party.apply_damage(1, app.party.get_hero(1).hp + app.party.get_hero(1).block), "one chosen hero genuinely downed")
+					for enemy in app.enemies.get_enemies():
+						_check(app.enemies.apply_damage(enemy.position, enemy.hp + enemy.block), "authoritative enemy damage witnesses victory")
+					app._observe_battle_result()
+					_check(app._battle_closed, "real victory observation closes battle")
+					_check(app.party_carryover.can_commit_victory(id, app.battle_result, app.party),
+						"real victory can commit chosen carryover")
+					await _frames()
+					_check(app.battle_result.get_outcome() == CombatBattleResult.VICTORY and app.reward_buttons.size() == 4,
+						"actual victory prepares nonempty three-card reward and Skip")
+					if app.reward_buttons.size() != 4:
+						break
+					_check(app.fight_reward_offers.size() == 3, "prepared reward has three offers")
+					for offer in app.fight_reward_offers:
+						var definition := RunPoolCardRewardOffers.resolve_reward_definition(offer.id)
+						_check(not definition.is_empty() and definition.owner in admission.hero_ids and definition.owner == offer.owner,
+							"every live reward resolves to chosen owner's authored base pool")
+					var selected: String = app.fight_reward_offers[0].id
+					var prior_cards: Array = app.run_deck.duplicate()
+					await _mouse(app.reward_buttons[0])
+					prior_cards.append(selected)
+					_check(app.fight_reward_claimed and app.run_deck == prior_cards,
+						"genuine chosen reward claim commits exactly one chosen-only card")
+					_check(app.party_carryover.torn.read_state().tear_counts[torn_id] == 1,
+						"chosen hero's one tear persists through claim and second battle")
+					_check(app.run_heroes == app.party_carryover.read_state().heroes,
+						"reward publishes authoritative chosen carryover")
+					trace.append([app.run_heroes.duplicate(true), app.run_deck.duplicate(), app.run_rng.state,
+						app.party_carryover.torn.read_state()])
+					await _mouse(app.continue_button)
+			_check(app.party_carryover.read_state().completed_fights.size() == 2,
+				"both genuine routed fights completed with chosen party")
+			if attempt == 0:
+				replay = trace.duplicate(true)
+			elif attempt == 1:
+				_check(trace == replay, "same-seed nondefault journey replays map, party, deck, RNG, rewards and tears exactly")
+			app._return_to_title()
+			_check(app.party_picker == null and app._party_receipt.is_empty() and _opening_state(app) == idle,
+				"Return clears selected admission and every run model and wallet")
+	app.free()
+	await _frames()
 
 
 func _finish() -> void:

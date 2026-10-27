@@ -1,6 +1,7 @@
 extends SceneTree
-## Scene-free Enemy keyword regressions: the Enrage confirmed-hit quote and the
-## unchanged Thorns N retaliation contract it shares validation helpers with.
+## Scene-free Enemy keyword regressions: the Enrage confirmed-hit quote and its
+## authoritative stack commit, the unchanged Thorns N retaliation contract they
+## share validation helpers with, and the shipped Marshal Enrage metadata.
 
 const ELITE_CATALOG_PATH := "res://data/enemies/m04_elites.json"
 const STARTER_CATALOG_PATH := "res://data/enemies/starter_enemies.json"
@@ -22,6 +23,12 @@ func _initialize() -> void:
 	_test_immutability_replay_and_rng()
 	_test_thorns_contract_unchanged()
 	_test_needle_marshal_thorns()
+	_test_enrage_commit_contract()
+	_test_enrage_commit_chain()
+	_test_enrage_commit_blocked_zero_and_lethal()
+	_test_enrage_commit_inert_sources()
+	_test_enrage_commit_rejections()
+	_test_enrage_commit_replay_and_rng()
 	if failures.is_empty():
 		print("combat_enemy_keyword_rules_test: PASS (", checks, " checks)")
 	else:
@@ -103,12 +110,19 @@ func _confirmed(enemies: CombatEnemies, damage: int, label: String,
 	return [pre, receipt]
 
 
-## Strict on-disk catalog lookup through the shipped parser. Exactly one record
-## must carry this ID; the returned dictionary is detached from the parse.
-func _catalog_record(path: String, id: String) -> Dictionary:
+## Strict on-disk catalog parse through the shipped parser. Callers look records
+## up by ID: never by catalog total or list position.
+func _catalog_records(path: String) -> Array:
 	var records := RunTypedBattleRoster._parse_catalog_text(
 		FileAccess.get_file_as_string(path))
 	_check(not records.is_empty(), "fixture: shipped catalog parses " + path)
+	return records
+
+
+## Strict on-disk catalog lookup through the shipped parser. Exactly one record
+## must carry this ID; the returned dictionary is detached from the parse.
+func _catalog_record(path: String, id: String) -> Dictionary:
+	var records := _catalog_records(path)
 	var matches: Array = records.filter(func(record: Dictionary) -> bool:
 		return record.get("id") == id)
 	_check(matches.size() == 1,
@@ -375,6 +389,49 @@ func _test_needle_marshal_thorns() -> void:
 		and marshal.get("bleed_on_attack") == true
 		and marshal.get("art_path") == "res://assets/paper/enemies/needle_marshal.png",
 		"AC1: authored Needle Marshal fields intact with thorns 3 and bleed_on_attack true")
+	# AC1: V3-2 Enrage is authored as a genuine boolean on the Marshal alone, and
+	# the record starts with no committed stacks.
+	_check(marshal.get("enrage") is bool and marshal.get("enrage") == true
+		and not marshal.has("enrage_stacks"),
+		"AC1: the shipped Marshal authors boolean enrage true at zero stacks")
+	_check(marshal.get("max_hp") is int and marshal.get("thorns") is int,
+		"AC1: the Enrage Marshal keeps genuine integer HP and Thorns metadata")
+	var marshal_intent: Dictionary = marshal.get("intent", {})
+	_check(marshal_intent.get("target") == "front"
+		and marshal_intent.get("actions", []).size() == 4,
+		"AC1: the Enrage Marshal keeps its front target and four alternatives")
+	var marshal_actions: Array = []
+	for raw in marshal_intent.get("actions", []):
+		var weighted := CombatEnemyIntents.weighted_action(raw)
+		var body: Dictionary = weighted.get("action", {}).duplicate(true)
+		body["weight"] = weighted.get("weight", 0)
+		marshal_actions.append(body)
+	_check(marshal_actions == [
+			{"type": "attack", "amount": 5, "weight": 2},
+			{"type": "attack", "amount": 4, "weight": 2},
+			{"type": "buff", "amount": 3, "weight": 1},
+			{"type": "shove", "amount": 0, "direction": 1, "weight": 1}],
+		"AC1: the four exact weighted alternatives are unchanged")
+	var enraged_records: Array = _catalog_records(ELITE_CATALOG_PATH).filter(
+		func(record: Dictionary) -> bool:
+			return record.get("enrage") is bool and record.get("enrage") == true)
+	_check(enraged_records.size() == 1
+		and enraged_records[0].get("id") == "needle_marshal",
+		"AC1: the shipped Elite catalog authors Enrage on the Marshal alone")
+	for id in ["spool_hexer", "scissor_bailiff", "zipper_hauler",
+			"needle_briar_guard", "spool_snarekeeper", "pincushion_matriarch",
+			"spool_leech"]:
+		var other := _catalog_record(ELITE_CATALOG_PATH, id)
+		_check(not other.is_empty() and not other.has("enrage"),
+			"AC1: the named older Elite gains no Enrage flag " + id)
+	var older_hp := {"spool_hexer": 24, "scissor_bailiff": 36, "zipper_hauler": 38,
+		"needle_briar_guard": 42, "spool_snarekeeper": 40,
+		"pincushion_matriarch": 44, "spool_leech": 42}
+	for id in older_hp:
+		var older := _catalog_record(ELITE_CATALOG_PATH, id)
+		_check(older.get("id") == id and older.get("max_hp") == older_hp[id]
+			and older.get("max_hp") is int,
+			"AC1: the named older Elite keeps its exact HP " + id)
 	# Existing companions remain untouched.
 	_check(_catalog_record(ELITE_CATALOG_PATH, "spool_hexer").get("max_hp") == 24
 		and not _catalog_record(ELITE_CATALOG_PATH, "spool_hexer").has("thorns"),
@@ -383,8 +440,9 @@ func _test_needle_marshal_thorns() -> void:
 		"AC1: scissor_bailiff unchanged")
 	# AC1: typed pool and encounter routing intact.
 	var typed_text := FileAccess.get_file_as_string(TYPED_POOLS_PATH)
-	_check(typed_text.contains("needle_marshal_elite"),
-		"AC1: typed battle pool contains needle_marshal_elite route")
+	_check(typed_text.contains("needle_marshal_elite")
+		and typed_text.contains("res://data/encounters/needle_marshal_elite.json"),
+		"AC1: typed battle pool contains the needle_marshal_elite route and schedule")
 	var encounter_text := FileAccess.get_file_as_string(MARSHAL_ENCOUNTER_PATH)
 	_check(encounter_text.contains("["),
 		"AC1: needle_marshal_elite encounter file parses")
@@ -495,3 +553,349 @@ func _test_needle_marshal_thorns() -> void:
 	# AC1: existing bleed-on-attack preserved in authored record.
 	_check(marshal.get("bleed_on_attack") == true,
 		"AC1: Marshal retains bleed_on_attack true for bleeding sting")
+
+
+## The shipped typed Marshal route assembled by the production roster bridge from
+## the real catalog, encounter schedule and roster bindings.
+func _typed_marshal_roster() -> CombatEnemies:
+	var schedule := RunFightEncounterSelection._parse_schedule_text(
+		FileAccess.get_file_as_string(MARSHAL_ENCOUNTER_PATH))
+	_check(not schedule.is_empty(),
+		"fixture: the shipped needle_marshal_elite schedule parses")
+	var assembled := RunTypedBattleRoster.new().assemble(
+		{"success": true, "node_type": "Elite",
+		"encounter_id": "needle_marshal_elite", "definitions": schedule},
+		{"needle_marshal_elite": ["needle_marshal", "ragling_guard"]},
+		[ELITE_CATALOG_PATH, STARTER_CATALOG_PATH])
+	var enemies: CombatEnemies = assembled.get("enemies")
+	_check(assembled.get("ok", false) and enemies != null and enemies.is_valid()
+		and enemies.get_enemies().size() == 2
+		and enemies.get_enemy(1).get("id") == "needle_marshal"
+		and enemies.get_enemy(1).get("enrage") == true
+		and enemies.get_enemy(1).get("hp") == 28
+		and enemies.get_enemy(2).get("id") == "ragling_guard"
+		and enemies.get_enemy(2).get("hp") == 12
+		and not enemies.get_enemy(1).has("enrage_stacks"),
+		"fixture: production typed roster carries the living Enrage Marshal at zero stacks")
+	return enemies
+
+
+## One exact expected roster derived from an earlier snapshot: only the Marshal's
+## HP, Block and committed stack count may differ.
+func _roster_with(initial: Array, hp: int, stacks: Variant, block: int = 0) -> Array:
+	var expected := initial.duplicate(true)
+	expected[0]["hp"] = hp
+	expected[0]["block"] = block
+	if stacks == null:
+		expected[0].erase("enrage_stacks")
+	else:
+		expected[0]["enrage_stacks"] = stacks
+	return expected
+
+
+## Anonymous enemies and receipts are never mutated by a commit, and a commit that
+## decides not to apply cannot touch any roster field.
+func _commit(enemies: CombatEnemies, position: int, pre_hit_enemy: Dictionary,
+		receipt: Dictionary, label: String) -> Dictionary:
+	var roster_before := enemies.get_enemies()
+	var pre_before := pre_hit_enemy.duplicate(true)
+	var receipt_before := receipt.duplicate(true)
+	var result := rules.commit_enrage_after_hit(
+		enemies, position, pre_hit_enemy, receipt)
+	_check(pre_hit_enemy == pre_before and receipt == receipt_before,
+		label + ": commit leaves the pre-hit snapshot and receipt unchanged")
+	if result.get("ok", false) and not result.get("applied", true):
+		_check(enemies.get_enemies() == roster_before,
+			label + ": an inert commit changes no roster field")
+	return result
+
+
+## A rejected commit must fail closed: no result, no roster change, no input change.
+func _expect_commit_failure(enemies: CombatEnemies, position: int,
+		pre_hit_enemy: Dictionary, receipt: Dictionary, label: String) -> void:
+	var roster_before: Array = [] if enemies == null else enemies.get_enemies()
+	var pre_before := pre_hit_enemy.duplicate(true)
+	var receipt_before := receipt.duplicate(true)
+	var result := rules.commit_enrage_after_hit(
+		enemies, position, pre_hit_enemy, receipt)
+	_check(result == _failure(),
+		label + ": commit reports ok=false with no stacks or attack bonus")
+	_check(pre_hit_enemy == pre_before and receipt == receipt_before,
+		label + ": failed commit leaves its inputs unchanged")
+	if enemies != null:
+		_check(enemies.get_enemies() == roster_before,
+			label + ": failed commit changes no roster HP, Block, statuses or stacks")
+
+
+## AC2: one commit call writes exactly the quoted stack on the same authoritative
+## Marshal and nothing else; its result is detached.
+func _test_enrage_commit_contract() -> void:
+	_check(rules.has_method("commit_enrage_after_hit"),
+		"scene-free keyword rules expose the authoritative Enrage commit")
+	var enemies := _typed_marshal_roster()
+	var initial := enemies.get_enemies()
+	var pre := enemies.get_enemy(1)
+	var receipt := attacks.resolve_vs_enemy(enemies, 1, 5, {}, {})
+	_check(receipt == _receipt(5, 0, 5),
+		"commit precondition: one authentic confirmed five-damage hit")
+	var result := _commit(enemies, 1, pre, receipt, "first commit")
+	_check(result == _enrage(1) and result.get("attack_bonus") == 2,
+		"the first confirmed hit persists exactly one stack and +2 attack")
+	_check(enemies.get_enemies() == _roster_with(initial, 23, 1),
+		"the commit writes only the stack: 28 -> 23 HP, zero Block, one stack")
+	result["enrage_stacks"] = 99
+	result["attack_bonus"] = 198
+	_check(enemies.get_enemy(1).get("enrage_stacks") == 1
+		and enemies.get_enemy(1).get("hp") == 23,
+		"mutating the returned result cannot alter the authoritative enemy")
+
+
+## AC2: successive confirmed hits on the real routed Marshal persist 1/+2, 2/+4,
+## 3/+6 and stop at the cap, with the complete roster proven after every call.
+func _test_enrage_commit_chain() -> void:
+	var enemies := _typed_marshal_roster()
+	var initial := enemies.get_enemies()
+	var expected := [[1, 2], [2, 4], [3, 6]]
+	for step in range(3):
+		var pre := enemies.get_enemy(1)
+		_check(pre.get("enrage") == true and pre.get("enrage_stacks", 0) == step
+			and pre.get("hp") == 28 - 4 * step,
+			"chain hit %d: genuine pre-hit snapshot at %d stacks" % [step, step])
+		var receipt := attacks.resolve_vs_enemy(enemies, 1, 4, {}, {})
+		_check(receipt == _receipt(4, 0, 4),
+			"chain hit %d: authentic confirmed four-damage receipt" % step)
+		var result := _commit(enemies, 1, pre, receipt, "chain hit %d" % step)
+		var want: Array = expected[step]
+		_check(result == _enrage(want[0]) and result.get("attack_bonus") == want[1],
+			"chain hit %d persists %d stacks and +%d attack"
+				% [step, want[0], want[1]])
+		_check(enemies.get_enemies()
+			== _roster_with(initial, 28 - 4 * (step + 1), want[0]),
+			"chain hit %d changes only the Marshal HP and stack count" % step)
+	var capped_pre := enemies.get_enemy(1)
+	var capped_receipt := attacks.resolve_vs_enemy(enemies, 1, 4, {}, {})
+	var capped_before := enemies.get_enemies()
+	var capped := _commit(enemies, 1, capped_pre, capped_receipt, "capped fourth hit")
+	_check(capped == _no_op(3),
+		"a fourth confirmed hit stays at three stacks and +6 attack")
+	_check(enemies.get_enemies() == capped_before,
+		"the capped fourth hit writes no stack and no other roster field")
+	_check(enemies.get_enemy(2).get("hp") == 12
+		and enemies.get_enemy(2).get("block") == 0,
+		"the escort keeps its exact HP and Block through the whole chain")
+
+
+## AC2/AC3: Block absorption, zero damage and a lethal hit each behave exactly
+## like the quote, and a slain source is never revived by its stack gain.
+func _test_enrage_commit_blocked_zero_and_lethal() -> void:
+	var blocked := _typed_marshal_roster()
+	_check(blocked.gain_block(1, 10), "fixture: ten Block absorbs the whole hit")
+	var blocked_initial := blocked.get_enemies()
+	var blocked_pre := blocked.get_enemy(1)
+	var blocked_receipt := attacks.resolve_vs_enemy(blocked, 1, 6, {}, {})
+	_check(blocked_receipt == _receipt(6, 6, 0),
+		"fixture: confirmed positive hit fully absorbed by defender Block")
+	var blocked_result := _commit(blocked, 1, blocked_pre, blocked_receipt,
+		"fully blocked hit")
+	_check(blocked_result == _enrage(1),
+		"a fully Block-absorbed positive hit still commits one stack")
+	_check(blocked.get_enemies() == _roster_with(blocked_initial, 28, 1, 4),
+		"the blocked commit keeps 28 HP, spends exactly six Block and adds one stack")
+
+	var idle := _typed_marshal_roster()
+	var idle_pre := idle.get_enemy(1)
+	var idle_receipt := attacks.resolve_vs_enemy(idle, 1, 0, {}, {})
+	_check(idle_receipt == _receipt(0, 0, 0),
+		"fixture: confirmed zero-damage receipt from the real bridge")
+	var idle_before := idle.get_enemies()
+	var idle_result := _commit(idle, 1, idle_pre, idle_receipt, "zero-damage hit")
+	_check(idle_result == _no_op(0),
+		"a zero-damage hit grants no stack and no bonus")
+	_check(idle.get_enemies() == idle_before,
+		"a zero-damage commit leaves every roster field as it was")
+
+	var lethal := _typed_marshal_roster()
+	_check(lethal.apply_damage(1, 23) and lethal.get_enemy(1).get("hp") == 5,
+		"fixture: the real Marshal is genuinely down to five HP")
+	var lethal_pre := lethal.get_enemy(1)
+	var lethal_receipt := attacks.resolve_vs_enemy(lethal, 1, 9, {}, {})
+	_check(lethal_receipt == _receipt(9, 0, 5) and lethal.is_slain(1),
+		"fixture: confirmed overkill receipt leaves the Marshal slain")
+	var lethal_result := _commit(lethal, 1, lethal_pre, lethal_receipt, "lethal hit")
+	_check(lethal_result == _enrage(1),
+		"a lethal confirmed hit still commits one stack")
+	_check(lethal.get_enemy(1).get("hp") == 0 and lethal.is_slain(1)
+		and lethal.get_enemy(1).get("enrage_stacks") == 1
+		and lethal.get_enemy(1).get("block") == 0,
+		"the slain Marshal stays dead at zero HP and only gains the stack")
+	_check(lethal.get_enemy(2).get("hp") == 12,
+		"the living escort is untouched by the lethal commit")
+
+
+## AC2/AC3: real non-Enrage sources stay inert with no new stack key.
+func _test_enrage_commit_inert_sources() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 55219
+	var rng_before := rng.state
+	seed(30411)
+	var global_before := randi()
+	seed(30411)
+	var hexer := _catalog_record(ELITE_CATALOG_PATH, "spool_hexer")
+	var escort := _catalog_record(STARTER_CATALOG_PATH, "ragling_guard")
+	_check(hexer.get("max_hp") == 24 and not hexer.has("enrage"),
+		"fixture: the real Spool Hexer authors no Enrage flag")
+	var plain := CombatEnemies.new([hexer.duplicate(true), escort.duplicate(true)])
+	_check(plain.is_valid() and plain.get_enemy(1).get("id") == "spool_hexer",
+		"fixture: a living non-Enrage Spool Hexer roster")
+	var plain_pre := plain.get_enemy(1)
+	var plain_receipt := attacks.resolve_vs_enemy(plain, 1, 5, {}, {})
+	var plain_before := plain.get_enemies()
+	var plain_result := _commit(plain, 1, plain_pre, plain_receipt, "non-Enrage hit")
+	_check(plain_result == _no_op(0),
+		"a confirmed hit on a non-Enrage source is an inert success")
+	_check(plain.get_enemies() == plain_before
+		and not plain.get_enemy(1).has("enrage_stacks"),
+		"a non-Enrage source gains no stack key and no other change")
+
+	var disabled_record := hexer.duplicate(true)
+	disabled_record["enrage"] = false
+	disabled_record["enrage_stacks"] = 2
+	var disabled := CombatEnemies.new([disabled_record, escort.duplicate(true)])
+	_check(disabled.is_valid() and disabled.get_enemy(1).get("enrage") == false
+		and disabled.get_enemy(1).get("enrage_stacks") == 2,
+		"fixture: explicitly disabled Enrage with leftover valid stack metadata")
+	var disabled_pre := disabled.get_enemy(1)
+	var disabled_receipt := attacks.resolve_vs_enemy(disabled, 1, 4, {}, {})
+	var disabled_before := disabled.get_enemies()
+	var disabled_result := _commit(disabled, 1, disabled_pre, disabled_receipt,
+		"disabled keyword hit")
+	_check(disabled_result == _no_op(0),
+		"an explicitly disabled keyword grants no stack or bonus")
+	_check(disabled.get_enemies() == disabled_before
+		and disabled.get_enemy(1).get("enrage_stacks") == 2,
+		"a disabled keyword keeps its leftover stack metadata untouched")
+	_check(rng.state == rng_before and randi() == global_before,
+		"inert Enrage commits consume no local seeded or global RNG")
+
+
+## AC3: bad rosters, slots, identities, metadata and receipts fail closed before
+## any write, and the untrusted pair stays inert until a genuine commit.
+func _test_enrage_commit_rejections() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 44801
+	var rng_before := rng.state
+	seed(91825)
+	var global_before := randi()
+	seed(91825)
+	var enemies := _typed_marshal_roster()
+	var pre := enemies.get_enemy(1)
+	var receipt := attacks.resolve_vs_enemy(enemies, 1, 4, {}, {})
+	_check(receipt == _receipt(4, 0, 4),
+		"rejection precondition: one authentic confirmed hit on the real Marshal")
+	var post_hit := enemies.get_enemies()
+	# The pair is otherwise valid: only the tested defect may reject it.
+	_expect_commit_failure(null, 1, pre, receipt, "null roster")
+	_expect_commit_failure(CombatEnemies.new([]), 1, pre, receipt, "invalid roster")
+	for bad_position in [0, -1, 4, 99]:
+		_expect_commit_failure(enemies, bad_position, pre, receipt,
+			"position outside the roster " + str(bad_position))
+	_expect_commit_failure(enemies, 2, pre, receipt,
+		"slot 1 snapshot committed on slot 2")
+	var wrong_id := pre.duplicate(true)
+	wrong_id["id"] = "spool_hexer"
+	_expect_commit_failure(enemies, 1, wrong_id, receipt, "mismatched enemy identity")
+	var wrong_max := pre.duplicate(true)
+	wrong_max["max_hp"] = 40
+	_expect_commit_failure(enemies, 1, wrong_max, receipt, "mismatched maximum HP")
+	var wrong_slot := pre.duplicate(true)
+	wrong_slot["position"] = 2
+	_expect_commit_failure(enemies, 1, wrong_slot, receipt, "snapshot from another slot")
+	var wrong_flag := pre.duplicate(true)
+	wrong_flag["enrage"] = false
+	_expect_commit_failure(enemies, 1, wrong_flag, receipt, "disagreeing enrage flag")
+	var stale_stacks := pre.duplicate(true)
+	stale_stacks["enrage_stacks"] = 2
+	_expect_commit_failure(enemies, 1, stale_stacks, receipt,
+		"stale committed stack count")
+	var stale_hp := pre.duplicate(true)
+	stale_hp["hp"] = 24
+	_expect_commit_failure(enemies, 1, stale_hp, receipt,
+		"post-hit snapshot reused as a pre-hit record")
+	for bad_flag in [1, "true", null, [], {}]:
+		var flagged := pre.duplicate(true)
+		flagged["enrage"] = bad_flag
+		_check(flagged.get("enrage") == bad_flag,
+			"fixture: non-boolean enrage flag " + str(bad_flag))
+		_expect_commit_failure(enemies, 1, flagged, receipt,
+			"non-boolean enrage flag " + str(bad_flag))
+	for bad_stacks in [-1, 4, 5, 1.5, "2", true, null, []]:
+		var stacked := pre.duplicate(true)
+		stacked["enrage_stacks"] = bad_stacks
+		_check(stacked.get("enrage_stacks") == bad_stacks,
+			"fixture: invalid stack count " + str(bad_stacks))
+		_expect_commit_failure(enemies, 1, stacked, receipt,
+			"invalid stack count " + str(bad_stacks))
+	for bad_record in [{}, {"enrage": true}, {"hp": 0, "enrage": true},
+			{"hp": -1, "enrage": true}, {"hp": "12", "enrage": true},
+			{"hp": 12, "block": -2, "enrage": true},
+			{"hp": 12, "thorns": -1, "enrage": true}]:
+		_expect_commit_failure(enemies, 1, bad_record, receipt,
+			"invalid pre-hit record " + str(bad_record))
+	_check(enemies.get_enemies() == post_hit,
+		"every rejected call leaves the complete post-hit roster untouched")
+
+	# Forged or other-target receipts on an untouched real roster.
+	var clean := _typed_marshal_roster()
+	var clean_pre := clean.get_enemy(1)
+	var clean_before := clean.get_enemies()
+	_check(clean_pre.get("hp") == 28 and clean_pre.get("block") == 0,
+		"fixture: untouched Marshal snapshot for forged-receipt cases")
+	for bad in [
+			{"ok": false, "damage": 4, "block_absorbed": 0, "hp_loss": 4},
+			{}, {"ok": true}, {"ok": true, "damage": 4, "block_absorbed": 0},
+			{"ok": 1, "damage": 4, "block_absorbed": 0, "hp_loss": 4},
+			{"ok": true, "damage": 4.5, "block_absorbed": 0, "hp_loss": 4},
+			{"ok": true, "damage": -4, "block_absorbed": 0, "hp_loss": 0},
+			{"ok": true, "damage": 4, "block_absorbed": 1, "hp_loss": 3},
+			{"ok": true, "damage": 4, "block_absorbed": 0, "hp_loss": 3},
+			{"ok": true, "damage": 4, "block_absorbed": 0, "hp_loss": 5},
+			{"ok": true, "damage": 4, "block_absorbed": 6, "hp_loss": 0},
+			{"ok": true, "damage": 30, "block_absorbed": 0, "hp_loss": 30}]:
+		_expect_commit_failure(clean, 1, clean_pre, bad,
+			"forged or other-target receipt " + str(bad))
+	_check(clean.get_enemies() == clean_before,
+		"forged receipts leave the full-health Marshal and its escort untouched")
+	_check(rng.state == rng_before and randi() == global_before,
+		"no failed commit consumes local seeded or global RNG")
+
+	# The genuine pair still commits once after every rejection.
+	var applied := _commit(enemies, 1, pre, receipt, "genuine pair after rejections")
+	_check(applied == _enrage(1) and enemies.get_enemy(1).get("enrage_stacks") == 1,
+		"a genuine confirmed hit still commits exactly one stack after rejections")
+
+
+## AC3: identical hits replay the same commit, and no commit touches any RNG.
+func _test_enrage_commit_replay_and_rng() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 60144
+	var rng_before := rng.state
+	seed(73921)
+	var global_before := randi()
+	seed(73921)
+	var first: Dictionary = {}
+	var first_roster: Array = []
+	for repeat in range(3):
+		var enemies := _typed_marshal_roster()
+		var pre := enemies.get_enemy(1)
+		var receipt := attacks.resolve_vs_enemy(enemies, 1, 4, {}, {})
+		var result := _commit(enemies, 1, pre, receipt, "commit replay %d" % repeat)
+		_check(result == _enrage(1),
+			"commit replay %d: deterministic one-stack result" % repeat)
+		if repeat == 0:
+			first = result.duplicate(true)
+			first_roster = enemies.get_enemies()
+		else:
+			_check(result == first and enemies.get_enemies() == first_roster,
+				"identical hits replay the same commit result and roster state")
+	_check(rng.state == rng_before, "Enrage commits consume no local seeded RNG")
+	_check(randi() == global_before, "Enrage commits consume no global RNG")

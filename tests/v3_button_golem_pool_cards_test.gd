@@ -378,12 +378,18 @@ func _test_starter_and_reward_isolation() -> void:
 		_check(not deck.has(card_id), card_id + " is absent from the live starting deck")
 		_check(not parsed.has(card_id), card_id + " is absent from the authored starter deck")
 
-	# The live D2-1 reward adapter still enumerates only the three wired hero pools.
-	var rewarded_ids: Dictionary = {}
+	# Cycle 332: a chosen Button Golem's base pool is a legal D2-1 reward; upgrades never are.
+	var rewarded: Dictionary = {}
 	for candidate: Dictionary in RewardOffersScript.get_authored_base_candidates():
-		rewarded_ids[str(candidate.get("id", ""))] = true
+		var id := str(candidate.get("id", ""))
+		_check(not rewarded.has(id), id + " is registered as a reward only once")
+		rewarded[id] = candidate
 	for base_id: String in catalog.get_base_ids():
-		_check(not rewarded_ids.has(base_id), base_id + " is not registered as a playable reward")
+		var record: Dictionary = rewarded.get(base_id, {})
+		_check(record.get("owner") == "button_golem"
+			and record.get("rarity") == catalog.get_definition(base_id).get("rarity"),
+			base_id + " is registered as a Button Golem reward with its authored rarity")
+		_check(not rewarded.has(base_id + "_plus"), base_id + "_plus is never a base reward")
 
 
 # ---------------------------------------------------------------------------------------------

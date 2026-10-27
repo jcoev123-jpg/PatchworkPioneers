@@ -290,6 +290,7 @@ func _plan(hand: Array[String], warden_id: String) -> Dictionary:
 func _open_route(seed_value: int) -> bool:
 	app.run_seed = seed_value
 	await _click(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
 	_check(app.run_map != null and is_instance_valid(app.route_view),
 		"physical title Start mounts the seeded opening route")
 	return app.run_map != null

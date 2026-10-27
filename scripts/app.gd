@@ -1337,22 +1337,83 @@ func _base_back(source: WeakRef) -> void:
 		base_button.grab_focus()
 
 
+var party_picker: LiveV3PartyPicker
+var _party_opening := 0
+var _party_receipt: Dictionary = {}
+
+
 func _start_run() -> void:
-	if deck != null or run_map != null:
+	if deck != null or run_map != null or is_instance_valid(party_picker) \
+		or not title_view.is_visible_in_tree():
 		return
-	_open_route()
+	_party_opening += 1
+	party_picker = load("res://scenes/v3_party_picker.tscn").instantiate()
+	add_child(party_picker)
+	party_picker.party_requested.connect(_admit_party.bind(weakref(party_picker), _party_opening))
+	party_picker.cancel_requested.connect(_cancel_party.bind(weakref(party_picker), _party_opening))
+	title_view.hide()
 
 
-func _open_route() -> void:
-	if deck != null or run_map != null:
+func _retire_party_picker() -> void:
+	_party_opening += 1
+	if is_instance_valid(party_picker):
+		party_picker._open = false
+		party_picker._latched = true
+		party_picker.hide()
+		remove_child(party_picker)
+		party_picker.queue_free()
+	party_picker = null
+
+
+func _cancel_party(source: WeakRef, opening: int) -> void:
+	if opening != _party_opening or source.get_ref() != party_picker \
+		or not is_instance_valid(party_picker) or not party_picker._latched or party_picker._open:
+		return
+	_retire_party_picker()
+	title_view.show()
+	start_button.grab_focus()
+
+
+func _admit_party(ids: Array[String], source: WeakRef, opening: int) -> void:
+	if opening != _party_opening or source.get_ref() != party_picker \
+		or not is_instance_valid(party_picker) or not party_picker.is_visible_in_tree() \
+		or not party_picker._latched or party_picker._open or ids != party_picker.selected_ids() \
+		or deck != null or run_map != null:
+		return
+	var receipt := RunV3PartyAdmission.admit(ids)
+	if not receipt.ok or _load_starter_deck().is_empty() or _load_party_definitions().is_empty():
+		_cancel_party(source, opening)
+		return
+	_open_route(receipt)
+	if run_map != null:
+		_retire_party_picker()
+	else:
+		_cancel_party(source, opening)
+
+
+func _open_route(admission: Dictionary = {}) -> void:
+	if deck != null or run_map != null or (is_instance_valid(party_picker) and admission.is_empty()):
+		return
+	if not admission.is_empty() and (not is_instance_valid(party_picker) \
+		or party_picker._open or not party_picker._latched \
+		or admission != RunV3PartyAdmission.admit(party_picker.selected_ids())):
+		return
+	var legacy := RunV3PartyAdmission.admit(["warden", "seamstress", "tinker"])
+	if not legacy.ok or _load_starter_deck().is_empty() or _load_party_definitions() != legacy.party:
 		return
 	# A fresh opening starts with no Path receipt; only this Base's Set out commits one.
 	run_seamstress_path_receipt = {}
 	run_warden_path_receipt = {}
 	run_tinker_path_receipt = {}
 	_route_from_base = false
-	var cards := _load_starter_deck()
-	var initial_party := CombatParty.new(_load_party_definitions())
+	var receipt := admission
+	if receipt.is_empty():
+		receipt = legacy
+	if receipt.get("ok") != true or receipt != RunV3PartyAdmission.admit(receipt.get("hero_ids")):
+		return
+	var cards: Array[String] = []
+	cards.assign(receipt.deck if not admission.is_empty() else _load_starter_deck())
+	var initial_party := CombatParty.new(receipt.party)
 	if cards.is_empty() or not initial_party.is_valid():
 		return
 	var carry := RunTornCarryover.new(initial_party.get_heroes())
@@ -1362,8 +1423,10 @@ func _open_route() -> void:
 	for hero in initial_party.get_heroes():
 		owners.append(hero.id)
 	for card in cards:
-		if not owners.has(StarterCards.new().get_definition(card).get("owner")):
+		if not owners.has(RunRestStitchCards.resolve_card_definition(card).get("owner")):
 			return
+	_party_receipt = receipt.duplicate(true)
+	_party_receipt.deck = cards.duplicate()
 	run_rng = RandomNumberGenerator.new()
 	run_rng.seed = run_seed
 	run_map = RunMap.new()
@@ -2837,7 +2900,8 @@ func _unfought_run() -> bool:
 			if _sewing_visits.get(id, []) != [run_map, run_map.get_generation_revision(), run_map.get_floors(), prefix]:
 				return false
 	if run_map.get_route().is_empty():
-		return run_deck == _load_starter_deck() and run_heroes == carry._initial \
+		return not _party_receipt.is_empty() and run_deck == _party_receipt.deck \
+			and carry._initial == CombatParty.new(_party_receipt.party).get_heroes() and run_heroes == carry._initial \
 			and carry.read_state().completed_rests.is_empty() and LiveWebPlaytestBoot.has_opening_wallet(self) \
 			and run_trinkets.is_empty() and run_removal_count == 0 \
 			and run_stitch_descriptors.is_empty() and run_next_stitch_id == 1
@@ -2929,6 +2993,16 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 	if not stitch_ledger.is_valid():
 		return false
 	var snapshot := stitch_ledger.get_snapshot()
+	var admitted_ids: Array = _party_receipt.get("hero_ids", [])
+	if admitted_ids.size() != CombatParty.PARTY_SIZE:
+		return false
+	for card in run_deck:
+		if run_stitch_descriptors.has(card):
+			for owner in run_stitch_descriptors[card].owners:
+				if owner not in admitted_ids:
+					return false
+		elif RunRestStitchCards.resolve_card_definition(card).get("owner") not in admitted_ids:
+			return false
 	var next_party := party_carryover.create_next_fight_party()
 	if next_party == null:
 		return false
@@ -6289,7 +6363,7 @@ func _quilt_owners_of(card_id: String) -> Array[String]:
 					and not owners.has(owner):
 				owners.append(str(owner))
 		return owners
-	var definition := StarterCards.new().get_definition(card_id)
+	var definition := RunRestStitchCards.resolve_card_definition(card_id)
 	if definition.is_empty():
 		definition = M02PositionCards.new().get_definition(card_id)
 	if definition.is_empty():
@@ -6764,6 +6838,8 @@ func _return_from_battle(button) -> void:
 
 
 func _return_to_title() -> void:
+	_retire_party_picker()
+	_party_receipt.clear()
 	if is_instance_valid(unpicker_view):
 		unpicker_view.free()
 	unpicker_view = null

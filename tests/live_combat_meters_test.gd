@@ -1815,6 +1815,7 @@ func _three_enemy_stage(app, presenter) -> void:
 		return
 	app.run_seed = fixture.seed
 	app.start_button.pressed.emit()
+	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()
 	var route_button: Button = null
 	for candidate in app.route_buttons:
@@ -3318,6 +3319,7 @@ func _finish() -> void:
 func _fixture_start(target) -> void:
 	if target.deck != null:
 		target.start_button.pressed.emit()
+		preload("res://tests/party_choice.gd").choose(target)
 		return
 	var started: bool = target._start_battle()
 	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

@@ -66,8 +66,8 @@ func _init(heroes: Variant = null, owned_trinket_ids: Variant = null,
 	_gold = gold
 	_cards = cards.duplicate(true)
 	_seed = run_seed
-	for hero_id in HERO_IDS:
-		_worn[hero_id] = {"HEAD": "", "ARM": "", "COAT": ""}
+	for hero in _heroes:
+		_worn[hero.id] = {"HEAD": "", "ARM": "", "COAT": ""}
 	_valid = true
 
 
@@ -246,7 +246,7 @@ func project_active(torn_state: Variant) -> Dictionary:
 
 
 func _find_wearer(patch_id: String) -> String:
-	for hero_id in HERO_IDS:
+	for hero_id in _worn:
 		for slot in SLOTS:
 			if _worn[hero_id][slot] == patch_id:
 				return hero_id
@@ -277,7 +277,7 @@ static func _valid_roster(heroes: Variant, require_starter: bool) -> bool:
 		if typeof(hero) != TYPE_DICTIONARY or not _id(hero.get("id")):
 			return false
 		var hero_id: String = hero["id"]
-		if not STARTING_HP.has(hero_id) or seen.has(hero_id):
+		if not hero_id in RunV3PartyAdmission.HERO_IDS or seen.has(hero_id):
 			return false
 		seen[hero_id] = true
 		for field in ["position", "hp", "max_hp", "block"]:

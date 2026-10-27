@@ -59,6 +59,7 @@ func _select_fight() -> bool:
 	for candidate in range(1, 25):
 		app.run_seed = candidate
 		await _click(app.start_button)
+		preload("res://tests/party_choice.gd").choose(app)
 		var selected: Button = null
 		if app.run_map != null:
 			for id in app.run_map.get_legal_choices():

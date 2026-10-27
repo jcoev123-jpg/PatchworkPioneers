@@ -271,6 +271,7 @@ func _abandon() -> void:
 	stale.call("bulwark")
 	_check(app.run_warden_path_choice == null and app.run_warden_path_receipt.is_empty(), "Back and retained choice abandon setup")
 	await _click(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
 	_check(app.run_warden_path_receipt.is_empty(), "title-only Start run grants no Path")
 	await _click(app.route_back_button)
 	await _click(app.base_button)

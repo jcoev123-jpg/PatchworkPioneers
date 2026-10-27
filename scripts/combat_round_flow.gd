@@ -51,7 +51,11 @@ func begin_fight() -> bool:
 		return false
 	# Authenticate an optional Path before clearing Block or drawing cards.
 	# Vanguard's zero is valid; a negative result is a forged receipt.
-	if not _opening_block.can_open():
+	var has_warden := false
+	for hero in _party.get_heroes():
+		has_warden = has_warden or hero.id == "warden"
+	if (has_warden and not _opening_block.can_open()) \
+		or (not has_warden and _opening_block.get_path_receipt() != null):
 		return false
 	# The optional battle-local projection is detached from the run wardrobe.
 	# Reject a malformed binding or a roster changed since its admission before
@@ -66,7 +70,7 @@ func begin_fight() -> bool:
 			return false
 	# Preflight checked the unique Warden and authentic carryover before mutation.
 	# A downed Warden is deliberately allowed without an opening latch.
-	var living_warden := not _party.is_downed(_opening_block._warden_position())
+	var living_warden := has_warden and not _party.is_downed(_opening_block._warden_position())
 	_party.start_player_turn()
 	if living_warden and not _opening_block.apply():
 		return false
@@ -252,7 +256,7 @@ func _valid_bindings() -> bool:
 	var ids: Array[String] = []
 	for index in range(CombatParty.PARTY_SIZE):
 		var hero: Dictionary = _party.get_hero(index + 1)
-		if hero.get("id") not in ["warden", "seamstress", "tinker"] \
+		if hero.get("id") not in RunV3PartyAdmission.HERO_IDS \
 				or hero["id"] in ids:
 			return false
 		# Run carryover can lower his cap after a tear or raise it with a coat.
