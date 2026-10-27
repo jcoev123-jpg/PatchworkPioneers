@@ -1,0 +1,17 @@
+{
+  "id": "frayed_debt_parcel",
+  "title": "Frayed Debt Parcel",
+  "description": "A stitched parcel offers borrowed craft, with a fraying debt tucked beneath the ribbon.",
+  "curse_id": "frayed_debt",
+  "offer_count": 2,
+  "rarity": "uncommon",
+  "exit_scraps": 1,
+  "once_per_run": true,
+  "visit_weight": 1,
+  "illustration_path": "res://assets/paper/ui/frayed_parcel_ticket.png",
+  "choices": [
+    {"id": "offer_0", "text": "Take the first uncommon card and one removable Frayed Debt curse."},
+    {"id": "offer_1", "text": "Take the second uncommon card and one removable Frayed Debt curse."},
+    {"id": "safe_exit", "text": "Leave the parcel and gather loose thread (+1 scrap)."}
+  ]
+}
