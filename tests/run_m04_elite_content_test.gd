@@ -34,7 +34,7 @@ const V3_ELITES := {
 ## The two earlier Elite records must survive the append unchanged.
 const LEGACY_ELITES := {
 	"needle_marshal": {
-		"name": "Needle Marshal", "max_hp": 28,
+		"name": "Needle Marshal", "max_hp": 28, "thorns": 3,
 		"art_path": "res://assets/paper/enemies/needle_marshal.png",
 		"target": "front",
 		"actions": [
@@ -53,9 +53,11 @@ const LEGACY_ELITES := {
 ## V3-2 appends two further harder Elites that reuse existing needle and spool
 ## puppets. They are authored content only: no encounter or floor-band pool
 ## binds them yet, so these checks read them by ID from the catalog itself.
+## The Guard's prickly needle silhouette now authors Thorns 3 ("attacker takes
+## N per hit"), proven against the real confirmed-hit retaliation service.
 const V3_2_ELITES := {
 	"needle_briar_guard": {
-		"name": "Needle Briar Guard", "max_hp": 42,
+		"name": "Needle Briar Guard", "max_hp": 42, "thorns": 3,
 		"art_path": "res://assets/paper/enemies/needle_marshal.png",
 		"target": "front",
 		"actions": [
@@ -72,6 +74,11 @@ const V3_2_ELITES := {
 			{"type": "attack", "amount": 8, "weight": 3}]}}
 ## Authored slot order for the two-record V3-2 roster fixtures.
 const V3_2_ORDER := ["needle_briar_guard", "spool_snarekeeper"]
+## Synthetic typed-encounter key used only to drive the production roster
+## assembler: the actors themselves come from the shipped catalog files, never
+## from a test-injected record. No shipped encounter routes this pair yet.
+const BRIAR_PROBE := "needle_briar_guard_thorns_probe"
+const BRIAR_PROBE_ROSTER := ["needle_briar_guard", "spool_snarekeeper"]
 const KEYWORD_ELITES := {
 	"pincushion_matriarch": {
 		"name": "Pincushion Matriarch", "max_hp": 44, "thorns": 4,
@@ -115,6 +122,7 @@ func _initialize() -> void:
 	_test_marshal_sting()
 	_test_v3_elites()
 	_test_v3_2_elites()
+	_test_briar_guard_thorns(_catalog(ELITES))
 	_test_keyword_elites()
 	_test_rejections()
 	for failure in failures:
@@ -947,6 +955,13 @@ func _authored_elite(records: Array, id: String, expected: Dictionary) -> Dictio
 		and record.get("max_hp") is int and record.get("max_hp") == expected["max_hp"]
 		and record.get("art_path") == expected["art_path"],
 		"exact authored identity, HP and art " + id)
+	# An authored Thorns keyword is content too: it must be the genuine integer
+	# the strict catalog parser publishes, never a JSON double or a string.
+	if expected.has("thorns"):
+		_check(record.get("thorns") is int and record.get("thorns") == expected["thorns"],
+			"exact authored integer Thorns keyword " + id + " " + str(record.get("thorns")))
+	else:
+		_check(not record.has("thorns"), "no fabricated Thorns keyword " + id)
 	var spec: Variant = record.get("intent")
 	_check(spec is Dictionary and spec.size() == 2
 		and spec.get("target") == expected["target"], "exact authored target policy " + id)
@@ -1655,6 +1670,202 @@ func _test_v3_2_elites() -> void:
 		"V3-2 checks never mutate the authored elite records")
 	_check(randi() == expected_rng,
 		"V3-2 catalog lookups, bound announcements and beats use no global RNG")
+
+
+## The authentic shipped Needle Briar Guard as the production typed roster
+## assembler publishes it from the real catalog files, beside its own authored
+## companion. Nothing here injects, rewrites or duplicates a record.
+func _briar_guard_roster() -> CombatEnemies:
+	var choice := {"success": true, "node_type": "Elite", "encounter_id": BRIAR_PROBE,
+		"definitions": [
+			{"enemy_position": 1, "pattern": [{"type": "block", "amount": 8}]},
+			{"enemy_position": 2, "pattern": [{"type": "block", "amount": 8}]}]}
+	var assembled := RunTypedBattleRoster.new().assemble(choice,
+		{BRIAR_PROBE: BRIAR_PROBE_ROSTER}, [ELITES, STARTER, RUN])
+	_check(assembled.get("ok", false),
+		"production typed assembly publishes the real Guard roster")
+	if not assembled.get("ok", false):
+		return null
+	var enemies: CombatEnemies = assembled.enemies
+	var living := 0
+	for foe in enemies.get_enemies():
+		if foe.get("hp", 0) > 0:
+			living += 1
+	_check(enemies.is_valid() and living == 2 and enemies.get_enemies().size() == 2
+		and enemies.get_enemy(1).get("id") == "needle_briar_guard"
+		and enemies.get_enemy(1).get("hp") == 42
+		and enemies.get_enemy(1).get("block") == 0
+		and enemies.get_enemy(2).get("id") == "spool_snarekeeper"
+		and enemies.get_enemy(2).get("hp") == 40,
+		"the assembled roster is the living authored 42/40 HP Guard pair")
+	return enemies
+
+
+## V3-2 Thorns AC1/AC2/AC3: the authored Guard, reached through the production
+## typed roster from the shipped catalog, retaliates exactly 3 for one confirmed
+## hero hit, spends hero Block before HP, and stays inert on no hit.
+func _test_briar_guard_thorns(catalog: Array) -> void:
+	var record := _record(catalog, "needle_briar_guard")
+	if record.is_empty():
+		return
+	# AC1: the on-disk catalog authors exactly Thorns 3 on this one record.
+	_check(record.get("thorns") is int and record.get("thorns") == 3,
+		"AC1: the shipped Guard record authors a genuine integer Thorns 3")
+	_check(record.get("name") == "Needle Briar Guard" and record.get("max_hp") is int
+		and record.get("max_hp") == 42
+		and record.get("art_path") == "res://assets/paper/enemies/needle_marshal.png"
+		and record.get("intent", {}).get("target") == "front",
+		"AC1: the thorned Guard keeps its name, 42 HP, art and front target")
+	var actions: Array = []
+	for raw in record.get("intent", {}).get("actions", []):
+		var weighted := CombatEnemyIntents.weighted_action(raw)
+		var body: Dictionary = weighted.get("action", {}).duplicate(true)
+		body["weight"] = weighted.get("weight", 0)
+		actions.append(body)
+	_check(actions == V3_2_ELITES["needle_briar_guard"]["actions"],
+		"AC1: the Guard keeps its three exact weighted alternatives")
+	# Earlier Elite entries stay present with exactly their own keyword state,
+	# checked by ID: only the Guard newly authors Thorns 3.
+	var earlier := {
+		"needle_marshal": 3, "pincushion_matriarch": 4,
+		"spool_hexer": 0, "scissor_bailiff": 0, "zipper_hauler": 0,
+		"spool_snarekeeper": 0, "spool_leech": 0}
+	for id in earlier:
+		var other := _record(catalog, id)
+		if earlier[id] > 0:
+			_check(other.get("thorns") is int and other.get("thorns") == earlier[id],
+				"AC1: the earlier authored Thorns stays exact " + id)
+		else:
+			_check(not other.is_empty() and not other.has("thorns"),
+				"AC1: the earlier elite gains no Thorns keyword " + id)
+
+	# AC2: one confirmed five-damage hero hit on a living three-hero party.
+	var party := _party()
+	var enemies := _briar_guard_roster()
+	if enemies == null:
+		return
+	var pre_hit := enemies.get_enemy(1)
+	_check(pre_hit.get("thorns") is int and pre_hit.get("thorns") == 3,
+		"AC2: the assembled live Guard actor carries Thorns 3")
+	var receipt := CombatStatusAttacks.new().resolve_vs_enemy(enemies, 1, 5, {}, {})
+	_check(receipt == {"ok": true, "damage": 5, "block_absorbed": 0, "hp_loss": 5},
+		"AC2: the real status bridge confirms a five-damage hit")
+	var heroes_before := party.get_heroes()
+	var foes_before := enemies.get_enemies()
+	seed(70731)
+	var expected_rng := randi()
+	seed(70731)
+	var result := CombatEnemyKeywordRules.new().resolve_thorns_retaliation(
+		party, 1, pre_hit, receipt)
+	_check(randi() == expected_rng,
+		"AC2: one retaliation consumes no random number")
+	_check(result == {"ok": true, "applied": true, "thorns": 3,
+		"block_absorbed": 0, "hp_loss": 3},
+		"AC2: the confirmed hit retaliates exactly Thorns 3")
+	_check(party.get_hero(1).get("hp") == heroes_before[0]["hp"] - 3
+		and party.get_hero(1).get("block") == 0,
+		"AC2: the attacking front hero loses exactly three HP from 40")
+	_check(party.get_hero(2) == heroes_before[1] and party.get_hero(3) == heroes_before[2],
+		"AC2: the middle and rear heroes keep their HP, Block and statuses")
+	_check(enemies.get_enemy(1).get("hp") == 37 and enemies.get_enemy(1).get("block") == 0
+		and enemies.get_enemy(2) == foes_before[1],
+		"AC2: the hit removes five Guard HP and leaves the companion alone")
+	_check(pre_hit.get("hp") == 42 and pre_hit.get("thorns") == 3
+		and receipt == {"ok": true, "damage": 5, "block_absorbed": 0, "hp_loss": 5},
+		"AC2: the pre-hit snapshot and the real receipt stay immutable")
+
+	# AC2: hero Block absorbs the retaliation before HP.
+	var blocked_party := _party()
+	_check(blocked_party.gain_block(1, 1) and blocked_party.get_hero(1).get("block") == 1,
+		"AC2 precondition: the attacking front hero really holds one Block")
+	enemies = _briar_guard_roster()
+	var blocked_pre := enemies.get_enemy(1)
+	var blocked_receipt := CombatStatusAttacks.new().resolve_vs_enemy(enemies, 1, 5, {}, {})
+	var blocked_result := CombatEnemyKeywordRules.new().resolve_thorns_retaliation(
+		blocked_party, 1, blocked_pre, blocked_receipt)
+	_check(blocked_result == {"ok": true, "applied": true, "thorns": 3,
+		"block_absorbed": 1, "hp_loss": 2},
+		"AC2: Thorns 3 spends one hero Block then removes two HP")
+	_check(blocked_party.get_hero(1).get("block") == 0
+		and blocked_party.get_hero(1).get("hp") == 38
+		and blocked_party.get_hero(2).get("hp") == 30
+		and blocked_party.get_hero(3).get("hp") == 26,
+		"AC2: the attacker ends at zero Block and 38 HP, the rest untouched")
+
+	# AC2: the Guard's own Block may absorb the hit without cancelling Thorns.
+	enemies = _briar_guard_roster()
+	_check(enemies.gain_block(1, 10) and enemies.get_enemy(1).get("block") == 10,
+		"AC2 precondition: the Guard really holds ten Block")
+	var armored_pre := enemies.get_enemy(1)
+	var armored_receipt := CombatStatusAttacks.new().resolve_vs_enemy(enemies, 1, 5, {}, {})
+	_check(armored_receipt == {"ok": true, "damage": 5, "block_absorbed": 5, "hp_loss": 0},
+		"AC2: the Guard's Block fully absorbs the confirmed five damage")
+	var armored_party := _party()
+	var armored_heroes := armored_party.get_heroes()
+	var armored_result := CombatEnemyKeywordRules.new().resolve_thorns_retaliation(
+		armored_party, 1, armored_pre, armored_receipt)
+	_check(armored_result == {"ok": true, "applied": true, "thorns": 3,
+		"block_absorbed": 0, "hp_loss": 3},
+		"AC2: a fully enemy-Block-absorbed hit still retaliates 3")
+	_check(enemies.get_enemy(1).get("hp") == 42 and enemies.get_enemy(1).get("block") == 5
+		and armored_party.get_hero(1).get("hp") == armored_heroes[0]["hp"] - 3
+		and armored_party.get_hero(2) == armored_heroes[1]
+		and armored_party.get_hero(3) == armored_heroes[2],
+		"AC2: the absorbing Guard keeps 42 HP and five Block; only the attacker pays")
+
+	# AC3: a confirmed zero-damage hit is inert and changes nothing at all.
+	var zero_party := _party()
+	enemies = _briar_guard_roster()
+	var zero_pre := enemies.get_enemy(1)
+	var zero_receipt := CombatStatusAttacks.new().resolve_vs_enemy(enemies, 1, 0, {}, {})
+	_check(zero_receipt == {"ok": true, "damage": 0, "block_absorbed": 0, "hp_loss": 0},
+		"AC3: the real bridge confirms a zero-damage hit")
+	var zero_heroes := zero_party.get_heroes()
+	var zero_foes := enemies.get_enemies()
+	seed(70732)
+	var zero_expected_rng := randi()
+	seed(70732)
+	var zero_result := CombatEnemyKeywordRules.new().resolve_thorns_retaliation(
+		zero_party, 1, zero_pre, zero_receipt)
+	_check(zero_result == {"ok": true, "applied": false, "thorns": 3,
+		"block_absorbed": 0, "hp_loss": 0},
+		"AC3: a zero-damage hit triggers no retaliation")
+	_check(zero_party.get_heroes() == zero_heroes and enemies.get_enemies() == zero_foes
+		and randi() == zero_expected_rng,
+		"AC3: the zero hit changes no party, roster or random number")
+
+	# AC3: a genuinely failed receipt from the real bridge fails closed.
+	var dead_party := _party()
+	enemies = _briar_guard_roster()
+	var dead_pre := enemies.get_enemy(1)
+	_check(enemies.apply_damage(1, 42) and enemies.is_slain(1),
+		"AC3 precondition: the Guard is genuinely slain")
+	var failed_receipt := CombatStatusAttacks.new().resolve_vs_enemy(enemies, 1, 5, {}, {})
+	_check(failed_receipt == {"ok": false, "damage": 0, "block_absorbed": 0, "hp_loss": 0},
+		"AC3: the real bridge fails a hit on a slain source")
+	var dead_heroes := dead_party.get_heroes()
+	var dead_result := CombatEnemyKeywordRules.new().resolve_thorns_retaliation(
+		dead_party, 1, dead_pre, failed_receipt)
+	_check(dead_result == {"ok": false, "applied": false, "thorns": 0,
+		"block_absorbed": 0, "hp_loss": 0} and dead_party.get_heroes() == dead_heroes,
+		"AC3: a failed receipt fails closed and touches no hero")
+
+	# AC3: the non-Thorns companion never invents a reaction.
+	var plain_party := _party()
+	enemies = _briar_guard_roster()
+	var plain_pre := enemies.get_enemy(2)
+	_check(not plain_pre.has("thorns"),
+		"AC3 precondition: the companion carries no Thorns keyword")
+	var plain_receipt := CombatStatusAttacks.new().resolve_vs_enemy(enemies, 2, 5, {}, {})
+	_check(plain_receipt == {"ok": true, "damage": 5, "block_absorbed": 0, "hp_loss": 5},
+		"AC3: the companion really absorbs the same confirmed five damage")
+	var plain_heroes := plain_party.get_heroes()
+	var plain_result := CombatEnemyKeywordRules.new().resolve_thorns_retaliation(
+		plain_party, 1, plain_pre, plain_receipt)
+	_check(plain_result == {"ok": true, "applied": false, "thorns": 0,
+		"block_absorbed": 0, "hp_loss": 0} and plain_party.get_heroes() == plain_heroes
+		and enemies.get_enemy(2).get("hp") == 35,
+		"AC3: the non-Thorns companion produces no retaliation")
 
 
 ## Independent weighted-draw oracle: both policies are deterministic and spend
