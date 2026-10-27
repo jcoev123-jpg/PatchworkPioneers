@@ -123,4 +123,12 @@ const SEEDS := [
 	610125,
 	1667572,
 	3703755,
+	# Genuine map/toll/event-rotation witnesses after the Pincushion Gate through
+	# Buttonlift hero stories joined the sorted starter-party pool.
+	6931154,
+	5498452,
+	8144128,
+	5498865,
+	7777327,
+	3695046,
 ]

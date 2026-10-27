@@ -407,6 +407,78 @@
         { "id": "trade_pitchfork_twine", "text": "Trade two bundles of pitchfork twine (spend 2 scraps; gain 29 gold)", "outcome": { "gold": 29, "scraps": -2 } },
         { "id": "leave", "text": "Leave the orchard to its crows", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_warden_pincushion_gate",
+      "title": "The Pincushion Gate",
+      "description": "A dented-pot-helmet Warden braces a huge slate patch shield against a moonlit gate bristling with brass sewing pins.",
+      "required_hero": "warden",
+      "hero_choice_ids": ["hold_pincushion_gate", "buy_quilted_shield_lacing"],
+      "choices": [
+        { "id": "hold_pincushion_gate", "text": "Hold the gate for the night watch (gain 22 gold)", "outcome": { "gold": 22, "scraps": 0 } },
+        { "id": "buy_quilted_shield_lacing", "text": "Buy quilted shield lacing (spend 14 gold; gain 2 scraps)", "outcome": { "gold": -14, "scraps": 2 } },
+        { "id": "leave", "text": "Walk away from the gate", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_seamstress_crimson_bell_cord",
+      "title": "The Crimson Bell Cord",
+      "description": "An oversized sewing needle has pinned a frayed scarlet thread-rope beneath a plum velvet bell tower.",
+      "required_hero": "seamstress",
+      "hero_choice_ids": ["rethread_crimson_bell", "salvage_red_bell_thread"],
+      "choices": [
+        { "id": "rethread_crimson_bell", "text": "Rethread the bell (spend 2 scraps; gain 27 gold)", "outcome": { "gold": 27, "scraps": -2 } },
+        { "id": "salvage_red_bell_thread", "text": "Collect loose red thread (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "leave", "text": "Let the bell sleep", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_lantern_monk_mothveil_passage",
+      "title": "The Mothveil Passage",
+      "description": "A stout robed lantern keeper and round stitched moths illuminate a dark quilted passage in saffron and teal.",
+      "required_hero": "lantern_monk",
+      "hero_choice_ids": ["guide_mothveil_pilgrims", "buy_amber_lantern_wicks"],
+      "choices": [
+        { "id": "guide_mothveil_pilgrims", "text": "Guide lost travellers by lantern (gain 18 gold)", "outcome": { "gold": 18, "scraps": 0 } },
+        { "id": "buy_amber_lantern_wicks", "text": "Pay 16 gold for three scraps of spare wick thread", "outcome": { "gold": -16, "scraps": 3 } },
+        { "id": "leave", "text": "Pass the lantern arch", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_cape_windmill",
+      "title": "The Cape Windmill",
+      "description": "A tattered oxblood cape catches in the sails of a storybook windmill; a slender needle rapier glints beneath the brass hub.",
+      "required_hero": "rag_duelist",
+      "hero_choice_ids": ["free_cape_blades", "gather_ribbon_offcuts"],
+      "choices": [
+        { "id": "free_cape_blades", "text": "Free the trapped sails using 1 scrap and earn 24 gold", "outcome": { "gold": 24, "scraps": -1 } },
+        { "id": "gather_ribbon_offcuts", "text": "Gather the fallen cape ribbons (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "leave", "text": "Leave the mill to the wind", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_bolas_mooring",
+      "title": "The Yarn-Bolas Mooring",
+      "description": "Two giant knitting needles mark a river mooring tangled with moss-green wool bolas and teal bowstring.",
+      "required_hero": "yarn_ranger",
+      "hero_choice_ids": ["recover_knotted_bolas", "sell_spare_knitting_knots"],
+      "choices": [
+        { "id": "recover_knotted_bolas", "text": "Untangle two useful thread bundles (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "sell_spare_knitting_knots", "text": "Spend 1 scrap and earn 20 gold trading knots", "outcome": { "gold": 20, "scraps": -1 } },
+        { "id": "leave", "text": "Cross without touching the wool", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_button_golem_buttonlift",
+      "title": "The Buttonlift",
+      "description": "A towering button-bodied doll stands beneath a dangling brass-button lift over a stitched ravine.",
+      "required_hero": "button_golem",
+      "hero_choice_ids": ["haul_buttonlift", "buy_brass_button_shanks"],
+      "choices": [
+        { "id": "haul_buttonlift", "text": "Raise the stranded lift with giant button fists (gain 23 gold)", "outcome": { "gold": 23, "scraps": 0 } },
+        { "id": "buy_brass_button_shanks", "text": "Buy brass button fittings (spend 17 gold; gain 3 scraps)", "outcome": { "gold": -17, "scraps": 3 } },
+        { "id": "leave", "text": "Let the lift settle", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
