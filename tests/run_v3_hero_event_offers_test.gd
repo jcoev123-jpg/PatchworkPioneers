@@ -2,6 +2,14 @@ extends SceneTree
 
 const PARTY_A := ["warden", "seamstress", "tinker"]
 const PARTY_B := ["lantern_monk", "rag_duelist", "tinker"]
+const NEW_CHOICES := {
+	"v3_warden_copper_chain_ferry": {"brace_ferry_chain": [20, 0], "buy_brass_buckles": [-14, 2], "leave": [0, 0]},
+	"v3_seamstress_needle_oracle": {"untangle_oracle_thread": [24, -1], "buy_oracle_silk": [-18, 3], "leave": [0, 0]},
+	"v3_tinker_spring_marionette": {"rewind_broken_heart": [32, -2], "salvage_worn_gears": [0, 2], "leave": [0, 0]},
+	"v3_lantern_monk_mothlight_ferry": {"guide_moth_passengers": [19, 0], "buy_glowing_wicks": [-12, 2], "leave": [0, 0]},
+	"v3_rag_duelist_cape_tribunal": {"mend_judges_cape": [23, -1], "buy_gilt_rapier_guard": [-19, 3], "leave": [0, 0]},
+	"v3_scarecrow_raven_orchard": {"guard_raven_harvest": [0, 2], "trade_pitchfork_twine": [29, -2], "leave": [0, 0]},
+}
 const CASES := {
 	"v3_warden_shield_menders": ["warden", "sell_spare_rivets", 17, -1],
 	"v3_seamstress_thread_cart": ["seamstress", "buy_red_thread", -12, 2],
@@ -31,6 +39,12 @@ const CASES := {
 	"v3_scarecrow_pumpkin_seam_census": ["scarecrow", "register_harvest", 18, -1],
 	"v3_yarn_ranger_tangled_willow": ["yarn_ranger", "buy_moss_bolas", -17, 3],
 	"v3_button_golem_brass_keyhole": ["button_golem", "push_rivet_door", 29, -2],
+	"v3_warden_copper_chain_ferry": ["warden", "buy_brass_buckles", -14, 2],
+	"v3_seamstress_needle_oracle": ["seamstress", "untangle_oracle_thread", 24, -1],
+	"v3_tinker_spring_marionette": ["tinker", "rewind_broken_heart", 32, -2],
+	"v3_lantern_monk_mothlight_ferry": ["lantern_monk", "buy_glowing_wicks", -12, 2],
+	"v3_rag_duelist_cape_tribunal": ["rag_duelist", "mend_judges_cape", 23, -1],
+	"v3_scarecrow_raven_orchard": ["scarecrow", "trade_pitchfork_twine", 29, -2],
 }
 
 var failures: Array[String] = []
@@ -48,6 +62,7 @@ func _initialize() -> void:
 	run_rng.seed = 257
 	var state := run_rng.state
 	_test_parties_and_receipts()
+	_test_new_choice_receipts()
 	_test_invalid_parties()
 	_test_invalid_catalogs()
 	_test_isolation()
@@ -121,6 +136,47 @@ func _test_parties_and_receipts() -> void:
 			_check(poor.choose_with_wallet("leave", empty)["ok"] and poor.is_claimed(), "same visit recovers with authored Leave")
 		for bad_id in ["unknown", "v3_deleted_event", "", null, 1, {"id": "v3_tinker_clockwork_wagon"}]:
 			_check(service.enter(bad_id) == null, "entry accepts only eligible catalog IDs")
+
+
+func _test_new_choice_receipts() -> void:
+	for party in [PARTY_A, PARTY_B, ["scarecrow", "yarn_ranger", "button_golem"]]:
+		var service := RunV3HeroEventOffers.new(party)
+		_check(service.is_valid(), "new choice matrix has a valid party service")
+		for event_id in NEW_CHOICES:
+			if not party.has(CASES[event_id][0]):
+				continue
+			for choice_id in NEW_CHOICES[event_id]:
+				var delta: Array = NEW_CHOICES[event_id][choice_id]
+				var visit := service.enter(event_id)
+				_check(visit != null and visit.is_valid(), "new option has an authentic visit: " + event_id)
+				if visit == null:
+					continue
+				var wallet := {"gold": 40, "scraps": 4}
+				var projected := {"gold": 40 + delta[0], "scraps": 4 + delta[1]}
+				var preview := visit.preview_wallet_choices(wallet)
+				var quote := {}
+				for entry in preview.get("choices", []):
+					if entry.get("choice_id") == choice_id:
+						quote = entry
+				_check(quote == {"choice_id": choice_id, "gold_delta": delta[0],
+					"scraps_delta": delta[1], "affordable": true, "wallet": projected},
+					"admitted option previews independent exact deltas: " + event_id + "/" + choice_id)
+				var receipt := visit.choose_with_wallet(choice_id, wallet)
+				_check(receipt == {"ok": true, "event_id": event_id, "choice_id": choice_id,
+					"wallet": projected} and wallet == {"gold": 40, "scraps": 4}
+					and visit.is_claimed() and not visit.is_valid(), "admitted option settles once: " + event_id)
+				receipt.wallet.gold = 999
+				_check(visit.choose_with_wallet(choice_id, projected) == {"ok": false,
+					"event_id": "", "choice_id": "", "wallet": projected}, "detached claim cannot replay")
+	# The new records obey the same canonical authentication as the old ones.
+	for event_id in NEW_CHOICES:
+		var record := _by_id(catalog.events, event_id)
+		_check(not record.is_empty(), "new forgery fixture exists: " + event_id)
+		if record.is_empty():
+			continue
+		var forged := record.duplicate(true)
+		forged.choices[0].outcome.gold = 999
+		_reject_catalog({"events": [forged]})
 
 
 func _test_invalid_parties() -> void:

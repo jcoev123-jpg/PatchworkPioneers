@@ -335,6 +335,78 @@
         { "id": "gather_loose_buttons", "text": "Gather loose button shanks (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
         { "id": "leave", "text": "Leave the door closed", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_warden_copper_chain_ferry",
+      "title": "The Copper-Chain Ferry",
+      "description": "A stout button-eyed ferryman hangs from a copper chain while the Warden's enormous patched shield braces his tilting boat.",
+      "required_hero": "warden",
+      "hero_choice_ids": ["brace_ferry_chain", "buy_brass_buckles"],
+      "choices": [
+        { "id": "brace_ferry_chain", "text": "Brace the ferry chain with the great shield (gain 20 gold)", "outcome": { "gold": 20, "scraps": 0 } },
+        { "id": "buy_brass_buckles", "text": "Buy brass shield buckles (spend 14 gold; gain 2 scraps)", "outcome": { "gold": -14, "scraps": 2 } },
+        { "id": "leave", "text": "Let the ferry drift past", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_seamstress_needle_oracle",
+      "title": "The Needle-Eye Oracle",
+      "description": "A round velvet oracle peers through a huge sewing-needle eye as scarlet threads bind a midnight-plum fortune quilt.",
+      "required_hero": "seamstress",
+      "hero_choice_ids": ["untangle_oracle_thread", "buy_oracle_silk"],
+      "choices": [
+        { "id": "untangle_oracle_thread", "text": "Unpick the oracle's snare (spend 1 scrap; earn 24 gold)", "outcome": { "gold": 24, "scraps": -1 } },
+        { "id": "buy_oracle_silk", "text": "Buy fortune silk (spend 18 gold; gain 3 scraps)", "outcome": { "gold": -18, "scraps": 3 } },
+        { "id": "leave", "text": "Leave the red threads tied", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_tinker_spring_marionette",
+      "title": "The Spring Marionette",
+      "description": "A stubby clockwork marionette lies beneath a brass spring chandelier, its bright button heart stalled inside a sewn chest.",
+      "required_hero": "tinker",
+      "hero_choice_ids": ["rewind_broken_heart", "salvage_worn_gears"],
+      "choices": [
+        { "id": "rewind_broken_heart", "text": "Use two scrap bundles to rewind its heart (spend 2 scraps; gain 32 gold)", "outcome": { "gold": 32, "scraps": -2 } },
+        { "id": "salvage_worn_gears", "text": "Gather discarded spring gears (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "leave", "text": "Let the marionette sleep", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_lantern_monk_mothlight_ferry",
+      "title": "The Mothlight Ferry",
+      "description": "A candlelit ferry of round stitched moth dolls follows the Lantern Monk's glowing pole across dark teal water.",
+      "required_hero": "lantern_monk",
+      "hero_choice_ids": ["guide_moth_passengers", "buy_glowing_wicks"],
+      "choices": [
+        { "id": "guide_moth_passengers", "text": "Guide the moth passengers ashore (gain 19 gold)", "outcome": { "gold": 19, "scraps": 0 } },
+        { "id": "buy_glowing_wicks", "text": "Buy spare mothlight wicks (spend 12 gold; gain 2 scraps)", "outcome": { "gold": -12, "scraps": 2 } },
+        { "id": "leave", "text": "Let the moth ferry sail away", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_cape_tribunal",
+      "title": "The Split-Cape Tribunal",
+      "description": "A crimson velvet judge in a button eyepatch holds court beneath torn capes, with a thin needle rapier laid across the dais.",
+      "required_hero": "rag_duelist",
+      "hero_choice_ids": ["mend_judges_cape", "buy_gilt_rapier_guard"],
+      "choices": [
+        { "id": "mend_judges_cape", "text": "Sew the judge's split cape (spend 1 scrap; earn 23 gold)", "outcome": { "gold": 23, "scraps": -1 } },
+        { "id": "buy_gilt_rapier_guard", "text": "Buy gilt rapier-thread guards (spend 19 gold; gain 3 scraps)", "outcome": { "gold": -19, "scraps": 3 } },
+        { "id": "leave", "text": "Bow without entering the tribunal", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_scarecrow_raven_orchard",
+      "title": "The Raven-Sewn Orchard",
+      "description": "Plump pumpkin ragdolls sit among button apples while the Scarecrow's black crow watches over a row of stitched straw baskets.",
+      "required_hero": "scarecrow",
+      "hero_choice_ids": ["guard_raven_harvest", "trade_pitchfork_twine"],
+      "choices": [
+        { "id": "guard_raven_harvest", "text": "Guard the stuffed harvest from ravens (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "trade_pitchfork_twine", "text": "Trade two bundles of pitchfork twine (spend 2 scraps; gain 29 gold)", "outcome": { "gold": 29, "scraps": -2 } },
+        { "id": "leave", "text": "Leave the orchard to its crows", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }

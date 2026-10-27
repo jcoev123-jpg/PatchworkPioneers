@@ -113,6 +113,9 @@ func _fixtures() -> Dictionary:
 	# Genuine six-Event witnesses re-derived with the once/run Auction candidate.
 	hints.append_array([1571440, 2266626, 2453554, 3103369, 4080424,
 		4932458, 5100312, 7382439, 8719337, 9036654])
+	# Genuine map/toll witnesses after the Copper-Chain through Raven-Sewn
+	# hero stories expanded the sorted pool. Keep all previous candidates.
+	hints.append_array([931076, 1667572, 4268604, 4278127, 7006462, 7547920])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():

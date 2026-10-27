@@ -1033,6 +1033,8 @@ func _auction_fixture() -> Dictionary:
 	var rotation := RunM04EventRotation.new({"events": events})
 	var hints: Array = preload("res://tests/event_wallet_hints.gd").SEEDS.duplicate()
 	hints.push_front(422169)
+	# Genuine six-Event map/toll witness for the expanded hero-story pool.
+	hints.push_front(2431350)
 	hints.append_array(range(1, 200000))
 	for value in hints:
 		var rng := RandomNumberGenerator.new()

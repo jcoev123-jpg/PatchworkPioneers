@@ -2,13 +2,13 @@ extends SceneTree
 ## Deterministic headless test for the hero-specific v3 roadside Events in
 ## data/events/v3_hero_choice_events.json.
 ##
-## This catalog is authored data only: every event names its future party hero
-## in `required_hero` and lists its two non-Leave hero choices in
+## This catalog is authored data only: every event names its party hero in
+## `required_hero` and lists its two non-Leave hero choices in
 ## `hero_choice_ids`. RunV3HeroEventOffers performs the scene-free party
-## admission, but neither service is live-wired from app.gd yet. The one-use
+## admission; app.gd's _load_wallet_event_catalog() merges its eligible offers
+## into the live wallet Event catalog for an active run. The one-use
 ## RunEventChoice only validates/settles the authored wallet choices, so these
-## checks cover exact authored metadata and wallet receipts without asserting
-## any live on-screen eligibility.
+## checks cover exact authored metadata and wallet receipts.
 ##
 ## Lookups are by authored event/choice ID, never by catalog size, catalog order,
 ## a global ordered ID list or a positional event index.
@@ -17,6 +17,15 @@ const EVENTS_PATH := "res://data/events/v3_hero_choice_events.json"
 
 const START_GOLD := 30
 const START_SCRAPS := 3
+
+## The six party-gated V3-4 stories appended by this task. They are listed by
+## authored ID (never by catalog index or catalog total) so the funded and
+## zero-wallet receipt matrices below exercise each one explicitly.
+const NEW_EVENT_IDS := ["v3_warden_copper_chain_ferry", "v3_seamstress_needle_oracle",
+	"v3_tinker_spring_marionette", "v3_lantern_monk_mothlight_ferry",
+	"v3_rag_duelist_cape_tribunal", "v3_scarecrow_raven_orchard"]
+const FUNDED_GOLD := 40
+const FUNDED_SCRAPS := 4
 
 ## Independent task-local mapping of the authored records. It is never read from
 ## the production catalog, so a missing field or a reworded choice is caught.
@@ -331,6 +340,72 @@ const EVENTS := {
 			"leave": {"text": "Leave the door closed", "gold": 0, "scraps": 0},
 		},
 	},
+	"v3_warden_copper_chain_ferry": {
+		"title": "The Copper-Chain Ferry",
+		"description": "A stout button-eyed ferryman hangs from a copper chain while the Warden's enormous patched shield braces his tilting boat.",
+		"required_hero": "warden",
+		"hero_choice_ids": ["brace_ferry_chain", "buy_brass_buckles"],
+		"choices": {
+			"brace_ferry_chain": {"text": "Brace the ferry chain with the great shield (gain 20 gold)", "gold": 20, "scraps": 0},
+			"buy_brass_buckles": {"text": "Buy brass shield buckles (spend 14 gold; gain 2 scraps)", "gold": -14, "scraps": 2},
+			"leave": {"text": "Let the ferry drift past", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_seamstress_needle_oracle": {
+		"title": "The Needle-Eye Oracle",
+		"description": "A round velvet oracle peers through a huge sewing-needle eye as scarlet threads bind a midnight-plum fortune quilt.",
+		"required_hero": "seamstress",
+		"hero_choice_ids": ["untangle_oracle_thread", "buy_oracle_silk"],
+		"choices": {
+			"untangle_oracle_thread": {"text": "Unpick the oracle's snare (spend 1 scrap; earn 24 gold)", "gold": 24, "scraps": -1},
+			"buy_oracle_silk": {"text": "Buy fortune silk (spend 18 gold; gain 3 scraps)", "gold": -18, "scraps": 3},
+			"leave": {"text": "Leave the red threads tied", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_tinker_spring_marionette": {
+		"title": "The Spring Marionette",
+		"description": "A stubby clockwork marionette lies beneath a brass spring chandelier, its bright button heart stalled inside a sewn chest.",
+		"required_hero": "tinker",
+		"hero_choice_ids": ["rewind_broken_heart", "salvage_worn_gears"],
+		"choices": {
+			"rewind_broken_heart": {"text": "Use two scrap bundles to rewind its heart (spend 2 scraps; gain 32 gold)", "gold": 32, "scraps": -2},
+			"salvage_worn_gears": {"text": "Gather discarded spring gears (gain 2 scraps)", "gold": 0, "scraps": 2},
+			"leave": {"text": "Let the marionette sleep", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_lantern_monk_mothlight_ferry": {
+		"title": "The Mothlight Ferry",
+		"description": "A candlelit ferry of round stitched moth dolls follows the Lantern Monk's glowing pole across dark teal water.",
+		"required_hero": "lantern_monk",
+		"hero_choice_ids": ["guide_moth_passengers", "buy_glowing_wicks"],
+		"choices": {
+			"guide_moth_passengers": {"text": "Guide the moth passengers ashore (gain 19 gold)", "gold": 19, "scraps": 0},
+			"buy_glowing_wicks": {"text": "Buy spare mothlight wicks (spend 12 gold; gain 2 scraps)", "gold": -12, "scraps": 2},
+			"leave": {"text": "Let the moth ferry sail away", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_rag_duelist_cape_tribunal": {
+		"title": "The Split-Cape Tribunal",
+		"description": "A crimson velvet judge in a button eyepatch holds court beneath torn capes, with a thin needle rapier laid across the dais.",
+		"required_hero": "rag_duelist",
+		"hero_choice_ids": ["mend_judges_cape", "buy_gilt_rapier_guard"],
+		"choices": {
+			"mend_judges_cape": {"text": "Sew the judge's split cape (spend 1 scrap; earn 23 gold)", "gold": 23, "scraps": -1},
+			"buy_gilt_rapier_guard": {"text": "Buy gilt rapier-thread guards (spend 19 gold; gain 3 scraps)", "gold": -19, "scraps": 3},
+			"leave": {"text": "Bow without entering the tribunal", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_scarecrow_raven_orchard": {
+		"title": "The Raven-Sewn Orchard",
+		"description": "Plump pumpkin ragdolls sit among button apples while the Scarecrow's black crow watches over a row of stitched straw baskets.",
+		"required_hero": "scarecrow",
+		"hero_choice_ids": ["guard_raven_harvest", "trade_pitchfork_twine"],
+		"choices": {
+			"guard_raven_harvest": {"text": "Guard the stuffed harvest from ravens (gain 2 scraps)", "gold": 0, "scraps": 2},
+			"trade_pitchfork_twine": {"text": "Trade two bundles of pitchfork twine (spend 2 scraps; gain 29 gold)", "gold": 29, "scraps": -2},
+			"leave": {"text": "Leave the orchard to its crows", "gold": 0, "scraps": 0},
+		},
+	},
 }
 
 var failures: Array[String] = []
@@ -346,6 +421,7 @@ func _initialize() -> void:
 	_test_preview_forecasts()
 	_test_priced_rejections_and_recovery()
 	_test_unoffered_choice_ids()
+	_test_new_event_funded_receipts()
 	_test_hero_metadata()
 	_test_fixed_seed_replay()
 	_check(catalog == catalog_snapshot, "shared event catalog unchanged across all test flows")
@@ -889,6 +965,129 @@ func _test_unoffered_choice_ids() -> void:
 		_check(_wallet_shape_ok(replay) and replay.get("ok", true) == false
 			and _wallet_exact_int(replay.get("wallet"), START_GOLD, START_SCRAPS),
 			"the recovered Leave cannot be replayed: " + event_id)
+
+
+func _test_new_event_funded_receipts() -> void:
+	# Funded and zero-wallet receipt matrix for the six appended party stories,
+	# keyed by authored ID and driven only through RunEventChoice (the same
+	# service app.gd's live route uses), with independent expected deltas.
+	var listed := {}
+	for event_id in NEW_EVENT_IDS:
+		_check(not listed.has(event_id), "new story ID is listed once in the matrix: " + event_id)
+		listed[event_id] = true
+		_check(EVENTS.has(event_id),
+			"new story has an independent expected fixture: " + event_id)
+	for event_id in NEW_EVENT_IDS:
+		var matches := _matching(event_id)
+		_check(matches.size() == 1, "funded matrix has one authored record: " + event_id)
+		if matches.size() != 1:
+			continue
+		var record: Dictionary = matches[0].duplicate(true)
+		var original: Dictionary = record.duplicate(true)
+		var expected: Dictionary = _expected(event_id)
+		var expected_choices: Dictionary = _expected_choices(event_id)
+		_check(record.get("required_hero") == expected["required_hero"],
+			"new story keeps its exact required hero: " + event_id)
+		var raw_listed: Variant = record.get("hero_choice_ids")
+		_check(raw_listed is Array and raw_listed == expected["hero_choice_ids"],
+			"new story keeps its exact two hero choice IDs: " + event_id)
+		_check(expected_choices.has("leave")
+			and int(expected_choices["leave"]["gold"]) == 0
+			and int(expected_choices["leave"]["scraps"]) == 0,
+			"new story keeps a zero-cost Leave: " + event_id)
+		_check(expected_choices.size() == 3, "new story keeps three distinct choices: " + event_id)
+		for choice_id in expected_choices:
+			var delta: Dictionary = expected_choices[choice_id]
+			var label: String = event_id + "/" + _signed(str(choice_id), delta)
+			var expected_gold: int = FUNDED_GOLD + int(delta["gold"])
+			var expected_scraps: int = FUNDED_SCRAPS + int(delta["scraps"])
+			var wallet := {"gold": FUNDED_GOLD, "scraps": FUNDED_SCRAPS}
+			var wallet_before: Dictionary = wallet.duplicate(true)
+			var local_rng := RandomNumberGenerator.new()
+			local_rng.seed = 81400
+			var local_state: int = local_rng.state
+			var expected_global := _rng_start(81400)
+			var service := RunEventChoice.new(record)
+			var preview := service.preview_wallet_choices(wallet)
+			var entry := _preview_choice(preview, str(choice_id))
+			_check(preview.get("ok") == true and preview.get("event_id") == event_id
+				and entry.size() == 5 and entry.get("choice_id") == choice_id
+				and entry.get("affordable") == true,
+				"funded preview offers the authored choice: " + label)
+			_check(typeof(entry.get("gold_delta")) == TYPE_INT
+				and typeof(entry.get("scraps_delta")) == TYPE_INT
+				and int(entry.get("gold_delta")) == int(delta["gold"])
+				and int(entry.get("scraps_delta")) == int(delta["scraps"])
+				and _wallet_exact_int(entry.get("wallet"), expected_gold, expected_scraps),
+				"funded preview quotes the exact signed delta and projected wallet: " + label)
+			var claim := service.choose_with_wallet(choice_id, wallet)
+			_check(_wallet_shape_ok(claim) and claim.get("ok") == true
+				and claim.get("event_id") == event_id and claim.get("choice_id") == choice_id
+				and _wallet_exact_int(claim.get("wallet"), expected_gold, expected_scraps),
+				"funded claim settles the exact authored wallet: " + label)
+			_check(_wallet_exact_int(wallet, FUNDED_GOLD, FUNDED_SCRAPS)
+				and wallet == wallet_before and service.get_event() == original,
+				"funded claim leaves the caller wallet and snapshot untouched: " + label)
+			_check(service.is_claimed() and not service.is_valid()
+				and service.preview_wallet_choices(wallet) == {"ok": false, "event_id": "", "choices": []},
+				"funded claim latches the visit once: " + label)
+			var replay := service.choose_with_wallet(choice_id,
+				{"gold": expected_gold, "scraps": expected_scraps})
+			_check(_wallet_shape_ok(replay) and replay.get("ok") == false
+				and replay.get("event_id") == "" and replay.get("choice_id") == ""
+				and _wallet_exact_int(replay.get("wallet"), expected_gold, expected_scraps),
+				"a replay of the settled choice is rejected unchanged: " + label)
+			_check(service.is_claimed() and service.get_event() == original
+				and local_rng.state == local_state and randi() == expected_global,
+				"funded preview, claim and replay spend no RNG: " + label)
+		# Zero wallet: every authored cost is disabled and refused, the neutral
+		# Leave still works on that same visit, and nothing consumes the wallet.
+		var zero_wallet := {"gold": 0, "scraps": 0}
+		var zero_before: Dictionary = zero_wallet.duplicate(true)
+		var first_priced := ""
+		for choice_id in expected_choices:
+			var delta: Dictionary = expected_choices[choice_id]
+			var priced: bool = int(delta["gold"]) < 0 or int(delta["scraps"]) < 0
+			var label: String = event_id + "/" + _signed(str(choice_id), delta)
+			if priced and first_priced.is_empty():
+				first_priced = choice_id
+			var probe := RunEventChoice.new(record)
+			var probe_entry := _preview_choice(probe.preview_wallet_choices(zero_wallet), str(choice_id))
+			_check(not probe_entry.is_empty() and probe_entry.get("affordable") == (not priced),
+				"zero-wallet affordability follows the authored cost: " + label)
+			if not priced:
+				var free := probe.choose_with_wallet(choice_id, zero_wallet)
+				_check(free.get("ok") == true
+					and _wallet_exact_int(free.get("wallet"), int(delta["gold"]), int(delta["scraps"])),
+					"a free/gain choice still settles from a zero wallet: " + label)
+				continue
+			var refused := probe.choose_with_wallet(choice_id, zero_wallet)
+			_check(_wallet_shape_ok(refused) and refused.get("ok") == false
+				and refused.get("event_id") == "" and refused.get("choice_id") == ""
+				and _wallet_exact_int(refused.get("wallet"), 0, 0) and not probe.is_claimed(),
+				"an unaffordable priced or scrap-cost choice is refused unchanged: " + label)
+		_check(not first_priced.is_empty(), "new story has an authored priced choice: " + event_id)
+		if first_priced.is_empty():
+			continue
+		var visit := RunEventChoice.new(record)
+		var refusal := visit.choose_with_wallet(first_priced, zero_wallet)
+		_check(_wallet_shape_ok(refusal) and refusal.get("ok") == false
+			and refusal.get("event_id") == "" and refusal.get("choice_id") == "",
+			"the priced refusal returns empty IDs: " + event_id + "/" + first_priced)
+		_check(visit.is_valid() and not visit.is_claimed() and zero_wallet == zero_before,
+			"the priced refusal consumes neither the visit nor the wallet: " + event_id)
+		var recovered := visit.choose_with_wallet("leave", zero_wallet)
+		_check(_wallet_shape_ok(recovered) and recovered.get("ok") == true
+			and recovered.get("event_id") == event_id and recovered.get("choice_id") == "leave"
+			and _wallet_exact_int(recovered.get("wallet"), 0, 0),
+			"Leave still succeeds on the same zero-wallet visit: " + event_id)
+		var late := visit.choose_with_wallet(first_priced,
+			{"gold": FUNDED_GOLD, "scraps": FUNDED_SCRAPS})
+		_check(_wallet_shape_ok(late) and late.get("ok") == false
+			and late.get("event_id") == "" and late.get("choice_id") == ""
+			and _wallet_exact_int(late.get("wallet"), FUNDED_GOLD, FUNDED_SCRAPS)
+			and visit.is_claimed() and not visit.is_valid(),
+			"a settled Leave cannot be replayed or re-claimed: " + event_id)
 
 
 func _test_hero_metadata() -> void:
