@@ -11,11 +11,17 @@ extends RefCounted
 ## still make a legal attack against an enemy that is already Blinded. The
 ## opposite roles (attacker Blind, defender Dodge) stay refused here: the separate
 ## miss/evasion attempt path owns those and must never be skipped silently.
+##
+## Fear (`cannot_buff_next_turn`) is the Scarecrow's one-owner-turn buff lock. It is
+## a pure marker with no attack effect, so EITHER side may carry exactly the literal
+## boolean true; it is admitted untouched and never consumed, aged or added to the
+## receipt. Its owner-turn expiry and buff denial stay in CombatStatuses.
 
 ## The status keys whose counters modify one attack.
 const ATTACK_STATUS_KEYS: Array[String] = ["bleed", "weak", "exposed", "tangled", "riposte"]
 const DODGE_STATUS_KEY := "dodge_next_attack"
 const BLIND_STATUS_KEY := "blind_next_attack"
+const FEAR_STATUS_KEY := "cannot_buff_next_turn"
 
 var _statuses := CombatStatuses.new()
 
@@ -80,6 +86,7 @@ func _valid_defender_statuses(statuses: Dictionary) -> bool:
 ## malformed map, which is indistinguishable from valid zero-damage attacks.
 ## Damage counters stay nonnegative ints, and at most the one named role token is
 ## admitted as exactly the int 0 or 1 (never bool, string, duration or stack).
+## Fear is admitted for either role, but only as the literal boolean true.
 func _valid_role_statuses(statuses: Dictionary, token_key: String) -> bool:
 	for name in statuses:
 		if not name is String:
@@ -87,6 +94,11 @@ func _valid_role_statuses(statuses: Dictionary, token_key: String) -> bool:
 		if token_key != "" and name == token_key:
 			var token = statuses[name]
 			if not token is int or (token != 0 and token != 1):
+				return false
+			continue
+		if name == FEAR_STATUS_KEY:
+			var fear = statuses[name]
+			if not fear is bool or not bool(fear):
 				return false
 			continue
 		if name not in ATTACK_STATUS_KEYS:
