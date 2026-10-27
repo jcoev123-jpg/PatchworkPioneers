@@ -59,6 +59,66 @@
         {"id": "deliver_letters", "text": "Wrap letters for delivery wages (spend 1 scrap; earn 17 gold)", "outcome": {"gold": 17, "scraps": -1}},
         {"id": "ignore_post", "text": "Pass the postbox (no cost or gain)", "outcome": {"gold": 0, "scraps": 0}}
       ]
+    },
+    {
+      "id": "v3_bellglass_night_market",
+      "title": "The Bellglass Night Market",
+      "description": "Round button-eyed merchants count glass bells beneath plum awnings, every bobbin lit by a single amber lantern.",
+      "choices": [
+        {"id": "buy_velvet_thread", "text": "Pay 26 gold for three bundles of midnight thread (+3 scraps)", "outcome": {"gold": -26, "scraps": 3}},
+        {"id": "trade_three_loops", "text": "Trade three scrap bundles for 39 gold", "outcome": {"gold": 39, "scraps": -3}},
+        {"id": "leave", "text": "Leave the bellglass traders to their counting", "outcome": {"gold": 0, "scraps": 0}}
+      ]
+    },
+    {
+      "id": "v3_crowlace_ticket_booth",
+      "title": "The Crowlace Ticket Booth",
+      "description": "A stuffed crow in a gold-button waistcoat stamps crooked ferry tickets beside a black-lace window.",
+      "choices": [
+        {"id": "buy_night_pass", "text": "Pay 18 gold for a pair of thread tickets (+2 scraps)", "outcome": {"gold": -18, "scraps": 2}},
+        {"id": "sell_spare_ticket", "text": "Exchange one spare scrap bundle for 15 gold", "outcome": {"gold": 15, "scraps": -1}},
+        {"id": "leave", "text": "Let the paper tickets flutter away", "outcome": {"gold": 0, "scraps": 0}}
+      ]
+    },
+    {
+      "id": "v3_moonlit_pin_exchange",
+      "title": "The Moonlit Pin Exchange",
+      "description": "A slate-blue puppet clerk opens a pin-lined drawer beneath a stitched button moon.",
+      "choices": [
+        {"id": "order_pin_roll", "text": "Pay 34 gold for five rolled pin bundles (+5 scraps)", "outcome": {"gold": -34, "scraps": 5}},
+        {"id": "redeem_spare_pins", "text": "Turn two scrap bundles into 33 gold", "outcome": {"gold": 33, "scraps": -2}},
+        {"id": "leave", "text": "Close the pin drawer without trading", "outcome": {"gold": 0, "scraps": 0}}
+      ]
+    },
+    {
+      "id": "v3_oxblood_patch_hall",
+      "title": "The Oxblood Patch Hall",
+      "description": "Tiny velvet ragdolls hold a candlelit auction around an oxblood quilt sewn with brass-button seals.",
+      "choices": [
+        {"id": "buy_quilt_seam", "text": "Spend 23 gold on three fine repair seams (+3 scraps)", "outcome": {"gold": -23, "scraps": 3}},
+        {"id": "auction_old_patch", "text": "Auction four scrap bundles for 51 gold", "outcome": {"gold": 51, "scraps": -4}},
+        {"id": "leave", "text": "Bow out before the next auction bell", "outcome": {"gold": 0, "scraps": 0}}
+      ]
+    },
+    {
+      "id": "v3_bonecream_button_press",
+      "title": "The Bone-Cream Button Press",
+      "description": "A squat stitched machinist works a giant button press under cream damask curtains.",
+      "choices": [
+        {"id": "buy_brass_mould", "text": "Buy a mould offcut for 12 gold (+1 scrap)", "outcome": {"gold": -12, "scraps": 1}},
+        {"id": "pawn_needle_wheel", "text": "Pawn two scrap bundles for 22 gold", "outcome": {"gold": 22, "scraps": -2}},
+        {"id": "leave", "text": "Let the press fall silent", "outcome": {"gold": 0, "scraps": 0}}
+      ]
+    },
+    {
+      "id": "v3_saffron_spool_trial",
+      "title": "The Saffron Spool Trial",
+      "description": "A plump saffron-robed spool-keeper displays prize threads in a midnight-teal candlelit alcove.",
+      "choices": [
+        {"id": "buy_trial_thread", "text": "Pay 40 gold for five prize-thread bundles (+5 scraps)", "outcome": {"gold": -40, "scraps": 5}},
+        {"id": "sell_spool_braid", "text": "Sell two scrap bundles for 31 gold", "outcome": {"gold": 31, "scraps": -2}},
+        {"id": "leave", "text": "Decline the spool-keeper’s trial", "outcome": {"gold": 0, "scraps": 0}}
+      ]
     }
   ]
 }
