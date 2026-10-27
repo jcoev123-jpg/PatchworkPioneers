@@ -53,8 +53,8 @@ func _tag(roster, slot: int) -> PanelContainer:
 func _assert_warning(app, roster, meters, amount: int, visible: bool) -> void:
 	var tag := _tag(roster, 1)
 	var meter := meters.row.get_child(3) as CombatActorMeter
-	_check(tag != null and meter != null and _chip_pool(meter).size() == 7,
-		"real mounted enemy puppet and exact seven reusable status controls")
+	_check(tag != null and meter != null and _chip_pool(meter).size() == 8,
+		"real mounted enemy puppet and exact eight reusable status controls")
 	if tag == null or meter == null:
 		return
 	var name := tag.get_node_or_null("Caption") as Button
@@ -166,7 +166,7 @@ func _run() -> void:
 		_check(_visible_chips(enemy_meter) == ["Bleed 2", "Weak 1", "Exposed 2", "Thorns 2"]
 			and _tag(roster, 1).get_instance_id() == tag_id
 			and _chip_pool(enemy_meter).map(func(c): return c.get_instance_id()) == ids,
-			"refresh uses one stable patch and seven identical pooled controls for four active chips")
+			"refresh uses one stable patch and eight identical pooled controls for four active chips")
 	_check(_state(app) == before and app.run_rng.state == seed_rng and randi() == expected_global,
 		"every UI-only refresh leaves HP, Block, statuses, wallet, route, deck, intents, seeded/global RNG unchanged")
 	_check(app.enemy_intents.get_intents() == intents

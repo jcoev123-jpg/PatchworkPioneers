@@ -209,6 +209,10 @@ func _expected_status(actor: Dictionary) -> String:
 		active.append("Blind")
 	if statuses.get("dodge_next_attack", 0) == 1:
 		active.append("Dodge")
+	# Fear is the same one-word shape: never "Fear 1" and never a turn count.
+	var fear: Variant = statuses.get("cannot_buff_next_turn", false)
+	if fear is bool and bool(fear):
+		active.append("Fear")
 	return "Statuses: none" if active.is_empty() else "Statuses: " + " · ".join(active)
 
 
@@ -245,6 +249,8 @@ func _expected_incoming(actor: Dictionary, forecast: Dictionary) -> String:
 		"Incoming: %d Block, %d HP" % [next["block_absorbed"], next["hp_lost"]])
 
 
+## Independent expected chips, in the presenter's documented stable order: the counted
+## owner-turn statuses, one-shot Blind, one-shot Dodge, the Fear buff lock, then Thorns.
 func _expected_chips(actor: Dictionary, side: String) -> Array[String]:
 	var chips: Array[String] = []
 	if actor.hp == 0:
@@ -258,6 +264,10 @@ func _expected_chips(actor: Dictionary, side: String) -> Array[String]:
 		chips.append("Blind")
 	if actor.hp > 0 and statuses.get("dodge_next_attack", 0) == 1:
 		chips.append("Dodge")
+	# Fear is the literal boolean lock: one unnumbered word, never "Fear 1".
+	var fear: Variant = statuses.get("cannot_buff_next_turn", false)
+	if fear is bool and bool(fear):
+		chips.append("Fear")
 	if side == "enemy" and actor.hp > 0 and actor.get("thorns", 0) > 0:
 		chips.append("Thorns %d" % actor["thorns"])
 	return chips
@@ -295,6 +305,10 @@ func _expected_chip_tooltip(actor: Dictionary, side: String, forecast: Dictionar
 		return full + "\nBlind: this actor's next attempted attack misses; then Blind is spent. It does not stack and has no turn duration."
 	if chip == "Dodge":
 		return full + "\nDodge: the next incoming attempted attack on this actor misses once, then Dodge is spent. After Guard redirection, the actual recipient's Dodge applies. If unused, it expires at this actor's owner-turn end. It does not stack or grant Block or HP."
+	# Fear: one owner-turn self-buff lock, no count/duration, ordinary attacks untouched,
+	# Weak independent. Written from the brief and CombatStatuses, not from the presenter.
+	if chip == "Fear":
+		return full + "\nFear: this enemy cannot buff itself on its next own turn. Fear is a one owner-turn buff lock with no count and no longer duration; it never makes this enemy's ordinary attacks miss and never stops them. Weak is separate and expires by its own counter."
 	return full
 
 
@@ -451,7 +465,7 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 		and buttons.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and buttons.focus_mode == Control.FOCUS_NONE,
 		"empty status row collapses; real statuses restore it without intercepting input: " + meter.name)
-	_check(buttons.get_child_count() == 7, "one reusable seven-button pool: " + meter.name)
+	_check(buttons.get_child_count() == 8, "one reusable eight-button pool: " + meter.name)
 	var texts: Array[String] = []
 	for child in buttons.get_children():
 		var button := child as Button
@@ -685,8 +699,8 @@ func _exercise_status_row_transitions(app, presenter) -> void:
 	var control_ids: Array[int] = []
 	for child in buttons.get_children():
 		control_ids.append(child.get_instance_id())
-	_check(control_ids.size() == 7 and not buttons.visible and _visible_buttons(meter).is_empty(),
-		"authentic opening has a collapsed status row and seven dormant buttons")
+	_check(control_ids.size() == 8 and not buttons.visible and _visible_buttons(meter).is_empty(),
+		"authentic opening has a collapsed status row and eight dormant buttons")
 	_check(app.enemies.apply_statuses({1: {"exposed": 2}}),
 		"real enemy API applies Exposed 2 to an initially empty row")
 	await _frames()
@@ -719,8 +733,8 @@ func _exercise_status_row_transitions(app, presenter) -> void:
 		var actual_ids: Array[int] = []
 		for child in buttons.get_children():
 			actual_ids.append(child.get_instance_id())
-		_check(actual_ids == control_ids and buttons.get_child_count() == 7
-			and meter == _meters(app)[3], "status refresh reuses seven original chips and mounted meter")
+		_check(actual_ids == control_ids and buttons.get_child_count() == 8
+			and meter == _meters(app)[3], "status refresh reuses eight original chips and mounted meter")
 	_check(_state(app) == refreshed and randi() == global_draw,
 		"refresh never changes deck, statuses, intents, combat or seeded/global RNG")
 	var batch := CombatStatusTurnBatch.new()
@@ -780,8 +794,8 @@ func _exercise_new_status_ribbons(app, presenter) -> void:
 		hero_ids.append(child.get_instance_id())
 	for child in _buttons(meters[3]).get_children():
 		enemy_ids.append(child.get_instance_id())
-	_check(hero_ids.size() == 7 and enemy_ids.size() == 7,
-		"both real status rows reserve seven stable actionless controls")
+	_check(hero_ids.size() == 8 and enemy_ids.size() == 8,
+		"both real status rows reserve eight stable actionless controls")
 	app.party._heroes[1]["statuses"] = {"tangled": 2, "riposte": 3}
 	app.enemies._enemies[0]["statuses"] = {"bleed": 2, "weak": 1, "exposed": 2,
 		"tangled": 2, "riposte": 3}
@@ -930,7 +944,7 @@ func _exercise_new_status_ribbons(app, presenter) -> void:
 		final_enemy_ids.append(child.get_instance_id())
 	_check(_state(app) == before and hero_ids == final_hero_ids and enemy_ids == final_enemy_ids
 		and _visible_buttons(meters[1]).is_empty() and _visible_buttons(meters[3]).is_empty(),
-		"V3-2 fixture restores exact original state, original seven controls and empty rows")
+		"V3-2 fixture restores exact original state, original eight controls and empty rows")
 
 
 ## One-shot Blind on a real mounted enemy ribbon. A genuine CombatEnemies snapshot with
@@ -952,8 +966,8 @@ func _exercise_blind_ribbon(app, presenter) -> void:
 	var control_ids: Array[int] = []
 	for child in buttons.get_children():
 		control_ids.append(child.get_instance_id())
-	_check(control_ids.size() == 7 and not buttons.visible and _visible_buttons(meter).is_empty(),
-		"Blind case starts with a collapsed seven-control status pool")
+	_check(control_ids.size() == 8 and not buttons.visible and _visible_buttons(meter).is_empty(),
+		"Blind case starts with a collapsed eight-control status pool")
 	# A real CombatEnemies reader snapshot really carrying the one-shot token.
 	app.enemies._enemies[0]["statuses"] = {"blind_next_attack": 1}
 	var armed: Dictionary = app.enemies.get_enemy(1)
@@ -995,8 +1009,8 @@ func _exercise_blind_ribbon(app, presenter) -> void:
 	_check(_visible_buttons(meter).is_empty() and not buttons.visible
 		and meter.status_text.text == "Statuses: none",
 		"an inert zero Blind adds no text and clears the mounted chip")
-	_check(zero_ids == control_ids and buttons.get_child_count() == 7,
-		"clearing Blind reuses the same seven sewn controls")
+	_check(zero_ids == control_ids and buttons.get_child_count() == 8,
+		"clearing Blind reuses the same eight sewn controls")
 	app.enemies._enemies[0].erase("statuses")
 	presenter._sync_battle()
 	await _frames()
@@ -1013,8 +1027,8 @@ func _exercise_blind_ribbon(app, presenter) -> void:
 		await _frames()
 	_check(_state(app) == absent and randi() == expected_global,
 		"cleared Blind refresh never changes HP, Block, statuses, deck or either RNG")
-	# The full simultaneous case needs the seventh reused slot: five timed statuses,
-	# Thorns and one-shot Blind on one living enemy.
+	# The full simultaneous case uses seven of the eight reused slots: five timed
+	# statuses, Thorns and one-shot Blind. Fear is the eighth chip and stays dark here.
 	app.enemies._enemies[0]["statuses"] = {"bleed": 1, "weak": 1, "exposed": 1,
 		"tangled": 1, "riposte": 1, "blind_next_attack": 1}
 	app.enemies._enemies[0]["thorns"] = 2
@@ -1028,8 +1042,13 @@ func _exercise_blind_ribbon(app, presenter) -> void:
 	_check(_expected_chips(dense, "enemy") == ["Bleed 1", "Weak 1", "Exposed 1",
 		"Tangled 1", "Riposte 1", "Blind", "Thorns 2"]
 		and dense_texts == _expected_chips(dense, "enemy")
-		and buttons.get_child_count() == 7,
-		"five timed statuses plus Thorns and Blind render on exactly seven reused chips")
+		and buttons.get_child_count() == 8 and _visible_buttons(meter).size() == 7,
+		"the previous seven-effect set renders exactly seven visible chips from the eight-control pool")
+	var dormant := buttons.get_child(7) as Button
+	_check(dormant != null and not dormant.visible and not dormant.is_visible_in_tree()
+		and dormant.text.is_empty() and dormant.tooltip_text.is_empty()
+		and dormant.pressed.get_connections().is_empty(),
+		"the eighth preallocated control stays dormant and tooltip-free while Fear is absent")
 	if _visible_buttons(meter).size() == 7:
 		var blind_chip := _visible_buttons(meter)[5]
 		await _hover(blind_chip)
@@ -1083,7 +1102,269 @@ func _exercise_blind_ribbon(app, presenter) -> void:
 		final_ids.append(child.get_instance_id())
 	_check(_state(app) == before and final_ids == control_ids
 		and _visible_buttons(meter).is_empty() and not buttons.is_visible_in_tree(),
-		"the Blind fixture restores exact original state and the same seven controls")
+		"the Blind fixture restores exact original state and the same eight controls")
+
+
+## V3-2 Scarecrow Fear on a real mounted enemy ribbon. `cannot_buff_next_turn: true` is a
+## literal boolean buff lock, not a stack: it reads as one unnumbered "Fear" chip after the
+## counted statuses and the one-shot tokens and before the passive Thorns badge. The hover
+## states the one-owner-turn self-buff lock without inventing a count, a duration or an attack
+## lock; CombatStatuses.end_owner_turn removes only Fear while Weak ages by its own counter;
+## and false, 1, "true", 1.0 or an absent key never fabricate a chip.
+func _exercise_fear_ribbon(app, presenter) -> void:
+	var meters := _meters(app)
+	var living_heroes := 0
+	for hero in app.party.get_heroes():
+		if hero["hp"] > 0:
+			living_heroes += 1
+	_check(meters.size() == 5 and app.enemies.get_enemy(1)["hp"] > 0
+		and app.enemies.get_enemy(2)["hp"] > 0 and living_heroes == 3,
+		"Fear ribbon case starts with two living mounted enemies and three living heroes")
+	if meters.size() != 5 or app.enemies.get_enemy(1)["hp"] <= 0 \
+			or app.enemies.get_enemy(2)["hp"] <= 0:
+		return
+	var original_heroes: Array[Dictionary] = app.party.get_heroes()
+	var original_enemies: Array[Dictionary] = app.enemies.get_enemies()
+	var before := _state(app)
+	var meter := meters[3]
+	var buttons := _buttons(meter)
+	var control_ids: Array[int] = []
+	for child in buttons.get_children():
+		control_ids.append(child.get_instance_id())
+	_check(control_ids.size() == 8 and not buttons.visible and _visible_buttons(meter).is_empty(),
+		"Fear case starts with a collapsed eight-control status pool")
+	# AC1: the authoritative roster record carries exactly the canonical Weak + Fear pair.
+	app.enemies._enemies[0]["statuses"] = {"weak": 1, "cannot_buff_next_turn": true}
+	var source: Dictionary = app.enemies.get_enemy(1)
+	_check(source["statuses"] == {"weak": 1, "cannot_buff_next_turn": true}
+		and source["hp"] > 0 and source["position"] == 1,
+		"real enemy reader snapshot owns canonical Weak 1 plus literal boolean Fear")
+	_check(meter.show_actor(source, "enemy")
+		and meter.status_text.text == "Statuses: Weak 1 · Fear"
+		and meter.status_text.text.count("Fear") == 1
+		and not meter.status_text.text.contains("Fear 1"),
+		"CombatActorMeter accepts the canonical Fear flag and reads one unnumbered Fear word")
+	var reflected := _state(app)
+	seed(70533)
+	var global_next := randi()
+	seed(70533)
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var shown := _visible_buttons(meter)
+	_check(shown.size() == 2 and shown[0].text == "Weak 1" and shown[1].text == "Fear"
+		and not shown[1].text.contains("1"),
+		"mounted ribbon shows 'Weak 1' then exactly one unnumbered 'Fear' chip")
+	var fear_chip: Button = shown[1] if shown.size() == 2 else null
+	if fear_chip != null:
+		_check(fear_chip.tooltip_text == _expected_chip_tooltip(
+			source, "enemy", _forecast(app), "Fear")
+			and fear_chip.tooltip_text.begins_with("Statuses: Weak 1 · Fear")
+			and fear_chip.tooltip_text.contains("cannot buff itself on its next own turn")
+			and fear_chip.tooltip_text.contains("one owner-turn buff lock")
+			and fear_chip.tooltip_text.contains("no count")
+			and fear_chip.tooltip_text.contains("never makes this enemy's ordinary attacks miss")
+			and fear_chip.tooltip_text.contains("Weak is separate and expires by its own counter")
+			and not fear_chip.tooltip_text.contains("Fear 1")
+			and not fear_chip.tooltip_text.contains("stack")
+			and not fear_chip.tooltip_text.contains("next attack misses")
+			and not fear_chip.tooltip_text.contains("cannot attack"),
+			"the Fear chip hover states the self-buff-only lock with no count or attack lock")
+		await _hover(fear_chip)
+		_check(root.gui_get_hovered_control() == fear_chip
+			and fear_chip.focus_mode == Control.FOCUS_NONE
+			and fear_chip.pressed.get_connections().is_empty(),
+			"real pointer hover reads Fear while the chip stays actionless")
+	_check(_state(app) == reflected and randi() == global_next,
+		"first Fear refresh changes no combat, status, intent, deck or RNG state")
+	# A clean second enemy and all three heroes never inherit the mounted Fear chip.
+	for index in [0, 1, 2, 4]:
+		var other := meters[index]
+		var inherited := false
+		for chip in _visible_buttons(other):
+			if chip.text.contains("Fear") or chip.tooltip_text.contains("Fear"):
+				inherited = true
+		_check(not inherited and not other.status_text.text.contains("Fear"),
+			"clean actor never inherits the Fear chip: " + other.name)
+	# Fear follows both one-shot tokens: the model's own order is Blind, Dodge, then the
+	# unnumbered Fear word, and the ribbon chips must restate it exactly.
+	app.party._heroes[0]["statuses"] = {"blind_next_attack": 1,
+		"dodge_next_attack": 1, "cannot_buff_next_turn": true}
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var token_order: Array[String] = []
+	for chip in _visible_buttons(meters[0]):
+		token_order.append(chip.text)
+	_check(token_order == ["Blind", "Dodge", "Fear"]
+		and meters[0].status_text.text == "Statuses: Blind · Dodge · Fear",
+		"Fear reads after the Blind and Dodge one-shot tokens in the model's order")
+	app.party._heroes[0].erase("statuses")
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	# AC2: the densest genuine enemy display fills all eight preallocated chips.
+	var dense_statuses := {"bleed": 1, "weak": 1, "exposed": 1, "tangled": 1, "riposte": 1,
+		"blind_next_attack": 1, "cannot_buff_next_turn": true}
+	app.enemies._enemies[0]["statuses"] = dense_statuses.duplicate(true)
+	app.enemies._enemies[0]["thorns"] = 2
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var dense: Dictionary = app.enemies.get_enemy(1)
+	var dense_expected := ["Bleed 1", "Weak 1", "Exposed 1", "Tangled 1", "Riposte 1",
+		"Blind", "Fear", "Thorns 2"]
+	var dense_shown := _visible_buttons(meter)
+	var dense_texts: Array[String] = []
+	for chip in dense_shown:
+		dense_texts.append(chip.text)
+	_check(_expected_chips(dense, "enemy") == dense_expected and dense_texts == dense_expected
+		and buttons.get_child_count() == 8,
+		"five counted statuses, Blind, Fear and Thorns fill all eight chips in stable order")
+	var h_separation := float(buttons.get_theme_constant("h_separation"))
+	var row_gap := float(buttons.get_theme_constant("v_separation"))
+	var measured := _measured_rows(_chip_widths(buttons, dense_shown.size()),
+		buttons.size.x, h_separation)
+	var rendered := _rendered_rows(dense_shown)
+	var chip_height := dense_shown[0].size.y if dense_shown.size() == 8 else 0.0
+	_check(dense_shown.size() == 8 and rendered >= 2 and rendered == measured
+		and is_equal_approx(buttons.custom_minimum_size.y,
+			rendered * chip_height + row_gap * float(rendered - 1))
+		and presenter.row.custom_minimum_size.y >= meter.get_combined_minimum_size().y,
+		"all eight live chips wrap onto precisely the measured rows the ribbon reserves")
+	var slot := _slot(app, "enemy", 1)
+	_check(slot != null and slot.is_visible_in_tree(), "the dense Fear enemy owns its stage slot")
+	if slot != null:
+		var slot_rect := slot.get_global_rect()
+		for chip in dense_shown:
+			var rect := chip.get_global_rect()
+			_check(rect.has_area() and rect.position.x >= slot_rect.position.x - 1.0
+				and rect.end.x <= slot_rect.end.x + 1.0,
+				"each dense Fear chip stays within its own actor slot: " + chip.text)
+	for chip in dense_shown:
+		_check(not chip.clip_text and chip.get_theme_font_size("font_size") >= READABLE_CHIP_FONT
+			and chip.get_minimum_size().x <= chip.size.x + 0.5
+			and chip.mouse_filter == Control.MOUSE_FILTER_STOP
+			and chip.focus_mode == Control.FOCUS_NONE
+			and chip.pressed.get_connections().is_empty()
+			and chip.tooltip_text == _expected_chip_tooltip(
+				dense, "enemy", _forecast(app), chip.text),
+			"each dense Fear chip stays readable, hover-only and actionless: " + chip.text)
+	if dense_shown.size() == 8:
+		var blind_chip := dense_shown[5]
+		await _hover(blind_chip)
+		_check(root.gui_get_hovered_control() == blind_chip and blind_chip.text == "Blind"
+			and blind_chip.tooltip_text == _expected_chip_tooltip(
+				dense, "enemy", _forecast(app), "Blind"),
+			"the earlier Blind tooltip is unchanged beside Fear")
+		var thorns_chip := dense_shown[7]
+		await _hover(thorns_chip)
+		_check(root.gui_get_hovered_control() == thorns_chip and thorns_chip.text == "Thorns 2"
+			and thorns_chip.tooltip_text == _expected_chip_tooltip(
+				dense, "enemy", _forecast(app), "Thorns 2"),
+			"the passive Thorns tooltip remains valid after Fear was inserted before it")
+	var dense_state := _state(app)
+	seed(77341)
+	var dense_global := randi()
+	seed(77341)
+	for repeat in range(3):
+		presenter._sync_battle()
+		await _frames()
+		var refreshed_ids: Array[int] = []
+		for child in buttons.get_children():
+			refreshed_ids.append(child.get_instance_id())
+		_check(refreshed_ids == control_ids and _visible_buttons(meter).size() == 8
+			and _visible_buttons(meter)[6].text == "Fear",
+			"each refresh preserves the pre-created eight Button IDs and the live Fear chip")
+	_check(_state(app) == dense_state and randi() == dense_global,
+		"dense Fear refresh is read-only for combat, statuses, intents, deck and both RNGs")
+	# AC3: the pure owner-turn rule expires Fear only; Weak ages by its own counter.
+	app.enemies._enemies[0]["thorns"] = 0
+	app.enemies._enemies[0]["statuses"] = {"weak": 2, "cannot_buff_next_turn": true}
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var armed: Dictionary = app.enemies.get_enemy(1)
+	_check(_visible_buttons(meter).size() == 2 and _visible_buttons(meter)[1].text == "Fear",
+		"Weak 2 plus canonical Fear arms the chip before the owner-turn boundary")
+	var tick := CombatStatuses.new().end_owner_turn(
+		armed["hp"], armed["block"], armed["statuses"].duplicate(true))
+	_check(tick["ok"] and not tick["statuses"].has("cannot_buff_next_turn")
+		and tick["statuses"] == {"weak": 1} and armed["statuses"].get("weak") == 2,
+		"the copied owner-turn rule removes Fear entirely while Weak 2 ages to Weak 1")
+	app.enemies._enemies[0]["statuses"] = tick["statuses"].duplicate(true)
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var ticked_state := _state(app)
+	var expired := _visible_buttons(meter)
+	_check(_expected_chips(app.enemies.get_enemy(1), "enemy") == ["Weak 1"]
+		and expired.size() == 1 and expired[0].text == "Weak 1"
+		and not meters[3].status_text.text.contains("Fear"),
+		"expired Fear leaves only the independently aged Weak 1 chip")
+	for index in range(1, buttons.get_child_count()):
+		var dormant := buttons.get_child(index) as Button
+		_check(dormant != null and not dormant.visible and dormant.text.is_empty()
+			and dormant.tooltip_text.is_empty(),
+			"expired Fear leaves no stale chip text or hover in the reused pool")
+	_check(_state(app) == ticked_state, "Fear expiry rendering never reapplies or re-ages statuses")
+	# Absent Fear means no chip at all, exactly like the other absent statuses.
+	app.enemies._enemies[0].erase("statuses")
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	_check(_visible_buttons(meter).is_empty() and not buttons.visible
+		and not buttons.is_visible_in_tree() and meter.status_text.text == "Statuses: none",
+		"absent Fear renders no chip and collapses the status row")
+	# AC3: false, 1, "true" and 1.0 are malformed, never inactive: the real meter refuses
+	# the source and the mounted refresh paints no fabricated Fear chip.
+	app.enemies._enemies[0]["statuses"] = {"weak": 1, "cannot_buff_next_turn": true}
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	_check(_visible_buttons(meter).size() == 2 and _visible_buttons(meter)[1].text == "Fear",
+		"the valid roster restores the Fear chip before the malformed probes")
+	for bad_fear in [false, 1, "true", 1.0]:
+		app.enemies._enemies[0]["statuses"]["cannot_buff_next_turn"] = bad_fear
+		var malformed: Dictionary = app.enemies.get_enemy(1)
+		_check(not meter.show_actor(malformed, "enemy") and not meter.visible
+			and not meter.is_visible_in_tree() and meter.status_text.text.is_empty(),
+			"malformed Fear %s is refused and clears the mounted ribbon" % str(bad_fear))
+		var reject_state := _state(app)
+		presenter._sync_battle()
+		await _frames()
+		var painted := 0
+		for chip in _visible_buttons(meter):
+			if chip.is_visible_in_tree():
+				painted += 1
+		_check(not meter.visible and not meter.is_visible_in_tree()
+			and meter.status_text.text.is_empty() and painted == 0
+			and _state(app) == reject_state,
+			"mounted refresh presents no fabricated Fear chip for %s" % str(bad_fear))
+		for child in buttons.get_children():
+			var pooled := child as Button
+			_check(pooled != null and pooled.text.is_empty() and pooled.tooltip_text.is_empty(),
+				"rejected Fear clears every pooled label and hover")
+		app.enemies._enemies[0]["statuses"]["cannot_buff_next_turn"] = true
+		presenter._sync_battle()
+		await _frames()
+		_visible(app)
+		_check(meter.visible and _visible_buttons(meter).size() == 2
+			and _visible_buttons(meter)[1].text == "Fear",
+			"restoring the valid roster restores the Fear chip after %s" % str(bad_fear))
+	for index in range(3):
+		app.party._heroes[index] = original_heroes[index].duplicate(true)
+	for index in range(original_enemies.size()):
+		app.enemies._enemies[index] = original_enemies[index].duplicate(true)
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var final_ids: Array[int] = []
+	for child in buttons.get_children():
+		final_ids.append(child.get_instance_id())
+	_check(_state(app) == before and final_ids == control_ids
+		and _visible_buttons(meter).is_empty() and not buttons.is_visible_in_tree(),
+		"the Fear fixture restores exact original state and the same eight controls")
 
 
 func _exercise_live_bleed(app, presenter) -> void:
@@ -1503,6 +1784,7 @@ func _run() -> void:
 		await _exercise_status_row_transitions(app, presenter)
 		await _exercise_new_status_ribbons(app, presenter)
 		await _exercise_blind_ribbon(app, presenter)
+		await _exercise_fear_ribbon(app, presenter)
 		# Inject only into an existing mounted view: no invented live status persistence.
 		var model_before_status := _state(app)
 		var active_meters := _meters(app)
@@ -3507,7 +3789,7 @@ func _exercise_dodge_ribbon(app, presenter) -> void:
 	var ids: Array[int] = []
 	for child in buttons.get_children():
 		ids.append(child.get_instance_id())
-	_check(ids.size() == 7, "Dodge reuses the seven-control pool")
+	_check(ids.size() == 8, "Dodge reuses the eight-control pool")
 	# Fixture authority changes only statuses; rendering must not change any model.
 	for status_case in [{"dodge_next_attack": 1}, {"dodge_next_attack": 0}, {},
 			{"dodge_next_attack": 1}, {"blind_next_attack": 1, "dodge_next_attack": 1},
