@@ -359,6 +359,66 @@
         { "id": "unpick_binding", "text": "Unpick 1 max HP to salvage 1 scrap", "outcome": { "gold": 0, "scraps": 1, "hp": 0, "max_hp": -1 } },
         { "id": "leave", "text": "Fold the damask pockets and go", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_ribbon_court",
+      "title": "The Ribbon Court",
+      "description": "A round velvet magistrate pins scarlet ribbons to a stitched verdict board beneath a warm brass lantern.",
+      "choices": [
+        { "id": "offer_scarlet_oath", "text": "Spend 22 gold and 1 scrap on a lasting scarlet seam (+4 max HP)", "outcome": { "gold": -22, "scraps": -1, "hp": 0, "max_hp": 4 } },
+        { "id": "stand_in_judgment", "text": "Give 5 HP of stuffing to receive the court's 27-gold purse", "outcome": { "gold": 27, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the verdict hanging", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_mothglass_lantern_vault",
+      "title": "The Mothglass Lantern Vault",
+      "description": "A squat, button-eyed keeper tends a great cracked lantern where round cloth moths nest among jewel-toned glass.",
+      "choices": [
+        { "id": "patch_lantern_glass", "text": "Pay 18 gold for healing glow (+9 HP, +1 max HP)", "outcome": { "gold": -18, "scraps": 0, "hp": 9, "max_hp": 1 } },
+        { "id": "carry_burning_wick", "text": "Carry a hot lantern wick (lose 6 HP; gain 3 scraps)", "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the moths sleep", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_strawbound_loom",
+      "title": "The Strawbound Loom",
+      "description": "A pumpkin-faced plush loomkeeper knots fraying straw hearts on a giant moss-green weaving frame.",
+      "choices": [
+        { "id": "take_heirloom", "text": "Sell an old heart seam (lose 2 max HP; gain 26 gold)", "outcome": { "gold": 26, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "stuff_new_heart", "text": "Spend 3 scraps to restuff a heart (+5 HP, +2 max HP)", "outcome": { "gold": 0, "scraps": -3, "hp": 5, "max_hp": 2 } },
+        { "id": "leave", "text": "Leave the loom's hearts beating", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_sable_clock_doll",
+      "title": "The Sable Clock Doll",
+      "description": "A broad midnight-plum clock doll holds a ticking button moon, its big brass hands stitched to its sleeves.",
+      "choices": [
+        { "id": "wind_giant_clock", "text": "Wind the clock with 8 HP of effort for 3 lasting max HP", "outcome": { "gold": 0, "scraps": 0, "hp": -8, "max_hp": 3 } },
+        { "id": "pawn_clock_hands", "text": "Pawn the clock hands (lose 3 HP; earn 18 gold and 1 scrap)", "outcome": { "gold": 18, "scraps": 1, "hp": -3, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the clock count another night", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_copper_moth_choir",
+      "title": "The Copper-Moth Choir",
+      "description": "A chorus of round moth-faced ragdolls sings beneath a copper bell sewn into an oxblood velvet arch.",
+      "choices": [
+        { "id": "buy_benediction", "text": "Pay 24 gold and 1 scrap for a bright seam (+4 HP, +2 max HP)", "outcome": { "gold": -24, "scraps": -1, "hp": 4, "max_hp": 2 } },
+        { "id": "burn_wick", "text": "Burn a lasting seam for the choir (lose 1 max HP; earn 29 gold)", "outcome": { "gold": 29, "scraps": 0, "hp": 0, "max_hp": -1 } },
+        { "id": "leave", "text": "Keep the bell quiet", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_nightquilt_watchtower",
+      "title": "The Nightquilt Watchtower",
+      "description": "A stout button-eyed watch doll guards a tower of midnight-teal quilts with a broad quilted lantern-shield.",
+      "choices": [
+        { "id": "keep_night_watch", "text": "Take the night watch (lose 7 HP; earn 23 gold and 1 scrap)", "outcome": { "gold": 23, "scraps": 1, "hp": -7, "max_hp": 0 } },
+        { "id": "sew_watchtower_hem", "text": "Pay 12 gold and 2 scraps for a lasting watch hem (+3 max HP)", "outcome": { "gold": -12, "scraps": -2, "hp": 0, "max_hp": 3 } },
+        { "id": "leave", "text": "Pass beneath the shield in peace", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }

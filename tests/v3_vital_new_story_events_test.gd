@@ -157,6 +157,72 @@ const NEW_VITAL_STORY_EVENTS := {
 	},
 }
 
+# The six high-stakes stories appended by this lane (independent expectations;
+# choice rows are [id, text, gold, scraps, hp, max_hp]). Never generated from
+# the production JSON, and never located by catalog total or position.
+const LATEST_VITAL_STORY_EVENTS := {
+	"v3_ribbon_court": {
+		"title": "The Ribbon Court",
+		"description": "A round velvet magistrate pins scarlet ribbons to a stitched verdict board beneath a warm brass lantern.",
+		"choices": [
+			["offer_scarlet_oath", "Spend 22 gold and 1 scrap on a lasting scarlet seam (+4 max HP)", -22, -1, 0, 4],
+			["stand_in_judgment", "Give 5 HP of stuffing to receive the court's 27-gold purse", 27, 0, -5, 0],
+			["leave", "Leave the verdict hanging", 0, 0, 0, 0],
+		],
+	},
+	"v3_mothglass_lantern_vault": {
+		"title": "The Mothglass Lantern Vault",
+		"description": "A squat, button-eyed keeper tends a great cracked lantern where round cloth moths nest among jewel-toned glass.",
+		"choices": [
+			["patch_lantern_glass", "Pay 18 gold for healing glow (+9 HP, +1 max HP)", -18, 0, 9, 1],
+			["carry_burning_wick", "Carry a hot lantern wick (lose 6 HP; gain 3 scraps)", 0, 3, -6, 0],
+			["leave", "Let the moths sleep", 0, 0, 0, 0],
+		],
+	},
+	"v3_strawbound_loom": {
+		"title": "The Strawbound Loom",
+		"description": "A pumpkin-faced plush loomkeeper knots fraying straw hearts on a giant moss-green weaving frame.",
+		"choices": [
+			["take_heirloom", "Sell an old heart seam (lose 2 max HP; gain 26 gold)", 26, 0, 0, -2],
+			["stuff_new_heart", "Spend 3 scraps to restuff a heart (+5 HP, +2 max HP)", 0, -3, 5, 2],
+			["leave", "Leave the loom's hearts beating", 0, 0, 0, 0],
+		],
+	},
+	"v3_sable_clock_doll": {
+		"title": "The Sable Clock Doll",
+		"description": "A broad midnight-plum clock doll holds a ticking button moon, its big brass hands stitched to its sleeves.",
+		"choices": [
+			["wind_giant_clock", "Wind the clock with 8 HP of effort for 3 lasting max HP", 0, 0, -8, 3],
+			["pawn_clock_hands", "Pawn the clock hands (lose 3 HP; earn 18 gold and 1 scrap)", 18, 1, -3, 0],
+			["leave", "Let the clock count another night", 0, 0, 0, 0],
+		],
+	},
+	"v3_copper_moth_choir": {
+		"title": "The Copper-Moth Choir",
+		"description": "A chorus of round moth-faced ragdolls sings beneath a copper bell sewn into an oxblood velvet arch.",
+		"choices": [
+			["buy_benediction", "Pay 24 gold and 1 scrap for a bright seam (+4 HP, +2 max HP)", -24, -1, 4, 2],
+			["burn_wick", "Burn a lasting seam for the choir (lose 1 max HP; earn 29 gold)", 29, 0, 0, -1],
+			["leave", "Keep the bell quiet", 0, 0, 0, 0],
+		],
+	},
+	"v3_nightquilt_watchtower": {
+		"title": "The Nightquilt Watchtower",
+		"description": "A stout button-eyed watch doll guards a tower of midnight-teal quilts with a broad quilted lantern-shield.",
+		"choices": [
+			["keep_night_watch", "Take the night watch (lose 7 HP; earn 23 gold and 1 scrap)", 23, 1, -7, 0],
+			["sew_watchtower_hem", "Pay 12 gold and 2 scraps for a lasting watch hem (+3 max HP)", -12, -2, 0, 3],
+			["leave", "Pass beneath the shield in peace", 0, 0, 0, 0],
+		],
+	},
+}
+
+# The funded living-hero snapshot the latest batch's settlement test uses.
+const LATEST_GOLD := 60
+const LATEST_SCRAPS := 5
+const LATEST_HP := 20
+const LATEST_MAX_HP := 36
+
 const FUNDED_GOLD := 40
 const FUNDED_SCRAPS := 4
 const FUNDED_HP := 25
@@ -256,6 +322,10 @@ func _initialize() -> void:
 	_test_this_batch_vital_boundaries()
 	_test_this_batch_refusals_then_leave()
 	_test_this_batch_rotation_admission()
+	_test_latest_story_data()
+	_test_latest_settlement_and_claims()
+	_test_latest_refusals_then_leave()
+	_test_latest_rotation_admission()
 	for failure in failures:
 		printerr(failure)
 	print("v3_vital_new_story_events_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
@@ -869,4 +939,223 @@ func _test_this_batch_rotation_admission() -> void:
 	for anchor_name in ANCHOR_IDS:
 		_check(_record(anchor_name) == anchors_before[anchor_name],
 			"authored anchor record remains unchanged: " + anchor_name)
+
+
+func _test_latest_story_data() -> void:
+	# Every story appended by this lane is present exactly once with its exact
+	# title, description, three distinct choice IDs and four signed outcome
+	# fields, including a free zero-effect Leave. Verified per ID only.
+	_check(LATEST_VITAL_STORY_EVENTS.size() == 6, "the independent latest table names six stories")
+	_check_story_table(LATEST_VITAL_STORY_EVENTS, "latest batch")
+
+
+func _test_latest_settlement_and_claims() -> void:
+	# On a fresh selector per choice, preview and then settle the funded snapshot
+	# {gold:60, scraps:5, hero:{id:"warden", hp:20, max_hp:36}}. Max HP is applied
+	# first, so a heal that overshoots is capped at the new maximum, and the free
+	# Leave is an exact no-op. Both the source record and the caller input stay
+	# detached, and a claimed visit rejects every replay.
+	for event_id in LATEST_VITAL_STORY_EVENTS:
+		var expected: Dictionary = LATEST_VITAL_STORY_EVENTS[event_id]
+		var rows: Array = expected["choices"]
+		for row in rows:
+			var choice_id: String = row[0]
+			var tag: String = event_id + "/" + choice_id
+			var gold_delta: int = int(row[2])
+			var scraps_delta: int = int(row[3])
+			var hp_delta: int = int(row[4])
+			var max_hp_delta: int = int(row[5])
+			var exp_gold: int = LATEST_GOLD + gold_delta
+			var exp_scraps: int = LATEST_SCRAPS + scraps_delta
+			var exp_max: int = LATEST_MAX_HP + max_hp_delta
+			var exp_hp: int = min(LATEST_HP + hp_delta, exp_max)
+
+			var record := _record(event_id)
+			_check(not record.is_empty(), "latest record available for settlement: " + tag)
+			if record.is_empty():
+				continue
+			var record_before: Dictionary = record.duplicate(true)
+			var snapshot: Dictionary = _vital_state(LATEST_GOLD, LATEST_SCRAPS, LATEST_HP, LATEST_MAX_HP)
+			var snapshot_before: Dictionary = snapshot.duplicate(true)
+			var phase_seed := 75000 + rows.find(row) * 3
+			var global_state := _rng_start(phase_seed)
+
+			var preview_service := RunEventChoice.new(record.duplicate(true))
+			_check(preview_service.is_valid() and not preview_service.is_claimed(),
+				"latest fresh preview selector is unclaimed: " + tag)
+			var preview := preview_service.preview_vital_choices(snapshot)
+			_check(preview.get("ok") == true and preview.get("event_id") == event_id
+				and (preview.get("choices") as Array).size() == 3,
+				"latest funded preview lists three choices: " + tag)
+			var entry := _preview_choice(preview, choice_id)
+			_check(not entry.is_empty() and entry.size() == 7,
+				"latest preview entry has seven fields: " + tag)
+			_check(entry.get("choice_id") == choice_id
+				and entry.get("gold_delta") == gold_delta
+				and entry.get("scraps_delta") == scraps_delta
+				and entry.get("hp_delta") == hp_delta
+				and entry.get("max_hp_delta") == max_hp_delta,
+				"latest preview reports exact signed deltas: " + tag)
+			_check(entry.get("affordable") == true
+				and _vital_state_is(entry.get("state"), exp_gold, exp_scraps, exp_hp, exp_max),
+				"latest funded preview projects the exact state: " + tag)
+			_check(snapshot == snapshot_before and record == record_before,
+				"latest preview mutates neither caller input nor source: " + tag)
+			_check(preview_service.is_valid() and not preview_service.is_claimed()
+				and preview_service.get_event() == record_before,
+				"latest preview keeps the visit open and detached: " + tag)
+			_check(randi() == global_state, "latest preview spends no global RNG: " + tag)
+
+			global_state = _rng_start(phase_seed + 1)
+			var commit_record := _record(event_id)
+			var commit_service := RunEventChoice.new(commit_record)
+			var input: Dictionary = _vital_state(LATEST_GOLD, LATEST_SCRAPS, LATEST_HP, LATEST_MAX_HP)
+			var input_before: Dictionary = input.duplicate(true)
+			var commit := commit_service.choose_with_vitals(choice_id, input)
+			_check(commit.size() == 4 and commit.get("ok") == true
+				and commit.get("event_id") == event_id and commit.get("choice_id") == choice_id
+				and _vital_state_is(commit.get("state"), exp_gold, exp_scraps, exp_hp, exp_max),
+				"latest funded commit settles the exact state: " + tag)
+			_check(commit.get("state") == entry.get("state"),
+				"latest commit matches its preview forecast: " + tag)
+			_check(input == input_before and commit_record == record_before
+				and commit_service.get_event() == record_before,
+				"latest commit keeps caller input and source detached: " + tag)
+			_check(commit_service.is_claimed() and not commit_service.is_valid(),
+				"latest commit latches exactly one claim: " + tag)
+			_check(randi() == global_state, "latest commit spends no global RNG: " + tag)
+
+			# Scribbling on the returned dictionaries must not reach the service.
+			var returned_commit_state: Dictionary = commit["state"]
+			returned_commit_state["gold"] = 999
+			var returned_preview_state: Dictionary = entry["state"]
+			var returned_preview_hero: Dictionary = returned_preview_state["hero"]
+			returned_preview_hero["hp"] = 999
+
+			global_state = _rng_start(phase_seed + 2)
+			var replay_input: Dictionary = _vital_state(LATEST_GOLD, LATEST_SCRAPS, LATEST_HP, LATEST_MAX_HP)
+			var replay := commit_service.choose_with_vitals(choice_id, replay_input)
+			_check(replay.size() == 4 and replay.get("ok") == false
+				and replay.get("event_id") == "" and replay.get("choice_id") == ""
+				and replay.get("state") == replay_input,
+				"latest spent visit rejects the replay unchanged: " + tag)
+			_check(commit_service.is_claimed() and not commit_service.is_valid()
+				and commit_service.get_event() == record_before,
+				"latest rejected replay consumes no second claim: " + tag)
+			_check(randi() == global_state, "latest replay spends no global RNG: " + tag)
+
+
+func _test_latest_refusals_then_leave() -> void:
+	# One representative shortage per resource class: an empty wallet, too little
+	# HP for a sacrifice and no max-HP margin. Each refusal must keep the visit
+	# unclaimed, leave the caller state and global RNG untouched, and then the
+	# free Leave must settle once on that same visit with every replay rejected.
+	var cases := [
+		{"event": "v3_ribbon_court", "choice": "offer_scarlet_oath",
+			"state": _vital_state(0, 0, 20, 36), "label": "poor wallet"},
+		{"event": "v3_sable_clock_doll", "choice": "wind_giant_clock",
+			"state": _vital_state(60, 5, 6, 36), "label": "low HP"},
+		{"event": "v3_strawbound_loom", "choice": "take_heirloom",
+			"state": _vital_state(60, 5, 9, 10), "label": "min max HP"},
+	]
+	for case_data in cases:
+		var event_id: String = case_data["event"]
+		var choice_id: String = case_data["choice"]
+		var label: String = case_data["label"]
+		var tag: String = label + " " + event_id + "/" + choice_id
+		var state: Dictionary = (case_data["state"] as Dictionary).duplicate(true)
+		var original: Dictionary = state.duplicate(true)
+		var record := _record(event_id)
+		_check(not record.is_empty(), "latest refusal case has its authored record: " + tag)
+		if record.is_empty():
+			continue
+		var record_before: Dictionary = record.duplicate(true)
+		var service := RunEventChoice.new(record)
+		var global_state := _rng_start(75200)
+
+		var preview := service.preview_vital_choices(state)
+		var entry := _preview_choice(preview, choice_id)
+		_check(preview.get("ok") == true and preview.get("event_id") == event_id
+			and not entry.is_empty() and entry.get("affordable") == false
+			and entry.get("state") == original,
+			"latest refused branch is forecast unavailable: " + tag)
+		var refusal := service.choose_with_vitals(choice_id, state)
+		_check(refusal.size() == 4 and refusal.get("ok") == false
+			and refusal.get("event_id") == "" and refusal.get("choice_id") == ""
+			and refusal.get("state") == original,
+			"latest refused branch rejects with unchanged detached state: " + tag)
+		_check(state == original and record == record_before
+			and service.get_event() == record_before
+			and service.is_valid() and not service.is_claimed(),
+			"latest refusal consumes no visit and mutates nothing: " + tag)
+		(refusal["state"] as Dictionary)["gold"] = 999
+		_check(state == original, "latest refusal state is detached from the caller: " + tag)
+		_check(randi() == global_state, "latest refusal spends no global RNG: " + tag)
+
+		global_state = _rng_start(75201)
+		var leave := service.choose_with_vitals("leave", state)
+		_check(leave.get("ok") == true and leave.get("event_id") == event_id
+			and leave.get("choice_id") == "leave" and leave.get("state") == original
+			and service.is_claimed() and not service.is_valid(),
+			"latest free Leave settles the same visit: " + tag)
+		var leave_replay := service.choose_with_vitals("leave", state)
+		var branch_replay := service.choose_with_vitals(choice_id, state)
+		_check(leave_replay.get("ok") == false and branch_replay.get("ok") == false
+			and leave_replay.get("state") == original and branch_replay.get("state") == original
+			and state == original,
+			"latest settled visit rejects Leave and branch replay: " + tag)
+		_check(service.is_claimed() and record == record_before
+			and service.get_event() == record_before,
+			"latest replays leave the claim latched and the source untouched: " + tag)
+		_check(randi() == global_state, "latest Leave and replays spend no global RNG: " + tag)
+
+
+func _test_latest_rotation_admission() -> void:
+	# The default shipped rotation: every latest ID is eligible exactly once, is
+	# the only eligible ID once every other returned ID is excluded, is chosen by
+	# the caller-owned seeded RandomNumberGenerator (exactly one range draw) and
+	# is admitted as a valid unclaimed RunEventChoice. No total, full order or
+	# absolute position is frozen, and no unrestricted draw has to pick it.
+	var rotation := RunV3VitalEventRotation.new()
+	_check(rotation.is_catalog_valid(), "shipped vitality rotation admits the latest batch")
+	var listing: Array = rotation.get_vital_events()
+	var listing_before: Array = listing.duplicate(true)
+	var ids: Array = rotation.get_vital_event_ids()
+	var seed_value := 75300
+	for event_id in LATEST_VITAL_STORY_EVENTS:
+		var tag: String = "latest rotation " + event_id
+		var authored := _record(event_id)
+		_check(not authored.is_empty(), "latest authored record is readable: " + tag)
+		_check(ids.count(event_id) == 1, "latest ID is eligible exactly once: " + tag)
+		var offered := _listing_matches(listing, event_id)
+		_check(offered.size() == 1, "latest ID is offered exactly once: " + tag)
+		if offered.size() == 1:
+			_check(offered[0] == authored, "latest offered record matches the authored source: " + tag)
+			var admitted := RunEventChoice.new(offered[0])
+			_check(admitted.is_valid() and not admitted.is_claimed(),
+				"latest offered record is an unclaimed visit: " + tag)
+
+		var excluded: Array = ids.duplicate()
+		excluded.erase(event_id)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = seed_value
+		oracle.randi_range(0, 0)
+		var result := rotation.select_event(rng, excluded)
+		_check(result.get("ok") == true
+			and (result.get("event") as Dictionary).get("id") == event_id,
+			"latest ID is selected when every other ID is excluded: " + tag)
+		_check(result.get("event") == authored,
+			"latest forced selection returns the authored record: " + tag)
+		_check(rng.state == oracle.state,
+			"latest forced selection consumes exactly one range draw: " + tag)
+		var selected_service := RunEventChoice.new(result.get("event"))
+		_check(selected_service.is_valid() and not selected_service.is_claimed(),
+			"latest selected event is admitted as an unclaimed visit: " + tag)
+		_check(rotation.get_vital_events() == listing_before,
+			"latest forced selection never mutates the rotation pool: " + tag)
+		seed_value += 1
+	_check(rotation.get_vital_events() == listing_before,
+		"latest rotation flows leave the shipped pool unchanged")
 
