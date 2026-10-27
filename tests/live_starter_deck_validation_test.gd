@@ -2,6 +2,7 @@ extends SceneTree
 
 const FIXTURE := "user://live_starter_deck_validation.json"
 const UNREADABLE := "user://live_starter_deck_validation_directory"
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
 var failures: Array[String] = []
 var checks := 0
 
@@ -109,6 +110,8 @@ func _run() -> void:
 	var app = scene.instantiate()
 	root.add_child(app)
 	await process_frame
+	_check(STARTER_ORACLE.pin_guard_block(app, "user://live_starter_deck_guard.json"),
+		"shipped Guard Ragling pinned to its own authored Block alternative")
 	_check(is_instance_valid(app.start_button), "mounted Start button exists")
 	if not is_instance_valid(app.start_button):
 		app.free()

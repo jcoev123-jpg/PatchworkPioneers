@@ -123,6 +123,48 @@ static func intent_clause(action: Dictionary, hero_names: Array) -> String:
 	return ""
 
 
+## Point the mounted app at a detached copy of the shipped enemy catalog whose
+## Guard Ragling keeps only its own authored Block alternative. A single action
+## consumes no run RNG, so a seeded viewport/lifecycle test stays deterministic;
+## the shipped record is still asserted to carry all three authored alternatives
+## before the copy is narrowed.
+static func pin_guard_block(app, path: String) -> bool:
+	if app == null or not is_instance_valid(app) or not path.begins_with("user://"):
+		return false
+	var source: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string(app.STARTER_ENEMIES_PATH))
+	if not source is Array or source.is_empty():
+		return false
+	var records: Array = []
+	var block: Dictionary = {}
+	for record in source:
+		if not record is Dictionary:
+			return false
+		var copy: Dictionary = record.duplicate(true)
+		if copy.get("id") == "ragling_guard":
+			var intent: Variant = copy.get("intent")
+			var actions: Variant = intent.get("actions") if intent is Dictionary else null
+			if not actions is Array or actions.size() != 3:
+				return false
+			for raw in actions:
+				if CombatEnemyIntents.weighted_action(raw).get("action", {}).get("type") == "block":
+					block = raw.duplicate(true)
+			if block.is_empty() or int(block.get("amount", 0)) != 5:
+				return false
+			copy["intent"] = {"target": String(intent.get("target", "front")),
+				"actions": [block]}
+		records.append(copy)
+	if block.is_empty() or records.size() != source.size():
+		return false
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		return false
+	file.store_string(JSON.stringify(records))
+	file.close()
+	app.starter_enemies_path = path
+	return app._load_enemy_definitions().size() == records.size()
+
+
 ## The authored Guard Ragling's own alternatives: Block 5, a right shield rush
 ## or a real six-point hit. Never a fixed passive Block.
 static func is_authored_guard_action(action: Dictionary) -> bool:

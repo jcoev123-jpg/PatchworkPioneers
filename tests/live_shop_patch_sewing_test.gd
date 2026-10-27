@@ -41,6 +41,10 @@ const PREVIEW_POWERS := {
 	"threadguard_wrap": {"slot": "ARM", "effect": "card_block_bonus", "amount": 1, "text": "+1 Block on this living wearer's cards that already grant Block; never on a card without Block."},
 	"frayfinder_mitt": {"slot": "ARM", "effect": "first_single_target_half_unravel_attack_bonus", "amount": 2, "minimum_unravel_numerator": 1, "minimum_unravel_denominator": 2, "once_per_player_turn": true, "hit_number": 1, "target_kind": "enemy_single", "text": "+2 attack damage once per player turn on this living wearer's first confirmed single-target hit against an enemy already at half its current Unravel threshold; no bonus on area or later hits."},
 	"borrowed_button": {"slot": "COAT", "effect": "other_hero_committed_heal_block", "heal_threshold": 1, "block": 3, "uses_per_combat": 1, "text": "Once per combat, when another living hero's committed card or stitched half restores at least 1 HP to this living wearer, gain 3 Block."},
+	"relay_bobbin": {"slot": "HEAD", "effect": "different_hero_pinned_token_shared_energy", "uses_per_combat": 1,
+		"text": "Once per combat, if a different living hero consumes a Pinned token placed by this living, untorn wearer (confirmed receipt), gain +1 shared energy, capped at 3."},
+	"hearth_lining": {"slot": "COAT", "effect": "earned_quilt_bonus_wearer_heal", "uses_per_combat": 1,
+		"text": "Once per combat, at the first EARNED Quilt bonus, heal this living, untorn wearer 2 HP, up to maximum HP."},
 }
 
 

@@ -98,7 +98,10 @@ func _run() -> void:
 		for tier in range(3):
 			if tier > 0:
 				var rng := RandomNumberGenerator.new()
-				var witness_seed := 979 if tier == 1 else 309
+				# The Guard Ragling's authored shield rush makes the old 979/309
+				# witnesses lose the final Boss from 32 HP; the same genuine legal
+				# seed and full-route policy wins every tier and its replay.
+				var witness_seed := 1550
 				rng.seed = witness_seed
 				var map := RunMap.new()
 				_check(map.generate(rng), "higher-tier witness generates the actual map")

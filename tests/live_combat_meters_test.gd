@@ -1,5 +1,7 @@
 extends SceneTree
 
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
+
 var failures: Array[String] = []
 var checks := 0
 ## Status chips keep their complete names at a readable size: at every normal 1280x720
@@ -1471,6 +1473,8 @@ func _run() -> void:
 	await _frames()
 	_check(_meters(app).is_empty(), "inactive End Turn has no presentation")
 	app.starter_party_path = app.STARTER_PARTY_PATH
+	_check(STARTER_ORACLE.pin_guard_block(app, "user://live_combat_meters_guard.json"),
+		"shipped Guard Ragling pinned to its own authored Block alternative")
 	var replay: Array = []
 	for session in range(2):
 		_fixture_start(app)
@@ -1567,7 +1571,7 @@ func _run() -> void:
 		app.end_turn_button.disabled = false
 		await _mouse(app.end_turn_button)
 		_check(app.party.get_hero(1).hp == 40 and app.party.get_hero(1).block == 0
-			and app.enemies.get_enemy(2).block == 1, "actual turn absorbs attack and executes second enemy Block")
+			and app.enemies.get_enemy(2).block == 5, "actual turn absorbs attack and executes second enemy Block")
 		_visible(app)
 		_check(_incoming(app, 1) == "Incoming: 0 Block, 5 HP"
 			and _incoming(app, 2) == "Incoming: none",
@@ -1796,7 +1800,7 @@ func _unravel_bound_fight(app, presenter) -> void:
 	roster._refresh()
 	var skipped: Dictionary = authority.get_snapshot(1)
 	_check(skipped.gauge == 0 and skipped.threshold == 12 and not skipped.skip_pending
-		and app.enemy_intents._turn_index == 1 and app.enemies.get_enemy(2).block == 1,
+		and app.enemy_intents._turn_index == 1 and app.enemies.get_enemy(2).block == 5,
 		"actual End Turn consumes one skip, raises threshold to 12, other enemy still acts")
 	_check(app.party.get_hero(1).hp == hero_before.hp and app.enemy_intents._turn_index == 1
 		and not app.enemy_intents.get_intents().is_empty(),
@@ -1943,7 +1947,7 @@ func _status_end_turns(app, presenter) -> void:
 				_check(actual["block"] == (predicted["block_remaining"] if scenario == "lethal_bleed" else 0)
 					and predicted["block_remaining"] == heroes[index]["block"] - predicted["block_absorbed"],
 					scenario + ": live Block matches absorption and new-turn reset")
-			_check(app.enemies.get_enemy(2)["block"] == (0 if scenario == "lethal_bleed" else 1),
+			_check(app.enemies.get_enemy(2)["block"] == (0 if scenario == "lethal_bleed" else 5),
 				scenario + ": owner defeat skips enemy Block as well as attacks")
 			await _frames()
 			_visible(app)

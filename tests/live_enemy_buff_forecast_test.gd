@@ -1,5 +1,7 @@
 extends SceneTree
 
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
+
 var failures: Array[String] = []
 var checks := 0
 
@@ -83,9 +85,9 @@ func _detached_cases(app) -> void:
 	var before := _snapshot(app)
 	var batch: Array = app.enemy_attacks.duplicate(true)
 	_check(rules.forecast(app.party, app.enemies, batch) == [
-		{"enemy_position": 2, "name": "Guard Ragling", "before": 2, "after": 3}], "helper projects exact current Block")
+		{"enemy_position": 2, "name": "Guard Ragling", "before": 10, "after": 15}], "helper projects exact current Block")
 	_check(rules.forecast(app.party, app.enemies, [{"type": "buff", "enemy_position": 2, "amount": 1}]) == [
-		{"enemy_position": 2, "name": "Guard Ragling", "before": 2, "after": 3}], "typed buff projects exact current Block")
+		{"enemy_position": 2, "name": "Guard Ragling", "before": 10, "after": 11}], "typed buff projects exact current Block")
 	var special_batch: Array = [{"type": "buff", "enemy_position": 1, "amount": 2},
 		{"type": "debuff", "enemy_position": 2, "amount": 1, "target_position": 3, "status": "weak"}]
 	var original_hero: Dictionary = app.party._heroes[2].duplicate(true)
@@ -124,7 +126,7 @@ func _detached_cases(app) -> void:
 	app.enemy_attacks = app.enemy_intents.get_intents()
 	app._refresh_intents()
 	_check(app.enemy_buff_forecast_label.text.is_empty(), "valid announced zero Block clears mounted forecast")
-	app.enemy_intents._cache[1]["amount"] = 1
+	app.enemy_intents._cache[1]["amount"] = 5
 	app.enemy_attacks = app.enemy_intents.get_intents()
 	app._refresh_intents()
 	_check(_snapshot(app) == before, "zero and stale fixtures restore full original state")
@@ -138,17 +140,17 @@ func _detached_cases(app) -> void:
 	var late_overflow: Array = [{"type": "block", "enemy_position": 1, "amount": 1}, batch[1]]
 	_check(rules.forecast(app.party, app.enemies, late_overflow).is_empty() \
 		and _snapshot(app) == overflow, "late overflowing buff publishes neither earlier forecast nor live write")
-	app.enemies._enemies[1].block = 2
+	app.enemies._enemies[1].block = 10
 	# Two buffs in deliberately reversed source order; outputs retain caller order.
 	var ordered: Array = [{"type": "block", "enemy_position": 2, "amount": 1},
 		{"type": "block", "enemy_position": 1, "amount": 2}]
 	var ordered_before := ordered.duplicate(true)
 	var result := rules.forecast(app.party, app.enemies, ordered)
 	_check(result.size() == 2 and result[0].enemy_position == 2 and result[1].enemy_position == 1 \
-		and result[0].after == 3 and result[1].after == 2, "multiple sources preserve input order and actual totals")
+		and result[0].after == 11 and result[1].after == 2, "multiple sources preserve input order and actual totals")
 	if not result.is_empty():
 		result[0].after = -1
-	_check(rules.forecast(app.party, app.enemies, ordered)[0].after == 3 \
+	_check(rules.forecast(app.party, app.enemies, ordered)[0].after == 11 \
 		and ordered == ordered_before and _snapshot(app) == before, "results and nested inputs are detached")
 
 
@@ -161,6 +163,8 @@ func _run() -> void:
 	var app = scene.instantiate()
 	root.add_child(app)
 	await process_frame
+	_check(STARTER_ORACLE.pin_guard_block(app, "user://live_enemy_buff_forecast_guard.json"),
+		"shipped Guard Ragling pinned to its own authored Block alternative")
 	_check(app.title_view.is_visible_in_tree() and app.enemy_buff_forecast_label == null, "title has no forecast")
 	var replay: Array = []
 	for session in range(2):
@@ -177,12 +181,12 @@ func _run() -> void:
 			return
 		_check(app.enemies.get_enemy(2).name == "Guard Ragling" and app.enemies.get_enemy(2).hp > 0 \
 			and app.enemies.get_enemy(2).block == 0 and app.enemy_attacks[1] == \
-			{"type": "block", "enemy_position": 2, "amount": 1}, "living authored Guard announces Block 1")
+			{"type": "block", "enemy_position": 2, "amount": 5}, "living authored Guard announces Block 5")
 		if "--inject-wrong-forecast" in OS.get_cmdline_user_args():
 			app.enemy_buff_forecast_label.text = "wrong"
 		if "--inject-missing-forecast" in OS.get_cmdline_user_args():
 			app.enemy_buff_forecast_label.free()
-		_visible(app, 0, 1)
+		_visible(app, 0, 5)
 		if not failures.is_empty():
 			app.free()
 			_finish()
@@ -196,9 +200,9 @@ func _run() -> void:
 				_key(app.end_turn_button)
 			await process_frame
 			await process_frame
-			_check(app.enemies.get_enemy(2).block == turn + 1 \
+			_check(app.enemies.get_enemy(2).block == (turn + 1) * 5 \
 				and app.enemy_intents._turn_index == turn + 1, "physical End Turn applies exactly one stacking buff")
-			_visible(app, turn + 1, turn + 2)
+			_visible(app, (turn + 1) * 5, (turn + 2) * 5)
 			_immutable_refresh(app)
 			trace.append(_snapshot(app))
 		if session == 0:
@@ -211,7 +215,7 @@ func _run() -> void:
 		app.enemies._enemies[1]["statuses"] = {"exposed": 2}
 		app.enemies._enemies[1]["metadata"] = {"nested": [1, {"value": 2}]}
 		_immutable_refresh(app)
-		_visible(app, 2, 3)
+		_visible(app, 10, 15)
 		_check(app.enemies.apply_damage(2, 999) and app.enemies.is_slain(2) \
 			and not app.enemies.is_defeated(), "Guard slain while another enemy keeps battle active")
 		app._refresh_intents()

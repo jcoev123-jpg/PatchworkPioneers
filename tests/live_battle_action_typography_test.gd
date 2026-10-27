@@ -3,6 +3,7 @@ extends SceneTree
 
 const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 const END_ART := "res://assets/paper/ui/hud_end_turn.png"
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
 var failures: Array[String] = []
 var checks := 0
 var app
@@ -126,6 +127,8 @@ func _run() -> void:
 	app = scene.instantiate()
 	root.add_child(app)
 	await _frames()
+	_check(STARTER_ORACLE.pin_guard_block(app, "user://live_action_typography_guard.json"),
+		"shipped Guard Ragling pinned to its own authored Block alternative")
 	hand = app.get_node("LiveSupportHand")
 	_check(app.theme is Theme and app.deck == null and hand._action_variations.is_empty(),
 		"real title owns the shared Theme but no battle action overrides")

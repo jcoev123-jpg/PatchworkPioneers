@@ -3,6 +3,7 @@ extends SceneTree
 const IDS := ["warden", "seamstress", "tinker"]
 const NAMES := ["Warden", "Seamstress", "Tinker"]
 const MAX_HP := [40, 30, 26]
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
 
 var failures: Array[String] = []
 var checks := 0
@@ -131,6 +132,8 @@ func _run() -> void:
 	var app = scene.instantiate()
 	root.add_child(app)
 	await process_frame
+	_check(STARTER_ORACLE.pin_guard_block(app, "user://live_party_guard.json"),
+		"shipped Guard Ragling pinned to its own authored Block alternative")
 	_check(is_instance_valid(app.start_button), "real Start Run button exists")
 	if not is_instance_valid(app.start_button):
 		app.free()

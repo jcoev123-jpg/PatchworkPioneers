@@ -3,6 +3,7 @@ extends SceneTree
 ## Expectations use manual pile/HP arithmetic, not the production play/round services.
 
 const FIXED_SEED := 42
+const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
 var failures: Array[String] = []
 var checks := 0
 var app
@@ -120,7 +121,7 @@ func _intents() -> Array:
 			target = index + 1
 			break
 	return [{"enemy_position": 1, "type": "attack", "amount": 5, "target_position": target},
-		{"enemy_position": 2, "type": "block", "amount": 1}]
+		{"enemy_position": 2, "type": "block", "amount": 5}]
 
 
 func _opening() -> void:
@@ -357,6 +358,8 @@ func _run() -> void:
 	original = JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH))
 	original.sort()
 	schedule = JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_ATTACKS_PATH))
+	_check(STARTER_ORACLE.pin_guard_block(app, "user://live_legal_starter_fight_guard.json"),
+		"shipped Guard Ragling pinned to its own authored Block alternative")
 	var first := await _fight()
 	var replay := await _fight()
 	_check(first.size() > 5 and replay == first, "Return/restart reproduces every same-seed action boundary exactly")
