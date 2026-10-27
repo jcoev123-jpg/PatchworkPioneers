@@ -377,7 +377,7 @@ func _test_rag_duelist_faces() -> void:
 
 ## AC2: Help explains the authored positive amounts with the documented rules,
 ## in the fixed keyword order after the legacy seven rows, and stays truthful
-## about the effects not being wired into combat yet.
+## about where Riposte and Tangled status rules apply versus unfinished live wiring.
 func _test_rag_duelist_help() -> void:
 	var legacy_size := LEGACY_KEYWORD_ORDER.size()
 	_check(CardKeywordGlossary.KEYWORD_ORDER.slice(0, legacy_size) == LEGACY_KEYWORD_ORDER
@@ -406,8 +406,14 @@ func _test_rag_duelist_help() -> void:
 			_check(text.contains("strikes back for %d damage" % amount),
 				"Help repeats the authored counterhit damage: " + card_id)
 			_check(text.contains("one turn"), "Help states the one-turn duration: " + card_id)
-			_check(text.contains("combat does not yet apply Riposte"),
-				"Help makes no live-play claim: " + card_id)
+			_check(not text.contains("combat does not yet apply Riposte"),
+				"stale Riposte caveat is replaced: " + card_id)
+			_check(text.contains("counterdamage, not a number of turns"),
+				"Help states Riposte N is counterdamage, not turns: " + card_id)
+			_check(text.contains("status rules apply"),
+				"Help states the status rules apply Riposte: " + card_id)
+			_check(not text.contains("always") and not text.contains("every confirmed hit"),
+				"Help does not claim every hit triggers Riposte: " + card_id)
 		_check(CardKeywordGlossary.describe(definition) == rows,
 			"repeated Help reads are identical: " + card_id)
 		_check(definition == before and rag_duelist.get_definition(card_id) == before,
@@ -441,8 +447,20 @@ func _test_rag_duelist_help() -> void:
 				"Help states the movement restriction: " + card_id)
 			_check(text.contains("attacks against it deal +2 damage"),
 				"Help states the +2 attack vulnerability: " + card_id)
-			_check(text.contains("combat does not yet apply Tangled"),
-				"Help makes no live-play claim: " + card_id)
+			_check(not text.contains("combat does not yet apply Tangled"),
+				"stale Tangled caveat is replaced: " + card_id)
+			_check(text.contains("once per positive-base"),
+				"Help states +2 is once per positive-base attack: " + card_id)
+			_check(text.contains("after Weak and Exposed"),
+				"Help states +2 timing after Weak/Exposed rounding: " + card_id)
+			_check(text.contains("regardless of the Tangled count"),
+				"Help states +2 is regardless of Tangled count: " + card_id)
+			_check(text.contains("Tangled decrements at owner-turn end"),
+				"Help states Tangled decrements at owner-turn end: " + card_id)
+			_check(text.contains("status rules apply"),
+				"Help states the status rules apply Tangled: " + card_id)
+			_check(not text.contains("always") and not text.contains("every movement"),
+				"Help does not claim every movement route is wired: " + card_id)
 		_check(CardKeywordGlossary.describe(definition) == rows,
 			"repeated Help reads are identical: " + card_id)
 		_check(definition == before, "Help never mutates the catalog record: " + card_id)
