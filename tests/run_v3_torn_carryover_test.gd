@@ -257,7 +257,8 @@ func _assert_rejected(heroes: Variant, label: String) -> void:
 	var request: Variant = heroes.duplicate(true) if heroes is Array else heroes
 	var carry := RunTornCarryover.new(heroes)
 	_check(not carry.is_valid() and not carry.torn.is_valid(), label + " rejects the carryover")
-	_check(carry.read_state() == {"ok": false, "heroes": [], "completed_fights": [], "completed_rests": []}
+	_check(carry.read_state() == {"ok": false, "heroes": [], "completed_fights": [], "completed_rests": [],
+		"completed_vital_events": []}
 		and carry.torn.read_state().get("heroes") == [] and carry._receipts.is_empty() and carry._initial.is_empty(),
 		label + " leaves no partial state")
 	_check(carry.create_next_fight_party() == null, label + " never hydrates")

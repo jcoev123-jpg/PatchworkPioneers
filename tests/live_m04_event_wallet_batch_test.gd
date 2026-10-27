@@ -493,15 +493,14 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 	await _click(_route_action(fixture.next))
 	_check(app.run_map.get_current_node_id() == fixture.next, "settlement admits genuine connected successor")
 	var second: LiveEventChoicePanel = app.wallet_event_panel
-	_check(is_instance_valid(second), "successor mounts second generic wallet offering")
+	_check(is_instance_valid(second), "successor mounts vitality offering")
 	if not is_instance_valid(second):
 		return []
 	var second_record := second._selector.get_event()
-	var remaining := ids.duplicate()
-	remaining.erase(event_id)
+	var remaining := RunV3VitalEventRotation.new().get_vital_event_ids()
 	var second_id: String = remaining[rng.randi_range(0, remaining.size() - 1)]
 	_check(second_record.id == second_id and second_record.id != event_id
-		and app._wallet_event_history == [event_id, second_id] and app.run_rng.state == rng.state,
+		and app._wallet_event_history == [event_id] and app._vital_event_history == [second_id] and app.run_rng.state == rng.state,
 		"next one-draw selection excludes actual visited generic history")
 	var paid := -1
 	for index in range(second_record.choices.size()):
@@ -518,6 +517,15 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 	var paid_wallet := {"gold": expected.gold + int(paid_choice.outcome.gold),
 		"scraps": expected.scraps + int(paid_choice.outcome.scraps)}
 	var paid_before := _other_ledgers()
+	var vital_receipt := RunEventChoice.new(second_record).choose_with_vitals(paid_choice.id, second._offered_snapshot)
+	_check(vital_receipt.ok and second._vital_mode, "second choice has authenticated vitality forecast")
+	var proposal: RunTornMending = app.party_carryover._observer()
+	_check(proposal.apply_vital_event(fixture.next, second_record, vital_receipt,
+		second._offered_snapshot, proposal.read_state()).ok, "independent ledger accepts authored vitality")
+	paid_before[1] = proposal.read_state().heroes
+	paid_before[6].heroes = proposal.read_state().heroes
+	paid_before[6].completed_vital_events = proposal.read_state().completed_vital_events
+	paid_before[7] = proposal.read_state()
 	if keyboard:
 		await _key(KEY_1 + paid)
 	else:

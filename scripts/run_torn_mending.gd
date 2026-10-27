@@ -12,10 +12,13 @@ const MIN_MAX_HP := 10
 const MEND_COST := 2
 
 var _heroes: Array = []
+var _vital_cap_offsets: Dictionary = {}
+var _initial_caps: Dictionary = {}
 var _tear_counts: Dictionary = {}
 var _battles: Dictionary = {}
 var _used_nodes: Dictionary = {}
 var _mend_receipts: Array[String] = []
+var _vital_nodes: Array[String] = []
 var _rest_nodes: Array[String] = []
 var _valid := false
 var _defeated := false
@@ -27,6 +30,7 @@ func _init(initial_heroes: Variant = null) -> void:
 	_heroes = initial_heroes.duplicate(true)
 	for hero in _heroes:
 		_tear_counts[hero["id"]] = 0
+		_initial_caps[hero.id] = hero.max_hp
 	_valid = true
 
 
@@ -37,13 +41,15 @@ func is_valid() -> bool:
 func read_state() -> Dictionary:
 	if not _valid:
 		return {"ok": false, "heroes": [], "tear_counts": {},
-			"completed_battles": [], "completed_mends": [], "completed_rests": [],
+			"completed_battles": [], "completed_mends": [], "completed_rests": [], "completed_vital_events": [], "vital_cap_offsets": {},
 			"defeated": false}
 	return {"ok": true, "heroes": _heroes.duplicate(true),
+		"vital_cap_offsets": _vital_cap_offsets.duplicate(),
 		"tear_counts": _tear_counts.duplicate(true),
 		"completed_battles": _battles.keys().duplicate(),
 		"completed_mends": _mend_receipts.duplicate(),
 		"completed_rests": _rest_nodes.duplicate(),
+		"completed_vital_events": _vital_nodes.duplicate(),
 		"defeated": _defeated}
 
 
@@ -98,6 +104,7 @@ func observe_battle_end(node_id: Variant, battle_start: Variant, battle_end: Var
 			any_living = true
 	_heroes = next_heroes
 	_tear_counts = next_counts
+	_refresh_vital_cap_offsets()
 	_defeated = not any_living
 	_battles[node_id] = {"start": battle_start.duplicate(true), "end": battle_end.duplicate(true)}
 	_used_nodes[node_id] = true
@@ -157,6 +164,46 @@ func apply_rest(node_id: Variant, expected_heroes: Variant, between_nodes: Varia
 	_used_nodes[node_id] = true
 	_rest_nodes.append(node_id)
 	return _accepted()
+
+
+## Recompute the authored claim against the first living actor and exact ledger.
+func apply_vital_event(node: Variant, record: Dictionary, receipt: Dictionary,
+		snapshot: Dictionary, expected: Dictionary) -> Dictionary:
+	if not _valid or _defeated or expected != read_state() or not _valid_id(node) \
+		or _used_nodes.has(node):
+		return _rejected()
+	var target := -1
+	for index in range(_heroes.size()):
+		if _heroes[index].hp > 0:
+			target = index
+			break
+	if target < 0:
+		return _rejected()
+	var hero: Dictionary = _heroes[target]
+	if snapshot.get("hero") != {"id": hero.id, "hp": hero.hp, "max_hp": hero.max_hp}:
+		return _rejected()
+	var claim := RunEventChoice.new(record).choose_with_vitals(receipt.get("choice_id"), snapshot)
+	if not claim.ok or claim != receipt:
+		return _rejected()
+	_heroes[target].hp = claim.state.hero.hp
+	_heroes[target].max_hp = claim.state.hero.max_hp
+	_used_nodes[node] = true
+	_vital_nodes.append(node)
+	_refresh_vital_cap_offsets()
+	return _accepted()
+
+
+## Keep cap evidence independent of read_state so a tampered hero cannot
+## authenticate its own cap. Recompute only after accepted cap transactions.
+func _refresh_vital_cap_offsets() -> void:
+	if _vital_nodes.is_empty():
+		return
+	for hero in _heroes:
+		var count: int = _tear_counts[hero.id]
+		var starting: int = _initial_caps[hero.id]
+		var threshold := ceili(float(starting - MIN_MAX_HP) / TEAR_LOSS)
+		var torn_cap: int = MIN_MAX_HP if count >= threshold else starting - count * TEAR_LOSS
+		_vital_cap_offsets[hero.id] = hero.max_hp - torn_cap
 
 
 func _same_owners(proposed: Array) -> bool:

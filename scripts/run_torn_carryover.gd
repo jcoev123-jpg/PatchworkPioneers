@@ -12,6 +12,12 @@ var _result: CombatBattleResult
 var _wardrobe: RunPatchWardrobe
 
 
+func read_state() -> Dictionary:
+	var state := super.read_state()
+	state["completed_vital_events"] = torn.read_state().completed_vital_events if torn != null else []
+	return state
+
+
 func clear_wardrobe(value: RunPatchWardrobe) -> void:
 	if value == _wardrobe:
 		_wardrobe = null
@@ -123,7 +129,11 @@ func commit_victory(node_id: Variant, result: CombatBattleResult, party: CombatP
 func _observer() -> RunTornMending:
 	var proposal := RunTornMending.new(_initial)
 	for receipt in _receipts:
-		if receipt.has("needle_toll"):
+		if receipt.has("vital"):
+			if not proposal.apply_vital_event(receipt.node, receipt.record, receipt.vital,
+				receipt.snapshot, proposal.read_state()).ok:
+				return null
+		elif receipt.has("needle_toll"):
 			if proposal.read_state().heroes != receipt.context.heroes:
 				return null
 			var rng := RandomNumberGenerator.new()
@@ -177,6 +187,38 @@ func apply_needle_toll(outcome: RunNeedleToll, expected: Dictionary) -> bool:
 	torn = proposal
 	_heroes = paid.heroes.duplicate(true)
 	_receipts.append({"needle_toll": hero, "context": context.duplicate(true)})
+	return true
+
+
+## Stage the ledger before publishing wardrobe and caps; failed refresh is atomic.
+func apply_vital_event(node: Variant, record: Dictionary, receipt: Dictionary,
+		snapshot: Dictionary, expected: Dictionary, expected_wardrobe: Variant) -> bool:
+	if expected != read_state() or not _same_identities(_heroes) \
+		or (_node != "" and not torn.read_state().completed_battles.has(_node)):
+		return false
+	var proposal := _observer()
+	if proposal == null or not proposal.apply_vital_event(node, record, receipt,
+		snapshot, proposal.read_state()).ok:
+		return false
+	if _wardrobe == null:
+		if expected_wardrobe != null:
+			return false
+	else:
+		if expected_wardrobe != _wardrobe.get_snapshot() \
+			or expected_wardrobe.heroes != _heroes or expected_wardrobe.rest_id != "" \
+			or expected_wardrobe.gold != snapshot.get("gold") \
+			or expected_wardrobe.scraps != snapshot.get("scraps"):
+			return false
+		if not _wardrobe.refresh_run_context(proposal.read_state().heroes,
+			expected_wardrobe.owned, receipt.state.scraps, receipt.state.gold,
+			expected_wardrobe.cards, expected_wardrobe):
+			return false
+	torn = proposal
+	_heroes = torn.read_state().heroes
+	for hero in _heroes:
+		_max_hp_by_id[hero.id] = hero.max_hp
+	_receipts.append({"node": node, "record": record.duplicate(true),
+		"vital": receipt.duplicate(true), "snapshot": snapshot.duplicate(true)})
 	return true
 
 

@@ -26,7 +26,7 @@ static func project_health(torn_state: Dictionary, wardrobe: RunPatchWardrobe,
 	if state.get("valid") != true or torn_state.get("ok") != true:
 		return rejected
 	var heroes: Variant = torn_state.get("heroes")
-	if not _valid_heroes(heroes, torn_state.get("tear_counts")):
+	if not _valid_heroes(heroes, torn_state.get("tear_counts"), torn_state.get("vital_cap_offsets", {})):
 		return rejected
 	# The optimistic run context MUST have been refreshed after each battle,
 	# mend or Rest; accepting a prior roster would create phantom bonuses.
@@ -120,7 +120,9 @@ static func _valid_authored(records: Variant) -> bool:
 	return true
 
 
-static func _valid_heroes(heroes: Variant, counts: Variant) -> bool:
+static func _valid_heroes(heroes: Variant, counts: Variant, offsets: Variant = {}) -> bool:
+	if not offsets is Dictionary:
+		return false
 	var caps := {}
 	if heroes is Array:
 		var ids: Array = []
@@ -165,6 +167,11 @@ static func _valid_heroes(heroes: Variant, counts: Variant) -> bool:
 		# Saturate before multiplication, avoiding overflow from forged counts.
 		var turns_to_floor: int = ceili(float(starting - 10) / 3.0)
 		var expected: int = 10 if count >= turns_to_floor else starting - 3 * count
-		if hero["max_hp"] != expected:
+		if not offsets.is_empty():
+			if offsets.size() != caps.size() or typeof(offsets.get(id)) != TYPE_INT:
+				return false
+			if hero["max_hp"] - expected != offsets[id]:
+				return false
+		elif hero["max_hp"] != expected:
 			return false
 	return true

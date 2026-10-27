@@ -8,6 +8,7 @@ func _initialize() -> void:
 	seed(99119)
 	var global_next := randi()
 	seed(99119)
+	_vital_timeline()
 	_negatives()
 	_map_projection_negative()
 	var map_bound := _map_paid_timeline(true)
@@ -446,3 +447,66 @@ func _map_paid_timeline(bound: bool) -> Array:
 	history.append(_snapshot(f))
 	history.append(after_tinker)
 	return history
+
+
+func _vital_timeline() -> void:
+	var pool := RunV3VitalEventRotation.new().get_vital_events()
+	_check(not pool.is_empty(), "validated shipped vitality pool")
+	for bound in [false, true]:
+		for record in pool:
+			for choice in record.choices:
+				var f := _fixture(bound)
+				_win(f, "before_vital")
+				var c: RunTornCarryover = f.carry
+				var state := c.read_state()
+				var hero: Dictionary = state.heroes[1]
+				var snapshot := {"gold": f.gold, "scraps": f.scraps,
+					"hero": {"id": hero.id, "hp": hero.hp, "max_hp": hero.max_hp}}
+				var claim := RunEventChoice.new(record).choose_with_vitals(choice.id, snapshot)
+				if not claim.ok:
+					continue
+				var w: Variant = f.wardrobe.get_snapshot() if bound else null
+				var before := _snapshot(f)
+				var forged := claim.duplicate(true)
+				forged.state.hero.max_hp += 1
+				_check(not c.apply_vital_event("vital", record, forged, snapshot, state, w)
+					and _snapshot(f) == before, "forged vitality is atomic with bound/unbound wardrobe")
+				_check(not c.apply_vital_event("before_vital", record, claim, snapshot, state, w)
+					and _snapshot(f) == before, "vital cannot reuse battle node")
+				if bound:
+					var stale: Dictionary = w.duplicate(true)
+					stale.gold += 1
+					_check(not c.apply_vital_event("vital", record, claim, snapshot, state, stale)
+						and _snapshot(f) == before, "stale wardrobe cannot partially publish")
+				_check(c.apply_vital_event("vital", record, claim, snapshot, state, w), "authored vitality publishes")
+				var expected: Array = state.heroes.duplicate(true)
+				expected[1].max_hp += int(choice.outcome.max_hp)
+				expected[1].hp = mini(hero.hp + int(choice.outcome.hp), expected[1].max_hp)
+				_check(c.read_state().heroes == expected and c.torn.read_state().heroes == expected
+					and c.read_state().completed_vital_events == ["vital"], "cap ledger and distinct node agree")
+				if bound:
+					var published: Dictionary = f.wardrobe.get_snapshot()
+					_check(published.heroes == expected and published.gold == claim.state.gold
+						and published.scraps == claim.state.scraps and published.worn == w.worn
+						and published.operation_ids == w.operation_ids, "wardrobe purse health and patch receipts agree")
+				var torn_state := c.torn.read_state()
+				var bad := expected.duplicate(true)
+				bad[1].max_hp += 1
+				_check(not RunPatchCoatRules._valid_heroes(bad, torn_state.tear_counts, torn_state.vital_cap_offsets)
+					and not CombatShopPatchRules._valid_heroes(bad, torn_state.tear_counts, torn_state.vital_cap_offsets),
+					"patch validators retain forged permanent-cap rejection")
+				var next := c.create_next_fight_party()
+				_check(next != null and next.is_valid() and next.get_heroes() == expected,
+					"next Fight authentic hydration after HP or permanent cap outcome")
+				before = _snapshot(f)
+				_check(not c.apply_vital_event("vital", record, claim, snapshot, c.read_state(),
+					f.wardrobe.get_snapshot() if bound else null) and _snapshot(f) == before, "replay atomic")
+				_check(not c.apply_vital_event("other", record, claim, snapshot, state,
+					f.wardrobe.get_snapshot() if bound else null) and _snapshot(f) == before, "stale carry rejected")
+				f.gold = claim.state.gold
+				f.scraps = claim.state.scraps
+				var rest := RunRestRecovery.new(expected).choose_heal()
+				_check(c.choose_rest_heal("after_vital").ok and c.read_state().heroes == rest.heroes,
+					"Rest uses permanently changed caps without removing tears")
+				_win(f, "after_vital_fight")
+				_check(c.create_next_fight_party() != null, "battle observation and reward replay remain valid after vitality and Rest")

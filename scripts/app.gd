@@ -781,6 +781,8 @@ var roadside_event_catalog_path := "res://data/events/v3_roadside_events.json"
 const REQUIRED_ROADSIDE_EVENT_IDS := ["v3_raincoat_bridge", "v3_puppet_box_office",
 	"v3_mismatched_mittens", "v3_coil_and_crow", "v3_patchwork_lighthouse", "v3_button_orchard"]
 var wallet_event_panel: LiveEventChoicePanel
+var vital_event_catalog_path := RunV3VitalEventRotation.EVENTS_PATH
+var _vital_event_history: Array = []
 var _wallet_event_record: Dictionary = {}
 var _wallet_event_context: Array = []
 var _wallet_event_history: Array = []
@@ -3384,6 +3386,7 @@ func _wallet_event_snapshot() -> Array:
 		wallet_event_panel._selector, wallet_event_panel._selector.get_event(),
 		_wallet_event_record.duplicate(true), _wallet_event_history.duplicate(),
 		wallet_event_panel._offered_wallet.duplicate(true),
+		wallet_event_panel._offered_snapshot.duplicate(true), _vital_event_history.duplicate(),
 		_quiet_spool_completed, _moth_completed, _dye_vat_completed]
 
 
@@ -3442,19 +3445,45 @@ func _load_wallet_event_catalog() -> Dictionary:
 
 
 func _open_wallet_event(id: String, source: WeakRef) -> bool:
+	if run_rng == null or run_map == null or source == null or source.get_ref() != run_map \
+		or not _can_choose_connected_route() or not run_map.get_legal_choices().has(id) \
+		or run_map.get_node(id).get("type") != "Event":
+		return false
+	var vital := _wallet_event_history.size() == 1 and _vital_event_history.is_empty()
+	var snapshot := {}
+	if vital:
+		var carry := party_carryover as RunTornCarryover
+		if carry == null or carry.read_state().heroes != run_heroes \
+			or carry.create_next_fight_party() == null:
+			return false
+		for hero in run_heroes:
+			if hero.hp > 0:
+				snapshot = {"gold": session_gold, "scraps": run_scraps,
+					"hero": {"id": hero.id, "hp": hero.hp, "max_hp": hero.max_hp}}
+				break
+		if snapshot.is_empty():
+			return false
 	# Draw on a detached copy: failed mounting/admission must consume nothing.
 	var staged_rng := RandomNumberGenerator.new()
 	staged_rng.state = run_rng.state
 	var document := _load_wallet_event_catalog()
 	if document.is_empty():
 		return false
-	var selection := RunM04EventRotation.new(document).select_event(staged_rng, _wallet_event_history)
+	var selection: Dictionary
+	if vital:
+		var catalog: Variant = JSON.parse_string(FileAccess.get_file_as_string(vital_event_catalog_path)) \
+			if FileAccess.file_exists(vital_event_catalog_path) else {}
+		selection = RunV3VitalEventRotation.new(catalog).select_event(staged_rng, _vital_event_history)
+	else:
+		selection = RunM04EventRotation.new(document).select_event(staged_rng, _wallet_event_history)
 	if not selection.ok:
 		return false
 	var record: Dictionary = selection.event
 	var panel := preload("res://scenes/event_choice_panel.tscn").instantiate() as LiveEventChoicePanel
 	add_child(panel)
-	if not panel.open_event_with_wallet(record, {"gold": session_gold, "scraps": run_scraps}):
+	var mounted := panel.open_event_with_vitals(record, snapshot) if vital else \
+		panel.open_event_with_wallet(record, {"gold": session_gold, "scraps": run_scraps})
+	if not mounted:
 		panel.free()
 		return false
 	_mount_event_backdrop(panel)
@@ -3462,12 +3491,18 @@ func _open_wallet_event(id: String, source: WeakRef) -> bool:
 		panel.free()
 		return false
 	run_rng.state = staged_rng.state
-	_wallet_event_history.append(record.id)
+	if vital:
+		_vital_event_history.append(record.id)
+	else:
+		_wallet_event_history.append(record.id)
 	_wallet_event_record = record.duplicate(true)
 	wallet_event_panel = panel
 	_clear_route_view()
 	_wallet_event_context = _wallet_event_snapshot()
-	panel.wallet_choice_committed.connect(_commit_wallet_event.bind(panel, source))
+	if vital:
+		panel.vital_choice_committed.connect(_commit_vital_event.bind(panel, source))
+	else:
+		panel.wallet_choice_committed.connect(_commit_wallet_event.bind(panel, source))
 	var enabled: Array[Button] = []
 	for button in panel.get_choice_buttons():
 		if not button.disabled:
@@ -3497,6 +3532,33 @@ func _commit_wallet_event(receipt: Dictionary, panel, source: WeakRef) -> void:
 		return
 	session_gold = expected.wallet.gold
 	run_scraps = expected.wallet.scraps
+	_placeholder_map = source
+	_placeholder_route = run_map.get_route()
+	_clear_wallet_event()
+	_present_connected_route(source)
+
+
+func _commit_vital_event(receipt: Dictionary, panel, source: WeakRef) -> void:
+	if not is_instance_valid(panel) or panel != wallet_event_panel or panel.get_parent() != self \
+		or not panel.is_visible_in_tree() or not panel.has_open_event() \
+		or source == null or source.get_ref() != run_map \
+		or _wallet_event_context.is_empty() or _wallet_event_snapshot() != _wallet_event_context \
+		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Event" \
+		or not panel._vital_mode or panel._selector == null or not panel._selector.is_claimed() \
+		or panel._committed_choice != receipt:
+		return
+	var expected := RunEventChoice.new(_wallet_event_record).choose_with_vitals(
+		receipt.get("choice_id"), panel._offered_snapshot)
+	if not expected.ok or expected != receipt:
+		return
+	var carry := party_carryover as RunTornCarryover
+	if carry == null or not carry.apply_vital_event(run_map.get_current_node_id(),
+		_wallet_event_record, expected, panel._offered_snapshot, carry.read_state(),
+		carry._wardrobe.get_snapshot() if carry._wardrobe != null else null):
+		return
+	run_heroes = carry.read_state().heroes
+	session_gold = expected.state.gold
+	run_scraps = expected.state.scraps
 	_placeholder_map = source
 	_placeholder_route = run_map.get_route()
 	_clear_wallet_event()
@@ -6928,6 +6990,7 @@ func _return_to_title() -> void:
 	_needle_toll_completed = false
 	_clear_wallet_event()
 	_wallet_event_history.clear()
+	_vital_event_history.clear()
 	_clear_rest_patch_overlay()
 	_clear_rest_stitch_overlay()
 	rest_stitch_guided_button = null

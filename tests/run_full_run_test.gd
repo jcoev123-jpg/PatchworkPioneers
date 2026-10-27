@@ -262,17 +262,29 @@ func _node(id: String, index: int) -> bool:
 			expected_rng.state = int(inventory[8])
 			var history: Array = app._wallet_event_history.duplicate()
 			history.pop_back()
-			var selected := RunM04EventRotation.new(_combined_wallet_catalog()).select_event(expected_rng, history)
+			var selected := RunV3VitalEventRotation.new().select_event(expected_rng) if panel._vital_mode else \
+				RunM04EventRotation.new(_combined_wallet_catalog()).select_event(expected_rng, history)
 			_check(selected.ok and selected.event == record and app.run_rng.state == expected_rng.state,
 				"later Event uses exactly one seeded rotation draw")
 			var wallet := {"gold": app.session_gold, "scraps": app.run_scraps}
 			for choice_index in range(record.choices.size()):
-				var receipt := RunEventChoice.new(record).choose_with_wallet(record.choices[choice_index].id, wallet)
+				var receipt := RunEventChoice.new(record).choose_with_vitals(record.choices[choice_index].id,
+					panel._offered_snapshot) if panel._vital_mode else \
+					RunEventChoice.new(record).choose_with_wallet(record.choices[choice_index].id, wallet)
 				if not receipt.ok:
 					continue
+				var vitality := panel._vital_mode
+				var proposal: RunTornMending = app.party_carryover._observer()
+				if vitality:
+					_check(proposal.apply_vital_event(id, record, receipt, panel._offered_snapshot,
+						proposal.read_state()).ok, "authored vitality ledger proposal")
 				await _activate(panel.get_choice_buttons()[choice_index], index % 2 == 0)
-				inventory[2] = receipt.wallet.gold
-				inventory[3] = receipt.wallet.scraps
+				if vitality:
+					inventory[1] = proposal.read_state().heroes
+					inventory[9].heroes = proposal.read_state().heroes
+					inventory[9].completed_vital_events = proposal.read_state().completed_vital_events
+				inventory[2] = receipt.state.gold if vitality else receipt.wallet.gold
+				inventory[3] = receipt.state.scraps if vitality else receipt.wallet.scraps
 				inventory[8] = str(expected_rng.state)
 				break
 		_check(_inventory() == inventory, "visit applies only its exact authored wallet and seeded draw; HP and ledgers unchanged")
@@ -978,7 +990,8 @@ func _needle_visits(fixture: Dictionary, branch: String, keyboard: bool) -> Arra
 	for index in range(4, 6):
 		var expected_rng := RandomNumberGenerator.new()
 		expected_rng.state = app.run_rng.state
-		var rotation := RunM04EventRotation.new(_combined_wallet_catalog()).select_event(expected_rng, app._wallet_event_history)
+		var rotation := RunV3VitalEventRotation.new().select_event(expected_rng) if index == 5 else \
+			RunM04EventRotation.new(_combined_wallet_catalog()).select_event(expected_rng, app._wallet_event_history)
 		await _activate(_needle_button(fixture.path[index]), keyboard)
 		var wallet_panel: LiveEventChoicePanel = app.wallet_event_panel
 		_check(is_instance_valid(wallet_panel) and app.needle_toll_panel == null,

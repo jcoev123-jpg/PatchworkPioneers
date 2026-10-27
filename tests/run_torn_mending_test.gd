@@ -11,6 +11,7 @@ func _initialize() -> void:
 	_test_rest_and_new_tear()
 	_test_tinker_floor()
 	_test_defeat_and_bad_battles()
+	_test_vital_receipts()
 	_test_deterministic_rng()
 	_finish()
 
@@ -505,3 +506,46 @@ func _test_deterministic_rng() -> void:
 		"replay covers real tear, rejected spend, mend, Rest and second tear")
 	_check(local.state == local_state and randi() == expected_global,
 		"accepted and rejected transactions consume neither local nor global RNG")
+
+
+func _test_vital_receipts() -> void:
+	var pool := RunV3VitalEventRotation.new().get_vital_events()
+	_check(not pool.is_empty(), "shipped vitality pool available")
+	for record in pool:
+		for choice in record.choices:
+			var service := _new_service()
+			_down(service, "prior_battle", 0)
+			var old := service.read_state()
+			var hero: Dictionary = old.heroes[1]
+			var snapshot := {"gold": 100, "scraps": 100,
+				"hero": {"id": hero.id, "hp": hero.hp, "max_hp": hero.max_hp}}
+			var claim := RunEventChoice.new(record).choose_with_vitals(choice.id, snapshot)
+			if not claim.ok:
+				continue
+			var forged := claim.duplicate(true)
+			forged.state.hero.hp = 0
+			_reject(service, "forged vitality", func(): return service.apply_vital_event(
+				"vital", record, forged, snapshot, old))
+			_reject(service, "used battle node", func(): return service.apply_vital_event(
+				"prior_battle", record, claim, snapshot, old))
+			var wrong := snapshot.duplicate(true)
+			wrong.hero = {"id": old.heroes[2].id, "hp": old.heroes[2].hp, "max_hp": old.heroes[2].max_hp}
+			var wrong_claim := RunEventChoice.new(record).choose_with_vitals(choice.id, wrong)
+			_reject(service, "later living actor cannot replace first", func(): return service.apply_vital_event(
+				"vital", record, wrong_claim, wrong, old))
+			_check(service.apply_vital_event("vital", record, claim, snapshot, old).ok, "authored vitality accepted")
+			var expected := old.duplicate(true)
+			expected.heroes[1].max_hp += int(choice.outcome.max_hp)
+			expected.heroes[1].hp = mini(hero.hp + int(choice.outcome.hp), expected.heroes[1].max_hp)
+			expected.completed_vital_events.append("vital")
+			for actor in expected.heroes:
+				expected.vital_cap_offsets[actor.id] = int(choice.outcome.max_hp) if actor.id == hero.id else 0
+			_check(service.read_state() == expected, "only first living vitals and distinct receipt change; tears retained")
+			_reject(service, "duplicate vitality", func(): return service.apply_vital_event(
+				"vital", record, claim, snapshot, service.read_state()))
+			_reject(service, "stale expected ledger", func(): return service.apply_vital_event(
+				"another", record, claim, snapshot, old))
+			_reject(service, "vital node cannot Rest", func(): return service.apply_rest(
+				"vital", service.read_state().heroes, true))
+			_check(service.apply_rest("later_rest", service.read_state().heroes, true).ok,
+				"Rest remains valid after authored HP and cap changes")

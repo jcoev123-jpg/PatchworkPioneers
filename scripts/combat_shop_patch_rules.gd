@@ -223,7 +223,7 @@ static func _valid_projection(state: Dictionary, torn_state: Dictionary, project
 		return false
 	if typeof(worn) != TYPE_DICTIONARY or typeof(active) != TYPE_DICTIONARY:
 		return false
-	if not _valid_heroes(heroes, counts):
+	if not _valid_heroes(heroes, counts, torn_state.get("vital_cap_offsets", {})):
 		return false
 	if state.get("heroes") != heroes or projection.get("worn") != worn:
 		return false
@@ -271,7 +271,9 @@ static func _valid_projection(state: Dictionary, torn_state: Dictionary, project
 	return seen_heroes.size() == RunPatchWardrobe.HERO_IDS.size()
 
 
-static func _valid_heroes(heroes: Variant, counts: Variant) -> bool:
+static func _valid_heroes(heroes: Variant, counts: Variant, offsets: Variant = {}) -> bool:
+	if not offsets is Dictionary:
+		return false
 	var caps := {}
 	if heroes is Array:
 		var ids: Array = []
@@ -318,6 +320,11 @@ static func _valid_heroes(heroes: Variant, counts: Variant) -> bool:
 		var starting: int = caps[id]
 		var turns_to_floor: int = ceili(float(starting - MIN_MAX_HP) / float(TEAR_LOSS))
 		var expected_max: int = MIN_MAX_HP if count >= turns_to_floor else starting - TEAR_LOSS * count
-		if hero["max_hp"] != expected_max:
+		if not offsets.is_empty():
+			if offsets.size() != caps.size() or typeof(offsets.get(id)) != TYPE_INT:
+				return false
+			if hero["max_hp"] - expected_max != offsets[id]:
+				return false
+		elif hero["max_hp"] != expected_max:
 			return false
 	return seen.size() == RunPatchWardrobe.HERO_IDS.size()
