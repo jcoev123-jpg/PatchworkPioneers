@@ -958,6 +958,14 @@ func _harder_expected() -> Dictionary:
 				{"type": "attack", "amount": 6, "weight": 3}]}}
 	}
 
+## The canonical authored two-hit marker, either as JSON delivers it (an integral
+## double) or as the strict scheduler normalizes it (a genuine int). Any other
+## value stays rejected so no invented hit count can look authored.
+func _is_authored_two_hits(value: Variant) -> bool:
+	if value is int:
+		return value == 2
+	return value is float and is_finite(value) and floorf(value) == value and value == 2.0
+
 ## True when the authored alternative carries exactly the keys its supported
 ## kind needs, so no invented field or unsupported type can slip in.
 func _alternative_shape_is_exact(raw: Variant) -> bool:
@@ -965,7 +973,15 @@ func _alternative_shape_is_exact(raw: Variant) -> bool:
 		return false
 	var expected: Array = []
 	match String(raw.get("type", "")):
-		"attack", "snip_block", "block":
+		"attack":
+			# A plain attack keeps the legacy keys; the only accepted extra is
+			# the canonical two-hit marker this batch authors on the Bat.
+			expected = ["amount", "type", "weight"]
+			if raw.has("hits"):
+				if not _is_authored_two_hits(raw["hits"]):
+					return false
+				expected = ["amount", "hits", "type", "weight"]
+		"snip_block", "block":
 			expected = ["amount", "type", "weight"]
 		"shove":
 			expected = ["amount", "direction", "type", "weight"]
@@ -3505,7 +3521,7 @@ func _bobbin_quilt_expected() -> Dictionary:
 			"drain": true,
 			"art_path": "res://assets/paper/enemies/bobbin_bat.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
-				{"type": "attack", "amount": 7, "weight": 4},
+				{"type": "attack", "amount": 7, "hits": 2, "weight": 4},
 				{"type": "debuff", "status": "weak", "amount": 1, "weight": 1},
 				{"type": "block", "amount": 4, "weight": 1}]}},
 		"quilt_termite": {"id": "quilt_termite", "name": "Quilt Termite", "max_hp": 26,
@@ -3599,6 +3615,23 @@ func _test_bobbin_bat_quilt_termite_catalog() -> void:
 	_check(_has_alternative(bat, "attack", 7) and _has_alternative(bat, "debuff", 1, "weak")
 		and _has_alternative(bat, "block", 4),
 		"Bobbin Bat bites for 7, leaves Weak 1 or wraps itself in 4 Block")
+	# AC1: the siphon bite is ONE authored 7-damage alternative marked hits 2;
+	# the phase splits it into two real hits, so the amount never doubles.
+	var bat_bite := _authored_alternative(bat, "attack", 7)
+	_check(_norm(bat_bite) == {"type": "attack", "amount": 7, "hits": 2, "weight": 4},
+		"AC1: the shipped Bat attack alternative is exactly attack 7 hits 2 weight 4")
+	var bat_actions: Array = bat.get("intent", {}).get("actions", [])
+	_check(bat_actions.size() == 3 and int(bat_actions[0].get("amount", 0)) == 7
+		and int(bat_actions[0].get("weight", 0)) == 4,
+		"AC1: the two-hit marker neither doubles the amount nor changes the weight")
+	var normalized_bite := CombatEnemyIntents.weighted_action(bat_bite)
+	_check(normalized_bite.get("action", {}).get("hits") is int
+		and int(normalized_bite.get("action", {}).get("hits", 0)) == 2
+		and int(normalized_bite.get("weight", 0)) == 4,
+		"AC1: the weighted scheduler validates the authored two-hit bite by ID")
+	_check(CombatEnemyIntents.weighted_action({"type": "attack", "amount": 7,
+		"hits": 3, "weight": 4}).is_empty(),
+		"AC1: only the canonical two-hit count validates, never three hits")
 	_check(bat.get("intent", {}).get("target") == "lowest_living_hp",
 		"Bobbin Bat hunts the lowest-living hero")
 	var termite := _find(parsed, "quilt_termite")
@@ -3700,7 +3733,8 @@ func _test_bobbin_bat_quilt_termite_seeded_announcements() -> void:
 	# Force every authored alternative from the genuine record, so no guessed
 	# seed can hide one and production weights stay 4/1/1.
 	var forced := [
-		{"id": "bobbin_bat", "action": {"type": "attack", "amount": 7, "weight": 1}},
+		{"id": "bobbin_bat",
+			"action": {"type": "attack", "amount": 7, "hits": 2, "weight": 1}},
 		{"id": "bobbin_bat",
 			"action": {"type": "debuff", "status": "weak", "amount": 1, "weight": 1}},
 		{"id": "bobbin_bat", "action": {"type": "block", "amount": 4, "weight": 1}},
@@ -3735,14 +3769,26 @@ func _test_bobbin_bat_quilt_termite_seeded_announcements() -> void:
 		if case.action.has("status"):
 			_check(announced.get("status") == case.action.status,
 				"forced debuff keeps its authored status: " + String(case.action.status))
+		# AC2: the two-hit bite is still ONE weighted announcement carrying the
+		# authored marker; a single-hit alternative never gains one.
+		if case.action.has("hits"):
+			_check(case.action.hits == 2 and announced.get("hits") is int
+				and int(announced.get("hits", 0)) == 2,
+				"the forced two-hit bite announces ONE action carrying hits 2: "
+					+ String(case.id))
+		else:
+			_check(not announced.has("hits"),
+				"a forced single-hit alternative announces no hit marker: " + String(case.id))
 		if announced.get("type") in ["attack", "debuff"]:
 			_check(announced.get("target_position") == expected_target,
 				"forced alternative honours the authored target policy: " + String(case.id))
 		# Every forced beat resolves through the genuine phase on fresh actors.
 		var live_party := _party()
+		var expected_events := 2 if case.action.has("hits") else 1
 		var receipt := CombatEnemyPhase.new().execute_phase(live_party, forced_enemies,
 			forced_scheduler.get_intents(), null, true)
-		_check(receipt.get("ok") == true and receipt.get("events", []).size() == 1
+		_check(receipt.get("ok") == true
+			and receipt.get("events", []).size() == expected_events
 			and receipt["events"][0].get("applied") == true,
 			"forced alternative executes through the real CombatEnemyPhase: %s %s"
 				% [case.id, str(case.action)])
@@ -3758,9 +3804,10 @@ func _test_bobbin_bat_quilt_termite_seeded_announcements() -> void:
 				String(case.action.status), 0) == int(case.action.amount),
 				"the real phase applies the authored status: " + String(case.id))
 
-## AC3: the shipped Bat's real 7-damage bite heals exactly the hero HP it removes,
-## capped by its own missing HP and never by Block-absorbed damage. Non-attack
-## turns and a slain Bat heal nothing.
+## AC3: the shipped Bat's real 7-damage bite is ONE announced action that the
+## genuine phase resolves into two ordered 4-then-3 hits, draining exactly the
+## hero HP each confirmed hit removed (never Block-absorbed damage), capped by
+## the Bat's own missing HP. Non-attack turns and a slain Bat heal nothing.
 func _test_bobbin_bat_drain_phase() -> void:
 	var parsed := _load_parsed()
 	var bat := _find(parsed, "bobbin_bat")
@@ -3775,7 +3822,12 @@ func _test_bobbin_bat_drain_phase() -> void:
 		"precondition: the shipped bite, Weak 1 and 4 Block alternatives exist")
 	if bite.is_empty() or weaken.is_empty() or wing.is_empty():
 		return
-	# AC3: a wounded 8/27 Bat restores exactly the 7 HP its real bite removes.
+	_check(_norm(bite) == {"type": "attack", "amount": 7, "hits": 2, "weight": 4},
+		"AC3 precondition: the shipped bite is ONE 7-damage action authoring hits 2")
+	var two_hits := [
+		{"type": "attack", "enemy_position": 1, "target_position": 3, "applied": true},
+		{"type": "attack", "enemy_position": 1, "target_position": 3, "applied": true}]
+	# AC3: a wounded 8/27 Bat restores exactly the 4+3 HP its two hits remove.
 	var party := _party()
 	var case := _force_normal_alternative(bat, bite, party)
 	_check(not case.is_empty(), "AC3: the shipped bite binds as a real announcement")
@@ -3786,22 +3838,25 @@ func _test_bobbin_bat_drain_phase() -> void:
 		"AC3 precondition: the Bat really stands at 8 of its authored 27 HP")
 	_check(case.intents.size() == 1 and case.intents[0].get("type") == "attack"
 		and int(case.intents[0].get("amount", -1)) == 7
+		and int(case.intents[0].get("hits", 0)) == 2
 		and case.intents[0].get("target_position") == 3,
-		"AC3: the real announcement is the authored 7-damage bite on Tinker")
+		"AC3: the real announcement is ONE authored 7-damage two-hit bite on Tinker")
+	var committed: int = case.rng.state
 	var receipt := CombatEnemyPhase.new().execute_phase(party, case.enemies,
 		case.intents, null, true)
-	_check(receipt == {"ok": true, "events": [
-		{"type": "attack", "enemy_position": 1, "target_position": 3, "applied": true}]},
-		"AC3: the draining bite keeps the ordinary attack event shape")
+	_check(receipt == {"ok": true, "events": two_hits},
+		"AC3: the draining bite resolves as two ordered genuine hit events")
 	_check(party.get_hero(3).get("hp") == 19 and party.get_hero(3).get("block") == 0,
-		"AC3: the unblocked bite removes exactly seven Tinker HP")
+		"AC3: the two hits remove 4 then 3 Tinker HP, seven in total")
 	_check(case.enemies.get_enemy(1).get("hp") == 15,
-		"AC3: Drain heals exactly the seven HP the bite really removed")
+		"AC3: Drain heals 4 then 3, exactly the seven HP the hits really removed")
 	_check(case.enemies.get_enemy(1).get("drain") == true
 		and case.enemies.get_enemy(1).get("max_hp") == 27,
 		"AC3: the heal preserves the Bat's Drain flag and its authored cap")
 	_check(party.get_hero(1).get("hp") == 40 and party.get_hero(2).get("hp") == 30,
 		"AC3: the other two heroes keep their HP")
+	_check(case.rng.state == committed and case.scheduler.get_intents() == case.intents,
+		"AC3: one announced action resolves both hits without an extra RNG draw")
 	# AC3: a Bat missing only 2 HP heals only those 2, never the full seven.
 	var capped_party := _party()
 	var capped := _force_normal_alternative(bat, bite, capped_party)
@@ -3812,10 +3867,11 @@ func _test_bobbin_bat_drain_phase() -> void:
 		var capped_receipt := CombatEnemyPhase.new().execute_phase(capped_party,
 			capped.enemies, capped.intents, null, true)
 		_check(capped_receipt.get("ok") == true
+			and capped_receipt.get("events", []).size() == 2
 			and capped_party.get_hero(3).get("hp") == 19
 			and capped.enemies.get_enemy(1).get("hp") == 27,
 			"AC3: Drain is clamped to the two missing HP and never overheals")
-	# AC3: seven Block absorb the whole bite, so there is no hero HP loss to drain.
+	# AC3: seven Block absorb both hits, so there is no hero HP loss to drain.
 	var blocked_party := _party()
 	_check(blocked_party.gain_block(3, 7),
 		"AC3 precondition: Tinker really holds seven Block")
@@ -3827,12 +3883,14 @@ func _test_bobbin_bat_drain_phase() -> void:
 		var blocked_receipt := CombatEnemyPhase.new().execute_phase(blocked_party,
 			blocked.enemies, blocked.intents, null, true)
 		_check(blocked_receipt.get("ok") == true
-			and blocked_receipt.get("events", [{}])[0].get("applied") == true,
-			"AC3: the fully blocked bite still resolves as one applied attack")
+			and blocked_receipt.get("events", []).size() == 2
+			and blocked_receipt["events"][0].get("applied") == true
+			and blocked_receipt["events"][1].get("applied") == true,
+			"AC3: the fully blocked bite still resolves as two applied hits")
 		_check(blocked_party.get_hero(3).get("hp") == 26
 			and blocked_party.get_hero(3).get("block") == 0
 			and blocked.enemies.get_enemy(1).get("hp") == 8,
-			"AC3: seven Block absorb all seven damage and Drain heals nothing")
+			"AC3: seven Block absorb 4 then 3 and Drain heals nothing")
 	# AC3: only the HP that really got through partial Block drains.
 	var partial_party := _party()
 	_check(partial_party.gain_block(3, 3),
@@ -3845,11 +3903,12 @@ func _test_bobbin_bat_drain_phase() -> void:
 		var partial_receipt := CombatEnemyPhase.new().execute_phase(partial_party,
 			partial.enemies, partial.intents, null, true)
 		_check(partial_receipt.get("ok") == true
+			and partial_receipt.get("events", []).size() == 2
 			and partial_party.get_hero(3).get("hp") == 22
 			and partial_party.get_hero(3).get("block") == 0,
-			"AC3: three Block absorb three and four HP really reach Tinker")
+			"AC3: three Block absorb the first hit whole and one point of the second")
 		_check(partial.enemies.get_enemy(1).get("hp") == 12,
-			"AC3: a partial Block drains exactly the four HP that got through")
+			"AC3: the two confirmed hits drain 1 then 3, the four HP that got through")
 	# AC3: the authored non-attack Weak turn heals nothing.
 	var weak_party := _party()
 	var weak := _force_normal_alternative(bat, weaken, weak_party)
@@ -3865,6 +3924,7 @@ func _test_bobbin_bat_drain_phase() -> void:
 		var weak_receipt := CombatEnemyPhase.new().execute_phase(weak_party,
 			weak.enemies, weak.intents, null, true)
 		_check(weak_receipt.get("ok") == true
+			and weak_receipt.get("events", []).size() == 1
 			and weak_party.get_hero(3).get("hp") == 26
 			and weak_party.get_hero(3).get("statuses", {}).get("weak", 0) == 1
 			and weak.enemies.get_enemy(1).get("hp") == 8,
@@ -3879,6 +3939,7 @@ func _test_bobbin_bat_drain_phase() -> void:
 		var wing_receipt := CombatEnemyPhase.new().execute_phase(wing_party,
 			wing_case.enemies, wing_case.intents, null, true)
 		_check(wing_receipt.get("ok") == true
+			and wing_receipt.get("events", []).size() == 1
 			and wing_case.enemies.get_enemy(1).get("block") == 4
 			and wing_case.enemies.get_enemy(1).get("hp") == 8
 			and wing_party.get_heroes() == _party().get_heroes(),
@@ -3895,12 +3956,33 @@ func _test_bobbin_bat_drain_phase() -> void:
 			slain.enemies, slain.intents, null, true)
 		_check(slain_receipt == {"ok": true, "events": [
 			{"type": "attack", "enemy_position": 1, "target_position": 3,
+				"applied": false},
+			{"type": "attack", "enemy_position": 1, "target_position": 3,
 				"applied": false}]},
-			"AC3: a slain Bat's announced bite resolves as one inert beat")
+			"AC3: a slain Bat's announced bite resolves as two inert skipped hits")
 		_check(slain_party.get_heroes() == slain_heroes
 			and slain.enemies.get_enemies() == slain_roster
 			and slain.enemies.get_enemy(1).get("hp") == 0,
 			"AC3: a slain Bat deals no damage and is never healed back to life")
+	# AC4: a three-hit action is rejected by the scheduler and by the phase
+	# without mutating either roster, and it never consumes run RNG.
+	_check(CombatEnemyIntents.weighted_action({"type": "attack", "amount": 7,
+		"hits": 3, "weight": 4}).is_empty(),
+		"AC4: an authored three-hit attack is rejected by the weighted scheduler")
+	var rejected_party := _party()
+	var rejected := _force_normal_alternative(bat, bite, rejected_party)
+	if not rejected.is_empty():
+		var rejected_heroes: Array = rejected_party.get_heroes()
+		var rejected_roster: Array = rejected.enemies.get_enemies()
+		var rejected_state: int = rejected.rng.state
+		var bad_hits: Dictionary = rejected.intents[0].duplicate(true)
+		bad_hits["hits"] = 3
+		_check(CombatEnemyPhase.new().execute_phase(rejected_party, rejected.enemies,
+			[bad_hits], null, true) == {"ok": false, "events": []}
+			and rejected_party.get_heroes() == rejected_heroes
+			and rejected.enemies.get_enemies() == rejected_roster
+			and rejected.rng.state == rejected_state,
+			"AC4: a malformed three-hit Bat announcement rejects the phase atomically")
 
 ## AC3: the shipped Termite's real 6-damage bite eats ALL the front hero's Block
 ## before the hit, so the full six reaches HP. Its standalone Block and Exposed
