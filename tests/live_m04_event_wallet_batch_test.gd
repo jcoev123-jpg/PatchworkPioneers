@@ -12,6 +12,7 @@ const REQUIRED := ["button_trail", "loose_seam", "thimble_well", "frayed_signpos
 const ORIGINAL_ROADSIDE := ["v3_raincoat_bridge", "v3_puppet_box_office",
 	"v3_mismatched_mittens", "v3_coil_and_crow", "v3_patchwork_lighthouse", "v3_button_orchard"]
 var gold_purchases := 0
+var new_hero_receipts := {}
 
 
 func _party_ids() -> Array:
@@ -54,11 +55,25 @@ func _event_path(map: RunMap, choices: Array, remaining: int) -> Array:
 
 
 const EVENT_WALLET_HINTS := preload("res://tests/event_wallet_hints.gd")
-## Revalidated cycle-321 witnesses: real map generation, toll draw and current
-## eligible hero/Event catalog. Keep the dynamic required set and fallback below.
-const OWED_WITNESSES := {1825487: "frayed_signpost", 8131558: "quilting_bee",
-	1517032: "estate_sale", 680308: "lantern_moth_clearing",
-	7946489: "v3_tinker_clockwork_wagon", 775148: "v3_seamstress_scarlet_loom"}
+## Revalidated witnesses for the current authentic eligible hero/Event pool:
+## real map generation, the same toll draw sequence and the same single sorted
+## pool draw. The pairs are re-derived from the shipped catalog and run RNG (not
+## a frozen pool total, order or list), so an unintended selector change fails
+## here while the bounded search below still covers every required ID. The seven
+## appended pairs were found by scanning seeds for a genuine six-Event route and
+## taking whatever the authentic single pool draw then returned; they restore
+## the required IDs whose former witnesses shifted when the hero pack grew.
+const OWED_WITNESSES := {1825487: "v3_velvet_kite_roost", 8131558: "ragpicker_cart",
+	1517032: "v3_cloud_hem_windmill", 680308: "v3_threadbare_aviary",
+	7946489: "v3_seamstress_thread_cart", 775148: "v3_tinker_clockwork_wagon",
+	8432984: "v3_seamstress_scarlet_loom", 8482256: "v3_seamstress_crimson_mending_queue",
+	8551107: "quilt_bridge", 8718701: "needle_gate", 9109934: "v3_raincoat_bridge",
+	9248794: "v3_puppet_box_office", 9848435: "v3_coil_and_crow"}
+## The hero-tied stories added by this batch: each must reach the real routed
+## panel through the ordinary required-ID loop below and settle its authored
+## signed wallet change at least once.
+const NEW_HERO_STORIES := ["v3_warden_buckle_checkpoint",
+	"v3_seamstress_crimson_mending_queue", "v3_tinker_gear_sideshow"]
 ## The six Candlelit Bargain stories promoted into the live M04 catalog. The live
 ## two-source loader must carry each exactly once so the run map can offer it.
 const PROMOTED_CANDLELIT := ["lantern_bobbin_ferry", "thimble_star_reading",
@@ -424,6 +439,20 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 		_check(record.required_hero == "seamstress" and _party_ids().has("seamstress")
 			and chosen.id == "sew_bunting" and int(chosen.outcome.scraps) < 0,
 			"hero receipt exercises a genuine affordable scrap-cost authored choice")
+	if NEW_HERO_STORIES.has(event_id):
+		new_hero_receipts[event_id] = true
+		var authored_choices := {}
+		for choice in record.choices:
+			authored_choices[choice.id] = choice
+		var hero_ids: Variant = record.get("hero_choice_ids")
+		_check(record.required_hero is String and _party_ids().has(record.required_hero),
+			"new hero story is admitted by its genuinely present hero: " + event_id)
+		_check(hero_ids is Array and (hero_ids as Array).size() == 2
+			and authored_choices.has((hero_ids as Array)[0])
+			and authored_choices.has((hero_ids as Array)[1]),
+			"new hero story presents its two authored hero choices: " + event_id)
+		_check(chosen.id != "leave" and expected != {"gold": 0, "scraps": 2},
+			"new hero story commits a non-zero authored wallet change: " + event_id)
 	var pressed: Callable = panel.get_choice_buttons()[selected].pressed.get_connections()[0].callable
 	if keyboard:
 		panel.get_choice_buttons()[selected].grab_focus()
@@ -627,6 +656,9 @@ func _run() -> void:
 	if fixtures.has(hero_id):
 		await _failures(fixtures[hero_id])
 		await _hero_leave(fixtures[hero_id], hero_id)
+	for new_id in NEW_HERO_STORIES:
+		_check(new_hero_receipts.has(new_id),
+			"new hero story reached the real routed panel and settled once: " + new_id)
 	_check(gold_purchases > 0, "real generic sales fund real gold-cost choices")
 	_check(randi() == global_next, "all selection, choices and rejections preserve global RNG")
 	app.free()
