@@ -202,6 +202,9 @@ func _expected_status(actor: Dictionary) -> String:
 		var count: int = statuses.get(key, 0)
 		if count > 0:
 			active.append("%s %d" % [key.capitalize(), count])
+	# One-shot Blind is one word with no count or duration.
+	if statuses.get("blind_next_attack", 0) == 1:
+		active.append("Blind")
 	return "Statuses: none" if active.is_empty() else "Statuses: " + " · ".join(active)
 
 
@@ -247,6 +250,8 @@ func _expected_chips(actor: Dictionary, side: String) -> Array[String]:
 		var count: int = statuses.get(key, 0)
 		if count > 0:
 			chips.append("%s %d" % [String(key).capitalize(), count])
+	if statuses.get("blind_next_attack", 0) == 1:
+		chips.append("Blind")
 	if side == "enemy" and actor.hp > 0 and actor.get("thorns", 0) > 0:
 		chips.append("Thorns %d" % actor["thorns"])
 	return chips
@@ -280,6 +285,8 @@ func _expected_chip_tooltip(actor: Dictionary, side: String, forecast: Dictionar
 	if chip.begins_with("Riposte "):
 		var n: int = actor["statuses"]["riposte"]
 		return full + "\nRiposte %d: Deals %d counterdamage on each confirmed hit while active. %d is damage per hit, not a turn count; Riposte expires completely at this actor's next owner-turn end." % [n, n, n]
+	if chip == "Blind":
+		return full + "\nBlind: this actor's next attempted attack misses; then Blind is spent. It does not stack and has no turn duration."
 	return full
 
 
@@ -436,7 +443,7 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 		and buttons.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and buttons.focus_mode == Control.FOCUS_NONE,
 		"empty status row collapses; real statuses restore it without intercepting input: " + meter.name)
-	_check(buttons.get_child_count() == 6, "one reusable six-button pool: " + meter.name)
+	_check(buttons.get_child_count() == 7, "one reusable seven-button pool: " + meter.name)
 	var texts: Array[String] = []
 	for child in buttons.get_children():
 		var button := child as Button
@@ -670,8 +677,8 @@ func _exercise_status_row_transitions(app, presenter) -> void:
 	var control_ids: Array[int] = []
 	for child in buttons.get_children():
 		control_ids.append(child.get_instance_id())
-	_check(control_ids.size() == 6 and not buttons.visible and _visible_buttons(meter).is_empty(),
-		"authentic opening has a collapsed status row and six dormant buttons")
+	_check(control_ids.size() == 7 and not buttons.visible and _visible_buttons(meter).is_empty(),
+		"authentic opening has a collapsed status row and seven dormant buttons")
 	_check(app.enemies.apply_statuses({1: {"exposed": 2}}),
 		"real enemy API applies Exposed 2 to an initially empty row")
 	await _frames()
@@ -704,8 +711,8 @@ func _exercise_status_row_transitions(app, presenter) -> void:
 		var actual_ids: Array[int] = []
 		for child in buttons.get_children():
 			actual_ids.append(child.get_instance_id())
-		_check(actual_ids == control_ids and buttons.get_child_count() == 6
-			and meter == _meters(app)[3], "status refresh reuses six original chips and mounted meter")
+		_check(actual_ids == control_ids and buttons.get_child_count() == 7
+			and meter == _meters(app)[3], "status refresh reuses seven original chips and mounted meter")
 	_check(_state(app) == refreshed and randi() == global_draw,
 		"refresh never changes deck, statuses, intents, combat or seeded/global RNG")
 	var batch := CombatStatusTurnBatch.new()
@@ -765,8 +772,8 @@ func _exercise_new_status_ribbons(app, presenter) -> void:
 		hero_ids.append(child.get_instance_id())
 	for child in _buttons(meters[3]).get_children():
 		enemy_ids.append(child.get_instance_id())
-	_check(hero_ids.size() == 6 and enemy_ids.size() == 6,
-		"both real status rows reserve six stable actionless controls")
+	_check(hero_ids.size() == 7 and enemy_ids.size() == 7,
+		"both real status rows reserve seven stable actionless controls")
 	app.party._heroes[1]["statuses"] = {"tangled": 2, "riposte": 3}
 	app.enemies._enemies[0]["statuses"] = {"bleed": 2, "weak": 1, "exposed": 2,
 		"tangled": 2, "riposte": 3}
@@ -915,7 +922,160 @@ func _exercise_new_status_ribbons(app, presenter) -> void:
 		final_enemy_ids.append(child.get_instance_id())
 	_check(_state(app) == before and hero_ids == final_hero_ids and enemy_ids == final_enemy_ids
 		and _visible_buttons(meters[1]).is_empty() and _visible_buttons(meters[3]).is_empty(),
-		"V3-2 fixture restores exact original state, original six controls and empty rows")
+		"V3-2 fixture restores exact original state, original seven controls and empty rows")
+
+
+## One-shot Blind on a real mounted enemy ribbon. A genuine CombatEnemies snapshot with
+## statuses.blind_next_attack = 1 is accepted by CombatActorMeter and reads as the single
+## word "Blind" (never "Blind 1" or a turn duration); the sewn chip states the truthful
+## one-shot rule; a later 0/absent snapshot clears that same reused control; and malformed
+## tokens (2, -1, true, text) are refused instead of fabricating a chip.
+func _exercise_blind_ribbon(app, presenter) -> void:
+	var meters := _meters(app)
+	_check(meters.size() == 5 and app.enemies.get_enemy(1)["hp"] > 0
+		and app.enemies.get_enemy(2)["hp"] > 0,
+		"Blind ribbon case starts with mounted living enemy authorities")
+	if meters.size() != 5 or app.enemies.get_enemy(1)["hp"] <= 0:
+		return
+	var original_enemies: Array[Dictionary] = app.enemies.get_enemies()
+	var before := _state(app)
+	var meter := meters[3]
+	var buttons := _buttons(meter)
+	var control_ids: Array[int] = []
+	for child in buttons.get_children():
+		control_ids.append(child.get_instance_id())
+	_check(control_ids.size() == 7 and not buttons.visible and _visible_buttons(meter).is_empty(),
+		"Blind case starts with a collapsed seven-control status pool")
+	# A real CombatEnemies reader snapshot really carrying the one-shot token.
+	app.enemies._enemies[0]["statuses"] = {"blind_next_attack": 1}
+	var armed: Dictionary = app.enemies.get_enemy(1)
+	_check(armed["statuses"] == {"blind_next_attack": 1}
+		and armed["position"] == 1 and armed["hp"] > 0,
+		"real enemy reader snapshot owns the armed one-shot Blind token")
+	# AC1: direct presenter inspection accepts the token and names it exactly once.
+	_check(meter.show_actor(armed, "enemy") and meter.status_text.text == "Statuses: Blind"
+		and not meter.status_text.text.contains("Blind 1")
+		and meter.status_text.text.count("Blind") == 1,
+		"CombatActorMeter accepts armed Blind and reads one Blind word, with no count or duration")
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var shown := _visible_buttons(meter)
+	_check(shown.size() == 1 and shown[0].text == "Blind" and not shown[0].text.contains("1"),
+		"the mounted ribbon shows exactly one readable Blind chip without a count")
+	if shown.size() == 1:
+		_check(shown[0].tooltip_text == _expected_chip_tooltip(
+			armed, "enemy", _forecast(app), "Blind")
+			and shown[0].tooltip_text.begins_with("Statuses: Blind")
+			and shown[0].tooltip_text.contains("next attempted attack misses; then Blind is spent")
+			and shown[0].tooltip_text.contains("does not stack")
+			and not shown[0].tooltip_text.contains("Blind 1"),
+			"the Blind chip states the truthful one-shot rule with no duration")
+		await _hover(shown[0])
+		_check(root.gui_get_hovered_control() == shown[0]
+			and shown[0].focus_mode == Control.FOCUS_NONE
+			and shown[0].pressed.get_connections().is_empty(),
+			"real pointer hover reads Blind while the chip stays actionless")
+	# AC2: the inert 0 and the absent token both clear the same reused control.
+	app.enemies._enemies[0]["statuses"] = {"blind_next_attack": 0}
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var zero_ids: Array[int] = []
+	for child in buttons.get_children():
+		zero_ids.append(child.get_instance_id())
+	_check(_visible_buttons(meter).is_empty() and not buttons.visible
+		and meter.status_text.text == "Statuses: none",
+		"an inert zero Blind adds no text and clears the mounted chip")
+	_check(zero_ids == control_ids and buttons.get_child_count() == 7,
+		"clearing Blind reuses the same seven sewn controls")
+	app.enemies._enemies[0].erase("statuses")
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	_check(_visible_buttons(meter).is_empty() and meter.status_text.text == "Statuses: none"
+		and _state(app) == before,
+		"an absent Blind stays invisible after the zero was removed, without state changes")
+	var absent := _state(app)
+	seed(70417)
+	var expected_global := randi()
+	seed(70417)
+	for repeat in range(3):
+		presenter._sync_battle()
+		await _frames()
+	_check(_state(app) == absent and randi() == expected_global,
+		"cleared Blind refresh never changes HP, Block, statuses, deck or either RNG")
+	# The full simultaneous case needs the seventh reused slot: five timed statuses,
+	# Thorns and one-shot Blind on one living enemy.
+	app.enemies._enemies[0]["statuses"] = {"bleed": 1, "weak": 1, "exposed": 1,
+		"tangled": 1, "riposte": 1, "blind_next_attack": 1}
+	app.enemies._enemies[0]["thorns"] = 2
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var dense: Dictionary = app.enemies.get_enemy(1)
+	var dense_texts: Array[String] = []
+	for button in _visible_buttons(meter):
+		dense_texts.append(button.text)
+	_check(_expected_chips(dense, "enemy") == ["Bleed 1", "Weak 1", "Exposed 1",
+		"Tangled 1", "Riposte 1", "Blind", "Thorns 2"]
+		and dense_texts == _expected_chips(dense, "enemy")
+		and buttons.get_child_count() == 7,
+		"five timed statuses plus Thorns and Blind render on exactly seven reused chips")
+	if _visible_buttons(meter).size() == 7:
+		var blind_chip := _visible_buttons(meter)[5]
+		await _hover(blind_chip)
+		_check(root.gui_get_hovered_control() == blind_chip
+			and blind_chip.tooltip_text == _expected_chip_tooltip(
+				dense, "enemy", _forecast(app), "Blind"),
+			"the dense ribbon's Blind chip keeps its exact one-shot hover")
+	# AC3: malformed Blind counts and types are refused by the real mounted meter and
+	# never fabricate a chip; the next honest refresh restores every real chip.
+	var dense_before := _state(app)
+	for bad_blind in [2, -1, true, "1"]:
+		var malformed := dense.duplicate(true)
+		malformed["statuses"] = dense["statuses"].duplicate(true)
+		malformed["statuses"]["blind_next_attack"] = bad_blind
+		_check(not meter.show_actor(malformed, "enemy") and not meter.visible
+			and not meter.is_visible_in_tree() and meter.status_text.text.is_empty(),
+			"malformed Blind %s is refused and clears the mounted ribbon" % str(bad_blind))
+		presenter._sync_battle()
+		await _frames()
+		_visible(app)
+		_check(_state(app) == dense_before
+			and _visible_buttons(meter).size() == 7
+			and _visible_buttons(meter)[5].text == "Blind",
+			"the next authoritative frame restores the real chips after malformed Blind %s" %
+				str(bad_blind))
+	# A malformed token on the real roster is refused by the mounted refresh too.
+	app.enemies._enemies[0]["statuses"]["blind_next_attack"] = 2
+	presenter._sync_battle()
+	await _frames()
+	var paintable := 0
+	for chip in _visible_buttons(meter):
+		if chip.is_visible_in_tree():
+			paintable += 1
+	_check(not meter.visible and not meter.is_visible_in_tree()
+		and meter.status_text.text.is_empty() and paintable == 0,
+		"the real refresh refuses malformed roster Blind instead of painting a chip")
+	app.enemies._enemies[0]["statuses"]["blind_next_attack"] = 1
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	_check(meter.visible and _visible_buttons(meter).size() == 7
+		and _visible_buttons(meter)[5].text == "Blind",
+		"restoring the armed token repaints the same Blind chip")
+	for index in range(original_enemies.size()):
+		app.enemies._enemies[index] = original_enemies[index].duplicate(true)
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var final_ids: Array[int] = []
+	for child in buttons.get_children():
+		final_ids.append(child.get_instance_id())
+	_check(_state(app) == before and final_ids == control_ids
+		and _visible_buttons(meter).is_empty() and not buttons.is_visible_in_tree(),
+		"the Blind fixture restores exact original state and the same seven controls")
 
 
 func _exercise_live_bleed(app, presenter) -> void:
@@ -1332,6 +1492,7 @@ func _run() -> void:
 		await _assert_hover(app)
 		await _exercise_status_row_transitions(app, presenter)
 		await _exercise_new_status_ribbons(app, presenter)
+		await _exercise_blind_ribbon(app, presenter)
 		# Inject only into an existing mounted view: no invented live status persistence.
 		var model_before_status := _state(app)
 		var active_meters := _meters(app)

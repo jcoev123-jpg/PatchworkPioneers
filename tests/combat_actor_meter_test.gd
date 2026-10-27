@@ -362,9 +362,15 @@ func _run() -> void:
 		{"statuses": {"bleed": 0, "weak": 0, "exposed": 0, "tangled": 0, "riposte": 0}, "text": "Statuses: none"},
 		{"statuses": {"tangled": 2}, "text": "Statuses: Tangled 2"},
 		{"statuses": {"riposte": 3}, "text": "Statuses: Riposte 3"},
+		{"statuses": {"blind_next_attack": 1}, "text": "Statuses: Blind"},
+		{"statuses": {"blind_next_attack": 0}, "text": "Statuses: none"},
+		{"statuses": {"bleed": 3, "blind_next_attack": 1}, "text": "Statuses: Bleed 3 · Blind"},
 		{"statuses": {"tangled": 2, "riposte": 3}, "text": "Statuses: Tangled 2 · Riposte 3"},
 		{"statuses": {"bleed": 3, "weak": 1, "exposed": 2, "tangled": 2, "riposte": 3},
 			"text": "Statuses: Bleed 3 · Weak 1 · Exposed 2 · Tangled 2 · Riposte 3"},
+		{"statuses": {"bleed": 3, "weak": 1, "exposed": 2, "tangled": 2, "riposte": 3,
+			"blind_next_attack": 1},
+			"text": "Statuses: Bleed 3 · Weak 1 · Exposed 2 · Tangled 2 · Riposte 3 · Blind"},
 		{"statuses": {"bleed": 3}, "text": "Statuses: Bleed 3"},
 		{"statuses": {"weak": 1}, "text": "Statuses: Weak 1"},
 		{"statuses": {"exposed": 2}, "text": "Statuses: Exposed 2"},
@@ -437,7 +443,11 @@ func _run() -> void:
 		{"exposed": true}, {"bleed": "3"}, {"tangled": -1}, {"riposte": -1},
 		{"tangled": 2.0}, {"riposte": "3"}, {"tangled": true}, {"riposte": null},
 		{"bleed": 1, "riposte": -1}, {"poison": 1},
-		{"bleed": 1, "poison": 0}, {1: 2}, {"exposed": null}]:
+		{"bleed": 1, "poison": 0}, {1: 2}, {"exposed": null},
+		{"blind_next_attack": 2}, {"blind_next_attack": -1},
+		{"blind_next_attack": true}, {"blind_next_attack": "1"},
+		{"blind_next_attack": 1.0}, {"blind_next_attack": null},
+		{"blind_next_attack": 1, "poison": 1}]:
 		var malformed := valid.duplicate(true)
 		malformed["statuses"] = bad_status
 		invalids.append(malformed)
