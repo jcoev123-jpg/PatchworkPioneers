@@ -317,6 +317,89 @@ func _run() -> void:
 	_view(meter, enemies.get_enemy(1), "enemy", party, enemies, rng)
 	_assert_actor(meter, "1. Ragling", 10, 12, 17, "uncapped Block above HP")
 
+	# Scarecrow Fear is the literal boolean buff lock. A real detached living enemy
+	# snapshot carrying the canonical Fear + Weak must be presented, not hidden.
+	var fear_enemy := enemies.get_enemy(1)
+	_check(fear_enemy["hp"] == 10 and fear_enemy["block"] == 17,
+		"Fear fixture is the real living Ragling with its actual HP and Block")
+	fear_enemy["statuses"] = {"weak": 1, "cannot_buff_next_turn": true}
+	var fear_before := fear_enemy.duplicate(true)
+	var roster_before_fear := enemies.get_enemies()
+	var fear_status_id := meter.status_text.get_instance_id()
+	_check(rule.can_apply_buff(fear_enemy["statuses"]) == {"ok": true, "allowed": false},
+		"CombatStatuses accepts the same canonical Fear flag and refuses the buff")
+	_view(meter, fear_enemy, "enemy", party, enemies, rng)
+	_assert_actor(meter, "1. Ragling", 10, 12, 17, "living enemy with canonical Fear plus Weak 1",
+		"Statuses: Weak 1 · Fear", "", "Weak: -25% attack damage")
+	_check(meter.status_text.text.count("Fear") == 1
+		and not meter.status_text.text.contains("Fear 1")
+		and meter.status_text.text.ends_with(" · Fear"),
+		"Fear is exactly one unnumbered word after the existing Weak counter")
+	_check(fear_enemy == fear_before and enemies.get_enemies() == roster_before_fear,
+		"Fear presentation never clears or mutates the snapshot or the real roster")
+	var fear_visual := _visual(meter)
+	_view(meter, fear_enemy, "enemy", party, enemies, rng)
+	_check(_visual(meter) == fear_visual and meter.status_text.get_instance_id() == fear_status_id
+		and meter.modifier_explanation.get_instance_id() == modifier_id,
+		"repeated Fear refresh is idempotent and reuses the one status label")
+
+	# Bleed 2 + one-shot Blind + Fear: the direct-HP forecast still runs, Blind stays a
+	# plain one-shot word, and Fear sits last without a count.
+	var fear_bleed := enemies.get_enemy(1)
+	fear_bleed["statuses"] = {"bleed": 2, "blind_next_attack": 1, "cannot_buff_next_turn": true}
+	var fear_bleed_before := fear_bleed.duplicate(true)
+	var fear_bleed_tick := rule.end_owner_turn(fear_bleed["hp"], fear_bleed["block"],
+		fear_bleed["statuses"].duplicate(true))
+	_check(fear_bleed_tick["ok"] and fear_bleed_tick["bleed_hp_loss"] == 2
+		and fear_bleed_tick["hp"] == 8 and fear_bleed_tick["block"] == 17
+		and not fear_bleed_tick["statuses"].has("cannot_buff_next_turn")
+		and fear_bleed_tick["statuses"] == {"bleed": 1, "blind_next_attack": 1},
+		"Fear + Bleed + Blind owner turn removes Fear, ages Bleed and keeps Blind and Block")
+	_view(meter, fear_bleed, "enemy", party, enemies, rng)
+	_assert_actor(meter, "1. Ragling", 10, 12, 17, "Fear with Bleed 2 and one-shot Blind",
+		"Statuses: Bleed 2 · Blind · Fear", "Bleed next: -2 HP (bypasses Block)")
+	_check(fear_bleed == fear_bleed_before,
+		"Fear/Bleed/Blind presentation leaves the caller snapshot untouched")
+
+	# The owner-turn boundary is the same canonical rule: Weak 1 expires, Weak 2 becomes
+	# Weak 1, Bleed ages by one, Block is untouched, and Fear never rides the Weak count.
+	var feared_actor := enemies.get_enemy(1)
+	feared_actor["statuses"] = {"bleed": 2, "weak": 1, "cannot_buff_next_turn": true}
+	var aged := rule.end_owner_turn(feared_actor["hp"], feared_actor["block"],
+		feared_actor["statuses"].duplicate(true))
+	_check(aged["ok"] and aged["hp"] == 8 and aged["block"] == 17
+		and aged["statuses"] == {"bleed": 1},
+		"owner turn clears one-turn Fear and Weak 1 while Bleed ages 2 to 1")
+	var aged_snapshot := feared_actor.duplicate(true)
+	aged_snapshot["hp"] = aged["hp"]
+	aged_snapshot["statuses"] = aged["statuses"].duplicate(true)
+	_view(meter, aged_snapshot, "enemy", party, enemies, rng)
+	_assert_actor(meter, "1. Ragling", 8, 12, 17, "post-Fear owner-turn snapshot",
+		"Statuses: Bleed 1", "Bleed next: -1 HP (bypasses Block)")
+	_check(not meter.status_text.text.contains("Fear"),
+		"expired Fear is removed by the same meter")
+	var long_weak := enemies.get_enemy(1)
+	long_weak["statuses"] = {"weak": 2, "cannot_buff_next_turn": true}
+	var long_weak_aged := rule.end_owner_turn(long_weak["hp"], long_weak["block"],
+		long_weak["statuses"].duplicate(true))
+	_check(long_weak_aged["ok"] and long_weak_aged["hp"] == 10
+		and long_weak_aged["block"] == 17 and long_weak_aged["statuses"] == {"weak": 1},
+		"Fear does not last two turns merely because Weak 2 does")
+	var long_weak_snapshot := long_weak.duplicate(true)
+	long_weak_snapshot["statuses"] = long_weak_aged["statuses"].duplicate(true)
+	_view(meter, long_weak_snapshot, "enemy", party, enemies, rng)
+	_assert_actor(meter, "1. Ragling", 10, 12, 17, "Weak 1 after the Fear-bearing Weak 2 turn",
+		"Statuses: Weak 1", "", "Weak: -25% attack damage")
+	var clean_enemy := enemies.get_enemy(1)
+	clean_enemy["statuses"] = {}
+	_view(meter, clean_enemy, "enemy", party, enemies, rng)
+	_assert_actor(meter, "1. Ragling", 10, 12, 17, "clean refresh after Fear expired",
+		"Statuses: none")
+	_check(not meter.status_text.text.contains("Fear"),
+		"a later clean refresh never leaks the old Fear label")
+	_check(enemies.get_enemies() == roster_before_fear,
+		"every Fear snapshot was detached from the real living roster")
+
 	_check(party.apply_damage(1, 100), "real Warden lethal overflow damage succeeds")
 	expected_heroes[0]["hp"] = 0
 	_check(party.is_downed(1) and party.get_heroes() == expected_heroes,
@@ -378,7 +461,16 @@ func _run() -> void:
 		{"statuses": {"bleed": 3, "exposed": 2}, "text": "Statuses: Bleed 3 · Exposed 2"},
 		{"statuses": {"weak": 1, "exposed": 2}, "text": "Statuses: Weak 1 · Exposed 2"},
 		{"statuses": {"exposed": 2, "bleed": 3, "weak": 1}, "text": "Statuses: Bleed 3 · Weak 1 · Exposed 2"},
-		{"statuses": {"bleed": 0, "weak": 4, "exposed": 0}, "text": "Statuses: Weak 4"}
+		{"statuses": {"bleed": 0, "weak": 4, "exposed": 0}, "text": "Statuses: Weak 4"},
+		{"statuses": {"cannot_buff_next_turn": true}, "text": "Statuses: Fear"},
+		{"statuses": {"weak": 1, "cannot_buff_next_turn": true}, "text": "Statuses: Weak 1 · Fear"},
+		{"statuses": {"dodge_next_attack": 1, "cannot_buff_next_turn": true},
+			"text": "Statuses: Dodge · Fear"},
+		{"statuses": {"bleed": 3, "blind_next_attack": 1, "cannot_buff_next_turn": true},
+			"text": "Statuses: Bleed 3 · Blind · Fear"},
+		{"statuses": {"bleed": 3, "weak": 1, "exposed": 2, "tangled": 2, "riposte": 3,
+			"blind_next_attack": 1, "cannot_buff_next_turn": true},
+			"text": "Statuses: Bleed 3 · Weak 1 · Exposed 2 · Tangled 2 · Riposte 3 · Blind · Fear"}
 	]
 	for side in ["hero", "enemy"]:
 		var source: Dictionary = no_cap_party.get_hero(1) if side == "hero" else enemies.get_enemy(1)
@@ -447,7 +539,11 @@ func _run() -> void:
 		{"blind_next_attack": 2}, {"blind_next_attack": -1},
 		{"blind_next_attack": true}, {"blind_next_attack": "1"},
 		{"blind_next_attack": 1.0}, {"blind_next_attack": null},
-		{"blind_next_attack": 1, "poison": 1}]:
+		{"blind_next_attack": 1, "poison": 1},
+		{"cannot_buff_next_turn": false}, {"cannot_buff_next_turn": 1},
+		{"cannot_buff_next_turn": 1.0}, {"cannot_buff_next_turn": "true"},
+		{"cannot_buff_next_turn": null}, {"cannot_buff_next_turn": []},
+		{"cannot_buff_next_turn": true, "poison": 1}]:
 		var malformed := valid.duplicate(true)
 		malformed["statuses"] = bad_status
 		invalids.append(malformed)
@@ -460,8 +556,11 @@ func _run() -> void:
 		_check(meter.show_actor(positive, "hero") and meter.status_text.text == "Statuses: Bleed 3 · Weak 1 · Exposed 2 · Tangled 2 · Riposte 3"
 			and not meter.bleed_warning.text.is_empty() and meter.modifier_explanation.visible,
 			"restore all positive stacks before negative case")
+		var invalid_before := invalid.duplicate(true)
 		_check(not meter.show_actor(invalid, "hero"), "malformed source must fail closed: " + str(invalid))
 		_assert_cleared(meter, "malformed source")
+		_check(invalid == invalid_before,
+			"rejected source snapshot is left intact: " + str(invalid))
 	for bad_side in ["", "ally", "HERO", "Enemy"]:
 		_check(meter.show_actor(positive, "hero") and meter.status_text.text == "Statuses: Bleed 3 · Weak 1 · Exposed 2 · Tangled 2 · Riposte 3"
 			and not meter.bleed_warning.text.is_empty() and meter.modifier_explanation.visible,
