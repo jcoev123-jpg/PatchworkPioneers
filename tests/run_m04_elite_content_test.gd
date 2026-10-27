@@ -17,6 +17,10 @@ const ESCORT_BLOCK := 5
 ## V3-2 appends two harder look-driven elites. Their authored alternatives are
 ## checked by ID only, never by catalog total or position.
 const V3_ELITES := {
+	## The Bailiff's shears shear through the recipient's whole Block before its
+	## own nine-point cut lands (`chew_block_on_attack`), then the confirmed-hit
+	## sting adds one Bleed. Both flags are real booleans on the shipped record,
+	## checked by ID in _test_scissor_sting.
 	"scissor_bailiff": {
 		"name": "Scissor Bailiff", "max_hp": 36,
 		"art_path": "res://assets/paper/enemies/scissor_bailiff.png",
@@ -1360,15 +1364,20 @@ func _test_scissor_beats(record: Dictionary) -> void:
 	result = CombatEnemyPhase.new().execute_phase(party, enemies, [strike.duplicate(true)])
 	after = party.get_hero(3)
 	_check(result == {"ok": true, "events": [_phase_event(strike)]}
-		and after.get("block") == 0 and after.get("hp") == 21
+		and after.get("block") == 0 and after.get("hp") == 17
+		and after.get("statuses") == {"bleed": 1}
 		and enemies.get_enemies() == foes_before,
-		"authored Scissor attack 9 absorbs four Block then deals exactly five HP")
+		"authored Scissor attack 9 eats four Block, deals all nine HP and stings once")
 
 
 ## One fresh authentic Scissor Bailiff actor, built from the shipped catalog
 ## record as the real CombatEnemies roster carries it, facing the real party.
-func _bailiff_fixture() -> Dictionary:
-	var record := _record(_catalog(ELITES), "scissor_bailiff")
+## `override` is only used by the focused controls that re-home an earlier
+## negative on a copy of that same real record; the shipped catalog is untouched.
+func _bailiff_fixture(override: Dictionary = {}) -> Dictionary:
+	var record: Dictionary = override.duplicate(true)
+	if record.is_empty():
+		record = _record(_catalog(ELITES), "scissor_bailiff")
 	if record.is_empty():
 		return {}
 	var party := _party()
@@ -1388,11 +1397,14 @@ func _bailiff_cut() -> Dictionary:
 	return {"type": "attack", "enemy_position": 1, "amount": 9, "target_position": 1}
 
 
-## AC1/AC2/AC3: the shipped Scissor Bailiff's existing nine-point scissor cut
-## also stings the hero who really loses HP, using the already-shipped
-## CombatEnemyPhase bleed_on_attack rule. Only a genuine, unblocked cut by a
-## living source stings; the fully blocked, slain-source and non-attack
-## alternatives stay clean, and each authored alternative remains its own act.
+## AC1/AC2/AC3/AC4: the shipped Scissor Bailiff's existing nine-point scissor cut
+## now shears through the real recipient's whole Block before it lands (the
+## already-shipped CombatEnemyPhase chew_block_on_attack rule), then stings the
+## hero who really loses HP with exactly one Bleed. Only a genuine cut by a
+## living source stings; the fully blocked no-sting negative moves onto a genuine
+## non-chewing control copied from the same record, so that coverage keeps its
+## strength, while dead-source, non-attack, malformed-metadata and
+## invalid-announcement beats stay clean and atomic.
 func _test_scissor_sting() -> void:
 	seed(64519)
 	var expected_rng := randi()
@@ -1401,10 +1413,29 @@ func _test_scissor_sting() -> void:
 	_check(not catalog.is_empty(), "AC1 precondition: the shipped Bailiff record loads")
 	if catalog.is_empty():
 		return
-	# AC1: only the authored boolean flag is new; every other field is untouched.
+	# AC1: the same record authors both boolean trait flags; every other field is
+	# untouched, and the cloth-eating cut is not a new keyword or action.
 	_check(catalog.get("bleed_on_attack") is bool
 		and catalog.get("bleed_on_attack") == true,
 		"AC1: scissor_bailiff authors bleed_on_attack as a genuine bool true")
+	_check(catalog.get("chew_block_on_attack") is bool
+		and catalog.get("chew_block_on_attack") == true,
+		"AC1: scissor_bailiff authors chew_block_on_attack as a genuine bool true")
+	# AC1: read the peers by ID, never by catalog total or position, so a
+	# parallel append cannot make this check lie about the shipped records.
+	var elites := _catalog(ELITES)
+	var chewer_ids: Array = []
+	for record in elites:
+		if record.get("chew_block_on_attack") is bool \
+				and record.get("chew_block_on_attack") == true:
+			chewer_ids.append(String(record.get("id", "")))
+	_check(chewer_ids.has("scissor_bailiff"),
+		"AC1: the shipped Elite catalog authors the cloth-eating cut on the Bailiff")
+	for id in ["needle_marshal", "spool_hexer", "zipper_hauler", "needle_briar_guard",
+			"spool_snarekeeper", "pincushion_matriarch", "spool_leech"]:
+		var peer := _record(elites, id)
+		_check(not peer.is_empty() and not peer.has("chew_block_on_attack"),
+			"AC1: no fabricated cloth-eating trait on the unchanged elite " + id)
 	_check(catalog.get("name") == "Scissor Bailiff" and catalog.get("max_hp") is int
 		and catalog.get("max_hp") == 36
 		and catalog.get("art_path") == "res://assets/paper/enemies/scissor_bailiff.png"
@@ -1421,7 +1452,8 @@ func _test_scissor_sting() -> void:
 	var cut := _bailiff_cut()
 	_check(cut.get("amount") == 9, "AC1 precondition: the authored scissor cut is 9")
 
-	# AC2: the authored cut over two Block removes real HP and stings once.
+	# AC2: the authored cut over two Block eats that Block, removes real HP and
+	# stings once; the published attack receipt shape is unchanged.
 	var first := _bailiff_fixture()
 	if first.is_empty():
 		return
@@ -1439,8 +1471,8 @@ func _test_scissor_sting() -> void:
 			"applied": true, "target_position": 1}]},
 		"AC2: the real phase publishes one applied nine-point scissor cut")
 	var after := party.get_hero(1)
-	_check(after.get("block") == 0 and after.get("hp") == 33,
-		"AC2: nine pays the two Block first, then removes exactly seven HP")
+	_check(after.get("block") == 0 and after.get("hp") == 31,
+		"AC2: the shears eat the two Block, so all nine points reach HP")
 	_check(after.get("statuses") == {"bleed": 1},
 		"AC2: the hero who really lost HP gains exactly one Bleed")
 	_check(party.get_hero(2) == heroes_before[1] and party.get_hero(3) == heroes_before[2]
@@ -1461,24 +1493,68 @@ func _test_scissor_sting() -> void:
 		and replay_input == input_before,
 		"AC2: the same nine-point cut on equal inputs replays identically")
 
-	# AC3: nine Block soak the whole cut, so no HP is lost and no sting lands.
-	var soaked := _bailiff_fixture()
-	if soaked.is_empty():
+	# AC3: nine Block no longer soak the cut. The shears eat all nine first, so
+	# the full nine points reach HP and the confirmed hit still stings once.
+	var eaten := _bailiff_fixture()
+	if eaten.is_empty():
 		return
-	var soaked_party: CombatParty = soaked["party"]
-	_check(soaked_party.get_hero(1).get("hp") == 40
-		and soaked_party.gain_block(1, 9)
-		and soaked_party.get_hero(1).get("block") == 9,
-		"AC3 precondition: the front Warden really holds nine Block")
-	var soaked_heroes := soaked_party.get_heroes()
-	var soaked_result: Dictionary = CombatEnemyPhase.new().execute_phase(
-		soaked_party, soaked["enemies"], [_bailiff_cut()])
-	_check(soaked_result.get("ok", false)
-		and soaked_result.get("events", [{}])[0].get("applied") == true
-		and soaked_party.get_hero(1).get("block") == 0
-		and soaked_party.get_hero(1).get("hp") == soaked_heroes[0]["hp"]
-		and not soaked_party.get_hero(1).get("statuses", {}).has("bleed"),
-		"AC3: nine Block absorb the whole cut and grant no attack-sting Bleed")
+	var eaten_party: CombatParty = eaten["party"]
+	var eaten_enemies: CombatEnemies = eaten["enemies"]
+	_check(eaten_party.get_hero(1).get("hp") == 40
+		and eaten_party.gain_block(1, 9)
+		and eaten_party.get_hero(1).get("block") == 9,
+		"AC3 precondition: the front Warden really holds 40 HP and nine Block")
+	var eaten_heroes := eaten_party.get_heroes()
+	var eaten_input := [_bailiff_cut()]
+	var eaten_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+		eaten_party, eaten_enemies, eaten_input)
+	_check(eaten_result == {"ok": true, "events": [{"type": "attack",
+			"enemy_position": 1, "applied": true, "target_position": 1}]},
+		"AC3: the chewing cut still publishes one ordinary applied attack event")
+	_check(eaten_party.get_hero(1).get("block") == 0
+		and eaten_party.get_hero(1).get("hp") == 31
+		and eaten_party.get_hero(1).get("hp") == eaten_heroes[0]["hp"] - 9
+		and eaten_party.get_hero(1).get("statuses") == {"bleed": 1}
+		and eaten_party.get_hero(2) == eaten_heroes[1]
+		and eaten_party.get_hero(3) == eaten_heroes[2],
+		"AC3: nine Block are eaten first, then exactly nine HP and one Bleed land")
+
+	# AC3: the earlier fully blocked, no-HP-loss and no-sting negative moves onto
+	# a genuine non-chewing control copied from the same shipped record, so that
+	# coverage keeps its old strength instead of being deleted.
+	for mode in ["explicit_false", "absent"]:
+		var control_record: Dictionary = catalog.duplicate(true)
+		if mode == "explicit_false":
+			control_record["chew_block_on_attack"] = false
+		else:
+			control_record.erase("chew_block_on_attack")
+		var control := _bailiff_fixture(control_record)
+		if control.is_empty():
+			return
+		var control_party: CombatParty = control["party"]
+		var control_enemies: CombatEnemies = control["enemies"]
+		_check(not control_enemies.get_enemy(1).get("chew_block_on_attack", false)
+			and control_party.get_hero(1).get("hp") == 40
+			and control_party.gain_block(1, 9)
+			and control_party.get_hero(1).get("block") == 9,
+			"AC3 precondition: nine Block on the non-chewing control: " + mode)
+		var control_heroes := control_party.get_heroes()
+		var control_input := [_bailiff_cut()]
+		var control_before := control_input.duplicate(true)
+		var control_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+			control_party, control_enemies, control_input)
+		_check(control_result == {"ok": true, "events": [{"type": "attack",
+				"enemy_position": 1, "applied": true, "target_position": 1}]},
+			"AC3: the non-chewing control still resolves one applied cut: " + mode)
+		_check(control_party.get_hero(1).get("block") == 0
+			and control_party.get_hero(1).get("hp") == control_heroes[0]["hp"]
+			and control_party.get_hero(1).get("hp") == 40
+			and not control_party.get_hero(1).get("statuses", {}).has("bleed")
+			and control_party.get_hero(2) == control_heroes[1]
+			and control_party.get_hero(3) == control_heroes[2]
+			and control_input == control_before,
+			"AC3: nine Block shield the whole cut, so no HP is lost and no Bleed lands: "
+				+ mode)
 
 	# AC3: a slain Bailiff cannot sting even with a Block-free front hero.
 	var dead := _bailiff_fixture()
@@ -1527,8 +1603,55 @@ func _test_scissor_sting() -> void:
 		and debuff_party.get_hero(1).get("statuses") == {"bleed": 2}
 		and debuff_party.get_hero(1).get("hp") == 40,
 		"AC3: the authored Bleed 2 debuff stays its own action with no extra sting")
+
+	# AC4: malformed chew metadata rejects the whole staged phase before any beat
+	# is staged, so no Block is eaten, no HP is lost and no Bleed lands.
+	var malformed_record: Dictionary = catalog.duplicate(true)
+	malformed_record["chew_block_on_attack"] = 1
+	var malformed := _bailiff_fixture(malformed_record)
+	if malformed.is_empty():
+		return
+	var malformed_party: CombatParty = malformed["party"]
+	var malformed_enemies: CombatEnemies = malformed["enemies"]
+	_check(malformed_enemies.is_valid()
+		and malformed_enemies.get_enemy(1).has("chew_block_on_attack")
+		and malformed_enemies.get_enemy(1).get("chew_block_on_attack") == 1,
+		"AC4 precondition: the malformed chew trait reaches a valid roster")
+	_check(malformed_party.gain_block(1, 9)
+		and malformed_party.get_hero(1).get("block") == 9,
+		"AC4 precondition: nine Block on the malformed-metadata case")
+	var malformed_heroes := malformed_party.get_heroes()
+	var malformed_roster := malformed_enemies.get_enemies()
+	var malformed_input := [_bailiff_cut()]
+	var malformed_before := malformed_input.duplicate(true)
+	_check(CombatEnemyPhase.new().execute_phase(malformed_party, malformed_enemies,
+		malformed_input) == {"ok": false, "events": []},
+		"AC4: malformed chew metadata rejects the whole staged phase")
+	_check(malformed_party.get_heroes() == malformed_heroes
+		and malformed_enemies.get_enemies() == malformed_roster
+		and malformed_party.get_hero(1).get("block") == 9
+		and malformed_party.get_hero(1).get("hp") == 40
+		and not malformed_party.get_hero(1).get("statuses", {}).has("bleed")
+		and malformed_input == malformed_before,
+		"AC4: a rejected malformed cut eats no Block and lands no HP loss or Bleed")
+
+	# AC4: an invalid announcement never speculatively eats the recipient's Block.
+	var bad := _bailiff_fixture()
+	if bad.is_empty():
+		return
+	var bad_party: CombatParty = bad["party"]
+	var bad_enemies: CombatEnemies = bad["enemies"]
+	_check(bad_party.gain_block(1, 9) and bad_party.get_hero(1).get("block") == 9,
+		"AC4 precondition: nine Block before an invalid announced cut")
+	var bad_cut := _bailiff_cut()
+	bad_cut["target_position"] = 0
+	_reject_beat("Scissor cut outside the party", bad_party, bad_enemies, bad_cut)
+	_check(bad_party.get_hero(1).get("block") == 9
+		and bad_party.get_hero(1).get("hp") == 40
+		and not bad_party.get_hero(1).get("statuses", {}).has("bleed"),
+		"AC4: an invalid announced cut keeps all nine Block and grants no Bleed")
 	_check(randi() == expected_rng,
-		"AC1/AC2/AC3: the Bailiff catalog and phase checks use no global RNG")
+		"AC1/AC2/AC3/AC4: the Bailiff catalog and phase checks use no global RNG")
 
 
 ## AC1/AC2/AC3: the shipped Zipper Hauler looks like a hook, so its authored
