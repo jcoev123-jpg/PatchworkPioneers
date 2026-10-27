@@ -139,6 +139,10 @@ const SELECTED_FONT_SIZE := 13
 const SELECTED_INSET := 6.0
 const SELECTED_BOTTOM_INSET := 6.0
 const SELECTED_ROW_HEIGHT := 26.0
+## The gallery's tiles sit this far from its scrollbar, and the last tile keeps
+## this much paper beneath its sewn frame at the bottom of the scroll.
+const GALLERY_SCROLLBAR_GAP := 12
+const GALLERY_TRAILING_GAP := 18
 
 var _app: Node = null
 var _face: Control = null
@@ -801,11 +805,23 @@ func _mount_gallery() -> void:
 	# Keyboard focus inside the gallery scrolls its own card into view.
 	_scroll.follow_focus = true
 	column.add_child(_scroll)
+	# A passive inset: never a card, focus stop or pointer target, so tile rows
+	# and the masked OptionButton mapping are exactly as before.
+	var inset := MarginContainer.new()
+	inset.name = "GalleryInset"
+	inset.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	inset.focus_mode = Control.FOCUS_NONE
+	inset.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inset.add_theme_constant_override("margin_left", 0)
+	inset.add_theme_constant_override("margin_top", 0)
+	inset.add_theme_constant_override("margin_right", GALLERY_SCROLLBAR_GAP)
+	inset.add_theme_constant_override("margin_bottom", GALLERY_TRAILING_GAP)
+	_scroll.add_child(inset)
 	_list = VBoxContainer.new()
 	_list.name = "GalleryTiles"
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_list.add_theme_constant_override("separation", 6)
-	_scroll.add_child(_list)
+	inset.add_child(_list)
 
 
 # --- content --------------------------------------------------------------
@@ -1821,6 +1837,7 @@ func _scroll_into_view(button: Control) -> void:
 	if _scroll == null or not is_instance_valid(_scroll):
 		return
 	_scroll.ensure_control_visible(button)
+	_reveal_trailing_inset(button)
 	call_deferred("_defer_scroll_into_view", _epoch, button)
 
 
@@ -1840,6 +1857,15 @@ func _defer_scroll_into_view(epoch: int, button: Variant) -> void:
 			or not is_instance_valid(button):
 		return
 	_scroll.ensure_control_visible(button)
+	_reveal_trailing_inset(button)
+
+
+## Focusing the final card scrolls fully down, so its trailing inset shows too.
+func _reveal_trailing_inset(button: Control) -> void:
+	if _tiles.is_empty() or not is_same(_tiles.back()["button"], button):
+		return
+	var bar := _scroll.get_v_scroll_bar()
+	_scroll.scroll_vertical = int(ceilf(bar.max_value - bar.page))
 
 
 func _record_for(button: Variant) -> Dictionary:
