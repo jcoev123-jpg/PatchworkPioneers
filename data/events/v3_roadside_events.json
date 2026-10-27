@@ -299,6 +299,66 @@
         { "id": "buy_masque_thread", "text": "Buy masque thread (spend 21 gold; gain 4 scraps)", "outcome": { "gold": -21, "scraps": 4 } },
         { "id": "leave_masquerade", "text": "Slip away before the last bell (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_blacklace_marionette_choir",
+      "title": "The Blacklace Marionette Choir",
+      "description": "Round stitched singers hang from velvet cords beneath a bruised-plum stage canopy.",
+      "choices": [
+        { "id": "retie_cords", "text": "Retie the marionettes' cords (spend 2 scraps, earn 33 gold)", "outcome": { "gold": 33, "scraps": -2 } },
+        { "id": "buy_spool_cord", "text": "Buy a bundle of spare cords (pay 16 gold, gain 3 scraps)", "outcome": { "gold": -16, "scraps": 3 } },
+        { "id": "leave_choir", "text": "Leave the choir singing (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_copper_moth_almanac",
+      "title": "The Copper-Moth Almanac",
+      "description": "A huge button-eyed moth keeps weather maps folded inside its quilted wings.",
+      "choices": [
+        { "id": "ink_forecast", "text": "Ink tomorrow's sky (earn 11 gold)", "outcome": { "gold": 11, "scraps": 0 } },
+        { "id": "trade_silk_pages", "text": "Trade for silk pages (pay 19 gold, gain 3 scraps)", "outcome": { "gold": -19, "scraps": 3 } },
+        { "id": "close_almanac", "text": "Close the almanac (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_oxblood_pin_bazaar",
+      "title": "The Oxblood Pin Bazaar",
+      "description": "A stocky pincushion keeper weighs blunt silver pins under dripping lanterns.",
+      "choices": [
+        { "id": "sell_pin_cache", "text": "Sell recovered pins (spend 3 scraps, gain 42 gold)", "outcome": { "gold": 42, "scraps": -3 } },
+        { "id": "buy_woven_sheath", "text": "Buy a woven pin sheath (pay 12 gold, gain 2 scraps)", "outcome": { "gold": -12, "scraps": 2 } },
+        { "id": "leave_bazaar", "text": "Leave the bazaar (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_mossveil_hollow_bridge",
+      "title": "The Mossveil Hollow Bridge",
+      "description": "A soft giant with button knuckles keeps a bridge of braided thread from unraveling.",
+      "choices": [
+        { "id": "mend_bridge", "text": "Mend the loose braid (earn 2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "claim_toll_share", "text": "Reclaim old toll buttons (spend 1 scrap, gain 17 gold)", "outcome": { "gold": 17, "scraps": -1 } },
+        { "id": "leave_bridge", "text": "Leave the bridge (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_bonecream_lantern_caravan",
+      "title": "The Bone-Cream Lantern Caravan",
+      "description": "Three lantern-dolls carry a moonlit wagon stitched from patterned pillowcases.",
+      "choices": [
+        { "id": "guide_wagon", "text": "Guide the wagon past the marsh (gain 15 gold)", "outcome": { "gold": 15, "scraps": 0 } },
+        { "id": "purchase_wicks", "text": "Purchase fresh thread wicks (pay 22 gold, gain 4 scraps)", "outcome": { "gold": -22, "scraps": 4 } },
+        { "id": "leave_caravan", "text": "Leave the caravan (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_saffron_button_harvest",
+      "title": "The Saffron Button Harvest",
+      "description": "Plump scarecrow dolls gather brass buttons from black velvet pumpkin vines.",
+      "choices": [
+        { "id": "thread_baskets", "text": "Thread the baskets (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "trade_harvest", "text": "Trade the button harvest (spend 2 scraps, gain 29 gold)", "outcome": { "gold": 29, "scraps": -2 } },
+        { "id": "leave_harvest", "text": "Leave the harvest (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }

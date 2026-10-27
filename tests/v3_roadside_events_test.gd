@@ -246,6 +246,10 @@ const NEW_EVENT_IDS := [
 ## copy of the authored story, captions and signed outcomes; it never reads the
 ## production catalog or the selector's constants back as its oracle, and it
 ## asserts per-ID membership rather than a catalog total or a full ID list.
+
+## The trade batch section adds a second independent per-ID table for the six
+## newest gothic trade tales outside the source table above; it repeats the same
+## funded/empty-purse claim, replay and forced-selection checks.
 const GOTHIC_EXPECTED := {
 	"v3_mothlace_clock": {
 		"title": "The Mothlace Clock",
@@ -321,6 +325,88 @@ const GOTHIC_SEEDS := {
 	"v3_ribbon_shadow_circus": 1020264,
 	"v3_velvet_patch_pier": 1020265,
 	"v3_lullaby_stitch_chapel": 1020266,
+}
+
+## The six gothic trade tales appended by this task. As with the earlier gothic
+## table this is an independent verbatim copy of the authored story, captions and
+## signed outcomes: it never reads the shipped catalog or the selector constants
+## back as its oracle, and it asserts per-ID membership rather than a catalog
+## total or a full ordered ID list. The third choice of every tale is a free Leave.
+const TRADE_EXPECTED := {
+	"v3_blacklace_marionette_choir": {
+		"title": "The Blacklace Marionette Choir",
+		"description": "Round stitched singers hang from velvet cords beneath a bruised-plum stage canopy.",
+		"choices": [
+			{"id": "retie_cords", "text": "Retie the marionettes' cords (spend 2 scraps, earn 33 gold)", "gold": 33, "scraps": -2},
+			{"id": "buy_spool_cord", "text": "Buy a bundle of spare cords (pay 16 gold, gain 3 scraps)", "gold": -16, "scraps": 3},
+			{"id": "leave_choir", "text": "Leave the choir singing (Leave)", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_copper_moth_almanac": {
+		"title": "The Copper-Moth Almanac",
+		"description": "A huge button-eyed moth keeps weather maps folded inside its quilted wings.",
+		"choices": [
+			{"id": "ink_forecast", "text": "Ink tomorrow's sky (earn 11 gold)", "gold": 11, "scraps": 0},
+			{"id": "trade_silk_pages", "text": "Trade for silk pages (pay 19 gold, gain 3 scraps)", "gold": -19, "scraps": 3},
+			{"id": "close_almanac", "text": "Close the almanac (Leave)", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_oxblood_pin_bazaar": {
+		"title": "The Oxblood Pin Bazaar",
+		"description": "A stocky pincushion keeper weighs blunt silver pins under dripping lanterns.",
+		"choices": [
+			{"id": "sell_pin_cache", "text": "Sell recovered pins (spend 3 scraps, gain 42 gold)", "gold": 42, "scraps": -3},
+			{"id": "buy_woven_sheath", "text": "Buy a woven pin sheath (pay 12 gold, gain 2 scraps)", "gold": -12, "scraps": 2},
+			{"id": "leave_bazaar", "text": "Leave the bazaar (Leave)", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_mossveil_hollow_bridge": {
+		"title": "The Mossveil Hollow Bridge",
+		"description": "A soft giant with button knuckles keeps a bridge of braided thread from unraveling.",
+		"choices": [
+			{"id": "mend_bridge", "text": "Mend the loose braid (earn 2 scraps)", "gold": 0, "scraps": 2},
+			{"id": "claim_toll_share", "text": "Reclaim old toll buttons (spend 1 scrap, gain 17 gold)", "gold": 17, "scraps": -1},
+			{"id": "leave_bridge", "text": "Leave the bridge (Leave)", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_bonecream_lantern_caravan": {
+		"title": "The Bone-Cream Lantern Caravan",
+		"description": "Three lantern-dolls carry a moonlit wagon stitched from patterned pillowcases.",
+		"choices": [
+			{"id": "guide_wagon", "text": "Guide the wagon past the marsh (gain 15 gold)", "gold": 15, "scraps": 0},
+			{"id": "purchase_wicks", "text": "Purchase fresh thread wicks (pay 22 gold, gain 4 scraps)", "gold": -22, "scraps": 4},
+			{"id": "leave_caravan", "text": "Leave the caravan (Leave)", "gold": 0, "scraps": 0},
+		],
+	},
+	"v3_saffron_button_harvest": {
+		"title": "The Saffron Button Harvest",
+		"description": "Plump scarecrow dolls gather brass buttons from black velvet pumpkin vines.",
+		"choices": [
+			{"id": "thread_baskets", "text": "Thread the baskets (gain 2 scraps)", "gold": 0, "scraps": 2},
+			{"id": "trade_harvest", "text": "Trade the button harvest (spend 2 scraps, gain 29 gold)", "gold": 29, "scraps": -2},
+			{"id": "leave_harvest", "text": "Leave the harvest (Leave)", "gold": 0, "scraps": 0},
+		],
+	},
+}
+
+const TRADE_EVENT_IDS := [
+	"v3_blacklace_marionette_choir",
+	"v3_copper_moth_almanac",
+	"v3_oxblood_pin_bazaar",
+	"v3_mossveil_hollow_bridge",
+	"v3_bonecream_lantern_caravan",
+	"v3_saffron_button_harvest",
+]
+
+## Independent per-ID seeds for the forced single-eligible selection replay.
+## With one eligible ID the seed cannot pin a catalog position.
+const TRADE_SEEDS := {
+	"v3_blacklace_marionette_choir": 1020271,
+	"v3_copper_moth_almanac": 1020272,
+	"v3_oxblood_pin_bazaar": 1020273,
+	"v3_mossveil_hollow_bridge": 1020274,
+	"v3_bonecream_lantern_caravan": 1020275,
+	"v3_saffron_button_harvest": 1020276,
 }
 
 var failures: Array[String] = []
@@ -537,6 +623,7 @@ func _run_tests() -> void:
 				_check(is_affordable, "Free choice is affordable at zero: " + cid)
 
 	_check_gothic_roadside_batch()
+	_check_trade_roadside_batch()
 	_check_injected_selector()
 	_check_default_admission()
 	_check_default_selection_contract()
@@ -754,6 +841,212 @@ func _check_gothic_roadside_batch() -> void:
 		"gothic wallet play never mutates the selector listing")
 	_check(roadside == roadside_snapshot and m04 == m04_snapshot,
 		"gothic flows never mutate either shipped source catalog")
+
+## AC1/AC2/AC3 for the six gothic trade tales appended by this task: verbatim
+## authored records with three uniquely identified choices and one third-position
+## free Leave, exact funded preview and one-shot settlement, a refused signed
+## debit at an empty purse followed by its legal free Leave, a refused replay,
+## unchanged definitions/wallets/RNG, and admission plus a one-draw forced
+## selection through the default shipped selector. Every assertion is per ID: no
+## catalog total and no full ordered list.
+func _check_trade_roadside_batch() -> void:
+	var roadside: Dictionary = _read_document(EVENTS_PATH)
+	var m04: Dictionary = _read_document(M04_EVENTS_PATH)
+	if roadside.is_empty() or m04.is_empty():
+		return
+	var roadside_snapshot: Dictionary = roadside.duplicate(true)
+	var m04_snapshot: Dictionary = m04.duplicate(true)
+	var roadside_events: Array = _source_events(roadside)
+	var generic_by_id: Dictionary = _records_by_id(_source_events(m04))
+	var source_by_id: Dictionary = _records_by_id(roadside_events)
+	var rotation := RunM04EventRotation.new()
+	_check(rotation.is_catalog_valid(), "the default selector validates for the six trade tales")
+	if not rotation.is_catalog_valid():
+		return
+	var listing_snapshot: Array = rotation.get_generic_events()
+	var ids: Array = rotation.get_generic_event_ids()
+	_check(ids.size() > TRADE_EVENT_IDS.size(),
+		"the default pool holds more than the trade batch, so exclusions are meaningful")
+	var guard := RandomNumberGenerator.new()
+	guard.seed = 303030
+	var guard_state: int = guard.state
+	var settlements := 0
+	var refusals := 0
+	for event_id in TRADE_EVENT_IDS:
+		var contract: Dictionary = TRADE_EXPECTED[event_id]
+		_check(not generic_by_id.has(event_id),
+			"the trade tale never reuses a generic event ID: " + event_id)
+		_check(_matches(roadside_events, event_id).size() == 1,
+			"exactly one sourced trade record for " + event_id)
+		var source_record: Dictionary = source_by_id.get(event_id, {})
+		var record_snapshot: Dictionary = source_record.duplicate(true)
+		_check_gothic_record(source_record, event_id, contract, "shipped")
+		var admitted: Array = _matches(listing_snapshot, event_id)
+		_check(admitted.size() == 1 and ids.count(event_id) == 1,
+			"the default selector admits the trade tale exactly once: " + event_id)
+		if admitted.size() == 1:
+			_check(admitted[0] == source_record,
+				"the default selector serves the verbatim authored trade record: " + event_id)
+		var excluded: Array = ids.duplicate()
+		excluded.erase(event_id)
+		_check(not excluded.has(event_id) and excluded.size() == ids.size() - 1,
+			"only the named trade tale stays eligible: " + event_id)
+		var seed_value: int = TRADE_SEEDS[event_id]
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = seed_value
+		oracle.randi_range(0, 0)
+		var picked := rotation.select_event(rng, excluded)
+		_check(picked.get("ok") == true, "the forced trade selection succeeds: " + event_id)
+		var selected: Dictionary = picked.get("event", {})
+		_check(selected.get("id") == event_id,
+			"the forced trade selection is the named tale: " + event_id)
+		_check(selected == source_record,
+			"the forced trade selection is the authentic authored record: " + event_id)
+		_check(rng.state == oracle.state,
+			"a trade selection consumes exactly one range draw: " + event_id)
+		var replay_rng := RandomNumberGenerator.new()
+		replay_rng.seed = seed_value
+		var replay := rotation.select_event(replay_rng, excluded)
+		_check(replay.get("ok") == true and replay.get("event") == selected
+			and replay_rng.state == rng.state,
+			"the same seed and exclusions replay " + event_id)
+		var selected_snapshot: Dictionary = selected.duplicate(true)
+		selected["title"] = "MUTATED"
+		selected["choices"] = []
+		selected["injected"] = true
+		var detached_rng := RandomNumberGenerator.new()
+		detached_rng.seed = seed_value
+		var detached := rotation.select_event(detached_rng, excluded)
+		_check(detached.get("event") == selected_snapshot and detached.get("event") == source_record,
+			"the selected trade record is a detached authored copy: " + event_id)
+		var wallet_record: Dictionary = detached.get("event", {})
+		_check(wallet_record == source_record,
+			"the trade selector hands back the authentic record for wallet play: " + event_id)
+		var funded := {"gold": 100, "scraps": 5}
+		var funded_snapshot: Dictionary = funded.duplicate(true)
+		var zero := {"gold": 0, "scraps": 0}
+		var zero_snapshot: Dictionary = zero.duplicate(true)
+		var forecast := RunEventChoice.new(wallet_record)
+		_check(forecast.is_valid() and not forecast.is_claimed(),
+			"the admitted trade record is a fresh valid choice service: " + event_id)
+		var preview: Dictionary = forecast.preview_wallet_choices(funded)
+		_check(preview.get("ok") == true and preview.get("event_id") == event_id,
+			"a funded trade preview succeeds: " + event_id)
+		var rows: Dictionary = _gothic_preview_rows(preview)
+		_check(rows.size() == 3, "a funded trade preview lists all three choices: " + event_id)
+		_check(guard.state == guard_state,
+			"a funded trade preview never touches the run RNG: " + event_id)
+		var free_def: Dictionary = {}
+		var free_ids: Array = []
+		var debit_ids: Array = []
+		for choice_def in contract["choices"]:
+			var definition: Dictionary = choice_def
+			if int(definition["gold"]) == 0 and int(definition["scraps"]) == 0:
+				free_def = definition
+				free_ids.append(definition["id"])
+			if int(definition["gold"]) < 0 or int(definition["scraps"]) < 0:
+				debit_ids.append(definition["id"])
+		_check(free_ids.size() == 1 and free_ids[0] == contract["choices"][2]["id"],
+			"the third trade choice is the only free Leave: " + event_id)
+		_check(debit_ids.size() >= 1, "the trade tale prices at least one choice: " + event_id)
+		for choice_def in contract["choices"]:
+			var definition: Dictionary = choice_def
+			var choice_id: String = definition["id"]
+			var gold_delta: int = definition["gold"]
+			var scraps_delta: int = definition["scraps"]
+			var after := {"gold": 100 + gold_delta, "scraps": 5 + scraps_delta}
+			var row: Dictionary = rows.get(choice_id, {})
+			_check(row.get("gold_delta") == gold_delta and row.get("scraps_delta") == scraps_delta,
+				"the trade preview reports the authored deltas: " + event_id + " / " + choice_id)
+			_check(row.get("affordable") == true and row.get("wallet") == after,
+				"the trade preview forecasts the exact funded balance: " + event_id + " / " + choice_id)
+			var committed := RunEventChoice.new(wallet_record)
+			var receipt := committed.choose_with_wallet(choice_id, funded)
+			_check(receipt == {
+				"ok": true, "event_id": event_id, "choice_id": choice_id, "wallet": after,
+			}, "the funded trade claim settles the authored deltas once: " + event_id + " / " + choice_id)
+			settlements += 1
+			_check(committed.is_claimed() and not committed.is_valid(),
+				"the funded trade claim latches and closes the visit: " + event_id + " / " + choice_id)
+			var replay_claim := committed.choose_with_wallet(choice_id, funded)
+			_check(replay_claim == {
+				"ok": false, "event_id": "", "choice_id": "", "wallet": funded,
+			}, "the settled trade claim cannot be replayed: " + event_id + " / " + choice_id)
+			var alternate_id := choice_id
+			for other_def in contract["choices"]:
+				var alternate: Dictionary = other_def
+				if alternate["id"] != choice_id:
+					alternate_id = alternate["id"]
+					break
+			_check(committed.choose_with_wallet(alternate_id, funded).get("ok") == false,
+				"no alternate trade choice claims a spent visit: " + event_id + " / " + choice_id)
+			_check(committed.preview_wallet_choices(funded).get("ok") == false,
+				"a spent trade visit offers no further preview: " + event_id + " / " + choice_id)
+		# An unfunded signed debit is refused without consuming the visit, and the
+		# same visit still settles its actual free Leave exactly once.
+		var scarce := RunEventChoice.new(wallet_record)
+		var scarce_rows: Dictionary = _gothic_preview_rows(scarce.preview_wallet_choices(zero))
+		_check(scarce_rows.size() == 3,
+			"an empty-purse trade preview lists all three choices: " + event_id)
+		for choice_def in contract["choices"]:
+			var definition: Dictionary = choice_def
+			var choice_id: String = definition["id"]
+			var paid := int(definition["gold"]) < 0 or int(definition["scraps"]) < 0
+			_check(scarce_rows.get(choice_id, {}).get("affordable") == (not paid),
+				"zero-purse trade affordability matches the signed outcome: "
+				+ event_id + " / " + choice_id)
+		var debit_id: String = debit_ids[0]
+		for paid_id in debit_ids:
+			var denied := scarce.choose_with_wallet(paid_id, zero)
+			_check(denied == {
+				"ok": false, "event_id": "", "choice_id": "", "wallet": zero,
+			}, "an unfunded trade debit is refused: " + event_id + " / " + paid_id)
+			refusals += 1
+			_check(not scarce.is_claimed() and scarce.is_valid(),
+				"the refused trade debit leaves the visit open: " + event_id + " / " + paid_id)
+			_check(guard.state == guard_state,
+				"a refused trade debit never touches the run RNG: " + event_id + " / " + paid_id)
+		var leave_id: String = free_def["id"]
+		var leave := scarce.choose_with_wallet(leave_id, zero)
+		_check(leave == {
+			"ok": true, "event_id": event_id, "choice_id": leave_id, "wallet": zero,
+		}, "the same trade visit still settles its free Leave: " + event_id)
+		_check(scarce.is_claimed() and not scarce.is_valid(),
+			"the free Leave consumes the trade visit: " + event_id)
+		var leave_replay := scarce.choose_with_wallet(leave_id, zero)
+		_check(leave_replay == {
+			"ok": false, "event_id": "", "choice_id": "", "wallet": zero,
+		}, "the settled trade free Leave cannot be replayed: " + event_id)
+		var swapped := scarce.choose_with_wallet(debit_id, zero)
+		_check(swapped.get("ok") == false and swapped.get("wallet") == zero,
+			"no debit claims a spent trade visit: " + event_id)
+		_check(funded == funded_snapshot and zero == zero_snapshot,
+			"the caller's wallets are unchanged by trade wallet play: " + event_id)
+		_check(source_record == record_snapshot,
+			"the authored trade definition is unchanged by wallet play: " + event_id)
+		_check(guard.state == guard_state,
+			"trade previews, claims and refusals never touch the run RNG: " + event_id)
+	# A non-vacuous batch: six events, eighteen authored choices, and at least one
+	# signed price per tale. The priced count is derived from the independent table.
+	var expected_prices := 0
+	for event_id in TRADE_EVENT_IDS:
+		for choice_def in TRADE_EXPECTED[event_id]["choices"]:
+			var priced: Dictionary = choice_def
+			if int(priced["gold"]) < 0 or int(priced["scraps"]) < 0:
+				expected_prices += 1
+	_check(TRADE_EXPECTED.size() == 6 and TRADE_EVENT_IDS.size() == 6,
+		"the independent trade table covers six events")
+	_check(settlements == TRADE_EVENT_IDS.size() * 3,
+		"every trade choice settles once when funded")
+	_check(expected_prices == refusals and refusals >= TRADE_EVENT_IDS.size(),
+		"every signed trade price is refused at an empty purse")
+	_check(guard.state == guard_state, "the trade batch never touches the run RNG")
+	_check(rotation.get_generic_events() == listing_snapshot,
+		"trade wallet play never mutates the selector listing")
+	_check(roadside == roadside_snapshot and m04 == m04_snapshot,
+		"trade flows never mutate either shipped source catalog")
 
 ## Verbatim presentation, choice shape and signed deltas against the independent
 ## gothic table. `origin` only labels failure messages.

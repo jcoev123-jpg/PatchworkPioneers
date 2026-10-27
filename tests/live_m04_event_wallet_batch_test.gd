@@ -62,13 +62,14 @@ const EVENT_WALLET_HINTS := preload("res://tests/event_wallet_hints.gd")
 ## here while the bounded search below still covers every required ID. The seven
 ## appended pairs were found by scanning seeds for a genuine six-Event route and
 ## taking whatever the authentic single pool draw then returned; they restore
-## the required IDs whose former witnesses shifted when the hero pack grew.
-const OWED_WITNESSES := {1825487: "v3_velvet_kite_roost", 8131558: "ragpicker_cart",
-	1517032: "v3_cloud_hem_windmill", 680308: "v3_threadbare_aviary",
-	7946489: "v3_seamstress_thread_cart", 775148: "v3_tinker_clockwork_wagon",
-	8432984: "v3_seamstress_scarlet_loom", 8482256: "v3_seamstress_crimson_mending_queue",
-	8551107: "quilt_bridge", 8718701: "needle_gate", 9109934: "v3_raincoat_bridge",
-	9248794: "v3_puppet_box_office", 9848435: "v3_coil_and_crow"}
+## the required IDs whose former witnesses shifted when the hero pack grew, and
+## were re-derived once more after the six gothic trade tales joined the pool.
+const OWED_WITNESSES := {1825487: "v3_warden_shield_menders", 8131558: "v3_saffron_button_harvest",
+	1517032: "v3_frosted_pincushion", 680308: "v3_stone_button_forge",
+	7946489: "v3_seamstress_crimson_mending_queue", 775148: "button_trail",
+	8432984: "v3_tinker_gearhouse_midnight", 8482256: "v3_mossbutton_weather_station",
+	8551107: "estate_sale", 8718701: "thimble_star_reading", 9109934: "v3_seamstress_thread_cart",
+	9248794: "v3_copper_bell_choir", 9848435: "v3_briar_pin_checkpoint"}
 ## The hero-tied stories added by this batch: each must reach the real routed
 ## panel through the ordinary required-ID loop below and settle its authored
 ## signed wallet change at least once.
@@ -101,6 +102,10 @@ func _fixtures() -> Dictionary:
 		2440227, 2757529, 3274715, 3525463, 3933498, 4969863,
 		696642, 2703008, 3782438, 5142127, 5281000,
 		4084937, 9640103, 8405118, 444032, 4586354, 7946489])
+	# Genuine six-Event witnesses re-derived after the six gothic trade tales
+	# joined the roadside pool, so every required ID keeps a real route without
+	# relying on the bounded fallback search.
+	hints.append_array([576647, 822958, 883989, 2535428, 3023381, 4388231])
 	for value in hints + range(1, 500000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
