@@ -498,6 +498,66 @@
         { "id": "buy_lighthouse_wick", "text": "Buy three coils of wick (spend 18 gold; gain 3 scraps)", "outcome": { "gold": -18, "scraps": 3 } },
         { "id": "leave_lighthouse", "text": "Follow the dark shoreline (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "lantern_bobbin_ferry",
+      "title": "The Lantern Bobbin Ferry",
+      "description": "A bobbin boat rocks beneath hanging lanterns, its ragdoll ferryman winding loose thread in the amber hush.",
+      "choices": [
+        { "id": "buy_passage", "text": "Pay the ferryman 12 gold for loose thread (+2 scraps)", "outcome": { "gold": -12, "scraps": 2 } },
+        { "id": "ferry_parcels", "text": "Trade a thread bundle for parcel wages (spend 1 scrap; gain 18 gold)", "outcome": { "gold": 18, "scraps": -1 } },
+        { "id": "walk_bank", "text": "Walk along the bank (no cost or gain)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "thimble_star_reading",
+      "title": "The Thimble Star Reading",
+      "description": "A felt fortune-reader peers through a silver thimble at stitched constellations, their frame trailing pale starlint.",
+      "choices": [
+        { "id": "offer_thread", "text": "Sell a spool to the reader (spend 1 scrap; gain 16 gold)", "outcome": { "gold": 16, "scraps": -1 } },
+        { "id": "gather_starlint", "text": "Collect thread caught in the frame (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "pass_by", "text": "Pass by (no cost or gain)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "moonpatch_archway",
+      "title": "The Moonpatch Archway",
+      "description": "Tiny cloth patches line a crescent arch; dangling price tags whisper against its candlelit seams.",
+      "choices": [
+        { "id": "purchase_two_spools", "text": "Purchase two spools (spend 15 gold; gain 2 scraps)", "outcome": { "gold": -15, "scraps": 2 } },
+        { "id": "sell_two_spools", "text": "Sell two spools (spend 2 scraps; gain 27 gold)", "outcome": { "gold": 27, "scraps": -2 } },
+        { "id": "keep_walking", "text": "Keep walking (no cost or gain)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "blacklace_swap_table",
+      "title": "The Blacklace Swap Table",
+      "description": "Small button-eyed puppets barter ribbons over an ink-black lace tablecloth, their stitched smiles lit by candle stubs.",
+      "choices": [
+        { "id": "take_small_bundle", "text": "Buy a small ribbon bundle (spend 8 gold; gain 1 scrap)", "outcome": { "gold": -8, "scraps": 1 } },
+        { "id": "trade_own_bundle", "text": "Sell your own bundle (spend 1 scrap; gain 14 gold)", "outcome": { "gold": 14, "scraps": -1 } },
+        { "id": "decline_trade", "text": "Decline the trade (no cost or gain)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "crooked_marionette",
+      "title": "The Crooked Marionette",
+      "description": "A wooden puppet dangles crookedly above a candle, offering a little coin purse for rethreading its frayed strings.",
+      "choices": [
+        { "id": "retie_strings", "text": "Rethread the puppet's strings (spend 2 scraps; earn 30 gold)", "outcome": { "gold": 30, "scraps": -2 } },
+        { "id": "gather_cuttings", "text": "Gather discarded thread cuttings (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "leave_puppet", "text": "Leave the puppet (no cost or gain)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "dusk_post_bobbin",
+      "title": "The Dusk Post Bobbin",
+      "description": "A patchwork postbox totters on a walking spindle, accepting thread-wrapped letters through a softly glowing slot.",
+      "choices": [
+        { "id": "send_letter", "text": "Pay postage and receive spare wrapping thread (spend 10 gold; gain 1 scrap)", "outcome": { "gold": -10, "scraps": 1 } },
+        { "id": "deliver_letters", "text": "Wrap letters for delivery wages (spend 1 scrap; earn 17 gold)", "outcome": { "gold": 17, "scraps": -1 } },
+        { "id": "ignore_post", "text": "Pass the postbox (no cost or gain)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }

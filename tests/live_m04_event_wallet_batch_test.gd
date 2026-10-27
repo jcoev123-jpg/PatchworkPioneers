@@ -54,11 +54,15 @@ func _event_path(map: RunMap, choices: Array, remaining: int) -> Array:
 
 
 const EVENT_WALLET_HINTS := preload("res://tests/event_wallet_hints.gd")
-## Revalidated cycle-318 witnesses: real map generation, toll draw and current
+## Revalidated cycle-321 witnesses: real map generation, toll draw and current
 ## eligible hero/Event catalog. Keep the dynamic required set and fallback below.
-const OWED_WITNESSES := {529380: "frayed_signpost", 5281000: "quilting_bee",
-	2703008: "estate_sale", 696642: "lantern_moth_clearing",
-	5142127: "v3_tinker_clockwork_wagon", 3782438: "v3_seamstress_scarlet_loom"}
+const OWED_WITNESSES := {1825487: "frayed_signpost", 8131558: "quilting_bee",
+	1517032: "estate_sale", 680308: "lantern_moth_clearing",
+	7946489: "v3_tinker_clockwork_wagon", 775148: "v3_seamstress_scarlet_loom"}
+## The six Candlelit Bargain stories promoted into the live M04 catalog. The live
+## two-source loader must carry each exactly once so the run map can offer it.
+const PROMOTED_CANDLELIT := ["lantern_bobbin_ferry", "thimble_star_reading",
+	"moonpatch_archway", "blacklace_swap_table", "crooked_marionette", "dusk_post_bobbin"]
 
 
 func _fixtures() -> Dictionary:
@@ -72,12 +76,16 @@ func _fixtures() -> Dictionary:
 	hints.append_array(OWED_WITNESSES.keys())
 	# Accepted genuine witnesses from the earlier lane, retained alongside the
 	# newer append-only helper so both sets remain available after the rebase.
+	# The final six were re-derived after the Candlelit Bargain batch joined the
+	# shipped generic pool, so every required ID still has a genuine six-Event
+	# route without relying on the bounded fallback search.
 	hints.append_array([35510, 233942, 236527, 292590, 379017, 422169,
 		449195, 529380, 610125, 622337, 756725, 802796, 807198, 899240,
 		1223721, 1333364, 1363210, 1433081, 1463887, 1610275,
 		1634509, 1658568, 1825487, 1892422, 2308951, 2356714,
 		2440227, 2757529, 3274715, 3525463, 3933498, 4969863,
-		696642, 2703008, 3782438, 5142127, 5281000])
+		696642, 2703008, 3782438, 5142127, 5281000,
+		4084937, 9640103, 8405118, 444032, 4586354, 7946489])
 	for value in hints + range(1, 500000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
@@ -123,6 +131,8 @@ func _catalog_contract() -> void:
 	var ids := rotation.get_generic_event_ids()
 	for id in REQUIRED:
 		_check(ids.count(id) == 1, "combined eligible pool contains required ID exactly once: " + id)
+	for id in PROMOTED_CANDLELIT:
+		_check(ids.count(id) == 1, "live two-source loader carries promoted Candlelit story exactly once: " + id)
 	_check(not ids.has("quiet_spool"), "Quiet Spool stays on its dedicated special route")
 	var expected: Dictionary = preload("res://tests/v3_roadside_events_test.gd").EXPECTED
 	for id in expected:
