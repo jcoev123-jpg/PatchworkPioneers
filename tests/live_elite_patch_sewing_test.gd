@@ -2,6 +2,70 @@ extends "res://tests/live_elite_reward_continuation_test.gd"
 ## Mounted claim -> free sew -> connected continuation -> second drop -> reset/replay.
 
 var sewing
+var rest_transits := {false: 0, true: 0}
+
+
+## Bound frame polling observes UI state, never retries an input or substitutes a visit.
+func _await_rest_state(id: String, phase: String, ready: Callable) -> void:
+	for frame in range(120):
+		if ready.call():
+			return
+		await process_frame
+	var message := "Rest %s requested=%s current=%s route=%s campfire=%s legacy=%s campfire_heal=%s legacy_heal=%s continue=%s" % [
+		phase, id, app.run_map.get_current_node_id(), app.run_map.get_route(),
+		{"visit": app.campfire_visit.read_state() if app.campfire_visit != null else {},
+			"panel": is_instance_valid(app.campfire_view) and app.campfire_view.is_visible_in_tree(),
+			"closed": app._campfire_closed},
+		{"panel": is_instance_valid(app.rest_view) and app.rest_view.is_visible_in_tree(),
+			"consumed": app.rest_recovery.is_consumed() if app.rest_recovery != null else false},
+		_rest_button_state(app.campfire_heal_button), _rest_button_state(app.rest_heal_button),
+		_rest_button_state(app.rest_continue_button)]
+	_check(false, message)
+	printerr(message)
+	# Stop this SceneTree before a caller can cascade into missing battle controls.
+	quit(1)
+	await process_frame
+
+
+func _rest_button_state(button) -> Dictionary:
+	if not is_instance_valid(button):
+		return {"valid": false}
+	return {"valid": true, "visible": button.is_visible_in_tree(),
+		"disabled": button.disabled, "rect": button.get_global_rect()}
+
+
+func _rest_action_ready(button) -> bool:
+	return is_instance_valid(button) and button.is_visible_in_tree() and not button.disabled \
+		and button.size.x > 0 and button.size.y > 0 \
+		and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect())
+
+
+func _rest_panel_ready(id: String) -> bool:
+	if app.run_map.get_current_node_id() != id:
+		return false
+	var campfire: bool = is_instance_valid(app.campfire_view) and app.campfire_view.is_visible_in_tree()
+	var legacy: bool = is_instance_valid(app.rest_view) and app.rest_view.is_visible_in_tree()
+	if campfire == legacy:
+		return false
+	if campfire:
+		return app.campfire_visit != null and app.campfire_visit.read_state().node_id == id \
+			and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN \
+			and not app._campfire_closed and _rest_action_ready(app.campfire_heal_button)
+	return app.rest_recovery != null and not app.rest_recovery.is_consumed() \
+		and _rest_action_ready(app.rest_heal_button)
+
+
+func _rest_connected(id: String) -> bool:
+	return app.run_map.get_current_node_id() == id and is_instance_valid(app.route_view) \
+		and app.route_view.is_visible_in_tree() and app._can_choose_connected_route()
+
+
+func _rest_input(button: Button, keyboard: bool) -> void:
+	if keyboard:
+		button.grab_focus()
+		await _key(KEY_ENTER)
+	else:
+		await _click(button)
 
 
 ## Later Rest nodes can retain the legacy recovery view. Drive whichever real
@@ -12,18 +76,18 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 			await super._visit_path([id], keyboard)
 			continue
 		var action := _route_action(id)
-		_check(is_instance_valid(action) and not action.disabled, "real transit Rest action exists")
-		if not is_instance_valid(action):
-			return
-		if keyboard:
-			action.grab_focus()
-			await _key(KEY_ENTER)
-		else:
-			await _click(action)
+		await _await_rest_state(id, "route action", func(): return (_rest_action_ready(action)
+			and app.run_map.get_legal_choices().has(id) and app._can_choose_connected_route()))
+		await _rest_input(action, keyboard)
+		await _await_rest_state(id, "mounted Heal", func(): return _rest_panel_ready(id))
+		_check(app.run_map.get_current_node_id() == id, "requested connected Rest is current before recovery")
 		if is_instance_valid(app.campfire_view) and app.campfire_view.is_visible_in_tree():
 			_check(app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
 				"transit Campfire binds an open visit")
-			await _click(app.campfire_heal_button)
+			await _rest_input(app.campfire_heal_button, keyboard)
+			await _await_rest_state(id, "Campfire healed", func(): return (app._campfire_closed
+				and app.campfire_visit.read_state().status == RunCampfireVisit.HEALED
+				and not app.campfire_view.is_visible_in_tree() and _rest_connected(id)))
 			_check(not app.campfire_view.visible and app._campfire_closed,
 				"transit Campfire Heal completes its visit")
 		else:
@@ -32,13 +96,42 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 				"legacy transit Rest binds an unconsumed recovery")
 			if not is_instance_valid(app.rest_view) or app.rest_recovery == null:
 				return
-			await _click(app.rest_heal_button)
+			await _rest_input(app.rest_heal_button, keyboard)
+			await _await_rest_state(id, "legacy healed", func(): return (app.rest_recovery.is_consumed()
+				and app.rest_heal_button.disabled and _rest_action_ready(app.rest_continue_button)))
 			_check(app.rest_recovery.is_consumed() and app.rest_heal_button.disabled
 				and not app.rest_continue_button.disabled, "legacy transit Heal commits once")
-			await _click(app.rest_continue_button)
+			await _rest_input(app.rest_continue_button, keyboard)
+			await _await_rest_state(id, "legacy closed", func(): return (
+				not app.rest_view.is_visible_in_tree() and _rest_connected(id)))
 		await _check_connected_book()
 		_check(app.route_view != null and app.route_view.is_visible_in_tree()
 			and app._can_choose_connected_route(), "completed Rest keeps connected chooser live")
+		rest_transits[keyboard] += 1
+
+
+## Keep the earned-coat witnesses unchanged: their current paths need not contain
+## a Rest. Independently prove the helper on a genuine Fight -> Rest seed twice.
+func _test_rest_inputs() -> void:
+	var fixture := _battle_fixture("Rest")
+	_check(not fixture.is_empty(), "seeded opening Fight has a genuine connected Rest path")
+	if fixture.is_empty():
+		return
+	var replay: Array = []
+	for keyboard in [false, true]:
+		if not await _routed_win(fixture, false):
+			return
+		await _click(app.reward_buttons[3])
+		await _click(app.continue_button)
+		var rests_before: int = rest_transits[keyboard]
+		await _visit_path(fixture.path, keyboard)
+		_check(rest_transits[keyboard] > rests_before,
+			"same-seed Fight -> Rest completes with " + ("keyboard" if keyboard else "mouse"))
+		if keyboard:
+			_check(_persistent() == replay, "mouse and keyboard Rest replay preserve exact settled run and RNG")
+		else:
+			replay = _persistent()
+		await _click(app.route_back_button)
 
 ## Use the acquired patch through the next battle's real held-card input.
 func _acquired_attack_check(patch_id: String) -> void:
@@ -952,6 +1045,7 @@ func _run() -> void:
 	await _frames()
 	presenter = app.get_node("LiveAttackPreview")
 	sewing = app.get_node("LiveElitePatchSewing")
+	await _test_rest_inputs()
 	await _attack_patch_claims()
 	_test_literal_names()
 	var fixture := await _coat_multi_fixture()
