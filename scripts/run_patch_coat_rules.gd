@@ -156,10 +156,6 @@ static func _valid_heroes(heroes: Variant, counts: Variant, offsets: Variant = {
 		var statuses: Variant = hero.get("statuses", {})
 		if typeof(statuses) != TYPE_DICTIONARY:
 			return false
-		for status in statuses:
-			if typeof(status) != TYPE_STRING or not ["bleed", "weak", "exposed"].has(status) \
-					or typeof(statuses[status]) != TYPE_INT or statuses[status] < 0:
-				return false
 		var count: Variant = counts.get(id)
 		if typeof(count) != TYPE_INT or count < 0:
 			return false
@@ -174,4 +170,4 @@ static func _valid_heroes(heroes: Variant, counts: Variant, offsets: Variant = {
 				return false
 		elif hero["max_hp"] != expected:
 			return false
-	return true
+	return CombatStatusTurnBatch.new().tick_side("heroes", heroes).ok

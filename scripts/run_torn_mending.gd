@@ -252,12 +252,9 @@ static func _valid_roster(roster: Variant) -> bool:
 		var statuses: Variant = hero.get("statuses", {})
 		if typeof(statuses) != TYPE_DICTIONARY:
 			return false
-		for status in statuses:
-			if typeof(status) != TYPE_STRING or status not in ["bleed", "weak", "exposed"]:
-				return false
-			if typeof(statuses[status]) != TYPE_INT or statuses[status] < 0:
-				return false
-	return true
+	# Accept authentic combat tokens, retaining the combat validator's exact
+	# counter/one-shot types and refusal of unknown or malformed statuses.
+	return CombatStatusTurnBatch.new().tick_side("heroes", roster).ok
 
 
 ## An admitted canonical trio in its default-position order, at full authored HP.

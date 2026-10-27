@@ -290,14 +290,9 @@ static func _valid_roster(heroes: Variant, require_starter: bool) -> bool:
 		var statuses: Variant = hero.get("statuses", {})
 		if typeof(statuses) != TYPE_DICTIONARY:
 			return false
-		for status in statuses:
-			if typeof(status) != TYPE_STRING or status not in ["bleed", "weak", "exposed"]:
-				return false
-			if typeof(statuses[status]) != TYPE_INT or statuses[status] < 0:
-				return false
 		if require_starter:
 			if hero_id != HERO_IDS[i] or hero["max_hp"] != STARTING_HP[hero_id]:
 				return false
 			if hero["hp"] != hero["max_hp"] or hero["block"] != 0:
 				return false
-	return true
+	return CombatStatusTurnBatch.new().tick_side("heroes", heroes).ok
