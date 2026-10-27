@@ -2,6 +2,7 @@ extends "res://tests/live_routed_battle_reentry_test.gd"
 ## Real title -> won Fight -> connected Fight with authentic run-owned sewing.
 ## All attack assertions use physical held panels and the mounted presenter.
 
+const PartyChoice := preload("res://tests/party_choice.gd")
 var worn_wardrobe: RunPatchWardrobe
 
 
@@ -362,6 +363,7 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 		_check(village.selected_tinker_path_id() == "sharpshot",
 			"real village commits Sharpshot before the run")
 		await _click(village.set_out_button)
+		PartyChoice.choose(app)  # Cycle 345: Set out first asks for the party.
 	else:
 		await _click(app.route_button)
 	await _click(_route_action(fixture.fight))

@@ -8,6 +8,7 @@ extends SceneTree
 ## deck, the seeded replay, the mounted hand face, the mouse/number-key cast and
 ## every rejection are then checked against independent oracles.
 
+const PartyChoice := preload("res://tests/party_choice.gd")
 const APP_SCENE := "res://scenes/app.tscn"
 const PATHS_PATH := "res://data/heroes/warden_paths.json"
 const BRACE := "warden_bulwark_brace"
@@ -254,6 +255,7 @@ func _enter_routed_fight(fixture: Dictionary, path_id: String, use_mouse: bool) 
 		await _key(KEY_ENTER)
 	_check(view.selected_warden_path_id() == path_id, "the village confirms the selected Path: " + path_id)
 	await _click(view.set_out_button)
+	PartyChoice.choose(app)  # Cycle 345: Set out first asks for the party.
 	await _frames()
 	_check(is_instance_valid(app.route_view) and app.base_screen == null,
 		"Set out opens the real opening book: " + path_id)
@@ -486,6 +488,7 @@ func _admission_case(tamper: bool) -> void:
 		await _click(_path_button("bulwark"))
 		_check(view.selected_warden_path_id() == "bulwark", "tamper starts with genuine claim")
 	await _click(view.set_out_button)
+	PartyChoice.choose(app)  # Cycle 345: Set out first asks for the party.
 	var admission_rng: int = app.run_rng.state
 	var admission_route: Array = app.run_map.get_route()
 	if tamper:

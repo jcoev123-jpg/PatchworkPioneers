@@ -10,6 +10,7 @@ const STARTER_DECK_PATH := "res://data/cards/starter_deck.json"
 const SEAMSTRESS_PATHS_PATH := "res://data/heroes/seamstress_paths.json"
 const TINKER_PATHS_PATH := "res://data/heroes/tinker_paths.json"
 const BASE_BACKDROP := "res://assets/paper/backgrounds/base_village.png"
+const PartyChoice := preload("res://tests/party_choice.gd")
 
 var failures: Array[String] = []
 var checks := 0
@@ -315,8 +316,14 @@ func _fresh_path_run(path_id: String, use_mouse: bool, enter_fight: bool) -> voi
 	expected_global = randi()
 	seed(166167)
 	await _click(view.set_out_button)
+	# Cycle 345: Set out first mounts the pick-three screen; no run exists before it returns.
+	_check(is_instance_valid(app.party_picker) and app.party_picker.is_visible_in_tree()
+		and app.run_map == null and app.run_rng == null and app.run_seamstress_path_receipt.is_empty(),
+		"Set out first mounts the party picker with no run: " + path_id)
+	PartyChoice.choose(app)
 	_check(is_instance_valid(app.route_view) and app.route_view.is_visible_in_tree()
-		and app.base_screen == null, "Set out reaches the real opening book: " + path_id)
+		and app.base_screen == null and app.party_picker == null,
+		"Set out reaches the real opening book: " + path_id)
 	_check(app.run_seamstress_path_receipt == expected,
 		"the run carries the validated Path receipt: " + path_id)
 	_check(randi() == expected_global, "Set out with a Path spends no global RNG")
@@ -981,7 +988,10 @@ func _run() -> void:
 	var invalid_before := _title_snapshot(app)
 	app.starter_deck_path = "res://missing-base-village-deck.json"
 	await _click(view.set_out_button)
-	_check(app.run_map == null and app.deck == null and app.run_rng == null
+	_check(is_instance_valid(app.party_picker) and app.run_map == null and not view.visible,
+		"invalid-data Set out still asks for the party first")
+	PartyChoice.choose(app)
+	_check(app.party_picker == null and app.run_map == null and app.deck == null and app.run_rng == null
 		and _title_snapshot(app) == invalid_before, "invalid Set out creates no run or RNG")
 	_check(app.run_seamstress_path_receipt.is_empty() and app.base_screen == view
 		and view.is_visible_in_tree() and not view.set_out_button.disabled
@@ -993,7 +1003,11 @@ func _run() -> void:
 	# --- AC2: Set out opens the real seeded chooser exactly like the title ---
 	var stale_binding := _app_binding(app, view.set_out_requested)
 	_check(stale_binding.is_valid(), "the app really handles the Base Set out signal")
+	await _check_base_picker_guards(app, view, stale_binding)
 	await _click(view.set_out_button)
+	_check(is_instance_valid(app.party_picker) and app.run_map == null,
+		"Set out mounts the picker before the chooser")
+	PartyChoice.choose(app)
 	_check(is_instance_valid(app.route_view) and app.route_view.is_visible_in_tree(),
 		"Set out opens the opening-route chooser")
 	_check(app.base_screen == null, "Base hides only after the route was created")
@@ -1110,7 +1124,146 @@ func _run() -> void:
 	# --- AC1/AC2/AC3: each authored Path in its own fresh mounted session ----
 	await _fresh_path_run("bloodline", true, true)
 	await _fresh_path_run("unpicker", false, false)
+	await _chosen_party_run()
 	_finish()
+
+
+## Cycle 345 AC3: the Base picker allocates nothing until a valid trio; cancel, hidden,
+## malformed, duplicate and replayed callbacks are inert and the Base recovers intact.
+func _check_base_picker_guards(app, view: BaseScreen, set_out_binding: Callable) -> void:
+	var before := _title_snapshot(app)
+	var path_before := view.selected_path_id()
+	seed(345345)
+	var expected_global := randi()
+	seed(345345)
+	await _click(view.set_out_button)
+	var picker = app.party_picker
+	_check(is_instance_valid(picker) and picker.is_visible_in_tree() and not view.visible
+		and _title_snapshot(app) == before and app.run_map == null and app.run_rng == null,
+		"AC1: Base Set out mounts one picker and allocates no run or RNG")
+	var admit_binding := _app_binding(app, picker.party_requested)
+	var cancel_binding := _app_binding(app, picker.cancel_requested)
+	_check(admit_binding.is_valid() and cancel_binding.is_valid(), "the app handles the Base picker signals")
+	# A hidden village cannot open a second picker.
+	set_out_binding.call()
+	view.set_out_button.pressed.emit()
+	var pickers := 0
+	for child in app.get_children():
+		if child is LiveV3PartyPicker:
+			pickers += 1
+	_check(pickers == 1 and app.party_picker == picker, "a replayed Set out cannot mount a second picker")
+	# Unlatched, malformed and duplicate requests are refused without spending anything.
+	for ids in [["warden", "seamstress", "tinker"], ["warden", "warden", "tinker"],
+			["warden", "seamstress"], ["warden", "seamstress", "not_a_hero"]]:
+		var typed: Array[String] = []
+		typed.assign(ids)
+		admit_binding.call(typed)
+		_check(app.run_map == null and app.party_picker == picker and not view.visible
+			and _title_snapshot(app) == before, "AC3: refused picker request allocates nothing: " + str(ids))
+	# A hidden picker's Continue cannot commit; its cancel still recovers the Base.
+	for id in ["warden", "seamstress", "tinker"]:
+		picker._tiles[id].pressed.emit()
+	picker.hide()
+	picker.continue_button.pressed.emit()
+	_check(app.run_map == null and app.deck == null and _title_snapshot(app) == before,
+		"AC3: a hidden picker's Continue allocates no run")
+	cancel_binding.call()
+	_check(app.party_picker == null and view.is_visible_in_tree() and not view.set_out_button.disabled
+		and not view.back_button.disabled and view.set_out_button.has_focus()
+		and view.selected_path_id() == path_before and _title_snapshot(app) == before,
+		"AC3: cancel returns to an actionable Base with its setup and wallet intact")
+	# A real Cancel press on a fresh opening also recovers, and old bindings stay inert.
+	await _click(view.set_out_button)
+	var second = app.party_picker
+	_check(is_instance_valid(second) and second != picker, "a later Set out mounts a fresh picker")
+	await _click(second.cancel_button)
+	await process_frame
+	_check(app.party_picker == null and view.is_visible_in_tree() and _title_snapshot(app) == before,
+		"AC3: the picker's Cancel button returns to the Base")
+	var legacy: Array[String] = ["warden", "seamstress", "tinker"]
+	admit_binding.call(legacy)
+	cancel_binding.call()
+	_check(app.run_map == null and app.party_picker == null and view.is_visible_in_tree()
+		and _title_snapshot(app) == before and randi() == expected_global,
+		"AC3: stale picker callbacks are inert and spend no RNG")
+
+
+## Cycle 345 AC1/AC2: a non-default trio from the village opens the canonical
+## seeded route; only a chosen hero's Path rides along into the Fight.
+func _chosen_party_run() -> void:
+	var app = (load(APP_SCENE) as PackedScene).instantiate()
+	root.add_child(app)
+	await process_frame
+	await _click(app.base_button)
+	var view: BaseScreen = app.base_screen
+	_check(view != null, "fresh session opens the village for a chosen party")
+	if view == null:
+		app.free()
+		return
+	await _mouse_select_path(view, "bloodline")
+	var warden_paths: Array = app.run_warden_path_choice.get_authored_paths()
+	_check(not warden_paths.is_empty(), "the village offers a Warden Path")
+	var warden_card := ""
+	if not warden_paths.is_empty():
+		warden_card = String(warden_paths[0].card.id)
+		_app_binding(app, view.warden_path_choice_requested).call(String(warden_paths[0].id))
+	_check(view.selected_path_id() == "bloodline" and not view.selected_warden_path_id().is_empty(),
+		"the village holds a Seamstress and a Warden Path")
+	var ids: Array[String] = ["rag_duelist", "seamstress", "lantern_monk"]
+	var expected := RunV3PartyAdmission.admit(ids)
+	_check(expected.ok and expected.hero_ids != ["warden", "seamstress", "tinker"],
+		"the chosen trio is a legal non-default party")
+	await _click(view.set_out_button)
+	_check(is_instance_valid(app.party_picker) and app.run_map == null, "Set out asks for the party first")
+	PartyChoice.choose(app, ids)
+	_check(is_instance_valid(app.route_view) and app.route_view.is_visible_in_tree()
+		and app.base_screen == null and app.party_picker == null, "the chosen party opens the route")
+	if app.run_map == null:
+		app.free()
+		return
+	var oracle := _seeded_oracle()
+	_check(app.run_rng.state == oracle[0] and app.run_map.get_floors() == oracle[1]
+		and app.run_map.get_legal_choices() == oracle[3]
+		and app.route_buttons.size() == oracle[3].size(),
+		"AC1: the chosen party opens the canonical seeded route")
+	var heroes_ok: bool = app.run_heroes.size() == 3
+	for index in range(mini(3, app.run_heroes.size())):
+		var hero: Dictionary = app.run_heroes[index]
+		var definition: Dictionary = expected.party[index]
+		heroes_ok = heroes_ok and String(hero.get("id", "")) == String(definition.id) \
+			and int(hero.get("max_hp", -1)) == int(definition.max_hp) \
+			and int(hero.get("hp", -1)) == int(definition.max_hp) \
+			and int(hero.get("position", -1)) == index + 1
+	_check(heroes_ok, "AC1: run heroes are the chosen trio with canonical HP and positions")
+	_check(app.run_deck == expected.deck and app._party_receipt.hero_ids == expected.hero_ids,
+		"AC1: the run deck is the chosen trio's starter deck")
+	_check(app.run_seamstress_path_receipt == _expected_receipt("bloodline")
+		and app.run_warden_path_receipt.is_empty() and app.run_tinker_path_receipt.is_empty(),
+		"AC2: the chosen Seamstress keeps her Path; the unchosen Warden's Path is dropped")
+	var fight_button: Button = null
+	for button in app.route_buttons:
+		if not button.disabled and String(button.get_meta("route_kind", "")) == "Fight":
+			fight_button = button
+			break
+	_check(fight_button != null, "the seeded opening offers a Fight")
+	if fight_button != null:
+		await _click(fight_button)
+		var seamstress_card := String((_expected_receipt("bloodline")["card"] as Dictionary).get("id", ""))
+		var cards: Array = []
+		if app.deck != null:
+			for pile in [app.deck.draw_pile, app.deck.hand, app.deck.discard_pile]:
+				cards.append_array(pile)
+		var party_ids: Array = []
+		if app.party != null:
+			for hero in app.party.get_heroes():
+				party_ids.append(String(hero.id))
+		_check(app.deck != null and party_ids == expected.hero_ids
+			and cards.size() == expected.deck.size() + 1 and cards.count(seamstress_card) == 1
+			and (warden_card.is_empty() or not cards.has(warden_card))
+			and app._party_receipt.hero_ids == expected.hero_ids,
+			"AC2: the Fight holds exactly the chosen party, its deck and the chosen Path card")
+	app.free()
+	await process_frame
 
 
 func _finish() -> void:

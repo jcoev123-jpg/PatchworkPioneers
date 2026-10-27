@@ -9,6 +9,7 @@ extends SceneTree
 ## commits, the Path authority's per-turn boundaries and every rejection are then
 ## checked against independent oracles and the authored data.
 
+const PartyChoice := preload("res://tests/party_choice.gd")
 const APP_SCENE := "res://scenes/app.tscn"
 const TINKER_PATHS := "res://data/heroes/tinker_paths.json"
 const SEAMSTRESS_PATHS := "res://data/heroes/seamstress_paths.json"
@@ -318,6 +319,7 @@ func _enter_routed_fight(fixture: Dictionary, path_id: String, use_mouse: bool,
 		_check(view.selected_path_id() == seamstress_id,
 			"the independent Seamstress board still confirms its own pick")
 	await _click(view.set_out_button)
+	PartyChoice.choose(app)  # Cycle 345: Set out first asks for the party.
 	await _frames()
 	_check(is_instance_valid(app.route_view) and app.base_screen == null,
 		"Set out opens the real opening book: " + path_id)
@@ -1066,6 +1068,7 @@ func _tampered_receipt_case() -> void:
 	await _click(app.base_button)
 	await _click(_tinker_button("sharpshot"))
 	await _click(app.base_screen.set_out_button)
+	PartyChoice.choose(app)  # Cycle 345: Set out first asks for the party.
 	await _frames()
 	_check(bool(app.run_tinker_path_receipt.get("ok", false)),
 		"the genuine Tinker receipt was committed before tampering")

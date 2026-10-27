@@ -1331,20 +1331,70 @@ func _close_base(view: BaseScreen = null) -> void:
 	closing.queue_free()
 
 
-## Set out runs the existing opening once; the Base hides only on a real route.
+## Set out first mounts the pick-three screen, bound to this village and to this one
+## opening; no run, RNG or deck exists until the picker returns a valid party.
 func _base_set_out(source: WeakRef) -> void:
 	var view := _live_base(source)
 	if view == null:
 		return
-	_open_route()
-	if run_map == null or not is_instance_valid(route_view) or not route_view.is_visible_in_tree():
+	if deck != null or run_map != null or is_instance_valid(party_picker) or not view._set_out_pending:
 		view.release_set_out()
 		return
-	# Only a real opening book commits the setup's Path as this run's detached receipt.
-	run_seamstress_path_receipt = _selected_path_receipt(view)
-	run_tinker_path_receipt = _selected_tinker_receipt(view)
-	run_warden_path_receipt = _selected_warden_receipt(view)
+	_party_opening += 1
+	party_picker = load("res://scenes/v3_party_picker.tscn").instantiate()
+	add_child(party_picker)
+	party_picker.party_requested.connect(_admit_base_party.bind(weakref(party_picker), _party_opening, source))
+	party_picker.cancel_requested.connect(_cancel_base_party.bind(weakref(party_picker), _party_opening, source))
+	# Hidden, the village's own actions are inert while the party is chosen.
+	view.hide()
+
+
+## The village that is waiting on its picker: this app's mounted, open, hidden Base
+## whose Set out is still pending.
+func _picking_base(source: WeakRef) -> BaseScreen:
+	if source == null or not is_instance_valid(base_screen):
+		return null
+	var view := source.get_ref() as BaseScreen
+	if view != base_screen or view.get_parent() != self or not view.has_open_village() \
+		or view.visible or not view._set_out_pending:
+		return null
+	return view
+
+
+func _cancel_base_party(source: WeakRef, opening: int, base: WeakRef) -> void:
+	var view := _picking_base(base)
+	if view == null or opening != _party_opening or source.get_ref() != party_picker \
+		or not is_instance_valid(party_picker) or not party_picker._latched or party_picker._open:
+		return
+	_retire_party_picker()
+	view.show()
+	view.release_set_out()
+	view.set_out_button.grab_focus()
+
+
+## The picker's valid trio opens the route once; only the chosen heroes' Paths ride along.
+func _admit_base_party(ids: Array[String], source: WeakRef, opening: int, base: WeakRef) -> void:
+	var view := _picking_base(base)
+	if view == null or opening != _party_opening or source.get_ref() != party_picker \
+		or not is_instance_valid(party_picker) or not party_picker.is_visible_in_tree() \
+		or not party_picker._latched or party_picker._open or ids != party_picker.selected_ids() \
+		or deck != null or run_map != null:
+		return
+	var receipt := RunV3PartyAdmission.admit(ids)
+	if not receipt.ok or _load_starter_deck().is_empty() or _load_party_definitions().is_empty():
+		_cancel_base_party(source, opening, base)
+		return
+	_open_route(receipt)
+	if run_map == null or not is_instance_valid(route_view) or not route_view.is_visible_in_tree():
+		_cancel_base_party(source, opening, base)
+		return
+	# Only a real opening book commits a chosen hero's Path as this run's detached receipt.
+	var heroes: Array = receipt.hero_ids
+	run_seamstress_path_receipt = _selected_path_receipt(view) if heroes.has("seamstress") else {}
+	run_tinker_path_receipt = _selected_tinker_receipt(view) if heroes.has("tinker") else {}
+	run_warden_path_receipt = _selected_warden_receipt(view) if heroes.has("warden") else {}
 	_route_from_base = true
+	_retire_party_picker()
 	_close_base(view)
 
 

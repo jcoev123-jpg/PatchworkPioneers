@@ -106,6 +106,7 @@ func _entry(fixture: Dictionary, path: String) -> void:
 	_check(app.run_warden_path_choice.get_receipt() == receipt and app.run_warden_path_receipt.is_empty(),
 		"duplicate cannot replace setup; run receipt waits for Set out")
 	await _click(view.set_out_button)
+	PartyChoice.choose(app)  # Cycle 345: Set out first asks for the party.
 	_check(app.run_warden_path_receipt == receipt
 		and RunWardenPathChoice.authenticate_receipt(app.run_warden_path_receipt).ok,
 		"Set out commits exact authenticated receipt")
@@ -277,6 +278,7 @@ func _abandon() -> void:
 	await _click(app.base_button)
 	await _click(app.base_screen.warden_buttons[1])
 	await _click(app.base_screen.set_out_button)
+	PartyChoice.choose(app)  # Cycle 345: Set out first asks for the party.
 	await _click(app.route_back_button)
 	_check(app.run_warden_path_receipt.is_empty() and app.base_screen != null
 		and not app.run_warden_path_choice.is_claimed(), "abandoned opening restores fresh unclaimed village")

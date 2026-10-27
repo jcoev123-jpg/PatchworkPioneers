@@ -8,6 +8,7 @@ extends SceneTree
 ## deck, the seeded replay, the mounted hand face, the mouse/number-key cast and
 ## every rejection are then checked against independent oracles.
 
+const PartyChoice := preload("res://tests/party_choice.gd")
 const APP_SCENE := "res://scenes/app.tscn"
 const PATHS_PATH := "res://data/heroes/seamstress_paths.json"
 const LEECH := "seamstress_leech_stitch"
@@ -278,6 +279,7 @@ func _enter_routed_fight(fixture: Dictionary, path_id: String, use_mouse: bool) 
 		await _key(KEY_ENTER)
 	_check(view.selected_path_id() == path_id, "the village confirms the selected Path: " + path_id)
 	await _click(view.set_out_button)
+	PartyChoice.choose(app)  # Cycle 345: Set out first asks for the party.
 	await _frames()
 	_check(is_instance_valid(app.route_view) and app.base_screen == null,
 		"Set out opens the real opening book: " + path_id)
@@ -641,6 +643,7 @@ func _tampered_receipt_case() -> void:
 	await _click(app.base_button)
 	await _click(_path_button("bloodline"))
 	await _click(app.base_screen.set_out_button)
+	PartyChoice.choose(app)  # Cycle 345: Set out first asks for the party.
 	await _frames()
 	_check(app.run_seamstress_path_receipt["ok"] == true, "the genuine receipt was committed before tampering")
 	app.run_seamstress_path_receipt["card"]["effects"]["bleed"] = 99
