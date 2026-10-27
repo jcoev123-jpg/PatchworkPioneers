@@ -11,10 +11,12 @@ extends RefCounted
 ## A node is recorded only after its entire transaction succeeds.
 
 const PARTY_SIZE := 3
-const STARTING_HP := {"warden": 40, "seamstress": 30, "tinker": 26}
 
 var _heroes: Array = []
 var _max_hp_by_id: Dictionary = {}
+## Authored caps of the initial trio, fixed at construction; {} when that trio is
+## not an admitted canonical lineup. Next-fight hydration is anchored to it.
+var _admitted_caps: Dictionary = {}
 var _fight_ids: Array[String] = []
 var _rest_ids: Array[String] = []
 var _valid := false
@@ -29,6 +31,7 @@ func _init(initial_heroes: Variant = null) -> void:
 	for hero in _heroes:
 		_max_hp_by_id[hero["id"]] = hero["max_hp"]
 		hero["block"] = 0
+	_admitted_caps = canonical_caps(_heroes, false)
 	_valid = true
 
 
@@ -56,10 +59,10 @@ func get_next_fight_heroes() -> Array:
 func create_next_fight_party() -> CombatParty:
 	if not _valid or not _valid_roster(_heroes, true) or not _same_identities(_heroes):
 		return null
-	if _max_hp_by_id.size() != STARTING_HP.size():
+	if _admitted_caps.is_empty() or _max_hp_by_id.size() != _admitted_caps.size():
 		return null
-	for hero_id in STARTING_HP:
-		if _max_hp_by_id.get(hero_id) != STARTING_HP[hero_id]:
+	for hero_id in _admitted_caps:
+		if _max_hp_by_id.get(hero_id) != _admitted_caps[hero_id]:
 			return null
 	var persisted: Array = _heroes.duplicate(true)
 	for hero in persisted:
@@ -139,6 +142,37 @@ func _same_identities(roster: Array) -> bool:
 		if not _max_hp_by_id.has(hero["id"]) or _max_hp_by_id[hero["id"]] != hero["max_hp"]:
 			return false
 	return true
+
+
+## {hero_id: authored max_hp} when heroes are three distinct heroes that
+## RunV3PartyAdmission admits, each at its authored max HP and, for a V3 hero, with
+## exactly its own authored passive; {} otherwise. ordered also requires the
+## admitted default-position order (stable pick order on ties).
+static func canonical_caps(heroes: Variant, ordered: bool) -> Dictionary:
+	if typeof(heroes) != TYPE_ARRAY or heroes.size() != PARTY_SIZE:
+		return {}
+	var ids: Array = []
+	for hero in heroes:
+		if typeof(hero) != TYPE_DICTIONARY:
+			return {}
+		ids.append(hero.get("id"))
+	var receipt := RunV3PartyAdmission.admit(ids)
+	if not receipt.ok:
+		return {}
+	var authored := {}
+	for index in range(PARTY_SIZE):
+		if ordered and receipt.hero_ids[index] != ids[index]:
+			return {}
+		authored[receipt.party[index].id] = receipt.party[index]
+	var caps := {}
+	for hero in heroes:
+		var definition: Dictionary = authored[hero.id]
+		if typeof(hero.get("max_hp")) != TYPE_INT or hero.max_hp != definition.max_hp:
+			return {}
+		if definition.has("passive") and hero.get("passive") != definition.passive:
+			return {}
+		caps[hero.id] = definition.max_hp
+	return caps
 
 
 static func _valid_id(value: Variant) -> bool:

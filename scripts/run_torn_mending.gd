@@ -4,8 +4,8 @@ extends RefCounted
 ## start/end snapshots, visit receipts and its authoritative scrap balance.
 ## This service neither owns a purse nor admits the next CombatParty (the
 ## existing M03 carryover still requires each hero's original maximum HP).
+## The initial roster may be any canonical trio of the eight authored heroes.
 
-const STARTING_HP := {"warden": 40, "seamstress": 30, "tinker": 26}
 const PARTY_SIZE := 3
 const TEAR_LOSS := 3
 const MIN_MAX_HP := 10
@@ -213,13 +213,11 @@ static func _valid_roster(roster: Variant) -> bool:
 	return true
 
 
+## An admitted canonical trio in its default-position order, at full authored HP.
 static func _is_starter(heroes: Array) -> bool:
-	for i in range(PARTY_SIZE):
-		var hero: Dictionary = heroes[i]
-		if hero["id"] != ["warden", "seamstress", "tinker"][i]:
-			return false
-		if hero["max_hp"] != STARTING_HP[hero["id"]]:
-			return false
+	if RunPartyCarryover.canonical_caps(heroes, true).is_empty():
+		return false
+	for hero in heroes:
 		if hero["hp"] != hero["max_hp"] or hero["block"] != 0:
 			return false
 	return true
