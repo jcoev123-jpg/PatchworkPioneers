@@ -259,7 +259,8 @@ func _typed(app, heroes: Array, cards: Array, rng_state: int, kind: String) -> v
 		var matches := catalog.filter(func(record): return record.id == id)
 		_check(matches.size() == 1, "one authored enemy definition: " + id)
 		if matches.size() == 1:
-			definitions.append(matches[0])
+			definitions.append(_normal_floor_record(matches[0], floor_number)
+				if kind == "Fight" else matches[0])
 	_check(actors == CombatEnemies.new(definitions).get_enemies(), "full typed enemy HP, metadata and roster order")
 	var expected: Array = heroes.duplicate(true)
 	for hero in expected:

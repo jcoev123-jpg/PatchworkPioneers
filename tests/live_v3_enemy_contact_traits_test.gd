@@ -224,7 +224,7 @@ func _run() -> void:
 			and w_badge.policy_cue == ("Aim low HP" if w.type in ["attack", "debuff"] else ""),
 			"authoritative announcements keep exact action, amount and target policy")
 		if b.type == "attack":
-			saw_biter_attack = saw_biter_attack or (b.amount == 3
+			saw_biter_attack = saw_biter_attack or (b.amount == 5
 				and b_badge.target_position == b.get("target_position"))
 		if b.type == "block":
 			saw_biter_block = saw_biter_block or (b.amount == 2
@@ -243,7 +243,7 @@ func _run() -> void:
 			break
 		_check(app.enemy_intents.advance_turn(), "real weighted scheduler advances to next authored announcement")
 	_check(saw_biter_attack and saw_biter_block and saw_wasp_attack and saw_wasp_debuff,
-		"all 3/2 and 8/Bleed-2 authored attack/nonattack alternatives occurred naturally")
+		"all 5/2 and 8/Bleed-2 authored attack/nonattack alternatives occurred naturally")
 	_pure_refresh(app, stage, "advanced weighted intentions")
 	# Both flags on the same authentic, admitted enemy record must share a short
 	# extra row with prior statuses, not replace original Bleed/Weak labels.

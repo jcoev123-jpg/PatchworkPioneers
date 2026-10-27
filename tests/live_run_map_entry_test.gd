@@ -1,5 +1,17 @@
 extends SceneTree
 
+## Independent authored-normal admission arithmetic, including x1 integer typing.
+func _normal_floor_record(source: Dictionary, floor_number: int) -> Dictionary:
+	var record := source.duplicate(true)
+	var numerator := 4 if floor_number <= 4 else (5 if floor_number <= 8 else 6)
+	record.max_hp = int(int(record.max_hp) * numerator / 4)
+	for action in record.intent.actions:
+		if action.type == "attack" and action.amount >= 5 and action.amount <= 9:
+			action.amount = int(int(action.amount) * numerator / 4)
+	return record
+
+
+
 const BAND_ORACLE := preload("res://tests/floor_band_oracle.gd")
 
 var failures: Array[String] = []
@@ -640,7 +652,7 @@ func _run() -> void:
 			_check(matches.size() == 1, "unique authored enemy ID: " + enemy_id)
 			if matches.size() == 1:
 				var record: Dictionary = matches[0].duplicate(true)
-				record.max_hp = int(record.max_hp)
+				record = _normal_floor_record(record, floor_number)
 				ordered.append(record)
 		var reference_enemies := CombatEnemies.new(ordered)
 		# Mirror admission order exactly: selector draw, deck shuffle, weighted
@@ -818,8 +830,9 @@ func _run() -> void:
 	_check(app._start_battle(), "explicit standalone M01 fixture starts")
 	_check(app.deck != null and app.run_map == null and app.route_view == null, "original direct start preserved")
 	if app.deck != null:
-		var starter := CombatEnemyIntents.new(app._load_enemy_schedule())
-		_check(app.enemy_attacks == starter.get_intents() and app.fight_selection == null
+		var starter: Array = [{"enemy_position": 1, "type": "attack", "amount": 5, "target_position": 1},
+			{"enemy_position": 2, "type": "block", "amount": 1}]
+		_check(app.enemy_attacks == starter and app.fight_selection == null
 			and app.encounter_id == "", "direct start keeps starter schedule without routed selector")
 		_check(app.enemies.get_enemies() == CombatEnemies.new(app._load_enemy_definitions()).get_enemies(),
 			"direct Start run retains original starter pair")

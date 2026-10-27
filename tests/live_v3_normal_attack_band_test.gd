@@ -10,6 +10,8 @@ const BASE_TO_BAND := {
 	9: {1: 9, 5: 11, 9: 13},
 }
 var seen_bands: Dictionary = {}
+var eligible_early := 0
+var phase_bands: Dictionary = {}
 var eligible_mid := 0
 var eligible_high := 0
 var phase_hits := 0
@@ -135,21 +137,26 @@ func _verify_band(floor_number: int) -> void:
 		_check(FileAccess.get_file_as_string(path) == original_texts[path],
 			"the original normal source JSON is never modified")
 	if band_key == 1:
-		_check(total_eligible == 0,
-			"existing early legacy 1-4 attacks remain unchanged rather than clamped")
+		eligible_early += total_eligible
+		_check(total_eligible > 0,
+			"early Fight contains authored five-point attack alternatives")
 	elif band_key == 5:
 		eligible_mid += total_eligible
 	else:
 		eligible_high += total_eligible
 
 
-func _actual_attack_phases() -> void:
-	# Use one genuine selected high-band actor. Slay the other live sources so
+func _actual_attack_phases(floor_number: int) -> void:
+	# Use one genuine selected actor from the current floor band. Slay the other live sources so
 	# there is exactly one attack, with no invented action or target.
 	var selected := 0
 	for actor in app.enemies.get_enemies():
 		var raw: Dictionary = FLOOR_BAND_ORACLE.records().get(actor.id, {})
 		if raw.is_empty():
+			continue
+		if floor_number <= 4 and actor.id not in ["ragling", "fray_scavenger",
+			"button_guard", "spool_stalker", "seam_ripper", "felt_bulwark",
+			"moth_scribe", "pin_skitter", "thread_biter"]:
 			continue
 		for option in raw.intent.actions:
 			var parsed := CombatEnemyIntents.weighted_action(option)
@@ -159,7 +166,7 @@ func _actual_attack_phases() -> void:
 				break
 		if selected > 0:
 			break
-	_check(selected > 0, "real high-band group includes an eligible authored attack")
+	_check(selected > 0, "real band group includes an eligible authored attack (formerly weak on floors 1-4)")
 	if selected == 0:
 		return
 	for actor in app.enemies.get_enemies():
@@ -185,6 +192,8 @@ func _actual_attack_phases() -> void:
 		if not announced.is_empty():
 			var target: int = announced.target_position
 			var amount: int = announced.amount
+			if floor_number <= 4:
+				_check(amount == 5, "formerly weak early actor announces exactly five damage")
 			var shield := 0 if not unblocked else 3
 			if shield > 0:
 				_check(app.party.gain_block(target, shield),
@@ -208,6 +217,8 @@ func _actual_attack_phases() -> void:
 		else:
 			await _click(app.end_turn_button)
 	_check(unblocked and blocked, "both unmitigated and Block-mitigated real attacks resolved")
+	if unblocked and blocked:
+		phase_bands[1 if floor_number <= 4 else (5 if floor_number <= 8 else 9)] = true
 
 
 func _run() -> void:
@@ -250,12 +261,15 @@ func _run() -> void:
 				_verify_band(floor_number)
 			if first_entry.is_empty():
 				first_entry = _mounted_state()
-			if node.type == "Fight" and floor_number >= 9:
-				await _actual_attack_phases()
-				break
+			if node.type == "Fight":
+				await _actual_attack_phases(floor_number)
+				if floor_number >= 9:
+					break
 			for enemy in app.enemies.get_enemies():
-				_check(app.enemies.apply_damage(enemy.position, 99999),
-					"authentic battle settles using real enemy HP models")
+				if enemy.hp > 0:
+					_check(app.enemies.apply_damage(enemy.position, 99999),
+						"authentic battle settles using real enemy HP models")
+			_check(app.enemies.get_enemies().all(func(enemy): return enemy.hp == 0), "all real sources are slain before settlement")
 			app._observe_battle_result()
 			await _frames()
 			_check(app._battle_closed and app.battle_result.get_outcome() == CombatBattleResult.VICTORY
@@ -268,9 +282,10 @@ func _run() -> void:
 		_check(first_entry.get("hand", []).size() == 5,
 			"actual seeded opening is dealt a five-card playable hand")
 	_check(seen_bands.has(1) and seen_bands.has(5) and seen_bands.has(9)
-		and eligible_mid > 0 and eligible_high > 0,
+		and eligible_early > 0 and eligible_mid > 0 and eligible_high > 0,
 		"first, middle and high genuine Fights covered, with eligible authored high-band actions")
-	_check(phase_hits >= 2, "actual normal-Fight phase damage and mitigation were exercised")
+	_check(phase_hits >= 6 and phase_bands.has(1) and phase_bands.has(5) and phase_bands.has(9),
+		"actual normal-Fight damage and Block mitigation exercised in every band")
 	if failures.is_empty():
 		print("live_v3_normal_attack_band_test: PASS (", checks, " checks)")
 	else:

@@ -33,7 +33,7 @@ func _front_target(app) -> int:
 	return 1
 
 
-func _visible(app, target: int = -1) -> void:
+func _visible(app, target: int = -1, expected_amount: int = 5) -> void:
 	if target < 1:
 		target = _front_target(app)
 	app.get_node("LiveCombatMeters")._sync_battle()
@@ -41,10 +41,10 @@ func _visible(app, target: int = -1) -> void:
 	if is_instance_valid(app.intent_label):
 		_check(not app.intent_label.visible and app.battle_view.is_ancestor_of(app.intent_label),
 			"legacy intent source remains mounted without a duplicate sentence")
-		_check(app.intent_label.text == "Intent: Enemy 1 -> Hero %d (%s): 1 damage; Enemy 2: 1 Block" % [
-			target, ["Warden", "Seamstress", "Tinker"][target - 1]],
+		_check(app.intent_label.text == "Intent: Enemy 1 -> Hero %d (%s): %d damage; Enemy 2: 1 Block" % [
+			target, ["Warden", "Seamstress", "Tinker"][target - 1], expected_amount],
 			"visible intent accurately describes authored source, target and damage")
-	_check(app.enemy_attacks == [{"enemy_position": 1, "type": "attack", "amount": 1,
+	_check(app.enemy_attacks == [{"enemy_position": 1, "type": "attack", "amount": expected_amount,
 		"target_position": target}, {"enemy_position": 2, "type": "block", "amount": 1}]
 		and app.enemy_attacks == app.enemy_intents.get_intents(),
 		"retained snapshot matches current selector and expected step")
@@ -270,7 +270,7 @@ func _run() -> void:
 			var target := _front_target(app)
 			var heroes: Array = app.party.get_heroes()
 			_check(CombatEnemyAttacks.new().execute_attacks(reference_party, [{"enemy_position": 1,
-				"target_position": target, "amount": 1}]).ok, "reference resolves announced Ragling hit first")
+				"target_position": target, "amount": 5}]).ok, "reference resolves announced Ragling hit first")
 			_check(CombatEnemyBlocks.execute_blocks(reference_enemies, [{"type": "block",
 				"enemy_position": 2, "amount": 1}]).ok, "reference resolves Guard Block second")
 			_check(reference.end_turn(), "reference ends hand after successful enemy actions")
@@ -284,7 +284,7 @@ func _run() -> void:
 				and app.enemies.get_enemies() == reference_enemies.get_enemies(), "complete party and enemy transition matches merged services")
 			_check(app.enemies.get_enemy(2).block == turn + 1 and app.enemies.get_enemy(1).block == 0,
 				"living Guard gains exactly one Block per phase; Ragling gains none")
-			_check(app.party.get_hero(target).hp == heroes[target - 1].hp - (0 if blocked else 1), "front living target takes exactly one hit using Block before HP")
+			_check(app.party.get_hero(target).hp == maxi(0, heroes[target - 1].hp - maxi(0, 5 - heroes[target - 1].block)), "front living target takes exactly one hit using Block before HP")
 			for position in range(1, 4):
 				_check(app.party.get_hero(position).block == 0, "next player turn clears all Block")
 			for position in range(1, 4):
@@ -383,7 +383,7 @@ func _slain_sources(app) -> void:
 		_check(is_instance_valid(app.intent_label) and not app.intent_label.visible,
 			"slain-source intent remains mounted before End Turn")
 		_check(app.intent_label.text == ("Intent: Enemy 2: 1 Block" if slain == 1
-			else "Intent: Enemy 1 -> Hero 1 (Warden): 1 damage"),
+			else "Intent: Enemy 1 -> Hero 1 (Warden): 5 damage"),
 			"slain source disappears on rendered frame before End Turn")
 		var after_frame := _snapshot(app)
 		before_frame[5] = after_frame[5]
@@ -393,7 +393,7 @@ func _slain_sources(app) -> void:
 		var heroes: Array = app.party.get_heroes()
 		var expected_heroes := heroes.duplicate(true)
 		if slain != 1:
-			expected_heroes[0].hp -= 1
+			expected_heroes[0].hp -= 5
 		var expected_enemies: Array = app.enemies.get_enemies()
 		if slain != 2:
 			expected_enemies[1].block += 1
@@ -410,8 +410,8 @@ func _slain_sources(app) -> void:
 		_check(app.enemy_intents._turn_index == 1 and app.enemy_attacks == app.enemy_intents.get_intents()
 			and app.enemy_attacks[0].target_position == 1, "slain-source turn advances intent exactly once")
 		_check(app.intent_label.text == ("Intent: Enemy 2: 1 Block" if slain == 1
-			else "Intent: Enemy 1 -> Hero 1 (Warden): 1 damage"), "living source displays exact next intent")
-		_check(app.party.get_hero(1).hp == heroes[0].hp - (0 if slain == 1 else 1), "only living Ragling attacks")
+			else "Intent: Enemy 1 -> Hero 1 (Warden): 5 damage"), "living source displays exact next intent")
+		_check(app.party.get_hero(1).hp == heroes[0].hp - (0 if slain == 1 else 5), "only living Ragling attacks")
 		_check(app.enemies.get_enemy(2).block == (0 if slain == 2 else 1), "only living Guard gains Block")
 		_check(app.enemies.get_enemy(slain).hp == 0 and app.enemies.get_enemy(slain).position == slain,
 			"slain source retains its original slot")
@@ -616,7 +616,7 @@ func _mixed_rejection_replay(app) -> void:
 			and app.enemy_intents._turn_index == 1,
 			"legal mixed End Turn after both rejections attacks and grants Block exactly once")
 		await process_frame
-		_visible(app)
+		_visible(app, -1, 1)
 		trace.append(_snapshot(app))
 		if session == 0:
 			replay = trace.duplicate(true)

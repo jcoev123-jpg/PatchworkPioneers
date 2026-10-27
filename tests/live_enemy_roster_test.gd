@@ -33,13 +33,13 @@ const IDLE_ART := {
 ## target policies and strongest weighted attacks are pinned here, never read from the view.
 const M05_NORMALS := {
 	"felt_bulwark": {"name": "Felt Bulwark", "max_hp": 18, "target": "front",
-		"attack": {"amount": 2, "weight": 3}},
+		"attack": {"amount": 5, "weight": 3}},
 	"moth_scribe": {"name": "Moth Scribe", "max_hp": 14, "target": "exposed",
-		"attack": {"amount": 2, "weight": 3}},
+		"attack": {"amount": 5, "weight": 3}},
 	"pin_skitter": {"name": "Pin Skitter", "max_hp": 13, "target": "random",
-		"attack": {"amount": 2, "weight": 4}},
+		"attack": {"amount": 5, "weight": 4}},
 	"thread_biter": {"name": "Thread Biter", "max_hp": 15, "target": "lowest_living_hp",
-		"attack": {"amount": 3, "weight": 3}},
+		"attack": {"amount": 5, "weight": 3}},
 }
 
 
@@ -1301,7 +1301,7 @@ func _caption_legibility(app, presenter) -> void:
 	_check(_snapshot(app) == before,
 		"every caption, plaque and policy transition is presentation only")
 	presenter._refresh()
-	_check(_snapshot(app) == before and presenter._badges[0].readable_text == "Hit 1: Front"
+	_check(_snapshot(app) == before and presenter._badges[0].readable_text == "Hit 5: Front"
 		and presenter._badges[0].policy_cue.is_empty()
 		and _caption_fits(presenter._badges[0]) and _caption_fits(presenter._badges[1]),
 		"a refresh restores the real announcements with fitted captions")
@@ -1403,7 +1403,7 @@ func _caption_fits(badge) -> bool:
 		and not text.intersects(badge.policy_rect())
 
 
-func _assert_badges(app, presenter, expected_target: int = -1) -> void:
+func _assert_badges(app, presenter, expected_target: int = -1, expected_amount: int = 5) -> void:
 	if not is_instance_valid(presenter.panel) or presenter.enemies == null:
 		_check(false, "badge assertions require a mounted real battle")
 		return
@@ -1474,8 +1474,8 @@ func _assert_badges(app, presenter, expected_target: int = -1) -> void:
 				badge.target_position == target and badge.readable_text == message,
 				"badge mode, text, damage/Block and target equal authoritative copied intent")
 			if position == 1 and expected_target != -1:
-				_check(kind == "attack" and amount == 1 and target == expected_target and
-					badge.readable_text == "Hit 1: %s" % {1: "Front", 2: "Middle", 3: "Back"}[expected_target],
+				_check(kind == "attack" and amount == expected_amount and target == expected_target and
+					badge.readable_text == "Hit %d: %s" % [expected_amount, {1: "Front", 2: "Middle", 3: "Back"}[expected_target]],
 					"ragling next announced target follows real End Turn scheduler")
 			if position == 2:
 				_check(kind == "block" and amount == 1 and target == 0 and
@@ -1507,7 +1507,7 @@ func _visible(app, presenter) -> void:
 	_check(guard.get("id") == "ragling_guard" and guard.get("name") == "Guard Ragling"
 		and guard.get("hp") == 12 and guard.get("max_hp") == 12 and guard.get("block") == 0,
 		"authored position-two Guard Ragling starts at 12 HP and zero Block")
-	_check(app.intent_label.text == "Intent: Enemy 1 -> Hero 1 (Warden): 1 damage; Enemy 2: 1 Block",
+	_check(app.intent_label.text == "Intent: Enemy 1 -> Hero 1 (Warden): 5 damage; Enemy 2: 1 Block",
 		"real start announces both authored intents")
 	var ragling := presenter.enemies.get_enemy(1) as Dictionary
 	_check(ragling.get("id") == "ragling" and ragling.get("position") == 1 and
@@ -2373,6 +2373,9 @@ func _run() -> void:
 		_check(_snapshot(app) == before, "duplicate Start Run preserves all gameplay state")
 		var trace: Array = []
 		for turn in range(12):
+			# Keep the long presentation/replay timeline alive after Ragling's +4 damage.
+			_check(app.party.gain_block(1, 4) and reference.party.gain_block(1, 4),
+				"both real parties receive identical mitigation for the stronger Ragling")
 			_check(_snapshot(app) == _snapshot(reference), "presenter leaves hero/deck/energy/RNG trace intact")
 			_check(presenter.enemies == app.enemies and app.enemies.get_enemies() == reference.enemies.get_enemies(),
 				"observed roster matches battle without presenter")
@@ -2466,7 +2469,7 @@ func _run() -> void:
 			and puppet.idle_texture == null and puppet.attack_texture == null
 			and puppet.image_rect() == Rect2(),
 			"an unknown mounted actor ID falls back to the drawn puppet without textures")
-	_assert_badges(app, presenter, 1)
+	_assert_badges(app, presenter, 1, 1)
 	_staging(app, presenter)
 	_idle_motion(app, presenter, true)
 	_attack_pose(app, presenter)
@@ -2532,11 +2535,11 @@ func _bound_skip_badges(app, presenter) -> void:
 		{1: "elite", 2: "boss"}), "mismatched roster is genuinely independently bound")
 	app.round_flow._unravel = foreign
 	presenter._refresh()
-	_check(badge.icon_mode == "attack" and badge.readable_text == "Hit 1: Front",
+	_check(badge.icon_mode == "attack" and badge.readable_text == "Hit 5: Front",
 		"roster-mismatched pending authority falls back to unchanged scheduler intent")
 	app.round_flow._unravel = null
 	presenter._refresh()
-	_check(badge.icon_mode == "attack" and badge.readable_text == "Hit 1: Front",
+	_check(badge.icon_mode == "attack" and badge.readable_text == "Hit 5: Front",
 		"missing authority preserves ordinary attack instead of stale UNRAVELLED")
 	app.round_flow._unravel = service
 	presenter._refresh()

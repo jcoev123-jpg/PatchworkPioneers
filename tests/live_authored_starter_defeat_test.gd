@@ -45,12 +45,12 @@ func _state() -> Array:
 
 func _announced(target: int) -> void:
 	var expected := [
-		{"enemy_position": 1, "type": "attack", "amount": 1, "target_position": target},
+		{"enemy_position": 1, "type": "attack", "amount": 5, "target_position": target},
 		{"enemy_position": 2, "type": "block", "amount": 1}]
 	_check(app.enemy_attacks == expected and app.enemy_intents.get_intents() == expected,
 		"current authored announcement targets slot %d" % target)
 	_check(not app.intent_label.visible and app.intent_label.text ==
-		"Intent: Enemy 1 -> Hero %d (%s): 1 damage; Enemy 2: 1 Block" %
+		"Intent: Enemy 1 -> Hero %d (%s): 5 damage; Enemy 2: 1 Block" %
 		[target, ["Warden", "Seamstress", "Tinker"][target - 1]],
 		"visible announcement includes exact target and unchanged amounts")
 
@@ -126,9 +126,9 @@ func _session() -> Array:
 		var heroes: Array = before[0].duplicate(true)
 		var victim: Dictionary = heroes[target - 1]
 		if victim.hp > 0:
-			var absorbed := mini(victim.block, 1)
+			var absorbed := mini(victim.block, 5)
 			victim.block -= absorbed
-			victim.hp = maxi(0, victim.hp - (1 - absorbed))
+			victim.hp = maxi(0, victim.hp - (5 - absorbed))
 		var defeated := true
 		for hero in heroes:
 			defeated = defeated and hero.hp == 0
@@ -153,7 +153,7 @@ func _session() -> Array:
 			_check(app.enemy_attacks == before[4] and app.enemy_intents.get_intents() == before[3]
 				and app.run_rng.state == before[2][7], "terminal phase freezes announcement and RNG")
 		trace.append(_state())
-	_check(turns == 97 and app.party.is_defeated()
+	_check(turns == 21 and app.party.is_defeated()
 		and app.battle_result.get_outcome() == CombatBattleResult.DEFEAT,
 		"unmodified authored front-target battle defeats all three heroes on End Turn %d" % turns)
 	_party_visible()
@@ -204,8 +204,8 @@ func _run() -> void:
 			and app.starter_deck_path == app.STARTER_DECK_PATH, "all shipped data paths used")
 		var first := await _session()
 		var second := await _session()
-		_check(first.size() == 98 and second.size() == 98 and first == second,
-			"same seed after Return reproduces complete 97-turn party/enemy/deck/energy/RNG trace")
+		_check(first.size() == 22 and second.size() == 22 and first == second,
+			"same seed after Return reproduces complete 21-turn party/enemy/deck/energy/RNG trace")
 		app.free()
 	if failures.is_empty():
 		print("live_authored_starter_defeat_test: PASS (", checks, " checks)")

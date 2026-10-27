@@ -240,7 +240,7 @@ func _run() -> void:
 			"same Bomb applies hero Weak and recipient-specific Exposed with floor once")
 		_check(_live().slice(1) == before.slice(1), "intents and selector unchanged")
 		_check(is_instance_valid(app.intent_label) and not app.intent_label.visible
-			and app.intent_label.text == "Intent: Enemy 1 -> Hero 1 (Warden): 1 damage",
+			and app.intent_label.text == "Intent: Enemy 1 -> Hero 1 (Warden): 5 damage",
 			"real mouse/keyboard bomb immediately removes slain Guard intent and retains Ragling")
 		_check(app.session_gold == 0, "nonterminal bomb awards no gold")
 		_check(_panel() == null and app.battle_result.can_continue(), "spent card leaves hand; surviving enemy keeps fight active")

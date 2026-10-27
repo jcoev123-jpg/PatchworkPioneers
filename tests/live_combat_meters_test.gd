@@ -1372,10 +1372,10 @@ func _run() -> void:
 				"mounted synthetic/invalid/authoritative view refresh never mutates models or run RNG")
 			_visible(app)
 			await _assert_hover(app)
-		_check(_incoming(app, 1) == "Incoming: 1 Block, 0 HP"
+		_check(_incoming(app, 1) == "Incoming: 5 Block, 0 HP"
 			and _incoming(app, 2) == "Incoming: none"
 			and _incoming(app, 3) == "Incoming: none",
-			"authored opening Warden absorbs Ragling one, Guard Block contributes zero")
+			"authored opening Warden absorbs Ragling five, Guard Block contributes zero")
 		await _exercise_live_bleed(app, presenter)
 		var initial := _state(app)
 		if session == 0:
@@ -1402,7 +1402,7 @@ func _run() -> void:
 		_check(app.party.get_hero(1).hp == 40 and app.party.get_hero(1).block == 0
 			and app.enemies.get_enemy(2).block == 1, "actual turn absorbs attack and executes second enemy Block")
 		_visible(app)
-		_check(_incoming(app, 1) == "Incoming: 0 Block, 1 HP"
+		_check(_incoming(app, 1) == "Incoming: 0 Block, 5 HP"
 			and _incoming(app, 2) == "Incoming: none",
 			"real End Turn reveals the next front-target Ragling intent on the Warden ribbon")
 		# Direct valid model changes must refresh without app refresh callbacks.
@@ -1412,7 +1412,7 @@ func _run() -> void:
 		var before := _state(app)
 		await _frames()
 		_visible(app)
-		_check(_incoming(app, 1) == "Incoming: 1 Block, 0 HP"
+		_check(_incoming(app, 1) == "Incoming: 4 Block, 1 HP"
 			and _incoming(app, 2) == "Incoming: none",
 			"real living attacker forecasts against changed Warden Block")
 		_check(_state(app) == before, "display refresh preserves every model, energy, piles, intents and RNG")
@@ -1420,7 +1420,7 @@ func _run() -> void:
 			"live downed target remains at position two")
 		await _frames()
 		_visible(app)
-		_check(_incoming(app, 2) == "DOWNED" and _incoming(app, 1) == "Incoming: 1 Block, 0 HP"
+		_check(_incoming(app, 2) == "DOWNED" and _incoming(app, 1) == "Incoming: 4 Block, 1 HP"
 			and _incoming(app, 3) == "DOWNED",
 			"downed heroes never show a plausible incoming line while the living target keeps its forecast")
 		var downed_chips: Array[String] = []

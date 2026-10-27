@@ -1,7 +1,7 @@
 [
   {"id": "ragling", "name": "Ragling", "max_hp": 12, "art_path": "res://assets/paper/enemies/ragling.png",
     "intent": {"target": "front", "actions": [
-      {"type": "attack", "amount": 1, "weight": 3}
+      {"type": "attack", "amount": 5, "weight": 3}
     ]}},
   {"id": "ragling_guard", "name": "Guard Ragling", "max_hp": 12, "art_path": "res://assets/paper/enemies/ragling_guard.png",
     "intent": {"target": "front", "actions": [

@@ -1,52 +1,52 @@
 [
   {"id": "fray_scavenger", "name": "Fray Scavenger", "max_hp": 14, "art_path": "res://assets/paper/enemies/fray_scavenger.png",
     "intent": {"target": "lowest_living_hp", "actions": [
-      {"type": "attack", "amount": 3, "weight": 3},
+      {"type": "attack", "amount": 5, "weight": 3},
       {"type": "block", "amount": 2, "weight": 2},
       {"type": "debuff", "amount": 1, "status": "exposed", "weight": 1}
     ]}},
   {"id": "button_guard", "name": "Button Guard", "max_hp": 16, "art_path": "res://assets/paper/enemies/button_guard.png",
     "intent": {"target": "front", "actions": [
-      {"type": "attack", "amount": 2, "weight": 3},
+      {"type": "attack", "amount": 5, "weight": 3},
       {"type": "block", "amount": 2, "weight": 2},
       {"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
       {"type": "shove", "amount": 0, "direction": 1, "weight": 1}
     ]}},
   {"id": "spool_stalker", "name": "Spool Stalker", "max_hp": 14, "art_path": "res://assets/paper/enemies/spool_stalker.png",
     "intent": {"target": "exposed", "actions": [
-      {"type": "attack", "amount": 2, "weight": 3},
+      {"type": "attack", "amount": 5, "weight": 3},
       {"type": "block", "amount": 2, "weight": 2},
       {"type": "debuff", "amount": 1, "status": "exposed", "weight": 2},
       {"type": "buff", "amount": 2, "weight": 1}
     ]}},
   {"id": "seam_ripper", "name": "Seam Ripper", "max_hp": 18, "art_path": "res://assets/paper/enemies/seam_ripper.png",
     "intent": {"target": "lowest_living_hp", "actions": [
-      {"type": "attack", "amount": 4, "weight": 3},
+      {"type": "attack", "amount": 5, "weight": 3},
       {"type": "block", "amount": 2, "weight": 2},
       {"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
       {"type": "buff", "amount": 2, "weight": 1}
     ]}},
   {"id": "felt_bulwark", "name": "Felt Bulwark", "max_hp": 18, "art_path": "res://assets/paper/enemies/felt_bulwark.png",
     "intent": {"target": "front", "actions": [
-      {"type": "attack", "amount": 2, "weight": 3},
+      {"type": "attack", "amount": 5, "weight": 3},
       {"type": "block", "amount": 3, "weight": 3},
       {"type": "buff", "amount": 2, "weight": 1}
     ]}},
   {"id": "moth_scribe", "name": "Moth Scribe", "max_hp": 14, "art_path": "res://assets/paper/enemies/moth_scribe.png",
     "intent": {"target": "exposed", "actions": [
-      {"type": "attack", "amount": 2, "weight": 3},
+      {"type": "attack", "amount": 5, "weight": 3},
       {"type": "debuff", "amount": 1, "status": "weak", "weight": 2},
       {"type": "block", "amount": 2, "weight": 1}
     ]}},
   {"id": "pin_skitter", "name": "Pin Skitter", "max_hp": 13, "art_path": "res://assets/paper/enemies/pin_skitter.png",
     "intent": {"target": "random", "actions": [
-      {"type": "attack", "amount": 2, "weight": 4},
+      {"type": "attack", "amount": 5, "weight": 4},
       {"type": "shove", "amount": 0, "direction": 1, "weight": 1},
       {"type": "block", "amount": 1, "weight": 1}
     ]}},
   {"id": "thread_biter", "name": "Thread Biter", "max_hp": 15, "drain": true, "art_path": "res://assets/paper/enemies/thread_biter.png",
     "intent": {"target": "lowest_living_hp", "actions": [
-      {"type": "attack", "amount": 3, "weight": 3},
+      {"type": "attack", "amount": 5, "weight": 3},
       {"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
       {"type": "block", "amount": 2, "weight": 1}
     ]}},

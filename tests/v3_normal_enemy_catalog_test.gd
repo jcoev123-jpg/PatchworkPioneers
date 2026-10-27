@@ -6,6 +6,7 @@ var failures: Array[String] = []
 var checks := 0
 
 func _initialize() -> void:
+	_test_normal_attack_minimum()
 	_test_catalog_records_and_parsing()
 	_test_three_slot_roster_and_weighted_slots()
 	_test_fixed_seed_binding_and_alternatives()
@@ -81,45 +82,45 @@ func _old_expected() -> Dictionary:
 	return {
 		"fray_scavenger": {"id": "fray_scavenger", "name": "Fray Scavenger", "max_hp": 14, "art_path": "res://assets/paper/enemies/fray_scavenger.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
-				{"type": "attack", "amount": 3, "weight": 3},
+				{"type": "attack", "amount": 5, "weight": 3},
 				{"type": "block", "amount": 2, "weight": 2},
 				{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1}]}},
 		"button_guard": {"id": "button_guard", "name": "Button Guard", "max_hp": 16, "art_path": "res://assets/paper/enemies/button_guard.png",
 			"intent": {"target": "front", "actions": [
-				{"type": "attack", "amount": 2, "weight": 3},
+				{"type": "attack", "amount": 5, "weight": 3},
 				{"type": "block", "amount": 2, "weight": 2},
 				{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
 				{"type": "shove", "amount": 0, "direction": 1, "weight": 1}]}},
 		"spool_stalker": {"id": "spool_stalker", "name": "Spool Stalker", "max_hp": 14, "art_path": "res://assets/paper/enemies/spool_stalker.png",
 			"intent": {"target": "exposed", "actions": [
-				{"type": "attack", "amount": 2, "weight": 3},
+				{"type": "attack", "amount": 5, "weight": 3},
 				{"type": "block", "amount": 2, "weight": 2},
 				{"type": "debuff", "amount": 1, "status": "exposed", "weight": 2},
 				{"type": "buff", "amount": 2, "weight": 1}]}},
 		"seam_ripper": {"id": "seam_ripper", "name": "Seam Ripper", "max_hp": 18, "art_path": "res://assets/paper/enemies/seam_ripper.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
-				{"type": "attack", "amount": 4, "weight": 3},
+				{"type": "attack", "amount": 5, "weight": 3},
 				{"type": "block", "amount": 2, "weight": 2},
 				{"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
 				{"type": "buff", "amount": 2, "weight": 1}]}},
 		"felt_bulwark": {"id": "felt_bulwark", "name": "Felt Bulwark", "max_hp": 18, "art_path": "res://assets/paper/enemies/felt_bulwark.png",
 			"intent": {"target": "front", "actions": [
-				{"type": "attack", "amount": 2, "weight": 3},
+				{"type": "attack", "amount": 5, "weight": 3},
 				{"type": "block", "amount": 3, "weight": 3},
 				{"type": "buff", "amount": 2, "weight": 1}]}},
 		"moth_scribe": {"id": "moth_scribe", "name": "Moth Scribe", "max_hp": 14, "art_path": "res://assets/paper/enemies/moth_scribe.png",
 			"intent": {"target": "exposed", "actions": [
-				{"type": "attack", "amount": 2, "weight": 3},
+				{"type": "attack", "amount": 5, "weight": 3},
 				{"type": "debuff", "amount": 1, "status": "weak", "weight": 2},
 				{"type": "block", "amount": 2, "weight": 1}]}},
 		"pin_skitter": {"id": "pin_skitter", "name": "Pin Skitter", "max_hp": 13, "art_path": "res://assets/paper/enemies/pin_skitter.png",
 			"intent": {"target": "random", "actions": [
-				{"type": "attack", "amount": 2, "weight": 4},
+				{"type": "attack", "amount": 5, "weight": 4},
 				{"type": "shove", "amount": 0, "direction": 1, "weight": 1},
 				{"type": "block", "amount": 1, "weight": 1}]}},
 		"thread_biter": {"id": "thread_biter", "name": "Thread Biter", "max_hp": 15, "drain": true, "art_path": "res://assets/paper/enemies/thread_biter.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
-				{"type": "attack", "amount": 3, "weight": 3},
+				{"type": "attack", "amount": 5, "weight": 3},
 				{"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
 				{"type": "block", "amount": 2, "weight": 1}]}}
 	}
@@ -141,6 +142,29 @@ func _new_expected() -> Dictionary:
 				{"type": "shove", "amount": 0, "direction": -1, "weight": 2},
 				{"type": "attack", "amount": 6, "weight": 3}]}}
 	}
+
+func _test_normal_attack_minimum() -> void:
+	var starter := RunTypedBattleRoster._parse_catalog_text(FileAccess.get_file_as_string(
+		"res://data/enemies/starter_enemies.json"))
+	for expected in [
+		{"id": "ragling", "name": "Ragling", "max_hp": 12,
+			"art_path": "res://assets/paper/enemies/ragling.png",
+			"intent": {"target": "front", "actions": [
+				{"type": "attack", "amount": 5, "weight": 3}]}},
+		{"id": "ragling_guard", "name": "Guard Ragling", "max_hp": 12,
+			"art_path": "res://assets/paper/enemies/ragling_guard.png",
+			"intent": {"target": "front", "actions": [
+				{"type": "block", "amount": 1, "weight": 3}]}}
+	]:
+		_check(_norm(_find(starter, expected.id)) == expected,
+			"starter record preserves all fields and the block-only Guard: " + expected.id)
+	for record in starter + _load_parsed():
+		for raw in record.intent.actions:
+			var parsed := CombatEnemyIntents.weighted_action(raw)
+			_check(not parsed.is_empty(), "ordinary-normal alternative validates: " + record.id)
+			if not parsed.is_empty() and parsed.action.type == "attack":
+				_check(parsed.action.amount >= 5 and parsed.action.amount <= 9,
+					"every ordinary-normal attack meets the authored V3 5-9 range: " + record.id)
 
 func _test_catalog_records_and_parsing() -> void:
 	var parsed := _load_parsed()
@@ -1664,12 +1688,12 @@ func _test_needle_wasp_bleeding_sting() -> void:
 	if not control_source.is_empty():
 		var control_party := _party()
 		var control_case := _force_normal_alternative(control_source,
-			_authored_alternative(control_source, "attack", 4), control_party)
+			_authored_alternative(control_source, "attack", 5), control_party)
 		if not control_case.is_empty():
 			var control_receipt := CombatEnemyPhase.new().execute_phase(control_party,
 				control_case.enemies, control_case.intents, null, true)
 			_check(control_receipt.get("ok") == true, "the unarmed enemy's attack resolves")
-			_check(control_party.get_hero(3).get("hp") == 22
+			_check(control_party.get_hero(3).get("hp") == 21
 				and control_party.get_hero(3).get("statuses", {}).get("bleed", 0) == 0,
 				"AC3: HP damage from a non-wasp enemy never adds the sting's Bleed")
 	# AC3: the same wasp with an explicit authored false never stings.
@@ -1791,15 +1815,15 @@ func _test_thread_biter_lifesteal_catalog() -> void:
 	_check(biter.get("drain") is bool and biter.get("drain") == true,
 		"AC1: the parsed Thread Biter authors drain as a genuine bool")
 	_check(_norm(biter) == _norm(_old_expected()["thread_biter"]),
-		"AC1: Drain is the only change to the shipped Thread Biter record")
+		"AC1: Thread Biter preserves its exact authored record with the V3 five-point bite")
 	_check(biter.get("max_hp") is int and biter.get("max_hp") == 15,
 		"AC1: Thread Biter keeps its authored 15 max HP")
 	var spec: Variant = biter.get("intent")
 	_check(spec is Dictionary and spec.get("target") == "lowest_living_hp",
 		"AC1: Thread Biter keeps its lowest-living target policy")
-	var bite := _authored_alternative(biter, "attack", 3)
+	var bite := _authored_alternative(biter, "attack", 5)
 	_check(not bite.is_empty() and int(bite.get("weight", 0)) == 3,
-		"AC1: the authored 3-damage bite keeps weight 3")
+		"AC1: the authored 5-damage bite keeps weight 3")
 	var bleed := _authored_alternative(biter, "debuff", 1)
 	_check(not bleed.is_empty() and bleed.get("status") == "bleed"
 		and int(bleed.get("weight", 0)) == 1,
@@ -1876,13 +1900,13 @@ func _test_thread_biter_lifesteal_phase() -> void:
 		"precondition: the shipped Thread Biter really authors Drain")
 	if biter.is_empty():
 		return
-	var bite := _authored_alternative(biter, "attack", 3)
+	var bite := _authored_alternative(biter, "attack", 5)
 	var bleed := _authored_alternative(biter, "debuff", 1)
 	_check(not bite.is_empty() and not bleed.is_empty(),
 		"precondition: the shipped bite and Bleed alternatives exist")
 	if bite.is_empty() or bleed.is_empty():
 		return
-	# AC2: a wounded 8/15 biter restores exactly the 3 HP its real bite removes.
+	# AC2: a wounded 8/15 biter restores exactly the 5 HP its real bite removes.
 	var party := _party()
 	_check(party.get_hero(1).get("hp") == 40 and party.get_hero(2).get("hp") == 30
 		and party.get_hero(3).get("hp") == 26,
@@ -1897,28 +1921,28 @@ func _test_thread_biter_lifesteal_phase() -> void:
 		and case.enemies.get_enemy(1).get("hp") == 8,
 		"AC2 precondition: the Thread Biter really stands at 8 of 15 HP")
 	_check(case.intents.size() == 1 and case.intents[0].get("type") == "attack"
-		and int(case.intents[0].get("amount", -1)) == 3
+		and int(case.intents[0].get("amount", -1)) == 5
 		and case.intents[0].get("target_position") == 3,
-		"AC2: the real announcement is the authored 3-damage bite on Tinker")
+		"AC2: the real announcement is the authored 5-damage bite on Tinker")
 	var receipt := CombatEnemyPhase.new().execute_phase(party, case.enemies,
 		case.intents, null, true)
 	_check(receipt == {"ok": true, "events": [
 		{"type": "attack", "enemy_position": 1, "target_position": 3, "applied": true}]},
 		"AC2: the genuine bite keeps the ordinary attack event shape")
-	_check(party.get_hero(3).get("hp") == 23 and party.get_hero(3).get("block") == 0,
-		"AC2: the unblocked bite removes exactly three Tinker HP")
-	_check(case.enemies.get_enemy(1).get("hp") == 11,
-		"AC2: the real after-state heals exactly three HP back to 11 of 15")
+	_check(party.get_hero(3).get("hp") == 21 and party.get_hero(3).get("block") == 0,
+		"AC2: the unblocked bite removes exactly five Tinker HP")
+	_check(case.enemies.get_enemy(1).get("hp") == 13,
+		"AC2: the real after-state heals exactly five HP back to 13 of 15")
 	_check(case.enemies.get_enemy(1).get("drain") == true
 		and case.enemies.get_enemy(1).get("max_hp") == 15
 		and case.enemies.get_enemy(1).get("position") == 1,
 		"AC2: the heal preserves the attacker's Drain flag, cap and slot")
 	_check(party.get_hero(1).get("hp") == 40 and party.get_hero(2).get("hp") == 30,
 		"AC2: the other two heroes keep their HP")
-	# AC3: three Block absorb the whole bite, so there is no HP loss to drain.
+	# AC3: five Block absorb the whole bite, so there is no HP loss to drain.
 	var blocked_party := _party()
-	_check(blocked_party.gain_block(3, 3),
-		"AC3 precondition: Tinker really holds three Block")
+	_check(blocked_party.gain_block(3, 5),
+		"AC3 precondition: Tinker really holds five Block")
 	var blocked := _force_normal_alternative(biter, bite, blocked_party)
 	if not blocked.is_empty():
 		_check(blocked.enemies.apply_damage(1, 7)
@@ -1932,7 +1956,7 @@ func _test_thread_biter_lifesteal_phase() -> void:
 		_check(blocked_party.get_hero(3).get("hp") == 26
 			and blocked_party.get_hero(3).get("block") == 0
 			and blocked.enemies.get_enemy(1).get("hp") == 8,
-			"AC3: Block absorbs all three damage and Drain heals nothing")
+			"AC3: Block absorbs all five damage and Drain heals nothing")
 	# AC3: an attacker already at its cap cannot overheal.
 	var capped_party := _party()
 	var capped := _force_normal_alternative(biter, bite, capped_party)
@@ -1942,7 +1966,7 @@ func _test_thread_biter_lifesteal_phase() -> void:
 		var capped_receipt := CombatEnemyPhase.new().execute_phase(capped_party,
 			capped.enemies, capped.intents, null, true)
 		_check(capped_receipt.get("ok") == true
-			and capped_party.get_hero(3).get("hp") == 23
+			and capped_party.get_hero(3).get("hp") == 21
 			and capped.enemies.get_enemy(1).get("hp") == 15,
 			"AC3: a full-HP Thread Biter cannot overheal past 15")
 	# AC3: the authored non-attack Bleed beat heals nothing.

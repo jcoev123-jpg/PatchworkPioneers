@@ -183,7 +183,7 @@ func _status_backstep_turn() -> void:
 		_check(app.deck.turn_active and app.party.get_hero(1).id == "warden"
 			and app.party.get_hero(1).block == 6 and app.party.get_hero(2).id == "seamstress"
 			and app.enemy_intents._turn_index == 0 and app.enemy_intents.get_intents() == [
-				{"enemy_position": 1, "type": "attack", "amount": 1, "target_position": 1},
+				{"enemy_position": 1, "type": "attack", "amount": 5, "target_position": 1},
 				{"enemy_position": 2, "type": "block", "amount": 1}],
 			"authored living formation, opening passive and front attack really present")
 		app.party._heroes[0].hp = 32
@@ -196,8 +196,8 @@ func _status_backstep_turn() -> void:
 		_check(app.party.get_hero(1).id == "seamstress" and app.party.get_hero(2).id == "warden",
 			"status-bearing paid backstep really reorders living actors")
 		var expected := moved.duplicate(true)
-		# Owner Bleed bypasses Block, then the announced 1 * 3/2 floors to 1.
-		expected[5][0].hp = 20 - 2 - 1
+		# Owner Bleed bypasses Block, then the announced 5 * 3/2 floors to 7.
+		expected[5][0].hp = 20 - 2 - 7
 		expected[5][0].statuses = {"bleed": 1, "exposed": 1}
 		expected[5][1].hp = 32 - 3
 		expected[5][1].statuses = {"bleed": 2, "weak": 1}
@@ -211,7 +211,7 @@ func _status_backstep_turn() -> void:
 			expected[0].append(expected[1].pop_back())
 		expected[3] = 3
 		expected[7] = [
-			{"enemy_position": 1, "type": "attack", "amount": 1, "target_position": 1},
+			{"enemy_position": 1, "type": "attack", "amount": 5, "target_position": 1},
 			{"enemy_position": 2, "type": "block", "amount": 1}]
 		expected[8] = expected[7].duplicate(true)
 		expected[9] = 1

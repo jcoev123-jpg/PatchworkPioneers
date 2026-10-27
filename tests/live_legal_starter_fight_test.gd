@@ -119,7 +119,7 @@ func _intents() -> Array:
 		if expected.heroes[index].hp > 0:
 			target = index + 1
 			break
-	return [{"enemy_position": 1, "type": "attack", "amount": 1, "target_position": target},
+	return [{"enemy_position": 1, "type": "attack", "amount": 5, "target_position": target},
 		{"enemy_position": 2, "type": "block", "amount": 1}]
 
 

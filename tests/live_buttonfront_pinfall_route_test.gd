@@ -51,7 +51,10 @@ func _independent(fixture: Dictionary, app) -> Dictionary:
 	deck.draw_pile.assign(app.run_deck)
 	deck._shuffle_draw_pile()
 	var party := CombatParty.new(app.run_heroes)
-	var enemies: CombatEnemies = entry.enemies
+	var definitions: Array = []
+	for record in entry.enemies.get_enemies():
+		definitions.append(_normal_floor_record(record, map.get_node(fixture.id).floor))
+	var enemies := CombatEnemies.new(definitions)
 	var intents := CombatEnemyIntents.new(entry.intents._definitions)
 	_check(party.is_valid() and enemies.is_valid()
 		and intents.bind_battle(enemies, party, rng),

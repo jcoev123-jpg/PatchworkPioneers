@@ -174,9 +174,9 @@ func _end(keyboard: bool) -> void:
 				statuses[status] -= 1
 				if statuses[status] == 0:
 					statuses.erase(status)
-	# Starter phase: enemy 1 attacks for 1, enemy 2 gains 1 Block.
+	# Starter phase: enemy 1 attacks for 5 (Weak truncates to 3), enemy 2 gains 1 Block.
 	var victim: Dictionary = expected.party[expected.intents[0].target_position - 1]
-	var damage := 0 if app.enemies.get_enemy(1).get("statuses", {}).get("weak", 0) > 0 else 1
+	var damage := 3 if app.enemies.get_enemy(1).get("statuses", {}).get("weak", 0) > 0 else 5
 	var absorbed: int = mini(victim.block, damage)
 	victim.block -= absorbed
 	victim.hp -= damage - absorbed

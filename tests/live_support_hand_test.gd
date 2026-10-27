@@ -1181,7 +1181,7 @@ func _ally_cases() -> void:
 			_check(app.party.get_hero(position).id == "seamstress", "actual owner at authored position fixture")
 			# Settle the view after replacing the party, before checking input is inert.
 			app._refresh_intents()
-			_check(app.intent_label.text == "Intent: Enemy 1 -> Hero 1 (%s): 1 damage; Enemy 2: 1 Block" % app.party.get_hero(1).name,
+			_check(app.intent_label.text == "Intent: Enemy 1 -> Hero 1 (%s): 5 damage; Enemy 2: 1 Block" % app.party.get_hero(1).name,
 				"reordered fixture announces the actual hero at the authored target")
 			var before := _live()
 			if id == "seamstress_mend" and position == 1:
