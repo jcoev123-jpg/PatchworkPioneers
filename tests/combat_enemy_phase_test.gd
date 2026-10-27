@@ -10,6 +10,7 @@ func _initialize() -> void:
 	_test_status_sensitive_attacks()
 	_test_two_turn_mixed_phase()
 	_test_dead_sources_and_downed_targets()
+	_test_lethal_batch_inert_specials()
 	_test_policy_targets()
 	_test_enrage_attack_bonus()
 	_test_enrage_status_and_replay()
@@ -191,6 +192,44 @@ func _test_dead_sources_and_downed_targets() -> void:
 	_check(party.is_downed(1) and party.get_hero(2)["hp"] == 30
 		and party.get_hero(3)["hp"] == 26,
 		"second attack cannot revive or damage another hero after first lethal hit")
+
+
+## A genuine lethal batch that downs the party's last hero still publishes: a
+## later hero-targeted snip/debuff has nothing left to change, so it stays inert
+## instead of rejecting the authentic turn. A downed target beside a living ally
+## keeps failing closed.
+func _test_lethal_batch_inert_specials() -> void:
+	var snip := {"type": "snip_block", "enemy_position": 2, "amount": 0, "target_position": 1}
+	var debuff := {"type": "debuff", "enemy_position": 2, "amount": 2,
+		"target_position": 1, "status": "weak"}
+	for later in [snip, debuff]:
+		var wiped_party := _party()
+		var foe_roster := _enemies()
+		_check(wiped_party.apply_damage(2, 30) and wiped_party.apply_damage(3, 26)
+			and wiped_party.is_downed(2) and wiped_party.is_downed(3)
+			and not wiped_party.is_defeated(),
+			"precondition: exactly one living hero remains for the lethal beat")
+		var foes := foe_roster.get_enemies()
+		var result := phase.execute_phase(wiped_party, foe_roster, [_attack(1, 99, 1), later])
+		_check(result.get("ok", false) and result.get("events", []).size() == 2
+			and result["events"][0] == _event("attack", 1, true, 1)
+			and result["events"][1].get("type") == later["type"]
+			and result["events"][1].get("applied") == false,
+			"lethal last-hero attack publishes with the later special inert: " + str(later["type"]))
+		var warden: Dictionary = wiped_party.get_hero(1)
+		_check(warden["hp"] == 0 and warden["block"] == 0
+			and wiped_party.is_defeated() and not warden.has("statuses")
+			and foe_roster.get_enemies() == foes,
+			"the inert special neither revives, buffs nor snips after the wipe: " + str(later["type"]))
+	# Contrast: with living allies left, a special aimed at a hero downed by an
+	# earlier beat of the same batch still fails closed without publishing.
+	var party := _party()
+	var enemies := _enemies()
+	_check(not party.is_defeated(), "precondition: three living heroes for the guarded batch")
+	var before := [party.get_heroes(), enemies.get_enemies()]
+	_check(not phase.execute_phase(party, enemies, [_attack(1, 99, 1), snip]).get("ok", true)
+		and [party.get_heroes(), enemies.get_enemies()] == before,
+		"a special aimed at a hero downed this batch still fails closed while allies live")
 
 
 func _party_snapshot() -> Array:

@@ -162,6 +162,15 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 						and not CombatEnemyIntents.shove_is_legal(staged_party,
 							effective.target_position, effective.direction):
 					event.applied = false
+				# An earlier beat of this same batch can down the party's last
+				# living hero. The fight is already decided then, so a remaining
+				# hero-targeted beat has nothing left to change: it stays inert
+				# instead of rejecting an authentic lethal/Block-snipping batch
+				# and locking the turn. A downed target beside a living ally still
+				# fails closed below.
+				elif effective.type in ["snip_block", "debuff"] \
+						and _party_has_no_living_hero(staged_party):
+					event.applied = false
 				else:
 					var result := CombatEnemySpecialActions.new().execute_actions(
 						staged_party, staged_enemies, [effective])
@@ -263,6 +272,17 @@ static func _attack_metadata_valid(roster: Array) -> bool:
 			if not stacks is int or stacks < 0 \
 					or stacks > CombatEnemyKeywordRules.ENRAGE_MAX_STACKS:
 				return false
+	return true
+
+
+## True only once every staged hero is already down: nothing a later beat does
+## can matter, because that same batch has just lost the fight.
+static func _party_has_no_living_hero(staged_party: CombatParty) -> bool:
+	if staged_party == null or not staged_party.is_valid():
+		return false
+	for index in range(CombatParty.PARTY_SIZE):
+		if not staged_party.is_downed(index + 1):
+			return false
 	return true
 
 

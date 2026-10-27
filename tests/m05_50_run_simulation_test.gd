@@ -16,14 +16,18 @@ var checks := 0
 ## card; authentic replacement seed 249 (another genuine floor-12 nonwin under the same
 ## strategy, which real reward offers hand the Blanket Stitch) stands in for it. Keep 46
 ## original seeds, the offered/acquired/played Blanket Stitch witness (249) and the
-## unchanged strategy; neither outcomes nor choices are injected.
+## unchanged strategy; neither outcomes nor choices are injected. Seed 10 stays in
+## the cohort: its f10_n1 batch is a genuine lethal wipe (the Shearwing Mantis snips
+## the front Block, the scaled Hound bite downs the last hero and a late snipped
+## target stays inert), so the run ends in an authentic defeat instead of a refused
+## authoritative turn.
 func _cohort_seeds() -> Array[int]:
 	var values: Array[int] = []
 	for value in range(1, 48):
-		if value == 9 or value == 10:
+		if value == 9:
 			continue
 		values.append(value)
-	values.append_array([99, 541, 249, 48, 50])
+	values.append_array([99, 541, 249, 48])
 	return values
 
 
