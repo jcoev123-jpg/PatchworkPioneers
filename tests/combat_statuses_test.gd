@@ -18,6 +18,7 @@ func _initialize() -> void:
 	_test_unravel_charge_and_bleed_tick()
 	_test_unravel_consume_skip_and_threshold_rise()
 	_test_unravel_invalid_and_isolation()
+	_test_dodge_project()
 	if failures.is_empty():
 		print("combat_statuses_test: PASS (", checks, " checks)")
 	else:
@@ -613,3 +614,146 @@ func _test_unravel_invalid_and_isolation() -> void:
 	_check(unravel_final.record_bleed_tick(enemies_final, 2), "bleed tick")
 	_check(unravel_final.consume_action_skip(enemies_final, 1), "consume")
 	_check(enemies_final.get_enemies() == roster_before, "CombatEnemies roster completely unchanged by Unravel operations")
+
+
+func _test_dodge_project() -> void:
+	_check(rules.has_method("dodge_project_for_attempt"),
+		"Dodge projection entrypoint exists")
+
+	# Verify the four real Rag Duelist Cape definitions by exact IDs.
+	var starters := RagDuelistStarterCards.new()
+	var pool := RagDuelistPoolCards.new()
+	var rag_ids := [
+		"rag_duelist_cape_slip",
+		"rag_duelist_cape_slip_plus",
+		"rag_duelist_cape_flourish",
+		"rag_duelist_cape_flourish_plus",
+	]
+	for card_id in rag_ids:
+		var definition: Dictionary = {}
+		if card_id in ["rag_duelist_cape_slip", "rag_duelist_cape_slip_plus"]:
+			definition = starters.get_definition(card_id)
+		else:
+			definition = pool.get_definition(card_id)
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			"authored Rag Cape definition exists: " + card_id)
+		_check(str(definition.get("owner", "")) == "rag_duelist",
+			"card " + card_id + " owner is rag_duelist")
+		_check(str(definition.get("target_kind", "")) == "self",
+			"card " + card_id + " target_kind is self")
+		_check(definition.get("from_positions") == [1, 2, 3],
+			"card " + card_id + " from_positions is [1,2,3]")
+		_check(definition.get("to_positions") == [],
+			"card " + card_id + " to_positions is empty")
+		var effects: Dictionary = definition.get("effects", {})
+		_check(effects.get("dodge_next_attack") == 1
+			and effects.get("duration") == 1,
+			"card " + card_id + " effect is dodge_next_attack=1 duration=1")
+
+	# Confirmed attempt with active Dodge 1: miss, token consumed.
+	var active := {"dodge_next_attack": 1}
+	var snapshot_active: Dictionary = active.duplicate(true)
+	var receipt1 := rules.dodge_project_for_attempt(active, true)
+	_check(receipt1["ok"] == true and receipt1["miss"] == true,
+		"confirmed attempt on Dodge 1 reports miss")
+	_check(receipt1["statuses"] == {},
+		"confirmed attempt consumes Dodge (status cleared)")
+	_check(active == snapshot_active,
+		"confirmed attempt never mutates caller dictionary")
+
+	# Second attempt against returned state: no miss, no token.
+	var receipt2 := rules.dodge_project_for_attempt(receipt1["statuses"], true)
+	_check(receipt2["ok"] == true and receipt2["miss"] == false,
+		"second attempt against consumed state has no miss")
+	_check(receipt2["statuses"] == {},
+		"second attempt against empty state stays empty")
+
+	# Unattempted attack preserves Dodge token.
+	var receipt_unattempted := rules.dodge_project_for_attempt(active, false)
+	_check(receipt_unattempted["ok"] == true and receipt_unattempted["miss"] == false,
+		"unattempted attack does not miss")
+	_check(receipt_unattempted["statuses"] == {"dodge_next_attack": 1},
+		"unattempted attack preserves Dodge 1")
+	_check(active == snapshot_active,
+		"unattempted attack leaves caller unchanged")
+
+	# Absent and zero Dodge never miss.
+	var absent := {}
+	var zero := {"dodge_next_attack": 0}
+	var receipt_absent := rules.dodge_project_for_attempt(absent, true)
+	_check(receipt_absent["ok"] == true and receipt_absent["miss"] == false,
+		"absent Dodge never misses")
+	_check(receipt_absent["statuses"] == {},
+		"absent Dodge receipt is empty")
+	var receipt_zero := rules.dodge_project_for_attempt(zero, true)
+	_check(receipt_zero["ok"] == true and receipt_zero["miss"] == false,
+		"zero Dodge never misses")
+	_check(receipt_zero["statuses"] == {"dodge_next_attack": 0},
+		"zero Dodge receipt keeps the 0")
+
+	# Invalid types and out-of-range values fail closed without mutation.
+	var bad_dodges: Array[Dictionary] = [
+		{"dodge_next_attack": true},
+		{"dodge_next_attack": "1"},
+		{"dodge_next_attack": 1.5},
+		{"dodge_next_attack": -1},
+		{"dodge_next_attack": 2},
+	]
+	for bad in bad_dodges:
+		var prior: Dictionary = bad.duplicate(true)
+		var bad_receipt := rules.dodge_project_for_attempt(bad, true)
+		_check(bad_receipt["ok"] == false and bad_receipt["miss"] == false,
+			"bad Dodge value fails closed: " + str(bad))
+		_check(bad_receipt["statuses"] == prior,
+			"rejected bad Dodge receipt preserves original: " + str(bad))
+		_check(bad == prior,
+			"rejected bad Dodge does not mutate caller: " + str(bad))
+
+	# Unrelated status keys remain validated as before.
+	_check(rules.dodge_project_for_attempt({"bleed": 2}, true)["ok"] == true,
+		"Bleed-only status is valid for Dodge projection")
+	_check(rules.dodge_project_for_attempt({"riposte": 3}, true)["ok"] == true,
+		"Riposte-only status is valid for Dodge projection")
+
+	# Owner-turn expiry removes both 1 and 0.
+	var one_turn := {"dodge_next_attack": 1, "bleed": 2}
+	var zero_turn := {"dodge_next_attack": 0, "bleed": 2}
+	var end_one := rules.end_owner_turn(10, 5, one_turn)
+	_check(end_one["ok"] == true and not end_one["statuses"].has("dodge_next_attack"),
+		"owner turn expires Dodge 1 completely")
+	_check(end_one["statuses"].has("bleed") and end_one["statuses"]["bleed"] == 1,
+		"Bleed ages correctly when Dodge expires")
+	var end_zero := rules.end_owner_turn(10, 5, zero_turn)
+	_check(end_zero["ok"] == true and not end_zero["statuses"].has("dodge_next_attack"),
+		"owner turn expires Dodge 0 completely")
+
+	# Three-hero batch snapshot with real preexisting statuses preserves semantics.
+	var batch := CombatStatusTurnBatch.new()
+	var heroes := [
+		{"id": "warden", "position": 1, "hp": 36, "max_hp": 40, "block": 0,
+		 "statuses": {"dodge_next_attack": 1, "tangled": 2}},
+		{"id": "seamstress", "position": 2, "hp": 30, "max_hp": 30, "block": 5,
+		 "statuses": {"riposte": 4}},
+		{"id": "tinker", "position": 3, "hp": 26, "max_hp": 26, "block": 3,
+		 "statuses": {"bleed": 1}},
+	]
+	var result := batch.tick_side("heroes", heroes)
+	_check(result["ok"] == true,
+		"three-hero batch with Dodge and other statuses is valid")
+	_check(result["actors"][0]["statuses"] == {"tangled": 1},
+		"hero 1: Dodge 1 expires at turn end, Tangled 2 -> 1")
+	_check(result["actors"][1]["statuses"] == {},
+		"hero 2: Riposte 4 expires at turn end")
+	_check(result["actors"][2]["statuses"] == {},
+		"hero 3: Bleed 1 expires at turn end")
+	_check(not result["actors"][0]["statuses"].has("dodge_next_attack"),
+		"batch result removes expired Dodge 1")
+
+	# Replay isolation: same input produces same receipt.
+	var replay_input := {"dodge_next_attack": 1}
+	var replay_a := rules.dodge_project_for_attempt(replay_input.duplicate(true), true)
+	var replay_b := rules.dodge_project_for_attempt({"dodge_next_attack": 1}, true)
+	_check(replay_a == replay_b,
+		"identical Dodge inputs reproduce same receipt")
+	_check(replay_input == {"dodge_next_attack": 1},
+		"replay never changes caller input")

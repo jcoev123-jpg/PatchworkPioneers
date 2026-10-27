@@ -65,6 +65,32 @@ func riposte_damage_for_confirmed_hit(statuses: Dictionary, hit_confirmed: bool)
 ## Weak, Exposed and Tangled expire at this boundary, after applying during this turn.
 ## Riposte is removed completely after this one owner turn, whatever its N was.
 ## Invalid state returns ok=false and an independent, unchanged deep snapshot.
+## Projected receipt for an attempted incoming attack on a hero that may bear
+## an active one-turn Dodge token. Returns an independent receipt; never touches
+## the caller's original dictionary, actual HP, Block, RNG, cards or intents.
+## Only integer 0 or 1 for dodge_next_attack is accepted; everything else fails
+## closed. On the first confirmed attempt with token 1 the attack misses and the
+## token is consumed (removed); on no token (absent or 0) or on an unattempted
+## attack nothing changes. A second attempt against the returned state sees no
+## token and reports no miss.
+func dodge_project_for_attempt(statuses: Dictionary, attempt_made: bool) -> Dictionary:
+	var snapshot: Dictionary = statuses.duplicate(true)
+	if not attempt_made is bool or not _valid_statuses(statuses):
+		return {"ok": false, "miss": false, "statuses": snapshot}
+	var next_statuses: Dictionary = statuses.duplicate(true)
+	var dodge: Variant = statuses.get("dodge_next_attack", 0)
+	if not dodge is int or (dodge != 0 and dodge != 1):
+		return {"ok": false, "miss": false, "statuses": snapshot}
+	if dodge == 0:
+		return {"ok": true, "miss": false, "statuses": next_statuses}
+	# dodge == 1
+	if attempt_made:
+		next_statuses.erase("dodge_next_attack")
+		return {"ok": true, "miss": true, "statuses": next_statuses}
+	else:
+		return {"ok": true, "miss": false, "statuses": next_statuses}
+
+
 func end_owner_turn(hp: int, block: int, statuses: Dictionary) -> Dictionary:
 	var next_statuses: Dictionary = statuses.duplicate(true)
 	if hp < 0 or block < 0 or not _valid_statuses(statuses):
@@ -81,7 +107,14 @@ func end_owner_turn(hp: int, block: int, statuses: Dictionary) -> Dictionary:
 
 func _valid_statuses(statuses: Dictionary) -> bool:
 	for name in statuses:
-		if not name is String or name not in ["bleed", "weak", "exposed", "tangled", "riposte"]:
+		if not name is String:
+			return false
+		if name == "dodge_next_attack":
+			var count = statuses[name]
+			if not count is int or (count != 0 and count != 1):
+				return false
+			continue
+		if name not in ["bleed", "weak", "exposed", "tangled", "riposte"]:
 			return false
 		var count = statuses[name]
 		if not count is int or count < 0:

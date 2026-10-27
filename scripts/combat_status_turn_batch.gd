@@ -67,7 +67,14 @@ func _valid_roster(side: String, actors: Array) -> bool:
 		if not statuses is Dictionary:
 			return false
 		for name in statuses:
-			if not name is String or name not in ["bleed", "weak", "exposed", "tangled", "riposte"]:
+			if not name is String:
+				return false
+			if name == "dodge_next_attack":
+				var dodge_count = statuses[name]
+				if not dodge_count is int or (dodge_count != 0 and dodge_count != 1):
+					return false
+				continue
+			if name not in ["bleed", "weak", "exposed", "tangled", "riposte"]:
 				return false
 			var count = statuses[name]
 			if not count is int or count < 0:
