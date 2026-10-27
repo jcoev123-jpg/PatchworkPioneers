@@ -133,6 +133,72 @@ const EVENTS := {
 			"leave": {"text": "Bow and leave the fair", "gold": 0, "scraps": 0},
 		},
 	},
+	"v3_warden_moonshield_watch": {
+		"title": "The Moonshield Watch",
+		"description": "A button-eyed sentry stands beneath a bone-cream moon with a shield patched from midnight-blue coats.",
+		"required_hero": "warden",
+		"hero_choice_ids": ["polish_moonshield", "sell_guard_stitch"],
+		"choices": {
+			"polish_moonshield": {"text": "Pay 14 gold to polish the moonshield (+2 scraps)", "gold": -14, "scraps": 2},
+			"sell_guard_stitch": {"text": "Trade a spare shield stitch (spend 1 scrap; gain 21 gold)", "gold": 21, "scraps": -1},
+			"leave": {"text": "Lower the shield and move on", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_seamstress_scarlet_loom": {
+		"title": "The Scarlet Midnight Loom",
+		"description": "A wide-eyed doll weaver tends a giant red needle, its loose threads glowing beside a plum velvet loom.",
+		"required_hero": "seamstress",
+		"hero_choice_ids": ["retie_scarlet_loom", "trade_loom_thread"],
+		"choices": {
+			"retie_scarlet_loom": {"text": "Retie the snapped needle thread (+2 scraps)", "gold": 0, "scraps": 2},
+			"trade_loom_thread": {"text": "Sell two spare thread bundles (spend 2 scraps; gain 24 gold)", "gold": 24, "scraps": -2},
+			"leave": {"text": "Leave the loom humming", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_tinker_gearhouse_midnight": {
+		"title": "The Midnight Gearhouse",
+		"description": "A hunched scrap-pack automaton sorts blunderbuss springs beneath lantern-lit copper shutters.",
+		"required_hero": "tinker",
+		"hero_choice_ids": ["recover_spring_teeth", "tune_gearhouse"],
+		"choices": {
+			"recover_spring_teeth": {"text": "Collect fallen spring teeth (+1 scrap)", "gold": 0, "scraps": 1},
+			"tune_gearhouse": {"text": "Tune the scrap gears (spend 2 scraps; gain 27 gold)", "gold": 27, "scraps": -2},
+			"leave": {"text": "Leave the clockwork ticking", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_scarecrow_blackcrow_post": {
+		"title": "The Blackcrow Post",
+		"description": "A straw-stuffed watchman and its crow perch at a dusk-lit letterpost wrapped in worn denim.",
+		"required_hero": "scarecrow",
+		"hero_choice_ids": ["follow_post_crow", "buy_straw_twines"],
+		"choices": {
+			"follow_post_crow": {"text": "Follow the crow to a lost purse (+13 gold)", "gold": 13, "scraps": 0},
+			"buy_straw_twines": {"text": "Buy twine to bind the loose straw (spend 13 gold; gain 2 scraps)", "gold": -13, "scraps": 2},
+			"leave": {"text": "Let the crow keep watch", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_yarn_ranger_bolas_bridge": {
+		"title": "The Knitted Bolas Bridge",
+		"description": "Knitting-needle arches stretch across a misty ford, hung with teal yarn bolas and mossy wool.",
+		"required_hero": "yarn_ranger",
+		"hero_choice_ids": ["reel_lost_bolas", "sell_needlespool"],
+		"choices": {
+			"reel_lost_bolas": {"text": "Reel in the drifting bolas (+2 scraps)", "gold": 0, "scraps": 2},
+			"sell_needlespool": {"text": "Trade a knitting-needle spool (spend 1 scrap; gain 18 gold)", "gold": 18, "scraps": -1},
+			"leave": {"text": "Cross without tangling the bridge", "gold": 0, "scraps": 0},
+		},
+	},
+	"v3_button_golem_bell_foundry": {
+		"title": "The Button-Bell Foundry",
+		"description": "A huge round button golem braces a brass mould beneath dark-ink bells and candlelight.",
+		"required_hero": "button_golem",
+		"hero_choice_ids": ["steady_button_mold", "buy_brass_thread"],
+		"choices": {
+			"steady_button_mold": {"text": "Steady the giant button mould (+17 gold)", "gold": 17, "scraps": 0},
+			"buy_brass_thread": {"text": "Buy brass-thread spools (spend 19 gold; gain 3 scraps)", "gold": -19, "scraps": 3},
+			"leave": {"text": "Leave the foundry ringing", "gold": 0, "scraps": 0},
+		},
+	},
 }
 
 var failures: Array[String] = []

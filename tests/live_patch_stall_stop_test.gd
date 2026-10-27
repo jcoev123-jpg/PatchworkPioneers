@@ -161,7 +161,15 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 		var cost := "%d gold" % offer.price if shortfall == 0 else "%d gold  \u00b7  short %d" % [offer.price, shortfall]
 		var caption := "%s  [%s]    \u2715 %s    \u00b7    %s" % [String(offer.id).replace("_", " ").capitalize(),
 			offer.id, power_ids[offer.id], cost]
-		_check(panel.offer_buttons[index].text == caption, "visible choice displays exact authentic price and patch")
+		var preview: Dictionary = panel._descriptions.get(offer.id, {})
+		var short_rule: String = preview.get("short", "")
+		var full_rule: String = preview.get("full", "")
+		_check(not short_rule.is_empty() and not full_rule.is_empty()
+			and short_rule != LivePatchStallPanel.DETAILS_UNAVAILABLE
+			and panel.offer_buttons[index].text == caption + "\n" + short_rule
+			and panel.offer_buttons[index].tooltip_text.contains(full_rule)
+			and panel.offer_buttons[index].tooltip_text.contains("Torn"),
+			"visible choice displays exact authentic price, patch and wearer power")
 	_check(panel.offer_buttons.size() == 3 and panel.wearer_buttons.size() == 3
 		and panel.leave_button.text == "Leave  \u00b7  FREE" and not is_instance_valid(app.shop_view),
 		"only patch choices, three recipients and Leave")

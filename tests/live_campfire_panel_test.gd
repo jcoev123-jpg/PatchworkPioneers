@@ -119,6 +119,8 @@ func _run() -> void:
 		{"action": "leave", "keyboard": false, "key": KEY_ENTER}
 	]:
 		await _positive(fixture)
+	await _keyboard_positive()
+	await _keyboard_negative()
 	await _fail_closed()
 	_check(randi() == expected_draw, "every mounted browse/commit/rejection uses zero global RNG")
 	panel.queue_free()
@@ -143,6 +145,9 @@ func _layout_and_previews() -> void:
 		and panel.get_theme_default_font_size() > 0, "large readable Campfire title")
 	_check(panel.hero_labels.size() == 3 and panel.heal_button.text == "Heal"
 		and panel.leave_button.text == "Leave", "exactly three ribbons and two actions")
+	_check(panel.heal_button.tooltip_text.contains("1 → Heal")
+		and panel.leave_button.tooltip_text.contains("2 → Leave"),
+		"discoverable shortcut hints in button tooltips, captions unchanged")
 	var all_buttons := panel.find_children("*", "Button", true, false)
 	_check(all_buttons.size() == 2 and all_buttons.has(panel.heal_button)
 		and all_buttons.has(panel.leave_button), "no hidden extra actionable choices")
@@ -370,3 +375,204 @@ func _fail_closed() -> void:
 	await _activate(panel.heal_button, false)
 	_check(intents.size() == 1 and current.read_state() == current_state,
 		"fresh replacement can emit again, with no view-side commit")
+
+
+func _keyboard_positive() -> void:
+	for fixture in [
+		{"action": "heal", "key": KEY_1},
+		{"action": "heal", "key": KEY_KP_1},
+		{"action": "leave", "key": KEY_2},
+		{"action": "leave", "key": KEY_KP_2},
+	]:
+		var source_fixture := _party([35, 18, 0])
+		var visit := RunCampfireVisit.new(NODE, source_fixture)
+		var saved := visit.read_state()
+		await _bind(visit)
+		intents.clear()
+		var event_down := InputEventKey.new()
+		event_down.keycode = fixture["key"]
+		event_down.pressed = true
+		root.push_input(event_down)
+		await process_frame
+		var event_up := InputEventKey.new()
+		event_up.keycode = fixture["key"]
+		event_up.pressed = false
+		root.push_input(event_up)
+		await process_frame
+		await _settle()
+		var action: String = fixture["action"]
+		_check(intents.size() == 1 and visit.read_state() == saved,
+			"keyboard number key " + str(fixture["key"]) + " emits one intent and no pre-commit for " + action)
+		if intents.size() == 1:
+			var intent := intents[0]
+			_check(intent.get("action") == action and intent.get("node_id") == NODE
+				and intent.get("source_visit") == visit
+				and intent.get("expected_heroes") == saved.heroes,
+				"keyboard intent exact bound instance/node/roster for " + action + " with key " + str(fixture["key"]))
+			var oracle := RunRestRecovery.new(saved.heroes).choose_heal()
+			var result := Controller.submit(visit, intent)
+			_check(result.get("ok") == true and result.get("decision") == action
+				and result.get("node_id") == NODE,
+				"keyboard-submitted authentic decision accepted once for " + action)
+			var expected_heroes: Array = oracle.heroes if action == "heal" else saved.heroes
+			_check(result.get("heroes") == expected_heroes
+				and visit.read_state().heroes == expected_heroes,
+				"keyboard heal equals independent recovery / Leave unchanged")
+
+
+func _check_key_rejected(visit: RunCampfireVisit, key: Key, label: String, echo: bool = false, modifier: Key = KEY_NONE, pressed: bool = true) -> void:
+	var before: Dictionary = visit.read_state() if visit != null else {}
+	var count := intents.size()
+	
+	var event := InputEventKey.new()
+	event.keycode = key
+	event.pressed = pressed
+	event.echo = echo
+	event.shift_pressed = (modifier == KEY_SHIFT)
+	event.ctrl_pressed = (modifier == KEY_CTRL)
+	event.alt_pressed = (modifier == KEY_ALT)
+	event.meta_pressed = (modifier == KEY_META)
+	root.push_input(event)
+	await process_frame
+	
+	if pressed:
+		var event_up := InputEventKey.new()
+		event_up.keycode = key
+		event_up.pressed = false
+		event_up.shift_pressed = event.shift_pressed
+		event_up.ctrl_pressed = event.ctrl_pressed
+		event_up.alt_pressed = event.alt_pressed
+		event_up.meta_pressed = event.meta_pressed
+		root.push_input(event_up)
+		await process_frame
+		
+	await _settle()
+	_check(intents.size() == count, label + ": inert handling, intent count unchanged")
+	if visit != null:
+		_check(visit.read_state() == before, label + ": service snapshot unchanged")
+
+func _keyboard_negative() -> void:
+	var visit := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
+	await _bind(visit)
+	
+	# Modified keys must be inert.
+	for modifier_key in [KEY_SHIFT, KEY_CTRL, KEY_ALT, KEY_META]:
+		await _check_key_rejected(visit, KEY_1, "modified key " + str(modifier_key), false, modifier_key)
+	
+	# Echo/release/unrelated keys must be inert.
+	for k in [KEY_1, KEY_2, KEY_KP_1, KEY_KP_2]:
+		await _check_key_rejected(visit, k, "pressed echo key " + str(k), true)
+		await _check_key_rejected(visit, k, "released key " + str(k), false, KEY_NONE, false)
+		
+	await _check_key_rejected(visit, KEY_3, "unrelated key KEY_3")
+	
+	# Invalid/consumed bindings
+	var invalid_visit := RunCampfireVisit.new("  ", _party([35, 18, 0]))
+	await _bind(invalid_visit)
+	await _check_key_rejected(invalid_visit, KEY_1, "invalid visit")
+	
+	var consumed := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
+	consumed.leave(consumed.read_state().node_id, consumed.read_state().heroes)
+	await _bind(consumed)
+	await _check_key_rejected(consumed, KEY_1, "consumed visit")
+	
+	# Hidden panel
+	await _bind(visit)
+	panel.hide()
+	await _check_key_rejected(visit, KEY_1, "hidden panel")
+	panel.show()
+	await _settle()
+	
+	# Detached panel
+	root.remove_child(panel)
+	await _check_key_rejected(visit, KEY_1, "detached panel")
+	root.add_child(panel)
+	await _settle()
+	
+	# Button disabled
+	panel.heal_button.disabled = true
+	await _check_key_rejected(visit, KEY_1, "disabled button")
+	panel.heal_button.disabled = false
+	
+	# Source snapshot / node drift
+	var before_drift := visit.read_state()
+	visit._heroes[1]["statuses"]["bleed"]["stacks"] = 999
+	await _check_key_rejected(visit, KEY_1, "source roster drift")
+	visit._heroes = before_drift.heroes.duplicate(true)
+	
+	visit._node_id = "forged_node"
+	await _check_key_rejected(visit, KEY_1, "source node drift")
+	visit._node_id = NODE
+	
+	# Already submitted
+	await _bind(visit)
+	var submitted_down := InputEventKey.new()
+	submitted_down.keycode = KEY_1
+	submitted_down.pressed = true
+	root.push_input(submitted_down)
+	await process_frame
+	var submitted_up := InputEventKey.new()
+	submitted_up.keycode = KEY_1
+	submitted_up.pressed = false
+	root.push_input(submitted_up)
+	await process_frame
+	await _settle()
+	
+	await _check_key_rejected(visit, KEY_1, "already submitted visit")
+	
+	# Rebound visits and retired callbacks
+	await _bind(visit)
+	var stale_heal: Callable = panel._connections[panel.heal_button]
+	var next := RunCampfireVisit.new("f04_new", _party([0, 12, 17], [37, 27, 23]))
+	await _bind(next)
+	
+	var count_before_stale := intents.size()
+	stale_heal.call()
+	await _settle()
+	_check(intents.size() == count_before_stale, "retired callback after keyboard rebind")
+	
+	var visit_before := visit.read_state()
+	var next_before := next.read_state()
+	var next_down := InputEventKey.new()
+	next_down.keycode = KEY_1
+	next_down.pressed = true
+	root.push_input(next_down)
+	await process_frame
+	var next_up := InputEventKey.new()
+	next_up.keycode = KEY_1
+	next_up.pressed = false
+	root.push_input(next_up)
+	await process_frame
+	await _settle()
+	
+	_check(intents.size() == count_before_stale + 1, "real number key routes to current visit")
+	var next_intent: Dictionary = intents[-1]
+	_check(next_intent.get("action") == "heal" and next_intent.get("source_visit") == next, "intent bound to current visit")
+	_check(visit.read_state() == visit_before, "retired visit unmutated by input to current visit")
+	var next_oracle := RunRestRecovery.new(next_before.heroes).choose_heal()
+	var next_result := Controller.submit(next, next_intent)
+	_check(next_result.get("ok") == true and next.read_state().heroes == next_oracle.heroes, "keyboard commit on rebound visit applied correct HP")
+	_check(not Controller.submit(next, next_intent).get("ok"), "no duplicate/replay on rebound visit")
+
+	# After negative attempts, prove one valid key still commits while replay/RNG remains unchanged
+	await _bind(visit)
+	var count_before_genuine := intents.size()
+	var genuine_down := InputEventKey.new()
+	genuine_down.keycode = KEY_2
+	genuine_down.pressed = true
+	root.push_input(genuine_down)
+	await process_frame
+	var genuine_up := InputEventKey.new()
+	genuine_up.keycode = KEY_2
+	genuine_up.pressed = false
+	root.push_input(genuine_up)
+	await process_frame
+	await _settle()
+	
+	_check(intents.size() == count_before_genuine + 1, "genuine action still works after rejected keyboard input")
+	var genuine_intent: Dictionary = intents[-1]
+	_check(genuine_intent.get("action") == "leave", "final genuine action is leave")
+	var genuine_result := Controller.submit(visit, genuine_intent)
+	_check(genuine_result.get("ok") == true and genuine_result.get("decision") == "leave" and visit.read_state().status == "left", "final genuine KEY_2 commit accepted")
+	_check(visit.read_state().heroes == visit_before.heroes, "Leave roster unchanged")
+	_check(not Controller.submit(visit, genuine_intent).get("ok"), "final genuine action rejects replay")

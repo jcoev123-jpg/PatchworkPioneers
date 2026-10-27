@@ -42,7 +42,7 @@ func _valid_statuses(statuses: Dictionary) -> bool:
 	# Validate explicitly: adjusted_attack_damage() also returns zero for a
 	# malformed map, which is indistinguishable from valid zero-damage attacks.
 	for name in statuses:
-		if not name is String or name not in ["bleed", "weak", "exposed", "tangled"]:
+		if not name is String or name not in ["bleed", "weak", "exposed", "tangled", "riposte"]:
 			return false
 		var count = statuses[name]
 		if not count is int or count < 0:
