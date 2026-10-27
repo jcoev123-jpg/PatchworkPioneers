@@ -6,7 +6,9 @@ const SUPPORT_IDS := ["warden_brace", "warden_brace_plus", "tinker_tune_up", "ti
 const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
 const VIGIL_IDS := ["lantern_monk_vigil_ring", "lantern_monk_vigil_ring_plus"]
 const GLOW_IDS := ["lantern_monk_lantern_glow", "lantern_monk_lantern_glow_plus"]
-const ALLY_IDS := ["seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up",
+const ALLY_IDS := ["seamstress_v3_shielding_hem", "seamstress_v3_shielding_hem_plus",
+	"seamstress_v3_patchwork_poultice", "seamstress_v3_patchwork_poultice_plus",
+	"seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up",
 	"scarecrow_straw_padding", "scarecrow_straw_padding_plus", "scarecrow_straw_wrap", "scarecrow_straw_wrap_plus",
 	"seamstress_v3_mending_knot", "seamstress_v3_mending_knot_plus",
 	"seamstress_v3_darn_the_tear", "seamstress_v3_darn_the_tear_plus",
@@ -75,6 +77,7 @@ var _energy_cards := CombatPoolEnergyCards.new()
 var _tinker_gadgets := CombatTinkerPoolGadgets.new()
 var _v3_tinker_scrap := CombatTinkerV3ScrapSupportCards.new()
 var _heal_cards := CombatSeamstressPoolHeals.new()
+var _hem := CombatSeamstressV3HemCards.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
 var _pitchfork := CombatScarecrowPitchforkCards.new()
@@ -632,6 +635,8 @@ func _enemy_service(card_id: String):
 
 
 func _is_actionable(card_id: String) -> bool:
+	if _hem.is_supported_card(card_id):
+		return true
 	if _v3_tinker_scrap != null and _v3_tinker_scrap.is_supported_card(card_id):
 		return true
 	if CombatYarnRangerKnitCards.CARDS.has(card_id):
@@ -653,6 +658,8 @@ func _is_actionable(card_id: String) -> bool:
 
 ## One entry point keeps starter support and pool Block cards on the same commit path.
 func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position: int, debuff: String = "") -> bool:
+	if _hem.is_supported_card(card_id):
+		return bool(_hem.play_card(deck, party, card_id, position).get("ok", false))
 	if _v3_tinker_scrap != null and _v3_tinker_scrap.is_supported_card(card_id):
 		return bool(_v3_tinker_scrap.play_card(deck, party, card_id, 0).get("ok", false))
 	if CombatYarnRangerKnitCards.CARDS.has(card_id):
@@ -959,7 +966,7 @@ func _sync_battle() -> void:
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_card_input.bind(panel, label.text, _deck, _party, _battle)
 		_bindings[panel] = callback
-		if CombatYarnRangerKnitCards.CARDS.has(label.text) or label.text in VIGIL_IDS or label.text in GLOW_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text):
+		if _hem.is_supported_card(label.text) or CombatYarnRangerKnitCards.CARDS.has(label.text) or label.text in VIGIL_IDS or label.text in GLOW_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text):
 			_move_context[panel] = _current_move_context(panel)
 		panel.gui_input.connect(callback)
 	# Keep the existing End/Return Tab cycle; Up enters the card row, Down exits it.
@@ -1214,6 +1221,20 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 				legal = true
 		if not legal:
 			return false
+	if _hem.is_supported_card(card_id):
+		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
+				or _move_context.get(panel, []) != _current_move_context(panel):
+			return false
+		if app._battle_closed or app.battle_result == null or not app.battle_result.can_continue() \
+				or app.battle_result._party != party or app.battle_result._enemies != app.enemies \
+				or app.enemies == null or not app.enemies.is_valid() or app.enemies.is_victorious():
+			return false
+		var legal := false
+		for slot in [1, 2, 3]:
+			if _hem._prepare(deck, party, card_id, slot).get("ok", false):
+				legal = true
+		if not legal:
+			return false
 	if _roll.is_supported_card(card_id):
 		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
 				or _move_context.get(panel, []) != _current_move_context(panel):
@@ -1305,7 +1326,7 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		_pending.heroes = party.get_heroes()
 		_pending.hand = deck.hand.duplicate()
 		_pending.selections = {}
-	if CombatYarnRangerKnitCards.CARDS.has(card_id) or _bolas.is_supported_card(card_id) or card_id in VIGIL_IDS or card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id) or _roll.is_supported_card(card_id):
+	if _hem.is_supported_card(card_id) or CombatYarnRangerKnitCards.CARDS.has(card_id) or _bolas.is_supported_card(card_id) or card_id in VIGIL_IDS or card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id) or _roll.is_supported_card(card_id):
 		_pending.owner_roster = _party.get_heroes().map(func(hero): return [hero.id, hero.position])
 	if _roll.is_supported_card(card_id):
 		for hero in _party._heroes:
@@ -1394,6 +1415,8 @@ func _selection_valid() -> bool:
 		return false
 	if (_pop.is_supported_card(_pending.id) or _bolas.is_supported_card(_pending.id) or _sew.is_supported_card(_pending.id) or _roll.is_supported_card(_pending.id)) and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
 		return false
+	if _hem.is_supported_card(_pending.id) and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
+		return false
 	if _roll.is_supported_card(_pending.id) and not is_same(_pending.owner_ref, _party._heroes[_pending.owner_ref.position - 1]):
 		return false
 	if _cleansing.is_supported_card(_pending.id):
@@ -1446,6 +1469,8 @@ func _choose_target() -> void:
 	var app = get_parent()
 	for index in range(_target_panels().size()):
 		var panel: Control = _target_panels()[index]
+		if _hem.is_supported_card(_pending.id) and not _hem._prepare(_deck, _party, _pending.id, index + 1).get("ok", false):
+			continue
 		if _roll.is_supported_card(_pending.id) and not _roll._prepare(_deck, _party, _pending.id, index + 1).get("ok", false):
 			continue
 		if (_enemy_selection() and not _enemy_service(_pending.id)._prepare(_deck, _party, app.enemies, _pending.id, index + 1).get("ok", false)) or (not _enemy_selection() and _party.is_downed(index + 1)):
@@ -1477,7 +1502,7 @@ func _choose_target() -> void:
 			"mouse_filter": previous_filter}
 		if _pop.is_supported_card(_pending.id) or _pitchfork.is_supported_card(_pending.id) or _bolas.is_supported_card(_pending.id):
 			_targets[panel].actor_ref = app.enemies._enemies[index]
-		if _roll.is_supported_card(_pending.id):
+		if _roll.is_supported_card(_pending.id) or _hem.is_supported_card(_pending.id):
 			_targets[panel].actor_ref = _party._heroes[index]
 		panel.gui_input.connect(callback)
 	for index in range(panels.size()):

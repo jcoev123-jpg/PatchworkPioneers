@@ -32,6 +32,7 @@ const GLOW_IDS := ["lantern_monk_lantern_glow", "lantern_monk_lantern_glow_plus"
 var _catalog := StarterCards.new()
 var _toss := CombatWardenV3ShieldTossCards.new()
 var _helmet := CombatWardenV3HelmetCards.new()
+var _hem := CombatSeamstressV3HemCards.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
 var _pop := CombatButtonGolemPopCards.new()
 var _sew := CombatButtonGolemSewCards.new()
@@ -121,6 +122,9 @@ func _definition(card_id: String) -> Dictionary:
 		return ScarecrowPoolCards.new().get_definition(card_id)
 	if _helmet.is_supported_card(card_id):
 		return _helmet._catalog_definition(card_id)
+	if _hem.is_supported_card(card_id):
+		var card := _hem._catalog_definition(card_id)
+		return card if _hem._authentic(card, card_id, _hem.CARDS[card_id]) else {}
 	if _cleansing.is_supported_card(card_id):
 		return _cleansing._catalog_definition(card_id)
 	if _toss.is_supported_card(card_id):
@@ -540,6 +544,8 @@ func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[Str
 		return ["Heal each living hero %d HP, capped at max HP; each gains %d Block. Torn heroes are excluded; no debuffs are removed." % [definition.effects.heal_all, definition.effects.block_all]]
 	if _re_stuff.is_supported_card(card_id):
 		return ["This hero loses 2 max HP first (current HP capped to the new maximum), then heals %d HP, capped at the new max HP." % definition.effects.heal]
+	if _hem.is_supported_card(card_id):
+		return ["Grant %d Block and heal %d HP to one chosen living ally, capped at max HP." % [definition.effects.block, definition.effects.heal]]
 	if _cleansing.is_supported_card(card_id):
 		return ["Heal %d HP to the chosen living ally, capped at max HP. Choose one present Bleed, Weak or Exposed to remove completely; heal alone if none are present." % definition.effects.heal]
 	var parts: Array[String] = []
@@ -1084,7 +1090,7 @@ func _update_visual(panel: Control) -> void:
 		if id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatYarnRangerSnareCards.CARDS.has(id) or CombatScarecrowCrowCards.CARDS.has(id):
 			var area = _app.get_node_or_null("LiveAreaAttackAction")
 			playable = area != null and area._eligible(panel, id)
-		elif CombatYarnRangerKnitCards.CARDS.has(id) or id in VIGIL_IDS or id in GLOW_IDS or id in CombatSupportCards.SCARECROW_STRAW_IDS or _re_stuff.is_supported_card(id) or _feint.is_supported_card(id) or _pitchfork.is_supported_card(id) or _bolas.is_supported_card(id) or _pop.is_supported_card(id) or _sew.is_supported_card(id) or _roll.is_supported_card(id) or _v3_tinker_scrap.is_supported_card(id):
+		elif _hem.is_supported_card(id) or CombatYarnRangerKnitCards.CARDS.has(id) or id in VIGIL_IDS or id in GLOW_IDS or id in CombatSupportCards.SCARECROW_STRAW_IDS or _re_stuff.is_supported_card(id) or _feint.is_supported_card(id) or _pitchfork.is_supported_card(id) or _bolas.is_supported_card(id) or _pop.is_supported_card(id) or _sew.is_supported_card(id) or _roll.is_supported_card(id) or _v3_tinker_scrap.is_supported_card(id):
 			var support_presenter = _app.get_node_or_null("LiveSupportHand")
 			playable = support_presenter != null and support_presenter._eligible(
 				panel, id, _app.deck, _app.party, _app.battle_view)
