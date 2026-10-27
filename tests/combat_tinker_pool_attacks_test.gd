@@ -27,6 +27,7 @@ func _initialize() -> void:
 	_test_visor_rivet_shot_variants()
 	_test_visor_other_five_families_and_alternate_wearers()
 	_test_visor_stale_failed_and_torn_rejections()
+	_test_staged_stitch_halves()
 	for failure in failures:
 		printerr(failure)
 	print("combat_tinker_pool_attacks_test: ",
@@ -2108,3 +2109,60 @@ func _test_visor_stale_failed_and_torn_rejections() -> void:
 	var play_recovered: Dictionary = resolver.play_attack(deck, party, foes, "tinker_rivet_shot", 1)
 	_check(play_recovered.get("ok", false) and play_recovered["hits"][0]["statuses"] == {"exposed": 2},
 		"recovered resolver plays Rivet with Exposed 2")
+
+
+## The Rest-stitch seam: only the six single-target printings, never a real deck
+## or RNG, the staged starter latches shared by reference, and a validated
+## stitched bonus of exactly 0 or 2.
+func _test_staged_stitch_halves() -> void:
+	var attacks := CombatAttackCards.new()
+	var staged := CombatTinkerPoolAttacks.stage_for_stitch(attacks)
+	_check(staged.get_first_attack() == attacks._tinker and staged._patches == attacks._patches
+		and staged._head_patches == attacks._head_rules and staged.get_pinned() == null,
+		"stitch stage shares the starter first-attack latch, patches and HEAD rules")
+	for id in ["tinker_spring_trap", "tinker_spring_trap_plus", "tinker_scatter_bolts",
+			"tinker_scatter_bolts_plus", "tinker_ricochet", "tinker_ricochet_plus",
+			"tinker_pop_shot", "tinker_rivet_shot_plus_plus", ""]:
+		var party := _party()
+		var enemies := _enemies()
+		var before := [party.get_heroes(), enemies.get_enemies(), attacks._tinker._consumed]
+		_check(staged.resolve_staged_half(party, enemies, id, 1) == _failed_play()
+			and [party.get_heroes(), enemies.get_enemies(), attacks._tinker._consumed] == before,
+			"stitch seam keeps " + id + " closed without mutation")
+	for id in CombatTinkerPoolAttacks.STITCHED_IDS:
+		var printed: int = int(TinkerPoolCards.new().get_definition(id)["effects"]["damage"])
+		for bonus in [0, 2]:
+			var fresh := CombatAttackCards.new()
+			var seam := CombatTinkerPoolAttacks.stage_for_stitch(fresh)
+			var party := _party()
+			var enemies := _enemies()
+			var result: Dictionary = seam.resolve_staged_half(party, enemies, id, 2, bonus)
+			var exposed: Dictionary = {"exposed": 1} if id.begins_with("tinker_rivet_shot") else {}
+			_check(result == {"ok": true, "hits": [{"position": 2, "damage": printed + 3 + bonus,
+				"block_absorbed": 0, "hp_loss": printed + 3 + bonus, "statuses": exposed}]},
+				id + " +" + str(bonus) + ": exact staged authored hit with the shared +3")
+			_check(fresh._tinker._consumed and fresh._tinker.bonus_for_attack("tinker_pop_shot") == 0,
+				id + ": staged pool half spends the starter resolver's latch")
+			_check(enemies.get_enemy(2).hp == 70 - printed - 3 - bonus
+				and enemies.get_enemy(1).hp == 70 and enemies.get_enemy(3).hp == 70,
+				id + ": only the chosen staged slot is hit")
+			var again: Dictionary = seam.resolve_staged_half(party, enemies, id, 1, bonus)
+			_check(again.get("ok", false) and again.hits[0].damage == printed + bonus,
+				id + ": a second staged half gets no second +3")
+		var party := _party()
+		var enemies := _enemies()
+		var seam := CombatTinkerPoolAttacks.stage_for_stitch(CombatAttackCards.new())
+		for bad_bonus in [1, 3, -2]:
+			_check(seam.resolve_staged_half(party, enemies, id, 1, bad_bonus) == _failed_play(),
+				id + ": unauthorized stitched bonus " + str(bad_bonus) + " rejected")
+		for bad_target in [0, 4, -1]:
+			_check(seam.resolve_staged_half(party, enemies, id, bad_target) == _failed_play(),
+				id + ": illegal staged target " + str(bad_target) + " rejected")
+		var downed := _party()
+		_check(downed.apply_damage(3, downed.get_hero(3).hp), id + ": downed Tinker precondition")
+		_check(seam.resolve_staged_half(downed, enemies, id, 1) == _failed_play(), id + ": downed owner rejected")
+		var front := _party(["tinker", "seamstress", "warden"])
+		_check(seam.resolve_staged_half(front, enemies, id, 1) == _failed_play(),
+			id + ": Tinker in slot one is outside every authored FROM")
+		_check(enemies.get_enemies() == _enemies().get_enemies() and not seam.get_first_attack()._consumed,
+			id + ": every rejection leaves the roster and latch untouched")

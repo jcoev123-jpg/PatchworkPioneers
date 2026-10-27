@@ -13,6 +13,7 @@ func _initialize() -> void:
 	_test_legal_halves()
 	_test_pool_healing_previews()
 	_test_pool_self_previews()
+	_test_pool_attack_previews()
 	_test_positions_and_recipients()
 	_test_refusals()
 	_test_replay_and_isolation()
@@ -582,3 +583,64 @@ func _test_pool_self_previews() -> void:
 			var poor := _pair("warden_brace" if reverse else id, id if reverse else "warden_brace")
 			_check(poor.deck.try_spend_energy(3), "spend actual shared energy")
 			_rejected(poor, id + ": no advance credit from energy half")
+
+
+## Rest stitches carrying Tinker's six single-target pool printings: only the
+## living legal enemy slots, the canonical FROM, and no cast from a forged
+## ledger, a downed or misplaced owner, or a stale hand.
+func _test_pool_attack_previews() -> void:
+	var brace_def := RunRestStitchCards.resolve_card_definition("warden_brace")
+	for id in CombatTinkerPoolAttacks.STITCHED_IDS:
+		var authored := RunRestStitchCards.resolve_card_definition(id)
+		_check(authored == TinkerPoolCards.new().get_definition(id) and authored.target_kind == "enemy_single"
+			and authored.to_positions == [1, 2, 3], "authored single-target pool half " + id)
+		for reverse in [false, true]:
+			var s := _pair("warden_brace" if reverse else id, id if reverse else "warden_brace")
+			var pool_index: int = 1 if reverse else 0
+			var accepted := 0
+			for order in [["warden", "seamstress", "tinker"], ["warden", "tinker", "seamstress"],
+					["tinker", "warden", "seamstress"], ["seamstress", "warden", "tinker"]]:
+				var typed_order: Array[String] = []
+				typed_order.assign(order)
+				s.party = _party(typed_order)
+				var position: int = order.find("tinker") + 1
+				var warden: int = order.find("warden") + 1
+				var label: String = id + " Tinker slot " + str(position) + (" reversed" if reverse else "")
+				if not authored.from_positions.has(position) or not brace_def.from_positions.has(warden):
+					_rejected(s, label + ": current owner slot illegal")
+					continue
+				accepted += 1
+				var pool := _half(pool_index, id, [1, 2, 3])
+				var brace := _half(1 - pool_index, "warden_brace", [], [warden])
+				_accepted(s, brace if reverse else pool, pool if reverse else brace, label + ": all living enemy slots")
+				s.enemies = _enemies()
+				_check(s.enemies.apply_damage(2, 999) and s.enemies.is_slain(2), label + ": real slain middle enemy")
+				pool = _half(pool_index, id, [1, 3])
+				_accepted(s, brace if reverse else pool, pool if reverse else brace, label + ": slain slot never offered")
+				s.enemies = _enemies(2)
+				pool = _half(pool_index, id, [1, 2])
+				_accepted(s, brace if reverse else pool, pool if reverse else brace, label + ": empty slot never offered")
+				s.enemies = _enemies()
+				s.party = _party(typed_order)
+				_check(s.party.apply_damage(position, 999) and s.party.is_downed(position), label + ": real downed Tinker")
+				_rejected(s, label + ": downed owner")
+			_check(accepted >= 1, id + ": at least one legal Tinker seat exercised")
+			s.party = _party()
+			var forged: Dictionary = s.snapshot.duplicate(true)
+			forged.descriptors[s.id]["second_half" if reverse else "first_half"].effects["damage"] = 99
+			_rejected(s, id + ": forged effects receipt", forged)
+			forged = s.snapshot.duplicate(true)
+			forged.descriptors[s.id]["second_half" if reverse else "first_half"]["to_positions"] = [1]
+			_rejected(s, id + ": forged TO receipt", forged)
+			forged = s.snapshot.duplicate(true)
+			forged.descriptors[s.id]["second_half" if reverse else "first_half"]["from_positions"] = [1, 2, 3]
+			_rejected(s, id + ": forged FROM receipt", forged)
+			s.rest._descriptors[s.id]["second_half" if reverse else "first_half"].effects["damage"] = 99
+			s.snapshot = s.rest.get_snapshot()
+			_rejected(s, id + ": forged internal canonical descriptor")
+			var stale := _pair("warden_brace" if reverse else id, id if reverse else "warden_brace")
+			stale.deck.discard_played(stale.id)
+			_rejected(stale, id + ": stale hand no longer holds the composite")
+			var poor := _pair("warden_brace" if reverse else id, id if reverse else "warden_brace")
+			_check(poor.deck.try_spend_energy(poor.deck.energy - poor.cost + 1), id + ": spend below the composite cost")
+			_rejected(poor, id + ": unaffordable pool composite")
