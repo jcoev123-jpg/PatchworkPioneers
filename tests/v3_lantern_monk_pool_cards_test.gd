@@ -5,7 +5,10 @@ extends SceneTree
 ## field against independent expected records, plus the look-driven Blind / Lantern Glow / Moth
 ## Cloud descriptors. It also drives the scene-free CombatLanternMonkPartyCards service over real
 ## seeded CombatDeck/CombatParty fixtures for the four Lantern Glow / Vigil Ring printings, so the
-## party-wide heal, Block and explicit per-ally cleanse transactions are covered here too. The
+## party-wide heal, Block and explicit per-ally cleanse transactions are covered here too. The same
+## real fixtures drive the scene-free CombatLanternMonkShroudCards service for both Moth Shroud
+## printings: a paid ally-only Block plus one-shot Dodge token that never stacks and is never spent
+## by the cast. The
 ## catalog stays deliberately unwired from the live hand, rewards, map and shops, so no live card
 ## is claimed. It also proves caller copies are detached, invalid IDs fail closed, catalog
 ## enumeration consumes no run RNG, and the existing Rag Duelist pool and StarterCards stay
@@ -14,6 +17,17 @@ extends SceneTree
 const CatalogScript = preload("res://data/cards/lantern_monk_pool_cards.gd")
 const RagDuelistScript = preload("res://data/cards/rag_duelist_pool_cards.gd")
 const StarterCardsScript = preload("res://data/cards/starter_cards.gd")
+
+## Catalog seam double: only Moth Shroud authentication reads it, so a forged record proves the
+## paid service fails closed on a rewritten catalog. Every other case uses the real catalog.
+class ForgedShroud extends CombatLanternMonkShroudCards:
+	var forged_id: String = ""
+	var forged: Dictionary = {}
+
+	func _catalog_definition(card_id: String) -> Dictionary:
+		if card_id == forged_id:
+			return forged.duplicate(true)
+		return super(card_id)
 
 ## Paid party-wide Lantern Glow / Vigil Ring fixtures. These literals are independent expectations
 ## copied from the v3 design, never read back from the service or its catalog.
@@ -40,9 +54,20 @@ const PARTY_HEROES_PATH := "res://data/heroes/starter_party.json"
 ## The Lantern Monk has no authored run-party record in this slice; the fixture picks a stable max HP.
 const MONK_MAX_HP := 34
 
+## Paid ally-targeting Moth Shroud fixtures, copied from the v3 design rather than read back from
+## the service or its catalog.
+const SHROUD_BASE := "lantern_monk_moth_shroud"
+const SHROUD_PLUS := "lantern_monk_moth_shroud_plus"
+const SHROUD_IDS := [SHROUD_BASE, SHROUD_PLUS]
+const SHROUD_COST := 1
+const SHROUD_BLOCK := {SHROUD_BASE: 6, SHROUD_PLUS: 8}
+const SHROUD_FROM := [2, 3]
+const DODGE_KEY := "dodge_next_attack"
+
 var failures: Array[String] = []
 var checks: int = 0
 var party_service := CombatLanternMonkPartyCards.new()
+var shroud_service := CombatLanternMonkShroudCards.new()
 
 
 func _initialize() -> void:
@@ -60,6 +85,10 @@ func _initialize() -> void:
 	_test_party_ac3_rejections()
 	_test_party_ac3_retry_and_replay()
 	_test_party_seeded_invariance()
+	_test_shroud_cards_authored()
+	_test_shroud_ac1_paid_play()
+	_test_shroud_ac2_no_stack()
+	_test_shroud_ac3_rejections()
 	if failures.is_empty():
 		print("v3_lantern_monk_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -1156,6 +1185,369 @@ func _party_rejected(deck: CombatDeck, party: CombatParty, card_id: Variant,
 	var before := _party_snapshot(deck, party)
 	var result: Dictionary = party_service.play_card(
 		deck, party, card_id, target_position, cleanse_selections)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("reason") is String and not (result.get("reason") as String).is_empty(),
+		label + ": refusal carries a reason")
+	_check(_party_snapshot(deck, party) == before,
+		label + ": unchanged party, hand, draw, discard, energy, turn and RNG")
+
+
+## --- Paid ally-only Moth Shroud (Block + one-shot Dodge) ----------------------------------
+##
+## These cases drive the scene-free CombatLanternMonkShroudCards service over the same real seeded
+## CombatDeck and CombatParty fixtures. Like the party-wide cases they claim callable rules-layer
+## behaviour only: no live hand, reward, app or run-deck wiring is asserted here.
+
+## Both printings must still carry their authored ally line, and nothing else is supported: not
+## another Monk pool card, not another hero's card, not an upgrade of an upgrade.
+func _test_shroud_cards_authored() -> void:
+	var catalog: RefCounted = CatalogScript.new()
+	for card_id: String in SHROUD_IDS:
+		var record: Dictionary = catalog.get_definition(card_id)
+		_check(not record.is_empty(), card_id + ": authored pool record exists")
+		if record.is_empty():
+			continue
+		_check(record.get("owner") == "lantern_monk",
+			card_id + ": authored owner is the Lantern Monk")
+		_check(record.get("cost") == SHROUD_COST,
+			card_id + ": authored cost is " + str(SHROUD_COST))
+		_check(record.get("from_positions") == SHROUD_FROM, card_id + ": authored FROM seats 2 and 3")
+		_check(record.get("target_kind") == "ally_single", card_id + ": veils one chosen ally")
+		_check(record.get("to_positions") == [], card_id + ": names no enemy position")
+		_check(record.get("effects") == {"block": SHROUD_BLOCK[card_id], "dodge_next_attack": 1},
+			card_id + ": exact authored Block and one-shot Dodge")
+		_check(shroud_service.is_supported_card(card_id), card_id + ": service authenticates the ID")
+	_check(catalog.get_upgrade_id(SHROUD_BASE) == SHROUD_PLUS
+			and catalog.get_upgrade_id(SHROUD_PLUS) == "",
+		"the Moth Shroud pair still links base and '+' in the pool catalog")
+	for unsupported in ["lantern_monk_moth_shroud_plus_plus", "lantern_monk_moth_shrou",
+			"lantern_monk_wax_ward", "lantern_monk_lantern_glow", "lantern_monk_vigil_ring",
+			"lantern_monk_wick_flicker", "lantern_monk_moth_cloud", "rag_duelist_cape_flourish",
+			"warden_v3_rim_toss", "seamstress_mend", ""]:
+		_check(not shroud_service.is_supported_card(unsupported),
+			unsupported + ": not an authentic Moth Shroud printing")
+	_check(not shroud_service.is_supported_card(null)
+			and not shroud_service.is_supported_card(7)
+			and not shroud_service.is_supported_card(true)
+			and not shroud_service.is_supported_card(StringName(SHROUD_BASE)),
+		"non-string IDs are never supported")
+	# The authenticated lookup alone consumes no seeded run RNG.
+	var rng := _party_rng(8191)
+	var state_before: int = rng.state
+	for card_id: String in SHROUD_IDS:
+		shroud_service.is_supported_card(card_id)
+	shroud_service.is_supported_card("lantern_monk_unknown")
+	_check(rng.state == state_before and not SHROUD_IDS.is_empty(),
+		"supported-card queries consume no run RNG (non-empty precondition)")
+
+
+## AC1: an authentic base/'+' Shroud is charged once, discarded once and gives ONLY the chosen
+## living ally its printed Block plus an armed one-shot Dodge. Both a different ally and the Monk's
+## own seat (self witness) are covered.
+func _test_shroud_ac1_paid_play() -> void:
+	for card_id: String in SHROUD_IDS:
+		# Different-ally witness: Monk in seat 2, veiling the front Warden in seat 1.
+		var party := _monk_party(2)
+		_check(party.get_hero(2)["id"] == "lantern_monk"
+				and party.get_hero(1)["id"] != "lantern_monk"
+				and party.get_hero(3)["id"] != "lantern_monk",
+			card_id + ": the witnessed target is a different living ally")
+		party._heroes[0]["statuses"] = {"bleed": 2}
+		party._heroes[2]["statuses"] = {"exposed": 1}
+		var deck := _party_deck(card_id)
+		var held_before: int = deck.hand.count(card_id)
+		var before := _party_snapshot(deck, party)
+		var result: Dictionary = shroud_service.play_card(deck, party, card_id, 1)
+		_check(result.get("ok") == true and result.get("reason") == "applied",
+			card_id + ": authorized paid ally play")
+		_check(result.get("card_id") == card_id and result.get("cost") == SHROUD_COST,
+			card_id + ": receipt names the authentic card and its printed cost")
+		_check(result.get("owner_position") == 2 and result.get("target_position") == 1
+				and result.get("target_kind") == "ally_single"
+				and result.get("target_id") == party.get_hero(1)["id"]
+				and result.get("self_target") == false,
+			card_id + ": receipt names the Monk seat and the chosen ally")
+		_check(result.get("energy_before") == 3 and result.get("energy_after") == 2,
+			card_id + ": exactly one shared energy was charged")
+		_check(result.get("block") == SHROUD_BLOCK[card_id]
+				and result.get("block_before") == 0
+				and result.get("block_after") == SHROUD_BLOCK[card_id],
+			card_id + ": the receipt reports the printed Block")
+		_check(result.get("dodge_before") == 0 and result.get("dodge_after") == 1
+				and result.get("dodge_already_active") == false,
+			card_id + ": the cast arms the one-shot Dodge without spending it")
+		var warden: Dictionary = party.get_hero(1)
+		_check(warden["block"] == SHROUD_BLOCK[card_id],
+			card_id + ": only the chosen ally gained the printed Block")
+		_check(warden["statuses"] == {"bleed": 2, "dodge_next_attack": 1},
+			card_id + ": the chosen ally keeps its debuff and gains Dodge 1")
+		_check(party.get_hero(2).get("statuses", {}) == {}
+				and party.get_hero(3)["statuses"] == {"exposed": 1},
+			card_id + ": no other hero is Blocked or Dodged")
+		_check(_party_snapshot(deck, party) == _shroud_expected_play(before, card_id, 1),
+			card_id + ": exact party, piles, energy and untouched injected RNG")
+		_check(deck.hand.count(card_id) == held_before - 1
+				and deck.discard_pile.count(card_id) == 1
+				and deck.hand.size() == 4 and deck.discard_pile.size() == 1
+				and deck.draw_pile.size() == 1,
+			card_id + ": exactly one held copy moved to the discard with no extra draw")
+
+		# Self witness: Monk in seat 3 veils its own seat, and only its own record changes.
+		var self_party := _monk_party(3)
+		_check(self_party.get_hero(3)["id"] == "lantern_monk",
+			card_id + ": the self-witness Monk really occupies seat 3")
+		self_party._heroes[0]["statuses"] = {"weak": 1}
+		var self_deck := _party_deck(card_id, 4311)
+		var self_before := _party_snapshot(self_deck, self_party)
+		var self_result: Dictionary = shroud_service.play_card(self_deck, self_party, card_id, 3)
+		_check(self_result.get("ok") == true and self_result.get("self_target") == true
+				and self_result.get("target_position") == 3
+				and self_result.get("owner_position") == 3,
+			card_id + ": the Monk may veil its own seat")
+		_check(self_party.get_hero(3)["block"] == SHROUD_BLOCK[card_id]
+				and self_party.get_hero(3)["statuses"] == {"dodge_next_attack": 1},
+			card_id + ": the self veil grants the printed Block and Dodge only to the Monk")
+		_check(self_party.get_hero(1)["block"] == 0
+				and self_party.get_hero(1)["statuses"] == {"weak": 1}
+				and self_party.get_hero(2)["block"] == 0,
+			card_id + ": the other allies are untouched by a self veil")
+		_check(_party_snapshot(self_deck, self_party)
+				== _shroud_expected_play(self_before, card_id, 3),
+			card_id + ": exact self-veil transaction")
+
+
+## AC2: a second authentic copy adds its printed Block again while Dodge stays exactly 1 and is
+## never spent or stacked; HP, the other heroes, every other status and the seeded RNG stay exact.
+func _test_shroud_ac2_no_stack() -> void:
+	for card_id: String in SHROUD_IDS:
+		var party := _monk_party(2)
+		party._heroes[0]["statuses"] = {"dodge_next_attack": 1, "bleed": 2}
+		party._heroes[1]["statuses"] = {"weak": 1}
+		_check(party.get_hero(1)["statuses"] == {"dodge_next_attack": 1, "bleed": 2},
+			card_id + ": the ally really starts with an armed Dodge and a debuff")
+		var deck := _party_deck(card_id)
+		_check(deck.hand.count(card_id) >= 2,
+			card_id + ": the hand really holds a second authentic copy")
+		var before := _party_snapshot(deck, party)
+		var first: Dictionary = shroud_service.play_card(deck, party, card_id, 1)
+		_check(first.get("ok") == true and first.get("dodge_before") == 1
+				and first.get("dodge_already_active") == true
+				and first.get("dodge_after") == 1,
+			card_id + ": re-casting keeps the already active Dodge at 1")
+		_check(first.get("block_after") == SHROUD_BLOCK[card_id],
+			card_id + ": the first re-cast still grants its printed Block")
+		_check(party.get_hero(1)["statuses"] == {"dodge_next_attack": 1, "bleed": 2},
+			card_id + ": casting Moth Shroud never spends or stacks Dodge")
+		var second: Dictionary = shroud_service.play_card(deck, party, card_id, 1)
+		_check(second.get("ok") == true
+				and second.get("block_before") == SHROUD_BLOCK[card_id]
+				and second.get("block_after") == 2 * SHROUD_BLOCK[card_id],
+			card_id + ": a second held copy adds its printed Block again")
+		_check(second.get("dodge_after") == 1 and second.get("dodge_already_active") == true,
+			card_id + ": Dodge stays exactly 1 after the second play")
+		_check(party.get_hero(1)["statuses"] == {"dodge_next_attack": 1, "bleed": 2},
+			card_id + ": no stack, no extra token and the debuff survives both plays")
+		_check(party.get_hero(2) == before["heroes"][1]
+				and party.get_hero(3) == before["heroes"][2],
+			card_id + ": the Monk and the non-target ally are unchanged")
+		_check(party.get_hero(1)["hp"] == before["heroes"][0]["hp"],
+			card_id + ": the protected ally's HP is untouched")
+		var expected := _shroud_expected_play(before, card_id, 1)
+		expected = _shroud_expected_play(expected, card_id, 1)
+		_check(_party_snapshot(deck, party) == expected,
+			card_id + ": exact two-copy transaction with unchanged RNG")
+
+
+## AC3: wrong/missing card, invalid owner or seat, torn target, insufficient energy, inactive turn
+## and malformed state all fail closed and leave deck, party and RNG byte-identical. A rejected
+## attempt never poisons the next authentic one.
+func _test_shroud_ac3_rejections() -> void:
+	var party := _monk_party(2)
+
+	var inactive := CombatDeck.new([SHROUD_BASE, SHROUD_BASE, SHROUD_BASE,
+		PARTY_FILLERS[0], PARTY_FILLERS[1], PARTY_FILLERS[2]], _party_rng(991))
+	_check(not inactive.turn_active and inactive.hand.is_empty(),
+		"inactive-turn fixture really has no active turn")
+	_shroud_rejected(inactive, party, SHROUD_BASE, 1, "inactive turn")
+
+	var deck := _party_deck(SHROUD_BASE)
+	_check(deck.hand.has(SHROUD_BASE) and not deck.hand.has(SHROUD_PLUS),
+		"absent-card fixture holds the base printing only")
+	_shroud_rejected(deck, party, SHROUD_PLUS, 1, "authentic '+' absent from the hand")
+	for unknown in ["", "lantern_monk_moth_shroud_plus_plus", "lantern_monk_moth_shrou",
+			"lantern_monk_wax_ward", "lantern_monk_lantern_glow", "rag_duelist_cape_flourish",
+			"warden_v3_rim_toss", 7, null, StringName(SHROUD_BASE)]:
+		_shroud_rejected(deck, party, unknown, 1, "unsupported or forged printing " + str(unknown))
+
+	var short := _party_deck(SHROUD_BASE)
+	_check(short.try_spend_energy(3) and short.energy == 0 and short.hand.has(SHROUD_BASE),
+		"energy-short fixture is genuinely broke and still holds the card")
+	_shroud_rejected(short, party, SHROUD_BASE, 1, "insufficient energy")
+
+	for bad_target in [0, -1, 4, 99]:
+		_shroud_rejected(_party_deck(SHROUD_BASE), party, SHROUD_BASE, bad_target,
+			"selected ally seat " + str(bad_target))
+
+	var torn_ally := _monk_party(2)
+	_check(torn_ally.apply_damage(1, 40) and torn_ally.is_downed(1),
+		"torn-target fixture really has a downed front ally")
+	torn_ally._heroes[0]["statuses"] = {"bleed": 3}
+	_shroud_rejected(_party_deck(SHROUD_BASE), torn_ally, SHROUD_BASE, 1, "torn ally target")
+
+	var front_monk := _monk_party(1)
+	_check(front_monk.get_hero(1)["id"] == "lantern_monk",
+		"illegal-FROM fixture really has the living Monk in seat 1")
+	_shroud_rejected(_party_deck(SHROUD_BASE), front_monk, SHROUD_BASE, 2,
+		"Moth Shroud from the Monk's illegal seat 1")
+
+	var torn_owner := _monk_party(2)
+	_check(torn_owner.apply_damage(2, MONK_MAX_HP) and torn_owner.is_downed(2),
+		"torn-caster fixture has a genuinely downed Monk")
+	_shroud_rejected(_party_deck(SHROUD_BASE), torn_owner, SHROUD_BASE, 1, "torn (downed) Monk")
+
+	var no_owner := CombatParty.new([
+		{"id": "warden", "name": "Warden", "max_hp": 40},
+		{"id": "tinker", "name": "Tinker", "max_hp": 26},
+		{"id": "mender", "name": "Mender", "max_hp": 20},
+	])
+	_check(no_owner.is_valid() and no_owner.get_hero(3)["id"] == "mender",
+		"missing-owner fixture is a valid three-hero party with no Monk")
+	_shroud_rejected(_party_deck(SHROUD_BASE), no_owner, SHROUD_BASE, 1,
+		"party with no Lantern Monk owner")
+
+	var duplicated := _monk_party(2)
+	duplicated._heroes[0]["id"] = "lantern_monk"
+	_check(duplicated.get_hero(1)["id"] == "lantern_monk"
+			and duplicated.get_hero(2)["id"] == "lantern_monk",
+		"duplicate-identity fixture really repeats the owner ID")
+	_shroud_rejected(_party_deck(SHROUD_BASE), duplicated, SHROUD_BASE, 1,
+		"duplicate hero identity")
+
+	var above_max := _monk_party(2)
+	above_max._heroes[0]["hp"] = int(above_max._heroes[0]["max_hp"]) + 1
+	_check(above_max.get_hero(1)["hp"] > above_max.get_hero(1)["max_hp"],
+		"malformed-roster fixture really has HP above max")
+	_shroud_rejected(_party_deck(SHROUD_BASE), above_max, SHROUD_BASE, 1, "HP above max")
+
+	var bad_block := _monk_party(2)
+	bad_block._heroes[0]["block"] = -1
+	_check(bad_block.get_hero(1)["block"] == -1, "negative-Block fixture really stores -1")
+	_shroud_rejected(_party_deck(SHROUD_BASE), bad_block, SHROUD_BASE, 1, "negative Block")
+
+	var bad_position := _monk_party(2)
+	bad_position._heroes[0]["position"] = 3
+	_check(bad_position.get_hero(1)["position"] == 3,
+		"wrong-position fixture really stores the wrong slot")
+	_shroud_rejected(_party_deck(SHROUD_BASE), bad_position, SHROUD_BASE, 1,
+		"wrong stored hero position")
+
+	for bad_statuses in ["bleed", [], null, {"bleed": -1}, {"bleed": "3"}, {"bleed": 1.5},
+			{"weak": true}, {1: 2}, {"": 1}, {"unknown_status": 1},
+			{"dodge_next_attack": 2}, {"dodge_next_attack": 1.5}, {"blind_next_attack": 2}]:
+		var broken := _monk_party(2)
+		broken._heroes[2]["statuses"] = bad_statuses
+		_check(broken.get_hero(3)["statuses"] == bad_statuses,
+			"malformed-status fixture really stores " + str(bad_statuses))
+		_shroud_rejected(_party_deck(SHROUD_BASE), broken, SHROUD_BASE, 1,
+			"malformed statuses " + str(bad_statuses))
+
+	var huge_block := _monk_party(2)
+	huge_block._heroes[0]["block"] = CombatParty.MAX_INT
+	_check(huge_block.get_hero(1)["block"] == CombatParty.MAX_INT,
+		"Block-overflow fixture really stores MAX_INT Block")
+	_shroud_rejected(_party_deck(SHROUD_BASE), huge_block, SHROUD_BASE, 1,
+		"unrepresentable Block gain")
+
+	_shroud_rejected(null, party, SHROUD_BASE, 1, "null deck")
+	_shroud_rejected(_party_deck(SHROUD_BASE), null, SHROUD_BASE, 1, "null party")
+	_shroud_rejected(_party_deck(SHROUD_BASE), CombatParty.new([]), SHROUD_BASE, 1,
+		"invalid party roster")
+
+	# A rejected attempt never poisons the next authentic one.
+	var retry_deck := _party_deck(SHROUD_BASE)
+	var retry_party := _monk_party(2)
+	var retry_before := _party_snapshot(retry_deck, retry_party)
+	_shroud_rejected(retry_deck, retry_party, SHROUD_BASE, 4, "retry: invalid ally seat")
+	_shroud_rejected(retry_deck, retry_party, SHROUD_PLUS, 1, "retry: absent '+' printing")
+	var retried: Dictionary = shroud_service.play_card(
+		retry_deck, retry_party, SHROUD_BASE, 1)
+	_check(retried.get("ok") == true, "retry: the authentic play then succeeds")
+	_check(_party_snapshot(retry_deck, retry_party)
+			== _shroud_expected_play(retry_before, SHROUD_BASE, 1),
+		"retry: exactly one charge, one discard and an untouched RNG")
+
+	# A forged catalog record — every authenticated field omitted or altered — is never paid for,
+	# while the restored authentic record still plays, so the refusal comes from the forgery.
+	var real_catalog: RefCounted = CatalogScript.new()
+	for card_id: String in SHROUD_IDS:
+		var authentic: Dictionary = real_catalog.get_definition(card_id)
+		_check(not authentic.is_empty(), card_id + ": authentic record available (forgery precondition)")
+		if authentic.is_empty():
+			continue
+		var link_field := "upgrade_of" if card_id.ends_with("_plus") else "upgrade_id"
+		var mutations: Array = []
+		for field in ["id", "owner", "cost", "from_positions", "to_positions", "target_kind",
+				"effects", link_field]:
+			var omitted: Dictionary = authentic.duplicate(true)
+			omitted.erase(field)
+			mutations.append(omitted)
+			var altered: Dictionary = authentic.duplicate(true)
+			altered[field] = {"id": "fake_shroud", "owner": "warden", "cost": 2.0,
+				"from_positions": [1, 2], "to_positions": [1], "target_kind": "party_all",
+				"effects": {"block": 99, "dodge_next_attack": 2},
+				"upgrade_id": "fake_shroud", "upgrade_of": "fake_shroud"}[field]
+			mutations.append(altered)
+		var extra_effect: Dictionary = authentic.duplicate(true)
+		extra_effect["effects"]["weak"] = 1
+		mutations.append(extra_effect)
+		var typed_block: Dictionary = authentic.duplicate(true)
+		typed_block["effects"]["block"] = float(typed_block["effects"]["block"])
+		mutations.append(typed_block)
+		var stacked_dodge: Dictionary = authentic.duplicate(true)
+		stacked_dodge["effects"][DODGE_KEY] = 2
+		mutations.append(stacked_dodge)
+		_check(not mutations.is_empty(), card_id + ": forgery fixtures are non-empty (precondition)")
+
+		var forged_service := ForgedShroud.new()
+		var forged_deck := _party_deck(card_id)
+		var forged_party := _monk_party(2)
+		forged_service.forged_id = card_id
+		for forged: Dictionary in mutations:
+			forged_service.forged = forged
+			var forged_before := _party_snapshot(forged_deck, forged_party)
+			var result: Dictionary = forged_service.play_card(forged_deck, forged_party, card_id, 1)
+			_check(result.get("ok") == false, card_id + ": forged catalog record rejected")
+			_check(_party_snapshot(forged_deck, forged_party) == forged_before,
+				card_id + ": forged record rejection leaves deck, party and RNG unchanged")
+		forged_service.forged_id = ""
+		var restored: Dictionary = forged_service.play_card(forged_deck, forged_party, card_id, 1)
+		_check(restored.get("ok") == true and restored.get("card_id") == card_id,
+			card_id + ": the restored authentic record plays")
+
+
+## The expected state after one authorized Moth Shroud play: one cost, one discard, the printed
+## Block and Dodge 1 on the chosen seat only.
+func _shroud_expected_play(before: Dictionary, card_id: String,
+		target_position: int) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] = int(expected["energy"]) - SHROUD_COST
+	expected["state_energy"] = int(expected["state_energy"]) - SHROUD_COST
+	var hand: Array = expected["hand"]
+	hand.remove_at(hand.find(card_id))
+	var discard: Array = expected["discard"]
+	discard.append(card_id)
+	var hero: Dictionary = expected["heroes"][target_position - 1]
+	hero["block"] = int(hero["block"]) + int(SHROUD_BLOCK[card_id])
+	var statuses: Dictionary = hero.get("statuses", {})
+	statuses[DODGE_KEY] = 1
+	hero["statuses"] = statuses
+	return expected
+
+
+func _shroud_rejected(deck: CombatDeck, party: CombatParty, card_id: Variant,
+		target_position: int, label: String) -> void:
+	var before := _party_snapshot(deck, party)
+	var result: Dictionary = shroud_service.play_card(deck, party, card_id, target_position)
 	_check(result.get("ok") == false, label + ": rejected")
 	_check(result.get("reason") is String and not (result.get("reason") as String).is_empty(),
 		label + ": refusal carries a reason")
