@@ -114,6 +114,13 @@ func _ready() -> void:
 	_focus_initial()
 
 
+## The physical number keys are an alias for the five mounted Buttons: a valid
+## press only forwards to that Button's own `pressed` signal, so keyboard, mouse,
+## Tab and Enter share one authenticated path and this handler never buys,
+## leaves, spends or mints an intent of its own. It stays inert - and leaves the
+## key to the rest of the game - when the panel is not open/visible, the GUI
+## focus belongs elsewhere, the key is a release/echo/modified/unrelated one, or
+## the addressed action is detached, hidden or disabled (sold or unaffordable).
 func _input(event: InputEvent) -> void:
 	if not _active():
 		return
@@ -141,9 +148,15 @@ func _input(event: InputEvent) -> void:
 		KEY_0, KEY_KP_0:
 			button = leave_button
 
-	if button != null:
-		get_viewport().set_input_as_handled()
-		button.pressed.emit()
+	if button == null:
+		return
+	# Only an authentic, still-mounted, visible and ENABLED action of this panel
+	# may receive the key press. A sold or unaffordable row neither emits a
+	# synthetic Button.pressed nor swallows the key from the rest of the game.
+	if not _attached(button) or button.disabled:
+		return
+	get_viewport().set_input_as_handled()
+	button.pressed.emit()
 
 
 ## A detached copy of the master Theme so the panel never mutates the project
