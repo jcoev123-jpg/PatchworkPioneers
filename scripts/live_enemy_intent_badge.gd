@@ -79,6 +79,12 @@ var action_status := ""
 var shove_direction := 0
 ## Presentation-only authenticated bonus for this particular attack; cleared on every call.
 var enrage_bonus := -1
+## Genuine two-hit presentation state, cleared on every call. The badge shows both hits only
+## for the exact canonical attack CombatEnemyPhase really resolves as two independent
+## packets; hit_damage is the first packet's pre-mitigation damage (odd points go first),
+## or -1 while the announcement is a single hit.
+var hit_count := 1
+var hit_damage := -1
 ## Empty unless a valid mounted weighted action supplies its real policy.
 var policy_cue := ""
 const POLICY_LABELS := {"front": "Front", "lowest_living_hp": "Aim low HP",
@@ -114,6 +120,46 @@ static func hero_target_label(pos: int) -> String:
 			return "Hero 3 (back)"
 		_:
 			return "Hero %d" % pos
+
+
+## True only for the exact authored attack shape CombatEnemyPhase really resolves as two
+## independent packets: an attack with an integer amount, one real hero target and the
+## integer hits 2, with no invented keys. Anything else - including malformed hits
+## metadata - stays one announced hit, so the view never forges an extra strike.
+static func is_two_hit_attack(action: Dictionary) -> bool:
+	if action.get("type") != "attack":
+		return false
+	var amount: Variant = action.get("amount")
+	var target: Variant = action.get("target_position")
+	var hits: Variant = action.get("hits")
+	if not amount is int or amount < 0:
+		return false
+	if not target is int or target < 1 or target > 3:
+		return false
+	if not hits is int or hits != 2:
+		return false
+	for key in action:
+		if not (key in ["type", "amount", "target_position", "hits", "enemy_position"]):
+			return false
+	if action.has("enemy_position"):
+		var source: Variant = action["enemy_position"]
+		if not source is int or source < 1 or source > 3:
+			return false
+	return true
+
+
+## The two pre-mitigation packet damages of a genuine two-hit attack, in the exact order
+## CombatEnemyPhase resolves them: an odd point in the total goes to the first packet.
+## Empty only for a negative total, which is never a valid announcement.
+static func two_hit_damages(total: int) -> Array[int]:
+	var packets: Array[int] = []
+	if total < 0:
+		return packets
+	@warning_ignore("integer_division")
+	var low := total / 2
+	packets.append(low + total % 2)
+	packets.append(low)
+	return packets
 
 
 ## A Theme's authored PatchHeading face, or null when that Theme merely falls back to its
@@ -317,9 +363,22 @@ func compact_caption_forms() -> Array[String]:
 	match intent_type:
 		"attack":
 			if enrage_bonus >= 0:
-				forms.append("Hit %d+%d→%d" % [amount, enrage_bonus, target_position])
-				forms.append("Hit %d+%d" % [amount, enrage_bonus])
-				forms.append("%d+%d" % [amount, enrage_bonus])
+				if hit_count == 2:
+					forms.append("Hit %d+%d A-2 → %d" % [amount, enrage_bonus, target_position])
+					forms.append("Hit %d+%d A-2" % [amount, enrage_bonus])
+					forms.append("%d+%dA-2→%d" % [amount, enrage_bonus, target_position])
+					forms.append("%d+%dA-2" % [amount, enrage_bonus])
+				else:
+					forms.append("Hit %d+%d→%d" % [amount, enrage_bonus, target_position])
+					forms.append("Hit %d+%d" % [amount, enrage_bonus])
+					forms.append("%d+%d" % [amount, enrage_bonus])
+			elif hit_count == 2:
+				# The ticket already names the aim; A-2 keeps the base total and both
+				# independently resolved packets readable at the compact 14 px floor.
+				forms.append("Hit %d A-2 → %d" % [amount, target_position])
+				forms.append("Hit %d A-2" % amount)
+				forms.append("%dA-2→%d" % [amount, target_position])
+				forms.append("%dA-2" % amount)
 			else:
 				forms.append("Hit %d → %d" % [amount, target_position])
 				forms.append("Hit %d→%d" % [amount, target_position])
@@ -455,6 +514,8 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 	action_status = ""
 	shove_direction = 0
 	enrage_bonus = -1
+	hit_count = 1
+	hit_damage = -1
 	if not slain and not skip_pending and action.get("type") in ["attack", "debuff", "shove", "snip_block"] \
 			and action.get("target_position") in [1, 2, 3] and POLICY_LABELS.has(policy):
 		policy_cue = POLICY_LABELS[policy]
@@ -478,14 +539,38 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		intent_type = "attack"
 		amount = action.get("amount", 0)
 		target_position = action.get("target_position", 0)
-		readable_text = "Hit %d: %s" % [amount, rank_caption(target_position)]
-		tip = "%d damage aimed at %s." % [amount, hero_target_label(target_position)]
-		if source_enrage_stacks >= 0 and source_enrage_stacks <= CombatEnemyKeywordRules.ENRAGE_MAX_STACKS:
+		# Two independent packets exist only when the copied announcement really authors
+		# the canonical integer hits 2; the scheduler is never re-read or re-rolled here.
+		var two_hit := is_two_hit_attack(action)
+		if two_hit:
+			hit_count = 2
+		var enraged := source_enrage_stacks >= 0 \
+			and source_enrage_stacks <= CombatEnemyKeywordRules.ENRAGE_MAX_STACKS
+		if enraged:
 			enrage_bonus = source_enrage_stacks * CombatEnemyKeywordRules.ENRAGE_ATTACK_BONUS_PER_STACK
+		var packets: Array[int] = []
+		if two_hit:
+			packets = two_hit_damages(amount + (enrage_bonus if enraged else 0))
+			hit_damage = packets[0]
+		if two_hit and enraged:
+			readable_text = "Hit %d (2 hits) +%d Enrage" % [amount, enrage_bonus]
+			tip = ("%dA-2: two hits — Base %d + %d Enrage (%d/3 stacks) = %d total attack power BEFORE Weak/Exposed adjustment, Guard redirection and hero Block. That total is split into %d + %d base damage, both packets aimed at %s; the +%d Enrage is added to the total once, never +%d per packet. Each packet is resolved independently against Block, so this is not guaranteed to deal %d HP of damage." % [
+				amount, amount, enrage_bonus, source_enrage_stacks, amount + enrage_bonus,
+				packets[0], packets[1], hero_target_label(target_position), enrage_bonus,
+				enrage_bonus, (amount + enrage_bonus) * 2])
+		elif two_hit:
+			readable_text = "Hit %d (2 hits): %s" % [amount, rank_caption(target_position)]
+			tip = ("%dA-2: two hits — the announced %d attack is split into %d + %d base damage, both packets aimed at %s. Each packet is resolved independently against Block (and may change after Guard or hero statuses), so this is not guaranteed to deal %d HP of damage." % [
+				amount, amount, packets[0], packets[1], hero_target_label(target_position),
+				amount * 2])
+		elif enraged:
 			readable_text = "Hit %d +%d Enrage" % [amount, enrage_bonus]
 			tip = "Base %d aimed at %s + %d Enrage (%d/3 stacks) = %d attack power BEFORE Weak/Exposed adjustment, Guard redirection and hero Block; not guaranteed HP loss." % [
 				amount, hero_target_label(target_position), enrage_bonus,
 				source_enrage_stacks, amount + enrage_bonus]
+		else:
+			readable_text = "Hit %d: %s" % [amount, rank_caption(target_position)]
+			tip = "%d damage aimed at %s." % [amount, hero_target_label(target_position)]
 	elif action.get("type") == "snip_block":
 		icon_mode = "snip_block"
 		intent_type = "snip_block"
