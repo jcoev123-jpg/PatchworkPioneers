@@ -120,6 +120,13 @@ func _run() -> void:
 	]:
 		await _positive(fixture)
 	await _keyboard_positive()
+	# Two seeded spans, so the focus sections neither hide nor weaken the
+	# original browse/commit/rejection RNG guard.
+	_check(randi() == expected_draw,
+		"layout, previews, mouse/Enter/Space and number keys use zero global RNG")
+	seed(266)
+	await _focus_outside_ignored()
+	await _focused_shortcuts()
 	await _keyboard_negative()
 	await _fail_closed()
 	_check(randi() == expected_draw, "every mounted browse/commit/rejection uses zero global RNG")
@@ -418,6 +425,147 @@ func _keyboard_positive() -> void:
 			_check(result.get("heroes") == expected_heroes
 				and visit.read_state().heroes == expected_heroes,
 				"keyboard heal equals independent recovery / Leave unchanged")
+
+
+## One real physical key press: down, frame, up, frame, settle.
+func _press(key: Key) -> void:
+	for down in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = key
+		event.pressed = down
+		root.push_input(event)
+		await process_frame
+	await _settle()
+
+
+## floor(30% of max HP) in integer arithmetic, independent of the panel.
+func _heal_amount(hero: Dictionary) -> int:
+	@warning_ignore("integer_division")
+	return (int(hero["max_hp"]) * 3) / 10
+
+
+func _recovered_hp(hero: Dictionary) -> int:
+	return mini(int(hero["max_hp"]), maxi(1, int(hero["hp"])) + _heal_amount(hero))
+
+
+## A visible open Campfire must not steal 1/2 from another screen's focused
+## control: no intent, no service state change and no global RNG draw.
+func _focus_outside_ignored() -> void:
+	var external := Button.new()
+	external.text = "Map"
+	external.position = Vector2(24, 656)
+	external.size = Vector2(180, 48)
+	external.focus_mode = Control.FOCUS_ALL
+	root.add_child(external)
+	await _settle()
+	_check(external.is_inside_tree() and external.is_visible_in_tree()
+		and not external.disabled and external.focus_mode == Control.FOCUS_ALL,
+		"separate enabled external Button mounted at 1280x720")
+	_check(not panel.is_ancestor_of(external)
+		and not panel.get_global_rect().intersects(external.get_global_rect()),
+		"external control sits outside the Campfire subtree and panel")
+	var visit := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
+	var saved := visit.read_state()
+	_check(saved.get("ok") == true and saved.get("status") == "open"
+		and saved.get("heroes", []).size() == 3, "focus-outside open Campfire precondition")
+	await _bind(visit)
+	_check(panel.is_visible_in_tree() and panel.heal_button.has_focus(),
+		"open Campfire starts focused for comparison")
+	external.grab_focus()
+	await _settle()
+	var owner := root.gui_get_focus_owner()
+	_check(external.has_focus() and owner == external and not panel.is_ancestor_of(owner),
+		"external enabled control truly owns GUI focus")
+	# Probe the same guarded global stream, then restore it for the end guard.
+	seed(266)
+	var expected_focus_draw := randi()
+	seed(266)
+	for key in [KEY_1, KEY_2, KEY_KP_1, KEY_KP_2]:
+		await _press(key)
+		var label := "focus-outside key " + str(key)
+		_check(intents.is_empty(), label + ": no decision signal")
+		_check(visit.read_state() == saved and not panel._submitted,
+			label + ": no Campfire state change")
+		_check(not panel.heal_button.disabled and not panel.leave_button.disabled,
+			label + ": both Campfire actions stay available")
+		_check(external.has_focus() and root.gui_get_focus_owner() == external,
+			label + ": external focus retained")
+	_check(randi() == expected_focus_draw, "focus-outside number keys draw no global RNG")
+	seed(266)
+	external.queue_free()
+	await _settle()
+	_check(visit.read_state() == saved and intents.is_empty(),
+		"removing the external control commits nothing")
+
+
+func _focused_shortcuts() -> void:
+	for fixture in [
+		{"action": "heal", "key": KEY_1, "focus": "heal"},
+		{"action": "heal", "key": KEY_KP_1, "focus": "heal"},
+		{"action": "leave", "key": KEY_2, "focus": "leave"},
+		{"action": "leave", "key": KEY_KP_2, "focus": "leave"},
+	]:
+		await _focused_shortcut(fixture["focus"], fixture["key"], fixture["action"])
+	# Either Campfire control owns the shortcuts, not only its own action.
+	await _focused_shortcut("leave", KEY_1, "heal")
+	await _focused_shortcut("heal", KEY_2, "leave")
+
+
+## The focused Campfire still accepts each number key exactly once with an
+## authentic source-bound intent, settled by the independent service oracle.
+func _focused_shortcut(focus_role: String, key: Key, action: String) -> void:
+	var label := "focused %s shortcut %s -> %s" % [focus_role, key, action]
+	var source_fixture := _party([35, 18, 0])
+	var visit := RunCampfireVisit.new(NODE, source_fixture)
+	var saved := visit.read_state()
+	_check(saved.get("ok") == true and saved.get("status") == "open"
+		and saved.get("heroes", []).size() == 3, label + ": real open visit precondition")
+	await _bind(visit)
+	var target: Button = panel.heal_button if focus_role == "heal" else panel.leave_button
+	target.grab_focus()
+	await _settle()
+	_check(target.has_focus() and root.gui_get_focus_owner() == target
+		and panel.is_ancestor_of(target), label + ": Campfire control owns GUI focus")
+	var count := intents.size()
+	await _press(key)
+	_check(intents.size() == count + 1, label + ": exactly one intent from one key press")
+	if intents.size() != count + 1:
+		return
+	var intent: Dictionary = intents[-1]
+	_check(intent.get("action") == action and intent.get("node_id") == NODE
+		and intent.get("source_visit") == visit
+		and intent.get("expected_heroes") == saved.heroes,
+		label + ": authentic bound instance/node/full roster intent")
+	_check(visit.read_state() == saved and panel._submitted,
+		label + ": view submits once without committing the service")
+	await _press(key)
+	_check(intents.size() == count + 1 and visit.read_state() == saved,
+		label + ": repeated or released key is inert")
+	var oracle: Dictionary = RunRestRecovery.new(saved.heroes).choose_heal()
+	var expected: Array = saved.heroes.duplicate(true)
+	if action == "heal":
+		for i in range(3):
+			expected[i]["hp"] = _recovered_hp(saved.heroes[i])
+		_check(int(saved.heroes[2]["hp"]) == 0
+			and int(expected[2]["hp"]) == 1 + _heal_amount(saved.heroes[2]),
+			label + ": torn hero revives to 1 HP before floor(30%) is added")
+		_check(int(saved.heroes[0]["hp"]) + _heal_amount(saved.heroes[0])
+			> int(saved.heroes[0]["max_hp"])
+			and int(expected[0]["hp"]) == int(saved.heroes[0]["max_hp"]),
+			label + ": healing is capped at max HP")
+		for i in range(3):
+			_check(int(oracle.heroes[i]["hp"]) == int(expected[i]["hp"]),
+				label + ": independent recovery oracle matches hero " + str(i))
+	var result := Controller.submit(visit, intent)
+	_check(result.get("ok") == true and result.get("decision") == action
+		and result.get("node_id") == NODE, label + ": route owner accepts the receipt once")
+	_check(result.get("heroes") == (oracle.heroes if action == "heal" else saved.heroes)
+		and visit.read_state().heroes == expected,
+		label + ": heal equals independent recovery / Leave changes no hero field")
+	_check(visit.read_state().status
+		== (RunCampfireVisit.HEALED if action == "heal" else RunCampfireVisit.LEFT),
+		label + ": real service consumed exactly once")
+	_check(not Controller.submit(visit, intent).get("ok"), label + ": replayed intent rejected")
 
 
 func _check_key_rejected(visit: RunCampfireVisit, key: Key, label: String, echo: bool = false, modifier: Key = KEY_NONE, pressed: bool = true) -> void:
