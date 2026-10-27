@@ -23,9 +23,19 @@ const STRAW_BLOCKS := {
 }
 const STRAW_COST := 1
 
+## Independent literal expectations for the two authored Wax Ward pool printings,
+## never read back from the resolver under test.
+const WAX_BLOCKS := {
+	"lantern_monk_wax_ward": 5,
+	"lantern_monk_wax_ward_plus": 7,
+}
+const WAX_COST := 1
+const WAX_PARTY_HP := {"warden": 40, "seamstress": 30, "tinker": 26, "lantern_monk": 30}
+
 var failures: Array[String] = []
 var checks := 0
 var service := CombatSupportCards.new()
+var wax := CombatLanternMonkWaxWardCards.new()
 
 
 func _initialize() -> void:
@@ -38,6 +48,7 @@ func _initialize() -> void:
 	_test_hemguard_cuff()
 	_test_reinforced_browband()
 	_test_scarecrow_straw()
+	_test_lantern_monk_wax_ward()
 	for failure in failures:
 		printerr(failure)
 	print("combat_support_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -1182,3 +1193,417 @@ func _test_scarecrow_straw_rejections() -> void:
 	_check(service.play_scarecrow_straw(recovered, recovered_party, card_id, 1)
 		and recovered_party.get_hero(1)["block"] == STRAW_BLOCKS[card_id],
 		"recovered binding restores the printed straw Block")
+
+
+## ------------------------------------------------------------------ Lantern Monk Wax Ward
+
+## A catalog double whose records can be rewritten, so forged or relinked pool metadata is
+## mockable without touching the real Lantern Monk catalog.
+class ForgedWaxCatalog extends RefCounted:
+	var records: Dictionary = {}
+
+
+	func _init(definitions: Dictionary) -> void:
+		records = definitions
+
+
+	## Mirrors LanternMonkPoolCards.get_definition: a non-string or unknown ID is {}.
+	func get_definition(card_id: Variant) -> Dictionary:
+		if typeof(card_id) != TYPE_STRING:
+			return {}
+		var id: String = card_id
+		if not records.has(id):
+			return {}
+		var record: Dictionary = records[id]
+		return record.duplicate(true)
+
+
+## Three distinct living heroes, with the one true Lantern Monk at the given position.
+func _wax_party(monk_position: int) -> CombatParty:
+	var others: Array[String] = ["warden", "seamstress", "tinker"]
+	var roster: Array = []
+	for position in [1, 2, 3]:
+		if position == monk_position:
+			roster.append({"id": "lantern_monk", "max_hp": WAX_PARTY_HP["lantern_monk"]})
+		else:
+			var hero_id: String = others.pop_front()
+			roster.append({"id": hero_id, "max_hp": WAX_PARTY_HP[hero_id]})
+	var party := CombatParty.new(roster)
+	_check(party.is_valid() and party.get_heroes().size() == 3
+		and party.get_hero(monk_position).get("id") == "lantern_monk",
+		"Wax Ward fixture builds three distinct heroes with a living Monk at "
+			+ str(monk_position))
+	return party
+
+
+## A real started turn whose hand genuinely holds every required ID. Extra authored cards leave
+## a remainder in the draw pile, which a real draw pulls into the hand.
+func _wax_deck(cards: Array[String], seed_value: int, required: Array[String]) -> CombatDeck:
+	var deck := _deck(cards, seed_value)
+	var guard := 0
+	while guard < cards.size():
+		var held := true
+		for card_id in required:
+			if not deck.hand.has(card_id):
+				held = false
+		if held:
+			break
+		_check(deck.draw_extra(1) == 1, "Wax Ward fixture draws the next required card")
+		guard += 1
+	for card_id in required:
+		_check(deck.hand.has(card_id) and deck.turn_active
+			and deck.energy == CombatState.TURN_ENERGY,
+			"Wax Ward fixture genuinely holds a playable " + card_id)
+	return deck
+
+
+## Independent oracle: one printed-energy charge, additive Block on the Monk's own current seat,
+## one discard, and no draw, heal, cleanse, status or RNG advance.
+func _wax_expected(before: Array, card_id: String, block: int, owner_position: int) -> Array:
+	var after := before.duplicate(true)
+	after[4] -= WAX_COST
+	after[6] -= WAX_COST
+	after[7][owner_position - 1]["block"] += block
+	var index: int = after[1].find(card_id)
+	if index < 0:
+		return after
+	after[1].remove_at(index)
+	after[2].append(card_id)
+	return after
+
+
+func _wax_accepted(deck: CombatDeck, party: CombatParty, card_id: String, monk_position: int,
+		label: String) -> void:
+	var block: int = WAX_BLOCKS[card_id]
+	var heroes_before := party.get_heroes()
+	var block_before: int = heroes_before[monk_position - 1]["block"]
+	var hand_before: int = deck.hand.count(card_id)
+	var discard_before: int = deck.discard_pile.count(card_id)
+	var energy_before: int = deck.energy
+	var draw_before: Array = deck.draw_pile.duplicate()
+	var before := _snapshot(deck, party)
+	_check(deck.hand.has(card_id) and deck.turn_active and energy_before >= WAX_COST,
+		label + ": real shared hand, active turn and energy before play")
+
+	var receipt := wax.play_card(deck, party, card_id)
+	_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+		label + ": accepted")
+	_check(receipt.get("card_id") == card_id and receipt.get("cost") == WAX_COST
+		and receipt.get("owner_position") == monk_position
+		and receipt.get("block_gained") == block
+		and receipt.get("block_before") == block_before
+		and receipt.get("block_after") == block_before + block,
+		label + ": receipt names exact card, cost, owner seat and Block")
+	_check(_snapshot(deck, party) == _wax_expected(before, card_id, block, monk_position),
+		label + ": complete piles, party, energy, turn and seeded RNG transition")
+	_check(party.get_hero(monk_position)["block"] == block_before + block,
+		label + ": Monk alone gains additive printed Block " + str(block))
+	var heroes_after := party.get_heroes()
+	for position in [1, 2, 3]:
+		if position != monk_position:
+			_check(heroes_after[position - 1] == heroes_before[position - 1],
+				label + ": non-owner hero " + str(position) + " record is byte-identical")
+	_check(deck.energy == energy_before - WAX_COST,
+		label + ": exactly one printed energy spent")
+	_check(deck.hand.count(card_id) == hand_before - 1
+		and deck.discard_pile.count(card_id) == discard_before + 1,
+		label + ": exactly one held copy moved to discard")
+	_check(deck.draw_pile == draw_before, label + ": no card is drawn or reshuffled")
+
+
+func _wax_rejected(deck: CombatDeck, party: CombatParty, card_id: Variant, target: int,
+		label: String) -> void:
+	var before := _snapshot(deck, party)
+	var receipt := wax.play_card(deck, party, card_id, target)
+	_check(receipt.get("ok") == false and receipt.get("reason") is String,
+		label + ": refused with a structured reason")
+	_check(_snapshot(deck, party) == before,
+		label + ": atomic refusal preserves party, piles, energy, turn and seeded RNG")
+
+
+func _test_lantern_monk_wax_ward() -> void:
+	_test_wax_ward_matrix()
+	_test_wax_ward_two_copies()
+	_test_wax_ward_replay()
+	_test_wax_ward_rejections()
+
+
+## AC1: both genuine printings, from a living Monk at each of seats 1-3, spend one printed energy,
+## discard one held copy and add only the printed Block to the Monk atop any existing Block.
+func _test_wax_ward_matrix() -> void:
+	var pool := LanternMonkPoolCards.new()
+	for card_id: String in WAX_BLOCKS:
+		_check(pool.has_card(card_id),
+			card_id + " is a genuine authored Lantern Monk pool record")
+		var record: Dictionary = pool.get_definition(card_id)
+		_check(record.get("owner") == "lantern_monk" and record.get("target_kind") == "self"
+			and record.get("cost") == WAX_COST
+			and record.get("effects") == {"block": WAX_BLOCKS[card_id]}
+			and record.get("from_positions") == [1, 2, 3] and record.get("to_positions") == [],
+			card_id + " authored line matches the independent expectation")
+		_check(wax.is_supported_card(card_id), card_id + " is supported")
+		for monk_position in [1, 2, 3]:
+			var party := _wax_party(monk_position)
+			_check(party.gain_block(monk_position, 3), "Monk already carries Block")
+			for other in [1, 2, 3]:
+				if other != monk_position:
+					_check(party.gain_block(other, 2 + other), "ally carries independent Block")
+			party._heroes[monk_position - 1]["statuses"] = {"weak": 2}
+			var deck := _wax_deck([card_id, "wax_a", "wax_b", "wax_c", "wax_d", "wax_e"],
+				42, [card_id])
+			_wax_accepted(deck, party, card_id, monk_position,
+				card_id + " from a living Monk at " + str(monk_position))
+			_check(party.get_hero(monk_position)["block"] == 3 + WAX_BLOCKS[card_id],
+				card_id + " adds to prior Block instead of resetting it at seat "
+					+ str(monk_position))
+			_check(party.get_hero(monk_position)["statuses"] == {"weak": 2},
+				card_id + " leaves the Monk's status map untouched")
+
+
+## AC2: two separate held copies add their exact printed Block, charge one energy each and
+## discard one copy each, while every other hero record, draw pile, status map and RNG stay put.
+func _test_wax_ward_two_copies() -> void:
+	var party := _wax_party(2)
+	_check(party.gain_block(2, 4) and party.gain_block(1, 6) and party.gain_block(3, 1),
+		"two-copy fixture seeds independent Block on every hero")
+	party._heroes[0]["statuses"] = {"bleed": 1}
+	party._heroes[2]["statuses"] = {"exposed": 2}
+	var deck := _wax_deck(["lantern_monk_wax_ward", "lantern_monk_wax_ward_plus",
+		"wax_a", "wax_b", "wax_c"], 42,
+		["lantern_monk_wax_ward", "lantern_monk_wax_ward_plus"])
+	var rng_before: int = deck._rng.state
+	var draw_before: Array = deck.draw_pile.duplicate()
+	var warden_before := party.get_hero(1)
+	var tinker_before := party.get_hero(3)
+
+	_wax_accepted(deck, party, "lantern_monk_wax_ward", 2, "first of two held copies")
+	_check(party.get_hero(2)["block"] == 9 and deck.energy == 2,
+		"first copy grants 5 atop existing 4 Block and leaves two energy")
+	_wax_accepted(deck, party, "lantern_monk_wax_ward_plus", 2, "second of two held copies")
+	_check(party.get_hero(2)["block"] == 16 and deck.energy == 1,
+		"second copy adds 7 for 16 total and leaves one energy")
+	_check(deck.discard_pile.count("lantern_monk_wax_ward") == 1
+		and deck.discard_pile.count("lantern_monk_wax_ward_plus") == 1
+		and deck.discard_pile.size() == 2,
+		"each held copy was discarded exactly once")
+	_check(not deck.hand.has("lantern_monk_wax_ward")
+		and not deck.hand.has("lantern_monk_wax_ward_plus"),
+		"both played copies left the shared hand")
+	_check(party.get_hero(1) == warden_before and party.get_hero(3) == tinker_before,
+		"both plays leave the non-Monk hero records byte-identical")
+	_check(party.get_hero(1)["statuses"] == {"bleed": 1}
+		and party.get_hero(3)["statuses"] == {"exposed": 2},
+		"both plays leave every status map exactly as it was")
+	_check(deck._rng.state == rng_before and deck.draw_pile == draw_before,
+		"both plays neither draw nor advance the seeded RNG")
+	_wax_rejected(deck, party, "lantern_monk_wax_ward", 0,
+		"a spent copy cannot be played a third time")
+
+
+## Seeded shared-deck state, two plays and a real turn refill replay exactly.
+func _wax_sequence(seed_value: int) -> Array:
+	var party := _wax_party(2)
+	var deck := _wax_deck(["lantern_monk_wax_ward", "lantern_monk_wax_ward_plus",
+		"wax_a", "wax_b", "wax_c"], seed_value,
+		["lantern_monk_wax_ward", "lantern_monk_wax_ward_plus"])
+	var trace: Array = [_snapshot(deck, party)]
+	_check(wax.play_card(deck, party, "lantern_monk_wax_ward", 0).get("ok", false),
+		"Wax Ward replay base commits")
+	trace.append(_snapshot(deck, party))
+	_check(wax.play_card(deck, party, "lantern_monk_wax_ward_plus", 0).get("ok", false),
+		"Wax Ward replay '+' commits")
+	trace.append(_snapshot(deck, party))
+	_wax_rejected(deck, party, "lantern_monk_wax_ward", 0, "Wax Ward replay consumed base")
+	trace.append(_snapshot(deck, party))
+	_check(deck.end_turn() and deck.start_turn(),
+		"Wax Ward replay refills a real next shared turn")
+	trace.append(_snapshot(deck, party))
+	return trace
+
+
+func _test_wax_ward_replay() -> void:
+	for seed_value in [0, 42, 987654]:
+		var first := _wax_sequence(seed_value)
+		var second := _wax_sequence(seed_value)
+		_check(first.size() == 5 and second.size() == 5,
+			"Wax Ward replay records five complete real snapshots")
+		_check(first == second, "identical Wax Ward plays, party and seed replay exactly")
+
+
+## AC3: every failed precondition refuses before any payment or mutation and leaves a valid
+## retry possible.
+func _test_wax_ward_rejections() -> void:
+	var base := "lantern_monk_wax_ward"
+	var plus := "lantern_monk_wax_ward_plus"
+
+	_check(wax.is_supported_card(base) and wax.is_supported_card(plus),
+		"both genuine Wax Ward printings are supported")
+	for unsupported in ["warden_brace", "seamstress_mend", "lantern_monk_moth_shroud",
+			"lantern_monk_wick_flicker", "lantern_monk_wax_ward_plus_plus", "", 7, null,
+			StringName(base), {"id": base, "effects": {"block": 99}}]:
+		_check(not wax.is_supported_card(unsupported),
+			"unsupported ID is not reported as supported: " + str(unsupported))
+
+	# Inactive shared turn while the genuine card and all three energy remain.
+	var inactive := _wax_deck([base, "wax_a", "wax_b"], 42, [base])
+	_check(inactive.combat_state.end_player_turn(), "inactive-turn fixture really ends the turn")
+	inactive.combat_state.energy = CombatState.TURN_ENERGY
+	_check(not inactive.turn_active and inactive.hand.has(base) and inactive.energy == 3,
+		"inactive fixture still holds the real card and full energy")
+	_wax_rejected(inactive, _wax_party(1), base, 0, "inactive shared turn")
+
+	# Null services and an invalid party.
+	var ready := _wax_deck([base], 42, [base])
+	_check(not wax.play_card(null, _wax_party(1), base, 0).get("ok", true),
+		"null deck rejects safely")
+	_check(not wax.play_card(ready, null, base, 0).get("ok", true),
+		"null party rejects safely")
+	_wax_rejected(ready, CombatParty.new([]), base, 0, "invalid empty party")
+
+	# The card exists but is not in the actual hand.
+	var absent := _wax_deck([base, "wax_a", "wax_b"], 42, [base])
+	_check(absent.discard_played(base) and not absent.hand.has(base)
+		and absent.discard_pile.has(base), "absent fixture really moved the card into discard")
+	_wax_rejected(absent, _wax_party(1), base, 0, "card absent from the actual hand")
+
+	# Genuine but unsupported other-hero and other-Lantern-Monk-pool IDs, each really held.
+	for other_id: String in ["warden_brace", "seamstress_mend", "tinker_tune_up",
+			"lantern_monk_moth_shroud", "lantern_monk_wick_flicker", "lantern_monk_lantern_glow"]:
+		var foreign := _wax_deck([other_id], 42, [other_id])
+		_check(foreign.hand.has(other_id), "foreign-card fixture genuinely holds " + other_id)
+		_wax_rejected(foreign, _wax_party(1), other_id, 0, "other hero/pool card " + other_id)
+
+	# Unknown, malformed and forged identifiers while the real card is held.
+	var held := _wax_deck([base], 42, [base])
+	for bad_value in ["", "wax_ward", "lantern_monk_wax_ward_plus_plus", 7, 3.5, null,
+			StringName(base), {"id": base, "cost": 1, "effects": {"block": 5}}]:
+		_wax_rejected(held, _wax_party(1), bad_value, 0,
+			"unsupported identifier " + str(bad_value))
+
+	# Missing and duplicated Monk records in otherwise valid, funded parties.
+	var no_monk := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26}])
+	_check(no_monk.is_valid(), "party without the Monk is otherwise valid")
+	_wax_rejected(_wax_deck([base], 42, [base]), no_monk, base, 0,
+		"no Lantern Monk in the party")
+	var duplicate := _wax_party(2)
+	duplicate._heroes[0]["id"] = "lantern_monk"
+	_check(duplicate.is_valid() and duplicate.get_hero(1)["id"] == "lantern_monk"
+		and duplicate.get_hero(2)["id"] == "lantern_monk",
+		"duplicate-Monk fixture really holds two Monk records")
+	_wax_rejected(_wax_deck([base], 42, [base]), duplicate, base, 0,
+		"duplicate Lantern Monk records")
+
+	# A torn (0 HP) Monk in each legal source seat.
+	for monk_position in [1, 2, 3]:
+		var downed := _wax_party(monk_position)
+		_check(downed.apply_damage(monk_position, 999) and downed.is_downed(monk_position),
+			"torn Monk fixture at " + str(monk_position))
+		_wax_rejected(_wax_deck([base], 42, [base]), downed, base, 0,
+			"torn Monk at " + str(monk_position))
+
+	# Malformed roster records.
+	var roster_edits := [
+		["block", -1], ["hp", 999], ["max_hp", 0], ["position", 5],
+		["statuses", "not a map"], ["statuses", {"weak": "2"}], ["statuses", {7: 1}],
+	]
+	for edit in roster_edits:
+		var malformed := _wax_party(2)
+		malformed._heroes[0][edit[0]] = edit[1]
+		_wax_rejected(_wax_deck([base], 42, [base]), malformed, base, 0,
+			"malformed roster record " + str(edit))
+
+	# Seat 1-3 is never a target choice for a self card: every explicit target is refused.
+	var targets := _wax_deck([base], 42, [base])
+	for bad_target in [-1, 1, 2, 3, 4]:
+		_wax_rejected(targets, _wax_party(2), base, bad_target,
+			"explicit nonzero or invalid target " + str(bad_target))
+	_wax_rejected(targets, _wax_party(2), base, 2,
+		"the Monk's own seat is still not a target choice")
+
+	# A refusal leaves the held copy retryable with the implicit self sentinel.
+	var retry_party := _wax_party(3)
+	var retry_deck := _wax_deck([base], 42, [base])
+	_wax_rejected(retry_deck, retry_party, base, 3, "rejected target leaves the copy retryable")
+	_wax_accepted(retry_deck, retry_party, base, 3, "valid retry after a target refusal")
+	_check(retry_party.get_hero(3)["block"] == WAX_BLOCKS[base]
+		and retry_deck.energy == 2,
+		"retry grants the printed Block and spends one energy")
+
+	# Block overflow refuses before charging; the exact capacity boundary is legal.
+	var full := _wax_party(3)
+	_check(full.gain_block(3, CombatParty.MAX_INT - WAX_BLOCKS[base] + 1),
+		"overflow fixture leaves one point less room than the printed Block")
+	_wax_rejected(_wax_deck([base], 42, [base]), full, base, 0,
+		"Block overflow rejects before spending")
+	var boundary := _wax_party(2)
+	_check(boundary.gain_block(2, CombatParty.MAX_INT - WAX_BLOCKS[plus]),
+		"capacity boundary fixture leaves exactly enough room")
+	var boundary_deck := _wax_deck([plus], 42, [plus])
+	_wax_accepted(boundary_deck, boundary, plus, 2, "exact capacity boundary play")
+	_check(boundary.get_hero(2)["block"] == CombatParty.MAX_INT,
+		"capacity boundary reaches MAX_INT with no overflow")
+
+	# Insufficient shared energy.
+	var poor := _wax_deck([base], 42, [base])
+	_check(poor.try_spend_energy(3) and poor.energy == 0,
+		"energy-shortage fixture really spent all three energy")
+	_wax_rejected(poor, _wax_party(1), base, 0, "insufficient shared energy")
+
+	# A rewritten or relinked catalog record is refused, never paid for.
+	var forgeries: Array = [
+		{"label": "changed Block", "id": base, "set": {"effects": {"block": 9}}},
+		{"label": "extra effect", "id": base,
+			"set": {"effects": {"block": 5, "blind_next_attack": true}}},
+		{"label": "coercible Block", "id": base, "set": {"effects": {"block": "5"}}},
+		{"label": "other owner", "id": base, "set": {"owner": "warden"}},
+		{"label": "free cost", "id": base, "set": {"cost": 0}},
+		{"label": "coercible cost", "id": base, "set": {"cost": "1"}},
+		{"label": "wrong seats", "id": base, "set": {"from_positions": [2, 3]}},
+		{"label": "ally target", "id": base, "set": {"target_kind": "ally_single"}},
+		{"label": "withheld reward flag", "id": base, "set": {"reward_eligible": false}},
+		{"label": "starting copy", "id": base, "set": {"starting_copies": 1}},
+		{"label": "relinked upgrade", "id": base,
+			"set": {"upgrade_id": "lantern_monk_moth_shroud"}},
+		{"label": "missing upgrade link", "id": base, "erase": ["upgrade_id"]},
+		{"label": "forged upgrade Block", "id": plus, "set": {"effects": {"block": 8}}},
+		{"label": "missing back link", "id": plus, "erase": ["upgrade_of"]},
+	]
+	for forgery in forgeries:
+		var card_id: String = forgery["id"]
+		var forged := CombatLanternMonkWaxWardCards.new()
+		forged._catalog = _forged_wax_catalog(card_id, forgery.get("set", {}),
+			forgery.get("erase", []))
+		var forged_deck := _wax_deck([card_id], 42, [card_id])
+		var forged_party := _wax_party(1)
+		var before := _snapshot(forged_deck, forged_party)
+		_check(not forged.is_supported_card(card_id),
+			"forged " + forgery["label"] + " is not supported")
+		_check(forged.play_card(forged_deck, forged_party, card_id, 0).get("ok") == false,
+			"forged " + forgery["label"] + " refuses")
+		_check(_snapshot(forged_deck, forged_party) == before,
+			"forged " + forgery["label"] + " changes no party, pile, energy or RNG state")
+
+	# The genuine service and state still play after every refusal above.
+	var recovered_deck := _wax_deck([base], 42, [base])
+	var recovered_party := _wax_party(2)
+	_wax_accepted(recovered_deck, recovered_party, base, 2,
+		"genuine service recovers after forged-catalog refusals")
+
+
+## A catalog double that keeps both genuine records but rewrites one of them.
+func _forged_wax_catalog(target_id: String, changes: Dictionary,
+		erased: Array) -> ForgedWaxCatalog:
+	var pool := LanternMonkPoolCards.new()
+	var definitions := {}
+	for card_id: String in WAX_BLOCKS:
+		definitions[card_id] = pool.get_definition(card_id)
+	var record: Dictionary = definitions[target_id]
+	for key in changes:
+		record[key] = changes[key]
+	for key in erased:
+		record.erase(key)
+	definitions[target_id] = record
+	return ForgedWaxCatalog.new(definitions)
