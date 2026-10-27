@@ -78,6 +78,7 @@ var _heal_cards := CombatSeamstressPoolHeals.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
 var _pitchfork := CombatScarecrowPitchforkCards.new()
+var _bolas := CombatYarnRangerBolasCards.new()
 var _pop := CombatButtonGolemPopCards.new()
 var _sew := CombatButtonGolemSewCards.new()
 var _roll := CombatButtonGolemRollCards.new()
@@ -619,10 +620,12 @@ func _path_discount(card_id: String) -> int:
 
 
 func _is_enemy_card(card_id: String) -> bool:
-	return _feint.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _pitchfork.is_supported_card(card_id)
+	return _feint.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _pitchfork.is_supported_card(card_id) or _bolas.is_supported_card(card_id)
 
 
 func _enemy_service(card_id: String):
+	if _bolas.is_supported_card(card_id):
+		return _bolas
 	if _pitchfork.is_supported_card(card_id):
 		return _pitchfork
 	return _pop if _pop.is_supported_card(card_id) else _feint
@@ -1302,7 +1305,7 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		_pending.heroes = party.get_heroes()
 		_pending.hand = deck.hand.duplicate()
 		_pending.selections = {}
-	if CombatYarnRangerKnitCards.CARDS.has(card_id) or card_id in VIGIL_IDS or card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id) or _roll.is_supported_card(card_id):
+	if CombatYarnRangerKnitCards.CARDS.has(card_id) or _bolas.is_supported_card(card_id) or card_id in VIGIL_IDS or card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id) or _roll.is_supported_card(card_id):
 		_pending.owner_roster = _party.get_heroes().map(func(hero): return [hero.id, hero.position])
 	if _roll.is_supported_card(card_id):
 		for hero in _party._heroes:
@@ -1389,7 +1392,7 @@ func _selection_valid() -> bool:
 		return false
 	if (_pending.id in CombatSupportCards.SCARECROW_STRAW_IDS or CombatYarnRangerKnitCards.CARDS.has(_pending.id)) and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
 		return false
-	if (_pop.is_supported_card(_pending.id) or _sew.is_supported_card(_pending.id) or _roll.is_supported_card(_pending.id)) and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
+	if (_pop.is_supported_card(_pending.id) or _bolas.is_supported_card(_pending.id) or _sew.is_supported_card(_pending.id) or _roll.is_supported_card(_pending.id)) and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
 		return false
 	if _roll.is_supported_card(_pending.id) and not is_same(_pending.owner_ref, _party._heroes[_pending.owner_ref.position - 1]):
 		return false
@@ -1472,7 +1475,7 @@ func _choose_target() -> void:
 		_targets[panel] = {"callback": callback, "cue": cue,
 			"position": index + 1, "hero_id": _target_actor(index + 1).id,
 			"mouse_filter": previous_filter}
-		if _pop.is_supported_card(_pending.id) or _pitchfork.is_supported_card(_pending.id):
+		if _pop.is_supported_card(_pending.id) or _pitchfork.is_supported_card(_pending.id) or _bolas.is_supported_card(_pending.id):
 			_targets[panel].actor_ref = app.enemies._enemies[index]
 		if _roll.is_supported_card(_pending.id):
 			_targets[panel].actor_ref = _party._heroes[index]
