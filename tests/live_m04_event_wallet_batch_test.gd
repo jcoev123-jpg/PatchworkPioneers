@@ -306,6 +306,7 @@ func _reject_wallet(callback: Callable, label: String) -> void:
 func _reach(fixture: Dictionary, funded: bool = true) -> void:
 	app.run_seed = fixture.seed
 	await _click(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
 	_check(app.run_map != null and app.run_rng != null, "real title Start creates seeded run")
 	var service := RunV3HeroEventOffers.new(_party_ids())
 	_check(service.is_valid(), "live three-hero party has a valid authored Event service")
