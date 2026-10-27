@@ -914,7 +914,8 @@ func _test_negative_fixtures() -> void:
 func _harder_expected() -> Dictionary:
 	return {
 		"shearwing_mantis": {"id": "shearwing_mantis", "name": "Shearwing Mantis",
-			"max_hp": 26, "art_path": "res://assets/paper/enemies/shearwing_mantis.png",
+			"max_hp": 26, "chew_block_on_attack": true,
+			"art_path": "res://assets/paper/enemies/shearwing_mantis.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "snip_block", "amount": 0, "weight": 2},
 				{"type": "attack", "amount": 8, "weight": 3}]}},
@@ -1236,8 +1237,9 @@ func _test_harder_normal_phase_actions() -> void:
 			_check(debuff_party.get_hero(position).get("statuses", {}).get("exposed", 0) == 0,
 				"unmarked hero %d gains no Exposed" % position)
 	# Every authored attack resolves through the real phase with Block first.
+	# Shearwing Mantis is distinguished: its chew_block_on_attack strips all
+	# Block before dealing its 8 damage, not the ordinary absorption path.
 	var attack_cases := [
-		{"id": "shearwing_mantis", "amount": 8, "block": 5},
 		{"id": "spoolback_hound", "amount": 7, "block": 5},
 		{"id": "inkbrush_imp", "amount": 6, "block": 4}]
 	for case in attack_cases:
@@ -1278,6 +1280,66 @@ func _test_harder_normal_phase_actions() -> void:
 			== hp_before - (int(case.amount) - absorbed),
 			"only the unabsorbed remainder reaches HP for the %d-damage hit: %s"
 				% [int(case.amount), String(case.id)])
+	# Shearwing Mantis positive chew_block_on_attack test.
+	var mantis_attack_party := _party()
+	_check(mantis.get("chew_block_on_attack") is bool
+		and mantis.get("chew_block_on_attack") == true,
+		"precondition: Mantis really carries the chew_block flag")
+	_check(mantis_attack_party.gain_block(1, 5),
+		"precondition: the Mantis target really holds 5 Block")
+	var hp_before_mantis := int(mantis_attack_party.get_hero(1).get("hp", 0))
+	var mantis_attack := _force_normal_alternative(mantis,
+		_authored_alternative(mantis, "attack", 8), mantis_attack_party)
+	if not mantis_attack.is_empty():
+		_check(mantis_attack.intents.size() == 1
+			and mantis_attack.intents[0].get("type") == "attack"
+			and int(mantis_attack.intents[0].get("amount", -1)) == 8
+			and mantis_attack.intents[0].get("target_position") == 1,
+			"the Mantis attack-8 announces on the front hero")
+		var mantis_receipt := CombatEnemyPhase.new().execute_phase(
+			mantis_attack_party, mantis_attack.enemies,
+			mantis_attack.intents, null, true)
+		_check(mantis_receipt.get("ok") == true
+			and mantis_receipt.get("events", []).size() == 1,
+			"AC2: the Mantis chew_block attack resolves through the real phase")
+		if mantis_receipt.get("ok", false) and mantis_receipt.get("events", []).size() == 1:
+			var event: Dictionary = mantis_receipt["events"][0]
+			_check(event.get("type") == "attack" and event.get("applied") == true
+				and event.get("target_position") == 1,
+				"the phase reports the applied Mantis attack on the front hero")
+		# Block is fully eaten before the 8 damage lands.
+		_check(mantis_attack_party.get_hero(1).get("block") == 0,
+			"AC2: Mantis chew eats all 5 Block before damage")
+		_check(mantis_attack_party.get_hero(1).get("hp") == hp_before_mantis - 8,
+			"AC2: the front hero loses exactly 8 HP after Block is stripped")
+	# The standalone snip stays a zero-damage Block strip.
+	var snip_party_fresh := _party()
+	_check(snip_party_fresh.gain_block(1, 5),
+		"precondition: fresh party holds 5 Block for standalone snip")
+	var snip_receipt_check := _force_normal_alternative(mantis,
+		_authored_alternative(mantis, "snip_block", 0), snip_party_fresh)
+	if not snip_receipt_check.is_empty():
+		var snip_receipt := CombatEnemyPhase.new().execute_phase(
+			snip_party_fresh, snip_receipt_check.enemies,
+			snip_receipt_check.intents, null, true)
+		_check(snip_receipt.get("ok") == true,
+			"AC3: the Mantis snip resolves without damage")
+		_check(snip_party_fresh.get_hero(1).get("block") == 0
+			and snip_party_fresh.get_hero(1).get("hp") == 40,
+			"AC3: standalone snip strips Block but leaves HP untouched")
+	# AC4: malformed chew_block_on_attack on Mantis fails the phase closed.
+	var malformed_mantis := mantis.duplicate(true)
+	malformed_mantis["chew_block_on_attack"] = 1
+	var malformed_party := _party()
+	var malformed_enemies := CombatEnemies.new([malformed_mantis])
+	_check(malformed_enemies.is_valid(),
+		"precondition: malformed Mantis roster constructs")
+	var malformed_before: Array = malformed_party.get_heroes()
+	var malformed_receipt := CombatEnemyPhase.new().execute_phase(
+		malformed_party, malformed_enemies, [_raw_attack_intent(1)], null, true)
+	_check(malformed_receipt == {"ok": false, "events": []}
+		and malformed_party.get_heroes() == malformed_before,
+		"AC4: malformed Mantis chew_block metadata rejects the phase")
 
 
 ## The real Warden reaction hand, seeded like the existing guard-phase fixture.
