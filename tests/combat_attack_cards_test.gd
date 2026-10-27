@@ -38,6 +38,10 @@ func _initialize() -> void:
 	_test_m05_head_statuses()
 	_test_m05_head_rejections()
 	_test_red_bobbin_cuff()
+	_test_one_shot_token_bridge()
+	_test_one_shot_token_held_card()
+	_test_one_shot_token_bridge_rejections()
+	_test_one_shot_token_card_rejections()
 	for failure in failures:
 		printerr(failure)
 	print("combat_attack_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -2307,3 +2311,402 @@ func _test_thorns_seeded_replay() -> void:
 		and first.after.discard.has("tinker_scrap_bomb")
 		and first.after.discard.has("warden_strike") and first.latch,
 		"two real paid cards, discarded copies, intact first-attack latch and active turn")
+
+
+## Bridge receipt shape for the direct one-shot comparisons.
+func _status_receipt(damage: int, absorbed: int, loss: int) -> Dictionary:
+	return {"ok": true, "damage": damage, "block_absorbed": absorbed, "hp_loss": loss}
+
+
+func _status_failure() -> Dictionary:
+	return {"ok": false, "damage": 0, "block_absorbed": 0, "hp_loss": 0}
+
+
+func _bridge_reject_enemy(bridge: CombatStatusAttacks, enemies: CombatEnemies,
+		position: int, base_damage: int, attacker: Dictionary, defender: Dictionary,
+		label: String) -> void:
+	var roster_before := enemies.get_enemies()
+	var attacker_before := attacker.duplicate(true)
+	var defender_before := defender.duplicate(true)
+	_check(bridge.resolve_vs_enemy(enemies, position, base_damage, attacker, defender)
+		== _status_failure(), "one-shot enemy refusal: " + label)
+	_check(enemies.get_enemies() == roster_before,
+		"one-shot enemy refusal leaves the roster unchanged: " + label)
+	_check(attacker == attacker_before and defender == defender_before,
+		"one-shot enemy refusal leaves the supplied maps unchanged: " + label)
+
+
+func _bridge_reject_hero(bridge: CombatStatusAttacks, party: CombatParty,
+		position: int, base_damage: int, attacker: Dictionary, defender: Dictionary,
+		label: String) -> void:
+	var roster_before := party.get_heroes()
+	var attacker_before := attacker.duplicate(true)
+	var defender_before := defender.duplicate(true)
+	_check(bridge.resolve_vs_hero(party, position, base_damage, attacker, defender)
+		== _status_failure(), "one-shot hero refusal: " + label)
+	_check(party.get_heroes() == roster_before,
+		"one-shot hero refusal leaves the roster unchanged: " + label)
+	_check(attacker == attacker_before and defender == defender_before,
+		"one-shot hero refusal leaves the supplied maps unchanged: " + label)
+
+
+## AC1: the shipped one-shot defense tokens are role-aware on the shared status
+## bridge. A Dodging attacker and an already-Blinded defender receive exactly the
+## token-free Weak/Exposed/Tangled damage and the same Block-before-HP receipt,
+## and neither token is spent, aged or mutated.
+func _test_one_shot_token_bridge() -> void:
+	var bridge := CombatStatusAttacks.new()
+	var bases: Array[Dictionary] = [
+		{"attack": {}, "defend": {}},
+		{"attack": {"weak": 1}, "defend": {}},
+		{"attack": {}, "defend": {"exposed": 1}},
+		{"attack": {"weak": 1}, "defend": {"exposed": 1, "tangled": 2}},
+	]
+	for base in bases:
+		var base_attack: Dictionary = base["attack"].duplicate(true)
+		var base_defend: Dictionary = base["defend"].duplicate(true)
+		var control_enemies := _enemies()
+		var control_party := _party()
+		_check(control_enemies.gain_block(1, 4) and control_party.gain_block(1, 6),
+			"one-shot control fixtures hold genuine Block")
+		seed(5521)
+		var next_global := randi()
+		seed(5521)
+		var expected_enemy := bridge.resolve_vs_enemy(control_enemies, 1, 6,
+			base_attack, base_defend)
+		var expected_hero := bridge.resolve_vs_hero(control_party, 1, 8,
+			base_attack, base_defend)
+		_check(expected_enemy["ok"] and expected_hero["ok"]
+			and expected_enemy["block_absorbed"] == 4
+			and expected_hero["block_absorbed"] == 6,
+			"token-free control lands a Block-before-HP hit: " + str(base))
+		_check(randi() == next_global, "token-free bridge hit consumes no global RNG")
+		var control_roster := control_enemies.get_enemies()
+		var control_heroes := control_party.get_heroes()
+		for token in [0, 1]:
+			for placement in ["attacker", "defender", "both"]:
+				var attack: Dictionary = base_attack.duplicate(true)
+				var defend: Dictionary = base_defend.duplicate(true)
+				if placement != "defender":
+					attack["dodge_next_attack"] = token
+				if placement != "attacker":
+					defend["blind_next_attack"] = token
+				var attack_before := attack.duplicate(true)
+				var defend_before := defend.duplicate(true)
+				_check((placement == "defender" or attack.get("dodge_next_attack") == token)
+					and (placement == "attacker"
+						or defend.get("blind_next_attack") == token),
+					"one-shot %s token %d really places both role tokens"
+						% [placement, token])
+				var enemies := _enemies()
+				var party := _party()
+				_check(enemies.gain_block(1, 4) and party.gain_block(1, 6),
+					"one-shot fixtures repeat the control Block")
+				var rng := RandomNumberGenerator.new()
+				rng.seed = 864213
+				var rng_before := rng.state
+				var enemy_result := bridge.resolve_vs_enemy(enemies, 1, 6, attack, defend)
+				var hero_result := bridge.resolve_vs_hero(party, 1, 8, attack, defend)
+				_check(enemy_result == expected_enemy and hero_result == expected_hero,
+					"one-shot %s token %d keeps both receipts identical to the control"
+						% [placement, token])
+				_check(enemies.get_enemies() == control_roster
+					and party.get_heroes() == control_heroes,
+					"one-shot %s token %d leaves the same rosters as the control"
+						% [placement, token])
+				_check(attack == attack_before and defend == defend_before,
+					"one-shot %s token %d is neither consumed nor mutated" % [placement, token])
+				_check(rng.state == rng_before,
+					"one-shot %s token %d leaves the run RNG untouched" % [placement, token])
+	# The tokens also live on the authentic roster records: the bridge reads those
+	# maps directly, still lands the plain receipt and leaves both tokens in place.
+	var record_enemies := _enemies()
+	var record_party := _party()
+	record_party._heroes[0]["statuses"] = {"dodge_next_attack": 1}
+	record_enemies._enemies[0]["statuses"] = {"blind_next_attack": 1}
+	_check(record_enemies.gain_block(1, 4) and record_party.gain_block(1, 6),
+		"record-backed one-shot fixtures hold genuine Block")
+	var record_enemy_hit := bridge.resolve_vs_enemy(record_enemies, 1, 6,
+		record_party.get_hero(1)["statuses"], record_enemies.get_enemy(1)["statuses"])
+	var record_hero_hit := bridge.resolve_vs_hero(record_party, 1, 8,
+		record_party.get_hero(1)["statuses"], record_enemies.get_enemy(1)["statuses"])
+	_check(record_enemy_hit == _status_receipt(6, 4, 2)
+		and record_hero_hit == _status_receipt(8, 6, 2),
+		"record-backed Dodge/Blind hits keep the plain floor-rounded receipts")
+	_check(record_party.get_hero(1)["statuses"] == {"dodge_next_attack": 1}
+		and record_enemies.get_enemy(1)["statuses"] == {"blind_next_attack": 1},
+		"both roster records keep their one-shot defense tokens after the hits")
+	_check(record_party.get_hero(1)["hp"] == 38 and record_party.get_hero(1)["block"] == 0
+		and record_enemies.get_enemy(1)["hp"] == 16
+		and record_enemies.get_enemy(1)["block"] == 0,
+		"record-backed one-shot hits spend Block before HP on both rosters")
+
+
+## AC2: one authentic seeded Prick transaction from the living Seamstress at her
+## real slot against a legal living target, optionally carrying the shipped
+## one-shot tokens on the owner/target and optional caller-supplied snapshots.
+func _one_shot_prick(seed_value: int, with_tokens: bool, supplied: bool) -> Dictionary:
+	var service := CombatAttackCards.new()
+	var deck := _deck(["seamstress_prick"], seed_value)
+	var party := _party()
+	var enemies := _enemies([40, 40, 40])
+	_check(deck.hand.has("seamstress_prick") and deck.turn_active and deck.energy >= 1,
+		"one-shot fixture holds the real Prick in an active paid turn")
+	_check(party.get_hero(2)["id"] == "seamstress" and not party.is_downed(2),
+		"one-shot fixture has the living Seamstress in her real slot")
+	if with_tokens:
+		party._heroes[1]["statuses"] = {"dodge_next_attack": 1}
+		enemies._enemies[2]["statuses"] = {"blind_next_attack": 1}
+	var attacker: Dictionary = {"dodge_next_attack": 1} if supplied else {}
+	var defenders: Dictionary = {3: {"blind_next_attack": 1}} if supplied else {}
+	var attacker_before := attacker.duplicate(true)
+	var defenders_before := defenders.duplicate(true)
+	var before := _snapshot(deck, party, enemies)
+	var copies: int = deck.draw_pile.size() + deck.hand.size() + deck.discard_pile.size()
+	var latch_before: bool = service._tinker._consumed
+	var rng_before: int = deck._rng.state
+	seed(66113)
+	var next_global := randi()
+	seed(66113)
+	var forecast := service.forecast_attack(deck, party, enemies, "seamstress_prick",
+		attacker, defenders)
+	var receipt := service.play_attack(deck, party, enemies, "seamstress_prick", 3,
+		attacker, defenders)
+	return {"before": before, "forecast": forecast, "receipt": receipt,
+		"after": _snapshot(deck, party, enemies), "copies": copies,
+		"latch_before": latch_before, "latch": service._tinker._consumed,
+		"rng_before": rng_before, "rng_after": deck._rng.state,
+		"next_global": next_global, "global": randi(),
+		"attacker": attacker, "attacker_before": attacker_before,
+		"defenders": defenders, "defenders_before": defenders_before}
+
+
+## AC2: the genuine held Prick with authentic Dodge on its owner and Blind on its
+## enemy target succeeds exactly once, charges/discards once, preserves both
+## defensive tokens and matches the token-free control receipt and RNG.
+func _test_one_shot_token_held_card() -> void:
+	var control := _one_shot_prick(8841, false, false)
+	var tokens := _one_shot_prick(8841, true, false)
+	var supplied := _one_shot_prick(8841, true, true)
+	var expected_hit := _hit(3, 3, 0, 3, {"bleed": 3})
+	_check(control["attacker"].is_empty() and control["defenders"].is_empty()
+		and not control["before"]["party"][1].has("statuses")
+		and not control["before"]["enemies"][2].has("statuses"),
+		"the token-free control really carries no Dodge or Blind")
+	_check(tokens["before"]["party"][1]["statuses"] == {"dodge_next_attack": 1}
+		and tokens["before"]["enemies"][2]["statuses"] == {"blind_next_attack": 1}
+		and supplied["attacker"] == {"dodge_next_attack": 1}
+		and supplied["defenders"] == {3: {"blind_next_attack": 1}},
+		"the token and supplied runs really carry the authentic Dodge and Blind")
+	for run in [control, tokens, supplied]:
+		_check(run["receipt"] == {"ok": true, "hits": [expected_hit]},
+			"one-shot Prick keeps its normal confirmed Bleed 3 hit")
+		_check(run["forecast"] == {"playable": true, "requires_selection": true,
+			"hits": [{"position": 1, "damage": 3}, {"position": 2, "damage": 3},
+				{"position": 3, "damage": 3}]},
+			"one-shot Prick forecast offers every legal target at printed damage")
+		_check(run["after"]["energy"] == 2 and run["after"]["state_energy"] == 2,
+			"one-shot Prick charges exactly one energy")
+		_check(run["after"]["discard"].count("seamstress_prick")
+			== run["before"]["discard"].count("seamstress_prick") + 1,
+			"one-shot Prick discards exactly one genuine held copy")
+		_check(run["after"]["draw"].size() + run["after"]["hand"].size()
+			+ run["after"]["discard"].size() == run["copies"],
+			"one-shot Prick keeps every copied card in exactly one pile")
+		_check(run["rng_after"] == run["rng_before"]
+			and run["global"] == run["next_global"],
+			"one-shot Prick leaves the seeded run and global RNG untouched")
+		_check(not run["latch"] and not run["latch_before"],
+			"one-shot Prick never touches Tinker's first-hit latch")
+		_check(run["attacker"] == run["attacker_before"]
+			and run["defenders"] == run["defenders_before"],
+			"one-shot Prick never mutates the optional caller snapshots")
+		_check(run["after"]["enemies"][2]["hp"] == 37
+			and run["after"]["enemies"][2]["block"] == 0,
+			"one-shot Prick lands its three damage on the living target")
+		_check(run["after"]["enemies"][0] == run["before"]["enemies"][0]
+			and run["after"]["enemies"][1] == run["before"]["enemies"][1],
+			"one-shot Prick leaves the unselected enemy slots untouched")
+	_check(control["after"]["enemies"][2]["statuses"] == {"bleed": 3},
+		"token-free control applies exactly the printed plus passive Bleed 3")
+	_check(tokens["after"]["enemies"][2]["statuses"] == {"blind_next_attack": 1, "bleed": 3}
+		and supplied["after"]["enemies"][2]["statuses"]
+			== {"blind_next_attack": 1, "bleed": 3},
+		"the Blinded target keeps Blind 1 and still gains its Bleed 3")
+	_check(tokens["after"]["party"][1]["statuses"] == {"dodge_next_attack": 1}
+		and supplied["after"]["party"][1]["statuses"] == {"dodge_next_attack": 1},
+		"the Dodging owner keeps Dodge 1 through the paid attack")
+	_check(not control["after"]["party"][1].has("statuses"),
+		"the token-free control owner gains no invented status")
+	_check(tokens["after"]["party"][1]["hp"] == control["after"]["party"][1]["hp"]
+		and tokens["after"]["party"][0] == control["after"]["party"][0]
+		and tokens["after"]["party"][2] == control["after"]["party"][2],
+		"one-shot tokens add no outgoing damage or incoming vulnerability")
+	_check(tokens["receipt"] == control["receipt"]
+		and supplied["receipt"] == control["receipt"]
+		and tokens["forecast"] == control["forecast"]
+		and supplied["forecast"] == control["forecast"],
+		"token and caller-snapshot runs match the token-free control receipts")
+
+
+## AC3: malformed 0/1 tokens, the wrong role for the damage path and every older
+## unsupported status still fail closed on the shared bridge without mutating a
+## roster, spending a miss/evasion token or drawing RNG.
+func _test_one_shot_token_bridge_rejections() -> void:
+	var bridge := CombatStatusAttacks.new()
+	var enemies := _enemies()
+	var party := _party()
+	_check(enemies.gain_block(1, 4) and party.gain_block(1, 6),
+		"one-shot rejection fixtures have living targets and genuine Block")
+	var malformed: Array[Dictionary] = []
+	for value in [-1, 2, 1.0, true, "1", null, [], {}]:
+		malformed.append({"dodge_next_attack": value})
+		malformed.append({"blind_next_attack": value})
+	for statuses in malformed:
+		_bridge_reject_enemy(bridge, enemies, 1, 6, statuses, {},
+			"malformed attacker token " + str(statuses))
+		_bridge_reject_enemy(bridge, enemies, 1, 6, {}, statuses,
+			"malformed defender token " + str(statuses))
+		_bridge_reject_hero(bridge, party, 1, 8, statuses, {},
+			"malformed hero attacker token " + str(statuses))
+		_bridge_reject_hero(bridge, party, 1, 8, {}, statuses,
+			"malformed hero defender token " + str(statuses))
+	# The opposite roles stay owned by the separate miss/evasion attempt path.
+	for token in [0, 1]:
+		_bridge_reject_enemy(bridge, enemies, 1, 6, {"blind_next_attack": token}, {},
+			"enemy attacker Blind %d is not an ordinary hit" % token)
+		_bridge_reject_enemy(bridge, enemies, 1, 6, {}, {"dodge_next_attack": token},
+			"enemy defender Dodge %d is not an ordinary hit" % token)
+		_bridge_reject_hero(bridge, party, 1, 8, {"blind_next_attack": token}, {},
+			"hero attacker Blind %d is not an ordinary hit" % token)
+		_bridge_reject_hero(bridge, party, 1, 8, {}, {"dodge_next_attack": token},
+			"hero defender Dodge %d is not an ordinary hit" % token)
+	for pairing in [
+		{"attack": {"dodge_next_attack": 1, "blind_next_attack": 0}, "defend": {}},
+		{"attack": {}, "defend": {"blind_next_attack": 1, "dodge_next_attack": 0}},
+		{"attack": {"dodge_next_attack": 1, "poison": 1}, "defend": {}},
+		{"attack": {}, "defend": {"blind_next_attack": 1, "poison": 1}},
+		{"attack": {"dodge_next_attack": 1, 1: 2}, "defend": {}},
+		{"attack": {}, "defend": {"blind_next_attack": 1, "Blind_Next_Attack": 1}},
+	]:
+		_bridge_reject_enemy(bridge, enemies, 1, 6, pairing["attack"], pairing["defend"],
+			"legal token beside an illegal entry " + str(pairing))
+		_bridge_reject_hero(bridge, party, 1, 8, pairing["attack"], pairing["defend"],
+			"legal token beside an illegal hero entry " + str(pairing))
+	for position in [-1, 0, 4, 100]:
+		_bridge_reject_enemy(bridge, enemies, position, 6,
+			{"dodge_next_attack": 1}, {"blind_next_attack": 1},
+			"missing enemy slot %d with legal tokens" % position)
+		_bridge_reject_hero(bridge, party, position, 8,
+			{"dodge_next_attack": 1}, {"blind_next_attack": 1},
+			"missing hero slot %d with legal tokens" % position)
+	var slain := _enemies([40, 40, 40])
+	_check(slain.apply_damage(2, 40) and slain.is_slain(2),
+		"one-shot bridge fixture really has a slain enemy")
+	_bridge_reject_enemy(bridge, slain, 2, 6, {"dodge_next_attack": 1},
+		{"blind_next_attack": 1}, "slain enemy with legal tokens")
+	var downed := _party()
+	_check(downed.apply_damage(2, 30) and downed.is_downed(2),
+		"one-shot bridge fixture really has a downed hero")
+	_bridge_reject_hero(bridge, downed, 2, 8, {"dodge_next_attack": 1},
+		{"blind_next_attack": 1}, "downed hero with legal tokens")
+	for amount in [-1]:
+		_bridge_reject_enemy(bridge, enemies, 1, amount, {"dodge_next_attack": 1},
+			{"blind_next_attack": 1}, "negative damage with legal tokens")
+		_bridge_reject_hero(bridge, party, 1, amount, {"dodge_next_attack": 1},
+			{"blind_next_attack": 1}, "negative hero damage with legal tokens")
+	# A legal token still resolves once the malformed fixture is corrected.
+	var repaired := _enemies()
+	_check(repaired.gain_block(1, 4), "repaired one-shot fixture has Block")
+	_check(bridge.resolve_vs_enemy(repaired, 1, 6, {"dodge_next_attack": 1},
+		{"blind_next_attack": 1}) == _status_receipt(6, 4, 2),
+		"corrected one-shot request succeeds exactly once")
+
+
+## AC3: the held-card preflight refuses every invalid supplied snapshot before
+## energy, deck, roster, passive or RNG can change, and still accepts the legal
+## token pair from the previous test.
+func _test_one_shot_token_card_rejections() -> void:
+	var card_cases: Array[Dictionary] = [
+		{"attacker": {"blind_next_attack": 1}, "defenders": {},
+			"label": "supplied attacker Blind 1"},
+		{"attacker": {"blind_next_attack": 0}, "defenders": {},
+			"label": "supplied attacker Blind 0"},
+		{"attacker": {}, "defenders": {3: {"dodge_next_attack": 1}},
+			"label": "supplied defender Dodge 1"},
+		{"attacker": {}, "defenders": {3: {"dodge_next_attack": 0}},
+			"label": "supplied defender Dodge 0"},
+		{"attacker": {"dodge_next_attack": 1, "blind_next_attack": 0}, "defenders": {},
+			"label": "supplied attacker carrying both tokens"},
+		{"attacker": {}, "defenders": {3: {"blind_next_attack": 1, "dodge_next_attack": 1}},
+			"label": "supplied defender carrying both tokens"},
+		{"attacker": {"dodge_next_attack": 1, "poison": 1}, "defenders": {},
+			"label": "legal attacker token beside an unsupported status"},
+		{"attacker": {}, "defenders": {3: {"blind_next_attack": 1, "poison": 1}},
+			"label": "legal defender token beside an unsupported status"},
+		{"attacker": {}, "defenders": {"3": {"blind_next_attack": 1}},
+			"label": "String defender slot with a legal token"},
+		{"attacker": {}, "defenders": {4: {"blind_next_attack": 1}},
+			"label": "unoccupied defender slot with a legal token"},
+	]
+	for value in [-1, 2, 1.0, true, "1", null, [], {}]:
+		card_cases.append({"attacker": {"dodge_next_attack": value}, "defenders": {},
+			"label": "malformed supplied attacker Dodge " + str(value)})
+		card_cases.append({"attacker": {}, "defenders": {3: {"blind_next_attack": value}},
+			"label": "malformed supplied defender Blind " + str(value)})
+	for request in card_cases:
+		var service := CombatAttackCards.new()
+		var deck := _deck(["seamstress_prick"])
+		var party := _party()
+		var enemies := _enemies([40, 40, 40])
+		var before := _snapshot(deck, party, enemies)
+		seed(3781)
+		var next_global := randi()
+		seed(3781)
+		_check(service.forecast_attack(deck, party, enemies, "seamstress_prick",
+			request["attacker"], request["defenders"])
+			== {"playable": false, "requires_selection": false, "hits": []},
+			request["label"] + ": forecast refuses")
+		_check(_snapshot(deck, party, enemies) == before and randi() == next_global,
+			request["label"] + ": forecast changes no deck, roster, passive or RNG")
+		seed(9107)
+		var play_global := randi()
+		seed(9107)
+		_reject(service, deck, party, enemies, "seamstress_prick", 3,
+			request["label"], request["attacker"], request["defenders"])
+		_check(randi() == play_global,
+			request["label"] + ": rejected play consumes no global RNG")
+	var slain := _enemies([40, 40, 40])
+	_check(slain.apply_damage(3, 40) and slain.is_slain(3),
+		"one-shot held-card rejection target truly slain")
+	_reject(CombatAttackCards.new(), _deck(["seamstress_prick"]), _party(), slain,
+		"seamstress_prick", 3, "slain target with legal Dodge/Blind tokens",
+		{"dodge_next_attack": 1}, {3: {"blind_next_attack": 1}})
+	for target in [0, 4]:
+		_reject(CombatAttackCards.new(), _deck(["seamstress_prick"]), _party(),
+			_enemies([40, 40, 40]), "seamstress_prick", target,
+			"illegal target %d with legal Dodge/Blind tokens" % target,
+			{"dodge_next_attack": 1}, {3: {"blind_next_attack": 1}})
+	var downed := _party()
+	_check(downed.apply_damage(2, 999) and downed.is_downed(2),
+		"the one-shot owner is truly downed before the refusal")
+	_reject(CombatAttackCards.new(), _deck(["seamstress_prick"]), downed,
+		_enemies([40, 40, 40]), "seamstress_prick", 3,
+		"downed Dodging owner with legal tokens", {"dodge_next_attack": 1},
+		{3: {"blind_next_attack": 1}})
+	var empty_energy := _deck(["seamstress_prick"])
+	_check(empty_energy.try_spend_energy(3), "all energy spent before the one-shot refusal")
+	_reject(CombatAttackCards.new(), empty_energy, _party(), _enemies([40, 40, 40]),
+		"seamstress_prick", 3, "unaffordable Dodging owner with legal tokens",
+		{"dodge_next_attack": 1}, {3: {"blind_next_attack": 1}})
+	# The same preflight still accepts the corrected legal token pair, so none of
+	# the refusals above can pass merely because every attack is broken.
+	var legal_deck := _deck(["seamstress_prick"])
+	var legal_party := _party()
+	var legal_enemies := _enemies([40, 40, 40])
+	legal_party._heroes[1]["statuses"] = {"dodge_next_attack": 1}
+	legal_enemies._enemies[2]["statuses"] = {"blind_next_attack": 1}
+	_check(CombatAttackCards.new().play_attack(legal_deck, legal_party, legal_enemies,
+		"seamstress_prick", 3, {"dodge_next_attack": 1}, {3: {"blind_next_attack": 1}})
+		== {"ok": true, "hits": [_hit(3, 3, 0, 3, {"bleed": 3})]},
+		"the corrected supplied token pair still charges and lands the normal hit")

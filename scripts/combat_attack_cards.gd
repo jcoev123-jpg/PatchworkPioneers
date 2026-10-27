@@ -9,6 +9,12 @@ const ATTACK_IDS := [
 	"tinker_pop_shot", "tinker_scrap_bomb"
 ]
 
+## Supplied preview snapshots keep their legacy damage-status shape, plus the one
+## canonical one-shot defense token each role may legitimately carry.
+const LEGACY_STATUS_KEYS: Array[String] = ["bleed", "weak", "exposed"]
+const DODGE_STATUS_KEY := "dodge_next_attack"
+const BLIND_STATUS_KEY := "blind_next_attack"
+
 var _targeting := CombatAttackTargeting.new()
 var _damage := CombatStatusAttacks.new()
 var _area := CombatAreaAttacks.new()
@@ -238,7 +244,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 
 	# Validate ALL supplied status entries, including late or unselected slots,
 	# before damage/energy/discard or first-attack bonus can change.
-	if not _valid_statuses(attacker_statuses):
+	if not _valid_attacker_statuses(attacker_statuses):
 		return _failure()
 	for position in enemy_statuses_by_position:
 		if not position is int or position < 1 or position > CombatEnemies.MAX_ENEMIES:
@@ -246,7 +252,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if enemies.get_enemy(position).is_empty():
 			return _failure()
 		var statuses: Variant = enemy_statuses_by_position[position]
-		if not statuses is Dictionary or not _valid_statuses(statuses):
+		if not statuses is Dictionary or not _valid_defender_statuses(statuses):
 			return _failure()
 
 	# Legacy caller snapshots are validated above but never control real damage.
@@ -367,9 +373,42 @@ func forecast_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemie
 	return {"playable": true, "requires_selection": plan.requires_selection, "hits": hits}
 
 
+## The legacy damage-status snapshot shape, with no one-shot token admitted.
 func _valid_statuses(statuses: Dictionary) -> bool:
+	return _valid_snapshot_statuses(statuses, "")
+
+
+## A hero who is genuinely Dodging may carry the canonical one-shot Dodge token
+## (int 0 inert or 1 active) on its supplied attacker snapshot, so a legal held
+## attack is not refused before it is charged. Attacker Blind still belongs to the
+## separate miss/evasion path and is rejected here rather than struck through.
+func _valid_attacker_statuses(statuses: Dictionary) -> bool:
+	if statuses.has(BLIND_STATUS_KEY):
+		return false
+	return _valid_snapshot_statuses(statuses, DODGE_STATUS_KEY)
+
+
+## An already-Blinded enemy is a legal damage recipient, so a supplied defender
+## snapshot may carry the canonical one-shot Blind token (int 0 or 1). Defender
+## Dodge still belongs to the separate evasion path and is rejected here.
+func _valid_defender_statuses(statuses: Dictionary) -> bool:
+	if statuses.has(DODGE_STATUS_KEY):
+		return false
+	return _valid_snapshot_statuses(statuses, BLIND_STATUS_KEY)
+
+
+## Legacy counts stay nonnegative ints, and at most the one named role token is
+## admitted as exactly the int 0 or 1. Every other status still rejects precharge.
+func _valid_snapshot_statuses(statuses: Dictionary, token_key: String) -> bool:
 	for name in statuses:
-		if not name is String or name not in ["bleed", "weak", "exposed"]:
+		if not name is String:
+			return false
+		if token_key != "" and name == token_key:
+			var token: Variant = statuses[name]
+			if not token is int or (token != 0 and token != 1):
+				return false
+			continue
+		if name not in LEGACY_STATUS_KEYS:
 			return false
 		var count: Variant = statuses[name]
 		if not count is int or count < 0:
