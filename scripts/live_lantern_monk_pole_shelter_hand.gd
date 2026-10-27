@@ -1,11 +1,13 @@
 extends Node
-## Scene-mounted, presentation-only Pole Shelter chooser. The paid rules live exclusively
-## in CombatLanternMonkPoleShelterCards; this node never mutates a roster to preview.
+## Scene-mounted Monk hand presenter. Paid rules live in the scene-free card
+## services; this node never mutates a roster to preview.
 const IDS := ["lantern_monk_pole_shelter", "lantern_monk_pole_shelter_plus"]
 const WAX_IDS := ["lantern_monk_wax_ward", "lantern_monk_wax_ward_plus"]
+const SHROUD_IDS := ["lantern_monk_moth_shroud", "lantern_monk_moth_shroud_plus"]
 const DEBUFFS := ["bleed", "weak", "exposed"]
 var _service := CombatLanternMonkPoleShelterCards.new()
 var _wax_service := CombatLanternMonkWaxWardCards.new()
+var _shroud_service := CombatLanternMonkShroudCards.new()
 var _bind_serial := 0
 var _wax_finishing := false
 var _bindings: Dictionary = {}
@@ -48,7 +50,9 @@ func _panel_id(panel: Variant) -> String:
 	if index < 0 or index >= app.deck.hand.size():
 		return ""
 	var id: String = app.deck.hand[index]
-	if (id not in IDS and id not in WAX_IDS) or panel.get_child(0).text != id:
+	if (id not in IDS and id not in WAX_IDS and id not in SHROUD_IDS) or panel.get_child(0).text != id:
+		return ""
+	if id in SHROUD_IDS and not _shroud_service.is_supported_card(id):
 		return ""
 	return id
 
@@ -74,7 +78,7 @@ func _sync_battle() -> void:
 		_bind_serial += 1
 		var callback := _card_input.bind(panel, id, panel.get_index(), _bind_serial)
 		_bindings[panel] = {"id": id, "index": panel.get_index(), "callback": callback,
-			"token": _bind_serial, "context": _snapshot() if id in WAX_IDS else {}}
+			"token": _bind_serial, "context": _snapshot() if id in WAX_IDS or id in SHROUD_IDS else {}}
 		panel.gui_input.connect(callback)
 		panel.focus_mode = Control.FOCUS_ALL
 		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -83,6 +87,10 @@ func _sync_battle() -> void:
 			panel.tooltip_text = "%s | Cost 1 | Block %d | self" % [
 				"Wax Ward+" if id.ends_with("_plus") else "Wax Ward",
 				7 if id.ends_with("_plus") else 5]
+		elif id in SHROUD_IDS:
+			panel.tooltip_text = "%s | Cost 1 | Block %d + Dodge | Choose living ally" % [
+				"Moth Shroud+" if id.ends_with("_plus") else "Moth Shroud",
+				8 if id.ends_with("_plus") else 6]
 		else:
 			panel.tooltip_text = "%s | Cost 1 | Block %d | Choose living ally; remove one chosen present Bleed, Weak or Exposed" % [
 				"Pole Shelter+" if id.ends_with("_plus") else "Pole Shelter",
@@ -129,6 +137,8 @@ func _can_target(id: String, position: int) -> bool:
 	var app = get_parent()
 	if not _current() or position < 1 or position > 3:
 		return false
+	if id in SHROUD_IDS:
+		return _shroud_service._prepare(app.deck, app.party, id, position).get("ok", false)
 	var options := _target_options(position)
 	var choice := options[0] if not options.is_empty() else ""
 	return _service._prepare(app.deck, app.party, id, position, choice).get("ok", false)
@@ -169,7 +179,9 @@ func _pending_valid() -> bool:
 		return false
 	if _pending.get("target", 0) != 0:
 		var target: int = _pending.target
-		if not _can_target(_pending.id, target) or _target_options(target) != _pending.options:
+		if not _can_target(_pending.id, target):
+			return false
+		if _pending.id not in SHROUD_IDS and _target_options(target) != _pending.options:
 			return false
 	return true
 
@@ -184,6 +196,8 @@ func _card_input(event: InputEvent, panel: Variant, id: String, index: int, toke
 		return
 	panel.accept_event()
 	if not _pending.is_empty():
+		return
+	if id in SHROUD_IDS and _bindings[panel].context != _snapshot():
 		return
 	if id in WAX_IDS:
 		_play_wax(panel, id, index, token)
@@ -278,7 +292,10 @@ func _open(panel: PanelContainer, id: String, index: int) -> void:
 		"context": _snapshot(), "target": 0}
 	choice_panel = PanelContainer.new()
 	choice_panel.name = "PoleShelterChoices"
-	choice_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	# A centre-top anchor offsets the panel from the viewport middle; the Shroud chooser is
+	# laid out from the left edge so its caption and Cancel stay inside 1280x720.
+	choice_panel.set_anchors_preset(Control.PRESET_TOP_LEFT if id in SHROUD_IDS
+		else Control.PRESET_CENTER_TOP)
 	choice_panel.position = Vector2(210, 310)
 	choice_panel.custom_minimum_size = Vector2(860, 0)
 	choice_panel.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -292,6 +309,10 @@ func _open(panel: PanelContainer, id: String, index: int) -> void:
 	caption.text = "%s  |  Cost 1 energy  |  Block %d  — Choose a living ally (Tab / arrows / Enter / Space)" % [
 		"Pole Shelter+" if id.ends_with("_plus") else "Pole Shelter",
 		7 if id.ends_with("_plus") else 5]
+	if id in SHROUD_IDS:
+		caption.text = "%s | Cost 1 energy | Block %d + Dodge | Choose a living ally" % [
+			"Moth Shroud+" if id.ends_with("_plus") else "Moth Shroud",
+			8 if id.ends_with("_plus") else 6]
 	caption.add_theme_font_size_override("font_size", 20)
 	stack.add_child(caption)
 	ally_row = HBoxContainer.new()
@@ -305,6 +326,9 @@ func _open(panel: PanelContainer, id: String, index: int) -> void:
 		button.disabled = not _can_target(id, position)
 		button.tooltip_text = "Block %d; remove a chosen present Bleed, Weak or Exposed" % [
 			7 if id.ends_with("_plus") else 5]
+		if id in SHROUD_IDS:
+			button.tooltip_text = "Block %d + Dodge (next incoming attack misses)" % [
+				8 if id.ends_with("_plus") else 6]
 		button.pressed.connect(_choose_ally.bind(position, _epoch))
 	debuff_row = HBoxContainer.new()
 	debuff_row.name = "PoleShelterDebuffs"
@@ -320,6 +344,9 @@ func _choose_ally(position: int, epoch: int) -> void:
 		_cancel()
 		return
 	_pending.target = position
+	if _pending.id in SHROUD_IDS:
+		_commit_shroud(position, epoch)
+		return
 	_pending.options = _target_options(position)
 	var hero: Dictionary = get_parent().party.get_hero(position)
 	caption.text = "%s -> %s  |  Cost 1  |  Block %d  |  Choose present debuff to remove" % [
@@ -338,15 +365,35 @@ func _choose_ally(position: int, epoch: int) -> void:
 
 
 func _choose_debuff(kind: String, position: int, epoch: int) -> void:
-	if epoch != _epoch or not _pending_valid() or _pending.target != position \
+	if epoch != _epoch or not _pending_valid() or _pending.id in SHROUD_IDS or _pending.target != position \
 			or not _pending.options.has(kind):
 		_cancel()
 		return
 	_commit(position, kind, epoch)
 
 
+func _commit_shroud(position: int, epoch: int) -> void:
+	if epoch != _epoch or not _pending_valid() or _pending.id not in SHROUD_IDS or _pending.target != position \
+			or not _can_target(_pending.id, position):
+		_cancel()
+		return
+	var app = get_parent()
+	var id: String = _pending.id
+	var panel: Variant = _pending.panel
+	# Retire both the chooser and source callback before the paid transaction.
+	_cancel(false)
+	_unbind(panel)
+	var receipt: Dictionary = _shroud_service.play_card(app.deck, app.party, id, position)
+	if receipt.get("ok", false):
+		app._refresh_party()
+		app._refresh_hand()
+		app._refresh_intents()
+		app._observe_battle_result()
+	_focus_action()
+
+
 func _commit(position: int, kind: String, epoch: int) -> void:
-	if epoch != _epoch or not _pending_valid() or _pending.target != position \
+	if epoch != _epoch or not _pending_valid() or _pending.id in SHROUD_IDS or _pending.target != position \
 			or (kind != "" and not _pending.options.has(kind)) \
 			or (kind == "" and not _pending.options.is_empty()) \
 			or not _service._prepare(get_parent().deck, get_parent().party, _pending.id, position, kind).get("ok", false):
