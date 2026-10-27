@@ -18,6 +18,10 @@ var _battle_party: CombatParty
 var _battle_enemies: CombatEnemies
 var _battle_intents: CombatEnemyIntents
 var _battle_result: CombatBattleResult
+# Battle-bound pending Wind-up Turret instances, committed only by a paid live
+# play of this fight and fired only by an accepted end_turn below.
+var _turrets: Array[Dictionary] = []
+var _turret_service := CombatTinkerV3TurretCards.new()
 
 
 func _init(deck: CombatDeck = null, party: CombatParty = null,
@@ -125,6 +129,42 @@ func play_warden_reaction_card(card_id: Variant) -> bool:
 	return true
 
 
+## True only while this begun fight can still accept a freshly paid turret:
+## the admitted actors, an active hand and a result that can continue.
+func can_register_turret() -> bool:
+	if not _started or not _valid_bindings() or not _deck.turn_active:
+		return false
+	if _deck != _battle_deck or _party != _battle_party \
+			or _enemies != _battle_enemies or _intents != _battle_intents \
+			or _result != _battle_result:
+		return false
+	return _result.can_continue() and not _party.is_defeated() and not _enemies.is_victorious()
+
+
+## Keep one detached, freshly deployed three-beat turret for this fight. A
+## malformed, partly spent or foreign instance is refused and nothing is stored.
+func register_turret(state: Variant) -> bool:
+	if not can_register_turret() or not CombatTinkerV3TurretCards.is_pending_instance(state):
+		return false
+	if int(state["remaining"]) != CombatTinkerV3TurretCards.DURATION_TURNS:
+		return false
+	_turrets.append(state.duplicate(true))
+	return true
+
+
+## Detached copies of this fight's live turrets, in deployment order.
+func get_turrets() -> Array[Dictionary]:
+	var copies: Array[Dictionary] = []
+	for state in _turrets:
+		copies.append(state.duplicate(true))
+	return copies
+
+
+## The battle session closed: no pending turret may survive into any later fight.
+func clear_turrets() -> void:
+	_turrets.clear()
+
+
 ## Close one active hand, execute the CURRENT announced phase once, and
 ## advance announcements and deal a new hand only if the fight remains active.
 func end_turn() -> bool:
@@ -163,7 +203,14 @@ func end_turn() -> bool:
 		return action.enemy_position not in skipped \
 			and not (action.type == "debuff" and _party.is_downed(action.target_position)
 				and not bound_policies))
-	if not _phase_is_executable(tick["actors"], effective):
+	# Every pending turret beat is rehearsed on detached copies of the roster and
+	# run RNG, and the enemy phase is preflighted against the roster those shots
+	# leave, so a refused turn spends no beat, deals no damage and draws no RNG.
+	var turret_plan := _turrets_are_executable()
+	if not turret_plan["ok"]:
+		return false
+	if not turret_plan["victorious"] \
+			and not _phase_is_executable(tick["actors"], effective, turret_plan["roster"]):
 		return false
 	# Preflight succeeded for the complete transition. Preserve authoritative
 	# record identities and metadata; only the owner tick's fields are committed.
@@ -175,6 +222,11 @@ func end_turn() -> bool:
 		if hero.has("statuses") or not next["statuses"].is_empty():
 			hero["statuses"] = next["statuses"]
 	_deck.end_turn()
+	if _result.evaluate() != CombatBattleResult.ACTIVE:
+		return true
+	# End-of-player-turn turret shots land before any enemy acts; a turret kill
+	# of the last enemy ends the fight before retaliation.
+	_fire_turrets()
 	if _result.evaluate() != CombatBattleResult.ACTIVE:
 		return true
 	var phase := CombatEnemyPhase.new().execute_phase(_party, _enemies, effective, _reactions,
@@ -314,12 +366,41 @@ func _valid_reactions_binding() -> bool:
 		and _reactions.get_thorns() <= CombatParty.MAX_INT
 
 
-func _phase_is_executable(next_heroes: Array, effective: Array) -> bool:
+## Rehearse each live turret's next beat with the real resolver on a detached
+## roster and a copy of the run RNG. Returns the roster those shots would leave.
+func _turrets_are_executable() -> Dictionary:
+	var roster := _enemies.get_enemies()
+	if _turrets.is_empty():
+		return {"ok": true, "victorious": false, "roster": roster}
+	var enemies := CombatEnemies.new(roster)
+	enemies._enemies.assign(roster.duplicate(true))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _deck._rng.seed
+	rng.state = _deck._rng.state
+	for state in _turrets:
+		if not _turret_service.tick_turret(state, enemies, rng)["ok"]:
+			return {"ok": false}
+	return {"ok": true, "victorious": enemies.is_victorious(), "roster": enemies.get_enemies()}
+
+
+## Fire every live turret once, in deployment order, with the shared run RNG,
+## then drop the instances whose three beats are spent.
+func _fire_turrets() -> void:
+	var next: Array[Dictionary] = []
+	for state in _turrets:
+		var receipt := _turret_service.tick_turret(state, _enemies, _deck._rng)
+		if receipt["ok"] and int(receipt["remaining"]) > 0:
+			next.append(receipt["state"])
+	_turrets = next
+
+
+func _phase_is_executable(next_heroes: Array, effective: Array, roster: Array = []) -> bool:
 	# Use the actual executor on independent actors to preflight every announced
 	# action, including capacity checks, without touching live actors or RNG.
 	var party := CombatParty.new(next_heroes)
 	party._heroes.assign(next_heroes.duplicate(true))
-	var roster := _enemies.get_enemies()
+	if roster.is_empty():
+		roster = _enemies.get_enemies()
 	var enemies := CombatEnemies.new(roster)
 	enemies._enemies.assign(roster.duplicate(true))
 	if not CombatEnemyPhase.new().execute_phase(party, enemies, effective, _reactions,

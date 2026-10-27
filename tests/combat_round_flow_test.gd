@@ -32,6 +32,9 @@ func _run() -> void:
 	_test_enemy_status_turns()
 	_test_status_damage()
 	_test_reordered_status_turn()
+	_test_turret_turns()
+	_test_turret_boundaries()
+	_test_turret_rejections()
 	await _test_mounted_enemy_status_turn()
 	if failures.is_empty():
 		print("combat_round_flow_test: PASS (", checks, " checks)")
@@ -1617,3 +1620,226 @@ func _test_lazy_coordinator_rejections() -> void:
 	_check(stale.flow.play_warden_reaction_card("warden_draw_fire")
 		and stale.flow._reactions != null and stale.flow._reactions.is_guarding(),
 		"AC4: valid state after repaired stale bindings still admits a paid card")
+
+
+const TURRET_IDS := ["tinker_v3_wind_up_turret", "tinker_v3_wind_up_turret_plus"]
+
+
+## A begun real fight whose shared hand also holds the given Wind-up Turret
+## printings, with exactly enough energy to pay for each of them.
+func _turret_fight(seed_value: int, ids: Array) -> Dictionary:
+	var fight := _fight(seed_value)
+	var deck: CombatDeck = fight["deck"]
+	_check(fight["flow"].begin_fight() and deck.turn_active, "turret fixture opens a real active turn")
+	for id in ids:
+		deck.hand.append(id)
+		fight["cards"].append(id)
+	deck.combat_state.energy = 2 * ids.size()
+	fight["service"] = CombatTinkerV3TurretCards.new()
+	return fight
+
+
+## The authored paid play, then the fight's own registration of its instance.
+func _deploy(fight: Dictionary, id: String) -> bool:
+	var receipt: Dictionary = fight["service"].play_card(fight["deck"], fight["party"], id, 0)
+	return receipt.get("ok", false) and fight["flow"].register_turret(receipt["state"])
+
+
+func _enemy_hp(enemies: CombatEnemies) -> Array:
+	return enemies.get_enemies().map(func(enemy): return enemy["hp"])
+
+
+## Independent oracle for one accepted End Turn: each live turret ticks in
+## deployment order through the real resolver on detached enemies with a copy
+## of the run RNG, then the next hand is drawn from that same copy. Returns
+## [enemy HP after the shots, shot targets, next hand, final RNG state].
+func _turret_oracle(fight: Dictionary) -> Array:
+	var deck: CombatDeck = fight["deck"]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = deck._rng.seed
+	rng.state = deck._rng.state
+	var roster: Array[Dictionary] = fight["enemies"].get_enemies()
+	var enemies := CombatEnemies.new(roster)
+	enemies._enemies.assign(roster.duplicate(true))
+	var service := CombatTinkerV3TurretCards.new()
+	var targets: Array[int] = []
+	for state in fight["flow"].get_turrets():
+		var receipt: Dictionary = service.tick_turret(state, enemies, rng)
+		_check(receipt["ok"], "oracle tick is legal")
+		targets.append(int(receipt.get("target_position", -1)))
+	var none: Array[String] = []
+	var next := CombatDeck.new(none, rng)
+	next.draw_pile.assign(deck.draw_pile)
+	next.discard_pile.assign(deck.discard_pile + deck.hand)
+	next.start_turn()
+	return [_enemy_hp(enemies), targets, next.hand.duplicate(), rng.state]
+
+
+func _turret_beats(fight: Dictionary, name: String, beats: int) -> Array:
+	var flow: CombatRoundFlow = fight["flow"]
+	var deck: CombatDeck = fight["deck"]
+	var enemies: CombatEnemies = fight["enemies"]
+	var shots: Array = []
+	for beat in range(beats):
+		var label := name + " beat " + str(beat + 1)
+		var count := flow.get_turrets().filter(func(state): return state["remaining"] > 1).size()
+		var oracle := _turret_oracle(fight)
+		_check(flow.end_turn(), label + ": a real End Turn is accepted")
+		_check(_enemy_hp(enemies) == oracle[0],
+			label + ": shots land before the enemy phase and through Block exactly as the resolver rules")
+		_check(deck.hand == oracle[2] and deck._rng.state == oracle[3],
+			label + ": turret draws use the shared run RNG before the next hand is drawn")
+		for target in oracle[1]:
+			_check(target in [1, 2], label + ": every shot picks a living enemy slot")
+		_check(flow.get_turrets().size() == count, label + ": each instance keeps its turret until its third beat")
+		shots.append(oracle[1])
+	return shots
+
+
+func _test_turret_turns() -> void:
+	for id in TURRET_IDS:
+		var damage: int = 3 if id == TURRET_IDS[0] else 4
+		var fight := _turret_fight(1201, [id])
+		var flow: CombatRoundFlow = fight["flow"]
+		var deck: CombatDeck = fight["deck"]
+		var enemies: CombatEnemies = fight["enemies"]
+		var rng_before := deck._rng.state
+		var roster_before := enemies.get_enemies()
+		var intents_before: Array = fight["intents"].get_intents()
+		_check(_deploy(fight, id) and deck.energy == 0 and deck.discard_pile.count(id) == 1
+			and not deck.hand.has(id) and enemies.get_enemies() == roster_before
+			and fight["intents"].get_intents() == intents_before and deck._rng.state == rng_before,
+			id + ": the paid deployment spends 2, discards one copy, shoots nothing and draws no RNG")
+		var turrets := flow.get_turrets()
+		_check(turrets.size() == 1 and turrets[0]["card_id"] == id and turrets[0]["remaining"] == 3
+			and turrets[0]["damage"] == damage, id + ": one detached three-beat instance is kept")
+		for beat in range(3):
+			var oracle := _turret_oracle(fight)
+			var shot := _enemy_hp(enemies)
+			_check(flow.end_turn(), id + " beat " + str(beat + 1) + ": End Turn accepted")
+			_check(_enemy_hp(enemies) == oracle[0] and deck.hand == oracle[2]
+				and deck._rng.state == oracle[3] and oracle[1].size() == 1 and oracle[1][0] in [1, 2],
+				id + " beat " + str(beat + 1) + ": one seeded shot on a living enemy before enemies act")
+			var loss: int = shot[oracle[1][0] - 1] - _enemy_hp(enemies)[oracle[1][0] - 1]
+			_check(loss >= 0 and loss <= damage, id + " beat " + str(beat + 1)
+				+ ": the shot deals the printed damage less any Block")
+			var left := flow.get_turrets()
+			_check(left.size() == (0 if beat == 2 else 1) and (beat == 2 or left[0]["remaining"] == 2 - beat),
+				id + " beat " + str(beat + 1) + ": exactly one beat is spent; the third retires the turret")
+		var hp_after := _enemy_hp(enemies)
+		var oracle := _turret_oracle(fight)
+		_check(oracle[1].is_empty() and flow.end_turn() and _enemy_hp(enemies) == hp_after
+			and deck._rng.state == oracle[3], id + ": no fourth shot and no fourth RNG draw")
+		_check(fight["result"].get_outcome() == CombatBattleResult.ACTIVE, id + ": the fight stays active")
+	# Two independent instances each fire once per End Turn, in deployment order.
+	var pair := _turret_fight(1207, TURRET_IDS)
+	_check(_deploy(pair, TURRET_IDS[0]) and _deploy(pair, TURRET_IDS[1])
+		and pair["deck"].energy == 0 and pair["flow"].get_turrets().size() == 2,
+		"two paid turrets register as two independent instances")
+	var shots := _turret_beats(pair, "pair", 3)
+	_check(shots.all(func(beat): return beat.size() == 2), "both turrets shoot on every one of the three beats")
+	_check(pair["flow"].get_turrets().is_empty(), "both independent turrets retire after their third beat")
+
+
+func _test_turret_boundaries() -> void:
+	# A slain slot is never targeted; a lone living enemy needs no RNG draw.
+	var lone := _turret_fight(1211, [TURRET_IDS[0]])
+	var enemies: CombatEnemies = lone["enemies"]
+	_check(enemies.apply_damage(1, 12) and enemies.is_slain(1) and enemies.gain_block(2, 2),
+		"lone fixture: enemy 1 is slain and enemy 2 carries 2 Block")
+	_check(_deploy(lone, TURRET_IDS[0]), "lone fixture deploys the base turret")
+	var oracle := _turret_oracle(lone)
+	var block_before: int = enemies.get_enemy(2)["block"]
+	_check(lone["flow"].end_turn() and enemies.get_enemy(2)["hp"] == 12 - (3 - block_before)
+		and enemies.get_enemy(1)["hp"] == 0 and oracle[1] == [2] and lone["deck"]._rng.state == oracle[3],
+		"Block absorbs before HP and the slain slot stays untouched")
+	var shots := _turret_beats(lone, "lone", 2)
+	_check(shots == [[2], [2]] and enemies.get_enemy(1)["hp"] == 0 and lone["flow"].get_turrets().is_empty(),
+		"all three beats hit only the living slot")
+	# A turret kill of the last enemy wins before any enemy retaliates.
+	var finish := _turret_fight(1213, [TURRET_IDS[1]])
+	var foes: CombatEnemies = finish["enemies"]
+	_check(foes.apply_damage(2, 12) and foes.apply_damage(1, 10) and foes.get_enemy(1)["hp"] == 2,
+		"kill fixture: one living attacker at HP 2")
+	_check(_deploy(finish, TURRET_IDS[1]), "kill fixture deploys the upgraded turret")
+	var heroes_before: Array = finish["party"].get_heroes()
+	var index_before: int = finish["intents"]._turn_index
+	_check(finish["flow"].end_turn() and foes.is_victorious()
+		and finish["result"].get_outcome() == CombatBattleResult.VICTORY,
+		"the end-of-turn turret shot slays the last enemy and wins")
+	_check(finish["party"].get_heroes().map(func(hero): return hero["hp"])
+		== heroes_before.map(func(hero): return hero["hp"])
+		and finish["intents"]._turn_index == index_before and not finish["deck"].turn_active,
+		"no enemy acts after a turret victory and no new turn opens")
+	var finish_flow: CombatRoundFlow = finish["flow"]
+	_reject(finish, finish_flow.end_turn, "post-turret-victory end")
+	finish["flow"].clear_turrets()
+	_check(finish["flow"].get_turrets().is_empty(), "clear_turrets retires every pending instance")
+	# Detached reads, a cleared session and a fresh fight keep no turret.
+	var copy := _turret_fight(1217, [TURRET_IDS[0]])
+	_check(_deploy(copy, TURRET_IDS[0]), "detached-read fixture deploys")
+	var read: Array = copy["flow"].get_turrets()
+	read[0]["remaining"] = 0
+	read.clear()
+	_check(copy["flow"].get_turrets().size() == 1 and copy["flow"].get_turrets()[0]["remaining"] == 3,
+		"get_turrets returns detached copies")
+	copy["flow"].clear_turrets()
+	var hp_cleared := _enemy_hp(copy["enemies"])
+	_check(copy["flow"].end_turn() and _enemy_hp(copy["enemies"]) == hp_cleared,
+		"a cleared turret never fires at a later End Turn")
+	_check(_fight(1217)["flow"].get_turrets().is_empty(), "a new fight's flow starts with no turret")
+
+
+func _test_turret_rejections() -> void:
+	var source := _turret_fight(1223, [TURRET_IDS[0]])
+	var receipt: Dictionary = source["service"].play_card(source["deck"], source["party"], TURRET_IDS[0], 0)
+	_check(receipt["ok"], "rejection fixture has one authentic deployed instance")
+	var valid: Dictionary = receipt["state"]
+	var unstarted := _fight(1223)
+	var before := _snapshot(unstarted)
+	_check(not unstarted["flow"].can_register_turret() and not unstarted["flow"].register_turret(valid)
+		and unstarted["flow"].get_turrets().is_empty() and _snapshot(unstarted) == before,
+		"an unbegun fight refuses a turret")
+	var spent := valid.duplicate(true)
+	spent["remaining"] = 2
+	var forged := valid.duplicate(true)
+	forged["damage"] = 9
+	var extra := valid.duplicate(true)
+	extra["bonus"] = 1
+	var expired := valid.duplicate(true)
+	expired["remaining"] = 0
+	for bad in [spent, forged, extra, expired, {}, 5, null, "tinker_v3_wind_up_turret"]:
+		before = _snapshot(source)
+		_check(not source["flow"].register_turret(bad) and source["flow"].get_turrets().is_empty()
+			and _snapshot(source) == before, "a malformed or partly spent instance is refused: " + str(bad))
+	_check(source["flow"].register_turret(valid) and source["flow"].get_turrets().size() == 1,
+		"the authentic instance still registers after the refusals")
+	# A tampered live instance refuses the whole End Turn atomically.
+	var tampered: Dictionary = source["flow"]._turrets[0]
+	tampered["damage"] = 99
+	before = _snapshot(source)
+	var stored: Array = source["flow"]._turrets.duplicate(true)
+	_check(not source["flow"].end_turn() and _snapshot(source) == before
+		and source["flow"]._turrets == stored,
+		"an invalid pending instance refuses End Turn with no shot, beat, RNG or turn change")
+	tampered["damage"] = 3
+	var oracle := _turret_oracle(source)
+	_check(source["flow"].end_turn() and _enemy_hp(source["enemies"]) == oracle[0]
+		and source["deck"]._rng.state == oracle[3] and source["flow"].get_turrets()[0]["remaining"] == 2,
+		"the restored instance fires on the retried End Turn")
+	# An unobserved lethal state refuses End Turn and keeps the turret's beats.
+	var lethal: CombatEnemies = source["enemies"]
+	_check(lethal.apply_damage(1, 99) and lethal.apply_damage(2, 99) and lethal.is_victorious(),
+		"lethal fixture: every enemy is slain by an earlier play")
+	_check(source["flow"].observe_result() == CombatBattleResult.VICTORY, "the lethal play is observed")
+	before = _snapshot(source)
+	_check(not source["flow"].end_turn() and _snapshot(source) == before
+		and source["flow"].get_turrets()[0]["remaining"] == 2,
+		"an ended battle neither fires nor spends a turret beat")
+	_check(not source["flow"].can_register_turret() and not source["flow"].register_turret(valid)
+		and source["flow"].get_turrets().size() == 1, "an ended battle accepts no new turret")
+	# An inactive hand refuses registration.
+	var idle := _turret_fight(1229, [])
+	idle["deck"].combat_state.end_player_turn()
+	_check(not idle["flow"].can_register_turret() and not idle["flow"].register_turret(valid)
+		and idle["flow"].get_turrets().is_empty(), "an inactive hand accepts no turret")

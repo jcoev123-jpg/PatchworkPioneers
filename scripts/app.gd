@@ -917,6 +917,9 @@ func _observe_battle_result() -> bool:
 		enemy_buff_forecast_label.hide()
 	if not _battle_closed:
 		_battle_closed = true
+		# A closed session keeps no pending Wind-up Turret for any later fight.
+		if round_flow != null:
+			round_flow.clear_turrets()
 		if outcome == CombatBattleResult.VICTORY:
 			if run_map == null:
 				session_gold = victory_gold.claim_gold(false, run_rng)
