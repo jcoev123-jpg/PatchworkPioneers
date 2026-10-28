@@ -208,6 +208,73 @@ func _ids(picker: LiveV3PartyPicker, expected: Array[String], note: String, latc
 	_check(button.disabled == (expected.size() != 3 or latched), note + " Continue gate")
 
 
+## Check every admitted physical starter occurrence against the shipped
+## resolver, in the exact receipt deck order (including repeated IDs).
+func _check_deck_rows(picker: LiveV3PartyPicker, picks: Array[String], note: String) -> void:
+	var actual := RunV3PartyAdmission.admit(picks)
+	var base := "PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout"
+	var view := picker.get_node(base) as VBoxContainer
+	var heading := view.get_node("DeckHeading") as Label
+	var toggle := picker.get_node("PaperPanel/Margins/Body/Foot/InspectDeckButton") as Button
+	_check(actual.get("ok", false) and actual.deck.size() == 12
+		and actual.party.size() == 3 and actual.hero_ids.size() == 3,
+		note + " successful twelve-occurrence authoritative receipt")
+	if not actual.get("ok", false):
+		return
+	_check(picker._seat_receipt == actual and picker.selected_ids() == picks,
+		note + " displayed receipt and click order unchanged: wanted " + str(picks) + " got " + str(picker.selected_ids()))
+	_check(view.visible and view.is_visible_in_tree() and heading.text == "SHARED DECK  •  12 starting cards / 3 heroes"
+		and toggle.text == "Back" and not toggle.disabled,
+		note + " three-hero combined inspection is visible")
+	var clip := picker.inspection_panel.get_global_rect()
+	_check(clip.encloses(view.get_global_rect())
+		and picker.get_node("PaperPanel").get_global_rect().encloses(view.get_global_rect()),
+		note + " all three rows inside the existing sewn inspection footprint")
+	for i in range(3):
+		var hero: String = actual.hero_ids[i]
+		_check(actual.party[i].id == hero, note + " canonical real seat %d owner" % (i + 1))
+		var ids: Array = actual.deck.slice(i * 4, (i + 1) * 4)
+		_check(ids.size() == 4, note + " four physical occurrences in seat %d" % (i + 1))
+		var unique: Array[String] = []
+		var copies := {}
+		var labels := {}
+		for id in ids:
+			var card: Dictionary = RunRestStitchCards.resolve_card_definition(id)
+			_check(not card.is_empty() and card.get("owner") == hero
+				and card.get("id") == id and typeof(card.get("cost")) == TYPE_INT
+				and typeof(card.get("display_name")) == TYPE_STRING,
+				note + " authentic printed owner/name/cost " + str(id))
+			if card.is_empty():
+				continue
+			if not copies.has(id):
+				unique.append(id)
+				copies[id] = 0
+				labels[id] = "%d EN %s" % [card.cost, card.display_name]
+			copies[id] += 1
+		var parts: Array[String] = []
+		for id in unique:
+			parts.append(labels[id] + (" x%d" % copies[id] if copies[id] > 1 else ""))
+		var expected: String = "%d  %s  •  %s" % [i + 1, actual.party[i].name, "   |   ".join(parts)]
+		var row := view.get_node("DeckSeat%d" % (i + 1)) as Label
+		_check(row.visible and row.text == expected and row.tooltip_text == expected,
+			note + " seat %d prints all distinct names, energy costs and exact xN: expected " % (i + 1) + expected + " got " + row.text)
+		_check(row.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and clip.encloses(row.get_global_rect())
+			and row.get_theme_font_size("font_size") >= 16
+			and row.text_overrun_behavior == TextServer.OVERRUN_TRIM_ELLIPSIS,
+			note + " row %d accessible typography, noninteractive ellipsis/tooltip" % (i + 1))
+		var printed_width := row.get_theme_font("font").get_string_size(
+			row.text, HORIZONTAL_ALIGNMENT_LEFT, -1, row.get_theme_font_size("font_size")).x
+		_check(printed_width <= row.size.x + 1.0,
+			note + " full long card names fit row %d without clipping" % (i + 1))
+		for earlier in range(i):
+			var before := view.get_node("DeckSeat%d" % (earlier + 1)) as Label
+			_check(not row.get_global_rect().intersects(before.get_global_rect()),
+				note + " seat lines remain distinct at normal UI scale")
+	_check(not picker.continue_button.disabled and picker.cancel_button.disabled == false,
+		note + " inspection never conceals or disables live actions")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	canonical_roster = _read_hero_records("res://data/heroes/v3_party_roster.json")
@@ -290,6 +357,14 @@ func _run() -> void:
 		"PaperPanel/Margins/Body/Foot/ContinueButton")
 	var cancel: Button = picker.get_node(
 		"PaperPanel/Margins/Body/Foot/CancelButton")
+	var deck_button: Button = picker.get_node(
+		"PaperPanel/Margins/Body/Foot/InspectDeckButton")
+	var deck_view: VBoxContainer = picker.get_node(
+		"PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout")
+	_check(deck_button != null and deck_button.focus_mode == Control.FOCUS_ALL,
+		"real keyboard and pointer Inspect Deck button exists")
+	_check(deck_view != null and deck_view.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"shared-deck rows live inside input-transparent original inspection")
 	_check(input_bounds.encloses(action.get_global_rect()) and
 		input_bounds.encloses(cancel.get_global_rect()),
 		"Continue and Cancel reachable in viewport")
@@ -334,7 +409,11 @@ func _run() -> void:
 	var hint: Label = picker.get_node("PaperPanel/Margins/Body/Foot/Hint")
 	_check(hint.text.contains("Choose three") and hint.text.contains("preview"),
 		"empty opening gives guidance instead of fictitious combat seats")
-	_check(not cancel.disabled and action.disabled, "fresh zero selection gate")
+	_check(not cancel.disabled and action.disabled and deck_button.disabled
+		and not deck_view.visible, "fresh zero selection gate and blank combined deck")
+	deck_button.pressed.emit()
+	_check(not deck_view.visible and picker._seat_receipt.is_empty(),
+		"invalid direct Inspect Deck press cannot invent starting deck")
 	_check(picker.selected_ids().is_empty(), "fresh selection is empty")
 	var before_json := FileAccess.get_file_as_string("res://data/heroes/starter_party.json")
 	_check(before_json.contains("warden") and before_json.contains("seamstress")
@@ -385,20 +464,44 @@ func _run() -> void:
 	_ids(picker, ["warden"], "mouse first")
 	await _key(_tile(picker, "seamstress"), KEY_SPACE)
 	_ids(picker, ["warden", "seamstress"], "Space second")
+	_check(deck_button.disabled and not deck_view.visible, "two picks have no inspectable deck")
+	deck_button.pressed.emit()
+	_check(not deck_view.visible and picker.selected_ids().size() == 2,
+		"disabled two-pick inspection leaves selection alone")
 	await _mouse(_tile(picker, "tinker"))
 	_ids(picker, ["warden", "seamstress", "tinker"], "mouse third")
 	_check_seats(picker, ["warden", "seamstress", "tinker"], "legacy trio")
+	await _key(deck_button, KEY_SPACE)
+	_check_deck_rows(picker, ["warden", "seamstress", "tinker"], "legacy three seat deck via keyboard")
+	_check(deck_view.get_node("DeckSeat1").text.contains("1 EN Strike x2")
+		and deck_view.get_node("DeckSeat2").text.contains("1 EN Prick x2"),
+		"genuine legacy duplicate starters count exactly twice, not collapsed or repeated")
+	_check(requests.is_empty() and cancels == 0, "Inspect Deck fires no run or cancel signals")
+	await _mouse(deck_button)
+	_check(not deck_view.visible and deck_button.text == "Inspect Deck",
+		"pointer Back restores hero inspection mode")
+	await _move_to(_tile(picker, "warden"))
+	_check_inspection(picker, "Warden", "HELMET", "Bulwark", "Guard",
+		"Back restores original hover details")
 	await _mouse(_tile(picker, "lantern_monk"))
 	_ids(picker, ["warden", "seamstress", "tinker"], "fourth blocked")
+	await _mouse(deck_button)
+	_check_deck_rows(picker, ["warden", "seamstress", "tinker"], "inspect before unpick")
 	await _key(_tile(picker, "seamstress"), KEY_ENTER)
 	_ids(picker, ["warden", "tinker"], "Enter unpicks second")
 	_check(not hint.text.contains("Seats:") and action.disabled,
 		"deselection removes prospective seats and closes Continue gate")
+	_check(not deck_view.visible and deck_button.disabled
+		and picker._seat_receipt.is_empty(),
+		"unpick while Inspect Deck open immediately retires all old card rows")
 	await _key(_tile(picker, "lantern_monk"), KEY_SPACE)
 	_ids(picker, ["warden", "tinker", "lantern_monk"],
 		"re-pick appends to order")
 	_check_seats(picker, ["warden", "tinker", "lantern_monk"],
 		"replacement selection sorted independent of click order")
+	await _mouse(deck_button)
+	_check_deck_rows(picker, ["warden", "tinker", "lantern_monk"],
+		"mixed legacy and new three-hero deck after replacement")
 	var snapshot: Array[String] = picker.selected_ids()
 	snapshot.clear()
 	_ids(picker, ["warden", "tinker", "lantern_monk"],
@@ -407,6 +510,10 @@ func _run() -> void:
 	_check(requests.size() == 1 and
 		requests[0] == ["warden", "tinker", "lantern_monk"],
 		"Continue emits one deterministic three-ID request")
+	_check(not deck_view.visible and deck_button.disabled and deck_button.text == "Inspect Deck",
+		"Continue retires combined inspection even while it is open")
+	deck_button.pressed.emit()
+	_check(requests.size() == 1, "stale Inspect after Continue emits no extra request")
 	_check(action.disabled and cancel.disabled
 		and _tile(picker, "warden").disabled,
 		"Continue latches all actions and retains submitted view")
@@ -437,6 +544,8 @@ func _run() -> void:
 		"neutral reset survives next mounted frame")
 	_check(not cancel.disabled and picker.is_visible_in_tree(),
 		"open_picker resets latch and visibility")
+	_check(deck_button.disabled and not deck_view.visible and deck_button.text == "Inspect Deck",
+		"fresh opening has no previous deck-mode state")
 	await _mouse(_tile(picker, "scarecrow"))
 	_ids(picker, ["scarecrow"], "fresh selection after reopen")
 	_check(not hint.text.contains("Seats:"), "one picked hero has no invented seat order")
@@ -465,6 +574,11 @@ func _run() -> void:
 		"second ordered full party")
 	_check_seats(picker, ["button_golem", "yarn_ranger", "rag_duelist"],
 		"two preferred-front heroes retain their pick-order tie")
+	await _key(deck_button, KEY_ENTER)
+	_check_deck_rows(picker, ["button_golem", "yarn_ranger", "rag_duelist"],
+		"V3 three-seat deck stable front ties")
+	await _key(deck_button, KEY_SPACE)
+	_check(not deck_view.visible, "keyboard Back exits combined preview")
 	await _key(action, KEY_SPACE)
 	_check(requests.size() == 2 and
 		requests[1] == ["button_golem", "yarn_ranger", "rag_duelist"],
@@ -482,6 +596,15 @@ func _run() -> void:
 	_ids(picker, ["button_golem", "rag_duelist", "lantern_monk"], "front tie example")
 	_check_seats(picker, ["button_golem", "rag_duelist", "lantern_monk"],
 		"both preferred front heroes occupy actual seats 1 and 2")
+	await _mouse(deck_button)
+	_check_deck_rows(picker, ["button_golem", "rag_duelist", "lantern_monk"],
+		"exact same-position tie order and seat deck projection")
+	await _key_focus(_tile(picker, "lantern_monk"))
+	_check(deck_view.visible, "keyboard focus never silently replaces an open deck view")
+	await _key(deck_button, KEY_ENTER)
+	await _move_to(_tile(picker, "lantern_monk"))
+	_check_inspection(picker, "Lantern Monk", "LANTERN", "Light keeper", "Blind",
+		"Back restores latest real tile focus/hover")
 	await _mouse(_tile(picker, "rag_duelist"))
 	_ids(picker, ["button_golem", "lantern_monk"], "tie example deselection")
 	_check(not hint.text.contains("Seats:"), "two heroes cannot display admitted positions")
@@ -490,16 +613,41 @@ func _run() -> void:
 		"replacement hero joins in click order")
 	_check_seats(picker, ["button_golem", "lantern_monk", "scarecrow"],
 		"middle-position tie retains click order")
+	await _key(deck_button, KEY_SPACE)
+	_check_deck_rows(picker, ["button_golem", "lantern_monk", "scarecrow"],
+		"replacement reprojects current receipt while in deck mode")
+	await _mouse(deck_button)
 	# A malformed internal request models a failed admission: no fabricated
 	# seats, no enabled Continue, and no detached party emission.
 	picker._ids.assign(["warden", "warden", "scarecrow"])
 	picker._refresh()
 	_check(hint.text == "Party admission unavailable" and action.disabled,
 		"invalid canonical admission produces no authoritative seating")
+	_check(deck_button.disabled and not deck_view.visible
+		and picker._deck_receipt_rows().is_empty(),
+		"invalid admission gates Inspect Deck with no stale or forged list")
 	action.pressed.emit()
 	_check(requests.size() == 2, "failed admission cannot emit party_requested")
 	picker.open_picker()
+	await _frames()  # New tile geometry must settle before synthesizing pointer events.
 	_ids(picker, [], "failed admission full reopen")
+	await _key(_tile(picker, "warden"), KEY_ENTER)
+	await _key(_tile(picker, "tinker"), KEY_SPACE)
+	await _key(_tile(picker, "yarn_ranger"), KEY_ENTER)
+	await _mouse(deck_button)
+	_check_deck_rows(picker, ["warden", "tinker", "yarn_ranger"],
+		"reopened mixed card deck before cancellation")
+	var pre_cancel := requests.size()
+	await _key(cancel, KEY_ENTER)
+	_check(not deck_view.visible and deck_button.disabled and not picker.visible
+		and cancels == 2 and requests.size() == pre_cancel,
+		"Cancel with combined deck visible clears it and emits only cancel")
+	picker.open_picker()
+	_check(deck_button.disabled and not deck_view.visible and picker.selected_ids().is_empty(),
+		"reopen after deck Cancel is neutral and has no receipt")
+	deck_button.pressed.emit()
+	_check(not deck_view.visible and picker._seat_receipt.is_empty(),
+		"retired deck action cannot resurrect cancelled preview")
 	_check(not hint.text.contains("Seats:"), "invalid party cannot survive reopen")
 	_check(randi() == second, "all input/reopen operations consume no global RNG")
 	_check(FileAccess.get_file_as_string(
