@@ -299,7 +299,8 @@ func _assert_flow(app, kind: String, id: String, rng_state: int) -> void:
 		var expected_cards: Array = []
 		var catalogs: Array = [StarterCards.new(), WardenPoolCards.new(), SeamstressPoolCards.new(),
 			TinkerPoolCards.new(), LanternMonkPoolCards.new(), RagDuelistPoolCards.new(),
-			ScarecrowPoolCards.new(), YarnRangerPoolCards.new()]
+			ScarecrowPoolCards.new(), YarnRangerPoolCards.new(), V3WardenPoolCards.new(),
+			V3SeamstressPoolCards.new(), V3TinkerPoolCards.new()]
 		for owner in owners:
 			var pool: Array = []
 			for candidate in authored.cards:

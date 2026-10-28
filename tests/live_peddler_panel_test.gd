@@ -294,11 +294,12 @@ func _fits(button: Button) -> bool:
 	return button.size.y >= font.get_height(size_px) * lines.size() + 16.0
 
 
+## The legacy one-line caption falls back to the shipped ID-to-name renderer
+## (readable_id) when a row has no catalog display name. Mirroring that same
+## documented projection keeps the oracle honest for IDs that carry digits
+## (for example a v3 printing) without weakening the quote/sale assertions.
 func _expected_name(item_id: String) -> String:
-	var words: PackedStringArray = item_id.split("_")
-	for i in range(words.size()):
-		words[i] = words[i].left(1).to_upper() + words[i].substr(1)
-	return " ".join(words)
+	return item_id.replace("_", " ").capitalize()
 
 
 ## A separate catalog oracle checks the *mounted* two-line caption. Prices

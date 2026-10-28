@@ -52,7 +52,10 @@
     {"id": "lantern_monk_lantern_glow", "owner": "lantern_monk", "price": 50},
     {"id": "scarecrow_crow_peck", "owner": "scarecrow", "price": 50},
     {"id": "yarn_ranger_knit_shield", "owner": "yarn_ranger", "price": 50},
-    {"id": "button_golem_button_roll", "owner": "button_golem", "price": 50}
+    {"id": "button_golem_button_roll", "owner": "button_golem", "price": 50},
+    {"id": "warden_v3_helmet_rattle", "owner": "warden", "price": 50},
+    {"id": "seamstress_v3_darn_the_tear", "owner": "seamstress", "price": 65},
+    {"id": "tinker_v3_gear_brace", "owner": "tinker", "price": 55}
   ],
   "trinkets": [
     {"id": "stitched_badge", "price": 100},

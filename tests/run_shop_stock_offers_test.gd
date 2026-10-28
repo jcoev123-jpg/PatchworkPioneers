@@ -239,6 +239,30 @@ const YARN_RANGER_PEDDLER_SPECS := {
 }
 
 
+## The three look-driven v3 raw printings this task appends to the shipped
+## Peddler stock. Rules are copied from their own authored catalogs
+## (data/cards/v3_{warden,seamstress,tinker}_pool_cards.gd); each quote matches
+## the already-shipped priced card of the same hero. Only the base ID is stock,
+## never the authored _plus upgrade.
+const V3_ORIGINAL_HERO_STOCK_SPECS := [
+	{
+		"id": "warden_v3_helmet_rattle", "owner": "warden", "price": 50,
+		"rarity": "common", "cost": 1, "from": [1, 2], "to": [1, 2],
+		"target": "enemy_single", "effects": {"damage": 4, "weak": 1},
+	},
+	{
+		"id": "seamstress_v3_darn_the_tear", "owner": "seamstress", "price": 65,
+		"rarity": "uncommon", "cost": 1, "from": [1, 2, 3], "to": [],
+		"target": "ally_single", "effects": {"heal": 4, "cleanse_debuff": 1},
+	},
+	{
+		"id": "tinker_v3_gear_brace", "owner": "tinker", "price": 55,
+		"rarity": "common", "cost": 1, "from": [1, 2, 3], "to": [],
+		"target": "self", "effects": {"block": 5, "combat_scrap_gain": 1},
+	},
+]
+
+
 func _initialize() -> void:
 	var party := _load_party()
 	var deck := _load_deck()
@@ -273,6 +297,7 @@ func _initialize() -> void:
 		_test_peddler_power_patch_stock(deck, catalog)
 		_test_v3_peddler_party_stock(deck, catalog)
 		_test_yarn_ranger_peddler_stock(deck, catalog)
+		_test_v3_original_hero_peddler_stock(deck, catalog)
 	else:
 		_check(false, "preconditions for non-vacuous shop stock tests failed")
 	if failures.is_empty():
@@ -512,7 +537,8 @@ func _reversed(pool: Array) -> Array:
 	return copy
 
 
-## Every authored hero catalog, starter plus all eight v3 pool catalogs.
+## Every authored hero catalog, starter plus all eight v3 pool catalogs and the
+## three look-driven raw v3 printings the Peddler now prices.
 func _all_party_catalogs() -> Array:
 	return [
 		StarterCards.new(),
@@ -524,6 +550,9 @@ func _all_party_catalogs() -> Array:
 		ScarecrowPoolCards.new(),
 		YarnRangerPoolCards.new(),
 		ButtonGolemPoolCards.new(),
+		V3WardenPoolCards.new(),
+		V3SeamstressPoolCards.new(),
+		V3TinkerPoolCards.new(),
 	]
 
 
@@ -3901,6 +3930,231 @@ func _test_yarn_ranger_peddler_stock(deck: Array[String], catalog: StarterCards)
 		"the bounded sweep reaches the shipped Knit Shield offer")
 	_check(candidates == candidates_before and patches == patches_before,
 		"the shipped candidate arrays survive the Yarn Ranger sweep unchanged")
+
+
+## AC1/AC2: the three look-driven v3 raw printings now priced at the Peddler.
+## A focused fixture sources exactly those three shipped records from the real
+## initial_offers.json beside one genuine power patch, so a seeded three-hero
+## party must sample precisely them (one per owner, four draws), open the real
+## RunPeddlerVisit and buy each at its own 50/65/55 quote once. A party that
+## omits one owner must never receive that absent hero's card, and the new
+## records still fail closed when malformed.
+func _test_v3_original_hero_peddler_stock(deck: Array[String], catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var candidates: Array = authored.get("cards", [])
+	var party: Array[String] = ["warden", "seamstress", "tinker"]
+	var catalogs := _all_party_catalogs()
+	_check(not candidates.is_empty() and not party.is_empty(),
+		"the shipped v3 raw-print fixture reads the real priced candidate list")
+
+	# AC1: every appended record exists exactly once at its established quote
+	# and resolves to the authentic authored base card, never an upgrade.
+	var focused_cards: Array = []
+	for entry in V3_ORIGINAL_HERO_STOCK_SPECS:
+		var card_id: String = entry["id"]
+		var matches: Array = candidates.filter(
+			func(candidate): return candidate is Dictionary and candidate.get("id") == card_id)
+		_check(matches.size() == 1, "shipped Peddler stock lists " + card_id + " exactly once")
+		if matches.size() != 1:
+			continue
+		var record: Dictionary = matches[0]
+		_check(record.get("owner") == entry["owner"]
+			and _whole_price(record.get("price")) == int(entry["price"])
+			and record.size() == 3,
+			card_id + ": authored owner and the exact " + str(entry["price"])
+				+ "-gold quote, with no extra field")
+		focused_cards.append({"id": card_id, "owner": record["owner"],
+			"price": _whole_price(record["price"])})
+		var definition: Dictionary = _catalog_definition(card_id, catalogs)
+		var is_authored_base: bool = definition.get("reward_eligible") == true \
+			or (definition.get("is_upgrade") == false
+				and definition.get("base_id") == card_id)
+		_check(definition.get("id") == card_id and definition.get("owner") == entry["owner"]
+			and definition.get("rarity") == entry["rarity"]
+			and definition.get("cost") == entry["cost"]
+			and definition.get("from_positions") == entry["from"]
+			and definition.get("to_positions") == entry["to"]
+			and definition.get("target_kind") == entry["target"]
+			and definition.get("effects") == entry["effects"]
+			and is_authored_base
+			and definition.get("starting_copies") == 0
+			and not definition.has("upgrade_of"),
+			card_id + ": authentic reward-eligible authored base card")
+		var upgrade_id: String = str(definition.get("upgrade_id", ""))
+		_check(upgrade_id == card_id + "_plus" and not _pool_has_id(candidates, upgrade_id),
+			card_id + ": the authored + upgrade is never priced stock")
+	# The earlier priced records this append must not disturb stay available.
+	for older in [
+		{"id": "warden_pinning_jab", "owner": "warden", "price": 50},
+		{"id": "seamstress_hemorrhage_hem", "owner": "seamstress", "price": 65},
+		{"id": "tinker_spool_launcher", "owner": "tinker", "price": 55},
+	]:
+		var found: Array = candidates.filter(
+			func(candidate): return candidate is Dictionary and candidate.get("id") == older["id"])
+		_check(found.size() == 1 and found[0].get("owner") == older["owner"]
+			and _whole_price(found[0].get("price")) == int(older["price"]),
+			"earlier priced card keeps its owner and quote: " + str(older["id"]))
+	_check(focused_cards.size() == 3,
+		"the focused fixture sources all three shipped v3 raw printings")
+	if focused_cards.size() != 3:
+		return
+
+	# One genuine authored power patch beside the three cards.
+	var patch_pool: Array = [{"id": "quilted_coat", "price": 100}]
+	_check(_power_patch_ids().has("quilted_coat"),
+		"the focused fixture uses a genuine authored power patch")
+
+	# AC1: one card per owner at its own quote beside one power patch, with the
+	# exact four seeded RNG draws an independent oracle replays.
+	var seed_value: int = SEED + 51000
+	var rng := _rng(seed_value)
+	var oracle_rng := _rng(seed_value)
+	var stock := RunShopStockOffers.generate_peddler_stock(rng, party, focused_cards,
+		patch_pool, [])
+	var expected := _peddler_stock_oracle(catalog, party, focused_cards, patch_pool, [],
+		oracle_rng)
+	_check(stock.get("ok", false) and stock == expected,
+		"focused v3 Peddler stock matches the independent four-draw oracle")
+	_check(rng.state == oracle_rng.state and rng.randi() == oracle_rng.randi(),
+		"focused v3 Peddler stock consumes exactly the four seeded draws")
+	var cards: Array = stock.get("cards", [])
+	var offered_patches: Array = stock.get("patches", [])
+	_check(cards == [
+		{"id": "warden_v3_helmet_rattle", "owner": "warden", "price": 50},
+		{"id": "seamstress_v3_darn_the_tear", "owner": "seamstress", "price": 65},
+		{"id": "tinker_v3_gear_brace", "owner": "tinker", "price": 55},
+	], "one named v3 base per party owner at its exact 50/65/55 quote in party order")
+	_check(offered_patches == [{"id": "quilted_coat", "price": 100}],
+		"exactly one genuine power patch is offered beside the three cards")
+
+	# AC2: the real visit buys each printed base ID once at its item price,
+	# appends only it to the shared deck and consumes the visit; a one-gold-short
+	# wallet is refused without spending and keeps the free Leave.
+	if stock.get("ok", false):
+		for entry in V3_ORIGINAL_HERO_STOCK_SPECS:
+			var card_id: String = entry["id"]
+			var price: int = int(entry["price"])
+			var node: String = "peddler_v3_original_" + card_id
+			var visit := RunPeddlerVisit.new(node, party, deck, [], 500, stock)
+			_check(visit.is_open(), card_id + ": the focused stock opens a real Peddler visit")
+			if not visit.is_open():
+				continue
+			var open := visit.read_state()
+			var receipt := visit.choose_purchase(node, open["state"], open["stock"],
+				"card", card_id)
+			_check(receipt.get("ok") == true and receipt.get("kind") == "card"
+				and receipt.get("id") == card_id and receipt.get("price") == price,
+				card_id + ": paid acquisition returns the exact item receipt")
+			_check(receipt.get("state", {}).get("gold") == 500 - price
+				and receipt.get("state", {}).get("deck") == deck + [card_id]
+				and receipt.get("state", {}).get("trinkets").is_empty(),
+				card_id + ": debits exactly its quote once and adds only that card")
+			_check(visit.is_consumed() and not visit.is_open(),
+				card_id + ": the paid buy consumes the one-purchase visit")
+			var spent := visit.read_state()
+			_check(not visit.choose_purchase(node, spent["state"], spent["stock"],
+				"card", card_id).get("ok", true) and visit.read_state() == spent,
+				card_id + ": the same visit cannot buy a second card")
+			var poor_node: String = node + "_poor"
+			var poor := RunPeddlerVisit.new(poor_node, party, deck, [], price - 1, stock)
+			var poor_open := poor.read_state()
+			var denied := poor.choose_purchase(poor_node, poor_open["state"],
+				poor_open["stock"], "card", card_id)
+			_check(poor.is_open() and not denied.get("ok", true)
+				and poor.read_state() == poor_open,
+				card_id + ": insufficient gold is refused without a spend")
+			var left := poor.leave(poor_node, poor_open["state"], poor_open["stock"])
+			_check(left.get("ok", true) and poor.is_consumed(),
+				card_id + ": a refused buy still leaves the free Leave available")
+
+	# AC1: a party that omits the Tinker never receives its card; every seat is
+	# filled by that party's own authored priced card instead.
+	var substitute_party: Array[String] = ["warden", "seamstress", "yarn_ranger"]
+	var yarn_matches: Array = candidates.filter(func(candidate):
+		return candidate is Dictionary and candidate.get("id") == "yarn_ranger_knit_shield")
+	_check(yarn_matches.size() == 1 and _whole_price(yarn_matches[0].get("price")) == 50,
+		"the omission fixture has a real authored Yarn Ranger priced card")
+	var omission_pool: Array = focused_cards.duplicate(true)
+	if yarn_matches.size() == 1:
+		omission_pool.append({"id": "yarn_ranger_knit_shield", "owner": "yarn_ranger",
+			"price": _whole_price(yarn_matches[0]["price"])})
+	var omission_rng := _rng(seed_value + 1)
+	var omission_oracle_rng := _rng(seed_value + 1)
+	var omission := RunShopStockOffers.generate_peddler_stock(omission_rng,
+		substitute_party, omission_pool, patch_pool, [])
+	var omission_expected := _peddler_stock_oracle(catalog, substitute_party,
+		omission_pool, patch_pool, [], omission_oracle_rng)
+	_check(omission.get("ok", false) and omission == omission_expected
+		and omission_rng.state == omission_oracle_rng.state,
+		"a party omitting the Tinker matches the independent four-draw oracle")
+	var omission_cards: Array = omission.get("cards", [])
+	_check(omission_cards.size() == 3,
+		"the omitting party still receives exactly three card offers")
+	for position in range(mini(omission_cards.size(), 3)):
+		_check(omission_cards[position].get("owner") == substitute_party[position]
+			and omission_cards[position].get("id") != "tinker_v3_gear_brace",
+			"seat " + str(position) + " keeps its own owner and never the absent Tinker card")
+	_check(not omission_cards.any(func(offer):
+		return offer.get("owner") == "tinker" or offer.get("id") == "tinker_v3_gear_brace"),
+		"the absent hero's v3 card is never offered to another owner")
+	if omission_cards.size() == 3:
+		_check(omission_cards[2].get("id") == "yarn_ranger_knit_shield"
+			and omission_cards[2].get("price") == 50,
+			"the substitute hero receives its own authored priced card")
+
+	# AC1/AC2 negative coverage for the new records: upgrades, unknown,
+	# spoofed-owner, duplicate, malformed quote and a missing owner all refuse
+	# whole before any draw, without consuming the run RNG.
+	var new_id: String = str(focused_cards[0]["id"])
+	var refusals := {
+		"v3 raw upgrade candidate": _with_card(focused_cards, 0,
+			{"id": new_id + "_plus", "owner": "warden", "price": 50}),
+		"v3 raw unknown candidate": _with_card(focused_cards, 0,
+			{"id": "__unknown_v3_raw_card__", "owner": "warden", "price": 50}),
+		"v3 raw spoofed owner": _with_card(focused_cards, 0,
+			{"id": new_id, "owner": "seamstress", "price": 50}),
+		"v3 raw duplicated record": _with_appended(focused_cards,
+			{"id": new_id, "owner": "warden", "price": 50}),
+		"v3 raw negative quote": _with_card(focused_cards, 0,
+			{"id": new_id, "owner": "warden", "price": -50}),
+		"v3 raw fractional quote": _with_card(focused_cards, 0,
+			{"id": new_id, "owner": "warden", "price": 50.5}),
+		"v3 raw missing owner record": focused_cards.slice(0, 2),
+	}
+	for label in refusals:
+		_reject_peddler_stock(label, _rng(SEED + 52000), party, refusals[label],
+			patch_pool, [])
+
+	# The shipped full catalog still validates and samples for this party, and a
+	# bounded deterministic sweep reaches each appended record in its own seat at
+	# its authored quote: the cards are genuinely reachable in live play.
+	var reached := {}
+	var sweep := 160
+	for offset in range(sweep):
+		var sweep_stock := RunShopStockOffers.generate_peddler_stock(
+			_rng(SEED + 54000 + offset), party, candidates, patch_pool, [])
+		if not sweep_stock.get("ok", false):
+			continue
+		for position in range(mini(sweep_stock.get("cards", []).size(), 3)):
+			var offer: Dictionary = sweep_stock["cards"][position]
+			if offer.get("owner") != party[position]:
+				continue
+			reached[offer.get("id")] = {"owner": offer.get("owner"),
+				"price": offer.get("price")}
+	for entry in V3_ORIGINAL_HERO_STOCK_SPECS:
+		var found: Dictionary = reached.get(entry["id"], {})
+		_check(found.get("owner") == entry["owner"]
+			and found.get("price") == int(entry["price"]),
+			str(entry["id"]) + ": the shipped seeded stock reaches it at its exact quote")
+	var live_seed: int = SEED + 53000
+	var live_rng := _rng(live_seed)
+	var live_oracle_rng := _rng(live_seed)
+	var live_stock := RunShopStockOffers.generate_peddler_stock(live_rng, party,
+		candidates, patch_pool, [])
+	_check(live_stock.get("ok", false) and live_stock == _peddler_stock_oracle(
+		catalog, party, candidates, patch_pool, [], live_oracle_rng)
+		and live_rng.state == live_oracle_rng.state,
+		"the shipped catalog samples this party with the appended v3 records intact")
 
 
 ## AC2: one real Peddler visit from truly sampled mixed-party stock.
