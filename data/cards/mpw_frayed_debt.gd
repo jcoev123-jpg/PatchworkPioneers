@@ -1,6 +1,6 @@
 class_name MpwFrayedDebt
 extends RefCounted
-## P11 data only. Automatic first-draw Exhaust is implemented in later work.
+## P11 curse data. CombatDeck._draw applies the first-draw Exhaust for each battle.
 
 const CARD_ID := "frayed_debt"
 

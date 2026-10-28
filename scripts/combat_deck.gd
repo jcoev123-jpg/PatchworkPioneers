@@ -8,6 +8,8 @@ const TURN_DRAW := 5
 var draw_pile: Array[String] = []
 var hand: Array[String] = []
 var discard_pile: Array[String] = []
+## Cards exhausted for this battle only (Frayed Debt on its first draw). The run deck still owns them.
+var exhausted: Array[String] = []
 var combat_state := CombatState.new()
 var turn_active: bool:
 	get:
@@ -32,7 +34,7 @@ func start_turn() -> bool:
 	return true
 
 
-## Returns cards drawn, or -1 for an inactive turn or a negative count.
+## Returns cards actually added to the hand, or -1 for an inactive turn or a negative count.
 func draw_extra(count: int) -> int:
 	if not turn_active or count < 0:
 		return -1
@@ -63,16 +65,22 @@ func try_spend_energy(cost: int) -> bool:
 	return combat_state.try_spend_energy(cost)
 
 
+## Each requested slot pops at most one card. A Frayed Debt pop uses its slot and
+## exhausts: it leaves this battle's circulation and the slot is not retried.
 func _draw(count: int) -> int:
 	var drawn := 0
-	while drawn < count:
+	for slot in range(count):
 		if draw_pile.is_empty():
 			if discard_pile.is_empty():
 				break
 			draw_pile.append_array(discard_pile)
 			discard_pile.clear()
 			_shuffle_draw_pile()
-		hand.append(draw_pile.pop_back())
+		var card: String = draw_pile.pop_back()
+		if card == MpwFrayedDebt.CARD_ID:
+			exhausted.append(card)
+			continue
+		hand.append(card)
 		drawn += 1
 	return drawn
 

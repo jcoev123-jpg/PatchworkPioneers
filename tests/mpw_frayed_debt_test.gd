@@ -1,5 +1,5 @@
 extends SceneTree
-## Independent P11 data/preparation/choice tests. No route or draw claim.
+## Independent P11 data/preparation/choice tests and the real battle draw exhaust. No route claim.
 
 var failures: Array[String] = []
 var checks := 0
@@ -14,6 +14,7 @@ func _initialize() -> void:
 	_test_invalid_preparation()
 	_test_stitches()
 	_test_stale_and_retry()
+	_test_battle_draws()
 	for failure in failures:
 		printerr(failure)
 	print("mpw_frayed_debt_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
@@ -296,3 +297,93 @@ func _test_stale_and_retry() -> void:
 	if full_offers.size() == 2:
 		var claimed := full.choose(full_offers[0].id, full_source)
 		_check(claimed.ok and claimed.remaining_scraps == 9223372036854775807, "overflow refusal preserves card claim")
+
+
+## Independent first-turn oracle for a fresh fight built from `cards`: the constructor's Fisher-Yates on a
+## same-seed RNG, then five draw slots in which each Frayed Debt uses its slot and is dropped.
+func _first_hand_oracle(cards: Array[String], seed_value: int) -> Dictionary:
+	var rng := _rng(seed_value)
+	var pile: Array[String] = cards.duplicate()
+	for index in range(pile.size() - 1, 0, -1):
+		var other := rng.randi_range(0, index)
+		var saved: String = pile[index]
+		pile[index] = pile[other]
+		pile[other] = saved
+	var hand: Array[String] = []
+	var exhausted := 0
+	for slot in range(CombatDeck.TURN_DRAW):
+		if pile.is_empty():
+			break
+		var card: String = pile.pop_back()
+		if card == MpwFrayedDebt.CARD_ID:
+			exhausted += 1
+		else:
+			hand.append(card)
+	return {"hand": hand, "draw": pile, "exhausted": exhausted, "rng": rng.state}
+
+
+## Play one real seeded fight from a run deck: turns through start_turn and draw_extra until every card has
+## been drawn at least once. Returns how many curses were exhausted; the curse must never reach hand/discard.
+func _fight(cards: Array[String], seed_value: int, label: String) -> int:
+	var deck := CombatDeck.new(cards, _rng(seed_value))
+	var oracle := _first_hand_oracle(cards, seed_value)
+	_check(deck.start_turn(), label + " real first turn")
+	_check(deck.hand == oracle.hand and deck.draw_pile == oracle.draw and deck.exhausted.size() == oracle.exhausted
+		and deck._rng.state == oracle.rng, label + " first turn matches the seeded slot oracle")
+	for turn in range(cards.size()):
+		_check(not deck.hand.has(MpwFrayedDebt.CARD_ID) and not deck.discard_pile.has(MpwFrayedDebt.CARD_ID),
+			label + " curse never held or discarded")
+		var hand_before := deck.hand.size()
+		var received := deck.draw_extra(1)
+		_check(received >= 0 and deck.hand.size() == hand_before + received, label + " draw_extra reports cards received")
+		_check(deck.end_turn() and deck.start_turn(), label + " real turn cycle")
+	var seen: Array[String] = []
+	seen.append_array(deck.draw_pile)
+	seen.append_array(deck.hand)
+	seen.append_array(deck.discard_pile)
+	seen.append_array(deck.exhausted)
+	seen.sort()
+	var expected := cards.duplicate()
+	expected.sort()
+	_check(seen == expected, label + " every copy is conserved between circulation and exhaust")
+	_check(not deck.hand.has(MpwFrayedDebt.CARD_ID) and not deck.discard_pile.has(MpwFrayedDebt.CARD_ID)
+		and not deck.draw_pile.has(MpwFrayedDebt.CARD_ID), label + " curse out of circulation after the fight")
+	return deck.exhausted.count(MpwFrayedDebt.CARD_ID)
+
+
+## P11 integration: the actual card-plus-curse claim exhausts in the next seeded battle; safe exit does not.
+func _test_battle_draws() -> void:
+	for ids in [LEGACY, ALTERNATE]:
+		for slot in range(3):
+			var context := _context(ids)
+			var before := context.duplicate(true)
+			var service := RunFrayedDebtParcel.new()
+			_check(service.prepare(context, _rng(358 + slot)).ok, "battle claim prepared")
+			var offers := service.get_offers()
+			_check(offers.size() == 2, "battle claim offers")
+			if offers.size() != 2:
+				continue
+			var choice: String = offers[slot].id if slot < 2 else RunFrayedDebtParcel.SAFE_EXIT
+			var result := service.choose(choice, service.get_source_snapshot())
+			_check(result.ok, "battle claim chosen")
+			if not result.ok:
+				continue
+			var cards: Array[String] = []
+			cards.assign(result.deck)
+			var ledger: Array = result.deck.duplicate()
+			if slot < 2:
+				_check(cards.count(choice) == before.deck.count(choice) + 1 and cards.count(MpwFrayedDebt.CARD_ID) == 1
+					and result.remaining_scraps == before.remaining_scraps, "claim: chosen uncommon plus one curse, no scrap")
+			else:
+				_check(result.deck == before.deck and not cards.has(MpwFrayedDebt.CARD_ID)
+					and result.remaining_scraps == before.remaining_scraps + 1, "safe exit: +1 scrap and no curse")
+			for seed_value in [5, 358, 9001]:
+				var exhausted := _fight(cards, seed_value, "%s slot %d seed %d" % [str(ids), slot, seed_value])
+				_check(exhausted == (1 if slot < 2 else 0), "the next battle exhausts exactly the claimed curse")
+				_check(result.deck == ledger and context == before, "battle leaves run ownership and the source untouched")
+				_check(result.descriptors == before.descriptors and result.next_stitch_id == before.next_stitch_id,
+					"stitched ledger and cursor exactly as the receipt requires")
+			# A fresh fight from the same persistent deck exhausts again, identically.
+			if slot < 2:
+				_check(_fight(cards, 358, "fresh fight") == 1 and cards.count(MpwFrayedDebt.CARD_ID) == 1,
+					"the removable curse stays owned and exhausts again next fight")

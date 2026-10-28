@@ -9,6 +9,7 @@ func _initialize() -> void:
 	_test_boundaries()
 	_test_energy()
 	_test_replay()
+	_test_frayed_debt()
 	if failures.is_empty():
 		print("combat_deck_test: PASS (", checks, " checks)")
 	else:
@@ -33,7 +34,8 @@ func _rng(seed_value: int) -> RandomNumberGenerator:
 func _snapshot(deck: CombatDeck) -> Array:
 	return [deck.draw_pile.duplicate(), deck.hand.duplicate(),
 		deck.discard_pile.duplicate(), deck.turn_active, deck.energy,
-		deck.combat_state.player_turn_active, deck.combat_state.energy, deck._rng.state]
+		deck.combat_state.player_turn_active, deck.combat_state.energy, deck._rng.state,
+		deck.exhausted.duplicate()]
 
 
 func _reject(deck: CombatDeck, operation: Callable, message: String) -> void:
@@ -91,6 +93,7 @@ func _conserved(deck: CombatDeck, original: Array[String]) -> void:
 	cards.append_array(deck.draw_pile)
 	cards.append_array(deck.hand)
 	cards.append_array(deck.discard_pile)
+	cards.append_array(deck.exhausted)
 	cards.sort()
 	var expected := original.duplicate()
 	expected.sort()
@@ -226,3 +229,138 @@ func _test_replay() -> void:
 			_check(a.end_turn() and b.end_turn(), "replay turns end")
 			_check(_snapshot(a) == _snapshot(b), "end discard replay")
 			_conserved(a, cards)
+
+
+const CURSE := MpwFrayedDebt.CARD_ID
+
+
+func _circulating(deck: CombatDeck) -> Array[String]:
+	var cards: Array[String] = []
+	cards.append_array(deck.draw_pile)
+	cards.append_array(deck.hand)
+	cards.append_array(deck.discard_pile)
+	return cards
+
+
+## A deck whose draw pile is set to an exact order (top card last) after construction.
+func _fixed(order: Array[String], seed_value: int = 7) -> CombatDeck:
+	var deck := CombatDeck.new([], _rng(seed_value))
+	deck.draw_pile.assign(order)
+	return deck
+
+
+## Independent oracle for `slots` draw slots: pops from a copy of the piles, refilling from the
+## discard with the same Fisher-Yates on a cloned RNG; a Frayed Debt pop uses its slot and is dropped.
+func _draw_oracle(deck: CombatDeck, slots: int) -> Dictionary:
+	var draw: Array[String] = deck.draw_pile.duplicate()
+	var hand: Array[String] = deck.hand.duplicate()
+	var discard: Array[String] = deck.discard_pile.duplicate()
+	var exhausted: Array[String] = deck.exhausted.duplicate()
+	var rng := _rng(0)
+	rng.state = deck._rng.state
+	var added := 0
+	for slot in range(slots):
+		if draw.is_empty():
+			if discard.is_empty():
+				break
+			draw.append_array(discard)
+			discard.clear()
+			for index in range(draw.size() - 1, 0, -1):
+				var other := rng.randi_range(0, index)
+				var saved: String = draw[index]
+				draw[index] = draw[other]
+				draw[other] = saved
+		var card: String = draw.pop_back()
+		if card == CURSE:
+			exhausted.append(card)
+		else:
+			hand.append(card)
+			added += 1
+	return {"draw": draw, "hand": hand, "discard": discard, "exhausted": exhausted,
+		"rng": rng.state, "added": added}
+
+
+func _matches(deck: CombatDeck, oracle: Dictionary) -> bool:
+	return deck.draw_pile == oracle.draw and deck.hand == oracle.hand and deck.discard_pile == oracle.discard \
+		and deck.exhausted == oracle.exhausted and deck._rng.state == oracle.rng
+
+
+func _test_frayed_debt() -> void:
+	_check(CURSE == "frayed_debt" and MpwFrayedDebt.new().get_definition(CURSE).exhaust_on_first_draw
+		and MpwFrayedDebt.new().get_definition(CURSE).consumes_draw, "canonical curse carries the exhaust contract")
+	# Drawn immediately: five slots, the curse uses one, four normal cards reach the hand.
+	var deck := _fixed(["a", "b", "c", "d", "e", "f", CURSE])
+	var rng_before: int = deck._rng.state
+	_check(deck.start_turn(), "turn with curse on top starts")
+	_check(deck.hand == ["f", "e", "d", "c"] and deck.draw_pile == ["a", "b"] and deck.discard_pile.is_empty()
+		and deck.exhausted == [CURSE], "five requested slots yield four normal cards and exhaust the curse")
+	_check(deck._rng.state == rng_before, "the consumed slot is not retried and draws no RNG")
+	_reject(deck, deck.start_turn, "repeated turn entry after exhaust")
+	_check(deck.draw_extra(-1) == -1 and deck.hand.size() == 4 and deck.exhausted == [CURSE], "negative extra draw refused")
+	_check(deck.end_turn() and deck.discard_pile == ["f", "e", "d", "c"] and not deck.discard_pile.has(CURSE),
+		"end of turn never discards an exhausted curse")
+	var before := _snapshot(deck)
+	_check(deck.draw_extra(1) == -1 and _snapshot(deck) == before, "inactive extra draw refused without mutation")
+	for turn in range(6):
+		_check(deck.start_turn() and not deck.hand.has(CURSE), "exhausted curse is never drawn again this fight")
+		_check(not _circulating(deck).has(CURSE) and deck.exhausted == [CURSE], "curse stays out of circulation")
+		_check(deck.end_turn(), "replay turn ends")
+	# Later via extra draw: the curse consumes one of n slots and draw_extra reports cards received.
+	deck = _fixed(["a", "b", CURSE, "c", "d", "e", "f", "g"])
+	_check(deck.start_turn() and deck.hand == ["g", "f", "e", "d", "c"] and deck.exhausted.is_empty(),
+		"ordinary start draws five normal cards")
+	_check(deck.draw_extra(2) == 1 and deck.hand.back() == "b" and deck.draw_pile == ["a"]
+		and deck.exhausted == [CURSE], "extra draw of two meets the curse: one slot spent, one card received")
+	_check(deck.draw_extra(1) == 1 and deck.hand.back() == "a" and deck.draw_pile.is_empty(), "next extra draw is normal")
+	_check(deck.draw_extra(3) == 0 and deck.exhausted == [CURSE], "empty piles terminate with no replay")
+	# Two copies: each consumes its own slot; the hand is short, never refilled for them.
+	deck = _fixed([CURSE, "a", CURSE, "b"])
+	_check(deck.start_turn() and deck.hand == ["b", "a"] and deck.draw_pile.is_empty()
+		and deck.exhausted == [CURSE, CURSE], "both copies exhaust on their first draws")
+	_check(deck.draw_extra(5) == 0 and deck.end_turn() and deck.start_turn() and deck.hand.size() == 2
+		and not deck.hand.has(CURSE) and deck.exhausted == [CURSE, CURSE],
+		"no copy returns after the discard refill")
+	# A curse met across a seeded discard refill, against the independent oracle.
+	for seed_value in [0, 42, 358, 987654]:
+		deck = CombatDeck.new([], _rng(seed_value))
+		_check(deck.start_turn(), "refill witness turn starts")
+		deck.draw_pile.assign(["p", "q"])
+		deck.discard_pile.assign(["a", CURSE, "b", "c", CURSE, "d"])
+		var partial := _draw_oracle(deck, 4)
+		var oracle := _draw_oracle(deck, 8)
+		var added := deck.draw_extra(8)
+		_check(added == oracle.added and added == 6 and _matches(deck, oracle) and partial.added + partial.exhausted.size() == 4,
+			"seed %d: refill shuffle path is unchanged and both curses use slots" % seed_value)
+		_check(deck.exhausted == [CURSE, CURSE] and not _circulating(deck).has(CURSE), "seed %d: curses exhausted" % seed_value)
+		before = _snapshot(deck)
+		_check(deck.draw_extra(-2) == -1 and _snapshot(deck) == before, "seed %d: refused draw keeps RNG" % seed_value)
+	# Seeded replay from one run ledger: same seed, same piles, same exhaust; a fresh fight exhausts again.
+	var ledger: Array[String] = ["a", "b", "c", "d", "e", "f", "g", "h", CURSE, "i", "j", "k"]
+	var ledger_before := ledger.duplicate()
+	for seed_value in [1, 77, 4242]:
+		var a := CombatDeck.new(ledger, _rng(seed_value))
+		var b := CombatDeck.new(ledger, _rng(seed_value))
+		for turn in range(5):
+			var oracle := _draw_oracle(a, CombatDeck.TURN_DRAW)
+			_check(a.start_turn() and b.start_turn(), "seeded curse turns start")
+			_check(_matches(a, oracle) and _snapshot(a) == _snapshot(b), "seed %d turn %d: start_turn oracle and replay" % [seed_value, turn])
+			_check(not a.hand.has(CURSE), "curse never reaches the hand")
+			_conserved(a, ledger)
+			if not a.hand.is_empty():
+				var card := a.hand[0]
+				_check(a.discard_played(card) and b.discard_played(card), "replay plays a real card")
+			oracle = _draw_oracle(a, 2)
+			var received := a.draw_extra(2)
+			_check(received == oracle.added and received == b.draw_extra(2) and _matches(a, oracle)
+				and _snapshot(a) == _snapshot(b), "seed %d turn %d: draw_extra oracle and replay" % [seed_value, turn])
+			_check(a.end_turn() and b.end_turn(), "seeded curse turns end")
+		_check(a.exhausted == [CURSE] and not _circulating(a).has(CURSE), "seed %d: curse met once, exhausted once" % seed_value)
+		_check(ledger == ledger_before, "the battle never edits the run ledger")
+		var fresh := CombatDeck.new(ledger, _rng(seed_value))
+		_check(fresh.exhausted.is_empty() and fresh.draw_pile.count(CURSE) == 1, "a fresh fight starts with the curse again")
+		_check(_snapshot(fresh) == _snapshot(CombatDeck.new(ledger, _rng(seed_value))), "fresh fight replays")
+	# An ordinary deck without the curse never exhausts anything.
+	var plain := CombatDeck.new(["a", "b", "c", "d", "e", "f", "g"], _rng(42))
+	var plain_oracle := _draw_oracle(plain, CombatDeck.TURN_DRAW)
+	_check(plain.start_turn() and _matches(plain, plain_oracle) and plain.hand.size() == 5 and plain.exhausted.is_empty(),
+		"no-curse draw is unchanged")
