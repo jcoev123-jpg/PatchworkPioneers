@@ -62,8 +62,12 @@ func _rest_panel_ready(id: String) -> bool:
 	if campfire:
 		return app.campfire_visit != null and app.campfire_visit.read_state().node_id == id \
 			and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN \
+			and app.campfire_visit.read_state().heroes == app.run_heroes \
+			and app.campfire_view._visit == app.campfire_visit \
+			and app.campfire_view._snapshot == app.campfire_visit.read_state() \
 			and not app._campfire_closed and _rest_action_ready(app.campfire_heal_button)
 	return app.rest_recovery != null and not app.rest_recovery.is_consumed() \
+		and app.rest_recovery._valid and app.rest_recovery._roster == app.run_heroes \
 		and app._rest_map != null and app._rest_map.get_ref() == app.run_map \
 		and app._rest_route == app.run_map.get_route() \
 		and is_instance_valid(app.rest_continue_button) \
@@ -134,6 +138,16 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 			await _await_rest_state(id, "completed transit", func(): return _rest_connected(id))
 			continue
 		var action: Button = await _ready_route_action(id)
+		var previous_campfire = app.campfire_visit
+		var previous_recovery = app.rest_recovery
+		var resources := [app.run_deck.duplicate(), app.session_gold, app.run_scraps,
+			app.run_rng.state, app.run_trinkets.duplicate(), app.run_removal_count,
+			app.run_stitch_descriptors.duplicate(true), app.run_next_stitch_id]
+		# Independent revive-first, floor(30%) oracle; observing a consumed flag
+		# alone could accept a stale recovery without proving this visit healed.
+		var expected_heroes: Array = app.run_heroes.duplicate(true)
+		for hero in expected_heroes:
+			hero.hp = mini(hero.max_hp, maxi(1, hero.hp) + floori(hero.max_hp * 0.3))
 		await _await_rest_state(id, "route action", func(): return (_rest_action_ready(action)
 			and app.run_map.get_legal_choices().has(id) and app._can_choose_connected_route()))
 		await _rest_input(action, keyboard)
@@ -144,6 +158,8 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 		_check(not completed.has(id), "admitted Rest has no earlier Heal receipt")
 		completed.append(id)
 		if is_instance_valid(app.campfire_view) and app.campfire_view.is_visible_in_tree():
+			_check(app.campfire_visit != previous_campfire,
+				"connected Rest creates a fresh Campfire service instead of reusing a completed visit")
 			_check(app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
 				"transit Campfire binds an open visit")
 			var stale_heal: Button = app.campfire_heal_button
@@ -163,6 +179,8 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 			_check(_persistent() == healed and app.campfire_visit.read_state().status == RunCampfireVisit.HEALED
 				and _rest_connected(id), "stale Campfire Heal after completion is inert")
 		else:
+			_check(app.rest_recovery != previous_recovery,
+				"connected legacy Rest creates a fresh recovery instead of reusing a consumed visit")
 			_check(is_instance_valid(app.rest_view) and app.rest_view.is_visible_in_tree()
 				and app.rest_recovery != null and not app.rest_recovery.is_consumed(),
 				"legacy transit Rest binds an unconsumed recovery")
@@ -206,6 +224,12 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 				"stale legacy Heal and Continue after leaving are inert")
 		_check(app.party_carryover.read_state().completed_rests == completed,
 			"one physical Heal adds exactly this Rest receipt once")
+		_check(app.run_heroes == expected_heroes and app.party_carryover.read_state().heroes == expected_heroes,
+			"this Rest publishes exact independent healed heroes to both run and carryover")
+		_check(resources == [app.run_deck.duplicate(), app.session_gold, app.run_scraps,
+			app.run_rng.state, app.run_trinkets.duplicate(), app.run_removal_count,
+			app.run_stitch_descriptors.duplicate(true), app.run_next_stitch_id],
+			"Rest admission, Heal and Continue preserve deck, wallets, inventory and RNG")
 		await _check_connected_book()
 		_check(app.route_view != null and app.route_view.is_visible_in_tree()
 			and app._can_choose_connected_route(), "completed Rest keeps connected chooser live")
