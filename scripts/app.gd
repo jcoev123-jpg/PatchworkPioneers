@@ -814,6 +814,11 @@ var _fate_pin_outcome: RunFatePinAuction
 var _fate_pin_wardrobe: RunPatchWardrobe
 var _fate_pin_context: Array = []
 var _fate_pin_seen := false
+var frayed_debt_panel: LiveEventChoicePanel
+var _frayed_debt_outcome: RunFrayedDebtParcel
+var _frayed_debt_context: Array = []
+var _frayed_debt_seen := false
+var _frayed_debt_receipt: Dictionary = {}
 var _fate_pin_receipt: Dictionary = {}
 var card_reward: RunCardRewardChoice
 var fight_rewards: RunFightVictoryRewards
@@ -2992,6 +2997,8 @@ func _unfought_run() -> bool:
 
 
 func _can_choose_connected_route() -> bool:
+	if is_instance_valid(frayed_debt_panel):
+		return false
 	if is_instance_valid(fate_pin_panel):
 		return false
 	if is_instance_valid(needle_toll_panel):
@@ -3086,7 +3093,7 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 			for owner in run_stitch_descriptors[card].owners:
 				if owner not in admitted_ids:
 					return false
-		elif RunRestStitchCards.resolve_card_definition(card).get("owner") not in admitted_ids:
+		elif card != MpwFrayedDebt.CARD_ID and RunRestStitchCards.resolve_card_definition(card).get("owner") not in admitted_ids:
 			return false
 	var next_party := party_carryover.create_next_fight_party()
 	if next_party == null:
@@ -3647,8 +3654,122 @@ func _clear_fate_pin_panel() -> void:
 	fate_pin_panel = null
 
 
+func _frayed_debt_source() -> Dictionary:
+	var ledger := RunRestStitchCards.new(run_deck, run_stitch_descriptors, run_scraps, run_next_stitch_id)
+	if not ledger.is_valid():
+		return {}
+	var context := ledger.get_snapshot()
+	context.party_ids = _party_receipt.get("hero_ids", []).duplicate()
+	context.visited = _frayed_debt_seen
+	return context
+
+
+## One ticket per eligible ordinary outcome, plus the authored Parcel weight.
+## Keep the non-wallet transaction out of RunM04EventRotation's catalog.
+func _select_generic_event(document: Dictionary, staged_rng: RandomNumberGenerator) -> Dictionary:
+	var rotation := RunM04EventRotation.new(document)
+	if not rotation.is_catalog_valid():
+		return {"ok": false}
+	for event_id in _wallet_event_history:
+		if event_id.strip_edges().is_empty():
+			return {"ok": false}
+	var records := {}
+	var tickets: Array[String] = []
+	for record in rotation.get_generic_events():
+		if not _wallet_event_history.has(record.id):
+			records[record.id] = record
+			tickets.append(record.id)
+	var probe_rng := RandomNumberGenerator.new()
+	probe_rng.state = staged_rng.state
+	var parcel := RunFrayedDebtParcel.new()
+	if not _frayed_debt_seen and parcel.prepare(_frayed_debt_source(), probe_rng).ok:
+		var record := RunFrayedDebtParcel.load_authored_event()
+		records[record.id] = record
+		for ticket in range(int(record.visit_weight)):
+			tickets.append(record.id)
+	if tickets.is_empty():
+		return {"ok": false}
+	tickets.sort()
+	return {"ok": true, "event": records[tickets[staged_rng.randi_range(0, tickets.size() - 1)]].duplicate(true)}
+
+
+func _frayed_debt_snapshot() -> Array:
+	if run_map == null or run_rng == null or party_carryover == null or act_outcome == null \
+		or not is_instance_valid(frayed_debt_panel) or frayed_debt_panel._selector == null \
+		or _frayed_debt_outcome == null:
+		return []
+	var carry := party_carryover as RunTornCarryover
+	return [run_map, run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route(),
+		run_rng, run_rng.state, run_seed, _frayed_debt_source(), _party_receipt.duplicate(true),
+		run_heroes.duplicate(true), run_trinkets.duplicate(), session_gold, run_removal_count,
+		carry, carry.read_state(), carry.torn, carry.torn.read_state(), carry._wardrobe,
+		carry._wardrobe.get_snapshot() if carry._wardrobe != null else {},
+		act_outcome, act_outcome.get_state(), frayed_debt_panel, frayed_debt_panel._selector,
+		frayed_debt_panel._selector.get_event(), _frayed_debt_outcome,
+		_frayed_debt_outcome.get_source_snapshot(), _frayed_debt_outcome.get_offers(),
+		_wallet_event_history.duplicate(), _vital_event_history.duplicate()]
+
+
+func _open_frayed_debt_parcel(id: String, source: WeakRef, staged_rng: RandomNumberGenerator) -> bool:
+	if _frayed_debt_seen or not _can_choose_connected_route() or source == null \
+		or source.get_ref() != run_map or staged_rng == null \
+		or not run_map.get_legal_choices().has(id) or run_map.get_node(id).get("type") != "Event":
+		return false
+	var outcome := RunFrayedDebtParcel.new()
+	if not outcome.prepare(_frayed_debt_source(), staged_rng).ok:
+		return false
+	var panel := preload("res://scenes/event_choice_panel.tscn").instantiate() as LiveEventChoicePanel
+	add_child(panel)
+	if not panel.open_frayed_debt_parcel(outcome) or not run_map.choose_node(id):
+		panel.free()
+		return false
+	_mount_event_backdrop(panel)
+	frayed_debt_panel = panel
+	_frayed_debt_outcome = outcome
+	run_rng.state = staged_rng.state
+	_clear_route_view()
+	_frayed_debt_context = _frayed_debt_snapshot()
+	panel.choice_committed.connect(_commit_frayed_debt_parcel.bind(panel, source))
+	return true
+
+
+func _commit_frayed_debt_parcel(event_id: String, choice_id: String, panel, source: WeakRef) -> void:
+	if not is_instance_valid(panel) or panel != frayed_debt_panel or panel.get_parent() != self \
+		or not panel.is_visible_in_tree() or not panel.has_open_event() or source == null \
+		or source.get_ref() != run_map or _frayed_debt_context.is_empty() \
+		or _frayed_debt_snapshot() != _frayed_debt_context \
+		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Event" \
+		or event_id != "frayed_debt_parcel" or not panel._selector.is_claimed() \
+		or panel._committed_choice != {"ok": true, "event_id": event_id, "choice_id": choice_id}:
+		return
+	var receipt := _frayed_debt_outcome.choose(choice_id, _frayed_debt_source())
+	if not receipt.ok:
+		return
+	run_deck.assign(receipt.deck)
+	run_scraps = receipt.remaining_scraps
+	run_stitch_descriptors = receipt.descriptors.duplicate(true)
+	run_next_stitch_id = receipt.next_stitch_id
+	_frayed_debt_seen = receipt.visited
+	_frayed_debt_receipt = receipt.duplicate(true)
+	_placeholder_map = source
+	_placeholder_route = run_map.get_route()
+	_clear_frayed_debt_panel()
+	_present_connected_route(source)
+
+
+func _clear_frayed_debt_panel() -> void:
+	_frayed_debt_context.clear()
+	_frayed_debt_outcome = null
+	if is_instance_valid(frayed_debt_panel):
+		frayed_debt_panel.close_event()
+		remove_child(frayed_debt_panel)
+		frayed_debt_panel.queue_free()
+	frayed_debt_panel = null
+
+
 func _open_wallet_event(id: String, source: WeakRef) -> bool:
 	if run_rng == null or run_map == null or source == null or source.get_ref() != run_map \
+		or session_gold < 0 or run_scraps < 0 \
 		or not _can_choose_connected_route() or not run_map.get_legal_choices().has(id) \
 		or run_map.get_node(id).get("type") != "Event":
 		return false
@@ -3678,10 +3799,12 @@ func _open_wallet_event(id: String, source: WeakRef) -> bool:
 			if FileAccess.file_exists(vital_event_catalog_path) else {}
 		selection = RunV3VitalEventRotation.new(catalog).select_event(staged_rng, _vital_event_history)
 	else:
-		selection = RunM04EventRotation.new(document).select_event(staged_rng, _wallet_event_history)
+		selection = _select_generic_event(document, staged_rng)
 	if not selection.ok:
 		return false
 	var record: Dictionary = selection.event
+	if record.id == "frayed_debt_parcel":
+		return _open_frayed_debt_parcel(id, source, staged_rng)
 	if record.id == RunFatePinAuction.EVENT_ID:
 		return _open_fate_pin_auction(id, source, staged_rng)
 	var panel := preload("res://scenes/event_choice_panel.tscn").instantiate() as LiveEventChoicePanel
@@ -7194,6 +7317,9 @@ func _return_to_title() -> void:
 	_clear_needle_toll()
 	_needle_toll_completed = false
 	_clear_fate_pin_panel()
+	_clear_frayed_debt_panel()
+	_frayed_debt_seen = false
+	_frayed_debt_receipt.clear()
 	_fate_pin_outcome = null
 	_fate_pin_wardrobe = null
 	_fate_pin_seen = false
