@@ -891,6 +891,7 @@ func _run() -> void:
 			_check(randi() == global_next, "earned route and cast preserve global RNG")
 	await _coat_cases(fixture)
 	await _pool_case()
+	await _sight_glass_case()
 	await _knit_case(fixture)
 	await _finish_hand()
 
@@ -973,6 +974,115 @@ func _pool_case() -> void:
 			_check(trace == replay, "seeded mouse/keyboard pool composite replay")
 		await _return()
 		_check(randi() == global_next, "earned pool route and cast preserve global RNG")
+
+
+## Seed 3106's opening Fight offers the authored Tinker gadget Sight Glass. It is
+## claimed by the real reward button, stitched ahead of the Seamstress's Prick at
+## the connected Rest, drawn in the next routed Fight and cast by mouse or keys.
+const SIGHT_FIXTURE := {"seed": 3106, "fight": "f01_n2", "elite": ["f02_n3"], "rest": ["f03_n2"], "next": "f04_n3"}
+
+
+func _sight_glass_case() -> void:
+	var pair := ["tinker_sight_glass", "seamstress_prick"]
+	var replay: Array = []
+	for keyboard in [false, true]:
+		print("sight glass stitched pair: ", pair, " keyboard=", keyboard)
+		seed(106106)
+		var global_next := randi()
+		seed(106106)
+		var id := await _earn(SIGHT_FIXTURE, pair, keyboard, "", true, pair[0])
+		if id.is_empty():
+			return
+		_check(app.run_stitch_descriptors[id].cost == 2 and app.deck.hand.has(id),
+			"earned Sight Glass composite is held at its shared cost two")
+		var ledger := RunRestStitchCards.new(app.run_deck, app.run_stitch_descriptors, app.run_scraps, app.run_next_stitch_id)
+		var preview := CombatStitchedTargetPreview.new().get_preview(ledger, app._stitch_snapshot(), app.deck, app.party, app.enemies, id)
+		_check(preview.playable and preview.halves.size() == 2 and preview.halves[0].requires_selection
+			and preview.halves[1].requires_selection, "Sight Glass half and Prick both need real enemy targets")
+		if not preview.playable:
+			return
+		var living: Array = []
+		for enemy in app.enemies.get_enemies():
+			if enemy.hp > 0:
+				living.append(enemy.position)
+		_check(preview.halves[0].target_positions == living, "Sight Glass offers exactly the living enemy slots")
+		var first: int = preview.halves[0].target_positions[0]
+		var second: int = first if preview.halves[1].target_positions.has(first) else preview.halves[1].target_positions[0]
+		_check(second == first and app.enemies.get_enemy(first).hp > 4,
+			"Prick can strike the Sight Glass target, which survives it")
+		var rng := RandomNumberGenerator.new()
+		rng.state = app.run_rng.state
+		var deck := CombatDeck.new([], rng)
+		deck.hand.assign(app.deck.hand)
+		deck.draw_pile.assign(app.deck.draw_pile)
+		deck.discard_pile.assign(app.deck.discard_pile)
+		deck.combat_state.energy = app.deck.energy
+		deck.combat_state.player_turn_active = true
+		var party := CombatParty.new(app.party.get_heroes())
+		party._heroes = app.party.get_heroes()
+		var enemies := CombatEnemies.new(app.enemies.get_enemies())
+		enemies._enemies = app.enemies.get_enemies()
+		var attacks := CombatAttackCards.new()
+		attacks.start_player_turn()
+		var expected := CombatStitchedCards.new(attacks).play_stitched(deck, party, enemies, ledger, id, first, second)
+		_check(expected.ok and expected.halves.size() == 2, "independent scene-free Sight Glass composite succeeds")
+		if not expected.ok:
+			return
+		# The ordinary gadget is the effect oracle: one loose Sight Glass over the
+		# same piles, energy, actors and RNG state applies the same Exposed/draw.
+		var loose_rng := RandomNumberGenerator.new()
+		loose_rng.state = app.run_rng.state
+		var loose := CombatDeck.new([], loose_rng)
+		loose.hand.assign([pair[0]])
+		loose.draw_pile.assign(app.deck.draw_pile)
+		loose.discard_pile.assign(app.deck.discard_pile)
+		loose.combat_state.energy = 3
+		loose.combat_state.player_turn_active = true
+		var loose_enemies := CombatEnemies.new(app.enemies.get_enemies())
+		loose_enemies._enemies = app.enemies.get_enemies()
+		var ordinary := CombatTinkerPoolGadgets.new().resolve_sight_glass(loose,
+			CombatParty.new(app.party.get_heroes()), loose_enemies, pair[0], first)
+		var sight: Dictionary = expected.halves[0]
+		_check(ordinary.ok and sight == {"ok": true, "effect": "exposed_and_draw", "exposed_applied": ordinary.exposed_applied,
+			"draw": 1, "drawn": ordinary.drawn, "target": first} and ordinary.exposed_applied == 2,
+			"stitched Sight Glass half equals the ordinary gadget's Exposed and draw")
+		var prick: Dictionary = expected.halves[1].hits[0]
+		_check(prick.position == first and prick.statuses.get("bleed", 0) > 0
+			and enemies.get_enemy(first).get("statuses", {}).get("exposed", 0) == 2,
+			"Prick strikes the same foe after Sight Glass's Exposed")
+		var hand_before: Array = app.deck.hand.duplicate()
+		var energy_before: int = app.deck.energy
+		var discard_before: Array = app.deck.discard_pile.duplicate()
+		var draw_before: int = app.deck.draw_pile.size()
+		var shared_service = presenter._play
+		_check(not shared_service._tinker._consumed, "Tinker bonus is unspent before the physical cast")
+		await _arm(id, keyboard)
+		await _pick(first, "enemy", keyboard)
+		await _pick(second, "enemy", keyboard)
+		_check(presenter.last_event == expected, "physical Sight Glass composite event equals the exact oracle")
+		_check([app.deck.hand, app.deck.draw_pile, app.deck.discard_pile, app.deck.energy, app.party.get_heroes(), app.enemies.get_enemies(), app.run_rng.state]
+			== [deck.hand, deck.draw_pile, deck.discard_pile, deck.energy, party.get_heroes(), enemies.get_enemies(), rng.state],
+			"complete Sight Glass composite transition equals oracle")
+		_check(app.deck.energy == energy_before - 2 and not app.deck.hand.has(id)
+			and app.deck.hand.size() == hand_before.size() - 1 + ordinary.drawn
+			and app.deck.discard_pile.back() == id and app.deck.discard_pile.count(id) == 1,
+			"one energy charge, one Sight Glass draw and exactly one composite discard")
+		_check(draw_before == 0 or app.deck.discard_pile.slice(0, -1) == discard_before,
+			"no other card is discarded")
+		_check(app.enemies.get_enemy(first).get("statuses", {}).get("exposed", 0) == 2, "live target carries exactly the printed Exposed")
+		_check(presenter._play == shared_service and not shared_service._tinker._consumed and not attacks._tinker._consumed,
+			"nonattack Sight Glass and Seamstress Prick leave Tinker's first-attack bonus unspent")
+		var after := _complete_state()
+		await _key(KEY_1 + first - 1)
+		await _key(KEY_1 + first - 1)
+		_check(_complete_state() == after, "repeated input after the Sight Glass cast is inert")
+		var trace := [_snapshot(), presenter.last_event.duplicate(true), app._stitch_snapshot()]
+		if replay.is_empty():
+			replay = trace
+		else:
+			_check(trace == replay, "seeded mouse/keyboard Sight Glass composite replay")
+		await _return()
+		_check(randi() == global_next, "earned Sight Glass route and cast preserve global RNG")
 
 
 func _knit_case(fixture: Dictionary) -> void:

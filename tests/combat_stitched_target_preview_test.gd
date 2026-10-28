@@ -628,12 +628,18 @@ func _test_pool_self_previews() -> void:
 			_rejected(poor, id + ": no advance credit from energy half")
 
 
-## Rest stitches carrying Tinker's six single-target pool printings: only the
+## Rest stitches carrying Tinker's six single-target pool printings and the
+## Sight Glass base/+ Exposed-and-draw gadgets: only the
 ## living legal enemy slots, the canonical FROM, and no cast from a forged
 ## ledger, a downed or misplaced owner, or a stale hand.
 func _test_pool_attack_previews() -> void:
 	var brace_def := RunRestStitchCards.resolve_card_definition("warden_brace")
-	for id in CombatTinkerPoolAttacks.STITCHED_IDS:
+	var ids: Array = []
+	ids.append_array(CombatTinkerPoolAttacks.STITCHED_IDS)
+	ids.append_array(CombatTinkerPoolGadgets.SIGHT_GLASS_IDS)
+	_check(ids.has("tinker_sight_glass") and ids.has("tinker_sight_glass_plus"),
+		"Sight Glass base/+ previews are exercised")
+	for id in ids:
 		var authored := RunRestStitchCards.resolve_card_definition(id)
 		_check(authored == TinkerPoolCards.new().get_definition(id) and authored.target_kind == "enemy_single"
 			and authored.to_positions == [1, 2, 3], "authored single-target pool half " + id)
@@ -672,6 +678,13 @@ func _test_pool_attack_previews() -> void:
 			var forged: Dictionary = s.snapshot.duplicate(true)
 			forged.descriptors[s.id]["second_half" if reverse else "first_half"].effects["damage"] = 99
 			_rejected(s, id + ": forged effects receipt", forged)
+			if authored.effects.has("exposed"):
+				forged = s.snapshot.duplicate(true)
+				forged.descriptors[s.id]["second_half" if reverse else "first_half"].effects["exposed"] = 99
+				_rejected(s, id + ": forged Exposed receipt", forged)
+				forged = s.snapshot.duplicate(true)
+				forged.descriptors[s.id]["second_half" if reverse else "first_half"].effects["draw"] = 9
+				_rejected(s, id + ": forged draw receipt", forged)
 			forged = s.snapshot.duplicate(true)
 			forged.descriptors[s.id]["second_half" if reverse else "first_half"]["to_positions"] = [1]
 			_rejected(s, id + ": forged TO receipt", forged)
