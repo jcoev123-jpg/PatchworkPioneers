@@ -419,6 +419,66 @@
         { "id": "sew_watchtower_hem", "text": "Pay 12 gold and 2 scraps for a lasting watch hem (+3 max HP)", "outcome": { "gold": -12, "scraps": -2, "hp": 0, "max_hp": 3 } },
         { "id": "leave", "text": "Pass beneath the shield in peace", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_candle_bell_tollhouse",
+      "title": "The Candle-Bell Tollhouse",
+      "description": "A stout velvet tollkeeper grips a brass bell beside a midnight-teal bridge wrapped in glowing lantern thread.",
+      "choices": [
+        { "id": "buy_guard_seam", "text": "Pay 13 gold and 1 scrap for a guarded seam (+2 max HP)", "outcome": { "gold": -13, "scraps": -1, "hp": 0, "max_hp": 2 } },
+        { "id": "watch_bell", "text": "Stand the cold bell watch (lose 5 HP; gain 17 gold)", "outcome": { "gold": 17, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Pass the bell without a bargain", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_inkfern_apothecary",
+      "title": "The Inkfern Apothecary",
+      "description": "A round button-eyed herbalist tends dark stitched ferns inside a bone-cream tent lit by rose lanterns.",
+      "choices": [
+        { "id": "buy_inkfern_wrap", "text": "Pay 16 gold for an inkfern wrap (+10 HP)", "outcome": { "gold": -16, "scraps": 0, "hp": 10, "max_hp": 0 } },
+        { "id": "press_fading_fern", "text": "Trade 2 max HP of lasting seam for 3 scraps", "outcome": { "gold": 0, "scraps": 3, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the ferns to the moon", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_silver_stitch_observatory",
+      "title": "The Silver-Stitch Observatory",
+      "description": "A plump star-chart doll winds silver thread around an enormous telescope under a plum quilt sky.",
+      "choices": [
+        { "id": "stitch_starchart", "text": "Spend 3 scraps to mend 3 HP and gain 2 max HP", "outcome": { "gold": 0, "scraps": -3, "hp": 3, "max_hp": 2 } },
+        { "id": "watch_lonely_star", "text": "Watch the cold star (lose 6 HP; gain 26 gold)", "outcome": { "gold": 26, "scraps": 0, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Fold the chart and depart", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_sable_button_foundry",
+      "title": "The Sable Button Foundry",
+      "description": "A squat soot-coloured buttonsmith works a velvet furnace, its giant brass buttons glowing like small suns.",
+      "choices": [
+        { "id": "temper_button_heart", "text": "Pay 18 gold and 1 scrap for a strong button heart (+3 max HP)", "outcome": { "gold": -18, "scraps": -1, "hp": 0, "max_hp": 3 } },
+        { "id": "pawn_old_heart", "text": "Pawn the old heart seam (lose 2 max HP; gain 25 gold)", "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Let the foundry fire die down", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_briarlace_ferry",
+      "title": "The Briarlace Ferry",
+      "description": "A round velvet ferryman poles a lantern-lit boat through mossy water stitched with thorny lace.",
+      "choices": [
+        { "id": "ford_cold_water", "text": "Ford the cold water (lose 4 HP; gain 8 gold and 2 scraps)", "outcome": { "gold": 8, "scraps": 2, "hp": -4, "max_hp": 0 } },
+        { "id": "buy_sheltered_crossing", "text": "Pay 15 gold for a sheltered crossing (+7 HP)", "outcome": { "gold": -15, "scraps": 0, "hp": 7, "max_hp": 0 } },
+        { "id": "leave", "text": "Stay on the safe bank", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_lantern_wisp_clocktower",
+      "title": "The Lantern-Wisp Clocktower",
+      "description": "A button-eyed moth clockkeeper winds luminous brass hands above a tower quilted in deep oxblood and teal.",
+      "choices": [
+        { "id": "mend_broken_hours", "text": "Spend 2 scraps to restore 8 HP and gain 1 max HP", "outcome": { "gold": 0, "scraps": -2, "hp": 8, "max_hp": 1 } },
+        { "id": "sell_missing_hour", "text": "Sell one lasting hour (lose 1 max HP; gain 21 gold)", "outcome": { "gold": 21, "scraps": 0, "hp": 0, "max_hp": -1 } },
+        { "id": "leave", "text": "Let the clock strike without you", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
