@@ -21,6 +21,7 @@ func _initialize() -> void:
 	_test_needle_wasp_bleeding_sting()
 	_test_moth_swarm_block_chew_catalog()
 	_test_moth_swarm_block_chew_phase()
+	_test_moth_scribe_block_chew_catalog()
 	_test_scissor_crab_block_snip_catalog()
 	_test_scissor_crab_block_snip_phase()
 	_test_thread_biter_lifesteal_catalog()
@@ -109,7 +110,7 @@ func _old_expected() -> Dictionary:
 				{"type": "attack", "amount": 5, "weight": 3},
 				{"type": "block", "amount": 3, "weight": 3},
 				{"type": "buff", "amount": 2, "weight": 1}]}},
-		"moth_scribe": {"id": "moth_scribe", "name": "Moth Scribe", "max_hp": 14, "art_path": "res://assets/paper/enemies/moth_scribe.png",
+		"moth_scribe": {"id": "moth_scribe", "name": "Moth Scribe", "max_hp": 14, "chew_block_on_attack": true, "art_path": "res://assets/paper/enemies/moth_scribe.png",
 			"intent": {"target": "exposed", "actions": [
 				{"type": "attack", "amount": 5, "weight": 3},
 				{"type": "debuff", "amount": 1, "status": "weak", "weight": 2},
@@ -3068,6 +3069,45 @@ func _test_moth_swarm_block_chew_catalog() -> void:
 		_check(RunTypedBattleRoster._parse_catalog_text(
 			JSON.stringify([malformed])).is_empty(),
 			"AC4: malformed chew metadata rejects the whole catalog: " + str(invalid_value))
+
+## AC1: the shipped Moth Scribe opts into its own cloth-eating bite with exactly
+## one genuine boolean metadata field; 14 HP, art, exposed policy and the
+## 5/Weak-1/Block-2 alternatives with weights 3/2/1 stay untouched, and its
+## felt_moth_pressure partner stays unflagged.
+func _test_moth_scribe_block_chew_catalog() -> void:
+	var parsed := _load_parsed()
+	var scribe := _find(parsed, "moth_scribe")
+	_check(not scribe.is_empty(), "precondition: the shipped Moth Scribe record loads")
+	if scribe.is_empty():
+		return
+	_check(scribe.get("chew_block_on_attack") is bool
+		and scribe.get("chew_block_on_attack") == true,
+		"AC1: the parsed Moth Scribe authors chew_block_on_attack as a genuine bool")
+	var established: Dictionary = _old_expected()["moth_scribe"].duplicate(true)
+	established.erase("chew_block_on_attack")
+	var without_trait: Dictionary = scribe.duplicate(true)
+	without_trait.erase("chew_block_on_attack")
+	_check(_norm(without_trait) == _norm(established),
+		"AC1: the new boolean is the only difference from the established Scribe record")
+	_check(int(scribe.get("max_hp", 0)) == 14
+		and String(scribe.get("art_path", "")) == "res://assets/paper/enemies/moth_scribe.png"
+		and scribe.get("intent", {}).get("target") == "exposed",
+		"AC1: the Scribe keeps its 14 HP, art path and exposed target policy")
+	var bite := _authored_alternative(scribe, "attack", 5)
+	var weaken := _authored_alternative(scribe, "debuff", 1)
+	var brace := _authored_alternative(scribe, "block", 2)
+	_check(not bite.is_empty() and not weaken.is_empty() and not brace.is_empty()
+		and weaken.get("status") == "weak"
+		and int(bite.get("weight", 0)) == 3 and int(weaken.get("weight", 0)) == 2
+		and int(brace.get("weight", 0)) == 1,
+		"AC1: the authored 5, Weak 1 and Block 2 alternatives keep weights 3/2/1")
+	_check(_norm(scribe) == _norm(_old_expected()["moth_scribe"]),
+		"AC1: the full Moth Scribe record matches the exact expectation")
+	_check(not _find(parsed, "felt_bulwark").has("chew_block_on_attack"),
+		"AC1: the named felt_moth_pressure partner stays unflagged")
+	_check(RunTypedBattleRoster._parse_catalog_text(
+		JSON.stringify([without_trait])).size() == 1,
+		"AC4: an absent Scribe trait stays valid metadata")
 
 ## Bind a genuine seeded multi-source encounter where every source announces
 ## exactly one authored alternative. Production weights stay untouched and no

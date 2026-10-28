@@ -10,6 +10,7 @@ const NEW := {
 			{"type": "block", "amount": 3, "weight": 3},
 			{"type": "buff", "amount": 2, "weight": 1}]},
 	"moth_scribe": {"name": "Moth Scribe", "max_hp": 14, "target": "exposed",
+		"chew_block_on_attack": true,
 		"actions": [{"type": "attack", "amount": 5, "weight": 3},
 			{"type": "debuff", "amount": 1, "status": "weak", "weight": 2},
 			{"type": "block", "amount": 2, "weight": 1}]},
@@ -142,12 +143,26 @@ func _catalog_and_bindings() -> void:
 			expected_record["drain"] = expected.drain
 		if expected.has("thorns"):
 			expected_record["thorns"] = expected.thorns
+		if expected.has("chew_block_on_attack"):
+			expected_record["chew_block_on_attack"] = expected.chew_block_on_attack
 		_check(record == expected_record,
 			"exact new identity, HP, art, policy and ordered weighted actions " + id)
 		for raw in expected.actions:
 			_check(CombatEnemyIntents.positive_weight(raw.weight) > 0
 				and not CombatEnemyIntents.weighted_action(raw).is_empty(),
 				"new weighted action is executable " + id + " " + str(raw))
+	var scribe_record: Dictionary = catalog.get("moth_scribe", {})
+	var bulwark_record: Dictionary = catalog.get("felt_bulwark", {})
+	_check(not scribe_record.is_empty() and scribe_record.get("chew_block_on_attack") is bool
+		and scribe_record.get("chew_block_on_attack") == true
+		and not bulwark_record.is_empty()
+		and not bulwark_record.has("chew_block_on_attack"),
+		"AC1: only the Moth Scribe in the real felt_moth_pressure pair chews Block")
+	_check(scribe_record.get("intent", {}).get("actions") == [
+			{"type": "attack", "amount": 5, "weight": 3},
+			{"type": "debuff", "amount": 1, "status": "weak", "weight": 2},
+			{"type": "block", "amount": 2, "weight": 1}],
+		"AC1: the Scribe keeps its exact 5/Weak-1/Block-2 weighted 3/2/1 actions")
 	for id in OLD:
 		_check(catalog.has(id), "original normal still present " + id)
 		if not catalog.has(id):
@@ -343,6 +358,276 @@ func _weighted(id: String, assembled: Dictionary) -> void:
 			break
 		_check(found, "found genuine target-bearing action for downed fallback " + id)
 
+## The genuine assembled record for one authored ID, so focused beats reuse the
+## real roster's identity, HP, art and authored alternatives.
+func _pair_record(assembled: Dictionary, id: String) -> Dictionary:
+	if assembled.is_empty():
+		return {}
+	for record in assembled.roster.enemies.get_enemies():
+		if record is Dictionary and record.get("id") == id:
+			return record.duplicate(true)
+	return {}
+
+## The authored alternative of one kind/amount from the genuine pair record.
+func _pair_action(assembled: Dictionary, id: String, kind: String,
+		amount: int) -> Dictionary:
+	for raw in _pair_record(assembled, id).get("intent", {}).get("actions", []):
+		if raw is Dictionary and raw.get("type") == kind \
+				and int(raw.get("amount", -1)) == amount:
+			return raw.duplicate(true)
+	return {}
+
+func _slot_for(enemies: CombatEnemies, id: String) -> int:
+	for index in range(enemies.get_enemies().size()):
+		if enemies.get_enemy(index + 1).get("id") == id:
+			return index + 1
+	return 0
+
+func _announced_for(intents: Array, source: int) -> Dictionary:
+	for action in intents:
+		if action is Dictionary and action.get("enemy_position") == source:
+			return action.duplicate(true)
+	return {}
+
+## Bind the genuine assembled pair with one source narrowed to a single authored
+## alternative (weight 1): one authored weighted choice, never a guessed seed.
+## The other source keeps its real alternatives, so the run RNG keeps its real
+## cadence (exactly its one weighted roll, no extra target draw).
+func _forced_pair(assembled: Dictionary, party: CombatParty, source_id: String,
+		action: Dictionary, override: Dictionary = {}) -> Dictionary:
+	if assembled.is_empty() or not party.is_valid() or action.is_empty():
+		return {}
+	var normalized := CombatEnemyIntents.weighted_action(action)
+	var body: Dictionary = normalized.get("action", {}).duplicate(true)
+	_check(not body.is_empty(), "focused beat is a valid authored action: " + str(action))
+	if body.is_empty():
+		return {}
+	body["weight"] = 1
+	var records: Array = []
+	var narrowed := false
+	for record in assembled.roster.enemies.get_enemies():
+		var copy: Dictionary = record.duplicate(true)
+		if copy.get("id") == source_id:
+			if not override.is_empty():
+				copy = override.duplicate(true)
+			copy["intent"] = {"target": copy.get("intent", {}).get("target"),
+				"actions": [body]}
+			narrowed = true
+		records.append(copy)
+	_check(narrowed, "the genuine pair contains the focused source " + source_id)
+	if not narrowed:
+		return {}
+	var enemies := CombatEnemies.new(records)
+	var rng := _rng(18141)
+	var scheduler := CombatEnemyIntents.new(assembled.roster.definitions)
+	var bound := enemies.is_valid() and scheduler.bind_battle(enemies, party, rng)
+	_check(bound, "the genuine pair binds the focused beat " + source_id)
+	if not bound:
+		return {}
+	return {"enemies": enemies, "party": party, "rng": rng,
+		"intents": scheduler.get_intents(), "scheduler": scheduler}
+
+## AC1/AC2/AC3: the real assembled felt_moth_pressure pair, the Scribe alive and
+## a living Exposed hero holding six Block. Its authentic five-point bite clears
+## that Block before the shared Exposed-adjusted damage lands; the Weak 1 and
+## Block 2 alternatives, an unflagged source and a slain Scribe stay inert.
+func _scribe_chew(assembled: Dictionary) -> void:
+	if assembled.is_empty():
+		return
+	var scribe := _pair_record(assembled, "moth_scribe")
+	var bulwark := _pair_record(assembled, "felt_bulwark")
+	_check(not scribe.is_empty() and not bulwark.is_empty(),
+		"AC1 precondition: the real felt_moth_pressure pair assembles")
+	if scribe.is_empty() or bulwark.is_empty():
+		return
+	_check(scribe.get("chew_block_on_attack") is bool
+		and scribe.get("chew_block_on_attack") == true
+		and not bulwark.has("chew_block_on_attack"),
+		"AC1: only the real Moth Scribe in the pair carries the genuine chew trait")
+	_check(int(scribe.get("max_hp", 0)) == 14
+		and String(scribe.get("art_path", "")) == "res://assets/paper/enemies/moth_scribe.png"
+		and scribe.get("intent", {}).get("target") == "exposed",
+		"AC1: the assembled Scribe keeps its 14 HP, art path and exposed policy")
+	var bite := _pair_action(assembled, "moth_scribe", "attack", 5)
+	var weaken := _pair_action(assembled, "moth_scribe", "debuff", 1)
+	var brace := _pair_action(assembled, "moth_scribe", "block", 2)
+	_check(_normalized(bite) == _normalized(NEW["moth_scribe"].actions[0])
+		and _normalized(weaken) == _normalized(NEW["moth_scribe"].actions[1])
+		and _normalized(brace) == _normalized(NEW["moth_scribe"].actions[2]),
+		"AC1: the assembled 5/Weak-1/Block-2 alternatives keep weights 3/2/1")
+
+	# AC2: the exposed policy selects the living Exposed hero, and the real
+	# production phase eats all six of its Block before the bite resolves.
+	var party := _party()
+	party._heroes[1]["statuses"] = {"exposed": 1}
+	_check(party.gain_block(2, 6) and party.get_hero(2).get("block") == 6,
+		"AC2 precondition: the Exposed Seamstress really holds six Block")
+	_check(CombatStatuses.new().adjusted_attack_damage(5, {}, {"exposed": 1}) == 7,
+		"AC2 precondition: the shared Exposed rule turns the authentic five into seven")
+	var live := _forced_pair(assembled, party, "moth_scribe", bite)
+	if live.is_empty():
+		return
+	var slot := _slot_for(live.enemies, "moth_scribe")
+	_check(slot == 2, "AC2: the Scribe keeps its genuine assembled slot")
+	var announced := _announced_for(live.intents, slot)
+	_check(announced.get("type") == "attack" and int(announced.get("amount", -1)) == 5
+		and announced.get("target_position") == 2,
+		"AC2: the exposed policy announces the five-point bite on the Exposed hero")
+	var oracle := _rng(18141)
+	var bulwark_total := 0
+	for raw in NEW["felt_bulwark"].actions:
+		bulwark_total += int(raw.weight)
+	oracle.randi_range(1, bulwark_total)
+	_check(live.rng.state == oracle.state,
+		"AC3: binding draws only the Bulwark's one real weighted roll")
+	var committed: int = live.rng.state
+	var receipt := CombatEnemyPhase.new().execute_phase(party, live.enemies,
+		[announced], null, true)
+	_check(receipt == {"ok": true, "events": [{"type": "attack",
+			"enemy_position": slot, "target_position": 2, "applied": true}]},
+		"AC2: the production enemy phase publishes one applied Scribe bite")
+	_check(party.get_hero(2).get("block") == 0 and party.get_hero(2).get("hp") == 23,
+		"AC2: six Block are eaten first, then the Exposed-adjusted seven reaches HP")
+	_check(party.get_hero(1).get("hp") == 40 and party.get_hero(1).get("block") == 0
+		and party.get_hero(3).get("hp") == 26,
+		"AC2: the Scribe's bite touches no other hero")
+	_check(live.rng.state == committed and live.scheduler.get_intents() == live.intents,
+		"AC3: executing the bite spends no extra run RNG and keeps its announcement")
+
+	# AC2: with no Exposed hero the established fallback keeps the front target,
+	# so six Block are eaten and exactly the authentic five reaches HP.
+	var fallback_party := _party()
+	_check(fallback_party.gain_block(1, 6),
+		"AC2 precondition: the front Warden really holds six Block")
+	var fallback := _forced_pair(assembled, fallback_party, "moth_scribe", bite)
+	if not fallback.is_empty():
+		var fallback_slot := _slot_for(fallback.enemies, "moth_scribe")
+		var fallback_action := _announced_for(fallback.intents, fallback_slot)
+		_check(fallback_action.get("target_position") == 1,
+			"AC2: without an Exposed hero the policy falls back to the front slot")
+		_check(CombatEnemyPhase.new().execute_phase(fallback_party, fallback.enemies,
+			[fallback_action], null, true).get("ok") == true
+			and fallback_party.get_hero(1).get("block") == 0
+			and fallback_party.get_hero(1).get("hp") == 35,
+			"AC2: six Block are eaten first, then exactly the authentic five reaches HP")
+
+	# AC3: the authored Weak 1 never chews the hero's Block or HP.
+	var weak_party := _party()
+	weak_party._heroes[1]["statuses"] = {"exposed": 1}
+	_check(weak_party.gain_block(2, 6),
+		"AC3 precondition: six Block before the authentic Weak 1")
+	var weak_case := _forced_pair(assembled, weak_party, "moth_scribe", weaken)
+	if not weak_case.is_empty():
+		var weak_slot := _slot_for(weak_case.enemies, "moth_scribe")
+		var weak_receipt := CombatEnemyPhase.new().execute_phase(weak_party,
+			weak_case.enemies, [_announced_for(weak_case.intents, weak_slot)], null, true)
+		_check(weak_receipt.get("ok") == true
+			and weak_receipt.get("events", []).size() == 1
+			and weak_receipt["events"][0].get("type") == "debuff"
+			and weak_receipt["events"][0].get("target_position") == 2,
+			"AC3: the authentic Weak 1 stays a debuff on the Exposed hero")
+		_check(weak_party.get_hero(2).get("block") == 6
+			and weak_party.get_hero(2).get("hp") == 30
+			and weak_party.get_hero(2).get("statuses", {}).get("weak", 0) == 1,
+			"AC3: Weak 1 adds its status without chewing Block or HP")
+
+	# AC3: the authored Block 2 never chews; it only grants the Scribe Block.
+	var brace_party := _party()
+	brace_party._heroes[1]["statuses"] = {"exposed": 1}
+	_check(brace_party.gain_block(2, 6),
+		"AC3 precondition: six Block before the authentic Block 2")
+	var brace_case := _forced_pair(assembled, brace_party, "moth_scribe", brace)
+	if not brace_case.is_empty():
+		var brace_slot := _slot_for(brace_case.enemies, "moth_scribe")
+		var brace_receipt := CombatEnemyPhase.new().execute_phase(brace_party,
+			brace_case.enemies, [_announced_for(brace_case.intents, brace_slot)], null, true)
+		_check(brace_receipt.get("ok") == true
+			and brace_receipt.get("events", []).size() == 1
+			and brace_receipt["events"][0].get("type") == "block",
+			"AC3: the authentic Block 2 stays a self-Block")
+		_check(brace_party.get_hero(2).get("block") == 6
+			and brace_party.get_hero(2).get("hp") == 30
+			and brace_case.enemies.get_enemy(brace_slot).get("block") == 2,
+			"AC3: Block 2 grants the Scribe Block without touching the hero")
+
+	# AC2: the unflagged Felt Bulwark's existing five is absorbed normally.
+	var guard_party := _party()
+	_check(guard_party.gain_block(1, 6),
+		"AC2 precondition: six Block before the Bulwark's ordinary five")
+	var bulwark_bite := _pair_action(assembled, "felt_bulwark", "attack", 5)
+	_check(not bulwark_bite.is_empty(),
+		"AC2 precondition: the real Bulwark authors its five-point attack")
+	var guard_case := _forced_pair(assembled, guard_party, "felt_bulwark", bulwark_bite)
+	if not guard_case.is_empty():
+		var guard_slot := _slot_for(guard_case.enemies, "felt_bulwark")
+		var guard_action := _announced_for(guard_case.intents, guard_slot)
+		_check(guard_action.get("target_position") == 1,
+			"AC2: the unflagged Bulwark announces its ordinary front five")
+		_check(CombatEnemyPhase.new().execute_phase(guard_party, guard_case.enemies,
+			[guard_action], null, true).get("ok") == true
+			and guard_party.get_hero(1).get("hp") == 40
+			and guard_party.get_hero(1).get("block") == 1,
+			"AC2: an unflagged five is absorbed by six Block, leaving one and full HP")
+
+	# AC3: a copied Scribe without the flag keeps ordinary Block mitigation.
+	for mode in ["absent", "false"]:
+		var unflagged: Dictionary = scribe.duplicate(true)
+		if mode == "absent":
+			unflagged.erase("chew_block_on_attack")
+		else:
+			unflagged["chew_block_on_attack"] = false
+		var disabled_party := _party()
+		_check(disabled_party.gain_block(1, 6),
+			"AC3 precondition: six Block for the unflagged Scribe: " + mode)
+		var disabled_case := _forced_pair(assembled, disabled_party, "moth_scribe",
+			bite, unflagged)
+		if disabled_case.is_empty():
+			continue
+		var disabled_slot := _slot_for(disabled_case.enemies, "moth_scribe")
+		_check(CombatEnemyPhase.new().execute_phase(disabled_party,
+			disabled_case.enemies,
+			[_announced_for(disabled_case.intents, disabled_slot)], null, true).get("ok") == true
+			and disabled_party.get_hero(1).get("block") == 1
+			and disabled_party.get_hero(1).get("hp") == 40,
+			"AC3: an unflagged Scribe five is absorbed by Block: " + mode)
+
+	# AC3: a slain Scribe's announced bite chews nothing and deals nothing.
+	var dead_party := _party()
+	dead_party._heroes[1]["statuses"] = {"exposed": 1}
+	_check(dead_party.gain_block(2, 6),
+		"AC3 precondition: six Block before the slain Scribe's bite")
+	var dead_case := _forced_pair(assembled, dead_party, "moth_scribe", bite)
+	if not dead_case.is_empty():
+		var dead_slot := _slot_for(dead_case.enemies, "moth_scribe")
+		var dead_action := _announced_for(dead_case.intents, dead_slot)
+		_check(dead_case.enemies.apply_damage(dead_slot, 99999)
+			and dead_case.enemies.is_slain(dead_slot),
+			"AC3 precondition: the Scribe is genuinely slain before its beat")
+		_check(CombatEnemyPhase.new().execute_phase(dead_party, dead_case.enemies,
+			[dead_action], null, true) == {"ok": true, "events": [{"type": "attack",
+				"enemy_position": dead_slot, "target_position": 2, "applied": false}]},
+			"AC3: a slain Scribe's announced bite resolves as one inert beat")
+		_check(dead_party.get_hero(2).get("block") == 6
+			and dead_party.get_hero(2).get("hp") == 30,
+			"AC3: a slain Scribe eats no Block and deals no HP")
+
+	# AC3: identical fixed seed replays the announcement, phase receipt and RNG.
+	var replay_party := _party()
+	replay_party._heroes[1]["statuses"] = {"exposed": 1}
+	_check(replay_party.gain_block(2, 6), "AC3 replay precondition: six Block")
+	var replay := _forced_pair(assembled, replay_party, "moth_scribe", bite)
+	if not replay.is_empty():
+		_check(replay.intents == live.intents and replay.rng.state == committed,
+			"AC3: the same seed announces the identical Scribe bite on the same RNG state")
+		var replay_slot := _slot_for(replay.enemies, "moth_scribe")
+		var replay_receipt := CombatEnemyPhase.new().execute_phase(replay_party,
+			replay.enemies, [_announced_for(replay.intents, replay_slot)], null, true)
+		_check(replay_receipt == receipt
+			and replay_party.get_heroes() == party.get_heroes()
+			and replay.enemies.get_enemies() == live.enemies.get_enemies()
+			and replay.rng.state == committed,
+			"AC3: replaying the seed publishes the same bite and end state")
+
 func _click(button: Control) -> void:
 	_check(is_instance_valid(button) and button.is_visible_in_tree(),
 		"physical mouse target visible")
@@ -483,6 +768,8 @@ func _run() -> void:
 					and first.roster.enemies.get_enemies() == again.roster.enemies.get_enemies(),
 					"seeded new Fight route, actor roster and RNG replay " + id)
 				_weighted(id, first)
+				if id == "felt_moth_pressure":
+					_scribe_chew(first)
 		await _mounted()
 	if failures.is_empty():
 		print("m05_normal_enemy_rotation_test: PASS (", checks, " checks)")
