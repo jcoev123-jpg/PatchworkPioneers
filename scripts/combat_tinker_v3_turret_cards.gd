@@ -26,6 +26,12 @@ extends RefCounted
 ## three ticks the instance is expired and a fourth tick is inert. Slain slots keep their id and position,
 ## are never resurrected and are never retargeted. Two independently deployed instances never share a counter.
 ##
+## A shot is a confirmed hit for the Enrage keyword: any positive damage (a blow fully absorbed by Block
+## included) commits one stack on an `enrage: true` target through CombatEnemyKeywordRules, capped at three,
+## so that foe's next real attack gains the keyword's bonus. Every living candidate's Enrage metadata is
+## checked before a target is chosen, the RNG is drawn or any state changes, so malformed metadata refuses
+## the whole tick.
+##
 ## This is callable rules-layer behaviour only. Admitting these two IDs to the mounted hand, preserving
 ## battle-local pending turrets and calling the tick on the real end-of-player-turn path are a later,
 ## separately owned wiring task.
@@ -76,6 +82,7 @@ const PENDING_KEYS := ["kind", "card_id", "damage", "duration_turns", "remaining
 const _CATALOG := preload("res://data/cards/v3_tinker_pool_cards.gd")
 
 var _catalog := _CATALOG.new()
+var _keywords := CombatEnemyKeywordRules.new()
 
 
 ## True only for the two authentic catalog printings. Pure lookup; nothing is charged or mutated and no RNG
@@ -368,6 +375,11 @@ func tick_turret(current: Variant, enemies: CombatEnemies, rng: RandomNumberGene
 			return _refusal("invalid_enemies")
 		if not enemy_block is int or enemy_block < 0:
 			return _refusal("invalid_enemies")
+		# Any living slot may be the random target, so its Enrage flag and stack count are checked here,
+		# with the keyword's own validator, before a target is chosen or anything is spent.
+		if enemy_hp > 0 and not _keywords.quote_enrage_after_hit(enemy,
+				{"ok": true, "damage": 0, "block_absorbed": 0, "hp_loss": 0})["ok"]:
+			return _refusal("invalid_enrage")
 		seen_enemy_ids.append(enemy_id)
 
 	if not is_pending_instance(current):
@@ -407,6 +419,13 @@ func tick_turret(current: Variant, enemies: CombatEnemies, rng: RandomNumberGene
 		var enemy_after: Dictionary = enemies.get_enemy(target)
 		block_absorbed = block_before - int(enemy_after.get("block", 0))
 		hp_loss = hp_before - int(enemy_after.get("hp", 0))
+		# The shot is the authentic Block-first hit on the frozen pre-hit record; Enrage reads that receipt.
+		var hit := {"ok": true, "damage": damage, "block_absorbed": block_absorbed, "hp_loss": hp_loss}
+		if not _keywords.commit_enrage_after_hit(enemies, target, enemy_before, hit)["ok"]:
+			# Fail closed: put the slot and the RNG back so a refused tick leaves nothing behind.
+			enemies._enemies[target - 1] = enemy_before.duplicate(true)
+			rng.state = rng_state_before
+			return _refusal("enrage_rejected")
 
 	var next_state: Dictionary = state.duplicate(true)
 	next_state["remaining"] = remaining_before - 1

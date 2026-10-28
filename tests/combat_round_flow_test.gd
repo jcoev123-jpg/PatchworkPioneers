@@ -35,6 +35,7 @@ func _run() -> void:
 	_test_turret_turns()
 	_test_turret_boundaries()
 	_test_turret_rejections()
+	_test_turret_enrage()
 	await _test_mounted_enemy_status_turn()
 	if failures.is_empty():
 		print("combat_round_flow_test: PASS (", checks, " checks)")
@@ -1843,3 +1844,81 @@ func _test_turret_rejections() -> void:
 	idle["deck"].combat_state.end_player_turn()
 	_check(not idle["flow"].can_register_turret() and not idle["flow"].register_turret(valid)
 		and idle["flow"].get_turrets().is_empty(), "an inactive hand accepts no turret")
+
+
+## A begun real fight against the catalog Spoolback Hound alone (Enrage removed for the control fight) whose
+## only announced action is a plain 7 attack on the front hero, plus the given held turret printings.
+func _hound_fight(seed_value: int, enrage: bool, ids: Array, extra: Array = []) -> Dictionary:
+	var hound: Dictionary = {}
+	for enemy in _load_json("res://data/enemies/run_enemies.json"):
+		if enemy.get("id") == "spoolback_hound":
+			hound = enemy.duplicate(true)
+	_check(hound.get("enrage") == true and hound.get("max_hp") == 28, "the catalog Spoolback Hound loads with Enrage")
+	if not enrage:
+		hound.erase("enrage")
+	var intents: Array = [{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 7, "target_position": 1}]}]
+	for index in range(extra.size()):
+		intents.append({"enemy_position": index + 2, "pattern": [{"type": "block", "amount": 1}]})
+	var fight := _fight(seed_value, [], [hound] + extra, intents)
+	var deck: CombatDeck = fight["deck"]
+	_check(fight["flow"].begin_fight() and deck.turn_active, "Hound fixture opens a real active turn")
+	for id in ids:
+		deck.hand.append(id)
+		fight["cards"].append(id)
+	deck.combat_state.energy = 2 * ids.size()
+	fight["service"] = CombatTinkerV3TurretCards.new()
+	return fight
+
+
+## Cycle 363 AC1-AC3 on the real End Turn path: turret shots enrage the Hound before it attacks.
+func _test_turret_enrage() -> void:
+	for id in TURRET_IDS:
+		var damage: int = 3 if id == TURRET_IDS[0] else 4
+		var live := _hound_fight(1301, true, [id])
+		var control := _hound_fight(1301, false, [id])
+		_check(_deploy(live, id) and _deploy(control, id), id + ": both Hound fixtures deploy one turret")
+		for beat in range(3):
+			var label: String = str(id) + " Hound beat " + str(beat + 1)
+			var plan: Dictionary = live["flow"]._turrets_are_executable()
+			var warden: int = live["party"].get_hero(1)["hp"]
+			var calm: int = control["party"].get_hero(1)["hp"]
+			_check(live["flow"].end_turn() and control["flow"].end_turn(), label + ": both End Turns are accepted")
+			var hound: Dictionary = live["enemies"].get_enemy(1)
+			_check(hound.get("enrage_stacks") == beat + 1 and hound.get("hp") == 28 - damage * (beat + 1)
+				and not control["enemies"].get_enemy(1).has("enrage_stacks"),
+				label + ": each shot adds one Enrage stack; the control Hound gains none")
+			_check(plan["ok"] and live["enemies"].get_enemies() == plan["roster"],
+				label + ": the preflight rehearsal and the commit leave the same roster")
+			_check((warden - live["party"].get_hero(1)["hp"]) - (calm - control["party"].get_hero(1)["hp"])
+				== 2 * (beat + 1), label + ": the Hound's following attack gains +2 per stack")
+			_check(live["deck"]._rng.state == control["deck"]._rng.state and live["deck"].hand == control["deck"].hand,
+				label + ": Enrage draws no RNG and changes no hand")
+		_check(live["flow"].get_turrets().is_empty(), id + ": the turret still retires after three beats")
+	# Two turrets: one stack per shot, so the same End Turn's attack gains +4.
+	var pair := _hound_fight(1303, true, TURRET_IDS)
+	var pair_control := _hound_fight(1303, false, TURRET_IDS)
+	_check(_deploy(pair, TURRET_IDS[0]) and _deploy(pair, TURRET_IDS[1]) and _deploy(pair_control, TURRET_IDS[0])
+		and _deploy(pair_control, TURRET_IDS[1]), "two turrets deploy against both Hounds")
+	var hp_live: int = pair["party"].get_hero(1)["hp"]
+	var hp_calm: int = pair_control["party"].get_hero(1)["hp"]
+	_check(pair["flow"].end_turn() and pair_control["flow"].end_turn() and pair["enemies"].get_enemy(1)["enrage_stacks"] == 2
+		and (hp_live - pair["party"].get_hero(1)["hp"]) - (hp_calm - pair_control["party"].get_hero(1)["hp"]) == 4,
+		"two turret shots add two stacks before the Hound's +4 attack")
+	# Invalid Hound metadata refuses the whole End Turn with nothing spent.
+	for bad in [["enrage_stacks", 4], ["enrage_stacks", "1"], ["enrage", "yes"]]:
+		var broken := _hound_fight(1307, true, [TURRET_IDS[0]])
+		_check(_deploy(broken, TURRET_IDS[0]), "malformed-Enrage fixture deploys")
+		broken["enemies"]._enemies[0][bad[0]] = bad[1]
+		var before := _snapshot(broken)
+		var stored: Array = broken["flow"]._turrets.duplicate(true)
+		_check(not broken["flow"].end_turn() and _snapshot(broken) == before and broken["flow"]._turrets == stored,
+			"malformed Enrage " + str(bad) + " refuses End Turn: no shot, stack, beat, RNG or turn change")
+	# A later enemy-phase refusal (malformed metadata on a slain slot the turret never targets) spends nothing.
+	var later := _hound_fight(1309, true, [TURRET_IDS[1]], [{"id": "husk", "max_hp": 12}])
+	_check(_deploy(later, TURRET_IDS[1]) and later["enemies"].apply_damage(2, 12), "later-refusal fixture")
+	later["enemies"]._enemies[1]["enrage"] = "yes"
+	var held := _snapshot(later)
+	var turrets: Array = later["flow"]._turrets.duplicate(true)
+	_check(not later["flow"].end_turn() and _snapshot(later) == held and later["flow"]._turrets == turrets
+		and not later["enemies"].get_enemy(1).has("enrage_stacks"),
+		"a refused enemy phase leaves the rehearsed Enrage stack, shot, beat and RNG uncommitted")

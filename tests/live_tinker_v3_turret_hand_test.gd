@@ -23,6 +23,8 @@ func _begin(id: String, mode: String = "plain", kill_hp: int = 3) -> Control:
 		{"id": "first", "name": "First", "max_hp": 40},
 		{"id": "second", "name": "Second", "max_hp": 40},
 		{"id": "third", "name": "Third", "max_hp": 40}])
+	if mode == "hound":
+		app.enemies = CombatEnemies.new([_catalog_hound()])
 	_check(app.party.is_valid() and app.enemies.is_valid(), "Tinker seated third and a valid enemy roster")
 	var second: Array = [{"type": "block", "amount": 1}]
 	if mode == "kill":
@@ -35,6 +37,9 @@ func _begin(id: String, mode: String = "plain", kill_hp: int = 3) -> Control:
 		{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]},
 		{"enemy_position": 2, "pattern": second},
 		{"enemy_position": 3, "pattern": [{"type": "block", "amount": 1}]}])
+	if mode == "hound":
+		app.enemy_intents = CombatEnemyIntents.new([
+			{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 7, "target_position": 1}]}])
 	_check(app.enemy_intents.is_valid(), "announced enemy schedule is valid")
 	app.enemy_attacks = app.enemy_intents.get_intents()
 	app.battle_result = CombatBattleResult.new(app.party, app.enemies)
@@ -333,6 +338,8 @@ func _run() -> void:
 	for id: String in TURRET:
 		await _success(id, keyboard)
 		await _success(id, not keyboard)
+		await _hound(id, keyboard)
+		await _hound(id, not keyboard)
 		await _kill(id, keyboard)
 		await _no_leak(id)
 		await _failed_end_turn(id)
@@ -351,3 +358,45 @@ func _run() -> void:
 		printerr("FAIL: " + failure)
 	print("live_tinker_v3_turret_hand_test: %d checks, %d failures" % [checks, failures.size()])
 	quit(0 if failures.is_empty() else 1)
+
+
+## The authored catalog Spoolback Hound (enrage: true), with JSON's float max_hp normalized as the app does.
+func _catalog_hound() -> Dictionary:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	if parsed is Array:
+		for entry in parsed:
+			if entry is Dictionary and entry.get("id") == "spoolback_hound":
+				var hound: Dictionary = entry.duplicate(true)
+				hound["max_hp"] = int(hound["max_hp"])
+				return hound
+	return {}
+
+
+## Cycle 363 AC1: a real held turret played by mouse or keyboard, then real End Turns against the catalog Hound
+## (2 Block at the start): every shot adds one Enrage stack before the Hound's attack, which gains +2 per stack.
+func _hound(id: String, keyboard: bool) -> void:
+	var panel := await _begin(id, "hound")
+	if panel == null:
+		await _dispose()
+		return
+	var damage: int = int(TURRET[id].damage)
+	_check(app.enemies.get_enemy(1).get("enrage") == true and app.enemies.get_enemy(1).get("block") == 2,
+		id + ": the live roster is the catalog Spoolback Hound behind 2 Block")
+	await _play(panel, keyboard)
+	_check(app.round_flow.get_turrets().size() == 1 and app.deck.energy == 1,
+		id + ": the held turret is paid and registered through the real hand")
+	var hp: int = 28
+	for beat in range(2):
+		var label := "%s Hound beat %d" % [id, beat + 1]
+		var oracle := _oracle()
+		app.party._heroes[0]["block"] = 0
+		var warden: int = app.party.get_hero(1).hp
+		await _press_end_turn(keyboard == (beat % 2 == 0))
+		hp -= damage - (2 if beat == 0 else 0)
+		var hound: Dictionary = app.enemies.get_enemy(1)
+		_check(app.deck.turn_active and _hp() == oracle[0] and hound.hp == hp and app.run_rng.state == oracle[3],
+			label + ": the shot lands through Block exactly as the resolver rules")
+		_check(hound.get("enrage_stacks") == beat + 1, label + ": the shot adds exactly one Enrage stack")
+		_check(warden - app.party.get_hero(1).hp == 7 + 2 * (beat + 1),
+			label + ": the Hound's attack that turn gains +2 per stack")
+	await _dispose()
