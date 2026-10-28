@@ -1,11 +1,28 @@
 extends SceneTree
-## V3-1 Warden starter-card catalog contract.
-## Catalog data only: no live party, reward, hand, deck or combat behavior is assumed or claimed
-## here. Guard / Block-based damage / Taunt are printed descriptors until a later wiring task.
+## V3-1 Warden starter-card catalog contract plus the callable Iron Challenge / Iron Taunt slice.
+## The catalog assertions below stay data-only. The paid self-play and one-enemy-turn Taunt
+## projection are exercised scene-free against real seeded CombatDeck/CombatParty fixtures;
+## Guard and Block-based damage remain printed descriptors until their own wiring tasks. No live
+## hand, reward, map or app flow is claimed here.
 
 const V3WardenStarterCards = preload("res://data/cards/v3_warden_starter_cards.gd")
 const StarterCards = preload("res://data/cards/starter_cards.gd")
 const V3WardenPoolCards = preload("res://data/cards/v3_warden_pool_cards.gd")
+
+const HEROES_PATH := "res://data/heroes/starter_party.json"
+const TAUNT_FILLERS := ["filler_stitch", "filler_thread", "filler_needle", "filler_ribbon"]
+const TAUNT_CARDS := [
+	"warden_v3_iron_challenge",
+	"warden_v3_iron_challenge_plus",
+	"warden_v3_iron_taunt",
+	"warden_v3_iron_taunt_plus",
+]
+const TAUNT_BLOCK := {
+	"warden_v3_iron_challenge": 3,
+	"warden_v3_iron_challenge_plus": 5,
+	"warden_v3_iron_taunt": 4,
+	"warden_v3_iron_taunt_plus": 6,
+}
 
 var failures: Array[String] = []
 var checks: int = 0
@@ -20,6 +37,13 @@ func _initialize() -> void:
 	_test_deterministic_and_rng_free()
 	_test_existing_catalogs_unchanged()
 	_test_not_reward_offered()
+	_test_taunt_service_catalog()
+	_test_taunt_paid_self_play()
+	_test_taunt_projection_for_whole_enemy_turn()
+	_test_taunt_expiry_and_following_turn()
+	_test_taunt_projection_guards()
+	_test_taunt_refusals()
+	_test_taunt_refresh_and_replay()
 	if failures.is_empty():
 		print("v3_warden_starter_cards_test: PASS (", checks, " checks)")
 	else:
@@ -156,7 +180,9 @@ func _test_each_base_and_upgrade() -> void:
 
 ## The printed look descriptors: a pot-helmet Weak bonk, a huge shield raised over one ally
 ## (Guard), a shield-rim toss reading the Warden's own Block, and an iron challenge (Taunt).
-## Presence, exact magnitudes and value types only; nothing here claims live resolution.
+## Presence, exact magnitudes and value types only here; the paid Iron Challenge / Iron Taunt
+## play and its one-enemy-turn target projection are exercised separately below. Guard and the
+## Block-based toss remain printed descriptors.
 func _test_look_descriptors() -> void:
 	var catalog := V3WardenStarterCards.new()
 	var pool := V3WardenPoolCards.new()
@@ -572,3 +598,535 @@ func _test_not_reward_offered() -> void:
 				"starter is not reward-resolvable yet: " + card_id)
 	_check(not RunPoolCardRewardOffers.resolve_reward_definition("warden_hold_the_line").is_empty(),
 		"an existing Warden reward card is still reward-resolvable (precondition)")
+
+
+## The callable slice authenticates exactly the two Iron Challenge printings (starter catalog)
+## and the two Iron Taunt printings (reward pool), each with its authored Block and Taunt line.
+func _test_taunt_service_catalog() -> void:
+	var service := CombatWardenV3TauntCards.new()
+	var starter := V3WardenStarterCards.new()
+	var pool := V3WardenPoolCards.new()
+	var expected := {
+		"warden_v3_iron_challenge": {"source": starter, "block": 3},
+		"warden_v3_iron_challenge_plus": {"source": starter, "block": 5},
+		"warden_v3_iron_taunt": {"source": pool, "block": 4},
+		"warden_v3_iron_taunt_plus": {"source": pool, "block": 6},
+	}
+	_check(not service.has_pending_taunt(), "a fresh service arms no Taunt")
+	for card_id: String in expected:
+		var source: Variant = expected[card_id]["source"]
+		var definition: Dictionary = source.get_definition(card_id)
+		_check(not definition.is_empty(), card_id + ": authored Taunt record exists")
+		_check(definition.get("owner") == "warden", card_id + ": owned by the Warden")
+		_check(definition.get("cost") == 1, card_id + ": costs one energy")
+		_check(definition.get("target_kind") == "self" and definition.get("to_positions") == [],
+			card_id + ": self-targeting with no enemy slot")
+		_check(definition.get("from_positions") == [1], card_id + ": printed FROM front seat 1")
+		_check(definition.get("effects")
+			== {"block": expected[card_id]["block"], "taunt_next_enemy_turn": true},
+			card_id + ": own Block plus the next-enemy-turn Taunt payload")
+		_check(service.is_supported_card(card_id), card_id + ": service supports the ID")
+		_check(service.is_authentic_card(card_id), card_id + ": live catalog still authentic")
+	_check(starter.get_definition("warden_v3_iron_challenge").get("starting_copies") == 1
+		and starter.get_definition("warden_v3_iron_challenge_plus").get("starting_copies") == 0,
+		"only the base Iron Challenge is a starter copy")
+	_check(pool.get_definition("warden_v3_iron_taunt").get("reward_eligible") == true
+		and pool.get_definition("warden_v3_iron_taunt_plus").get("reward_eligible") == false,
+		"only the base Iron Taunt is reward eligible")
+	_check(starter.get_definition("warden_v3_iron_challenge").get("upgrade_id")
+		== "warden_v3_iron_challenge_plus"
+		and starter.get_definition("warden_v3_iron_challenge_plus").get("upgrade_of")
+		== "warden_v3_iron_challenge",
+		"the starter base/upgrade link is unchanged")
+	_check(pool.get_definition("warden_v3_iron_taunt").get("upgrade_id")
+		== "warden_v3_iron_taunt_plus"
+		and pool.get_definition("warden_v3_iron_taunt_plus").get("upgrade_of")
+		== "warden_v3_iron_taunt",
+		"the pool base/upgrade link is unchanged")
+	for unsupported in [
+		"warden_v3_pot_helm_bonk", "warden_v3_pot_helm_bonk_plus", "warden_v3_shield_catch",
+		"warden_v3_rim_toss", "warden_v3_shield_toss", "warden_v3_helmet_rattle",
+		"warden_v3_guard_stitch", "warden_v3_rivet_pummel", "warden_v3_buckle_rebound",
+		"warden_v3_shieldwall_chorus", "warden_v3_final_bastion", "warden_strike",
+		"warden_v3_iron_challenge_plus_plus", "warden_v3_iron_taunt_ULTRA", ""]:
+		_check(not service.is_supported_card(unsupported),
+			unsupported + ": not an Iron Challenge / Iron Taunt printing")
+		_check(not service.is_authentic_card(unsupported),
+			unsupported + ": never authenticates")
+	_check(not service.is_supported_card(5) and not service.is_supported_card(null)
+		and not service.is_supported_card(StringName("warden_v3_iron_taunt")),
+		"non-string and StringName IDs fail closed")
+	# A detached, altered copy of an authored record never rewrites the authoritative catalog.
+	var copied: Dictionary = starter.get_definition("warden_v3_iron_challenge")
+	copied["effects"]["block"] = 99
+	copied["from_positions"] = [1, 2]
+	_check(starter.get_definition("warden_v3_iron_challenge").get("effects")
+		== {"block": 3, "taunt_next_enemy_turn": true}
+		and starter.get_definition("warden_v3_iron_challenge").get("from_positions") == [1],
+		"altered copied data leaves the authored record intact")
+
+
+## AC1: for each of the four authentic printings, one paid self play spends exactly one energy,
+## discards exactly the one held copy, adds its own printed Block and arms one pending Taunt.
+func _test_taunt_paid_self_play() -> void:
+	for card_id: String in TAUNT_CARDS:
+		var service := CombatWardenV3TauntCards.new()
+		var party := _taunt_party()
+		var gain: int = TAUNT_BLOCK[card_id]
+		_check(party.gain_block(1, 2), card_id + ": Warden seeded with two Block")
+		_check(party.gain_block(2, 5) and party.gain_block(3, 7),
+			card_id + ": companions seeded with their own Block")
+		party._heroes[0]["statuses"] = {"weak": 1}
+		party._heroes[1]["statuses"] = {"weak": 2}
+		party._heroes[2]["statuses"] = {"exposed": 1, "bleed": 1}
+		var deck := _taunt_deck(card_id, 20261028 + TAUNT_CARDS.find(card_id))
+		var before := _taunt_snapshot(deck, party, service)
+		var warden_before: Dictionary = party.get_hero(1)
+		var companion_before: Dictionary = party.get_hero(2)
+		var rear_before: Dictionary = party.get_hero(3)
+
+		var result: Dictionary = service.play_card(deck, party, card_id, "self", 1)
+		_check(result.get("ok") == true, card_id + ": paid self play succeeds")
+		_check(result.get("card_id") == card_id and result.get("cost") == 1,
+			card_id + ": receipt names the card and its one energy")
+		_check(result.get("owner_position") == 1, card_id + ": the Warden is the owner")
+		_check(result.get("block_gained") == gain
+			and result.get("block") == 2 + gain,
+			card_id + ": receipt reports exactly the printed Block")
+		_check(deck.energy == 2 and deck.combat_state.energy == 2,
+			card_id + ": 3 -> 2 shared energy")
+		_check(deck.hand.count(card_id) == 0 and deck.hand.size() == 4,
+			card_id + ": the only held copy left the hand")
+		_check(deck.discard_pile.count(card_id) == 1 and deck.discard_pile.size() == 1,
+			card_id + ": exactly one copy reached the discard pile")
+		_check(party.get_hero(1)["block"] == warden_before["block"] + gain,
+			card_id + ": additive Block landed on the Warden")
+		_check(party.get_hero(1)["hp"] == warden_before["hp"]
+			and party.get_hero(1).get("statuses", {}) == {"weak": 1},
+			card_id + ": the Warden's HP and status map are unchanged")
+		_check(party.get_hero(2) == companion_before and party.get_hero(3) == rear_before,
+			card_id + ": both companions keep HP, Block and statuses")
+		_check(service.has_pending_taunt() and service.get_pending_taunt_card_id() == card_id,
+			card_id + ": exactly one next-enemy-turn Taunt is armed")
+
+		var expected: Dictionary = before.duplicate(true)
+		expected["energy"] -= 1
+		expected["state_energy"] -= 1
+		var expected_hand: Array = expected["hand"]
+		expected_hand.erase(card_id)
+		var expected_discard: Array = expected["discard"]
+		expected_discard.append(card_id)
+		var expected_heroes: Array = expected["heroes"]
+		expected_heroes[0]["block"] = int(expected_heroes[0]["block"]) + gain
+		expected["taunt_pending"] = true
+		expected["taunt_card_id"] = card_id
+		_check(_taunt_snapshot(deck, party, service) == expected,
+			card_id + ": exact hand/piles/energy/party/Taunt and untouched RNG")
+		_check(_taunt_snapshot(deck, party, service)["rng_state"] == before["rng_state"],
+			card_id + ": the play consumes no seeded RNG draws")
+
+
+## AC2: the same pending Taunt redirects several targetable attacks in the SAME next enemy turn,
+## leaves one already aimed at the Warden alone, preserves each action's numbers and mutates
+## nothing while projecting.
+func _test_taunt_projection_for_whole_enemy_turn() -> void:
+	var service := CombatWardenV3TauntCards.new()
+	var party := _taunt_party()
+	var deck := _taunt_deck("warden_v3_iron_challenge")
+	_check(service.play_card(deck, party, "warden_v3_iron_challenge").get("ok") == true,
+		"projection fixture arms its Taunt")
+	_check(deck.end_turn() and not deck.turn_active,
+		"the player turn really ends into the next enemy turn")
+	var before := _taunt_snapshot(deck, party, service)
+
+	var first := service.project_attack_target(party, 2)
+	var second := service.project_attack_target(party, 3)
+	var repeated := service.project_attack_target(party, 2)
+	var on_warden := service.project_attack_target(party, 1)
+	_check(first.get("ok") == true and first.get("eligible") == true
+		and first.get("redirected") == true
+		and first.get("announced_target_position") == 2
+		and first.get("actual_target_position") == 1,
+		"the first ally-targeted attack of the phase aims at the Warden")
+	_check(second.get("ok") == true and second.get("redirected") == true
+		and second.get("announced_target_position") == 3
+		and second.get("actual_target_position") == 1,
+		"a later attack in the same phase also aims at the Warden, not only the first")
+	_check(repeated == first, "each attack is projected independently and identically")
+	_check(on_warden.get("ok") == true and on_warden.get("eligible") == true
+		and on_warden.get("redirected") == false
+		and on_warden.get("actual_target_position") == 1,
+		"an attack already aimed at the Warden stays there")
+	_check(service.has_pending_taunt(), "projection alone never consumes the Taunt")
+	_check(_taunt_snapshot(deck, party, service) == before,
+		"projection mutates no party, deck, Taunt or RNG state")
+
+	var attack_a: Dictionary = {"type": "attack", "enemy_position": 1,
+		"target_position": 3, "amount": 7}
+	var projected_a: Dictionary = service.project_enemy_action(party, attack_a)
+	_check(projected_a.get("ok") == true and projected_a.get("targetable") == true
+		and projected_a.get("redirected") == true
+		and projected_a["action"].get("target_position") == 1,
+		"a whole announced attack projects onto the Warden's seat")
+	_check(attack_a.get("target_position") == 3,
+		"the caller's announced action is never rewritten")
+	var multi: Dictionary = {"type": "attack", "enemy_position": 2,
+		"target_position": 2, "amount": 4, "hits": 2}
+	var projected_multi: Dictionary = service.project_enemy_action(party, multi)
+	_check(projected_multi["action"].get("target_position") == 1
+		and projected_multi["action"].get("amount") == 4
+		and projected_multi["action"].get("hits") == 2,
+		"Taunt changes the seat, never the damage, hit count or ownership")
+
+	# Non-targeted beats stay entirely outside this contract: same detached action, no redirect.
+	for action: Dictionary in [
+		{"type": "block", "amount": 5},
+		{"type": "buff", "amount": 2},
+		{"type": "debuff", "target_position": 3, "amount": 1, "status": "weak"},
+		{"type": "shove", "target_position": 2, "amount": 0, "direction": 1},
+		{"type": "snip_block", "target_position": 3, "amount": 0},
+	]:
+		var beat: Dictionary = service.project_enemy_action(party, action)
+		_check(beat.get("ok") == true and beat.get("targetable") == false
+			and beat.get("redirected") == false and beat["action"] == action,
+			str(action.get("type")) + " is returned unchanged and never redirected")
+	_check(service.has_pending_taunt()
+		and _taunt_snapshot(deck, party, service) == before,
+		"non-targeted actions leave the pending Taunt and every actor untouched")
+
+
+## AC2: one complete enemy turn consumes the armed Taunt exactly once; the following enemy turn
+## keeps the originally announced ally target, and a fresh play arms the next turn again.
+func _test_taunt_expiry_and_following_turn() -> void:
+	var service := CombatWardenV3TauntCards.new()
+	var party := _taunt_party()
+	var deck := _taunt_deck("warden_v3_iron_taunt")
+	_check(service.play_card(deck, party, "warden_v3_iron_taunt").get("ok") == true,
+		"expiry fixture arms Iron Taunt")
+	_check(deck.end_turn(), "expiry fixture enters the next enemy turn")
+	_check(service.project_attack_target(party, 2).get("redirected") == true,
+		"the armed phase really redirects before expiry")
+	_check(service.complete_enemy_turn() == true,
+		"the whole next enemy turn consumes the armed Taunt once")
+	_check(not service.has_pending_taunt() and service.get_pending_taunt_card_id() == "",
+		"no pending Taunt remains after that complete phase")
+	var later_two := service.project_attack_target(party, 2)
+	var later_three := service.project_attack_target(party, 3)
+	_check(later_two.get("ok") == true and later_two.get("eligible") == true
+		and later_two.get("redirected") == false
+		and later_two.get("actual_target_position") == 2,
+		"the following enemy turn preserves the announced middle target")
+	_check(later_three.get("actual_target_position") == 3
+		and later_three.get("redirected") == false,
+		"the following enemy turn preserves the announced rear target")
+	_check(service.complete_enemy_turn() == false,
+		"a following enemy turn expires nothing further")
+	# A later legal Taunt arms the next upcoming phase from scratch.
+	var rearm := _taunt_deck("warden_v3_iron_taunt_plus", 9174)
+	_check(service.play_card(rearm, party, "warden_v3_iron_taunt_plus").get("ok") == true,
+		"a later player turn can arm a fresh Taunt")
+	_check(service.project_attack_target(party, 3).get("actual_target_position") == 1,
+		"the freshly armed Taunt redirects its own next enemy turn")
+
+
+## AC2: a torn or missing Warden never attracts attacks, an already-downed announced target is
+## never projected into a legal one, and the projection reads the Warden's actual current seat.
+func _test_taunt_projection_guards() -> void:
+	var service := CombatWardenV3TauntCards.new()
+	var party := _taunt_party()
+	var deck := _taunt_deck("warden_v3_iron_challenge")
+	_check(service.play_card(deck, party, "warden_v3_iron_challenge").get("ok") == true,
+		"guard fixture arms its Taunt")
+	_check(deck.end_turn(), "guard fixture enters the next enemy turn")
+
+	_check(party.apply_damage(2, 30) and party.is_downed(2),
+		"the middle hero is really downed mid-turn")
+	var downed_target := service.project_attack_target(party, 2)
+	_check(downed_target.get("ok") == true and downed_target.get("eligible") == false
+		and downed_target.get("redirected") == false
+		and downed_target.get("actual_target_position") == 2,
+		"a downed announced target is not projected onto the living Warden")
+	var living_target := service.project_attack_target(party, 3)
+	_check(living_target.get("redirected") == true
+		and living_target.get("actual_target_position") == 1,
+		"a living ally attack in the same phase still reaches the Warden")
+
+	_check(party.apply_damage(1, 100) and party.is_downed(1),
+		"the Warden is really downed mid-turn")
+	var after_torn := service.project_attack_target(party, 3)
+	_check(after_torn.get("ok") == true and after_torn.get("redirected") == false
+		and after_torn.get("actual_target_position") == 3,
+		"no new attack redirects to a downed Warden")
+	var torn_warden_target := service.project_attack_target(party, 1)
+	_check(torn_warden_target.get("ok") == true
+		and torn_warden_target.get("eligible") == false
+		and torn_warden_target.get("actual_target_position") == 1,
+		"an already-announced attack on the torn Warden keeps its original seat")
+	_check(service.has_pending_taunt(),
+		"a mid-turn downing does not silently spend the Taunt before turn end")
+
+	# The projection re-reads his actual seat, not a remembered seat 1.
+	var shifted := CombatWardenV3TauntCards.new()
+	var shifted_party := _taunt_party()
+	var shifted_deck := _taunt_deck("warden_v3_iron_taunt", 8801)
+	_check(shifted.play_card(shifted_deck, shifted_party, "warden_v3_iron_taunt").get("ok") == true,
+		"seat-shift fixture arms its Taunt")
+	_check(shifted_deck.end_turn(), "seat-shift fixture enters the next enemy turn")
+	_swap_seats(shifted_party, 1, 2)
+	_check(shifted_party.get_hero(2).get("id") == "warden",
+		"a mid-turn swap really moved the Warden to seat 2")
+	var shifted_projection := shifted.project_attack_target(shifted_party, 3)
+	_check(shifted_projection.get("redirected") == true
+		and shifted_projection.get("actual_target_position") == 2,
+		"the projection follows the Warden's actual current seat")
+
+	# A valid party without any Warden never redirects.
+	var no_warden := CombatParty.new([
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26},
+		{"id": "apprentice", "max_hp": 20},
+	])
+	_check(no_warden.is_valid(), "absent-Warden fixture is a valid party")
+	var absent := service.project_attack_target(no_warden, 2)
+	_check(absent.get("ok") == true and absent.get("redirected") == false
+		and absent.get("actual_target_position") == 2,
+		"a missing Warden preserves the announced ally target")
+	# Invalid targets and invalid parties fail closed instead of inventing a legal seat.
+	for invalid_target: int in [0, -1, 4, 99]:
+		_check(service.project_attack_target(_taunt_party(), invalid_target).get("ok") == false,
+			"invalid target " + str(invalid_target) + " is not projected")
+	_check(service.project_attack_target(null, 2).get("ok") == false,
+		"a null party is not projected")
+	_check(service.project_attack_target(CombatParty.new([]), 2).get("ok") == false,
+		"an invalid party roster is not projected")
+	# An unarmed service preserves every announced target.
+	var idle := CombatWardenV3TauntCards.new()
+	_check(idle.project_attack_target(_taunt_party(), 2).get("actual_target_position") == 2,
+		"without an armed Taunt the announced target is preserved")
+
+
+## AC3: every invalid paid request fails closed without touching hand, piles, energy, Block,
+## the pending Taunt or the injected RNG.
+func _test_taunt_refusals() -> void:
+	var service := CombatWardenV3TauntCards.new()
+	var card := "warden_v3_iron_challenge"
+	var foreign := _taunt_deck("warden_v3_pot_helm_bonk")
+	_rejected_taunt(service, foreign, _taunt_party(), "warden_v3_pot_helm_bonk", "self", 0,
+		"foreign Warden card")
+	var deck := _taunt_deck(card)
+	var party := _taunt_party()
+	_rejected_taunt(service, deck, party, "warden_v3_iron_taunt", "self", 0,
+		"authentic but unheld pool ID")
+	_rejected_taunt(service, deck, party, "warden_v3_iron_challenge_plus", "self", 0,
+		"authentic but unheld upgrade")
+	_rejected_taunt(service, deck, party, "warden_v3_iron_challenge_plus_plus", "self", 0,
+		"forged plus-of-plus ID")
+	_rejected_taunt(service, deck, party, "warden_v3_iron_challenge_ULTRA", "self", 0,
+		"forged uppercase ID")
+	_rejected_taunt(service, deck, party, "", "self", 0, "empty card ID")
+	_rejected_taunt(service, deck, party, StringName(card), "self", 0, "StringName card ID")
+	_rejected_taunt(service, deck, party, 5, "self", 0, "numeric card ID")
+
+	# This self card never accepts an enemy or ally target, nor another hero seat.
+	_rejected_taunt(service, deck, party, card, "enemy_single", 1, "enemy-target request")
+	_rejected_taunt(service, deck, party, card, "enemy_single", 2, "enemy-target middle request")
+	_rejected_taunt(service, deck, party, card, "ally_single", 2, "ally-target request")
+	_rejected_taunt(service, deck, party, card, "self", 2, "wrong self target (middle seat)")
+	_rejected_taunt(service, deck, party, card, "self", 3, "wrong self target (rear seat)")
+	_rejected_taunt(service, deck, party, card, "self", -1, "negative self target")
+
+	var short := _taunt_deck(card, 5511)
+	_check(short.try_spend_energy(3) and short.energy == 0 and short.hand.has(card),
+		"no-energy fixture is genuinely broke while holding the card")
+	_rejected_taunt(service, short, _taunt_party(), card, "self", 0, "no energy")
+
+	var inactive := _taunt_deck(card, 5512)
+	inactive.combat_state.end_player_turn()
+	inactive.combat_state.energy = CombatState.TURN_ENERGY
+	_check(not inactive.turn_active and inactive.hand.has(card) and inactive.energy == 3,
+		"inactive-turn fixture holds the card and full energy but no active turn")
+	_rejected_taunt(service, inactive, _taunt_party(), card, "self", 0, "inactive turn")
+
+	var torn := _taunt_party()
+	_check(torn.apply_damage(1, 40) and torn.is_downed(1),
+		"torn-Warden fixture is genuinely downed")
+	_rejected_taunt(service, _taunt_deck(card, 5513), torn, card, "self", 0, "downed Warden")
+	_rejected_taunt(service, _taunt_deck(card, 5514), _moved_party(2), card, "self", 0,
+		"Warden moved to seat 2")
+	var no_warden := CombatParty.new([
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26},
+		{"id": "apprentice", "max_hp": 20},
+	])
+	_rejected_taunt(service, _taunt_deck(card, 5515), no_warden, card, "self", 0,
+		"Warden absent from the party")
+
+	var full := _taunt_party()
+	full._heroes[0]["block"] = CombatParty.MAX_INT
+	_rejected_taunt(service, _taunt_deck(card, 5516), full, card, "self", 0,
+		"no remaining Block capacity")
+	var corrupt := _taunt_party()
+	corrupt._heroes[0]["block"] = "nine"
+	_rejected_taunt(service, _taunt_deck(card, 5517), corrupt, card, "self", 0,
+		"malformed Warden Block state")
+	var over_healed := _taunt_party()
+	over_healed._heroes[0]["hp"] = 41
+	_rejected_taunt(service, _taunt_deck(card, 5518), over_healed, card, "self", 0,
+		"Warden HP above maximum")
+
+	# Null and invalid containers fail closed too.
+	var service_only := _taunt_snapshot(null, null, service)
+	_check(service.play_card(null, party, card).get("ok") == false, "null deck is refused")
+	_check(service.play_card(deck, null, card).get("ok") == false, "null party is refused")
+	_check(service.play_card(deck, CombatParty.new([]), card).get("ok") == false,
+		"invalid party roster is refused")
+	_check(_taunt_snapshot(null, null, service) == service_only,
+		"null/invalid container refusals mutate no Taunt state")
+
+	# A refusal never clears an already-armed Taunt.
+	var armed := CombatWardenV3TauntCards.new()
+	var armed_deck := _taunt_deck("warden_v3_iron_taunt", 5519)
+	_check(armed.play_card(armed_deck, party, "warden_v3_iron_taunt").get("ok") == true,
+		"armed-refusal fixture really arms a Taunt")
+	_rejected_taunt(armed, armed_deck, party, "warden_v3_iron_taunt", "self", 0,
+		"replay of the already-discarded copy")
+	_check(armed.has_pending_taunt()
+		and armed.get_pending_taunt_card_id() == "warden_v3_iron_taunt",
+		"a refused replay leaves the armed Taunt intact")
+
+
+## Two legal Taunt cards in the same player turn refresh one upcoming phase; neither stacks damage
+## nor extends the armed state to a second enemy turn.
+func _test_taunt_refresh_and_replay() -> void:
+	var service := CombatWardenV3TauntCards.new()
+	var party := _taunt_party()
+	var ids: Array[String] = ["warden_v3_iron_challenge", "warden_v3_iron_taunt",
+		TAUNT_FILLERS[0], TAUNT_FILLERS[1], TAUNT_FILLERS[2]]
+	var deck := CombatDeck.new(ids, _taunt_rng(4471))
+	_check(deck.start_turn() and deck.hand.has("warden_v3_iron_challenge")
+		and deck.hand.has("warden_v3_iron_taunt") and deck.energy == 3,
+		"refresh fixture really holds both Taunt cards and three energy")
+	var first: Dictionary = service.play_card(deck, party, "warden_v3_iron_challenge")
+	var second: Dictionary = service.play_card(deck, party, "warden_v3_iron_taunt", "self", 1)
+	_check(first.get("ok") == true and second.get("ok") == true,
+		"both legal Taunt cards resolve in the same player turn")
+	_check(party.get_hero(1)["block"] == 3 + 4,
+		"each card's own Block really landed, without multiplication")
+	_check(deck.energy == 1 and deck.discard_pile.size() == 2,
+		"two plays charge two energy and discard two copies")
+	_check(service.has_pending_taunt()
+		and service.get_pending_taunt_card_id() == "warden_v3_iron_taunt",
+		"the latest legal Taunt refreshes the same upcoming phase")
+	_check(service.project_attack_target(party, 2).get("actual_target_position") == 1,
+		"the refreshed phase redirects to the Warden once")
+	_check(service.complete_enemy_turn() == true, "one complete enemy turn consumes the Taunt")
+	_check(service.complete_enemy_turn() == false,
+		"two Taunt cards never buy an extra enemy turn of redirection")
+	_check(service.project_attack_target(party, 2).get("actual_target_position") == 2,
+		"the refreshed Taunt is gone on the following enemy turn")
+	# With both copies spent, a third play is genuinely unheld, not silently free.
+	var spent := _taunt_snapshot(deck, party, service)
+	var refused: Dictionary = service.play_card(deck, party, "warden_v3_iron_challenge")
+	_check(refused.get("ok") == false and refused.get("block_gained") == 0,
+		"a spent Taunt copy cannot be replayed")
+	_check(_taunt_snapshot(deck, party, service) == spent,
+		"the replay refusal changes no pile, energy, Block, Taunt or RNG")
+
+
+## One non-mutating snapshot of the paid transaction's whole surface.
+func _taunt_snapshot(deck: CombatDeck, party: CombatParty,
+		service: CombatWardenV3TauntCards) -> Dictionary:
+	var result: Dictionary = {}
+	if party != null:
+		result["heroes"] = party.get_heroes()
+	if deck != null:
+		result["hand"] = deck.hand.duplicate(true)
+		result["draw"] = deck.draw_pile.duplicate(true)
+		result["discard"] = deck.discard_pile.duplicate(true)
+		result["exhausted"] = deck.exhausted.duplicate(true)
+		result["energy"] = deck.energy
+		result["turn"] = deck.turn_active
+		if deck.combat_state != null:
+			result["state_energy"] = deck.combat_state.energy
+			result["state_turn"] = deck.combat_state.player_turn_active
+		if deck._rng != null:
+			result["rng_state"] = deck._rng.state
+			result["rng_seed"] = deck._rng.seed
+	if service != null:
+		result["taunt_pending"] = service.has_pending_taunt()
+		result["taunt_card_id"] = service.get_pending_taunt_card_id()
+	return result
+
+
+func _rejected_taunt(service: CombatWardenV3TauntCards, deck: CombatDeck, party: CombatParty,
+		card_id: Variant, target_kind: String, target_position: int, label: String) -> void:
+	var before := _taunt_snapshot(deck, party, service)
+	var result: Dictionary = service.play_card(deck, party, card_id, target_kind,
+		target_position)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("block_gained") == 0 and result.get("taunt_armed") == false,
+		label + ": refusal reports no Block and no Taunt")
+	_check(_taunt_snapshot(deck, party, service) == before,
+		label + ": no energy, hand, pile, party, Taunt or RNG mutation")
+
+
+func _taunt_rng(seed_value: int) -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	return rng
+
+
+## A real five-card hand from five cards, so the named ID is genuinely drawn exactly once.
+func _taunt_deck(card_id: String, seed_value: int = 20261028) -> CombatDeck:
+	var ids: Array[String] = [card_id, TAUNT_FILLERS[0], TAUNT_FILLERS[1],
+		TAUNT_FILLERS[2], TAUNT_FILLERS[3]]
+	var deck := CombatDeck.new(ids, _taunt_rng(seed_value))
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3
+		and deck.hand.size() == 5 and deck.hand.count(card_id) == 1,
+		card_id + ": real seeded five-card hand holds exactly one copy and three energy")
+	return deck
+
+
+## The real authored three-hero party (Warden 40 HP at seat 1), with no hand-built actors.
+func _taunt_party() -> CombatParty:
+	var raw: String = FileAccess.get_file_as_string(HEROES_PATH)
+	var parsed: Variant = JSON.parse_string(raw)
+	if not parsed is Array or parsed.size() != CombatParty.PARTY_SIZE:
+		_check(false, "real authored starter party file supplies all three heroes")
+		return CombatParty.new([])
+	for hero in parsed:
+		if hero is Dictionary and hero.get("max_hp") is float:
+			hero["max_hp"] = int(hero["max_hp"])
+	var party := CombatParty.new(parsed)
+	_check(party.is_valid() and party.get_hero(1).get("id") == "warden"
+		and party.get_hero(1).get("max_hp") == 40 and party.get_hero(1).get("hp") == 40,
+		"valid real CombatParty with the 40-HP Warden at seat 1")
+	return party
+
+
+## A genuine adjacent swap through the real position rules, not a hand-built roster.
+func _moved_party(position: int) -> CombatParty:
+	var party := _taunt_party()
+	var move_id := "fixture_warden_forward"
+	var moving := CombatDeck.new([move_id, move_id, move_id], _taunt_rng(345))
+	_check(moving.start_turn(), "position fixture begins a legitimate shared turn")
+	var definition := {"id": move_id, "owner": "warden", "cost": 0,
+		"from_positions": [1, 2, 3], "action_kind": "adjacent_swap", "direction": 1}
+	for _step in range(position - 1):
+		_check(CombatPositionSwaps.play_move_card(moving, party, move_id, definition),
+			"actual adjacent move shifts the Warden forward")
+	_check(party.get_hero(position).get("id") == "warden"
+		and party.get_hero(position).get("position") == position,
+		"Warden identity is really at actual slot " + str(position))
+	return party
+
+
+## Mid-enemy-turn movement of two authoritative hero records, the same shape the shared enemy
+## phase writes when a shove lands. Positions stay 1..3.
+func _swap_seats(party: CombatParty, first: int, second: int) -> void:
+	var a: Dictionary = party._heroes[first - 1]
+	var b: Dictionary = party._heroes[second - 1]
+	party._heroes[first - 1] = b
+	party._heroes[second - 1] = a
+	a["position"] = second
+	b["position"] = first
