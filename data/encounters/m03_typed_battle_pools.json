@@ -136,6 +136,20 @@
         "spool_hexer",
         "spool_stalker"
       ]
+    },
+    "marshal_threadclamp_elite": {
+      "schedule": "res://data/encounters/marshal_threadclamp_elite.json",
+      "enemy_ids": [
+        "needle_marshal",
+        "spool_stalker"
+      ]
+    },
+    "hexer_patchguard_elite": {
+      "schedule": "res://data/encounters/hexer_patchguard_elite.json",
+      "enemy_ids": [
+        "spool_hexer",
+        "button_guard"
+      ]
     }
   },
   "Boss": {
