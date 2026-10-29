@@ -599,6 +599,46 @@
         { "id": "pick_rustbell", "text": "Climb for a rustbell locket (lose 3 HP; gain 11 gold and 1 scrap)", "outcome": { "gold": 11, "scraps": 1, "hp": -3, "max_hp": 0 } },
         { "id": "leave", "text": "Leave the lockets chiming in the wind", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_ember_mitten_hatch",
+      "title": "The Ember-Mitten Hatch",
+      "description": "A plump badger-shaped oven keeper lifts a house-sized oxblood quilt mitt from a tiny furnace hatch, its brass-button eyes shining in the amber firelight.",
+      "choices": [
+        { "id": "buy_oven_warmth", "text": "Pay 14 gold for the mitten's warm stuffing (+8 HP)", "outcome": { "gold": -14, "scraps": 0, "hp": 8, "max_hp": 0 } },
+        { "id": "carry_coals", "text": "Carry glowing coals through the cold (lose 5 HP; gain 18 gold)", "outcome": { "gold": 18, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the furnace hatch click shut", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_briar_staple_bridge",
+      "title": "The Briar-Staple Bridge",
+      "description": "A round moss-cloaked bridge keeper braces a swaying patchwork footbridge with a giant copper safety pin while stitched briars tug at the rope seams.",
+      "choices": [
+        { "id": "staple_steady_hem", "text": "Spend 2 scraps on a lasting safety-pin seam (+2 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 2 } },
+        { "id": "offer_own_staple", "text": "Unpick an old staple for the keeper (lose 2 max HP; gain 24 gold)", "outcome": { "gold": 24, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Cross without disturbing the pin", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_moon_threadfish_lantern",
+      "title": "The Moon-Threadfish Lantern",
+      "description": "A rotund midnight-teal fish doll floats beneath a quilted canal bridge, dragging an enormous amber lantern from its ribbon tail.",
+      "choices": [
+        { "id": "mend_glowing_gill", "text": "Pay 11 gold and 1 scrap to mend the lantern gill (+5 HP, +1 max HP)", "outcome": { "gold": -11, "scraps": -1, "hp": 5, "max_hp": 1 } },
+        { "id": "snag_lightline", "text": "Snag the loose lantern thread (lose 4 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Watch the threadfish drift into the dark", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_honeycomb_button_hive",
+      "title": "The Honeycomb Button Hive",
+      "description": "A squat moss-and-mustard hive with great brass button holes hums as fat striped cloth bees stitch amber honey into a velvet teacup.",
+      "choices": [
+        { "id": "sip_button_honey", "text": "Pay 19 gold for a cup of warming button honey (+9 HP)", "outcome": { "gold": -19, "scraps": 0, "hp": 9, "max_hp": 0 } },
+        { "id": "trade_queen_seam", "text": "Give the hive one lasting heart seam (lose 1 max HP; gain 27 gold)", "outcome": { "gold": 27, "scraps": 0, "hp": 0, "max_hp": -1 } },
+        { "id": "leave", "text": "Leave the buzzing button hive asleep", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
