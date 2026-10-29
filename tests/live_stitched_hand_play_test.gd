@@ -214,7 +214,8 @@ func _hand_fixture() -> Dictionary:
 
 
 func _earn(fixture: Dictionary, pair: Array, keyboard: bool,
-		sew_wearer: String = "", sew_patch: bool = true, claim_offer: String = "") -> String:
+		sew_wearer: String = "", sew_patch: bool = true, claim_offer: String = "",
+		upgrade_claim: bool = false) -> String:
 	if not await _routed_win(fixture, false):
 		return ""
 	# `claim_offer` takes that seeded pool card through the actual opening reward
@@ -229,6 +230,25 @@ func _earn(fixture: Dictionary, pair: Array, keyboard: bool,
 	await _click(app.reward_buttons[3 if claim_offer.is_empty() else offered])
 	_check(claim_offer.is_empty() or (app.run_deck.back() == claim_offer and app.run_deck.count(claim_offer) == 1
 		and app.run_scraps == 1), "real reward input acquires exactly one pool card and one scrap")
+	if upgrade_claim:
+		var options := RunRestCardUpgrade.list_authored_choices(app.run_deck,
+			app.run_stitch_descriptors, app.run_next_stitch_id)
+		_check(options.get("ok", false) and options.permitted_upgrades.has(claim_offer),
+			"authored pool upgrade option exists for awarded card")
+		if not options.get("ok", false) or not options.permitted_upgrades.has(claim_offer):
+			return ""
+		var upgrade := RunRestCardUpgrade.new(app.run_deck, options.permitted_upgrades,
+			app.run_stitch_descriptors, app.run_next_stitch_id)
+		var receipt := upgrade.choose_upgrade(app.run_deck.find(claim_offer))
+		_check(receipt.get("ok", false) and upgrade.is_consumed()
+			and receipt.get("upgraded_id") == options.permitted_upgrades[claim_offer],
+			"canonical Rest upgrade service supplies the plus printing in setup")
+		if not receipt.get("ok", false):
+			return ""
+		app.run_deck.assign(receipt.deck)
+		_check(RunRestStitchCards.new(app.run_deck, app.run_stitch_descriptors,
+			app.run_scraps, app.run_next_stitch_id).is_valid(),
+			"upgraded pool deck retains authentic Rest stitch ledger")
 	await _click(app.continue_button)
 	# The opening reward closes before a genuine run-owned COAT receipt is sewn
 	# through the actual wardrobe transaction, so every later visit (Elite pass,
@@ -280,6 +300,12 @@ func _earn(fixture: Dictionary, pair: Array, keyboard: bool,
 		app.deck.draw_pile.push_back(extra)
 	app._refresh_hand()
 	await _frames()
+	# A seeded enemy shove may leave Shield Bash's Warden in slot two.
+	# Restore his legal front seat before asserting the mounted panel is actionable.
+	if claim_offer == "seamstress_thread_whip":
+		await _restore_stitch_positions(id)
+		app._refresh_hand()
+		await _frames()
 	_check(_panel(id) != null and presenter._bindings.has(_panel(id)), "held ordered panel bound to production presenter")
 	await _stitched_face(id, pair, app.get_node("LiveSupportHand")._metadata)
 	if _stale_card_input.is_valid():
@@ -891,6 +917,7 @@ func _run() -> void:
 			_check(randi() == global_next, "earned route and cast preserve global RNG")
 	await _coat_cases(fixture)
 	await _pool_case()
+	await _plain_strike_cases()
 	await _sight_glass_case()
 	await _knit_case(fixture)
 	await _finish_hand()
@@ -1189,3 +1216,117 @@ func _finish_hand() -> void:
 		printerr(failure)
 	print("live_stitched_hand_play_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+## Opening Fight reward -> authentic Rest stitch -> held hand. The plus setup
+## uses the canonical upgrade transaction before Rest, not a forged descriptor.
+const BUCKLE_FIXTURE := {"seed": 3354, "fight": "f01_n0", "elite": ["f02_n3"],
+	"rest": ["f03_n2"], "next": "f04_n2"}
+const WHIP_FIXTURE := {"seed": 1219, "fight": "f01_n0", "elite": ["f02_n1"],
+	"rest": ["f03_n1"], "next": "f04_n1"}
+
+
+func _plain_strike_cases() -> void:
+	for base_id in ["warden_brass_buckle", "seamstress_thread_whip"]:
+		var fixture: Dictionary = BUCKLE_FIXTURE if base_id.begins_with("warden_") else WHIP_FIXTURE
+		var partner: String = "seamstress_prick" if base_id.begins_with("warden_") else "warden_shield_bash"
+		for plus in [false, true]:
+			var plain_id: String = base_id + ("_plus" if plus else "")
+			var pair := [plain_id, partner]
+			var replay: Array = []
+			for keyboard in [false, true]:
+				print("mounted plain strike: ", pair, " keyboard=", keyboard)
+				seed(903377)
+				var global_next := randi()
+				seed(903377)
+				var id := await _earn(fixture, pair, keyboard, "", true, base_id, plus)
+				if id.is_empty():
+					_check(false, "mounted earned pool composite setup " + plain_id)
+					return
+				await _restore_stitch_positions(id)
+				var ledger := RunRestStitchCards.new(app.run_deck, app.run_stitch_descriptors,
+					app.run_scraps, app.run_next_stitch_id)
+				var preview := CombatStitchedTargetPreview.new().get_preview(ledger,
+					app._stitch_snapshot(), app.deck, app.party, app.enemies, id)
+				_check(ledger.is_valid() and preview.get("playable", false) and preview.halves.size() == 2
+					and preview.halves[0].card_id == plain_id and preview.halves[1].card_id == partner
+					and preview.halves[0].target_positions == [1, 2],
+					"mounted canonical pool half offers only original enemy slots 1-2: " + plain_id)
+				if not preview.get("playable", false):
+					return
+				var a := 2
+				var b := 1
+				_check(app.enemies.get_enemy(a).hp > 0 and app.enemies.get_enemy(b).hp > 0
+					and app.deck.hand.has(id) and app.deck.energy >= preview.cost,
+					"real mounted living targets, held composite and paid energy preconditions")
+				var rng := RandomNumberGenerator.new()
+				rng.state = app.run_rng.state
+				var deck := CombatDeck.new([], rng)
+				deck.hand.assign(app.deck.hand)
+				deck.draw_pile.assign(app.deck.draw_pile)
+				deck.discard_pile.assign(app.deck.discard_pile)
+				deck.combat_state.energy = app.deck.energy
+				deck.combat_state.player_turn_active = true
+				var party := CombatParty.new(app.party.get_heroes())
+				party._heroes = app.party.get_heroes()
+				var enemies := CombatEnemies.new(app.enemies.get_enemies())
+				enemies._enemies = app.enemies.get_enemies()
+				var attacks := CombatAttackCards.new()
+				attacks.start_player_turn()
+				var expected := CombatStitchedCards.new(attacks).play_stitched(deck, party, enemies,
+					ledger, id, a, b)
+				_check(expected.get("ok", false) and expected.halves.size() == 2,
+					"independent paid composite resolver succeeds for " + plain_id)
+				if not expected.get("ok", false):
+					return
+				var first: Dictionary = expected.halves[0]
+				var second: Dictionary = expected.halves[1]
+				var printed_damage := 7 if plus else 5
+				var printed_block := 6 if plus else 4
+				if not base_id.begins_with("warden_"):
+					printed_damage = 8 if plus else 6
+				_check(first.hits.size() == 1 and second.hits.size() == 1
+					and first.hits[0].position == a and second.hits[0].position == b
+					and first.hits[0].damage == printed_damage,
+					"ordered first hit has printed 5/7 Buckle or 6/8 Whip damage")
+				var expected_block: Dictionary = {_hero_position("warden"): printed_block} if base_id.begins_with("warden_") else {}
+				_check(first.block_deltas == expected_block,
+					"Brass Buckle grants exactly 4/6 Warden Block, Whip grants none")
+				var before_hand: Array = app.deck.hand.duplicate()
+				var before_discard: Array = app.deck.discard_pile.duplicate()
+				var before_energy: int = app.deck.energy
+				var before_warden_block: int = app.party.get_hero(_hero_position("warden")).block
+				var stale = presenter._bindings[_panel(id)].input
+				await _arm(id, keyboard)
+				await _pick(a, "enemy", keyboard)
+				await _pick(b, "enemy", keyboard)
+				_check(presenter.last_event == expected,
+					"physical mouse/keyboard ordered two-target receipt equals independent resolver")
+				_check([app.deck.hand, app.deck.draw_pile, app.deck.discard_pile,
+					app.deck.energy, app.party.get_heroes(), app.enemies.get_enemies(), app.run_rng.state]
+					== [deck.hand, deck.draw_pile, deck.discard_pile, deck.energy,
+					party.get_heroes(), enemies.get_enemies(), rng.state],
+					"live ordered hits, passives, Block/statuses, piles and seeded RNG equal resolver")
+				_check(app.deck.energy == before_energy - preview.cost and before_hand.count(id) == 1
+					and not app.deck.hand.has(id) and app.deck.hand.size() == before_hand.size() - 1
+					and app.deck.discard_pile == before_discard + [id],
+					"one capped composite energy debit, no duplicate commit, one discard")
+				_check(app.party.get_hero(_hero_position("warden")).block ==
+					before_warden_block + (printed_block if base_id.begins_with("warden_") else 0),
+					"live Warden Block obeys printed additive gain")
+				var after := _complete_state()
+				await _key(KEY_1)
+				await _key(KEY_2)
+				if stale.is_valid():
+					var event := InputEventMouseButton.new()
+					event.button_index = MOUSE_BUTTON_LEFT
+					event.pressed = true
+					stale.call(event)
+				await _frames()
+				_check(_complete_state() == after, "replayed keys and stale panel callback cannot recommit")
+				var trace := [_snapshot(), presenter.last_event.duplicate(true), app._stitch_snapshot()]
+				if replay.is_empty():
+					replay = trace
+				else:
+					_check(trace == replay, "seeded mouse/keyboard full mounted plain-strike replay")
+				await _return()
+				_check(randi() == global_next, "mounted plain strike preserves global RNG")

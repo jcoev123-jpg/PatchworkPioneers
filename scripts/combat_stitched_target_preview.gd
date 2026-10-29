@@ -154,6 +154,9 @@ func _half_preview(half: Dictionary, index: int, party_slots: Array[Dictionary],
 		authored = _pool.get_definition(id)
 	if authored.is_empty() and id in WARDEN_BLOCK_IDS:
 		authored = WardenPoolCards.new().get_definition(id)
+	if authored.is_empty() and id in CombatPoolPlainStrikes.SUPPORTED_IDS:
+		authored = (WardenPoolCards.new().get_definition(id)
+			if id.begins_with("warden_") else _pool.get_definition(id))
 	if authored.is_empty() and id in CombatPoolEnergyCards.TRANCE_IDS:
 		authored = _pool.get_definition(id)
 	if authored.is_empty() and (id in CombatPoolEnergyCards.OVERCLOCK_IDS
