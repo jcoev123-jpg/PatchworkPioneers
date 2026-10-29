@@ -44,7 +44,17 @@ const STITCH := Color("#efcba1")
 @onready var continue_button: Button = $PaperPanel/Margins/Body/Foot/ContinueButton
 @onready var cancel_button: Button = $PaperPanel/Margins/Body/Foot/CancelButton
 @onready var inspect_deck_button: Button = $PaperPanel/Margins/Body/Foot/InspectDeckButton
-@onready var inspect_cards_button: Button = $PaperPanel/Margins/Body/Foot/InspectCardsButton
+@onready var inspect_cards_button: Button = $PaperPanel/Margins/Body/Foot/InspectModes/InspectCardsButton
+@onready var reward_cards_button: Button = $PaperPanel/Margins/Body/Foot/InspectModes/RewardCardsButton
+@onready var reward_readout: VBoxContainer = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout
+@onready var reward_heading: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout/RewardHeading
+@onready var reward_identity: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout/RewardIdentity
+@onready var reward_target: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout/RewardTarget
+@onready var reward_scroll: ScrollContainer = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout/RewardScroll
+@onready var reward_effects: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout/RewardScroll/RewardEffects
+@onready var reward_previous: Button = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout/RewardNavigation/PreviousButton
+@onready var reward_next: Button = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout/RewardNavigation/NextButton
+@onready var reward_back: Button = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout/RewardNavigation/BackButton
 @onready var kit_readout: VBoxContainer = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout
 @onready var kit_card_heading: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout/KitCardHeading
 @onready var kit_target: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout/KitTarget
@@ -72,6 +82,9 @@ var _deck_mode: bool = false
 var _kit_mode: bool = false
 var _kit_hero: String = ""
 var _kit_index: int = 0
+var _reward_mode: bool = false
+var _reward_index: int = 0
+var _reward_candidates: Array[Dictionary] = []
 
 
 ## A drawn stand-in for not-yet-delivered portraits. These five faces are
@@ -180,6 +193,10 @@ func _ready() -> void:
 	cancel_button.pressed.connect(_cancel_pressed)
 	inspect_deck_button.pressed.connect(_inspect_deck_pressed)
 	inspect_cards_button.pressed.connect(_inspect_cards_pressed)
+	reward_cards_button.pressed.connect(_reward_cards_pressed)
+	reward_previous.pressed.connect(_reward_step.bind(-1))
+	reward_next.pressed.connect(_reward_step.bind(1))
+	reward_back.pressed.connect(_reward_back_pressed)
 	kit_previous.pressed.connect(_kit_step.bind(-1))
 	kit_next.pressed.connect(_kit_step.bind(1))
 	kit_back.pressed.connect(_kit_back_pressed)
@@ -201,6 +218,9 @@ func open_picker() -> void:
 	_kit_mode = false
 	_kit_hero = ""
 	_kit_index = 0
+	_reward_mode = false
+	_reward_index = 0
+	_reward_candidates.clear()
 	_hovered_id = ""
 	_focused_id = ""
 	for old in grid.get_children():
@@ -251,6 +271,7 @@ func _update_inspection() -> void:
 	# never of separately guessed hero decks or a cached prior opening.
 	if _deck_mode:
 		kit_readout.hide()
+		reward_readout.hide()
 		var rows := _deck_receipt_rows()
 		if rows.size() == 3 and _open and not _latched:
 			deck_readout.show()
@@ -264,6 +285,7 @@ func _update_inspection() -> void:
 		_deck_mode = false
 	deck_readout.hide()
 	kit_readout.hide()
+	reward_readout.hide()
 	for label in [inspection_heading, inspection_facts, inspection_detail, inspection_starters]:
 		label.show()
 	inspect_deck_button.text = "Inspect Deck"
@@ -273,8 +295,13 @@ func _update_inspection() -> void:
 	if not chosen.is_empty() and chosen != _kit_hero:
 		_kit_hero = chosen
 		_kit_index = 0
+		_reward_index = 0
+		_reward_candidates.clear()
+		if _reward_mode:
+			_reward_candidates = _reward_entries(chosen)
 	inspect_cards_button.disabled = not _open or _latched or _kit_hero.is_empty()
-	if _kit_mode and chosen.is_empty():
+	reward_cards_button.disabled = not _open or _latched or _kit_hero.is_empty() 		or _reward_entries(_kit_hero).is_empty()
+	if (_kit_mode or _reward_mode) and chosen.is_empty():
 		chosen = _kit_hero
 	for hero in HEROES:
 		if hero["id"] == chosen:
@@ -297,6 +324,8 @@ func _update_inspection() -> void:
 				definition["max_hp"], POSITION_NAMES[position - 1], position, passive]
 			if _kit_mode:
 				_show_kit()
+			elif _reward_mode:
+				_show_reward()
 			return
 	inspection_heading.text = "HOVER OR FOCUS A HERO TO INSPECT"
 	inspection_facts.text = "Inspect max HP, preferred position and passive."
@@ -467,6 +496,7 @@ func _inspect_cards_pressed() -> void:
 	if not _open or _latched or _deck_mode or _kit_hero.is_empty() \
 			or _kit_card(_kit_hero, 0).is_empty():
 		return
+	_reward_mode = false
 	_kit_mode = true
 	_kit_index = 0
 	_update_inspection()
@@ -493,6 +523,159 @@ func _kit_back_pressed() -> void:
 	_kit_mode = false
 	_update_inspection()
 	inspect_cards_button.grab_focus()
+
+
+## Read the exact published reward stock; no tier sampling or RNG is used.
+## Keep candidates separate from the definition lookup so missing / forged
+## definitions display Unavailable, never the previous hero's printing.
+func _reward_entries(hero_id: String) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	if hero_id not in RunV3PartyAdmission.HERO_IDS:
+		return entries
+	var seen := {}
+	for raw: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+		if raw.get("owner") != hero_id:
+			continue
+		var card_id: Variant = raw.get("id")
+		var rarity: Variant = raw.get("rarity")
+		if not card_id is String or String(card_id).is_empty() \
+				or String(card_id).ends_with("_plus") or seen.has(card_id) \
+				or not rarity is String or rarity not in RunPoolCardRewardOffers.TIER_ORDER:
+			return []
+		seen[card_id] = true
+		entries.append({"id": card_id, "owner": hero_id, "rarity": rarity})
+	return entries
+
+
+func _reward_card(hero_id: String, index: int) -> Dictionary:
+	if hero_id not in RunV3PartyAdmission.HERO_IDS or index < 0 \
+			or index >= _reward_candidates.size():
+		return {}
+	var candidate: Dictionary = _reward_candidates[index]
+	if candidate.get("owner") != hero_id or not candidate.get("id") is String \
+			or not candidate.get("rarity") is String:
+		return {}
+	var card_id: String = candidate["id"]
+	if card_id.is_empty() or card_id.ends_with("_plus") \
+			or RunV3PartyAdmission._starters(hero_id, null).has(card_id):
+		return {}
+	var card := RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+	if card.get("id") != card_id or card.get("owner") != hero_id \
+			or card.get("rarity") != candidate["rarity"] \
+			or (card.get("reward_eligible") != true and card.get("is_upgrade") != false) \
+			or card.has("upgrade_of") \
+			or card.get("starting_copies") != 0 \
+			or not card.get("display_name") is String \
+			or String(card["display_name"]).is_empty() \
+			or not card.get("cost") is int or int(card["cost"]) < 0 \
+			or not card.get("effects") is Dictionary \
+			or not card.get("from_positions") is Array \
+			or not card.get("to_positions") is Array \
+			or not card.get("target_kind") is String:
+		return {}
+	if card["target_kind"] not in ["enemy_single", "enemy_all", "enemy_back",
+			"enemy_random", "self", "ally_single", "party_all", "none"]:
+		return {}
+	for field in ["from_positions", "to_positions"]:
+		for slot in card[field]:
+			if not slot is int or slot not in [1, 2, 3]:
+				return {}
+	return card
+
+
+func _reward_target_line(card: Dictionary) -> String:
+	var from: Array[String] = []
+	var to: Array[String] = []
+	for slot in card["from_positions"]:
+		from.append(str(slot))
+	for slot in card["to_positions"]:
+		to.append(str(slot))
+	var positions := ", ".join(to) if not to.is_empty() else "none"
+	return "From slots %s  •  Target: %s  •  To slots: %s" % [
+		", ".join(from), card["target_kind"], positions]
+
+
+func _reward_effect_line(card: Dictionary) -> String:
+	# The raw authored values (including nested predicates) are printed
+	# verbatim. CardShortRules adds only its audited short *printed* wording.
+	var parts: Array[String] = []
+	var description := CardShortRules.describe(card)
+	var short_line: String = str(description.get("line", ""))
+	if not short_line.is_empty():
+		parts.append("Printed rules: " + short_line)
+	parts.append("Authored effect fields (printed intent, not guaranteed live):")
+	for key in card["effects"]:
+		parts.append("%s: %s" % [str(key), JSON.stringify(card["effects"][key])])
+	if (card["effects"] as Dictionary).is_empty() or description.get("unknown", false):
+		parts.append("Other authored effect semantics: Unavailable.")
+	return "\n".join(parts)
+
+
+func _show_reward() -> void:
+	inspection_heading.hide()
+	inspection_detail.hide()
+	inspection_facts.hide()
+	inspection_starters.hide()
+	reward_readout.show()
+	var card := _reward_card(_kit_hero, _reward_index)
+	if card.is_empty():
+		reward_heading.text = "REWARD CARDS  •  Unavailable"
+		reward_identity.text = "Authenticated card definition unavailable."
+		reward_target.text = ""
+		reward_effects.text = "Authored effects: Unavailable."
+	else:
+		reward_heading.text = "REWARD %d / %d  •  %s  •  %s  •  %d EN" % [
+			_reward_index + 1, _reward_candidates.size(), card["display_name"],
+			String(card["rarity"]).capitalize(), card["cost"]]
+		reward_identity.text = "ID: %s  •  Owner: %s" % [card["id"], card["owner"]]
+		reward_target.text = _reward_target_line(card)
+		reward_effects.text = _reward_effect_line(card)
+	for label in [reward_heading, reward_identity, reward_target, reward_effects]:
+		label.tooltip_text = label.text
+	reward_scroll.scroll_vertical = 0
+	reward_previous.disabled = _reward_index == 0
+	reward_next.disabled = _reward_index >= _reward_candidates.size() - 1
+	reward_back.disabled = false
+
+
+func _reward_cards_pressed() -> void:
+	if not _open or _latched or _deck_mode or _kit_hero.is_empty():
+		return
+	var candidates := _reward_entries(_kit_hero)
+	if candidates.is_empty():
+		return
+	_reward_candidates = candidates
+	_reward_mode = true
+	_kit_mode = false
+	_reward_index = 0
+	_update_inspection()
+	if not reward_next.disabled:
+		reward_next.grab_focus()
+	else:
+		reward_back.grab_focus()
+
+
+func _reward_step(delta: int) -> void:
+	if not _open or _latched or not _reward_mode or _deck_mode \
+			or delta not in [-1, 1] \
+			or _reward_index + delta < 0 or _reward_index + delta >= _reward_candidates.size():
+		return
+	_reward_index += delta
+	_update_inspection()
+	if delta > 0 and reward_next.disabled:
+		reward_previous.grab_focus()
+	elif delta < 0 and reward_previous.disabled:
+		reward_next.grab_focus()
+
+
+func _reward_back_pressed() -> void:
+	if not _open or _latched or not _reward_mode or _deck_mode:
+		return
+	_reward_mode = false
+	_reward_candidates.clear()
+	_reward_index = 0
+	_update_inspection()
+	reward_cards_button.grab_focus()
 
 
 ## Inspect only the four authenticated base occurrences owned by this hero.
@@ -580,6 +763,7 @@ func _inspect_deck_pressed() -> void:
 		_deck_mode = false
 	elif not inspect_deck_button.disabled and _deck_receipt_rows().size() == 3:
 		_kit_mode = false
+		_reward_mode = false
 		_deck_mode = true
 	_update_inspection()
 
@@ -606,6 +790,8 @@ func _continue_pressed() -> void:
 	_deck_mode = false
 	_kit_mode = false
 	_kit_hero = ""
+	_reward_mode = false
+	_reward_candidates.clear()
 	_refresh()
 	_update_inspection()
 	party_requested.emit(_ids.duplicate())
@@ -619,6 +805,8 @@ func _cancel_pressed() -> void:
 	_deck_mode = false
 	_kit_mode = false
 	_kit_hero = ""
+	_reward_mode = false
+	_reward_candidates.clear()
 	_refresh()
 	_update_inspection()
 	visible = false
@@ -643,6 +831,7 @@ func _refresh() -> void:
 	cancel_button.disabled = not _open or _latched
 	inspect_deck_button.disabled = not _open or _latched or _deck_receipt_rows().size() != 3
 	inspect_cards_button.disabled = not _open or _latched or (_hovered_id.is_empty() and _focused_id.is_empty() and not _kit_mode)
+	reward_cards_button.disabled = not _open or _latched or (_hovered_id.is_empty() and _focused_id.is_empty() and not _reward_mode)
 	if inspect_deck_button.disabled:
 		_deck_mode = false
 	for definition in HEROES:
@@ -813,6 +1002,14 @@ func _style_screen() -> void:
 	kit_target.add_theme_font_size_override("font_size", 15)
 	kit_effects.add_theme_color_override("font_color", CREAM)
 	kit_effects.add_theme_font_size_override("font_size", 16)
+	reward_heading.add_theme_color_override("font_color", GOLD)
+	reward_heading.add_theme_font_size_override("font_size", 16)
+	reward_identity.add_theme_color_override("font_color", SOFT)
+	reward_identity.add_theme_font_size_override("font_size", 14)
+	reward_target.add_theme_color_override("font_color", SOFT)
+	reward_target.add_theme_font_size_override("font_size", 14)
+	reward_effects.add_theme_color_override("font_color", CREAM)
+	reward_effects.add_theme_font_size_override("font_size", 15)
 	var deck_heading := deck_readout.get_node("DeckHeading") as Label
 	deck_heading.add_theme_color_override("font_color", GOLD)
 	deck_heading.add_theme_font_size_override("font_size", 18)
@@ -824,10 +1021,12 @@ func _style_screen() -> void:
 	selection_count.add_theme_color_override("font_color", CREAM)
 	selection_count.add_theme_font_size_override("font_size", 24)
 	for button in [continue_button, cancel_button, inspect_deck_button, inspect_cards_button,
-			kit_previous, kit_next, kit_back]:
+			reward_cards_button, kit_previous, kit_next, kit_back,
+			reward_previous, reward_next, reward_back]:
 		button.focus_mode = Control.FOCUS_ALL
 		button.add_theme_font_size_override("font_size", 18 if button in [inspect_deck_button,
-			inspect_cards_button, kit_previous, kit_next, kit_back] else 22)
+			inspect_cards_button, reward_cards_button, kit_previous, kit_next, kit_back,
+			reward_previous, reward_next, reward_back] else 22)
 		button.add_theme_color_override("font_color", CREAM)
 		button.add_theme_color_override("font_disabled_color", Color("#abaca8"))
 		var idle := _tile_box(Color("#386e65") if button == continue_button

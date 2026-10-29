@@ -160,6 +160,66 @@ layout_mode = 2
 focus_mode = 2
 text = "Back to Heroes"
 
+[node name="RewardReadout" type="VBoxContainer" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 1
+visible = false
+
+[node name="RewardHeading" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout"]
+layout_mode = 2
+mouse_filter = 2
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="RewardIdentity" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout"]
+layout_mode = 2
+mouse_filter = 2
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="RewardTarget" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout"]
+layout_mode = 2
+mouse_filter = 2
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="RewardScroll" type="ScrollContainer" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout"]
+custom_minimum_size = Vector2(0, 50)
+layout_mode = 2
+size_flags_vertical = 3
+focus_mode = 2
+horizontal_scroll_mode = 0
+
+[node name="RewardEffects" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout/RewardScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+autowrap_mode = 2
+
+[node name="RewardNavigation" type="HBoxContainer" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 12
+
+[node name="PreviousButton" type="Button" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout/RewardNavigation"]
+custom_minimum_size = Vector2(116, 26)
+layout_mode = 2
+focus_mode = 2
+text = "Previous"
+
+[node name="NextButton" type="Button" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout/RewardNavigation"]
+custom_minimum_size = Vector2(116, 26)
+layout_mode = 2
+focus_mode = 2
+text = "Next"
+
+[node name="BackButton" type="Button" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/RewardReadout/RewardNavigation"]
+custom_minimum_size = Vector2(116, 26)
+layout_mode = 2
+focus_mode = 2
+text = "Back to Heroes"
+
 [node name="DeckReadout" type="VBoxContainer" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack"]
 layout_mode = 2
 mouse_filter = 2
@@ -208,12 +268,24 @@ text = "Choose three to preview battle seats"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="InspectCardsButton" type="Button" parent="PaperPanel/Margins/Body/Foot"]
+[node name="InspectModes" type="VBoxContainer" parent="PaperPanel/Margins/Body/Foot"]
 custom_minimum_size = Vector2(142, 52)
+layout_mode = 2
+theme_override_constants/separation = 2
+
+[node name="InspectCardsButton" type="Button" parent="PaperPanel/Margins/Body/Foot/InspectModes"]
+custom_minimum_size = Vector2(142, 25)
 layout_mode = 2
 focus_mode = 2
 disabled = true
 text = "Inspect Cards"
+
+[node name="RewardCardsButton" type="Button" parent="PaperPanel/Margins/Body/Foot/InspectModes"]
+custom_minimum_size = Vector2(142, 25)
+layout_mode = 2
+focus_mode = 2
+disabled = true
+text = "Reward Cards"
 
 [node name="InspectDeckButton" type="Button" parent="PaperPanel/Margins/Body/Foot"]
 custom_minimum_size = Vector2(142, 52)
