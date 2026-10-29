@@ -222,6 +222,73 @@ func _run() -> void:
 		_assert_two_hit_tooltip(badge, base, hero, reason)
 		_assert_layout(badge, LiveEnemyIntentBadge.CAPTION_MIN_FONT, reason)
 
+	# Blind is an opt-in view of the same two authentic catalog attacks. It
+	# announces that the entire attempted action misses without resolving either
+	# of the authored packets, and restores the exact baseline once consumed.
+	for row in [[crab_action, 6, 1, "front", "Scissor Crab"],
+			[wasp_action, 8, 2, "lowest_living_hp", "Needle Wasp"]]:
+		var action: Dictionary = row[0]
+		var base: int = row[1]
+		var hero: int = row[2]
+		var policy: String = row[3]
+		var reason: String = row[4]
+		var original: Dictionary = action.duplicate(true)
+		badge.show_intent(action, false, false, policy)
+		var unblinded: Array = _presentation(badge)
+		badge.show_intent(action, false, false, policy, -1, {}, true)
+		_check(badge.blind_miss and badge.readable_text == "BLIND · MISS"
+			and badge.intent_type == "attack" and badge.icon_mode == "attack"
+			and badge.amount == base and badge.target_position == hero
+			and badge.hit_count == 2 and badge.hit_damage == int(base / 2.0)
+			and badge.policy_cue.is_empty() and badge.policy_rect() == Rect2(),
+			reason + ": Blind announces a genuine two-packet attack as a miss without changing action")
+		_check(badge.tooltip_text.contains("entire next attempted attack")
+			and badge.tooltip_text.contains(LiveEnemyIntentBadge.hero_target_label(hero))
+			and badge.tooltip_text.contains("Neither of the two authored hit packets resolves")
+			and badge.tooltip_text.contains("Without Blind:") and badge.tooltip_text.contains("two hits")
+			and badge.tooltip_text.contains("independently")
+			and badge.tooltip_text.contains("%d + %d base damage" % [int(base / 2.0), int(base / 2.0)])
+			and badge.tooltip_text.contains("Target policy (")
+			and badge.tooltip_text.contains("No hero HP or Block is lost"),
+			reason + ": miss hover names authentic target, entire skipped attack, raw packets and policy")
+		_assert_layout(badge, LiveEnemyIntentBadge.CAPTION_MIN_FONT, reason + " Blind miss")
+		replay_badge.show_intent(action, false, false, policy, -1, {}, true)
+		_check(_presentation(badge) == _presentation(replay_badge) and action == original,
+			reason + ": Blind rendering is deterministic and leaves the source announcement intact")
+		badge.show_intent(action, false, false, policy)
+		_check(not badge.blind_miss and _presentation(badge) == unblinded,
+			reason + ": consumed Blind restores exact two-hit badge, policy and tooltip")
+	# Blind remains pending across defensive or status actions, and skipped/slain
+	# states take precedence even when their caller supplies the true status bit.
+	var block_action := {"type": "block", "amount": 3, "enemy_position": 1}
+	badge.show_intent(block_action, false, false, "", -1, {}, true)
+	_check(not badge.blind_miss and badge.readable_text == "Block +3"
+		and badge.tooltip_text == "3 Block on the acting enemy.",
+		"Blind waits through a Block announcement without manufacturing a miss")
+	badge.show_intent(crab_action, false, false, "front", -1, {}, true)
+	_check(badge.blind_miss, "same source still previews miss on its next authored attack")
+	badge.show_intent(crab_action, false, true, "front", -1, {}, true)
+	_check(not badge.blind_miss and badge.readable_text == "UNRAVELLED"
+		and badge.tooltip_text == "Unravelled: next action is skipped.",
+		"Unravelled skip takes precedence over Blind without false damage")
+	badge.show_intent(crab_action, true, false, "front", -1, {}, true)
+	_check(not badge.blind_miss and badge.readable_text == "SLAIN"
+		and badge.tooltip_text == "Slain: no action.",
+		"slain source never announces a Blind miss")
+	badge.show_intent({}, false, false, "", -1, {}, true)
+	_check(not badge.blind_miss and badge.readable_text == "NO ACTION",
+		"missing action never borrows the source's waiting Blind")
+	badge.show_intent(wasp_action, false, false, "lowest_living_hp", 2, {}, true)
+	_check(badge.blind_miss and badge.enrage_bonus == 4
+		and badge.tooltip_text.contains("2 Enrage (2/3 stacks)") == false
+		and badge.tooltip_text.contains("+ 4 Enrage (2/3 stacks)")
+		and badge.tooltip_text.contains("split into 6 + 6 base damage"),
+		"Blind still preserves real once-only Enrage power in the conditional two-packet hover")
+	badge.show_intent(wasp_action, false, false, "lowest_living_hp", 2)
+	_check(not badge.blind_miss and badge.hit_count == 2 and badge.enrage_bonus == 4
+		and _two_hit_caption(badge.readable_text),
+		"cleared Blind restores the unchanged Enrage two-hit presentation")
+
 	# AC2: every supported policy cue keeps both the two-hit fact and the separate ticket
 	# inside the existing 192x28 band, for both authentic target policies.
 	for row in [[crab_action, 6, 1, "Scissor Crab"], [wasp_action, 8, 2, "Needle Wasp"]]:
@@ -347,6 +414,92 @@ func _run() -> void:
 		and badge.tooltip_text.contains("separate from an announced Bleed debuff"),
 		"the separate Bleed 2 debuff keeps its own amount, rule and passive separation")
 	_assert_reset(badge, "separate Bleed 2")
+
+	# An authentic, catalog-backed Scissor Crab or Needle Wasp two-packet attack
+	# never becomes two damaging hits when a trusted one-shot Blind is waiting.
+	for row in [[crab_action, 6, 1, "Scissor Crab", "front"],
+			[wasp_action, 8, 2, "Needle Wasp", "lowest_living_hp"]]:
+		var attack: Dictionary = row[0]
+		var base: int = row[1]
+		var hero: int = row[2]
+		var name: String = row[3]
+		var policy: String = row[4]
+		var before_action := attack.duplicate(true)
+		badge.show_intent(attack, false, false, policy, -1, {}, true)
+		_check(badge.blind_miss and badge.readable_text == "BLIND · MISS"
+			and badge.icon_mode == "attack" and badge.intent_type == "attack"
+			and badge.amount == base and badge.target_position == hero
+			and badge.hit_count == 2 and badge.hit_damage == int(base / 2.0)
+			and not badge.tooltip_text.contains("guaranteed HP loss"),
+			name + ": trusted Blind replaces damage promise without changing real two-hit data")
+		_check(badge.tooltip_text.contains("entire next attempted attack")
+			and badge.tooltip_text.contains("Neither of the two authored hit packets resolves")
+			and badge.tooltip_text.contains(LiveEnemyIntentBadge.hero_target_label(hero))
+			and badge.tooltip_text.contains("Without Blind:")
+			and badge.tooltip_text.contains("two hits")
+			and badge.tooltip_text.contains("split into %d + %d base damage" % [base / 2, base / 2])
+			and badge.tooltip_text.contains("Target policy (%s)" % LiveEnemyIntentBadge.POLICY_LABELS[policy].to_upper())
+			and attack == before_action,
+			name + ": hover explains complete missed attempt, real packets, target and policy without mutation")
+		_assert_layout(badge, LiveEnemyIntentBadge.CAPTION_MIN_FONT, name + " Blind MISS")
+		# A display refresh alone never spends Blind; only an executed attack can.
+		badge.show_intent(attack, false, false, policy, -1, {}, true)
+		_check(badge.blind_miss and badge.readable_text == "BLIND · MISS",
+			name + ": repeated read-only rendering retains Blind until combat consumes it")
+		badge.show_intent(attack, false, false, policy)
+		_check(not badge.blind_miss and _two_hit_caption(badge.readable_text)
+			and badge.tooltip_text.contains("two hits") and not badge.tooltip_text.contains("Blind:"),
+			name + ": consumed or switched source restores genuine unblinded A-2 announcement")
+	# Enrage still belongs to the stored source, never a phantom third packet.
+	badge.show_intent(crab_action, false, false, "front", 2, {}, true)
+	_check(badge.blind_miss and badge.hit_count == 2 and badge.hit_damage == 5
+		and badge.enrage_bonus == 4 and badge.tooltip_text.contains("+ 4 Enrage (2/3 stacks)")
+		and badge.tooltip_text.contains("split into 5 + 5 base damage")
+		and badge.tooltip_text.contains("Neither of the two authored hit packets resolves"),
+		"Blind takes precedence over two-hit Enrage without losing its stored power or packet contract")
+	_assert_layout(badge, LiveEnemyIntentBadge.CAPTION_MIN_FONT, "Blind with Enrage")
+	# A non-attack announcement leaves the enemy's next-attack miss token waiting,
+	# not a false miss for Block, Bleed, or a pushed/snip target.
+	for nonattack in [
+			{"type": "block", "amount": 4, "enemy_position": 1},
+			wasp_bleed,
+			{"type": "shove", "amount": 0, "direction": 1,
+				"target_position": 2, "enemy_position": 1},
+			{"type": "snip_block", "amount": 0, "target_position": 1, "enemy_position": 1},
+			{"type": "buff", "amount": 2, "enemy_position": 1}]:
+		badge.show_intent(nonattack, false, false, "", -1, {}, true)
+		_check(not badge.blind_miss and not badge.readable_text.contains("MISS")
+			and not badge.tooltip_text.contains("Blind:")
+			and badge.intent_type == nonattack.type,
+			"Blind waiting across " + nonattack.type + " does not erase its ordinary action")
+		badge.show_intent(wasp_action, false, false, "lowest_living_hp", -1, {}, true)
+		_check(badge.blind_miss and badge.hit_count == 2,
+			"nonattack leaves the next authentic two-hit attack blinded")
+	# Skip and slain have priority even when the source's Blind token still exists.
+	badge.show_intent(crab_action, false, true, "front", -1, {}, true)
+	_check(not badge.blind_miss and badge.readable_text == "UNRAVELLED"
+		and badge.tooltip_text == "Unravelled: next action is skipped.",
+		"Unravelled skip overrides Blind on the unchanged sewn badge")
+	badge.show_intent(crab_action, true, false, "front", -1, {}, true)
+	_check(not badge.blind_miss and badge.readable_text == "SLAIN"
+		and badge.tooltip_text == "Slain: no action.",
+		"slain enemy never promises a Blind miss")
+	badge.show_intent({}, false, false, "", -1, {}, true)
+	_check(not badge.blind_miss and badge.readable_text == "NO ACTION",
+		"missing announcement never retains stale Blind")
+	# The presenter authenticates only the literal integer one-shot status.
+	var roster_art := preload("res://scripts/live_enemy_roster.gd")
+	for bad in [null, 0, 2, -1, true, false, "1", 1.0, [], {}]:
+		_check(not roster_art._has_attack_blind({"hp": 12,
+			"statuses": {"blind_next_attack": bad}}),
+			"invalid/missing Blind count is never interpreted as a live miss: " + str(bad))
+	_check(roster_art._has_attack_blind({"hp": 12,
+		"statuses": {"blind_next_attack": 1}})
+		and not roster_art._has_attack_blind({"hp": 12, "statuses": []}),
+		"source view distinguishes literal 1 from malformed status dictionaries")
+	badge.show_intent(crab_action, false, false, "front")
+	_check(not badge.blind_miss and _two_hit_caption(badge.readable_text),
+		"after Blind source changes, exact normal two-hit caption remains")
 
 	# Existing icon and policy fallbacks stay reachable on the genuine two-hit form.
 	var saved_root: String = badge.icon_root

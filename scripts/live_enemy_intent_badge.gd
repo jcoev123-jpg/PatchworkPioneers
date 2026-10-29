@@ -85,6 +85,8 @@ var enrage_bonus := -1
 ## or -1 while the announcement is a single hit.
 var hit_count := 1
 var hit_damage := -1
+## True only for a trusted living source's next attack; this never spends the token.
+var blind_miss := false
 ## Empty unless a valid mounted weighted action supplies its real policy.
 var policy_cue := ""
 const POLICY_LABELS := {"front": "Front", "lowest_living_hp": "Aim low HP",
@@ -507,7 +509,7 @@ static func load_icon_texture(path: String) -> Texture2D:
 
 func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		policy: String = "", source_enrage_stacks: int = -1,
-		contact_traits: Dictionary = {}) -> void:
+		contact_traits: Dictionary = {}, source_blind: bool = false) -> void:
 	# Never affect or advance the scheduler: the caller passes a copied announcement.
 	# Only targeted, active, authored actions receive the small policy tag.
 	policy_cue = ""
@@ -516,6 +518,7 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 	enrage_bonus = -1
 	hit_count = 1
 	hit_damage = -1
+	blind_miss = false
 	if not slain and not skip_pending and action.get("type") in ["attack", "debuff", "shove", "snip_block"] \
 			and action.get("target_position") in [1, 2, 3] and POLICY_LABELS.has(policy):
 		policy_cue = POLICY_LABELS[policy]
@@ -631,8 +634,20 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		target_position = 0
 		readable_text = "NO ACTION"
 		tip = "No action."
-	if not policy_cue.is_empty() and POLICY_DESCRIPTIONS.has(policy):
-		tip += "\nTarget policy (%s): %s." % [policy_cue.to_upper(), POLICY_DESCRIPTIONS[policy]]
+	# A living, authenticated source's attack cannot hurt its target while Blind is
+	# waiting. Keep the real attack/packet details as conditional hover context,
+	# but make the sewn caption itself announce the entire missed attempt.
+	if intent_type == "attack" and source_blind:
+		blind_miss = true
+		readable_text = "BLIND · MISS"
+		var packet_note := " Neither of the two authored hit packets resolves." if hit_count == 2 else ""
+		tip = "Blind: the entire next attempted attack aimed at %s will MISS.%s No hero HP or Block is lost to this attack; this preview does not consume Blind.\nWithout Blind: %s" % [
+			hero_target_label(target_position), packet_note, tip]
+		# The long target policy is still in the hover, but its separate ticket
+		# yields the finite 192x28 caption space to the essential MISS warning.
+		policy_cue = ""
+	if (not policy_cue.is_empty() or blind_miss) and POLICY_DESCRIPTIONS.has(policy):
+		tip += "\nTarget policy (%s): %s." % [POLICY_LABELS[policy].to_upper(), POLICY_DESCRIPTIONS[policy]]
 	if not slain:
 		for keyword in ["drain", "bleed_on_attack"]:
 			var enabled: Variant = contact_traits.get(keyword, false)
