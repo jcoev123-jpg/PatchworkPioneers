@@ -194,12 +194,15 @@ func _run() -> void:
 	panel.intent_requested.connect(func(intent: Dictionary): intents.append(intent))
 	await _frames()
 	_check(panel.wearer_buttons[0].has_focus(), "pre-mount bind gives initial focus")
+	_check(root.gui_get_focus_owner() == panel.wearer_buttons[0],
+		"funded pre-mount bind focuses the true first wearer selector")
 	# Seed the global RNG only after Godot has mounted cosmetic UI nodes.
 	seed(268)
 	var expected_global := randi()
 	seed(268)
 	var expected_run := rng.state
 	await _layout(valid)
+	await _focus_cases()
 	await _named_power_cases(slot_map)
 	for chosen in range(3):
 		for option in range(3):
@@ -271,6 +274,145 @@ func _layout(visit: RunPatchStallVisit) -> void:
 		_check(focus_seen.has(button), "Tab visits all enabled pins and decisions")
 	_check(visit.read_state().get("status") == "available" and intents.is_empty(),
 		"mere preview/focus has no transaction")
+
+
+## V3-3: initial keyboard focus follows the wallet. When no authenticated
+## quoted patch is affordable (zero gold or any positive shortfall below the
+## least price), Enter on arrival must address the free Leave button instead
+## of the no-op wearer selector. Any affordable offer keeps the first wearer
+## as the default. The boundary wallet is derived from the MINIMUM actual
+## quoted offer price, never a fixed number, list order or catalog size.
+func _focus_cases() -> void:
+	var minimum := -1
+	for offer in offers:
+		var price := int(offer["price"])
+		if minimum < 0 or price < minimum:
+			minimum = price
+	_check(minimum > 1, "seeded authentic quote admits a positive below-minimum wallet")
+	if minimum <= 1:
+		return
+	var run_rng_before := rng.state
+	# Exact-minimum wallet: the least quoted price is genuinely affordable, so
+	# the first wearer stays the default and the one purchase still works.
+	var threshold := _visit("focus_threshold", minimum)
+	var threshold_before := threshold.read_state()
+	var threshold_quote := threshold.quote()
+	_check(threshold.is_valid() and threshold_quote["offers"].size() == 3,
+		"exact-minimum wallet visit is a genuine three-offer service")
+	var cheapest := 0
+	for i in range(3):
+		if int(threshold_quote["offers"][i]["price"]) == minimum:
+			cheapest = i
+			break
+	await _bind(threshold)
+	_check(root.gui_get_focus_owner() == panel.wearer_buttons[0]
+			and panel.wearer_buttons[0].has_focus(),
+		"exact-minimum gold keeps the first wearer selector focused")
+	for i in range(3):
+		_check(panel.offer_buttons[i].disabled
+				== (int(threshold_quote["offers"][i]["price"]) > minimum),
+			"exact-minimum wallet enables the least quote and disables the rest")
+	_check(panel.wearer_buttons.all(func(pin: Button): return not pin.disabled),
+		"exact-minimum wallet keeps wearer selectors available")
+	_check(intents.is_empty(), "initial focus never emits an intent")
+	await _act(panel.wearer_buttons[1], true, KEY_SPACE)
+	_check(panel.wearer_buttons[1].text.begins_with("✕")
+			and panel.wearer_buttons[1].get_meta("wearer_id") == PARTY[1],
+		"exact-minimum wallet still allows choosing the purchaser")
+	await _act(panel.offer_buttons[cheapest], false)
+	_check(intents.size() == 1 and intents[0].get("action") == "buy_patch"
+			and intents[0].get("patch_id") == threshold_quote["offers"][cheapest]["id"]
+			and intents[0].get("wearer_id") == PARTY[1],
+		"exact-minimum wallet buys the least quoted patch for the chosen wearer")
+	if intents.size() == 1:
+		var paid := Controller.settle(threshold, intents[0], threshold_before, threshold_quote)
+		_check(paid.get("ok") == true and paid["receipt"]["price"] == minimum
+				and paid["ledger"]["gold"] == 0
+				and paid["ledger"]["deck"] == DECK
+				and paid["ledger"]["trinkets"] == OWNED + [intents[0]["patch_id"]],
+			"exact-minimum purchase charges the least quote exactly once")
+		_check(threshold.is_consumed() and not Controller.settle(threshold,
+				intents[0], threshold_before, threshold_quote).get("ok"),
+			"exact-minimum purchase replay refused")
+	# Zero gold: no quoted patch is affordable, so Leave takes initial focus.
+	var broke := _visit("focus_zero", 0)
+	var broke_before := broke.read_state()
+	var broke_quote := broke.quote()
+	await _bind(broke)
+	_check(root.gui_get_focus_owner() == panel.leave_button
+			and panel.leave_button.has_focus() and not panel.leave_button.disabled,
+		"zero gold focuses the enabled free Leave button")
+	_check(panel.offer_buttons.all(func(button: Button): return button.disabled),
+		"zero gold keeps every quoted patch buy disabled")
+	for i in range(3):
+		_check(panel.offer_buttons[i].text.contains(
+				"short " + str(int(broke_quote["offers"][i]["price"]))),
+			"zero gold shows the exact source shortfall")
+	_check(panel.wearer_buttons.all(func(pin: Button): return not pin.disabled),
+		"wearer selectors remain available when broke")
+	_check(broke.read_state() == broke_before and intents.is_empty(),
+		"zero-gold initial focus is inert")
+	await _act(panel.leave_button, true, KEY_ENTER)
+	_check(intents.size() == 1, "focused Enter on Leave emits exactly one intent")
+	if intents.size() == 1:
+		var leave_intent := intents[0]
+		_check(leave_intent.keys().size() == 4 and leave_intent.get("action") == "leave"
+				and leave_intent.get("node_id") == broke_before["node_id"]
+				and leave_intent.get("visit_id") == broke_before["visit_id"]
+				and leave_intent.get("expected_snapshot") == broke_before["snapshot"],
+			"focused Leave carries only the current broke visit binding")
+		var left := Controller.settle(broke, leave_intent, broke_before, broke_quote)
+		_check(left.get("ok") == true and left.get("decision") == "leave"
+				and left["ledger"]["gold"] == 0
+				and left["ledger"]["trinkets"] == OWNED
+				and left["ledger"]["deck"] == DECK,
+			"independent controller settles focused Leave with zero spend")
+		_check(not Controller.settle(broke, leave_intent, broke_before, broke_quote).get("ok"),
+			"focused Leave replay refused")
+	# Below-minimum positive gold: still no affordable patch, Leave stays focused.
+	var nearly := _visit("focus_short", minimum - 1)
+	var nearly_before := nearly.read_state()
+	await _bind(nearly)
+	_check(minimum - 1 > 0 and root.gui_get_focus_owner() == panel.leave_button
+			and panel.leave_button.has_focus()
+			and panel.offer_buttons.all(func(button: Button): return button.disabled),
+		"below-minimum positive gold still focuses Leave")
+	_check(nearly.read_state() == nearly_before and intents.is_empty(),
+		"below-minimum focus emits nothing and mutates nothing")
+	# Bidirectional rebinding swaps the correct focus without side effects.
+	var rich := _visit("focus_rich", minimum * 3 + 7)
+	var rich_before := rich.read_state()
+	await _bind(rich)
+	_check(root.gui_get_focus_owner() == panel.wearer_buttons[0]
+			and panel.wallet_label.text.contains("%d gold" % (minimum * 3 + 7)),
+		"rebind onto an affordable quote restores the first wearer focus")
+	var rebroke := _visit("focus_rebind_broke", 0)
+	await _bind(rebroke)
+	_check(root.gui_get_focus_owner() == panel.leave_button
+			and panel.wallet_label.text.contains("0 gold"),
+		"rebind onto an unaffordable quote moves focus to Leave")
+	await _bind(rich)
+	_check(root.gui_get_focus_owner() == panel.wearer_buttons[0],
+		"rebind back onto an affordable quote returns focus to the first wearer")
+	_check(rich.read_state() == rich_before and not rich.is_consumed()
+			and intents.is_empty() and rng.state == run_rng_before,
+		"focus rebinding never mutates service, wallet or run RNG")
+	# A pre-mount bind at zero gold must still land on Leave once mounted.
+	var pre := LivePatchStallPanel.new()
+	pre.position = Vector2(190, 45)
+	var pre_intents: Array[Dictionary] = []
+	pre.intent_requested.connect(func(intent: Dictionary): pre_intents.append(intent))
+	pre.bind(_visit("focus_pre_mount", 0))
+	root.add_child(pre)
+	await _frames()
+	_check(root.gui_get_focus_owner() == pre.leave_button and pre.leave_button.has_focus(),
+		"pre-mount zero-gold bind focuses Leave once mounted")
+	_check(pre.offer_buttons.all(func(button: Button): return button.disabled)
+			and pre.wearer_buttons.all(func(pin: Button): return not pin.disabled)
+			and pre_intents.is_empty(),
+		"pre-mount rebound broke panel stays inert with selectors available")
+	pre.queue_free()
+	await process_frame
 
 ## Bind every named, authored power as a genuine three-offer service quote,
 ## with prices deliberately different from ordinary stock's 100. The quote's

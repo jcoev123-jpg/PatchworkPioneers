@@ -389,7 +389,22 @@ func _wire_focus() -> void:
 func _focus_initial() -> void:
 	if not is_inside_tree() or not _source_current():
 		return
+	if _leave_is_only_exit():
+		leave_button.grab_focus()
+		return
 	wearer_buttons[0].grab_focus()
+
+## True when none of the three authenticated quoted patches can be bought from
+## the bound snapshot's gold and the free Leave button is mounted, visible and
+## enabled: Enter on arrival must then address the only possible exit.
+func _leave_is_only_exit() -> bool:
+	if not _attached(leave_button) or leave_button.disabled:
+		return false
+	var gold := int(_source["snapshot"]["gold"])
+	for offer in _quoted["offers"]:
+		if gold >= int(offer["price"]):
+			return false
+	return true
 
 func _auth(epoch: int, source: RunPatchStallVisit) -> bool:
 	if epoch != _epoch or source == null or not is_same(source, _visit) or not _active():
