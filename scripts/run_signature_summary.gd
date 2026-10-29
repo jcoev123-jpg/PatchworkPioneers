@@ -5,7 +5,7 @@ extends RefCounted
 ## Exposes no mutable aliases; does not compute combat power, active statuses,
 ## gold, scraps, or consume RNG.
 
-const HERO_IDS := ["warden", "seamstress", "tinker"]
+const PARTY_SIZE := CombatParty.PARTY_SIZE
 const SLOTS := ["HEAD", "ARM", "COAT"]
 const MAX_INT := 9223372036854775807
 
@@ -54,18 +54,25 @@ static func summarize(deck_ids: Variant, descriptors: Variant, next_stitch_id: V
 			or typeof(worn_val) != TYPE_DICTIONARY or typeof(heroes_val) != TYPE_ARRAY:
 		return _failure()
 
-	# Verify heroes roster container shape and order.
-	if heroes_val.size() != HERO_IDS.size():
+	# The wardrobe's real seat order is authoritative, not a legacy roster.
+	# Enforce three distinct eligible heroes in positions 1-3 before reading wear.
+	if heroes_val.size() != PARTY_SIZE:
 		return _failure()
-	for i in range(HERO_IDS.size()):
+	var party_ids: Array[String] = []
+	for i in range(PARTY_SIZE):
 		var hero_info: Variant = heroes_val[i]
-		if typeof(hero_info) != TYPE_DICTIONARY or hero_info.get("id") != HERO_IDS[i]:
+		if typeof(hero_info) != TYPE_DICTIONARY:
 			return _failure()
+		var hero_id: Variant = hero_info.get("id")
+		if typeof(hero_id) != TYPE_STRING or not RunV3PartyAdmission.HERO_IDS.has(hero_id) \
+				or party_ids.has(hero_id) or hero_info.get("position") != i + 1:
+			return _failure()
+		party_ids.append(hero_id)
 
 	# Check worn records against the wardrobe's actual owned/definition maps
-	# in exact HERO_IDS/SLOTS order, rejecting duplicate IDs, wrong slots,
+	# in actual seat/SLOTS order, rejecting duplicate IDs, wrong slots,
 	# unknown IDs, missing heroes or invalid slot container shapes.
-	if worn_val.size() != HERO_IDS.size():
+	if worn_val.size() != PARTY_SIZE:
 		return _failure()
 
 	var seen_worn: Dictionary = {}
@@ -73,7 +80,7 @@ static func summarize(deck_ids: Variant, descriptors: Variant, next_stitch_id: V
 	var hero_rows: Array = []
 	var all_worn_ids: Array = []
 
-	for hero_id in HERO_IDS:
+	for hero_id in party_ids:
 		if not worn_val.has(hero_id):
 			return _failure()
 		var hero_slots_val: Variant = worn_val[hero_id]

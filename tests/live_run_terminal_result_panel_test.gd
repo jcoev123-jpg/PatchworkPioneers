@@ -170,8 +170,9 @@ func _wardrobe(deck: Array[String], sew_operations: Array) -> RunPatchWardrobe:
 
 ## Publish exactly the ledger against which the real parent App is validated.
 ## This is a test-only staging step, never a production mutation by the panel.
-func _install_run(ledger: Dictionary, wardrobe: RunPatchWardrobe = null) -> void:
-	var party := CombatParty.new(_definitions(HEROES))
+func _install_run(ledger: Dictionary, wardrobe: RunPatchWardrobe = null,
+		chosen: Array = []) -> void:
+	var party := CombatParty.new(_definitions(HEROES) if chosen.is_empty() else chosen)
 	_check(party.is_valid(), "App presentation fixture uses genuine authored party")
 	app.run_heroes = party.get_heroes()
 	app.run_deck.assign(ledger["deck"])
@@ -314,14 +315,16 @@ func _oracle_hero_lines(summary: Dictionary, defeated: bool = false) -> Array[St
 	return lines
 
 
-func _battle(enemy_path: String) -> Dictionary:
-	var party := CombatParty.new(_definitions(HEROES))
+func _battle(enemy_path: String, chosen: Array = []) -> Dictionary:
+	var party := CombatParty.new(_definitions(HEROES) if chosen.is_empty() else chosen)
 	var enemies := CombatEnemies.new(_definitions(enemy_path))
 	_check(party.is_valid() and enemies.is_valid(), "genuine living combat services are valid")
+	var expected_ids := ["warden", "seamstress", "tinker"] if chosen.is_empty() else [chosen[0].id, chosen[1].id, chosen[2].id]
 	_check(party.get_heroes().size() == 3
-		and party.get_hero(1).get("id") == "warden"
-		and party.get_hero(2).get("id") == "seamstress"
-		and party.get_hero(3).get("id") == "tinker", "authored starter identities occupy slots 1-3")
+		and party.get_hero(1).get("id") == expected_ids[0]
+		and party.get_hero(2).get("id") == expected_ids[1]
+		and party.get_hero(3).get("id") == expected_ids[2],
+		"authored chosen identities occupy their actual three seats")
 	_check(not party.is_defeated() and not enemies.is_victorious(),
 		"both battle rosters begin alive")
 	if enemy_path == BOSS:
@@ -402,7 +405,7 @@ func _settle_win(ctx: Dictionary, battle: Dictionary, label: String) -> void:
 	_check(latch.settle_current_battle(), label + " settles observed result")
 
 
-func _victory() -> Dictionary:
+func _victory(chosen: Array = []) -> Dictionary:
 	var ctx := _context(5801)
 	var map: RunMap = ctx["map"]
 	var path: Array[String] = []
@@ -420,7 +423,7 @@ func _victory() -> Dictionary:
 		if kind == "Boss":
 			break
 		if kind in ["Fight", "Elite"]:
-			var intermediate := _battle(FIGHT)
+			var intermediate := _battle(FIGHT, chosen)
 			_settle_win(ctx, intermediate, "floor %d %s" % [index + 1, kind])
 			previous_settled += 1
 			_check(ctx["latch"].get_state().run_status == RunActBattleOutcome.ACTIVE,
@@ -428,7 +431,7 @@ func _victory() -> Dictionary:
 	_check(map.is_complete() and map.get_current_floor() == 12
 		and map.get_node(map.get_current_node_id()).get("type") == "Boss",
 		"actual selected final node is a floor-12 Boss")
-	var battle := _battle(BOSS)
+	var battle := _battle(BOSS, chosen)
 	var latch: RunActBattleOutcome = ctx["latch"]
 	_check(latch.get_state().run_status == RunActBattleOutcome.ACTIVE,
 		"merely arriving at final Boss is not a victory")
@@ -465,7 +468,7 @@ func _settle_defeat(ctx: Dictionary, battle: Dictionary) -> bool:
 	return app._settle_act_battle()
 
 
-func _defeat() -> Dictionary:
+func _defeat(chosen: Array = []) -> Dictionary:
 	var ctx := _context(8722)
 	var map: RunMap = ctx["map"]
 	var opening := ""
@@ -477,7 +480,7 @@ func _defeat() -> Dictionary:
 	if opening.is_empty():
 		return {}
 	_select(ctx, opening)
-	var battle := _battle(FIGHT)
+	var battle := _battle(FIGHT, chosen)
 	var latch: RunActBattleOutcome = ctx["latch"]
 	_check(latch.begin_current_battle(battle["result"]), "actual Fight defeat begins active combat")
 	var party: CombatParty = battle["party"]
@@ -1217,34 +1220,24 @@ func _test_reordered_heroes() -> void:
 	_check(wardrobe.sew("pincushion_arm", "seamstress", "ARM", "ordered_arm",
 		wardrobe.get_snapshot()).get("ok") == true, "genuine reordered ARM sewing")
 	var before := wardrobe.get_snapshot()
-	var projection: RunPatchWardrobe = panel._canonical_signature_wardrobe(wardrobe)
-	_check(projection != null and projection != wardrobe and projection.is_valid(),
-		"reordered real wardrobe yields an independent valid read-only projection")
-	if projection == null:
-		return
-	var projected := projection.get_snapshot()
-	_check(projected["heroes"][0].id == "warden"
-		and projected["heroes"][1].id == "seamstress"
-		and projected["heroes"][2].id == "tinker",
-		"presentation-only positions are canonical for the signature reader")
-	_check(projected["worn"] == before["worn"] and projected["owned"] == before["owned"]
-		and projected["scraps"] == before["scraps"] and projected["gold"] == before["gold"]
-		and projected["cards"] == before["cards"],
-		"every authored wearer and real deck/currency survives the detached projection")
 	var signature: Dictionary = RunSignatureSummary.summarize(sewn["deck"],
-		sewn["descriptors"], sewn["next_stitch_id"], projection)
+		sewn["descriptors"], sewn["next_stitch_id"], wardrobe)
 	_check(signature.get("ok") == true and signature.get("stitched_current") == 2
 		and signature.get("worn_total") == 2,
-		"canonical signature validates both real stitched cards and both wear receipts")
-	_check(signature["heroes"][0].slots.HEAD == "button_eye"
-		and signature["heroes"][1].slots.ARM == "pincushion_arm",
-		"summary attributes worn patches to real owners, not physical party order")
+		"real swapped-seat wardrobe validates both stitched cards and worn receipts")
+	var rows: Array = signature.get("heroes", [])
+	_check(rows.size() == 3, "swapped-seat signature emits exactly three rows")
+	if rows.size() == 3:
+		_check(rows[0].hero_id == "seamstress" and rows[0].slots.ARM == "pincushion_arm"
+			and rows[1].hero_id == "warden" and rows[1].slots.HEAD == "button_eye"
+			and rows[2].hero_id == "tinker",
+			"signature keeps actual seat order and by-ID ownership, not legacy projection")
 	var kept: Array = signature.get("current_stitched_cards", [])
 	_check(kept.size() == 2 and kept[0].display_name == "Strike / Prick"
 		and kept[1].display_name == "Brace / Pop Shot",
-		"reordered projection keeps authored ordered stitched descriptors unchanged")
+		"swapped-seat signature retains original deck-ordered stitched descriptors")
 	_check(wardrobe.get_snapshot() == before,
-		"repeated projection and signature reads never alter the actual wardrobe receipt")
+		"repeated signature reads never alter the authentic swapped-seat wardrobe")
 
 
 func _test_invalid_source(defeat: Dictionary) -> void:
@@ -1624,14 +1617,14 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	_check(vic_lines[3] == "Crafted: Strike / Prick", "AC3: Victory preserves crafted card name")
 	_check(vic_lines.size() == 4, "AC1: Victory counters hold exactly the battles, stitched, worn and craft lines")
 	_check_hero_rows([
+		"Tinker 12/26 HP · 0 tears · COAT Quilted Coat",
 		"Warden 18/37 HP · 1 tear · HEAD Button Eye",
 		"Seamstress 22/30 HP · 0 tears · ARM Pincushion Arm",
-		"Tinker 12/26 HP · 0 tears · COAT Quilted Coat",
 	], "AC2: Victory hero ribbons")
-	_check(_hero_row_text(panel.hero_rows.get_child(0)).contains("18/37 HP")
-		and _hero_row_text(panel.hero_rows.get_child(1)).contains("22/30 HP")
-		and _hero_row_text(panel.hero_rows.get_child(2)).contains("12/26 HP"),
-		"AC2: hero ribbons follow identity, not the swapped battlefield positions")
+	_check(_hero_row_text(panel.hero_rows.get_child(0)).contains("Tinker 12/26 HP")
+		and _hero_row_text(panel.hero_rows.get_child(1)).contains("Warden 18/37 HP")
+		and _hero_row_text(panel.hero_rows.get_child(2)).contains("Seamstress 22/30 HP"),
+		"AC2: hero ribbons follow authentic swapped seats with identity-bound HP")
 	_check(not panel.return_button.disabled and panel.return_button.focus_mode == Control.FOCUS_ALL,
 		"AC3: Return button is enabled and focusable")
 	panel.close_result()
@@ -1654,9 +1647,9 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	_check(def_lines[3] == "Crafted: Strike / Prick", "AC3: Defeat preserves crafted card name")
 	_check(def_lines.size() == 4, "AC1: Defeat counters hold exactly the battles, stitched, worn and craft lines")
 	_check_hero_rows([
+		"Tinker TORN 0/26 HP · 0 tears · COAT Quilted Coat",
 		"Warden TORN 0/37 HP · 1 tear · HEAD Button Eye",
 		"Seamstress TORN 0/30 HP · 0 tears · ARM Pincushion Arm",
-		"Tinker TORN 0/26 HP · 0 tears · COAT Quilted Coat",
 	], "AC2: Defeat hero ribbons")
 	panel.close_result()
 	_check(_app_snapshot() == snap_before_def, "AC1: Defeat open/close leaves wallet, seed, deck and heroes completely unchanged")
@@ -2924,6 +2917,7 @@ func _run() -> void:
 		await _test_deferred_keyboard_focus(victory, defeat)
 		await _test_depth_beyond_battle_count()
 		await _test_unverified_floor()
+		await _test_v3_chosen_mounted_results()
 	_finish()
 
 
@@ -2936,3 +2930,221 @@ func _finish() -> void:
 	if is_instance_valid(panel):
 		panel.free()
 	quit(0 if failures.is_empty() else 1)
+
+## Two real admitted V3 trios, with genuine stitched halves, sewn patches and
+## witnessed terminal outcomes. The source ledgers (not panel-derived fields)
+## are the oracle. Includes an all-new-hero trio and a legacy/V3 mixture.
+func _test_v3_chosen_mounted_results() -> void:
+	for picks in [
+			["lantern_monk", "scarecrow", "yarn_ranger"],
+			["warden", "rag_duelist", "button_golem"]]:
+		var name := str(picks)
+		var admission := RunV3PartyAdmission.admit(picks)
+		_check(admission.ok and admission.party.size() == 3 and admission.deck.size() == 12,
+			name + " chosen trio authentic admission and 12 starter occurrences")
+		if not admission.ok:
+			continue
+		var original_party := CombatParty.new(admission.party)
+		_check(original_party.is_valid(), name + " actual three-hero combat party")
+		if not original_party.is_valid():
+			continue
+		var fresh_heroes: Array = original_party.get_heroes()
+		var unstitched: Array[String] = []
+		unstitched.assign(admission.deck)
+		var two_halves: Array[String] = []
+		for hero in fresh_heroes:
+			for id in unstitched:
+				if RunRestStitchCards.resolve_card_definition(id).get("owner") == hero.id:
+					two_halves.append(id)
+					break
+			if two_halves.size() == 2:
+				break
+		_check(two_halves.size() == 2, name + " two distinct chosen owners have real starter halves")
+		if two_halves.size() != 2:
+			continue
+		var sewn := _stitch_pairs(unstitched, [[two_halves[0], two_halves[1]]], 6)
+		_check(not sewn.is_empty(), name + " genuine Rest stitch committed")
+		if sewn.is_empty():
+			continue
+		var carry := RunTornCarryover.new(fresh_heroes)
+		_check(carry.is_valid(), name + " genuine V3 torn carryover")
+		if not carry.is_valid():
+			continue
+		# Authentically tear the middle chosen hero while surviving and claiming
+		# the reward. Use the ledger's effective HP cap (never 3*count math).
+		var fight := carry.create_next_fight_party()
+		_check(fight != null, name + " real prior battle party")
+		if fight == null:
+			continue
+		var enemies := CombatEnemies.new([{"id": "v3_torn_witness", "max_hp": 8}])
+		var win_result := CombatBattleResult.new(fight, enemies)
+		_check(carry.begin_battle("v3_torn_node", win_result, fight),
+			name + " tear battle admitted")
+		_check(fight.apply_damage(2, fight.get_hero(2).hp)
+			and fight.is_downed(2), name + " chosen second hero genuinely downed")
+		_check(enemies.apply_damage(1, 8)
+			and win_result.evaluate() == CombatBattleResult.VICTORY,
+			name + " authentic prior win observed")
+		_check(carry.commit_victory("v3_torn_node", win_result, fight).ok
+			and carry.apply_reward("v3_torn_node", win_result, fight).ok,
+			name + " torn carryover published by real reward claim")
+		var heroes: Array = carry.read_state().heroes.duplicate(true)
+		var tear_counts: Dictionary = carry.torn.read_state().tear_counts.duplicate(true)
+		_check(tear_counts.get(heroes[1].id) == 1
+			and heroes[1].hp == 0 and heroes[0].hp > 0 and heroes[2].hp > 0,
+			name + " chosen hero's exact by-ID tear and living peers")
+		var owned: Array = ["button_eye", "pincushion_arm", "quilted_coat"]
+		var wardrobe := RunPatchWardrobe.new(heroes, owned, PATCH_DEFINITIONS.duplicate(true),
+			7, 43, sewn.deck, 424242, true)
+		_check(wardrobe.is_valid(), name + " genuine torn V3 wardrobe")
+		if not wardrobe.is_valid():
+			continue
+		var wear := [["button_eye", heroes[0].id, "HEAD"],
+			["pincushion_arm", heroes[1].id, "ARM"],
+			["quilted_coat", heroes[2].id, "COAT"]]
+		for i in range(wear.size()):
+			var op: Array = wear[i]
+			_check(wardrobe.sew(op[0], op[1], op[2], "v3_wear_%d" % i,
+				wardrobe.get_snapshot()).ok,
+				name + " authentic worn patch owner/slot receipt")
+		_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()),
+			name + " exact V3 torn/wardrobe binding is genuine")
+		app.run_heroes = heroes.duplicate(true)
+		app.party_carryover = carry
+		app.run_deck.assign(sewn.deck)
+		app.run_stitch_descriptors = sewn.descriptors.duplicate(true)
+		app.run_next_stitch_id = sewn.next_stitch_id
+		app.run_trinkets.assign(owned)
+		app.run_scraps = 7
+		app.session_gold = 43
+		var ledger_before := _app_snapshot()
+		var wear_before := wardrobe.get_snapshot()
+		var torn_before := carry.torn.read_state()
+		var expectation: Array[String] = []
+		for i in range(heroes.size()):
+			var hero: Dictionary = heroes[i]
+			var op: Array = wear[i]
+			var torn_label := " TORN" if hero.hp == 0 else ""
+			expectation.append("%s%s %d/%d HP · %s · %s %s" % [
+				str(hero.id).capitalize(), torn_label, hero.hp, hero.max_hp,
+				"1 tear" if tear_counts[hero.id] == 1 else "%d tears" % tear_counts[hero.id],
+				op[2], str(op[0]).replace("_", " ").capitalize()])
+		for outcome in ["VICTORY", "DEFEAT"]:
+			# Route, battle and terminal settlement are witnessed by real
+			# services using this admitted trio, never fabricated verdicts.
+			var terminal := _victory(admission.party) if outcome == "VICTORY" else _defeat(admission.party)
+			if terminal.is_empty():
+				continue
+			var ctx: Dictionary = terminal.ctx
+			var witnessed := _snapshot(ctx, terminal.battle)
+			var before_panel := _app_snapshot()
+			var wardrobe_pre := wardrobe.get_snapshot()
+			var torn_pre := carry.torn.read_state()
+			var rng_pre: int = ctx.rng.state
+			_check(panel.open_result(ctx.latch), name + " " + outcome + " opens genuinely settled latch")
+			await _frames()
+			_check(panel.has_open_result() and panel.get_presented_status() == outcome,
+				name + " " + outcome + " selected truthful terminal heading")
+			var expected: Array[String] = expectation.duplicate()
+			if outcome == "DEFEAT":
+				expected.clear()
+				for i in range(heroes.size()):
+					var hero: Dictionary = heroes[i]
+					var op: Array = wear[i]
+					expected.append("%s TORN 0/%d HP · %s · %s %s" % [
+						str(hero.id).capitalize(), hero.max_hp,
+						"1 tear" if tear_counts[hero.id] == 1 else "%d tears" % tear_counts[hero.id],
+						op[2], str(op[0]).replace("_", " ").capitalize()])
+			_check_hero_rows(expected, name + " " + outcome + " original ledger hero rows")
+			_check(panel.summary_label.text.contains("Gold: 43 · Scraps: 7")
+				and panel.summary_label.text.contains("Stitched: 1 made · 1 in deck")
+				and panel.summary_label.text.contains("Patches worn: 3")
+				and panel.summary_label.text.contains("Battles resolved: ")
+				and panel.summary_label.text.contains("Floor reached: "),
+				name + " " + outcome + " genuine settlement, wallet and stitch counts")
+			var card_id: String = sewn.descriptors.keys()[0]
+			var source_descriptor: Dictionary = sewn.descriptors[card_id]
+			var first_def: Dictionary = RunRestStitchCards.resolve_card_definition(two_halves[0])
+			var second_def: Dictionary = RunRestStitchCards.resolve_card_definition(two_halves[1])
+			_check(source_descriptor.half_ids == two_halves
+				and source_descriptor.owners == [first_def.owner, second_def.owner],
+				name + " actual sewn receipt records original halves and owners")
+			_check(panel.stitched_rows.get_child_count() == 1,
+				name + " exactly one original stitched card remains displayed")
+			if panel.stitched_rows.get_child_count() == 1:
+				var lines := panel.stitched_rows.get_child(0).get_node("CardInset/CardLines")
+				var mounted_name: Label = lines.get_node("Composite")
+				var mounted_halves: Label = lines.get_node("Halves")
+				_check(mounted_name.text == "%s  ·  %d energy" % [
+					source_descriptor.display_name, source_descriptor.cost]
+					and mounted_halves.text == "1 · %s (%s)    →    2 · %s (%s)" % [
+						first_def.display_name, str(first_def.owner).capitalize(),
+						second_def.display_name, str(second_def.owner).capitalize()],
+					name + " exact descriptor cost and authentic ordered half/owner labels")
+			var right := -1.0
+			for i in range(panel.hero_rows.get_child_count()):
+				var ticket := panel.hero_rows.get_child(i) as PanelContainer
+				var hero: Dictionary = heroes[i]
+				var portrait := ticket.get_node("RowInset/HeroPortrait") as TextureRect
+				var name_label := ticket.get_node("RowInset/RowLine/HeroName") as Label
+				var detail_label := ticket.get_node("RowInset/RowLine/HeroDetail") as Label
+				var image_path: String = LiveRunTerminalResultPanel.HERO_PORTRAITS.get(hero.id, "")
+				_check(name_label.text == str(hero.id).capitalize()
+					and name_label.get_theme_font_size("font_size") >= 18
+					and detail_label.get_theme_font_size("font_size") >= 18,
+					name + " readable exact chosen hero ticket")
+				_check((portrait.texture == null and not portrait.visible)
+					if image_path.is_empty() else
+					(portrait.texture != null and portrait.texture.resource_path == image_path),
+					name + " uses shipped legacy art or clear blank ticket, no invented portrait")
+				_check(ticket.get_global_rect().position.x >= right - 0.5
+					and Rect2(Vector2.ZERO, Vector2(root.size)).encloses(ticket.get_global_rect()),
+					name + " 1280x720 nonoverlapping sewn hero tickets")
+				right = ticket.get_global_rect().end.x
+			_check(_app_snapshot() == before_panel and wardrobe.get_snapshot() == wardrobe_pre
+				and carry.torn.read_state() == torn_pre and ctx.rng.state == rng_pre
+				and _snapshot(ctx, terminal.battle) == witnessed,
+				name + " " + outcome + " read mutates no run, wardrobe, tears or RNG")
+			var earlier_returns := returns
+			var stale_callback: Callable = panel.return_button.pressed.get_connections()[0].callable
+			panel.return_button.pressed.emit()
+			_check(returns == earlier_returns + 1 and panel.return_button.disabled,
+				name + " " + outcome + " Return exactly once")
+			panel.close_result()
+			_check(panel.open_result(ctx.latch), name + " " + outcome + " close/reopen")
+			await _frames()
+			stale_callback.call()
+			_check(returns == earlier_returns + 1 and not panel.return_button.disabled,
+				name + " stale Return generation cannot consume a reopened result")
+			_check_hero_rows(expected, name + " reopened real chosen tickets")
+			panel.close_result()
+			_check(_app_snapshot() == before_panel and wardrobe.get_snapshot() == wardrobe_pre
+				and carry.torn.read_state() == torn_pre and _snapshot(ctx, terminal.battle) == witnessed,
+				name + " reopen fully read-only")
+		_check(wardrobe.get_snapshot() == wear_before and carry.torn.read_state() == torn_before,
+			name + " original authentic seam/wardrobe unchanged after both outcomes")
+		# Stale mismatched selected party is deliberately refused wholesale.
+		var mismatch: Array = app.run_heroes.duplicate(true)
+		app.run_heroes[0].id = "ninth_hero"
+		var terminal_invalid := _victory(admission.party)
+		_check(panel.open_result(terminal_invalid.ctx.latch),
+			name + " malformed party still allows truthful settled heading")
+		_check(panel.summary_label.text.ends_with("Summary unavailable")
+			and panel.hero_rows.get_child_count() == 0 and panel.return_button.disabled,
+			name + " forged chosen ID never displays partial recap or enables Return")
+		panel.close_result()
+		app.run_heroes = mismatch
+		# A separately valid fresh carryover is nevertheless stale for this
+		# genuinely torn trio. It must never yield a partial mixed recap.
+		var authentic_carry: RunTornCarryover = app.party_carryover
+		var alien_carry := RunTornCarryover.new(fresh_heroes)
+		_check(alien_carry.is_valid(), name + " independent carryover is valid")
+		app.party_carryover = alien_carry
+		_check(panel.open_result(terminal_invalid.ctx.latch)
+			and panel.summary_label.text.ends_with("Summary unavailable")
+			and panel.hero_rows.get_child_count() == 0 and panel.return_button.disabled,
+			name + " valid but mismatched torn ledger cannot authorize hero rows")
+		panel.close_result()
+		app.party_carryover = authentic_carry
+		_check(_app_snapshot() == ledger_before,
+			name + " malformed refusals restore exact source snapshots")

@@ -24,6 +24,7 @@ func _initialize() -> void:
 	_test_current_stitched_cards_readout()
 	_test_upgraded_half_in_stitched_card()
 	_test_negative_matrix_detachment_and_rng()
+	_test_v3_chosen_party_signatures()
 	if failures.is_empty():
 		print("run_signature_summary_test: PASS (", checks, " checks)")
 	else:
@@ -725,3 +726,139 @@ func _test_negative_matrix_detachment_and_rng() -> void:
 	# 9. RNG invariance across all calls
 	_check(test_rng.state == rng_initial_state, "AC3: seeded test RNG state unchanged across all positive and negative calls")
 	_check(randi() == global_initial_val, "AC3: global RNG state unchanged across all positive and negative calls")
+
+## The V3 admission contract supplies the three selected heroes and authentic
+## starter occurrences. Verify real wear, seat changes, stitches and failures.
+func _test_v3_chosen_party_signatures() -> void:
+	for id in ["warden", "seamstress", "tinker", "lantern_monk", "rag_duelist",
+			"scarecrow", "yarn_ranger", "button_golem"]:
+		_check(RunV3PartyAdmission.HERO_IDS.has(id), "canonical V3 ID exists: " + id)
+	_check(not RunV3PartyAdmission.admit(["scarecrow", "scarecrow", "yarn_ranger"]).ok,
+		"duplicate V3 selection refused")
+	_check(not RunV3PartyAdmission.admit(["scarecrow", "yarn_ranger", "ninth_hero"]).ok,
+		"unknown ninth hero refused")
+	_assert_v3_signature(["lantern_monk", "scarecrow", "yarn_ranger"], false)
+	_assert_v3_signature(["warden", "button_golem", "rag_duelist"], true)
+
+
+func _assert_v3_signature(picks: Array, swapped: bool) -> void:
+	var name := str(picks)
+	var admission := RunV3PartyAdmission.admit(picks)
+	_check(admission.ok and admission.party.size() == 3 and admission.deck.size() == 12,
+		name + " real admission produces three chosen heroes and 12 starters")
+	if not admission.ok:
+		return
+	var definitions: Array = admission.party.duplicate(true)
+	if swapped:
+		var first: Dictionary = definitions[0]
+		definitions[0] = definitions[2]
+		definitions[2] = first
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid(), name + " real CombatParty admits seats")
+	if not party.is_valid():
+		return
+	var heroes: Array = party.get_heroes()
+	var deck: Array[String] = []
+	deck.assign(admission.deck)
+	var first_half := ""
+	var second_half := ""
+	for card_id in deck:
+		var card := RunRestStitchCards.resolve_card_definition(card_id)
+		if card.get("owner") == heroes[0].id and first_half.is_empty():
+			first_half = card_id
+		elif card.get("owner") == heroes[1].id and second_half.is_empty():
+			second_half = card_id
+	_check(not first_half.is_empty() and not second_half.is_empty(),
+		name + " genuine different-hero stitch halves")
+	if first_half.is_empty() or second_half.is_empty():
+		return
+	var stitch := RunRestStitchCards.new(deck, {}, 6, 1)
+	_check(stitch.is_valid(), name + " genuine stitch service")
+	if not stitch.is_valid():
+		return
+	var receipt := stitch.choose_stitch(deck.find(first_half), deck.find(second_half),
+		stitch.get_snapshot())
+	_check(receipt.ok and receipt.consumed_ids == [first_half, second_half],
+		name + " stitched two actual selected-hero cards")
+	if not receipt.ok:
+		return
+	var sewn: Array[String] = []
+	sewn.assign(receipt.deck)
+	var desc: Dictionary = receipt.descriptors.duplicate(true)
+	var wardrobe := RunPatchWardrobe.new(heroes,
+		["button_eye", "pincushion_arm", "quilted_coat"],
+		_authored_patch_definitions(), 5, 91, sewn, 3970, true)
+	_check(wardrobe.is_valid(), name + " genuine selected wardrobe")
+	if not wardrobe.is_valid():
+		return
+	var ops := [["button_eye", heroes[0].id, "HEAD"],
+		["pincushion_arm", heroes[1].id, "ARM"],
+		["quilted_coat", heroes[2].id, "COAT"]]
+	for i in range(ops.size()):
+		var op: Array = ops[i]
+		_check(wardrobe.sew(op[0], op[1], op[2], "v3_%d" % i,
+			wardrobe.get_snapshot()).get("ok") == true,
+			name + " sewn owned patch " + str(op[0]))
+	var before := wardrobe.get_snapshot()
+	var original_deck := sewn.duplicate()
+	var original_desc := desc.duplicate(true)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 14922
+	var rng_before := rng.state
+	seed(9312)
+	var expected_global := randi()
+	seed(9312)
+	var summary := RunSignatureSummary.summarize(sewn, desc, receipt.next_stitch_id, wardrobe)
+	_check(summary.ok and summary.heroes.size() == 3 and summary.worn_total == 3,
+		name + " signature has exactly three genuine chosen wearers")
+	if summary.ok:
+		_check(summary.worn_ids == ["button_eye", "pincushion_arm", "quilted_coat"],
+			name + " authentic worn patch IDs in actual seat order")
+		for i in range(3):
+			var row: Dictionary = summary.heroes[i]
+			_check(row.hero_id == heroes[i].id and row.id == heroes[i].id
+				and row.slots[ops[i][2]] == ops[i][0],
+				name + " exact seat hero and owned patch " + str(i))
+		var cards: Array = summary.current_stitched_cards
+		var record: Dictionary = desc[receipt.stitched_id]
+		_check(summary.stitched_created == 1 and summary.stitched_current == 1
+			and summary.stitched_ids == [receipt.stitched_id] and cards.size() == 1,
+			name + " accurate stitch totals and deck-ordered current receipt")
+		if cards.size() == 1:
+			_check(cards[0].half_ids == [first_half, second_half]
+				and cards[0].owners == record.owners
+				and cards[0].display_name == record.display_name,
+				name + " ordered authentic sewn halves, owners and name")
+	_check(wardrobe.get_snapshot() == before and sewn == original_deck
+		and desc == original_desc and rng.state == rng_before and randi() == expected_global,
+		name + " summary is fully read-only including RNG")
+	var empty := RunSignatureSummary._failure()
+	for error_case in ["unknown", "duplicate", "missing_seat", "duplicate_seat",
+			"wrong_slot", "missing_wearer", "duplicate_wear"]:
+		var damaged := before.duplicate(true)
+		match error_case:
+			"unknown":
+				damaged.heroes[0].id = "ninth_hero"
+			"duplicate":
+				damaged.heroes[1].id = damaged.heroes[0].id
+			"missing_seat":
+				damaged.heroes[1].erase("position")
+			"duplicate_seat":
+				damaged.heroes[1].position = 1
+			"wrong_slot":
+				damaged.worn[heroes[0].id].HEAD = "pincushion_arm"
+			"missing_wearer":
+				damaged.worn.erase(heroes[2].id)
+			"duplicate_wear":
+				damaged.worn[heroes[1].id].HEAD = "button_eye"
+		_check(RunSignatureSummary.summarize(sewn, desc, receipt.next_stitch_id,
+			CorruptedWardrobe.new(damaged)) == empty,
+			name + " invalid chosen party/wear fails closed: " + error_case)
+	var extra: Array[String] = sewn.duplicate()
+	extra.append(first_half)
+	_check(RunSignatureSummary.summarize(extra, desc, receipt.next_stitch_id, wardrobe) == empty,
+		name + " mismatched deck fails closed")
+	var forged := desc.duplicate(true)
+	forged[receipt.stitched_id].half_ids = [first_half, first_half]
+	_check(RunSignatureSummary.summarize(sewn, forged, receipt.next_stitch_id, wardrobe) == empty,
+		name + " forged stitch descriptor fails closed")
