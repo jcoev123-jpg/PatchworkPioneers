@@ -25,8 +25,15 @@ func tick_side(side: String, actors: Array) -> Dictionary:
 		next_actor["block"] = tick["block"]
 		next_actor["statuses"] = tick["statuses"]
 		next_actors.append(next_actor)
-		events.append({"side": side, "position": current["position"],
-			"id": current["id"], "bleed_hp_loss": tick["bleed_hp_loss"]})
+		var event := {"side": side, "position": current["position"],
+			"id": current["id"], "bleed_hp_loss": tick["bleed_hp_loss"]}
+		# The proposal keeps the raw lethal loss (0 HP). CombatEnemies settles
+		# the authored once-only revival when the commit lands, so a proposal
+		# that is never committed can never spend or invent one.
+		if side == "enemies" and current["hp"] > 0 and tick["hp"] == 0 \
+				and CombatEnemies.revive_pending(current):
+			event["revives"] = true
+		events.append(event)
 	return {"ok": true, "actors": next_actors, "events": events}
 
 
@@ -62,6 +69,8 @@ func _valid_roster(side: String, actors: Array) -> bool:
 		if not hp is int or hp < 0 or hp > max_hp:
 			return false
 		if not block is int or block < 0:
+			return false
+		if not CombatEnemies.valid_revive_flags(record):
 			return false
 		var statuses = record.get("statuses", {})
 		if not statuses is Dictionary:
