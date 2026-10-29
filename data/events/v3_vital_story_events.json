@@ -479,6 +479,46 @@
         { "id": "sell_missing_hour", "text": "Sell one lasting hour (lose 1 max HP; gain 21 gold)", "outcome": { "gold": 21, "scraps": 0, "hp": 0, "max_hp": -1 } },
         { "id": "leave", "text": "Let the clock strike without you", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_compass_hollow_doll",
+      "title": "The Compass-Hollow Doll",
+      "description": "A squat button-eyed wayfinder carries a compass larger than its round chest; the brass needle twitches toward frayed seams in the road.",
+      "choices": [
+        { "id": "follow_needle", "text": "Follow the wobbling needle (lose 4 HP; gain 17 gold and 1 scrap)", "outcome": { "gold": 17, "scraps": 1, "hp": -4, "max_hp": 0 } },
+        { "id": "stitch_true_north", "text": "Spend 2 scraps to stitch a steady north (+2 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 2 } },
+        { "id": "leave", "text": "Leave the compass spinning", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_thimble_snail_post",
+      "title": "The Thimble-Snail Post",
+      "description": "A plump snail postmaster drags a giant brass thimble shell lined with plum ribbon and lantern-lit letters.",
+      "choices": [
+        { "id": "patch_post_shell", "text": "Pay 14 gold to patch the shell and rest (+8 HP)", "outcome": { "gold": -14, "scraps": 0, "hp": 8, "max_hp": 0 } },
+        { "id": "carry_moon_mail", "text": "Carry moon mail (lose 3 HP; earn 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -3, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the thimble snail pass", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_glass_pin_snowglobe",
+      "title": "The Glass-Pin Snowglobe",
+      "description": "A stitched winter doll shakes a globe of tiny quilted hills, and blunt silver pins glitter like slow snow.",
+      "choices": [
+        { "id": "warm_globe", "text": "Pay 9 gold and 1 scrap to warm the globe (+5 HP, +1 max HP)", "outcome": { "gold": -9, "scraps": -1, "hp": 5, "max_hp": 1 } },
+        { "id": "shake_buttons", "text": "Shake out frozen buttons (lose 5 HP; gain 24 gold)", "outcome": { "gold": 24, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the little storm asleep", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_soot_needle_chimney",
+      "title": "The Soot-Needle Chimney",
+      "description": "A round charcoal chimney sweep lifts an oversized bristle needle beneath a crooked oxblood roof with stitched smoke stars.",
+      "choices": [
+        { "id": "sew_sweep_padding", "text": "Pay 16 gold to sew fireproof padding (+2 max HP)", "outcome": { "gold": -16, "scraps": 0, "hp": 0, "max_hp": 2 } },
+        { "id": "rake_cinders", "text": "Rake the cinders (lose 1 max HP; gain 3 scraps)", "outcome": { "gold": 0, "scraps": 3, "hp": 0, "max_hp": -1 } },
+        { "id": "leave", "text": "Let the smoke stars settle", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
