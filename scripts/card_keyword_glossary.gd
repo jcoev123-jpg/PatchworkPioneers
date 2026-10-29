@@ -95,9 +95,10 @@ const EXHAUST_IDS := ["lantern_monk_moth_cloud", "lantern_monk_moth_cloud_plus"]
 ## Help row. Only the eight authentic catalog printings that CardShortRules
 ## authenticates receive it, so no same-shaped forged or mis-owned record can
 ## borrow the rule. The Scarecrow is a selectable live party hero (any three of
-## the eight heroes form a run), but the row states the authored design only:
-## no held card resolves Fear in battle yet.
-const FEAR_EXPLANATION := "Fear is the authored Scarecrow keyword: the affected enemy cannot buff on its NEXT enemy turn, and the buff lock then expires at the end of that turn, so it never covers a second turn. Upgrades never lengthen the lock. Fear is applied together with a separate Weak, which reduces the enemy's outgoing attack damage by 25% (rounded down) for its authored Weak turns: Sack Glare, Sack Grin and Crow Flock author Weak 1 on the base card and Weak 2 on the upgraded card, while Harvest Fright authors Weak 2 on the base card and Weak 3 on the upgraded card. Fear adds no damage, Bleed or Blind of its own. This Help explains the authored design rule only: the Scarecrow is one of the eight selectable heroes and can join any three-hero party, but no held card resolves Fear in battle yet."
+## the eight heroes form a run). The row states the authored design and the live
+## held-card split: the four single-target sack printings already play from the
+## shared hand, while the two area-card families are not applied by that path.
+const FEAR_EXPLANATION := "Fear is the authored Scarecrow keyword: the affected enemy cannot buff on its NEXT enemy turn, and the buff lock then expires at the end of that turn, so it never covers a second turn. Upgrades never lengthen the lock. Fear is applied together with a separate Weak, which reduces the enemy's outgoing attack damage by 25% (rounded down) for its authored Weak turns: Sack Glare, Sack Grin and Crow Flock author Weak 1 on the base card and Weak 2 on the upgraded card, while Harvest Fright authors Weak 2 on the base card and Weak 3 on the upgraded card. Fear adds no damage, Bleed or Blind of its own. The Scarecrow is one of the eight selectable heroes and can join any three-hero party. The four live sack variants, Sack Glare and Sack Grin with their '+' upgrades, already play from the shared hand and apply this Fear lock to the chosen living enemy. Crow Flock and Harvest Fright are the two authored area-card families: they carry the same Fear flag, but the live sack-card path does not play them, so their Fear is not yet applied in battle."
 
 
 static func describe(definition: Variant) -> Array[Dictionary]:

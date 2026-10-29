@@ -5,6 +5,11 @@ extends RefCounted
 
 const MAX_ENEMIES := 3
 const MAX_INT := 9223372036854775807
+## Authored once-only revival. The first HP loss that leaves a living
+## `revive_once` foe at 0 HP instead leaves it at half its max HP (rounded up)
+## in its own slot and latches `revived`; every later lethal loss is final.
+const REVIVE_FIELD := "revive_once"
+const REVIVED_FIELD := "revived"
 
 var _enemies: Array[Dictionary] = []
 
@@ -22,6 +27,8 @@ func _init(definitions: Array) -> void:
 			return
 		if not max_hp is int or max_hp <= 0:
 			return
+		if not valid_revive_flags(definition):
+			return
 		ids.append(id)
 	for index in range(definitions.size()):
 		var enemy: Dictionary = definitions[index].duplicate(true)
@@ -32,14 +39,57 @@ func _init(definitions: Array) -> void:
 
 
 func is_valid() -> bool:
+	_settle_revivals()
 	return not _enemies.is_empty() and _enemies.size() <= MAX_ENEMIES
 
 
+## `revive_once` and `revived` are each absent or a literal boolean, and a
+## `revived` latch is only meaningful on an authored reviver.
+static func valid_revive_flags(record: Dictionary) -> bool:
+	for field in [REVIVE_FIELD, REVIVED_FIELD]:
+		if record.has(field) and not record[field] is bool:
+			return false
+	return not (bool(record.get(REVIVED_FIELD, false)) and not bool(record.get(REVIVE_FIELD, false)))
+
+
+## True for a well-formed authored reviver that has not spent its revival yet.
+static func revive_pending(record: Dictionary) -> bool:
+	return valid_revive_flags(record) and bool(record.get(REVIVE_FIELD, false)) \
+		and not bool(record.get(REVIVED_FIELD, false))
+
+
+static func revive_hp(max_hp: int) -> int:
+	return maxi(1, ceili(max_hp / 2.0))
+
+
+## The single once-only lifecycle contract. A record left at 0 HP by a lethal
+## loss revives in place exactly once: only `hp` and the `revived` latch change,
+## so slot, Block, statuses, intent and every authored field are kept.
+static func settle_revival(record: Dictionary) -> bool:
+	var hp: Variant = record.get("hp")
+	if not hp is int or hp != 0 or not record.get("max_hp") is int or not revive_pending(record):
+		return false
+	record["hp"] = revive_hp(record["max_hp"])
+	record[REVIVED_FIELD] = true
+	return true
+
+
+## Owner-turn Bleed is resolved on a detached CombatStatusTurnBatch proposal and
+## committed field by field into these records by CombatRoundFlow. Its lethal
+## tick therefore lands as 0 HP and is settled here by the same contract before
+## any reader (victory, slain, snapshot) can observe the roster.
+func _settle_revivals() -> void:
+	for enemy in _enemies:
+		settle_revival(enemy)
+
+
 func get_enemies() -> Array[Dictionary]:
+	_settle_revivals()
 	return _enemies.duplicate(true)
 
 
 func get_enemy(position: int) -> Dictionary:
+	_settle_revivals()
 	if not _valid_position(position):
 		return {}
 	return _enemies[position - 1].duplicate(true)
@@ -86,9 +136,13 @@ func apply_damage(position: int, amount: int) -> bool:
 	if not _can_target(position, amount):
 		return false
 	var enemy := _enemies[position - 1]
+	# A malformed revive flag refuses the hit before Block or HP is written.
+	if not valid_revive_flags(enemy):
+		return false
 	var absorbed: int = mini(enemy["block"], amount)
 	enemy["block"] -= absorbed
 	enemy["hp"] = maxi(0, enemy["hp"] - (amount - absorbed))
+	settle_revival(enemy)
 	return true
 
 

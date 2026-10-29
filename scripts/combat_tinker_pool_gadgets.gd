@@ -301,6 +301,78 @@ func resolve_sight_glass(deck: CombatDeck, party: CombatParty, enemies: CombatEn
 	return {"ok": true, "exposed_applied": applied_exposed, "drawn": drawn, "target": target_position}
 
 
+## The two canonical printings a Rest stitch may carry as a Sight Glass half.
+const SIGHT_GLASS_IDS: Array[String] = ["tinker_sight_glass", "tinker_sight_glass_plus"]
+
+
+## Stitched-half seam for Sight Glass base/+. Stages the authored Exposed (plus
+## only the living Tinker's own worn HEAD Exposed patch, the same projection as
+## resolve_sight_glass) on one living legal enemy, then draws exactly one card
+## with the staged seeded deck. It neither holds, charges nor discards a card:
+## the enclosing stitched transaction owns the one composite cost and discard
+## and publishes nothing unless both ordered halves succeed. The half is
+## re-authenticated against the real Tinker catalog, never trusted as supplied.
+## head_rules / torn are the stitched service's own authenticated bind, or null.
+## Returns {ok: true, effect, exposed_applied, drawn, target} or {ok: false}.
+static func resolve_staged_sight_glass(deck: CombatDeck, party: CombatParty,
+		enemies: CombatEnemies, half: Dictionary, target_position: int,
+		head_rules: CombatM05HeadPatchRules = null, torn: RunTornMending = null) -> Dictionary:
+	var failed := {"ok": false}
+	if deck == null or party == null or enemies == null \
+			or not party.is_valid() or not enemies.is_valid():
+		return failed
+	var id_value: Variant = half.get("id")
+	if typeof(id_value) != TYPE_STRING or not id_value in SIGHT_GLASS_IDS:
+		return failed
+	var card_id: String = id_value
+	var authored: Dictionary = TinkerPoolCards.new().get_definition(card_id)
+	if authored.is_empty() or authored != half or authored.get("owner") != "tinker":
+		return failed
+	if authored["cost"] != 1 or authored["target_kind"] != "enemy_single":
+		return failed
+	var effects: Dictionary = authored["effects"]
+	if effects.size() != 2 or effects.get("exposed") != 2 or effects.get("draw") != 1:
+		return failed
+	var allowed: Array = authored["to_positions"]
+	if not allowed.has(target_position):
+		return failed
+	# is_slain() is false for a missing slot, so require a real living enemy.
+	var foes: Array[Dictionary] = enemies.get_enemies()
+	if target_position < 1 or target_position > foes.size() \
+			or int(foes[target_position - 1].get("hp", 0)) <= 0:
+		return failed
+	var owner_position := 0
+	for hero in party.get_heroes():
+		if hero["id"] == "tinker":
+			owner_position = hero["position"]
+			break
+	if owner_position == 0 or party.is_downed(owner_position) \
+			or not authored["from_positions"].has(owner_position):
+		return failed
+	# The battle party can still live while the run ledger marks Tinker torn.
+	if torn != null:
+		for hero in torn.read_state().get("heroes", []):
+			if typeof(hero) == TYPE_DICTIONARY and hero.get("id") == "tinker" \
+					and int(hero.get("hp", 0)) <= 0:
+				return failed
+	var bonus := 0
+	if head_rules != null:
+		bonus = head_rules.get_bonus("tinker", card_id, "exposed")
+		if bonus < 0 or bonus > CombatEnemies.MAX_INT - 2:
+			return failed
+	var applied_exposed: int = 2 + bonus
+	if not enemies.can_apply_statuses({target_position: {"exposed": applied_exposed}}):
+		return failed
+	enemies.apply_statuses({target_position: {"exposed": applied_exposed}})
+	# The composite itself is still held, so this draw can never reshuffle the
+	# just-played copy; an exhausted supply legally draws zero, never a stand-in.
+	var drawn: int = deck.draw_extra(1)
+	if drawn < 0:
+		return failed
+	return {"ok": true, "effect": "exposed_and_draw", "exposed_applied": applied_exposed,
+		"draw": 1, "drawn": drawn, "target": target_position}
+
+
 ## ---------------------------------------------------------------------------
 ## Wind-up Turret: detached three-beat end-of-turn effect.
 ## Deals 3 damage to a random living enemy at end of turn for 3 turns. The state

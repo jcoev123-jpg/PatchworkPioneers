@@ -148,6 +148,16 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 			if not strike.get("ok", false):
 				return failure
 			results.append(strike)
+		elif half.id in CombatTinkerPoolGadgets.SIGHT_GLASS_IDS:
+			# Sight Glass is a nonattack: no Scope/latch bonus applies and the
+			# generic attack resolver would reject its Exposed + draw outright.
+			if bonuses[index] != 0:
+				return failure
+			var sight := CombatTinkerPoolGadgets.resolve_staged_sight_glass(staged_deck,
+				staged_party, staged_enemies, half, target, _support._head_patches, _support._torn)
+			if not sight.get("ok", false):
+				return failure
+			results.append(sight)
 		elif kind in ["enemy_single", "enemy_all"]:
 			var result := attacks.resolve_staged_half(staged_party, staged_enemies,
 				half.id, target, bonuses[index])

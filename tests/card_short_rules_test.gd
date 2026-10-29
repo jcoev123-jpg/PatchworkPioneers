@@ -1488,8 +1488,9 @@ func _test_scarecrow_fear_faces() -> void:
 ## every existing row in place with Fear appended last.
 ## AC1: the same row never repeats the obsolete claim that the Scarecrow cannot
 ## be in a live party; it names the Scarecrow as one of the eight selectable
-## heroes that may join any three-hero party, while still stating that no held
-## card resolves Fear in battle yet.
+## heroes that may join any three-hero party, and truthfully says the four
+## single-target sack printings already play Fear from the shared hand while the
+## two area-card families are not applied by that live path.
 func _test_scarecrow_fear_help() -> void:
 	var keyword_order := CardKeywordGlossary.KEYWORD_ORDER
 	_check(keyword_order.count("fear") == 1
@@ -1549,8 +1550,19 @@ func _test_scarecrow_fear_help() -> void:
 				"Fear Help states Harvest Fright's Weak 2/3: " + card_id)
 			_check(text.contains("adds no damage, Bleed or Blind"),
 				"Fear Help is not extra damage, Bleed or Blind: " + card_id)
-			_check(text.contains("no held card resolves Fear in battle yet"),
-				"Fear Help claims no already-live held-hand action: " + card_id)
+			_check(text.contains("four live sack variants")
+				and text.contains("Sack Glare and Sack Grin")
+				and text.contains("already play from the shared hand")
+				and text.contains("apply this Fear lock to the chosen living enemy"),
+				"Fear Help names the four live held sack variants: " + card_id)
+			_check(text.contains("Crow Flock and Harvest Fright")
+				and text.contains("two authored area-card families")
+				and text.contains("live sack-card path does not play them")
+				and text.contains("their Fear is not yet applied in battle"),
+				"Fear Help keeps both area families out of the live sack path: "
+				+ card_id)
+			_check(not text.contains("no held card resolves Fear"),
+				"Fear Help no longer denies every held Fear card: " + card_id)
 			_check(not text.contains("not yet part of a live party")
 				and not text.contains("not part of a live party")
 				and not text.contains("not yet in a live party"),
@@ -1576,13 +1588,20 @@ func _test_scarecrow_fear_help() -> void:
 				== ["Weak %d" % int(entry["weak"]), "Fear"],
 				"Fear Help rows are detached from the caller's record: " + card_id)
 	_check(not shared_text.is_empty(), "the Fear Help row was really inspected")
-	# AC1: the shared explanation itself carries the corrected live-party fact
-	# and keeps the honest held-card limitation.
+	# AC2: the shared explanation itself carries the corrected live-party fact
+	# and distinguishes the four live held sack variants from the two area
+	# families instead of denying every held Fear card.
 	_check(not CardKeywordGlossary.FEAR_EXPLANATION.contains("not yet part of a live party")
 		and not CardKeywordGlossary.FEAR_EXPLANATION.contains("not part of a live party"),
 		"the Fear explanation carries no unselectable-live-party claim")
-	_check(CardKeywordGlossary.FEAR_EXPLANATION.contains("no held card resolves Fear in battle yet"),
-		"the Fear explanation still names the unwired held-card limitation")
+	_check(not CardKeywordGlossary.FEAR_EXPLANATION.contains("no held card resolves Fear")
+		and CardKeywordGlossary.FEAR_EXPLANATION.contains("four live sack variants")
+		and CardKeywordGlossary.FEAR_EXPLANATION.contains("already play from the shared hand"),
+		"the Fear explanation names the four live held sack variants")
+	_check(CardKeywordGlossary.FEAR_EXPLANATION.contains("Crow Flock and Harvest Fright")
+		and CardKeywordGlossary.FEAR_EXPLANATION.contains("two authored area-card families")
+		and CardKeywordGlossary.FEAR_EXPLANATION.contains("their Fear is not yet applied in battle"),
+		"the Fear explanation keeps the area families distinct from the live sack path")
 	# The base and '+' halves differ only in the authored Weak (and Harvest
 	# Fright's damage): the one-turn lock is never the upgraded number.
 	for pair in [["scarecrow_sack_glare", "scarecrow_sack_glare_plus"],

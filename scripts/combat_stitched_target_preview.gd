@@ -158,6 +158,7 @@ func _half_preview(half: Dictionary, index: int, party_slots: Array[Dictionary],
 		authored = _pool.get_definition(id)
 	if authored.is_empty() and (id in CombatPoolEnergyCards.OVERCLOCK_IDS
 			or id in CombatStitchedCards.SPARE_PARTS_IDS
+			or id in CombatTinkerPoolGadgets.SIGHT_GLASS_IDS
 			or id in CombatTinkerPoolAttacks.STITCHED_IDS):
 		authored = TinkerPoolCards.new().get_definition(id)
 	if authored.is_empty() or authored != half:

@@ -96,7 +96,7 @@ const KEYWORD_ELITES := {
 			{"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
 			{"type": "block", "amount": 9, "weight": 2}]},
 	"spool_leech": {
-		"name": "Spool Leech", "max_hp": 42, "drain": true,
+		"name": "Spool Leech", "max_hp": 42, "drain": true, "chew_block_on_attack": true,
 		"art_path": "res://assets/paper/enemies/spool_hexer.png",
 		"target": "lowest_living_hp", "actions": [
 			{"type": "attack", "amount": 8, "weight": 4},
@@ -1429,13 +1429,20 @@ func _test_scissor_sting() -> void:
 		if record.get("chew_block_on_attack") is bool \
 				and record.get("chew_block_on_attack") == true:
 			chewer_ids.append(String(record.get("id", "")))
-	_check(chewer_ids.has("scissor_bailiff"),
-		"AC1: the shipped Elite catalog authors the cloth-eating cut on the Bailiff")
+	_check(chewer_ids.has("scissor_bailiff") and chewer_ids.has("spool_leech"),
+		"AC1: the shipped Elite catalog authors the cloth-eating cut on Bailiff and Leech")
 	for id in ["needle_marshal", "spool_hexer", "zipper_hauler", "needle_briar_guard",
-			"spool_snarekeeper", "pincushion_matriarch", "spool_leech"]:
+			"spool_snarekeeper", "pincushion_matriarch"]:
 		var peer := _record(elites, id)
 		_check(not peer.is_empty() and not peer.has("chew_block_on_attack"),
 			"AC1: no fabricated cloth-eating trait on the unchanged elite " + id)
+	# AC1: the new Leech record carries the genuine boolean flag.
+	var leech_peer := _record(elites, "spool_leech")
+	_check(not leech_peer.is_empty()
+		and leech_peer.has("chew_block_on_attack")
+		and leech_peer.get("chew_block_on_attack") is bool
+		and leech_peer.get("chew_block_on_attack") == true,
+		"AC1: the Spool Leech authors the genuine bool chew_block_on_attack")
 	_check(catalog.get("name") == "Scissor Bailiff" and catalog.get("max_hp") is int
 		and catalog.get("max_hp") == 36
 		and catalog.get("art_path") == "res://assets/paper/enemies/scissor_bailiff.png"
@@ -2569,8 +2576,8 @@ func _pincushion_thorns(record: Dictionary) -> void:
 
 func _leech_drain(record: Dictionary) -> void:
 	# Missing HP, hero Block, hero HP, expected HP removed, expected healing.
-	for scenario in [[12, 0, 10, 8, 8], [12, 3, 10, 5, 5],
-			[12, 8, 10, 0, 0], [2, 0, 10, 8, 2], [12, 0, 3, 3, 3]]:
+	for scenario in [[12, 0, 10, 8, 8], [12, 3, 10, 8, 8],
+			[12, 8, 10, 8, 8], [2, 0, 10, 8, 2], [12, 0, 3, 3, 3]]:
 		var fixture := _new_elite_fixture(record)
 		var party: CombatParty = fixture["party"]
 		var enemies: CombatEnemies = fixture["enemies"]
@@ -2588,6 +2595,34 @@ func _leech_drain(record: Dictionary) -> void:
 		_check(result == {"ok": true, "events": [_phase_event(beat)]}
 			and party.get_heroes() == heroes and enemies.get_enemies() == foes,
 			"phase Attack 8 drains actual HP only, fully blocked zero, capped at 42: " + str(scenario))
+
+	# Separate UNFLAGGED Drain control: no chew_block_on_attack, 8 Block absorbs all,
+	# zero healing, fail-closed if metadata or state is wrong.
+	var unflagged_record := record.duplicate(true)
+	unflagged_record.erase("chew_block_on_attack")
+	var unflagged_fixture := _new_elite_fixture(unflagged_record)
+	if not unflagged_fixture.is_empty():
+		var unflagged_party: CombatParty = unflagged_fixture["party"]
+		var unflagged_enemies: CombatEnemies = unflagged_fixture["enemies"]
+		_check(unflagged_enemies.apply_damage(1, 12)
+			and unflagged_party.apply_damage(2, 20) and not unflagged_party.is_downed(2)
+			and unflagged_party.gain_block(2, 8)
+			and unflagged_party.get_hero(2).get("hp") == 10
+			and unflagged_party.get_hero(2).get("block") == 8,
+			"unflagged precondition: 12 missing HP, 10 target HP, 8 Block, living")
+		var unflagged_heroes := unflagged_party.get_heroes()
+		var unflagged_foes := unflagged_enemies.get_enemies()
+		var unflagged_beat := _authored_beat(unflagged_record, 1, "attack", 2)
+		if not unflagged_beat.is_empty():
+			var unflagged_result := CombatEnemyPhase.new().execute_phase(
+				unflagged_party, unflagged_enemies, [unflagged_beat])
+			unflagged_heroes[1]["block"] = 0
+			unflagged_heroes[1]["hp"] = 10
+			unflagged_foes[0]["hp"] += 0
+			_check(unflagged_result == {"ok": true, "events": [_phase_event(unflagged_beat)]}
+				and unflagged_party.get_heroes() == unflagged_heroes
+				and unflagged_enemies.get_enemies() == unflagged_foes,
+				"unflagged Drain: 8 Block fully absorbs 8 damage, zero HP loss, zero heal")
 
 
 func _test_keyword_elites() -> void:

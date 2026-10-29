@@ -225,6 +225,10 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		enemies._enemies[index].block = staged_enemies._enemies[index].block
 		if staged_enemies._enemies[index].has("statuses"):
 			enemies._enemies[index].statuses = staged_enemies._enemies[index].statuses
+		# A Thorns kill revived on the staged copy must keep its once-only latch.
+		if staged_enemies._enemies[index].has(CombatEnemies.REVIVED_FIELD):
+			enemies._enemies[index][CombatEnemies.REVIVED_FIELD] = \
+				staged_enemies._enemies[index][CombatEnemies.REVIVED_FIELD]
 	return {"ok": true, "events": events}
 
 

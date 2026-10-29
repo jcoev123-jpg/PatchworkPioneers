@@ -1660,7 +1660,9 @@ func _refresh() -> void:
 							if int(hit.get("statuses", {}).get(status, 0)) > 0:
 								status_text += ", %s %d" % [status.capitalize(), hit.statuses[status]]
 						effects.append("enemy %d: %d damage%s" % [hit.position, hit.damage, status_text])
-					if half.has("effect"):
+					if half.get("effect") == "exposed_and_draw":
+						effects.append("enemy %d: Exposed %d, draw %d" % [half.target, half.exposed_applied, half.draw])
+					elif half.has("effect"):
 						effects.append("%s %d" % [half.effect.replace("_", " ").capitalize(), half.amount])
 					outcomes.append("%d: %s" % [index + 1, ", ".join(effects)])
 				cue.text = "%s | %d energy\nProjected %s" % [" / ".join(names), stitched.cost, "; ".join(outcomes)]
