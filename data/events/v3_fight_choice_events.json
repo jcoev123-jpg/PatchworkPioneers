@@ -1,0 +1,59 @@
+{
+  "events": [
+    {
+      "id": "v3_stitchline_roadblock",
+      "title": "The Stitchline Roadblock",
+      "description": "A barricade of knotted bobbins and taut running-stitch cord stretches across the patchwork lane while hostile figures stir behind the cloth.",
+      "fight_choice_id": "break_barricade",
+      "choices": [
+        { "id": "break_barricade", "text": "Break through the stitched barricade (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "pay_road_toll", "text": "Pay the road toll (spend 14 gold)", "outcome": { "gold": -14, "scraps": 0 } },
+        { "id": "leave", "text": "Turn back down the quiet seam (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_frayed_bridge_watch",
+      "title": "The Frayed Bridge Watch",
+      "description": "A swaying bridge of braided felt spans a dark ravine, where armed sentries block the crossing until thread or steel settles the right of way.",
+      "fight_choice_id": "hold_bridge",
+      "choices": [
+        { "id": "hold_bridge", "text": "Hold the frayed bridge by force (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "offer_thread", "text": "Offer two thread bundles for safe passage (spend 2 scraps)", "outcome": { "gold": 0, "scraps": -2 } },
+        { "id": "leave", "text": "Retreat from the bridge crossing (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_lanternless_ambush",
+      "title": "The Lanternless Ambush",
+      "description": "Guttering wicks leave a velvet hollow in deep dusk as lurking shapes close around the unlit crossroads.",
+      "fight_choice_id": "face_shadows",
+      "choices": [
+        { "id": "face_shadows", "text": "Stand and face the closing shadows (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "buy_lantern_pass", "text": "Buy a sealed lantern pass (spend 18 gold)", "outcome": { "gold": -18, "scraps": 0 } },
+        { "id": "leave", "text": "Slip back to the lit road (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_knotted_yarn_patrol",
+      "title": "The Knotted-Yarn Patrol",
+      "description": "Tangled skeins of heavy wool snare the roadside posts while a roving patrol demands a tribute of yarn to clear the path.",
+      "fight_choice_id": "untie_patrol",
+      "choices": [
+        { "id": "untie_patrol", "text": "Cut the snares and confront the patrol (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "trade_yarn", "text": "Trade a spare yarn scrap to pass (spend 1 scrap)", "outcome": { "gold": 0, "scraps": -1 } },
+        { "id": "leave", "text": "Skirt the knotted wool (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_buttonwall_checkpoint",
+      "title": "The Buttonwall Checkpoint",
+      "description": "A rampart of stacked brass buttons and heavy quilted shields seals the narrow pass against travellers without a stamped token.",
+      "fight_choice_id": "challenge_checkpoint",
+      "choices": [
+        { "id": "challenge_checkpoint", "text": "Challenge the buttonwall garrison (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "purchase_token", "text": "Purchase a stamped gate token (spend 20 gold)", "outcome": { "gold": -20, "scraps": 0 } },
+        { "id": "leave", "text": "Step away from the checkpoint (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    }
+  ]
+}
