@@ -80,6 +80,9 @@ func _initialize() -> void:
 	_test_candlelit_bargain_event_batch()
 	_test_remaining_candlelit_bargain_event_batch()
 	_test_candlelit_shipping_merge_validation()
+	_test_actionable_event_qualification()
+	_test_actionable_event_seeded_selection()
+	_test_actionable_event_rejections()
 	_check(source_document == source_snapshot, "shipped catalog document unchanged by every flow")
 	_report()
 
@@ -2050,6 +2053,278 @@ func _replaced(events: Array, target_id: String, replacement: Variant) -> Array:
 		else:
 			out.append(record)
 	return out
+
+
+func _test_actionable_event_qualification() -> void:
+	var rotation := RunM04EventRotation.new()
+	var all_ids: Array = rotation.get_generic_event_ids()
+
+	# Wallet {gold: 0, scraps: 0}: button_trail qualifies (follow: +1 scrap), estate_sale does not (leave: 0/0).
+	var zero_wallet := {"gold": 0, "scraps": 0}
+	var trail_only_excluded := all_ids.duplicate()
+	trail_only_excluded.erase("button_trail")
+	var rng1 := RandomNumberGenerator.new()
+	rng1.seed = 801
+	var trail_result := rotation.select_actionable_event(rng1, trail_only_excluded, zero_wallet)
+	_check(trail_result.get("ok") == true, "button_trail qualifies at wallet {0, 0} via follow (+1 scrap)")
+	_check(trail_result.get("event", {}).get("id") == "button_trail", "button_trail selected at {0, 0}")
+
+	# estate_sale alone at {0, 0}: only Leave is affordable, which has 0/0 deltas, so it must not qualify.
+	var estate_only_excluded := all_ids.duplicate()
+	estate_only_excluded.erase("estate_sale")
+	var rng2 := RandomNumberGenerator.new()
+	rng2.seed = 802
+	var rng2_state := rng2.state
+	var estate_zero_result := rotation.select_actionable_event(rng2, estate_only_excluded, zero_wallet)
+	_check(estate_zero_result.get("ok") == false, "estate_sale does not qualify at {0, 0} through zero-effect Leave")
+	_check((estate_zero_result.get("event") as Dictionary).is_empty(), "estate_sale returns empty event at {0, 0}")
+	_check(rng2.state == rng2_state, "no RNG consumed when estate_sale does not qualify at {0, 0}")
+
+	# estate_sale qualifies at wallet {gold: 15, scraps: 0} through buy_thread (-15 gold, +2 scraps).
+	var gold_wallet := {"gold": 15, "scraps": 0}
+	var rng3 := RandomNumberGenerator.new()
+	rng3.seed = 803
+	var estate_gold_result := rotation.select_actionable_event(rng3, estate_only_excluded, gold_wallet)
+	_check(estate_gold_result.get("ok") == true, "estate_sale qualifies with 15 gold through buy_thread")
+	_check(estate_gold_result.get("event", {}).get("id") == "estate_sale", "estate_sale selected with 15 gold")
+
+	# estate_sale qualifies at wallet {gold: 0, scraps: 2} through sell_fabric (+30 gold, -2 scraps).
+	var scraps_wallet := {"gold": 0, "scraps": 2}
+	var rng4 := RandomNumberGenerator.new()
+	rng4.seed = 804
+	var estate_scraps_result := rotation.select_actionable_event(rng4, estate_only_excluded, scraps_wallet)
+	_check(estate_scraps_result.get("ok") == true, "estate_sale qualifies with 2 scraps through sell_fabric")
+	_check(estate_scraps_result.get("event", {}).get("id") == "estate_sale", "estate_sale selected with 2 scraps")
+
+	# Fixture with all required IDs where we exclude everything except button_trail and estate_sale.
+	var required_fixture_events: Array = []
+	for req_id in REQUIRED_IDS:
+		required_fixture_events.append(_record_copy(req_id))
+	var valid_fixture_rotation := RunM04EventRotation.new({"events": required_fixture_events})
+	_check(valid_fixture_rotation.is_catalog_valid(), "fixture rotation is catalog valid")
+	var exclude_rest: Array = []
+	for req_id in REQUIRED_IDS:
+		if req_id != "button_trail" and req_id != "estate_sale":
+			exclude_rest.append(req_id)
+	var rng5 := RandomNumberGenerator.new()
+	rng5.seed = 805
+	var pick_at_zero := valid_fixture_rotation.select_actionable_event(rng5, exclude_rest, zero_wallet)
+	_check(pick_at_zero.get("ok") == true, "selection between button_trail and estate_sale at {0,0} succeeds")
+	_check(pick_at_zero.get("event", {}).get("id") == "button_trail", "only button_trail is actionable at {0,0}")
+
+
+func _test_actionable_event_seeded_selection() -> void:
+	var rotation := RunM04EventRotation.new()
+	var test_wallet := {"gold": 25, "scraps": 3}
+	var wallet_snapshot := test_wallet.duplicate(true)
+
+	# Find actionable IDs independently using RunEventChoice.preview_wallet_choices.
+	var oracle_actionable: Array = []
+	for record in rotation.get_generic_events():
+		var event_id: String = record["id"]
+		var service := RunEventChoice.new(record)
+		var preview: Dictionary = service.preview_wallet_choices(test_wallet)
+		var actionable := false
+		for choice in preview.get("choices", []):
+			if choice.get("affordable", false):
+				var g: int = int(choice.get("gold_delta", 0))
+				var s: int = int(choice.get("scraps_delta", 0))
+				if g != 0 or s != 0:
+					actionable = true
+					break
+		if actionable:
+			oracle_actionable.append(event_id)
+	oracle_actionable.sort()
+	_check(oracle_actionable.size() > 2, "multiple generic events are actionable at {25 gold, 3 scraps}")
+
+	# Seeded replay against independent oracle and single randi_range draw.
+	for seed_value in [101, 202, 303, 404, 505]:
+		var oracle_rng := RandomNumberGenerator.new()
+		oracle_rng.seed = seed_value
+		var expected_idx: int = oracle_rng.randi_range(0, oracle_actionable.size() - 1)
+		var expected_id: String = oracle_actionable[expected_idx]
+
+		var test_rng := RandomNumberGenerator.new()
+		test_rng.seed = seed_value
+		var result := rotation.select_actionable_event(test_rng, null, test_wallet)
+		_check(_selection_shape_ok(result), "actionable selection shape is valid")
+		_check(result.get("ok") == true, "actionable selection succeeds with seed %d" % seed_value)
+		_check(result.get("event", {}).get("id") == expected_id,
+			"actionable selection matches independent oracle (seed %d)" % seed_value)
+		_check(test_rng.state == oracle_rng.state,
+			"one successful actionable selection consumes exactly one randi_range draw (seed %d)" % seed_value)
+
+		# Replay check with another RNG instance.
+		var replay_rng := RandomNumberGenerator.new()
+		replay_rng.seed = seed_value
+		var replay_result := rotation.select_actionable_event(replay_rng, null, test_wallet)
+		_check(replay_result.get("event", {}).get("id") == expected_id, "same-seed replay reproduces identical event")
+		_check(replay_rng.state == test_rng.state, "same-seed replay reproduces identical RNG state")
+
+	# Visited-ID exclusions.
+	var first_actionable: String = oracle_actionable[0]
+	var second_actionable: String = oracle_actionable[1]
+	var excluded_pair := [first_actionable, second_actionable]
+	var excl_rng := RandomNumberGenerator.new()
+	excl_rng.seed = 606
+	var excl_result := rotation.select_actionable_event(excl_rng, excluded_pair, test_wallet)
+	_check(excl_result.get("ok") == true, "actionable selection with exclusions succeeds")
+	_check(not excluded_pair.has(excl_result.get("event", {}).get("id")),
+		"actionable selection honors visited-ID exclusions")
+
+	# Detached record check: mutating returned event does not mutate rotation.
+	var detach_rng := RandomNumberGenerator.new()
+	detach_rng.seed = 707
+	var detach_res := rotation.select_actionable_event(detach_rng, null, test_wallet)
+	var returned_event: Dictionary = detach_res.get("event", {})
+	var returned_id: String = returned_event.get("id")
+	returned_event["title"] = "MUTATED_TITLE"
+	returned_event["choices"] = []
+	var verify_rng := RandomNumberGenerator.new()
+	verify_rng.seed = 707
+	var verify_res := rotation.select_actionable_event(verify_rng, null, test_wallet)
+	_check(verify_res.get("event", {}).get("id") == returned_id, "fresh selection returns original id")
+	_check(verify_res.get("event", {}).get("title") != "MUTATED_TITLE", "mutating result does not reach rotation")
+	_check(not (verify_res.get("event", {}).get("choices") as Array).is_empty(),
+		"mutating result choices does not reach rotation")
+
+	# Wallet and rotation state intact.
+	_check(test_wallet == wallet_snapshot, "caller wallet balance is never mutated by selection")
+
+	# Additive well-formed fixture.
+	var extended_events := _source_events()
+	extended_events.append(_future_event())
+	var extended_rotation := RunM04EventRotation.new({"events": extended_events})
+	_check(extended_rotation.is_catalog_valid(), "extended catalog is valid")
+	var ext_all_ids: Array = extended_rotation.get_generic_event_ids()
+	var exclude_all_but_future: Array = ext_all_ids.duplicate()
+	exclude_all_but_future.erase("future_lantern")
+	var ext_rng := RandomNumberGenerator.new()
+	ext_rng.seed = 901
+	var ext_result := extended_rotation.select_actionable_event(ext_rng, exclude_all_but_future, {"gold": 0, "scraps": 0})
+	_check(ext_result.get("ok") == true, "future additive event qualifies when actionable")
+	_check(ext_result.get("event", {}).get("id") == "future_lantern", "future additive event is selected")
+
+	# Existing select_event remains unchanged.
+	var legacy_rng := RandomNumberGenerator.new()
+	legacy_rng.seed = 902
+	var legacy_result := rotation.select_event(legacy_rng)
+	_check(legacy_result.get("ok") == true, "existing select_event works unchanged")
+	_check(rotation.get_generic_event_ids().has(legacy_result.get("event", {}).get("id")),
+		"existing select_event returns an event from the generic pool")
+
+
+func _test_actionable_event_rejections() -> void:
+	var rotation := RunM04EventRotation.new()
+	var test_wallet := {"gold": 10, "scraps": 2}
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 999111
+	var initial_state := rng.state
+
+	# Invalid wallet types.
+	var bad_wallets: Array = [
+		null,
+		5,
+		12.5,
+		"wallet",
+		[],
+		{},
+		{"gold": 10},
+		{"scraps": 2},
+		{"gold": 10, "scraps": 2, "extra": 1},
+		{"gold": "10", "scraps": 2},
+		{"gold": 10, "scraps": "2"},
+		{"gold": 10.0, "scraps": 2},
+		{"gold": -1, "scraps": 2},
+		{"gold": 10, "scraps": -1},
+		{"gold": -5, "scraps": -5},
+	]
+	for bad_w in bad_wallets:
+		var res := rotation.select_actionable_event(rng, null, bad_w)
+		_check(res.get("ok") == false, "invalid wallet rejects: " + str(bad_w))
+		_check((res.get("event") as Dictionary).is_empty(), "invalid wallet returns empty event: " + str(bad_w))
+		_check(rng.state == initial_state, "invalid wallet consumes no RNG: " + str(bad_w))
+
+	# Invalid RNG values.
+	var bad_rngs: Array = [null, 0, 3.14, "bad_rng", {}, [], RefCounted.new()]
+	for bad_r in bad_rngs:
+		var res := rotation.select_actionable_event(bad_r, null, test_wallet)
+		_check(res.get("ok") == false, "invalid RNG rejects: " + str(bad_r))
+		_check((res.get("event") as Dictionary).is_empty(), "invalid RNG returns empty event: " + str(bad_r))
+		_check(rng.state == initial_state, "invalid RNG consumes no RNG: " + str(bad_r))
+
+	# Malformed exclusions.
+	var bad_exclusions: Array = ["single_id", 123, {}, [1], [null], [""], ["   "], [["button_trail"]]]
+	for bad_ex in bad_exclusions:
+		var res := rotation.select_actionable_event(rng, bad_ex, test_wallet)
+		_check(res.get("ok") == false, "malformed exclusion rejects: " + str(bad_ex))
+		_check((res.get("event") as Dictionary).is_empty(), "malformed exclusion returns empty event: " + str(bad_ex))
+		_check(rng.state == initial_state, "malformed exclusion consumes no RNG: " + str(bad_ex))
+
+	# Invalid catalog.
+	var invalid_rotation := RunM04EventRotation.new({})
+	_check(not invalid_rotation.is_catalog_valid(), "empty fixture is invalid catalog")
+	var inv_res := invalid_rotation.select_actionable_event(rng, null, test_wallet)
+	_check(inv_res.get("ok") == false, "invalid catalog rejects actionable selection")
+	_check((inv_res.get("event") as Dictionary).is_empty(), "invalid catalog returns empty event")
+	_check(rng.state == initial_state, "invalid catalog consumes no RNG")
+
+	# Excluding all events leaves an empty eligible pool -> reject.
+	var all_ids: Array = rotation.get_generic_event_ids()
+	var empty_pool_res := rotation.select_actionable_event(rng, all_ids, test_wallet)
+	_check(empty_pool_res.get("ok") == false, "empty pool rejects actionable selection")
+	_check((empty_pool_res.get("event") as Dictionary).is_empty(), "empty pool returns empty event")
+	_check(rng.state == initial_state, "empty pool consumes no RNG")
+
+	# Leave-only fixture where choices have only zero deltas {gold: 0, scraps: 0}.
+	var zero_choice_events: Array = []
+	for req_id in REQUIRED_IDS:
+		var copy: Dictionary = _record_copy(req_id)
+		copy["choices"] = [
+			{"id": "leave", "text": "Leave", "outcome": {"gold": 0, "scraps": 0}},
+			{"id": "wait", "text": "Wait", "outcome": {"gold": 0, "scraps": 0}},
+		]
+		zero_choice_events.append(copy)
+	var zero_delta_rotation := RunM04EventRotation.new({"events": zero_choice_events})
+	_check(zero_delta_rotation.is_catalog_valid(), "zero-delta rotation catalog is valid")
+	var zero_delta_res := zero_delta_rotation.select_actionable_event(rng, null, {"gold": 100, "scraps": 100})
+	_check(zero_delta_res.get("ok") == false, "catalog with only zero-delta choices rejects as non-actionable")
+	_check((zero_delta_res.get("event") as Dictionary).is_empty(), "zero-delta choices return empty event")
+	_check(rng.state == initial_state, "zero-delta choices consume no RNG")
+
+	# Choice named "leave" with paid/nonzero delta IS actionable (do not infer action from choice ID).
+	var paid_leave_event := {
+		"id": "paid_leave_fixture",
+		"title": "Paid Leave Fixture",
+		"description": "The only affordable choice is named leave.",
+		"choices": [
+			{"id": "expensive", "text": "Cost 50 gold", "outcome": {"gold": -50, "scraps": 0}},
+			{"id": "leave", "text": "Pay 10 gold for 2 scraps", "outcome": {"gold": -10, "scraps": 2}},
+		],
+	}
+	var paid_leave_events: Array = []
+	for req_id in REQUIRED_IDS:
+		paid_leave_events.append(_record_copy(req_id))
+	paid_leave_events.append(paid_leave_event)
+	var paid_leave_rotation := RunM04EventRotation.new({"events": paid_leave_events})
+	_check(paid_leave_rotation.is_catalog_valid(), "paid leave fixture rotation is valid")
+	var paid_leave_rng := RandomNumberGenerator.new()
+	paid_leave_rng.seed = 444
+	var exclude_all_except_paid_leave: Array = paid_leave_rotation.get_generic_event_ids()
+	exclude_all_except_paid_leave.erase("paid_leave_fixture")
+	var paid_leave_res := paid_leave_rotation.select_actionable_event(
+		paid_leave_rng, exclude_all_except_paid_leave, {"gold": 10, "scraps": 0})
+	_check(paid_leave_res.get("ok") == true, "paid choice named leave is actionable")
+	_check(paid_leave_res.get("event", {}).get("id") == "paid_leave_fixture", "paid leave fixture is selected")
+
+	# Recovery check: after all rejections, RNG is untouched and clean call matches oracle.
+	var oracle := RandomNumberGenerator.new()
+	oracle.seed = 999111
+	var oracle_res := rotation.select_event(oracle)
+	var rec_res := rotation.select_event(rng)
+	_check(rec_res.get("event", {}).get("id") == oracle_res.get("event", {}).get("id"),
+		"rejections left RNG completely untouched for clean call")
+	_check(rng.state == oracle.state, "RNG state matches oracle after rejections")
 
 
 func _record_copy(event_id: String) -> Dictionary:
