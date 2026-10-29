@@ -697,22 +697,97 @@ func _fixture_start(target) -> void:
 func _mounted_blind(app) -> void:
 	_fixture_start(app)
 	await process_frame
-	_check(app.enemy_intents.is_bound() and app.enemies.get_enemy(1).hp > 0,
-		"mounted living attacker and bound announcements")
+	var presenter = app.get_node("LiveEnemyRoster")
+	_check(app.enemy_intents.is_bound() and app.enemies.get_enemy(1).hp > 0
+		and app.enemy_intents._enemies == app.enemies
+		and presenter.enemies == app.enemies and presenter._badges.size() == 2
+		and presenter._admitted_ids.size() == 2
+		and app.enemy_attacks == app.enemy_intents.get_intents()
+		and app.enemy_attacks[0].get("type") == "attack",
+		"mounted living attacker, identity-matched puppet and authentic bound attack")
+	if presenter._badges.size() != 2 or app.enemy_attacks.is_empty():
+		app.return_button.pressed.emit()
+		await process_frame
+		return
+	var badge: LiveEnemyIntentBadge = presenter._badges[0]
+	var action: Dictionary = app.enemy_attacks[0].duplicate(true)
+	var source_id: String = app.enemies.get_enemy(1).id
+	var puppet = presenter._puppets[CombatParty.PARTY_SIZE]
+	_check(puppet.actor_id == source_id and presenter._admitted_ids[0] == source_id
+		and action.get("enemy_position") == badge.source_position,
+		"Blind preview uses the genuinely bound source and puppet")
+	var ordinary := badge.readable_text
+	_check(not badge.blind_miss and badge.amount == action.amount
+		and badge.target_position == action.target_position and not ordinary.contains("MISS"),
+		"unblinded mounted attack starts with its ordinary real forecast")
+	# Remove opening protection with a real party operation so missed HP and Block
+	# are observable separately from the following player-turn Block reset.
+	_check(app.party.start_player_turn(), "real party clears initial Block before Blind witness")
 	app.enemies._enemies[0].statuses = {"blind_next_attack": 1}
+	var before_render := _snapshot(app)
+	presenter._refresh()
+	_check(_snapshot(app) == before_render, "Blind badge refresh does not spend turn, actors, deck or RNG")
+	_check(badge.blind_miss and badge.readable_text == "BLIND · MISS"
+		and badge.intent_type == "attack" and badge.amount == action.amount
+		and badge.target_position == action.target_position
+		and badge.tooltip_text.contains("entire next attempted attack")
+		and badge.tooltip_text.contains(LiveEnemyIntentBadge.hero_target_label(action.target_position))
+		and badge.tooltip_text.contains("No hero HP or Block")
+		and badge.tooltip_text.contains("Without Blind:"),
+		"mounted Blind source advertises entire miss with genuine attack/target only in hover: " + str([badge.blind_miss, badge.readable_text, badge.tooltip_text, presenter._admitted_ids, puppet.actor_id, app.enemy_intents._enemies == app.enemies, presenter._bound_unravel(app) != null, action]))
+	_check(badge.size.x >= LiveEnemyIntentBadge.BADGE_WIDTH
+		and badge.size.y == LiveEnemyIntentBadge.BADGE_HEIGHT
+		and badge.caption_text_area().grow(0.5).encloses(badge.caption_text_rect())
+		and badge.caption_rect().grow(0.5).encloses(badge.caption_text_rect())
+		and badge.caption_font_size() >= LiveEnemyIntentBadge.CAPTION_MIN_FONT,
+		"mounted sewn Blind MISS caption fits its original 192x28 patch: " + str([badge.size, badge.caption_text_area(), badge.caption_text_rect(), badge.caption_rect(), badge.caption_font_size()]))
+	# A stale/rebound admitted source must never borrow the current enemy's Blind.
+	# Refresh corrects a puppet's art ID automatically, so use the presenter's
+	# battle-admission identity ledger to simulate the stale binding.
+	presenter._admitted_ids[0] = "other_enemy"
+	presenter._refresh()
+	_check(not badge.blind_miss and not badge.readable_text.contains("MISS"),
+		"stale admitted identity cannot borrow the real enemy's Blind")
+	presenter._admitted_ids[0] = source_id
+	presenter._refresh()
+	_check(badge.blind_miss and _snapshot(app) == before_render,
+		"restoring source admission identity restores view without model or RNG drift")
 	var hp_before: Array = app.party.get_heroes().map(func(h): return h.hp)
+	var block_before: Array = app.party.get_heroes().map(func(h): return h.block)
+	var rng_before: int = app.run_rng.state
+	_check(block_before == [0, 0, 0], "real Blind attempt begins with zero hero Block")
 	app.end_turn_button.pressed.emit()
 	_check(app.party.get_heroes().map(func(h): return h.hp) == hp_before
+		and app.party.get_heroes().map(func(h): return h.block) == block_before
 		and app.enemies.get_enemy(1).statuses == {} and app.enemy_intents._turn_index == 1,
-		"actual End Turn consumes source Blind and misses entire single-hit attack")
+		"actual legal End Turn consumes Blind once; attempted attack costs no HP or Block")
 	await process_frame
-	var before := _snapshot(app)
+	var after_resolution := _snapshot(app)
+	presenter._refresh()
+	_check(_snapshot(app) == after_resolution and app.run_rng.state == rng_before,
+		"consumed Blind refresh cannot change actors, announcement, deck or seeded RNG")
+	var next_action: Dictionary = app.enemy_intents.get_intents()[0]
+	_check(next_action.get("type") == "attack" and not badge.blind_miss
+		and badge.amount == next_action.amount and badge.target_position == next_action.target_position
+		and badge.readable_text == ordinary and badge.tooltip_text.contains("damage aimed at")
+		and not badge.tooltip_text.contains("Blind:"),
+		"next unblinded live attack restores exact original amount, target and caption")
+	# Malformed Blind is invalid for combat, but the view must also refuse a fake MISS.
 	app.enemies._enemies[0].statuses = {"blind_next_attack": 2}
 	var malformed := _snapshot(app)
+	presenter._refresh()
+	_check(not badge.blind_miss and badge.readable_text == ordinary
+		and _snapshot(app) == malformed,
+		"malformed two-stack Blind cannot create a false MISS or drift RNG")
 	app.end_turn_button.pressed.emit()
-	_check(_snapshot(app) == malformed, "mounted malformed Blind rejects without turn/RNG/actor mutation")
+	_check(_snapshot(app) == malformed and not app.end_turn_button.disabled,
+		"mounted malformed Blind rejects without turn/RNG/actor mutation")
 	app.enemies._enemies[0].statuses = {}
-	_check(app.enemy_intents._turn_index == before[7], "malformed Blind never advanced cache")
+	_check(app.enemy_intents._turn_index == after_resolution[7],
+		"malformed Blind never advanced cached schedule")
+	presenter._refresh()
+	_check(not badge.blind_miss and badge.readable_text == ordinary,
+		"clearing malformed metadata retains the exact normal attack forecast")
 	await process_frame
 	app.return_button.pressed.emit()
 	await process_frame
