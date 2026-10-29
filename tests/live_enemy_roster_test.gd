@@ -2517,6 +2517,7 @@ func _run() -> void:
 	await _m05_fallbacks(app, presenter)
 	await _expanded_meadow_layout(scene)
 	await _mounted_plaque_reflow(scene)
+	await _survival_ribbons(scene)
 	app.free()
 	reference.free()
 	_finish()
@@ -3611,6 +3612,220 @@ func _mounted_plaque_reflow(scene: PackedScene) -> void:
 	app.free()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
 	await process_frame
+
+
+## V3 survival ribbons use genuine shipped actor definitions inside the real app scene.
+## No fake badge, fabricated receipt or direct edits to the presenter's cue fields.
+func _survival_records() -> Dictionary:
+	var records: Array = RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var found := {}
+	for record in records:
+		if record.get("id") in ["razor_ribbon_wraith", "quilt_termite",
+				"fray_scavenger", "button_guard"]:
+			found[record["id"]] = record.duplicate(true)
+	return found
+
+
+func _survival_plaque_bounds(presenter) -> void:
+	for index in range(presenter._status_tags.size()):
+		var plaque: PanelContainer = presenter._status_tags[index]
+		if not plaque.is_visible_in_tree():
+			continue
+		var puppet = presenter._puppets[CombatParty.PARTY_SIZE + index]
+		var world: Rect2 = plaque.get_global_rect()
+		_check(world.has_area() and Rect2(0, 0, 1280, 720).encloses(world)
+			and puppet.get_global_rect().grow(0.01).encloses(world)
+			and not world.intersects(presenter._badges[index].get_global_rect())
+			and not world.intersects(puppet.get_global_transform() * puppet.tag_band()),
+			"survival plaque fits the mounted actor and 1280x720 stage without covering intent/name")
+		for other in presenter._status_tags:
+			if other != plaque and other.is_visible_in_tree():
+				_check(not world.intersects(other.get_global_rect()),
+					"survival plaques never overlap another actor's warning")
+
+
+func _survival_ribbons(scene: PackedScene) -> void:
+	var authored := _survival_records()
+	_check(authored.has("razor_ribbon_wraith") and authored.has("quilt_termite")
+		and authored.has("fray_scavenger") and authored.has("button_guard")
+		and authored["razor_ribbon_wraith"].get("max_hp") == 27
+		and authored["razor_ribbon_wraith"].get("revive_once") == true
+		and authored["quilt_termite"].get("max_hp") == 26
+		and authored["quilt_termite"].get("split_on_death") is bool
+		and authored["quilt_termite"].get("split_on_death") == true,
+		"V3 ribbons start from real typed Wraith and Termite catalog records")
+	if authored.size() != 4:
+		return
+	var file := FileAccess.open(FIXTURE, FileAccess.WRITE)
+	_check(file != null, "authentic ribbon fixture can be staged for the app's real Start Run")
+	if file == null:
+		return
+	file.store_string(JSON.stringify([authored["razor_ribbon_wraith"],
+		authored["quilt_termite"]]))
+	file.close()
+	var app = scene.instantiate()
+	root.add_child(app)
+	await process_frame
+	app.starter_enemies_path = FIXTURE
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	var presenter = app.get_node("LiveEnemyRoster")
+	_check(app.enemies != null and app.round_flow != null and app.enemy_intents.is_bound()
+		and presenter.enemies == app.enemies and presenter._status_tags.size() == 2
+		and presenter._puppets.size() == 5
+		and presenter._puppets[3].actor_id == "razor_ribbon_wraith"
+		and presenter._puppets[4].actor_id == CombatEnemies.TERMITE_ID,
+		"live app Start Run mounts exactly the two typed actors with bound combat")
+	if app.enemies == null or presenter._status_tags.size() != 2:
+		app.free()
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
+		return
+	var wraith: PanelContainer = presenter._status_tags[0]
+	var termite: PanelContainer = presenter._status_tags[1]
+	var wraith_label := wraith.get_node("Caption") as Label
+	var termite_label := termite.get_node("Caption") as Label
+	var before: Array = _snapshot(app)
+	presenter._refresh()
+	_check(wraith.is_visible_in_tree() and wraith_label.text == "Revive ready"
+		and wraith.tooltip_text.contains("first lethal HP loss")
+		and wraith.tooltip_text.contains("14 HP")
+		and wraith.tooltip_text.contains("Only once")
+		and termite.is_visible_in_tree() and termite_label.text == "Splits if room"
+		and termite.tooltip_text.contains("confirmed paid-card lethal hit")
+		and termite.tooltip_text.contains("slot is available")
+		and termite.tooltip_text.contains("13-HP Half Quilt Termites")
+		and termite.tooltip_text.contains("Bleed and the enemy phase do not trigger"),
+		"ready Wraith and conditional Termite display exact source-owned captions and help")
+	_survival_plaque_bounds(presenter)
+	for repeat in range(3):
+		presenter._refresh()
+	_check(_snapshot(app) == before and presenter._badges.size() == 2,
+		"survival preview changes no HP, cards, turn, intent, party or run RNG")
+	var first: Dictionary = app.enemies._enemies[0]
+	var second: Dictionary = app.enemies._enemies[1]
+	first["statuses"] = {"weak": 2}
+	second["statuses"] = {"bleed": 1}
+	presenter._refresh()
+	_check(wraith_label.text.contains("Weak 2") and wraith_label.text.contains("Revive ready")
+		and termite_label.text.contains("Bleed 1") and termite_label.text.contains("Splits if room")
+		and presenter._badges[0].source_position == 1,
+		"existing statuses and intent badges coexist with both survival cues")
+	first.erase("statuses")
+	second.erase("statuses")
+	for invalid in ["yes", 1, null]:
+		first["revive_once"] = invalid
+		second["split_on_death"] = invalid
+		presenter._refresh()
+		_check(not wraith.visible and not termite.visible
+			and wraith.tooltip_text.is_empty() and termite.tooltip_text.is_empty(),
+			"malformed nonboolean revival/split flags cannot produce trait warnings")
+	first["revive_once"] = true
+	second["split_on_death"] = true
+	first["id"] = "foreign_wraith"
+	second["id"] = "foreign_termite"
+	presenter._refresh()
+	_check(not wraith.visible and not termite.visible,
+		"foreign actor IDs at occupied slots cannot borrow an old actor's trait")
+	first["id"] = "razor_ribbon_wraith"
+	second["id"] = "quilt_termite"
+	second["chew_block_on_attack"] = false
+	presenter._refresh()
+	_check(wraith_label.text == "Revive ready" and not termite.visible,
+		"unsupported Termite metadata fails closed without suppressing genuine Wraith")
+	second["chew_block_on_attack"] = true
+	first["revived"] = "invalid"
+	presenter._refresh()
+	_check(not wraith.visible and termite_label.text == "Splits if room",
+		"invalid revival latch is not guessed or coalesced into a ready state")
+	first.erase("revived")
+	presenter._refresh()
+	_check(_snapshot(app) == before and wraith_label.text == "Revive ready",
+		"invalid flags are restored without changing the authentic live battle")
+	_check(app.enemies.apply_damage(1, 27), "authoritative first lethal hits the 27-HP Wraith")
+	var revived: Dictionary = app.enemies.get_enemy(1)
+	presenter._refresh()
+	_check(revived.get("hp") == 14 and revived.get("revived") == true
+		and not app.enemies.is_slain(1) and wraith_label.text == "Revive spent"
+		and wraith.tooltip_text.contains("next lethal HP loss is final")
+		and not wraith.tooltip_text.contains("first lethal HP loss"),
+		"genuine first lethal latches revival and next refresh replaces ready with spent")
+	_check(app.enemies.apply_damage(1, 14) and app.enemies.is_slain(1),
+		"authoritative second lethal finally slays the same Wraith")
+	presenter._refresh()
+	_check(not wraith.visible and wraith_label.text.is_empty() and wraith.tooltip_text.is_empty(),
+		"slain Wraith emits no living revival claim")
+	_check(app.enemies.apply_damage(2, 26) and app.enemies.is_slain(2),
+		"authoritative 26-HP Termite receives a lethal hit")
+	presenter._refresh()
+	_check(not termite.visible and termite_label.text.is_empty(),
+		"lethal damage alone has no living split warning or fabricated offspring")
+	var stage: Dictionary = app.enemies.stage_split_on_death(2)
+	_check(stage == {"ok": true, "split": true, "positions": [2, 3]}
+		and app.enemies.get_enemies().size() == 3
+		and app.enemies.get_enemy(2).get("id") == CombatEnemies.HALF_LEFT_ID
+		and app.enemies.get_enemy(3).get("id") == CombatEnemies.HALF_RIGHT_ID
+		and app.enemies.get_enemy(2).get("hp") == 13
+		and app.enemies.get_enemy(3).get("hp") == 13,
+		"explicit post-paid-card staging replaces the parent with real 13-HP half actors")
+	presenter._sync_battle()
+	await process_frame
+	presenter._refresh()
+	_check(presenter._status_tags.size() == 3
+		and presenter._puppets[4].actor_id == CombatEnemies.HALF_LEFT_ID
+		and presenter._puppets[5].actor_id == CombatEnemies.HALF_RIGHT_ID,
+		"growing actual roster remounts one plaque per split child")
+	for plaque in presenter._status_tags:
+		var text: String = (plaque.get_node("Caption") as Label).text
+		_check(not text.contains("Splits if room") and not text.contains("Revive")
+			and not plaque.tooltip_text.contains("paid-card lethal"),
+			"half-Termites and the slain Wraith inherit no survival cue")
+	app.return_button.pressed.emit()
+	await process_frame
+	app.free()
+	# A full roster never makes the same paid-card split promise or stages a fourth.
+	file = FileAccess.open(FIXTURE, FileAccess.WRITE)
+	file.store_string(JSON.stringify([authored["quilt_termite"], authored["fray_scavenger"]]))
+	file.close()
+	app = scene.instantiate()
+	root.add_child(app)
+	await process_frame
+	app.starter_enemies_path = FIXTURE
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	presenter = app.get_node("LiveEnemyRoster")
+	# The standalone two-slot schedule cannot admit a third position. Present a
+	# genuine three-actor CombatEnemies model in the already-mounted battle instead.
+	# The source-of-truth model still owns capacity, lethal damage and staging.
+	var full_roster := CombatEnemies.new([authored["quilt_termite"],
+		authored["fray_scavenger"], authored["button_guard"]])
+	_check(full_roster.is_valid() and full_roster.get_enemies().size() == 3,
+		"three authentic definitions create a legal authoritative full roster")
+	app.enemies = full_roster
+	presenter._sync_battle()
+	await process_frame
+	_check(app.enemies != null and app.enemies.get_enemies().size() == CombatEnemies.MAX_ENEMIES
+		and presenter._status_tags.size() == CombatEnemies.MAX_ENEMIES
+		and presenter._puppets[3].actor_id == CombatEnemies.TERMITE_ID,
+		"full-roster boundary is the real mounted three-foe Termite fight")
+	if app.enemies != null and presenter._status_tags.size() == CombatEnemies.MAX_ENEMIES:
+		var full: PanelContainer = presenter._status_tags[0]
+		presenter._refresh()
+		_check(not full.visible and full.tooltip_text.is_empty()
+			and not (full.get_node("Caption") as Label).text.contains("Splits"),
+			"three occupied slots never promise a new Termite")
+		_check(app.enemies.apply_damage(1, 26), "real full-roster Termite is slain")
+		var all_before: Array[Dictionary] = app.enemies.get_enemies()
+		_check(app.enemies.stage_split_on_death(1) == {"ok": true, "split": false}
+			and app.enemies.get_enemies() == all_before,
+			"explicit split contract cannot publish a fourth foe after full-roster lethal")
+		presenter._refresh()
+		_check(not full.visible and full.tooltip_text.is_empty(),
+			"slain full-roster source never keeps a stale warning")
+	app.free()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
 
 
 func _finish() -> void:

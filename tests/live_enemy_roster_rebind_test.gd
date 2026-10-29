@@ -34,6 +34,7 @@ func _controls(presenter) -> Array:
 	var result: Array = [presenter.battle_row, presenter.panel]
 	result.append_array(presenter._labels)
 	result.append_array(presenter._badges)
+	result.append_array(presenter._status_tags)
 	return result
 
 
@@ -479,7 +480,127 @@ func _run() -> void:
 	app.return_button.pressed.emit()
 	await process_frame
 	app.free()
+	await _survival_rebind(scene)
 	_finish()
+
+
+## A real Start Run owns the source Wraith; only same-instance actor binding
+## can show its latch. Later battles and same-size replacement models may not
+## inherit either the Wraith or the Termite's old sewn status ticket.
+func _survival_rebind(scene: PackedScene) -> void:
+	const FIXTURE_PATH := "user://live_enemy_roster_rebind_survival.json"
+	var records: Array = RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var authored := {}
+	for record in records:
+		if record.get("id") in ["razor_ribbon_wraith", "quilt_termite",
+				"fray_scavenger"]:
+			authored[record["id"]] = record.duplicate(true)
+	_check(authored.size() == 3
+		and authored["razor_ribbon_wraith"].get("revive_once") == true
+		and authored["quilt_termite"].get("split_on_death") == true,
+		"rebind coverage uses shipped typed revival and split actors, not fake IDs")
+	if authored.size() != 3:
+		return
+	var file := FileAccess.open(FIXTURE_PATH, FileAccess.WRITE)
+	if file == null:
+		_check(false, "real app fixture file opens")
+		return
+	file.store_string(JSON.stringify([authored["razor_ribbon_wraith"],
+		authored["fray_scavenger"]]))
+	file.close()
+	var app = scene.instantiate()
+	root.add_child(app)
+	await process_frame
+	app.starter_enemies_path = FIXTURE_PATH
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	var presenter = app.get_node("LiveEnemyRoster")
+	_check(app.enemies != null and app.enemy_intents.is_bound()
+		and presenter.enemies == app.enemies and presenter._status_tags.size() == 2
+		and presenter._puppets[3].actor_id == "razor_ribbon_wraith",
+		"Start Run mounts the real Wraith in its original battle")
+	if app.enemies == null or presenter._status_tags.size() != 2:
+		app.free()
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE_PATH))
+		return
+	var original = presenter._status_tags[0]
+	var before := _snapshot(app, [app.enemies], [app.enemy_intents])
+	_check((original.get_node("Caption") as Label).text == "Revive ready"
+		and original.is_visible_in_tree(), "first battle's original Wraith starts ready")
+	_check(app.enemies.apply_damage(1, 27) and app.enemies.get_enemy(1).get("revived") == true,
+		"real model spends Wraith revival before the replacement battle")
+	presenter._refresh()
+	_check((original.get_node("Caption") as Label).text == "Revive spent"
+		and original.tooltip_text.contains("next lethal"),
+		"the very same source plaque refreshes its genuinely spent latch")
+	var previous_id: int = original.get_instance_id()
+	var old_enemies = app.enemies
+	var replacement := CombatEnemies.new([authored["fray_scavenger"],
+		authored["razor_ribbon_wraith"]])
+	_check(replacement.is_valid() and replacement.get_enemy(2).get("hp") == 27,
+		"replacement model is fresh and its Wraith has not inherited the old latch")
+	app.enemies = replacement
+	presenter._sync_battle()
+	_check(not original.is_inside_tree() and presenter.enemies == replacement,
+		"same-count model swap detaches old spent plaque synchronously")
+	await process_frame
+	presenter._refresh()
+	_check(not is_instance_id_valid(previous_id) and presenter._status_tags.size() == 2
+		and not presenter._status_tags[0].visible
+		and presenter._status_tags[0].tooltip_text.is_empty()
+		and (presenter._status_tags[0].get_node("Caption") as Label).text.is_empty()
+		and (presenter._status_tags[1].get_node("Caption") as Label).text == "Revive ready"
+		and presenter._puppets[4].actor_id == "razor_ribbon_wraith",
+		"fresh model's matched new slot alone receives ready; old spent source is freed")
+	var new_before := _snapshot(app, [old_enemies, replacement], [app.enemy_intents])
+	for repeat in range(3):
+		presenter._refresh()
+	_check(_snapshot(app, [old_enemies, replacement], [app.enemy_intents]) == new_before,
+		"rebound plaques consume no RNG, HP, intent, card or turn state")
+	var second_id: int = presenter._status_tags[1].get_instance_id()
+	app.enemies = null
+	presenter._sync_battle()
+	_check(presenter.enemies == null and presenter._status_tags.is_empty()
+		and presenter.panel == null, "null observation synchronously clears the rebind")
+	await process_frame
+	_check(not is_instance_id_valid(second_id), "detached ready plaque is freed, not pooled")
+	app.enemies = old_enemies
+	presenter._sync_battle()
+	presenter._refresh()
+	_check((presenter._status_tags[0].get_node("Caption") as Label).text == "Revive spent",
+		"reobserving original spent model never resets its one-use latch")
+	app.return_button.pressed.emit()
+	await process_frame
+	_check(presenter.enemies == null and presenter._status_tags.is_empty(),
+		"Return releases the entire first survival battle")
+	# A new Start Run with a different actual trait may display only that trait.
+	file = FileAccess.open(FIXTURE_PATH, FileAccess.WRITE)
+	file.store_string(JSON.stringify([authored["quilt_termite"], authored["fray_scavenger"]]))
+	file.close()
+	app.starter_enemies_path = FIXTURE_PATH
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	_check(app.enemies != null and presenter.enemies == app.enemies
+		and presenter._status_tags.size() == 2 and presenter._puppets[3].actor_id == "quilt_termite",
+		"fresh game after Return mounts authentic Termite, not old Wraith")
+	if app.enemies != null and presenter._status_tags.size() == 2:
+		_check((presenter._status_tags[0].get_node("Caption") as Label).text == "Splits if room"
+			and presenter._status_tags[0].tooltip_text.contains("paid-card lethal")
+			and not presenter._status_tags[0].tooltip_text.contains("Revive")
+			and not presenter._status_tags[1].visible,
+			"new battle shows only Termite's conditional split, no earlier revive cue")
+		var final_before := _snapshot(app, [app.enemies], [app.enemy_intents])
+		for repeat in range(3):
+			presenter._refresh()
+		_check(_snapshot(app, [app.enemies], [app.enemy_intents]) == final_before,
+			"fresh Termite cue remains presentation-only across repeated reads")
+	app.return_button.pressed.emit()
+	await process_frame
+	app.free()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE_PATH))
 
 
 func _finish() -> void:
