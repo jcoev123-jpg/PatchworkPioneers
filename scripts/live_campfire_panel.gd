@@ -55,8 +55,7 @@ func _ready() -> void:
 	heal_button.tooltip_text = "1 → Heal"
 	leave_button.tooltip_text = "2 → Leave"
 	_refresh()
-	if _source_current():
-		heal_button.grab_focus()
+	_focus_default()
 
 
 func _draw() -> void:
@@ -157,8 +156,7 @@ func bind(visit: RunCampfireVisit) -> void:
 	if is_node_ready():
 		show()
 		_refresh()
-		if _source_current():
-			heal_button.grab_focus()
+		_focus_default()
 
 
 func close() -> void:
@@ -183,6 +181,32 @@ func _source_current() -> bool:
 		and state.get("heroes") == _snapshot.get("heroes") \
 		and state == _snapshot and _preview.size() == 3 \
 		and RunRestRecovery.new(state["heroes"]).choose_heal().get("heroes") == _preview
+
+
+## The authentic read-only preview alone decides the safe default: a party that
+## can genuinely recover HP starts on Heal, a fully healed party starts on
+## Leave so a stray Enter cannot spend the one visit on a zero-gain Heal.
+## A Torn hero is never zero-gain: the same preview revives it above 0 HP.
+func _preview_gain_positive() -> bool:
+	var heroes: Array = _snapshot.get("heroes", [])
+	if heroes.size() != 3 or _preview.size() != 3:
+		return false
+	for i in range(3):
+		if int(_preview[i].get("hp", 0)) > int(heroes[i].get("hp", 0)):
+			return true
+	return false
+
+
+## Grab keyboard focus for the default choice only while the bound source is
+## current and the target is a valid, visible, focusable button.
+func _focus_default() -> void:
+	if heal_button == null or leave_button == null or not _source_current():
+		return
+	var target := heal_button if _preview_gain_positive() else leave_button
+	if target.disabled or not target.is_visible_in_tree() \
+			or target.focus_mode == Control.FOCUS_NONE:
+		return
+	target.grab_focus()
 
 
 func _hero_text(i: int) -> String:

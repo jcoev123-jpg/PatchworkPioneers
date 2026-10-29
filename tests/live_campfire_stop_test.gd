@@ -80,6 +80,15 @@ func _camp_enter(atlas: bool) -> void:
 		var note := "  ·  TORN → REVIVED" if hero.hp == 0 else ""
 		var caption := "%s    %d → %d / %d HP  ·  %s%s" % [actor_name, hero.hp, forecast, hero.max_hp, gain_text, note]
 		_check(app.campfire_view.hero_labels[i].text == caption, "real hero forecast mounted")
+	var preview_gain := false
+	for hero_entry in before.heroes:
+		var forecast_hp: int = mini(hero_entry.max_hp,
+			maxi(1, hero_entry.hp) + int(floor(hero_entry.max_hp * 0.3)))
+		if forecast_hp > int(hero_entry.hp):
+			preview_gain = true
+	_check((app.campfire_view.heal_button if preview_gain
+			else app.campfire_view.leave_button).has_focus(),
+		"live Campfire default focus follows the authentic preview gain")
 	app.campfire_view.heal_button.grab_focus()
 	await _key(KEY_TAB)
 	_check(app.campfire_view.leave_button.has_focus(), "Tab reaches Leave")

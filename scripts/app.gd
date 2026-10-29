@@ -5270,7 +5270,9 @@ func _choose_campfire_route(id: String, source: WeakRef, prior: Array[String], b
 	campfire_heal_button.focus_previous = campfire_heal_button.focus_next
 	campfire_leave_button.focus_previous = campfire_leave_button.focus_next
 	_campfire_original = _sewing_context()
-	campfire_heal_button.grab_focus()
+	# The panel's authentic preview gain decides the safe default focus: Heal
+	# only when the party can recover, Leave for a fully healed party.
+	campfire_view._focus_default()
 	return true
 
 
