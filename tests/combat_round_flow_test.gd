@@ -32,6 +32,7 @@ func _run() -> void:
 	_test_enemy_status_turns()
 	_test_status_damage()
 	_test_reordered_status_turn()
+	_test_taunt_phase_boundaries()
 	_test_turret_turns()
 	_test_turret_boundaries()
 	_test_turret_rejections()
@@ -1922,3 +1923,58 @@ func _test_turret_enrage() -> void:
 	_check(not later["flow"].end_turn() and _snapshot(later) == held and later["flow"]._turrets == turrets
 		and not later["enemies"].get_enemy(1).has("enrage_stacks"),
 		"a refused enemy phase leaves the rehearsed Enrage stack, shot, beat and RNG uncommitted")
+
+
+## Whole enemy-turn Taunt lives on the authoritative coordinator, not the hand UI.
+## A rejected transition cannot consume it; the enemy executor sees detached projections.
+func _test_taunt_phase_boundaries() -> void:
+	for lethal in [false, true]:
+		var fight := _fight(81010)
+		var id := "warden_v3_iron_challenge"
+		var rng: RandomNumberGenerator = fight.rng
+		fight.deck = CombatDeck.new([id, id, "warden_brace", "warden_strike",
+			"seamstress_mend"], rng)
+		fight.intents = CombatEnemyIntents.new([
+			{"enemy_position": 1, "pattern": [{"type": "attack",
+				"amount": 200 if lethal else 12, "hits": 2, "target_position": 3}]},
+			{"enemy_position": 2, "pattern": [{"type": "block", "amount": 1}]}])
+		fight.flow = CombatRoundFlow.new(fight.deck, fight.party, fight.enemies,
+			fight.intents, fight.result)
+		var flow: CombatRoundFlow = fight.flow
+		var party: CombatParty = fight.party
+		_check(flow.begin_fight() and fight.deck.hand.count(id) == 2
+			and flow.can_play_warden_taunt_card(id), "round-owned Taunt begins with authentic Warden, card and energy")
+		_check(flow.play_warden_taunt_card(id)
+			and flow._taunt_service.has_pending_taunt()
+			and fight.deck.hand.count(id) == 1 and fight.deck.discard_pile.count(id) == 1
+			and party.get_hero(1).block == 9, "exact paid Taunt is armed on this fight once")
+		var original: Array = fight.intents.get_intents()
+		# An armed Taunt redirects THIS fight's phase: a substituted scheduler cannot
+		# borrow it. The identity check costs no state and leaves the latch armed.
+		var genuine: CombatEnemyIntents = fight.intents
+		fight.flow._intents = CombatEnemyIntents.new([
+			{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 1,
+				"target_position": 2}]}])
+		var foreign := _snapshot(fight)
+		_check(not flow.end_turn() and _snapshot(fight) == foreign
+			and flow._taunt_service.has_pending_taunt(),
+			"armed Taunt refuses a foreign scheduler with no spend or expiry")
+		fight.flow._intents = genuine
+		_check(_snapshot(fight) == foreign, "taunt fixture restores the genuine scheduler unchanged")
+		# Intentionally malformed attack refuses in the phase's detached validation.
+		fight.intents._definitions[0].pattern[0].target_position = 99
+		var before := _snapshot(fight)
+		_check(not flow.end_turn() and _snapshot(fight) == before
+			and flow._taunt_service.has_pending_taunt(),
+			"invalid enemy phase preserves paid latch, complete models and RNG")
+		fight.intents._definitions[0].pattern[0].target_position = 3
+		_check(fight.intents.get_intents() == original, "refusal leaves original cached announcement intact")
+		_check(flow.end_turn() and not flow._taunt_service.has_pending_taunt(),
+			"first successful whole enemy phase consumes Taunt once")
+		_check(party.get_hero(2).hp == 30 and party.get_hero(3).hp == 26
+			and (party.is_downed(1) if lethal else party.get_hero(1).hp == 37),
+			"both redirected hits land on living Warden even when phase is lethal")
+		if not lethal:
+			_check(flow.end_turn() and party.get_hero(3).hp == 14
+				and party.get_hero(1).hp == 37,
+				"next completed turn preserves original third-seat attack after Taunt expiry")
