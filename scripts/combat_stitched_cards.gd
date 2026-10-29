@@ -132,10 +132,12 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 			return failure
 		if kind in ["enemy_single", "ally_single"] and not half.to_positions.is_empty() and not half.to_positions.has(target):
 			return failure
-		if half.id in CombatTinkerPoolAttacks.STITCHED_IDS:
-			# Authenticate the canonical Tinker pool record itself; its own
-			# resolver owns Rivet's after-hit Exposed and the shared latches.
-			if half != _tinker_pool.get_definition(half.id) or kind != "enemy_single":
+		if half.id in CombatTinkerPoolAttacks.STITCHED_IDS \
+				or half.id in CombatTinkerPoolAttacks.STITCHED_AREA_IDS:
+			# Authenticate both target shapes against canonical Tinker printings.
+			# The pool resolver owns per-living-slot hits and the shared latches.
+			var expected_kind := "enemy_all" if half.id in CombatTinkerPoolAttacks.STITCHED_AREA_IDS else "enemy_single"
+			if half != _tinker_pool.get_definition(half.id) or kind != expected_kind:
 				return failure
 			var pool_attack := direct_fire.resolve_staged_half(staged_party,
 				staged_enemies, half.id, target, bonuses[index])

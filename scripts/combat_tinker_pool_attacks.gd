@@ -14,6 +14,11 @@ const STITCHED_IDS: Array[String] = [
 	"tinker_long_barrel", "tinker_long_barrel_plus",
 	"tinker_bobbin_cannon", "tinker_bobbin_cannon_plus",
 ]
+## Target-free area halves use the same staged pool resolver, without changing
+## the single-target selection contract of STITCHED_IDS.
+const STITCHED_AREA_IDS: Array[String] = [
+	"tinker_scatter_bolts", "tinker_scatter_bolts_plus",
+]
 
 var _first_attack: CombatTinkerFirstAttack
 var _pinned: CombatPinned
@@ -121,7 +126,8 @@ static func stage_for_stitch(attacks: CombatAttackCards) -> CombatTinkerPoolAtta
 ## per-half authorization (0 or 2), exactly as for starter halves.
 func resolve_staged_half(party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, base_bonus: int = 0) -> Dictionary:
-	if card_id not in STITCHED_IDS or base_bonus not in [0, 2]:
+	if (card_id not in STITCHED_IDS and card_id not in STITCHED_AREA_IDS) \
+			or base_bonus not in [0, 2]:
 		return _failure()
 	if _patches != null and not _patches.is_current():
 		return _failure()

@@ -917,6 +917,7 @@ func _run() -> void:
 			_check(randi() == global_next, "earned route and cast preserve global RNG")
 	await _coat_cases(fixture)
 	await _pool_case()
+	await _scatter_area_cases()
 	await _plain_strike_cases()
 	await _sight_glass_case()
 	await _knit_case(fixture)
@@ -1330,3 +1331,155 @@ func _plain_strike_cases() -> void:
 					_check(trace == replay, "seeded mouse/keyboard full mounted plain-strike replay")
 				await _return()
 				_check(randi() == global_next, "mounted plain strike preserves global RNG")
+
+
+## Seeded first Fight's real reward UI offers Scatter. The opening claim earns
+## the base copy; the optional canonical upgrade service creates the + printing
+## before the connected Rest stitches it with a different owner's real Brace.
+const SCATTER_FIXTURE := {"seed": 1943, "fight": "f01_n0",
+	"elite": ["f02_n0"], "rest": ["f03_n0"], "next": "f04_n3"}
+
+
+func _scatter_area_cases() -> void:
+	for plus in [false, true]:
+		var area_id := "tinker_scatter_bolts_plus" if plus else "tinker_scatter_bolts"
+		for reverse in [false, true]:
+			var pair := ["warden_brace", area_id] if reverse else [area_id, "warden_brace"]
+			var replay: Array = []
+			for keyboard in [false, true]:
+				print("mounted earned Scatter: ", pair, " keyboard=", keyboard)
+				seed(80714)
+				var global_next := randi()
+				seed(80714)
+				var id := await _earn(SCATTER_FIXTURE, pair, keyboard, "", true,
+					"tinker_scatter_bolts", plus)
+				if id.is_empty():
+					_check(false, "opening reward/Rest/next Fight genuinely held Scatter " + area_id)
+					return
+				await _restore_stitch_positions(id)
+				var ledger := RunRestStitchCards.new(app.run_deck, app.run_stitch_descriptors,
+					app.run_scraps, app.run_next_stitch_id)
+				var preview := CombatStitchedTargetPreview.new().get_preview(ledger,
+					app._stitch_snapshot(), app.deck, app.party, app.enemies, id)
+				var area_index: int = 1 if reverse else 0
+				var slots: Array[int] = []
+				for enemy in app.enemies.get_enemies():
+					if enemy.hp > 0:
+						slots.append(enemy.position)
+				_check(ledger.is_valid() and app.deck.hand.has(id) and app.deck.energy >= 2
+					and _hero_position("tinker") == 3 and slots.size() >= 2
+					and preview.get("playable", false) and preview.halves.size() == 2,
+					"real reward, upgraded printing, living back Tinker, held area and two foes")
+				if not preview.get("playable", false):
+					await _return()
+					continue
+				_check(app.run_stitch_descriptors[id].half_ids == pair
+					and preview.cost == 2
+					and preview.halves[area_index].target_kind == "enemy_all"
+					and not preview.halves[area_index].requires_selection
+					and preview.halves[area_index].target_positions.is_empty()
+					and preview.halves[area_index].affected_positions == slots
+					and not preview.halves[1 - area_index].requires_selection,
+					"mounted stitched preview exposes zero selected targets and exact living slots")
+				var receipt: Dictionary = app._stitch_snapshot()
+				# A stale optimistic Rest receipt and a forged canonical record
+				# cannot authorize a zero-target play through the actual hand.
+				var stale_snapshot: Dictionary = receipt.duplicate(true)
+				stale_snapshot.remaining_scraps += 1
+				var refused_before := _complete_state()
+				var rejected := CombatStitchedTargetPreview.new().get_preview(
+					ledger, stale_snapshot, app.deck, app.party, app.enemies, id)
+				_check(not rejected.get("playable", false)
+					and _complete_state() == refused_before,
+					"stale optimistic receipt rejects without touching live resources")
+				var real_descriptors: Dictionary = app.run_stitch_descriptors.duplicate(true)
+				app.run_stitch_descriptors[id]["first_half" if not reverse else "second_half"]["effects"]["damage"] = 99
+				refused_before = _complete_state()
+				await _click(_panel(id))
+				_check(_complete_state() == refused_before,
+					"physical forged Scatter half click cannot spend or damage")
+				app.run_stitch_descriptors = real_descriptors
+				app._refresh_hand()
+				await _frames()
+				# Authoritative Block/Exposed and wearer Weak travel through the
+				# ordinary pool math, not a bespoke stitched damage calculation.
+				_check(app.enemies.gain_block(slots[0], 3),
+					"genuine enemy Block precondition in connected next Fight")
+				_check(app.enemies.apply_statuses({slots[1]: {"exposed": 1}}),
+					"genuine second enemy Exposed in connected next Fight")
+				var wearer: int = _hero_position("tinker")
+				app.party._heroes[wearer - 1]["statuses"] = {"weak": 1}
+				app._refresh_party()
+				app._refresh_enemy_roster()
+				await _frames()
+				var rng := RandomNumberGenerator.new()
+				rng.state = app.run_rng.state
+				var deck := CombatDeck.new([], rng)
+				deck.hand.assign(app.deck.hand)
+				deck.draw_pile.assign(app.deck.draw_pile)
+				deck.discard_pile.assign(app.deck.discard_pile)
+				deck.combat_state.energy = app.deck.energy
+				deck.combat_state.player_turn_active = true
+				var party := CombatParty.new(app.party.get_heroes())
+				party._heroes = app.party.get_heroes()
+				var enemies := CombatEnemies.new(app.enemies.get_enemies())
+				enemies._enemies = app.enemies.get_enemies()
+				var attacks := CombatAttackCards.new()
+				attacks.start_player_turn()
+				_check(not presenter._play._tinker._consumed,
+					"connected next Fight leaves Tinker first-attack opportunity unspent")
+				var expected := CombatStitchedCards.new(attacks).play_stitched(deck, party,
+					enemies, ledger, id, 0, 0)
+				_check(expected.get("ok", false) and expected.halves.size() == 2,
+					"detached stitched oracle resolves both authentic reward halves")
+				if not expected.get("ok", false):
+					await _return()
+					continue
+				var oracle_rng := RandomNumberGenerator.new()
+				oracle_rng.state = app.run_rng.state
+				var pool_deck := CombatDeck.new([area_id], oracle_rng)
+				_check(pool_deck.start_turn() and pool_deck.hand.has(area_id),
+					"independent ordinary pool card genuinely drawn into held oracle")
+				var pool_party := CombatParty.new(app.party.get_heroes())
+				pool_party._heroes = app.party.get_heroes()
+				var pool_enemies := CombatEnemies.new(app.enemies.get_enemies())
+				pool_enemies._enemies = app.enemies.get_enemies()
+				var ordinary := CombatTinkerPoolAttacks.new().play_attack(
+					pool_deck, pool_party, pool_enemies, area_id, 0)
+				_check(ordinary.get("ok", false) and ordinary.hits.size() == slots.size()
+					and expected.halves[area_index] == ordinary
+					and enemies.get_enemies() == pool_enemies.get_enemies(),
+					"staged area and detached ordinary pool hit same original living slots with Weak/Block/Exposed")
+				var before := _complete_state()
+				var hand_before: Array = app.deck.hand.duplicate()
+				var draw_before: Array = app.deck.draw_pile.duplicate()
+				var discard_before: Array = app.deck.discard_pile.duplicate()
+				var energy_before: int = app.deck.energy
+				var rng_before: int = app.run_rng.state
+				var shared = presenter._play
+				await _arm(id, keyboard)
+				if keyboard and presenter._armed != null:
+					await _key(KEY_SPACE)
+				_check(presenter.last_event == expected,
+					"real mouse/keyboard zero-target hand input commits both ordered Scatter halves")
+				_check([app.deck.hand, app.deck.draw_pile, app.deck.discard_pile,
+					app.deck.energy, app.party.get_heroes(), app.enemies.get_enemies(),
+					app.run_rng.state] == [deck.hand, deck.draw_pile, deck.discard_pile,
+					deck.energy, party.get_heroes(), enemies.get_enemies(), rng.state],
+					"complete mounted outcome equals detached stitched transaction")
+				_check(app.enemies.get_enemies() == pool_enemies.get_enemies()
+					and app.deck.energy == energy_before - 2
+					and app.deck.draw_pile == draw_before and app.run_rng.state == rng_before
+					and app.deck.hand.size() == hand_before.size() - 1
+					and not app.deck.hand.has(id)
+					and app.deck.discard_pile == discard_before + [id]
+					and presenter._play == shared and shared._tinker._consumed
+					and app._stitch_snapshot() == receipt,
+					"ordinary area damage, no draw/RNG drift, one shared payment/discard and Tinker latch")
+				var trace := [_snapshot(), presenter.last_event.duplicate(true), app._stitch_snapshot()]
+				if replay.is_empty():
+					replay = trace
+				else:
+					_check(trace == replay, "same seeded mouse/keyboard reward-to-Fight replay for " + area_id)
+				await _return()
+				_check(randi() == global_next, "earned stitched Scatter consumes no global RNG")

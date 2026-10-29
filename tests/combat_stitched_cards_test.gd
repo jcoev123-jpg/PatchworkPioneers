@@ -45,6 +45,8 @@ func _initialize() -> void:
 	_test_tinker_pool_attack_halves()
 	_test_tinker_pool_attack_latches()
 	_test_tinker_pool_attack_failures()
+	_test_scatter_area_halves()
+	_test_scatter_area_refusals()
 	for failure in failures:
 		printerr(failure)
 	print("combat_stitched_cards_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
@@ -2549,3 +2551,168 @@ func _test_tinker_pool_attack_failures() -> void:
 		var outcome := _play(c, 1, 1)
 		runs.append([outcome, _snapshot(c)])
 	_check(runs[0][0].ok and runs[0] == runs[1], "same-seed pool stitch replay is identical")
+
+
+## Independent ordinary-pool public transaction on a distinct held printing and
+## detached authentic rosters; no stitched helper is used to make the oracle.
+func _scatter_ordinary_oracle(c: Dictionary, card_id: String) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.state = c.deck._rng.state
+	var deck := CombatDeck.new([card_id], rng)
+	_check(deck.start_turn() and deck.hand == [card_id],
+		"ordinary Scatter oracle starts with its real authored card held")
+	var heroes := CombatParty.new(c.party.get_heroes())
+	var foes := CombatEnemies.new(c.enemies.get_enemies())
+	foes._enemies = c.enemies.get_enemies()
+	var resolver := CombatTinkerPoolAttacks.new()
+	if c.get("wardrobe") != null:
+		_check(resolver.bind_patch_wardrobe(c.wardrobe, c.torn),
+			"independent ordinary area resolver binds the same patch authorities")
+	var paid := resolver.play_attack(deck, heroes, foes, card_id, 0)
+	return {"result": paid, "enemies": foes.get_enemies(), "party": heroes.get_heroes(),
+		"rng": deck._rng.state}
+
+
+## The selected target remains zero; each living ORIGINAL slot receives exactly
+## the ordinary resolver's Weak/Exposed/Block-aware hit in either half order.
+func _test_scatter_area_halves() -> void:
+	for card_id in CombatTinkerPoolAttacks.STITCHED_AREA_IDS:
+		var authored := TinkerPoolCards.new().get_definition(card_id)
+		_check(authored == RunRestStitchCards.resolve_card_definition(card_id)
+			and authored.target_kind == "enemy_all" and authored.effects.damage ==
+				(4 if card_id.ends_with("_plus") else 3),
+			"Scatter base/+ is authentic and has the exact 3/4 area printing")
+		for reverse in [false, true]:
+			var c := _rest_fixture(SUPPORT_HALF if reverse else card_id,
+				card_id if reverse else SUPPORT_HALF, 8222)
+			var label: String = card_id + " reverse " + str(reverse)
+			_check(c.party.get_hero(3).id == "tinker" and c.deck.hand == [c.id]
+				and c.enemies.get_enemies().size() >= 2,
+				label + ": living Tinker, held Rest composite and multi-foe preconditions")
+			var weakened: Array[Dictionary] = c.party.get_heroes()
+			weakened[2]["statuses"] = {"weak": 1}
+			c.party._heroes.assign(weakened)
+			_check(c.enemies.gain_block(1, 3) and c.enemies.apply_statuses({2: {"exposed": 1}})
+				and c.party.get_hero(3).get("statuses", {}).get("weak", 0) == 1,
+				label + ": real Block, Exposed and Tinker Weak before area strike")
+			var oracle := _scatter_ordinary_oracle(c, card_id)
+			var original_living: Array[int] = []
+			for enemy in c.enemies.get_enemies():
+				if enemy.hp > 0:
+					original_living.append(enemy.position)
+			var hits: Array = oracle.result.get("hits", [])
+			var hit_slots: Array[int] = []
+			for hit in hits:
+				hit_slots.append(hit.position)
+			_check(oracle.result.get("ok", false) and hit_slots == original_living
+				and hits.size() >= 2, label + ": independent ordinary oracle hits every living original slot")
+			var before := _snapshot(c)
+			var receipt := _play(c, 0, 0)
+			var area_result: Dictionary = receipt.get("halves", [{}])[1 if reverse else 0]
+			_check(receipt.get("ok", false) and receipt.halves.size() == 2
+				and area_result == oracle.result
+				and receipt.halves[0 if reverse else 1] ==
+					{"ok": true, "effect": "self_block", "amount": 7},
+				label + ": staged Scatter is identical to ordinary area and other-owner Brace")
+			_check(c.enemies.get_enemies() == oracle.enemies
+				and c.party.get_hero(1).block == int(before[6][0].block) + 7
+				and c.deck.energy == before[3] - 2 and c.deck.discard_pile == [c.id]
+				and c.deck.hand.is_empty() and c.deck.draw_pile == before[0]
+				and c.deck._rng.state == before[5] and c.attacks._tinker._consumed,
+				label + ": all area outcomes, single composite cost/discard, no RNG or draw")
+			_check(c.rest.get_snapshot() == before[10],
+				label + ": run-owned Rest ledger remains unchanged")
+	# A slain original slot is never rerouted or given a phantom hit.
+	var slain := _rest_fixture("tinker_scatter_bolts_plus", SUPPORT_HALF, 8223)
+	_check(slain.enemies.apply_damage(2, 999) and slain.enemies.is_slain(2)
+		and not slain.enemies.is_victorious(), "one genuinely slain foe before Scatter")
+	var death_oracle := _scatter_ordinary_oracle(slain, "tinker_scatter_bolts_plus")
+	var death_receipt := _play(slain, 0, 0)
+	_check(death_receipt.get("ok", false)
+		and death_receipt.halves[0] == death_oracle.result
+		and death_receipt.halves[0].hits.size() == 1
+		and death_receipt.halves[0].hits[0].position == 1
+		and slain.enemies.get_enemies() == death_oracle.enemies,
+		"slain middle seat is skipped, original positions and death preserved")
+	# A live enemy killed by the first area hit does not suppress the later
+	# original slot or alter the staged result versus the ordinary oracle.
+	var lethal := _rest_fixture("tinker_scatter_bolts", SUPPORT_HALF, 8225)
+	lethal.enemies._enemies[0]["hp"] = 1
+	_check(lethal.enemies.get_enemy(1).hp == 1
+		and lethal.enemies.get_enemy(2).hp > 6,
+		"real front foe is lethal while the next original slot survives")
+	var lethal_oracle := _scatter_ordinary_oracle(lethal, "tinker_scatter_bolts")
+	var lethal_receipt := _play(lethal, 0, 0)
+	_check(lethal_receipt.get("ok", false)
+		and lethal_receipt.halves[0] == lethal_oracle.result
+		and lethal_receipt.halves[0].hits.size() == 2
+		and lethal_receipt.halves[0].hits[0].position == 1
+		and lethal_receipt.halves[0].hits[1].position == 2
+		and lethal.enemies.get_enemy(1).hp == 0
+		and lethal.enemies.get_enemy(2).hp > 0
+		and lethal.enemies.get_enemies() == lethal_oracle.enemies,
+		"area kills front foe and still strikes original second slot without rerouting")
+	# Wearer-only damage and once-per-combat Button Eye share the same latch.
+	var patched := _rest_fixture("tinker_scatter_bolts", SUPPORT_HALF, 8224)
+	var slots := [{"id": "button_eye", "slot": "HEAD"},
+		{"id": "pincushion_arm", "slot": "ARM"}]
+	patched.wardrobe = RunPatchWardrobe.new(patched.party.get_heroes(),
+		["button_eye", "pincushion_arm"], slots, 10)
+	patched.torn = RunTornMending.new(patched.party.get_heroes())
+	_check(patched.wardrobe.sew("button_eye", "tinker", "HEAD", "scatter-eye",
+		patched.wardrobe.get_snapshot()).ok
+		and patched.wardrobe.sew("pincushion_arm", "tinker", "ARM", "scatter-arm",
+		patched.wardrobe.get_snapshot()).ok
+		and patched.attacks.bind_patch_wardrobe(patched.wardrobe, patched.torn),
+		"real Tinker-worn attack patches bound before staged Scatter")
+	var patched_oracle := _scatter_ordinary_oracle(patched, "tinker_scatter_bolts")
+	var patched_receipt := _play(patched, 0, 0)
+	_check(patched_receipt.get("ok", false)
+		and patched_receipt.halves[0] == patched_oracle.result
+		and patched.enemies.get_enemies() == patched_oracle.enemies
+		and patched.attacks._patches.latch_snapshot().get("tinker", false),
+		"staged area shares ordinary wearer bonus, first-hit Exposed and spent patch latch")
+
+
+func _test_scatter_area_refusals() -> void:
+	var c := _rest_fixture("tinker_scatter_bolts", SUPPORT_HALF, 8331)
+	_reject(c, 1, 0, "area half rejects nonzero enemy selection")
+	_reject(c, -1, 0, "area half rejects negative selection")
+	_reject(c, 0, 1, "later Brace refuses any target after area")
+	c = _rest_fixture(SUPPORT_HALF, "tinker_scatter_bolts_plus", 8331)
+	_reject(c, 0, 2, "reversed area half rejects nonzero target")
+	_check(c.party.apply_damage(3, c.party.get_hero(3).hp)
+		and c.party.is_downed(3), "real downed Tinker for area rejection")
+	_reject(c, 0, 0, "downed owner forbids stitched area")
+	c = _rest_fixture(SUPPORT_HALF, "tinker_scatter_bolts", 8331)
+	var original: Array[Dictionary] = c.party.get_heroes()
+	c.party = CombatParty.new([original[0], original[2], original[1]])
+	_check(c.party.get_hero(2).id == "tinker", "Tinker moved to illegal middle FROM slot")
+	_reject(c, 0, 0, "misplaced owner forbids stitched Scatter")
+	c = _rest_fixture("tinker_scatter_bolts_plus", SUPPORT_HALF, 8331)
+	_check(c.deck.try_spend_energy(2) and c.deck.energy == 1,
+		"genuine insufficient energy for two-cost Scatter composite")
+	_reject(c, 0, 0, "unaffordable stitched area")
+	c = _rest_fixture("tinker_scatter_bolts", SUPPORT_HALF, 8331)
+	c.deck.discard_played(c.id)
+	_reject(c, 0, 0, "unheld area composite")
+	c = _rest_fixture("tinker_scatter_bolts", SUPPORT_HALF, 8331)
+	c.rest._descriptors[c.id]["first_half"]["effects"]["damage"] = 99
+	_reject(c, 0, 0, "forged in-memory area printing")
+	c = _rest_fixture("tinker_scatter_bolts", SUPPORT_HALF, 8331)
+	var snapshot: Dictionary = c.rest.get_snapshot()
+	snapshot.descriptors[c.id].first_half.effects.damage = 99
+	c.rest = RunRestStitchCards.new(snapshot.deck, snapshot.descriptors, 0, 2)
+	_check(not c.rest.is_valid(), "forged canonical area descriptor rejected by ledger")
+	_reject(c, 0, 0, "forged area ledger")
+	c = _rest_fixture("tinker_scatter_bolts", "warden_strike", 8331)
+	_reject(c, 0, 0, "later single-target half failure rolls back all staged area hits and latches")
+	c = _rest_fixture("tinker_scatter_bolts", SUPPORT_HALF, 8331)
+	c.enemies._enemies[0]["position"] = 3
+	_reject(c, 0, 0, "invalid original enemy roster refuses whole area")
+	var replay: Array = []
+	for attempt in range(2):
+		c = _rest_fixture("tinker_scatter_bolts_plus", SUPPORT_HALF, 8337)
+		replay.append([_play(c, 0, 0), _snapshot(c)])
+	_check(replay[0][0].get("ok", false) and replay[0] == replay[1],
+		"same seeded area replay keeps exact resources, latches and RNG")
