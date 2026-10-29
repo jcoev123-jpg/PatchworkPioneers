@@ -31,6 +31,8 @@ const TITLE_TEXT := "PEDDLER  ·  one purchase or Leave"
 const STATUS_OPEN := "Choose one offer, or Leave.  ·  1-3 cards · 4 patch · 0 Leave"
 const STATUS_CLOSED := "No open Peddler visit. No offer can be submitted."
 const DETAILS_UNAVAILABLE := "Card details unavailable"
+const PATCH_DETAILS_UNAVAILABLE := "Power details unavailable"
+const PATCH_TORN_WARNING := "Patch powers do not work while the wearer is Torn."
 const ELLIPSIS := "..."
 const WALLET_CLOSED := "Wallet unavailable"
 const LEAVE_TEXT := "Leave  ·  FREE"
@@ -86,6 +88,7 @@ var _pending_intent: Dictionary = {}
 var _connections: Dictionary = {} # Only view-owned Button.pressed -> Callable.
 var _preview_index := -1 # Card row whose read-only preview fills the status band.
 var _hover_index := -1 # Card row under the pointer; -1 when no card is hovered.
+var _patch_hover_active := false # Whether the patch button is under the pointer.
 var _catalogs: Array = [] # Read-only authored catalogs for the preview, built once.
 
 
@@ -493,10 +496,13 @@ func _wire_previews() -> void:
 		button.mouse_exited.connect(_on_card_hover.bind(i, false))
 		button.focus_entered.connect(_on_card_focus.bind(i))
 		button.focus_exited.connect(_on_preview_refresh)
-	for button in [patch_button, leave_button]:
-		button.mouse_entered.connect(_on_plain_hover)
-		button.focus_entered.connect(_on_preview_refresh)
-		button.focus_exited.connect(_on_preview_refresh)
+	patch_button.mouse_entered.connect(_on_patch_hover.bind(true))
+	patch_button.mouse_exited.connect(_on_patch_hover.bind(false))
+	patch_button.focus_entered.connect(_on_patch_focus)
+	patch_button.focus_exited.connect(_on_preview_refresh)
+	leave_button.mouse_entered.connect(_on_plain_hover)
+	leave_button.focus_entered.connect(_on_preview_refresh)
+	leave_button.focus_exited.connect(_on_preview_refresh)
 
 
 func _on_card_hover(index: int, entered: bool) -> void:
@@ -511,6 +517,15 @@ func _on_card_hover(index: int, entered: bool) -> void:
 
 func _on_plain_hover() -> void:
 	_hover_index = -1
+	_sync_preview()
+
+
+func _on_patch_hover(entered: bool) -> void:
+	_patch_hover_active = entered
+	_sync_preview()
+
+
+func _on_patch_focus() -> void:
 	_sync_preview()
 
 
@@ -544,13 +559,21 @@ func _sync_preview() -> void:
 		for button in card_buttons:
 			if is_instance_valid(button):
 				button.tooltip_text = ""
+		if is_instance_valid(patch_button):
+			patch_button.tooltip_text = ""
+		_patch_hover_active = false
 		if not _source_current():
 			status_label.text = STATUS_CLOSED
 		return
 	var index := _hover_index
 	if index < 0:
 		index = _focused_card()
-	_apply_preview(index)
+	if index >= 0:
+		_apply_preview(index)
+	elif _patch_hover_active or (patch_button != null and patch_button.has_focus()):
+		_apply_patch_preview()
+	else:
+		_apply_preview(-1)
 
 
 func _apply_preview(index: int) -> void:
@@ -561,6 +584,13 @@ func _apply_preview(index: int) -> void:
 		status_label.text = STATUS_OPEN
 		return
 	status_label.text = _clamp_status(_card_preview(_preview_index))
+
+
+func _apply_patch_preview() -> void:
+	_preview_index = -1
+	if status_label == null:
+		return
+	status_label.text = _clamp_status(_patch_preview())
 
 
 ## The authored catalogs the seeded Peddler stock generator itself validates
@@ -642,6 +672,96 @@ func _card_tooltip(index: int) -> String:
 	return "%s  ·  %s\n%s card  ·  %d energy  ·  %d gold\n%s" % [
 			str(details["name"]), str(details["id"]), str(details["owner"]).capitalize(),
 			int(details["cost"]), int(offer.get("price", 0)), str(details["line"])]
+
+
+## The audited patch description uses the same catalog authority as the live
+## Patch Stall panel: only a validated slot/power identity produces text.
+func _patch_details() -> Dictionary:
+	if _source.is_empty():
+		return {}
+	var offer := _patch_offer()
+	var offer_id := str(offer.get("id", ""))
+	if offer_id.is_empty():
+		return {}
+	# Build slot identity from the same audited catalogs.
+	var powers := RunAuthoredPatchDefinitions.load_power_definitions()
+	var slots: Dictionary = {}
+	for record in powers:
+		if typeof(record) == TYPE_DICTIONARY and record.has("id") and record.has("slot"):
+			slots[str(record["id"])] = str(record["slot"])
+	if not slots.has(offer_id):
+		return {}
+	var slot: String = str(slots[offer_id])
+	var name := readable_id(offer_id)
+	# Ordinary short descriptions from the same trusted table.
+	var short_text: String = LivePatchStallPanel.SHORT_RULES.get(offer_id, "")
+	var full_text: String = ""
+	if short_text != "":
+		# Use the same text resolver; build a minimal valid catalog_slots.
+		var mini_slots := {offer_id: slot}
+		full_text = RunPatchWearerSummary._resolve_rules_text(offer_id, mini_slots)
+		if full_text.is_empty():
+			full_text = RunPatchWearerSummary.KNOWN_TEXTS.get(offer_id, "")
+	else:
+		# Rare patches: build from the audited rare identity.
+		if LivePatchStallPanel.RARE_IDENTITIES.has(offer_id):
+			if offer_id == "relay_bobbin":
+				short_text = "+1 shared energy (cap 3) when ally uses your Pin, 1/combat"
+				full_text = "Once per combat, if a different living hero consumes a Pinned token placed by this living, untorn wearer (confirmed receipt), gain +1 shared energy, capped at 3."
+			elif offer_id == "hearth_lining":
+				short_text = "First earned Quilt bonus/combat heals wearer 2 HP"
+				full_text = "Once per combat, at the first EARNED Quilt bonus, heal this living, untorn wearer 2 HP, up to maximum HP."
+		else:
+			return {}
+	if full_text.is_empty() and not LivePatchStallPanel.RARE_IDENTITIES.has(offer_id):
+		return {}
+	return {
+		"id": offer_id,
+		"slot": slot,
+		"name": name,
+		"price": int(offer.get("price", 0)),
+		"sold": bool(offer.get("sold", false)),
+		"short": short_text,
+		"full": full_text,
+	}
+
+
+func _patch_preview() -> String:
+	if _source.is_empty():
+		return PATCH_DETAILS_UNAVAILABLE
+	var details := _patch_details()
+	var offer := _patch_offer()
+	if details.is_empty():
+		return "%s  ·  %s  ·  %s" % ["PATCH", readable_id(str(offer.get("id", ""))), PATCH_DETAILS_UNAVAILABLE]
+	var slot: String = str(details.get("slot", ""))
+	var name: String = str(details.get("name", readable_id(str(details.get("id", "")))))
+	var full: String = str(details.get("full", ""))
+	var short_text: String = str(details.get("short", ""))
+	# The preview shows the short form; the full form stays in the tooltip.
+	var line := short_text if not short_text.is_empty() else full
+	return "%s  ·  %s  ·  %s  ·  %s" % [slot, name, str(details["id"]), line]
+
+
+func _patch_tooltip() -> String:
+	if _source.is_empty():
+		return ""
+	var offer := _patch_offer()
+	var details := _patch_details()
+	if details.is_empty():
+		return "PATCH  ·  %s\n%s" % [readable_id(str(offer.get("id", ""))), PATCH_DETAILS_UNAVAILABLE]
+	var slot: String = str(details.get("slot", ""))
+	var full: String = str(details.get("full", ""))
+	# Replacement rule uses the same slot identity.
+	var replacement := "A %s slot: a patch already worn in this slot is destroyed for exactly +1 scrap.\nA free %s slot destroys nothing and gains no scrap." % [slot, slot]
+	return "%s  ·  %s  ·  %s\n%s\n%d gold\n%s\n%s" % [
+		str(details.get("name", readable_id(str(details.get("id", ""))))),
+		str(details.get("id", "")),
+		slot,
+		full,
+		int(details.get("price", int(offer.get("price", 0)))),
+		PATCH_TORN_WARNING,
+		replacement,
+	]
 
 
 ## Shortens only the on-screen display when the status band is too narrow for
@@ -733,6 +853,7 @@ func _refresh() -> void:
 		if open:
 			_attach(button, _request_buy.bind(i, false, button, _epoch, _visit))
 	patch_button.text = _patch_caption() if open else ""
+	patch_button.tooltip_text = _patch_tooltip() if open else ""
 	patch_button.disabled = true if not open else not _patch_buyable()
 	patch_button.set_meta("offer_kind", PATCH_KIND if open else "")
 	patch_button.set_meta("offer_id", str(_patch_offer()["id"]) if open else "")
@@ -788,6 +909,9 @@ func _status_authentic() -> bool:
 	for i in range(CARD_COUNT):
 		if status_label.text == _clamp_status(_card_preview(i)):
 			return true
+	# The patch preview is also authentic when it matches this exact source.
+	if status_label.text == _clamp_status(_patch_preview()):
+		return true
 	return false
 
 
