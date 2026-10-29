@@ -216,7 +216,9 @@ func _run() -> void:
 	await _rare_patch_panels()
 	await _patch_preview_cases()
 	await _unaudited_patch_case()
-	_check(rng.state == expected_run, "all panel previews, intents and refusals preserve seeded run RNG")
+	await _shared_hem_case()
+	_check(rng.state == expected_run,
+			"all panel previews, intents and refusals preserve seeded run RNG")
 	_check(randi() == expected_global, "all mounted actions preserve global RNG")
 	panel.queue_free()
 	await process_frame
@@ -1676,3 +1678,197 @@ func _unaudited_patch_case() -> void:
 	_check(intents.is_empty() and visit.read_state() == before
 		and not visit.is_consumed(),
 		"unaudited patch inspection never buys, emits an intent or mutates anything")
+
+
+## V3-3 P12: the already-unlocked rare ARM Shared Hem competes for the ONE
+## Peddler patch draw at its authored 100 gold, and the mounted panel explains
+## it truthfully before any spend. Everything comes from the real sampler and
+## genuine visits on the mounted controls: the withheld HEAD Needle Echo and
+## the default locked flag stay out of every draw, hover/keyboard previews pay
+## nothing, one real buy settles once at 100 gold, Leave stays free, and the
+## ordinary/P8 audited descriptions above are untouched.
+func _shared_hem_case() -> void:
+	# The canonical contract and the authored record the description must state.
+	var required: Dictionary = RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED.get("shared_hem", {})
+	var authored_heirloom: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/mpw_heirloom_patches.json"))
+	var authored_hem: Dictionary = {}
+	if typeof(authored_heirloom) == TYPE_ARRAY:
+		for record in authored_heirloom:
+			if typeof(record) == TYPE_DICTIONARY \
+					and str(record.get("id", "")) == "shared_hem":
+				authored_hem = record
+	_check(not required.is_empty() and not authored_hem.is_empty(),
+		"canonical HEIRLOOM_REQUIRED and the authored P12 catalog both carry Shared Hem")
+	_check(RunAuthoredPatchDefinitions._valid_heirloom(authored_hem),
+		"authored Shared Hem record passes the canonical P12 validation")
+	_check(str(authored_hem.get("slot", "")) == "ARM"
+		and int(authored_hem.get("shop_price_gold", -1)) == 100,
+		"authored Shared Hem is the canonical 100-gold ARM power")
+	if authored_hem.is_empty():
+		return
+
+	# The seeded P12 candidate fixture: every authored priced patch plus the
+	# canonical Shared Hem and the withheld Needle Echo (no data change).
+	var hem_candidates: Array = authored_patches.duplicate(true)
+	hem_candidates.append({"id": "shared_hem",
+		"price": int(required["shop_price_gold"])})
+	hem_candidates.append({"id": "needle_echo", "price": 100})
+	var hem_seed := -1
+	var hem_stock := {}
+	for seed_value in range(1, 300):
+		var unlocked_rng := RandomNumberGenerator.new()
+		unlocked_rng.seed = seed_value
+		var unlocked := RunShopStockOffers.generate_peddler_stock(unlocked_rng,
+			PARTY, authored_cards, hem_candidates, [], true)
+		_check(unlocked.ok and unlocked.patches.size() == 1
+			and str(unlocked.patches[0].id) != "needle_echo",
+			"unlocked seeded stock keeps one patch and still withholds Needle Echo")
+		var locked_rng := RandomNumberGenerator.new()
+		locked_rng.seed = seed_value
+		var locked := RunShopStockOffers.generate_peddler_stock(locked_rng,
+			PARTY, authored_cards, hem_candidates, [])
+		_check(locked.ok and str(locked.patches[0].id) != "shared_hem"
+			and str(locked.patches[0].id) != "needle_echo",
+			"default locked stock offers neither P12 patch")
+		if hem_seed < 0 and str(unlocked.patches[0].id) == "shared_hem":
+			hem_seed = seed_value
+			hem_stock = unlocked
+	_check(hem_seed > 0, "a deterministic genuine seed draws the authored Shared Hem")
+	if hem_stock.is_empty():
+		return
+	_check(int(hem_stock.patches[0].price) == 100,
+		"the genuine drawn Hem is quoted at its authored 100 gold")
+
+	# --- genuine mounted visit: truthful row, price, preview and purchase ---
+	var hem_visit := _party_visit("peddler_shared_hem", PARTY, DECK, hem_stock)
+	_check(hem_visit.is_valid() and hem_visit.is_open(),
+		"the genuine unlocked Hem stock opens a real Peddler visit")
+	if not hem_visit.is_open():
+		return
+	var hem_before := hem_visit.read_state()
+	await _bind(hem_visit)
+	var hem_offer: Dictionary = hem_before["stock"]["trinkets"][0]
+	_check(str(hem_offer["id"]) == "shared_hem" and int(hem_offer["price"]) == 100
+		and int(hem_offer["price"]) == int(authored_hem["shop_price_gold"]),
+		"bound Hem offer is the canonical 100-gold ARM ID")
+	var hem_rows: Array = panel.patch_button.text.split("\n")
+	_check(hem_rows.size() == 2 and hem_rows[0] == "PATCH  ·  Shared Hem  ·  100 gold",
+		"Hem ticket keeps its exact source-quoted 100-gold price and authored name")
+	_check(hem_rows[1].begins_with("ARM  ·  ")
+		and (hem_rows[1] == "ARM  ·  " + LivePeddlerPanel.SHARED_HEM_SHORT
+			or (hem_rows[1].ends_with(LivePeddlerPanel.ELLIPSIS)
+				and LivePeddlerPanel.SHARED_HEM_SHORT.begins_with(
+					hem_rows[1].trim_prefix("ARM  ·  ").trim_suffix(LivePeddlerPanel.ELLIPSIS).strip_edges()))),
+		"Hem ticket states the authored ARM slot and truthful condensed power")
+	_check(_fits(panel.patch_button), "Hem ticket fits its actual sewn button")
+	var hem_details: Dictionary = panel._patch_details()
+	_check(not hem_details.is_empty() and str(hem_details["slot"]) == "ARM"
+		and str(hem_details["short"]) == LivePeddlerPanel.SHARED_HEM_SHORT
+		and str(hem_details["full"]) == LivePeddlerPanel.SHARED_HEM_FULL,
+		"the Peddler projection recognizes the canonically verified Hem")
+	_check(LivePeddlerPanel.SHARED_HEM_FULL.contains("different living hero")
+		and LivePeddlerPanel.SHARED_HEM_FULL.contains("actually gains Block")
+		and LivePeddlerPanel.SHARED_HEM_FULL.contains("living, untorn wearer")
+		and LivePeddlerPanel.SHARED_HEM_FULL.contains("+1 Block")
+		and LivePeddlerPanel.SHARED_HEM_FULL.contains("Once per turn"),
+		"the full description states every authored Hem condition truthfully")
+	_check(bool(authored_hem.get("source_hero_must_differ_from_wearer", false))
+		and bool(authored_hem.get("source_hero_must_be_living", false))
+		and bool(authored_hem.get("requires_actual_block_gain", false))
+		and bool(authored_hem.get("wearer_must_be_living", false))
+		and bool(authored_hem.get("wearer_must_be_untorn", false))
+		and int(authored_hem.get("block", 0)) == 1
+		and int(authored_hem.get("uses_per_turn", 0)) == 1,
+		"the authored record really carries the described conditions")
+	var hem_tooltip := panel.patch_button.tooltip_text
+	_check(hem_tooltip.contains("shared_hem") and hem_tooltip.contains("ARM")
+		and hem_tooltip.contains("100 gold")
+		and hem_tooltip.contains(LivePeddlerPanel.SHARED_HEM_FULL)
+		and hem_tooltip.contains(LivePeddlerPanel.PATCH_TORN_WARNING),
+		"Hem tooltip carries the complete truthful rule, slot, price and torn warning")
+
+	# Hover preview pays nothing and mutates nothing.
+	await _move_pointer(panel.patch_button.get_global_rect().get_center())
+	var hem_hover := panel.status_label.text
+	var hem_expected := "ARM  ·  Shared Hem  ·  shared_hem  ·  " \
+		+ LivePeddlerPanel.SHARED_HEM_SHORT
+	_check(hem_hover == hem_expected or hem_hover == panel._clamp_status(hem_expected),
+		"Hem hover shows exactly the truthful slot/name/ID/power line")
+	_check(_status_fits(), "Hem hover preview fits the status band")
+	_check(intents.is_empty() and hem_visit.read_state() == hem_before
+		and hem_visit.is_open(),
+		"Hem hover mutates no source, spends nothing and keeps the visit open")
+	# Keyboard focus repeats the same truthful preview.
+	await _hover_none()
+	panel.patch_button.grab_focus()
+	await _frames()
+	_check(panel.patch_button.has_focus() and panel.status_label.text == hem_hover,
+		"Hem keyboard focus repeats the same truthful preview")
+	_check(intents.is_empty() and hem_visit.read_state() == hem_before,
+		"Hem focus spends nothing and emits no intent")
+
+	# The withheld HEAD power is never described: a relabelled row fails closed.
+	var authentic_source := panel._source.duplicate(true)
+	panel._source["stock"]["trinkets"][0]["id"] = "needle_echo"
+	_check(panel._patch_details().is_empty()
+		and panel._patch_preview().contains(LivePeddlerPanel.PATCH_DETAILS_UNAVAILABLE),
+		"a Needle Echo row shows unavailable, never a guessed or borrowed Hem power")
+	panel._source = authentic_source
+	_check(panel._source_current() and hem_visit.read_state() == hem_before,
+		"restoring the genuine Hem row restores its bound source untouched")
+	# Contradictory/missing/unreadable P12 catalog material fails closed too.
+	_check(panel._verified_shared_hem("needle_echo").is_empty()
+		and panel._verified_shared_hem("stitched_badge").is_empty(),
+		"the withheld and unknown IDs resolve to no P12 details at all")
+	_check(not panel._verified_shared_hem("shared_hem").is_empty()
+		and not panel._verified_shared_hem("shared_hem", authored_heirloom).is_empty(),
+		"the shipped and supplied genuine catalogs both verify the Hem")
+	var forged_catalog: Array = (authored_heirloom as Array).duplicate(true)
+	for record in forged_catalog:
+		if typeof(record) == TYPE_DICTIONARY \
+				and str(record.get("id", "")) == "shared_hem":
+			record["block"] = 2
+	_check(panel._verified_shared_hem("shared_hem", forged_catalog).is_empty(),
+		"a contradictory authored field refuses any Hem description")
+	var missing_catalog: Array = []
+	for record in forged_catalog:
+		if str(record.get("id", "")) != "shared_hem":
+			missing_catalog.append(record)
+	_check(panel._verified_shared_hem("shared_hem", missing_catalog).is_empty()
+		and panel._verified_shared_hem("shared_hem", "not an array").is_empty(),
+		"a missing Hem record and an unreadable P12 catalog fail closed")
+
+	# One real submitted purchase settles once at 100 gold through the visit.
+	await _act(panel.patch_button, true, KEY_SPACE)
+	_check(intents.size() == 1, "the genuine Hem buy emits exactly one intent")
+	if intents.size() == 1:
+		_check(intents[0]["kind"] == "trinket" and intents[0]["id"] == "shared_hem"
+			and intents[0]["node_id"] == hem_before["node_id"],
+			"Hem intent is the source-bound trinket buy")
+		var hem_receipt := Controller.settle(hem_visit, intents[0], hem_before)
+		_check(hem_receipt.get("ok") == true and hem_receipt.get("price") == 100
+				and hem_receipt["state"]["gold"] == GOLD - 100
+				and hem_receipt["state"]["trinkets"] == ["shared_hem"],
+				"real Hem purchase settles once at exactly 100 gold")
+		_check(hem_visit.is_consumed()
+				and not Controller.settle(hem_visit, intents[0], hem_before).get("ok", true),
+				"consumed Hem visit refuses a replayed intent")
+
+	# Leave stays free on a separately opened genuine Hem visit.
+	var leave_visit := _party_visit("peddler_shared_hem_leave", PARTY, DECK, hem_stock)
+	_check(leave_visit.is_open(), "a separately opened genuine Hem visit stays open")
+	var leave_before := leave_visit.read_state()
+	await _bind(leave_visit)
+	_check(panel.leave_button.text == "Leave  ·  FREE" and not panel.leave_button.disabled,
+		"Leave remains free beside the priced Hem")
+	await _act(panel.leave_button, true, KEY_SPACE)
+	_check(intents.size() == 1 and intents[0]["kind"] == "leave",
+		"Leave emits exactly one leave intent")
+	if intents.size() == 1:
+		var leave_receipt := Controller.settle(leave_visit, intents[0], leave_before)
+		_check(leave_receipt.get("ok") == true
+				and leave_receipt.get("decision") == "leave"
+				and leave_receipt["state"]["gold"] == GOLD
+				and leave_receipt["state"]["trinkets"].is_empty(),
+				"Leave on the Hem visit spends nothing and adds no patch")
