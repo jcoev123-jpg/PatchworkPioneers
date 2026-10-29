@@ -90,6 +90,7 @@ func _initialize() -> void:
 	_test_turret_deployments()
 	_test_turret_ticks()
 	_test_turret_refusals()
+	_test_turret_enrage()
 	_finish()
 
 
@@ -2569,3 +2570,138 @@ func _rejected_turret_tick(resolver: CombatTinkerV3TurretCards, state: Variant,
 		_check(enemies.get_enemies() == enemy_before, label + ": the roster was not touched")
 	if rng != null:
 		_check(rng.state == rng_before, label + ": the RNG was not drawn")
+
+
+## The authored catalog Spoolback Hound (enrage: true), with JSON's float max_hp normalized as the app does.
+func _catalog_hound() -> Dictionary:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	if parsed is Array:
+		for entry in parsed:
+			if entry is Dictionary and entry.get("id") == "spoolback_hound":
+				var hound: Dictionary = entry.duplicate(true)
+				hound["max_hp"] = int(hound["max_hp"])
+				return hound
+	return {}
+
+
+## A fresh, genuinely paid three-beat instance of one printing.
+func _enrage_turret(card_id: String) -> Dictionary:
+	var deploy: Dictionary = CombatTinkerV3TurretCards.new().play_card(
+		_scrap_deck([card_id], 503000, 5), _scrap_party(3), card_id, 0)
+	_check(deploy.get("ok") == true, card_id + ": the Enrage fixture turret is a genuine paid deployment")
+	return deploy.get("state", {})
+
+
+## A real roster from `definitions`; slot 1 is brought to `hp`, given `block` and, when `stacks` >= 0, an
+## explicit stored Enrage count.
+func _hound_roster(definitions: Array, hp: int, block: int, stacks: int) -> CombatEnemies:
+	var enemies := CombatEnemies.new(definitions)
+	_check(enemies.is_valid(), "Enrage fixture roster is valid")
+	var max_hp: int = int(enemies.get_enemy(1).get("max_hp", 0))
+	_check((hp == max_hp or enemies.apply_damage(1, max_hp - hp)) and (block == 0 or enemies.gain_block(1, block))
+		and (stacks < 0 or enemies.set_enrage_stacks(1, stacks)), "Enrage fixture slot 1 is prepared")
+	return enemies
+
+
+## Cycle 363: every Wind-up Turret shot is a confirmed hit for the catalog Spoolback Hound's Enrage.
+func _test_turret_enrage() -> void:
+	var hound := _catalog_hound()
+	_check(hound.get("enrage") == true and hound.get("max_hp") == 28,
+		"Enrage fixture: the catalog Spoolback Hound carries enrage true and 28 max HP")
+	var resolver := CombatTinkerV3TurretCards.new()
+	var plain_keys: Array = resolver.tick_turret(_enrage_turret(TURRET_IDS[0]), _turret_two_enemies(),
+		_scrap_rng(503100)).keys()
+	plain_keys.sort()
+	for card_id: String in TURRET_IDS:
+		var damage := _turret_damage(card_id)
+		# Fully Block-absorbed, partly blocked, HP-damaging, overkill and capped shots on a lone Hound.
+		for case in [["block-absorbed", 28, damage + 2, -1], ["partly blocked", 28, 1, 1],
+				["hp-damaging", 28, 0, 0], ["overkill", 2, 0, 2], ["capped", 28, 0, 3]]:
+			var label: String = card_id + " " + str(case[0])
+			var enemies := _hound_roster([hound], case[1], case[2], case[3])
+			var stacks_before: int = maxi(0, int(case[3]))
+			var tick := _tick_checked(resolver, _enrage_turret(card_id), enemies, _scrap_rng(503200), label)
+			var expected: int = mini(stacks_before + 1, CombatEnemyKeywordRules.ENRAGE_MAX_STACKS)
+			var after := enemies.get_enemy(1)
+			_check(after.get("enrage_stacks") == expected,
+				label + ": the shot commits exactly one Enrage stack, capped at three")
+			_check(after.get("enrage") == true and after.get("id") == "spoolback_hound"
+				and after.get("max_hp") == 28 and after.get("position") == 1,
+				label + ": the Hound keeps its authored identity and Enrage flag")
+			var keys: Array = tick.keys()
+			keys.sort()
+			_check(keys == plain_keys, label + ": the tick receipt keeps exactly its existing keys")
+			if case[0] == "overkill":
+				_check(after.get("hp") == 0 and tick.get("hp_loss") == 2, label + ": overkill clamps at the pre-hit HP")
+			else:
+				_check(CombatEnemyPhase._enrage_attack_bonus(enemies, 1) == expected * 2,
+					label + ": the Hound's next attack gains +2 per stored stack")
+		# One instance's three beats each add one stack; a fourth beat is inert.
+		var chain := _hound_roster([hound], 28, 0, -1)
+		var state := _enrage_turret(card_id)
+		for beat in range(3):
+			var tick := _tick_checked(resolver, state, chain, _scrap_rng(503300), card_id + " chain " + str(beat + 1))
+			state = tick.get("state", {})
+			_check(chain.get_enemy(1).get("enrage_stacks") == beat + 1
+				and chain.get_enemy(1).get("hp") == 28 - damage * (beat + 1),
+				card_id + " chain beat " + str(beat + 1) + ": one stack per shot")
+		_rejected_turret_tick(resolver, state, chain, _scrap_rng(503301), "turret_expired",
+			card_id + " chain fourth tick")
+		# A non-Enrage foe, absent or explicitly false, never gains a stack key.
+		for plain in [{"id": "straw_dummy", "max_hp": 30}, {"id": "straw_dummy", "max_hp": 30, "enrage": false}]:
+			var foes := CombatEnemies.new([plain])
+			_tick_checked(resolver, _enrage_turret(card_id), foes, _scrap_rng(503400), card_id + " non-Enrage foe")
+			_check(not foes.get_enemy(1).has("enrage_stacks"), card_id + ": a non-Enrage foe gains no Enrage stack")
+	# Two turrets in one end-turn boundary: one stack per shot.
+	var both := _hound_roster([hound], 28, 0, -1)
+	var first := _enrage_turret(TURRET_IDS[0])
+	var second := _enrage_turret(TURRET_IDS[1])
+	_tick_checked(resolver, first, both, _scrap_rng(503500), "two turrets first shot")
+	_tick_checked(resolver, second, both, _scrap_rng(503500), "two turrets second shot")
+	_check(both.get_enemy(1).get("enrage_stacks") == 2 and both.get_enemy(1).get("hp") == 21,
+		"two independent turrets each add one stack to the same Hound")
+	# Random targeting, RNG use and expiry are identical to a roster whose Hound has no Enrage.
+	for seed_value in [503600, 503601, 503602]:
+		var calm := hound.duplicate(true)
+		calm.erase("enrage")
+		var live := CombatEnemies.new([hound, {"id": "quilt_hog", "max_hp": 24}])
+		var control := CombatEnemies.new([calm, {"id": "quilt_hog", "max_hp": 24}])
+		var live_rng := _scrap_rng(seed_value)
+		var control_rng := _scrap_rng(seed_value)
+		var live_state := _enrage_turret(TURRET_IDS[1])
+		var control_state := live_state.duplicate(true)
+		var hits := 0
+		for beat in range(3):
+			var label := "seed " + str(seed_value) + " beat " + str(beat + 1)
+			var tick := _tick_checked(resolver, live_state, live, live_rng, label + " Enrage roster")
+			var oracle := _tick_checked(resolver, control_state, control, control_rng, label + " control roster")
+			_check(tick.get("target_position") == oracle.get("target_position")
+				and live_rng.state == control_rng.state and tick.get("rng_consumed") == oracle.get("rng_consumed")
+				and tick.get("remaining") == oracle.get("remaining"),
+				label + ": Enrage changes no target choice, RNG draw or expiry")
+			if tick.get("target_position") == 1:
+				hits += 1
+			live_state = tick.get("state", {})
+			control_state = oracle.get("state", {})
+		_check(int(live.get_enemy(1).get("enrage_stacks", 0)) == hits and not live.get_enemy(2).has("enrage_stacks")
+			and not control.get_enemy(1).has("enrage_stacks"),
+			"seed " + str(seed_value) + ": only shots on the Hound add stacks; other foes gain none")
+	# A Hound slain before the shot is never retargeted and gains nothing.
+	var slain := CombatEnemies.new([hound, {"id": "quilt_hog", "max_hp": 24}])
+	_check(slain.apply_damage(1, 28) and slain.is_slain(1), "slain Hound fixture")
+	var slain_state := _enrage_turret(TURRET_IDS[0])
+	for beat in range(3):
+		var tick := _tick_checked(resolver, slain_state, slain, _scrap_rng(503700), "slain Hound beat " + str(beat + 1))
+		_check(tick.get("target_position") == 2, "slain Hound beat " + str(beat + 1) + ": the living foe is hit")
+		slain_state = tick.get("state", {})
+	_check(not slain.get_enemy(1).has("enrage_stacks") and slain.get_enemy(1).get("hp") == 0,
+		"a slain Hound gains no stack and stays slain")
+	# Malformed Enrage metadata on any living candidate refuses the tick before anything changes.
+	for bad in [{"enrage": "yes"}, {"enrage": 1}, {"enrage_stacks": 4}, {"enrage_stacks": -1},
+			{"enrage_stacks": "2"}, {"enrage_stacks": 2.0}]:
+		for slot in [1, 2]:
+			var records: Array = [hound.duplicate(true), {"id": "quilt_hog", "max_hp": 24}]
+			records[slot - 1].merge(bad, true)
+			var foes := CombatEnemies.new(records)
+			_rejected_turret_tick(resolver, _enrage_turret(TURRET_IDS[0]), foes, _scrap_rng(503800), "invalid_enrage",
+				"malformed " + str(bad) + " on slot " + str(slot))

@@ -35,6 +35,22 @@ func _combined_wallet_catalog() -> Dictionary:
 	return {"events": events}
 
 
+func _generic_selection(document: Dictionary, rng: RandomNumberGenerator, history: Array = []) -> Dictionary:
+	var records := {}
+	var ids: Array = []
+	for record in RunM04EventRotation.new(document).get_generic_events():
+		if not history.has(record.id):
+			records[record.id] = record
+			ids.append(record.id)
+	if not app._frayed_debt_seen:
+		records["frayed_debt_parcel"] = RunFrayedDebtParcel.load_authored_event()
+		ids.append("frayed_debt_parcel")
+	ids.sort()
+	if ids.is_empty():
+		return {"ok": false}
+	return {"ok": true, "event": records[ids[rng.randi_range(0, ids.size() - 1)]]}
+
+
 func _frames() -> void:
 	for frame in range(3):
 		await process_frame
@@ -265,7 +281,7 @@ func _node(id: String, index: int) -> bool:
 			var history: Array = app._wallet_event_history.duplicate()
 			history.pop_back()
 			var selected := RunV3VitalEventRotation.new().select_event(expected_rng) if panel._vital_mode else \
-				RunM04EventRotation.new(_combined_wallet_catalog()).select_event(expected_rng, history)
+				_generic_selection(_combined_wallet_catalog(), expected_rng, history)
 			_check(selected.ok and selected.event == record and app.run_rng.state == expected_rng.state,
 				"later Event uses exactly one seeded rotation draw")
 			var wallet := {"gold": app.session_gold, "scraps": app.run_scraps}
@@ -993,7 +1009,7 @@ func _needle_visits(fixture: Dictionary, branch: String, keyboard: bool) -> Arra
 		var expected_rng := RandomNumberGenerator.new()
 		expected_rng.state = app.run_rng.state
 		var rotation := RunV3VitalEventRotation.new().select_event(expected_rng) if index == 5 else \
-			RunM04EventRotation.new(_combined_wallet_catalog()).select_event(expected_rng, app._wallet_event_history)
+			_generic_selection(_combined_wallet_catalog(), expected_rng, app._wallet_event_history)
 		await _activate(_needle_button(fixture.path[index]), keyboard)
 		var wallet_panel: LiveEventChoicePanel = app.wallet_event_panel
 		_check(is_instance_valid(wallet_panel) and app.needle_toll_panel == null,
@@ -1049,7 +1065,7 @@ func _auction_fixture() -> Dictionary:
 			"wallet": {"gold": 0, "scraps": 0}, "deck": app._load_starter_deck()}, rng)
 		if not toll.pay_toll("warden").ok:
 			continue
-		var selection := rotation.select_event(rng)
+		var selection := _generic_selection({"events": events}, rng)
 		if selection.ok and selection.event.id == "fate_pin_auction":
 			var events_path: Array = []
 			var transit: Dictionary = {}
@@ -1085,7 +1101,7 @@ func _auction_visits(fixture: Dictionary, paid: bool, keyboard: bool) -> Array:
 	var w := RunPatchWardrobe.new(app.run_heroes, [], RunAuthoredPatchDefinitions.load_definitions(), app.run_scraps, 65, app.run_deck, app.run_seed, true)
 	var oracle_rng := RandomNumberGenerator.new()
 	oracle_rng.state = app.run_rng.state
-	var rotation := RunM04EventRotation.new(_combined_wallet_catalog()).select_event(oracle_rng)
+	var rotation := _generic_selection(_combined_wallet_catalog(), oracle_rng)
 	_check(rotation.ok and rotation.event.id == "fate_pin_auction", "independent connected selection actually picks auction")
 	var oracle := RunFatePinAuction.new(w, oracle_rng)
 	var offer: Dictionary = oracle.get_offers()[1]
@@ -1102,7 +1118,7 @@ func _auction_visits(fixture: Dictionary, paid: bool, keyboard: bool) -> Array:
 	_check(carry.bind_wardrobe(w, carry.torn, w.get_snapshot()), "real carryover binds existing wardrobe")
 	# Rebuild the independent draw for the actual owned inventory.
 	oracle_rng.state = app.run_rng.state
-	RunM04EventRotation.new(_combined_wallet_catalog()).select_event(oracle_rng)
+	_generic_selection(_combined_wallet_catalog(), oracle_rng)
 	oracle = RunFatePinAuction.new(w, oracle_rng)
 	var before := w.get_snapshot()
 	for treasure in fixture.transit[fixture.path[4]]:

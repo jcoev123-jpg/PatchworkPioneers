@@ -174,7 +174,7 @@ func _later_wallet() -> void:
 		var transit := {}
 		var treasures: Array = []
 		for id in path:
-			if map.get_node(id).type == "Treasure":
+			if map.get_node(id).type != "Event":
 				treasures.append(id)
 			else:
 				transit[id] = treasures.duplicate()
@@ -196,7 +196,14 @@ func _later_wallet() -> void:
 	await _traverse_treasures(fixture, fixture.later)
 	var rng := RandomNumberGenerator.new()
 	rng.state = app.run_rng.state
-	var selection := RunM04EventRotation.new(_combined_catalog()).select_event(rng, app._wallet_event_history)
+	var ids := _generic_route_ids()
+	for id in app._wallet_event_history:
+		ids.erase(id)
+	var picked: String = ids[rng.randi_range(0, ids.size() - 1)]
+	var selection := {"event": {}}
+	for record in RunM04EventRotation.new(_combined_catalog()).get_generic_events():
+		if record.id == picked:
+			selection.event = record
 	var health: Array = app.run_heroes.duplicate(true)
 	await _click(_route_action(fixture.later))
 	panel = app.wallet_event_panel

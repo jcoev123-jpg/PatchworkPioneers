@@ -4,6 +4,7 @@ const PRICK := "seamstress_prick"
 const POP := "tinker_pop_shot"
 const BOMB := "tinker_scrap_bomb"
 const SUPPORT_HALF := "warden_brace"
+const SIGHT_GLASS_IDS: Array[String] = ["tinker_sight_glass", "tinker_sight_glass_plus"]
 const ENERGY_IDS := ["tinker_overclock", "tinker_overclock_plus",
 	"seamstress_tailors_trance", "seamstress_tailors_trance_plus"]
 const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
@@ -31,6 +32,9 @@ func _initialize() -> void:
 	_test_spare_parts_halves()
 	_test_spare_parts_failures()
 	_test_spare_parts_replay()
+	_test_sight_glass_halves()
+	_test_sight_glass_failures()
+	_test_sight_glass_replay()
 	_test_spool_rejections()
 	_test_hemguard_cuff()
 	_test_cuff_rejections()
@@ -1376,6 +1380,300 @@ func _test_spare_parts_replay() -> void:
 				_check(_spare_parts_sequence(card_id, reverse, seed_value)
 					== _spare_parts_sequence(card_id, reverse, seed_value),
 					card_id + " order " + str(reverse) + ": same-seed Spare Parts replay")
+
+
+## Independent effect oracle: the ORDINARY Sight Glass resolver on a fresh
+## shared deck holding one loose copy over the same piles and RNG state.
+func _sight_ordinary(card_id: String, before: Array, target: int,
+		wardrobe: RunPatchWardrobe = null, torn: RunTornMending = null) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	var deck := CombatDeck.new([card_id], rng)
+	_check(deck.start_turn() and deck.hand == [card_id], "ordinary oracle holds one loose Sight Glass")
+	deck.draw_pile.assign(before[0])
+	deck.discard_pile.assign(before[2])
+	rng.state = before[5]
+	var enemies := CombatEnemies.new(_definitions("res://data/enemies/starter_enemies.json"))
+	var party := CombatParty.new(_definitions("res://data/heroes/starter_party.json"))
+	var gadgets := CombatTinkerPoolGadgets.new()
+	if wardrobe != null:
+		_check(gadgets.bind_patch_wardrobe(wardrobe, torn), "ordinary oracle shares the real patch authorities")
+	var result := gadgets.resolve_sight_glass(deck, party, enemies, card_id, target)
+	return {"result": result, "deck": deck, "enemies": enemies}
+
+
+func _bind_visor(c: Dictionary, wearer: String) -> void:
+	c.wardrobe = RunPatchWardrobe.new(c.party.get_heroes(), ["button_glass_visor"],
+		[{"id": "button_glass_visor", "slot": "HEAD"}], 10)
+	c.torn = RunTornMending.new(c.party.get_heroes())
+	_check(c.wardrobe.is_valid() and c.torn.is_valid(), "genuine Visor run authorities")
+	_check(c.wardrobe.sew("button_glass_visor", wearer, "HEAD", "sight-visor-" + wearer,
+		c.wardrobe.get_snapshot()).ok, "Button Glass Visor genuinely sewn on " + wearer)
+	_check(c.service.bind_patch_wardrobe(c.wardrobe, c.torn),
+		"stitched resolver binds the current Visor wardrobe/torn ledgers")
+
+
+func _sight_result(target: int, exposed: int = 2, drawn: int = 1) -> Dictionary:
+	return {"ok": true, "effect": "exposed_and_draw", "exposed_applied": exposed,
+		"draw": 1, "drawn": drawn, "target": target}
+
+
+func _test_sight_glass_halves() -> void:
+	var brace := {"ok": true, "effect": "self_block", "amount": 7}
+	for card_id in SIGHT_GLASS_IDS:
+		var authored: Dictionary = TinkerPoolCards.new().get_definition(card_id)
+		_check(not authored.is_empty()
+			and authored == RunRestStitchCards.resolve_card_definition(card_id),
+			card_id + ": authentic authored Sight Glass half")
+		_check(authored.get("effects") == {"exposed": 2, "draw": 1} and authored.get("cost") == 1
+			and authored.get("target_kind") == "enemy_single" and authored.get("from_positions") == [2, 3],
+			card_id + ": printed Exposed 2 and one draw on one enemy from the back")
+		for target in [1, 2]:
+			for reverse in [false, true]:
+				var label: String = "%s %s Brace on foe %d" % [card_id, "after" if reverse else "before", target]
+				var c := _rest_fixture(SUPPORT_HALF if reverse else card_id,
+					card_id if reverse else SUPPORT_HALF, 8401 + target)
+				c.deck.draw_pile.assign([PRICK, "warden_strike"])
+				c.deck.discard_pile.assign([BOMB])
+				var cost: int = int(c.rest.get_snapshot()["descriptors"][c.id]["cost"])
+				_check(cost == 2 and c.deck.energy == 3 and c.deck.hand == [c.id],
+					label + ": held composite at its shared cost two")
+				var before := _snapshot(c)
+				var oracle := _oracle_draw(before[0], before[2], 1, before[5])
+				_check(oracle["drawn"] == ["warden_strike"], label + ": top draw-pile card is the drawn one")
+				var ordinary := _sight_ordinary(card_id, before, target)
+				_check(ordinary.result.get("ok", false) and ordinary.result.get("exposed_applied") == 2,
+					label + ": ordinary oracle applies printed Exposed 2")
+				var expected := before.duplicate(true)
+				expected[0] = oracle["draw"]
+				expected[1] = oracle["drawn"]
+				expected[2] = oracle["discard"].duplicate()
+				expected[2].append(c.id)
+				expected[3] = 3 - cost
+				expected[5] = oracle["rng"]
+				expected[6][0]["block"] = 7
+				expected[7] = ordinary.enemies.get_enemies()
+				var result := _play(c, 0 if reverse else target, target if reverse else 0)
+				var sight := _sight_result(target)
+				_check(result == {"ok": true, "halves": [brace, sight] if reverse else [sight, brace]},
+					label + ": exact ordered Exposed/draw and Brace outcomes")
+				_check(c.enemies.get_enemy(target).get("statuses", {}).get("exposed", 0) == 2
+					and c.enemies.get_enemy(3 - target).get("statuses", {}).get("exposed", 0) == 0,
+					label + ": Exposed lands on the chosen foe only")
+				_check(c.deck.hand == ordinary.deck.hand and c.deck.draw_pile == ordinary.deck.draw_pile
+					and c.deck._rng.state == ordinary.deck._rng.state,
+					label + ": shared-hand draw equals the ordinary Sight Glass draw")
+				_check(c.deck.energy == 3 - cost and c.deck.discard_pile.count(c.id) == 1
+					and not c.deck.hand.has(c.id), label + ": one composite charge and one discard")
+				for pile in [c.deck.draw_pile, c.deck.hand, c.deck.discard_pile]:
+					_check(not pile.has(card_id) and not pile.has(SUPPORT_HALF),
+						label + ": no loose half leaks into a pile")
+				_check(_snapshot(c) == expected,
+					label + ": exact piles, energy, party, enemies, latches and seeded RNG")
+				_check(not c.attacks._tinker._consumed and c.attacks._tinker.bonus_for_attack(POP) == 3,
+					label + ": nonattack leaves Tinker's first-attack +3 unspent")
+
+		# Authored half order: Exposed before Shield Bash is read by that hit,
+		# Exposed after it is not. Both sides come from independent oracles.
+		for reverse in [false, true]:
+			var label: String = card_id + (" after Shield Bash" if reverse else " before Shield Bash")
+			var c := _rest_fixture("warden_shield_bash" if reverse else card_id,
+				card_id if reverse else "warden_shield_bash", 8411)
+			c.deck.draw_pile.assign(["warden_brace"])
+			var enemies := CombatEnemies.new(_definitions("res://data/enemies/starter_enemies.json"))
+			var party := CombatParty.new(_definitions("res://data/heroes/starter_party.json"))
+			if not reverse:
+				_check(enemies.apply_statuses({1: {"exposed": 2}}), label + ": oracle Exposed first")
+			var bash: Dictionary = CombatAttackCards.new().resolve_staged_half(party, enemies,
+				"warden_shield_bash", 1, 0)
+			if reverse:
+				_check(enemies.apply_statuses({1: {"exposed": 2}}), label + ": oracle Exposed after the hit")
+			var result := _play(c, 1, 1)
+			_check(bash.get("ok", false) and result == {"ok": true,
+				"halves": [bash, _sight_result(1)] if reverse else [_sight_result(1), bash]},
+				label + ": exact authored-order Exposed and Shield Bash outcomes")
+			_check(c.enemies.get_enemies() == enemies.get_enemies(), label + ": exact enemy HP and statuses")
+			_check(c.deck.hand == ["warden_brace"] and c.deck.energy == 0 and c.deck.discard_pile == [c.id],
+				label + ": one capped charge, one draw and one discard")
+
+		# HEAD Button Glass Visor adds +1 Exposed for its Tinker wearer only.
+		for wearer in ["tinker", "seamstress", "warden"]:
+			var label: String = card_id + " with Visor on " + wearer
+			var c := _rest_fixture(card_id, SUPPORT_HALF, 8421)
+			_bind_visor(c, wearer)
+			c.deck.draw_pile.assign(["warden_strike"])
+			var before := _snapshot(c)
+			var bonus: int = 1 if wearer == "tinker" else 0
+			var ordinary := _sight_ordinary(card_id, before, 2, c.wardrobe, c.torn)
+			_check(ordinary.result.get("exposed_applied", -1) == 2 + bonus,
+				label + ": ordinary oracle prices the wearer-only Visor")
+			var ledger: Dictionary = c.wardrobe.get_snapshot()
+			var result := _play(c, 2, 0)
+			_check(result == {"ok": true, "halves": [_sight_result(2, 2 + bonus), brace]},
+				label + ": stitched half applies exactly Exposed " + str(2 + bonus))
+			_check(c.enemies.get_enemies() == ordinary.enemies.get_enemies()
+				and c.deck.hand == ordinary.deck.hand and c.wardrobe.get_snapshot() == ledger,
+				label + ": exact enemy, hand and untouched run ledger")
+
+		# An empty draw pile reshuffles the real discard with the seeded deck RNG.
+		var refill := _rest_fixture(card_id, SUPPORT_HALF, 9743)
+		refill.deck.discard_pile.assign(["warden_strike", PRICK, "tinker_tune_up"])
+		var before_refill := _snapshot(refill)
+		var oracle_refill := _oracle_draw(before_refill[0], before_refill[2], 1, before_refill[5])
+		_check(oracle_refill["drawn"].size() == 1 and oracle_refill["rng"] != before_refill[5],
+			card_id + ": seeded refill really shuffles one real card")
+		var ordinary_refill := _sight_ordinary(card_id, before_refill, 1)
+		var expected_refill := before_refill.duplicate(true)
+		expected_refill[0] = oracle_refill["draw"]
+		expected_refill[1] = oracle_refill["drawn"]
+		expected_refill[2] = oracle_refill["discard"].duplicate()
+		expected_refill[2].append(refill.id)
+		expected_refill[3] = 1
+		expected_refill[5] = oracle_refill["rng"]
+		expected_refill[6][0]["block"] = 7
+		expected_refill[7] = ordinary_refill.enemies.get_enemies()
+		_check(_play(refill, 1, 0) == {"ok": true, "halves": [_sight_result(1), brace]},
+			card_id + ": commits from an exhausted draw pile")
+		_check(_snapshot(refill) == expected_refill and refill.deck.hand == ordinary_refill.deck.hand
+			and refill.deck._rng.state == ordinary_refill.deck._rng.state,
+			card_id + ": exact seeded refill equals both draw oracles")
+
+		# No supply at all legally draws nothing; the held composite is never redrawn.
+		var dry := _rest_fixture(card_id, SUPPORT_HALF, 9744)
+		_check(dry.deck.draw_pile.is_empty() and dry.deck.discard_pile.is_empty(),
+			card_id + ": genuinely exhausted supply")
+		var dry_rng: int = dry.deck._rng.state
+		_check(_play(dry, 1, 0) == {"ok": true, "halves": [_sight_result(1, 2, 0), brace]}
+			and dry.deck.hand.is_empty() and dry.deck.discard_pile == [dry.id]
+			and dry.deck._rng.state == dry_rng,
+			card_id + ": empty supply draws zero and discards only the composite")
+
+
+## No rejection may publish Exposed, a draw, a discard, energy or RNG movement.
+func _test_sight_glass_failures() -> void:
+	for card_id in SIGHT_GLASS_IDS:
+		var c := _fixture(card_id, SUPPORT_HALF)
+		for target in [0, 3, 4, 99, -1]:
+			_reject(c, target, 0, card_id + ": Sight Glass target " + str(target))
+		_reject(c, 1, 1, card_id + ": Brace refuses a selected target")
+		c = _fixture(SUPPORT_HALF, card_id)
+		_reject(c, 0, 0, card_id + ": second Sight Glass without a target rolls back Brace")
+		_reject(c, 0, 3, card_id + ": second Sight Glass on an empty slot rolls back Brace")
+		c = _fixture(card_id, SUPPORT_HALF)
+		_check(c.enemies.apply_damage(2, c.enemies.get_enemy(2).hp) and c.enemies.is_slain(2),
+			card_id + ": real slain second foe")
+		_reject(c, 2, 0, card_id + ": dead Sight Glass target")
+		c = _fixture(SUPPORT_HALF, card_id)
+		_check(c.enemies.apply_damage(1, c.enemies.get_enemy(1).hp) and c.enemies.is_slain(1),
+			card_id + ": real slain first foe")
+		_reject(c, 0, 1, card_id + ": dead second-half target rolls back Brace")
+		c = _fixture(card_id, SUPPORT_HALF)
+		_check(c.enemies.apply_statuses({1: {"exposed": CombatEnemies.MAX_INT - 1}}),
+			card_id + ": genuine near-saturated Exposed")
+		_reject(c, 1, 0, card_id + ": Exposed overflow rejects before any draw")
+
+	var sight: String = SIGHT_GLASS_IDS[0]
+	# A failing later Prick rolls back the staged Exposed AND a seeded refill;
+	# the legal retry then commits both printed effects exactly once.
+	var c := _rest_fixture(sight, PRICK, 6111)
+	c.deck.discard_pile.assign(["warden_strike", "seamstress_mend", "tinker_tune_up"])
+	var cost: int = int(c.rest.get_snapshot()["descriptors"][c.id]["cost"])
+	_check(cost == 2 and c.deck.energy == 3, "Sight Glass/Prick composite costs two")
+	var before := _snapshot(c)
+	_reject(c, 1, 0, "missing Prick target rolls back staged Exposed and seeded refill")
+	_reject(c, 1, 3, "empty-slot Prick target rolls back staged Exposed and seeded refill")
+	var oracle := _oracle_draw(before[0], before[2], 1, before[5])
+	var retry := _play(c, 1, 2)
+	_check(retry.ok and retry.halves.size() == 2 and retry.halves[0] == _sight_result(1)
+		and retry.halves[1].get("hits", []).size() == 1 and retry.halves[1].hits[0].position == 2,
+		"retry commits Sight Glass and Prick once")
+	_check(c.deck.hand == oracle["drawn"] and c.deck.draw_pile == oracle["draw"]
+		and c.deck.discard_pile == oracle["discard"] + [c.id] and c.deck.energy == 1
+		and c.deck._rng.state == oracle["rng"]
+		and c.enemies.get_enemy(1).get("statuses", {}).get("exposed", 0) == 2,
+		"retry exact seeded refill, Exposed, one charge and one discard")
+
+	c = _fixture(sight, "warden_shield_bash")
+	_check(c.deck.try_spend_energy(1) and c.deck.energy == 2,
+		"one energy already paid before the cost-three composite")
+	_reject(c, 1, 1, "cost-three Sight Glass composite needs three energy")
+	c = _fixture(sight, SUPPORT_HALF)
+	_check(c.deck.try_spend_energy(2) and c.deck.energy == 1, "only one energy left")
+	_reject(c, 1, 0, "cost-two Sight Glass composite needs two energy")
+
+	c = _fixture(sight, SUPPORT_HALF)
+	var tpos := _position_of(c.party, "tinker")
+	_check(c.party.apply_damage(tpos, c.party.get_hero(tpos).hp) and c.party.is_downed(tpos),
+		"real downed Tinker")
+	_reject(c, 1, 0, "downed Sight Glass owner")
+
+	c = _fixture(sight, SUPPORT_HALF)
+	var heroes: Array = c.party.get_heroes()
+	c.party = CombatParty.new([heroes[2], heroes[1], heroes[0]])
+	_check(_position_of(c.party, "tinker") == 1, "Tinker genuinely moved to an illegal front FROM slot")
+	_reject(c, 1, 0, "Sight Glass owner at an illegal front FROM")
+
+	c = _fixture(sight, SUPPORT_HALF)
+	var forged: Dictionary = c.rest.get_snapshot()
+	forged.descriptors[c.id].first_half.effects.exposed = 99
+	c.rest = RunRestStitchCards.new(forged.deck, forged.descriptors, 0, 2)
+	_check(not c.rest.is_valid(), "preinflated Sight Glass descriptor is truly invalid")
+	_reject(c, 1, 0, "forged Sight Glass descriptor cannot grant 99 Exposed")
+
+	for field in ["exposed", "draw"]:
+		c = _fixture(sight, SUPPORT_HALF)
+		_check(c.rest._descriptors[c.id]["first_half"]["effects"].has(field),
+			"live Rest descriptor really carries printed " + field)
+		c.rest._descriptors[c.id]["first_half"]["effects"][field] = 9
+		_reject(c, 1, 0, "inflated live Sight Glass " + field + " fails closed")
+	c = _fixture(sight, SUPPORT_HALF)
+	c.rest._descriptors[c.id]["first_half"]["to_positions"] = [1, 2, 3, 4]
+	_reject(c, 1, 0, "widened live Sight Glass TO fails closed")
+
+	# A Visor receipt that changed after the bind is stale and grants nothing.
+	c = _fixture(sight, SUPPORT_HALF)
+	_bind_visor(c, "tinker")
+	_check(c.wardrobe.start_rest("stale-sight", c.wardrobe.get_snapshot()).ok,
+		"genuine authority change after the Visor bind")
+	_reject(c, 1, 0, "stale Visor patch receipt")
+
+	# The battle party can live while the run ledger marks Tinker torn.
+	c = _rest_fixture(sight, SUPPORT_HALF, 6113)
+	var slots: Array = JSON.parse_string(FileAccess.get_file_as_string(
+		CombatShopPatchRules.SLOTS_CATALOG))
+	c.wardrobe = RunPatchWardrobe.new(c.party.get_heroes(), [], slots, 5)
+	c.torn = RunTornMending.new(c.party.get_heroes())
+	var start: Array = c.torn.read_state().heroes
+	var finish: Array = start.duplicate(true)
+	finish[_position_of(c.party, "tinker") - 1].hp = 0
+	_check(c.torn.observe_battle_end("sight_glass_tear", start, finish).ok,
+		"run ledger records a genuine Tinker tear")
+	var state: Dictionary = c.wardrobe.get_snapshot()
+	_check(c.wardrobe.refresh_run_context(c.torn.read_state().heroes, state.owned,
+		state.scraps, state.gold, state.cards, state), "wardrobe refreshes the torn run heroes")
+	_check(c.party.get_hero(3).hp > 0 and c.torn.read_state().heroes[2].hp == 0,
+		"battle Tinker still lives while the run ledger marks her torn")
+	_check(c.service.bind_patch_wardrobe(c.wardrobe, c.torn),
+		"composite authenticated against the torn run ledger")
+	_reject(c, 1, 0, "run-torn Tinker cannot earn stitched Sight Glass")
+
+
+func _sight_glass_sequence(card_id: String, reverse: bool, seed_value: int) -> Array:
+	var c := _rest_fixture(card_id if not reverse else SUPPORT_HALF,
+		SUPPORT_HALF if not reverse else card_id, seed_value)
+	c.deck.discard_pile.assign(["warden_strike", PRICK, "tinker_tune_up", BOMB])
+	var before := _snapshot(c)
+	var result := _play(c, 0 if reverse else 2, 2 if reverse else 0)
+	return [before, result, _snapshot(c)]
+
+
+func _test_sight_glass_replay() -> void:
+	for seed_value in [0, 83, 9741]:
+		for card_id in SIGHT_GLASS_IDS:
+			for reverse in [false, true]:
+				var first := _sight_glass_sequence(card_id, reverse, seed_value)
+				_check(first[1].get("ok", false), card_id + " order " + str(reverse) + ": replay witness commits")
+				_check(first == _sight_glass_sequence(card_id, reverse, seed_value),
+					card_id + " order " + str(reverse) + ": same-seed Sight Glass replay")
 
 
 func _bind_cuff(c: Dictionary, mode: String = "sewn_warden") -> void:

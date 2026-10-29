@@ -43,6 +43,13 @@ const STITCH := Color("#efcba1")
 @onready var seat_preview: Label = $PaperPanel/Margins/Body/Foot/Hint
 @onready var continue_button: Button = $PaperPanel/Margins/Body/Foot/ContinueButton
 @onready var cancel_button: Button = $PaperPanel/Margins/Body/Foot/CancelButton
+@onready var inspect_deck_button: Button = $PaperPanel/Margins/Body/Foot/InspectDeckButton
+@onready var deck_readout: VBoxContainer = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout
+@onready var deck_rows: Array[Label] = [
+	$PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckSeat1,
+	$PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckSeat2,
+	$PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckSeat3,
+]
 
 var _ids: Array[String] = []
 var _tiles: Dictionary = {}
@@ -53,6 +60,7 @@ var _hovered_id: String = ""
 var _focused_id: String = ""
 var _canonical_heroes: Dictionary = {}
 var _seat_receipt: Dictionary = {}
+var _deck_mode: bool = false
 
 
 ## A drawn stand-in for not-yet-delivered portraits. These five faces are
@@ -159,6 +167,7 @@ func _ready() -> void:
 	_style_screen()
 	continue_button.pressed.connect(_continue_pressed)
 	cancel_button.pressed.connect(_cancel_pressed)
+	inspect_deck_button.pressed.connect(_inspect_deck_pressed)
 	open_picker()
 
 
@@ -173,6 +182,7 @@ func open_picker() -> void:
 	_ids.clear()
 	_canonical_heroes = RunV3PartyAdmission._canonical_records()
 	_seat_receipt = {}
+	_deck_mode = false
 	_hovered_id = ""
 	_focused_id = ""
 	for old in grid.get_children():
@@ -219,6 +229,24 @@ func _inspect_focus(hero_id: String, generation: int, entered: bool) -> void:
 
 
 func _update_inspection() -> void:
+	# The combined readout is a projection of the current successful receipt,
+	# never of separately guessed hero decks or a cached prior opening.
+	if _deck_mode:
+		var rows := _deck_receipt_rows()
+		if rows.size() == 3 and _open and not _latched:
+			deck_readout.show()
+			for label in [inspection_heading, inspection_facts, inspection_detail, inspection_starters]:
+				label.hide()
+			for index in range(3):
+				deck_rows[index].text = rows[index]
+				deck_rows[index].tooltip_text = rows[index]
+			inspect_deck_button.text = "Back"
+			return
+		_deck_mode = false
+	deck_readout.hide()
+	for label in [inspection_heading, inspection_facts, inspection_detail, inspection_starters]:
+		label.show()
+	inspect_deck_button.text = "Inspect Deck"
 	var chosen: String = ""
 	if _open and not _latched:
 		chosen = _hovered_id if not _hovered_id.is_empty() else _focused_id
@@ -278,6 +306,64 @@ func _starter_caption(hero_id: String) -> String:
 	return "STARTER CARDS (4)  •  " + "   |   ".join(entries)
 
 
+## Format only the actual receipt.deck, in its real four-occurrence seat
+## groups. Full printed names stay in each row and its tooltip if trimmed.
+## Invalid/incomplete receipts expose no combined preview.
+func _deck_receipt_rows() -> Array[String]:
+	var rows: Array[String] = []
+	if not _seat_receipt.get("ok", false):
+		return rows
+	var ids: Variant = _seat_receipt.get("hero_ids")
+	var party: Variant = _seat_receipt.get("party")
+	var deck: Variant = _seat_receipt.get("deck")
+	if not ids is Array or not party is Array or not deck is Array \
+			or ids.size() != 3 or party.size() != 3 or deck.size() != 12:
+		return []
+	for seat in range(3):
+		if not ids[seat] is String or not party[seat] is Dictionary \
+				or party[seat].get("id") != ids[seat] \
+				or not party[seat].get("name") is String:
+			return []
+		var hero_id: String = ids[seat]
+		var order: Array[String] = []
+		var counts: Dictionary = {}
+		var labels: Dictionary = {}
+		for offset in range(RunV3PartyAdmission.STARTERS_PER_HERO):
+			var raw: Variant = deck[seat * RunV3PartyAdmission.STARTERS_PER_HERO + offset]
+			if not raw is String:
+				return []
+			var card_id: String = raw
+			var card := RunRestStitchCards.resolve_card_definition(card_id)
+			if card.is_empty() or card.get("id") != card_id or card.get("owner") != hero_id \
+					or card_id.ends_with("_plus") or card.has("upgrade_of") \
+					or typeof(card.get("display_name")) != TYPE_STRING \
+					or String(card["display_name"]).is_empty() \
+					or typeof(card.get("cost")) != TYPE_INT or card["cost"] < 0:
+				return []
+			if not counts.has(card_id):
+				order.append(card_id)
+				counts[card_id] = 0
+				labels[card_id] = "%d EN %s" % [card["cost"], card["display_name"]]
+			counts[card_id] += 1
+		var parts: Array[String] = []
+		for card_id in order:
+			parts.append(labels[card_id] + (" x%d" % counts[card_id] if counts[card_id] > 1 else ""))
+		rows.append("%d  %s  •  %s" % [seat + 1, party[seat]["name"], "   |   ".join(parts)])
+	return rows
+
+
+## Generation-bound by the mounted screen's currently open/latch guards.
+## This control changes text only: no selection, signal or RNG calls.
+func _inspect_deck_pressed() -> void:
+	if not _open or _latched:
+		return
+	if _deck_mode:
+		_deck_mode = false
+	elif not inspect_deck_button.disabled and _deck_receipt_rows().size() == 3:
+		_deck_mode = true
+	_update_inspection()
+
+
 func selected_ids() -> Array[String]:
 	return _ids.duplicate()
 
@@ -297,6 +383,7 @@ func _continue_pressed() -> void:
 		return
 	_latched = true
 	_open = false
+	_deck_mode = false
 	_refresh()
 	_update_inspection()
 	party_requested.emit(_ids.duplicate())
@@ -307,6 +394,7 @@ func _cancel_pressed() -> void:
 		return
 	_latched = true
 	_open = false
+	_deck_mode = false
 	_refresh()
 	_update_inspection()
 	visible = false
@@ -329,6 +417,9 @@ func _refresh() -> void:
 			seat_preview.text = "Party admission unavailable"
 	continue_button.disabled = not _open or _latched or not _seat_receipt.get("ok", false)
 	cancel_button.disabled = not _open or _latched
+	inspect_deck_button.disabled = not _open or _latched or _deck_receipt_rows().size() != 3
+	if inspect_deck_button.disabled:
+		_deck_mode = false
 	for definition in HEROES:
 		var hero_id: String = definition["id"]
 		var tile: Button = _tiles[hero_id]
@@ -337,6 +428,7 @@ func _refresh() -> void:
 		tile.get_node("Inset/Stack/PickLabel").text = (
 			"PICK %d OF 3  ◆  SELECTED" % number if number > 0 else "✕  STITCH TO PARTY")
 		_style_tile(tile, Color(definition["tone"]), number > 0)
+	_update_inspection()
 
 
 func _mount_tile(definition: Dictionary, generation: int) -> void:
@@ -490,19 +582,25 @@ func _style_screen() -> void:
 	inspection_facts.add_theme_font_size_override("font_size", 16)
 	inspection_starters.add_theme_color_override("font_color", GOLD)
 	inspection_starters.add_theme_font_size_override("font_size", 14)
+	var deck_heading := deck_readout.get_node("DeckHeading") as Label
+	deck_heading.add_theme_color_override("font_color", GOLD)
+	deck_heading.add_theme_font_size_override("font_size", 18)
+	for row in deck_rows:
+		row.add_theme_color_override("font_color", CREAM)
+		row.add_theme_font_size_override("font_size", 16)
 	seat_preview.add_theme_color_override("font_color", GOLD)
 	seat_preview.add_theme_font_size_override("font_size", 15)
 	selection_count.add_theme_color_override("font_color", CREAM)
 	selection_count.add_theme_font_size_override("font_size", 24)
-	for button in [continue_button, cancel_button]:
+	for button in [continue_button, cancel_button, inspect_deck_button]:
 		button.focus_mode = Control.FOCUS_ALL
-		button.add_theme_font_size_override("font_size", 22)
+		button.add_theme_font_size_override("font_size", 18 if button == inspect_deck_button else 22)
 		button.add_theme_color_override("font_color", CREAM)
 		button.add_theme_color_override("font_disabled_color", Color("#abaca8"))
 		var idle := _tile_box(Color("#386e65") if button == continue_button
-			else Color("#765061"), SOFT, 3)
+			else Color("#765061") if button == cancel_button else Color("#496b85"), SOFT, 3)
 		var hover := _tile_box(Color("#487d73") if button == continue_button
-			else Color("#906179"), GOLD, 4)
+			else Color("#906179") if button == cancel_button else Color("#587b9a"), GOLD, 4)
 		button.add_theme_stylebox_override("normal", idle)
 		button.add_theme_stylebox_override("hover", hover)
 		button.add_theme_stylebox_override("pressed", hover)

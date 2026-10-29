@@ -2062,6 +2062,34 @@ func _test_fate_pin_auction() -> void:
 	panel.close_event()
 
 
+func _test_parcel_adapter() -> void:
+	var admission := RunV3PartyAdmission.admit(["scarecrow", "button_golem", "yarn_ranger"])
+	_check(admission.ok, "Parcel alternate three-of-eight prerequisite")
+	var ledger := RunRestStitchCards.new(admission.deck, {}, 0, 1).get_snapshot()
+	ledger.party_ids = admission.hero_ids
+	ledger.visited = false
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 360
+	var parcel := RunFrayedDebtParcel.new()
+	_check(parcel.prepare(ledger, rng).ok, "Parcel service prepares alternate party")
+	var state := rng.state
+	_check(panel.open_frayed_debt_parcel(parcel), "Parcel adapter opens existing Event panel")
+	await _frames()
+	var offers := parcel.get_offers()
+	_check(offers.size() == 2 and panel.get_choice_buttons().size() == 3, "two card tickets and safe exit")
+	for index in range(2):
+		var button := panel.get_choice_buttons()[index]
+		_check(button.text.contains(offers[index].display_name) and button.text.contains("Frayed Debt")
+			and not button.tooltip_text.contains("Outcome unavailable")
+			and panel._bound_choices[button] == offers[index].id, "honest card and removable curse preview")
+	var source := parcel.get_source_snapshot()
+	panel.get_choice_buttons()[0].pressed.emit()
+	_check(panel._committed_choice == {"ok": true, "event_id": "frayed_debt_parcel", "choice_id": offers[0].id}
+		and not parcel.is_consumed() and parcel.get_source_snapshot() == source and rng.state == state,
+		"presentation emits IDs only and never applies service or draws RNG")
+	panel.close_event()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(PANEL_SCENE) as PackedScene
@@ -2079,6 +2107,7 @@ func _run() -> void:
 	panel.wallet_choice_committed.connect(_on_wallet_choice_committed)
 	await _frames()
 	_check(not panel.visible and not panel.has_open_event(), "initially closed")
+	await _test_parcel_adapter()
 	await _test_fate_pin_auction()
 	_check(panel.has_method("open_event") and panel.has_method("close_event"),
 		"required public lifecycle methods exist")

@@ -81,6 +81,24 @@ var needle_payer: OptionButton
 var auction_payer: OptionButton
 
 
+## Presentation only: the route owner authenticates and applies the Parcel.
+func open_frayed_debt_parcel(outcome: RunFrayedDebtParcel) -> bool:
+	if outcome == null or not outcome.is_valid() or outcome.is_consumed():
+		return false
+	var record := RunFrayedDebtParcel.load_authored_event()
+	var offers := outcome.get_offers()
+	if offers.size() != 2:
+		return false
+	for index in range(2):
+		var card: Dictionary = offers[index]
+		record.choices[index] = {"id": card.id, "text": "Take %s (%s, uncommon) + one removable Frayed Debt\n%s" % [card.display_name, card.owner, CardShortRules.line(card)]}
+	if not open_event(record):
+		return false
+	for index in range(3):
+		_choice_buttons[index].tooltip_text = record.choices[index].text
+	return true
+
+
 func open_fate_pin_auction(outcome: RunFatePinAuction) -> bool:
 	if outcome == null or not outcome.is_valid() or not open_event(outcome.get_event()):
 		return false

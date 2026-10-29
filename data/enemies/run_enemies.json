@@ -32,7 +32,7 @@
       {"type": "block", "amount": 3, "weight": 3},
       {"type": "buff", "amount": 2, "weight": 1}
     ]}},
-  {"id": "moth_scribe", "name": "Moth Scribe", "max_hp": 14, "art_path": "res://assets/paper/enemies/moth_scribe.png",
+  {"id": "moth_scribe", "name": "Moth Scribe", "max_hp": 14, "chew_block_on_attack": true, "art_path": "res://assets/paper/enemies/moth_scribe.png",
     "intent": {"target": "exposed", "actions": [
       {"type": "attack", "amount": 5, "weight": 3},
       {"type": "debuff", "amount": 1, "status": "weak", "weight": 2},
@@ -60,7 +60,7 @@
   {"id":"spoolback_hound","name":"Spoolback Hound","max_hp":28,"enrage":true,"art_path":"res://assets/paper/enemies/spoolback_hound.png","intent":{"target":"front","actions":[{"type":"shove","amount":0,"direction":1,"weight":2},{"type":"attack","amount":7,"weight":3}]}},
   {"id":"inkbrush_imp","name":"Inkbrush Imp","max_hp":23,"art_path":"res://assets/paper/enemies/inkbrush_imp.png","intent":{"target":"lowest_living_hp","actions":[{"type":"debuff","amount":2,"status":"exposed","weight":2},{"type":"attack","amount":6,"weight":3}]}},
   {"id":"spindle_ram","name":"Spindle Ram","max_hp":30,"art_path":"res://assets/paper/enemies/spindle_ram.png","intent":{"target":"front","actions":[{"type":"shove","amount":0,"direction":1,"weight":2},{"type":"block","amount":7,"weight":2},{"type":"attack","amount":8,"weight":3}]}},
-  {"id":"razor_ribbon_wraith","name":"Razor Ribbon Wraith","max_hp":27,"art_path":"res://assets/paper/enemies/razor_ribbon_wraith.png","intent":{"target":"lowest_living_hp","actions":[{"type":"debuff","status":"bleed","amount":2,"weight":2},{"type":"debuff","status":"exposed","amount":1,"weight":1},{"type":"attack","amount":9,"weight":3}]}},
+  {"id":"razor_ribbon_wraith","name":"Razor Ribbon Wraith","max_hp":27,"revive_once":true,"art_path":"res://assets/paper/enemies/razor_ribbon_wraith.png","intent":{"target":"lowest_living_hp","actions":[{"type":"debuff","status":"bleed","amount":2,"weight":2},{"type":"debuff","status":"exposed","amount":1,"weight":1},{"type":"attack","amount":9,"weight":3}]}},
   {"id":"clothespin_crusher","name":"Clothespin Crusher","max_hp":30,"art_path":"res://assets/paper/enemies/clothespin_crusher.png","intent":{"target":"front","actions":[{"type":"snip_block","amount":0,"weight":2},{"type":"attack","amount":8,"weight":3},{"type":"block","amount":7,"weight":1}]}},
   {"id":"crochet_hook_harrier","name":"Crochet Hook Harrier","max_hp":26,"art_path":"res://assets/paper/enemies/crochet_hook_harrier.png","intent":{"target":"front","actions":[{"type":"shove","amount":0,"direction":-1,"weight":2},{"type":"attack","amount":7,"weight":3},{"type":"debuff","amount":1,"status":"exposed","weight":1}]}},
   {"id":"thistle_patch_doll","name":"Thistle Patch Doll","max_hp":28,"thorns":2,"art_path":"res://assets/paper/enemies/thistle_patch_doll.png","intent":{"target":"front","actions":[{"type":"block","amount":8,"weight":2},{"type":"attack","amount":6,"weight":3}]}},

@@ -60,7 +60,7 @@ func _expected() -> Dictionary:
 				{"type": "block", "amount": 7, "weight": 2},
 				{"type": "attack", "amount": 8, "weight": 3}]}},
 		"razor_ribbon_wraith": {"id": "razor_ribbon_wraith", "name": "Razor Ribbon Wraith",
-			"max_hp": 27, "art_path": "res://assets/paper/enemies/razor_ribbon_wraith.png",
+			"max_hp": 27, "revive_once": true, "art_path": "res://assets/paper/enemies/razor_ribbon_wraith.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
 				{"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
 				{"type": "debuff", "status": "exposed", "amount": 1, "weight": 1},

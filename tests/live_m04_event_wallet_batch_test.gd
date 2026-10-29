@@ -49,7 +49,7 @@ func _combined_catalog(include_party: bool = true) -> Dictionary:
 func _event_path(map: RunMap, choices: Array, remaining: int) -> Array:
 	for id in choices:
 		var node := map.get_node(id)
-		if node.type not in ["Event", "Treasure"]:
+		if node.type not in ["Event", "Treasure", "Campfire", "Unpicker", "Rest"]:
 			continue
 		var needed := remaining - (1 if node.type == "Event" else 0)
 		if needed == 0:
@@ -79,9 +79,17 @@ const PROMOTED_CANDLELIT := ["lantern_bobbin_ferry", "thimble_star_reading",
 	"moonpatch_archway", "blacklace_swap_table", "crooked_marionette", "dusk_post_bobbin"]
 
 
+func _generic_route_ids() -> Array:
+	var ids := RunM04EventRotation.new(_combined_catalog()).get_generic_event_ids()
+	if not app._frayed_debt_seen:
+		ids.append("frayed_debt_parcel")
+	ids.sort()
+	return ids
+
+
 func _fixtures() -> Dictionary:
 	var found := {}
-	var ids: Array = RunM04EventRotation.new(_combined_catalog()).get_generic_event_ids()
+	var ids: Array = _generic_route_ids()
 	_check(not ids.is_empty(), "fixture oracle has a genuine eligible Event pool")
 	if ids.is_empty():
 		return found
@@ -144,7 +152,7 @@ func _fixtures() -> Dictionary:
 			var transit := {}
 			var treasures: Array = []
 			for id in path:
-				if map.get_node(id).type == "Treasure":
+				if map.get_node(id).type != "Event":
 					treasures.append(id)
 				else:
 					transit[id] = treasures.duplicate()
@@ -291,7 +299,10 @@ func _catalog_failures(entry: Callable) -> void:
 	app.roadside_event_catalog_path = original
 	var history: Array = app._wallet_event_history.duplicate()
 	app._wallet_event_history = RunM04EventRotation.new(_combined_catalog()).get_generic_event_ids()
-	_reject_wallet(entry, "exhausted generic rotation")
+	var parcel_seen: bool = app._frayed_debt_seen
+	app._frayed_debt_seen = true
+	_reject_wallet(entry, "exhausted generic rotation including once-per-run Parcel")
+	app._frayed_debt_seen = parcel_seen
 	app._wallet_event_history = history
 
 
@@ -398,9 +409,14 @@ func _reach(fixture: Dictionary, funded: bool = true) -> void:
 func _traverse_treasures(fixture: Dictionary, target: String) -> void:
 	for id in fixture.transit[target]:
 		var before := [_wallet(), _other_ledgers()]
+		var kind: String = app.run_map.get_node(id).type
 		await _click(_route_action(id))
-		_check(app.run_map.get_current_node_id() == id and app.run_map.get_node(id).type == "Treasure"
-			and [_wallet(), _other_ledgers()] == before, "legal intervening Treasure changes only the route")
+		if kind in ["Campfire", "Rest"]:
+			await _click(app.campfire_leave_button)
+		elif kind == "Unpicker":
+			await _click(app.unpicker_leave_button)
+		_check(app.run_map.get_current_node_id() == id and kind in ["Treasure", "Campfire", "Unpicker", "Rest"]
+			and [_wallet(), _other_ledgers()] == before, "legal free transit changes only the route")
 
 
 func _return_title() -> void:
@@ -420,7 +436,7 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 	var rng := RandomNumberGenerator.new()
 	rng.state = fixture.before_draw
 	_check(app.run_rng.state == rng.state, "live seeded map and paid toll match independent fixture RNG")
-	var ids := RunM04EventRotation.new(_combined_catalog()).get_generic_event_ids()
+	var ids := _generic_route_ids()
 	ids.sort()
 	var expected_id: String = ids[rng.randi_range(0, ids.size() - 1)]
 	var before: Array = _other_ledgers()
