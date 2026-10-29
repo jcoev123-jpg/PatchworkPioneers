@@ -70,11 +70,15 @@ signal vital_choice_committed(result: Dictionary)
 
 @onready var paper_panel: PanelContainer = $PaperPanel
 @onready var backdrop_art: TextureRect = $EventBackdrop
-@onready var title_label: Label = $PaperPanel/ContentMargin/EventContent/EventTitle
-@onready var description_label: Label = $PaperPanel/ContentMargin/EventContent/EventDescription
-@onready var choices_container: VBoxContainer = $PaperPanel/ContentMargin/EventContent/Choices
-@onready var top_stitches: Label = $PaperPanel/ContentMargin/EventContent/TopStitches
-@onready var bottom_stitches: Label = $PaperPanel/ContentMargin/EventContent/BottomStitches
+@onready var scroll_stack: VBoxContainer = $PaperPanel/ContentMargin/ScrollStack
+@onready var story_scroll: ScrollContainer = $PaperPanel/ContentMargin/ScrollStack/StoryScroll
+@onready var event_content: VBoxContainer = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent
+@onready var scroll_hint: Label = $PaperPanel/ContentMargin/ScrollStack/ScrollHint
+@onready var title_label: Label = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent/EventTitle
+@onready var description_label: Label = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent/EventDescription
+@onready var choices_container: VBoxContainer = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent/Choices
+@onready var top_stitches: Label = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent/TopStitches
+@onready var bottom_stitches: Label = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent/BottomStitches
 
 var _selector: RunEventChoice = null
 var needle_payer: OptionButton
@@ -234,6 +238,11 @@ func _ready() -> void:
 	_apply_patchwork_style()
 	bind_event_backdrop()
 	paper_panel.minimum_size_changed.connect(_fit_parchment, CONNECT_DEFERRED)
+	event_content.minimum_size_changed.connect(_fit_parchment, CONNECT_DEFERRED)
+	resized.connect(_fit_parchment, CONNECT_DEFERRED)
+	scroll_hint.add_theme_color_override("font_color", Color("#584632"))
+	scroll_hint.add_theme_font_size_override("font_size", 17)
+	scroll_hint.theme_type_variation = DISPLAY_VARIATION
 	close_event()
 
 
@@ -257,12 +266,30 @@ func _resolve_event_backdrop(art_path: String) -> Texture2D:
 	return load(art_path) as Texture2D
 
 
-## Follow wrapped story and live selector minimums, including later picker mounts.
-## Equal vertical anchors keep the complete content-sized parchment centred.
+## The parchment remains content-height for ordinary stories. A long wrapped
+## story (or service picker) uses the same paper, capped 32px inside the
+## viewport, with its full authored content and payer controls scrolling inside.
+## The sewn hint lives below, not over, the choice tickets.
 func _fit_parchment() -> void:
-	var height := paper_panel.get_combined_minimum_size().y
+	if not is_node_ready():
+		return
+	var inner_height := event_content.get_combined_minimum_size().y
+	var paper_insets := paper_panel.get_theme_stylebox("panel").get_minimum_size().y
+	paper_insets += 26.0 + 24.0 # ContentMargin's authored paper insets.
+	var available := maxf(128.0, size.y - 64.0)
+	var needs_scroll := inner_height + paper_insets > available
+	scroll_hint.visible = needs_scroll
+	var hint_space := 0.0
+	if needs_scroll:
+		hint_space = scroll_hint.get_combined_minimum_size().y + scroll_stack.get_theme_constant("separation")
+	var story_height := minf(inner_height, maxf(1.0, available - paper_insets - hint_space))
+	story_scroll.custom_minimum_size.y = story_height
+	var height := minf(available, paper_panel.get_combined_minimum_size().y)
 	paper_panel.offset_top = -height * 0.5
 	paper_panel.offset_bottom = height * 0.5
+	# Scrollbars are still usable with a wheel, swipe, keyboard or focus. The
+	# hint also makes the long-story affordance obvious on 1280x720.
+	story_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO if needs_scroll else ScrollContainer.SCROLL_MODE_DISABLED
 
 
 ## Displays a detached authored offering; refuses invalid records and refuses
@@ -407,6 +434,7 @@ func _mount_vital_offering(offered: RunEventChoice, snapshot: Dictionary, previe
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.focus_mode = Control.FOCUS_ALL if can_take else Control.FOCUS_NONE
 		button.mouse_filter = Control.MOUSE_FILTER_STOP
+		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if String(choice["text"]).length() > 120 else TextServer.AUTOWRAP_OFF
 		_style_choice_button(button)
 		button.add_theme_font_size_override("font_size", 18)
 		button.disabled = not can_take
@@ -416,6 +444,8 @@ func _mount_vital_offering(offered: RunEventChoice, snapshot: Dictionary, previe
 		_bound_choices[button] = choice_id
 		button.pressed.connect(_on_choice_pressed.bind(offered, choice_id, _generation, button))
 	visible = true
+	story_scroll.scroll_vertical = 0
+	_fit_parchment.call_deferred()
 
 
 ## Short hero heading: the offered hero's ID, current/maximum HP and wallet.
@@ -534,6 +564,7 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.focus_mode = Control.FOCUS_ALL
 		button.mouse_filter = Control.MOUSE_FILTER_STOP
+		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if String(choice["text"]).length() > 120 else TextServer.AUTOWRAP_OFF
 		_style_choice_button(button)
 		if wallet_mode:
 			var forecast: Dictionary = (previews[i] as Dictionary).duplicate(true)
@@ -561,6 +592,8 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 		# and closed/reopened offerings cannot redirect an old pressed signal.
 		button.pressed.connect(_on_choice_pressed.bind(offered, choice_id, _generation, button))
 	visible = true
+	story_scroll.scroll_vertical = 0
+	_fit_parchment.call_deferred()
 
 
 ## A small sewn number tag pinned to the left edge of one choice ticket. It only
@@ -708,6 +741,11 @@ func close_event() -> void:
 	_offered_snapshot.clear()
 	_vital_previews.clear()
 	visible = false
+	if is_node_ready():
+		story_scroll.scroll_vertical = 0
+		scroll_hint.visible = false
+		story_scroll.custom_minimum_size.y = 0.0
+		story_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	if is_node_ready():
 		title_label.text = ""
 		description_label.text = ""

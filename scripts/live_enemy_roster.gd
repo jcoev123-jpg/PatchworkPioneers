@@ -2002,6 +2002,16 @@ static func _enrage_stacks(enemy: Dictionary) -> int:
 	return count
 
 
+## Read only the literal one-shot enemy Blind token. Invalid/missing metadata is not
+## interpreted as a miss; CombatEnemyPhase owns rejection and consumption.
+static func _has_attack_blind(enemy: Dictionary) -> bool:
+	var statuses: Variant = enemy.get("statuses", {})
+	if not statuses is Dictionary:
+		return false
+	var count: Variant = statuses.get("blind_next_attack", 0)
+	return count is int and count == 1
+
+
 ## Top-right in this puppet's art band, avoiding its separate Thorns and intent
 ## badges. The plaque stays inside the actor column and never covers the name/HP hem.
 func _place_status_tag(puppet: Puppet, tag: PanelContainer, occupied: Array[Rect2]) -> void:
@@ -2124,13 +2134,16 @@ func _refresh() -> void:
 		# its weighted scheduler and the puppet bound to the same actual actor ID.
 		# A stale slot, replaced roster, closed fight or unbound preview gets no trait.
 		var puppet := _puppets[CombatParty.PARTY_SIZE + index] as Puppet
-		var trusted_contact: bool = live_source and unravel != null \
+		var trusted_source: bool = live_source \
 			and app.enemy_intents != null and app.enemy_intents.is_bound() \
 			and app.enemy_intents._enemies == enemies \
 			and enemy.get("id") is String and not String(enemy["id"]).is_empty() \
 			and puppet.actor_id == enemy["id"] \
 			and _admitted_ids.size() == roster.size() \
 			and _admitted_ids[index] == enemy["id"]
+		# Unravelled's optional service is required for contact cues, but a
+		# real mounted Blind token must remain visible when that service is absent.
+		var trusted_contact: bool = trusted_source and unravel != null
 		var contact_traits: Dictionary = _contact_traits(enemy) if trusted_contact else {}
 		var trusted_survival: bool = position == index + 1 and enemy.get("hp") is int \
 			and enemy["hp"] > 0 and enemies == app.enemies and _battle == app.battle_view \
@@ -2156,11 +2169,14 @@ func _refresh() -> void:
 				and app.enemy_intents.is_bound():
 			policy = CombatEnemyIntents.policy_for(enemies, position)
 		var enrage_stacks := _enrage_stacks(enemy) if live_source else -1
+		# Blind belongs to this exact living source, not another occupant of its
+		# slot or a stale cached announcement. This read cannot consume the token.
+		var attack_blind := trusted_source and _has_attack_blind(enemy)
 		badge.show_intent(action, enemies.is_slain(position), pending, policy,
-			enrage_stacks, contact_traits)
+			enrage_stacks, contact_traits, attack_blind)
 		# Only a live, source-owned, already-announced attack can preview an actual
 		# redirect. Keep the printed target, amount and policy ticket untouched.
-		if reactions != null and live_source and not pending \
+		if reactions != null and live_source and not pending and not badge.blind_miss \
 				and app.enemy_intents != null and app.enemy_intents.is_bound() \
 				and app.enemy_intents._enemies == enemies \
 				and _admitted_ids.size() == roster.size() \

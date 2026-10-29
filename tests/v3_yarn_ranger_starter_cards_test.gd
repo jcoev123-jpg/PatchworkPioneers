@@ -2,8 +2,10 @@ extends SceneTree
 ## V3-1 Yarn Ranger starter-card contract and paid needle-shot service.
 ## The catalog fixtures below stay data-only; the service-level cases drive real seeded
 ## CombatDeck/CombatParty/CombatEnemies/CombatUnravel objects to prove the four needle
-## printings really damage one target and charge that foe's Unravel gauge. No live app hand or
-## reward registration is claimed here: dispatching a real held card is a separate task.
+## printings really damage one target and charge that foe's Unravel gauge. The Purling Barrage
+## cases prove the same class resolves its two authentic reward printings as two independent
+## paid hits and one post-hit Unravel charge. No live app hand or reward registration is claimed
+## here: dispatching a real held card is a separate task.
 
 const YarnRangerStarterCards = preload("res://data/cards/yarn_ranger_starter_cards.gd")
 const StarterCards = preload("res://data/cards/starter_cards.gd")
@@ -19,6 +21,9 @@ const NEEDLE_NOCK_PLUS := "yarn_ranger_needle_nock_plus"
 const NEEDLE_ARROW := "yarn_ranger_needle_arrow"
 const NEEDLE_ARROW_PLUS := "yarn_ranger_needle_arrow_plus"
 const NEEDLE_IDS := [NEEDLE_NOCK, NEEDLE_NOCK_PLUS, NEEDLE_ARROW, NEEDLE_ARROW_PLUS]
+const PURLING := "yarn_ranger_purling_barrage"
+const PURLING_PLUS := "yarn_ranger_purling_barrage_plus"
+const PURLING_IDS := [PURLING, PURLING_PLUS]
 
 var failures: Array[String] = []
 var checks: int = 0
@@ -37,6 +42,11 @@ func _initialize() -> void:
 	_test_needle_block_and_lethal()
 	_test_needle_threshold_and_skip()
 	_test_needle_refusals()
+	_test_purling_catalog_contract()
+	_test_purling_paid_play()
+	_test_purling_two_hits_and_lethal()
+	_test_purling_unravel_threshold()
+	_test_purling_refusals()
 	if failures.is_empty():
 		print("v3_yarn_ranger_starter_cards_test: PASS (", checks, " checks)")
 	else:
@@ -1027,6 +1037,723 @@ func _test_needle_refusals() -> void:
 		"retry: the boss seat keeps the service's own sixteen-point threshold")
 
 
+## AC1: the two authored Purling Barrage reward printings authenticate only as themselves in
+## the Yarn Ranger pool, keep their exact two-energy/two-hit/back-seat line and upgrade link,
+## refuse forged or tampered records, and never enter the separate needle-shot table.
+func _test_purling_catalog_contract() -> void:
+	var starter := YarnRangerStarterCards.new()
+	var pool := YarnRangerPoolCards.new()
+	var resolver := CombatYarnRangerNeedleCards.new()
+	var expected := {
+		PURLING: {"name": "Purling Barrage", "damage": 3, "unravel": 1, "reward": true},
+		PURLING_PLUS: {"name": "Purling Barrage+", "damage": 4, "unravel": 2,
+			"reward": false},
+	}
+	_check(pool.get_upgrade_id(PURLING) == PURLING_PLUS,
+		"Purling Barrage maps to its authored upgrade")
+	_check(pool.get_upgrade_id(PURLING_PLUS) == "",
+		"Purling Barrage+ cannot upgrade again")
+	_check(not pool.has_card(PURLING_PLUS + "_plus"),
+		"Purling Barrage+ has no second upgrade")
+	for card_id: String in PURLING_IDS:
+		var spec: Dictionary = expected[card_id]
+		var record: Dictionary = pool.get_definition(card_id)
+		_check(not record.is_empty(), card_id + " is authored by the Yarn Ranger pool")
+		_check(starter.get_definition(card_id).is_empty(),
+			card_id + " is not a Yarn Ranger starter card")
+		_check(record.get("id") == card_id, card_id + " keeps its exact identifier")
+		_check(record.get("display_name") == spec["name"], card_id + " keeps its printed name")
+		_check(record.get("owner") == "yarn_ranger", card_id + " is owned by the Yarn Ranger")
+		_check(record.get("cost") == 2, card_id + " prints two energy")
+		_check(record.get("from_positions") == [3], card_id + " prints FROM the back seat only")
+		_check(record.get("target_kind") == "enemy_single",
+			card_id + " prints a single-enemy target")
+		_check(record.get("to_positions") == [1, 2, 3], card_id + " prints TO slots 1-3")
+		var effects: Dictionary = record.get("effects", {})
+		_check(effects == {"damage": spec["damage"], "hit_count": 2,
+			"unravel": spec["unravel"]},
+			card_id + " prints exactly " + str(spec["damage"]) + " damage per hit, two hits and "
+			+ str(spec["unravel"]) + " Unravel")
+		_check(effects.size() == 3, card_id + " carries no extra effect key")
+		_check(typeof(effects.get("damage")) == TYPE_INT
+			and typeof(effects.get("hit_count")) == TYPE_INT
+			and typeof(effects.get("unravel")) == TYPE_INT,
+			card_id + " prints integer damage, hit count and Unravel values")
+		_check(record.get("starting_copies") == 0,
+			card_id + " adds no starting copy")
+		_check(record.get("reward_eligible") == spec["reward"],
+			card_id + " keeps its authored reward eligibility")
+		_check(record.get("rarity") == "uncommon", card_id + " stays an uncommon reward")
+		if card_id == PURLING:
+			_check(record.get("upgrade_id") == PURLING_PLUS and not record.has("upgrade_of"),
+				card_id + " links forward to its one upgrade")
+		else:
+			_check(record.get("upgrade_of") == PURLING and not record.has("upgrade_id"),
+				card_id + " links back to its one base printing")
+		_check(resolver.is_supported_purling_card(card_id),
+			card_id + " is a supported Purling Barrage card")
+		_check(CombatYarnRangerNeedleCards.is_authentic_purling_definition(record, card_id),
+			card_id + " passes the Purling definition authenticator")
+		_check(CombatYarnRangerNeedleCards.purling_definition(card_id) == record,
+			card_id + " resolves to its exact detached pool record")
+		# The Purling printings stay out of the existing one-hit needle service.
+		_check(not resolver.is_supported_card(card_id),
+			card_id + " is not a supported needle shot")
+		_check(CombatYarnRangerNeedleCards.needle_definition(card_id).is_empty(),
+			card_id + " does not resolve as a needle shot")
+
+	_check(CombatYarnRangerNeedleCards.PURLING_CARDS.has(PURLING)
+		and CombatYarnRangerNeedleCards.PURLING_CARDS.has(PURLING_PLUS),
+		"the resolver table carries both authentic Purling printings")
+	for needle_id: String in NEEDLE_IDS:
+		_check(not CombatYarnRangerNeedleCards.PURLING_CARDS.has(needle_id),
+			needle_id + " is not a Purling Barrage card")
+
+	# Detached: mutating a resolved record cannot rewrite the next resolution.
+	var sample := CombatYarnRangerNeedleCards.purling_definition(PURLING)
+	_check(not sample.is_empty(), "Purling resolution fixture loaded")
+	if not sample.is_empty():
+		sample["effects"]["damage"] = 900
+		sample["effects"]["hit_count"] = 9
+		sample["effects"]["unravel"] = 900
+		sample["from_positions"].clear()
+		sample["cost"] = 0
+		sample["display_name"] = "Forged Barrage"
+		_check(CombatYarnRangerNeedleCards.purling_definition(PURLING)
+			== pool.get_definition(PURLING),
+			"a mutated Purling definition cannot poison later resolutions")
+
+	# Forged or unrelated IDs never resolve, including the needle printings.
+	var forged: Array = [PURLING + "_plus_plus", "yarn_ranger_purling_barrage_+",
+		"purling_barrage", "yarn_ranger_Purling_Barrage", " " + PURLING, PURLING + " ",
+		PURLING.to_upper(), "", NEEDLE_NOCK, NEEDLE_ARROW_PLUS, "yarn_ranger_snare_net",
+		"warden_strike", StringName(PURLING), null, 0, 3.5, false, [], {}]
+	for other_id: Variant in forged:
+		_check(CombatYarnRangerNeedleCards.purling_definition(other_id).is_empty(),
+			"forged or unrelated ID never resolves as Purling Barrage: " + str(other_id))
+		_check(not CombatYarnRangerNeedleCards.is_authentic_purling_definition(
+			pool.get_definition(PURLING), other_id),
+			"a Purling record cannot authenticate under a forged ID: " + str(other_id))
+
+	# Adversarial copies of the base record: every altered contract field is refused.
+	var base_record: Dictionary = pool.get_definition(PURLING)
+	_check(not base_record.is_empty()
+		and CombatYarnRangerNeedleCards.is_authentic_purling_definition(
+			base_record, PURLING),
+		"authenticator positive fixture really is the authored Purling Barrage")
+	var base_mutations: Array[Callable] = [
+		func(record: Dictionary) -> void: record["effects"]["damage"] = 4,
+		func(record: Dictionary) -> void: record["effects"]["damage"] = 3.0,
+		func(record: Dictionary) -> void: record["effects"]["damage"] = "3",
+		func(record: Dictionary) -> void: record["effects"]["hit_count"] = 1,
+		func(record: Dictionary) -> void: record["effects"]["hit_count"] = 3,
+		func(record: Dictionary) -> void: record["effects"]["hit_count"] = 2.0,
+		func(record: Dictionary) -> void: record["effects"]["unravel"] = 2,
+		func(record: Dictionary) -> void: record["effects"]["unravel"] = true,
+		func(record: Dictionary) -> void: record["effects"].erase("hit_count"),
+		func(record: Dictionary) -> void: record["effects"].erase("unravel"),
+		func(record: Dictionary) -> void: record["effects"]["tangled"] = 1,
+		func(record: Dictionary) -> void: record["effects"] = "damage",
+		func(record: Dictionary) -> void: record["cost"] = 1,
+		func(record: Dictionary) -> void: record["cost"] = 3,
+		func(record: Dictionary) -> void: record["cost"] = 2.0,
+		func(record: Dictionary) -> void: record["owner"] = "warden",
+		func(record: Dictionary) -> void: record["display_name"] = "Purling Barrage+",
+		func(record: Dictionary) -> void: record["from_positions"] = [2, 3],
+		func(record: Dictionary) -> void: record["from_positions"] = [1, 2, 3],
+		func(record: Dictionary) -> void: record["to_positions"] = [1, 2],
+		func(record: Dictionary) -> void: record["target_kind"] = "enemy_all",
+		func(record: Dictionary) -> void: record["id"] = PURLING_PLUS,
+		func(record: Dictionary) -> void: record.erase("upgrade_id"),
+		func(record: Dictionary) -> void: record["upgrade_of"] = PURLING,
+		func(record: Dictionary) -> void: record["starting_copies"] = 1,
+		func(record: Dictionary) -> void: record["reward_eligible"] = false,
+		func(record: Dictionary) -> void: record["rarity"] = "common",
+		func(record: Dictionary) -> void: record.erase("rarity"),
+		func(record: Dictionary) -> void: record.erase("effects"),
+		func(record: Dictionary) -> void: record.erase("display_name"),
+	]
+	for index in range(base_mutations.size()):
+		var tampered: Dictionary = base_record.duplicate(true)
+		base_mutations[index].call(tampered)
+		_check(not CombatYarnRangerNeedleCards.is_authentic_purling_definition(
+			tampered, PURLING),
+			"tampered Purling Barrage record " + str(index) + " is refused")
+
+	# The upgraded printing carries its own reward/upgrade line; tampering is refused too.
+	var plus_record: Dictionary = pool.get_definition(PURLING_PLUS)
+	_check(not plus_record.is_empty()
+		and CombatYarnRangerNeedleCards.is_authentic_purling_definition(
+			plus_record, PURLING_PLUS),
+		"authenticator positive fixture really is the authored Purling Barrage+")
+	var plus_mutations: Array[Callable] = [
+		func(record: Dictionary) -> void: record["effects"]["damage"] = 3,
+		func(record: Dictionary) -> void: record["effects"]["unravel"] = 1,
+		func(record: Dictionary) -> void: record["reward_eligible"] = true,
+		func(record: Dictionary) -> void: record.erase("upgrade_of"),
+		func(record: Dictionary) -> void: record["upgrade_id"] = PURLING_PLUS,
+		func(record: Dictionary) -> void: record["rarity"] = "rare",
+	]
+	for index in range(plus_mutations.size()):
+		var tampered_plus: Dictionary = plus_record.duplicate(true)
+		plus_mutations[index].call(tampered_plus)
+		_check(not CombatYarnRangerNeedleCards.is_authentic_purling_definition(
+			tampered_plus, PURLING_PLUS),
+			"tampered Purling Barrage+ record " + str(index) + " is refused")
+
+	_check(not CombatYarnRangerNeedleCards.is_authentic_purling_definition(
+		pool.get_definition(PURLING_PLUS), PURLING),
+		"an upgraded record cannot authenticate as its base ID")
+	_check(not CombatYarnRangerNeedleCards.is_authentic_purling_definition(
+		pool.get_definition(PURLING), PURLING_PLUS),
+		"a base record cannot authenticate as its upgraded ID")
+	_check(not CombatYarnRangerNeedleCards.is_authentic_purling_definition(
+		pool.get_definition(PURLING), NEEDLE_ARROW),
+		"a Purling record cannot forge a needle identity")
+	_check(not CombatYarnRangerNeedleCards.is_authentic_definition(
+		pool.get_definition(PURLING), PURLING),
+		"a Purling record cannot enter the needle authenticator")
+	_check(not CombatYarnRangerNeedleCards.is_authentic_purling_definition(
+		starter.get_definition(NEEDLE_NOCK), NEEDLE_NOCK),
+		"a needle record cannot enter the Purling authenticator")
+
+
+## AC2: a genuinely held base/+ Purling Barrage from the back seat pays exactly two energy,
+## discards exactly one copy and resolves two independent printed-damage hits through the shared
+## attack bridge, then charges the printed Unravel once on the surviving target.
+func _test_purling_paid_play() -> void:
+	var resolver := CombatYarnRangerNeedleCards.new()
+	var cases := [
+		{"id": PURLING, "target": 1, "damage": 3, "unravel": 1},
+		{"id": PURLING_PLUS, "target": 2, "damage": 4, "unravel": 2},
+	]
+	for index in range(cases.size()):
+		var entry: Dictionary = cases[index]
+		var card_id: String = entry["id"]
+		var target: int = entry["target"]
+		var damage: int = entry["damage"]
+		var printed_unravel: int = entry["unravel"]
+		var threshold := 8 if target == 1 else 12
+		var label: String = card_id + " onto foe " + str(target)
+		var party := _needle_party(3)
+		var enemies := _needle_enemies([
+			{"max_hp": 40, "hp": 40}, {"max_hp": 40, "hp": 40}, {"max_hp": 40, "hp": 40},
+		])
+		var unravel := _needle_ledger(enemies, {1: "normal", 2: "elite", 3: "boss"})
+		var deck := _needle_deck([card_id], 20261029 + index)
+		_check(deck.hand.count(card_id) == 1, label + ": exactly one authentic copy is held")
+		_check(deck.energy == 3 and deck.turn_active,
+			label + ": a real three-energy turn is active")
+		_check(unravel.get_snapshot(target) == {"gauge": 0, "threshold": threshold,
+			"unravelled": false, "skip_pending": false},
+			label + ": the target gauge starts empty at its tier threshold")
+		var rng_before: int = deck._rng.state
+		var draw_before: Array = deck.draw_pile.duplicate()
+		var before := _needle_snapshot(deck, party, enemies, unravel)
+		var result: Dictionary = resolver.play_purling_barrage(deck, party, enemies, unravel,
+			card_id, target)
+		_check(result.get("ok") == true and result.get("reason") == "applied",
+			label + ": authorized paid play")
+		_check(result.get("card_id") == card_id and result.get("cost") == 2,
+			label + ": receipt names the authentic card and its two energy")
+		_check(result.get("owner_position") == 3, label + ": receipt reports the real owner seat")
+		_check(result.get("target_position") == target,
+			label + ": receipt reports the chosen foe")
+		_check(result.get("damage_per_hit") == damage and result.get("damage") == damage,
+			label + ": printed per-hit damage " + str(damage))
+		_check(result.get("hit_count") == 2, label + ": receipt reports both real hits")
+		var hits: Array = result.get("hits", [])
+		_check(hits.size() == 2, label + ": two per-hit receipts are exposed")
+		var total_hp := 0
+		for hit_index in range(hits.size()):
+			var hit: Dictionary = hits[hit_index]
+			_check(hit.get("index") == hit_index + 1, label + ": hit " + str(hit_index + 1)
+				+ " keeps its sequence number")
+			_check(hit.get("damage") == damage and hit.get("block_absorbed") == 0
+				and hit.get("hp_loss") == damage,
+				label + ": hit " + str(hit_index + 1) + " deals the full printed damage to HP")
+			total_hp += int(hit.get("hp_loss", 0))
+		_check(result.get("total_damage") == damage * 2
+			and result.get("total_block_absorbed") == 0
+			and result.get("total_hp_loss") == damage * 2 and total_hp == damage * 2,
+			label + ": both hits really add up")
+		_check(result.get("unravel_added") == printed_unravel,
+			label + ": receipt reports the one printed Unravel charge")
+		_check(result.get("unravel") == {"gauge": printed_unravel, "threshold": threshold,
+			"unravelled": false, "skip_pending": false},
+			label + ": the receipt carries the once-charged gauge snapshot")
+		_check(deck.energy == 1, label + ": exactly two of the three energy were spent")
+		_check(deck.combat_state.energy == 1, label + ": the shared combat state agrees")
+		_check(deck.hand.count(card_id) == 0, label + ": the held copy left the hand")
+		_check(deck.discard_pile == [card_id],
+			label + ": exactly one played copy reached discard")
+		_check(deck.draw_pile == draw_before, label + ": the shared draw supply is untouched")
+		_check(deck.hand.size() == before["hand"].size() - 1,
+			label + ": no extra card was drawn into the shared hand")
+		_check(deck._rng.state == rng_before, label + ": the deterministic play consumes no RNG")
+		_check(deck.turn_active, label + ": the shared turn is still active")
+		_check(enemies.get_enemy(target).get("hp") == 40 - damage * 2,
+			label + ": the target lost exactly both printed hits")
+		_check(enemies.get_enemy(target).get("block") == 0,
+			label + ": the target gained no Block")
+		_check(not enemies.get_enemy(target).has("statuses"),
+			label + ": Purling Barrage adds no unrelated status")
+		_check(enemies.get_enemy(target).get("position") == target,
+			label + ": the target kept its original slot")
+		for position in [1, 2, 3]:
+			if position == target:
+				continue
+			_check(enemies.get_enemy(position).get("hp") == 40
+				and not enemies.get_enemy(position).has("statuses"),
+				label + ": non-target foe " + str(position) + " is untouched")
+			_check(unravel.get_snapshot(position).get("gauge") == 0,
+				label + ": non-target gauge " + str(position) + " is untouched")
+		_check(party.get_hero(3).get("id") == "yarn_ranger"
+			and party.get_hero(3).get("hp") == 27,
+			label + ": the owner and its HP stay unchanged")
+		_check(_needle_snapshot(deck, party, enemies, unravel)
+			== _expected_purling(before, card_id, target, damage, 2, printed_unravel),
+			label + ": exact hand, piles, energy, turn, party, enemy, gauge and RNG state")
+		# A detached receipt is never authority for later state.
+		result["damage"] = 99
+		result["hit_count"] = 9
+		result["hits"] = []
+		result["unravel_added"] = 99
+		_check(unravel.get_snapshot(target).get("gauge") == printed_unravel
+			and enemies.get_enemy(target).get("hp") == 40 - damage * 2,
+			label + ": a mutated receipt cannot change the target or its gauge")
+		# A replay of the spent copy fails without another hit or gauge charge.
+		var replay_before := _needle_snapshot(deck, party, enemies, unravel)
+		var replay: Dictionary = resolver.play_purling_barrage(deck, party, enemies, unravel,
+			card_id, target)
+		_check(replay.get("ok") == false and replay.get("reason") == "card_not_held",
+			label + ": a replayed spent copy is refused")
+		_check(_needle_snapshot(deck, party, enemies, unravel) == replay_before,
+			label + ": the refused replay changes nothing")
+
+
+## AC2: the shared attack bridge owns each independent hit (Block before HP, Weak/Exposed/Tangled
+## modifiers and floor rounding), and a lethal first hit stops the sequence without retargeting.
+func _test_purling_two_hits_and_lethal() -> void:
+	var resolver := CombatYarnRangerNeedleCards.new()
+
+	# 1. Both hits are status-adjusted separately and each spends Block before HP.
+	#    Base 3 with attacker Weak and defender Exposed floors 3.375 to 3, then Tangled adds 2.
+	#    Hit one spends five of six Block; hit two spends the last Block and four HP.
+	var party := _needle_party(3)
+	party._heroes[2]["statuses"] = {"weak": 1}
+	var enemies := _needle_enemies([
+		{"max_hp": 40, "hp": 40},
+		{"max_hp": 40, "hp": 40, "block": 6,
+			"statuses": {"exposed": 1, "tangled": 2}},
+		{"max_hp": 40, "hp": 40},
+	])
+	var unravel := _needle_ledger(enemies, {1: "normal", 2: "normal", 3: "normal"})
+	var deck := _needle_deck([PURLING], 51111)
+	var before := _needle_snapshot(deck, party, enemies, unravel)
+	var blocked: Dictionary = resolver.play_purling_barrage(deck, party, enemies, unravel,
+		PURLING, 2)
+	_check(blocked.get("ok") == true, "status hits: the authentic play succeeds")
+	_check(blocked.get("hit_count") == 2, "status hits: both independent hits happen")
+	var blocked_hits: Array = blocked.get("hits", [])
+	_check(blocked_hits.size() == 2, "status hits: two per-hit receipts are exposed")
+	if blocked_hits.size() == 2:
+		_check(blocked_hits[0].get("damage") == 5
+			and blocked_hits[0].get("block_absorbed") == 5
+			and blocked_hits[0].get("hp_loss") == 0,
+			"status hits: the first five-damage hit is fully Block-absorbed")
+		_check(blocked_hits[1].get("damage") == 5
+			and blocked_hits[1].get("block_absorbed") == 1
+			and blocked_hits[1].get("hp_loss") == 4,
+			"status hits: the second hit spends the last Block then reaches HP")
+	_check(blocked.get("total_damage") == 10 and blocked.get("total_block_absorbed") == 6
+		and blocked.get("total_hp_loss") == 4,
+		"status hits: the receipt totals the two separate hits")
+	_check(enemies.get_enemy(2).get("block") == 0 and enemies.get_enemy(2).get("hp") == 36,
+		"status hits: the target ends with no Block and four less HP")
+	_check(enemies.get_enemy(2).get("statuses") == {"exposed": 1, "tangled": 2},
+		"status hits: the defender's statuses are neither rewritten nor consumed")
+	_check(party.get_hero(3).get("statuses") == {"weak": 1},
+		"status hits: the attacker's Weak is neither rewritten nor consumed")
+	_check(blocked.get("unravel_added") == 1
+		and unravel.get_snapshot(2).get("gauge") == 1,
+		"status hits: the survivor receives its single Unravel after both hits")
+	_check(deck.energy == 1 and deck.discard_pile == [PURLING],
+		"status hits: two energy and one copy were paid exactly once")
+	_check(_needle_snapshot(deck, party, enemies, unravel)
+		== _expected_purling(before, PURLING, 2, 5, 2, 1),
+		"status hits: exact deck, party, enemy, gauge and RNG state")
+
+	# 2. An upgraded shot still hits twice: base 4 with Exposed 1.5 then Tangled +2 gives eight
+	#    per hit, so nine Block only absorbs the first hit.
+	var plus_party := _needle_party(3)
+	var plus_enemies := _needle_enemies([
+		{"max_hp": 40, "hp": 40, "block": 9, "statuses": {"exposed": 1, "tangled": 1}},
+		{"max_hp": 40, "hp": 40},
+	])
+	var plus_unravel := _needle_ledger(plus_enemies, {1: "elite", 2: "normal"})
+	var plus_deck := _needle_deck([PURLING_PLUS], 51112)
+	var plus_before := _needle_snapshot(plus_deck, plus_party, plus_enemies, plus_unravel)
+	var plus_blocked: Dictionary = resolver.play_purling_barrage(plus_deck, plus_party,
+		plus_enemies, plus_unravel, PURLING_PLUS, 1)
+	_check(plus_blocked.get("ok") == true and plus_blocked.get("hit_count") == 2,
+		"upgraded status hits: both printed hits resolve")
+	_check(plus_blocked.get("total_damage") == 16
+		and plus_blocked.get("total_block_absorbed") == 9
+		and plus_blocked.get("total_hp_loss") == 7,
+		"upgraded status hits: eight damage per hit against nine Block")
+	_check(plus_enemies.get_enemy(1).get("block") == 0
+		and plus_enemies.get_enemy(1).get("hp") == 33,
+		"upgraded status hits: nine Block spent and seven HP lost")
+	_check(plus_blocked.get("unravel_added") == 2
+		and plus_unravel.get_snapshot(1).get("gauge") == 2,
+		"upgraded status hits: two Unravel added once on the survivor")
+	_check(_needle_snapshot(plus_deck, plus_party, plus_enemies, plus_unravel)
+		== _expected_purling(plus_before, PURLING_PLUS, 1, 8, 2, 2),
+		"upgraded status hits: exact deck, party, enemy, gauge and RNG state")
+
+	# 3. A lethal first hit ends the sequence: no second hit, no retarget, no Unravel.
+	var lethal_party := _needle_party(3)
+	var lethal_enemies := _needle_enemies([
+		{"max_hp": 30, "hp": 30},
+		{"max_hp": 3, "hp": 3},
+		{"max_hp": 30, "hp": 30},
+	])
+	var lethal_unravel := _needle_ledger(lethal_enemies, {1: "normal", 2: "elite", 3: "boss"})
+	var lethal_deck := _needle_deck([PURLING], 51113)
+	var lethal_before := _needle_snapshot(lethal_deck, lethal_party, lethal_enemies, lethal_unravel)
+	var lethal: Dictionary = resolver.play_purling_barrage(lethal_deck, lethal_party,
+		lethal_enemies, lethal_unravel, PURLING, 2)
+	_check(lethal.get("ok") == true and lethal.get("hit_count") == 1,
+		"lethal: the first hit kills, so exactly one hit is reported")
+	var lethal_hits: Array = lethal.get("hits", [])
+	_check(lethal_hits.size() == 1 and lethal_hits[0].get("hp_loss") == 3,
+		"lethal: the single hit carries its real HP loss")
+	_check(lethal.get("total_damage") == 3 and lethal.get("total_hp_loss") == 3,
+		"lethal: no second hit is invented")
+	_check(lethal.get("unravel_added") == 0, "lethal: a slain foe receives no Unravel")
+	_check(lethal_enemies.is_slain(2), "lethal: the chosen foe is really slain")
+	_check(lethal_enemies.get_enemy(2).get("position") == 2,
+		"lethal: the slain foe keeps its original nonmoving slot")
+	_check(lethal_unravel.get_snapshot(2) == {"gauge": 0, "threshold": 12,
+		"unravelled": false, "skip_pending": false},
+		"lethal: the slain foe's gauge stays empty and unqueued")
+	_check(lethal_enemies.get_enemy(1).get("hp") == 30
+		and lethal_enemies.get_enemy(3).get("hp") == 30,
+		"lethal: no neighbour is retargeted and the roster is not compacted")
+	_check(lethal_unravel.get_snapshot(1).get("gauge") == 0
+		and lethal_unravel.get_snapshot(3).get("gauge") == 0,
+		"lethal: no other gauge is charged")
+	_check(lethal_deck.energy == 1 and lethal_deck.discard_pile == [PURLING],
+		"lethal: the two-energy cost and single discard still happened once")
+	_check(_needle_snapshot(lethal_deck, lethal_party, lethal_enemies, lethal_unravel)
+		== _expected_purling(lethal_before, PURLING, 2, 3, 1, 0),
+		"lethal: exact deck, party, enemy, gauge and RNG state")
+
+
+## AC3: the printing's Unravel is one post-hit charge on the surviving target, adds even when
+## every hit was Blocked, and a threshold crossing queues exactly one skip for CombatUnravel's
+## real consumer without resetting or raising anything itself.
+func _test_purling_unravel_threshold() -> void:
+	var resolver := CombatYarnRangerNeedleCards.new()
+
+	# 1. One charge only: from five, the base card reaches six, never seven (once per hit).
+	var one_party := _needle_party(3)
+	var one_enemies := _needle_enemies([{"max_hp": 40, "hp": 40}])
+	var one_unravel := _needle_ledger(one_enemies, {1: "normal"})
+	_check(one_unravel.apply_unravel(one_enemies, 1, 5),
+		"one-charge fixture really starts at five of eight")
+	var one_deck := _needle_deck([PURLING], 61111)
+	var one_result: Dictionary = resolver.play_purling_barrage(one_deck, one_party,
+		one_enemies, one_unravel, PURLING, 1)
+	_check(one_result.get("ok") == true and one_result.get("unravel_added") == 1,
+		"one-charge: the base printing reports its single Unravel")
+	_check(one_unravel.get_snapshot(1) == {"gauge": 6, "threshold": 8,
+		"unravelled": false, "skip_pending": false},
+		"one-charge: five plus one is six, proving Unravel is not applied per hit")
+
+	# 2. Normal threshold while every hit is Block-absorbed: the survivor still crosses 8/8 and
+	#    queues exactly one skip; consumption stays with CombatUnravel.
+	var blocked_party := _needle_party(3)
+	var blocked_enemies := _needle_enemies([
+		{"max_hp": 40, "hp": 40, "block": 100},
+	])
+	var blocked_unravel := _needle_ledger(blocked_enemies, {1: "normal"})
+	_check(blocked_unravel.apply_unravel(blocked_enemies, 1, 7),
+		"normal threshold fixture really starts at seven of eight")
+	var blocked_deck := _needle_deck([PURLING], 61112)
+	var blocked_before := _needle_snapshot(blocked_deck, blocked_party, blocked_enemies,
+		blocked_unravel)
+	var blocked_result: Dictionary = resolver.play_purling_barrage(blocked_deck, blocked_party,
+		blocked_enemies, blocked_unravel, PURLING, 1)
+	_check(blocked_result.get("ok") == true
+		and blocked_result.get("total_block_absorbed") == 6
+		and blocked_result.get("total_hp_loss") == 0,
+		"normal threshold: both hits are fully absorbed by Block")
+	_check(blocked_enemies.get_enemy(1).get("hp") == 40
+		and blocked_enemies.get_enemy(1).get("block") == 94,
+		"normal threshold: the fully blocked target is still alive")
+	_check(blocked_result.get("unravel_added") == 1
+		and blocked_unravel.get_snapshot(1) == {"gauge": 8, "threshold": 8,
+			"unravelled": true, "skip_pending": true},
+		"normal threshold: a fully blocked survivor still crosses 8/8 and queues one skip")
+	_check(_needle_snapshot(blocked_deck, blocked_party, blocked_enemies, blocked_unravel)
+		== _expected_purling(blocked_before, PURLING, 1, 3, 2, 1),
+		"normal threshold: exact deck, party, enemy, gauge and RNG state")
+	_check(blocked_unravel.consume_action_skip(blocked_enemies, 1),
+		"normal threshold: the queued skip is still pending for the real consumer")
+	_check(blocked_unravel.get_snapshot(1) == {"gauge": 0, "threshold": 12,
+		"unravelled": false, "skip_pending": false},
+		"normal threshold: consumption resets the gauge and raises the line by four")
+	_check(not blocked_unravel.consume_action_skip(blocked_enemies, 1),
+		"normal threshold: only one skip was ever queued")
+
+	# 3. Elite threshold with the upgraded printing: eleven plus two clamps to 12/12, one skip.
+	var elite_party := _needle_party(3)
+	var elite_enemies := _needle_enemies([{"max_hp": 40, "hp": 40}])
+	var elite_unravel := _needle_ledger(elite_enemies, {1: "elite"})
+	_check(elite_unravel.apply_unravel(elite_enemies, 1, 11),
+		"elite threshold fixture really starts at eleven of twelve")
+	var elite_deck := _needle_deck([PURLING_PLUS], 61113)
+	var elite_result: Dictionary = resolver.play_purling_barrage(elite_deck, elite_party,
+		elite_enemies, elite_unravel, PURLING_PLUS, 1)
+	_check(elite_result.get("ok") == true and elite_result.get("unravel_added") == 2,
+		"elite threshold: the upgraded printing adds its two Unravel once")
+	_check(elite_unravel.get_snapshot(1) == {"gauge": 12, "threshold": 12,
+		"unravelled": true, "skip_pending": true},
+		"elite threshold: eleven plus two clamps to 12/12 and queues one skip")
+	_check(elite_unravel.consume_action_skip(elite_enemies, 1),
+		"elite threshold: the one queued skip is still pending")
+	_check(elite_unravel.get_snapshot(1).get("threshold") == 16,
+		"elite threshold: consumption raises the line to sixteen")
+	_check(not elite_unravel.consume_action_skip(elite_enemies, 1),
+		"elite threshold: no second skip was queued")
+
+	# 4. Boss threshold: fifteen plus the base one reaches 16/16 and queues exactly one skip.
+	var boss_party := _needle_party(3)
+	var boss_enemies := _needle_enemies([{"max_hp": 40, "hp": 40}])
+	var boss_unravel := _needle_ledger(boss_enemies, {1: "boss"})
+	_check(boss_unravel.apply_unravel(boss_enemies, 1, 15),
+		"boss threshold fixture really starts at fifteen of sixteen")
+	var boss_deck := _needle_deck([PURLING], 61114)
+	var boss_result: Dictionary = resolver.play_purling_barrage(boss_deck, boss_party,
+		boss_enemies, boss_unravel, PURLING, 1)
+	_check(boss_result.get("ok") == true and boss_result.get("unravel_added") == 1,
+		"boss threshold: the base printing adds its one Unravel once")
+	_check(boss_unravel.get_snapshot(1) == {"gauge": 16, "threshold": 16,
+		"unravelled": true, "skip_pending": true},
+		"boss threshold: fifteen plus one crosses 16/16 and queues one skip")
+	_check(boss_unravel.consume_action_skip(boss_enemies, 1),
+		"boss threshold: the one queued skip is still pending")
+	_check(boss_unravel.get_snapshot(1).get("threshold") == 20,
+		"boss threshold: consumption raises the line to twenty")
+	_check(not boss_unravel.consume_action_skip(boss_enemies, 1),
+		"boss threshold: no second skip was queued")
+
+
+## AC4: unheld/foreign/relinked IDs, an illegal owner or target, an inactive turn, no energy, a
+## malformed roster/status map or an unbound/wrong-roster ledger all refuse before any spend.
+func _test_purling_refusals() -> void:
+	var resolver := CombatYarnRangerNeedleCards.new()
+	var party := _needle_party(3)
+	var enemies := _needle_enemies([
+		{"max_hp": 12, "hp": 12}, {"max_hp": 12, "hp": 12}, {"max_hp": 12, "hp": 12},
+	])
+	var unravel := _needle_ledger(enemies, {1: "normal", 2: "normal", 3: "normal"})
+	var deck := _needle_deck([PURLING], 4456)
+
+	_rejected_purling(resolver, null, party, enemies, unravel, PURLING, 1,
+		"invalid_request", "null deck")
+	_rejected_purling(resolver, deck, null, enemies, unravel, PURLING, 1,
+		"invalid_request", "null party")
+	_rejected_purling(resolver, deck, party, null, unravel, PURLING, 1,
+		"invalid_request", "null enemies")
+	_rejected_purling(resolver, deck, party, enemies, null, PURLING, 1,
+		"invalid_request", "null ledger")
+	var unseeded := _needle_deck([PURLING], 9002)
+	unseeded._rng = null
+	_rejected_purling(resolver, unseeded, party, enemies, unravel, PURLING, 1,
+		"invalid_request", "deck without a seeded RNG")
+
+	# Inactive turn.
+	var inactive := CombatDeck.new([PURLING, "needle_filler_a"], _needle_rng(13))
+	inactive.hand.append(PURLING)
+	_check(not inactive.turn_active and inactive.hand.has(PURLING),
+		"inactive fixture really holds a Purling copy outside a turn")
+	_rejected_purling(resolver, inactive, party, enemies, unravel, PURLING, 1,
+		"inactive_turn", "inactive turn")
+
+	# Wrong IDs: the needle printings, unrelated authentic cards, forged spellings, non-strings.
+	var unsupported: Array = [NEEDLE_NOCK, NEEDLE_NOCK_PLUS, NEEDLE_ARROW, NEEDLE_ARROW_PLUS,
+		PURLING + "_plus_plus", PURLING_PLUS + "_plus", "yarn_ranger_purling_barrage_+",
+		"purling_barrage", PURLING.to_upper(), PURLING + " ", "yarn_ranger_snare_net",
+		"yarn_ranger_unspool", "yarn_ranger_wool_bolas", "warden_strike", "",
+		StringName(PURLING), null, 0, 3.5, false, [], {}]
+	for wrong_id: Variant in unsupported:
+		_rejected_purling(resolver, deck, party, enemies, unravel, wrong_id, 1,
+			"unsupported_card", "unsupported ID " + str(wrong_id))
+
+	# Authentic printings the hand does not hold are still unheld.
+	_rejected_purling(resolver, deck, party, enemies, unravel, PURLING_PLUS, 1,
+		"card_not_held", "authentic but unheld Purling Barrage+")
+	var no_copy := CombatDeck.new(["needle_filler_a", "needle_filler_b", "needle_filler_c",
+		"needle_filler_d", "needle_filler_e"], _needle_rng(78))
+	_check(no_copy.start_turn() and not no_copy.hand.has(PURLING),
+		"missing-copy fixture really lacks the card")
+	_rejected_purling(resolver, no_copy, party, enemies, unravel, PURLING, 1,
+		"card_not_held", "missing held copy")
+
+	# No energy: two energy are required, so one short refuses.
+	var poor := _needle_deck([PURLING], 5567)
+	poor.combat_state.energy = 1
+	_check(poor.energy == 1 and poor.hand.has(PURLING),
+		"short-energy fixture really holds a copy with only one energy")
+	_rejected_purling(resolver, poor, party, enemies, unravel, PURLING, 1,
+		"insufficient_energy", "one energy short")
+	var broke := _needle_deck([PURLING], 5568)
+	broke.combat_state.energy = 0
+	_rejected_purling(resolver, broke, party, enemies, unravel, PURLING, 1,
+		"insufficient_energy", "no energy")
+
+	# Illegal target slots: only enemies 1-3 are real recipients.
+	for slot: int in [0, 4, -1, 99]:
+		_rejected_purling(resolver, deck, party, enemies, unravel, PURLING, slot,
+			"invalid_target", "illegal target slot " + str(slot))
+	var dead_target := _needle_enemies([
+		{"max_hp": 12, "hp": 12}, {"max_hp": 12, "hp": 0}, {"max_hp": 12, "hp": 12},
+	])
+	var dead_ledger := _needle_ledger(dead_target, {1: "normal", 2: "normal", 3: "normal"})
+	_rejected_purling(resolver, deck, party, dead_target, dead_ledger, PURLING, 2,
+		"target_downed", "slain target slot")
+
+	# Invalid rosters.
+	var short_party := CombatParty.new([{"id": "yarn_ranger", "max_hp": 27}])
+	_rejected_purling(resolver, deck, short_party, enemies, unravel, PURLING, 1,
+		"invalid_roster", "invalid one-hero party")
+	_rejected_purling(resolver, deck, party, CombatEnemies.new([]), unravel, PURLING, 1,
+		"invalid_roster", "invalid empty enemy roster")
+
+	# Owner absent, in the front/middle seat, or downed grants no authority.
+	var no_owner := CombatParty.new([{"id": "rag_duelist", "max_hp": 32},
+		{"id": "scarecrow", "max_hp": 34}, {"id": "lantern_monk", "max_hp": 30}])
+	_check(no_owner.is_valid() and no_owner.get_hero(3).get("id") == "lantern_monk",
+		"absent-owner fixture is a valid three-hero party with no Yarn Ranger")
+	_rejected_purling(resolver, deck, no_owner, enemies, unravel, PURLING, 1,
+		"owner_missing", "absent Yarn Ranger")
+	for misplaced in [1, 2]:
+		var displaced := _needle_party(misplaced)
+		_check(displaced.get_hero(misplaced).get("id") == "yarn_ranger"
+			and not displaced.is_downed(misplaced),
+			"misplaced-owner fixture really has a living Yarn Ranger in seat "
+			+ str(misplaced))
+		_rejected_purling(resolver, deck, displaced, enemies, unravel, PURLING, 1,
+			"owner_illegal_position", "Yarn Ranger in seat " + str(misplaced))
+	var torn := _needle_party(3)
+	_check(torn.apply_damage(3, 27) and torn.is_downed(3),
+		"torn-owner fixture really has a downed Yarn Ranger in seat 3")
+	_rejected_purling(resolver, deck, torn, enemies, unravel, PURLING, 1,
+		"owner_downed", "downed owner")
+
+	# Malformed party/enemy models and status maps fail closed.
+	var duplicate := _needle_party(3)
+	duplicate._heroes[0]["id"] = "yarn_ranger"
+	_check(duplicate.get_hero(1).get("id") == "yarn_ranger"
+		and duplicate.get_hero(3).get("id") == "yarn_ranger",
+		"duplicate-identity fixture really repeats the owner ID")
+	_rejected_purling(resolver, deck, duplicate, enemies, unravel, PURLING, 1,
+		"invalid_party", "duplicate hero identity")
+	var bad_hp := _needle_party(3)
+	bad_hp._heroes[0]["hp"] = 999
+	_rejected_purling(resolver, deck, bad_hp, enemies, unravel, PURLING, 1,
+		"invalid_party", "malformed hero HP")
+	var bad_party_statuses := _needle_party(3)
+	bad_party_statuses._heroes[2]["statuses"] = "bad"
+	_rejected_purling(resolver, deck, bad_party_statuses, enemies, unravel, PURLING, 1,
+		"invalid_party", "malformed party status map")
+	var bad_attacker := _needle_party(3)
+	bad_attacker._heroes[2]["statuses"] = {"forged": 1}
+	_rejected_purling(resolver, deck, bad_attacker, enemies, unravel, PURLING, 1,
+		"invalid_party", "unsupported attacker status map")
+	var blind_attacker := _needle_party(3)
+	blind_attacker._heroes[2]["statuses"] = {"blind_next_attack": 1}
+	_rejected_purling(resolver, deck, blind_attacker, enemies, unravel, PURLING, 1,
+		"invalid_statuses", "attacker Blind token belongs to the miss path")
+	for malformed: Variant in ["bad", 4, {"tangled": -1}, {"tangled": "2"}, {"forged": 1},
+			{"tangled": 1.5}, {"tangled": true}, {1: 2}]:
+		var broken := _needle_enemies([
+			{"max_hp": 10, "hp": 10}, {"max_hp": 10, "hp": 10}, {"max_hp": 10, "hp": 10},
+		])
+		broken._enemies[1]["statuses"] = malformed
+		var broken_ledger := _needle_ledger(broken, {1: "normal", 2: "normal", 3: "normal"})
+		_rejected_purling(resolver, deck, party, broken, broken_ledger, PURLING, 1,
+			"invalid_enemies", "malformed target status map " + str(malformed))
+	var dodging_target := _needle_enemies([
+		{"max_hp": 10, "hp": 10, "statuses": {"dodge_next_attack": 1}},
+		{"max_hp": 10, "hp": 10},
+	])
+	var dodging_ledger := _needle_ledger(dodging_target, {1: "normal", 2: "normal"})
+	_rejected_purling(resolver, deck, party, dodging_target, dodging_ledger, PURLING, 1,
+		"invalid_statuses", "defender Dodge token belongs to the evasion path")
+	var bad_enemy_hp := _needle_enemies([{"max_hp": 10, "hp": 10}])
+	bad_enemy_hp._enemies[0]["hp"] = 99
+	var bad_enemy_hp_ledger := _needle_ledger(bad_enemy_hp, {1: "normal"})
+	_rejected_purling(resolver, deck, party, bad_enemy_hp, bad_enemy_hp_ledger, PURLING, 1,
+		"invalid_enemies", "malformed enemy HP")
+	var bad_enemy_position := _needle_enemies([{"max_hp": 10, "hp": 10}])
+	bad_enemy_position._enemies[0]["position"] = 2
+	var bad_enemy_position_ledger := _needle_ledger(bad_enemy_position, {1: "normal"})
+	_rejected_purling(resolver, deck, party, bad_enemy_position,
+		bad_enemy_position_ledger, PURLING, 1, "invalid_enemies", "malformed enemy slot index")
+
+	# Unbound, wrongly bound or tampered ledgers never authorize a paid Purling play.
+	var unbound := CombatUnravel.new()
+	_rejected_purling(resolver, deck, party, enemies, unbound, PURLING, 1,
+		"invalid_unravel", "unbound ledger")
+	var other_enemies := _needle_enemies([{"max_hp": 12, "hp": 12}])
+	var wrong_ledger := _needle_ledger(other_enemies, {1: "normal"})
+	_rejected_purling(resolver, deck, party, enemies, wrong_ledger, PURLING, 1,
+		"invalid_unravel", "ledger bound to another roster")
+	var torn_ledger := _needle_ledger(enemies, {1: "normal", 2: "normal", 3: "normal"})
+	torn_ledger._gauges[1]["threshold"] = 0
+	_rejected_purling(resolver, deck, party, enemies, torn_ledger, PURLING, 1,
+		"invalid_unravel", "tampered gauge threshold")
+
+	# A consumed copy cannot be played twice, and a refused attempt never poisons the next one.
+	var repeat_enemies := _needle_enemies([{"max_hp": 20, "hp": 20}])
+	var repeat_party := _needle_party(3)
+	var repeat_ledger := _needle_ledger(repeat_enemies, {1: "normal"})
+	var repeat_deck := _needle_deck([PURLING], 8815)
+	_check(resolver.play_purling_barrage(repeat_deck, repeat_party, repeat_enemies,
+		repeat_ledger, PURLING, 1).get("ok") == true,
+		"duplicate-play fixture really casts once")
+	_check(repeat_deck.energy == 1 and repeat_deck.discard_pile == [PURLING],
+		"duplicate-play fixture really spent two energy and discarded the copy")
+	var repeat_after := _needle_snapshot(repeat_deck, repeat_party, repeat_enemies, repeat_ledger)
+	var replay: Dictionary = resolver.play_purling_barrage(repeat_deck, repeat_party,
+		repeat_enemies, repeat_ledger, PURLING, 1)
+	_check(replay.get("ok") == false and replay.get("reason") == "card_not_held",
+		"replay: the consumed copy is refused")
+	_check(_needle_snapshot(repeat_deck, repeat_party, repeat_enemies, repeat_ledger)
+		== repeat_after, "replay: the refusal changes no energy, card, HP or gauge")
+
+	var retry_deck := _needle_deck([PURLING_PLUS], 6124)
+	var retry_party := _needle_party(3)
+	var retry_enemies := _needle_enemies([{"max_hp": 20, "hp": 20}])
+	var retry_ledger := _needle_ledger(retry_enemies, {1: "boss"})
+	_rejected_purling(resolver, retry_deck, retry_party, retry_enemies, retry_ledger,
+		"yarn_ranger_snare_net", 1, "unsupported_card", "retry: wrong card first")
+	_rejected_purling(resolver, retry_deck, retry_party, retry_enemies, retry_ledger,
+		PURLING_PLUS, 0, "invalid_target", "retry: illegal slot second")
+	var retry_result: Dictionary = resolver.play_purling_barrage(retry_deck, retry_party,
+		retry_enemies, retry_ledger, PURLING_PLUS, 1)
+	_check(retry_result.get("ok") == true and retry_deck.energy == 1
+		and retry_enemies.get_enemy(1).get("hp") == 12
+		and retry_ledger.get_snapshot(1).get("gauge") == 2,
+		"retry: the authentic play then succeeds exactly once on the boss gauge")
+	_check(retry_ledger.get_snapshot(1).get("threshold") == 16,
+		"retry: the boss seat keeps the service's own sixteen-point threshold")
+
+
 func _needle_rng(seed_value: int) -> RandomNumberGenerator:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
@@ -1171,6 +1898,50 @@ func _expected_needle(before: Dictionary, card_id: String, target: int, damage: 
 				gauge["skip_pending"] = true
 			gauge["gauge"] = charged
 	return expected
+
+
+## The exact post-Purling state: two energy, one discarded copy, each independent hit spending
+## Block before HP on the chosen target, and the printed Unravel charged once on a survivor.
+func _expected_purling(before: Dictionary, card_id: String, target: int, damage_per_hit: int,
+		hit_count: int, unravel_added: int) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	_check(expected.get("deck_present") == true and expected.get("enemies_present") == true,
+		"expected Purling snapshot is backed by real objects")
+	expected["energy"] = int(expected["energy"]) - 2
+	expected["state_energy"] = int(expected["state_energy"]) - 2
+	var hand: Array = expected["hand"]
+	_check(hand.count(card_id) >= 1,
+		"expected Purling snapshot: a played copy is really held")
+	hand.remove_at(hand.find(card_id))
+	(expected["discard"] as Array).append(card_id)
+	var enemy: Dictionary = expected["enemies"][target - 1]
+	for index in range(hit_count):
+		var absorbed: int = mini(int(enemy["block"]), damage_per_hit)
+		enemy["block"] = int(enemy["block"]) - absorbed
+		enemy["hp"] = maxi(0, int(enemy["hp"]) - (damage_per_hit - absorbed))
+	if int(enemy["hp"]) > 0 and unravel_added > 0:
+		var gauge: Dictionary = expected["gauges"][target]
+		if not (bool(gauge["unravelled"]) and bool(gauge["skip_pending"])):
+			var charged: int = int(gauge["gauge"]) + unravel_added
+			if charged >= int(gauge["threshold"]):
+				charged = int(gauge["threshold"])
+				gauge["unravelled"] = true
+				gauge["skip_pending"] = true
+			gauge["gauge"] = charged
+	return expected
+
+
+func _rejected_purling(resolver: CombatYarnRangerNeedleCards, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, unravel: CombatUnravel, card_id: Variant,
+		target: int, reason: String, label: String) -> void:
+	var before := _needle_snapshot(deck, party, enemies, unravel)
+	var result: Dictionary = resolver.play_purling_barrage(deck, party, enemies, unravel,
+		card_id, target)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("reason") == reason,
+		label + ": refusal reason is " + reason + " (got " + str(result.get("reason")) + ")")
+	_check(_needle_snapshot(deck, party, enemies, unravel) == before,
+		label + ": unchanged energy, hand, piles, turn, party, enemies, gauges and RNG")
 
 
 func _rejected_needle(resolver: CombatYarnRangerNeedleCards, deck: CombatDeck,

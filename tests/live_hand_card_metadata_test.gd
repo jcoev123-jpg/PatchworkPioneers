@@ -92,7 +92,7 @@ const SHORT_LINES := {
 	"warden_shield_bash": "Deal 8. Weak 1.",
 	"warden_shield_bash_plus": "Deal 11. Weak 1.",
 	"seamstress_prick": "Deal 3. Bleed 3.",
-	"seamstress_prick_plus": "Deal 4. Bleed 3.",
+	"seamstress_prick_plus": "Deal 4. Bleed 4.",
 	"seamstress_mend": "Heal ally 5 HP.",
 	"seamstress_mend_plus": "Heal ally 7 HP.",
 	"seamstress_stitch_up": "Ally gains 5 Block.",
@@ -141,6 +141,7 @@ const SHORT_LINES := {
 ## formatter itself never adds a bonus or infers a combat result.
 const AUTHORED_LINES := {
 	"seamstress_prick": "Deal 3. Bleed 2.",
+	"seamstress_prick_plus": "Deal 4. Bleed 3.",
 	"seamstress_running_stitch": "Deal 2. Bleed 3.",
 	"seamstress_running_stitch_plus": "Deal 3. Bleed 4.",
 	"seamstress_blanket_stitch": "Bleed 2 to all.",

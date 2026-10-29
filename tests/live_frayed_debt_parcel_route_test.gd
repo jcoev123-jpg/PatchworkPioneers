@@ -263,6 +263,214 @@ func _parcel_visit(f: Dictionary, branch: int, keyboard: bool) -> Array:
 	return replay
 
 
+func _booth_state() -> Array:
+	return [_wallet(), app.run_deck.duplicate(), app.run_stitch_descriptors.duplicate(true),
+		app.run_next_stitch_id, app.run_removal_count, app.run_rng.state,
+		app.run_map, app.run_map.get_route(), app._debt_booth_seen,
+		app._debt_booth_receipt.duplicate(true), app.debt_booth_panel,
+		app._debt_booth_service.is_claimed() if app._debt_booth_service != null else false,
+		app.route_view, app._wallet_event_history.duplicate(),
+		app._vital_event_history.duplicate()]
+
+
+func _deny_booth(callback: Callable, label: String) -> void:
+	var before := _booth_state()
+	if callback.is_valid():
+		callback.call()
+	_check(_booth_state() == before, label + " cannot change wallet, stitched ledger, map, RNG or visit")
+
+
+func _arrive_at_post_parcel_event(f: Dictionary, has_curse: bool, gold: int, scraps: int) -> void:
+	await _reach(f)
+	var entry := _route_action(f.path[4])
+	_check(is_instance_valid(entry), "genuine fifth Event route choice is mounted")
+	if not is_instance_valid(entry):
+		return
+	await _click(entry)
+	var parcel: LiveEventChoicePanel = app.frayed_debt_panel
+	_check(is_instance_valid(parcel) and app._frayed_debt_outcome != null,
+		"real fifth Event opens weighted Frayed Debt Parcel")
+	if not is_instance_valid(parcel):
+		return
+	var offers: Array = app._frayed_debt_outcome.get_offers()
+	_check(offers.size() == 2, "Parcel has two genuine selected-party reward offers")
+	if offers.size() != 2:
+		return
+	await _click(parcel.get_choice_buttons()[0 if has_curse else 2])
+	_check(app._frayed_debt_seen and app.frayed_debt_panel == null
+		and app.run_deck.count(MpwFrayedDebt.CARD_ID) == (1 if has_curse else 0),
+		"real Parcel reward creates one canonical owned curse, while exit creates none")
+	# Wallet boundary fixtures vary only funding; entry, curse and stitched
+	# descriptors come from the genuine routed run and accepted Parcel service.
+	app.session_gold = gold
+	app.run_scraps = scraps
+	for id in f.after:
+		await _parcel_transit(id)
+	_check(app.run_map.get_legal_choices().has(f.fight)
+		and app.run_map.get_node(f.fight).type == "Event"
+		and is_instance_valid(_route_action(f.fight)),
+		"real sixth connected Event is legal with an actionable route button")
+
+
+func _booth_visit(f: Dictionary, branch: int, keyboard: bool) -> Array:
+	await _arrive_at_post_parcel_event(f, true, 25, 3)
+	var opening: Dictionary = app._debt_booth_source()
+	var source_rng: int = app.run_rng.state
+	var oracle := RunV3DebtRedemptionEvent.new()
+	_check(opening.deck.count(MpwFrayedDebt.CARD_ID) == 1
+		and oracle.prepare(opening).ok, "valid genuine curse and six-key opening snapshot")
+	if not oracle.is_valid():
+		app._return_to_title()
+		await _frames()
+		return []
+	var entry: Callable = _route_action(f.fight).pressed.get_connections()[0].callable
+	await _click(_route_action(f.fight))
+	var panel: LiveEventChoicePanel = app.debt_booth_panel
+	_check(is_instance_valid(panel) and app.route_view == null
+		and app.run_map.get_current_node_id() == f.fight,
+		"live sixth Event mounts authored Booth and suspends route")
+	if not is_instance_valid(panel):
+		app._return_to_title()
+		await _frames()
+		return []
+	var forecast := oracle.preview_choices()
+	var buttons := panel.get_choice_buttons()
+	_check(buttons.size() == 3 and panel._wallet_mode
+		and panel._selector.get_event().id == RunV3DebtRedemptionEvent.EVENT_ID
+		and not app._debt_booth_seen and app.run_rng.state == source_rng,
+		"three real Booth tickets, no RNG draw or premature visit latch")
+	for index in range(buttons.size()):
+		_check(buttons[index].is_visible_in_tree() and not buttons[index].disabled
+			and Rect2(0, 0, 1280, 720).encloses(buttons[index].get_global_rect())
+			and panel._wallet_previews[forecast.choices[index].id].affordable
+			and buttons[index].focus_mode == Control.FOCUS_ALL,
+			"all funded Booth controls visible, enabled and keyboard accessible")
+	var ids := ["cut_debt", "sell_offcuts", "leave"]
+	var choice: String = ids[branch]
+	var expected := oracle.choose(choice, opening)
+	_check(expected.ok, "independent Booth service settles selected authored branch")
+	var commit: Callable = panel.wallet_choice_committed.get_connections()[0].callable
+	_deny_booth(entry, "duplicate route opening")
+	_deny_booth(commit.bind({"ok": true, "event_id": RunV3DebtRedemptionEvent.EVENT_ID,
+		"choice_id": choice, "wallet": {"gold": 25, "scraps": 3}}), "forged preclaim signal")
+	panel.wallet_choice_committed.disconnect(commit)
+	if keyboard:
+		await _key(KEY_1 + branch)
+	else:
+		await _click(buttons[branch])
+	var claim: Dictionary = panel._committed_choice.duplicate(true)
+	_check(panel._selector.is_claimed() and claim.get("choice_id") == choice
+		and app._debt_booth_source() == opening and app.run_rng.state == source_rng,
+		"panel claim emits intent only; run ledger and RNG remain unchanged")
+	# Every stale source or forged panel context fails before service.choose().
+	app.run_rng.randi()
+	_deny_booth(commit.bind(claim), "stale RNG")
+	app.run_rng.state = source_rng
+	app.run_scraps += 1
+	_deny_booth(commit.bind(claim), "stale opening ledger")
+	app.run_scraps -= 1
+	var source_map: RunMap = app.run_map
+	app.run_map = RunMap.new()
+	_deny_booth(commit.bind(claim), "foreign map")
+	app.run_map = source_map
+	var selector := panel._selector
+	panel._selector = RunEventChoice.new(selector.get_event())
+	_deny_booth(commit.bind(claim), "replaced panel selector")
+	panel._selector = selector
+	commit.call(claim)
+	_check(app._debt_booth_seen and app.debt_booth_panel == null
+		and is_instance_valid(app.route_view) and app.run_map.get_current_node_id() == f.fight
+		and app.run_rng.state == source_rng and app._debt_booth_receipt == expected,
+		"one accepted choice returns to the actual connected map without extra RNG")
+	_check(app._debt_booth_source() == expected.snapshot
+		and app.run_deck.count(MpwFrayedDebt.CARD_ID) == (0 if branch == 0 else 1)
+		and app.run_stitch_descriptors == opening.descriptors
+		and app.run_next_stitch_id == opening.next_stitch_id
+		and app.run_removal_count == opening.prior_removals,
+		"Booth commits exact service deck, wallet, descriptors, cursor and removal count")
+	_check(app.session_gold == [7, 45, 25][branch] and app.run_scraps == [3, 1, 3][branch],
+		"Cut costs 18 gold; Sell trades 2 scraps for 20 gold; Leave costs nothing")
+	_deny_booth(commit.bind(claim), "replayed committed choice")
+	_deny_booth(entry, "stale pressed route entry")
+	var choices: Array = app.run_map.get_legal_choices()
+	_check(not choices.is_empty() and is_instance_valid(_route_action(choices[0])),
+		"Booth closure exposes at least one usable onward route node")
+	var replay := [expected, app.run_rng.state, app.run_map.get_route(), choices]
+	app._return_to_title()
+	await _frames()
+	_check(not app._debt_booth_seen and app.debt_booth_panel == null,
+		"new-run lifecycle clears Booth visit latch and mounted panel")
+	return replay
+
+
+func _booth_refusals(f: Dictionary) -> void:
+	await _arrive_at_post_parcel_event(f, true, 17, 1)
+	var source: Dictionary = app._debt_booth_source()
+	var original: Dictionary = app.run_stitch_descriptors.duplicate(true)
+	# Invalid stitched registry must refuse entry even with a real curse.
+	app.run_stitch_descriptors["stitch_invalid"] = {"owners": []}
+	var before := _booth_state()
+	await _click(_route_action(f.fight))
+	_check(_booth_state() == before and app.debt_booth_panel == null,
+		"invalid stitched descriptor ledger refuses route with no spend or RNG")
+	app.run_stitch_descriptors = original
+	await _click(_route_action(f.fight))
+	var panel: LiveEventChoicePanel = app.debt_booth_panel
+	_check(is_instance_valid(panel) and app._debt_booth_source() == source,
+		"restored valid canonical ledger opens genuine Booth")
+	if not is_instance_valid(panel):
+		app._return_to_title()
+		await _frames()
+		return
+	var buttons := panel.get_choice_buttons()
+	var preview: Dictionary = app._debt_booth_service.preview_choices()
+	_check(buttons.size() == 3 and buttons[0].disabled and buttons[1].disabled
+		and not buttons[2].disabled and not preview.by_id.cut_debt.affordable
+		and not preview.by_id.sell_offcuts.affordable,
+		"17 gold cannot pay 18 and one scrap cannot pay two, Leave is enabled")
+	var denied: Callable = panel.wallet_choice_committed.get_connections()[0].callable
+	_deny_booth(denied.bind({"ok": true, "event_id": RunV3DebtRedemptionEvent.EVENT_ID,
+		"choice_id": "cut_debt", "wallet": {"gold": 0, "scraps": 1}}),
+		"forged unaffordable Cut receipt")
+	await _key(KEY_1)
+	await _key(KEY_2)
+	await _click(buttons[0])
+	await _click(buttons[1])
+	_check(app._debt_booth_source() == source and not app._debt_booth_seen
+		and app.debt_booth_panel == panel and app.run_rng.state == app._debt_booth_context[6],
+		"disabled keyboard and mouse choices cannot claim, debit, advance or draw RNG")
+	await _key(KEY_3)
+	_check(app._debt_booth_seen and app._debt_booth_receipt.choice_id == "leave"
+		and app._debt_booth_source() == source and is_instance_valid(app.route_view),
+		"unaﬀordable visit may Leave freely and returns to real map")
+	app._return_to_title()
+	await _frames()
+
+
+func _booth_no_curse(f: Dictionary) -> void:
+	await _arrive_at_post_parcel_event(f, false, 25, 3)
+	var rng_before: int = app.run_rng.state
+	await _click(_route_action(f.fight))
+	_check(app.debt_booth_panel == null and not app._debt_booth_seen
+		and app.run_deck.count(MpwFrayedDebt.CARD_ID) == 0
+		and is_instance_valid(app.wallet_event_panel) and app.run_rng.state != rng_before
+		and app.run_map.get_current_node_id() == f.fight,
+		"curse-free genuine route keeps regular RNG-backed generic wallet Event")
+	if is_instance_valid(app.wallet_event_panel):
+		var panel: LiveEventChoicePanel = app.wallet_event_panel
+		var enabled: Array[Button] = []
+		for button in panel.get_choice_buttons():
+			if not button.disabled:
+				enabled.append(button)
+		_check(not enabled.is_empty(), "ordinary Event remains playable")
+		if not enabled.is_empty():
+			await _click(enabled[0])
+			_check(is_instance_valid(app.route_view) and app.wallet_event_panel == null,
+				"ordinary Event still returns to connected route after claim")
+	app._return_to_title()
+	await _frames()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -288,6 +496,17 @@ func _run() -> void:
 	if not unpicker_fixture.is_empty():
 		print("Parcel Unpicker witness: ", unpicker_fixture.seed)
 		await _parcel_visit(unpicker_fixture, 1, true)
+	var booth_fixture := _parcel_fixture("Event", true)
+	_check(not booth_fixture.is_empty(), "seeded post-Parcel sixth Event route witness exists")
+	if not booth_fixture.is_empty():
+		print("Booth witness: ", booth_fixture.seed)
+		for branch in range(3):
+			var mouse := await _booth_visit(booth_fixture, branch, false)
+			var keys := await _booth_visit(booth_fixture, branch, true)
+			_check(not mouse.is_empty() and mouse == keys,
+				"funded Booth branch has identical mouse/keyboard replay: " + str(branch))
+		await _booth_refusals(booth_fixture)
+		await _booth_no_curse(booth_fixture)
 	app.queue_free()
 	await _frames()
 	for failure in failures:
