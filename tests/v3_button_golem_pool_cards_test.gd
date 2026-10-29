@@ -1,7 +1,7 @@
 extends SceneTree
 ## V3-1 Button Golem reward-pool catalog contract, plus the paid rules services over the four
-## authentic Roll printings and the four reward-pool area printings (Popping Volley and
-## Buttonstorm, base and "+").
+## authentic Roll printings, the four reward-pool area printings (Popping Volley and Buttonstorm,
+## base and "+") and the two Eyelet Guard printings (paid self Block plus one-turn Thorns).
 ## CATALOG + RULES SERVICE: the catalog checks below assert printed intent only, independently of
 ## any resolver. The appended cases drive real seeded CombatDeck/CombatParty/CombatEnemies state
 ## through those resolver classes; no live hand, reward, party-picker or starter-deck wiring is
@@ -13,11 +13,21 @@ const ButtonGolemStarterScript = preload("res://data/cards/button_golem_starter_
 const RollResolverScript = preload("res://scripts/combat_button_golem_roll_cards.gd")
 const PopResolverScript = preload("res://scripts/combat_button_golem_pop_cards.gd")
 const AreaResolverScript = preload("res://scripts/combat_button_golem_area_cards.gd")
+const EyeletResolverScript = preload("res://scripts/combat_button_golem_eyelet_guard_cards.gd")
 const RewardOffersScript = preload("res://scripts/run_pool_card_reward_offers.gd")
 
 ## A pool catalog source that serves caller-supplied records, so a rewritten field or a relinked
 ## upgrade can be proven inert before any energy, hand, HP, Block, counter or RNG state moves.
 class ForgedArea extends "res://scripts/combat_button_golem_area_cards.gd":
+	var forged: Dictionary = {}
+
+	func _catalog_definition(card_id: String) -> Dictionary:
+		var record: Dictionary = forged.get(card_id, {})
+		return record.duplicate(true)
+
+## A pool catalog source for the Eyelet Guard pair, so a rewritten record or a relinked upgrade
+## can be proven inert before any energy, hand, Block, armed mode or RNG state moves.
+class ForgedEyelet extends "res://scripts/combat_button_golem_eyelet_guard_cards.gd":
 	var forged: Dictionary = {}
 
 	func _catalog_definition(card_id: String) -> Dictionary:
@@ -39,6 +49,12 @@ const AREA_PRINTINGS := {
 	"button_golem_popping_volley_plus": {"shape": "volley", "from": [1, 2], "magnitude": 4},
 	"button_golem_buttonstorm": {"shape": "storm", "from": [1], "magnitude": 4},
 	"button_golem_buttonstorm_plus": {"shape": "storm", "from": [1], "magnitude": 5},
+}
+
+## The two authentic Eyelet Guard printings: paid self Block and one-turn armed Thorns.
+const EYELET_PRINTINGS := {
+	"button_golem_eyelet_guard": {"block": 6, "thorns": 2},
+	"button_golem_eyelet_guard_plus": {"block": 9, "thorns": 3},
 }
 
 var failures: Array[String] = []
@@ -66,6 +82,12 @@ func _initialize() -> void:
 	_test_area_dodge_token_refusals()
 	_test_area_refusals()
 	_test_area_forged_catalog()
+	_test_eyelet_printings()
+	_test_eyelet_paid_resolution()
+	_test_eyelet_contacts()
+	_test_eyelet_contacts_follow_identity()
+	_test_eyelet_refusals()
+	_test_eyelet_forged_catalog()
 	if failures.is_empty():
 		print("v3_button_golem_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -1690,4 +1712,495 @@ func _area_snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies
 		snapshot["enemies_valid"] = enemies.is_valid()
 		snapshot["enemies"] = enemies.get_enemies()
 	return snapshot
+
+
+# ---------------------------------------------------------------------------------------------
+# Eyelet Guard: paid self Block plus one-turn armed Thorns, with a read-only contact projection.
+# ---------------------------------------------------------------------------------------------
+
+## AC1: the two authentic Eyelet Guard printings, read back from the pool catalog with authored
+## metadata, exact effects and the base/"+" link (never a catalog total or ID list).
+func _test_eyelet_printings() -> void:
+	var catalog = ScriptClass.new()
+	var resolver = EyeletResolverScript.new()
+	_check(EYELET_PRINTINGS.size() == 2, "two distinct Eyelet Guard printings are enumerated")
+	for card_id: String in EYELET_PRINTINGS:
+		var spec: Dictionary = EYELET_PRINTINGS[card_id]
+		var definition: Dictionary = catalog.get_definition(card_id)
+		var upgraded: bool = card_id.ends_with("_plus")
+		var base_id: String = card_id.trim_suffix("_plus")
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			card_id + " is authentically authored in the Button Golem pool")
+		_check(resolver.is_supported_card(card_id),
+			card_id + " is a resolver-supported Eyelet Guard printing")
+		_check(definition.get("owner") == "button_golem", card_id + " is owned by the Golem")
+		_check(definition.get("display_name")
+			== ("Eyelet Guard+" if upgraded else "Eyelet Guard"),
+			card_id + " prints its authored name")
+		_check(definition.get("cost") == 1, card_id + " costs exactly one energy")
+		_check(definition.get("target_kind") == "self", card_id + " is a self card")
+		_check(definition.get("from_positions") == [1, 2, 3],
+			card_id + " plays from any hero seat 1-3")
+		_check(definition.get("to_positions") == [], card_id + " selects no target slot")
+		_check(definition.get("effects") == _eyelet_expected_effects(card_id),
+			card_id + " prints exactly " + str(_eyelet_expected_effects(card_id)))
+		_check(definition.get("starting_copies") == 0, card_id + " is never a starter copy")
+		_check(definition.get("reward_eligible") == not upgraded,
+			card_id + " reward eligibility matches its base/upgrade role")
+		_check(definition.get("rarity") == "common", card_id + " is a common card")
+		_check(definition.get("illustration_path")
+			== "res://assets/paper/cards/button_golem_eyelet_guard.png",
+			card_id + " keeps its authored art path")
+		_check(catalog.get_upgrade_id(base_id) == base_id + "_plus",
+			base_id + " still links to its authored upgrade")
+		_check(catalog.get_definition(base_id + "_plus").get("upgrade_of") == base_id,
+			base_id + "_plus still points back at its base")
+	# Other Golem cards, aliases and malformed values are not Eyelet Guard printings.
+	for rejected in ["button_golem_pop_button", "button_golem_button_roll",
+			"button_golem_sew_on", "button_golem_popping_volley",
+			"button_golem_starter_button_fist", "button_golem_eyelet_guard_plus_plus",
+			"button_golem_eyelet_guard+", ""]:
+		_check(not resolver.is_supported_card(rejected),
+			str(rejected) + " is not an Eyelet Guard printing")
+	for malformed in [null, 0, 3.5, false, [], {}, StringName("button_golem_eyelet_guard")]:
+		_check(not resolver.is_supported_card(malformed),
+			"malformed card id is not an Eyelet Guard printing: " + str(malformed))
+
+
+func _eyelet_expected_effects(card_id: String) -> Dictionary:
+	var spec: Dictionary = EYELET_PRINTINGS[card_id]
+	return {"block": int(spec["block"]), "thorns": int(spec["thorns"]), "duration": 1}
+
+
+## AC1: both printings from every legal Golem seat over a real seeded deck and real party. The
+## printed Block is additive on the Golem's existing Block, and the Golem's status map is left
+## exactly as it was: armed Thorns is fight state, never a CombatStatuses counter.
+func _test_eyelet_paid_resolution() -> void:
+	var cases := 0
+	for card_id: String in EYELET_PRINTINGS:
+		for seat in [1, 2, 3]:
+			_play_eyelet_success(card_id, seat)
+			cases += 1
+	_check(cases == 6,
+		"both Eyelet Guard printings are exercised from all three legal seats")
+
+
+func _play_eyelet_success(card_id: String, seat: int) -> void:
+	var label := "%s from seat %d" % [card_id, seat]
+	var spec: Dictionary = EYELET_PRINTINGS[card_id]
+	var definition: Dictionary = ScriptClass.new().get_definition(card_id)
+	var effects: Dictionary = definition.get("effects", {})
+	var deck := _area_deck(card_id)
+	_check(deck.hand.has(card_id) and deck.hand.count(card_id) == 1,
+		label + ": the exact Eyelet ID is genuinely held once")
+	var party := _roll_party(seat)
+	_check(party.gain_block(seat, 4), label + ": the Golem starts with four Block")
+	party._heroes[seat - 1]["statuses"] = {"weak": 1}
+	var resolver = EyeletResolverScript.new()
+	var before := _eyelet_snapshot(deck, party, resolver)
+	_check(not resolver.is_armed(), label + ": the fight starts unarmed")
+	var receipt: Dictionary = resolver.play_card(deck, party, card_id)
+	_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+		label + ": the paid Eyelet Guard resolves")
+	_check(receipt.get("card_id") == card_id and receipt.get("cost") == 1
+		and receipt.get("energy_spent") == 1, label + ": it charges exactly one energy")
+	_check(receipt.get("owner_position") == seat and receipt.get("target_position") == 0,
+		label + ": the receipt binds the Golem's real seat and no selected target")
+	_check(receipt.get("block_gained") == int(spec["block"])
+		and receipt.get("block_gained") == effects.get("block"),
+		label + ": it grants the authored " + str(spec["block"]) + " Block")
+	_check(receipt.get("thorns_gained") == int(spec["thorns"])
+		and receipt.get("thorns_gained") == effects.get("thorns"),
+		label + ": it arms the authored " + str(spec["thorns"]) + " Thorns")
+	_check(receipt.get("duration") == 1
+		and receipt.get("thorns_active") == int(spec["thorns"]),
+		label + ": the armed Thorns lasts exactly one turn")
+	_check(receipt.get("block_after") == 4 + int(spec["block"]),
+		label + ": the receipt reports the resulting Block")
+	_check(deck.energy == 2 and deck.energy == before["energy"] - 1,
+		label + ": exactly one energy left the shared turn")
+	var expected_hand: Array = before["hand"].duplicate()
+	expected_hand.erase(card_id)
+	_check(deck.hand == expected_hand and deck.discard_pile == before["discard"] + [card_id],
+		label + ": exactly one genuinely held copy moved to the discard pile")
+	_check(deck.draw_pile == before["draw"] and deck.turn_active,
+		label + ": the draw pile is untouched and the turn is still active")
+	_check(deck._rng.state == before["rng_state"] and deck._rng.seed == before["rng_seed"],
+		label + ": resolution consumes no seeded RNG draw")
+	var expected_heroes: Array = before["heroes"].duplicate(true)
+	expected_heroes[seat - 1]["block"] = 4 + int(spec["block"])
+	_check(party.get_heroes() == expected_heroes,
+		label + ": the authentic Golem alone gains the printed Block")
+	_check(party.get_hero(seat).get("hp") == 44
+		and party.get_hero(seat).get("statuses") == {"weak": 1}
+		and not (party.get_hero(seat).get("statuses") as Dictionary).has("thorns"),
+		label + ": HP and statuses are untouched and no thorns counter is written")
+	_check(resolver.is_armed() and resolver.get_armed_thorns() == int(spec["thorns"]),
+		label + ": the fight-scoped mode is armed with the printed value")
+
+
+## AC2: the armed bearer projects its exact retaliation for successive confirmed hits, and zero
+## for another hero, an unconfirmed/zero-damage contact and a torn owner. Every projection is
+## read-only towards Block, energy, HP, deck piles, the armed mode and the seeded RNG.
+func _test_eyelet_contacts() -> void:
+	for card_id: String in EYELET_PRINTINGS:
+		var thorns := int(EYELET_PRINTINGS[card_id]["thorns"])
+		var label := card_id
+		var deck := _area_deck(card_id)
+		var party := _roll_party(1)
+		var resolver = EyeletResolverScript.new()
+		var arm: Dictionary = resolver.play_card(deck, party, card_id)
+		_check(arm.get("ok") == true and resolver.get_armed_thorns() == thorns,
+			label + ": the Golem is armed with " + str(thorns) + " Thorns")
+		var before := _eyelet_snapshot(deck, party, resolver)
+		var first: Dictionary = resolver.project_contact(party, 1, 5)
+		_check(first.get("ok") == true and first.get("applied") == true
+			and first.get("thorns") == thorns and first.get("bearer_position") == 1
+			and first.get("duration") == 1 and first.get("reason") == "applied",
+			label + ": the first confirmed hit projects " + str(thorns) + " retaliation")
+		var second: Dictionary = resolver.project_contact(party, 1, 7)
+		_check(second.get("applied") == true and second.get("thorns") == thorns,
+			label + ": a second successive confirmed hit projects the same retaliation")
+		var elsewhere: Dictionary = resolver.project_contact(party, 2, 5)
+		_check(elsewhere.get("ok") == true and elsewhere.get("applied") == false
+			and elsewhere.get("thorns") == 0 and elsewhere.get("reason") == "not_bearer",
+			label + ": a hit on another hero projects zero")
+		var unconfirmed: Dictionary = resolver.project_contact(party, 1, 5, false)
+		_check(unconfirmed.get("applied") == false and unconfirmed.get("thorns") == 0
+			and unconfirmed.get("reason") == "no_contact",
+			label + ": an unconfirmed contact projects zero")
+		var no_damage: Dictionary = resolver.project_contact(party, 1, 0)
+		_check(no_damage.get("applied") == false and no_damage.get("thorns") == 0
+			and no_damage.get("reason") == "no_contact",
+			label + ": a zero-damage contact projects zero")
+		_check(_eyelet_snapshot(deck, party, resolver) == before,
+			label + ": projections consume no Block, energy, HP, deck, mode or RNG")
+		_check(party.apply_damage(1, 400) and party.is_downed(1),
+			label + ": the armed Golem is genuinely torn")
+		var torn_before := _eyelet_snapshot(deck, party, resolver)
+		var torn: Dictionary = resolver.project_contact(party, 1, 5)
+		_check(torn.get("applied") == false and torn.get("thorns") == 0
+			and torn.get("reason") == "owner_torn",
+			label + ": a torn bearer projects zero retaliation")
+		_check(_eyelet_snapshot(deck, party, resolver) == torn_before,
+			label + ": the torn projection mutates nothing")
+	# An unarmed Golem projects no retaliation at all.
+	var unarmed = EyeletResolverScript.new()
+	var unarmed_party := _roll_party(1)
+	var unarmed_receipt: Dictionary = unarmed.project_contact(unarmed_party, 1, 6)
+	_check(unarmed_receipt.get("ok") == true and unarmed_receipt.get("applied") == false
+		and unarmed_receipt.get("thorns") == 0
+		and unarmed_receipt.get("reason") == "not_armed",
+		"an unarmed Golem projects no retaliation")
+
+
+## AC2: the arming follows the Golem's IDENTITY after a legal Roll, re-arming refreshes rather than
+## sums, and the next player-turn boundary expires the mode.
+func _test_eyelet_contacts_follow_identity() -> void:
+	var base_id := "button_golem_eyelet_guard"
+	var plus_id := "button_golem_eyelet_guard_plus"
+	var roll_id := "button_golem_button_roll"
+	var deck := _area_deck_of([base_id, roll_id, plus_id], 424242)
+	_check(deck.hand.has(base_id) and deck.hand.has(roll_id) and deck.hand.has(plus_id),
+		"the armed card, a legal Roll and the upgrade are all genuinely held")
+	var party := _roll_party(1)
+	var resolver = EyeletResolverScript.new()
+	var armed: Dictionary = resolver.play_card(deck, party, base_id)
+	_check(armed.get("ok") == true and resolver.get_armed_thorns() == 2
+		and resolver.project_contact(party, 1, 4).get("thorns") == 2,
+		"the base Eyelet Guard arms two Thorns that project from seat 1")
+	var roll: Dictionary = RollResolverScript.new().play_card(deck, party, roll_id, 3)
+	_check(roll.get("ok") == true and party.get_hero(3).get("id") == "button_golem"
+		and party.get_hero(3).get("position") == 3,
+		"a real Button Roll legally moves the armed Golem to seat 3")
+	var moved_before := _eyelet_snapshot(deck, party, resolver)
+	_check(resolver.project_contact(party, 3, 5).get("thorns") == 2,
+		"the armed Thorns follows the Golem's identity to its new seat")
+	var former_seat: Dictionary = resolver.project_contact(party, 1, 5)
+	_check(former_seat.get("thorns") == 0 and former_seat.get("reason") == "not_bearer",
+		"the Golem's former seat holds another hero and projects zero")
+	_check(_eyelet_snapshot(deck, party, resolver) == moved_before,
+		"the moved-Golem projection mutates nothing")
+	var rearmed: Dictionary = resolver.play_card(deck, party, plus_id)
+	_check(rearmed.get("ok") == true and rearmed.get("thorns_active") == 3
+		and resolver.get_armed_thorns() == 3,
+		"re-arming with Eyelet Guard+ refreshes the value instead of summing stacks")
+	_check(resolver.project_contact(party, 3, 5).get("thorns") == 3,
+		"the refreshed three Thorns project from the Golem's new seat")
+	_check(deck.energy == 0 and deck.discard_pile == [base_id, roll_id, plus_id],
+		"the three authentic plays spend three energy and discard their own copies")
+	var expiry_before := _eyelet_snapshot(deck, party, resolver)
+	var expiry: Dictionary = resolver.expire_on_next_player_turn()
+	_check(expiry.get("ok") == true and expiry.get("expired") == true
+		and expiry.get("thorns_expired") == 3,
+		"the next player-turn boundary expires the armed three Thorns")
+	_check(not resolver.is_armed() and resolver.get_armed_thorns() == 0,
+		"the armed mode is cleared after its one turn")
+	var expired_contact: Dictionary = resolver.project_contact(party, 3, 5)
+	_check(expired_contact.get("thorns") == 0
+		and expired_contact.get("reason") == "not_armed",
+		"an expired arming projects no retaliation")
+	var after_expiry := _eyelet_snapshot(deck, party, resolver)
+	_check(after_expiry["hand"] == expiry_before["hand"]
+		and after_expiry["discard"] == expiry_before["discard"]
+		and after_expiry["draw"] == expiry_before["draw"]
+		and after_expiry["energy"] == expiry_before["energy"]
+		and after_expiry["heroes"] == expiry_before["heroes"]
+		and after_expiry["rng_state"] == expiry_before["rng_state"],
+		"expiry and the read-only projections leave deck, party and RNG untouched")
+	var second_expiry: Dictionary = resolver.expire_on_next_player_turn()
+	_check(second_expiry.get("expired") == false and second_expiry.get("thorns_expired") == 0,
+		"expiry is idempotent when nothing is armed")
+	# A separate fight owns a separate armed mode: nothing is inherited between battles.
+	var next_fight = EyeletResolverScript.new()
+	var next_party := _roll_party(1)
+	_check(next_fight.play_card(_area_deck(base_id), next_party, base_id).get("ok") == true
+		and next_fight.get_armed_thorns() == 2,
+		"the next fight arms its own two Thorns")
+	next_fight.reset_fight()
+	_check(not next_fight.is_armed() and next_fight.get_armed_thorns() == 0,
+		"a fresh fight starts unarmed")
+
+
+## AC3: every unsupported, unheld, unpayable or unlawful play refuses with a complete
+## before/after snapshot of the deck, the actor records, the armed mode and the seeded RNG.
+func _test_eyelet_refusals() -> void:
+	var card_id := "button_golem_eyelet_guard"
+	var plus_id := "button_golem_eyelet_guard_plus"
+	for rejected in ["button_golem_unknown_eyelet", "button_golem_pop_button",
+			"button_golem_button_roll", "button_golem_sew_on",
+			"button_golem_starter_button_fist", "button_golem_eyelet_guard_plus_plus",
+			"button_golem_eyelet_guard+", ""]:
+		_expect_eyelet_refusal("unsupported id " + str(rejected), _area_deck(card_id),
+			_roll_party(1), rejected, 0, "unsupported_card")
+	for malformed in [null, 0, 3.5, false, [], {}, StringName(card_id)]:
+		_expect_eyelet_refusal("malformed id " + str(malformed), _area_deck(card_id),
+			_roll_party(1), malformed, 0, "unsupported_card")
+	_expect_eyelet_refusal("supported upgrade not in hand", _area_deck(card_id),
+		_roll_party(1), plus_id, 0, "card_not_held")
+	_expect_eyelet_refusal("a different Golem card held in its place",
+		_area_deck("button_golem_button_roll"), _roll_party(1), card_id, 0, "card_not_held")
+	var inactive := _area_inactive_deck(card_id)
+	_check(not inactive.turn_active and inactive.energy == 0 and inactive.hand.is_empty(),
+		"inactive-turn fixture really has not started its turn")
+	_expect_eyelet_refusal("inactive turn", inactive, _roll_party(1), card_id, 0,
+		"inactive_turn")
+	var broke := _area_deck(card_id)
+	_check(broke.try_spend_energy(3) and broke.energy == 0 and broke.hand.has(card_id),
+		"energy-short fixture is genuinely broke and still holds the card")
+	_expect_eyelet_refusal("insufficient energy", broke, _roll_party(1), card_id, 0,
+		"insufficient_energy")
+	for bad_target in [1, 2, 3, -1, 99]:
+		_expect_eyelet_refusal("self card with a selected seat " + str(bad_target),
+			_area_deck(card_id), _roll_party(1), card_id, bad_target, "invalid_target")
+	var torn := _roll_party(1)
+	_check(torn.apply_damage(1, 400) and torn.is_downed(1),
+		"torn-Golem fixture has a genuinely downed Golem")
+	_expect_eyelet_refusal("Torn Golem cannot cast", _area_deck(card_id), torn, card_id, 0,
+		"owner_torn")
+	_expect_eyelet_refusal("no Button Golem in the party", _area_deck(card_id),
+		_roll_party_of(["warden", "seamstress", "tinker"]), card_id, 0, "owner_missing")
+	var duplicate_golem := _roll_party(1)
+	duplicate_golem._heroes[1]["id"] = "button_golem"
+	_check(duplicate_golem.get_hero(2).get("id") == "button_golem",
+		"duplicate-Golem fixture really carries a second Golem record")
+	_expect_eyelet_refusal("two Button Golems", _area_deck(card_id), duplicate_golem, card_id, 0,
+		"duplicate_owner")
+	var duplicate_hero := _roll_party(1)
+	duplicate_hero._heroes[2]["id"] = "warden"
+	_check(duplicate_hero.get_hero(2).get("id") == duplicate_hero.get_hero(3).get("id"),
+		"duplicate-hero fixture really repeats a non-Golem id")
+	_expect_eyelet_refusal("duplicate non-Golem hero id", _area_deck(card_id), duplicate_hero,
+		card_id, 0, "invalid_roster")
+	var bad_position := _roll_party(1)
+	bad_position._heroes[1]["position"] = 3
+	_check(bad_position.get_hero(2).get("position") == 3,
+		"malformed-position fixture really stores an out-of-order seat")
+	_expect_eyelet_refusal("malformed actor position", _area_deck(card_id), bad_position,
+		card_id, 0, "invalid_roster")
+	var bad_hp := _roll_party(1)
+	bad_hp._heroes[0]["hp"] = 999
+	_expect_eyelet_refusal("hero HP above its maximum", _area_deck(card_id), bad_hp, card_id, 0,
+		"invalid_roster")
+	var bad_block := _roll_party(1)
+	bad_block._heroes[0]["block"] = -1
+	_expect_eyelet_refusal("negative hero Block", _area_deck(card_id), bad_block, card_id, 0,
+		"invalid_roster")
+	for bad_status in [{"weak": "1"}, {"tangled": 1.5}, {"bleed": -1}, {"unknown": 1}]:
+		var malformed_statuses := _roll_party(1)
+		malformed_statuses._heroes[0]["statuses"] = bad_status
+		_check(malformed_statuses.get_hero(1).get("statuses") == bad_status,
+			"malformed-status fixture really stores " + str(bad_status))
+		_expect_eyelet_refusal("malformed status map " + str(bad_status), _area_deck(card_id),
+			malformed_statuses, card_id, 0, "malformed_statuses")
+	var full := _roll_party(1)
+	_check(full.gain_block(1, CombatParty.MAX_INT - 4),
+		"near-cap fixture holds MAX_INT - 4 Block")
+	_expect_eyelet_refusal("resulting Block above MAX_INT", _area_deck(card_id), full, card_id, 0,
+		"block_overflow")
+	_expect_eyelet_refusal("invalid party", _area_deck(card_id), CombatParty.new([]), card_id, 0,
+		"invalid_roster")
+	_expect_eyelet_refusal("missing deck", null, _roll_party(1), card_id, 0, "invalid_request")
+	_expect_eyelet_refusal("missing party", _area_deck(card_id), null, card_id, 0,
+		"invalid_request")
+	var broken_deck := _area_deck(card_id)
+	broken_deck.combat_state = null
+	_check(broken_deck.combat_state == null and broken_deck.hand.has(card_id),
+		"broken-deck fixture really has no combat state and still holds the card")
+	_expect_eyelet_refusal("deck without combat state", broken_deck, _roll_party(1), card_id, 0,
+		"invalid_deck")
+
+	# A refused second play never clears or weakens an already armed fight.
+	var armed_deck := _area_deck(card_id)
+	var armed_party := _roll_party(1)
+	var armed_resolver = EyeletResolverScript.new()
+	_check(armed_resolver.play_card(armed_deck, armed_party, card_id).get("ok") == true
+		and armed_resolver.get_armed_thorns() == 2,
+		"the armed refusal fixture really carries two live Thorns")
+	var armed_before := _eyelet_snapshot(armed_deck, armed_party, armed_resolver)
+	var rearm: Dictionary = armed_resolver.play_card(armed_deck, armed_party, plus_id)
+	_check(rearm.get("ok") == false and rearm.get("reason") == "card_not_held",
+		"a missing second copy is refused")
+	_check(_eyelet_snapshot(armed_deck, armed_party, armed_resolver) == armed_before
+		and armed_resolver.get_armed_thorns() == 2,
+		"the refused play keeps the existing armed Thorns and every other record")
+
+
+func _expect_eyelet_refusal(label: String, deck: CombatDeck, party: CombatParty,
+		card_id: Variant, target_position: int, reason: String) -> void:
+	var resolver = EyeletResolverScript.new()
+	var before := _eyelet_snapshot(deck, party, resolver)
+	var receipt: Dictionary = resolver.play_card(deck, party, card_id, target_position)
+	_check(receipt.get("ok") == false, label + ": refused")
+	_check(receipt.get("reason") == reason,
+		label + ": refusal reason is " + reason + " (got " + str(receipt.get("reason")) + ")")
+	for key: String in ["ok", "reason", "card_id", "cost", "energy_spent", "owner_position",
+			"target_position", "block_gained", "block_after", "thorns_gained", "thorns_active",
+			"duration"]:
+		_check(receipt.has(key), label + ": refusal receipt carries " + key)
+	_check(receipt.get("energy_spent") == 0 and receipt.get("block_gained") == 0
+		and receipt.get("thorns_gained") == 0 and receipt.get("thorns_active") == 0,
+		label + ": refusal reports no spend, Block or armed Thorns")
+	_check(_eyelet_snapshot(deck, party, resolver) == before,
+		label + ": hand, piles, energy, party, armed mode and seeded RNG are unchanged")
+
+
+## AC3: a rewritten, relinked or unauthentic pool record is refused before any state moves, while
+## the authentic pair through the same seam still plays.
+func _test_eyelet_forged_catalog() -> void:
+	var catalog = ScriptClass.new()
+	for card_id: String in EYELET_PRINTINGS:
+		var base_id: String = card_id.trim_suffix("_plus")
+		var plus_id: String = base_id + "_plus"
+		var authentic_base: Dictionary = catalog.get_definition(base_id)
+		var authentic_plus: Dictionary = catalog.get_definition(plus_id)
+		_check(not authentic_base.is_empty() and not authentic_plus.is_empty(),
+			card_id + ": both authored records load for forgery")
+		if authentic_base.is_empty() or authentic_plus.is_empty():
+			continue
+		var upgraded: bool = card_id.ends_with("_plus")
+		var authentic: Dictionary = authentic_plus if upgraded else authentic_base
+		var link_key := "upgrade_of" if upgraded else "upgrade_id"
+		var fields: Array[String] = ["id", "display_name", "owner", "cost", "from_positions",
+			"to_positions", "target_kind", "effects", "starting_copies", "reward_eligible",
+			link_key]
+		var replacements: Dictionary = {
+			"id": "button_golem_forged_eyelet", "display_name": "Forged Guard",
+			"owner": "warden", "cost": 2, "from_positions": [1, 2], "to_positions": [1],
+			"target_kind": "enemy_single",
+			"effects": {"block": 99, "thorns": 9, "duration": 2},
+			"starting_copies": 1,
+			"reward_eligible": not bool(authentic.get("reward_eligible", false)),
+			"upgrade_id": "button_golem_forged_eyelet",
+			"upgrade_of": "button_golem_forged_eyelet",
+		}
+		for field: String in fields:
+			var omitted: Dictionary = authentic.duplicate(true)
+			omitted.erase(field)
+			_forge_eyelet_refused(card_id + ": record without " + field, card_id,
+				_eyelet_forged_records(base_id, authentic_base, plus_id, authentic_plus,
+					card_id, omitted))
+			var altered: Dictionary = authentic.duplicate(true)
+			altered[field] = replacements[field]
+			_forge_eyelet_refused(card_id + ": record with a rewritten " + field, card_id,
+				_eyelet_forged_records(base_id, authentic_base, plus_id, authentic_plus,
+					card_id, altered))
+		var extra_effect: Dictionary = authentic.duplicate(true)
+		extra_effect["effects"]["pinned"] = true
+		_forge_eyelet_refused(card_id + ": record with an invented effect", card_id,
+			_eyelet_forged_records(base_id, authentic_base, plus_id, authentic_plus, card_id,
+				extra_effect))
+		var typed_cost: Dictionary = authentic.duplicate(true)
+		typed_cost["cost"] = float(typed_cost["cost"])
+		_forge_eyelet_refused(card_id + ": record with a non-integer cost", card_id,
+			_eyelet_forged_records(base_id, authentic_base, plus_id, authentic_plus, card_id,
+				typed_cost))
+		var typed_block: Dictionary = authentic.duplicate(true)
+		typed_block["effects"]["block"] = float(typed_block["effects"]["block"])
+		_forge_eyelet_refused(card_id + ": record with a non-integer Block", card_id,
+			_eyelet_forged_records(base_id, authentic_base, plus_id, authentic_plus, card_id,
+				typed_block))
+		var typed_duration: Dictionary = authentic.duplicate(true)
+		typed_duration["effects"]["duration"] = 1.0
+		_forge_eyelet_refused(card_id + ": record with a non-integer duration", card_id,
+			_eyelet_forged_records(base_id, authentic_base, plus_id, authentic_plus, card_id,
+				typed_duration))
+		var base_relinked: Dictionary = authentic_base.duplicate(true)
+		base_relinked["upgrade_id"] = "button_golem_forged_eyelet"
+		_forge_eyelet_refused(card_id + ": base record relinked away", card_id,
+			_eyelet_forged_records(base_id, base_relinked, plus_id, authentic_plus, card_id,
+				authentic if upgraded else base_relinked))
+		var plus_relinked: Dictionary = authentic_plus.duplicate(true)
+		plus_relinked["upgrade_of"] = "button_golem_forged_eyelet"
+		_forge_eyelet_refused(card_id + ": plus record relinked away", card_id,
+			_eyelet_forged_records(base_id, authentic_base, plus_id, plus_relinked, card_id,
+				plus_relinked if upgraded else authentic))
+		# The authentic records through the same seam still pay and arm.
+		_forge_eyelet_applied(card_id, _eyelet_forged_records(base_id, authentic_base, plus_id,
+			authentic_plus, card_id, authentic))
+
+
+## The two records served to one forged resolver: the authentic pair with the target replaced.
+func _eyelet_forged_records(base_id: String, base_record: Dictionary, plus_id: String,
+		plus_record: Dictionary, target_id: String, target_record: Dictionary) -> Dictionary:
+	var records: Dictionary = {base_id: base_record, plus_id: plus_record}
+	records[target_id] = target_record
+	return records
+
+
+func _forge_eyelet_refused(label: String, card_id: String, records: Dictionary) -> void:
+	var forged := ForgedEyelet.new()
+	forged.forged = records
+	var deck := _area_deck(card_id)
+	var party := _roll_party(1)
+	var before := _eyelet_snapshot(deck, party, forged)
+	var receipt: Dictionary = forged.play_card(deck, party, card_id, 0)
+	_check(receipt.get("ok") == false and receipt.get("reason") == "catalog_mismatch",
+		label + ": the forged record is refused as catalog_mismatch")
+	_check(_eyelet_snapshot(deck, party, forged) == before,
+		label + ": the forged record spends, discards and arms nothing")
+
+
+func _forge_eyelet_applied(card_id: String, records: Dictionary) -> void:
+	var forged := ForgedEyelet.new()
+	forged.forged = records
+	var deck := _area_deck(card_id)
+	var party := _roll_party(1)
+	var receipt: Dictionary = forged.play_card(deck, party, card_id, 0)
+	_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+		card_id + ": the authentic records through the same seam still play")
+	_check(deck.energy == 2 and deck.discard_pile == [card_id],
+		card_id + ": the restored record spends exactly one energy and one held copy")
+	_check(party.get_hero(1).get("block") == int(EYELET_PRINTINGS[card_id]["block"])
+		and forged.get_armed_thorns() == int(EYELET_PRINTINGS[card_id]["thorns"]),
+		card_id + ": the restored record really grants its Block and armed Thorns")
+
+
+## Detached before/after state: deck, party, seeded RNG and this fight's armed mode.
+func _eyelet_snapshot(deck: CombatDeck, party: CombatParty, resolver) -> Dictionary:
+	var snapshot: Dictionary = _area_snapshot(deck, party, null)
+	snapshot["armed"] = resolver.is_armed()
+	snapshot["armed_thorns"] = resolver.get_armed_thorns()
+	return snapshot
+
 
