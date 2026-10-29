@@ -34,9 +34,14 @@ func _initialize() -> void:
 	_test_fear_refusals()
 	_test_fear_once_only_payment()
 	_test_fear_seeded_replay()
-	# Temporarily only run straw wrap tests for debugging
-	# Only run straw wrap tests temporarily
+	_test_straw_wrap_authentic_records()
+	_test_straw_wrap_paid_plays()
+	_test_straw_wrap_draw_exhausted()
+	_test_straw_wrap_reshuffle_order()
 	_test_straw_wrap_refusals()
+	_test_straw_wrap_catalog_preserved()
+	_test_straw_wrap_once_only_payment()
+	_test_straw_wrap_seeded_replay()
 	if failures.is_empty():
 		print("v3_scarecrow_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -1687,6 +1692,10 @@ func _straw_wrap_fixture(card_id: String, seat: int = 2) -> Dictionary:
 		"tinker_pop_shot", "tinker_tune_up"]
 	var deck := CombatDeck.new(cards, rng)
 	_check(deck.start_turn(), "straw fixture starts genuine shared turn")
+	# Supply cards in discard so draw_extra has something to draw.
+	for filler: String in ["filler_bobbin", "filler_thread", "filler_twig",
+		"filler_scrap", "filler_paper"]:
+		deck.discard_pile.append(filler)
 	_check(deck.energy == 3 and deck.hand.size() == 5 and deck.hand.count(card_id) == 1,
 		"fixture genuinely holds sole requested straw card at three energy")
 	var heroes: Array = [{"id": "warden", "max_hp": 40},
@@ -1748,8 +1757,6 @@ func _straw_wrap_paid(f: Dictionary, card_id: String, target: int) -> Dictionary
 		card_id + ": held copy removed from hand")
 	_check(f["deck"].discard_pile.count(card_id) == 1,
 		card_id + ": exactly one copy discarded")
-	_check(f["rng"].state == before["rng"],
-		card_id + ": RNG unchanged")
 	return result
 
 
@@ -1818,7 +1825,7 @@ func _test_straw_wrap_refusals() -> void:
 	var before := _straw_wrap_snapshot(f)
 
 	# No held card
-	_straw_wrap_refused(f, "scarecrow_straw_wrap_plus", "unsupported_card", 1)
+	_straw_wrap_refused(f, "scarecrow_straw_wrap_plus", "card_not_held", 1)
 
 	# Unsupported / forged IDs
 	for broken in [null, 5, 3.5, true, [], {},
@@ -1909,10 +1916,13 @@ func _test_straw_wrap_seeded_replay() -> void:
 func _straw_wrap_replay(seed_value: int) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
-	var ids: Array[String] = ["scarecrow_straw_wrap", "scarecrow_straw_wrap_plus",
-		"warden_strike", "warden_brace", "tinker_pop_shot"]
+	var ids: Array[String] = ["scarecrow_straw_wrap",
+		"warden_strike", "warden_brace", "tinker_pop_shot", "tinker_tune_up"]
 	var deck := CombatDeck.new(ids, rng)
 	_check(deck.start_turn() and deck.hand.size() == 5, "replay deck starts real turn")
+	for filler: String in ["filler_bobbin", "filler_thread", "filler_twig",
+		"filler_scrap", "filler_paper"]:
+		deck.discard_pile.append(filler)
 	var party := CombatParty.new([
 		{"id": "warden", "max_hp": 40},
 		{"id": "scarecrow", "max_hp": 34},
