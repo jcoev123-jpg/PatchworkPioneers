@@ -29,6 +29,8 @@ const CombatTinkerV3OverloadCards = preload(
 	"res://scripts/combat_tinker_v3_overload_cards.gd")
 const CombatTinkerV3TurretCards = preload(
 	"res://scripts/combat_tinker_v3_turret_cards.gd")
+const CombatTinkerV3CasingClampCards = preload(
+	"res://scripts/combat_tinker_v3_casing_clamp_cards.gd")
 
 const SCRAP_GEAR := "tinker_v3_gear_brace"
 const SCRAP_GEAR_PLUS := "tinker_v3_gear_brace_plus"
@@ -43,6 +45,12 @@ const OVERLOAD_IDS: Array[String] = [OVERLOAD, OVERLOAD_PLUS]
 const TURRET := "tinker_v3_wind_up_turret"
 const TURRET_PLUS := "tinker_v3_wind_up_turret_plus"
 const TURRET_IDS: Array[String] = [TURRET, TURRET_PLUS]
+
+const CASING := "tinker_v3_brass_casing"
+const CASING_PLUS := "tinker_v3_brass_casing_plus"
+const CLAMP := "tinker_v3_spring_clamp"
+const CLAMP_PLUS := "tinker_v3_spring_clamp_plus"
+const CASING_CLAMP_IDS: Array[String] = [CASING, CASING_PLUS, CLAMP, CLAMP_PLUS]
 ## The detached pending instance's complete, closed key set (independent of the resolver's own constant).
 const TURRET_STATE_KEYS: Array[String] = ["kind", "card_id", "damage", "duration_turns",
 	"remaining", "tick", "target_kind", "living_targets_only", "rng_source"]
@@ -91,6 +99,10 @@ func _initialize() -> void:
 	_test_turret_ticks()
 	_test_turret_refusals()
 	_test_turret_enrage()
+	_test_casing_clamp_catalog_contract()
+	_test_casing_clamp_paid_plays()
+	_test_casing_clamp_second_copy()
+	_test_casing_clamp_refusals()
 	_finish()
 
 
@@ -2705,3 +2717,595 @@ func _test_turret_enrage() -> void:
 			var foes := CombatEnemies.new(records)
 			_rejected_turret_tick(resolver, _enrage_turret(TURRET_IDS[0]), foes, _scrap_rng(503800), "invalid_enrage",
 				"malformed " + str(bad) + " on slot " + str(slot))
+
+
+## ---------------------------------------------------------------------------
+## Brass Casing / Brass Casing+ and Spring Clamp / Spring Clamp+: paid single-target attacks.
+## ---------------------------------------------------------------------------
+
+
+## Independent printed damage, Weak and Combat Scrap for the four casing/clamp printings.
+func _casing_clamp_table(card_id: String) -> Dictionary:
+	match card_id:
+		CASING:
+			return {"damage": 4, "weak": 0, "scrap": 1, "is_upgrade": false}
+		CASING_PLUS:
+			return {"damage": 6, "weak": 0, "scrap": 1, "is_upgrade": true}
+		CLAMP:
+			return {"damage": 3, "weak": 1, "scrap": 1, "is_upgrade": false}
+		CLAMP_PLUS:
+			return {"damage": 4, "weak": 1, "scrap": 1, "is_upgrade": true}
+	return {}
+
+
+## AC1 (catalog half): the resolver authenticates exactly the four authored casings/clamps and nothing else.
+func _test_casing_clamp_catalog_contract() -> void:
+	var catalog := V3TinkerPoolCards.new()
+	var resolver := CombatTinkerV3CasingClampCards.new()
+	var expected := {
+		CASING: {
+			"display": "Brass Casing", "damage": 4, "weak": 0,
+			"effects": {"damage": 4, "combat_scrap_gain": 1},
+		},
+		CASING_PLUS: {
+			"display": "Brass Casing+", "damage": 6, "weak": 0,
+			"effects": {"damage": 6, "combat_scrap_gain": 1},
+		},
+		CLAMP: {
+			"display": "Spring Clamp", "damage": 3, "weak": 1,
+			"effects": {"damage": 3, "weak": 1, "combat_scrap_gain": 1},
+		},
+		CLAMP_PLUS: {
+			"display": "Spring Clamp+", "damage": 4, "weak": 1,
+			"effects": {"damage": 4, "weak": 1, "combat_scrap_gain": 1},
+		},
+	}
+	# Independent arithmetic: the exact printed numbers, never a formula copied back from the resolver.
+	for card_id: String in CASING_CLAMP_IDS:
+		var table := _casing_clamp_table(card_id)
+		var row: Dictionary = expected[card_id]
+		_check(not table.is_empty() and table["damage"] == row["damage"]
+			and table["weak"] == row["weak"] and table["scrap"] == 1,
+			card_id + " independently prints its damage, Weak and one Combat Scrap")
+		var record: Dictionary = catalog.get_definition(card_id)
+		_check(not record.is_empty(), card_id + " is authored in the v3 Tinker catalog")
+		if record.is_empty():
+			continue
+		_check(record.get("display_name") == row["display"], card_id + " display name")
+		_check(record.get("owner") == "tinker", card_id + " is owned by Tinker")
+		_check(record.get("cost") == 1, card_id + " prints cost 1")
+		_check(record.get("from_positions") == [2, 3], card_id + " prints FROM 2-3")
+		_check(record.get("target_kind") == "enemy_single", card_id + " targets one enemy")
+		_check(record.get("to_positions") == [1, 2, 3], card_id + " prints TO 1-3")
+		_check(record.get("effects") == row["effects"], card_id + " prints its exact effects")
+		_check(record.get("effects").get("combat_scrap_gain") == 1,
+			card_id + " prints exactly one Combat Scrap")
+		_check(not record.get("effects", {}).has("scraps")
+			and not record.get("effects", {}).has("scrap_cost"),
+			card_id + " never reads or spends wallet scraps")
+		_check(not record.has("upgrade_of"), card_id + " links with base_id/upgrade_id/is_upgrade")
+		var base_id: String = CLAMP if card_id.begins_with(CLAMP) else CASING
+		_check(record.get("base_id") == base_id and record.get("upgrade_id") == base_id + "_plus"
+			and record.get("is_upgrade") == table["is_upgrade"],
+			card_id + " preserves its base/+ link")
+		_check(resolver.is_supported_card(card_id), card_id + " is a supported casing/clamp card")
+		_check(CombatTinkerV3CasingClampCards.is_authentic_definition(record, card_id),
+			card_id + " passes the definition authenticator")
+		_check(CombatTinkerV3CasingClampCards.casing_clamp_definition(card_id) == record,
+			card_id + " resolves to its exact detached catalog record")
+
+	# Detached: mutating a resolved record cannot rewrite what the next resolution returns.
+	var sample: Dictionary = CombatTinkerV3CasingClampCards.casing_clamp_definition(CLAMP)
+	_check(not sample.is_empty(), "casing/clamp resolution fixture loaded")
+	if not sample.is_empty():
+		sample["effects"]["damage"] = 900
+		sample["effects"]["weak"] = 9
+		sample["from_positions"].clear()
+		sample["cost"] = 0
+		_check(CombatTinkerV3CasingClampCards.casing_clamp_definition(CLAMP)
+			== catalog.get_definition(CLAMP),
+			"a mutated casing/clamp definition cannot poison later resolutions")
+
+	# Every other v3 Tinker card (base and plus) is unrelated to this service.
+	var unrelated: Array[String] = []
+	for base_id in catalog.get_pool_card_ids():
+		if not CASING_CLAMP_IDS.has(base_id):
+			unrelated.append(base_id)
+		var upgrade_id: String = catalog.get_upgrade_id(base_id)
+		if not upgrade_id.is_empty() and not CASING_CLAMP_IDS.has(upgrade_id):
+			unrelated.append(upgrade_id)
+	_check(unrelated.has("tinker_v3_gear_brace") and unrelated.has("tinker_v3_scrapstorm_plus"),
+		"unrelated-card fixture really contains other authentic v3 Tinker cards (precondition)")
+	for other_id: String in unrelated:
+		_check(CombatTinkerV3CasingClampCards.casing_clamp_definition(other_id).is_empty(),
+			other_id + " does not resolve as a casing/clamp attack")
+		_check(not resolver.is_supported_card(other_id),
+			other_id + " is not a supported casing/clamp card")
+
+	# The v2 Tinker pool and foreign spellings are never casing/clamp printings.
+	var forged: Array = ["tinker_rivet_shot", "tinker_pop_shot", "tinker_v3_brass_casing+",
+		"tinker_v3_brass_casing_plus_plus", "tinker_v3_spring_clamp_", "brass_casing",
+		"TINKER_V3_BRASS_CASING", "", "tinker_v3_missing_card", StringName(CASING),
+		null, 0, 3.5, false, [], {}]
+	for other_id: Variant in forged:
+		_check(CombatTinkerV3CasingClampCards.casing_clamp_definition(other_id).is_empty(),
+			"forged or non-string ID never resolves as a casing/clamp attack: " + str(other_id))
+		_check(not resolver.is_supported_card(other_id),
+			"forged or non-string ID is never a supported casing/clamp card: " + str(other_id))
+
+	# Adversarial copies of the real Brass Casing record: each altered contract field is refused.
+	var base_record: Dictionary = catalog.get_definition(CASING)
+	_check(not base_record.is_empty()
+		and CombatTinkerV3CasingClampCards.is_authentic_definition(base_record, CASING),
+		"authenticator positive fixture really is the authored Brass Casing")
+	var mutations: Array[Callable] = [
+		func(record: Dictionary) -> void: record["effects"]["damage"] = 5,
+		func(record: Dictionary) -> void: record["effects"]["damage"] = 4.0,
+		func(record: Dictionary) -> void: record["effects"]["damage"] = "4",
+		func(record: Dictionary) -> void: record["effects"]["combat_scrap_gain"] = 2,
+		func(record: Dictionary) -> void: record["effects"]["combat_scrap_gain"] = 1.0,
+		func(record: Dictionary) -> void: record["effects"].erase("combat_scrap_gain"),
+		func(record: Dictionary) -> void: record["effects"]["weak"] = 1,
+		func(record: Dictionary) -> void: record["effects"]["scraps"] = 1,
+		func(record: Dictionary) -> void: record["effects"] = "damage",
+		func(record: Dictionary) -> void: record["cost"] = 0,
+		func(record: Dictionary) -> void: record["cost"] = 2,
+		func(record: Dictionary) -> void: record["cost"] = 1.0,
+		func(record: Dictionary) -> void: record["owner"] = "warden",
+		func(record: Dictionary) -> void: record["from_positions"] = [1, 2, 3],
+		func(record: Dictionary) -> void: record["from_positions"] = ["2", "3"],
+		func(record: Dictionary) -> void: record["to_positions"] = [],
+		func(record: Dictionary) -> void: record["target_kind"] = "self",
+		func(record: Dictionary) -> void: record["id"] = CASING_PLUS,
+		func(record: Dictionary) -> void: record["is_upgrade"] = true,
+		func(record: Dictionary) -> void: record["base_id"] = CASING_PLUS,
+		func(record: Dictionary) -> void: record.erase("upgrade_id"),
+		func(record: Dictionary) -> void: record["upgrade_of"] = CASING,
+		func(record: Dictionary) -> void: record.erase("to_positions"),
+		func(record: Dictionary) -> void: record.erase("effects"),
+	]
+	for index in range(mutations.size()):
+		var tampered: Dictionary = base_record.duplicate(true)
+		mutations[index].call(tampered)
+		_check(not CombatTinkerV3CasingClampCards.is_authentic_definition(tampered, CASING),
+			"tampered casing/clamp record " + str(index) + " is refused")
+	# Spring Clamp's Weak is part of the printed effects: removing or changing it is a foreign record.
+	var clamp_record: Dictionary = catalog.get_definition(CLAMP)
+	for clamp_mutation: Callable in [
+			func(record: Dictionary) -> void: record["effects"]["weak"] = 0,
+			func(record: Dictionary) -> void: record["effects"]["weak"] = 2,
+			func(record: Dictionary) -> void: record["effects"]["weak"] = 1.0,
+			func(record: Dictionary) -> void: record["effects"].erase("weak")]:
+		var tampered_clamp: Dictionary = clamp_record.duplicate(true)
+		clamp_mutation.call(tampered_clamp)
+		_check(not CombatTinkerV3CasingClampCards.is_authentic_definition(tampered_clamp, CLAMP),
+			"a Spring Clamp record without exactly Weak 1 is refused")
+	_check(not CombatTinkerV3CasingClampCards.is_authentic_definition(
+		catalog.get_definition(CASING_PLUS), CASING),
+		"an upgraded record cannot authenticate as its base ID")
+	_check(not CombatTinkerV3CasingClampCards.is_authentic_definition(
+		catalog.get_definition(CASING), CASING_PLUS),
+		"a base record cannot authenticate as its upgraded ID")
+	_check(not CombatTinkerV3CasingClampCards.is_authentic_definition(
+		catalog.get_definition(CLAMP), CASING),
+		"a Spring Clamp record cannot authenticate as Brass Casing")
+
+
+## A real three-enemy roster whose original slots 1-3 are all living.
+func _casing_clamp_enemies() -> CombatEnemies:
+	var enemies := CombatEnemies.new([
+		{"id": "straw_dummy", "max_hp": 30},
+		{"id": "quilt_hog", "max_hp": 24},
+		{"id": "moth_swarm", "max_hp": 18},
+	])
+	_check(enemies.is_valid() and enemies.get_enemies().size() == 3,
+		"three-enemy fixture really is a valid living roster")
+	return enemies
+
+
+## AC2: each of the four held printings pays one energy, discards one copy, lands the printed raw hit
+## through Block before HP, adds Weak 1 only for Spring Clamp (also when fully Blocked) and adds one
+## Combat Scrap to the living Tinker only.
+func _test_casing_clamp_paid_plays() -> void:
+	var resolver := CombatTinkerV3CasingClampCards.new()
+	var cases := [
+		{"id": CASING, "seat": 2, "target": 1, "blocks": 0, "scrap": 0},
+		{"id": CASING, "seat": 3, "target": 3, "blocks": 1, "scrap": 2},
+		{"id": CASING_PLUS, "seat": 2, "target": 2, "blocks": 2, "scrap": 1},
+		{"id": CASING_PLUS, "seat": 3, "target": 1, "blocks": 0, "scrap": 0},
+		{"id": CLAMP, "seat": 2, "target": 3, "blocks": 0, "scrap": 0},
+		{"id": CLAMP, "seat": 3, "target": 1, "blocks": 20, "scrap": 2},
+		{"id": CLAMP_PLUS, "seat": 2, "target": 2, "blocks": 2, "scrap": 0},
+		{"id": CLAMP_PLUS, "seat": 3, "target": 3, "blocks": 20, "scrap": 1},
+	]
+	var seed_value := 601000
+	for entry: Dictionary in cases:
+		var card_id: String = entry["id"]
+		var table := _casing_clamp_table(card_id)
+		var raw: int = table["damage"]
+		var weak: int = table["weak"]
+		var seat: int = entry["seat"]
+		var target: int = entry["target"]
+		var target_blocks: int = entry["blocks"]
+		var scrap: int = entry["scrap"]
+		var label := card_id + " from seat " + str(seat) + " at enemy " + str(target)
+		var party := _overload_party(seat, scrap)
+		var deck := _scrap_deck([card_id], seed_value, 5)
+		var enemies := _casing_clamp_enemies()
+		if target_blocks > 0:
+			_check(enemies.gain_block(target, target_blocks),
+				label + ": the fixture really grants the chosen enemy Block")
+		var enemy_before: Dictionary = enemies.get_enemy(target)
+		var block_absorbed: int = mini(int(enemy_before["block"]), raw)
+		var hp_loss: int = mini(int(enemy_before["hp"]), raw - block_absorbed)
+		if target_blocks >= raw:
+			_check(block_absorbed == raw and hp_loss == 0,
+				label + ": the Block fixture really absorbs the whole raw hit")
+		else:
+			_check(block_absorbed == int(enemy_before["block"]) and hp_loss > 0,
+				label + ": the Block fixture really lets HP loss through")
+		var wallet := {"gold": 9, "scraps": 4}
+		var wallet_before: Dictionary = wallet.duplicate(true)
+		var rng_before: int = deck._rng.state
+		var before := _battle_snapshot(deck, party, enemies)
+		# The pure preflight accepts the same request and changes nothing.
+		var plan: Dictionary = resolver.preflight(deck, party, enemies, card_id, target)
+		_check(plan.get("ok") == true and plan.get("reason") == "legal",
+			label + ": read-only preflight accepts the funded play")
+		_check(plan.get("raw_damage") == raw and plan.get("weak") == weak
+			and plan.get("combat_scrap_before") == scrap,
+			label + ": preflight reports the printed damage, Weak and counter")
+		_check(_battle_snapshot(deck, party, enemies) == before,
+			label + ": preflight changed no battle state")
+		var result: Dictionary = resolver.play_card(deck, party, enemies, card_id, target)
+		_check(result.get("ok") == true and result.get("reason") == "applied",
+			label + ": authorized paid play")
+		_check(result.get("card_id") == card_id and result.get("cost") == 1,
+			label + ": receipt names the authentic card and its one energy")
+		_check(result.get("owner_position") == seat and result.get("target_position") == target,
+			label + ": receipt reports the real owner seat and the chosen enemy")
+		_check(result.get("raw_damage") == raw and result.get("damage") == raw,
+			label + ": exactly " + str(raw) + " unmodified printed raw damage")
+		_check(result.get("block_absorbed") == block_absorbed and result.get("hp_loss") == hp_loss,
+			label + ": Block absorbed " + str(block_absorbed) + " before " + str(hp_loss) + " HP")
+		_check(result.get("combat_scrap_before") == scrap
+			and result.get("combat_scrap_gained") == 1
+			and result.get("combat_scrap_after") == scrap + 1,
+			label + ": receipt reports exactly one Combat Scrap from " + str(scrap))
+		_check(result.get("weak") == weak and result.get("statuses")
+			== ({"weak": weak} if weak > 0 else {}),
+			label + ": receipt reports the printed Weak only")
+		_check(result.get("enemy_weak_before") == 0 and result.get("enemy_weak_after") == weak,
+			label + ": the enemy Weak stack changes only by the printed amount")
+		_check(result.get("energy_before") == 3 and result.get("energy_after") == 2,
+			label + ": receipt reports the exact energy change")
+		_check(not result.has("scraps") and not result.has("wallet"),
+			label + ": receipt carries no wallet state")
+		_check(deck.energy == 2, label + ": exactly one energy was paid")
+		_check(deck.hand.count(card_id) == 0 and deck.discard_pile == [card_id],
+			label + ": exactly the held copy reached the discard")
+		_check(deck._rng.state == rng_before, label + ": no RNG was consumed")
+		_check(party.get_hero(seat).get("combat_scrap") == scrap + 1
+			and party._heroes[seat - 1].get("combat_scrap") == scrap + 1,
+			label + ": the Tinker's authoritative record gained exactly one Combat Scrap")
+		for position: int in [1, 2, 3]:
+			if position == seat:
+				continue
+			_check(party.get_hero(position).get("combat_scrap") == 2,
+				label + ": teammate seat " + str(position) + " keeps its own counter")
+			_check(party.get_hero(position).get("hp") == before["party"][position - 1]["hp"],
+				label + ": teammate seat " + str(position) + " keeps its HP")
+		_check(party.get_hero(seat).get("hp") == 26 and party.get_hero(seat).get("block") == 0,
+			label + ": the Tinker's HP and Block are untouched")
+		_check(enemies.get_enemy(target).get("hp") == int(enemy_before["hp"]) - hp_loss
+			and enemies.get_enemy(target).get("block")
+				== int(enemy_before["block"]) - block_absorbed,
+			label + ": only the chosen enemy's Block and HP changed")
+		_check(enemies.get_enemy(target).get("statuses", {}).get("weak", 0) == weak,
+			label + ": the chosen enemy carries exactly the printed Weak")
+		for position: int in range(1, enemies.get_enemies().size() + 1):
+			if position == target:
+				continue
+			_check(enemies.get_enemy(position) == before["enemies"][position - 1],
+				label + ": enemy " + str(position) + " is completely untouched")
+		if weak > 0:
+			# The existing status rules give the Weak token its 25% reduction (8 -> 6).
+			_check(CombatStatuses.new().adjusted_attack_damage(8,
+				enemies.get_enemy(target).get("statuses", {}), {}) == 6,
+				label + ": the applied Weak reduces that enemy's attack by 25%")
+		_check(wallet == wallet_before, label + ": the run wallet's scraps are never modified")
+		_check(_battle_snapshot(deck, party, enemies)
+			== _expected_casing_clamp(before, card_id, seat, target, raw, weak),
+			label + ": exact hand, piles, energy, turn, party, counters, enemy, Weak and RNG state")
+		seed_value += 1
+
+	# Weak is additive on the same enemy and leaves unrelated statuses alone.
+	var stack_party := _overload_party(2, 1)
+	var stack_deck := _scrap_deck([CLAMP], 601900, 5)
+	var stack_enemies := _casing_clamp_enemies()
+	_check(stack_enemies.apply_statuses({2: {"weak": 2, "exposed": 1}}),
+		"stacked-status fixture really seeds Weak 2 and Exposed 1")
+	var stack_before := _battle_snapshot(stack_deck, stack_party, stack_enemies)
+	var stack_result: Dictionary = resolver.play_card(stack_deck, stack_party, stack_enemies, CLAMP, 2)
+	_check(stack_result.get("ok") == true and stack_result.get("enemy_weak_before") == 2
+		and stack_result.get("enemy_weak_after") == 3,
+		"Spring Clamp adds exactly one Weak stack on top of an existing stack")
+	_check(stack_enemies.get_enemy(2).get("statuses") == {"weak": 3, "exposed": 1},
+		"Spring Clamp leaves the unrelated Exposed stack untouched")
+	_check(_battle_snapshot(stack_deck, stack_party, stack_enemies)
+		== _expected_casing_clamp(stack_before, CLAMP, 2, 2, 3, 1),
+		"the stacked-status play matches the exact expected battle state")
+
+	# Brass Casing never adds Weak, even to an enemy that already carries it.
+	var brass_party := _overload_party(3, 0)
+	var brass_deck := _scrap_deck([CASING], 601901, 5)
+	var brass_enemies := _casing_clamp_enemies()
+	_check(brass_enemies.apply_statuses({1: {"weak": 2}}),
+		"Brass fixture really seeds an existing Weak stack")
+	var brass_result: Dictionary = resolver.play_card(brass_deck, brass_party, brass_enemies, CASING, 1)
+	_check(brass_result.get("ok") == true and brass_result.get("weak") == 0
+		and brass_result.get("enemy_weak_before") == 2 and brass_result.get("enemy_weak_after") == 2,
+		"Brass Casing adds no Weak of its own")
+	_check(brass_enemies.get_enemy(1).get("statuses") == {"weak": 2},
+		"Brass Casing leaves the enemy's existing Weak stack alone")
+
+
+## AC2 (second half): a second genuine held copy is a separate paid action, never bundled into the first.
+func _test_casing_clamp_second_copy() -> void:
+	var resolver := CombatTinkerV3CasingClampCards.new()
+	var party := _overload_party(2, 0)
+	var deck := _casing_clamp_duplicate_deck(601950)
+	var enemies := _casing_clamp_enemies()
+	var rng_before: int = deck._rng.state
+	_check(deck.hand.count(CASING) == 2 and deck.energy == 3,
+		"second-copy fixture really holds two copies on a real three-energy turn")
+	var first: Dictionary = resolver.play_card(deck, party, enemies, CASING, 1)
+	_check(first.get("ok") == true and first.get("combat_scrap_after") == 1,
+		"the first copy is one paid action and gains one Combat Scrap")
+	_check(deck.energy == 2 and deck.hand.count(CASING) == 1
+		and deck.discard_pile == [CASING]
+		and enemies.get_enemy(1).get("hp") == 26 and party.get_hero(2).get("combat_scrap") == 1,
+		"the first play spends one energy, discards one copy and hits once")
+	var after_first := _battle_snapshot(deck, party, enemies)
+	var second: Dictionary = resolver.play_card(deck, party, enemies, CASING, 1)
+	_check(second.get("ok") == true and second.get("combat_scrap_after") == 2,
+		"the second held copy is played through its own paid action")
+	_check(deck.energy == 1 and deck.hand.count(CASING) == 0
+		and deck.discard_pile == [CASING, CASING]
+		and enemies.get_enemy(1).get("hp") == 22 and party.get_hero(2).get("combat_scrap") == 2,
+		"the second play spends another energy, discards the other copy and hits once")
+	_check(deck._rng.state == rng_before, "neither copy play consumed the seeded RNG")
+	_check(_battle_snapshot(deck, party, enemies)
+		== _expected_casing_clamp(after_first, CASING, 2, 1, 4, 0),
+		"the second play matches the exact expected battle state")
+	var third: Dictionary = resolver.play_card(deck, party, enemies, CASING, 1)
+	_check(third.get("ok") == false and third.get("reason") == "card_not_held",
+		"no third claim is possible without another held copy")
+	_check(deck.energy == 1 and party.get_hero(2).get("combat_scrap") == 2,
+		"the refused third claim spends nothing")
+
+
+## AC3: every failed identity, turn, owner, seat, energy, held-copy, target, roster, status or counter
+## precondition is refused with its reason and mutates no deck, party, enemy, counter or RNG state.
+func _test_casing_clamp_refusals() -> void:
+	var resolver := CombatTinkerV3CasingClampCards.new()
+	var party := _overload_party(2, 3)
+	var deck := _scrap_deck([CASING], 602100, 5)
+	var enemies := _casing_clamp_enemies()
+	var wallet := {"gold": 9, "scraps": 4}
+	var wallet_before: Dictionary = wallet.duplicate(true)
+
+	_rejected_casing_clamp(resolver, null, party, enemies, CASING, 1, "invalid_request", "null deck")
+	_rejected_casing_clamp(resolver, deck, null, enemies, CASING, 1, "invalid_request", "null party")
+	_rejected_casing_clamp(resolver, deck, party, null, CASING, 1, "invalid_request", "null enemies")
+
+	# An inactive turn is never paid, even with a real copy in hand.
+	var inactive := CombatDeck.new([CASING], _scrap_rng(602101))
+	inactive.hand.append(CASING)
+	_check(not inactive.turn_active and inactive.hand.has(CASING),
+		"inactive fixture really holds a copy outside a turn")
+	_rejected_casing_clamp(resolver, inactive, party, enemies, CASING, 1, "inactive_turn",
+		"inactive turn")
+
+	# Unsupported card identities: other authentic Tinker cards, v2 cards, forged spellings.
+	var wrong_ids: Array = ["tinker_v3_gear_brace", "tinker_v3_spare_screws",
+		"tinker_v3_overload", "tinker_v3_scrapstorm", "tinker_v3_wind_up_turret",
+		"tinker_pop_shot", "tinker_rivet_shot", "tinker_v3_brass_casing+",
+		"tinker_v3_brass_casing_plus_plus", "tinker_v3_brass_casing_", "brass_casing",
+		"TINKER_V3_BRASS_CASING", "", StringName(CASING), null, 0, 3.5, false, [], {}]
+	for wrong_id: Variant in wrong_ids:
+		_rejected_casing_clamp(resolver, deck, party, enemies, wrong_id, 1, "unsupported_card",
+			"unsupported ID " + str(wrong_id))
+	# An authentic Spring Clamp the shared hand does not hold is still unheld.
+	_rejected_casing_clamp(resolver, deck, party, enemies, CLAMP, 1, "card_not_held",
+		"authentic but unheld Spring Clamp")
+
+	# An unaffordable copy is refused without a partial charge.
+	var poor := _scrap_deck([CASING], 602102, 5)
+	poor.combat_state.energy = 0
+	_check(poor.energy == 0 and poor.hand.has(CASING),
+		"short-energy fixture really holds a copy with no energy")
+	_rejected_casing_clamp(resolver, poor, party, enemies, CASING, 1, "insufficient_energy",
+		"no energy")
+
+	# Both printings are FROM 2-3: the front seat is not a legal owner.
+	var front_party := _overload_party(1, 3)
+	var front_deck := _scrap_deck([CASING], 602103, 5)
+	_rejected_casing_clamp(resolver, front_deck, front_party, enemies, CASING, 1,
+		"owner_illegal_position", "Brass Casing from seat 1")
+
+	# A party without Tinker never authorizes the play.
+	var absent_owner := CombatParty.new([{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30}, {"id": "yarn_ranger", "max_hp": 28}])
+	_check(absent_owner.is_valid() and absent_owner.get_hero(2).get("id") == "seamstress",
+		"absent-owner fixture is a valid party without a Tinker")
+	_rejected_casing_clamp(resolver, deck, absent_owner, enemies, CASING, 1, "owner_missing",
+		"absent Tinker")
+
+	# Duplicate or malformed hero records never grant authority.
+	var duplicate := _overload_party(2, 3)
+	duplicate._heroes[0]["id"] = "tinker"
+	_check(duplicate.get_hero(1).get("id") == "tinker"
+		and duplicate.get_hero(2).get("id") == "tinker",
+		"duplicate-identity fixture really repeats the owner ID")
+	_rejected_casing_clamp(resolver, deck, duplicate, enemies, CASING, 1, "invalid_party",
+		"duplicate Tinker identity")
+	var bad_hp := _overload_party(2, 3)
+	bad_hp._heroes[0]["hp"] = 999
+	_rejected_casing_clamp(resolver, deck, bad_hp, enemies, CASING, 1, "invalid_party",
+		"malformed hero HP")
+	var bad_position := _overload_party(2, 3)
+	bad_position._heroes[0]["position"] = 3
+	_rejected_casing_clamp(resolver, deck, bad_position, enemies, CASING, 1, "invalid_party",
+		"malformed hero position")
+	var short_party := CombatParty.new([{"id": "tinker", "max_hp": 26}])
+	_rejected_casing_clamp(resolver, deck, short_party, enemies, CASING, 1, "invalid_party",
+		"invalid one-hero party")
+
+	# A torn (downed) owner may not play.
+	var torn_owner := _overload_party(3, 3)
+	_check(torn_owner.apply_damage(3, 26) and torn_owner.is_downed(3),
+		"torn-owner fixture really has a downed Tinker")
+	_rejected_casing_clamp(resolver, deck, torn_owner, enemies, CASING, 2, "owner_downed",
+		"downed Tinker")
+
+	# A slain enemy and out-of-range slots are never hit; slots never compact.
+	var slain_targets := _casing_clamp_enemies()
+	_check(slain_targets.apply_damage(1, 30) and slain_targets.is_slain(1),
+		"slain-target fixture really has a dead front enemy")
+	_rejected_casing_clamp(resolver, deck, party, slain_targets, CASING, 1, "target_slain",
+		"slain enemy")
+	for slot: int in [0, 4, -1, 99]:
+		_rejected_casing_clamp(resolver, deck, party, enemies, CASING, slot, "invalid_target",
+			"illegal target slot " + str(slot))
+
+	# A malformed stored counter is never coerced into a legal number.
+	var text_counter := _overload_party(2, 3)
+	text_counter._heroes[1]["combat_scrap"] = "3"
+	_rejected_casing_clamp(resolver, deck, text_counter, enemies, CASING, 1,
+		"malformed_combat_scrap", "string Combat Scrap")
+	var negative_counter := _overload_party(2, 3)
+	negative_counter._heroes[1]["combat_scrap"] = -1
+	_rejected_casing_clamp(resolver, deck, negative_counter, enemies, CASING, 1,
+		"malformed_combat_scrap", "negative Combat Scrap")
+	var float_counter := _overload_party(2, 3)
+	float_counter._heroes[1]["combat_scrap"] = 1.0
+	_rejected_casing_clamp(resolver, deck, float_counter, enemies, CASING, 1,
+		"malformed_combat_scrap", "float Combat Scrap")
+
+	# The printed one-scrap gain must stay representable.
+	var overflow_counter := _overload_party(2, 3)
+	overflow_counter._heroes[1]["combat_scrap"] = CombatParty.MAX_INT
+	_rejected_casing_clamp(resolver, deck, overflow_counter, enemies, CASING, 1,
+		"combat_scrap_overflow", "Combat Scrap counter overflow")
+
+	# Invalid or malformed enemy rosters fail closed.
+	var empty_roster := CombatEnemies.new([])
+	_check(not empty_roster.is_valid(), "empty-roster fixture really is invalid")
+	_rejected_casing_clamp(resolver, deck, party, empty_roster, CASING, 1, "invalid_enemies",
+		"empty enemy roster")
+	var bad_enemy_hp := _casing_clamp_enemies()
+	bad_enemy_hp._enemies[0]["hp"] = 999
+	_rejected_casing_clamp(resolver, deck, party, bad_enemy_hp, CASING, 1, "invalid_enemies",
+		"malformed enemy HP")
+	var duplicate_enemy := _casing_clamp_enemies()
+	duplicate_enemy._enemies[1]["id"] = duplicate_enemy._enemies[0]["id"]
+	_rejected_casing_clamp(resolver, deck, party, duplicate_enemy, CASING, 1, "invalid_enemies",
+		"duplicate enemy identity")
+
+	# Malformed status data anywhere in the roster is refused before the hit or the counter changes.
+	for bad_statuses: Variant in [{"weak": "1"}, {"weak": -1}, {"weak": 1.0},
+			{"invented": 1}, {"weak": 1, "invented": 1}, "weak", []]:
+		var bad_status_roster := _casing_clamp_enemies()
+		bad_status_roster._enemies[1]["statuses"] = bad_statuses
+		_rejected_casing_clamp(resolver, deck, party, bad_status_roster, CASING, 1,
+			"invalid_statuses", "malformed enemy statuses " + str(bad_statuses))
+	# The printed Weak addition itself must stay representable.
+	var weak_overflow := _casing_clamp_enemies()
+	weak_overflow._enemies[0]["statuses"] = {"weak": CombatParty.MAX_INT}
+	_rejected_casing_clamp(resolver, _scrap_deck([CLAMP], 602104, 5), party, weak_overflow, CLAMP, 1,
+		"status_overflow", "Weak stack overflow")
+
+	_check(wallet == wallet_before, "every refusal left the run wallet's scraps untouched")
+
+	# The shared fixture deck, party and roster survived every refusal untouched.
+	_check(deck.energy == 3 and deck.hand.has(CASING) and deck.discard_pile.is_empty()
+		and party.get_hero(2).get("combat_scrap") == 3
+		and enemies.get_enemy(1).get("hp") == 30 and enemies.get_enemy(1).get("block") == 0
+		and enemies.get_enemy(2).get("hp") == 24 and not enemies.get_enemy(1).has("statuses"),
+		"every refusal left the shared fixture deck, party and enemies untouched")
+
+	# A refused attempt never poisons the next authentic play on the same objects.
+	var retry: Dictionary = resolver.play_card(deck, party, enemies, CASING, 2)
+	_check(retry.get("ok") == true and retry.get("raw_damage") == 4,
+		"the authentic play then succeeds once with 4 raw damage")
+	_check(deck.energy == 2 and deck.discard_pile == [CASING]
+		and party.get_hero(2).get("combat_scrap") == 4
+		and enemies.get_enemy(2).get("hp") == 20 and enemies.get_enemy(1).get("hp") == 30,
+		"the retry paid once, gained one scrap and hit only the chosen enemy")
+	_rejected_casing_clamp(resolver, deck, party, enemies, CASING, 2, "card_not_held",
+		"a second claim of the same copy")
+
+
+## A genuine seeded shared hand already holding two copies of Brass Casing, with four filler cards left
+## in the draw pile so no refill can interfere.
+func _casing_clamp_duplicate_deck(seed_value: int) -> CombatDeck:
+	var deck := CombatDeck.new([CASING, CASING, "v3_casing_filler_a",
+		"v3_casing_filler_b", "v3_casing_filler_c", "v3_casing_filler_d"],
+		_scrap_rng(seed_value))
+	_check(deck.start_turn(), "duplicate-copy fixture starts a real turn")
+	while deck.hand.count(CASING) < 2 and deck.draw_pile.has(CASING):
+		var spare_slot := -1
+		for hand_index in range(deck.hand.size()):
+			if deck.hand[hand_index] != CASING:
+				spare_slot = hand_index
+				break
+		var pile_index: int = deck.draw_pile.find(CASING)
+		if spare_slot < 0 or pile_index < 0:
+			break
+		var moved: String = deck.hand[spare_slot]
+		deck.draw_pile[pile_index] = moved
+		deck.hand[spare_slot] = CASING
+	return deck
+
+
+## The exact casing/clamp outcome: one energy, the held copy moved to discard, one Combat Scrap on the
+## owner only, the raw hit through Block and (for Spring Clamp) one added Weak stack on the target.
+func _expected_casing_clamp(before: Dictionary, card_id: String, seat: int, target: int,
+		raw: int, weak: int) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] = int(expected["energy"]) - 1
+	expected["state_energy"] = int(expected["state_energy"]) - 1
+	var hand: Array = expected["hand"]
+	_check(hand.count(card_id) == 1, "expected snapshot: exactly one played copy is held")
+	hand.remove_at(hand.find(card_id))
+	(expected["discard"] as Array).append(card_id)
+	var hero: Dictionary = expected["party"][seat - 1]
+	hero["combat_scrap"] = int(hero.get("combat_scrap", 0)) + 1
+	var enemy: Dictionary = expected["enemies"][target - 1]
+	var absorbed: int = mini(int(enemy["block"]), raw)
+	enemy["block"] = int(enemy["block"]) - absorbed
+	enemy["hp"] = maxi(0, int(enemy["hp"]) - (raw - absorbed))
+	if weak > 0:
+		var statuses: Dictionary = enemy.get("statuses", {})
+		statuses["weak"] = int(statuses.get("weak", 0)) + weak
+		enemy["statuses"] = statuses
+	return expected
+
+
+func _rejected_casing_clamp(resolver: CombatTinkerV3CasingClampCards, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, card_id: Variant, target: int,
+		reason: String, label: String) -> void:
+	var before := _battle_snapshot(deck, party, enemies)
+	var plan: Dictionary = resolver.preflight(deck, party, enemies, card_id, target)
+	_check(plan.get("ok") == false and plan.get("reason") == reason,
+		label + ": pure preflight also refuses with " + reason)
+	_check(_battle_snapshot(deck, party, enemies) == before,
+		label + ": preflight itself changed no state")
+	var result: Dictionary = resolver.play_card(deck, party, enemies, card_id, target)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("reason") == reason,
+		label + ": refusal reason is " + reason + " (got " + str(result.get("reason")) + ")")
+	_check(_battle_snapshot(deck, party, enemies) == before,
+		label + ": unchanged energy, hand, piles, turn, party, counters, enemies, statuses and RNG")
+

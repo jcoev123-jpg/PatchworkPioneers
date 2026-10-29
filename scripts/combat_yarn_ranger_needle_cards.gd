@@ -21,6 +21,16 @@ extends RefCounted
 ## consumes a queued action skip and never touches thresholds: that stays with CombatUnravel
 ## and its turn consumer.
 ##
+## This same scene-free class also resolves the two authored Purling Barrage reward printings.
+## They are a separate, tightly bounded table (`PURLING_CARDS`) so the four needle shots above
+## keep their exact one-hit rules: Purling Barrage costs two energy, fires only from the back
+## seat (FROM 3) and prints 3/4 damage PER HIT with hit_count 2 plus Unravel 1/2. The two hits
+## resolve sequentially against the same living target through the shared CombatStatusAttacks
+## bridge (each hit re-applies Weak/Exposed/Tangled and spends Block before HP); a lethal first
+## hit stops the sequence without retargeting or compacting enemies. The single printed Unravel
+## charge is applied ONCE after the hit sequence and only to the same target if it survived,
+## through the caller's already-bound CombatUnravel ledger.
+##
 ## Every rejection is a pure no-op: no energy, hand, pile, party, enemy, gauge or RNG change.
 ## A deterministic shot never draws from the shared run RNG. This is callable rules-layer
 ## behaviour only; dispatching a real held card from the live battle hand is a later,
@@ -99,6 +109,39 @@ const CARDS := {
 const _STARTER_CATALOG := preload("res://data/cards/yarn_ranger_starter_cards.gd")
 const _POOL_CATALOG := preload("res://data/cards/yarn_ranger_pool_cards.gd")
 
+## The two authentic Purling Barrage reward printings and the exact catalog line each one must
+## still carry. `damage` is the printed damage of EACH independent hit, `hit_count` the number
+## of hits and `unravel` the one post-hit gauge charge. Both live in the Yarn Ranger pool.
+const PURLING_FROM_POSITIONS := [3]
+const PURLING_CARDS := {
+	"yarn_ranger_purling_barrage": {
+		"display_name": "Purling Barrage",
+		"cost": 2,
+		"damage": 3,
+		"hit_count": 2,
+		"unravel": 1,
+		"effects": {"damage": 3, "hit_count": 2, "unravel": 1},
+		"catalog": "pool",
+		"starting_copies": 0,
+		"reward_eligible": true,
+		"rarity": "uncommon",
+		"upgrade_id": "yarn_ranger_purling_barrage_plus",
+	},
+	"yarn_ranger_purling_barrage_plus": {
+		"display_name": "Purling Barrage+",
+		"cost": 2,
+		"damage": 4,
+		"hit_count": 2,
+		"unravel": 2,
+		"effects": {"damage": 4, "hit_count": 2, "unravel": 2},
+		"catalog": "pool",
+		"starting_copies": 0,
+		"reward_eligible": false,
+		"rarity": "uncommon",
+		"upgrade_of": "yarn_ranger_purling_barrage",
+	},
+}
+
 var _batch := CombatStatusTurnBatch.new()
 var _attacks := CombatStatusAttacks.new()
 var _statuses := CombatStatuses.new()
@@ -107,6 +150,11 @@ var _statuses := CombatStatuses.new()
 ## True only for the four authentic catalog IDs. Pure lookup; nothing is charged or mutated.
 func is_supported_card(card_id: Variant) -> bool:
 	return typeof(card_id) == TYPE_STRING and CARDS.has(card_id)
+
+
+## True only for the two authentic Purling Barrage printings. Pure lookup.
+func is_supported_purling_card(card_id: Variant) -> bool:
+	return typeof(card_id) == TYPE_STRING and PURLING_CARDS.has(card_id)
 
 
 ## A detached, shape-checked needle definition from the catalog that owns the ID, or {} for
@@ -128,17 +176,57 @@ static func needle_definition(card_id: Variant) -> Dictionary:
 	return definition
 
 
-## The record must still carry exactly the authored line: id, printed name, owner, printed
-## one-energy cost, the middle/back FROM line, the single-enemy target, the 1-3 TO line,
-## exactly the printed damage and Unravel (integer types only, no extra keys), the authored
-## copy/reward metadata and the base/"+" link in its own catalog.
-static func is_authentic_definition(definition: Variant, card_id: Variant) -> bool:
-	if typeof(definition) != TYPE_DICTIONARY or typeof(card_id) != TYPE_STRING:
-		return false
+## A detached, shape-checked Purling Barrage definition from the pool that owns both printings,
+## or {} for anything else. Unrelated, forged and tampered records all resolve to {}.
+static func purling_definition(card_id: Variant) -> Dictionary:
+	if typeof(card_id) != TYPE_STRING:
+		return {}
 	var id: String = card_id
-	var card: Dictionary = CARDS.get(id, {})
+	if not PURLING_CARDS.has(id):
+		return {}
+	var definition: Dictionary = _POOL_CATALOG.new().get_definition(id)
+	if not is_authentic_purling_definition(definition, id):
+		return {}
+	return definition
+
+
+## The record must still carry exactly the authored needle line: id, printed name, owner,
+## printed one-energy cost, the middle/back FROM line, the single-enemy target, the 1-3 TO
+## line, exactly the printed damage and Unravel (integer types only, no extra keys), the
+## authored copy/reward metadata and the base/"+" link in its own catalog.
+static func is_authentic_definition(definition: Variant, card_id: Variant) -> bool:
+	if typeof(card_id) != TYPE_STRING:
+		return false
+	var card: Dictionary = CARDS.get(card_id, {})
 	if card.is_empty():
 		return false
+	return _authenticate_record(definition, card_id, card, FROM_POSITIONS,
+		"common" if card["catalog"] == "pool" else "")
+
+
+## The Purling Barrage printing must still carry exactly its authored pool line: both hits of
+## its per-hit damage, hit_count two, its single Unravel charge, the back-seat FROM line, the
+## uncommon rarity, no starting copy and the base/"+" link in the same pool.
+static func is_authentic_purling_definition(definition: Variant, card_id: Variant) -> bool:
+	if typeof(card_id) != TYPE_STRING:
+		return false
+	var card: Dictionary = PURLING_CARDS.get(card_id, {})
+	if card.is_empty():
+		return false
+	return _authenticate_record(definition, card_id, card, PURLING_FROM_POSITIONS,
+		"uncommon")
+
+
+## The shared shape/authenticity check for one resolver table entry. Every authored field must
+## match exactly, effect values must be real integers and the base/"+" link must point back into
+## the same table entry, so a forged, rewritten or relinked record can never be played.
+static func _authenticate_record(definition: Variant, card_id: Variant, card: Dictionary,
+		from_positions: Array, rarity: String) -> bool:
+	if typeof(definition) != TYPE_DICTIONARY or typeof(card_id) != TYPE_STRING:
+		return false
+	if card.is_empty():
+		return false
+	var id: String = card_id
 	if definition.get("id") != id or definition.get("owner") != OWNER:
 		return false
 	if definition.get("display_name") != card["display_name"]:
@@ -148,30 +236,28 @@ static func is_authentic_definition(definition: Variant, card_id: Variant) -> bo
 	if definition.get("target_kind") != TARGET_KIND:
 		return false
 	if typeof(definition.get("from_positions")) != TYPE_ARRAY \
-			or definition["from_positions"] != FROM_POSITIONS:
+			or definition["from_positions"] != from_positions:
 		return false
 	var to_positions: Variant = definition.get("to_positions")
 	if typeof(to_positions) != TYPE_ARRAY or to_positions != TO_POSITIONS:
 		return false
 	var effects: Variant = definition.get("effects")
-	if typeof(effects) != TYPE_DICTIONARY or (effects as Dictionary).size() != 2:
+	var expected_effects: Dictionary = card["effects"]
+	if typeof(effects) != TYPE_DICTIONARY \
+			or (effects as Dictionary).size() != expected_effects.size():
 		return false
-	var damage: Variant = (effects as Dictionary).get("damage")
-	var unravel: Variant = (effects as Dictionary).get("unravel")
-	if typeof(damage) != TYPE_INT or typeof(unravel) != TYPE_INT:
-		return false
-	if damage != card["damage"] or unravel != card["unravel"]:
-		return false
-	if effects != card["effects"]:
-		return false
+	for key: String in expected_effects:
+		var value: Variant = (effects as Dictionary).get(key)
+		if typeof(value) != TYPE_INT or value != expected_effects[key]:
+			return false
 	if typeof(definition.get("starting_copies")) != TYPE_INT \
 			or definition["starting_copies"] != card["starting_copies"]:
 		return false
 	if typeof(definition.get("reward_eligible")) != TYPE_BOOL \
 			or definition["reward_eligible"] != card["reward_eligible"]:
 		return false
-	if card["catalog"] == "pool":
-		if definition.get("rarity") != "common":
+	if rarity != "":
+		if definition.get("rarity") != rarity:
 			return false
 	elif definition.has("rarity"):
 		return false
@@ -222,8 +308,88 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	}
 
 
+## The Purling Barrage transaction: authenticate, preflight the whole request against the real
+## active hand and the bound Unravel ledger, then charge its two energy once, discard exactly
+## one held copy and resolve up to two independent status-adjusted hits against the same living
+## target. A lethal first hit stops the sequence without retargeting or compacting the roster.
+## A surviving target then receives the printed Unravel exactly ONCE, even if every hit was
+## absorbed by Block; a slain foe receives none. The receipt exposes the real hit count and
+## each hit's damage/Block/HP details. A refusal changes no deck, party, enemy, gauge or RNG
+## state.
+func play_purling_barrage(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		unravel: CombatUnravel, card_id: Variant, target_position: int) -> Dictionary:
+	var plan: Dictionary = _prepare_purling(deck, party, enemies, unravel, card_id,
+		target_position)
+	if not plan.get("ok", false):
+		return _refusal(str(plan.get("reason", "refused")))
+	# Every operation below is guaranteed by the complete preflight above. Keep the
+	# defensive returns so an unexpected model change still fails closed.
+	if not deck.try_spend_energy(plan["cost"]):
+		return _refusal("insufficient_energy")
+	if not deck.discard_played(plan["card_id"]):
+		return _refusal("card_not_held")
+	var hits: Array[Dictionary] = []
+	var total_damage := 0
+	var total_block := 0
+	var total_hp_loss := 0
+	for index in range(plan["hit_count"]):
+		# The second hit never retargets: a slain first target simply ends the sequence.
+		if enemies.is_slain(target_position):
+			break
+		var hit: Dictionary = _attacks.resolve_vs_enemy(enemies, target_position,
+			plan["damage"], plan["attacker_statuses"], plan["defender_statuses"])
+		if not hit.get("ok", false):
+			return _refusal("invalid_target")
+		hits.append({
+			"index": index + 1,
+			"damage": hit.get("damage", 0),
+			"block_absorbed": hit.get("block_absorbed", 0),
+			"hp_loss": hit.get("hp_loss", 0),
+		})
+		total_damage += int(hit.get("damage", 0))
+		total_block += int(hit.get("block_absorbed", 0))
+		total_hp_loss += int(hit.get("hp_loss", 0))
+	# Exactly one printed charge, applied after the whole sequence and only to the survivor.
+	var applied: int = 0
+	if not hits.is_empty() and not enemies.is_slain(target_position):
+		if unravel.apply_unravel(enemies, target_position, plan["unravel"]):
+			applied = plan["unravel"]
+	return {
+		"ok": true,
+		"reason": "applied",
+		"card_id": plan["card_id"],
+		"cost": plan["cost"],
+		"owner_position": plan["owner_position"],
+		"target_position": target_position,
+		"damage": plan["damage"],
+		"damage_per_hit": plan["damage"],
+		"hit_count": hits.size(),
+		"hits": hits,
+		"total_damage": total_damage,
+		"total_block_absorbed": total_block,
+		"total_hp_loss": total_hp_loss,
+		"unravel_added": applied,
+		"unravel": unravel.get_snapshot(target_position),
+	}
+
+
+## The authentic needle plan (one hit) through the shared preflight.
 func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		unravel: CombatUnravel, card_id: Variant, target_position: int) -> Dictionary:
+	return _prepare_card(deck, party, enemies, unravel, card_id, target_position,
+		CARDS, FROM_POSITIONS, false)
+
+
+## The authentic Purling Barrage plan (two printed hits) through the same shared preflight.
+func _prepare_purling(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		unravel: CombatUnravel, card_id: Variant, target_position: int) -> Dictionary:
+	return _prepare_card(deck, party, enemies, unravel, card_id, target_position,
+		PURLING_CARDS, PURLING_FROM_POSITIONS, true)
+
+
+func _prepare_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		unravel: CombatUnravel, card_id: Variant, target_position: int, table: Dictionary,
+		from_positions: Array, purling: bool) -> Dictionary:
 	if deck == null or party == null or enemies == null or unravel == null:
 		return _refusal("invalid_request")
 	if deck._rng == null:
@@ -231,13 +397,13 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if typeof(card_id) != TYPE_STRING:
 		return _refusal("unsupported_card")
 	var id: String = card_id
-	var card: Dictionary = CARDS.get(id, {})
+	var card: Dictionary = table.get(id, {})
 	if card.is_empty():
 		return _refusal("unsupported_card")
 	# The authored catalog that owns this ID must still carry the exact printed line.
-	if needle_definition(id).is_empty():
+	var definition: Dictionary = purling_definition(id) if purling else needle_definition(id)
+	if definition.is_empty():
 		return _refusal("catalog_mismatch")
-
 	if deck.combat_state == null or not deck.turn_active:
 		return _refusal("inactive_turn")
 	if not party.is_valid() or not enemies.is_valid():
@@ -277,7 +443,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return _refusal("owner_missing")
 	if heroes[owner_position - 1]["hp"] == 0:
 		return _refusal("owner_downed")
-	if not FROM_POSITIONS.has(owner_position):
+	if not from_positions.has(owner_position):
 		return _refusal("owner_illegal_position")
 
 	# Shared validator for the whole party, including status maps.
@@ -335,8 +501,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var base_damage: int = card["damage"]
 	var attacker_map: Dictionary = attacker_statuses
 	var defender_map: Dictionary = defender_statuses
-	# Guard the shared damage arithmetic the same way the hit will; a resolved zero-damage
-	# shot must never be charged as a successful needle hit.
+	# Guard the shared damage arithmetic the same way each hit will; a resolved zero-damage
+	# strike must never be charged as a successful paid hit.
 	if _statuses.adjusted_attack_damage(base_damage, attacker_map, defender_map) <= 0:
 		return _refusal("invalid_statuses")
 
@@ -347,6 +513,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"owner_position": owner_position,
 		"target_position": target_position,
 		"damage": base_damage,
+		"hit_count": int(card.get("hit_count", 1)),
 		"unravel": unravel_amount,
 		"attacker_statuses": attacker_map.duplicate(true),
 		"defender_statuses": defender_map.duplicate(true),

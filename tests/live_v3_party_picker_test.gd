@@ -501,6 +501,195 @@ func _check_all_kits(picker: LiveV3PartyPicker) -> void:
 	_check(picker.selected_ids().is_empty(), "all source inspections keep selection empty")
 
 
+## Independent source oracle for reward browsing. The expected list comes
+## only from the stock API, not the picker's cached browse projection.
+func _source_rewards(hero_id: String) -> Array[Dictionary]:
+	var expected: Array[Dictionary] = []
+	for candidate: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+		if candidate.get("owner") != hero_id:
+			continue
+		var card := RunPoolCardRewardOffers.resolve_reward_definition(candidate["id"])
+		_check(not card.is_empty() and card.get("id") == candidate.get("id")
+			and card.get("owner") == hero_id and card.get("rarity") == candidate.get("rarity")
+			and (card.get("reward_eligible") == true or card.get("is_upgrade") == false)
+			and card.get("starting_copies") == 0
+			and not card.has("upgrade_of") and not str(card.get("id", "")).ends_with("_plus"),
+			hero_id + " every published stock entry resolves to authentic base definition")
+		if not card.is_empty():
+			expected.append(card)
+	return expected
+
+
+func _check_reward_entry(picker: LiveV3PartyPicker, hero_id: String,
+		index: int, expected: Dictionary) -> void:
+	var note := hero_id + " reward " + str(index + 1)
+	_check(picker._reward_mode and not picker._kit_mode and not picker._deck_mode
+		and picker._kit_hero == hero_id and picker._reward_index == index
+		and picker.reward_readout.is_visible_in_tree() and not picker.kit_readout.visible,
+		note + " independent Reward Cards mode is mounted")
+	_check(picker._reward_card(hero_id, index) == expected,
+		note + " exact unaltered published definition")
+	_check(picker.reward_heading.text == "REWARD %d / %d  •  %s  •  %s  •  %d EN" % [
+			index + 1, picker._reward_candidates.size(), expected["display_name"],
+			String(expected["rarity"]).capitalize(), expected["cost"]],
+		note + " genuine name, rarity, energy and actual pool index")
+	_check(picker.reward_identity.text == "ID: %s  •  Owner: %s" % [
+			expected["id"], expected["owner"]],
+		note + " actual candidate ID and inspected hero owner")
+	var from: Array[String] = []
+	var to: Array[String] = []
+	for slot in expected["from_positions"]:
+		from.append(str(slot))
+	for slot in expected["to_positions"]:
+		to.append(str(slot))
+	_check(picker.reward_target.text == "From slots %s  •  Target: %s  •  To slots: %s" % [
+		", ".join(from), expected["target_kind"],
+		", ".join(to) if not to.is_empty() else "none"],
+		note + " authentic source and target slots and target kind")
+	var effects: String = picker.reward_effects.text
+	_check(expected["effects"] is Dictionary and not expected["effects"].is_empty()
+		and effects.contains("printed intent, not guaranteed live"),
+		note + " nonvacuous authored effects displayed as non-live promise")
+	for effect_key in expected["effects"]:
+		_check(effects.contains("%s: %s" % [
+			str(effect_key), JSON.stringify(expected["effects"][effect_key])]),
+			note + " precise unguessed authored effect " + str(effect_key))
+	_check(effects == picker.reward_effects.tooltip_text
+		and picker.reward_target.tooltip_text == picker.reward_target.text
+		and picker.reward_identity.tooltip_text == picker.reward_identity.text,
+		note + " complete target and effects exposed without clipping via tooltips")
+	_check(picker.reward_scroll.focus_mode == Control.FOCUS_ALL
+		and picker.reward_scroll.get_v_scroll_bar() != null
+		and picker.reward_scroll.size.y >= 40,
+		note + " long authored effects accessible through keyboard and scrolling")
+	var clip := picker.inspection_panel.get_global_rect()
+	_check(clip.encloses(picker.reward_readout.get_global_rect())
+		and clip.encloses(picker.reward_heading.get_global_rect())
+		and clip.encloses(picker.reward_identity.get_global_rect())
+		and clip.encloses(picker.reward_target.get_global_rect())
+		and clip.encloses(picker.reward_scroll.get_global_rect())
+		and clip.encloses(picker.reward_back.get_global_rect()),
+		note + " heading, ID, slots, scroll and Back stay within visible inspection panel")
+	_check(picker.selected_ids().is_empty() and picker._seat_receipt.is_empty(),
+		note + " reward inspection never selects heroes or makes a deck")
+
+
+func _check_all_rewards(picker: LiveV3PartyPicker) -> void:
+	var controls: Array[Button] = [picker.reward_cards_button,
+		picker.reward_previous, picker.reward_next, picker.reward_back]
+	for button in controls:
+		_check(button.focus_mode == Control.FOCUS_ALL
+			and picker.get_node("PaperPanel").get_global_rect().encloses(button.get_global_rect()),
+			"Reward Cards entry and navigation are genuinely reachable at 1280x720")
+	var witnesses := {
+		"warden": "warden_hold_the_line",
+		"seamstress": "seamstress_running_stitch",
+		"tinker": "tinker_rivet_shot",
+		"lantern_monk": "lantern_monk_wick_flicker",
+		"rag_duelist": "rag_duelist_needle_prick",
+		"scarecrow": "scarecrow_pitchfork_prick",
+		"yarn_ranger": "yarn_ranger_needle_arrow",
+		"button_golem": "button_golem_pop_button",
+	}
+	var run_rng := RandomNumberGenerator.new()
+	run_rng.seed = 839121
+	var state: int = run_rng.state
+	var before_signals := [requests.size(), cancels]
+	for hero_id in ORDER:
+		var expected := _source_rewards(hero_id)
+		var ids: Array[String] = []
+		for card in expected:
+			ids.append(card["id"])
+		_check(not ids.is_empty() and ids.has(witnesses[hero_id]),
+			hero_id + " stock contains earlier authored base printing, not fixed total")
+		var unique_ids := {}
+		for id in ids:
+			unique_ids[id] = true
+		_check(ids.size() == unique_ids.size()
+			and not ids.has(_source_deck(hero_id)[0]),
+			hero_id + " reward stock is separate from starter occurrences")
+		await _key_focus(_tile(picker, hero_id))
+		_check(not picker.reward_cards_button.disabled,
+			hero_id + " genuine tile focus enables Reward Cards")
+		if hero_id == "seamstress" or hero_id == "button_golem":
+			await _mouse(picker.reward_cards_button)
+		else:
+			await _key(picker.reward_cards_button, KEY_ENTER)
+		_check(picker._reward_mode and picker._reward_candidates.size() == ids.size()
+			and picker.reward_previous.disabled and not picker.reward_back.disabled,
+			hero_id + " mouse / keyboard opens real catalog count from first entry")
+		var seen: Array[String] = []
+		for index in range(expected.size()):
+			_check_reward_entry(picker, hero_id, index, expected[index])
+			seen.append(picker._reward_candidates[picker._reward_index]["id"])
+			if index + 1 < expected.size():
+				if hero_id == "seamstress" and index == 0:
+					await _mouse(picker.reward_next)
+				else:
+					await _key(picker.reward_next, KEY_ENTER)
+		var got := seen.duplicate()
+		got.sort()
+		var want := ids.duplicate()
+		want.sort()
+		_check(got == want, hero_id + " complete browse ID set equals published base candidates")
+		_check(picker.reward_next.disabled and not picker.reward_previous.disabled,
+			hero_id + " Next cannot wrap past last real card")
+		var final_id: String = picker.reward_identity.text
+		picker.reward_next.pressed.emit()
+		_check(picker.reward_identity.text == final_id
+			and picker._reward_index == expected.size() - 1,
+			hero_id + " stale Next never wraps")
+		for index in range(expected.size() - 2, -1, -1):
+			if hero_id == "button_golem" and index == expected.size() - 2:
+				await _mouse(picker.reward_previous)
+			else:
+				await _key(picker.reward_previous, KEY_SPACE)
+			_check_reward_entry(picker, hero_id, index, expected[index])
+		picker.reward_previous.pressed.emit()
+		_check(picker._reward_index == 0, hero_id + " Previous cannot wrap")
+		if hero_id == "tinker":
+			await _mouse(picker.reward_back)
+		else:
+			await _key(picker.reward_back, KEY_ENTER)
+		_check(not picker._reward_mode and not picker.reward_readout.visible
+			and picker.inspection_starters.visible,
+			hero_id + " Back exits reward browse without selecting hero")
+	_check(run_rng.state == state and [requests.size(), cancels] == before_signals
+		and picker.selected_ids().is_empty(),
+		"reward browse rolls no supplied run RNG and emits no request/cancel")
+	# An invalid candidate/definition fails closed instead of using a cached
+	# card from another owner. Check while the scene is still mounted.
+	await _key_focus(_tile(picker, "warden"))
+	await _key(picker.reward_cards_button, KEY_ENTER)
+	var candidates := picker._reward_candidates.duplicate(true)
+	for invalid in [
+		{"id": "unknown_card_id", "owner": "warden", "rarity": "common"},
+		{"id": "seamstress_running_stitch", "owner": "warden", "rarity": "common"},
+		{"id": "warden_hold_the_line_plus", "owner": "warden", "rarity": "common"}
+	]:
+		picker._reward_candidates.assign([invalid])
+		picker._reward_index = 0
+		picker._update_inspection()
+		_check(picker.reward_heading.text.contains("Unavailable")
+			and picker.reward_effects.text.contains("Unavailable")
+			and not picker.reward_identity.text.contains("seamstress"),
+			"unknown, foreign-owner, plus reward lookup displays Unavailable")
+	picker._reward_candidates = candidates
+	picker._update_inspection()
+	_check_reward_entry(picker, "warden", 0, _source_rewards("warden")[0])
+	# Switch inspected owner during browsing, then retire the mode through
+	# Back; the old hero and its callbacks cannot leak across hover/focus.
+	await _move_to(_tile(picker, "scarecrow"))
+	_check(picker._kit_hero == "scarecrow" and picker._reward_index == 0
+		and picker.reward_identity.text.contains("Owner: scarecrow"),
+		"hover switches reward browse to new owner and resets index")
+	await _key(picker.reward_back, KEY_SPACE)
+	_check(not picker._reward_mode and picker._reward_candidates.is_empty()
+		and picker.selected_ids().is_empty(),
+		"Reward Back clears catalog state without making a pick")
+	await _move_to(picker.get_node("PaperPanel/Margins/Body/SubTitle"))
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	canonical_roster = _read_hero_records("res://data/heroes/v3_party_roster.json")
@@ -652,6 +841,7 @@ func _run() -> void:
 	seed(48109)
 	_check(randi() == first, "global RNG oracle established")
 	await _check_all_kits(picker)
+	await _check_all_rewards(picker)
 
 	# Genuine pointer and focus transitions inspect without picking.
 	await _key_focus(_tile(picker, "lantern_monk"))
@@ -698,6 +888,17 @@ func _run() -> void:
 	await _mouse(_tile(picker, "tinker"))
 	_ids(picker, ["warden", "seamstress", "tinker"], "mouse third")
 	_check_seats(picker, ["warden", "seamstress", "tinker"], "legacy trio")
+	var admitted_before_rewards := picker._seat_receipt.duplicate(true)
+	await _key(picker.reward_cards_button, KEY_ENTER)
+	_check(picker._reward_mode and picker.reward_readout.visible
+		and picker._kit_hero == "tinker", "three-picked party can inspect Tinker's rewards")
+	await _key(picker.reward_next, KEY_SPACE)
+	_check(picker._reward_index == 1
+		and picker._seat_receipt == admitted_before_rewards
+		and picker.selected_ids() == ["warden", "seamstress", "tinker"]
+		and not action.disabled and requests.is_empty(),
+		"reward Next leaves canonical selected party, Continue gate, deck and signals untouched")
+	await _key(picker.reward_back, KEY_ENTER)
 	await _key(deck_button, KEY_SPACE)
 	_check_deck_rows(picker, ["warden", "seamstress", "tinker"], "legacy three seat deck via keyboard")
 	_check(deck_view.get_node("DeckSeat1").text.contains("1 EN Strike x2")
@@ -705,6 +906,9 @@ func _run() -> void:
 		"genuine legacy duplicate starters count exactly twice, not collapsed or repeated")
 	_check(requests.is_empty() and cancels == 0, "Inspect Deck fires no run or cancel signals")
 	picker.inspect_cards_button.pressed.emit()
+	picker.reward_cards_button.pressed.emit()
+	_check(deck_view.visible and not picker._reward_mode,
+		"Reward Cards cannot replace the combined deck while it is open")
 	_check(deck_view.visible and not picker._kit_mode,
 		"Inspect Cards refuses to replace an active combined-deck receipt")
 	await _mouse(deck_button)
@@ -756,6 +960,12 @@ func _run() -> void:
 	_check(not deck_view.visible and deck_button.disabled and deck_button.text == "Inspect Deck",
 		"Continue retires combined inspection even while it is open")
 	deck_button.pressed.emit()
+	picker.reward_cards_button.pressed.emit()
+	picker.reward_next.pressed.emit()
+	picker.reward_back.pressed.emit()
+	_check(not picker._reward_mode and not picker.reward_readout.visible
+		and picker.reward_cards_button.disabled,
+		"latched Continue disables reward entry and stale browse callbacks")
 	_check(requests.size() == 1, "stale Inspect after Continue emits no extra request")
 	_check(action.disabled and cancel.disabled
 		and _tile(picker, "warden").disabled,
@@ -778,8 +988,10 @@ func _run() -> void:
 	stale.focus_entered.emit()
 	stale.mouse_exited.emit()
 	_check(picker.selected_ids().is_empty(), "stale generation ignored")
-	_check(_readout(picker)[0].contains("HOVER OR FOCUS"),
-		"retired hovered / focused / pressed tile cannot overwrite fresh inspection")
+	_check(_readout(picker)[0].contains("HOVER OR FOCUS")
+		and not picker._reward_mode and picker._reward_candidates.is_empty()
+		and not picker.reward_readout.visible,
+		"retired hovered / focused / pressed tile cannot overwrite fresh reward inspection")
 	await _frames()
 	_ids(picker, [], "reopened")
 	_check(not hint.text.contains("Seats:"), "full reopen retires previous party preview")
@@ -797,15 +1009,25 @@ func _run() -> void:
 	await _key(picker.kit_next, KEY_SPACE)
 	_check(picker._kit_mode and picker._kit_index == 1,
 		"Cancel case starts from an actual nonfirst Scarecrow kit card")
+	await _key(picker.reward_cards_button, KEY_ENTER)
+	await _key(picker.reward_next, KEY_SPACE)
+	_check(picker._reward_mode and picker._reward_index == 1
+		and picker.reward_identity.text.contains("Owner: scarecrow"),
+		"Cancel case also visits nonfirst actual Scarecrow reward")
 	await _key(cancel, KEY_ENTER)
 	_check(cancels == 1 and requests.size() == 1,
 		"Cancel emits only cancel_requested")
 	_check(not picker.visible and cancel.disabled and not picker._kit_mode
-		and not picker.kit_readout.visible and picker.inspect_cards_button.disabled,
+		and not picker.kit_readout.visible and picker.inspect_cards_button.disabled
+		and not picker._reward_mode and picker._reward_candidates.is_empty()
+		and not picker.reward_readout.visible and picker.reward_cards_button.disabled,
 		"Cancel closes/latches view and clears selected kit")
 	picker.kit_next.pressed.emit()
 	picker.inspect_cards_button.pressed.emit()
-	_check(not picker._kit_mode, "retired kit navigation cannot reopen on Cancel")
+	picker.reward_next.pressed.emit()
+	picker.reward_back.pressed.emit()
+	picker.reward_cards_button.pressed.emit()
+	_check(not picker._kit_mode and not picker._reward_mode, "retired kit navigation cannot reopen on Cancel")
 	cancel.pressed.emit()
 	_tile(picker, "scarecrow").pressed.emit()
 	_check(cancels == 1 and picker.selected_ids() == ["scarecrow"],
@@ -818,7 +1040,8 @@ func _run() -> void:
 	_ids(picker, [], "reopen after cancel")
 	_check(not hint.text.contains("Seats:"), "cancel and reopen never retain a stale party")
 	_check(_readout(picker)[0].contains("HOVER OR FOCUS")
-		and picker._kit_hero.is_empty() and not picker._kit_mode,
+		and picker._kit_hero.is_empty() and not picker._kit_mode
+		and not picker._reward_mode and picker._reward_candidates.is_empty(),
 		"cancelled tile callbacks cannot inspect newly opened chooser")
 	await _key(_tile(picker, "button_golem"), KEY_ENTER)
 	await _mouse(_tile(picker, "yarn_ranger"))

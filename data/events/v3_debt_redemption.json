@@ -1,0 +1,29 @@
+{
+  "id": "v3_frayed_debt_redemption",
+  "title": "The Unsewing Booth",
+  "description": "Behind a narrow velvet counter, a button-eyed clerk unpicking a loaned crimson seam taps an open ledger of borrowed thread.",
+  "choices": [
+    {
+      "id": "cut_debt",
+      "text": "Pay 18 gold to unpick one Frayed Debt",
+      "effect_kind": "remove_curse",
+      "card_id": "frayed_debt",
+      "gold": -18,
+      "scraps": 0
+    },
+    {
+      "id": "sell_offcuts",
+      "text": "Sell two scrap bundles for 20 gold",
+      "effect_kind": "wallet",
+      "gold": 20,
+      "scraps": -2
+    },
+    {
+      "id": "leave",
+      "text": "Leave the ledger sealed",
+      "effect_kind": "none",
+      "gold": 0,
+      "scraps": 0
+    }
+  ]
+}

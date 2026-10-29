@@ -98,6 +98,8 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if card_id in ["seamstress_v3_tether_loop", "seamstress_v3_tether_loop_plus"]:
+		return CombatSeamstressTetherRules.new().get_tether_definition(card_id)
 	if _rag_dodge.is_supported_card(card_id):
 		return _rag_dodge._catalog_definition(card_id)
 	if _riposte.is_supported_card(card_id):
@@ -461,6 +463,8 @@ func _target_text(definition: Dictionary, precise: bool) -> String:
 			return "Automatically hit the backmost living enemy only"
 		"enemy_single":
 			return ("To one selected enemy " if precise else "To enemy ") + positions
+		"enemy_pair":
+			return ("Choose two distinct living enemies " if precise else "Two distinct living enemies ") + positions
 		"enemy_all":
 			return "All enemies " + positions
 		"enemy_random":
@@ -569,6 +573,8 @@ func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[Str
 		return ["Heal each living hero %d HP, capped at max HP. For each living hero choose one present Bleed, Weak or Exposed to remove completely; heal alone if none are present. No Block; Torn heroes are excluded." % _party_heal(definition)]
 	if card_id in VIGIL_IDS:
 		return ["Heal each living hero %d HP, capped at max HP; each gains %d Block. Torn heroes are excluded; no debuffs are removed." % [definition.effects.heal_all, definition.effects.block_all]]
+	if card_id in ["seamstress_v3_tether_loop", "seamstress_v3_tether_loop_plus"]:
+		return ["Choose two distinct living foes. Link them: a subsequent confirmed card hit on either shares floor(50% of positive HP lost) to its partner, through partner Block first. No immediate damage; link lasts for this battle (no turn timer)."]
 	if _re_stuff.is_supported_card(card_id):
 		return ["This hero loses 2 max HP first (current HP capped to the new maximum), then heals %d HP, capped at the new max HP." % definition.effects.heal]
 	if _hem.is_supported_card(card_id):
@@ -1252,6 +1258,8 @@ func _party_heal(definition: Dictionary) -> int:
 
 
 func _rules(id: String) -> String:
+	if id in ["seamstress_v3_tether_loop", "seamstress_v3_tether_loop_plus"]:
+		return "Link 2 living foes; next confirmed HP loss echoes 50% through Block."
 	if _needle.is_supported_card(id):
 		var card := _definition(id)
 		return "" if card.is_empty() else "Deal %d; then Unravel %d if target survives." % [

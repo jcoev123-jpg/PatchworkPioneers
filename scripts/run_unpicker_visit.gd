@@ -42,7 +42,12 @@ func _init(node_id: Variant = null, deck_ids: Variant = null, gold: Variant = nu
     _prior_removals = prior_removals
     _next_stitch_id = next_stitch_id
     _valid = true
-    _visit_id = _ledger_receipt()
+    # Fresh instance-only identity: two independently opened visits can carry the
+    # same node, deck, descriptors, gold, prior count and cursor. Their shared
+    # economic receipt stays stable, but the visit_id must be unique per instance
+    # so an intent captured on an earlier visit cannot authorize this one. The
+    # object identity is deterministic and this service still draws no randomness.
+    _visit_id = JSON.stringify([get_instance_id(), _node_id, _ledger_receipt()]).sha256_text()
     _source_snapshot = read_state()
 
 
@@ -102,6 +107,24 @@ func _matches_source(expected_visit_id: Variant, expected_node_id: Variant,
             and typeof(expected_snapshot) == TYPE_DICTIONARY \
             and expected_visit_id == _visit_id and expected_node_id == _node_id \
             and expected_snapshot == _source_snapshot
+
+
+## Guard for a staged twin of a still-mounted visit: the ledger the twin was
+## built from must still reproduce the source state captured when the visit
+## opened, apart from the per-instance fresh visit identity embedded in
+## visit_id. This is a drift check only; it never authenticates a decision, so
+## an intent captured on a different visit is still refused by the visit's own
+## visit_id and snapshot comparison.
+func matches_mounted_source(snapshot: Variant) -> bool:
+    if not _valid or _consumed or typeof(snapshot) != TYPE_DICTIONARY or snapshot.is_empty():
+        return false
+    var current := read_state()
+    for key in snapshot:
+        if key == "visit_id":
+            continue
+        if current.get(key) != snapshot[key]:
+            return false
+    return true
 
 
 ## The result is a detached typed-state receipt with an immutable source

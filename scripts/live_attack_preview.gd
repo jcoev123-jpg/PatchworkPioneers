@@ -26,6 +26,7 @@ var _fray: CombatFrayfinderMitt
 var _direct_fire := CombatTinkerPoolAttacks.new()
 var _direct_fire_preview := CombatTinkerDirectFirePreview.new()
 var _overload := CombatTinkerV3OverloadCards.new()
+var _casing_clamp := CombatTinkerV3CasingClampCards.new()
 var _pool_strikes := CombatPoolPlainStrikes.new()
 var _heavy_attacks := CombatWardenPoolHeavyAttacks.new()
 var _toss := CombatWardenV3ShieldTossCards.new()
@@ -547,6 +548,8 @@ func _cancel_choice() -> void:
 	_queued = false
 	_armed = null
 	_choices.clear()
+	_tether_positions.clear()
+	_tether_enemy_ids.clear()
 	_target_ids.clear()
 	_receipt.clear()
 
@@ -729,7 +732,7 @@ func _input(event: InputEvent) -> void:
 					if _is_stitched(_armed):
 						_choose_stitch(index + 1, "enemy")
 					else:
-						_queue_attack(index + 1 if _single(_armed) else 0)
+						_queue_attack(index + 1 if _single(_armed) or _card_id(_armed) in TETHER_STARTERS else 0)
 					get_viewport().set_input_as_handled()
 		return
 	if not event is InputEventKey or not event.pressed or event.echo:
@@ -779,6 +782,8 @@ func _input(event: InputEvent) -> void:
 
 
 func _single(panel) -> bool:
+	if _card_id(panel) in TETHER_STARTERS:
+		return true
 	if _is_stitched(panel):
 		return _choices.size() < 2
 	return _definition(_card_id(panel)).get("target_kind") == "enemy_single"
@@ -787,6 +792,8 @@ func _single(panel) -> bool:
 ## Starter, plain-strike, heavy-pool, Seamstress control attacks and this
 ## battle's selected Path card use separate authored catalogs.
 func _definition(card_id: String) -> Dictionary:
+	if card_id in TETHER_STARTERS:
+		return _tether_definition(card_id)
 	if _needle.is_supported_card(card_id):
 		return CombatYarnRangerNeedleCards.needle_definition(card_id)
 	if _barrage.is_supported_card(card_id):
@@ -800,6 +807,8 @@ func _definition(card_id: String) -> Dictionary:
 		return _golem_pool.get_definition(card_id) if not _thread._authenticate(card_id).is_empty() else {}
 	if _overload.is_supported_card(card_id):
 		return _overload.overload_definition(card_id)
+	if _casing_clamp.is_supported_card(card_id):
+		return CombatTinkerV3CasingClampCards.casing_clamp_definition(card_id)
 	if _helmet.is_supported_card(card_id):
 		return _helmet._catalog_definition(card_id)
 	if _toss.is_supported_card(card_id):
@@ -847,6 +856,8 @@ func _select(event: InputEvent, panel) -> void:
 ## service itself validates each original enemy slot before it is offered.
 func _target_preview(id: String) -> Dictionary:
 	var app = get_parent()
+	if id in TETHER_STARTERS:
+		return tether_preview(id)
 	if _needle.is_supported_card(id):
 		return _needle_forecast(app.party, app.enemies, id)
 	if _barrage.is_supported_card(id):
@@ -859,6 +870,8 @@ func _target_preview(id: String) -> Dictionary:
 		return _thread_forecast(app.party, app.enemies, id)
 	if _overload.is_supported_card(id):
 		return _overload_forecast(app.party, app.enemies, id)
+	if _casing_clamp.is_supported_card(id):
+		return _casing_clamp_forecast(app.party, app.enemies, id)
 	if _helmet.is_supported_card(id):
 		return _helmet_forecast(app.party, app.enemies, id)
 	if _toss.is_supported_card(id):
@@ -893,6 +906,9 @@ func _queue_attack(position: int) -> void:
 		return
 	var app = get_parent()
 	var id: String = _card_id(_armed)
+	if id in TETHER_STARTERS:
+		_choose_tether(position)
+		return
 	var preview := _target_preview(id)
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0):
 		return
@@ -900,7 +916,7 @@ func _queue_attack(position: int) -> void:
 	# A single-target target ID plus the held panel's original hand index
 	# prevent an enemy replacement or equivalent-copy panel swap at commit.
 	var target_id := ""
-	if (_needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
+	if (_needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
 			or _targeting.is_seamstress_control(id) \
 			or _targeting.is_heavy_pool_attack(id) \
 			or _toss.is_supported_card(id) \
@@ -928,12 +944,13 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var heavy := _targeting.is_heavy_pool_attack(id)
 	var toss := _toss.is_supported_card(id) or _helmet.is_supported_card(id)
 	var overload := _overload.is_supported_card(id)
+	var casing_clamp := _casing_clamp.is_supported_card(id)
 	var lunge := _lunge.is_supported_card(id)
 	var snare := _snare.is_supported_card(id)
 	var barrage := _barrage.is_supported_card(id)
 	var needle := _needle.is_supported_card(id)
 	var thread := _thread.is_supported_card(id)
-	var guarded := needle or barrage or lunge or snare or thread or direct or control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS
+	var guarded := needle or barrage or lunge or snare or thread or direct or control or combo or path or heavy or toss or overload or casing_clamp or id in CombatAttackCards.ATTACK_IDS
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -963,7 +980,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		_reject_stitch()
 		return
 	var energy_before: int = _deck.energy
-	if (needle or barrage or lunge or snare or thread or direct or combo or path or heavy or toss or overload) and (app._battle_closed \
+	if (needle or barrage or lunge or snare or thread or direct or combo or path or heavy or toss or overload or casing_clamp) and (app._battle_closed \
 			or (target_id.is_empty() and not (_is_warden_card(id) and position == 0)) \
 			or app.deck._rng != rng or (combo and not app._combo_battle_current())):
 		_reject_stitch()
@@ -972,7 +989,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
 			or (((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id)) \
-			or ((needle or barrage or lunge or snare or thread or control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS) \
+			or ((needle or barrage or lunge or snare or thread or control or combo or path or heavy or toss or overload or casing_clamp or id in CombatAttackCards.ATTACK_IDS) \
 				and position > 0 and (app._battle_closed or target_id.is_empty() \
 				or app.enemies.get_enemy(position).get("id") != target_id))):
 		if guarded or _targeting.is_sight_glass(id):
@@ -980,13 +997,13 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		return
 	var definition := _definition(id)
 	_pinned.begin_confirmed_cast(id, str(definition.get("owner", "")),
-		int(definition.cost) if _overload.is_supported_card(id) else maxi(0, int(definition.get("cost", 0)) - tinker_cost_discount(id)))
+		int(definition.cost) if (overload or casing_clamp) else maxi(0, int(definition.get("cost", 0)) - tinker_cost_discount(id)))
 	# The lethal-card boundary needs the exact pre-hit roster of this one paid
 	# commit; forecasts and rejected selections never reach this point.
 	var roster_before: Array = enemies.get_enemies()
 	last_event = _resolve_attack(party, enemies, id, position)
 	if last_event.ok:
-		app._note_card_damage(enemies, roster_before)
+		app._note_card_damage(enemies, roster_before, last_event)
 		# Every real Tinker play feeds the battle's one Path authority, so its
 		# first-hit latch, Scope and Clockwork state can never drift from combat.
 		# A non-Tinker card fails closed inside the authority.
@@ -1034,6 +1051,15 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 		if forecast:
 			return _overload_forecast(party, enemies, id)
 		return _overload.play_card(_deck, party, enemies, id, position)
+	if _casing_clamp.is_supported_card(id):
+		if forecast:
+			return _casing_clamp_forecast(party, enemies, id)
+		var paid := _casing_clamp.play_card(_deck, party, enemies, id, position)
+		if paid.get("ok", false):
+			# Confirmed-hit observers receive one real paid hit, not a forecast.
+			paid["hits"] = [{"position": paid.target_position, "damage": paid.raw_damage,
+				"hp_loss": paid.hp_loss, "block_absorbed": paid.block_absorbed}]
+		return paid
 	if _helmet.is_supported_card(id):
 		if forecast:
 			return _helmet_forecast(party, enemies, id)
@@ -1301,6 +1327,28 @@ func _overload_forecast(party: CombatParty, enemies: CombatEnemies, id: String) 
 	return preview
 
 
+## Offer only legal original slots from the authenticated paid preflight.
+func _casing_clamp_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> Dictionary:
+	var preview := {"playable": false, "requires_selection": true,
+		"target_positions": [], "hits": []}
+	var app = get_parent()
+	if app == null or _deck == null or app.deck != _deck or app._battle_closed \
+			or app.enemy_intents == null or _turn != app.enemy_intents._turn_index \
+			or _deck._rng != app.run_rng or party != app.party or enemies != app.enemies \
+			or _session != [party, enemies, app.battle_result, app.run_rng, app.enemy_intents]:
+		return preview
+	for position in CombatTinkerV3CasingClampCards.TO_POSITIONS:
+		var plan := _casing_clamp.preflight(_deck, party, enemies, id, position)
+		if not plan.get("ok", false):
+			continue
+		preview.target_positions.append(position)
+		preview.hits.append({"position": position, "damage": plan.raw_damage,
+			"weak": plan.weak, "combat_scrap_gain": plan.combat_scrap_gain,
+			"combat_scrap_before": plan.combat_scrap_before})
+	preview.playable = not preview.target_positions.is_empty()
+	return preview
+
+
 ## Read live snapshots without coercion; the paid service validates their contents.
 func _toss_statuses(party: CombatParty, enemies: CombatEnemies, position: int) -> Dictionary:
 	if party == null or enemies == null:
@@ -1446,11 +1494,13 @@ func _eligible(panel) -> bool:
 	var index: int = panel.get_index()
 	var path_ok: bool = (_is_path_card(id) and not _path_positions(id).is_empty()) \
 		or (_is_warden_card(id) and warden_preview(id).get("playable", false))
-	return (_needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
+	return (id in TETHER_STARTERS or _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
 func _sync_battle() -> void:
 	var app = get_parent()
+	if app._battle_closed and not _tether_link.is_empty():
+		retire_tether_battle()
 	if app.deck == null or not is_instance_valid(app.battle_view) or not is_instance_valid(app.hand_view):
 		_clear()
 		return
@@ -1550,18 +1600,24 @@ func _sync_battle() -> void:
 		_overload_hud.add_theme_font_size_override("font_size", 18)
 		column.add_child(_overload_hud)
 		column.move_child(_overload_hud, cue.get_index())
-	var held_overload := false
+	var held_tinker_scrap := false
 	for held_id in _deck.hand:
-		if _overload.is_supported_card(held_id):
-			held_overload = true
+		if _overload.is_supported_card(held_id) or _casing_clamp.is_supported_card(held_id):
+			held_tinker_scrap = true
 	var overload_receipt: bool = _overload.is_supported_card(last_event.get("card_id", "")) and last_event.get("ok", false)
-	_overload_hud.visible = held_overload or overload_receipt
+	var casing_receipt: bool = _casing_clamp.is_supported_card(last_event.get("card_id", "")) and last_event.get("ok", false)
+	_overload_hud.visible = held_tinker_scrap or overload_receipt or casing_receipt
 	if _overload_hud.visible:
 		var scrap: Variant = _tinker_hero().get("combat_scrap", 0)
 		_overload_hud.text = "Tinker Combat Scrap: %s" % str(scrap)
 		if overload_receipt:
 			_overload_hud.text += " | Overload: %d damage, spent %d Combat Scrap" % [last_event.damage, last_event.combat_scrap_spent]
+		elif casing_receipt:
+			_overload_hud.text += " | %s: %d damage, gained %d Combat Scrap" % [
+				"Spring Clamp" if str(last_event.card_id).begins_with("tinker_v3_spring_clamp") else "Brass Casing",
+				last_event.raw_damage, last_event.combat_scrap_gained]
 	if _session != [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents]:
+		retire_tether_battle()
 		_cancel_choice()
 		_session = [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents]
 	if app.enemy_intents != null and _turn != app.enemy_intents._turn_index:
@@ -1723,6 +1779,16 @@ func _refresh() -> void:
 		cue.text = "%s | %d energy | P / click card; %s / click enemy\n%s" % [
 			definition.display_name, definition.cost, _key_hint(path_slots), path_reading]
 		return
+	if id in TETHER_STARTERS:
+		var link_preview := tether_preview(id)
+		var first := ""
+		if _selected == _armed and _tether_positions.size() == 1:
+			first = "First foe %d selected; choose a different second foe. " % _tether_positions[0]
+		cue.text = "%s | %d energy | P / click card; 1-3 / click each foe; Esc: cancel\n%sLink TWO distinct living foes: later confirmed card HP loss echoes 50%% (rounded down) to the partner through Block; no immediate damage. Available %s" % [
+			definition.display_name, definition.cost, first,
+			str(link_preview.target_positions) if link_preview.playable else "none"]
+		current_forecast = link_preview.duplicate(true)
+		return
 	var preview := _resolve_attack(app.party, app.enemies, id, 0, true)
 	if _needle.is_supported_card(id):
 		current_forecast = preview.duplicate(true)
@@ -1791,7 +1857,7 @@ func _refresh() -> void:
 		cue.text = "%s | %d energy | P / click card; %s / click enemy; Esc: cancel\n%s" % [
 			definition.display_name, definition.cost, _key_hint(preview.target_positions), reading]
 		return
-	if _overload.is_supported_card(id) or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
+	if _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
 		current_forecast = preview.duplicate(true)
 	if _targeting.is_pool_combo_attack(id):
 		current_forecast = preview.duplicate(true)
@@ -1849,7 +1915,7 @@ func _refresh() -> void:
 	# Only attach on-hit counters to starter attacks. Reward-pool strikes have
 	# no starter passive or worn-patch hook of their own.
 	var additions_by_position: Dictionary = {}
-	if not is_pool and not is_heavy and not is_direct and not _overload.is_supported_card(id) and not _toss.is_supported_card(id) and not _helmet.is_supported_card(id) and preview.playable:
+	if not is_pool and not is_heavy and not is_direct and not _overload.is_supported_card(id) and not _casing_clamp.is_supported_card(id) and not _toss.is_supported_card(id) and not _helmet.is_supported_card(id) and preview.playable:
 		# This is the same pure status preflight as the confirmed attack, including
 		# the authored passive, HEAD bonus, M04 rider and capacity eligibility.
 		var status_plan := _play._prepare(_deck, app.party, app.enemies, id, 0,
@@ -1876,6 +1942,8 @@ func _refresh() -> void:
 			detail += " (Exposed %d → %d after hit)" % [hit.exposed_before, hit.exposed_after]
 		if _helmet.is_supported_card(id):
 			detail += " (then Weak 1)"
+		if _casing_clamp.is_supported_card(id) and int(hit.get("weak", 0)) > 0:
+			detail += " (then Weak %d even through Block)" % int(hit.weak)
 		targets.append(detail)
 	var description := "Unavailable: no legal targets or energy"
 	if preview.playable:
@@ -1890,7 +1958,7 @@ func _refresh() -> void:
 	var controls: String
 	if not _single(_selected):
 		controls = "P: select; Enter / Space / click card: cast"
-	elif is_pool or is_heavy or is_direct or _overload.is_supported_card(id) or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
+	elif is_pool or is_heavy or is_direct or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
 		# Report exactly the slots this forecast offers, never a wider key row.
 		var legal: Array[int] = []
 		for hit in preview.hits:
@@ -1905,7 +1973,11 @@ func _refresh() -> void:
 	# resolver no longer asks for.
 	if _overload.is_supported_card(id) and preview.playable:
 		description += " | Combat Scrap %d -> 0" % int(preview.hits[0].combat_scrap_spent)
-	var shown_cost: int = int(definition.cost) if _overload.is_supported_card(id) else maxi(0, int(definition.cost) - tinker_cost_discount(id))
+	if _casing_clamp.is_supported_card(id) and preview.playable:
+		description += " | Tinker Combat Scrap %d -> %d" % [
+			int(preview.hits[0].combat_scrap_before),
+			int(preview.hits[0].combat_scrap_before) + int(preview.hits[0].combat_scrap_gain)]
+	var shown_cost: int = int(definition.cost) if (_overload.is_supported_card(id) or _casing_clamp.is_supported_card(id)) else maxi(0, int(definition.cost) - tinker_cost_discount(id))
 	cue.text = "%s | %d energy | %s\n%s" % [definition.display_name, shown_cost, controls, description]
 
 
@@ -1926,6 +1998,7 @@ func _unbind(panel) -> void:
 
 
 func _clear() -> void:
+	retire_tether_battle()
 	if _vanguard != null:
 		_vanguard.retire_battle()
 	_vanguard = null
@@ -2246,3 +2319,182 @@ func _lunge_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> 
 	return {"playable": not positions.is_empty(), "requires_selection": true,
 		"target_positions": positions, "hits": hits, "owner_position": seat,
 		"destination_position": seat - 1}
+
+
+## Only the starter Tether Loop pair is payable here. The pool Stitch pair
+## remains a rules-layer definition, not a live hand action.
+const TETHER_STARTERS := ["seamstress_v3_tether_loop", "seamstress_v3_tether_loop_plus"]
+var _tether_rules := CombatSeamstressTetherRules.new()
+var _tether_link: Dictionary = {}
+var _tether_link_session: Array = []
+var _tether_link_map
+var _tether_positions: Array[int] = []
+var _tether_enemy_ids: Array[String] = []
+
+
+func _tether_definition(card_id: String) -> Dictionary:
+	if card_id not in TETHER_STARTERS:
+		return {}
+	return _tether_rules.get_tether_definition(card_id)
+
+
+## An authentic, currently held printing and a real matching mounted fight.
+## Never let preview or a selection reserve energy or alter the roster.
+func tether_preview(card_id: String) -> Dictionary:
+	var unavailable := {"playable": false, "requires_selection": true, "target_positions": []}
+	var app = get_parent()
+	var definition := _tether_definition(card_id)
+	if definition.is_empty() or _deck == null or app == null or app.deck != _deck \
+			or app.enemies == null or app.party == null or app.enemy_intents == null \
+			or not app._combo_battle_current() or _deck._rng != app.run_rng \
+			or _session != [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents] \
+			or _turn != app.enemy_intents._turn_index or not _deck.hand.has(card_id) \
+			or _deck.energy < int(definition.cost):
+		return unavailable
+	var seamstress := {}
+	for hero in app.party.get_heroes():
+		if hero.get("id") == "seamstress":
+			if not seamstress.is_empty():
+				return unavailable
+			seamstress = hero
+	if seamstress.is_empty() or int(seamstress.get("hp", 0)) <= 0 \
+			or int(seamstress.get("position", 0)) not in definition.from_positions:
+		return unavailable
+	var positions: Array[int] = []
+	for pos in definition.to_positions:
+		var enemy: Dictionary = app.enemies.get_enemy(int(pos))
+		if not enemy.is_empty() and not app.enemies.is_slain(int(pos)) \
+				and int(enemy.get("hp", 0)) > 0:
+			positions.append(int(pos))
+	if positions.size() < 2:
+		return unavailable
+	return {"playable": true, "requires_selection": true, "target_positions": positions}
+
+
+func _choose_tether(position: int) -> void:
+	if _queued or not _bindings.has(_armed) or not _eligible(_armed):
+		return
+	var card_id := _card_id(_armed)
+	var preview := tether_preview(card_id)
+	if not preview.playable or position not in preview.target_positions:
+		return
+	if _tether_positions.size() > 0 and _tether_positions[0] == position:
+		return # Duplicate is not a second target, and never pays.
+	var app = get_parent()
+	var enemy_id := str(app.enemies.get_enemy(position).get("id", ""))
+	if enemy_id.is_empty():
+		return
+	_tether_positions.append(position)
+	_tether_enemy_ids.append(enemy_id)
+	if _tether_positions.size() == 1:
+		_refresh()
+		return
+	_queued = true
+	_commit_tether.call_deferred(_armed, card_id, _token,
+		_tether_positions.duplicate(), _tether_enemy_ids.duplicate(),
+		_armed.get_index(), _deck, _deck.hand.duplicate(),
+		_session.duplicate(), _turn, app.run_map)
+	_refresh()
+
+
+## Commit on the next frame so all mouse/keyboard paths share the identical
+## fail-closed hand, pair, seat, budget, identity and battle revalidation.
+func _commit_tether(panel, card_id: String, token: int, positions: Array,
+		enemy_ids: Array, panel_index: int, queued_deck, queued_hand: Array,
+		session: Array, turn: int, queued_map) -> void:
+	var app = get_parent()
+	if token != _token or not _queued or app == null or not is_inside_tree():
+		return
+	_queued = false
+	var legal: bool = positions.size() == 2 and enemy_ids.size() == 2 \
+		and positions[0] != positions[1] and not _tether_definition(card_id).is_empty() \
+		and _bindings.has(panel) and panel == _armed and _eligible(panel) \
+		and _card_id(panel) == card_id and _bindings[panel].id == card_id \
+		and panel_index >= 0 and panel.get_index() == panel_index \
+		and app.get_node_or_null("LiveAttackPreview") == self \
+		and app.deck == queued_deck and _deck == queued_deck \
+		and _deck.hand == queued_hand and app.run_map == queued_map \
+		and _session == session and _turn == turn \
+		and app.enemy_intents != null and app.enemy_intents._turn_index == turn
+	if not legal:
+		_reject_stitch()
+		return
+	var preview := tether_preview(card_id)
+	if not preview.playable or positions[0] not in preview.target_positions \
+			or positions[1] not in preview.target_positions \
+			or app.enemies.get_enemy(int(positions[0])).get("id") != enemy_ids[0] \
+			or app.enemies.get_enemy(int(positions[1])).get("id") != enemy_ids[1]:
+		_reject_stitch()
+		return
+	var pair := _tether_rules.authorize_pair_link(app.enemies,
+		_tether_definition(card_id), positions[0], positions[1])
+	if not pair.get("ok", false) or pair.first_id != enemy_ids[0] \
+			or pair.second_id != enemy_ids[1]:
+		_reject_stitch()
+		return
+	var cost: int = int(pair.card_definition.cost)
+	# All payment preconditions are now confirmed on these SAME models. A
+	# denied spend cannot discard or install a link.
+	if not _deck.try_spend_energy(cost):
+		_reject_stitch()
+		return
+	_deck.discard_played(card_id)
+	_tether_link = pair.duplicate(true)
+	_tether_link_session = _session.duplicate()
+	_tether_link_map = app.run_map
+	last_event = {"ok": true, "card_id": card_id, "linked": positions.duplicate(),
+		"energy_spent": cost, "hits": []}
+	_after_attack()
+
+
+func retire_tether_battle() -> void:
+	_tether_link.clear()
+	_tether_link_session.clear()
+	_tether_link_map = null
+	_tether_rules = CombatSeamstressTetherRules.new()
+
+
+func _tether_link_current(enemies: CombatEnemies) -> bool:
+	var app = get_parent()
+	return not _tether_link.is_empty() and app != null and not app._battle_closed \
+		and app.enemies == enemies and app.deck == _deck \
+		and app._combo_battle_current() and app.run_map == _tether_link_map \
+		and _session == _tether_link_session \
+		and _tether_rules.is_valid_pair_link(_tether_link)
+
+
+## Called only with a successful, real paid-card resolver receipt from the
+## mounted flow, after that resolver mutated the actual roster. Reconstitute
+## the precise four-field CombatStatusAttacks hit receipt (never its forecast).
+## One hit per enemy is necessary for an unambiguous before/after transition;
+## multi-hit sequences cannot be mistaken for one bridge receipt.
+func apply_tether_confirmed_hits(enemies: CombatEnemies, before: Array,
+		confirmed_card: Dictionary) -> void:
+	if not _tether_link_current(enemies) or confirmed_card.get("ok") != true \
+			or not confirmed_card.get("hits") is Array:
+		return
+	var after: Array = enemies.get_enemies()
+	if before.size() != after.size():
+		return
+	var hits: Array = confirmed_card.hits
+	for hit in hits:
+		if not hit is Dictionary or not hit.get("position") is int:
+			continue
+		var pos: int = hit.position
+		if pos < 1 or pos > before.size() or not before[pos - 1] is Dictionary:
+			continue
+		var occurrences := 0
+		for entry in hits:
+			if entry is Dictionary and entry.get("position") == pos:
+				occurrences += 1
+		if occurrences != 1:
+			continue
+		if not hit.get("damage") is int or not hit.get("hp_loss") is int \
+				or not hit.get("block_absorbed") is int:
+			continue
+		var receipt := {"ok": true, "damage": hit.damage,
+			"hp_loss": hit.hp_loss, "block_absorbed": hit.block_absorbed}
+		var echo := _tether_rules.resolve_confirmed_hit_echo(enemies, _tether_link,
+			pos, before[pos - 1], receipt)
+		if echo.get("applied", false):
+			last_event["tether_echo"] = echo.duplicate(true)

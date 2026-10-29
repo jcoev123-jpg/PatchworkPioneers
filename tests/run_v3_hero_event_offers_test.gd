@@ -90,9 +90,14 @@ func _initialize() -> void:
 	_test_invalid_parties()
 	_test_invalid_catalogs()
 	_test_isolation()
+	_test_actionable_named_examples()
+	_test_actionable_party_and_sorted_sampling()
+	_test_actionable_exclusions_and_exhaustion()
+	_test_actionable_invalid_inputs_and_isolation()
 	_check(_replay(257) == _replay(257), "whole offer/entry/receipt sequence replays exactly")
+	_check(_replay_actionable(257) == _replay_actionable(257), "seeded actionable selection and settlement sequence replays exactly")
 	_check(catalog == before, "all operations preserve authored catalog")
-	_check(run_rng.state == state and randi() == expected_global, "all paths consume neither seeded nor global RNG")
+	_check(run_rng.state == state and randi() == expected_global, "all paths consume neither unpassed seeded nor global RNG")
 	for failure in failures:
 		printerr(failure)
 	print("run_v3_hero_event_offers_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
@@ -298,15 +303,25 @@ func _test_invalid_parties() -> void:
 		["warden", "unknown", "tinker"], ["warden", "", "tinker"],
 		["warden", 1, "tinker"], ["warden", null, "tinker"], ["Warden", "seamstress", "tinker"]]:
 		var service := RunV3HeroEventOffers.new(party)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 409
+		var state := rng.state
 		_check(not service.is_valid() and service.get_offers().is_empty()
-			and service.enter("v3_warden_shield_menders") == null, "invalid party fails closed: " + str(party))
+			and service.enter("v3_warden_shield_menders") == null
+			and service.select_actionable_event(rng, [], {"gold": 30, "scraps": 3}) == {"ok": false, "event": {}}
+			and rng.state == state, "invalid party fails closed: " + str(party))
 
 
 func _reject_catalog(source: Variant) -> void:
 	var before: Variant = source.duplicate(true) if source is Dictionary or source is Array else source
 	var service := RunV3HeroEventOffers.new(PARTY_A, source)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 419
+	var state := rng.state
 	_check(not service.is_valid() and service.get_offers().is_empty()
-		and service.enter("v3_warden_shield_menders") == null, "malformed catalog wholly denied: " + str(source))
+		and service.enter("v3_warden_shield_menders") == null
+		and service.select_actionable_event(rng, [], {"gold": 30, "scraps": 3}) == {"ok": false, "event": {}}
+		and rng.state == state, "malformed catalog wholly denied: " + str(source))
 	_check(source == before, "rejected catalog unchanged")
 
 
@@ -387,6 +402,444 @@ func _test_isolation() -> void:
 	_check(service.get_offers() == original, "entry/claim never mutate adapter catalog")
 
 
+func _has_affordable_non_leave(record: Dictionary, wallet: Dictionary) -> bool:
+	var preview := RunEventChoice.new(record).preview_wallet_choices(wallet)
+	if not preview.get("ok", false):
+		return false
+	for choice in preview.get("choices", []):
+		if choice is Dictionary and choice.get("choice_id") != "leave" and choice.get("affordable") == true:
+			return true
+	return false
+
+
+func _expected_actionable_ids(party: Array, wallet: Dictionary, excluded: Array = [], source_events: Array = []) -> Array[String]:
+	var events_list: Array = catalog["events"] if source_events.is_empty() else source_events
+	var excluded_map := {}
+	for item in excluded:
+		excluded_map[item] = true
+	var ids: Array[String] = []
+	for record in events_list:
+		var event_id: String = record["id"]
+		if not party.has(record["required_hero"]) or excluded_map.has(event_id):
+			continue
+		if _has_affordable_non_leave(record, wallet):
+			ids.append(event_id)
+	ids.sort()
+	return ids
+
+
+func _test_actionable_named_examples() -> void:
+	var ferry := _by_id(catalog["events"], "v3_warden_copper_chain_ferry")
+	var oracle := _by_id(catalog["events"], "v3_seamstress_needle_oracle")
+	var monk_ferry := _by_id(catalog["events"], "v3_lantern_monk_mothlight_ferry")
+	_check(not ferry.is_empty() and not oracle.is_empty() and not monk_ferry.is_empty(),
+		"named example records exist in shipped catalog")
+	if ferry.is_empty() or oracle.is_empty() or monk_ferry.is_empty():
+		return
+
+	# Verify exact preview affordability on the two named shipped records at {0, 0} and {18, 1}.
+	var zero_wallet := {"gold": 0, "scraps": 0}
+	var funded_wallet := {"gold": 18, "scraps": 1}
+	var ferry_zero_preview := RunEventChoice.new(ferry).preview_wallet_choices(zero_wallet)
+	var oracle_zero_preview := RunEventChoice.new(oracle).preview_wallet_choices(zero_wallet)
+	var oracle_funded_preview := RunEventChoice.new(oracle).preview_wallet_choices(funded_wallet)
+	_check(ferry_zero_preview == {
+		"ok": true,
+		"event_id": "v3_warden_copper_chain_ferry",
+		"choices": [
+			{"choice_id": "brace_ferry_chain", "gold_delta": 20, "scraps_delta": 0, "affordable": true, "wallet": {"gold": 20, "scraps": 0}},
+			{"choice_id": "buy_brass_buckles", "gold_delta": -14, "scraps_delta": 2, "affordable": false, "wallet": {"gold": 0, "scraps": 0}},
+			{"choice_id": "leave", "gold_delta": 0, "scraps_delta": 0, "affordable": true, "wallet": {"gold": 0, "scraps": 0}},
+		],
+	}, "v3_warden_copper_chain_ferry at {0,0} has affordable +20/0 non-Leave choice")
+	_check(oracle_zero_preview == {
+		"ok": true,
+		"event_id": "v3_seamstress_needle_oracle",
+		"choices": [
+			{"choice_id": "untangle_oracle_thread", "gold_delta": 24, "scraps_delta": -1, "affordable": false, "wallet": {"gold": 0, "scraps": 0}},
+			{"choice_id": "buy_oracle_silk", "gold_delta": -18, "scraps_delta": 3, "affordable": false, "wallet": {"gold": 0, "scraps": 0}},
+			{"choice_id": "leave", "gold_delta": 0, "scraps_delta": 0, "affordable": true, "wallet": {"gold": 0, "scraps": 0}},
+		],
+	}, "v3_seamstress_needle_oracle at {0,0} is Leave-only")
+	_check(oracle_funded_preview == {
+		"ok": true,
+		"event_id": "v3_seamstress_needle_oracle",
+		"choices": [
+			{"choice_id": "untangle_oracle_thread", "gold_delta": 24, "scraps_delta": -1, "affordable": true, "wallet": {"gold": 42, "scraps": 0}},
+			{"choice_id": "buy_oracle_silk", "gold_delta": -18, "scraps_delta": 3, "affordable": true, "wallet": {"gold": 0, "scraps": 4}},
+			{"choice_id": "leave", "gold_delta": 0, "scraps_delta": 0, "affordable": true, "wallet": {"gold": 18, "scraps": 1}},
+		],
+	}, "v3_seamstress_needle_oracle at {18,1} has both hero choices affordable")
+
+	var subset_forward := RunV3HeroEventOffers.new(PARTY_A, {"events": [ferry, oracle, monk_ferry]})
+	var subset_reversed := RunV3HeroEventOffers.new(PARTY_A, {"events": [monk_ferry, oracle, ferry]})
+	var full_service := RunV3HeroEventOffers.new(PARTY_A)
+	_check(subset_forward.is_valid() and subset_reversed.is_valid() and full_service.is_valid(),
+		"subset and full services valid for PARTY_A")
+	var exclude_all_but_pair: Array[String] = []
+	for offer in full_service.get_offers():
+		var id: String = offer["id"]
+		if id != "v3_warden_copper_chain_ferry" and id != "v3_seamstress_needle_oracle":
+			exclude_all_but_pair.append(id)
+
+	# 1. With zero wallet, only v3_warden_copper_chain_ferry is actionable (exact 1 RNG draw).
+	for service_case in [
+		[subset_forward, null, "subset_forward"],
+		[subset_reversed, [], "subset_reversed"],
+		[full_service, exclude_all_but_pair, "full_service_isolated_pair"],
+	]:
+		var svc: RunV3HeroEventOffers = service_case[0]
+		var excl: Variant = service_case[1]
+		var label: String = service_case[2]
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 901
+		var oracle_rng := RandomNumberGenerator.new()
+		oracle_rng.seed = 901
+		var expected_draw := oracle_rng.randi_range(0, 0)
+		var wallet_arg := {"gold": 0, "scraps": 0}
+		var result := svc.select_actionable_event(rng, excl, wallet_arg)
+		_check(expected_draw == 0 and result == {"ok": true, "event": ferry},
+			"zero wallet selects only actionable v3_warden_copper_chain_ferry: " + label)
+		_check(rng.state == oracle_rng.state,
+			"single actionable candidate still consumes exact one randi_range(0,0) draw: " + label)
+		_check(wallet_arg == {"gold": 0, "scraps": 0},
+			"zero wallet argument untouched by selection: " + label)
+
+	# 2. Excluding v3_warden_copper_chain_ferry at {0, 0} or {17, 0} leaves only Leave-only oracle -> rejects with 0 draws.
+	var exclude_all_but_oracle := exclude_all_but_pair.duplicate()
+	exclude_all_but_oracle.append("v3_warden_copper_chain_ferry")
+	for poor_wallet in [{"gold": 0, "scraps": 0}, {"gold": 17, "scraps": 0}]:
+		var rng_sub := RandomNumberGenerator.new()
+		rng_sub.seed = 902
+		var state_sub := rng_sub.state
+		var sub_res := subset_forward.select_actionable_event(rng_sub, ["v3_warden_copper_chain_ferry"], poor_wallet)
+		_check(sub_res == {"ok": false, "event": {}} and rng_sub.state == state_sub,
+			"Leave-only v3_seamstress_needle_oracle rejected with zero RNG draws in subset: " + str(poor_wallet))
+		var rng_full := RandomNumberGenerator.new()
+		rng_full.seed = 903
+		var state_full := rng_full.state
+		var full_res := full_service.select_actionable_event(rng_full, exclude_all_but_oracle, poor_wallet)
+		_check(full_res == {"ok": false, "event": {}} and rng_full.state == state_full,
+			"Leave-only v3_seamstress_needle_oracle rejected with zero RNG draws in full catalog: " + str(poor_wallet))
+
+	# Direct entry into v3_seamstress_needle_oracle still preserves Leave at {0, 0}.
+	var oracle_poor_visit := full_service.enter("v3_seamstress_needle_oracle")
+	_check(oracle_poor_visit != null and oracle_poor_visit.is_valid() and not oracle_poor_visit.is_claimed(),
+		"v3_seamstress_needle_oracle still opens via enter() when poor")
+	if oracle_poor_visit != null:
+		_check(not oracle_poor_visit.choose_with_wallet("untangle_oracle_thread", zero_wallet)["ok"]
+			and not oracle_poor_visit.choose_with_wallet("buy_oracle_silk", zero_wallet)["ok"]
+			and not oracle_poor_visit.is_claimed(),
+			"unaffordable hero choices on v3_seamstress_needle_oracle refuse without latching")
+		var leave_receipt := oracle_poor_visit.choose_with_wallet("leave", zero_wallet)
+		_check(leave_receipt == {"ok": true, "event_id": "v3_seamstress_needle_oracle", "choice_id": "leave", "wallet": {"gold": 0, "scraps": 0}}
+			and oracle_poor_visit.is_claimed() and not oracle_poor_visit.is_valid(),
+			"Leave remains available and settles cleanly on v3_seamstress_needle_oracle")
+
+	# 3. With {0, 1}, {18, 0} or {18, 1}, v3_seamstress_needle_oracle becomes actionable.
+	for threshold_wallet in [{"gold": 0, "scraps": 1}, {"gold": 18, "scraps": 0}, {"gold": 18, "scraps": 1}]:
+		var rng_ok := RandomNumberGenerator.new()
+		rng_ok.seed = 904
+		var ref_rng := RandomNumberGenerator.new()
+		ref_rng.seed = 904
+		ref_rng.randi_range(0, 0)
+		var res_ok := full_service.select_actionable_event(rng_ok, exclude_all_but_oracle, threshold_wallet)
+		_check(res_ok == {"ok": true, "event": oracle} and rng_ok.state == ref_rng.state,
+			"v3_seamstress_needle_oracle selected with 1 draw once affordable: " + str(threshold_wallet))
+
+	# 4. With {18, 1} and neither ferry nor oracle excluded, both are eligible in lexical order:
+	# ["v3_seamstress_needle_oracle", "v3_warden_copper_chain_ferry"].
+	var sorted_pair := ["v3_seamstress_needle_oracle", "v3_warden_copper_chain_ferry"]
+	var seen_selected := {}
+	for seed_val in range(1001, 1015):
+		var rng_f := RandomNumberGenerator.new()
+		rng_f.seed = seed_val
+		var rng_r := RandomNumberGenerator.new()
+		rng_r.seed = seed_val
+		var rng_full := RandomNumberGenerator.new()
+		rng_full.seed = seed_val
+		var rng_ref := RandomNumberGenerator.new()
+		rng_ref.seed = seed_val
+		var pick_idx := rng_ref.randi_range(0, 1)
+		var expected_id: String = sorted_pair[pick_idx]
+		var expected_rec := _by_id(catalog["events"], expected_id)
+		var res_f := subset_forward.select_actionable_event(rng_f, null, funded_wallet)
+		var res_r := subset_reversed.select_actionable_event(rng_r, [], funded_wallet)
+		var res_full := full_service.select_actionable_event(rng_full, exclude_all_but_pair, funded_wallet)
+		_check(res_f == {"ok": true, "event": expected_rec}
+			and res_r == res_f and res_full == res_f,
+			"funded pair samples uniformly from lexically sorted IDs independent of catalog order: seed " + str(seed_val))
+		_check(rng_f.state == rng_ref.state and rng_r.state == rng_ref.state and rng_full.state == rng_ref.state,
+			"funded pair consumes exact one randi_range(0,1) draw: seed " + str(seed_val))
+		seen_selected[expected_id] = true
+	_check(seen_selected.has("v3_seamstress_needle_oracle") and seen_selected.has("v3_warden_copper_chain_ferry"),
+		"seeded sampling across {18,1} pair reaches both oracle and ferry")
+
+	# 5. Selected records open fresh RunEventChoice visits via enter(id) and settle once with exact signed deltas.
+	var ferry_visit := full_service.enter("v3_warden_copper_chain_ferry")
+	_check(ferry_visit != null and ferry_visit.is_valid() and not ferry_visit.is_claimed(),
+		"selected ferry opens fresh unclaimed RunEventChoice via enter(id)")
+	if ferry_visit != null:
+		var w0 := {"gold": 0, "scraps": 0}
+		var r_brace := ferry_visit.choose_with_wallet("brace_ferry_chain", w0)
+		_check(r_brace == {"ok": true, "event_id": "v3_warden_copper_chain_ferry", "choice_id": "brace_ferry_chain", "wallet": {"gold": 20, "scraps": 0}}
+			and w0 == {"gold": 0, "scraps": 0} and ferry_visit.is_claimed() and not ferry_visit.is_valid(),
+			"ferry brace_ferry_chain settles +20 gold/0 scraps once without mutating caller wallet")
+		_check(ferry_visit.choose_with_wallet("leave", {"gold": 20, "scraps": 0}) == {
+			"ok": false, "event_id": "", "choice_id": "", "wallet": {"gold": 20, "scraps": 0}},
+			"second claim on ferry visit fails closed")
+	var oracle_visit_1 := full_service.enter("v3_seamstress_needle_oracle")
+	var oracle_visit_2 := full_service.enter("v3_seamstress_needle_oracle")
+	_check(oracle_visit_1 != null and oracle_visit_2 != null and oracle_visit_1 != oracle_visit_2,
+		"each enter(id) creates a distinct RunEventChoice instance")
+	if oracle_visit_1 != null and oracle_visit_2 != null:
+		var w_fund := {"gold": 18, "scraps": 1}
+		var r_untangle := oracle_visit_1.choose_with_wallet("untangle_oracle_thread", w_fund)
+		_check(r_untangle == {"ok": true, "event_id": "v3_seamstress_needle_oracle", "choice_id": "untangle_oracle_thread", "wallet": {"gold": 42, "scraps": 0}}
+			and w_fund == {"gold": 18, "scraps": 1} and oracle_visit_1.is_claimed() and not oracle_visit_2.is_claimed(),
+			"oracle untangle_oracle_thread settles +24 gold/-1 scrap on first visit only")
+		_check( not oracle_visit_1.choose_with_wallet("buy_oracle_silk", w_fund)["ok"],
+			"second claim on first oracle visit fails")
+		var r_silk := oracle_visit_2.choose_with_wallet("buy_oracle_silk", w_fund)
+		_check(r_silk == {"ok": true, "event_id": "v3_seamstress_needle_oracle", "choice_id": "buy_oracle_silk", "wallet": {"gold": 0, "scraps": 4}}
+			and w_fund == {"gold": 18, "scraps": 1} and oracle_visit_2.is_claimed(),
+			"second fresh oracle visit settles -18 gold/+3 scraps independently")
+
+	# 6. A party lacking Warden and Seamstress (PARTY_B) never admits or selects ferry or oracle even with funded wallet.
+	var party_b_subset := RunV3HeroEventOffers.new(PARTY_B, {"events": [ferry, oracle]})
+	_check(party_b_subset.is_valid() and party_b_subset.get_offers().is_empty(),
+		"PARTY_B subset with only Warden/Seamstress records has zero eligible offers")
+	var rng_b := RandomNumberGenerator.new()
+	rng_b.seed = 905
+	var state_b := rng_b.state
+	_check(party_b_subset.select_actionable_event(rng_b, null, funded_wallet) == {"ok": false, "event": {}}
+		and rng_b.state == state_b,
+		"absent required heroes reject selection with zero RNG draws even when wallet is funded")
+
+
+func _test_actionable_party_and_sorted_sampling() -> void:
+	var reversed := catalog.duplicate(true)
+	reversed["events"].reverse()
+	for party in [PARTY_A, PARTY_B]:
+		var service := RunV3HeroEventOffers.new(party)
+		var reordered := RunV3HeroEventOffers.new(party, reversed)
+		_check(service.is_valid() and reordered.is_valid(),
+			"full and reversed services valid for party: " + str(party))
+		for wallet in [{"gold": 0, "scraps": 0}, {"gold": 18, "scraps": 1}, {"gold": 30, "scraps": 3}]:
+			var expected_ids := _expected_actionable_ids(party, wallet)
+			_check(not expected_ids.is_empty(),
+				"shipped catalog has actionable events for " + str(party) + " at " + str(wallet))
+			if party == PARTY_A and wallet == {"gold": 0, "scraps": 0}:
+				_check(expected_ids.has("v3_warden_copper_chain_ferry")
+					and not expected_ids.has("v3_seamstress_needle_oracle")
+					and not expected_ids.has("v3_lantern_monk_mothlight_ferry"),
+					"PARTY_A at {0,0} includes ferry, excludes Leave-only oracle and absent-hero records")
+			if party == PARTY_A and wallet == {"gold": 18, "scraps": 1}:
+				_check(expected_ids.has("v3_warden_copper_chain_ferry")
+					and expected_ids.has("v3_seamstress_needle_oracle")
+					and not expected_ids.has("v3_lantern_monk_mothlight_ferry"),
+					"PARTY_A at {18,1} includes both ferry and oracle and excludes absent-hero records")
+			if party == PARTY_B and wallet == {"gold": 0, "scraps": 0}:
+				_check(expected_ids.has("v3_lantern_monk_mothlight_ferry")
+					and not expected_ids.has("v3_rag_duelist_cape_tribunal")
+					and not expected_ids.has("v3_warden_copper_chain_ferry")
+					and not expected_ids.has("v3_seamstress_needle_oracle"),
+					"PARTY_B at {0,0} includes mothlight_ferry, excludes Leave-only cape_tribunal and PARTY_A records")
+			if party == PARTY_B and wallet == {"gold": 18, "scraps": 1}:
+				_check(expected_ids.has("v3_lantern_monk_mothlight_ferry")
+					and expected_ids.has("v3_rag_duelist_cape_tribunal")
+					and not expected_ids.has("v3_warden_copper_chain_ferry")
+					and not expected_ids.has("v3_seamstress_needle_oracle"),
+					"PARTY_B at {18,1} includes mothlight_ferry and cape_tribunal, excludes PARTY_A records")
+			for seed_val in [101, 202, 303, 404, 505, 606, 707, 808]:
+				var rng_norm := RandomNumberGenerator.new()
+				rng_norm.seed = seed_val
+				var rng_rev := RandomNumberGenerator.new()
+				rng_rev.seed = seed_val
+				var rng_ref := RandomNumberGenerator.new()
+				rng_ref.seed = seed_val
+				var idx := rng_ref.randi_range(0, expected_ids.size() - 1)
+				var chosen_id: String = expected_ids[idx]
+				var expected_record := _by_id(catalog["events"], chosen_id)
+				var res_norm := service.select_actionable_event(rng_norm, null, wallet)
+				var res_rev := reordered.select_actionable_event(rng_rev, [], wallet)
+				_check(res_norm == {"ok": true, "event": expected_record} and res_rev == res_norm,
+					"sorted selection matches expected authored record across normal and reversed catalog: "
+					+ str(party) + "/" + str(wallet) + "/" + str(seed_val))
+				_check(party.has(res_norm["event"].get("required_hero"))
+					and _has_affordable_non_leave(res_norm["event"], wallet),
+					"selected record belongs to party and has an affordable non-Leave choice")
+				_check(rng_norm.state == rng_ref.state and rng_rev.state == rng_ref.state,
+					"selection consumes exact one randi_range draw: " + str(seed_val))
+
+
+func _test_actionable_exclusions_and_exhaustion() -> void:
+	var service := RunV3HeroEventOffers.new(PARTY_A)
+	var zero_wallet := {"gold": 0, "scraps": 0}
+	var funded_wallet := {"gold": 18, "scraps": 1}
+
+	# Unknown and absent-hero exclusions are ignored without changing the draw.
+	var unknown_exclusions := ["unknown_event_id", "v3_nonexistent_visit", "v3_scarecrow_crow_roost", "v3_lantern_monk_moth_vigil"]
+	var unknown_before := unknown_exclusions.duplicate()
+	var rng_with_unknown := RandomNumberGenerator.new()
+	rng_with_unknown.seed = 1201
+	var rng_without_unknown := RandomNumberGenerator.new()
+	rng_without_unknown.seed = 1201
+	var res_with_unknown := service.select_actionable_event(rng_with_unknown, unknown_exclusions, zero_wallet)
+	var res_without_unknown := service.select_actionable_event(rng_without_unknown, null, zero_wallet)
+	_check(res_with_unknown["ok"] and res_with_unknown == res_without_unknown
+		and rng_with_unknown.state == rng_without_unknown.state
+		and unknown_exclusions == unknown_before,
+		"unknown well-formed exclusions are ignored and do not alter sampling or RNG state")
+
+	# Walk through all actionable events at {0, 0} by accumulating visited IDs.
+	var expected_zero := _expected_actionable_ids(PARTY_A, zero_wallet)
+	var all_party_offers := service.get_offers()
+	_check(expected_zero.size() > 0 and expected_zero.size() < all_party_offers.size(),
+		"PARTY_A has both actionable and Leave-only events at {0,0}")
+	var visited: Array[String] = []
+	var walk_rng := RandomNumberGenerator.new()
+	walk_rng.seed = 1301
+	var oracle_rng := RandomNumberGenerator.new()
+	oracle_rng.seed = 1301
+	for step in range(expected_zero.size()):
+		var remaining := _expected_actionable_ids(PARTY_A, zero_wallet, visited)
+		var expected_idx := oracle_rng.randi_range(0, remaining.size() - 1)
+		var expected_id: String = remaining[expected_idx]
+		var visited_snapshot := visited.duplicate()
+		var res := service.select_actionable_event(walk_rng, visited, zero_wallet)
+		_check(res == {"ok": true, "event": _by_id(catalog["events"], expected_id)}
+			and not visited.has(expected_id)
+			and visited == visited_snapshot
+			and walk_rng.state == oracle_rng.state,
+			"visit walk selects unvisited actionable event with 1 draw at step " + str(step))
+		visited.append(expected_id)
+
+	# Now only Leave-only events remain unvisited for PARTY_A at {0, 0}: must reject with 0 draws.
+	var state_after_zero_exhausted := walk_rng.state
+	var exhausted_zero_res := service.select_actionable_event(walk_rng, visited, zero_wallet)
+	_check(exhausted_zero_res == {"ok": false, "event": {}}
+		and walk_rng.state == state_after_zero_exhausted,
+		"exhausted actionable pool rejects rather than offering remaining Leave-only events (0 RNG draws)")
+
+	# Funding the wallet to {18, 1} unlocks the previously Leave-only events (including v3_seamstress_needle_oracle).
+	var remaining_funded := _expected_actionable_ids(PARTY_A, funded_wallet, visited)
+	_check(remaining_funded.has("v3_seamstress_needle_oracle"),
+		"funding wallet after zero-wallet exhaustion unlocks v3_seamstress_needle_oracle")
+	for step in range(remaining_funded.size()):
+		var pool_now := _expected_actionable_ids(PARTY_A, funded_wallet, visited)
+		var idx_now := oracle_rng.randi_range(0, pool_now.size() - 1)
+		var id_now: String = pool_now[idx_now]
+		var res_now := service.select_actionable_event(walk_rng, visited, funded_wallet)
+		_check(res_now == {"ok": true, "event": _by_id(catalog["events"], id_now)}
+			and walk_rng.state == oracle_rng.state,
+			"funded continuation selects unlocked actionable event at step " + str(step))
+		visited.append(id_now)
+
+	# Even with a huge wallet, once every party-owned event is excluded, selection rejects with 0 draws.
+	var all_ids: Array[String] = []
+	for offer in all_party_offers:
+		all_ids.append(offer["id"])
+	var state_fully_exhausted := walk_rng.state
+	var fully_exhausted_res := service.select_actionable_event(walk_rng, all_ids, {"gold": 500, "scraps": 50})
+	_check(fully_exhausted_res == {"ok": false, "event": {}}
+		and walk_rng.state == state_fully_exhausted,
+		"fully excluded party pool rejects with zero RNG draws")
+
+
+func _test_actionable_invalid_inputs_and_isolation() -> void:
+	var party := PARTY_A.duplicate()
+	var source := catalog.duplicate(true)
+	var service := RunV3HeroEventOffers.new(party, source)
+	var original_offers := service.get_offers()
+	var valid_wallet := {"gold": 18, "scraps": 1}
+	var valid_exclusions := ["v3_warden_shield_menders"]
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 1401
+	var state := rng.state
+
+	# Omitted wallet (1-arg and 2-arg calls) fails closed with 0 draws.
+	_check(service.select_actionable_event(rng) == {"ok": false, "event": {}} and rng.state == state,
+		"omitted wallet and exclusions rejected with 0 draws")
+	_check(service.select_actionable_event(rng, []) == {"ok": false, "event": {}} and rng.state == state,
+		"omitted wallet with valid exclusions rejected with 0 draws")
+
+	# Malformed RNG inputs fail closed.
+	for bad_rng in [null, 0, 257, "rng", {}, [], RefCounted.new(), service]:
+		_check(service.select_actionable_event(bad_rng, valid_exclusions, valid_wallet) == {"ok": false, "event": {}},
+			"malformed RNG rejected: " + str(bad_rng))
+	_check(rng.state == state, "malformed RNG checks leave caller RNG untouched")
+
+	# Malformed wallet inputs fail closed with 0 draws.
+	for bad_wallet in [
+		null, {}, {"gold": 10}, {"scraps": 1},
+		{"gold": 10, "scraps": 1, "extra": 0},
+		{"gold": -1, "scraps": 0}, {"gold": 0, "scraps": -1}, {"gold": -5, "scraps": -2},
+		{"gold": 10.0, "scraps": 0}, {"gold": 0, "scraps": 1.0}, {"gold": 18.5, "scraps": 1},
+		{"gold": "18", "scraps": 1}, {"gold": 18, "scraps": "1"},
+		{"gold": true, "scraps": 1}, {"gold": 18, "scraps": false},
+		{"gold": null, "scraps": 1}, {"gold": 18, "scraps": null},
+		[], ["gold", "scraps"], "wallet", 18, false,
+	]:
+		var before_bad: Variant = bad_wallet.duplicate(true) if bad_wallet is Dictionary or bad_wallet is Array else bad_wallet
+		var res := service.select_actionable_event(rng, valid_exclusions, bad_wallet)
+		_check(res == {"ok": false, "event": {}} and rng.state == state and bad_wallet == before_bad,
+			"malformed wallet rejected with 0 draws: " + str(bad_wallet))
+
+	# Malformed excluded_ids inputs fail closed with 0 draws.
+	for bad_exclusions in [
+		"", "v3_warden_copper_chain_ferry", {}, {"id": "v3_warden_copper_chain_ferry"}, 1, false,
+		[""], ["   "], ["\t\n"], [null], [123], [true], [{}], [[]],
+		["v3_warden_copper_chain_ferry", ""],
+		["v3_warden_copper_chain_ferry", "   "],
+		["v3_warden_copper_chain_ferry", null],
+		["v3_warden_copper_chain_ferry", 9],
+		["v3_warden_copper_chain_ferry", {"id": "v3_seamstress_needle_oracle"}],
+	]:
+		var before_excl: Variant = bad_exclusions.duplicate(true) if bad_exclusions is Dictionary or bad_exclusions is Array else bad_exclusions
+		var res := service.select_actionable_event(rng, bad_exclusions, valid_wallet)
+		_check(res == {"ok": false, "event": {}} and rng.state == state and bad_exclusions == before_excl,
+			"malformed excluded_ids rejected with 0 draws: " + str(bad_exclusions))
+
+	# Detached copy and non-mutation proof on successful selection.
+	var sel_rng := RandomNumberGenerator.new()
+	sel_rng.seed = 1409
+	var replay_rng := RandomNumberGenerator.new()
+	replay_rng.seed = 1409
+	var caller_wallet := {"gold": 18, "scraps": 1}
+	var caller_exclusions := ["v3_warden_shield_menders", "unknown_ignored_id"]
+	var selected := service.select_actionable_event(sel_rng, caller_exclusions, caller_wallet)
+	_check(selected["ok"] == true and selected["event"] is Dictionary and not selected["event"].is_empty(),
+		"isolation selection succeeds")
+	var selected_id: String = selected["event"]["id"]
+	var canonical_selected := _by_id(catalog["events"], selected_id)
+	_check(selected["event"] == canonical_selected,
+		"selected event matches canonical authored record")
+	_check(caller_wallet == {"gold": 18, "scraps": 1}
+		and caller_exclusions == ["v3_warden_shield_menders", "unknown_ignored_id"],
+		"selection never mutates caller wallet or exclusions")
+
+	# Mutate the returned selection dictionary heavily.
+	selected["ok"] = false
+	selected["event"]["id"] = "forged_selected_id"
+	selected["event"]["title"] = "Forged Title"
+	selected["event"]["required_hero"] = "scarecrow"
+	selected["event"]["choices"][0]["outcome"]["gold"] = 99999
+	selected["event"]["choices"].clear()
+
+	_check(service.enter(selected["event"]) == null and service.enter("forged_selected_id") == null,
+		"mutated selected dictionary or forged ID cannot authorize enter()")
+	_check(service.get_offers() == original_offers,
+		"mutating selected record never mutates service offers")
+	var reselected := service.select_actionable_event(replay_rng, ["v3_warden_shield_menders", "unknown_ignored_id"], {"gold": 18, "scraps": 1})
+	_check(reselected == {"ok": true, "event": canonical_selected} and replay_rng.state == sel_rng.state,
+		"re-selection with same seed returns intact authored copy")
+	var visit := service.enter(selected_id)
+	_check(visit != null and visit.is_valid() and not visit.is_claimed() and visit.get_event() == canonical_selected,
+		"enter(selected_id) opens a fresh unclaimed visit with intact authored record")
+
+
 func _replay(value: int) -> Array:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = value
@@ -409,3 +862,37 @@ func _replay(value: int) -> Array:
 		receipts.append(visit.choose_with_wallet("leave", wallet))
 	_check(rng.state == state, "replay preserves run RNG")
 	return receipts
+
+
+func _replay_actionable(value: int) -> Array:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = value
+	var service := RunV3HeroEventOffers.new(PARTY_A)
+	var visited: Array[String] = []
+	var wallet := {"gold": 0, "scraps": 0}
+	var trace: Array = []
+	for _step in range(6):
+		var selection := service.select_actionable_event(rng, visited, wallet)
+		_check(selection["ok"], "seeded actionable replay selects an event")
+		if not selection["ok"]:
+			break
+		var event_id: String = selection["event"]["id"]
+		visited.append(event_id)
+		var visit := service.enter(event_id)
+		_check(visit != null and visit.is_valid() and not visit.is_claimed(),
+			"seeded actionable replay opens fresh visit")
+		if visit == null:
+			break
+		var preview := visit.preview_wallet_choices(wallet)
+		var chosen_id := ""
+		for choice in preview.get("choices", []):
+			if choice.get("choice_id") != "leave" and choice.get("affordable") == true:
+				chosen_id = choice["choice_id"]
+				break
+		_check(chosen_id != "", "seeded actionable replay finds affordable non-Leave choice")
+		var receipt := visit.choose_with_wallet(chosen_id, wallet)
+		_check(receipt["ok"] and visit.is_claimed() and not visit.is_valid(),
+			"seeded actionable replay settles chosen affordable option once")
+		wallet = receipt["wallet"]
+		trace.append({"selected": selection, "receipt": receipt, "rng_state": str(rng.state)})
+	return trace

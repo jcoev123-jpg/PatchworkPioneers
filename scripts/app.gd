@@ -849,6 +849,12 @@ var _frayed_debt_outcome: RunFrayedDebtParcel
 var _frayed_debt_context: Array = []
 var _frayed_debt_seen := false
 var _frayed_debt_receipt: Dictionary = {}
+var debt_booth_panel: LiveEventChoicePanel
+var _debt_booth_service: RunV3DebtRedemptionEvent
+var _debt_booth_context: Array = []
+var _debt_booth_node := ""
+var _debt_booth_seen := false
+var _debt_booth_receipt: Dictionary = {}
 var _fate_pin_receipt: Dictionary = {}
 var card_reward: RunCardRewardChoice
 var fight_rewards: RunFightVictoryRewards
@@ -936,7 +942,7 @@ func _settle_act_battle() -> bool:
 ## Record one already-confirmed paid-card transition that left the authentic
 ## Quilt Termite at zero HP. Only a living-to-slain change caused by that card
 ## qualifies: direct model damage, enemy-phase Bleed and Thorns never call here.
-func _note_card_damage(enemies_after: CombatEnemies, before: Array) -> bool:
+func _note_card_damage(enemies_after: CombatEnemies, before: Array, confirmed_card: Dictionary = {}) -> bool:
 	if enemies_after == null or enemies_after != enemies or _battle_closed \
 			or battle_result == null or not battle_result.can_continue() \
 			or enemy_intents == null or round_flow == null or deck == null or party == null:
@@ -960,6 +966,12 @@ func _note_card_damage(enemies_after: CombatEnemies, before: Array) -> bool:
 			if source != 0:
 				return false
 			source = index + 1
+	# Run this battle's Tether receipt bridge even when no Termite was slain.
+	# Neither a forecast nor an unconfirmed card may be passed as a hit.
+	if confirmed_card.get("ok", false) and confirmed_card.get("hits") is Array:
+		var preview := get_node_or_null("LiveAttackPreview")
+		if preview != null and is_instance_valid(preview):
+			preview.apply_tether_confirmed_hits(enemies_after, before, confirmed_card)
 	if source == 0:
 		return false
 	_termite_split_hit = {"enemies": enemies_after, "position": source}
@@ -1047,6 +1059,9 @@ func _observe_battle_result() -> bool:
 		enemy_buff_forecast_label.hide()
 	if not _battle_closed:
 		_battle_closed = true
+		var tether_presenter := get_node_or_null("LiveAttackPreview")
+		if tether_presenter != null:
+			tether_presenter.retire_tether_battle()
 		# A closed session keeps no pending Wind-up Turret for any later fight.
 		if round_flow != null:
 			round_flow.clear_turrets()
@@ -1645,6 +1660,8 @@ func _open_route(admission: Dictionary = {}) -> void:
 	for card in cards:
 		if not owners.has(RunRestStitchCards.resolve_card_definition(card).get("owner")):
 			return
+	_debt_booth_seen = false
+	_debt_booth_receipt.clear()
 	_party_receipt = receipt.duplicate(true)
 	_party_receipt.deck = cards.duplicate()
 	run_rng = RandomNumberGenerator.new()
@@ -3129,6 +3146,8 @@ func _unfought_run() -> bool:
 
 
 func _can_choose_connected_route() -> bool:
+	if is_instance_valid(debt_booth_panel):
+		return false
 	if is_instance_valid(frayed_debt_panel):
 		return false
 	if is_instance_valid(fate_pin_panel):
@@ -3901,12 +3920,157 @@ func _clear_frayed_debt_panel() -> void:
 	frayed_debt_panel = null
 
 
+## A read-only wallet-panel adapter; the six-key redemption service is the only
+## source of truth for the accepted cut, sale and free leave. The panel's
+## RunEventChoice never mutates the live run.
+func _debt_booth_view_record(service: RunV3DebtRedemptionEvent) -> Dictionary:
+	var preview := service.preview_choices()
+	if not preview.get("ok", false) or preview.get("event_id") != RunV3DebtRedemptionEvent.EVENT_ID:
+		return {}
+	var choices: Array = []
+	for forecast in preview.choices:
+		choices.append({"id": forecast.id, "text": forecast.text,
+			"outcome": {"gold": forecast.gold_delta, "scraps": forecast.scraps_delta}})
+	return {"id": preview.event_id, "title": preview.title,
+		"description": preview.description, "choices": choices}
+
+
+func _debt_booth_source() -> Dictionary:
+	return {"deck": run_deck.duplicate(), "descriptors": run_stitch_descriptors.duplicate(true),
+		"next_stitch_id": run_next_stitch_id, "gold": session_gold,
+		"scraps": run_scraps, "prior_removals": run_removal_count}
+
+
+func _debt_booth_snapshot() -> Array:
+	var carry := party_carryover as RunTornCarryover
+	if run_map == null or run_rng == null or carry == null or act_outcome == null \
+		or not is_instance_valid(debt_booth_panel) or debt_booth_panel._selector == null \
+		or _debt_booth_service == null:
+		return []
+	return [run_map, run_map.get_generation_revision(), run_map.get_floors(),
+		run_map.get_route(), _debt_booth_node, run_rng, run_rng.state, run_seed,
+		_debt_booth_source(), _party_receipt.duplicate(true), run_heroes.duplicate(true),
+		run_trinkets.duplicate(), carry, carry.read_state(), carry.torn,
+		carry.torn.read_state(), carry._wardrobe,
+		carry._wardrobe.get_snapshot() if carry._wardrobe != null else {},
+		act_outcome, act_outcome.get_state(), debt_booth_panel,
+		debt_booth_panel._selector, debt_booth_panel._selector.get_event(),
+		debt_booth_panel._offered_wallet.duplicate(true),
+		debt_booth_panel._wallet_previews.duplicate(true),
+		_debt_booth_service, _debt_booth_service.get_event(),
+		_debt_booth_service.get_source_snapshot(), _debt_booth_service.preview_choices(),
+		_debt_booth_seen, _wallet_event_history.duplicate(), _vital_event_history.duplicate()]
+
+
+func _open_debt_booth(id: String, source: WeakRef) -> bool:
+	if _debt_booth_seen or is_instance_valid(debt_booth_panel) \
+		or not run_deck.has(MpwFrayedDebt.CARD_ID) or not _can_choose_connected_route() \
+		or source == null or source.get_ref() != run_map \
+		or not run_map.get_legal_choices().has(id) \
+		or run_map.get_node(id).get("type") != "Event":
+		return false
+	var service := RunV3DebtRedemptionEvent.new()
+	var opening := _debt_booth_source()
+	if not service.prepare(opening).get("ok", false):
+		return false
+	var view := _debt_booth_view_record(service)
+	if view.is_empty():
+		return false
+	var forecast := service.preview_choices()
+	var panel := preload("res://scenes/event_choice_panel.tscn").instantiate() as LiveEventChoicePanel
+	add_child(panel)
+	if not panel.open_event_with_wallet(view, {"gold": session_gold, "scraps": run_scraps}):
+		panel.free()
+		return false
+	# A view-only wallet adapter must deny exactly the service's unaffordable
+	# choices, including both boundary prices. Never rely on a cosmetic label.
+	var buttons := panel.get_choice_buttons()
+	var valid: bool = buttons.size() == forecast.choices.size()
+	if valid:
+		for index in range(buttons.size()):
+			var row: Dictionary = forecast.choices[index]
+			valid = valid and buttons[index].disabled == not row.affordable \
+				and panel._wallet_previews.get(row.id, {}).get("affordable") == row.affordable
+	if not valid or not run_map.choose_node(id):
+		panel.free()
+		return false
+	_mount_event_backdrop(panel)
+	debt_booth_panel = panel
+	_debt_booth_service = service
+	_debt_booth_node = id
+	_clear_route_view()
+	_debt_booth_context = _debt_booth_snapshot()
+	panel.wallet_choice_committed.connect(_commit_debt_booth.bind(panel, source))
+	var enabled: Array[Button] = []
+	for button in buttons:
+		if not button.disabled:
+			enabled.append(button)
+	for index in range(enabled.size()):
+		enabled[index].focus_next = enabled[index].get_path_to(enabled[(index + 1) % enabled.size()])
+		enabled[index].focus_previous = enabled[index].get_path_to(enabled[(index - 1 + enabled.size()) % enabled.size()])
+	if not enabled.is_empty():
+		enabled[0].grab_focus()
+	return true
+
+
+func _commit_debt_booth(claim: Dictionary, panel, source: WeakRef) -> void:
+	if not is_instance_valid(panel) or panel != debt_booth_panel or panel.get_parent() != self \
+		or not panel.is_visible_in_tree() or not panel.has_open_event() \
+		or not panel._wallet_mode or panel._selector == null or not panel._selector.is_claimed() \
+		or panel._committed_choice != claim or source == null or source.get_ref() != run_map \
+		or _debt_booth_seen or _debt_booth_context.is_empty() \
+		or _debt_booth_snapshot() != _debt_booth_context \
+		or run_map.get_current_node_id() != _debt_booth_node \
+		or run_map.get_node(_debt_booth_node).get("type") != "Event" \
+		or claim.get("event_id") != RunV3DebtRedemptionEvent.EVENT_ID:
+		return
+	var choice_id: Variant = claim.get("choice_id")
+	var expected_view := RunEventChoice.new(_debt_booth_view_record(_debt_booth_service)).choose_with_wallet(
+		choice_id, {"gold": session_gold, "scraps": run_scraps})
+	var preview := _debt_booth_service.preview_choice(choice_id)
+	if not expected_view.get("ok", false) or claim != expected_view \
+		or not preview.get("ok", false) or not preview.get("affordable", false) \
+		or _debt_booth_source() != _debt_booth_service.get_source_snapshot():
+		return
+	var receipt := _debt_booth_service.choose(choice_id, _debt_booth_service.get_source_snapshot())
+	if not receipt.get("ok", false):
+		return
+	# Commit the entire canonical stitched/wallet/allocator ledger exactly once.
+	run_deck.assign(receipt.deck)
+	run_stitch_descriptors = receipt.descriptors.duplicate(true)
+	run_next_stitch_id = receipt.next_stitch_id
+	session_gold = receipt.gold
+	run_scraps = receipt.scraps
+	run_removal_count = receipt.prior_removals
+	_debt_booth_seen = true
+	_debt_booth_receipt = receipt.duplicate(true)
+	_placeholder_map = source
+	_placeholder_route = run_map.get_route()
+	_clear_debt_booth()
+	_present_connected_route(source)
+
+
+func _clear_debt_booth() -> void:
+	_debt_booth_context.clear()
+	_debt_booth_node = ""
+	_debt_booth_service = null
+	if is_instance_valid(debt_booth_panel):
+		debt_booth_panel.close_event()
+		remove_child(debt_booth_panel)
+		debt_booth_panel.queue_free()
+	debt_booth_panel = null
+
+
 func _open_wallet_event(id: String, source: WeakRef) -> bool:
 	if run_rng == null or run_map == null or source == null or source.get_ref() != run_map \
 		or session_gold < 0 or run_scraps < 0 \
 		or not _can_choose_connected_route() or not run_map.get_legal_choices().has(id) \
 		or run_map.get_node(id).get("type") != "Event":
 		return false
+	# The Booth is an extra authored visit, not a generic lottery ticket, and
+	# cannot displace the first four dedicated opening Events.
+	if not _debt_booth_seen and run_deck.has(MpwFrayedDebt.CARD_ID):
+		return _open_debt_booth(id, source)
 	var vital := _wallet_event_history.size() == 1 and _vital_event_history.is_empty()
 	var snapshot := {}
 	if vital:
@@ -5019,7 +5183,7 @@ func _unpicker_decision(intent: Dictionary, view, visit: RunUnpickerVisit) -> vo
 		return
 	var staged := RunUnpickerVisit.new(id, run_deck, session_gold, run_removal_count,
 		run_stitch_descriptors, run_next_stitch_id)
-	if not staged.is_valid() or staged.read_state() != _unpicker_source:
+	if not staged.is_valid() or not staged.matches_mounted_source(_unpicker_source):
 		return
 	var result: Dictionary
 	match intent.get("action"):
@@ -5028,16 +5192,16 @@ func _unpicker_decision(intent: Dictionary, view, visit: RunUnpickerVisit) -> vo
 			if intent.size() != 5 or typeof(card) != TYPE_STRING or card != view._selected_id \
 				or not run_deck.has(card) or not view._honest_row(view._selected_button, card, true):
 				return
-			result = staged.remove_card(card, intent.visit_id, id, intent.expected_snapshot)
+			result = visit.remove_card(card, intent.visit_id, id, intent.expected_snapshot)
 		"leave":
 			if intent.size() != 4:
 				return
-			result = staged.leave(intent.visit_id, id, intent.expected_snapshot)
+			result = visit.leave(intent.visit_id, id, intent.expected_snapshot)
 		_:
 			return
 	if not result.ok or result.source_snapshot != _unpicker_source \
 		or result.source_receipt != _unpicker_source.receipt or _unpicker_original != _sewing_context() \
-		or visit.read_state() != _unpicker_source:
+		or result.visit_id != _unpicker_source.visit_id or not result.consumed:
 		return
 	# Publish the complete authenticated receipt without signals or RNG between fields.
 	run_deck.assign(result.deck)
@@ -5045,7 +5209,6 @@ func _unpicker_decision(intent: Dictionary, view, visit: RunUnpickerVisit) -> vo
 	run_removal_count = result.prior_removals
 	run_stitch_descriptors = result.descriptors.duplicate(true)
 	run_next_stitch_id = result.next_stitch_id
-	unpicker_visit = staged
 	_sync_bound_wardrobe(party_carryover as RunTornCarryover)
 	_unpicker_closed = true
 	_unpicker_original = _sewing_context()
@@ -7455,6 +7618,9 @@ func _return_to_title() -> void:
 	_clear_fate_pin_panel()
 	_clear_frayed_debt_panel()
 	_frayed_debt_seen = false
+	_clear_debt_booth()
+	_debt_booth_seen = false
+	_debt_booth_receipt.clear()
 	_frayed_debt_receipt.clear()
 	_fate_pin_outcome = null
 	_fate_pin_wardrobe = null

@@ -75,6 +75,65 @@ func enter(event_id: Variant) -> RunEventChoice:
 	return RunEventChoice.new(_eligible[event_id])
 
 
+## Uniformly samples one party-eligible authored event that is not in excluded_ids
+## and has at least one affordable non-Leave choice for wallet.
+## Rejects with {ok: false, event: {}} without advancing rng when the service,
+## rng, excluded_ids or wallet is invalid, or when no actionable record remains.
+func select_actionable_event(rng: Variant, excluded_ids: Variant = null, wallet: Variant = null) -> Dictionary:
+	var rejected := {"ok": false, "event": {}}
+	if not _valid or not (rng is RandomNumberGenerator) or not _valid_wallet(wallet):
+		return rejected
+	var excluded := {}
+	if excluded_ids != null:
+		if typeof(excluded_ids) != TYPE_ARRAY:
+			return rejected
+		for item in excluded_ids:
+			if not (item is String) or (item as String).strip_edges().is_empty():
+				return rejected
+			excluded[item] = true
+	var actionable_ids: Array[String] = []
+	for event_id in _eligible:
+		if excluded.has(event_id):
+			continue
+		var selector := RunEventChoice.new(_eligible[event_id])
+		if not selector.is_valid():
+			return rejected
+		var preview := selector.preview_wallet_choices(wallet)
+		if not preview.get("ok", false):
+			return rejected
+		if _has_affordable_non_leave_choice(preview):
+			actionable_ids.append(event_id)
+	if actionable_ids.is_empty():
+		return rejected
+	actionable_ids.sort()
+	var index: int = (rng as RandomNumberGenerator).randi_range(0, actionable_ids.size() - 1)
+	var chosen_id: String = actionable_ids[index]
+	return {"ok": true, "event": _eligible[chosen_id].duplicate(true)}
+
+
+func _valid_wallet(wallet: Variant) -> bool:
+	if typeof(wallet) != TYPE_DICTIONARY:
+		return false
+	var dict: Dictionary = wallet
+	if dict.size() != 2 or not dict.has("gold") or not dict.has("scraps"):
+		return false
+	var gold: Variant = dict.get("gold")
+	var scraps: Variant = dict.get("scraps")
+	if typeof(gold) != TYPE_INT or typeof(scraps) != TYPE_INT:
+		return false
+	return int(gold) >= 0 and int(scraps) >= 0
+
+
+func _has_affordable_non_leave_choice(preview: Dictionary) -> bool:
+	var choices: Variant = preview.get("choices")
+	if not choices is Array:
+		return false
+	for choice in choices:
+		if choice is Dictionary and choice.get("choice_id") != "leave" and choice.get("affordable") == true:
+			return true
+	return false
+
+
 func _valid_record(record: Variant) -> bool:
 	if not record is Dictionary:
 		return false
