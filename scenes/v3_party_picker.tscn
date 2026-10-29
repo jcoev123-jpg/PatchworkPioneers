@@ -69,7 +69,7 @@ theme_override_constants/v_separation = 10
 columns = 4
 
 [node name="InspectionPanel" type="PanelContainer" parent="PaperPanel/Margins/Body"]
-custom_minimum_size = Vector2(0, 126)
+custom_minimum_size = Vector2(0, 160)
 layout_mode = 2
 mouse_filter = 2
 
@@ -113,6 +113,52 @@ mouse_filter = 2
 text = ""
 horizontal_alignment = 1
 autowrap_mode = 2
+
+[node name="KitReadout" type="VBoxContainer" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 1
+visible = false
+
+[node name="KitCardHeading" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout"]
+layout_mode = 2
+mouse_filter = 2
+horizontal_alignment = 1
+
+[node name="KitTarget" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout"]
+layout_mode = 2
+mouse_filter = 2
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="KitEffects" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout"]
+layout_mode = 2
+mouse_filter = 2
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="KitNavigation" type="HBoxContainer" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 12
+
+[node name="PreviousButton" type="Button" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout/KitNavigation"]
+custom_minimum_size = Vector2(116, 26)
+layout_mode = 2
+focus_mode = 2
+text = "Previous"
+
+[node name="NextButton" type="Button" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout/KitNavigation"]
+custom_minimum_size = Vector2(116, 26)
+layout_mode = 2
+focus_mode = 2
+text = "Next"
+
+[node name="BackButton" type="Button" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout/KitNavigation"]
+custom_minimum_size = Vector2(116, 26)
+layout_mode = 2
+focus_mode = 2
+text = "Back to Heroes"
 
 [node name="DeckReadout" type="VBoxContainer" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack"]
 layout_mode = 2
@@ -161,6 +207,13 @@ size_flags_horizontal = 3
 text = "Choose three to preview battle seats"
 horizontal_alignment = 1
 vertical_alignment = 1
+
+[node name="InspectCardsButton" type="Button" parent="PaperPanel/Margins/Body/Foot"]
+custom_minimum_size = Vector2(142, 52)
+layout_mode = 2
+focus_mode = 2
+disabled = true
+text = "Inspect Cards"
 
 [node name="InspectDeckButton" type="Button" parent="PaperPanel/Margins/Body/Foot"]
 custom_minimum_size = Vector2(142, 52)

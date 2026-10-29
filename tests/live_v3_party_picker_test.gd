@@ -275,6 +275,232 @@ func _check_deck_rows(picker: LiveV3PartyPicker, picks: Array[String], note: Str
 		note + " inspection never conceals or disables live actions")
 
 
+## Independent source oracle: use the actual per-hero catalogs, not the
+## picker's caption, admission projection, or its kit lookup helper.
+func _source_catalog(hero_id: String) -> Object:
+	match hero_id:
+		"warden", "seamstress", "tinker":
+			return StarterCards.new()
+		"lantern_monk":
+			return LanternMonkStarterCards.new()
+		"rag_duelist":
+			return RagDuelistStarterCards.new()
+		"scarecrow":
+			return ScarecrowStarterCards.new()
+		"yarn_ranger":
+			return YarnRangerStarterCards.new()
+		"button_golem":
+			return ButtonGolemStarterCards.new()
+	return null
+
+
+func _source_deck(hero_id: String) -> Array[String]:
+	var source := _source_catalog(hero_id)
+	if source == null:
+		return []
+	var result: Array[String] = []
+	for id in source.get_starting_deck():
+		if source.get_definition(id).get("owner") == hero_id:
+			result.append(id)
+	return result
+
+
+func _oracle_effect_fragment(key: String, amount: Variant) -> String:
+	if key in ["ignore_block", "cannot_buff_next_turn"]:
+		return ("ignores foe Block" if key == "ignore_block" else "Fear: foe cannot buff next turn") if amount is bool and amount else ""
+	if not amount is int or amount <= 0:
+		return ""
+	match key:
+		"damage":
+			return "%d damage" % amount
+		"block":
+			return "%d Block to target" % amount
+		"block_self":
+			return "Self gains %d Block" % amount
+		"heal":
+			return "Heal %d HP" % amount
+		"weak", "bleed", "exposed", "unravel", "tangled":
+			return "%s %d" % [key.capitalize(), amount]
+		"blind":
+			return "Blind %d (next attack misses)" % amount
+		"draw":
+			return "Draw %d card" % amount
+		"cleanse_debuff":
+			return "Cleanse %d debuff" % amount
+		"move_self_forward":
+			return "Advance self %d slot" % amount
+		"riposte":
+			return "Riposte %d when hit" % amount
+		"duration":
+			return "Lasts %d turn" % amount
+		"dodge_next_attack":
+			return "Dodge next %d attack" % amount
+		"pull_forward":
+			return "Pull target forward %d slot" % amount
+		"spend_block":
+			return "spends %d self Block" % amount
+		"buttons_popped":
+			return "successful hit, add %d button" % amount
+		"swap_with_ally":
+			return "Swap position with chosen living ally"
+		"block_per_button_popped":
+			return "%d Block per previously popped button" % amount
+	return ""
+
+
+func _check_kit_occurrence(picker: LiveV3PartyPicker, hero_id: String,
+		occurrence: int, source_id: String, note: String) -> void:
+	var source := _source_catalog(hero_id)
+	var card: Dictionary = source.get_definition(source_id)
+	var kit := picker.kit_readout
+	_check(not card.is_empty() and card.get("owner") == hero_id and card.get("id") == source_id
+		and not source_id.ends_with("_plus") and not card.has("upgrade_of"),
+		note + " independent base owner and identity")
+	if card.is_empty():
+		return
+	_check(kit.is_visible_in_tree() and picker._kit_hero == hero_id and picker._kit_index == occurrence
+		and picker._kit_card(hero_id, occurrence) == card,
+		note + " exact physical occurrence from independent catalog")
+	_check(picker.kit_card_heading.text == "STARTER %d / 4  •  %s  •  %d EN" % [
+		occurrence + 1, card.display_name, card.cost],
+		note + " exact authored name, cost and physical copy index")
+	var from_parts: Array[String] = []
+	var to_parts: Array[String] = []
+	for slot in card.from_positions:
+		from_parts.append(str(slot))
+	for slot in card.to_positions:
+		to_parts.append(str(slot))
+	var target: String = picker.kit_target.text
+	_check(target.contains("Play from slots " + ", ".join(from_parts))
+		and target.contains("Target: "), note + " source caster slots and target label")
+	var scope := ""
+	match card.target_kind:
+		"enemy_single":
+			scope = "one foe in slots " + ", ".join(to_parts)
+		"enemy_all":
+			scope = "all foes in slots " + ", ".join(to_parts)
+		"enemy_back":
+			scope = "backmost living foe (slots " + ", ".join(to_parts) + ")"
+		"self":
+			scope = "self"
+		"ally_single":
+			scope = "one chosen ally"
+		"party_all":
+			scope = "all living allies"
+		"none":
+			scope = "no target"
+	_check(not scope.is_empty() and target.contains("Target: " + scope),
+		note + " precise source target_kind and target slots")
+	var effects: String = picker.kit_effects.text
+	_check(not effects.is_empty() and effects == picker.kit_effects.tooltip_text,
+		note + " fully available readable effect text")
+	_check(card.effects is Dictionary and not card.effects.is_empty(),
+		note + " non-vacuous actual authored effects")
+	for key in card.effects:
+		var phrase := _oracle_effect_fragment(str(key), card.effects[key])
+		_check(not phrase.is_empty() and effects.contains(phrase),
+			note + " describes authentic " + str(key) + " = " + str(card.effects[key]))
+	_check(not effects.contains("Undescribed"), note + " every actual base effect has a clause")
+	var clip := picker.inspection_panel.get_global_rect()
+	var text_stack: Array[Control] = [picker.inspection_heading, picker.inspection_facts,
+		picker.kit_card_heading, picker.kit_target, picker.kit_effects, picker.kit_previous,
+		picker.kit_next, picker.kit_back]
+	for node in text_stack:
+		_check(node.is_visible_in_tree() and clip.encloses(node.get_global_rect()),
+			note + " inspector control inside panel: " + node.name)
+	_check(picker.kit_effects.get_visible_line_count() == picker.kit_effects.get_line_count()
+		and picker.kit_target.get_visible_line_count() == picker.kit_target.get_line_count(),
+		note + " target/effect wrapped text not vertically clipped")
+	_check(picker.kit_effects.get_theme_font_size("font_size") >= 16
+		and picker.kit_card_heading.get_theme_font_size("font_size") >= 16,
+		note + " readable effect/card typography")
+	_check(picker.selected_ids().is_empty() and picker._seat_receipt.is_empty(),
+		note + " per-card preview cannot admit a party")
+
+
+func _check_all_kits(picker: LiveV3PartyPicker) -> void:
+	var special_keys := {
+		"lantern_monk": "cleanse_debuff", "rag_duelist": "move_self_forward",
+		"scarecrow": "cannot_buff_next_turn", "yarn_ranger": "tangled",
+		"button_golem": "block_per_button_popped"}
+	var seen: Dictionary = {}
+	var controls := [picker.inspect_cards_button, picker.kit_previous, picker.kit_next, picker.kit_back]
+	for button in controls:
+		_check(button.focus_mode == Control.FOCUS_ALL,
+			"real Inspect Cards and navigation buttons accept keyboard focus")
+	for hero_id in ORDER:
+		var actual: Array[String] = _source_deck(hero_id)
+		_check(actual.size() == 4, hero_id + " four actual source deck occurrences")
+		if actual.size() != 4:
+			continue
+		# Repeated legacy IDs are separate physical steps, never deduplicated.
+		var copies: Dictionary = {}
+		for id in actual:
+			copies[id] = int(copies.get(id, 0)) + 1
+		if hero_id in ["warden", "seamstress", "tinker"]:
+			_check(copies.values().has(2), hero_id + " duplicated starter is traversable twice")
+		# A mouse hover or keyboard focus drives the actual UI, not the helper.
+		await _key_focus(_tile(picker, hero_id))
+		await _key(picker.inspect_cards_button, KEY_ENTER)
+		_check(picker._kit_mode and not picker.inspect_cards_button.disabled
+			and picker.kit_previous.disabled and not picker.kit_next.disabled,
+			hero_id + " real keyboard Inspect Cards opens at first copy")
+		for index in range(actual.size()):
+			_check_kit_occurrence(picker, hero_id, index, actual[index],
+				hero_id + " card %d" % (index + 1))
+			var record: Dictionary = _source_catalog(hero_id).get_definition(actual[index])
+			for key in record.effects:
+				seen[hero_id + "/" + str(key)] = true
+			if index < actual.size() - 1:
+				await _key(picker.kit_next, KEY_ENTER)
+		_check(picker.kit_next.disabled and not picker.kit_previous.disabled,
+			hero_id + " last occurrence stops Next")
+		var last := picker.kit_card_heading.text
+		picker.kit_next.pressed.emit()
+		_check(picker.kit_card_heading.text == last and picker._kit_index == 3,
+			hero_id + " refused Next never wraps")
+		for index in range(2, -1, -1):
+			await _key(picker.kit_previous, KEY_SPACE)
+			_check_kit_occurrence(picker, hero_id, index, actual[index],
+				hero_id + " backwards copy %d" % (index + 1))
+		picker.kit_previous.pressed.emit()
+		_check(picker._kit_index == 0, hero_id + " refused Previous never wraps")
+		await _key(picker.kit_back, KEY_ENTER)
+		_check(not picker._kit_mode and not picker.kit_readout.visible
+			and picker.inspection_starters.visible,
+			hero_id + " Back restores hero description and starter caption")
+	for hero_id in special_keys:
+		_check(seen.has(hero_id + "/" + special_keys[hero_id]),
+			hero_id + " distinctive exotic effect came from actual card definition")
+	for hero_id in ORDER:
+		var first: String = _source_deck(hero_id)[0]
+		_check(picker._kit_card_by_id(hero_id, first) == _source_catalog(hero_id).get_definition(first)
+			and picker._kit_card_by_id(hero_id, first + "_plus").is_empty()
+			and picker._kit_card_by_id(hero_id, "forged_card_id").is_empty(),
+			hero_id + " base authentic; reward/upgrade/forged IDs fail closed")
+	_check(picker._kit_card("warden", -1).is_empty()
+		and picker._kit_card("warden", 4).is_empty()
+		and picker._kit_card("nonexistent", 0).is_empty()
+		and picker._kit_effect_clause("unsupported_effect_key", 9).contains("Undescribed"),
+		"unrecognized source IDs, indexes and effects never fabricate valid previews")
+	# A different tile really replaces the active kit hero and resets index.
+	await _key_focus(_tile(picker, "warden"))
+	await _mouse(picker.inspect_cards_button)
+	await _key(picker.kit_next, KEY_ENTER)
+	_check(picker._kit_index == 1, "mouse Inspect Cards and keyboard Next both work")
+	await _move_to(_tile(picker, "yarn_ranger"))
+	_check(picker._kit_mode and picker._kit_hero == "yarn_ranger" and picker._kit_index == 0
+		and picker.kit_card_heading.text.contains(_source_catalog("yarn_ranger")
+			.get_definition(_source_deck("yarn_ranger")[0]).display_name),
+		"new hovered hero switches immediately to its first authentic starter")
+	await _move_to(picker.get_node("PaperPanel/Margins/Body/SubTitle"))
+	await _key_focus(_tile(picker, "button_golem"))
+	_check(picker._kit_hero == "button_golem" and picker._kit_index == 0,
+		"new keyboard-focused hero replaces hover kit without stale card")
+	await _key(picker.kit_back, KEY_SPACE)
+	_check(picker.selected_ids().is_empty(), "all source inspections keep selection empty")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	canonical_roster = _read_hero_records("res://data/heroes/v3_party_roster.json")
@@ -425,6 +651,7 @@ func _run() -> void:
 	var second := randi()
 	seed(48109)
 	_check(randi() == first, "global RNG oracle established")
+	await _check_all_kits(picker)
 
 	# Genuine pointer and focus transitions inspect without picking.
 	await _key_focus(_tile(picker, "lantern_monk"))
@@ -477,12 +704,28 @@ func _run() -> void:
 		and deck_view.get_node("DeckSeat2").text.contains("1 EN Prick x2"),
 		"genuine legacy duplicate starters count exactly twice, not collapsed or repeated")
 	_check(requests.is_empty() and cancels == 0, "Inspect Deck fires no run or cancel signals")
+	picker.inspect_cards_button.pressed.emit()
+	_check(deck_view.visible and not picker._kit_mode,
+		"Inspect Cards refuses to replace an active combined-deck receipt")
 	await _mouse(deck_button)
 	_check(not deck_view.visible and deck_button.text == "Inspect Deck",
 		"pointer Back restores hero inspection mode")
 	await _move_to(_tile(picker, "warden"))
 	_check_inspection(picker, "Warden", "HELMET", "Bulwark", "Guard",
 		"Back restores original hover details")
+	await _key(picker.inspect_cards_button, KEY_ENTER)
+	await _key(picker.kit_next, KEY_ENTER)
+	_check(picker._kit_mode and picker._kit_index == 1
+		and picker._seat_receipt.get("ok", false) and picker.selected_ids() == ["warden", "seamstress", "tinker"],
+		"one-hero card navigation retains admitted three-hero selection/receipt")
+	await _key(deck_button, KEY_ENTER)
+	_check(deck_view.visible and not picker.kit_readout.visible and not picker._kit_mode,
+		"Inspect Deck replaces per-card view without losing source receipt")
+	_check_deck_rows(picker, ["warden", "seamstress", "tinker"],
+		"combined receipt from individual card kit")
+	await _key(deck_button, KEY_SPACE)
+	_check(not deck_view.visible and not picker._kit_mode,
+		"Back from shared deck restores normal hero readout")
 	await _mouse(_tile(picker, "lantern_monk"))
 	_ids(picker, ["warden", "seamstress", "tinker"], "fourth blocked")
 	await _mouse(deck_button)
@@ -550,10 +793,19 @@ func _run() -> void:
 	_ids(picker, ["scarecrow"], "fresh selection after reopen")
 	_check(not hint.text.contains("Seats:"), "one picked hero has no invented seat order")
 	var cancelled_tile := _tile(picker, "scarecrow")
+	await _key(picker.inspect_cards_button, KEY_ENTER)
+	await _key(picker.kit_next, KEY_SPACE)
+	_check(picker._kit_mode and picker._kit_index == 1,
+		"Cancel case starts from an actual nonfirst Scarecrow kit card")
 	await _key(cancel, KEY_ENTER)
 	_check(cancels == 1 and requests.size() == 1,
 		"Cancel emits only cancel_requested")
-	_check(not picker.visible and cancel.disabled, "Cancel closes/latches view")
+	_check(not picker.visible and cancel.disabled and not picker._kit_mode
+		and not picker.kit_readout.visible and picker.inspect_cards_button.disabled,
+		"Cancel closes/latches view and clears selected kit")
+	picker.kit_next.pressed.emit()
+	picker.inspect_cards_button.pressed.emit()
+	_check(not picker._kit_mode, "retired kit navigation cannot reopen on Cancel")
 	cancel.pressed.emit()
 	_tile(picker, "scarecrow").pressed.emit()
 	_check(cancels == 1 and picker.selected_ids() == ["scarecrow"],
@@ -565,7 +817,8 @@ func _run() -> void:
 	await _frames()
 	_ids(picker, [], "reopen after cancel")
 	_check(not hint.text.contains("Seats:"), "cancel and reopen never retain a stale party")
-	_check(_readout(picker)[0].contains("HOVER OR FOCUS"),
+	_check(_readout(picker)[0].contains("HOVER OR FOCUS")
+		and picker._kit_hero.is_empty() and not picker._kit_mode,
 		"cancelled tile callbacks cannot inspect newly opened chooser")
 	await _key(_tile(picker, "button_golem"), KEY_ENTER)
 	await _mouse(_tile(picker, "yarn_ranger"))
