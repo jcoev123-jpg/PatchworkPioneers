@@ -141,7 +141,7 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 	# The ledger may only be shown whole: a formatter that cannot render every
 	# proven row (including each hero's tears) fails closed with the same text.
 	var signature_text := _format_signature(signature) if _can_return else UNAVAILABLE
-	if signature_text == UNAVAILABLE or hero_recaps.size() != RunSignatureSummary.HERO_IDS.size():
+	if signature_text == UNAVAILABLE or hero_recaps.size() != CombatParty.PARTY_SIZE:
 		_can_return = false
 	var top_ledger := "Battles resolved: %d · Gold: %d · Scraps: %d" % [
 		battles_resolved,
@@ -333,11 +333,10 @@ func _validated_signature() -> Dictionary:
 				or snapshot.get("scraps") != app.run_scraps or snapshot.get("gold") != app.session_gold \
 				or snapshot.get("cards") != app.run_deck:
 			return {}
-	var display_wardrobe := _canonical_signature_wardrobe(wardrobe)
-	if display_wardrobe == null:
-		return {}
+	# Summarize the real bound wardrobe directly: reconstructing a legacy
+	# roster would erase the chosen trio and detach the authenticated seats.
 	var summary: Dictionary = RunSignatureSummary.summarize(app.run_deck,
-		app.run_stitch_descriptors, app.run_next_stitch_id, display_wardrobe)
+		app.run_stitch_descriptors, app.run_next_stitch_id, wardrobe)
 	if summary.get("ok") != true:
 		return {}
 	if typeof(app.session_gold) != TYPE_INT or app.session_gold < 0 \
@@ -347,13 +346,16 @@ func _validated_signature() -> Dictionary:
 	summary["scraps"] = app.run_scraps
 
 	var heroes_by_id: Dictionary = {}
+	if app.run_heroes.size() != CombatParty.PARTY_SIZE:
+		return {}
 	for hero_item in app.run_heroes:
 		if not hero_item is Dictionary or not hero_item.has("id"):
 			return {}
 		var hero_id: Variant = hero_item.get("id")
 		var hp: Variant = hero_item.get("hp")
 		var max_hp: Variant = hero_item.get("max_hp")
-		if typeof(hero_id) != TYPE_STRING or typeof(hp) != TYPE_INT or typeof(max_hp) != TYPE_INT:
+		if typeof(hero_id) != TYPE_STRING or not RunV3PartyAdmission.HERO_IDS.has(hero_id) \
+				or heroes_by_id.has(hero_id) or typeof(hp) != TYPE_INT or typeof(max_hp) != TYPE_INT:
 			return {}
 		if hp < 0 or max_hp <= 0 or hp > max_hp:
 			return {}
@@ -392,67 +394,6 @@ func _validated_signature() -> Dictionary:
 		hero_row["tears"] = tears_by_id[hero_id]
 
 	return summary
-
-
-## The summary authority requires Warden/Seamstress/Tinker row order, but an
-## authentic run can exchange their battlefield positions. Rebuild a DETACHED
-## presentation-only wardrobe from an already valid and matched source,
-## preserving every named wear slot; never normalize the actual run or its
-## receipts. A malformed source or impossible wear assignment still fails shut.
-func _canonical_signature_wardrobe(source: RunPatchWardrobe) -> RunPatchWardrobe:
-	if source == null or not source.is_valid():
-		return null
-	var state: Dictionary = source.get_snapshot()
-	var heroes: Array = state.get("heroes", [])
-	if heroes.size() != RunSignatureSummary.HERO_IDS.size():
-		return null
-	var by_id: Dictionary = {}
-	for hero in heroes:
-		if not hero is Dictionary or not RunSignatureSummary.HERO_IDS.has(hero.get("id")) \
-				or by_id.has(hero.get("id")):
-			return null
-		by_id[hero["id"]] = hero.duplicate(true)
-	var canonical: Array = []
-	for i in range(RunSignatureSummary.HERO_IDS.size()):
-		var hero_id: String = RunSignatureSummary.HERO_IDS[i]
-		if not by_id.has(hero_id):
-			return null
-		var hero_copy: Dictionary = by_id[hero_id]
-		hero_copy["position"] = i + 1
-		canonical.append(hero_copy)
-	if canonical == heroes:
-		return source
-	var definitions: Variant = state.get("definitions")
-	if not definitions is Dictionary:
-		return null
-	var records: Array = []
-	for patch_id in definitions:
-		records.append({"id": patch_id, "slot": definitions[patch_id]})
-	var projection := RunPatchWardrobe.new(canonical, state.get("owned"),
-		records, state.get("scraps"), state.get("gold"), state.get("cards"),
-		state.get("seed"), true)
-	if not projection.is_valid():
-		return null
-	var worn: Variant = state.get("worn")
-	if not worn is Dictionary or worn.size() != RunSignatureSummary.HERO_IDS.size():
-		return null
-	for hero_id in RunSignatureSummary.HERO_IDS:
-		var slots: Variant = worn.get(hero_id)
-		if not slots is Dictionary or slots.size() != RunSignatureSummary.SLOTS.size():
-			return null
-		for slot in RunSignatureSummary.SLOTS:
-			var patch_id: Variant = slots.get(slot)
-			if typeof(patch_id) != TYPE_STRING:
-				return null
-			if not patch_id.is_empty() and not projection.sew(patch_id, hero_id, slot,
-					"signature_%s_%s" % [hero_id, slot], projection.get_snapshot()).get("ok"):
-				return null
-	var checked: Dictionary = projection.get_snapshot()
-	if checked.get("worn") != worn or checked.get("owned") != state.get("owned") \
-			or checked.get("scraps") != state.get("scraps") or checked.get("gold") != state.get("gold") \
-			or checked.get("cards") != state.get("cards"):
-		return null
-	return projection
 
 
 ## This is a read-only view of the signature's current deck-ordered cards.
@@ -569,25 +510,30 @@ func _format_signature(summary: Dictionary) -> String:
 	var crafted := _crafted_cards_line(summary)
 	if not crafted.is_empty():
 		lines.append(crafted)
-	if _validated_hero_rows(summary).size() != RunSignatureSummary.HERO_IDS.size():
+	if _validated_hero_rows(summary).size() != CombatParty.PARTY_SIZE:
 		return UNAVAILABLE
 	return "\n".join(lines)
 
 
-## Exactly three canonical hero rows in Warden/Seamstress/Tinker identity order,
-## or none at all. Party position never decides which ribbon a hero receives.
+## Exactly the three chosen eligible hero rows in authentic seat order, or
+## none at all. Every ticket retains its own identity even after seat swaps.
 func _validated_hero_rows(summary: Dictionary) -> Array:
 	if summary.get("ok") != true:
 		return []
 	var heroes: Variant = summary.get("heroes")
-	if typeof(heroes) != TYPE_ARRAY or heroes.size() != RunSignatureSummary.HERO_IDS.size():
+	if typeof(heroes) != TYPE_ARRAY or heroes.size() != CombatParty.PARTY_SIZE:
 		return []
 	var rows: Array = []
-	for index in range(RunSignatureSummary.HERO_IDS.size()):
+	var seen: Dictionary = {}
+	for index in range(CombatParty.PARTY_SIZE):
 		var hero: Variant = heroes[index]
-		if typeof(hero) != TYPE_DICTIONARY \
-				or hero.get("hero_id") != RunSignatureSummary.HERO_IDS[index]:
+		if typeof(hero) != TYPE_DICTIONARY:
 			return []
+		var hero_id: Variant = hero.get("hero_id")
+		if typeof(hero_id) != TYPE_STRING or not RunV3PartyAdmission.HERO_IDS.has(hero_id) \
+				or seen.has(hero_id) or hero.get("id") != hero_id:
+			return []
+		seen[hero_id] = true
 		var parts: Dictionary = _hero_recap_parts(hero)
 		if parts.is_empty():
 			return []
@@ -609,7 +555,7 @@ func _hero_recap_line(hero: Dictionary) -> String:
 ## zero HP, the genuine by-ID tear count and only actually worn slots.
 func _hero_recap_parts(hero: Dictionary) -> Dictionary:
 	var hero_id: Variant = hero.get("hero_id")
-	if typeof(hero_id) != TYPE_STRING or not RunSignatureSummary.HERO_IDS.has(hero_id):
+	if typeof(hero_id) != TYPE_STRING or not RunV3PartyAdmission.HERO_IDS.has(hero_id):
 		return {}
 	var tears: Variant = hero.get("tears")
 	if typeof(tears) != TYPE_INT or tears < 0:
@@ -687,7 +633,9 @@ func _mount_hero_rows(rows: Array) -> void:
 		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		inset.add_child(portrait)
-		apply_hero_portrait(portrait, HERO_PORTRAITS.get(parts["hero_id"], ""))
+		# Unillustrated V3 heroes keep their named cream sewn ticket. The
+		# absent portrait reserves no blank column or fabricated character art.
+		portrait.visible = apply_hero_portrait(portrait, HERO_PORTRAITS.get(parts["hero_id"], ""))
 		if parts.get("is_torn", false):
 			portrait.modulate = Color(0.6, 0.6, 0.62, 1.0)
 		else:
