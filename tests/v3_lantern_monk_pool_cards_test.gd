@@ -8,7 +8,9 @@ extends SceneTree
 ## party-wide heal, Block and explicit per-ally cleanse transactions are covered here too. The same
 ## real fixtures drive the scene-free CombatLanternMonkShroudCards service for both Moth Shroud
 ## printings: a paid ally-only Block plus one-shot Dodge token that never stacks and is never spent
-## by the cast. The
+## by the cast. The same real fixtures also drive CombatLanternMonkMothCloudCards for both Moth Cloud
+## printings: one paid all-enemy Blind-and-Exhaust transaction that arms the shared one-shot Blind
+## token on every living enemy slot, never spends it, and exhausts exactly one held copy. The
 ## catalog stays deliberately unwired from the live hand, rewards, map and shops, so no live card
 ## is claimed. It also proves caller copies are detached, invalid IDs fail closed, catalog
 ## enumeration consumes no run RNG, and the existing Rag Duelist pool and StarterCards stay
@@ -21,6 +23,17 @@ const StarterCardsScript = preload("res://data/cards/starter_cards.gd")
 ## Catalog seam double: only Moth Shroud authentication reads it, so a forged record proves the
 ## paid service fails closed on a rewritten catalog. Every other case uses the real catalog.
 class ForgedShroud extends CombatLanternMonkShroudCards:
+	var forged_id: String = ""
+	var forged: Dictionary = {}
+
+	func _catalog_definition(card_id: String) -> Dictionary:
+		if card_id == forged_id:
+			return forged.duplicate(true)
+		return super(card_id)
+
+## The same seam for the Moth Cloud service: one rewritten printing must never be paid for, and the
+## restored authentic pair still plays.
+class ForgedCloud extends CombatLanternMonkMothCloudCards:
 	var forged_id: String = ""
 	var forged: Dictionary = {}
 
@@ -64,10 +77,21 @@ const SHROUD_BLOCK := {SHROUD_BASE: 6, SHROUD_PLUS: 8}
 const SHROUD_FROM := [2, 3]
 const DODGE_KEY := "dodge_next_attack"
 
+## Paid all-enemy Moth Cloud fixtures, copied from the v3 design rather than read back from the
+## service or its catalog. Blind is the shared one-shot integer token, never the boolean descriptor.
+const CLOUD_BASE := "lantern_monk_moth_cloud"
+const CLOUD_PLUS := "lantern_monk_moth_cloud_plus"
+const CLOUD_IDS := [CLOUD_BASE, CLOUD_PLUS]
+const CLOUD_COST := {CLOUD_BASE: 2, CLOUD_PLUS: 1}
+const CLOUD_FROM := [2, 3]
+const CLOUD_EFFECTS := {"blind_next_attack": true, "exhaust": true}
+const BLIND_KEY := "blind_next_attack"
+
 var failures: Array[String] = []
 var checks: int = 0
 var party_service := CombatLanternMonkPartyCards.new()
 var shroud_service := CombatLanternMonkShroudCards.new()
+var cloud_service := CombatLanternMonkMothCloudCards.new()
 
 
 func _initialize() -> void:
@@ -89,6 +113,10 @@ func _initialize() -> void:
 	_test_shroud_ac1_paid_play()
 	_test_shroud_ac2_no_stack()
 	_test_shroud_ac3_rejections()
+	_test_cloud_cards_authored()
+	_test_cloud_ac1_paid_play()
+	_test_cloud_ac2_no_stack_and_phase()
+	_test_cloud_ac3_rejections()
 	if failures.is_empty():
 		print("v3_lantern_monk_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -1553,3 +1581,506 @@ func _shroud_rejected(deck: CombatDeck, party: CombatParty, card_id: Variant,
 		label + ": refusal carries a reason")
 	_check(_party_snapshot(deck, party) == before,
 		label + ": unchanged party, hand, draw, discard, energy, turn and RNG")
+
+
+## --- Paid all-enemy Moth Cloud (Blind every living enemy, then Exhaust) -------------------
+##
+## These cases drive the scene-free CombatLanternMonkMothCloudCards service over real seeded
+## CombatDeck, CombatParty and CombatEnemies fixtures and the real CombatEnemyPhase miss/consume
+## path. Like the earlier cases they claim callable rules-layer behaviour only: no live hand,
+## reward, app or run-deck wiring is asserted here.
+
+## Both printings must still carry their whole authored area line, and nothing else is supported:
+## not another Monk pool card, not another hero's card, not an upgrade of an upgrade.
+func _test_cloud_cards_authored() -> void:
+	var catalog: RefCounted = CatalogScript.new()
+	for card_id: String in CLOUD_IDS:
+		var record: Dictionary = catalog.get_definition(card_id)
+		_check(not record.is_empty(), card_id + ": authored pool record exists")
+		if record.is_empty():
+			continue
+		_check(record.get("owner") == "lantern_monk",
+			card_id + ": authored owner is the Lantern Monk")
+		_check(record.get("cost") == CLOUD_COST[card_id],
+			card_id + ": authored cost is " + str(CLOUD_COST[card_id]))
+		_check(record.get("from_positions") == CLOUD_FROM, card_id + ": authored FROM seats 2 and 3")
+		_check(record.get("target_kind") == "enemy_all", card_id + ": blinds the whole enemy line")
+		_check(record.get("to_positions") == [1, 2, 3], card_id + ": names all three enemy slots")
+		_check(record.get("effects") == CLOUD_EFFECTS, card_id + ": exact authored Blind and Exhaust")
+		_check(record.get("rarity") == "rare", card_id + ": authored rare rarity")
+		_check(record.get("starting_copies") == 0, card_id + ": zero starting copies")
+		_check(cloud_service.is_supported_card(card_id), card_id + ": service authenticates the ID")
+	_check(catalog.get_upgrade_id(CLOUD_BASE) == CLOUD_PLUS
+			and catalog.get_upgrade_id(CLOUD_PLUS) == "",
+		"the Moth Cloud pair still links base and '+' in the pool catalog")
+	for unsupported in ["", "lantern_monk_moth_cloud_plus_plus", "lantern_monk_moth_clou",
+			"lantern_monk_moth_cloud_ultra", "lantern_monk_moth_shroud", "lantern_monk_wax_ward",
+			"lantern_monk_lantern_glow", "lantern_monk_vigil_ring", "lantern_monk_wick_flicker",
+			"rag_duelist_cape_flourish", "warden_v3_rim_toss", "seamstress_mend"]:
+		_check(not cloud_service.is_supported_card(unsupported),
+			unsupported + ": not an authentic Moth Cloud printing")
+	_check(not cloud_service.is_supported_card(null)
+			and not cloud_service.is_supported_card(7)
+			and not cloud_service.is_supported_card(true)
+			and not cloud_service.is_supported_card(StringName(CLOUD_BASE)),
+		"non-string IDs are never supported")
+	# The authenticated lookup alone consumes no seeded run RNG.
+	var rng := _party_rng(8191)
+	var state_before: int = rng.state
+	for card_id: String in CLOUD_IDS:
+		cloud_service.is_supported_card(card_id)
+	cloud_service.is_supported_card("lantern_monk_unknown")
+	_check(rng.state == state_before and not CLOUD_IDS.is_empty(),
+		"supported-card queries consume no run RNG (non-empty precondition)")
+
+
+## AC1: on a genuine held base or '+' Moth Cloud, the Monk in a legal seat with energy and at least
+## one living enemy resolves exactly one paid transaction: the printed cost, exactly one held copy
+## exhausted (never discarded) and one Blind token on every LIVING enemy slot only. Slain slots keep
+## their record and position; HP, Block, every other status and the seeded RNG stay exact.
+func _test_cloud_ac1_paid_play() -> void:
+	for card_id: String in CLOUD_IDS:
+		# Base witness from seat 2, '+' witness from seat 3: both authored FROM seats are covered.
+		var monk_seat: int = 2 if card_id == CLOUD_BASE else 3
+		var party := _monk_party(monk_seat)
+		_check(party.get_hero(monk_seat)["id"] == "lantern_monk",
+			card_id + ": the living Monk really sits in a legal FROM seat")
+		var enemies := _cloud_enemies()
+		_check(enemies.apply_damage(2, 15) and enemies.is_slain(2)
+				and not enemies.is_slain(1) and not enemies.is_slain(3),
+			card_id + ": the middle enemy slot is genuinely slain and does not compact")
+		_check(enemies.apply_damage(1, 4) and enemies.gain_block(1, 3)
+				and enemies.apply_damage(3, 2) and enemies.gain_block(3, 5),
+			card_id + ": living enemies carry real damage and Block")
+		enemies._enemies[0]["statuses"] = {"weak": 2, "bleed": 1}
+		enemies._enemies[2]["statuses"] = {"exposed": 3}
+		var dead_before: Dictionary = enemies.get_enemy(2)
+		_check(dead_before["hp"] == 0 and dead_before["position"] == 2,
+			card_id + ": the slain slot keeps position 2 and zero HP")
+		var deck := _cloud_deck(card_id)
+		var held_before: int = deck.hand.count(card_id)
+		var discard_before: Array = deck.discard_pile.duplicate()
+		var before := _cloud_snapshot(deck, party, enemies)
+		var result: Dictionary = cloud_service.play_card(deck, party, enemies, card_id)
+		_check(result.get("ok") == true and result.get("reason") == "applied",
+			card_id + ": authorized paid all-enemy play")
+		_check(result.get("card_id") == card_id and result.get("cost") == CLOUD_COST[card_id],
+			card_id + ": receipt names the authentic card and its printed cost")
+		_check(result.get("owner_position") == monk_seat
+				and result.get("target_position") == 0
+				and result.get("target_kind") == "enemy_all",
+			card_id + ": receipt reports the owner seat and no selected slot")
+		_check(result.get("exhausted_card_id") == card_id,
+			card_id + ": receipt names the exhausted printing")
+		_check(result.get("blinded_positions") == [1, 3],
+			card_id + ": only the living slots 1 and 3 are blinded")
+		_check(result.get("energy_before") == 3
+				and result.get("energy_after") == 3 - CLOUD_COST[card_id],
+			card_id + ": receipt reports exactly one charge")
+		var receipts: Array = result.get("enemies", [])
+		_check(receipts.size() == 2 and receipts[0].get("position") == 1
+				and receipts[1].get("position") == 3,
+			card_id + ": receipt covers exactly the living enemy slots")
+		for entry in receipts:
+			_check(entry.get("blind_before") == 0 and entry.get("blind_after") == 1
+					and entry.get("already_blinded") == false,
+				card_id + ": receipt reports the armed Blind token on slot "
+					+ str(entry.get("position")))
+		_check(enemies.get_enemy(1)["statuses"] == {"weak": 2, "bleed": 1, BLIND_KEY: 1}
+				and typeof(enemies.get_enemy(1)["statuses"][BLIND_KEY]) == TYPE_INT,
+			card_id + ": slot 1 keeps Weak and Bleed and gains the integer Blind 1 token")
+		_check(enemies.get_enemy(3)["statuses"] == {"exposed": 3, BLIND_KEY: 1}
+				and typeof(enemies.get_enemy(3)["statuses"][BLIND_KEY]) == TYPE_INT,
+			card_id + ": slot 3 keeps Exposed and gains the integer Blind 1 token")
+		_check(not enemies.get_enemy(2).has("statuses"),
+			card_id + ": the slain slot gains no status map at all")
+		_check(enemies.get_enemy(1)["hp"] == 8 and enemies.get_enemy(1)["block"] == 3
+				and enemies.get_enemy(3)["hp"] == 7 and enemies.get_enemy(3)["block"] == 5,
+			card_id + ": no living enemy's HP or Block changes")
+		_check(enemies.get_enemy(2) == dead_before,
+			card_id + ": the slain slot is left completely untouched")
+		_check(_cloud_snapshot(deck, party, enemies) == _cloud_expected_play(before, card_id),
+			card_id + ": exact enemies, party, hand, draw, discard, exhausted, energy and RNG")
+		_check(deck.hand.count(card_id) == held_before - 1 and deck.hand.size() == 4
+				and deck.draw_pile.size() == 1,
+			card_id + ": exactly one held copy left the hand and nothing was drawn")
+		_check(deck.exhausted == [card_id] and deck.discard_pile == discard_before
+				and not deck.discard_pile.has(card_id),
+			card_id + ": the copy was exhausted for this battle, never discarded")
+		_check(deck.energy == 3 - CLOUD_COST[card_id], card_id + ": exactly the printed energy was charged")
+		_check(_cloud_snapshot(deck, party, enemies)["rng_state"] == before["rng_state"],
+			card_id + ": no run-RNG draw during resolution")
+		# The receipt is detached from the live roster.
+		receipts[0]["blind_after"] = 9
+		_check(enemies.get_enemy(1)["statuses"][BLIND_KEY] == 1,
+			card_id + ": mutating a receipt cannot change the authoritative enemy")
+
+
+## AC2: an already armed Blind stays exactly 1 (never 2), an inert 0 becomes 1, and only the
+## enemy's actual next attack spends the token. The existing enemy phase resolves that miss, while
+## an end-owner-turn tick and a nonattack beat leave the token armed.
+func _test_cloud_ac2_no_stack_and_phase() -> void:
+	for card_id: String in CLOUD_IDS:
+		var party := _monk_party(2)
+		var enemies := _cloud_enemies()
+		enemies._enemies[0]["statuses"] = {BLIND_KEY: 1, "bleed": 2}
+		enemies._enemies[1]["statuses"] = {"weak": 2}
+		enemies._enemies[2]["statuses"] = {BLIND_KEY: 0, "tangled": 3}
+		var tick: Dictionary = CombatStatusTurnBatch.new().tick_side(
+			"enemies", enemies.get_enemies())
+		_check(tick.get("ok") == true
+				and tick.get("actors", [])[0].get("statuses") == {BLIND_KEY: 1, "bleed": 1},
+			card_id + ": an owner-turn tick ages Bleed but keeps Blind at 1")
+		_check(enemies.get_enemy(1)["statuses"] == {BLIND_KEY: 1, "bleed": 2},
+			card_id + ": the tick proposal never writes to the real roster")
+		var deck := _cloud_deck(card_id)
+		var before := _cloud_snapshot(deck, party, enemies)
+		var result: Dictionary = cloud_service.play_card(deck, party, enemies, card_id, 0)
+		_check(result.get("ok") == true, card_id + ": the authentic area cast succeeds")
+		_check(enemies.get_enemy(1)["statuses"] == {BLIND_KEY: 1, "bleed": 2}
+				and typeof(enemies.get_enemy(1)["statuses"][BLIND_KEY]) == TYPE_INT,
+			card_id + ": an already armed integer Blind stays exactly 1 and the debuff survives")
+		_check(enemies.get_enemy(2)["statuses"] == {"weak": 2, BLIND_KEY: 1}
+				and typeof(enemies.get_enemy(2)["statuses"][BLIND_KEY]) == TYPE_INT,
+			card_id + ": an enemy without Blind gains exactly one integer token")
+		_check(enemies.get_enemy(3)["statuses"] == {"tangled": 3, BLIND_KEY: 1}
+				and typeof(enemies.get_enemy(3)["statuses"][BLIND_KEY]) == TYPE_INT,
+			card_id + ": an inert Blind 0 is armed to the integer 1 without stacking")
+		_check(result.get("enemies", [])[0].get("already_blinded") == true,
+			card_id + ": the receipt reports the pre-existing Blind")
+		_check(_cloud_snapshot(deck, party, enemies) == _cloud_expected_play(before, card_id),
+			card_id + ": exact no-stack transaction")
+
+		# The existing real phase helper resolves the armed token as one missed attack.
+		var phase := CombatEnemyPhase.new()
+		var heroes_before: Array = party.get_heroes()
+		var attack_one := {"type": "attack", "enemy_position": 1, "amount": 6,
+			"target_position": 1}
+		var miss_one: Dictionary = phase.execute_phase(party, enemies, [attack_one])
+		_check(miss_one.get("ok") == true and miss_one.get("events", []).size() == 1
+				and miss_one["events"][0].get("applied") == false
+				and miss_one["events"][0].get("target_position") == 1,
+			card_id + ": the blinded enemy's next attack misses once")
+		_check(party.get_heroes() == heroes_before,
+			card_id + ": the miss deals no HP or Block damage")
+		_check(enemies.get_enemy(1)["statuses"] == {"bleed": 2},
+			card_id + ": only the actual attack spends that enemy's Blind token")
+		_check(enemies.get_enemy(2)["statuses"].get(BLIND_KEY) == 1
+				and enemies.get_enemy(3)["statuses"].get(BLIND_KEY) == 1,
+			card_id + ": other enemies keep their armed Blind untouched")
+
+		# A nonattack beat never spends Blind.
+		var block_action := {"type": "block", "enemy_position": 2, "amount": 4}
+		var block_result: Dictionary = phase.execute_phase(party, enemies, [block_action])
+		_check(block_result.get("ok") == true and block_result["events"][0].get("applied") == true
+				and enemies.get_enemy(2)["statuses"] == {"weak": 2, BLIND_KEY: 1},
+			card_id + ": a Block beat applies but leaves Blind armed")
+		var heroes_before_second: Array = party.get_heroes()
+		var miss_two: Dictionary = phase.execute_phase(party, enemies, [
+			{"type": "attack", "enemy_position": 2, "amount": 5, "target_position": 2}])
+		_check(miss_two.get("ok") == true and miss_two["events"][0].get("applied") == false
+				and party.get_heroes() == heroes_before_second
+				and not enemies.get_enemy(2)["statuses"].has(BLIND_KEY)
+				and enemies.get_enemy(2)["statuses"] == {"weak": 2},
+			card_id + ": the surviving Blind then spends on that enemy's real next attack")
+		var tick_after: Dictionary = CombatStatusTurnBatch.new().tick_side(
+			"enemies", enemies.get_enemies())
+		_check(tick_after.get("ok") == true
+				and tick_after["actors"][2]["statuses"].get(BLIND_KEY) == 1
+				and enemies.get_enemy(3)["statuses"] == {"tangled": 3, BLIND_KEY: 1},
+			card_id + ": ending an owner turn never consumes Blind")
+
+
+## AC3: every unsupported, forged, ineligible, unaffordable, unheld, ended, wrong-owner/seat/HP,
+## no-living-target or malformed-status request fails closed with no payment, exhaustion, discard,
+## HP/Block/status change or RNG advance. A rejected attempt never poisons the next authentic one.
+func _test_cloud_ac3_rejections() -> void:
+	var party := _monk_party(2)
+
+	var inactive := CombatDeck.new([CLOUD_BASE, CLOUD_BASE, CLOUD_BASE,
+		PARTY_FILLERS[0], PARTY_FILLERS[1], PARTY_FILLERS[2]], _party_rng(991))
+	_check(not inactive.turn_active and inactive.hand.is_empty(),
+		"inactive-turn fixture really has no active turn")
+	_cloud_rejected(inactive, party, _cloud_enemies(), CLOUD_BASE, 0, "inactive turn")
+
+	var deck := _cloud_deck(CLOUD_BASE)
+	_check(deck.hand.has(CLOUD_BASE) and not deck.hand.has(CLOUD_PLUS),
+		"absent-card fixture holds the base printing only")
+	_cloud_rejected(deck, party, _cloud_enemies(), CLOUD_PLUS, 0,
+		"authentic '+' absent from the hand")
+	for unknown in ["", "lantern_monk_moth_cloud_plus_plus", "lantern_monk_moth_clou",
+			"lantern_monk_moth_shroud", "lantern_monk_wax_ward", "lantern_monk_lantern_glow",
+			"lantern_monk_vigil_ring", "rag_duelist_cape_flourish", "warden_v3_rim_toss",
+			7, null, StringName(CLOUD_BASE)]:
+		_cloud_rejected(deck, party, _cloud_enemies(), unknown, 0,
+			"unsupported or forged printing " + str(unknown))
+
+	for short_id: String in CLOUD_IDS:
+		var short := _cloud_deck(short_id)
+		_check(short.try_spend_energy(3) and short.energy == 0 and short.hand.has(short_id),
+			short_id + ": energy-short fixture is genuinely broke and still holds the card")
+		_cloud_rejected(short, party, _cloud_enemies(), short_id, 0, "insufficient energy")
+
+	for bad_target in [1, 2, 3, -1, 4, 99]:
+		_cloud_rejected(_cloud_deck(CLOUD_BASE), party, _cloud_enemies(), CLOUD_BASE,
+			bad_target, "selected area target slot " + str(bad_target))
+
+	var front_monk := _monk_party(1)
+	_check(front_monk.get_hero(1)["id"] == "lantern_monk",
+		"illegal-FROM fixture really has the living Monk in seat 1")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), front_monk, _cloud_enemies(), CLOUD_BASE, 0,
+		"Moth Cloud from the Monk's illegal seat 1")
+
+	var torn_owner := _monk_party(2)
+	_check(torn_owner.apply_damage(2, MONK_MAX_HP) and torn_owner.is_downed(2),
+		"torn-caster fixture has a genuinely downed Monk")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), torn_owner, _cloud_enemies(), CLOUD_BASE, 0,
+		"torn (downed) Monk")
+
+	var no_owner := CombatParty.new([
+		{"id": "warden", "name": "Warden", "max_hp": 40},
+		{"id": "tinker", "name": "Tinker", "max_hp": 26},
+		{"id": "mender", "name": "Mender", "max_hp": 20},
+	])
+	_check(no_owner.is_valid() and no_owner.get_hero(3)["id"] == "mender",
+		"missing-owner fixture is a valid three-hero party with no Monk")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), no_owner, _cloud_enemies(), CLOUD_BASE, 0,
+		"party with no Lantern Monk owner")
+
+	var duplicated := _monk_party(2)
+	duplicated._heroes[0]["id"] = "lantern_monk"
+	_check(duplicated.get_hero(1)["id"] == "lantern_monk"
+			and duplicated.get_hero(2)["id"] == "lantern_monk",
+		"duplicate-identity fixture really repeats the owner ID")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), duplicated, _cloud_enemies(), CLOUD_BASE, 0,
+		"duplicate hero identity")
+
+	var above_max := _monk_party(2)
+	above_max._heroes[0]["hp"] = int(above_max._heroes[0]["max_hp"]) + 1
+	_check(above_max.get_hero(1)["hp"] > above_max.get_hero(1)["max_hp"],
+		"malformed-roster fixture really has HP above max")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), above_max, _cloud_enemies(), CLOUD_BASE, 0,
+		"HP above max")
+
+	var bad_block := _monk_party(2)
+	bad_block._heroes[2]["block"] = -1
+	_check(bad_block.get_hero(3)["block"] == -1, "negative-Block fixture really stores -1")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), bad_block, _cloud_enemies(), CLOUD_BASE, 0,
+		"negative Block")
+
+	var bad_position := _monk_party(2)
+	bad_position._heroes[0]["position"] = 3
+	_check(bad_position.get_hero(1)["position"] == 3,
+		"wrong-position fixture really stores the wrong slot")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), bad_position, _cloud_enemies(), CLOUD_BASE, 0,
+		"wrong stored hero position")
+
+	for bad_statuses in ["bleed", [], null, {"bleed": -1}, {"bleed": "3"}, {"bleed": 1.5},
+			{"weak": true}, {1: 2}, {"": 1}, {"unknown_status": 1},
+			{BLIND_KEY: 2}, {BLIND_KEY: 1.5}, {DODGE_KEY: 2}]:
+		var broken := _monk_party(2)
+		broken._heroes[2]["statuses"] = bad_statuses
+		_check(broken.get_hero(3)["statuses"] == bad_statuses,
+			"malformed hero-status fixture really stores " + str(bad_statuses))
+		_cloud_rejected(_cloud_deck(CLOUD_BASE), broken, _cloud_enemies(), CLOUD_BASE, 0,
+			"malformed hero statuses " + str(bad_statuses))
+
+	var wiped := _cloud_enemies()
+	_check(wiped.apply_damage(1, 12) and wiped.apply_damage(2, 15) and wiped.apply_damage(3, 9)
+			and wiped.is_defeated() and wiped.get_enemies().size() == 3,
+		"no-living-enemy fixture really has three slain, non-compacted slots")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), party, wiped, CLOUD_BASE, 0,
+		"no living enemy to blind")
+
+	for bad_statuses in ["bleed", [], null, {"bleed": -1}, {"bleed": "3"},
+			{"weak": true}, {1: 2}, {"": 1}, {"unknown_status": 1},
+			{BLIND_KEY: 2}, {BLIND_KEY: -1}, {DODGE_KEY: 2}]:
+		var broken_enemies := _cloud_enemies()
+		broken_enemies._enemies[0]["statuses"] = bad_statuses
+		_check(broken_enemies.get_enemy(1)["statuses"] == bad_statuses,
+			"malformed enemy-status fixture really stores " + str(bad_statuses))
+		_cloud_rejected(_cloud_deck(CLOUD_BASE), party, broken_enemies, CLOUD_BASE, 0,
+			"malformed enemy statuses " + str(bad_statuses))
+
+	# A malformed map on an already-slain slot is not skipped: the whole roster is validated.
+	var dead_malformed := _cloud_enemies()
+	_check(dead_malformed.apply_damage(2, 15) and dead_malformed.is_slain(2),
+		"dead-slot fixture really has a slain middle enemy")
+	dead_malformed._enemies[1]["statuses"] = {BLIND_KEY: 2}
+	_check(dead_malformed.get_enemy(2)["statuses"] == {BLIND_KEY: 2},
+		"dead-slot fixture really stores the malformed map")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), party, dead_malformed, CLOUD_BASE, 0,
+		"malformed status map on a slain slot")
+
+	var bad_enemy_block := _cloud_enemies()
+	bad_enemy_block._enemies[0]["block"] = -1
+	_check(bad_enemy_block.get_enemy(1)["block"] == -1,
+		"negative-enemy-Block fixture really stores -1")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), party, bad_enemy_block, CLOUD_BASE, 0,
+		"negative enemy Block")
+
+	var bad_enemy_position := _cloud_enemies()
+	bad_enemy_position._enemies[1]["position"] = 3
+	_check(bad_enemy_position.get_enemy(2)["position"] == 3,
+		"wrong-enemy-position fixture really stores the wrong slot")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), party, bad_enemy_position, CLOUD_BASE, 0,
+		"wrong stored enemy position")
+
+	_cloud_rejected(null, party, _cloud_enemies(), CLOUD_BASE, 0, "null deck")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), null, _cloud_enemies(), CLOUD_BASE, 0, "null party")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), CombatParty.new([]), _cloud_enemies(), CLOUD_BASE, 0,
+		"invalid party roster")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), party, null, CLOUD_BASE, 0, "null enemies")
+	_cloud_rejected(_cloud_deck(CLOUD_BASE), party, CombatEnemies.new([]), CLOUD_BASE, 0,
+		"invalid enemy roster")
+
+	# A rejected attempt never poisons the next authentic one.
+	var retry_deck := _cloud_deck(CLOUD_BASE)
+	var retry_party := _monk_party(2)
+	var retry_enemies := _cloud_enemies()
+	retry_enemies._enemies[0]["statuses"] = {"bleed": 2}
+	var retry_before := _cloud_snapshot(retry_deck, retry_party, retry_enemies)
+	_cloud_rejected(retry_deck, retry_party, retry_enemies, CLOUD_BASE, 2, "retry: selected slot")
+	_cloud_rejected(retry_deck, retry_party, retry_enemies, CLOUD_PLUS, 0,
+		"retry: absent '+' printing")
+	var retried: Dictionary = cloud_service.play_card(
+		retry_deck, retry_party, retry_enemies, CLOUD_BASE, 0)
+	_check(retried.get("ok") == true, "retry: the authentic play then succeeds")
+	_check(_cloud_snapshot(retry_deck, retry_party, retry_enemies)
+			== _cloud_expected_play(retry_before, CLOUD_BASE),
+		"retry: exactly one charge, one exhaustion and an untouched RNG")
+
+	# A forged catalog record — every authenticated field omitted or altered, or a coercible/extra
+	# effect — is never paid for, while the restored authentic record still plays.
+	var real_catalog: RefCounted = CatalogScript.new()
+	var altered_values := {
+		"id": "fake_cloud", "display_name": "Fake Cloud", "owner": "warden", "cost": 0,
+		"target_kind": "enemy_single", "from_positions": [1, 2], "to_positions": [1],
+		"effects": {BLIND_KEY: true}, "rarity": "common", "starting_copies": 1,
+		"reward_eligible": true, "illustration_path": "res://assets/paper/cards/fake_cloud.png",
+		"upgrade_id": "fake_cloud", "upgrade_of": "fake_cloud",
+	}
+	for card_id: String in CLOUD_IDS:
+		var authentic: Dictionary = real_catalog.get_definition(card_id)
+		_check(not authentic.is_empty(),
+			card_id + ": authentic record available (forgery precondition)")
+		if authentic.is_empty():
+			continue
+		var link_field := "upgrade_of" if card_id.ends_with("_plus") else "upgrade_id"
+		var mutations: Array = []
+		for field in ["id", "display_name", "owner", "cost", "target_kind", "from_positions",
+				"to_positions", "effects", "rarity", "starting_copies", "reward_eligible",
+				"illustration_path", link_field]:
+			var omitted: Dictionary = authentic.duplicate(true)
+			omitted.erase(field)
+			mutations.append(omitted)
+			var altered: Dictionary = authentic.duplicate(true)
+			var replacement: Variant = altered_values[field]
+			# The base record is already reward eligible, so that forgery flips the authored flag.
+			if field == "reward_eligible":
+				replacement = not bool(authentic[field])
+			if replacement is Dictionary or replacement is Array:
+				replacement = replacement.duplicate(true)
+			altered[field] = replacement
+			mutations.append(altered)
+		var extra_effect: Dictionary = authentic.duplicate(true)
+		extra_effect["effects"]["draw"] = 1
+		mutations.append(extra_effect)
+		var typed_blind: Dictionary = authentic.duplicate(true)
+		typed_blind["effects"][BLIND_KEY] = 1
+		mutations.append(typed_blind)
+		var typed_exhaust: Dictionary = authentic.duplicate(true)
+		typed_exhaust["effects"]["exhaust"] = "true"
+		mutations.append(typed_exhaust)
+		var bool_cost: Dictionary = authentic.duplicate(true)
+		bool_cost["cost"] = true
+		mutations.append(bool_cost)
+		_check(not mutations.is_empty(), card_id + ": forgery fixtures are non-empty (precondition)")
+
+		var forged_service := ForgedCloud.new()
+		var forged_deck := _cloud_deck(card_id)
+		var forged_party := _monk_party(2)
+		var forged_enemies := _cloud_enemies()
+		forged_service.forged_id = card_id
+		for forged: Dictionary in mutations:
+			forged_service.forged = forged
+			var forged_before := _cloud_snapshot(forged_deck, forged_party, forged_enemies)
+			var result: Dictionary = forged_service.play_card(
+				forged_deck, forged_party, forged_enemies, card_id, 0)
+			_check(result.get("ok") == false, card_id + ": forged catalog record rejected")
+			_check(result.get("reason") is String and not (result.get("reason") as String).is_empty(),
+				card_id + ": forged refusal carries a reason")
+			_check(_cloud_snapshot(forged_deck, forged_party, forged_enemies) == forged_before,
+				card_id + ": forged rejection leaves deck, party, enemies and RNG unchanged")
+		forged_service.forged_id = ""
+		var restored: Dictionary = forged_service.play_card(
+			forged_deck, forged_party, forged_enemies, card_id, 0)
+		_check(restored.get("ok") == true and restored.get("card_id") == card_id,
+			card_id + ": the restored authentic pair plays")
+
+
+## A real seeded five-card hand from six cards, so at least two copies of the named ID are held.
+func _cloud_deck(card_id: String, seed_value: int = 7311) -> CombatDeck:
+	var ids: Array[String] = [card_id, card_id, card_id, PARTY_FILLERS[0], PARTY_FILLERS[1],
+		PARTY_FILLERS[2]]
+	var deck := CombatDeck.new(ids, _party_rng(seed_value))
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3
+			and deck.hand.size() == 5 and deck.hand.count(card_id) >= 2,
+		card_id + ": real seeded five-card hand holding duplicate copies")
+	return deck
+
+
+## Three independent enemy slots; callers slay or wound them through CombatEnemies itself.
+func _cloud_enemies() -> CombatEnemies:
+	var enemies := CombatEnemies.new([
+		{"id": "moth_fixture_a", "max_hp": 12},
+		{"id": "moth_fixture_b", "max_hp": 15},
+		{"id": "moth_fixture_c", "max_hp": 9},
+	])
+	_check(enemies.is_valid() and enemies.get_enemies().size() == 3
+			and enemies.get_enemy(1)["hp"] == 12 and enemies.get_enemy(2)["hp"] == 15
+			and enemies.get_enemy(3)["hp"] == 9,
+		"moth-cloud fixture really has three independent enemy slots")
+	return enemies
+
+
+## The full observable state (including the exhausted pile) plus the injected RNG state.
+func _cloud_snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies) -> Dictionary:
+	var result: Dictionary = _party_snapshot(deck, party)
+	if deck != null:
+		result["exhausted"] = deck.exhausted.duplicate(true)
+	if enemies != null:
+		result["enemies"] = enemies.get_enemies()
+		result["enemies_valid"] = enemies.is_valid()
+	return result
+
+
+## The single-transaction expected state for an area Moth Cloud play: one cost, one card exhausted,
+## and exactly Blind 1 on every living enemy slot. Slain slots stay byte-identical.
+func _cloud_expected_play(before: Dictionary, card_id: String) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] = int(expected["energy"]) - int(CLOUD_COST[card_id])
+	expected["state_energy"] = int(expected["state_energy"]) - int(CLOUD_COST[card_id])
+	var hand: Array = expected["hand"]
+	hand.remove_at(hand.find(card_id))
+	expected["exhausted"].append(card_id)
+	for index in range(expected["enemies"].size()):
+		var enemy: Dictionary = expected["enemies"][index]
+		if int(enemy["hp"]) == 0:
+			continue
+		var statuses: Dictionary = enemy.get("statuses", {})
+		statuses[BLIND_KEY] = 1
+		enemy["statuses"] = statuses
+	return expected
+
+
+func _cloud_rejected(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, card_id: Variant,
+		target_position: int, label: String) -> void:
+	var before := _cloud_snapshot(deck, party, enemies)
+	var result: Dictionary = cloud_service.play_card(
+		deck, party, enemies, card_id, target_position)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("reason") is String and not (result.get("reason") as String).is_empty(),
+		label + ": refusal carries a reason")
+	_check(_cloud_snapshot(deck, party, enemies) == before,
+		label + ": unchanged enemies, party, hand, draw, discard, exhausted, energy, turn and RNG")
