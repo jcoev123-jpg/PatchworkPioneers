@@ -317,7 +317,10 @@ func _oracle_hero_lines(summary: Dictionary, defeated: bool = false) -> Array[St
 
 func _battle(enemy_path: String, chosen: Array = []) -> Dictionary:
 	var party := CombatParty.new(_definitions(HEROES) if chosen.is_empty() else chosen)
-	var enemies := CombatEnemies.new(_definitions(enemy_path))
+	var definitions := _definitions(enemy_path)
+	if enemy_path == BOSS:
+		definitions = definitions.filter(func(entry): return entry.get("id") == "patchwork_behemoth")
+	var enemies := CombatEnemies.new(definitions)
 	_check(party.is_valid() and enemies.is_valid(), "genuine living combat services are valid")
 	var expected_ids := ["warden", "seamstress", "tinker"] if chosen.is_empty() else [chosen[0].id, chosen[1].id, chosen[2].id]
 	_check(party.get_heroes().size() == 3

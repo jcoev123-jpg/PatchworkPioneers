@@ -1,0 +1,9 @@
+[
+  {"enemy_position": 1, "pattern": [
+    {"type": "attack", "amount": 3, "target_position": 1},
+    {"type": "block", "amount": 5},
+    {"type": "attack", "amount": 3, "target_position": 2},
+    {"type": "debuff", "amount": 1, "target_position": 3, "status": "weak"},
+    {"type": "attack", "amount": 3, "target_position": 3}
+  ]}
+]

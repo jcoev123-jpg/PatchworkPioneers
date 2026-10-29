@@ -171,7 +171,10 @@ func _replay(route: Dictionary, lose: bool) -> Array:
 					return []
 			_check(f.party.get_heroes() == f.carry.read_state().heroes, "battle starts with exact carried heroes")
 			var source := "res://data/enemies/boss.json" if kind == "Boss" else "res://data/enemies/starter_enemies.json"
-			f.enemies = CombatEnemies.new(_authored(source))
+			var records := _authored(source)
+			if kind == "Boss":
+				records = records.filter(func(entry): return entry.get("id") == "patchwork_behemoth")
+			f.enemies = CombatEnemies.new(records)
 			_check(f.enemies.is_valid() and not f.enemies.is_victorious(), "authored enemies begin alive")
 			f.result = CombatBattleResult.new(f.party, f.enemies)
 			_check(f.result.get_outcome() == CombatBattleResult.ACTIVE and f.act.begin_current_battle(f.result), "bind fresh ACTIVE battle before observation")

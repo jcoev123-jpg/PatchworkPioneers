@@ -158,6 +158,10 @@
       "enemy_ids": [
         "patchwork_behemoth"
       ]
+    },
+    "sewing_machine_colossus": {
+      "schedule": "res://data/encounters/sewing_machine_colossus.json",
+      "enemy_ids": ["sewing_machine_colossus"]
     }
   }
 }

@@ -119,9 +119,9 @@ func _search(map: RunMap, choices: Array, path: Array, counts: Dictionary) -> Ar
 
 func _fixture() -> Dictionary:
 	# The expanded stop pool repins the retained fixture with a funded Shop, final recovery and a
-	# witnessed full win using the unchanged held-card pilot. Repinned to seed 1550 when Clothespin
-	# Crusher, Crochet Hook Harrier and Thistle Patch Doll joined the normal floor bands.
-	for value in [1550] + range(128, SEED_LIMIT + 1):
+	# witnessed full win using the unchanged held-card pilot. Seed 309 preserves
+	# that victory after two genuine seeded Boss candidates changed RNG cadence.
+	for value in [309] + range(128, SEED_LIMIT + 1):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
@@ -711,7 +711,8 @@ func _win(fixture: Dictionary) -> Array:
 			_check(app.run_heroes == app.party_carryover.read_state().heroes,
 				"published roster agrees with carryover ledger before claim")
 			if kind == "Boss":
-				_check(app.enemies.get_enemy(1).id == "patchwork_behemoth" and app.enemies.is_victorious()
+				_check(app.enemies.get_enemy(1).id in ["patchwork_behemoth", "sewing_machine_colossus"]
+					and app.enemies.get_enemies().size() == 1 and app.enemies.is_victorious()
 					and app.act_outcome.get_state().run_status == "VICTORY" and app.run_map.get_route() == fixture.path,
 					"witnessed authored final Boss victory after all twelve selections")
 				await _return_terminal("Victory")

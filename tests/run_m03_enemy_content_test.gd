@@ -183,7 +183,7 @@ func _battle_snapshot(party: CombatParty, enemies: CombatEnemies, deck: CombatDe
 
 func _play_typed_boss() -> Dictionary:
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 83003
+	rng.seed = 4002
 	var map := RunMap.new()
 	map.generate(rng)
 	for floor_index in range(12):

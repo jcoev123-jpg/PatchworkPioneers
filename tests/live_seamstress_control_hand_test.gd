@@ -736,7 +736,8 @@ func _tier_cases() -> void:
 	for position in elite_tiers:
 		_check(elite_tiers[position] == "elite", "elite catalog slot maps to the elite tier")
 
-	var boss_records := _catalog_records("res://data/enemies/boss.json")
+	var boss_records := _catalog_records("res://data/enemies/boss.json").filter(
+		func(entry): return entry.get("id") == "patchwork_behemoth")
 	var boss := CombatEnemies.new(boss_records)
 	var boss_tiers: Dictionary = presenter.enemy_tier_map(boss)
 	_check(boss_tiers.size() == 1 and boss_tiers[1] == "boss",

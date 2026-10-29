@@ -113,11 +113,18 @@ func _bind_battle_with_phase_data(enemies: CombatEnemies, party: CombatParty,
 				or not CombatBehemothPhaseRules.validate_boss_definition(boss_data) \
 				or not CombatBehemothPhaseRules.validate_phase_two_record(phase_data):
 			return false
+		# The Boss catalog now also contains the Colossus. Select only the
+		# authentic Behemoth record; duplicate IDs fail before any RNG draw.
 		var canonical: Variant = boss_data
 		if boss_data is Array:
-			if boss_data.size() != 1:
-				return false
-			canonical = boss_data[0]
+			canonical = {}
+			for candidate in boss_data:
+				if not candidate is Dictionary:
+					return false
+				if candidate.get("id") == CombatBehemothPhaseRules.BOSS_ID:
+					if not canonical.is_empty():
+						return false
+					canonical = candidate
 		if not canonical is Dictionary:
 			return false
 		if tier not in [0, 1, 2]:
