@@ -45,6 +45,14 @@ const EXPECTED_EVENTS := {
 		"exact_wallet": {"gold": 20, "scraps": 0},
 		"funded_wallet": {"gold": 30, "scraps": 4},
 	},
+	"v3_bellspool_picket": {
+		"fight_choice_id": "ring_the_bells",
+		"paid_choice_id": "pay_bell_toll",
+		"paid_outcome": {"gold": -16, "scraps": 0},
+		"short_wallet": {"gold": 15, "scraps": 5},
+		"exact_wallet": {"gold": 16, "scraps": 0},
+		"funded_wallet": {"gold": 30, "scraps": 4},
+	},
 }
 
 var failures: Array[String] = []
@@ -69,6 +77,7 @@ func _initialize() -> void:
 	_test_ac1_seeded_selection_and_oracle_replay(run_rng)
 	_test_ac2_selected_open_visit_and_receipt_branches(run_rng)
 	_test_ac3_selection_refusals_and_isolation(run_rng)
+	_test_ac_bellspool_picket_dedicated(run_rng)
 
 	_check(catalog_doc == catalog_snapshot, "loaded catalog dictionary unchanged across all test flows")
 	_check(run_rng.state == initial_rng_state, "seeded RandomNumberGenerator state unchanged across entire suite")
@@ -700,7 +709,7 @@ func _test_ac3_invalid_metadata_and_forgeries(run_rng: RandomNumberGenerator) ->
 	(missing_required_doc["events"] as Array).pop_back()
 	var missing_gate := RunV3FightEventGate.new("v3_stitchline_roadblock", missing_required_doc)
 	_check(not missing_gate.is_catalog_valid() and not missing_gate.is_valid(),
-		"catalog missing one of the five required events fails closed")
+		"catalog missing one of the required events fails closed")
 
 	var duplicate_event_doc: Dictionary = catalog_doc.duplicate(true)
 	(duplicate_event_doc["events"] as Array).append(base_record.duplicate(true))
@@ -829,7 +838,7 @@ func _test_ac3_invalid_metadata_and_forgeries(run_rng: RandomNumberGenerator) ->
 		var appended_bad_gate := RunV3FightEventGate.new("v3_frayed_bridge_watch", appended_bad_catalog)
 		_check(
 			not appended_bad_gate.is_catalog_valid() and not appended_bad_gate.is_valid(),
-			"catalog with malformed appended 6th record fails closed"
+			"catalog with malformed appended record fails closed"
 		)
 
 	_check(run_rng.state == rng_before, "AC3 forgery/metadata checks consume zero seeded RNG")
@@ -1437,3 +1446,228 @@ func _test_ac3_selection_refusals_and_isolation(run_rng: RandomNumberGenerator) 
 	_check(caller_wallet == wallet_snapshot, "caller wallet argument unmutated by settlement")
 	_check(gate.get_catalog_events() == catalog_snapshot_events, "catalog events snapshot unmutated")
 	_check(run_rng.state == rng_before, "AC3 tests consume zero run_rng draws")
+
+
+func _test_ac_bellspool_picket_dedicated(run_rng: RandomNumberGenerator) -> void:
+	var rng_before: int = run_rng.state
+	var gate := RunV3FightEventGate.new()
+	_check(gate.is_catalog_valid(), "bellspool test: catalog is valid")
+
+	# 1. AC1: Authoring and schema verification of v3_bellspool_picket
+	var record: Dictionary = gate.get_event_record("v3_bellspool_picket")
+	_check(not record.is_empty(), "v3_bellspool_picket record exists in catalog")
+	_check(record.get("id") == "v3_bellspool_picket", "exact event ID v3_bellspool_picket")
+	_check(record.get("title") == "The Bellspool Picket", "exact title The Bellspool Picket")
+	_check(
+		record.get("description") == "A chain of oversized brass bells and thread-wrapped spools blocks the moonlit lane; doll sentries turn as one when the bells ring.",
+		"exact description byte-for-byte"
+	)
+	_check(record.get("fight_choice_id") == "ring_the_bells", "exact fight_choice_id ring_the_bells")
+	var choices_raw: Variant = record.get("choices")
+	_check(choices_raw is Array and (choices_raw as Array).size() == 3, "exact 3 choices in authored order")
+	if choices_raw is Array and (choices_raw as Array).size() == 3:
+		var choices: Array = choices_raw
+		_check(
+			choices[0].get("id") == "ring_the_bells"
+			and choices[0].get("text") == "Ring the bellspool and face the sentries (Fight)"
+			and int(choices[0].get("outcome", {}).get("gold")) == 0
+			and int(choices[0].get("outcome", {}).get("scraps")) == 0,
+			"choice 0 is ring_the_bells fight choice"
+		)
+		_check(
+			choices[1].get("id") == "pay_bell_toll"
+			and choices[1].get("text") == "Pay the bell toll (spend 16 gold)"
+			and int(choices[1].get("outcome", {}).get("gold")) == -16
+			and int(choices[1].get("outcome", {}).get("scraps")) == 0,
+			"choice 1 is pay_bell_toll paid choice costing 16 gold"
+		)
+		_check(
+			choices[2].get("id") == "leave"
+			and choices[2].get("text") == "Retreat along the quiet seam (Leave)"
+			and int(choices[2].get("outcome", {}).get("gold")) == 0
+			and int(choices[2].get("outcome", {}).get("scraps")) == 0,
+			"choice 2 is leave retreat choice"
+		)
+
+	# 2. AC2: Boundary affordability previews at 15 and 16 gold
+	var visit_preview_15 := gate.open_visit("v3_bellspool_picket")
+	_check(visit_preview_15 != null and visit_preview_15.is_valid(), "visit_preview_15 opened successfully")
+	var preview_15: Dictionary = visit_preview_15.preview_choices({"gold": 15, "scraps": 0})
+	_check(preview_15.get("ok") == true, "preview_choices succeeds at 15 gold")
+	var p15_choices: Array = preview_15.get("choices", [])
+	_check(p15_choices.size() == 3, "preview_15 has 3 choices")
+	for entry_raw: Variant in p15_choices:
+		var entry: Dictionary = entry_raw
+		var cid: String = String(entry.get("choice_id", ""))
+		if cid == "ring_the_bells":
+			_check(
+				entry.get("affordable") == true
+				and entry.get("wallet") == {"gold": 15, "scraps": 0}
+				and entry.get("fight_request") == {"node_type": "Fight"},
+				"15 gold preview: ring_the_bells affordable with fight_request"
+			)
+		elif cid == "pay_bell_toll":
+			_check(
+				entry.get("affordable") == false
+				and entry.get("wallet") == {"gold": 15, "scraps": 0}
+				and entry.get("fight_request") == {},
+				"15 gold preview: pay_bell_toll unaffordable without fight_request"
+			)
+		elif cid == "leave":
+			_check(
+				entry.get("affordable") == true
+				and entry.get("wallet") == {"gold": 15, "scraps": 0}
+				and entry.get("fight_request") == {},
+				"15 gold preview: leave affordable without fight_request"
+			)
+	var short_res: Dictionary = visit_preview_15.choose_with_wallet("pay_bell_toll", {"gold": 15, "scraps": 0})
+	_check(
+		short_res == {
+			"ok": false,
+			"event_id": "",
+			"choice_id": "",
+			"wallet": {"gold": 15, "scraps": 0},
+			"fight_request": {},
+		},
+		"15 gold paid choice refused without mutating wallet or issuing fight_request"
+	)
+	_check(visit_preview_15.is_valid() and not visit_preview_15.is_claimed(), "visit remains open after 15 gold refusal")
+
+	# At 16 gold: preview and successful payment to 0
+	var visit_preview_16 := gate.open_visit("v3_bellspool_picket")
+	_check(visit_preview_16 != null and visit_preview_16.is_valid(), "visit_preview_16 opened successfully")
+	var preview_16: Dictionary = visit_preview_16.preview_choices({"gold": 16, "scraps": 0})
+	_check(preview_16.get("ok") == true, "preview_choices succeeds at 16 gold")
+	for entry_raw: Variant in preview_16.get("choices", []):
+		var entry: Dictionary = entry_raw
+		if entry.get("choice_id") == "pay_bell_toll":
+			_check(
+				entry.get("affordable") == true
+				and entry.get("wallet") == {"gold": 0, "scraps": 0}
+				and entry.get("fight_request") == {},
+				"16 gold preview: pay_bell_toll affordable with resulting 0/0 wallet"
+			)
+	var exact_res: Dictionary = visit_preview_16.choose_with_wallet("pay_bell_toll", {"gold": 16, "scraps": 0})
+	_check(
+		exact_res == {
+			"ok": true,
+			"event_id": "v3_bellspool_picket",
+			"choice_id": "pay_bell_toll",
+			"wallet": {"gold": 0, "scraps": 0},
+			"fight_request": {},
+		},
+		"16 gold paid choice succeeds to exactly 0 gold with empty fight_request"
+	)
+	_check(visit_preview_16.is_claimed() and not visit_preview_16.is_valid(), "exact paid choice latches visit")
+
+	# 3. AC2: Fresh visit one-claim receipts
+	# Fresh visit: Fight choice
+	var visit_fight := gate.open_visit("v3_bellspool_picket")
+	var wallet_for_fight := {"gold": 22, "scraps": 3}
+	var fight_receipt: Dictionary = visit_fight.choose_with_wallet("ring_the_bells", wallet_for_fight)
+	_check(
+		fight_receipt == {
+			"ok": true,
+			"event_id": "v3_bellspool_picket",
+			"choice_id": "ring_the_bells",
+			"wallet": {"gold": 22, "scraps": 3},
+			"fight_request": {"node_type": "Fight"},
+		},
+		"ring_the_bells returns ONLY detached {node_type: Fight} and unchanged wallet"
+	)
+	_check(visit_fight.is_claimed() and not visit_fight.is_valid(), "fight choice latches visit")
+	var repeat_fight: Dictionary = visit_fight.choose_with_wallet("leave", wallet_for_fight)
+	_check(repeat_fight.get("ok") == false and repeat_fight.get("fight_request") == {}, "repeat claim rejected")
+
+	# Fresh visit: Leave choice
+	var visit_leave := gate.open_visit("v3_bellspool_picket")
+	var wallet_for_leave := {"gold": 12, "scraps": 2}
+	var leave_receipt: Dictionary = visit_leave.choose_with_wallet("leave", wallet_for_leave)
+	_check(
+		leave_receipt == {
+			"ok": true,
+			"event_id": "v3_bellspool_picket",
+			"choice_id": "leave",
+			"wallet": {"gold": 12, "scraps": 2},
+			"fight_request": {},
+		},
+		"leave choice returns empty fight_request and unchanged wallet"
+	)
+	_check(visit_leave.is_claimed() and not visit_leave.is_valid(), "leave choice latches visit")
+
+	# 4. AC3: Seeded selection and exclusions
+	var excl_rng := RandomNumberGenerator.new()
+	excl_rng.seed = 80808
+	for _i in range(50):
+		var sel_excl: Dictionary = gate.select_event(excl_rng, ["v3_bellspool_picket"])
+		_check(sel_excl.get("ok") == true, "select_event succeeds with exclusion")
+		_check(sel_excl.get("event", {}).get("id") != "v3_bellspool_picket", "excluded bellspool never selected")
+
+	# Exclude all OTHER events to select bellspool deterministically
+	var all_other_ids: Array = []
+	for rec: Dictionary in gate.get_catalog_events():
+		var rid: String = String(rec.get("id", ""))
+		if rid != "v3_bellspool_picket":
+			all_other_ids.append(rid)
+	var pick_rng := RandomNumberGenerator.new()
+	pick_rng.seed = 90909
+	var sel_bell: Dictionary = gate.select_event(pick_rng, all_other_ids)
+	_check(
+		sel_bell.get("ok") == true and sel_bell.get("event", {}).get("id") == "v3_bellspool_picket",
+		"isolating bellspool selects it deterministically"
+	)
+	var expected_draw_rng := RandomNumberGenerator.new()
+	expected_draw_rng.seed = 90909
+	expected_draw_rng.randi_range(0, 0)
+	_check(pick_rng.state == expected_draw_rng.state, "selection consumes exactly 1 draw from 1 eligible option")
+
+	# 5. AC3: Tampered metadata / forgery rejections
+	var bell_base: Dictionary = record.duplicate(true)
+
+	var tampered_cases: Array[Dictionary] = []
+	var t_paid_as_fight := bell_base.duplicate(true)
+	t_paid_as_fight["fight_choice_id"] = "pay_bell_toll"
+	tampered_cases.append(t_paid_as_fight)
+
+	var t_leave_as_fight := bell_base.duplicate(true)
+	t_leave_as_fight["fight_choice_id"] = "leave"
+	tampered_cases.append(t_leave_as_fight)
+
+	var t_unknown_fight := bell_base.duplicate(true)
+	t_unknown_fight["fight_choice_id"] = "ring_the_gong"
+	tampered_cases.append(t_unknown_fight)
+
+	var t_forged_paid := bell_base.duplicate(true)
+	t_forged_paid["choices"][1]["outcome"] = {"gold": -10, "scraps": 0}
+	tampered_cases.append(t_forged_paid)
+
+	var t_forged_fight := bell_base.duplicate(true)
+	t_forged_fight["choices"][0]["outcome"] = {"gold": -5, "scraps": 0}
+	tampered_cases.append(t_forged_fight)
+
+	var t_forged_leave := bell_base.duplicate(true)
+	t_forged_leave["choices"][2]["outcome"] = {"gold": 5, "scraps": 0}
+	tampered_cases.append(t_forged_leave)
+
+	for bad_rec: Dictionary in tampered_cases:
+		var bad_gate := RunV3FightEventGate.new(bad_rec)
+		_check(not bad_gate.is_valid() and not bad_gate.is_claimed(), "tampered bellspool record rejected on new()")
+		_check(gate.open_visit(bad_rec) == null, "tampered bellspool record rejected on open_visit()")
+		var replaced_cat: Dictionary = catalog_doc.duplicate(true)
+		for idx in range((replaced_cat["events"] as Array).size()):
+			if replaced_cat["events"][idx].get("id") == "v3_bellspool_picket":
+				replaced_cat["events"][idx] = bad_rec.duplicate(true)
+		var cat_gate := RunV3FightEventGate.new("v3_stitchline_roadblock", replaced_cat)
+		_check(not cat_gate.is_catalog_valid(), "catalog with tampered bellspool fails validation")
+
+	# Missing bellspool from catalog fails closed
+	var missing_bell_cat: Dictionary = catalog_doc.duplicate(true)
+	var filtered_events: Array = []
+	for ev_raw: Variant in missing_bell_cat["events"]:
+		if (ev_raw as Dictionary).get("id") != "v3_bellspool_picket":
+			filtered_events.append(ev_raw)
+	missing_bell_cat["events"] = filtered_events
+	var missing_bell_gate := RunV3FightEventGate.new("v3_stitchline_roadblock", missing_bell_cat)
+	_check(not missing_bell_gate.is_catalog_valid(), "catalog missing required v3_bellspool_picket fails validation")
+
+	_check(run_rng.state == rng_before, "dedicated bellspool checks consume zero run_rng draws")
