@@ -64,6 +64,17 @@ const SNARE_IDS := [SNARE, SNARE_PLUS]
 const SNARE_COST := 1
 const SNARE_TANGLED := {SNARE: 2, SNARE_PLUS: 3}
 
+## The common Needle Prick pair this task resolves, with the printed damage/Bleed pair copied
+## from the v3 data rather than read back from the resolver.
+const PRICK := "rag_duelist_needle_prick"
+const PRICK_PLUS := "rag_duelist_needle_prick_plus"
+const PRICK_IDS := [PRICK, PRICK_PLUS]
+const PRICK_COST := 1
+const PRICK_DAMAGE := {PRICK: 4, PRICK_PLUS: 6}
+const PRICK_BLEED := {PRICK: 2, PRICK_PLUS: 3}
+const PRICK_FILLERS := ["filler_stitch", "filler_thread", "filler_needle"]
+const HERO_MAX_HP := {"rag_duelist": 32, "warden": 40, "seamstress": 30, "tinker": 25}
+
 ## Catalog seam double: only Riposte authentication reads it, so a forged record proves the paid
 ## service fails closed on a rewritten catalog. Every other case uses the real catalogs.
 class ForgedRiposte extends CombatRagDuelistRiposteCards:
@@ -96,11 +107,25 @@ class ForgedSnare extends CombatRagDuelistTatteredSnareCards:
 			return forged.duplicate(true)
 		return super(card_id)
 
+
+## The same seam for the Needle Prick resolver: the pair is authenticated together, so rewriting
+## either the named printing or its counterpart must fail closed before payment.
+class ForgedNeedlePrick extends CombatRagDuelistNeedlePrickCards:
+	var forged_id: String = ""
+	var forged: Dictionary = {}
+
+	func _catalog_definition(card_id: String) -> Dictionary:
+		if card_id == forged_id:
+			return forged.duplicate(true)
+		return super(card_id)
+
+
 var failures: Array[String] = []
 var checks: int = 0
 var riposte_service := CombatRagDuelistRiposteCards.new()
 var barrage_service := CombatRagDuelistNeedleBarrageCards.new()
 var snare_service := CombatRagDuelistTatteredSnareCards.new()
+var prick_service := CombatRagDuelistNeedlePrickCards.new()
 
 
 func _initialize() -> void:
@@ -127,6 +152,14 @@ func _initialize() -> void:
 	_test_snare_ac2_tangled_lifecycle()
 	_test_snare_ac3_rejections()
 	_test_snare_forged_catalog()
+	_test_prick_cards_authored()
+	_test_prick_ac1_paid_play()
+	_test_prick_ac2_block_and_statuses()
+	_test_prick_legal_tokens()
+	_test_prick_owner_turn_bleed()
+	_test_prick_ac3_rejections()
+	_test_prick_forged_catalog()
+	_test_prick_seeded_replay()
 	if failures.is_empty():
 		print("v3_rag_duelist_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -2138,3 +2171,814 @@ func _snare_enemies(target_hp: int, target_position: int,
 	var enemies := CombatEnemies.new(definitions)
 	_check(enemies.is_valid(), "snare enemy fixture valid")
 	return enemies
+# --- Needle Prick: paid damage plus Bleed (common pool) -------------------------------
+##
+## These cases drive the scene-free CombatRagDuelistNeedlePrickCards service over the same real
+## seeded CombatDeck, CombatParty and CombatEnemies fixtures. Like the other Rag Duelist helpers
+## they claim callable rules-layer behaviour only: no live hand, reward, app or run-deck wiring is
+## asserted here. The confirmed strike uses the shared CombatStatusAttacks/CombatEnemies bridge,
+## and the Bleed rider uses the shared enemy status API and owner-turn rules.
+
+## AC1/authored: both authentic pool records, one energy, hero seats 1-2, enemy slots 1-2, the exact
+## printed damage plus Bleed pair and the base/'+' link; nothing else is accepted.
+func _test_prick_cards_authored() -> void:
+	var pool := RagDuelistPoolCards.new()
+	for card_id: String in PRICK_IDS:
+		var record: Dictionary = pool.get_definition(card_id)
+		_check(not record.is_empty() and record.get("id") == card_id,
+			card_id + ": authored catalog record exists")
+		if record.is_empty():
+			continue
+		_check(record.get("owner") == "rag_duelist", card_id + ": owned by the Rag Duelist")
+		_check(record.get("cost") == PRICK_COST, card_id + ": cost is one energy")
+		_check(record.get("from_positions") == [1, 2], card_id + ": from hero seats 1-2")
+		_check(record.get("target_kind") == "enemy_single", card_id + ": targets one enemy")
+		_check(record.get("to_positions") == [1, 2], card_id + ": prints enemy slots 1-2")
+		_check(record.get("effects") == {"damage": int(PRICK_DAMAGE[card_id]),
+			"bleed": int(PRICK_BLEED[card_id])}, card_id + ": exact printed damage plus Bleed")
+		_check(record.get("starting_copies") == 0, card_id + ": not a starter copy")
+		_check(record.get("rarity") == "common", card_id + ": stays common")
+		_check(record.get("reward_eligible") == (card_id == PRICK),
+			card_id + ": base-only reward eligibility")
+		_check(prick_service.is_supported_card(card_id),
+			card_id + ": service authenticates the ID")
+	_check(pool.get_upgrade_id(PRICK) == PRICK_PLUS
+		and pool.get_definition(PRICK_PLUS).get("upgrade_of") == PRICK,
+		"Needle Prick base-to-+ link is intact")
+	for unsupported: Variant in ["rag_duelist_needle_lunge", "rag_duelist_needle_lunge_plus",
+			"rag_duelist_needle_barrage", "rag_duelist_needle_barrage_plus",
+			"rag_duelist_tattered_snare", "rag_duelist_cape_guard",
+			"rag_duelist_needle_prick_plus_plus", "rag_duelist_needle_prick+",
+			"rag_duelist_needle_prick ", "RAG_DUELIST_NEEDLE_PRICK", "", 7, null, true,
+			StringName(PRICK)]:
+		_check(not prick_service.is_supported_card(unsupported),
+			str(unsupported) + ": not a Needle Prick printing for this service")
+	var rng := _rng(8244)
+	var state_before: int = rng.state
+	for card_id: String in PRICK_IDS:
+		prick_service.is_supported_card(card_id)
+	prick_service.is_supported_card("rag_duelist_unknown")
+	_check(rng.state == state_before and not PRICK_IDS.is_empty(),
+		"supported-card queries consume no run RNG (non-empty precondition)")
+
+
+## AC1: each authentic printing, from a living Rag Duelist in his actual seat 1 or 2 onto a living
+## enemy in slot 1 or 2, spends exactly one shared energy, discards exactly one held copy, lands
+## exactly one hit and adds only the printed Bleed to the selected enemy.
+func _test_prick_ac1_paid_play() -> void:
+	for card_id: String in PRICK_IDS:
+		var damage: int = int(PRICK_DAMAGE[card_id])
+		var bleed: int = int(PRICK_BLEED[card_id])
+		for seat: int in [1, 2]:
+			for target: int in [1, 2]:
+				var label := "%s seat=%d target=%d" % [card_id, seat, target]
+				var f := _prick_fixture(card_id, seat)
+				var before := _prick_snapshot(f)
+				_check(int(before["hand"].count(card_id)) == 1 and int(before["energy"]) == 3,
+					label + ": fixture really holds one copy at three energy")
+				_check(f["party"].get_hero(seat).get("id") == "rag_duelist"
+					and f["party"].get_hero(seat).get("position") == seat,
+					label + ": the authoritative Rag Duelist is in seat " + str(seat))
+				var result := _prick_paid(f, card_id, target, damage)
+				_check(result.get("owner_position") == seat
+					and result.get("owner_id") == "rag_duelist",
+					label + ": receipt reports the actual owner seat")
+				var literal_hp: int = 20 - damage if target == 1 else 18 - (damage - 2)
+				var enemy_after: Dictionary = f["enemies"].get_enemy(target)
+				_check(enemy_after["hp"] == literal_hp and enemy_after["block"] == 0
+					and enemy_after.get("statuses", {}).get("bleed", 0) == bleed,
+					label + ": literal HP/Block/Bleed after the puncture")
+				_check(f["deck"].energy == 2 and f["deck"].hand.count(card_id) == 0
+					and f["deck"].discard_pile == [card_id],
+					label + ": exactly one copy charged and discarded for one energy")
+				_check(f["deck"].draw_pile == before["draw"],
+					label + ": no extra card is drawn or reshuffled")
+				for slot: int in [1, 2, 3]:
+					if slot == target:
+						continue
+					_check(f["enemies"].get_enemy(slot) == before["enemies"][slot - 1],
+						label + ": the untargeted enemy in slot " + str(slot) + " is untouched")
+
+
+## AC2: Block absorbs the adjusted hit before HP, the printed Bleed lands even when Block soaks
+## the entire strike, legal Weak/Exposed/Tangled snapshots use the shared rules without being
+## consumed or aged, and only the selected enemy is mutated.
+func _test_prick_ac2_block_and_statuses() -> void:
+	for card_id: String in PRICK_IDS:
+		var damage: int = int(PRICK_DAMAGE[card_id])
+		var bleed: int = int(PRICK_BLEED[card_id])
+
+		# A full-Block puncture still opens the seam: HP untouched, Block spent, Bleed lands.
+		var full := _prick_fixture(card_id, 1, [
+			{"max_hp": 20, "hp": 20, "block": 12},
+			{"max_hp": 18, "hp": 18},
+			{"max_hp": 14, "hp": 14},
+		])
+		_check(12 > damage, card_id + ": fixture Block really exceeds the printed damage")
+		var full_result := _prick_paid(full, card_id, 1, damage)
+		var full_target: Dictionary = full["enemies"].get_enemy(1)
+		_check(full_target["hp"] == 20 and full_target["block"] == 12 - damage,
+			card_id + ": a fully blocked hit leaves HP untouched and spends Block")
+		_check(full_target.get("statuses", {}).get("bleed", 0) == bleed,
+			card_id + ": the printed Bleed lands even through a full Block")
+		_check(full_result.get("block_absorbed") == damage and full_result.get("hp_loss") == 0,
+			card_id + ": the receipt proves the full Block absorption")
+		_check(full["enemies"].get_enemy(2).get("statuses", {}) == {}
+			and full["enemies"].get_enemy(3).get("statuses", {}) == {},
+			card_id + ": no other enemy gains Bleed")
+
+		# Partial Block plus an existing Bleed stack: Block first, then HP, then the printed rider.
+		var partial := _prick_fixture(card_id, 2, [
+			{"max_hp": 20, "hp": 20, "block": 3, "statuses": {"bleed": 4}},
+			{"max_hp": 18, "hp": 18, "block": 2},
+			{"max_hp": 14, "hp": 14},
+		])
+		_check(partial["enemies"].get_enemy(1).get("statuses", {}).get("bleed", 0) == 4,
+			card_id + ": fixture enemy really starts at Bleed 4")
+		var partial_result := _prick_paid(partial, card_id, 1, damage)
+		var partial_target: Dictionary = partial["enemies"].get_enemy(1)
+		_check(partial_target["block"] == 0 and partial_target["hp"] == 20 - (damage - 3),
+			card_id + ": three Block absorb first and the rest hits HP")
+		_check(partial_target.get("statuses", {}).get("bleed", 0) == 4 + bleed,
+			card_id + ": printed Bleed stacks onto the existing counter")
+		_check(partial_result.get("bleed_before") == 4
+			and partial_result.get("bleed_after") == 4 + bleed,
+			card_id + ": receipt proves the exact Bleed change")
+
+		# Legal Weak/Exposed/Tangled snapshots on a Blocked target: the shared bridge applies the
+		# modifiers, the Block absorbs first and no status or token is consumed.
+		for spec: Dictionary in _prick_status_cases():
+			var label: String = card_id + ": " + str(spec["label"])
+			var damage_map: Dictionary = spec["damage"]
+			var adjusted: int = int(damage_map[card_id])
+			var status_f := _prick_fixture(card_id, 2, [
+				{"max_hp": 20, "hp": 20},
+				{"max_hp": 18, "hp": 18, "block": 3},
+				{"max_hp": 14, "hp": 14},
+			])
+			var attacker: Dictionary = (spec["attacker"] as Dictionary).duplicate(true)
+			var defender: Dictionary = (spec["defender"] as Dictionary).duplicate(true)
+			status_f["party"]._heroes[1]["statuses"] = attacker.duplicate(true)
+			status_f["enemies"]._enemies[1]["statuses"] = defender.duplicate(true)
+			var status_result := _prick_paid(status_f, card_id, 2, adjusted)
+			_check(status_result.get("damage") == adjusted, label + ": adjusted damage applies")
+			_check(status_f["party"].get_hero(2).get("statuses", {}) == attacker,
+				label + ": the attacker's statuses are not consumed or aged")
+			var merged: Dictionary = defender.duplicate(true)
+			merged["bleed"] = int(merged.get("bleed", 0)) + bleed
+			_check(status_f["enemies"].get_enemy(2).get("statuses", {}) == merged,
+				label + ": the defender keeps its statuses and gains only the printed Bleed")
+			var status_target: Dictionary = status_f["enemies"].get_enemy(2)
+			_check(status_target["block"] == 0
+				and status_target["hp"] == 18 - maxi(0, adjusted - 3),
+				label + ": Block absorbs first, then the adjusted damage hits HP")
+			_check(status_f["enemies"].get_enemy(1).get("statuses", {}) == {}
+				and status_f["enemies"].get_enemy(3).get("statuses", {}) == {},
+				label + ": no other enemy receives a status")
+
+		# A living Seamstress beside the Rag Duelist grants no passive +1 Bleed.
+		var seamstress_f := _prick_fixture(card_id, 1, [], 6300, ["seamstress", "warden"])
+		_check(seamstress_f["party"].get_hero(2).get("id") == "seamstress"
+			and not seamstress_f["party"].is_downed(2),
+			card_id + ": seamstress fixture really seats a living Seamstress")
+		var seamstress_result := _prick_paid(seamstress_f, card_id, 1, damage)
+		_check(seamstress_result.get("bleed_applied") == bleed
+			and seamstress_f["enemies"].get_enemy(1).get("statuses", {}).get("bleed", 0)
+			== bleed,
+			card_id + ": a living Seamstress adds no passive +1 Bleed to Needle Prick")
+
+
+## The independently stated Weak/Exposed/Tangled expectations for both printings.
+func _prick_status_cases() -> Array:
+	return [
+		{"label": "Weak takes 25 percent off", "attacker": {"weak": 1}, "defender": {},
+			"damage": {PRICK: 3, PRICK_PLUS: 4}},
+		{"label": "Exposed adds 50 percent", "attacker": {}, "defender": {"exposed": 1},
+			"damage": {PRICK: 6, PRICK_PLUS: 9}},
+		{"label": "Weak plus Exposed combines at nine eighths",
+			"attacker": {"weak": 2}, "defender": {"exposed": 3},
+			"damage": {PRICK: 4, PRICK_PLUS: 6}},
+		{"label": "positive-base Tangled adds two after scaling", "attacker": {},
+			"defender": {"tangled": 2}, "damage": {PRICK: 6, PRICK_PLUS: 8}},
+		{"label": "Weak then one Tangled +2", "attacker": {"weak": 1},
+			"defender": {"tangled": 1}, "damage": {PRICK: 5, PRICK_PLUS: 6}},
+		{"label": "Exposed then one Tangled +2", "attacker": {},
+			"defender": {"exposed": 1, "tangled": 1},
+			"damage": {PRICK: 8, PRICK_PLUS: 11}},
+	]
+
+
+## Legitimate one-shot tokens and Fear already on either actor are validated, never turned into
+## damage modifiers, never consumed by this paid strike and never forwarded to the bridge.
+func _test_prick_legal_tokens() -> void:
+	for card_id: String in PRICK_IDS:
+		var damage: int = int(PRICK_DAMAGE[card_id])
+		var bleed: int = int(PRICK_BLEED[card_id])
+		var f := _prick_fixture(card_id, 1, [
+			{"max_hp": 20, "hp": 20, "block": 8, "statuses": {"bleed": 1}},
+			{"max_hp": 18, "hp": 18},
+		])
+		var owner_statuses := {"blind_next_attack": 1, "dodge_next_attack": 1,
+			"cannot_buff_next_turn": true}
+		f["party"]._heroes[0]["statuses"] = owner_statuses.duplicate(true)
+		var target_statuses := {"blind_next_attack": 1, "dodge_next_attack": 1,
+			"cannot_buff_next_turn": true, "bleed": 1}
+		f["enemies"]._enemies[0]["statuses"] = target_statuses.duplicate(true)
+		_check(f["enemies"].get_enemy(1).get("statuses") == target_statuses,
+			card_id + ": fixture really carries armed one-shot tokens, Fear and Bleed")
+		var before := _prick_snapshot(f)
+		var result: Dictionary = prick_service.play_card(f["deck"], f["party"], f["enemies"],
+			card_id, 1)
+		_check(result.get("ok") == true and result.get("reason") == "applied",
+			card_id + ": legitimate defense tokens never refuse the paid strike")
+		_check(result.get("damage") == damage and result.get("bleed_applied") == bleed,
+			card_id + ": tokens and Fear add no invented damage modifier")
+		_check(f["party"].get_hero(1).get("statuses") == owner_statuses,
+			card_id + ": the attacker's Blind/Dodge/Fear are never consumed")
+		_check(f["enemies"].get_enemy(1).get("statuses")
+			== {"blind_next_attack": 1, "dodge_next_attack": 1,
+				"cannot_buff_next_turn": true, "bleed": 1 + bleed},
+			card_id + ": the defender's tokens survive and only the printed Bleed is added")
+		_check(f["enemies"].get_enemy(1).get("hp") == 20
+			and f["enemies"].get_enemy(1).get("block") == 8 - damage,
+			card_id + ": the tokens neither absorb nor change the printed strike")
+		var expected := _prick_expected(before, card_id, 1, damage)
+		_check(_prick_snapshot(f) == expected, card_id + ": the token play is an exact transaction")
+
+
+## AC2: the printed Bleed is not ticked or spent when the card is played; it ticks against HP at
+## the affected enemy's owner-turn end, bypasses Block and then ages by exactly one.
+func _test_prick_owner_turn_bleed() -> void:
+	var batch := CombatStatusTurnBatch.new()
+	var rules := CombatStatuses.new()
+	for card_id: String in PRICK_IDS:
+		var damage: int = int(PRICK_DAMAGE[card_id])
+		var bleed: int = int(PRICK_BLEED[card_id])
+		var f := _prick_fixture(card_id, 1, [
+			{"max_hp": 20, "hp": 20, "block": 12},
+			{"max_hp": 18, "hp": 18},
+		])
+		_prick_paid(f, card_id, 1, damage)
+		var target: Dictionary = f["enemies"].get_enemy(1)
+		_check(target.get("statuses", {}).get("bleed", 0) == bleed,
+			card_id + ": playing the card leaves the full printed Bleed stack in place")
+		_check(target["hp"] == 20 and target["block"] == 12 - damage,
+			card_id + ": the Bleed is not ticked or spent by playing Needle Prick")
+		var tick: Dictionary = batch.tick_side("enemies", f["enemies"].get_enemies())
+		_check(tick.get("ok") == true, card_id + ": the owner-turn tick accepts the roster")
+		var ticked: Array = tick.get("actors", [])
+		_check(ticked.size() == 2, card_id + ": the tick proposes the whole roster")
+		var actor: Dictionary = ticked[0]
+		_check(actor.get("hp") == 20 - bleed and actor.get("block") == 12 - damage,
+			card_id + ": owner-turn Bleed hits HP while Block is left untouched")
+		_check(actor.get("statuses", {}).get("bleed", 0) == bleed - 1,
+			card_id + ": the owner-turn tick ages the printed Bleed by exactly one")
+		var events: Array = tick.get("events", [])
+		_check(events.size() == 2 and events[0].get("bleed_hp_loss") == bleed,
+			card_id + ": the owner-turn event reports the printed Bleed HP loss")
+		var ended: Dictionary = rules.end_owner_turn(target["hp"], target["block"],
+			target["statuses"])
+		_check(ended.get("ok") == true and ended.get("hp") == 20 - bleed
+			and ended.get("block") == 12 - damage,
+			card_id + ": the direct owner-turn rule confirms Block-bypassing Bleed")
+		_check(f["enemies"].get_enemy(1) == target,
+			card_id + ": the detached owner-turn proposal never mutates the real enemy")
+
+
+## AC3: every invalid request is refused before payment and leaves the exact same deck, party,
+## enemy roster, status maps and seeded RNG state, with no partial Bleed.
+func _test_prick_ac3_rejections() -> void:
+	# Null authorities.
+	var null_deck_f := _prick_fixture(PRICK, 1)
+	var null_deck_before := _prick_snapshot(null_deck_f)
+	var null_deck: Dictionary = prick_service.play_card(null, null_deck_f["party"],
+		null_deck_f["enemies"], PRICK, 1)
+	_check(null_deck.get("ok") == false and null_deck.get("reason") == "invalid_request",
+		"null deck refused")
+	_check(_prick_snapshot(null_deck_f) == null_deck_before,
+		"null deck refusal leaves every authority unchanged")
+	var null_party_f := _prick_fixture(PRICK, 1)
+	var null_party_before := _prick_snapshot(null_party_f)
+	var null_party: Dictionary = prick_service.play_card(null_party_f["deck"], null,
+		null_party_f["enemies"], PRICK, 1)
+	_check(null_party.get("ok") == false and null_party.get("reason") == "invalid_request",
+		"null party refused")
+	_check(_prick_snapshot(null_party_f) == null_party_before,
+		"null party refusal leaves every authority unchanged")
+	var null_enemies_f := _prick_fixture(PRICK, 1)
+	var null_enemies_before := _prick_snapshot(null_enemies_f)
+	var null_enemies: Dictionary = prick_service.play_card(null_enemies_f["deck"],
+		null_enemies_f["party"], null, PRICK, 1)
+	_check(null_enemies.get("ok") == false and null_enemies.get("reason") == "invalid_request",
+		"null enemies refused")
+	_check(_prick_snapshot(null_enemies_f) == null_enemies_before,
+		"null enemies refusal leaves every authority unchanged")
+
+	# Broken combat state and turn.
+	var stateless := _prick_fixture(PRICK, 1)
+	stateless["deck"].combat_state = null
+	_check(stateless["deck"].combat_state == null and stateless["deck"].hand.has(PRICK),
+		"broken-deck fixture really has no combat state and still holds the card")
+	_prick_refused(stateless, PRICK, 1, "invalid_deck")
+	var rngless := _prick_fixture(PRICK, 1)
+	rngless["deck"]._rng = null
+	_check(rngless["deck"]._rng == null and rngless["deck"].turn_active,
+		"rngless-deck fixture really has no seeded generator and an active turn")
+	_prick_refused(rngless, PRICK, 1, "invalid_deck")
+	var inactive := _prick_fixture(PRICK, 1)
+	_check(inactive["deck"].end_turn(), "inactive fixture really ends the shared turn")
+	_check(not inactive["deck"].turn_active, "inactive fixture has no active turn")
+	_prick_refused(inactive, PRICK, 1, "inactive_turn")
+
+	# Hold, identity and payment.
+	var unheld := _prick_fixture(PRICK, 1)
+	_check(unheld["deck"].hand.has(PRICK) and not unheld["deck"].hand.has(PRICK_PLUS),
+		"absent-card fixture holds the base Needle Prick only")
+	_prick_refused(unheld, PRICK_PLUS, 1, "card_not_held")
+	var foreign := _prick_fixture("rag_duelist_cape_guard", 1)
+	_check(foreign["deck"].hand.has("rag_duelist_cape_guard"),
+		"foreign-card fixture really holds another Rag Duelist card")
+	_prick_refused(foreign, PRICK, 1, "card_not_held")
+	for unsupported: Variant in ["", "rag_duelist_needle_prick_plus_plus",
+			"rag_duelist_needle_prick ", "RAG_DUELIST_NEEDLE_PRICK",
+			"rag_duelist_needle_lunge", "rag_duelist_cape_guard", 7, null, true,
+			StringName(PRICK)]:
+		_prick_refused(_prick_fixture(PRICK, 1), unsupported, 1, "unsupported_card")
+	var poor := _prick_fixture(PRICK, 1)
+	_check(poor["deck"].try_spend_energy(3) and poor["deck"].energy == 0
+		and poor["deck"].hand.has(PRICK),
+		"energy-short fixture really holds zero energy and still holds the card")
+	_prick_refused(poor, PRICK, 1, "insufficient_energy")
+
+	# Owner presence, seat and health.
+	var rear := _prick_fixture(PRICK, 3)
+	_check(rear["party"].get_hero(3).get("id") == "rag_duelist",
+		"rear-seat fixture really seats the Rag Duelist in slot 3")
+	_prick_refused(rear, PRICK, 1, "owner_illegal_position")
+	var downed := _prick_fixture(PRICK, 1)
+	_check(downed["party"].apply_damage(1, 400) and downed["party"].is_downed(1),
+		"downed-owner fixture really has a downed Rag Duelist")
+	_prick_refused(downed, PRICK, 1, "owner_downed")
+	var no_owner := _prick_fixture(PRICK, 1)
+	no_owner["party"] = CombatParty.new([
+		{"id": "warden", "max_hp": 40}, {"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26},
+	])
+	_check(no_owner["party"].is_valid() and no_owner["party"].get_hero(1).get("id")
+		!= "rag_duelist" and no_owner["party"].get_hero(2).get("id") != "rag_duelist"
+		and no_owner["party"].get_hero(3).get("id") != "rag_duelist",
+		"absent-owner fixture is a valid party without a Rag Duelist")
+	_prick_refused(no_owner, PRICK, 1, "owner_missing")
+	var duplicate := _prick_fixture(PRICK, 1)
+	duplicate["party"]._heroes[1]["id"] = "rag_duelist"
+	_check(duplicate["party"].get_hero(1).get("id") == "rag_duelist"
+		and duplicate["party"].get_hero(2).get("id") == "rag_duelist",
+		"duplicate-identity fixture really repeats the owner ID")
+	_prick_refused(duplicate, PRICK, 1, "duplicate_owner")
+
+	# Roster shapes.
+	var invalid_party := _prick_fixture(PRICK, 1)
+	invalid_party["party"] = CombatParty.new([])
+	_prick_refused(invalid_party, PRICK, 1, "invalid_roster")
+	var short_party := _prick_fixture(PRICK, 1)
+	short_party["party"] = CombatParty.new([{"id": "rag_duelist", "max_hp": 32},
+		{"id": "warden", "max_hp": 40}])
+	_check(not short_party["party"].is_valid(), "short-party fixture is really invalid")
+	_prick_refused(short_party, PRICK, 1, "invalid_roster")
+	var bad_position := _prick_fixture(PRICK, 1)
+	bad_position["party"]._heroes[1]["position"] = 3
+	_check(bad_position["party"].get_hero(2).get("position") == 3,
+		"wrong-position fixture really stores the wrong hero seat")
+	_prick_refused(bad_position, PRICK, 1, "invalid_roster")
+	var above_max := _prick_fixture(PRICK, 1)
+	above_max["party"]._heroes[0]["hp"] = 99
+	_check(above_max["party"].get_hero(1).get("hp") > above_max["party"].get_hero(1)["max_hp"],
+		"malformed-roster fixture really has HP above max")
+	_prick_refused(above_max, PRICK, 1, "invalid_roster")
+	var bad_block := _prick_fixture(PRICK, 1)
+	bad_block["party"]._heroes[0]["block"] = -1
+	_check(bad_block["party"].get_hero(1).get("block") == -1,
+		"negative-Block fixture really stores -1")
+	_prick_refused(bad_block, PRICK, 1, "invalid_roster")
+	var duplicate_ally := _prick_fixture(PRICK, 1)
+	duplicate_ally["party"]._heroes[2]["id"] = "warden"
+	_check(duplicate_ally["party"].get_hero(2).get("id") == "warden"
+		and duplicate_ally["party"].get_hero(3).get("id") == "warden",
+		"duplicate-ally fixture really repeats a non-owner hero ID")
+	_prick_refused(duplicate_ally, PRICK, 1, "invalid_roster")
+	var no_enemies := _prick_fixture(PRICK, 1)
+	no_enemies["enemies"] = CombatEnemies.new([])
+	_check(not no_enemies["enemies"].is_valid(), "empty-enemy fixture is really invalid")
+	_prick_refused(no_enemies, PRICK, 1, "invalid_roster")
+	var bad_enemy_position := _prick_fixture(PRICK, 1)
+	bad_enemy_position["enemies"]._enemies[0]["position"] = 2
+	_check(bad_enemy_position["enemies"].get_enemy(1).get("position") == 2,
+		"wrong-enemy-position fixture really stores the wrong enemy seat")
+	_prick_refused(bad_enemy_position, PRICK, 1, "invalid_roster")
+	var above_max_enemy := _prick_fixture(PRICK, 1)
+	above_max_enemy["enemies"]._enemies[0]["hp"] = 99
+	_check(above_max_enemy["enemies"].get_enemy(1).get("hp")
+		> above_max_enemy["enemies"].get_enemy(1).get("max_hp"),
+		"malformed-enemy fixture really has HP above max")
+	_prick_refused(above_max_enemy, PRICK, 1, "invalid_roster")
+	var bad_enemy_block := _prick_fixture(PRICK, 1)
+	bad_enemy_block["enemies"]._enemies[0]["block"] = -1
+	_check(bad_enemy_block["enemies"].get_enemy(1).get("block") == -1,
+		"negative-enemy-Block fixture really stores -1")
+	_prick_refused(bad_enemy_block, PRICK, 1, "invalid_roster")
+
+	# Target seat, existence and life. Slot 3 exists but is outside the printed TO line, and
+	# original slots never compact after a death.
+	var target_f := _prick_fixture(PRICK, 1)
+	for bad_target: int in [0, 3, 4, -1, 99]:
+		_prick_refused(target_f, PRICK, bad_target, "invalid_target")
+	var single := _prick_fixture(PRICK, 1, [{"max_hp": 30, "hp": 30}])
+	_check(single["enemies"].is_valid() and not single["enemies"].is_slain(1),
+		"single-enemy fixture has one living slot")
+	_prick_refused(single, PRICK, 2, "invalid_target")
+	var dead := _prick_fixture(PRICK, 1, [
+		{"max_hp": 20, "hp": 20}, {"max_hp": 20, "hp": 20}, {"max_hp": 20, "hp": 20},
+	])
+	_check(dead["enemies"].apply_damage(1, 20) and dead["enemies"].is_slain(1),
+		"slain-target fixture really has a dead first slot")
+	_prick_refused(dead, PRICK, 1, "target_slain")
+
+	# Malformed status maps on the owner, an ally and the selected or bystander enemy.
+	for bad_statuses: Variant in ["bleed", [], null, {"bleed": -1}, {"bleed": "3"},
+			{"bleed": 1.5}, {"weak": true}, {1: 2}, {"": 1}, {"unknown_status": 1},
+			{"dodge_next_attack": 2}, {"blind_next_attack": -1},
+			{"cannot_buff_next_turn": false}]:
+		var broken_owner := _prick_fixture(PRICK, 1)
+		broken_owner["party"]._heroes[0]["statuses"] = bad_statuses
+		_check(broken_owner["party"].get_hero(1).get("statuses") == bad_statuses,
+			"malformed owner status fixture really stores " + str(bad_statuses))
+		_prick_refused(broken_owner, PRICK, 1, "malformed_statuses")
+	for bad_target_statuses: Variant in [{"tangled": -2}, {"exposed": "2"},
+			{"cannot_buff_next_turn": 1}, {"unknown_status": 1}]:
+		var broken_target := _prick_fixture(PRICK, 1)
+		broken_target["enemies"]._enemies[0]["statuses"] = bad_target_statuses
+		_check(broken_target["enemies"].get_enemy(1).get("statuses") == bad_target_statuses,
+			"malformed target status fixture really stores " + str(bad_target_statuses))
+		_prick_refused(broken_target, PRICK, 1, "malformed_statuses")
+	var broken_ally := _prick_fixture(PRICK, 1)
+	broken_ally["party"]._heroes[2]["statuses"] = {"poison": 1}
+	_check(broken_ally["party"].get_hero(3).get("statuses") == {"poison": 1},
+		"malformed-ally fixture really stores an unknown status")
+	_prick_refused(broken_ally, PRICK, 1, "malformed_statuses")
+	var broken_bystander := _prick_fixture(PRICK, 1)
+	broken_bystander["enemies"]._enemies[1]["statuses"] = {"unknown_status": 1}
+	_check(broken_bystander["enemies"].get_enemy(2).get("statuses") == {"unknown_status": 1},
+		"malformed-bystander fixture really stores an unknown status")
+	_prick_refused(broken_bystander, PRICK, 1, "malformed_statuses")
+
+	# An unrepresentable Bleed addition refuses before the charge, for both printings.
+	var overflow := _prick_fixture(PRICK, 1)
+	overflow["enemies"]._enemies[0]["statuses"] = {"bleed": CombatEnemies.MAX_INT}
+	_check(overflow["enemies"].get_enemy(1).get("statuses", {}).get("bleed")
+		== CombatEnemies.MAX_INT, "overflow fixture really stores the maximal Bleed counter")
+	_prick_refused(overflow, PRICK, 1, "malformed_statuses")
+	var near_overflow := _prick_fixture(PRICK_PLUS, 1)
+	near_overflow["enemies"]._enemies[0]["statuses"] = {"bleed": CombatEnemies.MAX_INT - 1}
+	_prick_refused(near_overflow, PRICK_PLUS, 1, "malformed_statuses")
+
+	# A refused attempt never poisons the next authentic one.
+	var retry := _prick_fixture(PRICK_PLUS, 1)
+	_prick_refused(retry, PRICK_PLUS, 3, "invalid_target")
+	_prick_refused(retry, PRICK, 1, "card_not_held")
+	_prick_paid(retry, PRICK_PLUS, 1, int(PRICK_DAMAGE[PRICK_PLUS]))
+	_check(retry["deck"].energy == 2 and retry["deck"].discard_pile == [PRICK_PLUS],
+		"retry: the authentic play then charges and discards exactly once")
+
+
+## AC3: a rewritten, relinked or mistyped pool record is refused as catalog_mismatch before any
+## energy, card, HP, Block or RNG state moves, while the same seam serving the authentic records
+## still plays the paid card.
+func _test_prick_forged_catalog() -> void:
+	var pool := RagDuelistPoolCards.new()
+	for card_id: String in PRICK_IDS:
+		var authentic: Dictionary = pool.get_definition(card_id)
+		_check(not authentic.is_empty(),
+			card_id + ": authentic record available (forgery precondition)")
+		if authentic.is_empty():
+			continue
+		var link_key := "upgrade_of" if card_id.ends_with("_plus") else "upgrade_id"
+		var fields: Array[String] = ["id", "owner", "cost", "from_positions", "to_positions",
+			"target_kind", "effects", "starting_copies", "reward_eligible", "rarity", link_key]
+		var replacements: Dictionary = {
+			"id": "rag_duelist_forged_prick", "owner": "warden", "cost": 2,
+			"from_positions": [2, 3], "to_positions": [3], "target_kind": "self",
+			"effects": {"damage": 9, "bleed": 1}, "starting_copies": 1,
+			"reward_eligible": not bool(authentic.get("reward_eligible", false)),
+			"rarity": "rare",
+			"upgrade_id": "rag_duelist_forged_prick",
+			"upgrade_of": "rag_duelist_forged_prick",
+		}
+		var mutations: Array = []
+		for field: String in fields:
+			var omitted: Dictionary = authentic.duplicate(true)
+			omitted.erase(field)
+			mutations.append(omitted)
+			var altered: Dictionary = authentic.duplicate(true)
+			altered[field] = replacements[field]
+			mutations.append(altered)
+		var extra_effect: Dictionary = authentic.duplicate(true)
+		extra_effect["effects"]["weak"] = 1
+		mutations.append(extra_effect)
+		var raised_damage: Dictionary = authentic.duplicate(true)
+		raised_damage["effects"]["damage"] = int(PRICK_DAMAGE[card_id]) + 1
+		mutations.append(raised_damage)
+		var raised_bleed: Dictionary = authentic.duplicate(true)
+		raised_bleed["effects"]["bleed"] = int(PRICK_BLEED[card_id]) + 1
+		mutations.append(raised_bleed)
+		var pooled_effects: Dictionary = authentic.duplicate(true)
+		pooled_effects["effects"] = {
+			"damage": int(PRICK_DAMAGE[card_id]) + int(PRICK_BLEED[card_id])}
+		mutations.append(pooled_effects)
+		var typed_damage: Dictionary = authentic.duplicate(true)
+		typed_damage["effects"]["damage"] = float(typed_damage["effects"]["damage"])
+		mutations.append(typed_damage)
+		var typed_bleed: Dictionary = authentic.duplicate(true)
+		typed_bleed["effects"]["bleed"] = float(typed_bleed["effects"]["bleed"])
+		mutations.append(typed_bleed)
+		_check(not mutations.is_empty(),
+			card_id + ": forgery fixtures are non-empty (precondition)")
+
+		var forged_service := ForgedNeedlePrick.new()
+		forged_service.forged_id = card_id
+		var forged_f := _prick_fixture(card_id, 1)
+		for forged: Dictionary in mutations:
+			forged_service.forged = forged
+			var forged_before := _prick_snapshot(forged_f)
+			var receipt: Dictionary = forged_service.play_card(forged_f["deck"],
+				forged_f["party"], forged_f["enemies"], card_id, 1)
+			_check(receipt.get("ok") == false and receipt.get("reason") == "catalog_mismatch",
+				card_id + ": a forged catalog record is refused as catalog_mismatch")
+			_check(_prick_snapshot(forged_f) == forged_before,
+				card_id + ": a forged record spends, discards and damages nothing")
+			_check(not forged_service.is_supported_card(card_id),
+				card_id + ": the forged pair is not an authenticated printing")
+		forged_service.forged_id = ""
+		var restored: Dictionary = forged_service.play_card(forged_f["deck"],
+			forged_f["party"], forged_f["enemies"], card_id, 1)
+		_check(restored.get("ok") == true and restored.get("reason") == "applied",
+			card_id + ": the restored authentic record plays")
+		_check(forged_f["deck"].energy == 2 and forged_f["deck"].discard_pile == [card_id],
+			card_id + ": the restored record spends exactly one energy and one copy")
+		_check(forged_f["enemies"].get_enemy(1).get("hp") == 20 - int(PRICK_DAMAGE[card_id])
+			and forged_f["enemies"].get_enemy(1).get("statuses", {}).get("bleed", 0)
+			== int(PRICK_BLEED[card_id]),
+			card_id + ": the restored record lands its printed strike and Bleed")
+
+
+## The same seed replays every receipt and the final state exactly, and resolution reseeds neither
+## the injected generator nor the global RNG.
+func _test_prick_seeded_replay() -> void:
+	var first := _prick_replay(6501)
+	var second := _prick_replay(6501)
+	_check((first["receipts"] as Array).size() == 4 and not (first["enemies"] as Array).is_empty(),
+		"the seeded replay fixture really ran real plays (non-empty precondition)")
+	_check(first == second, "the same seed replays the receipts and final state exactly")
+	var receipts: Array = first["receipts"]
+	_check(receipts.size() == 4 and receipts[0].get("ok") == true
+		and receipts[1].get("ok") == true and receipts[2].get("ok") == true
+		and receipts[3].get("ok") == false,
+		"the seeded replay keeps three paid punctures and the final refusal")
+	_check(receipts[3].get("reason") == "card_not_held",
+		"the spent three-energy turn has no fourth held copy")
+	_check(first["hp"] == [16, 10, 14], "the seeded replay lands the exact punctured HP")
+	_check(first["bleed"] == [2, 5, 0], "the seeded replay stacks the exact printed Bleed")
+	_check(first["energy"] == 0 and (first["discard"] as Array).size() == 3,
+		"the seeded replay charges and discards exactly three copies")
+	_check(first["rng_state"] == first["rng_start"] and first["rng_seed"] == first["rng_seed_start"],
+		"the paid strikes consume no injected RNG state")
+
+	seed(24680)
+	var expected_next: int = randi()
+	seed(24680)
+	var played := _prick_replay(6502)
+	_check(played["energy"] == 0, "the global-RNG fixture really played three cards")
+	_check(randi() == expected_next, "resolving Needle Prick never draws from the global RNG")
+
+
+func _prick_replay(seed_value: int) -> Dictionary:
+	var rng := _rng(seed_value)
+	var ids: Array[String] = [PRICK, PRICK, PRICK_PLUS, PRICK_FILLERS[0], PRICK_FILLERS[1]]
+	var deck := CombatDeck.new(ids, rng)
+	_check(deck.start_turn() and deck.hand.size() == 5 and deck.energy == 3,
+		"replay deck starts the real five-draw three-energy turn")
+	_check(deck.hand.count(PRICK) == 2 and deck.hand.has(PRICK_PLUS),
+		"replay hand holds both printings and two base copies")
+	var party := CombatParty.new([
+		{"id": "rag_duelist", "max_hp": 32},
+		{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30},
+	])
+	var enemies := _prick_enemies([
+		{"max_hp": 20, "hp": 20},
+		{"max_hp": 18, "hp": 18, "block": 2},
+		{"max_hp": 14, "hp": 14},
+	])
+	var rng_start: int = rng.state
+	var rng_seed: int = rng.seed
+	var receipts: Array = []
+	receipts.append(prick_service.play_card(deck, party, enemies, PRICK, 1))
+	receipts.append(prick_service.play_card(deck, party, enemies, PRICK_PLUS, 2))
+	receipts.append(prick_service.play_card(deck, party, enemies, PRICK, 2))
+	receipts.append(prick_service.play_card(deck, party, enemies, PRICK, 1))
+	var snapshot: Dictionary = {
+		"rng_start": rng_start, "rng_state": rng.state,
+		"rng_seed_start": rng_seed, "rng_seed": rng.seed,
+		"energy": deck.energy, "hand": deck.hand.duplicate(true),
+		"draw": deck.draw_pile.duplicate(true), "discard": deck.discard_pile.duplicate(true),
+		"heroes": party.get_heroes(), "enemies": enemies.get_enemies(),
+		"receipts": receipts,
+	}
+	snapshot["hp"] = [enemies.get_enemy(1)["hp"], enemies.get_enemy(2)["hp"],
+		enemies.get_enemy(3)["hp"]]
+	snapshot["bleed"] = [int(enemies.get_enemy(1).get("statuses", {}).get("bleed", 0)),
+		int(enemies.get_enemy(2).get("statuses", {}).get("bleed", 0)),
+		int(enemies.get_enemy(3).get("statuses", {}).get("bleed", 0))]
+	return snapshot
+
+
+## A real seeded four-card hand holding exactly one genuine copy of `card_id` (the five-card draw
+## simply exhausts the four-card fixture), with the real three shared energy.
+func _prick_fixture(card_id: String, seat: int = 1, enemy_specs: Array = [],
+		seed_value: int = 6200, neighbour_ids: Array = ["warden", "tinker"]) -> Dictionary:
+	var rng := _rng(seed_value)
+	var ids: Array[String] = [card_id]
+	for filler: String in PRICK_FILLERS:
+		ids.append(filler)
+	var deck := CombatDeck.new(ids, rng)
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3
+		and deck.hand.size() == 4 and deck.hand.count(card_id) == 1,
+		card_id + ": real seeded hand holding exactly one authentic copy at three energy")
+	var hero_ids: Array[String] = []
+	for neighbour: String in neighbour_ids:
+		hero_ids.append(str(neighbour))
+	hero_ids.insert(seat - 1, "rag_duelist")
+	var definitions: Array = []
+	for hero_id: String in hero_ids:
+		definitions.append({"id": hero_id, "max_hp": int(HERO_MAX_HP[hero_id])})
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid() and party.get_hero(seat).get("id") == "rag_duelist"
+		and party.get_hero(seat).get("position") == seat,
+		card_id + ": valid real party with the Rag Duelist in seat " + str(seat))
+	var specs: Array = enemy_specs
+	if specs.is_empty():
+		specs = [{"max_hp": 20, "hp": 20},
+			{"max_hp": 18, "hp": 18, "block": 2},
+			{"max_hp": 14, "hp": 14}]
+	var enemies := _prick_enemies(specs)
+	return {"deck": deck, "party": party, "enemies": enemies, "rng": rng}
+
+
+## Real enemy slots: HP loss and Block through the model's own APIs, then fixture statuses.
+func _prick_enemies(specs: Array) -> CombatEnemies:
+	var definitions: Array = []
+	for index in range(specs.size()):
+		definitions.append({"id": "prick_fixture_enemy_" + str(index + 1),
+			"max_hp": int(specs[index]["max_hp"])})
+	var enemies := CombatEnemies.new(definitions)
+	_check(enemies.is_valid() and enemies.get_enemies().size() == specs.size(),
+		"prick fixture builds a real indexed enemy roster")
+	for index in range(specs.size()):
+		var spec: Dictionary = specs[index]
+		var lost: int = int(spec["max_hp"]) - int(spec.get("hp", spec["max_hp"]))
+		if lost > 0:
+			_check(enemies.apply_damage(index + 1, lost),
+				"prick fixture enemy " + str(index + 1) + " really lost HP")
+		var block := int(spec.get("block", 0))
+		if block > 0:
+			_check(enemies.gain_block(index + 1, block),
+				"prick fixture enemy " + str(index + 1) + " really gained Block")
+		var statuses: Dictionary = spec.get("statuses", {})
+		if statuses.is_empty():
+			continue
+		var bleed := int(statuses.get("bleed", 0))
+		if bleed > 0:
+			_check(enemies.apply_statuses({index + 1: {"bleed": bleed}}),
+				"prick fixture enemy " + str(index + 1) + " really gained its Bleed stack")
+		if not enemies._enemies[index].has("statuses"):
+			enemies._enemies[index]["statuses"] = {}
+		for status_name in statuses:
+			if status_name == "bleed":
+				continue
+			enemies._enemies[index]["statuses"][status_name] = statuses[status_name]
+	return enemies
+
+
+## Detached before/after state for refusals: piles, turn, energy, seeded RNG and actor records,
+## tolerant of a deck whose combat state or generator is missing.
+func _prick_snapshot(f: Dictionary) -> Dictionary:
+	var snapshot: Dictionary = {}
+	var deck: CombatDeck = f.get("deck")
+	var party: CombatParty = f.get("party")
+	var enemies: CombatEnemies = f.get("enemies")
+	var rng: RandomNumberGenerator = f.get("rng")
+	if deck != null:
+		snapshot["hand"] = deck.hand.duplicate(true)
+		snapshot["draw"] = deck.draw_pile.duplicate(true)
+		snapshot["discard"] = deck.discard_pile.duplicate(true)
+		if deck.combat_state != null:
+			snapshot["energy"] = deck.energy
+			snapshot["state_energy"] = deck.combat_state.energy
+			snapshot["turn"] = deck.turn_active
+			snapshot["state_turn"] = deck.combat_state.player_turn_active
+		else:
+			snapshot["combat_state"] = "missing"
+		if deck._rng != null:
+			snapshot["deck_rng_state"] = deck._rng.state
+			snapshot["deck_rng_seed"] = deck._rng.seed
+		else:
+			snapshot["deck_rng"] = "missing"
+	if party != null:
+		snapshot["party_valid"] = party.is_valid()
+		snapshot["heroes"] = party.get_heroes()
+	if enemies != null:
+		snapshot["enemies_valid"] = enemies.is_valid()
+		snapshot["enemies"] = enemies.get_enemies()
+	if rng != null:
+		snapshot["rng_state"] = rng.state
+		snapshot["rng_seed"] = rng.seed
+	return snapshot
+
+
+## Independent oracle: one energy, one discarded held copy, Block before HP, then printed Bleed.
+func _prick_expected(before: Dictionary, card_id: String, target_position: int,
+		damage: int) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] = int(expected["energy"]) - PRICK_COST
+	expected["state_energy"] = int(expected["state_energy"]) - PRICK_COST
+	var hand: Array = expected["hand"]
+	hand.remove_at(hand.find(card_id))
+	(expected["discard"] as Array).append(card_id)
+	var enemy: Dictionary = expected["enemies"][target_position - 1]
+	var absorbed: int = mini(int(enemy["block"]), damage)
+	enemy["block"] = int(enemy["block"]) - absorbed
+	enemy["hp"] = maxi(0, int(enemy["hp"]) - (damage - absorbed))
+	var statuses: Dictionary = enemy.get("statuses", {})
+	statuses["bleed"] = int(statuses.get("bleed", 0)) + int(PRICK_BLEED[card_id])
+	enemy["statuses"] = statuses
+	return expected
+
+
+func _prick_paid(f: Dictionary, card_id: String, target_position: int,
+		expected_damage: int) -> Dictionary:
+	var bleed: int = int(PRICK_BLEED[card_id])
+	var before := _prick_snapshot(f)
+	var result: Dictionary = prick_service.play_card(f["deck"], f["party"], f["enemies"],
+		card_id, target_position)
+	_check(result.get("ok") == true and result.get("reason") == "applied",
+		card_id + ": authorized paid puncture on slot " + str(target_position))
+	_check(result.get("card_id") == card_id and result.get("cost") == PRICK_COST
+		and result.get("energy_spent") == PRICK_COST,
+		card_id + ": receipt names the authentic printing and its one energy")
+	_check(result.get("base_damage") == int(PRICK_DAMAGE[card_id])
+		and result.get("damage") == expected_damage,
+		card_id + ": receipt prints the base and the resolved damage")
+	_check(result.get("bleed_applied") == bleed,
+		card_id + ": receipt prints the exact Bleed stack")
+	_check(result.get("target_position") == target_position,
+		card_id + ": receipt reports the selected enemy slot")
+	var expected := _prick_expected(before, card_id, target_position, expected_damage)
+	_check(_prick_snapshot(f) == expected,
+		card_id + ": exact hand/piles/energy/HP/Block/Bleed/RNG state")
+	var enemy_before: Dictionary = before["enemies"][target_position - 1]
+	var enemy_after: Dictionary = expected["enemies"][target_position - 1]
+	_check(result.get("hp_before") == enemy_before["hp"]
+		and result.get("hp_after") == enemy_after["hp"]
+		and result.get("hp_loss") == int(enemy_before["hp"]) - int(enemy_after["hp"]),
+		card_id + ": receipt proves the exact HP change")
+	_check(result.get("block_before") == enemy_before["block"]
+		and result.get("block_after") == enemy_after["block"]
+		and result.get("block_absorbed")
+		== int(enemy_before["block"]) - int(enemy_after["block"]),
+		card_id + ": receipt proves Block absorption before HP")
+	_check(result.get("bleed_before") == int(
+			(enemy_before.get("statuses", {}) as Dictionary).get("bleed", 0))
+		and result.get("bleed_after") == int(
+			(enemy_after.get("statuses", {}) as Dictionary).get("bleed", 0)),
+		card_id + ": receipt proves the Bleed stack change")
+	_check(result.get("energy_before") == int(before["energy"])
+		and result.get("energy_after") == int(expected["energy"]),
+		card_id + ": receipt proves exactly one shared energy was spent")
+	var probe: Dictionary = result.duplicate(true)
+	probe["hp_after"] = -999
+	probe["bleed_after"] = -999
+	_check(_prick_snapshot(f) == expected, card_id + ": receipt is detached from state")
+	return result
+
+
+func _prick_refused(f: Dictionary, card_id: Variant, target_position: int,
+		reason: String) -> void:
+	var before := _prick_snapshot(f)
+	var result: Dictionary = prick_service.play_card(f["deck"], f["party"], f["enemies"],
+		card_id, target_position)
+	_check(result.get("ok") == false and result.get("reason") == reason,
+		str(card_id) + ": refuses " + reason)
+	_check(_prick_snapshot(f) == before,
+		reason + ": preserves hand, draw, discard, energy, HP, Block, statuses, turn and RNG")
+	result["reason"] = "tampered"
+	result["damage"] = 999
+	_check(_prick_snapshot(f) == before, reason + ": refusal receipt is detached")
