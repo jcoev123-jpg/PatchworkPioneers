@@ -851,6 +851,7 @@ func _run() -> void:
 	await _test_owner_position_pips()
 	await _test_copy_numbering_from_one()
 	await _test_card_tile_typography_and_contrast()
+	await _test_v3_stitch_heroes()
 	_finish()
 
 
@@ -2994,3 +2995,350 @@ func _test_card_tile_typography_and_contrast() -> void:
 		"typography test draws no local or global RNG")
 
 	panel.free()
+
+
+## V3 picker witnesses come from actual selected owners' starter catalogs. The
+## extra + instances model normal in-run upgrades of authored originals; there
+## are still exactly three owners per receipt, never a five-hero battle party.
+func _v3_owned_deck(sources: Array) -> Array[String]:
+	var deck: Array[String] = []
+	for source in sources:
+		for id in source.get_starting_deck():
+			var definition := RunRestStitchCards.resolve_card_definition(id)
+			# The legacy StarterCards bundle contains three owners; a V3 party
+			# selects Warden only, not the whole old trio.
+			if source is StarterCards and definition.get("owner") != "warden":
+				continue
+			deck.append(id)
+	# Real + records can coexist in an ongoing Rest deck after upgrades/receipts.
+	for id in deck.duplicate():
+		var original := RunRestStitchCards.resolve_card_definition(id)
+		var upgraded: String = str(original.get("upgrade_id", ""))
+		if not upgraded.is_empty() and not deck.has(upgraded):
+			deck.append(upgraded)
+	return deck
+
+
+func _v3_colors() -> Dictionary:
+	return {
+		"warden": Color("#4a5d73"),
+		"seamstress": Color("#6e4f6b"),
+		"tinker": Color("#c49a3a"),
+		"lantern_monk": Color("#466c65"),
+		"rag_duelist": Color("#823e62"),
+		"scarecrow": Color("#77613d"),
+		"yarn_ranger": Color("#426785"),
+		"button_golem": Color("#5c577e"),
+	}
+
+
+func _assert_v3_tile(tile: Button, index: int, id: String, prefix: String) -> void:
+	var definition := RunRestStitchCards.resolve_card_definition(id)
+	_check(not definition.is_empty() and tile != null,
+		prefix + " real authored instance and mounted tile #" + str(index))
+	if definition.is_empty() or tile == null:
+		return
+	var owner: String = definition["owner"]
+	var owner_color: Color = _v3_colors()[owner]
+	var ink: Color = LiveRestStitchPairPicker.INK if owner == "tinker" else LiveRestStitchPairPicker.CREAM
+	_check(tile.get_meta("index") == index and tile.get_meta("id") == id
+		and tile.get_meta("owner") == owner and tile.get_meta("cost") == definition["cost"]
+		and tile.get_meta("name") == definition["display_name"],
+		prefix + " exact deck instance, owner, cost and authored name")
+	var stripe := tile.find_child("OwnerStripe", true, false) as Label
+	_check(stripe != null, prefix + " owner ribbon exists")
+	if stripe != null:
+		var style := stripe.get_parent().get_theme_stylebox("panel") as StyleBoxFlat
+		_check(style != null and style.bg_color == owner_color
+			and stripe.get_theme_color("font_color") == ink
+			and _contrast(ink, owner_color) >= 4.5,
+			prefix + " exact owner felt and readable ribbon ink")
+		_check(stripe.text == "#%d %s" % [index + 1, owner.capitalize()],
+			prefix + " full owner with one-based copy number")
+		var font := stripe.get_theme_font("font")
+		_check(font != null and font.get_string_size(stripe.text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, stripe.get_theme_font_size("font_size")).x <= stripe.size.x + 0.5,
+			prefix + " full owner and copy fit the ribbon")
+	var name_label := tile.get_node_or_null("CardName") as Label
+	var cost_label := tile.find_child("CostLabel", true, false) as Label
+	_check(name_label != null and name_label.text == definition["display_name"]
+		and cost_label != null and cost_label.text == str(definition["cost"]),
+		prefix + " full named original and authored energy")
+	_check(tile.tooltip_text.begins_with(LiveRestStitchPairPicker.from_positions_tooltip(
+		definition["from_positions"])), prefix + " genuine FROM tooltip")
+	var pips := LiveRestStitchPairPicker.tile_from_pips(tile)
+	_check(pips.size() == 3, prefix + " mounts three FROM pips")
+	for pip in pips:
+		var pos: int = pip.get_meta("position")
+		var active: bool = definition["from_positions"].has(pos)
+		var style := pip.get_theme_stylebox("panel") as StyleBoxFlat
+		var num := pip.get_node_or_null("PipNum") as Label
+		_check(LiveRestStitchPairPicker.is_pip_lit(pip) == active
+			and style != null and style.bg_color == (owner_color if active else Color("#ebdcc0"))
+			and num != null and num.get_theme_color("font_color") == (
+				ink if active else Color("#7a7267")),
+			prefix + " FROM %d lit, ink and cloth match original" % pos)
+	var fallback := tile.find_child("CardNameFallback", true, false) as Label
+	var texture := LiveRestStitchPairPicker._texture(LiveRestStitchPairPicker.art_path(id))
+	if texture == null:
+		_check(fallback != null and fallback.text == definition["display_name"],
+			prefix + " missing art keeps full named owner-colour placeholder")
+	else:
+		_check(fallback == null, prefix + " shipped art is retained")
+
+
+func _assert_v3_half(panel: LiveRestStitchPairPicker, half: Dictionary,
+		order: String, phrases: Array, context: String) -> void:
+	var authored := RunRestStitchCards.resolve_card_definition(half.get("id", ""))
+	_check(not authored.is_empty() and half == authored,
+		context + " uses full authentic " + order + " catalog descriptor")
+	if authored.is_empty():
+		return
+	var lines := panel._half_lines(order, half)
+	_check(lines.begins_with("%s: %s — %s (%d energy)\nFrom hero positions %s; " % [
+		order, authored["display_name"], String(authored["owner"]).capitalize(),
+		authored["cost"], panel._positions(authored["from_positions"])]),
+		context + " authored name / owner / energy / FROM in " + order)
+	for phrase in phrases:
+		_check(lines.contains(phrase), context + " " + order + " forecasts " + phrase)
+
+
+func _v3_receipt_fixture(sources: Array, signature_pairs: Array, label: String) -> void:
+	var deck := _v3_owned_deck(sources)
+	var owners: Dictionary = {}
+	for id in deck:
+		var definition := RunRestStitchCards.resolve_card_definition(id)
+		_check(not definition.is_empty(), label + " authentic source card " + id)
+		if not definition.is_empty():
+			owners[definition["owner"]] = true
+	_check(owners.size() == 3 and deck.size() >= 12,
+		label + " exactly three selected catalog owners and their genuine starting cards")
+	if owners.size() != 3:
+		return
+	var ledger := RunRestStitchCards.new(deck, {}, 5)
+	_check(ledger.is_valid() and not ledger.is_consumed(), label + " valid 5-scrap Rest ledger")
+	if not ledger.is_valid():
+		return
+	var receipt := ledger.get_snapshot()
+	var model := RunRestStitchPairOptions.new(ledger, receipt)
+	var options := model.first_options()
+	_check(model.is_available() and options.size() == deck.size(),
+		label + " all eligible authentic instances offered first")
+	if not model.is_available() or options.size() != deck.size():
+		return
+	var panel := LiveRestStitchPairPicker.new()
+	panel.position = Vector2(285, 75)
+	root.add_child(panel)
+	await _frames()
+	panel.bind(ledger, receipt)
+	await _frames()
+	_check(panel.size == Vector2(710, 500), label + " 1280x720 panel footprint fixed")
+	_bounds(panel)
+	_check(panel.first_tiles.size() == options.size()
+		and panel.first_selector.item_count == options.size(),
+		label + " visible first tiles and mirror match receipt count")
+	for i in range(options.size()):
+		var entry: Dictionary = options[i]
+		var card_id: String = deck[i]
+		var authored := RunRestStitchCards.resolve_card_definition(card_id)
+		_check(entry["index"] == i and entry["id"] == card_id
+			and entry["name"] == authored["display_name"]
+			and entry["owner"] == authored["owner"]
+			and entry["cost"] == authored["cost"],
+			label + " first option #" + str(i) + " matches exact original")
+		_assert_v3_tile(panel.first_tile_for_index(i), i, card_id, label + " first")
+		var partners := model.second_options(i)
+		var expected: Array[int] = []
+		for j in range(deck.size()):
+			if j != i and RunRestStitchCards.resolve_card_definition(deck[j])["owner"] != authored["owner"]:
+				expected.append(j)
+		var actual: Array[int] = []
+		for partner in partners:
+			actual.append(partner["index"])
+		_check(not partners.is_empty() and actual == expected,
+			label + " only different-owner, original-instance second options at " + str(i))
+		# Drive the actual first tile, then inspect every mounted second tile.
+		var row := _row_in_first(panel, i)
+		_check(row >= 0, label + " can select first instance #" + str(i))
+		if row < 0:
+			continue
+		await _select_live_tile(panel.first_selector, row)
+		_check(panel.second_tiles.size() == partners.size()
+			and panel.second_selector.item_count == partners.size(),
+			label + " mounted second set matches authentic cross-owner choices")
+		for partner in partners:
+			var j: int = partner["index"]
+			_assert_v3_tile(panel.second_tile_for_index(j), j, deck[j], label + " second")
+		var second_row := _row_in_second(panel, partners[0]["index"])
+		_check(second_row >= 0, label + " second selectable row exists")
+		if second_row >= 0:
+			await _select_live_tile(panel.second_selector, second_row)
+			var pair := panel._current_pair()
+			_check(not pair.is_empty() and pair["first_index"] == i
+				and pair["second_index"] == partners[0]["index"]
+				and pair["first_owner"] != pair["second_owner"]
+				and pair["source_snapshot"] == receipt,
+				label + " mounted first-then-second genuine pair and receipt")
+			if not pair.is_empty():
+				_check(panel.first_half_label.text == panel._half_lines("First", pair["first_half"])
+					and panel.second_half_label.text == panel._half_lines("Second", pair["second_half"])
+					and panel._left_edge.color == _v3_colors()[pair["first_owner"]]
+					and panel._right_edge.color == _v3_colors()[pair["second_owner"]],
+					label + " both real half forecasts and sewn edges")
+				for which in ["first", "second"]:
+					var half: Dictionary = pair["first_half"] if which == "first" else pair["second_half"]
+					var state := panel.thumbnail_state(which)
+					_check(state["owner_color"] == _v3_colors()[half["owner"]],
+						label + " " + which + " owner-colour thumbnail")
+					if state["texture"] == null:
+						_check(state["placeholder_visible"] and state["name"] == half["display_name"],
+							label + " " + which + " readable missing-art thumbnail")
+					else:
+						_check(state["visible"], label + " " + which + " retained existing thumbnail")
+		panel._return_to_first_choice()
+		await _frames()
+
+	var intents: Array[Dictionary] = []
+	panel.stitch_requested.connect(func(a, b, s): intents.append({"a": a, "b": b, "s": s}))
+	var selected: Dictionary = {}
+	for sample in signature_pairs:
+		var a := _idx(deck, sample[0])
+		var b := _idx(deck, sample[1])
+		_check(a >= 0 and b >= 0 and a != b, label + " chosen authored signature pair exists")
+		if a < 0 or b < 0:
+			continue
+		var preview := _assert_projection(model, receipt, a, b, label + " " + sample[0])
+		_assert_authored(preview, sample[0], sample[1], label + " authored pair")
+		_check(model.preview(a, a).is_empty(), label + " duplicate deck instance refused")
+		var same_owner := -1
+		for j in range(deck.size()):
+			if j != a and RunRestStitchCards.resolve_card_definition(deck[j])["owner"] == 					RunRestStitchCards.resolve_card_definition(deck[a])["owner"]:
+				same_owner = j
+				break
+		_check(same_owner >= 0 and model.preview(a, same_owner).is_empty(),
+			label + " same-owner pair fails closed")
+		var reverse := model.preview(b, a)
+		_check(not reverse.is_empty() and reverse["first_id"] == sample[1]
+			and reverse["second_id"] == sample[0],
+			label + " authentic reverse half order")
+		var row := _row_in_first(panel, a)
+		if row < 0:
+			_check(false, label + " signature first tile exists")
+			continue
+		await _select_live_tile(panel.first_selector, row)
+		var other_row := _row_in_second(panel, b)
+		_check(other_row >= 0, label + " signature second different-owner tile exists")
+		if other_row < 0:
+			panel._return_to_first_choice()
+			continue
+		await _select_live_tile(panel.second_selector, other_row)
+		var live := panel._current_pair()
+		_check(not live.is_empty() and live["first_half"] == preview["first_half"]
+			and live["second_half"] == preview["second_half"],
+			label + " physically mounted signature uses detached authored preview")
+		if not live.is_empty():
+			_assert_v3_half(panel, live["first_half"], "First", sample[2], label)
+			_assert_v3_half(panel, live["second_half"], "Second", sample[3], label)
+			_check(panel.first_half_label.text == panel._half_lines("First", live["first_half"])
+				and panel.second_half_label.text == panel._half_lines("Second", live["second_half"]),
+				label + " both ordered mounted signature forecast sentences")
+			_check(live["energy_cost"] == mini(3, maxi(
+				live["first_cost"], live["second_cost"]) + 1)
+				and live["scrap_cost"] == 3
+				and live["descriptor"]["first_half"] == live["first_half"]
+				and live["descriptor"]["second_half"] == live["second_half"]
+				and live["descriptor"]["can_upgrade"] == false
+				and live["descriptor"]["can_stitch"] == false,
+				label + " capped energy, 3 scraps, preserved + descriptors and no re-stitch")
+			_check(panel.confirm_button.position == Vector2(30, 434)
+				and panel.confirm_button.size == Vector2(650, 44)
+				and panel.preview_scroll.size == Vector2(516, 178),
+				label + " controls stay pinned despite V3 forecast wrap")
+			selected = {"a": a, "b": b}
+		panel._return_to_first_choice()
+		await _frames()
+
+	# A genuine mounted one-shot must not pay or mutate the original Rest owner.
+	_check(not selected.is_empty(), label + " has nonvacuous selected pair")
+	if not selected.is_empty():
+		await _select_live_tile(panel.first_selector, _row_in_first(panel, selected["a"]))
+		await _select_live_tile(panel.second_selector, _row_in_second(panel, selected["b"]))
+		var before := ledger.get_snapshot()
+		var guard := RandomNumberGenerator.new()
+		guard.seed = 68771
+		var guard_before := guard.state
+		seed(68771)
+		var global_next := randi()
+		seed(68771)
+		var callback := panel._confirm_callback
+		callback.call()
+		callback.call()
+		_check(intents.size() == 1 and intents[0]["a"] == selected["a"]
+			and intents[0]["b"] == selected["b"] and intents[0]["s"] == receipt,
+			label + " emitted exactly one zero-based ordered authentic receipt")
+		_check(panel.confirm_button.disabled and panel._current_pair().is_empty()
+			and not ledger.is_consumed() and ledger.get_snapshot() == before
+			and guard.state == guard_before and randi() == global_next,
+			label + " preview/request/replay never spends, mutates deck or consumes RNG")
+		var stale := receipt.duplicate(true)
+		stale["remaining_scraps"] = 2
+		panel.bind(ledger, stale)
+		_check(panel.first_selector.disabled and panel.confirm_button.disabled,
+			label + " stale snapshot refuses mounted options")
+		var poor := RunRestStitchCards.new(deck, {}, 2)
+		_check(poor.is_valid() and not RunRestStitchPairOptions.new(
+			poor, poor.get_snapshot()).is_available(),
+			label + " genuine insufficient scraps disables model")
+		panel.bind(poor, poor.get_snapshot())
+		_check(panel.first_selector.disabled and panel.confirm_button.disabled,
+			label + " insufficient purse refuses mounted picker")
+	panel.free()
+
+
+func _test_v3_stitch_heroes() -> void:
+	# Each fixture is a genuine three-owner selected party, never 5 at once.
+	var first_party := [LanternMonkStarterCards.new(), RagDuelistStarterCards.new(),
+		ScarecrowStarterCards.new()]
+	var first_pairs := [
+		["lantern_monk_wick_spark", "rag_duelist_cape_parry",
+			["4 damage", "Blind 1", "next attack misses"], ["Block 4", "Riposte 2", "counterattack", "1 enemy turn"]],
+		["lantern_monk_lamplight_wash_plus", "rag_duelist_cape_slip_plus",
+			["heal every ally 3", "cleanse 1 present Bleed/Weak/Exposed", "each living ally"],
+			["Cape Slip+", "0 energy", "Dodge next attack", "spent on the next attack"]],
+		["rag_duelist_rapier_lunge_plus", "scarecrow_fork_jab_plus",
+			["7 damage", "move self forward 1"], ["6 damage", "Bleed 2"]],
+		["scarecrow_sack_glare_plus", "lantern_monk_moth_wink_plus",
+			["Weak 2", "Fear", "cannot buff on its next turn"],
+			["0 energy", "Blind 1", "draw 1"]],
+		["scarecrow_crow_dive_plus", "lantern_monk_pole_shelter_plus",
+			["backmost living enemy", "5 damage", "ignores enemy Block"],
+			["Block 7", "cleanse 1 present Bleed/Weak/Exposed"]],
+		["rag_duelist_feather_feint_plus", "scarecrow_straw_padding_plus",
+			["0 energy", "Exposed 1", "draw 1"], ["Block 6", "draw 1"]],
+	]
+	await _v3_receipt_fixture(first_party, first_pairs, "Lantern/Rag/Scarecrow")
+	var second_party := [YarnRangerStarterCards.new(), ButtonGolemStarterCards.new(),
+		StarterCards.new()]
+	var second_pairs := [
+		["yarn_ranger_needle_nock_plus", "button_golem_starter_button_fist_plus",
+			["6 damage", "Unravel 2"], ["7 damage", "gain 3 Block (self)"]],
+		["yarn_ranger_wool_bolas_plus", "button_golem_starter_loose_pop_plus",
+			["3 damage", "Tangled 2", "prevents movement", "+2 incoming attack damage"],
+			["requires 5 own Block", "spend 5 Block before the hit", "11 damage",
+				"count 1 popped button only on a successful hit"]],
+		["yarn_ranger_reel_thread_plus", "button_golem_starter_threadwheel_roll_plus",
+			["0 energy", "pull enemy forward 1"], ["different living ally", "swap self", "gain 7 Block (self)"]],
+		["button_golem_starter_seam_resew_plus", "yarn_ranger_hood_knit_plus",
+			["gain 1 Block per button previously popped", "gain 2 Block (self)"],
+			["Block 6", "draw 1"]],
+		["button_golem_starter_loose_pop", "warden_strike",
+			["spend 5 Block before the hit", "9 damage", "successful hit"], ["6 damage"]],
+	]
+	await _v3_receipt_fixture(second_party, second_pairs, "Yarn/Golem/Warden")
+	# All eight genuine identities retain the original three plus five V3 hues.
+	var palette := _v3_colors()
+	_check(LiveRestStitchPairPicker.OWNER_COLORS.size() == palette.size(),
+		"all eight shipped sewn owner hues are present")
+	for owner in palette:
+		_check(LiveRestStitchPairPicker.OWNER_COLORS.get(owner) == palette[owner],
+			"exact sewn owner identity for " + owner)

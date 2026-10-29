@@ -7,6 +7,11 @@ const OWNER_COLORS := {
 	"warden": Color("#4a5d73"),
 	"seamstress": Color("#6e4f6b"),
 	"tinker": Color("#c49a3a"),
+	"lantern_monk": Color("#466c65"),
+	"rag_duelist": Color("#823e62"),
+	"scarecrow": Color("#77613d"),
+	"yarn_ranger": Color("#426785"),
+	"button_golem": Color("#5c577e"),
 }
 const CREAM := Color("#f4e9d1")
 const INK := Color("#28313c")
@@ -363,6 +368,12 @@ static func _texture(path: String) -> Texture2D:
 	return load(path) as Texture2D
 
 
+## Contrast-checked cloth ink: only the mustard Tinker patch needs dark ink.
+## Every darker felt owner patch uses cream on the stripe, lit pips and fallback.
+static func _owner_ink(owner: String) -> Color:
+	return INK if owner == "tinker" else CREAM
+
+
 func _show_thumbnail(state: Dictionary, half: Dictionary) -> void:
 	var card_id: String = str(half.get("id", ""))
 	var owner: String = str(half.get("owner", ""))
@@ -379,6 +390,7 @@ func _show_thumbnail(state: Dictionary, half: Dictionary) -> void:
 	picture.visible = picture.texture != null
 	var label: Label = state["label"]
 	label.text = str(half.get("display_name", card_id))
+	label.add_theme_color_override("font_color", _owner_ink(owner))
 	label.visible = not picture.visible
 
 
@@ -514,7 +526,7 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	# One-based human copy number; the tile keeps the zero-based source index.
 	stripe_label.text = "#%d %s" % [int(entry["index"]) + 1, owner_str.capitalize()]
 	stripe_label.add_theme_font_size_override("font_size", 10)
-	stripe_label.add_theme_color_override("font_color", INK if owner_str == "tinker" else CREAM)
+	stripe_label.add_theme_color_override("font_color", _owner_ink(owner_str))
 	stripe_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	stripe_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	stripe_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -634,7 +646,7 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 		num_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		num_lbl.add_theme_font_size_override("font_size", 10)
 		if is_active:
-			num_lbl.add_theme_color_override("font_color", INK if owner_str == "tinker" else CREAM)
+			num_lbl.add_theme_color_override("font_color", _owner_ink(owner_str))
 		else:
 			num_lbl.add_theme_color_override("font_color", Color("#7a7267"))
 		num_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1343,10 +1355,17 @@ func _target(half: Dictionary) -> String:
 			return "all eligible enemies in positions %s" % _positions(positions)
 		"enemy_random":
 			return "random living enemy in positions %s" % _positions(positions) if not positions.is_empty() else "random living enemy"
+		"enemy_back":
+			return "backmost living enemy in positions %s" % _positions(positions)
 		"ally_single":
+			if half.get("effects", {}).has("swap_with_ally"):
+				return "choose one different living ally in positions %s" % _positions(
+					[1, 2, 3] if positions.is_empty() else positions)
 			return "choose one living ally in positions %s" % _positions(
 				[1, 2, 3] if positions.is_empty() else positions)
 		"party_all":
+			if half.get("owner") == "lantern_monk":
+				return "all living allies" if positions.is_empty() else "all living allies in positions %s" % _positions(positions)
 			return "all allies" if positions.is_empty() else "all allies in positions %s" % _positions(positions)
 		"self":
 			return "self (no chosen target)"
@@ -1396,7 +1415,10 @@ func _effects(half: Dictionary) -> String:
 				else:
 					words.append("heal %d" % effects[key])
 			"block":
-				words.append("Block %d" % effects[key])
+				if half["owner"] == "button_golem" and half["target_kind"] == "self":
+					words.append("gain %d Block (self)" % effects[key])
+				else:
+					words.append("Block %d" % effects[key])
 			"block_all":
 				words.append("Block %d to all allies" % effects[key])
 			"other_ally_block":
@@ -1411,6 +1433,39 @@ func _effects(half: Dictionary) -> String:
 				words.append("gain %d energy" % effects[key])
 			"self_hp_loss":
 				words.append("%d HP lost" % effects[key])
+	# V3 descriptors are interpreted from the real half's authored effects,
+	# never from a card-ID lookup table. Spend prerequisites precede hit text.
+	if effects.has("spend_block"):
+		words.push_front("requires %d own Block; spend %d Block before the hit" % [
+			effects["spend_block"], effects["spend_block"]])
+	if effects.has("blind"):
+		words.append("Blind %d (target's next attack misses; Blind consumed once)" % effects["blind"])
+	if effects.has("cleanse_debuff"):
+		var recipient := " on each living ally" if half["target_kind"] == "party_all" else ""
+		words.append("cleanse %d present Bleed/Weak/Exposed%s" % [effects["cleanse_debuff"], recipient])
+	if effects.has("move_self_forward"):
+		words.append("move self forward %d position" % effects["move_self_forward"])
+	if effects.has("riposte"):
+		words.append("Riposte %d (counterattack when hit for %d enemy turn)" % [
+			effects["riposte"], effects.get("duration", 1)])
+	if effects.has("dodge_next_attack"):
+		words.append("Dodge next attack (spent on the next attack; lasts %d enemy turn)" % effects.get("duration", 1))
+	if effects.get("cannot_buff_next_turn") == true:
+		words.append("Fear: enemy cannot buff on its next turn")
+	if effects.get("ignore_block") == true:
+		words.append("this hit ignores enemy Block")
+	if effects.has("tangled"):
+		words.append("Tangled %d (prevents movement by its side; +2 incoming attack damage while active)" % effects["tangled"])
+	if effects.has("pull_forward"):
+		words.append("pull enemy forward %d position" % effects["pull_forward"])
+	if effects.has("swap_with_ally"):
+		words.append("swap self with one different living ally")
+	if effects.has("block_self"):
+		words.append("gain %d Block (self)" % effects["block_self"])
+	if effects.has("buttons_popped"):
+		words.append("count %d popped button only on a successful hit" % effects["buttons_popped"])
+	if effects.has("block_per_button_popped"):
+		words.append("gain %d Block per button previously popped this combat (self)" % effects["block_per_button_popped"])
 	var text := "; ".join(PackedStringArray(words))
 	if half["owner"] == "seamstress" and effects.has("bleed"):
 		text += " (+1 Bleed if applied: Seamstress passive)"
