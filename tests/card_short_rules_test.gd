@@ -123,6 +123,24 @@ const SCARECROW_FEAR_CASES := [
 		"cost": 3, "target": "enemy_all", "weak": 3, "damage": 6,
 		"line": "Deal 6 to all. Weak 3 to all. Fear to all."},
 ]
+## AC1: the four authentic Scarecrow shoulder-crow printings (Crow Dive and Crow Peck,
+## base and '+'), looked up by named ID in their real starter and pool catalogs
+## (never a catalog total or an ordered ID list). The expected line names the backmost
+## living enemy, states the authored damage, and prints the Pierce Block clause.
+const SCARECROW_CROW_CASES := [
+	{"catalog": "starter", "id": "scarecrow_crow_dive", "owner": "scarecrow",
+		"cost": 1, "target": "enemy_back", "damage": 3,
+		"line": "Deal 3 to the backmost living enemy. Pierce Block."},
+	{"catalog": "starter", "id": "scarecrow_crow_dive_plus", "owner": "scarecrow",
+		"cost": 1, "target": "enemy_back", "damage": 5,
+		"line": "Deal 5 to the backmost living enemy. Pierce Block."},
+	{"catalog": "pool", "id": "scarecrow_crow_peck", "owner": "scarecrow",
+		"cost": 1, "target": "enemy_back", "damage": 4,
+		"line": "Deal 4 to the backmost living enemy. Pierce Block."},
+	{"catalog": "pool", "id": "scarecrow_crow_peck_plus", "owner": "scarecrow",
+		"cost": 1, "target": "enemy_back", "damage": 6,
+		"line": "Deal 6 to the backmost living enemy. Pierce Block."},
+]
 
 var failures: Array[String] = []
 var checks := 0
@@ -158,6 +176,9 @@ func _initialize() -> void:
 	_test_scarecrow_fear_faces()
 	_test_scarecrow_fear_help()
 	_test_scarecrow_fear_negative()
+	_test_scarecrow_crow_faces()
+	_test_scarecrow_crow_help()
+	_test_scarecrow_crow_negative()
 	_check(randi() == expected_global, "short-line formatting draws no global RNG")
 	for failure in failures:
 		printerr(failure)
@@ -1781,4 +1802,297 @@ func _test_scarecrow_fear_negative() -> void:
 	_check(glare_after == glare and fright_after == fright
 		and CardShortRules.line(glare_after) == "Weak 1. Fear.",
 		"the malformed probes cannot alter the shipped Scarecrow records")
+
+
+## AC1: the four authentic Scarecrow shoulder-crow printings show their authored damage
+## (Crow Dive 3/5, Crow Peck 4/6), name the backmost living enemy, and say that the strike
+## ignores Block ("Pierce Block."), with no generic unknown-effect warning.
+func _test_scarecrow_crow_faces() -> void:
+	for entry in SCARECROW_CROW_CASES:
+		var catalog := str(entry["catalog"])
+		var card_id := str(entry["id"])
+		var expected_line := str(entry["line"])
+		var definition := _scarecrow_definition(catalog, card_id)
+		_check(not definition.is_empty(),
+			"Scarecrow crow catalog record exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var effects: Dictionary = definition.get("effects", {})
+		_check(str(definition.get("owner", "")) == "scarecrow",
+			"authored Scarecrow owner: " + card_id)
+		_check(int(definition.get("cost", -1)) == int(entry["cost"]),
+			"authored crow cost: " + card_id)
+		_check(str(definition.get("target_kind", "")) == str(entry["target"]),
+			"authored crow recipient: " + card_id)
+		_check(effects.get("ignore_block") is bool and bool(effects["ignore_block"]),
+			"authored ignore_block flag is the boolean true: " + card_id)
+		_check(effects.get("damage") is int
+			and int(effects["damage"]) == int(entry["damage"]),
+			"authored damage read from the catalog: " + card_id)
+		_check(CardShortRules.is_authored_block_pierce(definition),
+			"card short rules recognizes authentic crow definition: " + card_id)
+		_check(CardShortRules.is_authored_crow(definition),
+			"crow alias recognizes authentic crow definition: " + card_id)
+		var before := definition.duplicate(true)
+		var described := CardShortRules.describe(definition)
+		var line := str(described.get("line", ""))
+		_check(described.get("known") == true, "face record is described: " + card_id)
+		_check(not bool(described.get("unknown", true))
+			and not CardShortRules.has_unknown(definition),
+			"an authentic crow printing needs no fallback: %s (%s)" % [card_id, line])
+		_check(line == expected_line,
+			"short face for %s: got '%s', want '%s'" % [card_id, line, expected_line])
+		_check(line.count("Pierce Block") == 1,
+			"exactly one Pierce Block clause: %s (%s)" % [card_id, line])
+		_check(line.contains("to the backmost living enemy"),
+			"face names the backmost living enemy: %s (%s)" % [card_id, line])
+		_check(line.begins_with("Deal %d" % int(entry["damage"])),
+			"authored damage leads the face: %s (%s)" % [card_id, line])
+		_check(line.find("Deal") < line.find("Pierce Block"),
+			"Pierce Block follows damage: %s (%s)" % [card_id, line])
+		for word in HELP_ONLY_WORDS:
+			_check(not line.contains(word),
+				"face omits Help-only wording '%s': %s (%s)" % [word, card_id, line])
+		_check(definition == before
+			and _scarecrow_definition(catalog, card_id) == before,
+			"formatting never mutates the shipped record: " + card_id)
+		_check(CardShortRules.line(_scarecrow_definition(catalog, card_id))
+			== expected_line, "repeated formatting is identical: " + card_id)
+
+
+## AC2: Help explains the authentic shoulder crow strike once per record: the
+## backmost LIVING enemy is selected, damage reduces HP without consuming Block,
+## and Weak/Exposed/Tangled still adjust damage.
+func _test_scarecrow_crow_help() -> void:
+	var shared_text := ""
+	for entry in SCARECROW_CROW_CASES:
+		var catalog := str(entry["catalog"])
+		var card_id := str(entry["id"])
+		var definition := _scarecrow_definition(catalog, card_id)
+		_check(not definition.is_empty(), "Crow Help catalog record exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var before := definition.duplicate(true)
+		var rows := CardKeywordGlossary.describe(definition)
+		var names := _row_names(rows)
+		_check(names == ["Pierce Block"],
+			"Help produces exactly one Pierce Block row: %s (%s)" % [card_id, str(names)])
+		var crow_rows := _rows_named(rows, "Pierce Block")
+		_check(crow_rows.size() == 1,
+			"exactly one Pierce Block row for %s (got %d)" % [card_id, crow_rows.size()])
+		if crow_rows.size() == 1:
+			var text := str(crow_rows[0].get("explanation", ""))
+			if shared_text.is_empty():
+				shared_text = text
+			_check(text == shared_text,
+				"one compact Pierce Block row serves every authentic crow printing: " + card_id)
+			_check(text.contains("backmost living enemy"),
+				"Crow Help states backmost living enemy: " + card_id)
+			_check(text.contains("HP") and text.contains("Block")
+				and (text.contains("without consuming") or text.contains("without reducing")),
+				"Crow Help explains HP reduction without consuming Block: " + card_id)
+			_check(text.contains("Weak") and text.contains("Exposed") and text.contains("Tangled"),
+				"Crow Help confirms Weak/Exposed/Tangled adjustments: " + card_id)
+			_check(text.contains("authored card rule only")
+				or text.contains("does not yet play this card"),
+				"Crow Help gives no false promise of live hand wiring: " + card_id)
+			_check(not text.contains("already plays from the shared hand"),
+				"Crow Help does not claim live hand wiring: " + card_id)
+		_check(CardKeywordGlossary.describe(definition) == rows,
+			"repeated Crow Help reads are identical: " + card_id)
+		_check(definition == before
+			and _scarecrow_definition(catalog, card_id) == before,
+			"Help never mutates the shipped Crow record: " + card_id)
+		var detached := CardKeywordGlossary.describe(definition)
+		if detached.size() == 1:
+			detached[0]["keyword"] = "Tampered"
+			detached[0]["explanation"] = "Tampered"
+			_check(_row_names(CardKeywordGlossary.describe(definition)) == ["Pierce Block"],
+				"Crow Help rows are detached from caller mutations: " + card_id)
+	_check(not shared_text.is_empty(), "the Pierce Block Help row was inspected")
+
+
+## AC3: malformed or forged ignore_block records (wrong owner/ID/cost/recipient/positions,
+## wrong damage, extra effect, non-boolean flag, broken upgrade link) do not borrow the
+## Pierce Block face or Help wording; preserve honest unknown-effect fallback and immutability.
+func _test_scarecrow_crow_negative() -> void:
+	var dive := _scarecrow_definition("starter", "scarecrow_crow_dive")
+	var peck := _scarecrow_definition("pool", "scarecrow_crow_peck")
+	_check(not dive.is_empty() and not peck.is_empty()
+		and CardShortRules.line(dive) == "Deal 3 to the backmost living enemy. Pierce Block."
+		and CardShortRules.line(peck) == "Deal 4 to the backmost living enemy. Pierce Block.",
+		"the authentic crow records are the positive controls")
+	# Non-boolean / false / numeric / text ignore_block flags
+	for case in [["boolean false", false], ["numeric one", 1], ["null", null],
+			["text", "true"], ["float", 1.0]]:
+		var probe := dive.duplicate(true)
+		var probe_effects: Dictionary = probe["effects"]
+		probe_effects["ignore_block"] = case[1]
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_block_pierce(probe),
+			"a %s ignore_block flag is not an authored crow strike" % str(case[0]))
+		var line := CardShortRules.line(probe)
+		_check(not line.contains("Pierce Block"),
+			"no Pierce Block clause is invented for a %s flag: %s" % [str(case[0]), line])
+		_check(line.ends_with(UNKNOWN_FALLBACK),
+			"a %s flag keeps the honest fallback: %s" % [str(case[0]), line])
+		_check(not _has_keyword_row(probe, "Pierce Block"),
+			"no Pierce Block Help row for a %s flag" % str(case[0]))
+		_check(probe == before, "the %s flag probe is never mutated" % str(case[0]))
+	# Wrong target_kind
+	for target: String in ["enemy_single", "enemy_all", "enemy_random", "self", "ally_single", "party_all"]:
+		var probe := dive.duplicate(true)
+		probe["target_kind"] = target
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_block_pierce(probe),
+			"a true ignore_block on %s is not an authored crow strike" % target)
+		var line := CardShortRules.line(probe)
+		_check(not line.contains("Pierce Block"),
+			"no Pierce Block for a %s recipient: %s" % [target, line])
+		_check(line.ends_with(UNKNOWN_FALLBACK),
+			"a %s recipient keeps the honest fallback: %s" % [target, line])
+		_check(not _has_keyword_row(probe, "Pierce Block"),
+			"no Pierce Block Help row for a %s recipient" % target)
+		_check(probe == before, "the %s recipient probe is never mutated" % target)
+	# Wrong owner
+	for owner: Variant in ["warden", "tinker", &"scarecrow", null]:
+		var probe := dive.duplicate(true)
+		probe["owner"] = owner
+		var before := probe.duplicate(true)
+		var line := CardShortRules.line(probe)
+		_check(not CardShortRules.is_authored_block_pierce(probe)
+			and not line.contains("Pierce Block")
+			and line.ends_with(UNKNOWN_FALLBACK)
+			and not _has_keyword_row(probe, "Pierce Block"),
+			"a %s owner never borrows Pierce Block: %s" % [str(owner), line])
+		_check(probe == before, "the %s owner probe is never mutated" % str(owner))
+	# Forged ID, wrong cost
+	var structural := [
+		["forged ID", "id", "scarecrow_crow_dive_forged"],
+		["wrong cost", "cost", 2],
+		["zero cost", "cost", 0],
+	]
+	for case in structural:
+		var probe := dive.duplicate(true)
+		probe[case[1]] = case[2]
+		var before := probe.duplicate(true)
+		var line := CardShortRules.line(probe)
+		_check(not CardShortRules.is_authored_block_pierce(probe)
+			and not line.contains("Pierce Block") and line.ends_with(UNKNOWN_FALLBACK),
+			"a %s never borrows Pierce Block: %s" % [str(case[0]), line])
+		_check(not _has_keyword_row(probe, "Pierce Block"),
+			"a %s adds no Pierce Block Help row" % str(case[0]))
+		_check(probe == before, "the %s probe is never mutated" % str(case[0]))
+	# Wrong positions
+	for case in [["from_positions", [1, 2]], ["to_positions", [1, 2]],
+			["from_positions", [2, 3]], ["to_positions", [2, 3]],
+			["from_positions", null], ["to_positions", null]]:
+		var probe := dive.duplicate(true)
+		probe[case[0]] = case[1]
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_block_pierce(probe)
+			and not CardShortRules.line(probe).contains("Pierce Block")
+			and not _has_keyword_row(probe, "Pierce Block"),
+			"a crow record with %s %s stays silent" % [str(case[0]), str(case[1])])
+		_check(probe == before,
+			"the %s %s probe is never mutated" % [str(case[0]), str(case[1])])
+	# Wrong damage
+	var wrong_damage_dive := dive.duplicate(true)
+	wrong_damage_dive["effects"]["damage"] = 4
+	var wrong_damage_peck := peck.duplicate(true)
+	wrong_damage_peck["effects"]["damage"] = 3
+	var missing_damage := dive.duplicate(true)
+	missing_damage["effects"].erase("damage")
+	for probe: Dictionary in [wrong_damage_dive, wrong_damage_peck, missing_damage]:
+		var before := probe.duplicate(true)
+		var line := CardShortRules.line(probe)
+		_check(not CardShortRules.is_authored_block_pierce(probe)
+			and not line.contains("Pierce Block") and line.ends_with(UNKNOWN_FALLBACK),
+			"an altered damage amount never borrows Pierce Block: " + line)
+		_check(not _has_keyword_row(probe, "Pierce Block"),
+			"an altered damage amount adds no Pierce Block Help row: " + line)
+		_check(probe == before, "an altered damage probe is never mutated: " + line)
+	# Extra effect keys (unsupported and supported)
+	for extra in [["unsupported", "mystery_status", 9, ""], ["supported", "weak", 1, "Weak 1"]]:
+		var sibling := dive.duplicate(true)
+		var sibling_effects: Dictionary = sibling["effects"]
+		sibling_effects[str(extra[1])] = extra[2]
+		var before := sibling.duplicate(true)
+		var line := CardShortRules.line(sibling)
+		_check(not CardShortRules.is_authored_block_pierce(sibling)
+			and not line.contains("Pierce Block") and line.ends_with(UNKNOWN_FALLBACK),
+			"a crow sibling with extra %s effect stays honest: %s" % [str(extra[0]), line])
+		_check(not _has_keyword_row(sibling, "Pierce Block"),
+			"extra %s effect adds no Pierce Block Help row" % str(extra[0]))
+		_check(sibling == before, "extra %s probe is never mutated" % str(extra[0]))
+	# Broken base/+ upgrade relationships
+	var broken_upgrade_base := dive.duplicate(true)
+	broken_upgrade_base.erase("upgrade_id")
+	var broken_upgrade_of_base := dive.duplicate(true)
+	broken_upgrade_of_base["upgrade_of"] = "scarecrow_crow_peck"
+	var broken_upgrade_plus := _scarecrow_definition("starter", "scarecrow_crow_dive_plus")
+	var broken_upgrade_plus_missing := broken_upgrade_plus.duplicate(true)
+	broken_upgrade_plus_missing.erase("upgrade_of")
+	var broken_upgrade_plus_with_id := broken_upgrade_plus.duplicate(true)
+	broken_upgrade_plus_with_id["upgrade_id"] = "scarecrow_crow_dive_plus_plus"
+	for probe: Dictionary in [broken_upgrade_base, broken_upgrade_of_base,
+			broken_upgrade_plus_missing, broken_upgrade_plus_with_id]:
+		var before := probe.duplicate(true)
+		var line := CardShortRules.line(probe)
+		_check(not CardShortRules.is_authored_block_pierce(probe)
+			and not line.contains("Pierce Block") and line.ends_with(UNKNOWN_FALLBACK),
+			"broken upgrade link never borrows Pierce Block: " + line)
+		_check(not _has_keyword_row(probe, "Pierce Block"),
+			"broken upgrade link adds no Pierce Block Help row")
+		_check(probe == before, "broken upgrade probe is never mutated")
+	# Detached canonical field-set negative probes: deleted/changed display_name,
+	# changed reward_eligible or rarity, extra top-level field, changed illustration,
+	# or changed starting copies must all fail authentication and preserve fallback.
+	var canonical_probes := [
+		["deleted display_name on dive", dive.duplicate(true), "erase", "display_name", null],
+		["changed display_name on dive", dive.duplicate(true), "set", "display_name", "Crow Strike"],
+		["deleted display_name on peck", peck.duplicate(true), "erase", "display_name", null],
+		["changed display_name on peck", peck.duplicate(true), "set", "display_name", "Peck"],
+		["changed reward_eligible on dive", dive.duplicate(true), "set", "reward_eligible", true],
+		["changed reward_eligible on peck", peck.duplicate(true), "set", "reward_eligible", false],
+		["changed rarity on peck", peck.duplicate(true), "set", "rarity", "rare"],
+		["deleted rarity on peck", peck.duplicate(true), "erase", "rarity", null],
+		["extra rarity on dive", dive.duplicate(true), "set", "rarity", "common"],
+		["extra top-level field on dive", dive.duplicate(true), "set", "unexpected_field", "forgery"],
+		["extra top-level field on peck", peck.duplicate(true), "set", "forged_flag", true],
+		["changed illustration_path on dive", dive.duplicate(true), "set", "illustration_path", "res://other.png"],
+		["changed starting_copies on dive", dive.duplicate(true), "set", "starting_copies", 2],
+		["changed starting_copies on peck", peck.duplicate(true), "set", "starting_copies", 1],
+	]
+	for case_def in canonical_probes:
+		var label: String = str(case_def[0])
+		var probe: Dictionary = case_def[1]
+		var action: String = str(case_def[2])
+		var key: String = str(case_def[3])
+		if action == "erase":
+			probe.erase(key)
+		else:
+			probe[key] = case_def[4]
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_block_pierce(probe),
+			"%s fails is_authored_block_pierce" % label)
+		_check(not CardShortRules.is_authored_crow(probe),
+			"%s fails is_authored_crow" % label)
+		_check(CardShortRules.has_unknown(probe),
+			"%s reports has_unknown true" % label)
+		var line := CardShortRules.line(probe)
+		_check(not line.contains("Pierce Block"),
+			"no Pierce Block on face for %s: %s" % [label, line])
+		_check(line.ends_with(UNKNOWN_FALLBACK),
+			"honest unknown fallback on face for %s: %s" % [label, line])
+		_check(not _has_keyword_row(probe, "Pierce Block"),
+			"no Pierce Block Help row for %s" % label)
+		_check(probe == before, "%s probe is never mutated" % label)
+	# Shipped records are untouched
+	var dive_after := _scarecrow_definition("starter", "scarecrow_crow_dive")
+	var peck_after := _scarecrow_definition("pool", "scarecrow_crow_peck")
+	_check(dive_after == dive and peck_after == peck
+		and CardShortRules.line(dive_after) == "Deal 3 to the backmost living enemy. Pierce Block."
+		and CardShortRules.line(peck_after) == "Deal 4 to the backmost living enemy. Pierce Block.",
+		"malformed probes cannot alter shipped Scarecrow records")
 

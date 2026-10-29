@@ -99,6 +99,12 @@ const EXHAUST_IDS := ["lantern_monk_moth_cloud", "lantern_monk_moth_cloud_plus"]
 ## held-card split: the four single-target sack printings already play from the
 ## shared hand, while the two area-card families are not applied by that path.
 const FEAR_EXPLANATION := "Fear is the authored Scarecrow keyword: the affected enemy cannot buff on its NEXT enemy turn, and the buff lock then expires at the end of that turn, so it never covers a second turn. Upgrades never lengthen the lock. Fear is applied together with a separate Weak, which reduces the enemy's outgoing attack damage by 25% (rounded down) for its authored Weak turns: Sack Glare, Sack Grin and Crow Flock author Weak 1 on the base card and Weak 2 on the upgraded card, while Harvest Fright authors Weak 2 on the base card and Weak 3 on the upgraded card. Fear adds no damage, Bleed or Blind of its own. The Scarecrow is one of the eight selectable heroes and can join any three-hero party. The four live sack variants, Sack Glare and Sack Grin with their '+' upgrades, already play from the shared hand and apply this Fear lock to the chosen living enemy. Crow Flock and Harvest Fright are the two authored area-card families: they carry the same Fear flag, but the live sack-card path does not play them, so their Fear is not yet applied in battle."
+## Pierce Block is the Scarecrow's shoulder crow strike (Crow Dive and Crow Peck,
+## base and '+'). It pierces Block straight to HP against the backmost living enemy.
+## Only the four authentic catalog printings that CardShortRules authenticates
+## receive this Help row.
+const BLOCK_PIERCE_KEYWORD := "Pierce Block"
+const BLOCK_PIERCE_EXPLANATION := "Pierce Block strikes the backmost living enemy (the highest-position living enemy): damage reduces that enemy's HP directly without reducing or consuming its Block, leaving enemy Block intact. Weak, Exposed and Tangled still adjust damage normally. This Help explains the authored card rule only; live combat does not yet play this card from the shared hand."
 
 
 static func describe(definition: Variant) -> Array[Dictionary]:
@@ -188,6 +194,9 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 	var darning := _darning_line(definition, effects)
 	if not darning.is_empty():
 		lines.append(darning)
+	var crow := _crow_line(definition, effects)
+	if not crow.is_empty():
+		lines.append(crow)
 	return lines
 
 
@@ -679,6 +688,19 @@ static func _darning_line(definition: Dictionary, effects: Dictionary) -> Dictio
 	var explanation := "Heals a chosen living ally %d HP and grants that ally %d Block. Costs %d energy and is playable by the Seamstress from positions 1-3. Healing is capped by the chosen living ally's missing HP, while the Block portion still applies even if the ally is already at full HP. A downed hero cannot be chosen and is not revived." % [
 		int(heal_value), int(block_value), int(cost_value)]
 	return {"keyword": "Mixed rescue", "explanation": explanation}
+
+
+## Pierce Block is the Scarecrow's shoulder crow strike. Its single authority is
+## CardShortRules' strict printing check, which validates the complete canonical
+## Scarecrow starter/pool record (ID, display_name, owner, cost, slots, target,
+## damage, ignore_block, illustration_path, starting_copies, reward_eligible,
+## rarity, upgrade link, and no unexpected fields). Delegating keeps the sewn face
+## and Help from disagreeing, and any mismatch, altered property or forged record
+## never earns the row.
+static func _crow_line(definition: Dictionary, _effects: Dictionary) -> Dictionary:
+	if not CardShortRules.is_authored_block_pierce(definition):
+		return {}
+	return {"keyword": BLOCK_PIERCE_KEYWORD, "explanation": BLOCK_PIERCE_EXPLANATION}
 
 
 ## Fear is the Scarecrow's authored one-turn buff lock. Its single authority is

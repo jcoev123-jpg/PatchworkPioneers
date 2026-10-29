@@ -121,6 +121,8 @@ func _catalog_test() -> void:
 	var starter := StarterCards.new()
 	var lantern_starters := LanternMonkStarterCards.new()
 	var lantern_pool := LanternMonkPoolCards.new()
+	var scarecrow_starter := ScarecrowStarterCards.new()
+	var scarecrow_pool := ScarecrowPoolCards.new()
 	var cases := [
 		[warden, "warden_pinning_jab", ["Pinned"], ["DIFFERENT hero", "+5", "before Weak/Exposed", "expires"]],
 		[warden, "warden_draw_fire", ["Guarding"], ["position 1", "other heroes", "next turn"]],
@@ -230,6 +232,7 @@ func _catalog_test() -> void:
 	_pin_and_pound_catalog_test(warden)
 	_blind_catalog_test(lantern_starters, lantern_pool)
 	_thorns_test(warden, v3_warden)
+	_scarecrow_crow_catalog_test(scarecrow_starter, scarecrow_pool)
 	# Exact authored shapes are explained; every unknown, malformed or partial
 	# variant stays silent and leaves the caller's definition untouched. These
 	# effect fixtures mirror the catalog descriptors but are built independently.
@@ -1252,6 +1255,295 @@ func _thorns_test(warden: WardenPoolCards, v3_warden: V3WardenPoolCards) -> void
 	var combined_names := _row_names(CardKeywordGlossary.describe(combined))
 	_check(combined_names == ["Bleed 1", "Weak 1", "Guarding", "Thorns 2"],
 		"Thorns follows Guarding in combined stable order: " + str(combined_names))
+
+
+## Genuine catalog tests asserting that every authentic shoulder-crow printing
+## produces exactly one Help row titled Pierce Block, whose explanation mentions
+## the backmost living enemy, direct damage straight to HP without reducing or
+## consuming enemy Block, Weak / Exposed / Tangled adjustment, and the explicit
+## disclaimer that live hand wiring is pending. Also asserts detached row results,
+## immutable catalog records, and fail-closed negative space.
+func _scarecrow_crow_catalog_test(starter: ScarecrowStarterCards, pool: ScarecrowPoolCards) -> void:
+	var cases := [
+		{"catalog": starter, "id": "scarecrow_crow_dive", "damage": 3, "upgrades_to": "scarecrow_crow_dive_plus"},
+		{"catalog": starter, "id": "scarecrow_crow_dive_plus", "damage": 5, "upgrades_to": ""},
+		{"catalog": pool, "id": "scarecrow_crow_peck", "damage": 4, "upgrades_to": "scarecrow_crow_peck_plus"},
+		{"catalog": pool, "id": "scarecrow_crow_peck_plus", "damage": 6, "upgrades_to": ""},
+	]
+	for case: Dictionary in cases:
+		var catalog: Variant = case["catalog"]
+		var card_id: String = String(case["id"])
+		var authored_damage: int = int(case["damage"])
+		_check(catalog.has_card(card_id), "shoulder-crow card present in catalog " + card_id)
+		if not catalog.has_card(card_id):
+			continue
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			"actual shoulder-crow catalog definition " + card_id)
+		if definition.is_empty():
+			continue
+		var original: Dictionary = definition.duplicate(true)
+		var effects: Dictionary = definition.get("effects", {})
+		_check(effects.get("damage") == authored_damage and effects.get("ignore_block") == true,
+			"authored damage %d and ignore_block true for %s" % [authored_damage, card_id])
+		_check(String(definition.get("owner", "")) == "scarecrow"
+			and int(definition.get("cost", -1)) == 1
+			and String(definition.get("target_kind", "")) == "enemy_back"
+			and Array(definition.get("from_positions", [])) == [1, 2, 3]
+			and Array(definition.get("to_positions", [])) == [1, 2, 3],
+			"authored owner, cost, target and positions for " + card_id)
+		_check(CardShortRules.is_authored_block_pierce(definition),
+			"CardShortRules authenticates block pierce " + card_id)
+		_check(CardShortRules.is_authored_crow(definition),
+			"CardShortRules authenticates crow alias " + card_id)
+		_check(not CardShortRules.has_unknown(definition),
+			"CardShortRules reports no unknown effects for authentic " + card_id)
+		var face: String = CardShortRules.line(definition)
+		var expected_face := "Deal %d to the backmost living enemy. Pierce Block." % authored_damage
+		_check(face == expected_face, "face text exact match for %s: '%s'" % [card_id, face])
+		var rows := CardKeywordGlossary.describe(definition)
+		var names := _row_names(rows)
+		_check(names == ["Pierce Block"],
+			"exactly one Pierce Block row for %s (got %s)" % [card_id, str(names)])
+		if names != ["Pierce Block"]:
+			continue
+		var text := str(rows[0]["explanation"])
+		_check(text.contains("backmost living enemy"),
+			"Pierce Block Help mentions the backmost living enemy: " + card_id)
+		_check(text.contains("HP"),
+			"Pierce Block Help mentions direct HP damage: " + card_id)
+		_check(text.contains("without reducing or consuming enemy Block")
+			or (text.contains("without reducing") and text.contains("Block")),
+			"Pierce Block Help mentions direct HP without reducing Block: " + card_id)
+		_check(text.contains("Weak") and text.contains("Exposed") and text.contains("Tangled"),
+			"Pierce Block Help mentions Weak, Exposed and Tangled adjustments: " + card_id)
+		_check(text.contains("authored card rule only") and text.contains("live combat does not yet play"),
+			"Pierce Block Help contains explicit live hand disclaimer: " + card_id)
+		_check(definition == original and catalog.get_definition(card_id) == original,
+			"Pierce Block Help never mutates catalog definition: " + card_id)
+		_check(CardKeywordGlossary.describe(definition) == rows,
+			"Pierce Block Help stays deterministic for " + card_id)
+		rows[0]["keyword"] = "Tampered"
+		rows[0]["explanation"] = "Tampered"
+		var fresh := CardKeywordGlossary.describe(definition)
+		_check(_row_names(fresh) == ["Pierce Block"] and definition == original,
+			"Pierce Block Help results are detached from caller definition: " + card_id)
+
+	var authentic_dive: Dictionary = starter.get_definition("scarecrow_crow_dive")
+	var authentic_dive_plus: Dictionary = starter.get_definition("scarecrow_crow_dive_plus")
+	var authentic_peck: Dictionary = pool.get_definition("scarecrow_crow_peck")
+	var authentic_peck_plus: Dictionary = pool.get_definition("scarecrow_crow_peck_plus")
+
+	var negatives: Array = []
+
+	# Non-boolean flag
+	var f := authentic_dive.duplicate(true)
+	f["effects"]["ignore_block"] = 1
+	negatives.append(["integer ignore_block", f])
+	f = authentic_dive.duplicate(true)
+	f["effects"]["ignore_block"] = "true"
+	negatives.append(["string ignore_block", f])
+	f = authentic_dive.duplicate(true)
+	f["effects"]["ignore_block"] = false
+	negatives.append(["false ignore_block", f])
+	f = authentic_dive.duplicate(true)
+	f["effects"]["ignore_block"] = null
+	negatives.append(["null ignore_block", f])
+
+	# Wrong target
+	f = authentic_dive.duplicate(true)
+	f["target_kind"] = "enemy_front"
+	negatives.append(["wrong target enemy_front", f])
+	f = authentic_dive.duplicate(true)
+	f["target_kind"] = "enemy_all"
+	negatives.append(["wrong target enemy_all", f])
+	f = authentic_dive.duplicate(true)
+	f["target_kind"] = "self"
+	negatives.append(["wrong target self", f])
+	f = authentic_dive.duplicate(true)
+	f["target_kind"] = "ally_single"
+	negatives.append(["wrong target ally_single", f])
+
+	# Wrong owner
+	f = authentic_dive.duplicate(true)
+	f["owner"] = "warden"
+	negatives.append(["wrong owner warden", f])
+	f = authentic_peck.duplicate(true)
+	f["owner"] = "tinker"
+	negatives.append(["wrong owner tinker", f])
+	f = authentic_dive.duplicate(true)
+	f.erase("owner")
+	negatives.append(["missing owner", f])
+
+	# Wrong cost
+	f = authentic_dive.duplicate(true)
+	f["cost"] = 0
+	negatives.append(["wrong cost 0", f])
+	f = authentic_dive.duplicate(true)
+	f["cost"] = 2
+	negatives.append(["wrong cost 2", f])
+	f = authentic_dive.duplicate(true)
+	f["cost"] = "1"
+	negatives.append(["string cost", f])
+
+	# Wrong positions
+	f = authentic_dive.duplicate(true)
+	f["from_positions"] = [1, 2]
+	negatives.append(["wrong from_positions", f])
+	f = authentic_dive.duplicate(true)
+	f["to_positions"] = [1]
+	negatives.append(["wrong to_positions [1]", f])
+	f = authentic_dive.duplicate(true)
+	f["to_positions"] = [1, 2]
+	negatives.append(["wrong to_positions [1, 2]", f])
+	f = authentic_dive.duplicate(true)
+	f["to_positions"] = [3]
+	negatives.append(["wrong to_positions [3]", f])
+	f = authentic_peck.duplicate(true)
+	f["to_positions"] = []
+	negatives.append(["empty to_positions", f])
+
+	# Wrong damage
+	f = authentic_dive.duplicate(true)
+	f["effects"]["damage"] = 4
+	negatives.append(["wrong Dive damage 4", f])
+	f = authentic_dive_plus.duplicate(true)
+	f["effects"]["damage"] = 3
+	negatives.append(["wrong Dive+ damage 3", f])
+	f = authentic_peck.duplicate(true)
+	f["effects"]["damage"] = 3
+	negatives.append(["wrong Peck damage 3", f])
+	f = authentic_peck_plus.duplicate(true)
+	f["effects"]["damage"] = 7
+	negatives.append(["wrong Peck+ damage 7", f])
+	f = authentic_dive.duplicate(true)
+	f["effects"]["damage"] = "3"
+	negatives.append(["string damage", f])
+	f = authentic_dive.duplicate(true)
+	f["effects"].erase("damage")
+	negatives.append(["missing damage", f])
+
+	# Extra effects
+	f = authentic_dive.duplicate(true)
+	f["effects"]["bleed"] = 1
+	negatives.append(["extra effect bleed", f])
+	f = authentic_dive.duplicate(true)
+	f["effects"]["block"] = 4
+	negatives.append(["extra effect block", f])
+	f = authentic_peck.duplicate(true)
+	f["effects"]["weak"] = 1
+	negatives.append(["extra effect weak", f])
+
+	# Forged ID
+	f = authentic_dive.duplicate(true)
+	f["id"] = "scarecrow_crow_scratch"
+	negatives.append(["forged ID scarecrow_crow_scratch", f])
+	f = authentic_dive.duplicate(true)
+	f["id"] = "scarecrow_crow_dive_forged"
+	negatives.append(["forged ID scarecrow_crow_dive_forged", f])
+	f = authentic_peck.duplicate(true)
+	f["id"] = "warden_crow_peck"
+	negatives.append(["forged ID warden_crow_peck", f])
+
+	# Broken upgrade links
+	f = authentic_dive.duplicate(true)
+	f["upgrade_id"] = "scarecrow_crow_dive"
+	negatives.append(["upgrade self loop", f])
+	f = authentic_dive.duplicate(true)
+	f["upgrade_id"] = "scarecrow_crow_peck_plus"
+	negatives.append(["wrong upgrade link", f])
+	f = authentic_dive.duplicate(true)
+	f.erase("upgrade_id")
+	negatives.append(["base missing upgrade_id", f])
+	f = authentic_dive.duplicate(true)
+	f["upgrade_of"] = "scarecrow_crow_dive"
+	negatives.append(["base has upgrade_of", f])
+	f = authentic_dive_plus.duplicate(true)
+	f["upgrade_id"] = "scarecrow_crow_dive_plus_plus"
+	negatives.append(["plus has upgrade_id", f])
+	f = authentic_dive_plus.duplicate(true)
+	f.erase("upgrade_of")
+	negatives.append(["plus missing upgrade_of", f])
+	f = authentic_peck_plus.duplicate(true)
+	f["upgrade_id"] = "scarecrow_crow_peck_plus_plus"
+	negatives.append(["peck plus has upgrade_id", f])
+	f = authentic_peck_plus.duplicate(true)
+	f["upgrade_of"] = "scarecrow_crow_dive"
+	negatives.append(["peck plus wrong upgrade_of", f])
+
+	# Detached canonical field-set negative probes: deleted/changed display_name,
+	# changed reward_eligible or rarity, extra top-level field, changed illustration,
+	# or changed starting copies must all fail authentication and produce no Help row.
+	f = authentic_dive.duplicate(true)
+	f.erase("display_name")
+	negatives.append(["deleted display_name on dive", f])
+	f = authentic_dive.duplicate(true)
+	f["display_name"] = "Crow Strike"
+	negatives.append(["changed display_name on dive", f])
+	f = authentic_peck.duplicate(true)
+	f.erase("display_name")
+	negatives.append(["deleted display_name on peck", f])
+	f = authentic_peck.duplicate(true)
+	f["display_name"] = "Peck"
+	negatives.append(["changed display_name on peck", f])
+	f = authentic_dive.duplicate(true)
+	f["reward_eligible"] = true
+	negatives.append(["changed reward_eligible on dive", f])
+	f = authentic_peck.duplicate(true)
+	f["reward_eligible"] = false
+	negatives.append(["changed reward_eligible on peck", f])
+	f = authentic_peck.duplicate(true)
+	f["rarity"] = "rare"
+	negatives.append(["changed rarity on peck", f])
+	f = authentic_peck.duplicate(true)
+	f.erase("rarity")
+	negatives.append(["deleted rarity on peck", f])
+	f = authentic_dive.duplicate(true)
+	f["rarity"] = "common"
+	negatives.append(["extra rarity on dive", f])
+	f = authentic_dive.duplicate(true)
+	f["unexpected_top_level_field"] = "forged"
+	negatives.append(["extra top-level field on dive", f])
+	f = authentic_peck.duplicate(true)
+	f["forged_flag"] = true
+	negatives.append(["extra top-level field on peck", f])
+	f = authentic_dive.duplicate(true)
+	f["illustration_path"] = "res://other.png"
+	negatives.append(["changed illustration_path on dive", f])
+	f = authentic_dive.duplicate(true)
+	f["starting_copies"] = 2
+	negatives.append(["changed starting_copies on dive", f])
+	f = authentic_peck.duplicate(true)
+	f["starting_copies"] = 1
+	negatives.append(["changed starting_copies on peck", f])
+
+	for case_entry in negatives:
+		var label: String = case_entry[0]
+		var bad: Dictionary = case_entry[1]
+		var bad_before := bad.duplicate(true)
+		_check(not CardShortRules.is_authored_block_pierce(bad),
+			"is_authored_block_pierce returns false for %s" % label)
+		_check(not CardShortRules.is_authored_crow(bad),
+			"is_authored_crow returns false for %s" % label)
+		var bad_rows := CardKeywordGlossary.describe(bad)
+		_check(not _row_names(bad_rows).has("Pierce Block"),
+			"no Pierce Block row for %s" % label)
+		if (bad.get("effects", {}) as Dictionary).has("ignore_block"):
+			_check(CardShortRules.has_unknown(bad),
+				"has_unknown returns true when unauthorized card carries ignore_block for %s" % label)
+			var bad_line := CardShortRules.line(bad)
+			_check(not bad_line.contains("Pierce Block"),
+				"no Pierce Block on face for %s" % label)
+			_check(bad_line.contains("Other authored effects are not described."),
+				"unknown effect fallback on face for %s" % label)
+		_check(bad == bad_before, "negative fixture %s is not mutated" % label)
+
+	# Verify authentic catalog records are unchanged after negative probes
+	_check(starter.get_definition("scarecrow_crow_dive") == authentic_dive
+		and starter.get_definition("scarecrow_crow_dive_plus") == authentic_dive_plus
+		and pool.get_definition("scarecrow_crow_peck") == authentic_peck
+		and pool.get_definition("scarecrow_crow_peck_plus") == authentic_peck_plus,
+		"authentic Scarecrow crow catalog records remain immutable")
 
 
 func _help_in_fixture(fixture: Dictionary, kind: String) -> void:
