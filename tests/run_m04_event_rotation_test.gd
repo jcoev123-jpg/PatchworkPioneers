@@ -17,9 +17,21 @@ extends SceneTree
 
 const EVENTS_PATH := "res://data/events/m04_events.json"
 const ROADSIDE_EVENTS_PATH := "res://data/events/v3_roadside_events.json"
-## Canonical source of the six promoted Candlelit Bargain records; it stays
-## outside the rotation and is only used here as the verbatim reference.
+## Canonical source of the twelve Candlelit Bargain records; the earlier six also
+## live in m04_events.json, while the remaining six are merged from here by the
+## default rotation without duplicating the earlier six.
 const CANDLELIT_EVENTS_PATH := "res://data/events/v3_candlelit_bargains.json"
+
+## Independent copy of the six remaining Candlelit Bargain IDs promoted directly
+## from v3_candlelit_bargains.json by the default selector.
+const PROMOTED_CANDLELIT_IDS := [
+	"v3_bellglass_night_market",
+	"v3_crowlace_ticket_booth",
+	"v3_moonlit_pin_exchange",
+	"v3_oxblood_patch_hall",
+	"v3_bonecream_button_press",
+	"v3_saffron_spool_trial",
+]
 
 ## Independent copy of the thirteen named generic IDs; never read from the
 ## production constant, so a shrink there is caught here.
@@ -66,6 +78,8 @@ func _initialize() -> void:
 	_test_midnight_story_event_batch()
 	_test_lantern_haunted_event_batch()
 	_test_candlelit_bargain_event_batch()
+	_test_remaining_candlelit_bargain_event_batch()
+	_test_candlelit_shipping_merge_validation()
 	_check(source_document == source_snapshot, "shipped catalog document unchanged by every flow")
 	_report()
 
@@ -225,18 +239,37 @@ func _test_sorted_eligibility() -> void:
 	_check(reversed_rotation.is_catalog_valid(), "a reverse-ordered catalog fixture still validates")
 	_check(reversed_rotation.get_generic_event_ids() == shipped.get_generic_event_ids(),
 		"both JSON orderings expose the same sorted eligible IDs")
+	var rev_generic_events: Array = _source_events()
+	rev_generic_events.reverse()
+	var rev_roadside_events: Array = _load_catalog_events(ROADSIDE_EVENTS_PATH)
+	rev_roadside_events.reverse()
+	var rev_candlelit_events: Array = _load_catalog_events(CANDLELIT_EVENTS_PATH)
+	rev_candlelit_events.reverse()
+	var reordered_merge: Variant = RunM04EventRotation._combine_shipped_catalogs(
+		{"events": rev_generic_events},
+		{"events": rev_roadside_events},
+		{"events": rev_candlelit_events}
+	)
+	var reordered_shipped := RunM04EventRotation.new(reordered_merge)
+	_check(reordered_shipped.is_catalog_valid(), "reordered shipping sources still validate")
+	_check(reordered_shipped.get_generic_event_ids() == shipped.get_generic_event_ids(),
+		"reordered shipping sources expose the exact same sorted eligible IDs")
 	for seed_value in [7, 99, 424242, 1000003]:
 		var first_rng := RandomNumberGenerator.new()
 		first_rng.seed = seed_value
 		var second_rng := RandomNumberGenerator.new()
 		second_rng.seed = seed_value
+		var third_rng := RandomNumberGenerator.new()
+		third_rng.seed = seed_value
 		var first := shipped.select_event(first_rng)
 		var second := reversed_rotation.select_event(second_rng)
-		_check(first.get("ok") == true and second.get("ok") == true,
-			"both JSON orderings select with seed %d" % seed_value)
-		_check(first.get("event", {}).get("id") == second.get("event", {}).get("id"),
+		var third := reordered_shipped.select_event(third_rng)
+		_check(first.get("ok") == true and second.get("ok") == true and third.get("ok") == true,
+			"all JSON orderings select with seed %d" % seed_value)
+		_check(first.get("event", {}).get("id") == second.get("event", {}).get("id")
+			and first.get("event", {}).get("id") == third.get("event", {}).get("id"),
 			"JSON order is not a hidden random input (seed %d)" % seed_value)
-		_check(first_rng.state == second_rng.state,
+		_check(first_rng.state == second_rng.state and first_rng.state == third_rng.state,
 			"JSON order never changes the RNG state (seed %d)" % seed_value)
 
 
@@ -1447,8 +1480,461 @@ func _test_candlelit_bargain_event_batch() -> void:
 		"selections, previews and claims never touch an unrelated run RNG")
 
 
+## Table-driven verification of the six remaining V3-4 Candlelit Bargain wallet
+## Events promoted directly from v3_candlelit_bargains.json by the default
+## RunM04EventRotation without re-copying them into m04_events.json or doubling
+## the earlier six.
+func _test_remaining_candlelit_bargain_event_batch() -> void:
+	var expected: Dictionary = {
+		"v3_bellglass_night_market": {
+			"title": "The Bellglass Night Market",
+			"description": "Round button-eyed merchants count glass bells beneath plum awnings, every bobbin lit by a single amber lantern.",
+			"choices": [
+				{"id": "buy_velvet_thread", "text": "Pay 26 gold for three bundles of midnight thread (+3 scraps)", "gold": -26, "scraps": 3},
+				{"id": "trade_three_loops", "text": "Trade three scrap bundles for 39 gold", "gold": 39, "scraps": -3},
+				{"id": "leave", "text": "Leave the bellglass traders to their counting", "gold": 0, "scraps": 0},
+			],
+		},
+		"v3_crowlace_ticket_booth": {
+			"title": "The Crowlace Ticket Booth",
+			"description": "A stuffed crow in a gold-button waistcoat stamps crooked ferry tickets beside a black-lace window.",
+			"choices": [
+				{"id": "buy_night_pass", "text": "Pay 18 gold for a pair of thread tickets (+2 scraps)", "gold": -18, "scraps": 2},
+				{"id": "sell_spare_ticket", "text": "Exchange one spare scrap bundle for 15 gold", "gold": 15, "scraps": -1},
+				{"id": "leave", "text": "Let the paper tickets flutter away", "gold": 0, "scraps": 0},
+			],
+		},
+		"v3_moonlit_pin_exchange": {
+			"title": "The Moonlit Pin Exchange",
+			"description": "A slate-blue puppet clerk opens a pin-lined drawer beneath a stitched button moon.",
+			"choices": [
+				{"id": "order_pin_roll", "text": "Pay 34 gold for five rolled pin bundles (+5 scraps)", "gold": -34, "scraps": 5},
+				{"id": "redeem_spare_pins", "text": "Turn two scrap bundles into 33 gold", "gold": 33, "scraps": -2},
+				{"id": "leave", "text": "Close the pin drawer without trading", "gold": 0, "scraps": 0},
+			],
+		},
+		"v3_oxblood_patch_hall": {
+			"title": "The Oxblood Patch Hall",
+			"description": "Tiny velvet ragdolls hold a candlelit auction around an oxblood quilt sewn with brass-button seals.",
+			"choices": [
+				{"id": "buy_quilt_seam", "text": "Spend 23 gold on three fine repair seams (+3 scraps)", "gold": -23, "scraps": 3},
+				{"id": "auction_old_patch", "text": "Auction four scrap bundles for 51 gold", "gold": 51, "scraps": -4},
+				{"id": "leave", "text": "Bow out before the next auction bell", "gold": 0, "scraps": 0},
+			],
+		},
+		"v3_bonecream_button_press": {
+			"title": "The Bone-Cream Button Press",
+			"description": "A squat stitched machinist works a giant button press under cream damask curtains.",
+			"choices": [
+				{"id": "buy_brass_mould", "text": "Buy a mould offcut for 12 gold (+1 scrap)", "gold": -12, "scraps": 1},
+				{"id": "pawn_needle_wheel", "text": "Pawn two scrap bundles for 22 gold", "gold": 22, "scraps": -2},
+				{"id": "leave", "text": "Let the press fall silent", "gold": 0, "scraps": 0},
+			],
+		},
+		"v3_saffron_spool_trial": {
+			"title": "The Saffron Spool Trial",
+			"description": "A plump saffron-robed spool-keeper displays prize threads in a midnight-teal candlelit alcove.",
+			"choices": [
+				{"id": "buy_trial_thread", "text": "Pay 40 gold for five prize-thread bundles (+5 scraps)", "gold": -40, "scraps": 5},
+				{"id": "sell_spool_braid", "text": "Sell two scrap bundles for 31 gold", "gold": 31, "scraps": -2},
+				{"id": "leave", "text": "Decline the spool-keeper’s trial", "gold": 0, "scraps": 0},
+			],
+		},
+	}
+	var earlier_candlelit_ids: Array[String] = [
+		"lantern_bobbin_ferry",
+		"thimble_star_reading",
+		"moonpatch_archway",
+		"blacklace_swap_table",
+		"crooked_marionette",
+		"dusk_post_bobbin",
+	]
+	var roadside_anchor_ids: Array[String] = [
+		"v3_raincoat_bridge",
+		"v3_puppet_box_office",
+		"v3_mismatched_mittens",
+		"v3_coil_and_crow",
+		"v3_patchwork_lighthouse",
+		"v3_button_orchard",
+		"v3_lacework_railway",
+		"v3_moonshadow_tailor",
+		"v3_sleeping_thimble_giant",
+		"v3_needlefall_star",
+		"v3_jackdaw_stitchmarket",
+		"v3_dreaming_quilt_fair",
+	]
+	var seeds: Dictionary = {
+		"v3_bellglass_night_market": 92001,
+		"v3_crowlace_ticket_booth": 92002,
+		"v3_moonlit_pin_exchange": 92003,
+		"v3_oxblood_patch_hall": 92004,
+		"v3_bonecream_button_press": 92005,
+		"v3_saffron_spool_trial": 92006,
+	}
+	var reference: Dictionary = _load_candlelit_by_id()
+	var rotation := RunM04EventRotation.new()
+	_check(rotation.is_catalog_valid(), "the remaining candlelit promotion keeps the default rotation valid")
+	var listing: Array = rotation.get_generic_events()
+	var ids: Array = rotation.get_generic_event_ids()
+	var listing_snapshot: Array = listing.duplicate(true)
+	var rng_guard := RandomNumberGenerator.new()
+	rng_guard.seed = 949494
+	var guard_state := rng_guard.state
+	for anchor in REQUIRED_IDS:
+		_check(ids.count(anchor) == 1, "original generic anchor stays eligible once: " + anchor)
+	for roadside_id in roadside_anchor_ids:
+		_check(ids.count(roadside_id) == 1, "roadside anchor stays eligible once: " + roadside_id)
+	for earlier_id in earlier_candlelit_ids:
+		_check(_matches(_source_events(), earlier_id).size() == 1,
+			"earlier promoted candlelit story stays once in m04_events.json: " + earlier_id)
+		_check(_matches(listing, earlier_id).size() == 1 and ids.count(earlier_id) == 1,
+			"earlier promoted candlelit story is never doubled in the default rotation: " + earlier_id)
+	_check(_matches(_source_events(), SPECIAL_ID).size() == 1,
+		"the special quiet_spool record stays in the generic source catalog")
+	_check(_matches(listing, SPECIAL_ID).is_empty() and not ids.has(SPECIAL_ID),
+		"quiet_spool stays excluded from the default generic rotation")
+	for event_id in expected:
+		var contract: Dictionary = expected[event_id]
+		var candlelit: Dictionary = reference.get(event_id, {})
+		_check(not candlelit.is_empty(), "the candlelit source carries " + event_id)
+		if candlelit.is_empty():
+			continue
+		_check(_matches(_source_events(), event_id).is_empty(),
+			"newly promoted candlelit record is routed from its source without re-copying into m04_events.json: " + event_id)
+		var listed_matches := _matches(listing, event_id)
+		_check(listed_matches.size() == 1, "exactly one default rotation record for " + event_id)
+		_check(ids.count(event_id) == 1, "the default ID listing carries " + event_id + " exactly once")
+		if listed_matches.size() != 1:
+			continue
+		var listed: Dictionary = listed_matches[0]
+		_check(listed == candlelit, "the default rotation serves the verbatim candlelit record: " + event_id)
+		_check(listed.size() == 4 and listed.has("id") and listed.has("title")
+			and listed.has("description") and listed.has("choices"),
+			"promoted record carries exactly id/title/description/choices: " + event_id)
+		_check(listed.get("title") == contract["title"], "authored title: " + event_id)
+		_check(listed.get("description") == contract["description"], "authored description: " + event_id)
+		var choices: Array = listed.get("choices", [])
+		_check(choices.size() == 3, "three authored choices: " + event_id)
+		var expected_choices: Array = contract["choices"]
+		for index in range(expected_choices.size()):
+			var choice_def: Dictionary = expected_choices[index]
+			var choice_id: String = choice_def["id"]
+			_check(index < choices.size(), "authored choice slot exists: " + event_id + " / " + choice_id)
+			if index >= choices.size():
+				continue
+			var choice: Variant = choices[index]
+			_check(choice is Dictionary, "every choice is an object: " + event_id + " / " + choice_id)
+			if not choice is Dictionary:
+				continue
+			_check(choice.get("id") == choice_id,
+				"authored ordered choice ID: " + event_id + " / " + choice_id)
+			_check(choice.get("text") == choice_def["text"],
+				"authored choice text: " + event_id + " / " + choice_id)
+			var outcome: Variant = choice.get("outcome")
+			_check(outcome is Dictionary, "choice outcome is an object: " + event_id + " / " + choice_id)
+			if not outcome is Dictionary:
+				continue
+			var outcome_dict: Dictionary = outcome
+			_check(outcome_dict.size() == 2 and outcome_dict.has("gold") and outcome_dict.has("scraps"),
+				"exact signed outcome keys: " + event_id + " / " + choice_id)
+			_check(_signed_amount(outcome_dict.get("gold")) == choice_def["gold"]
+				and _signed_amount(outcome_dict.get("scraps")) == choice_def["scraps"],
+				"authored signed outcome: " + event_id + " / " + choice_id)
+		# Forced selection under caller exclusions: one RNG draw, exact record equality and detachment.
+		var excluded: Array = ids.duplicate()
+		excluded.erase(event_id)
+		var seed_value: int = seeds[event_id]
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = seed_value
+		oracle.randi_range(0, 0)
+		var picked := rotation.select_event(rng, excluded)
+		_check(picked.get("ok") == true, "forced selection succeeds: " + event_id)
+		var selected: Dictionary = picked.get("event", {})
+		_check(selected.get("id") == event_id, "forced selection returns " + event_id)
+		_check(rng.state == oracle.state, "forced selection consumes exactly one range draw: " + event_id)
+		var replay_rng := RandomNumberGenerator.new()
+		replay_rng.seed = seed_value
+		var replay := rotation.select_event(replay_rng, excluded)
+		_check(replay.get("ok") == true and replay.get("event") == selected
+			and replay_rng.state == rng.state,
+			"identical seed and exclusions replay " + event_id)
+		_check(selected == candlelit, "selected event equals the candlelit source record: " + event_id)
+		var selected_snapshot: Dictionary = selected.duplicate(true)
+		selected["title"] = "MUTATED"
+		selected["choices"] = []
+		var detached_rng := RandomNumberGenerator.new()
+		detached_rng.seed = seed_value
+		var detached := rotation.select_event(detached_rng, excluded)
+		_check(detached.get("event") == selected_snapshot and detached.get("event") == candlelit,
+			"selected " + event_id + " is a detached authored copy")
+		var wallet_record: Dictionary = detached.get("event", {})
+		if wallet_record.is_empty():
+			continue
+		# Wallet preview and settlement across funded, exact-boundary, short-resource and empty wallets.
+		var funded := {"gold": 100, "scraps": 10}
+		var funded_snapshot: Dictionary = funded.duplicate(true)
+		var zero := {"gold": 0, "scraps": 0}
+		var zero_snapshot: Dictionary = zero.duplicate(true)
+		var forecast_service := RunEventChoice.new(wallet_record)
+		_check(forecast_service.is_valid(), "selected record is a valid RunEventChoice: " + event_id)
+		var preview := forecast_service.preview_wallet_choices(funded)
+		_check(preview.get("ok") == true and preview.get("event_id") == event_id,
+			"funded preview succeeds: " + event_id)
+		var rows := _preview_map(preview)
+		_check(rows.size() == 3, "funded preview lists all three choices: " + event_id)
+		var free_choice_ids: Array = []
+		for choice_def in expected_choices:
+			var choice_id: String = choice_def["id"]
+			var gold_delta: int = choice_def["gold"]
+			var scraps_delta: int = choice_def["scraps"]
+			var after := {"gold": 100 + gold_delta, "scraps": 10 + scraps_delta}
+			var row: Dictionary = rows.get(choice_id, {})
+			_check(row.get("gold_delta") == gold_delta and row.get("scraps_delta") == scraps_delta,
+				"funded preview reports authored deltas: " + event_id + " / " + choice_id)
+			_check(row.get("affordable") == true and row.get("wallet") == after,
+				"funded preview forecasts the exact balance: " + event_id + " / " + choice_id)
+			var service := RunEventChoice.new(wallet_record)
+			var receipt := service.choose_with_wallet(choice_id, funded)
+			_check(receipt == {
+				"ok": true,
+				"event_id": event_id,
+				"choice_id": choice_id,
+				"wallet": after,
+			}, "choose_with_wallet settles exact signed receipt: " + event_id + " / " + choice_id)
+			_check(service.is_claimed() and not service.is_valid(),
+				"the claim latches and closes the visit: " + event_id + " / " + choice_id)
+			var replay_claim := service.choose_with_wallet(choice_id, funded)
+			_check(replay_claim == {
+				"ok": false,
+				"event_id": "",
+				"choice_id": "",
+				"wallet": funded,
+			}, "the settled claim cannot be replayed: " + event_id + " / " + choice_id)
+			for other_def in expected_choices:
+				if other_def["id"] != choice_id:
+					var alt_claim := service.choose_with_wallet(other_def["id"], funded)
+					_check(alt_claim.get("ok") == false and alt_claim.get("wallet") == funded,
+						"no alternate choice claims a spent visit: " + event_id + " / " + choice_id)
+					break
+			if gold_delta == 0 and scraps_delta == 0:
+				free_choice_ids.append(choice_id)
+			var paid := gold_delta < 0 or scraps_delta < 0
+			if paid:
+				var short_wallet := {
+					"gold": (-gold_delta - 1) if gold_delta < 0 else 100,
+					"scraps": (-scraps_delta - 1) if scraps_delta < 0 else 10,
+				}
+				var short_snapshot: Dictionary = short_wallet.duplicate(true)
+				var short_service := RunEventChoice.new(wallet_record)
+				var short_rows := _preview_map(short_service.preview_wallet_choices(short_wallet))
+				_check(short_rows.get(choice_id, {}).get("affordable") == false
+					and short_rows.get(choice_id, {}).get("wallet") == short_wallet,
+					"short-resource wallet previews debit as unaffordable: " + event_id + " / " + choice_id)
+				_check(short_rows.get("leave", {}).get("affordable") == true
+					and short_rows.get("leave", {}).get("wallet") == short_wallet,
+					"short-resource wallet keeps leave affordable: " + event_id + " / " + choice_id)
+				var short_denied := short_service.choose_with_wallet(choice_id, short_wallet)
+				_check(short_denied == {
+					"ok": false,
+					"event_id": "",
+					"choice_id": "",
+					"wallet": short_wallet,
+				}, "short-resource debit is refused unchanged: " + event_id + " / " + choice_id)
+				_check(not short_service.is_claimed() and short_service.is_valid(),
+					"short-resource refusal preserves the visit claim: " + event_id + " / " + choice_id)
+				var short_leave := short_service.choose_with_wallet("leave", short_wallet)
+				_check(short_leave == {
+					"ok": true,
+					"event_id": event_id,
+					"choice_id": "leave",
+					"wallet": short_wallet,
+				}, "same selector settles free leave after short-resource refusal: " + event_id + " / " + choice_id)
+				_check(short_service.is_claimed() and not short_service.is_valid()
+					and short_service.choose_with_wallet("leave", short_wallet).get("ok") == false,
+					"free leave after refusal latches once: " + event_id + " / " + choice_id)
+				_check(short_wallet == short_snapshot,
+					"short-resource wallet input stays untouched: " + event_id + " / " + choice_id)
+			var scarce := RunEventChoice.new(wallet_record)
+			var scarce_rows := _preview_map(scarce.preview_wallet_choices(zero))
+			_check(scarce_rows.get(choice_id, {}).get("affordable") == (not paid),
+				"zero-wallet affordability matches the signed outcome: " + event_id + " / " + choice_id)
+			if paid:
+				var denied := scarce.choose_with_wallet(choice_id, zero)
+				_check(denied.get("ok") == false and denied.get("wallet") == zero,
+					"a signed debit is refused at an empty wallet: " + event_id + " / " + choice_id)
+				_check(not scarce.is_claimed() and scarce.is_valid(),
+					"a refused debit keeps the visit open: " + event_id + " / " + choice_id)
+			else:
+				var granted := scarce.choose_with_wallet(choice_id, zero)
+				_check(granted == {
+					"ok": true,
+					"event_id": event_id,
+					"choice_id": choice_id,
+					"wallet": {"gold": gold_delta, "scraps": scraps_delta},
+				}, "free leave settles at an empty wallet: " + event_id + " / " + choice_id)
+				_check(scarce.is_claimed() and scarce.choose_with_wallet(choice_id, zero).get("ok") == false,
+					"the empty-wallet claim cannot be replayed: " + event_id + " / " + choice_id)
+		_check(free_choice_ids == ["leave"], "each newly promoted candlelit event offers free leave: " + event_id)
+		var stranger := RunEventChoice.new(wallet_record)
+		var unknown_claim := stranger.choose_with_wallet("unlisted_choice", zero)
+		_check(unknown_claim.get("ok") == false and unknown_claim.get("wallet") == zero
+			and not stranger.is_claimed() and stranger.is_valid(),
+			"an unknown choice ID is denied without consuming the visit: " + event_id)
+		_check(forecast_service.is_valid(), "previews never consume the visit: " + event_id)
+		_check(funded == funded_snapshot and zero == zero_snapshot,
+			"caller funded and empty wallets remain unchanged: " + event_id)
+	_check(rotation.get_generic_events() == listing_snapshot,
+		"the remaining candlelit batch never mutates the rotation listing")
+	_check(rng_guard.state == guard_state,
+		"selections, previews and claims never touch an unrelated run RNG")
+
+
+## AC3 & AC4: injected fixtures stay independent of the shipping merge, and any
+## missing, duplicated, malformed or cross-catalog-conflicting required candlelit
+## record fails the default shipping merge closed and consumes no RNG.
+func _test_candlelit_shipping_merge_validation() -> void:
+	var injected_only := RunM04EventRotation.new(source_document)
+	_check(injected_only.is_catalog_valid(), "an injected generic catalog fixture still validates on its own")
+	var injected_ids: Array = injected_only.get_generic_event_ids()
+	for promoted_id in PROMOTED_CANDLELIT_IDS:
+		_check(not injected_ids.has(promoted_id),
+			"an injected catalog fixture never receives the shipping candlelit merge: " + promoted_id)
+	var generic_doc: Dictionary = {"events": _source_events()}
+	var roadside_events: Array = _load_catalog_events(ROADSIDE_EVENTS_PATH)
+	var roadside_doc: Dictionary = {"events": roadside_events}
+	var candlelit_events: Array = _load_catalog_events(CANDLELIT_EVENTS_PATH)
+	var candlelit_doc: Dictionary = {"events": candlelit_events}
+	var candlelit_by_id: Dictionary = _load_candlelit_by_id()
+	var cases: Array = [
+		{"name": "null candlelit catalog", "g": generic_doc, "r": roadside_doc, "c": null},
+		{"name": "candlelit catalog without events", "g": generic_doc, "r": roadside_doc, "c": {}},
+		{"name": "candlelit events not an array", "g": generic_doc, "r": roadside_doc, "c": {"events": "v3_bellglass_night_market"}},
+		{"name": "empty candlelit events", "g": generic_doc, "r": roadside_doc, "c": {"events": []}},
+		{"name": "non-object candlelit record", "g": generic_doc, "r": roadside_doc, "c": {"events": _replaced(candlelit_events, "v3_bellglass_night_market", 42)}},
+	]
+	for promoted_id in PROMOTED_CANDLELIT_IDS:
+		cases.append({
+			"name": "missing required candlelit record " + promoted_id,
+			"g": generic_doc,
+			"r": roadside_doc,
+			"c": {"events": _without(candlelit_events, promoted_id)},
+		})
+		var duplicated_candlelit: Array = candlelit_events.duplicate(true)
+		duplicated_candlelit.append((candlelit_by_id[promoted_id] as Dictionary).duplicate(true))
+		cases.append({
+			"name": "duplicated required candlelit record " + promoted_id,
+			"g": generic_doc,
+			"r": roadside_doc,
+			"c": {"events": duplicated_candlelit},
+		})
+	var duplicated_earlier: Array = candlelit_events.duplicate(true)
+	duplicated_earlier.append((candlelit_by_id["lantern_bobbin_ferry"] as Dictionary).duplicate(true))
+	cases.append({
+		"name": "duplicated earlier candlelit record in candlelit source",
+		"g": generic_doc,
+		"r": roadside_doc,
+		"c": {"events": duplicated_earlier},
+	})
+	var missing_id_rec: Dictionary = (candlelit_by_id["v3_bellglass_night_market"] as Dictionary).duplicate(true)
+	missing_id_rec.erase("id")
+	cases.append({
+		"name": "required candlelit record without id",
+		"g": generic_doc,
+		"r": roadside_doc,
+		"c": {"events": _replaced(candlelit_events, "v3_bellglass_night_market", missing_id_rec)},
+	})
+	var blank_title_rec: Dictionary = (candlelit_by_id["v3_crowlace_ticket_booth"] as Dictionary).duplicate(true)
+	blank_title_rec["title"] = "   "
+	cases.append({
+		"name": "blank required candlelit title",
+		"g": generic_doc,
+		"r": roadside_doc,
+		"c": {"events": _replaced(candlelit_events, "v3_crowlace_ticket_booth", blank_title_rec)},
+	})
+	var blank_desc_rec: Dictionary = (candlelit_by_id["v3_moonlit_pin_exchange"] as Dictionary).duplicate(true)
+	blank_desc_rec["description"] = ""
+	cases.append({
+		"name": "blank required candlelit description",
+		"g": generic_doc,
+		"r": roadside_doc,
+		"c": {"events": _replaced(candlelit_events, "v3_moonlit_pin_exchange", blank_desc_rec)},
+	})
+	var two_choices_rec: Dictionary = (candlelit_by_id["v3_oxblood_patch_hall"] as Dictionary).duplicate(true)
+	(two_choices_rec["choices"] as Array).pop_back()
+	cases.append({
+		"name": "truncated two-choice required candlelit record",
+		"g": generic_doc,
+		"r": roadside_doc,
+		"c": {"events": _replaced(candlelit_events, "v3_oxblood_patch_hall", two_choices_rec)},
+	})
+	var four_choices_rec: Dictionary = (candlelit_by_id["v3_oxblood_patch_hall"] as Dictionary).duplicate(true)
+	(four_choices_rec["choices"] as Array).append({"id": "extra", "text": "Extra", "outcome": {"gold": 0, "scraps": 0}})
+	cases.append({
+		"name": "four-choice required candlelit record",
+		"g": generic_doc,
+		"r": roadside_doc,
+		"c": {"events": _replaced(candlelit_events, "v3_oxblood_patch_hall", four_choices_rec)},
+	})
+	var dup_choice_rec: Dictionary = (candlelit_by_id["v3_bonecream_button_press"] as Dictionary).duplicate(true)
+	((dup_choice_rec["choices"] as Array)[1] as Dictionary)["id"] = "buy_brass_mould"
+	cases.append({
+		"name": "duplicate choice ID in required candlelit record",
+		"g": generic_doc,
+		"r": roadside_doc,
+		"c": {"events": _replaced(candlelit_events, "v3_bonecream_button_press", dup_choice_rec)},
+	})
+	var bad_outcome_rec: Dictionary = (candlelit_by_id["v3_saffron_spool_trial"] as Dictionary).duplicate(true)
+	((bad_outcome_rec["choices"] as Array)[0] as Dictionary)["outcome"] = {"gold": -40}
+	cases.append({
+		"name": "malformed required candlelit outcome",
+		"g": generic_doc,
+		"r": roadside_doc,
+		"c": {"events": _replaced(candlelit_events, "v3_saffron_spool_trial", bad_outcome_rec)},
+	})
+	var generic_conflict: Array = _source_events()
+	generic_conflict.append((candlelit_by_id["v3_bellglass_night_market"] as Dictionary).duplicate(true))
+	cases.append({
+		"name": "cross-catalog conflict between generic and promoted candlelit ID",
+		"g": {"events": generic_conflict},
+		"r": roadside_doc,
+		"c": candlelit_doc,
+	})
+	var roadside_conflict: Array = roadside_events.duplicate(true)
+	roadside_conflict.append((candlelit_by_id["v3_crowlace_ticket_booth"] as Dictionary).duplicate(true))
+	cases.append({
+		"name": "cross-catalog conflict between roadside and promoted candlelit ID",
+		"g": generic_doc,
+		"r": {"events": roadside_conflict},
+		"c": candlelit_doc,
+	})
+	var candlelit_generic_conflict: Array = candlelit_events.duplicate(true)
+	candlelit_generic_conflict.append(_record_copy("button_trail"))
+	cases.append({
+		"name": "cross-catalog conflict with generic ID inside candlelit catalog",
+		"g": generic_doc,
+		"r": roadside_doc,
+		"c": {"events": candlelit_generic_conflict},
+	})
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 404040
+	for entry in cases:
+		var state_before := rng.state
+		var merged: Variant = RunM04EventRotation._combine_shipped_catalogs(entry["g"], entry["r"], entry["c"])
+		_check(merged == null, "shipping merge rejects: " + entry["name"])
+		var rotation := RunM04EventRotation.new(merged)
+		_check(not rotation.is_catalog_valid(), "failed shipping merge invalidates rotation: " + entry["name"])
+		_check(rotation.get_generic_events().is_empty(), "failed shipping merge exposes no events: " + entry["name"])
+		_check(rotation.get_generic_event_ids().is_empty(), "failed shipping merge exposes no IDs: " + entry["name"])
+		var pick := rotation.select_event(rng)
+		_check(pick.get("ok") == false and (pick.get("event") as Dictionary).is_empty(),
+			"failed shipping merge refuses selection: " + entry["name"])
+		_check(rng.state == state_before, "failed shipping merge consumes no RNG: " + entry["name"])
+
+
 ## The separate authored candlelit catalog, parsed once per test run and keyed by
-## ID. It is a reference fixture here; the rotation never reads it.
+## ID.
 func _load_candlelit_by_id() -> Dictionary:
 	var out: Dictionary = {}
 	var file := FileAccess.open(CANDLELIT_EVENTS_PATH, FileAccess.READ)
@@ -1473,6 +1959,25 @@ func _load_candlelit_by_id() -> Dictionary:
 		if raw_id is String and not out.has(raw_id):
 			out[raw_id] = (record as Dictionary).duplicate(true)
 	return out
+
+
+func _load_catalog_events(path: String) -> Array:
+	var file := FileAccess.open(path, FileAccess.READ)
+	_check(file != null, path + " opens for catalog fixture")
+	if file == null:
+		return []
+	var text := file.get_as_text()
+	file.close()
+	var parser := JSON.new()
+	var parsed := parser.parse(text)
+	_check(parsed == OK, path + " parses for catalog fixture")
+	if parsed != OK or not parser.data is Dictionary:
+		return []
+	var events: Variant = (parser.data as Dictionary).get("events")
+	_check(events is Array, path + " carries an events array for catalog fixture")
+	if not events is Array:
+		return []
+	return (events as Array).duplicate(true)
 
 
 ## Deterministic seed per new event id for forced selections.
@@ -1503,27 +2008,17 @@ func _source_events() -> Array:
 	return (source_document.get("events") as Array).duplicate(true)
 
 
-## Every event the default selector ships: the generic M04 catalog plus the
-## standalone roadside pack. A fixture that must mirror the shipping merge (for
-## example the reversed-order ordering check) uses this instead of the generic
-## catalog alone.
+## Every event the default selector ships: the generic M04 catalog, the
+## standalone roadside pack, and the six remaining promoted candlelit bargains.
+## A fixture that must mirror the shipping merge (for example the reversed-order
+## ordering check) uses this instead of the generic catalog alone.
 func _combined_events() -> Array:
 	var events: Array = _source_events()
-	var file := FileAccess.open(ROADSIDE_EVENTS_PATH, FileAccess.READ)
-	_check(file != null, "v3_roadside_events.json opens for the combined ordering fixture")
-	if file == null:
-		return events
-	var text := file.get_as_text()
-	file.close()
-	var parser := JSON.new()
-	var parsed := parser.parse(text)
-	_check(parsed == OK, "v3_roadside_events.json parses for the combined ordering fixture")
-	if parsed != OK or not parser.data is Dictionary:
-		return events
-	var roadside: Variant = (parser.data as Dictionary).get("events")
-	_check(roadside is Array, "v3_roadside_events.json carries an events array for the ordering fixture")
-	if roadside is Array:
-		events.append_array((roadside as Array).duplicate(true))
+	events.append_array(_load_catalog_events(ROADSIDE_EVENTS_PATH))
+	var candlelit_by_id: Dictionary = _load_candlelit_by_id()
+	for promoted_id in PROMOTED_CANDLELIT_IDS:
+		if candlelit_by_id.has(promoted_id):
+			events.append((candlelit_by_id[promoted_id] as Dictionary).duplicate(true))
 	return events
 
 

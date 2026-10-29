@@ -1043,7 +1043,7 @@ func _auction_path(map: RunMap, choices: Array, remaining: int) -> Array:
 
 
 func _auction_fixture() -> Dictionary:
-	var events := RunM04EventRotation.new().get_generic_events()
+	var events := RunM04EventRotation.new(app._load_wallet_event_catalog()).get_generic_events()
 	events.append_array(RunV3HeroEventOffers.new(["warden", "seamstress", "tinker"]).get_offers())
 	events.append(JSON.parse_string(FileAccess.get_file_as_string("res://data/events/mpw_fate_pin_auction.json")))
 	var rotation := RunM04EventRotation.new({"events": events})
