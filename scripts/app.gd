@@ -5019,7 +5019,7 @@ func _unpicker_decision(intent: Dictionary, view, visit: RunUnpickerVisit) -> vo
 		return
 	var staged := RunUnpickerVisit.new(id, run_deck, session_gold, run_removal_count,
 		run_stitch_descriptors, run_next_stitch_id)
-	if not staged.is_valid() or staged.read_state() != _unpicker_source:
+	if not staged.is_valid() or not staged.matches_mounted_source(_unpicker_source):
 		return
 	var result: Dictionary
 	match intent.get("action"):
@@ -5028,16 +5028,16 @@ func _unpicker_decision(intent: Dictionary, view, visit: RunUnpickerVisit) -> vo
 			if intent.size() != 5 or typeof(card) != TYPE_STRING or card != view._selected_id \
 				or not run_deck.has(card) or not view._honest_row(view._selected_button, card, true):
 				return
-			result = staged.remove_card(card, intent.visit_id, id, intent.expected_snapshot)
+			result = visit.remove_card(card, intent.visit_id, id, intent.expected_snapshot)
 		"leave":
 			if intent.size() != 4:
 				return
-			result = staged.leave(intent.visit_id, id, intent.expected_snapshot)
+			result = visit.leave(intent.visit_id, id, intent.expected_snapshot)
 		_:
 			return
 	if not result.ok or result.source_snapshot != _unpicker_source \
 		or result.source_receipt != _unpicker_source.receipt or _unpicker_original != _sewing_context() \
-		or visit.read_state() != _unpicker_source:
+		or result.visit_id != _unpicker_source.visit_id or not result.consumed:
 		return
 	# Publish the complete authenticated receipt without signals or RNG between fields.
 	run_deck.assign(result.deck)
@@ -5045,7 +5045,6 @@ func _unpicker_decision(intent: Dictionary, view, visit: RunUnpickerVisit) -> vo
 	run_removal_count = result.prior_removals
 	run_stitch_descriptors = result.descriptors.duplicate(true)
 	run_next_stitch_id = result.next_stitch_id
-	unpicker_visit = staged
 	_sync_bound_wardrobe(party_carryover as RunTornCarryover)
 	_unpicker_closed = true
 	_unpicker_original = _sewing_context()

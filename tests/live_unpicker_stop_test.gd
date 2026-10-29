@@ -373,8 +373,12 @@ func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bo
 		_check(panel.card_buttons[0].has_focus(), "Tab cycles to first tile")
 	var source: Dictionary = app.unpicker_visit.read_state()
 	var oracle := RunUnpickerVisit.new(fixture.id, app.run_deck, app.session_gold, app.run_removal_count, app.run_stitch_descriptors, app.run_next_stitch_id)
+	_check(oracle.is_valid() and oracle.read_state()["visit_id"] != source.visit_id
+		and not oracle.read_state()["visit_id"].is_empty(),
+		"independent same-ledger instance owns a distinct fresh visit identity")
+	var oracle_source: Dictionary = oracle.read_state()
 	var card: String = panel._rows[tile].id
-	var expected := oracle.remove_card(card, source.visit_id, fixture.id, source) if remove else oracle.leave(source.visit_id, fixture.id, source)
+	var expected := oracle.remove_card(card, oracle_source.visit_id, fixture.id, oracle_source) if remove else oracle.leave(oracle_source.visit_id, fixture.id, oracle_source)
 	_check(expected.ok, "independent real service accepts intended decision")
 	var action: Button = app.unpicker_remove_button if remove else app.unpicker_leave_button
 	var saved: Callable = action.pressed.get_connections()[0].callable
@@ -388,6 +392,12 @@ func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bo
 		for key in bad:
 			forged[key] = bad[key]
 		_reject_action(listener.bind(forged), "forged payload " + str(bad.keys()))
+	var oracle_intent := {"action": "remove_card" if remove else "leave",
+		"visit_id": oracle_source.visit_id, "node_id": fixture.id,
+		"expected_snapshot": oracle_source.duplicate(true)}
+	if remove:
+		oracle_intent["selected_card_id"] = card
+	_reject_action(listener.bind(oracle_intent), "same-ledger independent visit intent")
 	if remove:
 		var alternate: String = panel._rows[panel.card_buttons[1]].id
 		if alternate == card:
@@ -412,7 +422,13 @@ func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bo
 	await _frames()
 	_check(emissions.count == 1, "physical action emits exactly one connected decision")
 	_check(app._unpicker_closed and not app.unpicker_view.visible and app._can_choose_connected_route(), "decision closes once and permits onward routing")
-	_check(app.unpicker_visit.read_state() == oracle.read_state(), "mounted service exactly matches independent receipt")
+	var live_after: Dictionary = app.unpicker_visit.read_state()
+	var oracle_after: Dictionary = oracle.read_state()
+	_check(live_after.visit_id != oracle_after.visit_id, "live and independent instances keep distinct visit identities")
+	for field in ["valid", "consumed", "node_id", "deck", "descriptors", "gold",
+		"prior_removals", "next_stitch_id", "price", "receipt"]:
+		_check(live_after[field] == oracle_after[field],
+			"mounted service matches independent receipt field " + field)
 	_check(app.run_deck == expected.deck and app.session_gold == expected.gold and app.run_removal_count == expected.prior_removals
 		and app.run_stitch_descriptors == expected.descriptors and app.run_next_stitch_id == expected.next_stitch_id, "all five receipt fields commit together")
 	if remove:
