@@ -691,15 +691,32 @@ func _actionable_choices_and_prompts() -> void:
 	await _frames()
 	_check(randi() == seeded_next, "standalone choice and prompt fixtures consume no global RNG")
 	# Also drive a routed no-upgrade Stitch visit through the live app controller.
-	fixture = _fixture()
-	await _boot(true, true)
-	app.run_deck.assign([STRIKE_PLUS, PRICK_PLUS])
+	# Opening route admission requires the untouched starting deck, so the earned
+	# all-plus deck and funded wallet are established only after a genuine
+	# committed fight, the legal order a real post-fight Sewing Circle visit
+	# finds them in; admission then accepts the mutated deck on a routed visit.
+	var routed := _post_fight_fixture()
+	_check(not routed.is_empty(), "real Fight -> Sewing Circle fixture exists for the routed no-upgrade visit")
+	var won := false
+	if not routed.is_empty():
+		fixture = routed
+		app = load("res://scenes/app.tscn").instantiate()
+		root.add_child(app)
+		await _frames()
+		presenter = app.get_node("LiveAttackPreview")
+		won = await _routed_win(fixture, false)
+	_check(won, "genuine won fight precedes the routed no-upgrade visit")
+	if not won:
+		if is_instance_valid(app):
+			app.free()
+			await _frames()
+		return
+	await _click(app.reward_buttons[3])
+	await _click(app.continue_button)
+	await _frames()
+	app.run_deck.assign([STRIKE_PLUS, PRICK_PLUS, POOL_PLUS,
+		STRIKE_PLUS, PRICK_PLUS, POOL_PLUS])
 	app.run_scraps = 3
-	var carry: RunTornCarryover = app.party_carryover
-	var w := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, [],
-		app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
-	_check(w.is_valid() and carry.bind_wardrobe(w, carry.torn, w.get_snapshot()),
-		"no-upgrade routed wardrobe rebound")
 	app._clear_route_view()
 	app._present_connected_route(weakref(app.run_map))
 	await _frames()
@@ -723,7 +740,8 @@ func _actionable_choices_and_prompts() -> void:
 		"selecting THEN stitch half enables Confirm with full pair preview")
 	await _activate(live_panel.confirm_button, true)
 	_check(live_visit.is_consumed() and live_visit.quote().choices.is_empty()
-		and app.run_deck == ["stitched_000001"] and app.run_scraps == 0 and app.run_next_stitch_id == 2,
+		and app.run_deck == ["stitched_000001", POOL_PLUS, STRIKE_PLUS, PRICK_PLUS, POOL_PLUS]
+		and app.run_scraps == 0 and app.run_next_stitch_id == 2,
 		"routed Stitch on no-upgrade deck commits composite for 3 scraps and empties consumed quote")
 	await _onward()
 	app.free()
