@@ -218,6 +218,10 @@ func _get_canonical_card_definition(card_id: String) -> Dictionary:
 		return _seamstress_cards.get_definition(card_id)
 	if _tinker_cards.has_card(card_id):
 		return _tinker_cards.get_definition(card_id)
+	# The existing wearer-only ARM projection also applies to the two authored
+	# v3 Buckle Rebound reactions; no other unwired v3 card is admitted.
+	if card_id == "warden_v3_buckle_rebound" or card_id == "warden_v3_buckle_rebound_plus":
+		return V3WardenPoolCards.new().get_definition(card_id)
 	return {}
 
 

@@ -158,6 +158,9 @@ static func _authored_definition(card_id: String) -> Dictionary:
 		definition = pool.get_definition(card_id)
 		if not definition.is_empty():
 			return definition
+	# Only these two v3 reaction cards use the existing HEAD Block projection.
+	if card_id == "warden_v3_buckle_rebound" or card_id == "warden_v3_buckle_rebound_plus":
+		return V3WardenPoolCards.new().get_definition(card_id)
 	return {}
 
 

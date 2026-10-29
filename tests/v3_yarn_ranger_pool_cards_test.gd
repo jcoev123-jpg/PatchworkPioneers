@@ -11,6 +11,7 @@ const CombatYarnRangerUnspoolCards = preload("res://scripts/combat_yarn_ranger_u
 const CombatYarnRangerSnareCards = preload("res://scripts/combat_yarn_ranger_snare_cards.gd")
 const CombatYarnRangerKnitCards = preload("res://scripts/combat_yarn_ranger_knit_cards.gd")
 const CombatYarnRangerBolasCards = preload("res://scripts/combat_yarn_ranger_bolas_cards.gd")
+const CombatYarnRangerEndlessSkeinCards = preload("res://scripts/combat_yarn_ranger_endless_skein_cards.gd")
 const CombatParty = preload("res://scripts/combat_party.gd")
 const CombatEnemies = preload("res://scripts/combat_enemies.gd")
 const CombatDeck = preload("res://scripts/combat_deck.gd")
@@ -32,6 +33,10 @@ const BOLAS_WOOL_PLUS := "yarn_ranger_wool_bolas_plus"
 const BOLAS_TANGLE := "yarn_ranger_tangle_bolas"
 const BOLAS_TANGLE_PLUS := "yarn_ranger_tangle_bolas_plus"
 const BOLAS_IDS := [BOLAS_WOOL, BOLAS_WOOL_PLUS, BOLAS_TANGLE, BOLAS_TANGLE_PLUS]
+
+const SKEIN_BASE := "yarn_ranger_endless_skein"
+const SKEIN_PLUS := "yarn_ranger_endless_skein_plus"
+const SKEIN_IDS := [SKEIN_BASE, SKEIN_PLUS]
 
 var failures: Array[String] = []
 var checks: int = 0
@@ -58,6 +63,11 @@ func _initialize() -> void:
 	_test_bolas_tangled_bonus_and_block()
 	_test_bolas_lethal_slot()
 	_test_bolas_refusals()
+	_test_skein_catalog_contract()
+	_test_skein_paid_play()
+	_test_skein_slots_statuses_and_block()
+	_test_skein_tangled_lifecycle()
+	_test_skein_refusals()
 	if failures.is_empty():
 		print("v3_yarn_ranger_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -2208,6 +2218,707 @@ func _rejected_bolas(resolver: CombatYarnRangerBolasCards, deck: CombatDeck,
 	_check(result.get("reason") == reason,
 		label + ": refusal reason is " + reason + " (got " + str(result.get("reason")) + ")")
 	_check(_bolas_snapshot(deck, party, enemies) == before,
+		label + ": unchanged energy, hand, piles, turn, party, enemies and RNG")
+
+
+## AC1: both authentic Endless Skein printings keep their exact authored rare pool line, resolve
+## to that record and refuse every other ID or tampered definition.
+func _test_skein_catalog_contract() -> void:
+	var catalog := YarnRangerPoolCards.new()
+	var starter := YarnRangerStarterCards.new()
+	var resolver := CombatYarnRangerEndlessSkeinCards.new()
+	var spec: Dictionary = _cases()[SKEIN_BASE]
+	_check(spec.has("plus_effects") and spec["plus_effects"].has("damage"),
+		"independent skein oracle really carries both printings")
+
+	for card_id: String in SKEIN_IDS:
+		var upgraded: bool = card_id == SKEIN_PLUS
+		var definition: Dictionary = catalog.get_definition(card_id)
+		var expected_record: Dictionary = _expected_record(SKEIN_BASE, spec, upgraded)
+		_check(not definition.is_empty(), card_id + " is authored by the Yarn pool")
+		_check(starter.get_definition(card_id).is_empty(),
+			card_id + " is not duplicated in the starter catalog")
+		_check(definition == expected_record,
+			card_id + " matches the complete independent catalog record")
+		_check(definition.get("id") == card_id, card_id + " keeps its exact identifier")
+		_check(definition.get("display_name") == spec["name"] + ("+" if upgraded else ""),
+			card_id + " keeps its printed name")
+		_check(definition.get("owner") == "yarn_ranger", card_id + " is owned by the Yarn Ranger")
+		_check(definition.get("rarity") == "rare", card_id + " stays a rare reward card")
+		_check(definition.get("cost") == 3, card_id + " prints three energy")
+		_check(definition.get("from_positions") == [2, 3], card_id + " prints FROM seats 2-3")
+		_check(definition.get("target_kind") == "enemy_all",
+			card_id + " prints an all-enemy target")
+		_check(definition.get("to_positions") == [1, 2, 3], card_id + " prints TO slots 1-3")
+		var effects: Dictionary = definition.get("effects", {})
+		var printed: Dictionary = spec["plus_effects"] if upgraded else spec["effects"]
+		_check(effects == printed, card_id + " prints the exact damage/Tangled/living-only line")
+		_check(effects.size() == 3, card_id + " carries no extra effect key")
+		_check(typeof(effects.get("damage")) == TYPE_INT
+			and typeof(effects.get("tangled")) == TYPE_INT
+			and effects.get("living_targets_only") == true,
+			card_id + " prints integer damage and Tangled with the living-only flag")
+		_check(definition.get("reward_eligible") == (not upgraded),
+			card_id + " keeps its authored reward-offer flag")
+		if upgraded:
+			_check(definition.get("upgrade_of") == SKEIN_BASE
+				and not definition.has("upgrade_id"),
+				card_id + " links back to its one base printing")
+		else:
+			_check(definition.get("upgrade_id") == SKEIN_PLUS
+				and not definition.has("upgrade_of"),
+				card_id + " links forward to its one upgrade")
+		_check(resolver.is_supported_card(card_id), card_id + " is a supported skein card")
+		_check(CombatYarnRangerEndlessSkeinCards.is_authentic_definition(definition, card_id),
+			card_id + " passes the definition authenticator")
+		_check(CombatYarnRangerEndlessSkeinCards.skein_definition(card_id) == definition,
+			card_id + " resolves to its exact detached catalog record")
+
+	# Detached: mutating a resolved record cannot rewrite what the next resolution returns.
+	var sample := CombatYarnRangerEndlessSkeinCards.skein_definition(SKEIN_BASE)
+	_check(not sample.is_empty(), "skein resolution fixture loaded")
+	if not sample.is_empty():
+		sample["effects"]["damage"] = 900
+		sample["effects"]["tangled"] = 900
+		sample["from_positions"].clear()
+		sample["cost"] = 0
+		sample["display_name"] = "Forged Skein"
+		_check(CombatYarnRangerEndlessSkeinCards.skein_definition(SKEIN_BASE)
+			== catalog.get_definition(SKEIN_BASE),
+			"a mutated skein definition cannot poison later resolutions")
+
+	# Every other Yarn starter/pool card is unrelated, never a skein card.
+	var unrelated: Array = []
+	unrelated.append_array(starter.get_all_card_ids())
+	unrelated.append_array(catalog.get_all_card_ids())
+	for card_id: String in SKEIN_IDS:
+		unrelated.erase(card_id)
+	for other_id: Variant in unrelated:
+		_check(CombatYarnRangerEndlessSkeinCards.skein_definition(other_id).is_empty(),
+			str(other_id) + " does not resolve as a skein card")
+		_check(not resolver.is_supported_card(other_id),
+			str(other_id) + " is not a supported skein card")
+	var forged: Array = [SKEIN_BASE + "_plus_plus", SKEIN_BASE + "+", SKEIN_PLUS + "_plus",
+		"endless_skein", "ENDLESS_SKEIN", " yarn_ranger_endless_skein",
+		"yarn_ranger_endless_skein ", "", "warden_strike", StringName(SKEIN_BASE),
+		null, 0, 3.5, false, [], {}]
+	for other_id: Variant in forged:
+		_check(CombatYarnRangerEndlessSkeinCards.skein_definition(other_id).is_empty(),
+			"forged or non-string ID never resolves as skein: " + str(other_id))
+		_check(not CombatYarnRangerEndlessSkeinCards.is_authentic_definition(
+			catalog.get_definition(SKEIN_BASE), other_id),
+			"a skein record cannot authenticate under a forged ID: " + str(other_id))
+
+	# Adversarial copies of a real record: every altered contract field is refused.
+	var base_record: Dictionary = catalog.get_definition(SKEIN_BASE)
+	_check(not base_record.is_empty()
+		and CombatYarnRangerEndlessSkeinCards.is_authentic_definition(base_record, SKEIN_BASE),
+		"authenticator positive fixture really is the authored Endless Skein")
+	var mutations: Array[Callable] = [
+		func(record: Dictionary) -> void: record["effects"]["damage"] = 5,
+		func(record: Dictionary) -> void: record["effects"]["damage"] = 4.0,
+		func(record: Dictionary) -> void: record["effects"]["damage"] = "4",
+		func(record: Dictionary) -> void: record["effects"]["tangled"] = 3,
+		func(record: Dictionary) -> void: record["effects"]["tangled"] = 2.0,
+		func(record: Dictionary) -> void: record["effects"]["tangled"] = true,
+		func(record: Dictionary) -> void: record["effects"]["living_targets_only"] = false,
+		func(record: Dictionary) -> void: record["effects"].erase("tangled"),
+		func(record: Dictionary) -> void: record["effects"].erase("living_targets_only"),
+		func(record: Dictionary) -> void: record["effects"]["draw"] = 1,
+		func(record: Dictionary) -> void: record["effects"] = "damage",
+		func(record: Dictionary) -> void: record["cost"] = 2,
+		func(record: Dictionary) -> void: record["cost"] = 4,
+		func(record: Dictionary) -> void: record["cost"] = 3.0,
+		func(record: Dictionary) -> void: record["owner"] = "warden",
+		func(record: Dictionary) -> void: record["display_name"] = "Endless Skein+",
+		func(record: Dictionary) -> void: record["from_positions"] = [1, 2, 3],
+		func(record: Dictionary) -> void: record["from_positions"] = ["2", "3"],
+		func(record: Dictionary) -> void: record["from_positions"] = "2,3",
+		func(record: Dictionary) -> void: record["to_positions"] = [1, 2],
+		func(record: Dictionary) -> void: record["target_kind"] = "enemy_single",
+		func(record: Dictionary) -> void: record["id"] = SKEIN_PLUS,
+		func(record: Dictionary) -> void: record.erase("upgrade_id"),
+		func(record: Dictionary) -> void: record["upgrade_of"] = SKEIN_BASE,
+		func(record: Dictionary) -> void: record.erase("to_positions"),
+		func(record: Dictionary) -> void: record.erase("effects"),
+		func(record: Dictionary) -> void: record.erase("display_name"),
+	]
+	for index in range(mutations.size()):
+		var tampered: Dictionary = base_record.duplicate(true)
+		mutations[index].call(tampered)
+		_check(not CombatYarnRangerEndlessSkeinCards.is_authentic_definition(tampered, SKEIN_BASE),
+			"tampered skein record " + str(index) + " is refused")
+	_check(not CombatYarnRangerEndlessSkeinCards.is_authentic_definition(
+		catalog.get_definition(SKEIN_PLUS), SKEIN_BASE),
+		"an upgraded record cannot authenticate as its base ID")
+	_check(not CombatYarnRangerEndlessSkeinCards.is_authentic_definition(
+		catalog.get_definition(SKEIN_BASE), SKEIN_PLUS),
+		"a base record cannot authenticate as its upgraded ID")
+
+
+## AC1: a genuinely held Endless Skein/Skein+ from seat 2 or 3 pays exactly three energy, hits
+## every living foe once in original slot order and adds its printed Tangled to each of them.
+func _test_skein_paid_play() -> void:
+	var resolver := CombatYarnRangerEndlessSkeinCards.new()
+	var cases := [
+		{"id": SKEIN_BASE, "seat": 2, "damage": 4, "tangled": 2},
+		{"id": SKEIN_BASE, "seat": 3, "damage": 4, "tangled": 2},
+		{"id": SKEIN_PLUS, "seat": 2, "damage": 6, "tangled": 3},
+		{"id": SKEIN_PLUS, "seat": 3, "damage": 6, "tangled": 3},
+	]
+	for index in range(cases.size()):
+		var entry: Dictionary = cases[index]
+		var card_id: String = entry["id"]
+		var seat: int = entry["seat"]
+		var damage: int = entry["damage"]
+		var added: int = entry["tangled"]
+		var label: String = card_id + " from seat " + str(seat)
+		var party := _snare_party(seat)
+		var enemies := _skein_enemies([
+			{"max_hp": 30, "hp": 30}, {"max_hp": 30, "hp": 30}, {"max_hp": 30, "hp": 30},
+		])
+		var deck := _skein_deck(card_id, 20261201 + index)
+		_check(deck.hand.count(card_id) == 1, label + ": exactly one authentic copy is held")
+		_check(deck.energy == 3 and deck.turn_active,
+			label + ": a real three-energy turn is active")
+		_check(deck.discard_pile.is_empty(), label + ": the fixture discard starts empty")
+		_check(deck.draw_pile.size() == 1, label + ": one genuine shared card remains to draw")
+		var rng_before: int = deck._rng.state
+		var draw_before: Array = deck.draw_pile.duplicate()
+		var before := _snare_snapshot(deck, party, enemies)
+		var result: Dictionary = resolver.play_card(deck, party, enemies, card_id)
+		_check(result.get("ok") == true and result.get("reason") == "applied",
+			label + ": authorized paid play")
+		_check(result.get("card_id") == card_id and result.get("cost") == 3,
+			label + ": receipt names the authentic card and its three energy")
+		_check(result.get("owner_position") == seat,
+			label + ": receipt reports the real owner seat")
+		_check(result.get("base_damage") == damage and result.get("tangled_added") == added,
+			label + ": receipt reports the printed damage and Tangled")
+		_check(result.get("target_positions") == [1, 2, 3],
+			label + ": receipt lists every living slot in order")
+		var hits: Array = result.get("hits", [])
+		_check(hits.size() == 3, label + ": exactly one hit per living foe")
+		for hit_index in range(hits.size()):
+			var hit: Dictionary = hits[hit_index]
+			_check(hit.get("position") == hit_index + 1,
+				label + ": hit " + str(hit_index) + " is in original slot order")
+			_check(hit.get("damage") == damage and hit.get("block_absorbed") == 0
+				and hit.get("hp_loss") == damage,
+				label + ": hit " + str(hit_index) + " deals the printed raw damage")
+			_check(hit.get("tangled_added") == added,
+				label + ": hit " + str(hit_index) + " reports its Tangled addition")
+		_check(deck.energy == 0, label + ": exactly three of the three energy were spent")
+		_check(deck.hand.count(card_id) == 0, label + ": the held copy left the hand")
+		_check(deck.discard_pile == [card_id],
+			label + ": exactly one authentic copy reached the discard pile")
+		_check(deck.draw_pile == draw_before, label + ": the shared draw supply is untouched")
+		_check(deck._rng.state == rng_before, label + ": the play consumes no RNG")
+		_check(deck.turn_active, label + ": the shared turn is still active")
+		_check(party.get_hero(seat).get("id") == "yarn_ranger"
+			and party.get_hero(seat).get("hp") == 28,
+			label + ": the owner and its HP stay unchanged")
+		for position in [1, 2, 3]:
+			_check(enemies.get_enemy(position).get("hp") == 30 - damage,
+				label + ": foe " + str(position) + " lost exactly the printed damage")
+			_check(enemies.get_enemy(position).get("block") == 0,
+				label + ": foe " + str(position) + " gained no Block")
+			_check(enemies.get_enemy(position).get("statuses") == {"tangled": added},
+				label + ": foe " + str(position) + " gained exactly its printed Tangled")
+			_check(enemies.get_enemy(position).get("position") == position,
+				label + ": foe " + str(position) + " kept its original slot")
+		var damage_by_position := {1: damage, 2: damage, 3: damage}
+		_check(_snare_snapshot(deck, party, enemies)
+			== _expected_skein(before, card_id, added, damage_by_position),
+			label + ": exact hand, piles, energy, turn, party, enemy and RNG state")
+		# A detached receipt is never authority for later state.
+		result["target_positions"] = [1]
+		if result["hits"] is Array and not (result["hits"] as Array).is_empty():
+			(result["hits"] as Array)[0]["damage"] = 99
+		_check(enemies.get_enemy(3).get("hp") == 30 - damage
+			and enemies.get_enemy(3).get("statuses") == {"tangled": added},
+			label + ": a mutated receipt cannot change an enemy")
+		# A replay of the spent copy fails without another charge.
+		var replay_before := _snare_snapshot(deck, party, enemies)
+		var replay: Dictionary = resolver.play_card(deck, party, enemies, card_id)
+		_check(replay.get("ok") == false and replay.get("reason") == "card_not_held",
+			label + ": a replayed spent copy is refused")
+		_check(_snare_snapshot(deck, party, enemies) == replay_before,
+			label + ": the refused replay changes nothing")
+
+
+## AC2: original slots with a slain gap, pre-hit Tangled amplification, Weak/Exposed flooring,
+## Block-before-HP, a confirmed lethal hit and bridge-compatible one-shot tokens.
+func _test_skein_slots_statuses_and_block() -> void:
+	var resolver := CombatYarnRangerEndlessSkeinCards.new()
+
+	# 1. Living front (already Tangled, blocked) and living back (Exposed) around a slain middle.
+	var party := _snare_party(3)
+	var enemies := _skein_enemies([
+		{"max_hp": 20, "hp": 20, "block": 4,
+			"statuses": {"tangled": 2, "bleed": 3, "weak": 1}},
+		{"max_hp": 12, "hp": 0, "statuses": {"tangled": 4}},
+		{"max_hp": 15, "hp": 15, "statuses": {"exposed": 2}},
+	])
+	var deck := _skein_deck(SKEIN_BASE, 20261211)
+	var before := _snare_snapshot(deck, party, enemies)
+	var result: Dictionary = resolver.play_card(deck, party, enemies, SKEIN_BASE)
+	_check(result.get("ok") == true, "gap fixture: the base skein binds the living front and back")
+	_check(result.get("target_positions") == [1, 3],
+		"gap fixture: the slain middle slot is skipped")
+	var hits: Array = result.get("hits", [])
+	_check(hits.size() == 2, "gap fixture: exactly two strikes")
+	_check(hits[0].get("position") == 1 and hits[1].get("position") == 3,
+		"gap fixture: the strikes stay in original slot order")
+	_check(hits[0].get("damage") == 6,
+		"gap fixture: pre-hit Tangled 2 adds its flat +2 to the printed four")
+	_check(hits[0].get("block_absorbed") == 4 and hits[0].get("hp_loss") == 2,
+		"gap fixture: Block absorbs before HP")
+	_check(hits[1].get("damage") == 6, "gap fixture: Exposed 2 raises four to six")
+	_check(hits[1].get("block_absorbed") == 0 and hits[1].get("hp_loss") == 6,
+		"gap fixture: the unblocked Exposed hit reaches HP in full")
+	_check(enemies.get_enemy(1).get("hp") == 18
+		and enemies.get_enemy(1).get("block") == 0,
+		"gap fixture: the front foe keeps only the HP its Block did not absorb")
+	_check(enemies.get_enemy(1).get("statuses")
+		== {"tangled": 4, "bleed": 3, "weak": 1},
+		"gap fixture: the front foe stacks its printed Tangled and keeps every other counter")
+	_check(enemies.get_enemy(2).get("hp") == 0
+		and enemies.get_enemy(2).get("statuses") == {"tangled": 4}
+		and enemies.get_enemy(2).get("position") == 2,
+		"gap fixture: the slain slot keeps its HP, counters and original position")
+	_check(enemies.get_enemy(3).get("hp") == 9
+		and enemies.get_enemy(3).get("statuses") == {"tangled": 2, "exposed": 2},
+		"gap fixture: the back foe takes six and gains its printed Tangled")
+	_check(_snare_snapshot(deck, party, enemies)
+		== _expected_skein(before, SKEIN_BASE, 2, {1: 6, 3: 6}),
+		"gap fixture: exact state apart from the paid hits and Tangled additions")
+
+	# 2. Weak attacker against an Exposed blocked front and a bare blocked back.
+	var weak_party := _snare_party(2)
+	weak_party._heroes[1]["statuses"] = {"weak": 1}
+	_check(weak_party.get_hero(2).get("statuses") == {"weak": 1},
+		"weak fixture really marks the Yarn Ranger Weak")
+	var weak_enemies := _skein_enemies([
+		{"max_hp": 20, "hp": 20, "block": 5,
+			"statuses": {"tangled": 1, "exposed": 1}},
+		{"max_hp": 20, "hp": 20, "block": 2},
+	])
+	var weak_deck := _skein_deck(SKEIN_BASE, 20261212)
+	var weak_before := _snare_snapshot(weak_deck, weak_party, weak_enemies)
+	var weak_result: Dictionary = resolver.play_card(weak_deck, weak_party, weak_enemies,
+		SKEIN_BASE)
+	_check(weak_result.get("ok") == true, "weak fixture: the authentic play succeeds")
+	var weak_hits: Array = weak_result.get("hits", [])
+	_check(weak_hits[0].get("damage") == 6,
+		"weak fixture: Weak+Exposed floors four to four, then Tangled adds two")
+	_check(weak_hits[0].get("block_absorbed") == 5 and weak_hits[0].get("hp_loss") == 1,
+		"weak fixture: five Block absorb before one HP is lost")
+	_check(weak_hits[1].get("damage") == 3,
+		"weak fixture: the unexposed back foe takes Weak's floored three")
+	_check(weak_hits[1].get("block_absorbed") == 2 and weak_hits[1].get("hp_loss") == 1,
+		"weak fixture: two Block absorb before one HP is lost")
+	_check(weak_enemies.get_enemy(1).get("hp") == 19
+		and weak_enemies.get_enemy(1).get("block") == 0,
+		"weak fixture: the front foe loses only the unabsorbed HP")
+	_check(weak_enemies.get_enemy(1).get("statuses") == {"tangled": 3, "exposed": 1},
+		"weak fixture: the front foe stacks its Tangled addition over the existing one")
+	_check(weak_enemies.get_enemy(2).get("hp") == 19
+		and weak_enemies.get_enemy(2).get("block") == 0
+		and weak_enemies.get_enemy(2).get("statuses") == {"tangled": 2},
+		"weak fixture: the back foe takes its floored hit and first Tangled")
+	_check(weak_party.get_hero(2).get("statuses") == {"weak": 1},
+		"weak fixture: the attacker's Weak counter is not spent or ticked")
+	_check(_snare_snapshot(weak_deck, weak_party, weak_enemies)
+		== _expected_skein(weak_before, SKEIN_BASE, 2, {1: 6, 2: 3}),
+		"weak fixture: exact state apart from the paid hits and Tangled additions")
+
+	# 3. A confirmed lethal hit keeps the new Tangled on the nonmoving original slot.
+	var lethal_party := _snare_party(2)
+	var lethal_enemies := _skein_enemies([
+		{"max_hp": 30, "hp": 30, "statuses": {"tangled": 1}},
+		{"max_hp": 2, "hp": 2},
+		{"max_hp": 30, "hp": 30},
+	])
+	var lethal_deck := _skein_deck(SKEIN_PLUS, 20261213)
+	var lethal_before := _snare_snapshot(lethal_deck, lethal_party, lethal_enemies)
+	var lethal_result: Dictionary = resolver.play_card(lethal_deck, lethal_party, lethal_enemies,
+		SKEIN_PLUS)
+	_check(lethal_result.get("ok") == true and lethal_result.get("tangled_added") == 3,
+		"lethal: the upgraded skein pays its printed three Tangled")
+	var lethal_hits: Array = lethal_result.get("hits", [])
+	_check(lethal_hits.size() == 3, "lethal: cast-time living foes each take one hit")
+	_check(lethal_hits[0].get("damage") == 8,
+		"lethal: the front foe's pre-hit Tangled adds two to the printed six")
+	_check(lethal_hits[1].get("hp_loss") == 2 and lethal_enemies.is_slain(2),
+		"lethal: the middle foe is confirmed slain by its hit")
+	_check(lethal_enemies.get_enemy(2).get("hp") == 0
+		and lethal_enemies.get_enemy(2).get("position") == 2
+		and lethal_enemies.get_enemy(2).get("statuses") == {"tangled": 3},
+		"lethal: the slain slot keeps its position and new Tangled")
+	_check(lethal_enemies.get_enemy(1).get("hp") == 22
+		and lethal_enemies.get_enemy(1).get("statuses") == {"tangled": 4},
+		"lethal: the front foe takes eight and stacks its Tangled")
+	_check(lethal_enemies.get_enemy(3).get("hp") == 24
+		and lethal_enemies.get_enemy(3).get("statuses") == {"tangled": 3},
+		"lethal: the rear foe takes six and gains its Tangled")
+	_check(not lethal_enemies.is_defeated(), "lethal: two living foes remain")
+	_check(_snare_snapshot(lethal_deck, lethal_party, lethal_enemies)
+		== _expected_skein(lethal_before, SKEIN_PLUS, 3, {1: 8, 2: 6, 3: 6}),
+		"lethal: exact state apart from the paid hits and Tangled additions")
+
+	# 4. Valid non-damage one-shot tokens stay on their owners and never break the paid cast.
+	var token_party := _snare_party(2)
+	token_party._heroes[1]["statuses"] = {"dodge_next_attack": 1}
+	var token_enemies := _skein_enemies([
+		{"max_hp": 20, "hp": 20, "statuses": {"blind_next_attack": 1}},
+	])
+	var token_deck := _skein_deck(SKEIN_BASE, 20261214)
+	var token_before := _snare_snapshot(token_deck, token_party, token_enemies)
+	var token_result: Dictionary = resolver.play_card(token_deck, token_party, token_enemies,
+		SKEIN_BASE)
+	_check(token_result.get("ok") == true, "tokens: an attacker Dodge and defender Blind are legal")
+	_check(token_party.get_hero(2).get("statuses") == {"dodge_next_attack": 1},
+		"tokens: the attacker's Dodge is untouched by an outgoing hit")
+	_check(token_enemies.get_enemy(1).get("statuses")
+		== {"blind_next_attack": 1, "tangled": 2},
+		"tokens: the defender's Blind survives beside its new Tangled")
+	var token_hits: Array = token_result.get("hits", [])
+	_check(token_hits.size() == 1 and token_hits[0].get("damage") == 4,
+		"tokens: neither one-shot token changes this card's damage")
+	_check(_snare_snapshot(token_deck, token_party, token_enemies)
+		== _expected_skein(token_before, SKEIN_BASE, 2, {1: 4}),
+		"tokens: exact state apart from the paid hit and Tangled addition")
+
+
+## AC2: the added Tangled never boosts its own hit, a later hit does benefit, and the existing
+## owner-turn tick ages it without any new lifecycle.
+func _test_skein_tangled_lifecycle() -> void:
+	var resolver := CombatYarnRangerEndlessSkeinCards.new()
+	var rules := CombatStatuses.new()
+	var batch := CombatStatusTurnBatch.new()
+	var cases := [
+		{"id": SKEIN_BASE, "added": 2, "damage": 4, "ticked": 1},
+		{"id": SKEIN_PLUS, "added": 3, "damage": 6, "ticked": 2},
+	]
+	for index in range(cases.size()):
+		var entry: Dictionary = cases[index]
+		var card_id: String = entry["id"]
+		var added: int = entry["added"]
+		var label: String = card_id + " lifecycle"
+		var enemies := _skein_enemies([
+			{"max_hp": 20, "hp": 20}, {"max_hp": 20, "hp": 20},
+		])
+		var deck := _skein_deck(card_id, 3311 + index)
+		var result: Dictionary = resolver.play_card(deck, _snare_party(2), enemies, card_id)
+		_check(result.get("ok") == true, label + ": the skein is cast on the real roster")
+		var hits: Array = result.get("hits", [])
+		_check(hits.size() == 2 and hits[0].get("damage") == entry["damage"],
+			label + ": the Tangled this cast adds never boosts its own hit")
+		_check(enemies.get_enemy(1).get("statuses") == {"tangled": added}
+			and enemies.get_enemy(2).get("statuses") == {"tangled": added},
+			label + ": every struck foe gains exactly its printed count")
+		var statuses: Dictionary = enemies.get_enemy(1).get("statuses")
+		_check(rules.adjusted_attack_damage(5, {}, statuses) == 7,
+			label + ": a later positive-base hit does benefit from the added Tangled")
+		_check(rules.adjusted_attack_damage(0, {}, statuses) == 0,
+			label + ": a zero-base hit never borrows Tangled's +2")
+		var roster_before: Array[Dictionary] = enemies.get_enemies()
+		var first_tick: Dictionary = batch.tick_side("enemies", roster_before)
+		_check(first_tick.get("ok") == true, label + ": the owner-turn tick accepts the roster")
+		var ticked: Array = first_tick["actors"]
+		_check(ticked[0]["statuses"] == {"tangled": entry["ticked"]},
+			label + ": the added count ticks down by one, never clearing early")
+		_check(ticked[1]["statuses"] == {"tangled": entry["ticked"]},
+			label + ": every struck foe ages on the same owner-turn boundary")
+		_check(enemies.get_enemies() == roster_before,
+			label + ": the tick projection leaves the authoritative roster untouched")
+		var second_tick: Dictionary = batch.tick_side("enemies", ticked)
+		_check(second_tick.get("ok") == true, label + ": the next owner turn is accepted")
+		var next: Array = second_tick["actors"]
+		var expected_second: Dictionary = {}
+		if int(entry["ticked"]) - 1 > 0:
+			expected_second["tangled"] = int(entry["ticked"]) - 1
+		_check(next[0]["statuses"] == expected_second,
+			label + ": later ticks keep using the same owner-turn rule")
+		var final_tick: Dictionary = batch.tick_side("enemies", next)
+		_check(final_tick.get("ok") == true, label + ": the last owner turn is accepted")
+		_check((final_tick["actors"] as Array)[0]["statuses"] == {},
+			label + ": the count expires exactly at its last owner-turn boundary")
+
+
+## AC3: every invalid request is inert, carries its reason and proves no mutation; a refusal never
+## poisons the next authentic play and a replay never double-charges.
+func _test_skein_refusals() -> void:
+	var resolver := CombatYarnRangerEndlessSkeinCards.new()
+	var party := _snare_party(2)
+	var enemies := _skein_enemies([
+		{"max_hp": 12, "hp": 12}, {"max_hp": 12, "hp": 12}, {"max_hp": 12, "hp": 12},
+	])
+	var deck := _skein_deck(SKEIN_BASE, 4455)
+
+	_rejected_skein(resolver, null, party, enemies, SKEIN_BASE, "invalid_request", "null deck")
+	_rejected_skein(resolver, deck, null, enemies, SKEIN_BASE, "invalid_request", "null party")
+	_rejected_skein(resolver, deck, party, null, SKEIN_BASE, "invalid_request", "null enemies")
+
+	# Inactive turn.
+	var inactive := CombatDeck.new([SKEIN_BASE, "skein_filler_a"], _skein_rng(12))
+	inactive.hand.append(SKEIN_BASE)
+	_check(not inactive.turn_active and inactive.hand.has(SKEIN_BASE),
+		"inactive fixture really holds a copy outside a turn")
+	_rejected_skein(resolver, inactive, party, enemies, SKEIN_BASE, "inactive_turn",
+		"inactive turn")
+
+	# Wrong IDs: unrelated authentic cards, forged spellings and non-strings.
+	var unsupported: Array = [SKEIN_BASE + "_plus_plus", SKEIN_BASE + "_plus2", SKEIN_BASE + "+",
+		" yarn_ranger_endless_skein", "yarn_ranger_endless_skein ", "ENDLESS_SKEIN",
+		"yarn_ranger_snare_net", "yarn_ranger_unspool", "yarn_ranger_tangle_bolas",
+		"warden_strike", "", StringName(SKEIN_BASE), null, 0, 3.5, false, [], {}]
+	for wrong_id: Variant in unsupported:
+		_rejected_skein(resolver, deck, party, enemies, wrong_id, "unsupported_card",
+			"unsupported ID " + str(wrong_id))
+
+	# Authentic printings the hand does not hold are still unheld.
+	_rejected_skein(resolver, deck, party, enemies, SKEIN_PLUS, "card_not_held",
+		"authentic but unheld Endless Skein+")
+	var no_copy := CombatDeck.new(["skein_filler_a", "skein_filler_b", "skein_filler_c",
+		"skein_filler_d", "skein_filler_e"], _skein_rng(77))
+	_check(no_copy.start_turn() and not no_copy.hand.has(SKEIN_BASE),
+		"missing-copy fixture really lacks the card")
+	_rejected_skein(resolver, no_copy, party, enemies, SKEIN_BASE, "card_not_held",
+		"missing held copy")
+
+	# Short energy.
+	var poor := _skein_deck(SKEIN_BASE, 5566)
+	poor.combat_state.energy = 2
+	_check(poor.energy == 2 and poor.hand.has(SKEIN_BASE),
+		"short-energy fixture really holds a copy with two energy")
+	_rejected_skein(resolver, poor, party, enemies, SKEIN_BASE, "insufficient_energy",
+		"one energy short")
+
+	# Owner absent, downed, or in the front seat grants no authority.
+	var no_owner := CombatParty.new([{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30}, {"id": "tinker", "max_hp": 26}])
+	_check(no_owner.is_valid() and no_owner.get_hero(2).get("id") == "seamstress",
+		"absent-owner fixture is a valid three-hero party with no Yarn Ranger")
+	_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6111), no_owner, enemies, SKEIN_BASE,
+		"owner_missing", "absent Yarn Ranger")
+	var front := _snare_party(1)
+	_check(front.get_hero(1).get("id") == "yarn_ranger" and not front.is_downed(1),
+		"front-seat fixture really has a living Yarn Ranger in seat 1")
+	_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6112), front, enemies, SKEIN_BASE,
+		"owner_illegal_position", "Yarn Ranger in seat 1")
+	var torn := _snare_party(3)
+	_check(torn.apply_damage(3, 28) and torn.is_downed(3),
+		"torn-owner fixture really has a downed Yarn Ranger")
+	_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6113), torn, enemies, SKEIN_BASE,
+		"owner_downed", "downed owner")
+
+	# Invalid rosters.
+	var short_party := CombatParty.new([{"id": "warden", "max_hp": 40}])
+	_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6114), short_party, enemies, SKEIN_BASE,
+		"invalid_roster", "invalid one-hero party")
+	_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6115), party, CombatEnemies.new([]),
+		SKEIN_BASE, "invalid_roster", "invalid empty enemy roster")
+
+	# Every foe already slain: nothing to strike.
+	var dead := _skein_enemies([{"max_hp": 8, "hp": 0}, {"max_hp": 8, "hp": 0}])
+	_check(dead.is_valid() and dead.is_defeated(),
+		"dead-roster fixture really has no living enemy")
+	_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6116), party, dead, SKEIN_BASE,
+		"no_living_target", "no living enemy")
+
+	# Duplicate and malformed party models.
+	var duplicate := _snare_party(2)
+	duplicate._heroes[2]["id"] = "yarn_ranger"
+	_check(duplicate.get_hero(2).get("id") == "yarn_ranger"
+		and duplicate.get_hero(3).get("id") == "yarn_ranger",
+		"duplicate-identity fixture really repeats the owner ID")
+	_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6117), duplicate, enemies, SKEIN_BASE,
+		"invalid_party", "duplicate hero identity")
+	var bad_hp := _snare_party(2)
+	bad_hp._heroes[0]["hp"] = 999
+	_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6118), bad_hp, enemies, SKEIN_BASE,
+		"invalid_party", "malformed hero HP")
+	var bad_block := _snare_party(2)
+	bad_block._heroes[0]["block"] = -1
+	_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6119), bad_block, enemies, SKEIN_BASE,
+		"invalid_party", "malformed hero Block")
+	var bad_party_statuses := _snare_party(2)
+	bad_party_statuses._heroes[1]["statuses"] = "bad"
+	_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6120), bad_party_statuses, enemies,
+		SKEIN_BASE, "invalid_party", "malformed party status map")
+	var blind_attacker := _snare_party(2)
+	blind_attacker._heroes[1]["statuses"] = {"blind_next_attack": 1}
+	_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6121), blind_attacker, enemies,
+		SKEIN_BASE, "invalid_party", "attacker-side Blind belongs to the miss path")
+
+	# Malformed enemy models and status maps.
+	for malformed: Variant in ["bad", 4, {"tangled": -1}, {"tangled": "2"}, {"forged": 1},
+			{"tangled": 1.5}, {"tangled": true}, {1: 2}]:
+		var broken := _skein_enemies([
+			{"max_hp": 10, "hp": 10}, {"max_hp": 10, "hp": 10}, {"max_hp": 10, "hp": 10},
+		])
+		broken._enemies[1]["statuses"] = malformed
+		_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6122), party, broken, SKEIN_BASE,
+			"invalid_enemies", "malformed enemy status map " + str(malformed))
+	var bad_enemy_hp := _skein_enemies([{"max_hp": 10, "hp": 10}])
+	bad_enemy_hp._enemies[0]["hp"] = 99
+	_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6123), party, bad_enemy_hp, SKEIN_BASE,
+		"invalid_enemies", "malformed enemy HP")
+	var bad_enemy_position := _skein_enemies([{"max_hp": 10, "hp": 10}])
+	bad_enemy_position._enemies[0]["position"] = 2
+	_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6124), party, bad_enemy_position,
+		SKEIN_BASE, "invalid_enemies", "malformed enemy slot index")
+	var dodge_defender := _skein_enemies([
+		{"max_hp": 10, "hp": 10, "statuses": {"dodge_next_attack": 1}},
+	])
+	_rejected_skein(resolver, _skein_deck(SKEIN_BASE, 6125), party, dodge_defender,
+		SKEIN_BASE, "invalid_enemies", "defender-side Dodge belongs to the miss path")
+
+	# Tangled overflow is refused before any payment, including a later foe after a valid one.
+	var overflow := _skein_enemies([
+		{"max_hp": 10, "hp": 10, "statuses": {"tangled": CombatStatuses.MAX_INT}},
+		{"max_hp": 10, "hp": 10},
+	])
+	var overflow_deck := _skein_deck(SKEIN_PLUS, 6126)
+	var overflow_before := _snare_snapshot(overflow_deck, party, overflow)
+	var overflow_result: Dictionary = resolver.play_card(overflow_deck, party, overflow,
+		SKEIN_PLUS)
+	_check(overflow_result.get("ok") == false
+		and overflow_result.get("reason") == "status_overflow",
+		"overflow: the maximum Tangled count refuses the cast")
+	_check(_snare_snapshot(overflow_deck, party, overflow) == overflow_before,
+		"overflow: no energy, card, damage, status or RNG was touched")
+	_check(overflow.get_enemy(2).get("hp") == 10
+		and not overflow.get_enemy(2).has("statuses"),
+		"overflow: the other foe was not partially struck or bound")
+	var partial := _skein_enemies([
+		{"max_hp": 10, "hp": 10, "statuses": {"tangled": 1}},
+		{"max_hp": 10, "hp": 10, "statuses": {"tangled": CombatStatuses.MAX_INT}},
+	])
+	var partial_deck := _skein_deck(SKEIN_BASE, 6127)
+	var partial_before := _snare_snapshot(partial_deck, party, partial)
+	var partial_result: Dictionary = resolver.play_card(partial_deck, party, partial, SKEIN_BASE)
+	_check(partial_result.get("ok") == false
+		and partial_result.get("reason") == "status_overflow",
+		"partial overflow: the later foe rejects the whole cast")
+	_check(_snare_snapshot(partial_deck, party, partial) == partial_before,
+		"partial overflow: no earlier foe, energy, card or RNG was touched")
+	_check(partial.get_enemy(1).get("hp") == 10
+		and partial.get_enemy(1).get("statuses") == {"tangled": 1},
+		"partial overflow: the first foe was not partially struck or bound")
+
+	# A consumed copy cannot be played twice and never double-charges.
+	var repeat_party := _snare_party(2)
+	var repeat_enemies := _skein_enemies([{"max_hp": 14, "hp": 14}])
+	var repeat_deck := _skein_deck(SKEIN_BASE, 8814)
+	_check(resolver.play_card(repeat_deck, repeat_party, repeat_enemies, SKEIN_BASE).get("ok")
+		== true, "duplicate-play fixture really casts once")
+	_check(repeat_deck.energy == 0 and repeat_deck.discard_pile == [SKEIN_BASE],
+		"duplicate-play fixture really spent three energy and discarded the copy")
+	_rejected_skein(resolver, repeat_deck, repeat_party, repeat_enemies, SKEIN_BASE,
+		"card_not_held", "replay of the consumed copy")
+	_check(repeat_deck.energy == 0, "replay: the spent turn keeps zero energy")
+
+	# A refused attempt never poisons the next authentic play on the same objects.
+	var retry_deck := _skein_deck(SKEIN_PLUS, 6128)
+	var retry_party := _snare_party(3)
+	var retry_enemies := _skein_enemies([{"max_hp": 14, "hp": 14}])
+	_rejected_skein(resolver, retry_deck, retry_party, retry_enemies, "yarn_ranger_snare_net",
+		"unsupported_card", "retry: wrong card first")
+	_rejected_skein(resolver, retry_deck, retry_party, retry_enemies, 12, "unsupported_card",
+		"retry: non-string ID second")
+	var retry_result: Dictionary = resolver.play_card(retry_deck, retry_party, retry_enemies,
+		SKEIN_PLUS)
+	_check(retry_result.get("ok") == true and retry_deck.energy == 0
+		and retry_enemies.get_enemy(1).get("statuses") == {"tangled": 3},
+		"retry: the authentic play then succeeds exactly once")
+
+
+func _skein_rng(seed_value: int) -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	return rng
+
+
+## Real enemy slots built through the model's own state APIs; HP loss and Block come from the model.
+func _skein_enemies(specs: Array) -> CombatEnemies:
+	var definitions: Array = []
+	for index in range(specs.size()):
+		var definition := {"id": "skein_fixture_foe_" + str(index + 1),
+			"max_hp": int(specs[index]["max_hp"])}
+		if specs[index].has("statuses"):
+			definition["statuses"] = specs[index]["statuses"]
+		definitions.append(definition)
+	var enemies := CombatEnemies.new(definitions)
+	_check(enemies.is_valid() and enemies.get_enemies().size() == specs.size(),
+		"skein fixture builds a real indexed enemy roster")
+	for index in range(specs.size()):
+		var lost: int = int(specs[index]["max_hp"]) - int(specs[index]["hp"])
+		if lost > 0:
+			_check(enemies.apply_damage(index + 1, lost),
+				"skein fixture foe " + str(index + 1) + " really lost HP")
+		var block := int(specs[index].get("block", 0))
+		if block > 0:
+			_check(enemies.gain_block(index + 1, block),
+				"skein fixture foe " + str(index + 1) + " really gained Block")
+	return enemies
+
+
+## A genuine seeded six-card turn: five cards drawn and one left in the shared draw pile. The
+## fixture guarantees exactly one held copy so a replay of the spent copy is provably refused.
+func _skein_deck(card_id: String, seed_value: int) -> CombatDeck:
+	var ids: Array[String] = [card_id]
+	for index in range(5):
+		ids.append("skein_filler_" + str(index))
+	var deck := CombatDeck.new(ids, _skein_rng(seed_value))
+	_check(deck.start_turn() and deck.energy == 3,
+		card_id + ": starts a real three-energy shared turn")
+	_check(deck.draw_pile.size() == 1, card_id + ": one genuine shared card remains to draw")
+	if deck.hand.count(card_id) == 0:
+		var found: int = deck.draw_pile.find(card_id)
+		if found >= 0:
+			var replacement: String = deck.hand[0]
+			deck.draw_pile[found] = replacement
+			deck.hand[0] = card_id
+	_check(deck.hand.count(card_id) == 1,
+		card_id + ": the fixture hand genuinely holds exactly one copy")
+	return deck
+
+
+## The exact post-transaction state: three energy, one discarded copy, Block-before-HP damage and
+## the printed Tangled addition on each struck foe only.
+func _expected_skein(before: Dictionary, card_id: String, added: int,
+		damage_by_position: Dictionary) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] = int(expected["energy"]) - 3
+	expected["state_energy"] = int(expected["state_energy"]) - 3
+	var hand: Array = expected["hand"]
+	_check(hand.count(card_id) == 1, "expected snapshot: exactly one played copy is held")
+	hand.remove_at(hand.find(card_id))
+	(expected["discard"] as Array).append(card_id)
+	for position in damage_by_position:
+		var enemy: Dictionary = expected["enemies"][int(position) - 1]
+		var damage: int = int(damage_by_position[position])
+		var absorbed: int = mini(int(enemy["block"]), damage)
+		enemy["block"] = int(enemy["block"]) - absorbed
+		enemy["hp"] = maxi(0, int(enemy["hp"]) - (damage - absorbed))
+		if not enemy.has("statuses"):
+			enemy["statuses"] = {}
+		enemy["statuses"]["tangled"] = int(enemy["statuses"].get("tangled", 0)) + added
+	return expected
+
+
+func _rejected_skein(resolver: CombatYarnRangerEndlessSkeinCards, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, card_id: Variant, reason: String,
+		label: String) -> void:
+	var before := _snare_snapshot(deck, party, enemies)
+	var result: Dictionary = resolver.play_card(deck, party, enemies, card_id)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("reason") == reason,
+		label + ": refusal reason is " + reason + " (got " + str(result.get("reason")) + ")")
+	_check(_snare_snapshot(deck, party, enemies) == before,
 		label + ": unchanged energy, hand, piles, turn, party, enemies and RNG")
 
 
