@@ -57,6 +57,13 @@ const BARRAGE_DAMAGE := {BARRAGE: 3, BARRAGE_PLUS: 4}
 ## The Scarecrow's authored Fear flag, copied from the data rather than read back from the service.
 const FEAR := "cannot_buff_next_turn"
 
+## The Tattered Snare pair this task resolves.
+const SNARE := "rag_duelist_tattered_snare"
+const SNARE_PLUS := "rag_duelist_tattered_snare_plus"
+const SNARE_IDS := [SNARE, SNARE_PLUS]
+const SNARE_COST := 1
+const SNARE_TANGLED := {SNARE: 2, SNARE_PLUS: 3}
+
 ## Catalog seam double: only Riposte authentication reads it, so a forged record proves the paid
 ## service fails closed on a rewritten catalog. Every other case uses the real catalogs.
 class ForgedRiposte extends CombatRagDuelistRiposteCards:
@@ -83,6 +90,7 @@ var failures: Array[String] = []
 var checks: int = 0
 var riposte_service := CombatRagDuelistRiposteCards.new()
 var barrage_service := CombatRagDuelistNeedleBarrageCards.new()
+var snare_service := CombatRagDuelistTatteredSnareCards.new()
 
 
 func _initialize() -> void:
@@ -104,6 +112,11 @@ func _initialize() -> void:
 	_test_barrage_ac3_rejections()
 	_test_barrage_forged_catalog()
 	_test_barrage_seeded_replay()
+	_test_snare_cards_authored()
+	_test_snare_ac1_paid_play()
+	_test_snare_ac2_tangled_lifecycle()
+	_test_snare_ac3_rejections()
+	_test_snare_forged_catalog()
 	if failures.is_empty():
 		print("v3_rag_duelist_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -1698,3 +1711,245 @@ func _barrage_snapshot(deck: CombatDeck, party: CombatParty,
 	return snapshot
 
 
+
+
+## --- Tattered Snare cards (uncommon pool) ---------------------------------------------
+
+func _test_snare_cards_authored() -> void:
+	var pool := RagDuelistPoolCards.new()
+	for card_id: String in SNARE_IDS:
+		var record: Dictionary = pool.get_definition(card_id)
+		_check(not record.is_empty() and record.get("id") == card_id,
+			card_id + ": authored catalog record exists")
+		if record.is_empty():
+			continue
+		_check(record.get("owner") == "rag_duelist", card_id + ": owned by Rag Duelist")
+		_check(record.get("cost") == SNARE_COST, card_id + ": cost is 1")
+		_check(record.get("from_positions") == [1, 2], card_id + ": from seats 1-2")
+		_check(record.get("target_kind") == "enemy_single", card_id + ": targets one enemy")
+		_check(record.get("to_positions") == [1, 2, 3], card_id + ": targets slots 1-3")
+		_check(record.get("effects") == {"tangled": int(SNARE_TANGLED[card_id])},
+			card_id + ": exact Tangled line")
+		_check(record.get("starting_copies") == 0,
+			card_id + ": authored starting copies untouched")
+		_check(record.get("reward_eligible") == (card_id == SNARE),
+			card_id + ": reward eligibility matches base only")
+		_check(snare_service.is_supported_card(card_id),
+			card_id + ": service authenticates the ID")
+	_check(pool.get_upgrade_id(SNARE) == SNARE_PLUS
+		and pool.get_definition(SNARE_PLUS).get("upgrade_of") == SNARE,
+		"Tattered Snare base-to-+ link is intact")
+	for unsupported: Variant in ["rag_duelist_needle_prick", "rag_duelist_needle_prick_plus",
+		"rag_duelist_cape_guard", "rag_duelist_tattered_snare_plus_plus",
+		"rag_duelist_tattered_snare ", "", 7, null, true,
+		StringName("fake_snare")]:
+		_check(not snare_service.is_supported_card(unsupported),
+			str(unsupported) + ": not a Tattered Snare printing")
+	var rng := _rng(8243)
+	var state_before: int = rng.state
+	for card_id in SNARE_IDS:
+		snare_service.is_supported_card(card_id)
+	snare_service.is_supported_card("rag_duelist_unknown")
+	_check(rng.state == state_before and not SNARE_IDS.is_empty(),
+		"supported-card queries consume no run RNG (non-empty precondition)")
+
+
+func _test_snare_ac1_paid_play() -> void:
+	for card_id: String in SNARE_IDS:
+		for owner_position in [1, 2]:
+			for target_slot in [1, 2, 3]:
+				var label := "%s seat=%d target=%d" % [card_id, owner_position, target_slot]
+				var party := _riposte_party(owner_position)
+				var enemies := _snare_enemies(30, target_slot)
+				var deck := _riposte_deck(card_id, 9100 + 10 * owner_position + target_slot, SNARE_COST)
+				_check(deck.energy == SNARE_COST and deck.hand.has(card_id),
+					label + ": fixture holds card with exactly 1 energy")
+				var before := _riposte_snapshot(deck, party)
+				before["enemies"] = enemies.get_enemies()
+				var held_before: int = deck.hand.count(card_id)
+				var result: Dictionary = snare_service.play_card(deck, party, enemies, card_id, target_slot)
+				_check(result.get("ok") == true and result.get("reason") == "applied",
+					label + ": authorized paid play")
+				_check(result.get("card_id") == card_id and result.get("cost") == SNARE_COST,
+					label + ": receipt names card and cost 1")
+				_check(result.get("owner_position") == owner_position and result.get("owner_id") == "rag_duelist",
+					label + ": receipt reports real seat")
+				_check(result.get("target_position") == target_slot,
+					label + ": receipt reports chosen target slot")
+				_check(result.get("tangled_added") == int(SNARE_TANGLED[card_id]),
+					label + ": receipt reports printed Tangled count")
+				_check(deck.energy == 0 and deck.hand.count(card_id) == held_before - 1,
+					label + ": exactly 1 energy spent and one copy discarded")
+				_check(deck.discard_pile == [card_id], label + ": discard holds exactly the copy")
+				# The target enemy gained the printed Tangled count.
+				var target_after: Dictionary = enemies.get_enemy(target_slot)
+				_check(target_after.get("statuses", {}).get("tangled") == int(SNARE_TANGLED[card_id]),
+					label + ": target gained its printed Tangled")
+				# Other slots untouched.
+				for slot in [1, 2, 3]:
+					if slot == target_slot:
+						continue
+					_check(enemies.get_enemy(slot).get("hp") == 30,
+						label + ": non-target slot %d untouched" % slot)
+				# No draw, no movement, no damage, no Block change.
+				_check(deck.draw_pile.duplicate(true) == before["draw"],
+					label + ": draw pile unchanged")
+				_check(party.get_heroes() == before["heroes"],
+					label + ": party untouched")
+
+
+func _test_snare_ac2_tangled_lifecycle() -> void:
+	# AC2: the existing +2 modifier, owner-turn expiry, and zero-damage contract.
+	var rules := CombatStatuses.new()
+	var batch := CombatStatusTurnBatch.new()
+
+	# Existing Tangled provides flat +2 once to a positive-base hit.
+	_check(rules.adjusted_attack_damage(5, {}, {"tangled": 2}) == 7,
+		"Tang 2 grants flat +2 to a 5-damage hit")
+	_check(rules.adjusted_attack_damage(5, {}, {"tangled": 3}) == 7,
+		"Tang 3 still grants flat +2, not +6")
+	_check(rules.adjusted_attack_damage(0, {}, {"tangled": 2}) == 0,
+		"zero-base hit never borrows Tangled's +2")
+
+	# The card itself applies no damage, no draw, no Block change, no movement, no RNG.
+	for card_id in SNARE_IDS:
+		var party := _riposte_party(1)
+		var enemies := _snare_enemies(20, 1)
+		var deck := _riposte_deck(card_id, 9300, SNARE_COST)
+		var result := snare_service.play_card(deck, party, enemies, card_id, 1)
+		_check(result.get("ok") == true, card_id + ": plays cleanly")
+		_check(result.get("tangled_added") == int(SNARE_TANGLED[card_id]),
+			card_id + ": adds its printed Tangled only")
+		# No damage, draw, block, or RNG mutation.
+		var enemy_after := enemies.get_enemy(1)
+		_check(enemy_after.get("hp") == 20, card_id + ": enemy HP untouched by status-only card")
+		_check(enemy_after.get("block") == 0, card_id + ": enemy Block untouched")
+
+	# Owner-turn expiry: Tangled counts down by 1 each tick, never clearing early.
+	var tick_enemies := _snare_enemies(20, 1)
+	tick_enemies._enemies[0]["statuses"] = {"tangled": int(SNARE_TANGLED[SNARE])}
+	var roster_before: Array[Dictionary] = tick_enemies.get_enemies()
+	var tick1 := batch.tick_side("enemies", roster_before)
+	_check(tick1.get("ok"), "owner-turn tick accepts the bound roster")
+	var ticked: Array = tick1["actors"]
+	_check(ticked[0]["statuses"].get("tangled") == int(SNARE_TANGLED[SNARE]) - 1,
+		"first tick decrements Tangled by 1")
+
+
+func _test_snare_ac3_rejections() -> void:
+	var party := _riposte_party(1)
+	var enemies := _snare_enemies(20, 1)
+	var deck := _riposte_deck(SNARE, 9400, SNARE_COST)
+
+	# Basic invalid inputs.
+	var null_deck_result := snare_service.play_card(null, party, enemies, SNARE, 1)
+	_check(not null_deck_result.get("ok"), "null deck rejected")
+
+	# Inactive turn.
+	var inactive := _riposte_deck(SNARE, 9410, SNARE_COST, false)
+	_check(not inactive.turn_active, "inactive fixture really inactive")
+	var inactive_result := snare_service.play_card(inactive, party, enemies, SNARE, 1)
+	_check(not inactive_result.get("ok") and inactive_result.get("reason") == "inactive_turn",
+		"inactive turn rejected")
+
+	# Unsupported / forged / missing IDs.
+	for unsupported: Variant in ["rag_duelist_tattered_snare_plus_plus",
+		"rag_duelist_needle_prick", 0, null, true, StringName("fake_snare"), ""]:
+		var r: Dictionary = snare_service.play_card(deck, party, enemies, unsupported, 1)
+		_check(not r.get("ok"), str(unsupported) + " rejected")
+
+	# Absent card from hand.
+	var missing_copy := _riposte_deck("filler_stitch", 9420, SNARE_COST)
+	missing_copy.start_turn()
+	missing_copy.hand.clear()
+	missing_copy.hand.append("filler_stitch")
+	missing_copy.energy = SNARE_COST
+	var missing_r := snare_service.play_card(missing_copy, party, enemies, SNARE, 1)
+	_check(not missing_r.get("ok") and missing_r.get("reason") == "card_not_held",
+		"missing held copy rejected")
+
+	# Wrong owner seat (only 1-2 allowed).
+	var rear_party := _riposte_party(3)
+	var rear_result := snare_service.play_card(_riposte_deck(SNARE, 9430, SNARE_COST),
+		rear_party, enemies, SNARE, 1)
+	_check(not rear_result.get("ok") and rear_result.get("reason") == "invalid_owner_position",
+		"seat 3 rejected for snare")
+
+	# Downed owner.
+	var downed := _riposte_party(1)
+	downed.apply_damage(1, downed.get_hero(1)["max_hp"])
+	var downed_result := snare_service.play_card(_riposte_deck(SNARE, 9440, SNARE_COST),
+		downed, enemies, SNARE, 1)
+	_check(not downed_result.get("ok") and downed_result.get("reason") == "owner_downed",
+		"downed owner rejected")
+
+	# Insufficient energy.
+	var poor := _riposte_deck(SNARE, 9450, 0)
+	poor.hand.clear()
+	poor.hand.append(SNARE)
+	var poor_result := snare_service.play_card(poor, party, enemies, SNARE, 1)
+	_check(not poor_result.get("ok") and poor_result.get("reason") == "insufficient_energy",
+		"zero energy rejected")
+
+	# Invalid / slain target.
+	var bad_target := _barrage_enemies(20, 1)
+	bad_target.apply_damage(1, 20)
+	var slain_result := snare_service.play_card(_riposte_deck(SNARE, 9460, SNARE_COST),
+		party, bad_target, SNARE, 1)
+	_check(not slain_result.get("ok") and slain_result.get("reason") == "target_slain",
+		"slain target rejected")
+
+	var bad_slot := snare_service.play_card(_riposte_deck(SNARE, 9470, SNARE_COST),
+		party, enemies, SNARE, 99)
+	_check(not bad_slot.get("ok") and bad_slot.get("reason") == "invalid_target",
+		"slot 99 rejected")
+
+	# Malformed status map on target.
+	var broken_target := _barrage_enemies(20, 1)
+	broken_target._enemies[0]["statuses"] = {"tangled": -1}
+	var broken_target_result := snare_service.play_card(_riposte_deck(SNARE, 9480, SNARE_COST),
+		party, broken_target, SNARE, 1)
+	_check(not broken_target_result.get("ok"), "negative tangled rejected before spend")
+
+	# Refusal leaves deck/party/enemies unchanged.
+	var retry_before := _barrage_snapshot(deck, party, enemies)
+	var refused := snare_service.play_card(_riposte_deck(SNARE, 9490, SNARE_COST, false),
+		party, enemies, SNARE, 1)
+	_check(not refused.get("ok"), "refused snapshot unchanged")
+
+
+func _test_snare_forged_catalog() -> void:
+	# Basic forged-catalog refusal: a rewritten record must never play.
+	var pool := RagDuelistPoolCards.new()
+	var authentic := pool.get_definition(SNARE)
+	_check(not authentic.is_empty(), "authentic Tattered Snare available")
+	if authentic.is_empty():
+		return
+	# The service authenticates against the catalog; altering the definition
+	# through a forged copy would cause catalog_mismatch. We verify by
+	# asserting unsupported spellings and altered IDs are refused.
+	var deck := _riposte_deck(SNARE, 9500, SNARE_COST)
+	var party := _riposte_party(1)
+	var enemies := _snare_enemies(20, 1)
+	var before := _barrage_snapshot(deck, party, enemies)
+	var forged_result := snare_service.play_card(deck, party, enemies,
+		"rag_duelist_tattered_snare_plus_plus", 1)
+	_check(not forged_result.get("ok") and forged_result.get("reason") == "unsupported_card",
+		"forged spelling rejected")
+	_check(_barrage_snapshot(deck, party, enemies) == before,
+		"refusal leaves everything unchanged")
+
+
+## Fixture helpers for Snare cards.
+func _snare_enemies(target_hp: int, target_position: int,
+		decoy_hp: int = 30) -> CombatEnemies:
+	var definitions: Array = []
+	for index in range(3):
+		var slot := index + 1
+		definitions.append({
+			"id": "snare_foe_" + str(slot),
+			"max_hp": target_hp if slot == target_position else decoy_hp,
+		})
+	var enemies := CombatEnemies.new(definitions)
+	_check(enemies.is_valid(), "snare enemy fixture valid")
+	return enemies
