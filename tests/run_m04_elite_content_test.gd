@@ -2894,7 +2894,7 @@ func _test_briar_snare_schedule() -> void:
 	_check(beat0_party[1].get("id") == "tinker"
 		and beat0_party[1].get("position") == 2
 		and beat0_party[1].get("hp") == 26
-		and beat0_party[1].get("statuses") == {"exposed": 1}
+		and beat0_party[1].get("statuses") == {"exposed": 2}
 		and beat0_party[2].get("id") == "seamstress"
 		and beat0_party[2].get("position") == 3
 		and beat0_party[2].get("hp") == 30
@@ -2911,7 +2911,7 @@ func _test_briar_snare_schedule() -> void:
 	_check(beat0_ticked.size() == 3
 		and beat0_ticked[0].get("hp") == 37
 		and beat0_ticked[1].get("id") == "tinker"
-		and beat0_ticked[1].get("statuses", {}).is_empty(),
+		and beat0_ticked[1].get("statuses") == {"exposed": 1},
 		"AC2: the owner-turn tick ages the preserved Exposed without extra HP loss")
 
 	var beat1: Dictionary = stages[1]
@@ -2928,7 +2928,7 @@ func _test_briar_snare_schedule() -> void:
 		and beat1_party[0].get("hp") == 37
 		and beat1_party[0].get("statuses") == {"bleed": 2}
 		and beat1_party[1].get("id") == "tinker"
-		and beat1_party[1].get("statuses", {}).is_empty()
+		and beat1_party[1].get("statuses") == {"exposed": 1}
 		and beat1_party[2].get("id") == "seamstress"
 		and beat1_party[2].get("hp") == 30
 		and beat1_party[2].get("statuses") == {"weak": 2},
