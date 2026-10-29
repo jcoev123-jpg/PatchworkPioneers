@@ -9,6 +9,7 @@ extends SceneTree
 
 const HEROES_PATH := "res://data/heroes/starter_party.json"
 const ENEMIES_PATH := "res://data/enemies/run_enemies.json"
+const ELITES_PATH := "res://data/enemies/m04_elites.json"
 
 const RIM := "warden_v3_rim_toss"
 const RIM_PLUS := "warden_v3_rim_toss_plus"
@@ -70,6 +71,10 @@ func _initialize() -> void:
 	_test_ac3_retry_after_rejection()
 	_test_once_only_payment()
 	_test_seeded_replay()
+	_test_thorns_retaliation()
+	_test_enrage_progression()
+	_test_needle_marshal_thorns_and_enrage()
+	_test_traited_zero_damage_and_malformed_refusals()
 	for failure in failures:
 		printerr(failure)
 	print("combat_warden_v3_shield_toss_cards_test: ",
@@ -488,6 +493,369 @@ func _replay_run(seed_value: int) -> Dictionary:
 	return snapshot
 
 
+## AC1: A confirmed positive hit triggers exactly one Thorns 3 retaliation against the Warden.
+func _test_thorns_retaliation() -> void:
+	for card_id: String in CARD_IDS:
+		# 1. Standard hit from seat 1 with Warden Block 6:
+		var party := _party()
+		_check(party.gain_block(1, 6), card_id + ": Thorns fixture seeded with 6 Warden Block")
+		var enemies := _enemies(["pincushion_hedgehog"])
+		var deck := _deck(card_id)
+		var before := _snapshot(deck, party, enemies)
+		var expect_damage: int = DAMAGE_MATRIX[card_id][6]["none"]
+		var result: Dictionary = service.play_card(deck, party, enemies, card_id, 1)
+		_check(result.get("ok") == true, card_id + ": positive hit lands on Hedgehog")
+		_check(result.get("damage") == expect_damage and result.get("block_absorbed") == 0
+			and result.get("hp_loss") == expect_damage, card_id + ": Hedgehog takes full unblocked damage")
+		_check(enemies.get_enemy(1)["hp"] == 25 - expect_damage, card_id + ": Hedgehog HP updated")
+		# Warden took Thorns 3 retaliation, absorbed by Warden Block: 6 -> 3 Block, 40 HP.
+		_check(party.get_hero(1)["block"] == 3 and party.get_hero(1)["hp"] == 40,
+			card_id + ": Warden Block absorbed Thorns 3 before HP")
+		_check(party.get_hero(2) == before["heroes"][1] and party.get_hero(3) == before["heroes"][2],
+			card_id + ": party allies untouched by Thorns retaliation")
+		_check(deck.energy == 2 and deck.discard_pile.count(card_id) == 1 and deck.hand.size() == 4,
+			card_id + ": exactly one energy charged and one card discarded")
+		var expected := _expected_traited_success(before, card_id, 1, 0, expect_damage, 1, 3, 0)
+		_check(_snapshot(deck, party, enemies) == expected,
+			card_id + ": full state and RNG match one paid transaction with Thorns")
+
+	# 2. Warden in seat 2 (middle position):
+	for card_id: String in [RIM, SHIELD_PLUS]:
+		var party := _moved_party(2)
+		_check(party.gain_block(2, 6), card_id + ": moved Warden Block 6 seeded in seat 2")
+		var enemies := _enemies(["pincushion_hedgehog"])
+		var deck := _deck(card_id)
+		var before := _snapshot(deck, party, enemies)
+		var expect_damage: int = DAMAGE_MATRIX[card_id][6]["none"]
+		var result: Dictionary = service.play_card(deck, party, enemies, card_id, 1)
+		_check(result.get("ok") == true and result.get("owner_position") == 2,
+			card_id + ": legal throw from middle seat 2")
+		_check(party.get_hero(2)["block"] == 3 and party.get_hero(2)["hp"] == 40,
+			card_id + ": Warden in seat 2 absorbed Thorns 3 retaliation")
+		_check(party.get_hero(1) == before["heroes"][0] and party.get_hero(3) == before["heroes"][2],
+			card_id + ": heroes in seat 1 and 3 untouched")
+		var expected := _expected_traited_success(before, card_id, 1, 0, expect_damage, 2, 3, 0)
+		_check(_snapshot(deck, party, enemies) == expected,
+			card_id + ": middle seat full snapshot matches")
+
+	# 3. Defender Block fully absorbs the hit, but Thorns 3 STILL retaliates:
+	var blocked_party := _party()
+	_check(blocked_party.gain_block(1, 6), "fully blocked hit: Warden Block 6 seeded")
+	var blocked_enemies := _enemies(["pincushion_hedgehog"])
+	_check(blocked_enemies.gain_block(1, 10), "fully blocked hit: Hedgehog holds 10 Block")
+	var blocked_deck := _deck(RIM)
+	var blocked_before := _snapshot(blocked_deck, blocked_party, blocked_enemies)
+	var blocked_res: Dictionary = service.play_card(blocked_deck, blocked_party, blocked_enemies, RIM, 1)
+	_check(blocked_res.get("ok") == true and blocked_res.get("damage") == 6
+		and blocked_res.get("block_absorbed") == 6 and blocked_res.get("hp_loss") == 0,
+		"fully blocked hit: 6 damage fully absorbed by enemy Block")
+	_check(blocked_enemies.get_enemy(1)["hp"] == 25 and blocked_enemies.get_enemy(1)["block"] == 4,
+		"fully blocked hit: Hedgehog HP 25 untouched, Block 10 -> 4")
+	_check(blocked_party.get_hero(1)["block"] == 3 and blocked_party.get_hero(1)["hp"] == 40,
+		"fully blocked hit: Thorns 3 STILL retaliates against Warden Block (6 -> 3)")
+	var blocked_exp := _expected_traited_success(blocked_before, RIM, 1, 6, 0, 1, 3, 0)
+	_check(_snapshot(blocked_deck, blocked_party, blocked_enemies) == blocked_exp,
+		"fully blocked hit: full snapshot matches")
+
+	# 4. Warden Block partial absorption and zero Block:
+	var partial_party := _party()
+	_check(partial_party.gain_block(1, 1), "partial: Warden has 1 Block")
+	var partial_enemies := _enemies(["pincushion_hedgehog"])
+	var partial_deck := _deck(RIM_PLUS)
+	var partial_res: Dictionary = service.play_card(partial_deck, partial_party, partial_enemies, RIM_PLUS, 1)
+	_check(partial_res.get("ok") == true and partial_res.get("damage") == 3,
+		"partial: RIM_PLUS deals 1 Block + 2 bonus = 3 damage")
+	_check(partial_party.get_hero(1)["block"] == 0 and partial_party.get_hero(1)["hp"] == 38,
+		"partial: Warden 1 Block absorbed, 2 HP lost from Thorns 3 retaliation")
+
+	var zero_block_party := _party()
+	var zero_block_enemies := _enemies(["pincushion_hedgehog"])
+	var zero_block_deck := _deck(SHIELD_PLUS)
+	var zero_res: Dictionary = service.play_card(zero_block_deck, zero_block_party, zero_block_enemies, SHIELD_PLUS, 1)
+	_check(zero_res.get("ok") == true and zero_res.get("damage") == 3,
+		"zero block: SHIELD_PLUS deals 3 bonus damage")
+	_check(zero_block_party.get_hero(1)["block"] == 0 and zero_block_party.get_hero(1)["hp"] == 37,
+		"zero block: Warden takes 3 full HP damage from Thorns 3 retaliation")
+
+	# 5. Status modifiers Weak and Exposed:
+	var weak_party := _party()
+	_check(weak_party.gain_block(1, 6), "weak: Warden has 6 Block")
+	var weak_enemies := _enemies(["pincushion_hedgehog"])
+	var weak_deck := _deck(RIM)
+	var weak_res: Dictionary = service.play_card(weak_deck, weak_party, weak_enemies, RIM, 1, {"weak": 1}, {})
+	_check(weak_res.get("ok") == true and weak_res.get("damage") == 4,
+		"weak: 6 Block floored at 4 damage")
+	_check(weak_party.get_hero(1)["block"] == 3 and weak_party.get_hero(1)["hp"] == 40,
+		"weak: Thorns 3 still retaliates against Warden Block")
+
+	var exp_party := _party()
+	_check(exp_party.gain_block(1, 6), "exposed: Warden has 6 Block")
+	var exp_enemies := _enemies(["pincushion_hedgehog"])
+	var exp_deck := _deck(RIM)
+	var exp_res: Dictionary = service.play_card(exp_deck, exp_party, exp_enemies, RIM, 1, {}, {"exposed": 1})
+	_check(exp_res.get("ok") == true and exp_res.get("damage") == 9,
+		"exposed: 6 Block floored at 9 damage")
+	_check(exp_party.get_hero(1)["block"] == 3 and exp_party.get_hero(1)["hp"] == 40,
+		"exposed: Thorns 3 still retaliates against Warden Block")
+
+	# 6. Lethal hit on Thorns enemy:
+	var lethal_party := _party()
+	_check(lethal_party.gain_block(1, 6), "lethal: Warden has 6 Block")
+	var lethal_enemies := _enemies(["pincushion_hedgehog"])
+	_check(lethal_enemies.apply_damage(1, 20) and lethal_enemies.get_enemy(1)["hp"] == 5,
+		"lethal: Hedgehog damaged to 5 HP")
+	var lethal_deck := _deck(RIM)
+	var lethal_res: Dictionary = service.play_card(lethal_deck, lethal_party, lethal_enemies, RIM, 1)
+	_check(lethal_res.get("ok") == true and lethal_res.get("damage") == 6
+		and lethal_res.get("hp_loss") == 5, "lethal: 6 damage lands, 5 HP lost")
+	_check(lethal_enemies.is_slain(1) and lethal_enemies.get_enemy(1)["hp"] == 0,
+		"lethal: Hedgehog is slain")
+	_check(lethal_party.get_hero(1)["block"] == 3 and lethal_party.get_hero(1)["hp"] == 40,
+		"lethal: Thorns 3 STILL retaliates on lethal strike against Hedgehog")
+
+	# 7. Lethal Thorns retaliation on Warden (downed owner):
+	var downed_party := _party()
+	_check(downed_party.apply_damage(1, 38) and downed_party.get_hero(1)["hp"] == 2,
+		"downed Warden: Warden down to 2 HP, 0 Block")
+	var downed_enemies := _enemies(["pincushion_hedgehog"])
+	var downed_deck := _deck(RIM_PLUS)
+	var downed_res: Dictionary = service.play_card(downed_deck, downed_party, downed_enemies, RIM_PLUS, 1)
+	_check(downed_res.get("ok") == true and downed_res.get("damage") == 2,
+		"downed Warden: attack lands for 2 damage")
+	_check(downed_enemies.get_enemy(1)["hp"] == 23, "downed Warden: Hedgehog took damage")
+	_check(downed_party.get_hero(1)["hp"] == 0 and downed_party.is_downed(1),
+		"downed Warden: Thorns 3 downs the Warden")
+	_check(downed_deck.energy == 2 and downed_deck.discard_pile.count(RIM_PLUS) == 1,
+		"downed Warden: transaction completed and not rolled back")
+
+
+## AC2: Confirmed hits grant +1 Enrage stack up to 3; each stack adds +2 attack in enemy phase.
+func _test_enrage_progression() -> void:
+	# 1. Four sequential hits on Spoolback Hound to verify 1, 2, 3 stacks and cap:
+	var party := _party()
+	_check(party.gain_block(1, 6), "enrage chain: Warden has 6 Block")
+	var enemies := _enemies(["spoolback_hound"])
+	var rng := _rng(8821)
+	var deck := CombatDeck.new([SHIELD, SHIELD, SHIELD, SHIELD, SHIELD, FILLERS[0]], rng)
+	_check(deck.start_turn() and deck.hand.size() == 5, "enrage chain: deck started")
+	deck.combat_state.energy = 10
+	deck.energy = 10
+
+	var expected_stacks := [1, 2, 3, 3]
+	var expected_bonuses := [2, 4, 6, 6]
+	for step in range(4):
+		var before := _snapshot(deck, party, enemies)
+		var res: Dictionary = service.play_card(deck, party, enemies, SHIELD, 1)
+		_check(res.get("ok") == true and res.get("damage") == 6,
+			"enrage chain hit %d: lands 6 damage" % (step + 1))
+		var want_stacks: int = expected_stacks[step]
+		var want_bonus: int = expected_bonuses[step]
+		var hound: Dictionary = enemies.get_enemy(1)
+		_check(hound.get("enrage_stacks") == want_stacks,
+			"enrage chain hit %d: Hound has %d enrage stacks" % [step + 1, want_stacks])
+		_check(CombatEnemyPhase._enrage_attack_bonus(enemies, 1) == want_bonus,
+			"enrage chain hit %d: enemy phase reports +%d attack bonus" % [step + 1, want_bonus])
+		# Hound has NO Thorns, so Warden Block 6 and HP 40 remain untouched:
+		_check(party.get_hero(1)["block"] == 6 and party.get_hero(1)["hp"] == 40,
+			"enrage chain hit %d: Hound has no Thorns, Warden Block untouched" % (step + 1))
+		var exp := _expected_traited_success(before, SHIELD, 1, 0, 6, 1, 0, 0, want_stacks)
+		_check(_snapshot(deck, party, enemies) == exp,
+			"enrage chain hit %d: full state matches" % (step + 1))
+
+	# 2. Fully blocked hit on Hound still grants 1 Enrage stack:
+	var blocked_party := _party()
+	_check(blocked_party.gain_block(1, 6), "enrage blocked: Warden has 6 Block")
+	var blocked_enemies := _enemies(["spoolback_hound"])
+	_check(blocked_enemies.gain_block(1, 10), "enrage blocked: Hound has 10 Block")
+	var blocked_deck := _deck(RIM)
+	var blocked_res: Dictionary = service.play_card(blocked_deck, blocked_party, blocked_enemies, RIM, 1)
+	_check(blocked_res.get("ok") == true and blocked_res.get("block_absorbed") == 6
+		and blocked_res.get("hp_loss") == 0, "enrage blocked: hit fully absorbed by enemy Block")
+	_check(blocked_enemies.get_enemy(1)["enrage_stacks"] == 1,
+		"enrage blocked: fully blocked hit still awards 1 Enrage stack")
+	_check(CombatEnemyPhase._enrage_attack_bonus(blocked_enemies, 1) == 2,
+		"enrage blocked: attack bonus is +2")
+
+	# 3. Middle Warden position (seat 2):
+	var mid_party := _moved_party(2)
+	_check(mid_party.gain_block(2, 6), "enrage mid: seat 2 Warden has 6 Block")
+	var mid_enemies := _enemies(["spoolback_hound"])
+	var mid_deck := _deck(RIM)
+	var mid_res: Dictionary = service.play_card(mid_deck, mid_party, mid_enemies, RIM, 1)
+	_check(mid_res.get("ok") == true and mid_res.get("owner_position") == 2,
+		"enrage mid: legal throw from seat 2")
+	_check(mid_enemies.get_enemy(1)["enrage_stacks"] == 1,
+		"enrage mid: Hound gains 1 stack from seat 2 Warden")
+
+
+## AC1/AC2: Needle Marshal combines Thorns 3 and Enrage on every confirmed positive hit.
+func _test_needle_marshal_thorns_and_enrage() -> void:
+	# 1. Single hit: damage, Thorns retaliation, Enrage stack, escort untouched:
+	var party := _party()
+	_check(party.gain_block(1, 6), "marshal: Warden has 6 Block")
+	var enemies := _enemies(["needle_marshal", "button_guard"])
+	var deck := _deck(RIM_PLUS)
+	var before := _snapshot(deck, party, enemies)
+	var res: Dictionary = service.play_card(deck, party, enemies, RIM_PLUS, 1)
+	_check(res.get("ok") == true and res.get("damage") == 8
+		and res.get("block_absorbed") == 0 and res.get("hp_loss") == 8,
+		"marshal hit 1: deals 8 damage (6 Block + 2 bonus)")
+	_check(enemies.get_enemy(1)["hp"] == 20, "marshal hit 1: HP 28 -> 20")
+	_check(enemies.get_enemy(1)["enrage_stacks"] == 1, "marshal hit 1: gains 1 Enrage stack")
+	_check(CombatEnemyPhase._enrage_attack_bonus(enemies, 1) == 2, "marshal hit 1: bonus is +2")
+	_check(party.get_hero(1)["block"] == 3 and party.get_hero(1)["hp"] == 40,
+		"marshal hit 1: Warden took Thorns 3 retaliation (Block 6 -> 3)")
+	_check(enemies.get_enemy(2) == before["enemies"][1], "marshal hit 1: escort button_guard untouched")
+	_check(deck.energy == 2 and deck.discard_pile.count(RIM_PLUS) == 1,
+		"marshal hit 1: paid 1 energy and 1 discard")
+	var exp := _expected_traited_success(before, RIM_PLUS, 1, 0, 8, 1, 3, 0, 1)
+	_check(_snapshot(deck, party, enemies) == exp, "marshal hit 1: full snapshot matches")
+
+	# 2. Blocked hit: Marshal Block absorbs hit, both Thorns 3 and Enrage trigger:
+	var blocked_party := _party()
+	_check(blocked_party.gain_block(1, 6), "marshal blocked: Warden has 6 Block")
+	var blocked_enemies := _enemies(["needle_marshal"])
+	_check(blocked_enemies.gain_block(1, 10), "marshal blocked: Marshal has 10 Block")
+	var blocked_deck := _deck(RIM)
+	var blocked_res: Dictionary = service.play_card(blocked_deck, blocked_party, blocked_enemies, RIM, 1)
+	_check(blocked_res.get("ok") == true and blocked_res.get("damage") == 6
+		and blocked_res.get("block_absorbed") == 6 and blocked_res.get("hp_loss") == 0,
+		"marshal blocked: hit fully absorbed by enemy Block")
+	_check(blocked_enemies.get_enemy(1)["hp"] == 28 and blocked_enemies.get_enemy(1)["block"] == 4,
+		"marshal blocked: Marshal HP 28, Block 10 -> 4")
+	_check(blocked_enemies.get_enemy(1)["enrage_stacks"] == 1,
+		"marshal blocked: fully blocked hit still awards 1 Enrage stack")
+	_check(blocked_party.get_hero(1)["block"] == 3 and blocked_party.get_hero(1)["hp"] == 40,
+		"marshal blocked: fully blocked hit still triggers Thorns 3 retaliation (Block 6 -> 3)")
+
+	# 3. Sequential hits to cap stacks:
+	var seq_party := _party()
+	var seq_enemies := _enemies(["needle_marshal"])
+	var rng := _rng(4411)
+	var seq_deck := CombatDeck.new([RIM, RIM, RIM, RIM, RIM], rng)
+	_check(seq_deck.start_turn(), "marshal seq: deck started")
+	seq_deck.combat_state.energy = 10
+	seq_deck.energy = 10
+
+	var expected_seq_stacks := [1, 2, 3, 3]
+	for step in range(4):
+		seq_party._heroes[0]["block"] = 0
+		_check(seq_party.gain_block(1, 6), "marshal seq hit %d: seed 6 Warden Block" % (step + 1))
+		var seq_res: Dictionary = service.play_card(seq_deck, seq_party, seq_enemies, RIM, 1)
+		_check(seq_res.get("ok") == true, "marshal seq hit %d lands" % (step + 1))
+		var want_st: int = expected_seq_stacks[step]
+		_check(seq_enemies.get_enemy(1)["enrage_stacks"] == want_st,
+			"marshal seq hit %d: has %d enrage stacks" % [step + 1, want_st])
+		_check(seq_party.get_hero(1)["block"] == 6 - 3,
+			"marshal seq hit %d: took Thorns 3 retaliation" % (step + 1))
+		_check(seq_enemies.get_enemy(1)["hp"] == 28 - 6 * (step + 1),
+			"marshal seq hit %d: Marshal HP 28 - %d" % [step + 1, 6 * (step + 1)])
+
+	# 4. Lethal hit on Marshal:
+	var let_party := _party()
+	_check(let_party.gain_block(1, 6), "marshal lethal: Warden has 6 Block")
+	var let_enemies := _enemies(["needle_marshal"])
+	_check(let_enemies.apply_damage(1, 25) and let_enemies.get_enemy(1)["hp"] == 3,
+		"marshal lethal: Marshal down to 3 HP")
+	var let_deck := _deck(SHIELD_PLUS)
+	var let_res: Dictionary = service.play_card(let_deck, let_party, let_enemies, SHIELD_PLUS, 1)
+	_check(let_res.get("ok") == true and let_res.get("hp_loss") == 3,
+		"marshal lethal: lands lethal strike")
+	_check(let_enemies.is_slain(1) and let_enemies.get_enemy(1)["hp"] == 0,
+		"marshal lethal: Marshal is slain")
+	_check(let_enemies.get_enemy(1)["enrage_stacks"] == 1,
+		"marshal lethal: Enrage stack committed onto slain slot without reviving")
+	_check(let_party.get_hero(1)["block"] == 3 and let_party.get_hero(1)["hp"] == 40,
+		"marshal lethal: Warden took Thorns 3 retaliation on lethal hit")
+
+
+## AC3: Zero damage produces no Thorns/Enrage; malformed traits fail closed before mutation.
+func _test_traited_zero_damage_and_malformed_refusals() -> void:
+	# 1. Zero-damage toss against Hedgehog (Thorns 3):
+	var z_party := _party()
+	var z_enemies := _enemies(["pincushion_hedgehog"])
+	var z_deck := _deck(RIM)
+	var z_before := _snapshot(z_deck, z_party, z_enemies)
+	var z_res: Dictionary = service.play_card(z_deck, z_party, z_enemies, RIM, 1)
+	_check(z_res.get("ok") == true and z_res.get("damage") == 0
+		and z_res.get("block_absorbed") == 0 and z_res.get("hp_loss") == 0,
+		"zero damage: 0 Block RIM produces 0 damage")
+	_check(z_enemies.get_enemy(1)["hp"] == 25, "zero damage: Hedgehog HP untouched")
+	_check(z_party.get_hero(1)["hp"] == 40 and z_party.get_hero(1)["block"] == 0,
+		"zero damage: NO Thorns retaliation occurred against Warden")
+	_check(z_deck.energy == 2 and z_deck.discard_pile.count(RIM) == 1,
+		"zero damage: exactly one energy charged and one card discarded")
+	var z_exp := _expected_traited_success(z_before, RIM, 1, 0, 0, 1, 0, 0, null)
+	_check(_snapshot(z_deck, z_party, z_enemies) == z_exp,
+		"zero damage: full snapshot matches no-thorns outcome")
+
+	# 2. Zero-damage toss against Hound (Enrage true):
+	var z_hound_party := _party()
+	var z_hound_enemies := _enemies(["spoolback_hound"])
+	var z_hound_deck := _deck(SHIELD)
+	var z_h_before := _snapshot(z_hound_deck, z_hound_party, z_hound_enemies)
+	var z_h_res: Dictionary = service.play_card(z_hound_deck, z_hound_party, z_hound_enemies, SHIELD, 1)
+	_check(z_h_res.get("ok") == true and z_h_res.get("damage") == 0,
+		"zero damage: 0 Block SHIELD produces 0 damage on Hound")
+	_check(not z_hound_enemies.get_enemy(1).has("enrage_stacks"),
+		"zero damage: NO Enrage stack gained on Hound")
+	var z_h_exp := _expected_traited_success(z_h_before, SHIELD, 1, 0, 0, 1, 0, 0, null)
+	_check(_snapshot(z_hound_deck, z_hound_party, z_hound_enemies) == z_h_exp,
+		"zero damage: full snapshot matches no-enrage outcome")
+
+	# 3. Weak-adjusted zero-damage toss against Needle Marshal (Thorns + Enrage):
+	var z_weak_party := _party()
+	var z_weak_enemies := _enemies(["needle_marshal"])
+	var z_weak_deck := _deck(RIM)
+	var z_w_res: Dictionary = service.play_card(z_weak_deck, z_weak_party, z_weak_enemies, RIM, 1, {"weak": 1}, {})
+	_check(z_w_res.get("ok") == true and z_w_res.get("damage") == 0,
+		"weak zero: Weak 0-damage hit on Needle Marshal")
+	_check(z_weak_party.get_hero(1)["hp"] == 40 and z_weak_party.get_hero(1)["block"] == 0,
+		"weak zero: NO Thorns retaliation on Marshal")
+	_check(not z_weak_enemies.get_enemy(1).has("enrage_stacks"),
+		"weak zero: NO Enrage stack gained on Marshal")
+	_check(z_weak_deck.energy == 2 and z_weak_deck.discard_pile.count(RIM) == 1,
+		"weak zero: 1 energy spent, 1 discard")
+
+	# 4. Malformed trait refusals fail closed before mutation or spend:
+	var ref_party := _party()
+	var ref_deck := _deck(RIM)
+
+	# Negative thorns:
+	_rejected(ref_deck, ref_party, CombatEnemies.new([{"id": "spiky", "max_hp": 20, "thorns": -1}]),
+		RIM, 1, {}, {}, "thorns negative")
+	# Non-int thorns:
+	_rejected(ref_deck, ref_party, CombatEnemies.new([{"id": "spiky", "max_hp": 20, "thorns": "sharp"}]),
+		RIM, 1, {}, {}, "thorns non-int")
+	# Non-bool enrage (string):
+	_rejected(ref_deck, ref_party, CombatEnemies.new([{"id": "mad", "max_hp": 20, "enrage": "yes"}]),
+		RIM, 1, {}, {}, "enrage non-bool string")
+	# Non-bool enrage (int):
+	_rejected(ref_deck, ref_party, CombatEnemies.new([{"id": "mad", "max_hp": 20, "enrage": 1}]),
+		RIM, 1, {}, {}, "enrage non-bool int")
+	# Enrage stacks over cap (4):
+	_rejected(ref_deck, ref_party, CombatEnemies.new([{"id": "mad", "max_hp": 20, "enrage": true, "enrage_stacks": 4}]),
+		RIM, 1, {}, {}, "enrage stacks over cap")
+	# Enrage stacks negative:
+	_rejected(ref_deck, ref_party, CombatEnemies.new([{"id": "mad", "max_hp": 20, "enrage": true, "enrage_stacks": -1}]),
+		RIM, 1, {}, {}, "enrage stacks negative")
+	# Enrage stacks non-int:
+	_rejected(ref_deck, ref_party, CombatEnemies.new([{"id": "mad", "max_hp": 20, "enrage": true, "enrage_stacks": "two"}]),
+		RIM, 1, {}, {}, "enrage stacks non-int")
+	# Non-target enemy in roster has malformed trait:
+	_rejected(ref_deck, ref_party, CombatEnemies.new([{"id": "good", "max_hp": 20}, {"id": "bad", "max_hp": 20, "thorns": -1}]),
+		RIM, 1, {}, {}, "roster has invalid enemy trait")
+	# Dead target among traited enemies:
+	var dead_trait_enemies := _enemies(["pincushion_hedgehog"])
+	_check(dead_trait_enemies.apply_damage(1, 99) and dead_trait_enemies.is_slain(1),
+		"fixture: Hedgehog actually slain")
+	_rejected(ref_deck, ref_party, dead_trait_enemies, RIM, 1, {}, {}, "dead traited target")
+	# Malformed attacker status with traited target:
+	var hedge_enemies := _enemies(["pincushion_hedgehog"])
+	_rejected(ref_deck, ref_party, hedge_enemies, RIM, 1, {"weak": -1}, {},
+		"malformed status with traited target")
+
+
 func _rejected(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, card_id: String,
 		target_position: int, attacker_statuses: Dictionary, defender_statuses: Dictionary,
 		label: String) -> void:
@@ -514,6 +882,29 @@ func _expected_success(before: Dictionary, card_id: String, target_position: int
 	var enemy: Dictionary = expected["enemies"][target_position - 1]
 	enemy["block"] -= block_absorbed
 	enemy["hp"] -= hp_loss
+	return expected
+
+
+## Expected transaction state with Thorns retaliation on the attacker and/or Enrage on the target.
+func _expected_traited_success(before: Dictionary, card_id: String, target_position: int,
+		block_absorbed: int, hp_loss: int, owner_position: int = 1,
+		thorns_block_absorbed: int = 0, thorns_hp_loss: int = 0,
+		enrage_stacks: Variant = null) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] -= 1
+	expected["state_energy"] -= 1
+	var hand: Array = expected["hand"]
+	hand.remove_at(hand.find(card_id))
+	var discard: Array = expected["discard"]
+	discard.append(card_id)
+	var enemy: Dictionary = expected["enemies"][target_position - 1]
+	enemy["block"] -= block_absorbed
+	enemy["hp"] -= hp_loss
+	if enrage_stacks != null:
+		enemy["enrage_stacks"] = enrage_stacks
+	var hero: Dictionary = expected["heroes"][owner_position - 1]
+	hero["block"] -= thorns_block_absorbed
+	hero["hp"] -= thorns_hp_loss
 	return expected
 
 
@@ -605,25 +996,32 @@ func _enemy_record(enemy_id: String) -> Dictionary:
 	for record in _enemy_catalog():
 		if record.get("id") == enemy_id:
 			return record.duplicate(true)
-	_check(false, "shipped run_enemies.json contains " + enemy_id)
+	_check(false, "shipped enemy catalogs contain " + enemy_id)
 	return {}
 
 
 func _enemy_catalog() -> Array[Dictionary]:
 	if not _catalog_cache.is_empty():
 		return _catalog_cache
-	var raw: String = FileAccess.get_file_as_string(ENEMIES_PATH)
-	var parsed: Variant = JSON.parse_string(raw)
-	_check(not raw.is_empty() and parsed is Array and not parsed.is_empty(),
-		"shipped run_enemies.json catalog loads")
-	if not parsed is Array:
-		return []
-	for entry in parsed:
-		if not entry is Dictionary:
+	for path in [ENEMIES_PATH, ELITES_PATH]:
+		var raw: String = FileAccess.get_file_as_string(path)
+		var parsed: Variant = JSON.parse_string(raw)
+		_check(not raw.is_empty() and parsed is Array and not parsed.is_empty(),
+			path + " catalog loads")
+		if not parsed is Array:
 			continue
-		var record: Dictionary = entry.duplicate(true)
-		var max_hp: Variant = record.get("max_hp")
-		if max_hp is float and max_hp == floor(max_hp):
-			record["max_hp"] = int(max_hp)
-		_catalog_cache.append(record)
+		for entry in parsed:
+			if not entry is Dictionary:
+				continue
+			var record: Dictionary = entry.duplicate(true)
+			var max_hp: Variant = record.get("max_hp")
+			if max_hp is float and max_hp == floor(max_hp):
+				record["max_hp"] = int(max_hp)
+			var thorns: Variant = record.get("thorns")
+			if thorns is float and thorns == floor(thorns):
+				record["thorns"] = int(thorns)
+			var stacks: Variant = record.get("enrage_stacks")
+			if stacks is float and stacks == floor(stacks):
+				record["enrage_stacks"] = int(stacks)
+			_catalog_cache.append(record)
 	return _catalog_cache
