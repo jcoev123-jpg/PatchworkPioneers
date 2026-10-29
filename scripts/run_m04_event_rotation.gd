@@ -157,6 +157,97 @@ func select_event(rng: Variant, excluded_ids: Variant = null) -> Dictionary:
 	return _rejection()
 
 
+## Picks one actionable generic wallet event uniformly from the unvisited eligible pool.
+## A candidate record is actionable when at least one authored choice is affordable
+## under `wallet` and carries a nonzero gold or scraps delta, verified through
+## RunEventChoice.preview_wallet_choices().
+## `rng` must be a RandomNumberGenerator. `excluded_ids` is an optional Array of
+## visited IDs. `wallet` must be a valid {gold: int >= 0, scraps: int >= 0} dictionary.
+## Returns {"ok": bool, "event": Dictionary}; rejects without consuming RNG on an
+## invalid RNG, invalid wallet, malformed exclusions, invalid catalog or when no
+## eligible event has an affordable nonzero-delta choice.
+func select_actionable_event(rng: Variant, excluded_ids: Variant = null, wallet: Variant = null) -> Dictionary:
+	if not rng is RandomNumberGenerator:
+		return _rejection()
+	if not _catalog_ok:
+		return _rejection()
+	var parsed_wallet: Dictionary = _parse_wallet(wallet)
+	if not parsed_wallet.get("ok", false):
+		return _rejection()
+	var parsed: Dictionary = _parse_exclusions(excluded_ids)
+	if not parsed.get("ok", false):
+		return _rejection()
+	var excluded: Dictionary = parsed["ids"]
+	var eligible: Array = []
+	for record in _pool:
+		var event_id: String = record["id"]
+		if excluded.has(event_id):
+			continue
+		if _is_event_actionable(record, parsed_wallet["wallet"]):
+			eligible.append(event_id)
+	if eligible.is_empty():
+		return _rejection()
+	eligible.sort()
+	var generator: RandomNumberGenerator = rng
+	var picked_id: String = eligible[generator.randi_range(0, eligible.size() - 1)]
+	for record in _pool:
+		if record["id"] == picked_id:
+			return {"ok": true, "event": record.duplicate(true)}
+	return _rejection()
+
+
+## A candidate event is actionable if at least one authored choice is affordable
+## and produces a nonzero gold or scraps delta.
+static func _is_event_actionable(record: Dictionary, wallet: Dictionary) -> bool:
+	var service := RunEventChoice.new(record)
+	if not service.is_valid():
+		return false
+	var preview: Dictionary = service.preview_wallet_choices(wallet)
+	if not preview.get("ok", false):
+		return false
+	var choices: Variant = preview.get("choices")
+	if not choices is Array:
+		return false
+	for choice in (choices as Array):
+		if not choice is Dictionary:
+			continue
+		var choice_dict: Dictionary = choice
+		if not choice_dict.get("affordable", false):
+			continue
+		var gold_delta: Variant = choice_dict.get("gold_delta")
+		var scraps_delta: Variant = choice_dict.get("scraps_delta")
+		if typeof(gold_delta) != TYPE_INT or typeof(scraps_delta) != TYPE_INT:
+			continue
+		if int(gold_delta) != 0 or int(scraps_delta) != 0:
+			return true
+	return false
+
+
+## Validates that wallet is a Dictionary with exactly gold and scraps as
+## non-negative integers.
+static func _parse_wallet(wallet: Variant) -> Dictionary:
+	if typeof(wallet) != TYPE_DICTIONARY:
+		return {"ok": false}
+	var dict: Dictionary = wallet
+	if dict.size() != 2 or not dict.has("gold") or not dict.has("scraps"):
+		return {"ok": false}
+	var gold: Variant = dict.get("gold")
+	var scraps: Variant = dict.get("scraps")
+	if typeof(gold) != TYPE_INT or typeof(scraps) != TYPE_INT:
+		return {"ok": false}
+	var gold_int: int = gold
+	var scraps_int: int = scraps
+	if gold_int < 0 or scraps_int < 0:
+		return {"ok": false}
+	return {
+		"ok": true,
+		"wallet": {
+			"gold": gold_int,
+			"scraps": scraps_int,
+		},
+	}
+
+
 func _rejection() -> Dictionary:
 	return {"ok": false, "event": {}}
 
