@@ -106,7 +106,21 @@ func _run() -> void:
 	root.add_child(panel)
 	panel.decision_requested.connect(func(intent: Dictionary): intents.append(intent))
 	await _settle()
-	_check(panel.heal_button.has_focus(), "pre-mount bind initially focuses Heal")
+	_check(panel.heal_button.has_focus()
+		and root.gui_get_focus_owner() == panel.heal_button,
+		"pre-mount bind initially focuses Heal for a recovering party")
+	intents.clear()
+	await _activate(panel.heal_button, true, KEY_ENTER)
+	_check(intents.size() == 1 and intents[0].get("action") == "heal"
+		and intents[0].get("source_visit") == early
+		and intents[0].get("node_id") == NODE,
+		"default Heal focus commits through one real keyboard activation")
+	var early_receipt: Dictionary = Controller.submit(early, intents[0])
+	_check(early_receipt.get("ok") == true and early_receipt.get("decision") == "heal"
+		and early.read_state().status == "healed",
+		"default keyboard Heal consumed exactly once")
+	_check(not Controller.submit(early, intents[0]).get("ok"),
+		"default keyboard Heal receipt is once-only")
 	# Cosmetic mounting happens before guarding the global RNG.
 	seed(266)
 	var expected_draw := randi()
@@ -120,6 +134,7 @@ func _run() -> void:
 	]:
 		await _positive(fixture)
 	await _keyboard_positive()
+	await _default_focus()
 	# Two seeded spans, so the focus sections neither hide nor weaken the
 	# original browse/commit/rejection RNG guard.
 	_check(randi() == expected_draw,
@@ -233,6 +248,14 @@ func _preview_fixture(visit: RunCampfireVisit, expected_hp: Array, label: String
 			label + ": mounted ribbon readable and visible")
 	_check(not panel.heal_button.disabled and not panel.leave_button.disabled,
 		label + ": Heal valid regardless of delta, Leave always allowed")
+	var any_gain := false
+	for i in range(3):
+		if int(expected_hp[i]) > int(source["heroes"][i]["hp"]):
+			any_gain = true
+	var expected_default: Button = panel.heal_button if any_gain else panel.leave_button
+	_check(expected_default.has_focus()
+		and root.gui_get_focus_owner() == expected_default,
+		label + ": authentic preview gain picks the actual default focus")
 	_check(visit.read_state() == source and intents.is_empty(),
 		label + ": preview read-only and no source decision")
 
@@ -425,6 +448,121 @@ func _keyboard_positive() -> void:
 			_check(result.get("heroes") == expected_heroes
 				and visit.read_state().heroes == expected_heroes,
 				"keyboard heal equals independent recovery / Leave unchanged")
+
+
+## The authentic zero-versus-positive preview gain alone decides the default
+## focus for the pre-mount and rebind paths; focusing alone never consumes a
+## visit, roster or RNG, and both real buttons stay explicitly selectable.
+func _default_focus() -> void:
+	# Zero-gain full trio: authentic source and preview HPs are exactly [40,30,26].
+	var full := RunCampfireVisit.new(NODE, _party([40, 30, 26]))
+	var full_before: Dictionary = full.read_state()
+	_check(full_before.get("ok") == true and full_before.get("status") == "open"
+		and full_before.heroes.size() == 3, "full trio genuine open visit")
+	var full_oracle: Dictionary = RunRestRecovery.new(full_before.heroes).choose_heal()
+	_check(full_oracle.get("ok") == true
+		and [int(full_oracle.heroes[0].hp), int(full_oracle.heroes[1].hp),
+			int(full_oracle.heroes[2].hp)] == [40, 30, 26],
+		"authentic zero-gain preview HPs stay exactly [40,30,26]")
+	var pre: LiveCampfirePanel = LiveCampfirePanel.new()
+	pre.position = Vector2(200, 60)
+	var pre_intents: Array[Dictionary] = []
+	pre.decision_requested.connect(func(intent: Dictionary): pre_intents.append(intent))
+	pre.bind(full)
+	root.add_child(pre)
+	await _settle()
+	_check(pre.is_visible_in_tree() and pre.leave_button.has_focus()
+		and root.gui_get_focus_owner() == pre.leave_button
+		and not pre.leave_button.disabled,
+		"zero-gain pre-mount bind focuses the real enabled Leave button")
+	_check(not pre.heal_button.disabled and pre.heal_button.is_visible_in_tree()
+		and pre.heal_button.text == "Heal",
+		"Heal still exists and can be chosen explicitly at full HP")
+	_check(full.read_state() == full_before and pre_intents.is_empty(),
+		"zero-gain default focus alone consumes no visit")
+	intents.clear()
+	await _activate(pre.leave_button, true, KEY_ENTER)
+	_check(pre_intents.size() == 1 and intents.is_empty()
+		and full.read_state() == full_before,
+		"default focused Leave emits one and only one current intent")
+	if pre_intents.size() == 1:
+		var leave_intent: Dictionary = pre_intents[0]
+		_check(leave_intent.get("action") == "leave" and leave_intent.get("node_id") == NODE
+			and leave_intent.get("source_visit") == full
+			and leave_intent.get("expected_heroes") == full_before.heroes,
+			"default Leave intent is the authentic bound instance/node/roster")
+		var leave_result: Dictionary = Controller.submit(full, leave_intent)
+		_check(leave_result.get("ok") == true and leave_result.get("decision") == "leave"
+			and leave_result.get("heroes") == full_before.heroes
+			and full.read_state().heroes == full_before.heroes,
+			"default Leave at full HP leaves all three HPs unchanged")
+		_check(full.read_state().status == "left"
+			and not Controller.submit(full, leave_intent).get("ok"),
+			"default Leave consumes its visit exactly once")
+	pre.queue_free()
+	await _settle()
+	# Deliberate Heal at full HP remains valid and once-only.
+	var full_heal := RunCampfireVisit.new(NODE, _party([40, 30, 26]))
+	var heal_before: Dictionary = full_heal.read_state()
+	await _bind(full_heal)
+	_check(panel.leave_button.has_focus()
+		and root.gui_get_focus_owner() == panel.leave_button,
+		"full-health rebind after mount defaults to Leave")
+	var stale_default: Callable = panel._connections[panel.leave_button]
+	await _activate(panel.heal_button, false)
+	_check(intents.size() == 1 and full_heal.read_state() == heal_before,
+		"explicit Heal at full HP emits one intent without committing")
+	if intents.size() == 1:
+		var heal_intent: Dictionary = intents[0]
+		_check(heal_intent.get("action") == "heal" and heal_intent.get("source_visit") == full_heal
+			and heal_intent.get("node_id") == NODE
+			and heal_intent.get("expected_heroes") == heal_before.heroes,
+			"explicit Heal intent is the authentic bound instance/node/roster")
+		var heal_result: Dictionary = Controller.submit(full_heal, heal_intent)
+		_check(heal_result.get("ok") == true and heal_result.get("decision") == "heal"
+			and heal_result.get("heroes") == heal_before.heroes
+			and full_heal.read_state().status == "healed",
+			"deliberate Heal at full HP remains valid and consumes its visit once")
+		_check(not Controller.submit(full_heal, heal_intent).get("ok"),
+			"deliberate full-HP Heal receipt is once-only")
+	# Positive-gain parties, including a Torn hero and a one-positive mix, focus Heal.
+	var wounded := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
+	var wounded_before: Dictionary = wounded.read_state()
+	var wounded_oracle: Dictionary = RunRestRecovery.new(wounded_before.heroes).choose_heal()
+	_check([int(wounded_oracle.heroes[0].hp), int(wounded_oracle.heroes[1].hp),
+		int(wounded_oracle.heroes[2].hp)] == [40, 27, 8],
+		"authentic wounded preview recovers to exactly [40,27,8]")
+	await _bind(wounded)
+	_check(panel.heal_button.has_focus()
+		and root.gui_get_focus_owner() == panel.heal_button
+		and not panel.heal_button.disabled,
+		"positive-gain rebind focuses the real Heal button")
+	stale_default.call()
+	_check(intents.is_empty() and wounded.read_state() == wounded_before
+		and full_heal.read_state().status == "healed",
+		"retired full-generation Leave callback cannot act after rebind")
+	var torn_only := RunCampfireVisit.new(NODE, _party([0, 30, 26]))
+	var torn_before: Dictionary = torn_only.read_state()
+	await _bind(torn_only)
+	_check(panel.heal_button.has_focus(),
+		"a Torn hero guarantees a positive preview and focuses Heal")
+	var mixed := RunCampfireVisit.new(NODE, _party([40, 30, 20]))
+	var mixed_before: Dictionary = mixed.read_state()
+	await _bind(mixed)
+	_check(panel.heal_button.has_focus(),
+		"mixed roster with one positive gain focuses Heal")
+	# Full -> wounded -> full rebinding moves the default both ways.
+	var full_again := RunCampfireVisit.new(NODE, _party([40, 30, 26]))
+	var again_before: Dictionary = full_again.read_state()
+	await _bind(full_again)
+	_check(panel.leave_button.has_focus()
+		and root.gui_get_focus_owner() == panel.leave_button,
+		"full -> wounded -> full rebinding returns the default to Leave")
+	_check(wounded.read_state() == wounded_before
+		and torn_only.read_state() == torn_before
+		and mixed.read_state() == mixed_before
+		and full_again.read_state() == again_before and intents.is_empty(),
+		"focus-only rebinding consumes no visit, roster or intent")
 
 
 ## One real physical key press: down, frame, up, frame, settle.
