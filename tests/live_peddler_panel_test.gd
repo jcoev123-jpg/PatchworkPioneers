@@ -1519,6 +1519,11 @@ func _patch_preview_cases() -> void:
 	await _bind(visit)
 	await _hover_none()
 	await _frames()
+	# All informational inspection (tooltip, hover, focus, rebind) has now
+	# happened while this visit was still open: verify the untouched snapshot
+	# BEFORE the deliberate Leave below mutates the lifecycle, so this oracle
+	# cannot hide an inspection-time mutation behind that Leave.
+	_check(visit.read_state() == before, "informational patch inspection leaves visit untouched")
 	visit.leave(before["node_id"], before["state"], before["stock"])
 	await _frames()
 	await _bind(visit)
@@ -1528,6 +1533,10 @@ func _patch_preview_cases() -> void:
 		"closure clears patch tooltip and shows the closed status")
 	_check(intents.is_empty(), "closure inspection emits no intent")
 
-	# After all informational inspection the visit remains unchanged.
-	_check(visit.read_state() == before, "informational patch inspection leaves visit untouched")
+	# The only mutation is this test's own controller-issued Leave: the ledger
+	# and stock stay exactly as inspected, and no intent was ever emitted.
+	var left_state := visit.read_state()
+	_check(left_state["status"] == "left" and left_state["state"] == before["state"]
+		and left_state["stock"] == before["stock"],
+		"deliberate test leave changes only the lifecycle status")
 	_check(intents.is_empty(), "no purchase or leave intent was emitted during preview")
