@@ -118,6 +118,7 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 					# Drain quotes only this single confirmed hit, so the real
 					# recipient's pre-hit record is captured before it is dispatched.
 					var recipient_before: Dictionary = staged_party.get_hero(actual_target)
+					var pre_hit_living: bool = not staged_party.is_downed(actual_target)
 					var hit_target: int = actual_target
 					# The source's stored Enrage stacks add their authored bonus ONCE
 					# to its own announced amount, before any status adjustment and
@@ -132,7 +133,8 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 					# Preserve every point when a scaled total is odd.
 					if hit_index < total % hit_count:
 						announced += 1
-					var damage := CombatStatuses.new().adjusted_attack_damage(announced,
+					var status_rules := CombatStatuses.new()
+					var damage := status_rules.adjusted_attack_damage(announced,
 						staged_enemies.get_enemy(source).get("statuses", {}),
 						staged_party.get_hero(actual_target).get("statuses", {}))
 					var attack: Dictionary = effective.duplicate(true)
@@ -155,21 +157,31 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 						if not result.ok:
 							return failure
 						event.applied = result.events[0].applied
+					if hit_target != actual_target:
+						return failure
+					# Riposte N strikes back against the real enemy source once per
+					# confirmed positive-damage hit on the living pre-hit defender
+					# (after any Guard redirect), even when hero Block absorbs the
+					# whole hit or the hit downs that defender.
+					var riposte_damage := status_rules.riposte_damage_for_confirmed_hit(
+						recipient_before.get("statuses", {}),
+						pre_hit_living and event.applied and damage > 0)
+					if riposte_damage > 0 and not staged_enemies.is_slain(source):
+						if not staged_enemies.apply_damage(source, riposte_damage):
+							return failure
 					# Drain is the source's own reward for that one confirmed hit: it
 					# heals the actor that really lost HP (after Guard and Block), not
 					# the announced slot, and a skipped beat or a source slain by
-					# Thorns in the same resolution can never heal or revive anything.
+					# Thorns or Riposte in the same resolution can never heal or revive anything.
 					if drains and event.applied and not staged_enemies.is_slain(source):
-						if hit_target != actual_target:
-							return failure
 						var receipt := _hit_receipt(recipient_before,
 							staged_party.get_hero(hit_target), damage)
 						if not receipt.get("ok", false) \
 								or not CombatEnemyKeywordRules.new().resolve_drain_after_hit(
 									staged_enemies, source, receipt).get("ok", false):
 							return failure
-					# A slain attacker (Thorns retaliation) never lands its sting, and
-					# the bonus status must not break the batch's atomicity.
+					# A slain attacker (Thorns or Riposte retaliation) never lands its
+					# sting, and the bonus status must not break the batch's atomicity.
 					if sting and not staged_enemies.is_slain(source) \
 							and not _sting_bleed(staged_party, actual_target, hp_before):
 						return failure
