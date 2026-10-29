@@ -1,6 +1,6 @@
 extends SceneTree
-## P12 is catalogued and earnable after a completed run, but not yet payable
-## or combat-wired. Exercises strict authored data, detached offers and profile.
+## P12 remains catalog-authenticated; the completed-run Shared Hem is now
+## payable at the real Peddler and live on held Brace, not on Needle Echo.
 
 var checks := 0
 var failures: Array[String] = []
@@ -99,15 +99,25 @@ func _run() -> void:
 	_check(rng.state == state_before and wallet == wallet_before and samples == candidates_before,
 		"all projection and refusal paths leave RNG, gold, deck and inventory unchanged")
 
-	# The actual Peddler uses the locked power accessor regardless of the
-	# prospective profile: these two IDs cannot yet be bought or worn.
+	# The default locked Peddler still withholds both. Only an explicit
+	# saved completed-run profile may admit the implemented ARM Hem.
 	var party := ["warden", "seamstress", "tinker"]
 	var cards := [{"id": "warden_strike", "price": 50},
 		{"id": "seamstress_prick", "price": 50},
 		{"id": "tinker_pop_shot", "price": 50}]
 	var real := RunShopStockOffers.generate_peddler_stock(rng, party, cards, samples, [])
 	_check(real.ok and real.patches.size() == 1 and real.patches[0].id == "relay_bobbin",
-		"live stock uses already-wired patch even when passed Heirloom candidates")
+		"locked Peddler preserves its single ordinary patch despite P12 candidates")
+	var offered_hem := false
+	for seed_value in range(1, 70):
+		var probe := RandomNumberGenerator.new()
+		probe.seed = seed_value
+		var stock := RunShopStockOffers.generate_peddler_stock(probe, party, cards, samples, [], true)
+		_check(stock.ok and stock.patches.size() == 1 and stock.patches[0].id != "needle_echo",
+			"unlocked Peddler still refuses unimplemented Needle Echo")
+		if stock.patches[0].id == "shared_hem":
+			offered_hem = offered_hem or stock.patches[0].price == 100
+	_check(offered_hem, "a real seeded unlocked Peddler draw offers Hem for its authored 100 gold")
 
 	# App envelope accepts old two-field records and new versioned records,
 	# without adding fields to RunDifficulty itself.
@@ -133,6 +143,7 @@ func _run() -> void:
 			{"selected_tier": 0, "highest_cleared_tier": -1, "heirloom_unlocked": true}]:
 		_check(not app.restore_profile_state(bad_profile) and app.profile_state() == before,
 			"malformed profile rejects atomically and retains unlock and difficulty")
+	await _test_routed_peddler_to_battle(app)
 	app.free()
 	_test_heirloom_needle()
 	_test_heirloom_hem()
@@ -177,6 +188,195 @@ func _heirloom_fixture(needle_owner: String = "warden",
 		"pins": pins, "rules": rules, "rng": rng, "deck": deck}
 
 
+
+
+## Follow the actual map -> Fight reward -> mounted Peddler purchase/sew ->
+## next Fight hand. This is deliberately a different witness from the detached
+## receipt checks below: no local shop service or surrogate Pinned is substituted.
+func _test_routed_peddler_to_battle(app) -> void:
+	_check(app.heirloom_unlocked and app.deck == null and app.run_map == null,
+		"real Peddler witness begins idle with restored completed-run eligibility")
+	var purchased := false
+	var eligible_routes := 0
+	for seed_value in range(1, 5000):
+		# Find an authored connected Fight -> Shop -> Fight without changing the
+		# graph, any candidate stock or the run RNG after admission.
+		var graph := RunMap.new()
+		var graph_rng := RandomNumberGenerator.new()
+		graph_rng.seed = seed_value
+		graph.generate(graph_rng)
+		var first_id := ""
+		var shop_id := ""
+		var next_id := ""
+		for initial in graph.get_legal_choices():
+			if graph.get_node(initial).get("type") != "Fight":
+				continue
+			for middle in graph.get_node(initial).get("outgoing", []):
+				if graph.get_node(middle).get("type") != "Shop":
+					continue
+				for following in graph.get_node(middle).get("outgoing", []):
+					if graph.get_node(following).get("type") == "Fight":
+						first_id = initial
+						shop_id = middle
+						next_id = following
+						break
+				if not next_id.is_empty():
+					break
+			if not next_id.is_empty():
+				break
+		if next_id.is_empty():
+			continue
+		eligible_routes += 1
+		app.run_seed = seed_value
+		app.route_button.pressed.emit()
+		await process_frame
+		await process_frame
+		if app.run_map == null:
+			preload("res://tests/party_choice.gd").choose(app)
+			await process_frame
+			await process_frame
+		var fight_button: Button = null
+		for button in app.route_buttons:
+			if button.get_meta("route_id") == first_id:
+				fight_button = button
+		if fight_button == null or fight_button.disabled or not fight_button.is_visible_in_tree():
+			_check(false, "authentic first Fight route admits playable mounted control")
+			return
+		fight_button.pressed.emit()
+		await process_frame
+		await process_frame
+		if not app._current_carryover_fight() or app.enemies == null:
+			_check(false, "real first battle admission succeeds before Peddler")
+			return
+		# Settle the prerequisite victory through authoritative enemy HP and
+		# the app's real outcome/reward route, not by fabricating reward receipts.
+		for enemy in app.enemies.get_enemies():
+			_check(app.enemies.apply_damage(enemy.position, 999),
+				"authentic enemy model accepts prerequisite victory damage")
+		app._observe_battle_result()
+		await process_frame
+		await process_frame
+		if not app._battle_closed or app.fight_rewards == null or app.reward_buttons.size() < 4:
+			_check(false, "real Fight reward opens on confirmed enemy defeat")
+			return
+		app.reward_buttons[3].pressed.emit()
+		await process_frame
+		if app.continue_button == null:
+			_check(false, "genuine reward Skip provides connected Continue")
+			return
+		app.continue_button.pressed.emit()
+		await process_frame
+		await process_frame
+		var shop_button: Button = null
+		for button in app.route_buttons:
+			if button.get_meta("route_id") == shop_id:
+				shop_button = button
+		if shop_button == null or shop_button.disabled:
+			_check(false, "genuine post-victory Shop is a connected actionable tile")
+			return
+		# Same funded boundary as existing mounted Peddler tests: purchase still
+		# goes through the real wallet, quote, visit and wardrobe checks.
+		app.session_gold = maxi(app.session_gold, 200)
+		shop_button.pressed.emit()
+		await process_frame
+		await process_frame
+		if app.peddler_visit == null or app.shop_view == null:
+			_check(false, "real Peddler opens with authenticated stock")
+			return
+		var stock: Dictionary = app.peddler_visit.read_state().stock
+		_check(stock.trinkets.size() == 1
+			and stock.trinkets[0].id != "needle_echo",
+			"real Peddler never leaks Needle Echo and keeps one patch slot")
+		if stock.trinkets[0].id != "shared_hem":
+			app._return_to_title()
+			await process_frame
+			await process_frame
+			continue
+		var wallet_before: int = app.session_gold
+		var rng_before: int = app.run_rng.state
+		var carry := app.party_carryover as RunTornCarryover
+		_check(stock.trinkets[0].price == 100 and not app.run_trinkets.has("shared_hem")
+			and app.peddler_buttons.size() == 4
+			and not app.peddler_buttons[3].disabled and carry != null,
+			"nonvacuous real Hem offer is 100g, unowned and payable at mounted Peddler")
+		app.peddler_heroes.select(1)
+		_check(app.run_heroes[1].id == "seamstress",
+			"real patch wearer selector targets different living hero")
+		app.peddler_buttons[3].pressed.emit()
+		await process_frame
+		await process_frame
+		var wardrobe: RunPatchWardrobe = carry._wardrobe
+		_check(app.peddler_visit.is_consumed() and app.peddler_receipt.get("ok", false)
+			and app.peddler_receipt.id == "shared_hem"
+			and app.session_gold == wallet_before - 100 and app.run_rng.state == rng_before
+			and app.run_trinkets.has("shared_hem") and wardrobe != null
+			and wardrobe.get_snapshot().worn.seamstress.ARM == "shared_hem"
+			and carry.can_bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()),
+			"real Peddler purchase spends exactly 100g and persists canonical sewn ARM")
+		var next_button: Button = null
+		for button in app.route_buttons:
+			if button.get_meta("route_id") == next_id:
+				next_button = button
+		_check(next_button != null and not next_button.disabled,
+			"post-Peddler connected Fight remains actionable")
+		if next_button == null:
+			return
+		next_button.pressed.emit()
+		await process_frame
+		await process_frame
+		var presenter = app.get_node("LiveSupportHand")
+		var attack = app.get_node("LiveAttackPreview")
+		_check(app._current_carryover_fight() and app.deck.turn_active
+			and presenter._heirloom != null and presenter._heirloom.is_current()
+			and presenter._heirloom_pinned == attack._pinned
+			and presenter._heirloom._wardrobe == wardrobe,
+			"next routed battle binds bought Hem to real party and battle Pinned")
+		if presenter._heirloom == null:
+			return
+		if not app.deck.hand.has("warden_brace"):
+			app.deck.draw_pile.append("warden_brace")
+			_check(app.deck.draw_extra(1) == 1,
+				"genuine deck draws authenticated Brace into post-Peddler hand")
+			app._refresh_hand()
+			await process_frame
+			await process_frame
+		var brace_panel: Control = null
+		for panel in app.hand_view.get_children():
+			if panel.get_child_count() > 0 and panel.get_child(0) is Label \
+					and panel.get_child(0).text == "warden_brace":
+				brace_panel = panel
+		_check(brace_panel != null and presenter._bindings.has(brace_panel)
+			and app.party.get_hero(1).hp > 0 and app.party.get_hero(2).hp > 0,
+			"real mounted held Brace and living different sewn wearer exist")
+		if brace_panel == null:
+			return
+		var before_warden: int = app.party.get_hero(1).block
+		var before_seamstress: int = app.party.get_hero(2).block
+		var before_energy: int = app.deck.energy
+		var before_discard: int = app.deck.discard_pile.count("warden_brace")
+		var point := brace_panel.get_global_rect().get_center()
+		var motion := InputEventMouseMotion.new()
+		motion.position = point
+		root.push_input(motion, true)
+		for pressed in [true, false]:
+			var click := InputEventMouseButton.new()
+			click.position = point
+			click.button_index = MOUSE_BUTTON_LEFT
+			click.pressed = pressed
+			root.push_input(click, true)
+		await process_frame
+		await process_frame
+		_check(app.party.get_hero(1).block == before_warden + 7
+			and app.party.get_hero(2).block == before_seamstress + 1
+			and app.deck.energy == before_energy - 1
+			and app.deck.discard_pile.count("warden_brace") == before_discard + 1,
+			"real post-purchase held Brace pays once and grants exact Hem Block to wearer")
+		purchased = true
+		break
+	_check(purchased, "deterministic connected Peddler seed buys Hem and plays next Fight (%d eligible routes)" % eligible_routes)
+	if app.run_map != null:
+		app._return_to_title()
+		await process_frame
 
 
 func _test_heirloom_needle() -> void:

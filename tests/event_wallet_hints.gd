@@ -169,4 +169,16 @@ const SEEDS := [
 	52253,
 	92094,
 	54971,
+	# Genuine witnesses re-derived after the four gothic roadside prop-and-wallet
+	# stories (Amber Mole, Inkblue Otter, Mossbound Tortoise, Brass Buttonbear)
+	# joined the sorted generic pool.
+	262,
+	1633,
+	6513,
+	71703,
+	116353,
+	125617,
+	233422,
+	240821,
+	376208,
 ]

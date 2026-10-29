@@ -246,8 +246,10 @@ static func generate_peddler_cards(rng: Variant, party_ids: Variant,
 ## empty offers, leaves the caller's arrays untouched and consumes no RNG.
 static func generate_peddler_stock(rng: Variant, party_ids: Variant,
 		card_candidates: Variant, patch_candidates: Variant,
-		owned_patch_ids: Variant) -> Dictionary:
+		owned_patch_ids: Variant, heirloom_unlocked: Variant = false) -> Dictionary:
 	var rejected: Dictionary = {"ok": false, "cards": [], "patches": []}
+	if typeof(heirloom_unlocked) != TYPE_BOOL:
+		return rejected
 	if not (rng is RandomNumberGenerator):
 		return rejected
 	if not (party_ids is Array) or not (card_candidates is Array) \
@@ -289,7 +291,11 @@ static func generate_peddler_stock(rng: Variant, party_ids: Variant,
 	# accepted whole while its two powerless starter records are filtered out
 	# of BOTH draw pools. An unknown or inert candidate is never promoted to a
 	# payable power.
-	var power_patch_ids := _power_patch_ids()
+	var power_patch_ids := _power_patch_ids(false)
+	# P12 is Peddler-only: the implemented ARM power unlocks, but the
+	# unimplemented HEAD power remains withheld in every run and shop.
+	if heirloom_unlocked and _power_patch_ids(true).has("shared_hem"):
+		power_patch_ids["shared_hem"] = true
 	var patch_prices := {}
 	var eligible_patch_ids: Array[String] = []
 	var owned_candidate_patch_ids: Array[String] = []
@@ -305,7 +311,8 @@ static func generate_peddler_stock(rng: Variant, party_ids: Variant,
 		if patch_id.strip_edges().is_empty() or patch_prices.has(patch_id):
 			return rejected
 		var price := _read_price(entry["price"])
-		if price < 0:
+		if price < 0 or (patch_id == "shared_hem" and price != \
+				RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED["shared_hem"]["shop_price_gold"]):
 			return rejected
 		patch_prices[patch_id] = price
 		if not power_patch_ids.has(patch_id):

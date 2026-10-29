@@ -6290,6 +6290,15 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	var candidates := _validated_patch_candidates(authored.trinkets)
 	if candidates.is_empty():
 		return false
+	# Only the actual routed Peddler can append the implemented P12 ARM power.
+	# Its price and slot come from the validated authored Heirloom record.
+	if heirloom_unlocked:
+		var hem: Dictionary = RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED["shared_hem"]
+		if not RunAuthoredPatchDefinitions.load_eligible_power_definitions(true).has(
+				{"id": hem["id"], "slot": hem["slot"]}) \
+				or hem["shop_price_gold"] != 100:
+			return false
+		candidates.append({"id": hem["id"], "price": hem["shop_price_gold"]})
 	var canonical_slots := {}
 	for definition in definitions:
 		canonical_slots[definition.id] = definition.slot
@@ -6303,7 +6312,7 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	var staged_rng := RandomNumberGenerator.new()
 	staged_rng.state = run_rng.state
 	var stock := RunShopStockOffers.generate_peddler_stock(staged_rng, ids,
-		authored.cards, candidates, run_trinkets)
+		authored.cards, candidates, run_trinkets, heirloom_unlocked)
 	var visit := RunPeddlerVisit.new(id, ids, run_deck, run_trinkets, session_gold, stock)
 	if not visit.is_open() or not run_map.choose_node(id):
 		return false
@@ -7111,6 +7120,9 @@ func _refresh_hand() -> void:
 		label.add_theme_font_size_override("font_size", 18)
 		panel.add_child(label)
 	pile_label.text = "Draw: %d | Discard: %d" % [deck.draw_pile.size(), deck.discard_pile.size()]
+	# Mount the battle's one real Pinned authority before binding support
+	# Heirloom receipts; neither authority is recreated by a hand redraw.
+	$LiveAttackPreview._sync_battle()
 	$LiveSupportHand._sync_battle()
 	_sync_combo_forecast()
 

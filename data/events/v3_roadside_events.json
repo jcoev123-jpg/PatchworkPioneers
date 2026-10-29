@@ -459,6 +459,46 @@
         { "id": "donate_inkproof_patches", "text": "Donate inkproof patches (spend 2 scraps; gain 37 gold)", "outcome": { "gold": 37, "scraps": -2 } },
         { "id": "leave_school", "text": "Leave the thimble classroom (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_amber_mole_tunnel",
+      "title": "The Amber Mole Tunnel",
+      "description": "A plump moss-cloth mole with brass-button eyes lifts a copper thimble lantern over a tunnel stitched into the rain-dark road.",
+      "choices": [
+        { "id": "gather_lamp_wicks", "text": "Gather fallen lamp-wick threads (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "buy_tunnel_key", "text": "Buy the mole's brass tunnel key (spend 17 gold; gain 3 scraps)", "outcome": { "gold": -17, "scraps": 3 } },
+        { "id": "leave_mole_tunnel", "text": "Follow the quiet tunnel (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_inkblue_otter_ferry",
+      "title": "The Inkblue Otter Ferry",
+      "description": "A round midnight-teal otter doll steers a boat made from a folded gingham coat, using an enormous silver needle as an oar.",
+      "choices": [
+        { "id": "patch_ferry_sail", "text": "Patch the ferry's torn sail (spend 2 scraps; gain 31 gold)", "outcome": { "gold": 31, "scraps": -2 } },
+        { "id": "collect_coat_offcuts", "text": "Collect floating coat offcuts (gain 1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "leave_otter_ferry", "text": "Leave the ferry at its mooring (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_mossbound_tortoise_library",
+      "title": "The Mossbound Tortoise Library",
+      "description": "A broad button-eyed tortoise carries a tiny velvet library on its quilted shell, each book fastened with crossed stitches.",
+      "choices": [
+        { "id": "sort_story_pages", "text": "Sort the shell's loose story pages (gain 14 gold)", "outcome": { "gold": 14, "scraps": 0 } },
+        { "id": "buy_needle_bookmark", "text": "Buy a needlework bookmark (spend 19 gold; gain 3 scraps)", "outcome": { "gold": -19, "scraps": 3 } },
+        { "id": "leave_tortoise_library", "text": "Let the tortoise keep its stories (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_brass_buttonbear_stormgate",
+      "title": "The Brass Buttonbear Stormgate",
+      "description": "A stout oxblood bear doll braces a copper gate against a sewn storm, its button paws gripping a massive spool crank.",
+      "choices": [
+        { "id": "oil_spool_crank", "text": "Oil the jammed spool crank (spend 1 scrap; gain 22 gold)", "outcome": { "gold": 22, "scraps": -1 } },
+        { "id": "buy_stormproof_hem", "text": "Buy stormproof hem tape (spend 21 gold; gain 4 scraps)", "outcome": { "gold": -21, "scraps": 4 } },
+        { "id": "leave_stormgate", "text": "Slip through before the wind returns (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
