@@ -1795,14 +1795,28 @@ func _record_copy(events: Array, target_id: String) -> Dictionary:
 			return (record as Dictionary).duplicate(true)
 	return {}
 
-## The eligible IDs a default rotation must expose, derived only from the two
+## The eligible IDs a default rotation must expose, derived only from the
 ## independently loaded source documents: every unique, presentable generic
-## record except the separately routed special, plus every roadside record.
+## record except the separately routed special, every roadside record, and the
+## six promoted candlelit bargain records.
 ## Sorted so the selector's ordering is verified rather than assumed.
 func _expected_eligible_ids(m04: Dictionary, roadside: Dictionary) -> Array:
+	const PROMOTED_CANDLELIT_IDS := [
+		"v3_bellglass_night_market",
+		"v3_crowlace_ticket_booth",
+		"v3_moonlit_pin_exchange",
+		"v3_oxblood_patch_hall",
+		"v3_bonecream_button_press",
+		"v3_saffron_spool_trial",
+	]
+	var candlelit: Dictionary = _read_document("res://data/events/v3_candlelit_bargains.json")
+	var promoted_candlelit: Array = []
+	for record in _source_events(candlelit):
+		if record is Dictionary and PROMOTED_CANDLELIT_IDS.has(record.get("id")):
+			promoted_candlelit.append(record)
 	var by_id: Dictionary = {}
 	var order: Array = []
-	for events in [_source_events(m04), _source_events(roadside)]:
+	for events in [_source_events(m04), _source_events(roadside), promoted_candlelit]:
 		for record in events:
 			if not record is Dictionary:
 				continue
