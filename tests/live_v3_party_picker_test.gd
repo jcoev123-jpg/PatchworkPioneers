@@ -227,12 +227,37 @@ func _check_deck_rows(picker: LiveV3PartyPicker, picks: Array[String], note: Str
 		and toggle.text == "Back" and not toggle.disabled,
 		note + " three-hero combined inspection is visible")
 	var clip := picker.inspection_panel.get_global_rect()
+	var scroll := view.get_node("DeckScroll") as ScrollContainer
+	var shared := view.get_node("DeckSharedHandNote") as Label
+	var frozen := picker._seat_receipt.duplicate(true)
+	var signals_before := [requests.size(), cancels]
 	_check(clip.encloses(view.get_global_rect())
-		and picker.get_node("PaperPanel").get_global_rect().encloses(view.get_global_rect()),
-		note + " all three rows inside the existing sewn inspection footprint")
+		and picker.get_node("PaperPanel").get_global_rect().encloses(view.get_global_rect())
+		and clip.encloses(scroll.get_global_rect())
+		and clip.encloses(shared.get_global_rect()),
+		note + " bounded scroll and shared-rule caption fit sewn inspection footprint")
+	_check(shared.is_visible_in_tree()
+		and shared.text == "ONE shared deck  •  3 energy per turn  •  draw 5"
+		and shared.tooltip_text == shared.text,
+		note + " one real 12-card shared deck with 3 energy and draw 5 rule")
+	_check(scroll.focus_mode == Control.FOCUS_ALL and scroll.get_v_scroll_bar() != null
+		and scroll.size.y >= 75 and scroll.get_v_scroll_bar().max_value > scroll.size.y,
+		note + " passive text has a bounded keyboard-focusable mouse scroll")
 	for i in range(3):
 		var hero: String = actual.hero_ids[i]
 		_check(actual.party[i].id == hero, note + " canonical real seat %d owner" % (i + 1))
+		var canonical := _canonical_facts(hero)
+		var facts_row := view.get_node("DeckScroll/DeckRows/DeckSeatFacts%d" % (i + 1)) as Label
+		_check(not canonical.is_empty() and int(canonical.get("hp", 0)) > 0
+			and not str(canonical.get("passive", "")).is_empty(),
+			note + " seat %d has independent authored HP and passive" % (i + 1))
+		var expected_facts: String = "%d  %s  •  Max HP: %d  •  Passive: %s" % [
+			i + 1, actual.party[i].name, canonical.get("hp", 0), canonical.get("passive", "")]
+		_check(facts_row.is_visible_in_tree() and facts_row.text == expected_facts
+			and facts_row.tooltip_text == expected_facts
+			and facts_row.autowrap_mode == TextServer.AUTOWRAP_WORD
+			and facts_row.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+			note + " seat %d prints exact independent max HP/passive in receipt order" % (i + 1))
 		var ids: Array = actual.deck.slice(i * 4, (i + 1) * 4)
 		_check(ids.size() == 4, note + " four physical occurrences in seat %d" % (i + 1))
 		var unique: Array[String] = []
@@ -255,11 +280,11 @@ func _check_deck_rows(picker: LiveV3PartyPicker, picks: Array[String], note: Str
 		for id in unique:
 			parts.append(labels[id] + (" x%d" % copies[id] if copies[id] > 1 else ""))
 		var expected: String = "%d  %s  •  %s" % [i + 1, actual.party[i].name, "   |   ".join(parts)]
-		var row := view.get_node("DeckSeat%d" % (i + 1)) as Label
+		var row := view.get_node("DeckScroll/DeckRows/DeckSeat%d" % (i + 1)) as Label
 		_check(row.visible and row.text == expected and row.tooltip_text == expected,
 			note + " seat %d prints all distinct names, energy costs and exact xN: expected " % (i + 1) + expected + " got " + row.text)
 		_check(row.mouse_filter == Control.MOUSE_FILTER_IGNORE
-			and clip.encloses(row.get_global_rect())
+			and row.get_parent() == view.get_node("DeckScroll/DeckRows")
 			and row.get_theme_font_size("font_size") >= 16
 			and row.text_overrun_behavior == TextServer.OVERRUN_TRIM_ELLIPSIS,
 			note + " row %d accessible typography, noninteractive ellipsis/tooltip" % (i + 1))
@@ -268,9 +293,17 @@ func _check_deck_rows(picker: LiveV3PartyPicker, picks: Array[String], note: Str
 		_check(printed_width <= row.size.x + 1.0,
 			note + " full long card names fit row %d without clipping" % (i + 1))
 		for earlier in range(i):
-			var before := view.get_node("DeckSeat%d" % (earlier + 1)) as Label
+			var before := view.get_node("DeckScroll/DeckRows/DeckSeat%d" % (earlier + 1)) as Label
 			_check(not row.get_global_rect().intersects(before.get_global_rect()),
 				note + " seat lines remain distinct at normal UI scale")
+	scroll.grab_focus()
+	_check(scroll.has_focus(), note + " scroll region accepts keyboard focus")
+	scroll.scroll_vertical = 10000
+	_check(scroll.scroll_vertical > 0, note + " long facts and card rows can be scrolled by pointer or keyboard")
+	scroll.scroll_vertical = 0
+	_check(picker.selected_ids() == picks and picker._seat_receipt == frozen
+		and [requests.size(), cancels] == signals_before,
+		note + " inspection and scroll leave picks, admission and signals untouched")
 	_check(not picker.continue_button.disabled and picker.cancel_button.disabled == false,
 		note + " inspection never conceals or disables live actions")
 
@@ -901,8 +934,8 @@ func _run() -> void:
 	await _key(picker.reward_back, KEY_ENTER)
 	await _key(deck_button, KEY_SPACE)
 	_check_deck_rows(picker, ["warden", "seamstress", "tinker"], "legacy three seat deck via keyboard")
-	_check(deck_view.get_node("DeckSeat1").text.contains("1 EN Strike x2")
-		and deck_view.get_node("DeckSeat2").text.contains("1 EN Prick x2"),
+	_check(deck_view.get_node("DeckScroll/DeckRows/DeckSeat1").text.contains("1 EN Strike x2")
+		and deck_view.get_node("DeckScroll/DeckRows/DeckSeat2").text.contains("1 EN Prick x2"),
 		"genuine legacy duplicate starters count exactly twice, not collapsed or repeated")
 	_check(requests.is_empty() and cancels == 0, "Inspect Deck fires no run or cancel signals")
 	picker.inspect_cards_button.pressed.emit()
@@ -1092,7 +1125,35 @@ func _run() -> void:
 	await _key(deck_button, KEY_SPACE)
 	_check_deck_rows(picker, ["button_golem", "lantern_monk", "scarecrow"],
 		"replacement reprojects current receipt while in deck mode")
+	# An incomplete real receipt must clear every previously printed fact,
+	# card and rule, even if an old combined inspection is currently visible.
+	var intact_receipt: Dictionary = picker._seat_receipt.duplicate(true)
+	picker._seat_receipt["deck"].pop_back()
+	picker._update_inspection()
+	_check(not deck_view.visible and deck_button.disabled and action.disabled
+		and picker.deck_shared_note.text.is_empty()
+		and picker.deck_rows[0].text.is_empty() and picker.deck_facts[0].text.is_empty()
+		and picker.deck_facts[2].tooltip_text.is_empty(),
+		"incomplete admission retires all shared rules, names, cards and facts")
+	var prior_requests := requests.size()
+	picker._continue_pressed()
+	_check(requests.size() == prior_requests, "incomplete receipt cannot dispatch Continue")
+	picker._seat_receipt = intact_receipt
+	picker._refresh()
 	await _mouse(deck_button)
+	_check_deck_rows(picker, ["button_golem", "lantern_monk", "scarecrow"],
+		"restored canonical receipt can be inspected again")
+	var intact_sources: Dictionary = picker._canonical_heroes.duplicate(true)
+	picker._canonical_heroes.erase("scarecrow")
+	picker._update_inspection()
+	_check(not deck_view.visible and deck_button.disabled and action.disabled
+		and picker.deck_shared_note.text.is_empty()
+		and picker.deck_facts[1].text.is_empty() and picker.deck_rows[2].tooltip_text.is_empty(),
+		"missing authenticated facts retires combined readout without fabricated HP")
+	picker._continue_pressed()
+	_check(requests.size() == prior_requests, "missing canonical source cannot dispatch")
+	picker._canonical_heroes = intact_sources
+	picker._refresh()
 	# A malformed internal request models a failed admission: no fabricated
 	# seats, no enabled Continue, and no detached party emission.
 	picker._ids.assign(["warden", "warden", "scarecrow"])
