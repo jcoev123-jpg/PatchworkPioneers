@@ -2,11 +2,11 @@ class_name CombatWardenV3TauntCards
 extends RefCounted
 ## Scene-free paid resolver for the Warden's iron challenges (V3-1).
 ##
-## Iron Challenge is a v3 starter card and Iron Taunt a v3 reward-pool card; both print their
-## own Block plus `taunt_next_enemy_turn`, so the squat shield-bearer plants himself and draws
-## the NEXT whole enemy turn's ordinary attacks onto his pot helmet. The two catalogs stay
-## authoritative: this service authenticates the exact held ID and its printed metadata, then
-## resolves against the real deck and party models.
+## Iron Challenge is a v3 starter card and Iron Taunt a v3 reward-pool card; Shieldwall Chorus
+## and its "+" are uncommon reward-pool cards. All of them print Taunt, so the squat shield-bearer
+## plants himself and draws the NEXT whole enemy turn's ordinary attacks onto his pot helmet.
+## The two catalogs stay authoritative: this service authenticates the exact held ID and its
+## printed metadata, then resolves against the real deck and party models.
 ##
 ## The service keeps one detached, battle-scoped pending Taunt. A later enemy-phase caller asks
 ## `project_attack_target` (or `project_enemy_action`) for EVERY otherwise valid targetable
@@ -36,6 +36,9 @@ const CARDS := {
 		"catalog": "starter",
 		"cost": 1,
 		"block": 3,
+		"target_kind": "self",
+		"from_positions": [1],
+		"to_positions": [],
 		"effects": {"block": 3, "taunt_next_enemy_turn": true},
 		"starting_copies": 1,
 		"reward_eligible": false,
@@ -47,6 +50,9 @@ const CARDS := {
 		"catalog": "starter",
 		"cost": 1,
 		"block": 5,
+		"target_kind": "self",
+		"from_positions": [1],
+		"to_positions": [],
 		"effects": {"block": 5, "taunt_next_enemy_turn": true},
 		"starting_copies": 0,
 		"reward_eligible": false,
@@ -58,6 +64,9 @@ const CARDS := {
 		"catalog": "pool",
 		"cost": 1,
 		"block": 4,
+		"target_kind": "self",
+		"from_positions": [1],
+		"to_positions": [],
 		"effects": {"block": 4, "taunt_next_enemy_turn": true},
 		"starting_copies": 0,
 		"reward_eligible": true,
@@ -69,6 +78,9 @@ const CARDS := {
 		"catalog": "pool",
 		"cost": 1,
 		"block": 6,
+		"target_kind": "self",
+		"from_positions": [1],
+		"to_positions": [],
 		"effects": {"block": 6, "taunt_next_enemy_turn": true},
 		"starting_copies": 0,
 		"reward_eligible": false,
@@ -76,50 +88,117 @@ const CARDS := {
 		"upgrade_id": "",
 		"upgrade_of": "warden_v3_iron_taunt",
 	},
+	"warden_v3_shieldwall_chorus": {
+		"catalog": "pool",
+		"cost": 2,
+		"block_all": 4,
+		"target_kind": "party_all",
+		"from_positions": [1, 2, 3],
+		"to_positions": [],
+		"effects": {"block_all": 4, "taunt_next_enemy_turn": true},
+		"starting_copies": 0,
+		"reward_eligible": true,
+		"rarity": "uncommon",
+		"upgrade_id": "warden_v3_shieldwall_chorus_plus",
+		"upgrade_of": "",
+	},
+	"warden_v3_shieldwall_chorus_plus": {
+		"catalog": "pool",
+		"cost": 2,
+		"block_all": 6,
+		"target_kind": "party_all",
+		"from_positions": [1, 2, 3],
+		"to_positions": [],
+		"effects": {"block_all": 6, "taunt_next_enemy_turn": true},
+		"starting_copies": 0,
+		"reward_eligible": false,
+		"rarity": "uncommon",
+		"upgrade_id": "",
+		"upgrade_of": "warden_v3_shieldwall_chorus",
+	},
 }
 
 var _taunt_armed := false
 var _taunt_card_id := ""
 
 
-## The single paid transaction: authenticate, preflight every input, then charge 1 energy, discard
-## exactly the held copy, add the authored Block to the Warden and arm one next-enemy-turn Taunt.
-## `target_kind` must stay "self"; `target_position` may be omitted (0) to mean the Warden's own
-## seat, and an explicit value must equal that seat. A rejection changes no deck, party, Taunt or
-## RNG state.
+## The single paid transaction: authenticate, preflight every input, then charge the authored cost,
+## discard exactly the held copy, add the authored Block (to the Warden for a self card, to every
+## living ally for a party card) and arm one next-enemy-turn Taunt.
+## `target_kind` must match the printed line; `target_position` may be omitted (0) and, for a self
+## card, an explicit value must equal the Warden's seat. A party card takes no target slot.
+## A rejection changes no deck, party, Taunt or RNG state.
 func play_card(deck: CombatDeck, party: CombatParty, card_id: Variant,
 		target_kind: String = "self", target_position: int = 0) -> Dictionary:
 	var plan: Dictionary = _prepare(deck, party, card_id, target_kind, target_position)
 	if not plan.get("ok", false):
 		return _failure()
 	# Every operation below is guaranteed by the complete preflight above: the turn is active,
-	# the held ID is authentic and affordable, the Warden is the living unique hero at seat 1 and
-	# the Block addition fits the party's capacity. Keep the defensive returns so an unexpected
-	# model change still fails closed.
+	# the held ID is authentic and affordable, the Warden is present in a printed from-seat and
+	# the Block addition fits every recipient's capacity. Keep the defensive returns so an
+	# unexpected model change still fails closed.
 	if not deck.try_spend_energy(plan["cost"]):
 		return _failure()
-	if not party.gain_block(plan["owner_position"], plan["block"]):
+
+	var target_kind_plan: String = plan.get("target_kind", "self")
+	if target_kind_plan == "self":
+		if not party.gain_block(plan["owner_position"], plan["block"]):
+			deck.combat_state.energy += plan["cost"]
+			return _failure()
+	elif target_kind_plan == "party_all":
+		var recipients: Array = plan.get("block_recipients", [])
+		var amount: int = plan["block_all"]
+		# Apply to each recipient; preflight guarantees no overflow.
+		for pos in recipients:
+			if not party.gain_block(pos, amount):
+				# Defensive rollback of energy only; partial block should not occur.
+				deck.combat_state.energy += plan["cost"]
+				return _failure()
+	else:
 		deck.combat_state.energy += plan["cost"]
 		return _failure()
+
 	if not deck.discard_played(plan["card_id"]):
+		# If discard fails, rollback energy. Block rollback is complex; rely on preflight.
+		deck.combat_state.energy += plan["cost"]
 		return _failure()
 	# A second legal Taunt card this turn refreshes this same upcoming enemy phase; it never
 	# stacks a second redirection or extends the armed state to another turn.
 	_taunt_armed = true
 	_taunt_card_id = plan["card_id"]
-	return {
-		"ok": true,
-		"card_id": plan["card_id"],
-		"cost": plan["cost"],
-		"owner_position": plan["owner_position"],
-		"block_gained": plan["block"],
-		"block": plan["current_block"] + plan["block"],
-		"energy": deck.energy,
-		"taunt_armed": true,
-	}
+
+	if target_kind_plan == "self":
+		var final_block: int = party.get_hero(plan["owner_position"]).get("block", 0)
+		return {
+			"ok": true,
+			"card_id": plan["card_id"],
+			"cost": plan["cost"],
+			"owner_position": plan["owner_position"],
+			"block_gained": plan["block"],
+			"block": final_block,
+			"energy": deck.energy,
+			"taunt_armed": true,
+		}
+	elif target_kind_plan == "party_all":
+		var recipient_final_blocks: Dictionary = {}
+		for pos in plan.get("block_recipients", []):
+			recipient_final_blocks[pos] = party.get_hero(pos).get("block", 0)
+		var first_recipient: int = plan.get("block_recipients", [0])[0]
+		var first_final: int = recipient_final_blocks.get(first_recipient, 0)
+		return {
+			"ok": true,
+			"card_id": plan["card_id"],
+			"cost": plan["cost"],
+			"owner_position": plan["owner_position"],
+			"block_all": plan["block_all"],
+			"block": first_final,
+			"energy": deck.energy,
+			"taunt_armed": true,
+		}
+	return _failure()
 
 
-## True only for the four authentic catalog IDs. Pure lookup; nothing is charged or mutated.
+## True only for the six authentic catalog IDs. Pure lookup; nothing is charged or mutated.
 func is_supported_card(card_id: Variant) -> bool:
 	return typeof(card_id) == TYPE_STRING and CARDS.has(card_id)
 
@@ -241,8 +320,9 @@ func _prepare(deck: CombatDeck, party: CombatParty, card_id: Variant,
 	var cost: int = card["cost"]
 	if deck.energy < cost:
 		return _failure()
-	# A self card prints no enemy slot and is not an ally-targeting card either.
-	if target_kind != TARGET_KIND:
+	var card_target_kind: String = card.get("target_kind", "self")
+	var allowed_from: Array = card.get("from_positions", [1])
+	if target_kind != card_target_kind:
 		return _failure()
 
 	# Verify the complete hero roster, then bind the unique Warden to its current slot.
@@ -269,28 +349,67 @@ func _prepare(deck: CombatDeck, party: CombatParty, card_id: Variant,
 		if hero_id == OWNER:
 			warden_count += 1
 			owner_position = index + 1
-	# The authored FROM line is the front seat 1 only, and a torn Warden cannot challenge.
-	if warden_count != 1 or owner_position != WARDEN_SEAT:
+	if warden_count != 1:
+		return _failure()
+	if not allowed_from.has(owner_position):
 		return _failure()
 	if heroes[owner_position - 1]["hp"] == 0:
 		return _failure()
-	# The Warden himself is the only legal recipient: an omitted target means his own seat.
-	if target_position != 0 and target_position != owner_position:
+	if card_target_kind == "self":
+		if target_position != 0 and target_position != owner_position:
+			return _failure()
+	elif card_target_kind == "party_all":
+		if target_position != 0:
+			return _failure()
+	else:
 		return _failure()
-	var block_gain: int = card["block"]
-	if int(card["effects"].get("block", -1)) != block_gain:
+
+	if card_target_kind == "self":
+		var block_gain: int = card.get("block", -1)
+		if int(card["effects"].get("block", -1)) != block_gain:
+			return _failure()
+		var current_block: int = heroes[owner_position - 1]["block"]
+		if block_gain > CombatParty.MAX_INT - current_block:
+			return _failure()
+		return {
+			"ok": true,
+			"card_id": id,
+			"cost": cost,
+			"owner_position": owner_position,
+			"block": block_gain,
+			"current_block": current_block,
+			"target_kind": "self",
+			"block_recipients": [owner_position],
+		}
+	elif card_target_kind == "party_all":
+		var block_all_amount: int = card.get("block_all", -1)
+		if int(card["effects"].get("block_all", -1)) != block_all_amount:
+			return _failure()
+		var recipients: Array[int] = []
+		var recipient_current_blocks: Dictionary = {}
+		for index in range(CombatParty.PARTY_SIZE):
+			var position = index + 1
+			if heroes[index]["hp"] > 0:
+				recipients.append(position)
+				var current_block: int = heroes[index]["block"]
+				recipient_current_blocks[position] = current_block
+				if block_all_amount > CombatParty.MAX_INT - current_block:
+					return _failure()
+		# The Warden must be among the living recipients.
+		if not recipients.has(owner_position):
+			return _failure()
+		return {
+			"ok": true,
+			"card_id": id,
+			"cost": cost,
+			"owner_position": owner_position,
+			"block_all": block_all_amount,
+			"current_blocks": recipient_current_blocks,
+			"target_kind": "party_all",
+			"block_recipients": recipients,
+		}
+	else:
 		return _failure()
-	var current_block: int = heroes[owner_position - 1]["block"]
-	if block_gain > CombatParty.MAX_INT - current_block:
-		return _failure()
-	return {
-		"ok": true,
-		"card_id": id,
-		"cost": cost,
-		"owner_position": owner_position,
-		"block": block_gain,
-		"current_block": current_block,
-	}
 
 
 ## Reads the exact authored record from the catalog that owns this ID (never the other hero
@@ -313,11 +432,11 @@ func _authentic(definition: Dictionary, card_id: String, card: Dictionary) -> bo
 		return false
 	if definition.get("cost") != card["cost"]:
 		return false
-	if definition.get("target_kind") != TARGET_KIND:
+	if definition.get("target_kind") != card.get("target_kind", "self"):
 		return false
-	if definition.get("from_positions") != FROM_POSITIONS:
+	if definition.get("from_positions") != card.get("from_positions", [1]):
 		return false
-	if definition.get("to_positions") != TO_POSITIONS:
+	if definition.get("to_positions") != card.get("to_positions", []):
 		return false
 	if definition.get("effects") != card["effects"]:
 		return false
