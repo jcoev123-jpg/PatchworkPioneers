@@ -519,6 +519,46 @@
         { "id": "rake_cinders", "text": "Rake the cinders (lose 1 max HP; gain 3 scraps)", "outcome": { "gold": 0, "scraps": 3, "hp": 0, "max_hp": -1 } },
         { "id": "leave", "text": "Let the smoke stars settle", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_amber_needle_music_box",
+      "title": "The Amber Needle Music Box",
+      "description": "A plump velvet music-box doll turns a giant brass sewing needle as notes glow in its oxblood seams.",
+      "choices": [
+        { "id": "wind_warm_lullaby", "text": "Pay 15 gold and 1 scrap to wind the warm lullaby (+6 HP, +1 max HP)", "outcome": { "gold": -15, "scraps": -1, "hp": 6, "max_hp": 1 } },
+        { "id": "sell_silver_note", "text": "Pull a sharp silver note (lose 6 HP; gain 24 gold)", "outcome": { "gold": 24, "scraps": 0, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the music box fall silent", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_moss_button_puppetry",
+      "title": "The Moss-Button Puppet Ward",
+      "description": "A round moss-cloaked puppet nurse pins oversized felt knee patches onto sleeping button-eyed dolls.",
+      "choices": [
+        { "id": "mend_knotted_knee", "text": "Spend 2 scraps to patch a battered knee (+8 HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 8, "max_hp": 0 } },
+        { "id": "trade_old_knee", "text": "Trade a lasting seam for 26 gold (lose 2 max HP)", "outcome": { "gold": 26, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the sleeping dolls undisturbed", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_starlace_mirror_carriage",
+      "title": "The Starlace Mirror Carriage",
+      "description": "A rotund mirror-faced coachman polishes star-shaped safety pins on a quilt-lined midnight carriage.",
+      "choices": [
+        { "id": "buy_star_pin", "text": "Pay 21 gold for a star-shaped anchor (+3 max HP)", "outcome": { "gold": -21, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "pull_mirror_shard", "text": "Pull a shard through your sleeve (lose 4 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the carriage roll away", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_cinder_loom_guardian",
+      "title": "The Cinder-Loom Guardian",
+      "description": "A stout soot-dusted ragdoll tends a glowing needle loom, its button eyes lit like coals.",
+      "choices": [
+        { "id": "weave_heat_seam", "text": "Pay 12 gold and 1 scrap for a warm seam (+5 HP, +1 max HP)", "outcome": { "gold": -12, "scraps": -1, "hp": 5, "max_hp": 1 } },
+        { "id": "pawn_cold_hem", "text": "Pawn a reinforced hem (lose 1 max HP; gain 20 gold)", "outcome": { "gold": 20, "scraps": 0, "hp": 0, "max_hp": -1 } },
+        { "id": "leave", "text": "Leave the loom glowing softly", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
