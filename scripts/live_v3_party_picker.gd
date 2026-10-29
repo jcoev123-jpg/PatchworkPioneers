@@ -44,6 +44,14 @@ const STITCH := Color("#efcba1")
 @onready var continue_button: Button = $PaperPanel/Margins/Body/Foot/ContinueButton
 @onready var cancel_button: Button = $PaperPanel/Margins/Body/Foot/CancelButton
 @onready var inspect_deck_button: Button = $PaperPanel/Margins/Body/Foot/InspectDeckButton
+@onready var inspect_cards_button: Button = $PaperPanel/Margins/Body/Foot/InspectCardsButton
+@onready var kit_readout: VBoxContainer = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout
+@onready var kit_card_heading: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout/KitCardHeading
+@onready var kit_target: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout/KitTarget
+@onready var kit_effects: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout/KitEffects
+@onready var kit_previous: Button = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout/KitNavigation/PreviousButton
+@onready var kit_next: Button = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout/KitNavigation/NextButton
+@onready var kit_back: Button = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout/KitNavigation/BackButton
 @onready var deck_readout: VBoxContainer = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout
 @onready var deck_rows: Array[Label] = [
 	$PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckSeat1,
@@ -61,6 +69,9 @@ var _focused_id: String = ""
 var _canonical_heroes: Dictionary = {}
 var _seat_receipt: Dictionary = {}
 var _deck_mode: bool = false
+var _kit_mode: bool = false
+var _kit_hero: String = ""
+var _kit_index: int = 0
 
 
 ## A drawn stand-in for not-yet-delivered portraits. These five faces are
@@ -168,6 +179,10 @@ func _ready() -> void:
 	continue_button.pressed.connect(_continue_pressed)
 	cancel_button.pressed.connect(_cancel_pressed)
 	inspect_deck_button.pressed.connect(_inspect_deck_pressed)
+	inspect_cards_button.pressed.connect(_inspect_cards_pressed)
+	kit_previous.pressed.connect(_kit_step.bind(-1))
+	kit_next.pressed.connect(_kit_step.bind(1))
+	kit_back.pressed.connect(_kit_back_pressed)
 	open_picker()
 
 
@@ -183,6 +198,9 @@ func open_picker() -> void:
 	_canonical_heroes = RunV3PartyAdmission._canonical_records()
 	_seat_receipt = {}
 	_deck_mode = false
+	_kit_mode = false
+	_kit_hero = ""
+	_kit_index = 0
 	_hovered_id = ""
 	_focused_id = ""
 	for old in grid.get_children():
@@ -232,6 +250,7 @@ func _update_inspection() -> void:
 	# The combined readout is a projection of the current successful receipt,
 	# never of separately guessed hero decks or a cached prior opening.
 	if _deck_mode:
+		kit_readout.hide()
 		var rows := _deck_receipt_rows()
 		if rows.size() == 3 and _open and not _latched:
 			deck_readout.show()
@@ -244,12 +263,19 @@ func _update_inspection() -> void:
 			return
 		_deck_mode = false
 	deck_readout.hide()
+	kit_readout.hide()
 	for label in [inspection_heading, inspection_facts, inspection_detail, inspection_starters]:
 		label.show()
 	inspect_deck_button.text = "Inspect Deck"
 	var chosen: String = ""
 	if _open and not _latched:
 		chosen = _hovered_id if not _hovered_id.is_empty() else _focused_id
+	if not chosen.is_empty() and chosen != _kit_hero:
+		_kit_hero = chosen
+		_kit_index = 0
+	inspect_cards_button.disabled = not _open or _latched or _kit_hero.is_empty()
+	if _kit_mode and chosen.is_empty():
+		chosen = _kit_hero
 	for hero in HEROES:
 		if hero["id"] == chosen:
 			inspection_heading.text = "%s  •  %s  /  %s" % [
@@ -269,11 +295,204 @@ func _update_inspection() -> void:
 				return
 			inspection_facts.text = "Max HP: %d  •  Preferred: %s (%d)  •  Passive: %s" % [
 				definition["max_hp"], POSITION_NAMES[position - 1], position, passive]
+			if _kit_mode:
+				_show_kit()
 			return
 	inspection_heading.text = "HOVER OR FOCUS A HERO TO INSPECT"
 	inspection_facts.text = "Inspect max HP, preferred position and passive."
 	inspection_detail.text = "Compare sewn looks and intended roles before choosing three."
 	inspection_starters.text = ""
+
+
+## The kit is a projection of the authenticated four-occurrence base deck, not
+## a playable card or a synthetic tooltip. Catalog lookup is deliberately
+## independent of the summary caption and of any currently selected party.
+func _kit_catalog(hero_id: String) -> Object:
+	match hero_id:
+		"warden", "seamstress", "tinker":
+			return StarterCards.new()
+		"lantern_monk":
+			return LanternMonkStarterCards.new()
+		"rag_duelist":
+			return RagDuelistStarterCards.new()
+		"scarecrow":
+			return ScarecrowStarterCards.new()
+		"yarn_ranger":
+			return YarnRangerStarterCards.new()
+		"button_golem":
+			return ButtonGolemStarterCards.new()
+	return null
+
+
+func _kit_card_by_id(hero_id: String, card_id: String) -> Dictionary:
+	if hero_id not in RunV3PartyAdmission.HERO_IDS or card_id.is_empty() or card_id.ends_with("_plus"):
+		return {}
+	var ids := RunV3PartyAdmission._starters(hero_id, null)
+	if ids.size() != RunV3PartyAdmission.STARTERS_PER_HERO or not ids.has(card_id):
+		return {}
+	var catalog := _kit_catalog(hero_id)
+	if catalog == null:
+		return {}
+	var card: Dictionary = catalog.get_definition(card_id)
+	if card.get("id") != card_id or card.get("owner") != hero_id \
+			or card.has("upgrade_of") or not card.get("cost") is int \
+			or int(card["cost"]) < 0 or not card.get("display_name") is String \
+			or String(card["display_name"]).is_empty() or not card.get("effects") is Dictionary \
+			or not card.get("from_positions") is Array or not card.get("to_positions") is Array \
+			or not card.get("target_kind") is String:
+		return {}
+	for field in ["from_positions", "to_positions"]:
+		for slot in card[field]:
+			if not slot is int or slot not in [1, 2, 3]:
+				return {}
+	if not card["target_kind"] in ["enemy_single", "enemy_all", "enemy_back",
+			"self", "ally_single", "party_all", "none"]:
+		return {}
+	return card
+
+
+func _kit_card(hero_id: String, occurrence: int) -> Dictionary:
+	if hero_id not in RunV3PartyAdmission.HERO_IDS:
+		return {}
+	var ids := RunV3PartyAdmission._starters(hero_id, null)
+	if ids.size() != RunV3PartyAdmission.STARTERS_PER_HERO \
+			or occurrence < 0 or occurrence >= ids.size():
+		return {}
+	return _kit_card_by_id(hero_id, ids[occurrence])
+
+
+func _kit_target_line(card: Dictionary) -> String:
+	var from: Array[String] = []
+	var to: Array[String] = []
+	for position in card["from_positions"]:
+		from.append(str(position))
+	for position in card["to_positions"]:
+		to.append(str(position))
+	var kind: String = card["target_kind"]
+	var recipient := ""
+	match kind:
+		"enemy_single":
+			recipient = "one foe in slots " + ", ".join(to)
+		"enemy_all":
+			recipient = "all foes in slots " + ", ".join(to)
+		"enemy_back":
+			recipient = "backmost living foe (slots " + ", ".join(to) + ")"
+		"ally_single":
+			recipient = "one chosen ally"
+		"party_all":
+			recipient = "all living allies"
+		"self":
+			recipient = "self"
+		"none":
+			recipient = "no target"
+	return "Play from slots %s  •  Target: %s" % [", ".join(from), recipient]
+
+
+## Every printed clause is keyed to an actual field. Never use the compact
+## CardShortRules line as a claim that it covers V3 movement or Block trades.
+func _kit_effect_clause(key: String, value: Variant) -> String:
+	if key in ["cannot_buff_next_turn", "ignore_block"] and value is bool and value:
+		return ("Fear: foe cannot buff next turn" if key == "cannot_buff_next_turn"
+			else "This hit ignores foe Block")
+	if not value is int or value <= 0:
+		return "Undescribed effect: " + key
+	match key:
+		"damage":
+			return "Deal %d damage" % value
+		"block":
+			return "Grant %d Block to target" % value
+		"block_self":
+			return "Self gains %d Block" % value
+		"heal":
+			return "Heal %d HP per target" % value
+		"weak", "bleed", "exposed", "unravel", "tangled":
+			return "Apply %s %d" % [key.capitalize(), value]
+		"blind":
+			return "Apply Blind %d (next attack misses)" % value
+		"draw":
+			return "Draw %d card(s)" % value
+		"cleanse_debuff":
+			return "Cleanse %d debuff(s) per target" % value
+		"move_self_forward":
+			return "Advance self %d slot(s)" % value
+		"riposte":
+			return "Riposte %d when hit" % value
+		"duration":
+			return "Lasts %d turn(s)" % value
+		"dodge_next_attack":
+			return "Dodge next %d attack(s)" % value
+		"pull_forward":
+			return "Pull target forward %d slot(s)" % value
+		"spend_block":
+			return "Requires and spends %d self Block" % value
+		"buttons_popped":
+			return "On successful hit, add %d button(s) popped" % value
+		"swap_with_ally":
+			return "Swap position with chosen living ally"
+		"block_per_button_popped":
+			return "Self gains %d Block per previously popped button" % value
+	return "Undescribed effect: " + key
+
+
+func _kit_effect_line(card: Dictionary) -> String:
+	var parts: Array[String] = []
+	var effects: Dictionary = card["effects"]
+	for key in effects:
+		parts.append(_kit_effect_clause(str(key), effects[key]))
+	if parts.is_empty():
+		return "Undescribed effects."
+	return ". ".join(parts) + "."
+
+
+func _show_kit() -> void:
+	var card := _kit_card(_kit_hero, _kit_index)
+	if card.is_empty():
+		_kit_mode = false
+		kit_readout.hide()
+		return
+	inspection_detail.hide()
+	inspection_starters.hide()
+	kit_readout.show()
+	kit_card_heading.text = "STARTER %d / 4  •  %s  •  %d EN" % [
+		_kit_index + 1, card["display_name"], card["cost"]]
+	kit_target.text = _kit_target_line(card)
+	kit_effects.text = _kit_effect_line(card)
+	kit_effects.tooltip_text = kit_effects.text
+	kit_previous.disabled = _kit_index == 0
+	kit_next.disabled = _kit_index == 3
+	kit_back.disabled = false
+
+
+func _inspect_cards_pressed() -> void:
+	if not _open or _latched or _deck_mode or _kit_hero.is_empty() \
+			or _kit_card(_kit_hero, 0).is_empty():
+		return
+	_kit_mode = true
+	_kit_index = 0
+	_update_inspection()
+	if not kit_next.disabled:
+		kit_next.grab_focus()
+
+
+func _kit_step(delta: int) -> void:
+	if not _open or _latched or not _kit_mode or _deck_mode \
+			or delta not in [-1, 1] or _kit_index + delta not in range(4) \
+			or _kit_card(_kit_hero, _kit_index + delta).is_empty():
+		return
+	_kit_index += delta
+	_update_inspection()
+	if delta > 0 and kit_next.disabled:
+		kit_previous.grab_focus()
+	elif delta < 0 and kit_previous.disabled:
+		kit_next.grab_focus()
+
+
+func _kit_back_pressed() -> void:
+	if not _open or _latched or not _kit_mode or _deck_mode:
+		return
+	_kit_mode = false
+	_update_inspection()
+	inspect_cards_button.grab_focus()
 
 
 ## Inspect only the four authenticated base occurrences owned by this hero.
@@ -360,6 +579,7 @@ func _inspect_deck_pressed() -> void:
 	if _deck_mode:
 		_deck_mode = false
 	elif not inspect_deck_button.disabled and _deck_receipt_rows().size() == 3:
+		_kit_mode = false
 		_deck_mode = true
 	_update_inspection()
 
@@ -384,6 +604,8 @@ func _continue_pressed() -> void:
 	_latched = true
 	_open = false
 	_deck_mode = false
+	_kit_mode = false
+	_kit_hero = ""
 	_refresh()
 	_update_inspection()
 	party_requested.emit(_ids.duplicate())
@@ -395,6 +617,8 @@ func _cancel_pressed() -> void:
 	_latched = true
 	_open = false
 	_deck_mode = false
+	_kit_mode = false
+	_kit_hero = ""
 	_refresh()
 	_update_inspection()
 	visible = false
@@ -418,6 +642,7 @@ func _refresh() -> void:
 	continue_button.disabled = not _open or _latched or not _seat_receipt.get("ok", false)
 	cancel_button.disabled = not _open or _latched
 	inspect_deck_button.disabled = not _open or _latched or _deck_receipt_rows().size() != 3
+	inspect_cards_button.disabled = not _open or _latched or (_hovered_id.is_empty() and _focused_id.is_empty() and not _kit_mode)
 	if inspect_deck_button.disabled:
 		_deck_mode = false
 	for definition in HEROES:
@@ -582,6 +807,12 @@ func _style_screen() -> void:
 	inspection_facts.add_theme_font_size_override("font_size", 16)
 	inspection_starters.add_theme_color_override("font_color", GOLD)
 	inspection_starters.add_theme_font_size_override("font_size", 14)
+	kit_card_heading.add_theme_color_override("font_color", GOLD)
+	kit_card_heading.add_theme_font_size_override("font_size", 17)
+	kit_target.add_theme_color_override("font_color", SOFT)
+	kit_target.add_theme_font_size_override("font_size", 15)
+	kit_effects.add_theme_color_override("font_color", CREAM)
+	kit_effects.add_theme_font_size_override("font_size", 16)
 	var deck_heading := deck_readout.get_node("DeckHeading") as Label
 	deck_heading.add_theme_color_override("font_color", GOLD)
 	deck_heading.add_theme_font_size_override("font_size", 18)
@@ -592,9 +823,11 @@ func _style_screen() -> void:
 	seat_preview.add_theme_font_size_override("font_size", 15)
 	selection_count.add_theme_color_override("font_color", CREAM)
 	selection_count.add_theme_font_size_override("font_size", 24)
-	for button in [continue_button, cancel_button, inspect_deck_button]:
+	for button in [continue_button, cancel_button, inspect_deck_button, inspect_cards_button,
+			kit_previous, kit_next, kit_back]:
 		button.focus_mode = Control.FOCUS_ALL
-		button.add_theme_font_size_override("font_size", 18 if button == inspect_deck_button else 22)
+		button.add_theme_font_size_override("font_size", 18 if button in [inspect_deck_button,
+			inspect_cards_button, kit_previous, kit_next, kit_back] else 22)
 		button.add_theme_color_override("font_color", CREAM)
 		button.add_theme_color_override("font_disabled_color", Color("#abaca8"))
 		var idle := _tile_box(Color("#386e65") if button == continue_button
