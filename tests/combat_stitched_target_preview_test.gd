@@ -15,6 +15,7 @@ func _initialize() -> void:
 	_test_pool_healing_previews()
 	_test_pool_self_previews()
 	_test_pool_attack_previews()
+	_test_plain_strike_previews()
 	_test_positions_and_recipients()
 	_test_refusals()
 	_test_replay_and_isolation()
@@ -700,3 +701,104 @@ func _test_pool_attack_previews() -> void:
 			var poor := _pair("warden_brace" if reverse else id, id if reverse else "warden_brace")
 			_check(poor.deck.try_spend_energy(poor.deck.energy - poor.cost + 1), id + ": spend below the composite cost")
 			_rejected(poor, id + ": unaffordable pool composite")
+
+## Canonical paid plain strikes: only the resolver's four admitted printings,
+## never arbitrary reward-pool attacks. Every stitch is a real Rest receipt.
+func _test_plain_strike_previews() -> void:
+	var expected_ids := ["warden_brass_buckle", "warden_brass_buckle_plus",
+		"seamstress_thread_whip", "seamstress_thread_whip_plus"]
+	for id in expected_ids:
+		_check(id in CombatPoolPlainStrikes.SUPPORTED_IDS, "paid resolver admits " + id)
+		var definition: Dictionary = RunRestStitchCards.resolve_card_definition(id)
+		var real: Dictionary = (WardenPoolCards.new().get_definition(id)
+			if id.begins_with("warden_") else SeamstressPoolCards.new().get_definition(id))
+		_check(not real.is_empty() and definition == real and real.target_kind == "enemy_single"
+			and real.to_positions == [1, 2], "authored restricted original target seats " + id)
+		var counterpart := "seamstress_prick" if id.begins_with("warden_") else "warden_brace"
+		for reverse in [false, true]:
+			var first_id: String = counterpart if reverse else id
+			var second_id: String = id if reverse else counterpart
+			var s := _pair(first_id, second_id, 63421)
+			var index := 1 if reverse else 0
+			var own := _half(index, id, [1, 2])
+			var other := _half(1 - index, counterpart,
+				[1, 2, 3] if counterpart == "seamstress_prick" else [],
+				[] if counterpart == "seamstress_prick" else [1])
+			_accepted(s, other if reverse else own, own if reverse else other,
+				id + " authentic ordered target slots")
+			_check(s.cost == 2 and s.deck.hand.has(s.id), "single capped cost and held card " + id)
+			s.enemies = _enemies()
+			_check(s.enemies.apply_damage(1, 999) and s.enemies.is_slain(1)
+				and not s.enemies.is_defeated(), "slain original front enemy while rear lives " + id)
+			own = _half(index, id, [2])
+			other = _half(1 - index, counterpart,
+				[2, 3] if counterpart == "seamstress_prick" else [],
+				[] if counterpart == "seamstress_prick" else [1])
+			_accepted(s, other if reverse else own, own if reverse else other,
+				id + " excludes slain front, never offers slot three")
+			s.enemies = _enemies()
+			_check(s.enemies.apply_damage(2, 999) and s.enemies.is_slain(2),
+				"slain original middle enemy " + id)
+			own = _half(index, id, [1])
+			other = _half(1 - index, counterpart,
+				[1, 3] if counterpart == "seamstress_prick" else [],
+				[] if counterpart == "seamstress_prick" else [1])
+			_accepted(s, other if reverse else own, own if reverse else other,
+				id + " excludes slain middle, never offers slot three")
+			s.enemies = _enemies()
+			for pos in [1, 2]:
+				_check(s.enemies.apply_damage(pos, 999), "both eligible slots slain " + id)
+			_check(s.enemies.get_enemy(3).hp > 0, "illegal original rear remains alive " + id)
+			_rejected(s, id + " only illegal rear slot alive")
+			s.enemies = _enemies(2)
+			other = _half(1 - index, counterpart,
+				[1, 2] if counterpart == "seamstress_prick" else [],
+				[] if counterpart == "seamstress_prick" else [1])
+			_accepted(s, other if reverse else _half(index, id, [1, 2]),
+				_half(index, id, [1, 2]) if reverse else other, id + " two occupied enemy slots")
+			if id.begins_with("warden_"):
+				s.party = _party(["seamstress", "warden", "tinker"])
+				own = _half(index, id, [1, 2])
+				other = _half(1 - index, counterpart, [1, 2])
+				_accepted(s, other if reverse else own, own if reverse else other,
+					id + " living Warden legal middle seat")
+				s.party = _party(["seamstress", "tinker", "warden"])
+				_rejected(s, id + " Warden illegal back seat")
+				s.party = _party()
+				_check(s.party.apply_damage(1, 999) and s.party.is_downed(1),
+					id + " Warden actually downed")
+			else:
+				s.party = _party(["warden", "tinker", "seamstress"])
+				own = _half(index, id, [1, 2])
+				other = _half(1 - index, counterpart, [], [1])
+				_accepted(s, other if reverse else own, own if reverse else other,
+					id + " living Seamstress legal rear seat")
+				s.party = _party(["seamstress", "warden", "tinker"])
+				own = _half(index, id, [1, 2])
+				other = _half(1 - index, counterpart, [], [2])
+				_accepted(s, other if reverse else own, own if reverse else other,
+					id + " legal Seamstress front and Warden middle seats")
+				s.party = _party()
+				_check(s.party.apply_damage(2, 999) and s.party.is_downed(2),
+					id + " Seamstress actually downed")
+			_rejected(s, id + " owner downed")
+			var forged: Dictionary = s.snapshot.duplicate(true)
+			forged.descriptors[s.id]["first_half" if not reverse else "second_half"].effects.damage += 1
+			_rejected(s, id + " forged receipt effects", forged)
+			forged = s.snapshot.duplicate(true)
+			forged.descriptors[s.id]["first_half" if not reverse else "second_half"].to_positions = [1, 2, 3]
+			_rejected(s, id + " forged rear-target receipt", forged)
+			s.party = _party()
+			var stale := _pair(first_id, second_id, 63421)
+			_check(stale.deck.discard_played(stale.id) and not stale.deck.hand.has(stale.id),
+				"real composite discarded " + id)
+			_rejected(stale, id + " unheld stale hand")
+			var poor := _pair(first_id, second_id, 63421)
+			_check(poor.deck.try_spend_energy(2) and poor.deck.energy < poor.cost,
+				"actual insufficient shared energy " + id)
+			_rejected(poor, id + " insufficient energy")
+			var replay := _pair(first_id, second_id, 63421)
+			var same := _pair(first_id, second_id, 63421)
+			_check(_state(replay) == _state(same) and _guarded_call(replay, id + " seeded first")
+				== _guarded_call(same, id + " seeded second"),
+				"independent seeded canonical replay " + id)

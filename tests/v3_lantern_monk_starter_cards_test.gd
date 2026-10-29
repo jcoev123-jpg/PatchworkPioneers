@@ -1,8 +1,9 @@
 extends SceneTree
 ## V3-1 Lantern Monk starter-card catalog contract.
-## Catalog contracts and scene-free Pole Shelter transactions; live hand wiring is separate.
+## Catalog contracts and scene-free Pole Shelter and blind-strike transactions; live hand wiring is separate.
 
 const LanternMonkStarterCards = preload("res://data/cards/lantern_monk_starter_cards.gd")
+const LanternMonkPoolCards = preload("res://data/cards/lantern_monk_pool_cards.gd")
 const StarterCards = preload("res://data/cards/starter_cards.gd")
 
 class ForgedShelter extends CombatLanternMonkPoleShelterCards:
@@ -10,8 +11,20 @@ class ForgedShelter extends CombatLanternMonkPoleShelterCards:
 	func _catalog_definition(_id: String) -> Dictionary:
 		return forged.duplicate(true)
 
+## Catalog seam double for the single-target blind strikes: one rewritten printing must never be paid for, and the
+## restored authentic pair still plays.
+class ForgedBlindStrike extends CombatLanternMonkBlindStrikeCards:
+	var forged_id: String = ""
+	var forged: Dictionary = {}
+
+	func _catalog_definition(card_id: String) -> Dictionary:
+		if card_id == forged_id:
+			return forged.duplicate(true)
+		return super(card_id)
+
 var failures: Array[String] = []
 var checks: int = 0
+var strike_service := CombatLanternMonkBlindStrikeCards.new()
 
 
 func _initialize() -> void:
@@ -24,6 +37,10 @@ func _initialize() -> void:
 	_test_existing_catalogs_unchanged()
 	_test_paid_shelter()
 	_test_shelter_refusals()
+	_test_blind_strike_catalog()
+	_test_blind_strike_paid_play()
+	_test_blind_strike_refusals()
+	_test_blind_strike_enemy_phase()
 	if failures.is_empty():
 		print("v3_lantern_monk_starter_cards_test: PASS (", checks, " checks)")
 	else:
@@ -511,3 +528,665 @@ func _test_existing_catalogs_unchanged() -> void:
 	for id: String in monk.get_all_card_ids():
 		_check(cases.has(id) or cases.has(id.trim_suffix("_plus")),
 			id + " is one of the four authored starter pairs, never a reward card")
+
+
+## --- Paid single-target lantern Blind strikes (Wick Spark / Wick Flicker / Snuff Flame) ----------------
+##
+## Six printings across two authoritative catalogs resolve through one scene-free service. These cases drive
+## CombatLanternMonkBlindStrikeCards over real seeded CombatDeck hands and real CombatParty/CombatEnemies models.
+## They claim callable rules-layer behaviour only: no live hand, reward, app or run-deck wiring is asserted here.
+
+const BLIND_STRIKE_IDS := [
+	"lantern_monk_wick_spark", "lantern_monk_wick_spark_plus",
+	"lantern_monk_wick_flicker", "lantern_monk_wick_flicker_plus",
+	"lantern_monk_snuff_flame", "lantern_monk_snuff_flame_plus",
+]
+const BLIND_STRIKE_FILLERS := ["warden_strike", "tinker_pop_shot", "seamstress_prick", "warden_brace"]
+const STRIKE_MONK_HP := 30
+const STRIKE_ALLY_HP := 24
+const STRIKE_BLIND_KEY := "blind_next_attack"
+## Independent literal damage expectations: the printed raw hit -> the shared rules' adjusted hit.
+## Weak is attacker -25%, Exposed is defender +50%, and Tangled adds a flat +2 after that floor-once quotient.
+const STRIKE_ADJUSTED := {
+	"plain": {3: 3, 4: 4, 6: 6},
+	"exposed": {3: 4, 4: 6, 6: 9},
+	"weak": {3: 2, 4: 3, 6: 4},
+	"combo": {3: 5, 4: 6, 6: 8},
+}
+
+
+## Independent, named expectations for the six exact catalog printings. No global catalog total or ordering claim.
+func _blind_strike_cases() -> Dictionary:
+	return {
+		"lantern_monk_wick_spark": {
+			"catalog": "starter", "name": "Wick Spark", "damage": 4, "exposed": 0,
+			"effects": {"damage": 4, "blind": 1}, "starting_copies": 1,
+			"reward_eligible": false, "rarity": null},
+		"lantern_monk_wick_spark_plus": {
+			"catalog": "starter", "name": "Wick Spark+", "damage": 6, "exposed": 0,
+			"effects": {"damage": 6, "blind": 1}, "starting_copies": 0,
+			"reward_eligible": false, "rarity": null},
+		"lantern_monk_wick_flicker": {
+			"catalog": "pool", "name": "Wick Flicker", "damage": 4, "exposed": 0,
+			"effects": {"damage": 4, "blind_next_attack": true}, "starting_copies": 0,
+			"reward_eligible": true, "rarity": "common"},
+		"lantern_monk_wick_flicker_plus": {
+			"catalog": "pool", "name": "Wick Flicker+", "damage": 6, "exposed": 0,
+			"effects": {"damage": 6, "blind_next_attack": true}, "starting_copies": 0,
+			"reward_eligible": false, "rarity": "common"},
+		"lantern_monk_snuff_flame": {
+			"catalog": "pool", "name": "Snuff Flame", "damage": 3, "exposed": 1,
+			"effects": {"damage": 3, "blind_next_attack": true, "exposed": 1}, "starting_copies": 0,
+			"reward_eligible": true, "rarity": "uncommon"},
+		"lantern_monk_snuff_flame_plus": {
+			"catalog": "pool", "name": "Snuff Flame+", "damage": 4, "exposed": 2,
+			"effects": {"damage": 4, "blind_next_attack": true, "exposed": 2}, "starting_copies": 0,
+			"reward_eligible": false, "rarity": "uncommon"},
+	}
+
+
+## Deep comparison that also rejects coercible metadata (an int standing in for a bool descriptor, etc.).
+func _typed_equal(actual: Variant, expected: Variant) -> bool:
+	if typeof(actual) != typeof(expected):
+		return false
+	if expected is Dictionary:
+		if actual.size() != expected.size():
+			return false
+		for key in expected:
+			if not (actual as Dictionary).has(key):
+				return false
+			if not _typed_equal(actual[key], expected[key]):
+				return false
+		return true
+	if expected is Array:
+		if actual.size() != expected.size():
+			return false
+		for index in range(expected.size()):
+			if not _typed_equal(actual[index], expected[index]):
+				return false
+		return true
+	return actual == expected
+
+
+## AC1: all six printings must still carry their exact authored line in the one catalog that owns them, and the
+## service must authenticate exactly that ID set and nothing else.
+func _test_blind_strike_catalog() -> void:
+	var starter := LanternMonkStarterCards.new()
+	var pool := LanternMonkPoolCards.new()
+	var cases: Dictionary = _blind_strike_cases()
+	_check(cases.size() == 6, "exactly six lantern blind-strike printings are enumerated")
+	_check(BLIND_STRIKE_IDS.size() == 6, "the six printed IDs are listed")
+	for card_id: String in BLIND_STRIKE_IDS:
+		_check(cases.has(card_id), card_id + " has an independent expectation")
+		if not cases.has(card_id):
+			continue
+		var spec: Dictionary = cases[card_id]
+		var base_id: String = card_id.trim_suffix("_plus")
+		var upgraded: bool = card_id.ends_with("_plus")
+		var catalog: RefCounted = starter if spec["catalog"] == "starter" else pool
+		var other: RefCounted = pool if spec["catalog"] == "starter" else starter
+		var record: Dictionary = catalog.get_definition(card_id)
+		_check(not record.is_empty(), card_id + ": authored record exists")
+		if record.is_empty():
+			continue
+		_check(record.get("display_name") == spec["name"],
+			card_id + ": printed name is " + str(spec["name"]))
+		_check(record.get("owner") == "lantern_monk", card_id + ": owned by the Lantern Monk")
+		_check(typeof(record.get("cost")) == TYPE_INT and record.get("cost") == 1,
+			card_id + ": printed cost is exactly one energy")
+		_check(_typed_equal(record.get("from_positions"), [2, 3]),
+			card_id + ": printed FROM is the Monk's middle/rear seats")
+		_check(record.get("target_kind") == "enemy_single", card_id + ": targets one enemy")
+		_check(_typed_equal(record.get("to_positions"), [1, 2, 3]),
+			card_id + ": printed TO is every original enemy slot")
+		_check(_typed_equal(record.get("effects"), spec["effects"]),
+			card_id + ": exact authored effects " + str(spec["effects"]))
+		_check(record.get("effects", {}).get("damage") == spec["damage"],
+			card_id + ": printed damage is " + str(spec["damage"]))
+		# Blind has two authored printings but one canonical meaning: one next-attack miss.
+		if spec["catalog"] == "starter":
+			_check(record.get("effects", {}).has("blind")
+				and record["effects"]["blind"] == 1
+				and typeof(record["effects"]["blind"]) == TYPE_INT,
+				card_id + ": starter prints the integer blind:1 descriptor")
+			_check(not record.get("effects", {}).has("blind_next_attack"),
+				card_id + ": starter does not print the pool Blind key")
+		else:
+			_check(record.get("effects", {}).has("blind_next_attack")
+				and typeof(record["effects"]["blind_next_attack"]) == TYPE_BOOL
+				and record["effects"]["blind_next_attack"] == true,
+				card_id + ": pool prints the boolean blind_next_attack:true descriptor")
+			_check(not record.get("effects", {}).has("blind"),
+				card_id + ": pool invents no numeric blind stack")
+		_check(typeof(record.get("starting_copies")) == TYPE_INT
+			and record.get("starting_copies") == spec["starting_copies"],
+			card_id + ": starting_copies is " + str(spec["starting_copies"]))
+		_check(typeof(record.get("reward_eligible")) == TYPE_BOOL
+			and record.get("reward_eligible") == spec["reward_eligible"],
+			card_id + ": reward_eligible is " + str(spec["reward_eligible"]))
+		_check(record.get("illustration_path") == "res://assets/paper/cards/" + base_id + ".png",
+			card_id + ": keeps its base illustration path")
+		if spec["rarity"] == null:
+			_check(not record.has("rarity"), card_id + ": starter carries no pool rarity")
+		else:
+			_check(record.get("rarity") == spec["rarity"],
+				card_id + ": pool rarity is " + str(spec["rarity"]))
+		if upgraded:
+			_check(record.get("upgrade_of") == base_id and not record.has("upgrade_id"),
+				card_id + ": points back to " + base_id)
+			_check(catalog.get_upgrade_id(base_id) == card_id,
+				card_id + ": its base still links up to it")
+		else:
+			_check(record.get("upgrade_id") == card_id + "_plus" and not record.has("upgrade_of"),
+				card_id + ": links up to " + card_id + "_plus")
+			_check(catalog.get_upgrade_id(card_id) == card_id + "_plus",
+				card_id + ": upgrade_id resolves through the catalog")
+		_check(not other.has_card(card_id), card_id + ": the other catalog does not own it")
+		# The service exposes a pure support/definition query over exactly these authenticated records.
+		_check(strike_service.is_supported_card(card_id), card_id + ": service authenticates the printing")
+		_check(_typed_equal(strike_service.get_definition(card_id), record),
+			card_id + ": definition query returns the exact authored record")
+	var sample: Dictionary = strike_service.get_definition("lantern_monk_snuff_flame")
+	_check(not sample.is_empty(), "definition query fixture loaded")
+	if not sample.is_empty():
+		sample["effects"]["damage"] = -99
+		_check(strike_service.get_definition("lantern_monk_snuff_flame").get("effects", {}).get("damage") == 3,
+			"definition query returns a detached record")
+	for unsupported in ["lantern_monk_moth_wink", "lantern_monk_moth_lure", "lantern_monk_moth_cloud",
+			"lantern_monk_wax_ward", "warden_strike", "seamstress_prick", "",
+			"lantern_monk_wick_spark_plus_plus", "wick_spark", "lantern_monk_wick_flicker_ultra"]:
+		_check(not strike_service.is_supported_card(unsupported),
+			str(unsupported) + ": not a blind-strike printing")
+		_check(strike_service.get_definition(unsupported).is_empty(),
+			str(unsupported) + ": definition query returns nothing")
+	for non_string in [null, 7, true, 3.5, StringName("lantern_monk_wick_spark")]:
+		_check(not strike_service.is_supported_card(non_string),
+			str(non_string) + ": non-string ID is never supported")
+		_check(strike_service.get_definition(non_string).is_empty(),
+			str(non_string) + ": non-string definition query returns nothing")
+	# A rewritten record is never supported, and every core field is guarded.
+	for card_id: String in BLIND_STRIKE_IDS:
+		var spec: Dictionary = cases[card_id]
+		var catalog: RefCounted = starter if spec["catalog"] == "starter" else pool
+		var authentic: Dictionary = catalog.get_definition(card_id)
+		_check(not authentic.is_empty(), card_id + ": forgery fixture loaded")
+		if authentic.is_empty():
+			continue
+		var forged := ForgedBlindStrike.new()
+		forged.forged_id = card_id
+		var mutations: Array = []
+		var altered_values := {
+			"id": "fake", "display_name": "Fake", "owner": "warden", "cost": 1.0,
+			"from_positions": [1, 2], "to_positions": [1], "target_kind": "enemy_all",
+			"effects": {"damage": 99, "blind": 1}, "starting_copies": 9,
+			"reward_eligible": not bool(spec["reward_eligible"]), "upgrade_id": "fake",
+			"upgrade_of": "fake", "rarity": "rare", "illustration_path": "res://fake.png",
+		}
+		for field: String in ["id", "display_name", "owner", "cost", "from_positions", "to_positions",
+				"target_kind", "effects", "starting_copies", "reward_eligible", "upgrade_id",
+				"upgrade_of", "rarity", "illustration_path"]:
+			# Erasing an absent field would be a no-op, so only omit fields the record really carries.
+			if authentic.has(field):
+				var omitted: Dictionary = authentic.duplicate(true)
+				omitted.erase(field)
+				mutations.append(omitted)
+			var altered: Dictionary = authentic.duplicate(true)
+			altered[field] = altered_values[field]
+			mutations.append(altered)
+		var extra: Dictionary = authentic.duplicate(true)
+		extra["effects"]["draw"] = 1
+		mutations.append(extra)
+		var typed: Dictionary = authentic.duplicate(true)
+		typed["effects"]["blind_next_attack"] = 1
+		mutations.append(typed)
+		var foreign: Dictionary = authentic.duplicate(true)
+		foreign["effects"] = {"damage": 9, "blind_next_attack": true, "exposed": 3}
+		mutations.append(foreign)
+		mutations.append(pool.get_definition("lantern_monk_moth_lure"))
+		for mutation: Dictionary in mutations:
+			forged.forged = mutation
+			_check(not forged.is_supported_card(card_id),
+				card_id + ": forged catalog record is not supported")
+			_check(forged.get_definition(card_id).is_empty(),
+				card_id + ": forged definition query returns nothing")
+		forged.forged = authentic
+		_check(forged.is_supported_card(card_id),
+			card_id + ": restored authentic catalog is supported again")
+
+
+func _strike_deck(card_id: String, seed_value: int = 60601) -> CombatDeck:
+	var ids: Array[String] = [card_id, card_id, card_id, BLIND_STRIKE_FILLERS[0],
+		BLIND_STRIKE_FILLERS[1], BLIND_STRIKE_FILLERS[2]]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var deck := CombatDeck.new(ids, rng)
+	var started: bool = deck.start_turn()
+	_check(started and deck.turn_active and deck.energy == 3 and deck.hand.size() == 5
+		and deck.hand.count(card_id) >= 2,
+		card_id + ": real seeded five-card hand holds at least two genuine copies")
+	return deck
+
+
+func _strike_party(monk_seat: int) -> CombatParty:
+	var definitions: Array = []
+	for position in range(1, 4):
+		definitions.append({
+			"id": "lantern_monk" if position == monk_seat else "ally_%d" % position,
+			"max_hp": STRIKE_MONK_HP if position == monk_seat else STRIKE_ALLY_HP,
+		})
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid() and party.get_hero(monk_seat)["id"] == "lantern_monk",
+		"real three-hero party with the living Monk in seat " + str(monk_seat))
+	return party
+
+
+func _strike_enemies() -> CombatEnemies:
+	var enemies := CombatEnemies.new([
+		{"id": "straw_brute", "name": "Straw Brute", "max_hp": 30,
+			"intent": {"target": "front", "actions": [{"type": "attack", "amount": 6, "weight": 1}]}},
+		{"id": "needle_wasp", "name": "Needle Wasp", "max_hp": 24,
+			"intent": {"target": "front", "actions": [{"type": "attack", "amount": 5, "weight": 1}]}},
+		{"id": "quilt_moth", "name": "Quilt Moth", "max_hp": 18,
+			"intent": {"target": "front", "actions": [{"type": "attack", "amount": 4, "weight": 1}]}},
+	])
+	_check(enemies.is_valid() and enemies.get_enemies().size() == 3,
+		"real three-slot enemy roster")
+	return enemies
+
+
+func _strike_fixture(card_id: String, monk_seat: int = 2, seed_value: int = 60601) -> Dictionary:
+	return {"deck": _strike_deck(card_id, seed_value), "party": _strike_party(monk_seat),
+		"enemies": _strike_enemies()}
+
+
+## Full observable state plus the injected run RNG, for exact no-mutation comparisons.
+func _strike_snapshot(f: Dictionary) -> Dictionary:
+	return {
+		"hand": f.deck.hand.duplicate(true),
+		"draw": f.deck.draw_pile.duplicate(true),
+		"discard": f.deck.discard_pile.duplicate(true),
+		"exhausted": f.deck.exhausted.duplicate(true),
+		"energy": f.deck.energy,
+		"turn": f.deck.turn_active,
+		"heroes": f.party.get_heroes(),
+		"enemies": f.enemies.get_enemies(),
+		"rng_state": f.deck._rng.state,
+		"rng_seed": f.deck._rng.seed,
+	}
+
+
+## AC2: one genuine held copy, one energy and exactly one status-adjusted hit per cast, with the printed Blind
+## (and Snuff Flame's Exposed) only after the hit. Covers raw, Weak/Exposed/Tangled, Block absorption, an
+## already-armed Blind, legal Dodge on the attacker, a Torn ally and post-hit Exposed stacking.
+func _test_blind_strike_paid_play() -> void:
+	var cases: Dictionary = _blind_strike_cases()
+	for card_id: String in BLIND_STRIKE_IDS:
+		var spec: Dictionary = cases[card_id]
+		for scenario: String in ["plain", "exposed", "weak", "combo", "blocked", "already_blind",
+				"dodge", "torn_ally", "stacked_exposed"]:
+			_strike_case(card_id, spec, scenario, 2)
+		_strike_case(card_id, spec, "plain", 3)
+		_strike_second_copy(card_id, spec)
+
+
+func _strike_case(card_id: String, spec: Dictionary, scenario: String, monk_seat: int) -> void:
+	var label := "%s/%s/seat%d" % [card_id, scenario, monk_seat]
+	var f := _strike_fixture(card_id, monk_seat, 60601 + monk_seat)
+	var deck: CombatDeck = f.deck
+	var party: CombatParty = f.party
+	var enemies: CombatEnemies = f.enemies
+	var target := 2
+	var damage: int = int(spec["damage"])
+	var exposed: int = int(spec["exposed"])
+	if scenario == "plain":
+		party._heroes[monk_seat - 1]["statuses"] = {"riposte": 4}
+		enemies._enemies[0]["statuses"] = {"bleed": 2}
+		_check(enemies.gain_block(target, 2), label + ": real pre-hit Block seeded")
+	elif scenario == "exposed":
+		enemies._enemies[target - 1]["statuses"] = {"exposed": 2}
+	elif scenario == "weak":
+		party._heroes[monk_seat - 1]["statuses"] = {"weak": 1}
+	elif scenario == "combo":
+		party._heroes[monk_seat - 1]["statuses"] = {"weak": 1}
+		enemies._enemies[target - 1]["statuses"] = {"exposed": 1, "tangled": 2}
+	elif scenario == "blocked":
+		_check(enemies.gain_block(target, damage + 2), label + ": full-absorption Block seeded")
+	elif scenario == "already_blind":
+		enemies._enemies[target - 1]["statuses"] = {"blind_next_attack": 1, "weak": 2}
+	elif scenario == "dodge":
+		party._heroes[monk_seat - 1]["statuses"] = {"dodge_next_attack": 1}
+	elif scenario == "torn_ally":
+		var torn := 1 if monk_seat != 1 else 3
+		_check(party.apply_damage(torn, STRIKE_ALLY_HP) and party.is_downed(torn),
+			label + ": a non-Monk ally is genuinely Torn")
+	elif scenario == "stacked_exposed":
+		enemies._enemies[target - 1]["statuses"] = {"exposed": 2}
+	# Expectations come from the real pre-hit records, never from a mutated test-side effect dictionary.
+	var target_before: Dictionary = enemies.get_enemy(target)
+	var expected_damage: int = damage
+	if scenario in ["exposed", "stacked_exposed"]:
+		expected_damage = int(STRIKE_ADJUSTED["exposed"][damage])
+	elif scenario == "weak":
+		expected_damage = int(STRIKE_ADJUSTED["weak"][damage])
+	elif scenario == "combo":
+		expected_damage = int(STRIKE_ADJUSTED["combo"][damage])
+	var absorbed: int = mini(int(target_before["block"]), expected_damage)
+	var hp_loss: int = mini(int(target_before["hp"]), expected_damage - absorbed)
+	var target_statuses: Dictionary = target_before.get("statuses", {})
+	var blind_before: int = int(target_statuses.get(STRIKE_BLIND_KEY, 0))
+	var exposed_before: int = int(target_statuses.get("exposed", 0))
+	var hand_before: Array = deck.hand.duplicate()
+	var draw_before: Array = deck.draw_pile.duplicate()
+	var discard_before: Array = deck.discard_pile.duplicate()
+	var energy_before: int = deck.energy
+	var rng_before: int = deck._rng.state
+	var heroes_before: Array = party.get_heroes()
+	var roster_before: Array = enemies.get_enemies()
+
+	var receipt: Dictionary = strike_service.play_card(deck, party, enemies, card_id, target)
+	_check(receipt.get("ok", false) and receipt.get("reason") == "applied",
+		label + ": authentic paid strike")
+	_check(receipt.get("card_id") == card_id and receipt.get("cost") == 1,
+		label + ": receipt names the printing and its one energy")
+	_check(receipt.get("owner_position") == monk_seat and receipt.get("target_position") == target
+		and receipt.get("target_kind") == "enemy_single"
+		and receipt.get("target_id") == target_before["id"],
+		label + ": receipt names the Monk seat and the selected original slot")
+	_check(receipt.get("base_damage") == damage and receipt.get("damage") == expected_damage,
+		label + ": one printed raw hit adjusted by the shared status rules")
+	_check(receipt.get("block_absorbed") == absorbed and receipt.get("hp_loss") == hp_loss,
+		label + ": Block absorbs before HP")
+	_check(receipt.get("hp_after") == int(target_before["hp"]) - hp_loss
+		and receipt.get("block_after") == int(target_before["block"]) - absorbed,
+		label + ": receipt reflects the real remaining HP and Block")
+	_check(receipt.get("blind_before") == blind_before and receipt.get("blind_after") == 1
+		and receipt.get("blind_already_active") == (blind_before == 1),
+		label + ": the cast arms the one-shot Blind at exactly 1 (never a second stack)")
+	_check(receipt.get("exposed_applied") == exposed
+		and receipt.get("exposed_after") == exposed_before + exposed,
+		label + ": only Snuff Flame adds its printed Exposed, after the hit")
+
+	var expected_hand: Array = hand_before.duplicate()
+	expected_hand.remove_at(expected_hand.find(card_id))
+	var expected_discard: Array = discard_before.duplicate()
+	expected_discard.append(card_id)
+	_check(deck.hand == expected_hand and deck.draw_pile == draw_before
+		and deck.discard_pile == expected_discard and deck.energy == energy_before - 1
+		and deck.turn_active,
+		label + ": exactly one energy and one held copy, no extra draw")
+	_check(deck._rng.state == rng_before, label + ": the paid strike consumes no run RNG draw")
+	_check(party.get_heroes() == heroes_before,
+		label + ": no hero HP, Block, status or seat is changed by the strike")
+
+	var expected_roster: Array = roster_before.duplicate(true)
+	var expected_target: Dictionary = expected_roster[target - 1]
+	expected_target["block"] = int(expected_target["block"]) - absorbed
+	expected_target["hp"] = int(expected_target["hp"]) - hp_loss
+	if not expected_target.has("statuses"):
+		expected_target["statuses"] = {}
+	expected_target["statuses"][STRIKE_BLIND_KEY] = 1
+	if exposed > 0:
+		expected_target["statuses"]["exposed"] = exposed_before + exposed
+	_check(enemies.get_enemies() == expected_roster,
+		label + ": exact target HP/Block/statuses; the other slots are untouched")
+	_check(typeof(enemies.get_enemy(target)["statuses"][STRIKE_BLIND_KEY]) == TYPE_INT
+		and enemies.get_enemy(target)["statuses"][STRIKE_BLIND_KEY] == 1,
+		label + ": Blind is the canonical integer 1 on the authoritative enemy record")
+
+
+## AC2: a second cast needs a second genuine held copy, and the first enemy's Blind is never spent by it.
+func _strike_second_copy(card_id: String, _spec: Dictionary) -> void:
+	var f := _strike_fixture(card_id, 2, 61611)
+	var deck: CombatDeck = f.deck
+	var party: CombatParty = f.party
+	var enemies: CombatEnemies = f.enemies
+	_check(deck.hand.count(card_id) >= 2, card_id + ": two genuine copies are really held")
+	var first: Dictionary = strike_service.play_card(deck, party, enemies, card_id, 1)
+	var second: Dictionary = strike_service.play_card(deck, party, enemies, card_id, 3)
+	_check(first.get("ok", false) and second.get("ok", false),
+		card_id + ": a second cast from a second genuine held copy succeeds")
+	_check(deck.energy == 1 and deck.discard_pile.count(card_id) == 2,
+		card_id + ": each cast spends one energy and discards one copy")
+	_check(enemies.get_enemy(1)["statuses"][STRIKE_BLIND_KEY] == 1
+		and enemies.get_enemy(3)["statuses"][STRIKE_BLIND_KEY] == 1,
+		card_id + ": both selected enemies really carry Blind 1")
+	_check(not enemies.get_enemy(2).get("statuses", {}).has(STRIKE_BLIND_KEY),
+		card_id + ": the unselected enemy is never Blinded")
+	_check(enemies.get_enemy(1)["hp"] < 30 and enemies.get_enemy(3)["hp"] < 18,
+		card_id + ": both casts really dealt damage")
+
+
+func _strike_refused(f: Dictionary, card_id: Variant, target: int, label: String) -> void:
+	var before := _strike_snapshot(f)
+	var result: Dictionary = strike_service.play_card(f.deck, f.party, f.enemies, card_id, target)
+	_check(result.get("ok", false) == false, label + ": refused")
+	_check(result.get("reason") is String and not (result.get("reason") as String).is_empty(),
+		label + ": refusal carries a reason")
+	_check(_strike_snapshot(f) == before,
+		label + ": unchanged hand, draw, discard, energy, party, roster and RNG")
+
+
+## AC3: every invalid precondition fails closed before payment, and a valid retry still works afterwards.
+func _test_blind_strike_refusals() -> void:
+	var card_id := "lantern_monk_snuff_flame"
+
+	var front := _strike_fixture(card_id, 1)
+	_check(front.party.get_hero(1)["id"] == "lantern_monk",
+		"front-Monk fixture really seats the Monk up front")
+	_strike_refused(front, card_id, 2, "front Monk (illegal FROM seat)")
+
+	var missing := _strike_fixture(card_id)
+	missing.party._heroes[1]["id"] = "mender"
+	_check(missing.party.get_hero(2)["id"] == "mender"
+		and missing.party.get_hero(1)["id"] != "lantern_monk"
+		and missing.party.get_hero(3)["id"] != "lantern_monk",
+		"missing-Monk fixture really has no Lantern Monk")
+	_strike_refused(missing, card_id, 2, "party with no Lantern Monk")
+
+	var duplicate := _strike_fixture(card_id)
+	duplicate.party._heroes[0]["id"] = "lantern_monk"
+	_check(duplicate.party.get_hero(1)["id"] == "lantern_monk"
+		and duplicate.party.get_hero(2)["id"] == "lantern_monk",
+		"duplicate-Monk fixture really repeats the owner ID")
+	_strike_refused(duplicate, card_id, 2, "duplicate Monk identity")
+
+	var downed := _strike_fixture(card_id)
+	_check(downed.party.apply_damage(2, STRIKE_MONK_HP) and downed.party.is_downed(2),
+		"torn-caster fixture has a genuinely downed Monk")
+	_strike_refused(downed, card_id, 2, "torn (downed) Monk")
+
+	var unheld := _strike_fixture(card_id)
+	for index in range(unheld.deck.hand.size()):
+		if unheld.deck.hand[index] == card_id:
+			unheld.deck.hand[index] = "warden_strike"
+	_check(not unheld.deck.hand.has(card_id), "unheld fixture really holds no copy")
+	_strike_refused(unheld, card_id, 2, "card not held")
+
+	var inactive := _strike_fixture(card_id)
+	_check(inactive.deck.end_turn() and not inactive.deck.turn_active,
+		"inactive-turn fixture really has no active turn")
+	_strike_refused(inactive, card_id, 2, "inactive turn")
+
+	var broke := _strike_fixture(card_id)
+	_check(broke.deck.try_spend_energy(3) and broke.deck.energy == 0,
+		"energy-short fixture is genuinely broke and still holds the card")
+	_strike_refused(broke, card_id, 2, "zero energy")
+
+	var dead := _strike_fixture(card_id)
+	_check(dead.enemies.apply_damage(2, 24) and dead.enemies.is_slain(2),
+		"dead-target fixture really has a slain selected slot")
+	_strike_refused(dead, card_id, 2, "slain enemy slot")
+
+	for target in [0, 4, -1, 99]:
+		_strike_refused(_strike_fixture(card_id), card_id, target,
+			"target slot " + str(target))
+
+	var short := _strike_fixture(card_id)
+	short["enemies"] = CombatEnemies.new([
+		{"id": "only_one", "max_hp": 10}, {"id": "only_two", "max_hp": 10}])
+	_check(short.enemies.is_valid() and short.enemies.get_enemies().size() == 2,
+		"short-roster fixture really has two slots")
+	_strike_refused(short, card_id, 3, "target 3 with a two-slot roster")
+
+	for bad in [{"weak": -1}, {"weak": "1"}, {"exposed": 1.5}, {"blind_next_attack": true},
+			{"dodge_next_attack": 2}, {"unknown_status": 1}, {1: 2}]:
+		var hero_bad := _strike_fixture(card_id)
+		hero_bad.party._heroes[1]["statuses"] = bad
+		_strike_refused(hero_bad, card_id, 2, "malformed hero statuses " + str(bad))
+		var enemy_bad := _strike_fixture(card_id)
+		enemy_bad.enemies._enemies[1]["statuses"] = bad
+		_strike_refused(enemy_bad, card_id, 2, "malformed enemy statuses " + str(bad))
+	var not_a_map := _strike_fixture(card_id)
+	not_a_map.enemies._enemies[1]["statuses"] = "exposed"
+	_strike_refused(not_a_map, card_id, 2, "non-dictionary enemy statuses")
+
+	var overflow := _strike_fixture(card_id)
+	overflow.enemies._enemies[1]["statuses"] = {"exposed": CombatEnemies.MAX_INT}
+	_strike_refused(overflow, card_id, 2, "unrepresentable post-hit Exposed addition")
+
+	# A non-Exposed printing is not refused by an unrelated huge existing Exposed counter.
+	var control := _strike_fixture("lantern_monk_wick_spark")
+	control.enemies._enemies[1]["statuses"] = {"exposed": CombatEnemies.MAX_INT}
+	var control_receipt: Dictionary = strike_service.play_card(
+		control.deck, control.party, control.enemies, "lantern_monk_wick_spark", 2)
+	_check(control_receipt.get("ok", false),
+		"a printing that adds no Exposed is not refused by a huge existing Exposed counter")
+	_check(control_receipt.get("exposed_applied") == 0
+		and control.enemies.get_enemy(2)["statuses"]["exposed"] == CombatEnemies.MAX_INT,
+		"the huge existing counter is preserved and never extended")
+
+	for scenario: String in ["hp_above_max", "negative_block", "wrong_hero_position",
+			"wrong_enemy_position", "duplicate_enemy_id"]:
+		var broken := _strike_fixture(card_id)
+		if scenario == "hp_above_max":
+			broken.party._heroes[0]["hp"] = STRIKE_ALLY_HP + 1
+		elif scenario == "negative_block":
+			broken.enemies._enemies[2]["block"] = -1
+		elif scenario == "wrong_hero_position":
+			broken.party._heroes[0]["position"] = 3
+		elif scenario == "wrong_enemy_position":
+			broken.enemies._enemies[1]["position"] = 3
+		elif scenario == "duplicate_enemy_id":
+			broken.enemies._enemies[2]["id"] = broken.enemies._enemies[1]["id"]
+		_strike_refused(broken, card_id, 2, "malformed roster " + scenario)
+
+	var empty_party := _strike_fixture(card_id)
+	empty_party["party"] = CombatParty.new([])
+	_strike_refused(empty_party, card_id, 2, "invalid party roster")
+
+	for missing_part in ["deck", "party", "enemies"]:
+		var f := _strike_fixture(card_id)
+		var before := _strike_snapshot(f)
+		var deck: CombatDeck = f.deck
+		var party: CombatParty = f.party
+		var enemies: CombatEnemies = f.enemies
+		if missing_part == "deck":
+			deck = null
+		elif missing_part == "party":
+			party = null
+		else:
+			enemies = null
+		var result: Dictionary = strike_service.play_card(deck, party, enemies, card_id, 2)
+		_check(not result.get("ok", false), "null " + missing_part + " refuses")
+		_check(_strike_snapshot(f) == before, "null " + missing_part + " leaves all state unchanged")
+
+	for unsupported in ["lantern_monk_moth_wink", "lantern_monk_moth_lure", "lantern_monk_moth_cloud",
+			"lantern_monk_wax_ward", "warden_strike", "", "lantern_monk_wick_flicker_ultra",
+			null, 7, true, StringName("lantern_monk_wick_flicker")]:
+		_strike_refused(_strike_fixture(card_id), unsupported, 2,
+			"unsupported card id " + str(unsupported))
+
+	# A consumed copy cannot replay: only one genuine copy is drawn.
+	var single_rng := RandomNumberGenerator.new()
+	single_rng.seed = 61777
+	var single := CombatDeck.new([card_id, BLIND_STRIKE_FILLERS[0], BLIND_STRIKE_FILLERS[1],
+		BLIND_STRIKE_FILLERS[2], BLIND_STRIKE_FILLERS[3]], single_rng)
+	_check(single.start_turn() and single.hand.count(card_id) == 1,
+		"replay fixture draws exactly one genuine copy")
+	var single_f := {"deck": single, "party": _strike_party(2), "enemies": _strike_enemies()}
+	var first: Dictionary = strike_service.play_card(
+		single_f.deck, single_f.party, single_f.enemies, card_id, 1)
+	_check(first.get("ok", false) and not single.hand.has(card_id),
+		"the single copy plays once and leaves the hand")
+	var replay_before := _strike_snapshot(single_f)
+	var replay: Dictionary = strike_service.play_card(
+		single_f.deck, single_f.party, single_f.enemies, card_id, 2)
+	_check(not replay.get("ok", false), "a replay of the consumed copy is refused")
+	_check(_strike_snapshot(single_f) == replay_before,
+		"the replay refusal changes no pile, roster or RNG")
+
+	# Forged catalog record, then a valid retry once the authentic catalog is restored.
+	var pool := LanternMonkPoolCards.new()
+	var authentic: Dictionary = pool.get_definition(card_id)
+	_check(not authentic.is_empty(), "forged-catalog fixture loaded")
+	if authentic.is_empty():
+		return
+	var forged := ForgedBlindStrike.new()
+	forged.forged_id = card_id
+	var forged_mutations: Array = []
+	for field: String in ["id", "display_name", "owner", "cost", "from_positions", "to_positions",
+			"target_kind", "effects", "starting_copies", "reward_eligible", "upgrade_of",
+			"rarity", "illustration_path"]:
+		# Erasing an absent field would be a no-op, so only omit fields the record really carries.
+		if authentic.has(field):
+			var omitted: Dictionary = authentic.duplicate(true)
+			omitted.erase(field)
+			forged_mutations.append(omitted)
+	var altered: Dictionary = authentic.duplicate(true)
+	altered["effects"]["damage"] = 99
+	forged_mutations.append(altered)
+	var relinked: Dictionary = authentic.duplicate(true)
+	relinked["upgrade_of"] = "lantern_monk_wick_flicker"
+	forged_mutations.append(relinked)
+	forged_mutations.append(LanternMonkStarterCards.new().get_definition("lantern_monk_wick_spark"))
+	for mutation: Dictionary in forged_mutations:
+		forged.forged = mutation
+		var f := _strike_fixture(card_id)
+		var before := _strike_snapshot(f)
+		_check(not forged.is_supported_card(card_id), "forged catalog record is not supported")
+		_check(forged.get_definition(card_id).is_empty(),
+			"forged definition query returns nothing")
+		_check(not forged.play_card(f.deck, f.party, f.enemies, card_id, 2).get("ok", false),
+			"forged catalog record refuses payment")
+		_check(_strike_snapshot(f) == before,
+			"forgery rejection leaves the whole transaction unchanged")
+	forged.forged = authentic
+	_check(forged.is_supported_card(card_id), "the restored authentic catalog is supported")
+
+	var retry := _strike_fixture(card_id)
+	var retry_before := _strike_snapshot(retry)
+	var refused: Dictionary = strike_service.play_card(retry.deck, retry.party, retry.enemies, card_id, 0)
+	_check(not refused.get("ok", false), "a retry fixture first refuses an illegal target")
+	_check(_strike_snapshot(retry) == retry_before, "that refusal changes nothing")
+	var retried: Dictionary = strike_service.play_card(retry.deck, retry.party, retry.enemies, card_id, 1)
+	_check(retried.get("ok", false), "the same fixture then accepts a valid retry")
+
+
+## AC2: the cast and owner-turn aging never spend Blind; only the existing enemy phase's attempted attack does.
+func _test_blind_strike_enemy_phase() -> void:
+	var f := _strike_fixture("lantern_monk_wick_spark", 2, 70707)
+	var receipt: Dictionary = strike_service.play_card(
+		f.deck, f.party, f.enemies, "lantern_monk_wick_spark", 2)
+	_check(receipt.get("ok", false)
+		and f.enemies.get_enemy(2)["statuses"][STRIKE_BLIND_KEY] == 1,
+		"precondition: the cast arms Blind 1 on the selected enemy")
+	var tick: Dictionary = CombatStatusTurnBatch.new().tick_side("enemies", f.enemies.get_enemies())
+	_check(tick.get("ok", false)
+		and tick["actors"][1]["statuses"].get(STRIKE_BLIND_KEY) == 1,
+		"owner-turn status aging keeps the armed Blind")
+	_check(f.enemies.get_enemy(2)["statuses"].get(STRIKE_BLIND_KEY) == 1,
+		"neither the cast nor status aging consumed the token")
+	var party_before: Array = f.party.get_heroes()
+	var attempted: Dictionary = CombatEnemyPhase.new().execute_phase(f.party, f.enemies,
+		[{"enemy_position": 2, "type": "attack", "amount": 7, "target_position": 1}])
+	_check(attempted.get("ok", false) and attempted["events"].size() == 1
+		and attempted["events"][0].get("applied") == false,
+		"the existing enemy phase makes the next attempted attack miss")
+	_check(f.party.get_heroes() == party_before
+		and not f.enemies.get_enemy(2)["statuses"].has(STRIKE_BLIND_KEY),
+		"Blind is consumed by that real attack attempt, dealing no damage")
+	var later: Dictionary = CombatEnemyPhase.new().execute_phase(f.party, f.enemies,
+		[{"enemy_position": 2, "type": "attack", "amount": 7, "target_position": 1}])
+	_check(later.get("ok", false) and later["events"][0].get("applied") == true
+		and f.party.get_hero(1)["hp"] < STRIKE_MONK_HP,
+		"the following attack lands normally once Blind is spent")

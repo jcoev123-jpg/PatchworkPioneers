@@ -203,14 +203,38 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 				return failure
 			results.append(spare_result)
 		else:
-			var effect := "draw"
-			var amount: int = half.effects.get("draw", 0)
-			if half.effects.has("block"):
-				effect = "self_block" if kind == "self" else "ally_block"
-				amount = half.effects.block
-			elif half.effects.has("heal"):
-				effect = "ally_heal"
-				amount = half.effects.heal
+			# Only these exact, single-effect support forms are implemented by
+			# CombatSupportCards. In particular enemy_random (Ricochet) and
+			# multi-effect halves must not masquerade as a zero-card draw.
+			var effects: Dictionary = half.effects
+			if effects.size() != 1:
+				return failure
+			var effect := ""
+			var amount: Variant = null
+			match kind:
+				"none":
+					if not effects.has("draw"):
+						return failure
+					effect = "draw"
+					amount = effects.draw
+				"self":
+					if not effects.has("block"):
+						return failure
+					effect = "self_block"
+					amount = effects.block
+				"ally_single":
+					if effects.has("block"):
+						effect = "ally_block"
+						amount = effects.block
+					elif effects.has("heal"):
+						effect = "ally_heal"
+						amount = effects.heal
+					else:
+						return failure
+				_:
+					return failure
+			if typeof(amount) != TYPE_INT or amount < 0:
+				return failure
 			var normalized := {"id": stitched_id, "owner_id": half.owner,
 				"cost": 0, "from_positions": half.from_positions,
 				"effect": effect, "amount": amount}

@@ -21,6 +21,7 @@ func _initialize() -> void:
 	_test_pairs()
 	_test_all_authored_pairs()
 	_test_rejections()
+	_test_unsupported_ricochet_halves()
 	_test_passives_and_statuses()
 	_test_draw_rollback_and_replay()
 	_test_spare_spool()
@@ -556,6 +557,62 @@ func _test_rejections() -> void:
 	c.enemies.apply_damage(1, 9)
 	_check(_play(c, 1, 0).ok and c.enemies.is_victorious() and c.enemies.get_enemy(1).position == 1
 		and c.party.get_hero(1).block == 7, "lethal first half can finish legal support and preserve final slot")
+
+
+## Both genuine Rest-stitched Ricochet printings have three random hits.
+## Until random-hit half semantics are mounted, neither order can commit.
+func _test_unsupported_ricochet_halves() -> void:
+	# A real, sewn Warden support half is executable when the second half
+	# is supported; Ricochet-after-Brace must roll that same staged Block back.
+	var control := _rest_fixture("warden_brace", "tinker_tune_up", 3781)
+	_bind_cuff(control)
+	var control_result := _play(control, 0, 0)
+	_check(control_result.ok and control_result.halves.size() == 2
+		and control.party.get_hero(1).block >= 7
+		and control.deck.energy == 1 and control.deck.discard_pile == [control.id],
+		"sewn Brace and authentic draw control both commit with one spend/discard")
+	for card_id in ["tinker_ricochet", "tinker_ricochet_plus"]:
+		var authored: Dictionary = TinkerPoolCards.new().get_definition(card_id)
+		var damage := 6 if card_id.ends_with("_plus") else 4
+		_check(not authored.is_empty()
+			and authored == RunRestStitchCards.resolve_card_definition(card_id)
+			and authored.get("target_kind") == "enemy_random"
+			and authored.get("effects") == {"damage": damage, "hit_count": 3,
+				"random_target_each_hit": true, "rng_source": "run",
+				"living_targets_only": true},
+			card_id + ": authentic random-hit catalog precondition")
+		for reverse in [false, true]:
+			var first: String = "warden_brace" if reverse else card_id
+			var second: String = card_id if reverse else "warden_brace"
+			var replays: Array = []
+			for attempt in range(2):
+				var c := _rest_fixture(first, second, 3782)
+				_bind_cuff(c)
+				# A real reshuffle source would advance the run RNG if a draw
+				# were incorrectly performed. Snapshots include all authorities.
+				c.deck.discard_pile.assign([PRICK, "warden_strike", "tinker_tune_up"])
+				var ledger: Dictionary = c.rest.get_snapshot()
+				var descriptor: Dictionary = ledger.descriptors[c.id]
+				var random_half: Dictionary = descriptor.second_half if reverse else descriptor.first_half
+				_check(c.rest.is_valid() and ledger.deck == [c.id]
+					and descriptor.half_ids == [first, second]
+					and descriptor.cost == 2 and c.deck.hand == [c.id]
+					and c.deck.turn_active and c.deck.energy == 3
+					and c.party.is_valid() and c.enemies.is_valid()
+					and random_half == authored
+					and c.wardrobe.is_valid() and c.torn.is_valid(),
+					card_id + " order " + str(reverse) + ": held authentic Rest and sewn party")
+				var before := _snapshot(c)
+				var label: String = card_id + (" after sewn Brace" if reverse else " before sewn Brace")
+				_reject(c, 0, 0, label + " rejects all unsupported random hits")
+				_check(c.deck._rng.state == before[5] and c.deck.energy == 3
+					and c.deck.hand == [c.id] and c.deck.discard_pile == before[2]
+					and c.party.get_hero(1).block == before[6][0].block
+					and c.rest.get_snapshot() == before[10],
+					label + ": no RNG draw, spend, discard, staged Block or ledger change")
+				replays.append([before, _snapshot(c)])
+			_check(replays[0] == replays[1],
+				card_id + " order " + str(reverse) + ": deterministic rejection replay")
 
 
 func _test_passives_and_statuses() -> void:
