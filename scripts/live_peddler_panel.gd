@@ -39,6 +39,13 @@ const STATUS_CLOSED := "No open Peddler visit. No offer can be submitted."
 const DETAILS_UNAVAILABLE := "Card details unavailable"
 const PATCH_DETAILS_UNAVAILABLE := "Power details unavailable"
 const PATCH_TORN_WARNING := "Patch powers do not work while the wearer is Torn."
+## The ONE unlocked P12 power the patch projection may supplement its ordinary/
+## P8 audit with: the authored ARM Shared Hem at its canonical 100 gold. The
+## withheld, still unimplemented HEAD Needle Echo is never described here.
+const SHARED_HEM_ID := "shared_hem"
+const SHARED_HEM_SLOT := "ARM"
+const SHARED_HEM_SHORT := "+1 Block once/turn when a different living hero actually gains Block"
+const SHARED_HEM_FULL := "Once per turn, after a different living hero actually gains Block, this living, untorn wearer gains exactly +1 Block."
 const ELLIPSIS := "..."
 const WALLET_CLOSED := "Wallet unavailable"
 const LEAVE_TEXT := "Leave  ·  FREE"
@@ -535,6 +542,12 @@ func _wire_previews() -> void:
 	patch_button.mouse_exited.connect(_on_patch_hover.bind(false))
 	patch_button.focus_entered.connect(_on_patch_focus)
 	patch_button.focus_exited.connect(_on_preview_refresh)
+	# A host route may re-flow this ticket after bind (the mounted Peddler
+	# moves and narrows the patch row), and the width-fitted abbreviation is
+	# part of this exact source's honest projection: re-fit it whenever the
+	# real button geometry changes so a later press still re-reads the very
+	# caption that is on screen.
+	patch_button.resized.connect(_on_patch_resized)
 	leave_button.mouse_entered.connect(_on_plain_hover)
 	leave_button.focus_entered.connect(_on_preview_refresh)
 	leave_button.focus_exited.connect(_on_preview_refresh)
@@ -548,6 +561,17 @@ func _on_card_hover(index: int, entered: bool) -> void:
 	elif _hover_index == index:
 		_hover_index = -1
 	_sync_preview()
+
+
+## Keeps the sewn patch ticket the honest projection of its bound source even
+## after the hosting route resizes its row: the measured abbreviation always
+## matches the actual button, so the press audit can never reject a genuine
+## open offer merely because its geometry changed after bind.
+func _on_patch_resized() -> void:
+	if title_label == null or patch_button == null or _source.is_empty():
+		return
+	if _source_current():
+		patch_button.text = _patch_caption()
 
 
 func _on_plain_hover() -> void:
@@ -744,10 +768,55 @@ func _trusted_patch_previews(slots: Dictionary) -> Dictionary:
 	return previews
 
 
+## The one P12 supplement to the ordinary/P8 audit: the unlocked Shared Hem is
+## authored in the heirloom catalog that audit's power-only slot map does not
+## carry, so the projection completes it only from a canonically VERIFIED
+## authored record. The record must match the exact HEIRLOOM_REQUIRED contract
+## through the shared patch projection's own validation before any rule text
+## is published; a missing, unreadable or duplicated P12 catalog, any
+## contradictory field, the withheld HEAD Needle Echo and every unknown ID
+## fail closed to no details, so the view keeps saying
+## PATCH_DETAILS_UNAVAILABLE instead of guessing a rule. The optional source
+## lets tests supply contradictory records without editing the shipped files,
+## mirroring the Patch Stall preview seam.
+func _verified_shared_hem(offer_id: String, catalog_source: Variant = null) -> Dictionary:
+	if offer_id != SHARED_HEM_ID:
+		return {}
+	var required: Dictionary = RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED.get(SHARED_HEM_ID, {})
+	if required.is_empty() or str(required.get("slot", "")) != SHARED_HEM_SLOT:
+		return {}
+	var catalog: Variant = catalog_source
+	if catalog == null:
+		catalog = JSON.parse_string(FileAccess.get_file_as_string(
+				RunAuthoredPatchDefinitions.CATALOG_PATHS[
+						RunAuthoredPatchDefinitions.HEIRLOOM_CATALOG_INDEX]))
+	if typeof(catalog) != TYPE_ARRAY:
+		return {}
+	var matched: Dictionary = {}
+	for record in catalog:
+		if typeof(record) != TYPE_DICTIONARY:
+			continue
+		if str(record.get("id", "")) != SHARED_HEM_ID:
+			continue
+		if not matched.is_empty():
+			return {}
+		matched = record
+	if matched.is_empty() or not RunAuthoredPatchDefinitions._valid_heirloom(matched):
+		return {}
+	return {
+		"id": SHARED_HEM_ID,
+		"slot": str(matched["slot"]),
+		"name": str(matched["name"]),
+		"short": SHARED_HEM_SHORT,
+		"full": SHARED_HEM_FULL,
+	}
+
+
 ## The audited patch description reuses the one existing Patch Stall
 ## verified-preview path: the offered ID must be a real power patch in the
 ## audited slot catalog, and the trusted projection must have proven that
-## exact ID and slot. Anything that audit rejects - an inert starter slot, a
+## exact ID and slot. The one exception is the canonically verified unlocked
+## Shared Hem above. Anything both audits reject - an inert starter slot, a
 ## contradictory or unknown record - yields no details at all, so the view
 ## fails closed with PATCH_DETAILS_UNAVAILABLE instead of guessing a rule.
 func _patch_details() -> Dictionary:
@@ -760,14 +829,25 @@ func _patch_details() -> Dictionary:
 	var authority := _patch_authority()
 	var slots: Dictionary = authority.get("slots", {})
 	var previews: Dictionary = authority.get("previews", {})
-	if not slots.has(offer_id) or not previews.has(offer_id):
-		return {}
-	var slot := str(slots[offer_id])
+	var slot := ""
+	var short_text := ""
+	var full_text := ""
+	if slots.has(offer_id) and previews.has(offer_id):
+		slot = str(slots[offer_id])
+		var preview: Dictionary = previews[offer_id]
+		short_text = str(preview.get("short", ""))
+		full_text = str(preview.get("full", ""))
+	else:
+		# The one P12 supplement: only a canonically verified authored
+		# Shared Hem record may complete this projection.
+		var verified := _verified_shared_hem(offer_id)
+		if verified.is_empty():
+			return {}
+		slot = str(verified["slot"])
+		short_text = str(verified["short"])
+		full_text = str(verified["full"])
 	if not ["HEAD", "ARM", "COAT"].has(slot):
 		return {}
-	var preview: Dictionary = previews[offer_id]
-	var short_text := str(preview.get("short", ""))
-	var full_text := str(preview.get("full", ""))
 	if short_text.is_empty() or full_text.is_empty():
 		return {}
 	return {
