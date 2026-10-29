@@ -38,6 +38,7 @@ func _initialize() -> void:
 	_test_existing_catalogs_unchanged()
 	_test_not_reward_offered()
 	_test_taunt_service_catalog()
+	_test_shieldwall_chorus_party_all()
 	_test_taunt_paid_self_play()
 	_test_taunt_projection_for_whole_enemy_turn()
 	_test_taunt_expiry_and_following_turn()
@@ -643,11 +644,42 @@ func _test_taunt_service_catalog() -> void:
 		and pool.get_definition("warden_v3_iron_taunt_plus").get("upgrade_of")
 		== "warden_v3_iron_taunt",
 		"the pool base/upgrade link is unchanged")
+	# Shieldwall Chorus: genuine pool metadata, upgrade links, party-wide Block + Taunt.
+	_check(service.is_supported_card("warden_v3_shieldwall_chorus"),
+		"Shieldwall Chorus is a supported service card")
+	_check(service.is_authentic_card("warden_v3_shieldwall_chorus"),
+		"Shieldwall Chorus authenticates against the pool catalog")
+	_check(service.is_supported_card("warden_v3_shieldwall_chorus_plus"),
+		"Shieldwall Chorus+ is a supported service card")
+	_check(service.is_authentic_card("warden_v3_shieldwall_chorus_plus"),
+		"Shieldwall Chorus+ authenticates against the pool catalog")
+	var chorus: Dictionary = pool.get_definition("warden_v3_shieldwall_chorus")
+	_check(not chorus.is_empty(), "Shieldwall Chorus definition exists in pool")
+	_check(chorus.get("display_name") == "Shieldwall Chorus", "Chorus display name")
+	_check(chorus.get("cost") == 2, "Chorus costs 2 energy")
+	_check(chorus.get("target_kind") == "party_all", "Chorus targets party_all")
+	_check(chorus.get("from_positions") == [1, 2, 3], "Chorus from_positions [1,2,3]")
+	_check(chorus.get("to_positions") == [], "Chorus has no enemy slot")
+	_check(chorus.get("effects") == {"block_all": 4, "taunt_next_enemy_turn": true},
+		"Chorus effects: block_all 4 + Taunt")
+	_check(chorus.get("rarity") == "uncommon", "Chorus rarity uncommon")
+	_check(chorus.get("reward_eligible") == true, "Chorus is reward eligible")
+	_check(chorus.get("starting_copies") == 0, "Chorus has 0 starting copies")
+	_check(chorus.get("upgrade_id") == "warden_v3_shieldwall_chorus_plus",
+		"Chorus upgrade link points to +")
+	var chorus_plus: Dictionary = pool.get_definition("warden_v3_shieldwall_chorus_plus")
+	_check(not chorus_plus.is_empty(), "Shieldwall Chorus+ definition exists")
+	_check(chorus_plus.get("upgrade_of") == "warden_v3_shieldwall_chorus",
+		"Chorus+ points back to base")
+	_check(chorus_plus.get("reward_eligible") == false, "Chorus+ is not reward eligible")
+	_check(chorus_plus.get("cost") == 2, "Chorus+ costs 2 energy")
+	_check(chorus_plus.get("effects") == {"block_all": 6, "taunt_next_enemy_turn": true},
+		"Chorus+ effects: block_all 6 + Taunt")
 	for unsupported in [
 		"warden_v3_pot_helm_bonk", "warden_v3_pot_helm_bonk_plus", "warden_v3_shield_catch",
 		"warden_v3_rim_toss", "warden_v3_shield_toss", "warden_v3_helmet_rattle",
 		"warden_v3_guard_stitch", "warden_v3_rivet_pummel", "warden_v3_buckle_rebound",
-		"warden_v3_shieldwall_chorus", "warden_v3_final_bastion", "warden_strike",
+		"warden_v3_final_bastion", "warden_strike",
 		"warden_v3_iron_challenge_plus_plus", "warden_v3_iron_taunt_ULTRA", ""]:
 		_check(not service.is_supported_card(unsupported),
 			unsupported + ": not an Iron Challenge / Iron Taunt printing")
@@ -664,6 +696,126 @@ func _test_taunt_service_catalog() -> void:
 		== {"block": 3, "taunt_next_enemy_turn": true}
 		and starter.get_definition("warden_v3_iron_challenge").get("from_positions") == [1],
 		"altered copied data leaves the authored record intact")
+
+
+## Shieldwall Chorus: party-wide Block (4/6) + Taunt, from any seat 1-3, target party_all.
+func _test_shieldwall_chorus_party_all() -> void:
+	var service := CombatWardenV3TauntCards.new()
+	var pool := V3WardenPoolCards.new()
+	# Base card: 4 Block to all living heroes, cost 2, Warden can be in any seat.
+	for base_id in ["warden_v3_shieldwall_chorus", "warden_v3_shieldwall_chorus_plus"]:
+		var deck := _taunt_deck(base_id, 3333)
+		var party := _taunt_party()
+		# Seed each hero with some Block to prove additive.
+		party.gain_block(1, 3)
+		party.gain_block(2, 2)
+		party.gain_block(3, 1)
+		var before := _taunt_snapshot(deck, party, service)
+		var result: Dictionary = service.play_card(deck, party, base_id, "party_all", 0)
+		_check(result.get("ok") == true, base_id + ": paid party_all succeeds")
+		_check(result.get("card_id") == base_id, base_id + ": receipt names card")
+		_check(result.get("cost") == 2, base_id + ": receipt names 2 energy")
+		_check(result.get("taunt_armed") == true, base_id + ": Taunt armed")
+		_check(deck.energy == 1 and deck.combat_state.energy == 1,
+			base_id + ": 3 -> 1 shared energy (cost 2)")
+		_check(deck.hand.count(base_id) == 0 and deck.hand.size() == 4,
+			base_id + ": held copy discarded")
+		_check(deck.discard_pile.count(base_id) == 1 and deck.discard_pile.size() == 1,
+			base_id + ": exactly one discard")
+		# All three living heroes receive the authored Block amount.
+		var expected_block: int = 4 if base_id == "warden_v3_shieldwall_chorus" else 6
+		_check(party.get_hero(1)["block"] == 3 + expected_block,
+			base_id + ": Warden Block 3 + " + str(expected_block))
+		_check(party.get_hero(2)["block"] == 2 + expected_block,
+			base_id + ": middle hero Block 2 + " + str(expected_block))
+		_check(party.get_hero(3)["block"] == 1 + expected_block,
+			base_id + ": rear hero Block 1 + " + str(expected_block))
+		# Downed third hero gains nothing.
+		party.apply_damage(3, 100)
+		_check(party.is_downed(3), base_id + ": rear hero genuinely downed")
+		var down_before := _taunt_snapshot(deck, party, service)
+		var down_result: Dictionary = service.play_card(_taunt_deck(base_id, 4444), party, base_id, "party_all", 0)
+		_check(down_result.get("ok") == true, base_id + ": downed ally still casts")
+		_check(party.get_hero(1)["block"] == 3 + 3 + expected_block + expected_block,
+			base_id + ": Warden gains again with one downed ally")
+		_check(party.get_hero(2)["block"] == 2 + 2 + expected_block + expected_block,
+			base_id + ": middle hero gains again")
+		_check(party.get_hero(3)["block"] == 1 + expected_block,
+			base_id + ": downed rear hero stays at its pre-down Block (no addition)")
+
+	# Warden can cast from seat 2 or 3 (from_positions [1,2,3]).
+	var moved_party := _moved_party(2)
+	var moved_service := CombatWardenV3TauntCards.new()
+	var moved_deck := _taunt_deck("warden_v3_shieldwall_chorus", 5555)
+	var moved_result: Dictionary = moved_service.play_card(moved_deck, moved_party, "warden_v3_shieldwall_chorus", "party_all", 0)
+	_check(moved_result.get("ok") == true, "Chorus from seat 2 succeeds")
+	_check(moved_result.get("owner_position") == 2, "Chorus owner is seat 2")
+
+	# Projection: enemy attack at seat 2 redirects to Warden at current seat.
+	var proj_service := CombatWardenV3TauntCards.new()
+	var proj_party := _taunt_party()
+	var proj_deck := _taunt_deck("warden_v3_shieldwall_chorus", 6666)
+	_check(proj_service.play_card(proj_deck, proj_party, "warden_v3_shieldwall_chorus", "party_all", 0).get("ok"),
+		"projection fixture arms Chorus")
+	proj_deck.end_turn()
+	var proj_target2 := proj_service.project_attack_target(proj_party, 2)
+	_check(proj_target2.get("redirected") == true and proj_target2.get("actual_target_position") == 1,
+		"Chorus redirects attack at seat 2 to Warden at seat 1")
+	var proj_target3 := proj_service.project_attack_target(proj_party, 3)
+	_check(proj_target3.get("redirected") == true and proj_target3.get("actual_target_position") == 1,
+		"Chorus redirects attack at seat 3 to Warden at seat 1")
+
+	# Second legal Taunt refresh and complete_enemy_turn expiry.
+	var refresh_service := CombatWardenV3TauntCards.new()
+	var refresh_party := _taunt_party()
+	var refresh_deck := CombatDeck.new([
+		"warden_v3_shieldwall_chorus", "warden_v3_shieldwall_chorus_plus",
+		TAUNT_FILLERS[0], TAUNT_FILLERS[1], TAUNT_FILLERS[2]], _taunt_rng(7777))
+	refresh_deck.start_turn()
+	_check(refresh_service.play_card(refresh_deck, refresh_party, "warden_v3_shieldwall_chorus", "party_all", 0).get("ok") == true,
+		"refresh: first Chorus arms Taunt")
+	_check(refresh_service.play_card(refresh_deck, refresh_party, "warden_v3_shieldwall_chorus_plus", "party_all", 0).get("ok") == true,
+		"refresh: second Chorus+ refreshes same phase")
+	_check(refresh_service.get_pending_taunt_card_id() == "warden_v3_shieldwall_chorus_plus",
+		"latest card ID is the refreshed one")
+	refresh_deck.end_turn()
+	_check(refresh_service.project_attack_target(refresh_party, 2).get("redirected") == true,
+		"refreshed Taunt redirects")
+	_check(refresh_service.complete_enemy_turn() == true, "complete_enemy_turn consumes once")
+	_check(not refresh_service.has_pending_taunt(), "Taunt expired after complete turn")
+
+	# Refusals for Shieldwall Chorus.
+	var ref_service := CombatWardenV3TauntCards.new()
+	var ref_party := _taunt_party()
+	var ref_deck := _taunt_deck("warden_v3_shieldwall_chorus", 8888)
+	# Invalid target kind for party_all card.
+	_rejected_taunt(ref_service, ref_deck, ref_party, "warden_v3_shieldwall_chorus", "self", 0,
+		"Chorus with self target kind rejected")
+	# Nonzero target position for party_all.
+	_rejected_taunt(ref_service, ref_deck, ref_party, "warden_v3_shieldwall_chorus", "party_all", 1,
+		"Chorus with nonzero target rejected")
+	# Wrong seat: old Iron requires seat 1; this card allows any seat, but missing Warden still fails.
+	var no_warden_party := CombatParty.new([
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26},
+		{"id": "apprentice", "max_hp": 20},
+	])
+	_rejected_taunt(ref_service, _taunt_deck("warden_v3_shieldwall_chorus", 9999), no_warden_party,
+		"warden_v3_shieldwall_chorus", "party_all", 0, "Chorus with missing Warden rejected")
+	# Insufficient energy (needs 2).
+	var short_energy := _taunt_deck("warden_v3_shieldwall_chorus", 7771)
+	short_energy.energy = 1
+	_rejected_taunt(ref_service, short_energy, ref_party, "warden_v3_shieldwall_chorus", "party_all", 0,
+		"Chorus with 1 energy rejected")
+	# Overflow: any recipient overflow rejects entire card.
+	var overflow_party := _taunt_party()
+	overflow_party.gain_block(1, CombatParty.MAX_INT - 1)
+	var overflow_deck := _taunt_deck("warden_v3_shieldwall_chorus", 7772)
+	var overflow_before := _taunt_snapshot(overflow_deck, overflow_party, ref_service)
+	var overflow_result: Dictionary = ref_service.play_card(overflow_deck, overflow_party, "warden_v3_shieldwall_chorus", "party_all", 0)
+	_check(overflow_result.get("ok") == false, "Chorus with overflow Block rejected")
+	_check(_taunt_snapshot(overflow_deck, overflow_party, ref_service) == overflow_before,
+		"overflow refusal mutates nothing")
 
 
 ## AC1: for each of the four authentic printings, one paid self play spends exactly one energy,
