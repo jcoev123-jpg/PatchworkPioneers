@@ -13,8 +13,12 @@ extends RefCounted
 ## Enrage is a quote plus an opt-in commit: the quote reports the stacks and
 ## additive attack bonus after one confirmed hit without touching anything, and
 ## the commit persists exactly that quote's `enrage_stacks` onto the same
-## authoritative roster slot (nothing else on the enemy changes). No live attack
-## intent reads it here; runtime attack scaling is a separate task.
+## authoritative roster slot (nothing else on the enemy changes).
+## Enrage additionally exposes a deterministic read-only action projection
+## (project_enrage_action / project_enrage_attack_action) that adds 2 * enrage_stacks
+## (+2/+4/+6) to an authored attack action while passing non-attack actions
+## through unchanged. Live enemy-phase attack wiring follows in a later task.
+
 ## Drain is an opt-in service: the battle caller invokes it once per CONFIRMED
 ## enemy hit, passing the authentic CombatStatusAttacks.resolve_vs_hero receipt
 ## for that hit. It heals only the hero HP loss of that hit, so Block-absorbed
@@ -128,6 +132,128 @@ func commit_enrage_after_hit(enemies: CombatEnemies, enemy_position: int,
 	if not enemies.set_enrage_stacks(enemy_position, quote["enrage_stacks"]):
 		return _enrage_failure()
 	return quote
+
+
+## Project an already-floor-scaled authored action through the Enrage keyword.
+## enemy: detached snapshot of a living enemy (e.g. from CombatEnemies.get_enemy).
+##   A valid Enrage source has `enrage: true` and optional integer `enrage_stacks` (0..3).
+##   A valid non-Enrage enemy snapshot is accepted and leaves actions unchanged.
+## action: authored or pre-scaled action dictionary (e.g. {type: "attack", amount: 3}).
+## Returns a detached receipt {ok, applied, action, enrage_stacks, attack_bonus}.
+## For type == "attack", adds 2 * enrage_stacks (hard +6 ceiling) to the integer amount.
+## For other valid action types (buff, shove, etc.), returns the action unchanged.
+## Preserves target_position, weight, and all other action fields.
+## Malformed/slain enemy snapshot, invalid stacks, negative/noninteger attack amount,
+## or malformed action fail closed to ok=false without side effects.
+## Inputs are never mutated and no RNG is used.
+func project_enrage_action(enemy: Variant, action: Variant) -> Dictionary:
+	if not enemy is Dictionary or not action is Dictionary:
+		return _enrage_action_failure()
+	if not _valid_action_enemy(enemy) or not _valid_action_record(action):
+		return _enrage_action_failure()
+	var projected: Dictionary = (action as Dictionary).duplicate(true)
+	var is_enrage: bool = enemy.get("enrage", false) == true
+	var stacks: int = enemy.get("enrage_stacks", 0) if is_enrage else 0
+	if not is_enrage or action.get("type") != "attack":
+		return {
+			"ok": true,
+			"applied": false,
+			"action": projected,
+			"enrage_stacks": stacks,
+			"attack_bonus": 0,
+		}
+	var bonus: int = mini(stacks, ENRAGE_MAX_STACKS) * ENRAGE_ATTACK_BONUS_PER_STACK
+	projected["amount"] = (action.get("amount") as int) + bonus
+	return {
+		"ok": true,
+		"applied": bonus > 0,
+		"action": projected,
+		"enrage_stacks": stacks,
+		"attack_bonus": bonus,
+	}
+
+
+## Stable API alias for project_enrage_action.
+func project_enrage_attack_action(enemy: Variant, action: Variant) -> Dictionary:
+	return project_enrage_action(enemy, action)
+
+
+## Stable API alias for project_enrage_action.
+func project_enrage_attack(enemy: Variant, action: Variant) -> Dictionary:
+	return project_enrage_action(enemy, action)
+
+
+func _enrage_action_failure() -> Dictionary:
+	return {
+		"ok": false,
+		"applied": false,
+		"action": {},
+		"enrage_stacks": 0,
+		"attack_bonus": 0,
+	}
+
+
+func _valid_action_enemy(enemy: Dictionary) -> bool:
+	if not _valid_enrage_enemy(enemy):
+		return false
+	if enemy.has("max_hp"):
+		var max_hp: Variant = enemy.get("max_hp")
+		if not max_hp is int or max_hp <= 0:
+			return false
+		var hp: Variant = enemy.get("hp")
+		if hp is int and hp > max_hp:
+			return false
+	if not enemy.has("id"):
+		return false
+	var id: Variant = enemy.get("id")
+	if not id is String or (id as String).is_empty():
+		return false
+	if enemy.has("position"):
+		var pos: Variant = enemy.get("position")
+		if not pos is int or pos < 1 or pos > CombatEnemies.MAX_ENEMIES:
+			return false
+	return true
+
+
+func _valid_action_record(action: Dictionary) -> bool:
+	if action.is_empty():
+		return false
+	var kind: Variant = action.get("type")
+	if not kind is String or (kind as String).is_empty():
+		return false
+	if kind not in ["attack", "buff", "shove", "block", "debuff", "snip_block", "summon"]:
+		return false
+	if kind == "attack":
+		if not action.has("amount"):
+			return false
+		var amount: Variant = action.get("amount")
+		if not amount is int or amount < 0:
+			return false
+	if action.has("amount"):
+		var amt: Variant = action.get("amount")
+		if not amt is int or amt < 0:
+			return false
+	if action.has("target_position"):
+		var target: Variant = action.get("target_position")
+		if not target is int or target < 1 or target > 3:
+			return false
+	if action.has("direction"):
+		var dir: Variant = action.get("direction")
+		if not dir is int:
+			return false
+	if action.has("weight"):
+		var weight: Variant = action.get("weight")
+		if not weight is int or weight < 0:
+			return false
+	if action.has("hits"):
+		var hits: Variant = action.get("hits")
+		if not hits is int or hits <= 0:
+			return false
+	if action.has("status"):
+		var status: Variant = action.get("status")
+		if not status is String or (status as String).is_empty():
+			return false
+	return true
 
 
 ## The authoritative slot must still be the exact source the caller snapshotted.
