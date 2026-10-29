@@ -1502,6 +1502,9 @@ func _run() -> void:
 	await _test_mounted_worn_patches()
 	await _test_mounted_red_bobbin_cuff()
 	await _test_effective_sewn_bleed()
+	for index in range(V3_IDS.size()):
+		await _v3_play(V3_IDS[index], ["mouse", "enter", "space", "duplicate"][index % 4])
+	await _v3_refusals()
 	app.free()
 	_finish()
 
@@ -1512,3 +1515,252 @@ func _finish() -> void:
 	print("live_seamstress_single_bleed_hand_test: %d checks, %d failures" % [
 		checks, failures.size()])
 	quit(0 if failures.is_empty() else 1)
+
+
+## V3 shares the real panel, target strip and fight session with the D2 actions
+## above; the detached oracle is the accepted V3 paid rules authority.
+const V3_IDS := [
+	"seamstress_v3_thread_prick", "seamstress_v3_thread_prick_plus",
+	"seamstress_v3_needle_rain", "seamstress_v3_needle_rain_plus",
+	"seamstress_v3_scarlet_knot", "seamstress_v3_scarlet_knot_plus",
+]
+
+
+func _v3_oracle(id: String, before: Array, position: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(before[7])
+	rng.state = int(before[8])
+	var deck := CombatDeck.new([], rng)
+	deck.draw_pile.assign(before[0])
+	deck.hand.assign(before[1])
+	deck.discard_pile.assign(before[2])
+	deck.combat_state.energy = int(before[3])
+	deck.combat_state.player_turn_active = bool(before[4])
+	var party := CombatParty.new(app._load_party_definitions())
+	party._heroes.assign((before[5] as Array).duplicate(true))
+	var definitions: Array[Dictionary] = []
+	for enemy in before[6]:
+		definitions.append({"id": String(enemy.id), "max_hp": int(enemy.max_hp)})
+	var enemies := CombatEnemies.new(definitions)
+	enemies._enemies.assign((before[6] as Array).duplicate(true))
+	var receipt := CombatSeamstressV3RedThreadCards.new().play_card(
+		deck, party, enemies, id, position)
+	return {"receipt": receipt, "draw": deck.draw_pile, "hand": deck.hand,
+		"discard": deck.discard_pile, "energy": deck.energy,
+		"heroes": party.get_heroes(), "enemies": enemies.get_enemies(),
+		"rng": rng.state}
+
+
+func _v3_arm(id: String, keyboard: bool) -> bool:
+	var panel := _panel(id)
+	_check(panel != null and adapter._bindings.has(panel), "V3 authentic mounted panel: " + id)
+	if panel == null:
+		return false
+	if keyboard:
+		panel.grab_focus()
+		await _key(KEY_SPACE if id.ends_with("_plus") else KEY_ENTER)
+	else:
+		await _mouse(panel)
+	var definition: Dictionary = adapter._definition(id)
+	_check(not definition.is_empty() and adapter._choice.get("id") == id
+		and is_instance_valid(adapter.target_strip) and adapter.target_strip.is_visible_in_tree(),
+		"V3 genuine mouse/keyboard input opens same sewn enemy strip: " + id)
+	if adapter.target_strip == null:
+		return false
+	var rule := adapter.target_strip.find_child("Rule", true, false) as Label
+	_check(rule != null and rule.text.contains(definition.display_name)
+		and rule.text.contains("Cost 1") and rule.text.contains("From 1,2,3")
+		and rule.text.contains("One living enemy 1,2,3"),
+		"V3 strip exposes exact authored name, energy and FROM/TO: " + id)
+	_check(adapter._targets.has(1) and adapter._targets.has(2)
+		and not adapter._targets.has(4)
+		and adapter.target_strip.find_child("Enemy4", true, false) == null,
+		"only living original TO positions are selectable: " + id)
+	return true
+
+
+func _v3_play(id: String, mode: String) -> void:
+	if not await _start(id):
+		await _return()
+		return
+	var definition: Dictionary = adapter._definition(id)
+	var metadata = app.get_node("LiveSupportHand")._metadata
+	var face: Dictionary = metadata.describe(id)
+	var panel := _panel(id)
+	_check(face.get("known", false) and face.get("display_name") == definition.display_name
+		and face.get("owner") == "seamstress" and face.get("cost") == 1
+		and face.get("from_text") == "From 1–3"
+		and face.get("target_text") == "To enemy 1–3"
+		and metadata.short_line(id).contains("Bleed")
+		and panel.gui_input.get_connections().size() == 1,
+		"authentic V3 printing is drawn once with sewn face and one active input: " + id)
+	# Nonzero existing status and a distinct untargeted enemy expose additive,
+	# pre-hit status and isolation mistakes.
+	app.party._heroes[1]["statuses"] = {"weak": 1}
+	_check(app.enemies.apply_statuses({1: {"bleed": 2, "exposed": 1}})
+		and app.enemies.gain_block(1, 2)
+		and app.enemies.apply_statuses({2: {"weak": 2}})
+		and app.enemies.gain_block(2, 4), "V3 uses real two-enemy status and Block fixture")
+	app._refresh_enemy_roster()
+	var before := _state()
+	var callback: Callable = adapter._bindings[panel].callback
+	if not await _v3_arm(id, mode != "mouse"):
+		await _return()
+		return
+	var preview := adapter.target_strip.find_child("OutcomePreview", true, false) as Label
+	_check(preview != null and preview.text.contains("Bleed")
+		and not preview.text.contains("Now:")
+		and not preview.text.contains(" HP)"),
+		"V3 preview describes applied statuses without inventing HP forecast: " + id)
+	_check(_state() == before, "opening and previewing V3 never spends or advances RNG: " + id)
+	var target: Button = adapter._targets[1]
+	if mode == "mouse":
+		await _mouse(target)
+	elif mode == "duplicate":
+		target.pressed.emit()
+		target.pressed.emit()
+		await _frames()
+	else:
+		target.grab_focus()
+		await _key(KEY_SPACE if mode == "space" else KEY_ENTER)
+	var oracle := _v3_oracle(id, before, 1)
+	var receipt: Dictionary = oracle.receipt
+	_check(receipt.get("ok", false) and receipt.get("reason") == "applied"
+		and adapter.last_event == receipt,
+		"mounted paid V3 receipt equals independent accepted resolver: " + id)
+	_check(app.deck.draw_pile == oracle.draw and app.deck.hand == oracle.hand
+		and app.deck.discard_pile == oracle.discard and app.deck.energy == oracle.energy
+		and app.party.get_heroes() == oracle.heroes and app.enemies.get_enemies() == oracle.enemies,
+		"complete mutable combat models equal V3 paid oracle: " + id)
+	_check(app.deck.energy == int(before[3]) - 1
+		and app.deck.hand.count(id) == int(before[1].count(id)) - 1
+		and app.deck.discard_pile.count(id) == int(before[2].count(id)) + 1,
+		"one real copy and exactly one energy are paid, even on double press: " + id)
+	_check(app.run_rng.seed == before[7] and app.run_rng.state == before[8]
+		and app.deck._rng.state == before[9] and oracle.rng == before[8],
+		"run and deck seeded RNG remain untouched by V3: " + id)
+	_check(app.enemy_intents.get_intents() == before[10] and app.enemy_intents._turn_index == before[11]
+		and app.enemy_attacks == before[12] and app.intent_label.text == before[13]
+		and app.battle_result.get_outcome() == before[14] and app.session_gold == before[15],
+		"live intent, result and wallet remain coherent after paid V3: " + id)
+	var old: Dictionary = before[6][0]
+	var after: Dictionary = app.enemies.get_enemy(1)
+	var spec: Dictionary = CombatSeamstressV3RedThreadCards.CARDS[id]
+	_check(int(after.statuses.get("bleed", 0)) == int(old.statuses.get("bleed", 0)) + int(spec.bleed) + 1
+		and receipt.bleed_applied == int(spec.bleed) + 1
+		and receipt.passive_bleed == 1,
+		"exact printed plus one passive Bleed, only once: " + id)
+	_check(int(after.statuses.get("weak", 0)) == int(old.statuses.get("weak", 0)) + int(spec.weak)
+		and receipt.weak_applied == int(spec.weak),
+		"authored Weak (or zero) added only after V3 hit: " + id)
+	if int(spec.damage) == 0:
+		_check(after.hp == old.hp and after.block == old.block
+			and receipt.damage == 0 and receipt.hp_loss == 0
+			and receipt.block_absorbed == 0,
+			"Scarlet Knot never strikes nor consumes Block or HP: " + id)
+	else:
+		_check(receipt.printed_damage == int(spec.damage) and receipt.block_before == old.block
+			and receipt.hp_after == after.hp and receipt.block_after == after.block
+			and receipt.block_absorbed + receipt.hp_loss == receipt.damage,
+			"one pre-hit status-modified strike consumes Block before HP: " + id)
+	_check(app.enemies.get_enemy(2) == before[6][1]
+		and app.party.get_heroes() == before[5],
+		"unselected original enemy and all heroes unchanged: " + id)
+	_check(adapter.target_strip == null and adapter._choice.is_empty()
+		and adapter._targets.is_empty() and adapter._preview == null
+		and app.get_node("LiveSupportHand").energy_label.text == str(app.deck.energy),
+		"V3 target listener cleaned and mounted energy refreshed: " + id)
+	_check(app._quilt_hand_snapshot == app.deck.hand and app._quilt_discard_snapshot == app.deck.discard_pile
+		and app.pile_label.text == "Draw: %d | Discard: %d" % [
+			app.deck.draw_pile.size(), app.deck.discard_pile.size()],
+		"quilt and pile display refreshed after V3: " + id)
+	var after_state := _state()
+	callback.call(_press())
+	await _frames()
+	_check(_state() == after_state, "stale V3 panel cannot double-pay after redraw: " + id)
+	await _return()
+
+
+func _v3_refusals() -> void:
+	var id := V3_IDS[0]
+	# Escape and now-invalid legal target must never pay.
+	if await _start(id):
+		var before := _state()
+		if await _v3_arm(id, false):
+			await _key(KEY_ESCAPE)
+			_check(_state() == before and adapter._choice.is_empty()
+				and adapter.target_strip == null and adapter._targets.is_empty(),
+				"V3 Escape cancels with exact full-model no-op")
+		await _return()
+	for kind in ["energy", "owner_downed", "owner_missing", "inactive", "slain", "unknown", "terminal", "closed", "wrong_hero"]:
+		if not await _start(id):
+			await _return()
+			continue
+		if kind == "energy":
+			app.deck.combat_state.energy = 0
+		elif kind == "owner_downed":
+			_check(app.party.apply_damage(2, 10000), "V3 downed owner fixture")
+		elif kind == "owner_missing":
+			app.party._heroes[1]["id"] = "not_seamstress"
+		elif kind == "inactive":
+			_check(app.deck.end_turn(), "V3 inactive turn fixture")
+		elif kind == "slain":
+			for enemy in app.enemies.get_enemies():
+				_check(app.enemies.apply_damage(int(enemy.position), 10000),
+					"V3 invalid target fixture slays original enemy")
+		elif kind == "terminal":
+			app.battle_result._outcome = CombatBattleResult.DEFEAT
+		elif kind == "closed":
+			app._battle_closed = true
+		elif kind == "wrong_hero":
+			app.party._heroes[1]["position"] = 4
+		elif kind == "unknown":
+			app.deck.hand[app.deck.hand.find(id)] = "seamstress_v3_thread_prick_forged"
+			app._refresh_hand()
+		await _frames()
+		var before := _state()
+		var panel := _panel(id)
+		if panel != null:
+			adapter._on_card_input(_press(), panel, id)
+		await _frames()
+		_check(_state() == before and adapter._choice.is_empty()
+			and adapter.target_strip == null and adapter.last_event.is_empty(),
+			"V3 fail-closed mounted refusal %s leaves full session unchanged" % kind)
+		await _return()
+	for kind in ["hand", "energy", "roster", "turn", "target", "deck", "panel", "battle", "rng"]:
+		if not await _start(id):
+			await _return()
+			continue
+		if not await _v3_arm(id, false):
+			await _return()
+			continue
+		if kind == "hand":
+			app.deck.hand.append("warden_strike")
+		elif kind == "energy":
+			app.deck.combat_state.energy -= 1
+		elif kind == "roster":
+			_check(app.enemies.gain_block(1, 1), "V3 roster stale fixture")
+		elif kind == "turn":
+			app.enemy_intents._turn_index += 1
+		elif kind == "target":
+			_check(app.enemies.apply_damage(1, 10000), "V3 selected target slain")
+			# Its visible intent is legitimately invalidated by the fixture kill.
+			# Settle that observation before the no-drift snapshot.
+			app._refresh_intents()
+		elif kind == "deck":
+			app.deck.draw_pile.append("warden_strike")
+		elif kind == "panel":
+			_panel(id).get_child(0).text = "fake_hand_label"
+		elif kind == "battle":
+			# A new fight/result identity invalidates the earlier pending chooser.
+			app.battle_result = CombatBattleResult.new(app.party, app.enemies)
+		elif kind == "rng":
+			app.run_rng.state += 1
+		var before := _state()
+		var old_token: int = adapter._token
+		adapter._on_target_pressed(1, String(app.enemies.get_enemy(1).id), old_token)
+		await _frames()
+		_check(_state() == before and adapter.last_event.is_empty()
+			and adapter._choice.is_empty() and adapter.target_strip == null,
+			"stale V3 %s refuses and clears picker without status, energy or RNG drift" % kind)
+		await _return()

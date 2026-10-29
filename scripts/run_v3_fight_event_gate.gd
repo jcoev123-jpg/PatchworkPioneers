@@ -3,7 +3,7 @@ extends RefCounted
 ## Scene-free, one-visit V3-4 Event Fight-choice admission and settlement gate.
 ##
 ## Reads and validates res://data/events/v3_fight_choice_events.json (or an
-## injected catalog dictionary that preserves all five required crossroads and
+## injected catalog dictionary that preserves all required crossroads and
 ## contains only valid unique records). Each visit binds one authenticated
 ## catalog record, verifies its metadata field `fight_choice_id` against the
 ## event's offered choices, and delegates wallet settlement and the one-claim
@@ -54,6 +54,12 @@ const REQUIRED_EVENTS := {
 		"paid_outcome": {"gold": -20, "scraps": 0},
 		"leave_choice_id": "leave",
 	},
+	"v3_bellspool_picket": {
+		"fight_choice_id": "ring_the_bells",
+		"paid_choice_id": "pay_bell_toll",
+		"paid_outcome": {"gold": -16, "scraps": 0},
+		"leave_choice_id": "leave",
+	},
 }
 
 const REQUIRED_EVENT_IDS := [
@@ -62,6 +68,7 @@ const REQUIRED_EVENT_IDS := [
 	"v3_lanternless_ambush",
 	"v3_knotted_yarn_patrol",
 	"v3_buttonwall_checkpoint",
+	"v3_bellspool_picket",
 ]
 
 var _catalog_valid: bool = false

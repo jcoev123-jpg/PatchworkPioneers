@@ -26,6 +26,7 @@ const SOURCES := [
     "res://data/encounters/marshal_threadclamp_elite.json",
     "res://data/encounters/hexer_patchguard_elite.json",
     "res://data/encounters/patchwork_behemoth.json",
+    "res://data/encounters/sewing_machine_colossus.json",
     "res://data/encounters/triple_spool_pinch.json",
     "res://data/encounters/double_hem_siege.json",
     "res://data/encounters/seamshift_tripwire.json",
@@ -34,7 +35,7 @@ const HP := {
     "ragling": 12, "ragling_guard": 12, "fray_scavenger": 14,
     "spool_stalker": 14, "button_guard": 16, "seam_ripper": 18,
     "needle_marshal": 28, "spool_hexer": 24,
-    "patchwork_behemoth": 84,
+    "patchwork_behemoth": 84, "sewing_machine_colossus": 96,
 }
 const NAMES := {
     "ragling": "Ragling", "ragling_guard": "Guard Ragling",
@@ -42,6 +43,7 @@ const NAMES := {
     "button_guard": "Button Guard", "seam_ripper": "Seam Ripper",
     "needle_marshal": "Needle Marshal", "spool_hexer": "Spool Hexer",
     "patchwork_behemoth": "Patchwork Behemoth",
+    "sewing_machine_colossus": "Sewing-Machine Colossus",
 }
 const ART_PATHS := {
     "ragling": "res://assets/paper/enemies/ragling.png",
@@ -53,6 +55,7 @@ const ART_PATHS := {
     "needle_marshal": "res://assets/paper/enemies/needle_marshal.png",
     "spool_hexer": "res://assets/paper/enemies/spool_hexer.png",
     "patchwork_behemoth": "res://assets/paper/enemies/patchwork_behemoth.png",
+    "sewing_machine_colossus": "res://assets/paper/enemies/sewing_machine_colossus.png",
 }
 const BINDINGS := {
     "Fight": {
@@ -80,7 +83,8 @@ const BINDINGS := {
         "marshal_threadclamp_elite": ["needle_marshal", "spool_stalker"],
         "hexer_patchguard_elite": ["spool_hexer", "button_guard"],
     },
-    "Boss": {"patchwork_behemoth": ["patchwork_behemoth"]},
+    "Boss": {"patchwork_behemoth": ["patchwork_behemoth"],
+        "sewing_machine_colossus": ["sewing_machine_colossus"]},
 }
 const SEAMSHIFT := "seamshift_tripwire"
 const SEAMSHIFT_ROSTER := ["seam_ripper", "spool_stalker", "fray_scavenger"]
@@ -484,6 +488,13 @@ func _expected_actions() -> Dictionary:
              {"type": "debuff", "amount": 1, "target_position": 2, "status": "weak"},
              {"type": "attack", "amount": 2, "target_position": 2}],
         ],
+        "sewing_machine_colossus": [
+            [{"type": "attack", "amount": 3, "target_position": 1},
+             {"type": "block", "amount": 5},
+             {"type": "attack", "amount": 3, "target_position": 2},
+             {"type": "debuff", "amount": 1, "target_position": 3, "status": "weak"},
+             {"type": "attack", "amount": 3, "target_position": 3}],
+        ],
     }
 
 
@@ -874,8 +885,11 @@ func _test_atomic_rejection_and_retry() -> void:
     _reject(boss_map, boss_rng, boss_selector, bad_boss, "unknown boss catalog ID")
     var after_boss := RunAuthoredBattleEntry.new().entry_current_battle(
         boss_map, boss_rng, boss_selector)
-    _verify_entry(after_boss, "Boss", "patchwork_behemoth",
-        "Boss successful retry after failed validation")
+    _check(after_boss.get("encounter_id") in BINDINGS["Boss"],
+        "Boss retry selects one of the two authenticated candidates")
+    if after_boss.get("success", false):
+        _verify_entry(after_boss, "Boss", after_boss["encounter_id"],
+            "Boss successful retry after failed validation")
 
 
 ## AC1: the typed Fight registry gains exactly one new binding, the on-disk

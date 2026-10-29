@@ -56,7 +56,10 @@ func _defs(path: String) -> Array:
 
 func _battle(path: String) -> Dictionary:
 	var party := CombatParty.new(_defs(PARTY))
-	var enemies := CombatEnemies.new(_defs(path))
+	var records := _defs(path)
+	if path == BOSS:
+		records = records.filter(func(entry): return entry.get("id") == "patchwork_behemoth")
+	var enemies := CombatEnemies.new(records)
 	_check(party.is_valid() and enemies.is_valid() and not party.is_defeated()
 		and not enemies.is_victorious(), "real battle actors start alive")
 	var result := CombatBattleResult.new(party, enemies)

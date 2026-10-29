@@ -19,6 +19,13 @@ extends SceneTree
 ## Extended again with the paid Overload / Overload+ resolver (CombatTinkerV3OverloadCards): the
 ## printed 2 + 3 / 3 + 4 per-Combat-Scrap raw damage, spending the whole counter, enemy Block before
 ## HP, and fail-closed preflight.
+##
+## Extended once more with Jury-rig / Jury-rig+ (CombatTinkerV3JuryRigCards): the authentic rare
+## printing pair, the paid once-per-combat marker, and the detached zero-cost free-play instruction
+## for the most recent genuinely committed OTHER card of the same combat. That resolver PREPARES the
+## copy only; replaying the copied card through its own resolver from the real held hand, and
+## admitting these IDs to the mounted hand, are later, separately owned wiring tasks, so no case here
+## claims live player availability.
 
 const CombatDeck = preload("res://scripts/combat_deck.gd")
 const CombatParty = preload("res://scripts/combat_party.gd")
@@ -31,6 +38,8 @@ const CombatTinkerV3TurretCards = preload(
 	"res://scripts/combat_tinker_v3_turret_cards.gd")
 const CombatTinkerV3CasingClampCards = preload(
 	"res://scripts/combat_tinker_v3_casing_clamp_cards.gd")
+const CombatTinkerV3JuryRigCards = preload(
+	"res://scripts/combat_tinker_v3_jury_rig_cards.gd")
 
 const SCRAP_GEAR := "tinker_v3_gear_brace"
 const SCRAP_GEAR_PLUS := "tinker_v3_gear_brace_plus"
@@ -51,6 +60,14 @@ const CASING_PLUS := "tinker_v3_brass_casing_plus"
 const CLAMP := "tinker_v3_spring_clamp"
 const CLAMP_PLUS := "tinker_v3_spring_clamp_plus"
 const CASING_CLAMP_IDS: Array[String] = [CASING, CASING_PLUS, CLAMP, CLAMP_PLUS]
+
+const JURY := "tinker_v3_jury_rig"
+const JURY_PLUS := "tinker_v3_jury_rig_plus"
+const JURY_IDS: Array[String] = [JURY, JURY_PLUS]
+## The detached free-copy instruction's complete, closed key set (independent of the resolver's own
+## building code).
+const JURY_COPY_KEYS: Array[String] = ["card_id", "cost_override", "from_positions", "kind",
+	"one_time", "owner", "target_kind", "to_positions"]
 ## The detached pending instance's complete, closed key set (independent of the resolver's own constant).
 const TURRET_STATE_KEYS: Array[String] = ["kind", "card_id", "damage", "duration_turns",
 	"remaining", "tick", "target_kind", "living_targets_only", "rng_source"]
@@ -103,6 +120,10 @@ func _initialize() -> void:
 	_test_casing_clamp_paid_plays()
 	_test_casing_clamp_second_copy()
 	_test_casing_clamp_refusals()
+	_test_jury_rig_catalog_contract()
+	_test_jury_rig_paid_plays()
+	_test_jury_rig_history_order()
+	_test_jury_rig_refusals()
 	_finish()
 
 
@@ -3308,4 +3329,634 @@ func _rejected_casing_clamp(resolver: CombatTinkerV3CasingClampCards, deck: Comb
 		label + ": refusal reason is " + reason + " (got " + str(result.get("reason")) + ")")
 	_check(_battle_snapshot(deck, party, enemies) == before,
 		label + ": unchanged energy, hand, piles, turn, party, counters, enemies, statuses and RNG")
+
+
+## ---------------------------------------------------------------------------
+## Jury-rig / Jury-rig+: the paid once-per-combat zero-cost copy preparation.
+## ---------------------------------------------------------------------------
+
+
+## The authored record that owns a witness card ID, taken from a real catalog (never a test-local
+## copy), so an independent oracle can compare the prepared instruction against the printed line.
+func _jury_source_record(card_id: String) -> Dictionary:
+	var starter := StarterCards.new()
+	if starter.has_card(card_id):
+		return starter.get_definition(card_id)
+	var v3 := V3TinkerPoolCards.new()
+	if v3.has_card(card_id):
+		return v3.get_definition(card_id)
+	var v2 := TinkerPoolCards.new()
+	if v2.has_card(card_id):
+		return v2.get_definition(card_id)
+	return {}
+
+
+## One genuine successful committed-play receipt for a real authored card, carrying exactly that
+## card's owner, FROM/TO seats and target kind.
+func _jury_receipt(card_id: String) -> Dictionary:
+	var record := _jury_source_record(card_id)
+	_check(not record.is_empty(), "witness fixture: " + card_id + " is an authored card")
+	return {
+		"ok": true,
+		"card_id": card_id,
+		"owner": record.get("owner"),
+		"from_positions": (record.get("from_positions", []) as Array).duplicate(),
+		"to_positions": (record.get("to_positions", []) as Array).duplicate(),
+		"target_kind": record.get("target_kind"),
+	}
+
+
+## A genuine rejected play receipt: that card was attempted and never committed.
+func _jury_failed_receipt(card_id: String) -> Dictionary:
+	return {"ok": false, "reason": "insufficient_energy", "card_id": card_id}
+
+
+## The battle state plus this combat's once-use marker and the witnessed history of the last accepted
+## play, so a refusal can prove it left all three untouched.
+func _jury_snapshot(deck: CombatDeck, party: CombatParty,
+		resolver: CombatTinkerV3JuryRigCards) -> Dictionary:
+	var snapshot := _scrap_snapshot(deck, party)
+	if resolver != null:
+		snapshot["used_this_combat"] = resolver.has_used_this_combat()
+		snapshot["history"] = resolver.committed_history()
+	return snapshot
+
+
+## The exact Jury-rig outcome: the printed cost paid once and exactly the held copy in the discard;
+## no HP, Block, counter, draw pile, discard refill or RNG change, and no replayed copy effect.
+func _expected_jury(before: Dictionary, card_id: String, cost: int) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] = int(expected["energy"]) - cost
+	expected["state_energy"] = int(expected["state_energy"]) - cost
+	var hand: Array = expected["hand"]
+	_check(hand.count(card_id) == 1, "expected snapshot: exactly one played Jury-rig copy is held")
+	hand.remove_at(hand.find(card_id))
+	(expected["discard"] as Array).append(card_id)
+	return expected
+
+
+func _rejected_jury(resolver: CombatTinkerV3JuryRigCards, deck: CombatDeck,
+		party: CombatParty, card_id: Variant, receipts: Variant, target: int,
+		reason: String, label: String) -> void:
+	var before := _jury_snapshot(deck, party, resolver)
+	var plan: Dictionary = resolver.preflight(deck, party, card_id, receipts, target)
+	_check(plan.get("ok") == false and plan.get("reason") == reason,
+		label + ": pure preflight refuses with " + reason + " (got " + str(plan.get("reason")) + ")")
+	_check(_jury_snapshot(deck, party, resolver) == before,
+		label + ": preflight itself changed no state")
+	var result: Dictionary = resolver.play_card(deck, party, card_id, receipts, target)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("reason") == reason,
+		label + ": refusal reason is " + reason + " (got " + str(result.get("reason")) + ")")
+	_check(_jury_snapshot(deck, party, resolver) == before,
+		label + ": unchanged energy, hand, piles, turn, party, once-use marker, history and RNG")
+
+
+## AC1 (catalog half): the resolver authenticates exactly the two authored Jury-rig printings, and a
+## rewritten, relinked, copied or foreign record can never act as Jury-rig.
+func _test_jury_rig_catalog_contract() -> void:
+	var catalog := V3TinkerPoolCards.new()
+	var resolver := CombatTinkerV3JuryRigCards.new()
+	var expected := {
+		JURY: {"display": "Jury-rig", "cost": 2, "is_upgrade": false},
+		JURY_PLUS: {"display": "Jury-rig+", "cost": 1, "is_upgrade": true},
+	}
+	for card_id: String in JURY_IDS:
+		var row: Dictionary = expected[card_id]
+		var record: Dictionary = catalog.get_definition(card_id)
+		_check(not record.is_empty(), card_id + " is authored in the v3 Tinker catalog")
+		if record.is_empty():
+			continue
+		_check(record.get("display_name") == row["display"], card_id + " display name")
+		_check(record.get("owner") == "tinker", card_id + " is owned by Tinker")
+		_check(record.get("rarity") == "rare", card_id + " keeps its rare rarity")
+		_check(record.get("cost") == row["cost"], card_id + " prints cost " + str(row["cost"]))
+		_check(record.get("from_positions") == [2, 3], card_id + " prints FROM 2-3")
+		_check(record.get("target_kind") == "self", card_id + " targets self")
+		_check(record.get("to_positions") == [], card_id + " prints an empty TO line")
+		_check(record.get("effects") == {"copy_previous_card": true, "copied_card_cost": 0,
+			"once_per_combat": true, "exclude_self": true}, card_id + " prints the exact copy rule")
+		_check(record.get("starting_copies") == 0, card_id + " is never a starting copy")
+		_check(not record.has("upgrade_of"), card_id + " links with base_id/upgrade_id/is_upgrade")
+		_check(record.get("base_id") == JURY and record.get("upgrade_id") == JURY_PLUS
+			and record.get("is_upgrade") == row["is_upgrade"], card_id + " preserves the base/+ link")
+		_check(resolver.is_supported_card(card_id), card_id + " is a supported Jury-rig printing")
+		_check(CombatTinkerV3JuryRigCards.is_authentic_definition(record, card_id),
+			card_id + " passes the definition authenticator")
+		_check(CombatTinkerV3JuryRigCards.jury_rig_definition(card_id) == record,
+			card_id + " resolves to its exact detached catalog record")
+	_check(catalog.get_upgrade_id(JURY) == JURY_PLUS and catalog.get_upgrade_id(JURY_PLUS) == "",
+		"Jury-rig+ stays the one upgrade of Jury-rig, never a new base")
+
+	# Detached: mutating a resolved record cannot rewrite what the next resolution returns.
+	var sample := CombatTinkerV3JuryRigCards.jury_rig_definition(JURY)
+	_check(not sample.is_empty(), "Jury-rig resolution fixture loaded")
+	if not sample.is_empty():
+		sample["effects"]["copied_card_cost"] = 3
+		sample["effects"]["exclude_self"] = false
+		sample["from_positions"].clear()
+		sample["cost"] = 0
+		_check(CombatTinkerV3JuryRigCards.jury_rig_definition(JURY) == catalog.get_definition(JURY),
+			"a mutated Jury-rig definition cannot poison later resolutions")
+
+	# Every other v3 Tinker card (base and plus) is unrelated to this service.
+	var unrelated: Array[String] = []
+	for base_id in catalog.get_pool_card_ids():
+		if not JURY_IDS.has(base_id):
+			unrelated.append(base_id)
+		var upgrade_id: String = catalog.get_upgrade_id(base_id)
+		if not upgrade_id.is_empty() and not JURY_IDS.has(upgrade_id):
+			unrelated.append(upgrade_id)
+	_check(unrelated.has("tinker_v3_brass_casing") and unrelated.has("tinker_v3_scrapstorm_plus"),
+		"unrelated-card fixture really contains other authentic v3 Tinker cards (precondition)")
+	for other_id: String in unrelated:
+		_check(CombatTinkerV3JuryRigCards.jury_rig_definition(other_id).is_empty(),
+			other_id + " does not resolve as Jury-rig")
+		_check(not resolver.is_supported_card(other_id),
+			other_id + " is not a supported Jury-rig printing")
+
+	# The v2 Tinker pool, starter cards and foreign spellings are never Jury-rig printings.
+	var forged: Array = ["tinker_rivet_shot", "tinker_pop_shot", "tinker_scrap_bomb",
+		"tinker_v3_jury_rig+", "tinker_v3_jury_rig_plus_plus", "tinker_v3_jury_rig_", "jury_rig",
+		"TINKER_V3_JURY_RIG", "", "tinker_v3_missing_card", StringName(JURY), null, 0, 3.5, false,
+		[], {}]
+	for other_id: Variant in forged:
+		_check(CombatTinkerV3JuryRigCards.jury_rig_definition(other_id).is_empty(),
+			"forged or non-string ID never resolves as Jury-rig: " + str(other_id))
+		_check(not resolver.is_supported_card(other_id),
+			"forged or non-string ID is never a supported Jury-rig printing: " + str(other_id))
+
+	# Adversarial copies of the real Jury-rig record: each altered contract field is refused.
+	var base_record: Dictionary = catalog.get_definition(JURY)
+	_check(not base_record.is_empty()
+		and CombatTinkerV3JuryRigCards.is_authentic_definition(base_record, JURY),
+		"authenticator positive fixture really is the authored Jury-rig")
+	var mutations: Array[Callable] = [
+		func(record: Dictionary) -> void: record["effects"]["copy_previous_card"] = false,
+		func(record: Dictionary) -> void: record["effects"]["copied_card_cost"] = 1,
+		func(record: Dictionary) -> void: record["effects"]["copied_card_cost"] = 0.0,
+		func(record: Dictionary) -> void: record["effects"]["once_per_combat"] = false,
+		func(record: Dictionary) -> void: record["effects"]["exclude_self"] = false,
+		func(record: Dictionary) -> void: record["effects"].erase("exclude_self"),
+		func(record: Dictionary) -> void: record["effects"]["extra"] = true,
+		func(record: Dictionary) -> void: record["effects"]["scraps"] = 1,
+		func(record: Dictionary) -> void: record["effects"] = "copy",
+		func(record: Dictionary) -> void: record["cost"] = 1,
+		func(record: Dictionary) -> void: record["cost"] = 3,
+		func(record: Dictionary) -> void: record["cost"] = 2.0,
+		func(record: Dictionary) -> void: record["owner"] = "warden",
+		func(record: Dictionary) -> void: record["from_positions"] = [1, 2, 3],
+		func(record: Dictionary) -> void: record["from_positions"] = ["2", "3"],
+		func(record: Dictionary) -> void: record["to_positions"] = [1],
+		func(record: Dictionary) -> void: record["target_kind"] = "enemy_single",
+		func(record: Dictionary) -> void: record["id"] = JURY_PLUS,
+		func(record: Dictionary) -> void: record["is_upgrade"] = true,
+		func(record: Dictionary) -> void: record["base_id"] = JURY_PLUS,
+		func(record: Dictionary) -> void: record.erase("upgrade_id"),
+		func(record: Dictionary) -> void: record["upgrade_of"] = JURY,
+		func(record: Dictionary) -> void: record.erase("to_positions"),
+		func(record: Dictionary) -> void: record.erase("effects"),
+	]
+	for index in range(mutations.size()):
+		var tampered: Dictionary = base_record.duplicate(true)
+		mutations[index].call(tampered)
+		_check(not CombatTinkerV3JuryRigCards.is_authentic_definition(tampered, JURY),
+			"tampered Jury-rig record " + str(index) + " is refused")
+	_check(not CombatTinkerV3JuryRigCards.is_authentic_definition(
+		catalog.get_definition(JURY_PLUS), JURY),
+		"an upgraded record cannot authenticate as Jury-rig")
+	_check(not CombatTinkerV3JuryRigCards.is_authentic_definition(
+		catalog.get_definition(JURY), JURY_PLUS),
+		"a base record cannot authenticate as Jury-rig+")
+	_check(not CombatTinkerV3JuryRigCards.is_authentic_definition(
+		catalog.get_definition(CASING), JURY),
+		"a Brass Casing record cannot authenticate as Jury-rig")
+
+
+## AC1: a funded authentic Jury-rig with a living middle/back-seat Tinker and one committed other card
+## pays 2 (base) or 1 (plus), discards exactly one held copy and publishes one detached zero-cost
+## instruction for that card with its own ID, owner, FROM/TO seats and target kind. No effect of the
+## copied card is replayed, and no wallet or Combat Scrap state exists to touch.
+func _test_jury_rig_paid_plays() -> void:
+	var cases := [
+		{"id": JURY, "seat": 2, "cost": 2, "witness": "seamstress_prick", "seed": 603000},
+		{"id": JURY, "seat": 3, "cost": 2, "witness": "tinker_pop_shot", "seed": 603100},
+		{"id": JURY_PLUS, "seat": 2, "cost": 1, "witness": "tinker_pop_shot", "seed": 603200},
+		{"id": JURY_PLUS, "seat": 3, "cost": 1, "witness": CASING, "seed": 603300},
+	]
+	for entry: Dictionary in cases:
+		var card_id: String = entry["id"]
+		var seat: int = entry["seat"]
+		var cost: int = entry["cost"]
+		var witness_id: String = entry["witness"]
+		var label := card_id + " from seat " + str(seat) + " copying " + witness_id
+		var source := _jury_source_record(witness_id)
+		_check(not source.is_empty() and source.get("owner") is String,
+			label + ": the witness fixture is a real authored card (precondition)")
+		var party := _scrap_party(seat)
+		var deck := _scrap_deck([card_id], int(entry["seed"]), 5)
+		var receipts: Array = [_jury_receipt(witness_id)]
+		var wallet := {"gold": 9, "scraps": 4}
+		var wallet_before: Dictionary = wallet.duplicate(true)
+		var resolution := CombatTinkerV3JuryRigCards.new()
+		var battle_before := _scrap_snapshot(deck, party)
+		var before := _jury_snapshot(deck, party, resolution)
+		var plan: Dictionary = resolution.preflight(deck, party, card_id, receipts, 0)
+		_check(plan.get("ok") == true and plan.get("reason") == "legal",
+			label + ": read-only preflight accepts the funded play")
+		_check(plan.get("cost") == cost and plan.get("owner_position") == seat
+			and plan.get("target_position") == seat,
+			label + ": preflight reports the printed cost and the real owner seat")
+		_check(plan.get("source_card_id") == witness_id
+			and plan.get("source", {}).get("owner") == source.get("owner"),
+			label + ": preflight reports the committed other card as the source")
+		_check(_jury_snapshot(deck, party, resolution) == before,
+			label + ": preflight changed no battle state, marker or history")
+		_check(not resolution.has_used_this_combat(), label + ": the marker starts unused")
+		var result: Dictionary = resolution.play_card(deck, party, card_id, receipts, 0)
+		_check(result.get("ok") == true and result.get("reason") == "applied",
+			label + ": authorized paid play")
+		_check(result.get("card_id") == card_id and result.get("cost") == cost,
+			label + ": receipt names the authentic card and its " + str(cost) + " energy")
+		_check(result.get("owner_position") == seat and result.get("target_position") == seat,
+			label + ": receipt reports the real caster seat for a self target")
+		_check(result.get("source_card_id") == witness_id,
+			label + ": receipt names the copied source card")
+		_check(result.get("energy_before") == 3 and result.get("energy_after") == 3 - cost,
+			label + ": receipt reports the exact energy change")
+		_check(result.get("used_this_combat") == true and resolution.has_used_this_combat(),
+			label + ": the once-per-combat marker is now set")
+
+		# The detached free-play instruction keeps the source's own rules and only overrides its cost.
+		var copy: Dictionary = result.get("copy", {})
+		var copy_keys: Array = copy.keys()
+		copy_keys.sort()
+		_check(copy_keys == JURY_COPY_KEYS, label + ": the copy instruction has exactly its own keys")
+		_check(copy.get("kind") == "free_card_copy", label + ": the copy instruction names its kind")
+		_check(copy.get("card_id") == witness_id, label + ": the copy keeps the source card ID")
+		_check(copy.get("owner") == source.get("owner"), label + ": the copy keeps the source owner")
+		_check(copy.get("from_positions") == source.get("from_positions"),
+			label + ": the copy keeps the original FROM seats")
+		_check(copy.get("to_positions") == source.get("to_positions"),
+			label + ": the copy keeps the original TO seats")
+		_check(copy.get("target_kind") == source.get("target_kind"),
+			label + ": the copy keeps the original target kind")
+		_check(copy.get("cost_override") == 0, label + ": the copy costs exactly 0")
+		_check(copy.get("one_time") == true, label + ": the copy is a one-time instruction")
+
+		# Exactly one paid Jury-rig discard, the printed energy, and no replayed card effect at all.
+		_check(deck.energy == 3 - cost, label + ": exactly " + str(cost) + " energy was paid")
+		_check(deck.hand.count(card_id) == 0 and deck.discard_pile == [card_id],
+			label + ": exactly the held copy reached the discard")
+		for effect_key in ["damage", "block", "weak", "heal", "draw", "scraps", "wallet",
+				"combat_scrap"]:
+			_check(not result.has(effect_key),
+				label + ": the receipt carries no replayed " + effect_key + " effect")
+		_check(_scrap_snapshot(deck, party) == _expected_jury(battle_before, card_id, cost),
+			label + ": exact hand, piles, energy, turn, party and RNG state")
+		_check(deck._rng.state == int(battle_before["rng_state"]), label + ": no run RNG was consumed")
+		_check(not party.get_hero(seat).has("combat_scrap"),
+			label + ": no Combat Scrap counter is created")
+		_check(wallet == wallet_before, label + ": the run wallet's scraps are never modified")
+		var history: Array[Dictionary] = resolution.committed_history()
+		_check(history.size() == 1 and history[0].get("card_id") == witness_id,
+			label + ": the verified committed play order holds exactly the one witness")
+
+		# Detached in both directions: editing the instruction cannot rewrite the witness or a later
+		# resolution of the same series.
+		copy["from_positions"].clear()
+		copy["to_positions"].append(3)
+		copy["cost_override"] = 5
+		copy["card_id"] = "tinker_rivet_shot"
+		_check(receipts[0].get("from_positions") == source.get("from_positions")
+			and receipts[0].get("to_positions") == source.get("to_positions")
+			and receipts[0].get("card_id") == witness_id,
+			label + ": mutating the instruction does not rewrite the witness receipts")
+		_check(resolution.committed_history()[0].get("from_positions")
+			== source.get("from_positions"),
+			label + ": mutating the instruction does not rewrite the committed history")
+		var fresh := CombatTinkerV3JuryRigCards.new()
+		var again: Dictionary = fresh.play_card(_scrap_deck([JURY_PLUS], 603900, 5),
+			_scrap_party(2), JURY_PLUS, receipts, 0)
+		_check(again.get("ok") == true
+			and again.get("copy", {}).get("cost_override") == 0
+			and again.get("copy", {}).get("from_positions") == source.get("from_positions")
+			and again.get("copy", {}).get("to_positions") == source.get("to_positions")
+			and again.get("copy", {}).get("card_id") == witness_id,
+			label + ": a fresh combat's copy is pristine after the mutated instruction")
+
+	# The exact-energy boundary: Jury-rig+ plays on one energy, the base needs two.
+	var tight := _scrap_deck([JURY_PLUS], 603400, 5)
+	tight.combat_state.energy = 1
+	var tight_result: Dictionary = CombatTinkerV3JuryRigCards.new().play_card(
+		tight, _scrap_party(2), JURY_PLUS, [_jury_receipt("tinker_pop_shot")], 0)
+	_check(tight_result.get("ok") == true and tight.energy == 0
+		and tight.discard_pile == [JURY_PLUS],
+		"Jury-rig+ pays its single printed energy and discards its one held copy")
+
+	# A genuinely played predecessor: Gear Brace is really paid and discarded by its own resolver,
+	# and Jury-rig then prepares a free copy of that actual discard.
+	var chain_party := _scrap_party(2)
+	var chain_deck := _scrap_deck([SCRAP_GEAR, JURY], 603410, 4)
+	_check(chain_deck.hand.has(SCRAP_GEAR) and chain_deck.hand.has(JURY),
+		"predecessor fixture really holds the other card and Jury-rig in one hand")
+	var gear: Dictionary = CombatTinkerV3ScrapSupportCards.new().play_card(
+		chain_deck, chain_party, SCRAP_GEAR, 0)
+	_check(gear.get("ok") == true and gear.get("card_id") == SCRAP_GEAR
+		and chain_deck.discard_pile == [SCRAP_GEAR] and chain_deck.energy == 2,
+		"the predecessor was genuinely paid and is the only card in the discard")
+	var gear_record := _jury_source_record(SCRAP_GEAR)
+	_check(not gear_record.is_empty(), "the predecessor catalog record really loaded")
+	var committed: Dictionary = {
+		"ok": true,
+		"card_id": SCRAP_GEAR,
+		"owner": gear_record.get("owner"),
+		"from_positions": (gear_record.get("from_positions", []) as Array).duplicate(),
+		"to_positions": (gear_record.get("to_positions", []) as Array).duplicate(),
+		"target_kind": gear_record.get("target_kind"),
+	}
+	_check(committed.get("card_id") == gear.get("card_id")
+		and CombatTinkerV3JuryRigCards.receipt_state(committed) == "success",
+		"the witness receipt names the card the real resolver actually committed")
+	var chain_resolution := CombatTinkerV3JuryRigCards.new()
+	var chained: Dictionary = chain_resolution.play_card(chain_deck, chain_party, JURY,
+		[committed], 0)
+	_check(chained.get("ok") == true and chained.get("copy", {}).get("card_id") == SCRAP_GEAR,
+		"Jury-rig prepares one free copy of the genuinely discarded card")
+	_check(chained.get("copy", {}).get("owner") == "tinker"
+		and chained.get("copy", {}).get("from_positions") == gear_record.get("from_positions")
+		and chained.get("copy", {}).get("to_positions") == []
+		and chained.get("copy", {}).get("target_kind") == "self"
+		and chained.get("copy", {}).get("cost_override") == 0,
+		"the free copy keeps Gear Brace's owner, seats, self target and zero cost")
+	_check(chain_deck.energy == 0 and chain_deck.discard_pile == [SCRAP_GEAR, JURY],
+		"both plays are real discards: the predecessor, then the one Jury-rig")
+	_check(chain_party.get_hero(2).get("block") == 5,
+		"Jury-rig replays no Block from the copied card")
+	_check(chain_resolution.committed_history().size() == 1
+		and chain_resolution.committed_history()[0].get("card_id") == SCRAP_GEAR,
+		"the witnessed history holds the genuinely committed predecessor")
+
+
+## AC2: only the immediately preceding successful OTHER card is prepared, once per combat; a rejected
+## play never becomes the source, a second Jury-rig in the same combat mints nothing, and a fresh
+## combat starts clean and may prepare one new copy with its own fresh history.
+func _test_jury_rig_history_order() -> void:
+	var resolver := CombatTinkerV3JuryRigCards.new()
+	var party := _scrap_party(2)
+	var deck := _scrap_deck([JURY, JURY_PLUS], 603500, 4)
+	_check(deck.hand.count(JURY) == 1 and deck.hand.count(JURY_PLUS) == 1,
+		"history fixture really holds one copy of each Jury-rig printing")
+	var receipts: Array = [
+		_jury_receipt("tinker_pop_shot"),
+		_jury_failed_receipt("warden_strike"),
+		_jury_receipt(CASING),
+		_jury_failed_receipt("seamstress_prick"),
+	]
+	_check(receipts[1].get("ok") == false and receipts[3].get("ok") == false,
+		"history fixture really contains two genuine rejected plays (precondition)")
+	var first: Dictionary = resolver.play_card(deck, party, JURY, receipts, 0)
+	_check(first.get("ok") == true, "the ordered-witness play is paid")
+	_check(first.get("source_card_id") == CASING,
+		"the most recent successful other card wins, not the first one")
+	_check(first.get("copy", {}).get("card_id") == CASING
+		and first.get("copy", {}).get("target_kind") == "enemy_single",
+		"the prepared copy is that immediately preceding card with its own target rule")
+	_check(deck.energy == 1 and deck.discard_pile == [JURY],
+		"the ordered-witness play pays two energy and discards exactly one Jury-rig")
+	var history: Array[Dictionary] = resolver.committed_history()
+	_check(history.size() == 2 and history[0].get("card_id") == "tinker_pop_shot"
+		and history[1].get("card_id") == CASING,
+		"the witnessed order keeps both successes and drops both rejected plays")
+
+	# A second Jury-rig in the same combat cannot mint a second copy, whichever printing it is.
+	_check(resolver.has_used_this_combat(), "the once-use marker is set after the paid play")
+	_rejected_jury(resolver, deck, party, JURY_PLUS, receipts, 0, "already_used",
+		"Jury-rig+ after Jury-rig in the same combat")
+	_check(deck.hand.count(JURY_PLUS) == 1 and deck.hand.count(JURY) == 0,
+		"the refused second printing is still in hand")
+	_check(deck.energy == 1 and deck.discard_pile == [JURY],
+		"the refused second copy spends nothing and discards nothing")
+
+	# A failed play recorded after a success never overwrites that success.
+	var failing := CombatTinkerV3JuryRigCards.new()
+	var failing_deck := _scrap_deck([JURY], 603501, 5)
+	var failed_last: Array = [_jury_receipt("tinker_pop_shot"), _jury_failed_receipt(CASING)]
+	var surviving: Dictionary = failing.play_card(failing_deck, _scrap_party(3), JURY, failed_last, 0)
+	_check(surviving.get("ok") == true and surviving.get("source_card_id") == "tinker_pop_shot",
+		"a rejected play after a success leaves the earlier success as the source")
+
+	# A successful Jury-rig receipt is not a source itself; the earlier other card still is.
+	var self_series := CombatTinkerV3JuryRigCards.new()
+	var self_result: Dictionary = self_series.play_card(_scrap_deck([JURY], 603502, 5),
+		_scrap_party(2), JURY, [_jury_receipt("tinker_pop_shot"), _jury_receipt(JURY_PLUS)], 0)
+	_check(self_result.get("ok") == true
+		and self_result.get("source_card_id") == "tinker_pop_shot",
+		"Jury-rig skips itself and copies the previous other card")
+
+	# A fresh combat resets the marker and takes its own fresh history.
+	_check(not CombatTinkerV3JuryRigCards.new().has_used_this_combat(),
+		"a fresh helper instance starts with an unused marker")
+	resolver.begin_combat()
+	_check(not resolver.has_used_this_combat() and resolver.committed_history().is_empty(),
+		"beginning a fresh fight resets the once-use marker and the witnessed history")
+	var fresh_party := _scrap_party(3)
+	var fresh_deck := _scrap_deck([JURY], 603503, 5)
+	var fresh_receipts: Array = [_jury_receipt("seamstress_prick")]
+	var second: Dictionary = resolver.play_card(fresh_deck, fresh_party, JURY,
+		fresh_receipts, 0)
+	_check(second.get("ok") == true and second.get("copy", {}).get("card_id") == "seamstress_prick",
+		"a fresh combat prepares one new copy from its own fresh history")
+	_check(fresh_deck.energy == 1 and fresh_deck.discard_pile == [JURY]
+		and resolver.has_used_this_combat(),
+		"the fresh combat's one copy was paid and consumed its marker")
+	_check(resolver.committed_history().size() == 1
+		and resolver.committed_history()[0].get("card_id") == "seamstress_prick",
+		"the fresh combat's history replaces the previous fight's")
+	_rejected_jury(resolver, fresh_deck, fresh_party, JURY, fresh_receipts, 0, "already_used",
+		"a second Jury-rig in the fresh combat")
+
+
+## AC3: without a genuine held copy, a live position-valid Tinker, enough energy, an unused marker and
+## verifiable previous committed other-card history, the operation fails closed with unchanged energy,
+## hand/discard/draw, party, marker, history and seeded RNG. Forged metadata and copying Jury-rig
+## itself reject too.
+func _test_jury_rig_refusals() -> void:
+	var resolver := CombatTinkerV3JuryRigCards.new()
+	var party := _scrap_party(2)
+	var deck := _scrap_deck([JURY], 604000, 5)
+	var receipts: Array = [_jury_receipt("tinker_pop_shot")]
+	var wallet := {"gold": 9, "scraps": 4}
+	var wallet_before: Dictionary = wallet.duplicate(true)
+
+	_rejected_jury(resolver, null, party, JURY, receipts, 0, "invalid_request", "null deck")
+	_rejected_jury(resolver, deck, null, JURY, receipts, 0, "invalid_request", "null party")
+
+	# An inactive turn is never paid, even with a real copy in hand and a real witness.
+	var inactive := CombatDeck.new([JURY], _scrap_rng(604001))
+	inactive.hand.append(JURY)
+	_check(not inactive.turn_active and inactive.hand.has(JURY),
+		"inactive fixture really holds a copy outside a turn")
+	_rejected_jury(resolver, inactive, party, JURY, receipts, 0, "inactive_turn", "inactive turn")
+
+	# Unsupported card identities: other authentic Tinker cards, starter cards, forged spellings.
+	var wrong_ids: Array = ["tinker_v3_brass_casing", "tinker_v3_gear_brace", "tinker_v3_overload",
+		"tinker_v3_spare_screws", "tinker_v3_wind_up_turret", "tinker_v3_scrapstorm",
+		"tinker_pop_shot", "tinker_rivet_shot", "tinker_v3_jury_rig+",
+		"tinker_v3_jury_rig_plus_plus", "tinker_v3_jury_rig_", "jury_rig", "TINKER_V3_JURY_RIG",
+		"", StringName(JURY), null, 0, 3.5, false, [], {}]
+	for wrong_id: Variant in wrong_ids:
+		_rejected_jury(resolver, deck, party, wrong_id, receipts, 0, "unsupported_card",
+			"unsupported ID " + str(wrong_id))
+	# An authentic upgraded printing the shared hand does not hold is still unheld.
+	_rejected_jury(resolver, deck, party, JURY_PLUS, receipts, 0, "card_not_held",
+		"authentic but unheld Jury-rig+")
+
+	# A discard pile is not a play log: without a receipt there is no previous card.
+	var discarded_only := _scrap_deck([JURY], 604002, 5)
+	discarded_only.discard_pile.append("tinker_pop_shot")
+	discarded_only.discard_pile.append(CASING)
+	_check(discarded_only.discard_pile.size() == 2 and discarded_only.hand.has(JURY),
+		"unplayed-discard fixture really holds a copy with two cards only in the discard")
+	_rejected_jury(resolver, discarded_only, party, JURY, [], 0, "no_previous_play",
+		"two discarded cards and no committed play")
+	_rejected_jury(resolver, discarded_only, party, JURY, [_jury_failed_receipt(CASING)], 0,
+		"no_previous_play", "only a rejected play")
+	# Jury-rig itself is never the source of its own copy.
+	_rejected_jury(resolver, discarded_only, party, JURY, [_jury_receipt(JURY)], 0, "self_copy",
+		"Jury-rig copying itself")
+	_rejected_jury(resolver, discarded_only, party, JURY,
+		[_jury_receipt(JURY), _jury_receipt(JURY_PLUS)], 0, "self_copy",
+		"both Jury-rig printings are the only committed plays")
+
+	# Unverifiable witnesses refuse instead of being trusted or silently skipped.
+	var good := _jury_receipt("tinker_pop_shot")
+	var tampered_receipts: Array = []
+	var receipt_mutations: Array[Callable] = [
+		func(record: Dictionary) -> void: record["ok"] = "true",
+		func(record: Dictionary) -> void: record["ok"] = 1,
+		func(record: Dictionary) -> void: record.erase("ok"),
+		func(record: Dictionary) -> void: record["card_id"] = 7,
+		func(record: Dictionary) -> void: record["card_id"] = "",
+		func(record: Dictionary) -> void: record.erase("card_id"),
+		func(record: Dictionary) -> void: record["owner"] = "",
+		func(record: Dictionary) -> void: record["owner"] = 3,
+		func(record: Dictionary) -> void: record["from_positions"] = [],
+		func(record: Dictionary) -> void: record["from_positions"] = [4],
+		func(record: Dictionary) -> void: record["from_positions"] = ["2"],
+		func(record: Dictionary) -> void: record["from_positions"] = 2,
+		func(record: Dictionary) -> void: record["to_positions"] = [4],
+		func(record: Dictionary) -> void: record["to_positions"] = "1",
+		func(record: Dictionary) -> void: record["to_positions"] = [1.0],
+		func(record: Dictionary) -> void: record["target_kind"] = "",
+		func(record: Dictionary) -> void: record["target_kind"] = 0,
+	]
+	for mutation: Callable in receipt_mutations:
+		var tampered: Dictionary = good.duplicate(true)
+		mutation.call(tampered)
+		tampered_receipts.append(tampered)
+	_check(tampered_receipts.size() == receipt_mutations.size()
+		and not tampered_receipts.is_empty(),
+		"unverifiable-witness fixture really built every mutation case (precondition)")
+	for tampered: Dictionary in tampered_receipts:
+		_rejected_jury(resolver, discarded_only, party, JURY, [tampered], 0, "invalid_history",
+			"unverifiable witness " + str(tampered))
+	# One unverifiable receipt taints a series that also holds a genuine success.
+	_rejected_jury(resolver, discarded_only, party, JURY, [good, {"ok": true}], 0,
+		"invalid_history", "unverifiable witness after a success")
+	_rejected_jury(resolver, discarded_only, party, JURY, [{"ok": false}, 7], 0,
+		"invalid_history", "unverifiable witness after a rejected play")
+	# The series itself must be a real array.
+	for bad_series: Variant in ["tinker_pop_shot", {"ok": true}, 3, null, StringName("x")]:
+		_rejected_jury(resolver, discarded_only, party, JURY, bad_series, 0, "invalid_history",
+			"witness series is not an array: " + str(bad_series))
+
+	# A substituted, rewritten Jury-rig record is refused through the catalog lookup seam.
+	var forged_catalog := V3TinkerPoolCards.new()
+	forged_catalog._definitions[JURY]["effects"]["copied_card_cost"] = 1
+	forged_catalog._definitions[JURY_PLUS]["cost"] = 0
+	var forged_resolver := CombatTinkerV3JuryRigCards.new()
+	forged_resolver._catalog = forged_catalog
+	_check(not forged_resolver.is_supported_card(JURY)
+		and not forged_resolver.is_supported_card(JURY_PLUS),
+		"rewritten Jury-rig records are not supported cards")
+	_check(CombatTinkerV3JuryRigCards.jury_rig_definition(JURY).get("effects")
+		.get("copied_card_cost") == 0,
+		"the authentic static resolution still returns the authored cost override")
+	var forged_deck := _scrap_deck([JURY], 604010, 5)
+	_rejected_jury(forged_resolver, forged_deck, party, JURY, receipts, 0, "catalog_mismatch",
+		"forged Jury-rig record")
+	_check(forged_deck.hand.has(JURY) and forged_deck.energy == 3,
+		"the forged-record refusal left the real deck untouched")
+
+	# An unaffordable copy is refused without a partial charge.
+	var short := _scrap_deck([JURY], 604011, 5)
+	short.combat_state.energy = 1
+	_check(short.energy == 1 and short.hand.has(JURY),
+		"short-energy fixture really holds a copy on one energy")
+	_rejected_jury(resolver, short, party, JURY, receipts, 0, "insufficient_energy",
+		"one energy for a two-energy Jury-rig")
+
+	# Both printings are FROM 2-3: the front seat is not a legal caster.
+	_rejected_jury(resolver, _scrap_deck([JURY], 604012, 5), _scrap_party(1), JURY, receipts, 0,
+		"owner_illegal_position", "Jury-rig from seat 1")
+	_rejected_jury(resolver, _scrap_deck([JURY_PLUS], 604013, 5), _scrap_party(1), JURY_PLUS,
+		receipts, 0, "owner_illegal_position", "Jury-rig+ from seat 1")
+
+	# A living Tinker at a legal seat is required.
+	var absent_owner := CombatParty.new([{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30}, {"id": "yarn_ranger", "max_hp": 28}])
+	_check(absent_owner.is_valid() and absent_owner.get_hero(2).get("id") == "seamstress",
+		"absent-owner fixture is a valid party without a Tinker")
+	_rejected_jury(resolver, deck, absent_owner, JURY, receipts, 0, "owner_missing",
+		"absent Tinker")
+	var torn_owner := _scrap_party(3)
+	_check(torn_owner.apply_damage(3, 26) and torn_owner.is_downed(3),
+		"torn-owner fixture really has a downed Tinker")
+	_rejected_jury(resolver, _scrap_deck([JURY], 604014, 5), torn_owner, JURY, receipts, 0,
+		"owner_downed", "downed Tinker")
+	var duplicate := _scrap_party(2)
+	duplicate._heroes[0]["id"] = "tinker"
+	_check(duplicate.get_hero(1).get("id") == "tinker"
+		and duplicate.get_hero(2).get("id") == "tinker",
+		"duplicate-identity fixture really repeats the owner ID")
+	_rejected_jury(resolver, deck, duplicate, JURY, receipts, 0, "invalid_party",
+		"duplicate Tinker identity")
+	var bad_hp := _scrap_party(2)
+	bad_hp._heroes[0]["hp"] = 999
+	_rejected_jury(resolver, deck, bad_hp, JURY, receipts, 0, "invalid_party",
+		"malformed hero HP")
+	var bad_position := _scrap_party(2)
+	bad_position._heroes[0]["position"] = 3
+	_rejected_jury(resolver, deck, bad_position, JURY, receipts, 0, "invalid_party",
+		"malformed hero position")
+	var bad_block := _scrap_party(2)
+	bad_block._heroes[1]["block"] = -1
+	_rejected_jury(resolver, deck, bad_block, JURY, receipts, 0, "invalid_party",
+		"negative hero Block")
+	var short_party := CombatParty.new([{"id": "tinker", "max_hp": 26}])
+	_rejected_jury(resolver, deck, short_party, JURY, receipts, 0, "invalid_party",
+		"invalid one-hero party")
+
+	# These cards print target_kind self: no enemy or ally slot may be named.
+	for slot: int in [1, 3, -1, 99]:
+		_rejected_jury(resolver, deck, party, JURY, receipts, slot, "invalid_target",
+			"illegal target slot " + str(slot))
+
+	# The shared fixture deck, party and marker survived every refusal untouched.
+	_check(deck.energy == 3 and deck.hand.has(JURY) and deck.discard_pile.is_empty()
+		and not resolver.has_used_this_combat() and resolver.committed_history().is_empty(),
+		"every refusal left the shared fixture deck, party, marker and history untouched")
+	_check(wallet == wallet_before, "every refusal left the run wallet's scraps untouched")
+
+	# A refused attempt never poisons the next authentic play on the same objects.
+	var retry: Dictionary = resolver.play_card(deck, party, JURY, receipts, 0)
+	_check(retry.get("ok") == true and retry.get("source_card_id") == "tinker_pop_shot",
+		"the authentic play then succeeds once and names the committed source")
+	_check(deck.energy == 1 and deck.discard_pile == [JURY]
+		and resolver.has_used_this_combat(),
+		"the retry paid once, discarded its one copy and set the marker")
+	_rejected_jury(resolver, deck, party, JURY, receipts, 0, "already_used",
+		"a second claim of the same copy")
+
 

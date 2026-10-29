@@ -1168,10 +1168,15 @@ func _test_weighted_rejections() -> void:
 
 func _boss_fixture() -> Dictionary:
 	var catalog: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/enemies/boss.json"))
-	_check(catalog is Array and catalog.size() == 1, "boss fixture: real catalog contains Behemoth")
-	if not catalog is Array or catalog.size() != 1:
+	_check(catalog is Array, "boss fixture: real catalog is an array")
+	if not catalog is Array:
 		return {}
-	var record: Dictionary = catalog[0].duplicate(true)
+	var matches: Array = catalog.filter(func(entry): return entry is Dictionary \
+		and entry.get("id") == CombatBehemothPhaseRules.BOSS_ID)
+	_check(matches.size() == 1, "boss fixture: one authentic Behemoth by ID")
+	if matches.size() != 1:
+		return {}
+	var record: Dictionary = matches[0].duplicate(true)
 	record["max_hp"] = int(record["max_hp"])
 	return record
 

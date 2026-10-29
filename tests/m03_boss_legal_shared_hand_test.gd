@@ -111,7 +111,8 @@ func _intent(pattern: Array, turn: int) -> Array:
 
 func _fight() -> String:
 	var heroes := _load_records("res://data/heroes/starter_party.json")
-	var bosses := _load_records("res://data/enemies/boss.json")
+	var bosses := _load_records("res://data/enemies/boss.json").filter(
+		func(entry): return entry.get("id") == "patchwork_behemoth")
 	var schedule := _load_records("res://data/encounters/patchwork_behemoth.json")
 	var authored_deck := _load_records("res://data/cards/starter_deck.json")
 	var cards: Array[String] = []
