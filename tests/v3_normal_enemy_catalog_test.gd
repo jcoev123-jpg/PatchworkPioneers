@@ -3754,7 +3754,7 @@ func _bobbin_quilt_expected() -> Dictionary:
 				{"type": "debuff", "status": "weak", "amount": 1, "weight": 1},
 				{"type": "block", "amount": 4, "weight": 1}]}},
 		"quilt_termite": {"id": "quilt_termite", "name": "Quilt Termite", "max_hp": 26,
-			"chew_block_on_attack": true,
+			"split_on_death": true, "chew_block_on_attack": true,
 			"art_path": "res://assets/paper/enemies/quilt_termite.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "attack", "amount": 6, "weight": 4},
@@ -3867,6 +3867,12 @@ func _test_bobbin_bat_quilt_termite_catalog() -> void:
 	_check(termite.get("chew_block_on_attack") is bool
 		and termite.get("chew_block_on_attack") == true,
 		"Quilt Termite authors the cloth-eating bite as a genuine boolean")
+	_check(termite.get("split_on_death") is bool and termite.get("split_on_death") == true,
+		"AC1: only the authentic Quilt Termite authors a literal true split flag")
+	for record in parsed:
+		if record.get("id") != "quilt_termite":
+			_check(not record.has("split_on_death"),
+				"AC1: every unrelated normal remains non-splitting: " + str(record.get("id")))
 	_check(_has_alternative(termite, "attack", 6) and _has_alternative(termite, "block", 5)
 		and _has_alternative(termite, "debuff", 1, "exposed"),
 		"Quilt Termite bites for 6, boards up 5 Block or marks Exposed 1")
