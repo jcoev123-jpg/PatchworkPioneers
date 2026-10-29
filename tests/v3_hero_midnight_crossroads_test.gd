@@ -135,8 +135,13 @@ func _test_catalog_content(events: Array) -> void:
 	for nid in NEW_EVENT_IDS:
 		_check(not seen.has(nid), "new ID listed once: " + nid)
 		seen[nid] = true
+		var matches := []
+		for e in events:
+			if e is Dictionary and e.get("id") == nid:
+				matches.append(e)
+		_check(matches.size() == 1, "new event authored once: " + nid)
 		var rec := _record_by_id(events, nid)
-		_check(not rec.is_empty(), "new event authored once: " + nid)
+		_check(not rec.is_empty(), "new event record found: " + nid)
 		_check(rec.get("title") == EXPECTED[nid]["title"], "new title: " + nid)
 		_check(rec.get("description") == EXPECTED[nid]["description"], "new description: " + nid)
 		_check(rec.get("required_hero") == EXPECTED[nid]["required_hero"], "new required_hero: " + nid)
@@ -183,9 +188,14 @@ func _test_party_gating(events: Array) -> void:
 	for party in [["warden", "seamstress", "tinker"], ["lantern_monk", "scarecrow", "button_golem"]]:
 		var offers := RunV3HeroEventOffers.new(party)
 		_check(offers.is_valid(), "valid service for party: " + str(party))
+		var offered_ids := {}
+		for rec in offers.get_offers():
+			if rec is Dictionary and rec.get("id") is String:
+				offered_ids[rec.get("id")] = true
 		for nid in NEW_EVENT_IDS:
 			var expected_hero: String = EXPECTED[nid]["required_hero"]
 			var eligible: bool = party.has(expected_hero)
+			_check(offered_ids.has(nid) == eligible, "offer list inclusion matches required hero: " + nid + "/" + str(party))
 			var visit := offers.enter(nid)
 			if eligible:
 				_check(visit != null and visit is RunEventChoice and visit.is_valid() and not visit.is_claimed(),
@@ -242,17 +252,43 @@ func _test_event_service(event_id: String, events: Array) -> void:
 	var visit2 := RunEventChoice.new(rec.duplicate(true))
 	var second_paid: String = paid_ids[1]
 	var second_delta: Dictionary = EXPECTED[event_id]["choices"][second_paid]
+	var preview2 := visit2.preview_wallet_choices(funded_wallet)
+	_check(preview2.get("ok") == true, "second funded preview ok: " + event_id)
+	var entry2: Dictionary = {}
+	for entry in preview2.get("choices", []):
+		if entry is Dictionary and entry.get("choice_id") == second_paid:
+			entry2 = entry
+	_check(not entry2.is_empty() and entry2.get("affordable") == true
+		and int(entry2.get("gold_delta")) == int(second_delta["gold"])
+		and int(entry2.get("scraps_delta")) == int(second_delta["scraps"]),
+		"second funded preview exact: " + event_id)
 	var claim2 := visit2.choose_with_wallet(second_paid, funded_wallet)
 	_check(claim2.get("ok") == true, "second funded claim succeeds: " + event_id)
 	_check(_wallet_exact(claim2.get("wallet"), 60 + int(second_delta["gold"]), 6 + int(second_delta["scraps"])),
 		"second funded claim exact wallet: " + event_id)
+	_check(visit2.is_claimed() and not visit2.is_valid(), "second funded claim latches once: " + event_id)
+	var replay2 := visit2.choose_with_wallet(second_paid, claim2.get("wallet", {}))
+	_check(replay2.get("ok") == false and _wallet_exact(replay2.get("wallet"), 60 + int(second_delta["gold"]), 6 + int(second_delta["scraps"])),
+		"second funded replay refused unchanged: " + event_id)
 
 	# 3. Free Leave visit (separate fresh visit)
 	var visit3 := RunEventChoice.new(rec.duplicate(true))
+	var preview3 := visit3.preview_wallet_choices(funded_wallet)
+	var entry3: Dictionary = {}
+	for entry in preview3.get("choices", []):
+		if entry is Dictionary and entry.get("choice_id") == "leave":
+			entry3 = entry
+	_check(not entry3.is_empty() and entry3.get("affordable") == true
+		and int(entry3.get("gold_delta")) == 0 and int(entry3.get("scraps_delta")) == 0,
+		"funded leave preview exact: " + event_id)
 	var claim3 := visit3.choose_with_wallet("leave", funded_wallet)
 	_check(claim3.get("ok") == true and claim3.get("choice_id") == "leave" and claim3.get("event_id") == event_id,
 		"funded leave claim succeeds: " + event_id)
 	_check(_wallet_exact(claim3.get("wallet"), 60, 6), "funded leave preserves wallet: " + event_id)
+	_check(visit3.is_claimed() and not visit3.is_valid(), "funded leave latches once: " + event_id)
+	var replay3 := visit3.choose_with_wallet("leave", claim3.get("wallet", {}))
+	_check(replay3.get("ok") == false and _wallet_exact(replay3.get("wallet"), 60, 6),
+		"funded leave replay refused unchanged: " + event_id)
 
 	# Zero wallet refusal and recovery
 	var zero_wallet := {"gold": 0, "scraps": 0}
@@ -271,8 +307,17 @@ func _test_event_service(event_id: String, events: Array) -> void:
 		var refused := visit_zero.choose_with_wallet(paid, zero_wallet)
 		_check(refused.get("ok") == false, "zero refusal fails: " + event_id + "/" + paid)
 		_check(refused.get("event_id") == "" and refused.get("choice_id") == "", "zero refusal empty ids: " + event_id + "/" + paid)
-		_check(_wallet_exact(refused.get("wallet"), 0, 0), "zero refusal unchanged wallet: " + event_id + "/" + paid)
+		_check(_wallet_exact(refused.get("wallet"), 0, 0) and zero_wallet == zero_before, "zero refusal unchanged wallet: " + event_id + "/" + paid)
 		_check(visit_zero.is_valid() and not visit_zero.is_claimed(), "zero refusal consumes no claim: " + event_id + "/" + paid)
+
+		# Also check one-short non-zero wallet in the specific shortage direction
+		var short_gold: int = (-int(delta["gold"]) - 1) if int(delta["gold"]) < 0 else 60
+		var short_scraps: int = (-int(delta["scraps"]) - 1) if int(delta["scraps"]) < 0 else 6
+		var short_wallet := {"gold": short_gold, "scraps": short_scraps}
+		var short_refused := visit_zero.choose_with_wallet(paid, short_wallet)
+		_check(short_refused.get("ok") == false and _wallet_exact(short_refused.get("wallet"), short_gold, short_scraps)
+			and visit_zero.is_valid() and not visit_zero.is_claimed(),
+			"short wallet refuses unchanged without claim: " + event_id + "/" + paid)
 
 	# After refusal, Leave commits once
 	var visit_recover := RunEventChoice.new(rec.duplicate(true))
