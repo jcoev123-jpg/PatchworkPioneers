@@ -430,7 +430,8 @@ func _trio_expected() -> Dictionary:
 			"intent": {"target": "front", "actions": [
 				{"type": "snip_block", "amount": 0, "weight": 2},
 				{"type": "attack", "amount": 7, "weight": 3},
-				{"type": "debuff", "status": "weak", "amount": 1, "weight": 1}]}},
+				{"type": "debuff", "status": "weak", "amount": 1, "weight": 1},
+				{"type": "summon", "amount": 0, "weight": 1}]}},
 		"needle_wasp": {"id": "needle_wasp", "name": "Needle Wasp", "max_hp": 22,
 			"bleed_on_attack": true,
 			"art_path": "res://assets/paper/enemies/needle_wasp.png",
@@ -491,9 +492,9 @@ func _test_trio_catalog_records() -> void:
 			_check(CombatEnemyIntents.weighted_action(raw) != {},
 				"trio alternative validates through the weighted scheduler: %s %s" % [new_id, str(raw)])
 			var kind := String(raw.get("type", ""))
-			# The V3 list also names summon and multi_hit; those need separately
-			# scoped engine support, so this slice must not claim them.
-			_check(kind in ["attack", "block", "debuff", "snip_block"],
+			# The Moth's summoned broodling is now a supported weighted beat;
+			# multi_hit remains outside this ordinary-normal slice.
+			_check(kind in ["attack", "block", "debuff", "snip_block", "summon"],
 				"trio alternative only uses currently supported mechanics: %s %s" % [new_id, kind])
 			if kind == "attack":
 				var amount := int(raw.get("amount", 0))
@@ -759,6 +760,8 @@ func _test_trio_seeded_announcements() -> void:
 			"action": {"type": "attack", "amount": 7, "weight": 1}},
 		{"id": "moth_swarm", "target": "front",
 			"action": {"type": "debuff", "status": "weak", "amount": 1, "weight": 1}},
+		{"id": "moth_swarm", "target": "front",
+			"action": {"type": "summon", "amount": 0, "weight": 1}},
 		{"id": "needle_wasp", "target": "lowest_living_hp",
 			"action": {"type": "debuff", "status": "bleed", "amount": 2, "weight": 1}},
 		{"id": "needle_wasp", "target": "lowest_living_hp",
@@ -3031,6 +3034,9 @@ func _test_moth_swarm_block_chew_catalog() -> void:
 	var snip := _authored_alternative(moth, "snip_block", 0)
 	var bite := _authored_alternative(moth, "attack", 7)
 	var weaken := _authored_alternative(moth, "debuff", 1)
+	var summon := _authored_alternative(moth, "summon", 0)
+	_check(not summon.is_empty() and int(summon.get("weight", 0)) == 1,
+		"AC1: Moth adds exactly one weighted broodling summon without replacing an older attack")
 	_check(not snip.is_empty() and not bite.is_empty() and not weaken.is_empty()
 		and weaken.get("status") == "weak",
 		"AC1: the authored 0 snip, 7 bite and Weak 1 alternatives stay authored")
@@ -3748,7 +3754,7 @@ func _bobbin_quilt_expected() -> Dictionary:
 				{"type": "debuff", "status": "weak", "amount": 1, "weight": 1},
 				{"type": "block", "amount": 4, "weight": 1}]}},
 		"quilt_termite": {"id": "quilt_termite", "name": "Quilt Termite", "max_hp": 26,
-			"chew_block_on_attack": true,
+			"split_on_death": true, "chew_block_on_attack": true,
 			"art_path": "res://assets/paper/enemies/quilt_termite.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "attack", "amount": 6, "weight": 4},
@@ -3861,6 +3867,12 @@ func _test_bobbin_bat_quilt_termite_catalog() -> void:
 	_check(termite.get("chew_block_on_attack") is bool
 		and termite.get("chew_block_on_attack") == true,
 		"Quilt Termite authors the cloth-eating bite as a genuine boolean")
+	_check(termite.get("split_on_death") is bool and termite.get("split_on_death") == true,
+		"AC1: only the authentic Quilt Termite authors a literal true split flag")
+	for record in parsed:
+		if record.get("id") != "quilt_termite":
+			_check(not record.has("split_on_death"),
+				"AC1: every unrelated normal remains non-splitting: " + str(record.get("id")))
 	_check(_has_alternative(termite, "attack", 6) and _has_alternative(termite, "block", 5)
 		and _has_alternative(termite, "debuff", 1, "exposed"),
 		"Quilt Termite bites for 6, boards up 5 Block or marks Exposed 1")

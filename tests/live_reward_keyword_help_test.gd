@@ -115,6 +115,7 @@ func _snapshot(fixture: Dictionary) -> Dictionary:
 
 func _catalog_test() -> void:
 	var warden := WardenPoolCards.new()
+	var v3_warden := V3WardenPoolCards.new()
 	var seamstress := SeamstressPoolCards.new()
 	var tinker := TinkerPoolCards.new()
 	var starter := StarterCards.new()
@@ -123,7 +124,7 @@ func _catalog_test() -> void:
 	var cases := [
 		[warden, "warden_pinning_jab", ["Pinned"], ["DIFFERENT hero", "+5", "before Weak/Exposed", "expires"]],
 		[warden, "warden_draw_fire", ["Guarding"], ["position 1", "other heroes", "next turn"]],
-		[warden, "warden_counter_stitch", ["Thorns 3"], ["3 damage", "positions 1-2", "next turn"]],
+		[warden, "warden_counter_stitch", ["Thorns 3"], ["takes 3 damage", "confirmed positive-damage hit", "until the next turn"]],
 		[seamstress, "seamstress_running_stitch", ["Bleed 3"], ["3 HP", "decreases by 1", "1 Unravel"]],
 		[seamstress, "seamstress_snag", ["Weak 1", "Unravel 3"], ["25%", "8, elite 12, boss 16", "NEXT action", "rises by 4"]],
 		[seamstress, "seamstress_red_thread", ["Bleed 6", "Exposed 1"], ["6 HP", "50%", "rounds down"]],
@@ -228,6 +229,7 @@ func _catalog_test() -> void:
 	_bleed_doubling_catalog_test(seamstress)
 	_pin_and_pound_catalog_test(warden)
 	_blind_catalog_test(lantern_starters, lantern_pool)
+	_thorns_test(warden, v3_warden)
 	# Exact authored shapes are explained; every unknown, malformed or partial
 	# variant stays silent and leaves the caller's definition untouched. These
 	# effect fixtures mirror the catalog descriptors but are built independently.
@@ -1129,6 +1131,127 @@ func _blind_catalog_test(starters: LanternMonkStarterCards,
 		and keyword_order[keyword_order.size() - 2] == "blind"
 		and keyword_order.find("blind") > keyword_order.find("tangled"),
 		"Fear is appended after Blind, which is appended after Tangled")
+
+
+## AC2: Thorns N Help explains the generic status effect without claiming a single
+## source. The four real Thorns cards — Counter-stitch base/plus (live Warden
+## pool) and Buckle Rebound base/plus (V3 Warden pool) — each carry Block, Thorns
+## and the until-next-turn duration, and each earns exactly one Thorns %d row with
+## the source-neutral retaliation wording plus the duration clause. Bad-count
+## Thorns values (missing, zero, negative, boolean, string, float) produce no row,
+## an enemy-shaped Thorns descriptor makes no Warden/position/expiry claims, and
+## the fixed keyword ordering is preserved.
+func _thorns_test(warden: WardenPoolCards, v3_warden: V3WardenPoolCards) -> void:
+	# The four real Thorns cards: Counter-stitch base/plus and Buckle Rebound
+	# base/plus. Plus variants are reached via has_card(), since get_base_ids()
+	# only lists base forms.
+	var cases := [
+		{"catalog": warden, "id": "warden_counter_stitch", "thorns": 3},
+		{"catalog": warden, "id": "warden_counter_stitch_plus", "thorns": 4},
+		{"catalog": v3_warden, "id": "warden_v3_buckle_rebound", "thorns": 3},
+		{"catalog": v3_warden, "id": "warden_v3_buckle_rebound_plus", "thorns": 4},
+	]
+	for case: Dictionary in cases:
+		var catalog: Variant = case["catalog"]
+		var card_id: String = String(case["id"])
+		var authored: int = int(case["thorns"])
+		_check(catalog.has_card(card_id), "Thorns card present in catalog " + card_id)
+		if not catalog.has_card(card_id):
+			continue
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			"actual catalog definition " + card_id)
+		if definition.is_empty():
+			continue
+		var original: Dictionary = definition.duplicate(true)
+		var effects: Dictionary = definition.get("effects", {})
+		_check(effects.has("thorns") and effects.get("thorns") is int
+			and int(effects["thorns"]) == authored,
+			"authored Thorns %d read from catalog: %s" % [authored, card_id])
+		_check(effects.get("block") is int and effects.get("duration") == "until_next_turn",
+			"authored Block and until-next-turn duration for " + card_id)
+		var rows := CardKeywordGlossary.describe(definition)
+		var names := _row_names(rows)
+		_check(names == ["Thorns %d" % authored],
+			"exactly one Thorns %d row for %s (got %s)" % [authored, card_id, str(names)])
+		if names != ["Thorns %d" % authored]:
+			continue
+		var text := str(rows[0]["explanation"])
+		_check(text.contains("takes %d damage" % authored),
+			"Thorns Help states the retaliation amount: " + card_id)
+		_check(text.contains("confirmed positive-damage hit"),
+			"Thorns Help states the hit trigger: " + card_id)
+		_check(text.contains("attacker's own Block") and text.contains("before HP"),
+			"Thorns Help states retaliation goes through Block before HP: " + card_id)
+		_check(text.contains("Misses, previews and rejected"),
+			"Thorns Help states misses/previews/rejected do not trigger: " + card_id)
+		_check(text.contains("until the next turn"),
+			"Thorns Help states the until-next-turn expiry: " + card_id)
+		_check(not text.contains("Counter-stitch") and not text.contains("Buckle Rebound")
+			and not text.contains("Warden's"),
+			"Thorns Help makes no source-specific claim: " + card_id)
+		_check(definition == original and catalog.get_definition(card_id) == original,
+			"Thorns Help never mutates the catalog definition " + card_id)
+		_check(CardKeywordGlossary.describe(definition) == rows,
+			"Thorns Help stays deterministic for " + card_id)
+		rows[0]["keyword"] = "Tampered"
+		rows[0]["explanation"] = "Tampered"
+		var fresh := CardKeywordGlossary.describe(definition)
+		_check(_row_names(fresh) == ["Thorns %d" % authored] and definition == original,
+			"Thorns Help results are detached from the caller's definition " + card_id)
+	# Bad-count cases: missing, zero, negative, boolean, string, float all
+	# produce no Thorns row instead of inventing one.
+	var bad_counts: Array = [
+		["missing", {"effects": {}}],
+		["zero", {"effects": {"thorns": 0}}],
+		["negative", {"effects": {"thorns": -1}}],
+		["boolean true", {"effects": {"thorns": true}}],
+		["string", {"effects": {"thorns": "3"}}],
+		["float", {"effects": {"thorns": 3.0}}],
+	]
+	for case in bad_counts:
+		var broken: Dictionary = case[1].duplicate(true)
+		var broken_before: Dictionary = broken.duplicate(true)
+		var rows := CardKeywordGlossary.describe(broken)
+		_check(not _row_names(rows).has("Thorns 3") and not _row_names(rows).has("Thorns 0")
+			and rows.is_empty(),
+			"%s produces no Thorns row" % String(case[0]))
+		_check(broken == broken_before,
+			"%s leaves the fixture untouched" % String(case[0]))
+	# Enemy-shaped Thorns descriptor: source-neutral text that never claims
+	# Warden, positions or expiry when the record carries no duration.
+	var enemy_thorns := {"id": "goblin_spine_crawler", "effects": {"thorns": 2}}
+	var enemy_rows := CardKeywordGlossary.describe(enemy_thorns)
+	var enemy_names := _row_names(enemy_rows)
+	_check(enemy_names == ["Thorns 2"], "enemy-shaped Thorns keeps one row: " + str(enemy_names))
+	if enemy_names.has("Thorns 2"):
+		var idx: int = enemy_names.find("Thorns 2")
+		var enemy_text: String = str(enemy_rows[idx]["explanation"])
+		_check(not enemy_text.is_empty(), "enemy Thorns Help is non-empty")
+		_check(enemy_text.contains("takes 2 damage")
+			and enemy_text.contains("confirmed positive-damage hit")
+			and enemy_text.contains("attacker's own Block")
+			and enemy_text.contains("before HP")
+			and enemy_text.contains("Misses, previews and rejected"),
+			"enemy Thorns Help states the generic mechanics")
+		_check(not enemy_text.contains("Warden")
+			and not enemy_text.contains("Counter-stitch")
+			and not enemy_text.contains("Buckle Rebound")
+			and not enemy_text.contains("positions 1-2")
+			and not enemy_text.contains("until the next turn"),
+			"enemy Thorns Help makes no false Warden/position/expiry claims: " + enemy_text)
+	# Stable ordering: Thorns sits inside KEYWORD_ORDER, after Guarding and
+	# before Riposte; combined rows keep that fixed position.
+	var order := CardKeywordGlossary.KEYWORD_ORDER
+	_check(order.find("thorns") == 6
+		and order.find("thorns") > order.find("guarding")
+		and order.find("thorns") < order.find("riposte"),
+		"Thorns stays in fixed keyword order between Guarding and Riposte: " + str(order))
+	var combined := {"id": "thorns_order_probe", "effects": {
+		"bleed": 1, "weak": 1, "guarding": true, "thorns": 2}}
+	var combined_names := _row_names(CardKeywordGlossary.describe(combined))
+	_check(combined_names == ["Bleed 1", "Weak 1", "Guarding", "Thorns 2"],
+		"Thorns follows Guarding in combined stable order: " + str(combined_names))
 
 
 func _help_in_fixture(fixture: Dictionary, kind: String) -> void:

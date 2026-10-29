@@ -234,6 +234,11 @@ func end_turn() -> bool:
 	# _phase_is_executable prevalidates the entire batch against this roster.
 	if not phase["ok"]:
 		return false
+	# A birth expands the genuine fight's gauge without resetting its older
+	# charges. That child becomes a legal target and source next player turn.
+	if _unravel != null and _enemies.get_enemies().size() > _unravel._gauges.size():
+		if not _unravel.admit_broodling(_enemies):
+			return false
 	# A skipped action is consumed only after the actual phase succeeds, and
 	# never for a source that died before its action could occur.
 	if _unravel != null:

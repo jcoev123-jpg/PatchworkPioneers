@@ -7149,6 +7149,8 @@ func _refresh_intents() -> void:
 			announcements.append("Enemy %d -> Hero %d: %s %d" % [attack.enemy_position, attack.target_position, attack.status.capitalize(), attack.amount])
 		elif attack.icon_key == "shove":
 			announcements.append("Enemy %d: Shove Hero %d %s" % [attack.enemy_position, attack.target_position, "back" if attack.direction == 1 else "front"])
+		elif attack.icon_key == "summon":
+			announcements.append("Enemy %d: Summon Moth Broodling" % attack.enemy_position)
 		else:
 			announcements.append("Enemy %d -> Hero %d (%s): %d damage" % [
 				attack["enemy_position"], attack["target_position"],
