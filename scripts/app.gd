@@ -936,7 +936,7 @@ func _settle_act_battle() -> bool:
 ## Record one already-confirmed paid-card transition that left the authentic
 ## Quilt Termite at zero HP. Only a living-to-slain change caused by that card
 ## qualifies: direct model damage, enemy-phase Bleed and Thorns never call here.
-func _note_card_damage(enemies_after: CombatEnemies, before: Array) -> bool:
+func _note_card_damage(enemies_after: CombatEnemies, before: Array, confirmed_card: Dictionary = {}) -> bool:
 	if enemies_after == null or enemies_after != enemies or _battle_closed \
 			or battle_result == null or not battle_result.can_continue() \
 			or enemy_intents == null or round_flow == null or deck == null or party == null:
@@ -960,6 +960,12 @@ func _note_card_damage(enemies_after: CombatEnemies, before: Array) -> bool:
 			if source != 0:
 				return false
 			source = index + 1
+	# Run this battle's Tether receipt bridge even when no Termite was slain.
+	# Neither a forecast nor an unconfirmed card may be passed as a hit.
+	if confirmed_card.get("ok", false) and confirmed_card.get("hits") is Array:
+		var preview := get_node_or_null("LiveAttackPreview")
+		if preview != null and is_instance_valid(preview):
+			preview.apply_tether_confirmed_hits(enemies_after, before, confirmed_card)
 	if source == 0:
 		return false
 	_termite_split_hit = {"enemies": enemies_after, "position": source}
@@ -1047,6 +1053,9 @@ func _observe_battle_result() -> bool:
 		enemy_buff_forecast_label.hide()
 	if not _battle_closed:
 		_battle_closed = true
+		var tether_presenter := get_node_or_null("LiveAttackPreview")
+		if tether_presenter != null:
+			tether_presenter.retire_tether_battle()
 		# A closed session keeps no pending Wind-up Turret for any later fight.
 		if round_flow != null:
 			round_flow.clear_turrets()

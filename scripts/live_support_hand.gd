@@ -1776,7 +1776,7 @@ func _resolve_target(position: int, token: int) -> void:
 		var roster_before: Array = app.enemies.get_enemies()
 		var played: Dictionary = _enemy_service(id).play_card(_deck, _party, app.enemies, id, position)
 		if played.get("ok", false):
-			app._note_card_damage(app.enemies, roster_before)
+			app._note_card_damage(app.enemies, roster_before, played)
 			app._refresh_party()
 			app._refresh_enemy_roster()
 			app._refresh_hand()
