@@ -51,6 +51,7 @@ const CARDS := {
 }
 
 var _damage := CombatStatusAttacks.new()
+var _keywords := CombatEnemyKeywordRules.new()
 
 
 ## The single paid transaction: authenticate, preflight every input, then charge 1 energy, discard
@@ -67,6 +68,7 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	# Every operation below is guaranteed by the complete preflight above: the turn is active,
 	# the held ID exists, the cost is affordable and the target is a living roster slot. Keep the
 	# defensive returns so an unexpected model change still fails closed.
+	var pre_hit_enemy: Dictionary = enemies.get_enemy(plan["target_position"])
 	if not deck.try_spend_energy(plan["cost"]):
 		return _failure()
 	if not deck.discard_played(card_id):
@@ -75,6 +77,8 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		plan["base_damage"], plan["attacker_statuses"], plan["defender_statuses"])
 	if not event.get("ok", false):
 		return _failure()
+	_keywords.commit_enrage_after_hit(enemies, plan["target_position"], pre_hit_enemy, event)
+	_keywords.resolve_thorns_retaliation(party, plan["owner_position"], pre_hit_enemy, event)
 	return {
 		"ok": true,
 		"card_id": card_id,
@@ -167,10 +171,24 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			return _failure()
 		if not enemy_block is int or enemy_block < 0:
 			return _failure()
+		if enemy.has("thorns"):
+			var thorns = enemy["thorns"]
+			if not thorns is int or thorns < 0:
+				return _failure()
+		if enemy.has("enrage") and not enemy["enrage"] is bool:
+			return _failure()
+		if enemy.has("enrage_stacks"):
+			var stacks = enemy["enrage_stacks"]
+			if not stacks is int or stacks < 0 or stacks > CombatEnemyKeywordRules.ENRAGE_MAX_STACKS:
+				return _failure()
 		seen_enemy_ids.append(enemy_id)
 	if not TO_POSITIONS.has(target_position) or target_position > enemy_records.size():
 		return _failure()
-	if enemy_records[target_position - 1]["hp"] == 0:
+	var target_enemy: Dictionary = enemy_records[target_position - 1]
+	if target_enemy["hp"] == 0:
+		return _failure()
+	if not _keywords.quote_enrage_after_hit(target_enemy,
+			{"ok": true, "damage": 0, "block_absorbed": 0, "hp_loss": 0}).get("ok", false):
 		return _failure()
 
 	# Validate both supplied snapshots here, before any mutation; the reused status bridge applies
