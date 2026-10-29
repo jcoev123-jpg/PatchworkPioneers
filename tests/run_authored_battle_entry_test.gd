@@ -23,6 +23,8 @@ const SOURCES := [
     "res://data/encounters/thimble_crossfire.json",
     "res://data/encounters/needle_marshal_elite.json",
     "res://data/encounters/spool_hexer_elite.json",
+    "res://data/encounters/marshal_threadclamp_elite.json",
+    "res://data/encounters/hexer_patchguard_elite.json",
     "res://data/encounters/patchwork_behemoth.json",
     "res://data/encounters/triple_spool_pinch.json",
     "res://data/encounters/double_hem_siege.json",
@@ -75,6 +77,8 @@ const BINDINGS := {
         "thimble_crossfire": ["button_guard", "seam_ripper"],
         "needle_marshal_elite": ["needle_marshal", "ragling_guard"],
         "spool_hexer_elite": ["spool_hexer", "spool_stalker"],
+        "marshal_threadclamp_elite": ["needle_marshal", "spool_stalker"],
+        "hexer_patchguard_elite": ["spool_hexer", "button_guard"],
     },
     "Boss": {"patchwork_behemoth": ["patchwork_behemoth"]},
 }
@@ -452,6 +456,26 @@ func _expected_actions() -> Dictionary:
             [{"type": "attack", "amount": 1, "target_position": 3},
              {"type": "block", "amount": 2},
              {"type": "attack", "amount": 1, "target_position": 2}],
+        ],
+        "marshal_threadclamp_elite": [
+            [{"type": "shove", "amount": 0, "target_position": 1, "direction": 1},
+             {"type": "attack", "amount": 4, "target_position": 2},
+             {"type": "buff", "amount": 3},
+             {"type": "debuff", "amount": 1, "target_position": 3, "status": "weak"}],
+            [{"type": "block", "amount": 2},
+             {"type": "attack", "amount": 3, "target_position": 3},
+             {"type": "attack", "amount": 2, "target_position": 1},
+             {"type": "attack", "amount": 2, "target_position": 2}],
+        ],
+        "hexer_patchguard_elite": [
+            [{"type": "debuff", "amount": 1, "target_position": 2, "status": "exposed"},
+             {"type": "attack", "amount": 3, "target_position": 2},
+             {"type": "debuff", "amount": 1, "target_position": 3, "status": "bleed"},
+             {"type": "attack", "amount": 3, "target_position": 3}],
+            [{"type": "block", "amount": 3},
+             {"type": "attack", "amount": 2, "target_position": 1},
+             {"type": "buff", "amount": 2},
+             {"type": "attack", "amount": 2, "target_position": 3}],
         ],
         "patchwork_behemoth": [
             [{"type": "attack", "amount": 2, "target_position": 1},
@@ -1848,6 +1872,8 @@ func _test_m04_elite_pool_bindings() -> void:
         "thimble_crossfire": ["button_guard", "seam_ripper"],
         "needle_marshal_elite": ["needle_marshal", "ragling_guard"],
         "spool_hexer_elite": ["spool_hexer", "spool_stalker"],
+        "marshal_threadclamp_elite": ["needle_marshal", "spool_stalker"],
+        "hexer_patchguard_elite": ["spool_hexer", "button_guard"],
     }
     for elite_id in expected_elites:
         _check(elite_pool.has(elite_id), "Elite/" + elite_id + " present by ID")
@@ -1890,6 +1916,8 @@ func _test_m04_elite_pool_bindings() -> void:
             "res://assets/paper/enemies/ragling_guard.png"],
         ["res://data/enemies/run_enemies.json", "spool_stalker", "Spool Stalker", 14,
             "res://assets/paper/enemies/spool_stalker.png"],
+        ["res://data/enemies/run_enemies.json", "button_guard", "Button Guard", 16,
+            "res://assets/paper/enemies/button_guard.png"],
     ]
     for spec in catalog_checks:
         var parsed := RunTypedBattleRoster._parse_catalog_text(
@@ -1979,7 +2007,8 @@ func _test_m04_elite_direct_entries() -> void:
     if not base_registry.get("Elite") is Dictionary:
         return
 
-    for elite_id in ["needle_marshal_elite", "spool_hexer_elite"]:
+    for elite_id in ["needle_marshal_elite", "spool_hexer_elite",
+            "marshal_threadclamp_elite", "hexer_patchguard_elite"]:
         _check(base_registry["Elite"].has(elite_id),
             "production registry contains " + elite_id)
         if not base_registry["Elite"].has(elite_id):
@@ -2025,7 +2054,7 @@ func _test_m04_elite_direct_entries() -> void:
                     "%s slot %d exact ID/name/position/HP/zero Block/art" % [elite_id, slot])
 
         # Verify full joint cycle including wraparound on a fresh intent scheduler.
-        var period := 4 if elite_id == "needle_marshal_elite" else 12
+        var period := 12 if elite_id == "spool_hexer_elite" else 4
         var full_cycle := CombatEnemyIntents.new(first["definitions"])
         _check(full_cycle.is_valid(), elite_id + " detached definitions build valid intents")
         for step in range(period + 1):
@@ -2112,7 +2141,7 @@ func _test_m04_elite_direct_entries() -> void:
                     phase_enemies.get_enemy(1).get("hp") == 28 and phase_enemies.get_enemy(1).get("block") == 3 and
                     phase_enemies.get_enemy(2).get("hp") == 12 and phase_enemies.get_enemy(2).get("block") == 4,
                     "needle_marshal_elite four-beat phase applies attack, buff, shove swap 2/3, and escort block/attack")
-            else:
+            elif elite_id == "spool_hexer_elite":
                 _check(party.get_hero(1).get("id") == "warden" and
                     party.get_hero(1).get("hp") == 40 and party.get_hero(1).get("block") == 2 and
                     party.get_hero(1).get("statuses", {}) == {"exposed": 1} and
@@ -2124,6 +2153,18 @@ func _test_m04_elite_direct_entries() -> void:
                     phase_enemies.get_enemy(1).get("hp") == 24 and phase_enemies.get_enemy(1).get("block") == 0 and
                     phase_enemies.get_enemy(2).get("hp") == 14 and phase_enemies.get_enemy(2).get("block") == 2,
                     "spool_hexer_elite four-beat phase applies Exposed +50% incoming, Weak -25% outgoing, and escort cycle")
+            else:
+                # marshal_threadclamp_elite and hexer_patchguard_elite: their
+                # full four-beat hero/enemy ledger (HP, Block, statuses) is
+                # verified end-to-end in tests/m04_elite_threadclamp_pair_test.gd.
+                # Here confirm the phase ran all beats cleanly and that the
+                # assembled catalog enemies retain their identities and max HP
+                # (their actions target heroes, not enemies).
+                _check(phase_enemies.get_enemy(1)["id"] == expected_ids[0]
+                    and phase_enemies.get_enemy(2)["id"] == expected_ids[1]
+                    and phase_enemies.get_enemy(1)["hp"] == HP[expected_ids[0]]
+                    and phase_enemies.get_enemy(2)["hp"] == HP[expected_ids[1]],
+                    "%s phase retains authentic enemy IDs and max HP through four beats" % elite_id)
 
         _check(_sources() == sources_before,
             elite_id + " direct entry and replay leave all source JSON unchanged")
@@ -2142,7 +2183,8 @@ func _test_m04_elite_full_pool_selection() -> void:
     var pools := _registry()
     if not pools.get("Elite") is Dictionary:
         return
-    for required_id in ["thimble_crossfire", "needle_marshal_elite", "spool_hexer_elite"]:
+    for required_id in ["thimble_crossfire", "needle_marshal_elite", "spool_hexer_elite",
+            "marshal_threadclamp_elite", "hexer_patchguard_elite"]:
         _check(pools["Elite"].has(required_id),
             "full Elite pool includes " + required_id)
     var sorted_ids: Array = pools["Elite"].keys()

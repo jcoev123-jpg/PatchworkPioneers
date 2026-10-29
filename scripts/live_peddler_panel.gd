@@ -22,6 +22,12 @@ extends Control
 ## the offer; anything unresolvable reads "Card details unavailable" instead of
 ## a guessed number. It never changes a quoted price, the five actions, the
 ## purchase intent or the visit state.
+##
+## The priced patch row repeats the one trusted Patch Stall power preview:
+## hovering or focusing it shows the audited LivePatchStallPanel projection's
+## exact slot, power and trigger in the status band (the complete rule stays
+## in the patch Button's tooltip), and anything that audit cannot prove reads
+## PATCH_DETAILS_UNAVAILABLE instead of a guessed buff.
 signal intent_requested(intent: Dictionary)
 
 const PANEL_ART := "res://assets/paper/ui/reward_panel.png"
@@ -31,6 +37,8 @@ const TITLE_TEXT := "PEDDLER  ·  one purchase or Leave"
 const STATUS_OPEN := "Choose one offer, or Leave.  ·  1-3 cards · 4 patch · 0 Leave"
 const STATUS_CLOSED := "No open Peddler visit. No offer can be submitted."
 const DETAILS_UNAVAILABLE := "Card details unavailable"
+const PATCH_DETAILS_UNAVAILABLE := "Power details unavailable"
+const PATCH_TORN_WARNING := "Patch powers do not work while the wearer is Torn."
 const ELLIPSIS := "..."
 const WALLET_CLOSED := "Wallet unavailable"
 const LEAVE_TEXT := "Leave  ·  FREE"
@@ -86,7 +94,9 @@ var _pending_intent: Dictionary = {}
 var _connections: Dictionary = {} # Only view-owned Button.pressed -> Callable.
 var _preview_index := -1 # Card row whose read-only preview fills the status band.
 var _hover_index := -1 # Card row under the pointer; -1 when no card is hovered.
+var _patch_hover_active := false # Whether the patch button is under the pointer.
 var _catalogs: Array = [] # Read-only authored catalogs for the preview, built once.
+var _patch_projection: Dictionary = {} # Cached audited patch slots/previews, built once.
 
 
 func _ready() -> void:
@@ -493,10 +503,13 @@ func _wire_previews() -> void:
 		button.mouse_exited.connect(_on_card_hover.bind(i, false))
 		button.focus_entered.connect(_on_card_focus.bind(i))
 		button.focus_exited.connect(_on_preview_refresh)
-	for button in [patch_button, leave_button]:
-		button.mouse_entered.connect(_on_plain_hover)
-		button.focus_entered.connect(_on_preview_refresh)
-		button.focus_exited.connect(_on_preview_refresh)
+	patch_button.mouse_entered.connect(_on_patch_hover.bind(true))
+	patch_button.mouse_exited.connect(_on_patch_hover.bind(false))
+	patch_button.focus_entered.connect(_on_patch_focus)
+	patch_button.focus_exited.connect(_on_preview_refresh)
+	leave_button.mouse_entered.connect(_on_plain_hover)
+	leave_button.focus_entered.connect(_on_preview_refresh)
+	leave_button.focus_exited.connect(_on_preview_refresh)
 
 
 func _on_card_hover(index: int, entered: bool) -> void:
@@ -511,6 +524,15 @@ func _on_card_hover(index: int, entered: bool) -> void:
 
 func _on_plain_hover() -> void:
 	_hover_index = -1
+	_sync_preview()
+
+
+func _on_patch_hover(entered: bool) -> void:
+	_patch_hover_active = entered
+	_sync_preview()
+
+
+func _on_patch_focus() -> void:
 	_sync_preview()
 
 
@@ -544,13 +566,24 @@ func _sync_preview() -> void:
 		for button in card_buttons:
 			if is_instance_valid(button):
 				button.tooltip_text = ""
+		if is_instance_valid(patch_button):
+			patch_button.tooltip_text = ""
+		_patch_hover_active = false
 		if not _source_current():
 			status_label.text = STATUS_CLOSED
 		return
+	# The pointer wins while it is over any offer: a hovered patch outranks
+	# a focused card exactly as a hovered card outranks the patch's focus ring,
+	# so a mouse-only player always sees the row actually under the pointer.
 	var index := _hover_index
-	if index < 0:
+	if index < 0 and not _patch_hover_active:
 		index = _focused_card()
-	_apply_preview(index)
+	if index >= 0:
+		_apply_preview(index)
+	elif _patch_hover_active or (patch_button != null and patch_button.has_focus()):
+		_apply_patch_preview()
+	else:
+		_apply_preview(-1)
 
 
 func _apply_preview(index: int) -> void:
@@ -561,6 +594,13 @@ func _apply_preview(index: int) -> void:
 		status_label.text = STATUS_OPEN
 		return
 	status_label.text = _clamp_status(_card_preview(_preview_index))
+
+
+func _apply_patch_preview() -> void:
+	_preview_index = -1
+	if status_label == null:
+		return
+	status_label.text = _clamp_status(_patch_preview())
 
 
 ## The authored catalogs the seeded Peddler stock generator itself validates
@@ -642,6 +682,113 @@ func _card_tooltip(index: int) -> String:
 	return "%s  ·  %s\n%s card  ·  %d energy  ·  %d gold\n%s" % [
 			str(details["name"]), str(details["id"]), str(details["owner"]).capitalize(),
 			int(details["cost"]), int(offer.get("price", 0)), str(details["line"])]
+
+
+## The single audited patch authority: the complete power/slot map built from
+## the same power-only catalogs the live Patch Stall binds, passed through that
+## panel's UNCHANGED verified-preview audit. Like the card preview catalogs the
+## result is built once per panel because the authored files are immutable; a
+## catalog that fails to load yields no authority at all and every patch
+## preview fails closed.
+func _patch_authority() -> Dictionary:
+	if _patch_projection.is_empty():
+		var slots: Dictionary = {}
+		for record in RunAuthoredPatchDefinitions.load_power_definitions():
+			if typeof(record) == TYPE_DICTIONARY and record.has("id") and record.has("slot"):
+				slots[str(record["id"])] = str(record["slot"])
+		if not slots.is_empty():
+			var previews := _trusted_patch_previews(slots)
+			if not previews.is_empty():
+				_patch_projection = {"slots": slots, "previews": previews}
+	return _patch_projection
+
+
+## The live Patch Stall's own verified-preview path, unchanged: a detached
+## read-only instance of that panel exists only to run its audited function
+## over the full power/slot map (it is never mounted, owns no state, and the
+## audit only reads authored constants and the shipped catalogs). This view
+## publishes exactly the power/trigger text the Patch Stall audit proves,
+## never a second independently copied description.
+func _trusted_patch_previews(slots: Dictionary) -> Dictionary:
+	var stall := LivePatchStallPanel.new()
+	var previews: Dictionary = stall._trusted_power_previews(slots)
+	stall.free()
+	return previews
+
+
+## The audited patch description reuses the one existing Patch Stall
+## verified-preview path: the offered ID must be a real power patch in the
+## audited slot catalog, and the trusted projection must have proven that
+## exact ID and slot. Anything that audit rejects - an inert starter slot, a
+## contradictory or unknown record - yields no details at all, so the view
+## fails closed with PATCH_DETAILS_UNAVAILABLE instead of guessing a rule.
+func _patch_details() -> Dictionary:
+	if _source.is_empty():
+		return {}
+	var offer := _patch_offer()
+	var offer_id := str(offer.get("id", ""))
+	if offer_id.is_empty():
+		return {}
+	var authority := _patch_authority()
+	var slots: Dictionary = authority.get("slots", {})
+	var previews: Dictionary = authority.get("previews", {})
+	if not slots.has(offer_id) or not previews.has(offer_id):
+		return {}
+	var slot := str(slots[offer_id])
+	if not ["HEAD", "ARM", "COAT"].has(slot):
+		return {}
+	var preview: Dictionary = previews[offer_id]
+	var short_text := str(preview.get("short", ""))
+	var full_text := str(preview.get("full", ""))
+	if short_text.is_empty() or full_text.is_empty():
+		return {}
+	return {
+		"id": offer_id,
+		"slot": slot,
+		"name": readable_id(offer_id),
+		"price": int(offer.get("price", 0)),
+		"sold": bool(offer.get("sold", false)),
+		"short": short_text,
+		"full": full_text,
+	}
+
+
+func _patch_preview() -> String:
+	if _source.is_empty():
+		return PATCH_DETAILS_UNAVAILABLE
+	var details := _patch_details()
+	var offer := _patch_offer()
+	if details.is_empty():
+		return "%s  ·  %s  ·  %s" % ["PATCH", readable_id(str(offer.get("id", ""))), PATCH_DETAILS_UNAVAILABLE]
+	var slot: String = str(details.get("slot", ""))
+	var name: String = str(details.get("name", readable_id(str(details.get("id", "")))))
+	var full: String = str(details.get("full", ""))
+	var short_text: String = str(details.get("short", ""))
+	# The preview shows the short form; the full form stays in the tooltip.
+	var line := short_text if not short_text.is_empty() else full
+	return "%s  ·  %s  ·  %s  ·  %s" % [slot, name, str(details["id"]), line]
+
+
+func _patch_tooltip() -> String:
+	if _source.is_empty():
+		return ""
+	var offer := _patch_offer()
+	var details := _patch_details()
+	if details.is_empty():
+		return "PATCH  ·  %s\n%s" % [readable_id(str(offer.get("id", ""))), PATCH_DETAILS_UNAVAILABLE]
+	var slot: String = str(details.get("slot", ""))
+	var full: String = str(details.get("full", ""))
+	# Replacement rule uses the same slot identity.
+	var replacement := "A %s slot: a patch already worn in this slot is destroyed for exactly +1 scrap.\nA free %s slot destroys nothing and gains no scrap." % [slot, slot]
+	return "%s  ·  %s  ·  %s\n%s\n%d gold\n%s\n%s" % [
+		str(details.get("name", readable_id(str(details.get("id", ""))))),
+		str(details.get("id", "")),
+		slot,
+		full,
+		int(details.get("price", int(offer.get("price", 0)))),
+		PATCH_TORN_WARNING,
+		replacement,
+	]
 
 
 ## Shortens only the on-screen display when the status band is too narrow for
@@ -733,6 +880,7 @@ func _refresh() -> void:
 		if open:
 			_attach(button, _request_buy.bind(i, false, button, _epoch, _visit))
 	patch_button.text = _patch_caption() if open else ""
+	patch_button.tooltip_text = _patch_tooltip() if open else ""
 	patch_button.disabled = true if not open else not _patch_buyable()
 	patch_button.set_meta("offer_kind", PATCH_KIND if open else "")
 	patch_button.set_meta("offer_id", str(_patch_offer()["id"]) if open else "")
@@ -788,6 +936,9 @@ func _status_authentic() -> bool:
 	for i in range(CARD_COUNT):
 		if status_label.text == _clamp_status(_card_preview(i)):
 			return true
+	# The patch preview is also authentic when it matches this exact source.
+	if status_label.text == _clamp_status(_patch_preview()):
+		return true
 	return false
 
 

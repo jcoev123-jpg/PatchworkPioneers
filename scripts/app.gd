@@ -1050,6 +1050,7 @@ func _observe_battle_result() -> bool:
 		# A closed session keeps no pending Wind-up Turret for any later fight.
 		if round_flow != null:
 			round_flow.clear_turrets()
+			round_flow.clear_taunt()
 		if outcome == CombatBattleResult.VICTORY:
 			if run_map == null:
 				session_gold = victory_gold.claim_gold(false, run_rng)
@@ -3325,6 +3326,8 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 		torn_carry._start = witness_before[3]
 		return false
 	# No fallible model work remains. Detach old controls before mounting fresh ones.
+	if round_flow != null:
+		round_flow.clear_taunt()
 	$LiveSupportHand._cancel_pending()
 	_clear_route_view()
 	if is_instance_valid(battle_view):
@@ -7548,6 +7551,8 @@ func _return_to_title() -> void:
 	_carryover_party = null
 	_carryover_result = null
 	continue_button = null
+	if round_flow != null:
+		round_flow.clear_taunt()
 	round_flow = null
 	_quilt_detach()
 	_combo_clear(true)

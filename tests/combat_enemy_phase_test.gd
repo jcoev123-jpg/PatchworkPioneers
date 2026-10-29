@@ -21,6 +21,9 @@ func _initialize() -> void:
 	_test_drain_inert_and_fail_closed()
 	_test_rejections()
 	_test_replay_and_empty()
+	_test_riposte_confirmed_hits_and_block()
+	_test_riposte_multi_hit_and_guard_redirect()
+	_test_riposte_skips_misses_and_rollback()
 	if failures.is_empty():
 		print("combat_enemy_phase_test: PASS (", checks, " checks)")
 	else:
@@ -1080,3 +1083,543 @@ func _test_two_hits_and_blind() -> void:
 		"type": "debuff", "amount": 1, "status": "bleed", "target_position": 1}])
 		== {"ok": false, "events": []} and snapshot == [party.get_heroes(), enemies.get_enemies()],
 		"later overflow rolls back both earlier landed hits")
+
+
+
+func _riposte_party(duelist_seat: int = 2) -> CombatParty:
+	var definitions: Array = [
+		{"id": "warden", "max_hp": 40},
+		{"id": "tinker", "max_hp": 26},
+	]
+	definitions.insert(duelist_seat - 1, {"id": "rag_duelist", "max_hp": 30})
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid() and party.get_heroes().size() == 3
+		and party.get_hero(duelist_seat)["id"] == "rag_duelist"
+		and party.get_hero(duelist_seat)["hp"] == 30,
+		"precondition: three-hero party with Rag Duelist at seat " + str(duelist_seat))
+	return party
+
+
+func _riposte_deck(card_id: String, seed_value: int = 9101) -> CombatDeck:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var cards: Array[String] = [
+		card_id, "warden_strike", "warden_brace", "tinker_pop_shot", "tinker_scrap_bomb"
+	]
+	var deck := CombatDeck.new(cards, rng)
+	_check(deck.start_turn() and deck.turn_active
+		and deck.energy == CombatState.TURN_ENERGY and deck.hand.size() == 5
+		and deck.hand.has(card_id),
+		"precondition: 5-card hand with 3 energy holding " + card_id)
+	return deck
+
+
+func _guard_event(source: int, announced: int, applied: bool, actual: int,
+		redirected: bool, thorns_damage: int) -> Dictionary:
+	return {
+		"type": "attack",
+		"enemy_position": source,
+		"target_position": announced,
+		"applied": applied,
+		"actual_target_position": actual,
+		"redirected": redirected,
+		"retaliation_damage": thorns_damage,
+		"retaliatory_damage": thorns_damage,
+	}
+
+
+## AC1 & AC4: Every authentic Rag Duelist Riposte N card deals exactly N retaliation
+## through enemy Block then HP on each confirmed positive-damage hit on a living
+## pre-hit defender—even when hero Block absorbs the whole hit or the hit downs
+## the defender—while keeping Riposte N unchanged during the phase.
+func _test_riposte_confirmed_hits_and_block() -> void:
+	var riposte_service := CombatRagDuelistRiposteCards.new()
+	var card_specs: Array = [
+		["rag_duelist_cape_parry", 4, 2, [1, 2, 3]],
+		["rag_duelist_cape_parry_plus", 6, 3, [1, 2, 3]],
+		["rag_duelist_cape_guard", 5, 3, [1, 2, 3]],
+		["rag_duelist_cape_guard_plus", 7, 4, [1, 2, 3]],
+		["rag_duelist_duelist_reprise", 0, 5, [1, 2]],
+		["rag_duelist_duelist_reprise_plus", 0, 7, [1, 2]],
+	]
+	for spec: Array in card_specs:
+		var card_id: String = spec[0]
+		var expected_block: int = spec[1]
+		var expected_riposte: int = spec[2]
+		var seats: Array = spec[3]
+		for seat_v in seats:
+			var seat: int = int(seat_v)
+			var party := _riposte_party(seat)
+			var deck := _riposte_deck(card_id, 9200 + seat)
+			var enemies := _enemies()
+			_check(enemies.gain_block(1, 2) and enemies.gain_block(2, 3),
+				"AC1 precondition: enemy 1 has 2 Block, enemy 2 has 3 Block for " + card_id)
+			var rng_before: int = deck._rng.state
+			var play_res: Dictionary = riposte_service.play_card(deck, party, card_id)
+			_check(play_res.get("ok", false)
+				and deck.energy == 2 and deck.discard_pile == [card_id]
+				and party.get_hero(seat)["block"] == expected_block
+				and party.get_hero(seat)["statuses"] == {"riposte": expected_riposte}
+				and deck._rng.state == rng_before,
+				"AC1 precondition: paid " + card_id + " at seat " + str(seat)
+					+ " sets Block " + str(expected_block) + " and Riposte " + str(expected_riposte))
+			var hero_ref: Dictionary = party._heroes[seat - 1]
+			var enemy_ref: Dictionary = enemies._enemies[0]
+			var enemy2_before: Dictionary = enemies.get_enemy(2)
+			var incoming := 6
+			var result := phase.execute_phase(party, enemies, [_attack(1, incoming, seat)])
+			_check(result == {"ok": true, "events": [_event("attack", 1, true, seat)]},
+				"AC1/AC4: " + card_id + " phase keeps exact ordinary attack event shape")
+			var absorbed_by_hero: int = mini(expected_block, incoming)
+			var expected_hero_block: int = expected_block - absorbed_by_hero
+			var expected_hero_hp: int = 30 - (incoming - absorbed_by_hero)
+			_check(party.get_hero(seat)["block"] == expected_hero_block
+				and party.get_hero(seat)["hp"] == expected_hero_hp
+				and party.get_hero(seat)["statuses"] == {"riposte": expected_riposte},
+				"AC1: " + card_id + " hero Block absorbs first and Riposte N remains unchanged")
+			var absorbed_by_enemy: int = mini(2, expected_riposte)
+			var expected_enemy_block: int = 2 - absorbed_by_enemy
+			var expected_enemy_hp: int = 12 - (expected_riposte - absorbed_by_enemy)
+			_check(enemies.get_enemy(1)["block"] == expected_enemy_block
+				and enemies.get_enemy(1)["hp"] == expected_enemy_hp
+				and enemies.get_enemy(2) == enemy2_before,
+				"AC1: " + card_id + " deals exact Riposte " + str(expected_riposte)
+					+ " through enemy Block then HP without touching enemy 2")
+			_check(is_same(party._heroes[seat - 1], hero_ref)
+				and is_same(enemies._enemies[0], enemy_ref)
+				and deck._rng.state == rng_before,
+				"AC1: " + card_id + " preserves actor dictionary identities and RNG")
+			# Owner-turn boundary (not CombatEnemyPhase) expires Riposte N completely.
+			var batch_tick := CombatStatusTurnBatch.new().tick_side("heroes", party.get_heroes())
+			_check(batch_tick.get("ok", false)
+				and batch_tick["actors"][seat - 1]["statuses"] == {},
+				"AC1: CombatStatusTurnBatch expires Riposte " + str(expected_riposte) + " after phase")
+
+	# Full hero Block absorption still triggers Riposte N and suppresses enemy Drain/Sting.
+	var blocked_party := _riposte_party(2)
+	var blocked_deck := _riposte_deck("rag_duelist_cape_guard_plus", 9301)
+	var blocked_enemies := CombatEnemies.new([
+		{"id": "stinger-bat", "max_hp": 14, "drain": true, "bleed_on_attack": true},
+		{"id": "bystander", "max_hp": 15},
+	])
+	_check(blocked_enemies.is_valid()
+		and blocked_enemies.apply_damage(1, 5)
+		and blocked_enemies.gain_block(1, 1)
+		and blocked_enemies.get_enemy(1)["hp"] == 9,
+		"AC1 precondition: wounded Drain+Sting enemy with 1 Block and 9 HP")
+	_check(riposte_service.play_card(blocked_deck, blocked_party, "rag_duelist_cape_guard_plus").get("ok", false)
+		and blocked_party.get_hero(2)["block"] == 7
+		and blocked_party.get_hero(2)["statuses"] == {"riposte": 4},
+		"AC1 precondition: Cape Guard+ grants 7 Block and Riposte 4")
+	var blocked_res := phase.execute_phase(blocked_party, blocked_enemies, [_attack(1, 5, 2)])
+	_check(blocked_res == {"ok": true, "events": [_event("attack", 1, true, 2)]},
+		"AC1: fully blocked hit is still an applied positive-damage attack")
+	_check(blocked_party.get_hero(2)["hp"] == 30
+		and blocked_party.get_hero(2)["block"] == 2
+		and blocked_party.get_hero(2)["statuses"] == {"riposte": 4},
+		"AC1: hero Block absorbs all 5 damage; HP stays 30, no Bleed added, Riposte 4 intact")
+	_check(blocked_enemies.get_enemy(1)["block"] == 0
+		and blocked_enemies.get_enemy(1)["hp"] == 6,
+		"AC1: enemy takes 4 Riposte (1 Block + 3 HP -> 6 HP) and heals 0 Drain on blocked hit")
+
+	# A hit that downs the previously living Riposte hero still counters once;
+	# a subsequent enemy targeting that now-downed slot is skipped without a second counter.
+	var lethal_party := _riposte_party(1)
+	var lethal_deck := _riposte_deck("rag_duelist_duelist_reprise_plus", 9302)
+	var lethal_enemies := _enemies()
+	_check(lethal_party.apply_damage(1, 26) and lethal_party.get_hero(1)["hp"] == 4
+		and lethal_enemies.gain_block(1, 2) and lethal_enemies.gain_block(2, 1),
+		"AC1 precondition: living Rag Duelist at 4 HP; enemies carry Block")
+	_check(riposte_service.play_card(lethal_deck, lethal_party, "rag_duelist_duelist_reprise_plus").get("ok", false)
+		and lethal_party.get_hero(1)["statuses"] == {"riposte": 7},
+		"AC1 precondition: Duelist Reprise+ sets Riposte 7 on 4-HP front hero")
+	var lethal_res := phase.execute_phase(lethal_party, lethal_enemies,
+		[_attack(2, 6, 1), _attack(1, 9, 1)])
+	_check(lethal_res == {"ok": true, "events": [
+		_event("attack", 1, true, 1),
+		_event("attack", 2, false, 1)]},
+		"AC1: lethal first hit applies; second hit on now-downed hero is skipped")
+	_check(lethal_party.is_downed(1) and lethal_party.get_hero(1)["hp"] == 0
+		and lethal_party.get_hero(1)["statuses"] == {"riposte": 7},
+		"AC1: downed hero retains pre-tick status dictionary")
+	_check(lethal_enemies.get_enemy(1)["block"] == 0 and lethal_enemies.get_enemy(1)["hp"] == 7
+		and lethal_enemies.get_enemy(2)["block"] == 1 and lethal_enemies.get_enemy(2)["hp"] == 15,
+		"AC1: enemy 1 takes 7 Riposte (2 Block + 5 HP) from lethal hit; skipped enemy 2 takes 0")
+
+	# Enemy revive_once semantics stay intact when Riposte deals lethal retaliation.
+	var revive_party := _riposte_party(2)
+	var revive_deck := _riposte_deck("rag_duelist_duelist_reprise", 9303)
+	var revive_enemies := CombatEnemies.new([
+		{"id": "wraith-a", "max_hp": 11, "revive_once": true},
+		{"id": "wraith-b", "max_hp": 11, "revive_once": true, "revived": true},
+	])
+	_check(revive_enemies.is_valid()
+		and revive_enemies.apply_damage(1, 8) and revive_enemies.get_enemy(1)["hp"] == 3
+		and not revive_enemies.get_enemy(1).get("revived", false)
+		and revive_enemies.apply_damage(2, 8) and revive_enemies.get_enemy(2)["hp"] == 3
+		and revive_enemies.get_enemy(2).get("revived", false),
+		"AC1/AC4 precondition: unrevived and already-revived foes both at 3 HP")
+	_check(riposte_service.play_card(revive_deck, revive_party, "rag_duelist_duelist_reprise").get("ok", false),
+		"AC1/AC4 precondition: Riposte 5 active on Rag Duelist")
+	var revive_res := phase.execute_phase(revive_party, revive_enemies,
+		[_attack(1, 5, 2), _attack(2, 5, 2)])
+	_check(revive_res == {"ok": true, "events": [
+		_event("attack", 1, true, 2),
+		_event("attack", 2, true, 2)]},
+		"AC1/AC4: both wraith attacks resolve in source order")
+	_check(revive_enemies.get_enemy(1)["hp"] == 6
+		and revive_enemies.get_enemy(1).get("revived") == true
+		and not revive_enemies.is_slain(1),
+		"AC1/AC4: first lethal Riposte triggers revive_once to ceil(11/2)=6 HP and latches revived")
+	_check(revive_enemies.get_enemy(2)["hp"] == 0
+		and revive_enemies.get_enemy(2).get("revived") == true
+		and revive_enemies.is_slain(2),
+		"AC1/AC4: already-revived enemy slain by Riposte stays at 0 HP")
+
+
+## AC2: Multi-hit attacks trigger Riposte N separately on each confirmed hit; an
+## attacker killed by a counter cannot land its remaining hits; Guard redirection
+## uses the actual hit defender (not the announced target) without double-counting
+## Guard's own Thorns retaliation.
+func _test_riposte_multi_hit_and_guard_redirect() -> void:
+	var riposte_service := CombatRagDuelistRiposteCards.new()
+
+	# 1. Two-hit attack where enemy survives Hit 1 and takes two separate Riposte counters.
+	var party := _riposte_party(3)
+	var deck := _riposte_deck("rag_duelist_cape_parry_plus", 9401)
+	var enemies := CombatEnemies.new([
+		{"id": "needle_wasp", "max_hp": 16, "bleed_on_attack": true}
+	])
+	_check(enemies.is_valid() and enemies.gain_block(1, 2),
+		"AC2 precondition: two-hit Wasp with 2 Block and 16 HP")
+	_check(riposte_service.play_card(deck, party, "rag_duelist_cape_parry_plus").get("ok", false)
+		and party.get_hero(3)["block"] == 6
+		and party.get_hero(3)["statuses"] == {"riposte": 3},
+		"AC2 precondition: Cape Parry+ at seat 3 sets Block 6 and Riposte 3")
+	var two_hit := {"enemy_position": 1, "type": "attack", "amount": 10, "hits": 2, "target_position": 3}
+	var res := phase.execute_phase(party, enemies, [two_hit])
+	_check(res == {"ok": true, "events": [
+		_event("attack", 1, true, 3),
+		_event("attack", 1, true, 3)]},
+		"AC2: both hits of multi-hit attack land and emit standard events")
+	# Hit 1 deals 5 (absorbed by 6 Block -> 1 Block left, 30 HP, no Bleed); Riposte 3 -> consumes 2 Block + 1 HP (15 HP).
+	# Hit 2 deals 5 (consumes 1 Block + 4 HP -> 26 HP, inflicts Bleed 1); Riposte 3 -> consumes 3 HP (12 HP).
+	_check(party.get_hero(3)["hp"] == 26 and party.get_hero(3)["block"] == 0
+		and party.get_hero(3)["statuses"] == {"riposte": 3, "bleed": 1},
+		"AC2: first hit blocked, second hit deals HP loss + Bleed 1 while preserving Riposte 3")
+	_check(enemies.get_enemy(1)["block"] == 0 and enemies.get_enemy(1)["hp"] == 12,
+		"AC2: two confirmed hits trigger two separate Riposte 3 counters (2 Block + 4 HP lost)")
+
+	# 2. Multi-hit attack where Hit 1's Riposte counter kills the attacker: Hit 2 does not land.
+	var kill_party := _riposte_party(2)
+	var kill_deck := _riposte_deck("rag_duelist_cape_guard_plus", 9402)
+	var kill_enemies := CombatEnemies.new([
+		{"id": "fragile_wasp", "max_hp": 12, "bleed_on_attack": true, "drain": true}
+	])
+	_check(kill_enemies.is_valid()
+		and kill_enemies.apply_damage(1, 9)
+		and kill_enemies.gain_block(1, 1)
+		and kill_enemies.get_enemy(1)["hp"] == 3,
+		"AC2 precondition: multi-hit attacker has 1 Block and 3 HP (4 effective HP <= Riposte 4)")
+	_check(riposte_service.play_card(kill_deck, kill_party, "rag_duelist_cape_guard_plus").get("ok", false),
+		"AC2 precondition: Cape Guard+ grants 7 Block and Riposte 4")
+	var kill_action := {"enemy_position": 1, "type": "attack", "amount": 18, "hits": 2, "target_position": 2}
+	var kill_res := phase.execute_phase(kill_party, kill_enemies, [kill_action])
+	_check(kill_res == {"ok": true, "events": [
+		_event("attack", 1, true, 2),
+		_event("attack", 1, false, 2)]},
+		"AC2: Hit 1 lands and slays source via Riposte 4; Hit 2 is skipped (applied: false)")
+	_check(kill_enemies.is_slain(1) and kill_enemies.get_enemy(1)["hp"] == 0
+		and kill_enemies.get_enemy(1)["block"] == 0,
+		"AC2: attacker killed by Hit 1 Riposte stays slain at 0 HP without Drain")
+	_check(kill_party.get_hero(2)["hp"] == 28 and kill_party.get_hero(2)["block"] == 0
+		and kill_party.get_hero(2)["statuses"] == {"riposte": 4},
+		"AC2: defender takes only Hit 1 (9 vs 7 Block -> 28 HP), no Sting from slain source, no Hit 2")
+
+	# 3. Multi-hit attack where Hit 1 downs the Riposte defender: Hit 1 counters, Hit 2 skips.
+	var down_party := _riposte_party(2)
+	var down_deck := _riposte_deck("rag_duelist_duelist_reprise", 9403)
+	var down_enemies := CombatEnemies.new([{"id": "wasp", "max_hp": 16}])
+	_check(down_party.apply_damage(2, 27) and down_party.get_hero(2)["hp"] == 3,
+		"AC2 precondition: Rag Duelist at 3 HP before two-hit attack")
+	_check(riposte_service.play_card(down_deck, down_party, "rag_duelist_duelist_reprise").get("ok", false),
+		"AC2 precondition: Duelist Reprise sets Riposte 5")
+	var down_res := phase.execute_phase(down_party, down_enemies,
+		[{"enemy_position": 1, "type": "attack", "amount": 8, "hits": 2, "target_position": 2}])
+	_check(down_res == {"ok": true, "events": [
+		_event("attack", 1, true, 2),
+		_event("attack", 1, false, 2)]},
+		"AC2: Hit 1 downs defender; Hit 2 against now-downed defender is skipped")
+	_check(down_party.is_downed(2) and down_enemies.get_enemy(1)["hp"] == 11,
+		"AC2: only Hit 1 triggers Riposte 5 (16 -> 11 HP); skipped Hit 2 does not counter")
+
+	# 4. Guard redirection: announced target has Riposte 5, actual recipient (Warden) does not.
+	var guard_party := _riposte_party(2)
+	var guard_deck := _riposte_deck("rag_duelist_duelist_reprise", 9404)
+	var guard_enemies := _enemies()
+	var reactions := CombatWardenGuardReactions.new()
+	var warden_catalog := WardenPoolCards.new()
+	_check(reactions.apply_committed_card(warden_catalog.get_definition("warden_draw_fire"), guard_party)
+		and reactions.apply_committed_card(warden_catalog.get_definition("warden_counter_stitch"), guard_party)
+		and reactions.is_guarding() and reactions.get_thorns() == 3
+		and guard_party.get_hero(1)["block"] == 11,
+		"AC2 precondition: Warden at pos 1 has Guarding, Thorns 3, and 11 Block")
+	_check(riposte_service.play_card(guard_deck, guard_party, "rag_duelist_duelist_reprise").get("ok", false)
+		and guard_party.get_hero(2)["statuses"] == {"riposte": 5},
+		"AC2 precondition: Rag Duelist at pos 2 has Riposte 5")
+	var guard_res := phase.execute_phase(guard_party, guard_enemies,
+		[_attack(1, 6, 2), _attack(2, 4, 1)], reactions)
+	_check(guard_res == {"ok": true, "events": [
+		_guard_event(1, 2, true, 1, true, 3),
+		_guard_event(2, 1, true, 1, false, 3)]},
+		"AC2: attack aimed at Riposte ally redirects to Warden with exact reaction event")
+	_check(guard_party.get_hero(1)["block"] == 1 and guard_party.get_hero(1)["hp"] == 40
+		and guard_party.get_hero(2)["hp"] == 30
+		and guard_party.get_hero(2)["statuses"] == {"riposte": 5},
+		"AC2: Warden absorbs both hits (11 -> 1 Block); bypassed Rag Duelist takes no hit")
+	_check(guard_enemies.get_enemy(1)["hp"] == 9 and guard_enemies.get_enemy(2)["hp"] == 12,
+		"AC2: enemies take only Warden's Thorns 3 (not bypassed ally's Riposte 5, no double-count)")
+
+	# 5. Guard reaction service active WITHOUT Guarding redirect: direct hit on Riposte ally
+	# counters with Riposte N while direct hit on Warden counters with Thorns.
+	var unguarded_party := _riposte_party(2)
+	var unguarded_deck := _riposte_deck("rag_duelist_cape_guard_plus", 9405)
+	var unguarded_enemies := _enemies()
+	var thorns_only := CombatWardenGuardReactions.new()
+	_check(thorns_only.apply_committed_card(warden_catalog.get_definition("warden_counter_stitch"), unguarded_party)
+		and not thorns_only.is_guarding() and thorns_only.get_thorns() == 3,
+		"AC2 precondition: Warden has Thorns 3 without Guarding")
+	_check(riposte_service.play_card(unguarded_deck, unguarded_party, "rag_duelist_cape_guard_plus").get("ok", false)
+		and unguarded_party.get_hero(2)["block"] == 7
+		and unguarded_party.get_hero(2)["statuses"] == {"riposte": 4},
+		"AC2 precondition: Rag Duelist at pos 2 has 7 Block and Riposte 4")
+	var unguarded_res := phase.execute_phase(unguarded_party, unguarded_enemies,
+		[_attack(1, 5, 2), _attack(2, 4, 1)], thorns_only)
+	_check(unguarded_res == {"ok": true, "events": [
+		_guard_event(1, 2, true, 2, false, 0),
+		_guard_event(2, 1, true, 1, false, 3)]},
+		"AC2: reaction-mode events keep Thorns receipt separate from Riposte")
+	_check(unguarded_party.get_hero(2)["block"] == 2 and unguarded_party.get_hero(2)["hp"] == 30
+		and unguarded_enemies.get_enemy(1)["hp"] == 8
+		and unguarded_enemies.get_enemy(2)["hp"] == 12,
+		"AC2: enemy 1 takes Riposte 4 from hitting Rag Duelist; enemy 2 takes Thorns 3 from hitting Warden")
+
+	# 6. Guard redirection onto a guarding defender who ALSO carries Riposte N:
+	# the actual hit defender's Riposte N triggers on the redirected hit.
+	var redirect_riposte_party := _riposte_party(2)
+	var redirect_enemies := _enemies()
+	var redirect_guard := CombatWardenGuardReactions.new()
+	_check(redirect_guard.apply_committed_card(warden_catalog.get_definition("warden_draw_fire"), redirect_riposte_party)
+		and redirect_guard.is_guarding() and redirect_guard.get_thorns() == 0,
+		"AC2 precondition: Warden at pos 1 is Guarding with 6 Block and 0 Thorns")
+	redirect_riposte_party._heroes[0]["statuses"] = {"riposte": 4}
+	var redirect_res := phase.execute_phase(redirect_riposte_party, redirect_enemies,
+		[_attack(1, 5, 3)], redirect_guard)
+	_check(redirect_res == {"ok": true, "events": [
+		_guard_event(1, 3, true, 1, true, 0)]},
+		"AC2: attack aimed at pos 3 redirects to pos 1")
+	_check(redirect_riposte_party.get_hero(1)["block"] == 1
+		and redirect_riposte_party.get_hero(1)["hp"] == 40
+		and redirect_enemies.get_enemy(1)["hp"] == 8,
+		"AC2: redirected actual recipient at pos 1 counters with her Riposte 4 (12 -> 8 HP)")
+
+	# 7. Earlier shove in the same phase swaps Rag Duelist into the attacked slot:
+	# the actual post-shove recipient at that slot determines Riposte.
+	var shove_party := _riposte_party(2)
+	var shove_deck := _riposte_deck("rag_duelist_cape_guard", 9406)
+	var shove_enemies := _enemies()
+	_check(riposte_service.play_card(shove_deck, shove_party, "rag_duelist_cape_guard").get("ok", false)
+		and shove_party.get_hero(2)["block"] == 5
+		and shove_party.get_hero(2)["statuses"] == {"riposte": 3},
+		"AC2 precondition: Rag Duelist at pos 2 has Block 5 and Riposte 3")
+	var shove_res := phase.execute_phase(shove_party, shove_enemies, [
+		{"type": "shove", "enemy_position": 1, "amount": 0, "target_position": 1, "direction": 1},
+		_attack(2, 4, 1),
+	])
+	_check(shove_res.get("ok", false)
+		and shove_party.get_hero(1)["id"] == "rag_duelist"
+		and shove_party.get_hero(1)["block"] == 1
+		and shove_party.get_hero(1)["hp"] == 30
+		and shove_enemies.get_enemy(2)["hp"] == 12,
+		"AC2: after shove moves Rag Duelist to pos 1, attack on pos 1 hits her and triggers Riposte 3")
+
+
+## AC3 & AC4: Blind/Dodge misses, slain sources, pre-downed recipients, zero adjusted
+## damage, missing/zero Riposte and malformed inputs trigger no counter and change no
+## RNG/unrelated state; rejected phases roll back all staged changes atomically.
+func _test_riposte_skips_misses_and_rollback() -> void:
+	var riposte_service := CombatRagDuelistRiposteCards.new()
+	var dodge_service := CombatRagDuelistDodgeCards.new()
+
+	# 1. Blind miss on single and multi-hit attacks against Riposte hero: no counter.
+	var blind_party := _riposte_party(2)
+	var blind_deck := _riposte_deck("rag_duelist_duelist_reprise_plus", 9501)
+	var blind_enemies := CombatEnemies.new([
+		{"id": "wasp", "max_hp": 16, "bleed_on_attack": true}
+	])
+	_check(riposte_service.play_card(blind_deck, blind_party, "rag_duelist_duelist_reprise_plus").get("ok", false),
+		"AC3 precondition: Rag Duelist has Riposte 7")
+	blind_enemies._enemies[0]["statuses"] = {"blind_next_attack": 1}
+	var blind_party_before := blind_party.get_heroes()
+	var blind_res := phase.execute_phase(blind_party, blind_enemies,
+		[{"enemy_position": 1, "type": "attack", "amount": 10, "hits": 2, "target_position": 2}])
+	_check(blind_res == {"ok": true, "events": [_event("attack", 1, false, 2)]}
+		and blind_party.get_heroes() == blind_party_before
+		and blind_enemies.get_enemy(1)["hp"] == 16
+		and blind_enemies.get_enemy(1)["statuses"] == {},
+		"AC3: Blind miss consumes Blind, deals 0 damage, and triggers 0 Riposte")
+
+	# 2. Dodge miss on Riposte hero: first hit misses (0 Riposte), second hit lands (triggers Riposte).
+	var dodge_party := _riposte_party(2)
+	var dodge_rng := RandomNumberGenerator.new()
+	dodge_rng.seed = 9502
+	var dodge_cards: Array[String] = [
+		"rag_duelist_cape_slip", "rag_duelist_duelist_reprise",
+		"warden_strike", "warden_brace", "tinker_pop_shot"
+	]
+	var dodge_deck := CombatDeck.new(dodge_cards, dodge_rng)
+	_check(dodge_deck.start_turn()
+		and dodge_service.play_card(dodge_deck, dodge_party, "rag_duelist_cape_slip").get("ok", false)
+		and riposte_service.play_card(dodge_deck, dodge_party, "rag_duelist_duelist_reprise").get("ok", false)
+		and dodge_party.get_hero(2)["statuses"] == {"dodge_next_attack": 1, "riposte": 5},
+		"AC3 precondition: paid Cape Slip + Duelist Reprise arm both Dodge 1 and Riposte 5")
+	var dodge_enemies := _enemies()
+	var dodge_rng_before: int = dodge_deck._rng.state
+	var dodge_res := phase.execute_phase(dodge_party, dodge_enemies,
+		[_attack(1, 7, 2), _attack(2, 6, 2)])
+	_check(dodge_res == {"ok": true, "events": [
+		_event("attack", 1, false, 2),
+		_event("attack", 2, true, 2)]},
+		"AC3: enemy 1 misses on Dodge; enemy 2 lands after Dodge is spent")
+	_check(dodge_party.get_hero(2)["hp"] == 24
+		and dodge_party.get_hero(2)["statuses"] == {"riposte": 5}
+		and dodge_enemies.get_enemy(1)["hp"] == 12
+		and dodge_enemies.get_enemy(2)["hp"] == 10
+		and dodge_deck._rng.state == dodge_rng_before,
+		"AC3: Dodge-missed enemy 1 takes 0 Riposte; landing enemy 2 takes 5 Riposte (15 -> 10 HP)")
+
+	# 3. Slain source and pre-downed recipient trigger no Riposte.
+	var skip_party := _riposte_party(2)
+	var skip_deck := _riposte_deck("rag_duelist_duelist_reprise", 9503)
+	var skip_enemies := _enemies()
+	_check(riposte_service.play_card(skip_deck, skip_party, "rag_duelist_duelist_reprise").get("ok", false),
+		"AC3 precondition: Rag Duelist has Riposte 5")
+	_check(skip_enemies.apply_damage(1, 12) and skip_enemies.is_slain(1)
+		and skip_party.apply_damage(2, 30) and skip_party.is_downed(2),
+		"AC3 precondition: enemy 1 is slain and Rag Duelist at pos 2 is pre-downed")
+	var skip_party_before := skip_party.get_heroes()
+	var skip_enemies_before := skip_enemies.get_enemies()
+	var skip_res := phase.execute_phase(skip_party, skip_enemies,
+		[_attack(1, 8, 1), _attack(2, 8, 2)])
+	_check(skip_res == {"ok": true, "events": [
+		_event("attack", 1, false, 1),
+		_event("attack", 2, false, 2)]}
+		and skip_party.get_heroes() == skip_party_before
+		and skip_enemies.get_enemies() == skip_enemies_before,
+		"AC3: slain attacker and pre-downed Riposte target produce no counter or state mutation")
+
+	# 4. Zero adjusted damage (both literal 0 amount and Weak-attenuated 1 -> 0) triggers no Riposte.
+	var zero_party := _riposte_party(2)
+	var zero_deck := _riposte_deck("rag_duelist_cape_parry", 9504)
+	var zero_enemies := _enemies()
+	_check(riposte_service.play_card(zero_deck, zero_party, "rag_duelist_cape_parry").get("ok", false)
+		and zero_enemies.apply_statuses({2: {"weak": 1}}),
+		"AC3 precondition: Rag Duelist has Block 4 + Riposte 2; enemy 2 has Weak 1")
+	var zero_party_before := zero_party.get_heroes()
+	var zero_enemies_before := zero_enemies.get_enemies()
+	# Enemy 1 attacks for 0; Enemy 2 attacks for 1 while Weak (floor(1 * 3/4) == 0).
+	var zero_res := phase.execute_phase(zero_party, zero_enemies,
+		[_attack(1, 0, 2), _attack(2, 1, 2)])
+	_check(zero_res == {"ok": true, "events": [
+		_event("attack", 1, true, 2),
+		_event("attack", 2, true, 2)]}
+		and zero_party.get_heroes() == zero_party_before
+		and zero_enemies.get_enemies() == zero_enemies_before,
+		"AC3: zero nominal and Weak-attenuated zero-damage attempts do not trigger Riposte")
+
+	# 5. Missing or zero Riposte triggers no counter.
+	for statuses in [{}, {"riposte": 0}, {"riposte": 0, "exposed": 1}]:
+		var inert_party := _riposte_party(2)
+		var inert_enemies := _enemies()
+		inert_party._heroes[1]["statuses"] = statuses.duplicate(true)
+		var inert_res := phase.execute_phase(inert_party, inert_enemies, [_attack(1, 4, 2)])
+		_check(inert_res == {"ok": true, "events": [_event("attack", 1, true, 2)]}
+			and inert_enemies.get_enemy(1)["hp"] == 12,
+			"AC3: absent or zero Riposte deals 0 retaliation: " + str(statuses))
+
+	# 6. Malformed Riposte statuses and invalid later beats fail closed without partial commit.
+	seed(9595)
+	var expected_global_rng := randi()
+	seed(9595)
+	for bad_val in [-1, 1.5, "3", true, false, null, [], {}]:
+		var bad_party := _riposte_party(2)
+		var bad_enemies := _enemies()
+		bad_party._heroes[1]["statuses"] = {"riposte": bad_val}
+		var bad_before := [bad_party.get_heroes(), bad_enemies.get_enemies()]
+		_check(phase.execute_phase(bad_party, bad_enemies, [_attack(1, 4, 2)])
+			== {"ok": false, "events": []}
+			and [bad_party.get_heroes(), bad_enemies.get_enemies()] == bad_before,
+			"AC3: malformed Riposte value fails closed with no mutation: " + str(bad_val))
+
+	# Late-beat failure after an earlier staged Riposte kill/revive rolls back everything.
+	var rollback_party := _riposte_party(2)
+	var rollback_deck := _riposte_deck("rag_duelist_duelist_reprise_plus", 9505)
+	var rollback_enemies := CombatEnemies.new([
+		{"id": "wraith", "max_hp": 10, "revive_once": true},
+		{"id": "blocker", "max_hp": 15},
+	])
+	_check(riposte_service.play_card(rollback_deck, rollback_party, "rag_duelist_duelist_reprise_plus").get("ok", false)
+		and rollback_enemies.apply_damage(1, 6) and rollback_enemies.get_enemy(1)["hp"] == 4
+		and rollback_enemies.gain_block(2, CombatEnemies.MAX_INT - 2),
+		"AC3 precondition: enemy 1 will revive from Riposte 7 on beat 1; enemy 2 will overflow Block on beat 2")
+	var rollback_hero_ref: Dictionary = rollback_party._heroes[1]
+	var rollback_enemy_ref: Dictionary = rollback_enemies._enemies[0]
+	var rollback_before := [
+		rollback_party.get_heroes(),
+		rollback_enemies.get_enemies(),
+		rollback_deck._rng.state,
+	]
+	var rollback_intents := [_attack(1, 5, 2), _block(2, 3)]
+	var rollback_intents_copy := rollback_intents.duplicate(true)
+	_check(phase.execute_phase(rollback_party, rollback_enemies, rollback_intents)
+		== {"ok": false, "events": []}
+		and [
+			rollback_party.get_heroes(),
+			rollback_enemies.get_enemies(),
+			rollback_deck._rng.state,
+		] == rollback_before
+		and rollback_intents == rollback_intents_copy
+		and is_same(rollback_party._heroes[1], rollback_hero_ref)
+		and is_same(rollback_enemies._enemies[0], rollback_enemy_ref),
+		"AC3: late Block overflow rolls back earlier staged Riposte damage and revival latch")
+	_check(randi() == expected_global_rng, "AC3: rejected Riposte batches consume no global RNG")
+
+	# 7. Deterministic replay of a mixed Riposte + multi-hit + Block phase.
+	var replay_traces: Array = []
+	for rep in range(3):
+		var rep_party := _riposte_party(2)
+		var rep_deck := _riposte_deck("rag_duelist_cape_guard", 9506)
+		var rep_enemies := CombatEnemies.new([
+			{"id": "wasp", "max_hp": 14, "bleed_on_attack": true},
+			{"id": "raider", "max_hp": 12, "enrage": true, "enrage_stacks": 1},
+		])
+		_check(rep_enemies.gain_block(1, 2)
+			and riposte_service.play_card(rep_deck, rep_party, "rag_duelist_cape_guard").get("ok", false),
+			"AC4 replay precondition")
+		var rng_state_before: int = rep_deck._rng.state
+		var rep_res := phase.execute_phase(rep_party, rep_enemies, [
+			{"enemy_position": 1, "type": "attack", "amount": 6, "hits": 2, "target_position": 2},
+			_attack(2, 5, 2),
+		])
+		_check(rep_res.get("ok", false) and rep_deck._rng.state == rng_state_before,
+			"AC4: mixed Riposte phase succeeds without RNG consumption")
+		replay_traces.append([rep_res, rep_party.get_heroes(), rep_enemies.get_enemies()])
+	_check(replay_traces[0] == replay_traces[1] and replay_traces[1] == replay_traces[2],
+		"AC4: identical Riposte phase fixtures replay deterministically")
+	# Enemy 1 (2 hits of 3) and Enemy 2 (1 hit of 5+2=7) all hit living Rag Duelist (Riposte 3):
+	# Enemy 1 takes 3 + 3 = 6 Riposte (2 Block + 4 HP -> 10 HP); Enemy 2 takes 3 Riposte (12 -> 9 HP).
+	_check(replay_traces[0][2][0]["hp"] == 10 and replay_traces[0][2][0]["block"] == 0
+		and replay_traces[0][2][1]["hp"] == 9
+		and replay_traces[0][1][1]["hp"] == 22 and replay_traces[0][1][1]["block"] == 0
+		and replay_traces[0][1][1]["statuses"] == {"riposte": 3, "bleed": 1},
+		"AC4: exact multi-source Riposte, Enrage, Bleed, Block and HP outcomes verified")

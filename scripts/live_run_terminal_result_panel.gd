@@ -65,6 +65,8 @@ const HERO_PORTRAITS := {
 }
 const HERO_ROW_BG := Color("#f2e5cb")
 const HERO_ROW_BORDER := Color("#8d7560")
+const HERO_SEAT_COLORS := [Color("#40576b"), Color("#67465d"), Color("#52604a")]
+const HERO_SEAT_NAMES := ["FRONT", "MIDDLE", "BACK"]
 const HERO_NAME_INK := Color("#28363c")
 const HERO_DETAIL_INK := Color("#334750")
 ## The permanent identity of the sole Return action, re-resolved at handoff time
@@ -607,27 +609,26 @@ func _mount_hero_rows(rows: Array) -> void:
 		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var felt := StyleBoxFlat.new()
 		felt.bg_color = HERO_ROW_BG
-		felt.border_color = HERO_ROW_BORDER
-		felt.set_border_width_all(1)
-		felt.set_corner_radius_all(5)
-		felt.content_margin_left = 10
-		felt.content_margin_right = 10
-		felt.content_margin_top = 8
-		felt.content_margin_bottom = 8
+		felt.border_color = HERO_SEAT_COLORS[index]
+		felt.set_border_width_all(3)
+		felt.set_corner_radius_all(7)
+		felt.content_margin_left = 9
+		felt.content_margin_right = 9
+		felt.content_margin_top = 7
+		felt.content_margin_bottom = 7
 		row.add_theme_stylebox_override("panel", felt)
 		var inset := HBoxContainer.new()
 		inset.name = "RowInset"
 		inset.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		inset.add_theme_constant_override("separation", 10)
+		inset.add_theme_constant_override("separation", 8)
 		row.add_child(inset)
 		var portrait := TextureRect.new()
 		portrait.name = "HeroPortrait"
-		# The ticket shares the parchment's spare height with the ledger, so the
-		# portrait grows with it instead of floating as a small square in a tall
-		# felt strip; the name and detail keep the wider share of the ticket.
-		portrait.custom_minimum_size = Vector2(84, 140)
-		portrait.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		portrait.size_flags_stretch_ratio = 0.8
+		# Reserve a compact illustration column, leaving enough width for real
+		# HP, tear and three-slot text to wrap without clipping. A missing V3
+		# portrait collapses the entire column rather than faking a character.
+		portrait.custom_minimum_size = Vector2(76, 128)
+		portrait.size_flags_horizontal = Control.SIZE_FILL
 		portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		portrait.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -644,10 +645,20 @@ func _mount_hero_rows(rows: Array) -> void:
 		line.name = "RowLine"
 		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		line.size_flags_stretch_ratio = 1.5
 		line.alignment = BoxContainer.ALIGNMENT_CENTER
-		line.add_theme_constant_override("separation", 4)
+		line.add_theme_constant_override("separation", 3)
 		inset.add_child(line)
+		# A sewn seat tab belongs to this ticket, not to the roster data.
+		# It orients the three real chosen identities without inventing stats.
+		var seat_label := Label.new()
+		seat_label.name = "SeatLabel"
+		seat_label.text = "%s  ·  %d" % [HERO_SEAT_NAMES[index], index + 1]
+		seat_label.theme_type_variation = "PatchHeading"
+		seat_label.add_theme_color_override("font_color", HERO_SEAT_COLORS[index])
+		seat_label.add_theme_font_size_override("font_size", 18)
+		seat_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		seat_label.focus_mode = Control.FOCUS_NONE
+		line.add_child(seat_label)
 		var name_label := Label.new()
 		name_label.name = "HeroName"
 		name_label.text = parts["name"]
@@ -689,6 +700,7 @@ func _mount_hero_rows(rows: Array) -> void:
 		detail_label.add_theme_font_size_override("font_size", HERO_DETAIL_FONT_SIZE)
 		detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		detail_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		detail_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		line.add_child(detail_label)
 		hero_rows.add_child(row)
 	hero_recap.visible = not rows.is_empty()

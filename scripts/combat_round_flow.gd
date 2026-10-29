@@ -22,6 +22,8 @@ var _battle_result: CombatBattleResult
 # play of this fight and fired only by an accepted end_turn below.
 var _turrets: Array[Dictionary] = []
 var _turret_service := CombatTinkerV3TurretCards.new()
+# One Taunt authority per fight: both the mounted hand and enemy turn use this instance.
+var _taunt_service := CombatWardenV3TauntCards.new()
 
 
 func _init(deck: CombatDeck = null, party: CombatParty = null,
@@ -129,6 +131,29 @@ func play_warden_reaction_card(card_id: Variant) -> bool:
 	return true
 
 
+## Validate a real held Warden Taunt against this fight before spending anything.
+func can_play_warden_taunt_card(card_id: Variant) -> bool:
+	if not _started or not _valid_bindings() or not _deck.turn_active:
+		return false
+	if _deck != _battle_deck or _party != _battle_party \
+			or _enemies != _battle_enemies or _intents != _battle_intents \
+			or _result != _battle_result:
+		return false
+	if not _result.can_continue() or _party.is_defeated() or _enemies.is_victorious():
+		return false
+	if not _taunt_service.is_supported_card(card_id):
+		return false
+	var kind: String = CombatWardenV3TauntCards.CARDS[card_id]["target_kind"]
+	return bool(_taunt_service._prepare(_deck, _party, card_id, kind, 0).get("ok", false))
+
+
+func play_warden_taunt_card(card_id: Variant) -> bool:
+	if not can_play_warden_taunt_card(card_id):
+		return false
+	var kind: String = CombatWardenV3TauntCards.CARDS[card_id]["target_kind"]
+	return bool(_taunt_service.play_card(_deck, _party, card_id, kind, 0).get("ok", false))
+
+
 ## True only while this begun fight can still accept a freshly paid turret:
 ## the admitted actors, an active hand and a result that can continue.
 func can_register_turret() -> bool:
@@ -165,6 +190,10 @@ func clear_turrets() -> void:
 	_turrets.clear()
 
 
+func clear_taunt() -> void:
+	_taunt_service.complete_enemy_turn()
+
+
 ## Close one active hand, execute the CURRENT announced phase once, and
 ## advance announcements and deal a new hand only if the fight remains active.
 func end_turn() -> bool:
@@ -176,6 +205,16 @@ func end_turn() -> bool:
 	if not tick["ok"] or not batch.tick_side("enemies", _enemies.get_enemies())["ok"]:
 		return false
 	if not _started or not _valid_bindings() or not _deck.turn_active:
+		return false
+	# An armed Taunt redirects THIS announced phase, so refuse to run it against
+	# any fight other than the one that authenticated the arming. Ordinary turns
+	# keep their existing binding checks alone: legacy fixtures legitimately
+	# swap a valid scheduler, and a detached already-active oracle never went
+	# through begin_fight.
+	if _taunt_service.has_pending_taunt() \
+			and (_deck != _battle_deck or _party != _battle_party \
+				or _enemies != _battle_enemies or _intents != _battle_intents \
+				or _result != _battle_result):
 		return false
 	# A caller may have completed a lethal card play without explicitly
 	# observing it yet. Never discard/draw or let enemies act on that state.
@@ -203,12 +242,42 @@ func end_turn() -> bool:
 		return action.enemy_position not in skipped \
 			and not (action.type == "debuff" and _party.is_downed(action.target_position)
 				and not bound_policies))
-	# Every pending turret beat is rehearsed on detached copies of the roster and
-	# run RNG, and the enemy phase is preflighted against the roster those shots
-	# leave, so a refused turn spends no beat, deals no damage and draws no RNG.
+	# Turret shots precede the enemy phase; a slain shove source must not
+	# move heroes during Taunt projection. Both roster and RNG stay detached.
 	var turret_plan := _turrets_are_executable()
 	if not turret_plan["ok"]:
 		return false
+	# Rehearse the cached actions in the executor's source order. A shove can
+	# move the Warden before a later attack; attacks can also down a target
+	# before a bound policy falls back. Each beat is applied only to detached
+	# actors. The whole-phase preflight below still owns admission/atomicity.
+	if _taunt_service.has_pending_taunt() and not turret_plan["victorious"]:
+		var projected_party := CombatParty.new(tick["actors"])
+		projected_party._heroes.assign(tick["actors"].duplicate(true))
+		var projected_enemies := CombatEnemies.new(turret_plan["roster"])
+		projected_enemies._enemies.assign(turret_plan["roster"].duplicate(true))
+		var ordered: Array = effective.duplicate(true)
+		ordered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return a.enemy_position < b.enemy_position)
+		var projected: Array = []
+		for action in ordered:
+			var beat: Dictionary = action
+			if action.get("type") == "attack":
+				var announced: Dictionary = action
+				if bound_policies:
+					announced = CombatEnemyIntents.resolve_announced_action(
+						projected_party, action, projected_enemies)
+				var plan := _taunt_service.project_enemy_action(projected_party, announced)
+				if not plan.get("ok", false):
+					return false
+				beat = plan["action"]
+			projected.append(beat)
+			# The existing executor owns legal shove/special semantics, multi-hit
+			# damage and source deaths. No authoritative party, deck or RNG writes.
+			if not CombatEnemyPhase.new().execute_phase(projected_party,
+					projected_enemies, [beat], _reactions, bound_policies).get("ok", false):
+				return false
+		effective = projected
 	if not turret_plan["victorious"] \
 			and not _phase_is_executable(tick["actors"], effective, turret_plan["roster"]):
 		return false
@@ -234,6 +303,9 @@ func end_turn() -> bool:
 	# _phase_is_executable prevalidates the entire batch against this roster.
 	if not phase["ok"]:
 		return false
+	# Even a lethal enemy phase is complete: consume the one armed Taunt now,
+	# not during preflight or on a refused End Turn.
+	_taunt_service.complete_enemy_turn()
 	# A birth expands the genuine fight's gauge without resetting its older
 	# charges. That child becomes a legal target and source next player turn.
 	if _unravel != null and _enemies.get_enemies().size() > _unravel._gauges.size():

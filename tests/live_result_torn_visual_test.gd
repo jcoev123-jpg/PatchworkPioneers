@@ -103,6 +103,20 @@ func _run() -> void:
 	_check(tinker_row.get_node_or_null("RowInset/RowLine/TornBadge") == null,
 		"AC2: living Tinker has no TORN badge")
 
+	# Every chosen slot is labelled on its own sewn ticket; decorative labels
+	# never capture mouse or keyboard input from the retained-card scroll.
+	for i in range(3):
+		var ticket := panel.hero_rows.get_child(i) as PanelContainer
+		var seat := ticket.get_node_or_null("RowInset/RowLine/SeatLabel") as Label
+		_check(seat != null and seat.text == "%s  ·  %d" % [
+			LiveRunTerminalResultPanel.HERO_SEAT_NAMES[i], i + 1],
+			"AC2: actual three-seat order is legible on each ticket")
+		if seat != null:
+			_check(seat.mouse_filter == Control.MOUSE_FILTER_IGNORE
+				and seat.focus_mode == Control.FOCUS_NONE
+				and seat.get_theme_font_size("font_size") >= 18,
+				"AC4: seat tab is decorative and input-transparent")
+
 	# Clean torn-to-living remount: no old tint or badge survives.
 	panel._clear_hero_rows()
 	await _frames()
@@ -123,6 +137,31 @@ func _run() -> void:
 		"AC2: remounted portrait has no leftover grey tint")
 	_check(panel.find_children("TornBadge", "", true, false).is_empty(),
 		"AC2: zero TornBadge nodes survive remount")
+
+	# An unillustrated chosen V3 hero uses the entire sewn-ticket text space;
+	# even three worn slots stay readable without a placeholder portrait.
+	var unillustrated := {
+		"hero_id": "lantern_monk", "name": "Lantern Monk",
+		"detail": "24/24 HP · 0 tears · HEAD Button Eye · ARM Pincushion Arm · COAT Quilted Coat",
+		"is_torn": false,
+	}
+	panel._mount_hero_rows([warden_living, unillustrated, living_tinker])
+	await _frames()
+	var v3_ticket := panel.hero_rows.get_child(1) as PanelContainer
+	var v3_portrait := v3_ticket.get_node("RowInset/HeroPortrait") as TextureRect
+	var v3_detail := v3_ticket.get_node("RowInset/RowLine/HeroDetail") as Label
+	var v3_name := v3_ticket.get_node("RowInset/RowLine/HeroName") as Label
+	_check(v3_portrait.texture == null and not v3_portrait.visible,
+		"AC4: unillustrated V3 identity shows no invented portrait or blank column")
+	_check(v3_name.text == "Lantern Monk" and v3_detail.text == unillustrated.detail,
+		"AC1: V3 fallback retains HP, tears and all three authentic-looking slot labels")
+	_check(v3_detail.get_line_count() > 1
+		and v3_detail.get_visible_line_count() == v3_detail.get_line_count()
+		and v3_ticket.get_global_rect().encloses(v3_detail.get_global_rect()),
+		"AC2: three-slot detail wraps fully inside the 1280x720 ticket")
+	_check(v3_portrait.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and v3_detail.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"AC4: fallback ticket never consumes Return or scroll input")
 
 	# AC3: styling remains view-only; Return control untouched by presentation.
 	_check(panel.return_button != null, "AC3: Return button exists")
