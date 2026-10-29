@@ -705,8 +705,14 @@ func _test_ac3_invalid_metadata_and_forgeries(run_rng: RandomNumberGenerator) ->
 		)
 
 	# 2. Missing required event or duplicate event IDs in catalog.
+	# Remove a NAMED required event by ID (never by position: the catalog is shared
+	# with other lanes and grows additively).
 	var missing_required_doc: Dictionary = catalog_doc.duplicate(true)
-	(missing_required_doc["events"] as Array).pop_back()
+	var missing_filtered: Array = []
+	for ev_raw: Variant in (missing_required_doc["events"] as Array):
+		if (ev_raw as Dictionary).get("id") != "v3_bellspool_picket":
+			missing_filtered.append(ev_raw)
+	missing_required_doc["events"] = missing_filtered
 	var missing_gate := RunV3FightEventGate.new("v3_stitchline_roadblock", missing_required_doc)
 	_check(not missing_gate.is_catalog_valid() and not missing_gate.is_valid(),
 		"catalog missing one of the required events fails closed")
@@ -1002,6 +1008,13 @@ func _test_ac1_seeded_selection_and_oracle_replay(run_rng: RandomNumberGenerator
 	# Test multiple seeds against independent sorted-ID RNG oracle, verifying shipped-record membership and 2 identical-seed replays.
 	var test_seeds: Array[int] = [10001, 20002, 30003, 40004, 50005, 99999]
 	var catalog_events: Array[Dictionary] = gate.get_catalog_events()
+	# Membership is checked against the canonical catalog itself (which must still
+	# contain every originally required ID), never against a hard-coded total.
+	var canonical_ids: Dictionary = {}
+	for rec: Dictionary in catalog_events:
+		canonical_ids[String(rec.get("id", ""))] = true
+	for required_id: String in EXPECTED_EVENTS.keys():
+		_check(canonical_ids.has(required_id), "catalog still lists required event: " + required_id)
 	for s_val: int in test_seeds:
 		var draw_rng := RandomNumberGenerator.new()
 		draw_rng.seed = s_val
@@ -1009,7 +1022,7 @@ func _test_ac1_seeded_selection_and_oracle_replay(run_rng: RandomNumberGenerator
 		_check(res.get("ok") == true, "select_event succeeds with seed: " + str(s_val))
 		var picked: Dictionary = res.get("event", {})
 		var picked_id: String = String(picked.get("id", ""))
-		_check(EXPECTED_EVENTS.has(picked_id), "shipped-record membership proven: " + picked_id)
+		_check(canonical_ids.has(picked_id), "shipped-record membership proven: " + picked_id)
 		_check(picked == gate.get_event_record(picked_id), "selected record equals get_event_record for: " + picked_id)
 
 		var oracle_res: Dictionary = _oracle_select_id(catalog_events, null, s_val)
