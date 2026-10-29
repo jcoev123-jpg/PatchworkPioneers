@@ -137,6 +137,111 @@ func consume_action_skip(enemies: CombatEnemies, position: int) -> bool:
 	return true
 
 
+## The Termite split replaces one living source with two fresh actors. Their
+## gauges start clean: an old charge, threshold break or pending skip never
+## transfers. Every unrelated gauge stays byte-for-byte in place.
+func can_admit_split(enemies: CombatEnemies, source: Variant,
+		proposed: Variant = null) -> bool:
+	return not _split_proposal(enemies, source, proposed).is_empty()
+
+
+func admit_split(enemies: CombatEnemies, source: Variant) -> bool:
+	var proposal := _split_proposal(enemies, source, null)
+	if proposal.is_empty():
+		return false
+	_gauges = proposal["gauges"]
+	_tiers_by_position = proposal["tiers"]
+	return true
+
+
+func _split_proposal(enemies: CombatEnemies, source: Variant,
+		proposed: Variant = null) -> Dictionary:
+	if _bound_enemies == null or enemies != _bound_enemies or not enemies.is_valid():
+		return {}
+	var roster: Array = []
+	if proposed == null:
+		roster = enemies.get_enemies()
+	elif proposed is Array:
+		roster = proposed
+	else:
+		return {}
+	var old_size := _gauges.size()
+	if old_size < 1 or old_size >= MAX_ENEMIES or roster.size() != old_size + 1:
+		return {}
+	if not source is int or source < 1 or source > old_size:
+		return {}
+	if _tiers_by_position.size() != old_size:
+		return {}
+	var left: Dictionary = roster[source - 1]
+	var right: Dictionary = roster[old_size]
+	if not _valid_split_half(left, source, CombatEnemies.HALF_LEFT_ID) \
+			or not _valid_split_half(right, old_size + 1, CombatEnemies.HALF_RIGHT_ID):
+		return {}
+	for index in range(old_size):
+		if not _valid_gauge(_gauges.get(index + 1)):
+			return {}
+	var tier = _tiers_by_position.get(source)
+	if not tier is String or tier not in VALID_TIERS:
+		return {}
+	var threshold := _threshold_for(tier)
+	var gauges := _gauges.duplicate(true)
+	gauges[source] = {"gauge": 0, "threshold": threshold,
+		"unravelled": false, "skip_pending": false}
+	gauges[old_size + 1] = {"gauge": 0, "threshold": threshold,
+		"unravelled": false, "skip_pending": false}
+	var tiers := _tiers_by_position.duplicate(true)
+	tiers[old_size + 1] = tier
+	return {"gauges": gauges, "tiers": tiers}
+
+
+static func _valid_split_half(record: Dictionary, position: int, id: String) -> bool:
+	if record.get("id") != id or record.get("position") != position:
+		return false
+	var maximum = record.get("max_hp")
+	if not maximum is int or maximum <= 0 or record.get("hp") != maximum \
+			or record.get("block") != 0:
+		return false
+	if record.has("enemy_position") and record["enemy_position"] != position:
+		return false
+	if record.has("statuses") or record.has(CombatEnemies.SPLIT_FIELD) \
+			or record.has("revive_once") or record.has("revived") \
+			or record.has("chew_block_on_attack"):
+		return false
+	var spec = record.get("intent")
+	if not spec is Dictionary or spec.get("target") != "front":
+		return false
+	var actions = spec.get("actions")
+	if not actions is Array or actions.size() != 1:
+		return false
+	var action = actions[0]
+	return action is Dictionary and action.get("type") == "attack" \
+		and action.get("amount") is int and action["amount"] >= 1 \
+		and action.get("weight") == 1 and action.size() == 3
+
+
+static func _valid_gauge(gauge: Variant) -> bool:
+	if not gauge is Dictionary or gauge.size() != 4:
+		return false
+	var amount = gauge.get("gauge")
+	var threshold = gauge.get("threshold")
+	var pending = gauge.get("skip_pending")
+	var unravelled = gauge.get("unravelled")
+	if not amount is int or not threshold is int or not pending is bool \
+			or not unravelled is bool:
+		return false
+	return threshold > 0 and amount >= 0 and amount <= threshold \
+		and pending == unravelled and (amount == threshold) == pending
+
+
+static func _threshold_for(tier: String) -> int:
+	match tier:
+		"elite":
+			return THRESHOLD_ELITE
+		"boss":
+			return THRESHOLD_BOSS
+	return THRESHOLD_NORMAL
+
+
 func _validate_roster_and_position(enemies: CombatEnemies, position: int) -> bool:
 	if enemies != _bound_enemies or _bound_enemies == null:
 		return false

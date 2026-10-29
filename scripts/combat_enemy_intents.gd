@@ -354,6 +354,105 @@ static func resolve_announced_action(party: CombatParty, action: Dictionary,
 	return resolved
 
 
+## The authored Quilt Termite split publishes one replacement half in its own
+## slot and one appended half. The bound schedule must grow with that roster:
+## the replaced source's stale announcement is swapped for the left child's own
+## single front attack and the right child appends its own. Both children carry
+## exactly one alternative, so this admission consumes no run RNG; every other
+## slot's cached announcement stays untouched.
+func can_admit_split(enemies: CombatEnemies, source: Variant,
+		proposed: Variant = null) -> bool:
+	return not _split_proposal(enemies, source, proposed).is_empty()
+
+
+## Commit the preflighted split announcements. It re-derives the same proposal
+## from the current bound roster before writing, so a stale or forged caller can
+## never publish a partial schedule.
+func admit_split(enemies: CombatEnemies, source: Variant) -> bool:
+	var proposal := _split_proposal(enemies, source, null)
+	if proposal.is_empty():
+		return false
+	_slots = proposal["slots"]
+	_cache = proposal["cache"]
+	return true
+
+
+func _split_proposal(enemies: CombatEnemies, source: Variant,
+		proposed: Variant = null) -> Dictionary:
+	if not _valid or not _bound or enemies == null or not is_instance_valid(enemies) \
+			or enemies != _enemies or _rng == null or not is_instance_valid(_rng) \
+			or _party == null or not is_instance_valid(_party):
+		return {}
+	if not enemies.is_valid() or not _party.is_valid() \
+			or living_positions(_party).is_empty():
+		return {}
+	var roster: Array = []
+	if proposed == null:
+		roster = enemies.get_enemies()
+	elif proposed is Array:
+		roster = proposed
+	else:
+		return {}
+	var old_size := _slots.size()
+	if old_size < 1 or old_size >= CombatEnemies.MAX_ENEMIES \
+			or roster.size() != old_size + 1 or _cache.size() != old_size:
+		return {}
+	if not source is int or source < 1 or source > old_size:
+		return {}
+	for index in range(old_size):
+		if _slots[index].get("enemy_position") != index + 1 \
+				or _cache[index].get("enemy_position") != index + 1:
+			return {}
+	var left: Dictionary = roster[source - 1]
+	var right: Dictionary = roster[old_size]
+	if not _valid_split_half(left, source, CombatEnemies.HALF_LEFT_ID) \
+			or not _valid_split_half(right, old_size + 1, CombatEnemies.HALF_RIGHT_ID):
+		return {}
+	var left_slot := _weighted_slot(source, left.get("intent"))
+	var right_slot := _weighted_slot(old_size + 1, right.get("intent"))
+	if left_slot.is_empty() or right_slot.is_empty():
+		return {}
+	var batch := _draw_batch([left_slot, right_slot], _party, _rng)
+	if batch.size() != 2 or batch[0].get("enemy_position") != source \
+			or batch[1].get("enemy_position") != old_size + 1:
+		return {}
+	var slots: Array[Dictionary] = _slots.duplicate(true)
+	slots[source - 1] = left_slot
+	slots.append(right_slot)
+	var cache: Array[Dictionary] = _cache.duplicate(true)
+	cache[source - 1] = batch[0]
+	cache.append(batch[1])
+	return {"slots": slots, "cache": cache}
+
+
+## Only the freshly built half-actors from CombatEnemies.stage_split_on_death
+## qualify: full half HP, no inherited Block/status/special flag and exactly one
+## plain front attack. Any other roster change is refused.
+static func _valid_split_half(record: Dictionary, position: int, id: String) -> bool:
+	if record.get("id") != id or record.get("position") != position:
+		return false
+	var maximum = record.get("max_hp")
+	if not maximum is int or maximum <= 0 or record.get("hp") != maximum \
+			or record.get("block") != 0:
+		return false
+	if record.has("enemy_position") and record["enemy_position"] != position:
+		return false
+	if record.has("statuses") or record.has(CombatEnemies.SPLIT_FIELD) \
+			or record.has("revive_once") or record.has("revived") \
+			or record.has("chew_block_on_attack"):
+		return false
+	var spec = record.get("intent")
+	if not spec is Dictionary or spec.get("target") != "front":
+		return false
+	var actions = spec.get("actions")
+	if not actions is Array or actions.size() != 1:
+		return false
+	var action = actions[0]
+	return action is Dictionary and action.get("type") == "attack" \
+		and action.get("amount") is int and action["amount"] >= 1 \
+		and action.get("weight") == 1 and action.size() == 3
+
+
 ## One announcement per slot. A single authored alternative needs no draw; a
 ## real weighted choice and a random target each consume the run RNG once.
 static func _draw_batch(slots: Array, party: CombatParty,

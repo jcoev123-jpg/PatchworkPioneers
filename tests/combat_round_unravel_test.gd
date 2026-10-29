@@ -19,6 +19,8 @@ func _run() -> void:
 	_test_bleed_magnitude_and_lethal()
 	_test_no_gauge_and_atomic_rejections()
 	_test_seeded_replay()
+	_test_termite_split_gauges()
+	_test_termite_split_round_flow()
 	if failures.is_empty():
 		print("combat_round_unravel_test: PASS (", checks, " checks)")
 	else:
@@ -376,3 +378,153 @@ func _test_seeded_replay() -> void:
 		else:
 			_check(snapshots == first,
 				"fresh same-seed full actor/deck/intent/gauge snapshots and RNG state replay exactly")
+
+
+func _termite_source() -> Dictionary:
+	var parsed := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	for record in parsed:
+		if record.get("id") == CombatEnemies.TERMITE_ID:
+			return record.duplicate(true)
+	return {}
+
+
+func _split_peer(id: String) -> Dictionary:
+	return {"id": id, "name": id, "max_hp": 12,
+		"intent": {"target": "front", "actions": [
+			{"type": "attack", "amount": 2, "weight": 1}]}}
+
+
+func _termite_gauge_fixture(count: int = 2, seed_value: int = 733) -> Dictionary:
+	var source := _termite_source()
+	var records: Array = [source]
+	for index in range(1, count):
+		records.append(_split_peer("split_peer_%d" % index))
+	var enemies := CombatEnemies.new(records)
+	var gauge := CombatUnravel.new()
+	var tiers := {}
+	for index in range(count):
+		tiers[index + 1] = "normal"
+	if source.is_empty() or not enemies.is_valid() or not gauge.bind_roster(enemies, tiers):
+		return {}
+	return {"enemies": enemies, "gauge": gauge, "rng": RandomNumberGenerator.new()}
+
+
+func _split_snapshots(enemies: CombatEnemies, gauge: CombatUnravel) -> Array:
+	var snaps: Array = []
+	for index in range(enemies.get_enemies().size()):
+		snaps.append(gauge.get_snapshot(index + 1))
+	return snaps
+
+
+func _test_termite_split_gauges() -> void:
+	var f := _termite_gauge_fixture(2, 733)
+	_check(not f.is_empty(),
+		"precondition: a real two-foe Termite fight binds its authoritative gauges")
+	if f.is_empty():
+		return
+	var enemies: CombatEnemies = f.enemies
+	var gauge: CombatUnravel = f.gauge
+	_check(gauge.apply_unravel(enemies, 1, 8) and gauge.apply_unravel(enemies, 2, 3),
+		"precondition: source carries a queued skip and the peer has its own charge")
+	var peer_before := gauge.get_snapshot(2)
+	_check(not gauge.can_admit_split(enemies, 1),
+		"AC3: a nonlethal roster admits no split gauges")
+	_check(enemies.stage_split_on_death(1) == {"ok": true, "split": false}
+		and gauge.get_snapshot(1).skip_pending,
+		"AC3: nonlethal staging is inert and keeps the old charge and skip")
+	_check(enemies.apply_damage(1, 26) and enemies.is_slain(1),
+		"precondition: lethal damage leaves the Termite at zero HP")
+	var staged := enemies.stage_split_on_death(1)
+	_check(staged.get("ok", false) and staged.get("split", false)
+		and staged.get("positions") == [1, 3],
+		"precondition: the existing splitter publishes the two half actors")
+	var proposed := enemies.get_enemies()
+	_check(gauge.can_admit_split(enemies, 1, proposed),
+		"AC2: gauge preflight accepts both new actors before publication")
+	_check(gauge.admit_split(enemies, 1),
+		"AC2: three fresh positions publish one gauge each")
+	var clean := {"gauge": 0, "threshold": 8, "unravelled": false, "skip_pending": false}
+	_check(_split_snapshots(enemies, gauge) == [clean, peer_before, clean],
+		"AC2: both halves start clean at the base tier threshold; no charge or skip transfers")
+	_check(gauge._tiers_by_position == {1: "normal", 2: "normal", 3: "normal"},
+		"AC2: both halves keep the source's authored normal tier")
+	var after := _split_snapshots(enemies, gauge)
+	_check(not gauge.can_admit_split(enemies, 1)
+		and not gauge.admit_split(enemies, 1)
+		and _split_snapshots(enemies, gauge) == after,
+		"AC3: a duplicate split receipt cannot create grandchildren or extra gauges")
+	var broken := _termite_gauge_fixture(2, 734)
+	broken.enemies.apply_damage(1, 26)
+	broken.enemies.stage_split_on_death(1)
+	broken.enemies._enemies[2]["hp"] = 0
+	var broken_before := _split_snapshots(broken.enemies, broken.gauge)
+	_check(not broken.gauge.can_admit_split(broken.enemies, 1)
+		and not broken.gauge.admit_split(broken.enemies, 1)
+		and _split_snapshots(broken.enemies, broken.gauge) == broken_before,
+		"AC3: a malformed half refuses admission and leaves every gauge untouched")
+	var full := _termite_gauge_fixture(3, 735)
+	full.enemies.apply_damage(1, 26)
+	var full_before := _split_snapshots(full.enemies, full.gauge)
+	_check(full.enemies.stage_split_on_death(1) == {"ok": true, "split": false}
+		and not full.gauge.can_admit_split(full.enemies, 1)
+		and not full.gauge.admit_split(full.enemies, 1)
+		and _split_snapshots(full.enemies, full.gauge) == full_before,
+		"AC3: a full three-slot roster keeps the normal death and existing gauges")
+	var replay: Array = []
+	for repeat_index in range(2):
+		var fight := _termite_gauge_fixture(2, 736)
+		fight.enemies.apply_damage(1, 26)
+		fight.enemies.stage_split_on_death(1)
+		_check(fight.gauge.admit_split(fight.enemies, 1),
+			"same-seed split gauge admission succeeds")
+		var snap := _split_snapshots(fight.enemies, fight.gauge)
+		if repeat_index == 0:
+			replay = snap
+		else:
+			_check(snap == replay,
+				"AC3: same-seed gauge admission replays exactly")
+
+
+func _test_termite_split_round_flow() -> void:
+	var source := _termite_source()
+	var enemies := CombatEnemies.new([source])
+	var party := CombatParty.new(_load_authored(HEROES))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 9182
+	var deck := CombatDeck.new(StarterCards.new().get_starting_deck(), rng)
+	var intents := CombatEnemyIntents.new([
+		{"enemy_position": 1, "pattern": [{"type": "block", "amount": 0}]}])
+	_check(not source.is_empty() and enemies.is_valid() and party.is_valid()
+		and intents.is_valid() and intents.bind_battle(enemies, party, rng),
+		"precondition: a genuine one-foe Termite Fight binds its weighted schedule")
+	var result := CombatBattleResult.new(party, enemies)
+	var gauge := CombatUnravel.new()
+	_check(gauge.bind_roster(enemies, {1: "normal"}),
+		"precondition: the fight binds its gauge ledger")
+	var flow := CombatRoundFlow.new(deck, party, enemies, intents, result, gauge)
+	_check(flow.begin_fight() and flow._valid_bindings(),
+		"precondition: the real round flow starts over the authentic Termite")
+	_check(enemies.apply_damage(1, source.max_hp) and enemies.is_slain(1)
+		and enemies.stage_split_on_death(1).get("split", false),
+		"precondition: the existing splitter replaces the dead source and appends its half")
+	var proposed := enemies.get_enemies()
+	_check(intents.can_admit_split(enemies, 1, proposed)
+		and gauge.can_admit_split(enemies, 1, proposed),
+		"AC2: scheduler and gauge preflight both accept the proposed roster")
+	_check(intents.admit_split(enemies, 1) and gauge.admit_split(enemies, 1),
+		"AC2: both ledgers publish the two new actors together")
+	_check(flow._valid_bindings() and result.get_outcome() == CombatBattleResult.ACTIVE,
+		"AC2: the genuine round flow remains legally playable, not a stale two-slot fight")
+	var rng_before := rng.state
+	_check(flow.end_turn(), "AC2: the next enemy phase with both halves executes")
+	_check(intents._turn_index == 1 and deck.turn_active
+		and rng.state == rng_before,
+		"AC2: both halves announce legal single actions without a new seeded draw")
+	_check(enemies.get_enemies().size() == 2 and not enemies.is_victorious(),
+		"AC2: two living halves keep the fight active after the enemy phase")
+	_check(enemies.apply_damage(1, 13) and not enemies.is_victorious(),
+		"AC2: killing only the first half cannot claim victory")
+	_check(enemies.apply_damage(2, 13) and enemies.is_victorious()
+		and enemies.get_enemies().size() == 2,
+		"AC2: legitimate victory arrives only after both halves die, with no third split")

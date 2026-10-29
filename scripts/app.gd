@@ -833,6 +833,9 @@ var _reward_return_parent: WeakRef
 const INTERIM_REWARD_IDS := ["warden_strike", "seamstress_prick", "tinker_pop_shot"]
 var result_label: Label
 var _battle_closed := false
+# One confirmed paid-card hit may have left the authored Quilt Termite at zero
+# HP. The genuine post-card observation boundary consumes this before evaluate().
+var _termite_split_hit: Dictionary = {}
 var terminal_result_panel: LiveRunTerminalResultPanel
 var _terminal_return_connection: Callable
 var action_corner: PanelContainer
@@ -900,6 +903,96 @@ func _settle_act_battle() -> bool:
 	return true
 
 
+## Record one already-confirmed paid-card transition that left the authentic
+## Quilt Termite at zero HP. Only a living-to-slain change caused by that card
+## qualifies: direct model damage, enemy-phase Bleed and Thorns never call here.
+func _note_card_damage(enemies_after: CombatEnemies, before: Array) -> bool:
+	if enemies_after == null or enemies_after != enemies or _battle_closed \
+			or battle_result == null or not battle_result.can_continue() \
+			or enemy_intents == null or round_flow == null or deck == null or party == null:
+		return false
+	if not enemies.is_valid() or not party.is_valid():
+		return false
+	var after := enemies_after.get_enemies()
+	if before.size() != after.size() or before.size() > CombatEnemies.MAX_ENEMIES:
+		return false
+	var source := 0
+	for index in range(after.size()):
+		var previous = before[index]
+		var current: Dictionary = after[index]
+		if not previous is Dictionary or current.get("position") != index + 1 \
+				or previous.get("position") != index + 1 \
+				or not previous.get("hp") is int or not current.get("hp") is int:
+			return false
+		if previous["hp"] > 0 and current["hp"] == 0 \
+				and previous.get("id") == CombatEnemies.TERMITE_ID \
+				and previous.get(CombatEnemies.SPLIT_FIELD) == true:
+			if source != 0:
+				return false
+			source = index + 1
+	if source == 0:
+		return false
+	_termite_split_hit = {"enemies": enemies_after, "position": source}
+	return true
+
+
+## The one genuine post-card boundary. A pending lethal hand hit is preflighted
+## against a detached roster through the existing split primitive, then the
+## scheduler and gauge ledgers must accept both children BEFORE any subsystem is
+## published. Any stale, malformed or full-roster case leaves the normal death
+## untouched and falls through to the ordinary victory/defeat evaluation.
+func _settle_pending_termite_split() -> bool:
+	if _termite_split_hit.is_empty():
+		return true
+	var receipt := _termite_split_hit
+	_termite_split_hit = {}
+	if _battle_closed or enemies == null or receipt.get("enemies") != enemies \
+			or enemy_intents == null or round_flow == null or battle_result == null \
+			or deck == null or party == null:
+		return true
+	var flow: CombatRoundFlow = round_flow
+	if flow._deck != deck or flow._party != party or flow._enemies != enemies \
+			or flow._intents != enemy_intents or flow._result != battle_result:
+		return true
+	var source: Variant = receipt.get("position")
+	var roster := enemies.get_enemies()
+	if not source is int or source < 1 or source > roster.size():
+		return true
+	var probe := CombatEnemies.new(roster)
+	# The constructor normalizes HP to max_hp, so restore the exact live records
+	# before the detached splitter sees the just-confirmed zero-HP source.
+	probe._enemies.assign(roster.duplicate(true))
+	var staged := probe.stage_split_on_death(source)
+	if not staged.get("ok", false) or not staged.get("split", false):
+		return true
+	var after := probe.get_enemies()
+	var unravel: CombatUnravel = flow._unravel
+	if unravel != null and (not is_instance_valid(unravel) \
+			or unravel._bound_enemies != enemies or not flow._valid_unravel_binding()):
+		return true
+	if not enemy_intents.can_admit_split(enemies, source, after):
+		return true
+	if unravel != null and not unravel.can_admit_split(enemies, source, after):
+		return true
+	# Every subsystem accepted the same deterministic transition above, so the
+	# published roster is the exact proposal and both ledgers commit atomically.
+	var published := enemies.stage_split_on_death(source)
+	if not published.get("ok", false) or not published.get("split", false) \
+			or published != staged or enemies.get_enemies() != after:
+		return true
+	if not enemy_intents.admit_split(enemies, source):
+		return true
+	if unravel != null and not unravel.admit_split(enemies, source):
+		return true
+	enemy_attacks = enemy_intents.get_intents()
+	_refresh_intents()
+	_refresh_enemy_roster()
+	var meters := get_node_or_null("LiveCombatMeters")
+	if meters != null and is_instance_valid(meters):
+		meters._sync_battle()
+	return true
+
+
 ## Single observation boundary for live updates and resolved phases.
 func _observe_battle_result() -> bool:
 	if battle_result == null:
@@ -907,6 +1000,8 @@ func _observe_battle_result() -> bool:
 	if party_carryover != null and not _current_carryover_fight():
 		return false
 	if run_map != null and not _current_act_battle():
+		return false
+	if not _settle_pending_termite_split():
 		return false
 	var outcome := battle_result.evaluate()
 	if outcome == CombatBattleResult.ACTIVE:

@@ -16,8 +16,9 @@ const BROODLING_ID := "moth_swarm_broodling"
 const BROODLING_LATCH := "broodling_summoned"
 const MOTH_ID := "moth_swarm"
 
-## Explicit, battle-local Termite split. No damage, round or scheduler code calls
-## this yet: the later live-flow integration must stage it after a lethal loss.
+## Explicit, battle-local Termite split. Only the app's post-card observation
+## boundary stages it, after a confirmed paid-card lethal hit; damage helpers,
+## Bleed, Thorns and the enemy phase never do.
 const SPLIT_FIELD := "split_on_death"
 const TERMITE_ID := "quilt_termite"
 const HALF_LEFT_ID := "quilt_termite_half_left"

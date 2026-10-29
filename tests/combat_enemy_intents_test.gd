@@ -22,6 +22,7 @@ func _initialize() -> void:
 	_test_weighted_rejections()
 	_test_behemoth_phase_transition_cache()
 	_test_behemoth_phase_fail_closed()
+	_test_termite_split_admission()
 	if failures.is_empty():
 		print("combat_enemy_intents_test: PASS (", checks, " checks)")
 	else:
@@ -1343,3 +1344,132 @@ func _test_two_hit_schema() -> void:
 			_check(scheduler.advance_turn(), "advance RNG comparison")
 		traces.append(trace)
 	_check(traces[0] == traces[1], "two hits use same weighted and random target draws, reentry cache")
+
+
+func _termite_intent_source() -> Dictionary:
+	var parsed := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	for record in parsed:
+		if record.get("id") == CombatEnemies.TERMITE_ID:
+			return record.duplicate(true)
+	return {}
+
+
+func _split_peer(id: String) -> Dictionary:
+	return {"id": id, "name": id, "max_hp": 10,
+		"intent": {"target": "front", "actions": [
+			{"type": "attack", "amount": 2, "weight": 1}]}}
+
+
+func _termite_intent_fixture(count: int = 2, seed_value: int = 707) -> Dictionary:
+	var source := _termite_intent_source()
+	var records: Array = [source]
+	for index in range(1, count):
+		records.append(_split_peer("split_peer_%d" % index))
+	var enemies := CombatEnemies.new(records)
+	var party := _party_fixture()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var definitions: Array = []
+	for index in range(count):
+		definitions.append(_enemy(index + 1, [_block(1)]))
+	var scheduler := CombatEnemyIntents.new(definitions)
+	if source.is_empty() or not enemies.is_valid() or not party.is_valid() \
+			or not scheduler.is_valid() or not scheduler.bind_battle(enemies, party, rng):
+		return {}
+	return {"enemies": enemies, "party": party, "rng": rng, "intents": scheduler}
+
+
+func _test_termite_split_admission() -> void:
+	var f := _termite_intent_fixture(2, 707)
+	_check(not f.is_empty(),
+		"precondition: a genuine authored Termite fight binds the weighted scheduler")
+	if f.is_empty():
+		return
+	var enemies: CombatEnemies = f.enemies
+	var intents: CombatEnemyIntents = f.intents
+	var rng: RandomNumberGenerator = f.rng
+	var original_announcements := intents.get_intents()
+	var original_slots := intents._slots.duplicate(true)
+	var original_rng := rng.state
+	_check(not intents.can_admit_split(enemies, 1),
+		"AC3: a nonlethal roster admits no split announcements")
+	_check(enemies.stage_split_on_death(1) == {"ok": true, "split": false}
+		and intents.get_intents() == original_announcements and rng.state == original_rng,
+		"AC3: nonlethal staging leaves every announcement and RNG untouched")
+	_check(enemies.apply_damage(1, 26) and enemies.is_slain(1),
+		"precondition: one lethal transition leaves the Termite at zero HP")
+	var staged := enemies.stage_split_on_death(1)
+	_check(staged.get("ok", false) and staged.get("split", false)
+		and staged.get("positions") == [1, 3],
+		"precondition: the existing splitter publishes one replacement and one append")
+	var proposed := enemies.get_enemies()
+	var rng_before := rng.state
+	_check(intents.can_admit_split(enemies, 1, proposed) and rng.state == rng_before,
+		"AC2: preflight accepts both halves without a scheduler draw")
+	_check(intents.admit_split(enemies, 1),
+		"AC2: the bound scheduler publishes both new sources")
+	var announcements := intents.get_intents()
+	_check(announcements.size() == 3
+		and announcements.map(func(a): return a.enemy_position) == [1, 2, 3],
+		"AC2: exactly one announcement per occupied slot in roster order")
+	_check(intents._slots.size() == 3 and rng.state == rng_before,
+		"AC2: the bound slot cache grows with the roster and consumes no RNG")
+	_check(announcements[1] == original_announcements[1]
+		and intents._slots[1] == original_slots[1],
+		"AC2: the unrelated peer announcement and slot stay byte-for-byte intact")
+	_check(announcements[0] == {"enemy_position": 1, "type": "attack",
+			"amount": 3, "target_position": 1}
+		and announcements[2] == {"enemy_position": 3, "type": "attack",
+			"amount": 3, "target_position": 1}
+		and intents._slots[0] == {"enemy_position": 1, "target": "front",
+			"actions": [{"weight": 1, "action": {"type": "attack", "amount": 3}}]}
+		and intents._slots[2] == {"enemy_position": 3, "target": "front",
+			"actions": [{"weight": 1, "action": {"type": "attack", "amount": 3}}]},
+		"AC2: each half announces its own single front attack at once-scaled half strength")
+	var after := intents.get_intents()
+	_check(not intents.can_admit_split(enemies, 1)
+		and not intents.admit_split(enemies, 1)
+		and intents.get_intents() == after,
+		"AC3: a duplicate split receipt cannot publish grandchildren")
+	var legacy := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+	_check(not legacy.can_admit_split(enemies, 1, proposed)
+		and not legacy.admit_split(enemies, 1),
+		"AC3: an unbound legacy schedule never admits a split")
+	var full := _termite_intent_fixture(3, 708)
+	_check(full.enemies.apply_damage(1, 26) and full.enemies.is_slain(1),
+		"precondition: the full-capacity Termite really dies")
+	var full_before := [full.intents.get_intents(), full.intents._slots.duplicate(true),
+		full.rng.state]
+	_check(full.enemies.stage_split_on_death(1) == {"ok": true, "split": false}
+		and not full.intents.can_admit_split(full.enemies, 1)
+		and not full.intents.admit_split(full.enemies, 1)
+		and [full.intents.get_intents(), full.intents._slots.duplicate(true),
+			full.rng.state] == full_before,
+		"AC3: full three-slot occupancy keeps the normal death and the whole schedule")
+	var broken := _termite_intent_fixture(2, 709)
+	broken.enemies.apply_damage(1, 26)
+	broken.enemies.stage_split_on_death(1)
+	broken.enemies._enemies[2]["hp"] = 0
+	broken.enemies._enemies[2]["block"] = 4
+	var broken_before := [broken.intents.get_intents(),
+		broken.intents._slots.duplicate(true), broken.rng.state]
+	_check(not broken.intents.can_admit_split(broken.enemies, 1)
+		and not broken.intents.admit_split(broken.enemies, 1)
+		and [broken.intents.get_intents(), broken.intents._slots.duplicate(true),
+			broken.rng.state] == broken_before,
+		"AC3: a malformed or modified half refuses admission atomically")
+	var replay: Array = []
+	for repeat_index in range(2):
+		var fight := _termite_intent_fixture(2, 711)
+		fight.enemies.apply_damage(1, 26)
+		fight.enemies.stage_split_on_death(1)
+		_check(fight.intents.admit_split(fight.enemies, 1),
+			"same-seed split announcement admission succeeds")
+		var snap := [fight.intents.get_intents(), fight.intents._slots.duplicate(true),
+			fight.rng.state]
+		if repeat_index == 0:
+			replay = snap
+		else:
+			_check(snap == replay,
+				"AC3: same-seed split announcement replay is byte-for-byte identical")

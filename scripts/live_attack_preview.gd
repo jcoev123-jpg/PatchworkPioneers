@@ -975,8 +975,12 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var definition := _definition(id)
 	_pinned.begin_confirmed_cast(id, str(definition.get("owner", "")),
 		int(definition.cost) if _overload.is_supported_card(id) else maxi(0, int(definition.get("cost", 0)) - tinker_cost_discount(id)))
+	# The lethal-card boundary needs the exact pre-hit roster of this one paid
+	# commit; forecasts and rejected selections never reach this point.
+	var roster_before: Array = enemies.get_enemies()
 	last_event = _resolve_attack(party, enemies, id, position)
 	if last_event.ok:
+		app._note_card_damage(enemies, roster_before)
 		# Every real Tinker play feeds the battle's one Path authority, so its
 		# first-hit latch, Scope and Clockwork state can never drift from combat.
 		# A non-Tinker card fails closed inside the authority.

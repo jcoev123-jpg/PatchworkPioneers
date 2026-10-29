@@ -2,7 +2,7 @@ extends SceneTree
 
 ## A detached, explicit post-lethal Quilt Termite split model contract.
 
-## Live damage/Bleed/Thorns, enemy phase and card flow intentionally do not call it.
+## Live paid-card damage reaches it only through App._settle_pending_termite_split;
 
 
 

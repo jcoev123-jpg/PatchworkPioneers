@@ -971,6 +971,8 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 	# The existing resolvers revalidate every condition before mutation.
 	var event: Dictionary
 	var energy_before: int = receipt.deck.energy
+	# Exact pre-hit roster for the app's confirmed lethal-card boundary.
+	var roster_before: Array = receipt.enemies.get_enemies()
 	if card_id in GOLEM_IDS:
 		event = CombatButtonGolemAreaCards.new().play_card(
 			receipt.deck, receipt.party, receipt.enemies, card_id, 0)
@@ -1028,6 +1030,7 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 		return
 	# A real, successful Tinker cast still feeds the battle's one Path authority,
 	# so its first-hit, Scope and Clockwork state can never drift from combat.
+	get_parent()._note_card_damage(receipt.enemies, roster_before)
 	_report_tinker_path_play(card_id, energy_before)
 	_forward_switchback_ordinary_play(card_id)
 	last_event = event.duplicate(true)
