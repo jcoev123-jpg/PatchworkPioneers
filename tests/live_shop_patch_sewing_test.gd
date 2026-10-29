@@ -745,6 +745,13 @@ func _candidate_contract_checks() -> void:
 	for definition in definitions:
 		if definition.id in ["relay_bobbin", "hearth_lining"]:
 			continue # P8 rare patches use a separate stock mechanism (deferred)
+		if RunAuthoredPatchDefinitions.HEIRLOOM_IDS.has(definition.id):
+			# P12 Heirlooms stay unmounted in live stock until their combat
+			# powers are playable, so their authored records must be absent
+			# from the shipped pool while remaining valid wardrobe entries.
+			_check(ids.count(definition.id) == 0,
+				"shared Elite pool keeps unmounted Heirloom unstocked: " + definition.id)
+			continue
 		_check(ids.count(definition.id) == 1, "shared Elite pool has authored ID once: " + definition.id)
 	for bad in [null, [], ["button_eye"], [{"id": 7, "price": 100}],
 		[{"id": "foreign_patch", "price": 100}], [{"id": "", "price": 100}],
