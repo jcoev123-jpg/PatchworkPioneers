@@ -559,6 +559,46 @@
         { "id": "pawn_cold_hem", "text": "Pawn a reinforced hem (lose 1 max HP; gain 20 gold)", "outcome": { "gold": 20, "scraps": 0, "hp": 0, "max_hp": -1 } },
         { "id": "leave", "text": "Leave the loom glowing softly", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_mothwing_parasol_shelter",
+      "title": "The Moth-Wing Parasol Shelter",
+      "description": "A plump button-eyed parasol-keeper unfolds a giant plum umbrella edged in stitched moth wings beside the rain-dark road.",
+      "choices": [
+        { "id": "shelter_warm_seam", "text": "Pay 13 gold for a dry quilt lining (+7 HP)", "outcome": { "gold": -13, "scraps": 0, "hp": 7, "max_hp": 0 } },
+        { "id": "catch_needle_rain", "text": "Catch the sharp thread-rain (lose 4 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Walk beyond the shadow of the parasol", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_ironkey_dollhouse",
+      "title": "The Iron-Key Dollhouse",
+      "description": "A round velvet locksmith raises a door-sized brass key before a tiny oxblood house with warm button windows.",
+      "choices": [
+        { "id": "line_keyhole", "text": "Spend 9 gold and 2 scraps to line a keyhole (+2 max HP)", "outcome": { "gold": -9, "scraps": -2, "hp": 0, "max_hp": 2 } },
+        { "id": "sell_old_key", "text": "Unpick one lasting key seam for 23 gold (lose 1 max HP)", "outcome": { "gold": 23, "scraps": 0, "hp": 0, "max_hp": -1 } },
+        { "id": "leave", "text": "Let the little house keep its secrets", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_gloam_patch_kite",
+      "title": "The Gloam Patch-Kite",
+      "description": "A round-headed puppet child flies an enormous patched star kite above a midnight-teal hill, its long tail held by brass pins.",
+      "choices": [
+        { "id": "steady_kite_tail", "text": "Spend 1 scrap to steady the kite tail (+5 HP, +1 max HP)", "outcome": { "gold": 0, "scraps": -1, "hp": 5, "max_hp": 1 } },
+        { "id": "chase_fallen_kite", "text": "Chase the loose kite in cold wind (lose 5 HP; gain 16 gold)", "outcome": { "gold": 16, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Wave to the kite as it climbs", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rustbell_locket_tree",
+      "title": "The Rustbell Locket Tree",
+      "description": "A squat moss-coated gardener lifts a brass locket from a tree of rust-red button fruit, each branch tied with cream thread.",
+      "choices": [
+        { "id": "buy_heart_locket", "text": "Pay 20 gold to sew a locket into a lasting heart seam (+3 max HP)", "outcome": { "gold": -20, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "pick_rustbell", "text": "Climb for a rustbell locket (lose 3 HP; gain 11 gold and 1 scrap)", "outcome": { "gold": 11, "scraps": 1, "hp": -3, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the lockets chiming in the wind", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
