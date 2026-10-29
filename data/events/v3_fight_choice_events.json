@@ -54,6 +54,17 @@
         { "id": "purchase_token", "text": "Purchase a stamped gate token (spend 20 gold)", "outcome": { "gold": -20, "scraps": 0 } },
         { "id": "leave", "text": "Step away from the checkpoint (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_bellspool_picket",
+      "title": "The Bellspool Picket",
+      "description": "A chain of oversized brass bells and thread-wrapped spools blocks the moonlit lane; doll sentries turn as one when the bells ring.",
+      "fight_choice_id": "ring_the_bells",
+      "choices": [
+        { "id": "ring_the_bells", "text": "Ring the bellspool and face the sentries (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "pay_bell_toll", "text": "Pay the bell toll (spend 16 gold)", "outcome": { "gold": -16, "scraps": 0 } },
+        { "id": "leave", "text": "Retreat along the quiet seam (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
