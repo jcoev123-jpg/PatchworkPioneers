@@ -21,7 +21,7 @@ const KNOWN_EFFECT_KEYS := [
 	"self_hp_loss", "conditional_damage", "random_target_each_hit", "rng_source",
 	"living_targets_only", "duration", "next_attack_damage_bonus",
 	"next_turn_energy", "expires", "blind", "blind_next_attack",
-	"dodge_next_attack", "exhaust", "cannot_buff_next_turn",
+	"dodge_next_attack", "exhaust", "cannot_buff_next_turn", "ignore_block",
 ]
 ## The two V3 one-shot descriptors the face names beside the classic effects.
 ## They are printed design wording only: this formatter assumes no enemy attack
@@ -72,6 +72,39 @@ const FEAR_PRINTINGS := {
 	"scarecrow_harvest_fright_plus": {"cost": 3, "target_kind": "enemy_all",
 		"from_positions": [1, 2, 3], "to_positions": [1, 2, 3],
 		"weak": 3, "damage": 6},
+}
+## Block piercing is the Scarecrow's shoulder crow strike (`ignore_block: true`).
+## The face prints 'Pierce Block.' following the authentic damage aimed at the
+## backmost living enemy. The whole catalog record is re-checked below, so a rebuilt
+## or forged look-alike card cannot borrow the sentence.
+const CROW_KEY := "ignore_block"
+const CROW_OWNER := "scarecrow"
+const CROW_TARGET_KIND := "enemy_back"
+const CROW_CLAUSE := "pierce Block"
+## The four authentic Scarecrow shoulder-crow printings and their complete authored
+## shape.
+const CROW_PRINTINGS := {
+	"scarecrow_crow_dive": {
+		"cost": 1, "damage": 3,
+		"from_positions": [1, 2, 3], "to_positions": [1, 2, 3],
+		"upgrade_id": "scarecrow_crow_dive_plus",
+	},
+	"scarecrow_crow_dive_plus": {
+		"cost": 1, "damage": 5,
+		"from_positions": [1, 2, 3], "to_positions": [1, 2, 3],
+		"upgrade_of": "scarecrow_crow_dive",
+	},
+	"scarecrow_crow_peck": {
+		"cost": 1, "damage": 4,
+		"from_positions": [1, 2, 3], "to_positions": [1, 2, 3],
+		"upgrade_id": "scarecrow_crow_peck_plus",
+	},
+	"scarecrow_crow_peck_plus": {
+		"cost": 1, "damage": 6,
+		"from_positions": [1, 2, 3], "to_positions": [1, 2, 3],
+		"upgrade_of": "scarecrow_crow_peck",
+	},
+
 }
 
 
@@ -143,6 +176,11 @@ static func has_unknown(definition: Variant) -> bool:
 	# an honest unknown instead of a guessed Fear keyword.
 	if effects.has(FEAR_KEY) and not bool(_fear_clause(card, effects).get("valid", false)):
 		return true
+	# `ignore_block` is only a known effect in the four authentic Scarecrow crow
+	# printings; every other value, recipient, damage or companion effect stays
+	# an honest unknown instead of a guessed Block-piercing clause.
+	if effects.has(CROW_KEY) and not bool(_crow_clause(card, effects).get("valid", false)):
+		return true
 	return false
 
 
@@ -157,6 +195,24 @@ static func is_authored_fear(definition: Variant) -> bool:
 	if not raw_effects is Dictionary:
 		return false
 	return bool(_fear_clause(card, raw_effects).get("valid", false))
+
+
+## True when this exact record is one of the four authentic Scarecrow crow
+## printings (Crow Dive and Crow Peck, base and '+'). The Help glossary reuses
+## this single authority so the sewn face and Help can never disagree about
+## which cards really author Block piercing.
+static func is_authored_block_pierce(definition: Variant) -> bool:
+	if not definition is Dictionary:
+		return false
+	var card: Dictionary = definition
+	var raw_effects: Variant = card.get("effects", {})
+	if not raw_effects is Dictionary:
+		return false
+	return bool(_crow_clause(card, raw_effects).get("valid", false))
+
+
+static func is_authored_crow(definition: Variant) -> bool:
+	return is_authored_block_pierce(definition)
 
 
 ## Fear is the Scarecrow's authored one-turn buff lock, never a status stack. The
@@ -206,6 +262,55 @@ static func _fear_clause(card: Dictionary, effects: Dictionary) -> Dictionary:
 	return {"valid": true, "clause": FEAR_CLAUSE + _enemy_object_suffix(card)}
 
 
+## Block piercing is the Scarecrow's shoulder crow strike, ignoring enemy Block.
+## The face prints it only when the whole descriptor matches one of the four real
+## catalog printings: boolean true, exact identity/owner/cost/recipient/slots,
+## the authored damage amount, base/+ upgrade link, and no extra or missing effect key.
+## Anything else is not a Block pierce this formatter will name.
+static func _crow_clause(card: Dictionary, effects: Dictionary) -> Dictionary:
+	var invalid := {"valid": false, "clause": ""}
+	if not effects.has(CROW_KEY):
+		return invalid
+	var flag: Variant = effects[CROW_KEY]
+	# `1`, `"true"` and `1.0` are not the authored boolean true.
+	if not flag is bool or not bool(flag):
+		return invalid
+	var id_value: Variant = card.get("id")
+	if not id_value is String:
+		return invalid
+	var card_id: String = id_value
+	if not CROW_PRINTINGS.has(card_id):
+		return invalid
+	var expected: Dictionary = CROW_PRINTINGS[card_id]
+	var owner_value: Variant = card.get("owner")
+	if not owner_value is String or String(owner_value) != CROW_OWNER:
+		return invalid
+	var target_value: Variant = card.get("target_kind")
+	if not target_value is String or String(target_value) != CROW_TARGET_KIND:
+		return invalid
+	var cost_value: Variant = card.get("cost")
+	if not cost_value is int or int(cost_value) != int(expected["cost"]):
+		return invalid
+	if not _exact_positions(card.get("from_positions", null), expected["from_positions"]):
+		return invalid
+	if not _exact_positions(card.get("to_positions", null), expected["to_positions"]):
+		return invalid
+	var damage_value: Variant = effects.get("damage")
+	if not damage_value is int or int(damage_value) != int(expected["damage"]):
+		return invalid
+	if effects.size() != 2:
+		return invalid
+	if expected.has("upgrade_id"):
+		if card.get("upgrade_id") != expected["upgrade_id"] or card.has("upgrade_of"):
+			return invalid
+	elif expected.has("upgrade_of"):
+		if card.get("upgrade_of") != expected["upgrade_of"] or card.has("upgrade_id"):
+			return invalid
+	else:
+		return invalid
+	return {"valid": true, "clause": CROW_CLAUSE}
+
+
 static func _result(known: bool, phrases: Array[String], unknown: bool) -> Dictionary:
 	return {"known": known, "phrases": phrases, "line": SEPARATOR.join(phrases),
 		"unknown": unknown}
@@ -220,6 +325,8 @@ static func _recipient(card: Dictionary) -> String:
 			return "every enemy"
 		"enemy_random":
 			return "a random enemy"
+		"enemy_back":
+			return "the backmost living enemy"
 		"ally_single":
 			return "a chosen ally"
 		"party_all":
@@ -232,7 +339,7 @@ static func _recipient(card: Dictionary) -> String:
 static func _has_enemy_effects(effects: Dictionary) -> bool:
 	for key in ["damage", "conditional_damage", "exposed", "weak", "bleed",
 			"unravel", "bleed_multiplier", "pinned", "tangled", "blind",
-			"blind_next_attack", FEAR_KEY]:
+			"blind_next_attack", FEAR_KEY, CROW_KEY]:
 		if effects.has(key):
 			return true
 	return false
@@ -277,6 +384,12 @@ static func _enemy_sentence(card: Dictionary, effects: Dictionary,
 			damage += ", or %d if %s" % [empowered, _condition_text(condition)]
 	if not damage.is_empty():
 		clauses.append(damage)
+	if effects.has(CROW_KEY):
+		var crow := _crow_clause(card, effects)
+		if bool(crow.get("valid", false)):
+			clauses.append(str(crow["clause"]))
+		else:
+			unknown = true
 	# One merged status clause in the fixed order, then Unravel and Pin.
 	var status := _status_labels(effects, applied)
 	if bool(status.get("unknown", false)):
