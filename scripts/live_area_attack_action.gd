@@ -17,7 +17,8 @@ const CROW_IDS := ["scarecrow_crow_dive", "scarecrow_crow_dive_plus",
 	"scarecrow_crow_peck", "scarecrow_crow_peck_plus"]
 const GOLEM_IDS := ["button_golem_popping_volley", "button_golem_popping_volley_plus",
 	"button_golem_buttonstorm", "button_golem_buttonstorm_plus"]
-const CARD_IDS := SEAMSTRESS_IDS + TINKER_IDS + UNRAVEL_TINKER_IDS + ENERGY_IDS + YARN_IDS + SNARE_IDS + CROW_IDS + GOLEM_IDS
+const MOTH_IDS := ["lantern_monk_moth_cloud", "lantern_monk_moth_cloud_plus"]
+const CARD_IDS := SEAMSTRESS_IDS + TINKER_IDS + UNRAVEL_TINKER_IDS + ENERGY_IDS + YARN_IDS + SNARE_IDS + CROW_IDS + GOLEM_IDS + MOTH_IDS
 const INSTRUCTION := "Click or focus and press Enter / Space to play"
 const CUE_NAME := "BlanketStitchCue"
 const CREAM := Color("#ece0c8")
@@ -162,6 +163,8 @@ func _is_card(card_id: String) -> bool:
 
 
 func _definition(card_id: String) -> Dictionary:
+	if card_id in MOTH_IDS:
+		return LanternMonkPoolCards.new().get_definition(card_id)
 	if card_id in GOLEM_IDS:
 		return ButtonGolemPoolCards.new().get_definition(card_id)
 	if card_id in CROW_IDS:
@@ -423,6 +426,10 @@ func _rule_text(card_id: String) -> String:
 	if definition.get("id") != card_id:
 		return "Unknown card rules"
 	var effects: Dictionary = definition.get("effects", {})
+	if card_id in MOTH_IDS:
+		return "%s | Lantern Monk | %d energy | From %s\nAll living enemies %s: Blind NEXT attack (one miss per enemy); Exhaust this held copy; no target choice" % [
+			definition.display_name, definition.cost, _positions(definition.from_positions),
+			_positions(definition.to_positions)]
 	if card_id in GOLEM_IDS:
 		var rule: String = ("%d independent hits of %d base damage per living enemy (check survival before each hit)" % [
 			int(effects.get("hit_count", 0)), int(effects.get("damage", 0))]
@@ -502,6 +509,8 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 		owner_color = INK
 	if card_id in GOLEM_IDS:
 		owner_color = RUST
+	if card_id in MOTH_IDS:
+		owner_color = SEAMSTRESS
 	for existing in panel.get_children():
 		if existing.name == CUE_NAME:
 			panel.remove_child(existing)
@@ -586,8 +595,8 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 		effect_label.clip_text = false
 		effect_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		column.add_child(effect_label)
-		if card_id in YARN_IDS or card_id in SNARE_IDS or card_id in CROW_IDS or card_id in GOLEM_IDS:
-			var owner_name := "Button Golem" if card_id in GOLEM_IDS else ("Scarecrow" if card_id in CROW_IDS else "Yarn Ranger")
+		if card_id in YARN_IDS or card_id in SNARE_IDS or card_id in CROW_IDS or card_id in GOLEM_IDS or card_id in MOTH_IDS:
+			var owner_name := "Lantern Monk" if card_id in MOTH_IDS else ("Button Golem" if card_id in GOLEM_IDS else ("Scarecrow" if card_id in CROW_IDS else "Yarn Ranger"))
 			var owner_label := _cue_label(owner_name, 9, owner_color)
 			owner_label.name = "Owner"
 			column.add_child(owner_label)
@@ -614,6 +623,8 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 ## resolver applies, printed without its arithmetic.
 func _short_effect(definition: Dictionary) -> String:
 	var effects: Dictionary = definition.get("effects", {})
+	if definition.get("id", "") in MOTH_IDS:
+		return "Blind NEXT attack on all; Exhaust."
 	if definition.get("id", "") in GOLEM_IDS:
 		if effects.has("hit_count"):
 			return "Deal %d x%d independent hits to all living enemies." % [
@@ -895,6 +906,12 @@ func _eligible(panel, card_id: String) -> bool:
 		return false
 	if not _enemies.is_valid() or _enemies.is_victorious():
 		return false
+	if card_id in MOTH_IDS:
+		if app.enemy_intents != _intents or _deck._rng != _rng \
+				or not _receipt_valid(_receipt(panel, card_id)) \
+				or not CombatLanternMonkMothCloudCards.new()._prepare(
+					_deck, _party, _enemies, card_id, 0).get("ok", false):
+			return false
 	if card_id in GOLEM_IDS:
 		if app.enemy_intents != _intents or _deck._rng != _rng or not _receipt_valid(_receipt(panel, card_id)) \
 				or not CombatButtonGolemAreaCards.new()._prepare(
@@ -973,7 +990,10 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 	var energy_before: int = receipt.deck.energy
 	# Exact pre-hit roster for the app's confirmed lethal-card boundary.
 	var roster_before: Array = receipt.enemies.get_enemies()
-	if card_id in GOLEM_IDS:
+	if card_id in MOTH_IDS:
+		event = CombatLanternMonkMothCloudCards.new().play_card(
+			receipt.deck, receipt.party, receipt.enemies, card_id, 0)
+	elif card_id in GOLEM_IDS:
 		event = CombatButtonGolemAreaCards.new().play_card(
 			receipt.deck, receipt.party, receipt.enemies, card_id, 0)
 	elif card_id in CROW_IDS:
@@ -1030,8 +1050,10 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 		return
 	# A real, successful Tinker cast still feeds the battle's one Path authority,
 	# so its first-hit, Scope and Clockwork state can never drift from combat.
-	get_parent()._note_card_damage(receipt.enemies, roster_before)
-	_report_tinker_path_play(card_id, energy_before)
+	# A Blind-only Exhaust cast is not an attack, damage or Tinker first-hit event.
+	if card_id not in MOTH_IDS:
+		get_parent()._note_card_damage(receipt.enemies, roster_before)
+		_report_tinker_path_play(card_id, energy_before)
 	_forward_switchback_ordinary_play(card_id)
 	last_event = event.duplicate(true)
 	_after_cast()
