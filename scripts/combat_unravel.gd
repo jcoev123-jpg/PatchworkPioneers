@@ -57,6 +57,31 @@ func bind_roster(enemies: CombatEnemies, tiers_by_position: Dictionary) -> bool:
 	return true
 
 
+## Extend this fight's original gauges for the one authenticated spawned normal
+## child. Preserve every earlier gauge, pending skip and threshold in place.
+func admit_broodling(enemies: CombatEnemies) -> bool:
+	if enemies == null or enemies != _bound_enemies or not enemies.is_valid():
+		return false
+	var position := enemies.get_enemies().size()
+	if position < 2 or position > MAX_ENEMIES or _gauges.size() != position - 1:
+		return false
+	var child := enemies.get_enemy(position)
+	if child.get("id") != CombatEnemies.BROODLING_ID or child.get("max_hp") != 8 \
+			or child.get("position") != position or child.get("hp", 0) <= 0:
+		return false
+	var parent_latched := false
+	for index in range(1, position):
+		if enemies.get_enemy(index).get("id") == CombatEnemies.MOTH_ID \
+				and enemies.get_enemy(index).get(CombatEnemies.BROODLING_LATCH) == true:
+			parent_latched = true
+	if not parent_latched:
+		return false
+	_gauges[position] = {"gauge": 0, "threshold": THRESHOLD_NORMAL,
+		"unravelled": false, "skip_pending": false}
+	_tiers_by_position[position] = "normal"
+	return true
+
+
 func get_snapshot(position: int) -> Dictionary:
 	## Return a deep copy of the gauge state for the given position.
 	## Returns empty dictionary if unbound or invalid position.

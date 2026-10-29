@@ -11,6 +11,51 @@ const MAX_INT := 9223372036854775807
 const REVIVE_FIELD := "revive_once"
 const REVIVED_FIELD := "revived"
 
+## Embedded battle-only child: never loaded from a run/Elite/Boss catalog.
+const BROODLING_ID := "moth_swarm_broodling"
+const BROODLING_LATCH := "broodling_summoned"
+const MOTH_ID := "moth_swarm"
+
+static func broodling_definition() -> Dictionary:
+	return {"id": BROODLING_ID, "name": "Moth Broodling", "max_hp": 8,
+		"art_path": "res://assets/paper/enemies/moth_swarm_broodling.png",
+		"intent": {"target": "front", "actions": [
+			{"type": "attack", "amount": 5, "weight": 1}]}}
+
+
+## Only the detached phase roster calls this. Returns failure for malformed
+## metadata and a successful inert beat for full, slain or already-used sources.
+## No RNG is accepted here; neither a rejected nor a skipped birth can draw it.
+func stage_broodling(source: int) -> Dictionary:
+	var failure := {"ok": false, "spawned": false}
+	if not is_valid() or source < 1 or source > _enemies.size():
+		return failure
+	var mother: Dictionary = _enemies[source - 1]
+	var latch: Variant = mother.get(BROODLING_LATCH, false)
+	if not latch is bool:
+		return failure
+	if mother.get("id") != MOTH_ID:
+		return failure
+	var spec: Variant = mother.get("intent")
+	if CombatEnemyIntents._weighted_slot(source, spec).is_empty():
+		return failure
+	var child := broodling_definition()
+	if CombatEnemyIntents._weighted_slot(_enemies.size() + 1, child.intent).is_empty():
+		return failure
+	if mother["hp"] == 0 or latch or _enemies.size() >= MAX_ENEMIES:
+		return {"ok": true, "spawned": false}
+	for existing in _enemies:
+		if existing.get("id") == BROODLING_ID:
+			return {"ok": true, "spawned": false}
+	var next: Dictionary = child.duplicate(true)
+	next["position"] = _enemies.size() + 1
+	next["hp"] = next["max_hp"]
+	next["block"] = 0
+	mother[BROODLING_LATCH] = true
+	_enemies.append(next)
+	return {"ok": true, "spawned": true, "position": next.position}
+
+
 var _enemies: Array[Dictionary] = []
 
 

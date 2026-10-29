@@ -56,7 +56,8 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 	var staged_party := CombatParty.new(heroes)
 	staged_party._heroes = heroes
 	var staged_enemies := CombatEnemies.new(roster)
-	staged_enemies._enemies = roster
+	# Keep the pre-phase source snapshot distinct from the appendable staged roster.
+	staged_enemies._enemies = roster.duplicate(true)
 	var events: Array[Dictionary] = []
 	for action in ordered:
 		var source: int = action.enemy_position
@@ -172,6 +173,15 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 					if sting and not staged_enemies.is_slain(source) \
 							and not _sting_bleed(staged_party, actual_target, hp_before):
 						return failure
+				elif effective.type == "summon":
+					# Spawn only in this detached batch; the original mother and
+					# appended child publish together after every beat succeeds.
+					var birth := staged_enemies.stage_broodling(source)
+					if not birth.get("ok", false):
+						return failure
+					event.applied = birth.get("spawned", false)
+					if event.applied:
+						event["spawn_position"] = birth["position"]
 				elif effective.type == "block":
 					var result := CombatEnemyBlocks.execute_blocks(staged_enemies, [effective])
 					if not result.ok:
@@ -229,6 +239,12 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		if staged_enemies._enemies[index].has(CombatEnemies.REVIVED_FIELD):
 			enemies._enemies[index][CombatEnemies.REVIVED_FIELD] = \
 				staged_enemies._enemies[index][CombatEnemies.REVIVED_FIELD]
+		if staged_enemies._enemies[index].has(CombatEnemies.BROODLING_LATCH):
+			enemies._enemies[index][CombatEnemies.BROODLING_LATCH] = \
+				staged_enemies._enemies[index][CombatEnemies.BROODLING_LATCH]
+	# Only a successfully staged birth may extend the real battle roster.
+	for index in range(roster.size(), staged_enemies._enemies.size()):
+		enemies._enemies.append(staged_enemies._enemies[index].duplicate(true))
 	return {"ok": true, "events": events}
 
 
@@ -292,6 +308,9 @@ static func _attack_metadata_valid(roster: Array) -> bool:
 			return false
 		if enemy.has(CHEW_BLOCK_ON_ATTACK_FIELD) \
 				and not (enemy[CHEW_BLOCK_ON_ATTACK_FIELD] is bool):
+			return false
+		if enemy.has(CombatEnemies.BROODLING_LATCH) \
+				and not (enemy[CombatEnemies.BROODLING_LATCH] is bool):
 			return false
 		if enemy.has(ENRAGE_FIELD) and not (enemy[ENRAGE_FIELD] is bool):
 			return false

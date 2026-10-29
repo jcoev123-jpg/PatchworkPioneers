@@ -137,7 +137,9 @@ func _sync_battle() -> void:
 	if not app.battle_view.is_visible_in_tree() or not app.party.is_valid() or not app.enemies.is_valid():
 		_clear()
 		return
-	if _battle != app.battle_view or _deck != app.deck or _party != app.party or _enemies != app.enemies:
+	if _battle != app.battle_view or _deck != app.deck or _party != app.party or _enemies != app.enemies \
+			or not is_instance_valid(row) \
+			or row.get_child_count() != CombatParty.PARTY_SIZE + app.enemies.get_enemies().size():
 		_clear()
 		_mount(app)
 	var unravel := _bound_unravel(app)
