@@ -71,6 +71,7 @@ func _run() -> void:
 		"reinforced_patchcoat": "COAT", "thick_felt_mantle": "COAT",
 		"borrowed_button": "COAT",
 		"relay_bobbin": "HEAD", "hearth_lining": "COAT",
+		"needle_echo": "HEAD", "shared_hem": "ARM",
 	}
 	for id in required:
 		_check(_has_one(projected, id, required[id]),
@@ -96,6 +97,12 @@ func _run() -> void:
 	for id in power_required:
 		_check(_has_one(power, id, power_required[id]),
 			"power-only authored slot retained: " + id)
+	for id in ["needle_echo", "shared_hem"]:
+		_check(_entries_for(power, id).is_empty(),
+			"locked standard candidates exclude unwired heirloom: " + id)
+		_check(_has_one(RunAuthoredPatchDefinitions.load_eligible_power_definitions(true),
+			id, "HEAD" if id == "needle_echo" else "ARM"),
+			"unlocked detached power projection includes: " + id)
 	for id in inert:
 		_check(_has_one(projected, id, inert[id]),
 			"full projection still keeps inert starter slot: " + id)
@@ -206,6 +213,25 @@ func _run() -> void:
 	copy = catalogs.duplicate(true)
 	copy[5][0]["id"] = "stitched_badge"
 	_rejected_everywhere(copy, "starter record duplicated into a power catalog fails closed")
+
+	# P12 exact authored triggers, caps, slots and stock metadata fail closed.
+	for field in RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED["needle_echo"]:
+		copy = catalogs.duplicate(true)
+		copy[8][0].erase(field)
+		_rejected_everywhere(copy, "missing heirloom needle echo field " + field)
+	for field in RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED["shared_hem"]:
+		copy = catalogs.duplicate(true)
+		copy[8][1][field] = null
+		_rejected_everywhere(copy, "corrupt heirloom shared hem field " + field)
+	copy = catalogs.duplicate(true)
+	copy[8][0]["unexpected"] = true
+	_rejected_everywhere(copy, "extra heirloom field fails closed")
+	copy = catalogs.duplicate(true)
+	copy[8].append(copy[8][0].duplicate(true))
+	_rejected_everywhere(copy, "duplicate P12 record fails closed")
+	copy = catalogs.duplicate(true)
+	copy[8].pop_back()
+	_rejected_everywhere(copy, "missing P12 record fails closed")
 
 	# P8 negative fixtures: missing, malformed, duplicate, wrong-slot.
 	copy = catalogs.duplicate(true)

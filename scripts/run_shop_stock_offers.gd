@@ -413,9 +413,39 @@ static func _read_price(value: Variant) -> int:
 ## there later) but withholds every entry of it, so an inert starter-slot
 ## record can never be priced as a patch offer. An unreadable catalog yields an
 ## empty set, which refuses the visit instead of offering a powerless patch.
-static func _power_patch_ids() -> Dictionary:
+## Prospective stock filter runs before any RNG draw, quote or inventory
+## mutation. The actual Peddler stock path intentionally remains locked
+## until a future cycle implements both powers in real combat.
+static func filter_patch_candidates(candidates: Variant, unlocked: Variant) -> Dictionary:
+	var rejected := {"ok": false, "candidates": []}
+	if typeof(unlocked) != TYPE_BOOL or not (candidates is Array):
+		return rejected
+	var all_ids := {}
+	for definition in RunAuthoredPatchDefinitions.load_definitions():
+		all_ids[definition["id"]] = true
+	var eligible := _power_patch_ids(unlocked)
+	if all_ids.is_empty() or eligible.is_empty():
+		return rejected
+	var seen := {}
+	var filtered: Array = []
+	for candidate in candidates:
+		if not (candidate is Dictionary) or not candidate.has("id") \
+				or not candidate.has("price") or typeof(candidate["id"]) != TYPE_STRING:
+			return rejected
+		var id: String = candidate["id"]
+		if id.strip_edges().is_empty() or seen.has(id) or not all_ids.has(id) \
+				or _read_price(candidate["price"]) < 0:
+			return rejected
+		seen[id] = true
+		if eligible.has(id):
+			filtered.append(candidate.duplicate(true))
+	filtered.sort_custom(func(a, b): return a["id"] < b["id"])
+	return {"ok": true, "candidates": filtered}
+
+
+static func _power_patch_ids(unlocked: bool = false) -> Dictionary:
 	var ids := {}
-	for definition in RunAuthoredPatchDefinitions.load_power_definitions():
+	for definition in RunAuthoredPatchDefinitions.load_eligible_power_definitions(unlocked):
 		if definition is Dictionary and definition.get("id") is String:
 			ids[definition["id"]] = true
 	return ids

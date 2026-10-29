@@ -638,6 +638,9 @@ func _reward(pick: bool) -> void:
 
 func _return_terminal(status: String) -> void:
 	var difficulty_before: Dictionary = app.difficulty_state()
+	var actual_root: bool = app.get_tree().current_scene == app
+	_check(app.heirloom_unlocked == actual_root,
+		"settled terminal latches only in the actual app root, never embedded previews")
 	_check(difficulty_before.selected_tier == app._run_tier, "terminal retains the run's chosen tier")
 	if status == "Victory":
 		_check(difficulty_before.highest_cleared_tier >= app._run_tier,
@@ -679,7 +682,8 @@ func _return_terminal(status: String) -> void:
 	_check(callback.is_valid(), "terminal has app-owned return connection")
 	await _activate(panel.return_button, true)
 	stale.append(callback)
-	_check(app.difficulty_state() == difficulty_before, "terminal Return preserves the two-field difficulty state")
+	_check(app.difficulty_state() == difficulty_before and app.heirloom_unlocked == actual_root,
+		"terminal Return preserves difficulty and the correctly scoped Heirloom flag")
 	_check(app.title_view.is_visible_in_tree() and app.start_button.has_focus()
 		and app.run_map == null and app.run_rng == null and app.deck == null
 		and app.party_carryover == null and app.act_outcome == null and app.terminal_result_panel == null
@@ -1198,6 +1202,8 @@ func _run() -> void:
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await _frames()
+	_check(not app.heirloom_unlocked and app.difficulty_state().size() == 2,
+		"fresh preview game has locked Heirlooms and unchanged difficulty authority")
 	var auction_fixture := _auction_fixture()
 	_check(not auction_fixture.is_empty(), "genuine seeded six-Event auction witness exists")
 	if not auction_fixture.is_empty():

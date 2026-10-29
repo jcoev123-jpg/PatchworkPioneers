@@ -3,6 +3,8 @@ extends Control
 var run_difficulty := RunDifficulty.new()
 var _run_tier := 0
 var _difficulty_completed_map: RunMap
+var heirloom_unlocked := false
+const PROFILE_VERSION := 1
 @export var difficulty_save_path := "user://quilt_difficulty.json"
 
 
@@ -18,6 +20,34 @@ func restore_difficulty_state(state: Variant) -> bool:
 	return run_difficulty.restore_state(state)
 
 
+## The public RunDifficulty contract stays exactly two fields. Only the app owns
+## progression's versioned envelope, and both branches restore atomically.
+func profile_state() -> Dictionary:
+	return {"version": PROFILE_VERSION, "difficulty": difficulty_state(),
+		"heirloom_unlocked": heirloom_unlocked}
+
+
+func restore_profile_state(raw: Variant) -> bool:
+	if not (raw is Dictionary):
+		return false
+	var difficulty: Variant = raw
+	var unlocked := false
+	if raw.has("version"):
+		if raw.size() != 3 or typeof(raw.get("version")) not in [TYPE_INT, TYPE_FLOAT] \
+				or not is_finite(float(raw["version"])) or raw["version"] != PROFILE_VERSION \
+				or not raw.has("difficulty") or typeof(raw.get("heirloom_unlocked")) != TYPE_BOOL:
+			return false
+		difficulty = raw["difficulty"]
+		unlocked = raw["heirloom_unlocked"]
+	# A separate validator protects the live difficulty and progression flag
+	# from partial restoration when the saved tier is malformed or unearned.
+	var validator := RunDifficulty.new()
+	if not validator.restore_state(difficulty) or not restore_difficulty_state(difficulty):
+		return false
+	heirloom_unlocked = unlocked
+	return true
+
+
 ## Only the running game's root owns the profile file. Embedded app views
 ## (including previews) retain their own state without writing the profile.
 func _load_difficulty_progress() -> void:
@@ -26,7 +56,7 @@ func _load_difficulty_progress() -> void:
 		return
 	var file := FileAccess.open(difficulty_save_path, FileAccess.READ)
 	if file != null:
-		restore_difficulty_state(JSON.parse_string(file.get_as_text()))
+		restore_profile_state(JSON.parse_string(file.get_as_text()))
 
 
 func _save_difficulty_progress() -> void:
@@ -34,7 +64,7 @@ func _save_difficulty_progress() -> void:
 		return
 	var file := FileAccess.open(difficulty_save_path, FileAccess.WRITE)
 	if file != null:
-		file.store_string(JSON.stringify(difficulty_state()))
+		file.store_string(JSON.stringify(profile_state()))
 ## Root of the game. The hand view delegates all card movement to CombatDeck.
 
 signal start_run_requested
@@ -1074,9 +1104,15 @@ func _mount_terminal_result() -> void:
 	if is_instance_valid(terminal_result_panel) or not _terminal_result_is_current():
 		return
 	if _difficulty_completed_map != run_map and run_difficulty.get_selected_tier() == _run_tier:
-		run_difficulty.complete_run(act_outcome.get_state().run_status == RunActBattleOutcome.VICTORY)
-		_difficulty_completed_map = run_map
-		_save_difficulty_progress()
+		var previous_profile := profile_state()
+		if run_difficulty.complete_run(act_outcome.get_state().run_status == RunActBattleOutcome.VICTORY):
+			# Both genuine terminal outcomes are first-run witnesses; no preview,
+			# incomplete fight or repeated terminal mount may grant eligibility.
+			if get_tree().current_scene == self:
+				heirloom_unlocked = true
+			_difficulty_completed_map = run_map
+			if profile_state() != previous_profile:
+				_save_difficulty_progress()
 	var panel := load("res://scenes/run_terminal_result_panel.tscn").instantiate() as LiveRunTerminalResultPanel
 	if panel == null:
 		return

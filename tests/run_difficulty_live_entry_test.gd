@@ -51,6 +51,8 @@ func _battle(loss: bool = false) -> bool:
 	var before := _state()
 	app._mount_terminal_result()
 	_check(_state() == before, "unsettled battle cannot publish a difficulty win")
+	_check(not app.heirloom_unlocked or app._difficulty_completed_map != app.run_map,
+		"unsettled battle cannot record a first-run unlock")
 	var won := await super._battle(loss)
 	if tier > 0 and kind == "Boss":
 		_check(app.enemy_intents._boss_phase == 2, "real mounted chosen-tier Boss reaches phase two")
@@ -86,6 +88,8 @@ func _run() -> void:
 	root.add_child(app)
 	current_scene = app
 	await _frames()
+	_check(not app.heirloom_unlocked and app.difficulty_state().size() == 2,
+		"fresh real app begins locked with public two-field difficulty")
 	for invalid in [null, {}, {"selected_tier": 2, "highest_cleared_tier": -1},
 		{"selected_tier": true, "highest_cleared_tier": 0},
 		{"selected_tier": 0, "highest_cleared_tier": 0, "extra": 1}]:
@@ -95,6 +99,21 @@ func _run() -> void:
 	var fixture := _fixture()
 	_check(not fixture.is_empty(), "real full-run fixture exists")
 	if not fixture.is_empty():
+		# Loss-first on an actual mounted run must unlock P12 without advancing
+		# difficulty, awarding a victory receipt or inventing terminal state.
+		var initial_difficulty: Dictionary = app.difficulty_state()
+		await _start(fixture)
+		await _node(fixture.path[0], 0)
+		_check(not app.heirloom_unlocked and app.run_map != null,
+			"first real battle is still nonterminal and eligibility stays locked")
+		_check(await _battle(true), "first genuine enemy-phase defeat settles")
+		_check(app.heirloom_unlocked and app.difficulty_state() == initial_difficulty,
+			"first genuine LOSS unlocks Heirlooms without clearing difficulty")
+		var first_loss_saved: Variant = JSON.parse_string(FileAccess.get_file_as_string(save_path))
+		_check(first_loss_saved is Dictionary and first_loss_saved.get("heirloom_unlocked") == true
+			and int(first_loss_saved.get("difficulty", {}).get("highest_cleared_tier", -99)) == -1,
+			"first loss durably records eligibility in versioned profile")
+		await _return_terminal("Defeat")
 		for tier in range(3):
 			if tier > 0:
 				var rng := RandomNumberGenerator.new()
@@ -118,10 +137,15 @@ func _run() -> void:
 			if app.run_map != null:
 				break
 			_check(app.difficulty_state().highest_cleared_tier == tier, "only real sequential wins unlock the next tier")
+			_check(app.heirloom_unlocked, "authenticated first completed victory latches both patch eligibility")
 			var persisted: Variant = JSON.parse_string(FileAccess.get_file_as_string(save_path))
-			_check(persisted is Dictionary and persisted.size() == 2
-				and persisted.get("selected_tier") == tier and persisted.get("highest_cleared_tier") == tier,
-				"real main-scene victory persists exactly the two authority fields")
+			_check(persisted is Dictionary and persisted.size() == 3
+				and persisted.get("version") == 1 and persisted.get("heirloom_unlocked") == true
+				and persisted.get("difficulty") is Dictionary
+				and int(persisted["difficulty"].get("selected_tier", -1)) == tier
+				and int(persisted["difficulty"].get("highest_cleared_tier", -1)) == tier
+				and app.difficulty_state().size() == 2,
+				"real main-scene victory persists envelope with unchanged two-field authority")
 			if tier == 1:
 				attacks = 0
 				var replay := await _win(fixture)
@@ -129,11 +153,14 @@ func _run() -> void:
 					"chosen-tier seed replay preserves encounters, wallets, heroes, deck and RNG")
 		if app.run_map == null:
 			var before_loss: Dictionary = app.difficulty_state()
+			var before_loss_profile: String = FileAccess.get_file_as_string(save_path)
 			await _start(fixture)
 			await _node(fixture.path[0], 0)
 			_check(await _battle(true), "chosen-tier opening reaches genuine enemy-phase defeat")
 			await _return_terminal("Defeat")
 			_check(app.difficulty_state() == before_loss, "real chosen-tier loss preserves earnings and selection")
+			_check(app.heirloom_unlocked and FileAccess.get_file_as_string(save_path) == before_loss_profile,
+				"repeated genuine loss keeps first unlock without duplicate profile writes")
 		for tier in range(3):
 			for kind in ["Fight", "Elite", "Boss"]:
 				_check(mounted_kinds.has([tier, kind]), "nonvacuous live tier/type entry: %d %s" % [tier, kind])
@@ -144,12 +171,14 @@ func _run() -> void:
 	root.add_child(app)
 	current_scene = app
 	await _frames()
-	_check(app.difficulty_state() == saved, "fresh real main scene automatically restores saved selection and earnings")
+	_check(app.difficulty_state() == saved and app.heirloom_unlocked,
+		"fresh real main scene restores both selected difficulty and first-run eligibility")
 	var file := FileAccess.open(save_path, FileAccess.WRITE)
 	file.store_string('{"selected_tier":2,"highest_cleared_tier":-1}')
 	file.close()
 	app._load_difficulty_progress()
-	_check(app.difficulty_state() == saved, "malformed/unearned disk save cannot change live state")
+	_check(app.difficulty_state() == saved and app.heirloom_unlocked,
+		"malformed/unearned disk save cannot change either saved profile field")
 	DirAccess.remove_absolute(save_path)
 	app.free()
 	await _frames()

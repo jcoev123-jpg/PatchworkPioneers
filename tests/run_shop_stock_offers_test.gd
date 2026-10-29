@@ -320,7 +320,8 @@ func _test_attack_patch_stock(party: Array[String], catalog: StarterCards) -> vo
 		"res://data/shop/initial_offers.json"))
 	var definitions := RunAuthoredPatchDefinitions.load_definitions()
 	_check(not definitions.is_empty(), "all authored patch catalogs validate before stock assertions")
-	var p8_ids := {"relay_bobbin": true, "hearth_lining": true}
+	var p8_ids := {"relay_bobbin": true, "hearth_lining": true,
+		"needle_echo": true, "shared_hem": true}
 	var seen := {}
 	for definition in definitions:
 		var id: String = definition.id

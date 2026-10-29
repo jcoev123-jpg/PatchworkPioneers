@@ -1,0 +1,39 @@
+[
+  {
+    "id": "needle_echo",
+    "name": "Needle Echo",
+    "slot": "HEAD",
+    "rarity": "rare",
+    "effect": "first_confirmed_pinned_hit_bonus_damage",
+    "trigger": "first_confirmed_wearer_hit_on_pinned_enemy_per_turn",
+    "requires_confirmed_receipt": true,
+    "requires_pinned_enemy": true,
+    "wearer_must_be_living": true,
+    "wearer_must_be_untorn": true,
+    "bonus_damage": 1,
+    "uses_per_turn": 1,
+    "shop_price_gold": 100,
+    "stock_weight_percent": 100,
+    "stock_weight_basis": "ordinary_patch",
+    "stock_competes_for_existing_slot": true
+  },
+  {
+    "id": "shared_hem",
+    "name": "Shared Hem",
+    "slot": "ARM",
+    "rarity": "rare",
+    "effect": "different_living_hero_block_gain_wearer_block",
+    "trigger": "different_living_hero_actually_gains_block",
+    "requires_actual_block_gain": true,
+    "source_hero_must_be_living": true,
+    "source_hero_must_differ_from_wearer": true,
+    "wearer_must_be_living": true,
+    "wearer_must_be_untorn": true,
+    "block": 1,
+    "uses_per_turn": 1,
+    "shop_price_gold": 100,
+    "stock_weight_percent": 100,
+    "stock_weight_basis": "ordinary_patch",
+    "stock_competes_for_existing_slot": true
+  }
+]
