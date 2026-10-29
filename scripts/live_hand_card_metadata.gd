@@ -45,6 +45,7 @@ var _lunge := CombatRagDuelistLungeCards.new()
 var _snare := CombatRagDuelistTatteredSnareCards.new()
 var _barrage := CombatRagDuelistNeedleBarrageCards.new()
 var _needle := CombatYarnRangerNeedleCards.new()
+var _monk := CombatLanternMonkBlindStrikeCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
 var _pitchfork := CombatScarecrowPitchforkCards.new()
 var _bolas := CombatYarnRangerBolasCards.new()
@@ -98,6 +99,8 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if _monk.is_supported_card(card_id):
+		return _monk.get_definition(card_id)
 	if card_id in ["seamstress_v3_tether_loop", "seamstress_v3_tether_loop_plus"]:
 		return CombatSeamstressTetherRules.new().get_tether_definition(card_id)
 	if _rag_dodge.is_supported_card(card_id):
@@ -562,6 +565,12 @@ func _recipient(definition: Dictionary) -> String:
 ## fields and the real confirmed-hit starter adapter are described, and any
 ## unrecognized effect key is flagged instead of being rendered as a number.
 func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[String]:
+	if _monk.is_supported_card(card_id):
+		var effects: Dictionary = definition.effects
+		var text := "BASE deal %d damage through Block before HP, then arm Blind: the selected foe's next real attack misses (it still takes its turn)." % int(effects.damage)
+		if effects.has("exposed"):
+			text += " AFTER that hit, apply Exposed %d; it never boosts this hit." % int(effects.exposed)
+		return [text]
 	if _rag_dodge.is_supported_card(card_id):
 		return [_rules(card_id)]
 	if _v3_tinker_scrap.is_supported_card(card_id):
@@ -1130,7 +1139,7 @@ func _update_visual(panel: Control) -> void:
 			var support_presenter = _app.get_node_or_null("LiveSupportHand")
 			playable = support_presenter != null and support_presenter._eligible(
 				panel, id, _app.deck, _app.party, _app.battle_view)
-		elif _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _thread.is_supported_card(id) or id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
+		elif _monk.is_supported_card(id) or _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _thread.is_supported_card(id) or id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
 			# The mounted battle owns both the legal picker and its shared pin.
 			# Catalog knowledge alone cannot enable Spring Trap.
 			playable = battle_preview != null and is_instance_valid(battle_preview) \
@@ -1258,6 +1267,10 @@ func _party_heal(definition: Dictionary) -> int:
 
 
 func _rules(id: String) -> String:
+	if _monk.is_supported_card(id):
+		var effects: Dictionary = _definition(id).effects
+		return "Deal %d; then Blind next attack%s." % [int(effects.damage),
+			"; then Exposed %d" % int(effects.exposed) if effects.has("exposed") else ""]
 	if id in ["seamstress_v3_tether_loop", "seamstress_v3_tether_loop_plus"]:
 		return "Link 2 living foes; next confirmed HP loss echoes 50% through Block."
 	if _needle.is_supported_card(id):
