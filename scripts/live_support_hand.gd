@@ -75,6 +75,11 @@ var _ui_art_cache: Dictionary = {}
 var _action_variations: Dictionary = {}
 var _hud: Control
 var _play := CombatStarterSupportPlay.new()
+# One receipt service per genuine fight; redraws reuse its per-turn latch.
+var _heirloom: CombatHeirloomPatchTriggers
+var _heirloom_pinned: CombatPinned
+var _heirloom_enemies: CombatEnemies
+var _heirloom_turn_index := -1
 var _straw := CombatSupportCards.new()
 var _wrap := CombatScarecrowStrawWrapCards.new()
 var _block_cards := CombatWardenPoolBlockCards.new()
@@ -732,8 +737,45 @@ func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position:
 			_heal_cards.notify_committed_starter_mend(deck, party, card_id, position, before_hp,
 				int(party.get_hero(position)["hp"]), hand_before, discard_before, energy_before)
 		return committed
+	if card_id in ["warden_brace", "warden_brace_plus"]:
+		# Provisional observation must precede the sole ordinary paid resolver.
+		# A receipt only awards after that resolver's genuine Block transition.
+		var rules := _current_heirloom_rules(deck, party)
+		var quote: Dictionary = rules.begin_block_gain("warden") if rules != null else {}
+		var held_before := deck.hand.count(card_id)
+		var discarded_before := deck.discard_pile.count(card_id)
+		var played: bool = _play != null and _play.play_card(deck, party, card_id,
+			position, _path_discount(card_id))
+		if played and quote.get("ok", false) and held_before > 0 \
+				and deck.hand.count(card_id) == held_before - 1 \
+				and deck.discard_pile.count(card_id) == discarded_before + 1:
+			rules.finish_block_gain(quote)
+		return played
 	return _play != null and _play.play_card(deck, party, card_id, position,
 		_path_discount(card_id))
+
+
+## Only a bound authentic battle can advance the Heirloom once on the
+## scheduler's real turn index. UI redraws, failed plays and stale views cannot.
+func _current_heirloom_rules(deck: CombatDeck, party: CombatParty) -> CombatHeirloomPatchTriggers:
+	var app = get_parent()
+	if _heirloom == null or app == null or deck != _deck or party != _party \
+			or app.deck != deck or app.party != party or app.battle_view != _battle \
+			or app.enemies != _heirloom_enemies or app.enemy_intents == null \
+			or not app._current_carryover_fight() or not deck.turn_active:
+		return null
+	var preview = app.get_node_or_null("LiveAttackPreview")
+	if preview == null or preview._battle != _battle or preview._deck != deck \
+			or preview._pinned != _heirloom_pinned or not _heirloom.is_current():
+		return null
+	var index: int = app.enemy_intents._turn_index
+	if index < _heirloom_turn_index:
+		return null
+	if index > _heirloom_turn_index:
+		if not _heirloom.start_player_turn():
+			return null
+		_heirloom_turn_index = index
+	return _heirloom
 
 
 ## Target-free commit of the selected Tinker Path card. The face the player is
@@ -816,6 +858,20 @@ func _sync_battle() -> void:
 				_straw.bind_patch_wardrobe(null, null)
 				_heal_cards.bind_patch_wardrobe(null, null)
 				_block_cards.bind_patch_wardrobe(null, null)
+		# The attack presenter owns the actual Pinned instance for this fight.
+		# Do not allocate a substitute or bind a detached/unrouted wardrobe.
+		var preview = app.get_node_or_null("LiveAttackPreview")
+		if carry is RunTornCarryover and carry._wardrobe != null \
+				and app._current_carryover_fight() and preview != null \
+				and preview._battle == _battle and preview._deck == _deck \
+				and preview._pinned is CombatPinned and app.enemy_intents != null:
+			var rules := CombatHeirloomPatchTriggers.new()
+			if rules.bind_battle(carry._wardrobe, carry.torn, _party, app.enemies,
+					preview._pinned) and rules.start_player_turn():
+				_heirloom = rules
+				_heirloom_pinned = preview._pinned
+				_heirloom_enemies = app.enemies
+				_heirloom_turn_index = app.enemy_intents._turn_index
 		_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 		var hud := _battle.find_child("SupportHUD", true, false) as HBoxContainer
 		energy_orb = EnergyOrb.new()
@@ -1920,6 +1976,10 @@ func _clear() -> void:
 	_tinker_gadgets = null
 	_v3_tinker_scrap = null
 	_heal_cards = null
+	_heirloom = null
+	_heirloom_pinned = null
+	_heirloom_enemies = null
+	_heirloom_turn_index = -1
 
 
 

@@ -838,6 +838,7 @@ func _run() -> void:
 	await _starter_borrowed_button_live_case("seamstress_mend_plus", true, false)
 	await _starter_borrowed_button_live_case("seamstress_mend_plus", false, true)
 	await _hemguard_cuff_live_case()
+	await _shared_hem_live_case()
 	await _missing_art_session(seed_value)
 	app.free()
 	_finish()
@@ -2286,6 +2287,165 @@ func _hemguard_cuff_live_case() -> void:
 			"replayed HEAD target callback cannot double-award or pay again")
 
 	# Clean return to title
+	await _pool_return()
+
+
+## A real routed battle with the canonical P12 wardrobe and actual Pinned
+## authority: the mounted mouse-held Brace pays once and awards a DIFFERENT
+## untorn wearer, while idle redraw and stale input cannot reset/replay it.
+func _shared_hem_live_case() -> void:
+	_check(app.deck == null and app.run_map == null,
+		"Shared Hem starts from a real idle title")
+	var route_seed := -1
+	var fight_id := ""
+	for candidate in range(1, 200):
+		var graph := RunMap.new()
+		var rng := RandomNumberGenerator.new()
+		rng.seed = candidate
+		graph.generate(rng)
+		for node_id in graph.get_legal_choices():
+			if graph.get_node(node_id).get("type") == "Fight":
+				route_seed = candidate
+				fight_id = node_id
+				break
+		if route_seed > 0:
+			break
+	_check(route_seed > 0 and not fight_id.is_empty(),
+		"authentic seeded graph exposes connected Fight for Hem")
+	if route_seed < 0:
+		return
+	app.run_seed = route_seed
+	app.route_button.pressed.emit()
+	await _frames()
+	var carry := app.party_carryover as RunTornCarryover
+	_check(app.run_map != null and carry != null and app.deck == null,
+		"real run has carried party and no fabricated combat")
+	if carry == null:
+		return
+	var fight: Button = null
+	for action in app.route_buttons:
+		if action.get_meta("route_id") == fight_id:
+			fight = action
+			break
+	_check(fight != null and not fight.disabled and fight.is_visible_in_tree(),
+		"real Fight button is enabled and mounted")
+	if fight == null:
+		return
+	fight.pressed.emit()
+	await _frames()
+	_check(app._current_carryover_fight() and app.deck.turn_active
+		and app.party.get_hero(1).id == "warden"
+		and app.party.get_hero(2).id == "seamstress"
+		and app.party.get_hero(1).hp > 0 and app.party.get_hero(2).hp > 0,
+		"mounted real battle contains living separate Brace owner and Hem wearer")
+	if not app._current_carryover_fight():
+		return
+	_check(not app.run_trinkets.has("shared_hem"),
+		"unmodified run does not start owning the Heirloom")
+	app.run_trinkets.append("shared_hem")
+	var wardrobe := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+		RunAuthoredPatchDefinitions.load_definitions(), app.run_scraps,
+		app.session_gold, app.run_deck, app.run_seed, true)
+	_check(wardrobe.is_valid(), "full authored catalog admits genuine run wardrobe")
+	if not wardrobe.is_valid():
+		return
+	var sewn := wardrobe.sew("shared_hem", "seamstress", "ARM",
+		"mounted_heirloom_sew", wardrobe.get_snapshot())
+	_check(sewn.get("ok", false) and
+		wardrobe.project_active(carry.torn.read_state()).active.seamstress.has("shared_hem"),
+		"canonical ARM sew activates real living untorn Seamstress")
+	_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()),
+		"canonical torn carryover owns sewn Hem ledger")
+	presenter._clear()
+	app._refresh_hand()
+	await _frames()
+	var rules: CombatHeirloomPatchTriggers = presenter._heirloom
+	var attack = app.get_node("LiveAttackPreview")
+	_check(rules != null and rules.is_current()
+		and presenter._heirloom_pinned == attack._pinned and attack._pinned != null
+		and rules._wardrobe == carry._wardrobe and rules._party == app.party
+		and rules._enemies == app.enemies and rules._torn == carry.torn,
+		"one P12 service binds the real battle wardrobe, torn, party, foes and Pinned")
+	if rules == null:
+		return
+	var same_owner := rules.begin_block_gain("seamstress")
+	_check(not same_owner.ok, "same-hero Block cannot quote Hem")
+	var zero := rules.begin_block_gain("warden")
+	var seam_before: int = app.party.get_hero(2).block
+	_check(zero.ok and rules.finish_block_gain(zero) == 0
+		and app.party.get_hero(2).block == seam_before,
+		"no real source Block transition grants no Hem bonus")
+	if not app.deck.hand.has("warden_brace"):
+		app.deck.draw_pile.append("warden_brace")
+		_check(app.deck.draw_extra(1) == 1,
+			"authored Brace is drawn through genuine deck into mounted hand")
+		app._refresh_hand()
+		await _frames()
+	var brace: Control = _panel("warden_brace")
+	_check(brace != null and presenter._bindings.has(brace),
+		"held authenticated Brace panel has live mouse callback")
+	if brace == null:
+		return
+	var callback: Callable = presenter._bindings[brace]
+	var warden_before: int = app.party.get_hero(1).block
+	seam_before = app.party.get_hero(2).block
+	var tinker_before: int = app.party.get_hero(3).block
+	var energy_before: int = app.deck.energy
+	var discard_before: int = app.deck.discard_pile.count("warden_brace")
+	var rng_before: int = app.run_rng.state
+	await _mouse(brace)
+	_check(app.party.get_hero(1).block == warden_before + 7
+		and app.party.get_hero(2).block == seam_before + 1
+		and app.party.get_hero(3).block == tinker_before,
+		"genuine held Brace grants printed seven to Warden, exactly one Hem Block to Seamstress")
+	_check(app.deck.energy == energy_before - 1 and not app.deck.hand.has("warden_brace")
+		and app.deck.discard_pile.count("warden_brace") == discard_before + 1
+		and app.run_rng.state == rng_before,
+		"one real Brace cast spends once, discards once, and consumes no random draw")
+	var recorded := _snapshot(app.deck, app.party, app.run_rng)
+	callback.call(_press())
+	await _frames()
+	_check(_snapshot(app.deck, app.party, app.run_rng) == recorded
+		and rules.finish_block_gain(zero) == 0
+		and not rules.begin_block_gain("warden").ok,
+		"stale click, replayed quote and same-turn additional triggers are inert")
+	app._refresh_hand()
+	await _frames()
+	_check(presenter._heirloom == rules
+		and presenter._heirloom_turn_index == app.enemy_intents._turn_index
+		and _snapshot(app.deck, app.party, app.run_rng) == recorded,
+		"hand redraw does not reset Heirloom latch or change battle")
+	var prior_index: int = app.enemy_intents._turn_index
+	app.end_turn_button.pressed.emit()
+	await _frames()
+	if app.deck.turn_active and not app._battle_closed and not app.party.is_downed(1) \
+			and not app.party.is_downed(2):
+		_check(app.enemy_intents._turn_index == prior_index + 1
+			and presenter._current_heirloom_rules(app.deck, app.party) == rules,
+			"only genuine end-turn advances the same service exactly once")
+		# The next REAL hand demonstrates Brace+ on the same receipt service,
+		# instead of manufacturing a second turn or manually awarding Block.
+		if not app.deck.hand.has("warden_brace_plus"):
+			app.deck.draw_pile.append("warden_brace_plus")
+			_check(app.deck.draw_extra(1) == 1, "real next-turn deck draws Brace+")
+			app._refresh_hand()
+			await _frames()
+		var plus := _panel("warden_brace_plus")
+		_check(plus != null and presenter._bindings.has(plus),
+			"upgraded held Brace has the same real mounted support callback")
+		if plus != null:
+			var next_warden: int = app.party.get_hero(1).block
+			var next_wearer: int = app.party.get_hero(2).block
+			var next_energy: int = app.deck.energy
+			var next_discard: int = app.deck.discard_pile.count("warden_brace_plus")
+			await _mouse(plus)
+			_check(app.party.get_hero(1).block == next_warden + 10
+				and app.party.get_hero(2).block == next_wearer + 1
+				and app.deck.energy == next_energy - 1
+				and app.deck.discard_pile.count("warden_brace_plus") == next_discard + 1,
+				"genuine next turn Brace+ grants printed ten and exactly one Hem Block")
+			_check(not rules.begin_block_gain("warden").ok,
+				"second turn still limits both Brace forms to one bonus")
 	await _pool_return()
 
 
