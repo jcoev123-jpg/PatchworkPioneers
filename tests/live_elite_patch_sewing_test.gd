@@ -283,6 +283,85 @@ func _test_rest_inputs() -> void:
 		await _click(app.route_back_button)
 
 
+## A genuine opening Fight -> Rest -> Elite route, not a stand-in recovery or
+## forced selection. Keep the actual generated edges and seeded encounter roll.
+func _rest_elite_fixture() -> Dictionary:
+	for value in range(1, 30000):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		map.generate(rng)
+		for fight in map.get_legal_choices():
+			if map.get_node(fight).type != "Fight":
+				continue
+			var rest_path: Array = _path_to(map, fight, "Rest")
+			if rest_path.is_empty():
+				continue
+			var elite_path: Array = _path_to(map, rest_path.back(), "Elite")
+			if elite_path.is_empty():
+				continue
+			var entry_rng := RandomNumberGenerator.new()
+			entry_rng.state = rng.state
+			if not map.choose_node(fight):
+				continue
+			var selected := RunAuthoredBattleEntry.new().entry_current_battle(
+				map, entry_rng, RunFightEncounterSelection.new())
+			if selected.get("encounter_id") == "starter_attacks":
+				return {"seed": value, "fight": fight, "path": rest_path,
+					"elite_path": elite_path}
+	return {}
+
+
+## This catches the historical admission stall at its real downstream edge:
+## route once, settle a fresh Heal, then enter the authored Elite once.
+func _test_rest_elite_inputs() -> void:
+	var fixture := _rest_elite_fixture()
+	_check(not fixture.is_empty(), "generated opening Fight -> Rest -> Elite path exists")
+	if fixture.is_empty():
+		return
+	var replay: Array = []
+	for keyboard in [false, true]:
+		seed(736173)
+		var global_next := randi()
+		seed(736173)
+		if not await _routed_win(fixture, false):
+			return
+		await _click(app.reward_buttons[3])
+		await _click(app.continue_button)
+		var rest_id: String = fixture.path.back()
+		var before: int = rest_transits[keyboard]
+		await _visit_path(fixture.path, keyboard)
+		_check(rest_transits[keyboard] > before
+			and app.party_carryover.read_state().completed_rests.has(rest_id),
+			"real fresh Rest settles exactly one Heal before the Elite")
+		var transit: Array = fixture.elite_path.duplicate()
+		var elite_id: String = transit.pop_back()
+		await _visit_path(transit, keyboard)
+		var route_before: Array = app.run_map.get_route()
+		var action: Button = await _ready_route_action(elite_id)
+		_check(action != null and action.get_meta("route_kind") == "Elite"
+			and _rest_action_ready(action) and app._can_choose_connected_route(),
+			"legal enabled onward Elite control survives Rest completion")
+		if action == null:
+			return
+		var old_callback: Callable = action.pressed.get_connections()[0].callable
+		await _rest_input(action, keyboard)
+		_check(app.run_map.get_route() == route_before + [elite_id]
+			and app.run_map.get_current_node_id() == elite_id
+			and app._current_carryover_fight() and app.party != null and app.enemies != null
+			and not app._battle_closed, "one physical onward action mounts the live Elite battle")
+		var settled := _persistent()
+		old_callback.call()
+		_check(_persistent() == settled and app.run_map.get_route() == route_before + [elite_id],
+			"stale Elite route callback cannot double-advance or change the settled state")
+		if keyboard:
+			_check(settled == replay, "identical mouse/keyboard Rest -> Elite seed replays party, deck, ledger and RNG")
+		else:
+			replay = settled
+		_check(randi() == global_next, "Rest -> Elite path uses no global RNG")
+		await _click(app.return_button)
+
+
 ## Use the acquired patch through the next battle's real held-card input.
 func _acquired_attack_check(patch_id: String) -> void:
 	# An authored shove on the routed floor-band fight can move the Warden out of
@@ -1242,6 +1321,7 @@ func _run() -> void:
 	sewing = app.get_node("LiveElitePatchSewing")
 	await _test_input_preconditions()
 	await _test_rest_inputs()
+	await _test_rest_elite_inputs()
 	await _attack_patch_claims()
 	_test_literal_names()
 	var fixture := await _coat_multi_fixture()
