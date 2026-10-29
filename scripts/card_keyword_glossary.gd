@@ -165,7 +165,10 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 			"guarding":
 				explanation = "Warden's Draw Fire (1 energy, from position 1) redirects attacks aimed at other heroes to Warden until the next turn."
 			"thorns":
-				explanation = "Warden's Counter-stitch (1 energy, from positions 1-2) makes enemies that attack Warden take %d damage until the next turn." % int(raw)
+				explanation = "An attacker that confirms a positive-damage hit against the bearer takes %d damage in return. Thorns retaliates once per confirmed positive-damage hit, including a blow fully absorbed by Block. The retaliation goes through the attacker's own Block before HP, so Block absorbs it before any HP loss. Misses, previews and rejected plays do not trigger Thorns." % int(raw)
+				var duration_value: Variant = effects.get("duration")
+				if duration_value is String and duration_value == "until_next_turn":
+					explanation += " It lasts until the next turn."
 			"riposte":
 				explanation = "When the Rag Duelist is hit, she strikes back for %d damage. This is counterdamage, not a number of turns: Riposte lasts one turn and expires fully at that turn's end. The combat status rules apply this counter on each confirmed hit; this Help states the printed design, and not every live confirmed-hit route reaches the retaliation." % int(raw)
 			"tangled":

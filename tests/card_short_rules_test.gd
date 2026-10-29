@@ -311,8 +311,11 @@ func _test_help_keeps_full_mechanics() -> void:
 		_check(thorns_rows.has("Thorns %d" % authored),
 			"Help explains Thorns %d: %s" % [authored, card_id])
 		var thorns_text: String = str(thorns_rows.get("Thorns %d" % authored, ""))
-		_check(thorns_text.contains("makes enemies that attack Warden take %d damage"
-			% authored), "Help keeps the Thorns return damage: " + card_id)
+		_check(thorns_text.contains("takes %d damage" % authored),
+			"Help keeps the Thorns return damage: " + card_id)
+		_check(not thorns_text.contains("Warden") and not thorns_text.contains("Counter-stitch")
+			and not thorns_text.contains("positions 1-2"),
+			"Help Thorns is source-neutral: " + card_id)
 		_check(thorns_text.contains("until the next turn"),
 			"Help keeps the Thorns expiry: " + card_id)
 		_check(not CardShortRules.line(_definition(card_id)).contains("until"),
