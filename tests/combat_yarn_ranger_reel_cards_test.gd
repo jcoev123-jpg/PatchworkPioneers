@@ -181,6 +181,10 @@ func _check_projection(card_id: String, seat: int, target: int, slots: Dictionar
 
 	var proposed: Dictionary = result.get("slots", {})
 	_check(proposed.keys().size() == 3, label + ": three explicit slots")
+	var proposed_keys: Array = proposed.keys()
+	proposed_keys.sort()
+	_check(proposed_keys == [1, 2, 3],
+		label + ": exactly the reel slots 1,2,3, never a battle-wide slot 4")
 	for slot: int in [1, 2, 3]:
 		_check(proposed.has(slot), label + ": slot " + str(slot) + " is explicit")
 		_check(proposed.get(slot) is Dictionary, label + ": slot " + str(slot) + " is a record")
@@ -371,6 +375,11 @@ func _test_ac3_target_and_slot_refusals() -> void:
 			"invalid_slots")
 	_rejected("slot key 0", THREAD, _party(2), 2, {0: _foe("x", 0), 2: _foe("y", 2)},
 		"invalid_slots")
+	# The preview keeps its own literal three-slot domain even when the battle-wide
+	# CombatEnemies.MAX_ENEMIES is raised for four-enemy fights by another change.
+	_check(ReelCards.MAX_REEL_SLOTS == 3,
+		"the reel preview declares its own literal three-slot domain")
+	_rejected("slot key 4 only", THREAD, _party(2), 2, {4: _foe("x", 4)}, "invalid_slots")
 	_rejected("slot key 4", THREAD, _party(2), 2, {2: _foe("y", 2), 4: _foe("x", 4)},
 		"invalid_slots")
 	_rejected("string slot key", THREAD, _party(2), 2, {"2": _foe("y", 2)}, "invalid_slots")

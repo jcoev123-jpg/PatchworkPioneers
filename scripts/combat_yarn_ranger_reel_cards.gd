@@ -29,6 +29,11 @@ const FROM_POSITIONS := [2, 3]
 const TO_POSITIONS := [2, 3]
 const TARGET_KIND := "enemy_single"
 const PULL_FORWARD := 1
+## This preview is a three-slot contract: a reel pull reads and proposes enemy slots 1-3 only.
+## It deliberately does NOT track the battle-wide CombatEnemies.MAX_ENEMIES, which the concurrent
+## four-enemy main cycle raises to 4: a valid pull must still publish exactly slots 1-3 and a
+## record in slot 4 is an out-of-domain snapshot, never an accepted slot.
+const MAX_REEL_SLOTS := 3
 
 const _STARTER_CATALOG := preload("res://data/cards/yarn_ranger_starter_cards.gd")
 const _POOL_CATALOG := preload("res://data/cards/yarn_ranger_pool_cards.gd")
@@ -182,7 +187,7 @@ func propose_pull(card_id: Variant, party: CombatParty, target_position: Variant
 	if typeof(target_position) != TYPE_INT:
 		return _refusal("invalid_target")
 	var target: int = target_position
-	if target < 1 or target > CombatEnemies.MAX_ENEMIES:
+	if target < 1 or target > MAX_REEL_SLOTS:
 		return _refusal("invalid_target")
 	if not TO_POSITIONS.has(target):
 		return _refusal("target_out_of_reach")
@@ -214,7 +219,7 @@ func propose_pull(card_id: Variant, party: CombatParty, target_position: Variant
 	pulled["position"] = destination
 
 	var proposed: Dictionary = {}
-	for slot in range(1, CombatEnemies.MAX_ENEMIES + 1):
+	for slot in range(1, MAX_REEL_SLOTS + 1):
 		proposed[slot] = {}
 	for slot: int in records:
 		if slot == target:
@@ -303,7 +308,7 @@ static func _validate_slots(enemy_slots: Variant) -> Dictionary:
 		if typeof(key) != TYPE_INT:
 			return {"ok": false, "reason": "invalid_slots"}
 		var slot: int = key
-		if slot < 1 or slot > CombatEnemies.MAX_ENEMIES:
+		if slot < 1 or slot > MAX_REEL_SLOTS:
 			return {"ok": false, "reason": "invalid_slots"}
 		var record: Variant = raw[key]
 		if typeof(record) != TYPE_DICTIONARY:
