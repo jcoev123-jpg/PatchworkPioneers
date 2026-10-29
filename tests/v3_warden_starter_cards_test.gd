@@ -733,15 +733,14 @@ func _test_shieldwall_chorus_party_all() -> void:
 		# Downed third hero gains nothing.
 		party.apply_damage(3, 100)
 		_check(party.is_downed(3), base_id + ": rear hero genuinely downed")
-		var down_before := _taunt_snapshot(deck, party, service)
 		var down_result: Dictionary = service.play_card(_taunt_deck(base_id, 4444), party, base_id, "party_all", 0)
 		_check(down_result.get("ok") == true, base_id + ": downed ally still casts")
-		_check(party.get_hero(1)["block"] == 3 + 3 + expected_block + expected_block,
+		_check(party.get_hero(1)["block"] == 3 + expected_block * 2,
 			base_id + ": Warden gains again with one downed ally")
-		_check(party.get_hero(2)["block"] == 2 + 2 + expected_block + expected_block,
+		_check(party.get_hero(2)["block"] == 2 + expected_block * 2,
 			base_id + ": middle hero gains again")
-		_check(party.get_hero(3)["block"] == 1 + expected_block,
-			base_id + ": downed rear hero stays at its pre-down Block (no addition)")
+		_check(party.get_hero(3)["block"] == 0,
+			base_id + ": downed rear hero gains no Block")
 
 	# Warden can cast from seat 2 or 3 (from_positions [1,2,3]).
 	var moved_party := _moved_party(2)
@@ -772,10 +771,14 @@ func _test_shieldwall_chorus_party_all() -> void:
 		"warden_v3_shieldwall_chorus", "warden_v3_shieldwall_chorus_plus",
 		TAUNT_FILLERS[0], TAUNT_FILLERS[1], TAUNT_FILLERS[2]], _taunt_rng(7777))
 	refresh_deck.start_turn()
+	# Two 2-cost Chorus printings need four shared energy in this one turn.
+	refresh_deck.combat_state.energy = 4
 	_check(refresh_service.play_card(refresh_deck, refresh_party, "warden_v3_shieldwall_chorus", "party_all", 0).get("ok") == true,
 		"refresh: first Chorus arms Taunt")
 	_check(refresh_service.play_card(refresh_deck, refresh_party, "warden_v3_shieldwall_chorus_plus", "party_all", 0).get("ok") == true,
 		"refresh: second Chorus+ refreshes same phase")
+	_check(refresh_deck.energy == 0 and refresh_deck.discard_pile.size() == 2,
+		"refresh: each of the two plays charged 2 energy and discarded one copy")
 	_check(refresh_service.get_pending_taunt_card_id() == "warden_v3_shieldwall_chorus_plus",
 		"latest card ID is the refreshed one")
 	refresh_deck.end_turn()
@@ -804,7 +807,8 @@ func _test_shieldwall_chorus_party_all() -> void:
 		"warden_v3_shieldwall_chorus", "party_all", 0, "Chorus with missing Warden rejected")
 	# Insufficient energy (needs 2).
 	var short_energy := _taunt_deck("warden_v3_shieldwall_chorus", 7771)
-	short_energy.energy = 1
+	short_energy.combat_state.energy = 1
+	_check(short_energy.energy == 1, "Chorus insufficient-energy fixture really holds one energy")
 	_rejected_taunt(ref_service, short_energy, ref_party, "warden_v3_shieldwall_chorus", "party_all", 0,
 		"Chorus with 1 energy rejected")
 	# Overflow: any recipient overflow rejects entire card.

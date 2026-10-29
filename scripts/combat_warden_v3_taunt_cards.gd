@@ -2,11 +2,11 @@ class_name CombatWardenV3TauntCards
 extends RefCounted
 ## Scene-free paid resolver for the Warden's iron challenges (V3-1).
 ##
-## Iron Challenge is a v3 starter card and Iron Taunt a v3 reward-pool card; both print their
-## own Block plus `taunt_next_enemy_turn`, so the squat shield-bearer plants himself and draws
-## the NEXT whole enemy turn's ordinary attacks onto his pot helmet. The two catalogs stay
-## authoritative: this service authenticates the exact held ID and its printed metadata, then
-## resolves against the real deck and party models.
+## Iron Challenge is a v3 starter card and Iron Taunt a v3 reward-pool card; Shieldwall Chorus
+## and its "+" are uncommon reward-pool cards. All of them print Taunt, so the squat shield-bearer
+## plants himself and draws the NEXT whole enemy turn's ordinary attacks onto his pot helmet.
+## The two catalogs stay authoritative: this service authenticates the exact held ID and its
+## printed metadata, then resolves against the real deck and party models.
 ##
 ## The service keeps one detached, battle-scoped pending Taunt. A later enemy-phase caller asks
 ## `project_attack_target` (or `project_enemy_action`) for EVERY otherwise valid targetable
@@ -122,20 +122,21 @@ var _taunt_armed := false
 var _taunt_card_id := ""
 
 
-## The single paid transaction: authenticate, preflight every input, then charge 1 energy, discard
-## exactly the held copy, add the authored Block to the Warden and arm one next-enemy-turn Taunt.
-## `target_kind` must stay "self"; `target_position` may be omitted (0) to mean the Warden's own
-## seat, and an explicit value must equal that seat. A rejection changes no deck, party, Taunt or
-## RNG state.
+## The single paid transaction: authenticate, preflight every input, then charge the authored cost,
+## discard exactly the held copy, add the authored Block (to the Warden for a self card, to every
+## living ally for a party card) and arm one next-enemy-turn Taunt.
+## `target_kind` must match the printed line; `target_position` may be omitted (0) and, for a self
+## card, an explicit value must equal the Warden's seat. A party card takes no target slot.
+## A rejection changes no deck, party, Taunt or RNG state.
 func play_card(deck: CombatDeck, party: CombatParty, card_id: Variant,
 		target_kind: String = "self", target_position: int = 0) -> Dictionary:
 	var plan: Dictionary = _prepare(deck, party, card_id, target_kind, target_position)
 	if not plan.get("ok", false):
 		return _failure()
 	# Every operation below is guaranteed by the complete preflight above: the turn is active,
-	# the held ID is authentic and affordable, the Warden is the living unique hero at seat 1 and
-	# the Block addition fits the party's capacity. Keep the defensive returns so an unexpected
-	# model change still fails closed.
+	# the held ID is authentic and affordable, the Warden is present in a printed from-seat and
+	# the Block addition fits every recipient's capacity. Keep the defensive returns so an
+	# unexpected model change still fails closed.
 	if not deck.try_spend_energy(plan["cost"]):
 		return _failure()
 
@@ -145,7 +146,7 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: Variant,
 			deck.combat_state.energy += plan["cost"]
 			return _failure()
 	elif target_kind_plan == "party_all":
-		var recipients: Array[int] = plan.get("block_recipients", [])
+		var recipients: Array = plan.get("block_recipients", [])
 		var amount: int = plan["block_all"]
 		# Apply to each recipient; preflight guarantees no overflow.
 		for pos in recipients:
@@ -197,7 +198,7 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: Variant,
 	return _failure()
 
 
-## True only for the four authentic catalog IDs. Pure lookup; nothing is charged or mutated.
+## True only for the six authentic catalog IDs. Pure lookup; nothing is charged or mutated.
 func is_supported_card(card_id: Variant) -> bool:
 	return typeof(card_id) == TYPE_STRING and CARDS.has(card_id)
 
@@ -320,7 +321,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, card_id: Variant,
 	if deck.energy < cost:
 		return _failure()
 	var card_target_kind: String = card.get("target_kind", "self")
-	var allowed_from: Array[int] = card.get("from_positions", [1])
+	var allowed_from: Array = card.get("from_positions", [1])
 	if target_kind != card_target_kind:
 		return _failure()
 
