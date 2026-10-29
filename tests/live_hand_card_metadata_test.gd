@@ -2347,6 +2347,7 @@ func _run() -> void:
 		_finish()
 		return
 	_check(presenter._metadata._bindings.is_empty(), "no title-time decoration binds")
+	await _v3_red_thread_faces()
 	var first_trace: Array = []
 	for session in range(2):
 		if not await _start():
@@ -2653,3 +2654,90 @@ func _monk_card_faces() -> void:
 		_check(_snapshot() == original, "repeated Monk face reads leave models and RNG unchanged")
 		app.return_button.pressed.emit()
 		await _frames()
+
+
+## Genuine V3 starter/pool names, pips and passive-inclusive rules on the
+## exact mounted shared-hand CanvasItem presenter (not a detached imitation).
+func _v3_red_thread_faces() -> void:
+	var metadata = presenter._metadata
+	var expected := {
+		"seamstress_v3_thread_prick": ["Thread Prick", 3, 2, 0],
+		"seamstress_v3_thread_prick_plus": ["Thread Prick+", 4, 3, 0],
+		"seamstress_v3_needle_rain": ["Needle Rain", 2, 3, 0],
+		"seamstress_v3_needle_rain_plus": ["Needle Rain+", 3, 4, 0],
+		"seamstress_v3_scarlet_knot": ["Scarlet Knot", 0, 2, 1],
+		"seamstress_v3_scarlet_knot_plus": ["Scarlet Knot+", 0, 3, 1],
+	}
+	var rules := CombatSeamstressV3RedThreadCards.new()
+	for id in expected:
+		var spec: Array = expected[id]
+		var source: Dictionary = V3SeamstressStarterCards.new().get_definition(id) 			if String(id).contains("thread_prick") else V3SeamstressPoolCards.new().get_definition(id)
+		var record: Dictionary = metadata.definition(id)
+		var facts: Dictionary = metadata.describe(id)
+		var short: String = metadata.short_line(id)
+		var effect: String = metadata.base_effect_text(id)
+		_check(rules.is_authentic_card(id) and record == source and not source.is_empty()
+			and source.display_name == spec[0] and source.cost == 1
+			and source.owner == "seamstress" and source.from_positions == [1, 2, 3]
+			and source.to_positions == [1, 2, 3] and source.target_kind == "enemy_single"
+			and int(source.effects.bleed) == int(spec[2]),
+			"source-authenticated V3 card definitions, owner, energy and pips: " + id)
+		_check(facts.known and facts.display_name == spec[0] and facts.owner_text == "Seamstress"
+			and facts.cost == 1 and facts.from_text == "From 1–3"
+			and facts.target_text == "To enemy 1–3",
+			"V3 paper-face metadata uses exact authenticated name, source and target: " + id)
+		var expected_short := "Bleed %d. Weak 1. No damage." % (int(spec[2]) + 1) 			if int(spec[3]) > 0 else "Deal %d. Bleed %d." % [int(spec[1]), int(spec[2]) + 1]
+		_check(short == expected_short and facts.rules == expected_short,
+			"V3 face shows applied (not printed) Bleed plus exact damage/Weak: " + id)
+		_check(effect.contains(spec[0]) and effect.contains("1 energy")
+			and effect.contains("From 1–3") and effect.contains("one selected enemy 1–3")
+			and effect.contains("printed %d + Seamstress passive 1" % int(spec[2]))
+			and effect.contains("BLEED:"),
+			"V3 tooltip explains printed plus passive Bleed in authored targets: " + id)
+		if int(spec[3]) > 0:
+			_check(effect.contains("No attack or damage") and effect.contains("Weak 1")
+				and effect.contains("WEAK:"), "Scarlet Knot is a nonattack with Weak: " + id)
+		else:
+			_check(effect.contains("through Block before HP")
+				and effect.contains("Weak/Exposed/Tangled"),
+				"V3 attacking tooltip preserves pre-hit modifiers: " + id)
+		var tampered: Dictionary = source.duplicate(true)
+		tampered["effects"]["bleed"] = 99
+		_check(not rules._authentic(tampered, id, CombatSeamstressV3RedThreadCards.CARDS[id]),
+			"forged V3 definition is rejected even for a genuine held ID: " + id)
+	for unknown in ["seamstress_v3_thread_prick_plus_plus", "seamstress_v3_unknown", "seamstress_v3_scarlet_knot_forged"]:
+		_check(metadata.definition(unknown).is_empty() and not metadata.describe(unknown).known
+			and metadata.base_effect_text(unknown) == "Unknown card"
+			and metadata.short_line(unknown).is_empty(),
+			"unknown or forged V3 card never gains an actionable face: " + unknown)
+	# The actual app scene mounts the shared decorated hand and its target
+	# presenter; draw physical copies of all six rather than injecting fake UI.
+	app.run_seed = 42
+	_fixture_start(app)
+	await _frames()
+	_check(app.deck != null and app.deck.turn_active and app.hand_view != null
+		and app.get_node_or_null("LiveAreaAttackAction/LiveSeamstressSingleBleedHand") != null,
+		"V3 face test entered real app.tscn fight and mounted V3 live input")
+	if app.deck == null or not app.deck.turn_active:
+		return
+	for id in expected:
+		app.deck.draw_pile.append(id)
+		_check(app.deck.draw_extra(1) == 1, "real shared deck draws V3 held copy: " + id)
+		app._refresh_hand()
+		await _frames()
+		var panel := _find(id)
+		var live = app.get_node("LiveAreaAttackAction/LiveSeamstressSingleBleedHand")
+		var authored: Dictionary = metadata.describe(id)
+		_check(panel != null and panel.is_visible_in_tree()
+			and presenter._metadata._bindings.has(panel) and live._bindings.has(panel)
+			and panel.gui_input.get_connections().size() == 1
+			and presenter._metadata.get_facts(panel) == authored,
+			"mounted V3 copied panel is sewn, visible, drawable, input-authenticated: " + id)
+		if panel != null:
+			_check(panel.tooltip_text.contains("Seamstress") and panel.tooltip_text.contains("Bleed")
+				and presenter._metadata.visual_state(panel).get("playable", false),
+				"authentic held V3 printing is enabled with truthful hover Help: " + id)
+	app.return_button.pressed.emit()
+	await _frames()
+	_check(app.deck == null and metadata._bindings.is_empty(),
+		"V3 mounted faces retire on actual Return-to-Title")

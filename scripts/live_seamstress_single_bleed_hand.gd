@@ -1,11 +1,17 @@
 extends Node
-## Enemy-single Seamstress Bleed pool cards, mounted beneath LiveAreaAttackAction.
-## The catalog is presentation/preflight only; CombatSeamstressPoolBleed owns mutation.
+## Enemy-single Seamstress Bleed cards, mounted beneath LiveAreaAttackAction.
+## D2 is paid only by CombatSeamstressPoolBleed; the six authenticated V3
+## printings are paid only by CombatSeamstressV3RedThreadCards.
 
 const CARD_IDS := [
 	"seamstress_running_stitch", "seamstress_running_stitch_plus",
 	"seamstress_hemorrhage_hem", "seamstress_hemorrhage_hem_plus",
 	"seamstress_red_thread", "seamstress_red_thread_plus",
+]
+const V3_IDS := [
+	"seamstress_v3_thread_prick", "seamstress_v3_thread_prick_plus",
+	"seamstress_v3_needle_rain", "seamstress_v3_needle_rain_plus",
+	"seamstress_v3_scarlet_knot", "seamstress_v3_scarlet_knot_plus",
 ]
 const CREAM := Color("#ece0c8")
 const INK := Color("#3d3440")
@@ -15,6 +21,18 @@ const INSTRUCTION := "Click or focus and press Enter / Space; choose a living en
 
 var _catalog := SeamstressPoolCards.new()
 var _service := CombatSeamstressPoolBleed.new()
+var _v3_service := CombatSeamstressV3RedThreadCards.new()
+
+
+## Only authentic catalog printings may enter the mounted target chooser.
+func _definition(card_id: String) -> Dictionary:
+	if card_id in V3_IDS:
+		return _v3_service._catalog_definition(card_id) if _v3_service.is_authentic_card(card_id) else {}
+	return _catalog.get_definition(card_id)
+
+
+func _supported(card_id: String) -> bool:
+	return card_id in CARD_IDS or (card_id in V3_IDS and _v3_service.is_authentic_card(card_id))
 var _battle: Control
 var _deck: CombatDeck
 var _party: CombatParty
@@ -65,13 +83,13 @@ func _valid_panel(panel, card_id: String) -> bool:
 	if app == null or not is_instance_valid(panel) or not is_instance_valid(app.hand_view) 			or panel.get_parent() != app.hand_view or not _bindings.has(panel):
 		return false
 	var index: int = panel.get_index()
-	return _bindings[panel].id == card_id and card_id in CARD_IDS 		and index >= 0 and index < _deck.hand.size() 		and _deck.hand[index] == card_id and panel.get_child_count() > 0 		and panel.get_child(0) is Label and panel.get_child(0).text == card_id
+	return _bindings[panel].id == card_id and _supported(card_id) 		and index >= 0 and index < _deck.hand.size() 		and _deck.hand[index] == card_id and panel.get_child_count() > 0 		and panel.get_child(0) is Label and panel.get_child(0).text == card_id
 
 
 func _affordable(panel, card_id: String) -> bool:
 	if not _live() or not _valid_panel(panel, card_id) 			or not panel.is_visible_in_tree():
 		return false
-	var definition: Dictionary = _catalog.get_definition(card_id)
+	var definition: Dictionary = _definition(card_id)
 	if definition.get("id") != card_id or definition.get("owner") != "seamstress" 			or definition.get("target_kind") != "enemy_single":
 		return false
 	var from: Array = definition.get("from_positions", [])
@@ -81,7 +99,16 @@ func _affordable(panel, card_id: String) -> bool:
 		if hero["id"] == "seamstress":
 			owners += 1
 			legal_owner = hero["hp"] > 0 and from.has(hero["position"])
-	return owners == 1 and legal_owner 		and _deck.energy >= int(definition.get("cost", -1)) 		and int(definition.get("cost", -1)) >= 0
+	if owners != 1 or not legal_owner or _deck.energy < int(definition.get("cost", -1)) 			or int(definition.get("cost", -1)) < 0:
+		return false
+	if card_id in V3_IDS:
+		# Preflight real original living slots before offering an actionable picker.
+		for enemy in _enemies.get_enemies():
+			var position: int = enemy["position"]
+			if definition.get("to_positions", []).has(position) and enemy["hp"] > 0 					and _v3_service._prepare(_deck, _party, _enemies, card_id, position).get("ok", false):
+				return true
+		return false
+	return true
 
 
 func _sync_battle() -> void:
@@ -131,7 +158,7 @@ func _sync_battle() -> void:
 		if panel.get_child_count() == 0 or not panel.get_child(0) is Label:
 			continue
 		var card_id: String = panel.get_child(0).text
-		if card_id not in CARD_IDS or _bindings.has(panel):
+		if not _supported(card_id) or _bindings.has(panel):
 			continue
 		var index: int = panel.get_index()
 		if index >= 0 and index < _deck.hand.size() and _deck.hand[index] == card_id:
@@ -154,7 +181,7 @@ func _bind(panel: Control, card_id: String) -> void:
 	focus.border_color = CREAM
 	focus.set_border_width_all(3)
 	panel.add_theme_stylebox_override("focus", focus)
-	var definition: Dictionary = _catalog.get_definition(card_id)
+	var definition: Dictionary = _definition(card_id)
 	var metadata = _app().get_node("LiveSupportHand")._metadata
 	panel.tooltip_text = INSTRUCTION + "\n" + metadata.base_effect_text(card_id)
 	panel.gui_input.connect(callback)
@@ -166,6 +193,8 @@ func _bind(panel: Control, card_id: String) -> void:
 ## they really are instead of a fixed authored-plus-one guess. An unprojected
 ## strip (no legal target yet) states no number at all.
 func _projected_bleed(definition: Dictionary, legal: Array[int]) -> Dictionary:
+	if str(definition.get("id", "")) in V3_IDS:
+		return {} # V3 previews report authored effects, never a D2 HP forecast.
 	if legal.is_empty():
 		return {}
 	return _service.forecast_single(
@@ -195,11 +224,28 @@ func _bleed_detail(definition: Dictionary, outcome: Dictionary) -> String:
 
 
 func _rule_text(definition: Dictionary, outcome: Dictionary = {}) -> String:
+	if str(definition.get("id", "")) in V3_IDS:
+		return "%s | Cost 1 | From %s | One living enemy %s\n%s" % [
+			definition.display_name, _positions(definition.from_positions),
+			_positions(definition.to_positions), _v3_detail(definition)]
 	return "%s | Cost %d | From %s | One living enemy %s\n%s" % [
 		str(definition.get("display_name", "")), int(definition.get("cost", -1)),
 		_positions(definition.get("from_positions", [])),
 		_positions(definition.get("to_positions", [])),
 		_bleed_detail(definition, outcome)]
+
+
+## Printed effect, its one passive Bleed, and the real order of operations.
+## This is not a damage forecast: existing statuses can modify a pre-hit strike.
+func _v3_detail(definition: Dictionary) -> String:
+	var effects: Dictionary = definition.effects
+	var bleed: int = int(effects["bleed"])
+	var detail := "Bleed %d (%d printed + 1 Seamstress passive) after the hit" % [bleed + 1, bleed]
+	if effects.has("weak"):
+		return "No attack; Bleed %d (%d printed + 1 Seamstress passive); Weak %d" % [
+			bleed + 1, bleed, int(effects.weak)]
+	return "BASE %d damage through Block before HP (pre-hit Weak/Exposed/Tangled); %s" % [
+		int(effects.damage), detail]
 
 
 func _positions(values: Array) -> String:
@@ -236,18 +282,20 @@ func _on_card_input(event: InputEvent, panel, card_id: String) -> void:
 	if _choice.get("panel") == panel:
 		return
 	_cancel()
-	var definition: Dictionary = _catalog.get_definition(card_id)
+	var definition: Dictionary = _definition(card_id)
 	var positions: Array = definition.get("to_positions", [])
 	var legal: Array[int] = []
 	for enemy in _enemies.get_enemies():
-		if enemy["hp"] > 0 and positions.has(enemy["position"]):
+		if enemy["hp"] > 0 and positions.has(enemy["position"]) 				and (card_id not in V3_IDS or _v3_service._prepare(
+					_deck, _party, _enemies, card_id, int(enemy["position"])).get("ok", false)):
 			legal.append(enemy["position"])
 	if legal.is_empty():
 		return
 	_token += 1
 	_choice = {"panel": panel, "id": card_id, "index": panel.get_index(),
 		"token": _token, "deck": _deck, "party": _party, "enemies": _enemies,
-		"battle": _battle, "result": _result, "rng": _rng, "intents": _intents,
+		"battle": _battle, "result": _result, "rng": _rng,
+		"rng_seed": _rng.seed, "rng_state": _rng.state, "intents": _intents,
 		"turn": _turn, "hand": _deck.hand.duplicate(),
 		"draw": _deck.draw_pile.duplicate(), "discard": _deck.discard_pile.duplicate(),
 		"energy": _deck.energy, "heroes": _party.get_heroes(),
@@ -260,7 +308,7 @@ func _selection_valid() -> bool:
 		return false
 	var panel = _choice.get("panel")
 	var card_id: String = str(_choice.get("id", ""))
-	return _choice.token == _token and _choice.deck == _deck 		and _choice.party == _party and _choice.enemies == _enemies 		and _choice.battle == _battle and _choice.result == _result 		and _choice.rng == _rng and _choice.intents == _intents 		and _choice.turn == _turn and is_instance_valid(panel) 		and panel.get_index() == _choice.index 		and _affordable(panel, card_id) and _choice.hand == _deck.hand 		and _choice.draw == _deck.draw_pile and _choice.discard == _deck.discard_pile 		and _choice.energy == _deck.energy 		and _choice.heroes == _party.get_heroes() 		and _choice.roster == _enemies.get_enemies()
+	return _choice.token == _token and _choice.deck == _deck 		and _choice.party == _party and _choice.enemies == _enemies 		and _choice.battle == _battle and _choice.result == _result 		and _choice.rng == _rng and _choice.rng_seed == _rng.seed 		and _choice.rng_state == _rng.state and _choice.intents == _intents 		and _choice.turn == _turn and is_instance_valid(panel) 		and panel.get_index() == _choice.index 		and _affordable(panel, card_id) and _choice.hand == _deck.hand 		and _choice.draw == _deck.draw_pile and _choice.discard == _deck.discard_pile 		and _choice.energy == _deck.energy 		and _choice.heroes == _party.get_heroes() 		and _choice.roster == _enemies.get_enemies()
 
 
 func _mount_strip(definition: Dictionary, legal: Array[int], outcome: Dictionary) -> void:
@@ -357,6 +405,12 @@ func _show_preview(position: int, token: int) -> void:
 	if not _targets.has(position) or not is_instance_valid(_targets[position]) \
 			or _targets[position].disabled or not _selection_valid():
 		return
+	if str(_choice.id) in V3_IDS:
+		var card: Dictionary = _definition(str(_choice.id))
+		if not card.is_empty() and _v3_service._prepare(
+				_deck, _party, _enemies, str(_choice.id), position).get("ok", false):
+			_preview.text = _v3_detail(card) + " | Selected enemy %d" % position
+		return
 	var outcome: Dictionary = _service.forecast_single(
 		_deck, _party, _enemies, str(_choice.id), position)
 	if not outcome.get("ok", false):
@@ -376,7 +430,7 @@ func _on_target_pressed(position: int, enemy_id: String, token: int) -> void:
 	if token != _token or not _selection_valid() or _choice.get("queued", false) 			or not _targets.has(position) 			or not is_instance_valid(_targets[position]) 			or _targets[position].disabled:
 		return
 	var enemy: Dictionary = _enemies.get_enemy(position)
-	var definition: Dictionary = _catalog.get_definition(str(_choice.id))
+	var definition: Dictionary = _definition(str(_choice.id))
 	if enemy.get("id") != enemy_id or enemy.get("hp", 0) <= 0 			or not definition.get("to_positions", []).has(position):
 		_cancel()
 		return
@@ -389,12 +443,12 @@ func _commit(position: int, enemy_id: String, token: int) -> void:
 		_cancel()
 		return
 	var enemy: Dictionary = _enemies.get_enemy(position)
-	var definition: Dictionary = _catalog.get_definition(str(_choice.id))
+	var definition: Dictionary = _definition(str(_choice.id))
 	if not _targets.has(position) or enemy.get("id") != enemy_id 			or enemy.get("hp", 0) <= 0 			or not definition.get("to_positions", []).has(position):
 		_cancel()
 		return
 	var card_id: String = _choice.id
-	var event: Dictionary = _service.play_card(_deck, _party, _enemies, card_id, position)
+	var event: Dictionary = _v3_service.play_card(_deck, _party, _enemies, card_id, position) 		if card_id in V3_IDS else _service.play_card(_deck, _party, _enemies, card_id, position)
 	_cancel()
 	if not event.get("ok", false):
 		return
