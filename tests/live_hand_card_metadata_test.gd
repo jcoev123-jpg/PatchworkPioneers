@@ -2422,6 +2422,7 @@ func _run() -> void:
 			"Title remains focusable and no stale panel survives")
 	await _spring_face_states()
 	await _needle_card_faces()
+	await _monk_card_faces()
 	app.free()
 	_finish()
 
@@ -2550,3 +2551,105 @@ func _fixture_start(target) -> void:
 		return
 	var started: bool = target._start_battle()
 	_check(started == (target.deck != null), "standalone fixture reports admission consistently")
+
+## The displayed Monk's printed rules come from the authenticated starter/pool
+## pair. Only the actual mounted enemy picker can enable these held faces.
+func _monk_card_faces() -> void:
+	var monk := CombatLanternMonkBlindStrikeCards.new()
+	var metadata = presenter._metadata
+	for id in CombatLanternMonkBlindStrikeCards.CARDS:
+		var card: Dictionary = monk.get_definition(id)
+		var facts: Dictionary = metadata.describe(id)
+		_check(not card.is_empty() and metadata.definition(id) == card
+			and facts.known and facts.display_name == card.display_name
+			and facts.owner == "lantern_monk" and facts.cost == 1
+			and facts.from_text == "From 2–3" and facts.target_text == "To enemy 1–3",
+			"Monk authentic base/+ starter/pool printing and source/target pips: " + id)
+		var expected := "Deal %d; then Blind next attack%s." % [
+			int(card.effects.damage), "; then Exposed %d" % int(card.effects.exposed)
+				if card.effects.has("exposed") else ""]
+		_check(metadata.short_line(id) == expected and facts.rules == expected,
+			"Monk face displays one hit, then Blind and post-hit Exposed: " + id)
+		var tooltip: String = metadata.base_effect_text(id)
+		_check(tooltip.contains("next real attack misses")
+			and tooltip.contains("BASE deal %d damage" % int(card.effects.damage))
+			and (tooltip.contains("AFTER that hit, apply Exposed %d" % int(card.effects.exposed))
+				if card.effects.has("exposed") else not tooltip.contains("AFTER that hit")),
+			"Monk tooltip uses printed damage and precise Blind/Exposed timing")
+	_check(not metadata.describe("lantern_monk_wick_flicker_plus_plus").known,
+		"forged Monk ID cannot acquire an enabled card face")
+	for id in CombatLanternMonkBlindStrikeCards.CARDS:
+		if not await _start():
+			return
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 7861
+		app.run_rng = rng
+		app.deck = CombatDeck.new([id, "warden_strike", "warden_brace",
+			"tinker_pop_shot", "tinker_tune_up"], rng)
+		_check(app.deck.start_turn() and app.deck.hand.has(id),
+			"Monk face mounts an actually held live printing")
+		var seat := 3 if id.ends_with("_plus") else 2
+		var heroes: Array = [{"id": "warden", "name": "Warden", "max_hp": 40},
+			{"id": "tinker", "name": "Tinker", "max_hp": 25}]
+		heroes.insert(seat - 1, {"id": "lantern_monk", "name": "Lantern Monk", "max_hp": 27})
+		app.party = CombatParty.new(heroes)
+		app.enemies = CombatEnemies.new([
+			{"id": "ragling", "name": "Ragling", "max_hp": 30},
+			{"id": "ragling_guard", "name": "Guard Ragling", "max_hp": 30},
+			{"id": "fray_scavenger", "name": "Fray Scavenger", "max_hp": 30}])
+		app.battle_result = CombatBattleResult.new(app.party, app.enemies)
+		app.round_flow = CombatRoundFlow.new(app.deck, app.party, app.enemies,
+			app.enemy_intents, app.battle_result)
+		app._refresh_party()
+		app._refresh_enemy_roster()
+		app._refresh_hand()
+		await _frames()
+		var panel: Control = _find(id)
+		var attack = app.get_node_or_null("LiveAttackPreview")
+		_check(panel != null and attack != null and attack._bindings.has(panel),
+			"Monk held art-backed panel binds the real picker: " + id)
+		if panel == null or attack == null:
+			app.return_button.pressed.emit()
+			await _frames()
+			continue
+		var original := _snapshot()
+		metadata._update_visual(panel)
+		_check(metadata.visual_state(panel).playable and panel.self_modulate == Color.WHITE
+			and panel.tooltip_text.contains("Blind")
+			and panel.tooltip_text.contains("PIPS:") and metadata.get_geometry(panel).size() > 0
+			and attack._eligible(panel) and attack._target_preview(id).target_positions == [1, 2, 3],
+			"genuine Monk hand, printed face, tooltip and picker all agree")
+		for mode in ["energy", "seat1", "downed", "targets", "no_binding"]:
+			var energy_before: int = app.deck.energy
+			var old_heroes: Array = app.party.get_heroes()
+			var old_enemies: Array = app.enemies.get_enemies()
+			var binding: Dictionary = attack._bindings.get(panel, {}).duplicate()
+			match mode:
+				"energy": app.deck.combat_state.energy = 0
+				"seat1":
+					var first: Dictionary = app.party._heroes[0]
+					app.party._heroes[0] = app.party._heroes[seat - 1]
+					app.party._heroes[seat - 1] = first
+					app.party._heroes[0].position = 1
+					app.party._heroes[seat - 1].position = seat
+				"downed": app.party.apply_damage(seat, 999)
+				"targets":
+					for position in range(1, 4):
+						app.enemies.apply_damage(position, 999)
+				"no_binding": panel.gui_input.disconnect(binding.input)
+			metadata._update_visual(panel)
+			_check(not metadata.visual_state(panel).playable and panel.self_modulate != Color.WHITE,
+				"Monk unpayable, wrong seat, downed, no enemies or disconnected panel dims: " + mode)
+			_check(app.deck.hand.has(id) and app.deck.discard_pile.is_empty(),
+				"Monk metadata never pays a card even under illegal conditions")
+			app.deck.combat_state.energy = energy_before
+			app.party._heroes.assign(old_heroes)
+			app.enemies._enemies.assign(old_enemies)
+			if mode == "no_binding":
+				panel.gui_input.connect(binding.input)
+			metadata._update_visual(panel)
+			_check(metadata.visual_state(panel).playable,
+				"valid mounted Monk eligibility is restored after negative preview")
+		_check(_snapshot() == original, "repeated Monk face reads leave models and RNG unchanged")
+		app.return_button.pressed.emit()
+		await _frames()

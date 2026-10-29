@@ -44,9 +44,16 @@ func read_state() -> Dictionary:
 
 
 func quote() -> Dictionary:
+	var choices: Array = []
+	if _valid and not _consumed:
+		if not upgrade_options().is_empty():
+			choices.append("upgrade")
+		if not stitch_first_options().is_empty():
+			choices.append("stitch")
+		choices.append("leave")
 	return {"ok": _valid and not _consumed, "node_id": _node_id,
 		"visit_id": _visit_id, "scrap_cost": RunRestStitchCards.SCRAP_COST,
-		"choices": ["upgrade", "stitch", "leave"] if _valid and not _consumed else []}
+		"choices": choices}
 
 
 func upgrade_options() -> Array:

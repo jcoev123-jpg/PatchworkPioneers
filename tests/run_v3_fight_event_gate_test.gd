@@ -66,6 +66,9 @@ func _initialize() -> void:
 	_test_ac3_affordability_recovery_replay_and_isolation(run_rng)
 	_test_ac3_invalid_metadata_and_forgeries(run_rng)
 	_test_ac4_determinism_rng_and_ownership_boundaries(run_rng)
+	_test_ac1_seeded_selection_and_oracle_replay(run_rng)
+	_test_ac2_selected_open_visit_and_receipt_branches(run_rng)
+	_test_ac3_selection_refusals_and_isolation(run_rng)
 
 	_check(catalog_doc == catalog_snapshot, "loaded catalog dictionary unchanged across all test flows")
 	_check(run_rng.state == initial_rng_state, "seeded RandomNumberGenerator state unchanged across entire suite")
@@ -927,3 +930,510 @@ func _run_seeded_sequence(seed_value: int) -> Array:
 
 	_check(rng.state == start_state, "seeded sequence consumes zero RNG draws")
 	return log_entries
+
+
+
+func _oracle_select_id(catalog_events: Array, excluded_ids: Variant, seed_value: int) -> Dictionary:
+	var excluded_dict: Dictionary = {}
+	if excluded_ids != null:
+		if not (excluded_ids is Array):
+			return {"ok": false, "id": "", "rng_state": 0}
+		for value: Variant in (excluded_ids as Array):
+			if not (value is String):
+				return {"ok": false, "id": "", "rng_state": 0}
+			var s: String = value
+			if s.strip_edges().is_empty():
+				return {"ok": false, "id": "", "rng_state": 0}
+			excluded_dict[s] = true
+	var eligible_ids: Array = []
+	for item_raw: Variant in catalog_events:
+		if item_raw is Dictionary:
+			var id_val: Variant = (item_raw as Dictionary).get("id")
+			if id_val is String and not excluded_dict.has(String(id_val)):
+				eligible_ids.append(String(id_val))
+	if eligible_ids.is_empty():
+		return {"ok": false, "id": "", "rng_state": 0}
+	eligible_ids.sort()
+	var oracle_rng := RandomNumberGenerator.new()
+	oracle_rng.seed = seed_value
+	var picked_index: int = oracle_rng.randi_range(0, eligible_ids.size() - 1)
+	return {
+		"ok": true,
+		"id": String(eligible_ids[picked_index]),
+		"rng_state": oracle_rng.state,
+	}
+
+
+func _test_ac1_seeded_selection_and_oracle_replay(run_rng: RandomNumberGenerator) -> void:
+	var rng_before: int = run_rng.state
+	var gate := RunV3FightEventGate.new()
+	_check(gate.is_catalog_valid(), "gate has valid catalog")
+	_check(not gate.is_valid() and not gate.is_claimed(), "unbound gate is neither valid visit nor claimed")
+
+	# Detached record: modifying returned record cannot alter catalog or future selections.
+	var mut_rng := RandomNumberGenerator.new()
+	mut_rng.seed = 445566
+	var initial_sel: Dictionary = gate.select_event(mut_rng)
+	_check(initial_sel.get("ok") == true and initial_sel.get("event") is Dictionary, "initial selection succeeds")
+	var selected_event: Dictionary = initial_sel.get("event", {})
+	var original_event_id: String = String(selected_event.get("id", ""))
+	_check(not original_event_id.is_empty(), "selected event has non-empty ID")
+	var original_snapshot: Dictionary = selected_event.duplicate(true)
+
+	selected_event["title"] = "MUTATED_TITLE_ATTACK"
+	selected_event["choices"] = []
+	selected_event["id"] = "v3_mutated_id"
+	var canonical_check: Dictionary = gate.get_event_record(original_event_id)
+	_check(canonical_check == original_snapshot, "mutating returned record dictionary does not mutate catalog record")
+	var mut_rng_replay := RandomNumberGenerator.new()
+	mut_rng_replay.seed = 445566
+	var second_sel: Dictionary = gate.select_event(mut_rng_replay)
+	_check(second_sel.get("event") == original_snapshot, "mutating returned record dictionary does not mutate future offers")
+
+	# Test multiple seeds against independent sorted-ID RNG oracle, verifying shipped-record membership and 2 identical-seed replays.
+	var test_seeds: Array[int] = [10001, 20002, 30003, 40004, 50005, 99999]
+	var catalog_events: Array[Dictionary] = gate.get_catalog_events()
+	for s_val: int in test_seeds:
+		var draw_rng := RandomNumberGenerator.new()
+		draw_rng.seed = s_val
+		var res: Dictionary = gate.select_event(draw_rng)
+		_check(res.get("ok") == true, "select_event succeeds with seed: " + str(s_val))
+		var picked: Dictionary = res.get("event", {})
+		var picked_id: String = String(picked.get("id", ""))
+		_check(EXPECTED_EVENTS.has(picked_id), "shipped-record membership proven: " + picked_id)
+		_check(picked == gate.get_event_record(picked_id), "selected record equals get_event_record for: " + picked_id)
+
+		var oracle_res: Dictionary = _oracle_select_id(catalog_events, null, s_val)
+		_check(oracle_res.get("ok") == true, "oracle succeeds with seed: " + str(s_val))
+		_check(picked_id == oracle_res.get("id"), "selected ID matches independent oracle ID for seed: " + str(s_val))
+		_check(draw_rng.state == int(oracle_res.get("rng_state")), "RNG state matches oracle RNG state for seed: " + str(s_val))
+
+		# Replay 1 with same seed from scratch.
+		var replay_rng_1 := RandomNumberGenerator.new()
+		replay_rng_1.seed = s_val
+		var rep_1: Dictionary = gate.select_event(replay_rng_1)
+		_check(rep_1 == res and replay_rng_1.state == draw_rng.state, "identical seed replay 1 matches exact result and state: " + str(s_val))
+
+		# Replay 2 with same seed from scratch.
+		var replay_rng_2 := RandomNumberGenerator.new()
+		replay_rng_2.seed = s_val
+		var rep_2: Dictionary = gate.select_event(replay_rng_2)
+		_check(rep_2 == res and replay_rng_2.state == draw_rng.state, "identical seed replay 2 matches exact result and state: " + str(s_val))
+
+	# Injected reordering fixture: reverse catalog events order.
+	var reordered_doc: Dictionary = catalog_doc.duplicate(true)
+	(reordered_doc["events"] as Array).reverse()
+	var reordered_gate := RunV3FightEventGate.new(&"__omitted_event_target__", reordered_doc)
+	_check(reordered_gate.is_catalog_valid(), "reordered catalog gate is catalog-valid")
+	for s_val: int in test_seeds:
+		var reorder_rng := RandomNumberGenerator.new()
+		reorder_rng.seed = s_val
+		var reorder_res: Dictionary = reordered_gate.select_event(reorder_rng)
+		var oracle_res: Dictionary = _oracle_select_id(catalog_events, null, s_val)
+		_check(
+			reorder_res.get("ok") == true
+			and reorder_res.get("event", {}).get("id") == oracle_res.get("id")
+			and reorder_rng.state == int(oracle_res.get("rng_state")),
+			"injected reversed-order fixture produces identical sorted-ID draw and RNG state for seed: " + str(s_val)
+		)
+
+	# Exclusions for each required named ID without assuming it is the nth item.
+	for required_id: String in EXPECTED_EVENTS.keys():
+		# 1. Exclude this specific ID: verify it is never drawn.
+		for s_val: int in [111, 222, 333, 444]:
+			var excl_rng := RandomNumberGenerator.new()
+			excl_rng.seed = s_val
+			var excl_res: Dictionary = gate.select_event(excl_rng, [required_id])
+			_check(excl_res.get("ok") == true, "selection with excluded ID succeeds: " + required_id)
+			_check(excl_res.get("event", {}).get("id") != required_id,
+				"excluded ID is never returned: " + required_id + " (seed " + str(s_val) + ")")
+
+		# 2. Exclude all OTHER catalog IDs: this named ID must be drawn deterministically.
+		var all_others: Array = []
+		for rec: Dictionary in catalog_events:
+			var rid: String = String(rec.get("id", ""))
+			if rid != required_id:
+				all_others.append(rid)
+		var isolate_rng := RandomNumberGenerator.new()
+		isolate_rng.seed = 77777
+		var iso_res: Dictionary = gate.select_event(isolate_rng, all_others)
+		_check(iso_res.get("ok") == true and iso_res.get("event", {}).get("id") == required_id,
+			"isolating required ID by excluding others selects it deterministically: " + required_id)
+
+	# Unknown but well-formed excluded IDs are harmless and have zero effect on draw.
+	var plain_rng := RandomNumberGenerator.new()
+	plain_rng.seed = 88888
+	var plain_res: Dictionary = gate.select_event(plain_rng, null)
+	var unknown_rng := RandomNumberGenerator.new()
+	unknown_rng.seed = 88888
+	var unknown_res: Dictionary = gate.select_event(unknown_rng, ["v3_unknown_unrelated_future_event_id"])
+	_check(
+		unknown_res == plain_res and unknown_rng.state == plain_rng.state,
+		"unknown well-formed exclusion is harmless and yields identical draw and RNG state"
+	)
+
+	# Duplicate and reordered exclusions produce identical results.
+	var ord_rng := RandomNumberGenerator.new()
+	ord_rng.seed = 99999
+	var dup_rng := RandomNumberGenerator.new()
+	dup_rng.seed = 99999
+	var ord_res: Dictionary = gate.select_event(ord_rng, ["v3_stitchline_roadblock", "v3_frayed_bridge_watch"])
+	var dup_res: Dictionary = gate.select_event(dup_rng, ["v3_frayed_bridge_watch", "v3_stitchline_roadblock", "v3_stitchline_roadblock"])
+	_check(
+		ord_res == dup_res and ord_rng.state == dup_rng.state,
+		"duplicate and reordered exclusions produce identical selection and RNG state"
+	)
+
+	# Forward-compatible future catalog additions join the eligible rotation.
+	var future_doc: Dictionary = catalog_doc.duplicate(true)
+	(future_doc["events"] as Array).append({
+		"id": "v3_future_crossroad_gate",
+		"title": "Future Gate",
+		"description": "A well-formed future crossroad.",
+		"fight_choice_id": "future_fight",
+		"choices": [
+			{"id": "future_fight", "text": "Fight", "outcome": {"gold": 0, "scraps": 0}},
+			{"id": "future_paid", "text": "Pay (-10 gold)", "outcome": {"gold": -10, "scraps": 0}},
+			{"id": "leave", "text": "Leave", "outcome": {"gold": 0, "scraps": 0}},
+		],
+	})
+	var future_gate := RunV3FightEventGate.new(&"__omitted_event_target__", future_doc)
+	_check(future_gate.is_catalog_valid(), "catalog with future addition validates")
+	var all_standard_ids: Array = []
+	for rec: Dictionary in catalog_events:
+		all_standard_ids.append(rec.get("id"))
+	var fut_rng := RandomNumberGenerator.new()
+	fut_rng.seed = 54321
+	var fut_res: Dictionary = future_gate.select_event(fut_rng, all_standard_ids)
+	_check(
+		fut_res.get("ok") == true and fut_res.get("event", {}).get("id") == "v3_future_crossroad_gate",
+		"future catalog addition is eligible and selected when required IDs are excluded"
+	)
+
+	_check(run_rng.state == rng_before, "AC1 selection tests consume zero run_rng draws")
+
+
+func _test_ac2_selected_open_visit_and_receipt_branches(run_rng: RandomNumberGenerator) -> void:
+	var rng_before: int = run_rng.state
+	var gate := RunV3FightEventGate.new()
+	var catalog_events: Array[Dictionary] = gate.get_catalog_events()
+
+	for event_id: String in EXPECTED_EVENTS.keys():
+		var spec: Dictionary = EXPECTED_EVENTS[event_id]
+		var fight_cid: String = spec["fight_choice_id"]
+		var paid_cid: String = spec["paid_choice_id"]
+		var paid_delta: Dictionary = spec["paid_outcome"]
+		var funded_wallet: Dictionary = (spec["funded_wallet"] as Dictionary).duplicate(true)
+		var exact_wallet: Dictionary = (spec["exact_wallet"] as Dictionary).duplicate(true)
+		var short_wallet: Dictionary = (spec["short_wallet"] as Dictionary).duplicate(true)
+
+		# Deterministically select this specific named event record via select_event.
+		var others: Array = []
+		for rec: Dictionary in catalog_events:
+			var rid: String = String(rec.get("id", ""))
+			if rid != event_id:
+				others.append(rid)
+		var sel_rng := RandomNumberGenerator.new()
+		sel_rng.seed = 65432
+		var sel: Dictionary = gate.select_event(sel_rng, others)
+		_check(sel.get("ok") == true, "select_event succeeded for: " + event_id)
+		var selected_record: Dictionary = sel.get("event", {})
+		_check(selected_record.get("id") == event_id, "selected record ID matches: " + event_id)
+
+		# 1. Fight branch on authentic open_visit(selected.event).
+		var visit_fight := gate.open_visit(selected_record)
+		_check(visit_fight != null and visit_fight.is_valid(), "open_visit(selected.event) is valid for Fight branch: " + event_id)
+		var preview_funded: Dictionary = visit_fight.preview_choices(funded_wallet)
+		_check(
+			preview_funded.get("ok") == true
+			and preview_funded.get("event_id") == event_id
+			and preview_funded.get("fight_choice_id") == fight_cid,
+			"preview_choices succeeded on funded wallet for Fight: " + event_id
+		)
+		for entry_raw: Variant in preview_funded.get("choices", []):
+			var entry: Dictionary = entry_raw
+			if entry.get("choice_id") == fight_cid:
+				_check(
+					entry.get("gold_delta") == 0
+					and entry.get("scraps_delta") == 0
+					and entry.get("affordable") == true
+					and entry.get("wallet") == funded_wallet
+					and entry.get("fight_request") == {"node_type": "Fight"},
+					"preview marks Fight choice affordable with node_type Fight: " + event_id
+				)
+		var receipt_fight: Dictionary = visit_fight.choose_with_wallet(fight_cid, funded_wallet)
+		_check(
+			receipt_fight == {
+				"ok": true,
+				"event_id": event_id,
+				"choice_id": fight_cid,
+				"wallet": funded_wallet,
+				"fight_request": {"node_type": "Fight"},
+			},
+			"Fight choice settles {node_type: Fight} without wallet charge: " + event_id
+		)
+		_check(visit_fight.is_claimed() and not visit_fight.is_valid(), "Fight choice latches visit: " + event_id)
+		var double_claim: Dictionary = visit_fight.choose_with_wallet("leave", funded_wallet)
+		_check(double_claim.get("ok") == false and double_claim.get("fight_request") == {},
+			"double claim on Fight visit fails closed: " + event_id)
+
+		# 2. Paid escape branch on authentic open_visit(selected.event).
+		# 2a. Insufficient funds preflight refusal and recovery.
+		var visit_paid_short := gate.open_visit(selected_record)
+		_check(visit_paid_short != null and visit_paid_short.is_valid(), "open_visit valid for short wallet: " + event_id)
+		var short_refusal: Dictionary = visit_paid_short.choose_with_wallet(paid_cid, short_wallet)
+		_check(
+			short_refusal == {
+				"ok": false,
+				"event_id": "",
+				"choice_id": "",
+				"wallet": short_wallet,
+				"fight_request": {},
+			}
+			and visit_paid_short.is_valid() and not visit_paid_short.is_claimed(),
+			"insufficient-funds paid choice refused without claiming visit: " + event_id
+		)
+		var recover_leave: Dictionary = visit_paid_short.choose_with_wallet("leave", short_wallet)
+		_check(
+			recover_leave == {
+				"ok": true,
+				"event_id": event_id,
+				"choice_id": "leave",
+				"wallet": short_wallet,
+				"fight_request": {},
+			}
+			and visit_paid_short.is_claimed() and not visit_paid_short.is_valid(),
+			"short-wallet visit recovers on free Leave and latches: " + event_id
+		)
+
+		# 2b. Exact wallet paid escape.
+		var visit_paid_exact := gate.open_visit(selected_record)
+		var exact_receipt: Dictionary = visit_paid_exact.choose_with_wallet(paid_cid, exact_wallet)
+		_check(
+			exact_receipt == {
+				"ok": true,
+				"event_id": event_id,
+				"choice_id": paid_cid,
+				"wallet": {"gold": 0, "scraps": 0},
+				"fight_request": {},
+			}
+			and visit_paid_exact.is_claimed() and not visit_paid_exact.is_valid(),
+			"exact wallet paid choice debits to 0/0 with empty fight_request: " + event_id
+		)
+
+		# 2c. Funded wallet paid escape.
+		var visit_paid_funded := gate.open_visit(selected_record)
+		var expected_funded_after := {
+			"gold": int(funded_wallet["gold"]) + int(paid_delta["gold"]),
+			"scraps": int(funded_wallet["scraps"]) + int(paid_delta["scraps"]),
+		}
+		var funded_receipt: Dictionary = visit_paid_funded.choose_with_wallet(paid_cid, funded_wallet)
+		_check(
+			funded_receipt == {
+				"ok": true,
+				"event_id": event_id,
+				"choice_id": paid_cid,
+				"wallet": expected_funded_after,
+				"fight_request": {},
+			}
+			and visit_paid_funded.is_claimed() and not visit_paid_funded.is_valid(),
+			"funded paid choice debits printed cost with empty fight_request: " + event_id
+		)
+
+		# 3. Leave branch on authentic open_visit(selected.event).
+		var visit_leave := gate.open_visit(selected_record)
+		var empty_wallet := {"gold": 0, "scraps": 0}
+		var leave_receipt: Dictionary = visit_leave.choose_with_wallet("leave", empty_wallet)
+		_check(
+			leave_receipt == {
+				"ok": true,
+				"event_id": event_id,
+				"choice_id": "leave",
+				"wallet": {"gold": 0, "scraps": 0},
+				"fight_request": {},
+			}
+			and visit_leave.is_claimed() and not visit_leave.is_valid(),
+			"Leave choice changes nothing, returns empty fight_request and latches: " + event_id
+		)
+
+	_check(run_rng.state == rng_before, "AC2 tests consume zero run_rng draws")
+
+
+func _test_ac3_selection_refusals_and_isolation(run_rng: RandomNumberGenerator) -> void:
+	var rng_before: int = run_rng.state
+	var gate := RunV3FightEventGate.new()
+	_check(gate.is_catalog_valid(), "factory gate is catalog-valid")
+
+	# Prepare an active bound visit to prove refusals do not mutate it.
+	var bound_visit := gate.open_visit("v3_stitchline_roadblock")
+	_check(bound_visit != null and bound_visit.is_valid() and not bound_visit.is_claimed(), "bound visit ready")
+	var bound_id_before: String = bound_visit.get_event_id()
+	var bound_fight_id_before: String = bound_visit.get_fight_choice_id()
+	var bound_event_before: Dictionary = bound_visit.get_event()
+
+	var caller_wallet := {"gold": 33, "scraps": 5}
+	var wallet_snapshot := caller_wallet.duplicate(true)
+	var catalog_snapshot_events := gate.get_catalog_events()
+
+	var probe_rng := RandomNumberGenerator.new()
+	probe_rng.seed = 551122
+	var probe_rng_state: int = probe_rng.state
+
+	seed(73401)
+	var expected_global_rng: int = randi()
+	seed(73401)
+
+	# 1. Missing / wrong RNG values fail closed.
+	var bad_rngs: Array = [null, 0, 42, 3.14, "rng", {}, [], RefCounted.new()]
+	for bad_rng: Variant in bad_rngs:
+		var bad_sel: Dictionary = gate.select_event(bad_rng)
+		_check(
+			bad_sel == {"ok": false, "event": {}},
+			"wrong/missing RNG rejects with empty event: " + str(bad_rng)
+		)
+		_check(probe_rng.state == probe_rng_state, "probe RNG unmutated by wrong RNG rejection")
+		_check(randi() == expected_global_rng, "global RNG unmutated by wrong RNG rejection")
+		seed(73401)
+		_check(caller_wallet == wallet_snapshot, "caller wallet unmutated by wrong RNG rejection")
+		_check(
+			bound_visit.is_valid()
+			and not bound_visit.is_claimed()
+			and bound_visit.get_event_id() == bound_id_before
+			and bound_visit.get_fight_choice_id() == bound_fight_id_before
+			and bound_visit.get_event() == bound_event_before,
+			"bound visit completely unmutated by wrong RNG rejection"
+		)
+
+	# 2. Malformed exclusions fail closed without drawing RNG.
+	var bad_exclusions: Array = [
+		"v3_stitchline_roadblock",
+		123,
+		4.5,
+		{},
+		true,
+		false,
+		[1],
+		[null],
+		[{}],
+		[true],
+		[""],
+		["   "],
+		[["v3_stitchline_roadblock"]],
+	]
+	for bad_excl: Variant in bad_exclusions:
+		var st_before: int = probe_rng.state
+		var bad_sel: Dictionary = gate.select_event(probe_rng, bad_excl)
+		_check(
+			bad_sel == {"ok": false, "event": {}},
+			"malformed exclusions rejects with empty event: " + str(bad_excl)
+		)
+		_check(probe_rng.state == st_before, "RNG state untouched by malformed exclusion rejection")
+		_check(randi() == expected_global_rng, "global RNG untouched by malformed exclusion rejection")
+		seed(73401)
+		_check(caller_wallet == wallet_snapshot, "caller wallet untouched by malformed exclusion rejection")
+		_check(bound_visit.is_valid() and not bound_visit.is_claimed(), "bound visit untouched by malformed exclusion")
+
+	# 3. Exhausted eligible events (all catalog events excluded) fails closed without drawing RNG.
+	var all_ids: Array = []
+	for rec: Dictionary in catalog_snapshot_events:
+		all_ids.append(rec.get("id"))
+	var st_before_exh: int = probe_rng.state
+	var exh_sel: Dictionary = gate.select_event(probe_rng, all_ids)
+	_check(
+		exh_sel == {"ok": false, "event": {}},
+		"exhausted catalog exclusions rejects with empty event"
+	)
+	_check(probe_rng.state == st_before_exh, "RNG state untouched by exhausted exclusions rejection")
+	_check(randi() == expected_global_rng, "global RNG untouched by exhausted exclusions rejection")
+	seed(73401)
+
+	# 4. Invalid catalog rejects selection.
+	var bad_docs: Array = [
+		false,
+		99,
+		"catalog",
+		[],
+		{},
+		{"events": null},
+		{"events": []},
+		{"events": [null]},
+	]
+	for bad_doc: Variant in bad_docs:
+		var bad_gate := RunV3FightEventGate.new(&"__omitted_event_target__", bad_doc)
+		_check(not bad_gate.is_catalog_valid(), "bad doc is catalog invalid: " + str(bad_doc))
+		var st_before_bad: int = probe_rng.state
+		var bad_cat_sel: Dictionary = bad_gate.select_event(probe_rng)
+		_check(
+			bad_cat_sel == {"ok": false, "event": {}},
+			"invalid catalog rejects select_event with empty event: " + str(bad_doc)
+		)
+		_check(probe_rng.state == st_before_bad, "RNG state untouched by invalid catalog rejection")
+		_check(randi() == expected_global_rng, "global RNG untouched by invalid catalog rejection")
+		seed(73401)
+
+	# 5. Altered / forged selected records fail closed on open_visit() and enter() (returning null).
+	var valid_sel_rng := RandomNumberGenerator.new()
+	valid_sel_rng.seed = 332211
+	var genuine_sel: Dictionary = gate.select_event(valid_sel_rng)
+	_check(genuine_sel.get("ok") == true, "fresh genuine selection succeeds")
+	var auth_rec: Dictionary = genuine_sel.get("event", {})
+
+	var forgeries: Array[Dictionary] = []
+	var forged_title := auth_rec.duplicate(true)
+	forged_title["title"] = "Forged Event Title"
+	forgeries.append(forged_title)
+
+	var forged_desc := auth_rec.duplicate(true)
+	forged_desc["description"] = "Forged Event Description"
+	forgeries.append(forged_desc)
+
+	var forged_fight_cid := auth_rec.duplicate(true)
+	forged_fight_cid["fight_choice_id"] = "leave"
+	forgeries.append(forged_fight_cid)
+
+	var forged_fight_outcome := auth_rec.duplicate(true)
+	forged_fight_outcome["choices"][0]["outcome"] = {"gold": -10, "scraps": 0}
+	forgeries.append(forged_fight_outcome)
+
+	var forged_paid_outcome := auth_rec.duplicate(true)
+	forged_paid_outcome["choices"][1]["outcome"] = {"gold": 0, "scraps": 0}
+	forgeries.append(forged_paid_outcome)
+
+	var forged_extra_key := auth_rec.duplicate(true)
+	forged_extra_key["node_type"] = "Boss"
+	forgeries.append(forged_extra_key)
+
+	var forged_unknown_id := auth_rec.duplicate(true)
+	forged_unknown_id["id"] = "v3_forged_unknown_fight_event"
+	forgeries.append(forged_unknown_id)
+
+	for forged_rec: Dictionary in forgeries:
+		var st_before_forgery: int = probe_rng.state
+		var v_open := gate.open_visit(forged_rec)
+		var v_enter := gate.enter(forged_rec)
+		var v_new := RunV3FightEventGate.new(forged_rec)
+		_check(v_open == null, "open_visit rejects forged record: " + str(forged_rec.get("id")))
+		_check(v_enter == null, "enter rejects forged record: " + str(forged_rec.get("id")))
+		_check(not v_new.is_valid(), "new(forged) is not a valid visit: " + str(forged_rec.get("id")))
+		_check(probe_rng.state == st_before_forgery, "probe RNG state unmutated by forged admission rejection")
+		_check(randi() == expected_global_rng, "global RNG unmutated by forged admission rejection")
+		seed(73401)
+		_check(caller_wallet == wallet_snapshot, "caller wallet unmutated by forged admission rejection")
+		_check(bound_visit.is_valid() and not bound_visit.is_claimed(), "bound visit unmutated by forged admission rejection")
+
+	# 6. Prove the bound visit settles cleanly and latches after all previous rejections.
+	var bound_claim: Dictionary = bound_visit.choose_with_wallet("break_barricade", caller_wallet)
+	_check(
+		bound_claim == {
+			"ok": true,
+			"event_id": "v3_stitchline_roadblock",
+			"choice_id": "break_barricade",
+			"wallet": wallet_snapshot,
+			"fight_request": {"node_type": "Fight"},
+		},
+		"bound visit settles successfully and produces Fight request after all rejections"
+	)
+	_check(bound_visit.is_claimed() and not bound_visit.is_valid(), "bound visit latches after successful settlement")
+	_check(caller_wallet == wallet_snapshot, "caller wallet argument unmutated by settlement")
+	_check(gate.get_catalog_events() == catalog_snapshot_events, "catalog events snapshot unmutated")
+	_check(run_rng.state == rng_before, "AC3 tests consume zero run_rng draws")
