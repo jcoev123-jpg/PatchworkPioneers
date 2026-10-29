@@ -223,7 +223,7 @@ text = "Back to Heroes"
 [node name="DeckReadout" type="VBoxContainer" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack"]
 layout_mode = 2
 mouse_filter = 2
-theme_override_constants/separation = 1
+theme_override_constants/separation = 2
 visible = false
 
 [node name="DeckHeading" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout"]
@@ -232,23 +232,57 @@ mouse_filter = 2
 text = "SHARED DECK  •  12 starting cards / 3 heroes"
 horizontal_alignment = 1
 
-[node name="DeckSeat1" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout"]
+[node name="DeckScroll" type="ScrollContainer" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout"]
+custom_minimum_size = Vector2(0, 92)
+layout_mode = 2
+size_flags_vertical = 3
+focus_mode = 2
+horizontal_scroll_mode = 0
+
+[node name="DeckRows" type="VBoxContainer" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+theme_override_constants/separation = 2
+
+[node name="DeckSeatFacts1" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckScroll/DeckRows"]
+layout_mode = 2
+mouse_filter = 2
+autowrap_mode = 2
+
+[node name="DeckSeat1" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckScroll/DeckRows"]
 layout_mode = 2
 mouse_filter = 2
 clip_text = true
 text_overrun_behavior = 3
 
-[node name="DeckSeat2" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout"]
+[node name="DeckSeatFacts2" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckScroll/DeckRows"]
+layout_mode = 2
+mouse_filter = 2
+autowrap_mode = 2
+
+[node name="DeckSeat2" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckScroll/DeckRows"]
 layout_mode = 2
 mouse_filter = 2
 clip_text = true
 text_overrun_behavior = 3
 
-[node name="DeckSeat3" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout"]
+[node name="DeckSeatFacts3" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckScroll/DeckRows"]
+layout_mode = 2
+mouse_filter = 2
+autowrap_mode = 2
+
+[node name="DeckSeat3" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckScroll/DeckRows"]
 layout_mode = 2
 mouse_filter = 2
 clip_text = true
 text_overrun_behavior = 3
+
+[node name="DeckSharedHandNote" type="Label" parent="PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout"]
+layout_mode = 2
+mouse_filter = 2
+horizontal_alignment = 1
+text = ""
 
 [node name="Foot" type="HBoxContainer" parent="PaperPanel/Margins/Body"]
 custom_minimum_size = Vector2(0, 58)

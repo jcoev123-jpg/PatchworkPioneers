@@ -63,10 +63,17 @@ const STITCH := Color("#efcba1")
 @onready var kit_next: Button = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout/KitNavigation/NextButton
 @onready var kit_back: Button = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/KitReadout/KitNavigation/BackButton
 @onready var deck_readout: VBoxContainer = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout
+@onready var deck_scroll: ScrollContainer = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckScroll
+@onready var deck_shared_note: Label = $PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckSharedHandNote
+@onready var deck_facts: Array[Label] = [
+	$PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckScroll/DeckRows/DeckSeatFacts1,
+	$PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckScroll/DeckRows/DeckSeatFacts2,
+	$PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckScroll/DeckRows/DeckSeatFacts3,
+]
 @onready var deck_rows: Array[Label] = [
-	$PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckSeat1,
-	$PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckSeat2,
-	$PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckSeat3,
+	$PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckScroll/DeckRows/DeckSeat1,
+	$PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckScroll/DeckRows/DeckSeat2,
+	$PaperPanel/Margins/Body/InspectionPanel/Inset/Stack/DeckReadout/DeckScroll/DeckRows/DeckSeat3,
 ]
 
 var _ids: Array[String] = []
@@ -273,17 +280,25 @@ func _update_inspection() -> void:
 		kit_readout.hide()
 		reward_readout.hide()
 		var rows := _deck_receipt_rows()
-		if rows.size() == 3 and _open and not _latched:
+		var facts := _deck_receipt_facts(rows)
+		if rows.size() == 3 and facts.size() == 3 and _open and not _latched:
 			deck_readout.show()
 			for label in [inspection_heading, inspection_facts, inspection_detail, inspection_starters]:
 				label.hide()
 			for index in range(3):
 				deck_rows[index].text = rows[index]
 				deck_rows[index].tooltip_text = rows[index]
+				deck_facts[index].text = facts[index]
+				deck_facts[index].tooltip_text = facts[index]
+			deck_shared_note.text = "ONE shared deck  •  3 energy per turn  •  draw 5"
+			deck_shared_note.tooltip_text = deck_shared_note.text
 			inspect_deck_button.text = "Back"
 			return
 		_deck_mode = false
+		inspect_deck_button.disabled = true
+		continue_button.disabled = true
 	deck_readout.hide()
+	_clear_deck_readout()
 	kit_readout.hide()
 	reward_readout.hide()
 	for label in [inspection_heading, inspection_facts, inspection_detail, inspection_starters]:
@@ -754,6 +769,47 @@ func _deck_receipt_rows() -> Array[String]:
 	return rows
 
 
+## All three readiness facts come from the same admitted, authenticated
+## party definitions as the receipt deck; tile signatures are never stats.
+## Any missing/mismatched definition retires the whole combined view.
+func _deck_receipt_facts(rows: Array[String]) -> Array[String]:
+	var facts: Array[String] = []
+	if rows.size() != 3 or _ids.size() != 3 or not _seat_receipt.get("ok", false):
+		return facts
+	var party: Array = _seat_receipt["party"]
+	var ids: Array = _seat_receipt["hero_ids"]
+	for seat in range(3):
+		var hero_id: String = ids[seat]
+		if not _canonical_heroes.has(hero_id):
+			return []
+		var source: Variant = _canonical_heroes[hero_id]
+		if not source is Dictionary or not source.get("definition") is Dictionary:
+			return []
+		var definition: Dictionary = source["definition"]
+		if definition != party[seat] or not definition.get("max_hp") is int \
+				or definition["max_hp"] <= 0 or not definition.get("name") is String:
+			return []
+		var passive: String = ""
+		if hero_id in RunV3PartyAdmission.LEGACY_IDS:
+			passive = LEGACY_PASSIVES.get(hero_id, "")
+		else:
+			var authored: Variant = definition.get("passive")
+			if not authored is Dictionary or not authored.get("text") is String:
+				return []
+			passive = authored["text"]
+		if passive.is_empty():
+			return []
+		facts.append("%d  %s  •  Max HP: %d  •  Passive: %s" % [
+			seat + 1, definition["name"], definition["max_hp"], passive])
+	return facts
+
+
+func _clear_deck_readout() -> void:
+	for label in deck_rows + deck_facts + [deck_shared_note]:
+		label.text = ""
+		label.tooltip_text = ""
+
+
 ## Generation-bound by the mounted screen's currently open/latch guards.
 ## This control changes text only: no selection, signal or RNG calls.
 func _inspect_deck_pressed() -> void:
@@ -761,7 +817,8 @@ func _inspect_deck_pressed() -> void:
 		return
 	if _deck_mode:
 		_deck_mode = false
-	elif not inspect_deck_button.disabled and _deck_receipt_rows().size() == 3:
+	elif not inspect_deck_button.disabled and _deck_receipt_facts(_deck_receipt_rows()).size() == 3:
+		deck_scroll.scroll_vertical = 0
 		_kit_mode = false
 		_reward_mode = false
 		_deck_mode = true
@@ -783,7 +840,8 @@ func _pressed_hero(hero_id: String, generation: int) -> void:
 
 
 func _continue_pressed() -> void:
-	if not _open or _latched or _ids.size() != 3 or not _seat_receipt.get("ok", false):
+	if not _open or _latched or _ids.size() != 3 \
+			or _deck_receipt_facts(_deck_receipt_rows()).size() != 3:
 		return
 	_latched = true
 	_open = false
@@ -827,9 +885,9 @@ func _refresh() -> void:
 			seat_preview.text = "Seats: " + "  |  ".join(seats)
 		else:
 			seat_preview.text = "Party admission unavailable"
-	continue_button.disabled = not _open or _latched or not _seat_receipt.get("ok", false)
+	continue_button.disabled = not _open or _latched or _deck_receipt_facts(_deck_receipt_rows()).size() != 3
 	cancel_button.disabled = not _open or _latched
-	inspect_deck_button.disabled = not _open or _latched or _deck_receipt_rows().size() != 3
+	inspect_deck_button.disabled = not _open or _latched or _deck_receipt_facts(_deck_receipt_rows()).size() != 3
 	inspect_cards_button.disabled = not _open or _latched or (_hovered_id.is_empty() and _focused_id.is_empty() and not _kit_mode)
 	reward_cards_button.disabled = not _open or _latched or (_hovered_id.is_empty() and _focused_id.is_empty() and not _reward_mode)
 	if inspect_deck_button.disabled:
@@ -1016,6 +1074,11 @@ func _style_screen() -> void:
 	for row in deck_rows:
 		row.add_theme_color_override("font_color", CREAM)
 		row.add_theme_font_size_override("font_size", 16)
+	for facts in deck_facts:
+		facts.add_theme_color_override("font_color", SOFT)
+		facts.add_theme_font_size_override("font_size", 15)
+	deck_shared_note.add_theme_color_override("font_color", GOLD)
+	deck_shared_note.add_theme_font_size_override("font_size", 15)
 	seat_preview.add_theme_color_override("font_color", GOLD)
 	seat_preview.add_theme_font_size_override("font_size", 15)
 	selection_count.add_theme_color_override("font_color", CREAM)
