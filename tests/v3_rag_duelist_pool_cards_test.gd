@@ -1964,24 +1964,24 @@ func _test_snare_ac3_rejections() -> void:
 
 	# Wrong owner seat (only 1-2 allowed).
 	var rear_party := _riposte_party(3)
-	var rear_before := _barrage_snapshot(_riposte_deck(SNARE, 9430, SNARE_COST), rear_party, enemies)
-	var rear_result := snare_service.play_card(_riposte_deck(SNARE, 9430, SNARE_COST),
-		rear_party, enemies, SNARE, 1)
+	var rear_deck := _riposte_deck(SNARE, 9430, SNARE_COST)
+	var rear_before := _barrage_snapshot(rear_deck, rear_party, enemies)
+	var rear_result := snare_service.play_card(rear_deck, rear_party, enemies, SNARE, 1)
 	_check(not rear_result.get("ok") and rear_result.get("reason") == "invalid_owner_position",
 		"seat 3 rejected for snare")
-	_check(_barrage_snapshot(_riposte_deck(SNARE, 9430, SNARE_COST), rear_party, enemies) == rear_before,
-		"illegal seat refusal leaves full snapshot unchanged")
+	_check(_barrage_snapshot(rear_deck, rear_party, enemies) == rear_before,
+		"illegal seat refusal leaves full snapshot unchanged (same instance)")
 
 	# Downed owner.
 	var downed := _riposte_party(1)
 	downed.apply_damage(1, downed.get_hero(1)["max_hp"])
-	var downed_before := _barrage_snapshot(_riposte_deck(SNARE, 9440, SNARE_COST), downed, enemies)
-	var downed_result := snare_service.play_card(_riposte_deck(SNARE, 9440, SNARE_COST),
-		downed, enemies, SNARE, 1)
+	var downed_deck := _riposte_deck(SNARE, 9440, SNARE_COST)
+	var downed_before := _barrage_snapshot(downed_deck, downed, enemies)
+	var downed_result := snare_service.play_card(downed_deck, downed, enemies, SNARE, 1)
 	_check(not downed_result.get("ok") and downed_result.get("reason") == "owner_downed",
 		"downed owner rejected")
-	_check(_barrage_snapshot(_riposte_deck(SNARE, 9440, SNARE_COST), downed, enemies) == downed_before,
-		"downed owner refusal leaves full snapshot unchanged")
+	_check(_barrage_snapshot(downed_deck, downed, enemies) == downed_before,
+		"downed owner refusal leaves full snapshot unchanged (same instance)")
 
 	# Insufficient energy.
 	var poor := _riposte_deck(SNARE, 9450, 0)
@@ -2003,39 +2003,42 @@ func _test_snare_ac3_rejections() -> void:
 		and no_owner.get_hero(2)["id"] != "rag_duelist"
 		and no_owner.get_hero(3)["id"] != "rag_duelist",
 		"absent-owner fixture is a valid party without a Rag Duelist")
-	var absent_before := _barrage_snapshot(_riposte_deck(SNARE, 9455, SNARE_COST), no_owner, enemies)
-	var absent_result := snare_service.play_card(_riposte_deck(SNARE, 9455, SNARE_COST),
-		no_owner, enemies, SNARE, 1)
+	var absent_deck := _riposte_deck(SNARE, 9455, SNARE_COST)
+	var absent_before := _barrage_snapshot(absent_deck, no_owner, enemies)
+	var absent_result := snare_service.play_card(absent_deck, no_owner, enemies, SNARE, 1)
 	_check(not absent_result.get("ok") and absent_result.get("reason") == "invalid_party",
 		"absent owner rejected")
-	_check(_barrage_snapshot(_riposte_deck(SNARE, 9455, SNARE_COST), no_owner, enemies) == absent_before,
-		"absent owner refusal leaves full snapshot unchanged")
+	_check(_barrage_snapshot(absent_deck, no_owner, enemies) == absent_before,
+		"absent owner refusal leaves full snapshot unchanged (same instance)")
 
 	# Invalid / slain target with full snapshot isolation.
 	var bad_target := _barrage_enemies(20, 1)
 	bad_target.apply_damage(1, 20)
-	var slain_before := _barrage_snapshot(_riposte_deck(SNARE, 9460, SNARE_COST), party, bad_target)
-	var slain_result := snare_service.play_card(_riposte_deck(SNARE, 9460, SNARE_COST),
-		party, bad_target, SNARE, 1)
+	var slain_target_deck := _riposte_deck(SNARE, 9460, SNARE_COST)
+	var slain_before := _barrage_snapshot(slain_target_deck, party, bad_target)
+	var slain_result := snare_service.play_card(slain_target_deck, party, bad_target, SNARE, 1)
 	_check(not slain_result.get("ok") and slain_result.get("reason") == "target_slain",
 		"slain target rejected")
-	_check(_barrage_snapshot(_riposte_deck(SNARE, 9460, SNARE_COST), party, bad_target) == slain_before,
-		"slain target refusal leaves full snapshot unchanged")
+	_check(_barrage_snapshot(slain_target_deck, party, bad_target) == slain_before,
+		"slain target refusal leaves full snapshot unchanged (same instance)")
 
-	var bad_slot := snare_service.play_card(_riposte_deck(SNARE, 9470, SNARE_COST),
-		party, enemies, SNARE, 99)
+	var bad_slot_deck := _riposte_deck(SNARE, 9470, SNARE_COST)
+	var bad_slot_before := _barrage_snapshot(bad_slot_deck, party, enemies)
+	var bad_slot := snare_service.play_card(bad_slot_deck, party, enemies, SNARE, 99)
 	_check(not bad_slot.get("ok") and bad_slot.get("reason") == "invalid_target",
 		"slot 99 rejected")
+	_check(_barrage_snapshot(bad_slot_deck, party, enemies) == bad_slot_before,
+		"invalid target-slot refusal leaves full snapshot unchanged (same instance)")
 
 	# Malformed status map on target.
 	var broken_target := _barrage_enemies(20, 1)
 	broken_target._enemies[0]["statuses"] = {"tangled": -1}
-	var broken_before := _barrage_snapshot(_riposte_deck(SNARE, 9480, SNARE_COST), party, broken_target)
-	var broken_target_result := snare_service.play_card(_riposte_deck(SNARE, 9480, SNARE_COST),
-		party, broken_target, SNARE, 1)
+	var broken_target_deck := _riposte_deck(SNARE, 9480, SNARE_COST)
+	var broken_before := _barrage_snapshot(broken_target_deck, party, broken_target)
+	var broken_target_result := snare_service.play_card(broken_target_deck, party, broken_target, SNARE, 1)
 	_check(not broken_target_result.get("ok"), "negative tangled rejected before spend")
-	_check(_barrage_snapshot(_riposte_deck(SNARE, 9480, SNARE_COST), party, broken_target) == broken_before,
-		"malformed status refusal leaves full snapshot unchanged")
+	_check(_barrage_snapshot(broken_target_deck, party, broken_target) == broken_before,
+		"malformed status refusal leaves full snapshot unchanged (same instance)")
 
 	# Refusal leaves deck/party/enemies unchanged (full snapshot comparison using same instance).
 	var retry_deck := _riposte_deck(SNARE, 9490, SNARE_COST, false)
