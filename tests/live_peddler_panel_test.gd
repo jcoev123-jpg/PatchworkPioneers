@@ -37,6 +37,7 @@ var card_authored: Dictionary = {}
 var patch_authored: Dictionary = {}
 var intents: Array[Dictionary] = []
 var preview_catalogs: Array = []
+var trusted_projection: Dictionary = {}
 var observer: KeyObserver
 var presses: Dictionary = {}
 
@@ -214,6 +215,7 @@ func _run() -> void:
 	await _fail_closed()
 	await _rare_patch_panels()
 	await _patch_preview_cases()
+	await _unaudited_patch_case()
 	_check(rng.state == expected_run, "all panel previews, intents and refusals preserve seeded run RNG")
 	_check(randi() == expected_global, "all mounted actions preserve global RNG")
 	panel.queue_free()
@@ -518,6 +520,24 @@ func _authored_definition(offer: Dictionary) -> Dictionary:
 		return {}
 	var definition: Variant = found.get("def", {})
 	return definition if definition is Dictionary else {}
+
+
+## The audited projection the live Patch Stall itself binds: the complete
+## power/slot map from the same power-only catalogs, passed through that
+## panel's own verified-preview audit. Computed once, it is the independent
+## oracle for every patch tooltip/preview comparison, so a Peddler row can
+## never pass with a description the Patch Stall audit would reject.
+func _trusted_projection() -> Dictionary:
+	if trusted_projection.is_empty():
+		var slots: Dictionary = {}
+		for record in RunAuthoredPatchDefinitions.load_power_definitions():
+			if typeof(record) == TYPE_DICTIONARY and record.has("id") and record.has("slot"):
+				slots[str(record["id"])] = str(record["slot"])
+		var stall := LivePatchStallPanel.new()
+		var previews: Dictionary = stall._trusted_power_previews(slots)
+		stall.free()
+		trusted_projection = {"slots": slots, "previews": previews}
+	return trusted_projection
 
 
 ## The status band's measured readability: its shipped 18px face must fit the
@@ -1433,6 +1453,16 @@ func _rare_patch_panels() -> void:
 		_check(panel.patch_button.text.contains(patch_id.replace("_", " ").capitalize())
 			and panel.patch_button.text.contains("100 gold") and panel.card_buttons.size() == 3,
 			"rare uses existing readable priced patch row without extra offer")
+		# The rare tooltip must state exactly the trusted Patch Stall
+		# projection's slot and complete power/trigger for this P8 rare.
+		var rare_projection := _trusted_projection()
+		var rare_slot := str(rare_projection["slots"].get(patch_id, ""))
+		var rare_full := str(rare_projection["previews"].get(patch_id, {}).get("full", ""))
+		_check(not rare_slot.is_empty() and not rare_full.is_empty(),
+			"trusted Patch Stall projection proves the P8 rare " + patch_id)
+		_check(panel.patch_button.tooltip_text.contains(rare_slot)
+			and panel.patch_button.tooltip_text.contains(rare_full),
+			"rare tooltip states the trusted slot and complete power/trigger")
 		await _act(panel.patch_button, patch_id == "hearth_lining")
 		_check(intents.size() == 1 and intents[0].get("id") == patch_id,
 			"rare mouse/keyboard action emits genuine source-bound selection")
@@ -1456,16 +1486,29 @@ func _patch_preview_cases() -> void:
 	var patch_offer: Dictionary = before["stock"]["trinkets"][0]
 	var patch_id: String = str(patch_offer["id"])
 
-	# The tooltip carries the real slot, full authored power, torn suppression
-	# and exact replacement rule; never a guessed effect.
+	# The trusted Patch Stall projection is the independent oracle: the
+	# offered patch must be one it proves, and the tooltip must state exactly
+	# that audited slot and complete power/trigger, never a second-hand or
+	# guessed description.
+	var projection := _trusted_projection()
+	var power_slots: Dictionary = projection["slots"]
+	var power_previews: Dictionary = projection["previews"]
+	_check(power_slots.has(patch_id) and power_previews.has(patch_id),
+		"offered patch " + patch_id + " is proven by the trusted Patch Stall projection")
+	var expected_slot := str(power_slots.get(patch_id, ""))
+	var expected_full := str(power_previews.get(patch_id, {}).get("full", ""))
+	var expected_short := str(power_previews.get(patch_id, {}).get("short", ""))
+	_check(["HEAD", "ARM", "COAT"].has(expected_slot)
+		and not expected_full.is_empty() and not expected_short.is_empty(),
+		"trusted oracle for " + patch_id + " has a slot, short and full power")
+	# The tooltip carries the real slot, complete trusted power, torn
+	# suppression and exact replacement rule; never a guessed effect.
 	var tooltip := panel.patch_button.tooltip_text
 	_check(tooltip.contains(patch_id), "patch tooltip carries the offered patch ID")
-	# Check for truthful slot, torn warning and replacement text.
-	var has_slot := false
-	for word in ["HEAD", "ARM", "COAT"]:
-		if tooltip.contains(word):
-			has_slot = true
-	_check(has_slot, "patch tooltip names its authored slot (HEAD/ARM/COAT)")
+	_check(tooltip.contains(expected_slot),
+		"patch tooltip states the trusted projection's " + expected_slot + " slot")
+	_check(tooltip.contains(expected_full),
+		"patch tooltip carries the complete trusted power and trigger")
 	_check(tooltip.contains("Patch powers do not work while the wearer is Torn."),
 		"patch tooltip includes torn suppression")
 	_check(tooltip.contains("destroyed for exactly +1 scrap")
@@ -1474,37 +1517,41 @@ func _patch_preview_cases() -> void:
 	_check(tooltip.contains(str(int(patch_offer["price"])) + " gold"),
 		"patch tooltip shows the exact quoted gold price")
 
-	# Hover shows a truthful preview in the status band.
+	# Hover shows exactly the trusted projection in the status band (the band
+	# may clamp a long line to its width, but the text is never anything else).
 	# We trigger the hover manually to avoid mouse-motion timing differences.
 	panel._hover_index = -1
 	panel._patch_hover_active = true
 	panel._sync_preview()
 	await _frames()
-	# The preview mechanism must respond without crashing; the exact line
-	# depends on whether the audited projection proves the effect.
+	var expected_preview := "%s  ·  %s  ·  %s  ·  %s" % [
+		expected_slot, _expected_name(patch_id), patch_id, expected_short]
 	var preview_text := panel.status_label.text
+	_check(preview_text == expected_preview
+		or preview_text == panel._clamp_status(expected_preview),
+		"patch hover shows exactly the trusted slot/name/ID/power line")
 	_check(preview_text != LivePeddlerPanel.STATUS_CLOSED,
 		"patch hover does not show the closed status (mechanism responds)")
+	_check(_status_fits(), "patch hover preview fits the status band")
 
-	# Focus shows the same preview for keyboard users.
+	# Focus shows the same trusted preview for keyboard users.
 	await _hover_none()
 	panel.patch_button.grab_focus()
 	await _frames()
 	_check(panel.patch_button.has_focus(), "patch button has real keyboard focus")
-	# The preview should be set from the focused patch button.
+	# The preview is set from the focused patch button and repeats the same
+	# truthful trusted line, never a different or guessed one.
 	var focus_preview := panel.status_label.text
-	_check(focus_preview.contains(str(patch_offer["id"]))
-		or focus_preview.contains(_expected_name(str(patch_offer["id"])))
-		or focus_preview.contains(LivePeddlerPanel.PATCH_DETAILS_UNAVAILABLE)
-		or focus_preview == LivePeddlerPanel.STATUS_OPEN,
-		"patch focus fills the status band")
+	_check(focus_preview == preview_text,
+		"patch focus repeats the same trusted preview as hover")
+	_check(focus_preview.contains(expected_short),
+		"patch focus carries the trusted projection's short power line")
 
 	# The preview mechanism responds without emitting any purchase intent.
 	_check(intents.is_empty(), "patch preview emits no purchase or leave intent")
 
-	# Unknown/unverified patch must close with unavailable, not a guess.
-	# This is covered implicitly by the tooltip/result assertions above;
-	# if the catalog authority fails, the preview/text falls back to unavailable.
+	# Unknown/unverified patch must close with unavailable, not a guess: the
+	# dedicated _unaudited_patch_case below proves that fallback explicitly.
 
 	# Rebind clears previous patch tooltip and shows the new visit's data.
 	await _bind(_visit(GOLD, "peddler_patch_rebind"))
@@ -1540,3 +1587,66 @@ func _patch_preview_cases() -> void:
 		and left_state["stock"] == before["stock"],
 		"deliberate test leave changes only the lifecycle status")
 	_check(intents.is_empty(), "no purchase or leave intent was emitted during preview")
+
+
+## A genuinely priced, open visit whose offered patch is an authored inert
+## starter-slot trinket (the power-only catalog withholds it, so the trusted
+## Patch Stall projection cannot prove any power for it) must fail closed:
+## the tooltip is exactly the unavailable fallback, hover and focus repeat
+## that line, and no guessed buff is ever published - all without a buy.
+func _unaudited_patch_case() -> void:
+	var unaudited_id := "stitched_badge"
+	_check(patch_authored.has(unaudited_id),
+		"unaudited fixture is a genuinely authored priced trinket")
+	if not patch_authored.has(unaudited_id):
+		return
+	# Precondition: the trusted projection really cannot prove this ID, so
+	# the fallback case cannot pass vacuously.
+	var projection := _trusted_projection()
+	_check(not projection["slots"].has(unaudited_id)
+		and not projection["previews"].has(unaudited_id),
+		"unaudited fixture patch is genuinely absent from the trusted projection")
+	var stock := {
+		"ok": true,
+		"cards": sampled["cards"].duplicate(true),
+		"patches": [{"id": unaudited_id, "price": int(patch_authored[unaudited_id])}],
+	}
+	var visit := _party_visit("peddler_unaudited_patch", PARTY, DECK, stock)
+	_check(visit.is_valid() and visit.is_open(),
+		"unaudited fixture opens a genuine Peddler visit")
+	if not visit.is_open():
+		return
+	var before := visit.read_state()
+	await _bind(visit)
+	_check(panel.patch_button.get_meta("offer_id") == unaudited_id
+		and not panel.patch_button.disabled,
+		"unaudited patch row really offers the fixture trinket and is buyable")
+	# The exact unavailable tooltip: never a guessed slot, power or trigger.
+	var unavailable := "PATCH  ·  %s\n%s" % [
+		_expected_name(unaudited_id), LivePeddlerPanel.PATCH_DETAILS_UNAVAILABLE]
+	_check(panel.patch_button.tooltip_text == unavailable,
+		"unaudited patch tooltip is exactly the unavailable fallback")
+	_check(panel._patch_details().is_empty(),
+		"unaudited patch resolves to no details at all")
+	# Hover fails closed with the same unavailable line.
+	panel._hover_index = -1
+	panel._patch_hover_active = true
+	panel._sync_preview()
+	await _frames()
+	var hover_text := panel.status_label.text
+	_check(hover_text.contains(LivePeddlerPanel.PATCH_DETAILS_UNAVAILABLE),
+		"unaudited patch hover fails closed with the unavailable line")
+	_check(not hover_text.contains("+") and not hover_text.contains("Block")
+		and not hover_text.contains("HP"),
+		"unaudited patch hover never guesses a power")
+	# Keyboard focus repeats the same unavailable line.
+	await _hover_none()
+	panel.patch_button.grab_focus()
+	await _frames()
+	_check(panel.patch_button.has_focus()
+		and panel.status_label.text == hover_text,
+		"unaudited patch focus repeats the unavailable line")
+	# Information only: no intent, no buy, no spend, no state change.
+	_check(intents.is_empty() and visit.read_state() == before
+		and not visit.is_consumed(),
+		"unaudited patch inspection never buys, emits an intent or mutates anything")

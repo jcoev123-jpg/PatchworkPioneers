@@ -22,6 +22,12 @@ extends Control
 ## the offer; anything unresolvable reads "Card details unavailable" instead of
 ## a guessed number. It never changes a quoted price, the five actions, the
 ## purchase intent or the visit state.
+##
+## The priced patch row repeats the one trusted Patch Stall power preview:
+## hovering or focusing it shows the audited LivePatchStallPanel projection's
+## exact slot, power and trigger in the status band (the complete rule stays
+## in the patch Button's tooltip), and anything that audit cannot prove reads
+## PATCH_DETAILS_UNAVAILABLE instead of a guessed buff.
 signal intent_requested(intent: Dictionary)
 
 const PANEL_ART := "res://assets/paper/ui/reward_panel.png"
@@ -90,6 +96,7 @@ var _preview_index := -1 # Card row whose read-only preview fills the status ban
 var _hover_index := -1 # Card row under the pointer; -1 when no card is hovered.
 var _patch_hover_active := false # Whether the patch button is under the pointer.
 var _catalogs: Array = [] # Read-only authored catalogs for the preview, built once.
+var _patch_projection: Dictionary = {} # Cached audited patch slots/previews, built once.
 
 
 func _ready() -> void:
@@ -565,8 +572,11 @@ func _sync_preview() -> void:
 		if not _source_current():
 			status_label.text = STATUS_CLOSED
 		return
+	# The pointer wins while it is over any offer: a hovered patch outranks
+	# a focused card exactly as a hovered card outranks the patch's focus ring,
+	# so a mouse-only player always sees the row actually under the pointer.
 	var index := _hover_index
-	if index < 0:
+	if index < 0 and not _patch_hover_active:
 		index = _focused_card()
 	if index >= 0:
 		_apply_preview(index)
@@ -674,8 +684,44 @@ func _card_tooltip(index: int) -> String:
 			int(details["cost"]), int(offer.get("price", 0)), str(details["line"])]
 
 
-## The audited patch description uses the same catalog authority as the live
-## Patch Stall panel: only a validated slot/power identity produces text.
+## The single audited patch authority: the complete power/slot map built from
+## the same power-only catalogs the live Patch Stall binds, passed through that
+## panel's UNCHANGED verified-preview audit. Like the card preview catalogs the
+## result is built once per panel because the authored files are immutable; a
+## catalog that fails to load yields no authority at all and every patch
+## preview fails closed.
+func _patch_authority() -> Dictionary:
+	if _patch_projection.is_empty():
+		var slots: Dictionary = {}
+		for record in RunAuthoredPatchDefinitions.load_power_definitions():
+			if typeof(record) == TYPE_DICTIONARY and record.has("id") and record.has("slot"):
+				slots[str(record["id"])] = str(record["slot"])
+		if not slots.is_empty():
+			var previews := _trusted_patch_previews(slots)
+			if not previews.is_empty():
+				_patch_projection = {"slots": slots, "previews": previews}
+	return _patch_projection
+
+
+## The live Patch Stall's own verified-preview path, unchanged: a detached
+## read-only instance of that panel exists only to run its audited function
+## over the full power/slot map (it is never mounted, owns no state, and the
+## audit only reads authored constants and the shipped catalogs). This view
+## publishes exactly the power/trigger text the Patch Stall audit proves,
+## never a second independently copied description.
+func _trusted_patch_previews(slots: Dictionary) -> Dictionary:
+	var stall := LivePatchStallPanel.new()
+	var previews: Dictionary = stall._trusted_power_previews(slots)
+	stall.free()
+	return previews
+
+
+## The audited patch description reuses the one existing Patch Stall
+## verified-preview path: the offered ID must be a real power patch in the
+## audited slot catalog, and the trusted projection must have proven that
+## exact ID and slot. Anything that audit rejects - an inert starter slot, a
+## contradictory or unknown record - yields no details at all, so the view
+## fails closed with PATCH_DETAILS_UNAVAILABLE instead of guessing a rule.
 func _patch_details() -> Dictionary:
 	if _source.is_empty():
 		return {}
@@ -683,42 +729,23 @@ func _patch_details() -> Dictionary:
 	var offer_id := str(offer.get("id", ""))
 	if offer_id.is_empty():
 		return {}
-	# Build slot identity from the same audited catalogs.
-	var powers := RunAuthoredPatchDefinitions.load_power_definitions()
-	var slots: Dictionary = {}
-	for record in powers:
-		if typeof(record) == TYPE_DICTIONARY and record.has("id") and record.has("slot"):
-			slots[str(record["id"])] = str(record["slot"])
-	if not slots.has(offer_id):
+	var authority := _patch_authority()
+	var slots: Dictionary = authority.get("slots", {})
+	var previews: Dictionary = authority.get("previews", {})
+	if not slots.has(offer_id) or not previews.has(offer_id):
 		return {}
-	var slot: String = str(slots[offer_id])
-	var name := readable_id(offer_id)
-	# Ordinary short descriptions from the same trusted table.
-	var short_text: String = LivePatchStallPanel.SHORT_RULES.get(offer_id, "")
-	var full_text: String = ""
-	if short_text != "":
-		# Use the same text resolver; build a minimal valid catalog_slots.
-		var mini_slots := {offer_id: slot}
-		full_text = RunPatchWearerSummary._resolve_rules_text(offer_id, mini_slots)
-		if full_text.is_empty():
-			full_text = RunPatchWearerSummary.KNOWN_TEXTS.get(offer_id, "")
-	else:
-		# Rare patches: build from the audited rare identity.
-		if LivePatchStallPanel.RARE_IDENTITIES.has(offer_id):
-			if offer_id == "relay_bobbin":
-				short_text = "+1 shared energy (cap 3) when ally uses your Pin, 1/combat"
-				full_text = "Once per combat, if a different living hero consumes a Pinned token placed by this living, untorn wearer (confirmed receipt), gain +1 shared energy, capped at 3."
-			elif offer_id == "hearth_lining":
-				short_text = "First earned Quilt bonus/combat heals wearer 2 HP"
-				full_text = "Once per combat, at the first EARNED Quilt bonus, heal this living, untorn wearer 2 HP, up to maximum HP."
-		else:
-			return {}
-	if full_text.is_empty() and not LivePatchStallPanel.RARE_IDENTITIES.has(offer_id):
+	var slot := str(slots[offer_id])
+	if not ["HEAD", "ARM", "COAT"].has(slot):
+		return {}
+	var preview: Dictionary = previews[offer_id]
+	var short_text := str(preview.get("short", ""))
+	var full_text := str(preview.get("full", ""))
+	if short_text.is_empty() or full_text.is_empty():
 		return {}
 	return {
 		"id": offer_id,
 		"slot": slot,
-		"name": name,
+		"name": readable_id(offer_id),
 		"price": int(offer.get("price", 0)),
 		"sold": bool(offer.get("sold", false)),
 		"short": short_text,
