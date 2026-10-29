@@ -42,6 +42,7 @@ var _sew := CombatButtonGolemSewCards.new()
 var _roll := CombatButtonGolemRollCards.new()
 var _thread := CombatButtonGolemThreadCards.new()
 var _lunge := CombatRagDuelistLungeCards.new()
+var _snare := CombatRagDuelistTatteredSnareCards.new()
 var _barrage := CombatRagDuelistNeedleBarrageCards.new()
 var _needle := CombatYarnRangerNeedleCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
@@ -108,6 +109,8 @@ func _definition(card_id: String) -> Dictionary:
 	if _lunge.is_supported_card(card_id):
 		var card := _lunge._catalog_definition(card_id)
 		return card if _lunge._authentic(card, card_id) else {}
+	if _snare.is_supported_card(card_id):
+		return _snare._catalog_definition(card_id)
 	if _bolas.is_supported_card(card_id):
 		return CombatYarnRangerBolasCards.bolas_definition(card_id)
 	if _v3_tinker_scrap.is_supported_card(card_id):
@@ -1121,7 +1124,7 @@ func _update_visual(panel: Control) -> void:
 			var support_presenter = _app.get_node_or_null("LiveSupportHand")
 			playable = support_presenter != null and support_presenter._eligible(
 				panel, id, _app.deck, _app.party, _app.battle_view)
-		elif _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _thread.is_supported_card(id) or id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
+		elif _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _thread.is_supported_card(id) or id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
 			# The mounted battle owns both the legal picker and its shared pin.
 			# Catalog knowledge alone cannot enable Spring Trap.
 			playable = battle_preview != null and is_instance_valid(battle_preview) \

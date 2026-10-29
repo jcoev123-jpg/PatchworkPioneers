@@ -34,6 +34,14 @@ func _initialize() -> void:
 	_test_fear_refusals()
 	_test_fear_once_only_payment()
 	_test_fear_seeded_replay()
+	_test_straw_wrap_authentic_records()
+	_test_straw_wrap_paid_plays()
+	_test_straw_wrap_draw_exhausted()
+	_test_straw_wrap_reshuffle_order()
+	_test_straw_wrap_refusals()
+	_test_straw_wrap_catalog_preserved()
+	_test_straw_wrap_once_only_payment()
+	_test_straw_wrap_seeded_replay()
 	if failures.is_empty():
 		print("v3_scarecrow_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -1667,4 +1675,266 @@ class ForgedFearCards extends CombatScarecrowFearCards:
 				else:
 					record["upgrade_of"] = "scarecrow_sack_glare_plus"
 		return record
+
+
+# --- Scarecrow Straw Wrap and Straw Wrap+ paid ally Block-and-draw ---------------
+const STRAW_WRAP_IDS := ["scarecrow_straw_wrap", "scarecrow_straw_wrap_plus"]
+const STRAW_WRAP_BLOCKS := {
+	"scarecrow_straw_wrap": 6,
+	"scarecrow_straw_wrap_plus": 8,
+}
+
+
+func _straw_wrap_fixture(card_id: String, seat: int = 2) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 555
+	var cards: Array[String] = [card_id, "warden_strike", "warden_brace",
+		"tinker_pop_shot", "tinker_tune_up"]
+	var deck := CombatDeck.new(cards, rng)
+	_check(deck.start_turn(), "straw fixture starts genuine shared turn")
+	# Supply cards in discard so draw_extra has something to draw.
+	for filler: String in ["filler_bobbin", "filler_thread", "filler_twig",
+		"filler_scrap", "filler_paper"]:
+		deck.discard_pile.append(filler)
+	_check(deck.energy == 3 and deck.hand.size() == 5 and deck.hand.count(card_id) == 1,
+		"fixture genuinely holds sole requested straw card at three energy")
+	var heroes: Array = [{"id": "warden", "max_hp": 40},
+		{"id": "tinker", "max_hp": 25}]
+	heroes.insert(seat - 1, {"id": "scarecrow", "max_hp": 34,
+		"statuses": {"weak": 1}, "metadata": {"seams": ["straw", "felt"]}})
+	var party := CombatParty.new(heroes)
+	_check(party.is_valid() and party.get_hero(seat).get("id") == "scarecrow",
+		"fixture has three distinct heroes and Scarecrow in requested seat")
+	return {"deck": deck, "party": party, "rng": rng, "seat": seat}
+
+
+func _straw_wrap_snapshot(f: Dictionary) -> Dictionary:
+	var deck: CombatDeck = f["deck"]
+	var party: CombatParty = f["party"]
+	return {"hand": deck.hand.duplicate(), "draw": deck.draw_pile.duplicate(),
+		"discard": deck.discard_pile.duplicate(), "energy": deck.energy,
+		"active": deck.turn_active, "heroes": party.get_heroes(), "rng": f["rng"].state}
+
+
+func _straw_wrap_refused(f: Dictionary, card_id: Variant, reason: String,
+		target: int = 0) -> void:
+	var before := _straw_wrap_snapshot(f)
+	var result := CombatScarecrowStrawWrapCards.new().play_card(
+		f["deck"], f["party"], card_id, target)
+	_check(not result.get("ok", true) and result.get("reason") == reason,
+		"Straw Wrap refuses " + reason)
+	_check(_straw_wrap_snapshot(f) == before,
+		reason + " preserves all authorities and RNG")
+	result["drawn"] = -999
+	_check(_straw_wrap_snapshot(f) == before,
+		reason + " receipt is detached")
+
+
+func _straw_wrap_paid(f: Dictionary, card_id: String, target: int) -> Dictionary:
+	var before := _straw_wrap_snapshot(f)
+	var result := CombatScarecrowStrawWrapCards.new().play_card(
+		f["deck"], f["party"], card_id, target)
+	_check(result.get("ok", false), card_id + ": authorized paid straw play to "
+		+ str(target) + " from seat " + str(f["seat"]))
+	_check(result.get("card_id") == card_id, card_id + ": receipt names card")
+	_check(result.get("cost") == 1, card_id + ": receipt shows cost 1")
+	_check(result.get("owner_position") == f["seat"], card_id + ": receipt shows owner seat")
+	_check(result.get("target_position") == target,
+		card_id + ": receipt shows target seat")
+	var expected_block: int = STRAW_WRAP_BLOCKS[card_id]
+	_check(result.get("block_gained") == expected_block,
+		card_id + ": receipt shows printed block " + str(expected_block))
+	_check(f["party"].get_hero(target)["block"] == before["heroes"][target - 1]["block"]
+		+ expected_block,
+		card_id + ": target gains exactly printed block")
+	for other in [1, 2, 3]:
+		if other != target:
+			_check(f["party"].get_hero(other)["block"] == before["heroes"][other - 1]["block"],
+				card_id + ": non-target hero " + str(other) + " keeps block")
+	_check(f["deck"].energy == 2,
+		card_id + ": exactly one energy spent")
+	_check(f["deck"].hand.count(card_id) == 0,
+		card_id + ": held copy removed from hand")
+	_check(f["deck"].discard_pile.count(card_id) == 1,
+		card_id + ": exactly one copy discarded")
+	return result
+
+
+func _test_straw_wrap_authentic_records() -> void:
+	var pool := ScriptClass.new()
+	var service := CombatScarecrowStrawWrapCards.new()
+	for id: String in STRAW_WRAP_IDS:
+		var spec_block: int = STRAW_WRAP_BLOCKS[id]
+		_check(service.is_supported_card(id), id + ": service authenticates")
+		var record := pool.get_definition(id)
+		_check(not record.is_empty(), id + ": pool record exists")
+		_check(record.get("id") == id and record.get("owner") == "scarecrow",
+			id + ": owned by scarecrow")
+		_check(record.get("cost") == 1, id + ": cost 1")
+		_check(record.get("from_positions") == [1, 2, 3], id + ": any seat")
+		_check(record.get("target_kind") == "ally_single", id + ": ally target")
+		_check(record.get("to_positions") == [], id + ": empty TO")
+		_check(record.get("effects") == {"block": spec_block, "draw": 1},
+			id + ": effects match")
+		_check(record.get("reward_eligible") == (not id.ends_with("_plus")),
+			id + ": reward eligibility correct")
+
+
+func _test_straw_wrap_paid_plays() -> void:
+	for id: String in STRAW_WRAP_IDS:
+		for seat: int in [1, 2, 3]:
+			for target: int in [1, 2, 3]:
+				var f := _straw_wrap_fixture(id, seat)
+				var result := _straw_wrap_paid(f, id, target)
+				_check(result.get("drawn") == 1,
+					id + ": exactly one card drawn when supply available")
+
+
+func _test_straw_wrap_draw_exhausted() -> void:
+	# AC2: zero supply still resolves with drawn == 0.
+	var empty_f := _straw_wrap_fixture("scarecrow_straw_wrap", 1)
+	# Empty the draw and discard piles to have nothing drawable.
+	empty_f["deck"].draw_pile.clear()
+	empty_f["deck"].discard_pile.clear()
+	var result := CombatScarecrowStrawWrapCards.new().play_card(
+		empty_f["deck"], empty_f["party"], "scarecrow_straw_wrap", 2)
+	_check(result.get("ok", false), "exhausted supply: play succeeds")
+	_check(result.get("drawn") == 0, "exhausted supply: drawn is 0")
+	_check(empty_f["deck"].energy == 2, "exhausted supply: energy spent")
+	_check(empty_f["deck"].discard_pile == ["scarecrow_straw_wrap"],
+		"exhausted supply: card discarded")
+
+
+func _test_straw_wrap_reshuffle_order() -> void:
+	# AC2: draw first, then discard. A reshuffle cannot redraw the played card.
+	var f := _straw_wrap_fixture("scarecrow_straw_wrap_plus", 2)
+	# Manually discard a different card into discard pile so reshuffle has something.
+	f["deck"].discard_pile.append("straw_other")
+	var before := _straw_wrap_snapshot(f)
+	var result := _straw_wrap_paid(f, "scarecrow_straw_wrap_plus", 1)
+	_check(result.get("drawn") == 1, "reshuffle: one card drawn")
+	# More directly: the played card must not be in the new hand (since it was discarded after draw).
+	_check(not f["deck"].hand.has("scarecrow_straw_wrap_plus"),
+		"reshuffle: played card is not back in hand")
+
+
+func _test_straw_wrap_refusals() -> void:
+	var service := CombatScarecrowStrawWrapCards.new()
+
+	var f := _straw_wrap_fixture("scarecrow_straw_wrap", 2)
+	var before := _straw_wrap_snapshot(f)
+
+	# No held card
+	_straw_wrap_refused(f, "scarecrow_straw_wrap_plus", "card_not_held", 1)
+
+	# Unsupported / forged IDs
+	for broken in [null, 5, 3.5, true, [], {},
+		StringName("scarecrow_straw_wrap"), "missing", "warden_strike",
+		"scarecrow_straw_wrap_plus_plus", "SCARECROW_STRAW_WRAP",
+		" scarecrow_straw_wrap"]:
+		_straw_wrap_refused(f, broken, "unsupported_card", 1)
+
+	# Inactive turn
+	var inactive := _straw_wrap_fixture("scarecrow_straw_wrap", 2)
+	_check(inactive["deck"].end_turn() and not inactive["deck"].turn_active,
+		"inactive fixture really ends turn")
+	_straw_wrap_refused(inactive, "scarecrow_straw_wrap", "inactive_turn", 1)
+
+	# Insufficient energy
+	var poor := _straw_wrap_fixture("scarecrow_straw_wrap", 2)
+	_check(poor["deck"].try_spend_energy(3) and poor["deck"].energy == 0,
+		"poor fixture really spent all energy")
+	_straw_wrap_refused(poor, "scarecrow_straw_wrap", "insufficient_energy", 1)
+
+	# Missing owner
+	var no_owner := _straw_wrap_fixture("scarecrow_straw_wrap", 2)
+	no_owner["party"] = CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "tinker", "max_hp": 25},
+		{"id": "seamstress", "max_hp": 30}])
+	_check(no_owner["party"].is_valid() and no_owner["party"].get_hero(3)["id"] == "seamstress",
+		"missing-owner fixture is valid living without Scarecrow")
+	_straw_wrap_refused(no_owner, "scarecrow_straw_wrap", "owner_missing", 1)
+
+	# Downed owner
+	var torn := _straw_wrap_fixture("scarecrow_straw_wrap", 1)
+	_check(torn["party"].apply_damage(1, 34) and torn["party"].is_downed(1),
+		"downed-owner fixture really has zero HP on Scarecrow")
+	_straw_wrap_refused(torn, "scarecrow_straw_wrap", "owner_downed", 1)
+
+	# Downed target
+	var target_down := _straw_wrap_fixture("scarecrow_straw_wrap", 2)
+	_check(target_down["party"].apply_damage(1, 40) and target_down["party"].is_downed(1),
+		"downed-target fixture really killed Warden in seat 1")
+	_straw_wrap_refused(target_down, "scarecrow_straw_wrap", "target_downed", 1)
+
+	# Invalid target seat
+	for bad_target: int in [0, 4, -1]:
+		_straw_wrap_refused(f, "scarecrow_straw_wrap", "invalid_target", bad_target)
+
+
+func _test_straw_wrap_catalog_preserved() -> void:
+	# Check the unchanged catalog still has both named cards and their upgrade links.
+	var catalog := ScriptClass.new()
+	_check(catalog.has_card("scarecrow_straw_wrap"),
+		"catalog preserves straw_wrap base")
+	_check(catalog.has_card("scarecrow_straw_wrap_plus"),
+		"catalog preserves straw_wrap_plus")
+	_check(catalog.get_upgrade_id("scarecrow_straw_wrap") == "scarecrow_straw_wrap_plus",
+		"base upgrade link preserved")
+	_check(catalog.get_upgrade_id("scarecrow_straw_wrap_plus") == "",
+		"plus has no further upgrade")
+
+
+func _test_straw_wrap_once_only_payment() -> void:
+	var f := _straw_wrap_fixture("scarecrow_straw_wrap_plus", 2)
+	var before := _straw_wrap_snapshot(f)
+	var result := _straw_wrap_paid(f, "scarecrow_straw_wrap_plus", 3)
+	_check(f["deck"].energy == 2 and f["deck"].hand.count("scarecrow_straw_wrap_plus") == 0
+			and f["deck"].discard_pile == ["scarecrow_straw_wrap_plus"],
+		"one play costs exactly one energy and moves to discard once")
+	# Replay refused
+	var after := _straw_wrap_snapshot(f)
+	_straw_wrap_refused(f, "scarecrow_straw_wrap_plus", "card_not_held", 2)
+	_straw_wrap_refused(f, "scarecrow_straw_wrap_plus", "card_not_held", 3)
+	_check(_straw_wrap_snapshot(f) == after, "replay attempts never touch state")
+
+
+func _test_straw_wrap_seeded_replay() -> void:
+	var first := _straw_wrap_replay(7333)
+	var second := _straw_wrap_replay(7333)
+	_check(first == second, "seeded replay produces identical final state")
+	_check(first["rng"] == second["rng"], "seeded replay consumes no run RNG")
+	_check((first["results"] as Array).size() == 2
+			and first["results"][0].get("ok") == true
+			and first["results"][1].get("ok") == false,
+		"seeded replay keeps one paid straw and one refusal")
+	_check(first["results"][1].get("reason") == "card_not_held",
+		"final refusal is specifically missing held copy")
+
+
+func _straw_wrap_replay(seed_value: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var ids: Array[String] = ["scarecrow_straw_wrap",
+		"warden_strike", "warden_brace", "tinker_pop_shot", "tinker_tune_up"]
+	var deck := CombatDeck.new(ids, rng)
+	_check(deck.start_turn() and deck.hand.size() == 5, "replay deck starts real turn")
+	for filler: String in ["filler_bobbin", "filler_thread", "filler_twig",
+		"filler_scrap", "filler_paper"]:
+		deck.discard_pile.append(filler)
+	var party := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "scarecrow", "max_hp": 34},
+		{"id": "tinker", "max_hp": 25},
+	])
+	var service := CombatScarecrowStrawWrapCards.new()
+	var results: Array = []
+	results.append(service.play_card(deck, party, "scarecrow_straw_wrap", 2))
+	results.append(service.play_card(deck, party, "scarecrow_straw_wrap_plus", 2))
+	return {"rng": rng.state, "energy": deck.energy,
+		"hand": deck.hand.duplicate(), "draw": deck.draw_pile.duplicate(),
+		"discard": deck.discard_pile.duplicate(), "heroes": party.get_heroes(),
+		"results": results}
+
 

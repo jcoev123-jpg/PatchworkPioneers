@@ -30,6 +30,7 @@ var _pool_strikes := CombatPoolPlainStrikes.new()
 var _heavy_attacks := CombatWardenPoolHeavyAttacks.new()
 var _toss := CombatWardenV3ShieldTossCards.new()
 var _lunge := CombatRagDuelistLungeCards.new()
+var _snare := CombatRagDuelistTatteredSnareCards.new()
 var _barrage := CombatRagDuelistNeedleBarrageCards.new()
 var _needle := CombatYarnRangerNeedleCards.new()
 ## Button Golem's Knuckle/Snag resolver. It keeps no token store: every cast
@@ -793,6 +794,8 @@ func _definition(card_id: String) -> Dictionary:
 	if _lunge.is_supported_card(card_id):
 		var card := _lunge._catalog_definition(card_id)
 		return card if _lunge._authentic(card, card_id) else {}
+	if _snare.is_supported_card(card_id):
+		return _snare._catalog_definition(card_id)
 	if _thread.is_supported_card(card_id):
 		return _golem_pool.get_definition(card_id) if not _thread._authenticate(card_id).is_empty() else {}
 	if _overload.is_supported_card(card_id):
@@ -850,6 +853,8 @@ func _target_preview(id: String) -> Dictionary:
 		return _barrage_forecast(app.party, app.enemies, id)
 	if _lunge.is_supported_card(id):
 		return _lunge_forecast(app.party, app.enemies, id)
+	if _snare.is_supported_card(id):
+		return _snare_forecast(app.party, app.enemies, id)
 	if _thread.is_supported_card(id):
 		return _thread_forecast(app.party, app.enemies, id)
 	if _overload.is_supported_card(id):
@@ -895,7 +900,7 @@ func _queue_attack(position: int) -> void:
 	# A single-target target ID plus the held panel's original hand index
 	# prevent an enemy replacement or equivalent-copy panel swap at commit.
 	var target_id := ""
-	if (_needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
+	if (_needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
 			or _targeting.is_seamstress_control(id) \
 			or _targeting.is_heavy_pool_attack(id) \
 			or _toss.is_supported_card(id) \
@@ -924,10 +929,11 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var toss := _toss.is_supported_card(id) or _helmet.is_supported_card(id)
 	var overload := _overload.is_supported_card(id)
 	var lunge := _lunge.is_supported_card(id)
+	var snare := _snare.is_supported_card(id)
 	var barrage := _barrage.is_supported_card(id)
 	var needle := _needle.is_supported_card(id)
 	var thread := _thread.is_supported_card(id)
-	var guarded := needle or barrage or lunge or thread or direct or control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS
+	var guarded := needle or barrage or lunge or snare or thread or direct or control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -957,7 +963,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		_reject_stitch()
 		return
 	var energy_before: int = _deck.energy
-	if (needle or barrage or lunge or thread or direct or combo or path or heavy or toss or overload) and (app._battle_closed \
+	if (needle or barrage or lunge or snare or thread or direct or combo or path or heavy or toss or overload) and (app._battle_closed \
 			or (target_id.is_empty() and not (_is_warden_card(id) and position == 0)) \
 			or app.deck._rng != rng or (combo and not app._combo_battle_current())):
 		_reject_stitch()
@@ -966,7 +972,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
 			or (((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id)) \
-			or ((needle or barrage or lunge or thread or control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS) \
+			or ((needle or barrage or lunge or snare or thread or control or combo or path or heavy or toss or overload or id in CombatAttackCards.ATTACK_IDS) \
 				and position > 0 and (app._battle_closed or target_id.is_empty() \
 				or app.enemies.get_enemy(position).get("id") != target_id))):
 		if guarded or _targeting.is_sight_glass(id):
@@ -1011,6 +1017,10 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 		if forecast:
 			return _lunge_forecast(party, enemies, id)
 		return _lunge.play_card(_deck, party, enemies, id, position)
+	if _snare.is_supported_card(id):
+		if forecast:
+			return _snare_forecast(party, enemies, id)
+		return _snare.play_card(_deck, party, enemies, id, position)
 	if _thread.is_supported_card(id):
 		if forecast:
 			return _thread_forecast(party, enemies, id)
@@ -1436,7 +1446,7 @@ func _eligible(panel) -> bool:
 	var index: int = panel.get_index()
 	var path_ok: bool = (_is_path_card(id) and not _path_positions(id).is_empty()) \
 		or (_is_warden_card(id) and warden_preview(id).get("playable", false))
-	return (_needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
+	return (_needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
 func _sync_battle() -> void:
@@ -1735,6 +1745,18 @@ func _refresh() -> void:
 		var reading := "Unavailable: no legal target or 2 energy"
 		if preview.playable:
 			reading = "Choose one foe (all 3 hits stay on it): " + "; ".join(choices)
+		cue.text = "%s | %d energy | P / click card; %s / click enemy; Esc: cancel\n%s" % [
+			definition.display_name, definition.cost, _key_hint(preview.target_positions), reading]
+		return
+	if _snare.is_supported_card(id):
+		current_forecast = preview.duplicate(true)
+		var details: PackedStringArray = []
+		for target in preview.targets:
+			details.append("%d: Tangled %d -> %d (+%d)" % [target.position,
+				target.tangled_before, target.tangled_after, target.tangled_added])
+		var reading := "Unavailable: no legal living enemy, owner, energy or Tangled capacity"
+		if preview.playable:
+			reading = "Choose one enemy slot: " + "; ".join(details)
 		cue.text = "%s | %d energy | P / click card; %s / click enemy; Esc: cancel\n%s" % [
 			definition.display_name, definition.cost, _key_hint(preview.target_positions), reading]
 		return
@@ -2157,6 +2179,33 @@ func _barrage_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -
 			"base_damage": int(plan.base_damage)})
 	return {"playable": not positions.is_empty(), "requires_selection": true,
 		"target_positions": positions, "hits": hits}
+
+
+## Status-only forecast delegates legality, including Tangled overflow, to the
+## paid authority for each ORIGINAL enemy slot. Never invent a damage hit.
+func _snare_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> Dictionary:
+	var unavailable := {"playable": false, "requires_selection": true,
+		"target_positions": [], "targets": []}
+	var app = get_parent()
+	if app == null or _deck == null or app.deck != _deck or app._battle_closed \
+			or app.enemy_intents == null or _turn != app.enemy_intents._turn_index \
+			or _deck._rng != app.run_rng or party != app.party or enemies != app.enemies \
+			or _session != [party, enemies, app.battle_result, app.run_rng, app.enemy_intents] \
+			or not _snare.is_supported_card(id):
+		return unavailable
+	var slots: Array[int] = []
+	var targets: Array[Dictionary] = []
+	for position in CombatRagDuelistTatteredSnareCards.TO_POSITIONS:
+		var plan: Dictionary = _snare._prepare(_deck, party, enemies, id, position)
+		if not plan.get("ok", false):
+			continue
+		var enemy: Dictionary = enemies.get_enemy(position)
+		var before: int = int(enemy.get("statuses", {}).get("tangled", 0))
+		slots.append(position)
+		targets.append({"position": position, "tangled_before": before,
+			"tangled_added": int(plan.tangled_added), "tangled_after": before + int(plan.tangled_added)})
+	return {"playable": not slots.is_empty(), "requires_selection": true,
+		"target_positions": slots, "targets": targets}
 
 
 ## Read-only mirror of the Lunge authority's preflight; mutation stays in play_card.
