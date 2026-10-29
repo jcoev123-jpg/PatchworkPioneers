@@ -23,8 +23,13 @@ const ENRAGE_FIELD := "enrage"
 ## a player hit is a separate task.
 const ENRAGE_STACKS_FIELD := "enrage_stacks"
 
+## `eyelet` is the ONE fight-scoped Button Golem Eyelet Guard authority admitted
+## by CombatRoundFlow. It is quoted read-only on this phase's detached actors and
+## only ever writes retaliation into the staged enemy roster, so a rejected batch
+## publishes neither its damage nor its thorns.
 func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
-		reactions: CombatWardenGuardReactions = null, policy_targets := false) -> Dictionary:
+		reactions: CombatWardenGuardReactions = null, policy_targets := false,
+		eyelet: CombatButtonGolemEyeletGuardCards = null) -> Dictionary:
 	var failure := {"ok": false, "events": []}
 	if party == null or enemies == null or not party.is_valid() or not enemies.is_valid():
 		return failure
@@ -137,6 +142,13 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 					var damage := status_rules.adjusted_attack_damage(announced,
 						staged_enemies.get_enemy(source).get("statuses", {}),
 						staged_party.get_hero(actual_target).get("statuses", {}))
+					# Armed Eyelet Guard Thorns is quoted on the PRE-hit living actual
+					# recipient, after any Guard redirect and before any HP/Block write,
+					# so a hit that downs the bearer still retaliates and a redirected
+					# hit on a different hero never does.
+					var eyelet_quote: Dictionary = {}
+					if eyelet != null:
+						eyelet_quote = eyelet.project_contact(staged_party, actual_target, damage)
 					var attack: Dictionary = effective.duplicate(true)
 					attack.erase("type")
 					attack.erase("hits")
@@ -168,6 +180,18 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 						pre_hit_living and event.applied and damage > 0)
 					if riposte_damage > 0 and not staged_enemies.is_slain(source):
 						if not staged_enemies.apply_damage(source, riposte_damage):
+							return failure
+					# Armed Eyelet Guard Thorns retaliates N against the ORIGINAL
+					# attacking enemy for each confirmed positive-damage hit on the
+					# pre-hit living bearer, even when hero Block absorbed the whole
+					# hit. It strikes the detached roster only, so Block, revival and
+					# a source already slain by Riposte behave exactly as they do for
+					# the Warden's own Thorns and this batch's atomic publication.
+					var eyelet_thorns: int = int(eyelet_quote.get("thorns", 0)) \
+						if bool(eyelet_quote.get("applied", false)) else 0
+					if eyelet_thorns > 0 and pre_hit_living and event.applied and damage > 0 \
+							and not staged_enemies.is_slain(source):
+						if not staged_enemies.apply_damage(source, eyelet_thorns):
 							return failure
 					# Drain is the source's own reward for that one confirmed hit: it
 					# heals the actor that really lost HP (after Guard and Block), not

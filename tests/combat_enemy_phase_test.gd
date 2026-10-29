@@ -24,6 +24,7 @@ func _initialize() -> void:
 	_test_riposte_confirmed_hits_and_block()
 	_test_riposte_multi_hit_and_guard_redirect()
 	_test_riposte_skips_misses_and_rollback()
+	_test_eyelet_guard_thorns()
 	if failures.is_empty():
 		print("combat_enemy_phase_test: PASS (", checks, " checks)")
 	else:
@@ -1623,3 +1624,251 @@ func _test_riposte_skips_misses_and_rollback() -> void:
 		and replay_traces[0][1][1]["hp"] == 22 and replay_traces[0][1][1]["block"] == 0
 		and replay_traces[0][1][1]["statuses"] == {"riposte": 3, "bleed": 1},
 		"AC4: exact multi-source Riposte, Enrage, Bleed, Block and HP outcomes verified")
+
+
+const EYELET_SCRIPT = preload("res://scripts/combat_button_golem_eyelet_guard_cards.gd")
+const EYELET_SPECS := [
+	["button_golem_eyelet_guard", 6, 2],
+	["button_golem_eyelet_guard_plus", 9, 3],
+]
+
+
+## A real three-hero party whose Button Golem really occupies `seat`, plus a real
+## seeded deck holding the requested Eyelet printing at one energy.
+func _eyelet_fixture(card_id: String, seat: int, seed_value: int) -> Array:
+	var definitions: Array = [
+		{"id": "warden", "max_hp": 40},
+		{"id": "tinker", "max_hp": 26}]
+	definitions.insert(seat - 1, {"id": "button_golem", "max_hp": 30})
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid() and party.get_hero(seat)["id"] == "button_golem"
+		and party.get_hero(seat)["hp"] == 30,
+		"precondition: living Button Golem really occupies seat " + str(seat))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var cards: Array[String] = [card_id, "warden_strike", "warden_brace",
+		"tinker_pop_shot", "tinker_scrap_bomb"]
+	var deck := CombatDeck.new(cards, rng)
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3
+		and deck.hand.has(card_id) and deck.hand.count(card_id) == 1,
+		"precondition: the shared hand really holds one " + card_id + " and 3 energy")
+	var eyelet = EYELET_SCRIPT.new()
+	var armed: Dictionary = eyelet.play_card(deck, party, card_id)
+	var printed: Array = []
+	for spec: Array in EYELET_SPECS:
+		if spec[0] == card_id:
+			printed = spec
+	_check(not printed.is_empty() and armed.get("ok", false)
+		and party.get_hero(seat)["block"] == int(printed[1])
+		and eyelet.is_armed() and eyelet.get_armed_thorns() == int(printed[2]),
+		"precondition: the paid " + card_id + " armed " + str(printed[2])
+			+ " Thorns on seat " + str(seat))
+	return [party, deck, eyelet, printed]
+
+
+## AC2: a real End Turn's staged phase retaliates the armed 2/3 Thorns against the
+## ORIGINAL attacker for each confirmed positive-damage hit on the pre-hit-living
+## Golem — even a fully Block-absorbed hit — from every legal seat and printing,
+## while misses, other heroes, non-attacks, a torn bearer and an unarmed fight
+## never retaliate. Events, actor identity, slot order, revival and RNG stay exact.
+func _test_eyelet_guard_thorns() -> void:
+	for spec: Array in EYELET_SPECS:
+		var card_id: String = spec[0]
+		var block: int = spec[1]
+		var thorns: int = spec[2]
+		for seat in [1, 2, 3]:
+			var fixture := _eyelet_fixture(card_id, seat, 9700 + seat)
+			var party: CombatParty = fixture[0]
+			var enemies := _enemies()
+			var eyelet = fixture[2]
+			_check(enemies.gain_block(1, 1),
+				card_id + " seat " + str(seat) + ": attacker carries one real Block")
+			var golem_ref: Dictionary = party._heroes[seat - 1]
+			var enemy_ref: Dictionary = enemies._enemies[0]
+			var other_ref: Dictionary = enemies._enemies[1]
+			var result := phase.execute_phase(party, enemies, [_attack(1, 4, seat)],
+				null, false, eyelet)
+			_check(result == {"ok": true, "events": [_event("attack", 1, true, seat)]},
+				card_id + " seat " + str(seat) + ": the beat keeps the ordinary event shape")
+			_check(party.get_hero(seat)["hp"] == 30 and party.get_hero(seat)["block"] == block - 4,
+				card_id + " seat " + str(seat) + ": hero Block absorbs first, no HP loss")
+			_check(enemies.get_enemy(1)["block"] == 0
+				and enemies.get_enemy(1)["hp"] == 12 - (thorns - 1),
+				card_id + " seat " + str(seat) + ": attacker takes exactly " + str(thorns)
+					+ " Thorns through its Block")
+			_check(enemies.get_enemy(2) == other_ref,
+				card_id + " seat " + str(seat) + ": a non-attacking sibling takes nothing")
+			_check(is_same(party._heroes[seat - 1], golem_ref)
+				and is_same(enemies._enemies[0], enemy_ref),
+				card_id + " seat " + str(seat) + ": actor dictionaries keep their identity")
+			_check(not party.get_hero(seat).get("statuses", {}).has("thorns")
+				and eyelet.is_armed() and eyelet.get_armed_thorns() == thorns,
+				card_id + " seat " + str(seat)
+					+ ": armed Thorns stays fight state, never a hero status")
+
+			# A fully Block-absorbed contact still retaliates exactly once.
+			var absorbed := _eyelet_fixture(card_id, seat, 9704 + seat)
+			var absorbed_party: CombatParty = absorbed[0]
+			var absorbed_eyelet = absorbed[2]
+			var absorbed_enemies := _enemies()
+			_check(absorbed_party.gain_block(seat, 3),
+				card_id + " seat " + str(seat) + ": bearer gains three extra Block")
+			var absorb_res := phase.execute_phase(absorbed_party, absorbed_enemies,
+				[_attack(1, block + 3, seat)], null, false, absorbed_eyelet)
+			_check(absorb_res == {"ok": true, "events": [_event("attack", 1, true, seat)]}
+				and absorbed_party.get_hero(seat)["hp"] == 30
+				and absorbed_party.get_hero(seat)["block"] == 0,
+				card_id + " seat " + str(seat) + ": the whole hit is Block-absorbed")
+			_check(absorbed_enemies.get_enemy(1)["hp"] == 12 - thorns,
+				card_id + " seat " + str(seat)
+					+ ": a Block-absorbed confirmed hit still takes " + str(thorns))
+
+			# A hit that downs the Golem still quotes the PRE-hit living bearer,
+			# because the arming was live when the contact really happened.
+			var lethal := _eyelet_fixture(card_id, seat, 9760 + seat)
+			var lethal_party: CombatParty = lethal[0]
+			var lethal_enemies := _enemies()
+			var lethal_res := phase.execute_phase(lethal_party, lethal_enemies,
+				[_attack(1, 60, seat)], null, false, lethal[2])
+			_check(lethal_res == {"ok": true, "events": [_event("attack", 1, true, seat)]}
+				and lethal_party.is_downed(seat) and lethal_party.get_hero(seat)["hp"] == 0,
+				card_id + " seat " + str(seat) + ": the announced hit really tears the Golem")
+			_check(lethal_enemies.get_enemy(1)["hp"] == 12 - thorns,
+				card_id + " seat " + str(seat) + ": a hit that tears the pre-hit-living bearer"
+					+ " still retaliates " + str(thorns))
+
+			# Two hits of one announced attack retaliate independently.
+			var multi := _eyelet_fixture(card_id, seat, 9707 + seat)
+			var multi_party: CombatParty = multi[0]
+			var multi_enemies := _enemies()
+			var multi_res := phase.execute_phase(multi_party, multi_enemies,
+				[{"enemy_position": 1, "type": "attack", "amount": 6, "hits": 2,
+					"target_position": seat}], null, false, multi[2])
+			_check(multi_res == {"ok": true, "events": [
+				_event("attack", 1, true, seat), _event("attack", 1, true, seat)]},
+				card_id + " seat " + str(seat) + ": both hits resolve in order")
+			_check(multi_enemies.get_enemy(1)["hp"] == 12 - thorns * 2,
+				card_id + " seat " + str(seat) + ": each confirmed hit retaliates "
+					+ str(thorns) + " separately")
+
+			# A Blind miss, a zero-damage hit and a non-attack never retaliate.
+			var miss := _eyelet_fixture(card_id, seat, 9710 + seat)
+			var miss_enemies := _enemies()
+			miss_enemies._enemies[0]["statuses"] = {"blind_next_attack": 1}
+			var miss_res := phase.execute_phase(miss[0], miss_enemies,
+				[_attack(1, 4, seat)], null, false, miss[2])
+			_check(miss_res.get("ok", false) and not miss_res["events"][0]["applied"]
+				and miss_enemies.get_enemy(1)["hp"] == 12
+				and miss_enemies.get_enemy(1)["block"] == 0
+				and miss_enemies.get_enemy(1)["statuses"] == {},
+				card_id + " seat " + str(seat) + ": a Blind miss takes no Thorns")
+			var zero := _eyelet_fixture(card_id, seat, 9713 + seat)
+			var zero_enemies := _enemies()
+			var zero_res := phase.execute_phase(zero[0], zero_enemies,
+				[_attack(1, 0, seat)], null, false, zero[2])
+			_check(zero_res.get("ok", false) and zero_res["events"][0]["applied"]
+				and zero_enemies.get_enemy(1)["hp"] == 12,
+				card_id + " seat " + str(seat) + ": a zero-damage hit takes no Thorns")
+			var idle := _eyelet_fixture(card_id, seat, 9716 + seat)
+			var idle_enemies := _enemies()
+			var idle_res := phase.execute_phase(idle[0], idle_enemies,
+				[_block(1, 2)], null, false, idle[2])
+			_check(idle_res.get("ok", false) and idle_enemies.get_enemy(1)["hp"] == 12
+				and idle_enemies.get_enemy(1)["block"] == 2,
+				card_id + " seat " + str(seat) + ": a non-attack beat takes no Thorns")
+
+			# A hit on another hero, a pre-downed bearer and an unarmed fight stay inert.
+			var other_seat: int = 1 if seat != 1 else 3
+			var elsewhere := _eyelet_fixture(card_id, seat, 9719 + seat)
+			var elsewhere_enemies := _enemies()
+			var elsewhere_res := phase.execute_phase(elsewhere[0], elsewhere_enemies,
+				[_attack(1, 4, other_seat)], null, false, elsewhere[2])
+			_check(elsewhere_res.get("ok", false)
+				and elsewhere_enemies.get_enemy(1)["hp"] == 12,
+				card_id + " seat " + str(seat) + ": a hit on another hero takes no Thorns")
+			var torn := _eyelet_fixture(card_id, seat, 9722 + seat)
+			_check(torn[0].apply_damage(seat, 999) and torn[0].is_downed(seat),
+				card_id + " seat " + str(seat) + ": the armed bearer is genuinely torn")
+			var torn_enemies := _enemies()
+			var torn_res := phase.execute_phase(torn[0], torn_enemies,
+				[_attack(1, 4, seat)], null, false, torn[2])
+			_check(torn_res.get("ok", false) and not torn_res["events"][0]["applied"]
+				and torn_enemies.get_enemy(1)["hp"] == 12,
+				card_id + " seat " + str(seat) + ": a torn bearer takes and deals no Thorns")
+			var unarmed := _eyelet_fixture(card_id, seat, 9725 + seat)
+			var unarmed_enemies := _enemies()
+			var unarmed_phase := phase.execute_phase(unarmed[0], unarmed_enemies,
+				[_attack(1, 4, seat)], null, false, EYELET_SCRIPT.new())
+			_check(unarmed_phase.get("ok", false)
+				and unarmed_enemies.get_enemy(1)["hp"] == 12,
+				card_id + " seat " + str(seat) + ": an unarmed fight takes no Thorns")
+
+	# A Guard redirect takes the hit AWAY from the armed bearer: no Thorns, and the
+	# original Thorns receipt still belongs to the Warden reaction alone.
+	var redirect_fixture := _eyelet_fixture("button_golem_eyelet_guard", 2, 9731)
+	var redirect_party: CombatParty = redirect_fixture[0]
+	var redirect_eyelet = redirect_fixture[2]
+	var redirect_enemies := _enemies()
+	var reactions := CombatWardenGuardReactions.new()
+	var warden_catalog := WardenPoolCards.new()
+	_check(reactions.apply_committed_card(warden_catalog.get_definition("warden_draw_fire"),
+		redirect_party) and reactions.is_guarding() and reactions.get_thorns() == 0,
+		"precondition: the Warden really Guards with no Thorns of her own")
+	var redirect_res := phase.execute_phase(redirect_party, redirect_enemies,
+		[_attack(1, 4, 2)], reactions, false, redirect_eyelet)
+	_check(redirect_res == {"ok": true, "events": [_guard_event(1, 2, true, 1, true, 0)]},
+		"a redirected hit keeps the exact Guard receipt with zero retaliation")
+	_check(redirect_enemies.get_enemy(1)["hp"] == 12
+		and redirect_party.get_hero(1)["hp"] == 40,
+		"the redirected hit lands on the Warden and never on the armed Golem")
+
+	# Expedition 2: the attacker dies to real Thorns and its once-only revival keeps
+	# its original slot and latch through the same staged publication.
+	var revive_fixture := _eyelet_fixture("button_golem_eyelet_guard_plus", 1, 9732)
+	var revive_party: CombatParty = revive_fixture[0]
+	var revive_eyelet = revive_fixture[2]
+	var revive_enemies := CombatEnemies.new([
+		{"id": "wraith", "max_hp": 2, "revive_once": true},
+		{"id": "bystander", "max_hp": 15}])
+	_check(revive_enemies.is_valid() and not revive_enemies.get_enemy(1).get("revived", false),
+		"precondition: an unrevived two-HP wraith occupies the attacking slot")
+	var revive_res := phase.execute_phase(revive_party, revive_enemies,
+		[_attack(1, 2, 1)], null, false, revive_eyelet)
+	_check(revive_res == {"ok": true, "events": [_event("attack", 1, true, 1)]},
+		"a lethal Thorns retaliation still publishes the ordinary attack event")
+	_check(revive_enemies.get_enemy(1)["position"] == 1
+		and revive_enemies.get_enemy(1)["hp"] == 1
+		and revive_enemies.get_enemy(1).get("revived") == true
+		and not revive_enemies.is_slain(1),
+		"Thorns kills the attacker once: it revives in its own slot with its latch")
+
+	# RNG: a committed Eyelet phase draws nothing, and a rejected one publishes none
+	# of its staged damage.
+	seed(9741)
+	var next_global := randi()
+	seed(9741)
+	var rng_fixture := _eyelet_fixture("button_golem_eyelet_guard", 1, 9742)
+	var rng_party: CombatParty = rng_fixture[0]
+	var rng_eyelet = rng_fixture[2]
+	var rng_enemies := _enemies()
+	_check(phase.execute_phase(rng_party, rng_enemies, [_attack(1, 5, 1)],
+		null, false, rng_eyelet).get("ok", false) and randi() == next_global,
+		"a committed Eyelet phase consumes no RNG")
+	var rollback_fixture := _eyelet_fixture("button_golem_eyelet_guard", 1, 9743)
+	var rollback_party: CombatParty = rollback_fixture[0]
+	var rollback_eyelet = rollback_fixture[2]
+	var rollback_enemies := _enemies()
+	_check(rollback_enemies.gain_block(2, CombatEnemies.MAX_INT - 2),
+		"precondition: the later source's Block is at exact capacity")
+	var rollback_before := [rollback_party.get_heroes(), rollback_enemies.get_enemies()]
+	var rollback_res := phase.execute_phase(rollback_party, rollback_enemies,
+		[_attack(1, 5, 1), _block(2, 4)], null, false, rollback_eyelet)
+	_check(rollback_res == {"ok": false, "events": []}
+		and [rollback_party.get_heroes(), rollback_enemies.get_enemies()] == rollback_before,
+		"a later failure rolls back the earlier staged Thorns damage completely")
+	_check(rollback_eyelet.is_armed() and rollback_eyelet.get_armed_thorns() == 2,
+		"a rejected phase leaves the armed mode untouched for the retry")
+	var retry_res := phase.execute_phase(rollback_party, rollback_enemies,
+		[_attack(1, 5, 1)], null, false, rollback_eyelet)
+	_check(retry_res.get("ok", false) and rollback_enemies.get_enemy(1)["hp"] == 10,
+		"the accepted retry still retaliates the same two Thorns")

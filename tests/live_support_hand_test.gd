@@ -686,7 +686,13 @@ func _run() -> void:
 		"button_golem_pop_button", "button_golem_pop_button_plus"]:
 		_check(presenter._is_actionable(id) and presenter._enemy_service(id) is CombatButtonGolemPopCards,
 			"Pop uses its sole paid resolver through support picker: " + id)
-	for id in ["button_golem_eyelet_guard", "button_golem_pop_button_plus_plus", "button_golem_starter_loose_look"]:
+	# The authentic Eyelet Guard pair is now really wired; aliases and every other
+	# pool/starter Golem card still stay outside the support wiring.
+	for card_id in CombatButtonGolemEyeletGuardCards.PRINTINGS:
+		_check(presenter._is_actionable(card_id) and presenter._is_eyelet_card(card_id),
+			"authentic Eyelet Guard is wired through the support hand: " + card_id)
+	for id in ["button_golem_eyelet_guard_plus_plus", "button_golem_eyelet_guard+",
+			"button_golem_pop_button_plus_plus", "button_golem_starter_loose_look"]:
 		_check(not presenter._is_actionable(id), "other Golem cards remain outside support wiring: " + id)
 	_check(app.deck == null and presenter._bindings.is_empty(), "title has no support bindings")
 	# Find a deterministic opening with Brace, so it must stack atop the real passive.

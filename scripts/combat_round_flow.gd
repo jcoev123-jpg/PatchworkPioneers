@@ -24,6 +24,10 @@ var _turrets: Array[Dictionary] = []
 var _turret_service := CombatTinkerV3TurretCards.new()
 # One Taunt authority per fight: both the mounted hand and enemy turn use this instance.
 var _taunt_service := CombatWardenV3TauntCards.new()
+# One Eyelet Guard authority per fight: the mounted held cast arms it and the
+# same instance's retaliation is quoted by the enemy turn. It is never a status
+# key and is never recreated per click, so a second fight starts unarmed.
+var _eyelet_guard := CombatButtonGolemEyeletGuardCards.new()
 
 
 func _init(deck: CombatDeck = null, party: CombatParty = null,
@@ -95,6 +99,7 @@ func begin_fight() -> bool:
 	# The initial accepted player turn must not inherit modes from an older fight.
 	if _reactions != null:
 		_reactions.begin_player_turn()
+	_eyelet_guard.reset_fight()
 	return true
 
 
@@ -152,6 +157,37 @@ func play_warden_taunt_card(card_id: Variant) -> bool:
 		return false
 	var kind: String = CombatWardenV3TauntCards.CARDS[card_id]["target_kind"]
 	return bool(_taunt_service.play_card(_deck, _party, card_id, kind, 0).get("ok", false))
+
+
+## Validate a real held Button Golem Eyelet Guard against THIS admitted fight
+## before spending anything. Self-only, so no target seat is ever selected.
+func can_play_button_golem_eyelet_card(card_id: Variant) -> bool:
+	if not _started or not _valid_bindings() or not _deck.turn_active:
+		return false
+	if _deck != _battle_deck or _party != _battle_party \
+			or _enemies != _battle_enemies or _intents != _battle_intents \
+			or _result != _battle_result:
+		return false
+	if not _result.can_continue() or _party.is_defeated() or _enemies.is_victorious():
+		return false
+	if not _eyelet_guard.is_supported_card(card_id):
+		return false
+	return bool(_eyelet_guard._prepare(_deck, _party, card_id, 0).get("ok", false))
+
+
+## Paid Eyelet Guard/Guard+ through the fight's ONE resolver: the printed Block
+## lands on the Golem's real seat and its printed one-turn Thorns is armed on
+## this same instance, which end_turn quotes and the next player turn expires.
+func play_button_golem_eyelet_card(card_id: Variant) -> bool:
+	if not can_play_button_golem_eyelet_card(card_id):
+		return false
+	return bool(_eyelet_guard.play_card(_deck, _party, card_id, 0).get("ok", false))
+
+
+## This fight's single Eyelet Guard authority. Read-only for callers: the mode is
+## armed only by a paid play and cleared only by this flow's own turn boundary.
+func get_eyelet_guard_authority() -> CombatButtonGolemEyeletGuardCards:
+	return _eyelet_guard
 
 
 ## True only while this begun fight can still accept a freshly paid turret:
@@ -274,8 +310,11 @@ func end_turn() -> bool:
 			projected.append(beat)
 			# The existing executor owns legal shove/special semantics, multi-hit
 			# damage and source deaths. No authoritative party, deck or RNG writes.
+			# The same Eyelet authority is quoted here, so a projected Thorns kill
+			# matches what the committed phase will really do.
 			if not CombatEnemyPhase.new().execute_phase(projected_party,
-					projected_enemies, [beat], _reactions, bound_policies).get("ok", false):
+					projected_enemies, [beat], _reactions, bound_policies,
+					_eyelet_guard).get("ok", false):
 				return false
 		effective = projected
 	if not turret_plan["victorious"] \
@@ -299,7 +338,7 @@ func end_turn() -> bool:
 	if _result.evaluate() != CombatBattleResult.ACTIVE:
 		return true
 	var phase := CombatEnemyPhase.new().execute_phase(_party, _enemies, effective, _reactions,
-		_intents.is_bound())
+		_intents.is_bound(), _eyelet_guard)
 	# _phase_is_executable prevalidates the entire batch against this roster.
 	if not phase["ok"]:
 		return false
@@ -340,9 +379,11 @@ func end_turn() -> bool:
 		_party.start_player_turn()
 		_deck.start_turn()
 		# Retain Guarding and Thorns for the entire enemy phase, then expire
-		# them only after an accepted new player turn has opened.
+		# them only after an accepted new player turn has opened. The armed
+		# Eyelet Guard Thorns lasts exactly that same one turn.
 		if _reactions != null:
 			_reactions.begin_player_turn()
+		_eyelet_guard.expire_on_next_player_turn()
 	return true
 
 
@@ -481,6 +522,6 @@ func _phase_is_executable(next_heroes: Array, effective: Array, roster: Array = 
 	var enemies := CombatEnemies.new(roster)
 	enemies._enemies.assign(roster.duplicate(true))
 	if not CombatEnemyPhase.new().execute_phase(party, enemies, effective, _reactions,
-			_intents.is_bound())["ok"]:
+			_intents.is_bound(), _eyelet_guard)["ok"]:
 		return false
 	return CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies())["ok"]
