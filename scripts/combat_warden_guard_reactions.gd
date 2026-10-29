@@ -13,6 +13,8 @@ const ALLOWED_CARD_IDS: Array[String] = [
 	"warden_draw_fire_plus",
 	"warden_counter_stitch",
 	"warden_counter_stitch_plus",
+	"warden_v3_buckle_rebound",
+	"warden_v3_buckle_rebound_plus",
 ]
 
 var guarding: bool = false
@@ -94,6 +96,36 @@ func is_patch_binding_valid() -> bool:
 	return true
 
 
+## Only these two v3 records are admitted to the existing reaction service.
+## Validate their printed rules before allowing an already-paid or hand play.
+static func _is_buckle_rebound(card_id: String) -> bool:
+	return card_id == "warden_v3_buckle_rebound" or card_id == "warden_v3_buckle_rebound_plus"
+
+
+static func _reaction_definition(card_id: String) -> Dictionary:
+	if not _is_buckle_rebound(card_id):
+		return WardenPoolCards.new().get_definition(card_id)
+	var definition: Dictionary = V3WardenPoolCards.new().get_definition(card_id)
+	var upgraded: bool = card_id == "warden_v3_buckle_rebound_plus"
+	if definition.get("id") != card_id or definition.get("owner") != WARDEN_ID \
+			or definition.get("cost") != 1 or definition.get("from_positions") != [1, 2] \
+			or definition.get("target_kind") != "self" or definition.get("to_positions") != [] \
+			or definition.get("effects") != {"block": 6 if upgraded else 4,
+				"thorns": 4 if upgraded else 3, "duration": "until_next_turn"} \
+			or definition.get("starting_copies") != 0 \
+			or definition.get("reward_eligible") != not upgraded:
+		return {}
+	if upgraded:
+		if definition.get("upgrade_of") != "warden_v3_buckle_rebound" \
+				or definition.has("upgrade_id"):
+			return {}
+	else:
+		if definition.get("upgrade_id") != "warden_v3_buckle_rebound_plus" \
+				or definition.has("upgrade_of"):
+			return {}
+	return definition
+
+
 ## Read-only wearer Block projection for one authored Warden reaction card.
 ## Returns the authored Block plus +2 per genuine, living, worn block patch.
 ## Guarding, Thorns and every other effect stay exactly as authored.
@@ -106,7 +138,7 @@ func project_block(card_id: Variant) -> Dictionary:
 	var card: String = card_id as String
 	if not ALLOWED_CARD_IDS.has(card):
 		return rejected
-	var definition: Dictionary = WardenPoolCards.new().get_definition(card)
+	var definition: Dictionary = _reaction_definition(card)
 	if definition.is_empty() or definition.get("id") != card \
 			or definition.get("owner") != WARDEN_ID:
 		return rejected
@@ -191,9 +223,11 @@ func apply_committed_card(arg1: Variant, arg2: Variant) -> bool:
 	if not ALLOWED_CARD_IDS.has(card_id):
 		return false
 
-	var catalog: WardenPoolCards = WardenPoolCards.new()
-	var auth_def: Dictionary = catalog.get_definition(card_id)
+	var auth_def: Dictionary = _reaction_definition(card_id)
 	if auth_def.is_empty():
+		return false
+	# V3 cards must be complete, genuine catalog records (or an exact ID).
+	if _is_buckle_rebound(card_id) and not card_dict.is_empty() and card_dict != auth_def:
 		return false
 
 	# Validate caller dictionary fields if provided
@@ -289,8 +323,7 @@ func play_from_hand(deck: Variant, party: Variant, card_id: Variant) -> bool:
 	if not d.hand.has(id):
 		return false
 
-	var catalog: WardenPoolCards = WardenPoolCards.new()
-	var auth_def: Dictionary = catalog.get_definition(id)
+	var auth_def: Dictionary = _reaction_definition(id)
 	if auth_def.is_empty() or auth_def.get("id") != id:
 		return false
 

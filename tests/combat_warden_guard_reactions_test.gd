@@ -17,6 +17,8 @@ func _run_all_suites() -> void:
 	_test_ac3_reactions_sequential_and_movement()
 	_test_ac4_lifecycle_and_rejections()
 	_test_hand_spend()
+	_test_v3_buckle_rebound_paid_and_retaliation()
+	_test_v3_buckle_rebound_refusals_and_patches()
 	_test_patch_block_projection_ac1()
 	_test_patch_wearer_and_binding_ac2()
 	_test_patch_negative_and_stale_ac3()
@@ -736,6 +738,7 @@ func _combat_snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemi
 		deck.hand.duplicate(true),
 		deck.draw_pile.duplicate(true),
 		deck.discard_pile.duplicate(true),
+		deck.exhausted.duplicate(true),
 		deck.energy,
 		deck.turn_active,
 		deck.combat_state.energy,
@@ -1767,3 +1770,240 @@ func _test_real_mounted_hand() -> void:
 	await _return_to_title(app)
 	app.queue_free()
 	await _frames()
+
+
+# V3-1 Buckle Rebound is admitted to this rules service only, not the live hand.
+# These are genuine card IDs in a real started CombatDeck, with no hand injection.
+func _test_v3_buckle_rebound_paid_and_retaliation() -> void:
+	var catalog: V3WardenPoolCards = V3WardenPoolCards.new()
+	for card_id: String in ["warden_v3_buckle_rebound", "warden_v3_buckle_rebound_plus"]:
+		var upgraded: bool = card_id.ends_with("_plus")
+		var block: int = 6 if upgraded else 4
+		var thorns_amount: int = 4 if upgraded else 3
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			"V3 AC1: authentic " + card_id + " catalog record exists")
+		_check(definition.get("owner") == "warden" and definition.get("cost") == 1
+			and definition.get("from_positions") == [1, 2]
+			and definition.get("target_kind") == "self" and definition.get("to_positions") == []
+			and definition.get("effects") == {"block": block, "thorns": thorns_amount,
+				"duration": "until_next_turn"}, "V3 AC1: exact printed metadata " + card_id)
+		_check(definition.get("upgrade_of", "") == ("warden_v3_buckle_rebound" if upgraded else "")
+			and definition.get("upgrade_id", "") == ("" if upgraded else "warden_v3_buckle_rebound_plus"),
+			"V3 AC1: exact upgrade relation " + card_id)
+
+		for seat: int in [1, 2]:
+			var label: String = "V3 " + card_id + " seat " + str(seat)
+			var party: CombatParty = _party_with_warden_at(seat)
+			var enemies: CombatEnemies = _enemies()
+			var deck: CombatDeck = _deck([card_id], 140 + seat)
+			var reactions: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+			_check(deck.turn_active and deck.hand == [card_id]
+				and deck.energy == CombatState.TURN_ENERGY,
+				label + ": real turn really holds exactly this card")
+			_check(party.get_hero(seat).get("id") == "warden"
+				and not party.is_downed(seat), label + ": real living owner occupies this seat")
+			var before: Array = party.get_heroes()
+			var rng_before: int = deck._rng.state
+			_check(reactions.play_from_hand(deck, party, card_id), label + ": paid play succeeds")
+			_check(deck.energy == CombatState.TURN_ENERGY - 1
+				and deck.hand.is_empty() and deck.discard_pile == [card_id],
+				label + ": exactly one cost and one discard")
+			_check(deck._rng.state == rng_before, label + ": play consumes no RNG")
+			_check(party.get_hero(seat)["block"] == block
+				and party.get_hero(seat)["hp"] == 40,
+				label + ": only Warden gains exact printed Block")
+			for ally_position: int in range(1, CombatParty.PARTY_SIZE + 1):
+				if ally_position != seat:
+					_check(party.get_hero(ally_position) == before[ally_position - 1],
+						label + ": other hero " + str(ally_position) + " untouched")
+			_check(reactions.get_thorns() == thorns_amount and not reactions.is_guarding(),
+				label + ": correct Thorns, without invented Guarding")
+
+			# A confirmed hit absorbed entirely by Block still retaliates.
+			var first: Dictionary = reactions.resolve_enemy_attack(party, enemies,
+				{"enemy_position": 1, "target_position": seat, "amount": 1})
+			_check(first.get("ok") == true and first.get("applied") == true
+				and first.get("retaliation_damage") == thorns_amount,
+				label + ": actual Block-only hit retaliates")
+			_check(party.get_hero(seat)["block"] == block - 1
+				and party.get_hero(seat)["hp"] == 40
+				and enemies.get_enemy(1)["hp"] == 12 - thorns_amount,
+				label + ": Block absorbed hit, enemy took Thorns")
+
+			# Another confirmed hit retaliates once again; an ally hit does not.
+			var second: Dictionary = reactions.resolve_enemy_attack(party, enemies,
+				{"enemy_position": 1, "target_position": seat, "amount": 1})
+			_check(second.get("applied") == true and second.get("retaliation_damage") == thorns_amount
+				and enemies.get_enemy(1)["hp"] == 12 - 2 * thorns_amount,
+				label + ": second genuine hit triggers Thorns again")
+			var warden_before_ally: Dictionary = party.get_hero(seat)
+			var ally_position: int = 3 if seat == 2 else 2
+			var enemy2_before: Dictionary = enemies.get_enemy(2)
+			var ally: Dictionary = reactions.resolve_enemy_attack(party, enemies,
+				{"enemy_position": 2, "target_position": ally_position, "amount": 2})
+			_check(ally.get("applied") == true and ally.get("retaliation_damage") == 0
+				and party.get_hero(seat) == warden_before_ally
+				and enemies.get_enemy(2) == enemy2_before,
+				label + ": hit on another hero cannot retaliate")
+
+			# The real recipient's one-use Dodge prevents both damage and Thorns.
+			party._heroes[seat - 1]["statuses"] = {"dodge_next_attack": 1}
+			var before_dodge: Dictionary = party.get_hero(seat)
+			var enemy_before_dodge: Dictionary = enemies.get_enemy(1)
+			var dodge: Dictionary = reactions.resolve_enemy_attack(party, enemies,
+				{"enemy_position": 1, "target_position": seat, "amount": 3})
+			_check(dodge.get("ok") == true and dodge.get("applied") == false
+				and dodge.get("retaliation_damage") == 0
+				and party.get_hero(seat)["block"] == before_dodge["block"]
+				and party.get_hero(seat)["hp"] == before_dodge["hp"]
+				and not party.get_hero(seat)["statuses"].has("dodge_next_attack")
+				and enemies.get_enemy(1) == enemy_before_dodge,
+				label + ": Dodge consumes only token, never retaliates")
+
+			_check(enemies.apply_damage(2, 15) and enemies.is_slain(2),
+				label + ": slain-source precondition")
+			var before_dead: Array = party.get_heroes()
+			var dead_source: Dictionary = reactions.resolve_enemy_attack(party, enemies,
+				{"enemy_position": 2, "target_position": seat, "amount": 2})
+			_check(dead_source.get("ok") == true and dead_source.get("applied") == false
+				and dead_source.get("retaliation_damage") == 0 and party.get_heroes() == before_dead,
+				label + ": dead attacker cannot trigger Thorns")
+
+			var block_before_expiry: int = int(party.get_hero(seat)["block"])
+			_check(reactions.begin_player_turn() and not reactions.is_active()
+				and reactions.get_thorns() == 0
+				and party.get_hero(seat)["block"] == block_before_expiry,
+				label + ": next turn expires Thorns but retains Block")
+			var post_expiry: Dictionary = reactions.resolve_enemy_attack(party, enemies,
+				{"enemy_position": 1, "target_position": seat, "amount": 1})
+			_check(post_expiry.get("applied") == true and post_expiry.get("retaliation_damage") == 0,
+				label + ": no Thorns after expiry")
+
+		# Already-paid dispatch accepts the complete genuine v3 record at the
+		# post-swap real Warden seat, without hand or deck side effects.
+		var committed_party: CombatParty = _party_with_warden_at(2)
+		var committed: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+		_check(committed.apply_committed_card(definition, committed_party)
+			and committed_party.get_hero(2)["block"] == block
+			and committed.get_thorns() == thorns_amount and not committed.is_guarding(),
+			"V3 AC1: authentic already-paid " + card_id + " from seat 2")
+
+
+func _test_v3_buckle_rebound_refusals_and_patches() -> void:
+	var catalog: V3WardenPoolCards = V3WardenPoolCards.new()
+	var foes: CombatEnemies = _enemies()
+	for card_id: String in ["warden_v3_buckle_rebound", "warden_v3_buckle_rebound_plus"]:
+		var upgraded: bool = card_id.ends_with("_plus")
+		var authored_block: int = 6 if upgraded else 4
+		var authored_thorns: int = 4 if upgraded else 3
+		var card: Dictionary = catalog.get_definition(card_id)
+		_check(not card.is_empty(), "V3 AC3: genuine metadata exists for rejection controls")
+		var reactions: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+
+		var not_held: CombatDeck = _deck(["warden_draw_fire"], 201)
+		_check(not not_held.hand.has(card_id), "V3 AC3: absent-card precondition")
+		_refuse_paid(reactions, not_held, _party(), foes, card_id,
+			"V3 AC3: unheld " + card_id)
+		var foreign: CombatDeck = _deck(["warden_v3_shield_toss"], 203)
+		_check(foreign.hand == ["warden_v3_shield_toss"],
+			"V3 AC3: held unsupported card precondition")
+		_refuse_paid(reactions, foreign, _party(), foes, "warden_v3_shield_toss",
+			"V3 AC3: foreign v3 card")
+		var inactive: CombatDeck = CombatDeck.new([card_id], _rng(205))
+		inactive.hand.append(card_id)
+		_check(not inactive.turn_active and inactive.hand.has(card_id),
+			"V3 AC3: inactive but held precondition")
+		_refuse_paid(reactions, inactive, _party(), foes, card_id,
+			"V3 AC3: inactive turn")
+		var poor: CombatDeck = _deck([card_id], 207)
+		_check(poor.try_spend_energy(CombatState.TURN_ENERGY) and poor.energy == 0,
+			"V3 AC3: unaffordable precondition")
+		_refuse_paid(reactions, poor, _party(), foes, card_id, "V3 AC3: no energy")
+
+		var no_warden: CombatParty = CombatParty.new([
+			{"id": "seamstress", "max_hp": 30},
+			{"id": "tinker", "max_hp": 26},
+			{"id": "another", "max_hp": 20},
+		])
+		_check(no_warden.is_valid(), "V3 AC3: valid roster without a Warden")
+		_refuse_paid(reactions, _deck([card_id], 209), no_warden, foes, card_id,
+			"V3 AC3: absent Warden")
+		var downed: CombatParty = _party()
+		_check(downed.apply_damage(1, 40) and downed.is_downed(1),
+			"V3 AC3: downed Warden precondition")
+		_refuse_paid(reactions, _deck([card_id], 211), downed, foes, card_id,
+			"V3 AC3: downed Warden")
+		_refuse_paid(reactions, _deck([card_id], 213),
+			_party_with_warden_at(3), foes, card_id, "V3 AC3: wrong seat 3")
+		_refuse_committed(reactions, card, _party_with_warden_at(3), foes,
+			"V3 AC3: already-paid wrong seat 3")
+
+		var capped: CombatParty = _party()
+		capped._heroes[0]["block"] = CombatParty.MAX_INT
+		_refuse_paid(reactions, _deck([card_id], 215), capped, foes, card_id,
+			"V3 AC3: Block capacity")
+		_refuse_committed(reactions, card, capped, foes,
+			"V3 AC3: committed Block capacity")
+		var full_thorns: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+		full_thorns.thorns = CombatParty.MAX_INT
+		_refuse_paid(full_thorns, _deck([card_id], 217), _party(), foes, card_id,
+			"V3 AC3: Thorns capacity")
+		_refuse_committed(full_thorns, card, _party(), foes,
+			"V3 AC3: committed Thorns capacity")
+
+		# An ID plus incomplete or substituted card metadata is not a paid receipt.
+		var forgeries: Array = []
+		var fake_cost: Dictionary = card.duplicate(true)
+		fake_cost["cost"] = 0
+		forgeries.append(fake_cost)
+		var fake_owner: Dictionary = card.duplicate(true)
+		fake_owner["owner"] = "tinker"
+		forgeries.append(fake_owner)
+		var fake_seat: Dictionary = card.duplicate(true)
+		fake_seat["from_positions"] = [1, 2, 3]
+		forgeries.append(fake_seat)
+		var fake_target: Dictionary = card.duplicate(true)
+		fake_target["target_kind"] = "ally_single"
+		forgeries.append(fake_target)
+		var fake_to: Dictionary = card.duplicate(true)
+		fake_to["to_positions"] = [1]
+		forgeries.append(fake_to)
+		var fake_effects: Dictionary = card.duplicate(true)
+		fake_effects["effects"]["thorns"] = 999
+		forgeries.append(fake_effects)
+		var fake_relation: Dictionary = card.duplicate(true)
+		fake_relation["upgrade_of" if upgraded else "upgrade_id"] = "warden_draw_fire"
+		forgeries.append(fake_relation)
+		var incomplete: Dictionary = {"id": card_id}
+		forgeries.append(incomplete)
+		var missing_effects: Dictionary = card.duplicate(true)
+		missing_effects.erase("effects")
+		forgeries.append(missing_effects)
+		for index: int in range(forgeries.size()):
+			_refuse_committed(reactions, forgeries[index], _party(), foes,
+				"V3 AC3: forged catalog record " + card_id + " case " + str(index))
+		_check(reactions.get_thorns() == 0 and not reactions.is_guarding(),
+			"V3 AC3: failed records leave modes untouched")
+
+		# Both genuine worn patches add Block to the Warden alone through the
+		# same authenticated ARM and HEAD rules as legacy reaction cards.
+		var worn: Dictionary = _patch_fixture({"HEAD": "warden", "ARM": "warden"})
+		var patched: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+		_check(patched.bind_patch_wardrobe(worn["wardrobe"], worn["torn"]),
+			"V3 AC1: bind genuine Warden-worn HEAD/ARM patches")
+		_check(patched.project_block(card_id) == {
+			"ok": true, "block": authored_block + 4, "bonus": 4},
+			"V3 AC1: both patches contribute exactly +4 Block to " + card_id)
+		var patched_party: CombatParty = _party()
+		var patched_deck: CombatDeck = _deck([card_id], 219)
+		_check(patched.play_from_hand(patched_deck, patched_party, card_id)
+			and patched_party.get_hero(1)["block"] == authored_block + 4
+			and patched.get_thorns() == authored_thorns,
+			"V3 AC1: paid patched Block and unchanged Thorns " + card_id)
+		var other_wearer: Dictionary = _patch_fixture({"HEAD": "tinker", "ARM": "tinker"})
+		var unboosted: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+		_check(unboosted.bind_patch_wardrobe(other_wearer["wardrobe"], other_wearer["torn"])
+			and unboosted.project_block(card_id).get("block") == authored_block
+			and unboosted.project_block(card_id).get("bonus") == 0,
+			"V3 AC1: another hero's patches cannot boost " + card_id)
