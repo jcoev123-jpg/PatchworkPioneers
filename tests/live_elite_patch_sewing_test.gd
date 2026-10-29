@@ -387,6 +387,13 @@ func _attack_patch_claims() -> void:
 			var rng: int = app.run_rng.state
 			var ids: Array = app._catalog_trinket_ids()
 			for definition in RunAuthoredPatchDefinitions.load_definitions():
+				if RunAuthoredPatchDefinitions.HEIRLOOM_IDS.has(definition.id):
+					# P12 Heirlooms stay unmounted in live stock until their
+					# combat powers are playable, so their authored records
+					# must be absent from the shipped Elite pool.
+					_check(ids.count(definition.id) == 0,
+						"real Elite pool keeps unmounted Heirloom unstocked: " + definition.id)
+					continue
 				_check(ids.count(definition.id) == 1, "real Elite pool retains candidate once: " + definition.id)
 			_check(app.run_rng.state == rng, "reading shared Elite catalog consumes no RNG")
 			for enemy in app.enemies.get_enemies():

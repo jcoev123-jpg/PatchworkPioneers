@@ -1905,7 +1905,8 @@ static func _contact_traits(enemy: Dictionary) -> Dictionary:
 
 ## All displayed names, stacks and explanatory help come from the same live record.
 ## A malformed optional field is simply empty; rendering never normalizes gameplay data.
-func _status_copy(enemy: Dictionary, contact_traits: Dictionary = {}) -> Dictionary:
+func _status_copy(enemy: Dictionary, contact_traits: Dictionary = {},
+		survival_traits: Dictionary = {}) -> Dictionary:
 	var source: Variant = enemy.get("statuses", {})
 	var visible: Array[String] = []
 	var help: Array[String] = []
@@ -1946,9 +1947,44 @@ func _status_copy(enemy: Dictionary, contact_traits: Dictionary = {}) -> Diction
 			help.append(String(LiveEnemyIntentBadge.CONTACT_HELP[keyword]))
 	if not passive_row.is_empty():
 		visible.append("  ·  ".join(passive_row))
+	if survival_traits.has("revival"):
+		var revival: String = survival_traits["revival"]
+		visible.append("Revive ready" if revival == "ready" else "Revive spent")
+		if revival == "ready":
+			help.append("Revive ready: the first lethal HP loss revives this Wraith at %d HP (half max HP, rounded up), in its original slot. Only once." % CombatEnemies.revive_hp(enemy["max_hp"]))
+		else:
+			help.append("Revive spent: this Wraith has already revived once; its next lethal HP loss is final.")
+	if survival_traits.get("split") == true:
+		visible.append("Splits if room")
+		help.append("Splits if room: only a confirmed paid-card lethal hit can replace this Quilt Termite with two %d-HP Half Quilt Termites, and only while an enemy slot is available (fewer than %d foes). Bleed and the enemy phase do not trigger a split." % [CombatEnemies.revive_hp(enemy["max_hp"]), CombatEnemies.MAX_ENEMIES])
 	if visible.is_empty():
 		return {}
 	return {"caption": "\n".join(visible), "help": "\n".join(help)}
+
+
+## Survival warnings are never inferred from an ID alone: this is called only
+## for a living, ID-matched puppet in the currently mounted authoritative roster.
+## Its strings describe the model's latch and post-paid-card staging conditions;
+## reading these flags never stages a split or settles HP.
+static func _survival_traits(enemy: Dictionary, occupied_slots: int) -> Dictionary:
+	var hp: Variant = enemy.get("hp")
+	var maximum: Variant = enemy.get("max_hp")
+	if not hp is int or not maximum is int or hp <= 0 or maximum <= 0 or hp > maximum:
+		return {}
+	if enemy.get("id") == "razor_ribbon_wraith" \
+			and enemy.get("name") == "Razor Ribbon Wraith" and maximum >= 27 \
+			and enemy.get(CombatEnemies.REVIVE_FIELD) is bool \
+			and enemy[CombatEnemies.REVIVE_FIELD] == true \
+			and CombatEnemies.valid_revive_flags(enemy):
+		return {"revival": "ready" if CombatEnemies.revive_pending(enemy) else "spent"}
+	if occupied_slots < CombatEnemies.MAX_ENEMIES \
+			and enemy.get("id") == CombatEnemies.TERMITE_ID \
+			and enemy.get(CombatEnemies.SPLIT_FIELD) is bool \
+			and enemy[CombatEnemies.SPLIT_FIELD] == true \
+			and CombatEnemies.valid_split_flags(enemy) \
+			and CombatEnemies._termite_parent_attack(enemy, int(enemy.get("position", 0))) >= 0:
+		return {"split": true}
+	return {}
 
 
 ## A validated, source-owned Enrage count, or -1 for absent/invalid metadata.
@@ -2096,8 +2132,15 @@ func _refresh() -> void:
 			and _admitted_ids.size() == roster.size() \
 			and _admitted_ids[index] == enemy["id"]
 		var contact_traits: Dictionary = _contact_traits(enemy) if trusted_contact else {}
+		var trusted_survival: bool = position == index + 1 and enemy.get("hp") is int \
+			and enemy["hp"] > 0 and enemies == app.enemies and _battle == app.battle_view \
+			and roster.size() == _status_tags.size() \
+			and _admitted_ids.size() == roster.size() \
+			and enemy.get("id") is String and _admitted_ids[index] == enemy["id"] \
+			and puppet.actor_id == enemy["id"]
+		var survival_traits: Dictionary = _survival_traits(enemy, roster.size()) if trusted_survival else {}
 		var status_tag := _status_tags[index]
-		var status_copy: Dictionary = _status_copy(enemy, contact_traits) if show_hazard or (
+		var status_copy: Dictionary = _status_copy(enemy, contact_traits, survival_traits) if show_hazard or (
 			position == index + 1 and enemy.get("hp") is int and enemy["hp"] > 0
 			and enemies == app.enemies and _battle == app.battle_view) else {}
 		var status_label := status_tag.get_node("Caption") as Label
