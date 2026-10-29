@@ -643,6 +643,13 @@ func _validate_view(status: String, label: String) -> void:
 				label + " portrait is inert, linear filtered and aspect preserving")
 		var name_label := row.get_node("RowInset/RowLine/HeroName") as Label
 		var detail_label := row.get_node("RowInset/RowLine/HeroDetail") as Label
+		var seat_label := row.get_node_or_null("RowInset/RowLine/SeatLabel") as Label
+		var seat_index: int = row.get_index()
+		_check(seat_label != null and seat_label.text == "%s  ·  %d" % [
+			LiveRunTerminalResultPanel.HERO_SEAT_NAMES[seat_index], seat_index + 1]
+			and seat_label.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and seat_label.get_theme_font_size("font_size") >= 18,
+			label + " genuine front/middle/back sewn tab ignores pointer input")
 		_check(name_label != null and name_label.theme_type_variation == "PatchHeading"
 			and (name_label.get_theme_font("font") as Font).resource_path == HEADING_FONT
 			and name_label.get_theme_font_size("font_size") >= 18,
@@ -653,6 +660,10 @@ func _validate_view(status: String, label: String) -> void:
 			label + " hero ribbon detail keeps the inherited body face at 18 px or more")
 		_check(screen.encloses(row.get_global_rect()),
 			label + " hero ribbon fits the 1280x720 stage")
+		_check(detail_label.get_line_count() > 0
+			and detail_label.get_visible_line_count() == detail_label.get_line_count()
+			and row.get_global_rect().encloses(detail_label.get_global_rect()),
+			label + " full wrapped HP/tear/patch text is inside the sewn ticket")
 		_check(row.size.y >= 180.0 and row.size.y <= 260.0,
 			label + " hero portrait ticket is prominent and bounded, height %s" % str(row.size.y))
 	_check(panel.hero_recap.size.y <= 290.0,
@@ -1177,6 +1188,16 @@ func _mounted_composites(ledger: Dictionary, wardrobe: RunPatchWardrobe,
 		var bar := panel.stitched_scroll.get_v_scroll_bar()
 		_check(bar.max_value > panel.stitched_scroll.size.y,
 			label + " scroll viewport is shorter than three retained rows")
+		panel.stitched_scroll.grab_focus()
+		await _frames()
+		_check(panel.stitched_scroll.has_focus(),
+			label + " retained-card list accepts keyboard focus")
+		await _key(KEY_END)
+		_check(panel.stitched_scroll.scroll_vertical > 0,
+			label + " keyboard End scrolls to the third retained card")
+		await _key(KEY_HOME)
+		_check(panel.stitched_scroll.scroll_vertical == 0,
+			label + " keyboard Home returns to the first retained card")
 		panel.stitched_scroll.scroll_vertical = 99999
 		await _frames()
 		_check(panel.stitched_scroll.scroll_vertical > 0,
