@@ -1132,7 +1132,7 @@ func _test_rejections() -> void:
 		var source := visit.read_state()
 		_check(panel.stitch_button.disabled and not panel.upgrade_button.disabled and not panel.leave_button.disabled, "poor/no-pair keeps free decisions")
 		_check(panel.option_buttons.is_empty() and panel.preview().is_empty()
-			and panel.preview_label.text == "Choose Upgrade, Stitch or Leave, then confirm."
+			and panel.preview_label.text == "Choose Upgrade or Leave, then confirm."
 			and panel.confirm_button.disabled, "unavailable Stitch has a neutral unselected preview")
 		_check(panel.status_label.text.contains("Insufficient") if fixture[0] < 3 else panel.status_label.text.contains("No different-owner"), "reason visibly explained")
 		panel.stitch_button.pressed.emit()

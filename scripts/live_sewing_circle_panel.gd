@@ -90,8 +90,7 @@ func _ready() -> void:
 	_refresh()
 	# A visit bound before this panel was mounted becomes keyboard-ready here:
 	# the first primary action takes focus, exactly as a rebind does.
-	if _active():
-		upgrade_button.grab_focus()
+	_focus_initial()
 
 
 ## The physical number keys are an alias for the four mounted Buttons. A valid
@@ -185,8 +184,7 @@ func bind(visit: RunSewingCircleVisit) -> void:
 	if is_node_ready():
 		_connect_session()
 		_refresh()
-		if _active():
-			upgrade_button.grab_focus()
+		_focus_initial()
 
 
 func close() -> void:
@@ -246,14 +244,16 @@ func _refresh() -> void:
 	visible = true
 	_clear_options()
 	var active := _active()
-	upgrade_button.disabled = not active or _visit.upgrade_options().is_empty()
-	stitch_button.disabled = not active or _visit.stitch_first_options().is_empty()
-	leave_button.disabled = not active
+	var quoted: Array = _visit.quote().get("choices", []) if active else []
+	upgrade_button.disabled = not active or not quoted.has("upgrade") or _visit.upgrade_options().is_empty()
+	stitch_button.disabled = not active or not quoted.has("stitch") or _visit.stitch_first_options().is_empty()
+	leave_button.disabled = not active or not quoted.has("leave")
 	confirm_button.disabled = true
 	preview_label.text = "Choose Upgrade, Stitch or Leave, then confirm."
 	if not active:
 		status_label.text = "Visit closed or awaiting controller settlement."
 		return
+	preview_label.text = _neutral_prompt(quoted)
 	status_label.text = "%d scraps. Upgrade: free. Stitch: %d scraps. Leave: free." % [
 		_source.remaining_scraps, RunRestStitchCards.SCRAP_COST]
 	if _source.remaining_scraps < RunRestStitchCards.SCRAP_COST:
@@ -361,9 +361,35 @@ func _choose_filter(owner: String, epoch: int, rows_epoch: int, chip: Variant) -
 			break
 
 
+func _neutral_prompt(quoted: Array) -> String:
+	var actions: Array[String] = []
+	if quoted.has("upgrade") and not upgrade_button.disabled:
+		actions.append("Upgrade")
+	if quoted.has("stitch") and not stitch_button.disabled:
+		actions.append("Stitch")
+	if quoted.has("leave") and not leave_button.disabled:
+		actions.append("Leave")
+	match actions.size():
+		3: return "Choose %s, %s or %s, then confirm." % [actions[0], actions[1], actions[2]]
+		2: return "Choose %s or %s, then confirm." % [actions[0], actions[1]]
+		1: return "Choose %s, then confirm." % actions[0]
+	return "Choose Upgrade, Stitch or Leave, then confirm."
+
+
+func _focus_initial() -> void:
+	if not _active():
+		return
+	for button in [upgrade_button, stitch_button, leave_button]:
+		if not button.disabled:
+			button.grab_focus()
+			return
+
+
 func _wire_focus() -> void:
 	var chain: Array[Button] = []
 	for button in [upgrade_button, stitch_button, leave_button] + filter_buttons + option_buttons + [confirm_button]:
+		button.focus_next = NodePath()
+		button.focus_previous = NodePath()
 		if not button.disabled:
 			chain.append(button)
 	for i in range(chain.size()):
