@@ -86,6 +86,9 @@ const CLOUD_COST := {CLOUD_BASE: 2, CLOUD_PLUS: 1}
 const CLOUD_FROM := [2, 3]
 const CLOUD_EFFECTS := {"blind_next_attack": true, "exhaust": true}
 const BLIND_KEY := "blind_next_attack"
+## Fear is the shared literal-boolean buff lock (`cannot_buff_next_turn: true`), the one canonical
+## status that is not an integer counter.
+const FEAR_KEY := "cannot_buff_next_turn"
 
 var failures: Array[String] = []
 var checks: int = 0
@@ -117,6 +120,7 @@ func _initialize() -> void:
 	_test_cloud_ac1_paid_play()
 	_test_cloud_ac2_no_stack_and_phase()
 	_test_cloud_ac3_rejections()
+	_test_cloud_fear_bearing_roster()
 	if failures.is_empty():
 		print("v3_lantern_monk_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -2017,6 +2021,86 @@ func _test_cloud_ac3_rejections() -> void:
 			forged_deck, forged_party, forged_enemies, card_id, 0)
 		_check(restored.get("ok") == true and restored.get("card_id") == card_id,
 			card_id + ": the restored authentic pair plays")
+
+
+## AC1/AC3: the canonical Fear status `cannot_buff_next_turn: true` is legal on the real roster.
+## An otherwise authentic base or '+' cast against a Feared living enemy line (and a Feared hero)
+## still pays exactly once, exhausts one held copy and arms Blind 1 on every living enemy while
+## Fear and every other status, the slain slot and the seeded RNG stay unchanged. A malformed Fear
+## value is still refused with byte-identical state.
+func _test_cloud_fear_bearing_roster() -> void:
+	for card_id: String in CLOUD_IDS:
+		var party := _monk_party(2)
+		party._heroes[0]["statuses"] = {"weak": 1, FEAR_KEY: true}
+		var enemies := _cloud_enemies()
+		_check(enemies.apply_damage(2, 15) and enemies.is_slain(2),
+			card_id + ": the middle slot is genuinely slain (Fear fixture)")
+		enemies._enemies[0]["statuses"] = {"weak": 2, "bleed": 1, FEAR_KEY: true}
+		enemies._enemies[2]["statuses"] = {"exposed": 3, FEAR_KEY: true}
+		# A slain slot may keep its own status map; it must never gain Blind or change.
+		enemies._enemies[1]["statuses"] = {"weak": 4, FEAR_KEY: true}
+		var dead_before: Dictionary = enemies.get_enemy(2)
+		_check(enemies.get_enemy(1)["statuses"].get(FEAR_KEY) == true
+				and typeof(enemies.get_enemy(1)["statuses"][FEAR_KEY]) == TYPE_BOOL
+				and enemies.get_enemy(3)["statuses"].get(FEAR_KEY) == true,
+			card_id + ": living enemies really carry the canonical boolean Fear")
+		_check(party.get_hero(1)["statuses"] == {"weak": 1, FEAR_KEY: true},
+			card_id + ": a hero really carries the canonical boolean Fear")
+		var deck := _cloud_deck(card_id)
+		var held_before: int = deck.hand.count(card_id)
+		var energy_before: int = deck.energy
+		var before := _cloud_snapshot(deck, party, enemies)
+		var result: Dictionary = cloud_service.play_card(deck, party, enemies, card_id, 0)
+		_check(result.get("ok") == true and result.get("reason") == "applied",
+			card_id + ": canonical Fear on the roster does not block an authentic paid cast")
+		_check(result.get("cost") == CLOUD_COST[card_id]
+				and result.get("energy_before") == energy_before
+				and deck.energy == energy_before - CLOUD_COST[card_id],
+			card_id + ": exactly the printed cost is charged beside Fear")
+		_check(deck.exhausted.count(card_id) == 1
+				and deck.hand.count(card_id) == held_before - 1
+				and not deck.discard_pile.has(card_id),
+			card_id + ": exactly one held copy is exhausted, never discarded")
+		_check(enemies.get_enemy(1)["statuses"]
+				== {"weak": 2, "bleed": 1, FEAR_KEY: true, BLIND_KEY: 1}
+				and enemies.get_enemy(3)["statuses"]
+				== {"exposed": 3, FEAR_KEY: true, BLIND_KEY: 1},
+			card_id + ": living enemies keep Fear and their other statuses and gain Blind 1")
+		_check(party.get_hero(1)["statuses"] == {"weak": 1, FEAR_KEY: true},
+			card_id + ": the Feared hero is untouched by the area cast")
+		_check(enemies.get_enemy(2) == dead_before
+				and not enemies.get_enemy(2)["statuses"].has(BLIND_KEY),
+			card_id + ": the Fear-bearing slain slot is left completely untouched")
+		_check(_cloud_snapshot(deck, party, enemies) == _cloud_expected_play(before, card_id),
+			card_id + ": exact Fear-bearing transaction with untouched RNG")
+
+	# Every non-canonical Fear value is malformed, on a hero and on an enemy alike.
+	for bad_fear in [false, 0, 1, 1.0, "true", null, []]:
+		var broken_hero := _monk_party(2)
+		broken_hero._heroes[0]["statuses"] = {"weak": 1, FEAR_KEY: bad_fear}
+		_check(broken_hero.get_hero(1)["statuses"] == {"weak": 1, FEAR_KEY: bad_fear},
+			"fear fixture really stores hero " + str(bad_fear))
+		_cloud_rejected(_cloud_deck(CLOUD_BASE), broken_hero, _cloud_enemies(), CLOUD_BASE, 0,
+			"malformed hero Fear " + str(bad_fear))
+		var broken_enemies := _cloud_enemies()
+		broken_enemies._enemies[0]["statuses"] = {"weak": 1, FEAR_KEY: bad_fear}
+		_check(broken_enemies.get_enemy(1)["statuses"] == {"weak": 1, FEAR_KEY: bad_fear},
+			"fear fixture really stores enemy " + str(bad_fear))
+		_cloud_rejected(_cloud_deck(CLOUD_BASE), _monk_party(2), broken_enemies, CLOUD_BASE, 0,
+			"malformed enemy Fear " + str(bad_fear))
+
+	# The literal `false` is malformed rather than inactive, and the refusal pays nothing.
+	var false_party := _monk_party(2)
+	false_party._heroes[0]["statuses"] = {FEAR_KEY: false}
+	var false_deck := _cloud_deck(CLOUD_BASE)
+	var false_enemies := _cloud_enemies()
+	var false_before := _cloud_snapshot(false_deck, false_party, false_enemies)
+	var false_result: Dictionary = cloud_service.play_card(
+		false_deck, false_party, false_enemies, CLOUD_BASE, 0)
+	_check(false_result.get("ok") == false
+			and false_result.get("reason") == "malformed_statuses"
+			and _cloud_snapshot(false_deck, false_party, false_enemies) == false_before,
+		"a literal false Fear is malformed and refused without payment or mutation")
 
 
 ## A real seeded five-card hand from six cards, so at least two copies of the named ID are held.

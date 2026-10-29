@@ -45,6 +45,9 @@ const EFFECTS := {"blind_next_attack": true, "exhaust": true}
 const ONE_SHOT_STATUS_KEYS: Array[String] = ["dodge_next_attack", "blind_next_attack"]
 ## The N-turn counters the shared combat status rules accept (non-negative ints).
 const COUNTER_STATUS_KEYS: Array[String] = ["bleed", "weak", "exposed", "tangled", "riposte"]
+## Fear is the shared buff lock, the one canonical status that is not an integer counter: its
+## single accepted value is the literal boolean true (see CombatStatuses._valid_statuses).
+const FEAR_STATUS_KEY := "cannot_buff_next_turn"
 
 ## The two authentic printings and the exact catalog line each must still carry. Everything except
 ## the cost and the base/'+' link is identical between them.
@@ -240,7 +243,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 
 
 ## The status shape the shared combat rules accept: named N-turn counters with non-negative int
-## counts and the two one-shot tokens as integer 0/1. Anything else fails closed before mutation.
+## counts, the two one-shot tokens as integer 0/1, and Fear (`cannot_buff_next_turn`) as the
+## literal boolean true only. Anything else fails closed before mutation.
 func _valid_status_shape(statuses: Variant) -> bool:
 	if not statuses is Dictionary:
 		return false
@@ -249,6 +253,11 @@ func _valid_status_shape(statuses: Variant) -> bool:
 		if not name is String or (name as String).is_empty():
 			return false
 		var count = values[name]
+		if name == FEAR_STATUS_KEY:
+			# The canonical Fear lock is a literal boolean, never an int/string/float stand-in.
+			if not count is bool or not bool(count):
+				return false
+			continue
 		if not count is int:
 			return false
 		if name in ONE_SHOT_STATUS_KEYS:
