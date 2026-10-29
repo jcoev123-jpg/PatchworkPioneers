@@ -3,6 +3,7 @@ extends Node
 
 const SUPPORT_IDS := ["warden_brace", "warden_brace_plus", "tinker_tune_up", "tinker_tune_up_plus",
 	"seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up", "seamstress_stitch_up_plus"]
+const STRAW_WRAP_IDS := ["scarecrow_straw_wrap", "scarecrow_straw_wrap_plus"]
 const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
 const VIGIL_IDS := ["lantern_monk_vigil_ring", "lantern_monk_vigil_ring_plus"]
 ## Party heal plus one explicit whole-debuff cleanse per living ally: the pool Lantern Glow
@@ -75,6 +76,7 @@ var _action_variations: Dictionary = {}
 var _hud: Control
 var _play := CombatStarterSupportPlay.new()
 var _straw := CombatSupportCards.new()
+var _wrap := CombatScarecrowStrawWrapCards.new()
 var _block_cards := CombatWardenPoolBlockCards.new()
 var _energy_cards := CombatPoolEnergyCards.new()
 var _tinker_gadgets := CombatTinkerPoolGadgets.new()
@@ -689,8 +691,12 @@ func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position:
 		return bool(_roll.play_card(deck, party, card_id, position).get("ok", false))
 	if _sew.is_supported_card(card_id):
 		return bool(_sew.play_card(deck, party, card_id, 0).get("ok", false))
+	if card_id in STRAW_WRAP_IDS:
+		return _wrap != null and _straw != null and _straw.is_patch_binding_valid() \
+			and bool(_wrap.play_card(deck, party, card_id, position).get("ok", false))
 	if card_id in CombatSupportCards.SCARECROW_STRAW_IDS:
-		return _straw != null and _straw.play_scarecrow_straw(deck, party, card_id, position)
+		return _straw != null and deck.combat_state != null and deck._rng != null \
+			and _straw.play_scarecrow_straw(deck, party, card_id, position)
 	if _re_stuff.is_supported_card(card_id):
 		return bool(_re_stuff.play_card(deck, party, card_id, 0).get("ok", false))
 	if _cleansing.is_supported_card(card_id):
@@ -788,6 +794,7 @@ func _sync_battle() -> void:
 		_play = CombatStarterSupportPlay.new()
 		_fear = CombatScarecrowFearCards.new()
 		_straw = CombatSupportCards.new()
+		_wrap = CombatScarecrowStrawWrapCards.new()
 		_block_cards = CombatWardenPoolBlockCards.new()
 		_energy_cards = CombatPoolEnergyCards.new()
 		_tinker_gadgets = CombatTinkerPoolGadgets.new()
@@ -1223,9 +1230,12 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 				or app.battle_result._party != party or app.battle_result._enemies != app.enemies \
 				or app.enemies == null or not app.enemies.is_valid() or app.enemies.is_victorious() \
 				or (card_id in CombatSupportCards.SCARECROW_STRAW_IDS and (_straw == null or not _straw.is_patch_binding_valid())) \
-				or (CombatYarnRangerKnitCards.CARDS.has(card_id) and (deck.combat_state == null or deck._rng == null)):
+				or ((card_id in CombatSupportCards.SCARECROW_STRAW_IDS or CombatYarnRangerKnitCards.CARDS.has(card_id)) \
+					and (deck.combat_state == null or deck._rng == null)):
 			return false
-		var authored := CombatYarnRangerKnitCards.knit_definition(card_id) if CombatYarnRangerKnitCards.CARDS.has(card_id) else CombatSupportCards.scarecrow_straw_definition(card_id)
+		var authored: Dictionary = CombatYarnRangerKnitCards.knit_definition(card_id) if CombatYarnRangerKnitCards.CARDS.has(card_id) \
+			else CombatScarecrowStrawWrapCards.wrap_definition(card_id) if card_id in STRAW_WRAP_IDS \
+			else CombatSupportCards.scarecrow_straw_definition(card_id)
 		if authored.is_empty() or deck.energy < authored.cost:
 			return false
 		var owner := 0
@@ -1578,6 +1588,10 @@ func _choose_target() -> void:
 			continue
 		if _roll.is_supported_card(_pending.id) and not _roll._prepare(_deck, _party, _pending.id, index + 1).get("ok", false):
 			continue
+		if _pending.id in STRAW_WRAP_IDS:
+			var wrap: Dictionary = CombatScarecrowStrawWrapCards.wrap_definition(_pending.id)
+			if wrap.is_empty() or _party.get_hero(index + 1).get("block", -1) > CombatParty.MAX_INT - int(wrap.effects.block):
+				continue
 		if (_enemy_selection() and not _enemy_service(_pending.id)._prepare(_deck, _party, app.enemies, _pending.id, index + 1).get("ok", false)) or (not _enemy_selection() and _party.is_downed(index + 1)):
 			continue
 		panels.append(panel)
@@ -1790,6 +1804,11 @@ func _resolve_target(position: int, token: int) -> void:
 	if _cleansing.is_supported_card(id) and not _cleansing._prepare(_deck, _party, id, position, debuff).get("ok", false):
 		_cancel_pending()
 		return
+	if id in STRAW_WRAP_IDS:
+		var wrap: Dictionary = CombatScarecrowStrawWrapCards.wrap_definition(id)
+		if wrap.is_empty() or _party.get_hero(position).get("block", -1) > CombatParty.MAX_INT - int(wrap.effects.block):
+			_cancel_pending()
+			return
 	_cancel_pending()
 	if _play_held(_deck, _party, id, position, debuff):
 		_forward_switchback_ordinary_play(id)

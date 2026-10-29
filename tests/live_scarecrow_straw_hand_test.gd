@@ -17,21 +17,28 @@ func _straw_begin(id: String, seat: int, supply: int = 0) -> Control:
 	return panel
 
 
-func _arm(panel: Control, key: int) -> void:
+func _arm(panel: Control, key: int, count: int = 3) -> void:
 	if key == 0:
 		await _mouse(panel)
 	else:
 		panel.grab_focus()
 		await _keyboard(key)
-	_check(presenter._pending.get("choosing", false) and presenter._targets.size() == 3,
-		"real card activation opens all three living ally targets")
+	_check(presenter._pending.get("choosing", false) and presenter._targets.size() == count,
+		"real card activation offers exactly %d legal ally targets" % count)
 
 
-func _straw_success(id: String, seat: int, target: int, key: int, supply: int) -> Array:
+func _straw_success(id: String, seat: int, target: int, key: int, supply: int, capped_target: int = 0) -> Array:
 	var panel := await _straw_begin(id, seat, supply)
 	if panel == null:
 		await _dispose()
 		return []
+	if capped_target > 0:
+		_check(capped_target != target, "capped ally cannot be selected as the successful target")
+		app.party._heroes[capped_target - 1].block = CombatParty.MAX_INT
+		app._refresh_party()
+		app._refresh_hand()
+		await _frames()
+		panel = _panel(id)
 	var meta = presenter._metadata
 	var definition := CombatSupportCards.scarecrow_straw_definition(id)
 	var catalog: Dictionary = ScarecrowStarterCards.new().get_definition(id)
@@ -41,6 +48,11 @@ func _straw_success(id: String, seat: int, target: int, key: int, supply: int) -
 	var facts: Dictionary = meta.get_facts(panel)
 	_check(not catalog.is_empty() and meta.definition(id) == catalog and definition == catalog,
 		"face uses exact canonical starter/pool printing")
+	if id in presenter.STRAW_WRAP_IDS:
+		_check(CombatScarecrowStrawWrapCards.wrap_definition(id) == catalog
+			and presenter._wrap.is_supported_card(id), "strict Wrap definition authenticates the real held printing")
+	else:
+		_check(not presenter._wrap.is_supported_card(id), "starter Padding stays outside strict Wrap resolver")
 	_check(facts.known and facts.owner == "scarecrow" and facts.cost == 1
 		and facts.target_text == "Ally" and facts.rules.contains(str(block))
 		and panel.tooltip_text.contains("BASE draw 1 card") and meta.visual_state(panel).playable,
@@ -70,7 +82,14 @@ func _straw_success(id: String, seat: int, target: int, key: int, supply: int) -
 	snapshot[3] -= 1
 	snapshot[5][target - 1].block += block
 	var callback: Callable = presenter._bindings[panel]
-	await _arm(panel, key)
+	await _arm(panel, key, 2 if capped_target > 0 else 3)
+	if capped_target > 0:
+		_check(not presenter._targets.has(app.hero_panels[capped_target - 1])
+			and presenter._targets.has(app.hero_panels[target - 1]),
+			"capped Block recipient is excluded, while a legal ally is selectable")
+		await _mouse(app.hero_panels[capped_target - 1])
+		_check(presenter._pending.get("choosing", false) and not presenter._pending.get("queued", false),
+			"clicking a capped ally does not queue a paid target")
 	_check(_state() == before, "picker preview never spends, draws or advances RNG")
 	var recipient: Control = app.hero_panels[target - 1]
 	_check(presenter._targets.has(recipient), "selected real living recipient bound")
@@ -147,9 +166,11 @@ func _straw_refusal(id: String, mode: String, stage: int) -> void:
 		"wardrobe": _check(not presenter._straw.bind_patch_wardrobe(null, null), "explicit invalid wardrobe binding")
 		"escape": root.push_input(_key(KEY_ESCAPE), true)
 		"overflow": app.party._heroes[0].block = CombatParty.MAX_INT
+		"rng": app.deck._rng = null
+		"deck_state": app.deck.combat_state.energy = -1
 		"forged", "echo", "release", "right", "unfocused": pass
 		_: _check(false, "known straw refusal")
-	if mode in ["energy", "owner_dead", "missing_owner", "duplicate_owner", "malformed", "absent", "inactive", "closed", "hidden", "label", "turn", "result", "wardrobe"]:
+	if mode in ["energy", "owner_dead", "missing_owner", "duplicate_owner", "malformed", "absent", "inactive", "closed", "hidden", "label", "turn", "result", "wardrobe", "rng", "deck_state"]:
 		_check(presenter._metadata._bindings.has(panel), "negative starts with bound metadata")
 		presenter._metadata._update_visual(panel)
 		_check(not presenter._metadata.visual_state(panel).playable, "invalid live card truthfully dim: " + mode)
@@ -187,9 +208,12 @@ func _run() -> void:
 				for target in [1, 2, 3]:
 					# Rotate supplies across the complete input/seat/recipient matrix.
 					await _straw_success(id, seat, target, key, (seat + target + key) % 3)
+		if CombatScarecrowStrawWrapCards.CARDS.has(id):
+			for key in [0, KEY_ENTER, KEY_SPACE]:
+				await _straw_success(id, 2, 2, key, 2, 1)
 		var first := await _straw_success(id, 2, 1, KEY_SPACE, 2)
 		_check(not first.is_empty() and first == await _straw_success(id, 2, 1, KEY_SPACE, 2), "entire seeded mounted replay")
-		for mode in ["energy", "owner_dead", "missing_owner", "duplicate_owner", "malformed", "absent", "inactive", "closed", "hidden", "label", "turn", "result", "deck", "party", "rebuild", "wardrobe"]:
+		for mode in ["energy", "owner_dead", "missing_owner", "duplicate_owner", "malformed", "absent", "inactive", "closed", "hidden", "label", "turn", "result", "deck", "party", "rebuild", "wardrobe", "rng", "deck_state"]:
 			for stage in [0, 1, 2]:
 				await _straw_refusal(id, mode, stage)
 		for mode in ["target_dead", "escape", "overflow"]:
