@@ -551,6 +551,54 @@
         { "id": "buy_rivet_thread", "text": "Buy brass rivet thread (spend 20 gold; gain 3 scraps)", "outcome": { "gold": -20, "scraps": 3 } },
         { "id": "leave", "text": "Leave the choir to its song", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_yarn_ranger_fogbell_loom",
+      "title": "The Fog-Bell Loom",
+      "description": "A squat button-eyed bell keeper points to a brass bell snagged in moss-green wool; the Yarn Ranger's knitting-needle bow and teal bolas can reel down its rope.",
+      "required_hero": "yarn_ranger",
+      "hero_choice_ids": ["reel_fogbell_rope", "gather_fog_wool"],
+      "choices": [
+        {"id": "reel_fogbell_rope", "text": "Reel down the fog bell (spend 2 scraps; gain 25 gold)", "outcome": {"gold": 25, "scraps": -2}},
+        {"id": "gather_fog_wool", "text": "Gather loose teal wool knots (gain 2 scraps)", "outcome": {"gold": 0, "scraps": 2}},
+        {"id": "leave", "text": "Leave the bell hidden in the mist", "outcome": {"gold": 0, "scraps": 0}}
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_velvet_mirror",
+      "title": "The Velvet Mirror Duel",
+      "description": "A plump velvet mirror puppet raises a needle rapier at the Rag Duelist; candlelight catches his tattered crimson cape and the puppet's gold-button eyepatch.",
+      "required_hero": "rag_duelist",
+      "hero_choice_ids": ["parry_mirror_needle", "buy_mirror_cape_lace"],
+      "choices": [
+        {"id": "parry_mirror_needle", "text": "Parry the mirror puppet's needle (gain 21 gold)", "outcome": {"gold": 21, "scraps": 0}},
+        {"id": "buy_mirror_cape_lace", "text": "Buy fresh velvet cape lace (spend 17 gold; gain 3 scraps)", "outcome": {"gold": -17, "scraps": 3}},
+        {"id": "leave", "text": "Bow to the puppet and leave", "outcome": {"gold": 0, "scraps": 0}}
+      ]
+    },
+    {
+      "id": "v3_scarecrow_crow_letter_post",
+      "title": "The Crow-Letter Post",
+      "description": "A black crow carries red wax letters to a squat burlap postmaster; the Scarecrow's pitchfork holds the stitched mailbag above a pumpkin-lit desk.",
+      "required_hero": "scarecrow",
+      "hero_choice_ids": ["deliver_crow_letters", "gather_straw_seals"],
+      "choices": [
+        {"id": "deliver_crow_letters", "text": "Deliver the crow's sealed letters (spend 1 scrap; gain 24 gold)", "outcome": {"gold": 24, "scraps": -1}},
+        {"id": "gather_straw_seals", "text": "Collect discarded straw seals (gain 1 scrap)", "outcome": {"gold": 0, "scraps": 1}},
+        {"id": "leave", "text": "Leave the letters unopened", "outcome": {"gold": 0, "scraps": 0}}
+      ]
+    },
+    {
+      "id": "v3_button_golem_midnight_button_clock",
+      "title": "The Midnight Button Clock",
+      "description": "A great round midnight-teal clock has stopped between two huge brass buttons; the Button Golem's stacked button fists fit its missing hand-shaped crank.",
+      "required_hero": "button_golem",
+      "hero_choice_ids": ["turn_button_clock", "buy_clock_spring_thread"],
+      "choices": [
+        {"id": "turn_button_clock", "text": "Turn the button clock's heavy crank (gain 26 gold)", "outcome": {"gold": 26, "scraps": 0}},
+        {"id": "buy_clock_spring_thread", "text": "Buy spare clock spring thread (spend 19 gold; gain 3 scraps)", "outcome": {"gold": -19, "scraps": 3}},
+        {"id": "leave", "text": "Let midnight wait another hour", "outcome": {"gold": 0, "scraps": 0}}
+      ]
     }
   ]
 }
