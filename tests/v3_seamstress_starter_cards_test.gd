@@ -1,8 +1,9 @@
 extends SceneTree
 ## V3-1 Seamstress starter-card catalog contract.
 ## The catalog half keeps this hero's authored data authoritative (no live party, reward, hand, deck
-## or run wiring is assumed there). The appended suite drives the scene-free paid Block-and-heal
-## resolver for Shielding Hem and Patchwork Poultice against real seeded CombatDeck/CombatParty
+## or run wiring is assumed there). The appended suites drive the scene-free paid Block-and-heal
+## resolver for Shielding Hem and Patchwork Poultice, and the paid red-thread resolver for Thread
+## Prick, Needle Rain and Scarlet Knot, against real seeded CombatDeck/CombatParty/CombatEnemies
 ## state; live hand and app integration remain a later task.
 
 const V3SeamstressStarterCards = preload("res://data/cards/v3_seamstress_starter_cards.gd")
@@ -10,10 +11,19 @@ const StarterCards = preload("res://data/cards/starter_cards.gd")
 const V3SeamstressPoolCards = preload("res://data/cards/v3_seamstress_pool_cards.gd")
 const V3SeamstressHemCards = preload("res://scripts/combat_seamstress_v3_hem_cards.gd")
 const SeamstressCleansingCards = preload("res://scripts/combat_seamstress_v3_cleansing_cards.gd")
+const RedThreadCards = preload("res://scripts/combat_seamstress_v3_red_thread_cards.gd")
 
 ## A catalog source that serves one caller-supplied record, so a rewritten field or a relinked
 ## upgrade can be proven inert before any energy, hand, Block, HP or RNG state moves.
 class ForgedHem extends "res://scripts/combat_seamstress_v3_hem_cards.gd":
+	var forged: Dictionary = {}
+
+	func _catalog_definition(_id: String) -> Dictionary:
+		return forged.duplicate(true)
+
+
+## The same forgery seam for the red-thread resolver.
+class ForgedRedThread extends "res://scripts/combat_seamstress_v3_red_thread_cards.gd":
 	var forged: Dictionary = {}
 
 	func _catalog_definition(_id: String) -> Dictionary:
@@ -32,6 +42,42 @@ const HEM_HEAL := {HEM: 2, HEM_PLUS: 3, POULTICE: 3, POULTICE_PLUS: 4}
 const HEM_FROM := {HEM: [1, 2, 3], HEM_PLUS: [1, 2, 3], POULTICE: [2, 3], POULTICE_PLUS: [2, 3]}
 const HEM_FILLERS := ["filler_hem", "filler_patch", "filler_thread", "filler_needle",
 	"filler_bobbin", "filler_scrap"]
+
+# --- V3 red thread: Thread Prick / Needle Rain / Scarlet Knot, base and "+" --------------------
+const PRICK := "seamstress_v3_thread_prick"
+const PRICK_PLUS := "seamstress_v3_thread_prick_plus"
+const RAIN := "seamstress_v3_needle_rain"
+const RAIN_PLUS := "seamstress_v3_needle_rain_plus"
+const KNOT := "seamstress_v3_scarlet_knot"
+const KNOT_PLUS := "seamstress_v3_scarlet_knot_plus"
+const RED_THREAD_IDS := [PRICK, PRICK_PLUS, RAIN, RAIN_PLUS, KNOT, KNOT_PLUS]
+const RED_THREAD_FILLERS := ["filler_red_thread", "filler_red_needle", "filler_red_knot",
+	"filler_red_bobbin"]
+
+## Independent literal expectations copied from the v3 design and the authored catalogs, never read
+## back from the resolver under test. `effects` is the COMPLETE printed dictionary; Scarlet Knot
+## prints no `damage` key at all. `bleed` is the printed stack, so the applied stack is that plus
+## the Seamstress's authored +1 passive.
+const RED_THREAD_CASES := {
+	PRICK: {"catalog": "starter", "name": "Thread Prick",
+		"effects": {"damage": 3, "bleed": 2}, "copies": 1, "reward": false, "rarity": ""},
+	PRICK_PLUS: {"catalog": "starter", "name": "Thread Prick+",
+		"effects": {"damage": 4, "bleed": 3}, "copies": 0, "reward": false, "rarity": ""},
+	RAIN: {"catalog": "pool", "name": "Needle Rain",
+		"effects": {"damage": 2, "bleed": 3}, "copies": 0, "reward": true, "rarity": "common"},
+	RAIN_PLUS: {"catalog": "pool", "name": "Needle Rain+",
+		"effects": {"damage": 3, "bleed": 4}, "copies": 0, "reward": false, "rarity": "common"},
+	KNOT: {"catalog": "pool", "name": "Scarlet Knot",
+		"effects": {"bleed": 2, "weak": 1}, "copies": 0, "reward": true, "rarity": "common"},
+	KNOT_PLUS: {"catalog": "pool", "name": "Scarlet Knot+",
+		"effects": {"bleed": 3, "weak": 1}, "copies": 0, "reward": false, "rarity": "common"},
+}
+const RED_THREAD_DAMAGE := {PRICK: 3, PRICK_PLUS: 4, RAIN: 2, RAIN_PLUS: 3, KNOT: 0, KNOT_PLUS: 0}
+const RED_THREAD_PRINTED_BLEED := {PRICK: 2, PRICK_PLUS: 3, RAIN: 3, RAIN_PLUS: 4, KNOT: 2,
+	KNOT_PLUS: 3}
+## The printed Bleed plus the authored +1 Seamstress passive.
+const RED_THREAD_BLEED := {PRICK: 3, PRICK_PLUS: 4, RAIN: 4, RAIN_PLUS: 5, KNOT: 3, KNOT_PLUS: 4}
+const RED_THREAD_WEAK := {PRICK: 0, PRICK_PLUS: 0, RAIN: 0, RAIN_PLUS: 0, KNOT: 1, KNOT_PLUS: 1}
 
 ## Effect keys these four look-driven starters may print. Anything else would be an invented
 ## status, resource or combat-state descriptor.
@@ -73,6 +119,13 @@ func _initialize() -> void:
 	_test_hem_refusals()
 	_test_hem_tampered_catalog()
 	_test_hem_seeded_replay()
+	_test_red_thread_catalog_contracts()
+	_test_red_thread_paid_play()
+	_test_red_thread_block_and_status_math()
+	_test_red_thread_knot_status_only()
+	_test_red_thread_refusals()
+	_test_red_thread_tampered_catalog()
+	_test_red_thread_seeded_replay()
 	if failures.is_empty():
 		print("v3_seamstress_starter_cards_test: PASS (", checks, " checks)")
 	else:
@@ -1230,3 +1283,720 @@ func _hem_party(seat: int) -> CombatParty:
 		and party.get_hero(seat).get("position") == seat,
 		"Seamstress identity is really at actual slot " + str(seat))
 	return party
+
+# ---------------------------------------------------------------------------------------------
+# V3-1 Thread Prick / Needle Rain / Scarlet Knot: authentic paid red-thread resolution
+# ---------------------------------------------------------------------------------------------
+
+## AC1: all six real catalog records against independent literals, plus every negative lookup.
+func _test_red_thread_catalog_contracts() -> void:
+	var starter := V3SeamstressStarterCards.new()
+	var pool := V3SeamstressPoolCards.new()
+	var service := RedThreadCards.new()
+	_check(RED_THREAD_CASES.size() == 6, "red-thread fixture enumerates exactly six printings")
+	for card_id: String in RED_THREAD_IDS:
+		var spec: Dictionary = RED_THREAD_CASES[card_id]
+		var source: Variant = starter
+		var other: Variant = pool
+		if spec["catalog"] == "pool":
+			source = pool
+			other = starter
+		var record: Dictionary = source.get_definition(card_id)
+		_check(not record.is_empty(), card_id + ": authored record exists in its own catalog")
+		_check(record.get("id") == card_id, card_id + ": authored id")
+		_check(record.get("display_name") == spec["name"], card_id + ": authored display name")
+		_check(record.get("owner") == "seamstress", card_id + ": authored owner")
+		_check(record.get("cost") == 1, card_id + ": authored one-energy cost")
+		_check(record.get("target_kind") == "enemy_single", card_id + ": one living enemy target")
+		_check(record.get("from_positions") == [1, 2, 3], card_id + ": authored FROM seats")
+		_check(record.get("to_positions") == [1, 2, 3], card_id + ": authored TO enemy slots")
+		_check(record.get("effects") == spec["effects"],
+			card_id + ": complete authored effect dictionary")
+		_check(record.get("effects") is Dictionary and record.get("effects").size()
+			== (spec["effects"] as Dictionary).size(), card_id + ": no invented effect key")
+		_check(record.get("starting_copies") == spec["copies"],
+			card_id + ": authored starting copies")
+		_check(record.get("reward_eligible") == spec["reward"],
+			card_id + ": authored reward flag")
+		if spec["rarity"] == "":
+			_check(not record.has("rarity"), card_id + ": a starter printing carries no rarity")
+		else:
+			_check(record.get("rarity") == spec["rarity"], card_id + ": authored pool rarity")
+		_check(not other.has_card(card_id), card_id + ": owned by exactly one catalog")
+		if card_id.ends_with("_plus"):
+			_check(record.get("upgrade_of") == card_id.trim_suffix("_plus"),
+				card_id + ": points back at its base")
+			_check(not record.has("upgrade_id"), card_id + ": terminal upgrade link")
+		else:
+			_check(record.get("upgrade_id") == card_id + "_plus",
+				card_id + ": points at its + printing")
+			_check(not record.has("upgrade_of"), card_id + ": the base is not an upgrade")
+		_check(service.is_supported_card(card_id), card_id + ": resolver supports the ID")
+		_check(service.is_authentic_card(card_id), card_id + ": resolver authenticates the record")
+		# The catalog prints the base Bleed only; the +1 passive is never baked in.
+		_check(int((spec["effects"] as Dictionary).get("bleed", 0))
+			== RED_THREAD_PRINTED_BLEED[card_id],
+			card_id + ": the printed Bleed is the base stack, not the passive-inflated stack")
+		_check(RED_THREAD_BLEED[card_id] == RED_THREAD_PRINTED_BLEED[card_id] + 1,
+			card_id + ": the applied Bleed is exactly printed + 1")
+	# Scarlet Knot is status-only: it prints no damage key, so it can never be a strike.
+	for knot_id: String in [KNOT, KNOT_PLUS]:
+		var knot: Dictionary = pool.get_definition(knot_id)
+		_check(not knot.get("effects").has("damage"), knot_id + ": prints no damage key")
+		_check(knot.get("effects").get("weak") == 1, knot_id + ": prints exactly Weak 1")
+	# Every other Seamstress, Lantern Monk, stitched, Rag Duelist and forged ID is refused.
+	var unsupported: Array = [
+		"seamstress_v3_tether_loop", "seamstress_v3_tether_loop_plus",
+		"seamstress_v3_mending_knot", "seamstress_v3_mending_knot_plus",
+		"seamstress_v3_shielding_hem", "seamstress_v3_shielding_hem_plus",
+		"seamstress_v3_bobbin_snag", "seamstress_v3_bobbin_snag_plus",
+		"seamstress_v3_patchwork_poultice", "seamstress_v3_patchwork_poultice_plus",
+		"seamstress_v3_tether_stitch", "seamstress_v3_tether_stitch_plus",
+		"seamstress_v3_darn_the_tear", "seamstress_v3_darn_the_tear_plus",
+		"seamstress_v3_blanket_of_barbs", "seamstress_v3_blanket_of_barbs_plus",
+		"seamstress_v3_midnight_loom", "seamstress_v3_midnight_loom_plus",
+		"seamstress_prick", "seamstress_mend", "seamstress_stitch_up",
+		"seamstress_running_stitch", "seamstress_blanket_stitch", "seamstress_red_thread",
+		"lantern_monk_wick_flicker", "lantern_monk_wax_ward", "lantern_monk_moth_cloud",
+		"rag_duelist_needle_prick", "warden_v3_guard_stitch", "warden_strike",
+		"warden_v3_pot_helm_bonk", "tinker_pop_shot", "yarn_ranger_needle_nock",
+		PRICK + "_plus_plus", KNOT + "_plus_plus", RAIN + "_plus_plus",
+		PRICK.to_upper(), " " + PRICK, PRICK + " ", "thread_prick",
+		"", null, 7, 3.5, true, ["seamstress_v3_thread_prick"], {}, StringName(PRICK),
+	]
+	for unsupported_id: Variant in unsupported:
+		_check(not service.is_supported_card(unsupported_id),
+			"resolver rejects unsupported id: " + str(unsupported_id))
+		_check(not service.is_authentic_card(unsupported_id),
+			"resolver never authenticates unsupported id: " + str(unsupported_id))
+	# No overlap with the other two Seamstress v3 resolvers.
+	var hem := V3SeamstressHemCards.new()
+	var cleansing := SeamstressCleansingCards.new()
+	for card_id: String in RED_THREAD_IDS:
+		_check(not hem.is_supported_card(card_id), card_id + ": the hem helper does not own it")
+		_check(not cleansing.is_supported_card(card_id),
+			card_id + ": the cleansing helper does not own it")
+	_check(hem.is_supported_card(HEM) and cleansing.is_supported_card("seamstress_v3_mending_knot"),
+		"the neighbouring helpers still own their own card families (precondition)")
+
+
+## AC2: each printing pays exactly one energy, discards one copy, and performs exactly its printed
+## hit-and-Bleed or Bleed-and-Weak action from every printed owner seat.
+func _test_red_thread_paid_play() -> void:
+	for card_id: String in RED_THREAD_IDS:
+		for seat in [1, 2, 3]:
+			var fixture := _red_thread_fixture(card_id, seat, seat)
+			_red_thread_paid(fixture, RED_THREAD_DAMAGE[card_id], RED_THREAD_BLEED[card_id],
+				RED_THREAD_WEAK[card_id])
+	# A genuine second copy: each cast spends and discards exactly one and stacks its statuses.
+	var twin := _red_thread_fixture(PRICK, 2, 1, [], {}, {}, 8419, 2)
+	_check(twin["deck"].hand.count(PRICK) == 2, "second-copy fixture really holds two copies")
+	var twin_before := _red_thread_snapshot(twin)
+	var first := RedThreadCards.new().play_card(twin["deck"], twin["party"], twin["enemies"],
+		PRICK, 1)
+	_check(first.get("ok") == true and first.get("bleed_after") == 3,
+		"the first copy lays its first red-thread stack")
+	_check(twin["deck"].hand.count(PRICK) == 1 and twin["deck"].discard_pile == [PRICK],
+		"the first copy alone moved to the discard pile")
+	var second := RedThreadCards.new().play_card(twin["deck"], twin["party"], twin["enemies"],
+		PRICK, 1)
+	_check(second.get("ok") == true and second.get("bleed_before") == 3
+		and second.get("bleed_after") == 6, "the second copy adds its own stack additively")
+	_check(twin["deck"].energy == CombatState.TURN_ENERGY - 2
+		and twin["deck"].discard_pile == [PRICK, PRICK],
+		"two casts charge two energy and discard two copies")
+	_check(_red_thread_snapshot(twin) == _red_thread_expected(
+		_red_thread_expected(twin_before, PRICK, 1, 3, 3, 0), PRICK, 1, 3, 3, 0),
+		"the twin fixture matches the two-transaction oracle")
+	_check(_red_thread_snapshot(twin)["rng"] == twin_before["rng"],
+		"neither cast consumes a run-RNG draw")
+
+
+## AC2: Block is consumed before HP, and the shared Weak/Exposed/Tangled math stays authoritative.
+func _test_red_thread_block_and_status_math() -> void:
+	var block_cases := [
+		{"card": PRICK, "block": 5, "damage": 3, "hp_loss": 0, "block_left": 2},
+		{"card": PRICK_PLUS, "block": 2, "damage": 4, "hp_loss": 2, "block_left": 0},
+		{"card": RAIN, "block": 1, "damage": 2, "hp_loss": 1, "block_left": 0},
+		{"card": RAIN_PLUS, "block": 8, "damage": 3, "hp_loss": 0, "block_left": 5},
+	]
+	for entry: Dictionary in block_cases:
+		var card_id: String = entry["card"]
+		var fixture := _red_thread_fixture(card_id, 2, 1,
+			[{"max_hp": 20, "block": entry["block"]}, {"max_hp": 18}, {"max_hp": 14}])
+		var result := _red_thread_paid(fixture, entry["damage"], RED_THREAD_BLEED[card_id], 0)
+		var enemy: Dictionary = fixture["enemies"].get_enemy(1)
+		_check(result.get("block_absorbed") == mini(int(entry["block"]), int(entry["damage"])),
+			card_id + ": Block absorbs its share of the hit first")
+		_check(result.get("hp_loss") == entry["hp_loss"] and enemy["hp"] == 20 - int(entry["hp_loss"]),
+			card_id + ": only the unabsorbed remainder reaches HP")
+		_check(enemy["block"] == entry["block_left"], card_id + ": the exact Block remainder stays")
+		_check(int(enemy.get("statuses", {}).get("bleed", 0)) == RED_THREAD_BLEED[card_id],
+			card_id + ": the rip still opens and the printed Bleed lands even when Block soaked it")
+
+	# Base 3 damage under the shared status rules: Weak 2, Exposed 4, Tangled 5, both 3.
+	var math_cases := [
+		{"hero": {"weak": 1}, "enemy": {}, "expected": 2, "label": "attacker Weak 1 floors 3 to 2"},
+		{"hero": {}, "enemy": {"exposed": 1}, "expected": 4,
+			"label": "defender Exposed 1 raises 3 to 4"},
+		{"hero": {}, "enemy": {"tangled": 1}, "expected": 5,
+			"label": "defender Tangled 1 adds its flat +2"},
+		{"hero": {"weak": 1}, "enemy": {"exposed": 1}, "expected": 3,
+			"label": "Weak and Exposed combine with one floor"},
+	]
+	for entry: Dictionary in math_cases:
+		var fixture := _red_thread_fixture(PRICK, 2, 1, [], entry["hero"], entry["enemy"])
+		var result := _red_thread_paid(fixture, entry["expected"], RED_THREAD_BLEED[PRICK], 0)
+		_check(result.get("base_damage") == 3 and result.get("damage") == entry["expected"],
+			"Thread Prick: " + str(entry["label"]))
+		_check(fixture["party"].get_hero(2).get("statuses", {}) == entry["hero"],
+			"the attacking Seamstress' own statuses are read, never consumed")
+
+	# A legal Dodge on the attacker and Blind/Fear on the defender never blocks the paid strike.
+	var token_fixture := _red_thread_fixture(PRICK, 2, 1, [],
+		{"dodge_next_attack": 1},
+		{"blind_next_attack": 1, "cannot_buff_next_turn": true, "exposed": 1})
+	var token_result := _red_thread_paid(token_fixture, 4, RED_THREAD_BLEED[PRICK], 0)
+	_check(token_result.get("damage") == 4, "the strike still connects beside valid one-shot tokens")
+	_check(token_fixture["party"].get_hero(2).get("statuses") == {"dodge_next_attack": 1},
+		"the attacker's Dodge token stays on its record, unspent")
+	_check(token_fixture["enemies"].get_enemy(1).get("statuses")
+		== {"blind_next_attack": 1, "cannot_buff_next_turn": true, "exposed": 1, "bleed": 3},
+		"the defender keeps Blind, Fear and Exposed while gaining exactly the printed Bleed")
+
+	# An already-bleeding enemy stacks additively rather than being replaced.
+	var stacking := _red_thread_fixture(PRICK, 2, 1, [], {}, {"bleed": 2})
+	var stacking_result := _red_thread_paid(stacking, 3, RED_THREAD_BLEED[PRICK], 0)
+	_check(stacking_result.get("bleed_before") == 2 and stacking_result.get("bleed_after") == 5,
+		"Thread Prick adds to an existing Bleed stack")
+	var rain_stacking := _red_thread_fixture(RAIN_PLUS, 3, 2, [], {}, {"bleed": 4})
+	var rain_result := _red_thread_paid(rain_stacking, 3, RED_THREAD_BLEED[RAIN_PLUS], 0)
+	_check(rain_result.get("bleed_before") == 4 and rain_result.get("bleed_after") == 9,
+		"Needle Rain+ adds its whole stack to an existing one")
+
+
+## AC2: Scarlet Knot is status-only; its Weak governs only later outgoing enemy attacks.
+func _test_red_thread_knot_status_only() -> void:
+	var rules := CombatStatuses.new()
+	for card_id: String in [KNOT, KNOT_PLUS]:
+		var fixture := _red_thread_fixture(card_id, 2, 1,
+			[{"max_hp": 20, "block": 3}, {"max_hp": 18}, {"max_hp": 14}])
+		var result := _red_thread_paid(fixture, 0, RED_THREAD_BLEED[card_id], 1)
+		var enemy: Dictionary = fixture["enemies"].get_enemy(1)
+		_check(result.get("printed_damage") == 0 and result.get("base_damage") == 0
+			and result.get("damage") == 0, card_id + ": deals no damage and triggers no attack")
+		_check(result.get("block_absorbed") == 0 and enemy["block"] == 3,
+			card_id + ": consumes no enemy Block")
+		_check(result.get("hp_before") == 20 and result.get("hp_after") == 20
+			and enemy["hp"] == 20, card_id + ": leaves enemy HP untouched")
+		_check(result.get("bleed_after") == RED_THREAD_BLEED[card_id]
+			and result.get("weak_after") == 1, card_id + ": applies Bleed and Weak 1")
+		# The shared status engine, not the card, decides what Weak 1 does to later attacks.
+		_check(rules.adjusted_attack_damage(8, {}, {}) == 8,
+			card_id + ": an un-Weakened 8-damage enemy attack stays at 8")
+		_check(rules.adjusted_attack_damage(8, enemy.get("statuses", {}), {}) == 6,
+			card_id + ": Weak 1 reduces the enemy's LATER outgoing attack to 6")
+		_check(rules.adjusted_attack_damage(5, enemy.get("statuses", {}), {}) == 3,
+			card_id + ": Weak 1 floors a 5-damage later attack to 3")
+	# A target that already carries Weak and Bleed stacks additively.
+	var stacked := _red_thread_fixture(KNOT, 2, 1, [], {}, {"bleed": 4, "weak": 1})
+	var stacked_result := _red_thread_paid(stacked, 0, RED_THREAD_BLEED[KNOT], 1)
+	_check(stacked_result.get("bleed_before") == 4 and stacked_result.get("bleed_after") == 7
+		and stacked_result.get("weak_before") == 1 and stacked_result.get("weak_after") == 2,
+		"Scarlet Knot adds both statuses to an already affected enemy")
+
+
+## AC3: every invalid request fails closed before payment, discard or any other mutation.
+func _test_red_thread_refusals() -> void:
+	var party := _hem_party(2)
+	## One valid roster shared by the kits whose refusal must come from the deck or the party.
+	var valid_roster := _red_thread_enemies([{"max_hp": 20}, {"max_hp": 18}])
+	# Null collaborations: no state exists to change, and the real fixture stays intact.
+	var intact := _red_thread_fixture(PRICK, 2, 1)
+	var intact_before := _red_thread_snapshot(intact)
+	_check(RedThreadCards.new().play_card(null, intact["party"], intact["enemies"], PRICK, 1)
+		.get("reason") == "invalid_request", "null deck is refused")
+	_check(RedThreadCards.new().play_card(intact["deck"], null, intact["enemies"], PRICK, 1)
+		.get("reason") == "invalid_request", "null party is refused")
+	_check(RedThreadCards.new().play_card(intact["deck"], intact["party"], null, PRICK, 1)
+		.get("reason") == "invalid_request", "null enemy roster is refused")
+	_check(_red_thread_snapshot(intact) == intact_before,
+		"the null-request refusals leave the real fixture untouched")
+
+	# Inactive shared turn.
+	var idle_rng := _hem_rng(414)
+	var idle := CombatDeck.new([PRICK, RED_THREAD_FILLERS[0], RED_THREAD_FILLERS[1],
+		RED_THREAD_FILLERS[2], RED_THREAD_FILLERS[3]], idle_rng)
+	_check(not idle.turn_active and idle.hand.is_empty(),
+		"inactive-turn fixture really has no active turn")
+	_red_thread_refused(_red_thread_kit(idle, party, valid_roster, PRICK, 2, 1), PRICK, 1,
+		"inactive_turn")
+
+	# Missing held copy, and every unsupported / forged / coerced ID.
+	var other_deck := _red_thread_fixture(RAIN, 2, 1)
+	_check(other_deck["deck"].hand.has(RAIN) and not other_deck["deck"].hand.has(PRICK),
+		"absent-card fixture holds the other genuine ID only")
+	_red_thread_refused(other_deck, PRICK, 1, "card_not_held")
+	for unknown: Variant in ["seamstress_v3_missing_thread", "", 7, StringName(PRICK),
+			PRICK + "_plus_plus", "warden_strike"]:
+		_red_thread_refused(other_deck, unknown, 1, "unsupported_card")
+
+	# Zero energy.
+	var broke := _red_thread_fixture(PRICK, 2, 1)
+	_check(broke["deck"].try_spend_energy(CombatState.TURN_ENERGY) and broke["deck"].energy == 0
+		and broke["deck"].hand.has(PRICK), "energy-short fixture is broke and still holds the card")
+	_red_thread_refused(broke, PRICK, 1, "insufficient_energy")
+
+	# Wrong hero ID, absent owner, downed owner.
+	_red_thread_refused(_red_thread_fixture(PRICK, 2, 1), "seamstress_v3_thread_prick_typo", 1,
+		"unsupported_card")
+	var absent := _red_thread_kit(_red_thread_fixture(PRICK, 2, 1)["deck"],
+		_hem_party_without_owner(), valid_roster, PRICK, 2, 1)
+	_check(absent["party"].get_hero(1)["id"] == "warden"
+		and absent["party"].get_hero(2)["id"] == "tinker",
+		"missing-owner fixture is a valid party with no Seamstress")
+	_red_thread_refused(absent, PRICK, 1, "owner_missing")
+	var impostor_party := _hem_party(2)
+	impostor_party._heroes[1]["id"] = "seamstress_impostor"
+	_check(impostor_party.get_hero(2)["id"] == "seamstress_impostor",
+		"impostor fixture really lacks the Seamstress identity")
+	_red_thread_refused(_red_thread_kit(_red_thread_fixture(PRICK, 2, 1)["deck"], impostor_party,
+		valid_roster, PRICK, 2, 1), PRICK, 1, "owner_missing")
+	var downed := _red_thread_fixture(PRICK, 2, 1)
+	_check(downed["party"].apply_damage(2, 30) and downed["party"].is_downed(2),
+		"torn-caster fixture has a genuinely downed Seamstress")
+	_red_thread_refused(downed, PRICK, 1, "owner_downed")
+
+	# Illegal positions: a malformed slot, a short roster and a duplicated identity. All six
+	# printings are legal from every hero seat 1-3, so an authentic cast can never be out of seat;
+	# the party model's own slot contract is what fails closed here.
+	var misplaced := _hem_party(2)
+	misplaced._heroes[1]["position"] = 4
+	_check(misplaced.get_hero(2).get("position") == 4,
+		"misplaced fixture really records an illegal hero slot")
+	_red_thread_refused(_red_thread_kit(_red_thread_fixture(PRICK, 2, 1)["deck"], misplaced,
+		valid_roster, PRICK, 2, 1), PRICK, 1, "invalid_party")
+	var short_party := CombatParty.new([{"id": "seamstress", "max_hp": 30}])
+	_check(not short_party.is_valid(), "short-roster fixture really fails party validity")
+	_red_thread_refused(_red_thread_kit(_red_thread_fixture(PRICK, 2, 1)["deck"], short_party,
+		valid_roster, PRICK, 2, 1), PRICK, 1, "invalid_party")
+	var duplicate := _hem_party(2)
+	duplicate._heroes[0]["id"] = "seamstress"
+	_check(duplicate.get_hero(1)["id"] == "seamstress"
+		and duplicate.get_hero(2)["id"] == "seamstress",
+		"duplicate-identity fixture really repeats the owner ID")
+	_red_thread_refused(_red_thread_kit(_red_thread_fixture(PRICK, 2, 1)["deck"], duplicate,
+		valid_roster, PRICK, 2, 1), PRICK, 1, "invalid_party")
+
+	# Dead, out-of-range and missing targets, plus malformed rosters.
+	var dead_target := _red_thread_fixture(PRICK, 2, 1,
+		[{"max_hp": 20}, {"max_hp": 18}, {"max_hp": 14}])
+	_check(dead_target["enemies"].apply_damage(2, 18) and dead_target["enemies"].is_slain(2),
+		"dead-target fixture really has a slain original slot 2")
+	_red_thread_refused(dead_target, PRICK, 2, "invalid_target")
+	for bad_target in [0, -1, 4, 99]:
+		_red_thread_refused(_red_thread_fixture(PRICK, 2, 1), PRICK, bad_target,
+			"invalid_target")
+	var empty_roster := _red_thread_fixture(PRICK, 2, 1)
+	empty_roster["enemies"] = CombatEnemies.new([])
+	_red_thread_refused(empty_roster, PRICK, 1, "invalid_enemies")
+	var bad_enemy := _red_thread_fixture(PRICK, 2, 1)
+	bad_enemy["enemies"]._enemies[1]["hp"] = 99
+	_check(bad_enemy["enemies"].get_enemy(2)["hp"] == 99,
+		"malformed-roster fixture really stores HP above max")
+	_red_thread_refused(bad_enemy, PRICK, 1, "invalid_enemies")
+
+	# Corrupt, unknown or malformed status counters on either side.
+	var corrupt_hero := _red_thread_fixture(PRICK, 2, 1)
+	corrupt_hero["party"]._heroes[0]["statuses"] = {"bleed": -1}
+	_check(corrupt_hero["party"].get_hero(1)["statuses"] == {"bleed": -1},
+		"corrupt-status fixture really stores a negative counter on a bystander")
+	_red_thread_refused(corrupt_hero, PRICK, 1, "malformed_statuses")
+	var corrupt_owner := _red_thread_fixture(PRICK, 2, 1)
+	corrupt_owner["party"]._heroes[1]["statuses"] = {"weak": 1.5}
+	_check(corrupt_owner["party"].get_hero(2)["statuses"] == {"weak": 1.5},
+		"corrupt-owner fixture really stores a non-integer counter on the Seamstress")
+	_red_thread_refused(corrupt_owner, PRICK, 1, "malformed_statuses")
+	for bad_statuses: Dictionary in [{"weak": 1.5}, {"bleed": "2"}, {"unknown_status": 1},
+			{"dodge_next_attack": 2}, {"cannot_buff_next_turn": 1}, {"exposed": -3}]:
+		var corrupt_enemy := _red_thread_fixture(PRICK, 2, 1)
+		corrupt_enemy["enemies"]._enemies[0]["statuses"] = bad_statuses.duplicate(true)
+		_check(corrupt_enemy["enemies"].get_enemy(1).get("statuses") == bad_statuses,
+			"corrupt-status fixture really stores " + str(bad_statuses))
+		_red_thread_refused(corrupt_enemy, PRICK, 1, "malformed_statuses")
+
+	# Overflowing cumulative status additions refuse before any payment.
+	for card_id: String in [PRICK, KNOT]:
+		var overflow := _red_thread_fixture(card_id, 2, 1)
+		overflow["enemies"]._enemies[0]["statuses"] = {"bleed": CombatEnemies.MAX_INT}
+		_check(int(overflow["enemies"].get_enemy(1)["statuses"]["bleed"]) == CombatEnemies.MAX_INT,
+			card_id + ": overflow fixture really sits at the counter ceiling")
+		_red_thread_refused(overflow, card_id, 1, "status_overflow")
+		var near := _red_thread_fixture(card_id, 2, 1)
+		near["enemies"]._enemies[0]["statuses"] = {"bleed": CombatEnemies.MAX_INT - 1}
+		_red_thread_refused(near, card_id, 1, "status_overflow")
+	var weak_overflow := _red_thread_fixture(KNOT, 2, 1)
+	weak_overflow["enemies"]._enemies[0]["statuses"] = {"weak": CombatEnemies.MAX_INT}
+	_red_thread_refused(weak_overflow, KNOT, 1, "status_overflow")
+
+	# A played copy cannot replay, and a refused card stays playable once its precondition is fixed.
+	var replay := _red_thread_fixture(PRICK, 2, 1)
+	var replay_before := _red_thread_snapshot(replay)
+	var played := RedThreadCards.new().play_card(replay["deck"], replay["party"],
+		replay["enemies"], PRICK, 1)
+	_check(played.get("ok") == true and not replay["deck"].hand.has(PRICK),
+		"replay fixture really spent its only copy")
+	_red_thread_refused(replay, PRICK, 1, "card_not_held")
+	_check(_red_thread_snapshot(replay)["rng"] == replay_before["rng"],
+		"the replay refusal consumes no run-RNG draw")
+
+	var retry := _red_thread_fixture(RAIN, 2, 1)
+	_red_thread_refused(retry, RAIN, 4, "invalid_target")
+	_red_thread_refused(retry, "seamstress_v3_forged_thread", 1, "unsupported_card")
+	_check(retry["deck"].try_spend_energy(CombatState.TURN_ENERGY) and retry["deck"].energy == 0,
+		"retry fixture really has no energy left")
+	_red_thread_refused(retry, RAIN, 1, "insufficient_energy")
+	retry["deck"].combat_state.energy = CombatState.TURN_ENERGY
+	_check(retry["deck"].energy == CombatState.TURN_ENERGY and retry["deck"].hand.has(RAIN),
+		"retry fixture restores only the missing energy")
+	var recovered := _red_thread_paid(retry, RED_THREAD_DAMAGE[RAIN], RED_THREAD_BLEED[RAIN], 0)
+	_check(recovered.get("ok") == true,
+		"the previously refused authentic cast then applies on the same objects")
+
+	# A confirmed lethal hit keeps its original slot: no fallback to a surviving, compacted slot.
+	var lethal := _red_thread_fixture(PRICK, 2, 1,
+		[{"max_hp": 3}, {"max_hp": 18}, {"max_hp": 14}], {}, {}, 6307, 2)
+	var lethal_result := RedThreadCards.new().play_card(lethal["deck"], lethal["party"],
+		lethal["enemies"], PRICK, 1)
+	_check(lethal_result.get("ok") == true and lethal_result.get("hp_after") == 0,
+		"the lethal Thread Prick really downed its chosen slot")
+	_check(lethal["enemies"].is_slain(1) and lethal["enemies"].get_enemy(2)["hp"] == 18
+		and lethal["enemies"].get_enemy(3)["hp"] == 14,
+		"only the original target slot died; no surviving slot moved or was hit")
+	_check(int(lethal["enemies"].get_enemy(1).get("statuses", {}).get("bleed", 0))
+		== RED_THREAD_BLEED[PRICK],
+		"the printed Bleed still lands on the slain original slot")
+	_red_thread_refused(lethal, PRICK, 1, "invalid_target")
+	var surviving := RedThreadCards.new().play_card(lethal["deck"], lethal["party"],
+		lethal["enemies"], PRICK, 2)
+	_check(surviving.get("ok") == true and surviving.get("target_position") == 2
+		and lethal["enemies"].get_enemy(2)["hp"] == 15,
+		"a later cast must name a surviving slot explicitly, never inherit one")
+
+
+## AC3: a rewritten or relinked catalog record is inert before any state changes.
+func _test_red_thread_tampered_catalog() -> void:
+	var forged := ForgedRedThread.new()
+	for card_id: String in RED_THREAD_IDS:
+		var authentic := _red_thread_record(card_id)
+		_check(not authentic.is_empty(), card_id + ": authentic catalog record loaded")
+		var link := "upgrade_of" if card_id.ends_with("_plus") else "upgrade_id"
+		var fields: Array = ["id", "display_name", "owner", "cost", "target_kind",
+			"from_positions", "to_positions", "effects", "starting_copies", "reward_eligible"]
+		if authentic.has("rarity"):
+			fields.append("rarity")
+		fields.append(link)
+		var replacements: Dictionary = {
+			"id": "seamstress_forged_thread", "display_name": "Forged Thread", "owner": "warden",
+			"cost": 2, "target_kind": "enemy_all", "from_positions": [1, 2],
+			"to_positions": [1, 2], "effects": {"bleed": 99}, "rarity": "rare",
+			"starting_copies": int(authentic.get("starting_copies", 0)) + 1,
+			"reward_eligible": not bool(authentic.get("reward_eligible", false)),
+			"upgrade_id": "seamstress_forged_thread", "upgrade_of": "seamstress_forged_thread",
+		}
+		var mutations: Array = []
+		for field: String in fields:
+			var omitted: Dictionary = authentic.duplicate(true)
+			omitted.erase(field)
+			mutations.append(omitted)
+			var altered: Dictionary = authentic.duplicate(true)
+			altered[field] = replacements[field]
+			mutations.append(altered)
+		var extra_effect: Dictionary = authentic.duplicate(true)
+		extra_effect["effects"]["exposed"] = 1
+		mutations.append(extra_effect)
+		var typed_cost: Dictionary = authentic.duplicate(true)
+		typed_cost["cost"] = float(typed_cost["cost"])
+		mutations.append(typed_cost)
+		var typed_bleed: Dictionary = authentic.duplicate(true)
+		typed_bleed["effects"]["bleed"] = float(typed_bleed["effects"]["bleed"])
+		mutations.append(typed_bleed)
+		var relinked: Dictionary = authentic.duplicate(true)
+		relinked["upgrade_of" if link == "upgrade_id" else "upgrade_id"] = "seamstress_forged_thread"
+		mutations.append(relinked)
+		if not authentic.has("rarity"):
+			var extra_rarity: Dictionary = authentic.duplicate(true)
+			extra_rarity["rarity"] = "common"
+			mutations.append(extra_rarity)
+
+		var fixture := _red_thread_fixture(card_id, 2, 1)
+		for mutation: Dictionary in mutations:
+			forged.forged = mutation
+			var before := _red_thread_snapshot(fixture)
+			var result: Dictionary = forged.play_card(fixture["deck"], fixture["party"],
+				fixture["enemies"], card_id, 1)
+			_check(result.get("ok") == false and result.get("reason") == "catalog_mismatch",
+				card_id + ": a tampered catalog record is refused")
+			_check(_red_thread_snapshot(fixture) == before,
+				card_id + ": the forgery refusal spends, discards and applies nothing")
+			_check(not forged.is_authentic_card(card_id),
+				card_id + ": a tampered record never authenticates")
+		forged.forged = authentic
+		_check(forged.is_authentic_card(card_id), card_id + ": the restored record authenticates")
+		var restored := _red_thread_paid(fixture, RED_THREAD_DAMAGE[card_id],
+			RED_THREAD_BLEED[card_id], RED_THREAD_WEAK[card_id])
+		_check(restored.get("ok") == true, card_id + ": the restored authentic record still plays")
+
+
+## AC2: identical seeds and request sequences replay identically, with no RNG movement.
+func _test_red_thread_seeded_replay() -> void:
+	var first := _red_thread_replay(74125, false)
+	var second := _red_thread_replay(74125, false)
+	_check(first == second, "same-seed base replay produces an identical snapshot and receipts")
+	var plus_first := _red_thread_replay(74125, true)
+	var plus_second := _red_thread_replay(74125, true)
+	_check(plus_first == plus_second, "same-seed + replay produces an identical snapshot")
+	_check(first["discard"] == [PRICK, RAIN, KNOT],
+		"the base replay discards exactly its three paid copies in order")
+	_check(plus_first["discard"] == [PRICK_PLUS, RAIN_PLUS, KNOT_PLUS],
+		"the + replay discards exactly its three paid copies in order")
+	_check(first["hp"] == [17, 18, 14], "the base replay lands the exact Block-first HP changes")
+	_check(first["bleed"] == [7, 3, 0], "the base replay stacks the exact passive-inflated Bleed")
+	_check(first["weak"] == [0, 1, 0], "only the Scarlet Knot target carries Weak")
+	_check(plus_first["hp"] == [15, 18, 14], "the + replay lands its own exact HP changes")
+	_check(plus_first["bleed"] == [9, 4, 0], "the + replay stacks its own exact Bleed")
+	_check(first["energy"] == 0 and plus_first["energy"] == 0,
+		"each replay spends the whole three-energy turn")
+	_check(first["rng"] == second["rng"] and plus_first["rng"] == plus_second["rng"],
+		"neither replay consumes a run-RNG draw at any step")
+
+
+func _red_thread_replay(seed_value: int, upgraded: bool) -> Dictionary:
+	var rng := _hem_rng(seed_value)
+	var ids: Array[String] = [PRICK_PLUS if upgraded else PRICK, RAIN_PLUS if upgraded else RAIN,
+		KNOT_PLUS if upgraded else KNOT, RED_THREAD_FILLERS[0], RED_THREAD_FILLERS[1]]
+	var deck := CombatDeck.new(ids, rng)
+	_check(deck.start_turn() and deck.hand.size() == 5 and deck.energy == 3,
+		"red-thread replay deck starts the real five-draw three-energy turn")
+	for card_id: String in ids.slice(0, 3):
+		_check(deck.hand.has(card_id), "replay fixture holds " + card_id)
+	var party := _hem_party(3)
+	var enemies := _red_thread_enemies([
+		{"max_hp": 20, "block": 2},
+		{"max_hp": 18, "block": 1},
+		{"max_hp": 14},
+	])
+	var service := RedThreadCards.new()
+	var results: Array = []
+	results.append(service.play_card(deck, party, enemies, ids[0], 1))
+	results.append(service.play_card(deck, party, enemies, ids[1], 1))
+	results.append(service.play_card(deck, party, enemies, ids[2], 2))
+	var snapshot := {"rng": rng.state, "energy": deck.energy, "hand": deck.hand.duplicate(),
+		"draw": deck.draw_pile.duplicate(), "discard": deck.discard_pile.duplicate(),
+		"heroes": party.get_heroes(), "enemies": enemies.get_enemies(), "results": results}
+	snapshot["hp"] = [enemies.get_enemy(1)["hp"], enemies.get_enemy(2)["hp"],
+		enemies.get_enemy(3)["hp"]]
+	snapshot["bleed"] = [int(enemies.get_enemy(1).get("statuses", {}).get("bleed", 0)),
+		int(enemies.get_enemy(2).get("statuses", {}).get("bleed", 0)),
+		int(enemies.get_enemy(3).get("statuses", {}).get("bleed", 0))]
+	snapshot["weak"] = [int(enemies.get_enemy(1).get("statuses", {}).get("weak", 0)),
+		int(enemies.get_enemy(2).get("statuses", {}).get("weak", 0)),
+		int(enemies.get_enemy(3).get("statuses", {}).get("weak", 0))]
+	return snapshot
+
+
+## A real seeded five-card hand holding `copies` genuine copies of `card_id`.
+func _red_thread_fixture(card_id: String, seat: int = 2, target: int = 1,
+		enemy_specs: Array = [], hero_statuses: Dictionary = {},
+		enemy_statuses: Dictionary = {}, seed_value: int = 6307,
+		copies: int = 1) -> Dictionary:
+	var rng := _hem_rng(seed_value)
+	var ids: Array[String] = []
+	for _copy in range(copies):
+		ids.append(card_id)
+	var filler_index := 0
+	while ids.size() < CombatDeck.TURN_DRAW:
+		ids.append(RED_THREAD_FILLERS[filler_index % RED_THREAD_FILLERS.size()])
+		filler_index += 1
+	var deck := CombatDeck.new(ids, rng)
+	_check(deck.start_turn() and deck.turn_active and deck.energy == CombatState.TURN_ENERGY
+		and deck.hand.size() == CombatDeck.TURN_DRAW and deck.hand.count(card_id) == copies,
+		card_id + ": real seeded hand holding the expected genuine copies")
+	var party := _hem_party(seat)
+	if not hero_statuses.is_empty():
+		party._heroes[seat - 1]["statuses"] = hero_statuses.duplicate(true)
+	var specs: Array = enemy_specs
+	if specs.is_empty():
+		specs = [{"max_hp": 20}, {"max_hp": 18}, {"max_hp": 14}]
+	var enemies := _red_thread_enemies(specs)
+	if not enemy_statuses.is_empty():
+		enemies._enemies[target - 1]["statuses"] = enemy_statuses.duplicate(true)
+	return _red_thread_kit(deck, party, enemies, card_id, seat, target)
+
+
+func _red_thread_kit(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		card_id: Variant, seat: int, target: int) -> Dictionary:
+	return {"deck": deck, "party": party, "enemies": enemies,
+		"rng": deck._rng if deck != null else null,
+		"card_id": card_id, "seat": seat, "target": target}
+
+
+## Real enemy slots: HP loss and Block through the model's own state APIs, then fixture statuses.
+func _red_thread_enemies(specs: Array) -> CombatEnemies:
+	var definitions: Array = []
+	for index in range(specs.size()):
+		definitions.append({"id": "fixture_red_thread_enemy_" + str(index + 1),
+			"max_hp": int(specs[index].get("max_hp", 20))})
+	var enemies := CombatEnemies.new(definitions)
+	if specs.is_empty():
+		return enemies
+	_check(enemies.is_valid() and enemies.get_enemies().size() == specs.size(),
+		"fixture builds a real indexed enemy roster")
+	for index in range(specs.size()):
+		var spec: Dictionary = specs[index]
+		var max_hp := int(spec.get("max_hp", 20))
+		var lost := max_hp - int(spec.get("hp", max_hp))
+		if lost > 0:
+			_check(enemies.apply_damage(index + 1, lost),
+				"fixture enemy " + str(index + 1) + " really lost HP")
+		var block := int(spec.get("block", 0))
+		if block > 0:
+			_check(enemies.gain_block(index + 1, block),
+				"fixture enemy " + str(index + 1) + " really gained Block")
+		var statuses: Dictionary = spec.get("statuses", {})
+		var bleed := int(statuses.get("bleed", 0))
+		if bleed > 0:
+			_check(enemies.apply_statuses({index + 1: {"bleed": bleed}}),
+				"fixture enemy " + str(index + 1) + " really gained its Bleed stack")
+		for name in statuses:
+			if name == "bleed":
+				continue
+			if not enemies._enemies[index].has("statuses"):
+				enemies._enemies[index]["statuses"] = {}
+			enemies._enemies[index]["statuses"][name] = statuses[name]
+	return enemies
+
+
+func _red_thread_snapshot(f: Dictionary) -> Dictionary:
+	var deck: CombatDeck = f["deck"]
+	var party: CombatParty = f["party"]
+	var enemies: CombatEnemies = f["enemies"]
+	var result := {"hand": deck.hand.duplicate(), "draw": deck.draw_pile.duplicate(),
+		"discard": deck.discard_pile.duplicate(), "energy": deck.energy,
+		"state_energy": deck.combat_state.energy, "active": deck.turn_active,
+		"heroes": party.get_heroes(), "enemies": enemies.get_enemies(),
+		"rng": f["rng"].state}
+	return result
+
+
+## Independent oracle: one energy, one discarded held copy, Block before HP, then printed Bleed
+## (plus the passive) and, for Scarlet Knot only, printed Weak.
+func _red_thread_expected(before: Dictionary, card_id: String, target_position: int,
+		damage: int, bleed: int, weak: int) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] = int(expected["energy"]) - 1
+	expected["state_energy"] = int(expected["state_energy"]) - 1
+	var hand: Array = expected["hand"]
+	hand.remove_at(hand.find(card_id))
+	(expected["discard"] as Array).append(card_id)
+	var enemy: Dictionary = expected["enemies"][target_position - 1]
+	var absorbed: int = mini(int(enemy["block"]), damage)
+	enemy["block"] = int(enemy["block"]) - absorbed
+	enemy["hp"] = maxi(0, int(enemy["hp"]) - (damage - absorbed))
+	var statuses: Dictionary = enemy.get("statuses", {})
+	statuses["bleed"] = int(statuses.get("bleed", 0)) + bleed
+	if weak > 0:
+		statuses["weak"] = int(statuses.get("weak", 0)) + weak
+	enemy["statuses"] = statuses
+	return expected
+
+
+func _red_thread_paid(f: Dictionary, expected_damage: int, expected_bleed: int,
+		expected_weak: int) -> Dictionary:
+	var card_id: String = str(f["card_id"])
+	var target: int = int(f["target"])
+	var before := _red_thread_snapshot(f)
+	var result: Dictionary = RedThreadCards.new().play_card(f["deck"], f["party"],
+		f["enemies"], card_id, target)
+	_check(result.get("ok") == true and result.get("reason") == "applied",
+		card_id + ": authorized paid cast on slot " + str(target))
+	_check(result.get("card_id") == card_id and result.get("cost") == 1,
+		card_id + ": receipt names the authentic card and its one energy")
+	_check(result.get("owner_position") == int(f["seat"])
+		and result.get("target_position") == target,
+		card_id + ": receipt reports the real owner seat and target slot")
+	_check(result.get("printed_damage") == RED_THREAD_DAMAGE[card_id]
+		and result.get("base_damage") == RED_THREAD_DAMAGE[card_id]
+		and result.get("damage") == expected_damage,
+		card_id + ": receipt prints the base and the resolved hit")
+	_check(result.get("passive_bleed") == 1 and result.get("bleed_applied") == expected_bleed
+		and result.get("weak_applied") == expected_weak,
+		card_id + ": receipt prints the passive-inflated Bleed and the printed Weak")
+	var expected := _red_thread_expected(before, card_id, target, expected_damage, expected_bleed,
+		expected_weak)
+	var after := _red_thread_snapshot(f)
+	_check(after == expected,
+		card_id + ": exact hand/piles/energy/turn/heroes/enemies/RNG state")
+	_check(after["energy"] == CombatState.TURN_ENERGY - 1
+		and after["state_energy"] == CombatState.TURN_ENERGY - 1,
+		card_id + ": exactly one shared energy was charged")
+	_check(after["discard"] == [card_id] and after["hand"].size() == CombatDeck.TURN_DRAW - 1,
+		card_id + ": precisely one held copy moved to the discard pile")
+	_check(after["draw"] == before["draw"], card_id + ": the draw pile is untouched")
+	_check(after["rng"] == before["rng"], card_id + ": no run-RNG draw during resolution")
+	var enemy_before: Dictionary = before["enemies"][target - 1]
+	var enemy_after: Dictionary = after["enemies"][target - 1]
+	_check(result.get("hp_before") == enemy_before["hp"]
+		and result.get("hp_after") == enemy_after["hp"]
+		and result.get("hp_loss") == int(enemy_before["hp"]) - int(enemy_after["hp"]),
+		card_id + ": receipt proves the exact HP change")
+	_check(result.get("block_before") == enemy_before["block"]
+		and result.get("block_after") == enemy_after["block"],
+		card_id + ": receipt proves the exact Block change")
+	_check(result.get("bleed_before") == int(
+			(enemy_before.get("statuses", {}) as Dictionary).get("bleed", 0))
+		and result.get("bleed_after") == int(
+			(enemy_after.get("statuses", {}) as Dictionary).get("bleed", 0)),
+		card_id + ": receipt proves the Bleed stack change")
+	_check(result.get("weak_before") == int(
+			(enemy_before.get("statuses", {}) as Dictionary).get("weak", 0))
+		and result.get("weak_after") == int(
+			(enemy_after.get("statuses", {}) as Dictionary).get("weak", 0)),
+		card_id + ": receipt proves the Weak stack change")
+	# Bystander isolation: no other hero and no other enemy record changes at all.
+	for index in range(CombatParty.PARTY_SIZE):
+		_check(after["heroes"][index] == before["heroes"][index],
+			card_id + ": hero slot " + str(index + 1) + " is untouched")
+	for index in range(before["enemies"].size()):
+		if index == target - 1:
+			continue
+		_check(after["enemies"][index] == before["enemies"][index],
+			card_id + ": enemy slot " + str(index + 1) + " is untouched")
+	var tampered := result.duplicate(true)
+	tampered["hp_after"] = -999
+	tampered["bleed_after"] = -999
+	tampered["weak_after"] = -999
+	_check(_red_thread_snapshot(f) == expected, card_id + ": the receipt is detached from state")
+	return result
+
+
+func _red_thread_refused(f: Dictionary, card_id: Variant, target_position: int,
+		reason: String) -> void:
+	var before := _red_thread_snapshot(f)
+	var result: Dictionary = RedThreadCards.new().play_card(f["deck"], f["party"],
+		f["enemies"], card_id, target_position)
+	_check(result.get("ok") == false and result.get("reason") == reason,
+		str(card_id) + ": refuses " + reason)
+	_check(_red_thread_snapshot(f) == before,
+		reason + ": preserves hand, draw, discard, energy, turn, heroes, enemies and RNG")
+	result["reason"] = "tampered"
+	result["damage"] = 999
+	_check(_red_thread_snapshot(f) == before, reason + ": the refusal receipt is detached")
+
+
+func _red_thread_record(card_id: String) -> Dictionary:
+	var spec: Dictionary = RED_THREAD_CASES[card_id]
+	var source: Variant = V3SeamstressStarterCards.new()
+	if spec["catalog"] == "pool":
+		source = V3SeamstressPoolCards.new()
+	return source.get_definition(card_id)
