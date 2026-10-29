@@ -17,6 +17,7 @@ func _initialize() -> void:
     _test_frayed_debt_removal()
     _test_authored_open_and_quotes()
     _test_first_copy_and_replay()
+    _test_fresh_visit_identity()
     _test_real_stitched_and_survivors()
     _test_insufficient_gold_and_leave()
     _test_stale_and_forged_inputs()
@@ -69,8 +70,9 @@ func _test_frayed_debt_removal() -> void:
                 "curse removal preserves composites and allocator")
         _reject(visit, curse, source["visit_id"], NODE, source, "replayed curse removal")
         var replay := _make_visit(deck, price + 50, prior, registry, fixture["cursor"])
-        _check(_remove(replay, curse, replay.read_state()) == paid and randi() == next_draw,
-                "identical removal receipt replay consumes no randomness")
+        _same_stable_receipt(_remove(replay, curse, replay.read_state()), paid,
+                "same-input independent-instance curse replay")
+        _check(randi() == next_draw, "identical removal receipt replay consumes no randomness")
         _check(deck == original and registry == fixture["descriptors"], "curse removal leaves caller containers intact")
 
 
@@ -124,6 +126,21 @@ func _reject(visit: RunUnpickerVisit, card: Variant, visit_id: Variant,
             label + ": no phantom action or payment")
 
 
+## Two receipts from independent instances with the same ledger differ only in
+## the fresh visit identity and its embedded source snapshot; every stable
+## economic field must still replay exactly.
+func _same_stable_receipt(actual: Dictionary, expected: Dictionary, label: String) -> void:
+    _check(actual.get("visit_id") != expected.get("visit_id")
+            and not str(actual.get("visit_id", "")).is_empty()
+            and not str(expected.get("visit_id", "")).is_empty(),
+            label + ": independent instances expose distinct fresh visit identities")
+    for key in expected:
+        if key == "visit_id" or key == "source_snapshot":
+            continue
+        _check(actual.get(key) == expected[key],
+                label + ": stable field " + str(key) + " replays exactly")
+
+
 func _test_authored_open_and_quotes() -> void:
     var deck := _deck()
     for prior in [0, 1, 2]:
@@ -174,8 +191,8 @@ func _test_first_copy_and_replay() -> void:
     _reject(first, PRICK, source["visit_id"], NODE, source, "repeated callback")
     _reject(first, null, source["visit_id"], NODE, source, "repeated Leave", true)
     var replay := _make_visit(deck, 150)
-    _check(_remove(replay, STRIKE, replay.read_state()) == receipt,
-            "same-input separate instance replays exact complete receipt")
+    _same_stable_receipt(_remove(replay, STRIKE, replay.read_state()), receipt,
+            "same-input separate instance replays the stable economic receipt")
     var detached: Dictionary = receipt["source_snapshot"]
     detached["deck"].clear()
     var returned: Array = receipt["deck"]
@@ -184,6 +201,54 @@ func _test_first_copy_and_replay() -> void:
             "caller, source snapshot and internal state do not alias returned receipt")
     _check(local_rng.state == local_before and randi() == global_next,
             "valid, refused, and replayed decisions consume no local/global RNG")
+
+
+## AC1: independently opened visits with an identical node, deck, descriptors,
+## gold, prior removal count and cursor own distinct fresh identities, so an
+## intent captured on the first can never authorize the second, and the second
+## still completes with its own authenticated request.
+func _test_fresh_visit_identity() -> void:
+    var cases: Array = [{"deck": _deck(), "descriptors": {}, "cursor": 1}]
+    var fixture := _two_composites()
+    if not fixture.is_empty():
+        cases.append({"deck": fixture["deck"], "descriptors": fixture["descriptors"],
+                "cursor": fixture["cursor"]})
+    for ledger in cases:
+        var first := _make_visit(ledger["deck"], 175, 0, ledger["descriptors"], ledger["cursor"])
+        var second := _make_visit(ledger["deck"], 175, 0, ledger["descriptors"], ledger["cursor"])
+        _check(first.is_valid() and second.is_valid() and not first.is_consumed()
+                and not second.is_consumed(), "independent same-ledger visits both open")
+        var first_source := first.read_state()
+        var second_source := second.read_state()
+        _check(not first_source["visit_id"].is_empty() and not second_source["visit_id"].is_empty()
+                and first_source["visit_id"] != second_source["visit_id"],
+                "independent same-ledger visits expose distinct nonempty visit_ids")
+        _check(second.quote()["visit_id"] == second_source["visit_id"]
+                and second.quote()["ok"],
+                "each visit quotes only its own fresh identity")
+        _check(first_source["receipt"] == second_source["receipt"]
+                and first_source["price"] == second_source["price"]
+                and first_source["price"] == 75,
+                "identical ledger keeps one stable economic receipt and quote")
+        seed(9713)
+        var next_draw := randi()
+        seed(9713)
+        _reject(second, STRIKE, first_source["visit_id"], NODE, first_source,
+                "first visit's remove intent on second visit")
+        _reject(second, null, first_source["visit_id"], NODE, first_source,
+                "first visit's Leave intent on second visit", true)
+        _check(randi() == next_draw,
+                "cross-visit stale refusals consume no global RNG")
+        var second_paid := _remove(second, STRIKE, second_source)
+        _check(second_paid.get("ok") == true and second_paid.get("charged_gold") == 75
+                and second_paid.get("prior_removals") == 1 and second.is_consumed(),
+                "fresh authenticated removal completes on the second visit")
+        _check(first.read_state() == first_source and not first.is_consumed(),
+                "second visit's completion leaves the first visit fully unchanged")
+        var first_paid := _remove(first, STRIKE, first_source)
+        _check(first_paid.get("ok") == true and first_paid.get("charged_gold") == 75
+                and first.is_consumed(),
+                "first visit still completes with its own fresh identity")
 
 
 func _two_composites() -> Dictionary:
