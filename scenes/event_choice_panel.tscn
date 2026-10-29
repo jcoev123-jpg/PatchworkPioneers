@@ -62,31 +62,48 @@ theme_override_constants/margin_top = 26
 theme_override_constants/margin_right = 36
 theme_override_constants/margin_bottom = 24
 
-[node name="EventContent" type="VBoxContainer" parent="PaperPanel/ContentMargin"]
+[node name="ScrollStack" type="VBoxContainer" parent="PaperPanel/ContentMargin"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="StoryScroll" type="ScrollContainer" parent="PaperPanel/ContentMargin/ScrollStack"]
+layout_mode = 2
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 1
+follow_focus = true
+
+[node name="EventContent" type="VBoxContainer" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll"]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="TopStitches" type="Label" parent="PaperPanel/ContentMargin/EventContent"]
+[node name="TopStitches" type="Label" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent"]
 layout_mode = 2
 text = "×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×"
 horizontal_alignment = 1
 
-[node name="EventTitle" type="Label" parent="PaperPanel/ContentMargin/EventContent"]
+[node name="EventTitle" type="Label" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent"]
 layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="EventDescription" type="Label" parent="PaperPanel/ContentMargin/EventContent"]
+[node name="EventDescription" type="Label" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent"]
 layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
 autowrap_mode = 3
 
-[node name="Choices" type="VBoxContainer" parent="PaperPanel/ContentMargin/EventContent"]
+[node name="Choices" type="VBoxContainer" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent"]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="BottomStitches" type="Label" parent="PaperPanel/ContentMargin/EventContent"]
+[node name="BottomStitches" type="Label" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent"]
 layout_mode = 2
 text = "×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×"
 horizontal_alignment = 1
+
+[node name="ScrollHint" type="Label" parent="PaperPanel/ContentMargin/ScrollStack"]
+visible = false
+layout_mode = 2
+text = "↓  Scroll to reveal every choice  ↓"
+horizontal_alignment = 1
+mouse_filter = 2

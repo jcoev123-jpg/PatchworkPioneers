@@ -30,6 +30,7 @@ var checks: int = 0
 var committed: Array[Dictionary] = []
 var authored: Dictionary = {}
 var wallet_committed: Array[Dictionary] = []
+var vital_committed: Array[Dictionary] = []
 
 
 func _initialize() -> void:
@@ -84,6 +85,10 @@ func _on_choice_committed(event_id: String, choice_id: String) -> void:
 
 func _on_wallet_choice_committed(result: Dictionary) -> void:
 	wallet_committed.append(result.duplicate(true))
+
+
+func _on_vital_choice_committed(result: Dictionary) -> void:
+	vital_committed.append(result.duplicate(true))
 
 
 func _wallet_record(path: String, event_id: String) -> Dictionary:
@@ -1879,6 +1884,17 @@ func _test_needle_toll(seed_value: int = 245, require_empty_targets: bool = fals
 		"safe exit keeps the authored +1 scrap wording")
 	_check(panel.get_choice_buttons()[0].text == "Pay toll with selected hero: -6 HP; choose a rare card",
 		"first-stage payment caption stays exact")
+	panel.description_label.text = _long_story()
+	await _frames()
+	_check_long_paper("long Needle Toll payer", 2)
+	_check(panel.needle_payer.get_parent() == panel.event_content,
+		"Needle Toll selector remains within the scrolling story")
+	panel.get_choice_buttons()[1].grab_focus()
+	await _frames()
+	panel.needle_payer.grab_focus()
+	await _frames()
+	_check(_is_in_scroll(panel.needle_payer),
+		"Needle Toll payer auto-scrolls into view on keyboard focus")
 	var old: Callable = panel.get_choice_buttons()[0].pressed.get_connections()[0].callable
 	var count := committed.size()
 	panel.hide()
@@ -2039,6 +2055,16 @@ func _test_fate_pin_auction() -> void:
 		and panel.get_choice_buttons()[0].tooltip_text.contains("+1 scrap"), "exact payment and displacement copy")
 	for button in panel.get_choice_buttons():
 		_check(button.get_global_rect().position.y >= 0 and button.get_global_rect().end.y <= 720, "auction actions fit viewport")
+	panel.description_label.text = _long_story()
+	await _frames()
+	_check_long_paper("long Fate Pin Auction payer", 3)
+	_check(picker.get_parent() == panel.event_content,
+		"Fate Pin Auction payer remains inside the scrolling story")
+	panel.get_choice_buttons()[2].grab_focus()
+	await _frames()
+	picker.grab_focus()
+	await _frames()
+	_check(_is_in_scroll(picker), "auction payer can be scrolled to by focus")
 	var count := committed.size()
 	await _key(KEY_2)
 	_check(committed.size() == count + 1 and committed.back() == {"event_id": "fate_pin_auction", "choice_id": "patch_1"}, "number key emits selected patch identity")
@@ -2090,6 +2116,231 @@ func _test_parcel_adapter() -> void:
 	panel.close_event()
 
 
+## A genuine three- or two-choice service-valid Event whose story and authored
+## actions are deliberately longer than the parchment's available height.
+func _long_story() -> String:
+	var passages: Array[String] = []
+	for index in range(16):
+		passages.append("Under the velvet-dark sky the old tailor unties another stubborn knot. "
+			+ "The lanterns click against the thimbles, and the distant fabric hills shiver as "
+			+ "each whispered promise must be read before any traveller decides the price. "
+			+ "A crooked needle points toward the bridge, where every scrap bears the marks "
+			+ "of someone who once trusted this narrow path.")
+	return "\n\n".join(passages)
+
+
+func _long_fixture(count: int = 3, mode: String = "legacy") -> Dictionary:
+	var choices := [
+		{"id": "sew", "text": "Sew the midnight banner carefully by threading each of the "
+			+ "tattered blue hems through a silver eye, setting every crooked edge straight "
+			+ "before the restless wind can lift the whole patchwork from its frame."},
+		{"id": "unpick", "text": "Unpick the fraying border and gather its lost tokens, "
+			+ "though the unsewn promise may follow the travelling party through the woods."},
+		{"id": "depart", "text": "Leave the candlelit sewing table quietly, take the last "
+			+ "winding footpath past the mossy timber bridge, and carry your unfinished "
+			+ "message safely into the next mist-covered valley."},
+	]
+	for i in range(choices.size()):
+		var gold := -20 if i == 0 else (8 if i == 1 else 0)
+		var scraps := -2 if i == 0 else (1 if i == 1 else 0)
+		if mode == "vital":
+			choices[i]["outcome"] = {"gold": gold, "scraps": scraps,
+				"hp": -21 if i == 0 else (5 if i == 1 else 0),
+				"max_hp": 0}
+		else:
+			choices[i]["outcome"] = {"gold": gold, "scraps": scraps}
+	if count == 2:
+		choices.resize(2)
+	return {"id": "long_scroll_" + mode + "_" + str(count),
+		"title": "The Lantern Keeper's Unfinished Midnight Stitch",
+		"description": _long_story(), "choices": choices}
+
+
+func _wheel_down(ticks: int = 32) -> void:
+	var position := panel.story_scroll.get_global_rect().get_center()
+	for i in range(ticks):
+		var wheel := InputEventMouseButton.new()
+		wheel.position = position
+		wheel.button_index = MOUSE_BUTTON_WHEEL_DOWN
+		wheel.factor = 1.0
+		wheel.pressed = true
+		root.push_input(wheel, true)
+		wheel.pressed = false
+		root.push_input(wheel, true)
+	await _frames()
+
+
+func _is_in_scroll(control: Control) -> bool:
+	var viewport_rect := panel.story_scroll.get_global_rect()
+	var rect := control.get_global_rect()
+	return rect.position.y >= viewport_rect.position.y - 1.0 \
+		and rect.end.y <= viewport_rect.end.y + 1.0 \
+		and rect.position.x >= viewport_rect.position.x - 1.0 \
+		and rect.end.x <= viewport_rect.end.x + 1.0
+
+
+func _check_long_paper(label: String, buttons: int) -> void:
+	var bounds := panel.paper_panel.get_global_rect()
+	_check(bounds.position.y >= 31.0 and bounds.end.y <= 689.0,
+		label + " parchment entirely within 32px viewport safety margins")
+	_check(panel.scroll_hint.visible and panel.scroll_hint.is_visible_in_tree(),
+		label + " sewn scroll hint actually visible")
+	_check(panel.story_scroll.vertical_scroll_mode == ScrollContainer.SCROLL_MODE_AUTO
+		and panel.story_scroll.get_v_scroll_bar().max_value > panel.story_scroll.size.y,
+		label + " real scrollable viewport with positive overflow")
+	_check(panel.get_choice_buttons().size() == buttons
+		and panel.event_content.get_combined_minimum_size().y > panel.story_scroll.size.y,
+		label + " all valid authored tickets are mounted in overflowing story")
+	_check(panel.title_label.get_index() + 1 == panel.description_label.get_index(),
+		label + " title remains adjacent to story inside the scroll")
+
+
+func _test_long_legacy() -> void:
+	var record := _long_fixture()
+	_check(RunEventChoice.new(record).is_valid(), "long three-choice service fixture authentic")
+	committed.clear()
+	_check(panel.open_event(record), "long three-choice scene opens")
+	await _frames()
+	_check_long_paper("long three-choice", 3)
+	var buttons := panel.get_choice_buttons()
+	_check(panel.description_label.text == record.description and panel.title_label.text == record.title,
+		"long story and title remain completely authored, not truncated")
+	for i in range(buttons.size()):
+		_check(buttons[i].text == _expected_ticket(record.choices[i])
+			and panel._bound_choices.get(buttons[i]) == record.choices[i].id,
+			"long wrapped ticket retains complete action, outcome and authored ID " + str(i))
+	_check(not _is_in_scroll(buttons[2]), "long final choice initially below viewport")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 99312
+	var rng_state := rng.state
+	await _wheel_down(90)
+	_check(panel.story_scroll.scroll_vertical > 0 and _is_in_scroll(buttons[2]),
+		"real wheel scrolling reaches the entire third choice")
+	_check(committed.is_empty() and not panel._selector.is_claimed() and rng.state == rng_state,
+		"wheeling down commits nothing and consumes no RNG")
+	await _mouse_motion(buttons[2])
+	_check(committed.is_empty(), "hovering last visible ticket never chooses")
+	var overlay := Control.new()
+	overlay.name = "TestOnlyOverlay"
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.add_child(overlay)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	await _frames()
+	_check(overlay.is_visible_in_tree() and committed.is_empty()
+		and panel._selector.is_valid(), "opening a covering overlay leaves long Event untouched")
+	overlay.queue_free()
+	await _frames()
+	await _mouse(buttons[2])
+	_check(committed == [{"event_id": record.id, "choice_id": "depart"}],
+		"wheel-reached third ticket pointer emits exact authored ID once")
+	await _key(KEY_3)
+	_check(committed.size() == 1, "wheel-reached pointer action cannot replay via key")
+	panel.close_event()
+	await _frames()
+
+	# Two-choice variation still reaches its last authored action through Tab.
+	var two := _long_fixture(2)
+	committed.clear()
+	_check(panel.open_event(two), "long two-choice Event opens")
+	await _frames()
+	_check_long_paper("long two-choice", 2)
+	_check(panel.story_scroll.scroll_vertical == 0,
+		"reopened long offering starts at the top rather than old wheel position")
+	await _key(KEY_3)
+	_check(committed.is_empty(), "long two-choice has no third shortcut")
+	buttons = panel.get_choice_buttons()
+	buttons[0].grab_focus()
+	await _frames()
+	await _key(KEY_TAB)
+	await _frames()
+	_check(buttons[1].has_focus() and _is_in_scroll(buttons[1]),
+		"real Tab moves to last ticket and follow-focus scrolls it into view")
+	await _key(KEY_ENTER)
+	_check(committed == [{"event_id": two.id, "choice_id": "unpick"}],
+		"real Enter chooses only focused final authored ticket")
+	panel.close_event()
+	await _frames()
+	var short: Dictionary = authored["quiet_spool"]
+	_check(panel.open_event(short), "short authored Event reopens after long Event")
+	await _frames()
+	_check(panel.story_scroll.scroll_vertical == 0 and not panel.scroll_hint.visible
+		and panel.story_scroll.vertical_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED,
+		"long-to-short resets scroll, hint, and scroll mode")
+	_check(absf(panel.paper_panel.size.y - panel.paper_panel.get_combined_minimum_size().y) <= 1.0,
+		"short reopened parchment retains its compact natural centered height")
+	_check(panel.choices_container.get_child_count() == 2
+		and panel.description_label.text == short.description,
+		"fresh short Event has no stale choices and exact short description")
+	panel.close_event()
+	await _frames()
+
+
+func _test_long_wallet_and_vital() -> void:
+	var record := _long_fixture(3, "wallet")
+	var wallet := {"gold": 5, "scraps": 1}
+	var before := wallet.duplicate(true)
+	var rows: Array = RunEventChoice.new(record).preview_wallet_choices(wallet).choices
+	_check(rows.size() == 3 and not rows[0].affordable and rows[1].affordable and rows[2].affordable,
+		"long wallet fixture has independently proven unaffordable and affordable options")
+	wallet_committed.clear()
+	_check(panel.open_event_with_wallet(record, wallet), "long wallet preview mounts")
+	await _frames()
+	_check_long_paper("long wallet", 3)
+	var buttons := panel.get_choice_buttons()
+	for i in range(3):
+		_check(buttons[i].text.begins_with(record.choices[i].text)
+			and buttons[i].text.ends_with(_expected_forecast(rows[i], wallet))
+			and buttons[i].disabled == not rows[i].affordable,
+			"long wallet authored action, projected totals and service affordability " + str(i))
+	await _wheel_down(90)
+	_check(_is_in_scroll(buttons[2]), "long wallet last ticket reached with real wheel")
+	await _key(KEY_1)
+	_check(wallet_committed.is_empty() and panel._selector.is_valid(),
+		"out-of-view disabled number key spends nothing")
+	await _key(KEY_3)
+	_check(wallet_committed.size() == 1 and wallet_committed[0] == {
+		"ok": true, "event_id": record.id, "choice_id": "depart", "wallet": wallet},
+		"long wallet last authored shortcut emits exact detached service receipt once")
+	_check(wallet == before, "long wallet scroll/claim never changes source wallet")
+	panel.close_event()
+	await _frames()
+
+	var vital_record := _long_fixture(3, "vital")
+	var snapshot := {"gold": 10, "scraps": 2, "hero": {
+		"id": "seamstress", "hp": 18, "max_hp": 30}}
+	var original := snapshot.duplicate(true)
+	var vital_rows: Array = RunEventChoice.new(vital_record).preview_vital_choices(snapshot).choices
+	_check(vital_rows.size() == 3 and not vital_rows[0].affordable
+		and vital_rows[1].affordable and vital_rows[2].affordable,
+		"long vitality fixture has authentic service-denied lethal choice")
+	vital_committed.clear()
+	_check(panel.open_event_with_vitals(vital_record, snapshot), "long vitality preview mounts")
+	await _frames()
+	_check_long_paper("long vitality", 3)
+	buttons = panel.get_choice_buttons()
+	for i in range(3):
+		_check(buttons[i].text.begins_with(vital_record.choices[i].text)
+			and buttons[i].text.contains(panel._vital_delta_line(vital_rows[i]))
+			and buttons[i].text.ends_with(panel._vital_forecast_line(vital_rows[i], original))
+			and buttons[i].disabled == not vital_rows[i].affordable
+			and panel._bound_choices.get(buttons[i]) == vital_record.choices[i].id,
+			"long vitality complete authored action, exact HP/gold/scrap projections and denial " + str(i))
+	await _wheel_down(90)
+	_check(_is_in_scroll(buttons[2]), "long vitality final ticket visible after scrolling")
+	await _key(KEY_1)
+	_check(vital_committed.is_empty(), "long vitality denied shortcut stays inert")
+	buttons[2].grab_focus()
+	await _frames()
+	await _key(KEY_ENTER)
+	_check(vital_committed.size() == 1 and vital_committed[0] == {
+		"ok": true, "event_id": vital_record.id, "choice_id": "depart",
+		"state": original},
+		"long vital focused Enter emits exactly one detached unchanged-state receipt")
+	_check(snapshot == original, "long vital preview, scroll and commit preserve caller state")
+	panel.close_event()
+	await _frames()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(PANEL_SCENE) as PackedScene
@@ -2105,6 +2356,7 @@ func _run() -> void:
 	root.add_child(panel)
 	panel.choice_committed.connect(_on_choice_committed)
 	panel.wallet_choice_committed.connect(_on_wallet_choice_committed)
+	panel.vital_choice_committed.connect(_on_vital_choice_committed)
 	await _frames()
 	_check(not panel.visible and not panel.has_open_event(), "initially closed")
 	await _test_parcel_adapter()
@@ -2117,6 +2369,8 @@ func _run() -> void:
 	await _test_wallet_malformed_tooltips()
 	await _test_authored()
 	await _test_three_choice_and_identity()
+	await _test_long_legacy()
+	await _test_long_wallet_and_vital()
 	await _test_fallback_tickets()
 	_check(panel.open_event(authored["frayed_signpost"]), "art state offering opens")
 	await _frames()
