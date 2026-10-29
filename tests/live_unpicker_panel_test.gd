@@ -205,6 +205,8 @@ func _run() -> void:
 		await _test_leave(keyboard, 74)
 		await _test_remove_v3(keyboard)
 	await _test_price_boundaries()
+	await _test_initial_focus()
+	await _test_rebind_focus()
 	await _test_stitched()
 	await _test_rejections()
 	_check(randi() == global_next, "mounting completed before guard; all browsing/decisions preserve global RNG")
@@ -466,7 +468,20 @@ func _test_leave(keyboard: bool, gold: int) -> void:
 	var source := visit.read_state()
 	_check(panel.remove_button.disabled and not panel.leave_button.disabled
 			and panel.status_label.text.contains("1 more gold"), "74-gold shortage disables Remove, not Leave")
-	await _activate(panel.leave_button, keyboard, KEY_SPACE if keyboard else KEY_ENTER)
+	_check(not panel.card_buttons.is_empty()
+			and panel.leave_button.has_focus() and root.gui_get_focus_owner() == panel.leave_button,
+			"broke mounted bind defaults to enabled Leave focus, never a card row")
+	if keyboard:
+		# Real keyboard Enter on the default-focused Leave: no focus is grabbed.
+		for down in [true, false]:
+			var event := InputEventKey.new()
+			event.keycode = KEY_ENTER
+			event.pressed = down
+			root.push_input(event)
+			await process_frame
+		await _settle()
+	else:
+		await _activate(panel.leave_button, false)
 	_check(intents.size() == 1 and visit.read_state() == source, "Leave emits before route controller applies")
 	if intents.size() != 1:
 		return
@@ -498,6 +513,17 @@ func _test_price_boundaries() -> void:
 		_check(visit.quote().price == fixture.price
 				and panel.wallet_label.text.contains("%d gold" % fixture.price),
 				"service-derived price shown at boundary " + str(fixture))
+		if fixture.can_remove:
+			_check(not panel.card_buttons.is_empty()
+					and panel.card_buttons[0].has_focus()
+					and root.gui_get_focus_owner() == panel.card_buttons[0],
+					"affordable boundary default focus is the real first card row " + str(fixture))
+		else:
+			_check(panel.leave_button.has_focus()
+					and root.gui_get_focus_owner() == panel.leave_button
+					and not panel.card_buttons.is_empty()
+					and panel.remove_button.disabled and not panel.leave_button.disabled,
+					"unaffordable boundary default focus is free Leave, rows inspectable " + str(fixture))
 		if not fixture.can_remove:
 			panel.card_buttons[0].grab_focus()
 			await _settle()
@@ -528,6 +554,88 @@ func _test_price_boundaries() -> void:
 			panel.remove_button.pressed.emit()
 			_check(intents.is_empty() and visit.read_state() == before,
 					"insufficient gold cannot forge a paid request")
+
+
+## Binding before mount must make the same authoritative decision in _ready:
+## a broke quote lands on free Leave, an exactly-affordable quote on the
+## first authentic card row.
+func _test_initial_focus() -> void:
+	var broke := _make(74)
+	var fresh := LiveUnpickerPanel.new()
+	fresh.position = Vector2(200, 60)
+	fresh.bind(broke)
+	var fresh_intents: Array[Dictionary] = []
+	fresh.decision_requested.connect(func(intent: Dictionary): fresh_intents.append(intent))
+	root.add_child(fresh)
+	await _settle()
+	var broke_source := broke.read_state()
+	_check(broke.quote().price == 75 and int(broke_source.gold) == 74,
+			"pre-mount broke prerequisite: wallet 74 against an authentic 75 quote")
+	_check(fresh.leave_button.has_focus() and root.gui_get_focus_owner() == fresh.leave_button
+			and not fresh.card_buttons.is_empty() and fresh.remove_button.disabled
+			and not fresh.leave_button.disabled,
+			"pre-mount broke bind focuses enabled Leave while rows stay inspectable")
+	_check(fresh_intents.is_empty() and broke.read_state() == broke_source and not broke.is_consumed(),
+			"pre-mount default focus never pays or consumes the visit")
+	fresh.queue_free()
+	await process_frame
+	var funded := _make(75)
+	var second := LiveUnpickerPanel.new()
+	second.position = Vector2(200, 60)
+	second.bind(funded)
+	root.add_child(second)
+	await _settle()
+	_check(funded.quote().price == 75 and int(funded.read_state().gold) == 75,
+			"pre-mount funded prerequisite: wallet exactly meets the 75 quote")
+	_check(not second.card_buttons.is_empty() and second.card_buttons[0].has_focus()
+			and root.gui_get_focus_owner() == second.card_buttons[0],
+			"pre-mount affordable bind focuses the real first card row")
+	second.queue_free()
+	await process_frame
+
+
+## broke -> funded -> broke rebind on one mounted panel: focus is recomputed
+## each time without any payment or intent, and a broke card row stays
+## inspectable while Remove cannot be activated.
+func _test_rebind_focus() -> void:
+	var broke_a := _make(74)
+	await _bind(broke_a)
+	_check(panel.leave_button.has_focus() and root.gui_get_focus_owner() == panel.leave_button,
+			"first broke bind defaults to Leave")
+	var funded := _make(100, 1)
+	await _bind(funded)
+	var funded_source := funded.read_state()
+	_check(funded.quote().price == 100 and not panel.card_buttons.is_empty()
+			and panel.card_buttons[0].has_focus()
+			and root.gui_get_focus_owner() == panel.card_buttons[0],
+			"funded rebind recomputes focus onto the first card row")
+	_check(intents.is_empty() and funded.read_state() == funded_source and not funded.is_consumed(),
+			"rebinding focus never pays or consumes the funded visit")
+	var broke_b := _make(99, 1)
+	await _bind(broke_b)
+	var broke_source := broke_b.read_state()
+	_check(broke_b.quote().price == 100 and int(broke_source.gold) == 99,
+			"rebind prerequisite: wallet 99 against an authentic 100 quote")
+	_check(panel.leave_button.has_focus() and root.gui_get_focus_owner() == panel.leave_button,
+			"second broke rebind recomputes focus back to free Leave")
+	_check(intents.is_empty() and broke_b.read_state() == broke_source and not broke_b.is_consumed(),
+			"rebinds never emit an intent or spend anything")
+	var first_id: String = broke_source.deck[0]
+	_check(panel.card_buttons[0].tooltip_text == LiveUnpickerPanel.card_tooltip(broke_source, first_id)
+			and panel.card_buttons[0].tooltip_text != "",
+			"broke rebind keeps genuine detached tooltips for inspection")
+	_check(panel.choice_scroll.is_visible_in_tree()
+			and panel.choice_scroll.get_v_scroll_bar().max_value > panel.choice_scroll.size.y,
+			"broke rebind keeps the scrollable owned-card list")
+	# Manual inspection of an unaffordable row never makes Remove actionable.
+	panel.card_buttons[0].grab_focus()
+	await _settle()
+	await _activate(panel.card_buttons[0], true)
+	_check(panel._selected_id == first_id and panel.remove_button.disabled,
+			"inspecting/selecting an unaffordable row keeps Remove disabled")
+	panel.remove_button.pressed.emit()
+	_check(intents.is_empty() and broke_b.read_state() == broke_source,
+			"Remove cannot be activated while broke")
 
 
 func _stitched_fixture() -> Dictionary:
@@ -646,6 +754,10 @@ func _test_rejections() -> void:
 	await _bind(invalid)
 	_check(panel.card_buttons.is_empty() and panel.remove_button.disabled
 			and panel.leave_button.disabled, "invalid/no-card service exposes no actions")
+	var invalid_focus := root.gui_get_focus_owner()
+	_check(invalid_focus == null or not panel.is_ancestor_of(invalid_focus)
+			or ((invalid_focus is Button) and (invalid_focus as Button).disabled),
+			"invalid visit acquires no actionable focus inside the panel")
 	var already := _make()
 	var snapshot := already.read_state()
 	_check(already.leave(snapshot.visit_id, snapshot.node_id, snapshot).ok,
@@ -653,6 +765,10 @@ func _test_rejections() -> void:
 	await _bind(already)
 	_check(panel.card_buttons.is_empty() and panel.remove_button.disabled
 			and panel.leave_button.disabled, "consumed visit never reopens")
+	var consumed_focus := root.gui_get_focus_owner()
+	_check(consumed_focus == null or not panel.is_ancestor_of(consumed_focus)
+			or ((consumed_focus is Button) and (consumed_focus as Button).disabled),
+			"consumed visit acquires no actionable focus inside the panel")
 
 	var old := _make()
 	await _bind(old)

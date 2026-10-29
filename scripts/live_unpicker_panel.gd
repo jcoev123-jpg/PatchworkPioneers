@@ -78,10 +78,7 @@ func _ready() -> void:
 	remove_button = _button("1 Remove", Vector2(30, 510), Vector2(390, 62))
 	leave_button = _button("0 Leave · free", Vector2(450, 510), Vector2(400, 62))
 	_refresh()
-	if _active() and not card_buttons.is_empty():
-		card_buttons[0].grab_focus()
-	elif _active():
-		leave_button.grab_focus()
+	_grab_initial_focus()
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -185,15 +182,26 @@ func bind(visit: RunUnpickerVisit) -> void:
 	if is_node_ready():
 		visible = true
 		_refresh()
-		if _active() and not card_buttons.is_empty():
-			card_buttons[0].grab_focus()
-		elif _active():
-			leave_button.grab_focus()
+		_grab_initial_focus()
 
 
 func close() -> void:
 	bind(null)
 	hide()
+
+
+## The single authoritative initial-focus decision, shared by _ready and bind:
+## a visit whose authentic wallet cannot pay the exact removal quote starts on
+## the only finishable action, free Leave; an affordable visit starts on the
+## first real card row. Focus never disables or hides rows, and an invalid,
+## closed or consumed visit acquires neither focus nor callbacks.
+func _grab_initial_focus() -> void:
+	if not _active():
+		return
+	if _affordable() and not card_buttons.is_empty():
+		card_buttons[0].grab_focus()
+	else:
+		leave_button.grab_focus()
 
 
 func _source_current() -> bool:
