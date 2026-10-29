@@ -132,6 +132,66 @@ func get_event_record(event_id: Variant) -> Dictionary:
 	return (_catalog_by_id[key] as Dictionary).duplicate(true)
 
 
+## Picks one authenticated Fight-choice Event record from the catalog using the
+## caller's seeded RandomNumberGenerator.
+## `rng` is typed Variant so wrong or missing arguments reject fail-closed without
+## raising a typed-argument error. `excluded_ids` is an optional Array of visited
+## event ID Strings to skip and is never stored internally.
+## Eligible records are sorted lexicographically by event ID, and a successful
+## selection consumes precisely one randi_range(0, eligible.size() - 1) draw.
+## Returns exactly {"ok": true, "event": deep_detached_record} on success, or
+## {"ok": false, "event": {}} with zero RNG draws on any refusal.
+func select_event(rng: Variant, excluded_ids: Variant = null) -> Dictionary:
+	if not (rng is RandomNumberGenerator):
+		return _selection_rejection()
+	if not _catalog_valid:
+		return _selection_rejection()
+	var parsed: Dictionary = _parse_exclusions(excluded_ids)
+	if not parsed.get("ok", false):
+		return _selection_rejection()
+	var excluded: Dictionary = parsed["ids"]
+	var eligible: Array = []
+	for record: Dictionary in _catalog_events:
+		var event_id: String = String(record.get("id", ""))
+		if not excluded.has(event_id):
+			eligible.append(event_id)
+	if eligible.is_empty():
+		return _selection_rejection()
+	eligible.sort()
+	var generator: RandomNumberGenerator = rng
+	var picked_id: String = eligible[generator.randi_range(0, eligible.size() - 1)]
+	if not _catalog_by_id.has(picked_id):
+		return _selection_rejection()
+	var selected_record: Dictionary = (_catalog_by_id[picked_id] as Dictionary).duplicate(true)
+	return {
+		"ok": true,
+		"event": selected_record,
+	}
+
+
+static func _selection_rejection() -> Dictionary:
+	return {
+		"ok": false,
+		"event": {},
+	}
+
+
+static func _parse_exclusions(excluded_ids: Variant) -> Dictionary:
+	var ids: Dictionary = {}
+	if excluded_ids == null:
+		return {"ok": true, "ids": ids}
+	if not (excluded_ids is Array):
+		return {"ok": false}
+	for value: Variant in (excluded_ids as Array):
+		if not (value is String):
+			return {"ok": false}
+		var event_id: String = value
+		if event_id.strip_edges().is_empty():
+			return {"ok": false}
+		ids[event_id] = true
+	return {"ok": true, "ids": ids}
+
+
 ## Creates a fresh, independent one-visit gate for `event_target` (an event ID
 ## String or an authentic event record Dictionary). Returns null if rejected.
 func open_visit(event_target: Variant) -> RunV3FightEventGate:

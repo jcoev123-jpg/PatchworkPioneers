@@ -234,6 +234,7 @@ func _run() -> void:
 			_check(_snapshot() == before, "rebuild and stale callback preserve rules state")
 			await _return()
 	await _needle_mount_cases()
+	await _monk_mount_cases()
 	await _combo_route_case()
 	await _combo_precast_bleed()
 	await _combo_three_slots()
@@ -2538,3 +2539,184 @@ func _control_attack_patches() -> void:
 		and app.enemies.get_enemy(1).statuses.exposed == 2,
 		"physical keyboard Needle Pin+ commits once without repeated Eye")
 	await _return()
+
+## The shipped app's exact hand panel and mounted picker, never a detached
+## resolver-only fixture. Both Monk seats and all six catalog printings play.
+func _monk_mount(id: String, seat: int, mode: String = "") -> bool:
+	if not await _start(_seed_for("warden_strike")):
+		return false
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 8712
+	app.run_rng = rng
+	app.deck = CombatDeck.new([id, "warden_strike", "warden_brace",
+		"tinker_pop_shot", "tinker_tune_up"], rng)
+	_check(app.deck.start_turn() and app.deck.hand.size() == 5
+		and app.deck.hand.has(id) and app.deck.energy == 3,
+		"Monk precondition: authentic held printing, active three-energy turn: " + id)
+	var heroes: Array = [{"id": "warden", "name": "Warden", "max_hp": 40},
+		{"id": "tinker", "name": "Tinker", "max_hp": 25}]
+	heroes.insert(seat - 1, {"id": "lantern_monk", "name": "Lantern Monk", "max_hp": 27})
+	app.party = CombatParty.new(heroes)
+	app.enemies = CombatEnemies.new([
+		{"id": "ragling", "name": "Ragling", "max_hp": 30},
+		{"id": "ragling_guard", "name": "Guard Ragling", "max_hp": 30},
+		{"id": "fray_scavenger", "name": "Fray Scavenger", "max_hp": 30}])
+	if mode == "block":
+		_check(app.enemies.gain_block(1, 30), "Monk blocked hit uses real enemy Block")
+	elif mode == "statuses":
+		app.party._heroes[seat - 1]["statuses"] = {"weak": 1}
+		app.enemies._enemies[0]["statuses"] = {"exposed": 1, "tangled": 1}
+		_check(app.enemies.gain_block(1, 2), "Monk status hit uses real Block")
+	app.battle_result = CombatBattleResult.new(app.party, app.enemies)
+	app.round_flow = CombatRoundFlow.new(app.deck, app.party, app.enemies,
+		app.enemy_intents, app.battle_result)
+	app._refresh_party()
+	app._refresh_enemy_roster()
+	app._refresh_hand()
+	await _frames()
+	var panel: Control = _panel(id)
+	var ready: bool = panel != null and panel.is_visible_in_tree() 		and presenter._bindings.has(panel) and app.party.is_valid() 		and app.enemies.is_valid() and app.round_flow._enemies == app.enemies
+	_check(ready, "Monk living seat %d and held hand wired to live picker: %s" % [seat, id])
+	return ready
+
+
+func _monk_state() -> Array:
+	return [_snapshot(), presenter.last_event.duplicate(true)]
+
+
+func _monk_arm(panel: Control, keyboard: bool) -> void:
+	if keyboard:
+		for i in range(9):
+			await _key(KEY_P)
+			if presenter._armed == panel:
+				break
+	else:
+		await _click(panel)
+	_check(presenter._armed == panel, "Monk actual P/click selected exact held panel")
+
+
+func _monk_mount_cases() -> void:
+	var monk := CombatLanternMonkBlindStrikeCards.new()
+	var ids := ["lantern_monk_wick_spark", "lantern_monk_wick_spark_plus",
+		"lantern_monk_wick_flicker", "lantern_monk_wick_flicker_plus",
+		"lantern_monk_snuff_flame", "lantern_monk_snuff_flame_plus"]
+	for id in ids:
+		for mode in ["plain", "block", "statuses"]:
+			var seat := 3 if id.ends_with("_plus") else 2
+			if not await _monk_mount(id, seat, mode):
+				await _return()
+				continue
+			var panel: Control = _panel(id)
+			var definition: Dictionary = monk.get_definition(id)
+			var plan: Dictionary = monk._prepare(app.deck, app.party, app.enemies, id, 1)
+			_check(not definition.is_empty() and plan.get("ok", false)
+				and definition.get("owner") == "lantern_monk" and definition.get("cost") == 1,
+				"nonvacuous Monk preflight and catalog-backed printing: " + id)
+			var quote: Dictionary = presenter._target_preview(id)
+			var visual: Dictionary = app.get_node("LiveSupportHand")._metadata.visual_state(panel)
+			_check(quote.playable and quote.requires_selection
+				and quote.target_positions == [1, 2, 3] and quote.hits.size() == 3
+				and visual.get("playable", false),
+				"mounted Monk picker and enabled authored face: " + id)
+			var expected_damage: int = CombatStatuses.new().adjusted_attack_damage(
+				int(plan.base_damage), plan.attacker_statuses, plan.defender_statuses)
+			_check(quote.hits[0].damage == expected_damage
+				and quote.hits[0].exposed_added == int(plan.exposed),
+				"Monk forecast uses pre-hit modifiers and printed post-hit Exposed")
+			var before := _monk_state()
+			var keyboard: bool = id.ends_with("_plus")
+			await _monk_arm(panel, keyboard)
+			_check(_monk_state() == before and presenter.current_forecast.get("hits", []).size() == 3
+				and presenter.cue.text.contains("Blind") and presenter.cue.text.contains("P / click"),
+				"mounted Monk forecast doesn't spend, add statuses or consume RNG")
+			presenter._queue_attack(4)
+			_check(not presenter._queued and _monk_state() == before,
+				"Monk refuses enemy slot four without queueing")
+			var original: Dictionary = app.enemies.get_enemy(1)
+			var other: Array = app.enemies.get_enemies()
+			var party_before: Array = app.party.get_heroes()
+			var rng_before: int = app.run_rng.state
+			var absorbed: int = mini(original.block, expected_damage)
+			var loss: int = mini(original.hp, expected_damage - absorbed)
+			if keyboard:
+				await _key(KEY_1)
+			else:
+				await _click(app.get_node("LiveEnemyRoster")._labels[0])
+			var paid: Dictionary = presenter.last_event
+			_check(paid.get("ok", false) and paid.get("card_id") == id
+				and paid.get("damage") == expected_damage
+				and paid.get("block_absorbed") == absorbed and paid.get("hp_loss") == loss
+				and paid.get("hits", []).size() == 1 and paid.hits[0].hp_loss == loss,
+				"one real confirmed Monk hit with actual observer metadata: " + id)
+			var target: Dictionary = app.enemies.get_enemy(1)
+			_check(target.hp == original.hp - loss and target.block == original.block - absorbed
+				and target.statuses.get("blind_next_attack", 0) == 1
+				and int(target.statuses.get("exposed", 0)) == int(original.get("statuses", {}).get("exposed", 0)) + int(plan.exposed),
+				"selected foe gets one paid hit, Blind and AFTER-hit Exposed: " + id)
+			_check(app.enemies.get_enemy(2) == other[1] and app.enemies.get_enemy(3) == other[2]
+				and app.party.get_heroes() == party_before and app.run_rng.state == rng_before,
+				"Monk attack isolates other slots, party and seeded RNG")
+			_check(app.deck.energy == 2 and app.deck.hand.size() == 4
+				and not app.deck.hand.has(id) and app.deck.discard_pile == [id]
+				and app.hand_view.get_child_count() == 4,
+				"Monk spends exactly one energy and discards exactly one actual card")
+			var phase := CombatEnemyPhase.new()
+			var attack := [{"type": "attack", "enemy_position": 1, "amount": 6, "target_position": 1}]
+			var phase_party: Array = app.party.get_heroes()
+			var missed := phase.execute_phase(app.party, app.enemies, attack)
+			_check(missed.get("ok", false) and missed.events.size() == 1
+				and not missed.events[0].applied
+				and app.party.get_heroes() == phase_party
+				and not app.enemies.get_enemy(1).statuses.has("blind_next_attack"),
+				"Blind makes next real enemy attack miss; it is consumed without ending the turn")
+			var next_attack := phase.execute_phase(app.party, app.enemies, attack)
+			_check(next_attack.get("ok", false) and next_attack.events.size() == 1
+				and next_attack.events[0].applied
+				and app.party.get_hero(1).hp < phase_party[0].hp,
+				"enemy still acts: following phase's genuine attack deals HP damage")
+			var settled := _monk_state()
+			await _key(KEY_1)
+			_check(_monk_state() == settled, "consumed Monk hand selection cannot replay")
+			await _return()
+
+	for scenario in ["seat1", "downed", "energy", "target_dead", "replaced_target",
+			"spoofed_id", "stale_panel", "switched_turn", "switched_battle", "cancelled", "unheld"]:
+		if not await _monk_mount("lantern_monk_snuff_flame_plus", 2):
+			await _return()
+			continue
+		var panel: Control = _panel("lantern_monk_snuff_flame_plus")
+		if scenario in ["replaced_target", "spoofed_id", "stale_panel", "switched_turn",
+				"switched_battle", "cancelled", "unheld"]:
+			await _monk_arm(panel, false)
+			presenter._queue_attack(1)
+			_check(presenter._queued, "Monk queued a real, originally identified target: " + scenario)
+		match scenario:
+			"seat1":
+				var hero: Dictionary = app.party._heroes[0]
+				app.party._heroes[0] = app.party._heroes[1]
+				app.party._heroes[1] = hero
+				app.party._heroes[0].position = 1
+				app.party._heroes[1].position = 2
+			"downed": app.party.apply_damage(2, 999)
+			"energy": app.deck.combat_state.energy = 0
+			"target_dead": app.enemies.apply_damage(1, 999)
+			"replaced_target":
+				var old_id: String = app.enemies._enemies[0].id
+				app.enemies._enemies[0].id = app.enemies._enemies[2].id
+				app.enemies._enemies[2].id = old_id
+			"spoofed_id": panel.get_child(0).text = "lantern_monk_snuff_flame_plus_plus"
+			"stale_panel": app._refresh_hand()
+			"switched_turn": app.enemy_intents._turn_index += 1
+			"switched_battle": app.battle_result = CombatBattleResult.new(app.party, app.enemies)
+			"cancelled": presenter._cancel_choice()
+			"unheld": app.deck.hand.erase("lantern_monk_snuff_flame_plus")
+		var before := _monk_state()
+		var quote: Dictionary = presenter._target_preview("lantern_monk_snuff_flame_plus")
+		if scenario in ["seat1", "downed", "energy", "unheld"]:
+			_check(not quote.playable, "Monk owner/energy/hand preflight refuses: " + scenario)
+		if scenario == "target_dead":
+			_check(not quote.target_positions.has(1), "dead target excluded by Monk picker")
+		await _frames()
+		_check(_monk_state() == before and app.deck.discard_pile.is_empty(),
+			"stale/illegal Monk callback leaves complete battle and RNG unchanged: " + scenario)
+		await _return()

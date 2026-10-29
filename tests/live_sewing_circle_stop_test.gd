@@ -103,6 +103,24 @@ func _enter(atlas: bool, keyboard: bool) -> void:
 		and panel._visit == app.sewing_visit and app.sewing_visit.is_valid(), "one controller owns authentic visit")
 	_check(panel.stitch_button.text.contains("3 scraps") and panel.confirm_button.disabled,
 		"cost visible and explicit confirmation required")
+	var has_upgrade: bool = not app.sewing_visit.upgrade_options().is_empty()
+	var has_stitch: bool = not app.sewing_visit.stitch_first_options().is_empty()
+	var expected_choices: Array = []
+	if has_upgrade:
+		expected_choices.append("upgrade")
+	if has_stitch:
+		expected_choices.append("stitch")
+	expected_choices.append("leave")
+	var expected_prompt := "Choose Upgrade, Stitch or Leave, then confirm." if has_upgrade and has_stitch \
+		else "Choose Upgrade or Leave, then confirm." if has_upgrade \
+		else "Choose Stitch or Leave, then confirm." if has_stitch \
+		else "Choose Leave, then confirm."
+	_check(app.sewing_visit.quote().choices == expected_choices
+		and panel.preview_label.text == expected_prompt
+		and panel.upgrade_button.disabled == (not has_upgrade)
+		and panel.stitch_button.disabled == (not has_stitch)
+		and not panel.leave_button.disabled,
+		"mounted route visit advertises only actionable choices in quote and neutral prompt")
 	var before := _ledger()
 	var controls := [panel.upgrade_button, panel.stitch_button, panel.leave_button]
 	var visited: Array = []
@@ -562,6 +580,174 @@ func _composite_visit() -> void:
 	await _frames()
 
 
+func _actionable_choices_and_prompts() -> void:
+	const STRIKE := "warden_strike"
+	const STRIKE_PLUS := "warden_strike_plus"
+	const PRICK := "seamstress_prick"
+	const PRICK_PLUS := "seamstress_prick_plus"
+	const POOL := "seamstress_running_stitch"
+	const POOL_PLUS := "seamstress_running_stitch_plus"
+	seed(376)
+	var seeded_next := randi()
+	seed(376)
+	var composite_builder := RunRestStitchCards.new([STRIKE, PRICK], {}, 7, 1)
+	var composite_tx := composite_builder.choose_stitch(0, 1, composite_builder.get_snapshot())
+	_check(composite_tx.get("ok", false) and composite_tx.deck == ["stitched_000001"],
+		"authentic composite ledger fixture constructed")
+	var panel := LiveSewingCirclePanel.new()
+	panel.position = Vector2(170, 50)
+	root.add_child(panel)
+	var emitted: Array[Dictionary] = []
+	panel.intent_requested.connect(func(intent: Dictionary): emitted.append(intent))
+	await _frames()
+	var cases := [
+		{"deck": [STRIKE, STRIKE, PRICK, POOL], "descriptors": {}, "scraps": 7, "cursor": 1,
+			"choices": ["upgrade", "stitch", "leave"],
+			"prompt": "Choose Upgrade, Stitch or Leave, then confirm."},
+		{"deck": [STRIKE, PRICK], "descriptors": {}, "scraps": 3, "cursor": 1,
+			"choices": ["upgrade", "stitch", "leave"],
+			"prompt": "Choose Upgrade, Stitch or Leave, then confirm."},
+		{"deck": [STRIKE, PRICK], "descriptors": {}, "scraps": 0, "cursor": 1,
+			"choices": ["upgrade", "leave"],
+			"prompt": "Choose Upgrade or Leave, then confirm."},
+		{"deck": [STRIKE, PRICK], "descriptors": {}, "scraps": 2, "cursor": 1,
+			"choices": ["upgrade", "leave"],
+			"prompt": "Choose Upgrade or Leave, then confirm."},
+		{"deck": [STRIKE, STRIKE], "descriptors": {}, "scraps": 7, "cursor": 1,
+			"choices": ["upgrade", "leave"],
+			"prompt": "Choose Upgrade or Leave, then confirm."},
+		{"deck": [STRIKE_PLUS, PRICK_PLUS, POOL_PLUS], "descriptors": {}, "scraps": 3, "cursor": 1,
+			"choices": ["stitch", "leave"],
+			"prompt": "Choose Stitch or Leave, then confirm."},
+		{"deck": [STRIKE_PLUS, PRICK_PLUS, POOL_PLUS], "descriptors": {}, "scraps": 7, "cursor": 1,
+			"choices": ["stitch", "leave"],
+			"prompt": "Choose Stitch or Leave, then confirm."},
+		{"deck": [STRIKE_PLUS, PRICK_PLUS], "descriptors": {}, "scraps": 0, "cursor": 1,
+			"choices": ["leave"],
+			"prompt": "Choose Leave, then confirm."},
+		{"deck": [STRIKE_PLUS, PRICK_PLUS], "descriptors": {}, "scraps": 2, "cursor": 1,
+			"choices": ["leave"],
+			"prompt": "Choose Leave, then confirm."},
+		{"deck": [STRIKE_PLUS, STRIKE_PLUS], "descriptors": {}, "scraps": 7, "cursor": 1,
+			"choices": ["leave"],
+			"prompt": "Choose Leave, then confirm."},
+		{"deck": composite_tx.deck, "descriptors": composite_tx.descriptors, "scraps": 4, "cursor": 2,
+			"choices": ["leave"],
+			"prompt": "Choose Leave, then confirm."},
+	]
+	for spec in cases:
+		emitted.clear()
+		var visit := RunSewingCircleVisit.new("sewing-fixture", spec.deck,
+			spec.descriptors, spec.scraps, spec.cursor)
+		var state := visit.read_state()
+		var quote := visit.quote()
+		var canonical_up: Array = RunRestCardUpgrade.list_authored_choices(
+			spec.deck, spec.descriptors, spec.cursor).choices
+		var rest := RunRestStitchCards.new(spec.deck, spec.descriptors, spec.scraps, spec.cursor)
+		var canonical_stitch := RunRestStitchPairOptions.new(rest, rest.get_snapshot()).first_options()
+		_check(visit.is_valid() and not visit.is_consumed() and quote.ok
+			and quote.node_id == "sewing-fixture" and quote.visit_id == state.visit_id
+			and quote.scrap_cost == RunRestStitchCards.SCRAP_COST,
+			"valid open visit quote metadata preserved")
+		_check(visit.upgrade_options() == canonical_up
+			and visit.stitch_first_options() == canonical_stitch
+			and quote.choices == spec.choices,
+			"quoted choices match canonical upgrade/stitch option services: " + str(spec.choices))
+		panel.bind(visit)
+		await _frames()
+		var want_up: bool = spec.choices.has("upgrade")
+		var want_stitch: bool = spec.choices.has("stitch")
+		_check(panel.preview_label.text == spec.prompt
+			and panel.upgrade_button.disabled == (not want_up)
+			and panel.stitch_button.disabled == (not want_stitch)
+			and not panel.leave_button.disabled and panel.confirm_button.disabled,
+			"mounted neutral prompt and enabled buttons match quoted choices: " + spec.prompt)
+		_check(panel.status_label.text.contains("Upgrade: free. Stitch: 3 scraps. Leave: free."),
+			"mounted status retains truthful pricing")
+		if not want_stitch:
+			_check(panel.status_label.text.contains("Insufficient scraps to stitch.") if spec.scraps < 3
+				else panel.status_label.text.contains("No different-owner pair available."),
+				"mounted status explains unavailable Stitch")
+		var expected_focus: Button = panel.upgrade_button if want_up else panel.stitch_button if want_stitch else panel.leave_button
+		_check(root.gui_get_focus_owner() == expected_focus, "initial keyboard focus lands on first actionable button")
+		if not want_up:
+			panel.upgrade_button.pressed.emit()
+			await _key(KEY_1)
+			_check(panel._mode == "" and panel.preview_label.text == spec.prompt
+				and emitted.is_empty() and visit.read_state() == state
+				and not visit.choose_upgrade(0, state.visit_id, state.node_id, state).get("ok", false),
+				"unavailable Upgrade is inert across button, shortcut and service")
+		if not want_stitch:
+			panel.stitch_button.pressed.emit()
+			await _key(KEY_2)
+			_check(panel._mode == "" and panel.preview_label.text == spec.prompt
+				and emitted.is_empty() and visit.read_state() == state
+				and not visit.choose_stitch(0, 1, state.visit_id, state.node_id, state).get("ok", false),
+				"unavailable Stitch is inert across button, shortcut and service")
+	var invalid := RunSewingCircleVisit.new("sewing-invalid", ["nonexistent_card"], {}, 7, 1)
+	_check(not invalid.is_valid() and not invalid.quote().ok and invalid.quote().choices.is_empty(),
+		"invalid visit quotes empty choices")
+	panel.free()
+	await _frames()
+	_check(randi() == seeded_next, "standalone choice and prompt fixtures consume no global RNG")
+	# Also drive a routed no-upgrade Stitch visit through the live app controller.
+	# Opening route admission requires the untouched starting deck, so the earned
+	# all-plus deck and funded wallet are established only after a genuine
+	# committed fight, the legal order a real post-fight Sewing Circle visit
+	# finds them in; admission then accepts the mutated deck on a routed visit.
+	var routed := _post_fight_fixture()
+	_check(not routed.is_empty(), "real Fight -> Sewing Circle fixture exists for the routed no-upgrade visit")
+	var won := false
+	if not routed.is_empty():
+		fixture = routed
+		app = load("res://scenes/app.tscn").instantiate()
+		root.add_child(app)
+		await _frames()
+		presenter = app.get_node("LiveAttackPreview")
+		won = await _routed_win(fixture, false)
+	_check(won, "genuine won fight precedes the routed no-upgrade visit")
+	if not won:
+		if is_instance_valid(app):
+			app.free()
+			await _frames()
+		return
+	await _click(app.reward_buttons[3])
+	await _click(app.continue_button)
+	await _frames()
+	app.run_deck.assign([STRIKE_PLUS, PRICK_PLUS, POOL_PLUS,
+		STRIKE_PLUS, PRICK_PLUS, POOL_PLUS])
+	app.run_scraps = 3
+	app._clear_route_view()
+	app._present_connected_route(weakref(app.run_map))
+	await _frames()
+	await _enter(false, true)
+	var live_panel: LiveSewingCirclePanel = app.sewing_view
+	var live_visit: RunSewingCircleVisit = app.sewing_visit
+	_check(live_visit.quote().choices == ["stitch", "leave"]
+		and live_panel.preview_label.text == "Choose Stitch or Leave, then confirm."
+		and live_panel.upgrade_button.disabled and not live_panel.stitch_button.disabled
+		and not live_panel.leave_button.disabled,
+		"routed all-plus visit advertises only Stitch and Leave")
+	_inert(live_panel.intent_requested.get_connections()[0].callable,
+		"routed unavailable upgrade intent", [_intent("upgrade", 0)])
+	await _activate(live_panel.stitch_button, true)
+	await _activate(live_panel.option_buttons[0], true)
+	_check(live_panel.preview_label.text.contains("FIRST | ")
+		and live_panel.preview_label.text != "Choose Stitch or Leave, then confirm.",
+		"selecting FIRST stitch half replaces neutral prompt with half preview")
+	await _activate(live_panel.option_buttons[0], true)
+	_check(live_panel.preview_label.text.contains("THEN | ") and not live_panel.confirm_button.disabled,
+		"selecting THEN stitch half enables Confirm with full pair preview")
+	await _activate(live_panel.confirm_button, true)
+	_check(live_visit.is_consumed() and live_visit.quote().choices.is_empty()
+		and app.run_deck == ["stitched_000001", POOL_PLUS, STRIKE_PLUS, PRICK_PLUS, POOL_PLUS]
+		and app.run_scraps == 0 and app.run_next_stitch_id == 2,
+		"routed Stitch on no-upgrade deck commits composite for 3 scraps and empties consumed quote")
+	await _onward()
+	app.free()
+	await _frames()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	fixture = _fixture()
@@ -587,6 +773,7 @@ func _run() -> void:
 		_check(first == second, "same seed and choices replay exactly: " + mode)
 	await _connected_visits()
 	await _composite_visit()
+	await _actionable_choices_and_prompts()
 	_finish()
 
 
