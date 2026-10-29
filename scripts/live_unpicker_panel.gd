@@ -262,6 +262,14 @@ func _card_name(id: String) -> String:
 		if not owner_prefix.is_empty():
 			owner_prefix += " - "
 		return owner_prefix + named
+	# The canonical P11 curse is deck-only: the stitchable-catalog resolver
+	# intentionally returns {} for it. This narrow, trusted path names only that
+	# exact authored record; every other ID keeps the ordinary/unknown rules.
+	if id == MpwFrayedDebt.CARD_ID:
+		var curse: Dictionary = MpwFrayedDebt.new().get_definition(id)
+		var curse_name := str(curse.get("display_name", "")).strip_edges()
+		if not curse.is_empty() and str(curse.get("owner", "owned")) == "" and not curse_name.is_empty():
+			return curse_name
 	var definition := RunRestStitchCards.resolve_card_definition(id)
 	var named := str(definition.get("display_name", "")).strip_edges()
 	if named.is_empty():
@@ -290,6 +298,13 @@ static func card_tooltip(source: Dictionary, id: String) -> String:
 		if not descriptor is Dictionary:
 			return "Unknown stitched card: its descriptor is not authentic."
 		return _stitched_tooltip(descriptor)
+	# Same narrow exception as _card_name: only the exact canonical P11 curse
+	# ID, and only through its own authenticated authored record. Any other
+	# ID keeps the ordinary stitchable-catalog rules below.
+	if id == MpwFrayedDebt.CARD_ID:
+		var curse: Dictionary = MpwFrayedDebt.new().get_definition(id)
+		if not curse.is_empty():
+			return _curse_tooltip(curse, source)
 	return _definition_tooltip(RunRestStitchCards.resolve_card_definition(id))
 
 
@@ -307,6 +322,36 @@ static func _definition_tooltip(definition: Dictionary) -> String:
 	var rule := CardShortRules.line(definition)
 	if not rule.is_empty():
 		lines.append(rule)
+	return "\n".join(lines)
+
+
+## The canonical P11 Frayed Debt curse, described only from its authenticated
+## authored record: an ownerless, unplayable curse that automatically Exhausts
+## on its first draw of each fight while still using that draw up, never
+## upgrades or stitches, and leaves the deck only through the Unpicker's paid
+## gold removal. It is never given a fictitious energy cost.
+static func _curse_tooltip(definition: Dictionary, source: Dictionary) -> String:
+	if definition.is_empty():
+		return "Unknown card: no authentic authored definition resolves."
+	var named := str(definition.get("display_name", "")).strip_edges()
+	var lines: Array[String] = ["%s • %s" % [
+			named if not named.is_empty() else "Unknown card",
+			str(definition.get("card_type", "curse"))]]
+	if definition.get("playable") == false:
+		lines.append("Unplayable: it has no energy cost and never enters play.")
+	if definition.get("exhaust_on_first_draw") == true:
+		var draw := "Automatically Exhausts on its first draw of each fight"
+		if definition.get("consumes_draw") == true:
+			draw += ", and that draw is still used up (no extra card, no energy charged)"
+		lines.append(draw + ".")
+	if definition.get("can_upgrade") == false and definition.get("can_stitch") == false:
+		lines.append("It cannot be upgraded or stitched.")
+	if definition.get("removable") == true:
+		var price: Variant = source.get("price", null)
+		if typeof(price) == TYPE_INT and int(price) > 0:
+			lines.append("The Unpicker can remove one copy for %d gold." % int(price))
+		else:
+			lines.append("The Unpicker can remove one copy for gold.")
 	return "\n".join(lines)
 
 

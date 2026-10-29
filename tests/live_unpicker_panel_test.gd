@@ -9,6 +9,8 @@ const POP := "tinker_pop_shot"
 const POOL := "warden_pinning_jab"
 const UPGRADED := "warden_strike_plus"
 const V3_CARD := "button_golem_pop_button"
+## The canonical P11 curse ID, taken from its authored data class.
+const CURSE := MpwFrayedDebt.CARD_ID
 var failures: Array[String] = []
 var checks := 0
 var intents: Array[Dictionary] = []
@@ -204,10 +206,12 @@ func _run() -> void:
 		await _test_remove(keyboard)
 		await _test_leave(keyboard, 74)
 		await _test_remove_v3(keyboard)
+		await _test_frayed_debt(keyboard)
 	await _test_price_boundaries()
 	await _test_initial_focus()
 	await _test_rebind_focus()
 	await _test_stitched()
+	await _test_frayed_debt_negatives()
 	await _test_rejections()
 	_check(randi() == global_next, "mounting completed before guard; all browsing/decisions preserve global RNG")
 	panel.queue_free()
@@ -460,6 +464,198 @@ func _test_remove_v3(keyboard: bool) -> void:
 			and receipt.charged_gold == 75 and not receipt.deck.has(V3_CARD)
 			and receipt.deck.size() == deck.size() - 1,
 			"controller removes the authentic v3 card for the 75-gold quote")
+
+
+## AC1-AC3: the canonical P11 Frayed Debt curse, mounted through a genuine
+## RunUnpickerVisit holding two real copies beside ordinary cards. The row
+## must tell the truth about the authored curse before any gold is spent,
+## while selection, forecast and Remove stay on the existing source-bound
+## service path with the authentic 75-gold quote.
+func _test_frayed_debt(keyboard: bool) -> void:
+	var curse := MpwFrayedDebt.new().get_definition(CURSE)
+	_check(CURSE == "frayed_debt" and curse.get("display_name") == "Frayed Debt"
+			and curse.get("owner") == "" and curse.get("card_type") == "curse"
+			and curse.get("playable") == false and curse.get("removable") == true
+			and curse.get("can_upgrade") == false and curse.get("can_stitch") == false
+			and curse.get("exhaust_on_first_draw") == true
+			and curse.get("consumes_draw") == true,
+			"canonical authored Frayed Debt definition prerequisite")
+	var deck := _deck()
+	deck.append(CURSE)
+	deck.append(CURSE)
+	var visit := _make(150, 0, deck)
+	await _bind(visit)
+	var source := visit.read_state()
+	var unique := _unique_ids(source.deck)
+	var row_index := unique.find(CURSE)
+	_check(visit.is_valid() and not visit.is_consumed() and visit.quote().price == 75
+			and source.deck.count(CURSE) == 2 and row_index >= 0,
+			"authentic affordable two-copy curse visit with a mounted row")
+	if row_index < 0:
+		return
+	var row: Button = panel.card_buttons[row_index]
+	_check(row.text.contains("Frayed Debt") and not row.text.contains("Unknown card"),
+			"mounted curse row is explicitly named Frayed Debt, never Unknown card")
+	var tooltip := row.tooltip_text
+	_check(tooltip != "" and tooltip == LiveUnpickerPanel.card_tooltip(source, CURSE),
+			"curse tooltip is the pure detached projection of the authenticated source")
+	_check(tooltip.contains("Frayed Debt") and tooltip.contains("curse"),
+			"curse tooltip identifies the authored curse by name and kind")
+	_check(tooltip.contains("Unplayable") and tooltip.contains("no energy cost")
+			and not tooltip.contains("0 energy"),
+			"curse tooltip reports it unplayable, never a 0-energy playable card")
+	_check(tooltip.contains("Exhausts on its first draw")
+			and tooltip.contains("first draw of each fight")
+			and tooltip.contains("draw is still used up"),
+			"curse tooltip explains first-draw Exhaust while consuming that draw")
+	_check(tooltip.contains("cannot be upgraded or stitched"),
+			"curse tooltip rules out upgrade and stitch")
+	_check(tooltip.contains("remove one copy for 75 gold") and not tooltip.contains("free"),
+			"curse tooltip prices paid removal at the authentic quote, never free")
+	# Scroll the curse row into view and hover it: inspection only.
+	var scroll := row.get_parent()
+	while scroll != null and not scroll is ScrollContainer:
+		scroll = scroll.get_parent()
+	if scroll != null:
+		(scroll as ScrollContainer).ensure_control_visible(row)
+	await _settle()
+	var hover := InputEventMouseMotion.new()
+	hover.position = row.get_global_rect().get_center()
+	_check(Rect2(Vector2.ZERO, Vector2(root.size)).has_point(hover.position),
+			"curse hover target lies in the physical viewport")
+	root.push_input(hover)
+	await _settle()
+	_check(intents.is_empty() and visit.read_state() == source and not visit.is_consumed(),
+			"hovering the curse row mutates nothing")
+	await _activate(row, keyboard, KEY_SPACE if keyboard else KEY_ENTER)
+	_check(panel.status_label.text.contains("Frayed Debt")
+			and panel.status_label.text.contains("first of 2 copies")
+			and panel.status_label.text.contains("deck %d→%d" % [source.deck.size(), source.deck.size() - 1])
+			and panel.status_label.text.contains("gold 150→75 (75 cost)"),
+			"curse selection forecasts one removed copy, deck size and 75-gold debit")
+	var projected := LiveUnpickerPanel.forecast(source, CURSE)
+	_check(projected.get("card_id") == CURSE and projected.get("copies") == 2
+			and projected.get("deck_before") == source.deck.size()
+			and projected.get("deck_after") == source.deck.size() - 1
+			and projected.get("gold_before") == 150 and projected.get("gold_after") == 75
+			and projected.get("price") == 75 and projected.get("stitched") == false,
+			"pure curse forecast matches the independent service ledger")
+	_check(visit.read_state() == source and intents.is_empty() and not visit.is_consumed(),
+			"selecting the curse never mutates the visit")
+	await _activate(panel.remove_button, keyboard, KEY_ENTER)
+	_check(intents.size() == 1, "physical Remove emits exactly one intent for the curse")
+	if intents.size() != 1:
+		return
+	var intent := intents[0]
+	_check(intent == {"action": "remove_card", "node_id": source.node_id,
+			"visit_id": source.visit_id, "expected_snapshot": source,
+			"selected_card_id": CURSE},
+			"curse intent is the existing fully captured source-bound Remove intent")
+	var receipt := Controller.apply(visit, intent)
+	var expected: Array = source.deck.duplicate()
+	expected.remove_at(expected.find(CURSE))
+	_check(receipt.get("ok") == true and receipt.action == "remove_card"
+			and receipt.removed_card_id == CURSE and receipt.charged_gold == 75
+			and receipt.gold == 75 and receipt.prior_removals == 1
+			and receipt.deck == expected and receipt.deck.count(CURSE) == 1
+			and receipt.deck.size() == source.deck.size() - 1,
+			"controller removes exactly one curse copy and debits 75 gold once")
+	var after := visit.read_state()
+	_check(Controller.apply(visit, intent).get("ok") == false and visit.read_state() == after,
+			"replayed curse intent changes neither card nor wallet")
+	var later := _make(100, 1, expected)
+	_check(later.is_valid() and later.quote().price == 100
+			and later.quote().price == RunShopCardRemoval.BASE_PRICE
+			+ RunShopCardRemoval.PRICE_STEP * int(receipt.prior_removals),
+			"one earlier removal raises the authentic next quote to 100")
+
+
+## AC2/AC3 negatives: unknown deck IDs never gain Frayed Debt powers, a stale
+## retired callback and an unaffordable wallet cannot forge a curse removal,
+## and Leave stays free.
+func _test_frayed_debt_negatives() -> void:
+	var deck := _deck()
+	deck.append(CURSE)
+	deck.append(CURSE)
+	var visit := _make(150, 0, deck)
+	await _bind(visit)
+	var source := visit.read_state()
+	var forged := source.duplicate(true)
+	forged["deck"].append("unknown_card")
+	forged["deck"].append("frayed_debt_plus")
+	var unknown_line := "Unknown card: no authentic authored definition resolves."
+	_check(LiveUnpickerPanel.card_tooltip(forged, "unknown_card") == unknown_line
+			and LiveUnpickerPanel.card_tooltip(forged, "frayed_debt_plus") == unknown_line,
+			"unknown deck IDs stay unknown and never receive Frayed Debt powers")
+	_check(LiveUnpickerPanel.card_tooltip(forged, CURSE)
+			== LiveUnpickerPanel.card_tooltip(source, CURSE),
+			"the canonical curse keeps its truthful tooltip beside unknown IDs")
+	_check(LiveUnpickerPanel.card_tooltip(source, "not_in_deck") == "",
+			"absent IDs produce no tooltip at all")
+	# Select the curse row so Remove is genuinely enabled, capture the live
+	# callback, then rebind: the retired epoch must not reach the visit.
+	var unique := _unique_ids(source.deck)
+	var row_index := unique.find(CURSE)
+	_check(row_index >= 0, "curse row present before retired-callback capture")
+	if row_index < 0:
+		return
+	var row: Button = panel.card_buttons[row_index]
+	var scroll := row.get_parent()
+	while scroll != null and not scroll is ScrollContainer:
+		scroll = scroll.get_parent()
+	if scroll != null:
+		(scroll as ScrollContainer).ensure_control_visible(row)
+	await _settle()
+	await _activate(row, false)
+	_check(not panel.remove_button.disabled,
+			"curse selection enables Remove before the retired-callback capture")
+	var retired_remove: Callable = panel._connections[panel.remove_button]
+	panel.bind(visit)
+	await _settle()
+	retired_remove.call()
+	_check(intents.is_empty() and visit.read_state() == source and not visit.is_consumed(),
+			"stale retired Remove callback cannot reach the rebound curse visit")
+	await _activate(panel.leave_button, false)
+	_check(intents.size() == 1 and intents[0].get("action") == "leave",
+			"free Leave emits on the affordable curse visit")
+	var leave_receipt := Controller.apply(visit, intents[0])
+	_check(leave_receipt.get("ok") == true and leave_receipt.charged_gold == 0
+			and leave_receipt.deck == source.deck and leave_receipt.gold == 150
+			and leave_receipt.prior_removals == source.prior_removals,
+			"Leave on the curse visit is free and changes no card or wallet")
+	# An unaffordable curse visit cannot forge a paid request.
+	var poor := _make(74, 0, deck)
+	await _bind(poor)
+	var poor_source := poor.read_state()
+	var poor_unique := _unique_ids(poor_source.deck)
+	var poor_index := poor_unique.find(CURSE)
+	_check(poor_index >= 0 and panel.remove_button.disabled and not panel.leave_button.disabled,
+			"unaffordable curse visit keeps Remove disabled, Leave enabled")
+	if poor_index < 0:
+		return
+	var poor_row: Button = panel.card_buttons[poor_index]
+	_check(poor_row.text.contains("Frayed Debt"),
+			"unaffordable curse visit still shows the truthful Frayed Debt row")
+	var poor_scroll := poor_row.get_parent()
+	while poor_scroll != null and not poor_scroll is ScrollContainer:
+		poor_scroll = poor_scroll.get_parent()
+	if poor_scroll != null:
+		(poor_scroll as ScrollContainer).ensure_control_visible(poor_row)
+	await _settle()
+	await _activate(poor_row, false)
+	_check(panel.remove_button.disabled and panel.status_label.text.contains("Need 1 more gold"),
+			"insufficient quote still shows the exact shortfall after selecting the curse")
+	panel.remove_button.pressed.emit()
+	_check(intents.is_empty() and poor.read_state() == poor_source and not poor.is_consumed(),
+			"insufficient gold cannot forge a curse removal")
+	await _activate(panel.leave_button, false)
+	_check(intents.size() == 1 and intents[0].get("action") == "leave",
+			"free Leave emits on the unaffordable curse visit")
+	var poor_leave := Controller.apply(poor, intents[0])
+	_check(poor_leave.get("ok") == true and poor_leave.charged_gold == 0
+			and poor_leave.deck == poor_source.deck and poor_leave.gold == 74
+			and poor.is_consumed(),
+			"Leave on the unaffordable curse visit is free and changes no card or wallet")
 
 
 func _test_leave(keyboard: bool, gold: int) -> void:
