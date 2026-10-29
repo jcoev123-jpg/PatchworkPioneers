@@ -691,11 +691,12 @@ static func _darning_line(definition: Dictionary, effects: Dictionary) -> Dictio
 
 
 ## Pierce Block is the Scarecrow's shoulder crow strike. Its single authority is
-## CardShortRules' strict printing check, which re-reads the exact ID, owner,
-## recipient, cost, slots, damage amount, base/+ upgrade link, and the whole effect descriptor.
-## Delegating keeps the sewn face and Help from disagreeing, and a Boolean false,
-## a numeric one, a null, a rebuilt same-shaped card or a wrong recipient never
-## earns the row.
+## CardShortRules' strict printing check, which validates the complete canonical
+## Scarecrow starter/pool record (ID, display_name, owner, cost, slots, target,
+## damage, ignore_block, illustration_path, starting_copies, reward_eligible,
+## rarity, upgrade link, and no unexpected fields). Delegating keeps the sewn face
+## and Help from disagreeing, and any mismatch, altered property or forged record
+## never earns the row.
 static func _crow_line(definition: Dictionary, _effects: Dictionary) -> Dictionary:
 	if not CardShortRules.is_authored_block_pierce(definition):
 		return {}

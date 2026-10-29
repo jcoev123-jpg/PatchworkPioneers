@@ -2045,10 +2045,54 @@ func _test_scarecrow_crow_negative() -> void:
 		_check(not _has_keyword_row(probe, "Pierce Block"),
 			"broken upgrade link adds no Pierce Block Help row")
 		_check(probe == before, "broken upgrade probe is never mutated")
+	# Detached canonical field-set negative probes: deleted/changed display_name,
+	# changed reward_eligible or rarity, extra top-level field, changed illustration,
+	# or changed starting copies must all fail authentication and preserve fallback.
+	var canonical_probes := [
+		["deleted display_name on dive", dive.duplicate(true), "erase", "display_name", null],
+		["changed display_name on dive", dive.duplicate(true), "set", "display_name", "Crow Strike"],
+		["deleted display_name on peck", peck.duplicate(true), "erase", "display_name", null],
+		["changed display_name on peck", peck.duplicate(true), "set", "display_name", "Peck"],
+		["changed reward_eligible on dive", dive.duplicate(true), "set", "reward_eligible", true],
+		["changed reward_eligible on peck", peck.duplicate(true), "set", "reward_eligible", false],
+		["changed rarity on peck", peck.duplicate(true), "set", "rarity", "rare"],
+		["deleted rarity on peck", peck.duplicate(true), "erase", "rarity", null],
+		["extra rarity on dive", dive.duplicate(true), "set", "rarity", "common"],
+		["extra top-level field on dive", dive.duplicate(true), "set", "unexpected_field", "forgery"],
+		["extra top-level field on peck", peck.duplicate(true), "set", "forged_flag", true],
+		["changed illustration_path on dive", dive.duplicate(true), "set", "illustration_path", "res://other.png"],
+		["changed starting_copies on dive", dive.duplicate(true), "set", "starting_copies", 2],
+		["changed starting_copies on peck", peck.duplicate(true), "set", "starting_copies", 1],
+	]
+	for case_def in canonical_probes:
+		var label: String = str(case_def[0])
+		var probe: Dictionary = case_def[1]
+		var action: String = str(case_def[2])
+		var key: String = str(case_def[3])
+		if action == "erase":
+			probe.erase(key)
+		else:
+			probe[key] = case_def[4]
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_block_pierce(probe),
+			"%s fails is_authored_block_pierce" % label)
+		_check(not CardShortRules.is_authored_crow(probe),
+			"%s fails is_authored_crow" % label)
+		_check(CardShortRules.has_unknown(probe),
+			"%s reports has_unknown true" % label)
+		var line := CardShortRules.line(probe)
+		_check(not line.contains("Pierce Block"),
+			"no Pierce Block on face for %s: %s" % [label, line])
+		_check(line.ends_with(UNKNOWN_FALLBACK),
+			"honest unknown fallback on face for %s: %s" % [label, line])
+		_check(not _has_keyword_row(probe, "Pierce Block"),
+			"no Pierce Block Help row for %s" % label)
+		_check(probe == before, "%s probe is never mutated" % label)
 	# Shipped records are untouched
 	var dive_after := _scarecrow_definition("starter", "scarecrow_crow_dive")
 	var peck_after := _scarecrow_definition("pool", "scarecrow_crow_peck")
 	_check(dive_after == dive and peck_after == peck
-		and CardShortRules.line(dive_after) == "Deal 3 to the backmost living enemy. Pierce Block.",
+		and CardShortRules.line(dive_after) == "Deal 3 to the backmost living enemy. Pierce Block."
+		and CardShortRules.line(peck_after) == "Deal 4 to the backmost living enemy. Pierce Block.",
 		"malformed probes cannot alter shipped Scarecrow records")
 

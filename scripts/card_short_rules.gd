@@ -262,11 +262,52 @@ static func _fear_clause(card: Dictionary, effects: Dictionary) -> Dictionary:
 	return {"valid": true, "clause": FEAR_CLAUSE + _enemy_object_suffix(card)}
 
 
+## Reads the detached canonical record from the catalog that authors this crow card.
+static func _catalog_crow_definition(card_id: String) -> Dictionary:
+	match card_id:
+		"scarecrow_crow_dive", "scarecrow_crow_dive_plus":
+			return ScarecrowStarterCards.new().get_definition(card_id)
+		"scarecrow_crow_peck", "scarecrow_crow_peck_plus":
+			return ScarecrowPoolCards.new().get_definition(card_id)
+	return {}
+
+
+## Strict deep comparison requiring exact matching types, keys and values.
+static func _deep_exact_equal(a: Variant, b: Variant) -> bool:
+	if typeof(a) != typeof(b):
+		return false
+	match typeof(a):
+		TYPE_DICTIONARY:
+			var dict_a: Dictionary = a
+			var dict_b: Dictionary = b
+			if dict_a.size() != dict_b.size():
+				return false
+			for key in dict_a:
+				if not dict_b.has(key):
+					return false
+				if not _deep_exact_equal(dict_a[key], dict_b[key]):
+					return false
+			return true
+		TYPE_ARRAY:
+			var arr_a: Array = a
+			var arr_b: Array = b
+			if arr_a.size() != arr_b.size():
+				return false
+			for i in range(arr_a.size()):
+				if not _deep_exact_equal(arr_a[i], arr_b[i]):
+					return false
+			return true
+		_:
+			return a == b
+
+
 ## Block piercing is the Scarecrow's shoulder crow strike, ignoring enemy Block.
-## The face prints it only when the whole descriptor matches one of the four real
-## catalog printings: boolean true, exact identity/owner/cost/recipient/slots,
-## the authored damage amount, base/+ upgrade link, and no extra or missing effect key.
-## Anything else is not a Block pierce this formatter will name.
+## The face prints it only when the complete supplied card definition matches the
+## detached canonical ScarecrowStarterCards/ScarecrowPoolCards catalog definition:
+## all keys (display_name, illustration_path, starting_copies, reward_eligible,
+## pool rarity, cost, target, positions, damage, ignore_block, upgrade links)
+## and nested values, with no missing or unexpected fields. Anything else is not
+## a Block pierce this formatter will name.
 static func _crow_clause(card: Dictionary, effects: Dictionary) -> Dictionary:
 	var invalid := {"valid": false, "clause": ""}
 	if not effects.has(CROW_KEY):
@@ -281,32 +322,12 @@ static func _crow_clause(card: Dictionary, effects: Dictionary) -> Dictionary:
 	var card_id: String = id_value
 	if not CROW_PRINTINGS.has(card_id):
 		return invalid
-	var expected: Dictionary = CROW_PRINTINGS[card_id]
-	var owner_value: Variant = card.get("owner")
-	if not owner_value is String or String(owner_value) != CROW_OWNER:
+	var canonical: Dictionary = _catalog_crow_definition(card_id)
+	if canonical.is_empty():
 		return invalid
-	var target_value: Variant = card.get("target_kind")
-	if not target_value is String or String(target_value) != CROW_TARGET_KIND:
+	if not _deep_exact_equal(card, canonical):
 		return invalid
-	var cost_value: Variant = card.get("cost")
-	if not cost_value is int or int(cost_value) != int(expected["cost"]):
-		return invalid
-	if not _exact_positions(card.get("from_positions", null), expected["from_positions"]):
-		return invalid
-	if not _exact_positions(card.get("to_positions", null), expected["to_positions"]):
-		return invalid
-	var damage_value: Variant = effects.get("damage")
-	if not damage_value is int or int(damage_value) != int(expected["damage"]):
-		return invalid
-	if effects.size() != 2:
-		return invalid
-	if expected.has("upgrade_id"):
-		if card.get("upgrade_id") != expected["upgrade_id"] or card.has("upgrade_of"):
-			return invalid
-	elif expected.has("upgrade_of"):
-		if card.get("upgrade_of") != expected["upgrade_of"] or card.has("upgrade_id"):
-			return invalid
-	else:
+	if not _deep_exact_equal(effects, canonical.get("effects", {})):
 		return invalid
 	return {"valid": true, "clause": CROW_CLAUSE}
 

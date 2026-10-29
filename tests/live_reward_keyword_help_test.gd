@@ -1471,9 +1471,56 @@ func _scarecrow_crow_catalog_test(starter: ScarecrowStarterCards, pool: Scarecro
 	f["upgrade_of"] = "scarecrow_crow_dive"
 	negatives.append(["peck plus wrong upgrade_of", f])
 
+	# Detached canonical field-set negative probes: deleted/changed display_name,
+	# changed reward_eligible or rarity, extra top-level field, changed illustration,
+	# or changed starting copies must all fail authentication and produce no Help row.
+	f = authentic_dive.duplicate(true)
+	f.erase("display_name")
+	negatives.append(["deleted display_name on dive", f])
+	f = authentic_dive.duplicate(true)
+	f["display_name"] = "Crow Strike"
+	negatives.append(["changed display_name on dive", f])
+	f = authentic_peck.duplicate(true)
+	f.erase("display_name")
+	negatives.append(["deleted display_name on peck", f])
+	f = authentic_peck.duplicate(true)
+	f["display_name"] = "Peck"
+	negatives.append(["changed display_name on peck", f])
+	f = authentic_dive.duplicate(true)
+	f["reward_eligible"] = true
+	negatives.append(["changed reward_eligible on dive", f])
+	f = authentic_peck.duplicate(true)
+	f["reward_eligible"] = false
+	negatives.append(["changed reward_eligible on peck", f])
+	f = authentic_peck.duplicate(true)
+	f["rarity"] = "rare"
+	negatives.append(["changed rarity on peck", f])
+	f = authentic_peck.duplicate(true)
+	f.erase("rarity")
+	negatives.append(["deleted rarity on peck", f])
+	f = authentic_dive.duplicate(true)
+	f["rarity"] = "common"
+	negatives.append(["extra rarity on dive", f])
+	f = authentic_dive.duplicate(true)
+	f["unexpected_top_level_field"] = "forged"
+	negatives.append(["extra top-level field on dive", f])
+	f = authentic_peck.duplicate(true)
+	f["forged_flag"] = true
+	negatives.append(["extra top-level field on peck", f])
+	f = authentic_dive.duplicate(true)
+	f["illustration_path"] = "res://other.png"
+	negatives.append(["changed illustration_path on dive", f])
+	f = authentic_dive.duplicate(true)
+	f["starting_copies"] = 2
+	negatives.append(["changed starting_copies on dive", f])
+	f = authentic_peck.duplicate(true)
+	f["starting_copies"] = 1
+	negatives.append(["changed starting_copies on peck", f])
+
 	for case_entry in negatives:
 		var label: String = case_entry[0]
 		var bad: Dictionary = case_entry[1]
+		var bad_before := bad.duplicate(true)
 		_check(not CardShortRules.is_authored_block_pierce(bad),
 			"is_authored_block_pierce returns false for %s" % label)
 		_check(not CardShortRules.is_authored_crow(bad),
@@ -1484,6 +1531,19 @@ func _scarecrow_crow_catalog_test(starter: ScarecrowStarterCards, pool: Scarecro
 		if (bad.get("effects", {}) as Dictionary).has("ignore_block"):
 			_check(CardShortRules.has_unknown(bad),
 				"has_unknown returns true when unauthorized card carries ignore_block for %s" % label)
+			var bad_line := CardShortRules.line(bad)
+			_check(not bad_line.contains("Pierce Block"),
+				"no Pierce Block on face for %s" % label)
+			_check(bad_line.contains("Other authored effects are not described."),
+				"unknown effect fallback on face for %s" % label)
+		_check(bad == bad_before, "negative fixture %s is not mutated" % label)
+
+	# Verify authentic catalog records are unchanged after negative probes
+	_check(starter.get_definition("scarecrow_crow_dive") == authentic_dive
+		and starter.get_definition("scarecrow_crow_dive_plus") == authentic_dive_plus
+		and pool.get_definition("scarecrow_crow_peck") == authentic_peck
+		and pool.get_definition("scarecrow_crow_peck_plus") == authentic_peck_plus,
+		"authentic Scarecrow crow catalog records remain immutable")
 
 
 func _help_in_fixture(fixture: Dictionary, kind: String) -> void:
