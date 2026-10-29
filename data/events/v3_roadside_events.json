@@ -419,6 +419,46 @@
         { "id": "buy_wish_buttons", "text": "Buy four wish buttons (spend 23 gold; gain 4 scraps)", "outcome": { "gold": -23, "scraps": 4 } },
         { "id": "leave_fountain", "text": "Leave the fountain to its song", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_blackwater_singing_well",
+      "title": "The Blackwater Singing Well",
+      "description": "A round button-eyed frog sings inside a velvet-lined wishing well; tarnished brass wishes shimmer on its stitches.",
+      "choices": [
+        { "id": "polish_wish_buttons", "text": "Polish the well's lost wish-buttons (gain 13 gold)", "outcome": { "gold": 13, "scraps": 0 } },
+        { "id": "buy_rainproof_seam", "text": "Buy rainproof well-thread (spend 17 gold; gain 3 scraps)", "outcome": { "gold": -17, "scraps": 3 } },
+        { "id": "leave_well", "text": "Leave the frog to its song (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_nightglass_firefly_hutch",
+      "title": "The Nightglass Firefly Hutch",
+      "description": "A plump plum-velvet mothkeeper opens a glass hutch of lantern-bright button fireflies beneath a stitched cobalt sky.",
+      "choices": [
+        { "id": "repair_hutch_net", "text": "Reweave the fireflies' torn net (spend 2 scraps; gain 31 gold)", "outcome": { "gold": 31, "scraps": -2 } },
+        { "id": "collect_glowing_trim", "text": "Gather loose glowing trim (gain 1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "leave_hutch", "text": "Shut the hutch quietly (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_silver_snail_clocktower",
+      "title": "The Silver Snail Clocktower",
+      "description": "A squat clockwork snail carries a moonlit clock on its quilted shell, winding it with silver spool antennae.",
+      "choices": [
+        { "id": "buy_clockthread", "text": "Buy clockthread for the road (spend 19 gold; gain 3 scraps)", "outcome": { "gold": -19, "scraps": 3 } },
+        { "id": "trade_spare_gears", "text": "Trade a spare spool-gear (spend 1 scrap; gain 22 gold)", "outcome": { "gold": 22, "scraps": -1 } },
+        { "id": "let_clock_tick", "text": "Leave the slow clock ticking (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_inkcap_mushroom_school",
+      "title": "The Inkcap Mushroom School",
+      "description": "Button-eyed mushroom pupils practise needlework under a damask leaf canopy while their round teacher rings a thimble bell.",
+      "choices": [
+        { "id": "teach_needlework", "text": "Teach the pupils a safe stitch (gain 17 gold)", "outcome": { "gold": 17, "scraps": 0 } },
+        { "id": "donate_inkproof_patches", "text": "Donate inkproof patches (spend 2 scraps; gain 37 gold)", "outcome": { "gold": 37, "scraps": -2 } },
+        { "id": "leave_school", "text": "Leave the thimble classroom (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }

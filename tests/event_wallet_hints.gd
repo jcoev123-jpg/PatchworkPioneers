@@ -161,4 +161,12 @@ const SEEDS := [
 	300770,
 	342403,
 	3386420,
+	# Genuine map/toll/event-rotation witnesses re-derived after the four gothic
+	# night-road wallet stories joined the shipped generic pool.
+	172076,
+	19942,
+	465258,
+	52253,
+	92094,
+	54971,
 ]

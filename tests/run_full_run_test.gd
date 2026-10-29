@@ -1108,14 +1108,30 @@ func _auction_visits(fixture: Dictionary, paid: bool, keyboard: bool) -> Array:
 	var rotation := _generic_selection(_combined_wallet_catalog(), oracle_rng)
 	_check(rotation.ok and rotation.event.id == "fate_pin_auction", "independent connected selection actually picks auction")
 	var oracle := RunFatePinAuction.new(w, oracle_rng)
-	var offer: Dictionary = oracle.get_offers()[1]
-	# Seed an existing patch of the same slot through the real wardrobe API.
+	# Seed an existing patch so the paid auction genuinely displaces it. Owning
+	# that patch shrinks the offer pool, so probe each candidate against the draw
+	# the app will actually mount instead of assuming the pre-sew draw keeps the
+	# same slot when the event pool changes which RNG state the draw starts at.
 	var displaced := ""
+	var offer: Dictionary = {}
 	for d in RunAuthoredPatchDefinitions.load_definitions():
-		if d.slot == offer.slot and d.id != offer.id and not oracle.get_offers().has(d):
+		if oracle.get_offers().has(d):
+			continue
+		var probe := RunPatchWardrobe.new(app.run_heroes, [d.id], RunAuthoredPatchDefinitions.load_definitions(),
+			app.run_scraps, 65, app.run_deck, app.run_seed, true)
+		if not probe.is_valid():
+			continue
+		var probe_rng := RandomNumberGenerator.new()
+		probe_rng.state = app.run_rng.state
+		_generic_selection(_combined_wallet_catalog(), probe_rng)
+		var staged := RunFatePinAuction.new(probe, probe_rng)
+		if staged.is_valid() and staged.get_offers().size() == 2 and staged.get_offers()[1].slot == d.slot:
 			displaced = d.id
+			offer = staged.get_offers()[1]
 			break
 	_check(not displaced.is_empty(), "real displaced patch fixture exists")
+	if displaced.is_empty():
+		return []
 	app.run_trinkets.assign([displaced])
 	_check(w.refresh_run_context(app.run_heroes, app.run_trinkets, app.run_scraps, 65, app.run_deck, w.get_snapshot()), "existing wardrobe context")
 	_check(w.sew(displaced, "seamstress", offer.slot, "before_auction", w.get_snapshot()).ok, "existing payer slot occupied")
