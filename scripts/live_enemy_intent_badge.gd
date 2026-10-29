@@ -578,6 +578,13 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		target_position = action.get("target_position", 0)
 		readable_text = "Snip Block: %s" % rank_caption(target_position)
 		tip = "Snip Block on %s: remove all Block; no direct HP damage." % hero_target_label(target_position)
+	elif action.get("type") == "summon":
+		icon_mode = "summon"
+		intent_type = "summon"
+		amount = 0
+		target_position = 0
+		readable_text = "Summon Broodling"
+		tip = "Call one 8 HP Moth Broodling (maximum three enemies); its attack 5 is announced for the following turn, not its birth turn."
 	elif action.get("type") == "block":
 		icon_mode = "block"
 		intent_type = "block"

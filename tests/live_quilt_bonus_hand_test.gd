@@ -184,6 +184,7 @@ func _oracle() -> Dictionary:
 	intents._bound = true
 	intents._party = party
 	intents._rng = rng
+	intents._enemies = enemies
 	intents._slots = app.enemy_intents._slots.duplicate(true)
 	intents._cache = app.enemy_intents.get_intents()
 	var flow := CombatRoundFlow.new(deck, party, enemies, intents,

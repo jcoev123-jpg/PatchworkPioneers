@@ -11,6 +11,162 @@ const MAX_INT := 9223372036854775807
 const REVIVE_FIELD := "revive_once"
 const REVIVED_FIELD := "revived"
 
+## Embedded battle-only child: never loaded from a run/Elite/Boss catalog.
+const BROODLING_ID := "moth_swarm_broodling"
+const BROODLING_LATCH := "broodling_summoned"
+const MOTH_ID := "moth_swarm"
+
+## Explicit, battle-local Termite split. No damage, round or scheduler code calls
+## this yet: the later live-flow integration must stage it after a lethal loss.
+const SPLIT_FIELD := "split_on_death"
+const TERMITE_ID := "quilt_termite"
+const HALF_LEFT_ID := "quilt_termite_half_left"
+const HALF_RIGHT_ID := "quilt_termite_half_right"
+
+
+## An optional split flag must be a literal boolean, and only an authored
+## Quilt Termite can request a split. Never coerce truthy numbers or strings.
+static func valid_split_flags(record: Dictionary) -> bool:
+	if record.has(SPLIT_FIELD) and not record[SPLIT_FIELD] is bool:
+		return false
+	return record.get(SPLIT_FIELD, false) != true or record.get("id") == TERMITE_ID
+
+
+## Authenticate the canonical front-facing weighted Termite attack as well
+## as its other alternatives. Accept difficulty-scaled HP/attack already on the
+## parent; never reapply tier modifiers or use the run's RNG.
+static func _termite_parent_attack(record: Dictionary, position: int) -> int:
+	if record.get("id") != TERMITE_ID or record.get(SPLIT_FIELD) != true \
+			or record.get("name") != "Quilt Termite" \
+			or record.get("art_path") != "res://assets/paper/enemies/quilt_termite.png" \
+			or record.get("chew_block_on_attack") != true \
+			or not record.get("chew_block_on_attack") is bool \
+			or record.has(REVIVE_FIELD) or record.has(REVIVED_FIELD):
+		return -1
+	if not record.get("max_hp") is int or record["max_hp"] < 26:
+		return -1
+	var slot := CombatEnemyIntents._weighted_slot(position, record.get("intent"))
+	if slot.is_empty() or slot.get("target") != "front":
+		return -1
+	var actions: Array = slot["actions"]
+	if actions.size() != 3:
+		return -1
+	var first: Dictionary = actions[0]
+	var body: Variant = first.get("action")
+	if not body is Dictionary or body.get("type") != "attack" \
+			or not body.get("amount") is int or body["amount"] < 6 \
+			or first.get("weight") != 4 or body.keys().size() != 2:
+		return -1
+	if actions[1] != {"weight": 1, "action": {"type": "block", "amount": 5}} \
+			or actions[2] != {"weight": 1, "action": {
+				"type": "debuff", "amount": 1, "status": "exposed"}}:
+		return -1
+	return body["amount"]
+
+
+## Build fresh half-actors from approved values only. Never copy the parent's
+## Block, statuses, damage flags, split flag or other mutable combat metadata.
+static func _half_termite(id: String, position: int, hp: int, attack: int,
+		art_path: String) -> Dictionary:
+	return {"id": id, "name": "Half Quilt Termite", "max_hp": hp, "hp": hp,
+		"block": 0, "position": position, "enemy_position": position,
+		"art_path": art_path, "intent": {"target": "front", "actions": [
+			{"type": "attack", "amount": attack, "weight": 1}]}}
+
+
+## Stage ONLY when explicitly requested after lethal damage. Validate the
+## entire occupied roster and the authentic parent before examining inert
+## cases. No is_valid()/get_enemy() calls here: those settle Wraith revivals
+## and could mutate an unrelated record on an otherwise rejected proposal.
+## One detached proposal is published only after BOTH children validate.
+func stage_split_on_death(source: Variant) -> Dictionary:
+	var rejected := {"ok": false, "split": false}
+	if not source is int or source < 1 or source > _enemies.size() \
+			or _enemies.is_empty() or _enemies.size() > MAX_ENEMIES:
+		return rejected
+	var ids: Array[String] = []
+	for index in range(_enemies.size()):
+		var actor: Dictionary = _enemies[index]
+		var id: Variant = actor.get("id")
+		var maximum: Variant = actor.get("max_hp")
+		var hp: Variant = actor.get("hp")
+		var block: Variant = actor.get("block")
+		var position: Variant = actor.get("position")
+		if not id is String or id.is_empty() or id in ids \
+				or not maximum is int or maximum <= 0 \
+				or not hp is int or hp < 0 or hp > maximum \
+				or not block is int or block < 0 \
+				or not position is int or position != index + 1 \
+				or not valid_revive_flags(actor) or not valid_split_flags(actor):
+			return rejected
+		if actor.has("enemy_position") and (not actor["enemy_position"] is int \
+				or actor["enemy_position"] != index + 1):
+			return rejected
+		ids.append(id)
+	var parent: Dictionary = _enemies[source - 1]
+	var attack := _termite_parent_attack(parent, source)
+	if attack < 0:
+		return rejected
+	if parent["hp"] > 0 or _enemies.size() == MAX_ENEMIES:
+		return {"ok": true, "split": false}
+	if HALF_LEFT_ID in ids or HALF_RIGHT_ID in ids:
+		return rejected
+	var half_hp: int = (parent["max_hp"] / 2) + (parent["max_hp"] % 2)
+	var half_attack: int = (attack / 2) + (attack % 2)
+	var left := _half_termite(HALF_LEFT_ID, source, half_hp, half_attack, parent["art_path"])
+	var right := _half_termite(HALF_RIGHT_ID, _enemies.size() + 1,
+		half_hp, half_attack, parent["art_path"])
+	if CombatEnemyIntents._weighted_slot(left["position"], left["intent"]).is_empty() \
+			or CombatEnemyIntents._weighted_slot(right["position"], right["intent"]).is_empty():
+		return rejected
+	var proposal: Array[Dictionary] = _enemies.duplicate(true)
+	proposal[source - 1] = left
+	proposal.append(right)
+	_enemies = proposal
+	return {"ok": true, "split": true, "positions": [source, right["position"]]}
+
+
+
+static func broodling_definition() -> Dictionary:
+	return {"id": BROODLING_ID, "name": "Moth Broodling", "max_hp": 8,
+		"art_path": "res://assets/paper/enemies/moth_swarm_broodling.png",
+		"intent": {"target": "front", "actions": [
+			{"type": "attack", "amount": 5, "weight": 1}]}}
+
+
+## Only the detached phase roster calls this. Returns failure for malformed
+## metadata and a successful inert beat for full, slain or already-used sources.
+## No RNG is accepted here; neither a rejected nor a skipped birth can draw it.
+func stage_broodling(source: int) -> Dictionary:
+	var failure := {"ok": false, "spawned": false}
+	if not is_valid() or source < 1 or source > _enemies.size():
+		return failure
+	var mother: Dictionary = _enemies[source - 1]
+	var latch: Variant = mother.get(BROODLING_LATCH, false)
+	if not latch is bool:
+		return failure
+	if mother.get("id") != MOTH_ID:
+		return failure
+	var spec: Variant = mother.get("intent")
+	if CombatEnemyIntents._weighted_slot(source, spec).is_empty():
+		return failure
+	var child := broodling_definition()
+	if CombatEnemyIntents._weighted_slot(_enemies.size() + 1, child.intent).is_empty():
+		return failure
+	if mother["hp"] == 0 or latch or _enemies.size() >= MAX_ENEMIES:
+		return {"ok": true, "spawned": false}
+	for existing in _enemies:
+		if existing.get("id") == BROODLING_ID:
+			return {"ok": true, "spawned": false}
+	var next: Dictionary = child.duplicate(true)
+	next["position"] = _enemies.size() + 1
+	next["hp"] = next["max_hp"]
+	next["block"] = 0
+	mother[BROODLING_LATCH] = true
+	_enemies.append(next)
+	return {"ok": true, "spawned": true, "position": next.position}
+
+
 var _enemies: Array[Dictionary] = []
 
 
@@ -27,7 +183,7 @@ func _init(definitions: Array) -> void:
 			return
 		if not max_hp is int or max_hp <= 0:
 			return
-		if not valid_revive_flags(definition):
+		if not valid_revive_flags(definition) or not valid_split_flags(definition):
 			return
 		ids.append(id)
 	for index in range(definitions.size()):

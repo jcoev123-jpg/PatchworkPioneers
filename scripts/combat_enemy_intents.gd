@@ -424,6 +424,8 @@ static func valid_action(action: Variant) -> bool:
 	var amount = action.get("amount")
 	if not kind is String or not amount is int or amount < 0:
 		return false
+	if kind == "summon":
+		return action.size() == 2 and amount == 0
 	if kind in ["block", "buff"]:
 		return action.size() == 2 and (kind == "block" or amount > 0)
 	if kind not in ["attack", "shove", "debuff", "snip_block"]:
@@ -470,6 +472,31 @@ func advance_turn() -> bool:
 		return false
 	if _bound:
 		var next_slots: Array[Dictionary] = _slots
+		# A genuine spawn is appended only after its birth phase has committed.
+		# Validate the complete battle-only child before any next-turn RNG draw.
+		var roster := _enemies.get_enemies()
+		if roster.size() != _slots.size():
+			if roster.size() != _slots.size() + 1 or roster.size() > CombatEnemies.MAX_ENEMIES:
+				return false
+			var child: Dictionary = roster[roster.size() - 1]
+			var expected := CombatEnemies.broodling_definition()
+			for field in expected:
+				if child.get(field) != expected[field]:
+					return false
+			if child.get("position") != roster.size() or child.get("hp") != 8 or child.get("block") != 0:
+				return false
+			var parent_latched := false
+			for original in roster.slice(0, _slots.size()):
+				if original.get("id") == CombatEnemies.MOTH_ID \
+						and original.get(CombatEnemies.BROODLING_LATCH) == true:
+					parent_latched = true
+			if not parent_latched:
+				return false
+			var child_slot := _weighted_slot(roster.size(), child.intent)
+			if child_slot.is_empty():
+				return false
+			next_slots = _slots.duplicate(true)
+			next_slots.append(child_slot)
 		var next_phase := _boss_phase
 		var next_intent: Dictionary = {}
 		if _boss_slot > 0:

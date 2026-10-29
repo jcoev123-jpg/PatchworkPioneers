@@ -46,6 +46,7 @@ const ACTOR_ART := {
 	"ragling": "enemies/ragling",
 	"ragling_guard": "enemies/ragling_guard",
 	"fray_scavenger": "enemies/fray_scavenger",
+	"moth_swarm_broodling": "enemies/moth_swarm_broodling",
 	"button_guard": "enemies/button_guard",
 	"spool_stalker": "enemies/spool_stalker",
 	"seam_ripper": "enemies/seam_ripper",
@@ -1627,7 +1628,8 @@ func _sync_battle() -> void:
 		_clear()
 		return
 	if _battle == app.battle_view and enemies == app.enemies and _heroes == app.hero_view \
-			and is_instance_valid(battle_row) and is_instance_valid(panel) and is_instance_valid(backdrop):
+			and is_instance_valid(battle_row) and is_instance_valid(panel) and is_instance_valid(backdrop) \
+			and _admitted_ids.size() == enemies.get_enemies().size():
 		# A changed admitted kind or Fight area floor rebinds the same one stage
 		# instead of adding another; an unchanged selection leaves it alone.
 		if stage_key(_battle_kind(app), _battle_floor(app)) != _backdrop_key:
