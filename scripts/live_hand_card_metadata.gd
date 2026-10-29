@@ -57,6 +57,7 @@ var _warden_pool := WardenPoolCards.new()
 var _tinker_pool := TinkerPoolCards.new()
 var _v3_tinker_scrap := CombatTinkerV3ScrapSupportCards.new()
 var _seamstress_pool := SeamstressPoolCards.new()
+var _v3_red_thread := CombatSeamstressV3RedThreadCards.new()
 var _targeting := CombatAttackTargeting.new()
 var _stitched_preview := CombatStitchedTargetPreview.new()
 var _on_hit := CombatOnHitStatuses.new()
@@ -99,6 +100,8 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if _v3_red_thread.is_supported_card(card_id):
+		return _v3_red_thread._catalog_definition(card_id) 			if _v3_red_thread.is_authentic_card(card_id) else {}
 	if _monk.is_supported_card(card_id):
 		return _monk.get_definition(card_id)
 	if card_id in ["seamstress_v3_tether_loop", "seamstress_v3_tether_loop_plus"]:
@@ -565,6 +568,15 @@ func _recipient(definition: Dictionary) -> String:
 ## fields and the real confirmed-hit starter adapter are described, and any
 ## unrecognized effect key is flagged instead of being rendered as a number.
 func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[String]:
+	if _v3_red_thread.is_authentic_card(card_id):
+		var effects: Dictionary = definition.effects
+		var amount: int = int(effects.bleed)
+		var line: String = "BASE apply Bleed %d (printed %d + Seamstress passive 1) to the chosen enemy after the hit." % [
+			amount + 1, amount]
+		if effects.has("weak"):
+			return ["No attack or damage. " + line + " Apply Weak %d to that same enemy." % int(effects.weak)]
+		return ["BASE deal %d attack damage through Block before HP; pre-hit Weak/Exposed/Tangled modify it. THEN %s New Bleed cannot boost its own strike." % [
+			int(effects.damage), line]]
 	if _monk.is_supported_card(card_id):
 		var effects: Dictionary = definition.effects
 		var text := "BASE deal %d damage through Block before HP, then arm Blind: the selected foe's next real attack misses (it still takes its turn)." % int(effects.damage)
@@ -1132,6 +1144,10 @@ func _update_visual(panel: Control) -> void:
 		if CombatRagDuelistRiposteCards.CARDS.has(id) or CombatRagDuelistDodgeCards.CARDS.has(id):
 			var riposte_presenter = _app.get_node_or_null("LiveRagDuelistRiposteHand")
 			playable = riposte_presenter != null and riposte_presenter._eligible(panel, id)
+		elif id in CombatSeamstressV3RedThreadCards.CARDS:
+			var seamstress_presenter = _app.get_node_or_null("LiveAreaAttackAction")
+			var hand = seamstress_presenter.get_node_or_null("LiveSeamstressSingleBleedHand") if seamstress_presenter != null else null
+			playable = hand != null and hand._affordable(panel, id)
 		elif id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatYarnRangerSnareCards.CARDS.has(id) or CombatScarecrowCrowCards.CARDS.has(id):
 			var area = _app.get_node_or_null("LiveAreaAttackAction")
 			playable = area != null and area._eligible(panel, id)
@@ -1267,6 +1283,12 @@ func _party_heal(definition: Dictionary) -> int:
 
 
 func _rules(id: String) -> String:
+	if _v3_red_thread.is_authentic_card(id):
+		var effects: Dictionary = _definition(id).effects
+		var bleed: int = int(effects.bleed) + CombatSeamstressV3RedThreadCards.PASSIVE_BLEED
+		if effects.has("weak"):
+			return "Bleed %d. Weak %d. No damage." % [bleed, int(effects.weak)]
+		return "Deal %d. Bleed %d." % [int(effects.damage), bleed]
 	if _monk.is_supported_card(id):
 		var effects: Dictionary = _definition(id).effects
 		return "Deal %d; then Blind next attack%s." % [int(effects.damage),
