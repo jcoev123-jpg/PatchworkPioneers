@@ -479,6 +479,78 @@
         { "id": "buy_brass_button_shanks", "text": "Buy brass button fittings (spend 17 gold; gain 3 scraps)", "outcome": { "gold": -17, "scraps": 3 } },
         { "id": "leave", "text": "Let the lift settle", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_warden_cinder_shield_parade",
+      "title": "The Cinder Shield Parade",
+      "description": "A squat guard with a dented pot helmet braces a giant slate patch shield beneath oxblood procession flags and glowing lantern coals.",
+      "required_hero": "warden",
+      "hero_choice_ids": ["brace_cinder_procession","buy_shield_rivets"],
+      "choices": [
+        { "id": "brace_cinder_procession", "text": "Brace the burning procession (spend 2 scraps; gain 26 gold)", "outcome": { "gold": 26, "scraps": -2 } },
+        { "id": "buy_shield_rivets", "text": "Buy shield rivets (spend 13 gold; gain 2 scraps)", "outcome": { "gold": -13, "scraps": 2 } },
+        { "id": "leave", "text": "Let the lantern procession pass", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_seamstress_ribbon_heart_gallery",
+      "title": "The Ribbon-Heart Gallery",
+      "description": "A needle the size of a staff threads scarlet ribbons between plush velvet hearts beneath a bone-cream gallery roof.",
+      "required_hero": "seamstress",
+      "hero_choice_ids": ["mend_gallery_hearts","buy_glimmer_needles"],
+      "choices": [
+        { "id": "mend_gallery_hearts", "text": "Mend the torn velvet hearts (spend 2 scraps; gain 31 gold)", "outcome": { "gold": 31, "scraps": -2 } },
+        { "id": "buy_glimmer_needles", "text": "Buy silver glimmer needles (spend 19 gold; gain 3 scraps)", "outcome": { "gold": -19, "scraps": 3 } },
+        { "id": "leave", "text": "Leave the hearts hanging", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_tinker_thunder_spool_dock",
+      "title": "The Thunder-Spool Dock",
+      "description": "A hunchbacked gearsmith with a scrap blunderbuss winds copper turbines beside a storm-lit mountain of wooden spools.",
+      "required_hero": "tinker",
+      "hero_choice_ids": ["rewind_dock_engines","buy_copper_springs"],
+      "choices": [
+        { "id": "rewind_dock_engines", "text": "Rewind the dock engines (spend 3 scraps; gain 33 gold)", "outcome": { "gold": 33, "scraps": -3 } },
+        { "id": "buy_copper_springs", "text": "Buy copper clock springs (spend 11 gold; gain 2 scraps)", "outcome": { "gold": -11, "scraps": 2 } },
+        { "id": "leave", "text": "Leave the turbines unwound", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_lantern_monk_moonmoth_procession",
+      "title": "The Moon-Moth Procession",
+      "description": "A round saffron-robed lantern keeper guides button-eyed moth dolls across a midnight-teal bridge of embroidered stars.",
+      "required_hero": "lantern_monk",
+      "hero_choice_ids": ["guide_moonmoth_pilgrims","buy_amber_wicks"],
+      "choices": [
+        { "id": "guide_moonmoth_pilgrims", "text": "Guide the moth pilgrims (spend 1 scrap; gain 18 gold)", "outcome": { "gold": 18, "scraps": -1 } },
+        { "id": "buy_amber_wicks", "text": "Buy amber lantern wicks (spend 18 gold; gain 3 scraps)", "outcome": { "gold": -18, "scraps": 3 } },
+        { "id": "leave", "text": "Watch the lanterns float away", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_scarecrow_strawmoon_watch",
+      "title": "The Strawmoon Watch",
+      "description": "A pumpkin-orange sack head and pitchfork stand beside a black crow on a velvet roof while straw bells ring across the moonlit fields.",
+      "required_hero": "scarecrow",
+      "hero_choice_ids": ["guard_crow_bell","buy_harvest_twine"],
+      "choices": [
+        { "id": "guard_crow_bell", "text": "Guard the midnight crow bell (spend 2 scraps; gain 22 gold)", "outcome": { "gold": 22, "scraps": -2 } },
+        { "id": "buy_harvest_twine", "text": "Buy fresh harvest twine (spend 14 gold; gain 2 scraps)", "outcome": { "gold": -14, "scraps": 2 } },
+        { "id": "leave", "text": "Leave the straw bells ringing", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_button_golem_bronze_rivet_choir",
+      "title": "The Bronze-Rivet Choir",
+      "description": "A huge button-bodied doll steadies a falling brass-button organ while tiny velvet singers hold its fraying thread pipes.",
+      "required_hero": "button_golem",
+      "hero_choice_ids": ["raise_button_organ","buy_rivet_thread"],
+      "choices": [
+        { "id": "raise_button_organ", "text": "Raise the giant button organ (spend 3 scraps; gain 37 gold)", "outcome": { "gold": 37, "scraps": -3 } },
+        { "id": "buy_rivet_thread", "text": "Buy brass rivet thread (spend 20 gold; gain 3 scraps)", "outcome": { "gold": -20, "scraps": 3 } },
+        { "id": "leave", "text": "Leave the choir to its song", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
