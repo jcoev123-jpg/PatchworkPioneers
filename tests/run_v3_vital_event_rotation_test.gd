@@ -131,6 +131,10 @@ func _initialize() -> void:
 	_test_button_heart_shrine_settlement()
 	_test_infirmary_and_shared_validation()
 	_test_vitality_batch()
+	_test_actionable_anchor_selection()
+	_test_actionable_multi_oracle_and_rejections()
+	_test_actionable_settlement_and_detachment()
+	_test_default_selector_unchanged_with_actionable()
 	_check(source_document == source_snapshot, "the shipped vitality document is unchanged by every flow")
 	_report()
 
@@ -1180,3 +1184,434 @@ func _test_infirmary_and_shared_validation() -> void:
 		"an extra snapshot key is denied by the vitality commit")
 	_check(rng.state == rng_state, "Infirmary and shared snapshot checks spend no seed")
 	_check(randi() == global_state, "Infirmary and shared snapshot checks spend no global RNG")
+
+
+func _vital_state_for_hero(hero_id: String, gold: int, scraps: int, hp: int, max_hp: int) -> Dictionary:
+	return {"gold": gold, "scraps": scraps, "hero": {"id": hero_id, "hp": hp, "max_hp": max_hp}}
+
+
+func _independent_actionable_ids(rotation: RunV3VitalEventRotation, excluded_ids: Array, snapshot: Dictionary) -> Array:
+	var excluded_lookup: Dictionary = {}
+	for raw_id in excluded_ids:
+		excluded_lookup[raw_id] = true
+	var qualified: Array = []
+	for record in rotation.get_vital_events():
+		if not record is Dictionary:
+			continue
+		var event_id: String = record["id"]
+		if excluded_lookup.has(event_id):
+			continue
+		var service := RunEventChoice.new(record)
+		var preview := service.preview_vital_choices(snapshot)
+		if preview.get("ok") != true:
+			continue
+		for entry in preview.get("choices", []):
+			if entry is Dictionary and entry.get("choice_id") != "leave" and entry.get("affordable") == true:
+				qualified.append(event_id)
+				break
+	qualified.sort()
+	return qualified
+
+
+func _assert_forced_actionable_admits(
+	rotation: RunV3VitalEventRotation,
+	target_id: String,
+	snapshot: Dictionary,
+	seed_value: int,
+	label: String
+) -> Dictionary:
+	var excluded: Array = rotation.get_vital_event_ids()
+	excluded.erase(target_id)
+	var excluded_before: Array = excluded.duplicate(true)
+	var snapshot_before: Dictionary = snapshot.duplicate(true)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var oracle := RandomNumberGenerator.new()
+	oracle.seed = seed_value
+	oracle.randi_range(0, 0)
+	var global_next := _global_rng_start(seed_value + 70000)
+	var result := rotation.select_actionable_event(rng, excluded, snapshot)
+	_check(_selection_shape_ok(result) and result.get("ok") == true,
+		"actionable selector admits " + label)
+	var event: Dictionary = result.get("event", {})
+	_check(event == source_by_id.get(target_id, {}),
+		"actionable selector returns exact full record for " + label)
+	_check(rng.state == oracle.state,
+		"actionable admission consumes exactly one randi_range draw for " + label)
+	_check(randi() == global_next,
+		"actionable admission consumes no global RNG for " + label)
+	_check(excluded == excluded_before and snapshot == snapshot_before,
+		"actionable admission preserves excluded IDs and caller snapshot for " + label)
+	return event
+
+
+func _assert_forced_actionable_rejects(
+	rotation: RunV3VitalEventRotation,
+	target_id: String,
+	snapshot: Dictionary,
+	seed_value: int,
+	label: String
+) -> void:
+	var excluded: Array = rotation.get_vital_event_ids()
+	excluded.erase(target_id)
+	var excluded_before: Array = excluded.duplicate(true)
+	var snapshot_before: Dictionary = snapshot.duplicate(true)
+	var service := RunEventChoice.new(source_by_id.get(target_id, {}))
+	var preview := service.preview_vital_choices(snapshot)
+	_check(preview.get("ok") == true and _preview_choice(preview, "leave").get("affordable") == true,
+		"Leave remains affordable in RunEventChoice preview for " + label)
+	var non_leave_affordable := false
+	for entry in preview.get("choices", []):
+		if entry is Dictionary and entry.get("choice_id") != "leave" and entry.get("affordable") == true:
+			non_leave_affordable = true
+	_check(not non_leave_affordable,
+		"only Leave is affordable in RunEventChoice preview for " + label)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var rng_before := rng.state
+	var global_next := _global_rng_start(seed_value + 80000)
+	var result := rotation.select_actionable_event(rng, excluded, snapshot)
+	_check(result == {"ok": false, "event": {}},
+		"actionable selector rejects Leave-only candidate for " + label)
+	_check(rng.state == rng_before and randi() == global_next,
+		"actionable rejection consumes neither caller nor global RNG for " + label)
+	_check(excluded == excluded_before and snapshot == snapshot_before,
+		"actionable rejection preserves excluded IDs and caller snapshot for " + label)
+
+
+func _test_actionable_anchor_selection() -> void:
+	var rotation := RunV3VitalEventRotation.new()
+	_check(rotation.is_catalog_valid(), "shipped rotation is valid for actionable anchor selection")
+	# AC1: Lantern-Quilt Infirmary: buy_bandages (-12 gold, +8 HP), blood_receipt (-4 HP, +18 gold), leave (0).
+	_assert_forced_actionable_rejects(rotation, "v3_lantern_quilt_infirmary",
+		_vital_state(0, 0, 1, 40), 61001, "Infirmary at gold=0/hp=1")
+	_assert_forced_actionable_rejects(rotation, "v3_lantern_quilt_infirmary",
+		_vital_state(11, 5, 4, 40), 61002, "Infirmary at gold=11/hp=4 boundary")
+	_assert_forced_actionable_admits(rotation, "v3_lantern_quilt_infirmary",
+		_vital_state(12, 0, 1, 40), 61003, "Infirmary at gold=12/hp=1")
+	_assert_forced_actionable_admits(rotation, "v3_lantern_quilt_infirmary",
+		_vital_state(20, 0, 1, 40), 61004, "Infirmary at gold=20/hp=1")
+	_assert_forced_actionable_admits(rotation, "v3_lantern_quilt_infirmary",
+		_vital_state(0, 0, 5, 40), 61005, "Infirmary at gold=0/hp=5")
+	_assert_forced_actionable_admits(rotation, "v3_lantern_quilt_infirmary",
+		_vital_state(0, 0, 12, 40), 61006, "Infirmary at gold=0/hp=12")
+	# AC1: Button-Heart Shrine: reinforce_heart (-2 scraps, +3 max_hp), surrender_button (-2 max_hp, +24 gold), leave (0).
+	_assert_forced_actionable_rejects(rotation, "v3_button_heart_shrine",
+		_vital_state(0, 0, 10, 10), 61007, "Button-Heart Shrine at max_hp=10/scraps=0")
+	_assert_forced_actionable_rejects(rotation, "v3_button_heart_shrine",
+		_vital_state(50, 1, 11, 11), 61008, "Button-Heart Shrine at max_hp=11/scraps=1 boundary")
+	_assert_forced_actionable_admits(rotation, "v3_button_heart_shrine",
+		_vital_state(0, 2, 10, 10), 61009, "Button-Heart Shrine at max_hp=10/scraps=2")
+	_assert_forced_actionable_admits(rotation, "v3_button_heart_shrine",
+		_vital_state(0, 4, 10, 10), 61010, "Button-Heart Shrine at max_hp=10/scraps=4")
+	_assert_forced_actionable_admits(rotation, "v3_button_heart_shrine",
+		_vital_state(0, 0, 10, 12), 61011, "Button-Heart Shrine at max_hp=12/scraps=0")
+	# AC1: Needle-Thorn Garden: harvest_thorns (-6 HP, +3 scraps), buy_rose_balm (-10 gold, +6 HP), leave (0).
+	_assert_forced_actionable_rejects(rotation, "v3_needle_thorn_garden",
+		_vital_state(0, 0, 1, 40), 61012, "Needle-Thorn Garden at gold=0/hp=1")
+	_assert_forced_actionable_rejects(rotation, "v3_needle_thorn_garden",
+		_vital_state(9, 5, 6, 40), 61013, "Needle-Thorn Garden at gold=9/hp=6 boundary")
+	_assert_forced_actionable_admits(rotation, "v3_needle_thorn_garden",
+		_vital_state(10, 0, 1, 40), 61014, "Needle-Thorn Garden at gold=10/hp=1")
+	_assert_forced_actionable_admits(rotation, "v3_needle_thorn_garden",
+		_vital_state(16, 0, 1, 40), 61015, "Needle-Thorn Garden at gold=16/hp=1")
+	_assert_forced_actionable_admits(rotation, "v3_needle_thorn_garden",
+		_vital_state(0, 0, 7, 40), 61016, "Needle-Thorn Garden at gold=0/hp=7")
+	_assert_forced_actionable_admits(rotation, "v3_needle_thorn_garden",
+		_vital_state(0, 0, 18, 40), 61017, "Needle-Thorn Garden at gold=0/hp=18")
+	# Any nonblank hero ID is accepted without party-ownership authentication inside this helper.
+	for hero_id in ["seamstress", "lantern_monk", "caller_authenticated_custom_hero"]:
+		_assert_forced_actionable_admits(rotation, "v3_needle_thorn_garden",
+			_vital_state_for_hero(hero_id, 10, 0, 1, 40), 61018, "Needle-Thorn Garden for hero " + hero_id)
+	# Leave position is not assumed: if 'leave' is first or middle in choices, it is still recognized by ID.
+	var leave_first := _record_copy("v3_lantern_quilt_infirmary")
+	var choices_lf: Array = leave_first["choices"]
+	leave_first["choices"] = [choices_lf[2], choices_lf[0], choices_lf[1]]
+	var lf_rotation := RunV3VitalEventRotation.new(
+		{"events": _replaced(source_events, "v3_lantern_quilt_infirmary", leave_first)})
+	_check(lf_rotation.is_catalog_valid(), "fixture with Leave at choice index 0 validates")
+	var lf_excluded: Array = lf_rotation.get_vital_event_ids()
+	lf_excluded.erase("v3_lantern_quilt_infirmary")
+	var lf_rng := RandomNumberGenerator.new()
+	lf_rng.seed = 61019
+	var lf_state_before := lf_rng.state
+	_check(lf_rotation.select_actionable_event(lf_rng, lf_excluded, _vital_state(0, 0, 1, 40))
+		== {"ok": false, "event": {}} and lf_rng.state == lf_state_before,
+		"Leave at choice index 0 does not qualify a Leave-only event")
+	_check(lf_rotation.select_actionable_event(lf_rng, lf_excluded, _vital_state(12, 0, 1, 40)).get("ok") == true,
+		"Leave at choice index 0 still admits a funded non-Leave choice")
+
+
+func _test_actionable_multi_oracle_and_rejections() -> void:
+	var shipped := RunV3VitalEventRotation.new()
+	var all_ids: Array = shipped.get_vital_event_ids()
+	# Subset of three anchors where two qualify (Shrine via 2 scraps, Garden via 10 gold)
+	# and Infirmary (needs 12 gold or 5 HP) is filtered out as Leave-only.
+	var anchor_excluded: Array = all_ids.duplicate()
+	anchor_excluded.erase("v3_lantern_quilt_infirmary")
+	anchor_excluded.erase("v3_button_heart_shrine")
+	anchor_excluded.erase("v3_needle_thorn_garden")
+	var mixed_snapshot := _vital_state(10, 2, 1, 10)
+	var expected_subset := _independent_actionable_ids(shipped, anchor_excluded, mixed_snapshot)
+	_check(expected_subset == ["v3_button_heart_shrine", "v3_needle_thorn_garden"],
+		"mixed snapshot qualifies Shrine and Garden while excluding Leave-only Infirmary")
+	for seed_value in range(1, 33):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = seed_value
+		var expected_id: String = expected_subset[oracle.randi_range(0, expected_subset.size() - 1)]
+		var result := shipped.select_actionable_event(rng, anchor_excluded, mixed_snapshot)
+		_check(result.get("ok") == true and result.get("event", {}).get("id") == expected_id,
+			"mixed anchor pool matches independent sorted-ID oracle (seed %d)" % seed_value)
+		_check(result.get("event", {}).get("id") != "v3_lantern_quilt_infirmary",
+			"Leave-only Infirmary is never picked from mixed anchor pool (seed %d)" % seed_value)
+		_check(rng.state == oracle.state,
+			"mixed anchor pool consumes exactly one randi_range draw (seed %d)" % seed_value)
+	# Full-pool and reordered-catalog uniform selection across diverse snapshots.
+	var reversed_events: Array = source_events.duplicate(true)
+	reversed_events.reverse()
+	var reversed := RunV3VitalEventRotation.new({"events": reversed_events})
+	_check(reversed.is_catalog_valid(), "reversed catalog validates for actionable selection")
+	var probe_snapshots := [
+		_vital_state(12, 0, 1, 10),
+		_vital_state(0, 2, 1, 10),
+		_vital_state(0, 0, 5, 10),
+		_vital_state(25, 3, 20, 30),
+	]
+	for snapshot in probe_snapshots:
+		var qualified := _independent_actionable_ids(shipped, [], snapshot)
+		_check(qualified.size() >= 2, "probe snapshot qualifies multiple vitality stories: " + str(snapshot))
+		if qualified.size() < 2:
+			continue
+		for seed_value in [7, 42, 318, 424242, 999983]:
+			var rng_shipped := RandomNumberGenerator.new()
+			rng_shipped.seed = seed_value
+			var rng_reversed := RandomNumberGenerator.new()
+			rng_reversed.seed = seed_value
+			var oracle := RandomNumberGenerator.new()
+			oracle.seed = seed_value
+			var expected_id: String = qualified[oracle.randi_range(0, qualified.size() - 1)]
+			var pick_shipped := shipped.select_actionable_event(rng_shipped, null, snapshot)
+			var pick_reversed := reversed.select_actionable_event(rng_reversed, [], snapshot)
+			_check(pick_shipped.get("ok") == true and pick_reversed.get("ok") == true,
+				"shipped and reversed pools both select for seed %d" % seed_value)
+			_check(pick_shipped.get("event", {}).get("id") == expected_id
+				and pick_reversed.get("event", {}).get("id") == expected_id,
+				"JSON insertion order never affects actionable selection (seed %d)" % seed_value)
+			_check(rng_shipped.state == oracle.state and rng_reversed.state == oracle.state,
+				"actionable selection ends in identical single-draw RNG state (seed %d)" % seed_value)
+	# Rejections: invalid RNG, invalid exclusions, malformed snapshots, invalid catalog, and Leave-only pools.
+	var guard_rng := RandomNumberGenerator.new()
+	guard_rng.seed = 777777
+	var guard_state := guard_rng.state
+	var global_next := _global_rng_start(888888)
+	var valid_snapshot := _vital_state(20, 2, 20, 40)
+	var valid_snapshot_before := valid_snapshot.duplicate(true)
+	var valid_excluded := ["v3_lantern_quilt_infirmary"]
+	var valid_excluded_before := valid_excluded.duplicate(true)
+	for bad_rng in [null, 5, 3.5, "rng", {}, [], RefCounted.new()]:
+		var res := shipped.select_actionable_event(bad_rng, valid_excluded, valid_snapshot)
+		_check(res == {"ok": false, "event": {}}, "actionable selector rejects bad RNG: " + str(bad_rng))
+	for bad_exclusions in ["v3_needle_thorn_garden", 7, {}, true, [1], [null], [""], ["   "]]:
+		var res := shipped.select_actionable_event(guard_rng, bad_exclusions, valid_snapshot)
+		_check(res == {"ok": false, "event": {}},
+			"actionable selector rejects malformed exclusions: " + str(bad_exclusions))
+		_check(guard_rng.state == guard_state, "malformed exclusions consume no RNG")
+	var bad_snapshots: Array = [
+		null,
+		42,
+		"snapshot",
+		[],
+		{},
+		{"gold": 20, "scraps": 2},
+		{"gold": 20, "scraps": 2, "hero": {"id": "warden", "hp": 20, "max_hp": 40}, "extra": 1},
+		{"gold": -1, "scraps": 2, "hero": {"id": "warden", "hp": 20, "max_hp": 40}},
+		{"gold": 20, "scraps": -1, "hero": {"id": "warden", "hp": 20, "max_hp": 40}},
+		{"gold": 20.0, "scraps": 2, "hero": {"id": "warden", "hp": 20, "max_hp": 40}},
+		{"gold": 20, "scraps": 2.0, "hero": {"id": "warden", "hp": 20, "max_hp": 40}},
+		{"gold": 20, "scraps": 2, "hero": "warden"},
+		{"gold": 20, "scraps": 2, "hero": {"id": "", "hp": 20, "max_hp": 40}},
+		{"gold": 20, "scraps": 2, "hero": {"id": "   ", "hp": 20, "max_hp": 40}},
+		{"gold": 20, "scraps": 2, "hero": {"id": "warden", "hp": 0, "max_hp": 40}},
+		{"gold": 20, "scraps": 2, "hero": {"id": "warden", "hp": -3, "max_hp": 40}},
+		{"gold": 20, "scraps": 2, "hero": {"id": "warden", "hp": 20, "max_hp": 9}},
+		{"gold": 20, "scraps": 2, "hero": {"id": "warden", "hp": 41, "max_hp": 40}},
+		{"gold": 20, "scraps": 2, "hero": {"id": "warden", "hp": 20.0, "max_hp": 40}},
+		{"gold": 20, "scraps": 2, "hero": {"id": "warden", "hp": 20, "max_hp": 40.0}},
+		{"gold": 20, "scraps": 2, "hero": {"id": "warden", "hp": 20, "max_hp": 40, "slot": 0}},
+	]
+	for bad_snap in bad_snapshots:
+		var snap_copy: Variant = bad_snap.duplicate(true) if bad_snap is Dictionary or bad_snap is Array else bad_snap
+		var res := shipped.select_actionable_event(guard_rng, valid_excluded, bad_snap)
+		_check(res == {"ok": false, "event": {}},
+			"actionable selector rejects malformed snapshot: " + str(bad_snap))
+		_check(guard_rng.state == guard_state, "malformed snapshot consumes no RNG")
+		_check(bad_snap == snap_copy, "malformed snapshot is not mutated")
+	# Whole-pool Leave-only snapshot (gold=0, scraps=0, hp=1, max_hp=10) and all-excluded pool reject without RNG.
+	var destitute := _vital_state(0, 0, 1, 10)
+	var destitute_before := destitute.duplicate(true)
+	_check(_independent_actionable_ids(shipped, [], destitute).is_empty(),
+		"destitute 1-HP/10-max-HP snapshot has only Leave affordable across the shipped catalog")
+	var no_actionable := shipped.select_actionable_event(guard_rng, valid_excluded, destitute)
+	_check(no_actionable == {"ok": false, "event": {}},
+		"destitute Leave-only pool rejects cleanly")
+	_check(destitute == destitute_before and valid_excluded == valid_excluded_before,
+		"destitute Leave-only rejection mutates neither snapshot nor excluded IDs")
+	var all_excluded_copy: Array = all_ids.duplicate(true)
+	var exhausted := shipped.select_actionable_event(guard_rng, all_ids, valid_snapshot)
+	_check(exhausted == {"ok": false, "event": {}} and all_ids == all_excluded_copy,
+		"excluding all IDs rejects without mutating exclusions")
+	var invalid_rotation := RunV3VitalEventRotation.new({})
+	_check(invalid_rotation.select_actionable_event(guard_rng, [], valid_snapshot) == {"ok": false, "event": {}},
+		"unvalidated catalog rejects actionable selection")
+	_check(guard_rng.state == guard_state and randi() == global_next,
+		"every actionable rejection leaves caller and global RNG untouched")
+	_check(valid_snapshot == valid_snapshot_before and valid_excluded == valid_excluded_before,
+		"caller containers remain unchanged after all rejection checks")
+
+
+func _test_actionable_settlement_and_detachment() -> void:
+	var rotation := RunV3VitalEventRotation.new()
+	var catalog_before: Array = rotation.get_vital_events()
+	# AC3: Select each anchor through select_actionable_event, mutate returned copy to prove detachment,
+	# and settle through the real RunEventChoice (verifying paid choice settles while unaffordable/replay do not).
+	var infirmary_state := _vital_state(12, 0, 4, 40)
+	var infirmary_before := infirmary_state.duplicate(true)
+	var infirmary_event := _assert_forced_actionable_admits(rotation, "v3_lantern_quilt_infirmary",
+		infirmary_state, 62001, "Infirmary for AC3 settlement")
+	var infirmary_mutated := infirmary_event.duplicate(true)
+	infirmary_mutated["title"] = "CORRUPTED"
+	(infirmary_mutated["choices"] as Array).clear()
+	_check(rotation.get_vital_events() == catalog_before and source_document == source_snapshot,
+		"mutating a returned actionable event never reaches rotation or source catalog")
+	var infirmary_service := RunEventChoice.new(infirmary_event)
+	_check(infirmary_service.is_valid() and not infirmary_service.is_claimed(),
+		"selector returns an unclaimed valid event record")
+	var infirmary_preview := infirmary_service.preview_vital_choices(infirmary_state)
+	_check(_preview_choice(infirmary_preview, "blood_receipt").get("affordable") == false,
+		"blood_receipt is unaffordable at 4 HP in RunEventChoice preview")
+	_check(_preview_choice(infirmary_preview, "buy_bandages").get("affordable") == true,
+		"buy_bandages is affordable at 12 gold in RunEventChoice preview")
+	var blood_refusal := infirmary_service.choose_with_vitals("blood_receipt", infirmary_state)
+	_check(blood_refusal == {"ok": false, "event_id": "", "choice_id": "", "state": infirmary_before}
+		and infirmary_service.is_valid() and not infirmary_service.is_claimed(),
+		"unaffordable blood_receipt is rejected without claiming the visit")
+	var bandage_receipt := infirmary_service.choose_with_vitals("buy_bandages", infirmary_state)
+	_check(bandage_receipt == {
+		"ok": true,
+		"event_id": "v3_lantern_quilt_infirmary",
+		"choice_id": "buy_bandages",
+		"state": _preview_choice(infirmary_preview, "buy_bandages").get("state"),
+	} and _vital_state_is(bandage_receipt.get("state"), 0, 0, 12, 40),
+		"affordable buy_bandages settles through RunEventChoice with exact deltas")
+	_check(infirmary_service.is_claimed() and not infirmary_service.is_valid()
+		and infirmary_state == infirmary_before,
+		"settling buy_bandages claims once and leaves caller snapshot untouched")
+	_check(infirmary_service.choose_with_vitals("buy_bandages", infirmary_state)
+		== {"ok": false, "event_id": "", "choice_id": "", "state": infirmary_before}
+		and infirmary_service.choose_with_vitals("leave", infirmary_state)
+		== {"ok": false, "event_id": "", "choice_id": "", "state": infirmary_before},
+		"replaying a claimed actionable visit is rejected")
+	# Button-Heart Shrine: scraps=2, max_hp=11 => surrender_button (-2 max_hp) violates floor 10, reinforce_heart settles.
+	var shrine_state := _vital_state(0, 2, 11, 11)
+	var shrine_before := shrine_state.duplicate(true)
+	var shrine_event := _assert_forced_actionable_admits(rotation, "v3_button_heart_shrine",
+		shrine_state, 62002, "Button-Heart Shrine for AC3 settlement")
+	var shrine_service := RunEventChoice.new(shrine_event)
+	var shrine_preview := shrine_service.preview_vital_choices(shrine_state)
+	_check(_preview_choice(shrine_preview, "surrender_button").get("affordable") == false
+		and _preview_choice(shrine_preview, "reinforce_heart").get("affordable") == true,
+		"Button-Heart Shrine preview enforces max-HP floor 10 and 2-scrap affordability")
+	_check(shrine_service.choose_with_vitals("surrender_button", shrine_state)
+		== {"ok": false, "event_id": "", "choice_id": "", "state": shrine_before}
+		and not shrine_service.is_claimed(),
+		"surrender_button below max-HP floor 10 is rejected without claiming")
+	var reinforce_receipt := shrine_service.choose_with_vitals("reinforce_heart", shrine_state)
+	_check(reinforce_receipt.get("ok") == true
+		and reinforce_receipt.get("state") == _preview_choice(shrine_preview, "reinforce_heart").get("state")
+		and _vital_state_is(reinforce_receipt.get("state"), 0, 0, 11, 14)
+		and shrine_service.is_claimed(),
+		"reinforce_heart settles once through RunEventChoice")
+	_check(shrine_service.choose_with_vitals("reinforce_heart", shrine_state)
+		== {"ok": false, "event_id": "", "choice_id": "", "state": shrine_before},
+		"reinforce_heart replay is rejected")
+	# Needle-Thorn Garden: gold=10, hp=38, max_hp=40 => buy_rose_balm clamps healing to 40, while harvest_thorns at hp=6 rejects.
+	var garden_state := _vital_state(10, 0, 6, 40)
+	var garden_before := garden_state.duplicate(true)
+	var garden_event := _assert_forced_actionable_admits(rotation, "v3_needle_thorn_garden",
+		garden_state, 62003, "Needle-Thorn Garden for AC3 settlement")
+	var garden_service := RunEventChoice.new(garden_event)
+	var garden_preview := garden_service.preview_vital_choices(garden_state)
+	_check(_preview_choice(garden_preview, "harvest_thorns").get("affordable") == false
+		and _preview_choice(garden_preview, "buy_rose_balm").get("affordable") == true,
+		"Needle-Thorn Garden preview enforces 1-HP survival floor and 10-gold balm")
+	_check(garden_service.choose_with_vitals("harvest_thorns", garden_state)
+		== {"ok": false, "event_id": "", "choice_id": "", "state": garden_before}
+		and not garden_service.is_claimed(),
+		"harvest_thorns at 6 HP is rejected without claiming")
+	var balm_receipt := garden_service.choose_with_vitals("buy_rose_balm", garden_state)
+	_check(balm_receipt.get("ok") == true
+		and balm_receipt.get("state") == _preview_choice(garden_preview, "buy_rose_balm").get("state")
+		and _vital_state_is(balm_receipt.get("state"), 0, 0, 12, 40)
+		and garden_service.is_claimed() and garden_state == garden_before,
+		"buy_rose_balm settles once through RunEventChoice")
+
+
+func _test_default_selector_unchanged_with_actionable() -> void:
+	var rotation := RunV3VitalEventRotation.new()
+	var destitute := _vital_state(0, 0, 1, 10)
+	var destitute_before := destitute.duplicate(true)
+	# AC4: Default select_event(rng, excluded_ids) still selects Leave-only events with 1 RNG draw.
+	for target_id in ["v3_lantern_quilt_infirmary", "v3_button_heart_shrine", "v3_needle_thorn_garden"]:
+		var excluded: Array = rotation.get_vital_event_ids()
+		excluded.erase(target_id)
+		var opt_in_rng := RandomNumberGenerator.new()
+		opt_in_rng.seed = 63001
+		var opt_in_before := opt_in_rng.state
+		var opt_in := rotation.select_actionable_event(opt_in_rng, excluded, destitute)
+		_check(opt_in == {"ok": false, "event": {}} and opt_in_rng.state == opt_in_before,
+			"opt-in selector rejects Leave-only " + target_id)
+		var default_rng := RandomNumberGenerator.new()
+		default_rng.seed = 63001
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = 63001
+		oracle.randi_range(0, 0)
+		var default_pick := rotation.select_event(default_rng, excluded)
+		_check(default_pick.get("ok") == true and default_pick.get("event", {}).get("id") == target_id
+			and default_rng.state == oracle.state,
+			"default select_event still selects Leave-only " + target_id + " with one draw")
+		var visit := RunEventChoice.new(default_pick.get("event", {}))
+		var leave_receipt := visit.choose_with_vitals("leave", destitute)
+		_check(leave_receipt == {"ok": true, "event_id": target_id, "choice_id": "leave", "state": destitute_before}
+			and visit.is_claimed(),
+			"a default-selected Leave-only event still settles Leave once: " + target_id)
+	# Future well-formed additions also work with select_actionable_event without hard-coded catalog totals.
+	var future := {
+		"id": "v3_future_quilt_well",
+		"title": "The Future Quilt Well",
+		"description": "A well of stitched water waits for a later release.",
+		"choices": [
+			{"id": "drink", "text": "Pay 5 gold to drink deep (+4 HP)",
+				"outcome": {"gold": -5, "scraps": 0, "hp": 4, "max_hp": 0}},
+			{"id": "leave", "text": "Leave the well covered",
+				"outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}},
+		],
+	}
+	var events: Array = source_events.duplicate(true)
+	events.append(future)
+	var future_rotation := RunV3VitalEventRotation.new({"events": events})
+	var future_excluded: Array = future_rotation.get_vital_event_ids()
+	future_excluded.erase("v3_future_quilt_well")
+	var future_rng := RandomNumberGenerator.new()
+	future_rng.seed = 63002
+	var future_state := future_rng.state
+	_check(future_rotation.select_actionable_event(future_rng, future_excluded, _vital_state(4, 0, 10, 20))
+		== {"ok": false, "event": {}} and future_rng.state == future_state,
+		"future vitality addition is rejected by opt-in selector when unaffordable")
+	var future_admitted := future_rotation.select_actionable_event(
+		future_rng, future_excluded, _vital_state(5, 0, 10, 20))
+	_check(future_admitted.get("ok") == true
+		and future_admitted.get("event", {}).get("id") == "v3_future_quilt_well",
+		"future vitality addition is admitted by opt-in selector when affordable")
+

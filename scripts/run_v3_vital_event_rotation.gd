@@ -127,6 +127,59 @@ func select_event(rng: Variant, excluded_ids: Variant = null) -> Dictionary:
 	return _rejection()
 
 
+## Opt-in selector that qualifies only unvisited vitality events having at least
+## one affordable non-Leave choice for the caller's living hero snapshot
+## {gold, scraps, hero: {id, hp, max_hp}}. Rejects invalid RNG, unvalidated
+## catalogs, malformed exclusions, invalid snapshots and Leave-only/empty pools
+## before any RNG draw. Preserves sorted-ID single-draw uniformity, detached
+## returned records and no-settlement semantics.
+func select_actionable_event(rng: Variant, excluded_ids: Variant = null, snapshot: Variant = null) -> Dictionary:
+	if not rng is RandomNumberGenerator:
+		return _rejection()
+	if not _catalog_ok:
+		return _rejection()
+	var parsed: Dictionary = _parse_exclusions(excluded_ids)
+	if not parsed.get("ok", false):
+		return _rejection()
+	var excluded: Dictionary = parsed["ids"]
+	var eligible: Array = []
+	for record in _pool:
+		var event_id: String = record["id"]
+		if excluded.has(event_id):
+			continue
+		if _is_actionable_for_snapshot(record, snapshot):
+			eligible.append(event_id)
+	if eligible.is_empty():
+		return _rejection()
+	eligible.sort()
+	var generator: RandomNumberGenerator = rng
+	var picked_id: String = eligible[generator.randi_range(0, eligible.size() - 1)]
+	for record in _pool:
+		if record["id"] == picked_id:
+			return {"ok": true, "event": record.duplicate(true)}
+	return _rejection()
+
+
+static func _is_actionable_for_snapshot(record: Dictionary, snapshot: Variant) -> bool:
+	var service := RunEventChoice.new(record)
+	if not service.is_valid():
+		return false
+	var preview: Dictionary = service.preview_vital_choices(snapshot)
+	if not preview.get("ok", false):
+		return false
+	var choices: Variant = preview.get("choices")
+	if not choices is Array:
+		return false
+	for entry in (choices as Array):
+		if not entry is Dictionary:
+			return false
+		var entry_dict: Dictionary = entry
+		var choice_id: Variant = entry_dict.get("choice_id")
+		if choice_id is String and choice_id != "leave" and entry_dict.get("affordable", false) == true:
+			return true
+	return false
+
+
 func _rejection() -> Dictionary:
 	return {"ok": false, "event": {}}
 
