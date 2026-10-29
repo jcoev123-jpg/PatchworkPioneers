@@ -87,6 +87,21 @@ const V3_2_ORDER := ["needle_briar_guard", "spool_snarekeeper"]
 ## from a test-injected record. No shipped encounter routes this pair yet.
 const BRIAR_PROBE := "needle_briar_guard_thorns_probe"
 const BRIAR_PROBE_ROSTER := ["needle_briar_guard", "spool_snarekeeper"]
+## The new unregistered Elite script. Every check below reaches it through one
+## local candidate and production selection; no shipped pool entry is claimed.
+const BRIAR_SNARE := "res://data/encounters/briar_snare_elite.json"
+const BRIAR_SNARE_ID := "briar_snare_elite"
+const BRIAR_SNARE_ROSTER := {
+	"briar_snare_elite": ["needle_briar_guard", "spool_snarekeeper"]}
+const BRIAR_SNARE_PATTERNS := [
+	{"enemy_position": 1, "pattern": [
+		{"type": "attack", "amount": 9, "target_position": 1},
+		{"type": "debuff", "amount": 2, "status": "bleed", "target_position": 1},
+		{"type": "block", "amount": 8}]},
+	{"enemy_position": 2, "pattern": [
+		{"type": "shove", "amount": 0, "target_position": 2, "direction": 1},
+		{"type": "debuff", "amount": 2, "status": "weak", "target_position": 3},
+		{"type": "attack", "amount": 8, "target_position": 2}]}]
 const KEYWORD_ELITES := {
 	"pincushion_matriarch": {
 		"name": "Pincushion Matriarch", "max_hp": 44, "thorns": 4,
@@ -134,6 +149,7 @@ func _initialize() -> void:
 	_test_zipper_pull_rng()
 	_test_v3_2_elites()
 	_test_briar_guard_thorns(_catalog(ELITES))
+	_test_briar_snare_schedule()
 	_test_keyword_elites()
 	_test_rejections()
 	for failure in failures:
@@ -2655,3 +2671,457 @@ func _test_keyword_elites() -> void:
 	# Earlier tests validate every field of all six earlier identities by ID.
 	_check(catalog == untouched and _catalog(ELITES) == untouched,
 		"keyword elite tests preserve the real catalog and parsed inputs")
+
+
+## The new Elite reached exactly as a run would reach an unregistered schedule:
+## an actual legal generated Elite node, one local candidate, the production
+## selector, and typed assembly from the shipped m04_elites catalog alone.
+func _briar_snare_setup(seed_value: int) -> Dictionary:
+	var route := _elite_route(seed_value)
+	_check(not route.is_empty() and route.get("map") is RunMap,
+		"generated map offers a legal Elite node for briar_snare_elite")
+	if route.is_empty():
+		return {}
+	var selector := RunFightEncounterSelection.new()
+	var choice := selector.select_current_battle(route.map, route.rng,
+		{"Elite": {BRIAR_SNARE_ID: BRIAR_SNARE}})
+	_check(choice.get("success") == true and choice.get("node_type") == "Elite"
+		and choice.get("encounter_id") == BRIAR_SNARE_ID
+		and choice.get("definitions") == BRIAR_SNARE_PATTERNS,
+		"production selector picks the sole local briar_snare_elite candidate")
+	if not choice.get("success", false):
+		return {}
+	var parsed := RunFightEncounterSelection._parse_schedule_text(
+		FileAccess.get_file_as_string(BRIAR_SNARE))
+	_check(parsed == BRIAR_SNARE_PATTERNS,
+		"real JSON parses into the exact two-source three-beat schedule")
+	var assembled := RunTypedBattleRoster.new().assemble(
+		choice, BRIAR_SNARE_ROSTER, [ELITES])
+	_check(assembled.get("ok", false),
+		"typed assembly reads only the shipped m04_elites catalog")
+	if not assembled.get("ok", false):
+		return {}
+	var enemies: CombatEnemies = assembled.enemies
+	_check(enemies.is_valid() and enemies.get_enemies().size() == 2,
+		"typed assembly publishes two fixed living source slots")
+	return {"route": route, "selector": selector, "choice": choice,
+		"enemies": enemies, "definitions": assembled.definitions,
+		"rng_state": route.rng.state}
+
+
+## The two announcements the fixed authored schedule must publish on one beat.
+func _briar_snare_beat(beat: int) -> Array:
+	var expected: Array = []
+	for source in BRIAR_SNARE_PATTERNS:
+		var pattern: Array = source["pattern"]
+		var action: Dictionary = pattern[beat % pattern.size()].duplicate(true)
+		action["enemy_position"] = source["enemy_position"]
+		expected.append(action)
+	return expected
+
+
+## Commit one real hero owner-turn status tick the way CombatRoundFlow does:
+## HP, Block and statuses only, then leave the actual party authoritative.
+func _commit_hero_tick(party: CombatParty) -> void:
+	var tick := CombatStatusTurnBatch.new().tick_side("heroes", party.get_heroes())
+	_check(tick.get("ok", false), "real hero owner-turn status tick")
+	if not tick.get("ok", false):
+		return
+	var actors: Array = tick.get("actors", [])
+	for index in range(CombatParty.PARTY_SIZE):
+		var hero: Dictionary = party._heroes[index]
+		hero["hp"] = actors[index]["hp"]
+		hero["block"] = actors[index]["block"]
+		if hero.has("statuses") or not actors[index]["statuses"].is_empty():
+			hero["statuses"] = actors[index]["statuses"].duplicate(true)
+
+
+## Four real beats of the fixed schedule over the authentic roster, including
+## the owner-turn tick that follows each enemy phase. Everything is detached and
+## returned, so two equal runs can be compared byte for byte.
+func _briar_snare_timeline(seed_value: int) -> Dictionary:
+	var fixture := _briar_snare_setup(seed_value)
+	if fixture.is_empty():
+		return {}
+	var party := _party()
+	var enemies: CombatEnemies = fixture["enemies"]
+	_check(CombatStartingBlock.new(party).apply()
+		and party.get_hero(1).get("hp") == 40
+		and party.get_hero(1).get("block") == CombatStartingBlock.BLOCK_AMOUNT,
+		"authentic Warden opens with six Block")
+	party._heroes[2]["statuses"] = {"exposed": 2}
+	_check(party.get_hero(3).get("id") == "tinker"
+		and party.get_hero(3).get("statuses") == {"exposed": 2},
+		"rear Tinker carries a real status the shove must preserve")
+	var scheduler := CombatEnemyIntents.new(fixture["choice"]["definitions"])
+	_check(scheduler.is_valid(), "accepted scheduler for the new schedule")
+	var stages: Array = []
+	for beat in range(4):
+		var expected := _briar_snare_beat(beat)
+		var announced := scheduler.get_intents()
+		_check(announced == expected,
+			"exact two-source announcement for briar_snare beat " + str(beat))
+		var input := announced.duplicate(true)
+		var result := CombatEnemyPhase.new().execute_phase(party, enemies, announced)
+		_check(result.get("ok", false) and result.get("events", []).size() == 2,
+			"real phase resolves both sources for briar_snare beat " + str(beat))
+		_check(announced == input and scheduler.get_intents() == expected,
+			"phase neither rewrites nor advances the briar_snare announcement")
+		var stage := {"announced": announced, "result": result,
+			"phase_party": party.get_heroes(), "phase_enemies": enemies.get_enemies()}
+		_commit_hero_tick(party)
+		stage["tick_party"] = party.get_heroes()
+		stages.append(stage)
+		_check(scheduler.advance_turn(), "advance one fixed briar_snare beat")
+	_check(fixture["route"].rng.state == fixture["rng_state"],
+		"the fixed schedule and phase spend no run RNG")
+	return {"stages": stages, "final_party": party.get_heroes(),
+		"final_enemies": enemies.get_enemies(), "rng_state": fixture["rng_state"],
+		"choice": fixture["choice"]}
+
+
+## AC1/AC2/AC3: the new unregistered briar-and-snare schedule reached through a
+## real legal Elite node, one fixed local candidate and the shipped catalog; the
+## six authored actions run over four beats, replay identically, and rejections
+## leave party, roster, selection, source and RNG untouched.
+func _test_briar_snare_schedule() -> void:
+	seed(64237)
+	var expected_global := randi()
+	seed(64237)
+	var elites := _catalog(ELITES)
+	var untouched := elites.duplicate(true)
+	var raw_json := FileAccess.get_file_as_string(BRIAR_SNARE)
+	var parsed := RunFightEncounterSelection._parse_schedule_text(raw_json)
+	var scheduler := CombatEnemyIntents.new(parsed)
+	_check(parsed == BRIAR_SNARE_PATTERNS and parsed.size() == 2
+		and parsed[0].get("enemy_position") == 1
+		and parsed[1].get("enemy_position") == 2,
+		"AC1: new JSON is exactly two fixed source definitions in slots 1 and 2")
+	_check(scheduler.is_valid() and scheduler.get_intents().size() == 2,
+		"AC1: both authored sources form one accepted scheduler")
+	_check(parsed[0].get("pattern") == [
+		{"type":"attack","amount":9,"target_position":1},
+		{"type":"debuff","amount":2,"status":"bleed","target_position":1},
+		{"type":"block","amount":8}],
+		"AC2: source 1 authors attack 9, Bleed 2, Block 8 in that order")
+	_check(parsed[1].get("pattern") == [
+		{"type":"shove","amount":0,"target_position":2,"direction":1},
+		{"type":"debuff","amount":2,"status":"weak","target_position":3},
+		{"type":"attack","amount":8,"target_position":2}],
+		"AC2: source 2 authors shove +1, Weak 2, attack 8 in that order")
+	var guard := _record(elites, "needle_briar_guard")
+	var snare := _record(elites, "spool_snarekeeper")
+	_check(guard.get("name") == "Needle Briar Guard" and guard.get("max_hp") == 42
+		and guard.get("max_hp") is int
+		and guard.get("art_path") == "res://assets/paper/enemies/needle_marshal.png"
+		and guard.get("thorns") is int and guard.get("thorns") == 3,
+		"AC1: Guard keeps its exact name, 42 HP, reused art and integer Thorns 3")
+	_check(snare.get("name") == "Spool Snarekeeper" and snare.get("max_hp") == 40
+		and snare.get("max_hp") is int
+		and snare.get("art_path") == "res://assets/paper/enemies/spool_hexer.png"
+		and not snare.has("thorns"),
+		"AC1: Snarekeeper keeps its exact name, 40 HP, reused art and no Thorns")
+	for id in V3_2_ELITES:
+		var record := _record(elites, id)
+		var actions: Array = []
+		for raw_action in record.get("intent", {}).get("actions", []):
+			var weighted := CombatEnemyIntents.weighted_action(raw_action)
+			var body: Dictionary = weighted.get("action", {}).duplicate(true)
+			body["weight"] = weighted.get("weight", 0)
+			actions.append(body)
+		_check(actions == V3_2_ELITES[id]["actions"],
+			"AC1: retained exact weighted catalog alternatives " + id)
+
+	var seed_value := _elite_seed()
+	_check(seed_value > 0, "AC1: bounded seed sequence discovers a legal Elite node")
+	if seed_value < 0:
+		return
+	var fixture := _briar_snare_setup(seed_value)
+	if fixture.is_empty():
+		return
+	var choice: Dictionary = fixture["choice"]
+	var enemies: CombatEnemies = fixture["enemies"]
+	var first_enemy := enemies.get_enemy(1)
+	var second_enemy := enemies.get_enemy(2)
+	_check(first_enemy.get("id") == "needle_briar_guard"
+		and first_enemy.get("position") == 1
+		and first_enemy.get("name") == "Needle Briar Guard"
+		and first_enemy.get("hp") == 42 and first_enemy.get("max_hp") == 42
+		and first_enemy.get("block") == 0
+		and first_enemy.get("art_path") == guard.get("art_path")
+		and first_enemy.get("thorns") is int and first_enemy.get("thorns") == 3
+		and first_enemy.get("intent") == guard.get("intent"),
+		"AC1: typed slot 1 is the authentic 42 HP thorned Needle Briar Guard")
+	_check(second_enemy.get("id") == "spool_snarekeeper"
+		and second_enemy.get("position") == 2
+		and second_enemy.get("name") == "Spool Snarekeeper"
+		and second_enemy.get("hp") == 40 and second_enemy.get("max_hp") == 40
+		and second_enemy.get("block") == 0
+		and second_enemy.get("art_path") == snare.get("art_path")
+		and not second_enemy.has("thorns")
+		and second_enemy.get("intent") == snare.get("intent"),
+		"AC1: typed slot 2 is the authentic 40 HP Spool Snarekeeper")
+	_check(choice.get("definitions") == BRIAR_SNARE_PATTERNS,
+		"AC1: the selected choice carries the exact two fixed source schedules")
+
+	var first_timeline := _briar_snare_timeline(seed_value)
+	var second_timeline := _briar_snare_timeline(seed_value)
+	_check(not first_timeline.is_empty() and not second_timeline.is_empty()
+		and first_timeline.get("stages") == second_timeline.get("stages")
+		and first_timeline.get("final_party") == second_timeline.get("final_party")
+		and first_timeline.get("final_enemies") == second_timeline.get("final_enemies")
+		and first_timeline.get("rng_state") == second_timeline.get("rng_state")
+		and first_timeline.get("choice") == second_timeline.get("choice"),
+		"AC3: same seed replays identical choices, effects and run-RNG state")
+	var stages: Array = first_timeline.get("stages", [])
+	if stages.size() != 4:
+		_check(false, "AC2: four authored beats were observed")
+		return
+
+	var beat0: Dictionary = stages[0]
+	_check(beat0.get("announced") == _briar_snare_beat(0)
+		and beat0.get("result") == {"ok": true, "events": [
+			{"type": "attack", "enemy_position": 1, "applied": true,
+				"target_position": 1},
+			{"type": "shove", "enemy_position": 2, "applied": true,
+				"target_position": 2, "direction": 1}]},
+		"AC2: beat 0 publishes source 1 attack then source 2 shove in slot order")
+	var beat0_party: Array = beat0.get("phase_party", [])
+	_check(beat0_party.size() == 3
+		and beat0_party[0].get("id") == "warden"
+		and beat0_party[0].get("hp") == 37 and beat0_party[0].get("block") == 0,
+		"AC2: the authentic six Block absorbs six of nine, removing exactly three HP")
+	_check(beat0_party[1].get("id") == "tinker"
+		and beat0_party[1].get("position") == 2
+		and beat0_party[1].get("hp") == 26
+		and beat0_party[1].get("statuses") == {"exposed": 1}
+		and beat0_party[2].get("id") == "seamstress"
+		and beat0_party[2].get("position") == 3
+		and beat0_party[2].get("hp") == 30
+		and not beat0_party[2].get("statuses", {}).has("exposed"),
+		"AC2: shove +1 swaps the living 2/3 pair and preserves the rear Exposed stack")
+	var beat0_enemies: Array = beat0.get("phase_enemies", [])
+	_check(beat0_enemies.size() == 2
+		and beat0_enemies[0].get("id") == "needle_briar_guard"
+		and beat0_enemies[0].get("hp") == 42 and beat0_enemies[0].get("block") == 0
+		and beat0_enemies[1].get("id") == "spool_snarekeeper"
+		and beat0_enemies[1].get("hp") == 40 and beat0_enemies[1].get("block") == 0,
+		"AC2: the first beat leaves both authored enemy sources at full HP")
+	var beat0_ticked: Array = beat0.get("tick_party", [])
+	_check(beat0_ticked.size() == 3
+		and beat0_ticked[0].get("hp") == 37
+		and beat0_ticked[1].get("id") == "tinker"
+		and beat0_ticked[1].get("statuses", {}).is_empty(),
+		"AC2: the owner-turn tick ages the preserved Exposed without extra HP loss")
+
+	var beat1: Dictionary = stages[1]
+	_check(beat1.get("announced") == _briar_snare_beat(1)
+		and beat1.get("result") == {"ok": true, "events": [
+			{"type": "debuff", "enemy_position": 1, "applied": true,
+				"target_position": 1, "status": "bleed"},
+			{"type": "debuff", "enemy_position": 2, "applied": true,
+				"target_position": 3, "status": "weak"}]},
+		"AC2: beat 1 publishes Bleed 2 on slot 1 then Weak 2 on slot 3")
+	var beat1_party: Array = beat1.get("phase_party", [])
+	_check(beat1_party.size() == 3
+		and beat1_party[0].get("id") == "warden"
+		and beat1_party[0].get("hp") == 37
+		and beat1_party[0].get("statuses") == {"bleed": 2}
+		and beat1_party[1].get("id") == "tinker"
+		and beat1_party[1].get("statuses", {}).is_empty()
+		and beat1_party[2].get("id") == "seamstress"
+		and beat1_party[2].get("hp") == 30
+		and beat1_party[2].get("statuses") == {"weak": 2},
+		"AC2: the authored Bleed and Weak land on exactly their announced heroes")
+	var beat1_ticked: Array = beat1.get("tick_party", [])
+	_check(beat1_ticked.size() == 3
+		and beat1_ticked[0].get("hp") == 35
+		and beat1_ticked[0].get("statuses") == {"bleed": 1}
+		and beat1_ticked[2].get("statuses") == {"weak": 1},
+		"AC2: the owner tick removes Bleed N HP and ages both counters to one")
+	_check(CombatStatuses.new().adjusted_attack_damage(
+			8, beat1_ticked[2].get("statuses", {}), {}) == 6,
+		"AC2: the aged Weak 1 still cuts a hero attack from 8 to exactly 6")
+
+	var beat2: Dictionary = stages[2]
+	_check(beat2.get("announced") == _briar_snare_beat(2)
+		and beat2.get("result") == {"ok": true, "events": [
+			{"type": "block", "enemy_position": 1, "applied": true},
+			{"type": "attack", "enemy_position": 2, "applied": true,
+				"target_position": 2}]},
+		"AC2: beat 2 publishes guard Block 8 then the snare attack 8 on slot 2")
+	var beat2_party: Array = beat2.get("phase_party", [])
+	_check(beat2_party.size() == 3
+		and beat2_party[0].get("hp") == 35
+		and beat2_party[0].get("statuses") == {"bleed": 1}
+		and beat2_party[1].get("id") == "tinker"
+		and beat2_party[1].get("position") == 2
+		and beat2_party[1].get("hp") == 18
+		and beat2_party[2].get("id") == "seamstress"
+		and beat2_party[2].get("statuses") == {"weak": 1},
+		"AC2: the snare attack removes exactly eight HP from the swapped middle hero")
+	var beat2_enemies: Array = beat2.get("phase_enemies", [])
+	_check(beat2_enemies.size() == 2
+		and beat2_enemies[0].get("id") == "needle_briar_guard"
+		and beat2_enemies[0].get("hp") == 42 and beat2_enemies[0].get("block") == 8
+		and beat2_enemies[1].get("id") == "spool_snarekeeper"
+		and beat2_enemies[1].get("hp") == 40 and beat2_enemies[1].get("block") == 0,
+		"AC2: Block 8 shields only the Guard's own slot")
+	var beat2_ticked: Array = beat2.get("tick_party", [])
+	_check(beat2_ticked.size() == 3
+		and beat2_ticked[0].get("hp") == 34
+		and beat2_ticked[0].get("statuses", {}).is_empty()
+		and beat2_ticked[2].get("statuses", {}).is_empty(),
+		"AC2: the owner tick spends the last Bleed HP and expires Weak")
+
+	var beat3: Dictionary = stages[3]
+	_check(beat3.get("announced") == stages[0].get("announced")
+		and beat3.get("result") == stages[0].get("result"),
+		"AC2: the three-beat schedule wraps to its exact first announcement")
+	var beat3_party: Array = beat3.get("phase_party", [])
+	_check(beat3_party.size() == 3
+		and beat3_party[0].get("id") == "warden"
+		and beat3_party[0].get("hp") == 25 and beat3_party[0].get("block") == 0
+		and beat3_party[1].get("id") == "seamstress"
+		and beat3_party[1].get("position") == 2
+		and beat3_party[1].get("hp") == 30
+		and beat3_party[2].get("id") == "tinker"
+		and beat3_party[2].get("position") == 3
+		and beat3_party[2].get("hp") == 18,
+		"AC2: the wrapped nine removes exactly nine HP and the second shove restores slots")
+	var beat3_enemies: Array = beat3.get("phase_enemies", [])
+	_check(beat3_enemies.size() == 2
+		and beat3_enemies[0].get("hp") == 42 and beat3_enemies[0].get("block") == 8
+		and beat3_enemies[1].get("hp") == 40 and beat3_enemies[1].get("block") == 0,
+		"AC2: the wrapped beat keeps the Guard Block and both authored HP totals")
+	_check(first_timeline.get("final_party") == beat3.get("tick_party")
+		and first_timeline.get("final_enemies") == beat3_enemies,
+		"AC3: the replay holds the final detached timeline and roster")
+
+	var thorn_fixture := _briar_snare_setup(seed_value)
+	if thorn_fixture.is_empty():
+		return
+	var thorn_roster: CombatEnemies = thorn_fixture["enemies"]
+	var pre_hit := thorn_roster.get_enemy(1)
+	_check(pre_hit.get("id") == "needle_briar_guard"
+		and pre_hit.get("thorns") is int and pre_hit.get("thorns") == 3
+		and pre_hit.get("hp") == 42,
+		"AC2: the production-assembled Guard still carries Thorns 3 at 42 HP")
+	var thorn_party := _party()
+	_check(thorn_party.gain_block(1, 1),
+		"AC2 precondition: the attacking hero really holds one Block")
+	var receipt := CombatStatusAttacks.new().resolve_vs_enemy(thorn_roster, 1, 5, {}, {})
+	_check(receipt == {"ok": true, "damage": 5, "block_absorbed": 0, "hp_loss": 5},
+		"AC2: the real bridge confirms a five-damage hit on the Guard")
+	var thorn_heroes := thorn_party.get_heroes()
+	var retaliation := CombatEnemyKeywordRules.new().resolve_thorns_retaliation(
+		thorn_party, 1, pre_hit, receipt)
+	_check(retaliation == {"ok": true, "applied": true, "thorns": 3,
+		"block_absorbed": 1, "hp_loss": 2},
+		"AC2: Thorns 3 spends the attacker's one Block then removes two HP")
+	_check(thorn_party.get_hero(1).get("hp") == 38
+		and thorn_party.get_hero(1).get("block") == 0
+		and thorn_party.get_hero(2) == thorn_heroes[1]
+		and thorn_party.get_hero(3) == thorn_heroes[2]
+		and thorn_roster.get_enemy(1).get("hp") == 37,
+		"AC2: only the attacking hero pays; the other heroes and Guard stay exact")
+	var zero_fixture := _briar_snare_setup(seed_value)
+	if zero_fixture.is_empty():
+		return
+	var zero_roster: CombatEnemies = zero_fixture["enemies"]
+	var zero_pre := zero_roster.get_enemy(1)
+	var zero_party := _party()
+	var zero_receipt := CombatStatusAttacks.new().resolve_vs_enemy(
+		zero_roster, 1, 0, {}, {})
+	var zero_heroes := zero_party.get_heroes()
+	var zero_foes := zero_roster.get_enemies()
+	var zero_result := CombatEnemyKeywordRules.new().resolve_thorns_retaliation(
+		zero_party, 1, zero_pre, zero_receipt)
+	_check(zero_receipt == {"ok": true, "damage": 0, "block_absorbed": 0, "hp_loss": 0}
+		and zero_result == {"ok": true, "applied": false, "thorns": 3,
+			"block_absorbed": 0, "hp_loss": 0}
+		and zero_party.get_heroes() == zero_heroes
+		and zero_roster.get_enemies() == zero_foes,
+		"AC2: an unconfirmed zero-damage contact triggers no Thorns retaliation")
+	var dead_fixture := _briar_snare_setup(seed_value)
+	if dead_fixture.is_empty():
+		return
+	var dead_roster: CombatEnemies = dead_fixture["enemies"]
+	var dead_pre := dead_roster.get_enemy(1)
+	_check(dead_roster.apply_damage(1, 42) and dead_roster.is_slain(1),
+		"AC2 precondition: the Guard source is genuinely slain")
+	var dead_party := _party()
+	var dead_heroes := dead_party.get_heroes()
+	var dead_receipt := CombatStatusAttacks.new().resolve_vs_enemy(
+		dead_roster, 1, 5, {}, {})
+	var dead_result := CombatEnemyKeywordRules.new().resolve_thorns_retaliation(
+		dead_party, 1, dead_pre, dead_receipt)
+	_check(dead_receipt == {"ok": false, "damage": 0, "block_absorbed": 0, "hp_loss": 0}
+		and dead_result == {"ok": false, "applied": false, "thorns": 0,
+			"block_absorbed": 0, "hp_loss": 0}
+		and dead_party.get_heroes() == dead_heroes,
+		"AC2: a failed unconfirmed receipt retaliates for nothing")
+
+	_check(RunFightEncounterSelection._parse_schedule_text(
+		"[{\"enemy_position\":1,\"pattern\":[{\"type\":\"shove\",\"amount\":0," +
+		"\"target_position\":2,\"direction\":2}]}]").is_empty(),
+		"AC3: the real parser rejects a malformed authored shove direction")
+	_check(RunFightEncounterSelection._parse_schedule_text(
+		"[{\"enemy_position\":1,\"pattern\":[{\"type\":\"attack\",\"amount\":2.5," +
+		"\"target_position\":1}]}]").is_empty(),
+		"AC3: the real parser rejects a fractional authored amount")
+	var reject_fixture := _briar_snare_setup(seed_value)
+	if reject_fixture.is_empty():
+		return
+	var reject_party := _party()
+	var reject_enemies: CombatEnemies = reject_fixture["enemies"]
+	_check(reject_party.apply_damage(3, 26) and reject_party.is_downed(3),
+		"AC3 precondition: the shove destination is genuinely downed")
+	var shove := {"type": "shove", "amount": 0, "enemy_position": 2,
+		"target_position": 2, "direction": 1}
+	var reject_choice: Dictionary = reject_fixture["choice"].duplicate(true)
+	var reject_snapshot := [reject_party.get_heroes(), reject_enemies.get_enemies(),
+		reject_fixture["route"].rng.state, reject_choice]
+	var rejected := CombatEnemyPhase.new().execute_phase(
+		reject_party, reject_enemies, [shove.duplicate(true)])
+	_check(rejected == {"ok": false, "events": []}
+		and [reject_party.get_heroes(), reject_enemies.get_enemies(),
+			reject_fixture["route"].rng.state, reject_choice] == reject_snapshot,
+		"AC3: a shove into a downed destination changes no actor and spends no RNG")
+	var malformed_choice: Dictionary = reject_fixture["choice"].duplicate(true)
+	malformed_choice["definitions"][1]["pattern"][0]["direction"] = 2
+	var malformed_before := malformed_choice.duplicate(true)
+	_check(RunTypedBattleRoster.new().assemble(
+			malformed_choice, BRIAR_SNARE_ROSTER, [ELITES]) == {"ok": false}
+		and malformed_choice == malformed_before,
+		"AC3: typed assembly fails closed on a malformed source without mutation")
+	var bad_target_party := _party()
+	var bad_target_fixture := _briar_snare_setup(seed_value)
+	if bad_target_fixture.is_empty():
+		return
+	var beyond := shove.duplicate(true)
+	beyond["target_position"] = 3
+	_reject_beat("briar_snare shove beyond the back slot", bad_target_party,
+		bad_target_fixture["enemies"], beyond)
+	var dead_source_fixture := _briar_snare_setup(seed_value)
+	if dead_source_fixture.is_empty():
+		return
+	var dead_source_party := _party()
+	var dead_source_enemies: CombatEnemies = dead_source_fixture["enemies"]
+	_check(dead_source_enemies.apply_damage(2, 40)
+		and dead_source_enemies.is_slain(2),
+		"AC3 precondition: the Snarekeeper source is genuinely slain")
+	var dead_source_snapshot := [dead_source_party.get_heroes(),
+		dead_source_enemies.get_enemies()]
+	_check(CombatEnemyPhase.new().execute_phase(dead_source_party,
+			dead_source_enemies, [shove.duplicate(true)]) == {"ok": true, "events": [
+				{"type": "shove", "enemy_position": 2, "applied": false,
+					"target_position": 2, "direction": 1}]}
+		and [dead_source_party.get_heroes(),
+			dead_source_enemies.get_enemies()] == dead_source_snapshot,
+		"AC3: a slain source's shove stays inert without any mutation")
+	_check(elites == untouched and _catalog(ELITES) == untouched
+		and FileAccess.get_file_as_string(BRIAR_SNARE) == raw_json,
+		"AC3: the shipped catalog and the new on-disk source stay untouched")
+	_check(randi() == expected_global,
+		"AC3: the complete briar-and-snare case uses no global RNG")
