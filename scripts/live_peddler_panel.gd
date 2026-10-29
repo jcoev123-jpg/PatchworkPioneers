@@ -33,8 +33,8 @@ signal intent_requested(intent: Dictionary)
 const PANEL_ART := "res://assets/paper/ui/reward_panel.png"
 const BUTTON_ART := "res://assets/paper/ui/reward_button.png"
 const THEME_PATH := "res://assets/fonts/patchwork_theme.tres"
-const TITLE_TEXT := "PEDDLER  ·  one purchase or Leave"
-const STATUS_OPEN := "Choose one offer, or Leave.  ·  1-3 cards · 4 patch · 0 Leave"
+const TITLE_TEXT := "PEDDLER  ·  a keepsake for the road"
+const STATUS_OPEN := "Choose one of your party's three cards, the sewn patch, or leave for free."
 const STATUS_CLOSED := "No open Peddler visit. No offer can be submitted."
 const DETAILS_UNAVAILABLE := "Card details unavailable"
 const PATCH_DETAILS_UNAVAILABLE := "Power details unavailable"
@@ -54,12 +54,15 @@ const PANEL_SIZE := Vector2(900, 600)
 const STATUS_WIDTH := 822.0
 const CREAM := Color("#f3e6cf")
 const GOLD := Color("#e9c47d")
-const THREAD := Color("#b9a58d")
+const THREAD := Color("#806852")
 const PLUM := Color("#37293f")
 const TEAL := Color("#214b50")
 const OXBLOOD := Color("#713544")
 const INK := Color("#191b2a")
-const DIM := Color("#b6a9a2")
+const DIM := Color("#655b58")
+const CARD_FABRIC := Color("#f1e3cf")
+const PATCH_FABRIC := Color("#dbe8dd")
+const EXIT_FABRIC := Color("#efd2a4")
 
 
 ## Input-transparent running stitch over the sewn paper surface.
@@ -116,9 +119,9 @@ func _ready() -> void:
 	wallet_label = _label("", Vector2(39, 68), Vector2(822, 32), 22, CREAM)
 	status_label = _label("", Vector2(39, 102), Vector2(822, 30), 18, CREAM)
 	for i in range(CARD_COUNT):
-		card_buttons.append(_button("", Vector2(39, 142 + i * 88), Vector2(822, 78), OXBLOOD, 20))
-	patch_button = _button("", Vector2(39, 406), Vector2(822, 78), TEAL, 20)
-	leave_button = _button(LEAVE_TEXT, Vector2(39, 498), Vector2(822, 58), TEAL, 24)
+		card_buttons.append(_button("", Vector2(39, 142 + i * 88), Vector2(822, 78), CARD_FABRIC, 20))
+	patch_button = _button("", Vector2(39, 406), Vector2(822, 78), PATCH_FABRIC, 20)
+	leave_button = _button(LEAVE_TEXT, Vector2(39, 498), Vector2(822, 58), EXIT_FABRIC, 24)
 	_wire_previews()
 	_refresh()
 	_focus_initial()
@@ -250,14 +253,30 @@ func _button(value: String, at: Vector2, extent: Vector2, fill: Color, font_size
 	button.add_theme_font_size_override("font_size", font_size)
 	for state in ["font_color", "font_hover_color", "font_pressed_color",
 			"font_hover_pressed_color", "font_focus_color"]:
-		button.add_theme_color_override(state, CREAM)
+		button.add_theme_color_override(state, INK)
 	button.add_theme_color_override("font_disabled_color", DIM)
-	button.add_theme_stylebox_override("normal", _style(fill, INK))
-	button.add_theme_stylebox_override("hover", _style(fill.lightened(0.13), GOLD))
-	button.add_theme_stylebox_override("pressed", _style(fill.darkened(0.12), GOLD))
-	button.add_theme_stylebox_override("disabled", _style(PLUM, DIM))
+	button.add_theme_stylebox_override("normal", _style(fill, THREAD))
+	button.add_theme_stylebox_override("hover", _style(fill.lightened(0.06), OXBLOOD))
+	button.add_theme_stylebox_override("pressed", _style(fill.darkened(0.10), OXBLOOD))
+	button.add_theme_stylebox_override("disabled", _style(Color("#dad1c5"), DIM))
 	button.add_theme_stylebox_override("focus", _focus_style())
 	add_child(button)
+	# Opaque contrasting fabric carries the text; the imported sewn-button
+	# image outlines the ticket without painting over a single authored word.
+	if ResourceLoader.exists(BUTTON_ART, "Texture2D"):
+		var fabric := ResourceLoader.load(BUTTON_ART) as Texture2D
+		if fabric != null:
+			var edging := Panel.new()
+			edging.name = "FabricEdging"
+			edging.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			var seam := StyleBoxTexture.new()
+			seam.texture = fabric
+			seam.draw_center = false
+			seam.modulate_color = Color(1.0, 0.93, 0.78, 0.8)
+			seam.set_texture_margin_all(13)
+			edging.add_theme_stylebox_override("panel", seam)
+			button.add_child(edging)
+			edging.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	button.add_child(SewnBorder.new())
 	return button
 
@@ -485,7 +504,16 @@ func _fit_card_rule(line: String, width: float, font: Font, px: int) -> String:
 
 func _patch_caption() -> String:
 	var offer := _patch_offer()
-	return _caption("PATCH", str(offer["id"]), int(offer["price"]), bool(offer["sold"]))
+	var quote := _caption("PATCH", str(offer["id"]), int(offer["price"]), bool(offer["sold"]))
+	var details := _patch_details()
+	if details.is_empty():
+		return quote + "\n" + PATCH_DETAILS_UNAVAILABLE
+	var font := patch_button.get_theme_font("font")
+	var px := patch_button.get_theme_font_size("font_size")
+	var slot := "%s  ·  " % str(details["slot"])
+	var short := _fit_row_text(str(details["short"]),
+			maxf(0.0, patch_button.size.x - 32.0 - _row_width(font, slot, px)), font, px)
+	return quote + "\n" + slot + short
 
 
 func _wallet_caption() -> String:
@@ -876,7 +904,8 @@ func _refresh() -> void:
 		# fresh rebind drop the previous visit's text instead of keeping it.
 		button.tooltip_text = _card_tooltip(i) if open else ""
 		button.add_theme_stylebox_override("normal", _style(
-				OXBLOOD if open else PLUM, GOLD if open and not button.disabled else INK))
+				CARD_FABRIC if open else Color("#dad1c5"),
+				OXBLOOD if open and not button.disabled else DIM))
 		if open:
 			_attach(button, _request_buy.bind(i, false, button, _epoch, _visit))
 	patch_button.text = _patch_caption() if open else ""
@@ -885,7 +914,8 @@ func _refresh() -> void:
 	patch_button.set_meta("offer_kind", PATCH_KIND if open else "")
 	patch_button.set_meta("offer_id", str(_patch_offer()["id"]) if open else "")
 	patch_button.add_theme_stylebox_override("normal", _style(
-			TEAL if open else PLUM, GOLD if open and not patch_button.disabled else INK))
+			PATCH_FABRIC if open else Color("#dad1c5"),
+			TEAL if open and not patch_button.disabled else DIM))
 	if open:
 		_attach(patch_button, _request_buy.bind(0, true, patch_button, _epoch, _visit))
 	leave_button.text = LEAVE_TEXT

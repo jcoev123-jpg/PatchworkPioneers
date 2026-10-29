@@ -424,6 +424,11 @@ func _layout(visit: RunPeddlerVisit) -> void:
 				or opening_status == panel._clamp_status(panel._card_preview(panel._preview_index))
 	_check(opening_authentic and _status_fits(),
 			"status band opens with the neutral hint or a fitted current-card preview")
+	_check(LivePeddlerPanel.STATUS_OPEN.contains("party's three cards")
+			and LivePeddlerPanel.STATUS_OPEN.contains("leave for free")
+			and not LivePeddlerPanel.STATUS_OPEN.contains("1-3")
+			and not LivePeddlerPanel.STATUS_OPEN.contains("0 Leave"),
+			"neutral hint explains one choice without shortcut diagnostics")
 	var open := visit.read_state()
 	for index in range(3):
 		var button := panel.card_buttons[index]
@@ -436,6 +441,14 @@ func _layout(visit: RunPeddlerVisit) -> void:
 				"funded card row is actionable and source-tagged")
 		_check(_fits(button) and button.get_theme_stylebox("focus") != null,
 				"card row text fits its sewn button and has a focus ring")
+		var face := button.get_theme_stylebox("normal") as StyleBoxFlat
+		var edge := button.get_node_or_null("FabricEdging") as Panel
+		_check(face != null and face.bg_color.a == 1.0
+				and face.bg_color.get_luminance() > 0.6
+				and button.get_theme_color("font_color").get_luminance() < 0.25
+				and edge != null and edge.mouse_filter == Control.MOUSE_FILTER_IGNORE
+				and edge.get_theme_stylebox("panel") is StyleBoxTexture,
+				"opaque readable card fabric uses imported sewn-button edge")
 	var patch_button := panel.patch_button
 	var patch_offer: Dictionary = open["stock"]["trinkets"][0]
 	_check(screen.encloses(patch_button.get_global_rect())
@@ -447,10 +460,23 @@ func _layout(visit: RunPeddlerVisit) -> void:
 			and not patch_button.text.contains("_"), "patch row hides the raw item ID")
 	_check(patch_button.text.contains(_expected_name(str(patch_offer["id"]))),
 			"patch row shows independently readable authored name")
-	_check(patch_button.text.ends_with("  ·  %d gold" % int(patch_offer["price"])),
-			"patch row shows exact authored quote")
+	_check(patch_button.text.split("\n")[0].ends_with("  ·  %d gold" % int(patch_offer["price"])),
+			"patch ticket's first line keeps exact authored gold quote")
+	var patch_details: Dictionary = panel._patch_details()
+	_check(not patch_details.is_empty()
+			and patch_button.text.split("\n").size() == 2
+			and patch_button.text.split("\n")[1].begins_with(str(patch_details["slot"]) + "  ·  ")
+			and patch_button.text.split("\n")[1].contains(str(patch_details["short"]).get_slice(" ", 0))
+			and patch_button.tooltip_text.contains(str(patch_details["full"])),
+			"authentic patch ticket shows audited slot and power with full tooltip")
 	_check(_fits(patch_button) and patch_button.get_theme_stylebox("focus") != null,
 			"patch row text fits its sewn button and has a focus ring")
+	var patch_face := patch_button.get_theme_stylebox("normal") as StyleBoxFlat
+	var card_face := panel.card_buttons[0].get_theme_stylebox("normal") as StyleBoxFlat
+	_check(patch_face != null and card_face != null and patch_face.bg_color.a == 1.0
+			and patch_face.bg_color != card_face.bg_color
+			and patch_button.get_node_or_null("FabricEdging") != null,
+			"patch wears a separate opaque contrasting ticket and shipped fabric edge")
 	_check(screen.encloses(panel.leave_button.get_global_rect())
 			and panel.leave_button.text == "Leave  ·  FREE" and not panel.leave_button.disabled,
 			"free Leave is visible, enabled and inside the viewport")

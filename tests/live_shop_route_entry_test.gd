@@ -1156,13 +1156,50 @@ func _run() -> void:
 						for line in lines:
 							display_ok = display_ok and font.get_string_size(line,
 									HORIZONTAL_ALIGNMENT_LEFT, -1, expected_font).x <= action.size.x - 32
+			else:
+				# The patch also has two sewn lines now: the unchanged exact
+				# quoted price, then the independently audited slot/power. Do
+				# not compare the whole Button to the retired one-line caption.
+				var slots := {}
+				for record in RunAuthoredPatchDefinitions.load_power_definitions():
+					if record is Dictionary and record.get("id") is String and record.get("slot") is String:
+						slots[record["id"]] = record["slot"]
+				var stall := LivePatchStallPanel.new()
+				var trusted: Dictionary = stall._trusted_power_previews(slots)
+				stall.free()
+				var patch_lines := action.text.split("\n")
+				var rule: Dictionary = trusted.get(str(offer.id), {})
+				var slot: String = str(slots.get(str(offer.id), ""))
+				display_ok = patch_lines.size() == 2 and not slot.is_empty() and not rule.is_empty()
+				if display_ok:
+					var header := slot + "  ·  "
+					var displayed := patch_lines[1].trim_prefix(header)
+					var short_rule: String = str(rule.get("short", ""))
+					var font := action.get_theme_font("font")
+					display_ok = patch_lines[0] == expected and patch_lines[1].begins_with(header)
+					# A shortened row is allowed only when the complete audited
+					# rule remains intact in this same button's tooltip.
+					display_ok = display_ok and not short_rule.is_empty() and (
+						displayed == short_rule or (displayed.ends_with(LivePeddlerPanel.ELLIPSIS)
+						and short_rule.begins_with(displayed.trim_suffix(LivePeddlerPanel.ELLIPSIS).strip_edges())))
+					display_ok = display_ok and (
+						action.tooltip_text.contains(str(rule.get("full", "")))
+						and action.tooltip_text.contains(str(offer.id)) and action.tooltip_text.contains(slot)
+						and action.tooltip_text.contains("%d gold" % int(offer.price)))
+					# The live wearer selector shares this row, leaving a narrower
+					# action than the three full-width card buttons.
+					display_ok = display_ok and font != null and action.size.y == 78 and action.size.x > 32
+					if font != null:
+						for line in patch_lines:
+							display_ok = display_ok and font.get_string_size(line,
+									HORIZONTAL_ALIGNMENT_LEFT, -1, expected_font).x <= action.size.x - 32
 			_check(display_ok and not action.text.contains(str(offer.id))
 				and not action.text.contains("_")
 				and action.get_parent() == app.shop_view
 				and action.get_meta("offer_id") == offer.id and action.pressed.get_connections().size() == 1
 				and action.get_theme_font_size("font_size") == expected_font
 				and action.disabled == (offer.sold or app.session_gold < offer.price),
-				"each routed sewn choice displays authentic name, price, energy and ability")
+				"each routed sewn choice displays authentic name, price, energy and ability (row %d; text=%s; expected=%s; display=%s)" % [i, action.text.replace("\n", " / "), expected, str(display_ok)])
 		# The live mounted panel explains a real hovered offer from its own
 		# authored record before the player spends anything. Read-only: the
 		# ledger, visit and RNG stay exactly as the Shop left them.

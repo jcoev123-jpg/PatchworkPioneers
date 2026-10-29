@@ -1462,6 +1462,10 @@ func _audit_result_readability(status: String, expected: Dictionary,
 	_check(panel.stitched_section.visible
 		and panel.stitched_rows.get_child_count() == cards.size(),
 		label + ": every retained card is mounted in its signed order")
+	_check(panel.result_content.alignment == BoxContainer.ALIGNMENT_BEGIN
+			and panel.run_ledger.size_flags_vertical == Control.SIZE_EXPAND_FILL
+			and panel.hero_recap.size_flags_vertical == Control.SIZE_EXPAND_FILL,
+			label + ": sewn-card run shares parchment height between tickets and scroll")
 	_check(printed.y > 0 and panel.stitched_rows.get_child_count() >= 3,
 		label + ": readability oracle is non-vacuous")
 	for index in range(mini(cards.size(), panel.stitched_rows.get_child_count())):
@@ -2108,6 +2112,12 @@ func _test_compact_hero_recap(defeat: Dictionary) -> void:
 			"AC1: mounted count line %d matches the independent oracle" % (index + 1))
 	_check_hero_rows(_oracle_hero_lines(summary, true), "AC1: fully worn fallen party ribbons")
 	_validate_view("Defeat", "fully worn portrait tickets")
+	_check(not panel.stitched_section.visible
+			and panel.result_content.alignment == BoxContainer.ALIGNMENT_CENTER
+			and panel.run_ledger.size_flags_vertical == Control.SIZE_FILL
+			and panel.hero_rows.get_child_count() == CombatParty.PARTY_SIZE
+			and panel.hero_rows.get_child(0).size.y >= 200.0,
+			"AC3: empty-card defeat groups three sewn seats and ledger, not an expanded blank")
 	var recap_text := "\n".join(_hero_rows_text())
 	_check(not recap_text.contains("HEAD -")
 		and not recap_text.contains("ARM -")

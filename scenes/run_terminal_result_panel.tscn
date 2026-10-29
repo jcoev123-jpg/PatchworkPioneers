@@ -56,13 +56,13 @@ grow_vertical = 2
 [node name="ContentMargin" type="MarginContainer" parent="PaperPanel"]
 layout_mode = 2
 theme_override_constants/margin_left = 18
-theme_override_constants/margin_top = 6
+theme_override_constants/margin_top = 10
 theme_override_constants/margin_right = 18
-theme_override_constants/margin_bottom = 6
+theme_override_constants/margin_bottom = 10
 
 [node name="ResultContent" type="VBoxContainer" parent="PaperPanel/ContentMargin"]
 layout_mode = 2
-theme_override_constants/separation = 7
+theme_override_constants/separation = 9
 alignment = 0
 
 [node name="TopStitches" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
@@ -71,7 +71,7 @@ text = "×    ×    ×    ×    ×    ×    ×    ×    ×    ×"
 horizontal_alignment = 1
 
 [node name="ResultTitle" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 60)
+custom_minimum_size = Vector2(0, 56)
 layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
@@ -92,7 +92,7 @@ theme_override_constants/separation = 6
 
 [node name="HeroRecapTitle" type="Label" parent="PaperPanel/ContentMargin/ResultContent/HeroRecap"]
 layout_mode = 2
-text = "PARTY RECAP"
+text = "YOUR THREE HEROES"
 horizontal_alignment = 1
 
 [node name="HeroRows" type="HBoxContainer" parent="PaperPanel/ContentMargin/ResultContent/HeroRecap"]

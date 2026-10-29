@@ -233,10 +233,14 @@ func _with_defeat_hp(summary: Dictionary, latch: RunActBattleOutcome, state: Dic
 func _fit_result_height() -> void:
 	if not is_node_ready():
 		return
-	var filled: bool = hero_recap.visible
-	result_content.alignment = (BoxContainer.ALIGNMENT_BEGIN if filled
+	var kept_cards: bool = stitched_section.visible
+	# Empty-card verdicts centre the three seat tickets and concise ledger as
+	# one compact group; retained-card runs share the page with the scroll.
+	result_content.alignment = (BoxContainer.ALIGNMENT_BEGIN if kept_cards
 		else BoxContainer.ALIGNMENT_CENTER)
-	run_ledger.size_flags_vertical = (Control.SIZE_EXPAND_FILL if filled
+	hero_recap.size_flags_vertical = (Control.SIZE_EXPAND_FILL if kept_cards
+		else Control.SIZE_FILL)
+	run_ledger.size_flags_vertical = (Control.SIZE_EXPAND_FILL if kept_cards
 		else Control.SIZE_FILL)
 
 
@@ -604,7 +608,7 @@ func _mount_hero_rows(rows: Array) -> void:
 		var parts: Dictionary = rows[index]
 		var row := PanelContainer.new()
 		row.name = "HeroRow%d" % index
-		row.custom_minimum_size = Vector2(0, 180)
+		row.custom_minimum_size = Vector2(0, 200)
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var felt := StyleBoxFlat.new()
