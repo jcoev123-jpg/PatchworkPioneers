@@ -153,8 +153,12 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	}
 
 
+func _catalog_definition(card_id: String) -> Dictionary:
+	return _catalog.get_definition(card_id)
+
+
 func _authentic(id: String, card: Dictionary) -> bool:
-	var definition: Dictionary = _catalog.get_definition(id)
+	var definition: Dictionary = _catalog_definition(id)
 	if definition.is_empty():
 		return false
 	if definition.get("id") != id or definition.get("owner") != OWNER:
