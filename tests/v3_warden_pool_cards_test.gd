@@ -4,6 +4,11 @@ extends SceneTree
 ## catalog isolation (unknown/invalid IDs, base lookup, caller mutation) and that the existing v2
 ## Warden pool, starter cards and live reward draws are untouched. The v3 catalog is deliberately
 ## NOT wired into combat, rewards, the map or shops yet, so nothing here drives a live card.
+##
+## The second half covers the scene-free paid resolver for the authored Rivet Pummel base and '+'
+## printings (CombatWardenV3RivetCards): authentic two-strike/Block-before-HP receipts, the shared
+## Pinned token rule (cross-hero +5 once, same-hero no bonus, no pin on a lethal cast) and
+## fail-closed refusals that leave every model, the token map and the seeded RNG untouched.
 
 
 var failures: Array[String] = []
@@ -30,6 +35,14 @@ func _initialize() -> void:
 	_test_mutation_isolation()
 	_test_existing_catalogs_untouched()
 	_test_not_in_reward_draws()
+	_test_rivet_catalog_authentication()
+	_test_rivet_paid_two_hits()
+	_test_rivet_first_hit_lethal()
+	_test_rivet_pinned_provenance()
+	_test_rivet_status_rounding()
+	_test_rivet_rejections()
+	_test_rivet_spent_copy_and_energy()
+	_test_rivet_seeded_replay()
 	_finish()
 
 
@@ -680,3 +693,719 @@ func _test_not_in_reward_draws() -> void:
 	for v3_id: String in v3_all_ids:
 		_check(RunPoolCardRewardOffers.resolve_reward_definition(v3_id).is_empty(), "v3 card is not reward-resolvable yet: " + v3_id)
 	_check(not RunPoolCardRewardOffers.resolve_reward_definition("warden_hold_the_line").is_empty(), "v2 Warden card still reward-resolvable")
+
+
+# --- Rivet Pummel paid two-strike/Pinned resolver (scene-free rules slice) -------------------
+#
+# Every fixture below is a real seeded CombatDeck that genuinely holds the named ID (never a
+# fabricated status-only receipt), a real authored starter CombatParty, shipped run_enemies.json
+# records, and one shared CombatPinned token map. No app, hand, reward or mounted wiring is claimed
+# here: the resolver is the callable rules layer that a later task routes the live hand into.
+
+const RIVET_ID := "warden_v3_rivet_pummel"
+const RIVET_PLUS_ID := "warden_v3_rivet_pummel_plus"
+const RIVET_FILLERS := ["filler_stitch", "filler_thread", "filler_needle", "filler_ribbon", "filler_twig"]
+const RIVET_HEROES_PATH := "res://data/heroes/starter_party.json"
+const RIVET_ENEMIES_PATH := "res://data/enemies/run_enemies.json"
+
+var _rivet_enemy_cache: Array[Dictionary] = []
+
+
+## AC1: only the two authored records are supported, and both still print exactly their catalog
+## line: cost 2, FROM [1,2], TO [1,2], two separate hits of 3/4, pinned true, reward-only.
+func _test_rivet_catalog_authentication() -> void:
+	var catalog: V3WardenPoolCards = _get_catalog()
+	var service := _rivet_service()
+	var expected := {
+		RIVET_ID: {"display_name": "Rivet Pummel", "damage": 3, "eligible": true},
+		RIVET_PLUS_ID: {"display_name": "Rivet Pummel+", "damage": 4, "eligible": false},
+	}
+	for card_id: String in expected:
+		var line: Dictionary = expected[card_id]
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(not definition.is_empty(), card_id + ": authored catalog record exists")
+		_check(definition.get("id") == card_id, card_id + ": id matches its key")
+		_check(definition.get("display_name") == line["display_name"], card_id + ": display name")
+		_check(definition.get("owner") == "warden", card_id + ": owner is the Warden")
+		_check(definition.get("cost") == 2, card_id + ": cost is exactly 2")
+		_check(definition.get("from_positions") == [1, 2], card_id + ": FROM is exactly 1-2")
+		_check(definition.get("to_positions") == [1, 2], card_id + ": TO is exactly 1-2 (no third slot)")
+		_check(definition.get("target_kind") == "enemy_single", card_id + ": targets one enemy")
+		_check(definition.get("effects") == {"damage": line["damage"], "hits": 2, "pinned": true},
+			card_id + ": exact two-hit pinned effect line")
+		_check(definition.get("starting_copies") == 0, card_id + ": reward-only, zero starting copies")
+		_check(definition.get("rarity") == "uncommon", card_id + ": rarity is uncommon")
+		_check(definition.get("reward_eligible") == line["eligible"],
+			card_id + ": authored reward eligibility")
+		_check(definition.get("illustration_path")
+			== "res://assets/paper/cards/warden_v3_rivet_pummel.png", card_id + ": shared art path")
+		_check(service.is_supported_card(card_id), card_id + ": the resolver authenticates the ID")
+
+	_check(catalog.get_definition(RIVET_ID).get("upgrade_id") == RIVET_PLUS_ID,
+		"the base points at its authored plus")
+	_check(catalog.get_definition(RIVET_PLUS_ID).get("upgrade_of") == RIVET_ID,
+		"the plus points back at its base")
+	_check(catalog.get_definition(RIVET_ID).get("effects")
+		!= catalog.get_definition(RIVET_PLUS_ID).get("effects"),
+		"the plus differs from the base in printed damage")
+
+	# Unrelated Warden v3 reward cards, other heroes, v2 cards and malformed IDs are unsupported.
+	for unsupported: String in ["warden_v3_shield_toss", "warden_v3_shield_toss_plus",
+			"warden_v3_helmet_rattle", "warden_v3_helmet_rattle_plus", "warden_v3_guard_stitch",
+			"warden_v3_iron_taunt", "warden_v3_buckle_rebound", "warden_v3_shieldwall_chorus",
+			"warden_v3_final_bastion", "warden_v3_rivet_pummel_ultra",
+			"warden_v3_rivet_pummel_plus_plus", "warden_hold_the_line", "warden_strike",
+			"seamstress_prick", "tinker_pop_shot", "WARDEN_V3_RIVET_PUMMEL", ""]:
+		_check(not service.is_supported_card(unsupported),
+			unsupported + ": not a Rivet Pummel printing for this resolver")
+	_check(not service.is_supported_card(5) and not service.is_supported_card(null)
+		and not service.is_supported_card({}), "non-string IDs are never supported")
+
+	# A rewritten catalog record for an otherwise valid, genuinely held ID is refused: a green
+	# unsupported-ID check alone would not prove catalog authentication.
+	var forged_cost := V3WardenPoolCards.new()
+	forged_cost._definitions[RIVET_ID]["cost"] = 1
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), _rivet_enemies(["scissor_crab"]),
+		_rivet_pinned(), RIVET_ID, 1, "forged one-cost record", "catalog_mismatch",
+		CombatWardenV3RivetCards.new(forged_cost))
+	var forged_damage := V3WardenPoolCards.new()
+	forged_damage._definitions[RIVET_ID]["effects"] = {"damage": 9, "hits": 2, "pinned": true}
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), _rivet_enemies(["scissor_crab"]),
+		_rivet_pinned(), RIVET_ID, 1, "forged nine-damage record", "catalog_mismatch",
+		CombatWardenV3RivetCards.new(forged_damage))
+	var forged_pin := V3WardenPoolCards.new()
+	forged_pin._definitions[RIVET_PLUS_ID]["effects"] = {"damage": 4, "hits": 2}
+	_rivet_rejected(_rivet_deck(RIVET_PLUS_ID), _rivet_party(), _rivet_enemies(["scissor_crab"]),
+		_rivet_pinned(), RIVET_PLUS_ID, 1, "forged unpinned plus record", "catalog_mismatch",
+		CombatWardenV3RivetCards.new(forged_pin))
+
+
+## AC2: base and plus each pay 2 energy, discard exactly one held copy, land two independently
+## observed strikes with Block overflow into HP, keep every other actor and the RNG untouched, and
+## pin the surviving target for the Warden.
+func _test_rivet_paid_two_hits() -> void:
+	for card_id: String in [RIVET_ID, RIVET_PLUS_ID]:
+		var printed: int = 3 if card_id == RIVET_ID else 4
+		var party := _rivet_party()
+		var enemies := _rivet_enemies(["scissor_crab", "button_guard"])
+		var pins := _rivet_pinned()
+		_check(enemies.gain_block(1, 2), card_id + ": target really holds two Block")
+		_check(enemies.gain_block(2, 4), card_id + ": bystander really holds four Block")
+		_check(enemies.apply_statuses({2: {"weak": 2}}),
+			card_id + ": bystander really carries its own Weak 2")
+		var bystander_before: Dictionary = enemies.get_enemy(2)
+		var target_hp_before: int = int(enemies.get_enemy(1)["hp"])
+		var deck := _rivet_deck(card_id)
+		var before := _rivet_models(deck, party, enemies, pins)
+		var result: Dictionary = _rivet_service().play_card(deck, party, enemies, pins, card_id, 1)
+
+		_check(result.get("ok") == true and result.get("reason") == "applied",
+			card_id + ": authorized paid play")
+		_check(result.get("card_id") == card_id and result.get("cost") == 2
+			and result.get("energy_spent") == 2, card_id + ": receipt names the card and its two energy")
+		_check(result.get("owner_position") == 1 and result.get("target_position") == 1,
+			card_id + ": receipt reports the real Warden and target slots")
+
+		var hits: Array = result.get("hits", [])
+		_check(hits.size() == 2 and result.get("hit_count") == 2,
+			card_id + ": two independently resolved hits")
+		if hits.size() == 2:
+			_check(hits[0].get("hit") == 0 and hits[1].get("hit") == 1,
+				card_id + ": hits are reported in strike order")
+			_check(hits[0].get("base_damage") == printed and hits[0].get("damage") == printed
+				and hits[0].get("pin_bonus") == 0,
+				card_id + ": the first strike is exactly the printed damage")
+			_check(hits[0].get("block_absorbed") == 2 and hits[0].get("hp_loss") == printed - 2,
+				card_id + ": the first strike spends the target's Block before HP")
+			_check(hits[1].get("base_damage") == printed and hits[1].get("damage") == printed,
+				card_id + ": the second strike is its own printed damage, never one aggregate")
+			_check(hits[1].get("block_absorbed") == 0 and hits[1].get("hp_loss") == printed,
+				card_id + ": the spent Block cannot absorb the second strike")
+			_check(hits[0].get("pin_consumed") == false and hits[1].get("pin_consumed") == false,
+				card_id + ": no token existed to consume")
+		_check(result.get("pinned") == true and result.get("pinner") == "warden"
+			and pins.pinner_for_enemy(1) == "warden",
+			card_id + ": the surviving target is pinned with Warden provenance")
+		_check(pins.bonus_for_attack(enemies, 1, "warden") == 0,
+			card_id + ": the Warden's own pin is worth no bonus to the Warden")
+		_check(result.get("target_slain") == false
+			and result.get("target_hp") == target_hp_before - (printed - 2) - printed
+			and result.get("target_block") == 0,
+			card_id + ": receipt reports the real surviving target state")
+
+		var expected_hand: Array = before["hand"].duplicate()
+		expected_hand.remove_at(expected_hand.find(card_id))
+		var expected_discard: Array = before["discard"].duplicate()
+		expected_discard.append(card_id)
+		_check(deck.hand == expected_hand and deck.discard_pile == expected_discard,
+			card_id + ": discards exactly one copy and preserves every other card")
+		_check(deck.energy == 1 and deck.hand.size() == before["hand"].size() - 1,
+			card_id + ": pays exactly two of three energy")
+		_check(enemies.get_enemy(2) == bystander_before,
+			card_id + ": the other foe keeps HP, Block and statuses")
+		_check(deck._rng.state == before["rng_state"] and deck._rng.seed == before["rng_seed"],
+			card_id + ": the cast draws no seeded RNG")
+		_check(_rivet_models(deck, party, enemies, pins)
+			== _rivet_expected_success(before, card_id, 1, 2, (printed - 2) + printed, "warden"),
+			card_id + ": exactly one charge, one discard, two hits and one Warden pin")
+
+	# FROM 1-2: the authentic card also plays from the middle seat onto the second foe slot.
+	var moved_party := _rivet_moved_party(2)
+	var moved_enemies := _rivet_enemies(["fray_scavenger", "button_guard"])
+	var moved_pins := _rivet_pinned()
+	var moved_deck := _rivet_deck(RIVET_ID, 913)
+	var moved: Dictionary = _rivet_service().play_card(moved_deck, moved_party, moved_enemies,
+		moved_pins, RIVET_ID, 2)
+	_check(moved.get("ok") == true and moved.get("owner_position") == 2
+		and moved.get("target_position") == 2, "the middle seat plays onto the second foe slot")
+	_check((moved.get("hits") as Array).size() == 2 and moved.get("pinner") == "warden"
+		and moved_pins.pinner_for_enemy(2) == "warden",
+		"the middle-seat cast resolves both hits and pins its own target")
+	_check(moved_pins.pinner_for_enemy(1) == "", "only the chosen slot is pinned")
+
+
+## AC2: a lethal first strike omits the second hit and adds no new pin.
+func _test_rivet_first_hit_lethal() -> void:
+	for card_id: String in [RIVET_ID, RIVET_PLUS_ID]:
+		var printed: int = 3 if card_id == RIVET_ID else 4
+		var party := _rivet_party()
+		var enemies := _rivet_enemies(["pin_skitter"])
+		var pins := _rivet_pinned()
+		var full_hp: int = int(enemies.get_enemy(1)["hp"])
+		_check(full_hp > printed, card_id + ": fixture foe starts above one printed strike")
+		_check(enemies.apply_damage(1, full_hp - printed),
+			card_id + ": the foe is whittled through the real damage path")
+		_check(enemies.get_enemy(1)["hp"] == printed and not enemies.is_slain(1),
+			card_id + ": the target is alive on exactly one printed strike of HP")
+		var deck := _rivet_deck(card_id)
+		var before := _rivet_models(deck, party, enemies, pins)
+		var result: Dictionary = _rivet_service().play_card(deck, party, enemies, pins, card_id, 1)
+		var hits: Array = result.get("hits", [])
+		_check(result.get("ok") == true and hits.size() == 1 and result.get("hit_count") == 1,
+			card_id + ": a lethal first strike omits the second hit")
+		if hits.size() == 1:
+			_check(hits[0].get("damage") == printed and hits[0].get("hp_loss") == printed
+				and hits[0].get("block_absorbed") == 0,
+				card_id + ": the single landed strike is lethal")
+		_check(enemies.is_slain(1) and result.get("target_slain") == true,
+			card_id + ": the target is really slain in its original slot")
+		_check(result.get("pinned") == false and result.get("pinner") == ""
+			and pins.pinner_for_enemy(1) == "",
+			card_id + ": a slain target is never pinned after the strikes")
+		_check(_rivet_models(deck, party, enemies, pins)
+			== _rivet_expected_success(before, card_id, 1, 0, printed, ""),
+			card_id + ": exactly one paid cast, one hit and no new token")
+
+
+## AC2: the shared Pinned rule is reused, never reimplemented. An earlier other-hero pin boosts
+## only the first strike and is consumed once; an existing Warden pin gives no bonus; a lethal
+## cross-hero cast spends the old token and lays nothing new.
+func _test_rivet_pinned_provenance() -> void:
+	var party := _rivet_party()
+	var enemies := _rivet_enemies(["scissor_crab"])
+	var pins := _rivet_pinned()
+	_check(pins.pin_enemy(enemies, 1, "seamstress"),
+		"the shared token really starts on another hero")
+	_check(pins.pinner_for_enemy(1) == "seamstress"
+		and pins.bonus_for_attack(enemies, 1, "warden") == 5,
+		"the cross-hero token is worth its +5 to the Warden (precondition)")
+	var deck := _rivet_deck(RIVET_ID)
+	var before := _rivet_models(deck, party, enemies, pins)
+	var result: Dictionary = _rivet_service().play_card(deck, party, enemies, pins, RIVET_ID, 1)
+	var hits: Array = result.get("hits", [])
+	_check(result.get("ok") == true and hits.size() == 2,
+		"the cross-hero cast resolves both strikes")
+	if hits.size() == 2:
+		_check(hits[0].get("pin_bonus") == 5 and hits[0].get("base_damage") == 8
+			and hits[0].get("damage") == 8 and hits[0].get("pin_consumed") == true,
+			"the other-hero +5 boosts the first strike and is consumed")
+		_check(hits[1].get("pin_bonus") == 0 and hits[1].get("base_damage") == 3
+			and hits[1].get("damage") == 3 and hits[1].get("pin_consumed") == false,
+			"the consumed token cannot boost the second strike")
+	_check(result.get("pinned") == true and pins.pinner_for_enemy(1) == "warden",
+		"the surviving target is then pinned by the Warden")
+	_check(pins.bonus_for_attack(enemies, 1, "warden") == 0,
+		"the freshly laid Warden pin pays no bonus to the Warden")
+	_check(_rivet_models(deck, party, enemies, pins)
+		== _rivet_expected_success(before, RIVET_ID, 1, 0, 11, "warden"),
+		"the cross-hero cast lands 8 + 3 damage and replaces the token once")
+
+	# An existing Warden pin is never a self-bonus and survives this same-hero cast.
+	var own_party := _rivet_party()
+	var own_enemies := _rivet_enemies(["scissor_crab"])
+	var own_pins := _rivet_pinned()
+	_check(own_pins.pin_enemy(own_enemies, 1, "warden"),
+		"the Warden really pinned the target earlier")
+	var own_deck := _rivet_deck(RIVET_PLUS_ID, 555)
+	var own_before := _rivet_models(own_deck, own_party, own_enemies, own_pins)
+	var own: Dictionary = _rivet_service().play_card(own_deck, own_party, own_enemies, own_pins,
+		RIVET_PLUS_ID, 1)
+	var own_hits: Array = own.get("hits", [])
+	_check(own.get("ok") == true and own_hits.size() == 2,
+		"the same-hero cast resolves both strikes")
+	if own_hits.size() == 2:
+		_check(own_hits[0].get("pin_bonus") == 0 and own_hits[0].get("damage") == 4
+			and own_hits[0].get("pin_consumed") == false,
+			"an existing Warden pin gives no bonus and is not consumed")
+		_check(own_hits[1].get("pin_bonus") == 0 and own_hits[1].get("damage") == 4,
+			"the second strike also carries no self-bonus")
+	_check(own.get("pinned") == true and own_pins.pinner_for_enemy(1) == "warden",
+		"the Warden keeps provenance on its own target")
+	_check(_rivet_models(own_deck, own_party, own_enemies, own_pins)
+		== _rivet_expected_success(own_before, RIVET_PLUS_ID, 1, 0, 8, "warden"),
+		"the same-hero cast lands 4 + 4 and leaves the token in place")
+
+	# A lethal cross-hero cast still consumes the old token and lays no new one.
+	var lethal_enemies := _rivet_enemies(["pin_skitter"])
+	var lethal_pins := _rivet_pinned()
+	var lethal_hp: int = int(lethal_enemies.get_enemy(1)["hp"])
+	_check(lethal_enemies.apply_damage(1, lethal_hp - 3)
+		and lethal_enemies.get_enemy(1)["hp"] == 3,
+		"the lethal fixture foe is whittled to three HP")
+	_check(lethal_pins.pin_enemy(lethal_enemies, 1, "tinker"),
+		"the lethal fixture target really carries another hero's pin")
+	var lethal_deck := _rivet_deck(RIVET_ID, 77)
+	var lethal := _rivet_service().play_card(lethal_deck, _rivet_party(), lethal_enemies,
+		lethal_pins, RIVET_ID, 1)
+	var lethal_hits: Array = lethal.get("hits", [])
+	_check(lethal.get("ok") == true and lethal_hits.size() == 1,
+		"the lethal cross-hero cast lands one strike")
+	if lethal_hits.size() == 1:
+		_check(lethal_hits[0].get("pin_bonus") == 5 and lethal_hits[0].get("base_damage") == 8,
+			"the lethal strike still carries the other hero's +5")
+	_check(lethal.get("pinned") == false and lethal_pins.pinner_for_enemy(1) == "",
+		"the lethal cast leaves no pin behind")
+
+
+## AC2: Weak/Exposed use the shared floor-once arithmetic, and legal non-damage tokens are
+## admitted without being consumed or dropped from their actor.
+func _test_rivet_status_rounding() -> void:
+	var status_cases := [
+		{"label": "Weak", "hero": {"weak": 1}, "foe": {}, "damage": {3: 2, 4: 3}},
+		{"label": "Exposed", "hero": {}, "foe": {"exposed": 2}, "damage": {3: 4, 4: 6}},
+		{"label": "Weak and Exposed", "hero": {"weak": 3}, "foe": {"exposed": 1},
+			"damage": {3: 3, 4: 4}},
+	]
+	for status_case: Dictionary in status_cases:
+		for card_id: String in [RIVET_ID, RIVET_PLUS_ID]:
+			var label: String = status_case["label"] + " " + card_id
+			var party := _rivet_party()
+			var enemies := _rivet_enemies(["scissor_crab"])
+			var pins := _rivet_pinned()
+			party._heroes[0]["statuses"] = (status_case["hero"] as Dictionary).duplicate(true)
+			enemies._enemies[0]["statuses"] = (status_case["foe"] as Dictionary).duplicate(true)
+			var deck := _rivet_deck(card_id, 8081)
+			var result: Dictionary = _rivet_service().play_card(deck, party, enemies, pins,
+				card_id, 1)
+			var printed: int = 3 if card_id == RIVET_ID else 4
+			var expected_hit: int = status_case["damage"][printed]
+			var hits: Array = result.get("hits", [])
+			_check(result.get("ok") == true and hits.size() == 2, label + ": both strikes land")
+			if hits.size() == 2:
+				_check(hits[0].get("damage") == expected_hit
+					and hits[1].get("damage") == expected_hit,
+					label + ": both strikes are floored once to " + str(expected_hit))
+			_check(party.get_hero(1)["statuses"] == status_case["hero"],
+				label + ": the attacker's own statuses are untouched")
+			_check(enemies.get_enemy(1)["statuses"] == status_case["foe"],
+				label + ": the defender's statuses are untouched")
+
+	# A genuine Dodge on the Warden, Blind on the foe and the literal Fear marker are all legal
+	# authoritative state: the paid cast still lands both hits and none of them is spent.
+	var token_party := _rivet_party()
+	var token_enemies := _rivet_enemies(["scissor_crab"])
+	var token_pins := _rivet_pinned()
+	token_party._heroes[0]["statuses"] = {"dodge_next_attack": 1, "cannot_buff_next_turn": true,
+		"weak": 1}
+	token_enemies._enemies[0]["statuses"] = {"blind_next_attack": 1}
+	var token_deck := _rivet_deck(RIVET_ID, 4242)
+	var token: Dictionary = _rivet_service().play_card(token_deck, token_party, token_enemies,
+		token_pins, RIVET_ID, 1)
+	var token_hits: Array = token.get("hits", [])
+	_check(token.get("ok") == true and token_hits.size() == 2,
+		"legal non-damage tokens do not turn a paid cast into a phantom turn")
+	if token_hits.size() == 2:
+		_check(token_hits[0].get("damage") == 2 and token_hits[1].get("damage") == 2,
+			"only the Weak counter adjusts the strikes")
+	_check(token_party.get_hero(1)["statuses"]
+		== {"dodge_next_attack": 1, "cannot_buff_next_turn": true, "weak": 1},
+		"the Warden's Dodge and Fear tokens are neither spent nor dropped")
+	_check(token_enemies.get_enemy(1)["statuses"] == {"blind_next_attack": 1},
+		"the foe's Blind token is neither spent nor dropped")
+
+
+## AC3: without the genuine affordable held copy, a living correctly positioned Warden, a legal
+## living target or valid supplied status/token state, the cast is refused before any mutation.
+func _test_rivet_rejections() -> void:
+	# Unsupported and unrelated IDs, even when genuinely held.
+	_rivet_rejected(_rivet_deck("warden_v3_shield_toss"), _rivet_party(),
+		_rivet_enemies(["scissor_crab"]), _rivet_pinned(), "warden_v3_shield_toss", 1,
+		"held unrelated Warden v3 card", "unsupported_card")
+	_rivet_rejected(_rivet_deck("seamstress_prick"), _rivet_party(),
+		_rivet_enemies(["scissor_crab"]), _rivet_pinned(), "seamstress_prick", 1,
+		"held non-Warden card", "unsupported_card")
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), _rivet_enemies(["scissor_crab"]),
+		_rivet_pinned(), "warden_v3_rivet_pummel_ultra", 1, "invalid Rivet-like ID",
+		"unsupported_card")
+
+	# The genuine base is not held: only its plus is in the seeded hand.
+	_rivet_rejected(_rivet_deck(RIVET_PLUS_ID), _rivet_party(),
+		_rivet_enemies(["scissor_crab"]), _rivet_pinned(), RIVET_ID, 1,
+		"the base is not in the hand", "card_not_held")
+
+	# Insufficient energy through a genuine spend off the shared energy pool.
+	var drained := _rivet_deck(RIVET_ID)
+	_check(drained.try_spend_energy(2) and drained.energy == 1,
+		"energy fixture really holds only one energy")
+	_rivet_rejected(drained, _rivet_party(), _rivet_enemies(["scissor_crab"]), _rivet_pinned(),
+		RIVET_ID, 1, "one energy cannot pay two", "insufficient_energy")
+
+	# A downed Warden cannot swing.
+	var downed_party := _rivet_party()
+	var warden_hp: int = int(downed_party.get_hero(1)["hp"])
+	_check(downed_party.apply_damage(1, warden_hp) and downed_party.get_hero(1)["hp"] == 0,
+		"caster fixture really downed the Warden")
+	_rivet_rejected(_rivet_deck(RIVET_ID), downed_party, _rivet_enemies(["scissor_crab"]),
+		_rivet_pinned(), RIVET_ID, 1, "a downed Warden cannot swing", "owner_torn")
+
+	# Out of position: FROM is printed as 1-2 only.
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_moved_party(3),
+		_rivet_enemies(["scissor_crab"]), _rivet_pinned(), RIVET_ID, 1,
+		"the back seat is not a printed FROM slot", "invalid_owner_position")
+
+	# Dead, illegal and missing target slots (a two-foe battle, so the fight is still live).
+	var dead_enemies := _rivet_enemies(["scissor_crab", "button_guard"])
+	_check(dead_enemies.apply_damage(1, int(dead_enemies.get_enemy(1)["hp"]))
+		and dead_enemies.is_slain(1), "target fixture really slew the foe in slot one")
+	_check(not dead_enemies.is_victorious(), "the dead-target fixture still has a living foe")
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), dead_enemies, _rivet_pinned(),
+		RIVET_ID, 1, "a slain target cannot be struck", "dead_target")
+	var won_enemies := _rivet_enemies(["scissor_crab"])
+	_check(won_enemies.apply_damage(1, int(won_enemies.get_enemy(1)["hp"]))
+		and won_enemies.is_victorious(), "victory fixture really slew the whole roster")
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), won_enemies, _rivet_pinned(),
+		RIVET_ID, 1, "a won battle refuses further casts", "invalid_roster")
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(),
+		_rivet_enemies(["scissor_crab", "button_guard", "spool_stalker"]), _rivet_pinned(),
+		RIVET_ID, 3, "slot three is outside the printed TO line", "invalid_target")
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), _rivet_enemies(["scissor_crab"]),
+		_rivet_pinned(), RIVET_ID, 0, "slot zero is not a target", "invalid_target")
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), _rivet_enemies(["scissor_crab"]),
+		_rivet_pinned(), RIVET_ID, 2, "a second slot that does not exist", "invalid_target")
+
+	# An inactive shared turn cannot pay for anything.
+	var idle := CombatDeck.new([RIVET_ID, RIVET_FILLERS[0], RIVET_FILLERS[1], RIVET_FILLERS[2],
+		RIVET_FILLERS[3]], _rivet_rng(19))
+	_check(not idle.turn_active, "idle fixture really has no active turn")
+	_rivet_rejected(idle, _rivet_party(), _rivet_enemies(["scissor_crab"]), _rivet_pinned(),
+		RIVET_ID, 1, "no active turn", "inactive_turn")
+
+	# Missing or non-authoritative shared Pinned state.
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), _rivet_enemies(["scissor_crab"]),
+		null, RIVET_ID, 1, "no shared Pinned authority", "invalid_pinned_authority")
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), _rivet_enemies(["scissor_crab"]),
+		["warden"], RIVET_ID, 1, "a plain Array is not the shared Pinned authority",
+		"invalid_pinned_authority")
+
+	# Malformed authoritative status state on the caster or the foe.
+	var bad_negative := _rivet_party()
+	bad_negative._heroes[0]["statuses"] = {"weak": -1}
+	_rivet_rejected(_rivet_deck(RIVET_ID), bad_negative, _rivet_enemies(["scissor_crab"]),
+		_rivet_pinned(), RIVET_ID, 1, "negative attacker counter", "malformed_statuses")
+	var bad_dodge := _rivet_party()
+	bad_dodge._heroes[0]["statuses"] = {"dodge_next_attack": 2}
+	_rivet_rejected(_rivet_deck(RIVET_ID), bad_dodge, _rivet_enemies(["scissor_crab"]),
+		_rivet_pinned(), RIVET_ID, 1, "non-canonical Dodge token", "malformed_statuses")
+	var bad_fear := _rivet_party()
+	bad_fear._heroes[0]["statuses"] = {"cannot_buff_next_turn": 1}
+	_rivet_rejected(_rivet_deck(RIVET_ID), bad_fear, _rivet_enemies(["scissor_crab"]),
+		_rivet_pinned(), RIVET_ID, 1, "Fear must be the literal boolean true",
+		"malformed_statuses")
+	var bad_foe := _rivet_enemies(["scissor_crab"])
+	bad_foe._enemies[0]["statuses"] = {"unknown_status": 1}
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), bad_foe, _rivet_pinned(),
+		RIVET_ID, 1, "unknown defender status key", "malformed_statuses")
+	var bad_foe_count := _rivet_enemies(["scissor_crab"])
+	bad_foe_count._enemies[0]["statuses"] = {"weak": "two"}
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), bad_foe_count, _rivet_pinned(),
+		RIVET_ID, 1, "non-int defender counter", "malformed_statuses")
+
+	# Corrupt shared token maps fail closed before payment.
+	var bad_slot := _rivet_pinned()
+	bad_slot._pinner_by_position[9] = "seamstress"
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), _rivet_enemies(["scissor_crab"]),
+		bad_slot, RIVET_ID, 1, "token on a slot that does not exist", "malformed_pinned")
+	var bad_pinner := _rivet_pinned()
+	bad_pinner._pinner_by_position[1] = 7
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), _rivet_enemies(["scissor_crab"]),
+		bad_pinner, RIVET_ID, 1, "non-string pinner identity", "malformed_pinned")
+	var unknown_pinner := _rivet_pinned()
+	unknown_pinner._pinner_by_position[1] = "gargoyle"
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), _rivet_enemies(["scissor_crab"]),
+		unknown_pinner, RIVET_ID, 1, "unknown pinner identity", "malformed_pinned")
+
+	# Null and invalid models.
+	_rivet_rejected(null, _rivet_party(), _rivet_enemies(["scissor_crab"]), _rivet_pinned(),
+		RIVET_ID, 1, "null deck", "invalid_request")
+	_rivet_rejected(_rivet_deck(RIVET_ID), null, _rivet_enemies(["scissor_crab"]),
+		_rivet_pinned(), RIVET_ID, 1, "null party", "invalid_request")
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), null, _rivet_pinned(), RIVET_ID, 1,
+		"null enemies", "invalid_request")
+	_rivet_rejected(_rivet_deck(RIVET_ID), CombatParty.new([]),
+		_rivet_enemies(["scissor_crab"]), _rivet_pinned(), RIVET_ID, 1, "invalid party roster",
+		"invalid_roster")
+	_rivet_rejected(_rivet_deck(RIVET_ID), _rivet_party(), CombatEnemies.new([]),
+		_rivet_pinned(), RIVET_ID, 1, "invalid enemy roster", "invalid_roster")
+
+	# A Warden-free party has no legal caster at all.
+	var no_warden: Array = [{"id": "seamstress", "max_hp": 30}, {"id": "tinker", "max_hp": 26},
+		{"id": "rag_duelist", "max_hp": 28}]
+	var no_warden_party := CombatParty.new(no_warden)
+	_check(no_warden_party.is_valid(), "Warden-free fixture really builds a valid party")
+	_rivet_rejected(_rivet_deck(RIVET_ID), no_warden_party, _rivet_enemies(["scissor_crab"]),
+		_rivet_pinned(), RIVET_ID, 1, "no Warden in the party", "owner_missing")
+
+
+## AC3: a cast consumes its only held copy and its energy, so a second attempt must fail without
+## touching anything, and a held copy with one energy left is refused rather than played free.
+func _test_rivet_spent_copy_and_energy() -> void:
+	var deck := CombatDeck.new([RIVET_ID, RIVET_FILLERS[0], RIVET_FILLERS[1], RIVET_FILLERS[2],
+		RIVET_FILLERS[3]], _rivet_rng(6101))
+	_check(deck.start_turn() and deck.energy == 3 and deck.hand.size() == 5
+		and deck.hand.count(RIVET_ID) == 1,
+		"single-copy fixture draws exactly one authentic copy and three energy")
+	var party := _rivet_party()
+	var enemies := _rivet_enemies(["scissor_crab"])
+	var pins := _rivet_pinned()
+	var once: Dictionary = _rivet_service().play_card(deck, party, enemies, pins, RIVET_ID, 1)
+	_check(once.get("ok") == true and (once.get("hits") as Array).size() == 2,
+		"the single held copy really plays both strikes")
+	var spent := _rivet_models(deck, party, enemies, pins)
+	_check(deck.energy == 1 and deck.discard_pile.count(RIVET_ID) == 1
+		and not deck.hand.has(RIVET_ID),
+		"the cast spent two energy and moved exactly one copy to the discard")
+	_rivet_rejected(deck, party, enemies, pins, RIVET_ID, 1,
+		"a second attempt after spending the only copy", "card_not_held")
+	_check(_rivet_models(deck, party, enemies, pins) == spent,
+		"the second attempt leaves the paid state exactly as it was")
+
+	# A genuinely held copy with only one energy left is refused, not silently free.
+	var full := CombatDeck.new([RIVET_ID, RIVET_ID, RIVET_ID, RIVET_ID, RIVET_ID], _rivet_rng(6102))
+	_check(full.start_turn() and full.energy == 3 and full.hand.count(RIVET_ID) == 5,
+		"multi-copy fixture really holds five copies and three energy")
+	var full_party := _rivet_party()
+	var full_enemies := _rivet_enemies(["scissor_crab"])
+	var full_pins := _rivet_pinned()
+	var first: Dictionary = _rivet_service().play_card(full, full_party, full_enemies, full_pins,
+		RIVET_ID, 1)
+	_check(first.get("ok") == true and full.energy == 1 and full.hand.count(RIVET_ID) == 4,
+		"the first of five copies is paid for from real energy")
+	var one_left := _rivet_models(full, full_party, full_enemies, full_pins)
+	_rivet_rejected(full, full_party, full_enemies, full_pins, RIVET_ID, 1,
+		"a held two-cost copy with one energy", "insufficient_energy")
+	_check(_rivet_models(full, full_party, full_enemies, full_pins) == one_left,
+		"the energy refusal changes no card, energy, hero, enemy, pin or RNG state")
+
+
+## The same seed and the same request sequence produce identical state and receipts.
+func _test_rivet_seeded_replay() -> void:
+	var first := _rivet_replay_run(8642)
+	var second := _rivet_replay_run(8642)
+	_check(first == second, "seeded replay produces an identical final state and receipts")
+	_check(first["rng_state"] == second["rng_state"],
+		"seeded replay leaves both runs on the same run RNG state")
+	var results: Array = first["results"]
+	_check(results.size() == 3 and results[0].get("ok") == true
+		and (results[0].get("hits") as Array).size() == 2,
+		"seeded replay lands the authentic two-strike cast")
+	_check(results[1].get("ok") == false and results[1].get("reason") == "card_not_held"
+		and results[2].get("ok") == false
+		and results[2].get("reason") == "insufficient_energy",
+		"seeded replay keeps both genuine refusals")
+
+
+func _rivet_replay_run(seed_value: int) -> Dictionary:
+	var party := _rivet_party()
+	var enemies := _rivet_enemies(["scissor_crab", "button_guard"])
+	var pins := _rivet_pinned()
+	var deck := _rivet_deck(RIVET_ID, seed_value)
+	var service := _rivet_service()
+	var results: Array = []
+	results.append(service.play_card(deck, party, enemies, pins, RIVET_ID, 1))
+	results.append(service.play_card(deck, party, enemies, pins, RIVET_PLUS_ID, 1))
+	results.append(service.play_card(deck, party, enemies, pins, RIVET_ID, 2))
+	var snapshot := _rivet_models(deck, party, enemies, pins)
+	snapshot["results"] = results
+	return snapshot
+
+
+func _rivet_service() -> CombatWardenV3RivetCards:
+	return CombatWardenV3RivetCards.new()
+
+
+func _rivet_rng(seed_value: int) -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	return rng
+
+
+## A real five-card hand from six cards, so at least one copy of the named ID is genuinely held.
+func _rivet_deck(card_id: String, seed_value: int = 6452) -> CombatDeck:
+	var ids: Array[String] = [card_id, card_id, RIVET_FILLERS[0], RIVET_FILLERS[1],
+		RIVET_FILLERS[2], RIVET_FILLERS[3]]
+	var deck := CombatDeck.new(ids, _rivet_rng(seed_value))
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3
+		and deck.hand.size() == 5 and deck.hand.count(card_id) >= 1,
+		card_id + ": real seeded five-card hand genuinely holds the copy")
+	return deck
+
+
+func _rivet_party() -> CombatParty:
+	var raw: String = FileAccess.get_file_as_string(RIVET_HEROES_PATH)
+	var parsed: Variant = JSON.parse_string(raw)
+	_check(not raw.is_empty() and parsed is Array
+		and (parsed as Array).size() == CombatParty.PARTY_SIZE,
+		"real authored starter party file supplies all three heroes")
+	if not parsed is Array or (parsed as Array).size() != CombatParty.PARTY_SIZE:
+		return CombatParty.new([])
+	for hero in parsed:
+		if hero is Dictionary and hero.get("max_hp") is float:
+			hero["max_hp"] = int(hero["max_hp"])
+	var party := CombatParty.new(parsed)
+	_check(party.is_valid() and party.get_hero(1).get("id") == "warden"
+		and party.get_hero(1).get("hp") == 40,
+		"valid real CombatParty with the 40-HP Warden in the front seat")
+	return party
+
+
+## A genuine adjacent swap through the real position rules, not a hand-built roster.
+func _rivet_moved_party(position: int) -> CombatParty:
+	var party := _rivet_party()
+	var move_id := "fixture_rivet_warden_forward"
+	var moving := CombatDeck.new([move_id, move_id, move_id], _rivet_rng(346))
+	_check(moving.start_turn(), "position fixture begins a legitimate shared turn")
+	var definition := {"id": move_id, "owner": "warden", "cost": 0,
+		"from_positions": [1, 2, 3], "action_kind": "adjacent_swap", "direction": 1}
+	for step in range(position - 1):
+		_check(CombatPositionSwaps.play_move_card(moving, party, move_id, definition),
+			"actual adjacent move shifts the Warden to " + str(step + 2))
+	_check(party.get_hero(position).get("id") == "warden"
+		and party.get_hero(position).get("position") == position,
+		"Warden identity is really at actual slot " + str(position))
+	return party
+
+
+func _rivet_pinned() -> CombatPinned:
+	return CombatPinned.new()
+
+
+func _rivet_enemies(ids: Array) -> CombatEnemies:
+	var definitions: Array = []
+	for enemy_id: String in ids:
+		definitions.append(_rivet_enemy_record(enemy_id))
+	var enemies := CombatEnemies.new(definitions)
+	var actual: Array = []
+	for record in enemies.get_enemies():
+		actual.append(record.get("id"))
+	_check(enemies.is_valid() and actual == ids,
+		"real run_enemies.json roster " + str(ids))
+	return enemies
+
+
+func _rivet_enemy_record(enemy_id: String) -> Dictionary:
+	for record in _rivet_enemy_catalog():
+		if record.get("id") == enemy_id:
+			return record.duplicate(true)
+	_check(false, "shipped run_enemies.json contains " + enemy_id)
+	return {}
+
+
+func _rivet_enemy_catalog() -> Array[Dictionary]:
+	if not _rivet_enemy_cache.is_empty():
+		return _rivet_enemy_cache
+	var raw: String = FileAccess.get_file_as_string(RIVET_ENEMIES_PATH)
+	var parsed: Variant = JSON.parse_string(raw)
+	_check(not raw.is_empty() and parsed is Array and not (parsed as Array).is_empty(),
+		"shipped run_enemies.json catalog loads")
+	if not parsed is Array:
+		return []
+	for entry in parsed:
+		if not entry is Dictionary:
+			continue
+		var record: Dictionary = entry.duplicate(true)
+		var max_hp: Variant = record.get("max_hp")
+		if max_hp is float and max_hp == floor(max_hp):
+			record["max_hp"] = int(max_hp)
+		_rivet_enemy_cache.append(record)
+	return _rivet_enemy_cache
+
+
+## A rejection must report no hit, no spend and no pin, and leave every mutable model plus the
+## shared token map exactly as it was.
+func _rivet_rejected(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		pinned: Variant, card_id: String, target_position: int, label: String,
+		expected_reason: String = "", service: CombatWardenV3RivetCards = null) -> void:
+	var resolver: CombatWardenV3RivetCards = service if service != null else _rivet_service()
+	var before := _rivet_models(deck, party, enemies, pinned)
+	var result: Dictionary = resolver.play_card(deck, party, enemies, pinned, card_id,
+		target_position)
+	_check(result.get("ok") == false, label + ": rejected")
+	if not expected_reason.is_empty():
+		_check(result.get("reason") == expected_reason,
+			label + ": refused for " + expected_reason + " (got " + str(result.get("reason")) + ")")
+	var hits: Variant = result.get("hits")
+	_check(hits is Array and (hits as Array).is_empty() and result.get("hit_count") == 0
+		and result.get("pinned") == false and result.get("energy_spent") == 0,
+		label + ": refusal reports no hit, no spend and no pin")
+	_check(_rivet_models(deck, party, enemies, pinned) == before,
+		label + ": every model and the shared token map are unchanged")
+
+
+## The whole model snapshot a refusal must preserve: both rosters, all four piles, energy, turn
+## flags, the shared token map and the seeded RNG.
+func _rivet_models(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		pinned: Variant) -> Dictionary:
+	var result: Dictionary = {}
+	if party != null:
+		result["heroes"] = party.get_heroes()
+	if enemies != null:
+		result["enemies"] = enemies.get_enemies()
+	if deck != null:
+		result["hand"] = deck.hand.duplicate(true)
+		result["draw"] = deck.draw_pile.duplicate(true)
+		result["discard"] = deck.discard_pile.duplicate(true)
+		result["exhausted"] = deck.exhausted.duplicate(true)
+		result["energy"] = deck.energy
+		result["turn"] = deck.turn_active
+		if deck.combat_state != null:
+			result["state_energy"] = deck.combat_state.energy
+			result["state_turn"] = deck.combat_state.player_turn_active
+		if deck._rng != null:
+			result["rng_state"] = deck._rng.state
+			result["rng_seed"] = deck._rng.seed
+	if pinned is CombatPinned:
+		var authority: CombatPinned = pinned
+		result["pins"] = authority._pinner_by_position.duplicate(true)
+	return result
+
+
+## The single-transaction expected state: two energy, one discarded held copy, the summed
+## Block/HP change on the original target and the token map after the cast.
+func _rivet_expected_success(before: Dictionary, card_id: String, target_position: int,
+		block_absorbed: int, hp_loss: int, pinner_after: String) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] -= 2
+	expected["state_energy"] -= 2
+	var hand: Array = expected["hand"]
+	hand.remove_at(hand.find(card_id))
+	var discard: Array = expected["discard"]
+	discard.append(card_id)
+	var enemy: Dictionary = expected["enemies"][target_position - 1]
+	enemy["block"] -= block_absorbed
+	enemy["hp"] -= hp_loss
+	var pins: Dictionary = expected["pins"]
+	if pinner_after.is_empty():
+		pins.erase(target_position)
+	else:
+		pins[target_position] = pinner_after
+	return expected
