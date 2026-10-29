@@ -22,7 +22,10 @@ func _battle(loss: bool = false) -> bool:
 		for record in RunTypedBattleRoster._parse_catalog_text(FileAccess.get_file_as_string(path)):
 			catalogs[record.id] = record
 	var percent: int = [0, 10, 20][tier]
+	var boss_id := ""
 	for enemy in app.enemies.get_enemies():
+		if kind == "Boss":
+			boss_id = enemy.id
 		_check(catalogs.has(enemy.id), "mounted enemy has an authored definition")
 		if not catalogs.has(enemy.id):
 			continue
@@ -44,7 +47,13 @@ func _battle(loss: bool = false) -> bool:
 					expected.amount = amount
 				if tier > 0:
 					expected.amount = amount + tier
-			if kind == "Boss":
+			if kind == "Boss" and enemy.id == CombatBehemothPhaseRules.BOSS_ID:
+				# Only the Behemoth's bound schedule is rebuilt by
+				# CombatBehemothPhaseRules.select_phase, which normalizes JSON
+				# numbers to ints. The Colossus keeps its raw JSON-authored
+				# numeric representation in the mounted roster, so its expected
+				# dictionary keeps the authored floats (except the tier bonus,
+				# which RunDifficulty.scale_intent writes as an int).
 				expected.amount = int(expected.amount)
 				expected.weight = int(expected.weight)
 			_check(enemy.intent.actions[index] == expected, "mounted intent has exactly one chosen-tier bonus")
@@ -54,11 +63,16 @@ func _battle(loss: bool = false) -> bool:
 	_check(not app.heirloom_unlocked or app._difficulty_completed_map != app.run_map,
 		"unsettled battle cannot record a first-run unlock")
 	var won := await super._battle(loss)
-	if tier > 0 and kind == "Boss":
+	if tier > 0 and kind == "Boss" and boss_id == CombatBehemothPhaseRules.BOSS_ID:
 		_check(app.enemy_intents._boss_phase == 2, "real mounted chosen-tier Boss reaches phase two")
 		for action in app.enemies.get_enemy(1).intent.actions:
 			if action.type == "attack":
 				_check(action.amount == 40 + tier, "mounted phase-two attack retains exactly the chosen tier bonus")
+	elif kind == "Boss" and boss_id != CombatBehemothPhaseRules.BOSS_ID:
+		# Only the Behemoth authors a phase two; the chosen Colossus must never
+		# inherit its phase state or its stronger phase-two schedule.
+		_check(app.enemy_intents._boss_phase == 0,
+			"real mounted Colossus never binds a Behemoth phase")
 	return won
 
 
