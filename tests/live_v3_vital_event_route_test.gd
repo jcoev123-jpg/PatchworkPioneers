@@ -235,6 +235,10 @@ func _run() -> void:
 		var initial_hp := hp_claims
 		var initial_caps := cap_claims
 		for id in fixtures:
+			# These fifth-stop IDs mount their own dedicated visit, not the
+			# generic wallet parchment required before a vitality slot.
+			if id in ["frayed_debt_parcel", RunFatePinAuction.EVENT_ID]:
+				continue
 			for index in range(3):
 				await _settle(fixtures[id], index, keyboard, hp_claims == 0)
 			if hp_claims > initial_hp and cap_claims > initial_caps:

@@ -101,10 +101,12 @@ func _reach(f: Dictionary, _funded: bool = true) -> void:
 		if not is_instance_valid(panel):
 			return
 		await _click(panel.get_choice_buttons()[[0, 2, 1, 0][index]])
-		if index == 0 and f.stitched:
-			_install_stitched_fixture()
+		# Fund the Unpicker branch before the composite fixture re-presents the
+		# connected choices, so those buttons bind the run context they will use.
 		if index == 0 and f.terminal == "Unpicker":
 			app.session_gold = 100
+		if index == 0 and f.stitched:
+			_install_stitched_fixture()
 		if index == 3:
 			_check(is_instance_valid(app.needle_toll_panel) and app._needle_toll_outcome.is_paid(), "real paid toll draws precede Parcel")
 			await _click(app.needle_toll_panel.get_choice_buttons()[2])
@@ -126,6 +128,11 @@ func _install_stitched_fixture() -> void:
 	app.run_stitch_descriptors = sewn.descriptors
 	app.run_next_stitch_id = sewn.next_stitch_id
 	app.run_scraps = sewn.remaining_scraps
+	# A genuine visit close re-presents the connected route from the committed run
+	# resources; installing the earned composite here must refresh the mounted
+	# choices the same way, or every route action keeps the pre-stitch context.
+	app._clear_route_view()
+	app._present_connected_route(weakref(app.run_map))
 
 
 func _parcel_visit(f: Dictionary, branch: int, keyboard: bool) -> Array:
