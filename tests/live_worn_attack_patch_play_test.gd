@@ -83,6 +83,29 @@ func _bind_mitt(owner: String) -> bool:
 	return sewn.get("ok", false) and carry._wardrobe == worn_wardrobe
 
 
+## A P12 Needle Echo is worn before this genuine connected Fight, never
+## put into Peddler stock and never substituted into an attack-only fixture.
+func _bind_needle(owner: String) -> bool:
+	var definitions: Array = RunAuthoredPatchDefinitions.load_definitions()
+	_check(definitions.any(func(item): return item.get("id") == "needle_echo" and item.get("slot") == "HEAD"), "authored Needle Echo HEAD record exists")
+	app.run_trinkets.append("needle_echo")
+	var carry := app.party_carryover as RunTornCarryover
+	if carry == null or not carry.is_valid():
+		return false
+	worn_wardrobe = RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+		definitions, app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+	if not worn_wardrobe.is_valid():
+		return false
+	var sewn: Dictionary = worn_wardrobe.sew("needle_echo", owner, "HEAD",
+		"live_needle_echo_sew", worn_wardrobe.get_snapshot())
+	var expected := worn_wardrobe.get_snapshot()
+	_check(sewn.get("ok", false) and expected.worn[owner].HEAD == "needle_echo"
+		and carry.can_bind_wardrobe(worn_wardrobe, carry.torn, expected)
+		and carry.bind_wardrobe(worn_wardrobe, carry.torn, expected),
+		"authentic worn HEAD Needle receipt bound to actual carryover")
+	return sewn.get("ok", false) and carry._wardrobe == worn_wardrobe
+
+
 ## Rest's canonical two-owner stitch transaction is committed to the run deck,
 ## rather than forging a stitched hand instance or detached half descriptor.
 func _prepare_live_stitch(first_id: String, second_id: String) -> String:
@@ -340,7 +363,8 @@ func _physical_hit(id: String, position: int, keyboard: bool, damage: int,
 
 func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 		mitt: bool = false, stitch_pair: Array = [], scope: bool = false,
-		head_status: bool = false, visor: String = "", heavy: bool = false) -> bool:
+		head_status: bool = false, visor: String = "", heavy: bool = false,
+		needle: bool = false, upgrade_strike: bool = false) -> bool:
 	worn_wardrobe = null
 	# Only the predecessor is terminally settled to reach a genuine connected
 	# route quickly. Every asserted patch attack below hits a live next Fight.
@@ -393,6 +417,16 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 	if not stitch_pair.is_empty():
 		_check(stitch_pair.size() == 2 and not _prepare_live_stitch(stitch_pair[0], stitch_pair[1]).is_empty(),
 			"genuine Rest descriptor ready before routed battle")
+	if upgrade_strike:
+		var slot: int = app.run_deck.find("warden_strike")
+		var upgraded := RunRestCardUpgrade.new(app.run_deck,
+			{"warden_strike": "warden_strike_plus"}).choose_upgrade(slot)
+		_check(slot >= 0 and upgraded.get("ok", false)
+			and upgraded.deck.has("warden_strike_plus"),
+			"genuine upgraded Warden Strike+ joins owned run deck before Fight")
+		if not upgraded.get("ok", false):
+			return false
+		app.run_deck.assign(upgraded.deck)
 	if visor == "absent":
 		# A genuinely unpatched run: the real deck owns both Rivet variants but
 		# no wardrobe is ever bound for this battle.
@@ -405,6 +439,8 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 			bound = _bind_visor(owner, visor == "sewn")
 		elif head_status:
 			bound = _bind_head_statuses()
+		elif needle:
+			bound = _bind_needle(owner)
 		elif mitt:
 			bound = _bind_mitt(owner)
 		else:
@@ -464,9 +500,9 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 			and projection.get("ok", false)
 			and projection.get("heads", {}).get(owner, {}) == expected_sewn,
 			"starter and direct-fire services share one authenticated HEAD projection")
-	elif not mitt:
+	elif not mitt and not needle:
 		await _probe_patch_refresh(owner)
-	else:
+	elif mitt:
 		_check(presenter._fray != null and presenter._fray.is_valid()
 			and presenter._fray._unravel == presenter._unravel
 			and presenter._fray._deck == app.deck
@@ -977,6 +1013,7 @@ func _run() -> void:
 	await _head_mounted_cases(fixture)
 	await _visor_cases(fixture)
 	await _mitt_heavy_cases(fixture)
+	await _needle_mounted_cases(fixture)
 	await _finish_patch_play()
 
 
@@ -1804,4 +1841,150 @@ func _mitt_heavy_cases(fixture: Dictionary) -> void:
 			_check(not presenter._resolve_attack(app.party, app.enemies, "warden_heavy_thimble", 1).get("ok", false)
 				and _live_state() == state_torn,
 				"torn Warden cannot attack or spend mitt")
+		await _click(app.return_button)
+
+## Independent complete game snapshots include the live Needle latch/quote and
+## the battle's one authentic Pinned identity, not just the rendered HUD.
+func _needle_state() -> Array:
+	var hand = app.get_node("LiveSupportHand")
+	var rules: CombatHeirloomPatchTriggers = hand._heirloom
+	return [_live_state(), presenter._pinned._pinner_by_position.duplicate(true),
+		rules._needle_used if rules != null else null,
+		rules._pending_needle.duplicate(true) if rules != null else null,
+		rules._turn if rules != null else null, rules._ticket if rules != null else null]
+
+
+func _needle_mounted_cases(fixture: Dictionary) -> void:
+	for scenario in ["strike", "plus", "nonwearer", "torn", "unworn"]:
+		var owner := "" if scenario == "unworn" else (
+			"seamstress" if scenario == "nonwearer" else "warden")
+		var upgrading: bool = scenario == "plus"
+		var torn: bool = scenario == "torn"
+		if not await _entry(fixture, owner, torn, false, false, [], false,
+				false, "", false, owner != "", upgrading):
+			_check(false, "real Needle Fight mounted " + scenario)
+			continue
+		var hand = app.get_node("LiveSupportHand")
+		var rules: CombatHeirloomPatchTriggers = hand._heirloom
+		_check(app.deck.turn_active and presenter._battle == app.battle_view
+			and presenter._deck == app.deck and app.enemies.get_enemies().size() > 0
+			and (rules == null if owner == "" else rules != null
+				and rules._enemies == app.enemies and rules._party == app.party
+				and rules._pinned == presenter._pinned),
+			"nonvacuous real mounted carried battle authority " + scenario)
+		if rules == null and owner != "":
+			await _click(app.return_button)
+			continue
+		var id := "warden_strike_plus" if upgrading else "warden_strike"
+		var target: Dictionary = app.enemies.get_enemy(1)
+		_check(target.get("hp", 0) > 0 and presenter._pinned.pin_enemy(
+			app.enemies, 1, "warden") and presenter._pinned.pinner_for_enemy(1) == "warden",
+			"authentic live Pinned token and living original target " + scenario)
+		if scenario != "torn" and not await _ensure_held(id):
+			_check(false, "genuine held Needle target exists " + scenario)
+			await _click(app.return_button)
+			continue
+		var before := _needle_state()
+		var preview: Dictionary = presenter._resolve_attack(app.party, app.enemies, id, 0, true)
+		_check((not preview.get("playable", false) if torn else (
+			preview.get("playable", false) and preview.hits.any(
+				func(hit): return hit.position == 1))) and _needle_state() == before,
+			"read-only live forecast never quotes or consumes Needle " + scenario)
+		if scenario == "torn":
+			_check(app.party.is_downed(1) and not rules.quote_needle_hit("warden", 1).ok
+				and _needle_state() == before,
+				"torn/downed Needle wearer cannot quote or mutate state")
+			await _click(app.return_button)
+			continue
+		if scenario == "strike":
+			# Draw genuine extra copies through CombatDeck before this turn's
+			# first payment so a second successful card stays in this turn.
+			while app.deck.hand.count(id) < 2 and not app.deck.draw_pile.is_empty():
+				_check(app.deck.draw_extra(1) == 1,
+					"second Strike drawn from real owned battle deck")
+			app._refresh_hand()
+			await _frames()
+			_check(app.deck.hand.count(id) >= 2, "two genuine held Strike copies for same-turn latch")
+		if rules != null:
+			var forged_source: Dictionary = rules.quote_needle_hit("warden", 1)
+			if scenario in ["strike", "plus"]:
+				_check(forged_source.get("ok", false)
+					and forged_source.get("bonus_damage") == 1,
+					"living wearer receives sealed pre-hit Needle quote")
+				var forged := forged_source.duplicate(true)
+				forged["ticket"] = -999
+				var game_before := _live_state()
+				var refused: Dictionary = presenter._play.play_attack(app.deck, app.party,
+					app.enemies, id, 1, {}, {}, 0, null, {}, rules, forged)
+				_check(refused == {"ok": false, "hits": []}
+					and _live_state() == game_before
+					and rules._pending_needle.is_empty() and not rules._needle_used,
+					"forged seal refuses atomically and cancels pending quote")
+				if scenario == "strike":
+					var stale_quote: Dictionary = rules.quote_needle_hit("warden", 1)
+					_check(stale_quote.get("ok", false)
+						and presenter._pinned.clear_pin(1), "authentic pin disappears after quote")
+					var without_pin := _live_state()
+					var stale_result: Dictionary = presenter._play.play_attack(
+						app.deck, app.party, app.enemies, id, 1, {}, {}, 0,
+						null, {}, rules, stale_quote)
+					_check(stale_result == {"ok": false, "hits": []}
+						and _live_state() == without_pin and not rules._needle_used
+						and rules._pending_needle.is_empty(),
+						"stale quote after lost Pin refuses without deck, party or RNG mutation")
+					_check(presenter._pinned.pin_enemy(app.enemies, 1, "warden"),
+						"authentic Pinned authority can be restored for actual paid hit")
+			else:
+				_check(not forged_source.get("ok", false)
+					and rules._pending_needle.is_empty(),
+					"nonwearer cannot reserve Needle bonus")
+		_check(app.enemies.gain_block(1, 3),
+			"real enemy Block protects the confirmed Needle receipt")
+		var original: Dictionary = app.enemies.get_enemy(1)
+		var payment := [app.deck.energy, app.deck.hand.count(id),
+			app.deck.discard_pile.count(id), app.run_rng.state]
+		_check(await _choose(id, false), "actual selected held card " + scenario)
+		await _click(app.get_node("LiveEnemyRoster")._labels[0])
+		var receipt: Dictionary = presenter.last_event
+		var expected_damage := (7 if upgrading else 6) + (
+			1 if scenario in ["strike", "plus"] else 0)
+		var now: Dictionary = app.enemies.get_enemy(1)
+		_check(receipt.get("ok", false) and receipt.get("hits", []).size() == 1
+			and receipt.hits[0].position == 1
+			and receipt.hits[0].damage == expected_damage
+			and receipt.hits[0].block_absorbed == mini(original.block, expected_damage)
+			and receipt.hits[0].hp_loss == mini(original.hp,
+				maxi(0, expected_damage - original.block))
+			and now.hp == original.hp - receipt.hits[0].hp_loss
+			and now.block == original.block - receipt.hits[0].block_absorbed,
+			"actual original hit rows exactly reconcile HP/Block " + scenario)
+		_check(app.deck.energy == payment[0] - 1
+			and app.deck.hand.count(id) == payment[1] - 1
+			and app.deck.discard_pile.count(id) == payment[2] + 1
+			and app.run_rng.state == payment[3]
+			and (rules == null or rules._needle_used == (scenario in ["strike", "plus"]))
+			and (rules == null or rules._pending_needle.is_empty()),
+			"exactly one paid/discarded card and correct latch with no RNG draw " + scenario)
+		if scenario == "strike" and app.deck.hand.has(id):
+			var second_before: Dictionary = app.enemies.get_enemy(1)
+			var latch_before := _needle_state()
+			_check(await _choose(id, false), "second real held Strike selected in same turn")
+			await _click(app.get_node("LiveEnemyRoster")._labels[0])
+			_check(presenter.last_event.get("ok", false)
+				and presenter.last_event.hits.size() == 1
+				and presenter.last_event.hits[0].damage == 6
+				and app.enemies.get_enemy(1).hp == second_before.hp - 6
+				and rules._needle_used,
+				"second genuine same-turn hit cannot earn second +1")
+			_check(_needle_state()[1] == latch_before[1],
+				"same-pinner Pin survives both valid hits")
+			await _click(app.end_turn_button)
+			_check(app.deck.turn_active and app.enemy_intents._turn_index > 0,
+				"real enemy phase opens a later player turn")
+			if not app.party.is_downed(1) and app.enemies.get_enemy(1).hp > 0:
+				var fresh: CombatHeirloomPatchTriggers = hand.current_attack_heirloom(
+					app.deck, app.party)
+				_check(fresh == rules and not rules._needle_used
+					and rules._pending_needle.is_empty(),
+					"next real scheduler turn re-arms exactly one Needle use")
 		await _click(app.return_button)
