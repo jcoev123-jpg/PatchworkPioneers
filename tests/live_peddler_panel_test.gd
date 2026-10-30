@@ -326,7 +326,7 @@ func _check_card_row(index: int, offer: Dictionary, context: String) -> void:
 	var name := str(definition.get("display_name", "")).strip_edges()
 	if name.is_empty():
 		name = _expected_name(str(offer["id"]))
-	var prefix := str(offer["owner"]).capitalize() + "  ·  "
+	var prefix := LivePeddlerPanel.ACTION_KEY_LABELS[index] + "  ·  " + str(offer["owner"]).capitalize() + "  ·  "
 	var suffix := "  ·  %d gold" % int(offer["price"])
 	var money := int(panel._source["state"]["gold"])
 	if bool(offer["sold"]):
@@ -339,7 +339,7 @@ func _check_card_row(index: int, offer: Dictionary, context: String) -> void:
 			and (actual_name == name or (actual_name.ends_with(LivePeddlerPanel.ELLIPSIS)
 			and name.begins_with(actual_name.trim_suffix(LivePeddlerPanel.ELLIPSIS).strip_edges())))
 			and not lines[0].contains(str(offer["id"])),
-			label + ": quote, sale/shortfall and catalog display name coexist")
+			label + ": key label, quote, sale/shortfall and catalog display name coexist")
 	var energy := "%d energy  ·  " % int(definition["cost"])
 	var effect := lines[1].substr(energy.length()) if lines[1].begins_with(energy) else ""
 	var full := str(described["line"])
@@ -415,6 +415,8 @@ func _layout(visit: RunPeddlerVisit) -> void:
 	_check(actual.size() == 5 and panel.card_buttons.size() == 3
 			and actual.has(panel.patch_button) and actual.has(panel.leave_button),
 			"exactly three card buys, one patch buy and Leave (five buttons)")
+	_check(LivePeddlerPanel.ACTION_KEY_LABELS == ["1", "2", "3", "4", "0"],
+			"the five visible labels are the exact keys the panel routes: 1/2/3 cards, 4 patch, 0 Leave")
 	_check(panel.title_label.text.contains("PEDDLER")
 			and panel.wallet_label.text.contains("500 gold"), "title and wallet are readable")
 	# The band opens on the neutral hint or on the genuine preview of the card
@@ -457,7 +459,8 @@ func _layout(visit: RunPeddlerVisit) -> void:
 			and patch_button.get_meta("offer_id") == patch_offer["id"]
 			and patch_button.get_meta("offer_kind") == "trinket" and not patch_button.disabled,
 			"patch row retains authored ID metadata and is actionable")
-	_check(patch_button.text.begins_with("PATCH  ·  "), "patch row starts with PATCH")
+	_check(patch_button.text.begins_with(LivePeddlerPanel.ACTION_KEY_LABELS[3] + "  ·  "),
+			"patch row starts with its own 4 key label")
 	_check(not patch_button.text.contains(str(patch_offer["id"]))
 			and not patch_button.text.contains("_"), "patch row hides the raw item ID")
 	_check(patch_button.text.contains(_expected_name(str(patch_offer["id"]))),
@@ -480,8 +483,10 @@ func _layout(visit: RunPeddlerVisit) -> void:
 			and patch_button.get_node_or_null("FabricEdging") != null,
 			"patch wears a separate opaque contrasting ticket and shipped fabric edge")
 	_check(screen.encloses(panel.leave_button.get_global_rect())
-			and panel.leave_button.text == "Leave  ·  FREE" and not panel.leave_button.disabled,
-			"free Leave is visible, enabled and inside the viewport")
+			and panel.leave_button.text == "0  ·  Leave  ·  FREE"
+			and panel.leave_button.text.begins_with(LivePeddlerPanel.ACTION_KEY_LABELS[4] + "  ·  ")
+			and not panel.leave_button.disabled,
+			"free Leave is visible, carries its 0 key label and is enabled")
 	_check(_fits(panel.leave_button), "Leave text fits its sewn button")
 	var action_rects: Array[Rect2] = []
 	for button in panel.card_buttons + [panel.patch_button, panel.leave_button]:
@@ -501,20 +506,22 @@ func _layout(visit: RunPeddlerVisit) -> void:
 	_check(panel.status_label.size.x >= LivePeddlerPanel.STATUS_WIDTH
 			and panel.status_label.size.y >= 24,
 			"the status band really has its designed room at 1280x720")
-	# _caption remains the exact one-line oracle for the unchanged patch and
-	# any legacy callers. Card rows instead use measured two-line projections.
+	# _caption remains the exact one-line oracle for the patch quote (now led
+	# by its own visible 4 key label) and any legacy callers. Card rows instead
+	# use measured two-line projections.
 	var caption_font := panel.patch_button.get_theme_font("font")
 	var caption_size := panel.patch_button.get_theme_font_size("font_size")
 	var worst_patch := 0.0
 	if caption_font != null:
 		for entry in authored_cards + authored_patches:
-			var prefix := str(entry["owner"]).capitalize() if entry.has("owner") else "PATCH"
+			var prefix := str(entry["owner"]).capitalize() if entry.has("owner") \
+					else LivePeddlerPanel.ACTION_KEY_LABELS[3]
 			var line := "%s  ·  %s  ·  %d gold" % [
 					prefix, _expected_name(str(entry["id"])), int(entry["price"])]
 			_check(panel._caption(prefix, entry["id"], entry["price"], false) == line
 					and panel._caption(prefix, entry["id"], entry["price"], true) == line + "  ·  SOLD",
 					"legacy one-line caption keeps price and sold suffix: " + entry["id"])
-			if prefix == "PATCH":
+			if prefix == LivePeddlerPanel.ACTION_KEY_LABELS[3]:
 				for caption in [line, line + "  ·  SOLD", line + "  ·  short %d" % int(entry["price"])]:
 					worst_patch = maxf(worst_patch, caption_font.get_string_size(caption,
 							HORIZONTAL_ALIGNMENT_LEFT, -1, caption_size).x)
@@ -1041,16 +1048,24 @@ func _push_shortcut(key: Key, echo: bool = false, shift: bool = false) -> bool:
 
 
 func _shortcut_cases() -> void:
-	# --- enabled offers: 1/2/3 cards, 4 patch, 0 Leave, each pressed once ---
+	# --- enabled offers: 1/2/3 cards, 4 patch, 0 Leave, each pressed once.
+	# Physical and keypad digits share one scenario table so the five VISIBLE
+	# labels are proven against both key forms the mounted panel dispatches. ---
 	var scenarios := [
-		{"key": KEY_1, "index": 0, "kind": "card", "spy": "card0"},
-		{"key": KEY_2, "index": 1, "kind": "card", "spy": "card1"},
-		{"key": KEY_3, "index": 2, "kind": "card", "spy": "card2"},
-		{"key": KEY_4, "index": 0, "kind": "trinket", "spy": "patch"},
-		{"key": KEY_0, "index": -1, "kind": "leave", "spy": "leave"},
+		{"key": KEY_1, "label": "1", "index": 0, "kind": "card", "spy": "card0"},
+		{"key": KEY_2, "label": "2", "index": 1, "kind": "card", "spy": "card1"},
+		{"key": KEY_3, "label": "3", "index": 2, "kind": "card", "spy": "card2"},
+		{"key": KEY_4, "label": "4", "index": 0, "kind": "trinket", "spy": "patch"},
+		{"key": KEY_0, "label": "0", "index": -1, "kind": "leave", "spy": "leave"},
+		{"key": KEY_KP_1, "label": "1", "index": 0, "kind": "card", "spy": "card0"},
+		{"key": KEY_KP_2, "label": "2", "index": 1, "kind": "card", "spy": "card1"},
+		{"key": KEY_KP_3, "label": "3", "index": 2, "kind": "card", "spy": "card2"},
+		{"key": KEY_KP_4, "label": "4", "index": 0, "kind": "trinket", "spy": "patch"},
+		{"key": KEY_KP_0, "label": "0", "index": -1, "kind": "leave", "spy": "leave"},
 	]
 	for scenario in scenarios:
 		var key: int = scenario["key"]
+		var label: String = scenario["label"]
 		var index: int = scenario["index"]
 		var kind: String = scenario["kind"]
 		var spy_name: String = scenario["spy"]
@@ -1061,6 +1076,13 @@ func _shortcut_cases() -> void:
 		await _frames()
 		_check(panel.get_viewport().gui_get_focus_owner() == panel.card_buttons[0],
 				"panel button has focus before shortcut " + str(key))
+		# The shortcut's target is the mounted action whose own caption visibly
+		# opens with that exact numeral: the label and the dispatched key agree.
+		var labeled: Button = panel.leave_button if kind == "leave" \
+				else (panel.patch_button if kind == "trinket" \
+				else panel.card_buttons[index])
+		_check(labeled.text.begins_with(label + "  ·  "),
+				"key " + str(key) + " targets the action visibly labeled " + label)
 		var counts := _press_totals()
 		var passed_on := await _push_shortcut(key)
 		_check(not passed_on, "enabled shortcut " + str(key) + " is handled, not passed on")
@@ -1753,7 +1775,7 @@ func _shared_hem_case() -> void:
 		and int(hem_offer["price"]) == int(authored_hem["shop_price_gold"]),
 		"bound Hem offer is the canonical 100-gold ARM ID")
 	var hem_rows: Array = panel.patch_button.text.split("\n")
-	_check(hem_rows.size() == 2 and hem_rows[0] == "PATCH  ·  Shared Hem  ·  100 gold",
+	_check(hem_rows.size() == 2 and hem_rows[0] == "4  ·  Shared Hem  ·  100 gold",
 		"Hem ticket keeps its exact source-quoted 100-gold price and authored name")
 	_check(hem_rows[1].begins_with("ARM  ·  ")
 		and (hem_rows[1] == "ARM  ·  " + LivePeddlerPanel.SHARED_HEM_SHORT
@@ -1860,8 +1882,8 @@ func _shared_hem_case() -> void:
 	_check(leave_visit.is_open(), "a separately opened genuine Hem visit stays open")
 	var leave_before := leave_visit.read_state()
 	await _bind(leave_visit)
-	_check(panel.leave_button.text == "Leave  ·  FREE" and not panel.leave_button.disabled,
-		"Leave remains free beside the priced Hem")
+	_check(panel.leave_button.text == "0  ·  Leave  ·  FREE" and not panel.leave_button.disabled,
+		"Leave remains free and 0-labeled beside the priced Hem")
 	await _act(panel.leave_button, true, KEY_SPACE)
 	_check(intents.size() == 1 and intents[0]["kind"] == "leave",
 		"Leave emits exactly one leave intent")
