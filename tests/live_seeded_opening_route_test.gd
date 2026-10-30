@@ -476,10 +476,12 @@ func _party_slate(app, page: Rect2) -> void:
 		var portrait: TextureRect = row.get_node("Portrait")
 		_check(portrait.expand_mode == TextureRect.EXPAND_IGNORE_SIZE
 			and portrait.stretch_mode == TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			and portrait.texture_filter == CanvasItem.TEXTURE_FILTER_LINEAR,
-			"portrait preserves its aspect ratio with linear filtering")
+			and portrait.texture_filter == CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS,
+			"portrait preserves its aspect ratio with mipmapped filtering")
 		if ResourceLoader.exists(paths[index], "Texture2D"):
-			_check(portrait.texture == load(paths[index]), "committed idle portrait is mounted")
+			var bust := portrait.texture as AtlasTexture
+			_check(bust != null and bust.atlas == load(paths[index]) and bust.region.has_area(),
+				"committed idle portrait is mounted as a head-and-shoulders crop")
 		else:
 			_check(portrait.texture == null and row.get_node_or_null("PortraitFallback") != null
 				and not caption.text.is_empty(), "missing portrait retains readable fallback and name")
