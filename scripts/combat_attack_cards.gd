@@ -83,6 +83,8 @@ func commit_transaction(staged: CombatAttackCards) -> void:
 ## real deck for this half. No RNG or synthetic half enters the shared piles.
 func resolve_staged_half(party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, base_bonus: int = 0) -> Dictionary:
+	if base_bonus not in [0, 2]:
+		return _failure()
 	var eligibility := CombatDeck.new([], RandomNumberGenerator.new())
 	eligibility.hand.append(card_id)
 	eligibility.combat_state.start_player_turn()
@@ -98,15 +100,32 @@ func resolve_staged_half(party: CombatParty, enemies: CombatEnemies,
 func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int = 0, attacker_statuses: Dictionary = {},
 		enemy_statuses_by_position: Dictionary = {}, cost_discount: int = 0,
-		mitt: CombatFrayfinderMitt = null, quote: Dictionary = {}) -> Dictionary:
+		mitt: CombatFrayfinderMitt = null, quote: Dictionary = {},
+		heirloom: CombatHeirloomPatchTriggers = null, needle_quote: Dictionary = {}) -> Dictionary:
 	var bonus := 0
 	if mitt != null and quote.get("bonus") == 2:
 		bonus = mitt.authorize_starter_hit(quote, deck, party, enemies, card_id,
 			target_position, cost_discount)
 		if bonus != 2:
+			if heirloom != null:
+				heirloom.cancel_needle_hit()
 			return _failure()
-	return _play_attack(deck, party, enemies, card_id, target_position,
+	# Only the battle-bound Heirloom verifies its own pending quote, wearer,
+	# target and Pin. Never accept a supplied +1 or a preview as authority.
+	if heirloom != null or not needle_quote.is_empty():
+		if heirloom == null or not heirloom.authorizes_needle_hit(
+				needle_quote, party, enemies, card_id, target_position):
+			if heirloom != null:
+				heirloom.cancel_needle_hit()
+			return _failure()
+		bonus += 1
+	var receipt := _play_attack(deck, party, enemies, card_id, target_position,
 		attacker_statuses, enemy_statuses_by_position, cost_discount, bonus)
+	if heirloom != null:
+		# Finish against the actual original hit rows, including zero-contact
+		# successes; a failed paid commit clears its provisional quote.
+		heirloom.finish_needle_hit(needle_quote, receipt)
+	return receipt
 
 
 ## Internal damage seam: only an authenticated starter quote or a stitched
@@ -205,7 +224,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, attacker_statuses: Dictionary,
 		enemy_statuses_by_position: Dictionary, select_target: bool,
 		cost_discount: int = 0, base_bonus: int = 0) -> Dictionary:
-	if base_bonus not in [0, 2]:
+	if base_bonus not in [0, 1, 2, 3]:
 		return _failure()
 	if deck == null or party == null or enemies == null:
 		return _failure()

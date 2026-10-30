@@ -220,6 +220,32 @@ func quote_needle_hit(attacker_id: Variant, position: Variant) -> Dictionary:
     return quote.duplicate(true)
 
 
+## A sealed, still-live quote may authorize ONLY the one supported held-hand
+## Warden starter hit. The caller's claimed bonus is never the authority.
+func authorizes_needle_hit(quote: Dictionary, party: CombatParty,
+        enemies: CombatEnemies, card_id: String, position: int) -> bool:
+    if card_id not in ["warden_strike", "warden_strike_plus"] \
+            or party != _party or enemies != _enemies or _pending_needle.is_empty() \
+            or _needle_used or not is_current() or _turn <= 0:
+        return false
+    if quote != _pending_needle["quote"] or quote.get("ok") != true \
+            or quote.get("bonus_damage") != 1 or quote.get("position") != position \
+            or quote.get("attacker_id") != "warden" or quote.get("turn") != _turn:
+        return false
+    var wearer := _wearer(NEEDLE)
+    if wearer.is_empty() or wearer["id"] != "warden":
+        return false
+    var old: Dictionary = _pending_needle["before"]
+    var now := _enemies.get_enemy(position)
+    return not now.is_empty() and now == old and now.get("hp", 0) > 0 \
+        and _pinned.pinner_for_enemy(position) == _pending_needle["pinner"]
+
+
+## A refused paid commit must not leave a quote capable of later replay.
+func cancel_needle_hit() -> void:
+    _pending_needle.clear()
+
+
 ## Accept either the genuine CombatStatusAttacks event or a CombatAttackCards
 ## result with hit rows; require exact authoritative Block/HP deltas, not the
 ## mere claim of a paid card, label, preview, or non-contact success.

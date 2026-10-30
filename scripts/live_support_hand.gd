@@ -1045,6 +1045,12 @@ func _current_heirloom_rules(deck: CombatDeck, party: CombatParty) -> CombatHeir
 	return _heirloom
 
 
+## The attack presenter may borrow only this battle's turn-synchronized,
+## genuinely carried Heirloom authority. No detached replacement is created.
+func current_attack_heirloom(deck: CombatDeck, party: CombatParty) -> CombatHeirloomPatchTriggers:
+	return _current_heirloom_rules(deck, party)
+
+
 ## Target-free commit of the selected Tinker Path card. The face the player is
 ## looking at supplies the presented metadata; the battle's one Path authority
 ## revalidates it with the real Tinker position, turn and energy before it
