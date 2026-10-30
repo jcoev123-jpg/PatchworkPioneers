@@ -94,7 +94,7 @@ func _late_scenario(heal: bool, keyboard: bool) -> Array:
 	for child in app.campfire_view.get_children():
 		if child is Button:
 			actions.append(child.text)
-	_check(actions == ["Heal", "0 Leave · free"], "later Rest mounts only Heal and Leave")
+	_check(actions == ["1 Heal · 30%", "0 Leave · free"], "later Rest mounts only Heal and Leave")
 	var admitted: Dictionary = app._sewing_context()
 	for key in original:
 		if key != "route":

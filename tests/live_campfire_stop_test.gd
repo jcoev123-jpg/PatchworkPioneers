@@ -59,7 +59,7 @@ func _camp_enter(atlas: bool) -> void:
 	for child in app.campfire_view.get_children():
 		if child is Button:
 			actions.append(child.text)
-	_check(actions == ["Heal", "0 Leave · free"] and not is_instance_valid(app.rest_view)
+	_check(actions == ["1 Heal · 30%", "0 Leave · free"] and not is_instance_valid(app.rest_view)
 		and not is_instance_valid(app.shop_view), "only Heal and Leave mounted, Leave shows primary 0")
 	var viewport := Rect2(Vector2.ZERO, Vector2(1280, 720))
 	_check(viewport.encloses(app.campfire_view.get_global_rect())
@@ -69,6 +69,11 @@ func _camp_enter(atlas: bool) -> void:
 		and app.campfire_view.size == Vector2(880, 600), "real route mounts authored sewn panel")
 	_check(app.campfire_heal_button == app.campfire_view.heal_button
 		and app.campfire_leave_button == app.campfire_view.leave_button, "existing aliases reference sewn controls")
+	_check(app.campfire_view.heal_button.tooltip_text.contains("30% max HP")
+		and app.campfire_view.heal_button.tooltip_text.contains("Torn revives at 1 HP first")
+		and app.campfire_view.heal_button.tooltip_text.contains("1 →"), "Heal tooltip spells out 1/30%-max/Torn revival")
+	_check(app.campfire_view.leave_button.tooltip_text.contains("Leave")
+		and app.campfire_view.leave_button.tooltip_text.contains("2 also works"), "Leave tooltip remains truthful")
 	for i in range(3):
 		var hero: Dictionary = before.heroes[i]
 		var forecast := mini(hero.max_hp, maxi(1, hero.hp) + int(floor(hero.max_hp * 0.3)))
