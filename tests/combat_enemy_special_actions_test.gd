@@ -16,6 +16,7 @@ func _initialize() -> void:
 	_test_status_additions_and_owner_turns()
 	_test_dead_sources_and_rejections()
 	_test_replay_and_detached_results()
+	_test_tangled_enemy_debuff()
 	for failure in failures:
 		printerr(failure)
 	print("combat_enemy_special_actions_test: ",
@@ -493,7 +494,21 @@ func _test_dead_sources_and_rejections() -> void:
 			"direction": 1, "target_position": "1"},
 		{"type": "shove", "enemy_position": 2, "amount": 0,
 			"direction": 1, "target_position": 1, "extra": true},
-		_buff(1, 1), _debuff(1, 1, "weak", 1)]
+		{"type": "debuff", "enemy_position": 2, "amount": 1,
+			"status": "tangle", "target_position": 1},
+		{"type": "debuff", "enemy_position": 2, "amount": 0,
+			"status": "tangled", "target_position": 1},
+		{"type": "debuff", "enemy_position": 2, "amount": -1,
+			"status": "tangled", "target_position": 1},
+		{"type": "debuff", "enemy_position": 2, "amount": 1.5,
+			"status": "tangled", "target_position": 1},
+		{"type": "debuff", "enemy_position": 2, "amount": "1",
+			"status": "tangled", "target_position": 1},
+		{"type": "debuff", "enemy_position": 2, "amount": 1,
+			"status": "tangled", "target_position": 0},
+		{"type": "debuff", "enemy_position": 2, "amount": 1,
+			"status": "tangled", "target_position": 4},
+		_buff(1, 1), _debuff(1, 1, "weak", 1), _debuff(1, 1, "tangled", 1)]
 	for bad in bad_later:
 		_reject("late bad/duplicate action " + str(bad), [valid_first, bad])
 	_reject("duplicate after valid buff", [_buff(1, 1), _shove(1, 2, 1)])
@@ -523,6 +538,12 @@ func _test_dead_sources_and_rejections() -> void:
 	party._heroes[1]["statuses"] = {"weak": MAX_INT}
 	_reject("late Weak counter arithmetic overflow after shove",
 		[_shove(1, 1, 1), _debuff(2, 1, "weak", 1)],
+		party, enemies)
+	party = _party()
+	enemies = _enemies()
+	party._heroes[1]["statuses"] = {"tangled": MAX_INT}
+	_reject("late Tangled counter arithmetic overflow after shove",
+		[_shove(1, 1, 1), _debuff(2, 1, "tangled", 1)],
 		party, enemies)
 	party = _party()
 	enemies = _enemies()
@@ -586,3 +607,269 @@ func _test_replay_and_detached_results() -> void:
 			and result_again == {"ok": true, "events": []}
 			and _snapshot(party, enemies) == after,
 			"events are independent detached return dictionaries")
+
+
+func _test_rng(seed_value: int) -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	return rng
+
+
+func _test_deck(cards: Array[String], seed_value: int = 4701) -> CombatDeck:
+	var deck := CombatDeck.new(cards, _test_rng(seed_value))
+	_check(deck.draw_pile.size() == cards.size(), "test deck has all supplied cards")
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3,
+		"test deck starts active with 3 energy")
+	return deck
+
+
+func _deck_snapshot(deck: CombatDeck, party: CombatParty) -> Dictionary:
+	var result := {}
+	if party != null:
+		result["party"] = party.get_heroes()
+	if deck != null:
+		result["hand"] = deck.hand.duplicate(true)
+		result["draw"] = deck.draw_pile.duplicate(true)
+		result["discard"] = deck.discard_pile.duplicate(true)
+		result["energy"] = deck.energy
+		result["turn"] = deck.turn_active
+		result["state_energy"] = deck.combat_state.energy
+		result["state_turn"] = deck.combat_state.player_turn_active
+		result["rng_seed"] = deck._rng.seed
+		result["rng_state"] = deck._rng.state
+	return result
+
+
+func _apply_turn_batch(party: CombatParty, ticked_actors: Array) -> void:
+	for index in range(CombatParty.PARTY_SIZE):
+		var hero: Dictionary = party._heroes[index]
+		var next: Dictionary = ticked_actors[index]
+		hero["hp"] = next["hp"]
+		hero["block"] = next["block"]
+		if hero.has("statuses") or not next["statuses"].is_empty():
+			hero["statuses"] = next["statuses"].duplicate(true)
+
+
+func _test_tangled_enemy_debuff() -> void:
+	# --- AC1: Tangled debuff execution, receipt shape, and state isolation ---
+	var party := _party()
+	var enemies := _enemies()
+	_check(party.gain_block(1, 4) and party.gain_block(2, 6) and party.gain_block(3, 2),
+		"AC1: distinct initial block on heroes")
+	_check(enemies.gain_block(1, 3) and enemies.gain_block(2, 5),
+		"AC1: distinct initial block on enemies")
+	var before_heroes := party.get_heroes()
+	var before_foes := enemies.get_enemies()
+	var identities := party._heroes.duplicate()
+	var authored_action := {
+		"type": "debuff",
+		"enemy_position": 1,
+		"amount": 1,
+		"target_position": 2,
+		"status": "tangled"
+	}
+	var input_actions := [authored_action]
+	var input_before := input_actions.duplicate(true)
+	var expected_rng := _rng_expected()
+	var result := rules.execute_actions(party, enemies, input_actions)
+
+	_check(randi() == expected_rng, "AC1: execute_actions consumes no global RNG")
+	_check(result == {"ok": true, "events": [
+		{"type": "debuff", "enemy_position": 1, "applied": true, "target_position": 2, "status": "tangled"}]},
+		"AC1: execute_actions succeeds and emits exact receipt shape")
+	_check(input_actions == input_before, "AC1: caller action records and order remain immutable")
+	_check(party.get_hero(2)["id"] == "seamstress"
+		and party.get_hero(2)["statuses"] == {"tangled": 1}
+		and party.get_hero(2)["hp"] == 30 and party.get_hero(2)["block"] == 6,
+		"AC1: writes Tangled 1 on only the living hero currently at position 2, HP and Block unchanged")
+	_check(party.get_hero(1)["id"] == "warden" and party.get_hero(1)["hp"] == 40
+		and party.get_hero(1)["block"] == 4 and party.get_hero(1).get("statuses", {}).is_empty(),
+		"AC1: hero at position 1 untouched in HP, Block, and statuses")
+	_check(party.get_hero(3)["id"] == "tinker" and party.get_hero(3)["hp"] == 26
+		and party.get_hero(3)["block"] == 2 and party.get_hero(3).get("statuses", {}).is_empty(),
+		"AC1: hero at position 3 untouched in HP, Block, and statuses")
+	var expected_heroes := before_heroes.duplicate(true)
+	expected_heroes[1]["statuses"] = {"tangled": 1}
+	_check(party.get_heroes() == expected_heroes and enemies.get_enemies() == before_foes,
+		"AC1: exact snapshots verify no mutation to unrelated heroes, enemies, HP, Block or roster order")
+	_check(is_same(party._heroes[0], identities[0])
+		and is_same(party._heroes[1], identities[1])
+		and is_same(party._heroes[2], identities[2]),
+		"AC1: retains original live hero dictionary identities")
+
+	# --- AC2: Rules enforcement (Damage, Movement denial, Shove allowed, Expiry) ---
+	var statuses_service := CombatStatuses.new()
+	var tangled_hero_statuses: Dictionary = party.get_hero(2)["statuses"]
+
+	# 1. Damage rules
+	_check(statuses_service.adjusted_attack_damage(8, {}, tangled_hero_statuses) == 10,
+		"AC2: incoming attack against Tangled 1 hero gets +2 damage (8 to 10)")
+	_check(statuses_service.adjusted_attack_damage(8, {"weak": 1}, tangled_hero_statuses) == 8,
+		"AC2: Tangled +2 applies after attacker Weak floor (8 * 3/4 = 6 to 8)")
+	_check(statuses_service.adjusted_attack_damage(8, {"weak": 1}, {"exposed": 1, "tangled": 1}) == 11,
+		"AC2: Tangled +2 applies after attacker Weak and defender Exposed floor (8 * 9/8 = 9 to 11)")
+	_check(statuses_service.adjusted_attack_damage(8, {}, {"tangled": 3}) == 10,
+		"AC2: +2 damage is independent of Tangled counter magnitude (Tangled 3 is still +2)")
+	_check(statuses_service.adjusted_attack_damage(0, {}, tangled_hero_statuses) == 0,
+		"AC2: zero-base attack gets no Tangled bonus")
+	_check(statuses_service.adjusted_attack_damage(8, {}, party.get_hero(1).get("statuses", {})) == 8,
+		"AC2: untangled hero at position 1 receives unmodified base damage")
+
+	# 2. Movement denial: ally paid swap involving Tangled hero
+	var backstep_def := M02PositionCards.new().get_definition("warden_backstep")
+	var deck := _test_deck(["warden_backstep"])
+	var before_swap_snap := _deck_snapshot(deck, party)
+	_check(deck.hand.has("warden_backstep") and deck.energy >= backstep_def["cost"] and deck.turn_active,
+		"AC2 precondition: warden_backstep legitimately held, affordable, turn active")
+	_check(CombatPositionSwaps.preview_adjacent_swap(party, 1, 1).get("ok", false),
+		"AC2 precondition: generic preview succeeds for adjacent swap 1 to 2")
+	var swap_denied := CombatPositionSwaps.play_move_card(deck, party, "warden_backstep", backstep_def)
+	_check(not swap_denied, "AC2: ally swap involving Tangled neighbor at position 2 is denied")
+	_check(_deck_snapshot(deck, party) == before_swap_snap,
+		"AC2: denied swap causes no energy, hand, discard or position mutation")
+
+	# Mover itself Tangled
+	var mover_tangled_party := _party()
+	mover_tangled_party._heroes[0]["statuses"] = {"tangled": 1}
+	var mover_deck := _test_deck(["warden_backstep"])
+	var mover_snap := _deck_snapshot(mover_deck, mover_tangled_party)
+	var mover_swap_denied := CombatPositionSwaps.play_move_card(
+		mover_deck, mover_tangled_party, "warden_backstep", backstep_def)
+	_check(not mover_swap_denied, "AC2: ally swap with Tangled mover at position 1 is denied")
+	_check(_deck_snapshot(mover_deck, mover_tangled_party) == mover_snap,
+		"AC2: denied mover-tangled swap preserves deck and party state")
+
+	# 3. Enemy shove is NOT blocked by Tangled
+	var shove_result := rules.execute_actions(party, enemies, [_shove(1, 2, -1)])
+	_check(shove_result == {"ok": true, "events": [_event("shove", 1, true, 2, -1)]},
+		"AC2: enemy shove targeting Tangled hero succeeds")
+	_check(_ids(party) == ["seamstress", "warden", "tinker"]
+		and party.get_hero(1)["id"] == "seamstress" and party.get_hero(1)["statuses"] == {"tangled": 1}
+		and party.get_hero(2)["id"] == "warden",
+		"AC2: enemy shove moved Tangled Seamstress to position 1 and Warden to position 2")
+
+	# 4. Hero owner-turn tick expires Tangled 1 so later legal ally swap can proceed
+	var batch := CombatStatusTurnBatch.new()
+	var tick_result := batch.tick_side("heroes", party.get_heroes())
+	_check(tick_result.get("ok", false)
+		and tick_result["actors"][0]["statuses"].is_empty(),
+		"AC2: hero owner-turn tick expires Tangled 1 to empty statuses")
+	_apply_turn_batch(party, tick_result["actors"])
+	_check(party.get_hero(1)["statuses"].is_empty()
+		and party.get_hero(2).get("statuses", {}).is_empty(),
+		"AC2: Seamstress at position 1 and Warden at position 2 are now clear of Tangled")
+
+	# Now Warden at pos 2 plays warden_advance (-1 direction to swap with pos 1)
+	var advance_def := M02PositionCards.new().get_definition("warden_advance")
+	var advance_deck := _test_deck(["warden_advance"])
+	var advance_ok := CombatPositionSwaps.play_move_card(
+		advance_deck, party, "warden_advance", advance_def)
+	_check(advance_ok, "AC2: legal ally swap succeeds after Tangled expiry")
+	_check(_ids(party) == ["warden", "seamstress", "tinker"]
+		and party.get_hero(1)["id"] == "warden" and party.get_hero(2)["id"] == "seamstress",
+		"AC2: Warden and Seamstress successfully swapped positions")
+	_check(advance_deck.energy == 2 and advance_deck.hand.is_empty()
+		and advance_deck.discard_pile == ["warden_advance"],
+		"AC2: successful play spent 1 energy and moved card to discard")
+
+	# --- AC3: Stacking, shove re-targeting, dead source, atomic validation ---
+	# 1. Two ordered debuffs on same hero accumulate additively
+	var p3 := _party()
+	var e3 := _enemies()
+	var res3 := rules.execute_actions(p3, e3, [
+		_debuff(1, 2, "tangled", 1),
+		_debuff(2, 2, "tangled", 2)
+	])
+	_check(res3 == {"ok": true, "events": [
+		_event("debuff", 1, true, 2, 0, "tangled"),
+		_event("debuff", 2, true, 2, 0, "tangled")]},
+		"AC3: two ordered debuffs on same hero succeed with ordered events")
+	_check(p3.get_hero(2)["statuses"] == {"tangled": 3}
+		and p3.get_hero(2)["hp"] == 30 and p3.get_hero(2)["block"] == 0,
+		"AC3: Tangled values accumulate additively (1 + 2 is 3), no immediate aging or damage")
+	_check(p3.get_hero(1).get("statuses", {}).is_empty()
+		and p3.get_hero(3).get("statuses", {}).is_empty(),
+		"AC3: untargeted heroes have no statuses")
+
+	# 2. Preceding shove changes target occupant for subsequent debuff
+	p3 = _party()
+	e3 = _enemies()
+	res3 = rules.execute_actions(p3, e3, [
+		_shove(1, 1, 1),
+		_debuff(2, 2, "tangled", 2)
+	])
+	_check(res3 == {"ok": true, "events": [
+		_event("shove", 1, true, 1, 1),
+		_event("debuff", 2, true, 2, 0, "tangled")]},
+		"AC3: shove followed by Tangled debuff executes in order")
+	_check(_ids(p3) == ["seamstress", "warden", "tinker"],
+		"AC3: shove moved Seamstress to 1 and Warden to 2")
+	_check(p3.get_hero(2)["id"] == "warden" and p3.get_hero(2)["statuses"] == {"tangled": 2},
+		"AC3: occupant after shove (Warden) receives Tangled 2")
+	_check(p3.get_hero(1)["id"] == "seamstress" and p3.get_hero(1).get("statuses", {}).is_empty(),
+		"AC3: original slot 2 occupant (Seamstress) receives no debuff")
+
+	# 3. Dead source no-op
+	p3 = _party()
+	e3 = _enemies()
+	_check(e3.apply_damage(1, 12) and e3.is_slain(1), "AC3 precondition: enemy 1 slain")
+	var snap_dead := _snapshot(p3, e3)
+	var res_dead := rules.execute_actions(p3, e3, [_debuff(1, 2, "tangled", 1)])
+	_check(res_dead == {"ok": true, "events": [
+		_event("debuff", 1, false, 2, 0, "tangled")]},
+		"AC3: dead enemy source produces applied=false event for Tangled")
+	_check(_snapshot(p3, e3) == snap_dead,
+		"AC3: dead source leaves party and enemies unchanged")
+
+	# 4. Atomic rejections and fail-closed validation
+	_reject("AC3: malformed status name tangle", [_debuff(1, 2, "tangle", 1)])
+	_reject("AC3: malformed status name tangled_hero", [_debuff(1, 2, "tangled_hero", 1)])
+	_reject("AC3: zero amount Tangled", [_debuff(1, 2, "tangled", 0)])
+	_reject("AC3: negative amount Tangled", [_debuff(1, 2, "tangled", -1)])
+	_reject("AC3: float amount Tangled",
+		[{"type": "debuff", "enemy_position": 1, "amount": 1.5, "status": "tangled", "target_position": 2}])
+	_reject("AC3: string amount Tangled",
+		[{"type": "debuff", "enemy_position": 1, "amount": "1", "status": "tangled", "target_position": 2}])
+	_reject("AC3: bool amount Tangled",
+		[{"type": "debuff", "enemy_position": 1, "amount": true, "status": "tangled", "target_position": 2}])
+	_reject("AC3: invalid target position 0 Tangled", [_debuff(1, 0, "tangled", 1)])
+	_reject("AC3: invalid target position 4 Tangled", [_debuff(1, 4, "tangled", 1)])
+	_reject("AC3: float target position Tangled",
+		[{"type": "debuff", "enemy_position": 1, "amount": 1, "status": "tangled", "target_position": 2.0}])
+
+	# Downed hero
+	p3 = _party()
+	e3 = _enemies()
+	_check(p3.apply_damage(2, 30) and p3.is_downed(2), "AC3 precondition: hero 2 downed")
+	_reject("AC3: Tangled debuff targeting downed hero rejects atomically",
+		[_debuff(1, 2, "tangled", 1)], p3, e3)
+
+	# Arithmetic overflow
+	p3 = _party()
+	e3 = _enemies()
+	p3._heroes[1]["statuses"] = {"tangled": MAX_INT}
+	_reject("AC3: Tangled overflow past MAX_INT rejects atomically",
+		[_debuff(1, 2, "tangled", 1)], p3, e3)
+
+	# Late-invalid Tangled action after valid staged action rolls back atomically
+	p3 = _party()
+	e3 = _enemies()
+	_reject("AC3: late malformed status name rolls back valid shove",
+		[_shove(1, 1, 1), _debuff(2, 2, "tangle", 1)], p3, e3)
+	p3 = _party()
+	e3 = _enemies()
+	_reject("AC3: late zero amount Tangled rolls back valid buff",
+		[_buff(1, 1), _debuff(2, 2, "tangled", 0)], p3, e3)
+	p3 = _party()
+	e3 = _enemies()
+	_reject("AC3: late negative amount Tangled rolls back valid Tangled debuff",
+		[_debuff(1, 2, "tangled", 1), _debuff(2, 2, "tangled", -1)], p3, e3)
+	p3 = _party()
+	e3 = _enemies()
+	_reject("AC3: late invalid target Tangled rolls back valid shove",
+		[_shove(1, 1, 1), _debuff(2, 4, "tangled", 1)], p3, e3)
+	p3 = _party()
+	e3 = _enemies()
+	p3._heroes[1]["statuses"] = {"tangled": MAX_INT}
+	_reject("AC3: late Tangled overflow rolls back valid buff",
+		[_buff(1, 1), _debuff(2, 2, "tangled", 1)], p3, e3)

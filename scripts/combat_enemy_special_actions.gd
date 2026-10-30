@@ -62,7 +62,7 @@ func execute_actions(party: CombatParty, enemies: CombatEnemies, actions: Array)
 				var target = action["target_position"]
 				var status = action["status"]
 				if not target is int or target < 1 or target > CombatParty.PARTY_SIZE \
-						or not status is String or status not in ["bleed", "weak", "exposed"]:
+						or not status is String or status not in ["bleed", "weak", "exposed", "tangled"]:
 					return failure
 			"buff":
 				if action.size() != 3 or amount <= 0:
