@@ -181,4 +181,11 @@ const SEEDS := [
 	233422,
 	240821,
 	376208,
+	# Genuine map/toll/event-rotation witnesses for the two warden hero stories and
+	# the once/run Auction candidate that the bounded 1..499999 fallback could not
+	# reach (indices 123/125/6 in the 129-event pool); each seeded witness lands on
+	# the named event through the real paid toll draw.
+	517263,
+	684678,
+	874243,
 ]
