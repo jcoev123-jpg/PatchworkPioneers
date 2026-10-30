@@ -237,6 +237,11 @@ func open_picker() -> void:
 	for definition in HEROES:
 		_mount_tile(definition, _generation)
 	visible = true
+	# A new opening starts in the neutral grid, not on a stale action from
+	# the previous screen (or a previous generation of this picker).
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	if focus_owner != null:
+		focus_owner.release_focus()
 	_refresh()
 	_update_inspection()  # Neutral until actual pointer motion or keyboard focus.
 
@@ -825,6 +830,31 @@ func _inspect_deck_pressed() -> void:
 	_update_inspection()
 
 
+## Only a genuine, plain key-down in this visible opening's hero grid
+## selects a tile. UI actions still flow through the generation-bound mouse
+## callback, so admission, fourth-pick refusal and previews are identical.
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not event is InputEventKey:
+		return
+	var key: InputEventKey = event
+	if not _open or _latched or not is_visible_in_tree() or _deck_mode or _kit_mode or _reward_mode \
+			or not key.pressed or key.echo or key.shift_pressed or key.ctrl_pressed \
+			or key.alt_pressed or key.meta_pressed:
+		return
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	if focus_owner != null and focus_owner != self and not is_ancestor_of(focus_owner):
+		return
+	var index := -1
+	if key.keycode >= KEY_1 and key.keycode <= KEY_8:
+		index = key.keycode - KEY_1
+	elif key.keycode >= KEY_KP_1 and key.keycode <= KEY_KP_8:
+		index = key.keycode - KEY_KP_1
+	if index < 0 or index >= HEROES.size():
+		return
+	_pressed_hero(HEROES[index]["id"], _generation)
+	get_viewport().set_input_as_handled()
+
+
 func selected_ids() -> Array[String]:
 	return _ids.duplicate()
 
@@ -921,6 +951,29 @@ func _mount_tile(definition: Dictionary, generation: int) -> void:
 	grid.add_child(tile)
 	_tiles[hero_id] = tile
 
+	# A small stitched key ticket, independent of the original name, motif,
+	# and image/fallback hierarchy. It never intercepts mouse input.
+	var cue := Label.new()
+	cue.name = "KeyCue"
+	cue.text = str(HEROES.find(definition) + 1)
+	cue.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	cue.position = Vector2(9, 9)
+	cue.custom_minimum_size = Vector2(26, 24)
+	cue.size = cue.custom_minimum_size
+	cue.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cue.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	cue.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cue.add_theme_font_size_override("font_size", 16)
+	cue.add_theme_color_override("font_color", CREAM)
+	var ticket := StyleBoxFlat.new()
+	ticket.bg_color = Color("#2a3044")
+	ticket.border_color = STITCH
+	ticket.set_border_width_all(2)
+	ticket.set_corner_radius_all(4)
+	ticket.set_content_margin_all(2)
+	cue.add_theme_stylebox_override("normal", ticket)
+	tile.add_child(cue)
+
 	var inset := MarginContainer.new()
 	inset.name = "Inset"
 	inset.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -948,7 +1001,7 @@ func _mount_tile(definition: Dictionary, generation: int) -> void:
 
 	var face := Control.new()
 	face.name = "Face"
-	face.custom_minimum_size = Vector2(0, 88)
+	face.custom_minimum_size = Vector2(0, 86)
 	face.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	stack.add_child(face)
