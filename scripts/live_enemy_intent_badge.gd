@@ -670,15 +670,21 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 	# A living, authenticated source's attack cannot hurt its target while Blind is
 	# waiting. Keep the real attack/packet details as conditional hover context,
 	# but make the sewn caption itself announce the entire missed attempt.
+	# An unarmed charge wind-up is a telegraph/skip that deals 0 now; Blind is
+	# preserved for the armed charged attack rather than claimed as missed.
 	if intent_type == "attack" and source_blind:
-		blind_miss = true
-		readable_text = "BLIND · MISS"
-		var packet_note := " Neither of the two authored hit packets resolves." if hit_count == 2 else ""
-		tip = "Blind: the entire next attempted attack aimed at %s will MISS.%s No hero HP or Block is lost to this attack; this preview does not consume Blind.\nWithout Blind: %s" % [
-			hero_target_label(target_position), packet_note, tip]
-		# The long target policy is still in the hover, but its separate ticket
-		# yields the finite 192x28 caption space to the essential MISS warning.
-		policy_cue = ""
+		if charge_state == "wind_up":
+			tip = "Wind Up aimed at %s: this action deals 0 damage now and prepares a strike at floor(%d * 2.5) = %d before status/Block mitigation. Blind remains for the later charged attack." % [
+				hero_target_label(target_position), charge_base_damage, charge_projected_damage]
+		else:
+			blind_miss = true
+			readable_text = "BLIND · MISS"
+			var packet_note := " Neither of the two authored hit packets resolves." if hit_count == 2 else ""
+			tip = "Blind: the entire next attempted attack aimed at %s will MISS.%s No hero HP or Block is lost to this attack; this preview does not consume Blind.\nWithout Blind: %s" % [
+				hero_target_label(target_position), packet_note, tip]
+			# The long target policy is still in the hover, but its separate ticket
+			# yields the finite 192x28 caption space to the essential MISS warning.
+			policy_cue = ""
 	if (not policy_cue.is_empty() or blind_miss) and POLICY_DESCRIPTIONS.has(policy):
 		tip += "\nTarget policy (%s): %s." % [POLICY_LABELS[policy].to_upper(), POLICY_DESCRIPTIONS[policy]]
 	if not slain:
