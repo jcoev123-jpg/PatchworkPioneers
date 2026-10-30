@@ -160,7 +160,7 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 		var offer: Dictionary = expected[index]
 		var shortfall: int = maxi(0, offer.price - app.session_gold)
 		var cost := "%d gold" % offer.price if shortfall == 0 else "%d gold  \u00b7  short %d" % [offer.price, shortfall]
-		var caption := "%s  [%s]    \u2715 %s    \u00b7    %s" % [String(offer.id).replace("_", " ").capitalize(),
+		var caption := "%d  %s  [%s]  \u2715 %s  \u00b7  %s" % [index + 1, String(offer.id).replace("_", " ").capitalize(),
 			offer.id, power_ids[offer.id], cost]
 		var preview: Dictionary = panel._descriptions.get(offer.id, {})
 		var short_rule: String = preview.get("short", "")
@@ -171,8 +171,15 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 			and panel.offer_buttons[index].tooltip_text.contains(full_rule)
 			and panel.offer_buttons[index].tooltip_text.contains("Torn"),
 			"visible choice displays exact authentic price, patch and wearer power")
+		var font: Font = panel.offer_buttons[index].get_theme_font("font")
+		var measured := font.get_multiline_string_size(panel.offer_buttons[index].text,
+			HORIZONTAL_ALIGNMENT_CENTER, panel.offer_buttons[index].size.x - 24,
+			panel.offer_buttons[index].get_theme_font_size("font_size"))
+		_check(measured.x <= panel.offer_buttons[index].size.x - 24
+			and measured.y <= panel.offer_buttons[index].size.y - 14,
+			"numbered two-line caption and power fit the sewn 90px action at 1280x720")
 	_check(panel.offer_buttons.size() == 3 and panel.wearer_buttons.size() == 3
-		and panel.leave_button.text == "Leave  \u00b7  FREE" and not is_instance_valid(app.shop_view),
+		and panel.leave_button.text == "0 Leave  \u00b7  FREE" and not is_instance_valid(app.shop_view),
 		"only patch choices, three recipients and Leave")
 	_check(panel.wearer_label.is_visible_in_tree()
 		and panel.wearer_label.text == LivePatchStallPanel.WEARER_WARNING

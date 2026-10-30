@@ -5080,7 +5080,7 @@ func _try_patch_stall_action(intent: Dictionary, source: WeakRef, service: RunPa
 			or action.get_meta("patch_id", "") != quoted.offers[i].id:
 			return
 	if not view._attached(view.leave_button) or not view.leave_button.disabled \
-		or view.leave_button.text != "Leave  \u00b7  FREE" or view.wallet_label.text != view._wallet_caption():
+		or view.leave_button.text != view.LEAVE_CAPTION or view.wallet_label.text != view._wallet_caption():
 		return
 	var visit := patch_stall_visit
 	if intent.action == "buy_patch":

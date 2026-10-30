@@ -241,6 +241,8 @@ func _layout(visit: RunPatchStallVisit) -> void:
 				and button.text.contains(str(offer["price"]) + " gold") and not button.disabled,
 				"source ID/name, authored HEAD/ARM/COAT slot, exact gold and affordability")
 		var lines := button.text.split("\n")
+		_check(lines.size() == 2 and lines[0].begins_with(str(i + 1) + "  "),
+			"offer caption visibly begins with its own physical/keypad number")
 		_check(lines.size() == 2 and not lines[1].is_empty() 				and button.tooltip_text.contains("Torn") 				and button.tooltip_text.contains(offer["id"]),
 				"real sampled quote shows an effect second line and a wearer-aware tooltip")
 		if EXPECTED_SHORT.has(offer["id"]):
@@ -260,8 +262,8 @@ func _layout(visit: RunPatchStallVisit) -> void:
 					panel.offer_buttons[i - 1].get_global_rect()),
 					"power-bearing patch buttons do not overlap")
 	_check(screen.encloses(panel.leave_button.get_global_rect()) and
-			panel.leave_button.text.contains("FREE") and not panel.leave_button.disabled,
-			"free Leave is reachable")
+			panel.leave_button.text == "0 Leave  ·  FREE" and not panel.leave_button.disabled,
+			"free Leave visibly numbered 0 and reachable")
 	var focus_seen: Array = []
 	panel.wearer_buttons[0].grab_focus()
 	for i in range(7):
@@ -438,6 +440,9 @@ func _number_key_cases() -> void:
 				and panel.wearer_buttons[chosen].get_meta("wearer_id") == PARTY[chosen],
 				"keyed buy keeps a real chosen wearer before the number key")
 			var code: Key = normal_keys[option] if (chosen + option) % 2 == 0 else keypad_keys[option]
+			_check(panel.offer_buttons[option].text.begins_with(str(option + 1) + "  ")
+				and panel.leave_button.text == "0 Leave  ·  FREE",
+				"keyed buy dispatches the button that visibly shows its own number")
 			await _key(code)
 			_check(intents.size() == 1, "physical number key emits exactly one buy intent")
 			if intents.size() == 1:
@@ -474,6 +479,8 @@ func _number_key_cases() -> void:
 	_check(intents.is_empty() and broke.read_state() == broke_before
 		and broke.quote() == broke_quote,
 		"unaffordable numbered buys emit nothing and mutate no state")
+	_check(panel.leave_button.text == "0 Leave  ·  FREE",
+		"physical 0 label sits on the free Leave button")
 	await _key(KEY_0)
 	_check(intents.size() == 1, "physical 0 emits exactly one Leave intent")
 	if intents.size() == 1:
@@ -635,6 +642,8 @@ func _named_power_cases(power_slots: Dictionary) -> void:
 			var action := panel.offer_buttons[i]
 			var quoted: Dictionary = quote["offers"][i]
 			var lines := action.text.split("\n")
+			_check(lines.size() == 2 and lines[0].begins_with(str(i + 1) + "  "),
+				"named power caption visibly begins with its own number: " + id)
 			_check(quoted["id"] == id and not quoted["sold"] and
 					quote["offers"][i]["price"] == records[i]["price"],
 					"genuine quote retains named ID, order and unique authored fixture price")

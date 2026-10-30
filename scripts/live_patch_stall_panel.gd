@@ -14,6 +14,9 @@ const INK := Color("#191b2a")
 const DIM := Color("#b6a9a2")
 const PANEL_SIZE := Vector2(900, 630)
 const DETAILS_UNAVAILABLE := "Power details unavailable"
+# Canonical Leave caption for construction, refresh and authentication: the
+# physical/keypad 0 alias must be visible on the honest button itself.
+const LEAVE_CAPTION := "0 Leave  ·  FREE"
 # Always-visible wearer header: sewing into an occupied authored slot destroys
 # the patch already worn there. The visit carries no wardrobe, so this states
 # the rule (and its +1 scrap) rather than guessing any hero's live loadout.
@@ -115,7 +118,7 @@ func _ready() -> void:
 		wearer_buttons.append(_button("", Vector2(43 + i * 278, 165), Vector2(264, 57), TEAL, 22))
 	for i in range(3):
 		offer_buttons.append(_button("", Vector2(43, 239 + i * 99), Vector2(814, 90), OXBLOOD, 20))
-	leave_button = _button("Leave  ·  FREE", Vector2(43, 545), Vector2(814, 60), TEAL, 26)
+	leave_button = _button(LEAVE_CAPTION, Vector2(43, 545), Vector2(814, 60), TEAL, 26)
 	status_label = _label("", Vector2(43, 612), Vector2(814, 15), 12, DIM)
 	_refresh()
 	_focus_initial()
@@ -374,7 +377,7 @@ func _offer_caption(i: int) -> String:
 	var shortfall: int = maxi(0, price - int(_source["snapshot"]["gold"]))
 	var cost := "%d gold" % price if shortfall == 0 else "%d gold  ·  short %d" % [price, shortfall]
 	var power: String = _descriptions.get(id, {}).get("short", DETAILS_UNAVAILABLE)
-	return "%s  [%s]    ✕ %s    ·    %s\n%s" % [_name(id), id, _slots[id], cost, power]
+	return "%d  %s  [%s]  ✕ %s  ·  %s\n%s" % [i + 1, _name(id), id, _slots[id], cost, power]
 
 func _offer_tooltip(i: int) -> String:
 	var id: String = _quoted["offers"][i]["id"]
@@ -414,7 +417,7 @@ func _refresh() -> void:
 		if open:
 			_attach(pin, _choose_wearer.bind(i, pin, _epoch, _visit))
 			_attach(offer_button, _request_patch.bind(i, offer_button, _epoch, _visit))
-	leave_button.text = "Leave  ·  FREE"
+	leave_button.text = LEAVE_CAPTION
 	leave_button.disabled = not open
 	if open:
 		_attach(leave_button, _request_leave.bind(_epoch, _visit))
@@ -454,7 +457,7 @@ func _auth(epoch: int, source: RunPatchStallVisit) -> bool:
 		return false
 	if title_label.text != "PATCH STALL    ✕    sewn power patches" \
 			or wallet_label.text != _wallet_caption() or wearer_label.text != WEARER_WARNING \
-			or leave_button.text != "Leave  ·  FREE":
+			or leave_button.text != LEAVE_CAPTION:
 		return false
 	for i in range(3):
 		if not _attached(wearer_buttons[i]) or wearer_buttons[i].disabled \
