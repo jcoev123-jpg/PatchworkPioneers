@@ -145,6 +145,7 @@ func _check_seats(picker: LiveV3PartyPicker, picks: Array[String], note: String)
 	_check(hint.text == "Seats: " + "  |  ".join(expected),
 		note + " displayed combat seats exactly match admission")
 	_check(picker.selected_ids() == picks, note + " seat projection retains click order")
+	_check_tile_badges(picker, picks, note)
 	var width := hint.get_theme_font("font").get_string_size(
 		hint.text, HORIZONTAL_ALIGNMENT_LEFT, -1, hint.get_theme_font_size("font_size")).x
 	_check(width <= hint.size.x + 1.0
@@ -152,6 +153,50 @@ func _check_seats(picker: LiveV3PartyPicker, picks: Array[String], note: String)
 		and picker.get_node("PaperPanel/Margins/Body/Foot").get_global_rect().encloses(hint.get_global_rect()),
 		note + " every seat label remains visible in footer")
 
+
+## Tags on the mounted hero buttons must reflect authentic combat seat order,
+## never the number in the independent pick-order caption.
+func _check_tile_badges(picker: LiveV3PartyPicker, picks: Array[String],
+		note: String, active: bool = true) -> void:
+	var receipt := RunV3PartyAdmission.admit(picks)
+	var full: bool = active and receipt.get("ok", false) and receipt.get("hero_ids", []).size() == 3
+	var shown := 0
+	for hero_id in ORDER:
+		var tile := _tile(picker, hero_id)
+		_check(tile != null, note + " tile exists for " + hero_id)
+		if tile == null:
+			continue
+		var face := tile.get_node_or_null("Inset/Stack/Face") as Control
+		var badge := face.get_node_or_null("SeatBadge") as Label if face != null else null
+		_check(badge != null, note + " sewn tag exists on " + hero_id)
+		if badge == null:
+			continue
+		_check(badge.get_parent() == face and face.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and badge.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and badge.focus_mode == Control.FOCUS_NONE,
+			note + " tag and portrait are input-transparent: " + hero_id)
+		_check(badge.get_theme_font_size("font_size") >= 15
+			and badge.get_theme_stylebox("normal") is StyleBoxFlat,
+			note + " tag has readable sewn-felt typography: " + hero_id)
+		var seat: int = receipt["hero_ids"].find(hero_id) if full else -1
+		if seat >= 0:
+			shown += 1
+			var expected := "%d  •  %s" % [seat + 1, POSITION_NAMES[seat].to_upper()]
+			_check(badge.visible and badge.is_visible_in_tree()
+				and badge.text == expected and badge.tooltip_text == expected,
+				note + " real admitted seat " + expected + " on " + hero_id)
+			var printed_width := badge.get_theme_font("font").get_string_size(
+				badge.text, HORIZONTAL_ALIGNMENT_LEFT, -1, badge.get_theme_font_size("font_size")).x
+			_check(printed_width <= badge.size.x - 8.0
+				and face.get_global_rect().encloses(badge.get_global_rect())
+				and not badge.get_global_rect().intersects(
+					tile.get_node("Inset/Stack/MotifLabel").get_global_rect()),
+				note + " legible 1280x720 seat tag fits portrait without covering motif: " + hero_id)
+		else:
+			_check(not badge.visible and badge.text.is_empty() and badge.tooltip_text.is_empty(),
+				note + " no false seat on " + hero_id)
+	_check(shown == (3 if full else 0),
+		note + " exactly three badges for accepted full party, zero otherwise")
 
 func _check_inspection(picker: Control, name: String, motif: String,
 		role: String, signature: String, note: String) -> void:
@@ -206,6 +251,7 @@ func _ids(picker: LiveV3PartyPicker, expected: Array[String], note: String, latc
 	var button: Button = picker.get_node(
 		"PaperPanel/Margins/Body/Foot/ContinueButton")
 	_check(button.disabled == (expected.size() != 3 or latched), note + " Continue gate")
+	_check_tile_badges(picker, expected, note, not latched)
 
 
 ## Check every admitted physical starter occurrence against the shipped
@@ -1159,6 +1205,7 @@ func _run() -> void:
 		"duplicate, canceled and mutation presses ignored after Continue")
 	_ids(picker, ["warden", "tinker", "lantern_monk"], "latched snapshot", true)
 	_check(not hint.text.contains("Seats:"), "latched view no longer advertises an active seat projection")
+	_check_tile_badges(picker, picker.selected_ids(), "latched Continue retires tags", false)
 
 	# Reopening replaces the actual buttons; an old generation cannot inject.
 	var stale := _tile(picker, "warden")
@@ -1210,6 +1257,7 @@ func _run() -> void:
 	picker.reward_back.pressed.emit()
 	picker.reward_cards_button.pressed.emit()
 	_check(not picker._kit_mode and not picker._reward_mode, "retired kit navigation cannot reopen on Cancel")
+	_check_tile_badges(picker, picker.selected_ids(), "Cancel removes all final tags", false)
 	cancel.pressed.emit()
 	_tile(picker, "scarecrow").pressed.emit()
 	_check(cancels == 1 and picker.selected_ids() == ["scarecrow"],
@@ -1312,8 +1360,28 @@ func _run() -> void:
 	_check(deck_button.disabled and not deck_view.visible
 		and picker._deck_receipt_rows().is_empty(),
 		"invalid admission gates Inspect Deck with no stale or forged list")
+	_check_tile_badges(picker, picker.selected_ids(), "failed admission removes all seat tags")
 	action.pressed.emit()
 	_check(requests.size() == 2, "failed admission cannot emit party_requested")
+
+	# The two-front tie and two-middle tie witnesses are actual picker clicks,
+	# and their explicit expected seat IDs are independent of rendered captions.
+	picker.open_picker()
+	await _frames()
+	for hero_id in ["button_golem", "rag_duelist", "yarn_ranger"]:
+		await _mouse(_tile(picker, hero_id))
+	_check_seats(picker, ["button_golem", "rag_duelist", "yarn_ranger"],
+		"front tie with back Ranger")
+	_check(picker._seat_receipt.get("hero_ids", []) == ["button_golem", "rag_duelist", "yarn_ranger"],
+		"same preferred-front heroes retain actual click-order tie")
+	picker.open_picker()
+	await _frames()
+	for hero_id in ["lantern_monk", "scarecrow", "warden"]:
+		await _mouse(_tile(picker, hero_id))
+	_check_seats(picker, ["lantern_monk", "scarecrow", "warden"],
+		"picked-middle heroes move behind Warden")
+	_check(picker._seat_receipt.get("hero_ids", []) == ["warden", "lantern_monk", "scarecrow"],
+		"late-picked Warden is actual Front, middle tie keeps click order")
 	picker.open_picker()
 	await _frames()  # New tile geometry must settle before synthesizing pointer events.
 	_ids(picker, [], "failed admission full reopen")
@@ -1406,6 +1474,7 @@ func _live_start_checks() -> void:
 			"forged valid/invalid request and cancel allocate and spend nothing")
 	await _mouse(_tile(view, "warden"))
 	await _key(_tile(view, "tinker"), KEY_SPACE)
+	_check_tile_badges(view, view.selected_ids(), "title Start incomplete selection")
 	view.continue_button.pressed.emit()
 	_check(_opening_state(app) == idle and view.continue_button.disabled,
 		"two picks cannot Continue")
@@ -1433,6 +1502,9 @@ func _live_start_checks() -> void:
 			var retired: Callable = view.party_requested.get_connections()[0].callable
 			for id in trio:
 				await _key(_tile(view, id), KEY_SPACE)
+			var live_picks: Array[String] = []
+			live_picks.assign(trio)
+			_check_tile_badges(view, live_picks, "real title Start picker three-seat display")
 			var admission := RunV3PartyAdmission.admit(trio)
 			_check(admission.ok and view.selected_ids().size() == 3, "nondefault request is canonically admitted")
 			await _key(view.continue_button, KEY_ENTER)
