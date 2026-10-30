@@ -971,14 +971,34 @@ func _mounted_ram_charge(app) -> void:
 		{"valid": true, "state": "wind_up", "base_amount": 8, "projected_damage": 20, "target_position": 1})
 	_check(test_badge.readable_text == "UNRAVELLED" and test_badge.charge_state == "" and test_badge.icon_mode == "unravelled",
 		"AC3: unravelled skip displays UNRAVELLED and never shows WIND UP or CHARGE")
-	# 4. Blind attack: BLIND · MISS wins and never promises a hit
+	# 4. Blind unarmed charge wind-up: keep WIND UP caption and hover explaining Blind remains for later charged strike
 	test_badge.show_intent({"type": "attack", "amount": 0, "target_position": 1}, false, false, "front", -1, {}, true,
 		{"valid": true, "state": "wind_up", "base_amount": 8, "projected_damage": 20, "target_position": 1})
+	_check(not test_badge.blind_miss and test_badge.readable_text == "WIND UP → 1"
+		and test_badge.charge_state == "wind_up"
+		and test_badge.tooltip_text.contains("deals 0 damage now")
+		and test_badge.tooltip_text.contains("prepares a strike at floor(8 * 2.5) = 20")
+		and test_badge.tooltip_text.contains("Blind remains for the later charged attack")
+		and not test_badge.tooltip_text.contains("Blind: the entire next attempted attack")
+		and not test_badge.tooltip_text.contains("Without Blind:"),
+		"AC3: blind unarmed wind-up displays compact WIND UP and explains Blind remains for later strike")
+	# 4a. Blind unarmed wind-up without policy ticket displays WIND UP: Front
+	test_badge.show_intent({"type": "attack", "amount": 0, "target_position": 1}, false, false, "", -1, {}, true,
+		{"valid": true, "state": "wind_up", "base_amount": 8, "projected_damage": 20, "target_position": 1})
+	_check(not test_badge.blind_miss and test_badge.readable_text == "WIND UP: Front"
+		and test_badge.charge_state == "wind_up"
+		and test_badge.tooltip_text.contains("deals 0 damage now")
+		and test_badge.tooltip_text.contains("Blind remains for the later charged attack"),
+		"AC3: blind unarmed wind-up without policy ticket displays WIND UP: Front")
+	# 4b. Blind armed strike: BLIND · MISS wins and explains the impending full miss
+	test_badge.show_intent({"type": "attack", "amount": 20, "target_position": 1}, false, false, "front", -1, {}, true,
+		{"valid": true, "state": "strike", "base_amount": 8, "projected_damage": 20, "target_position": 1})
 	_check(test_badge.blind_miss and test_badge.readable_text == "BLIND · MISS"
+		and test_badge.charge_state == "strike"
 		and test_badge.tooltip_text.contains("Blind: the entire next attempted attack aimed at Hero 1 (front) will MISS")
 		and test_badge.tooltip_text.contains("No hero HP or Block is lost to this attack")
-		and test_badge.tooltip_text.contains("Without Blind: Wind Up aimed at Hero 1 (front):"),
-		"AC3: blind attack displays BLIND · MISS and does not promise a hit")
+		and test_badge.tooltip_text.contains("Without Blind: Charge strike: 20 damage (2.5x base 8)"),
+		"AC3: blind armed strike displays BLIND · MISS with full strike miss hover")
 	# 5. Non-attack action on charge foe retains ordinary cue
 	var roster_script = load("res://scripts/live_enemy_roster.gd")
 	var shove_action := {"type": "shove", "amount": 0, "target_position": 1, "direction": 1}

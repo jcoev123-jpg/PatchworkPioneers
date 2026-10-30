@@ -87,6 +87,24 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		if not staged_enemies.is_slain(source) and not policy.is_empty():
 			effective = CombatEnemyIntents.resolve_announced_action(staged_party, action, staged_enemies)
 		var hit_count: int = effective.get("hits", 1) if effective.type == "attack" else 1
+		# Only the real attack choice winds up. The zero-damage preview and
+		# subsequent held amount are checked above against the source's own
+		# floor-scaled authored attack, not against a UI-only counter.
+		# An unarmed charge wind-up is a telegraph/skip, not the next attempted
+		# attack; Blind is bypassed and preserved for the armed 2.5x strike.
+		if effective.type == "attack" and not staged_enemies.is_slain(source) \
+				and staged_enemies._enemies[source - 1].get(CombatEnemyIntents.CHARGE_FLAG, false) == true \
+				and not staged_enemies._enemies[source - 1].has(CombatEnemyIntents.CHARGE_PENDING) \
+				and not staged_party.is_downed(effective.target_position):
+			var base := CombatEnemyIntents.charge_attack_amount(staged_enemies.get_enemy(source))
+			var step := CombatEnemyKeywordRules.new().project_charge_step(base, false)
+			if not step["ok"] or effective.amount != 0:
+				return failure
+			staged_enemies._enemies[source - 1][CombatEnemyIntents.CHARGE_PENDING] = {
+				"amount": base, "target_position": effective.target_position}
+			events.append({"type": "wind_up", "enemy_position": source,
+				"target_position": effective.target_position, "damage": 0, "applied": true})
+			continue
 		# Blind belongs to the entire attempted attack, before mitigation or reactions.
 		# All writes remain on the detached roster until every beat succeeds.
 		if effective.type == "attack" and not staged_enemies.is_slain(source) \
@@ -101,22 +119,6 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 				miss.merge({"actual_target_position": effective.target_position,
 					"redirected": false, "retaliation_damage": 0, "retaliatory_damage": 0})
 			events.append(miss)
-			continue
-		# Only the real attack choice winds up. The zero-damage preview and
-		# subsequent held amount are checked above against the source's own
-		# floor-scaled authored attack, not against a UI-only counter.
-		if effective.type == "attack" and not staged_enemies.is_slain(source) \
-				and staged_enemies._enemies[source - 1].get(CombatEnemyIntents.CHARGE_FLAG, false) == true \
-				and not staged_enemies._enemies[source - 1].has(CombatEnemyIntents.CHARGE_PENDING) \
-				and not staged_party.is_downed(effective.target_position):
-			var base := CombatEnemyIntents.charge_attack_amount(staged_enemies.get_enemy(source))
-			var step := CombatEnemyKeywordRules.new().project_charge_step(base, false)
-			if not step["ok"] or effective.amount != 0:
-				return failure
-			staged_enemies._enemies[source - 1][CombatEnemyIntents.CHARGE_PENDING] = {
-				"amount": base, "target_position": effective.target_position}
-			events.append({"type": "wind_up", "enemy_position": source,
-				"target_position": effective.target_position, "damage": 0, "applied": true})
 			continue
 		# One cached choice/target, independently resolved hits; no RNG per strike.
 		for hit_index in range(hit_count):
