@@ -260,7 +260,7 @@ func _run() -> void:
 					var owner_node: Control = button.get_parent().get_node_or_null("CardHeader/OwnerPatch") if button.get_parent().get_node_or_null("CardHeader") != null else button.get_parent().get_node("OwnerPatch")
 					_check(owner_node.get("owner_color") == LiveRunCardRewardChoicePanel.OWNER_COLORS[expected.offers[index].owner] and button.get_parent().get_node("NameLabel").text == def.get("display_name", "") and button.get_parent().get_node("RarityLabel").text == def.get("rarity", "").capitalize(), "actual offer visible")
 				else:
-					_check(button.text == "Skip — take no card", "actual Skip visible")
+					_check(button.text == "0 Skip — take no card", "actual Skip shortcut and full label visible")
 			var before := _settlement_state()
 			for repeat in range(3):
 				app._observe_battle_result()

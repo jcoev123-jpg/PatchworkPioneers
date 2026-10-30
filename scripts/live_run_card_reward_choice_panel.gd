@@ -403,7 +403,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	# Choose button
 	var action := Button.new()
 	action.name = "ChooseButton"
-	action.text = "Choose card"
+	action.text = "%d Choose card" % (index + 1)
 	action.focus_mode = Control.FOCUS_ALL
 	action.custom_minimum_size = Vector2(0, CHOOSE_HEIGHT)
 	action.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -798,12 +798,39 @@ func _on_help_close_pressed(generation: int, node_id: String, index: int,
 	_dismiss_help(true)
 
 
+## Route numbered shortcuts through the same guarded, mounted Button callbacks
+## as pointer/focus choices. Never bypass the host's acknowledgement boundary.
 func _input(event: InputEvent) -> void:
-	if _is_open and not _accepted and not _awaiting_ack and is_visible_in_tree() \
-			and _help_overlay != null and event is InputEventKey \
-			and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
-		_dismiss_help(true)
-		get_viewport().set_input_as_handled()
+	if not _is_open or _accepted or _awaiting_ack or not is_visible_in_tree() \
+			or not event is InputEventKey:
+		return
+	if not event.pressed or event.echo:
+		return
+	if _help_overlay != null:
+		if event.keycode == KEY_ESCAPE:
+			_dismiss_help(true)
+			get_viewport().set_input_as_handled()
+		return
+	if event.shift_pressed or event.ctrl_pressed or event.alt_pressed or event.meta_pressed:
+		return
+	var index := -1
+	match event.keycode:
+		KEY_1, KEY_KP_1:
+			index = 0
+		KEY_2, KEY_KP_2:
+			index = 1
+		KEY_3, KEY_KP_3:
+			index = 2
+		KEY_0, KEY_KP_0:
+			index = 3
+	if index < 0 or index >= _choice_buttons.size():
+		return
+	var button := _choice_buttons[index]
+	if not is_instance_valid(button) or not button.is_inside_tree() \
+			or not button.is_visible_in_tree() or button.disabled:
+		return
+	button.pressed.emit()
+	get_viewport().set_input_as_handled()
 
 
 func _dismiss_help(restore_focus: bool) -> void:

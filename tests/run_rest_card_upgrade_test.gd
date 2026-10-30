@@ -22,6 +22,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_frayed_debt_upgrades()
 	_test_authored_pool_upgrade_cases()
+	_test_newer_hero_pool_upgrade_cases()
 	_test_pool_mapping_and_membership_rejections()
 	_test_pool_plus_in_stitched_upgrade_ledger()
 	_test_real_mixed_upgrade_and_composite_rejection()
@@ -885,6 +886,120 @@ func _test_authored_pool_upgrade_cases() -> void:
 		var fresh := RunRestCardUpgrade.new(success["deck"], {upgraded_id: original_id})
 		_assert_rejected(fresh, target, success["deck"], original_id + ": fresh visit cannot re-upgrade a plus")
 		_check(not fresh.is_consumed(), original_id + ": rejected re-upgrade leaves visit open")
+
+
+## The five newer v3 hero pools' authored base/+ pairs must project and upgrade
+## through the same canonical Rest path as the three starter heroes (M04 fix).
+## Expected costs and effects are copied from the shipped catalogs and then
+## checked against the real catalog definitions and the projected choices.
+func _test_newer_hero_pool_upgrade_cases() -> void:
+	var pools := {
+		"lantern_monk": LanternMonkPoolCards.new(),
+		"rag_duelist": RagDuelistPoolCards.new(),
+		"scarecrow": ScarecrowPoolCards.new(),
+		"yarn_ranger": YarnRangerPoolCards.new(),
+		"button_golem": ButtonGolemPoolCards.new(),
+	}
+	var examples := [
+		{"base": "lantern_monk_moth_lure", "owner": "lantern_monk",
+			"cost": 1, "plus_cost": 0,
+			"effects": {"blind_next_attack": true, "draw": 1},
+			"plus_effects": {"blind_next_attack": true, "draw": 1}},
+		{"base": "rag_duelist_velvet_feint", "owner": "rag_duelist",
+			"cost": 1, "plus_cost": 0,
+			"effects": {"exposed": 1, "draw": 1},
+			"plus_effects": {"exposed": 1, "draw": 1}},
+		{"base": "scarecrow_pitchfork_prick", "owner": "scarecrow",
+			"cost": 1, "plus_cost": 1,
+			"effects": {"damage": 5, "bleed": 1},
+			"plus_effects": {"damage": 7, "bleed": 2}},
+		{"base": "yarn_ranger_needle_arrow", "owner": "yarn_ranger",
+			"cost": 1, "plus_cost": 1,
+			"effects": {"damage": 5, "unravel": 1},
+			"plus_effects": {"damage": 7, "unravel": 2}},
+		{"base": "button_golem_pop_button", "owner": "button_golem",
+			"cost": 1, "plus_cost": 1,
+			"effects": {"require_owner_block": 5, "spend_owner_block": 5, "damage": 9,
+				"buttons_popped_gain": 1},
+			"plus_effects": {"require_owner_block": 5, "spend_owner_block": 5, "damage": 12,
+				"buttons_popped_gain": 1}},
+	]
+	for example in examples:
+		var original_id: String = example["base"]
+		var owner: String = example["owner"]
+		var pool: Object = pools[owner]
+		var upgraded_id: String = original_id + "_plus"
+		var original: Dictionary = pool.get_definition(original_id)
+		var upgraded: Dictionary = pool.get_definition(upgraded_id)
+		_check(not original.is_empty() and not upgraded.is_empty(),
+			original_id + ": both canonical catalog definitions exist")
+		_check(original.get("owner") == owner and upgraded.get("owner") == owner
+			and original.get("upgrade_id") == upgraded_id
+			and upgraded.get("upgrade_of", "") == original_id,
+			original_id + ": catalog owns the exact authored base/plus link")
+		_check(original.get("cost") == example["cost"]
+			and upgraded.get("cost") == example["plus_cost"]
+			and original.get("effects") == example["effects"]
+			and upgraded.get("effects") == example["plus_effects"],
+			original_id + ": authored costs and effects match the shipped catalog")
+		if original.is_empty() or upgraded.is_empty():
+			continue
+		var source := _load_starter_deck()
+		source.insert(2, original_id)
+		source.append(original_id)
+		var pristine := source.duplicate(true)
+		var target: int = source.size() - 1
+		var other_copy := 2
+		_check(source.count(original_id) == 2 and source[target] == original_id
+			and source[other_copy] == original_id,
+			original_id + ": two earned copies at distinct real indices")
+		var projection := RunRestCardUpgrade.list_authored_choices(source)
+		_check(_is_ok(projection), original_id + ": newer-hero pool deck projects")
+		var matched: Array = []
+		for row_raw: Variant in projection.get("choices", []):
+			var row: Dictionary = row_raw
+			if row.get("source_id") == original_id:
+				matched.append(row)
+		_check(matched.size() == 2, original_id + ": both owned copies appear as choices")
+		var permitted: Dictionary = projection.get("permitted_upgrades", {})
+		_check(permitted.get(original_id) == upgraded_id,
+			original_id + ": permitted map carries the exact authored plus ID")
+		for row_raw: Variant in matched:
+			var row: Dictionary = row_raw
+			_check(row.get("index") in [2, target] and row.get("base_id") == original_id
+				and row.get("plus_id") == upgraded_id and row.get("owner") == owner
+				and row.get("cost") == example["cost"]
+				and row.get("plus_cost") == example["plus_cost"]
+				and row.get("effects") == example["effects"]
+				and row.get("plus_effects") == example["plus_effects"],
+				original_id + ": choice carries exact catalog owner, plus ID, cost and effects")
+		_check(_decks_equal(source, pristine), original_id + ": projection never mutates the deck")
+		# A forged or mismatched plus is refused while a genuine visit stays usable.
+		for forged_plus in [original_id + "_plus_fake", "warden_iron_hem_plus"]:
+			var forged := RunRestCardUpgrade.new(source, {original_id: forged_plus})
+			_assert_rejected(forged, target, pristine,
+				original_id + ": mismatched plus refused (" + forged_plus + ")")
+			_check(not forged.is_consumed(),
+				original_id + ": refused wrong plus leaves its visit unconsumed")
+		seed(RNG_SEED)
+		var next_draw := randi()
+		seed(RNG_SEED)
+		var visit := RunRestCardUpgrade.new(source, permitted)
+		var success := visit.choose_upgrade(target)
+		_check(_is_ok(success) and visit.is_consumed(), original_id + ": indexed upgrade succeeds")
+		_check(success.get("original_id") == original_id and success.get("upgraded_id") == upgraded_id,
+			original_id + ": receipt identifies the canonical newer-hero pair")
+		_check(_decks_equal(success.get("deck"), _expected_replaced(pristine, target, upgraded_id))
+			and success["deck"][other_copy] == original_id,
+			original_id + ": exactly the selected index changed; other copy retained")
+		_assert_rejected_while_used(visit, other_copy, pristine,
+			original_id + ": second selection denied")
+		var reupgrade := RunRestCardUpgrade.new(success["deck"], {upgraded_id: original_id})
+		_assert_rejected(reupgrade, target, success["deck"],
+			original_id + ": upgraded plus cannot be re-upgraded")
+		_check(not reupgrade.is_consumed(), original_id + ": refused re-upgrade leaves visit open")
+		_check(_decks_equal(source, pristine) and randi() == next_draw,
+			original_id + ": caller deck and global RNG unchanged")
 
 
 func _test_pool_mapping_and_membership_rejections() -> void:

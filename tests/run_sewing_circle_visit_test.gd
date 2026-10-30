@@ -4,6 +4,7 @@ const NODE := "sewing-circle-3"
 const STRIKE := "warden_strike"
 const PRICK := "seamstress_prick"
 const POOL := "seamstress_running_stitch"
+const V3_POOL := "lantern_monk_moth_lure"
 var failures: Array[String] = []
 var checks := 0
 
@@ -13,6 +14,7 @@ func _initialize() -> void:
 	var global_next := randi()
 	seed(263)
 	_test_choices_and_upgrades()
+	_test_newer_hero_pool_upgrade()
 	_test_stitches()
 	_test_rejections()
 	_test_invalid()
@@ -74,6 +76,62 @@ func _test_choices_and_upgrades() -> void:
 		result.deck.clear()
 		result.source_snapshot.deck.clear()
 		_check(v.read_state() == after, "detached success receipt")
+
+
+## A genuine newer-hero (v3) reward-pool base must appear in the live visit's
+## Upgrade choices and upgrade for free through the exact bound callback.
+func _test_newer_hero_pool_upgrade() -> void:
+	_check(not RunRestStitchCards.resolve_card_definition(V3_POOL).is_empty(),
+		"authentic newer-hero pool fixture")
+	var catalog := LanternMonkPoolCards.new()
+	var base_def: Dictionary = catalog.get_definition(V3_POOL)
+	var plus_id: String = String(base_def.get("upgrade_id", ""))
+	var plus_def: Dictionary = catalog.get_definition(plus_id)
+	_check(not base_def.is_empty() and not plus_def.is_empty()
+		and base_def.get("owner") == "lantern_monk"
+		and base_def.get("cost") == 1 and plus_def.get("cost") == 0,
+		"authored Moth Lure pair carries the genuine 1-to-0 cost change")
+	if plus_id.is_empty() or plus_def.is_empty():
+		return
+	var deck := [STRIKE, V3_POOL, PRICK, POOL]
+	var v := _make(deck)
+	var s := v.read_state()
+	_check(v.is_valid() and not v.is_consumed(), "newer-hero pool visit opens")
+	_check(v.quote().choices == ["upgrade", "stitch", "leave"],
+		"newer-hero pool visit quotes all three decisions")
+	var canonical := RunRestCardUpgrade.list_authored_choices(deck, {}, 1)
+	_check(not canonical.choices.is_empty() and v.upgrade_options() == canonical.choices,
+		"exact canonical upgrades include the newer-hero pool card")
+	var matched: Array = []
+	for offered in v.upgrade_options():
+		if offered.source_id == V3_POOL:
+			matched.append(offered)
+	_check(matched.size() == 1, "exactly one owned newer-hero pool copy offered")
+	if matched.size() != 1:
+		return
+	var option: Dictionary = matched[0]
+	_check(option.index == 1 and option.plus_id == plus_id
+		and option.owner == "lantern_monk" and option.cost == 1 and option.plus_cost == 0
+		and option.effects == base_def.effects and option.plus_effects == plus_def.effects,
+		"newer-hero upgrade choice carries exact catalog metadata")
+	var result := _upgrade(v, 1, s)
+	var expected: Array = s.deck.duplicate()
+	expected[1] = plus_id
+	_check(result.get("ok", false) and result.deck == expected,
+		"only the indexed newer-hero pool card changes")
+	_check(result.remaining_scraps == 7 and result.descriptors == {}
+		and result.next_stitch_id == 1 and result.charged_scraps == 0,
+		"upgrade is free and preserves the whole remaining ledger")
+	_check(result.source_snapshot == s and result.source_receipt == s.receipt and result.consumed,
+		"complete bound receipt for the newer-hero upgrade")
+	var after := v.read_state()
+	_check(not _stitch(v, 0, 2, s).ok and not _upgrade(v, 1, s).ok and not _leave(v, s).ok
+		and v.read_state() == after and v.quote().choices.is_empty(),
+		"consumed visit rejects duplicate and all later requests")
+	var stale := s.duplicate(true)
+	stale.remaining_scraps += 1
+	_check(not _upgrade(v, 1, stale).ok and v.read_state() == after,
+		"stale snapshot request fails after consumption")
 
 
 func _test_stitches() -> void:

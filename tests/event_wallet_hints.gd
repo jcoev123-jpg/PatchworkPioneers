@@ -5,6 +5,23 @@ extends RefCounted
 ## APPEND ONLY: when new Events need witnesses, add each seed as a NEW LINE just above the closing bracket.
 ## Never edit, reorder or remove existing lines, so parallel Event batches merge without clashing.
 const SEEDS := [
+	# Genuine six-Event map/toll witnesses for the four look-driven hero-choice
+	# stories that joined the sorted generic pool, so no required Event depends on
+	# the bounded fallback search. Each seed lands on one of them (Gloamveil
+	# Laundry, Threadbare Aviary, Seamstress Needle Oracle, Moonlace Tailor) through
+	# the authentic draw; every seed is re-checked, so a stale one only costs time.
+	554707,
+	598220,
+	771997,
+	1361223,
+	# Re-derived required witnesses for the same grown pool: Raincoat Bridge,
+	# Warden Buckle Checkpoint, Patchwork Lighthouse, Needle Gate and the
+	# Seamstress Scarlet Loom lost their earlier routed hint seeds.
+	90010,
+	116647,
+	170826,
+	227654,
+	309117,
 	7756,
 	171871,
 	233942,
