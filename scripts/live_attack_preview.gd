@@ -30,6 +30,8 @@ var _casing_clamp := CombatTinkerV3CasingClampCards.new()
 var _pool_strikes := CombatPoolPlainStrikes.new()
 var _heavy_attacks := CombatWardenPoolHeavyAttacks.new()
 var _toss := CombatWardenV3ShieldTossCards.new()
+## Authenticated V3 Rivet Pummel uses this battle's existing shared _pinned authority.
+var _rivet := CombatWardenV3RivetCards.new()
 var _lunge := CombatRagDuelistLungeCards.new()
 var _snare := CombatRagDuelistTatteredSnareCards.new()
 var _prick := CombatRagDuelistNeedlePrickCards.new()
@@ -819,6 +821,8 @@ func _definition(card_id: String) -> Dictionary:
 		return _helmet._catalog_definition(card_id)
 	if _toss.is_supported_card(card_id):
 		return _toss._catalog_definition(card_id)
+	if _rivet.is_supported_card(card_id):
+		return _rivet._catalog.get_definition(card_id) if not _rivet._authenticate(card_id).is_empty() else {}
 	if _is_warden_card(card_id):
 		return _warden_card
 	if _is_path_card(card_id):
@@ -886,6 +890,8 @@ func _target_preview(id: String) -> Dictionary:
 		return _helmet_forecast(app.party, app.enemies, id)
 	if _toss.is_supported_card(id):
 		return _toss_forecast(app.party, app.enemies, id)
+	if _rivet.is_supported_card(id):
+		return _rivet_forecast(app.party, app.enemies, id)
 	if _is_warden_card(id):
 		return warden_preview(id)
 	if _is_path_card(id):
@@ -929,7 +935,7 @@ func _queue_attack(position: int) -> void:
 	if (_monk.is_supported_card(id) or _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _prick.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
 			or _targeting.is_seamstress_control(id) \
 			or _targeting.is_heavy_pool_attack(id) \
-			or _toss.is_supported_card(id) \
+			or _toss.is_supported_card(id) or _rivet.is_supported_card(id) \
 			or _helmet.is_supported_card(id) \
 			or _targeting.is_pool_combo_attack(id) or _is_path_card(id) or _is_warden_card(id) \
 			or id in CombatAttackCards.ATTACK_IDS) and position > 0:
@@ -953,6 +959,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var path := _is_path_card(id) or _is_warden_card(id)
 	var heavy := _targeting.is_heavy_pool_attack(id)
 	var toss := _toss.is_supported_card(id) or _helmet.is_supported_card(id)
+	var rivet := _rivet.is_supported_card(id)
 	var overload := _overload.is_supported_card(id)
 	var casing_clamp := _casing_clamp.is_supported_card(id)
 	var lunge := _lunge.is_supported_card(id)
@@ -962,7 +969,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var needle := _needle.is_supported_card(id)
 	var monk := _monk.is_supported_card(id)
 	var thread := _thread.is_supported_card(id)
-	var guarded := monk or needle or barrage or lunge or snare or prick or thread or direct or control or combo or path or heavy or toss or overload or casing_clamp or id in CombatAttackCards.ATTACK_IDS
+	var guarded := monk or needle or barrage or lunge or snare or prick or thread or direct or control or combo or path or heavy or toss or rivet or overload or casing_clamp or id in CombatAttackCards.ATTACK_IDS
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -981,7 +988,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 			or queued_pinned != _pinned or _direct_fire.get_pinned() != _pinned):
 		_reject_stitch()
 		return
-	if _is_warden_card(id) and queued_pinned != _pinned:
+	if (_is_warden_card(id) or rivet) and (_pinned == null or queued_pinned != _pinned):
 		_reject_stitch()
 		return
 	# Knuckle/Snag read and write the Pinned set the selection was quoted against.
@@ -992,7 +999,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		_reject_stitch()
 		return
 	var energy_before: int = _deck.energy
-	if (monk or needle or barrage or lunge or snare or prick or thread or direct or combo or path or heavy or toss or overload or casing_clamp) and (app._battle_closed \
+	if (monk or needle or barrage or lunge or snare or prick or thread or direct or combo or path or heavy or toss or rivet or overload or casing_clamp) and (app._battle_closed \
 			or (target_id.is_empty() and not (_is_warden_card(id) and position == 0)) \
 			or app.deck._rng != rng or (combo and not app._combo_battle_current())):
 		_reject_stitch()
@@ -1001,7 +1008,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
 			or (((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id)) \
-			or ((monk or needle or barrage or lunge or snare or prick or thread or control or combo or path or heavy or toss or overload or casing_clamp or id in CombatAttackCards.ATTACK_IDS) \
+			or ((monk or needle or barrage or lunge or snare or prick or thread or control or combo or path or heavy or toss or rivet or overload or casing_clamp or id in CombatAttackCards.ATTACK_IDS) \
 				and position > 0 and (app._battle_closed or target_id.is_empty() \
 				or app.enemies.get_enemy(position).get("id") != target_id))):
 		if guarded or _targeting.is_sight_glass(id):
@@ -1106,6 +1113,15 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 			return {"ok": false}
 		return _toss.play_card(_deck, party, enemies, id, position,
 			snapshots.attacker, snapshots.defender)
+	if _rivet.is_supported_card(id):
+		if forecast:
+			return _rivet_forecast(party, enemies, id)
+		var paid := _rivet.play_card(_deck, party, enemies, _pinned, id, position)
+		if paid.get("ok", false):
+			# Feed each actual strike to existing observers once; the resolver owns damage.
+			for hit in paid["hits"]:
+				hit["position"] = position
+		return paid
 	if _is_warden_card(id):
 		if not warden_ready() or party != get_parent().party or enemies != get_parent().enemies:
 			return {"ok": false}
@@ -1455,6 +1471,53 @@ func _toss_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> D
 	return preview
 
 
+## Read-only Rivet Pummel quote: authenticated per-slot preflight, two distinct
+## Block-before-HP strikes, and only the first cross-hero Pinned bonus. No
+## deck, enemy, token or RNG state is written while projecting the survivor.
+func _rivet_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> Dictionary:
+	var preview := {"playable": false, "requires_selection": true,
+		"target_positions": [], "hits": [], "cost": 2}
+	var app = get_parent()
+	if app == null or _deck == null or _pinned == null or app.deck != _deck \
+			or app._battle_closed or app.enemy_intents == null \
+			or _turn != app.enemy_intents._turn_index or app.run_rng != _deck._rng \
+			or _session != [party, enemies, app.battle_result, app.run_rng, app.enemy_intents] \
+			or party != app.party or enemies != app.enemies:
+		return preview
+	for position in CombatWardenV3RivetCards.TO_POSITIONS:
+		var plan := _rivet._prepare(_deck, party, enemies, _pinned, id, position)
+		if not plan.get("ok", false):
+			continue
+		var target: Dictionary = enemies.get_enemy(position)
+		var remaining_hp: int = int(target.hp)
+		var remaining_block: int = int(target.block)
+		var strikes: Array[Dictionary] = []
+		var bonus: int = _pinned.bonus_for_attack(enemies, position, "warden")
+		for index in range(int(plan.hits_printed)):
+			if remaining_hp <= 0:
+				break
+			var dealt: int = _statuses.adjusted_attack_damage(
+				int(plan.hit_damage) + (bonus if index == 0 else 0),
+				plan.attacker_statuses, plan.defender_statuses)
+			var absorbed: int = mini(dealt, remaining_block)
+			var hp_loss: int = mini(remaining_hp, dealt - absorbed)
+			remaining_block -= absorbed
+			remaining_hp -= hp_loss
+			strikes.append({"hit": index, "damage": dealt,
+				"block_absorbed": absorbed, "hp_loss": hp_loss})
+		preview.target_positions.append(position)
+		preview.hits.append({"position": position, "hit_count": strikes.size(),
+			"strikes": strikes, "first_damage": strikes[0].damage,
+			"second_damage": strikes[1].damage if strikes.size() > 1 else 0,
+			"pin_bonus": bonus, "pin_consumed": bonus > 0,
+			"weak": int(plan.attacker_statuses.get("weak", 0)),
+			"exposed": int(plan.defender_statuses.get("exposed", 0)),
+			"applies_pinned": remaining_hp > 0,
+			"hp_after": remaining_hp, "block_after": remaining_block})
+	preview.playable = not preview.target_positions.is_empty()
+	return preview
+
+
 ## Identical read-only damage preview, but express Pin and Pound as two
 ## sequential hits on the chosen target, not a single damage packet, and include
 ## any conditional first-hit bonus without mutating or latching anything.
@@ -1549,7 +1612,7 @@ func _eligible(panel) -> bool:
 	var index: int = panel.get_index()
 	var path_ok: bool = (_is_path_card(id) and not _path_positions(id).is_empty()) \
 		or (_is_warden_card(id) and warden_preview(id).get("playable", false))
-	return (id in TETHER_STARTERS or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _prick.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
+	return (id in TETHER_STARTERS or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _prick.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _rivet.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
 func _sync_battle() -> void:
@@ -1869,6 +1932,28 @@ func _refresh() -> void:
 			reading = "Choose one enemy slot: " + "; ".join(choices)
 		cue.text = "%s | %d energy | P / click card; %s / click enemy; Esc: cancel\n%s" % [
 			definition.display_name, definition.cost, _key_hint(preview.target_positions), reading]
+		return
+	if _rivet.is_supported_card(id):
+		current_forecast = preview.duplicate(true)
+		var details: PackedStringArray = []
+		for target in preview.hits:
+			var line := "%d: %d + %d damage" % [target.position,
+				target.first_damage, target.second_damage]
+			if target.hit_count < 2:
+				line += " (first hit lethal)"
+			if target.pin_bonus > 0:
+				line += " (+%d cross-hero Pin on first)" % target.pin_bonus
+			if target.weak > 0:
+				line += ", Weak %d" % target.weak
+			if target.exposed > 0:
+				line += ", Exposed %d" % target.exposed
+			line += ", Block %d, HP %d, %s" % [target.block_after,
+				target.hp_after, "Pin survivor" if target.applies_pinned else "no Pin on slain foe"]
+			details.append(line)
+		cue.text = "%s | 2 energy | P / click card; %s / click enemy; Esc: cancel\n%s" % [
+			definition.display_name, _key_hint(preview.target_positions),
+			"Two printed hits; choose foe: " + "; ".join(details) if preview.playable else
+			"Unavailable: no held/affordable Rivet, living Warden in 1-2 or legal foe in 1-2"]
 		return
 	if _barrage.is_supported_card(id):
 		current_forecast = preview.duplicate(true)
