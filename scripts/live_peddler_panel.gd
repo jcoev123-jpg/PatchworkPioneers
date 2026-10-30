@@ -14,6 +14,11 @@ extends Control
 ## RunPeddlerVisit.choose_purchase()/leave(), which stay the single purchase
 ## and Leave authority. The live Shop route mounts this view through app.gd.
 ##
+## Visible shortcuts: each of the five mounted captions opens with its own
+## numeral key label (1/2/3 the cards, 4 the patch, 0 Leave) - exactly the
+## unmodified keys _input below already dispatches, so a keyboard player can
+## read the shortcut on the interactive surface instead of guessing it.
+##
 ## Read-only ability preview: hovering or focusing one offered card repeats its
 ## authored energy cost and CardShortRules sentence in the existing status band
 ## and leaves the complete sentences in that card Button's tooltip. The preview
@@ -48,7 +53,12 @@ const SHARED_HEM_SHORT := "+1 Block once/turn when a different living hero actua
 const SHARED_HEM_FULL := "Once per turn, after a different living hero actually gains Block, this living, untorn wearer gains exactly +1 Block."
 const ELLIPSIS := "..."
 const WALLET_CLOSED := "Wallet unavailable"
-const LEAVE_TEXT := "Leave  ·  FREE"
+## The numeral keys _input already routes to the five mounted actions, in offer
+## order (1/2/3 the three hero cards, 4 the patch, 0 Leave). Each action's own
+## caption opens with its label so the working shortcut is visible on the
+## interactive surface itself.
+const ACTION_KEY_LABELS: Array[String] = ["1", "2", "3", "4", "0"]
+const LEAVE_TEXT := "0  ·  Leave  ·  FREE"
 const CARD_KIND := "card"
 const PATCH_KIND := "trinket"
 const LEAVE_KIND := "leave"
@@ -434,9 +444,11 @@ func _caption(prefix: String, item_id: String, price: int, sold: bool) -> String
 	return line
 
 
-## Preserve the entire source-quoted price and state on line one. Only the
-## catalog display name and the catalog effect may be shortened. Both lines are
-## measured against the real Button font rather than left to autowrap/clipping.
+## Line one opens with this row's own visible key label (1/2/3), then the
+## source-verified owner; the entire source-quoted price and state stays on
+## line one too. Only the catalog display name and the catalog effect may be
+## shortened. Both lines are measured against the real Button font rather than
+## left to autowrap/clipping.
 func _card_caption(index: int) -> String:
 	var offer := _offer(index)
 	var details := _card_details(index)
@@ -444,7 +456,8 @@ func _card_caption(index: int) -> String:
 	var font := button.get_theme_font("font")
 	var px := button.get_theme_font_size("font_size")
 	var width := maxf(0.0, button.size.x - 32.0)
-	var prefix := "%s  ·  " % str(offer["owner"]).capitalize()
+	var prefix := "%s  ·  %s  ·  " % [ACTION_KEY_LABELS[index],
+			str(offer["owner"]).capitalize()]
 	var suffix := "  ·  %d gold" % int(offer["price"])
 	if bool(offer["sold"]):
 		suffix += "  ·  SOLD"
@@ -511,7 +524,10 @@ func _fit_card_rule(line: String, width: float, font: Font, px: int) -> String:
 
 func _patch_caption() -> String:
 	var offer := _patch_offer()
-	var quote := _caption("PATCH", str(offer["id"]), int(offer["price"]), bool(offer["sold"]))
+	# The patch row is the fourth action: its caption opens with its own "4"
+	# key label exactly as the card rows open with 1/2/3 and Leave with 0.
+	var quote := _caption(ACTION_KEY_LABELS[CARD_COUNT], str(offer["id"]),
+			int(offer["price"]), bool(offer["sold"]))
 	var details := _patch_details()
 	if details.is_empty():
 		return quote + "\n" + PATCH_DETAILS_UNAVAILABLE
