@@ -10,11 +10,12 @@ extends SceneTree
 ## printings: a paid ally-only Block plus one-shot Dodge token that never stacks and is never spent
 ## by the cast. The same real fixtures also drive CombatLanternMonkMothCloudCards for both Moth Cloud
 ## printings: one paid all-enemy Blind-and-Exhaust transaction that arms the shared one-shot Blind
-## token on every living enemy slot, never spends it, and exhausts exactly one held copy. The
-## catalog stays deliberately unwired from the live hand, rewards, map and shops, so no live card
-## is claimed. It also proves caller copies are detached, invalid IDs fail closed, catalog
-## enumeration consumes no run RNG, and the existing Rag Duelist pool and StarterCards stay
-## unchanged.
+## token on every living enemy slot, never spends it, and exhausts exactly one held copy. They also
+## drive CombatLanternMonkMothLureCards for both Moth Lure printings: a paid single-target Blind that
+## discards exactly one held copy and then requests one real CombatDeck draw. The catalog stays
+## deliberately unwired from the live hand, rewards, map and shops, so no live card is claimed. It
+## also proves caller copies are detached, invalid IDs fail closed, catalog enumeration consumes no
+## run RNG, and the existing Rag Duelist pool and StarterCards stay unchanged.
 
 const CatalogScript = preload("res://data/cards/lantern_monk_pool_cards.gd")
 const RagDuelistScript = preload("res://data/cards/rag_duelist_pool_cards.gd")
@@ -34,6 +35,17 @@ class ForgedShroud extends CombatLanternMonkShroudCards:
 ## The same seam for the Moth Cloud service: one rewritten printing must never be paid for, and the
 ## restored authentic pair still plays.
 class ForgedCloud extends CombatLanternMonkMothCloudCards:
+	var forged_id: String = ""
+	var forged: Dictionary = {}
+
+	func _catalog_definition(card_id: String) -> Dictionary:
+		if card_id == forged_id:
+			return forged.duplicate(true)
+		return super(card_id)
+
+## The same seam for the Moth Lure service: a rewritten printing or a broken base/'+' link must
+## never be paid for, while the restored authentic pair still plays.
+class ForgedLure extends CombatLanternMonkMothLureCards:
 	var forged_id: String = ""
 	var forged: Dictionary = {}
 
@@ -90,11 +102,23 @@ const BLIND_KEY := "blind_next_attack"
 ## status that is not an integer counter.
 const FEAR_KEY := "cannot_buff_next_turn"
 
+## Paid single-target Moth Lure fixtures, copied from the v3 design rather than read back from the
+## service or its catalog. The base printing costs 1, the '+' is free, and both print one Blind
+## descriptor plus a one-card draw.
+const LURE_BASE := "lantern_monk_moth_lure"
+const LURE_PLUS := "lantern_monk_moth_lure_plus"
+const LURE_IDS := [LURE_BASE, LURE_PLUS]
+const LURE_COST := {LURE_BASE: 1, LURE_PLUS: 0}
+const LURE_FROM := [2, 3]
+const LURE_EFFECTS := {"blind_next_attack": true, "draw": 1}
+const LURE_ART := "res://assets/paper/cards/lantern_monk_moth_lure.png"
+
 var failures: Array[String] = []
 var checks: int = 0
 var party_service := CombatLanternMonkPartyCards.new()
 var shroud_service := CombatLanternMonkShroudCards.new()
 var cloud_service := CombatLanternMonkMothCloudCards.new()
+var lure_service := CombatLanternMonkMothLureCards.new()
 
 
 func _initialize() -> void:
@@ -121,6 +145,11 @@ func _initialize() -> void:
 	_test_cloud_ac2_no_stack_and_phase()
 	_test_cloud_ac3_rejections()
 	_test_cloud_fear_bearing_roster()
+	_test_lure_cards_authored()
+	_test_lure_ac1_paid_play()
+	_test_lure_ac2_no_stack_and_phase()
+	_test_lure_ac3_draws()
+	_test_lure_ac4_rejections()
 	if failures.is_empty():
 		print("v3_lantern_monk_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -2162,6 +2191,726 @@ func _cloud_rejected(deck: CombatDeck, party: CombatParty, enemies: CombatEnemie
 		target_position: int, label: String) -> void:
 	var before := _cloud_snapshot(deck, party, enemies)
 	var result: Dictionary = cloud_service.play_card(
+		deck, party, enemies, card_id, target_position)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("reason") is String and not (result.get("reason") as String).is_empty(),
+		label + ": refusal carries a reason")
+	_check(_cloud_snapshot(deck, party, enemies) == before,
+		label + ": unchanged enemies, party, hand, draw, discard, exhausted, energy, turn and RNG")
+
+
+## --- Paid single-target Moth Lure (Blind one enemy, then one real deck draw) ----------------
+##
+## These cases drive the scene-free CombatLanternMonkMothLureCards service over the same real seeded
+## CombatDeck, CombatParty and CombatEnemies fixtures and the real CombatEnemyPhase miss/consume
+## path. Like the earlier cases they claim callable rules-layer behaviour only: no live hand,
+## reward, app or run-deck wiring is asserted here.
+
+## Both printings must still carry their whole authored single-target line, and nothing else is
+## supported: not another Monk pool card, not another hero's card, not an upgrade of an upgrade.
+func _test_lure_cards_authored() -> void:
+	var catalog: RefCounted = CatalogScript.new()
+	for card_id: String in LURE_IDS:
+		var record: Dictionary = catalog.get_definition(card_id)
+		_check(not record.is_empty(), card_id + ": authored pool record exists")
+		if record.is_empty():
+			continue
+		_check(record.get("owner") == "lantern_monk",
+			card_id + ": authored owner is the Lantern Monk")
+		_check(record.get("display_name") == ("Moth Lure+" if card_id == LURE_PLUS else "Moth Lure"),
+			card_id + ": authored display name is the printed one")
+		_check(typeof(record.get("cost")) == TYPE_INT
+				and int(record.get("cost")) == int(LURE_COST[card_id]),
+			card_id + ": authored cost is " + str(LURE_COST[card_id]))
+		_check(record.get("from_positions") == LURE_FROM, card_id + ": authored FROM seats 2 and 3")
+		_check(record.get("target_kind") == "enemy_single", card_id + ": lures one chosen enemy")
+		_check(record.get("to_positions") == [1, 2, 3], card_id + ": names all three enemy slots")
+		_check(_same_effects(record.get("effects"), LURE_EFFECTS),
+			card_id + ": exact authored Blind descriptor and one-card draw")
+		_check(record.get("rarity") == "common", card_id + ": authored common rarity")
+		_check(typeof(record.get("starting_copies")) == TYPE_INT
+				and int(record.get("starting_copies")) == 0,
+			card_id + ": zero starting copies")
+		_check(typeof(record.get("reward_eligible")) == TYPE_BOOL
+				and bool(record.get("reward_eligible")) == (card_id == LURE_BASE),
+			card_id + ": only the base printing is reward eligible")
+		_check(record.get("illustration_path") == LURE_ART,
+			card_id + ": both printings use the authored base-card art")
+		_check(lure_service.is_supported_card(card_id), card_id + ": service authenticates the ID")
+	_check(catalog.get_upgrade_id(LURE_BASE) == LURE_PLUS
+			and catalog.get_upgrade_id(LURE_PLUS) == "",
+		"the Moth Lure pair still links base and '+' in the pool catalog")
+	for unsupported in ["", "lantern_monk_moth_lure_plus_plus", "lantern_monk_moth_lur",
+			"lantern_monk_moth_cloud", "lantern_monk_moth_cloud_plus", "lantern_monk_wick_flicker",
+			"lantern_monk_moth_shroud", "lantern_monk_snuff_flame", "lantern_monk_wax_ward",
+			"rag_duelist_velvet_feint", "warden_v3_rim_toss", "seamstress_mend"]:
+		_check(not lure_service.is_supported_card(unsupported),
+			unsupported + ": not an authentic Moth Lure printing")
+	_check(not lure_service.is_supported_card(null)
+			and not lure_service.is_supported_card(7)
+			and not lure_service.is_supported_card(1.5)
+			and not lure_service.is_supported_card(true)
+			and not lure_service.is_supported_card(StringName(LURE_BASE)),
+		"non-string IDs are never supported")
+	# The authenticated lookup alone consumes no seeded run RNG.
+	var rng := _party_rng(8191)
+	var state_before: int = rng.state
+	for card_id: String in LURE_IDS:
+		lure_service.is_supported_card(card_id)
+	lure_service.is_supported_card("lantern_monk_unknown")
+	_check(rng.state == state_before and not LURE_IDS.is_empty(),
+		"supported-card queries consume no run RNG (non-empty precondition)")
+
+
+## AC1: on a genuine held base or '+' Moth Lure, the unique living Monk stands in a legal FROM seat
+## and the chosen original enemy slot is occupied and living, the whole paid transaction is exact:
+## the printed cost (1 for the base, 0 for the '+'), exactly one held copy discarded, exactly one
+## real card drawn from the prepared draw pile and canonical integer Blind 1 on that one enemy only.
+func _test_lure_ac1_paid_play() -> void:
+	for card_id: String in LURE_IDS:
+		for monk_seat: int in [2, 3]:
+			for target: int in [1, 2, 3]:
+				var label := "%s seat %d slot %d" % [card_id, monk_seat, target]
+				var party := _monk_party(monk_seat)
+				_check(party.get_hero(monk_seat)["id"] == "lantern_monk"
+						and party.get_hero(monk_seat)["position"] == monk_seat,
+					label + ": the living Monk really sits in a legal FROM seat")
+				party._heroes[0]["statuses"] = {"weak": 1}
+				var enemies := _cloud_enemies()
+				_check(enemies.apply_damage(1, 1) and enemies.gain_block(2, 3)
+						and enemies.apply_damage(3, 2),
+					label + ": living enemies carry real damage and Block")
+				enemies._enemies[0]["statuses"] = {"bleed": 2}
+				enemies._enemies[1]["statuses"] = {"exposed": 1}
+				enemies._enemies[2]["statuses"] = {"tangled": 2}
+				_check(not enemies.is_slain(target),
+					label + ": the chosen original enemy slot is genuinely living")
+				var deck := _lure_deck(card_id)
+				var draw_before: Array = deck.draw_pile.duplicate()
+				var next_card: String = draw_before.back()
+				var discard_before: Array = deck.discard_pile.duplicate()
+				var before := _cloud_snapshot(deck, party, enemies)
+				var result: Dictionary = lure_service.play_card(deck, party, enemies, card_id, target)
+				_check(result.get("ok") == true and result.get("reason") == "applied",
+					label + ": authorized paid single-target play")
+				_check(result.get("card_id") == card_id and result.get("cost") == LURE_COST[card_id],
+					label + ": receipt names the authentic card and its printed cost")
+				_check(result.get("owner_position") == monk_seat
+						and result.get("target_kind") == "enemy_single"
+						and result.get("target_position") == target
+						and result.get("target_id") == before["enemies"][target - 1]["id"],
+					label + ": receipt names the Monk seat and the chosen enemy")
+				_check(result.get("energy_before") == 3
+						and result.get("energy_after") == 3 - int(LURE_COST[card_id])
+						and deck.energy == 3 - int(LURE_COST[card_id]),
+					label + ": exactly the printed cost was charged from the shared energy")
+				_check(result.get("blind_before") == 0 and result.get("blind_after") == 1
+						and result.get("blind_already_active") == false,
+					label + ": the cast arms the one-shot Blind without spending it")
+				_check(result.get("draw_requested") == 1 and result.get("cards_drawn") == 1,
+					label + ": the cast requests and really resolves one deck draw")
+				var expected_statuses: Dictionary = before["enemies"][target - 1].get(
+					"statuses", {}).duplicate(true)
+				expected_statuses[BLIND_KEY] = 1
+				_check(enemies.get_enemy(target)["statuses"] == expected_statuses
+						and typeof(enemies.get_enemy(target)["statuses"][BLIND_KEY]) == TYPE_INT,
+					label + ": the target keeps its own statuses and gains the integer Blind 1 token")
+				_check(enemies.get_enemy(target)["hp"]
+						== before["enemies"][target - 1]["hp"]
+						and enemies.get_enemy(target)["block"]
+						== before["enemies"][target - 1]["block"],
+					label + ": a Moth Lure deals no HP or Block damage")
+				for position in range(1, 4):
+					if position == target:
+						continue
+					_check(enemies.get_enemy(position) == before["enemies"][position - 1],
+						label + ": enemy " + str(position) + " is untouched")
+				_check(party.get_heroes() == before["heroes"],
+					label + ": no hero's HP, Block, position or status changes")
+				_check(deck.draw_pile == draw_before.slice(0, draw_before.size() - 1)
+						and deck.hand.back() == next_card
+						and deck.hand.size() == int(before["hand"].size()),
+					label + ": the real draw-pile top card entered the hand")
+				_check(deck.discard_pile == discard_before + [card_id],
+					label + ": exactly one held copy moved to the discard pile")
+				_check(deck.exhausted.is_empty() and before["exhausted"].is_empty(),
+					label + ": nothing is exhausted and no wallet or scrap is spent")
+				_check(_cloud_snapshot(deck, party, enemies)
+						== _lure_expected_play(before, card_id, target),
+					label + ": exact enemies, party, hand, draw, discard, exhausted, energy and RNG")
+
+	# A slain non-target slot keeps its record, position, HP and statuses untouched.
+	var dead_party := _monk_party(3)
+	var dead_enemies := _cloud_enemies()
+	_check(dead_enemies.apply_damage(3, 9) and dead_enemies.is_slain(3),
+		"slain-slot fixture really has a dead rear enemy in slot 3")
+	dead_enemies._enemies[2]["statuses"] = {"bleed": 4}
+	var dead_enemy_before: Dictionary = dead_enemies.get_enemy(3)
+	var dead_deck := _lure_deck(LURE_BASE)
+	var dead_before := _cloud_snapshot(dead_deck, dead_party, dead_enemies)
+	var dead_result: Dictionary = lure_service.play_card(
+		dead_deck, dead_party, dead_enemies, LURE_BASE, 1)
+	_check(dead_result.get("ok") == true and dead_result.get("target_position") == 1,
+		"a living front slot is blinded beside a slain rear slot")
+	_check(dead_enemies.get_enemy(3) == dead_enemy_before,
+		"the slain slot keeps its record, position, HP and statuses")
+	_check(_cloud_snapshot(dead_deck, dead_party, dead_enemies)
+			== _lure_expected_play(dead_before, LURE_BASE, 1),
+		"exact transaction beside a slain non-target slot")
+
+	# The canonical Fear status (`cannot_buff_next_turn: true`) is legal on the real roster: an
+	# otherwise authentic cast against a Feared enemy and a Feared hero still pays exactly once,
+	# draws one real card and arms Blind 1 beside Fear.
+	for card_id: String in LURE_IDS:
+		var fear_party := _monk_party(2)
+		fear_party._heroes[0]["statuses"] = {"weak": 1, FEAR_KEY: true}
+		var fear_enemies := _cloud_enemies()
+		fear_enemies._enemies[1]["statuses"] = {"weak": 2, FEAR_KEY: true}
+		_check(fear_enemies.get_enemy(2)["statuses"].get(FEAR_KEY) == true
+				and typeof(fear_enemies.get_enemy(2)["statuses"][FEAR_KEY]) == TYPE_BOOL,
+			card_id + ": the target really carries the canonical boolean Fear")
+		var fear_deck := _lure_deck(card_id, 4311)
+		var fear_before := _cloud_snapshot(fear_deck, fear_party, fear_enemies)
+		var fear_result: Dictionary = lure_service.play_card(
+			fear_deck, fear_party, fear_enemies, card_id, 2)
+		_check(fear_result.get("ok") == true and fear_result.get("reason") == "applied",
+			card_id + ": canonical Fear on the roster does not block the paid cast")
+		_check(fear_enemies.get_enemy(2)["statuses"]
+				== {"weak": 2, FEAR_KEY: true, BLIND_KEY: 1}
+				and typeof(fear_enemies.get_enemy(2)["statuses"][BLIND_KEY]) == TYPE_INT,
+			card_id + ": the Feared target keeps Fear and its other status and gains Blind 1")
+		_check(fear_party.get_heroes() == fear_before["heroes"],
+			card_id + ": the Feared hero is untouched by the single-target cast")
+		_check(_cloud_snapshot(fear_deck, fear_party, fear_enemies)
+				== _lure_expected_play(fear_before, card_id, 2),
+			card_id + ": exact Fear-bearing Moth Lure transaction")
+
+
+## AC2: an already armed Blind stays exactly 1 (never 2), an inert 0 becomes 1, and only the
+## enemy's actual next attack spends the token through the existing enemy phase. An owner-turn tick
+## and a nonattack beat leave the token armed, and re-casting after a spent miss re-arms it at 1.
+func _test_lure_ac2_no_stack_and_phase() -> void:
+	for card_id: String in LURE_IDS:
+		var party := _monk_party(2)
+		var enemies := _cloud_enemies()
+		enemies._enemies[0]["statuses"] = {BLIND_KEY: 1, "bleed": 2}
+		enemies._enemies[1]["statuses"] = {"weak": 2}
+		enemies._enemies[2]["statuses"] = {BLIND_KEY: 0, "tangled": 3}
+		_check(enemies.get_enemy(1)["statuses"] == {BLIND_KEY: 1, "bleed": 2}
+				and enemies.get_enemy(2)["statuses"] == {"weak": 2}
+				and enemies.get_enemy(3)["statuses"] == {BLIND_KEY: 0, "tangled": 3},
+			card_id + ": the fixture really starts with an armed, an unarmed and a clean enemy")
+		var tick: Dictionary = CombatStatusTurnBatch.new().tick_side(
+			"enemies", enemies.get_enemies())
+		_check(tick.get("ok") == true
+				and tick.get("actors", [])[0].get("statuses") == {BLIND_KEY: 1, "bleed": 1},
+			card_id + ": an owner-turn tick ages Bleed but keeps Blind at 1")
+		_check(enemies.get_enemy(1)["statuses"] == {BLIND_KEY: 1, "bleed": 2},
+			card_id + ": the tick proposal never writes to the real roster")
+		var deck := _lure_deck(card_id)
+		var before := _cloud_snapshot(deck, party, enemies)
+		var result: Dictionary = lure_service.play_card(deck, party, enemies, card_id, 1)
+		_check(result.get("ok") == true, card_id + ": the authentic single-target cast succeeds")
+		_check(enemies.get_enemy(1)["statuses"] == {BLIND_KEY: 1, "bleed": 2}
+				and typeof(enemies.get_enemy(1)["statuses"][BLIND_KEY]) == TYPE_INT,
+			card_id + ": an already armed integer Blind stays exactly 1 and the debuff survives")
+		_check(result.get("blind_before") == 1 and result.get("blind_after") == 1
+				and result.get("blind_already_active") == true,
+			card_id + ": the receipt reports the pre-existing Blind and re-arms it at 1")
+		_check(enemies.get_enemy(2)["statuses"] == {"weak": 2}
+				and enemies.get_enemy(3)["statuses"] == {BLIND_KEY: 0, "tangled": 3},
+			card_id + ": no other enemy gains, loses or stacks a token")
+		_check(enemies.get_enemy(1)["hp"] == 12 and enemies.get_enemy(1)["block"] == 0,
+			card_id + ": the cast deals no damage and grants no Block")
+		_check(_cloud_snapshot(deck, party, enemies) == _lure_expected_play(before, card_id, 1),
+			card_id + ": exact no-stack transaction")
+
+		# The existing real phase helper resolves the armed token as one missed attack.
+		var phase := CombatEnemyPhase.new()
+		var heroes_before: Array = party.get_heroes()
+		var miss_one: Dictionary = phase.execute_phase(party, enemies, [
+			{"type": "attack", "enemy_position": 1, "amount": 6, "target_position": 1}])
+		_check(miss_one.get("ok") == true and miss_one.get("events", []).size() == 1
+				and miss_one["events"][0].get("applied") == false,
+			card_id + ": the blinded enemy's next real attack misses once")
+		_check(party.get_heroes() == heroes_before,
+			card_id + ": the miss deals no HP or Block damage to any hero")
+		_check(enemies.get_enemy(1)["statuses"] == {"bleed": 2},
+			card_id + ": only the actual attack attempt spent that enemy's Blind token")
+
+		# Re-casting after the spent miss re-arms exactly one token again.
+		var rearm: Dictionary = lure_service.play_card(deck, party, enemies, card_id, 1)
+		_check(rearm.get("ok") == true and rearm.get("blind_before") == 0
+				and rearm.get("blind_after") == 1,
+			card_id + ": a fresh cast re-arms the spent Blind at exactly 1")
+		_check(enemies.get_enemy(1)["statuses"] == {"bleed": 2, BLIND_KEY: 1},
+			card_id + ": the re-armed token sits beside the preserved debuff without stacking")
+
+		# A nonattack beat never spends Blind.
+		var block_action := {"type": "block", "enemy_position": 2, "amount": 4}
+		var block_result: Dictionary = phase.execute_phase(party, enemies, [block_action])
+		_check(block_result.get("ok") == true
+				and block_result["events"][0].get("applied") == true
+				and enemies.get_enemy(1)["statuses"] == {"bleed": 2, BLIND_KEY: 1},
+			card_id + ": a Block beat applies but leaves Blind armed")
+		var heroes_before_second: Array = party.get_heroes()
+		var miss_two: Dictionary = phase.execute_phase(party, enemies, [
+			{"type": "attack", "enemy_position": 1, "amount": 6, "target_position": 2}])
+		_check(miss_two.get("ok") == true and miss_two["events"][0].get("applied") == false
+				and party.get_heroes() == heroes_before_second
+				and enemies.get_enemy(1)["statuses"] == {"bleed": 2},
+			card_id + ": the re-armed Blind then spends on that enemy's real next attack")
+
+
+## AC3: after payment and discard, an accepted printing requests exactly one real
+## CombatDeck.draw_extra(1). A prepared draw pile supplies a real card, an empty pile reshuffles the
+## genuine discard through the seeded generator, and a Frayed Debt slot supplies no card at all
+## without fabricating one. No extra energy, cards, exhaust or invented effect occurs.
+func _test_lure_ac3_draws() -> void:
+	for card_id: String in LURE_IDS:
+		var party := _monk_party(2)
+		var enemies := _cloud_enemies()
+		var deck := _lure_deck(card_id)
+		var drawn_card: String = deck.draw_pile.back()
+		var before := _cloud_snapshot(deck, party, enemies)
+		var result: Dictionary = lure_service.play_card(deck, party, enemies, card_id, 2)
+		_check(result.get("ok") == true and result.get("draw_requested") == 1
+				and result.get("cards_drawn") == 1,
+			card_id + ": the printed draw requests and really draws one card")
+		_check(deck.hand.back() == drawn_card
+				and deck.hand.size() == int(before["hand"].size()),
+			card_id + ": the real draw-pile top card entered the hand")
+		_check(deck.draw_pile.is_empty() and deck.discard_pile == [card_id],
+			card_id + ": exactly one real card was drawn and one held copy discarded")
+		_check(deck.exhausted.is_empty() and deck._rng.state == int(before["rng_state"]),
+			card_id + ": no exhaust and no RNG use while the draw pile supplies the card")
+		_check(_cloud_snapshot(deck, party, enemies) == _lure_expected_play(before, card_id, 2),
+			card_id + ": exact hand, piles, energy, enemies and RNG for the draw-pile case")
+
+	# Moth Lure+ is free: it plays at zero shared energy and still requests its real draw.
+	var free_party := _monk_party(3)
+	var free_enemies := _cloud_enemies()
+	var free_deck := _lure_deck(LURE_PLUS)
+	_check(free_deck.try_spend_energy(3) and free_deck.energy == 0
+			and free_deck.hand.has(LURE_PLUS),
+		"Moth Lure+ at zero energy: fixture is broke and still holds the '+' copy")
+	var free_before := _cloud_snapshot(free_deck, free_party, free_enemies)
+	var free_result: Dictionary = lure_service.play_card(
+		free_deck, free_party, free_enemies, LURE_PLUS, 1)
+	_check(free_result.get("ok") == true and free_result.get("cost") == 0
+			and free_result.get("cards_drawn") == 1 and free_deck.energy == 0,
+		"Moth Lure+ costs exactly 0 at zero energy and still draws one real card")
+	_check(_cloud_snapshot(free_deck, free_party, free_enemies)
+			== _lure_expected_play(free_before, LURE_PLUS, 1),
+		"Moth Lure+ zero-energy transaction is exact")
+
+	# Zero cards is a valid draw when the real deck supplies none: the Frayed Debt slot is consumed.
+	var cursed_party := _monk_party(2)
+	var cursed_enemies := _cloud_enemies()
+	var cursed := _lure_deck(LURE_BASE)
+	cursed.draw_pile.assign([MpwFrayedDebt.CARD_ID])
+	_check(cursed.hand.size() == 5 and cursed.draw_pile == [MpwFrayedDebt.CARD_ID],
+		"no-card draw fixture leaves only a consuming Frayed Debt on top of the draw pile")
+	var cursed_before := _cloud_snapshot(cursed, cursed_party, cursed_enemies)
+	var cursed_result: Dictionary = lure_service.play_card(
+		cursed, cursed_party, cursed_enemies, LURE_BASE, 1)
+	_check(cursed_result.get("ok") == true and cursed_result.get("draw_requested") == 1
+			and cursed_result.get("cards_drawn") == 0,
+		"a draw that supplies no card is still a successful play of one requested draw")
+	_check(cursed.hand.size() == int(cursed_before["hand"].size()) - 1
+			and not cursed.hand.has(MpwFrayedDebt.CARD_ID),
+		"no card is fabricated into the hand when the draw supplies none")
+	_check(cursed.exhausted == [MpwFrayedDebt.CARD_ID] and cursed.draw_pile.is_empty()
+			and cursed.discard_pile == [LURE_BASE],
+		"the real deck consumed the Frayed Debt slot and discarded the played copy once")
+	_check(cursed._rng.state == int(cursed_before["rng_state"]),
+		"no reshuffle happened, so the injected generator was not used")
+	_check(_cloud_snapshot(cursed, cursed_party, cursed_enemies)
+			== _lure_expected_play(cursed_before, LURE_BASE, 1),
+		"exact hand, exhausted, discard, energy, enemies and RNG when nothing can be drawn")
+
+	# An empty draw pile and an empty discard pile before the play: the only supply left is the copy
+	# just discarded, which the real reshuffle may legally hand straight back. A one-card shuffle
+	# needs no random value, so the injected generator is untouched.
+	var recycle_party := _monk_party(3)
+	var recycle_enemies := _cloud_enemies()
+	var recycle := CombatDeck.new([LURE_BASE, PARTY_FILLERS[0], PARTY_FILLERS[1], PARTY_FILLERS[2],
+		PARTY_FILLERS[3]], _party_rng(6161))
+	_check(recycle.start_turn() and recycle.draw_pile.is_empty()
+			and recycle.discard_pile.is_empty() and recycle.hand.size() == 5
+			and recycle.hand.has(LURE_BASE) and recycle.energy == 3,
+		"empty-pile fixture really has no draw or discard supply before the play")
+	var recycle_before := _cloud_snapshot(recycle, recycle_party, recycle_enemies)
+	var recycle_result: Dictionary = lure_service.play_card(
+		recycle, recycle_party, recycle_enemies, LURE_BASE, 1)
+	_check(recycle_result.get("ok") == true and recycle_result.get("cards_drawn") == 1
+			and recycle.energy == 2,
+		"an empty pile pair still resolves the one real draw at the printed cost")
+	_check(recycle.hand.size() == int(recycle_before["hand"].size())
+			and recycle.hand.count(LURE_BASE) == int(recycle_before["hand"].count(LURE_BASE)),
+		"the reshuffled one-card supply handed exactly one real card back")
+	_check(recycle.draw_pile.is_empty() and recycle.discard_pile.is_empty(),
+		"the one-card pile was consumed by the draw")
+	_check(recycle._rng.state == int(recycle_before["rng_state"]),
+		"a one-card reshuffle needs no random draw, so the generator is untouched")
+	_check(recycle_enemies.get_enemy(1)["statuses"] == {BLIND_KEY: 1}
+			and not recycle_enemies.get_enemy(2).has("statuses")
+			and not recycle_enemies.get_enemy(3).has("statuses")
+			and recycle_party.get_heroes() == recycle_before["heroes"],
+		"the empty-pile cast still arms only the chosen slot and touches no hero")
+
+	# Seed-paired forced reshuffle: the played copy joins the discard pile before the draw, so the
+	# legal seeded reshuffle may supply any card from that supply. Two identical fixtures must
+	# replay identically, and only a real reshuffle may consume the injected generator.
+	for card_id: String in LURE_IDS:
+		var first := _lure_reshuffle_run(8801, card_id)
+		var second := _lure_reshuffle_run(8801, card_id)
+		var first_result: Dictionary = first["result"]
+		var first_before: Dictionary = first["before"]
+		var first_after: Dictionary = first["after"]
+		_check(first_result.get("ok") == true and first_result.get("cost") == LURE_COST[card_id]
+				and first_result.get("cards_drawn") == 1,
+			card_id + ": the forced reshuffle supplied exactly one real card at the printed cost")
+		_check(first_after["energy"] == int(first_before["energy"]) - int(LURE_COST[card_id]),
+			card_id + ": no extra energy is spent beyond the printed cost")
+		_check(first_after["discard"].is_empty(),
+			card_id + ": the whole discard pile was reshuffled into the deck")
+		_check(first_after["draw"].size() == int(first_before["discard"].size()),
+			card_id + ": the reshuffled pile kept the cards it did not draw")
+		_check(first_after["hand"].size() == int(first_before["hand"].size()),
+			card_id + ": one copy left the hand and one real card came back")
+		_check(first_after["rng_state"] != first_before["rng_state"],
+			card_id + ": the real reshuffle consumed the injected generator")
+		_check(first_after["rng_seed"] == first_before["rng_seed"],
+			card_id + ": the injected generator was never reseeded")
+		_check(first_after["enemies"][0]["statuses"] == {"weak": 1, BLIND_KEY: 1}
+				and typeof(first_after["enemies"][0]["statuses"][BLIND_KEY]) == TYPE_INT,
+			card_id + ": the reshuffle play arms Blind beside the existing status")
+		var remaining: Array = first_before["hand"].duplicate()
+		remaining.erase(card_id)
+		var supplied := ""
+		for hand_card: String in first_after["hand"]:
+			if remaining.has(hand_card):
+				remaining.erase(hand_card)
+			else:
+				supplied = hand_card
+		var supply: Array = first_before["discard"].duplicate()
+		supply.append(card_id)
+		_check(not supplied.is_empty() and supply.has(supplied),
+			card_id + ": the drawn card really came from the reshuffled discard supply")
+		_check(second["result"] == first_result and second["after"] == first_after,
+			card_id + ": two identical seeded fixtures replay identically")
+
+
+## AC4: every unsupported, forged, ineligible, unaffordable, unheld, ended, wrong-owner/seat/HP,
+## torn/dead target or malformed-status request fails closed with no payment, discard, draw,
+## Blind/HP/Block change or RNG advance. A rejected attempt never poisons the next authentic one.
+func _test_lure_ac4_rejections() -> void:
+	var party := _monk_party(2)
+
+	var inactive := CombatDeck.new([LURE_BASE, LURE_BASE, LURE_BASE,
+		PARTY_FILLERS[0], PARTY_FILLERS[1], PARTY_FILLERS[2]], _party_rng(991))
+	_check(not inactive.turn_active and inactive.hand.is_empty(),
+		"inactive-turn fixture really has no active turn")
+	_lure_rejected(inactive, party, _cloud_enemies(), LURE_BASE, 1, "inactive turn")
+
+	var deck := _lure_deck(LURE_BASE)
+	_check(deck.hand.has(LURE_BASE) and not deck.hand.has(LURE_PLUS),
+		"absent-card fixture holds the base printing only")
+	_lure_rejected(deck, party, _cloud_enemies(), LURE_PLUS, 1,
+		"authentic '+' absent from the hand")
+	for unknown in ["", "lantern_monk_moth_lure_plus_plus", "lantern_monk_moth_lur",
+			"lantern_monk_moth_cloud", "lantern_monk_wick_flicker", "lantern_monk_wax_ward",
+			"rag_duelist_velvet_feint", 7, null, true, 1.5, StringName(LURE_BASE)]:
+		_lure_rejected(deck, party, _cloud_enemies(), unknown, 1,
+			"unsupported or forged printing " + str(unknown))
+
+	var short := _lure_deck(LURE_BASE)
+	_check(short.try_spend_energy(3) and short.energy == 0 and short.hand.has(LURE_BASE),
+		"energy-short fixture is genuinely broke and still holds the card")
+	_lure_rejected(short, party, _cloud_enemies(), LURE_BASE, 1, "unaffordable base printing")
+
+	for bad_target in [0, -1, 4, 99, true, 1.5, "2", null, [], {}]:
+		_lure_rejected(_lure_deck(LURE_BASE), party, _cloud_enemies(), LURE_BASE, bad_target,
+			"selected enemy slot " + str(bad_target))
+
+	var front_monk := _monk_party(1)
+	_check(front_monk.get_hero(1)["id"] == "lantern_monk",
+		"illegal-FROM fixture really has the living Monk in seat 1")
+	_lure_rejected(_lure_deck(LURE_BASE), front_monk, _cloud_enemies(), LURE_BASE, 1,
+		"Moth Lure from the Monk's illegal seat 1")
+
+	var torn_owner := _monk_party(2)
+	_check(torn_owner.apply_damage(2, MONK_MAX_HP) and torn_owner.is_downed(2),
+		"torn-caster fixture has a genuinely downed Monk")
+	_lure_rejected(_lure_deck(LURE_BASE), torn_owner, _cloud_enemies(), LURE_BASE, 1,
+		"torn (downed) Monk")
+
+	var no_owner := CombatParty.new([
+		{"id": "warden", "name": "Warden", "max_hp": 40},
+		{"id": "tinker", "name": "Tinker", "max_hp": 26},
+		{"id": "mender", "name": "Mender", "max_hp": 20},
+	])
+	_check(no_owner.is_valid() and no_owner.get_hero(3)["id"] == "mender",
+		"missing-owner fixture is a valid three-hero party with no Monk")
+	_lure_rejected(_lure_deck(LURE_BASE), no_owner, _cloud_enemies(), LURE_BASE, 1,
+		"party with no Lantern Monk owner")
+
+	var duplicated := _monk_party(2)
+	duplicated._heroes[0]["id"] = "lantern_monk"
+	_check(duplicated.get_hero(1)["id"] == "lantern_monk"
+			and duplicated.get_hero(2)["id"] == "lantern_monk",
+		"duplicate-identity fixture really repeats the owner ID")
+	_lure_rejected(_lure_deck(LURE_BASE), duplicated, _cloud_enemies(), LURE_BASE, 1,
+		"duplicate hero identity")
+
+	var above_max := _monk_party(2)
+	above_max._heroes[0]["hp"] = int(above_max._heroes[0]["max_hp"]) + 1
+	_check(above_max.get_hero(1)["hp"] > above_max.get_hero(1)["max_hp"],
+		"malformed-roster fixture really has HP above max")
+	_lure_rejected(_lure_deck(LURE_BASE), above_max, _cloud_enemies(), LURE_BASE, 1, "HP above max")
+
+	var bad_block := _monk_party(2)
+	bad_block._heroes[2]["block"] = -1
+	_check(bad_block.get_hero(3)["block"] == -1, "negative-Block fixture really stores -1")
+	_lure_rejected(_lure_deck(LURE_BASE), bad_block, _cloud_enemies(), LURE_BASE, 1,
+		"negative Block")
+
+	var bad_position := _monk_party(2)
+	bad_position._heroes[0]["position"] = 3
+	_check(bad_position.get_hero(1)["position"] == 3,
+		"wrong-position fixture really stores the wrong slot")
+	_lure_rejected(_lure_deck(LURE_BASE), bad_position, _cloud_enemies(), LURE_BASE, 1,
+		"wrong stored hero position")
+
+	for bad_statuses in ["bleed", [], null, {"bleed": -1}, {"bleed": "3"}, {"bleed": 1.5},
+			{"weak": true}, {1: 2}, {"": 1}, {"unknown_status": 1},
+			{BLIND_KEY: 2}, {BLIND_KEY: -1}, {BLIND_KEY: 1.5}, {DODGE_KEY: 2},
+			{FEAR_KEY: false}, {FEAR_KEY: 1}, {FEAR_KEY: "true"}]:
+		var broken := _monk_party(2)
+		broken._heroes[2]["statuses"] = bad_statuses
+		_check(broken.get_hero(3)["statuses"] == bad_statuses,
+			"malformed hero-status fixture really stores " + str(bad_statuses))
+		_lure_rejected(_lure_deck(LURE_BASE), broken, _cloud_enemies(), LURE_BASE, 1,
+			"malformed hero statuses " + str(bad_statuses))
+
+	for bad_statuses in ["bleed", [], null, {"bleed": -1}, {"bleed": "3"},
+			{"weak": true}, {1: 2}, {"": 1}, {"unknown_status": 1},
+			{BLIND_KEY: 2}, {BLIND_KEY: -1}, {DODGE_KEY: 2},
+			{FEAR_KEY: false}, {FEAR_KEY: 1}, {FEAR_KEY: "true"}]:
+		var broken_enemies := _cloud_enemies()
+		broken_enemies._enemies[0]["statuses"] = bad_statuses
+		_check(broken_enemies.get_enemy(1)["statuses"] == bad_statuses,
+			"malformed enemy-status fixture really stores " + str(bad_statuses))
+		_lure_rejected(_lure_deck(LURE_BASE), party, broken_enemies, LURE_BASE, 1,
+			"malformed enemy statuses " + str(bad_statuses))
+
+	# A malformed map on an already-slain slot is not skipped: the whole roster is validated.
+	var dead_malformed := _cloud_enemies()
+	_check(dead_malformed.apply_damage(2, 15) and dead_malformed.is_slain(2),
+		"dead-slot fixture really has a slain middle enemy")
+	dead_malformed._enemies[1]["statuses"] = {BLIND_KEY: 2}
+	_check(dead_malformed.get_enemy(2)["statuses"] == {BLIND_KEY: 2},
+		"dead-slot fixture really stores the malformed map")
+	_lure_rejected(_lure_deck(LURE_BASE), party, dead_malformed, LURE_BASE, 1,
+		"malformed status map on a slain slot")
+
+	var dead_target := _cloud_enemies()
+	_check(dead_target.apply_damage(2, 15) and dead_target.is_slain(2)
+			and dead_target.get_enemy(2)["position"] == 2,
+		"dead-target fixture really has a slain original slot 2")
+	_lure_rejected(_lure_deck(LURE_BASE), party, dead_target, LURE_BASE, 2,
+		"slain chosen enemy slot")
+
+	var two_slot := CombatEnemies.new([{"id": "lure_two_a", "max_hp": 5},
+		{"id": "lure_two_b", "max_hp": 5}])
+	_check(two_slot.is_valid() and two_slot.get_enemies().size() == 2,
+		"short-roster fixture really has only two enemy slots")
+	_lure_rejected(_lure_deck(LURE_BASE), party, two_slot, LURE_BASE, 3,
+		"enemy slot beyond the occupied roster")
+
+	var bad_enemy_block := _cloud_enemies()
+	bad_enemy_block._enemies[0]["block"] = -1
+	_check(bad_enemy_block.get_enemy(1)["block"] == -1,
+		"negative-enemy-Block fixture really stores -1")
+	_lure_rejected(_lure_deck(LURE_BASE), party, bad_enemy_block, LURE_BASE, 1,
+		"negative enemy Block")
+
+	var bad_enemy_position := _cloud_enemies()
+	bad_enemy_position._enemies[1]["position"] = 3
+	_check(bad_enemy_position.get_enemy(2)["position"] == 3,
+		"wrong-enemy-position fixture really stores the wrong slot")
+	_lure_rejected(_lure_deck(LURE_BASE), party, bad_enemy_position, LURE_BASE, 1,
+		"wrong stored enemy position")
+
+	_lure_rejected(null, party, _cloud_enemies(), LURE_BASE, 1, "null deck")
+	_lure_rejected(_lure_deck(LURE_BASE), null, _cloud_enemies(), LURE_BASE, 1, "null party")
+	_lure_rejected(_lure_deck(LURE_BASE), CombatParty.new([]), _cloud_enemies(), LURE_BASE, 1,
+		"invalid party roster")
+	_lure_rejected(_lure_deck(LURE_BASE), party, null, LURE_BASE, 1, "null enemies")
+	_lure_rejected(_lure_deck(LURE_BASE), party, CombatEnemies.new([]), LURE_BASE, 1,
+		"invalid enemy roster")
+
+	# A rejected attempt never poisons the next authentic one.
+	var retry_deck := _lure_deck(LURE_BASE)
+	var retry_party := _monk_party(2)
+	var retry_enemies := _cloud_enemies()
+	retry_enemies._enemies[0]["statuses"] = {"bleed": 2}
+	var retry_before := _cloud_snapshot(retry_deck, retry_party, retry_enemies)
+	_lure_rejected(retry_deck, retry_party, retry_enemies, LURE_BASE, 4,
+		"retry: invalid enemy slot")
+	_lure_rejected(retry_deck, retry_party, retry_enemies, LURE_PLUS, 1,
+		"retry: absent '+' printing")
+	var retried: Dictionary = lure_service.play_card(
+		retry_deck, retry_party, retry_enemies, LURE_BASE, 1)
+	_check(retried.get("ok") == true, "retry: the authentic play then succeeds")
+	_check(_cloud_snapshot(retry_deck, retry_party, retry_enemies)
+			== _lure_expected_play(retry_before, LURE_BASE, 1),
+		"retry: exactly one charge, one discard, one real draw and an untouched RNG")
+
+	# A forged catalog record - every authenticated field omitted or altered, an extra or retyped
+	# effect, or a broken base/'+' link - is never paid for, while the restored authentic pair
+	# still plays. Refusals leave the deck, party, enemies and RNG byte-identical.
+	var real_catalog: RefCounted = CatalogScript.new()
+	var altered_values := {
+		"id": "fake_lure", "display_name": "Fake Lure", "owner": "warden", "cost": 2.0,
+		"target_kind": "enemy_all", "from_positions": [1, 2], "to_positions": [1],
+		"effects": {BLIND_KEY: true}, "rarity": "rare", "starting_copies": 1,
+		"reward_eligible": true, "illustration_path": "res://assets/paper/cards/fake_lure.png",
+		"upgrade_id": "fake_lure", "upgrade_of": "fake_lure",
+	}
+	for card_id: String in LURE_IDS:
+		var authentic: Dictionary = real_catalog.get_definition(card_id)
+		_check(not authentic.is_empty(),
+			card_id + ": authentic record available (forgery precondition)")
+		if authentic.is_empty():
+			continue
+		var link_field := "upgrade_of" if card_id.ends_with("_plus") else "upgrade_id"
+		var mutations: Array = []
+		for field in ["id", "display_name", "owner", "cost", "target_kind", "from_positions",
+				"to_positions", "effects", "rarity", "starting_copies", "reward_eligible",
+				"illustration_path", link_field]:
+			var omitted: Dictionary = authentic.duplicate(true)
+			omitted.erase(field)
+			mutations.append(omitted)
+			var altered: Dictionary = authentic.duplicate(true)
+			var replacement: Variant = altered_values[field]
+			# The base record is already reward eligible, so that forgery flips the authored flag.
+			if field == "reward_eligible":
+				replacement = not bool(authentic[field])
+			if replacement is Dictionary or replacement is Array:
+				replacement = replacement.duplicate(true)
+			altered[field] = replacement
+			mutations.append(altered)
+		var extra_effect: Dictionary = authentic.duplicate(true)
+		extra_effect["effects"]["damage"] = 2
+		mutations.append(extra_effect)
+		var typed_blind: Dictionary = authentic.duplicate(true)
+		typed_blind["effects"][BLIND_KEY] = 1
+		mutations.append(typed_blind)
+		var typed_draw: Dictionary = authentic.duplicate(true)
+		typed_draw["effects"]["draw"] = "1"
+		mutations.append(typed_draw)
+		var stacked_draw: Dictionary = authentic.duplicate(true)
+		stacked_draw["effects"]["draw"] = 2
+		mutations.append(stacked_draw)
+		var bool_cost: Dictionary = authentic.duplicate(true)
+		bool_cost["cost"] = true
+		mutations.append(bool_cost)
+		_check(not mutations.is_empty(), card_id + ": forgery fixtures are non-empty (precondition)")
+
+		var forged_service := ForgedLure.new()
+		var forged_deck := _lure_deck(card_id)
+		var forged_party := _monk_party(2)
+		var forged_enemies := _cloud_enemies()
+		forged_service.forged_id = card_id
+		for forged: Dictionary in mutations:
+			forged_service.forged = forged
+			var forged_before := _cloud_snapshot(forged_deck, forged_party, forged_enemies)
+			var result: Dictionary = forged_service.play_card(
+				forged_deck, forged_party, forged_enemies, card_id, 1)
+			_check(result.get("ok") == false, card_id + ": forged catalog record rejected")
+			_check(result.get("reason") is String and not (result.get("reason") as String).is_empty(),
+				card_id + ": forged refusal carries a reason")
+			_check(_cloud_snapshot(forged_deck, forged_party, forged_enemies) == forged_before,
+				card_id + ": forged rejection leaves deck, party, enemies and RNG unchanged")
+		forged_service.forged_id = ""
+		var restored: Dictionary = forged_service.play_card(
+			forged_deck, forged_party, forged_enemies, card_id, 1)
+		_check(restored.get("ok") == true and restored.get("card_id") == card_id,
+			card_id + ": the restored authentic pair plays")
+
+
+## A real seeded five-card hand from six cards, so at least two copies of the named ID are held and
+## exactly one real card is left on top of the draw pile for the printed draw.
+func _lure_deck(card_id: String, seed_value: int = 7311) -> CombatDeck:
+	var ids: Array[String] = [card_id, card_id, card_id, PARTY_FILLERS[0], PARTY_FILLERS[1],
+		PARTY_FILLERS[2]]
+	var deck := CombatDeck.new(ids, _party_rng(seed_value))
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3
+			and deck.hand.size() == 5 and deck.hand.count(card_id) >= 2
+			and deck.draw_pile.size() == 1,
+		card_id + ": real seeded five-card hand holding duplicate copies and one drawable card")
+	return deck
+
+
+## A real seeded fixture whose draw pile is empty before the play: the printed draw must reshuffle
+## the battle's genuine discard pile through CombatDeck's injected generator.
+func _lure_reshuffle_run(seed_value: int, card_id: String) -> Dictionary:
+	var party := _monk_party(2)
+	var enemies := _cloud_enemies()
+	enemies._enemies[0]["statuses"] = {"weak": 1}
+	var deck := CombatDeck.new([card_id, PARTY_FILLERS[0], PARTY_FILLERS[1], PARTY_FILLERS[2],
+		PARTY_FILLERS[3]], _party_rng(seed_value))
+	_check(deck.start_turn() and deck.hand.size() == 5 and deck.draw_pile.is_empty()
+			and deck.hand.has(card_id) and deck.energy == 3,
+		card_id + ": reshuffle fixture drew its whole five-card deck")
+	# Prior discards through the real API leave a genuine multi-card discard supply.
+	for filler: String in [PARTY_FILLERS[3], PARTY_FILLERS[2], PARTY_FILLERS[1]]:
+		_check(deck.discard_played(filler),
+			card_id + ": reshuffle fixture discards a prior held card")
+	if card_id == LURE_PLUS:
+		_check(deck.try_spend_energy(3) and deck.energy == 0,
+			card_id + ": reshuffle fixture spends the shared energy to zero first")
+	_check(deck.draw_pile.is_empty() and deck.discard_pile.size() == 3
+			and deck.hand.size() == 2 and deck.hand.has(card_id),
+		card_id + ": reshuffle fixture has an empty draw pile, three prior discards and a held copy")
+	var before := _cloud_snapshot(deck, party, enemies)
+	var result: Dictionary = lure_service.play_card(deck, party, enemies, card_id, 1)
+	var after := _cloud_snapshot(deck, party, enemies)
+	return {"result": result, "before": before, "after": after}
+
+
+## The single-transaction expected state for one paid Moth Lure play whose draw only pops from a
+## non-empty prepared draw pile (the reshuffle case is verified by seed-paired replay instead): one
+## cost, one held copy discarded, the draw pile's top card drawn (or a Frayed Debt exhausted in its
+## slot), and exactly Blind 1 on the chosen slot.
+func _lure_expected_play(before: Dictionary, card_id: String, target_position: int) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] = int(expected["energy"]) - int(LURE_COST[card_id])
+	expected["state_energy"] = int(expected["state_energy"]) - int(LURE_COST[card_id])
+	var hand: Array = expected["hand"]
+	hand.remove_at(hand.find(card_id))
+	var draw: Array = expected["draw"]
+	if not draw.is_empty():
+		var next_card: String = str(draw.pop_back())
+		if next_card == MpwFrayedDebt.CARD_ID:
+			expected["exhausted"].append(next_card)
+		else:
+			hand.append(next_card)
+	var discard: Array = expected["discard"]
+	discard.append(card_id)
+	var enemy: Dictionary = expected["enemies"][target_position - 1]
+	var statuses: Dictionary = enemy.get("statuses", {})
+	statuses[BLIND_KEY] = 1
+	enemy["statuses"] = statuses
+	return expected
+
+
+func _lure_rejected(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, card_id: Variant,
+		target_position: Variant, label: String) -> void:
+	var before := _cloud_snapshot(deck, party, enemies)
+	var result: Dictionary = lure_service.play_card(
 		deck, party, enemies, card_id, target_position)
 	_check(result.get("ok") == false, label + ": rejected")
 	_check(result.get("reason") is String and not (result.get("reason") as String).is_empty(),
