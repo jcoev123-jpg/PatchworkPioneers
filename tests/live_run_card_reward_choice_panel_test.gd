@@ -2664,14 +2664,14 @@ func _test_burlap_fallback() -> void:
 	art_probe.free()
 
 
-## The Help cell must stay readable when the optional sewn button art is absent:
+## The Details cell must stay readable when the optional sewn button art is absent:
 ## the procedural face is opaque and the same measured label fit reserves both
 ## sewn side seams, so the fallback never crowds the owner ribbon either.
 func _test_help_cell_without_art() -> void:
 	var accent := Color("#766351")
 	var probe := Button.new()
 	probe.name = "HelpCellFallbackProbe"
-	probe.text = "Help"
+	probe.text = "Details"
 	probe.theme_type_variation = &"PatchHeadingButton"
 	probe.add_theme_font_size_override("font_size",
 		LiveRunCardRewardChoicePanel.HELP_TAB_FONT_SIZE)
@@ -2876,7 +2876,7 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 			"mouse Help opens the real glossary for this card: " + card_id)
 		if overlay != null:
 			var help_title := overlay.get_node("HelpContent/HelpTitle") as Label
-			var lines := overlay.get_node("HelpContent/KeywordScroll/KeywordLines") as VBoxContainer
+			var lines := overlay.get_node("HelpContent/KeywordScroll/DetailBody/KeywordLines") as VBoxContainer
 			var def: Dictionary = _base_pool_definition(card_id)
 			_check(help_title.text.contains(String(def["display_name"]))
 				and lines.get_child_count() > 0,
@@ -2972,7 +2972,7 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 	await _frames()
 
 
-## A valid reward offer with no authored keyword mounts no Help tab at all, while
+## A valid reward offer with no authored keyword still mounts its Details tab, while
 ## a keyword offer in the same three-offer receipt keeps its separate tab. The
 ## three owner strips cover Warden, Seamstress and Tinker, and the glossary's
 ## Close action wears the same display face as every reward action.
@@ -3023,14 +3023,14 @@ func _test_no_keyword_card_without_help(base: Dictionary, kind: String) -> void:
 			"owner label wears PatchHeading: " + card_id)
 		if keywords.is_empty():
 			plain_cards += 1
-			_check(help == null and (header == null or header.get_node_or_null("HelpButton") == null),
-				"no-keyword offer mounts no Help tab at all: " + card_id)
-			_check(owner_patch != null and header != null and is_equal_approx(owner_patch.size.x, header.size.x),
-				"owner ribbon occupies full width of card header when no Help tab: " + card_id)
-			continue
-		keyword_cards += 1
-		_check(help != null and help.is_visible_in_tree() and not help.disabled,
-			"keyword offer keeps a live Help tab: " + card_id)
+		else:
+			keyword_cards += 1
+		_check(help != null and help.is_visible_in_tree() and not help.disabled
+			and help.text == "Details",
+			"every authentic offer keeps a visible Details tab: " + card_id)
+		_check(owner_patch != null and header != null
+			and not owner_patch.get_global_rect().intersects(help.get_global_rect()),
+			"Details and owner ribbon remain distinct sewn cells: " + card_id)
 		if help == null:
 			continue
 		_check(help.theme_type_variation == &"PatchHeadingButton"
@@ -3046,7 +3046,7 @@ func _test_no_keyword_card_without_help(base: Dictionary, kind: String) -> void:
 		if first_help == null:
 			first_help = help
 	_check(keyword_cards >= 1 and plain_cards >= 1,
-		"the case really mounts a keyword Help tab and a no-keyword offer")
+		"the case really mounts a keyword offer and a no-keyword offer with Details")
 	_check(owners.size() == 3 and owners[0] == "warden" and owners[1] == "seamstress"
 		and owners[2] == "tinker",
 		"the three resolved owner labels cover all three heroes: " + str(owners))
@@ -3076,6 +3076,221 @@ func _test_no_keyword_card_without_help(base: Dictionary, kind: String) -> void:
 					"closing the glossary returns focus to its Help tab")
 	_check(requests.is_empty() and panel._receipt == before and not panel._awaiting_ack,
 		"keyword-presence presentation never requests or mutates the receipt: " + kind)
+	panel.close_rewards()
+	await _frames()
+
+
+## A real three-hero V3 victory supplies the three requested, catalog-backed
+## offers through the unchanged Fight/Elite reward service. No free-form offer
+## dictionaries are introduced here.
+func _prepared_v3_details(is_elite: bool) -> Dictionary:
+	var admitted := RunV3PartyAdmission.admit(["scarecrow", "button_golem", "lantern_monk"])
+	_check(admitted.get("ok", false) and (admitted.get("hero_ids", []) as Array).size() == 3,
+		"three selected V3 heroes admitted to the authentic reward flow")
+	if not admitted.get("ok", false):
+		return {}
+	var party := CombatParty.new(admitted["party"])
+	var enemies := CombatEnemies.new(_defs(ENEMIES))
+	_check(party.is_valid() and enemies.is_valid(), "V3 Details real rosters")
+	var result := CombatBattleResult.new(party, enemies)
+	_check(result.get_outcome() == CombatBattleResult.ACTIVE, "V3 Details starts a real battle")
+	for slot in range(1, enemies.get_enemies().size() + 1):
+		_check(enemies.apply_damage(slot, enemies.get_enemy(slot).get("hp", 0)),
+			"V3 Details wins with actual enemy damage")
+	_check(result.evaluate() == CombatBattleResult.VICTORY, "V3 Details has a witnessed victory")
+	var wanted := ["scarecrow_re_stuff", "button_golem_button_roll",
+		"lantern_monk_wick_flicker"]
+	var candidates: Array = []
+	for authored: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+		if wanted.has(String(authored.get("id", ""))):
+			candidates.append(authored)
+	_check(candidates.size() == 3, "all three named V3 cards are genuine eligible base candidates")
+	var ids: Array[String] = []
+	for hero_id: String in admitted["hero_ids"]:
+		ids.append(hero_id)
+	var deck: Array[String] = []
+	for id: String in admitted["deck"]:
+		deck.append(id)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 19752
+	var service := RunFightVictoryRewards.new(result, rng, ids, candidates,
+		deck, 97, is_elite, ["button_charm", "thread_token"], ["button_charm"])
+	var receipt: Dictionary = service.prepare()
+	_check(receipt.get("ok", false) and (receipt.get("offers", []) as Array).size() == 3,
+		"genuine V3 Details Fight/Elite prepares exactly three distinct offers")
+	if not receipt.get("ok", false):
+		return {}
+	var actual_ids: Array[String] = []
+	for offer: Dictionary in receipt["offers"]:
+		actual_ids.append(String(offer["id"]))
+	_check(actual_ids.size() == 3 and actual_ids[0] != actual_ids[1]
+		and actual_ids[0] != actual_ids[2] and actual_ids[1] != actual_ids[2],
+		"prepared V3 Details receipt uses three distinct IDs")
+	for wanted_id: String in wanted:
+		_check(actual_ids.has(wanted_id), "actual receipt contains " + wanted_id)
+	_check(receipt["gold_award"] >= (25 if is_elite else 10)
+		and receipt["gold_award"] <= (35 if is_elite else 20)
+		and (not String(receipt["trinket_drop_id"]).is_empty()) == is_elite,
+		"authentic pending Fight/Elite gold band and Elite-only patch")
+	return {"receipt": receipt, "rng": rng, "service": service, "deck": deck,
+		"gold": 97, "owned": ["button_charm"], "party": party, "enemies": enemies,
+		"result": result}
+
+
+func _test_all_details(is_elite: bool) -> void:
+	var fixture := _prepared_v3_details(is_elite)
+	if fixture.is_empty():
+		return
+	var receipt: Dictionary = fixture["receipt"]
+	var node_id := "v3_details_elite" if is_elite else "v3_details_fight"
+	requests.clear()
+	_check(panel.open_rewards(node_id, "Elite" if is_elite else "Fight", receipt),
+		"authentic V3 receipt opens the mounted real reward panel")
+	if not panel.has_open_rewards():
+		return
+	await _frames()
+	var before := _snapshot(fixture)
+	var bound_receipt: Dictionary = panel._receipt.duplicate(true)
+	var actions := panel.get_choice_buttons()
+	_check(actions.size() == 4 and panel.choices_container.get_child_count() == 3,
+		"three genuine cards plus Skip, with no extra choice inputs")
+	if actions.size() != 4:
+		panel.close_rewards()
+		return
+	await _test_focus_navigation(actions, "V3 Details")
+	var old_details: Callable
+	var old_close: Callable
+	var old_button: Button
+	var old_overlay: PanelContainer
+	var old_generation := panel._generation
+	for slot in range(3):
+		var offer: Dictionary = receipt["offers"][slot]
+		var definition := RunPoolCardRewardOffers.resolve_reward_definition(offer["id"])
+		var card := panel.choices_container.get_child(slot) as PanelContainer
+		var help := card.get_node("CardMargin/CardContent/CardHeader/HelpButton") as Button
+		_check(help != null and help.text == "Details" and not help.disabled
+			and help.focus_mode == Control.FOCUS_ALL,
+			"all three V3 offers have active Details input: " + offer["id"])
+		if help == null:
+			continue
+		if slot == 0:
+			old_details = help.pressed.get_connections()[0]["callable"]
+			old_button = help
+		# Both genuine pointer and keyboard activation use the same guarded action.
+		if slot == 0:
+			await _mouse(help)
+		else:
+			actions[slot].grab_focus()
+			await _key(KEY_RIGHT)
+			_check(help.has_focus(), "Choose Right opens this card's Details focus")
+			await _key(KEY_ENTER if slot == 1 else KEY_SPACE)
+		var overlay := panel.get_node_or_null("KeywordHelpOverlay") as PanelContainer
+		_check(overlay != null and panel._help_overlay == overlay,
+			"this bound V3 offer opens the existing sewn Details sheet")
+		if overlay == null:
+			continue
+		var summary := overlay.get_node("HelpContent/KeywordScroll/DetailBody/DetailsSummary") as Label
+		var effects := overlay.get_node("HelpContent/KeywordScroll/DetailBody/AuthoredEffects") as Label
+		var list := overlay.get_node("HelpContent/KeywordScroll/DetailBody/KeywordLines") as VBoxContainer
+		var scroll := overlay.get_node("HelpContent/KeywordScroll") as ScrollContainer
+		var title := overlay.get_node("HelpContent/HelpTitle") as Label
+		var owner_name := String(definition["owner"]).replace("_", " ").capitalize()
+		_check(title.text.contains(definition["display_name"]) and title.text.contains("Details")
+			and summary.text.contains(owner_name)
+			and summary.text.contains("Energy cost: %d" % definition["cost"])
+			and summary.text.contains("Source hero seats:")
+			and summary.text.contains("Target kind: " + definition["target_kind"])
+			and summary.text.contains("Rarity: " + String(definition["rarity"]).capitalize()),
+			"mounted Details shows authenticated name/owner/energy/rarity/seats/target")
+		for position in definition["from_positions"]:
+			_check(summary.text.contains(str(position)), "every printed source seat shown")
+		if definition["to_positions"].is_empty():
+			_check(summary.text.contains("Target seats: none printed")
+				and summary.text.contains("No target squares are printed"),
+				"no fabricated target seats for a self or ally offer")
+		else:
+			_check(summary.text.contains(panel._details_seats(definition["to_positions"])),
+				"complete target seat list is printed")
+		for key in definition["effects"]:
+			_check(effects.text.contains(String(key) + " = " + str(definition["effects"][key])),
+				"every raw authored effect printed: " + String(key))
+		if offer["id"] == "scarecrow_re_stuff":
+			_check(definition["cost"] == 2 and definition["effects"] == {"max_hp_loss": 2, "heal": 10}
+				and effects.text.contains("lose 2 maximum HP, then heal 10 HP")
+				and summary.text.contains("The owning hero only."),
+				"Scarecrow Re-Stuff Details names exact 2-energy 2-max-HP/10-heal exchange")
+		if offer["id"] == "button_golem_button_roll":
+			_check(summary.text.contains("Choose one living ally")
+				and summary.text.contains("Target seats: none printed")
+				and effects.text.contains("swap_with_target_ally = true"),
+				"Button Golem ally swap shows no fabricated recipient seat")
+		var rows := CardKeywordGlossary.describe(definition)
+		_check(list.get_child_count() == rows.size(), "all keyword rows retained beside printed effects")
+		for row_index in range(rows.size()):
+			var row_label := list.get_child(row_index) as Label
+			_check(row_label.text.contains(rows[row_index]["keyword"])
+				and row_label.text.contains(rows[row_index]["explanation"]),
+				"real keyword explanation and exact values preserved")
+		var screen := Rect2(Vector2.ZERO, Vector2(root.size))
+		var close := overlay.get_node("HelpContent/CloseHelpButton") as Button
+		_check(root.size == Vector2i(1280, 720) and screen.encloses(overlay.get_global_rect())
+			and overlay.get_global_rect().encloses(close.get_global_rect()) and close.has_focus()
+			and summary.get_line_count() >= 4 and scroll.size.y > 0,
+			"readable Details sheet and focused Close fit 1280x720")
+		if slot == 0:
+			old_overlay = overlay
+			old_close = close.pressed.get_connections()[0]["callable"]
+		scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
+		await _frames()
+		_check(scroll.scroll_vertical > 0, "long Details text scrolls within the sewn overlay")
+		_check(_snapshot(fixture) == before and panel._receipt == bound_receipt
+			and requests.is_empty(), "open/scroll Details changes no reward, ledger or RNG")
+		if slot % 2 == 0:
+			await _key(KEY_ESCAPE)
+		else:
+			await _mouse(close)
+		_check(panel._help_overlay == null and help.has_focus(),
+			"Escape or mouse Close restores the originating Details focus")
+		_check(_snapshot(fixture) == before and requests.is_empty(),
+			"Details close is strictly read only")
+	# The stored action and stored Close cannot affect a new, valid receipt.
+	panel.close_rewards()
+	_check(not panel.visible and panel._help_overlay == null, "closing clears Details")
+	_check(panel.open_rewards(node_id, "Elite" if is_elite else "Fight", receipt),
+		"genuine replacement receipt opens after close")
+	await _frames()
+	if old_details.is_valid():
+		old_details.call()
+	if old_close.is_valid():
+		old_close.call()
+	if is_instance_valid(old_button):
+		panel._on_help_pressed(old_generation, node_id, 0,
+			String(receipt["offers"][0]["id"]), old_button)
+	_check(panel._help_overlay == null and requests.is_empty()
+		and panel._receipt == receipt and not panel._awaiting_ack,
+		"stale Details/Close callables cannot inspect new binding or request choice")
+	panel.hide()
+	panel._on_help_pressed(panel._generation, node_id, 0,
+		String(receipt["offers"][0]["id"]), panel._help_buttons[0])
+	panel.show()
+	_check(panel._help_overlay == null and requests.is_empty(),
+		"hidden Details is rejected without a request")
+	var current := panel._help_buttons[0]
+	current.pressed.emit()
+	_check(panel._help_overlay != null, "current Details remains available")
+	actions = panel.get_choice_buttons()
+	actions[3].pressed.emit()
+	_check(panel._help_overlay == null and requests == [{"node": node_id, "card": ""}],
+		"only genuine Skip settles after Details; no inspection signal")
+	panel._on_help_pressed(panel._generation, node_id, 0,
+		String(receipt["offers"][0]["id"]), current)
+	_check(panel._help_overlay == null and requests.size() == 1,
+		"pending Skip prevents reopening Details")
+	panel.acknowledge(true)
+	current.pressed.emit()
+	_check(panel._help_overlay == null and requests.size() == 1,
+		"accepted Skip prevents all later Details callbacks")
+	_check(_snapshot(fixture) == before, "all Details/refusals/Skip requests leave models unchanged")
 	panel.close_rewards()
 	await _frames()
 
@@ -3134,6 +3349,8 @@ func _run() -> void:
 		await _test_pool_replay(pool_fight)
 		await _test_all_pool_cards(original_fight)
 		await _test_three_tier_rarities(original_fight)
+	await _test_all_details(false)
+	await _test_all_details(true)
 	# Fresh global seeded stream must also survive panel interactions.
 	seed(3941)
 	var expected := randi()

@@ -269,7 +269,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	margin.add_child(content)
 
 	# Horizontal card header row: the owner ribbon keeps its own whole cell and
-	# the keyword Help tab is a second sewn cell, separated by card paper.
+	# the Details tab is a second sewn cell, separated by card paper.
 	var header := HBoxContainer.new()
 	header.name = "CardHeader"
 	header.custom_minimum_size = Vector2(0, OWNER_STRIP_HEIGHT)
@@ -297,7 +297,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	owner_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	# A plain FULL_RECT label can run glyphs into the felt border. The measured
 	# side inset keeps the complete Warden/Seamstress/Tinker name inside its own
-	# sewn cell, clear of the gap that separates it from Help.
+	# sewn cell, clear of the gap that separates it from Details.
 	owner_label.offset_left = OWNER_NAME_SIDE_INSET
 	owner_label.offset_right = -OWNER_NAME_SIDE_INSET
 	owner_patch.add_child(owner_label)
@@ -418,22 +418,20 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	card.mouse_exited.connect(_on_card_mouse_exited.bind(index))
 	action.focus_entered.connect(_on_card_focus_entered.bind(index))
 	action.focus_exited.connect(_on_card_focus_exited.bind(index))
-	# Distinct, always reserved-in-width Help tab cell for keyword cards,
-	# a separate sibling of OwnerPatch in CardHeader with card paper between.
-	var keywords: Array[Dictionary] = CardKeywordGlossary.describe(definition)
-	if not keywords.is_empty():
-		var help := Button.new()
-		help.name = "HelpButton"
-		help.text = "Help"
-		help.focus_mode = Control.FOCUS_ALL
-		help.mouse_filter = Control.MOUSE_FILTER_STOP
-		help.size_flags_horizontal = Control.SIZE_SHRINK_END
-		help.size_flags_vertical = Control.SIZE_FILL
-		_style_button(help, OWNER_COLORS[owner], HELP_TAB_EDGE_VERTICAL)
-		help.add_theme_font_size_override("font_size", HELP_TAB_FONT_SIZE)
-		_fit_help_tab(help)
-		_add_focus_stitch(help)
-		header.add_child(help)
+	# Every authenticated offer receives its own Details tab, including cards
+	# without glossary rows. It stays beside the owner patch, never on Choose.
+	var help := Button.new()
+	help.name = "HelpButton"
+	help.text = "Details"
+	help.focus_mode = Control.FOCUS_ALL
+	help.mouse_filter = Control.MOUSE_FILTER_STOP
+	help.size_flags_horizontal = Control.SIZE_SHRINK_END
+	help.size_flags_vertical = Control.SIZE_FILL
+	_style_button(help, OWNER_COLORS[owner], HELP_TAB_EDGE_VERTICAL)
+	help.add_theme_font_size_override("font_size", HELP_TAB_FONT_SIZE)
+	_fit_help_tab(help)
+	_add_focus_stitch(help)
+	header.add_child(help)
 	return card
 
 
@@ -604,16 +602,97 @@ func _on_help_pressed(generation: int, node_id: String, index: int,
 			or String(_receipt["offers"][index].get("id", "")) != card_id:
 		return
 	var definition := RunPoolCardRewardOffers.resolve_reward_definition(card_id)
-	var keywords: Array[Dictionary] = CardKeywordGlossary.describe(definition)
-	if keywords.is_empty():
+	if definition.is_empty() or definition.get("owner") != _receipt["offers"][index].get("owner"):
 		return
+	var keywords: Array[Dictionary] = CardKeywordGlossary.describe(definition)
 	_dismiss_help(false)
 	_help_invoker = button
-	_mount_help_overlay(definition, keywords, generation, button)
+	_mount_help_overlay(definition, keywords, generation, node_id, index, card_id, button)
+
+
+## The sheet prints the resolver's *authored* record, not a promise of
+## combat support. Keep every effect key/value even when short rules or the
+## keyword glossary know nothing about it.
+func _details_label(label_name: String, value: String) -> Label:
+	var label := Label.new()
+	label.name = label_name
+	label.text = value
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.add_theme_font_size_override("font_size", 18)
+	label.add_theme_color_override("font_color", DARK_INK)
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return label
+
+
+func _details_seats(positions: Array) -> String:
+	if positions.is_empty():
+		return "none printed"
+	var parts: Array[String] = []
+	for seat in positions:
+		parts.append(str(seat))
+	return ", ".join(parts)
+
+
+func _details_summary(definition: Dictionary) -> String:
+	var owner := String(definition.get("owner", "")).replace("_", " ").capitalize()
+	var source: Array = definition.get("from_positions", [])
+	var target: Array = definition.get("to_positions", [])
+	var kind := String(definition.get("target_kind", ""))
+	var recipient := "Target rule not described; consult printed target seats."
+	match kind:
+		"enemy_single":
+			recipient = "Choose one living enemy in the printed enemy seats."
+		"enemy_all":
+			recipient = "All enemies in the printed enemy seats."
+		"enemy_back":
+			recipient = "Backmost eligible living enemy in the printed enemy seats."
+		"ally_single":
+			recipient = "Choose one living ally in the party."
+		"self":
+			recipient = "The owning hero only."
+		"party_all":
+			recipient = "Every hero in the party."
+		"adjacent_ally":
+			recipient = "An adjacent ally of the owning hero."
+	if target.is_empty():
+		recipient += " No target squares are printed; none are implied."
+	return "%s  |  %s\nOwner: %s  |  Energy cost: %s  |  Rarity: %s\nSource hero seats: %s\nTarget kind: %s  |  Target seats: %s\n%s\nPips: filled circles show source seats; filled squares show printed target seats.\nCard face: %s\nThese are catalog-authored rules, not a claim of live combat implementation." % [
+		String(definition.get("display_name", "")), String(definition.get("id", "")),
+		owner, str(definition.get("cost", "?")),
+		String(definition.get("rarity", "not printed")).capitalize(),
+		_details_seats(source), kind, _details_seats(target), recipient,
+		CardShortRules.line(definition)]
+
+
+func _details_effects(definition: Dictionary) -> String:
+	var raw: Variant = definition.get("effects", {})
+	if not raw is Dictionary:
+		return "Authored effects: unreadable printed effect block."
+	var effects: Dictionary = raw
+	var lines: Array[String] = ["Authored effects (literal printed key = value):"]
+	if effects.is_empty():
+		lines.append("None printed.")
+	for key in effects:
+		# Every entry is visible even if CardShortRules has no description for it.
+		var name := String(key)
+		var value: Variant = effects[key]
+		var explanation := ""
+		if name == "max_hp_loss" and value is int:
+			explanation = " (lose %d maximum HP)" % value
+		elif name == "heal" and value is int:
+			explanation = " (heal %d HP)" % value
+		elif not CardShortRules.KNOWN_EFFECT_KEYS.has(name):
+			explanation = " — unexplained authored effect"
+		lines.append("• %s = %s%s" % [name, str(value), explanation])
+	if String(definition.get("id", "")) == "scarecrow_re_stuff" \
+			and effects.get("max_hp_loss") == 2 and effects.get("heal") == 10:
+		lines.append("Re-Stuff exchange: lose 2 maximum HP, then heal 10 HP.")
+	return "\n".join(lines)
 
 
 func _mount_help_overlay(definition: Dictionary, keywords: Array[Dictionary],
-		generation: int, invoker: Button) -> void:
+		generation: int, node_id: String, index: int, card_id: String,
+		invoker: Button) -> void:
 	var owner: String = String(definition.get("owner", ""))
 	var felt: Color = OWNER_COLORS.get(owner, Color("#736451"))
 	var overlay := PanelContainer.new()
@@ -643,7 +722,7 @@ func _mount_help_overlay(definition: Dictionary, keywords: Array[Dictionary],
 	overlay.add_child(column)
 	var title := Label.new()
 	title.name = "HelpTitle"
-	title.text = String(definition["display_name"]) + "  •  Keywords"
+	title.text = String(definition["display_name"]) + "  •  Details"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	title.theme_type_variation = &"PatchHeading"
@@ -663,11 +742,20 @@ func _mount_help_overlay(definition: Dictionary, keywords: Array[Dictionary],
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	column.add_child(scroll)
+	var body := VBoxContainer.new()
+	body.name = "DetailBody"
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_theme_constant_override("separation", 12)
+	scroll.add_child(body)
+	var summary := _details_label("DetailsSummary", _details_summary(definition))
+	body.add_child(summary)
+	var effects := _details_label("AuthoredEffects", _details_effects(definition))
+	body.add_child(effects)
 	var list := VBoxContainer.new()
 	list.name = "KeywordLines"
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	list.add_theme_constant_override("separation", 13)
-	scroll.add_child(list)
+	body.add_child(list)
 	for item: Dictionary in keywords:
 		var line := Label.new()
 		line.name = "KeywordLine_%d" % list.get_child_count()
@@ -679,7 +767,7 @@ func _mount_help_overlay(definition: Dictionary, keywords: Array[Dictionary],
 		list.add_child(line)
 	var close := Button.new()
 	close.name = "CloseHelpButton"
-	close.text = "Close help"
+	close.text = "Close details"
 	close.focus_mode = Control.FOCUS_ALL
 	close.custom_minimum_size = Vector2(0, 42)
 	close.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -687,21 +775,32 @@ func _mount_help_overlay(definition: Dictionary, keywords: Array[Dictionary],
 	close.add_theme_font_size_override("font_size", 18)
 	_add_focus_stitch(close)
 	column.add_child(close)
-	close.pressed.connect(_on_help_close_pressed.bind(generation, invoker, overlay))
+	close.pressed.connect(_on_help_close_pressed.bind(
+		generation, node_id, index, card_id, invoker, overlay))
 	close.grab_focus()
 
 
-func _on_help_close_pressed(generation: int, invoker: Variant,
-		overlay: Variant) -> void:
-	if not _is_open or _generation != generation or not is_instance_valid(invoker) \
-			or not is_instance_valid(overlay) or _help_overlay != overlay \
-			or _help_invoker != invoker:
+func _on_help_close_pressed(generation: int, node_id: String, index: int,
+		card_id: String, invoker: Variant, overlay: Variant) -> void:
+	if not _is_open or _accepted or _awaiting_ack or not is_visible_in_tree() \
+			or _generation != generation or _node_id != node_id \
+			or not is_instance_valid(invoker) or not is_instance_valid(overlay) \
+			or _help_overlay != overlay or _help_invoker != invoker \
+			or not _help_buttons.has(invoker) or _help_ids.get(invoker, "") != card_id:
+		return
+	if index < 0 or index >= _card_panels.size() \
+			or index >= _receipt.get("offers", []).size():
+		return
+	if String(_receipt["offers"][index].get("id", "")) != card_id \
+			or _card_panels[index].get_node_or_null(
+				"CardMargin/CardContent/CardHeader/HelpButton") != invoker:
 		return
 	_dismiss_help(true)
 
 
 func _input(event: InputEvent) -> void:
-	if _is_open and _help_overlay != null and event is InputEventKey \
+	if _is_open and not _accepted and not _awaiting_ack and is_visible_in_tree() \
+			and _help_overlay != null and event is InputEventKey \
 			and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 		_dismiss_help(true)
 		get_viewport().set_input_as_handled()
