@@ -12,6 +12,7 @@ const OXBLOOD := Color("#713a45")
 const INK := Color("#171c27")
 const DIM := Color("#c1b6ae")
 const PANEL_SIZE := Vector2(880, 600)
+const HEAL_TEXT := "1 Heal · 30%"
 const LEAVE_TEXT := "0 Leave · free"
 
 class Stitches extends Control:
@@ -51,9 +52,9 @@ func _ready() -> void:
 	for i in range(3):
 		hero_labels.append(_label("", Vector2(70, 161 + i * 97),
 			Vector2(740, 70), 26, CREAM))
-	heal_button = _button("Heal", Vector2(48, 498), Vector2(373, 72), OXBLOOD)
+	heal_button = _button(HEAL_TEXT, Vector2(48, 498), Vector2(373, 72), OXBLOOD)
 	leave_button = _button(LEAVE_TEXT, Vector2(459, 498), Vector2(373, 72), TEAL)
-	heal_button.tooltip_text = "1 → Heal"
+	heal_button.tooltip_text = "1 → Heal each hero 30% max HP (Torn revives at 1 HP first)"
 	leave_button.tooltip_text = "0 → Leave (2 also works)"
 	_refresh()
 	_focus_default()
@@ -227,7 +228,7 @@ func _hero_text(i: int) -> String:
 
 func _display_current() -> bool:
 	if title_label == null or title_label.text != "CAMPFIRE" \
-			or heal_button.text != "Heal" or leave_button.text != LEAVE_TEXT:
+			or heal_button.text != HEAL_TEXT or leave_button.text != LEAVE_TEXT:
 		return false
 	if hero_labels.size() != 3:
 		return false

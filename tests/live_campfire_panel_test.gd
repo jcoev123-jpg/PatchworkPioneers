@@ -165,7 +165,7 @@ func _layout_and_previews() -> void:
 	_check(panel.title_label.text == "CAMPFIRE"
 		and panel.title_label.get_theme_font_size("font_size") >= 35
 		and panel.get_theme_default_font_size() > 0, "large readable Campfire title")
-	_check(panel.hero_labels.size() == 3 and panel.heal_button.text == "Heal"
+	_check(panel.hero_labels.size() == 3 and panel.heal_button.text == "1 Heal · 30%"
 		and panel.leave_button.text == "0 Leave · free",
 		"exactly three ribbons and two actions, Leave shows its primary 0")
 	_check(panel.heal_button.tooltip_text.contains("1 → Heal")
@@ -359,7 +359,7 @@ func _fail_closed() -> void:
 	panel.hero_labels[0].text = panel._hero_text(0)
 	panel.heal_button.text = "Buy for 0 gold"
 	_reject_without_mutation(original, "forged choice caption")
-	panel.heal_button.text = "Heal"
+	panel.heal_button.text = "1 Heal · 30%"
 	panel.leave_button.text = "0 Leave · free!"
 	_reject_without_mutation(original, "forged leave caption")
 	panel.leave_button.text = "0 Leave · free"
@@ -404,7 +404,7 @@ func _fail_closed() -> void:
 	retired.call()
 	_reject_without_mutation(current, "closed panel and retired callback")
 	await _bind(current)
-	_check(panel.heal_button.has_focus() and panel.heal_button.text == "Heal"
+	_check(panel.heal_button.has_focus() and panel.heal_button.text == "1 Heal · 30%"
 		and current.read_state() == current_state,
 		"fresh legitimate rebind reopens action without altering source")
 	await _activate(panel.heal_button, false)
@@ -483,7 +483,7 @@ func _default_focus() -> void:
 		and not pre.leave_button.disabled,
 		"zero-gain pre-mount bind focuses the real enabled Leave button")
 	_check(pre.heal_button.disabled and pre.heal_button.is_visible_in_tree()
-		and pre.heal_button.text == "Heal",
+		and pre.heal_button.text == "1 Heal · 30%",
 		"zero-gain Heal stays visible but disabled at full HP")
 	_check(full.read_state() == full_before and pre_intents.is_empty(),
 		"zero-gain default focus alone consumes no visit")
