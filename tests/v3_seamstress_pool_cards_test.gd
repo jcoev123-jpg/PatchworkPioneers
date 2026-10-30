@@ -3,13 +3,23 @@ extends SceneTree
 ## Verifies the eight authored v3 Seamstress needle-and-thread base cards and their eight '+'
 ## upgrades field by field, the Tether / cleanse descriptors, catalog isolation (unknown and
 ## malformed IDs, base enumeration, caller mutation, RNG-free determinism) and that the existing
-## Seamstress pool, the starter catalogs and the live reward selector are untouched. The v3
-## catalog is deliberately NOT wired into combat, rewards, the map or shops yet, so nothing here
-## drives a live card and no Tether/cleanse behaviour is claimed to be playable.
+## Seamstress pool, the starter catalogs and the live reward selector are untouched.
+##
+## The second half drives the V3-1 Bobbin Snag / Bobbin Snag+ RULES resolver added by this task:
+## real seeded CombatDeck hands, a real three-hero CombatParty, an original-slot CombatEnemies
+## roster and the genuine CombatPinned plus roster-bound CombatUnravel authorities. The catalog is
+## still NOT mounted in rewards, the map, shops or the live battle hand, so nothing here drives a
+## live card, and no Tether/cleanse behaviour is claimed to be playable.
 
 
 var failures: Array[String] = []
 var checks: int = 0
+
+const SNAG := "seamstress_v3_bobbin_snag"
+const SNAG_PLUS := "seamstress_v3_bobbin_snag_plus"
+## The v2 Seamstress control card of a similar name: never this V3 printing.
+const V2_SNAG := "seamstress_snag"
+var snag_resolver := CombatSeamstressV3BobbinSnagCards.new()
 
 ## Effect keys this v3 pool is allowed to print. Guards against invented statuses, resources or
 ## persistent combat state arriving with a "helpful" edit.
@@ -46,6 +56,7 @@ func _initialize() -> void:
 	_test_deterministic_and_rng_free()
 	_test_existing_catalogs_untouched()
 	_test_not_in_reward_draws()
+	_test_bobbin_snag_resolver()
 	_finish()
 
 
@@ -882,3 +893,431 @@ func _test_not_in_reward_draws() -> void:
 			"v3 card is not reward-resolvable yet: " + v3_id)
 	_check(not RunPoolCardRewardOffers.resolve_reward_definition("seamstress_running_stitch").is_empty(),
 		"v2 Seamstress card still reward-resolvable")
+
+
+## ===== V3-1 Bobbin Snag / Bobbin Snag+ paid rules resolver =====
+##
+## Every fixture below uses the real authorities: a seeded CombatDeck that genuinely dealt a
+## five-card hand, a real three-hero CombatParty, an original-slot CombatEnemies roster, the
+## genuine CombatPinned token map and a CombatUnravel bound to that exact roster. Nothing here
+## mounts the card in the live hand, the reward pool, the map or the app flow.
+
+## A seeded authentic five-card held-hand fixture. The Seamstress is genuinely constructed at her
+## real position (the authoritative party records are reordered, never mislabelled), the enemies
+## keep their original slots 1-3 with normal/elite/boss tiers, and the gauge is bound to that
+## exact roster instance.
+func _resolver_fixture(cards: Array[String], seamstress_position: int = 2,
+		seed_value: int = 386) -> Dictionary:
+	var party := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26}])
+	if seamstress_position != 2:
+		var exchanged: Dictionary = party._heroes[seamstress_position - 1]
+		party._heroes[seamstress_position - 1] = party._heroes[1]
+		party._heroes[1] = exchanged
+		party._heroes[seamstress_position - 1]["position"] = seamstress_position
+		party._heroes[1]["position"] = 2
+	var enemies := CombatEnemies.new([
+		{"id": "normal_foe", "max_hp": 18},
+		{"id": "elite_foe", "max_hp": 22},
+		{"id": "boss_foe", "max_hp": 30}])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var deck_ids: Array[String] = cards.duplicate()
+	while deck_ids.size() < CombatDeck.TURN_DRAW:
+		deck_ids.append("filler_%d" % deck_ids.size())
+	var deck := CombatDeck.new(deck_ids, rng)
+	var pinned := CombatPinned.new()
+	var unravel := CombatUnravel.new()
+	_check(party.is_valid() and enemies.is_valid()
+			and party.get_hero(seamstress_position)["id"] == "seamstress"
+			and party.get_hero(seamstress_position)["hp"] == 30,
+			"resolver fixture has a living Seamstress at real seat %d" % seamstress_position)
+	_check(unravel.bind_roster(enemies, {1: "normal", 2: "elite", 3: "boss"}),
+		"resolver fixture gauge is bound to the exact roster and tiers")
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3
+			and deck.hand.size() == 5 and deck._rng == rng,
+			"resolver fixture begins a real seeded five-card turn")
+	for card_id: String in cards:
+		_check(deck.hand.has(card_id), "authored printing is genuinely held: " + card_id)
+	return {"deck": deck, "party": party, "enemies": enemies,
+		"pinned": pinned, "unravel": unravel}
+
+
+## Complete authoritative snapshot, taken from the SAME seeded instances before and after a call,
+## so a no-mutation assertion cannot pass on independently rebuilt fixtures.
+func _resolver_state(f: Dictionary) -> Dictionary:
+	var deck: CombatDeck = f["deck"]
+	var pinned: CombatPinned = f["pinned"]
+	var unravel: CombatUnravel = f["unravel"]
+	return {
+		"draw": deck.draw_pile.duplicate(),
+		"hand": deck.hand.duplicate(),
+		"discard": deck.discard_pile.duplicate(),
+		"exhausted": deck.exhausted.duplicate(),
+		"turn": deck.turn_active,
+		"energy": deck.energy,
+		"rng": deck._rng.state,
+		"heroes": f["party"].get_heroes(),
+		"enemies": f["enemies"].get_enemies(),
+		"tokens": pinned._pinner_by_position.duplicate(true),
+		"gauges": unravel._gauges.duplicate(true),
+		"tiers": unravel._tiers_by_position.duplicate(true),
+		"bound_roster": unravel._bound_enemies,
+	}
+
+
+func _snag_play(f: Dictionary, card_id: Variant, target: int,
+		resolver: RefCounted = null) -> Dictionary:
+	var service: RefCounted = resolver if resolver != null else snag_resolver
+	return service.play_card(f["deck"], f["party"], f["enemies"], f["pinned"],
+		f["unravel"], card_id, target)
+
+
+func _snag_spent_once(before: Dictionary, f: Dictionary, card_id: String,
+		label: String) -> void:
+	var after: Dictionary = _resolver_state(f)
+	_check(after["energy"] == before["energy"] - 1
+			and after["hand"].size() == before["hand"].size() - 1
+			and after["hand"].count(card_id) == before["hand"].count(card_id) - 1
+			and after["discard"].size() == before["discard"].size() + 1
+			and after["discard"][-1] == card_id
+			and after["draw"] == before["draw"]
+			and after["rng"] == before["rng"]
+			and after["heroes"] == before["heroes"],
+			label + " pays exactly one energy, discards one held copy and preserves draw/RNG/party")
+
+
+## AC1: both authentic printings from both legal seats against every original enemy slot.
+func _test_bobbin_snag_paid_cast() -> void:
+	_check(snag_resolver.is_supported_card(SNAG)
+			and snag_resolver.is_supported_card(SNAG_PLUS)
+			and not snag_resolver.is_supported_card(V2_SNAG)
+			and not snag_resolver.is_supported_card("seamstress_v3_needle_rain"),
+			"only the two authentic V3 Bobbin Snag printings are supported")
+	for record: Dictionary in [
+		{"id": SNAG, "seat": 2, "unravel": 3},
+		{"id": SNAG_PLUS, "seat": 3, "unravel": 4},
+	]:
+		var card_id: String = record["id"]
+		for target: int in [1, 2, 3]:
+			var f: Dictionary = _resolver_fixture([card_id], record["seat"])
+			var enemies: CombatEnemies = f["enemies"]
+			var pinned: CombatPinned = f["pinned"]
+			var unravel: CombatUnravel = f["unravel"]
+			var enemy_max: int = [18, 22, 30][target - 1]
+			_check(enemies.gain_block(target, 6)
+					and enemies.apply_statuses({target: {"bleed": 2, "exposed": 1}}),
+					"%s fixture keeps the target's Block and unrelated statuses" % card_id)
+			var untouched: Array[Dictionary] = []
+			for position: int in [1, 2, 3]:
+				if position != target:
+					untouched.append(enemies.get_enemy(position))
+			var before: Dictionary = _resolver_state(f)
+			var r: Dictionary = _snag_play(f, card_id, target)
+			var gauge: Dictionary = unravel.get_snapshot(target)
+			_check(r.get("ok", false) and r["reason"] == "applied"
+					and r["card_id"] == card_id and r["cost"] == 1
+					and r["energy_spent"] == 1
+					and r["owner_position"] == record["seat"]
+					and r["target_position"] == target
+					and r["printed_unravel"] == record["unravel"]
+					and r["unravel_applied"] == record["unravel"],
+					"%s from seat %d onto slot %d publishes an exact receipt"
+							% [card_id, record["seat"], target])
+			_check(r["gauge_before"]["gauge"] == 0
+					and r["gauge_before"]["threshold"] == [8, 12, 16][target - 1]
+					and gauge == {"gauge": record["unravel"],
+						"threshold": [8, 12, 16][target - 1],
+						"unravelled": false, "skip_pending": false}
+					and r["unravel_snapshot"] == gauge
+					and r["gauge"] == record["unravel"]
+					and not r["skip_pending"],
+					"%s adds exactly %d Unravel through the bound gauge on slot %d"
+							% [card_id, record["unravel"], target])
+			_check(r["pinned"] and r["pinner"] == "seamstress"
+					and r["prior_pinner"] == ""
+					and pinned.pinner_for_enemy(target) == "seamstress"
+					and pinned._pinner_by_position == {target: "seamstress"},
+					"%s pins exactly the chosen slot for the Seamstress: %d" % [card_id, target])
+			_check(r["damage"] == 0 and r["hp_loss"] == 0 and r["block_absorbed"] == 0
+					and not r["target_slain"]
+					and r["hp_before"] == enemy_max and r["hp_after"] == enemy_max
+					and r["block_before"] == 6 and r["block_after"] == 6,
+					"%s is control, not a strike: no damage on slot %d" % [card_id, target])
+			var live: Dictionary = enemies.get_enemy(target)
+			_check(live["hp"] == enemy_max and live["block"] == 6
+					and live["position"] == target and live["id"] == before["enemies"][target - 1]["id"]
+					and live["statuses"] == {"bleed": 2, "exposed": 1},
+					"%s preserves HP, Block, slot and unrelated statuses: %d" % [card_id, target])
+			var others_live: Array[Dictionary] = []
+			var other_gauges_untouched := true
+			for position: int in [1, 2, 3]:
+				if position != target:
+					others_live.append(enemies.get_enemy(position))
+					other_gauges_untouched = other_gauges_untouched \
+						and unravel.get_snapshot(position)["gauge"] == 0
+			_check(others_live == untouched and other_gauges_untouched,
+					"%s touches no other original enemy slot or gauge: %d" % [card_id, target])
+			_snag_spent_once(before, f, card_id, "%s on slot %d" % [card_id, target])
+
+
+## AC2: needle-and-thread control across the real 8/12/16 thresholds, one pending skip, and the
+## blocked / already-pinned living enemy cases.
+func _test_bobbin_snag_needle_and_thread() -> void:
+	# Normal (slot 1, threshold 8): three base charges clamp at eight.
+	var f: Dictionary = _resolver_fixture([SNAG, SNAG, SNAG, SNAG], 2)
+	var unravel: CombatUnravel = f["unravel"]
+	f["deck"].combat_state.energy = 4
+	_check(f["deck"].energy == 4, "normal-threshold fixture funds four real paid casts")
+	_check(unravel.get_snapshot(1)["threshold"] == 8
+			and unravel.get_snapshot(2)["threshold"] == 12
+			and unravel.get_snapshot(3)["threshold"] == 16,
+			"the real roster starts at normal/elite/boss thresholds 8/12/16")
+	var before: Dictionary = _resolver_state(f)
+	var counters: Array[int] = []
+	for index: int in range(3):
+		var cast: Dictionary = _snag_play(f, SNAG, 1)
+		_check(cast.get("ok", false), "normal charge %d resolves" % (index + 1))
+		counters.append(int(cast.get("gauge", -1)))
+	_check(counters == [3, 6, 8], "normal gauge charges 3, 6 then clamps at 8")
+	_check(unravel.get_snapshot(1) == {"gauge": 8, "threshold": 8,
+			"unravelled": true, "skip_pending": true},
+			"normal threshold queues exactly one action skip")
+	var pending_before: Dictionary = _resolver_state(f)
+	var pending: Dictionary = _snag_play(f, SNAG, 1)
+	_check(pending.get("ok", false) and pending["gauge"] == 8
+			and pending["unravelled"] and pending["skip_pending"]
+			and unravel.get_snapshot(1) == pending["gauge_before"],
+			"a charge while the skip is pending neither stacks a second skip nor moves the gauge")
+	_snag_spent_once(pending_before, f, SNAG, "pending-skip charge")
+	_check(_resolver_state(f)["rng"] == before["rng"]
+			and _resolver_state(f)["enemies"] == before["enemies"],
+			"threshold work draws no RNG and changes no enemy HP/Block/status/slot")
+	_check(unravel.consume_action_skip(f["enemies"], 1)
+			and unravel.get_snapshot(1) == {"gauge": 0, "threshold": 12,
+				"unravelled": false, "skip_pending": false}
+			and not unravel.consume_action_skip(f["enemies"], 1),
+			"one queued skip resets the gauge to 0, raises the threshold by 4 and is consumed once")
+
+	# Elite (slot 2, threshold 12): three plus charges land exactly on twelve.
+	f = _resolver_fixture([SNAG_PLUS, SNAG_PLUS, SNAG_PLUS], 3)
+	unravel = f["unravel"]
+	for index: int in range(3):
+		_check(_snag_play(f, SNAG_PLUS, 2).get("ok", false),
+			"elite charge %d resolves" % (index + 1))
+	_check(unravel.get_snapshot(2) == {"gauge": 12, "threshold": 12,
+			"unravelled": true, "skip_pending": true},
+			"elite reaches its authored threshold of twelve with one pending skip")
+	_check(unravel.get_snapshot(1)["gauge"] == 0 and unravel.get_snapshot(3)["gauge"] == 0,
+			"the elite charge stays on its original slot only")
+	_check(unravel.consume_action_skip(f["enemies"], 2)
+			and unravel.get_snapshot(2)["threshold"] == 16
+			and unravel.get_snapshot(2)["gauge"] == 0
+			and not unravel.consume_action_skip(f["enemies"], 2),
+			"the elite skip resets to zero and raises the threshold to sixteen once")
+
+	# Boss (slot 3, threshold 16): four plus charges land exactly on sixteen.
+	f = _resolver_fixture([SNAG_PLUS, SNAG_PLUS, SNAG_PLUS, SNAG_PLUS], 2)
+	unravel = f["unravel"]
+	f["deck"].combat_state.energy = 4
+	for index: int in range(4):
+		_check(_snag_play(f, SNAG_PLUS, 3).get("ok", false),
+			"boss charge %d resolves" % (index + 1))
+	_check(unravel.get_snapshot(3) == {"gauge": 16, "threshold": 16,
+			"unravelled": true, "skip_pending": true},
+			"boss reaches its authored threshold of sixteen with one pending skip")
+	_check(unravel.consume_action_skip(f["enemies"], 3)
+			and unravel.get_snapshot(3)["threshold"] == 20
+			and unravel.get_snapshot(3)["gauge"] == 0,
+			"the boss skip resets to zero and raises the threshold to twenty")
+
+	# A blocked, already cross-pinned living enemy is still a legal target: Block and HP stay put
+	# and the later Snag replaces the earlier pinner.
+	f = _resolver_fixture([SNAG], 2)
+	var enemies: CombatEnemies = f["enemies"]
+	var pinned: CombatPinned = f["pinned"]
+	unravel = f["unravel"]
+	_check(enemies.gain_block(1, 9) and pinned.pin_enemy(enemies, 1, "warden"),
+			"blocked and already-pinned living enemy precondition")
+	before = _resolver_state(f)
+	var replaced: Dictionary = _snag_play(f, SNAG, 1)
+	_check(replaced.get("ok", false) and replaced["prior_pinner"] == "warden"
+			and replaced["pinner"] == "seamstress"
+			and pinned.pinner_for_enemy(1) == "seamstress"
+			and enemies.get_enemy(1)["block"] == 9
+			and enemies.get_enemy(1)["hp"] == 18
+			and unravel.get_snapshot(1)["gauge"] == 3,
+			"a blocked, already-pinned living enemy is pinned and charged, not attacked")
+	_snag_spent_once(before, f, SNAG, "blocked and re-pinned cast")
+
+
+## AC3: the pin is a real cross-hero setup measured through CombatPinned's own bonus/consume API.
+func _test_bobbin_snag_cross_hero_setup() -> void:
+	var f: Dictionary = _resolver_fixture([SNAG, SNAG_PLUS], 2)
+	var enemies: CombatEnemies = f["enemies"]
+	var pinned: CombatPinned = f["pinned"]
+	_check(_snag_play(f, SNAG, 1).get("ok", false), "cross-hero setup pin resolves")
+	_check(pinned.pinner_for_enemy(1) == "seamstress"
+			and pinned.bonus_for_attack(enemies, 1, "warden") == 5
+			and pinned.bonus_for_attack(enemies, 1, "tinker") == 5
+			and pinned.bonus_for_attack(enemies, 1, "seamstress") == 0,
+			"a later confirmed different-hero attack gets the shared +5; the pinning Seamstress does not")
+	_check(pinned.bonus_for_attack(enemies, 1, "warden") == 5
+			and pinned.pinner_for_enemy(1) == "seamstress",
+			"reading the +5 preview repeatedly never consumes the token")
+	_check(not pinned.consume_after_attack(1, "warden", false)
+			and pinned.pinner_for_enemy(1) == "seamstress",
+			"an unconfirmed preview never consumes the token")
+	_check(not pinned.consume_after_attack(1, "seamstress", true)
+			and pinned.pinner_for_enemy(1) == "seamstress"
+			and pinned.bonus_for_attack(enemies, 1, "warden") == 5,
+			"a same-owner confirmed attack neither consumes nor weakens the token")
+	_check(pinned.consume_after_attack(1, "tinker", true)
+			and pinned.pinner_for_enemy(1) == ""
+			and pinned.bonus_for_attack(enemies, 1, "warden") == 0,
+			"one confirmed different-hero attack consumes the +5 exactly once")
+	_check(not pinned.consume_after_attack(1, "warden", true),
+			"a spent token cannot be consumed twice")
+
+	var other: Dictionary = _resolver_fixture([SNAG_PLUS], 3)
+	_check(other["pinned"].pin_enemy(other["enemies"], 2, "warden"),
+			"prior Warden pin precondition")
+	var replaced: Dictionary = _snag_play(other, SNAG_PLUS, 2)
+	_check(replaced.get("ok", false) and replaced["prior_pinner"] == "warden"
+			and other["pinned"].pinner_for_enemy(2) == "seamstress"
+			and other["pinned"].bonus_for_attack(other["enemies"], 2, "warden") == 5
+			and other["pinned"].bonus_for_attack(other["enemies"], 2, "seamstress") == 0,
+			"a later successful Snag replaces the prior pinner and re-arms the cross-hero +5")
+
+
+## AC4: every refusal is a complete no-op on the same seeded instances.
+func _snag_reject_with(f: Dictionary, card_id: Variant, target: int,
+		pinned: Variant, unravel: Variant, label: String,
+		resolver: RefCounted = null) -> void:
+	var before: Dictionary = _resolver_state(f)
+	var service: RefCounted = resolver if resolver != null else snag_resolver
+	var r: Dictionary = service.play_card(f["deck"], f["party"], f["enemies"],
+		pinned, unravel, card_id, target)
+	_check(not r.get("ok", false) and not String(r.get("reason", "")).is_empty(),
+			label + " refuses with an explicit reason")
+	_check(_resolver_state(f) == before,
+			label + " leaves deck, party, enemies, pin, gauge and RNG untouched")
+
+
+func _snag_reject(f: Dictionary, card_id: Variant, target: int, label: String) -> void:
+	_snag_reject_with(f, card_id, target, f["pinned"], f["unravel"], label)
+
+
+func _test_bobbin_snag_rejections() -> void:
+	# Unknown / unsupported / unheld printings and the v2 control card of a similar name.
+	var f: Dictionary = _resolver_fixture([SNAG, V2_SNAG], 2)
+	_snag_reject(f, SNAG_PLUS, 1, "unheld plus printing")
+	_snag_reject(f, V2_SNAG, 1, "held v2 Snag is not this V3 printing")
+	_snag_reject(f, "seamstress_v3_bobbin_snag_plus_plus", 1, "unknown V3 card id")
+	_snag_reject(f, 17, 1, "non-string card id")
+	_snag_reject(f, null, 1, "null card id")
+
+	# A forged definition for an otherwise valid, held ID is refused by the catalog seam.
+	var forged_effects := V3SeamstressPoolCards.new()
+	forged_effects._definitions[SNAG]["effects"]["unravel"] = 9
+	var forged_resolver := CombatSeamstressV3BobbinSnagCards.new(forged_effects)
+	_snag_reject_with(f, SNAG, 1, f["pinned"], f["unravel"],
+			"forged Unravel printing", forged_resolver)
+	var forged_seat := V3SeamstressPoolCards.new()
+	forged_seat._definitions[SNAG]["from_positions"] = [1, 2, 3]
+	_snag_reject_with(f, SNAG, 1, f["pinned"], f["unravel"],
+			"forged printing that widens FROM", CombatSeamstressV3BobbinSnagCards.new(forged_seat))
+	var forged_link := V3SeamstressPoolCards.new()
+	forged_link._definitions[SNAG]["upgrade_id"] = SNAG
+	_snag_reject_with(f, SNAG, 1, f["pinned"], f["unravel"],
+			"forged base/+ link", CombatSeamstressV3BobbinSnagCards.new(forged_link))
+	_check(snag_resolver.is_supported_card(SNAG) and snag_resolver.is_supported_card(SNAG_PLUS),
+			"the shipped resolver still accepts both authentic printings after the forged runs")
+
+	# Not held, inactive turn, unaffordable.
+	f = _resolver_fixture([SNAG], 2)
+	f["deck"].hand.erase(SNAG)
+	_snag_reject(f, SNAG, 1, "printing no longer in hand")
+	f = _resolver_fixture([SNAG], 2)
+	_check(f["deck"].end_turn() and not f["deck"].turn_active, "ended real player turn fixture")
+	_snag_reject(f, SNAG, 1, "inactive turn")
+	f = _resolver_fixture([SNAG], 2)
+	f["deck"].combat_state.energy = 0
+	_snag_reject(f, SNAG, 1, "insufficient energy")
+
+	# Torn, misplaced and duplicated Seamstress.
+	f = _resolver_fixture([SNAG], 2)
+	_check(f["party"].apply_damage(2, 30) and f["party"].is_downed(2), "downed Seamstress fixture")
+	_snag_reject(f, SNAG, 1, "downed Seamstress")
+	f = _resolver_fixture([SNAG], 2)
+	f["party"]._heroes[1]["position"] = 1
+	_snag_reject(f, SNAG, 1, "misplaced Seamstress record")
+	f = _resolver_fixture([SNAG], 2)
+	f["party"]._heroes[0]["id"] = "seamstress"
+	_snag_reject(f, SNAG, 1, "duplicated Seamstress")
+	f = _resolver_fixture([SNAG], 1)
+	_snag_reject(f, SNAG, 1, "Seamstress in the illegal front seat")
+	f = _resolver_fixture([SNAG], 2)
+	f["party"]._heroes[1]["id"] = "mender"
+	_snag_reject(f, SNAG, 1, "no Seamstress in the party")
+
+	# Target slots: out of range, out of the printed window, and slain.
+	f = _resolver_fixture([SNAG], 2)
+	_snag_reject(f, SNAG, 0, "target slot 0")
+	_snag_reject(f, SNAG, 4, "unoccupied target slot 4")
+	_snag_reject(f, SNAG, -1, "negative target slot")
+	f = _resolver_fixture([SNAG], 2)
+	_check(f["enemies"].apply_damage(1, 18) and f["enemies"].is_slain(1), "slain target fixture")
+	_snag_reject(f, SNAG, 1, "slain target enemy")
+
+	# Missing / foreign authorities.
+	f = _resolver_fixture([SNAG], 2)
+	_snag_reject_with(f, SNAG, 1, null, f["unravel"], "missing Pinned authority")
+	_snag_reject_with(f, SNAG, 1, f["pinned"], null, "missing Unravel authority")
+	_snag_reject_with(f, SNAG, 1, f["pinned"], CombatUnravel.new(), "unbound Unravel gauge")
+	var alien := CombatEnemies.new([{"id": "alien", "max_hp": 10}])
+	var wrong := CombatUnravel.new()
+	_check(wrong.bind_roster(alien, {1: "normal"}), "different roster gauge genuinely bound")
+	_snag_reject_with(f, SNAG, 1, f["pinned"], wrong, "wrong-roster Unravel gauge")
+	_check(wrong.get_snapshot(1)["gauge"] == 0, "the wrong-roster gauge is never charged")
+	var stage: Dictionary = _resolver_state(f)
+	_check(not snag_resolver.play_card(null, f["party"], f["enemies"], f["pinned"],
+			f["unravel"], SNAG, 1).get("ok", false)
+			and _resolver_state(f) == stage, "missing deck refuses with no mutation")
+	_check(not snag_resolver.play_card(f["deck"], null, f["enemies"], f["pinned"],
+			f["unravel"], SNAG, 1).get("ok", false)
+			and _resolver_state(f) == stage, "missing party refuses with no mutation")
+	_check(not snag_resolver.play_card(f["deck"], f["party"], null, f["pinned"],
+			f["unravel"], SNAG, 1).get("ok", false)
+			and _resolver_state(f) == stage, "missing enemy roster refuses with no mutation")
+
+	# Corrupt authoritative state fails closed before payment.
+	f = _resolver_fixture([SNAG], 2)
+	f["pinned"]._pinner_by_position[1] = "not_a_pinner"
+	_snag_reject(f, SNAG, 1, "malformed Pinned token")
+	f = _resolver_fixture([SNAG], 2)
+	f["pinned"]._pinner_by_position[4] = "warden"
+	_snag_reject(f, SNAG, 1, "Pinned token on an unoccupied slot")
+	f = _resolver_fixture([SNAG], 2)
+	f["enemies"]._enemies[0]["statuses"] = {"unknown": 1}
+	_snag_reject(f, SNAG, 1, "malformed enemy status")
+	f = _resolver_fixture([SNAG], 2)
+	f["party"]._heroes[0]["statuses"] = {"unknown": 1}
+	_snag_reject(f, SNAG, 1, "malformed hero status")
+	f = _resolver_fixture([SNAG], 2)
+	f["unravel"]._gauges[1]["gauge"] = 99
+	_snag_reject(f, SNAG, 1, "gauge above its own threshold")
+	f = _resolver_fixture([SNAG], 2)
+	f["unravel"]._gauges[1] = {"gauge": CombatSeamstressV3BobbinSnagCards.MAX_COUNTER,
+		"threshold": CombatSeamstressV3BobbinSnagCards.MAX_COUNTER,
+		"unravelled": true, "skip_pending": true}
+	_snag_reject(f, SNAG, 1, "Unravel counter overflow")
+
+
+func _test_bobbin_snag_resolver() -> void:
+	_test_bobbin_snag_paid_cast()
+	_test_bobbin_snag_needle_and_thread()
+	_test_bobbin_snag_cross_hero_setup()
+	_test_bobbin_snag_rejections()
