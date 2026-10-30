@@ -53,6 +53,29 @@ const ACTOR_ART := {
 	"needle_marshal": "enemies/needle_marshal",
 	"spool_hexer": "enemies/spool_hexer",
 	"patchwork_behemoth": "boss/patchwork_behemoth",
+	"scissor_bailiff": "enemies/scissor_bailiff",
+	"zipper_hauler": "enemies/zipper_hauler",
+	"scissor_crab": "enemies/scissor_crab",
+	"thimble_beetle": "enemies/thimble_beetle",
+	"zipper_snake": "enemies/zipper_snake",
+	"pincushion_hedgehog": "enemies/pincushion_hedgehog",
+	"moth_swarm": "enemies/moth_swarm",
+	"needle_wasp": "enemies/needle_wasp",
+	"shearwing_mantis": "enemies/shearwing_mantis",
+	"spoolback_hound": "enemies/spoolback_hound",
+	"inkbrush_imp": "enemies/inkbrush_imp",
+	"spindle_ram": "enemies/spindle_ram",
+	"razor_ribbon_wraith": "enemies/razor_ribbon_wraith",
+	"clothespin_crusher": "enemies/clothespin_crusher",
+	"crochet_hook_harrier": "enemies/crochet_hook_harrier",
+	"thistle_patch_doll": "enemies/thistle_patch_doll",
+	"bobbin_bat": "enemies/bobbin_bat",
+	"quilt_termite": "enemies/quilt_termite",
+	"sewing_machine_colossus": "enemies/sewing_machine_colossus",
+	"needle_briar_guard": "enemies/needle_marshal",
+	"spool_snarekeeper": "enemies/spool_hexer",
+	"spool_leech": "enemies/spool_hexer",
+	"pincushion_matriarch": "enemies/pincushion_hedgehog",
 }
 
 ## One large stage for both sides: heroes and enemies share this minimum actor height,
@@ -216,6 +239,9 @@ class Puppet extends Control:
 	const IDLE_BREATHE_RATE := 1.15
 	const IDLE_SLOT_OFFSET := 0.9
 	const IDLE_SIDE_OFFSET := 0.55
+	## Tall artwork stops short of the band top, leaving the column room for its intent
+	## ticket and a status plaque above it instead of hiding the plaque.
+	const ART_HEIGHT_SHARE := 0.62
 	## The drawn fallback's own local extents before the pose transform: body, head, legs
 	## and the slot-specific sewn prop, including stroke width.
 	const FALLBACK_EXTENTS := Rect2(-26.0, -43.0, 73.0, 85.5)
@@ -646,7 +672,8 @@ class Puppet extends Control:
 		if texture == null or texture.get_width() <= 0 or texture.get_height() <= 0 \
 				or fit_band.size.x <= 0.0 or fit_band.size.y <= 0.0:
 			return Rect2()
-		var fit := minf(fit_band.size.x / float(texture.get_width()), fit_band.size.y / float(texture.get_height()))
+		var fit := minf(fit_band.size.x / float(texture.get_width()),
+			fit_band.size.y * ART_HEIGHT_SHARE / float(texture.get_height()))
 		var drawn := Vector2(texture.get_width(), texture.get_height()) * fit
 		return Rect2(Vector2(fit_band.get_center().x - drawn.x / 2.0, fit_band.end.y - drawn.y), drawn)
 

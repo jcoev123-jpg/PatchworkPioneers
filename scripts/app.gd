@@ -373,6 +373,11 @@ class RouteBook extends Control:
 		"warden": "res://assets/paper/heroes/warden.png",
 		"seamstress": "res://assets/paper/heroes/seamstress.png",
 		"tinker": "res://assets/paper/heroes/tinker.png",
+		"lantern_monk": "res://assets/paper/heroes/lantern_monk.png",
+		"rag_duelist": "res://assets/paper/heroes/rag_duelist.png",
+		"scarecrow": "res://assets/paper/heroes/scarecrow.png",
+		"yarn_ranger": "res://assets/paper/heroes/yarn_ranger.png",
+		"button_golem": "res://assets/paper/heroes/button_golem.png",
 	}
 
 	var board_texture: Texture2D = null

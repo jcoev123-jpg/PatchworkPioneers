@@ -138,10 +138,10 @@ func _run() -> void:
 	_check(panel.find_children("TornBadge", "", true, false).is_empty(),
 		"AC2: zero TornBadge nodes survive remount")
 
-	# An unillustrated chosen V3 hero uses the entire sewn-ticket text space;
+	# A chosen hero without a portrait (all eight are drawn now, so an unmapped id) uses the entire sewn-ticket text space;
 	# even three worn slots stay readable without a placeholder portrait.
 	var unillustrated := {
-		"hero_id": "lantern_monk", "name": "Lantern Monk",
+		"hero_id": "unmapped_wayfarer", "name": "Wayfarer",
 		"detail": "24/24 HP · 0 tears · HEAD Button Eye · ARM Pincushion Arm · COAT Quilted Coat",
 		"is_torn": false,
 	}
@@ -153,7 +153,7 @@ func _run() -> void:
 	var v3_name := v3_ticket.get_node("RowInset/RowLine/HeroName") as Label
 	_check(v3_portrait.texture == null and not v3_portrait.visible,
 		"AC4: unillustrated V3 identity shows no invented portrait or blank column")
-	_check(v3_name.text == "Lantern Monk" and v3_detail.text == unillustrated.detail,
+	_check(v3_name.text == "Wayfarer" and v3_detail.text == unillustrated.detail,
 		"AC1: V3 fallback retains HP, tears and all three authentic-looking slot labels")
 	_check(v3_detail.get_line_count() > 1
 		and v3_detail.get_visible_line_count() == v3_detail.get_line_count()
