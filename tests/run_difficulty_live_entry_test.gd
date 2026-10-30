@@ -138,7 +138,14 @@ func _run() -> void:
 				# Seamstress and Tinker look-driven v3 printings: the expanded
 				# party stock changes that route's cheapest genuine Shop purchase,
 				# so the old 1550 witness no longer wins the tier-2 Boss.
-				var witness_seed := 3012
+				# Repinned again to seed 2404 when the Moth Queen joined the
+				# sorted Boss choice: seed 3012's unchanged route now selects the
+				# Queen at both higher tiers and the unchanged held-card pilot
+				# loses that Boss (Queen at 4 HP, all three heroes down). Seed
+				# 2404's legal twelve-floor route selects the Sewing Machine
+				# Colossus (106 HP at tier 1, 116 HP at tier 2) in both tiers and
+				# the same pilot genuinely wins both runs and the tier-1 replay.
+				var witness_seed := 2404
 				rng.seed = witness_seed
 				var map := RunMap.new()
 				_check(map.generate(rng), "higher-tier witness generates the actual map")

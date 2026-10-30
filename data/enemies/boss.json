@@ -11,5 +11,11 @@
       {"type": "attack", "amount": 24, "hits": 2, "weight": 4},
       {"type": "block", "amount": 5, "weight": 2},
       {"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
+    ]}},
+  {"id": "moth_queen", "name": "Moth Queen", "max_hp": 90,
+    "art_path": "res://assets/paper/enemies/moth_queen.png",
+    "intent": {"target": "front", "actions": [
+      {"type": "attack", "amount": 25, "weight": 4},
+      {"type": "summon", "amount": 0, "weight": 2}
     ]}}
 ]

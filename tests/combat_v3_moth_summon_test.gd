@@ -14,28 +14,29 @@ func _check(ok: bool, reason: String) -> void:
 		failures.append(reason)
 
 
-func _source() -> Dictionary:
+func _source(queen: bool = false) -> Dictionary:
 	var parsed := RunTypedBattleRoster._parse_catalog_text(
-		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+		FileAccess.get_file_as_string("res://data/enemies/boss.json" if queen else "res://data/enemies/run_enemies.json"))
 	for record in parsed:
-		if record.get("id") == "moth_swarm":
+		if record.get("id") == ("moth_queen" if queen else "moth_swarm"):
 			return record.duplicate(true)
 	return {}
 
 
-func _fixture(seed_value: int, count: int = 2) -> Dictionary:
-	var mother := _source()
+func _fixture(seed_value: int, count: int = 2, queen: bool = false) -> Dictionary:
+	var mother := _source(queen)
 	if mother.is_empty():
 		return {}
 	var summon: Dictionary = {}
 	for action in mother.intent.actions:
 		if action.get("type") == "summon":
 			summon = action.duplicate(true)
-	_check(CombatEnemyIntents.weighted_action(summon) == {"weight": 1, "action": {"type": "summon", "amount": 0}},
+	_check(CombatEnemyIntents.weighted_action(summon) == {"weight": 2 if queen else 1, "action": {"type": "summon", "amount": 0}},
 		"precondition: shipped Moth authors a real weighted zero-amount summon")
 	if summon.is_empty():
 		return {}
-	mother.intent = {"target": "front", "actions": [summon]}
+	_check(CombatEnemies.authentic_broodling_mother(mother, 1),
+		"precondition: complete shipped weighted mother is authentic")
 	var actors: Array = [mother]
 	for i in range(1, count):
 		actors.append({"id": "passive_%d" % i, "name": "Passive",
@@ -56,6 +57,19 @@ func _fixture(seed_value: int, count: int = 2) -> Dictionary:
 		"precondition: real two/three-enemy combat models and three living heroes")
 	_check(scheduler.bind_battle(enemies, party, rng),
 		"precondition: the authentic bound weighted scheduler accepts the fight")
+	if not scheduler.is_bound():
+		return {}
+	var found := false
+	for step in range(80):
+		var chosen := scheduler.get_intents()
+		if not chosen.is_empty() and chosen[0].get("type") == "summon":
+			found = true
+			break
+		if not scheduler.advance_turn():
+			break
+	_check(found, "precondition: genuinely weighted parent selects Summon")
+	if not found:
+		return {}
 	return {"enemies": enemies, "party": party, "rng": rng, "intents": scheduler}
 
 
@@ -97,7 +111,12 @@ func _phase_cases() -> void:
 			and intents.get_intents()[2] == {"enemy_position": 3, "type": "attack",
 				"amount": 5, "target_position": 1},
 			"only the following turn announces the child attack-5 on the living front hero")
-		_check(rng.state == rng_before, "one-action child needs no extra seeded draw")
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = rng.seed
+		oracle.state = rng_before
+		oracle.randi_range(1, 7)
+		_check(rng.state == oracle.state,
+			"child admission draws no RNG beyond the authored parent choice")
 		var hp_before: int = party.get_hero(1).hp
 		var next := CombatEnemyPhase.new().execute_phase(party, enemies, intents.get_intents(), null, true)
 		_check(next.ok and party.get_hero(1).hp == hp_before - 5
@@ -170,7 +189,13 @@ func _round_session(seed_value: int) -> Array:
 	_check(flow.get_outcome() == CombatBattleResult.ACTIVE,
 		"live result remains active with a living child")
 	var child_before: int = f.party.get_hero(1).hp
-	_check(flow.end_turn() and f.party.get_hero(1).hp == child_before - 5,
+	var announced_next: Array = f.intents.get_intents()
+	var parent_damage := int(announced_next[0].get("amount", 0)) if announced_next[0].get("type") == "attack" else 0
+	var before_block: int = f.party.get_hero(1).block
+	if announced_next[0].get("type") == "snip_block":
+		before_block = 0
+	var expected_hp := maxi(0, child_before - maxi(0, parent_damage + 5 - before_block))
+	_check(flow.end_turn() and f.party.get_hero(1).hp == expected_hp,
 		"next accepted end turn actually resolves the announced child hit")
 	_check(f.enemies.apply_damage(1, 21) and f.enemies.apply_damage(2, 12),
 		"precondition: both originals can die independently")
@@ -309,8 +334,175 @@ func _mounted_routed_fight() -> void:
 	app.free()
 
 
+## A committed final-Boss entry and genuine bound round (not a forged
+## single-action summon) exercise the Queen's own weighted RNG.
+## Both authentic parents must pass the real bound scheduler/phase refusal and
+## capacity contract, not a forged summon-only intent in a model fixture.
+func _queen_phase_refusals() -> void:
+	for count in [2, 3]:
+		var f := _fixture(8120 + count, count, true)
+		_check(not f.is_empty() and f.intents.is_bound()
+			and f.intents.get_intents().size() == count
+			and f.intents.get_intents()[0].get("type") == "summon",
+			"precondition: full Queen weighted spec announces a real summon")
+		if f.is_empty():
+			continue
+		var before := [f.party.get_heroes(), f.enemies.get_enemies(),
+			f.intents.get_intents(), f.rng.state]
+		var phase := CombatEnemyPhase.new().execute_phase(
+			f.party, f.enemies, f.intents.get_intents(), null, true)
+		_check(phase.get("ok", false) and f.rng.state == before[3],
+			"Queen phase is executable and does not draw run RNG")
+		if count == 3:
+			_check(f.enemies.get_enemies() == before[1]
+				and not phase.events[0].applied and f.intents.get_intents() == before[2],
+				"full-slot Queen is inert; cached phase and latch untouched")
+		else:
+			_check(f.enemies.get_enemies().size() == 3
+				and f.enemies.get_enemy(3).id == CombatEnemies.BROODLING_ID
+				and f.enemies.get_enemy(1).get(CombatEnemies.BROODLING_LATCH) == true
+				and phase.events[0].applied
+				and f.party.get_heroes() == before[0]
+				and f.intents.get_intents() == before[2],
+				"Queen birth commits one child without changing the current announcement")
+			_check(f.intents.advance_turn() and f.intents.get_intents().size() == 3
+				and f.intents.get_intents()[2] == {"type": "attack", "amount": 5,
+					"enemy_position": 3, "target_position": 1},
+				"Queen's child first attacks on the following announced turn")
+	for mode in ["slain", "forged", "bad_latch", "bad_weight"]:
+		var f := _fixture(8202, 2, true)
+		if f.is_empty():
+			_check(false, "precondition: Queen forged-source fixture exists")
+			continue
+		match mode:
+			"slain":
+				_check(f.enemies.apply_damage(1, f.enemies.get_enemy(1).hp),
+					"precondition: Queen is actually slain")
+			"forged":
+				f.enemies._enemies[0]["id"] = "not_queen"
+			"bad_latch":
+				f.enemies._enemies[0][CombatEnemies.BROODLING_LATCH] = "true"
+			"bad_weight":
+				f.enemies._enemies[0]["intent"]["actions"][1]["weight"] = 3
+		var before := [f.party.get_heroes(), f.enemies.get_enemies(),
+			f.intents.get_intents(), f.rng.state]
+		var result := CombatEnemyPhase.new().execute_phase(
+			f.party, f.enemies, f.intents.get_intents(), null, true)
+		if mode == "slain":
+			_check(result.get("ok", false) and not result.events[0].applied,
+				"slain Queen's genuine summon is inert")
+		else:
+			_check(result == {"ok": false, "events": []},
+				"forged/malformed Queen source refuses entire phase: " + mode)
+		_check(before == [f.party.get_heroes(), f.enemies.get_enemies(),
+			f.intents.get_intents(), f.rng.state],
+			"slain/forged Queen refusal preserves heroes/roster/cache/RNG: " + mode)
+
+
+func _queen_round_case() -> Array:
+	var found := {}
+	for value in range(1, 401):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		var route_ok := true
+		for floor in range(RunMap.FLOOR_COUNT):
+			var legal := map.get_legal_choices()
+			if legal.is_empty() or not map.choose_node(legal[0]):
+				route_ok = false
+				break
+		if not route_ok:
+			continue
+		var selector := RunFightEncounterSelection.new()
+		var entry := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
+		if entry.get("success", false) and entry.get("encounter_id") == "moth_queen":
+			# Replay the actual admission shuffle and weighted draw on a
+			# detached generator, selecting a witness that summons on turn one.
+			var witness_rng := RandomNumberGenerator.new()
+			witness_rng.seed = rng.seed
+			witness_rng.state = rng.state
+			var witness_deck := CombatDeck.new(StarterCards.new().get_starting_deck(), witness_rng)
+			var witness_party := CombatParty.new([
+				{"id": "warden", "max_hp": 40},
+				{"id": "seamstress", "max_hp": 30},
+				{"id": "tinker", "max_hp": 26}])
+			var witness_enemies := CombatEnemies.new(entry.enemies.get_enemies())
+			var witness_intents := CombatEnemyIntents.new(entry.definitions)
+			if not witness_deck.draw_pile.is_empty() and witness_intents.bind_battle(
+				witness_enemies, witness_party, witness_rng) \
+				and witness_intents.get_intents().size() == 1 \
+				and witness_intents.get_intents()[0].get("type") == "summon":
+				found = {"entry": entry, "rng": rng, "map": map}
+				break
+	_check(not found.is_empty(), "precondition: real seeded final Boss chooses Queen")
+	if found.is_empty():
+		return []
+	var enemies: CombatEnemies = found.entry.enemies
+	var actor := enemies.get_enemy(1)
+	_check(enemies.get_enemies().size() == 1 and actor.id == "moth_queen"
+		and actor.hp == 90 and CombatEnemies.authentic_broodling_mother(actor, 1),
+		"authentic Queen enters as sole boss with full HP and weighted summon")
+	var party := CombatParty.new([{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30}, {"id": "tinker", "max_hp": 26}])
+	var rng: RandomNumberGenerator = found.rng
+	var deck := CombatDeck.new(StarterCards.new().get_starting_deck(), rng)
+	var scheduler: CombatEnemyIntents = found.entry.intents
+	var outcome := CombatBattleResult.new(party, enemies)
+	var gauge := CombatUnravel.new()
+	_check(gauge.bind_roster(enemies, {1: "boss"}), "boss gauge binds Queen")
+	var flow := CombatRoundFlow.new(deck, party, enemies, scheduler, outcome, gauge)
+	_check(scheduler.bind_battle(enemies, party, rng) and flow.begin_fight() and scheduler.is_bound(), "real Queen round flow mounts")
+	if not scheduler.is_bound():
+		return []
+	var summoned := false
+	for turn in range(80):
+		var selected := scheduler.get_intents()
+		if selected.size() != 1:
+			break
+		var birth: bool = selected[0].get("type") == "summon"
+		var before := party.get_heroes()
+		if not flow.end_turn():
+			break
+		if birth:
+			summoned = true
+			_check(party.get_hero(1).hp == before[0].hp
+				and party.get_hero(2).hp == before[1].hp
+				and party.get_hero(3).hp == before[2].hp
+				and gauge.get_snapshot(2).get("threshold") == CombatUnravel.THRESHOLD_NORMAL
+				and enemies.get_enemies().size() == 2
+				and enemies.get_enemy(1).get(CombatEnemies.BROODLING_LATCH) == true
+				and enemies.get_enemy(2).id == CombatEnemies.BROODLING_ID
+				and enemies.get_enemy(2).hp == 8 and enemies.get_enemy(2).position == 2,
+				"Queen summon adds real child only after the parent phase")
+			_check(scheduler.get_intents().size() == 2
+				and scheduler.get_intents()[1] == {"enemy_position": 2,
+					"type": "attack", "amount": 5, "target_position": 1},
+				"next announced turn holds the newborn's authentic attack-5")
+			break
+	_check(summoned, "authentic weighted Queen selects summon before battle ends")
+	if not summoned:
+		return []
+	var hp: int = party.get_hero(1).hp
+	_check(flow.end_turn() and party.get_hero(1).hp <= hp - 5,
+		"Queen child attacks on later real round, not the birth round")
+	var before_roster := enemies.get_enemies()
+	_check(enemies.stage_broodling(1) == {"ok": true, "spawned": false}
+		and enemies.get_enemies() == before_roster,
+		"Queen once-only latch blocks a duplicate spawn")
+	return [party.get_heroes(), enemies.get_enemies(), scheduler.get_intents(),
+		deck.hand.duplicate(), deck.draw_pile.duplicate(), deck.discard_pile.duplicate(),
+		rng.state, outcome.get_outcome()]
+
+
 func _run() -> void:
 	_phase_cases()
+	_queen_phase_refusals()
+	var queen_first := _queen_round_case()
+	var queen_replay := _queen_round_case()
+	_check(not queen_first.is_empty() and queen_first == queen_replay,
+		"independent genuine Queen boss rounds and child replays are identical")
 	await _mounted_routed_fight()
 	var first := _round_session(9452)
 	var replay := _round_session(9452)

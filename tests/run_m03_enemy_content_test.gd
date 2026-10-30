@@ -181,9 +181,31 @@ func _battle_snapshot(party: CombatParty, enemies: CombatEnemies, deck: CombatDe
 		"turn_index": intents._turn_index, "outcome": flow.get_outcome(), "rng": rng.state}
 
 
+func _behemoth_witness_seed() -> int:
+	for value in range(1, 501):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		var connected := true
+		for floor in range(12):
+			var legal := map.get_legal_choices()
+			if legal.is_empty() or not map.choose_node(legal[0]):
+				connected = false
+				break
+		if not connected:
+			continue
+		var entry := RunAuthoredBattleEntry.new().entry_current_battle(
+			map, rng, RunFightEncounterSelection.new())
+		if entry.get("success", false) and entry.get("encounter_id") == "patchwork_behemoth":
+			return value
+	return -1
+
+
 func _play_typed_boss() -> Dictionary:
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 4002
+	rng.seed = _behemoth_witness_seed()
 	var map := RunMap.new()
 	map.generate(rng)
 	for floor_index in range(12):

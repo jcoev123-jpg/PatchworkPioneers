@@ -71,7 +71,7 @@ func admit_broodling(enemies: CombatEnemies) -> bool:
 		return false
 	var parent_latched := false
 	for index in range(1, position):
-		if enemies.get_enemy(index).get("id") == CombatEnemies.MOTH_ID \
+		if enemies.get_enemy(index).get("id") in [CombatEnemies.MOTH_ID, CombatEnemies.MOTH_QUEEN_ID] \
 				and enemies.get_enemy(index).get(CombatEnemies.BROODLING_LATCH) == true:
 			parent_latched = true
 	if not parent_latched:

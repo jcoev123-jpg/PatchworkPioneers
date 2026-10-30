@@ -1,0 +1,9 @@
+[
+  {"enemy_position": 1, "pattern": [
+    {"type": "attack", "amount": 3, "target_position": 1},
+    {"type": "summon", "amount": 0},
+    {"type": "block", "amount": 4},
+    {"type": "attack", "amount": 3, "target_position": 2},
+    {"type": "summon", "amount": 0}
+  ]}
+]

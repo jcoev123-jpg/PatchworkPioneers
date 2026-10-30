@@ -27,6 +27,7 @@ const SOURCES := [
     "res://data/encounters/hexer_patchguard_elite.json",
     "res://data/encounters/patchwork_behemoth.json",
     "res://data/encounters/sewing_machine_colossus.json",
+    "res://data/encounters/moth_queen.json",
     "res://data/encounters/triple_spool_pinch.json",
     "res://data/encounters/double_hem_siege.json",
     "res://data/encounters/seamshift_tripwire.json",
@@ -36,6 +37,7 @@ const HP := {
     "spool_stalker": 14, "button_guard": 16, "seam_ripper": 18,
     "needle_marshal": 28, "spool_hexer": 24,
     "patchwork_behemoth": 84, "sewing_machine_colossus": 96,
+    "moth_queen": 90,
 }
 const NAMES := {
     "ragling": "Ragling", "ragling_guard": "Guard Ragling",
@@ -44,6 +46,7 @@ const NAMES := {
     "needle_marshal": "Needle Marshal", "spool_hexer": "Spool Hexer",
     "patchwork_behemoth": "Patchwork Behemoth",
     "sewing_machine_colossus": "Sewing-Machine Colossus",
+    "moth_queen": "Moth Queen",
 }
 const ART_PATHS := {
     "ragling": "res://assets/paper/enemies/ragling.png",
@@ -56,6 +59,7 @@ const ART_PATHS := {
     "spool_hexer": "res://assets/paper/enemies/spool_hexer.png",
     "patchwork_behemoth": "res://assets/paper/enemies/patchwork_behemoth.png",
     "sewing_machine_colossus": "res://assets/paper/enemies/sewing_machine_colossus.png",
+    "moth_queen": "res://assets/paper/enemies/moth_queen.png",
 }
 const BINDINGS := {
     "Fight": {
@@ -84,7 +88,8 @@ const BINDINGS := {
         "hexer_patchguard_elite": ["spool_hexer", "button_guard"],
     },
     "Boss": {"patchwork_behemoth": ["patchwork_behemoth"],
-        "sewing_machine_colossus": ["sewing_machine_colossus"]},
+        "sewing_machine_colossus": ["sewing_machine_colossus"],
+        "moth_queen": ["moth_queen"]},
 }
 const SEAMSHIFT := "seamshift_tripwire"
 const SEAMSHIFT_ROSTER := ["seam_ripper", "spool_stalker", "fray_scavenger"]
@@ -495,6 +500,13 @@ func _expected_actions() -> Dictionary:
              {"type": "debuff", "amount": 1, "target_position": 3, "status": "weak"},
              {"type": "attack", "amount": 3, "target_position": 3}],
         ],
+        "moth_queen": [
+            [{"type": "attack", "amount": 3, "target_position": 1},
+             {"type": "summon", "amount": 0},
+             {"type": "block", "amount": 4},
+             {"type": "attack", "amount": 3, "target_position": 2},
+             {"type": "summon", "amount": 0}],
+        ],
     }
 
 
@@ -530,6 +542,8 @@ func _test_authored_bindings() -> void:
             for enemy_id in expected_ids:
                 if kind == "Fight":
                     all_normals[enemy_id] = true
+    _check(not pools["Fight"].has("moth_queen") and not pools["Elite"].has("moth_queen"),
+        "Queen cannot leak into Fight or Elite pools")
     for id in ["ragling", "ragling_guard", "fray_scavenger",
             "button_guard", "spool_stalker", "seam_ripper"]:
         _check(all_normals.has(id), "all six normals occur in explicitly named Fight pool: " + id)
@@ -2375,7 +2389,7 @@ func _test_m04_elite_rejections_and_isolation() -> void:
             "Elite enemy ID " + elite_enemy_id + " rejected in Boss pool")
     var valid_boss := RunAuthoredBattleEntry.new().entry_current_battle(
         boss_map, boss_rng, boss_selector)
-    _check(not _verify_entry(valid_boss, "Boss", "patchwork_behemoth",
+    _check(not _verify_entry(valid_boss, "Boss", valid_boss.get("encounter_id", ""),
         "Boss entry after Elite-in-Boss rejections").is_empty(),
         "Boss entry still succeeds after rejecting Elite IDs in Boss pool")
 
