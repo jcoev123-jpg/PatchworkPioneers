@@ -28,6 +28,7 @@ func _required_ids() -> Array:
 	var ids := REQUIRED.duplicate()
 	for record in RunV3HeroEventOffers.new(_party_ids()).get_offers():
 		ids.append(record.id)
+	ids.append("v3_emberglass_campfire")
 	return ids
 
 
@@ -36,6 +37,12 @@ func _combined_catalog(include_party: bool = true) -> Dictionary:
 	for path in ["res://data/events/m04_events.json", "res://data/events/v3_roadside_events.json"]:
 		var document: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
 		events.append_array(document.events.duplicate(true))
+	var waystation := RunV3ServiceWaystationEventGate.new()
+	var emberglass := waystation.get_event_record("v3_emberglass_campfire")
+	_check(waystation.is_catalog_valid() and not emberglass.is_empty(),
+		"fixture contains authenticated Emberglass record")
+	if not emberglass.is_empty():
+		events.append(emberglass)
 	if include_party:
 		events.append_array(RunV3HeroEventOffers.new(_party_ids()).get_offers())
 		if not app._fate_pin_seen:
@@ -124,6 +131,9 @@ func _fixtures() -> Dictionary:
 	# Genuine map/toll witnesses after the Copper-Chain through Raven-Sewn
 	# hero stories expanded the sorted pool. Keep all previous candidates.
 	hints.append_array([931076, 1667572, 4268604, 4278127, 7006462, 7547920])
+	# Genuine map/toll witnesses for the shifted sorted pool after admitting
+	# Emberglass; IDs and draws are always revalidated below, not pinned here.
+	hints.append_array([236051, 316683, 90763, 200641, 33752])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():
@@ -525,6 +535,12 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 		await _key(KEY_SPACE)
 	else:
 		await _click(panel.get_choice_buttons()[selected])
+	if event_id == "v3_emberglass_campfire" and chosen.id == "light_the_embers":
+		_check(app.wallet_event_panel == null and is_instance_valid(app.campfire_view)
+			and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN
+			and app.run_map.get_current_node_id() == fixture.path[4],
+			"Emberglass paid choice mounts an actual same-node Campfire")
+		await _click(app.campfire_leave_button)
 	_check(app.wallet_event_panel == null and is_instance_valid(app.route_view)
 		and _wallet() == expected and _other_ledgers() == before,
 		"physical choice publishes exact wallet once with all other ledgers unchanged: " + event_id)

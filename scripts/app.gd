@@ -843,6 +843,9 @@ var _vital_event_history: Array = []
 var _wallet_event_record: Dictionary = {}
 var _wallet_event_context: Array = []
 var _wallet_event_history: Array = []
+# A paid Emberglass request is the only Event permitted to host a Campfire.
+var _emberglass_gate: RunV3ServiceWaystationEventGate
+var _emberglass_campfire_auth: Array = []
 var quiet_spool_panel: LiveEventChoicePanel
 var _quiet_spool_outcome: RunQuietSpoolOutcome
 var _quiet_spool_context: Array = []
@@ -3172,6 +3175,23 @@ func _unfought_run() -> bool:
 	return true
 
 
+## Only the gate's paid, claimed, same-node request may borrow the Campfire
+## completion guard; an ordinary Event never becomes a free Rest.
+func _emberglass_campfire_active(id: String) -> bool:
+	if _emberglass_campfire_auth.size() != 6 or run_map == null:
+		return false
+	var gate: RunV3ServiceWaystationEventGate = _emberglass_campfire_auth[5]
+	return gate != null and gate.is_claimed() \
+		and gate.get_event_id() == "v3_emberglass_campfire" \
+		and gate.get_service_choice_id() == "light_the_embers" \
+		and gate.get_service_kind() == "Campfire" \
+		and _emberglass_campfire_auth.slice(0, 5) == [run_map,
+			run_map.get_generation_revision(), run_map.get_floors(),
+			run_map.get_route(), id] \
+		and run_map.get_current_node_id() == id \
+		and run_map.get_node(id).get("type") == "Event"
+
+
 func _can_choose_connected_route() -> bool:
 	if is_instance_valid(debt_booth_panel):
 		return false
@@ -3233,6 +3253,12 @@ func _can_choose_connected_route() -> bool:
 				run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()] \
 			and is_instance_valid(sewing_view) and not sewing_view.visible
 	if run_map.get_node(run_map.get_current_node_id()).get("type") in ["Event", "Treasure"]:
+		var current_id := run_map.get_current_node_id()
+		if _emberglass_campfire_active(current_id):
+			return _campfire_closed and _campfire_original == _sewing_context() \
+				and _campfire_visits.get(current_id, []) == [run_map,
+					run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()] \
+				and is_instance_valid(campfire_view) and not campfire_view.visible
 		return _placeholder_map != null and _placeholder_map.get_ref() == run_map \
 			and not _placeholder_route.is_empty() and run_map.get_route() == _placeholder_route
 	return _peddler_closed()
@@ -3655,6 +3681,8 @@ func _wallet_event_snapshot() -> Array:
 		act_outcome, act_outcome.get_state(), wallet_event_panel,
 		wallet_event_panel._selector, wallet_event_panel._selector.get_event(),
 		_wallet_event_record.duplicate(true), _wallet_event_history.duplicate(),
+		_emberglass_gate, _emberglass_gate.get_event() if _emberglass_gate != null else {},
+		_emberglass_gate.is_valid() if _emberglass_gate != null else false,
 		wallet_event_panel._offered_wallet.duplicate(true),
 		wallet_event_panel._offered_snapshot.duplicate(true), _vital_event_history.duplicate(),
 		_quiet_spool_completed, _moth_completed, _dye_vat_completed]
@@ -3695,7 +3723,16 @@ func _load_wallet_event_catalog() -> Dictionary:
 	for required in REQUIRED_ROADSIDE_EVENT_IDS:
 		if not roadside_ids.has(required):
 			return {}
-	# Title-time catalog queries retain their existing generic/roadside contract.
+	# Only Emberglass is live-wired. Require the exact shipped record and
+	# refuse an ID collision instead of replacing a generic wallet story.
+	var waystations := RunV3ServiceWaystationEventGate.new()
+	var emberglass := waystations.get_event_record("v3_emberglass_campfire")
+	if not waystations.is_catalog_valid() or emberglass.is_empty() \
+		or seen.has(emberglass.id) or not RunEventChoice.new(emberglass).is_valid():
+		return {}
+	seen[emberglass.id] = true
+	combined.events.append(emberglass)
+	# The ordinary, roadside and hero-gated generic contracts remain intact.
 	# A live run admits only detached, service-authenticated stories for its party.
 	if run_map != null or not run_heroes.is_empty():
 		if run_map == null or not RunRestRecovery._is_valid_roster(run_heroes):
@@ -4132,6 +4169,13 @@ func _open_wallet_event(id: String, source: WeakRef) -> bool:
 		return _open_frayed_debt_parcel(id, source, staged_rng)
 	if record.id == RunFatePinAuction.EVENT_ID:
 		return _open_fate_pin_auction(id, source, staged_rng)
+	var emberglass_gate: RunV3ServiceWaystationEventGate = null
+	if record.id == "v3_emberglass_campfire":
+		var waystations := RunV3ServiceWaystationEventGate.new()
+		emberglass_gate = waystations.open_visit(record)
+		if emberglass_gate == null or not emberglass_gate.is_valid() \
+			or emberglass_gate.get_event() != record or vital:
+			return false
 	var panel := preload("res://scenes/event_choice_panel.tscn").instantiate() as LiveEventChoicePanel
 	add_child(panel)
 	var mounted := panel.open_event_with_vitals(record, snapshot) if vital else \
@@ -4149,6 +4193,7 @@ func _open_wallet_event(id: String, source: WeakRef) -> bool:
 	else:
 		_wallet_event_history.append(record.id)
 	_wallet_event_record = record.duplicate(true)
+	_emberglass_gate = emberglass_gate
 	wallet_event_panel = panel
 	_clear_route_view()
 	_wallet_event_context = _wallet_event_snapshot()
@@ -4183,12 +4228,42 @@ func _commit_wallet_event(receipt: Dictionary, panel, source: WeakRef) -> void:
 		receipt.get("choice_id"), {"gold": session_gold, "scraps": run_scraps})
 	if not expected.ok or receipt != expected:
 		return
+	var paid_emberglass := false
+	var pending_visit: RunCampfireVisit = null
+	if _wallet_event_record.get("id") == "v3_emberglass_campfire":
+		if _emberglass_gate == null or not _emberglass_gate.is_valid() \
+			or _emberglass_gate.get_event() != _wallet_event_record:
+			return
+		paid_emberglass = receipt.get("choice_id") == _emberglass_gate.get_service_choice_id()
+		if paid_emberglass:
+			# The map already committed this Event node when the parchment opened.
+			# Preflight a real Campfire before spending the one-scrap price.
+			var carry := party_carryover as RunTornCarryover
+			if carry == null or carry._observer() == null or carry.read_state().heroes != run_heroes \
+				or not _emberglass_campfire_auth.is_empty():
+				return
+			pending_visit = RunCampfireVisit.new(run_map.get_current_node_id(), run_heroes)
+			if not pending_visit.read_state().ok:
+				return
+		var service := _emberglass_gate.choose_with_wallet(receipt.get("choice_id"),
+			{"gold": session_gold, "scraps": run_scraps})
+		if not service.get("ok", false) or service.event_id != expected.event_id \
+			or service.choice_id != expected.choice_id or service.wallet != expected.wallet \
+			or service.service_request != ({"stop_type": "Campfire"} if paid_emberglass else {}):
+			return
+		if paid_emberglass:
+			_emberglass_campfire_auth = [run_map, run_map.get_generation_revision(),
+				run_map.get_floors(), run_map.get_route(), run_map.get_current_node_id(),
+				_emberglass_gate]
 	session_gold = expected.wallet.gold
 	run_scraps = expected.wallet.scraps
 	_placeholder_map = source
 	_placeholder_route = run_map.get_route()
 	_clear_wallet_event()
-	_present_connected_route(source)
+	if paid_emberglass:
+		_mount_campfire_visit(pending_visit)
+	else:
+		_present_connected_route(source)
 
 
 func _commit_vital_event(receipt: Dictionary, panel, source: WeakRef) -> void:
@@ -4226,6 +4301,7 @@ func _clear_wallet_event() -> void:
 		remove_child(wallet_event_panel)
 		wallet_event_panel.queue_free()
 	wallet_event_panel = null
+	_emberglass_gate = null
 
 
 func _load_quiet_spool() -> Dictionary:
@@ -5277,6 +5353,13 @@ func _choose_campfire_route(id: String, source: WeakRef, prior: Array[String], b
 	var visit := RunCampfireVisit.new(id, run_heroes)
 	if not visit.read_state().ok or not run_map.choose_node(id):
 		return false
+	_mount_campfire_visit(visit)
+	return true
+
+
+## Shared live visit presenter: a paid Event uses the already-committed node,
+## while normal Campfire/Rest admission still chooses its route exactly once.
+func _mount_campfire_visit(visit: RunCampfireVisit) -> void:
 	_clear_route_view()
 	if is_instance_valid(campfire_view):
 		remove_child(campfire_view)
@@ -5300,7 +5383,6 @@ func _choose_campfire_route(id: String, source: WeakRef, prior: Array[String], b
 	# The panel's authentic preview gain decides the safe default focus: Heal
 	# only when the party can recover, Leave for a fully healed party.
 	campfire_view._focus_default()
-	return true
 
 
 func _campfire_action(intent: Dictionary, view,
@@ -5320,7 +5402,8 @@ func _commit_campfire_action(intent: Dictionary, view,
 		or view != campfire_view or view.get_parent() != self or not view.is_visible_in_tree() \
 		or not view._submitted or view._visit != visit or view._snapshot != snapshot \
 		or not view._display_current() or run_map == null \
-		or run_map.get_node(run_map.get_current_node_id()).get("type") not in ["Campfire", "Rest"]:
+		or (run_map.get_node(run_map.get_current_node_id()).get("type") not in ["Campfire", "Rest"] \
+			and not _emberglass_campfire_active(run_map.get_current_node_id())):
 		return false
 	var id := run_map.get_current_node_id()
 	if intent.size() != 4 or intent.get("action") not in ["heal", "leave"] \
@@ -7668,6 +7751,7 @@ func _return_to_title() -> void:
 	_fate_pin_seen = false
 	_fate_pin_receipt.clear()
 	_clear_wallet_event()
+	_emberglass_campfire_auth.clear()
 	_wallet_event_history.clear()
 	_vital_event_history.clear()
 	_clear_rest_patch_overlay()
