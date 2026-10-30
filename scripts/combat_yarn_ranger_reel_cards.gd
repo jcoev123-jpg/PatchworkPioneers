@@ -13,7 +13,7 @@ extends RefCounted
 ## The catalog stays authoritative. The caller supplies a card ID and a detached enemy-slot
 ## snapshot, never a card record, cost, pull distance or Tangled count, and never a "living
 ## record swapped into the vacant slot" trick: a snapshot is an explicit mapping for enemy slots
-## 1-3 whose vacant slots are absent/empty. Each ID is authenticated against its own exact
+## 1-4 whose vacant slots are absent/empty. Each ID is authenticated against its own exact
 ## starter/pool record (full record, recursive type-exact equality) before anything is proposed,
 ## so a rewritten, relinked, outward-facing or foreign descriptor is refused instead of resolving
 ## as a reel card.
@@ -29,11 +29,13 @@ const FROM_POSITIONS := [2, 3]
 const TO_POSITIONS := [2, 3]
 const TARGET_KIND := "enemy_single"
 const PULL_FORWARD := 1
-## This preview is a three-slot contract: a reel pull reads and proposes enemy slots 1-3 only.
-## It deliberately does NOT track the battle-wide CombatEnemies.MAX_ENEMIES, which the concurrent
-## four-enemy main cycle raises to 4: a valid pull must still publish exactly slots 1-3 and a
-## record in slot 4 is an out-of-domain snapshot, never an accepted slot.
-const MAX_REEL_SLOTS := 3
+## This preview is a four-slot contract: a reel pull reads and proposes enemy slots 1-4, matching
+## the V3-2 floor bands that place an enemy group of 2-4 in the battle, so a bystander behind the
+## reel's two-slot target line is preserved untouched. It keeps its OWN literal domain constant
+## and deliberately does NOT derive it from the battle-wide CombatEnemies.MAX_ENEMIES (which stays
+## at 3): widening this detached snapshot does not enable a live four-foe fight, and a record under
+## key 5 or higher is an out-of-domain snapshot, never an accepted slot.
+const MAX_REEL_SLOTS := 4
 
 const _STARTER_CATALOG := preload("res://data/cards/yarn_ranger_starter_cards.gd")
 const _POOL_CATALOG := preload("res://data/cards/yarn_ranger_pool_cards.gd")
@@ -161,7 +163,9 @@ static func is_authentic_definition(definition: Variant, card_id: Variant) -> bo
 ## The single rules-only proposal. `party` is the authoritative hero roster (read through
 ## get_heroes(), never mutated); `enemy_slots` is the detached slot snapshot described above.
 ## Returns {"ok": true, reason "proposed", printed cost/Tangled, owner and slot receipt, and a
-## detached "slots" map} or {"ok": false, reason ...} with no proposed roster.
+## detached "slots" map} or {"ok": false, reason ...} with no proposed roster. The published map
+## always carries exactly the integer keys 1-4 (a vacant slot maps to an empty dictionary), whether
+## the caller's snapshot listed three or four slots, and only the chosen foe ever moves.
 func propose_pull(card_id: Variant, party: CombatParty, target_position: Variant,
 		enemy_slots: Variant, definition_lookup: Variant = null) -> Dictionary:
 	if typeof(card_id) != TYPE_STRING:
