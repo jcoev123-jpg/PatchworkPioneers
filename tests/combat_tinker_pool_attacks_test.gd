@@ -28,6 +28,7 @@ func _initialize() -> void:
 	_test_visor_other_five_families_and_alternate_wearers()
 	_test_visor_stale_failed_and_torn_rejections()
 	_test_staged_stitch_halves()
+	_test_staged_random_ricochet()
 	for failure in failures:
 		printerr(failure)
 	print("combat_tinker_pool_attacks_test: ",
@@ -2166,3 +2167,30 @@ func _test_staged_stitch_halves() -> void:
 			id + ": Tinker in slot one is outside every authored FROM")
 		_check(enemies.get_enemies() == _enemies().get_enemies() and not seam.get_first_attack()._consumed,
 			id + ": every rejection leaves the roster and latch untouched")
+
+## The detached stitched seam must consume only its supplied clone of run RNG,
+## with the same sequential legal recipients as the ordinary public resolver.
+func _test_staged_random_ricochet() -> void:
+	for id in CombatTinkerPoolAttacks.STITCHED_RANDOM_IDS:
+		var damage: int = int(TinkerPoolCards.new().get_definition(id).effects.damage)
+		var fresh := CombatAttackCards.new()
+		var seam := CombatTinkerPoolAttacks.stage_for_stitch(fresh)
+		var party := _party()
+		var enemies := _enemies()
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 4370
+		var before := [party.get_heroes(), enemies.get_enemies(), rng.state, fresh._tinker._consumed]
+		_check(seam.resolve_staged_half(party, enemies, id, 0) == _failed_play()
+			and [party.get_heroes(), enemies.get_enemies(), rng.state, fresh._tinker._consumed] == before,
+			id + ": random stitch requires caller's staged RNG")
+		_check(seam.resolve_staged_half(party, enemies, id, 1, 0, rng) == _failed_play()
+			and [party.get_heroes(), enemies.get_enemies(), rng.state, fresh._tinker._consumed] == before,
+			id + ": random stitch refuses manual selection without RNG drift")
+		var oracle := _oracle_random_pinned(rng.state, enemies.get_enemies(), damage + 3, {}, 3, {})
+		var result := seam.resolve_staged_half(party, enemies, id, 0, 0, rng)
+		_check(result.get("ok", false) and result.hits == oracle.hits
+			and enemies.get_enemies() == oracle.roster and rng.state == oracle.state
+			and rng.state != before[2] and fresh._tinker._consumed,
+			id + ": exact independent three-hit RNG, HP, Block and shared latch")
+		_check(party.get_heroes() == before[0] and oracle.hits.size() == 3,
+			id + ": genuine three-hit staged cast never touches party")

@@ -163,7 +163,8 @@ func _half_preview(half: Dictionary, index: int, party_slots: Array[Dictionary],
 			or id in CombatStitchedCards.SPARE_PARTS_IDS
 			or id in CombatTinkerPoolGadgets.SIGHT_GLASS_IDS
 			or id in CombatTinkerPoolAttacks.STITCHED_IDS
-			or id in CombatTinkerPoolAttacks.STITCHED_AREA_IDS):
+			or id in CombatTinkerPoolAttacks.STITCHED_AREA_IDS
+			or id in CombatTinkerPoolAttacks.STITCHED_RANDOM_IDS):
 		authored = TinkerPoolCards.new().get_definition(id)
 	if authored.is_empty() or authored != half:
 		return {}
@@ -181,7 +182,7 @@ func _half_preview(half: Dictionary, index: int, party_slots: Array[Dictionary],
 	var side := "none"
 	var select := false
 	match kind:
-		"enemy_single", "enemy_all":
+		"enemy_single", "enemy_all", "enemy_random":
 			side = "enemy"
 			select = kind == "enemy_single"
 			for enemy in enemy_slots:

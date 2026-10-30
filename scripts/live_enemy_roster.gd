@@ -155,7 +155,7 @@ static func art_paths(actor_id: String) -> Dictionary:
 	if not ACTOR_ART.has(actor_id):
 		return {}
 	var base: String = ART_ROOT + String(ACTOR_ART[actor_id])
-	return {"idle": base + ".png", "attack": base + "_attack.png"}
+	return {"idle": base + ".png", "attack": base + "_attack.png", "idle_loop": base + "_idle.png"}
 
 
 ## The exact sewn fallback kind of one authoritative actor ID: the four unillustrated M05
@@ -239,6 +239,8 @@ class Puppet extends Control:
 	const IDLE_BREATHE_RATE := 1.15
 	const IDLE_SLOT_OFFSET := 0.9
 	const IDLE_SIDE_OFFSET := 0.55
+	## Playback rate of an authored idle loop strip.
+	const IDLE_LOOP_FPS := 12.0
 	## Tall artwork stops short of the band top, leaving the column room for its intent
 	## ticket and a status plaque above it instead of hiding the plaque.
 	const ART_HEIGHT_SHARE := 0.62
@@ -335,6 +337,9 @@ class Puppet extends Control:
 	## Seconds of idle presentation this instance has run. A fresh puppet starts at rest.
 	var idle_phase := 0.0
 	var idle_texture: Texture2D
+	## Optional authored idle loop: square cells cut from one `<id>_idle.png` strip, each
+	## with the figure standing on the cell's bottom edge at the still's own height.
+	var idle_frames: Array[Texture2D] = []
 	## Authored attack pose, drawn only while this actor performs its own committed hit.
 	var attack_texture: Texture2D
 	## Seconds left of the one bounded committed attack pose; zero means plain idle.
@@ -645,10 +650,41 @@ class Puppet extends Control:
 		fallback_kind = fallback_kind_for(id)
 		idle_texture = art.get("idle") as Texture2D
 		attack_texture = art.get("attack") as Texture2D
+		idle_frames = loop_frames(art.get("idle_loop") as Texture2D if idle_texture != null else null)
 		queue_redraw()
 
 	func current_texture() -> Texture2D:
 		return idle_texture
+
+	## Cuts a horizontal strip of square cells into frames; anything else is no loop.
+	static func loop_frames(strip: Texture2D) -> Array[Texture2D]:
+		var frames: Array[Texture2D] = []
+		if strip == null or strip.get_height() <= 0 or strip.get_width() % strip.get_height() != 0:
+			return frames
+		var cell := float(strip.get_height())
+		for index in range(strip.get_width() / strip.get_height()):
+			var frame := AtlasTexture.new()
+			frame.atlas = strip
+			frame.region = Rect2(index * cell, 0.0, cell, cell)
+			frames.append(frame)
+		return frames
+
+	## The artwork actually painted for the pose image `texture`: a standing actor's still
+	## idle image is swapped for the current loop frame; attack poses and fallen actors keep
+	## their own image. Placement and targets still come from the still image.
+	func idle_frame(texture: Texture2D) -> Texture2D:
+		if idle_frames.is_empty() or texture != idle_texture or fallen:
+			return texture
+		var index := int((idle_phase + idle_offset()) * IDLE_LOOP_FPS)
+		return idle_frames[index % idle_frames.size()]
+
+	## Where `painted` goes for the still's fitted `rect`: a loop frame keeps the still's
+	## pixel scale, bottom-centred on the same foot line, so the figure keeps its size.
+	func painted_rect(painted: Texture2D, texture: Texture2D, rect: Rect2) -> Rect2:
+		if painted == texture or texture.get_height() <= 0:
+			return rect
+		var drawn := Vector2(painted.get_width(), painted.get_height()) * (rect.size.y / float(texture.get_height()))
+		return Rect2(Vector2(rect.get_center().x - drawn.x / 2.0, rect.end.y - drawn.y), drawn)
 
 	## The pinned name band at the bottom of the actor; art never reaches into it.
 	func tag_band() -> Rect2:
@@ -814,9 +850,11 @@ class Puppet extends Control:
 			var rect := pose_rect(texture)
 			if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 				return
-			var grown := rect.size + Vector2(RIM_RADIUS, RIM_RADIUS) * 2.0
-			draw_set_transform_matrix(idle_transform(rect.get_center() - Vector2(0.0, RIM_RADIUS), 1.0))
-			draw_texture_rect(texture, Rect2(-grown / 2.0, grown), false, Color(RIM_INK, RIM_ALPHA))
+			var painted := idle_frame(texture)
+			var paint_rect := painted_rect(painted, texture, rect)
+			var grown := paint_rect.size + Vector2(RIM_RADIUS, RIM_RADIUS) * 2.0
+			draw_set_transform_matrix(idle_transform(paint_rect.get_center() - Vector2(0.0, RIM_RADIUS), 1.0))
+			draw_texture_rect(painted, Rect2(-grown / 2.0, grown), false, Color(RIM_INK, RIM_ALPHA))
 			draw_set_transform(Vector2.ZERO)
 			return
 		var band := art_band()
@@ -851,9 +889,11 @@ class Puppet extends Control:
 		var rect := pose_rect(texture)
 		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 			return
+		var painted := idle_frame(texture)
+		var paint_rect := painted_rect(painted, texture, rect)
 		# Heroes face right, enemies left; the fallen actor keeps the drawn tilt treatment.
-		draw_set_transform_matrix(idle_transform(rect.get_center(), 1.0))
-		draw_texture_rect(texture, Rect2(-rect.size / 2.0, rect.size), false,
+		draw_set_transform_matrix(idle_transform(paint_rect.get_center(), 1.0))
+		draw_texture_rect(painted, Rect2(-paint_rect.size / 2.0, paint_rect.size), false,
 			Color("8c8b86") if fallen else Color.WHITE)
 		draw_set_transform(Vector2.ZERO)
 
@@ -2310,7 +2350,8 @@ func art_for(actor_id: String) -> Dictionary:
 		return _art_cache[actor_id]
 	var paths: Dictionary = art_paths(actor_id)
 	var art := {"idle": _load_art_texture(String(paths.get("idle", ""))),
-		"attack": _load_art_texture(String(paths.get("attack", "")))}
+		"attack": _load_art_texture(String(paths.get("attack", ""))),
+		"idle_loop": _load_art_texture(String(paths.get("idle_loop", "")))}
 	_art_cache[actor_id] = art
 	return art
 

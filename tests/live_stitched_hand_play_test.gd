@@ -918,6 +918,7 @@ func _run() -> void:
 	await _coat_cases(fixture)
 	await _pool_case()
 	await _scatter_area_cases()
+	await _ricochet_cases()
 	await _plain_strike_cases()
 	await _sight_glass_case()
 	await _knit_case(fixture)
@@ -1483,3 +1484,149 @@ func _scatter_area_cases() -> void:
 					_check(trace == replay, "same seeded mouse/keyboard reward-to-Fight replay for " + area_id)
 				await _return()
 				_check(randi() == global_next, "earned stitched Scatter consumes no global RNG")
+
+
+## A seeded opening reward is actually claimed, upgraded at Rest if requested,
+## sewn with the other owner's Brace, then drawn and played by the live hand.
+const RICOCHET_FIXTURE := {"seed": 179, "fight": "f01_n1",
+	"elite": ["f02_n1"], "rest": ["f03_n2"], "next": "f04_n2"}
+
+
+func _ricochet_cases() -> void:
+	for plus in [false, true]:
+		var card_id := "tinker_ricochet_plus" if plus else "tinker_ricochet"
+		for reverse in [false, true]:
+			var keyboard: bool = reverse
+			var pair := ["warden_brace", card_id] if reverse else [card_id, "warden_brace"]
+			print("mounted earned Ricochet: ", pair, " keyboard=", keyboard)
+			seed(80714)
+			var global_next := randi()
+			seed(80714)
+			var id := await _earn(RICOCHET_FIXTURE, pair, keyboard, "", true,
+				"tinker_ricochet", plus)
+			if id.is_empty():
+				_check(false, "real opening Ricochet reward, Rest and next Fight fixture")
+				return
+			await _restore_stitch_positions(id)
+			var ledger := RunRestStitchCards.new(app.run_deck, app.run_stitch_descriptors,
+				app.run_scraps, app.run_next_stitch_id)
+			var preview := CombatStitchedTargetPreview.new().get_preview(ledger,
+				app._stitch_snapshot(), app.deck, app.party, app.enemies, id)
+			var hit_index: int = 1 if reverse else 0
+			var slots: Array[int] = []
+			for enemy in app.enemies.get_enemies():
+				if enemy.hp > 0:
+					slots.append(enemy.position)
+			_check(ledger.is_valid() and app.deck.hand.has(id) and app.deck.energy >= 2
+				and _hero_position("tinker") == 3 and slots.size() >= 2
+				and app.run_stitch_descriptors[id].half_ids == pair
+				and preview.get("playable", false) and preview.halves.size() == 2,
+				"authentic reward, upgraded printing, living Tinker, hand and multi-foe battle")
+			if not preview.get("playable", false):
+				await _return()
+				continue
+			_check(preview.cost == 2 and preview.halves[hit_index].card_id == card_id
+				and preview.halves[hit_index].target_kind == "enemy_random"
+				and preview.halves[hit_index].side == "enemy"
+				and not preview.halves[hit_index].requires_selection
+				and preview.halves[hit_index].target_positions.is_empty()
+				and preview.halves[hit_index].affected_positions == slots
+				and not preview.halves[1 - hit_index].requires_selection,
+				"the connected hand offers automatic enemy-side target zero in either order")
+			var rest_receipt: Dictionary = app._stitch_snapshot()
+			var before_rejection := _complete_state()
+			var stale: Dictionary = rest_receipt.duplicate(true)
+			stale.remaining_scraps += 1
+			_check(not CombatStitchedTargetPreview.new().get_preview(ledger, stale,
+				app.deck, app.party, app.enemies, id).get("playable", false)
+				and _complete_state() == before_rejection,
+				"real live Rest preview rejects stale receipt without resource drift")
+			_check(app.enemies.gain_block(slots[0], 3),
+				"living mounted enemy has true Block for sequential hit oracle")
+			_check(app.enemies.apply_statuses({slots[1]: {"exposed": 1}}),
+				"mounted second living enemy has authentic Exposed")
+			var wearer: int = _hero_position("tinker")
+			app.party._heroes[wearer - 1]["statuses"] = {"weak": 1}
+			app._refresh_party()
+			app._refresh_enemy_roster()
+			await _frames()
+			var rng := RandomNumberGenerator.new()
+			rng.seed = app.run_rng.seed
+			rng.state = app.run_rng.state
+			var deck := CombatDeck.new([], rng)
+			deck.hand.assign(app.deck.hand)
+			deck.draw_pile.assign(app.deck.draw_pile)
+			deck.discard_pile.assign(app.deck.discard_pile)
+			deck.combat_state.energy = app.deck.energy
+			deck.combat_state.player_turn_active = true
+			var party := CombatParty.new(app.party.get_heroes())
+			party._heroes = app.party.get_heroes()
+			var enemies := CombatEnemies.new(app.enemies.get_enemies())
+			enemies._enemies = app.enemies.get_enemies()
+			var attacks := CombatAttackCards.new()
+			attacks.start_player_turn()
+			_check(not presenter._play._tinker._consumed,
+				"connected battle first-Tinker latch genuinely available")
+			var expected := CombatStitchedCards.new(attacks).play_stitched(
+				deck, party, enemies, ledger, id, 0, 0)
+			_check(expected.get("ok", false) and expected.halves.size() == 2,
+				"independent staged transaction succeeds from actual mounted authorities")
+			if not expected.get("ok", false):
+				await _return()
+				continue
+			var oracle_rng := RandomNumberGenerator.new()
+			oracle_rng.state = app.run_rng.state
+			var pool_deck := CombatDeck.new([card_id], oracle_rng)
+			_check(pool_deck.start_turn() and pool_deck.hand == [card_id],
+				"ordinary independent Ricochet is truly held and payable")
+			var pool_party := CombatParty.new(app.party.get_heroes())
+			pool_party._heroes = app.party.get_heroes()
+			var pool_enemies := CombatEnemies.new(app.enemies.get_enemies())
+			pool_enemies._enemies = app.enemies.get_enemies()
+			var ordinary := CombatTinkerPoolAttacks.new().play_attack(
+				pool_deck, pool_party, pool_enemies, card_id, 0)
+			_check(ordinary.get("ok", false) and ordinary.hits.size() >= 1
+				and expected.halves[hit_index] == ordinary
+				and enemies.get_enemies() == pool_enemies.get_enemies()
+				and rng.state == pool_deck._rng.state and rng.state != app.run_rng.state,
+				"ordinary sequential Weak/Block/Exposed hits and RNG equal sewn resolver")
+			var before := _complete_state()
+			var forecast := CombatStitchedEffectForecast.new().get_forecast(
+				ledger, rest_receipt, app.deck, app.party, app.enemies, id, 0, 0,
+				presenter._stitched_transaction(app))
+			_check(_complete_state() == before and forecast.get("playable", false)
+				and forecast.get("halves", []) == expected.halves,
+				"authentic read-only Ricochet forecast shows exact ordered hit receipts")
+			forecast_before = _complete_state()
+			captured_forecast = {}
+			presenter.forecast_updated.connect(_capture_forecast)
+			await _arm(id, keyboard)
+			if keyboard and presenter._armed != null:
+				await _key(KEY_SPACE)
+			presenter.forecast_updated.disconnect(_capture_forecast)
+			_check(captured_forecast.get("playable", false)
+				and captured_forecast.get("halves", []) == expected.halves,
+				"production hand emits automatic two-half forecast before commit")
+			_check(presenter.last_event == expected,
+				"physical mouse or key triggers an exact Ricochet/Brace commit")
+			_check([app.deck.hand, app.deck.draw_pile, app.deck.discard_pile,
+				app.deck.energy, app.party.get_heroes(), app.enemies.get_enemies(),
+				app.run_rng.state] == [deck.hand, deck.draw_pile, deck.discard_pile,
+				deck.energy, party.get_heroes(), enemies.get_enemies(), rng.state],
+				"mounted hand publishes exact predicted deck, roster, energy and RNG")
+			if forecast.get("playable", false):
+				var projected: Dictionary = forecast.projected
+				_check([projected.hand, projected.draw_pile, projected.discard_pile,
+					projected.energy, projected.heroes, projected.enemies,
+					projected.rng_state, projected.tinker_consumed] ==
+					[app.deck.hand, app.deck.draw_pile, app.deck.discard_pile,
+					app.deck.energy, app.party.get_heroes(), app.enemies.get_enemies(),
+					app.run_rng.state, presenter._play._tinker._consumed],
+					"forecast and live commit have identical full RNG, passive and roster receipts")
+			_check(not app.deck.hand.has(id) and app.deck.discard_pile.count(id) == 1
+				and app.deck.energy == int(before[0][3]) - 2
+				and presenter._play._tinker._consumed
+				and app._stitch_snapshot() == rest_receipt,
+				"physical stitched hand charges/discards once without changing Rest ledger")
+			await _return()
+			_check(randi() == global_next, "mounted Ricochet touches only run RNG")

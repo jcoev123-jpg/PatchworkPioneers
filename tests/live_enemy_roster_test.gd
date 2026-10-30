@@ -276,6 +276,28 @@ func _v3_hero_fallbacks(app, presenter) -> void:
 	_check(host.current_texture() == injected and host.pose_texture() == injected
 		and host.posed_image_rect().has_area() and host.image_rect().has_area(),
 		"provided Texture2D overrides the hero fallback on the live stage")
+	# An authored idle loop strip is cut into square frames and only replaces the still at rest.
+	var loop_art: Dictionary = presenter.art_for("seamstress")
+	var strip := loop_art.get("idle_loop") as Texture2D
+	_check(strip != null and strip.get_width() == strip.get_height() * 16
+		and ROSTER_ART.art_paths("seamstress").get("idle_loop") == "res://assets/paper/heroes/seamstress_idle.png",
+		"the Seamstress idle loop strip resolves by authoritative ID as sixteen square frames")
+	host.bind_actor("seamstress", loop_art)
+	host.idle_phase = 0.0
+	var first_frame: Texture2D = host.idle_frame(host.pose_texture())
+	host.idle_phase = 0.25
+	var later_frame: Texture2D = host.idle_frame(host.pose_texture())
+	_check(host.idle_frames.size() == 16 and host.current_texture() == loop_art.idle
+		and host.pose_texture() == loop_art.idle and first_frame is AtlasTexture
+		and later_frame is AtlasTexture and first_frame != later_frame,
+		"a standing hero paints its idle loop while placement still uses the still image")
+	_check(host.idle_frame(loop_art.attack) == loop_art.attack,
+		"the committed attack pose is never replaced by a loop frame")
+	var still_rect: Rect2 = host.image_rect()
+	var painted: Rect2 = host.painted_rect(later_frame, loop_art.idle, still_rect)
+	_check(is_equal_approx(painted.end.y, still_rect.end.y)
+		and is_equal_approx(painted.size.y / later_frame.get_height(), still_rect.size.y / loop_art.idle.get_height()),
+		"loop frames stand on the still's foot line at the still's pixel scale")
 	host.bind_actor("fabricated_v3_hero", {})
 	_check(host.fallback_kind == host.FALLBACK_KIND_GENERIC
 		and host.fallback_silhouettes().is_empty() and host.current_texture() == null

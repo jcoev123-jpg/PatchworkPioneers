@@ -128,19 +128,24 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 		var kind: String = half.target_kind
 		# Real per-half pre/post snapshots; discarded on any staged failure.
 		var hp_before: Array = staged_party.get_heroes() if half.effects.has("heal") else []
-		if kind in ["self", "none", "enemy_all", "party_all"] and target != 0:
+		if kind in ["self", "none", "enemy_all", "enemy_random", "party_all"] and target != 0:
 			return failure
 		if kind in ["enemy_single", "ally_single"] and not half.to_positions.is_empty() and not half.to_positions.has(target):
 			return failure
 		if half.id in CombatTinkerPoolAttacks.STITCHED_IDS \
-				or half.id in CombatTinkerPoolAttacks.STITCHED_AREA_IDS:
-			# Authenticate both target shapes against canonical Tinker printings.
-			# The pool resolver owns per-living-slot hits and the shared latches.
-			var expected_kind := "enemy_all" if half.id in CombatTinkerPoolAttacks.STITCHED_AREA_IDS else "enemy_single"
+				or half.id in CombatTinkerPoolAttacks.STITCHED_AREA_IDS \
+				or half.id in CombatTinkerPoolAttacks.STITCHED_RANDOM_IDS:
+			# Exact authored printings, including Ricochet's automatic random targets.
+			# All halves share staged latches; random hits share the cloned run RNG.
+			var expected_kind := "enemy_single"
+			if half.id in CombatTinkerPoolAttacks.STITCHED_AREA_IDS:
+				expected_kind = "enemy_all"
+			elif half.id in CombatTinkerPoolAttacks.STITCHED_RANDOM_IDS:
+				expected_kind = "enemy_random"
 			if half != _tinker_pool.get_definition(half.id) or kind != expected_kind:
 				return failure
 			var pool_attack := direct_fire.resolve_staged_half(staged_party,
-				staged_enemies, half.id, target, bonuses[index])
+				staged_enemies, half.id, target, bonuses[index], rng)
 			if not pool_attack.get("ok", false):
 				return failure
 			results.append(pool_attack)
