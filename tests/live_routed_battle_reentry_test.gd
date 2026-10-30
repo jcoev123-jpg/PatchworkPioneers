@@ -275,9 +275,21 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 				_check(app.campfire_view is LiveCampfirePanel and app.campfire_view.is_visible_in_tree()
 					and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
 					"Rest transit mounts its own live Campfire panel")
-				await _click(app.campfire_heal_button)
-				_check(not app.campfire_view.visible and app._campfire_closed
-					and app._can_choose_connected_route(), "Rest Heal closes its panel and permits continuation")
+				# The authentic preview decides: an undamaged transit party cannot
+				# spend the stop on a zero-gain Heal and completes via Leave.
+				if app.campfire_heal_button.disabled:
+					_check(not app.campfire_leave_button.disabled,
+						"zero-gain Rest transit keeps its Leave enabled")
+					await _click(app.campfire_heal_button)
+					_check(app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
+						"disabled Heal cannot spend the Rest transit")
+					await _click(app.campfire_leave_button)
+					_check(not app.campfire_view.visible and app._campfire_closed
+						and app._can_choose_connected_route(), "Rest Leave closes its panel and permits continuation")
+				else:
+					await _click(app.campfire_heal_button)
+					_check(not app.campfire_view.visible and app._campfire_closed
+						and app._can_choose_connected_route(), "Rest Heal closes its panel and permits continuation")
 			"Shop":
 				_check(is_instance_valid(app.visit_backdrop) and app.visit_backdrop.visit_kind == "Shop",
 					"Shop visit mounts its own art bed")

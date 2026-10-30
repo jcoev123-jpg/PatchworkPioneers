@@ -191,6 +191,24 @@ func _camp_scenario(connected: bool, heal: bool, keyboard: bool, opening_rest: b
 	await _camp_enter(keyboard)
 	await _camp_negatives()
 	var before: Dictionary = app._sewing_context()
+	var zero_gain := true
+	for hero_entry in before.heroes:
+		var forecast_hp: int = mini(hero_entry.max_hp,
+			maxi(1, hero_entry.hp) + int(floor(hero_entry.max_hp * 0.3)))
+		if forecast_hp > int(hero_entry.hp):
+			zero_gain = false
+	if heal and zero_gain:
+		# Design v3 V3-3: a fully healed party cannot spend its one-use visit on
+		# a zero-gain Heal. The mounted view shows Heal disabled and Leave is the
+		# only genuine action, so the scenario completes the stop via Leave.
+		_check(app.campfire_view.heal_button.disabled
+			and app.campfire_view.heal_button.is_visible_in_tree()
+			and not app.campfire_view.leave_button.disabled
+			and app.campfire_view.leave_button.has_focus(),
+			"fully healed party mounts a disabled Heal and an enabled focused Leave")
+		_refuse(app.campfire_view._connections[app.campfire_view.heal_button],
+			"zero-gain disabled Heal decision")
+		heal = false
 	var expected: Array = before.heroes.duplicate(true)
 	if heal:
 		for hero in expected:

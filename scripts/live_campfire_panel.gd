@@ -242,7 +242,10 @@ func _refresh() -> void:
 	var valid := _source_current()
 	for i in range(hero_labels.size()):
 		hero_labels[i].text = _hero_text(i) if valid else ""
-	heal_button.disabled = not valid
+	# The authenticated preview alone admits Heal: a party whose forecast
+	# recovers no HP cannot spend its one visit on a zero-gain Heal. Leave
+	# stays available for every genuinely open visit.
+	heal_button.disabled = not valid or not _preview_gain_positive()
 	leave_button.disabled = not valid
 	_retire_callbacks()
 	if valid:

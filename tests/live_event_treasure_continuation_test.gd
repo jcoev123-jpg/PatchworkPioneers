@@ -123,8 +123,15 @@ func _run() -> void:
 					app._clear_route_view()
 					if visit == "Rest":
 						_check(app.campfire_visit != null and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN, "real Rest requires completion")
+						# The undamaged party cannot gain HP, so Heal is disabled and
+						# the enabled Leave is the authentic completion.
+						_check(app.campfire_heal_button.disabled and not app.campfire_leave_button.disabled,
+							"real Rest disables its zero-gain Heal")
 						await _click(app.campfire_heal_button)
-						_check(app.campfire_visit.read_state().status == RunCampfireVisit.HEALED, "real Rest healed")
+						_check(app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
+							"disabled Heal cannot spend the real Rest")
+						await _click(app.campfire_leave_button)
+						_check(app.campfire_visit.read_state().status == RunCampfireVisit.LEFT, "real Rest left unchanged")
 						_check(app._campfire_closed and app._can_choose_connected_route(), "completed Campfire admits onward route")
 					else:
 						_check(app.peddler_visit != null, "real Shop visit mounted")
@@ -193,7 +200,22 @@ func _run() -> void:
 					_check(app.run_map.get_current_node_id() == final_visit, "completed placeholder admits next real visit")
 					if kind == "Event":
 						_check(app.campfire_view.is_visible_in_tree() and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN, "Rest after placeholder is fresh")
-						await _click(app.campfire_heal_button)
+						# The authentic preview decides: a wounded party Heals, while a
+						# fully healed party cannot spend the stop on a zero-gain Heal
+						# and completes through the enabled Leave instead.
+						if app.campfire_heal_button.disabled:
+							_check(not app.campfire_leave_button.disabled,
+								"fresh zero-gain Rest keeps its Leave enabled")
+							await _click(app.campfire_heal_button)
+							_check(app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
+								"disabled Heal cannot spend the fresh Rest")
+							await _click(app.campfire_leave_button)
+							_check(app.campfire_visit.read_state().status == RunCampfireVisit.LEFT,
+								"fresh zero-gain Rest left unchanged")
+						else:
+							await _click(app.campfire_heal_button)
+							_check(app.campfire_visit.read_state().status == RunCampfireVisit.HEALED,
+								"fresh wounded Rest heals through its enabled Heal")
 						_check(app._campfire_closed and app._can_choose_connected_route(), "completed Campfire admits onward route")
 					else:
 						_check(app.shop_view.is_visible_in_tree() and app.peddler_visit.read_state().status == RunPeddlerVisit.OPEN, "Shop after placeholder is fresh")
