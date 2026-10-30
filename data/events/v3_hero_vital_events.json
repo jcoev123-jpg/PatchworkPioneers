@@ -54,6 +54,50 @@
         { "id": "sell_cape_padding", "text": "Give up 5 HP worth of cape padding for 22 gold", "outcome": { "gold": 22, "scraps": 0, "hp": -5, "max_hp": 0 } },
         { "id": "leave", "text": "Tuck the cape in and depart", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_scarecrow_strawheart_alarm",
+      "title": "The Strawheart Alarm",
+      "description": "The Scarecrow hooks a quilted straw heart above a moonlit crow roost with a long forked pitchfork; black ribbon feathers tremble when it rings.",
+      "required_hero": "scarecrow",
+      "choices": [
+        { "id": "patch_straw_heart", "text": "Spend 2 scraps patching the straw heart (+8 HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 8, "max_hp": 0 } },
+        { "id": "offer_alarm_straw", "text": "Offer 5 HP of stuffing for 2 rescued scraps", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the crow roost to its midnight watch", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_starladder_bolas",
+      "title": "The Starladder Bolas",
+      "description": "The Ranger's giant braided wool bolas snag a moonlit ladder of crossed knitting needles, its silver rungs hanging between two stitched willow trees.",
+      "required_hero": "yarn_ranger",
+      "choices": [
+        { "id": "buy_knotted_rung", "text": "Spend 14 gold for a stronger wool seam (+2 max HP)", "outcome": { "gold": -14, "scraps": 0, "hp": 0, "max_hp": 2 } },
+        { "id": "unpick_bolas_strand", "text": "Unpick 1 max HP of wool to salvage 2 scraps", "outcome": { "gold": 0, "scraps": 2, "hp": 0, "max_hp": -1 } },
+        { "id": "leave", "text": "Leave the silver ladder hanging", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_button_golem_rivet_choir",
+      "title": "The Rivet Choir",
+      "description": "The Golem's enormous chest buttons hum beside a choir of bronze rivets sewn into a midnight velvet bell, each bass note shaking its stitches.",
+      "required_hero": "button_golem",
+      "choices": [
+        { "id": "polish_chest_buttons", "text": "Pay 17 gold to polish a worn chest seam (+9 HP)", "outcome": { "gold": -17, "scraps": 0, "hp": 9, "max_hp": 0 } },
+        { "id": "lend_bass_button", "text": "Give up 3 max HP of old brass for 27 gold", "outcome": { "gold": 27, "scraps": 0, "hp": 0, "max_hp": -3 } },
+        { "id": "leave", "text": "Let the bronze choir fall silent", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_tinker_blunderbuss_fuse_well",
+      "title": "The Blunderbuss Fuse Well",
+      "description": "A huge blunderbuss rests against the Tinker's overstuffed scrap backpack as copper gear teeth catch sparks above an ink-dark wishing well.",
+      "required_hero": "tinker",
+      "choices": [
+        { "id": "patch_fuse_lining", "text": "Spend 1 scrap reinforcing the blunderbuss lining (+2 max HP)", "outcome": { "gold": 0, "scraps": -1, "hp": 0, "max_hp": 2 } },
+        { "id": "bleed_fuse_heat", "text": "Endure 4 HP of hot fuse sparks to earn 21 gold", "outcome": { "gold": 21, "scraps": 0, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Cap the fuse and walk past the well", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
