@@ -30,6 +30,9 @@ func _combined_wallet_catalog() -> Dictionary:
 	var offers := RunV3HeroEventOffers.new(ids)
 	_check(offers.is_valid(), "wallet oracle has the genuine live three-hero party")
 	events.append_array(offers.get_offers())
+	var waystation := RunV3ServiceWaystationEventGate.new()
+	_check(waystation.is_catalog_valid(), "wallet oracle validates service-waystation source")
+	events.append(waystation.get_event_record("v3_emberglass_campfire"))
 	if not app._fate_pin_seen:
 		events.append(JSON.parse_string(FileAccess.get_file_as_string("res://data/events/mpw_fate_pin_auction.json")))
 	return {"events": events}
@@ -286,6 +289,11 @@ func _node(id: String, index: int) -> bool:
 				"later Event uses exactly one seeded rotation draw")
 			var wallet := {"gold": app.session_gold, "scraps": app.run_scraps}
 			for choice_index in range(record.choices.size()):
+				# This full-run fixture chooses the authored trade; paid Campfire
+				# entry and completion are covered by the mounted Emberglass test.
+				if record.get("id") == "v3_emberglass_campfire" \
+					and record.choices[choice_index].id == "light_the_embers":
+					continue
 				var receipt := RunEventChoice.new(record).choose_with_vitals(record.choices[choice_index].id,
 					panel._offered_snapshot) if panel._vital_mode else \
 					RunEventChoice.new(record).choose_with_wallet(record.choices[choice_index].id, wallet)
