@@ -19,6 +19,8 @@ func _run_all_suites() -> void:
 	_test_hand_spend()
 	_test_v3_buckle_rebound_paid_and_retaliation()
 	_test_v3_buckle_rebound_refusals_and_patches()
+	_test_v3_guard_cards_paid_and_interception()
+	_test_v3_guard_cards_refusals()
 	_test_patch_block_projection_ac1()
 	_test_patch_wearer_and_binding_ac2()
 	_test_patch_negative_and_stale_ac3()
@@ -2007,3 +2009,451 @@ func _test_v3_buckle_rebound_refusals_and_patches() -> void:
 			and unboosted.project_block(card_id).get("block") == authored_block
 			and unboosted.project_block(card_id).get("bonus") == 0,
 			"V3 AC1: another hero's patches cannot boost " + card_id)
+
+
+# =============================================================================
+# V3-1 Shield Catch / Guard Stitch: one-use ally interception
+# =============================================================================
+
+## Independent oracle from the brief: owner, printed Block and catalog identity. Never derived from
+## the catalog or from the service under test.
+func _v3_guard_table() -> Dictionary:
+	return {
+		"warden_v3_shield_catch": {"catalog": "starter", "display_name": "Shield Catch",
+			"block": 4, "starting_copies": 1, "reward_eligible": false, "has_rarity": false,
+			"upgrade_id": "warden_v3_shield_catch_plus", "upgrade_of": ""},
+		"warden_v3_shield_catch_plus": {"catalog": "starter", "display_name": "Shield Catch+",
+			"block": 6, "starting_copies": 0, "reward_eligible": false, "has_rarity": false,
+			"upgrade_id": "", "upgrade_of": "warden_v3_shield_catch"},
+		"warden_v3_guard_stitch": {"catalog": "pool", "display_name": "Guard Stitch",
+			"block": 5, "starting_copies": 0, "reward_eligible": true, "has_rarity": true,
+			"upgrade_id": "warden_v3_guard_stitch_plus", "upgrade_of": ""},
+		"warden_v3_guard_stitch_plus": {"catalog": "pool", "display_name": "Guard Stitch+",
+			"block": 7, "starting_copies": 0, "reward_eligible": false, "has_rarity": true,
+			"upgrade_id": "", "upgrade_of": "warden_v3_guard_stitch"},
+	}
+
+
+func _v3_guard_definition(card_id: String) -> Dictionary:
+	var spec: Dictionary = _v3_guard_table()[card_id]
+	if spec["catalog"] == "starter":
+		return V3WardenStarterCards.new().get_definition(card_id)
+	return V3WardenPoolCards.new().get_definition(card_id)
+
+
+func _guard_snapshot(deck: CombatDeck, party: CombatParty,
+		guard: CombatWardenV3GuardCards) -> Array:
+	return [
+		party.get_heroes(),
+		deck.hand.duplicate(true),
+		deck.draw_pile.duplicate(true),
+		deck.discard_pile.duplicate(true),
+		deck.exhausted.duplicate(true),
+		deck.energy,
+		deck.turn_active,
+		deck.combat_state.energy,
+		deck.combat_state.player_turn_active,
+		guard.has_pending_guard(),
+		guard.get_guarded_hero_id(),
+		guard.get_pending_guard_card_id(),
+		deck._rng.state,
+		deck._rng.seed,
+	]
+
+
+func _guard_state(party: CombatParty, guard: CombatWardenV3GuardCards) -> Array:
+	return [
+		party.get_heroes(),
+		guard.has_pending_guard(),
+		guard.get_guarded_hero_id(),
+		guard.get_pending_guard_card_id(),
+	]
+
+
+func _refuse_guard(guard: CombatWardenV3GuardCards, deck: CombatDeck,
+		party: CombatParty, card_id: Variant, target_position: int,
+		label: String) -> Dictionary:
+	var before: Array = _guard_snapshot(deck, party, guard)
+	var receipt: Dictionary = guard.play_card(deck, party, card_id, target_position)
+	_check(not receipt.get("ok", false), label + ": refused")
+	_check(_guard_snapshot(deck, party, guard) == before,
+		label + ": hand, piles, energy, party, pending guard and RNG unchanged")
+	return receipt
+
+
+## AC1/AC2: all four catalog printings, both legal Warden seats, exact paid Block, one-shot
+## interception keyed by hero identity, confirmed-hit consumption, miss/non-attack preservation,
+## a second hit after consumption being ordinary, and a legal seat change following the hero.
+func _test_v3_guard_cards_paid_and_interception() -> void:
+	var table: Dictionary = _v3_guard_table()
+	var seat_runs := 0
+	for card_id: String in table:
+		var spec: Dictionary = table[card_id]
+		var definition: Dictionary = _v3_guard_definition(card_id)
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			"V3 Guard AC1: authentic catalog record exists for " + card_id)
+		_check(definition.get("display_name") == spec["display_name"]
+			and definition.get("owner") == "warden" and definition.get("cost") == 1
+			and definition.get("target_kind") == "ally_single"
+			and definition.get("from_positions") == [1, 2]
+			and definition.get("to_positions") == []
+			and definition.get("effects") == {"block": int(spec["block"]),
+				"guard_next_hit": true}
+			and definition.get("starting_copies") == int(spec["starting_copies"])
+			and definition.get("reward_eligible") == bool(spec["reward_eligible"])
+			and definition.get("upgrade_id", "") == str(spec["upgrade_id"])
+			and definition.get("upgrade_of", "") == str(spec["upgrade_of"]),
+			"V3 Guard AC1: exact printed metadata for " + card_id)
+		if bool(spec["has_rarity"]):
+			_check(definition.get("rarity") == "common",
+				"V3 Guard AC1: pool rarity preserved for " + card_id)
+		else:
+			_check(not definition.has("rarity"),
+				"V3 Guard AC1: starter record keeps no pool rarity for " + card_id)
+
+		var service: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new()
+		_check(service.is_supported_card(card_id) and service.is_authentic_card(card_id),
+			"V3 Guard AC1: service authenticates " + card_id)
+
+		for seat: int in [1, 2]:
+			var label: String = "V3 Guard " + card_id + " seat " + str(seat)
+			seat_runs += 1
+			var party: CombatParty = _party_with_warden_at(seat)
+			var deck: CombatDeck = _deck([card_id], 300 + seat * 7 + table.keys().find(card_id))
+			var guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new()
+			_check(deck.turn_active and deck.hand == [card_id]
+				and deck.energy == CombatState.TURN_ENERGY,
+				label + ": real turn really holds exactly this card")
+			_check(party.get_hero(seat)["id"] == "warden" and not party.is_downed(seat),
+				label + ": living Warden really occupies this seat")
+			var before: Array = party.get_heroes()
+			var rng_before: int = deck._rng.state
+			var target: int = 3
+			var receipt: Dictionary = guard.play_card(deck, party, card_id, target)
+			_check(receipt.get("ok", false) and receipt.get("reason") == "applied",
+				label + ": paid play accepted")
+			_check(int(receipt.get("owner_position", 0)) == seat
+				and int(receipt.get("target_position", 0)) == target
+				and int(receipt.get("cost", 0)) == 1
+				and int(receipt.get("energy_spent", 0)) == 1,
+				label + ": receipt names the current Warden seat and the paid cost")
+			_check(deck.energy == CombatState.TURN_ENERGY - 1,
+				label + ": exactly one shared energy spent")
+			_check(deck.hand.is_empty() and deck.discard_pile == [card_id],
+				label + ": exactly one held copy discarded")
+			_check(deck._rng.state == rng_before, label + ": play consumes no RNG")
+			_check(party.get_hero(target)["block"] == int(spec["block"]),
+				label + ": chosen ally gains exactly " + str(spec["block"]) + " Block")
+			_check(party.get_hero(target)["hp"] == before[target - 1]["hp"],
+				label + ": chosen ally HP untouched")
+			for position: int in range(1, CombatParty.PARTY_SIZE + 1):
+				if position != target:
+					_check(party.get_hero(position) == before[position - 1],
+						label + ": hero " + str(position) + " untouched by the Block")
+			_check(guard.has_pending_guard()
+				and guard.get_guarded_hero_id() == "tinker"
+				and guard.get_pending_guard_card_id() == card_id,
+				label + ": interception is armed on the chosen ally identity")
+
+			# Read-only projection for an announced attack on the protected ally.
+			var party_before_projection: Array = party.get_heroes()
+			var projection: Dictionary = guard.project_interception(party, target)
+			_check(projection.get("ok", false) and projection.get("eligible", false)
+				and projection.get("redirected", false)
+				and int(projection.get("announced_target_position", 0)) == target
+				and int(projection.get("actual_target_position", 0)) == seat
+				and projection.get("guarded_hero_id") == "tinker"
+				and int(projection.get("warden_position", 0)) == seat,
+				label + ": projection nominates the Warden's current seat")
+			_check(party.get_heroes() == party_before_projection,
+				label + ": projection mutates nothing")
+
+			# A confirmed hit on another hero neither redirects nor consumes.
+			var other_position: int = 2 if seat == 1 else 1
+			var other: Dictionary = guard.consume_confirmed_hit(party, other_position, true)
+			_check(not other.get("consumed", false) and guard.has_pending_guard(),
+				label + ": a hit on another hero does not consume the guard")
+			_check(int(other.get("actual_target_position", 0)) == other_position,
+				label + ": the other hero keeps its ordinary target")
+
+			# A miss or a non-attack is not a confirmed hit: nothing is consumed.
+			var miss: Dictionary = guard.consume_confirmed_hit(party, target, false)
+			_check(not miss.get("consumed", false) and guard.has_pending_guard(),
+				label + ": miss/non-attack does not consume the guard")
+			var still_armed: Dictionary = guard.project_interception(party, target)
+			_check(still_armed.get("eligible", false)
+				and still_armed.get("redirected", false),
+				label + ": the guard is still armed after a miss")
+
+			# A confirmed hit absorbed entirely by Warden Block still consumes the one-shot.
+			_check(party.gain_block(seat, 2), label + ": Warden prepares 2 Block")
+			var warden_hp_before: int = int(party.get_hero(seat)["hp"])
+			var warden_block_before: int = int(party.get_hero(seat)["block"])
+			var ally_block_before: int = int(party.get_hero(target)["block"])
+			_check(party.apply_damage(seat, 1),
+				label + ": ordinary Block-before-HP hit lands on the Warden")
+			_check(party.get_hero(seat)["hp"] == warden_hp_before
+				and party.get_hero(seat)["block"] == warden_block_before - 1,
+				label + ": Warden Block really absorbed the hit")
+			_check(party.get_hero(target)["block"] == ally_block_before
+				and party.get_hero(target)["hp"] == before[target - 1]["hp"],
+				label + ": protected ally took no damage and kept its Block")
+			var confirmed: Dictionary = guard.consume_confirmed_hit(party, target, true)
+			_check(confirmed.get("ok", false) and confirmed.get("consumed", false)
+				and int(confirmed.get("actual_target_position", 0)) == seat,
+				label + ": Block-absorbed confirmed hit consumes the interception")
+			_check(not guard.has_pending_guard() and guard.get_guarded_hero_id() == ""
+				and guard.get_pending_guard_card_id() == "",
+				label + ": pending guard is cleared after consumption")
+
+			# The next hit after consumption is ordinary and consumes nothing.
+			var second_projection: Dictionary = guard.project_interception(party, target)
+			_check(second_projection.get("ok", false)
+				and not second_projection.get("eligible", false)
+				and not second_projection.get("redirected", false)
+				and int(second_projection.get("actual_target_position", 0)) == target,
+				label + ": following hit is ordinary")
+			var second: Dictionary = guard.consume_confirmed_hit(party, target, true)
+			_check(not second.get("consumed", false)
+				and int(second.get("actual_target_position", 0)) == target,
+				label + ": following confirmed hit consumes nothing")
+	_check(seat_runs == 8, "V3 Guard AC1: all four printings played from both legal seats")
+
+	# A self-selected Warden gets the printed Block but never redirects another hero's hit.
+	var self_party: CombatParty = _party()
+	var self_deck: CombatDeck = _deck(["warden_v3_shield_catch"], 401)
+	var self_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new()
+	_check(self_guard.play_card(self_deck, self_party, "warden_v3_shield_catch", 1).get("ok", false),
+		"V3 Guard AC2: self-selected Warden play accepted")
+	_check(self_party.get_hero(1)["block"] == 4,
+		"V3 Guard AC2: self-selected Warden gains exact printed 4 Block")
+	_check(self_guard.get_guarded_hero_id() == "warden",
+		"V3 Guard AC2: self-selected Warden is the protected identity")
+	var self_projection: Dictionary = self_guard.project_interception(self_party, 1)
+	_check(self_projection.get("eligible", false)
+		and not self_projection.get("redirected", false)
+		and int(self_projection.get("actual_target_position", 0)) == 1,
+		"V3 Guard AC2: hit on the Warden stays on the Warden")
+	var ally_projection: Dictionary = self_guard.project_interception(self_party, 2)
+	_check(ally_projection.get("ok", false)
+		and not ally_projection.get("eligible", false)
+		and int(ally_projection.get("actual_target_position", 0)) == 2,
+		"V3 Guard AC2: self-guard never redirects another hero's hit")
+	var self_hit: Dictionary = self_guard.consume_confirmed_hit(self_party, 1, true)
+	_check(self_hit.get("consumed", false)
+		and int(self_hit.get("actual_target_position", 0)) == 1,
+		"V3 Guard AC2: confirmed hit on the self-guarded Warden consumes the one-shot")
+
+	# The protected identity follows a legal seat change; the remembered seat is not used.
+	var moved_party: CombatParty = _party()
+	var moved_deck: CombatDeck = _deck(["warden_v3_guard_stitch"], 503)
+	var moved_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new()
+	_check(moved_guard.play_card(moved_deck, moved_party, "warden_v3_guard_stitch", 3).get("ok", false),
+		"V3 Guard AC2: guard on Tinker at seat 3 accepted")
+	_check(moved_party.get_hero(3)["block"] == 5,
+		"V3 Guard AC2: Tinker holds exact 5 Block before moving")
+	var swap_one: Dictionary = CombatPositionSwaps.preview_adjacent_swap(moved_party, 3, -1)
+	_check(swap_one.get("ok", false), "V3 Guard AC2: first legal swap preview")
+	moved_party._heroes.assign(swap_one["heroes"])
+	var swap_two: Dictionary = CombatPositionSwaps.preview_adjacent_swap(moved_party, 2, -1)
+	_check(swap_two.get("ok", false), "V3 Guard AC2: second legal swap preview")
+	moved_party._heroes.assign(swap_two["heroes"])
+	_check(moved_party.get_hero(1)["id"] == "tinker"
+		and moved_party.get_hero(1)["block"] == 5,
+		"V3 Guard AC2: protected Tinker now lives in seat 1 with its Block")
+	_check(moved_party.get_hero(2)["id"] == "warden",
+		"V3 Guard AC2: Warden now lives in seat 2")
+	_check(moved_guard.get_guarded_hero_id() == "tinker",
+		"V3 Guard AC2: pending protection stays keyed by hero identity")
+	var moved_projection: Dictionary = moved_guard.project_interception(moved_party, 1)
+	_check(moved_projection.get("eligible", false)
+		and moved_projection.get("redirected", false)
+		and int(moved_projection.get("announced_target_position", 0)) == 1
+		and int(moved_projection.get("actual_target_position", 0)) == 2
+		and int(moved_projection.get("guarded_position", 0)) == 1
+		and int(moved_projection.get("warden_position", 0)) == 2,
+		"V3 Guard AC2: projection follows both heroes to their current seats")
+	var moved_hit: Dictionary = moved_guard.consume_confirmed_hit(moved_party, 1, true)
+	_check(moved_hit.get("consumed", false)
+		and int(moved_hit.get("actual_target_position", 0)) == 2,
+		"V3 Guard AC2: consumption uses the moved Warden's current seat")
+
+
+## AC3: forged, unheld, unaffordable, inactive, illegal-seat, downed-owner and downed-target
+## preflights all fail closed before any charge, with complete before/after snapshots.
+func _test_v3_guard_cards_refusals() -> void:
+	var card: String = "warden_v3_guard_stitch"
+
+	# 1. Invalid and unsupported IDs keep every byte of state.
+	var id_party: CombatParty = _party()
+	var id_deck: CombatDeck = _deck([card], 601)
+	var id_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new()
+	_check(id_deck.hand == [card] and id_deck.energy == CombatState.TURN_ENERGY,
+		"V3 Guard AC3: invalid-ID fixture really holds the card and energy")
+	for bad_id in [null, "", 7, "fake_guard_card", "warden_v3_shield_toss"]:
+		_refuse_guard(id_guard, id_deck, id_party, bad_id, 2,
+			"V3 Guard AC3: invalid ID " + str(bad_id))
+	_check(not id_guard.is_supported_card("warden_v3_shield_toss")
+		and not id_guard.is_supported_card(null),
+		"V3 Guard AC3: non-guard IDs are unsupported, not silently aliased")
+
+	# 2. Authentic but not held.
+	var not_held: CombatDeck = _deck(["warden_v3_shield_catch"], 603)
+	_check(not not_held.hand.has(card), "V3 Guard AC3: not-held precondition")
+	_refuse_guard(id_guard, not_held, _party(), card, 2, "V3 Guard AC3: authentic but unheld")
+
+	# 3. Unaffordable after a genuine full spend.
+	var poor: CombatDeck = _deck([card], 605)
+	_check(poor.try_spend_energy(CombatState.TURN_ENERGY) and poor.energy == 0,
+		"V3 Guard AC3: unaffordable precondition")
+	_refuse_guard(id_guard, poor, _party(), card, 2, "V3 Guard AC3: no energy")
+
+	# 4. Inactive turn, and null deck/party.
+	var inactive: CombatDeck = CombatDeck.new([card], _rng(607))
+	inactive.hand.append(card)
+	_check(not inactive.turn_active and inactive.hand.has(card),
+		"V3 Guard AC3: inactive but held precondition")
+	_refuse_guard(id_guard, inactive, _party(), card, 2, "V3 Guard AC3: inactive turn")
+	var null_party: CombatParty = _party()
+	var null_deck: CombatDeck = _deck([card], 609)
+	var null_state: Array = _guard_state(null_party, id_guard)
+	var null_receipt: Dictionary = id_guard.play_card(null_deck, null, card, 2)
+	_check(not null_receipt.get("ok", false)
+		and _guard_state(null_party, id_guard) == null_state,
+		"V3 Guard AC3: null party refused without state change")
+	var null_deck_receipt: Dictionary = id_guard.play_card(null, null_party, card, 2)
+	_check(not null_deck_receipt.get("ok", false)
+		and _guard_state(null_party, id_guard) == null_state,
+		"V3 Guard AC3: null deck refused without state change")
+	# A deck without its shared combat state is invalid, not an ordinary inactive turn.
+	var broken_deck: CombatDeck = _deck([card], 629)
+	var broken_state: Array = [
+		broken_deck.hand.duplicate(true), broken_deck.draw_pile.duplicate(true),
+		broken_deck.discard_pile.duplicate(true), broken_deck._rng.state,
+		broken_deck._rng.seed, null_party.get_heroes(),
+		id_guard.has_pending_guard(), id_guard.get_guarded_hero_id(),
+	]
+	broken_deck.combat_state = null
+	var broken_receipt: Dictionary = id_guard.play_card(broken_deck, null_party, card, 2)
+	_check(not broken_receipt.get("ok", false)
+		and broken_receipt.get("reason") == "invalid_deck",
+		"V3 Guard AC3: deck without combat state reports invalid_deck")
+	var broken_after: Array = [
+		broken_deck.hand.duplicate(true), broken_deck.draw_pile.duplicate(true),
+		broken_deck.discard_pile.duplicate(true), broken_deck._rng.state,
+		broken_deck._rng.seed, null_party.get_heroes(),
+		id_guard.has_pending_guard(), id_guard.get_guarded_hero_id(),
+	]
+	_check(broken_after == broken_state,
+		"V3 Guard AC3: invalid deck refused without pile, party, guard or RNG change")
+
+	# 5. Illegal Warden seat and downed Warden.
+	_refuse_guard(id_guard, _deck([card], 611), _party_with_warden_at(3), card, 2,
+		"V3 Guard AC3: Warden in illegal seat 3")
+	var downed_warden: CombatParty = _party()
+	_check(downed_warden.apply_damage(1, 40) and downed_warden.is_downed(1),
+		"V3 Guard AC3: downed Warden precondition")
+	_refuse_guard(id_guard, _deck([card], 613), downed_warden, card, 2,
+		"V3 Guard AC3: downed Warden")
+
+	# 6. Invalid and downed ally targets.
+	var target_party: CombatParty = _party()
+	var target_deck: CombatDeck = _deck([card], 615)
+	for bad_target: int in [0, 4, -1]:
+		_refuse_guard(id_guard, target_deck, target_party, card, bad_target,
+			"V3 Guard AC3: invalid ally seat " + str(bad_target))
+	var downed_target_party: CombatParty = _party()
+	_check(downed_target_party.apply_damage(2, 30) and downed_target_party.is_downed(2),
+		"V3 Guard AC3: downed ally precondition")
+	_refuse_guard(id_guard, _deck([card], 617), downed_target_party, card, 2,
+		"V3 Guard AC3: downed ally target")
+
+	# 7. Block capacity on the chosen ally.
+	var capped: CombatParty = _party()
+	capped._heroes[2]["block"] = CombatParty.MAX_INT
+	_refuse_guard(id_guard, _deck([card], 619), capped, card, 3,
+		"V3 Guard AC3: chosen ally Block capacity")
+
+	# 8. A forged record for an otherwise valid, held ID is refused through the catalog seam.
+	var forged_starter_record: Dictionary = V3WardenStarterCards.new().get_definition(
+		"warden_v3_shield_catch")
+	forged_starter_record["effects"]["block"] = 99
+	var forged_starter := ForgedStarterGuardCatalog.new()
+	forged_starter.forged_id = "warden_v3_shield_catch"
+	forged_starter.forged_record = forged_starter_record
+	var forged_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new(forged_starter)
+	_check(not forged_guard.is_authentic_card("warden_v3_shield_catch"),
+		"V3 Guard AC3: forged starter record authenticates as nothing")
+	_refuse_guard(forged_guard, _deck(["warden_v3_shield_catch"], 621), _party(),
+		"warden_v3_shield_catch", 2, "V3 Guard AC3: forged Shield Catch")
+	var forged_pool_record: Dictionary = V3WardenPoolCards.new().get_definition(
+		"warden_v3_guard_stitch")
+	forged_pool_record["effects"]["guard_next_hit"] = false
+	var forged_pool := ForgedPoolGuardCatalog.new()
+	forged_pool.forged_id = "warden_v3_guard_stitch"
+	forged_pool.forged_record = forged_pool_record
+	var forged_pool_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new(null,
+		forged_pool)
+	_check(not forged_pool_guard.is_authentic_card("warden_v3_guard_stitch"),
+		"V3 Guard AC3: forged pool record authenticates as nothing")
+	_refuse_guard(forged_pool_guard, _deck(["warden_v3_guard_stitch"], 623), _party(),
+		"warden_v3_guard_stitch", 2, "V3 Guard AC3: forged Guard Stitch")
+
+	# 9. A refusal never disturbs an already-pending interception.
+	var pending_party: CombatParty = _party()
+	var pending_deck: CombatDeck = _deck(["warden_v3_shield_catch", "warden_v3_guard_stitch"], 625)
+	var pending_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new()
+	_check(pending_guard.play_card(pending_deck, pending_party,
+		"warden_v3_shield_catch", 2).get("ok", false),
+		"V3 Guard AC3: pending-guard fixture arms a real interception")
+	_check(pending_guard.get_guarded_hero_id() == "seamstress"
+		and pending_party.get_hero(2)["block"] == 4,
+		"V3 Guard AC3: pending-guard fixture is really armed on Seamstress")
+	_refuse_guard(pending_guard, pending_deck, pending_party, "warden_v3_guard_stitch", 4,
+		"V3 Guard AC3: refused play with pending guard")
+	_check(pending_guard.has_pending_guard()
+		and pending_guard.get_guarded_hero_id() == "seamstress"
+		and pending_guard.get_pending_guard_card_id() == "warden_v3_shield_catch",
+		"V3 Guard AC3: pending guard survives the refusal")
+	var pending_projection: Dictionary = pending_guard.project_interception(pending_party, 2)
+	_check(pending_projection.get("eligible", false)
+		and pending_projection.get("redirected", false)
+		and int(pending_projection.get("actual_target_position", 0)) == 1,
+		"V3 Guard AC3: pending guard still redirects after the refusal")
+
+	# 10. Deterministic replay of the whole accepted transaction.
+	var replay: Array = []
+	for repetition: int in range(2):
+		var r_party: CombatParty = _party()
+		var r_deck: CombatDeck = _deck(["warden_v3_shield_catch_plus"], 627)
+		var r_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new()
+		var r_play: Dictionary = r_guard.play_card(r_deck, r_party,
+			"warden_v3_shield_catch_plus", 3)
+		var r_projection: Dictionary = r_guard.project_interception(r_party, 3)
+		var r_consume: Dictionary = r_guard.consume_confirmed_hit(r_party, 3, true)
+		var pack: Array = [r_play, r_projection, r_consume, r_party.get_heroes(),
+			r_deck.discard_pile, r_deck._rng.state]
+		if repetition == 0:
+			replay = pack.duplicate(true)
+		else:
+			_check(pack == replay, "V3 Guard AC3: fixed-seed replay is identical")
+
+
+class ForgedStarterGuardCatalog extends V3WardenStarterCards:
+	var forged_id: String = ""
+	var forged_record: Dictionary = {}
+
+	func get_definition(card_id: Variant) -> Dictionary:
+		if typeof(card_id) == TYPE_STRING and (card_id as String) == forged_id:
+			return forged_record.duplicate(true)
+		return super.get_definition(card_id)
+
+
+class ForgedPoolGuardCatalog extends V3WardenPoolCards:
+	var forged_id: String = ""
+	var forged_record: Dictionary = {}
+
+	func get_definition(card_id: Variant) -> Dictionary:
+		if typeof(card_id) == TYPE_STRING and (card_id as String) == forged_id:
+			return forged_record.duplicate(true)
+		return super.get_definition(card_id)
