@@ -54,6 +54,25 @@ func _generic_selection(document: Dictionary, rng: RandomNumberGenerator, histor
 	return {"ok": true, "event": records[ids[rng.randi_range(0, ids.size() - 1)]]}
 
 
+func _live_vital_selection(rng: RandomNumberGenerator) -> Dictionary:
+	var records: Array = RunV3VitalEventRotation.new().get_vital_events()
+	var party_ids: Array = []
+	var warden_living := false
+	for hero in app.run_heroes:
+		party_ids.append(hero.id)
+		if hero.id == "warden" and hero.hp > 0:
+			warden_living = true
+	if warden_living:
+		var gate := RunV3HeroVitalEventGate.new(party_ids)
+		_check(gate.is_valid(), "full-run vitality oracle uses authenticated hero event catalog")
+		for record in gate.get_offers():
+			if record.id == "v3_warden_buckle_heart_ward":
+				records.append(record)
+	records.sort_custom(func(a, b): return String(a.id) < String(b.id))
+	_check(not records.is_empty(), "full-run vitality pool has real candidates")
+	return {"ok": true, "event": records[rng.randi_range(0, records.size() - 1)]}
+
+
 func _frames() -> void:
 	for frame in range(3):
 		await process_frame
@@ -283,7 +302,7 @@ func _node(id: String, index: int) -> bool:
 			expected_rng.state = int(inventory[8])
 			var history: Array = app._wallet_event_history.duplicate()
 			history.pop_back()
-			var selected := RunV3VitalEventRotation.new().select_event(expected_rng) if panel._vital_mode else \
+			var selected := _live_vital_selection(expected_rng) if panel._vital_mode else \
 				_generic_selection(_combined_wallet_catalog(), expected_rng, history)
 			_check(selected.ok and selected.event == record and app.run_rng.state == expected_rng.state,
 				"later Event uses exactly one seeded rotation draw")
@@ -309,6 +328,7 @@ func _node(id: String, index: int) -> bool:
 					inventory[1] = proposal.read_state().heroes
 					inventory[9].heroes = proposal.read_state().heroes
 					inventory[9].completed_vital_events = proposal.read_state().completed_vital_events
+					inventory[9].vital_cap_offsets = proposal.read_state().vital_cap_offsets
 				inventory[2] = receipt.state.gold if vitality else receipt.wallet.gold
 				inventory[3] = receipt.state.scraps if vitality else receipt.wallet.scraps
 				inventory[8] = str(expected_rng.state)
@@ -1031,7 +1051,7 @@ func _needle_visits(fixture: Dictionary, branch: String, keyboard: bool) -> Arra
 	for index in range(4, 6):
 		var expected_rng := RandomNumberGenerator.new()
 		expected_rng.state = app.run_rng.state
-		var rotation := RunV3VitalEventRotation.new().select_event(expected_rng) if index == 5 else \
+		var rotation := _live_vital_selection(expected_rng) if index == 5 else \
 			_generic_selection(_combined_wallet_catalog(), expected_rng, app._wallet_event_history)
 		await _activate(_needle_button(fixture.path[index]), keyboard)
 		var wallet_panel: LiveEventChoicePanel = app.wallet_event_panel
