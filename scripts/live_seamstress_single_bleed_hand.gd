@@ -1,7 +1,8 @@
 extends Node
 ## Enemy-single Seamstress Bleed cards, mounted beneath LiveAreaAttackAction.
 ## D2 is paid only by CombatSeamstressPoolBleed; the six authenticated V3
-## printings are paid only by CombatSeamstressV3RedThreadCards.
+## printings are paid only by CombatSeamstressV3RedThreadCards; Bobbin Snag
+## uses the scene-free CombatSeamstressV3BobbinSnagCards and shared battle gauges.
 
 const CARD_IDS := [
 	"seamstress_running_stitch", "seamstress_running_stitch_plus",
@@ -13,6 +14,7 @@ const V3_IDS := [
 	"seamstress_v3_needle_rain", "seamstress_v3_needle_rain_plus",
 	"seamstress_v3_scarlet_knot", "seamstress_v3_scarlet_knot_plus",
 ]
+const BOBBIN_IDS := ["seamstress_v3_bobbin_snag", "seamstress_v3_bobbin_snag_plus"]
 const CREAM := Color("#ece0c8")
 const INK := Color("#3d3440")
 const THREAD := Color("#6e4f6b")
@@ -22,17 +24,22 @@ const INSTRUCTION := "Click or focus and press Enter / Space; choose a living en
 var _catalog := SeamstressPoolCards.new()
 var _service := CombatSeamstressPoolBleed.new()
 var _v3_service := CombatSeamstressV3RedThreadCards.new()
+var _bobbin_catalog := V3SeamstressPoolCards.new()
+var _bobbin_service := CombatSeamstressV3BobbinSnagCards.new()
 
 
 ## Only authentic catalog printings may enter the mounted target chooser.
 func _definition(card_id: String) -> Dictionary:
+	if card_id in BOBBIN_IDS:
+		return _bobbin_catalog.get_definition(card_id) if not _bobbin_service._authenticate(card_id).is_empty() else {}
 	if card_id in V3_IDS:
 		return _v3_service._catalog_definition(card_id) if _v3_service.is_authentic_card(card_id) else {}
 	return _catalog.get_definition(card_id)
 
 
 func _supported(card_id: String) -> bool:
-	return card_id in CARD_IDS or (card_id in V3_IDS and _v3_service.is_authentic_card(card_id))
+	return card_id in CARD_IDS or (card_id in V3_IDS and _v3_service.is_authentic_card(card_id)) \
+		or (card_id in BOBBIN_IDS and not _bobbin_service._authenticate(card_id).is_empty())
 var _battle: Control
 var _deck: CombatDeck
 var _party: CombatParty
@@ -86,6 +93,30 @@ func _valid_panel(panel, card_id: String) -> bool:
 	return _bindings[panel].id == card_id and _supported(card_id) 		and index >= 0 and index < _deck.hand.size() 		and _deck.hand[index] == card_id and panel.get_child_count() > 0 		and panel.get_child(0) is Label and panel.get_child(0).text == card_id
 
 
+func _bobbin_authorities() -> Dictionary:
+	var app = _app()
+	if app == null or not _live():
+		return {}
+	return get_parent()._live_unravel_authorities(app)
+
+
+func _bobbin_plan(card_id: String, position: int) -> Dictionary:
+	var authorities := _bobbin_authorities()
+	if authorities.is_empty():
+		return {}
+	return _bobbin_service._prepare(_deck, _party, _enemies,
+		authorities.pinned, authorities.unravel, card_id, position)
+
+
+func _bobbin_choice_valid() -> bool:
+	var authorities := _bobbin_authorities()
+	return not authorities.is_empty() and authorities.pinned == _choice.get("pinned") \
+		and authorities.unravel == _choice.get("unravel") \
+		and authorities.flow == _choice.get("flow") \
+		and authorities.pinned._pinner_by_position == _choice.get("pins") \
+		and authorities.unravel._gauges == _choice.get("gauges")
+
+
 func _affordable(panel, card_id: String) -> bool:
 	if not _live() or not _valid_panel(panel, card_id) 			or not panel.is_visible_in_tree():
 		return false
@@ -100,6 +131,12 @@ func _affordable(panel, card_id: String) -> bool:
 			owners += 1
 			legal_owner = hero["hp"] > 0 and from.has(hero["position"])
 	if owners != 1 or not legal_owner or _deck.energy < int(definition.get("cost", -1)) 			or int(definition.get("cost", -1)) < 0:
+		return false
+	if card_id in BOBBIN_IDS:
+		for enemy in _enemies.get_enemies():
+			var position: int = enemy["position"]
+			if _bobbin_plan(card_id, position).get("ok", false):
+				return true
 		return false
 	if card_id in V3_IDS:
 		# Preflight real original living slots before offering an actionable picker.
@@ -193,8 +230,8 @@ func _bind(panel: Control, card_id: String) -> void:
 ## they really are instead of a fixed authored-plus-one guess. An unprojected
 ## strip (no legal target yet) states no number at all.
 func _projected_bleed(definition: Dictionary, legal: Array[int]) -> Dictionary:
-	if str(definition.get("id", "")) in V3_IDS:
-		return {} # V3 previews report authored effects, never a D2 HP forecast.
+	if str(definition.get("id", "")) in V3_IDS or str(definition.get("id", "")) in BOBBIN_IDS:
+		return {} # Neither V3 branch uses the D2 Bleed forecast.
 	if legal.is_empty():
 		return {}
 	return _service.forecast_single(
@@ -224,6 +261,9 @@ func _bleed_detail(definition: Dictionary, outcome: Dictionary) -> String:
 
 
 func _rule_text(definition: Dictionary, outcome: Dictionary = {}) -> String:
+	if str(definition.get("id", "")) in BOBBIN_IDS:
+		return "%s | Cost 1 | From 2,3 | One living enemy 1,2,3\nUnravel %d; Pin (Seamstress); no attack or damage" % [
+			definition.display_name, int(definition.effects.unravel)]
 	if str(definition.get("id", "")) in V3_IDS:
 		return "%s | Cost 1 | From %s | One living enemy %s\n%s" % [
 			definition.display_name, _positions(definition.from_positions),
@@ -286,7 +326,9 @@ func _on_card_input(event: InputEvent, panel, card_id: String) -> void:
 	var positions: Array = definition.get("to_positions", [])
 	var legal: Array[int] = []
 	for enemy in _enemies.get_enemies():
-		if enemy["hp"] > 0 and positions.has(enemy["position"]) 				and (card_id not in V3_IDS or _v3_service._prepare(
+		if enemy["hp"] > 0 and positions.has(enemy["position"]) \
+				and (card_id not in BOBBIN_IDS or _bobbin_plan(card_id, int(enemy["position"])).get("ok", false)) \
+				and (card_id not in V3_IDS or _v3_service._prepare(
 					_deck, _party, _enemies, card_id, int(enemy["position"])).get("ok", false)):
 			legal.append(enemy["position"])
 	if legal.is_empty():
@@ -300,6 +342,16 @@ func _on_card_input(event: InputEvent, panel, card_id: String) -> void:
 		"draw": _deck.draw_pile.duplicate(), "discard": _deck.discard_pile.duplicate(),
 		"energy": _deck.energy, "heroes": _party.get_heroes(),
 		"roster": _enemies.get_enemies(), "queued": false}
+	if card_id in BOBBIN_IDS:
+		var authorities := _bobbin_authorities()
+		if authorities.is_empty():
+			_cancel()
+			return
+		_choice["pinned"] = authorities.pinned
+		_choice["unravel"] = authorities.unravel
+		_choice["flow"] = authorities.flow
+		_choice["pins"] = authorities.pinned._pinner_by_position.duplicate(true)
+		_choice["gauges"] = authorities.unravel._gauges.duplicate(true)
 	_mount_strip(definition, legal, _projected_bleed(definition, legal))
 
 
@@ -308,7 +360,8 @@ func _selection_valid() -> bool:
 		return false
 	var panel = _choice.get("panel")
 	var card_id: String = str(_choice.get("id", ""))
-	return _choice.token == _token and _choice.deck == _deck 		and _choice.party == _party and _choice.enemies == _enemies 		and _choice.battle == _battle and _choice.result == _result 		and _choice.rng == _rng and _choice.rng_seed == _rng.seed 		and _choice.rng_state == _rng.state and _choice.intents == _intents 		and _choice.turn == _turn and is_instance_valid(panel) 		and panel.get_index() == _choice.index 		and _affordable(panel, card_id) and _choice.hand == _deck.hand 		and _choice.draw == _deck.draw_pile and _choice.discard == _deck.discard_pile 		and _choice.energy == _deck.energy 		and _choice.heroes == _party.get_heroes() 		and _choice.roster == _enemies.get_enemies()
+	return _choice.token == _token and _choice.deck == _deck 		and _choice.party == _party and _choice.enemies == _enemies 		and _choice.battle == _battle and _choice.result == _result 		and _choice.rng == _rng and _choice.rng_seed == _rng.seed 		and _choice.rng_state == _rng.state and _choice.intents == _intents 		and _choice.turn == _turn and is_instance_valid(panel) 		and panel.get_index() == _choice.index 		and _affordable(panel, card_id) and _choice.hand == _deck.hand 		and _choice.draw == _deck.draw_pile and _choice.discard == _deck.discard_pile 		and _choice.energy == _deck.energy 		and _choice.heroes == _party.get_heroes() 		and _choice.roster == _enemies.get_enemies() \
+		and (card_id not in BOBBIN_IDS or _bobbin_choice_valid())
 
 
 func _mount_strip(definition: Dictionary, legal: Array[int], outcome: Dictionary) -> void:
@@ -405,6 +458,16 @@ func _show_preview(position: int, token: int) -> void:
 	if not _targets.has(position) or not is_instance_valid(_targets[position]) \
 			or _targets[position].disabled or not _selection_valid():
 		return
+	if str(_choice.id) in BOBBIN_IDS:
+		var plan := _bobbin_plan(str(_choice.id), position)
+		if plan.get("ok", false):
+			var gauge: Dictionary = plan.gauge_before
+			var after: int = int(gauge.gauge)
+			if not gauge.skip_pending:
+				after = mini(int(gauge.threshold), after + int(plan.printed_unravel))
+			_preview.text = "1 energy | Unravel %d: %d -> %d (threshold %d); Pin: Seamstress | 0 damage" % [
+				int(plan.printed_unravel), int(gauge.gauge), after, int(gauge.threshold)]
+		return
 	if str(_choice.id) in V3_IDS:
 		var card: Dictionary = _definition(str(_choice.id))
 		if not card.is_empty() and _v3_service._prepare(
@@ -448,7 +511,21 @@ func _commit(position: int, enemy_id: String, token: int) -> void:
 		_cancel()
 		return
 	var card_id: String = _choice.id
-	var event: Dictionary = _v3_service.play_card(_deck, _party, _enemies, card_id, position) 		if card_id in V3_IDS else _service.play_card(_deck, _party, _enemies, card_id, position)
+	var event: Dictionary
+	if card_id in BOBBIN_IDS:
+		var authorities := _bobbin_authorities()
+		if authorities.is_empty() or not _bobbin_choice_valid():
+			_cancel()
+			return
+		event = _bobbin_service.play_card(_deck, _party, _enemies,
+			authorities.pinned, authorities.unravel, card_id, position)
+		if event.get("ok", false):
+			# This exact gauge is consumed by the actual end-turn round flow.
+			authorities.flow._unravel = authorities.unravel
+	elif card_id in V3_IDS:
+		event = _v3_service.play_card(_deck, _party, _enemies, card_id, position)
+	else:
+		event = _service.play_card(_deck, _party, _enemies, card_id, position)
 	_cancel()
 	if not event.get("ok", false):
 		return

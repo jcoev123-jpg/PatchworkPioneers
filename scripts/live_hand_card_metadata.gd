@@ -59,6 +59,8 @@ var _tinker_pool := TinkerPoolCards.new()
 var _v3_tinker_scrap := CombatTinkerV3ScrapSupportCards.new()
 var _seamstress_pool := SeamstressPoolCards.new()
 var _v3_red_thread := CombatSeamstressV3RedThreadCards.new()
+var _bobbin := CombatSeamstressV3BobbinSnagCards.new()
+var _bobbin_catalog := V3SeamstressPoolCards.new()
 var _targeting := CombatAttackTargeting.new()
 var _stitched_preview := CombatStitchedTargetPreview.new()
 var _on_hit := CombatOnHitStatuses.new()
@@ -101,6 +103,8 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if _bobbin.is_supported_card(card_id):
+		return _bobbin_catalog.get_definition(card_id) if not _bobbin._authenticate(card_id).is_empty() else {}
 	if _v3_red_thread.is_supported_card(card_id):
 		return _v3_red_thread._catalog_definition(card_id) 			if _v3_red_thread.is_authentic_card(card_id) else {}
 	if _monk.is_supported_card(card_id):
@@ -396,6 +400,12 @@ func get_faces(panel: Control) -> Dictionary:
 ## effect and keyword text without that legend; the default keeps the hand
 ## tooltip byte-for-byte unchanged and an unknown ID still fails closed.
 func base_effect_text(card_id: String, include_pips: bool = true) -> String:
+	if _bobbin.is_supported_card(card_id):
+		var card := _definition(card_id)
+		if card.is_empty():
+			return "Unknown card"
+		return "%s; Seamstress; 1 energy\nFrom 2,3; To one selected living enemy 1,2,3\nAdd printed Unravel %d to the shared gauge; Pin this enemy for Seamstress. No attack or damage." % [
+			card.display_name, int(card.effects.unravel)]
 	if _bolas.is_supported_card(card_id):
 		var card := _definition(card_id)
 		if card.is_empty():
@@ -1154,7 +1164,7 @@ func _update_visual(panel: Control) -> void:
 		if CombatRagDuelistRiposteCards.CARDS.has(id) or CombatRagDuelistDodgeCards.CARDS.has(id):
 			var riposte_presenter = _app.get_node_or_null("LiveRagDuelistRiposteHand")
 			playable = riposte_presenter != null and riposte_presenter._eligible(panel, id)
-		elif id in CombatSeamstressV3RedThreadCards.CARDS:
+		elif id in CombatSeamstressV3RedThreadCards.CARDS or _bobbin.is_supported_card(id):
 			var seamstress_presenter = _app.get_node_or_null("LiveAreaAttackAction")
 			var hand = seamstress_presenter.get_node_or_null("LiveSeamstressSingleBleedHand") if seamstress_presenter != null else null
 			playable = hand != null and hand._affordable(panel, id)

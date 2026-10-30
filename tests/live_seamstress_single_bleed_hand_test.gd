@@ -1505,6 +1505,7 @@ func _run() -> void:
 	for index in range(V3_IDS.size()):
 		await _v3_play(V3_IDS[index], ["mouse", "enter", "space", "duplicate"][index % 4])
 	await _v3_refusals()
+	await _bobbin_tests()
 	app.free()
 	_finish()
 
@@ -1764,3 +1765,376 @@ func _v3_refusals() -> void:
 			and adapter._choice.is_empty() and adapter.target_strip == null,
 			"stale V3 %s refuses and clears picker without status, energy or RNG drift" % kind)
 		await _return()
+
+## Bobbin uses the shipped scene-free resolver as an independent paid oracle,
+## while the test obtains the SAME shared authorities used by live battle input.
+const BOBBIN_IDS := ["seamstress_v3_bobbin_snag", "seamstress_v3_bobbin_snag_plus"]
+
+
+func _bobbin_state() -> Array:
+	var preview = app.get_node("LiveAttackPreview")
+	return [_state(), preview._pinned._pinner_by_position.duplicate(true),
+		preview._unravel._gauges.duplicate(true)]
+
+
+func _bobbin_oracle(id: String, before: Array, target: int,
+		pins: Dictionary, gauges: Dictionary, tiers: Dictionary) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(before[7])
+	rng.state = int(before[8])
+	var deck := CombatDeck.new([], rng)
+	deck.draw_pile.assign(before[0])
+	deck.hand.assign(before[1])
+	deck.discard_pile.assign(before[2])
+	deck.combat_state.energy = int(before[3])
+	deck.combat_state.player_turn_active = bool(before[4])
+	var party := CombatParty.new(app._load_party_definitions())
+	party._heroes.assign((before[5] as Array).duplicate(true))
+	var definitions: Array[Dictionary] = []
+	for enemy in before[6]:
+		definitions.append({"id": String(enemy.id), "max_hp": int(enemy.max_hp)})
+	var enemies := CombatEnemies.new(definitions)
+	enemies._enemies.assign((before[6] as Array).duplicate(true))
+	var pinned := CombatPinned.new()
+	pinned._pinner_by_position = pins.duplicate(true)
+	var unravel := CombatUnravel.new()
+	_check(unravel.bind_roster(enemies, tiers), "oracle binds complete independently cloned enemy roster")
+	unravel._gauges = gauges.duplicate(true)
+	var result := CombatSeamstressV3BobbinSnagCards.new().play_card(
+		deck, party, enemies, pinned, unravel, id, target)
+	return {"result": result, "hand": deck.hand, "draw": deck.draw_pile,
+		"discard": deck.discard_pile, "energy": deck.energy,
+		"heroes": party.get_heroes(), "enemies": enemies.get_enemies(),
+		"pins": pinned._pinner_by_position, "gauges": unravel._gauges, "rng": rng.state}
+
+
+func _bobbin_start(id: String, routed: bool = false) -> bool:
+	if not routed:
+		return await _start(id)
+	var fixture := _quick_fight_fixture()
+	_check(not fixture.is_empty(), "Bobbin routed Fight has authentic seeded encounter")
+	if fixture.is_empty():
+		return false
+	app.run_seed = fixture.seed
+	app.start_button.pressed.emit()
+	preload("res://tests/party_choice.gd").choose(app)
+	await _frames()
+	_check(app.run_map != null and app.run_rng != null,
+		"Bobbin routed battle starts through admitted party and real run map")
+	var button := _route_action(fixture.fight)
+	_check(button != null and not button.disabled, "Bobbin routed Fight is offered")
+	if button == null or button.disabled:
+		return false
+	button.pressed.emit()
+	await _frames()
+	_check(app.deck != null and app.enemies != null and app.deck.turn_active
+		and app.battle_view.is_visible_in_tree(), "Bobbin routed battle actually mounted")
+	if app.deck == null:
+		return false
+	app.deck.draw_pile.append(id)
+	_check(app.deck.draw_extra(1) == 1, "Bobbin genuine shared deck draws authenticated printing")
+	app._refresh_hand()
+	await _frames()
+	var panel := _panel(id)
+	_check(panel != null and adapter._bindings.has(panel),
+		"Bobbin routed printing has one actual bound hand panel")
+	return panel != null and adapter._bindings.has(panel)
+
+
+func _bobbin_play(id: String, mode: String, routed: bool = false,
+		seat_three: bool = false) -> void:
+	if not await _bobbin_start(id, routed):
+		await _return()
+		return
+	if seat_three:
+		var old: Dictionary = app.party._heroes[2]
+		app.party._heroes[2] = app.party._heroes[1]
+		app.party._heroes[1] = old
+		app.party._heroes[1]["position"] = 2
+		app.party._heroes[2]["position"] = 3
+		app._refresh_party()
+		await _frames()
+		_check(app.party.is_valid() and app.party.get_heroes()[2].id == "seamstress",
+			"genuine mounted owner moves to printed legal seat 3")
+	var authorities: Dictionary = adapter._bobbin_authorities()
+	_check(not authorities.is_empty() and authorities.unravel._bound_enemies == app.enemies
+		and authorities.pinned == app.get_node("LiveAttackPreview")._pinned,
+		"Bobbin live path uses the battle's exact shared Pinned and Unravel")
+	if authorities.is_empty():
+		await _return()
+		return
+	var owner: Dictionary = app.party.get_heroes()[2 if seat_three else 1]
+	_check(owner.id == "seamstress" and owner.position == (3 if seat_three else 2) and owner.hp > 0,
+		"genuine living Seamstress occupies printed seat 2 or 3")
+	var panel := _panel(id)
+	var metadata = app.get_node("LiveSupportHand")._metadata
+	var face: Dictionary = metadata.describe(id)
+	var definition := V3SeamstressPoolCards.new().get_definition(id)
+	_check(face.get("known", false) and face.get("cost") == 1
+		and face.get("from_text") == "From 2–3"
+		and String(face.get("target_text", "")).contains("enemy")
+		and panel.gui_input.get_connections().size() == 1
+		and metadata.base_effect_text(id).contains("Unravel")
+		and metadata.base_effect_text(id).contains("Pin")
+		and not metadata.base_effect_text(id).contains("Bleed"),
+		"Bobbin mounted face and tooltip authenticate one-energy FROM, Unravel, Pin, never Bleed")
+	_check(app.enemies.gain_block(1, 2)
+		and app.enemies.apply_statuses({2: {"weak": 1}}),
+		"Bobbin real living targets start with distinct Block and statuses")
+	if id.ends_with("_plus"):
+		_check(authorities.unravel.apply_unravel(app.enemies, 1, 6),
+			"Bobbin+ has genuine near-threshold normal enemy gauge")
+	if routed:
+		_check(authorities.pinned.pin_enemy(app.enemies, 1, "warden"),
+			"Bobbin real shared pin already belongs to Warden before replacement")
+	var before := _state()
+	var pins: Dictionary = authorities.pinned._pinner_by_position.duplicate(true)
+	var gauges: Dictionary = authorities.unravel._gauges.duplicate(true)
+	var tiers: Dictionary = authorities.unravel._tiers_by_position.duplicate(true)
+	var oracle := _bobbin_oracle(id, before, 1, pins, gauges, tiers)
+	_check(oracle.result.get("ok", false) and int(oracle.result.printed_unravel) == int(definition.effects.unravel),
+		"independent Bobbin resolver accepts exact authentic one-target printing")
+	if mode == "mouse":
+		await _mouse(panel)
+	else:
+		panel.grab_focus()
+		await _key(KEY_SPACE if mode == "space" else KEY_ENTER)
+	_check(adapter._choice.get("id") == id and adapter.target_strip != null
+		and adapter.target_strip.is_visible_in_tree(),
+		"Bobbin mouse/keyboard held input opens real enemy target strip")
+	if adapter.target_strip == null:
+		await _return()
+		return
+	var heading := adapter.target_strip.find_child("Rule", true, false) as Label
+	var preview := adapter.target_strip.find_child("OutcomePreview", true, false) as Label
+	_check(heading != null and heading.text.contains("From 2,3")
+		and heading.text.contains("Unravel %d" % int(definition.effects.unravel))
+		and heading.text.contains("Pin") and not heading.text.contains("Bleed"),
+		"mounted Bobbin heading states printed Unravel and Pin, not Bleed")
+	_check(preview != null and preview.text.contains("Unravel %d" % int(definition.effects.unravel))
+		and preview.text.contains("1 energy") and not preview.text.contains("Bleed")
+		and preview.text.contains("%d -> %d (threshold %d)" % [
+			int(gauges[1].gauge), int(oracle.gauges[1].gauge), int(gauges[1].threshold)])
+		and not preview.text.contains("Now:"),
+		"selected enemy previews shared gauge plus printed Pin without damage")
+	_check(adapter._targets.has(1) and adapter._targets.has(2)
+		and _bobbin_state() == [before, pins, gauges],
+		"Bobbin preview exposes two living original slots, spends no models, token or RNG")
+	var target: Button = adapter._targets[1]
+	if mode == "mouse":
+		await _mouse(target)
+	else:
+		target.grab_focus()
+		await _key(KEY_ENTER if mode == "enter" else KEY_SPACE)
+	await _frames()
+	_check(adapter.last_event == oracle.result and oracle.result.get("ok", false),
+		"real mounted Bobbin receipt matches independent service receipt")
+	_check(app.deck.draw_pile == oracle.draw and app.deck.hand == oracle.hand
+		and app.deck.discard_pile == oracle.discard and app.deck.energy == oracle.energy
+		and app.party.get_heroes() == oracle.heroes and app.enemies.get_enemies() == oracle.enemies
+		and authorities.pinned._pinner_by_position == oracle.pins
+		and authorities.unravel._gauges == oracle.gauges,
+		"real paid state, both shared authorities and independent oracle are identical")
+	_check(app.deck.energy == int(before[3]) - 1
+		and app.deck.hand.count(id) == int(before[1].count(id)) - 1
+		and app.deck.discard_pile.count(id) == int(before[2].count(id)) + 1
+		and app.run_rng.seed == before[7] and app.run_rng.state == before[8]
+		and app.deck._rng.state == before[9] and app.enemies.get_enemies() == before[6],
+		"Bobbin spends one energy/copy, changes no enemy HP, Block, status, RNG or extra Bleed")
+	_check(authorities.flow._unravel == authorities.unravel
+		and authorities.pinned.pinner_for_enemy(1) == "seamstress"
+		and authorities.pinned.bonus_for_attack(app.enemies, 1, "warden") == 5
+		and authorities.pinned.bonus_for_attack(app.enemies, 1, "seamstress") == 0,
+		"Bobbin arms real round-flow gauge and Seamstress cross-hero +5 pin")
+	_check(not authorities.pinned.consume_after_attack(1, "warden", false)
+		and not authorities.pinned.consume_after_attack(1, "seamstress", true)
+		and authorities.pinned.pinner_for_enemy(1) == "seamstress"
+		and authorities.pinned.consume_after_attack(1, "warden", true)
+		and authorities.pinned.bonus_for_attack(app.enemies, 1, "warden") == 0,
+		"preview and same-owner leave Pin; confirmed cross-hero consumes exactly once")
+	if id.ends_with("_plus"):
+		_check(authorities.unravel.get_snapshot(1).skip_pending,
+			"Bobbin+ crossed actual threshold, queuing one enemy action skip")
+		_check(not app.end_turn_button.disabled and app.deck.turn_active,
+			"real End Turn is enabled after Bobbin+ paid play")
+		app.end_turn_button.pressed.emit()
+		await _frames()
+		_check(authorities.unravel.get_snapshot(1).gauge == 0
+			and authorities.unravel.get_snapshot(1).threshold == int(gauges[1].threshold) + 4
+			and not authorities.unravel.get_snapshot(1).skip_pending,
+			"real End Turn consumes Bobbin's queued action skip once, raising threshold")
+	_check(adapter._choice.is_empty() and adapter.target_strip == null,
+		"Bobbin successful mounted selection and target strip retire")
+	await _return()
+
+
+func _bobbin_refusals() -> void:
+	var id := BOBBIN_IDS[0]
+	for kind in ["energy", "unheld", "owner_front", "owner_downed", "slain", "forged", "missing_gauge"]:
+		if not await _start(id):
+			await _return()
+			continue
+		var panel := _panel(id)
+		var callback: Callable = adapter._bindings[panel].callback
+		var preview = app.get_node("LiveAttackPreview")
+		var old_gauge = preview._unravel
+		match kind:
+			"energy": app.deck.combat_state.energy = 0
+			"unheld":
+				app.deck.hand.erase(id)
+				app._refresh_hand()
+			"owner_front":
+				var a: Dictionary = app.party._heroes[0]
+				app.party._heroes[0] = app.party._heroes[1]
+				app.party._heroes[1] = a
+				app.party._heroes[0]["position"] = 1
+				app.party._heroes[1]["position"] = 2
+			"owner_downed": _check(app.party.apply_damage(2, 999), "Bobbin downed owner precondition")
+			"slain":
+				for enemy in app.enemies.get_enemies():
+					_check(app.enemies.apply_damage(enemy.position, 999), "Bobbin all-targets-dead precondition")
+			"forged":
+				adapter._bobbin_service._catalog._definitions[id]["effects"]["unravel"] = 17
+			"missing_gauge": preview._unravel = CombatUnravel.new()
+		await _frames()
+		var before := _bobbin_state()
+		callback.call(_press())
+		await _frames()
+		_check(_bobbin_state() == before and adapter._choice.is_empty()
+			and adapter.target_strip == null and adapter.last_event.is_empty(),
+			"Bobbin forged/unheld/illegal live input refuses without mutation: " + kind)
+		if kind == "forged":
+			adapter._bobbin_service = CombatSeamstressV3BobbinSnagCards.new()
+		if kind == "missing_gauge":
+			preview._unravel = old_gauge
+		await _return()
+	# Every pending selection is rechecked at the actual deferred callback.
+	for kind in ["hand", "energy", "roster", "target", "turn", "panel", "rng", "pins", "gauge", "missing_gauge", "cancel"]:
+		if not await _start(id):
+			await _return()
+			continue
+		var panel := _panel(id)
+		await _mouse(panel)
+		_check(adapter.target_strip != null and adapter._targets.has(1),
+			"Bobbin genuine pending selection exists for stale witness: " + kind)
+		if adapter.target_strip == null or not adapter._targets.has(1):
+			await _return()
+			continue
+		var callback: Callable = adapter._targets[1].pressed.get_connections()[0].callable
+		var preview = app.get_node("LiveAttackPreview")
+		var old_gauge = preview._unravel
+		match kind:
+			"hand": app.deck.hand.append("warden_strike")
+			"energy": app.deck.combat_state.energy = 0
+			"roster": _check(app.enemies.gain_block(1, 1), "Bobbin stale roster actually changes")
+			"target":
+				_check(app.enemies.apply_damage(1, 999), "Bobbin stale enemy actually slain")
+				app._refresh_intents()
+			"turn": app.enemy_intents._turn_index += 1
+			"panel": panel.get_child(0).text = "forged_label"
+			"rng": app.run_rng.state += 1
+			"pins": _check(preview._pinned.pin_enemy(app.enemies, 2, "warden"), "Bobbin token changed")
+			"gauge": _check(preview._unravel.apply_unravel(app.enemies, 2, 1), "Bobbin gauge changed")
+			"missing_gauge": preview._unravel = CombatUnravel.new()
+			"cancel": await _key(KEY_ESCAPE)
+		var before := _bobbin_state()
+		callback.call()
+		await _frames()
+		_check(_bobbin_state() == before and adapter.last_event.is_empty()
+			and adapter._choice.is_empty() and adapter.target_strip == null,
+			"Bobbin stale/cancelled target remains pure refusal: " + kind)
+		if kind == "missing_gauge":
+			preview._unravel = old_gauge
+		await _return()
+
+
+func _bobbin_tests() -> void:
+	await _bobbin_play(BOBBIN_IDS[0], "mouse", true)
+	await _bobbin_play(BOBBIN_IDS[1], "space")
+	await _bobbin_play(BOBBIN_IDS[0], "enter", false, true)
+	await _bobbin_three_enemy()
+	await _bobbin_refusals()
+
+
+## The routed three-slot witness proves Bobbin never compacts a slain
+## middle position or silently retargets the chosen original slot 3.
+func _bobbin_three_enemy() -> void:
+	var candidate := {}
+	for seed_value in range(1, 1025):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var map := RunMap.new()
+		map.generate(rng)
+		var start_state: int = rng.state
+		for node_id in map.get_legal_choices():
+			if map.get_node(node_id).get("type") != "Fight":
+				continue
+			rng.state = start_state
+			if not map.choose_node(node_id):
+				continue
+			var entry := RunAuthoredBattleEntry.new().entry_current_battle(
+				map, rng, RunFightEncounterSelection.new())
+			map.undo_choice(node_id, [])
+			if entry.get("success", false) and entry.enemies.get_enemies().size() == 3:
+				candidate = {"seed": seed_value, "fight": node_id}
+				break
+		if not candidate.is_empty():
+			break
+	_check(not candidate.is_empty(), "Bobbin original three-slot routed Fight precondition")
+	if candidate.is_empty():
+		return
+	app.run_seed = candidate.seed
+	app.start_button.pressed.emit()
+	preload("res://tests/party_choice.gd").choose(app)
+	await _frames()
+	var button := _route_action(candidate.fight)
+	_check(button != null and not button.disabled, "Bobbin three-slot Fight has live route control")
+	if button == null or button.disabled:
+		await _return()
+		return
+	button.pressed.emit()
+	await _frames()
+	_check(app.enemies != null and app.enemies.get_enemies().size() == 3,
+		"Bobbin actually enters the three-original-slot encounter")
+	if app.enemies == null or app.enemies.get_enemies().size() != 3:
+		await _return()
+		return
+	_check(app.enemies.apply_damage(2, 999) and app.enemies.is_slain(2),
+		"Bobbin middle original enemy is genuinely slain")
+	app._refresh_enemy_roster()
+	var id := BOBBIN_IDS[1]
+	app.deck.draw_pile.append(id)
+	_check(app.deck.draw_extra(1) == 1, "Bobbin+ drawn in routed three-slot battle")
+	app._refresh_hand()
+	await _frames()
+	var panel := _panel(id)
+	var authorities: Dictionary = adapter._bobbin_authorities()
+	_check(panel != null and adapter._bindings.has(panel) and not authorities.is_empty()
+		and app.enemies.get_enemy(3).hp > 0,
+		"Bobbin genuine held copy and living original enemy 3 exist")
+	if panel == null or authorities.is_empty():
+		await _return()
+		return
+	var before := _bobbin_state()
+	var oracle := _bobbin_oracle(id, before[0], 3,
+		before[1], before[2], authorities.unravel._tiers_by_position.duplicate(true))
+	await _mouse(panel)
+	_check(adapter.target_strip != null and adapter._targets.has(1)
+		and not adapter._targets.has(2) and adapter._targets.has(3),
+		"Bobbin enemy slots 1/3 legal; dead slot 2 disabled")
+	if adapter.target_strip == null or not adapter._targets.has(3):
+		await _return()
+		return
+	var slain := adapter.target_strip.find_child("Enemy2", true, false) as Button
+	_check(slain != null and slain.disabled and slain.text.contains("Slain"),
+		"Bobbin middle enemy stays visibly disabled in the mounted target strip")
+	await _hover(adapter._targets[3])
+	_check(_bobbin_state() == before, "Bobbin original-slot-3 hover changes no model or gauge")
+	await _mouse(adapter._targets[3])
+	_check(oracle.result.get("ok", false) and adapter.last_event == oracle.result
+		and app.enemies.get_enemies() == oracle.enemies
+		and authorities.unravel._gauges == oracle.gauges
+		and authorities.pinned._pinner_by_position == oracle.pins
+		and app.deck.energy == oracle.energy,
+		"routed mouse commit pins/charges precisely original enemy 3 per service oracle")
+	await _return()
