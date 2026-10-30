@@ -91,6 +91,7 @@ func _check_event_tickets(panel: LiveEventChoicePanel, label: String) -> void:
 	_check(panel.description_label.get_index() < panel.choices_container.get_index()
 		and panel.bottom_stitches.get_index() > panel.choices_container.get_index(),
 		label + " story, choices and bottom stitches in content order")
+	_check_centred_column(panel, label)
 	var picker_name: String = {"moth_infestation": "MothCardPickerBox", "dye_vat": "DyeVatPickerBox"}.get(record.get("id"), "")
 	if not picker_name.is_empty():
 		var box := panel.choices_container.get_node_or_null(picker_name)
@@ -122,17 +123,23 @@ func _check_event_tickets(panel: LiveEventChoicePanel, label: String) -> void:
 		var font_size := button.get_theme_font_size("font_size")
 		var style := button.get_theme_stylebox("normal")
 		_check_event_ticket_skin(button, label + str(i))
-		_check(font.get_height(font_size) * 2 + style.get_minimum_size().y <= button.size.y,
-			label + " both caption lines fit ticket height " + str(i))
-		var widest := 0.0
-		for line in button.text.split("\n"):
-			widest = maxf(widest, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x)
 		var rect := button.get_global_rect()
-		_check(widest + style.get_minimum_size().x <= rect.size.x,
-			label + " action and impact fit ticket width " + str(i))
+		var text_width: float = rect.size.x - style.content_margin_left - style.content_margin_right
+		var text_height: float = rect.size.y - style.content_margin_top - style.content_margin_bottom
+		# Measure the real mounted ticket: its authored action wraps at its own
+		# content width, so the whole wrapped block (action plus wallet impact)
+		# must fit that measured area instead of one unwrapped line.
+		var wrapped := font.get_multiline_string_size(button.text, HORIZONTAL_ALIGNMENT_CENTER,
+			text_width, font_size)
+		_check(wrapped.x <= text_width + 0.5 and wrapped.y <= text_height + 0.5,
+			label + " wrapped action and impact fit its ticket " + str(i))
+		for line in button.text.split("\n"):
+			for word in line.split(" ", false):
+				_check(font.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= text_width,
+					label + " every written word fits the ticket width " + str(i))
 		_check(cues[i].text == str(i + 1) and cues[i].is_visible_in_tree()
 			and rect.encloses(cues[i].get_global_rect())
-			and cues[i].get_global_rect().end.x <= rect.position.x + (rect.size.x - widest) / 2,
+			and cues[i].get_global_rect().end.x <= rect.position.x + style.content_margin_left,
 			label + " number cue visible and clear of caption " + str(i))
 		for sibling in panel.choices_container.get_children():
 			if sibling != button and sibling is Control and sibling.is_visible_in_tree():
@@ -141,6 +148,39 @@ func _check_event_tickets(panel: LiveEventChoicePanel, label: String) -> void:
 		_check(not rect.intersects(panel.bottom_stitches.get_global_rect())
 			and not rect.intersects(panel.description_label.get_global_rect()),
 			label + " ticket clears description and bottom stitches " + str(i))
+
+
+## AC1: the real routed parchment presents one centred, readable story column
+## instead of leaving its title, story and tickets in the left third. The equal
+## sewn pads on the ColumnMargin centre the stack, and its live width is the
+## bounded readable measure from the mounted scroll viewport; the relay's
+## 1280x720 capture confirms the final appearance.
+func _check_centred_column(panel: LiveEventChoicePanel, label: String) -> void:
+	var column := panel.column_margin
+	_check(column != null and panel.event_content.get_parent() == column
+		and column.get_parent() == panel.story_scroll,
+		label + " story column keeps the existing parchment hierarchy")
+	if column == null:
+		return
+	var pad_left := column.get_theme_constant("margin_left")
+	var pad_right := column.get_theme_constant("margin_right")
+	_check(pad_left > 0 and pad_left == pad_right,
+		label + " equal sewn margins centre the story column")
+	_check((column.size_flags_horizontal & Control.SIZE_EXPAND) != 0
+		and (panel.event_content.size_flags_horizontal & Control.SIZE_EXPAND) != 0,
+		label + " story column fills that measure instead of its caption width")
+	var bar := panel.story_scroll.get_v_scroll_bar()
+	var bar_width := bar.size.x if bar != null and bar.is_visible_in_tree() else 0.0
+	var measure := minf(panel.story_scroll.size.x - bar_width, panel.MAX_COLUMN_WIDTH)
+	_check(panel.event_content.size.x >= panel.event_content.get_combined_minimum_size().x
+		and absf(panel.event_content.size.x - measure) <= 1.0,
+		label + " story column keeps the bounded readable measure without clipping")
+	_check(panel.title_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
+		and panel.title_label.get_combined_minimum_size().x <= panel.event_content.size.x + 0.5,
+		label + " title stays centred in the column, wrapping instead of stretching the paper")
+	for ticket in panel.get_choice_buttons():
+		_check(ticket.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART,
+			label + " ticket wraps inside the centred story column")
 
 
 func _check_event_ticket_skin(button: Button, label: String) -> void:

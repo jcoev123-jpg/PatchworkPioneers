@@ -51,8 +51,16 @@ func _open_sixth(f: Dictionary, negatives: bool, warden_rear: bool = false) -> L
 		return null
 	var opening_choices: Array = wallet._selector.get_event().choices
 	var chosen := false
+	# Prefer the story's authored no-spend exit, whatever its ID or position: every
+	# candidate here must hand over the 0 gold / 2 scraps purse that `_reach`
+	# establishes, so the priced permanent-cap trade offered by the vitality slot
+	# after it stays a genuinely affordable choice. Older stories name that exit
+	# "leave"; the current rotation also names it "leave_auction", "close_curtain"
+	# and "descend", and a first-enabled fallback used to pay a scrap away.
 	for i in range(opening_choices.size()):
-		if opening_choices[i].id == "leave" and not wallet.get_choice_buttons()[i].disabled:
+		if wallet.get_choice_buttons()[i].disabled:
+			continue
+		if _is_no_spend_outcome(opening_choices[i].get("outcome")):
 			await _click(wallet.get_choice_buttons()[i])
 			chosen = true
 			break
@@ -117,6 +125,25 @@ func _open_sixth(f: Dictionary, negatives: bool, warden_rear: bool = false) -> L
 
 func record_id_is_warden(panel: LiveEventChoicePanel) -> bool:
 	return panel._selector.get_event().id == "v3_warden_buckle_heart_ward"
+
+
+## An authored outcome that moves no resource at all: zero gold, zero scraps and
+## no HP or permanent-cap change. Integral floats from JSON are accepted; an
+## absent, malformed or nonzero amount is never a no-spend exit.
+func _is_no_spend_outcome(outcome: Variant) -> bool:
+	if not outcome is Dictionary:
+		return false
+	var amounts: Dictionary = outcome
+	for key in ["gold", "scraps", "hp", "max_hp"]:
+		var amount: Variant = amounts.get(key, 0)
+		if typeof(amount) == TYPE_FLOAT:
+			var number: float = amount
+			if not is_finite(number) or floor(number) != number:
+				return false
+			amount = int(number)
+		if typeof(amount) != TYPE_INT or int(amount) != 0:
+			return false
+	return true
 
 
 func _settle(f: Dictionary, choice_index: int, keyboard: bool, negatives: bool,

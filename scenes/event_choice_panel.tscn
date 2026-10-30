@@ -72,31 +72,39 @@ horizontal_scroll_mode = 0
 vertical_scroll_mode = 1
 follow_focus = true
 
-[node name="EventContent" type="VBoxContainer" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll"]
+[node name="ColumnMargin" type="MarginContainer" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll"]
 layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/margin_left = 0
+theme_override_constants/margin_right = 0
+
+[node name="EventContent" type="VBoxContainer" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/ColumnMargin"]
+layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/separation = 8
 
-[node name="TopStitches" type="Label" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent"]
+[node name="TopStitches" type="Label" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/ColumnMargin/EventContent"]
 layout_mode = 2
 text = "×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×"
 horizontal_alignment = 1
 
-[node name="EventTitle" type="Label" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent"]
-layout_mode = 2
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="EventDescription" type="Label" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent"]
+[node name="EventTitle" type="Label" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/ColumnMargin/EventContent"]
 layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
 autowrap_mode = 3
 
-[node name="Choices" type="VBoxContainer" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent"]
+[node name="EventDescription" type="Label" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/ColumnMargin/EventContent"]
+layout_mode = 2
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 3
+
+[node name="Choices" type="VBoxContainer" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/ColumnMargin/EventContent"]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="BottomStitches" type="Label" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent"]
+[node name="BottomStitches" type="Label" parent="PaperPanel/ContentMargin/ScrollStack/StoryScroll/ColumnMargin/EventContent"]
 layout_mode = 2
 text = "×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×"
 horizontal_alignment = 1
