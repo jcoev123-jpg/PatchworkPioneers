@@ -58,6 +58,8 @@ const PATH_OPTION_SIZE := 18
 
 var set_out_button: Button
 var back_button: Button
+var deck_button: Button
+var deck_gallery: VillageStarterKitGallery
 var village_title_label: Label
 var wallet_label: Label
 var path_panel: PanelContainer
@@ -139,8 +141,11 @@ func _ready() -> void:
 	_build_tinker_choice()
 	_build_warden_choice()
 	_build_actions()
+	_build_deck_house_action()
 	_build_difficulty()
+	_build_deck_gallery()
 	_wire_focus()
+	visibility_changed.connect(_on_base_visibility_changed)
 	resized.connect(queue_redraw)
 	_apply_closed_state()
 
@@ -230,6 +235,7 @@ func open_village(gold: int = 0, scraps: int = 0) -> bool:
 	_warden_pending = false
 	set_out_button.disabled = false
 	back_button.disabled = false
+	deck_button.disabled = false
 	for button in path_buttons:
 		if is_instance_valid(button):
 			button.disabled = not _selected_path_id.is_empty()
@@ -663,6 +669,8 @@ func release_warden_path_choice() -> bool:
 
 
 func _apply_closed_state() -> void:
+	if is_instance_valid(deck_gallery):
+		deck_gallery.dismiss()
 	_open = false
 	_set_out_pending = false
 	_back_pending = false
@@ -703,6 +711,9 @@ func _apply_closed_state() -> void:
 		if is_instance_valid(button):
 			button.disabled = true
 			button.release_focus()
+	if is_instance_valid(deck_button):
+		deck_button.disabled = true
+		deck_button.release_focus()
 	if is_instance_valid(set_out_button):
 		set_out_button.disabled = true
 		set_out_button.release_focus()
@@ -1041,12 +1052,63 @@ func _build_actions() -> void:
 	row.add_child(set_out_button)
 
 
-## Every live sewn action forms one forward/reverse Tab loop: Back, both authored
+## The existing painted Deck house is a live sewn keyboard/pointer action.
+## It ends at y=385, clear of the Path boards beginning at y=392.
+func _build_deck_house_action() -> void:
+	deck_button = Button.new()
+	deck_button.name = "DeckHouseButton"
+	deck_button.text = "Browse kits"
+	deck_button.position = Vector2(797, 333)
+	deck_button.size = Vector2(152, 47)
+	deck_button.custom_minimum_size = Vector2(152, 47)
+	deck_button.theme_type_variation = &"PatchHeadingButton"
+	deck_button.add_theme_font_size_override("font_size", 19)
+	deck_button.focus_mode = Control.FOCUS_ALL
+	deck_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	deck_button.tooltip_text = "Deck house: inspect every hero's four base starter cards (reference only)"
+	deck_button.pressed.connect(_on_deck_pressed)
+	deck_button.add_child(SewnEdge.new())
+	add_child(deck_button)
+
+
+func _build_deck_gallery() -> void:
+	deck_gallery = VillageStarterKitGallery.new()
+	add_child(deck_gallery)
+	deck_gallery.close_requested.connect(_on_deck_closed)
+
+
+func _gallery_is_open() -> bool:
+	return is_instance_valid(deck_gallery) and deck_gallery.is_open()
+
+
+func _on_deck_pressed() -> void:
+	if not _open or _set_out_pending or _back_pending or _gallery_is_open() \
+			or not is_visible_in_tree() or not is_instance_valid(deck_button) or deck_button.disabled:
+		return
+	deck_gallery.open_gallery()
+
+
+func _on_deck_closed() -> void:
+	if not _gallery_is_open():
+		return
+	deck_gallery.dismiss()
+	if _open and is_visible_in_tree() and not deck_button.disabled:
+		deck_button.grab_focus()
+
+
+func _on_base_visibility_changed() -> void:
+	if not is_visible_in_tree() and is_instance_valid(deck_gallery):
+		deck_gallery.dismiss()
+
+
+## Every live sewn action forms one forward/reverse Tab loop: Back, Deck, both authored
 ## Path options, both authored Tinker options (while still choosable), then Set out.
 func _wire_focus() -> void:
 	var loop: Array[Control] = []
 	if is_instance_valid(back_button) and not back_button.disabled:
 		loop.append(back_button)
+	if is_instance_valid(deck_button) and not deck_button.disabled and deck_button.is_visible_in_tree():
+		loop.append(deck_button)
 	for button in path_buttons:
 		if is_instance_valid(button) and not button.disabled:
 			loop.append(button)
@@ -1099,7 +1161,7 @@ func present_difficulty(available: Array[int], selected: int) -> void:
 
 
 func _request_difficulty(tier: int) -> void:
-	if not _open or _set_out_pending or _back_pending or not is_visible_in_tree() \
+	if not _open or _set_out_pending or _back_pending or _gallery_is_open() or not is_visible_in_tree() \
 		or tier < 0 or tier >= difficulty_buttons.size() or difficulty_buttons[tier].disabled:
 		return
 	_difficulty_request = tier
@@ -1204,7 +1266,7 @@ func _refresh_tinker_hint() -> void:
 ## The view reports the pick; the host validates it and, only on success, calls
 ## mark_path_selected. A refused request leaves both options actionable.
 func _on_path_pressed(path_id: String) -> void:
-	if not _open or _path_pending or _set_out_pending or _back_pending:
+	if not _open or _path_pending or _set_out_pending or _back_pending or _gallery_is_open():
 		return
 	if not _selected_path_id.is_empty():
 		return
@@ -1221,7 +1283,7 @@ func _on_path_pressed(path_id: String) -> void:
 ## The Tinker board reports its own pick. The host validates it against the
 ## authored Tinker record and, only on success, calls mark_tinker_path_selected.
 func _on_tinker_path_pressed(path_id: String) -> void:
-	if not _open or _tinker_pending or _set_out_pending or _back_pending:
+	if not _open or _tinker_pending or _set_out_pending or _back_pending or _gallery_is_open():
 		return
 	if not _selected_tinker_id.is_empty():
 		return
@@ -1271,7 +1333,7 @@ func _refresh_warden_hint() -> void:
 ## Pending remains held until explicit host mark or release (unlike the older
 ## synchronous Seamstress/Tinker callbacks); stale button instances fail closed.
 func _on_warden_path_pressed(path_id: String, source: Button) -> void:
-	if not _open or _warden_pending or _set_out_pending or _back_pending:
+	if not _open or _warden_pending or _set_out_pending or _back_pending or _gallery_is_open():
 		return
 	if not _selected_warden_id.is_empty() or not is_inside_tree() or not is_visible_in_tree():
 		return
@@ -1290,12 +1352,13 @@ func _on_warden_path_pressed(path_id: String, source: Button) -> void:
 
 
 func _on_set_out_pressed() -> void:
-	if not _open or _set_out_pending or _back_pending:
+	if not _open or _set_out_pending or _back_pending or _gallery_is_open():
 		return
 	if not is_inside_tree() or not is_visible_in_tree():
 		return
 	if not is_instance_valid(set_out_button) or set_out_button.disabled:
 		return
+	deck_gallery.dismiss()
 	_set_out_pending = true
 	set_out_button.disabled = true
 	if is_instance_valid(back_button):
@@ -1304,12 +1367,13 @@ func _on_set_out_pressed() -> void:
 
 
 func _on_back_pressed() -> void:
-	if not _open or _back_pending or _set_out_pending:
+	if not _open or _back_pending or _set_out_pending or _gallery_is_open():
 		return
 	if not is_inside_tree() or not is_visible_in_tree():
 		return
 	if not is_instance_valid(back_button) or back_button.disabled:
 		return
+	deck_gallery.dismiss()
 	_back_pending = true
 	back_button.disabled = true
 	if is_instance_valid(set_out_button):
