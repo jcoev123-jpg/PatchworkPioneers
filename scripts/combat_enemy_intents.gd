@@ -107,7 +107,7 @@ var _quilt_tier := 0
 
 func _init(definitions: Array = []) -> void:
 	# Validate the entire copied schedule before publishing any of it.
-	if definitions.is_empty() or definitions.size() > 3:
+	if definitions.is_empty() or definitions.size() > 4:
 		return
 	var snapshot := definitions.duplicate(true)
 	var seen_positions: Array[int] = []
@@ -118,7 +118,7 @@ func _init(definitions: Array = []) -> void:
 		if not definition.has("enemy_position") or not definition.has("pattern"):
 			return
 		var position = definition["enemy_position"]
-		if not position is int or position < 1 or position > 3 or position in seen_positions:
+		if not position is int or position < 1 or position > 4 or position in seen_positions:
 			return
 		var pattern = definition["pattern"]
 		if not pattern is Array or pattern.is_empty():

@@ -854,9 +854,9 @@ func _test_negative_fail_closed() -> void:
 	var zero_position: Array = _expected_definitions().duplicate(true)
 	zero_position[0]["enemy_position"] = 0
 	malformed.append({"label": "source position 0", "data": zero_position})
-	var fourth_position: Array = _expected_definitions().duplicate(true)
-	fourth_position[1]["enemy_position"] = 4
-	malformed.append({"label": "source position 4", "data": fourth_position})
+	var fifth_position: Array = _expected_definitions().duplicate(true)
+	fifth_position[1]["enemy_position"] = 5
+	malformed.append({"label": "source position 5", "data": fifth_position})
 	var extra_source_key: Array = _expected_definitions().duplicate(true)
 	extra_source_key[0]["note"] = "extra"
 	malformed.append({"label": "source with an extra key", "data": extra_source_key})
