@@ -56,7 +56,7 @@ vertical_alignment = 1
 [node name="SubTitle" type="Label" parent="PaperPanel/Margins/Body"]
 custom_minimum_size = Vector2(0, 23)
 layout_mode = 2
-text = "Eight threadbound souls. Choose exactly three. Preview their combat seats below."
+text = "Eight threadbound souls. Press 1–8 to pick or undo three; preview seats below."
 horizontal_alignment = 1
 vertical_alignment = 1
 
