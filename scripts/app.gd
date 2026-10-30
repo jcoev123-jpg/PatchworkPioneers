@@ -487,12 +487,18 @@ class RouteBook extends Control:
 			portrait.size = Vector2(64, 66)
 			portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			portrait.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+			portrait.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 			portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			portrait.focus_mode = Control.FOCUS_NONE
 			var path: String = HERO_IDLE_PATHS.get(hero.id, "")
 			if not path.is_empty() and ResourceLoader.exists(path, "Texture2D"):
-				portrait.texture = load(path) as Texture2D
+				# Head-and-shoulders crop so the doll reads at row size instead of a shrunken full body.
+				var full := load(path) as Texture2D
+				var side := minf(full.get_width(), full.get_height() * 0.62)
+				var bust := AtlasTexture.new()
+				bust.atlas = full
+				bust.region = Rect2((full.get_width() - side) / 2.0, 4.0, side, side)
+				portrait.texture = bust
 			row.add_child(portrait)
 			if portrait.texture == null:
 				var fallback := _inert_label("PortraitFallback", "?", 26)
