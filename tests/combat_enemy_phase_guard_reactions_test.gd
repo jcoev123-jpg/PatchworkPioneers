@@ -798,14 +798,26 @@ func _test_two_hit_reactions() -> void:
 ## Its adapter is expendable: real guard consumption belongs to RoundFlow only.
 func _test_v3_guard_stage() -> void:
 	for id: String in CombatWardenV3GuardCards.CARDS:
+		var printed: Dictionary = CombatWardenV3GuardCards.CARDS[id]
+		# Final Bastion is the self-targeted rare: it pays 3 for the Warden's own Block and also
+		# arms the fight's Taunt authority, so its play needs that authority and aims at the Warden.
+		var self_targeted: bool = str(printed.get("target_kind", "")) == "self"
+		var play_target: int = 1 if self_targeted else 3
 		var party := _party()
 		var deck := _deck([id, "warden_brace", "tinker_tune_up", "seamstress_mend", "warden_counter_stitch"])
-		var guard := CombatWardenV3GuardCards.new()
+		var taunt: Variant = CombatWardenV3TauntCards.new() if self_targeted else null
+		var guard := CombatWardenV3GuardCards.new(null, null, taunt)
 		var before_rng: int = deck._rng.state
-		var grant: int = int(CombatWardenV3GuardCards.CARDS[id].block)
-		_check(guard.play_card(deck, party, id, 3).get("ok", false) and guard.has_pending_guard()
-			and deck.energy == 2 and party.get_hero(3).block == grant,
-			"V3 phase precondition: a real paid " + id + " guards living Tinker")
+		var grant: int = int(printed["block"])
+		var warden_before: int = int(party.get_hero(1)["block"])
+		# The printed Block lands on the Warden himself for a self card, on the chosen ally otherwise.
+		var ally_block: int = 0 if self_targeted else grant
+		var warden_after_play: int = warden_before + (grant if self_targeted else 0)
+		_check(guard.play_card(deck, party, id, play_target).get("ok", false) and guard.has_pending_guard()
+			and deck.energy == 3 - int(printed["cost"])
+			and int(party.get_hero(1)["block"]) == warden_after_play
+			and int(party.get_hero(3)["block"]) == ally_block,
+			"V3 phase precondition: a real paid " + id + " guards the printed recipient")
 		var reactions := CombatWardenGuardReactions.new().phase_adapter(guard)
 		var foes := _enemies([50])
 		var block_first := phase.execute_phase(party, foes,
@@ -821,9 +833,9 @@ func _test_v3_guard_stage() -> void:
 			and hits.events[1].applied and hits.events[1].actual_target_position == 3
 			and not hits.events[1].redirected,
 			"one staged positive hit redirects to Warden, next hit stays on Tinker: " + id)
-		_check(party.get_hero(1).hp == 40 and party.get_hero(1).block == 1
-			and party.get_hero(3).hp == 26 - maxi(0, 5 - grant)
-			and party.get_hero(3).block == maxi(0, grant - 5),
+		_check(party.get_hero(1).hp == 40 and party.get_hero(1).block == maxi(0, warden_after_play - 5)
+			and party.get_hero(3).hp == 26 - maxi(0, 5 - ally_block)
+			and party.get_hero(3).block == maxi(0, ally_block - 5),
 			"V3 phase uses real Block before HP for both actual recipients: " + id)
 		var witness: Dictionary = reactions.confirmed_v3_guard_hit()
 		_check(not witness.is_empty() and witness.get("target") == 3

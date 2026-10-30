@@ -21,6 +21,7 @@ func _run_all_suites() -> void:
 	_test_v3_buckle_rebound_refusals_and_patches()
 	_test_v3_guard_cards_paid_and_interception()
 	_test_v3_guard_cards_refusals()
+	_test_v3_final_bastion_paid_and_interaction()
 	_test_patch_block_projection_ac1()
 	_test_patch_wearer_and_binding_ac2()
 	_test_patch_negative_and_stale_ac3()
@@ -2042,7 +2043,7 @@ func _v3_guard_definition(card_id: String) -> Dictionary:
 
 
 func _guard_snapshot(deck: CombatDeck, party: CombatParty,
-		guard: CombatWardenV3GuardCards) -> Array:
+		guard: CombatWardenV3GuardCards, taunt: Variant = null) -> Array:
 	return [
 		party.get_heroes(),
 		deck.hand.duplicate(true),
@@ -2056,9 +2057,20 @@ func _guard_snapshot(deck: CombatDeck, party: CombatParty,
 		guard.has_pending_guard(),
 		guard.get_guarded_hero_id(),
 		guard.get_pending_guard_card_id(),
+		guard.has_universal_guard(),
+		_taunt_snapshot(taunt),
 		deck._rng.state,
 		deck._rng.seed,
 	]
+
+
+## The separately held battle Taunt authority's complete pending state, so a refusal can prove
+## that a required reaction really stayed unarmed.
+func _taunt_snapshot(taunt: Variant) -> Array:
+	if not (taunt is CombatWardenV3TauntCards):
+		return ["no_authority"]
+	var authority: CombatWardenV3TauntCards = taunt
+	return [authority.has_pending_taunt(), authority.get_pending_taunt_card_id()]
 
 
 func _guard_state(party: CombatParty, guard: CombatWardenV3GuardCards) -> Array:
@@ -2072,12 +2084,12 @@ func _guard_state(party: CombatParty, guard: CombatWardenV3GuardCards) -> Array:
 
 func _refuse_guard(guard: CombatWardenV3GuardCards, deck: CombatDeck,
 		party: CombatParty, card_id: Variant, target_position: int,
-		label: String) -> Dictionary:
-	var before: Array = _guard_snapshot(deck, party, guard)
+		label: String, taunt: Variant = null) -> Dictionary:
+	var before: Array = _guard_snapshot(deck, party, guard, taunt)
 	var receipt: Dictionary = guard.play_card(deck, party, card_id, target_position)
 	_check(not receipt.get("ok", false), label + ": refused")
-	_check(_guard_snapshot(deck, party, guard) == before,
-		label + ": hand, piles, energy, party, pending guard and RNG unchanged")
+	_check(_guard_snapshot(deck, party, guard, taunt) == before,
+		label + ": hand, piles, energy, party, pending guard, pending taunt and RNG unchanged")
 	return receipt
 
 
@@ -2457,3 +2469,363 @@ class ForgedPoolGuardCatalog extends V3WardenPoolCards:
 		if typeof(card_id) == TYPE_STRING and (card_id as String) == forged_id:
 			return forged_record.duplicate(true)
 		return super.get_definition(card_id)
+
+
+# =============================================================================
+# V3-1 Final Bastion: rare self Block + universal ally Guard + next-enemy-turn Taunt
+# =============================================================================
+
+func _test_v3_final_bastion_paid_and_interaction() -> void:
+	var catalog: V3WardenPoolCards = V3WardenPoolCards.new()
+	var base_id: String = "warden_v3_final_bastion"
+	var plus_id: String = "warden_v3_final_bastion_plus"
+
+	# AC1: both printings are authentic pool records with the exact authored line and links.
+	for card_id: String in [base_id, plus_id]:
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			"V3 Final Bastion AC1: authentic catalog record exists for " + card_id)
+		_check(definition.get("owner") == "warden" and definition.get("cost") == 3
+			and definition.get("from_positions") == [1]
+			and definition.get("target_kind") == "self" and definition.get("to_positions") == []
+			and definition.get("effects") == ({"block": 12, "guard_next_hit": true, "taunt_next_enemy_turn": true} if card_id == base_id else {"block": 16, "guard_next_hit": true, "taunt_next_enemy_turn": true}),
+			"V3 Final Bastion AC1: exact printed metadata for " + card_id)
+		_check(definition.get("rarity") == "rare"
+			and definition.get("reward_eligible") == (true if card_id == base_id else false)
+			and definition.get("upgrade_id", "") == (plus_id if card_id == base_id else "")
+			and definition.get("upgrade_of", "") == ("" if card_id == base_id else base_id),
+			"V3 Final Bastion AC1: exact rarity/reward/upgrade links for " + card_id)
+		var companion_id: String = plus_id if card_id == base_id else base_id
+		_check(not catalog.get_definition(companion_id).is_empty(),
+			"V3 Final Bastion AC1: reciprocal companion printing exists for " + card_id)
+
+	# AC1/AC2: two independent real Guard and Taunt objects passed together; both printings pay
+	# exactly 3 energy, discard exactly one held copy, give only the Warden 12/16 Block and arm
+	# THAT SAME battle Taunt authority plus the universal ally guard.
+	for card_id: String in [base_id, plus_id]:
+		var expected_block: int = 12 if card_id == base_id else 16
+		var label: String = "V3 Final Bastion " + card_id
+		var party: CombatParty = _party()
+		var deck: CombatDeck = _paid_deck(card_id, 700 + (0 if card_id == base_id else 1))
+		var taunt: CombatWardenV3TauntCards = CombatWardenV3TauntCards.new()
+		var guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new(null, null, taunt)
+		_check(deck.turn_active and deck.hand == [card_id]
+			and deck.energy == CombatState.TURN_ENERGY,
+			label + ": real 3-energy turn really holds exactly this card")
+		_check(is_same(guard.get_taunt_authority(), taunt),
+			label + ": resolver holds the caller-supplied battle Taunt authority")
+		var before: Array = party.get_heroes()
+		var rng_before: int = deck._rng.state
+		var energy_before: int = deck.energy
+		var draw_before: Array = deck.draw_pile.duplicate(true)
+
+		var receipt: Dictionary = guard.play_card(deck, party, card_id, 1)
+		_check(receipt.get("ok", false) and receipt.get("reason") == "applied",
+			label + ": paid play accepted")
+		_check(receipt.get("taunt_armed") == true, label + ": receipt reports the armed Taunt")
+		_check(deck.energy == energy_before - 3 and deck.energy == 0,
+			label + ": exactly 3 of the turn's 3 energy spent")
+		_check(int(receipt.get("energy_spent", 0)) == 3
+			and int(receipt.get("energy_after", -1)) == 0,
+			label + ": receipt reports exactly one 3-cost payment")
+		_check(deck.hand.is_empty() and deck.discard_pile == [card_id],
+			label + ": exactly one held copy discarded and no new draw")
+		_check(deck.draw_pile == draw_before, label + ": draw pile untouched")
+		_check(party.get_hero(1)["block"] == expected_block,
+			label + ": Warden gains exactly " + str(expected_block) + " Block")
+		_check(party.get_hero(1)["hp"] == 40, label + ": Warden HP untouched")
+		for other: int in [2, 3]:
+			_check(party.get_hero(other) == before[other - 1],
+				label + ": ally seat " + str(other) + " completely untouched")
+		_check(deck._rng.state == rng_before, label + ": deck RNG untouched by the play")
+		_check(guard.has_pending_guard() and guard.has_universal_guard()
+			and guard.get_pending_guard_card_id() == card_id,
+			label + ": universal ally guard is armed with the card ID")
+		_check(guard.get_guarded_hero_id() == "",
+			label + ": universal guard forges no target hero ID")
+		_check(taunt.has_pending_taunt() and taunt.get_pending_taunt_card_id() == card_id,
+			label + ": the SAME battle Taunt authority is really armed")
+		_check(not CombatWardenV3TauntCards.CARDS.has(card_id),
+			label + ": Final Bastion was never added to the paid Taunt card set")
+
+		# AC2: every eligible attack of the next whole enemy turn redirects to the living
+		# Warden's current seat; an attack already aimed at him stays there.
+		for announced: int in [2, 3, 1, 3, 2]:
+			var target: Dictionary = taunt.project_attack_target(party, announced)
+			_check(target.get("ok", false) and target.get("eligible", false),
+				label + ": announced attack " + str(announced) + " is a valid target")
+			_check(int(target.get("announced_target_position", 0)) == announced
+				and int(target.get("actual_target_position", 0)) == 1,
+				label + ": announced attack " + str(announced) + " lands on the Warden seat 1")
+			_check(target.get("redirected") == (announced != 1),
+				label + ": attack " + str(announced) + " redirect flag matches its origin")
+		# Non-attack actions are returned as detached, unchanged copies and never retargeted.
+		for nonattack: Dictionary in [
+			{"type": "block", "enemy_position": 1, "target_position": 2, "amount": 4},
+			{"type": "buff", "enemy_position": 2, "amount": 3},
+			{"type": "debuff", "enemy_position": 1, "target_position": 3, "status": "bleed"},
+		]:
+			var nonattack_copy: Dictionary = nonattack.duplicate(true)
+			var projected: Dictionary = taunt.project_enemy_action(party, nonattack)
+			_check(projected.get("ok", false) and not projected.get("targetable", true),
+				label + ": non-attack " + str(nonattack["type"]) + " is never Taunt-targeted")
+			_check(projected.get("action") == nonattack_copy and nonattack == nonattack_copy,
+				label + ": non-attack " + str(nonattack["type"]) + " passes through unchanged")
+		var attack_action: Dictionary = {"type": "attack", "enemy_position": 2,
+			"target_position": 3, "amount": 5, "hits": 2}
+		var attack_copy: Dictionary = attack_action.duplicate(true)
+		var projected_attack: Dictionary = taunt.project_enemy_action(party, attack_action)
+		_check(projected_attack.get("ok", false) and projected_attack.get("targetable", false)
+			and projected_attack.get("redirected") == true
+			and int(projected_attack.get("actual_target_position", 0)) == 1,
+			label + ": attack action is redirected to the Warden")
+		_check((projected_attack.get("action") as Dictionary).get("target_position") == 1
+			and (projected_attack.get("action") as Dictionary).get("amount") == 5
+			and (projected_attack.get("action") as Dictionary).get("hits") == 2
+			and (projected_attack.get("action") as Dictionary).get("enemy_position") == 2,
+			label + ": Taunt changes only the seat, never hit count, damage or owner")
+		_check(attack_action == attack_copy, label + ": caller's attack dictionary is untouched")
+
+		# A legal seat swap moves both reactions with the living Warden identity.
+		var swap: Dictionary = CombatPositionSwaps.preview_adjacent_swap(party, 1, 1)
+		_check(swap.get("ok", false), label + ": legal adjacent swap preview")
+		party._heroes.assign(swap.get("heroes", []))
+		_check(party.get_hero(2)["id"] == "warden" and party.get_hero(1)["id"] == "seamstress",
+			label + ": Warden really moved to seat 2")
+		var moved_attack: Dictionary = taunt.project_attack_target(party, 3)
+		_check(moved_attack.get("eligible", false) and moved_attack.get("redirected", false)
+			and int(moved_attack.get("actual_target_position", 0)) == 2,
+			label + ": following attack follows the Warden's new seat 2")
+		var moved_guard: Dictionary = guard.project_interception(party, 3)
+		_check(moved_guard.get("eligible", false) and moved_guard.get("redirected", false)
+			and int(moved_guard.get("actual_target_position", 0)) == 2,
+			label + ": ally guard also follows the Warden's new seat 2")
+		_check(taunt.has_pending_taunt() and guard.has_pending_guard(),
+			label + ": both reactions stay armed through the swap")
+
+		# The Taunt expires only after the WHOLE enemy turn; the Guard is independent.
+		_check(taunt.complete_enemy_turn(), label + ": complete_enemy_turn retires the armed Taunt")
+		_check(not taunt.has_pending_taunt() and taunt.get_pending_taunt_card_id() == "",
+			label + ": Taunt is cleared after the enemy turn")
+		var following: Dictionary = taunt.project_attack_target(party, 3)
+		_check(not following.get("redirected", true)
+			and int(following.get("actual_target_position", 0)) == 3,
+			label + ": the following enemy turn is unaffected")
+		_check(not taunt.complete_enemy_turn(),
+			label + ": a second complete_enemy_turn consumes nothing")
+		_check(guard.has_pending_guard(),
+			label + ": the ally guard outlives the Taunt until its own confirmed hit")
+
+	# AC1: exactly one held occurrence is spent even when the hand holds two genuine copies.
+	var pair_deck: CombatDeck = _paid_deck(base_id, 749)
+	pair_deck.hand.append(base_id)
+	var pair_party: CombatParty = _party()
+	var pair_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new(
+		null, null, CombatWardenV3TauntCards.new())
+	_check(pair_deck.hand == [base_id, base_id] and pair_deck.energy == 3
+		and pair_deck.discard_pile.is_empty(),
+		"V3 Final Bastion AC1: two genuine held copies, one full turn of energy")
+	_check(pair_guard.play_card(pair_deck, pair_party, base_id, 1).get("ok", false)
+		and pair_deck.hand == [base_id] and pair_deck.discard_pile == [base_id]
+		and pair_deck.energy == 0 and int(pair_party.get_hero(1)["block"]) == 12,
+		"V3 Final Bastion AC1: exactly one held occurrence is paid for and discarded")
+
+	# AC2: Taunt-driven redirection is never counted as a second ally interception.
+	var interaction_party: CombatParty = _party()
+	var interaction_deck: CombatDeck = _paid_deck(base_id, 719)
+	var interaction_taunt: CombatWardenV3TauntCards = CombatWardenV3TauntCards.new()
+	var interaction_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new(
+		null, null, interaction_taunt)
+	_check(interaction_guard.play_card(interaction_deck, interaction_party, base_id, 1).get("ok", false),
+		"V3 Final Bastion AC2: interaction fixture really plays")
+	var taunted: Dictionary = interaction_taunt.project_attack_target(interaction_party, 3)
+	_check(taunted.get("redirected", false)
+		and int(taunted.get("actual_target_position", 0)) == 1,
+		"V3 Final Bastion AC2: Taunt retargets the announced Tinker attack onto the Warden")
+	var announced_ally: Dictionary = interaction_guard.project_interception(interaction_party, 3)
+	_check(announced_ally.get("eligible", false)
+		and int(announced_ally.get("actual_target_position", 0)) == 1,
+		"V3 Final Bastion AC2: the same contact is one interception, not two")
+
+	# A hit already aimed at the Warden is not another ally's contact: preview and miss keep it.
+	var warden_target: Dictionary = interaction_guard.project_interception(interaction_party, 1)
+	_check(warden_target.get("ok", false) and not warden_target.get("eligible", false)
+		and not warden_target.get("redirected", false)
+		and int(warden_target.get("actual_target_position", 0)) == 1,
+		"V3 Final Bastion AC2: announced Warden target is not an ally interception")
+	var warden_preview: Dictionary = interaction_guard.project_interception(interaction_party, 3)
+	_check(warden_preview.get("eligible", false) and interaction_guard.has_pending_guard(),
+		"V3 Final Bastion AC2: preview-only projection never consumes the guard")
+	var miss: Dictionary = interaction_guard.consume_confirmed_hit(interaction_party, 3, false)
+	_check(not miss.get("consumed", false) and interaction_guard.has_pending_guard(),
+		"V3 Final Bastion AC2: a miss or non-attack never consumes the guard")
+	var warden_consume: Dictionary = interaction_guard.consume_confirmed_hit(interaction_party, 1, true)
+	_check(not warden_consume.get("consumed", false) and interaction_guard.has_pending_guard(),
+		"V3 Final Bastion AC2: a hit already aimed at the Warden consumes nothing")
+	var ally_consume: Dictionary = interaction_guard.consume_confirmed_hit(interaction_party, 3, true)
+	_check(ally_consume.get("ok", false) and ally_consume.get("consumed", false)
+		and int(ally_consume.get("actual_target_position", 0)) == 1
+		and not interaction_guard.has_pending_guard(),
+		"V3 Final Bastion AC2: the one genuine ally contact consumes exactly once")
+	var repeat_consume: Dictionary = interaction_guard.consume_confirmed_hit(interaction_party, 3, true)
+	_check(not repeat_consume.get("consumed", false)
+		and int(repeat_consume.get("actual_target_position", 0)) == 3,
+		"V3 Final Bastion AC2: the following contact is ordinary")
+	_check(interaction_taunt.has_pending_taunt(),
+		"V3 Final Bastion AC2: the Taunt authority is unaffected by the guard consumption")
+
+	# AC3: every refusal keeps deck, party, guard, Taunt and RNG byte-identical.
+	var missing_party: CombatParty = _party()
+	var missing_deck: CombatDeck = _paid_deck(base_id, 721)
+	var no_authority_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new()
+	var missing_receipt: Dictionary = _refuse_guard(no_authority_guard, missing_deck,
+		missing_party, base_id, 1, "V3 Final Bastion AC3: missing Taunt authority")
+	_check(str(missing_receipt.get("reason", "")) == "taunt_authority_missing",
+		"V3 Final Bastion AC3: missing Taunt authority is a read-only preflight refusal")
+
+	var incompatible_taunt: CombatWardenV3TauntCards = CombatWardenV3TauntCards.new()
+	var incompatible_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new(
+		null, null, "not a taunt authority")
+	var incompatible_receipt: Dictionary = _refuse_guard(incompatible_guard, _paid_deck(base_id, 723),
+		_party(), base_id, 1, "V3 Final Bastion AC3: incompatible Taunt authority",
+		incompatible_taunt)
+	_check(str(incompatible_receipt.get("reason", "")) == "taunt_authority_incompatible",
+		"V3 Final Bastion AC3: incompatible Taunt authority is refused read-only")
+
+	# A real authority that passes the read-only preflight but rejects the arm proves the whole
+	# payment is restored instead of leaving a partially paid card.
+	var refusing_taunt := RefusingFinalBastionTauntAuthority.new()
+	var refusing_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new(
+		null, null, refusing_taunt)
+	var refusing_receipt: Dictionary = _refuse_guard(refusing_guard, _paid_deck(base_id, 725),
+		_party(), base_id, 1, "V3 Final Bastion AC3: rejected arm rolls the payment back",
+		refusing_taunt)
+	_check(str(refusing_receipt.get("reason", "")) == "taunt_arm_rejected",
+		"V3 Final Bastion AC3: a rejected arm reports taunt_arm_rejected")
+
+	# A missing or forged companion pool record refuses the genuine held card before payment.
+	var missing_pool := MissingFinalBastionCompanionCatalog.new()
+	var missing_pair_taunt: CombatWardenV3TauntCards = CombatWardenV3TauntCards.new()
+	var missing_pair_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new(
+		null, missing_pool, missing_pair_taunt)
+	_check(not missing_pair_guard.is_authentic_card(base_id)
+		and not missing_pair_guard.is_authentic_card(plus_id),
+		"V3 Final Bastion AC3: a missing companion printing authenticates as nothing")
+	var missing_pair_receipt: Dictionary = _refuse_guard(missing_pair_guard,
+		_paid_deck(base_id, 727), _party(), base_id, 1,
+		"V3 Final Bastion AC3: missing companion definition", missing_pair_taunt)
+	_check(str(missing_pair_receipt.get("reason", "")) == "catalog_pair_mismatch",
+		"V3 Final Bastion AC3: a missing companion is a catalog pair refusal")
+
+	var forged_pool := ForgedPoolGuardCatalog.new()
+	forged_pool.forged_id = plus_id
+	var forged_companion: Dictionary = V3WardenPoolCards.new().get_definition(plus_id)
+	forged_companion["effects"]["block"] = 99
+	forged_pool.forged_record = forged_companion
+	var forged_pair_taunt: CombatWardenV3TauntCards = CombatWardenV3TauntCards.new()
+	var forged_pair_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new(
+		null, forged_pool, forged_pair_taunt)
+	_check(not forged_pair_guard.is_authentic_card(base_id),
+		"V3 Final Bastion AC3: a forged companion invalidates the base printing")
+	_check(not forged_pair_guard.is_authentic_card(plus_id),
+		"V3 Final Bastion AC3: the forged printing itself is never authentic")
+	_refuse_guard(forged_pair_guard, _paid_deck(base_id, 729), _party(), base_id, 1,
+		"V3 Final Bastion AC3: forged companion definition", forged_pair_taunt)
+
+	# A forged Final Bastion record of its own is refused through the same catalog seam.
+	var forged_own_pool := ForgedPoolGuardCatalog.new()
+	forged_own_pool.forged_id = base_id
+	var forged_own_record: Dictionary = V3WardenPoolCards.new().get_definition(base_id)
+	forged_own_record["effects"]["guard_next_hit"] = false
+	forged_own_pool.forged_record = forged_own_record
+	var forged_own_taunt: CombatWardenV3TauntCards = CombatWardenV3TauntCards.new()
+	var forged_own_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new(
+		null, forged_own_pool, forged_own_taunt)
+	_check(not forged_own_guard.is_authentic_card(base_id),
+		"V3 Final Bastion AC3: a forged own record authenticates as nothing")
+	_refuse_guard(forged_own_guard, _paid_deck(base_id, 730), _party(), base_id, 1,
+		"V3 Final Bastion AC3: forged own definition", forged_own_taunt)
+
+	# Genuine controls: a genuine pair really authenticates and really pays.
+	var genuine_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new(
+		null, null, CombatWardenV3TauntCards.new())
+	_check(genuine_guard.is_authentic_card(base_id)
+		and genuine_guard.is_authentic_card(plus_id),
+		"V3 Final Bastion AC3: the genuine reciprocal pair authenticates")
+
+	# Retained negative preflights: unheld, unaffordable, inactive, torn, wrong seat, bad target,
+	# Block overflow; each also proves the battle Taunt stays unarmed.
+	var negatives_taunt: CombatWardenV3TauntCards = CombatWardenV3TauntCards.new()
+	var negatives_guard: CombatWardenV3GuardCards = CombatWardenV3GuardCards.new(
+		null, null, negatives_taunt)
+	var not_held: CombatDeck = _paid_deck("warden_draw_fire", 731)
+	_check(not not_held.hand.has(base_id), "V3 Final Bastion AC3: unheld precondition")
+	_refuse_guard(negatives_guard, not_held, _party(), base_id, 1,
+		"V3 Final Bastion AC3: unheld refuses", negatives_taunt)
+
+	var poor: CombatDeck = _paid_deck(base_id, 733)
+	_check(poor.try_spend_energy(3) and poor.energy == 0,
+		"V3 Final Bastion AC3: unaffordable precondition")
+	_refuse_guard(negatives_guard, poor, _party(), base_id, 1,
+		"V3 Final Bastion AC3: no energy refuses", negatives_taunt)
+
+	var inactive: CombatDeck = CombatDeck.new([base_id], _rng(735))
+	inactive.hand.append(base_id)
+	_check(not inactive.turn_active and inactive.hand.has(base_id),
+		"V3 Final Bastion AC3: inactive but held precondition")
+	_refuse_guard(negatives_guard, inactive, _party(), base_id, 1,
+		"V3 Final Bastion AC3: inactive turn refuses", negatives_taunt)
+
+	var downed_party: CombatParty = _party()
+	_check(downed_party.apply_damage(1, 40) and downed_party.is_downed(1),
+		"V3 Final Bastion AC3: downed Warden precondition")
+	_refuse_guard(negatives_guard, _paid_deck(base_id, 737), downed_party, base_id, 1,
+		"V3 Final Bastion AC3: downed Warden refuses", negatives_taunt)
+
+	var no_warden_party: CombatParty = CombatParty.new([
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26},
+		{"id": "another", "max_hp": 20},
+	])
+	_check(no_warden_party.is_valid() and not no_warden_party.is_defeated(),
+		"V3 Final Bastion AC3: valid roster without a Warden")
+	_refuse_guard(negatives_guard, _paid_deck(base_id, 739), no_warden_party, base_id, 1,
+		"V3 Final Bastion AC3: absent Warden refuses", negatives_taunt)
+
+	var wrong_seat_party: CombatParty = _party_with_warden_at(2)
+	_refuse_guard(negatives_guard, _paid_deck(base_id, 741), wrong_seat_party, base_id, 2,
+		"V3 Final Bastion AC3: wrong Warden seat refuses", negatives_taunt)
+
+	_refuse_guard(negatives_guard, _paid_deck(base_id, 743), _party(), base_id, 2,
+		"V3 Final Bastion AC3: non-Warden self target refuses", negatives_taunt)
+
+	var capped_party: CombatParty = _party()
+	capped_party._heroes[0]["block"] = CombatParty.MAX_INT - 11
+	_refuse_guard(negatives_guard, _paid_deck(base_id, 745), capped_party, base_id, 1,
+		"V3 Final Bastion AC3: base Block overflow refuses", negatives_taunt)
+	var capped_plus_party: CombatParty = _party()
+	capped_plus_party._heroes[0]["block"] = CombatParty.MAX_INT - 15
+	_refuse_guard(negatives_guard, _paid_deck(plus_id, 747), capped_plus_party, plus_id, 1,
+		"V3 Final Bastion AC3: plus Block overflow refuses", negatives_taunt)
+	_check(not negatives_taunt.has_pending_taunt()
+		and not negatives_guard.has_pending_guard(),
+		"V3 Final Bastion AC3: no refusal armed either reaction")
+
+
+## A battle Taunt authority that passes the read-only preflight but rejects the real arm, so the
+## guard resolver's post-payment rollback is exercised honestly.
+class RefusingFinalBastionTauntAuthority extends CombatWardenV3TauntCards:
+	func can_arm_taunt_for_final_bastion(_card_id: Variant) -> bool:
+		return true
+
+	func arm_taunt_for_final_bastion(_card_id: String) -> bool:
+		return false
+
+
+## A pool catalog whose companion "+" record is genuinely missing while everything else is intact.
+class MissingFinalBastionCompanionCatalog extends V3WardenPoolCards:
+	func get_definition(card_id: Variant) -> Dictionary:
+		if typeof(card_id) == TYPE_STRING and (card_id as String) == "warden_v3_final_bastion_plus":
+			return {}
+		return super.get_definition(card_id)
+

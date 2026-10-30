@@ -287,9 +287,36 @@ func project_enemy_action(party: CombatParty, action: Variant) -> Dictionary:
 	}
 
 
+## Read-only arming preflight for the non-paying Final Bastion entry. The separate Guard
+## resolver asks this before it spends anything, so a missing, incoherent or incompatible
+## battle Taunt authority refuses the whole paid play. Nothing is armed or cleared here.
+func can_arm_taunt_for_final_bastion(card_id: Variant) -> bool:
+	if typeof(card_id) != TYPE_STRING:
+		return false
+	var id: String = card_id
+	if id != "warden_v3_final_bastion" and id != "warden_v3_final_bastion_plus":
+		return false
+	# The latch is one battle-scoped slot: it is either empty, or refreshing a pending
+	# Taunt that an authentic Taunt printing really armed. Anything else is incoherent.
+	if not _taunt_armed:
+		return _taunt_card_id.is_empty()
+	return CARDS.has(_taunt_card_id) or _taunt_card_id == "warden_v3_final_bastion" \
+		or _taunt_card_id == "warden_v3_final_bastion_plus"
+
+
+## Non-paying arming entry used by the guard service after a successful paid
+## Final Bastion play. Does not charge energy or add new IDs to CARDS.
+func arm_taunt_for_final_bastion(card_id: String) -> bool:
+	if not can_arm_taunt_for_final_bastion(card_id):
+		return false
+	_taunt_armed = true
+	_taunt_card_id = card_id
+	return true
+
+
 ## Explicit expiry: call once after the WHOLE next enemy turn has completed. Returns true only
 ## when a genuinely armed Taunt was consumed; a following enemy turn then expires nothing. This
-## is the only state transition besides a successful play.
+## is the only state transition besides a successful paid play or the Final Bastion arming entry.
 func complete_enemy_turn() -> bool:
 	var was_armed: bool = _taunt_armed
 	_taunt_armed = false

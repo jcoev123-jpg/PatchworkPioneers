@@ -24,6 +24,13 @@ extends RefCounted
 ## the printed Block, and the pending one-shot can only ever apply to a hit aimed at him, so it
 ## never redirects a hit away from another hero.
 ##
+## Final Bastion (and its "+") is the self-targeted rare printing: it grants the Warden 12/16 Block,
+## arms a universal pending ally guard and arms the SAME battle-local `CombatWardenV3TauntCards`
+## authority the fight already holds for its paid Taunt cards. That authority is caller-supplied
+## and never constructed here; a missing, incoherent or incompatible authority refuses the whole
+## paid play read-only, before energy, hand, Block or any reaction changes. Both the base and "+"
+## pool records are authenticated as one exact reciprocal pair before payment.
+##
 ## This is the callable combat rules slice only. It does not admit these IDs into a live party
 ## deck, the reward pool, the mounted hand, the enemy phase or any app flow; that wiring is a later
 ## task. Nothing here draws from the seeded run RNG.
@@ -34,8 +41,10 @@ const GUARD_EFFECT_KEY := "guard_next_hit"
 ## Both printings play from the Warden's two legal front seats and print no enemy TO target.
 const FROM_POSITIONS: Array[int] = [1, 2]
 const TO_POSITIONS: Array[int] = []
+const FINAL_BASTION_EFFECTS := {"block": 12, "guard_next_hit": true, "taunt_next_enemy_turn": true}
+const FINAL_BASTION_PLUS_EFFECTS := {"block": 16, "guard_next_hit": true, "taunt_next_enemy_turn": true}
 
-## The four authentic IDs, the catalog that owns each one, and the exact printed line it must still
+## The six authentic IDs, the catalog that owns each one, and the exact printed line it must still
 ## carry. A base printing and its "+" share owner, cost, legal seats and target; only Block differs.
 const CARDS := {
 	"warden_v3_shield_catch": {
@@ -43,6 +52,10 @@ const CARDS := {
 		"display_name": "Shield Catch",
 		"cost": 1,
 		"block": 4,
+		"from_positions": [1, 2],
+		"target_kind": "ally_single",
+		"to_positions": [],
+		"effects": {"block": 4, "guard_next_hit": true},
 		"has_rarity": false,
 		"starting_copies": 1,
 		"reward_eligible": false,
@@ -54,6 +67,10 @@ const CARDS := {
 		"display_name": "Shield Catch+",
 		"cost": 1,
 		"block": 6,
+		"from_positions": [1, 2],
+		"target_kind": "ally_single",
+		"to_positions": [],
+		"effects": {"block": 6, "guard_next_hit": true},
 		"has_rarity": false,
 		"starting_copies": 0,
 		"reward_eligible": false,
@@ -65,6 +82,11 @@ const CARDS := {
 		"display_name": "Guard Stitch",
 		"cost": 1,
 		"block": 5,
+		"from_positions": [1, 2],
+		"target_kind": "ally_single",
+		"to_positions": [],
+		"effects": {"block": 5, "guard_next_hit": true},
+		"rarity": "common",
 		"has_rarity": true,
 		"starting_copies": 0,
 		"reward_eligible": true,
@@ -76,11 +98,48 @@ const CARDS := {
 		"display_name": "Guard Stitch+",
 		"cost": 1,
 		"block": 7,
+		"from_positions": [1, 2],
+		"target_kind": "ally_single",
+		"to_positions": [],
+		"effects": {"block": 7, "guard_next_hit": true},
+		"rarity": "common",
 		"has_rarity": true,
 		"starting_copies": 0,
 		"reward_eligible": false,
 		"upgrade_id": "",
 		"upgrade_of": "warden_v3_guard_stitch",
+	},
+	"warden_v3_final_bastion": {
+		"catalog": "pool",
+		"display_name": "Final Bastion",
+		"cost": 3,
+		"block": 12,
+		"from_positions": [1],
+		"target_kind": "self",
+		"to_positions": [],
+		"effects": FINAL_BASTION_EFFECTS,
+		"rarity": "rare",
+		"has_rarity": true,
+		"starting_copies": 0,
+		"reward_eligible": true,
+		"upgrade_id": "warden_v3_final_bastion_plus",
+		"upgrade_of": "",
+	},
+	"warden_v3_final_bastion_plus": {
+		"catalog": "pool",
+		"display_name": "Final Bastion+",
+		"cost": 3,
+		"block": 16,
+		"from_positions": [1],
+		"target_kind": "self",
+		"to_positions": [],
+		"effects": FINAL_BASTION_PLUS_EFFECTS,
+		"rarity": "rare",
+		"has_rarity": true,
+		"starting_copies": 0,
+		"reward_eligible": false,
+		"upgrade_id": "",
+		"upgrade_of": "warden_v3_final_bastion",
 	},
 }
 
@@ -90,37 +149,55 @@ const CARDS := {
 var _guard_armed := false
 var _guarded_hero_id := ""
 var _guard_card_id := ""
+var _universal_guard_armed := false
+var _universal_guard_card_id := ""
 
 var _starter_catalog: RefCounted
 var _pool_catalog: RefCounted
+## The battle's own Taunt authority (never a private copy). Final Bastion arms THIS latch;
+## one-ally Shield Catch / Guard Stitch callers may pass nothing because they print no Taunt.
+var _taunt_authority: Variant = null
 
 
 ## The default catalogs are the shipped authored ones. An explicit instance lets a test prove that
 ## a rewritten record for an otherwise valid, held ID is refused instead of paid for.
-func _init(starter_catalog: Variant = null, pool_catalog: Variant = null) -> void:
+## `taunt_authority` is the fight's existing `CombatWardenV3TauntCards`; it is required for the two
+## Final Bastion printings and optional for the ally-only Guard cards.
+func _init(starter_catalog: Variant = null, pool_catalog: Variant = null,
+		taunt_authority: Variant = null) -> void:
 	_starter_catalog = starter_catalog if starter_catalog is V3WardenStarterCards \
 		else V3WardenStarterCards.new()
 	_pool_catalog = pool_catalog if pool_catalog is V3WardenPoolCards else V3WardenPoolCards.new()
+	_taunt_authority = taunt_authority
 
 
-## True only for the four authentic catalog IDs. Pure lookup; nothing is charged or mutated.
+## The separately held battle-local Taunt authority this resolver would arm for Final Bastion,
+## or null when this resolver was not bound to one.
+func get_taunt_authority() -> Variant:
+	return _taunt_authority
+
+
+## True only for the six authentic catalog IDs. Pure lookup; nothing is charged or mutated.
 func is_supported_card(card_id: Variant) -> bool:
 	return typeof(card_id) == TYPE_STRING and CARDS.has(card_id)
 
 
-## True only when the live catalog that owns this ID still carries the exact authored record.
+## True only when the live catalog that owns this ID still carries the exact authored record and,
+## for a printed base/"+" pair, its exact reciprocal companion record in the same catalog.
 func is_authentic_card(card_id: Variant) -> bool:
 	if not is_supported_card(card_id):
 		return false
 	var id: String = card_id
-	return _authentic(_catalog_definition(id), id, CARDS[id])
+	return _authentic(_catalog_definition(id), id, CARDS[id]) and _authentic_pair(id)
 
 
 ## The single paid transaction: authenticate the printing, preflight the whole request, then charge
 ## one shared energy, discard exactly one genuinely held copy, add the printed Block to the chosen
-## living ally and arm that ally's one-use interception.
+## living ally and arm that ally's one-use interception. Final Bastion additionally arms the
+## caller-supplied battle Taunt authority as part of the same coherent transaction.
 ## `target_position` is the chosen living ally's current seat (the Warden's own seat is legal).
-## A rejection changes no deck, party, pending guard or RNG state.
+## A rejection changes no deck, party, pending Guard, pending Taunt or RNG state; a payment step
+## that somehow fails after preflight is rolled back completely.
 func play_card(deck: CombatDeck, party: CombatParty, card_id: Variant,
 		target_position: int) -> Dictionary:
 	var plan: Dictionary = _prepare(deck, party, card_id, target_position)
@@ -128,51 +205,119 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: Variant,
 		return plan
 	# Every operation below is guaranteed by the complete preflight above: the turn is active, the
 	# held ID is authentic and affordable, the Warden is living in a printed FROM seat, the chosen
-	# ally is living and the Block addition fits. Keep the defensive returns so an unexpected model
-	# change still fails closed.
-	if not deck.try_spend_energy(int(plan["cost"])):
+	# ally is living, the Block addition fits and a Final Bastion Taunt authority can really arm.
+	# Keep the defensive rollbacks so an unexpected model change still fails closed.
+	var id: String = str(plan["card_id"])
+	var cost: int = int(plan["cost"])
+	var recipient: int = int(plan["target_position"])
+	var final_bastion: bool = _is_final_bastion(CARDS[id])
+	var hand_index: int = deck.hand.find(id)
+	var energy_before: int = deck.energy
+	var block_before: int = int(party.get_hero(recipient).get("block", 0))
+
+	if not deck.try_spend_energy(cost):
 		plan["ok"] = false
 		plan["reason"] = "energy_rejected"
 		return plan
-	if not deck.discard_played(plan["card_id"]):
-		deck.combat_state.energy += int(plan["cost"])
+	if not deck.discard_played(id):
+		deck.combat_state.energy = energy_before
 		plan["ok"] = false
 		plan["reason"] = "discard_rejected"
 		return plan
-	if not party.gain_block(int(plan["target_position"]), int(plan["block_gained"])):
-		deck.combat_state.energy += int(plan["cost"])
+	if not party.gain_block(recipient, int(plan["block_gained"])):
+		_restore_payment(deck, party, id, hand_index, energy_before, recipient, block_before)
 		plan["ok"] = false
 		plan["reason"] = "block_rejected"
 		return plan
 
-	# One pending one-shot per battle: a second legal play refreshes it to its own ally.
-	_guard_armed = true
-	_guarded_hero_id = str(plan["target_hero_id"])
-	_guard_card_id = str(plan["card_id"])
+	# Final Bastion arms the SAME battle-local Taunt authority the fight already owns. A rejected
+	# arm restores the whole payment instead of leaving a partially paid card.
+	if final_bastion and not _arm_battle_taunt(id):
+		_restore_payment(deck, party, id, hand_index, energy_before, recipient, block_before)
+		plan["ok"] = false
+		plan["reason"] = "taunt_arm_rejected"
+		return plan
 
-	plan["energy_spent"] = int(plan["cost"])
+	# Arm either the specific ally guard or the universal Final Bastion guard.
+	if final_bastion:
+		_universal_guard_armed = true
+		_universal_guard_card_id = id
+		_guard_armed = false
+		_guarded_hero_id = ""
+		_guard_card_id = ""
+	else:
+		_guard_armed = true
+		_guarded_hero_id = str(plan["target_hero_id"])
+		_guard_card_id = id
+		_universal_guard_armed = false
+		_universal_guard_card_id = ""
+
+	plan["energy_spent"] = cost
 	plan["energy_after"] = deck.energy
-	plan["block_after"] = int(party.get_hero(int(plan["target_position"])).get("block", 0))
-	plan["guard_armed"] = true
-	plan["guarded_hero_id"] = _guarded_hero_id
+	plan["block_after"] = int(party.get_hero(recipient).get("block", 0))
+	plan["guard_armed"] = (_guard_armed or _universal_guard_armed)
+	plan["guarded_hero_id"] = _guarded_hero_id if _guard_armed else ""
+	plan["taunt_armed"] = final_bastion and _taunt_authority is CombatWardenV3TauntCards \
+		and (_taunt_authority as CombatWardenV3TauntCards).has_pending_taunt()
 	plan["ok"] = true
 	plan["reason"] = "applied"
 	return plan
 
 
+## Restores the exact pre-payment deck and hero Block after a defensive post-preflight failure.
+## The pending Guard and Taunt are never touched before every payment step has succeeded.
+func _restore_payment(deck: CombatDeck, party: CombatParty, card_id: String, hand_index: int,
+		energy_before: int, recipient: int, block_before: int) -> void:
+	deck.combat_state.energy = energy_before
+	if deck.discard_pile.size() > 0 and deck.discard_pile.back() == card_id:
+		deck.discard_pile.pop_back()
+		deck.hand.insert(maxi(hand_index, 0), card_id)
+	party._heroes[recipient - 1]["block"] = block_before
+
+
+## Arms the caller-supplied battle Taunt authority for an already-authenticated Final Bastion.
+func _arm_battle_taunt(card_id: String) -> bool:
+	if not (_taunt_authority is CombatWardenV3TauntCards):
+		return false
+	return (_taunt_authority as CombatWardenV3TauntCards).arm_taunt_for_final_bastion(card_id)
+
+
+## "" when the battle Taunt authority can really arm this Final Bastion card, otherwise the
+## read-only refusal reason the paid preflight reports.
+func _taunt_authority_refusal(card_id: String) -> String:
+	if _taunt_authority == null:
+		return "taunt_authority_missing"
+	if not (_taunt_authority is CombatWardenV3TauntCards):
+		return "taunt_authority_incompatible"
+	if not (_taunt_authority as CombatWardenV3TauntCards).can_arm_taunt_for_final_bastion(card_id):
+		return "taunt_arm_unavailable"
+	return ""
+
+
+## The two rare printings are the only ones that also print `taunt_next_enemy_turn`.
+func _is_final_bastion(printed: Dictionary) -> bool:
+	var effects: Variant = printed.get("effects", {})
+	return effects is Dictionary and bool((effects as Dictionary).get("taunt_next_enemy_turn", false))
+
+
 ## True while one one-use ally interception waits for a confirmed enemy hit.
 func has_pending_guard() -> bool:
-	return _guard_armed
+	return _guard_armed or _universal_guard_armed
 
 
 ## The hero identity currently protected by the pending one-shot, or "" when nothing is armed.
 func get_guarded_hero_id() -> String:
-	return _guarded_hero_id
+	return _guarded_hero_id if _guard_armed else ""
 
 
 ## The most recent legal Guard card that armed the pending interception, or "" when none is armed.
 func get_pending_guard_card_id() -> String:
-	return _guard_card_id
+	return _guard_card_id if _guard_armed else (_universal_guard_card_id if _universal_guard_armed else "")
+
+
+## True when a universal Final Bastion interception is pending (protects any other ally).
+func has_universal_guard() -> bool:
+	return _universal_guard_armed
 
 
 ## Read-only projection of one announced enemy attack. `announced_target_position` is the seat the
@@ -191,28 +336,70 @@ func project_interception(party: CombatParty, announced_target_position: int) ->
 		receipt["reason"] = "invalid_target"
 		return receipt
 	receipt["ok"] = true
+	var warden_position: int = _hero_position(party, OWNER_ID)
+	receipt["warden_position"] = warden_position
+	if warden_position == 0:
+		# Missing Warden: preserve the announced target in both modes.
+		receipt["reason"] = "warden_unavailable"
+		receipt["eligible"] = false
+		receipt["guarded_hero_id"] = _guarded_hero_id
+		receipt["guarded_position"] = 0
+		return receipt
+	if party.is_downed(warden_position):
+		var reason_str := "warden_torn"
+		receipt["reason"] = reason_str
+		receipt["eligible"] = false
+		receipt["guarded_hero_id"] = _guarded_hero_id
+		receipt["guarded_position"] = 0
+		return receipt
+
+	# Universal Final Bastion mode: protects ANY other living ally.
+	if _universal_guard_armed:
+		receipt["guarded_hero_id"] = ""
+		receipt["guarded_position"] = 0
+		# If the announced target is the Warden himself, it's not another ally.
+		if announced_target_position == warden_position:
+			receipt["reason"] = "not_guarded_target"
+			receipt["eligible"] = false
+			receipt["redirected"] = false
+			receipt["actual_target_position"] = announced_target_position
+			return receipt
+		# If the announced target is downed, no interception.
+		if party.is_downed(announced_target_position):
+			receipt["reason"] = "not_guarded_target"
+			receipt["eligible"] = false
+			receipt["redirected"] = false
+			receipt["actual_target_position"] = announced_target_position
+			return receipt
+		# Living other ally: redirect to Warden's current seat.
+		var redirect: bool = warden_position != announced_target_position
+		receipt["eligible"] = true
+		receipt["redirected"] = redirect
+		receipt["actual_target_position"] = warden_position if redirect else announced_target_position
+		receipt["reason"] = "redirected" if redirect else "self_guard"
+		return receipt
+
+	# Specific ally guard mode: existing behavior preserved.
 	if not _guard_armed:
 		receipt["reason"] = "not_armed"
+		receipt["eligible"] = false
+		receipt["guarded_hero_id"] = ""
+		receipt["guarded_position"] = 0
 		return receipt
 	receipt["guarded_hero_id"] = _guarded_hero_id
 	var guarded_position: int = _hero_position(party, _guarded_hero_id)
 	receipt["guarded_position"] = guarded_position
 	if guarded_position == 0:
 		receipt["reason"] = "guarded_missing"
+		receipt["eligible"] = false
 		return receipt
 	if announced_target_position != guarded_position:
 		receipt["reason"] = "not_guarded_target"
+		receipt["eligible"] = false
 		return receipt
 	if party.is_downed(guarded_position):
 		receipt["reason"] = "guarded_torn"
-		return receipt
-	var warden_position: int = _hero_position(party, OWNER_ID)
-	receipt["warden_position"] = warden_position
-	if warden_position == 0:
-		receipt["reason"] = "warden_unavailable"
-		return receipt
-	if party.is_downed(warden_position):
-		receipt["reason"] = "warden_torn"
+		receipt["eligible"] = false
 		return receipt
 	# Self-selected Warden: he already is the announced recipient, so the hit stays where it is.
 	var redirect: bool = warden_position != guarded_position
@@ -252,6 +439,8 @@ func consume_confirmed_hit(party: CombatParty, announced_target_position: int,
 	_guard_armed = false
 	_guarded_hero_id = ""
 	_guard_card_id = ""
+	_universal_guard_armed = false
+	_universal_guard_card_id = ""
 	receipt["consumed"] = true
 	receipt["reason"] = "consumed"
 	return receipt
@@ -269,6 +458,9 @@ func _prepare(deck: CombatDeck, party: CombatParty, card_id: Variant,
 	plan["cost"] = int(printed["cost"])
 	if not _authentic(_catalog_definition(id), id, printed):
 		plan["reason"] = "catalog_mismatch"
+		return plan
+	if not _authentic_pair(id):
+		plan["reason"] = "catalog_pair_mismatch"
 		return plan
 	if deck == null or party == null:
 		plan["reason"] = "invalid_request"
@@ -299,7 +491,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, card_id: Variant,
 		plan["reason"] = "duplicate_owner"
 		return plan
 	plan["owner_position"] = warden_position
-	if not FROM_POSITIONS.has(warden_position):
+	var card_from_positions: Array = printed.get("from_positions", FROM_POSITIONS)
+	if not card_from_positions.has(warden_position):
 		plan["reason"] = "invalid_owner_position"
 		return plan
 	if party.is_downed(warden_position):
@@ -307,12 +500,19 @@ func _prepare(deck: CombatDeck, party: CombatParty, card_id: Variant,
 		return plan
 
 	# The chosen ally is a current seat, not a remembered one.
-	if target_position < 1 or target_position > CombatParty.PARTY_SIZE:
-		plan["reason"] = "invalid_target"
-		return plan
-	if party.is_downed(target_position):
-		plan["reason"] = "target_torn"
-		return plan
+	var card_target_kind: String = str(printed.get("target_kind", TARGET_KIND))
+	if card_target_kind == "self":
+		# Self-targeted cards (Final Bastion) require the Warden's current seat.
+		if target_position != warden_position:
+			plan["reason"] = "invalid_target"
+			return plan
+	else:
+		if target_position < 1 or target_position > CombatParty.PARTY_SIZE:
+			plan["reason"] = "invalid_target"
+			return plan
+		if party.is_downed(target_position):
+			plan["reason"] = "target_torn"
+			return plan
 	var target: Dictionary = heroes[target_position - 1]
 	plan["target_position"] = target_position
 	plan["target_hero_id"] = str(target["id"])
@@ -333,6 +533,14 @@ func _prepare(deck: CombatDeck, party: CombatParty, card_id: Variant,
 		return plan
 	plan["block_gained"] = block_gain
 	plan["block_after"] = current_block + block_gain
+
+	# Final Bastion also prints Taunt, so the battle's existing Taunt authority must be present,
+	# compatible and really able to arm before one energy is spent or one Block is added.
+	if _is_final_bastion(printed):
+		var taunt_refusal: String = _taunt_authority_refusal(id)
+		if not taunt_refusal.is_empty():
+			plan["reason"] = taunt_refusal
+			return plan
 	plan["ok"] = true
 	plan["reason"] = "ready"
 	return plan
@@ -350,8 +558,8 @@ func _catalog_definition(card_id: String) -> Dictionary:
 	return {}
 
 
-## Exact contract for one record: identity, printed name, Warden owner, printed one-energy cost, the
-## single-ally target with FROM 1-2 and empty TO, the complete printed effect set with exact types
+## Exact contract for one record: identity, printed name, Warden owner, the printed energy cost, the
+## printed target kind with its FROM/TO seats, the complete printed effect set with exact types
 ## and magnitudes, authored starter/reward identity and the base/"+" link inside its own catalog.
 ## Rarity is checked only where the owning catalog authors it.
 func _authentic(definition: Dictionary, card_id: String, printed: Dictionary) -> bool:
@@ -364,18 +572,23 @@ func _authentic(definition: Dictionary, card_id: String, printed: Dictionary) ->
 	var cost: Variant = definition.get("cost")
 	if not cost is int or cost != int(printed["cost"]):
 		return false
-	if definition.get("target_kind") != TARGET_KIND:
+	var card_target_kind: String = str(printed.get("target_kind", TARGET_KIND))
+	if definition.get("target_kind") != card_target_kind:
 		return false
-	if not _exact_positions(definition.get("from_positions"), FROM_POSITIONS):
+	var card_from_positions: Array = printed.get("from_positions", [1, 2])
+	if not _exact_positions(definition.get("from_positions"), card_from_positions):
 		return false
-	if not _exact_positions(definition.get("to_positions"), TO_POSITIONS):
+	var card_to_positions: Array = printed.get("to_positions", [])
+	if not _exact_positions(definition.get("to_positions"), card_to_positions):
 		return false
 	var effects_value: Variant = definition.get("effects")
 	if not effects_value is Dictionary:
 		return false
 	var effects: Dictionary = effects_value
-	var expected_effects: Dictionary = {"block": int(printed["block"])}
-	expected_effects[GUARD_EFFECT_KEY] = true
+	var expected_effects: Dictionary = {"block": int(printed["block"]), GUARD_EFFECT_KEY: true}
+	if _is_final_bastion(printed):
+		# Final Bastion and its upgrade also print the next-enemy-turn Taunt effect.
+		expected_effects["taunt_next_enemy_turn"] = true
 	if effects.size() != expected_effects.size():
 		return false
 	for key: String in expected_effects:
@@ -391,10 +604,11 @@ func _authentic(definition: Dictionary, card_id: String, printed: Dictionary) ->
 	var reward_eligible: Variant = definition.get("reward_eligible")
 	if not reward_eligible is bool or reward_eligible != bool(printed["reward_eligible"]):
 		return false
-	if bool(printed["has_rarity"]):
-		if definition.get("rarity") != "common":
+	var printed_rarity = str(printed.get("rarity", ""))
+	if bool(printed.get("has_rarity", false)):
+		if definition.get("rarity", "") != printed_rarity:
 			return false
-	elif definition.has("rarity"):
+	elif definition.has("rarity") and definition.get("rarity") != "":
 		return false
 	var base_id: String = str(printed["upgrade_of"])
 	if base_id.is_empty():
@@ -403,13 +617,40 @@ func _authentic(definition: Dictionary, card_id: String, printed: Dictionary) ->
 	return definition.get("upgrade_of") == base_id and not definition.has("upgrade_id")
 
 
-func _exact_positions(value: Variant, expected: Array[int]) -> bool:
+func _exact_positions(value: Variant, expected: Array) -> bool:
 	if not value is Array or value.size() != expected.size():
 		return false
 	for index in range(expected.size()):
 		if not value[index] is int or value[index] != expected[index]:
 			return false
 	return true
+
+
+## A printed base/"+" pair is one authentic record set: the exact companion record must still
+## authenticate in the same owning catalog and the two link fields must point at each other.
+## Final Bastion therefore cannot be paid for when its opposite printing is missing or forged.
+func _authentic_pair(card_id: String) -> bool:
+	var printed: Dictionary = CARDS.get(card_id, {})
+	if printed.is_empty():
+		return false
+	var base_id: String = str(printed.get("upgrade_of", ""))
+	var partner_id: String = base_id
+	if partner_id.is_empty():
+		partner_id = str(printed.get("upgrade_id", ""))
+	if partner_id.is_empty():
+		return true
+	var partner: Dictionary = CARDS.get(partner_id, {})
+	if partner.is_empty():
+		return false
+	if not _authentic(_catalog_definition(partner_id), partner_id, partner):
+		return false
+	if base_id.is_empty():
+		# Base printing: its "+" must name this exact base back.
+		return str(partner.get("upgrade_of", "")) == card_id \
+			and str(printed.get("upgrade_id", "")) == partner_id
+	# "+" printing: its base must name this exact "+" back.
+	return str(partner.get("upgrade_id", "")) == card_id \
+		and str(printed.get("upgrade_of", "")) == partner_id
 
 
 ## Three genuine seats in order with unique nonempty IDs and sane per-combat records, read through
@@ -495,5 +736,6 @@ func _failure() -> Dictionary:
 		"block_after": 0,
 		"guard_armed": false,
 		"guarded_hero_id": "",
+		"taunt_armed": false,
 		"energy_after": 0,
 	}
