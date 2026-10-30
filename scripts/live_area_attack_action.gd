@@ -21,7 +21,8 @@ const CROW_IDS := ["scarecrow_crow_dive", "scarecrow_crow_dive_plus",
 const GOLEM_IDS := ["button_golem_popping_volley", "button_golem_popping_volley_plus",
 	"button_golem_buttonstorm", "button_golem_buttonstorm_plus"]
 const MOTH_IDS := ["lantern_monk_moth_cloud", "lantern_monk_moth_cloud_plus"]
-const CARD_IDS := SEAMSTRESS_IDS + BLANKET_IDS + TINKER_IDS + UNRAVEL_TINKER_IDS + ENERGY_IDS + YARN_IDS + SNARE_IDS + SKEIN_IDS + CROW_IDS + GOLEM_IDS + MOTH_IDS
+const HARVEST_IDS := ["scarecrow_harvest_fright", "scarecrow_harvest_fright_plus"]
+const CARD_IDS := SEAMSTRESS_IDS + BLANKET_IDS + TINKER_IDS + UNRAVEL_TINKER_IDS + ENERGY_IDS + YARN_IDS + SNARE_IDS + SKEIN_IDS + CROW_IDS + GOLEM_IDS + MOTH_IDS + HARVEST_IDS
 const INSTRUCTION := "Click or focus and press Enter / Space to play"
 const CUE_NAME := "BlanketStitchCue"
 const CREAM := Color("#ece0c8")
@@ -172,6 +173,8 @@ func _definition(card_id: String) -> Dictionary:
 		return LanternMonkPoolCards.new().get_definition(card_id)
 	if card_id in GOLEM_IDS:
 		return ButtonGolemPoolCards.new().get_definition(card_id)
+	if card_id in HARVEST_IDS:
+		return ScarecrowPoolCards.new().get_definition(card_id)
 	if card_id in CROW_IDS:
 		return CombatScarecrowCrowCards.new()._catalog_definition(card_id)
 	if card_id in SKEIN_IDS:
@@ -437,6 +440,10 @@ func _rule_text(card_id: String) -> String:
 		return "%s | Lantern Monk | %d energy | From %s\nAll living enemies %s: Blind NEXT attack (one miss per enemy); Exhaust this held copy; no target choice" % [
 			definition.display_name, definition.cost, _positions(definition.from_positions),
 			_positions(definition.to_positions)]
+	if card_id in HARVEST_IDS:
+		return "%s | Scarecrow | %d energy | From %s\nAll living enemies %s: %d base attack damage through Block, then Weak %d and literal next-turn Fear (cannot buff) to survivors; no target choice" % [
+			definition.display_name, definition.cost, _positions(definition.from_positions),
+			_positions(definition.to_positions), effects.damage, effects.weak]
 	if card_id in GOLEM_IDS:
 		var rule: String = ("%d independent hits of %d base damage per living enemy (check survival before each hit)" % [
 			int(effects.get("hit_count", 0)), int(effects.get("damage", 0))]
@@ -520,7 +527,7 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 		or card_id in ENERGY_TINKER_IDS
 	var is_energy: bool = card_id in ENERGY_IDS
 	var owner_color: Color = TINKER if is_tinker else SEAMSTRESS
-	if card_id in YARN_IDS or card_id in SNARE_IDS or card_id in SKEIN_IDS or card_id in CROW_IDS:
+	if card_id in YARN_IDS or card_id in SNARE_IDS or card_id in SKEIN_IDS or card_id in CROW_IDS or card_id in HARVEST_IDS:
 		owner_color = INK
 	if card_id in GOLEM_IDS:
 		owner_color = RUST
@@ -610,8 +617,8 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 		effect_label.clip_text = false
 		effect_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		column.add_child(effect_label)
-		if card_id in YARN_IDS or card_id in SNARE_IDS or card_id in SKEIN_IDS or card_id in CROW_IDS or card_id in GOLEM_IDS or card_id in MOTH_IDS:
-			var owner_name := "Lantern Monk" if card_id in MOTH_IDS else ("Button Golem" if card_id in GOLEM_IDS else ("Scarecrow" if card_id in CROW_IDS else "Yarn Ranger"))
+		if card_id in YARN_IDS or card_id in SNARE_IDS or card_id in SKEIN_IDS or card_id in CROW_IDS or card_id in GOLEM_IDS or card_id in MOTH_IDS or card_id in HARVEST_IDS:
+			var owner_name := "Lantern Monk" if card_id in MOTH_IDS else ("Button Golem" if card_id in GOLEM_IDS else ("Scarecrow" if card_id in CROW_IDS or card_id in HARVEST_IDS else "Yarn Ranger"))
 			var owner_label := _cue_label(owner_name, 9, owner_color)
 			owner_label.name = "Owner"
 			column.add_child(owner_label)
@@ -638,6 +645,9 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 ## resolver applies, printed without its arithmetic.
 func _short_effect(definition: Dictionary) -> String:
 	var effects: Dictionary = definition.get("effects", {})
+	if definition.get("id", "") in HARVEST_IDS:
+		return "Deal %d to all; Weak %d and Fear survivors." % [
+			int(effects.get("damage", 0)), int(effects.get("weak", 0))]
 	if definition.get("id", "") in MOTH_IDS:
 		return "Blind NEXT attack on all; Exhaust."
 	if definition.get("id", "") in GOLEM_IDS:
@@ -923,6 +933,12 @@ func _eligible(panel, card_id: String) -> bool:
 		return false
 	if not _enemies.is_valid() or _enemies.is_victorious():
 		return false
+	if card_id in HARVEST_IDS:
+		if app.enemy_intents != _intents or _deck._rng != _rng \
+				or not _receipt_valid(_receipt(panel, card_id)) \
+				or not CombatScarecrowHarvestFrightCards.new()._prepare(
+					_deck, _party, _enemies, card_id, 0).get("ok", false):
+			return false
 	if card_id in MOTH_IDS:
 		if app.enemy_intents != _intents or _deck._rng != _rng \
 				or not _receipt_valid(_receipt(panel, card_id)) \
@@ -1019,7 +1035,10 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 	var energy_before: int = receipt.deck.energy
 	# Exact pre-hit roster for the app's confirmed lethal-card boundary.
 	var roster_before: Array = receipt.enemies.get_enemies()
-	if card_id in MOTH_IDS:
+	if card_id in HARVEST_IDS:
+		event = CombatScarecrowHarvestFrightCards.new().play_card(
+			receipt.deck, receipt.party, receipt.enemies, card_id, 0)
+	elif card_id in MOTH_IDS:
 		event = CombatLanternMonkMothCloudCards.new().play_card(
 			receipt.deck, receipt.party, receipt.enemies, card_id, 0)
 	elif card_id in GOLEM_IDS:
