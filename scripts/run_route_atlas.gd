@@ -19,8 +19,9 @@ extends Control
 ## emblem, and a focused legal tag wears the same stitched seam inset just inside its
 ## edge, clear of both the art and the lower caption.
 ## Beneath every bead the party actually completed, the diary prints that floor's
-## authentic authored kind, projected only from the committed route's real RunMap
-## records; future beads stay blank and never leak an upcoming floor's kind.
+## stop name, projected through display_kind() from the committed route's real RunMap
+## records (a legacy Shop/Rest bead reads Peddler/Campfire); future beads stay blank
+## and never leak an upcoming floor's kind.
 ##
 ## Every patch hover names its authored floor, kind and one-based branch row, and a
 ## legal patch's Action adds the real 1-4 shortcut it answers to. Raw f##_n# IDs stay
@@ -476,8 +477,9 @@ class JourneyJournal extends Control:
 	var complete := false
 	var visited: Array[String] = []
 	## One authentic authored kind per committed floor, in route order, projected by
-	## _add_journal from the real RunMap record of each committed ID. It is never
-	## inferred from an ID, filled from an unvisited node or consumed by input.
+	## _add_journal through display_kind() from the real RunMap record of each committed
+	## ID. It is never inferred from an ID, filled from an unvisited node or consumed
+	## by input.
 	var visited_kinds: Array[String] = []
 	## Cached committed heading face, so redraws never re-probe the shipped font file.
 	var _fallback_heading: Font = null
@@ -603,9 +605,12 @@ func _add_journal(current_floor: int, chosen: Array[String]) -> void:
 	journal.visited = chosen.duplicate()
 	# Project each committed ID through the authoritative model once, in route order.
 	# Only visited records are read; an unvisited floor is never queried for display.
+	# The committed kind passes through the same display_kind() projection as markers,
+	# hover and choice tickets, so a legacy Shop/Rest bead captions Peddler/Campfire
+	# while the authored RunMap record keeps its own raw type and ID.
 	var kinds: Array[String] = []
 	for id in chosen:
-		kinds.append(str(_map.get_node(id).get("type", "")))
+		kinds.append(display_kind(str(_map.get_node(id).get("type", ""))))
 	journal.visited_kinds = kinds
 	journal.position = Vector2(46.0, 174.0)
 	journal.size = Vector2(532.0, 400.0)

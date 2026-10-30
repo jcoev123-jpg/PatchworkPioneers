@@ -208,4 +208,10 @@ const SEEDS := [
 	1007589,
 	1187708,
 	1227514,
+	# Genuine map/toll/event-rotation witness re-derived for the Frayed Debt Parcel
+	# stitched Unpicker-terminal route after the newest generic-pool stories retired
+	# seed 159691: its five-Event walk has no Campfire, Rest or Unpicker transit
+	# between the first and second Event, so every mounted route button keeps a
+	# matching sewing source after the test installs its stitched ledger.
+	862443,
 ]
