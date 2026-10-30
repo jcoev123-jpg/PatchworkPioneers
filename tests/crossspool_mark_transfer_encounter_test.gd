@@ -1082,8 +1082,8 @@ func _verify_ac3_independent_beats_and_negative_cases(hero_catalog: Array, enemy
 			"json": '[{"enemy_position": 2, "pattern": [{"type": "block", "amount": 2}]}, {"enemy_position": 2, "pattern": [{"type": "buff", "amount": 3}]}]'
 		},
 		{
-			"label": "fifth/fourth enemy_position 4",
-			"json": '[{"enemy_position": 4, "pattern": [{"type": "block", "amount": 2}]}]'
+			"label": "out-of-range enemy_position 5",
+			"json": '[{"enemy_position": 5, "pattern": [{"type": "block", "amount": 2}]}]'
 		},
 		{
 			"label": "malformed JSON syntax",

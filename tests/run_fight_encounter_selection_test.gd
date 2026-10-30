@@ -337,7 +337,7 @@ func _test_malformed_data() -> void:
 		JSON.stringify([{"enemy_position": 1, "pattern": [{"type": "block", "amount": -1}]}]),
 		JSON.stringify([{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]},
 			{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}]),
-		JSON.stringify([{"enemy_position": 4, "pattern": [{"type": "block", "amount": 1}]}]),
+		JSON.stringify([{"enemy_position": 5, "pattern": [{"type": "block", "amount": 1}]}]),
 		JSON.stringify([{"enemy_position": 1.5, "pattern": [{"type": "block", "amount": 1}]}]),
 		JSON.stringify([{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1.5}]}]),
 		JSON.stringify([{"enemy_position": 1, "pattern": [

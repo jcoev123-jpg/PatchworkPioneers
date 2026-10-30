@@ -11,6 +11,8 @@ func _initialize() -> void:
 	_test_snip_bound_phases_and_badge()
 	_test_one_enemy()
 	_test_three_enemies_and_wrap()
+	_test_four_enemies_and_wrap()
+	_test_four_source_copy_isolation_and_replay()
 	_test_copy_isolation_and_replay()
 	_test_no_combat_mutation()
 	_test_invalid_schedules()
@@ -76,6 +78,31 @@ func _turns() -> Array:
 		[_announced(1, _block(4)), _announced(2, _block(0)), _announced(3, _attack(8, 2))]
 	]
 
+func _four_enemies() -> Array:
+	# Intentionally shuffled: four distinct patterns of lengths 4, 3, 2 and 1.
+	return [
+		_enemy(4, [_block(8), _attack(4, 3), _block(0), _attack(9, 1)]),
+		_enemy(2, [_attack(3, 2), _block(2), _attack(7, 1)]),
+		_enemy(1, [_block(1), _attack(2, 1)]),
+		_enemy(3, [_attack(5, 3)]),
+	]
+
+
+func _four_turns() -> Array:
+	# Independent expected 12-beat least-common-multiple trace, in slot order.
+	var one := [_block(1), _attack(2, 1)]
+	var two := [_attack(3, 2), _block(2), _attack(7, 1)]
+	var three := [_attack(5, 3)]
+	var four := [_block(8), _attack(4, 3), _block(0), _attack(9, 1)]
+	var expected: Array = []
+	for turn in range(12):
+		expected.append([
+			_announced(1, one[turn % 2]),
+			_announced(2, two[turn % 3]),
+			_announced(3, three[0]),
+			_announced(4, four[turn % 4]),
+		])
+	return expected
 
 
 func _snip_action(target: int) -> Dictionary:
@@ -334,6 +361,63 @@ func _test_three_enemies_and_wrap() -> void:
 	_check(definitions == original, "turn selection and advance never change caller definitions")
 
 
+func _test_four_enemies_and_wrap() -> void:
+	var definitions := _four_enemies()
+	var original := definitions.duplicate(true)
+	var schedule := CombatEnemyIntents.new(definitions)
+	_check(schedule.is_valid() and not schedule.is_bound(),
+		"four unique shuffled source slots 1-4 admit a valid scene-free schedule")
+	var expected := _four_turns()
+	for turn in range(26):
+		var announced := schedule.get_intents()
+		_check(announced.size() == 4, "four-source turn %d publishes exactly four actions" % turn)
+		if announced.size() == 4:
+			_check(announced[0].enemy_position == 1 and announced[1].enemy_position == 2
+				and announced[2].enemy_position == 3 and announced[3].enemy_position == 4,
+				"four-source turn %d is strictly sorted with exactly one action per source" % turn)
+		_check(announced == expected[turn % expected.size()],
+			"four-source turn %d has exact independent 1/2/3/4-cycle action and target" % turn)
+		_check(schedule.advance_turn(), "four-source turn %d explicitly advances" % turn)
+	_check(definitions == original, "four-source reads/advances preserve input deeply")
+
+
+func _test_four_source_copy_isolation_and_replay() -> void:
+	var definitions := _four_enemies()
+	var pristine := definitions.duplicate(true)
+	var first := CombatEnemyIntents.new(definitions)
+	var replay := CombatEnemyIntents.new(pristine.duplicate(true))
+	_check(first.is_valid() and replay.is_valid(), "two independent identical four-source schedules validate")
+	# Damage every layer of the caller's former schedule after construction.
+	definitions[0]["pattern"][0]["amount"] = 777
+	definitions[1]["pattern"].append(_attack(99, 1))
+	definitions[2]["enemy_position"] = 5
+	definitions[3]["pattern"].clear()
+	definitions.reverse()
+	definitions.clear()
+	var expected := _four_turns()
+	_check(first.get_intents() == expected[0] and replay.get_intents() == expected[0],
+		"caller changes to source fields, nested arrays, order and size cannot affect either instance")
+	for turn in range(26):
+		var before_first := first.get_intents()
+		var before_replay := replay.get_intents()
+		_check(before_first.size() == 4 and before_replay.size() == 4
+			and before_first == expected[turn % 12] and before_replay == before_first,
+			"four-source replay turn %d matches an independent exact expected trace" % turn)
+		# Returned dictionaries and arrays are disposable snapshots, even at wrap boundaries.
+		if not before_first.is_empty():
+			before_first[0]["amount"] = 888
+			before_first[0]["enemy_position"] = 4
+			before_first[-1].clear()
+		before_first.append({"invented": true})
+		before_replay.clear()
+		_check(first.get_intents() == expected[turn % 12]
+			and replay.get_intents() == expected[turn % 12],
+			"four-source turn %d rejects edits to returned action dictionaries and arrays" % turn)
+		_check(first.advance_turn() and replay.advance_turn(),
+			"both independent four-source replays advance turn %d" % turn)
+	_check(pristine == _four_enemies(), "replay leaves the original four-source snapshot intact")
+
+
 func _test_copy_isolation_and_replay() -> void:
 	var definitions := _three_enemies()
 	var original := definitions.duplicate(true)
@@ -406,11 +490,18 @@ func _reject(name: String, definitions: Array) -> void:
 
 func _test_invalid_schedules() -> void:
 	_reject("empty lineup", [])
-	_reject("more than three enemies", [
+	_reject("more than four enemies", [
 		_enemy(1, [_block(1)]), _enemy(2, [_block(1)]),
-		_enemy(3, [_block(1)]), _enemy(1, [_block(1)])])
+		_enemy(3, [_block(1)]), _enemy(4, [_block(1)]),
+		_enemy(5, [_block(1)])])
+	_reject("malformed fourth source rejects all previous valid sources", [
+		_enemy(1, [_block(1)]), _enemy(2, [_attack(2, 2)]),
+		_enemy(3, [_block(3)]), _enemy(4, [_block(4), {"type": "heal", "amount": 1}])])
+	_reject("duplicate position four rejects whole four-source schedule", [
+		_enemy(1, [_block(1)]), _enemy(4, [_block(2)]),
+		_enemy(3, [_block(3)]), _enemy(4, [_block(4)])])
 	_reject("duplicate occupied position", [_enemy(1, [_attack(1, 1)]), _enemy(1, [_block(1)])])
-	for position in [0, -1, 4, null, true, false, "1", 1.0, [], {}]:
+	for position in [0, -1, 5, null, true, false, "1", 1.0, [], {}]:
 		_reject("invalid position " + str(position), [_enemy(2, [_block(1)]),
 			{"enemy_position": position, "pattern": [_block(2)]}])
 	for invalid in [null, "enemy", [], 3, {}]:
