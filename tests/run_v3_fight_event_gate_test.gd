@@ -55,10 +55,107 @@ const EXPECTED_EVENTS := {
 	},
 }
 
+const WAYSTATION_CATALOG_PATH := "res://data/events/v3_service_waystation_events.json"
+
+const EXPECTED_WAYSTATION_EVENTS := {
+	"v3_emberglass_campfire": {
+		"title": "The Emberglass Hearth",
+		"description": "Moth-winged lanterns surround a cracked brass firebox.",
+		"service_choice_id": "light_the_embers",
+		"service_kind": "Campfire",
+		"paid_outcome": {"gold": 0, "scraps": -1},
+		"trade_choice_id": "sell_cinders",
+		"trade_outcome": {"gold": 12, "scraps": 0},
+		"leave_choice_id": "leave",
+		"choices": [
+			{"id": "light_the_embers", "text": "Light the embers (spend 1 scrap, Campfire)", "outcome": {"gold": 0, "scraps": -1}},
+			{"id": "sell_cinders", "text": "Sell cinders (gain 12 gold)", "outcome": {"gold": 12, "scraps": 0}},
+			{"id": "leave", "text": "Leave", "outcome": {"gold": 0, "scraps": 0}},
+		],
+		"short_wallet": {"gold": 10, "scraps": 0},
+		"exact_wallet": {"gold": 0, "scraps": 1},
+		"funded_wallet": {"gold": 25, "scraps": 3},
+	},
+	"v3_threadmill_sewing_circle": {
+		"title": "The Threadmill Loft",
+		"description": "A huge brass needle wheel hauls moonlit cloth through a stitched room.",
+		"service_choice_id": "borrow_spools",
+		"service_kind": "SewingCircle",
+		"paid_outcome": {"gold": -12, "scraps": 0},
+		"trade_choice_id": "untie_scraps",
+		"trade_outcome": {"gold": 0, "scraps": 2},
+		"leave_choice_id": "leave",
+		"choices": [
+			{"id": "borrow_spools", "text": "Borrow spools (spend 12 gold, Sewing Circle)", "outcome": {"gold": -12, "scraps": 0}},
+			{"id": "untie_scraps", "text": "Untie scraps (gain 2 scraps)", "outcome": {"gold": 0, "scraps": 2}},
+			{"id": "leave", "text": "Leave", "outcome": {"gold": 0, "scraps": 0}},
+		],
+		"short_wallet": {"gold": 11, "scraps": 5},
+		"exact_wallet": {"gold": 12, "scraps": 0},
+		"funded_wallet": {"gold": 25, "scraps": 3},
+	},
+	"v3_inkblack_unpicker_van": {
+		"title": "The Inkblack Unpicker Van",
+		"description": "Silver scissors hang behind an oxblood caravan's velvet curtain.",
+		"service_choice_id": "hire_unpicker",
+		"service_kind": "Unpicker",
+		"paid_outcome": {"gold": -10, "scraps": 0},
+		"trade_choice_id": "sell_trim",
+		"trade_outcome": {"gold": 0, "scraps": 1},
+		"leave_choice_id": "leave",
+		"choices": [
+			{"id": "hire_unpicker", "text": "Hire unpicker (spend 10 gold, Unpicker)", "outcome": {"gold": -10, "scraps": 0}},
+			{"id": "sell_trim", "text": "Sell trim (gain 1 scrap)", "outcome": {"gold": 0, "scraps": 1}},
+			{"id": "leave", "text": "Leave", "outcome": {"gold": 0, "scraps": 0}},
+		],
+		"short_wallet": {"gold": 9, "scraps": 5},
+		"exact_wallet": {"gold": 10, "scraps": 0},
+		"funded_wallet": {"gold": 25, "scraps": 3},
+	},
+	"v3_briar_button_mending_bench": {
+		"title": "The Briar-Button Hearth",
+		"description": "A giant button kettle glows beside a bramble-wrapped quilt bench.",
+		"service_choice_id": "fuel_button_fire",
+		"service_kind": "Campfire",
+		"paid_outcome": {"gold": 0, "scraps": -2},
+		"trade_choice_id": "take_rivets",
+		"trade_outcome": {"gold": 14, "scraps": 0},
+		"leave_choice_id": "leave",
+		"choices": [
+			{"id": "fuel_button_fire", "text": "Fuel button fire (spend 2 scraps, Campfire)", "outcome": {"gold": 0, "scraps": -2}},
+			{"id": "take_rivets", "text": "Take rivets (gain 14 gold)", "outcome": {"gold": 14, "scraps": 0}},
+			{"id": "leave", "text": "Leave", "outcome": {"gold": 0, "scraps": 0}},
+		],
+		"short_wallet": {"gold": 20, "scraps": 1},
+		"exact_wallet": {"gold": 0, "scraps": 2},
+		"funded_wallet": {"gold": 25, "scraps": 3},
+	},
+	"v3_moonlace_darning_parlor": {
+		"title": "The Moonlace Parlour",
+		"description": "A button-eyed seam-keeper rents a lace loom below a plum lantern.",
+		"service_choice_id": "sew_at_parlor",
+		"service_kind": "SewingCircle",
+		"paid_outcome": {"gold": 0, "scraps": -2},
+		"trade_choice_id": "trade_lace",
+		"trade_outcome": {"gold": 10, "scraps": 0},
+		"leave_choice_id": "leave",
+		"choices": [
+			{"id": "sew_at_parlor", "text": "Sew at parlour (spend 2 scraps, Sewing Circle)", "outcome": {"gold": 0, "scraps": -2}},
+			{"id": "trade_lace", "text": "Trade lace (gain 10 gold)", "outcome": {"gold": 10, "scraps": 0}},
+			{"id": "leave", "text": "Leave", "outcome": {"gold": 0, "scraps": 0}},
+		],
+		"short_wallet": {"gold": 20, "scraps": 1},
+		"exact_wallet": {"gold": 0, "scraps": 2},
+		"funded_wallet": {"gold": 25, "scraps": 3},
+	},
+}
+
 var failures: Array[String] = []
 var checks: int = 0
 var catalog_doc: Dictionary = {}
 var catalog_snapshot: Dictionary = {}
+var waystation_catalog_doc: Dictionary = {}
+var waystation_catalog_snapshot: Dictionary = {}
 
 
 func _initialize() -> void:
@@ -79,7 +176,13 @@ func _initialize() -> void:
 	_test_ac3_selection_refusals_and_isolation(run_rng)
 	_test_ac_bellspool_picket_dedicated(run_rng)
 
+	_test_ac1_waystation_catalog_and_choices(run_rng)
+	_test_ac2_waystation_service_choices_and_previews(run_rng)
+	_test_ac3_waystation_trades_leave_and_rejections(run_rng)
+	_test_ac3_waystation_forgery_tampering_and_isolation(run_rng)
+
 	_check(catalog_doc == catalog_snapshot, "loaded catalog dictionary unchanged across all test flows")
+	_check(waystation_catalog_doc == waystation_catalog_snapshot, "loaded waystation catalog dictionary unchanged across all test flows")
 	_check(run_rng.state == initial_rng_state, "seeded RandomNumberGenerator state unchanged across entire suite")
 	_check(randi() == expected_global_rng, "global RNG untouched across entire suite")
 
@@ -106,6 +209,20 @@ func _receipt_shape_ok(receipt: Variant) -> bool:
 		and typeof(dict.get("choice_id")) == TYPE_STRING
 		and typeof(dict.get("wallet")) == TYPE_DICTIONARY
 		and typeof(dict.get("fight_request")) == TYPE_DICTIONARY
+	)
+
+
+func _waystation_receipt_shape_ok(receipt: Variant) -> bool:
+	if typeof(receipt) != TYPE_DICTIONARY:
+		return false
+	var dict: Dictionary = receipt
+	return (
+		dict.size() == 5
+		and typeof(dict.get("ok")) == TYPE_BOOL
+		and typeof(dict.get("event_id")) == TYPE_STRING
+		and typeof(dict.get("choice_id")) == TYPE_STRING
+		and typeof(dict.get("wallet")) == TYPE_DICTIONARY
+		and typeof(dict.get("service_request")) == TYPE_DICTIONARY
 	)
 
 
@@ -1684,3 +1801,356 @@ func _test_ac_bellspool_picket_dedicated(run_rng: RandomNumberGenerator) -> void
 	_check(not missing_bell_gate.is_catalog_valid(), "catalog missing required v3_bellspool_picket fails validation")
 
 	_check(run_rng.state == rng_before, "dedicated bellspool checks consume zero run_rng draws")
+
+
+func _test_ac1_waystation_catalog_and_choices(run_rng: RandomNumberGenerator) -> void:
+	var rng_before: int = run_rng.state
+	var file := FileAccess.open(WAYSTATION_CATALOG_PATH, FileAccess.READ)
+	_check(file != null, "v3_service_waystation_events.json opens through FileAccess")
+	if file == null:
+		return
+	var text := file.get_as_text()
+	file.close()
+	_check(not text.strip_edges().is_empty(), "v3_service_waystation_events.json is non-empty")
+	var parser := JSON.new()
+	var parse_err := parser.parse(text)
+	_check(parse_err == OK and parser.data is Dictionary, "v3_service_waystation_events.json parses as a JSON object")
+	if parse_err != OK or not (parser.data is Dictionary):
+		return
+	waystation_catalog_doc = parser.data
+	waystation_catalog_snapshot = waystation_catalog_doc.duplicate(true)
+	var events_raw: Variant = waystation_catalog_doc.get("events")
+	_check(events_raw is Array and not (events_raw as Array).is_empty(), "waystation catalog has a non-empty events array")
+	if not (events_raw is Array):
+		return
+	var events: Array = events_raw
+
+	var gate_catalog := RunV3ServiceWaystationEventGate.new()
+	_check(gate_catalog.is_catalog_valid(), "default RunV3ServiceWaystationEventGate validates shipped catalog")
+	_check(not gate_catalog.is_valid() and not gate_catalog.is_claimed(),
+		"unbound waystation catalog gate is not a bound visit until prepared or opened")
+
+	for event_id: String in EXPECTED_WAYSTATION_EVENTS.keys():
+		var spec: Dictionary = EXPECTED_WAYSTATION_EVENTS[event_id]
+		var matches: Array = _matching_events(events, event_id)
+		_check(matches.size() == 1, "exactly one authored waystation record for " + event_id)
+		if matches.size() != 1:
+			continue
+		var record: Dictionary = matches[0]
+		_check(
+			record.size() == 6
+			and record.has("id")
+			and record.has("title")
+			and record.has("description")
+			and record.has("service_choice_id")
+			and record.has("service_kind")
+			and record.has("choices"),
+			"record has exact 6 top-level keys: " + event_id
+		)
+		var title: Variant = record.get("title")
+		var description: Variant = record.get("description")
+		_check(title is String and not String(title).strip_edges().is_empty(), "nonblank title: " + event_id)
+		_check(description is String and not String(description).strip_edges().is_empty(), "nonblank description: " + event_id)
+		_check(record.get("id") == event_id, "exact id: " + event_id)
+		_check(record.get("title") == spec["title"], "exact title: " + event_id)
+		_check(record.get("description") == spec["description"], "exact description: " + event_id)
+		_check(record.get("service_choice_id") == spec["service_choice_id"], "exact service_choice_id metadata: " + event_id)
+		_check(record.get("service_kind") == spec["service_kind"], "exact service_kind metadata: " + event_id)
+
+		var choices_raw: Variant = record.get("choices")
+		_check(choices_raw is Array and (choices_raw as Array).size() == 3, "three choices on " + event_id)
+		if not (choices_raw is Array) or (choices_raw as Array).size() != 3:
+			continue
+		var choices: Array = choices_raw
+		var exp_choices: Array = spec["choices"]
+		for idx in range(3):
+			var choice_raw: Variant = choices[idx]
+			_check(choice_raw is Dictionary, "choice is Dictionary in " + event_id)
+			if not (choice_raw is Dictionary):
+				continue
+			var choice: Dictionary = choice_raw
+			var exp_choice: Dictionary = exp_choices[idx]
+			_check(choice.get("id") == exp_choice["id"], "choice id matches: " + event_id + " idx " + str(idx))
+			_check(choice.get("text") == exp_choice["text"], "choice text matches: " + event_id + " idx " + str(idx))
+			var outcome_raw: Variant = choice.get("outcome")
+			_check(outcome_raw is Dictionary and (outcome_raw as Dictionary).size() == 2, "outcome is 2-key dict: " + event_id)
+			if outcome_raw is Dictionary:
+				var outcome: Dictionary = outcome_raw
+				_check(_is_integral_json_number(outcome.get("gold")) and _is_integral_json_number(outcome.get("scraps")), "outcome values are integral: " + event_id)
+				_check(int(outcome.get("gold")) == int(exp_choice["outcome"]["gold"]), "exact gold outcome: " + event_id + " idx " + str(idx))
+				_check(int(outcome.get("scraps")) == int(exp_choice["outcome"]["scraps"]), "exact scraps outcome: " + event_id + " idx " + str(idx))
+
+		# Verify RunEventChoice compatibility
+		var selector := RunEventChoice.new(record)
+		_check(selector.is_valid() and not selector.is_claimed(), "RunEventChoice accepts waystation record: " + event_id)
+		var preview: Dictionary = selector.preview_wallet_choices({"gold": 50, "scraps": 50})
+		_check(preview.get("ok") == true, "RunEventChoice preview_wallet_choices succeeds: " + event_id)
+		var p_choices: Array = preview.get("choices", [])
+		_check(p_choices.size() == 3, "RunEventChoice preview has 3 choices: " + event_id)
+
+	_check(run_rng.state == rng_before, "AC1 waystation tests consume zero run_rng draws")
+
+
+func _test_ac2_waystation_service_choices_and_previews(run_rng: RandomNumberGenerator) -> void:
+	var rng_before: int = run_rng.state
+	var gate := RunV3ServiceWaystationEventGate.new()
+	_check(gate.is_catalog_valid(), "gate validates catalog for AC2")
+
+	for event_id: String in EXPECTED_WAYSTATION_EVENTS.keys():
+		var spec: Dictionary = EXPECTED_WAYSTATION_EVENTS[event_id]
+		var service_choice_id: String = spec["service_choice_id"]
+		var service_kind: String = spec["service_kind"]
+		var paid_outcome: Dictionary = spec["paid_outcome"]
+		var exact_wallet: Dictionary = spec["exact_wallet"]
+		var funded_wallet: Dictionary = spec["funded_wallet"]
+
+		# 1. Preview checks on funded wallet
+		var visit_p := gate.open_visit(event_id)
+		_check(visit_p != null and visit_p.is_valid() and not visit_p.is_claimed(), "visit opened for preview: " + event_id)
+		var preview: Dictionary = visit_p.preview_choices(funded_wallet)
+		_check(preview.get("ok") == true, "preview_choices ok: " + event_id)
+		_check(preview.get("event_id") == event_id, "preview event_id: " + event_id)
+		_check(preview.get("service_choice_id") == service_choice_id, "preview service_choice_id: " + event_id)
+		_check(preview.get("service_kind") == service_kind, "preview service_kind: " + event_id)
+		var p_choices: Array = preview.get("choices", [])
+		_check(p_choices.size() == 3, "preview has 3 choices: " + event_id)
+
+		var expected_post_wallet := {
+			"gold": funded_wallet["gold"] + paid_outcome["gold"],
+			"scraps": funded_wallet["scraps"] + paid_outcome["scraps"],
+		}
+
+		for item_raw: Variant in p_choices:
+			var item: Dictionary = item_raw
+			var cid: String = String(item.get("choice_id", ""))
+			if cid == service_choice_id:
+				_check(item.get("affordable") == true, "service choice affordable in funded preview: " + event_id)
+				_check(item.get("service_request") == {"stop_type": service_kind}, "service_request in preview for service choice: " + event_id)
+				_check(item.get("wallet") == expected_post_wallet, "preview wallet matches expected post-payment: " + event_id)
+			else:
+				_check(item.get("service_request") == {}, "non-service choices have empty service_request in preview: " + event_id)
+
+		# 2. Exact wallet settlement (settling down to 0)
+		var visit_exact := gate.open_visit(event_id)
+		var exact_receipt: Dictionary = visit_exact.choose_with_wallet(service_choice_id, exact_wallet)
+		_check(_waystation_receipt_shape_ok(exact_receipt), "exact receipt shape ok: " + event_id)
+		_check(exact_receipt.get("ok") == true, "exact paid choice succeeds: " + event_id)
+		_check(exact_receipt.get("event_id") == event_id, "exact receipt event_id: " + event_id)
+		_check(exact_receipt.get("choice_id") == service_choice_id, "exact receipt choice_id: " + event_id)
+		_check(exact_receipt.get("wallet") == {"gold": 0, "scraps": 0}, "exact settlement reaches 0/0: " + event_id)
+		_check(exact_receipt.get("service_request") == {"stop_type": service_kind}, "exact service_request: " + event_id)
+		_check(visit_exact.is_claimed() and not visit_exact.is_valid(), "visit latched after exact paid choice: " + event_id)
+
+		# 3. Funded wallet settlement and preview/receipt agreement
+		var visit_funded := gate.open_visit(event_id)
+		var funded_receipt: Dictionary = visit_funded.choose_with_wallet(service_choice_id, funded_wallet)
+		_check(_waystation_receipt_shape_ok(funded_receipt), "funded receipt shape ok: " + event_id)
+		_check(funded_receipt.get("ok") == true, "funded paid choice succeeds: " + event_id)
+		_check(funded_receipt.get("event_id") == event_id, "funded receipt event_id: " + event_id)
+		_check(funded_receipt.get("choice_id") == service_choice_id, "funded receipt choice_id: " + event_id)
+		_check(funded_receipt.get("wallet") == expected_post_wallet, "post-payment wallet matches preview: " + event_id)
+		_check(funded_receipt.get("service_request") == {"stop_type": service_kind}, "funded service_request matches kind: " + event_id)
+		_check(visit_funded.is_claimed() and not visit_funded.is_valid(), "visit latched after funded paid choice: " + event_id)
+
+		# Replay rejection on same visit
+		var replay_res: Dictionary = visit_funded.choose_with_wallet(service_choice_id, funded_wallet)
+		_check(replay_res.get("ok") == false, "replay on claimed visit rejected: " + event_id)
+		_check(replay_res.get("service_request") == {}, "replay returns empty service_request: " + event_id)
+		_check(replay_res.get("wallet") == funded_wallet, "replay returns unchanged wallet: " + event_id)
+
+	_check(run_rng.state == rng_before, "AC2 waystation tests consume zero run_rng draws")
+
+
+func _test_ac3_waystation_trades_leave_and_rejections(run_rng: RandomNumberGenerator) -> void:
+	var rng_before: int = run_rng.state
+	var gate := RunV3ServiceWaystationEventGate.new()
+
+	for event_id: String in EXPECTED_WAYSTATION_EVENTS.keys():
+		var spec: Dictionary = EXPECTED_WAYSTATION_EVENTS[event_id]
+		var service_choice_id: String = spec["service_choice_id"]
+		var trade_choice_id: String = spec["trade_choice_id"]
+		var trade_outcome: Dictionary = spec["trade_outcome"]
+		var short_wallet: Dictionary = spec["short_wallet"]
+		var funded_wallet: Dictionary = spec["funded_wallet"]
+
+		# 1. Trade choice branch on fresh visit
+		var visit_trade := gate.open_visit(event_id)
+		_check(visit_trade != null and visit_trade.is_valid(), "trade visit opened: " + event_id)
+		var trade_receipt: Dictionary = visit_trade.choose_with_wallet(trade_choice_id, funded_wallet)
+		_check(_waystation_receipt_shape_ok(trade_receipt), "trade receipt shape: " + event_id)
+		_check(trade_receipt.get("ok") == true, "trade choice succeeds: " + event_id)
+		_check(trade_receipt.get("event_id") == event_id, "trade event_id: " + event_id)
+		_check(trade_receipt.get("choice_id") == trade_choice_id, "trade choice_id: " + event_id)
+		var expected_trade_wallet := {
+			"gold": funded_wallet["gold"] + trade_outcome["gold"],
+			"scraps": funded_wallet["scraps"] + trade_outcome["scraps"],
+		}
+		_check(trade_receipt.get("wallet") == expected_trade_wallet, "trade grants exact currency reward: " + event_id)
+		_check(trade_receipt.get("service_request") == {}, "trade returns empty service_request: " + event_id)
+		_check(visit_trade.is_claimed() and not visit_trade.is_valid(), "trade consumes visit once: " + event_id)
+		var replay_trade: Dictionary = visit_trade.choose_with_wallet("leave", funded_wallet)
+		_check(replay_trade.get("ok") == false and replay_trade.get("service_request") == {}, "replay denied on trade visit: " + event_id)
+
+		# 2. Leave choice branch on fresh visit
+		var visit_leave := gate.open_visit(event_id)
+		_check(visit_leave != null and visit_leave.is_valid(), "leave visit opened: " + event_id)
+		var leave_receipt: Dictionary = visit_leave.choose_with_wallet("leave", funded_wallet)
+		_check(_waystation_receipt_shape_ok(leave_receipt), "leave receipt shape: " + event_id)
+		_check(leave_receipt.get("ok") == true, "leave choice succeeds: " + event_id)
+		_check(leave_receipt.get("event_id") == event_id, "leave event_id: " + event_id)
+		_check(leave_receipt.get("choice_id") == "leave", "leave choice_id: " + event_id)
+		_check(leave_receipt.get("wallet") == funded_wallet, "leave returns exact unchanged wallet: " + event_id)
+		_check(leave_receipt.get("service_request") == {}, "leave returns empty service_request: " + event_id)
+		_check(visit_leave.is_claimed() and not visit_leave.is_valid(), "leave consumes visit once: " + event_id)
+		var replay_leave: Dictionary = visit_leave.choose_with_wallet("leave", funded_wallet)
+		_check(replay_leave.get("ok") == false and replay_leave.get("service_request") == {}, "replay denied on leave visit: " + event_id)
+
+		# 3. Short wallet preflight failure leaves visit unclaimed; affordable retry succeeds
+		var visit_short := gate.open_visit(event_id)
+		_check(visit_short != null and visit_short.is_valid(), "short visit opened: " + event_id)
+		var short_receipt: Dictionary = visit_short.choose_with_wallet(service_choice_id, short_wallet)
+		_check(short_receipt.get("ok") == false, "unaffordable payment rejected: " + event_id)
+		_check(short_receipt.get("wallet") == short_wallet, "short wallet unchanged on refusal: " + event_id)
+		_check(short_receipt.get("service_request") == {}, "empty service_request on refusal: " + event_id)
+		_check(visit_short.is_valid() and not visit_short.is_claimed(), "visit remains unclaimed after payment refusal: " + event_id)
+
+		var retry_receipt: Dictionary = visit_short.choose_with_wallet(service_choice_id, funded_wallet)
+		_check(retry_receipt.get("ok") == true, "affordable retry succeeds on same visit: " + event_id)
+		_check(retry_receipt.get("service_request") == {"stop_type": spec["service_kind"]}, "retry returns service request: " + event_id)
+		_check(visit_short.is_claimed() and not visit_short.is_valid(), "retry consumes visit: " + event_id)
+
+		# 4. Unknown choice rejection
+		var visit_unk := gate.open_visit(event_id)
+		var unk_receipt: Dictionary = visit_unk.choose_with_wallet("bogus_choice_id", funded_wallet)
+		_check(unk_receipt.get("ok") == false, "unknown choice rejected: " + event_id)
+		_check(unk_receipt.get("wallet") == funded_wallet, "wallet unchanged on unknown choice: " + event_id)
+		_check(unk_receipt.get("service_request") == {}, "empty service_request on unknown choice: " + event_id)
+		_check(visit_unk.is_valid() and not visit_unk.is_claimed(), "visit remains unclaimed after unknown choice: " + event_id)
+
+		# 5. Malformed wallet rejection
+		var bad_wallets: Array = [
+			null,
+			"not a wallet",
+			[1, 2],
+			{"gold": -1, "scraps": 0},
+			{"gold": 0, "scraps": -1},
+			{"gold": 10.5, "scraps": 0},
+			{"gold": 10},
+			{"gold": 10, "scraps": 0, "extra": 1},
+		]
+		for bad_w: Variant in bad_wallets:
+			var bad_receipt: Dictionary = visit_unk.choose_with_wallet(service_choice_id, bad_w)
+			_check(bad_receipt.get("ok") == false, "malformed wallet rejected: " + event_id)
+			_check(bad_receipt.get("wallet") == {}, "malformed wallet returns empty dict: " + event_id)
+			_check(bad_receipt.get("service_request") == {}, "malformed wallet returns empty service_request: " + event_id)
+			_check(visit_unk.is_valid() and not visit_unk.is_claimed(), "visit remains unclaimed after bad wallet: " + event_id)
+
+	_check(run_rng.state == rng_before, "AC3 waystation tests consume zero run_rng draws")
+
+
+func _test_ac3_waystation_forgery_tampering_and_isolation(run_rng: RandomNumberGenerator) -> void:
+	var rng_before: int = run_rng.state
+	var gate := RunV3ServiceWaystationEventGate.new()
+
+	for event_id: String in EXPECTED_WAYSTATION_EVENTS.keys():
+		var authentic_rec: Dictionary = gate.get_event_record(event_id)
+		_check(not authentic_rec.is_empty(), "get_event_record returns authentic record: " + event_id)
+
+		# Detached copy isolation
+		authentic_rec["title"] = "Injected Modified Title"
+		authentic_rec["choices"][0]["outcome"]["scraps"] = 999
+		var authentic_rec2: Dictionary = gate.get_event_record(event_id)
+		_check(authentic_rec2["title"] != "Injected Modified Title", "modifying get_event_record does not alter catalog: " + event_id)
+		_check(authentic_rec2["choices"][0]["outcome"]["scraps"] != 999, "modifying choices does not alter catalog: " + event_id)
+
+		# Bound visit get_event isolation
+		var visit := gate.open_visit(event_id)
+		var v_event: Dictionary = visit.get_event()
+		v_event["title"] = "Another Mutation"
+		_check(visit.get_event()["title"] != "Another Mutation", "modifying visit.get_event does not alter bound event: " + event_id)
+
+		# Forged / tampered records
+		var base_record: Dictionary = gate.get_event_record(event_id)
+		var tampered_cases: Array[Dictionary] = []
+
+		# Case 1: Tampered service_choice_id
+		var t_choice_id := base_record.duplicate(true)
+		t_choice_id["service_choice_id"] = "leave"
+		tampered_cases.append(t_choice_id)
+
+		var t_choice_id2 := base_record.duplicate(true)
+		t_choice_id2["service_choice_id"] = base_record["choices"][1]["id"]
+		tampered_cases.append(t_choice_id2)
+
+		# Case 2: Tampered service_kind
+		var t_kind := base_record.duplicate(true)
+		t_kind["service_kind"] = "Fight"
+		tampered_cases.append(t_kind)
+
+		var t_kind_bogus := base_record.duplicate(true)
+		t_kind_bogus["service_kind"] = "UnknownKind"
+		tampered_cases.append(t_kind_bogus)
+
+		# Case 3: Tampered service outcome (made free or gain)
+		var t_free_service := base_record.duplicate(true)
+		t_free_service["choices"][0]["outcome"] = {"gold": 0, "scraps": 0}
+		tampered_cases.append(t_free_service)
+
+		var t_gain_service := base_record.duplicate(true)
+		t_gain_service["choices"][0]["outcome"] = {"gold": 10, "scraps": 0}
+		tampered_cases.append(t_gain_service)
+
+		# Case 4: Tampered trade outcome (made spend instead of gain)
+		var t_spend_trade := base_record.duplicate(true)
+		t_spend_trade["choices"][1]["outcome"] = {"gold": -5, "scraps": 0}
+		tampered_cases.append(t_spend_trade)
+
+		# Case 5: Tampered leave outcome (non-zero)
+		var t_paid_leave := base_record.duplicate(true)
+		t_paid_leave["choices"][2]["outcome"] = {"gold": 1, "scraps": 0}
+		tampered_cases.append(t_paid_leave)
+
+		# Case 6: Extra key
+		var t_extra_key := base_record.duplicate(true)
+		t_extra_key["extra_tamper_key"] = true
+		tampered_cases.append(t_extra_key)
+
+		for bad_rec: Dictionary in tampered_cases:
+			var bad_gate := RunV3ServiceWaystationEventGate.new(bad_rec)
+			_check(not bad_gate.is_valid() and not bad_gate.is_claimed(), "tampered waystation record rejected on new(): " + event_id)
+			_check(gate.open_visit(bad_rec) == null, "tampered waystation record rejected on open_visit(): " + event_id)
+
+			# Tampered catalog injection rejection
+			var replaced_cat: Dictionary = waystation_catalog_doc.duplicate(true)
+			for idx in range((replaced_cat["events"] as Array).size()):
+				if replaced_cat["events"][idx].get("id") == event_id:
+					replaced_cat["events"][idx] = bad_rec.duplicate(true)
+			var cat_gate := RunV3ServiceWaystationEventGate.new("v3_emberglass_campfire", replaced_cat)
+			_check(not cat_gate.is_catalog_valid(), "catalog with tampered record fails validation: " + event_id)
+
+	# Missing required event fails catalog validation
+	for req_id: String in EXPECTED_WAYSTATION_EVENTS.keys():
+		var missing_cat: Dictionary = waystation_catalog_doc.duplicate(true)
+		var filtered: Array = []
+		for ev_raw: Variant in missing_cat["events"]:
+			if (ev_raw as Dictionary).get("id") != req_id:
+				filtered.append(ev_raw)
+		missing_cat["events"] = filtered
+		var missing_gate := RunV3ServiceWaystationEventGate.new("v3_emberglass_campfire", missing_cat)
+		_check(not missing_gate.is_catalog_valid(), "catalog missing " + req_id + " fails validation")
+
+	# Duplicate event ID fails catalog validation
+	var dup_cat: Dictionary = waystation_catalog_doc.duplicate(true)
+	var first_rec: Dictionary = (dup_cat["events"] as Array)[0].duplicate(true)
+	(dup_cat["events"] as Array).append(first_rec)
+	var dup_gate := RunV3ServiceWaystationEventGate.new("v3_emberglass_campfire", dup_cat)
+	_check(not dup_gate.is_catalog_valid(), "catalog with duplicate event fails validation")
+
+	# Seeded selection test with independent RNG
+	var pick_rng := RandomNumberGenerator.new()
+	pick_rng.seed = 445566
+	var pick_res: Dictionary = gate.select_event(pick_rng)
+	_check(pick_res.get("ok") == true, "select_event succeeds with seeded RNG")
+	_check(EXPECTED_WAYSTATION_EVENTS.has(pick_res.get("event", {}).get("id")), "select_event picked valid waystation")
+
+	_check(run_rng.state == rng_before, "waystation tamper and isolation checks consume zero run_rng draws")

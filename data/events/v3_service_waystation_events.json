@@ -1,0 +1,64 @@
+{
+  "events": [
+    {
+      "id": "v3_emberglass_campfire",
+      "title": "The Emberglass Hearth",
+      "description": "Moth-winged lanterns surround a cracked brass firebox.",
+      "service_choice_id": "light_the_embers",
+      "service_kind": "Campfire",
+      "choices": [
+        { "id": "light_the_embers", "text": "Light the embers (spend 1 scrap, Campfire)", "outcome": { "gold": 0, "scraps": -1 } },
+        { "id": "sell_cinders", "text": "Sell cinders (gain 12 gold)", "outcome": { "gold": 12, "scraps": 0 } },
+        { "id": "leave", "text": "Leave", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_threadmill_sewing_circle",
+      "title": "The Threadmill Loft",
+      "description": "A huge brass needle wheel hauls moonlit cloth through a stitched room.",
+      "service_choice_id": "borrow_spools",
+      "service_kind": "SewingCircle",
+      "choices": [
+        { "id": "borrow_spools", "text": "Borrow spools (spend 12 gold, Sewing Circle)", "outcome": { "gold": -12, "scraps": 0 } },
+        { "id": "untie_scraps", "text": "Untie scraps (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "leave", "text": "Leave", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_inkblack_unpicker_van",
+      "title": "The Inkblack Unpicker Van",
+      "description": "Silver scissors hang behind an oxblood caravan's velvet curtain.",
+      "service_choice_id": "hire_unpicker",
+      "service_kind": "Unpicker",
+      "choices": [
+        { "id": "hire_unpicker", "text": "Hire unpicker (spend 10 gold, Unpicker)", "outcome": { "gold": -10, "scraps": 0 } },
+        { "id": "sell_trim", "text": "Sell trim (gain 1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "leave", "text": "Leave", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_briar_button_mending_bench",
+      "title": "The Briar-Button Hearth",
+      "description": "A giant button kettle glows beside a bramble-wrapped quilt bench.",
+      "service_choice_id": "fuel_button_fire",
+      "service_kind": "Campfire",
+      "choices": [
+        { "id": "fuel_button_fire", "text": "Fuel button fire (spend 2 scraps, Campfire)", "outcome": { "gold": 0, "scraps": -2 } },
+        { "id": "take_rivets", "text": "Take rivets (gain 14 gold)", "outcome": { "gold": 14, "scraps": 0 } },
+        { "id": "leave", "text": "Leave", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_moonlace_darning_parlor",
+      "title": "The Moonlace Parlour",
+      "description": "A button-eyed seam-keeper rents a lace loom below a plum lantern.",
+      "service_choice_id": "sew_at_parlor",
+      "service_kind": "SewingCircle",
+      "choices": [
+        { "id": "sew_at_parlor", "text": "Sew at parlour (spend 2 scraps, Sewing Circle)", "outcome": { "gold": 0, "scraps": -2 } },
+        { "id": "trade_lace", "text": "Trade lace (gain 10 gold)", "outcome": { "gold": 10, "scraps": 0 } },
+        { "id": "leave", "text": "Leave", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    }
+  ]
+}
