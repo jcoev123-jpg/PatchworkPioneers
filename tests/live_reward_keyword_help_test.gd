@@ -1570,7 +1570,7 @@ func _help_in_fixture(fixture: Dictionary, kind: String) -> void:
 		"mounted three authored choices and Skip")
 	var card := panel.choices_container.get_child(slot) as PanelContainer
 	var help := card.get_node_or_null("CardMargin/CardContent/CardHeader/HelpButton") as Button
-	_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
+	_check(help != null and help.text == "Details" and help.focus_mode == Control.FOCUS_ALL,
 		"keyword offer gets styled Help control")
 	if help == null:
 		panel.close_rewards()
@@ -1601,7 +1601,7 @@ func _help_in_fixture(fixture: Dictionary, kind: String) -> void:
 	var title := overlay.get_node("HelpContent/HelpTitle") as Label
 	_check(title.text.contains(definition["display_name"]) and not title.text.contains("_"),
 		"popup uses current authored human card name")
-	var list := overlay.get_node("HelpContent/KeywordScroll/KeywordLines") as VBoxContainer
+	var list := overlay.get_node("HelpContent/KeywordScroll/DetailBody/KeywordLines") as VBoxContainer
 	var entries := CardKeywordGlossary.describe(definition)
 	_check(list.get_child_count() == entries.size() and entries.size() > 0,
 		"only matching offered keywords in popup")
@@ -1723,7 +1723,7 @@ func _special_help(fixture: Dictionary, slot: int) -> void:
 	var before := _snapshot(fixture)
 	var card := panel.choices_container.get_child(slot) as PanelContainer
 	var help := card.get_node_or_null("CardMargin/CardContent/CardHeader/HelpButton") as Button
-	_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
+	_check(help != null and help.text == "Details" and help.focus_mode == Control.FOCUS_ALL,
 		"%s offer gains an authored Help tab" % offered_id)
 	if help == null:
 		panel.close_rewards()
@@ -1736,7 +1736,7 @@ func _special_help(fixture: Dictionary, slot: int) -> void:
 		panel.close_rewards()
 		return
 	var entries := CardKeywordGlossary.describe(definition)
-	var list := overlay.get_node("HelpContent/KeywordScroll/KeywordLines") as VBoxContainer
+	var list := overlay.get_node("HelpContent/KeywordScroll/DetailBody/KeywordLines") as VBoxContainer
 	_check(entries.size() == 1 and list.get_child_count() == entries.size(),
 		"%s Help shows exactly its authored special rule" % offered_id)
 	var text := ""
@@ -1847,7 +1847,7 @@ func _hemorrhage_help(fixture: Dictionary) -> void:
 	var card := panel.choices_container.get_child(slot) as PanelContainer
 	var help := card.get_node_or_null(
 		"CardMargin/CardContent/CardHeader/HelpButton") as Button
-	_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
+	_check(help != null and help.text == "Details" and help.focus_mode == Control.FOCUS_ALL,
 		"offered Hemorrhage Hem gains the real Help tab")
 	if help == null or entries.size() != 1:
 		panel.close_rewards()
@@ -1859,7 +1859,7 @@ func _hemorrhage_help(fixture: Dictionary) -> void:
 	if overlay == null:
 		panel.close_rewards()
 		return
-	var list := overlay.get_node("HelpContent/KeywordScroll/KeywordLines") as VBoxContainer
+	var list := overlay.get_node("HelpContent/KeywordScroll/DetailBody/KeywordLines") as VBoxContainer
 	_check(list.get_child_count() == 1, "Hemorrhage Hem Help shows exactly its doubling row")
 	var text := ""
 	if list.get_child_count() > 0:
@@ -1965,7 +1965,7 @@ func _pin_and_pound_help(fixture: Dictionary) -> void:
 	var card := panel.choices_container.get_child(slot) as PanelContainer
 	var help := card.get_node_or_null(
 		"CardMargin/CardContent/CardHeader/HelpButton") as Button
-	_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
+	_check(help != null and help.text == "Details" and help.focus_mode == Control.FOCUS_ALL,
 		"offered Pin and Pound gains the real Help tab")
 	if help == null or entries.size() != 1:
 		panel.close_rewards()
@@ -1980,7 +1980,7 @@ func _pin_and_pound_help(fixture: Dictionary) -> void:
 	var title := overlay.get_node("HelpContent/HelpTitle") as Label
 	_check(title.text.contains("Pin and Pound") and not title.text.contains("_"),
 		"Pin and Pound popup uses the authored human card name")
-	var list := overlay.get_node("HelpContent/KeywordScroll/KeywordLines") as VBoxContainer
+	var list := overlay.get_node("HelpContent/KeywordScroll/DetailBody/KeywordLines") as VBoxContainer
 	_check(list.get_child_count() == 1,
 		"Pin and Pound Help shows exactly its authored two-hit row")
 	var text := ""
@@ -2053,7 +2053,7 @@ func _energy_help(fixture: Dictionary, kind: String) -> void:
 			"catalog-backed single energy row for offered " + card_id)
 		var card := panel.choices_container.get_child(slot) as PanelContainer
 		var help := card.get_node_or_null("CardMargin/CardContent/CardHeader/HelpButton") as Button
-		_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
+		_check(help != null and help.text == "Details" and help.focus_mode == Control.FOCUS_ALL,
 			"%s energy offer gains the real Help tab" % card_id)
 		if help == null or entries.size() != 1:
 			continue
@@ -2063,7 +2063,7 @@ func _energy_help(fixture: Dictionary, kind: String) -> void:
 			"mouse Help opens the %s energy popup" % card_id)
 		if overlay == null:
 			continue
-		var list := overlay.get_node("HelpContent/KeywordScroll/KeywordLines") as VBoxContainer
+		var list := overlay.get_node("HelpContent/KeywordScroll/DetailBody/KeywordLines") as VBoxContainer
 		_check(list.get_child_count() == 1, "%s Help shows exactly its energy row" % card_id)
 		var text := ""
 		if list.get_child_count() > 0:
@@ -2208,7 +2208,7 @@ func _status_help(fixture: Dictionary) -> void:
 		var card := panel.choices_container.get_child(slot) as PanelContainer
 		var help := card.get_node_or_null(
 			"CardMargin/CardContent/CardHeader/HelpButton") as Button
-		_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
+		_check(help != null and help.text == "Details" and help.focus_mode == Control.FOCUS_ALL,
 			"offered %s gains the real Help tab" % card_id)
 		if help == null or keyword_rows.size() != 1:
 			continue
@@ -2218,7 +2218,7 @@ func _status_help(fixture: Dictionary) -> void:
 			"mouse Help opens the %s popup" % card_id)
 		if overlay == null:
 			continue
-		var list := overlay.get_node("HelpContent/KeywordScroll/KeywordLines") as VBoxContainer
+		var list := overlay.get_node("HelpContent/KeywordScroll/DetailBody/KeywordLines") as VBoxContainer
 		_check(entries.size() > 0 and list.get_child_count() == entries.size(),
 			"%s Help lists exactly its catalog rows" % card_id)
 		var shown := ""
@@ -2305,8 +2305,10 @@ func _run() -> void:
 		await _frames()
 		for i in range(3):
 			if no_keyword["receipt"]["offers"][i]["id"] == "warden_strike":
-				_check(panel.choices_container.get_child(i).get_node_or_null("HelpButton") == null,
-					"real mounted no-keyword Strike has no Help control")
+				var details := panel.choices_container.get_child(i).get_node_or_null(
+					"CardMargin/CardContent/CardHeader/HelpButton") as Button
+				_check(details != null and details.text == "Details" and not details.disabled,
+					"real mounted no-keyword Strike has its universal Details control")
 		_check(requests.is_empty(), "no-keyword Help inspection does not request reward")
 		panel.close_rewards()
 	# The seeded offered Snip and Ricochet cards now explain their special rule in
