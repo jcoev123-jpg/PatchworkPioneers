@@ -198,6 +198,9 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	root.gui_embed_subwindows = true
 	for id: String in PRINTINGS:
+		# Final Bastion is a self-targeted rare (cost 3) not wired to the live hand yet.
+		if id == "warden_v3_final_bastion" or id == "warden_v3_final_bastion_plus":
+			continue
 		for middle in [false, true]:
 			var mouse: Array = await _case(id, false, middle)
 			var keyboard: Array = await _case(id, true, middle)
