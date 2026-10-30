@@ -12,6 +12,7 @@ const OXBLOOD := Color("#713a45")
 const INK := Color("#171c27")
 const DIM := Color("#c1b6ae")
 const PANEL_SIZE := Vector2(880, 600)
+const LEAVE_TEXT := "0 Leave · free"
 
 class Stitches extends Control:
 	func _ready() -> void:
@@ -51,9 +52,9 @@ func _ready() -> void:
 		hero_labels.append(_label("", Vector2(70, 161 + i * 97),
 			Vector2(740, 70), 26, CREAM))
 	heal_button = _button("Heal", Vector2(48, 498), Vector2(373, 72), OXBLOOD)
-	leave_button = _button("Leave", Vector2(459, 498), Vector2(373, 72), TEAL)
+	leave_button = _button(LEAVE_TEXT, Vector2(459, 498), Vector2(373, 72), TEAL)
 	heal_button.tooltip_text = "1 → Heal"
-	leave_button.tooltip_text = "2 → Leave"
+	leave_button.tooltip_text = "0 → Leave (2 also works)"
 	_refresh()
 	_focus_default()
 
@@ -226,7 +227,7 @@ func _hero_text(i: int) -> String:
 
 func _display_current() -> bool:
 	if title_label == null or title_label.text != "CAMPFIRE" \
-			or heal_button.text != "Heal" or leave_button.text != "Leave":
+			or heal_button.text != "Heal" or leave_button.text != LEAVE_TEXT:
 		return false
 	if hero_labels.size() != 3:
 		return false
@@ -290,10 +291,11 @@ func _owns_focus() -> bool:
 	return focus_owner != null and (focus_owner == self or is_ancestor_of(focus_owner))
 
 
-## Physical 1/2 hands the numbered action to the same generation-bound pressed
-## callback the mouse and focus paths use, so the bound visit, snapshot,
-## submission, visibility and disabled state still decide. Closed, hidden,
-## spent, disabled, modified, unfocused and unnumbered keys are inert.
+## Physical 1/0 hands the numbered action to the same generation-bound pressed
+## callback the mouse and focus paths use (2 stays a working Leave alias), so
+## the bound visit, snapshot, submission, visibility and disabled state still
+## decide. Closed, hidden, spent, disabled, modified, unfocused and unnumbered
+## keys are inert.
 func _input(event: InputEvent) -> void:
 	if not event is InputEventKey or event.echo or not event.pressed:
 		return
@@ -311,7 +313,8 @@ func _input(event: InputEvent) -> void:
 			return
 		if _request("heal", _epoch, _visit):
 			get_viewport().set_input_as_handled()
-	elif key.keycode == KEY_2 or key.keycode == KEY_KP_2:
+	elif key.keycode == KEY_2 or key.keycode == KEY_KP_2 \
+			or key.keycode == KEY_0 or key.keycode == KEY_KP_0:
 		if not is_inside_tree() or not is_visible_in_tree():
 			return
 		if _submitted or _visit == null or _snapshot.is_empty() or not _source_current() or not _display_current():

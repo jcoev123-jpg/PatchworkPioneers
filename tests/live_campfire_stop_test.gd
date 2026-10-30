@@ -59,8 +59,8 @@ func _camp_enter(atlas: bool) -> void:
 	for child in app.campfire_view.get_children():
 		if child is Button:
 			actions.append(child.text)
-	_check(actions == ["Heal", "Leave"] and not is_instance_valid(app.rest_view)
-		and not is_instance_valid(app.shop_view), "only Heal and Leave mounted")
+	_check(actions == ["Heal", "0 Leave · free"] and not is_instance_valid(app.rest_view)
+		and not is_instance_valid(app.shop_view), "only Heal and Leave mounted, Leave shows primary 0")
 	var viewport := Rect2(Vector2.ZERO, Vector2(1280, 720))
 	_check(viewport.encloses(app.campfire_view.get_global_rect())
 		and not app.campfire_view.heal_button.get_global_rect().intersects(app.campfire_view.leave_button.get_global_rect()),
@@ -217,7 +217,7 @@ func _camp_scenario(connected: bool, heal: bool, keyboard: bool, opening_rest: b
 	var callback: Callable = app.campfire_view._connections[button]
 	if keyboard:
 		button.grab_focus()
-		await _key(KEY_SPACE)
+		await _key(KEY_1 if heal else KEY_0)
 	else:
 		await _click(button)
 	await _frames()

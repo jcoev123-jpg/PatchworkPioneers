@@ -166,10 +166,12 @@ func _layout_and_previews() -> void:
 		and panel.title_label.get_theme_font_size("font_size") >= 35
 		and panel.get_theme_default_font_size() > 0, "large readable Campfire title")
 	_check(panel.hero_labels.size() == 3 and panel.heal_button.text == "Heal"
-		and panel.leave_button.text == "Leave", "exactly three ribbons and two actions")
+		and panel.leave_button.text == "0 Leave · free",
+		"exactly three ribbons and two actions, Leave shows its primary 0")
 	_check(panel.heal_button.tooltip_text.contains("1 → Heal")
-		and panel.leave_button.tooltip_text.contains("2 → Leave"),
-		"discoverable shortcut hints in button tooltips, captions unchanged")
+		and panel.leave_button.tooltip_text.contains("0 → Leave")
+		and panel.leave_button.tooltip_text.contains("2 also works"),
+		"tooltips advertise the primary 0 shortcut and the retained 2 alias")
 	var all_buttons := panel.find_children("*", "Button", true, false)
 	_check(all_buttons.size() == 2 and all_buttons.has(panel.heal_button)
 		and all_buttons.has(panel.leave_button), "no hidden extra actionable choices")
@@ -358,6 +360,9 @@ func _fail_closed() -> void:
 	panel.heal_button.text = "Buy for 0 gold"
 	_reject_without_mutation(original, "forged choice caption")
 	panel.heal_button.text = "Heal"
+	panel.leave_button.text = "0 Leave · free!"
+	_reject_without_mutation(original, "forged leave caption")
+	panel.leave_button.text = "0 Leave · free"
 	panel.hide()
 	_reject_without_mutation(original, "hidden view")
 	panel.show()
@@ -413,6 +418,8 @@ func _keyboard_positive() -> void:
 		{"action": "heal", "key": KEY_KP_1},
 		{"action": "leave", "key": KEY_2},
 		{"action": "leave", "key": KEY_KP_2},
+		{"action": "leave", "key": KEY_0},
+		{"action": "leave", "key": KEY_KP_0},
 	]:
 		var source_fixture := _party([35, 18, 0])
 		var visit := RunCampfireVisit.new(NODE, source_fixture)
@@ -527,6 +534,39 @@ func _default_focus() -> void:
 			and not Controller.submit(full, leave_intent).get("ok"),
 			"default Leave consumes its visit exactly once")
 	pre.queue_free()
+	await _settle()
+	# The same full-HP Leave completes through the primary 0 shortcut on a
+	# separately mounted Campfire while the spent panel stays inert.
+	var keyed := RunCampfireVisit.new(NODE, _party([40, 30, 26]))
+	var keyed_before: Dictionary = keyed.read_state()
+	var keyed_panel: LiveCampfirePanel = LiveCampfirePanel.new()
+	var keyed_intents: Array[Dictionary] = []
+	keyed_panel.decision_requested.connect(func(intent: Dictionary): keyed_intents.append(intent))
+	keyed_panel.bind(keyed)
+	root.add_child(keyed_panel)
+	await _settle()
+	_check(keyed_panel.is_visible_in_tree() and keyed_panel.leave_button.has_focus()
+		and not keyed_panel.leave_button.disabled and keyed_panel.heal_button.disabled,
+		"keyed full-HP bind focuses the enabled Leave with Heal disabled")
+	await _activate(keyed_panel.leave_button, true, KEY_0)
+	_check(keyed_intents.size() == 1 and keyed.read_state() == keyed_before
+		and intents.is_empty(),
+		"physical 0 on the focused full-HP Leave emits one intent and nothing for the spent panel")
+	if keyed_intents.size() == 1:
+		var keyed_intent: Dictionary = keyed_intents[0]
+		_check(keyed_intent.get("action") == "leave" and keyed_intent.get("source_visit") == keyed
+			and keyed_intent.get("node_id") == NODE
+			and keyed_intent.get("expected_heroes") == keyed_before.heroes,
+			"keyed full-HP 0 intent is the authentic bound instance/node/roster")
+		var keyed_result: Dictionary = Controller.submit(keyed, keyed_intent)
+		_check(keyed_result.get("ok") == true and keyed_result.get("decision") == "leave"
+			and keyed_result.get("heroes") == keyed_before.heroes
+			and keyed.read_state().heroes == keyed_before.heroes
+			and keyed.read_state().status == "left",
+			"keyed full-HP Leave settles once and changes no hero field")
+		_check(not Controller.submit(keyed, keyed_intent).get("ok"),
+			"keyed full-HP 0 receipt is once-only")
+	keyed_panel.queue_free()
 	await _settle()
 	# After mounting, a full-health rebind keeps Heal disabled: only the
 	# genuine Leave can act, and no input path may forge a Heal decision.
@@ -684,7 +724,7 @@ func _focus_outside_ignored() -> void:
 	seed(266)
 	var expected_focus_draw := randi()
 	seed(266)
-	for key in [KEY_1, KEY_2, KEY_KP_1, KEY_KP_2]:
+	for key in [KEY_1, KEY_2, KEY_KP_1, KEY_KP_2, KEY_0, KEY_KP_0]:
 		await _press(key)
 		var label := "focus-outside key " + str(key)
 		_check(intents.is_empty(), label + ": no decision signal")
@@ -708,11 +748,16 @@ func _focused_shortcuts() -> void:
 		{"action": "heal", "key": KEY_KP_1, "focus": "heal"},
 		{"action": "leave", "key": KEY_2, "focus": "leave"},
 		{"action": "leave", "key": KEY_KP_2, "focus": "leave"},
+		{"action": "leave", "key": KEY_0, "focus": "leave"},
+		{"action": "leave", "key": KEY_KP_0, "focus": "leave"},
 	]:
 		await _focused_shortcut(fixture["focus"], fixture["key"], fixture["action"])
 	# Either Campfire control owns the shortcuts, not only its own action.
 	await _focused_shortcut("leave", KEY_1, "heal")
 	await _focused_shortcut("heal", KEY_2, "leave")
+	# 0 is Leave on either focused control and never invokes Heal.
+	await _focused_shortcut("heal", KEY_0, "leave")
+	await _focused_shortcut("heal", KEY_KP_0, "leave")
 
 
 ## The focused Campfire still accepts each number key exactly once with an
@@ -810,9 +855,10 @@ func _keyboard_negative() -> void:
 	# Modified keys must be inert.
 	for modifier_key in [KEY_SHIFT, KEY_CTRL, KEY_ALT, KEY_META]:
 		await _check_key_rejected(visit, KEY_1, "modified key " + str(modifier_key), false, modifier_key)
+		await _check_key_rejected(visit, KEY_0, "modified leave key " + str(modifier_key), false, modifier_key)
 	
 	# Echo/release/unrelated keys must be inert.
-	for k in [KEY_1, KEY_2, KEY_KP_1, KEY_KP_2]:
+	for k in [KEY_1, KEY_2, KEY_KP_1, KEY_KP_2, KEY_0, KEY_KP_0]:
 		await _check_key_rejected(visit, k, "pressed echo key " + str(k), true)
 		await _check_key_rejected(visit, k, "released key " + str(k), false, KEY_NONE, false)
 		
@@ -822,22 +868,30 @@ func _keyboard_negative() -> void:
 	var invalid_visit := RunCampfireVisit.new("  ", _party([35, 18, 0]))
 	await _bind(invalid_visit)
 	await _check_key_rejected(invalid_visit, KEY_1, "invalid visit")
+	await _check_key_rejected(invalid_visit, KEY_0, "invalid visit 0")
+	await _check_key_rejected(invalid_visit, KEY_KP_0, "invalid visit keypad 0")
 	
 	var consumed := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
 	consumed.leave(consumed.read_state().node_id, consumed.read_state().heroes)
 	await _bind(consumed)
 	await _check_key_rejected(consumed, KEY_1, "consumed visit")
+	await _check_key_rejected(consumed, KEY_0, "consumed visit 0")
+	await _check_key_rejected(consumed, KEY_KP_0, "consumed visit keypad 0")
 	
 	# Hidden panel
 	await _bind(visit)
 	panel.hide()
 	await _check_key_rejected(visit, KEY_1, "hidden panel")
+	await _check_key_rejected(visit, KEY_0, "hidden panel 0")
+	await _check_key_rejected(visit, KEY_KP_0, "hidden panel keypad 0")
 	panel.show()
 	await _settle()
 	
 	# Detached panel
 	root.remove_child(panel)
 	await _check_key_rejected(visit, KEY_1, "detached panel")
+	await _check_key_rejected(visit, KEY_0, "detached panel 0")
+	await _check_key_rejected(visit, KEY_KP_0, "detached panel keypad 0")
 	root.add_child(panel)
 	await _settle()
 	
@@ -845,15 +899,25 @@ func _keyboard_negative() -> void:
 	panel.heal_button.disabled = true
 	await _check_key_rejected(visit, KEY_1, "disabled button")
 	panel.heal_button.disabled = false
+	panel.leave_button.grab_focus()
+	_check(panel.leave_button.has_focus(), "leave-shortcut negative owns Campfire focus")
+	panel.leave_button.disabled = true
+	await _check_key_rejected(visit, KEY_0, "disabled leave button 0")
+	await _check_key_rejected(visit, KEY_KP_0, "disabled leave button keypad 0")
+	await _check_key_rejected(visit, KEY_2, "disabled leave button alias 2")
+	await _check_key_rejected(visit, KEY_KP_2, "disabled leave button alias keypad 2")
+	panel.leave_button.disabled = false
 	
 	# Source snapshot / node drift
 	var before_drift := visit.read_state()
 	visit._heroes[1]["statuses"]["bleed"]["stacks"] = 999
 	await _check_key_rejected(visit, KEY_1, "source roster drift")
+	await _check_key_rejected(visit, KEY_0, "source roster drift 0")
 	visit._heroes = before_drift.heroes.duplicate(true)
 	
 	visit._node_id = "forged_node"
 	await _check_key_rejected(visit, KEY_1, "source node drift")
+	await _check_key_rejected(visit, KEY_0, "source node drift 0")
 	visit._node_id = NODE
 	
 	# Already submitted
@@ -871,6 +935,10 @@ func _keyboard_negative() -> void:
 	await _settle()
 	
 	await _check_key_rejected(visit, KEY_1, "already submitted visit")
+	await _check_key_rejected(visit, KEY_0, "already submitted visit 0")
+	await _check_key_rejected(visit, KEY_KP_0, "already submitted visit keypad 0")
+	await _check_key_rejected(visit, KEY_2, "already submitted visit alias 2")
+	await _check_key_rejected(visit, KEY_KP_2, "already submitted visit alias keypad 2")
 	
 	# Rebound visits and retired callbacks
 	await _bind(visit)
