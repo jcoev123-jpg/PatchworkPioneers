@@ -676,7 +676,7 @@ func _check_focus_style(button: Button, label: String) -> void:
 ## burlap inset, then check the entire visible vertical family in screen space.
 func _check_skip_and_vertical_fit(label: String) -> void:
 	var skip := panel.skip_button
-	_check(skip.text == "Skip — take no card",
+	_check(skip.text == "0 Skip — take no card",
 		label + " preserves every word of the Skip action")
 	var font: Font = skip.get_theme_font("font")
 	if font == null:
@@ -3052,7 +3052,7 @@ func _test_no_keyword_card_without_help(base: Dictionary, kind: String) -> void:
 		"the three resolved owner labels cover all three heroes: " + str(owners))
 	var actions := panel.get_choice_buttons()
 	_check(actions.size() == 4 and actions[3].theme_type_variation == &"PatchHeadingButton"
-		and actions[3].text == "Skip — take no card",
+		and actions[3].text == "0 Skip — take no card",
 		"%s Skip keeps its complete display label" % kind)
 	if first_help != null:
 		await _mouse(first_help)
@@ -3295,6 +3295,158 @@ func _test_all_details(is_elite: bool) -> void:
 	await _frames()
 
 
+## Inject actual SceneTree key events, not a direct _input call or a stand-in
+## button. This also exercises modifier/release/repeat rejection.
+func _shortcut_key_event(key: Key, down: bool, repeated := false,
+		shift := false, ctrl := false, alt := false, meta := false) -> void:
+	var event := InputEventKey.new()
+	event.keycode = key
+	event.pressed = down
+	event.echo = repeated
+	event.shift_pressed = shift
+	event.ctrl_pressed = ctrl
+	event.alt_pressed = alt
+	event.meta_pressed = meta
+	root.push_input(event, true)
+	await _frames()
+
+
+func _shortcut_pool_snapshot(fixture: Dictionary) -> Dictionary:
+	return {
+		"rng": fixture["rng"].state,
+		"deck": fixture["deck"].duplicate(true),
+		"prepared": fixture["service"].prepare(),
+		"claimed": fixture["service"]._choice.is_claimed(),
+	}
+
+
+func _test_number_shortcuts(is_elite: bool) -> void:
+	var fixture := _prepared_pool(is_elite, 18203)
+	var receipt: Dictionary = fixture.get("receipt", {})
+	_check(receipt.get("ok", false) and (receipt.get("offers", []) as Array).size() == 3,
+		"numbered selection has three genuinely prepared weighted offers")
+	if not receipt.get("ok", false) or (receipt.get("offers", []) as Array).size() != 3:
+		return
+	var node_id := "keys_elite" if is_elite else "keys_fight"
+	var kind := "Elite" if is_elite else "Fight"
+	var before := _shortcut_pool_snapshot(fixture)
+	var keys: Array[Key] = [KEY_1, KEY_2, KEY_3, KEY_0,
+		KEY_KP_1, KEY_KP_2, KEY_KP_3, KEY_KP_0]
+	for pass_index in range(keys.size()):
+		var index := pass_index % 4
+		var key := keys[pass_index]
+		var selected_id := "" if index == 3 else String(receipt["offers"][index]["id"])
+		requests.clear()
+		_check(panel.open_rewards(node_id, kind, receipt),
+			"%s numbered pass %d opens real prepared reward" % [kind, pass_index])
+		if not panel.has_open_rewards():
+			continue
+		await _frames()
+		_check(panel.is_visible_in_tree() and panel.choices_container.get_child_count() == 3,
+			"%s numbered pass has mounted visible cards" % kind)
+		var actions := panel.get_choice_buttons()
+		_check(actions.size() == 4, kind + " numbered choice includes Skip")
+		if actions.size() != 4:
+			panel.close_rewards()
+			continue
+		if pass_index == 0:
+			_validate_pool(receipt, kind, node_id)
+			_check_skip_and_vertical_fit(kind + " numbered")
+		var screen := Rect2(Vector2.ZERO, Vector2(root.size))
+		for slot in range(4):
+			var button := actions[slot]
+			var expected_caption := "0 Skip — take no card" if slot == 3 \
+				else "%d Choose card" % (slot + 1)
+			_check(button.text == expected_caption and button.is_visible_in_tree(),
+				"%s action %d displays full numbered sewn caption" % [kind, slot])
+			var font := button.get_theme_font("font")
+			if font == null:
+				font = ThemeDB.fallback_font
+			var font_size := button.get_theme_font_size("font_size")
+			var glyph_width := font.get_string_size(button.text,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+			_check(button.size.x >= glyph_width + float(panel.BUTTON_EDGE + 8) * 2.0
+				and screen.encloses(button.get_global_rect()),
+				"%s numbered text fits inside the visible button's sewn seams %d" % [kind, slot])
+			if slot < 3:
+				var content := panel.choices_container.get_child(slot).get_node(
+					"CardMargin/CardContent") as VBoxContainer
+				var name := content.get_node("NameLabel") as Label
+				var rules := content.get_node("RulesLabel") as Label
+				var cost := content.get_node("CostButton") as Control
+				var marks := content.get_node("PositionPips") as Control
+				_check(not button.get_global_rect().intersects(name.get_global_rect())
+					and not button.get_global_rect().intersects(rules.get_global_rect())
+					and not button.get_global_rect().intersects(cost.get_global_rect())
+					and not button.get_global_rect().intersects(marks.get_global_rect()),
+					"%s numbered cue does not cover authored name/rules/cost/marks %d" % [kind, slot])
+		# No unrelated, repeated, modified or release-only input selects a card.
+		if pass_index == 0:
+			await _shortcut_key_event(KEY_1, false)
+			await _shortcut_key_event(KEY_1, true, true)
+			await _shortcut_key_event(KEY_1, true, false, true)
+			await _shortcut_key_event(KEY_1, true, false, false, true)
+			await _shortcut_key_event(KEY_1, true, false, false, false, true)
+			await _shortcut_key_event(KEY_1, true, false, false, false, false, true)
+			await _key(KEY_4)
+			await _key(KEY_A)
+			_check(requests.is_empty() and not panel._awaiting_ack,
+				kind + " key-up, echo, modifiers and unrelated keys cannot choose")
+			panel.hide()
+			await _key(KEY_1)
+			panel.show()
+			await _frames()
+			_check(requests.is_empty() and not panel._awaiting_ack,
+				kind + " mounted but invisible panel ignores shortcut")
+			var invoker := panel._help_buttons[0] as Button
+			invoker.pressed.emit()
+			await _frames()
+			_check(panel._help_overlay != null,
+				kind + " real Details overlay opens before key guard test")
+			if panel._help_overlay != null:
+				for blocked_key in [KEY_1, KEY_2, KEY_3, KEY_0,
+						KEY_KP_1, KEY_KP_2, KEY_KP_3, KEY_KP_0]:
+					await _key(blocked_key)
+				_check(requests.is_empty() and not panel._awaiting_ack,
+					kind + " all number keys ignored while Details is active")
+				await _key(KEY_ESCAPE)
+				_check(panel._help_overlay == null and invoker.has_focus(),
+					kind + " Escape closes Details and restores the invoker's focus")
+		_check(requests.is_empty(), kind + " pre-choice input never requested")
+		await _key(key)
+		_check(requests == [{"node": node_id, "card": selected_id}],
+			"%s key %s selects only its exact displayed prepared ID" % [kind, str(key)])
+		_check(panel._awaiting_ack and actions.all(
+			func(button: Button) -> bool: return button.disabled),
+			kind + " numbered choice awaits host ack with all buttons locked")
+		await _key(key)
+		await _key(KEY_0 if index != 3 else KEY_1)
+		_check(requests.size() == 1, kind + " pending ack ignores repeats/other keys")
+		if pass_index == 0:
+			panel.acknowledge(false)
+			_check(actions.all(func(button: Button) -> bool: return not button.disabled),
+				kind + " rejected numbered request re-enables same actions")
+			await _key(key)
+			_check(requests.size() == 2 and requests[1] ==
+				{"node": node_id, "card": selected_id},
+				kind + " rejected shortcut retries same prepared ID once")
+		panel.acknowledge(true)
+		await _key(key)
+		await _key(KEY_0)
+		_check(panel._accepted and not panel._awaiting_ack
+			and actions.all(func(button: Button) -> bool: return button.disabled)
+			and requests.size() == (2 if pass_index == 0 else 1),
+			kind + " accepted acknowledgement permanently locks numbered choices")
+		_check(_shortcut_pool_snapshot(fixture) == before and panel._receipt == receipt,
+			kind + " numbered selection leaves prepared reward, RNG and ledger untouched")
+		panel.close_rewards()
+		await _key(key)
+		_check(requests.size() == (2 if pass_index == 0 else 1)
+			and not panel.has_open_rewards() and not panel.visible,
+			kind + " closed reward ignores all old key events")
+		await _frames()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var loaded := load(SCENE) as PackedScene
@@ -3351,6 +3503,8 @@ func _run() -> void:
 		await _test_three_tier_rarities(original_fight)
 	await _test_all_details(false)
 	await _test_all_details(true)
+	await _test_number_shortcuts(false)
+	await _test_number_shortcuts(true)
 	# Fresh global seeded stream must also survive panel interactions.
 	seed(3941)
 	var expected := randi()

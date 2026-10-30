@@ -72,7 +72,7 @@ custom_minimum_size = Vector2(0, 54)
 layout_mode = 2
 size_flags_horizontal = 4
 focus_mode = 2
-text = "Skip — take no card"
+text = "0 Skip — take no card"
 
 [node name="BottomStitches" type="Label" parent="PaperPanel/ContentMargin/RewardContent"]
 layout_mode = 2
