@@ -1217,8 +1217,22 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 	var mitt_quote := {}
 	if _fray != null and id in CombatAttackCards.ATTACK_IDS:
 		mitt_quote = _fray.quote_starter_hit(id, position, 1, discount)
+	# The live hand owns the single turn-synchronized Heirloom; this
+	# presenter owns the real Pinned identity and committed target.
+	var needle_rules: CombatHeirloomPatchTriggers = null
+	var needle_quote := {}
+	if id in ["warden_strike", "warden_strike_plus"] and position > 0:
+		var hand = get_parent().get_node_or_null("LiveSupportHand")
+		if hand != null:
+			var current: CombatHeirloomPatchTriggers = hand.current_attack_heirloom(_deck, party)
+			if current != null and current._pinned == _pinned and current._enemies == enemies:
+				var offered: Dictionary = current.quote_needle_hit("warden", position)
+				if offered.get("ok", false):
+					needle_rules = current
+					needle_quote = offered
 	var committed := _play.play_attack(_deck, party, enemies, id, position,
-		owner_statuses, enemy_statuses, discount, _fray, mitt_quote)
+		owner_statuses, enemy_statuses, discount, _fray, mitt_quote,
+		needle_rules, needle_quote)
 	if committed.get("ok", false) and mitt_quote.get("bonus") == 2:
 		_fray.consume_confirmed_hit(mitt_quote, committed)
 	return committed

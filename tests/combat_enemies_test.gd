@@ -8,6 +8,7 @@ var rules := CombatEnemyKeywordRules.new()
 
 func _initialize() -> void:
 	_test_construction()
+	_test_broodling_model()
 	_test_invalid_construction()
 	_test_required_queries()
 	_test_status_transaction()
@@ -347,6 +348,78 @@ func _test_drain_after_hit() -> void:
 				"identical fixtures replay the same Drain receipt and roster")
 	_check(rng.state == state_before, "Drain consumes no seeded run RNG")
 	_check(randi() == next_global, "Drain consumes no global RNG")
+
+
+func _test_broodling_model() -> void:
+	var normal: Array = RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var bosses: Array = RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/boss.json"))
+	for id in [CombatEnemies.MOTH_ID, CombatEnemies.MOTH_QUEEN_ID]:
+		var record := {}
+		for candidate in normal + bosses:
+			if candidate.get("id") == id:
+				record = candidate
+		_check(not record.is_empty() and
+			CombatEnemies.authentic_broodling_mother(record, 1),
+			"precondition: canonical mother has real weighted summon " + id)
+		if record.is_empty():
+			continue
+		for count in [1, 2, 3]:
+			var definitions: Array = [record.duplicate(true)]
+			for i in range(1, count):
+				definitions.append({"id": "passive_%d" % i, "max_hp": 12})
+			var roster := CombatEnemies.new(definitions)
+			var snapshot := roster.get_enemies()
+			var result := roster.stage_broodling(1)
+			_check(roster.is_valid() and result.get("ok", false),
+				"valid mother stages or skips when full")
+			if count == 3:
+				_check(result == {"ok": true, "spawned": false}
+					and roster.get_enemies() == snapshot,
+					"three occupied slots skip without latch or state mutation " + id)
+				continue
+			_check(result == {"ok": true, "spawned": true, "position": count + 1}
+				and roster.get_enemies().size() == count + 1
+				and roster.get_enemy(count + 1).id == CombatEnemies.BROODLING_ID
+				and roster.get_enemy(count + 1).hp == 8
+				and roster.get_enemy(count + 1).max_hp == 8
+				and roster.get_enemy(count + 1).block == 0
+				and roster.get_enemy(1).get(CombatEnemies.BROODLING_LATCH) == true,
+				"valid mother spawns exactly one healthy latched child " + id)
+			var after := roster.get_enemies()
+			_check(roster.stage_broodling(1) == {"ok": true, "spawned": false}
+				and roster.get_enemies() == after,
+				"repeat summon preserves every record " + id)
+		var slain := CombatEnemies.new([record])
+		_check(slain.apply_damage(1, slain.get_enemy(1).hp),
+			"precondition: genuine mother can be slain")
+		var dead_before := slain.get_enemies()
+		_check(slain.stage_broodling(1) == {"ok": true, "spawned": false}
+			and slain.get_enemies() == dead_before,
+			"dead source is inert and never spends latch " + id)
+		for forged in ["not_moth", "moth_swarm_broodling"]:
+			var wrong := record.duplicate(true)
+			wrong.id = forged
+			var invalid := CombatEnemies.new([wrong])
+			var prior := invalid.get_enemies()
+			_check(invalid.stage_broodling(1) == {"ok": false, "spawned": false}
+				and invalid.get_enemies() == prior,
+				"forged identity rejects without partial child " + id)
+		for bad in ["true", 1, [], {}]:
+			var malformed := CombatEnemies.new([record])
+			malformed._enemies[0][CombatEnemies.BROODLING_LATCH] = bad
+			var before := malformed.get_enemies()
+			_check(malformed.stage_broodling(1) == {"ok": false, "spawned": false}
+				and malformed.get_enemies() == before,
+				"malformed latch is failure-atomic " + id)
+		var counterfeit := record.duplicate(true)
+		counterfeit.intent.actions = [{"type": "summon", "amount": 0, "weight": 1}]
+		var forged_spec := CombatEnemies.new([counterfeit])
+		var before_spec := forged_spec.get_enemies()
+		_check(forged_spec.stage_broodling(1) == {"ok": false, "spawned": false}
+			and forged_spec.get_enemies() == before_spec,
+			"unweighted single-option summon is not authentic " + id)
 
 
 func _test_construction() -> void:

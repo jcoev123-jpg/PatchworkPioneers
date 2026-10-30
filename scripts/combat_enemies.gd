@@ -15,6 +15,7 @@ const REVIVED_FIELD := "revived"
 const BROODLING_ID := "moth_swarm_broodling"
 const BROODLING_LATCH := "broodling_summoned"
 const MOTH_ID := "moth_swarm"
+const MOTH_QUEEN_ID := "moth_queen"
 
 ## Explicit, battle-local Termite split. Only the app's post-card observation
 ## boundary stages it, after a confirmed paid-card lethal hit; damage helpers,
@@ -135,6 +136,58 @@ static func broodling_definition() -> Dictionary:
 			{"type": "attack", "amount": 5, "weight": 1}]}}
 
 
+## Authenticate both authored parents (including the weighted summon) before
+## staging a birth. Attack amounts may already include an earned tier bonus;
+## every other alternative and weight must still match the shipped spec.
+static func authentic_broodling_mother(mother: Dictionary, position: int) -> bool:
+	var id: Variant = mother.get("id")
+	if id not in [MOTH_ID, MOTH_QUEEN_ID]:
+		return false
+	var queen: bool = id == MOTH_QUEEN_ID
+	if mother.get("name") != ("Moth Queen" if queen else "Moth Swarm") \
+			or mother.get("art_path") != ("res://assets/paper/enemies/moth_queen.png" if queen \
+			else "res://assets/paper/enemies/moth_swarm.png") \
+			or not mother.get("max_hp") is int \
+			or mother["max_hp"] < (90 if queen else 21):
+		return false
+	if queen:
+		if mother.has("chew_block_on_attack"):
+			return false
+	elif mother.get("chew_block_on_attack") != true \
+			or not mother.get("chew_block_on_attack") is bool:
+		return false
+	var slot := CombatEnemyIntents._weighted_slot(position, mother.get("intent"))
+	if slot.is_empty() or slot.get("target") != "front":
+		return false
+	var actual: Array = slot["actions"]
+	var expected: Array = [
+		{"weight": 4 if queen else 3, "action": {"type": "attack",
+			"amount": 25 if queen else 7}}
+	]
+	if queen:
+		expected.append({"weight": 2, "action": {"type": "summon", "amount": 0}})
+	else:
+		expected = [
+			{"weight": 2, "action": {"type": "snip_block", "amount": 0}},
+			{"weight": 3, "action": {"type": "attack", "amount": 7}},
+			{"weight": 1, "action": {"type": "debuff", "status": "weak", "amount": 1}},
+			{"weight": 1, "action": {"type": "summon", "amount": 0}}
+		]
+	if actual.size() != expected.size():
+		return false
+	for i in range(expected.size()):
+		var candidate: Dictionary = actual[i].duplicate(true)
+		var baseline: Dictionary = expected[i]
+		if candidate["action"].get("type") == "attack":
+			if not candidate["action"].get("amount") is int \
+					or candidate["action"]["amount"] < baseline["action"]["amount"]:
+				return false
+			candidate["action"]["amount"] = baseline["action"]["amount"]
+		if candidate != baseline:
+			return false
+	return true
+
+
 ## Only the detached phase roster calls this. Returns failure for malformed
 ## metadata and a successful inert beat for full, slain or already-used sources.
 ## No RNG is accepted here; neither a rejected nor a skipped birth can draw it.
@@ -146,7 +199,7 @@ func stage_broodling(source: int) -> Dictionary:
 	var latch: Variant = mother.get(BROODLING_LATCH, false)
 	if not latch is bool:
 		return failure
-	if mother.get("id") != MOTH_ID:
+	if not authentic_broodling_mother(mother, source):
 		return failure
 	var spec: Variant = mother.get("intent")
 	if CombatEnemyIntents._weighted_slot(source, spec).is_empty():

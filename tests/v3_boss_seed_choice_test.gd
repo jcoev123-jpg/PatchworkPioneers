@@ -4,6 +4,7 @@ extends SceneTree
 
 var failures: Array[String] = []
 var checks := 0
+var witnesses: Dictionary = {}
 
 
 func _initialize() -> void:
@@ -30,7 +31,7 @@ func _seeded(seed_value: int) -> Dictionary:
 		return {}
 	var selector := RunFightEncounterSelection.new()
 	var entry := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
-	return {"map": map, "rng": rng, "selector": selector, "entry": entry}
+	return {"seed": seed_value, "entry_rng": rng.state, "map": map, "rng": rng, "selector": selector, "entry": entry}
 
 
 func _party() -> CombatParty:
@@ -44,50 +45,73 @@ func _party() -> CombatParty:
 
 
 func _boss_cases() -> void:
-	for row in [[4001, "sewing_machine_colossus", 96],
-			[4002, "patchwork_behemoth", 84]]:
-		var seed_value: int = row[0]
-		var expected: String = row[1]
-		var hp: int = row[2]
-		var fixture := _seeded(seed_value)
-		_check(not fixture.is_empty(), "seeded generated map reaches real final Boss")
-		if fixture.is_empty():
+	# The real route and the sorted three-choice pool determine witnesses;
+	# never assume the old two-choice selection indices remain fixed.
+	for value in range(1, 501):
+		var candidate := _seeded(value)
+		if candidate.is_empty() or not candidate.entry.get("success", false):
 			continue
+		var id: String = candidate.entry.encounter_id
+		if not witnesses.has(id):
+			witnesses[id] = candidate
+		if witnesses.size() == 3:
+			break
+	var expected_hp := {"patchwork_behemoth": 84,
+		"sewing_machine_colossus": 96, "moth_queen": 90}
+	_check(witnesses.size() == 3, "three independent authentic final-Boss seed witnesses exist")
+	for expected in expected_hp:
+		_check(witnesses.has(expected), "real final-node seed selects " + expected)
+		if not witnesses.has(expected):
+			continue
+		var fixture: Dictionary = witnesses[expected]
 		var entry: Dictionary = fixture.entry
-		_check(entry.get("success", false) and entry.get("node_type") == "Boss"
-			and entry.get("encounter_id") == expected, "seed chooses " + expected)
-		if not entry.get("success", false):
-			continue
 		var roster: Array = entry.enemies.get_enemies()
 		_check(roster.size() == 1 and roster[0].id == expected
-			and roster[0].hp == hp and roster[0].max_hp == hp
-			and entry.definitions.size() == 1 and entry.definitions[0].enemy_position == 1,
-			"chosen Boss alone mounts authentic actor and one-source schedule")
-		var saved_rng: int = fixture.rng.state
-		var selected: Dictionary = fixture.selector._selected.duplicate(true)
+			and roster[0].hp == expected_hp[expected]
+			and roster[0].max_hp == expected_hp[expected]
+			and entry.definitions.size() == 1
+			and entry.definitions[0].enemy_position == 1,
+			"one canonical Boss actor and one-position schedule: " + expected)
+		var pool: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/encounters/m03_typed_battle_pools.json"))["Boss"]
+		var ids: Array = pool.keys()
+		ids.sort()
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = fixture.seed
+		var oracle_map := RunMap.new()
+		_check(oracle_map.generate(oracle), "independent Boss map oracle generated")
+		for floor in range(RunMap.FLOOR_COUNT):
+			var choices := oracle_map.get_legal_choices()
+			if choices.is_empty() or not oracle_map.choose_node(choices[0]):
+				_check(false, "independent Boss route commits floor")
+				break
+		var expected_choice: String = ids[oracle.randi_range(0, ids.size() - 1)]
+		_check(expected_choice == expected and oracle.state == fixture.entry_rng,
+			"sorted three-way selector consumes exactly one seeded RNG choice")
+		var current_state: int = fixture.rng.state
+		var cached: Dictionary = fixture.selector._selected.duplicate(true)
 		var repeated := RunAuthoredBattleEntry.new().entry_current_battle(
 			fixture.map, fixture.rng, fixture.selector)
 		_check(repeated.get("success", false) and repeated.encounter_id == expected
 			and repeated.definitions == entry.definitions
 			and repeated.enemies.get_enemies() == roster
-			and fixture.rng.state == saved_rng and fixture.selector._selected == selected,
-			"Boss cache re-entry returns same selected actor and spends zero extra RNG")
+			and fixture.rng.state == current_state and fixture.selector._selected == cached,
+			"full actor/schedule/cache/RNG re-entry replay for " + expected)
 		var party := _party()
 		_check(party.is_valid() and entry.intents.bind_battle(entry.enemies, party, fixture.rng)
-			and entry.intents.is_bound() and entry.intents.get_intents().size() == 1,
-			"selected authentic Boss binds to living party and sole run RNG")
-	_check(not _seeded(4001).is_empty() and not _seeded(4002).is_empty(),
-		"both distinct genuine seed witnesses remain reachable")
+			and entry.intents.get_intents().size() == 1
+			and not CombatEnemyIntents._weighted_slot(1, roster[0].intent).is_empty(),
+			"authentic weighted Boss action binds for " + expected)
 
 
 func _alternate_refusal() -> void:
-	var fixture := _seeded(4001)
+	var fixture: Dictionary = witnesses.get("sewing_machine_colossus", {})
 	if fixture.is_empty():
 		_check(false, "negative fixture has a real selected Boss")
 		return
 	var registry: Variant = JSON.parse_string(FileAccess.get_file_as_string(
 		"res://data/encounters/m03_typed_battle_pools.json"))
-	_check(registry is Dictionary and registry.get("Boss", {}).size() >= 2,
+	_check(registry is Dictionary and registry.get("Boss", {}).size() >= 3,
 		"negative fixture contains both independent Boss alternatives")
 	if not registry is Dictionary:
 		return
@@ -100,10 +124,24 @@ func _alternate_refusal() -> void:
 	_check(not rejected.get("success", false) and fixture.rng.state == state
 		and fixture.selector._selected == cached,
 		"invalid nonselected Boss candidate refuses atomically before RNG/cache")
+	var bad_queen: Dictionary = registry.duplicate(true)
+	bad_queen["Boss"]["moth_queen"]["enemy_ids"] = ["moth_swarm"]
+	var rejected_queen := RunAuthoredBattleEntry.new()._entry_from_data(
+		fixture.map, fixture.rng, fixture.selector, bad_queen)
+	_check(not rejected_queen.get("success", false) and fixture.rng.state == state
+		and fixture.selector._selected == cached,
+		"forged Queen catalog binding fails before any RNG or cache mutation")
+	var bad_schedule: Dictionary = registry.duplicate(true)
+	bad_schedule["Boss"]["moth_queen"]["schedule"] = "res://data/encounters/starter_attacks.json"
+	var rejected_schedule := RunAuthoredBattleEntry.new()._entry_from_data(
+		fixture.map, fixture.rng, fixture.selector, bad_schedule)
+	_check(not rejected_schedule.get("success", false) and fixture.rng.state == state
+		and fixture.selector._selected == cached,
+		"noncanonical Queen schedule fails before any RNG or cache mutation")
 
 
 func _packets_and_badge() -> void:
-	var fixture := _seeded(4001)
+	var fixture: Dictionary = _seeded(witnesses.get("sewing_machine_colossus", {}).get("seed", 0))
 	if fixture.is_empty() or not fixture.entry.get("success", false):
 		_check(false, "real Colossus packet fixture is selected")
 		return
@@ -169,15 +207,44 @@ func _packets_and_badge() -> void:
 	badge.queue_free()
 
 
+## Find a full legal route that really selects Colossus after all earlier
+## Fight/Elite entries consume their own seeded selection and band draws.
+func _routed_colossus_seed() -> int:
+	for value in range(1, 501):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		var selector := RunFightEncounterSelection.new()
+		var valid := true
+		for floor in range(RunMap.FLOOR_COUNT):
+			var legal := map.get_legal_choices()
+			if legal.is_empty() or not map.choose_node(legal[0]):
+				valid = false
+				break
+			var kind: String = map.get_node(map.get_current_node_id()).get("type")
+			if kind not in ["Fight", "Elite", "Boss"]:
+				continue
+			var entry := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
+			if not entry.get("success", false):
+				valid = false
+				break
+			if kind == "Boss" and entry.encounter_id == "sewing_machine_colossus":
+				return value
+	return -1
+
+
 func _routed_victory() -> void:
-	var fixture := _seeded(4001)
+	var seed_value := _routed_colossus_seed()
+	var fixture: Dictionary = _seeded(seed_value) if seed_value > 0 else {}
 	if fixture.is_empty():
-		_check(false, "victory route has authentic seeded final map")
+		_check(false, "victory route has authentic seeded final Colossus witness")
 		return
 	var map: RunMap = fixture.map
 	# Re-enact the connected public route with independent authentic battle models.
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 4001
+	rng.seed = fixture.seed
 	var live_map := RunMap.new()
 	_check(live_map.generate(rng) and live_map.get_floors() == map.get_floors(),
 		"terminal replay starts from a genuinely identical seeded map")

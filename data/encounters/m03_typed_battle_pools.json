@@ -162,6 +162,10 @@
     "sewing_machine_colossus": {
       "schedule": "res://data/encounters/sewing_machine_colossus.json",
       "enemy_ids": ["sewing_machine_colossus"]
+    },
+    "moth_queen": {
+      "schedule": "res://data/encounters/moth_queen.json",
+      "enemy_ids": ["moth_queen"]
     }
   }
 }

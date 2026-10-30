@@ -680,7 +680,7 @@ func advance_turn() -> bool:
 				return false
 			var parent_latched := false
 			for original in roster.slice(0, _slots.size()):
-				if original.get("id") == CombatEnemies.MOTH_ID \
+				if original.get("id") in [CombatEnemies.MOTH_ID, CombatEnemies.MOTH_QUEEN_ID] \
 						and original.get(CombatEnemies.BROODLING_LATCH) == true:
 					parent_latched = true
 			if not parent_latched:

@@ -4,6 +4,7 @@ extends SceneTree
 
 var failures: Array[String] = []
 var checks := 0
+var _witness_seed := -1
 
 
 func _initialize() -> void:
@@ -87,14 +88,24 @@ func _start_boss(seed_value: int, with_round_flow := false, tier: int = 0) -> Di
 	return battle
 
 
+func _behemoth_seed() -> int:
+	if _witness_seed > 0:
+		return _witness_seed
+	for value in range(1, 501):
+		if not _start_boss(value).is_empty():
+			_witness_seed = value
+			break
+	return _witness_seed
+
+
 func _test_quilt_phases() -> void:
 	for tier in [0, 1, 2]:
-		var battle := _start_boss(4002, false, tier)
-		var replay := _start_boss(4002, false, tier)
+		var battle := _start_boss(_behemoth_seed(), false, tier)
+		var replay := _start_boss(_behemoth_seed(), false, tier)
 		_check(not battle.is_empty() and not replay.is_empty(), "earned tier binds genuine routed Boss: %d" % tier)
 		if battle.is_empty() or replay.is_empty():
 			continue
-		var baseline := _start_boss(4002)
+		var baseline := _start_boss(_behemoth_seed())
 		_check(battle.rng.state == baseline.rng.state, "tier bonuses add no Boss RNG draws")
 		for intent in battle.enemies.get_enemy(1).intent.actions:
 			if intent.type == "attack":
@@ -121,7 +132,7 @@ func _hurt_to_phase_two(battle: Dictionary) -> bool:
 
 
 func _test_real_boss_threshold() -> void:
-	var battle := _start_boss(4002)
+	var battle := _start_boss(_behemoth_seed())
 	_check(not battle.is_empty(), "floor-12 route selects authentic Boss and binds live selector")
 	if battle.is_empty():
 		return
@@ -610,8 +621,8 @@ func _test_round_bleed_delayed_skip() -> void:
 
 
 func _test_round_rejections_and_replay() -> void:
-	var battle := _start_boss(4002, true)
-	var foreign := _start_boss(4002, true)
+	var battle := _start_boss(_behemoth_seed(), true)
+	var foreign := _start_boss(_behemoth_seed(), true)
 	_check(not battle.is_empty() and not foreign.is_empty(),
 		"independent real run battles exist for mismatch and replay guards")
 	if battle.is_empty() or foreign.is_empty():
@@ -648,7 +659,7 @@ func _test_round_rejections_and_replay() -> void:
 	_check(not flow.end_turn() and _round_snapshot(battle) == before,
 		"stale duplicate end-turn cannot consume a pending skip or weighted RNG")
 
-	var terminal := _start_boss(4002, true)
+	var terminal := _start_boss(_behemoth_seed(), true)
 	_check(not terminal.is_empty(), "terminal guard has an independent routed Boss")
 	if not terminal.is_empty():
 		_check(terminal.flow.begin_fight()
