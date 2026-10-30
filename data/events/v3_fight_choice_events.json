@@ -109,6 +109,50 @@
         { "id": "trade_drum_stitches", "text": "Trade 3 scrap bundles for a guarded pass", "outcome": { "gold": 0, "scraps": -3 } },
         { "id": "leave", "text": "Slip past the quiet bunting (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_inklace_paper_doll_tribunal",
+      "title": "The Inklace Paper-Doll Tribunal",
+      "description": "A round inkblue paper-doll magistrate bangs an enormous silver needle gavel while button-eyed witnesses stretch a black-lace cord across the road.",
+      "fight_choice_id": "defy_needle_verdict",
+      "choices": [
+        { "id": "defy_needle_verdict", "text": "Defy the needle verdict and face the doll bailiffs (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "buy_wax_seal", "text": "Pay 19 gold for the magistrate's wax-sealed writ", "outcome": { "gold": -19, "scraps": 0 } },
+        { "id": "leave", "text": "Slip away before the next gavel stitch (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_mossroot_button_snare",
+      "title": "The Mossroot Button Snare",
+      "description": "Huge moss-cloth roots knot around a fallen button tree as squat nettle-puppet wardens tighten brass clasps across the shadowed lane.",
+      "fight_choice_id": "cut_button_roots",
+      "choices": [
+        { "id": "cut_button_roots", "text": "Cut the giant button roots and confront the nettle wardens (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "offer_skein_tithe", "text": "Give the wardens 2 scrap bundles to loosen the clasp", "outcome": { "gold": 0, "scraps": -2 } },
+        { "id": "leave", "text": "Take the long path around the rooted tree (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_oxblood_wardrobe_checkpoint",
+      "title": "The Oxblood Wardrobe Checkpoint",
+      "description": "A giant wheeled oxblood wardrobe rattles in the mist, its coat-sleeve puppets marching under a padlock the size of a shield.",
+      "fight_choice_id": "force_wardrobe_gate",
+      "choices": [
+        { "id": "force_wardrobe_gate", "text": "Force the wardrobe latch and battle the coat guards (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "purchase_brass_key", "text": "Spend 23 gold on the oversized brass wardrobe key", "outcome": { "gold": -23, "scraps": 0 } },
+        { "id": "leave", "text": "Turn away from the marching sleeves (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_bonecream_mirror_masquerade",
+      "title": "The Bone-Cream Mirror Masquerade",
+      "description": "A crooked bone-cream hand mirror hangs from red stitches above a roadside masked ball; its button-eyed reflection guards bar the threadbare passage.",
+      "fight_choice_id": "unmask_reflection_guards",
+      "choices": [
+        { "id": "unmask_reflection_guards", "text": "Pull the mask seams and face the reflection guards (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "trade_mirror_thread", "text": "Surrender 3 scrap bundles to repair the mirror's edge", "outcome": { "gold": 0, "scraps": -3 } },
+        { "id": "leave", "text": "Back away from the laughing reflections (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
