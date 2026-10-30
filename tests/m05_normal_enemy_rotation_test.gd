@@ -726,10 +726,28 @@ func _mounted() -> void:
 			"band-selected actor renders its exact catalog ID, HP and name " + expected[index])
 		if NEW.has(expected[index]):
 			m05_count += 1
-			_check(presenter.art_for(expected[index]).get("idle") == null
-				and puppet.current_texture() == null and puppet.fallback_kind == expected[index]
+			# The mounted actor's own exact ID chooses its imported Art v3 pose pair.
+			var id: String = String(actor.id)
+			var idle_path := "res://assets/paper/enemies/" + id + ".png"
+			var attack_path := "res://assets/paper/enemies/" + id + "_attack.png"
+			var art: Dictionary = presenter.art_for(id)
+			var idle: Texture2D = art.get("idle") as Texture2D
+			var attack: Texture2D = art.get("attack") as Texture2D
+			_check(idle is Texture2D and idle.resource_path == idle_path
+				and puppet.current_texture() == idle
+				and attack is Texture2D and attack != idle
+				and attack.resource_path == attack_path and puppet.attack_texture == attack
+				and puppet.fallback_kind == id
 				and not puppet.fallback_silhouettes().is_empty(),
-				"genuine M05 actor uses its distinct sewn fallback " + expected[index])
+				"genuine M05 actor shows its imported idle and own attack pose " + id)
+			# The identity-specific sewn fallback still exists when the image is
+			# unavailable: force empty art on the same mounted puppet, then restore it.
+			puppet.bind_actor(id, {})
+			_check(puppet.current_texture() == null and puppet.attack_texture == null
+				and puppet.fallback_kind == id
+				and not puppet.fallback_silhouettes().is_empty(),
+				"the same mounted M05 actor falls back to its own sewn silhouette " + id)
+			puppet.bind_actor(id, presenter.art_for(id))
 	_check(m05_count > 0, "seeded live band group actually contains an M05 normal")
 	_check(app.deck.hand.size() == 5 and app.end_turn_button.is_visible_in_tree(),
 		"real five-card hand and End Turn reachable at 1280x720")
