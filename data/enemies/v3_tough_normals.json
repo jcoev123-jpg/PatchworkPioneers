@@ -1,5 +1,5 @@
 [
-  {"id": "spindle_ram", "name": "Spindle Ram", "max_hp": 30, "art_path": "res://assets/paper/enemies/spindle_ram.png",
+  {"id": "spindle_ram", "name": "Spindle Ram", "max_hp": 30, "charge": true, "art_path": "res://assets/paper/enemies/spindle_ram.png",
     "intent": {"target": "front", "actions": [
       {"type": "shove", "amount": 0, "direction": 1, "weight": 2},
       {"type": "block", "amount": 7, "weight": 2},

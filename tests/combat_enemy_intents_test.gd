@@ -23,6 +23,7 @@ func _initialize() -> void:
 	_test_behemoth_phase_transition_cache()
 	_test_behemoth_phase_fail_closed()
 	_test_termite_split_admission()
+	_test_ram_charge_seeded_cache()
 	if failures.is_empty():
 		print("combat_enemy_intents_test: PASS (", checks, " checks)")
 	else:
@@ -1478,3 +1479,75 @@ func _test_termite_split_admission() -> void:
 		else:
 			_check(snap == replay,
 				"AC3: same-seed split announcement replay is byte-for-byte identical")
+
+
+## AC1/AC2: a genuine already-floor-scaled Ram source owns its pending
+## strike. Reads, wind-up, held release and a fresh fight never roll RNG.
+func _test_ram_charge_seeded_cache() -> void:
+	var records := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var ram: Dictionary = {}
+	for record in records:
+		if record.get("id") == CombatEnemyIntents.CHARGE_ID:
+			ram = record.duplicate(true)
+	_check(not ram.is_empty() and ram.get("charge") == true
+		and ram.get("intent", {}).get("actions", []).size() == 3,
+		"AC1 precondition: real catalog Ram has Charge and all three authored choices")
+	if ram.is_empty():
+		return
+	var attack: Dictionary = ram["intent"]["actions"][2].duplicate(true)
+	_check(attack.get("type") == "attack" and attack.get("amount") == 8,
+		"AC2 precondition: source attack has exactly eight authored damage")
+	ram["intent"]["actions"] = [attack]
+	ram["intent"] = RunDifficulty.scale_intent(ram["intent"], 1)
+	var control := {"id": "other-foe", "max_hp": 18, "intent":
+		{"target": "front", "actions": [{"type": "block", "amount": 3, "weight": 1}]}}
+	var traces: Array = []
+	for trial in range(2):
+		var party := _party_fixture()
+		var enemies := CombatEnemies.new([control, ram])
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 871
+		var selector := CombatEnemyIntents.new([_enemy(1, [_block(1)]),
+			_enemy(2, [_block(1)])])
+		_check(enemies.is_valid() and selector.bind_battle(enemies, party, rng)
+			and enemies.get_enemy(2).get("charge") == true,
+			"AC1 precondition: seeded actual two-source fight binds Ram in slot 2")
+		if not selector.is_bound():
+			return
+		var turn := selector.get_intents()
+		var state := rng.state
+		_check(turn.size() == 2 and turn[0]["type"] == "block"
+			and turn[1] == {"type": "attack", "amount": 0,
+				"enemy_position": 2, "target_position": 1}
+			and selector.get_intents() == turn and rng.state == state,
+			"AC1: slot-2 Ram telegraphs zero while the other actor keeps Block")
+		_check(not enemies.get_enemy(2).has("charge_pending")
+			and not enemies.get_enemy(1).has("charge_pending"),
+			"AC2: fresh combat has neither actor armed")
+		var first := CombatEnemyPhase.new().execute_phase(party, enemies, turn, null, true)
+		_check(first.get("ok") and first.get("events", []).size() == 2
+			and first["events"][1].get("type") == "wind_up"
+			and party.get_hero(1).get("hp") == 40
+			and enemies.get_enemy(2).get("charge_pending") ==
+				{"amount": 9, "target_position": 1}
+			and not enemies.get_enemy(1).has("charge_pending"),
+			"AC1/2: first real beat only arms scaled-nine attack on source 2")
+		_check(selector.advance_turn() and rng.state == state,
+			"AC2: held strike requires no new weighted roll or target roll")
+		var held := selector.get_intents()
+		_check(held[1] == {"type": "attack", "amount": 22,
+			"enemy_position": 2, "target_position": 1},
+			"AC1/2: once-scaled nine projects to exactly floor(22.5)=22")
+		var next := CombatEnemyPhase.new().execute_phase(party, enemies, held, null, true)
+		_check(next.get("ok") and next["events"][1].get("applied") == true
+			and party.get_hero(1).get("hp") == 18
+			and not enemies.get_enemy(2).has("charge_pending")
+			and rng.state == state,
+			"AC1/2: normal phase delivers 22 HP loss, clears only actor latch, spends no RNG")
+		_check(selector.advance_turn() and selector.get_intents()[1].get("amount") == 0,
+			"AC2: the next genuine attack announces wind-up again, not a repeat strike")
+		traces.append([turn, first, held, next, rng.state, enemies.get_enemies(),
+			party.get_heroes()])
+	_check(traces.size() == 2 and traces[0] == traces[1],
+		"AC2: fresh same-seed fights replay complete charge and actor/RNG history")

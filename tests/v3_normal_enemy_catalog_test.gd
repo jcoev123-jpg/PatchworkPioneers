@@ -2048,7 +2048,7 @@ func _test_thread_biter_lifesteal_phase() -> void:
 func _tough_pair_expected() -> Dictionary:
 	return {
 		"spindle_ram": {"id": "spindle_ram", "name": "Spindle Ram", "max_hp": 30,
-			"art_path": "res://assets/paper/enemies/spindle_ram.png",
+			"charge": true, "art_path": "res://assets/paper/enemies/spindle_ram.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
 				{"type": "block", "amount": 7, "weight": 2},
@@ -2267,7 +2267,7 @@ func _test_tough_normal_pair_phase_actions() -> void:
 			"the Ram really holds 7 Block at its authored 30 HP")
 		_check(block_party.get_heroes() == _party().get_heroes(),
 			"a self Block changes no hero")
-	# Spindle Ram: its 8-damage charge spends hero Block before HP.
+	# Spindle Ram's first attack is a zero-damage wind-up, not a hit.
 	var attack_party := _party()
 	_check(attack_party.gain_block(1, 5),
 		"precondition: the front hero really holds five Block")
@@ -2276,16 +2276,32 @@ func _test_tough_normal_pair_phase_actions() -> void:
 	_check(not ram_attack.is_empty(), "the shipped Ram attack alternative binds")
 	if not ram_attack.is_empty():
 		_check(ram_attack.intents.size() == 1 and ram_attack.intents[0].get("type") == "attack"
-			and int(ram_attack.intents[0].get("amount", -1)) == 8
+			and ram_attack.intents[0].get("amount") == 0
 			and ram_attack.intents[0].get("target_position") == 1,
-			"the Ram announces its authored 8 damage on the front hero")
+			"the Ram announces zero damage on the original front hero")
 		var receipt := CombatEnemyPhase.new().execute_phase(attack_party, ram_attack.enemies,
 			ram_attack.intents, null, true)
-		_check(receipt.get("ok") == true,
-			"the announced 8-damage charge resolves through a real CombatEnemyPhase")
+		_check(receipt.get("ok") and receipt.get("events", []).size() == 1
+			and receipt["events"][0].get("type") == "wind_up"
+			and attack_party.get_hero(1).get("block") == 5
+			and attack_party.get_hero(1).get("hp") == 40,
+			"the phase confirms wind-up without consuming Block or HP")
+		_check(ram_attack.scheduler.advance_turn(),
+			"the real bound scheduler advances with a pending actor strike")
+		var strike: Array = ram_attack.scheduler.get_intents()
+		_check(strike.size() == 1 and strike[0].get("amount") == 20
+			and strike[0].get("target_position") == 1,
+			"the held base eight projects exactly twenty on the same target")
+		receipt = CombatEnemyPhase.new().execute_phase(attack_party, ram_attack.enemies,
+			strike, null, true)
+		_check(receipt.get("ok") and receipt.get("events", []).size() == 1
+			and receipt["events"][0].get("type") == "attack"
+			and receipt["events"][0].get("applied"),
+			"the stored strike resolves via the normal phase pipeline")
 		_check(attack_party.get_hero(1).get("block") == 0
-			and attack_party.get_hero(1).get("hp") == 37,
-			"five Block absorb five and the remaining three reach the front hero")
+			and attack_party.get_hero(1).get("hp") == 25
+			and not ram_attack.enemies.get_enemy(1).has("charge_pending"),
+			"five Block absorb five, fifteen HP is lost and the Ram resets")
 		_check(attack_party.get_hero(2).get("hp") == 30
 			and attack_party.get_hero(3).get("hp") == 26,
 			"the Ram charge touches no other hero")

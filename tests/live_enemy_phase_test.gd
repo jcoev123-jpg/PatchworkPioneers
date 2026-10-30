@@ -416,6 +416,7 @@ func _run() -> void:
 	await _status_damage(app)
 	await _mounted_blind(app)
 	await _mixed_rejection_replay(app)
+	await _mounted_ram_charge(app)
 	app.starter_enemies_path = app.STARTER_ENEMIES_PATH
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://live_enemy_phase_guard.json"))
 	app.free()
@@ -791,3 +792,124 @@ func _mounted_blind(app) -> void:
 	await process_frame
 	app.return_button.pressed.emit()
 	await process_frame
+
+
+## AC1-AC3: a genuine mounted End Turn, not a detached phase stand-in,
+## announces the Ram's two beats on the same real puppet and actor roster.
+func _mounted_ram_charge(app) -> void:
+	var catalog: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var starter: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("user://live_enemy_phase_guard.json"))
+	_check(catalog is Array and starter is Array and starter.size() == 2,
+		"AC1 live precondition: authentic Ram and pinned Guard catalogs load")
+	if not catalog is Array or not starter is Array or starter.size() != 2:
+		return
+	var ram: Dictionary = {}
+	for source in catalog:
+		if source.get("id") == "spindle_ram":
+			ram = source.duplicate(true)
+	_check(ram.get("charge") == true
+		and ram.get("intent", {}).get("actions", []).size() == 3
+		and ram["intent"]["actions"][2].get("amount") == 8.0,
+		"AC1 live precondition: genuine Ram authors Charge and attack 8")
+	if ram.is_empty():
+		return
+	# Pin the *authentic* attack alternative (the other two are already
+	# catalog-checked); the app, scheduler, CombatRoundFlow and HUD are real.
+	ram["intent"]["actions"] = [ram["intent"]["actions"][2]]
+	starter[0] = ram
+	var fixture := "user://live_enemy_phase_ram.json"
+	var file := FileAccess.open(fixture, FileAccess.WRITE)
+	_check(file != null, "AC1 precondition: mounted fixture outside repo opens")
+	if file == null:
+		return
+	file.store_string(JSON.stringify(starter))
+	file.close()
+	app.starter_enemies_path = fixture
+	var traces: Array = []
+	for run in range(2):
+		app.run_seed = 39198
+		_fixture_start(app)
+		await process_frame
+		var mounted: bool = app.deck != null and app.enemies != null 			and app.party != null and app.enemy_intents != null and app.round_flow != null 			and app.enemy_attacks.size() == 2 			and is_instance_valid(app.intent_label) 			and is_instance_valid(app.end_turn_button)
+		_check(mounted, "AC1 precondition: real seeded Start Run mounts two live actors and a hand")
+		if not mounted:
+			break
+		var roster = app.get_node("LiveEnemyRoster")
+		_check(app.enemies.get_enemy(1).get("id") == "spindle_ram"
+			and app.enemies.get_enemy(2).get("id") == "ragling_guard"
+			and roster.enemies == app.enemies and roster._badges.size() == 2
+			and roster._admitted_ids[0] == "spindle_ram"
+			and app.enemy_intents._enemies == app.enemies,
+			"AC1 precondition: the HUD and bound scheduler use the genuine Ram at source 1")
+		if roster._badges.size() < 2:
+			app.return_button.pressed.emit()
+			await process_frame
+			break
+		var badge: LiveEnemyIntentBadge = roster._badges[0]
+		var start_rng: int = app.run_rng.state
+		var oracle_rng := RandomNumberGenerator.new()
+		oracle_rng.seed = app.run_seed
+		var oracle_source: Array[String] = []
+		oracle_source.assign(JSON.parse_string(
+			FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
+		var oracle_deck := CombatDeck.new(oracle_source, oracle_rng)
+		_check(oracle_deck.start_turn() and oracle_rng.state == start_rng,
+			"AC2 precondition: real seeded draw and independent deck oracle match at entry")
+		_check(app.enemy_attacks[0].get("amount") == 0
+			and app.enemy_attacks[0].get("target_position") == 1
+			and app.enemy_attacks[0].get("enemy_position") == 1
+			and app.intent_label.text.contains("Enemy 1 -> Hero 1 (Warden): 0 damage")
+			and badge.amount == 0 and badge.source_position == 1
+			and not app.enemies.get_enemy(1).has("charge_pending"),
+			"AC1: actual mounted Ram badge and intent label telegraph zero damage")
+		# Forged cached amount cannot bypass an unarmed wind-up on End Turn.
+		app.enemy_attacks[0]["amount"] = 8
+		var refused := _snapshot(app)
+		app.end_turn_button.pressed.emit()
+		_check(_snapshot(app) == refused
+			and not app.enemies.get_enemy(1).has("charge_pending")
+			and not app.end_turn_button.disabled,
+			"AC3: mounted stale intent refuses End Turn without state or RNG publication")
+		app.enemy_attacks = app.enemy_intents.get_intents()
+		app._refresh_intents()
+		var hp: int = app.party.get_hero(1).get("hp")
+		var guarded: int = app.party.get_hero(1).get("block")
+		_check(hp == 40 and guarded == 6,
+			"AC1 precondition: living Warden enters first beat with genuine opening Block")
+		app.end_turn_button.pressed.emit()
+		await process_frame
+		_check(app.party.get_hero(1).get("hp") == hp
+			and app.enemies.get_enemy(1).get("charge_pending") ==
+				{"amount": 8, "target_position": 1}
+			and app.enemy_attacks[0].get("amount") == 20
+			and app.enemy_attacks[0].get("target_position") == 1
+			and app.intent_label.text.contains("Enemy 1 -> Hero 1 (Warden): 20 damage")
+			and badge.amount == 20,
+			"AC1: actual End Turn commits wind-up, previews stored 20-damage strike next beat")
+		var armed_rng: int = app.run_rng.state
+		_check(oracle_deck.end_turn() and oracle_deck.start_turn()
+			and oracle_rng.state == armed_rng,
+			"AC2: zero-damage wind-up spends no RNG beyond genuine deck draw")
+		app.end_turn_button.pressed.emit()
+		await process_frame
+		_check(app.party.get_hero(1).get("hp") == 20
+			and app.party.get_hero(1).get("block") == 0
+			and app.party.get_hero(2).get("hp") == 30
+			and app.party.get_hero(3).get("hp") == 26
+			and not app.enemies.get_enemy(1).has("charge_pending")
+			and app.enemy_attacks[0].get("amount") == 0
+			and app.enemy_attacks[0].get("target_position") == 1
+			and badge.amount == 0,
+			"AC1/2: actual stored strike hits exactly 20 via live pipeline then resets")
+		_check(oracle_deck.end_turn() and oracle_deck.start_turn()
+			and app.run_rng.state == oracle_rng.state,
+			"AC2: held strike and single-alternative Guard spend no RNG beyond deck draws")
+		traces.append(_snapshot(app))
+		app.return_button.pressed.emit()
+		await process_frame
+	_check(traces.size() == 2 and traces[0] == traces[1],
+		"AC2: starting a fresh mounted fight resets Charge and replays same seed")
+	app.starter_enemies_path = "user://live_enemy_phase_guard.json"
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(fixture))

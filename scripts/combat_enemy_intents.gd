@@ -9,6 +9,81 @@ extends RefCounted
 const TARGET_POLICIES := ["front", "lowest_living_hp", "exposed", "random"]
 const MAX_INT := 9223372036854775807
 const BOSS_CATALOG_PATH := "res://data/enemies/boss.json"
+const CHARGE_ID := "spindle_ram"
+const CHARGE_FLAG := "charge"
+# A single actor-owned pending strike is the armed latch; its absence means unarmed.
+const CHARGE_PENDING := "charge_pending"
+
+## Authenticate charge metadata on the real roster, including an already
+## floor-scaled attack. The actor is the only owner of its pending amount/target.
+static func charge_attack_amount(actor: Dictionary) -> int:
+	var slot := _weighted_slot(int(actor.get("position", 0)), actor.get("intent"))
+	if slot.is_empty() or slot.get("target") != "front":
+		return -1
+	var attack_amount := -1
+	for entry in slot["actions"]:
+		var action: Dictionary = entry["action"]
+		if action.get("type") == "attack":
+			if attack_amount >= 0 or action.has("hits"):
+				return -1
+			attack_amount = action["amount"]
+	return attack_amount
+
+
+static func valid_charge_actor(actor: Dictionary) -> bool:
+	var flag: Variant = actor.get(CHARGE_FLAG, false)
+	if not flag is bool:
+		return false
+	if actor.get("id") == CHARGE_ID and flag != true:
+		return false
+	if flag and actor.get("id") != CHARGE_ID:
+		return false
+	if not flag:
+		return not actor.has(CHARGE_PENDING)
+	var slot := _weighted_slot(int(actor.get("position", 0)), actor.get("intent"))
+	if slot.is_empty() or slot.get("target") != "front":
+		return false
+	var attack_count := 0
+	for entry in slot["actions"]:
+		var action: Dictionary = entry["action"]
+		if action.get("type") == "attack":
+			attack_count += 1
+			if action.has("hits") or action["amount"] > CombatParty.MAX_INT / 5:
+				return false
+	if attack_count > 1:
+		return false
+	if attack_count == 0:
+		# A fixture exercising only the authentic shove/Block remains inert;
+		# a stored hit without an authored attack is always invalid.
+		return not actor.has(CHARGE_PENDING)
+	var amount := charge_attack_amount(actor)
+	if amount < 0:
+		return false
+	if not actor.has(CHARGE_PENDING):
+		return true
+	var pending: Variant = actor[CHARGE_PENDING]
+	return pending is Dictionary and pending.size() == 2 \
+		and pending.get("amount") is int and pending["amount"] == amount \
+		and pending.get("target_position") is int \
+		and pending["target_position"] >= 1 \
+		and pending["target_position"] <= CombatParty.PARTY_SIZE
+
+
+## The display never owns the latch: an unarmed Ram shows zero damage and an
+## armed Ram shows the projected strike stored on that very same actor.
+static func charge_announcement(actor: Dictionary, cached: Dictionary) -> Dictionary:
+	var action: Dictionary = cached.duplicate(true)
+	if actor.get(CHARGE_FLAG, false) != true:
+		return action
+	if actor.has(CHARGE_PENDING):
+		var stored: Dictionary = actor[CHARGE_PENDING]
+		var quote := CombatEnemyKeywordRules.new().project_charge_step(stored["amount"], true)
+		action = {"type": "attack", "amount": quote["damage"],
+			"target_position": stored["target_position"],
+			"enemy_position": cached["enemy_position"]}
+	elif action.get("type") == "attack":
+		action["amount"] = 0
+	return action
 
 var _definitions: Array[Dictionary] = []
 var _turn_index := 0
@@ -98,6 +173,9 @@ func _bind_battle_with_phase_data(enemies: CombatEnemies, party: CombatParty,
 			or not is_instance_valid(rng) or not enemies.is_valid() or not party.is_valid():
 		return false
 	var roster := enemies.get_enemies()
+	for actor in roster:
+		if not valid_charge_actor(actor):
+			return false
 	if roster.size() != _definitions.size() or roster.size() > CombatEnemies.MAX_ENEMIES \
 			or living_positions(party).is_empty():
 		return false
@@ -463,12 +541,15 @@ static func _valid_split_half(record: Dictionary, position: int, id: String) -> 
 ## One announcement per slot. A single authored alternative needs no draw; a
 ## real weighted choice and a random target each consume the run RNG once.
 static func _draw_batch(slots: Array, party: CombatParty,
-		rng: RandomNumberGenerator) -> Array[Dictionary]:
+		rng: RandomNumberGenerator, forced: Dictionary = {}) -> Array[Dictionary]:
 	var batch: Array[Dictionary] = []
 	# Nothing is drawn for a party with no living hero to announce against.
 	if living_positions(party).is_empty():
 		return batch
 	for slot in slots:
+		if forced.has(slot["enemy_position"]):
+			batch.append(forced[slot["enemy_position"]].duplicate(true))
+			continue
 		var actions: Array = slot["actions"]
 		var total := 0
 		for entry in actions:
@@ -561,7 +642,13 @@ func get_intents() -> Array[Dictionary]:
 	if not _valid:
 		return []
 	if _bound:
-		return _cache.duplicate(true)
+		var result: Array[Dictionary] = _cache.duplicate(true)
+		if _enemies != null:
+			for index in range(result.size()):
+				var actor := _enemies.get_enemy(index + 1)
+				if valid_charge_actor(actor):
+					result[index] = charge_announcement(actor, result[index])
+		return result
 	var intents: Array[Dictionary] = []
 	for definition in _definitions:
 		var pattern: Array = definition["pattern"]
@@ -631,7 +718,23 @@ func advance_turn() -> bool:
 					return false
 				next_slots = _slots.duplicate(true)
 				next_slots[_boss_slot - 1] = next_slot
-		var batch := _draw_batch(next_slots, _party, _rng)
+		# A held strike is this actor's next beat, not a new weighted choice.
+		# Other actors draw normally; the held Ram spends no extra run RNG.
+		var forced: Dictionary = {}
+		for index in range(roster.size()):
+			var actor: Dictionary = roster[index]
+			if not valid_charge_actor(actor):
+				return false
+			if actor.get(CHARGE_FLAG, false) == true \
+					and actor.has(CHARGE_PENDING) and actor.get("hp", 0) > 0:
+				var pending: Dictionary = actor[CHARGE_PENDING]
+				var step := CombatEnemyKeywordRules.new().project_charge_step(
+					pending["amount"], true)
+				if not step["ok"]:
+					return false
+				forced[index + 1] = {"type": "attack", "amount": step["damage"],
+					"target_position": pending["target_position"], "enemy_position": index + 1}
+		var batch := _draw_batch(next_slots, _party, _rng, forced)
 		if batch.size() != next_slots.size():
 			return false
 		# One commit: the next cached action and CombatEnemyPhase's policy

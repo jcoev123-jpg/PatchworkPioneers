@@ -54,6 +54,16 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		action.erase("enemy_position")
 		if not CombatEnemyIntents.valid_action(action):
 			return failure
+		var actor: Dictionary = roster[source - 1]
+		if actor.get(CombatEnemyIntents.CHARGE_FLAG, false) == true and actor["hp"] > 0:
+			var armed := actor.has(CombatEnemyIntents.CHARGE_PENDING)
+			if armed and action.get("type") != "attack":
+				return failure
+			if action.get("type") == "attack":
+				var base := CombatEnemyIntents.charge_attack_amount(actor)
+				var step := CombatEnemyKeywordRules.new().project_charge_step(base, armed)
+				if not step["ok"] or action.get("amount") != step["damage"]:
+					return failure
 		seen.append(source)
 		ordered.append(raw.duplicate(true))
 	ordered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
@@ -83,12 +93,30 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 				and not staged_party.is_downed(effective.target_position) \
 				and staged_enemies._enemies[source - 1].get("statuses", {}).get("blind_next_attack", 0) == 1:
 			staged_enemies._enemies[source - 1].statuses.erase("blind_next_attack")
+			# Blind spends the attempted held strike without releasing it.
+			staged_enemies._enemies[source - 1].erase(CombatEnemyIntents.CHARGE_PENDING)
 			var miss := {"type": "attack", "enemy_position": source,
 				"target_position": effective.target_position, "applied": false}
 			if reactions != null:
 				miss.merge({"actual_target_position": effective.target_position,
 					"redirected": false, "retaliation_damage": 0, "retaliatory_damage": 0})
 			events.append(miss)
+			continue
+		# Only the real attack choice winds up. The zero-damage preview and
+		# subsequent held amount are checked above against the source's own
+		# floor-scaled authored attack, not against a UI-only counter.
+		if effective.type == "attack" and not staged_enemies.is_slain(source) \
+				and staged_enemies._enemies[source - 1].get(CombatEnemyIntents.CHARGE_FLAG, false) == true \
+				and not staged_enemies._enemies[source - 1].has(CombatEnemyIntents.CHARGE_PENDING) \
+				and not staged_party.is_downed(effective.target_position):
+			var base := CombatEnemyIntents.charge_attack_amount(staged_enemies.get_enemy(source))
+			var step := CombatEnemyKeywordRules.new().project_charge_step(base, false)
+			if not step["ok"] or effective.amount != 0:
+				return failure
+			staged_enemies._enemies[source - 1][CombatEnemyIntents.CHARGE_PENDING] = {
+				"amount": base, "target_position": effective.target_position}
+			events.append({"type": "wind_up", "enemy_position": source,
+				"target_position": effective.target_position, "damage": 0, "applied": true})
 			continue
 		# One cached choice/target, independently resolved hits; no RNG per strike.
 		for hit_index in range(hit_count):
@@ -245,6 +273,10 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 						if not result.ok:
 							return failure
 						event.applied = result.events[0].applied
+			if effective.type == "attack" and staged_enemies._enemies[source - 1].get(
+					CombatEnemyIntents.CHARGE_FLAG, false) == true:
+				# Success or an inert target consumes the held strike exactly once.
+				staged_enemies._enemies[source - 1].erase(CombatEnemyIntents.CHARGE_PENDING)
 			if reactions != null and effective.type == "attack" and not event.has("actual_target_position"):
 				# A slain source never enters the resolver, but still has a useful
 				# skipped beat in the reaction-mode trace.
@@ -278,6 +310,13 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		if staged_enemies._enemies[index].has(CombatEnemies.BROODLING_LATCH):
 			enemies._enemies[index][CombatEnemies.BROODLING_LATCH] = \
 				staged_enemies._enemies[index][CombatEnemies.BROODLING_LATCH]
+		# Publish the single actor-owned charge latch only with the complete
+		# successful phase. A rejected later beat leaves its old value intact.
+		if staged_enemies._enemies[index].has(CombatEnemyIntents.CHARGE_PENDING):
+			enemies._enemies[index][CombatEnemyIntents.CHARGE_PENDING] = \
+				staged_enemies._enemies[index][CombatEnemyIntents.CHARGE_PENDING].duplicate(true)
+		else:
+			enemies._enemies[index].erase(CombatEnemyIntents.CHARGE_PENDING)
 	# Only a successfully staged birth may extend the real battle roster.
 	for index in range(roster.size(), staged_enemies._enemies.size()):
 		enemies._enemies.append(staged_enemies._enemies[index].duplicate(true))
@@ -336,6 +375,8 @@ static func _enrage_attack_bonus(enemies: CombatEnemies, source: int) -> int:
 static func _attack_metadata_valid(roster: Array) -> bool:
 	for enemy in roster:
 		if not enemy is Dictionary:
+			return false
+		if not CombatEnemyIntents.valid_charge_actor(enemy):
 			return false
 		if enemy.has(BLEED_ON_ATTACK_FIELD) \
 				and not (enemy[BLEED_ON_ATTACK_FIELD] is bool):

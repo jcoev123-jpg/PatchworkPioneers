@@ -25,6 +25,7 @@ func _initialize() -> void:
 	_test_riposte_multi_hit_and_guard_redirect()
 	_test_riposte_skips_misses_and_rollback()
 	_test_eyelet_guard_thorns()
+	_test_ram_charge_fail_closed()
 	if failures.is_empty():
 		print("combat_enemy_phase_test: PASS (", checks, " checks)")
 	else:
@@ -1872,3 +1873,130 @@ func _test_eyelet_guard_thorns() -> void:
 		[_attack(1, 5, 1)], null, false, rollback_eyelet)
 	_check(retry_res.get("ok", false) and rollback_enemies.get_enemy(1)["hp"] == 10,
 		"the accepted retry still retaliates the same two Thorns")
+
+
+## AC3: authentic charge preconditions, forged metadata, Blind, slain source,
+## stale amount and a failed later beat never publish a phantom charge.
+func _test_ram_charge_fail_closed() -> void:
+	var records := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var ram: Dictionary = {}
+	for item in records:
+		if item.get("id") == "spindle_ram":
+			ram = item.duplicate(true)
+	_check(not ram.is_empty() and ram.get("charge") == true
+		and ram.get("intent", {}).get("actions", []).size() == 3,
+		"AC3 precondition: real authored Ram and shove/Block/attack alternatives")
+	if ram.is_empty():
+		return
+	ram["intent"]["actions"] = [ram["intent"]["actions"][2]]
+	var control := {"id": "control", "max_hp": 16,
+		"intent": {"target": "front", "actions": [
+			{"type": "block", "amount": 3, "weight": 1}]}}
+	var party := _party()
+	var enemies := CombatEnemies.new([ram, control])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 690
+	var scheduler := CombatEnemyIntents.new([{"enemy_position": 1,
+		"pattern": [{"type": "block", "amount": 1}]},
+		{"enemy_position": 2, "pattern": [{"type": "block", "amount": 1}]}])
+	_check(enemies.is_valid() and scheduler.bind_battle(enemies, party, rng),
+		"AC3 precondition: two occupied sources, genuine bound schedule and seeded RNG")
+	if not scheduler.is_bound():
+		return
+	var windup := scheduler.get_intents()
+	_check(windup.size() == 2 and windup[0].get("amount") == 0
+		and windup[0].get("target_position") == 1 and windup[1].get("type") == "block",
+		"AC3 precondition: unarmed Ram attack followed by valid separate Block actor")
+	var rng_before := rng.state
+	# The later Block overflows only after the Ram's staged wind-up.
+	_check(enemies.gain_block(2, CombatEnemies.MAX_INT),
+		"AC3 precondition: real later source holds maximal Block")
+	var before_heroes := party.get_heroes()
+	var before_enemies := enemies.get_enemies()
+	_check(phase.execute_phase(party, enemies, windup, null, true)
+		== {"ok": false, "events": []}
+		and party.get_heroes() == before_heroes
+		and enemies.get_enemies() == before_enemies
+		and rng.state == rng_before,
+		"AC3: later failed Block rolls back the earlier wind-up and all party/actor state")
+	_check(enemies.apply_damage(2, 0), "AC3 precondition: actor still present after refusal")
+	# Replace the later action with a harmless valid attack to isolate Charge.
+	var solo := [windup[0]]
+	var malformed: Array = [
+		{"charge": "true"},
+		{"charge": 1},
+		{"charge": false},
+		{"charge_pending": true},
+		{"charge_pending": {}},
+		{"charge_pending": {"amount": 7, "target_position": 1}},
+		{"charge_pending": {"amount": 8, "target_position": 4}},
+		{"charge_pending": {"amount": 8, "target_position": 1, "extra": 0}}]
+	for extra in malformed:
+		var bad := CombatEnemies.new([ram])
+		for field in extra:
+			bad._enemies[0][field] = extra[field]
+		var heroes := party.get_heroes()
+		var actors := bad.get_enemies()
+		var original_rng := rng.state
+		_check(phase.execute_phase(party, bad, solo, null, true)
+			== {"ok": false, "events": []}
+			and party.get_heroes() == heroes and bad.get_enemies() == actors
+			and rng.state == original_rng,
+			"AC3: malformed Charge flag or stored strike fails closed " + str(extra))
+	var other := CombatEnemies.new([control])
+	other._enemies[0]["charge"] = true
+	_check(phase.execute_phase(party, other, [_block(1, 3)]).get("ok") == false
+		and not other.get_enemy(1).has("charge_pending"),
+		"AC3: a non-Ram actor cannot forge a Charge keyword")
+	var tampered := windup[0].duplicate(true)
+	tampered["amount"] = 8
+	before_heroes = party.get_heroes()
+	var fresh := CombatEnemies.new([ram])
+	before_enemies = fresh.get_enemies()
+	_check(phase.execute_phase(party, fresh, [tampered], null, true).get("ok") == false
+		and fresh.get_enemies() == before_enemies and party.get_heroes() == before_heroes,
+		"AC3: stale unarmed eight-damage intent cannot bypass the telegraph")
+
+	var blind_party := _party()
+	var blind := CombatEnemies.new([ram])
+	blind._enemies[0]["statuses"] = {"blind_next_attack": 1}
+	var miss := phase.execute_phase(blind_party, blind, solo, null, true)
+	_check(miss.get("ok") and miss.get("events", [])[0].get("applied") == false
+		and blind_party.get_hero(1).get("hp") == 40
+		and not blind.get_enemy(1).has("charge_pending")
+		and not blind.get_enemy(1).get("statuses", {}).has("blind_next_attack"),
+		"AC3: Blind consumes attempted wind-up without arming or damaging")
+	# Arm a fresh living source, then Blind its held strike.
+	var ready := CombatEnemies.new([ram])
+	_check(phase.execute_phase(blind_party, ready, solo, null, true).get("ok")
+		and ready.get_enemy(1).get("charge_pending", {}).get("amount") == 8,
+		"AC3 precondition: a real unblinded wind-up stored a valid attack")
+	# A forged near-hit cannot spend or bypass an authentic pending strike.
+	var bad_strike := [_attack(1, 19, 1)]
+	before_heroes = blind_party.get_heroes()
+	before_enemies = ready.get_enemies()
+	_check(phase.execute_phase(blind_party, ready, bad_strike, null, true)
+		== {"ok": false, "events": []}
+		and blind_party.get_heroes() == before_heroes
+		and ready.get_enemies() == before_enemies,
+		"AC3: stale held amount fails closed without spending the actor latch")
+	ready._enemies[0]["statuses"] = {"blind_next_attack": 1}
+	var strike := [_attack(1, 20, 1)]
+	before_heroes = blind_party.get_heroes()
+	miss = phase.execute_phase(blind_party, ready, strike, null, true)
+	_check(miss.get("ok") and miss.get("events", [])[0].get("applied") == false
+		and not ready.get_enemy(1).has("charge_pending")
+		and blind_party.get_heroes() == before_heroes
+		and rng.state == rng_before,
+		"AC3: Blind cancels the held strike atomically without HP, Block or RNG changes")
+	var dead := CombatEnemies.new([ram])
+	_check(phase.execute_phase(blind_party, dead, solo, null, true).get("ok")
+		and dead.get_enemy(1).has("charge_pending")
+		and dead.apply_damage(1, 30) and dead.is_slain(1),
+		"AC3 precondition: armed Ram is genuinely dead before release")
+	before_heroes = blind_party.get_heroes()
+	var slain_receipt := phase.execute_phase(blind_party, dead, strike, null, true)
+	_check(slain_receipt.get("ok") and slain_receipt.get("events", [])[0].get("applied") == false
+		and blind_party.get_heroes() == before_heroes and dead.get_enemy(1).get("hp") == 0,
+		"AC3: dead Ram has no strike, no HP mutation or resurrection")
