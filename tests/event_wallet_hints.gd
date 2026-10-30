@@ -181,4 +181,19 @@ const SEEDS := [
 	233422,
 	240821,
 	376208,
+	# Genuine map/toll/event-rotation witnesses for the two warden hero stories and
+	# the once/run Auction candidate that the bounded 1..499999 fallback could not
+	# reach (indices 123/125/6 in the 129-event pool); each seeded witness lands on
+	# the named event through the real paid toll draw.
+	517263,
+	684678,
+	874243,
+	# Genuine witnesses re-derived after the four gothic look-driven roadside wallet
+	# stories (Lantern Snail, Velvet Fox, Copper Beetle, Inkblue Swan) joined the
+	# sorted generic pool: the two Tinker hero stories lost their only routed
+	# six-Event witnesses, and the strict Event/Treasure six-stop Auction route needs
+	# one pinned seed because its bounded 1..199999 search can no longer reach it.
+	22320,
+	412761,
+	2356714,
 ]
