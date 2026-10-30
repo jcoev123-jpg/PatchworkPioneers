@@ -844,7 +844,7 @@ var _vital_event_gate: RunV3HeroVitalEventGate
 var _wallet_event_record: Dictionary = {}
 var _wallet_event_context: Array = []
 var _wallet_event_history: Array = []
-# A paid Emberglass request is the only Event permitted to host a Campfire.
+# Only authenticated paid Emberglass or Briar-Button requests may host a Campfire.
 var _emberglass_gate: RunV3ServiceWaystationEventGate
 var _emberglass_campfire_auth: Array = []
 var quiet_spool_panel: LiveEventChoicePanel
@@ -3182,9 +3182,10 @@ func _emberglass_campfire_active(id: String) -> bool:
 	if _emberglass_campfire_auth.size() != 6 or run_map == null:
 		return false
 	var gate: RunV3ServiceWaystationEventGate = _emberglass_campfire_auth[5]
+	var paid_choices := {"v3_emberglass_campfire": "light_the_embers",
+		"v3_briar_button_mending_bench": "fuel_button_fire"}
 	return gate != null and gate.is_claimed() \
-		and gate.get_event_id() == "v3_emberglass_campfire" \
-		and gate.get_service_choice_id() == "light_the_embers" \
+		and paid_choices.get(gate.get_event_id(), "") == gate.get_service_choice_id() \
 		and gate.get_service_kind() == "Campfire" \
 		and _emberglass_campfire_auth.slice(0, 5) == [run_map,
 			run_map.get_generation_revision(), run_map.get_floors(),
@@ -3727,15 +3728,18 @@ func _load_wallet_event_catalog() -> Dictionary:
 	for required in REQUIRED_ROADSIDE_EVENT_IDS:
 		if not roadside_ids.has(required):
 			return {}
-	# Only Emberglass is live-wired. Require the exact shipped record and
-	# refuse an ID collision instead of replacing a generic wallet story.
+	# Admit only the two shipped, authenticated Campfire records. Neither
+	# may replace an existing generic Event ID, even with matching content.
 	var waystations := RunV3ServiceWaystationEventGate.new()
-	var emberglass := waystations.get_event_record("v3_emberglass_campfire")
-	if not waystations.is_catalog_valid() or emberglass.is_empty() \
-		or seen.has(emberglass.id) or not RunEventChoice.new(emberglass).is_valid():
+	if not waystations.is_catalog_valid():
 		return {}
-	seen[emberglass.id] = true
-	combined.events.append(emberglass)
+	for campfire_id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench"]:
+		var campfire_record := waystations.get_event_record(campfire_id)
+		if campfire_record.is_empty() or seen.has(campfire_id) \
+			or not RunEventChoice.new(campfire_record).is_valid():
+			return {}
+		seen[campfire_id] = true
+		combined.events.append(campfire_record)
 	# The ordinary, roadside and hero-gated generic contracts remain intact.
 	# A live run admits only detached, service-authenticated stories for its party.
 	if run_map != null or not run_heroes.is_empty():
@@ -4209,7 +4213,7 @@ func _open_wallet_event(id: String, source: WeakRef) -> bool:
 	if record.id == RunFatePinAuction.EVENT_ID:
 		return _open_fate_pin_auction(id, source, staged_rng)
 	var emberglass_gate: RunV3ServiceWaystationEventGate = null
-	if record.id == "v3_emberglass_campfire":
+	if record.id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench"]:
 		var waystations := RunV3ServiceWaystationEventGate.new()
 		emberglass_gate = waystations.open_visit(record)
 		if emberglass_gate == null or not emberglass_gate.is_valid() \
@@ -4270,14 +4274,14 @@ func _commit_wallet_event(receipt: Dictionary, panel, source: WeakRef) -> void:
 		return
 	var paid_emberglass := false
 	var pending_visit: RunCampfireVisit = null
-	if _wallet_event_record.get("id") == "v3_emberglass_campfire":
+	if _wallet_event_record.get("id") in ["v3_emberglass_campfire", "v3_briar_button_mending_bench"]:
 		if _emberglass_gate == null or not _emberglass_gate.is_valid() \
 			or _emberglass_gate.get_event() != _wallet_event_record:
 			return
 		paid_emberglass = receipt.get("choice_id") == _emberglass_gate.get_service_choice_id()
 		if paid_emberglass:
 			# The map already committed this Event node when the parchment opened.
-			# Preflight a real Campfire before spending the one-scrap price.
+			# Preflight a real Campfire before spending either canonical price.
 			var carry := party_carryover as RunTornCarryover
 			if carry == null or carry._observer() == null or carry.read_state().heroes != run_heroes \
 				or not _emberglass_campfire_auth.is_empty():

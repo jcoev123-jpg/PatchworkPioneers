@@ -32,7 +32,10 @@ func _combined_wallet_catalog() -> Dictionary:
 	events.append_array(offers.get_offers())
 	var waystation := RunV3ServiceWaystationEventGate.new()
 	_check(waystation.is_catalog_valid(), "wallet oracle validates service-waystation source")
-	events.append(waystation.get_event_record("v3_emberglass_campfire"))
+	for id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench"]:
+		var record := waystation.get_event_record(id)
+		_check(not record.is_empty(), "full-run oracle authenticates Campfire ID: " + id)
+		events.append(record)
 	if not app._fate_pin_seen:
 		events.append(JSON.parse_string(FileAccess.get_file_as_string("res://data/events/mpw_fate_pin_auction.json")))
 	return {"events": events}
@@ -310,8 +313,10 @@ func _node(id: String, index: int) -> bool:
 			for choice_index in range(record.choices.size()):
 				# This full-run fixture chooses the authored trade; paid Campfire
 				# entry and completion are covered by the mounted Emberglass test.
-				if record.get("id") == "v3_emberglass_campfire" \
-					and record.choices[choice_index].id == "light_the_embers":
+				if (record.get("id") == "v3_emberglass_campfire" \
+					and record.choices[choice_index].id == "light_the_embers") \
+					or (record.get("id") == "v3_briar_button_mending_bench" \
+					and record.choices[choice_index].id == "fuel_button_fire"):
 					continue
 				var receipt := RunEventChoice.new(record).choose_with_vitals(record.choices[choice_index].id,
 					panel._offered_snapshot) if panel._vital_mode else \
@@ -1091,6 +1096,9 @@ func _auction_fixture() -> Dictionary:
 	events.append(JSON.parse_string(FileAccess.get_file_as_string("res://data/events/mpw_fate_pin_auction.json")))
 	var rotation := RunM04EventRotation.new({"events": events})
 	var hints: Array = preload("res://tests/event_wallet_hints.gd").SEEDS.duplicate()
+	# Genuine strict Event/Treasure route and Auction draw after Briar-Button
+	# entered the sorted wallet lottery (rechecked against map, toll and RNG).
+	hints.push_front(3489597)
 	hints.push_front(422169)
 	# Genuine six-Event map/toll witness for the expanded hero-story pool.
 	hints.push_front(2431350)

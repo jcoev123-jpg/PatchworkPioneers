@@ -29,6 +29,7 @@ func _required_ids() -> Array:
 	for record in RunV3HeroEventOffers.new(_party_ids()).get_offers():
 		ids.append(record.id)
 	ids.append("v3_emberglass_campfire")
+	ids.append("v3_briar_button_mending_bench")
 	return ids
 
 
@@ -38,11 +39,12 @@ func _combined_catalog(include_party: bool = true) -> Dictionary:
 		var document: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
 		events.append_array(document.events.duplicate(true))
 	var waystation := RunV3ServiceWaystationEventGate.new()
-	var emberglass := waystation.get_event_record("v3_emberglass_campfire")
-	_check(waystation.is_catalog_valid() and not emberglass.is_empty(),
-		"fixture contains authenticated Emberglass record")
-	if not emberglass.is_empty():
-		events.append(emberglass)
+	_check(waystation.is_catalog_valid(), "fixture validates shipped service-waystation catalog")
+	for id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench"]:
+		var record := waystation.get_event_record(id)
+		_check(not record.is_empty(), "fixture contains authenticated Campfire record: " + id)
+		if not record.is_empty():
+			events.append(record)
 	if include_party:
 		events.append_array(RunV3HeroEventOffers.new(_party_ids()).get_offers())
 		if not app._fate_pin_seen:
@@ -560,11 +562,12 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 		await _key(KEY_SPACE)
 	else:
 		await _click(panel.get_choice_buttons()[selected])
-	if event_id == "v3_emberglass_campfire" and chosen.id == "light_the_embers":
+	if event_id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench"] \
+		and chosen.id == ("light_the_embers" if event_id == "v3_emberglass_campfire" else "fuel_button_fire"):
 		_check(app.wallet_event_panel == null and is_instance_valid(app.campfire_view)
 			and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN
 			and app.run_map.get_current_node_id() == fixture.path[4],
-			"Emberglass paid choice mounts an actual same-node Campfire")
+			"authenticated paid choice mounts an actual same-node Campfire")
 		await _click(app.campfire_leave_button)
 	_check(app.wallet_event_panel == null and is_instance_valid(app.route_view)
 		and _wallet() == expected and _other_ledgers() == before,

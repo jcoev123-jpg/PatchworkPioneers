@@ -196,4 +196,13 @@ const SEEDS := [
 	22320,
 	412761,
 	2356714,
+	# Actual six-Event map/toll witnesses after Briar-Button joined the
+	# sorted generic lottery; verified through the authentic draw and route.
+	170826,
+	381668,
+	210953,
+	283111,
+	44737,
+	310416,
+	283822,
 ]
