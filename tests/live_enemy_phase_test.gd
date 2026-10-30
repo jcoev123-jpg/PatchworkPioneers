@@ -417,6 +417,7 @@ func _run() -> void:
 	await _mounted_blind(app)
 	await _mixed_rejection_replay(app)
 	await _mounted_ram_charge(app)
+	await _mounted_ram_guard_redirect(app)
 	app.starter_enemies_path = app.STARTER_ENEMIES_PATH
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://live_enemy_phase_guard.json"))
 	app.free()
@@ -1025,3 +1026,135 @@ func _mounted_ram_charge(app) -> void:
 	test_badge.free()
 	app.starter_enemies_path = "user://live_enemy_phase_guard.json"
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(fixture))
+
+
+## AC1-AC3 regression: verify mounted authentic 0-amount blinded Ram excludes Guard
+## redirect while preserving WIND UP and Blind tooltip, verify ordinary non-Charge
+## attack redirect, and verify armed 20-amount blinded strike excludes Guard redirect.
+func _mounted_ram_guard_redirect(app) -> void:
+	var catalog: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var starter: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string(app.STARTER_ENEMIES_PATH))
+	_check(catalog is Array and starter is Array and not starter.is_empty(),
+		"guard redirect precondition: enemy catalogs load")
+	if not catalog is Array or not starter is Array or starter.is_empty():
+		return
+	var ram: Dictionary = {}
+	for source in catalog:
+		if source.get("id") == "spindle_ram":
+			ram = source.duplicate(true)
+	_check(ram.get("charge") == true
+		and ram.get("intent", {}).get("actions", []).size() == 3
+		and ram["intent"]["actions"][2].get("amount") == 8.0,
+		"guard redirect precondition: genuine Ram authors Charge and attack 8")
+	if ram.is_empty():
+		return
+	ram["intent"]["actions"] = [ram["intent"]["actions"][2]]
+	var ragling: Dictionary = {}
+	for source in starter:
+		if source.get("id") == "ragling":
+			ragling = source.duplicate(true)
+	_check(not ragling.is_empty(), "guard redirect precondition: ragling found")
+	if ragling.is_empty():
+		return
+	var enemies_fixture: Array = [ram, ragling]
+	var fixture_path := "user://live_enemy_phase_ram_guard.json"
+	var file := FileAccess.open(fixture_path, FileAccess.WRITE)
+	_check(file != null, "guard redirect precondition: fixture file opens")
+	if file == null:
+		return
+	file.store_string(JSON.stringify(enemies_fixture))
+	file.close()
+	app.starter_enemies_path = fixture_path
+	app.run_seed = 39198
+	_fixture_start(app)
+	await process_frame
+	var mounted: bool = app.deck != null and app.enemies != null \
+		and app.party != null and app.enemy_intents != null and app.round_flow != null \
+		and app.enemy_attacks.size() == 2
+	_check(mounted, "guard redirect precondition: fight mounted with 2 enemies")
+	if not mounted:
+		app.starter_enemies_path = "user://live_enemy_phase_guard.json"
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(fixture_path))
+		return
+	var roster = app.get_node("LiveEnemyRoster")
+	# Swap Warden to middle seat (hero 2) so an attack aimed at hero 1 is eligible for Guard redirect.
+	var swap_preview: Dictionary = CombatPositionSwaps.preview_adjacent_swap(app.party, 1, 1)
+	_check(swap_preview.get("ok") == true, "guard redirect precondition: swap Warden to middle seat")
+	if swap_preview.get("ok") == true:
+		app.party._heroes.assign(swap_preview["heroes"])
+		app._refresh_party()
+	_check(app.party.get_hero(1).id == "seamstress" and app.party.get_hero(2).id == "warden",
+		"guard redirect precondition: Warden is in seat 2 and Seamstress in seat 1")
+
+	# Arm active Guard on reactions service
+	if app.round_flow._reactions == null:
+		app.round_flow._reactions = CombatWardenGuardReactions.new()
+	app.round_flow._reactions.guarding = true
+	_check(app.round_flow._reactions.is_guarding(), "guard redirect precondition: Guard is active")
+	var redirect_preview: Dictionary = app.round_flow._reactions.preview_actual_recipient(app.party, 1)
+	_check(redirect_preview.get("ok") == true and redirect_preview.get("eligible") == true \
+		and redirect_preview.get("redirected") == true and redirect_preview.get("actual_target_position") == 2,
+		"guard redirect precondition: attack aimed at hero 1 is eligible for redirect to Warden")
+
+	# Give authentic Ram Blind token
+	app.enemies._enemies[0].statuses = {"blind_next_attack": 1}
+
+	var pre_refresh_snapshot := _snapshot(app)
+	var pre_rng: int = app.run_rng.state
+	roster._refresh()
+	_check(_snapshot(app) == pre_refresh_snapshot and app.run_rng.state == pre_rng,
+		"guard redirect: roster refresh does not mutate state or RNG")
+
+	var ram_badge: LiveEnemyIntentBadge = roster._badges[0]
+	var ragling_badge: LiveEnemyIntentBadge = roster._badges[1]
+
+	# 1. Blinded Ram WIND UP: shows WIND UP, Blind preserved, NO Guard redirect line
+	_check(ram_badge.charge_state == "wind_up"
+		and not ram_badge.blind_miss
+		and ram_badge.readable_text == "WIND UP: Front"
+		and ram_badge.tooltip_text.contains("deals 0 damage now")
+		and ram_badge.tooltip_text.contains("Blind remains for the later charged attack")
+		and not ram_badge.tooltip_text.contains("Guard → Warden")
+		and not ram_badge.tooltip_text.contains("redirected"),
+		"AC3/Defect: blinded Ram wind-up displays WIND UP, preserves Blind, and excludes Guard redirect tooltip")
+
+	# 2. Ordinary non-Charge attacker (Ragling): previews Guard redirect to Warden
+	_check(ragling_badge.charge_state == ""
+		and not ragling_badge.blind_miss
+		and ragling_badge.target_position == 1
+		and ragling_badge.tooltip_text.contains("Guard → Warden (hero 2): this announced attack is redirected from hero 1; normal Block/HP apply."),
+		"Defect regression: ordinary non-Charge attack previews eligible Guard redirect to Warden")
+
+	# 3. Advance turn: End Turn commits wind-up, retains Blind for charged strike
+	app.end_turn_button.pressed.emit()
+	await process_frame
+	_check(app.enemies.get_enemy(1).get("charge_pending") == {"amount": 8, "target_position": 1}
+		and app.enemies.get_enemy(1).get("statuses", {}).get("blind_next_attack") == 1
+		and app.enemy_attacks[0].get("amount") == 20,
+		"AC1/AC2: End Turn commits wind-up, retains Blind token and schedules 20 damage strike")
+
+	# Re-arm Guard on the new player turn
+	app.round_flow._reactions.guarding = true
+	var armed_pre_refresh := _snapshot(app)
+	var armed_rng: int = app.run_rng.state
+	roster._refresh()
+	_check(_snapshot(app) == armed_pre_refresh and app.run_rng.state == armed_rng,
+		"guard redirect: armed blinded refresh does not mutate state or RNG")
+
+	# 4. Armed 20-amount blinded strike: shows BLIND · MISS, hover explains full miss, NO Guard redirect line
+	_check(ram_badge.amount == 20
+		and ram_badge.charge_state == "strike"
+		and ram_badge.blind_miss
+		and ram_badge.readable_text == "BLIND · MISS"
+		and ram_badge.tooltip_text.contains("Blind: the entire next attempted attack aimed at Hero 1 (front) will MISS")
+		and ram_badge.tooltip_text.contains("Without Blind: Charge strike: 20 damage (2.5x base 8)")
+		and not ram_badge.tooltip_text.contains("Guard → Warden")
+		and not ram_badge.tooltip_text.contains("redirected"),
+		"AC2/Defect: armed blinded strike shows BLIND · MISS with full miss hover and no Guard redirect")
+
+	app.return_button.pressed.emit()
+	await process_frame
+	app.starter_enemies_path = "user://live_enemy_phase_guard.json"
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(fixture_path))

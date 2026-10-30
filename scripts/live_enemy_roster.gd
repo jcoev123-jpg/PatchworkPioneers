@@ -2300,7 +2300,7 @@ func _refresh() -> void:
 			enrage_stacks, contact_traits, attack_blind, charge_context)
 		# Only a live, source-owned, already-announced attack can preview an actual
 		# redirect. Keep the printed target, amount and policy ticket untouched.
-		if reactions != null and live_source and not pending and not badge.blind_miss \
+		if reactions != null and live_source and not pending and not badge.blind_miss and badge.charge_state != "wind_up" \
 				and app.enemy_intents != null and app.enemy_intents.is_bound() \
 				and app.enemy_intents._enemies == enemies \
 				and _admitted_ids.size() == roster.size() \
