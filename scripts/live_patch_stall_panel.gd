@@ -120,6 +120,49 @@ func _ready() -> void:
 	_refresh()
 	_focus_initial()
 
+## The physical number keys are an alias for the four mounted Buttons: a valid
+## press only forwards to that Button's own `pressed` signal, so keyboard,
+## mouse, Tab and Enter share the one authenticated path and this handler never
+## buys, leaves, spends or mints an intent of its own. It stays inert - and
+## leaves the key to the rest of the game - when the panel is not open/visible,
+## the GUI focus belongs elsewhere, the key is a release/echo/modified/unrelated
+## one, or the addressed action is detached, hidden or disabled (sold or
+## unaffordable).
+func _input(event: InputEvent) -> void:
+	if not _active():
+		return
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	# is_ancestor_of() needs a real node: with nothing focused (or focus on a
+	# control outside this panel) no shortcut belongs to the Patch Stall.
+	if focus_owner == null or (focus_owner != self and not is_ancestor_of(focus_owner)):
+		return
+	var key_event := event as InputEventKey
+	if key_event == null or not key_event.is_pressed() or key_event.is_echo():
+		return
+	if key_event.shift_pressed or key_event.alt_pressed or key_event.ctrl_pressed or key_event.meta_pressed:
+		return
+
+	var button: Button = null
+	match key_event.keycode:
+		KEY_1, KEY_KP_1:
+			button = offer_buttons[0]
+		KEY_2, KEY_KP_2:
+			button = offer_buttons[1]
+		KEY_3, KEY_KP_3:
+			button = offer_buttons[2]
+		KEY_0, KEY_KP_0:
+			button = leave_button
+
+	if button == null:
+		return
+	# Only an authentic, still-mounted, visible and ENABLED action of this panel
+	# may receive the key press. An unaffordable or sold row neither emits a
+	# synthetic Button.pressed nor swallows the key from the rest of the game.
+	if not _attached(button) or button.disabled:
+		return
+	get_viewport().set_input_as_handled()
+	button.pressed.emit()
+
 func _panel_style() -> StyleBox:
 	if ResourceLoader.exists(PANEL_ART, "Texture2D"):
 		var texture := ResourceLoader.load(PANEL_ART) as Texture2D
@@ -356,7 +399,7 @@ func _refresh() -> void:
 	var open := _source_current()
 	wallet_label.text = _wallet_caption() if open else "Wallet unavailable"
 	wearer_label.text = WEARER_WARNING if open else "Patch Stall unavailable"
-	status_label.text = "Choose one patch or Leave." if open else "No open quote."
+	status_label.text = "Choose one patch or Leave.  ·  1-3 Buy / 0 Leave" if open else "No open quote."
 	for i in range(3):
 		var pin := wearer_buttons[i]
 		var offer_button := offer_buttons[i]
