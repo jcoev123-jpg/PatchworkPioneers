@@ -579,6 +579,91 @@ func _exercise_shop_alias(view: RunRouteAtlas) -> void:
 	seeded_legal_shop = true
 
 
+## Bounded deterministic witness for a genuinely generated route whose next legal
+## choice is the wanted kind: it commits only real RunMap legal steps along the
+## way, so the wanted node is the route's last committed floor and every record,
+## route step and RNG draw is the map's own. Fails closed when none exists.
+func _committed_kind_fixture(kind: String) -> Dictionary:
+	for seed_value in range(1, 201):
+		var rng := _rng(seed_value)
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		while not map.is_complete():
+			var legal := map.get_legal_choices()
+			if legal.is_empty():
+				break
+			var wanted := ""
+			for id in legal:
+				if str(map.get_node(id).get("type", "")) == kind:
+					wanted = id
+					break
+			if not wanted.is_empty():
+				if map.choose_node(wanted):
+					return {"map": map, "rng": rng, "id": wanted, "seed": seed_value}
+				break
+			if not map.choose_node(legal[0]):
+				break
+	return {}
+
+
+## AC1/AC2: a genuinely committed legacy Shop/Rest floor captions its bead with the
+## projected Peddler/Campfire name through the existing alias helper, while its
+## authored RunMap record, ID, route and RNG stay exactly raw. Native and unknown
+## kinds keep their own names; a refresh is idempotent and spends no RNG.
+func _exercise_committed_diary_names(view: RunRouteAtlas) -> void:
+	_check(RunV3StopChoiceProjection.v3_kind_for("Shop") == "Peddler"
+		and RunV3StopChoiceProjection.v3_kind_for("Rest") == "Campfire"
+		and RunRouteAtlas.display_kind("Shop") == RunV3StopChoiceProjection.v3_kind_for("Shop")
+		and RunRouteAtlas.display_kind("Rest") == RunV3StopChoiceProjection.v3_kind_for("Rest"),
+		"the diary projection reuses the existing alias helper, never a new table")
+	for native_kind in ["Campfire", "SewingCircle", "Peddler", "PatchStall", "Unpicker",
+			"Fight", "Elite", "Event", "Treasure", "Boss"]:
+		_check(RunRouteAtlas.display_kind(native_kind) == native_kind
+			and RunV3StopChoiceProjection.v3_kind_for(native_kind) == native_kind,
+			"native diary kind keeps its own displayed name: " + native_kind)
+	_check(RunRouteAtlas.display_kind("Unknown") == "Unknown"
+		and RunV3StopChoiceProjection.v3_kind_for("Unknown") == "Unknown",
+		"an unknown kind keeps its identity, with no invented diary stop")
+	for entry in [{"kind": "Shop", "shown": "Peddler"}, {"kind": "Rest", "shown": "Campfire"}]:
+		var kind: String = entry["kind"]
+		var shown: String = entry["shown"]
+		var fixture := _committed_kind_fixture(kind)
+		_check(not fixture.is_empty(),
+			"bounded seed search finds a genuinely committed legacy " + kind + " floor")
+		if fixture.is_empty():
+			continue
+		var map: RunMap = fixture["map"]
+		var rng: RandomNumberGenerator = fixture["rng"]
+		var id: String = fixture["id"]
+		var route := map.get_route()
+		var committed := _state(map, rng)
+		view.bind_map(map)
+		var diary := view.get_node_or_null("JourneyJournal") as RunRouteAtlas.JourneyJournal
+		var sequence := _journal_kinds(view)
+		_check(diary != null and not sequence.is_empty()
+			and sequence.back() == shown and not sequence.has(kind)
+			and diary.caption_kind(route.size() - 1) == shown
+			and diary.caption_kind(route.size()).is_empty()
+			and diary.visited.back() == id,
+			"committed legacy %s bead captions only %s below its floor" % [kind, shown])
+		_check(map.get_node(id).get("type") == kind
+			and map.get_route() == route and map.get_current_node_id() == id,
+			"the authored %s record, ID and route stay raw behind the %s caption" % [kind, shown])
+		var marker := view.get_node_or_null("Node_" + id) as PanelContainer
+		_check(marker != null and marker.get_meta("route_id") == id
+			and marker.get_meta("route_kind") == kind
+			and marker.get_meta("display_kind") == shown,
+			"the committed %s marker keeps its source kind and displays %s" % [kind, shown])
+		view.refresh()
+		_check(_journal_kinds(view) == sequence
+			and (view.get_node_or_null("JourneyJournal") as RunRouteAtlas.JourneyJournal).visited_kinds.back() == shown
+			and _state(map, rng) == committed,
+			"refresh keeps the committed %s caption without route or RNG change" % kind)
+		_verify(view, map, rng, "committed legacy " + kind + " diary")
+		view.bind_map(null)
+
+
 # The mounted preview must always show a complete open book: owner art or drawing.
 func _verify_book(view: RunRouteAtlas, label: String) -> void:
 	if view.uses_board_texture():
@@ -1040,15 +1125,20 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				and diary.focus_mode == Control.FOCUS_NONE,
 				label + ": authentic left journal, area and pinned visited trail without floor 13")
 			# Independent projection of the same route: each committed ID through its own
-			# authoritative node record. The view may not infer, preassign or spoiler.
+			# authoritative node record, then through the same alias rule the sewn markers,
+			# hover and tickets already use. The view may not infer, preassign or spoiler.
 			var route := map.get_route()
+			var raw_kinds: Array[String] = []
 			var expected_kinds: Array[String] = []
 			for visited_id in route:
-				expected_kinds.append(str(map.get_node(visited_id).get("type", "")))
+				var authored_kind := str(map.get_node(visited_id).get("type", ""))
+				raw_kinds.append(authored_kind)
+				expected_kinds.append(_display_kind(authored_kind))
 			var sequence: Array[String] = diary.visited_kind_sequence()
 			_check(sequence == expected_kinds and diary.visited_kinds == expected_kinds
-				and sequence.size() == current_floor and sequence.size() == route.size(),
-				label + ": each completed bead owns its authentic visited kind in route order")
+				and sequence.size() == current_floor and sequence.size() == route.size()
+				and not sequence.has("Shop") and not sequence.has("Rest"),
+				label + ": each completed bead owns its projected stop name in route order")
 			# The caption actually painted under each of the twelve beads: completed floors only.
 			var painted: Array[String] = []
 			var expected_painted: Array[String] = []
@@ -1073,6 +1163,11 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				for node in floor_nodes:
 					if not route.has(node["id"]):
 						future_kinds[str(node["type"])] = true
+			# Both the authored kind and the projected stop name of every committed
+			# floor are legitimately known: a legacy Rest bead may read Campfire even
+			# while a native Campfire patch still waits unvisited elsewhere.
+			for kind in raw_kinds:
+				future_kinds.erase(kind)
 			for kind in expected_kinds:
 				future_kinds.erase(kind)
 			var leaked := false
@@ -2057,6 +2152,8 @@ func _run() -> void:
 	_verify_peddler_preview(first)
 	# AC1/AC2/AC3: a genuine seeded legal Shop patch rendered and admitted as Peddler.
 	await _exercise_shop_alias(first)
+	# AC1/AC2/AC3: committed legacy Shop/Rest diary beads caption Peddler/Campfire.
+	_exercise_committed_diary_names(first)
 
 	for seed_value in [6, 42]:
 		var rng := _rng(seed_value)
