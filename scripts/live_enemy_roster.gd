@@ -2083,6 +2083,58 @@ static func _has_attack_blind(enemy: Dictionary) -> bool:
 	return count is int and count == 1
 
 
+## Derive a strictly read-only Charge presentation context only for an admitted living
+## legitimate charge foe with its matching pending state and authentic attack.
+static func _charge_context(trusted_source: bool, enemy: Dictionary, action: Dictionary) -> Dictionary:
+	if not trusted_source:
+		return {}
+	if enemy.get("charge", false) != true:
+		return {}
+	if not CombatEnemyIntents.valid_charge_actor(enemy):
+		return {}
+	if action.get("type") != "attack":
+		return {}
+	var base_amount := CombatEnemyIntents.charge_attack_amount(enemy)
+	if base_amount <= 0:
+		return {}
+	var target_pos: Variant = action.get("target_position")
+	if not target_pos is int or target_pos < 1 or target_pos > CombatParty.PARTY_SIZE:
+		return {}
+	var action_amount: Variant = action.get("amount")
+	if not action_amount is int or action_amount < 0:
+		return {}
+	@warning_ignore("integer_division")
+	var projected_damage: int = base_amount * 5 / 2
+	var has_pending: bool = enemy.has("charge_pending")
+	if not has_pending:
+		if action_amount != 0:
+			return {}
+		return {
+			"valid": true,
+			"state": "wind_up",
+			"base_amount": base_amount,
+			"projected_damage": projected_damage,
+			"target_position": target_pos,
+		}
+	else:
+		var pending: Variant = enemy.get("charge_pending")
+		if not pending is Dictionary or pending.size() != 2:
+			return {}
+		if pending.get("amount") != base_amount:
+			return {}
+		if pending.get("target_position") != target_pos:
+			return {}
+		if action_amount != projected_damage:
+			return {}
+		return {
+			"valid": true,
+			"state": "strike",
+			"base_amount": base_amount,
+			"projected_damage": projected_damage,
+			"target_position": target_pos,
+		}
+
+
 ## Top-right in this puppet's art band, avoiding its separate Thorns and intent
 ## badges. The plaque stays inside the actor column and never covers the name/HP hem.
 func _place_status_tag(puppet: Puppet, tag: PanelContainer, occupied: Array[Rect2]) -> void:
@@ -2243,8 +2295,9 @@ func _refresh() -> void:
 		# Blind belongs to this exact living source, not another occupant of its
 		# slot or a stale cached announcement. This read cannot consume the token.
 		var attack_blind := trusted_source and _has_attack_blind(enemy)
+		var charge_context := _charge_context(trusted_source, enemy, action)
 		badge.show_intent(action, enemies.is_slain(position), pending, policy,
-			enrage_stacks, contact_traits, attack_blind)
+			enrage_stacks, contact_traits, attack_blind, charge_context)
 		# Only a live, source-owned, already-announced attack can preview an actual
 		# redirect. Keep the printed target, amount and policy ticket untouched.
 		if reactions != null and live_source and not pending and not badge.blind_miss \
