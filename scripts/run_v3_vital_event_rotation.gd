@@ -160,6 +160,125 @@ func select_actionable_event(rng: Variant, excluded_ids: Variant = null, snapsho
 	return _rejection()
 
 
+## Opt-in party selector that qualifies unvisited vitality events having at least
+## one affordable non-Leave choice for ANY living hero in the caller's three-hero
+## party snapshots [{id, hp, max_hp}, ...] and wallet {gold, scraps}. Rejects
+## invalid RNG, unvalidated catalogs, malformed exclusions, malformed wallet or
+## hero snapshots, and all-Torn/Leave-only pools before any RNG draw. Preserves
+## sorted-ID single-draw uniformity, detached returned records and no-settlement
+## semantics.
+func select_party_actionable_event(
+	rng: Variant,
+	excluded_ids: Variant = null,
+	wallet: Variant = null,
+	heroes: Variant = null
+) -> Dictionary:
+	if not rng is RandomNumberGenerator:
+		return _rejection()
+	if not _catalog_ok:
+		return _rejection()
+	var parsed_exclusions: Dictionary = _parse_exclusions(excluded_ids)
+	if not parsed_exclusions.get("ok", false):
+		return _rejection()
+	var parsed_wallet: Dictionary = _parse_party_wallet(wallet)
+	if not parsed_wallet.get("ok", false):
+		return _rejection()
+	var parsed_heroes: Dictionary = _parse_party_heroes(heroes)
+	if not parsed_heroes.get("ok", false):
+		return _rejection()
+	var living_heroes: Array = parsed_heroes["living_heroes"]
+	var excluded: Dictionary = parsed_exclusions["ids"]
+	var eligible: Array = []
+	for record in _pool:
+		var event_id: String = record["id"]
+		if excluded.has(event_id):
+			continue
+		if _is_actionable_for_party(record, parsed_wallet, living_heroes):
+			eligible.append(event_id)
+	if eligible.is_empty():
+		return _rejection()
+	eligible.sort()
+	var generator: RandomNumberGenerator = rng
+	var picked_id: String = eligible[generator.randi_range(0, eligible.size() - 1)]
+	for record in _pool:
+		if record["id"] == picked_id:
+			return {"ok": true, "event": record.duplicate(true)}
+	return _rejection()
+
+
+static func _is_actionable_for_party(record: Dictionary, wallet: Dictionary, living_heroes: Array) -> bool:
+	for hero in living_heroes:
+		var snapshot := {
+			"gold": wallet["gold"],
+			"scraps": wallet["scraps"],
+			"hero": {
+				"id": hero["id"],
+				"hp": hero["hp"],
+				"max_hp": hero["max_hp"],
+			},
+		}
+		if _is_actionable_for_snapshot(record, snapshot):
+			return true
+	return false
+
+
+static func _parse_party_wallet(wallet: Variant) -> Dictionary:
+	if typeof(wallet) != TYPE_DICTIONARY:
+		return {"ok": false}
+	var dict: Dictionary = wallet
+	if dict.size() != 2 or not dict.has("gold") or not dict.has("scraps"):
+		return {"ok": false}
+	var gold: Variant = dict.get("gold")
+	var scraps: Variant = dict.get("scraps")
+	if typeof(gold) != TYPE_INT or typeof(scraps) != TYPE_INT:
+		return {"ok": false}
+	var gold_int: int = gold
+	var scraps_int: int = scraps
+	if gold_int < 0 or scraps_int < 0:
+		return {"ok": false}
+	return {"ok": true, "gold": gold_int, "scraps": scraps_int}
+
+
+static func _parse_party_heroes(heroes: Variant) -> Dictionary:
+	if typeof(heroes) != TYPE_ARRAY:
+		return {"ok": false}
+	var list: Array = heroes
+	if list.size() != 3:
+		return {"ok": false}
+	var seen_ids: Dictionary = {}
+	var living_heroes: Array = []
+	for item in list:
+		if typeof(item) != TYPE_DICTIONARY:
+			return {"ok": false}
+		var dict: Dictionary = item
+		if dict.size() != 3 or not dict.has("id") or not dict.has("hp") or not dict.has("max_hp"):
+			return {"ok": false}
+		var hero_id: Variant = dict.get("id")
+		var hp: Variant = dict.get("hp")
+		var max_hp: Variant = dict.get("max_hp")
+		if not _is_nonblank_string(hero_id) or typeof(hp) != TYPE_INT or typeof(max_hp) != TYPE_INT:
+			return {"ok": false}
+		var id_str: String = hero_id
+		if seen_ids.has(id_str):
+			return {"ok": false}
+		seen_ids[id_str] = true
+		var hp_int: int = hp
+		var max_hp_int: int = max_hp
+		if max_hp_int < 10:
+			return {"ok": false}
+		if hp_int < 0 or hp_int > max_hp_int:
+			return {"ok": false}
+		if hp_int > 0:
+			living_heroes.append({
+				"id": id_str,
+				"hp": hp_int,
+				"max_hp": max_hp_int,
+			})
+	if living_heroes.is_empty():
+		return {"ok": false}
+	return {"ok": true, "living_heroes": living_heroes}
+
+
 static func _is_actionable_for_snapshot(record: Dictionary, snapshot: Variant) -> bool:
 	var service := RunEventChoice.new(record)
 	if not service.is_valid():
