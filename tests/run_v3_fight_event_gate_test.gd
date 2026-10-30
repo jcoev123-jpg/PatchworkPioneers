@@ -2153,4 +2153,117 @@ func _test_ac3_waystation_forgery_tampering_and_isolation(run_rng: RandomNumberG
 	_check(pick_res.get("ok") == true, "select_event succeeds with seeded RNG")
 	_check(EXPECTED_WAYSTATION_EVENTS.has(pick_res.get("event", {}).get("id")), "select_event picked valid waystation")
 
+	# Defect 1: Injected sixth valid-looking ID in custom catalog must fail catalog validation
+	var sixth_forged_event := {
+		"id": "v3_forged_sixth_waystation",
+		"title": "The Forged Hearth",
+		"description": "An authentic-looking but never-shipped extra waystation event.",
+		"service_choice_id": "service_action",
+		"service_kind": "Campfire",
+		"choices": [
+			{"id": "service_action", "text": "Stitch embers (spend 1 scrap, Campfire)", "outcome": {"gold": 0, "scraps": -1}},
+			{"id": "trade_action", "text": "Trade cinders (gain 10 gold)", "outcome": {"gold": 10, "scraps": 0}},
+			{"id": "leave", "text": "Leave", "outcome": {"gold": 0, "scraps": 0}},
+		],
+	}
+	var injected_sixth_cat: Dictionary = waystation_catalog_doc.duplicate(true)
+	(injected_sixth_cat["events"] as Array).append(sixth_forged_event.duplicate(true))
+
+	var forged_sixth_cat_gate := RunV3ServiceWaystationEventGate.new(&"__omitted_event_target__", injected_sixth_cat)
+	_check(not forged_sixth_cat_gate.is_catalog_valid(), "catalog with injected sixth never-shipped event ID fails is_catalog_valid()")
+	_check(forged_sixth_cat_gate.open_visit("v3_forged_sixth_waystation") == null, "open_visit rejects injected sixth event on invalid catalog")
+	_check(forged_sixth_cat_gate.open_visit("v3_emberglass_campfire") == null, "open_visit rejects authentic event on invalid injected catalog")
+
+	var forged_sixth_bound_gate := RunV3ServiceWaystationEventGate.new("v3_forged_sixth_waystation", injected_sixth_cat)
+	_check(not forged_sixth_bound_gate.is_catalog_valid(), "bound gate with injected sixth catalog fails is_catalog_valid()")
+	_check(not forged_sixth_bound_gate.is_valid(), "bound gate with injected sixth event is not valid")
+	_check(not forged_sixth_bound_gate.is_claimed(), "bound gate with injected sixth event is not claimed")
+	var caller_test_wallet := {"gold": 25, "scraps": 5}
+	var test_wallet_snap := caller_test_wallet.duplicate(true)
+	var forged_sixth_claim: Dictionary = forged_sixth_bound_gate.choose_with_wallet("service_action", caller_test_wallet)
+	_check(forged_sixth_claim.get("ok") == false, "claim rejected on injected sixth event")
+	_check(forged_sixth_claim.get("service_request") == {}, "no service_request issued for injected sixth event")
+	_check(forged_sixth_claim.get("wallet") == test_wallet_snap, "wallet unchanged on rejected injected sixth event")
+	_check(not forged_sixth_bound_gate.is_claimed(), "injected sixth event visit remains unclaimed")
+
+	# Standard gate rejects opening sixth event directly
+	_check(gate.open_visit(sixth_forged_event) == null, "open_visit rejects sixth event record dictionary")
+	_check(gate.open_visit("v3_forged_sixth_waystation") == null, "open_visit rejects sixth event id string")
+
+	# Confirm the five authentic IDs still pass on authentic catalog
+	for auth_id: String in EXPECTED_WAYSTATION_EVENTS.keys():
+		var auth_spec: Dictionary = EXPECTED_WAYSTATION_EVENTS[auth_id]
+		var auth_v := gate.open_visit(auth_id)
+		_check(auth_v != null and auth_v.is_valid() and not auth_v.is_claimed(), "authentic event open_visit succeeds: " + auth_id)
+		var auth_receipt: Dictionary = auth_v.choose_with_wallet(auth_spec["service_choice_id"], auth_spec["funded_wallet"])
+		_check(auth_receipt.get("ok") == true, "authentic service choice succeeds: " + auth_id)
+		_check(auth_receipt.get("service_request") == {"stop_type": auth_spec["service_kind"]}, "authentic service_request matches: " + auth_id)
+
+	# Defect 2: Cloned authentic record/catalog with float outcome substitution must fail validation
+	var ember_authentic: Dictionary = gate.get_event_record("v3_emberglass_campfire")
+	_check(not ember_authentic.is_empty(), "retrieved authentic emberglass record")
+
+	var float_scraps_rec := ember_authentic.duplicate(true)
+	float_scraps_rec["choices"][0]["outcome"]["scraps"] = -1.0 # integral float substitution
+
+	var float_gold_rec := ember_authentic.duplicate(true)
+	float_gold_rec["choices"][0]["outcome"]["gold"] = 0.0 # integral float substitution
+
+	var float_trade_rec := ember_authentic.duplicate(true)
+	float_trade_rec["choices"][1]["outcome"]["gold"] = 12.0 # integral float in trade choice
+
+	var float_leave_rec := ember_authentic.duplicate(true)
+	float_leave_rec["choices"][2]["outcome"]["gold"] = 0.0 # integral float in leave choice
+
+	var float_cases: Array = [
+		{"rec": float_scraps_rec, "label": "float scraps -1.0"},
+		{"rec": float_gold_rec, "label": "float gold 0.0"},
+		{"rec": float_trade_rec, "label": "float trade gold 12.0"},
+		{"rec": float_leave_rec, "label": "float leave gold 0.0"},
+	]
+
+	for fc: Dictionary in float_cases:
+		var f_rec: Dictionary = fc["rec"]
+		var f_label: String = fc["label"]
+
+		# 1. Direct record binding fails
+		var f_gate := RunV3ServiceWaystationEventGate.new(f_rec)
+		_check(not f_gate.is_valid(), "gate initialized with " + f_label + " is not valid")
+		_check(not f_gate.is_claimed(), "gate initialized with " + f_label + " is unclaimed")
+		var f_wallet := {"gold": 20, "scraps": 5}
+		var f_wallet_snap := f_wallet.duplicate(true)
+		var f_claim: Dictionary = f_gate.choose_with_wallet("light_the_embers", f_wallet)
+		_check(f_claim.get("ok") == false, "claim rejected on " + f_label)
+		_check(f_claim.get("service_request") == {}, "service_request is {} on " + f_label + " rejection")
+		_check(f_claim.get("wallet") == f_wallet_snap, "wallet unchanged on " + f_label + " rejection")
+		_check(not f_gate.is_claimed(), "gate remains unclaimed after " + f_label + " rejection")
+
+		# 2. open_visit with float record fails
+		_check(gate.open_visit(f_rec) == null, "open_visit rejects record with " + f_label)
+
+		# 3. Injected catalog with float-substituted record fails
+		var float_cat: Dictionary = waystation_catalog_doc.duplicate(true)
+		for idx in range((float_cat["events"] as Array).size()):
+			if float_cat["events"][idx].get("id") == "v3_emberglass_campfire":
+				float_cat["events"][idx] = f_rec.duplicate(true)
+		var float_cat_gate := RunV3ServiceWaystationEventGate.new("v3_emberglass_campfire", float_cat)
+		_check(not float_cat_gate.is_catalog_valid(), "catalog with " + f_label + " fails is_catalog_valid()")
+		_check(not float_cat_gate.is_valid(), "gate with " + f_label + " catalog is not valid")
+		var f_cat_claim: Dictionary = float_cat_gate.choose_with_wallet("light_the_embers", f_wallet)
+		_check(f_cat_claim.get("ok") == false, "claim rejected on " + f_label + " catalog")
+		_check(f_cat_claim.get("service_request") == {}, "service_request is {} on " + f_label + " catalog rejection")
+		_check(f_cat_claim.get("wallet") == f_wallet_snap, "wallet unchanged on " + f_label + " catalog rejection")
+		_check(not float_cat_gate.is_claimed(), "visit remains unclaimed on " + f_label + " catalog rejection")
+
+	# 4. Verify authentic integer record receipts succeed with signed integer results
+	var auth_visit := gate.open_visit("v3_emberglass_campfire")
+	_check(auth_visit != null and auth_visit.is_valid(), "authentic emberglass visit opens")
+	var auth_gold_scraps_wallet := {"gold": 10, "scraps": 3}
+	var signed_receipt: Dictionary = auth_visit.choose_with_wallet("light_the_embers", auth_gold_scraps_wallet)
+	_check(signed_receipt.get("ok") == true, "signed integer paid receipt succeeds")
+	_check(signed_receipt.get("choice_id") == "light_the_embers", "signed integer receipt choice_id")
+	_check(signed_receipt.get("wallet") == {"gold": 10, "scraps": 2}, "signed integer receipt wallet")
+	_check(typeof(signed_receipt["wallet"]["gold"]) == TYPE_INT and typeof(signed_receipt["wallet"]["scraps"]) == TYPE_INT, "wallet fields remain native TYPE_INT")
+	_check(signed_receipt.get("service_request") == {"stop_type": "Campfire"}, "signed integer receipt service_request")
+
 	_check(run_rng.state == rng_before, "waystation tamper and isolation checks consume zero run_rng draws")

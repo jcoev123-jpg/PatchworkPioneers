@@ -124,7 +124,29 @@ static func load_shipped_catalog() -> Dictionary:
 		return {}
 	if not (parser.data is Dictionary):
 		return {}
-	return (parser.data as Dictionary).duplicate(true)
+	var doc: Dictionary = (parser.data as Dictionary).duplicate(true)
+	var raw_events: Variant = doc.get("events")
+	if raw_events is Array:
+		for ev_raw: Variant in (raw_events as Array):
+			if ev_raw is Dictionary:
+				var ev: Dictionary = ev_raw
+				var raw_choices: Variant = ev.get("choices")
+				if raw_choices is Array:
+					for ch_raw: Variant in (raw_choices as Array):
+						if ch_raw is Dictionary:
+							var ch: Dictionary = ch_raw
+							var raw_outcome: Variant = ch.get("outcome")
+							if raw_outcome is Dictionary:
+								var out: Dictionary = raw_outcome
+								if typeof(out.get("gold")) == TYPE_FLOAT:
+									var g: float = out["gold"]
+									if is_finite(g) and floor(g) == g:
+										out["gold"] = int(g)
+								if typeof(out.get("scraps")) == TYPE_FLOAT:
+									var s: float = out["scraps"]
+									if is_finite(s) and floor(s) == s:
+										out["scraps"] = int(s)
+	return doc
 
 
 ## True when the catalog loaded and all required plus extra records validated.
@@ -474,7 +496,9 @@ static func _parse_catalog_document(document: Variant, canonical_normalized: Dic
 		if by_id.has(event_id):
 			return {"ok": false}
 		var normalized_record: Dictionary = validated["normalized"]
-		if canonical_normalized.has(event_id):
+		if not canonical_normalized.is_empty():
+			if not canonical_normalized.has(event_id):
+				return {"ok": false}
 			if not _same_value(normalized_record, canonical_normalized[event_id]):
 				return {"ok": false}
 		var copy: Dictionary = (entry_raw as Dictionary).duplicate(true)
@@ -527,6 +551,45 @@ static func _validate_record(record_raw: Variant) -> Dictionary:
 	var choices: Array = choices_raw
 	if choices.size() != 3:
 		return {"ok": false}
+	var seen_choices: Dictionary = {}
+	var choice_idx: int = 0
+	var trade_choice_id: String = ""
+	for choice_raw: Variant in choices:
+		if typeof(choice_raw) != TYPE_DICTIONARY:
+			return {"ok": false}
+		var choice: Dictionary = choice_raw
+		if choice.size() != 3 or not choice.has("id") or not choice.has("text") or not choice.has("outcome"):
+			return {"ok": false}
+		var cid_raw: Variant = choice.get("id")
+		var text_raw: Variant = choice.get("text")
+		var outcome_raw: Variant = choice.get("outcome")
+		if not _is_trimmed_nonblank_string(cid_raw) or not _is_nonblank_string(text_raw):
+			return {"ok": false}
+		if typeof(outcome_raw) != TYPE_DICTIONARY:
+			return {"ok": false}
+		var outcome: Dictionary = outcome_raw
+		if outcome.size() != 2 or not outcome.has("gold") or not outcome.has("scraps"):
+			return {"ok": false}
+		if typeof(outcome.get("gold")) != TYPE_INT or typeof(outcome.get("scraps")) != TYPE_INT:
+			return {"ok": false}
+		var cid: String = cid_raw
+		if seen_choices.has(cid):
+			return {"ok": false}
+		seen_choices[cid] = true
+		if choice_idx == 0:
+			if cid != service_choice_id:
+				return {"ok": false}
+		elif choice_idx == 1:
+			if cid == service_choice_id or cid == LEAVE_CHOICE_ID:
+				return {"ok": false}
+			trade_choice_id = cid
+		elif choice_idx == 2:
+			if cid != LEAVE_CHOICE_ID:
+				return {"ok": false}
+		choice_idx += 1
+	if not seen_choices.has(service_choice_id) or not seen_choices.has(LEAVE_CHOICE_ID) or trade_choice_id.is_empty():
+		return {"ok": false}
+
 	var selector := RunEventChoice.new(record)
 	if not selector.is_valid():
 		return {"ok": false}
@@ -552,52 +615,25 @@ static func _validate_record(record_raw: Variant) -> Dictionary:
 			"gold": int(gold_delta),
 			"scraps": int(scraps_delta),
 		}
-	var seen_choices: Dictionary = {}
+
 	var normalized_choices: Array = []
-	var choice_idx: int = 0
-	var trade_choice_id: String = ""
 	for choice_raw: Variant in choices:
-		if typeof(choice_raw) != TYPE_DICTIONARY:
-			return {"ok": false}
 		var choice: Dictionary = choice_raw
-		if choice.size() != 3 or not choice.has("id") or not choice.has("text") or not choice.has("outcome"):
+		var cid: String = choice["id"]
+		if not deltas_by_id.has(cid):
 			return {"ok": false}
-		var cid_raw: Variant = choice.get("id")
-		var text_raw: Variant = choice.get("text")
-		var outcome_raw: Variant = choice.get("outcome")
-		if not _is_trimmed_nonblank_string(cid_raw) or not _is_nonblank_string(text_raw):
-			return {"ok": false}
-		if typeof(outcome_raw) != TYPE_DICTIONARY:
-			return {"ok": false}
-		var outcome: Dictionary = outcome_raw
-		if outcome.size() != 2 or not outcome.has("gold") or not outcome.has("scraps"):
-			return {"ok": false}
-		var cid: String = cid_raw
-		if seen_choices.has(cid) or not deltas_by_id.has(cid):
-			return {"ok": false}
-		seen_choices[cid] = true
 		var delta: Dictionary = deltas_by_id[cid]
-		if choice_idx == 0:
-			if cid != service_choice_id:
-				return {"ok": false}
-		elif choice_idx == 1:
-			if cid == service_choice_id or cid == LEAVE_CHOICE_ID:
-				return {"ok": false}
-			trade_choice_id = cid
-		elif choice_idx == 2:
-			if cid != LEAVE_CHOICE_ID:
-				return {"ok": false}
+		var outcome: Dictionary = choice["outcome"]
+		if int(delta["gold"]) != int(outcome["gold"]) or int(delta["scraps"]) != int(outcome["scraps"]):
+			return {"ok": false}
 		normalized_choices.append({
 			"id": cid,
-			"text": String(text_raw),
+			"text": String(choice["text"]),
 			"outcome": {
-				"gold": int(delta["gold"]),
-				"scraps": int(delta["scraps"]),
+				"gold": int(outcome["gold"]),
+				"scraps": int(outcome["scraps"]),
 			},
 		})
-		choice_idx += 1
-	if not seen_choices.has(service_choice_id) or not seen_choices.has(LEAVE_CHOICE_ID) or trade_choice_id.is_empty():
-		return {"ok": false}
 	var paid_delta: Dictionary = deltas_by_id[service_choice_id]
 	var paid_gold: int = int(paid_delta["gold"])
 	var paid_scraps: int = int(paid_delta["scraps"])
