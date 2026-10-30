@@ -4,6 +4,8 @@ extends Node
 ## alone owns Tinker's first-attack latch.
 
 const SEAMSTRESS_IDS := ["seamstress_blanket_stitch", "seamstress_blanket_stitch_plus"]
+## Authored V3 control sweep; reuses this fight's existing Unravel gauge.
+const BLANKET_IDS := ["seamstress_v3_blanket_of_barbs", "seamstress_v3_blanket_of_barbs_plus"]
 const TINKER_IDS := ["tinker_scatter_bolts", "tinker_scatter_bolts_plus",
 	"tinker_ricochet", "tinker_ricochet_plus"]
 ## Target-free area attacks that charge the battle's shared Unravel gauge.
@@ -19,7 +21,7 @@ const CROW_IDS := ["scarecrow_crow_dive", "scarecrow_crow_dive_plus",
 const GOLEM_IDS := ["button_golem_popping_volley", "button_golem_popping_volley_plus",
 	"button_golem_buttonstorm", "button_golem_buttonstorm_plus"]
 const MOTH_IDS := ["lantern_monk_moth_cloud", "lantern_monk_moth_cloud_plus"]
-const CARD_IDS := SEAMSTRESS_IDS + TINKER_IDS + UNRAVEL_TINKER_IDS + ENERGY_IDS + YARN_IDS + SNARE_IDS + SKEIN_IDS + CROW_IDS + GOLEM_IDS + MOTH_IDS
+const CARD_IDS := SEAMSTRESS_IDS + BLANKET_IDS + TINKER_IDS + UNRAVEL_TINKER_IDS + ENERGY_IDS + YARN_IDS + SNARE_IDS + SKEIN_IDS + CROW_IDS + GOLEM_IDS + MOTH_IDS
 const INSTRUCTION := "Click or focus and press Enter / Space to play"
 const CUE_NAME := "BlanketStitchCue"
 const CREAM := Color("#ece0c8")
@@ -164,6 +166,8 @@ func _is_card(card_id: String) -> bool:
 
 
 func _definition(card_id: String) -> Dictionary:
+	if card_id in BLANKET_IDS:
+		return V3SeamstressPoolCards.new().get_definition(card_id)
 	if card_id in MOTH_IDS:
 		return LanternMonkPoolCards.new().get_definition(card_id)
 	if card_id in GOLEM_IDS:
@@ -458,6 +462,10 @@ func _rule_text(card_id: String) -> String:
 		return "%s | Yarn Ranger | %d energy | From %s\nLiving Tangled enemies %s only: %d base damage each (Weak/Exposed, Tangled +2 and Block apply); requires a living Tangled target, no target choice" % [
 			definition.display_name, definition.cost, _positions(definition.from_positions),
 			_positions(definition.to_positions), effects.damage]
+	if card_id in BLANKET_IDS:
+		return "%s | Seamstress | %d energy | From %s\nAll living enemies %s: Bleed %d (%d + Seamstress passive 1) and Unravel %d; no target choice" % [
+			definition.display_name, definition.cost, _positions(definition.from_positions),
+			_positions(definition.to_positions), int(effects.bleed) + 1, int(effects.bleed), int(effects.unravel)]
 	if card_id in ENERGY_TINKER_IDS:
 		return "%s | Tinker | %d energy | From %s\nSelf: Gain %d energy; take %d self-damage (Block absorbs first), no target choice" % [
 			String(definition.get("display_name", card_id)), int(definition.get("cost", -1)),
@@ -941,6 +949,13 @@ func _eligible(panel, card_id: String) -> bool:
 		if not _receipt_valid(_receipt(panel, card_id)) or not CombatYarnRangerSnareCards.new()._prepare(
 				_deck, _party, _enemies, card_id).get("ok", false):
 			return false
+	if card_id in BLANKET_IDS:
+		var authorities := _live_unravel_authorities(app)
+		if app.enemy_intents != _intents or _deck._rng != _rng \
+				or not _receipt_valid(_receipt(panel, card_id)) or authorities.is_empty() \
+				or not CombatSeamstressV3BlanketCards.new()._prepare(
+					_deck, _party, _enemies, authorities.unravel, card_id).get("ok", false):
+			return false
 	return app.deck == _deck and app.party == _party and app.enemies == _enemies \
 		and app.battle_result == _result and app.run_rng == _rng and app.battle_view == _battle
 
@@ -1022,6 +1037,17 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 	elif card_id in SNARE_IDS:
 		event = CombatYarnRangerSnareCards.new().play_card(
 			receipt.deck, receipt.party, receipt.enemies, card_id)
+	elif card_id in BLANKET_IDS:
+		var authorities: Dictionary = _live_unravel_authorities(get_parent())
+		if authorities.is_empty():
+			_cancel()
+			return
+		event = CombatSeamstressV3BlanketCards.new().play_card(
+			receipt.deck, receipt.party, receipt.enemies, authorities.unravel, card_id)
+		if event.get("ok", false):
+			# The end-turn enemy phase must consume the SAME gauge's queued skip.
+			var flow: CombatRoundFlow = authorities.flow
+			flow._unravel = authorities.unravel
 	elif card_id in ENERGY_IDS:
 		if not CombatPoolEnergyCards.new().play_card(receipt.deck, receipt.party, card_id, 0):
 			_cancel()
