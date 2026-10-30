@@ -134,6 +134,12 @@ func _fixtures() -> Dictionary:
 	# Genuine map/toll witnesses for the shifted sorted pool after admitting
 	# Emberglass; IDs and draws are always revalidated below, not pinned here.
 	hints.append_array([236051, 316683, 90763, 200641, 33752])
+	# Genuine map/toll/event-rotation witnesses for the six required Events that lost
+	# their pinned coverage when the latest roadside batches grew the sorted draw
+	# pool: needle_gate, v3_raincoat_bridge, v3_patchwork_lighthouse,
+	# v3_seamstress_scarlet_loom, v3_seamstress_needle_oracle and
+	# v3_warden_buckle_checkpoint.
+	hints.append_array([501072, 653273, 771997, 1007589, 1187708, 1227514])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():
