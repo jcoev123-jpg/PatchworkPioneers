@@ -65,6 +65,50 @@
         { "id": "pay_bell_toll", "text": "Pay the bell toll (spend 16 gold)", "outcome": { "gold": -16, "scraps": 0 } },
         { "id": "leave", "text": "Retreat along the quiet seam (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_scissorclock_tollhouse",
+      "title": "The Scissor-Clock Tollhouse",
+      "description": "A squat button-eyed tollkeeper shelters under a giant scissor-faced clock; its brass blades tick as stitched sentries bar the midnight lane.",
+      "fight_choice_id": "cut_clock_chain",
+      "choices": [
+        { "id": "cut_clock_chain", "text": "Cut the scissor-clock chain and confront the sentries (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "buy_clock_pass", "text": "Pay 17 gold for a stamped scissor-clock pass", "outcome": { "gold": -17, "scraps": 0 } },
+        { "id": "leave", "text": "Take the unlit side path (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_mothglass_lantern_patrol",
+      "title": "The Mothglass Lantern Patrol",
+      "description": "A plump moth puppet circles a huge glass lantern as candle-eyed guards block the velvet road with stretched silk wings.",
+      "fight_choice_id": "scatter_moth_guard",
+      "choices": [
+        { "id": "scatter_moth_guard", "text": "Scatter the moth-wing guards and fight through (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "offer_wick_thread", "text": "Offer 2 scrap bundles of wick thread for passage", "outcome": { "gold": 0, "scraps": -2 } },
+        { "id": "leave", "text": "Follow the dark path around the lantern (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_crowpin_quilt_checkpoint",
+      "title": "The Crowpin Quilt Checkpoint",
+      "description": "A button-eyed crow doll perches on an oversized silver safety pin above an oxblood quilt wall; masked guards wait beneath its wings.",
+      "fight_choice_id": "raise_crowpin_banner",
+      "choices": [
+        { "id": "raise_crowpin_banner", "text": "Raise the crowpin banner and challenge the guards (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "buy_crowpin_token", "text": "Pay 13 gold for a crowpin crossing token", "outcome": { "gold": -13, "scraps": 0 } },
+        { "id": "leave", "text": "Turn away from the quilt wall (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_button_drum_masquerade",
+      "title": "The Button-Drum Masquerade",
+      "description": "A brass-button drum booms beneath plum bunting; round masked ragdoll drummers raise patched shields to block the torchlit street.",
+      "fight_choice_id": "challenge_drum_guard",
+      "choices": [
+        { "id": "challenge_drum_guard", "text": "Challenge the button-drummers at the barricade (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "trade_drum_stitches", "text": "Trade 3 scrap bundles for a guarded pass", "outcome": { "gold": 0, "scraps": -3 } },
+        { "id": "leave", "text": "Slip past the quiet bunting (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
