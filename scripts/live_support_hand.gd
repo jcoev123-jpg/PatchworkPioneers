@@ -5,6 +5,15 @@ const SUPPORT_IDS := ["warden_brace", "warden_brace_plus", "tinker_tune_up", "ti
 	"seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up", "seamstress_stitch_up_plus"]
 const STRAW_WRAP_IDS := ["scarecrow_straw_wrap", "scarecrow_straw_wrap_plus"]
 const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
+## The only preceding cards this build can genuinely copy: the starter Tune Up pair.
+## Jury-rig itself remains authentic; an unsupported preceding card leaves it disabled.
+const JURY_SOURCE_IDS := ["tinker_tune_up", "tinker_tune_up_plus"]
+const JURY_SOURCE_FROM := [1, 2, 3]
+## The leading `_jury_state()` fields that name the fight itself (deck, party, battle,
+## enemies, result, intent scheduler, turn). The trailing fields are the live piles,
+## energy and hero records that a source's own post-commit rewards may legitimately
+## change before the witness is finalized.
+const JURY_IDENTITY_FIELDS := 7
 const VIGIL_IDS := ["lantern_monk_vigil_ring", "lantern_monk_vigil_ring_plus"]
 ## Party heal plus one explicit whole-debuff cleanse per living ally: the pool Lantern Glow
 ## and (cycle 346) the Lantern Monk starter Lamplight Wash share one choice flow.
@@ -101,6 +110,15 @@ var _sew := CombatButtonGolemSewCards.new()
 var _roll := CombatButtonGolemRollCards.new()
 var _re_stuff := CombatScarecrowReStuffCards.new()
 var _vigil := CombatLanternMonkPartyCards.new()
+## One authentic Jury-rig resolver per genuine fight. Its once-per-combat latch and
+## witnessed history are never shared with a replaced deck or battle.
+var _jury: CombatTinkerV3JuryRigCards
+## The last GENUINE support-hand commit that is an authentic Tune Up/+. Only this
+## presenter observes it; no caller or discard pile may supply the receipt.
+var _jury_receipts: Array[Dictionary] = []
+## The observed Tune Up/+ receipt plus the exact live deck/turn snapshot taken at
+## that commit, so a later play or turn invalidates the witness instead of reusing it.
+var _jury_witness: Dictionary = {}
 var cleanse_choices: HBoxContainer
 ## Display-only extension of the shared hand metadata service: the service itself
 ## is owned by another lane, so this presenter's Eyelet Guard faces are described
@@ -669,6 +687,8 @@ func _enemy_service(card_id: String):
 
 
 func _is_actionable(card_id: String) -> bool:
+	if _jury != null and _jury.is_supported_card(card_id):
+		return true
 	if _hem.is_supported_card(card_id):
 		return true
 	if _v3_tinker_scrap != null and _v3_tinker_scrap.is_supported_card(card_id):
@@ -695,7 +715,16 @@ func _is_actionable(card_id: String) -> bool:
 
 
 ## One entry point keeps starter support and pool Block cards on the same commit path.
+## Every genuine successful support commit is observed for the battle's Jury-rig
+## witness; a failed attempt never rewrites the last real success.
 func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position: int, debuff: String = "") -> bool:
+	var committed := _commit_held(deck, party, card_id, position, debuff)
+	if committed:
+		_observe_support_commit(card_id)
+	return committed
+
+
+func _commit_held(deck: CombatDeck, party: CombatParty, card_id: String, position: int, debuff: String = "") -> bool:
 	if _hem.is_supported_card(card_id):
 		return bool(_hem.play_card(deck, party, card_id, position).get("ok", false))
 	if _v3_tinker_scrap != null and _v3_tinker_scrap.is_supported_card(card_id):
@@ -775,6 +804,222 @@ func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position:
 		return played
 	return _play != null and _play.play_card(deck, party, card_id, position,
 		_path_discount(card_id))
+
+
+## Record only the genuine successful commits this presenter actually observed. A Tune
+## Up/+ becomes the sole source; every other real card replaces it with an unsupported
+## source, so Jury-rig truthfully disables instead of reusing an older play.
+func _observe_support_commit(card_id: String) -> void:
+	if _jury == null:
+		return
+	if _jury_source_definition(card_id).is_empty():
+		_clear_jury_witness()
+		return
+	var receipt := _jury_receipt_for(card_id)
+	if receipt.is_empty():
+		_clear_jury_witness()
+		return
+	_jury_receipts.clear()
+	_jury_receipts.append(receipt)
+	_jury_witness = {"receipt": receipt.duplicate(true), "state": _jury_state()}
+
+
+func _clear_jury_witness() -> void:
+	_jury_receipts.clear()
+	_jury_witness.clear()
+
+
+## The authentic starter record for a Tune Up/+ source, or {} for any other record.
+## Its printed draw amount is the only draw Jury-rig executes.
+func _jury_source_definition(card_id: String) -> Dictionary:
+	if not card_id in JURY_SOURCE_IDS:
+		return {}
+	var record := StarterCards.new().get_definition(card_id)
+	if record.is_empty() or record.get("id") != card_id or record.get("owner") != "tinker":
+		return {}
+	if typeof(record.get("cost")) != TYPE_INT or int(record.get("cost")) != 0:
+		return {}
+	if record.get("target_kind") != "none":
+		return {}
+	if record.get("from_positions") != JURY_SOURCE_FROM:
+		return {}
+	var to_positions: Variant = record.get("to_positions")
+	if typeof(to_positions) != TYPE_ARRAY or not (to_positions as Array).is_empty():
+		return {}
+	var effects: Variant = record.get("effects")
+	if typeof(effects) != TYPE_DICTIONARY:
+		return {}
+	var authored: Dictionary = effects
+	if authored.size() != 1 or not authored.has("draw"):
+		return {}
+	if typeof(authored["draw"]) != TYPE_INT or int(authored["draw"]) <= 0:
+		return {}
+	return record
+
+
+func _jury_receipt_for(card_id: String) -> Dictionary:
+	var record := _jury_source_definition(card_id)
+	if record.is_empty():
+		return {}
+	return {
+		"ok": true,
+		"card_id": card_id,
+		"owner": str(record.get("owner", "")),
+		"from_positions": (record.get("from_positions", []) as Array).duplicate(),
+		"to_positions": (record.get("to_positions", []) as Array).duplicate(),
+		"target_kind": str(record.get("target_kind", "")),
+	}
+
+
+## The exact live deck, battle and turn the witness belongs to. Any later play,
+## draw, reshuffle, end turn or battle replacement makes this snapshot differ.
+func _jury_state() -> Array:
+	var app = get_parent()
+	if _deck == null or _party == null or not is_instance_valid(_battle) or app == null:
+		return []
+	return [_deck, _party, _battle, app.enemies, app.battle_result, app.enemy_intents,
+		_turn_index(), _deck.hand.duplicate(), _deck.draw_pile.duplicate(),
+		_deck.discard_pile.duplicate(), _deck.energy, _deck.turn_active,
+		_party.get_heroes(), app.run_rng.state if app.run_rng != null else -1]
+
+
+func _turn_index() -> int:
+	var app = get_parent()
+	return int(app.enemy_intents._turn_index) if app != null and app.enemy_intents != null else -1
+
+
+func _jury_witness_valid() -> bool:
+	if _jury == null or _jury_witness.is_empty() or _jury_receipts.size() != 1:
+		return false
+	if _jury_witness.get("receipt") != _jury_receipts[0]:
+		return false
+	var state: Variant = _jury_witness.get("state", [])
+	return state is Array and not (state as Array).is_empty() and state == _jury_state()
+
+
+## The genuine source commit is observed BEFORE its own automatic rewards settle: a
+## Switchback Button's Block for this very play, or the Quilt's party Block and draw on
+## the third distinct owner, land after that snapshot. Once the source's post-commit
+## hooks and hand/Quilt reconciliation finish, rebase ONLY the witness this same commit
+## just observed onto the settled live state. The fight identity and the source receipt
+## must still be the committed one, so a newer play (which rewrites the receipts), a
+## replaced deck/battle or a later turn never inherits this witness.
+func _finalize_jury_witness(card_id: String) -> void:
+	if _jury == null or _jury_receipts.size() != 1 or _jury_witness.is_empty():
+		return
+	var receipt: Dictionary = _jury_receipts[0]
+	if _jury_source_definition(card_id).is_empty() \
+			or str(receipt.get("card_id", "")) != card_id:
+		return
+	if _jury_witness.get("receipt") != receipt:
+		return
+	var observed: Variant = _jury_witness.get("state", [])
+	var settled: Array = _jury_state()
+	if not observed is Array or settled.size() < JURY_IDENTITY_FIELDS \
+			or (observed as Array).size() != settled.size():
+		return
+	for index in range(JURY_IDENTITY_FIELDS):
+		if observed[index] != settled[index]:
+			# A different fight, resolver or turn: the observation is stale, not merely
+			# unsettled, so it must stay invalid instead of being rebased.
+			_clear_jury_witness()
+			return
+	_jury_witness["state"] = settled
+
+
+
+## Read-only admission for the mounted hand and the card face. The accepted resolver
+## revalidates the exact held copy, living back/middle Tinker, printed cost, latch and
+## verified Tune Up/+ receipt series before anything is charged.
+func _jury_can_cast(card_id: String, deck: CombatDeck = null, party: CombatParty = null) -> bool:
+	if _jury == null or not _jury.CARD_IDS.has(card_id):
+		return false
+	if deck == null:
+		deck = _deck
+	if party == null:
+		party = _party
+	if deck == null or party == null or not _jury_witness_valid():
+		return false
+	return bool(_jury.preflight(deck, party, card_id, _jury_receipts.duplicate(true)).get("ok", false))
+
+
+func _jury_selection_state() -> Array:
+	return [_jury, _jury_witness.duplicate(true), _jury_receipts.duplicate(true), _jury_state()]
+
+
+## Selection must still describe the same fight, turn, deck and witnessed source.
+func _jury_selection_valid() -> bool:
+	if _pending.is_empty() or _jury == null:
+		return false
+	var snapshot: Variant = _pending.get("jury_state", [])
+	if not snapshot is Array or (snapshot as Array).size() != 4:
+		return false
+	var state: Array = snapshot
+	return is_same(state[0], _jury) and state[1] == _jury_witness \
+		and state[2] == _jury_receipts and state[3] == _jury_state() \
+		and _jury_witness_valid()
+
+
+## Revalidate the plan and its cost-zero copy instruction BEFORE payment, then let
+## the accepted resolver charge/discard/latch exactly once. Only the copied printed
+## draw is executed; no source card is placed in hand, paid for or discarded again.
+func _play_jury_rig(deck: CombatDeck, party: CombatParty, card_id: String) -> bool:
+	if _jury == null or not _jury.CARD_IDS.has(card_id):
+		return false
+	if deck != _deck or party != _party or not _jury_witness_valid():
+		return false
+	var receipts: Array = _jury_receipts.duplicate(true)
+	var plan: Dictionary = _jury.preflight(deck, party, card_id, receipts)
+	if not plan.get("ok", false):
+		return false
+	var source: Variant = plan.get("source", {})
+	if not source is Dictionary:
+		return false
+	var source_card: Dictionary = source
+	var record := _jury_source_definition(str(source_card.get("card_id", "")))
+	if record.is_empty() or str(plan.get("source_card_id", "")) != str(record.get("id", "")):
+		return false
+	if str(source_card.get("owner", "")) != str(record.get("owner", "")) \
+			or source_card.get("from_positions") != record.get("from_positions") \
+			or source_card.get("to_positions") != record.get("to_positions") \
+			or str(source_card.get("target_kind", "")) != str(record.get("target_kind", "")):
+		return false
+	var copy := _jury.copy_instruction(source_card)
+	if not _jury_copy_authentic(copy, record):
+		return false
+	var result: Dictionary = _jury.play_card(deck, party, card_id, receipts)
+	if not result.get("ok", false) or result.get("copy", {}) != copy:
+		return false
+	var draw: int = int((record.get("effects", {}) as Dictionary).get("draw", 0))
+	if draw <= 0:
+		return false
+	if deck.draw_extra(draw) < 0:
+		return false
+	_clear_jury_witness()
+	return true
+
+
+func _jury_copy_authentic(copy: Dictionary, record: Dictionary) -> bool:
+	if str(copy.get("kind", "")) != "free_card_copy":
+		return false
+	if typeof(copy.get("cost_override")) != TYPE_INT \
+			or int(copy["cost_override"]) != CombatTinkerV3JuryRigCards.FREE_COPY_COST:
+		return false
+	if not copy.get("one_time") is bool or not bool(copy["one_time"]):
+		return false
+	if str(copy.get("card_id", "")) != str(record.get("id", "")) \
+			or str(copy.get("owner", "")) != str(record.get("owner", "")):
+		return false
+	return copy.get("from_positions") == record.get("from_positions") \
+		and copy.get("to_positions") == record.get("to_positions") \
+		and str(copy.get("target_kind", "")) == str(record.get("target_kind", ""))
+
+
+## Public read-only admission used by the sewn card face.
+func jury_rig_actionable(panel, card_id: String) -> bool:
+	if _jury == null or not _jury.CARD_IDS.has(card_id):
+		return false
+	return _eligible(panel, card_id, _deck, _party, _battle)
 
 
 ## Only a bound authentic battle can advance the Heirloom once on the
@@ -867,6 +1112,10 @@ func _sync_battle() -> void:
 		_deck = app.deck
 		_party = app.party
 		_play = CombatStarterSupportPlay.new()
+		_jury = CombatTinkerV3JuryRigCards.new()
+		_jury.begin_combat()
+		_jury_receipts.clear()
+		_jury_witness.clear()
 		_fear = CombatScarecrowFearCards.new()
 		_straw = CombatSupportCards.new()
 		_wrap = CombatScarecrowStrawWrapCards.new()
@@ -1113,7 +1362,7 @@ func _sync_battle() -> void:
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_card_input.bind(panel, label.text, _deck, _party, _battle)
 		_bindings[panel] = callback
-		if _hem.is_supported_card(label.text) or CombatYarnRangerKnitCards.CARDS.has(label.text) or label.text in VIGIL_IDS or label.text in GLOW_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text) or _turret.is_supported_card(label.text) or CombatWardenV3TauntCards.CARDS.has(label.text) or _is_eyelet_card(label.text) or _is_warden_guard_card(label.text):
+		if (_jury != null and _jury.CARD_IDS.has(label.text)) or _hem.is_supported_card(label.text) or CombatYarnRangerKnitCards.CARDS.has(label.text) or label.text in VIGIL_IDS or label.text in GLOW_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text) or _turret.is_supported_card(label.text) or CombatWardenV3TauntCards.CARDS.has(label.text) or _is_eyelet_card(label.text) or _is_warden_guard_card(label.text):
 			_move_context[panel] = _current_move_context(panel)
 		panel.gui_input.connect(callback)
 	# Keep the existing End/Return Tab cycle; Up enters the card row, Down exits it.
@@ -1306,6 +1555,19 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 		return false
 	if not panel.is_visible_in_tree() or not battle.is_visible_in_tree() or panel.get_parent() != app.hand_view:
 		return false
+	if _jury != null and _jury.CARD_IDS.has(card_id):
+		# The accepted resolver owns the authentic held copy, living back/middle
+		# Tinker, printed energy, latch and the observed Tune Up/+ witness.
+		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
+				or _move_context.get(panel, []) != _current_move_context(panel) \
+				or app._battle_closed or app.battle_result == null \
+				or not app.battle_result.can_continue() or app.battle_result._party != party \
+				or app.battle_result._enemies != app.enemies or app.enemies == null \
+				or not app.enemies.is_valid() or app.enemies.is_victorious() \
+				or party.is_defeated() or not deck.turn_active:
+			return false
+		if not _jury_can_cast(card_id, deck, party):
+			return false
 	if _v3_tinker_scrap != null and _v3_tinker_scrap.is_supported_card(card_id):
 		# Authoritative paid service preflight; stale or forged panels never charge.
 		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] 				or app._battle_closed or app.battle_result == null 				or not app.battle_result.can_continue() or app.battle_result._party != party 				or app.battle_result._enemies != app.enemies or app.enemies == null 				or not app.enemies.is_valid() or app.enemies.is_victorious() 				or party.is_defeated() 				or not _v3_tinker_scrap._prepare(deck, party, card_id, 0).get("ok", false):
@@ -1524,6 +1786,8 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		return
 	_cancel_pending()
 	_pending = {"panel": panel, "id": card_id, "choosing": false, "queued": false, "context": _current_move_context(panel)}
+	if _jury != null and _jury.CARD_IDS.has(card_id):
+		_pending.jury_state = _jury_selection_state()
 	if _is_fear_card(card_id):
 		_pending.fear_state = _fear_selection_state()
 		_pending.hero_refs = _party._heroes.duplicate()
@@ -1563,6 +1827,23 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 	if not _eligible(panel, card_id, deck, party, battle):
 		_cancel_pending()
 		return
+	if _jury != null and _jury.CARD_IDS.has(card_id):
+		# The selection snapshot must still name this fight, turn, deck and source.
+		if not _jury_selection_valid():
+			_cancel_pending()
+			return
+		_cancel_pending()
+		var jury_energy_before: int = deck.energy
+		if not _play_jury_rig(deck, party, card_id):
+			return
+		_report_path_play(card_id, jury_energy_before)
+		_forward_switchback_ordinary_play(card_id)
+		var jury_app = get_parent()
+		jury_app._refresh_party()
+		jury_app._refresh_hand()
+		_sync_battle()
+		jury_app.end_turn_button.grab_focus()
+		return
 	if card_id in GLOW_IDS:
 		if not _selection_valid():
 			_cancel_pending()
@@ -1584,6 +1865,7 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 	_cancel_pending()
 	if card_id in M02PositionCards.IDS:
 		if CombatPositionSwaps.play_move_card(deck, party, card_id, M02PositionCards.new().get_definition(card_id)):
+			_clear_jury_witness()
 			_forward_switchback_ordinary_play(card_id)
 			var app = get_parent()
 			app._refresh_party()
@@ -1600,6 +1882,9 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 	var app = get_parent()
 	app._refresh_party()
 	app._refresh_hand()
+	# The source's own Switchback/Quilt rewards just settled; the witnessed Tune Up/+
+	# stays the latest committed card, so rebase its snapshot before the hand redraws.
+	_finalize_jury_witness(card_id)
 	_sync_battle()
 	app.end_turn_button.grab_focus()
 
@@ -1624,6 +1909,8 @@ func _selection_valid() -> bool:
 	if _pending.is_empty() or not _eligible(_pending.panel, _pending.id, _deck, _party, _battle):
 		return false
 	if _pending.get("context", []) != _current_move_context(_pending.panel):
+		return false
+	if _jury != null and _jury.CARD_IDS.has(_pending.id) and not _jury_selection_valid():
 		return false
 	if _is_fear_card(_pending.id):
 		if _pending.fear_state != _fear_selection_state() \
@@ -1876,6 +2163,7 @@ func _advance_glow(token: int) -> void:
 	var selections: Dictionary = _pending.selections.duplicate()
 	_cancel_pending()
 	if _vigil.play_card(_deck, _party, id, 0, selections).get("ok", false):
+		_clear_jury_witness()
 		_forward_switchback_ordinary_play(id)
 		var app = get_parent()
 		app._refresh_party()
@@ -1924,6 +2212,7 @@ func _resolve_target(position: int, token: int) -> void:
 		var roster_before: Array = app.enemies.get_enemies()
 		var played: Dictionary = _enemy_service(id).play_card(_deck, _party, app.enemies, id, position)
 		if played.get("ok", false):
+			_clear_jury_witness()
 			app._note_card_damage(app.enemies, roster_before, played)
 			app._refresh_party()
 			app._refresh_enemy_roster()
@@ -2052,6 +2341,9 @@ func _clear() -> void:
 	_deck = null
 	_party = null
 	_play = null
+	_jury = null
+	_jury_receipts.clear()
+	_jury_witness.clear()
 	_fear = null
 	_straw = null
 	_block_cards = null
