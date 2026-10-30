@@ -71,6 +71,10 @@ const ACTOR_ART := {
 	"thistle_patch_doll": "enemies/thistle_patch_doll",
 	"bobbin_bat": "enemies/bobbin_bat",
 	"quilt_termite": "enemies/quilt_termite",
+	"felt_bulwark": "enemies/felt_bulwark",
+	"moth_scribe": "enemies/moth_scribe",
+	"pin_skitter": "enemies/pin_skitter",
+	"thread_biter": "enemies/thread_biter",
 	"sewing_machine_colossus": "enemies/sewing_machine_colossus",
 	"needle_briar_guard": "enemies/needle_marshal",
 	"spool_snarekeeper": "enemies/spool_hexer",
@@ -155,11 +159,11 @@ static func art_paths(actor_id: String) -> Dictionary:
 	if not ACTOR_ART.has(actor_id):
 		return {}
 	var base: String = ART_ROOT + String(ACTOR_ART[actor_id])
-	return {"idle": base + ".png", "attack": base + "_attack.png"}
+	return {"idle": base + ".png", "attack": base + "_attack.png", "idle_loop": base + "_idle.png"}
 
 
-## The exact sewn fallback kind of one authoritative actor ID: the four unillustrated M05
-## normals draw their own silhouette, every other ID keeps the generic drawn puppet. The
+## The exact sewn fallback kind of one authoritative actor ID: the four M05 normals
+## retain their own silhouette when art is unavailable; other IDs use the generic puppet. The
 ## one authority lives in the mounted Puppet, chosen by ID and never by stage slot.
 static func fallback_kind_for(actor_id: String) -> String:
 	return Puppet.fallback_kind_for(actor_id)
@@ -239,14 +243,16 @@ class Puppet extends Control:
 	const IDLE_BREATHE_RATE := 1.15
 	const IDLE_SLOT_OFFSET := 0.9
 	const IDLE_SIDE_OFFSET := 0.55
+	## Playback rate of an authored idle loop strip.
+	const IDLE_LOOP_FPS := 12.0
 	## Tall artwork stops short of the band top, leaving the column room for its intent
 	## ticket and a status plaque above it instead of hiding the plaque.
 	const ART_HEIGHT_SHARE := 0.62
 	## The drawn fallback's own local extents before the pose transform: body, head, legs
 	## and the slot-specific sewn prop, including stroke width.
 	const FALLBACK_EXTENTS := Rect2(-26.0, -43.0, 73.0, 85.5)
-	## The four authored M05 normals ship no image yet, so each draws its own sewn
-	## silhouette and prop inside this same Puppet; every other ID, including a fabricated
+	## The four authored M05 normals retain their own sewn fallback if their
+	## imported images are unavailable; every other ID, including a fabricated
 	## one, keeps the generic drawn puppet. The kind follows the bound actor ID only, never
 	## the stage slot, so a rebind really changes the puppet an actor draws.
 	const FALLBACK_KIND_GENERIC := "generic"
@@ -335,6 +341,9 @@ class Puppet extends Control:
 	## Seconds of idle presentation this instance has run. A fresh puppet starts at rest.
 	var idle_phase := 0.0
 	var idle_texture: Texture2D
+	## Optional authored idle loop: square cells cut from one `<id>_idle.png` strip, each
+	## with the figure standing on the cell's bottom edge at the still's own height.
+	var idle_frames: Array[Texture2D] = []
 	## Authored attack pose, drawn only while this actor performs its own committed hit.
 	var attack_texture: Texture2D
 	## Seconds left of the one bounded committed attack pose; zero means plain idle.
@@ -645,10 +654,41 @@ class Puppet extends Control:
 		fallback_kind = fallback_kind_for(id)
 		idle_texture = art.get("idle") as Texture2D
 		attack_texture = art.get("attack") as Texture2D
+		idle_frames = loop_frames(art.get("idle_loop") as Texture2D if idle_texture != null else null)
 		queue_redraw()
 
 	func current_texture() -> Texture2D:
 		return idle_texture
+
+	## Cuts a horizontal strip of square cells into frames; anything else is no loop.
+	static func loop_frames(strip: Texture2D) -> Array[Texture2D]:
+		var frames: Array[Texture2D] = []
+		if strip == null or strip.get_height() <= 0 or strip.get_width() % strip.get_height() != 0:
+			return frames
+		var cell := float(strip.get_height())
+		for index in range(strip.get_width() / strip.get_height()):
+			var frame := AtlasTexture.new()
+			frame.atlas = strip
+			frame.region = Rect2(index * cell, 0.0, cell, cell)
+			frames.append(frame)
+		return frames
+
+	## The artwork actually painted for the pose image `texture`: a standing actor's still
+	## idle image is swapped for the current loop frame; attack poses and fallen actors keep
+	## their own image. Placement and targets still come from the still image.
+	func idle_frame(texture: Texture2D) -> Texture2D:
+		if idle_frames.is_empty() or texture != idle_texture or fallen:
+			return texture
+		var index := int((idle_phase + idle_offset()) * IDLE_LOOP_FPS)
+		return idle_frames[index % idle_frames.size()]
+
+	## Where `painted` goes for the still's fitted `rect`: a loop frame keeps the still's
+	## pixel scale, bottom-centred on the same foot line, so the figure keeps its size.
+	func painted_rect(painted: Texture2D, texture: Texture2D, rect: Rect2) -> Rect2:
+		if painted == texture or texture.get_height() <= 0:
+			return rect
+		var drawn := Vector2(painted.get_width(), painted.get_height()) * (rect.size.y / float(texture.get_height()))
+		return Rect2(Vector2(rect.get_center().x - drawn.x / 2.0, rect.end.y - drawn.y), drawn)
 
 	## The pinned name band at the bottom of the actor; art never reaches into it.
 	func tag_band() -> Rect2:
@@ -814,9 +854,11 @@ class Puppet extends Control:
 			var rect := pose_rect(texture)
 			if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 				return
-			var grown := rect.size + Vector2(RIM_RADIUS, RIM_RADIUS) * 2.0
-			draw_set_transform_matrix(idle_transform(rect.get_center() - Vector2(0.0, RIM_RADIUS), 1.0))
-			draw_texture_rect(texture, Rect2(-grown / 2.0, grown), false, Color(RIM_INK, RIM_ALPHA))
+			var painted := idle_frame(texture)
+			var paint_rect := painted_rect(painted, texture, rect)
+			var grown := paint_rect.size + Vector2(RIM_RADIUS, RIM_RADIUS) * 2.0
+			draw_set_transform_matrix(idle_transform(paint_rect.get_center() - Vector2(0.0, RIM_RADIUS), 1.0))
+			draw_texture_rect(painted, Rect2(-grown / 2.0, grown), false, Color(RIM_INK, RIM_ALPHA))
 			draw_set_transform(Vector2.ZERO)
 			return
 		var band := art_band()
@@ -851,9 +893,11 @@ class Puppet extends Control:
 		var rect := pose_rect(texture)
 		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 			return
+		var painted := idle_frame(texture)
+		var paint_rect := painted_rect(painted, texture, rect)
 		# Heroes face right, enemies left; the fallen actor keeps the drawn tilt treatment.
-		draw_set_transform_matrix(idle_transform(rect.get_center(), 1.0))
-		draw_texture_rect(texture, Rect2(-rect.size / 2.0, rect.size), false,
+		draw_set_transform_matrix(idle_transform(paint_rect.get_center(), 1.0))
+		draw_texture_rect(painted, Rect2(-paint_rect.size / 2.0, paint_rect.size), false,
 			Color("8c8b86") if fallen else Color.WHITE)
 		draw_set_transform(Vector2.ZERO)
 
@@ -868,7 +912,7 @@ class Puppet extends Control:
 	## Body, head, limbs and the slot-specific sewn prop in one local pose. With
 	## `silhouette` the same shapes are painted as one dark rim copy behind the actor.
 	func _draw_fallback_shapes(silhouette: bool) -> void:
-		# The four unillustrated M05 normals draw their own sewn silhouette and prop from
+		# The four M05 normals draw their own sewn fallback silhouette and prop from
 		# this same filled/rim entry point, so neither path can disagree about the actor.
 		# Every other ID, including a fabricated one, keeps the generic puppet below.
 		if fallback_kind != FALLBACK_KIND_GENERIC:
@@ -2310,7 +2354,8 @@ func art_for(actor_id: String) -> Dictionary:
 		return _art_cache[actor_id]
 	var paths: Dictionary = art_paths(actor_id)
 	var art := {"idle": _load_art_texture(String(paths.get("idle", ""))),
-		"attack": _load_art_texture(String(paths.get("attack", "")))}
+		"attack": _load_art_texture(String(paths.get("attack", ""))),
+		"idle_loop": _load_art_texture(String(paths.get("idle_loop", "")))}
 	_art_cache[actor_id] = art
 	return art
 

@@ -135,6 +135,10 @@ func _initialize() -> void:
 	_test_actionable_multi_oracle_and_rejections()
 	_test_actionable_settlement_and_detachment()
 	_test_default_selector_unchanged_with_actionable()
+	_test_party_actionable_ac1_admission()
+	_test_party_actionable_ac2_denials()
+	_test_party_actionable_ac3_replay_and_settlement()
+	_test_party_actionable_ac4_malformed_inputs()
 	_check(source_document == source_snapshot, "the shipped vitality document is unchanged by every flow")
 	_report()
 
@@ -1615,3 +1619,384 @@ func _test_default_selector_unchanged_with_actionable() -> void:
 		and future_admitted.get("event", {}).get("id") == "v3_future_quilt_well",
 		"future vitality addition is admitted by opt-in selector when affordable")
 
+
+
+func _party_heroes(h1_id: String, h1_hp: int, h1_max: int,
+		h2_id: String, h2_hp: int, h2_max: int,
+		h3_id: String, h3_hp: int, h3_max: int) -> Array:
+	return [
+		{"id": h1_id, "hp": h1_hp, "max_hp": h1_max},
+		{"id": h2_id, "hp": h2_hp, "max_hp": h2_max},
+		{"id": h3_id, "hp": h3_hp, "max_hp": h3_max},
+	]
+
+
+func _independent_party_actionable_ids(
+	rotation: RunV3VitalEventRotation,
+	excluded_ids: Array,
+	wallet: Dictionary,
+	heroes: Array
+) -> Array:
+	var excluded_lookup: Dictionary = {}
+	for raw_id in excluded_ids:
+		excluded_lookup[raw_id] = true
+	var living_heroes: Array = []
+	for h in heroes:
+		if h is Dictionary and int(h.get("hp", 0)) > 0:
+			living_heroes.append(h)
+	var qualified: Array = []
+	for record in rotation.get_vital_events():
+		if not record is Dictionary:
+			continue
+		var event_id: String = record["id"]
+		if excluded_lookup.has(event_id):
+			continue
+		var actionable := false
+		for hero in living_heroes:
+			var service := RunEventChoice.new(record)
+			var preview := service.preview_vital_choices({
+				"gold": wallet["gold"],
+				"scraps": wallet["scraps"],
+				"hero": {"id": hero["id"], "hp": hero["hp"], "max_hp": hero["max_hp"]},
+			})
+			if preview.get("ok") != true:
+				continue
+			for entry in preview.get("choices", []):
+				if entry is Dictionary and entry.get("choice_id") != "leave" and entry.get("affordable") == true:
+					actionable = true
+					break
+			if actionable:
+				break
+		if actionable:
+			qualified.append(event_id)
+	qualified.sort()
+	return qualified
+
+
+func _assert_forced_party_actionable_admits(
+	rotation: RunV3VitalEventRotation,
+	target_id: String,
+	wallet: Dictionary,
+	heroes: Array,
+	seed_value: int,
+	label: String
+) -> Dictionary:
+	var excluded: Array = rotation.get_vital_event_ids()
+	excluded.erase(target_id)
+	var excluded_before: Array = excluded.duplicate(true)
+	var wallet_before: Dictionary = wallet.duplicate(true)
+	var heroes_before: Array = heroes.duplicate(true)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var oracle := RandomNumberGenerator.new()
+	oracle.seed = seed_value
+	oracle.randi_range(0, 0)
+	var global_next := _global_rng_start(seed_value + 90000)
+	var result := rotation.select_party_actionable_event(rng, excluded, wallet, heroes)
+	_check(_selection_shape_ok(result) and result.get("ok") == true,
+		"party actionable selector admits " + label)
+	var event: Dictionary = result.get("event", {})
+	_check(event == source_by_id.get(target_id, {}),
+		"party actionable selector returns exact authentic catalog entry for " + label)
+	_check(rng.state == oracle.state,
+		"party actionable admission consumes exactly one randi_range draw for " + label)
+	_check(randi() == global_next,
+		"party actionable admission consumes no global RNG for " + label)
+	_check(excluded == excluded_before and wallet == wallet_before and heroes == heroes_before,
+		"party actionable admission preserves excluded IDs, wallet, and heroes for " + label)
+	return event
+
+
+func _assert_forced_party_actionable_rejects(
+	rotation: RunV3VitalEventRotation,
+	target_id: String,
+	wallet: Dictionary,
+	heroes: Array,
+	seed_value: int,
+	label: String
+) -> void:
+	var excluded: Array = rotation.get_vital_event_ids()
+	excluded.erase(target_id)
+	var excluded_before: Array = excluded.duplicate(true)
+	var wallet_before: Dictionary = wallet.duplicate(true)
+	var heroes_before: Array = heroes.duplicate(true)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var rng_before := rng.state
+	var global_next := _global_rng_start(seed_value + 95000)
+	var result := rotation.select_party_actionable_event(rng, excluded, wallet, heroes)
+	_check(result == {"ok": false, "event": {}},
+		"party actionable selector rejects " + label)
+	_check(rng.state == rng_before and randi() == global_next,
+		"party actionable rejection consumes neither caller nor global RNG for " + label)
+	_check(excluded == excluded_before and wallet == wallet_before and heroes == heroes_before,
+		"party actionable rejection preserves excluded IDs, wallet, and heroes for " + label)
+
+
+func _test_party_actionable_ac1_admission() -> void:
+	var rotation := RunV3VitalEventRotation.new()
+	_check(rotation.is_catalog_valid(), "shipped rotation is valid for party actionable AC1 admission")
+	var party := _party_heroes("hero_front", 2, 30, "hero_mid", 12, 30, "hero_back", 0, 30)
+	var wallet := {"gold": 0, "scraps": 0}
+	var admitted := _assert_forced_party_actionable_admits(
+		rotation, "v3_needle_thorn_garden", wallet, party, 71001,
+		"Garden when front is 2 HP, second is 12 HP, third is Torn"
+	)
+	_check(admitted == source_by_id.get("v3_needle_thorn_garden", {}),
+		"returned record for AC1 matches authentic Needle-Thorn Garden catalog entry")
+
+	var party_front_able := _party_heroes("hero_front", 12, 30, "hero_mid", 2, 30, "hero_back", 0, 30)
+	_assert_forced_party_actionable_admits(
+		rotation, "v3_needle_thorn_garden", wallet, party_front_able, 71002,
+		"Garden when front is 12 HP, second is 2 HP, third is Torn"
+	)
+
+	var party_third_able := _party_heroes("hero_front", 0, 30, "hero_mid", 2, 30, "hero_back", 12, 30)
+	_assert_forced_party_actionable_admits(
+		rotation, "v3_needle_thorn_garden", wallet, party_third_able, 71003,
+		"Garden when front is Torn, second is 2 HP, third is 12 HP"
+	)
+
+	var infirmary_party := _party_heroes("nurse_front", 2, 20, "nurse_mid", 10, 20, "nurse_back", 0, 20)
+	_assert_forced_party_actionable_admits(
+		rotation, "v3_lantern_quilt_infirmary", wallet, infirmary_party, 71004,
+		"Infirmary when front is 2 HP, second is 10 HP, third is Torn"
+	)
+
+	var shrine_party := _party_heroes("shrine_front", 10, 10, "shrine_mid", 10, 14, "shrine_back", 0, 10)
+	_assert_forced_party_actionable_admits(
+		rotation, "v3_button_heart_shrine", wallet, shrine_party, 71005,
+		"Button-Heart Shrine when front max_hp is 10, second max_hp is 14, third is Torn"
+	)
+
+
+func _test_party_actionable_ac2_denials() -> void:
+	var rotation := RunV3VitalEventRotation.new()
+	_check(rotation.is_catalog_valid(), "shipped rotation is valid for party actionable AC2 denials")
+	var wallet := {"gold": 0, "scraps": 0}
+
+	var all_living_low := _party_heroes("h1", 2, 30, "h2", 2, 30, "h3", 0, 30)
+	_assert_forced_party_actionable_rejects(
+		rotation, "v3_needle_thorn_garden", wallet, all_living_low, 72001,
+		"Needle-Thorn Garden with all living heroes at 2 HP, zero gold"
+	)
+
+	var all_three_living_low := _party_heroes("h1", 2, 30, "h2", 2, 30, "h3", 2, 30)
+	_assert_forced_party_actionable_rejects(
+		rotation, "v3_needle_thorn_garden", wallet, all_three_living_low, 72002,
+		"Needle-Thorn Garden with all three living heroes at 2 HP, zero gold"
+	)
+
+	var two_torn_one_low := _party_heroes("h1", 0, 30, "h2", 0, 30, "h3", 2, 30)
+	_assert_forced_party_actionable_rejects(
+		rotation, "v3_needle_thorn_garden", wallet, two_torn_one_low, 72003,
+		"Needle-Thorn Garden with two Torn heroes and one living hero at 2 HP"
+	)
+
+	var all_torn := _party_heroes("h1", 0, 30, "h2", 0, 30, "h3", 0, 30)
+	_assert_forced_party_actionable_rejects(
+		rotation, "v3_needle_thorn_garden", wallet, all_torn, 72004,
+		"Needle-Thorn Garden with all three heroes Torn"
+	)
+
+	var party_able := _party_heroes("h1", 2, 30, "h2", 12, 30, "h3", 0, 30)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 72005
+	var rng_before := rng.state
+	var all_ids: Array = rotation.get_vital_event_ids()
+
+	var all_excluded_result := rotation.select_party_actionable_event(rng, all_ids, wallet, party_able)
+	_check(all_excluded_result == {"ok": false, "event": {}},
+		"party actionable selector rejects when all events are excluded")
+	_check(rng.state == rng_before,
+		"all-excluded party actionable rejection consumes no RNG")
+
+	var single_excluded_result := rotation.select_party_actionable_event(rng, all_ids, wallet, party_able)
+	_check(single_excluded_result == {"ok": false, "event": {}},
+		"party actionable selector rejects fully excluded pool")
+	_check(rng.state == rng_before,
+		"fully excluded party actionable rejection consumes no RNG")
+
+
+func _test_party_actionable_ac3_replay_and_settlement() -> void:
+	var shipped := RunV3VitalEventRotation.new()
+	var all_ids: Array = shipped.get_vital_event_ids()
+	var party := _party_heroes("hero_front", 2, 30, "hero_mid", 12, 30, "hero_back", 0, 30)
+	var wallet := {"gold": 0, "scraps": 0}
+
+	var admitted := _assert_forced_party_actionable_admits(
+		shipped, "v3_needle_thorn_garden", wallet, party, 73001,
+		"Garden for detachment check"
+	)
+	var original_title: String = admitted.get("title", "")
+	admitted["title"] = "CORRUPTED_PARTY_RECORD"
+	(admitted["choices"] as Array).clear()
+	admitted["injected_key"] = 999
+	var fresh_pull := _assert_forced_party_actionable_admits(
+		shipped, "v3_needle_thorn_garden", wallet, party, 73001,
+		"Garden fresh pull after mutation"
+	)
+	_check(fresh_pull.get("title") == original_title and not fresh_pull.has("injected_key"),
+		"returned record is deep detached from rotation and subsequent draws")
+	_check(source_document == source_snapshot,
+		"source catalog is unchanged after mutating returned party-actionable event")
+
+	var reversed_events: Array = source_events.duplicate(true)
+	reversed_events.reverse()
+	var reversed := RunV3VitalEventRotation.new({"events": reversed_events})
+	_check(reversed.is_catalog_valid(), "reversed catalog validates for party actionable selection")
+
+	var anchor_excluded: Array = all_ids.duplicate()
+	anchor_excluded.erase("v3_lantern_quilt_infirmary")
+	anchor_excluded.erase("v3_button_heart_shrine")
+	anchor_excluded.erase("v3_needle_thorn_garden")
+	var mixed_wallet := {"gold": 10, "scraps": 0}
+	var mixed_party := _party_heroes("h1", 2, 10, "h2", 10, 10, "h3", 0, 10)
+	var expected_subset := _independent_party_actionable_ids(shipped, anchor_excluded, mixed_wallet, mixed_party)
+	_check(expected_subset == ["v3_lantern_quilt_infirmary", "v3_needle_thorn_garden"],
+		"mixed party snapshot qualifies Infirmary and Garden while excluding Leave-only Shrine")
+
+	for seed_value in [1, 2, 7, 42, 318, 424242, 999983]:
+		var rng_shipped := RandomNumberGenerator.new()
+		rng_shipped.seed = seed_value
+		var rng_reversed := RandomNumberGenerator.new()
+		rng_reversed.seed = seed_value
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = seed_value
+		var expected_id: String = expected_subset[oracle.randi_range(0, expected_subset.size() - 1)]
+		var pick_shipped := shipped.select_party_actionable_event(rng_shipped, anchor_excluded, mixed_wallet, mixed_party)
+		var pick_reversed := reversed.select_party_actionable_event(rng_reversed, anchor_excluded, mixed_wallet, mixed_party)
+		_check(pick_shipped.get("ok") == true and pick_reversed.get("ok") == true,
+			"shipped and reversed party selections both succeed (seed %d)" % seed_value)
+		_check(pick_shipped.get("event", {}).get("id") == expected_id
+			and pick_reversed.get("event", {}).get("id") == expected_id,
+			"JSON insertion order is invariant for party selection (seed %d)" % seed_value)
+		_check(rng_shipped.state == oracle.state and rng_reversed.state == oracle.state,
+			"party actionable selection ends in identical single-draw RNG state (seed %d)" % seed_value)
+
+	var garden_event := _assert_forced_party_actionable_admits(
+		shipped, "v3_needle_thorn_garden", wallet, party, 73002,
+		"Garden for AC3 settlement"
+	)
+	var service := RunEventChoice.new(garden_event)
+	_check(service.is_valid() and not service.is_claimed(),
+		"fresh RunEventChoice for admitted party event is valid and unclaimed")
+	var mid_snapshot := {
+		"gold": wallet["gold"],
+		"scraps": wallet["scraps"],
+		"hero": party[1].duplicate(true),
+	}
+	var mid_snapshot_before := mid_snapshot.duplicate(true)
+	var preview := service.preview_vital_choices(mid_snapshot)
+	_check(preview.get("ok") == true, "middle hero preview succeeds")
+	var harvest_entry := _preview_choice(preview, "harvest_thorns")
+	_check(harvest_entry.get("affordable") == true, "harvest_thorns is affordable for middle hero")
+	var receipt := service.choose_with_vitals("harvest_thorns", mid_snapshot)
+	_check(receipt.get("ok") == true and receipt.get("choice_id") == "harvest_thorns",
+		"harvest_thorns settles through RunEventChoice")
+	var receipt_state: Variant = receipt.get("state")
+	var receipt_hero: Variant = (receipt_state as Dictionary).get("hero") if receipt_state is Dictionary else null
+	_check(receipt_state is Dictionary and receipt_hero is Dictionary
+		and (receipt_state as Dictionary).get("gold") == 0
+		and (receipt_state as Dictionary).get("scraps") == 3
+		and (receipt_hero as Dictionary).get("hp") == 6
+		and (receipt_hero as Dictionary).get("max_hp") == 30
+		and (receipt_hero as Dictionary).get("id") == "hero_mid",
+		"settlement receipt gives exact vitality arithmetic: gold 0, scraps 3, hp 6, max_hp 30")
+	_check(service.is_claimed() and not service.is_valid(),
+		"RunEventChoice claims once after party choice settlement")
+	_check(mid_snapshot == mid_snapshot_before,
+		"settling choice leaves caller hero snapshot untouched")
+	_check(service.choose_with_vitals("harvest_thorns", mid_snapshot) ==
+		{"ok": false, "event_id": "", "choice_id": "", "state": mid_snapshot_before},
+		"second settlement on claimed party choice refuses")
+
+
+func _test_party_actionable_ac4_malformed_inputs() -> void:
+	var shipped := RunV3VitalEventRotation.new()
+	var valid_wallet := {"gold": 10, "scraps": 2}
+	var valid_wallet_before := valid_wallet.duplicate(true)
+	var valid_heroes := _party_heroes("h1", 10, 20, "h2", 15, 25, "h3", 0, 20)
+	var valid_heroes_before := valid_heroes.duplicate(true)
+	var valid_excluded := ["v3_lantern_quilt_infirmary"]
+	var valid_excluded_before := valid_excluded.duplicate(true)
+
+	var guard_rng := RandomNumberGenerator.new()
+	guard_rng.seed = 74001
+	var guard_state := guard_rng.state
+	var global_next := _global_rng_start(74002)
+
+	for bad_rng in [null, 5, 3.5, "rng", {}, [], RefCounted.new()]:
+		var res := shipped.select_party_actionable_event(bad_rng, valid_excluded, valid_wallet, valid_heroes)
+		_check(res == {"ok": false, "event": {}}, "party selector rejects bad RNG: " + str(bad_rng))
+
+	for bad_ex in ["v3_needle_thorn_garden", 7, {}, true, [1], [null], [""], ["   "]]:
+		var res := shipped.select_party_actionable_event(guard_rng, bad_ex, valid_wallet, valid_heroes)
+		_check(res == {"ok": false, "event": {}}, "party selector rejects bad exclusion: " + str(bad_ex))
+		_check(guard_rng.state == guard_state, "bad exclusion consumes no RNG")
+
+	var bad_wallets: Array = [
+		null,
+		42,
+		"wallet",
+		[],
+		{},
+		{"gold": 10},
+		{"scraps": 2},
+		{"gold": 10, "scraps": 2, "extra": 1},
+		{"gold": -1, "scraps": 2},
+		{"gold": 10, "scraps": -1},
+		{"gold": 10.0, "scraps": 2},
+		{"gold": 10, "scraps": 2.0},
+		{"gold": "10", "scraps": 2},
+		{"gold": 10, "scraps": "2"},
+	]
+	for bad_w in bad_wallets:
+		var w_copy: Variant = bad_w.duplicate(true) if bad_w is Dictionary or bad_w is Array else bad_w
+		var res := shipped.select_party_actionable_event(guard_rng, valid_excluded, bad_w, valid_heroes)
+		_check(res == {"ok": false, "event": {}}, "party selector rejects bad wallet: " + str(bad_w))
+		_check(guard_rng.state == guard_state, "bad wallet consumes no RNG")
+		_check(bad_w == w_copy, "bad wallet is not mutated")
+
+	var h1 := {"id": "h1", "hp": 10, "max_hp": 20}
+	var h2 := {"id": "h2", "hp": 15, "max_hp": 25}
+	var bad_heroes_list: Array = [
+		null,
+		42,
+		"heroes",
+		{},
+		[],
+		[h1],
+		[h1, h2],
+		[h1, h2, {"id": "h3", "hp": 10, "max_hp": 20}, {"id": "h4", "hp": 10, "max_hp": 20}],
+		[h1, null, h2],
+		[h1, "h2", h2],
+		[h1, h2, {"id": "h3", "hp": 10}],
+		[h1, h2, {"id": "h3", "max_hp": 20}],
+		[h1, h2, {"hp": 10, "max_hp": 20}],
+		[h1, h2, {"id": "h3", "hp": 10, "max_hp": 20, "extra": 1}],
+		[h1, h2, {"id": "", "hp": 10, "max_hp": 20}],
+		[h1, h2, {"id": "   ", "hp": 10, "max_hp": 20}],
+		[h1, h2, {"id": "h1", "hp": 10, "max_hp": 20}],
+		[h1, h2, {"id": "h3", "hp": -1, "max_hp": 20}],
+		[h1, h2, {"id": "h3", "hp": 21, "max_hp": 20}],
+		[h1, h2, {"id": "h3", "hp": 10.0, "max_hp": 20}],
+		[h1, h2, {"id": "h3", "hp": 10, "max_hp": 20.0}],
+		[h1, h2, {"id": "h3", "hp": 10, "max_hp": 9}],
+		[{"id": "h1", "hp": 0, "max_hp": 20}, {"id": "h2", "hp": 0, "max_hp": 20}, {"id": "h3", "hp": 0, "max_hp": 20}],
+	]
+	for bad_h in bad_heroes_list:
+		var h_copy: Variant = bad_h.duplicate(true) if bad_h is Dictionary or bad_h is Array else bad_h
+		var res := shipped.select_party_actionable_event(guard_rng, valid_excluded, valid_wallet, bad_h)
+		_check(res == {"ok": false, "event": {}}, "party selector rejects bad heroes: " + str(bad_h))
+		_check(guard_rng.state == guard_state, "bad heroes consumes no RNG")
+		_check(bad_h == h_copy, "bad heroes is not mutated")
+
+	var invalid_rotation := RunV3VitalEventRotation.new({})
+	var inv_res := invalid_rotation.select_party_actionable_event(guard_rng, [], valid_wallet, valid_heroes)
+	_check(inv_res == {"ok": false, "event": {}}, "unvalidated catalog rejects party actionable selection")
+	_check(guard_rng.state == guard_state and randi() == global_next,
+		"rejections preserve caller RNG and global RNG")
+	_check(valid_wallet == valid_wallet_before and valid_heroes == valid_heroes_before
+		and valid_excluded == valid_excluded_before,
+		"caller containers remain untouched after all rejection checks")

@@ -19,6 +19,10 @@ const STITCHED_IDS: Array[String] = [
 const STITCHED_AREA_IDS: Array[String] = [
 	"tinker_scatter_bolts", "tinker_scatter_bolts_plus",
 ]
+## Random-target halves require the enclosing stitch's staged run RNG.
+const STITCHED_RANDOM_IDS: Array[String] = [
+	"tinker_ricochet", "tinker_ricochet_plus",
+]
 
 var _first_attack: CombatTinkerFirstAttack
 var _pinned: CombatPinned
@@ -125,13 +129,16 @@ static func stage_for_stitch(attacks: CombatAttackCards) -> CombatTinkerPoolAtta
 ## discard and publication. base_bonus is only the stitched resolver's validated
 ## per-half authorization (0 or 2), exactly as for starter halves.
 func resolve_staged_half(party: CombatParty, enemies: CombatEnemies,
-		card_id: String, target_position: int, base_bonus: int = 0) -> Dictionary:
-	if (card_id not in STITCHED_IDS and card_id not in STITCHED_AREA_IDS) \
-			or base_bonus not in [0, 2]:
+		card_id: String, target_position: int, base_bonus: int = 0,
+		staged_rng: RandomNumberGenerator = null) -> Dictionary:
+	if (card_id not in STITCHED_IDS and card_id not in STITCHED_AREA_IDS
+			and card_id not in STITCHED_RANDOM_IDS) or base_bonus not in [0, 2]:
+		return _failure()
+	if card_id in STITCHED_RANDOM_IDS and staged_rng == null:
 		return _failure()
 	if _patches != null and not _patches.is_current():
 		return _failure()
-	var eligibility := CombatDeck.new([], RandomNumberGenerator.new())
+	var eligibility := CombatDeck.new([], staged_rng if staged_rng != null else RandomNumberGenerator.new())
 	eligibility.hand.append(card_id)
 	eligibility.combat_state.start_player_turn()
 	var plan: Dictionary = _prepare(eligibility, party, enemies, card_id,

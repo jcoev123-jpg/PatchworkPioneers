@@ -21,7 +21,7 @@ func _initialize() -> void:
 	_test_pairs()
 	_test_all_authored_pairs()
 	_test_rejections()
-	_test_unsupported_ricochet_halves()
+	_test_ricochet_halves()
 	_test_passives_and_statuses()
 	_test_draw_rollback_and_replay()
 	_test_spare_spool()
@@ -561,60 +561,99 @@ func _test_rejections() -> void:
 		and c.party.get_hero(1).block == 7, "lethal first half can finish legal support and preserve final slot")
 
 
-## Both genuine Rest-stitched Ricochet printings have three random hits.
-## Until random-hit half semantics are mounted, neither order can commit.
-func _test_unsupported_ricochet_halves() -> void:
-	# A real, sewn Warden support half is executable when the second half
-	# is supported; Ricochet-after-Brace must roll that same staged Block back.
-	var control := _rest_fixture("warden_brace", "tinker_tune_up", 3781)
-	_bind_cuff(control)
-	var control_result := _play(control, 0, 0)
-	_check(control_result.ok and control_result.halves.size() == 2
-		and control.party.get_hero(1).block >= 7
-		and control.deck.energy == 1 and control.deck.discard_pile == [control.id],
-		"sewn Brace and authentic draw control both commit with one spend/discard")
-	for card_id in ["tinker_ricochet", "tinker_ricochet_plus"]:
+## Authenticated random-target halves use ordinary sequential hits but commit
+## neither RNG nor attack/patch latches until both halves succeed.
+func _test_ricochet_halves() -> void:
+	for card_id in CombatTinkerPoolAttacks.STITCHED_RANDOM_IDS:
 		var authored: Dictionary = TinkerPoolCards.new().get_definition(card_id)
 		var damage := 6 if card_id.ends_with("_plus") else 4
-		_check(not authored.is_empty()
-			and authored == RunRestStitchCards.resolve_card_definition(card_id)
+		_check(authored == RunRestStitchCards.resolve_card_definition(card_id)
+			and authored.get("owner") == "tinker"
 			and authored.get("target_kind") == "enemy_random"
 			and authored.get("effects") == {"damage": damage, "hit_count": 3,
 				"random_target_each_hit": true, "rng_source": "run",
 				"living_targets_only": true},
-			card_id + ": authentic random-hit catalog precondition")
+			card_id + ": full authored base/+ random-target printing")
 		for reverse in [false, true]:
-			var first: String = "warden_brace" if reverse else card_id
-			var second: String = card_id if reverse else "warden_brace"
+			var first: String = SUPPORT_HALF if reverse else card_id
+			var second: String = card_id if reverse else SUPPORT_HALF
 			var replays: Array = []
 			for attempt in range(2):
 				var c := _rest_fixture(first, second, 3782)
 				_bind_cuff(c)
-				# A real reshuffle source would advance the run RNG if a draw
-				# were incorrectly performed. Snapshots include all authorities.
-				c.deck.discard_pile.assign([PRICK, "warden_strike", "tinker_tune_up"])
-				var ledger: Dictionary = c.rest.get_snapshot()
-				var descriptor: Dictionary = ledger.descriptors[c.id]
-				var random_half: Dictionary = descriptor.second_half if reverse else descriptor.first_half
-				_check(c.rest.is_valid() and ledger.deck == [c.id]
-					and descriptor.half_ids == [first, second]
-					and descriptor.cost == 2 and c.deck.hand == [c.id]
-					and c.deck.turn_active and c.deck.energy == 3
-					and c.party.is_valid() and c.enemies.is_valid()
-					and random_half == authored
-					and c.wardrobe.is_valid() and c.torn.is_valid(),
-					card_id + " order " + str(reverse) + ": held authentic Rest and sewn party")
+				c.deck.draw_pile.assign([PRICK, BOMB])
+				c.deck.discard_pile.assign(["warden_strike"])
+				var desc: Dictionary = c.rest.get_snapshot().descriptors[c.id]
+				_check(c.rest.is_valid() and desc.half_ids == [first, second]
+					and desc.cost == 2 and c.deck.hand == [c.id] and c.deck.energy == 3
+					and _position_of(c.party, "tinker") == 3
+					and c.enemies.get_enemies().size() >= 2
+					and (desc.second_half if reverse else desc.first_half) == authored,
+					card_id + ": real Rest, multiple foes and held capped-cost card")
+				c.party._heroes[2]["statuses"] = {"weak": 1}
+				_check(c.enemies.gain_block(1, 2)
+					and c.enemies.apply_statuses({2: {"exposed": 1}}),
+					"Ricochet oracle has real Block, Weak and Exposed")
+				var oracle := _scatter_ordinary_oracle(c, card_id)
+				_check(oracle.result.get("ok", false) and oracle.result.hits.size() == 3
+					and oracle.rng != c.deck._rng.state,
+					"independent ordinary Ricochet consumes seeded RNG for three hits")
 				var before := _snapshot(c)
-				var label: String = card_id + (" after sewn Brace" if reverse else " before sewn Brace")
-				_reject(c, 0, 0, label + " rejects all unsupported random hits")
-				_check(c.deck._rng.state == before[5] and c.deck.energy == 3
-					and c.deck.hand == [c.id] and c.deck.discard_pile == before[2]
-					and c.party.get_hero(1).block == before[6][0].block
+				var receipt := _play(c, 0, 0)
+				var random_index: int = 1 if reverse else 0
+				var brace := {"ok": true, "effect": "self_block", "amount": 7}
+				_check(receipt.get("ok", false) and receipt.halves.size() == 2
+					and receipt.halves[random_index] == oracle.result
+					and receipt.halves[1 - random_index] == brace,
+					card_id + ": both ordered halves equal exact ordinary hit receipts")
+				_check(c.enemies.get_enemies() == oracle.enemies
+					and c.party.get_hero(1).block == before[6][0].block + 9
+					and c.deck.energy == before[3] - 2
+					and c.deck.draw_pile == before[0] and c.deck.hand.is_empty()
+					and c.deck.discard_pile == before[2] + [c.id]
+					and c.deck._rng.state == oracle.rng
+					and c.attacks._tinker._consumed
 					and c.rest.get_snapshot() == before[10],
-					label + ": no RNG draw, spend, discard, staged Block or ledger change")
-				replays.append([before, _snapshot(c)])
+					card_id + ": HP, Block, statuses, RNG, ledger, latch, single payment")
+				replays.append([receipt, _snapshot(c)])
 			_check(replays[0] == replays[1],
-				card_id + " order " + str(reverse) + ": deterministic rejection replay")
+					card_id + ": same-seed both-order replay")
+		# One remaining 1-HP enemy dies on hit one; no phantom retarget.
+		var dying := _rest_fixture(card_id, SUPPORT_HALF, 3785)
+		_check(dying.enemies.apply_damage(2, 999) and dying.enemies.get_enemy(1).hp > 0,
+			"one living eligible enemy before lethal random retarget")
+		dying.enemies._enemies[0]["hp"] = 1
+		var death_oracle := _scatter_ordinary_oracle(dying, card_id)
+		var death := _play(dying, 0, 0)
+		_check(death_oracle.result.get("ok", false) and death_oracle.result.hits.size() == 1
+			and death.get("ok", false) and death.halves[0] == death_oracle.result
+			and dying.enemies.is_victorious() and dying.deck._rng.state == death_oracle.rng,
+			"lethal Ricochet stops at final death, preserves slot and consumed RNG")
+		var failing := _rest_fixture(card_id, SUPPORT_HALF, 3786)
+		_reject(failing, 0, 1, "late Brace rejects after staged three-hit Ricochet")
+		_reject(failing, 1, 0, "random half refuses manual enemy target")
+		_reject(failing, -1, 0, "random half refuses negative target")
+		var reversed := _rest_fixture(SUPPORT_HALF, card_id, 3786)
+		_reject(reversed, 0, 2, "reverse random half refuses manual target")
+		var broke := _rest_fixture(card_id, SUPPORT_HALF, 3786)
+		_check(broke.deck.try_spend_energy(2) and broke.deck.energy == 1,
+			"one energy cannot pay the authentic two-cost pair")
+		_reject(broke, 0, 0, "unaffordable Ricochet rejects atomically")
+		broke = _rest_fixture(card_id, SUPPORT_HALF, 3786)
+		_check(broke.party.apply_damage(3, 999) and broke.party.is_downed(3),
+			"Tinker owner actually downed")
+		_reject(broke, 0, 0, "downed Tinker cannot fire")
+		broke = _rest_fixture(card_id, SUPPORT_HALF, 3786)
+		_check(broke.enemies.apply_damage(1, 999)
+			and broke.enemies.apply_damage(2, 999), "all enemies actually dead")
+		_reject(broke, 0, 0, "no living eligible targets rejects")
+		broke = _rest_fixture(card_id, SUPPORT_HALF, 3786)
+		broke.rest._descriptors[broke.id].first_half.effects.damage = 999
+		_reject(broke, 0, 0, "forged authored damage rejects")
+		broke = _rest_fixture(card_id, SUPPORT_HALF, 3786)
+		_bind_cuff(broke)
+		broke.service._support._wardrobe_snapshot["scraps"] = -1
+		_reject(broke, 0, 0, "stale patch binding rejects")
 
 
 func _test_passives_and_statuses() -> void:

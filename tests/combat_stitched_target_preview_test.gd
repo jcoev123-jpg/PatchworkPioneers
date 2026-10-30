@@ -16,6 +16,7 @@ func _initialize() -> void:
 	_test_pool_self_previews()
 	_test_pool_attack_previews()
 	_test_scatter_area_previews()
+	_test_ricochet_previews()
 	_test_plain_strike_previews()
 	_test_positions_and_recipients()
 	_test_refusals()
@@ -807,6 +808,45 @@ func _test_plain_strike_previews() -> void:
 
 ## Area halves have no enemy selection; the preview lists living original
 ## recipients only. This must not expand the single-target ID contract.
+func _test_ricochet_previews() -> void:
+	for card_id in CombatTinkerPoolAttacks.STITCHED_RANDOM_IDS:
+		var definition := TinkerPoolCards.new().get_definition(card_id)
+		_check(definition == RunRestStitchCards.resolve_card_definition(card_id)
+			and definition.get("target_kind") == "enemy_random"
+			and definition.get("to_positions") == [1, 2, 3],
+			card_id + ": authentic random-target pool half")
+		for reverse in [false, true]:
+			var s := _pair("warden_brace" if reverse else card_id,
+				card_id if reverse else "warden_brace", 8750)
+			var index: int = 1 if reverse else 0
+			var brace := _half(1 - index, "warden_brace", [], [1])
+			var random_half := _half(index, card_id, [], [1, 2, 3])
+			_accepted(s, brace if reverse else random_half,
+				random_half if reverse else brace,
+				card_id + ": automatic enemy-side random preview in both orders")
+			_check(s.enemies.apply_damage(2, 999) and s.enemies.is_slain(2),
+				"middle enemy genuinely slain before preview")
+			random_half = _half(index, card_id, [], [1, 3])
+			_accepted(s, brace if reverse else random_half,
+				random_half if reverse else brace,
+				card_id + ": living eligible candidates only; no RNG move")
+			var forged: Dictionary = s.snapshot.duplicate(true)
+			forged.descriptors[s.id]["second_half" if reverse else "first_half"].effects.hit_count = 2
+			_rejected(s, card_id + ": forged hit-count descriptor", forged)
+			var stale: Dictionary = s.snapshot.duplicate(true)
+			stale.remaining_scraps += 1
+			_rejected(s, card_id + ": stale ledger snapshot", stale)
+			var broke := _pair("warden_brace" if reverse else card_id,
+				card_id if reverse else "warden_brace", 8750)
+			_check(broke.deck.try_spend_energy(2) and broke.deck.energy == 1,
+				"two-cost preview genuinely unaffordable")
+			_rejected(broke, card_id + ": insufficient energy")
+			broke = _pair("warden_brace" if reverse else card_id,
+				card_id if reverse else "warden_brace", 8750)
+			_check(broke.party.apply_damage(3, 999), "Tinker actually downed")
+			_rejected(broke, card_id + ": downed owner")
+
+
 func _test_scatter_area_previews() -> void:
 	for card_id in CombatTinkerPoolAttacks.STITCHED_AREA_IDS:
 		var authored := TinkerPoolCards.new().get_definition(card_id)
