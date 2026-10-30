@@ -49,6 +49,7 @@ var _monk := CombatLanternMonkBlindStrikeCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
 var _pitchfork := CombatScarecrowPitchforkCards.new()
 var _bolas := CombatYarnRangerBolasCards.new()
+var _skein := CombatYarnRangerEndlessSkeinCards.new()
 var _vigil := CombatLanternMonkPartyCards.new()
 var _re_stuff := CombatScarecrowReStuffCards.new()
 var _riposte := CombatRagDuelistRiposteCards.new()
@@ -119,6 +120,8 @@ func _definition(card_id: String) -> Dictionary:
 		return card if _lunge._authentic(card, card_id) else {}
 	if _snare.is_supported_card(card_id):
 		return _snare._catalog_definition(card_id)
+	if _skein.is_supported_card(card_id):
+		return CombatYarnRangerEndlessSkeinCards.skein_definition(card_id)
 	if _bolas.is_supported_card(card_id):
 		return CombatYarnRangerBolasCards.bolas_definition(card_id)
 	if _v3_tinker_scrap.is_supported_card(card_id):
@@ -417,6 +420,13 @@ func base_effect_text(card_id: String, include_pips: bool = true) -> String:
 			card.display_name, CombatScarecrowCrowCards.CARDS[card_id].catalog,
 			card.cost, _positions(card.from_positions), card.effects.damage,
 			_pip_legend(card) if include_pips else ""]
+	if _skein.is_supported_card(card_id):
+		var card := _definition(card_id)
+		if card.is_empty():
+			return "Unknown card"
+		return "%s; Yarn Ranger; %d energy\nFrom %s; all living enemies %s\nDeal %d attack damage to each living foe through Block before HP; THEN add Tangled %d to that same slot. Weak/Exposed and pre-existing Tangled (+2 incoming attack damage) affect the hit; newly applied Tangled does not boost that hit. Tangled prevents own-side movement. No target choice.\n%s" % [
+			card.display_name, card.cost, _positions(card.from_positions), _positions(card.to_positions),
+			card.effects.damage, card.effects.tangled, _pip_legend(card) if include_pips else ""]
 	if CombatYarnRangerSnareCards.CARDS.has(card_id):
 		var card := _definition(card_id)
 		return "%s; Yarn Ranger; 2 energy\nFrom 2,3; all living enemies 1,2,3\nTangled %d; prevents own-side movement and shoves; +2 damage taken from attacks. No target choice.\n%s" % [
@@ -1148,7 +1158,7 @@ func _update_visual(panel: Control) -> void:
 			var seamstress_presenter = _app.get_node_or_null("LiveAreaAttackAction")
 			var hand = seamstress_presenter.get_node_or_null("LiveSeamstressSingleBleedHand") if seamstress_presenter != null else null
 			playable = hand != null and hand._affordable(panel, id)
-		elif id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatYarnRangerSnareCards.CARDS.has(id) or CombatScarecrowCrowCards.CARDS.has(id):
+		elif id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatYarnRangerSnareCards.CARDS.has(id) or _skein.is_supported_card(id) or CombatScarecrowCrowCards.CARDS.has(id):
 			var area = _app.get_node_or_null("LiveAreaAttackAction")
 			playable = area != null and area._eligible(panel, id)
 		elif _hem.is_supported_card(id) or CombatYarnRangerKnitCards.CARDS.has(id) or id in VIGIL_IDS or id in GLOW_IDS or id in CombatSupportCards.SCARECROW_STRAW_IDS or _re_stuff.is_supported_card(id) or _feint.is_supported_card(id) or _pitchfork.is_supported_card(id) or _bolas.is_supported_card(id) or _pop.is_supported_card(id) or _sew.is_supported_card(id) or _roll.is_supported_card(id) or _v3_tinker_scrap.is_supported_card(id):
@@ -1318,6 +1328,9 @@ func _rules(id: String) -> String:
 		var effects: Dictionary = _definition(id).effects
 		return "Gain %d Block per button popped%s; self only." % [effects.block_per_button_popped,
 			" + %d Block" % effects.block if effects.has("block") else ""]
+	if _skein.is_supported_card(id):
+		var card := _definition(id)
+		return "" if card.is_empty() else "Deal %d to all; then Tangled %d." % [card.effects.damage, card.effects.tangled]
 	if CombatYarnRangerSnareCards.CARDS.has(id):
 		return "Tangled %d to all living enemies." % _definition(id).effects.tangled
 	if _pop.is_supported_card(id) and not _definition(id).is_empty():
