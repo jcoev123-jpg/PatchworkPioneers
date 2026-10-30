@@ -844,9 +844,10 @@ var _vital_event_gate: RunV3HeroVitalEventGate
 var _wallet_event_record: Dictionary = {}
 var _wallet_event_context: Array = []
 var _wallet_event_history: Array = []
-# Only authenticated paid Emberglass or Briar-Button requests may host a Campfire.
+# Only a claimed service gate may turn an Event into an on-node service visit.
 var _emberglass_gate: RunV3ServiceWaystationEventGate
 var _emberglass_campfire_auth: Array = []
+var _inkblack_unpicker_auth: Array = []
 var quiet_spool_panel: LiveEventChoicePanel
 var _quiet_spool_outcome: RunQuietSpoolOutcome
 var _quiet_spool_context: Array = []
@@ -3194,6 +3195,22 @@ func _emberglass_campfire_active(id: String) -> bool:
 		and run_map.get_node(id).get("type") == "Event"
 
 
+## A claimed Inkblack hire grants exactly one on-Event Unpicker, not a new node.
+func _inkblack_unpicker_active(id: String) -> bool:
+	if _inkblack_unpicker_auth.size() != 6 or run_map == null:
+		return false
+	var gate: RunV3ServiceWaystationEventGate = _inkblack_unpicker_auth[5]
+	return gate != null and gate.is_claimed() \
+		and gate.get_event_id() == "v3_inkblack_unpicker_van" \
+		and gate.get_service_choice_id() == "hire_unpicker" \
+		and gate.get_service_kind() == "Unpicker" \
+		and _inkblack_unpicker_auth.slice(0, 5) == [run_map,
+			run_map.get_generation_revision(), run_map.get_floors(),
+			run_map.get_route(), id] \
+		and run_map.get_current_node_id() == id \
+		and run_map.get_node(id).get("type") == "Event"
+
+
 func _can_choose_connected_route() -> bool:
 	if is_instance_valid(debt_booth_panel):
 		return false
@@ -3261,6 +3278,16 @@ func _can_choose_connected_route() -> bool:
 				and _campfire_visits.get(current_id, []) == [run_map,
 					run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()] \
 				and is_instance_valid(campfire_view) and not campfire_view.visible
+		if _inkblack_unpicker_active(current_id):
+			return _unpicker_closed and _unpicker_original == _sewing_context() \
+				and _unpicker_visits.get(current_id, []) == [run_map,
+					run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()] \
+				and is_instance_valid(unpicker_view) and not unpicker_view.visible
+		# A stale claim cannot bypass its own Event. A completed earlier
+		# Inkblack visit must not block subsequent ordinary Event receipts.
+		if not _inkblack_unpicker_auth.is_empty() and (_inkblack_unpicker_auth.size() != 6 \
+			or _inkblack_unpicker_auth[4] == current_id):
+			return false
 		return _placeholder_map != null and _placeholder_map.get_ref() == run_map \
 			and not _placeholder_route.is_empty() and run_map.get_route() == _placeholder_route
 	return _peddler_closed()
@@ -3728,18 +3755,19 @@ func _load_wallet_event_catalog() -> Dictionary:
 	for required in REQUIRED_ROADSIDE_EVENT_IDS:
 		if not roadside_ids.has(required):
 			return {}
-	# Admit only the two shipped, authenticated Campfire records. Neither
-	# may replace an existing generic Event ID, even with matching content.
+	# Admit only the shipped, authenticated Campfire and Inkblack service records.
+	# None may replace an existing generic Event ID, even with matching content.
 	var waystations := RunV3ServiceWaystationEventGate.new()
 	if not waystations.is_catalog_valid():
 		return {}
-	for campfire_id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench"]:
-		var campfire_record := waystations.get_event_record(campfire_id)
-		if campfire_record.is_empty() or seen.has(campfire_id) \
-			or not RunEventChoice.new(campfire_record).is_valid():
+	for service_id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench",
+			"v3_inkblack_unpicker_van"]:
+		var service_record := waystations.get_event_record(service_id)
+		if service_record.is_empty() or seen.has(service_id) \
+			or not RunEventChoice.new(service_record).is_valid():
 			return {}
-		seen[campfire_id] = true
-		combined.events.append(campfire_record)
+		seen[service_id] = true
+		combined.events.append(service_record)
 	# The ordinary, roadside and hero-gated generic contracts remain intact.
 	# A live run admits only detached, service-authenticated stories for its party.
 	if run_map != null or not run_heroes.is_empty():
@@ -4213,7 +4241,8 @@ func _open_wallet_event(id: String, source: WeakRef) -> bool:
 	if record.id == RunFatePinAuction.EVENT_ID:
 		return _open_fate_pin_auction(id, source, staged_rng)
 	var emberglass_gate: RunV3ServiceWaystationEventGate = null
-	if record.id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench"]:
+	if record.id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench",
+			"v3_inkblack_unpicker_van"]:
 		var waystations := RunV3ServiceWaystationEventGate.new()
 		emberglass_gate = waystations.open_visit(record)
 		if emberglass_gate == null or not emberglass_gate.is_valid() \
@@ -4273,12 +4302,27 @@ func _commit_wallet_event(receipt: Dictionary, panel, source: WeakRef) -> void:
 	if not expected.ok or receipt != expected:
 		return
 	var paid_emberglass := false
+	var paid_inkblack := false
 	var pending_visit: RunCampfireVisit = null
-	if _wallet_event_record.get("id") in ["v3_emberglass_campfire", "v3_briar_button_mending_bench"]:
+	var pending_unpicker: RunUnpickerVisit = null
+	if _wallet_event_record.get("id") in ["v3_emberglass_campfire", "v3_briar_button_mending_bench",
+			"v3_inkblack_unpicker_van"]:
 		if _emberglass_gate == null or not _emberglass_gate.is_valid() \
 			or _emberglass_gate.get_event() != _wallet_event_record:
 			return
-		paid_emberglass = receipt.get("choice_id") == _emberglass_gate.get_service_choice_id()
+		paid_emberglass = _emberglass_gate.get_service_kind() == "Campfire" \
+			and receipt.get("choice_id") == _emberglass_gate.get_service_choice_id()
+		paid_inkblack = _emberglass_gate.get_event_id() == "v3_inkblack_unpicker_van" \
+			and receipt.get("choice_id") == "hire_unpicker" \
+			and _emberglass_gate.get_service_kind() == "Unpicker"
+		if paid_inkblack:
+			# Preflight every live ledger using the *post-hire* wallet before the debit.
+			if not _inkblack_unpicker_auth.is_empty() or not _emberglass_campfire_auth.is_empty():
+				return
+			pending_unpicker = _preflight_unpicker_visit(run_map.get_current_node_id(),
+				expected.wallet.gold)
+			if pending_unpicker == null:
+				return
 		if paid_emberglass:
 			# The map already committed this Event node when the parchment opened.
 			# Preflight a real Campfire before spending either canonical price.
@@ -4293,19 +4337,29 @@ func _commit_wallet_event(receipt: Dictionary, panel, source: WeakRef) -> void:
 			{"gold": session_gold, "scraps": run_scraps})
 		if not service.get("ok", false) or service.event_id != expected.event_id \
 			or service.choice_id != expected.choice_id or service.wallet != expected.wallet \
-			or service.service_request != ({"stop_type": "Campfire"} if paid_emberglass else {}):
+			or service.service_request != ({"stop_type": "Campfire"} if paid_emberglass else \
+				({"stop_type": "Unpicker"} if paid_inkblack else {})):
 			return
 		if paid_emberglass:
 			_emberglass_campfire_auth = [run_map, run_map.get_generation_revision(),
 				run_map.get_floors(), run_map.get_route(), run_map.get_current_node_id(),
 				_emberglass_gate]
+		if paid_inkblack:
+			_inkblack_unpicker_auth = [run_map, run_map.get_generation_revision(),
+				run_map.get_floors(), run_map.get_route(), run_map.get_current_node_id(),
+				_emberglass_gate]
 	session_gold = expected.wallet.gold
 	run_scraps = expected.wallet.scraps
+	if paid_inkblack:
+		# The paid visit and any bound wardrobe must see one coherent wallet.
+		_sync_bound_wardrobe(party_carryover as RunTornCarryover)
 	_placeholder_map = source
 	_placeholder_route = run_map.get_route()
 	_clear_wallet_event()
 	if paid_emberglass:
 		_mount_campfire_visit(pending_visit)
+	elif paid_inkblack:
+		_mount_unpicker_visit(pending_unpicker)
 	else:
 		_present_connected_route(source)
 
@@ -5326,6 +5380,35 @@ func _choose_unpicker_route(id: String, source: WeakRef, prior: Array[String], b
 	if not visit.is_valid() or not run_map.choose_node(id):
 		return false
 	_clear_route_view()
+	_mount_unpicker_visit(visit)
+	return true
+
+
+## Event service preflight is a read-only check of the live run's actual deck,
+## stitch allocator, paid wallet and carryover/wardrobe identity.
+func _preflight_unpicker_visit(id: String, post_payment_gold: int) -> RunUnpickerVisit:
+	if run_map == null or run_map.get_current_node_id() != id or run_rng == null \
+		or (is_instance_valid(unpicker_view) and not _unpicker_closed):
+		return null
+	var carry := party_carryover as RunTornCarryover
+	if carry == null or carry._observer() == null or carry.read_state().heroes != run_heroes:
+		return null
+	if carry._wardrobe != null:
+		var state := carry._wardrobe.get_snapshot()
+		if not carry._wardrobe.is_valid() or state.heroes != run_heroes or state.cards != run_deck \
+			or state.owned != run_trinkets or state.scraps != run_scraps or state.gold != session_gold \
+			or state.seed != run_seed or state.rest_id != "" \
+			or not carry.can_bind_wardrobe(carry._wardrobe, carry.torn, state):
+			return null
+	var visit := RunUnpickerVisit.new(id, run_deck, post_payment_gold, run_removal_count,
+		run_stitch_descriptors, run_next_stitch_id)
+	return visit if visit.is_valid() and visit.read_state().gold == post_payment_gold else null
+
+
+## Reuse the typed Unpicker's one-use physical panel without choosing a second map node.
+func _mount_unpicker_visit(visit: RunUnpickerVisit) -> void:
+	if visit == null or not visit.is_valid():
+		return
 	if is_instance_valid(unpicker_view):
 		unpicker_view.free()
 	unpicker_visit = visit
@@ -5340,7 +5423,6 @@ func _choose_unpicker_route(id: String, source: WeakRef, prior: Array[String], b
 	unpicker_leave_button = unpicker_view.leave_button
 	unpicker_view.decision_requested.connect(_unpicker_decision.bind(unpicker_view, visit))
 	_unpicker_original = _sewing_context()
-	return true
 
 
 func _unpicker_decision(intent: Dictionary, view, visit: RunUnpickerVisit) -> void:
@@ -5352,7 +5434,8 @@ func _unpicker_decision(intent: Dictionary, view, visit: RunUnpickerVisit) -> vo
 		or unpicker_remove_button != view.remove_button or unpicker_leave_button != view.leave_button \
 		or not view._submitted or run_map == null \
 		or run_map.get_current_node_id() != _unpicker_source.get("node_id") \
-		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Unpicker":
+		or not (run_map.get_node(run_map.get_current_node_id()).get("type") == "Unpicker" \
+			or _inkblack_unpicker_active(run_map.get_current_node_id())):
 		return
 	var id := run_map.get_current_node_id()
 	if intent.get("visit_id") != _unpicker_source.visit_id or intent.get("node_id") != id \
@@ -7826,6 +7909,7 @@ func _return_to_title() -> void:
 	_fate_pin_receipt.clear()
 	_clear_wallet_event()
 	_emberglass_campfire_auth.clear()
+	_inkblack_unpicker_auth.clear()
 	_wallet_event_history.clear()
 	_vital_event_history.clear()
 	_clear_rest_patch_overlay()

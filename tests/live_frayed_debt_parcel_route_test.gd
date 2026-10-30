@@ -3,6 +3,10 @@ extends "res://tests/live_m04_event_wallet_batch_test.gd"
 
 
 func _parcel_path(map: RunMap, choices: Array, events: int, terminal: String = "Fight") -> Array:
+	# Transit stops used here are the ones with a genuine free Leave control:
+	# Treasure, Campfire (typed Leave callback) and Unpicker (typed Leave).
+	# A real Rest stop needs its own rest decision and Continue, so it is never
+	# treated as zero-effect transit: this oracle would otherwise bypass it.
 	for id in choices:
 		var node := map.get_node(id)
 		if events == 0:
@@ -13,7 +17,7 @@ func _parcel_path(map: RunMap, choices: Array, events: int, terminal: String = "
 				if not onward.is_empty():
 					return [id] + onward
 			continue
-		if node.type not in ["Event", "Treasure", "Campfire", "Unpicker", "Rest"]:
+		if node.type not in ["Event", "Treasure", "Campfire", "Unpicker"]:
 			continue
 		var tail := _parcel_path(map, node.outgoing, events - (1 if node.type == "Event" else 0), terminal)
 		if not tail.is_empty():
@@ -73,7 +77,7 @@ func _parcel_transit(id: String) -> void:
 	var before: Array = [app.run_deck.duplicate(), app.run_heroes.duplicate(true), _wallet(), app.run_rng.state]
 	var kind: String = app.run_map.get_node(id).type
 	await _click(_route_action(id))
-	if kind in ["Campfire", "Rest"]:
+	if kind == "Campfire":
 		await _click(app.campfire_leave_button)
 	elif kind == "Unpicker":
 		await _click(app.unpicker_leave_button)
@@ -106,10 +110,20 @@ func _reach(f: Dictionary, _funded: bool = true,
 			_install_stitched_fixture()
 		if index == 0 and f.terminal == "Unpicker":
 			app.session_gold = 100
+			_refresh_route()
 		if index == 3:
 			_check(is_instance_valid(app.needle_toll_panel) and app._needle_toll_outcome.is_paid(), "real paid toll draws precede Parcel")
 			await _click(app.needle_toll_panel.get_choice_buttons()[2])
 	await _traverse_treasures(f, f.path[4])
+
+
+## Live Campfire and Unpicker route tickets authenticate the ledger snapshot
+## that was current when the route was presented. A fixture that legitimately
+## changes that ledger mid-route must therefore re-present the real route, as a
+## completed visit does, so the stale tickets are retired instead of trusted.
+func _refresh_route() -> void:
+	app._clear_route_view()
+	app._present_connected_route(weakref(app.run_map))
 
 
 func _install_stitched_fixture() -> void:
@@ -127,6 +141,7 @@ func _install_stitched_fixture() -> void:
 	app.run_stitch_descriptors = sewn.descriptors
 	app.run_next_stitch_id = sewn.next_stitch_id
 	app.run_scraps = sewn.remaining_scraps
+	_refresh_route()
 
 
 func _parcel_visit(f: Dictionary, branch: int, keyboard: bool) -> Array:
@@ -140,8 +155,17 @@ func _parcel_visit(f: Dictionary, branch: int, keyboard: bool) -> Array:
 	_check(ids[rng.randi_range(0, ids.size() - 1)] == "frayed_debt_parcel", "one authored-weight ticket among eligible generic outcomes")
 	var oracle := RunFrayedDebtParcel.new()
 	_check(oracle.prepare(before, rng).ok, "real current Rest ledger prepares independent offers")
-	var entry: Callable = _route_action(f.path[4]).pressed.get_connections()[0].callable
-	await _click(_route_action(f.path[4]))
+	var entry_button := _route_action(f.path[4])
+	_check(is_instance_valid(entry_button) and not entry_button.disabled,
+		"authentic fifth Event route choice is mounted after lawful transit")
+	if not is_instance_valid(entry_button):
+		# A missing connected control is a failed fixture precondition, never a
+		# reason to dereference Nil and abandon the remaining assertions.
+		app._return_to_title()
+		await _frames()
+		return []
+	var entry: Callable = entry_button.pressed.get_connections()[0].callable
+	await _click(entry_button)
 	var panel: LiveEventChoicePanel = app.frayed_debt_panel
 	_check(is_instance_valid(panel) and app.route_view == null, "legal Event mounts Parcel and gates route")
 	if not is_instance_valid(panel):

@@ -120,6 +120,30 @@ func _paid(fixture: Dictionary, keyboard: bool, heal: bool = true) -> Array:
 	return replay
 
 
+## A genuine earlier Campfire/Rest transit legally keeps its closed, hidden
+## panel mounted: the app's completion guard needs that retained instance.
+## Snapshot it so a non-service or refused Event action can be proven not to
+## open, mount or re-claim any Campfire service.
+func _campfire_state() -> Array:
+	var view = app.campfire_view if is_instance_valid(app.campfire_view) else null
+	return [view, is_instance_valid(view) and view.is_visible_in_tree(),
+		app.campfire_visit, app._campfire_closed,
+		app._emberglass_campfire_auth.duplicate()]
+
+
+## True only when no Campfire service appeared: either none is mounted at all,
+## or the very same closed, hidden panel from lawful prior transit remains.
+func _no_new_campfire(before: Array) -> bool:
+	if not is_instance_valid(app.campfire_view):
+		return before[0] == null and before[1] == false
+	return before[0] != null and app.campfire_view == before[0] \
+		and before[1] == false and not app.campfire_view.is_visible_in_tree() \
+		and app.campfire_visit == before[2] and app.campfire_visit != null \
+		and app.campfire_visit.read_state().status != RunCampfireVisit.OPEN \
+		and app._campfire_closed == before[3] \
+		and app._emberglass_campfire_auth == before[4]
+
+
 func _trade_leave(fixture: Dictionary, choice_index: int) -> void:
 	var panel := await _open_briar(fixture)
 	if panel == null:
@@ -127,12 +151,13 @@ func _trade_leave(fixture: Dictionary, choice_index: int) -> void:
 	var prior := _wallet()
 	var route: Array[String] = app.run_map.get_route()
 	var rng_state: int = app.run_rng.state
+	var transit := _campfire_state()
 	var button := panel.get_choice_buttons()[choice_index]
 	_check(not button.disabled, "authored trade or Leave has a physical enabled choice")
 	await _click(button)
 	var expected := {"gold": prior.gold + (14 if choice_index == 1 else 0),
 		"scraps": prior.scraps}
-	_check(app.wallet_event_panel == null and not is_instance_valid(app.campfire_view)
+	_check(app.wallet_event_panel == null and _no_new_campfire(transit)
 		and app._emberglass_campfire_auth.is_empty()
 		and _wallet() == expected and app.run_map.get_route() == route
 		and app.run_rng.state == rng_state and app._can_choose_connected_route(),
@@ -147,11 +172,12 @@ func _reject_and_claim(fixture: Dictionary) -> void:
 	_check(_wallet().scraps == 0 and panel.get_choice_buttons()[0].disabled,
 		"genuinely empty wallet disables paid service")
 	var before := _wallet_state()
+	var transit := _campfire_state()
 	await _click(panel.get_choice_buttons()[0])
 	await _key(KEY_1)
 	panel.get_choice_buttons()[0].pressed.emit()
 	_check(_wallet_state() == before and not panel._selector.is_claimed()
-		and app._emberglass_gate.is_valid() and not is_instance_valid(app.campfire_view),
+		and app._emberglass_gate.is_valid() and _no_new_campfire(transit),
 		"unaffordable mouse, keyboard and direct signal refuse without RNG/spend/recovery")
 	await _click(panel.get_choice_buttons()[2])
 	_check(app.wallet_event_panel == null and app._can_choose_connected_route(),

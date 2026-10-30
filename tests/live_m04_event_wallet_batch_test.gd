@@ -30,6 +30,7 @@ func _required_ids() -> Array:
 		ids.append(record.id)
 	ids.append("v3_emberglass_campfire")
 	ids.append("v3_briar_button_mending_bench")
+	ids.append("v3_inkblack_unpicker_van")
 	return ids
 
 
@@ -40,7 +41,8 @@ func _combined_catalog(include_party: bool = true) -> Dictionary:
 		events.append_array(document.events.duplicate(true))
 	var waystation := RunV3ServiceWaystationEventGate.new()
 	_check(waystation.is_catalog_valid(), "fixture validates shipped service-waystation catalog")
-	for id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench"]:
+	for id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench",
+			"v3_inkblack_unpicker_van"]:
 		var record := waystation.get_event_record(id)
 		_check(not record.is_empty(), "fixture contains authenticated Campfire record: " + id)
 		if not record.is_empty():
@@ -136,6 +138,10 @@ func _fixtures() -> Dictionary:
 	# Genuine map/toll witnesses for the shifted sorted pool after admitting
 	# Emberglass; IDs and draws are always revalidated below, not pinned here.
 	hints.append_array([236051, 316683, 90763, 200641, 33752])
+	# Five additional genuine map/toll/rotation witnesses in the Inkblack pool;
+	# keep the shared append-only hints file untouched while another RUNNING
+	# lane has it locked. The real oracle below re-verifies every candidate.
+	hints.append_array([3101, 11326, 12070, 38791, 329651])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():
@@ -188,7 +194,8 @@ func _catalog_contract() -> void:
 	var rotation := RunM04EventRotation.new(live)
 	_check(rotation.is_catalog_valid(), "combined catalog validates for the real rotation")
 	var ids := rotation.get_generic_event_ids()
-	for id in REQUIRED:
+	for id in REQUIRED + ["v3_emberglass_campfire", "v3_briar_button_mending_bench",
+			"v3_inkblack_unpicker_van"]:
 		_check(ids.count(id) == 1, "combined eligible pool contains required ID exactly once: " + id)
 	for id in PROMOTED_CANDLELIT:
 		_check(ids.count(id) == 1, "live two-source loader carries promoted Candlelit story exactly once: " + id)

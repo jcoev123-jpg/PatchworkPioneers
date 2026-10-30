@@ -32,13 +32,30 @@ func _combined_wallet_catalog() -> Dictionary:
 	events.append_array(offers.get_offers())
 	var waystation := RunV3ServiceWaystationEventGate.new()
 	_check(waystation.is_catalog_valid(), "wallet oracle validates service-waystation source")
-	for id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench"]:
+	for id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench",
+			"v3_inkblack_unpicker_van"]:
 		var record := waystation.get_event_record(id)
 		_check(not record.is_empty(), "full-run oracle authenticates Campfire ID: " + id)
 		events.append(record)
 	if not app._fate_pin_seen:
 		events.append(JSON.parse_string(FileAccess.get_file_as_string("res://data/events/mpw_fate_pin_auction.json")))
 	return {"events": events}
+
+
+## A general continuation probe settles a non-service choice; mounted paid
+## Campfire/Unpicker flows are exercised by their dedicated route regressions.
+func _non_service_wallet_button(panel: LiveEventChoicePanel) -> Button:
+	if panel == null or panel._selector == null:
+		return null
+	var record: Dictionary = panel._selector.get_event()
+	var service := RunV3ServiceWaystationEventGate.new().open_visit(record)
+	for button in panel.get_choice_buttons():
+		if button.disabled:
+			continue
+		if service != null and panel._bound_choices.get(button, "") == service.get_service_choice_id():
+			continue
+		return button
+	return null
 
 
 func _generic_selection(document: Dictionary, rng: RandomNumberGenerator, history: Array = []) -> Dictionary:
@@ -316,7 +333,9 @@ func _node(id: String, index: int) -> bool:
 				if (record.get("id") == "v3_emberglass_campfire" \
 					and record.choices[choice_index].id == "light_the_embers") \
 					or (record.get("id") == "v3_briar_button_mending_bench" \
-					and record.choices[choice_index].id == "fuel_button_fire"):
+					and record.choices[choice_index].id == "fuel_button_fire") \
+					or (record.get("id") == "v3_inkblack_unpicker_van" \
+					and record.choices[choice_index].id == "hire_unpicker"):
 					continue
 				var receipt := RunEventChoice.new(record).choose_with_vitals(record.choices[choice_index].id,
 					panel._offered_snapshot) if panel._vital_mode else \
@@ -1066,10 +1085,11 @@ func _needle_visits(fixture: Dictionary, branch: String, keyboard: bool) -> Arra
 			return []
 		_check(wallet_panel._selector.get_event() == rotation.event and app.run_rng.state == expected_rng.state,
 			"subsequent seeded selection and history remain unchanged")
-		for button in wallet_panel.get_choice_buttons():
-			if not button.disabled:
-				await _activate(button, keyboard)
-				break
+		var ordinary := _non_service_wallet_button(wallet_panel)
+		_check(ordinary != null, "continuation has an authorized non-service wallet choice")
+		if ordinary == null:
+			return []
+		await _activate(ordinary, keyboard)
 	result.append(_inventory())
 	await _activate(app.route_back_button, keyboard)
 	_check(not app._needle_toll_completed and app.needle_toll_panel == null, "new-run boundary clears toll latch")
@@ -1099,6 +1119,9 @@ func _auction_fixture() -> Dictionary:
 	# Genuine strict Event/Treasure route and Auction draw after Briar-Button
 	# entered the sorted wallet lottery (rechecked against map, toll and RNG).
 	hints.push_front(3489597)
+	# Reverified strict six-Event/Treasure Auction route after Inkblack joined
+	# the sorted eligible pool; independent map/toll draw still authenticates it.
+	hints.push_front(1574836)
 	hints.push_front(422169)
 	# Genuine six-Event map/toll witness for the expanded hero-story pool.
 	hints.push_front(2431350)
@@ -1250,10 +1273,10 @@ func _auction_visits(fixture: Dictionary, paid: bool, keyboard: bool) -> Array:
 	await _activate(_needle_button(fixture.path[5]), keyboard)
 	_check(is_instance_valid(app.wallet_event_panel) and app.fate_pin_panel == null, "next Event is normal rotation, no duplicate auction")
 	if is_instance_valid(app.wallet_event_panel):
-		for button in app.wallet_event_panel.get_choice_buttons():
-			if not button.disabled:
-				await _activate(button, keyboard)
-				break
+		var ordinary := _non_service_wallet_button(app.wallet_event_panel)
+		_check(ordinary != null, "post-auction Event has a non-service choice")
+		if ordinary != null:
+			await _activate(ordinary, keyboard)
 	var result: Array = [app.run_heroes.duplicate(true), app.session_gold, app.run_scraps, app.run_trinkets.duplicate(), app.run_rng.state, w.get_snapshot()]
 	await _activate(app.route_back_button, keyboard)
 	_check(not app._fate_pin_seen and app._fate_pin_outcome == null, "new run clears auction history")
