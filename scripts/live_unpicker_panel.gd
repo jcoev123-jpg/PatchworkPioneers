@@ -225,9 +225,16 @@ func _quote_line() -> String:
 	return "Wallet: %d gold    •    Remove: %d gold" % [int(_source["gold"]), int(_source["price"])]
 
 
+func _remove_caption() -> String:
+	if not _source_current():
+		return "1 Remove"
+	return "1 Remove · %d gold" % int(_source["price"])
+
+
 func _active() -> bool:
 	return is_inside_tree() and is_visible_in_tree() and _source_current() \
-			and wallet_label != null and wallet_label.text == _quote_line()
+			and wallet_label != null and wallet_label.text == _quote_line() \
+			and remove_button != null and remove_button.text == _remove_caption()
 
 
 func _canonical_ids() -> Array[String]:
@@ -539,6 +546,7 @@ func _refresh() -> void:
 	_retire_callbacks()
 	_clear_choices()
 	wallet_label.text = _quote_line()
+	remove_button.text = _remove_caption()
 	var open := _active()
 	_update_status()
 	for id in _canonical_ids() if open else []:
