@@ -268,9 +268,10 @@ func _enter_unpicker(atlas: bool) -> void:
 	_check(app.unpicker_visit.read_state() == app._unpicker_source and app._unpicker_source.deck == before.deck, "visit binds exact deck source")
 	_check(Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(app.unpicker_view.get_global_rect()), "compact visit fits viewport")
 	var panel: LiveUnpickerPanel = app.unpicker_view
-	_check(panel.remove_button.text == "1 Remove" and panel.leave_button.text == "0 Leave · free"
+	_check(panel.remove_button.text == "1 Remove · %d gold" % (75 + 25 * before.removals)
+		and panel.leave_button.text == "0 Leave · free"
 		and panel.remove_button.is_visible_in_tree() and panel.leave_button.is_visible_in_tree(),
-		"mounted action captions advertise number shortcuts and free Leave")
+		"mounted action captions advertise number shortcuts, quoted Remove price and free Leave")
 	_check(panel.position == Vector2(200, 60) and panel.size == Vector2(880, 600)
 		and panel.remove_button.size == Vector2(390, 62) and panel.leave_button.size == Vector2(400, 62),
 		"shortcut captions retain authored panel and action geometry")

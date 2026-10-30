@@ -233,6 +233,18 @@ func _test_layout() -> void:
 	_check(panel.title_label.text.contains("UNPICKER")
 			and panel.wallet_label.text.contains("250 gold")
 			and panel.wallet_label.text.contains("125 gold"), "readable source-bound wallet and 75+25 per prior")
+	var expected_layout_price: int = RunShopCardRemoval.BASE_PRICE + RunShopCardRemoval.PRICE_STEP * int(source.prior_removals)
+	_check(panel.remove_button.is_visible_in_tree()
+			and panel.remove_button.text == "1 Remove · %d gold" % expected_layout_price
+			and panel.remove_button.text == "1 Remove · 125 gold"
+			and panel.leave_button.is_visible_in_tree()
+			and panel.leave_button.text == "0 Leave · free"
+			and panel.size == Vector2(880, 600)
+			and panel.remove_button.position == Vector2(30, 510)
+			and panel.remove_button.size == Vector2(390, 62)
+			and panel.leave_button.position == Vector2(450, 510)
+			and panel.leave_button.size == Vector2(400, 62),
+			"mounted Remove button displays authenticated 125-gold quote while preserving Leave caption and 880x600 geometry")
 	_check(panel.title_label.get_theme_font_size("font_size") >= 26
 			and panel.wallet_label.get_theme_font_size("font_size") >= 20,
 			"sewn title and wallet readable at real font sizes")
@@ -701,14 +713,21 @@ func _test_price_boundaries() -> void:
 	for fixture in [{"gold": 74, "prior": 0, "price": 75, "can_remove": false},
 			{"gold": 75, "prior": 0, "price": 75, "can_remove": true},
 			{"gold": 99, "prior": 1, "price": 100, "can_remove": false},
-			{"gold": 100, "prior": 1, "price": 100, "can_remove": true}]:
+			{"gold": 100, "prior": 1, "price": 100, "can_remove": true},
+			{"gold": 124, "prior": 2, "price": 125, "can_remove": false},
+			{"gold": 125, "prior": 2, "price": 125, "can_remove": true}]:
 		var visit := _make(fixture.gold, fixture.prior)
 		await _bind(visit)
 		var before := visit.read_state()
 		var selected_id: String = before.deck[0]
+		var formula_price: int = RunShopCardRemoval.BASE_PRICE + RunShopCardRemoval.PRICE_STEP * int(before.prior_removals)
 		_check(visit.quote().price == fixture.price
-				and panel.wallet_label.text.contains("%d gold" % fixture.price),
-				"service-derived price shown at boundary " + str(fixture))
+				and int(before.price) == formula_price and formula_price == fixture.price
+				and panel.wallet_label.text == "Wallet: %d gold    •    Remove: %d gold" % [fixture.gold, formula_price]
+				and panel.remove_button.is_visible_in_tree()
+				and panel.remove_button.text == "1 Remove · %d gold" % formula_price
+				and panel.leave_button.text == "0 Leave · free",
+				"service-derived price shown on wallet line and Remove button at boundary " + str(fixture))
 		if fixture.can_remove:
 			_check(not panel.card_buttons.is_empty()
 					and panel.card_buttons[0].has_focus()
@@ -727,8 +746,9 @@ func _test_price_boundaries() -> void:
 					"focus alone never enables an unaffordable paid action " + str(fixture))
 		await _activate(panel.card_buttons[0], false)
 		_check(panel.remove_button.disabled != fixture.can_remove
-				and not panel.leave_button.disabled,
-				"affordability and free Leave at boundary " + str(fixture))
+				and not panel.leave_button.disabled
+				and panel.remove_button.text == "1 Remove · %d gold" % formula_price,
+				"affordability, Remove quote caption and free Leave at boundary " + str(fixture))
 		if not fixture.can_remove:
 			_check(panel.status_label.text.contains("Need %d more gold" % (fixture.price - fixture.gold)),
 					"unaffordable quote still shows shortfall despite selection")
@@ -740,7 +760,7 @@ func _test_price_boundaries() -> void:
 					"preview quotes the escalating service price, never a hardcoded 75 " + str(fixture))
 		if fixture.can_remove:
 			await _activate(panel.remove_button, false)
-			_check(intents.size() == 1, "affordable 75/100 sends one intent")
+			_check(intents.size() == 1, "affordable 75/100/125 sends one intent")
 			if intents.size() == 1:
 				var result := Controller.apply(visit, intents[0])
 				_check(result.get("ok") == true and result.charged_gold == fixture.price
@@ -750,6 +770,14 @@ func _test_price_boundaries() -> void:
 			panel.remove_button.pressed.emit()
 			_check(intents.is_empty() and visit.read_state() == before,
 					"insufficient gold cannot forge a paid request")
+			await _activate(panel.leave_button, false)
+			_check(intents.size() == 1 and intents[0].get("action") == "leave",
+					"unaffordable visit still permits free Leave " + str(fixture))
+			if intents.size() == 1:
+				var leave_result := Controller.apply(visit, intents[0])
+				_check(leave_result.get("ok") == true and leave_result.charged_gold == 0
+						and leave_result.gold == fixture.gold and leave_result.deck == before.deck,
+						"free Leave on unaffordable boundary preserves wallet and deck " + str(fixture))
 
 
 ## Binding before mount must make the same authoritative decision in _ready:
@@ -765,8 +793,10 @@ func _test_initial_focus() -> void:
 	root.add_child(fresh)
 	await _settle()
 	var broke_source := broke.read_state()
-	_check(broke.quote().price == 75 and int(broke_source.gold) == 74,
-			"pre-mount broke prerequisite: wallet 74 against an authentic 75 quote")
+	_check(broke.quote().price == 75 and int(broke_source.gold) == 74
+			and fresh.remove_button.text == "1 Remove · %d gold" % int(broke_source.price)
+			and fresh.leave_button.text == "0 Leave · free",
+			"pre-mount broke prerequisite: wallet 74 against an authentic 75 quote with priced Remove caption")
 	_check(fresh.leave_button.has_focus() and root.gui_get_focus_owner() == fresh.leave_button
 			and not fresh.card_buttons.is_empty() and fresh.remove_button.disabled
 			and not fresh.leave_button.disabled,
@@ -781,8 +811,10 @@ func _test_initial_focus() -> void:
 	second.bind(funded)
 	root.add_child(second)
 	await _settle()
-	_check(funded.quote().price == 75 and int(funded.read_state().gold) == 75,
-			"pre-mount funded prerequisite: wallet exactly meets the 75 quote")
+	_check(funded.quote().price == 75 and int(funded.read_state().gold) == 75
+			and second.remove_button.text == "1 Remove · %d gold" % int(funded.read_state().price)
+			and second.leave_button.text == "0 Leave · free",
+			"pre-mount funded prerequisite: wallet exactly meets the 75 quote with priced Remove caption")
 	_check(not second.card_buttons.is_empty() and second.card_buttons[0].has_focus()
 			and root.gui_get_focus_owner() == second.card_buttons[0],
 			"pre-mount affordable bind focuses the real first card row")
@@ -796,21 +828,34 @@ func _test_initial_focus() -> void:
 func _test_rebind_focus() -> void:
 	var broke_a := _make(74)
 	await _bind(broke_a)
-	_check(panel.leave_button.has_focus() and root.gui_get_focus_owner() == panel.leave_button,
-			"first broke bind defaults to Leave")
+	var broke_a_source := broke_a.read_state()
+	_check(panel.leave_button.has_focus() and root.gui_get_focus_owner() == panel.leave_button
+			and panel.remove_button.text == "1 Remove · %d gold" % int(broke_a_source.price)
+			and panel.remove_button.text == "1 Remove · 75 gold"
+			and panel.leave_button.text == "0 Leave · free",
+			"first broke bind defaults to Leave and shows 75-gold Remove caption")
 	var funded := _make(100, 1)
 	await _bind(funded)
 	var funded_source := funded.read_state()
 	_check(funded.quote().price == 100 and not panel.card_buttons.is_empty()
 			and panel.card_buttons[0].has_focus()
-			and root.gui_get_focus_owner() == panel.card_buttons[0],
-			"funded rebind recomputes focus onto the first card row")
+			and root.gui_get_focus_owner() == panel.card_buttons[0]
+			and panel._selected_id == "" and panel.remove_button.disabled
+			and panel.remove_button.text == "1 Remove · %d gold" % int(funded_source.price)
+			and panel.remove_button.text == "1 Remove · 100 gold"
+			and panel.leave_button.text == "0 Leave · free"
+			and panel.size == Vector2(880, 600)
+			and panel.remove_button.size == Vector2(390, 62)
+			and panel.leave_button.size == Vector2(400, 62),
+			"funded rebind updates Remove caption to 100 gold, clears selection, and focuses first card row")
 	_check(intents.is_empty() and funded.read_state() == funded_source and not funded.is_consumed(),
 			"rebinding focus never pays or consumes the funded visit")
 	var broke_b := _make(99, 1)
 	await _bind(broke_b)
 	var broke_source := broke_b.read_state()
-	_check(broke_b.quote().price == 100 and int(broke_source.gold) == 99,
+	_check(broke_b.quote().price == 100 and int(broke_source.gold) == 99
+			and panel.remove_button.text == "1 Remove · %d gold" % int(broke_source.price)
+			and panel.leave_button.text == "0 Leave · free",
 			"rebind prerequisite: wallet 99 against an authentic 100 quote")
 	_check(panel.leave_button.has_focus() and root.gui_get_focus_owner() == panel.leave_button,
 			"second broke rebind recomputes focus back to free Leave")
@@ -827,11 +872,43 @@ func _test_rebind_focus() -> void:
 	panel.card_buttons[0].grab_focus()
 	await _settle()
 	await _activate(panel.card_buttons[0], true)
-	_check(panel._selected_id == first_id and panel.remove_button.disabled,
-			"inspecting/selecting an unaffordable row keeps Remove disabled")
+	_check(panel._selected_id == first_id and panel.remove_button.disabled
+			and panel.remove_button.text == "1 Remove · 100 gold",
+			"inspecting/selecting an unaffordable row keeps Remove disabled with its 100-gold quote")
 	panel.remove_button.pressed.emit()
 	_check(intents.is_empty() and broke_b.read_state() == broke_source,
 			"Remove cannot be activated while broke")
+	# Rebind to a third-removal (125 gold) visit after a prior selection: selection resets,
+	# Remove caption updates to 125 gold, and keyboard shortcut 1 works once a card is chosen.
+	var third := _make(150, 2)
+	await _bind(third)
+	var third_source := third.read_state()
+	_check(third.quote().price == 125 and panel._selected_id == ""
+			and panel.remove_button.disabled and not panel.leave_button.disabled
+			and panel.remove_button.text == "1 Remove · %d gold" % int(third_source.price)
+			and panel.remove_button.text == "1 Remove · 125 gold"
+			and panel.leave_button.text == "0 Leave · free",
+			"rebind to prior_removals=2 updates Remove caption to 125 gold and clears prior selection")
+	await _activate(panel.card_buttons[0], true)
+	_check(panel._selected_id == third_source.deck[0] and not panel.remove_button.disabled
+			and panel.remove_button.text == "1 Remove · 125 gold",
+			"selecting a card on rebound 125-gold visit enables Remove without altering its caption")
+	for down in [true, false]:
+		var key_one := InputEventKey.new()
+		key_one.keycode = KEY_1
+		key_one.physical_keycode = KEY_1
+		key_one.pressed = down
+		root.push_input(key_one, true)
+		await process_frame
+	await _settle()
+	_check(intents.size() == 1 and intents[0].get("action") == "remove_card"
+			and intents[0].get("selected_card_id") == third_source.deck[0],
+			"unmodified 1 key submits authenticated remove_card intent on rebound 125-gold visit")
+	if intents.size() == 1:
+		var third_receipt := Controller.apply(third, intents[0])
+		_check(third_receipt.get("ok") == true and third_receipt.charged_gold == 125
+				and third_receipt.gold == 25 and third_receipt.prior_removals == 3,
+				"rebound 125-gold removal charges exact 125 quote once")
 
 
 func _stitched_fixture() -> Dictionary:
@@ -949,7 +1026,10 @@ func _test_rejections() -> void:
 	_check(not invalid.is_valid(), "empty-deck service invalid by real validation")
 	await _bind(invalid)
 	_check(panel.card_buttons.is_empty() and panel.remove_button.disabled
-			and panel.leave_button.disabled, "invalid/no-card service exposes no actions")
+			and panel.leave_button.disabled
+			and panel.remove_button.text == "1 Remove"
+			and panel.leave_button.text == "0 Leave · free",
+			"invalid/no-card service exposes no actions and resets Remove caption")
 	var invalid_focus := root.gui_get_focus_owner()
 	_check(invalid_focus == null or not panel.is_ancestor_of(invalid_focus)
 			or ((invalid_focus is Button) and (invalid_focus as Button).disabled),
@@ -960,7 +1040,10 @@ func _test_rejections() -> void:
 			"already-used real visit prerequisite")
 	await _bind(already)
 	_check(panel.card_buttons.is_empty() and panel.remove_button.disabled
-			and panel.leave_button.disabled, "consumed visit never reopens")
+			and panel.leave_button.disabled
+			and panel.remove_button.text == "1 Remove"
+			and panel.leave_button.text == "0 Leave · free",
+			"consumed visit never reopens and resets Remove caption")
 	var consumed_focus := root.gui_get_focus_owner()
 	_check(consumed_focus == null or not panel.is_ancestor_of(consumed_focus)
 			or ((consumed_focus is Button) and (consumed_focus as Button).disabled),
@@ -974,15 +1057,23 @@ func _test_rejections() -> void:
 	var retired_leave: Callable = panel._connections[panel.leave_button]
 	await _activate(row, false)
 	var original_quote := panel.wallet_label.text
+	var original_remove_text := panel.remove_button.text
 	var forecast_text := panel.status_label.text
-	_check(forecast_text.contains("first of") and forecast_text.contains("gold"),
-			"genuine selection really produced a forecast before rebind")
+	_check(original_remove_text == "1 Remove · 75 gold"
+			and forecast_text.contains("first of") and forecast_text.contains("gold"),
+			"genuine selection really produced a forecast and 75-gold button caption before rebind")
 	panel.wallet_label.text = "Wallet: 99999 gold • Remove: 0 gold"
 	panel.remove_button.pressed.emit()
 	panel.leave_button.pressed.emit()
 	_check(intents.is_empty() and old.read_state() == before,
 			"forged displayed price suppresses both actionable source intents")
 	panel.wallet_label.text = original_quote
+	panel.remove_button.text = "1 Remove · 0 gold"
+	panel.remove_button.pressed.emit()
+	panel.leave_button.pressed.emit()
+	_check(intents.is_empty() and old.read_state() == before,
+			"forged Remove button caption suppresses both actionable source intents")
+	panel.remove_button.text = original_remove_text
 	panel.hide()
 	panel.remove_button.pressed.emit()
 	panel.leave_button.pressed.emit()
@@ -1003,8 +1094,11 @@ func _test_rejections() -> void:
 	var newer_definition := RunRestStitchCards.resolve_card_definition(newer_ids[0]) \
 			if not newer_ids.is_empty() else {}
 	_check(not newer_definition.is_empty() and not panel.card_buttons.is_empty()
-			and panel.card_buttons[0].tooltip_text == _expected_tooltip(newer_definition),
-			"rebind rebuilds mounted tooltips from the new authenticated deck")
+			and panel.card_buttons[0].tooltip_text == _expected_tooltip(newer_definition)
+			and panel.remove_button.text == "1 Remove · %d gold" % int(after_new.price)
+			and panel.remove_button.text == "1 Remove · 100 gold"
+			and panel.leave_button.text == "0 Leave · free",
+			"rebind rebuilds mounted tooltips and updates Remove button quote from the new authenticated visit")
 	retired_remove.call()
 	retired_leave.call()
 	_check(intents.is_empty() and old.read_state() == before
@@ -1015,7 +1109,9 @@ func _test_rejections() -> void:
 			"retired callbacks and rebind reset selection and forecast without touching either source")
 	var closed_before := newer.read_state()
 	panel.close()
-	_check(panel.card_buttons.is_empty(), "closed view keeps no reachable stale tooltip row")
+	_check(panel.card_buttons.is_empty() and panel.remove_button.disabled
+			and panel.leave_button.disabled and panel.remove_button.text == "1 Remove",
+			"closed view keeps no reachable stale tooltip row and resets Remove caption")
 	panel.leave_button.pressed.emit()
 	_check(intents.is_empty() and newer.read_state() == closed_before,
 			"closed view cannot request Leave")
