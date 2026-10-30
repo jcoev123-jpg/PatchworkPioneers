@@ -462,6 +462,22 @@ class RouteBook extends Control:
 			row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			row.focus_mode = Control.FOCUS_NONE
 			slate.add_child(row)
+			# A sewn paper card lifts each hero off the page drawings behind it.
+			var card := Panel.new()
+			card.name = "RowCard"
+			card.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			card.focus_mode = Control.FOCUS_NONE
+			var paper := StyleBoxFlat.new()
+			paper.bg_color = Color(0.953, 0.906, 0.784, 0.95)
+			paper.border_color = Color("a8997b")
+			paper.set_border_width_all(2)
+			paper.set_corner_radius_all(6)
+			paper.shadow_color = Color(0.11, 0.1, 0.09, 0.35)
+			paper.shadow_size = 4
+			paper.shadow_offset = Vector2(3, 4)
+			card.add_theme_stylebox_override("panel", paper)
+			row.add_child(card)
 			var stitch := ActionCornerStitch.new()
 			stitch.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			row.add_child(stitch)

@@ -5,6 +5,12 @@ const INK := Color("302b29")
 const PAPER := Color("ecdfbd")
 const THREAD := Color("c9b996")
 const TITLE_BACKDROP := "res://assets/paper/backgrounds/title.png"
+## Stuffed-fabric wordmark drawn in place of the title text; the live label keeps its text.
+const TITLE_LOGO := "res://assets/paper/ui/title_logo.png"
+## Widest the wordmark may grow, centred on the title banner.
+const LOGO_MAX_WIDTH := 760.0
+## Padded felt the title actions are sewn onto; the drawn felt patch is its fallback.
+const MENU_FELT := "res://assets/paper/ui/panel_felt.png"
 ## The master project Theme owns the Patch* typography variations and the body font.
 const THEME_PATH := "res://assets/fonts/patchwork_theme.tres"
 const TITLE_FONT := "res://assets/fonts/LondrinaSolid-Black.ttf"
@@ -19,6 +25,8 @@ var _title: Control
 var _label: Label
 var _actions: Array[Button] = []
 var _backdrop: Texture2D
+var _logo: Texture2D
+var _menu_felt: StyleBoxTexture
 
 
 class ButtonStitches extends Control:
@@ -38,6 +46,13 @@ class ButtonStitches extends Control:
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_backdrop = _load_backdrop()
+	_logo = _load_backdrop(TITLE_LOGO)
+	var felt := _load_backdrop(MENU_FELT)
+	if felt != null:
+		_menu_felt = StyleBoxTexture.new()
+		_menu_felt.texture = felt
+		for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+			_menu_felt.set_texture_margin(side, 48)
 	get_parent().theme = _build_theme()
 	get_parent().ready.connect(_bind_title, CONNECT_ONE_SHOT)
 	resized.connect(queue_redraw)
@@ -76,6 +91,19 @@ func title_backing_rect() -> Rect2:
 	if not is_instance_valid(_label):
 		return Rect2()
 	return Rect2(_label.global_position - global_position, _label.size).grow_individual(26, 20, 26, 18)
+
+
+## The wordmark fills the space above the menu, centred on the title banner, proportions kept.
+func logo_rect() -> Rect2:
+	var banner := title_backing_rect()
+	if _logo == null or not banner.has_area() or _logo.get_width() <= 0 or _logo.get_height() <= 0:
+		return Rect2()
+	var room := Rect2(banner.get_center().x - LOGO_MAX_WIDTH / 2.0, 12.0,
+		LOGO_MAX_WIDTH, banner.end.y - 12.0)
+	var texture_size := Vector2(_logo.get_width(), _logo.get_height())
+	var fit := minf(room.size.x / texture_size.x, room.size.y / texture_size.y)
+	var drawn := texture_size * fit
+	return Rect2(Vector2(room.get_center().x - drawn.x / 2.0, room.end.y - drawn.y), drawn)
 
 
 ## Compact felt backing that follows the three original actions, in shell coordinates.
@@ -203,6 +231,9 @@ func _bind_title() -> void:
 	_label.theme_type_variation = "PatchTitle"
 	_label.add_theme_color_override("font_color", INK)
 	_label.add_theme_constant_override("outline_size", 0)
+	# With the wordmark the label stays for layout and screen readers but paints nothing.
+	if _logo != null:
+		_label.self_modulate = Color(1, 1, 1, 0)
 	for button in _actions:
 		# The three original actions speak in the master Theme's Londrina heading face.
 		button.theme_type_variation = "PatchHeadingButton"
@@ -296,8 +327,14 @@ func _draw() -> void:
 	# Only two compact sewn backings follow the live controls. The rest of the picture
 	# stays uncovered scenery, and every original control still draws above this shell.
 	var banner := title_backing_rect()
-	if banner.size.x > 0 and banner.size.y > 0:
+	var logo := logo_rect()
+	if banner.size.x > 0 and banner.size.y > 0 and not logo.has_area():
 		_draw_sewn_backing(banner, PAPER)
 	var menu := action_backing_rect()
 	if menu.size.x > 0 and menu.size.y > 0:
-		_draw_sewn_backing(menu, ACTION_BACKING)
+		if _menu_felt != null:
+			draw_style_box(_menu_felt, menu)
+		else:
+			_draw_sewn_backing(menu, ACTION_BACKING)
+	if logo.has_area():
+		draw_texture_rect(_logo, logo, false)
