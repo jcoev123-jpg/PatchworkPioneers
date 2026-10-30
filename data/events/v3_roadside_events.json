@@ -539,6 +539,94 @@
         { "id": "purchase_rain_thread", "text": "Buy four waterproof thread bundles (spend 21 gold; gain 4 scraps)", "outcome": { "gold": -21, "scraps": 4 } },
         { "id": "leave", "text": "Walk beyond the swan's quilted shadow", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_umbra_zipper_meteor",
+      "title": "The Umbra Zipper Meteor",
+      "description": "A round soot-purple comet doll drags an enormous silver zipper across the night sky, its bright teeth raining onto the torn velvet road.",
+      "choices": [
+        {
+          "id": "gather_zipper_teeth",
+          "text": "Gather fallen silver zipper teeth (+2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2 }
+        },
+        {
+          "id": "purchase_star_shuttle",
+          "text": "Pay 18 gold for the comet's star-thread shuttle (+3 scraps)",
+          "outcome": { "gold": -18, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the comet close the night seam (Leave)",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_bellows_button_bakery",
+      "title": "The Button-Bun Bakery",
+      "description": "A round baker doll with mismatched button eyes pedals giant patchwork bellows, blowing amber light through an oven of knitted button buns.",
+      "choices": [
+        {
+          "id": "repair_oven_bellows",
+          "text": "Repair the torn oven bellows (spend 2 scraps; gain 29 gold)",
+          "outcome": { "gold": 29, "scraps": -2 }
+        },
+        {
+          "id": "collect_oven_twine",
+          "text": "Collect dropped oven twine (+1 scrap)",
+          "outcome": { "gold": 0, "scraps": 1 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the button buns warming (Leave)",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_mothneedle_weather_vane",
+      "title": "The Moth-Needle Weather Vane",
+      "description": "An enormous moth-shaped brass vane with sewing-needle antennae creaks above a plum quilt watchhouse, pointing at a shower of silver pins.",
+      "choices": [
+        {
+          "id": "sew_loose_vane",
+          "text": "Sew down the loose vane (spend 1 scrap; gain 20 gold)",
+          "outcome": { "gold": 20, "scraps": -1 }
+        },
+        {
+          "id": "buy_storm_yarn",
+          "text": "Buy two coils of storm yarn (spend 16 gold; gain 2 scraps)",
+          "outcome": { "gold": -16, "scraps": 2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the moth vane turn with the wind (Leave)",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_teacup_clockwork_procession",
+      "title": "The Clockwork Teacup Parade",
+      "description": "Three button-eyed teacup automata march on oversized brass-spoon legs, spilling glowing thread from their lids onto a cobbled patchwork path.",
+      "choices": [
+        {
+          "id": "gather_spilled_thread",
+          "text": "Collect the spilled glowing thread (+2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2 }
+        },
+        {
+          "id": "polish_spoon_joints",
+          "text": "Polish the parade's spoon joints (spend 2 scraps; gain 25 gold)",
+          "outcome": { "gold": 25, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Watch the last teacup march away (Leave)",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }

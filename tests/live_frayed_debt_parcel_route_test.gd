@@ -33,6 +33,11 @@ func _parcel_fixture(terminal: String = "Fight", stitched: bool = false) -> Dict
 	hints.push_front(39502)
 	if terminal == "Unpicker":
 		hints.push_front(159691)
+	# Genuine Unpicker-terminal Parcel witnesses re-derived after the four gothic
+	# prop-led roadside tales joined the sorted generic pool; kept local while
+	# another RUNNING lane holds the shared append-only hints file. Every seed is
+	# re-verified below through the authentic map, toll and draw.
+	hints.append_array([590817, 975147, 1012371])
 	hints.append_array(range(1, 500000))
 	for value in hints:
 		var rng := RandomNumberGenerator.new()

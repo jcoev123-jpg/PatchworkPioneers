@@ -142,6 +142,16 @@ func _fixtures() -> Dictionary:
 	# keep the shared append-only hints file untouched while another RUNNING
 	# lane has it locked. The real oracle below re-verifies every candidate.
 	hints.append_array([3101, 11326, 12070, 38791, 329651])
+	# Genuine six-Event map/toll/rotation witnesses re-derived after the four
+	# gothic prop-led roadside tales (Umbra Zipper Meteor, Button-Bun Bakery,
+	# Moth-Needle Weather Vane, Clockwork Teacup Parade) joined the sorted generic
+	# pool and shifted the authentic draw index. Eighteen required Events lost
+	# their routed witness, so they are kept here, as above, while another RUNNING
+	# lane holds the shared append-only hints file. The real oracle below
+	# re-verifies every candidate; none is pinned by index or position.
+	hints.append_array([25641, 32125, 35913, 40503, 50550, 59436, 75867, 124098,
+		147778, 154437, 157055, 169502, 194744, 612249, 294711, 312836,
+		432525, 458419])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():
