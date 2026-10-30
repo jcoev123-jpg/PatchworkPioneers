@@ -3,6 +3,9 @@ extends "res://tests/live_elite_reward_continuation_test.gd"
 
 var sewing
 var rest_transits := {false: 0, true: 0}
+## Whether the most recent Rest transit settled through a genuine Heal (a
+## zero-gain Campfire completes via Leave and records no receipt).
+var rest_healed := false
 signal admission_stopped
 
 
@@ -65,7 +68,8 @@ func _rest_panel_ready(id: String) -> bool:
 			and app.campfire_visit.read_state().heroes == app.run_heroes \
 			and app.campfire_view._visit == app.campfire_visit \
 			and app.campfire_view._snapshot == app.campfire_visit.read_state() \
-			and not app._campfire_closed and _rest_action_ready(app.campfire_heal_button)
+			and not app._campfire_closed and (_rest_action_ready(app.campfire_heal_button) \
+				or (app.campfire_heal_button.disabled and _rest_action_ready(app.campfire_leave_button)))
 	return app.rest_recovery != null and not app.rest_recovery.is_consumed() \
 		and app.rest_recovery._valid and app.rest_recovery._roster == app.run_heroes \
 		and app._rest_map != null and app._rest_map.get_ref() == app.run_map \
@@ -163,21 +167,53 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 			_check(app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
 				"transit Campfire binds an open visit")
 			var stale_heal: Button = app.campfire_heal_button
-			await _rest_input(stale_heal, keyboard)
-			await _await_rest_state(id, "Campfire healed", func(): return (app._campfire_closed
-				and app.campfire_visit != null
-				and app.campfire_visit.read_state().node_id == id
-				and app.campfire_visit.read_state().status == RunCampfireVisit.HEALED
-				and (not is_instance_valid(app.campfire_view) or not app.campfire_view.is_visible_in_tree())
-				and _rest_connected(id)))
-			_check((not is_instance_valid(app.campfire_view) or not app.campfire_view.visible) and app._campfire_closed,
-				"transit Campfire Heal completes its visit")
-			var healed: Array = _persistent()
-			if is_instance_valid(stale_heal):
+			if stale_heal.disabled:
+				# Fully healed transit party: the disabled zero-gain Heal can never
+				# spend the one-use visit, so the enabled Leave completes it.
+				_check(_rest_action_ready(app.campfire_leave_button),
+					"zero-gain transit Campfire keeps its Leave physically actionable")
+				var zero_open: Dictionary = app.campfire_visit.read_state()
 				stale_heal.pressed.emit()
-			await process_frame
-			_check(_persistent() == healed and app.campfire_visit.read_state().status == RunCampfireVisit.HEALED
-				and _rest_connected(id), "stale Campfire Heal after completion is inert")
+				await process_frame
+				_check(app.campfire_visit.read_state() == zero_open and not app._campfire_closed
+					and app.campfire_view.is_visible_in_tree(),
+					"disabled zero-gain Heal cannot spend the transit visit")
+				await _rest_input(app.campfire_leave_button, keyboard)
+				await _await_rest_state(id, "Campfire left", func(): return (app._campfire_closed
+					and app.campfire_visit != null
+					and app.campfire_visit.read_state().node_id == id
+					and app.campfire_visit.read_state().status == RunCampfireVisit.LEFT
+					and (not is_instance_valid(app.campfire_view) or not app.campfire_view.is_visible_in_tree())
+					and _rest_connected(id)))
+				_check((not is_instance_valid(app.campfire_view) or not app.campfire_view.visible) and app._campfire_closed,
+					"transit Campfire Leave completes its zero-gain visit")
+				var left_state: Array = _persistent()
+				if is_instance_valid(stale_heal):
+					stale_heal.pressed.emit()
+				await process_frame
+				_check(_persistent() == left_state and app.campfire_visit.read_state().status == RunCampfireVisit.LEFT
+					and _rest_connected(id), "stale Campfire Heal after Leave is inert")
+				# Leave records no rest receipt, so the pre-appended completion
+				# candidate is withdrawn: only a real Heal adds one.
+				completed.pop_back()
+				rest_healed = false
+			else:
+				await _rest_input(stale_heal, keyboard)
+				await _await_rest_state(id, "Campfire healed", func(): return (app._campfire_closed
+					and app.campfire_visit != null
+					and app.campfire_visit.read_state().node_id == id
+					and app.campfire_visit.read_state().status == RunCampfireVisit.HEALED
+					and (not is_instance_valid(app.campfire_view) or not app.campfire_view.is_visible_in_tree())
+					and _rest_connected(id)))
+				_check((not is_instance_valid(app.campfire_view) or not app.campfire_view.visible) and app._campfire_closed,
+					"transit Campfire Heal completes its visit")
+				var healed: Array = _persistent()
+				if is_instance_valid(stale_heal):
+					stale_heal.pressed.emit()
+				await process_frame
+				_check(_persistent() == healed and app.campfire_visit.read_state().status == RunCampfireVisit.HEALED
+					and _rest_connected(id), "stale Campfire Heal after completion is inert")
+				rest_healed = true
 		else:
 			_check(app.rest_recovery != previous_recovery,
 				"connected legacy Rest creates a fresh recovery instead of reusing a consumed visit")
@@ -204,6 +240,7 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 				and not app.rest_continue_button.disabled, "legacy transit Heal commits once")
 			_check(app.party_carryover.read_state().completed_rests.has(id),
 				"legacy transit Heal records exactly this Rest in the party ledger")
+			rest_healed = true
 			var healed: Array = _persistent()
 			if is_instance_valid(heal):
 				heal.pressed.emit()
@@ -332,8 +369,8 @@ func _test_rest_elite_inputs() -> void:
 		var before: int = rest_transits[keyboard]
 		await _visit_path(fixture.path, keyboard)
 		_check(rest_transits[keyboard] > before
-			and app.party_carryover.read_state().completed_rests.has(rest_id),
-			"real fresh Rest settles exactly one Heal before the Elite")
+			and app.party_carryover.read_state().completed_rests.has(rest_id) == rest_healed,
+			"real fresh Rest records its receipt exactly when its Heal genuinely pays")
 		var transit: Array = fixture.elite_path.duplicate()
 		var elite_id: String = transit.pop_back()
 		await _visit_path(transit, keyboard)

@@ -764,13 +764,23 @@ func _win(fixture: Dictionary) -> Array:
 			var gold: int = app.session_gold
 			var scraps: int = app.run_scraps
 			var rng: int = app.run_rng.state
-			var callback := _retained(app.campfire_heal_button)
-			await _activate(app.campfire_heal_button)
-			for hero in app.run_heroes:
-				var prior: Dictionary = before.filter(func(h): return h.id == hero.id)[0]
-				_check(hero.hp == mini(hero.max_hp, maxi(1, prior.hp) + floori(hero.max_hp * 0.3)), "Rest exact authored recovery")
+			var action: Button = app.campfire_heal_button
+			if action.disabled:
+				# The authenticated recovery preview admits no HP gain (V3-3),
+				# so Heal cannot spend this one-use Rest: the enabled Leave is
+				# the genuine completion for a fully healed party.
+				action = app.campfire_leave_button
+				_check(not action.disabled, "zero-gain Rest keeps its Leave enabled")
+			var callback := _retained(action)
+			await _activate(action)
+			if action == app.campfire_heal_button:
+				for hero in app.run_heroes:
+					var prior: Dictionary = before.filter(func(h): return h.id == hero.id)[0]
+					_check(hero.hp == mini(hero.max_hp, maxi(1, prior.hp) + floori(hero.max_hp * 0.3)), "Rest exact authored recovery")
+			else:
+				_check(app.run_heroes == before, "zero-gain Rest Leave changes no hero")
 			_check(app.session_gold == gold and app.run_scraps == scraps and app.run_rng.state == rng,
-				"Rest heal preserves currencies and RNG")
+				"Rest completion preserves currencies and RNG")
 			stale.append(callback)
 			await _reject_stale()
 			_record(["rest"])

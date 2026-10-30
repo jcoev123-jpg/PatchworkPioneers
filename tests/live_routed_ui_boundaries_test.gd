@@ -233,9 +233,17 @@ func _complete_node(kind: String, mode: int, step: int) -> void:
 		"Rest":
 			_check(app.campfire_view is LiveCampfirePanel and app.campfire_view.is_visible_in_tree()
 				and not is_instance_valid(app.rest_view), "book and atlas Rest mount only Campfire")
+			# This routed fixture never damages the party, so the authentic
+			# zero-gain Heal is disabled and the enabled Leave completes the stop.
+			_check(app.campfire_heal_button.disabled and not app.campfire_leave_button.disabled,
+				"undamaged routed party shows its zero-gain Heal disabled")
 			await _click(app.campfire_heal_button)
-			_check(app._campfire_closed and app.campfire_visit.read_state().status == RunCampfireVisit.HEALED
-				and app._can_choose_connected_route(), "Rest completes an authenticated Heal and admits onward play")
+			_check(not app._campfire_closed
+				and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
+				"disabled Heal cannot spend the routed Rest")
+			await _click(app.campfire_leave_button)
+			_check(app._campfire_closed and app.campfire_visit.read_state().status == RunCampfireVisit.LEFT
+				and app._can_choose_connected_route(), "Rest completes an authenticated Leave and admits onward play")
 		"Unpicker":
 			await _click(app.unpicker_leave_button)
 		"Campfire":

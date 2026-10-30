@@ -296,8 +296,16 @@ func _run() -> void:
 				await _click(app.peddler_leave_button)
 			else:
 				_check(app.campfire_visit != null and app.campfire_view.is_visible_in_tree(), "next Rest has real Campfire actions")
+				# The undamaged party's Heal forecast gains nothing, so Heal is
+				# disabled and the enabled Leave closes the stop instead.
+				_check(app.campfire_heal_button.disabled and not app.campfire_leave_button.disabled,
+					"next Rest shows its zero-gain Heal disabled")
 				await _click(app.campfire_heal_button)
-				_check(app._campfire_closed and app._can_choose_connected_route(), "next Rest Heal closes and admits onward play")
+				_check(not app._campfire_closed
+					and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
+					"disabled Heal cannot spend the next Rest")
+				await _click(app.campfire_leave_button)
+				_check(app._campfire_closed and app._can_choose_connected_route(), "next Rest Leave closes and admits onward play")
 			var observation := [app.run_map.get_route(), app.run_deck.duplicate(), app.session_gold,
 				app.run_rng.state, app.run_heroes.duplicate(true), app.run_trinkets.duplicate()]
 			if session == 0:

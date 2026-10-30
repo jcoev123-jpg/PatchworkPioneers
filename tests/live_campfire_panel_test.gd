@@ -186,7 +186,7 @@ func _layout_and_previews() -> void:
 	var source := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
 	await _preview_fixture(source, [40, 27, 8], "wounded starter, Torn revive first")
 	await _preview_fixture(RunCampfireVisit.new(NODE, _party([40, 30, 26])),
-		[40, 30, 26], "fully healthy still permitted")
+		[40, 30, 26], "fully healthy party with a zero-gain preview")
 	await _preview_fixture(RunCampfireVisit.new(NODE, _party([0, 0, 1])),
 		[13, 10, 8], "two Torn heroes")
 	await _preview_fixture(RunCampfireVisit.new(NODE, _party([0, 26, 20], [37, 27, 23])),
@@ -246,12 +246,12 @@ func _preview_fixture(visit: RunCampfireVisit, expected_hp: Array, label: String
 			and Rect2(Vector2.ZERO, Vector2(root.size)).encloses(
 				panel.hero_labels[i].get_global_rect()),
 			label + ": mounted ribbon readable and visible")
-	_check(not panel.heal_button.disabled and not panel.leave_button.disabled,
-		label + ": Heal valid regardless of delta, Leave always allowed")
 	var any_gain := false
 	for i in range(3):
 		if int(expected_hp[i]) > int(source["heroes"][i]["hp"]):
 			any_gain = true
+	_check(panel.heal_button.disabled == (not any_gain) and not panel.leave_button.disabled,
+		label + ": Heal enabled exactly when the preview genuinely recovers HP")
 	var expected_default: Button = panel.heal_button if any_gain else panel.leave_button
 	_check(expected_default.has_focus()
 		and root.gui_get_focus_owner() == expected_default,
@@ -475,11 +475,38 @@ func _default_focus() -> void:
 		and root.gui_get_focus_owner() == pre.leave_button
 		and not pre.leave_button.disabled,
 		"zero-gain pre-mount bind focuses the real enabled Leave button")
-	_check(not pre.heal_button.disabled and pre.heal_button.is_visible_in_tree()
+	_check(pre.heal_button.disabled and pre.heal_button.is_visible_in_tree()
 		and pre.heal_button.text == "Heal",
-		"Heal still exists and can be chosen explicitly at full HP")
+		"zero-gain Heal stays visible but disabled at full HP")
 	_check(full.read_state() == full_before and pre_intents.is_empty(),
 		"zero-gain default focus alone consumes no visit")
+	# No input path onto the disabled Heal may forge a decision or spend anything.
+	var pre_zero := pre_intents.size()
+	var pre_point := pre.heal_button.get_global_rect().get_center()
+	for down in [true, false]:
+		var click := InputEventMouseButton.new()
+		click.button_index = MOUSE_BUTTON_LEFT
+		click.position = pre_point
+		click.pressed = down
+		root.push_input(click)
+		await process_frame
+	await _settle()
+	pre.heal_button.grab_focus()
+	_check(pre.heal_button.has_focus(),
+		"disabled Heal remains a real control inside the focus chain")
+	for key in [KEY_ENTER, KEY_SPACE, KEY_1, KEY_KP_1]:
+		for down in [true, false]:
+			var event := InputEventKey.new()
+			event.keycode = key
+			event.pressed = down
+			root.push_input(event)
+			await process_frame
+		await _settle()
+	pre.heal_button.pressed.emit()
+	await _settle()
+	_check(pre_intents.size() == pre_zero and full.read_state() == full_before
+		and not pre._submitted and not pre.leave_button.disabled,
+		"mouse, Enter/Space, physical 1/KP1 and direct signal on the disabled Heal emit nothing")
 	intents.clear()
 	await _activate(pre.leave_button, true, KEY_ENTER)
 	_check(pre_intents.size() == 1 and intents.is_empty()
@@ -501,30 +528,69 @@ func _default_focus() -> void:
 			"default Leave consumes its visit exactly once")
 	pre.queue_free()
 	await _settle()
-	# Deliberate Heal at full HP remains valid and once-only.
+	# After mounting, a full-health rebind keeps Heal disabled: only the
+	# genuine Leave can act, and no input path may forge a Heal decision.
 	var full_heal := RunCampfireVisit.new(NODE, _party([40, 30, 26]))
 	var heal_before: Dictionary = full_heal.read_state()
 	await _bind(full_heal)
 	_check(panel.leave_button.has_focus()
 		and root.gui_get_focus_owner() == panel.leave_button,
 		"full-health rebind after mount defaults to Leave")
+	_check(panel.heal_button.disabled and panel.heal_button.is_visible_in_tree()
+		and not panel.leave_button.disabled,
+		"rebind keeps the zero-gain Heal disabled while Leave stays enabled")
 	var stale_default: Callable = panel._connections[panel.leave_button]
-	await _activate(panel.heal_button, false)
-	_check(intents.size() == 1 and full_heal.read_state() == heal_before,
-		"explicit Heal at full HP emits one intent without committing")
-	if intents.size() == 1:
-		var heal_intent: Dictionary = intents[0]
-		_check(heal_intent.get("action") == "heal" and heal_intent.get("source_visit") == full_heal
-			and heal_intent.get("node_id") == NODE
-			and heal_intent.get("expected_heroes") == heal_before.heroes,
-			"explicit Heal intent is the authentic bound instance/node/roster")
-		var heal_result: Dictionary = Controller.submit(full_heal, heal_intent)
-		_check(heal_result.get("ok") == true and heal_result.get("decision") == "heal"
-			and heal_result.get("heroes") == heal_before.heroes
-			and full_heal.read_state().status == "healed",
-			"deliberate Heal at full HP remains valid and consumes its visit once")
-		_check(not Controller.submit(full_heal, heal_intent).get("ok"),
-			"deliberate full-HP Heal receipt is once-only")
+	var zero_count := intents.size()
+	var heal_point := panel.heal_button.get_global_rect().get_center()
+	for down in [true, false]:
+		var click := InputEventMouseButton.new()
+		click.button_index = MOUSE_BUTTON_LEFT
+		click.position = heal_point
+		click.pressed = down
+		root.push_input(click)
+		await process_frame
+	await _settle()
+	panel.heal_button.grab_focus()
+	for key in [KEY_ENTER, KEY_SPACE, KEY_1, KEY_KP_1]:
+		for down in [true, false]:
+			var event := InputEventKey.new()
+			event.keycode = key
+			event.pressed = down
+			root.push_input(event)
+			await process_frame
+		await _settle()
+	panel.heal_button.pressed.emit()
+	await _settle()
+	_check(intents.size() == zero_count and full_heal.read_state() == heal_before
+		and not panel._submitted,
+		"rebound disabled Heal admits no mouse, Enter/Space, 1/KP1 or signal decision")
+	# The real Leave still emits one legitimate intent and commits once.
+	await _activate(panel.leave_button, false)
+	_check(intents.size() == zero_count + 1 and full_heal.read_state() == heal_before,
+		"the genuine Leave emits one intent without committing")
+	if intents.size() == zero_count + 1:
+		var leave_intent: Dictionary = intents[-1]
+		_check(leave_intent.get("action") == "leave" and leave_intent.get("source_visit") == full_heal
+			and leave_intent.get("node_id") == NODE
+			and leave_intent.get("expected_heroes") == heal_before.heroes,
+			"rebound Leave intent is the authentic bound instance/node/roster")
+		var leave_result: Dictionary = Controller.submit(full_heal, leave_intent)
+		_check(leave_result.get("ok") == true and leave_result.get("decision") == "leave"
+			and leave_result.get("heroes") == heal_before.heroes
+			and full_heal.read_state().status == "left",
+			"the genuine Leave at full HP consumes its visit exactly once")
+		_check(not Controller.submit(full_heal, leave_intent).get("ok"),
+			"rebound full-HP Leave receipt is once-only")
+	# Independently of the view, the service still accepts an explicit full-HP Heal.
+	var full_service := RunCampfireVisit.new(NODE, _party([40, 30, 26]))
+	var service_before: Dictionary = full_service.read_state()
+	var service_receipt: Dictionary = full_service.choose_heal(service_before.node_id, service_before.heroes)
+	_check(service_receipt.get("ok") == true and service_receipt.get("decision") == "heal"
+		and service_receipt.get("heroes") == service_before.heroes
+		and full_service.read_state().status == RunCampfireVisit.HEALED,
+		"explicitly invoked full-HP Heal remains valid for non-view callers")
+	_check(not full_service.choose_heal(service_before.node_id, service_before.heroes).get("ok"),
+		"explicit full-HP Heal receipt is once-only")
 	# Positive-gain parties, including a Torn hero and a one-positive mix, focus Heal.
 	var wounded := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
 	var wounded_before: Dictionary = wounded.read_state()
@@ -539,18 +605,18 @@ func _default_focus() -> void:
 		"positive-gain rebind focuses the real Heal button")
 	stale_default.call()
 	_check(intents.is_empty() and wounded.read_state() == wounded_before
-		and full_heal.read_state().status == "healed",
+		and full_heal.read_state().status == "left",
 		"retired full-generation Leave callback cannot act after rebind")
 	var torn_only := RunCampfireVisit.new(NODE, _party([0, 30, 26]))
 	var torn_before: Dictionary = torn_only.read_state()
 	await _bind(torn_only)
-	_check(panel.heal_button.has_focus(),
-		"a Torn hero guarantees a positive preview and focuses Heal")
+	_check(panel.heal_button.has_focus() and not panel.heal_button.disabled,
+		"a Torn hero guarantees a positive preview and an enabled focused Heal")
 	var mixed := RunCampfireVisit.new(NODE, _party([40, 30, 20]))
 	var mixed_before: Dictionary = mixed.read_state()
 	await _bind(mixed)
-	_check(panel.heal_button.has_focus(),
-		"mixed roster with one positive gain focuses Heal")
+	_check(panel.heal_button.has_focus() and not panel.heal_button.disabled,
+		"mixed roster with one positive gain focuses an enabled Heal")
 	# Full -> wounded -> full rebinding moves the default both ways.
 	var full_again := RunCampfireVisit.new(NODE, _party([40, 30, 26]))
 	var again_before: Dictionary = full_again.read_state()

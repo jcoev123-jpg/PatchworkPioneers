@@ -710,14 +710,24 @@ func _run() -> void:
 				_check(app.campfire_view is LiveCampfirePanel and app.campfire_view.is_visible_in_tree()
 					and app.rest_view == null and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN,
 					"authentic opening Rest mounts sewn Campfire before any battle")
-				var camp_action: Button = app.campfire_leave_button if mode == 0 else app.campfire_heal_button
+				# Before any battle the party is fully healed: the zero-gain Heal is
+				# disabled and inert, and the enabled focused Leave is the only commit.
+				_check(app.campfire_heal_button.disabled and app.campfire_heal_button.is_visible_in_tree()
+					and not app.campfire_leave_button.disabled
+					and app.campfire_leave_button.has_focus(),
+					"full-HP opening Campfire disables Heal and focuses the enabled Leave")
+				app.campfire_view._connections[app.campfire_heal_button].call()
+				_check(app.campfire_visit.read_state().status == RunCampfireVisit.OPEN
+					and not app._campfire_closed and not app.campfire_view._submitted,
+					"disabled zero-gain Heal emits no decision and spends nothing")
+				var camp_action: Button = app.campfire_leave_button
 				stale.append(app.campfire_view.decision_requested.get_connections()[0].callable.bind({
-					"action": "leave" if mode == 0 else "heal", "source_visit": app.campfire_visit,
+					"action": "leave", "source_visit": app.campfire_visit,
 					"node_id": fixture[2], "expected_heroes": heroes.duplicate(true)}))
 				await _activate(camp_action, mode == 1)
 				_check(app.run_deck == cards and app.run_heroes == heroes and app._campfire_closed
-					and app.party_carryover.read_state().completed_rests == ([] if mode == 0 else [fixture[2]])
-					and shared.state == start_rng, "exact full-HP Heal/Leave receipt without deck or RNG drift")
+					and app.party_carryover.read_state().completed_rests.is_empty()
+					and shared.state == start_rng, "exact full-HP Leave receipt without deck or RNG drift")
 			elif kind == "Unpicker":
 				_check(app.unpicker_visit.is_valid() and app.unpicker_view.is_visible_in_tree(), "real seeded Unpicker mounted")
 				var source: Dictionary = app.unpicker_visit.read_state()
