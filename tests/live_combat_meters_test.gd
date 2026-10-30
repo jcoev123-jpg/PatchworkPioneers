@@ -270,6 +270,11 @@ func _expected_chips(actor: Dictionary, side: String) -> Array[String]:
 		chips.append("Fear")
 	if side == "enemy" and actor.hp > 0 and actor.get("thorns", 0) > 0:
 		chips.append("Thorns %d" % actor["thorns"])
+	var enrage: Variant = actor.get("enrage", false)
+	if side == "enemy" and actor.hp > 0 and enrage is bool and bool(enrage):
+		var stacks: Variant = actor.get("enrage_stacks", 0)
+		if stacks is int and stacks >= 0 and stacks <= 3:
+			chips.append("Enrage %d" % stacks)
 	return chips
 
 
@@ -294,6 +299,11 @@ func _expected_chip_tooltip(actor: Dictionary, side: String, forecast: Dictionar
 	if chip.begins_with("Thorns "):
 		var n: int = actor["thorns"]
 		return "Thorns %d: Each confirmed positive-damage hit on this enemy deals %d damage back to its attacking hero, even if enemy Block absorbs that hit. Hero Block absorbs the retaliation before HP. Misses, failed plays, zero-damage attacks and previews do not retaliate." % [n, n]
+	if chip.begins_with("Enrage "):
+		var stacks_val: Variant = actor.get("enrage_stacks", 0)
+		var stacks: int = stacks_val if (stacks_val is int and stacks_val >= 0 and stacks_val <= 3) else 0
+		return "Enrage %d: Gain one stack per genuine positive-damage hit (even into Block), maximum three. Misses, zero-damage hits and refused plays add none. +%d attack bonus before Weak/Exposed." % [
+			stacks, stacks * CombatEnemyKeywordRules.ENRAGE_ATTACK_BONUS_PER_STACK]
 	var full := _expected_tooltip(actor, side, forecast)
 	if chip.begins_with("Tangled "):
 		var n: int = actor["statuses"]["tangled"]
@@ -465,7 +475,7 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 		and buttons.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and buttons.focus_mode == Control.FOCUS_NONE,
 		"empty status row collapses; real statuses restore it without intercepting input: " + meter.name)
-	_check(buttons.get_child_count() == 8, "one reusable eight-button pool: " + meter.name)
+	_check(buttons.get_child_count() == 10, "one reusable ten-button pool: " + meter.name)
 	var texts: Array[String] = []
 	for child in buttons.get_children():
 		var button := child as Button
@@ -699,8 +709,8 @@ func _exercise_status_row_transitions(app, presenter) -> void:
 	var control_ids: Array[int] = []
 	for child in buttons.get_children():
 		control_ids.append(child.get_instance_id())
-	_check(control_ids.size() == 8 and not buttons.visible and _visible_buttons(meter).is_empty(),
-		"authentic opening has a collapsed status row and eight dormant buttons")
+	_check(control_ids.size() == 10 and not buttons.visible and _visible_buttons(meter).is_empty(),
+		"authentic opening has a collapsed status row and ten dormant buttons")
 	_check(app.enemies.apply_statuses({1: {"exposed": 2}}),
 		"real enemy API applies Exposed 2 to an initially empty row")
 	await _frames()
@@ -733,8 +743,8 @@ func _exercise_status_row_transitions(app, presenter) -> void:
 		var actual_ids: Array[int] = []
 		for child in buttons.get_children():
 			actual_ids.append(child.get_instance_id())
-		_check(actual_ids == control_ids and buttons.get_child_count() == 8
-			and meter == _meters(app)[3], "status refresh reuses eight original chips and mounted meter")
+		_check(actual_ids == control_ids and buttons.get_child_count() == 10
+			and meter == _meters(app)[3], "status refresh reuses ten original chips and mounted meter")
 	_check(_state(app) == refreshed and randi() == global_draw,
 		"refresh never changes deck, statuses, intents, combat or seeded/global RNG")
 	var batch := CombatStatusTurnBatch.new()
@@ -794,8 +804,8 @@ func _exercise_new_status_ribbons(app, presenter) -> void:
 		hero_ids.append(child.get_instance_id())
 	for child in _buttons(meters[3]).get_children():
 		enemy_ids.append(child.get_instance_id())
-	_check(hero_ids.size() == 8 and enemy_ids.size() == 8,
-		"both real status rows reserve eight stable actionless controls")
+	_check(hero_ids.size() == 10 and enemy_ids.size() == 10,
+		"both real status rows reserve ten stable actionless controls")
 	app.party._heroes[1]["statuses"] = {"tangled": 2, "riposte": 3}
 	app.enemies._enemies[0]["statuses"] = {"bleed": 2, "weak": 1, "exposed": 2,
 		"tangled": 2, "riposte": 3}
@@ -966,8 +976,8 @@ func _exercise_blind_ribbon(app, presenter) -> void:
 	var control_ids: Array[int] = []
 	for child in buttons.get_children():
 		control_ids.append(child.get_instance_id())
-	_check(control_ids.size() == 8 and not buttons.visible and _visible_buttons(meter).is_empty(),
-		"Blind case starts with a collapsed eight-control status pool")
+	_check(control_ids.size() == 10 and not buttons.visible and _visible_buttons(meter).is_empty(),
+		"Blind case starts with a collapsed ten-control status pool")
 	# A real CombatEnemies reader snapshot really carrying the one-shot token.
 	app.enemies._enemies[0]["statuses"] = {"blind_next_attack": 1}
 	var armed: Dictionary = app.enemies.get_enemy(1)
@@ -1009,8 +1019,8 @@ func _exercise_blind_ribbon(app, presenter) -> void:
 	_check(_visible_buttons(meter).is_empty() and not buttons.visible
 		and meter.status_text.text == "Statuses: none",
 		"an inert zero Blind adds no text and clears the mounted chip")
-	_check(zero_ids == control_ids and buttons.get_child_count() == 8,
-		"clearing Blind reuses the same eight sewn controls")
+	_check(zero_ids == control_ids and buttons.get_child_count() == 10,
+		"clearing Blind reuses the same ten sewn controls")
 	app.enemies._enemies[0].erase("statuses")
 	presenter._sync_battle()
 	await _frames()
@@ -1042,13 +1052,14 @@ func _exercise_blind_ribbon(app, presenter) -> void:
 	_check(_expected_chips(dense, "enemy") == ["Bleed 1", "Weak 1", "Exposed 1",
 		"Tangled 1", "Riposte 1", "Blind", "Thorns 2"]
 		and dense_texts == _expected_chips(dense, "enemy")
-		and buttons.get_child_count() == 8 and _visible_buttons(meter).size() == 7,
-		"the previous seven-effect set renders exactly seven visible chips from the eight-control pool")
-	var dormant := buttons.get_child(7) as Button
-	_check(dormant != null and not dormant.visible and not dormant.is_visible_in_tree()
-		and dormant.text.is_empty() and dormant.tooltip_text.is_empty()
-		and dormant.pressed.get_connections().is_empty(),
-		"the eighth preallocated control stays dormant and tooltip-free while Fear is absent")
+		and buttons.get_child_count() == 10 and _visible_buttons(meter).size() == 7,
+		"the previous seven-effect set renders exactly seven visible chips from the ten-control pool")
+	for dormant_index in range(7, 10):
+		var dormant := buttons.get_child(dormant_index) as Button
+		_check(dormant != null and not dormant.visible and not dormant.is_visible_in_tree()
+			and dormant.text.is_empty() and dormant.tooltip_text.is_empty()
+			and dormant.pressed.get_connections().is_empty(),
+			"the unused preallocated controls stay dormant and tooltip-free while Fear and Enrage are absent")
 	if _visible_buttons(meter).size() == 7:
 		var blind_chip := _visible_buttons(meter)[5]
 		await _hover(blind_chip)
@@ -1131,8 +1142,8 @@ func _exercise_fear_ribbon(app, presenter) -> void:
 	var control_ids: Array[int] = []
 	for child in buttons.get_children():
 		control_ids.append(child.get_instance_id())
-	_check(control_ids.size() == 8 and not buttons.visible and _visible_buttons(meter).is_empty(),
-		"Fear case starts with a collapsed eight-control status pool")
+	_check(control_ids.size() == 10 and not buttons.visible and _visible_buttons(meter).is_empty(),
+		"Fear case starts with a collapsed ten-control status pool")
 	# AC1: the authoritative roster record carries exactly the canonical Weak + Fear pair.
 	app.enemies._enemies[0]["statuses"] = {"weak": 1, "cannot_buff_next_turn": true}
 	var source: Dictionary = app.enemies.get_enemy(1)
@@ -1219,8 +1230,13 @@ func _exercise_fear_ribbon(app, presenter) -> void:
 	for chip in dense_shown:
 		dense_texts.append(chip.text)
 	_check(_expected_chips(dense, "enemy") == dense_expected and dense_texts == dense_expected
-		and buttons.get_child_count() == 8,
-		"five counted statuses, Blind, Fear and Thorns fill all eight chips in stable order")
+		and buttons.get_child_count() == 10,
+		"five counted statuses, Blind, Fear and Thorns fill eight active chips in stable order from ten-button pool")
+	for dormant_index in range(8, 10):
+		var dormant := buttons.get_child(dormant_index) as Button
+		_check(dormant != null and not dormant.visible and not dormant.is_visible_in_tree()
+			and dormant.text.is_empty() and dormant.tooltip_text.is_empty(),
+			"unused controls 8..9 stay dormant and tooltip-free while Enrage is absent")
 	var h_separation := float(buttons.get_theme_constant("h_separation"))
 	var row_gap := float(buttons.get_theme_constant("v_separation"))
 	var measured := _measured_rows(_chip_widths(buttons, dense_shown.size()),
@@ -1275,7 +1291,7 @@ func _exercise_fear_ribbon(app, presenter) -> void:
 			refreshed_ids.append(child.get_instance_id())
 		_check(refreshed_ids == control_ids and _visible_buttons(meter).size() == 8
 			and _visible_buttons(meter)[6].text == "Fear",
-			"each refresh preserves the pre-created eight Button IDs and the live Fear chip")
+			"each refresh preserves the pre-created ten Button IDs and the live Fear chip")
 	_check(_state(app) == dense_state and randi() == dense_global,
 		"dense Fear refresh is read-only for combat, statuses, intents, deck and both RNGs")
 	# AC3: the pure owner-turn rule expires Fear only; Weak ages by its own counter.
@@ -1364,8 +1380,212 @@ func _exercise_fear_ribbon(app, presenter) -> void:
 		final_ids.append(child.get_instance_id())
 	_check(_state(app) == before and final_ids == control_ids
 		and _visible_buttons(meter).is_empty() and not buttons.is_visible_in_tree(),
-		"the Fear fixture restores exact original state and the same eight controls")
+		"the Fear fixture restores exact original state and the same ten controls")
 
+
+
+
+## Enrage ribbon tests covering AC1, AC2, AC3:
+## AC1: Living actor with top-level enrage: true displays Enrage 0..3 according to authoritative stack
+##      (0-3, absent = 0); unflagged enemies and heroes get none.
+## AC2: Hover explains 1 stack per genuine positive-damage hit (even into Block), max 3,
+##      and accurate +0/+2/+4/+6 attack bonus before Weak/Exposed. Absent/false, slain, and
+##      malformed metadata produce no active Enrage chip.
+## AC3: Ten-chip dense coexistence (5 counters, Blind, Dodge, Fear, Thorns, Enrage).
+##      Inactive controls hidden, pool preallocated to 10 (STATUS_BUTTONS := 10),
+##      read-only UI reading mutates no state/RNG.
+func _exercise_enrage_ribbon(app, presenter) -> void:
+	var meters := _meters(app)
+	_check(meters.size() == 5 and app.party.get_hero(2)["hp"] > 0
+		and app.enemies.get_enemy(1)["hp"] > 0,
+		"Enrage ribbon case starts with mounted living hero and enemy authorities")
+	if meters.size() != 5:
+		return
+	var original_heroes: Array[Dictionary] = app.party.get_heroes()
+	var original_enemies: Array[Dictionary] = app.enemies.get_enemies()
+	var before := _state(app)
+	var enemy_meter := meters[3]
+	var enemy_buttons := _buttons(enemy_meter)
+	var hero_meter := meters[0]
+	var control_ids: Array[int] = []
+	for child in enemy_buttons.get_children():
+		control_ids.append(child.get_instance_id())
+	_check(control_ids.size() == 10 and not enemy_buttons.visible and _visible_buttons(enemy_meter).is_empty(),
+		"Enrage case starts with a collapsed ten-control status pool")
+
+	# AC1: absent enrage_stacks defaults to 0 -> "Enrage 0"
+	app.enemies._enemies[0]["enrage"] = true
+	app.enemies._enemies[0].erase("enrage_stacks")
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var shown := _visible_buttons(enemy_meter)
+	_check(shown.size() == 1 and shown[0].text == "Enrage 0",
+		"enemy with enrage: true and absent enrage_stacks displays Enrage 0")
+	if shown.size() == 1:
+		_check(shown[0].tooltip_text == presenter.enrage_tooltip(0)
+			and shown[0].tooltip_text == _expected_chip_tooltip(app.enemies.get_enemy(1), "enemy", _forecast(app), "Enrage 0")
+			and shown[0].tooltip_text.contains("Enrage 0")
+			and shown[0].tooltip_text.contains("+0 attack bonus before Weak/Exposed")
+			and shown[0].tooltip_text.contains("Gain one stack per genuine positive-damage hit (even into Block), maximum three"),
+			"Enrage 0 chip tooltip matches exact keyword rule and +0 bonus")
+		await _hover(shown[0])
+		_check(root.gui_get_hovered_control() == shown[0]
+			and shown[0].focus_mode == Control.FOCUS_NONE
+			and shown[0].pressed.get_connections().is_empty(),
+			"Enrage chip is passive, hover-only, and actionless")
+
+	# AC1 & AC2: Stacks 1, 2, 3 display Enrage 1, Enrage 2, Enrage 3 with corresponding +2, +4, +6 bonuses
+	for stacks in range(1, 4):
+		app.enemies._enemies[0]["enrage_stacks"] = stacks
+		presenter._sync_battle()
+		await _frames()
+		_visible(app)
+		var current_shown := _visible_buttons(enemy_meter)
+		var expected_bonus: int = stacks * CombatEnemyKeywordRules.ENRAGE_ATTACK_BONUS_PER_STACK
+		_check(current_shown.size() == 1 and current_shown[0].text == "Enrage %d" % stacks,
+			"enemy with enrage: true and enrage_stacks %d displays Enrage %d" % [stacks, stacks])
+		if current_shown.size() == 1:
+			_check(current_shown[0].tooltip_text == presenter.enrage_tooltip(stacks)
+				and current_shown[0].tooltip_text == _expected_chip_tooltip(app.enemies.get_enemy(1), "enemy", _forecast(app), "Enrage %d" % stacks)
+				and current_shown[0].tooltip_text.contains("+%d attack bonus before Weak/Exposed" % expected_bonus),
+				"Enrage %d tooltip has accurate +%d attack bonus" % [stacks, expected_bonus])
+
+	# AC1: Heroes NEVER display an Enrage chip even if flag is set
+	app.party._heroes[0]["enrage"] = true
+	app.party._heroes[0]["enrage_stacks"] = 2
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var hero_shown := _visible_buttons(hero_meter)
+	var hero_has_enrage := false
+	for chip in hero_shown:
+		if chip.text.begins_with("Enrage"):
+			hero_has_enrage = true
+	_check(not hero_has_enrage, "hero never displays an Enrage chip even with enrage metadata")
+
+	# AC1 & AC2: Unflagged enemies (enrage: false or absent) get no Enrage chip
+	app.enemies._enemies[0]["enrage"] = false
+	app.enemies._enemies[0]["enrage_stacks"] = 2
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	_check(_visible_buttons(enemy_meter).is_empty() and not enemy_buttons.visible,
+		"enemy with enrage: false displays no Enrage chip")
+
+	app.enemies._enemies[0].erase("enrage")
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	_check(_visible_buttons(enemy_meter).is_empty() and not enemy_buttons.visible,
+		"enemy with absent enrage displays no Enrage chip")
+
+	# AC2: Slain enemy (hp <= 0) displays no Enrage chip (displays SLAIN)
+	app.enemies._enemies[0]["enrage"] = true
+	app.enemies._enemies[0]["enrage_stacks"] = 2
+	app.enemies._enemies[0]["hp"] = 0
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var slain_shown := _visible_buttons(enemy_meter)
+	_check(slain_shown.size() == 1 and slain_shown[0].text == "SLAIN",
+		"slain enemy displays SLAIN and no active Enrage chip")
+
+	# AC2: Malformed metadata produce no active Enrage chip
+	app.enemies._enemies[0]["hp"] = original_enemies[0]["hp"]
+	for bad_enrage in ["true", 1, 1.0, null, []]:
+		app.enemies._enemies[0]["enrage"] = bad_enrage
+		app.enemies._enemies[0]["enrage_stacks"] = 1
+		presenter._sync_battle()
+		await _frames()
+		_visible(app)
+		var malformed_shown := _visible_buttons(enemy_meter)
+		var has_enrage := false
+		for chip in malformed_shown:
+			if chip.text.begins_with("Enrage"):
+				has_enrage = true
+		_check(not has_enrage, "malformed enrage value %s produces no Enrage chip" % str(bad_enrage))
+
+	app.enemies._enemies[0]["enrage"] = true
+	for bad_stacks in [-1, 4, 99, "2", 1.5, null, true]:
+		app.enemies._enemies[0]["enrage_stacks"] = bad_stacks
+		presenter._sync_battle()
+		await _frames()
+		_visible(app)
+		var malformed_shown := _visible_buttons(enemy_meter)
+		var has_enrage := false
+		for chip in malformed_shown:
+			if chip.text.begins_with("Enrage"):
+				has_enrage = true
+		_check(not has_enrage, "malformed enrage_stacks value %s produces no Enrage chip" % str(bad_stacks))
+
+	# AC3: Dense 10-chip coexistence: 5 counters, Blind, Dodge, Fear, Thorns, Enrage
+	app.enemies._enemies[0]["hp"] = original_enemies[0]["hp"]
+	app.enemies._enemies[0]["statuses"] = {
+		"bleed": 1, "weak": 1, "exposed": 1, "tangled": 1, "riposte": 1,
+		"blind_next_attack": 1, "dodge_next_attack": 1, "cannot_buff_next_turn": true
+	}
+	app.enemies._enemies[0]["thorns"] = 2
+	app.enemies._enemies[0]["enrage"] = true
+	app.enemies._enemies[0]["enrage_stacks"] = 3
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var dense_enemy: Dictionary = app.enemies.get_enemy(1)
+	var dense_expected: Array[String] = [
+		"Bleed 1", "Weak 1", "Exposed 1", "Tangled 1", "Riposte 1",
+		"Blind", "Dodge", "Fear", "Thorns 2", "Enrage 3"
+	]
+	var dense_shown := _visible_buttons(enemy_meter)
+	var dense_texts: Array[String] = []
+	for chip in dense_shown:
+		dense_texts.append(chip.text)
+	_check(_expected_chips(dense_enemy, "enemy") == dense_expected
+		and dense_texts == dense_expected
+		and dense_shown.size() == 10
+		and enemy_buttons.get_child_count() == 10,
+		"all 10 chips co-exist simultaneously in stable order and fill the 10-button pool")
+
+	# Verify tooltip on the 10th chip (Enrage 3)
+	if dense_shown.size() == 10:
+		var enrage_chip := dense_shown[9]
+		await _hover(enrage_chip)
+		_check(root.gui_get_hovered_control() == enrage_chip
+			and enrage_chip.text == "Enrage 3"
+			and enrage_chip.tooltip_text == presenter.enrage_tooltip(3)
+			and enrage_chip.tooltip_text == _expected_chip_tooltip(dense_enemy, "enemy", _forecast(app), "Enrage 3"),
+			"dense 10-chip ribbon retains accurate Enrage 3 tooltip")
+
+	# AC3: Verify button ID persistence across refreshes and read-only behavior
+	var state_before_sync := _state(app)
+	seed(54321)
+	var expected_global_rng := randi()
+	seed(54321)
+	for repeat in range(3):
+		presenter._sync_battle()
+		await _frames()
+		var refreshed_ids: Array[int] = []
+		for child in enemy_buttons.get_children():
+			refreshed_ids.append(child.get_instance_id())
+		_check(refreshed_ids == control_ids and _visible_buttons(enemy_meter).size() == 10,
+			"refresh preserves identical control IDs across all 10 pooled buttons")
+	_check(_state(app) == state_before_sync and randi() == expected_global_rng,
+		"Enrage sync is strictly read-only and mutates no state or RNG")
+
+	# Restore original roster and confirm clean recovery
+	for index in range(3):
+		app.party._heroes[index] = original_heroes[index].duplicate(true)
+	for index in range(original_enemies.size()):
+		app.enemies._enemies[index] = original_enemies[index].duplicate(true)
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var final_ids: Array[int] = []
+	for child in enemy_buttons.get_children():
+		final_ids.append(child.get_instance_id())
+	_check(_state(app) == before and final_ids == control_ids
+		and _visible_buttons(enemy_meter).is_empty() and not enemy_buttons.is_visible_in_tree(),
+		"Enrage test cleanly restores original state and collapsed 10-button pool")
 
 func _exercise_live_bleed(app, presenter) -> void:
 	# Exercise real mounted services, not a test-only presenter or mutated reader copy.
@@ -1785,6 +2005,7 @@ func _run() -> void:
 		await _exercise_new_status_ribbons(app, presenter)
 		await _exercise_blind_ribbon(app, presenter)
 		await _exercise_fear_ribbon(app, presenter)
+		await _exercise_enrage_ribbon(app, presenter)
 		# Inject only into an existing mounted view: no invented live status persistence.
 		var model_before_status := _state(app)
 		var active_meters := _meters(app)
@@ -3789,7 +4010,7 @@ func _exercise_dodge_ribbon(app, presenter) -> void:
 	var ids: Array[int] = []
 	for child in buttons.get_children():
 		ids.append(child.get_instance_id())
-	_check(ids.size() == 8, "Dodge reuses the eight-control pool")
+	_check(ids.size() == 10, "Dodge reuses the ten-control pool")
 	# Fixture authority changes only statuses; rendering must not change any model.
 	for status_case in [{"dodge_next_attack": 1}, {"dodge_next_attack": 0}, {},
 			{"dodge_next_attack": 1}, {"blind_next_attack": 1, "dodge_next_attack": 1},

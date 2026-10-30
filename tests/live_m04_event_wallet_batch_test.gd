@@ -142,6 +142,12 @@ func _fixtures() -> Dictionary:
 	# keep the shared append-only hints file untouched while another RUNNING
 	# lane has it locked. The real oracle below re-verifies every candidate.
 	hints.append_array([3101, 11326, 12070, 38791, 329651])
+	# Genuine map/toll/event-rotation witnesses for the six required Events that lost
+	# their pinned coverage when the latest roadside batches grew the sorted draw
+	# pool: needle_gate, v3_raincoat_bridge, v3_patchwork_lighthouse,
+	# v3_seamstress_scarlet_loom, v3_seamstress_needle_oracle and
+	# v3_warden_buckle_checkpoint.
+	hints.append_array([501072, 653273, 771997, 1007589, 1187708, 1227514])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():

@@ -21,10 +21,10 @@ const RIBBON_HEIGHT := 64.0
 ## outside the stitched fill.
 const RIBBON_HP_BAR_HEIGHT := 22.0
 const RIBBON_SLOT_INSET := 4.0
-## Eight reusable slots: a living hero can carry five counters, Blind and Dodge;
-## the densest living enemy carries the five counters, Blind, Fear and a Thorns badge.
+## Ten reusable slots: a living hero can carry five counters, Blind and Dodge;
+## the densest living enemy carries the five counters, Blind, Fear, Thorns and Enrage.
 ## The pool is preallocated once per mounted ribbon and never grows during a refresh.
-const STATUS_BUTTONS := 8
+const STATUS_BUTTONS := 10
 ## Stable chip order: the counted owner-turn statuses, the one-shot tokens, the
 ## Scarecrow's Fear buff lock, then the separately appended enemy Thorns badge.
 const STATUS_ORDER := ["bleed", "weak", "exposed", "tangled", "riposte",
@@ -34,7 +34,7 @@ const STATUS_ORDER := ["bleed", "weak", "exposed", "tangled", "riposte",
 ## actor's own slot is too narrow for the whole row. The compact names survive only as
 ## the fallback for a slot narrower than one complete chip; the hover text stays whole.
 const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp",
-	"tangled": "Tan", "riposte": "Rip", "blind_next_attack": "Bli", "thorns": "Thr"}
+	"tangled": "Tan", "riposte": "Rip", "blind_next_attack": "Bli", "thorns": "Thr", "enrage": "Enr"}
 ## One-shot Blind is one word: never "Blind 1" and never a turn duration.
 const BLIND_LABEL := "Blind"
 ## Fear is the literal boolean buff lock too: one unnumbered word, no count or duration.
@@ -918,6 +918,14 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 			and thorns is int and thorns > 0:
 		entries.append({"kind": "thorns", "full": "Thorns %d" % thorns,
 			"short": "%s %d" % [STATUS_SHORT["thorns"], thorns]})
+	if side == "enemy" and snapshot.get("hp", 0) is int and snapshot["hp"] > 0:
+		var enrage: Variant = snapshot.get("enrage", false)
+		if enrage is bool and enrage:
+			var stacks: Variant = snapshot.get("enrage_stacks", 0)
+			if stacks is int and stacks >= 0 and stacks <= CombatEnemyKeywordRules.ENRAGE_MAX_STACKS:
+				entries.append({"kind": "enrage", "full": "Enrage %d" % stacks,
+					"short": "%s %d" % [STATUS_SHORT["enrage"], stacks],
+					"stacks": stacks})
 	var tooltip := _compose_tooltip(meter, incoming)
 	var buttons := meter.get_node("Padding/Content/StatusButtons") as HFlowContainer
 	var fit: Dictionary = {"texts": [], "font_size": READABLE_CHIP_FONT,
@@ -933,6 +941,8 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 			var kind: String = entries[index]["kind"]
 			if kind == "thorns":
 				rule = thorns_tooltip(int(thorns))
+			elif kind == "enrage":
+				rule = enrage_tooltip(int(entries[index]["stacks"]))
 			else:
 				rule = tooltip
 				if kind == "tangled":
@@ -973,6 +983,12 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 ## can absorb a positive hit without suppressing Thorns retaliation.
 static func thorns_tooltip(amount: int) -> String:
 	return "Thorns %d: Each confirmed positive-damage hit on this enemy deals %d damage back to its attacking hero, even if enemy Block absorbs that hit. Hero Block absorbs the retaliation before HP. Misses, failed plays, zero-damage attacks and previews do not retaliate." % [amount, amount]
+
+
+## Enrage adds +2 attack per stack (0..3), capped at 3, gained from confirmed positive-damage hits.
+static func enrage_tooltip(stacks: int) -> String:
+	return "Enrage %d: Gain one stack per genuine positive-damage hit (even into Block), maximum three. Misses, zero-damage hits and refused plays add none. +%d attack bonus before Weak/Exposed." % [
+		stacks, stacks * CombatEnemyKeywordRules.ENRAGE_ATTACK_BONUS_PER_STACK]
 
 
 ## Tangled N counts owner turns but its +2 is flat, not multiplied by N.
