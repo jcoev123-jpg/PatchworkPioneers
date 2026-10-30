@@ -204,6 +204,7 @@ func _run() -> void:
 	await _layout(valid)
 	await _focus_cases()
 	await _named_power_cases(slot_map)
+	await _number_key_cases()
 	for chosen in range(3):
 		for option in range(3):
 			await _buy_case(chosen, option, (chosen + option) % 2 == 0)
@@ -413,6 +414,184 @@ func _focus_cases() -> void:
 		"pre-mount rebound broke panel stays inert with selectors available")
 	pre.queue_free()
 	await process_frame
+
+
+## V3-3: the physical number keys are only an alias for the same authenticated
+## Button.pressed path the mouse and Enter use: every numbered case drives a
+## real InputEventKey through the mounted panel, matches the exact
+## pressed-button intent schema and settles through the independent controller.
+func _number_key_cases() -> void:
+	var normal_keys := [KEY_1, KEY_2, KEY_3]
+	var keypad_keys := [KEY_KP_1, KEY_KP_2, KEY_KP_3]
+	# Funded wallet: 1-3 (normal and keypad) buy the exact quoted offer for the
+	# currently chosen wearer; the selected party wearer is preserved.
+	for chosen in range(3):
+		for option in range(3):
+			var visit := _visit("keys_buy_%d_%d" % [chosen, option])
+			var before := visit.read_state()
+			var quote := visit.quote()
+			_check(visit.is_valid() and quote["offers"].size() == 3,
+				"keyed buy fixture is a genuine funded three-offer service")
+			await _bind(visit)
+			await _act(panel.wearer_buttons[chosen], true, KEY_SPACE)
+			_check(panel.wearer_buttons[chosen].text.begins_with("✕")
+				and panel.wearer_buttons[chosen].get_meta("wearer_id") == PARTY[chosen],
+				"keyed buy keeps a real chosen wearer before the number key")
+			var code: Key = normal_keys[option] if (chosen + option) % 2 == 0 else keypad_keys[option]
+			await _key(code)
+			_check(intents.size() == 1, "physical number key emits exactly one buy intent")
+			if intents.size() == 1:
+				var intent := intents[0]
+				_check(intent.keys().size() == 6 and intent.get("action") == "buy_patch"
+					and intent.get("patch_id") == quote["offers"][option]["id"]
+					and intent.get("wearer_id") == PARTY[chosen]
+					and intent.get("node_id") == before["node_id"]
+					and intent.get("visit_id") == before["visit_id"]
+					and intent.get("expected_snapshot") == before["snapshot"],
+					"keyed buy intent matches the pressed-button schema for the chosen wearer")
+				var receipt := Controller.settle(visit, intent, before, quote)
+				var expected := {"kind": "trinket", "id": intent["patch_id"],
+					"price": quote["offers"][option]["price"]}
+				_check(receipt.get("ok") == true and receipt.get("decision") == "buy_patch"
+					and receipt["receipt"] == expected
+					and receipt["ledger"]["gold"] == 240 - quote["offers"][option]["price"]
+					and receipt["ledger"]["trinkets"] == OWNED + [intent["patch_id"]],
+					"independent controller settles the keyed buy once at the quoted price")
+			await _key(code)
+			_check(intents.size() == 1 and visit.is_consumed()
+				and not Controller.settle(visit, intents[0], before, quote).get("ok"),
+				"keyed replay after submission emits nothing and cannot settle twice")
+	# Zero-gold wallet: only the free Leave answers; numbered buys stay inert.
+	var broke := _visit("keys_broke", 0)
+	var broke_before := broke.read_state()
+	var broke_quote := broke.quote()
+	await _bind(broke)
+	_check(panel.offer_buttons.all(func(button: Button): return button.disabled)
+		and not panel.leave_button.disabled,
+		"broke keyed fixture leaves only the free exit actionable")
+	for code in [KEY_1, KEY_2, KEY_3, KEY_KP_1, KEY_KP_2, KEY_KP_3]:
+		await _key(code)
+	_check(intents.is_empty() and broke.read_state() == broke_before
+		and broke.quote() == broke_quote,
+		"unaffordable numbered buys emit nothing and mutate no state")
+	await _key(KEY_0)
+	_check(intents.size() == 1, "physical 0 emits exactly one Leave intent")
+	if intents.size() == 1:
+		var leave_intent := intents[0]
+		_check(leave_intent.keys().size() == 4 and leave_intent.get("action") == "leave"
+			and leave_intent.get("node_id") == broke_before["node_id"]
+			and leave_intent.get("visit_id") == broke_before["visit_id"]
+			and leave_intent.get("expected_snapshot") == broke_before["snapshot"],
+			"keyed Leave intent matches the pressed-button schema")
+		var left := Controller.settle(broke, leave_intent, broke_before, broke_quote)
+		_check(left.get("ok") == true and left.get("decision") == "leave"
+			and left["ledger"]["gold"] == 0 and left["ledger"]["trinkets"] == OWNED
+			and left["ledger"]["deck"] == DECK,
+			"independent controller settles keyed zero-gold Leave with zero spend")
+	await _key(KEY_KP_0)
+	_check(intents.size() == 1 and broke.is_consumed()
+		and not Controller.settle(broke, intents[0], broke_before, broke_quote).get("ok"),
+		"keyed Leave replay refused after submission")
+	# Funded wallet: keypad 0 also leaves for free without spending anything.
+	var funded := _visit("keys_leave_funded")
+	var funded_before := funded.read_state()
+	var funded_quote := funded.quote()
+	await _bind(funded)
+	await _key(KEY_KP_0)
+	_check(intents.size() == 1, "keypad 0 leaves a funded stall too")
+	if intents.size() == 1:
+		var funded_left := Controller.settle(funded, intents[0], funded_before, funded_quote)
+		_check(funded_left.get("ok") == true and funded_left["ledger"]["gold"] == 240
+			and funded_left["ledger"]["trinkets"] == OWNED
+			and funded_left["ledger"]["deck"] == DECK,
+			"keyed funded Leave spends no gold and grants no patch")
+	# Negative guards: releases, echoes, modifiers, unrelated keys, foreign
+	# focus and hidden/detached/closed/rebound panels never mint an intent.
+	await _number_key_guards()
+
+
+## One authentic physical key press followed by its release, with optional
+## per-event property overrides for the negative variants.
+func _key(code: Key, changes: Dictionary = {}) -> void:
+	for down in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = code
+		event.physical_keycode = code
+		event.pressed = down
+		for property in changes:
+			event.set(property, changes[property])
+		root.push_input(event)
+		await process_frame
+	await _frames()
+
+
+func _reject_key(code: Key, reason: String, changes: Dictionary = {}) -> void:
+	var count := intents.size()
+	await _key(code, changes)
+	_check(intents.size() == count,
+		reason + " emits no Patch Stall intent: " + str(code))
+
+
+func _number_key_guards() -> void:
+	var visit := _visit("keys_guards")
+	var before := visit.read_state()
+	var quote := visit.quote()
+	await _bind(visit)
+	_check(panel.status_label.text.contains("1-3 Buy") and panel.status_label.text.contains("0 Leave"),
+		"open status line advertises the numbered shortcuts")
+	panel.wearer_buttons[1].grab_focus()
+	await _frames()
+	_check(panel.wearer_buttons[1].has_focus(), "key guard fixture focuses a panel control")
+	for code in [KEY_1, KEY_2, KEY_3, KEY_0, KEY_KP_1, KEY_KP_2, KEY_KP_3, KEY_KP_0]:
+		for changes in [{"echo": true}, {"pressed": false}, {"shift_pressed": true},
+				{"ctrl_pressed": true}, {"alt_pressed": true}, {"meta_pressed": true}]:
+			await _reject_key(code, "echo/release/modified number key", changes)
+	for code in [KEY_4, KEY_5, KEY_9, KEY_KP_4, KEY_P, KEY_ESCAPE]:
+		await _reject_key(code, "unrelated key")
+	# Focus owned by a control outside this panel: the key is never stolen.
+	var outside := Button.new()
+	root.add_child(outside)
+	outside.grab_focus()
+	_check(outside.has_focus() and not panel.is_ancestor_of(outside),
+		"guard fixture moves focus outside the Patch Stall")
+	for code in [KEY_1, KEY_2, KEY_3, KEY_0, KEY_KP_2, KEY_KP_0]:
+		await _reject_key(code, "focus outside the panel")
+	outside.free()
+	# Hidden and detached panels never act on number keys.
+	panel.wearer_buttons[1].grab_focus()
+	panel.hide()
+	for code in [KEY_1, KEY_2, KEY_3, KEY_0]:
+		await _reject_key(code, "hidden panel")
+	panel.show()
+	await _frames()
+	panel.wearer_buttons[1].grab_focus()
+	root.remove_child(panel)
+	for code in [KEY_1, KEY_0]:
+		await _reject_key(code, "detached panel")
+	root.add_child(panel)
+	await _frames()
+	# An invalid or already consumed rebound service disables every key.
+	var invalid := RunPatchStallVisit.new("", PARTY, DECK, OWNED, 240, offers)
+	_check(not invalid.is_valid(), "guard fixture is a real invalid service")
+	await _bind(invalid)
+	for code in [KEY_1, KEY_2, KEY_3, KEY_0, KEY_KP_1, KEY_KP_0]:
+		await _reject_key(code, "invalid rebound service")
+	var consumed := _visit("keys_guards_used")
+	var consumed_state := consumed.read_state()
+	_check(consumed.leave(consumed_state["visit_id"], consumed_state["node_id"],
+		consumed_state["snapshot"]).get("ok"), "guard fixture truly consumed")
+	await _bind(consumed)
+	for code in [KEY_1, KEY_3, KEY_0]:
+		await _reject_key(code, "consumed rebound visit")
+	# A closed panel is inert even while its controls stay mounted.
+	await _bind(_visit("keys_close_guard"))
+	panel.close()
+	for code in [KEY_1, KEY_2, KEY_3, KEY_0, KEY_KP_3, KEY_KP_0]:
+		await _reject_key(code, "closed panel")
+	_check(visit.read_state() == before and visit.quote() == quote
+		and not visit.is_consumed(),
+		"rejected number keys never mutate the guarded visit")
+
 
 ## Bind every named, authored power as a genuine three-offer service quote,
 ## with prices deliberately different from ordinary stock's 100. The quote's
