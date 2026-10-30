@@ -94,6 +94,7 @@ func _initialize() -> void:
 	_test_actionable_party_and_sorted_sampling()
 	_test_actionable_exclusions_and_exhaustion()
 	_test_actionable_invalid_inputs_and_isolation()
+	_test_v3_hero_vital_event_gate()
 	_check(_replay(257) == _replay(257), "whole offer/entry/receipt sequence replays exactly")
 	_check(_replay_actionable(257) == _replay_actionable(257), "seeded actionable selection and settlement sequence replays exactly")
 	_check(catalog == before, "all operations preserve authored catalog")
@@ -896,3 +897,325 @@ func _replay_actionable(value: int) -> Array:
 		wallet = receipt["wallet"]
 		trace.append({"selected": selection, "receipt": receipt, "rng_state": str(rng.state)})
 	return trace
+
+
+const VITAL_HERO_SPECS := {
+	"v3_warden_buckle_heart_ward": {
+		"hero": "warden",
+		"trades": {
+			"reinforce_shield_seam": [0, -2, 0, 3],
+			"sell_rivets": [24, 0, 0, -2],
+			"leave": [0, 0, 0, 0],
+		},
+	},
+	"v3_seamstress_crimson_quilt_surgeon": {
+		"hero": "seamstress",
+		"trades": {
+			"stitch_wound": [-12, 0, 8, 0],
+			"donate_red_thread": [18, 0, -4, 0],
+			"leave": [0, 0, 0, 0],
+		},
+	},
+	"v3_tinker_copper_needle_greenhouse": {
+		"hero": "tinker",
+		"trades": {
+			"buy_gear_balm": [-10, 0, 6, 0],
+			"harvest_barbed_gears": [0, 3, -6, 0],
+			"leave": [0, 0, 0, 0],
+		},
+	},
+	"v3_lantern_monk_thimble_moon_vigil": {
+		"hero": "lantern_monk",
+		"trades": {
+			"moonlight_seam": [-16, 0, 0, 2],
+			"tend_moth_candles": [20, 0, -4, 0],
+			"leave": [0, 0, 0, 0],
+		},
+	},
+	"v3_rag_duelist_velvet_straw_mender": {
+		"hero": "rag_duelist",
+		"trades": {
+			"mend_cape": [0, -2, 10, 0],
+			"sell_cape_padding": [22, 0, -5, 0],
+			"leave": [0, 0, 0, 0],
+		},
+	},
+}
+
+
+func _vital_state(hero_id: String, gold: int = 50, scraps: int = 5, hp: int = 20, max_hp: int = 30) -> Dictionary:
+	return {
+		"gold": gold,
+		"scraps": scraps,
+		"hero": {
+			"id": hero_id,
+			"hp": hp,
+			"max_hp": max_hp,
+		},
+	}
+
+
+func _test_v3_hero_vital_event_gate() -> void:
+	# Load and check the new catalog file directly.
+	var vital_catalog_raw := FileAccess.get_file_as_string(RunV3HeroVitalEventGate.CATALOG_PATH)
+	_check(not vital_catalog_raw.is_empty(), "shipped v3_hero_vital_events.json loads")
+	var vital_catalog: Dictionary = JSON.parse_string(vital_catalog_raw)
+	_check(vital_catalog.has("events") and vital_catalog["events"] is Array, "vital catalog has events array")
+	var catalog_events: Array = vital_catalog.get("events", [])
+
+	# AC4: Authenticity and own-ID presence (never assert total catalog size).
+	for event_id: String in VITAL_HERO_SPECS:
+		var found := _by_id(catalog_events, event_id)
+		_check(not found.is_empty(), "vital hero event exists by own-ID: " + event_id)
+		if found.is_empty():
+			continue
+		var spec: Dictionary = VITAL_HERO_SPECS[event_id]
+		_check(found.get("required_hero") == spec["hero"], "vital event required_hero: " + event_id)
+		_check(not String(found.get("title", "")).strip_edges().is_empty(), "vital event title nonblank: " + event_id)
+		_check(not String(found.get("description", "")).strip_edges().is_empty(), "vital event description nonblank: " + event_id)
+		var choices: Array = found.get("choices", [])
+		_check(choices.size() == 3, "vital event has exactly 3 choices: " + event_id)
+		var seen_ids := {}
+		for choice: Variant in choices:
+			_check(choice is Dictionary, "choice is dictionary: " + event_id)
+			if not choice is Dictionary:
+				continue
+			var cid: String = choice.get("id", "")
+			_check(spec["trades"].has(cid), "recognized choice ID: " + event_id + "/" + cid)
+			_check(not seen_ids.has(cid), "unique choice ID: " + event_id + "/" + cid)
+			seen_ids[cid] = true
+			_check(not String(choice.get("text", "")).strip_edges().is_empty(), "choice text nonblank: " + event_id + "/" + cid)
+			var expected_deltas: Array = spec["trades"][cid]
+			var out: Dictionary = choice.get("outcome", {})
+			_check(int(out.get("gold")) == expected_deltas[0]
+				and int(out.get("scraps")) == expected_deltas[1]
+				and int(out.get("hp")) == expected_deltas[2]
+				and int(out.get("max_hp")) == expected_deltas[3],
+				"choice exact deltas match: " + event_id + "/" + cid)
+
+	# AC1: Offers for valid parties (PARTY_A and PARTY_B).
+	var gate_a := RunV3HeroVitalEventGate.new(PARTY_A)
+	var gate_b := RunV3HeroVitalEventGate.new(PARTY_B)
+	_check(gate_a.is_valid() and gate_b.is_valid(), "gates valid for canonical parties")
+
+	var offers_a := gate_a.get_offers()
+	var offers_b := gate_b.get_offers()
+
+	_check(_by_id(offers_a, "v3_warden_buckle_heart_ward").size() > 0, "PARTY_A offers warden vital event")
+	_check(_by_id(offers_a, "v3_seamstress_crimson_quilt_surgeon").size() > 0, "PARTY_A offers seamstress vital event")
+	_check(_by_id(offers_a, "v3_tinker_copper_needle_greenhouse").size() > 0, "PARTY_A offers tinker vital event")
+	_check(_by_id(offers_a, "v3_lantern_monk_thimble_moon_vigil").is_empty(), "PARTY_A excludes lantern_monk vital event")
+	_check(_by_id(offers_a, "v3_rag_duelist_velvet_straw_mender").is_empty(), "PARTY_A excludes rag_duelist vital event")
+
+	_check(_by_id(offers_b, "v3_lantern_monk_thimble_moon_vigil").size() > 0, "PARTY_B offers lantern_monk vital event")
+	_check(_by_id(offers_b, "v3_rag_duelist_velvet_straw_mender").size() > 0, "PARTY_B offers rag_duelist vital event")
+	_check(_by_id(offers_b, "v3_tinker_copper_needle_greenhouse").size() > 0, "PARTY_B offers tinker vital event")
+	_check(_by_id(offers_b, "v3_warden_buckle_heart_ward").is_empty(), "PARTY_B excludes warden vital event")
+	_check(_by_id(offers_b, "v3_seamstress_crimson_quilt_surgeon").is_empty(), "PARTY_B excludes seamstress vital event")
+
+	# Invalid parties fail closed.
+	for bad_party in [null, {}, "warden", [], ["warden"], ["warden", "seamstress"],
+		["warden", "seamstress", "tinker", "scarecrow"], ["warden", "warden", "tinker"],
+		["warden", "unknown", "tinker"], ["warden", "", "tinker"], ["warden", 1, "tinker"]]:
+		var bad_gate := RunV3HeroVitalEventGate.new(bad_party)
+		_check(not bad_gate.is_valid() and bad_gate.get_offers().is_empty()
+			and bad_gate.enter("v3_warden_buckle_heart_ward", _vital_state("warden")) == null,
+			"invalid party fails closed: " + str(bad_party))
+
+	# AC1: Entering a visit requires living snapshot for that same hero.
+	var warden_snapshot := _vital_state("warden", 50, 5, 20, 30)
+	var admitted_visit := gate_a.enter("v3_warden_buckle_heart_ward", warden_snapshot)
+	_check(admitted_visit != null and admitted_visit.is_valid() and not admitted_visit.is_claimed(),
+		"admitted visit valid and unclaimed")
+
+	# Wrong hero in party.
+	var wrong_hero_snapshot := _vital_state("tinker", 50, 5, 20, 30)
+	_check(gate_a.enter("v3_warden_buckle_heart_ward", wrong_hero_snapshot) == null,
+		"refuse admission when hero snapshot does not match required_hero")
+
+	# Missing required hero (not in party).
+	var missing_hero_snapshot := _vital_state("scarecrow", 50, 5, 20, 30)
+	_check(gate_a.enter("v3_warden_buckle_heart_ward", missing_hero_snapshot) == null,
+		"refuse admission for hero not in party")
+
+	# Torn hero (0 HP).
+	var torn_snapshot := _vital_state("warden", 50, 5, 0, 30)
+	_check(gate_a.enter("v3_warden_buckle_heart_ward", torn_snapshot) == null,
+		"refuse admission for Torn hero (0 HP)")
+
+	# Invalid HP boundaries.
+	_check(gate_a.enter("v3_warden_buckle_heart_ward", _vital_state("warden", 50, 5, -1, 30)) == null,
+		"refuse admission for negative HP")
+	_check(gate_a.enter("v3_warden_buckle_heart_ward", _vital_state("warden", 50, 5, 35, 30)) == null,
+		"refuse admission when HP exceeds max_HP")
+	_check(gate_a.enter("v3_warden_buckle_heart_ward", _vital_state("warden", 50, 5, 5, 9)) == null,
+		"refuse admission when max_HP < 10 floor")
+
+	# Unoffered event ID for PARTY_A.
+	_check(gate_a.enter("v3_lantern_monk_thimble_moon_vigil", _vital_state("lantern_monk")) == null,
+		"refuse admission to unoffered event")
+	_check(gate_a.enter("v3_nonexistent_event", warden_snapshot) == null,
+		"refuse admission to unknown event")
+
+	# AC2: All five events preview and commit exact four-key signed deltas.
+	for event_id: String in VITAL_HERO_SPECS:
+		var spec: Dictionary = VITAL_HERO_SPECS[event_id]
+		var hero_id: String = spec["hero"]
+		var gate: RunV3HeroVitalEventGate = gate_a if PARTY_A.has(hero_id) else gate_b
+		for choice_id: String in spec["trades"]:
+			var base_snap := _vital_state(hero_id, 50, 5, 20, 30)
+			var snap_copy := base_snap.duplicate(true)
+			var visit := gate.enter(event_id, base_snap)
+			_check(visit != null and visit.is_valid(), "open fresh visit for AC2: " + event_id + "/" + choice_id)
+			if visit == null:
+				continue
+			var deltas: Array = spec["trades"][choice_id]
+			var expected_max: int = base_snap["hero"]["max_hp"] + deltas[3]
+			var expected_hp: int = mini(base_snap["hero"]["hp"] + deltas[2], expected_max)
+			var expected_state := _vital_state(hero_id,
+				base_snap["gold"] + deltas[0],
+				base_snap["scraps"] + deltas[1],
+				expected_hp,
+				expected_max)
+
+			# Preview forecast.
+			var preview := visit.preview_vital_choices(base_snap)
+			_check(preview.get("ok") == true and preview.get("event_id") == event_id,
+				"preview ok: " + event_id + "/" + choice_id)
+			var preview_entry := {}
+			for entry: Variant in preview.get("choices", []):
+				if entry is Dictionary and entry.get("choice_id") == choice_id:
+					preview_entry = entry
+					break
+			_check(preview_entry == {
+				"choice_id": choice_id,
+				"gold_delta": deltas[0],
+				"scraps_delta": deltas[1],
+				"hp_delta": deltas[2],
+				"max_hp_delta": deltas[3],
+				"affordable": true,
+				"state": expected_state,
+			}, "forecast equals exact four-key deltas and state: " + event_id + "/" + choice_id)
+			_check(not visit.is_claimed() and visit.is_valid() and base_snap == snap_copy,
+				"preview is non-claiming and snapshot unchanged")
+
+			# Claim commitment.
+			var receipt := visit.choose_with_vitals(choice_id, base_snap)
+			_check(receipt == {
+				"ok": true,
+				"event_id": event_id,
+				"choice_id": choice_id,
+				"state": expected_state,
+			}, "affordable forecast equals claim receipt: " + event_id + "/" + choice_id)
+			_check(visit.is_claimed() and not visit.is_valid() and base_snap == snap_copy,
+				"claim latches visit and input snapshot remains detached")
+
+			# Replay refusal.
+			var replay := visit.choose_with_vitals(choice_id, expected_state)
+			_check(replay == {"ok": false, "event_id": "", "choice_id": "", "state": expected_state},
+				"replay refuses after single claim latched: " + event_id + "/" + choice_id)
+			_check(visit.choose_with_vitals("leave", expected_state).get("ok") == false,
+				"alternative choice also refuses once claimed")
+
+	# AC2: Math detail — increasing max HP alone does not heal.
+	var warden_buff_snap := _vital_state("warden", 50, 5, 20, 30)
+	var warden_buff_visit := gate_a.enter("v3_warden_buckle_heart_ward", warden_buff_snap)
+	var buff_receipt := warden_buff_visit.choose_with_vitals("reinforce_shield_seam", warden_buff_snap)
+	_check(buff_receipt.get("ok") == true
+		and buff_receipt["state"]["hero"]["max_hp"] == 33
+		and buff_receipt["state"]["hero"]["hp"] == 20,
+		"increasing max HP alone does not heal current HP")
+
+	# AC2: Math detail — max HP cut pulls current HP down if current HP > new max HP.
+	var warden_cut_snap := _vital_state("warden", 50, 5, 30, 30)
+	var warden_cut_visit := gate_a.enter("v3_warden_buckle_heart_ward", warden_cut_snap)
+	var cut_receipt := warden_cut_visit.choose_with_vitals("sell_rivets", warden_cut_snap)
+	_check(cut_receipt.get("ok") == true
+		and cut_receipt["state"]["hero"]["max_hp"] == 28
+		and cut_receipt["state"]["hero"]["hp"] == 28,
+		"max HP cut clamps current HP to new lower max")
+
+	# AC3: Unaffordable payments refuse without consuming visit; recovery path succeeds.
+	# 1. Insufficient gold (stitch_wound costs 12 gold).
+	var poor_gold_snap := _vital_state("seamstress", 5, 5, 20, 30)
+	var poor_gold_copy := poor_gold_snap.duplicate(true)
+	var visit_poor_gold := gate_a.enter("v3_seamstress_crimson_quilt_surgeon", poor_gold_snap)
+	var res_poor_gold := visit_poor_gold.choose_with_vitals("stitch_wound", poor_gold_snap)
+	_check(res_poor_gold.get("ok") == false and visit_poor_gold.is_valid() and not visit_poor_gold.is_claimed()
+		and poor_gold_snap == poor_gold_copy, "insufficient gold refuses without consuming visit")
+	var recov_gold := visit_poor_gold.choose_with_vitals("leave", poor_gold_snap)
+	_check(recov_gold.get("ok") == true and visit_poor_gold.is_claimed() and not visit_poor_gold.is_valid(),
+		"subsequently choosing Leave recovers and claims visit exactly once")
+
+	# 2. Insufficient scraps (reinforce_shield_seam costs 2 scraps).
+	var poor_scraps_snap := _vital_state("warden", 50, 1, 20, 30)
+	var poor_scraps_copy := poor_scraps_snap.duplicate(true)
+	var visit_poor_scraps := gate_a.enter("v3_warden_buckle_heart_ward", poor_scraps_snap)
+	var res_poor_scraps := visit_poor_scraps.choose_with_vitals("reinforce_shield_seam", poor_scraps_snap)
+	_check(res_poor_scraps.get("ok") == false and visit_poor_scraps.is_valid() and not visit_poor_scraps.is_claimed()
+		and poor_scraps_snap == poor_scraps_copy, "insufficient scraps refuses without consuming visit")
+	var recov_scraps := visit_poor_scraps.choose_with_vitals("leave", poor_scraps_snap)
+	_check(recov_scraps.get("ok") == true and visit_poor_scraps.is_claimed(), "recovery via Leave succeeds after scraps refusal")
+
+	# 3. HP=1 payment (donate_red_thread loses 4 HP; must leave at least 1 living HP).
+	var hp1_snap := _vital_state("seamstress", 50, 5, 1, 30)
+	var hp1_copy := hp1_snap.duplicate(true)
+	var visit_hp1 := gate_a.enter("v3_seamstress_crimson_quilt_surgeon", hp1_snap)
+	var res_hp1 := visit_hp1.choose_with_vitals("donate_red_thread", hp1_snap)
+	_check(res_hp1.get("ok") == false and visit_hp1.is_valid() and not visit_hp1.is_claimed()
+		and hp1_snap == hp1_copy, "HP=1 payment refuses without consuming visit")
+	# Also test HP=4 payment that would leave exactly 0 HP.
+	var hp4_snap := _vital_state("seamstress", 50, 5, 4, 30)
+	var visit_hp4 := gate_a.enter("v3_seamstress_crimson_quilt_surgeon", hp4_snap)
+	_check(visit_hp4.choose_with_vitals("donate_red_thread", hp4_snap).get("ok") == false
+		and visit_hp4.is_valid(), "HP payment resulting in 0 HP refuses without consuming visit")
+	var recov_hp1 := visit_hp1.choose_with_vitals("leave", hp1_snap)
+	_check(recov_hp1.get("ok") == true and visit_hp1.is_claimed(), "recovery via Leave succeeds after HP refusal")
+
+	# 4. max_HP=10 cut (sell_rivets cuts 2 max HP; floor is 10).
+	var floor_max_snap := _vital_state("warden", 50, 5, 10, 10)
+	var floor_max_copy := floor_max_snap.duplicate(true)
+	var visit_floor_max := gate_a.enter("v3_warden_buckle_heart_ward", floor_max_snap)
+	var res_floor_max := visit_floor_max.choose_with_vitals("sell_rivets", floor_max_snap)
+	_check(res_floor_max.get("ok") == false and visit_floor_max.is_valid() and not visit_floor_max.is_claimed()
+		and floor_max_snap == floor_max_copy, "max_HP cut below floor 10 refuses without consuming visit")
+	var recov_floor := visit_floor_max.choose_with_vitals("leave", floor_max_snap)
+	_check(recov_floor.get("ok") == true and visit_floor_max.is_claimed(), "recovery via Leave succeeds after max_HP floor refusal")
+
+	# AC4: Forgery detection, detached data, and RNG isolation.
+	var warden_record := _by_id(catalog_events, "v3_warden_buckle_heart_ward")
+	_check(not warden_record.is_empty(), "canonical warden record found")
+
+	var forged_record := warden_record.duplicate(true)
+	forged_record["choices"][0]["outcome"]["gold"] = 999
+	_check(gate_a.enter(forged_record, warden_snapshot) == null,
+		"forged record with altered outcome cannot bind")
+
+	var forged_id_record := warden_record.duplicate(true)
+	forged_id_record["id"] = "v3_forged_vital_event"
+	_check(gate_a.enter(forged_id_record, warden_snapshot) == null,
+		"forged record with unknown ID cannot bind")
+
+	var forged_catalog := {"events": [forged_record]}
+	var forged_gate := RunV3HeroVitalEventGate.new(PARTY_A, forged_catalog)
+	_check(not forged_gate.is_valid(), "mutated catalog wholly rejected")
+
+	# Detached data integrity.
+	var fresh_gate := RunV3HeroVitalEventGate.new(PARTY_A)
+	var initial_offers := fresh_gate.get_offers()
+	var mutated_offers := fresh_gate.get_offers()
+	mutated_offers.clear()
+	_check(fresh_gate.get_offers().size() == initial_offers.size(), "mutating returned offers does not mutate gate")
+
+	var visit_iso := fresh_gate.enter("v3_warden_buckle_heart_ward", warden_snapshot)
+	_check(visit_iso != null, "visit opened for isolation test")
+	if visit_iso != null:
+		var initial_snap := visit_iso.get_snapshot()
+		var mutated_snap := visit_iso.get_snapshot()
+		mutated_snap["gold"] = 99999
+		_check(visit_iso.get_snapshot() == initial_snap, "mutating get_snapshot does not mutate visit state")
+		var receipt_iso := visit_iso.choose_with_vitals("leave")
+		_check(receipt_iso.get("ok") == true, "leave succeeds on isolation visit")
+		receipt_iso["state"]["gold"] = 88888
+		_check(visit_iso.get_snapshot()["gold"] != 88888, "mutating receipt does not mutate visit state")
+

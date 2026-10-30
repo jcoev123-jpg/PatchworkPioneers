@@ -1,0 +1,59 @@
+{
+  "events": [
+    {
+      "id": "v3_warden_buckle_heart_ward",
+      "title": "The Buckle-Heart Ward",
+      "description": "A huge patched shield props open a heavy rivet gate as the Warden inspects frayed brass seams.",
+      "required_hero": "warden",
+      "choices": [
+        { "id": "reinforce_shield_seam", "text": "Spend 2 scraps to sew a lasting shield seam (+3 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 3 } },
+        { "id": "sell_rivets", "text": "Trade 2 max HP of rivets for 24 gold", "outcome": { "gold": 24, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the rivet gate untouched", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_seamstress_crimson_quilt_surgeon",
+      "title": "The Crimson Quilt Surgeon",
+      "description": "A red needle and trailing thread stitch warm quilt bandages beneath a crimson canopy.",
+      "required_hero": "seamstress",
+      "choices": [
+        { "id": "stitch_wound", "text": "Pay 12 gold to dress one hero's wounds (+8 HP)", "outcome": { "gold": -12, "scraps": 0, "hp": 8, "max_hp": 0 } },
+        { "id": "donate_red_thread", "text": "Donate 4 HP of red thread for a purse of 18 gold", "outcome": { "gold": 18, "scraps": 0, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the surgeon's quilt", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_tinker_copper_needle_greenhouse",
+      "title": "The Copper-Needle Greenhouse",
+      "description": "Crooked goggles and barbed gears glint among copper-wire ferns and needle-thorn blossoms.",
+      "required_hero": "tinker",
+      "choices": [
+        { "id": "buy_gear_balm", "text": "Spend 10 gold on soothing gear balm (+6 HP)", "outcome": { "gold": -10, "scraps": 0, "hp": 6, "max_hp": 0 } },
+        { "id": "harvest_barbed_gears", "text": "Endure 6 HP loss to salvage 3 scraps of barbed gears", "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the copper greenhouse", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_lantern_monk_thimble_moon_vigil",
+      "title": "The Thimble-Moon Vigil",
+      "description": "A glowing lantern with a soft moth halo hangs beneath a pale stitched thimble moon.",
+      "required_hero": "lantern_monk",
+      "choices": [
+        { "id": "moonlight_seam", "text": "Pay 16 gold to strengthen seams in moonlight (+2 max HP)", "outcome": { "gold": -16, "scraps": 0, "hp": 0, "max_hp": 2 } },
+        { "id": "tend_moth_candles", "text": "Lose 4 HP tending the moth candles; earn 20 gold", "outcome": { "gold": 20, "scraps": 0, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the sanctuary undisturbed", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_velvet_straw_mender",
+      "title": "The Velvet Straw Mender",
+      "description": "A tattered cape and needle rapier rest on a bed of warm velvet and straw padding.",
+      "required_hero": "rag_duelist",
+      "choices": [
+        { "id": "mend_cape", "text": "Spend 2 scraps on velvet straw stuffing (+10 HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 10, "max_hp": 0 } },
+        { "id": "sell_cape_padding", "text": "Give up 5 HP worth of cape padding for 22 gold", "outcome": { "gold": 22, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Tuck the cape in and depart", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    }
+  ]
+}
