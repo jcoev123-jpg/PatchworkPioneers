@@ -1103,7 +1103,12 @@ func _run() -> void:
 		for i in range(4):
 			var offer: Dictionary = (bound.stock.cards + bound.stock.trinkets)[i]
 			var action: Button = app.peddler_buttons[i]
-			var prefix: String = str(offer.owner).capitalize() if i < 3 else "PATCH"
+			# Each routed caption opens with its own visible numeral key label
+			# (1/2/3 the cards, 4 the patch) - exactly the shortcuts the mounted
+			# panel's _input already dispatches, so the label is the real binding.
+			var prefix: String = "%s  ·  %s" % [LivePeddlerPanel.ACTION_KEY_LABELS[i],
+					str(offer.owner).capitalize()] if i < 3 \
+					else LivePeddlerPanel.ACTION_KEY_LABELS[3]
 			var expected := "%s  ·  %s  ·  %d gold" % [prefix,
 				str(offer.id).replace("_", " ").capitalize(), offer.price]
 			if offer.sold:
