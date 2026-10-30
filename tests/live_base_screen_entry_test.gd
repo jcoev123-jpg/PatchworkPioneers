@@ -543,6 +543,174 @@ func _check_preview_formatter() -> void:
 		"each preview is detached from the returned records")
 
 
+## Exercise the genuine title-mounted Base, not a detached helper or invented run.
+## All eight sets use the exact admission oracle and occurrence indices.
+func _check_deck_gallery(app, view: BaseScreen) -> void:
+	var before := _title_snapshot(app)
+	var tier_before: Dictionary = app.difficulty_state().duplicate(true)
+	var path_before := [view.selected_path_id(), view.selected_tinker_path_id(),
+		view.selected_warden_path_id()]
+	var tier_caption_before: Array[String] = []
+	for button in view.difficulty_buttons:
+		tier_caption_before.append(button.text)
+	var choices_before := [app.run_seamstress_path_choice, app.run_tinker_path_choice,
+		app.run_warden_path_choice]
+	var signals := [0, 0, 0, 0, 0, 0]
+	view.path_choice_requested.connect(func(_id: String): signals[0] += 1)
+	view.tinker_path_choice_requested.connect(func(_id: String): signals[1] += 1)
+	view.warden_path_choice_requested.connect(func(_id: String): signals[2] += 1)
+	view.difficulty_choice_requested.connect(func(_tier: int): signals[3] += 1)
+	view.set_out_requested.connect(func(): signals[4] += 1)
+	view.back_requested.connect(func(): signals[5] += 1)
+	seed(388612)
+	var next_global := randi()
+	seed(388612)
+	var house := Rect2(778, 240, 190, 150)
+	var viewport := Rect2(Vector2.ZERO, Vector2(1280, 720))
+	_check(view.deck_button != null and view.deck_button.is_visible_in_tree()
+		and not view.deck_button.disabled and house.encloses(view.deck_button.get_global_rect())
+		and viewport.encloses(view.deck_button.get_global_rect()),
+		"Deck house has a sewn action inside its actual painted house")
+	for control in view.path_buttons + view.tinker_buttons + view.warden_buttons 			+ [view.back_button, view.set_out_button]:
+		_check(not view.deck_button.get_global_rect().intersects(control.get_global_rect()),
+			"Deck action never overlays another mounted action")
+	await _click(view.deck_button)
+	var gallery: VillageStarterKitGallery = view.deck_gallery
+	_check(gallery != null and gallery.is_open() and gallery.is_visible_in_tree(),
+		"mouse click opens the actual mounted Deck gallery before a run")
+	_check(gallery.hero_order == RunV3PartyAdmission.HERO_IDS
+		and gallery.hero_buttons.size() == RunV3PartyAdmission.HERO_IDS.size()
+		and gallery.card_buttons.size() == RunV3PartyAdmission.STARTERS_PER_HERO,
+		"every canonical hero selector and four occurrence controls are mounted")
+	var canon := RunV3PartyAdmission._canonical_records()
+	_check(canon.size() == RunV3PartyAdmission.HERO_IDS.size(), "all eight shipped hero records validate")
+	_check(view.deck_button.get_child_count() == 1
+		and view.deck_button.get_child(0).mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"Deck house action uses the original sewn-control visual language")
+	var detail_scroll := gallery.detail_label.get_parent() as ScrollContainer
+	_check(detail_scroll != null and viewport.encloses(detail_scroll.get_global_rect())
+		and detail_scroll.size.x >= 400.0 and detail_scroll.size.y >= 130.0
+		and viewport.encloses(gallery.get_node("SewnGalleryPaper").get_global_rect())
+		and viewport.encloses(gallery.close_button.get_global_rect()),
+		"readable sewn sheet, large scrollable facts and Close fit the 1280x720 viewport")
+	var witnessed := {"warden": false, "rag_duelist": false, "scarecrow": false,
+		"button_golem": false}
+	for hero_id in RunV3PartyAdmission.HERO_IDS:
+		var button: Button = gallery.hero_buttons[hero_id]
+		_check(button.is_visible_in_tree() and viewport.encloses(button.get_global_rect())
+			and button.text == canon[hero_id]["definition"]["name"],
+			"canonical mounted hero choice: " + hero_id)
+		await _click(button)
+		var starters := RunV3PartyAdmission._starters(hero_id, null)
+		var projected := gallery.get_occurrences(hero_id)
+		_check(starters.size() == RunV3PartyAdmission.STARTERS_PER_HERO
+			and projected.size() == starters.size() and gallery.selected_hero_id == hero_id,
+			"four distinct occurrence positions in authored order: " + hero_id)
+		var catalog := RunV3PartyAdmission._shipped_catalog(hero_id)
+		for index in range(starters.size()):
+			var authored: Dictionary = catalog.get_definition(starters[index])
+			_check(projected[index] == authored and authored["owner"] == hero_id,
+				"gallery occurrence retains all catalog fields without deduplication: "
+					+ hero_id + " #" + str(index))
+			_check(gallery.card_buttons[index].is_visible_in_tree()
+				and viewport.encloses(gallery.card_buttons[index].get_global_rect())
+				and gallery.card_buttons[index].text.contains(authored["display_name"])
+				and gallery.card_buttons[index].text.contains("%d EN" % authored["cost"]),
+				"readable starter occurrence button names the real card and cost")
+			await _click(gallery.card_buttons[index])
+			var detail := gallery.detail_label.text
+			_check(gallery.selected_occurrence == index and gallery.selected_card() == authored
+				and detail.contains(authored["display_name"]) and detail.contains("ID: " + starters[index])
+				and detail.contains("OWNER: " + hero_id)
+				and detail.contains("COST: %d ENERGY" % authored["cost"])
+				and detail.contains("TARGET KIND: " + authored["target_kind"]),
+				"mounted card detail includes canonical identity, owner, cost and target kind")
+			for field in ["from_positions", "to_positions"]:
+				var positions: Array[String] = []
+				for value in authored[field]:
+					positions.append(str(value))
+				_check(detail.contains(("FROM: " if field == "from_positions" else "TO: ")
+					+ (", ".join(positions) if not positions.is_empty() else "—")),
+					"full authored card position slots printed: " + starters[index])
+			for key in authored["effects"]:
+				_check(detail.contains("%s: %s" % [str(key), JSON.stringify(authored["effects"][key])]),
+					"unmodified authored effect descriptor: " + starters[index] + ":" + str(key))
+			if hero_id == "warden" and authored["target_kind"] == "enemy_single":
+				witnessed["warden"] = true
+			if hero_id == "rag_duelist" and authored["target_kind"] == "self":
+				witnessed["rag_duelist"] = true
+			if hero_id == "scarecrow" and authored["target_kind"] == "enemy_back":
+				witnessed["scarecrow"] = true
+			if hero_id == "button_golem" and authored["target_kind"] == "ally_single":
+				witnessed["button_golem"] = true
+	_check(not witnessed.values().has(false), "authentic Warden and three differently targeted V3 cards")
+	gallery.hero_buttons["warden"].grab_focus()
+	await _key(KEY_TAB)
+	_check(gallery.hero_buttons["seamstress"].has_focus(),
+		"gallery Tab reaches the next canonical hero, not a hidden Base control")
+	gallery.hero_buttons["button_golem"].grab_focus()
+	await _key(KEY_TAB)
+	_check(gallery.card_buttons[0].has_focus(),
+		"gallery keyboard focus continues into actual occurrence controls")
+	var wheel := InputEventMouseButton.new()
+	wheel.position = detail_scroll.get_global_rect().get_center()
+	wheel.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	wheel.pressed = true
+	root.push_input(wheel, true)
+	await process_frame
+	_check(gallery.is_open() and detail_scroll.is_visible_in_tree(),
+		"scrolling the real authored-detail region does not dismiss the gallery")
+	# The modal is the sole active action surface: even synthetic stale Base
+	# button callbacks cannot choose a Path, a tier, Back or Set out.
+	view.set_out_button.pressed.emit()
+	view.back_button.pressed.emit()
+	view.path_buttons[0].pressed.emit()
+	view.tinker_buttons[0].pressed.emit()
+	view.warden_buttons[0].pressed.emit()
+	view.difficulty_buttons[0].pressed.emit()
+	view.deck_button.pressed.emit()
+	_check(gallery.is_open() and app.base_screen == view and app.party_picker == null,
+		"stale Base button callbacks cannot open the run or dismiss the modal")
+	await _key(KEY_ESCAPE)
+	_check(not gallery.is_open() and not gallery.visible and view.deck_button.has_focus(),
+		"Escape closes gallery and restores focus to the Deck house")
+	var last_detail := gallery.detail_label.text
+	gallery.hero_buttons["warden"].pressed.emit()
+	gallery.card_buttons[2].pressed.emit()
+	gallery.close_button.pressed.emit()
+	_check(gallery.detail_label.text == last_detail and gallery.selected_hero_id.is_empty()
+		and gallery.selected_occurrence == -1 and not gallery.visible,
+		"hidden stale hero/card/Close callbacks are inert")
+	# Reopen by a genuinely focused Tab/Enter, then use physical Close and Space.
+	view.back_button.grab_focus()
+	await _key(KEY_TAB)
+	_check(view.deck_button.has_focus(), "Tab from Back reaches the real Deck house")
+	await _key(KEY_ENTER)
+	_check(gallery.is_open() and gallery.hero_buttons["warden"].has_focus(),
+		"Enter opens a fresh canonical gallery")
+	await _click(gallery.close_button)
+	_check(not gallery.is_open() and view.deck_button.has_focus(),
+		"mouse Close returns keyboard focus to the Deck house")
+	await _key(KEY_SPACE)
+	_check(gallery.is_open(), "Space activates the same Deck house without a mouse")
+	await _key(KEY_ESCAPE)
+	_check(not gallery.is_open() and view.deck_button.has_focus(),
+		"second Escape dismisses the selection without a run")
+	_check(_title_snapshot(app) == before and app.difficulty_state() == tier_before
+		and [view.selected_path_id(), view.selected_tinker_path_id(),
+			view.selected_warden_path_id()] == path_before
+		and [app.run_seamstress_path_choice, app.run_tinker_path_choice,
+			app.run_warden_path_choice] == choices_before,
+		"hero, card, mouse, keyboard and scroll inspection change no run, wallet, route or Paths")
+	var tier_caption_after: Array[String] = []
+	for button in view.difficulty_buttons:
+		tier_caption_after.append(button.text)
+	_check(tier_caption_after == tier_caption_before and signals == [0, 0, 0, 0, 0, 0],
+		"all six Base action signals and the selected difficulty are untouched")
+	_check(randi() == next_global, "gallery and all its input consume no global RNG")
+	view.set_out_button.grab_focus()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(APP_SCENE) as PackedScene
@@ -706,6 +874,7 @@ func _run() -> void:
 		and view.set_out_button.get_child(0).mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and view.back_button.get_child(0).mouse_filter == Control.MOUSE_FILTER_IGNORE,
 		"both Base actions are sewn, keyboard-reachable controls")
+	await _check_deck_gallery(app, view)
 	# Visible village: houses and tents with pinned names, a central spool, stitched paths.
 	var buildings: Array = view.village_buildings()
 	var labels: Array[String] = []
@@ -857,6 +1026,8 @@ func _run() -> void:
 	await _key(KEY_TAB)
 	_check(view.back_button.has_focus(), "Tab reaches Back to title")
 	await _key(KEY_TAB)
+	_check(view.deck_button.has_focus(), "Tab reaches the Deck house")
+	await _key(KEY_TAB)
 	_check(view.path_buttons[0].has_focus()
 		and view.path_hint_label.text
 			== String(VillagePathPreview.seamstress(shown[0]).get("hint", "")),
@@ -890,7 +1061,7 @@ func _run() -> void:
 		"leaving all boards restores their prompts")
 	for control in [view.warden_buttons[1], view.warden_buttons[0],
 			view.tinker_buttons[1], view.tinker_buttons[0], view.path_buttons[1],
-			view.path_buttons[0], view.back_button, view.difficulty_buttons[0], view.set_out_button]:
+			view.path_buttons[0], view.deck_button, view.back_button, view.difficulty_buttons[0], view.set_out_button]:
 		for down in [true, false]:
 			var reverse := InputEventKey.new()
 			reverse.keycode = KEY_TAB
@@ -949,6 +1120,8 @@ func _run() -> void:
 	_check(view.difficulty_buttons[0].has_focus(), "Tier remains reachable after Path selection")
 	await _key(KEY_TAB)
 	_check(view.back_button.has_focus(), "Tab reaches Back to title")
+	await _key(KEY_TAB)
+	_check(view.deck_button.has_focus(), "Tab reaches Deck after a Path is chosen")
 	await _key(KEY_TAB)
 	_check(view.tinker_buttons[0].has_focus(), "Tab reaches the still-open first Tinker Path")
 	await _key(KEY_TAB)
