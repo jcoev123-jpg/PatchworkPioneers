@@ -237,6 +237,16 @@ static func _resolve_pool_card_definition(owner: String, card_id: String) -> Dic
 			return SeamstressPoolCards.new().get_definition(card_id)
 		"tinker":
 			return TinkerPoolCards.new().get_definition(card_id)
+		"lantern_monk":
+			return LanternMonkPoolCards.new().get_definition(card_id)
+		"rag_duelist":
+			return RagDuelistPoolCards.new().get_definition(card_id)
+		"scarecrow":
+			return ScarecrowPoolCards.new().get_definition(card_id)
+		"yarn_ranger":
+			return YarnRangerPoolCards.new().get_definition(card_id)
+		"button_golem":
+			return ButtonGolemPoolCards.new().get_definition(card_id)
 		_:
 			return {}
 
