@@ -17,7 +17,9 @@ const ALLY_IDS := ["seamstress_v3_shielding_hem", "seamstress_v3_shielding_hem_p
 	"seamstress_v3_mending_knot", "seamstress_v3_mending_knot_plus",
 	"seamstress_v3_darn_the_tear", "seamstress_v3_darn_the_tear_plus",
 	"seamstress_stitch_up_plus", "warden_patch_guard", "warden_patch_guard_plus",
-	"seamstress_darning", "seamstress_darning_plus", "seamstress_thimble_tea", "seamstress_thimble_tea_plus"]
+	"seamstress_darning", "seamstress_darning_plus", "seamstress_thimble_tea", "seamstress_thimble_tea_plus",
+	"warden_v3_shield_catch", "warden_v3_shield_catch_plus",
+	"warden_v3_guard_stitch", "warden_v3_guard_stitch_plus"]
 const TABLE_ID := "SupportTableBacking"
 const QUILT_IDS := ["warden", "seamstress", "tinker"]
 const QUILT_RULE := "Play cards from all living heroes: each living hero gains 3 Block; draw 1 once per turn"
@@ -592,6 +594,10 @@ func _is_energy_card(card_id: String) -> bool:
 func _is_eyelet_card(card_id: String) -> bool:
 	return CombatButtonGolemEyeletGuardCards.PRINTINGS.has(card_id)
 
+
+func _is_warden_guard_card(card_id: String) -> bool:
+	return CombatWardenV3GuardCards.CARDS.has(card_id)
+
 ## True only for the six authored Seamstress healing pool records the resolver owns.
 func _is_heal_card(card_id: String) -> bool:
 	return card_id in CombatSeamstressPoolHeals.DARNING_IDS \
@@ -675,7 +681,7 @@ func _is_actionable(card_id: String) -> bool:
 		return _vigil.is_supported_card(card_id)
 	if _roll.is_supported_card(card_id) or _sew.is_supported_card(card_id):
 		return true
-	if _is_eyelet_card(card_id):
+	if _is_eyelet_card(card_id) or _is_warden_guard_card(card_id):
 		return true
 	if card_id in CombatSupportCards.SCARECROW_STRAW_IDS:
 		return true
@@ -709,6 +715,9 @@ func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position:
 		return bool(_sew.play_card(deck, party, card_id, 0).get("ok", false))
 	if _is_eyelet_card(card_id):
 		return _play_eyelet_card(deck, party, card_id)
+	if _is_warden_guard_card(card_id):
+		var flow = _turret_flow(deck, party)
+		return flow != null and flow.play_warden_guard_card(card_id, position)
 	if card_id in STRAW_WRAP_IDS:
 		return _wrap != null and _straw != null and _straw.is_patch_binding_valid() \
 			and bool(_wrap.play_card(deck, party, card_id, position).get("ok", false))
@@ -1104,7 +1113,7 @@ func _sync_battle() -> void:
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_card_input.bind(panel, label.text, _deck, _party, _battle)
 		_bindings[panel] = callback
-		if _hem.is_supported_card(label.text) or CombatYarnRangerKnitCards.CARDS.has(label.text) or label.text in VIGIL_IDS or label.text in GLOW_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text) or _turret.is_supported_card(label.text) or CombatWardenV3TauntCards.CARDS.has(label.text) or _is_eyelet_card(label.text):
+		if _hem.is_supported_card(label.text) or CombatYarnRangerKnitCards.CARDS.has(label.text) or label.text in VIGIL_IDS or label.text in GLOW_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text) or _turret.is_supported_card(label.text) or CombatWardenV3TauntCards.CARDS.has(label.text) or _is_eyelet_card(label.text) or _is_warden_guard_card(label.text):
 			_move_context[panel] = _current_move_context(panel)
 		panel.gui_input.connect(callback)
 	# Keep the existing End/Return Tab cycle; Up enters the card row, Down exits it.
@@ -1400,6 +1409,23 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 			return false
 		if not _sew._prepare(deck, party, card_id, 0).get("ok", false):
 			return false
+	if _is_warden_guard_card(card_id):
+		# Revalidate the exact bound card and real fight before target selection.
+		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
+				or _move_context.get(panel, []) != _current_move_context(panel) \
+				or app._battle_closed or app.enemies == null or not app.enemies.is_valid() \
+				or app.battle_result == null or not app.battle_result.can_continue():
+			return false
+		var guard_flow = _turret_flow(deck, party)
+		if guard_flow == null:
+			return false
+		var available := false
+		for seat in [1, 2, 3]:
+			if guard_flow.can_play_warden_guard_card(card_id, seat):
+				available = true
+				break
+		if not available:
+			return false
 	if _is_eyelet_card(card_id):
 		# The fight's own authoritative paid preflight decides: an unheld,
 		# unaffordable, torn-owner or foreign-battle panel never arms or charges.
@@ -1507,8 +1533,12 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		_pending.heroes = party.get_heroes()
 		_pending.hand = deck.hand.duplicate()
 		_pending.selections = {}
-	if _hem.is_supported_card(card_id) or CombatYarnRangerKnitCards.CARDS.has(card_id) or _bolas.is_supported_card(card_id) or card_id in VIGIL_IDS or card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id) or _roll.is_supported_card(card_id) or _turret.is_supported_card(card_id) or CombatWardenV3TauntCards.CARDS.has(card_id) or _is_eyelet_card(card_id):
+	if _hem.is_supported_card(card_id) or _is_warden_guard_card(card_id) or CombatYarnRangerKnitCards.CARDS.has(card_id) or _bolas.is_supported_card(card_id) or card_id in VIGIL_IDS or card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id) or _roll.is_supported_card(card_id) or _turret.is_supported_card(card_id) or CombatWardenV3TauntCards.CARDS.has(card_id) or _is_eyelet_card(card_id):
 		_pending.owner_roster = _party.get_heroes().map(func(hero): return [hero.id, hero.position])
+	if _is_warden_guard_card(card_id):
+		_pending.guard_hand = deck.hand.duplicate()
+		_pending.guard_energy = deck.energy
+		_pending.guard_refs = _party._heroes.duplicate()
 	if _turret.is_supported_card(card_id) or CombatWardenV3TauntCards.CARDS.has(card_id):
 		_pending.turret_state = _turret_selection_state()
 		_pending.hero_refs = _party._heroes.duplicate()
@@ -1614,7 +1644,8 @@ func _selection_valid() -> bool:
 		return false
 	if (_pop.is_supported_card(_pending.id) or _bolas.is_supported_card(_pending.id) or _sew.is_supported_card(_pending.id) or _roll.is_supported_card(_pending.id) or _is_eyelet_card(_pending.id)) and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
 		return false
-	if _hem.is_supported_card(_pending.id) and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
+	if (_hem.is_supported_card(_pending.id) or _is_warden_guard_card(_pending.id)) \
+			and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
 		return false
 	if _turret.is_supported_card(_pending.id) or CombatWardenV3TauntCards.CARDS.has(_pending.id):
 		# An armed battle-scoped support play against one exact table: same owner seats, the
@@ -1624,6 +1655,12 @@ func _selection_valid() -> bool:
 			return false
 		for index in range(_pending.hero_refs.size()):
 			if not is_same(_pending.hero_refs[index], _party._heroes[index]):
+				return false
+	if _is_warden_guard_card(_pending.id):
+		if _pending.guard_hand != _deck.hand or _pending.guard_energy != _deck.energy:
+			return false
+		for index in range(_pending.guard_refs.size()):
+			if not is_same(_pending.guard_refs[index], _party._heroes[index]):
 				return false
 	if _roll.is_supported_card(_pending.id) and not is_same(_pending.owner_ref, _party._heroes[_pending.owner_ref.position - 1]):
 		return false
@@ -1679,6 +1716,10 @@ func _choose_target() -> void:
 		var panel: Control = _target_panels()[index]
 		if _hem.is_supported_card(_pending.id) and not _hem._prepare(_deck, _party, _pending.id, index + 1).get("ok", false):
 			continue
+		if _is_warden_guard_card(_pending.id):
+			var guard_flow = _turret_flow(_deck, _party)
+			if guard_flow == null or not guard_flow.can_play_warden_guard_card(_pending.id, index + 1):
+				continue
 		if _roll.is_supported_card(_pending.id) and not _roll._prepare(_deck, _party, _pending.id, index + 1).get("ok", false):
 			continue
 		if _pending.id in STRAW_WRAP_IDS:
@@ -1714,7 +1755,7 @@ func _choose_target() -> void:
 			"mouse_filter": previous_filter}
 		if _pop.is_supported_card(_pending.id) or _pitchfork.is_supported_card(_pending.id) or _bolas.is_supported_card(_pending.id) or _is_fear_card(_pending.id):
 			_targets[panel].actor_ref = app.enemies._enemies[index]
-		if _roll.is_supported_card(_pending.id) or _hem.is_supported_card(_pending.id):
+		if _roll.is_supported_card(_pending.id) or _hem.is_supported_card(_pending.id) or _is_warden_guard_card(_pending.id):
 			_targets[panel].actor_ref = _party._heroes[index]
 		panel.gui_input.connect(callback)
 	for index in range(panels.size()):
@@ -1891,6 +1932,11 @@ func _resolve_target(position: int, token: int) -> void:
 			app.end_turn_button.grab_focus()
 		return
 	var debuff: String = _pending.get("debuff", "")
+	if _is_warden_guard_card(id):
+		var guard_flow = _turret_flow(_deck, _party)
+		if guard_flow == null or not guard_flow.can_play_warden_guard_card(id, position):
+			_cancel_pending()
+			return
 	if _roll.is_supported_card(id) and not _roll._prepare(_deck, _party, id, position).get("ok", false):
 		_cancel_pending()
 		return

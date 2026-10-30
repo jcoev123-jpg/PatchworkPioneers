@@ -8,6 +8,7 @@ var phase := CombatEnemyPhase.new()
 
 func _initialize() -> void:
 	_test_two_hit_reactions()
+	_test_v3_guard_stage()
 	_test_draw_fire_variants()
 	_test_counter_stitch_variants()
 	_test_joint_modes_and_turn_boundary()
@@ -791,3 +792,80 @@ func _test_two_hit_reactions() -> void:
 	_check(result.ok and result.events.size() == 1 and not result.events[0].applied
 		and party.get_heroes() == before and enemies.get_enemy(1).hp == 22
 		and enemies.get_enemy(1).statuses == {}, "Blind misses whole attack before defensive reactions")
+
+
+## The executor uses the existing reaction callbacks, not a special V3 phase.
+## Its adapter is expendable: real guard consumption belongs to RoundFlow only.
+func _test_v3_guard_stage() -> void:
+	for id: String in CombatWardenV3GuardCards.CARDS:
+		var party := _party()
+		var deck := _deck([id, "warden_brace", "tinker_tune_up", "seamstress_mend", "warden_counter_stitch"])
+		var guard := CombatWardenV3GuardCards.new()
+		var before_rng: int = deck._rng.state
+		var grant: int = int(CombatWardenV3GuardCards.CARDS[id].block)
+		_check(guard.play_card(deck, party, id, 3).get("ok", false) and guard.has_pending_guard()
+			and deck.energy == 2 and party.get_hero(3).block == grant,
+			"V3 phase precondition: a real paid " + id + " guards living Tinker")
+		var reactions := CombatWardenGuardReactions.new().phase_adapter(guard)
+		var foes := _enemies([50])
+		var block_first := phase.execute_phase(party, foes,
+			[{"type": "block", "enemy_position": 1, "amount": 2}], reactions)
+		_check(block_first.ok and reactions.confirmed_v3_guard_hit().is_empty()
+			and guard.has_pending_guard() and deck._rng.state == before_rng,
+			"nonattack does not consume the staged or authoritative V3 guard")
+		var hits := phase.execute_phase(party, foes,
+			[{"type": "attack", "enemy_position": 1, "target_position": 3,
+				"amount": 10, "hits": 2}], reactions)
+		_check(hits.ok and hits.events.size() == 2 and hits.events[0].applied
+			and hits.events[0].actual_target_position == 1 and hits.events[0].redirected
+			and hits.events[1].applied and hits.events[1].actual_target_position == 3
+			and not hits.events[1].redirected,
+			"one staged positive hit redirects to Warden, next hit stays on Tinker: " + id)
+		_check(party.get_hero(1).hp == 40 and party.get_hero(1).block == 1
+			and party.get_hero(3).hp == 26 - maxi(0, 5 - grant)
+			and party.get_hero(3).block == maxi(0, grant - 5),
+			"V3 phase uses real Block before HP for both actual recipients: " + id)
+		var witness: Dictionary = reactions.confirmed_v3_guard_hit()
+		_check(not witness.is_empty() and witness.get("target") == 3
+			and guard.has_pending_guard() and deck._rng.state == before_rng,
+			"staged reaction records confirmed identity without spending real latch or RNG")
+		if not witness.is_empty():
+			_check(guard.consume_confirmed_hit(witness.party, witness.target, true).get("consumed", false)
+				and not guard.has_pending_guard(),
+				"accepted phase publishes exactly one authoritative consumption: " + id)
+		var after := party.get_heroes()
+		var no_repeat := phase.execute_phase(party, foes,
+			[{"type": "attack", "enemy_position": 1, "target_position": 3, "amount": 2}],
+			CombatWardenGuardReactions.new().phase_adapter(guard))
+		_check(no_repeat.ok and no_repeat.events.size() == 1
+			and no_repeat.events[0].actual_target_position == 3
+			and party.get_hero(1) == after[0], "later hit never reuses the consumed guard")
+	# Blind, failed whole batches and Dodge never touch the authoritative V3 latch.
+	for status in ["blind", "dodge", "invalid_batch"]:
+		var party := _party()
+		var deck := _deck(["warden_v3_shield_catch", "warden_brace",
+			"tinker_tune_up", "seamstress_mend", "warden_counter_stitch"])
+		var guard := CombatWardenV3GuardCards.new()
+		_check(guard.play_card(deck, party, "warden_v3_shield_catch", 3).ok,
+			"negative V3 phase precondition has genuinely armed service")
+		var enemies := _enemies([50, 50])
+		var adapter := CombatWardenGuardReactions.new().phase_adapter(guard)
+		var before := [party.get_heroes(), enemies.get_enemies(), deck._rng.state]
+		var actions: Array = [{"type": "attack", "enemy_position": 1,
+			"target_position": 3, "amount": 5}]
+		if status == "blind":
+			enemies._enemies[0]["statuses"] = {"blind_next_attack": 1}
+		elif status == "dodge":
+			party._heroes[0]["statuses"] = {"dodge_next_attack": 1}
+		else:
+			actions.append({"type": "attack", "enemy_position": 2,
+				"target_position": 99, "amount": 1})
+		before = [party.get_heroes(), enemies.get_enemies(), deck._rng.state]
+		var result := phase.execute_phase(party, enemies, actions, adapter)
+		_check((not result.ok if status == "invalid_batch" else result.ok)
+			and guard.has_pending_guard() and adapter.confirmed_v3_guard_hit().is_empty()
+			and deck._rng.state == before[2],
+			"failed/missed " + status + " leaves authoritative guard and RNG untouched")
+		if status == "invalid_batch":
+			_check(party.get_heroes() == before[0] and enemies.get_enemies() == before[1],
+				"failed batch atomically rolls back the earlier staged hit")

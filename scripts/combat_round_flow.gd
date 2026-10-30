@@ -28,6 +28,8 @@ var _taunt_service := CombatWardenV3TauntCards.new()
 # same instance's retaliation is quoted by the enemy turn. It is never a status
 # key and is never recreated per click, so a second fight starts unarmed.
 var _eyelet_guard := CombatButtonGolemEyeletGuardCards.new()
+# Exactly one authenticated Shield Catch / Guard Stitch latch per admitted fight.
+var _v3_guard := CombatWardenV3GuardCards.new()
 
 
 func _init(deck: CombatDeck = null, party: CombatParty = null,
@@ -190,6 +192,39 @@ func get_eyelet_guard_authority() -> CombatButtonGolemEyeletGuardCards:
 	return _eyelet_guard
 
 
+## The real held-card and ally-target preflight; never accept a stale fight,
+## a fake printing, or an unavailable recipient. The service owns all numbers.
+func can_play_warden_guard_card(card_id: Variant, target_position: int) -> bool:
+	if not _started or not _valid_bindings() or not _deck.turn_active:
+		return false
+	if _deck != _battle_deck or _party != _battle_party \
+			or _enemies != _battle_enemies or _intents != _battle_intents \
+			or _result != _battle_result:
+		return false
+	if not _result.can_continue() or _party.is_defeated() or _enemies.is_victorious():
+		return false
+	return bool(_v3_guard._prepare(_deck, _party, card_id, target_position).get("ok", false))
+
+
+func play_warden_guard_card(card_id: Variant, target_position: int) -> bool:
+	if not can_play_warden_guard_card(card_id, target_position):
+		return false
+	return bool(_v3_guard.play_card(_deck, _party, card_id, target_position).get("ok", false))
+
+
+func get_warden_guard_authority() -> CombatWardenV3GuardCards:
+	return _v3_guard
+
+
+## A private per-execution reaction adapter is essential: the phase executor
+## rehearses attacks on detached parties before the authoritative commit.
+func _phase_reactions() -> CombatWardenGuardReactions:
+	if not _v3_guard.has_pending_guard():
+		return _reactions
+	var base := _reactions if _reactions != null else CombatWardenGuardReactions.new()
+	return base.phase_adapter(_v3_guard)
+
+
 ## True only while this begun fight can still accept a freshly paid turret:
 ## the admitted actors, an active hand and a result that can continue.
 func can_register_turret() -> bool:
@@ -247,7 +282,7 @@ func end_turn() -> bool:
 	# keep their existing binding checks alone: legacy fixtures legitimately
 	# swap a valid scheduler, and a detached already-active oracle never went
 	# through begin_fight.
-	if _taunt_service.has_pending_taunt() \
+	if (_taunt_service.has_pending_taunt() or _v3_guard.has_pending_guard()) \
 			and (_deck != _battle_deck or _party != _battle_party \
 				or _enemies != _battle_enemies or _intents != _battle_intents \
 				or _result != _battle_result):
@@ -292,6 +327,7 @@ func end_turn() -> bool:
 		projected_party._heroes.assign(tick["actors"].duplicate(true))
 		var projected_enemies := CombatEnemies.new(turret_plan["roster"])
 		projected_enemies._enemies.assign(turret_plan["roster"].duplicate(true))
+		var preview_reactions := _phase_reactions()
 		var ordered: Array = effective.duplicate(true)
 		ordered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 			return a.enemy_position < b.enemy_position)
@@ -313,7 +349,7 @@ func end_turn() -> bool:
 			# The same Eyelet authority is quoted here, so a projected Thorns kill
 			# matches what the committed phase will really do.
 			if not CombatEnemyPhase.new().execute_phase(projected_party,
-					projected_enemies, [beat], _reactions, bound_policies,
+					projected_enemies, [beat], preview_reactions, bound_policies,
 					_eyelet_guard).get("ok", false):
 				return false
 		effective = projected
@@ -337,7 +373,8 @@ func end_turn() -> bool:
 	_fire_turrets()
 	if _result.evaluate() != CombatBattleResult.ACTIVE:
 		return true
-	var phase := CombatEnemyPhase.new().execute_phase(_party, _enemies, effective, _reactions,
+	var committed_reactions := _phase_reactions()
+	var phase := CombatEnemyPhase.new().execute_phase(_party, _enemies, effective, committed_reactions,
 		_intents.is_bound(), _eyelet_guard)
 	# _phase_is_executable prevalidates the entire batch against this roster.
 	if not phase["ok"]:
@@ -345,6 +382,12 @@ func end_turn() -> bool:
 	# Even a lethal enemy phase is complete: consume the one armed Taunt now,
 	# not during preflight or on a refused End Turn.
 	_taunt_service.complete_enemy_turn()
+	if committed_reactions != null:
+		var confirmed: Dictionary = committed_reactions.confirmed_v3_guard_hit()
+		if not confirmed.is_empty():
+			# The witness is the actual pre-hit staged roster and announced seat.
+			# Post-hit HP/death or a preceding shove cannot invalidate the receipt.
+			_v3_guard.consume_confirmed_hit(confirmed["party"], confirmed["target"], true)
 	# A birth expands the genuine fight's gauge without resetting its older
 	# charges. That child becomes a legal target and source next player turn.
 	if _unravel != null and _enemies.get_enemies().size() > _unravel._gauges.size():
@@ -521,7 +564,7 @@ func _phase_is_executable(next_heroes: Array, effective: Array, roster: Array = 
 		roster = _enemies.get_enemies()
 	var enemies := CombatEnemies.new(roster)
 	enemies._enemies.assign(roster.duplicate(true))
-	if not CombatEnemyPhase.new().execute_phase(party, enemies, effective, _reactions,
+	if not CombatEnemyPhase.new().execute_phase(party, enemies, effective, _phase_reactions(),
 			_intents.is_bound(), _eyelet_guard)["ok"]:
 		return false
 	return CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies())["ok"]

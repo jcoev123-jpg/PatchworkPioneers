@@ -19,6 +19,35 @@ const ALLOWED_CARD_IDS: Array[String] = [
 
 var guarding: bool = false
 var thorns: int = 0
+# Detached enemy-phase adapters mirror only the legacy reaction modes. The V3
+# authority remains on CombatRoundFlow; preflight never spends its one-shot.
+var _v3_guard: CombatWardenV3GuardCards = null
+var _v3_guard_available := false
+var _v3_guard_hit: Dictionary = {}
+
+
+func phase_adapter(guard: CombatWardenV3GuardCards) -> CombatWardenGuardReactions:
+	var adapter := CombatWardenGuardReactions.new()
+	adapter.guarding = guarding
+	adapter.thorns = thorns
+	if guard != null and guard.has_pending_guard():
+		adapter._v3_guard = guard
+		adapter._v3_guard_available = true
+	return adapter
+
+
+func confirmed_v3_guard_hit() -> Dictionary:
+	return _v3_guard_hit.duplicate()
+
+
+func _v3_hit_witness(party: CombatParty, announced: int) -> Dictionary:
+	if not _v3_guard_available or _v3_guard == null:
+		return {}
+	var projected: Dictionary = _v3_guard.project_interception(party, announced)
+	if not projected.get("ok", false) or not projected.get("eligible", false):
+		return {}
+	return {"party": CombatParty.new(party.get_heroes()), "target": announced}
+
 
 var _binding_attempted: bool = false
 var _binding_valid: bool = false
@@ -461,6 +490,11 @@ func preview_actual_recipient(party: CombatParty, target_position: int) -> Dicti
 	var warden_position: int = _find_warden_position(party)
 	var redirect: bool = guarding and warden_position > 0 \
 		and not party.is_downed(warden_position) and target_position != warden_position
+	var guard_projection: Dictionary = _v3_guard.project_interception(party, target_position) \
+		if _v3_guard_available and _v3_guard != null else {}
+	if guard_projection.get("eligible", false):
+		redirect = bool(guard_projection.get("redirected", false)) or redirect
+		warden_position = int(guard_projection.get("actual_target_position", target_position))
 	return {"ok": true, "eligible": true,
 		"actual_target_position": warden_position if redirect else target_position,
 		"redirected": redirect}
@@ -558,6 +592,10 @@ func resolve_enemy_attack(party_val: Variant, enemies_val: Variant, attack_val: 
 	var actual_target: int = preview["actual_target_position"]
 	var redirected: bool = preview["redirected"]
 
+	# Capture the protected identity and seat before damage may down either hero.
+	# The witness stays local until the complete enemy phase is accepted.
+	var guard_witness: Dictionary = _v3_hit_witness(party, target)
+
 	# 4. A genuine one-shot Dodge on the real recipient makes this attempt miss.
 	# The token is spent on the authoritative hero record only after the actual
 	# recipient (Guard redirect included) is known: no HP, Block or retarget
@@ -591,6 +629,13 @@ func resolve_enemy_attack(party_val: Variant, enemies_val: Variant, attack_val: 
 			"retaliation_damage": 0,
 			"retaliatory_damage": 0,
 		}
+
+	# An actually landed positive hit (including all-Block absorption) uses this
+	# adapter's one-shot, not the authentic resolver's latch. A miss/failed batch
+	# therefore leaves the authority untouched, including across rehearsals.
+	if amount > 0 and not guard_witness.is_empty():
+		_v3_guard_available = false
+		_v3_guard_hit = guard_witness
 
 	# 6. Retaliate with Thorns if the Warden's own hit really landed
 	var retaliatory_damage: int = 0
