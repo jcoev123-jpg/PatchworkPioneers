@@ -353,9 +353,9 @@ func _check_card_row(index: int, offer: Dictionary, context: String) -> void:
 			and button.tooltip_text.contains(full)
 			and button.tooltip_text.contains("%d gold" % int(offer["price"])),
 			label + ": full rule, ID and quote remain in tooltip")
-	_check(_fits(button) and button.size == Vector2(822, 78)
+	_check(_fits(button) and button.size == LivePeddlerPanel.CARD_TICKET_SIZE
 			and button.get_theme_font_size("font_size") >= 18,
-			label + ": both lines fit the actual 822x78 font geometry")
+			label + ": both lines fit the actual compact ticket font geometry")
 
 
 ## Exercise the bounded rule formatter with the longest genuinely authored
@@ -417,6 +417,29 @@ func _layout(visit: RunPeddlerVisit) -> void:
 			"exactly three card buys, one patch buy and Leave (five buttons)")
 	_check(LivePeddlerPanel.ACTION_KEY_LABELS == ["1", "2", "3", "4", "0"],
 			"the five visible labels are the exact keys the panel routes: 1/2/3 cards, 4 patch, 0 Leave")
+	# VIS-A: a genuinely opaque sewn-fabric backdrop keeps the illustrated
+	# market from showing through under the labels; the imported art floats
+	# on it and the art-less fallback is that same solid fabric.
+	var fabric_backing := panel.get_node_or_null("FabricBacking") as Panel
+	var art_backing := panel.get_node_or_null("PanelArt") as Panel
+	var fabric_face: StyleBoxFlat = null
+	if fabric_backing != null:
+		fabric_face = fabric_backing.get_theme_stylebox("panel") as StyleBoxFlat
+	_check(fabric_backing != null and art_backing != null
+			and fabric_face != null and fabric_face.bg_color.a == 1.0
+			and fabric_face.bg_color.get_luminance() < 0.3
+			and fabric_backing.get_global_rect() == panel.get_global_rect()
+			and fabric_backing.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and art_backing.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+			"alpha-1 deep-jewel fabric backs the whole sewn panel under the labels")
+	if art_backing != null and ResourceLoader.exists(LivePeddlerPanel.PANEL_ART, "Texture2D"):
+		var art_face := art_backing.get_theme_stylebox("panel") as StyleBoxTexture
+		_check(art_face != null and art_face.texture != null
+				and art_face.texture.resource_path == LivePeddlerPanel.PANEL_ART,
+				"the imported reward_panel market art overlays the opaque fabric")
+	_check(panel._fabric_style().bg_color.a == 1.0
+			and panel._fabric_style().bg_color.get_luminance() < 0.3,
+			"the art-less fallback backing is the same fully opaque dark fabric")
 	_check(panel.title_label.text.contains("PEDDLER")
 			and panel.wallet_label.text.contains("500 gold"), "title and wallet are readable")
 	# The band opens on the neutral hint or on the genuine preview of the card
@@ -449,10 +472,12 @@ func _layout(visit: RunPeddlerVisit) -> void:
 		var edge := button.get_node_or_null("FabricEdging") as Panel
 		_check(face != null and face.bg_color.a == 1.0
 				and face.bg_color.get_luminance() > 0.6
+				and face.border_width_top >= 4
+				and face.get_corner_radius(CORNER_TOP_LEFT) > 0
 				and button.get_theme_color("font_color").get_luminance() < 0.25
 				and edge != null and edge.mouse_filter == Control.MOUSE_FILTER_IGNORE
 				and edge.get_theme_stylebox("panel") is StyleBoxTexture,
-				"opaque readable card fabric uses imported sewn-button edge")
+				"opaque, clearly bordered card fabric uses imported sewn-button edge")
 	var patch_button := panel.patch_button
 	var patch_offer: Dictionary = open["stock"]["trinkets"][0]
 	_check(screen.encloses(patch_button.get_global_rect())
@@ -480,14 +505,28 @@ func _layout(visit: RunPeddlerVisit) -> void:
 	var card_face := panel.card_buttons[0].get_theme_stylebox("normal") as StyleBoxFlat
 	_check(patch_face != null and card_face != null and patch_face.bg_color.a == 1.0
 			and patch_face.bg_color != card_face.bg_color
+			and patch_face.border_width_top >= 4
 			and patch_button.get_node_or_null("FabricEdging") != null,
-			"patch wears a separate opaque contrasting ticket and shipped fabric edge")
+			"patch wears a separate opaque contrasting bordered ticket and shipped fabric edge")
 	_check(screen.encloses(panel.leave_button.get_global_rect())
 			and panel.leave_button.text == "0  ·  Leave  ·  FREE"
 			and panel.leave_button.text.begins_with(LivePeddlerPanel.ACTION_KEY_LABELS[4] + "  ·  ")
 			and not panel.leave_button.disabled,
 			"free Leave is visible, carries its 0 key label and is enabled")
 	_check(_fits(panel.leave_button), "Leave text fits its sewn button")
+	# VIS-A: each of the five actions is one compact, clearly bordered sewn
+	# ticket, so the illustrated market column stays uncovered beside them
+	# instead of one edge-to-edge slab.
+	var art_edge := panel.get_global_rect().end.x - LivePeddlerPanel.UNCOVERED_ART
+	for ticket in panel.card_buttons + [panel.patch_button, panel.leave_button]:
+		var ticket_face := ticket.get_theme_stylebox("normal") as StyleBoxFlat
+		_check(ticket.size.x == LivePeddlerPanel.TICKET_WIDTH
+				and ticket.get_global_rect().end.x <= art_edge
+				and ticket_face != null and ticket_face.bg_color.a == 1.0
+				and ticket_face.border_width_top >= 4
+				and ticket_face.border_width_top == ticket_face.border_width_left
+				and ticket_face.get_corner_radius(CORNER_TOP_LEFT) > 0,
+				"sewn ticket is compact, opaque and clearly bordered with the market uncovered")
 	var action_rects: Array[Rect2] = []
 	for button in panel.card_buttons + [panel.patch_button, panel.leave_button]:
 		action_rects.append(button.get_global_rect())

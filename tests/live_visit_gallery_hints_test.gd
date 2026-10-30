@@ -223,8 +223,13 @@ func _check_peddler_labels(app) -> void:
 			and offer.price == prices[offer.id] and button.disabled == (offer.sold or bound.state.gold < offer.price),
 			"every direct Peddler choice prints its complete catalog name and authored price")
 		var size := button.get_theme_font_size("font_size")
-		var measured := button.get_theme_font("font").get_string_size(expected, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
-		_check(size >= MIN_BODY_SIZE and measured.x + button.get_theme_stylebox("normal").get_minimum_size().x <= button.size.x,
+		# VIS-A compact tickets: each choice caption is two stacked lines, so the
+		# honest fit oracle is the widest actual rendered line. Measuring both
+		# lines as one string would demand their sum fit a single row.
+		var widest := 0.0
+		for line in expected.split("\n"):
+			widest = maxf(widest, button.get_theme_font("font").get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x)
+		_check(size >= MIN_BODY_SIZE and widest + button.get_theme_stylebox("normal").get_minimum_size().x <= button.size.x,
 			"short Peddler price sentence fits its real sewn button without truncation")
 	_check(app.peddler_leave_button.text == LivePeddlerPanel.LEAVE_TEXT and not app.peddler_leave_button.disabled,
 		"Peddler always prints an available free Leave")
