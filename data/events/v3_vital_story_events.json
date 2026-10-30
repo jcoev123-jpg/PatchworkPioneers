@@ -639,6 +639,46 @@
         { "id": "trade_queen_seam", "text": "Give the hive one lasting heart seam (lose 1 max HP; gain 27 gold)", "outcome": { "gold": 27, "scraps": 0, "hp": 0, "max_hp": -1 } },
         { "id": "leave", "text": "Leave the buzzing button hive asleep", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_plum_accordion_sickroom",
+      "title": "The Plum Accordion Sickroom",
+      "description": "A round plum-cloth nurse pumps a concertina as large as a bed, its bone-cream bellows sewn with red healing stitches.",
+      "choices": [
+        { "id": "warm_bellows", "text": "Pay 15 gold to warm the stitched bellows (heal 7 HP)", "outcome": { "gold": -15, "scraps": 0, "hp": 7, "max_hp": 0 } },
+        { "id": "pump_night_watch", "text": "Pump the heavy concertina for wages (lose 4 HP; gain 18 gold)", "outcome": { "gold": 18, "scraps": 0, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the accordion sleeping", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_copper_hedgehog_pin_bower",
+      "title": "The Copper Hedgehog Pin Bower",
+      "description": "A squat moss hedgehog doll carries a bristling silver pincushion on its back; giant copper safety pins hold a canopy of quilt leaves.",
+      "choices": [
+        { "id": "fasten_heart_pin", "text": "Spend 2 scraps to fasten a lasting heart pin (+2 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 2 } },
+        { "id": "pawn_own_heart_pin", "text": "Unpick a lasting heart pin for 23 gold (lose 2 max HP)", "outcome": { "gold": 23, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the copper pins beneath their leaves", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_teal_swan_needleboat",
+      "title": "The Teal Swan Needleboat",
+      "description": "A plump midnight-teal swan puppet glides in a coat-shaped boat, its oversized silver needle beak stitching the torn canal moon.",
+      "choices": [
+        { "id": "repair_moon_sail", "text": "Pay 12 gold and 1 scrap to mend the moon-sail (+5 HP, +1 max HP)", "outcome": { "gold": -12, "scraps": -1, "hp": 5, "max_hp": 1 } },
+        { "id": "dive_for_silver_thread", "text": "Dive for lost thread (lose 3 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -3, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the swan's needleboat drift on", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rosebutton_teapot_oracle",
+      "title": "The Rose-Button Teapot Oracle",
+      "description": "A round rose-cloth fortune keeper pours glowing tea from a giant button-lidded teapot; steam forms stitched heart-shaped clouds.",
+      "choices": [
+        { "id": "drink_hearth_tea", "text": "Pay 17 gold for hot heart tea (heal 8 HP)", "outcome": { "gold": -17, "scraps": 0, "hp": 8, "max_hp": 0 } },
+        { "id": "trade_rose_seam", "text": "Unpick 1 max HP for the teapot keeper (gain 21 gold)", "outcome": { "gold": 21, "scraps": 0, "hp": 0, "max_hp": -1 } },
+        { "id": "leave", "text": "Leave the rose-button lid closed", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
