@@ -188,4 +188,12 @@ const SEEDS := [
 	517263,
 	684678,
 	874243,
+	# Genuine witnesses re-derived after the four gothic look-driven roadside wallet
+	# stories (Lantern Snail, Velvet Fox, Copper Beetle, Inkblue Swan) joined the
+	# sorted generic pool: the two Tinker hero stories lost their only routed
+	# six-Event witnesses, and the strict Event/Treasure six-stop Auction route needs
+	# one pinned seed because its bounded 1..199999 search can no longer reach it.
+	22320,
+	412761,
+	2356714,
 ]
