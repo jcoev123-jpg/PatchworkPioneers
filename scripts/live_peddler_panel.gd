@@ -33,6 +33,12 @@ extends Control
 ## exact slot, power and trigger in the status band (the complete rule stays
 ## in the patch Button's tooltip), and anything that audit cannot prove reads
 ## PATCH_DETAILS_UNAVAILABLE instead of a guessed buff.
+##
+## VIS-A: the sewn market art floats on a genuinely opaque jewel-toned fabric
+## (the shipped reward_panel.png source alpha may be transparent), and each of
+## the five actions is a compact, clearly bordered sewn ticket: the illustrated
+## market stays visible beside the quotes instead of behind a muddy,
+## translucent, edge-to-edge slab.
 signal intent_requested(intent: Dictionary)
 
 const PANEL_ART := "res://assets/paper/ui/reward_panel.png"
@@ -69,6 +75,16 @@ const PANEL_SIZE := Vector2(900, 600)
 ## minimum-size growth would allow, so a long line can never spill over the
 ## sewn panel.
 const STATUS_WIDTH := 822.0
+## VIS-A legibility: every priced offer is one compact sewn ticket, not a
+## full-width slab, so the imported market art stays uncovered beside the
+## quotes at 1280x720.
+const TICKET_WIDTH := 640.0
+const CARD_TICKET_SIZE := Vector2(TICKET_WIDTH, 78)
+const PATCH_TICKET_SIZE := Vector2(TICKET_WIDTH, 78)
+const LEAVE_TICKET_SIZE := Vector2(TICKET_WIDTH, 58)
+## The illustrated market column the compact tickets must leave visible on
+## the sewn panel's right side.
+const UNCOVERED_ART := 160.0
 const CREAM := Color("#f3e6cf")
 const GOLD := Color("#e9c47d")
 const THREAD := Color("#806852")
@@ -126,7 +142,19 @@ func _ready() -> void:
 	var master := _load_theme()
 	if master != null:
 		theme = master
+	# Genuinely opaque sewn fabric first: the shipped reward_panel.png may
+	# carry transparent alpha, so a solid jewel-toned backing keeps the
+	# illustrated market from showing through under the labels (VIS-A).
+	var fabric := Panel.new()
+	fabric.name = "FabricBacking"
+	fabric.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(fabric)
+	fabric.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	fabric.add_theme_stylebox_override("panel", _fabric_style())
+	# The imported market art floats on the opaque fabric; a missing or
+	# unreadable image falls back to that same solid fabric.
 	var backing := Panel.new()
+	backing.name = "PanelArt"
 	backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(backing)
 	backing.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -136,9 +164,9 @@ func _ready() -> void:
 	wallet_label = _label("", Vector2(39, 68), Vector2(822, 32), 22, CREAM)
 	status_label = _label("", Vector2(39, 102), Vector2(822, 30), 18, CREAM)
 	for i in range(CARD_COUNT):
-		card_buttons.append(_button("", Vector2(39, 142 + i * 88), Vector2(822, 78), CARD_FABRIC, 20))
-	patch_button = _button("", Vector2(39, 406), Vector2(822, 78), PATCH_FABRIC, 20)
-	leave_button = _button(LEAVE_TEXT, Vector2(39, 498), Vector2(822, 58), EXIT_FABRIC, 24)
+		card_buttons.append(_button("", Vector2(39, 142 + i * 88), CARD_TICKET_SIZE, CARD_FABRIC, 20))
+	patch_button = _button("", Vector2(39, 406), PATCH_TICKET_SIZE, PATCH_FABRIC, 20)
+	leave_button = _button(LEAVE_TEXT, Vector2(39, 498), LEAVE_TICKET_SIZE, EXIT_FABRIC, 24)
 	_wire_previews()
 	_refresh()
 	_focus_initial()
@@ -201,19 +229,28 @@ static func _load_theme() -> Theme:
 	return master.duplicate(true) as Theme
 
 
+## The genuinely opaque sewn fabric behind the imported market art: solid
+## deep-jewel paper with a stitched edge, whether or not that art loads. This
+## is the one alpha-1 backdrop under every label and ticket (VIS-A).
+func _fabric_style() -> StyleBoxFlat:
+	return _style(PLUM, THREAD, 5)
+
+
 func _panel_style() -> StyleBox:
 	if ResourceLoader.exists(PANEL_ART, "Texture2D"):
 		var texture := ResourceLoader.load(PANEL_ART) as Texture2D
 		if texture != null:
 			var style := StyleBoxTexture.new()
 			style.texture = texture
-			style.modulate_color = Color("#635264")
+			style.modulate_color = Color("#5a4272")
 			style.set_texture_margin_all(24)
 			return style
-	return _style(PLUM, THREAD, 5)
+	return _fabric_style()
 
 
-func _style(fill: Color, edge: Color, width: int = 3) -> StyleBoxFlat:
+## Every sewn ticket face carries a clearly readable border: the default
+## width 4 keeps each compact offer visibly edged instead of a flat slab.
+func _style(fill: Color, edge: Color, width: int = 4) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = fill
 	style.border_color = edge

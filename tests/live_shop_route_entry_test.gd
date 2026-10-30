@@ -1156,7 +1156,7 @@ func _run() -> void:
 							effect.contains(rule.get_slice(" ", 0))))
 					display_ok = display_ok and action.tooltip_text.contains(String(offer.id))
 					display_ok = display_ok and action.tooltip_text.contains(rule)
-					display_ok = display_ok and font != null and action.size == Vector2(822, 78)
+					display_ok = display_ok and font != null and action.size == LivePeddlerPanel.CARD_TICKET_SIZE
 					if font != null:
 						for line in lines:
 							display_ok = display_ok and font.get_string_size(line,
