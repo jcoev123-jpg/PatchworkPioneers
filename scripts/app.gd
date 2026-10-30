@@ -840,6 +840,7 @@ const REQUIRED_ROADSIDE_EVENT_IDS := ["v3_raincoat_bridge", "v3_puppet_box_offic
 var wallet_event_panel: LiveEventChoicePanel
 var vital_event_catalog_path := RunV3VitalEventRotation.EVENTS_PATH
 var _vital_event_history: Array = []
+var _vital_event_gate: RunV3HeroVitalEventGate
 var _wallet_event_record: Dictionary = {}
 var _wallet_event_context: Array = []
 var _wallet_event_history: Array = []
@@ -3685,6 +3686,9 @@ func _wallet_event_snapshot() -> Array:
 		_emberglass_gate.is_valid() if _emberglass_gate != null else false,
 		wallet_event_panel._offered_wallet.duplicate(true),
 		wallet_event_panel._offered_snapshot.duplicate(true), _vital_event_history.duplicate(),
+		_vital_event_gate, _vital_event_gate.get_event() if _vital_event_gate != null else {},
+		_vital_event_gate.get_snapshot() if _vital_event_gate != null else {},
+		_vital_event_gate.is_valid() if _vital_event_gate != null else false,
 		_quiet_spool_completed, _moth_completed, _dye_vat_completed]
 
 
@@ -4137,6 +4141,8 @@ func _open_wallet_event(id: String, source: WeakRef) -> bool:
 		return _open_debt_booth(id, source)
 	var vital := _wallet_event_history.size() == 1 and _vital_event_history.is_empty()
 	var snapshot := {}
+	var vital_gate: RunV3HeroVitalEventGate = null
+	var live_warden: Dictionary = {}
 	if vital:
 		var carry := party_carryover as RunTornCarryover
 		if carry == null or carry.read_state().heroes != run_heroes \
@@ -4144,9 +4150,12 @@ func _open_wallet_event(id: String, source: WeakRef) -> bool:
 			return false
 		for hero in run_heroes:
 			if hero.hp > 0:
-				snapshot = {"gold": session_gold, "scraps": run_scraps,
-					"hero": {"id": hero.id, "hp": hero.hp, "max_hp": hero.max_hp}}
-				break
+				if snapshot.is_empty():
+					snapshot = {"gold": session_gold, "scraps": run_scraps,
+						"hero": {"id": hero.id, "hp": hero.hp, "max_hp": hero.max_hp}}
+				if hero.id == "warden":
+					live_warden = {"gold": session_gold, "scraps": run_scraps,
+						"hero": {"id": hero.id, "hp": hero.hp, "max_hp": hero.max_hp}}
 		if snapshot.is_empty():
 			return false
 	# Draw on a detached copy: failed mounting/admission must consume nothing.
@@ -4159,7 +4168,37 @@ func _open_wallet_event(id: String, source: WeakRef) -> bool:
 	if vital:
 		var catalog: Variant = JSON.parse_string(FileAccess.get_file_as_string(vital_event_catalog_path)) \
 			if FileAccess.file_exists(vital_event_catalog_path) else {}
-		selection = RunV3VitalEventRotation.new(catalog).select_event(staged_rng, _vital_event_history)
+		var rotation := RunV3VitalEventRotation.new(catalog)
+		if not rotation.is_catalog_valid():
+			return false
+		var eligible: Array = rotation.get_vital_events()
+		var warden_offers: RunV3HeroVitalEventGate = null
+		if not live_warden.is_empty():
+			var party_ids: Array = []
+			for hero in run_heroes:
+				party_ids.append(hero.id)
+			warden_offers = RunV3HeroVitalEventGate.new(party_ids)
+			if not warden_offers.is_valid():
+				return false
+			for offered in warden_offers.get_offers():
+				if offered.id == "v3_warden_buckle_heart_ward":
+					eligible.append(offered)
+		# Preserve the entire story rotation: append only the authenticated
+		# living-Warden offer, sort by ID and consume one run RNG draw.
+		eligible = eligible.filter(func(event): return not _vital_event_history.has(event.id))
+		eligible.sort_custom(func(a, b): return String(a.id) < String(b.id))
+		if eligible.is_empty():
+			return false
+		var picked: Dictionary = eligible[staged_rng.randi_range(0, eligible.size() - 1)]
+		if picked.id == "v3_warden_buckle_heart_ward":
+			snapshot = live_warden
+			if warden_offers == null:
+				return false
+			vital_gate = warden_offers.enter(picked, snapshot)
+			if vital_gate == null or not vital_gate.is_valid() \
+				or vital_gate.get_event() != picked or vital_gate.get_snapshot() != snapshot:
+				return false
+		selection = {"ok": true, "event": picked}
 	else:
 		selection = _select_generic_event(document, staged_rng)
 	if not selection.ok:
@@ -4194,6 +4233,7 @@ func _open_wallet_event(id: String, source: WeakRef) -> bool:
 		_wallet_event_history.append(record.id)
 	_wallet_event_record = record.duplicate(true)
 	_emberglass_gate = emberglass_gate
+	_vital_event_gate = vital_gate
 	wallet_event_panel = panel
 	_clear_route_view()
 	_wallet_event_context = _wallet_event_snapshot()
@@ -4275,12 +4315,41 @@ func _commit_vital_event(receipt: Dictionary, panel, source: WeakRef) -> void:
 		or not panel._vital_mode or panel._selector == null or not panel._selector.is_claimed() \
 		or panel._committed_choice != receipt:
 		return
-	var expected := RunEventChoice.new(_wallet_event_record).choose_with_vitals(
-		receipt.get("choice_id"), panel._offered_snapshot)
-	if not expected.ok or expected != receipt:
+	# The mounted Warden visit must still be the canonical gate's unclaimed
+	# offer. Rebind its live opening snapshot to a fresh gate at commit time;
+	# a signal or a detached RunEventChoice receipt alone is not authority.
+	var expected: Dictionary
+	if _wallet_event_record.get("id") == "v3_warden_buckle_heart_ward":
+		if _vital_event_gate == null or not _vital_event_gate.is_valid() \
+			or _vital_event_gate.get_event() != _wallet_event_record \
+			or _vital_event_gate.get_snapshot() != panel._offered_snapshot:
+			return
+		var party_ids: Array = []
+		var warden_snapshot: Dictionary = {}
+		for hero in run_heroes:
+			party_ids.append(hero.id)
+			if hero.id == "warden" and hero.hp > 0:
+				warden_snapshot = {"gold": session_gold, "scraps": run_scraps,
+					"hero": {"id": hero.id, "hp": hero.hp, "max_hp": hero.max_hp}}
+		if warden_snapshot.is_empty() or warden_snapshot != panel._offered_snapshot:
+			return
+		var fresh := RunV3HeroVitalEventGate.new(party_ids)
+		if not fresh.is_valid():
+			return
+		var bound := fresh.enter(_wallet_event_record, warden_snapshot)
+		if bound == null or not bound.is_valid():
+			return
+		expected = bound.choose_with_vitals(receipt.get("choice_id"))
+	else:
+		if _vital_event_gate != null:
+			return
+		expected = RunEventChoice.new(_wallet_event_record).choose_with_vitals(
+			receipt.get("choice_id"), panel._offered_snapshot)
+	if not expected.get("ok", false) or expected != receipt:
 		return
 	var carry := party_carryover as RunTornCarryover
-	if carry == null or not carry.apply_vital_event(run_map.get_current_node_id(),
+	if carry == null or carry.read_state().heroes != run_heroes \
+		or not carry.apply_vital_event(run_map.get_current_node_id(),
 		_wallet_event_record, expected, panel._offered_snapshot, carry.read_state(),
 		carry._wardrobe.get_snapshot() if carry._wardrobe != null else null):
 		return
@@ -4302,6 +4371,7 @@ func _clear_wallet_event() -> void:
 		wallet_event_panel.queue_free()
 	wallet_event_panel = null
 	_emberglass_gate = null
+	_vital_event_gate = null
 
 
 func _load_quiet_spool() -> Dictionary:

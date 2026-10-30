@@ -87,6 +87,10 @@ var hit_count := 1
 var hit_damage := -1
 ## True only for a trusted living source's next attack; this never spends the token.
 var blind_miss := false
+## Presentation-only Charge presentation state ("wind_up", "strike", or ""); cleared on every call.
+var charge_state := ""
+var charge_base_damage := -1
+var charge_projected_damage := -1
 ## Empty unless a valid mounted weighted action supplies its real policy.
 var policy_cue := ""
 const POLICY_LABELS := {"front": "Front", "lowest_living_hp": "Aim low HP",
@@ -381,6 +385,14 @@ func compact_caption_forms() -> Array[String]:
 				forms.append("Hit %d A-2" % amount)
 				forms.append("%dA-2→%d" % [amount, target_position])
 				forms.append("%dA-2" % amount)
+			elif charge_state == "wind_up":
+				forms.append("WIND UP → %d" % target_position)
+				forms.append("WIND UP→%d" % target_position)
+				forms.append("WIND UP")
+			elif charge_state == "strike":
+				forms.append("CHARGE %d → %d" % [amount, target_position])
+				forms.append("CHARGE %d→%d" % [amount, target_position])
+				forms.append("CHARGE %d" % amount)
 			else:
 				forms.append("Hit %d → %d" % [amount, target_position])
 				forms.append("Hit %d→%d" % [amount, target_position])
@@ -509,7 +521,8 @@ static func load_icon_texture(path: String) -> Texture2D:
 
 func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		policy: String = "", source_enrage_stacks: int = -1,
-		contact_traits: Dictionary = {}, source_blind: bool = false) -> void:
+		contact_traits: Dictionary = {}, source_blind: bool = false,
+		charge_context: Dictionary = {}) -> void:
 	# Never affect or advance the scheduler: the caller passes a copied announcement.
 	# Only targeted, active, authored actions receive the small policy tag.
 	policy_cue = ""
@@ -519,6 +532,18 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 	hit_count = 1
 	hit_damage = -1
 	blind_miss = false
+	charge_state = ""
+	charge_base_damage = -1
+	charge_projected_damage = -1
+	if not slain and not skip_pending and charge_context is Dictionary \
+			and charge_context.get("valid") == true \
+			and charge_context.get("state") in ["wind_up", "strike"]:
+		var base: Variant = charge_context.get("base_amount")
+		var proj: Variant = charge_context.get("projected_damage")
+		if base is int and base > 0 and proj is int and proj > 0:
+			charge_state = String(charge_context["state"])
+			charge_base_damage = base
+			charge_projected_damage = proj
 	if not slain and not skip_pending and action.get("type") in ["attack", "debuff", "shove", "snip_block"] \
 			and action.get("target_position") in [1, 2, 3] and POLICY_LABELS.has(policy):
 		policy_cue = POLICY_LABELS[policy]
@@ -571,6 +596,14 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 			tip = "Base %d aimed at %s + %d Enrage (%d/3 stacks) = %d attack power BEFORE Weak/Exposed adjustment, Guard redirection and hero Block; not guaranteed HP loss." % [
 				amount, hero_target_label(target_position), enrage_bonus,
 				source_enrage_stacks, amount + enrage_bonus]
+		elif charge_state == "wind_up":
+			readable_text = "WIND UP: %s" % rank_caption(target_position)
+			tip = "Wind Up aimed at %s: this action deals 0 damage now and prepares a strike at floor(%d * 2.5) = %d before status/Block mitigation." % [
+				hero_target_label(target_position), charge_base_damage, charge_projected_damage]
+		elif charge_state == "strike":
+			readable_text = "CHARGE %d: %s" % [amount, rank_caption(target_position)]
+			tip = "Charge strike: %d damage (2.5x base %d) aimed at %s before status/Block mitigation; actual loss may be reduced by Block/Weak/Exposed or redirects." % [
+				amount, charge_base_damage, hero_target_label(target_position)]
 		else:
 			readable_text = "Hit %d: %s" % [amount, rank_caption(target_position)]
 			tip = "%d damage aimed at %s." % [amount, hero_target_label(target_position)]

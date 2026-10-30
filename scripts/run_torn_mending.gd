@@ -166,24 +166,44 @@ func apply_rest(node_id: Variant, expected_heroes: Variant, between_nodes: Varia
 	return _accepted()
 
 
-## Recompute the authored claim against the first living actor and exact ledger.
+## Recompute ordinary vitality against the first living actor; an authenticated
+## Warden-specific vital event instead targets its required living Warden.
 func apply_vital_event(node: Variant, record: Dictionary, receipt: Dictionary,
 		snapshot: Dictionary, expected: Dictionary) -> Dictionary:
 	if not _valid or _defeated or expected != read_state() or not _valid_id(node) \
 		or _used_nodes.has(node):
 		return _rejected()
 	var target := -1
-	for index in range(_heroes.size()):
-		if _heroes[index].hp > 0:
-			target = index
-			break
+	var bound_warden: RunV3HeroVitalEventGate = null
+	if record.get("id") == "v3_warden_buckle_heart_ward":
+		# This authored hero-specific visit settles against the living Warden,
+		# not whichever picked hero happens to stand first in the party.
+		var party_ids: Array = []
+		for hero in _heroes:
+			party_ids.append(hero.id)
+		var canonical := RunV3HeroVitalEventGate.new(party_ids)
+		if not canonical.is_valid():
+			return _rejected()
+		bound_warden = canonical.enter(record, snapshot)
+		if bound_warden == null or not bound_warden.is_valid():
+			return _rejected()
+		for index in range(_heroes.size()):
+			if _heroes[index].id == "warden" and _heroes[index].hp > 0:
+				target = index
+				break
+	else:
+		for index in range(_heroes.size()):
+			if _heroes[index].hp > 0:
+				target = index
+				break
 	if target < 0:
 		return _rejected()
 	var hero: Dictionary = _heroes[target]
 	if snapshot.get("hero") != {"id": hero.id, "hp": hero.hp, "max_hp": hero.max_hp}:
 		return _rejected()
-	var claim := RunEventChoice.new(record).choose_with_vitals(receipt.get("choice_id"), snapshot)
-	if not claim.ok or claim != receipt:
+	var claim: Dictionary = bound_warden.choose_with_vitals(receipt.get("choice_id")) if bound_warden != null else \
+		RunEventChoice.new(record).choose_with_vitals(receipt.get("choice_id"), snapshot)
+	if not claim.get("ok", false) or claim != receipt:
 		return _rejected()
 	_heroes[target].hp = claim.state.hero.hp
 	_heroes[target].max_hp = claim.state.hero.max_hp

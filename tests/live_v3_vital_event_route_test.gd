@@ -18,17 +18,53 @@ func _deny_vital(callback: Callable, why: String) -> void:
 	_check(_vital_state() == before, why + " preserves all state")
 
 
-func _open_sixth(f: Dictionary, negatives: bool) -> LiveEventChoicePanel:
-	await _reach(f)
+## Independent single-draw oracle: the full shipped story IDs plus the one
+## canonical, living-Warden offer. Never call the app's selector.
+func _vital_oracle(rng: RandomNumberGenerator, heroes: Array) -> Dictionary:
+	var records: Array = RunV3VitalEventRotation.new().get_vital_events()
+	var ids: Array = []
+	var living_warden := false
+	for hero in heroes:
+		ids.append(hero.id)
+		if hero.id == "warden" and hero.hp > 0:
+			living_warden = true
+	if living_warden:
+		var gate := RunV3HeroVitalEventGate.new(ids)
+		_check(gate.is_valid(), "independent oracle authenticates shipped hero vital pack")
+		for record in gate.get_offers():
+			if record.id == "v3_warden_buckle_heart_ward":
+				records.append(record)
+	records.sort_custom(func(a, b): return String(a.id) < String(b.id))
+	_check(not records.is_empty(), "vital pool contains genuine authored candidates")
+	return {"ok": true, "event": records[rng.randi_range(0, records.size() - 1)]}
+
+
+func _open_sixth(f: Dictionary, negatives: bool, warden_rear: bool = false) -> LiveEventChoicePanel:
+	await _reach(f, true, ["rag_duelist", "warden", "tinker"] if warden_rear else ["warden", "seamstress", "tinker"])
+	if warden_rear:
+		_check(app.run_heroes[1].id == "warden" and app.run_heroes[0].id != "warden",
+			"real pick-three places required Warden behind another living hero")
 	await _click(_route_action(f.path[4]))
 	var wallet: LiveEventChoicePanel = app.wallet_event_panel
 	_check(is_instance_valid(wallet) and wallet._wallet_mode, "first generic remains actual wallet story")
 	if not is_instance_valid(wallet):
 		return null
-	for button in wallet.get_choice_buttons():
-		if not button.disabled:
-			await _click(button)
+	var opening_choices: Array = wallet._selector.get_event().choices
+	var chosen := false
+	for i in range(opening_choices.size()):
+		if opening_choices[i].id == "leave" and not wallet.get_choice_buttons()[i].disabled:
+			await _click(wallet.get_choice_buttons()[i])
+			chosen = true
 			break
+	if not chosen:
+		for button in wallet.get_choice_buttons():
+			if not button.disabled:
+				await _click(button)
+				chosen = true
+				break
+	_check(chosen and app.wallet_event_panel == null, "fifth Event physically settled before vitality")
+	if not chosen:
+		return null
 	await _traverse_treasures(f, f.next)
 	var entry: Callable = _route_action(f.next).pressed.get_connections()[0].callable
 	if negatives:
@@ -50,7 +86,7 @@ func _open_sixth(f: Dictionary, negatives: bool) -> LiveEventChoicePanel:
 			"illegal route rolls back staged panel and RNG")
 	var rng := RandomNumberGenerator.new()
 	rng.state = app.run_rng.state
-	var expected := RunV3VitalEventRotation.new().select_event(rng)
+	var expected := _vital_oracle(rng, app.run_heroes)
 	await _click(_route_action(f.next))
 	var panel: LiveEventChoicePanel = app.wallet_event_panel
 	_check(is_instance_valid(panel) and app.route_view == null, "sixth Event genuinely mounts and gates route")
@@ -61,19 +97,31 @@ func _open_sixth(f: Dictionary, negatives: bool) -> LiveEventChoicePanel:
 		"shipped sorted pool uses exactly one run RNG draw")
 	var target: Dictionary = {}
 	for hero in app.run_heroes:
-		if hero.hp > 0:
+		if hero.hp > 0 and (not record_id_is_warden(panel) or hero.id == "warden"):
 			target = {"id": hero.id, "hp": hero.hp, "max_hp": hero.max_hp}
 			break
 	_check(not target.is_empty() and panel._offered_snapshot.hero == target,
-		"frontmost living actual hero authenticated")
+		"authored target is live and Warden is selected regardless of position")
+	if record_id_is_warden(panel):
+		_check(app._vital_event_gate != null and app._vital_event_gate.is_valid()
+			and app._vital_event_gate.get_event() == expected.event
+			and app._vital_event_gate.get_snapshot() == panel._offered_snapshot,
+			"real mounted Warden gate binds canonical offer and living hero")
+	else:
+		_check(app._vital_event_gate == null, "ordinary stories retain their ungated service")
 	var style := panel.paper_panel.get_theme_stylebox("panel")
 	_check(style is StyleBoxTexture or style is StyleBoxFlat, "sewn parchment or readable fallback mounted")
 	_deny_vital(entry, "duplicate route signal")
 	return panel
 
 
-func _settle(f: Dictionary, choice_index: int, keyboard: bool, negatives: bool) -> void:
-	var panel := await _open_sixth(f, negatives)
+func record_id_is_warden(panel: LiveEventChoicePanel) -> bool:
+	return panel._selector.get_event().id == "v3_warden_buckle_heart_ward"
+
+
+func _settle(f: Dictionary, choice_index: int, keyboard: bool, negatives: bool,
+		warden_rear: bool = false) -> void:
+	var panel := await _open_sixth(f, negatives, warden_rear)
 	if panel == null:
 		return
 	var record := panel._selector.get_event()
@@ -95,6 +143,14 @@ func _settle(f: Dictionary, choice_index: int, keyboard: bool, negatives: bool) 
 	var choice: Dictionary = record.choices[choice_index]
 	var receipt := RunEventChoice.new(record).choose_with_vitals(choice.id, before)
 	_check(receipt.ok, "real affordable authored claim exists")
+	if record_id_is_warden(panel):
+		_check((choice.id == "reinforce_shield_seam"
+			and int(choice.outcome.gold) == 0 and int(choice.outcome.scraps) == -2
+			and int(choice.outcome.hp) == 0 and int(choice.outcome.max_hp) == 3
+			and before.scraps >= 2) or (choice.id == "sell_rivets"
+			and int(choice.outcome.gold) == 24 and int(choice.outcome.scraps) == 0
+			and int(choice.outcome.hp) == 0 and int(choice.outcome.max_hp) == -2)
+			or choice.id == "leave", "Warden's mounted tickets retain exact authored trade prices")
 	var commit: Callable = panel.vital_choice_committed.get_connections()[0].callable
 	_deny_vital(commit.bind(receipt), "matching intent cannot bypass physical claim")
 	var heroes: Array = app.run_heroes.duplicate(true)
@@ -235,11 +291,47 @@ func _run() -> void:
 		var initial_hp := hp_claims
 		var initial_caps := cap_claims
 		for id in fixtures:
+			# These fifth-stop IDs mount their own dedicated visit, not the
+			# generic wallet parchment required before a vitality slot.
+			if id in ["frayed_debt_parcel", RunFatePinAuction.EVENT_ID]:
+				continue
 			for index in range(3):
 				await _settle(fixtures[id], index, keyboard, hp_claims == 0)
 			if hp_claims > initial_hp and cap_claims > initial_caps:
 				break
 		_check(hp_claims > initial_hp and cap_claims > initial_caps, "mouse/keyboard cover HP and permanent cap outcomes")
+	# A naturally seeded sixth Event must reach the Warden twice: pay the 2
+	# scraps for +3 permanent cap, then trade -2 cap for +24 gold. The same
+	# real button flow proves each exact receipt and onward continuation.
+	var warden_fixture: Dictionary = {}
+	for id in fixtures:
+		if id in ["frayed_debt_parcel", RunFatePinAuction.EVENT_ID]:
+			continue
+		var candidate: Dictionary = fixtures[id]
+		var witness := RandomNumberGenerator.new()
+		witness.state = candidate.after_draw
+		var party := CombatParty.new(app._load_party_definitions()).get_heroes()
+		if _vital_oracle(witness, party).event.id == "v3_warden_buckle_heart_ward":
+			warden_fixture = candidate
+			break
+	_check(not warden_fixture.is_empty(), "genuine seeded map and single RNG draw offer Buckle-Heart")
+	if not warden_fixture.is_empty():
+		var warden_caps := cap_claims
+		for keyboard in [false, true]:
+			await _settle(warden_fixture, 0, keyboard, true, true)
+			await _settle(warden_fixture, 1, keyboard, true, true)
+		_check(cap_claims == warden_caps + 4,
+			"mouse and keyboard really settle Buckle-Heart's +3 and -2 cap trades")
+	var no_warden := CombatParty.new(app._load_party_definitions()).get_heroes()
+	for hero in no_warden:
+		if hero.id == "warden":
+			hero.hp = 0
+	var excluded := RandomNumberGenerator.new()
+	excluded.seed = 399
+	var before_exclusion := excluded.state
+	var excluded_offer := _vital_oracle(excluded, no_warden)
+	_check(excluded_offer.event.id != "v3_warden_buckle_heart_ward"
+		and excluded.state != before_exclusion, "dead Warden excluded from single-draw pool")
 	await _later_wallet()
 	app.free()
 	await _frames()

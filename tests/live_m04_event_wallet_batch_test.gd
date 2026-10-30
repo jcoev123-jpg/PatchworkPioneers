@@ -343,10 +343,35 @@ func _reject_wallet(callback: Callable, label: String) -> void:
 	_check(_wallet_state() == before, label + " preserves wallet, all ledgers, route and RNG")
 
 
-func _reach(fixture: Dictionary, funded: bool = true) -> void:
+## Independent single-draw oracle for the live vitality slot: the full shipped
+## story pool plus, only when the picked Warden is alive, the canonical
+## Buckle-Heart offer the app appends before its one sorted-ID draw. It never
+## calls the app's own selector, so a wrong live pool or extra draw still fails.
+func _vital_selection_id(rng: RandomNumberGenerator) -> String:
+	var ids: Array = RunV3VitalEventRotation.new().get_vital_event_ids()
+	var party_ids: Array = []
+	for hero in app.run_heroes:
+		party_ids.append(hero.id)
+	var living_warden := false
+	for hero in app.run_heroes:
+		if hero.id == "warden" and hero.hp > 0:
+			living_warden = true
+	if living_warden:
+		var gate := RunV3HeroVitalEventGate.new(party_ids)
+		_check(gate.is_valid(), "vitality oracle authenticates the shipped hero vital pack")
+		for record in gate.get_offers():
+			if record.id == "v3_warden_buckle_heart_ward":
+				ids.append(record.id)
+	_check(not ids.is_empty(), "vitality oracle has genuine authored candidates")
+	ids.sort()
+	return ids[rng.randi_range(0, ids.size() - 1)]
+
+
+func _reach(fixture: Dictionary, funded: bool = true,
+		picked: Array = ["warden", "seamstress", "tinker"]) -> void:
 	app.run_seed = fixture.seed
 	await _click(app.start_button)
-	preload("res://tests/party_choice.gd").choose(app)
+	preload("res://tests/party_choice.gd").choose(app, picked)
 	# Title Start mounts the real pick-three screen first (cycle 332); admit the
 	# ordinary three-hero party through its tiles and Continue before expecting a map.
 	preload("res://tests/party_choice.gd").choose(app)
@@ -558,8 +583,7 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 	if not is_instance_valid(second):
 		return []
 	var second_record := second._selector.get_event()
-	var remaining := RunV3VitalEventRotation.new().get_vital_event_ids()
-	var second_id: String = remaining[rng.randi_range(0, remaining.size() - 1)]
+	var second_id := _vital_selection_id(rng)
 	_check(second_record.id == second_id and second_record.id != event_id
 		and app._wallet_event_history == [event_id] and app._vital_event_history == [second_id] and app.run_rng.state == rng.state,
 		"next one-draw selection excludes actual visited generic history")

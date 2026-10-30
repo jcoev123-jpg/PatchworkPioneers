@@ -87,10 +87,11 @@ func _deny_parcel(callback: Callable, message: String) -> void:
 	_check(_parcel_state() == before, message + " preserves route, ledgers and RNG")
 
 
-func _reach(f: Dictionary, _funded: bool = true) -> void:
+func _reach(f: Dictionary, _funded: bool = true,
+		picked: Array = ["warden", "seamstress", "tinker"]) -> void:
 	app.run_seed = f.seed
 	await _click(app.start_button)
-	preload("res://tests/party_choice.gd").choose(app)
+	preload("res://tests/party_choice.gd").choose(app, picked)
 	await _frames()
 	_check(app.run_map != null and app._party_receipt == RunV3PartyAdmission.admit(_party_ids()), "actual canonical three-of-eight admission")
 	for index in range(4):

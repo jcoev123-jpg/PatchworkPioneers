@@ -832,7 +832,11 @@ func _mounted_ram_charge(app) -> void:
 		app.run_seed = 39198
 		_fixture_start(app)
 		await process_frame
-		var mounted: bool = app.deck != null and app.enemies != null 			and app.party != null and app.enemy_intents != null and app.round_flow != null 			and app.enemy_attacks.size() == 2 			and is_instance_valid(app.intent_label) 			and is_instance_valid(app.end_turn_button)
+		var mounted: bool = app.deck != null and app.enemies != null \
+			and app.party != null and app.enemy_intents != null and app.round_flow != null \
+			and app.enemy_attacks.size() == 2 \
+			and is_instance_valid(app.intent_label) \
+			and is_instance_valid(app.end_turn_button)
 		_check(mounted, "AC1 precondition: real seeded Start Run mounts two live actors and a hand")
 		if not mounted:
 			break
@@ -862,8 +866,25 @@ func _mounted_ram_charge(app) -> void:
 			and app.enemy_attacks[0].get("enemy_position") == 1
 			and app.intent_label.text.contains("Enemy 1 -> Hero 1 (Warden): 0 damage")
 			and badge.amount == 0 and badge.source_position == 1
+			and badge.charge_state == "wind_up"
+			and badge.readable_text == "WIND UP: Front"
+			and badge.tooltip_text.contains("deals 0 damage now and prepares a strike at floor(8 * 2.5) = 20 before status/Block mitigation")
+			and badge.tooltip_text.contains("Hero 1 (front)")
 			and not app.enemies.get_enemy(1).has("charge_pending"),
-			"AC1: actual mounted Ram badge and intent label telegraph zero damage")
+			"AC1: actual mounted Ram badge identifies WIND UP aimed at announced hero and hovers 0 now / 20 next")
+		var pre_refresh_snapshot := _snapshot(app)
+		roster._refresh()
+		_check(_snapshot(app) == pre_refresh_snapshot
+			and badge.readable_text == "WIND UP: Front"
+			and badge.charge_state == "wind_up"
+			and app.run_rng.state == start_rng,
+			"AC1: view refresh preserves WIND UP presentation without state or RNG mutation")
+		# Non-charge foe at seat 2 never shows WIND UP or CHARGE.
+		var guard_badge: LiveEnemyIntentBadge = roster._badges[1]
+		_check(guard_badge.charge_state == ""
+			and not guard_badge.readable_text.contains("WIND UP")
+			and not guard_badge.readable_text.contains("CHARGE"),
+			"AC3: non-charge foe never falsely shows WIND UP or CHARGE")
 		# Forged cached amount cannot bypass an unarmed wind-up on End Turn.
 		app.enemy_attacks[0]["amount"] = 8
 		var refused := _snapshot(app)
@@ -874,6 +895,9 @@ func _mounted_ram_charge(app) -> void:
 			"AC3: mounted stale intent refuses End Turn without state or RNG publication")
 		app.enemy_attacks = app.enemy_intents.get_intents()
 		app._refresh_intents()
+		roster._refresh()
+		_check(badge.charge_state == "wind_up" and badge.readable_text == "WIND UP: Front",
+			"AC1: restoring canonical announcement restores WIND UP badge")
 		var hp: int = app.party.get_hero(1).get("hp")
 		var guarded: int = app.party.get_hero(1).get("block")
 		_check(hp == 40 and guarded == 6,
@@ -886,8 +910,19 @@ func _mounted_ram_charge(app) -> void:
 			and app.enemy_attacks[0].get("amount") == 20
 			and app.enemy_attacks[0].get("target_position") == 1
 			and app.intent_label.text.contains("Enemy 1 -> Hero 1 (Warden): 20 damage")
-			and badge.amount == 20,
-			"AC1: actual End Turn commits wind-up, previews stored 20-damage strike next beat")
+			and badge.amount == 20
+			and badge.charge_state == "strike"
+			and badge.readable_text == "CHARGE 20: Front"
+			and badge.tooltip_text.contains("2.5x base 8")
+			and badge.tooltip_text.contains("Hero 1 (front)")
+			and badge.tooltip_text.contains("Block/Weak/Exposed or redirects"),
+			"AC2: actual End Turn commits wind-up, previews stored 20-damage strike with 2.5x hover")
+		var pre_armed_refresh := _snapshot(app)
+		roster._refresh()
+		_check(_snapshot(app) == pre_armed_refresh
+			and badge.readable_text == "CHARGE 20: Front"
+			and badge.charge_state == "strike",
+			"AC2: view refresh preserves CHARGE 20 presentation without model or RNG drift")
 		var armed_rng: int = app.run_rng.state
 		_check(oracle_deck.end_turn() and oracle_deck.start_turn()
 			and oracle_rng.state == armed_rng,
@@ -901,8 +936,11 @@ func _mounted_ram_charge(app) -> void:
 			and not app.enemies.get_enemy(1).has("charge_pending")
 			and app.enemy_attacks[0].get("amount") == 0
 			and app.enemy_attacks[0].get("target_position") == 1
-			and badge.amount == 0,
-			"AC1/2: actual stored strike hits exactly 20 via live pipeline then resets")
+			and badge.amount == 0
+			and badge.charge_state == "wind_up"
+			and badge.readable_text == "WIND UP: Front"
+			and badge.tooltip_text.contains("deals 0 damage now and prepares a strike at floor(8 * 2.5) = 20 before status/Block mitigation"),
+			"AC1/2: actual stored strike hits exactly 20 via live pipeline then resets to WIND UP")
 		_check(oracle_deck.end_turn() and oracle_deck.start_turn()
 			and app.run_rng.state == oracle_rng.state,
 			"AC2: held strike and single-alternative Guard spend no RNG beyond deck draws")
@@ -911,5 +949,59 @@ func _mounted_ram_charge(app) -> void:
 		await process_frame
 	_check(traces.size() == 2 and traces[0] == traces[1],
 		"AC2: starting a fresh mounted fight resets Charge and replays same seed")
+	# AC3: focused negative / precedence presentation checks
+	var test_badge := LiveEnemyIntentBadge.new()
+	test_badge.size = Vector2(LiveEnemyIntentBadge.BADGE_WIDTH, LiveEnemyIntentBadge.BADGE_HEIGHT)
+	# 1. Compact policy ticket: CHARGE 20 and WIND UP produce compact captions with true target
+	test_badge.show_intent({"type": "attack", "amount": 0, "target_position": 1}, false, false, "front", -1, {}, false,
+		{"valid": true, "state": "wind_up", "base_amount": 8, "projected_damage": 20, "target_position": 1})
+	_check(test_badge.readable_text == "WIND UP → 1" and test_badge.charge_state == "wind_up",
+		"AC1: compact policy ticket produces WIND UP → 1")
+	test_badge.show_intent({"type": "attack", "amount": 20, "target_position": 1}, false, false, "front", -1, {}, false,
+		{"valid": true, "state": "strike", "base_amount": 8, "projected_damage": 20, "target_position": 1})
+	_check(test_badge.readable_text == "CHARGE 20 → 1" and test_badge.charge_state == "strike",
+		"AC2: compact policy ticket produces CHARGE 20 → 1")
+	# 2. Slain source: SLAIN wins over charge context
+	test_badge.show_intent({"type": "attack", "amount": 0, "target_position": 1}, true, false, "front", -1, {}, false,
+		{"valid": true, "state": "wind_up", "base_amount": 8, "projected_damage": 20, "target_position": 1})
+	_check(test_badge.readable_text == "SLAIN" and test_badge.charge_state == "" and test_badge.icon_mode == "slain",
+		"AC3: slain source displays SLAIN and never shows WIND UP or CHARGE")
+	# 3. Unravelled (skip pending): UNRAVELLED wins over charge context
+	test_badge.show_intent({"type": "attack", "amount": 0, "target_position": 1}, false, true, "front", -1, {}, false,
+		{"valid": true, "state": "wind_up", "base_amount": 8, "projected_damage": 20, "target_position": 1})
+	_check(test_badge.readable_text == "UNRAVELLED" and test_badge.charge_state == "" and test_badge.icon_mode == "unravelled",
+		"AC3: unravelled skip displays UNRAVELLED and never shows WIND UP or CHARGE")
+	# 4. Blind attack: BLIND · MISS wins and never promises a hit
+	test_badge.show_intent({"type": "attack", "amount": 0, "target_position": 1}, false, false, "front", -1, {}, true,
+		{"valid": true, "state": "wind_up", "base_amount": 8, "projected_damage": 20, "target_position": 1})
+	_check(test_badge.blind_miss and test_badge.readable_text == "BLIND · MISS"
+		and test_badge.tooltip_text.contains("Blind: the entire next attempted attack aimed at Hero 1 (front) will MISS")
+		and test_badge.tooltip_text.contains("No hero HP or Block is lost to this attack")
+		and test_badge.tooltip_text.contains("Without Blind: Wind Up aimed at Hero 1 (front):"),
+		"AC3: blind attack displays BLIND · MISS and does not promise a hit")
+	# 5. Non-attack action on charge foe retains ordinary cue
+	var roster_script = load("res://scripts/live_enemy_roster.gd")
+	var shove_action := {"type": "shove", "amount": 0, "target_position": 1, "direction": 1}
+	_check(roster_script._charge_context(true, {"id": "spindle_ram", "charge": true, "position": 1, "intent": {"target": "front", "actions": [{"weight": 1.0, "action": {"type": "attack", "amount": 8}}]}}, shove_action).is_empty(),
+		"AC3: charge foe shove returns empty charge context")
+	test_badge.show_intent(shove_action, false, false, "front", -1, {}, false, {})
+	_check(test_badge.readable_text == "Shove 1 back" and test_badge.charge_state == "",
+		"AC3: shove retains ordinary presentation on charge foe")
+	# 6. Mismatched pending state rejects fail-closed
+	var ram_spec := {"id": "spindle_ram", "charge": true, "position": 1, "intent": {"target": "front", "actions": [{"weight": 1.0, "action": {"type": "attack", "amount": 8}}]}}
+	var ram_wrong_amount: Dictionary = ram_spec.duplicate(true)
+	ram_wrong_amount["charge_pending"] = {"amount": 999, "target_position": 1}
+	_check(roster_script._charge_context(true, ram_wrong_amount, {"type": "attack", "amount": 20, "target_position": 1}).is_empty(),
+		"AC3: mismatched pending amount rejects charge context")
+	var ram_wrong_target: Dictionary = ram_spec.duplicate(true)
+	ram_wrong_target["charge_pending"] = {"amount": 8, "target_position": 2}
+	_check(roster_script._charge_context(true, ram_wrong_target, {"type": "attack", "amount": 20, "target_position": 1}).is_empty(),
+		"AC3: mismatched pending target rejects charge context")
+	_check(roster_script._charge_context(false, ram_spec, {"type": "attack", "amount": 0, "target_position": 1}).is_empty(),
+		"AC3: untrusted source rejects charge context")
+	# 7. Forged non-zero amount on unarmed charge foe returns empty charge context
+	_check(roster_script._charge_context(true, ram_spec, {"type": "attack", "amount": 8, "target_position": 1}).is_empty(),
+		"AC3: forged non-zero amount on unarmed charge foe returns empty charge context")
+	test_badge.free()
 	app.starter_enemies_path = "user://live_enemy_phase_guard.json"
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(fixture))

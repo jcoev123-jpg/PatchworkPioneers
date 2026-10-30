@@ -499,6 +499,46 @@
         { "id": "buy_stormproof_hem", "text": "Buy stormproof hem tape (spend 21 gold; gain 4 scraps)", "outcome": { "gold": -21, "scraps": 4 } },
         { "id": "leave_stormgate", "text": "Slip through before the wind returns (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_lantern_snail_posthouse",
+      "title": "The Lantern Snail Posthouse",
+      "description": "A plump moss-felt snail carries a posthouse in its shell, stamping letters with an enormous wax seal beneath a warm thimble lantern.",
+      "choices": [
+        { "id": "collect_seal_cuttings", "text": "Gather discarded wax-seal thread (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "buy_postal_spools", "text": "Buy three lantern-wick spools (spend 16 gold; gain 3 scraps)", "outcome": { "gold": -16, "scraps": 3 } },
+        { "id": "leave", "text": "Let the snail carry the letters into the fog", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_velvet_fox_thread_trick",
+      "title": "The Velvet Fox Thread Trick",
+      "description": "A broad-faced oxblood fox puppet fans giant gingham cards, its long velvet tail stitched into a magician's sleeve hiding a little coin purse.",
+      "choices": [
+        { "id": "rethread_trick_cards", "text": "Resew the fox's split card deck (gain 15 gold)", "outcome": { "gold": 15, "scraps": 0 } },
+        { "id": "trade_fox_tassels", "text": "Trade two scrap bundles for the hidden purse (spend 2 scraps; gain 24 gold)", "outcome": { "gold": 24, "scraps": -2 } },
+        { "id": "leave", "text": "Keep your purse closed and watch the fox bow", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_copper_beetle_pulley_bridge",
+      "title": "The Copper Beetle Pulley Bridge",
+      "description": "A squat copper-shelled beetle doll winds a rope bridge with enormous brass-buckle mandibles under a midnight-teal lantern.",
+      "choices": [
+        { "id": "mend_pulley_rope", "text": "Replace two frayed rope bundles (spend 2 scraps; gain 34 gold)", "outcome": { "gold": 34, "scraps": -2 } },
+        { "id": "buy_buckle_offcuts", "text": "Buy three buckle-thread offcuts (spend 19 gold; gain 3 scraps)", "outcome": { "gold": -19, "scraps": 3 } },
+        { "id": "leave", "text": "Cross when the beetle's pulley falls quiet", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_inkblue_swan_raincloak",
+      "title": "The Inkblue Swan Raincloak",
+      "description": "A round inkblue swan ragdoll shelters travellers under one enormous umbrella-shaped quilt wing as brass-button raindrops tick along the hem.",
+      "choices": [
+        { "id": "sew_rain_hem", "text": "Sew the swan's leaky rain hem (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "purchase_rain_thread", "text": "Buy four waterproof thread bundles (spend 21 gold; gain 4 scraps)", "outcome": { "gold": -21, "scraps": 4 } },
+        { "id": "leave", "text": "Walk beyond the swan's quilted shadow", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
