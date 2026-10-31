@@ -679,6 +679,46 @@
         { "id": "trade_rose_seam", "text": "Unpick 1 max HP for the teapot keeper (gain 21 gold)", "outcome": { "gold": 21, "scraps": 0, "hp": 0, "max_hp": -1 } },
         { "id": "leave", "text": "Leave the rose-button lid closed", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_velvet_handbell_nursery",
+      "title": "The Velvet Handbell Nursery",
+      "description": "A plump rose-cloth nurse rocks a cradle made from an enormous velvet handbell, its brass clapper wrapped in warm stitched blankets.",
+      "choices": [
+        { "id": "stitch_crib_hem", "text": "Pay 14 gold to stitch the bell-cradle's warm hem (heal 7 HP; gain 1 max HP)", "outcome": { "gold": -14, "scraps": 0, "hp": 7, "max_hp": 1 } },
+        { "id": "ring_bell_shift", "text": "Keep the heavy bell ringing through the night (lose 5 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the little bell asleep", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_brass_boot_cobbler",
+      "title": "The Brass-Boot Cobbler",
+      "description": "A squat button-eyed cobbler threads enormous moonlit shoelaces through a brass boot as tall as a quilt tent.",
+      "choices": [
+        { "id": "lace_heart_sole", "text": "Spend 2 scraps lacing a lasting heart-sole (+3 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 3 } },
+        { "id": "unpick_old_heel", "text": "Sell the lining from an old heel (lose 1 max HP; gain 21 gold)", "outcome": { "gold": 21, "scraps": 0, "hp": 0, "max_hp": -1 } },
+        { "id": "leave", "text": "Let the brass boot stand untouched", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_blacklace_windup_mouse",
+      "title": "The Blacklace Wind-Up Mouse",
+      "description": "A round stuffed clockwork mouse drags a key larger than its body across black lace, its single amber button eye blinking beside a tiny oil lamp.",
+      "choices": [
+        { "id": "rewind_heart", "text": "Pay 17 gold for a winding-key heart mend (heal 10 HP)", "outcome": { "gold": -17, "scraps": 0, "hp": 10, "max_hp": 0 } },
+        { "id": "trade_stuffing", "text": "Give 4 HP of soft stuffing to oil the gears (gain 18 gold and 1 scrap)", "outcome": { "gold": 18, "scraps": 1, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Allow the mouse to wind itself down", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_glass_button_tidepool",
+      "title": "The Glass-Button Tidepool",
+      "description": "Beneath a midnight-teal pier, a giant translucent glass button shelters a round coral ragdoll gathering glowing silver thread from the tide.",
+      "choices": [
+        { "id": "sew_pearl_socket", "text": "Pay 12 gold and 1 scrap to stitch a pearl socket (heal 2 HP; gain 2 max HP)", "outcome": { "gold": -12, "scraps": -1, "hp": 2, "max_hp": 2 } },
+        { "id": "dive_for_thread", "text": "Dive into the cold tide for shining thread (lose 7 HP; gain 3 scraps)", "outcome": { "gold": 0, "scraps": 3, "hp": -7, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the quiet tidepool unpicked", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
