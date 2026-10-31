@@ -144,7 +144,9 @@ func _run() -> void:
 	await _focused_shortcuts()
 	await _keyboard_negative()
 	await _fail_closed()
-	_check(randi() == expected_draw, "every mounted browse/commit/rejection uses zero global RNG")
+	await _rest_art_ambient()
+	_check(randi() == expected_draw,
+		"every mounted browse/commit/rejection and rest-art motion uses zero global RNG")
 	panel.queue_free()
 	await process_frame
 	_finish()
@@ -410,6 +412,203 @@ func _fail_closed() -> void:
 	await _activate(panel.heal_button, false)
 	_check(intents.size() == 1 and current.read_state() == current_state,
 		"fresh replacement can emit again, with no view-side commit")
+
+
+func _rest_art_ambient() -> void:
+	var art: Texture2D = panel.rest_art_texture
+	_check(art != null and art.resource_path == "res://assets/paper/backgrounds/rest_camp.png",
+		"mounted panel loads the already-present authored rest art")
+	_check(panel.find_children("*", "TextureRect", true, false).is_empty()
+		and panel.find_children("*", "Button", true, false).size() == 2,
+		"decoration lives in the panel canvas, never as an input-receiving node")
+	if art == null:
+		return
+	var baseline := {"scale": 1.0, "offset": Vector2.ZERO}
+	_check(LiveCampfirePanel.rest_art_transform_at(0.0) == baseline
+		and LiveCampfirePanel.rest_art_transform_at(
+			LiveCampfirePanel.REST_ART_BREATH_PERIOD * LiveCampfirePanel.REST_ART_PAN_PERIOD) == baseline,
+		"presentation motion is smooth repetition from and back to the static baseline")
+	var frame := Rect2(Vector2(6, 6), panel.size - Vector2(12, 12))
+	for dims in [Vector2(640, 400), Vector2(880, 600), Vector2(1152, 648), Vector2(2200, 900)]:
+		var covered := true
+		var inside := true
+		for step in range(28):
+			var elapsed := LiveCampfirePanel.REST_ART_BREATH_PERIOD \
+				* LiveCampfirePanel.REST_ART_PAN_PERIOD * float(step) / 27.0
+			var crop := LiveCampfirePanel.rest_art_crop(dims, frame,
+				LiveCampfirePanel.rest_art_transform_at(elapsed))
+			if crop.is_empty():
+				covered = false
+				inside = false
+				continue
+			var dest: Rect2 = crop["rect"]
+			var region: Rect2 = crop["region"]
+			if dest != frame:
+				covered = false
+			if region.position.x < 1.0 or region.position.y < 1.0 \
+					or region.end.x > dims.x - 1.0 or region.end.y > dims.y - 1.0:
+				inside = false
+		_check(covered, "art crop covers the whole sewn frame for image " + str(dims))
+		_check(inside, "no image edge is revealed across the full motion cycle for " + str(dims))
+	var visit := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
+	var saved := visit.read_state()
+	intents.clear()
+	panel.bind(visit)
+	var start := panel.rest_art_transform()
+	_check(start == baseline, "freshly bound mounted visit starts at the exact static baseline")
+	var heal_rect := panel.heal_button.get_global_rect()
+	var leave_rect := panel.leave_button.get_global_rect()
+	var title_rect := panel.title_label.get_global_rect()
+	var hero_rects: Array[Rect2] = []
+	for i in range(3):
+		hero_rects.append(panel.hero_labels[i].get_global_rect())
+	panel.advance_rest_art(2.0)
+	var moved := panel.rest_art_transform()
+	var moved_offset: Vector2 = moved["offset"]
+	_check(float(moved["scale"]) > 1.0
+		and float(moved["scale"]) - 1.0 <= LiveCampfirePanel.REST_ART_BREATH
+		and moved_offset != Vector2.ZERO
+		and moved_offset.length() <= LiveCampfirePanel.REST_ART_PAN.length(),
+		"elapsed presentation time moves only the restrained decorative transform")
+	_check(panel.heal_button.get_global_rect() == heal_rect
+		and panel.leave_button.get_global_rect() == leave_rect
+		and panel.title_label.get_global_rect() == title_rect
+		and panel.hero_labels[0].get_global_rect() == hero_rects[0]
+		and panel.hero_labels[1].get_global_rect() == hero_rects[1]
+		and panel.hero_labels[2].get_global_rect() == hero_rects[2],
+		"buttons, forecasts and their hit rectangles stay stationary under motion")
+	_check(visit.read_state() == saved and intents.is_empty(),
+		"elapsed motion consumes no visit, roster or intent")
+	await _settle()
+	# ProjectSettings accessibility/reduced_motion (default false), restored afterward.
+	var prior: Variant = ProjectSettings.get_setting("accessibility/reduced_motion", false)
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	await _bind(RunCampfireVisit.new(NODE, _party([35, 18, 0])))
+	_check(panel.is_visible_in_tree() and not panel.heal_button.disabled
+		and not panel.leave_button.disabled and panel.heal_button.has_focus()
+		and panel.title_label.text == "CAMPFIRE"
+		and panel.hero_labels[0].text == panel._hero_text(0),
+		"reduced motion still mounts the readable focused actionable panel")
+	panel.advance_rest_art(5.0)
+	_check(panel.rest_art_transform() == baseline,
+		"accessibility/reduced_motion keeps the authored art exactly static")
+	ProjectSettings.set_setting("accessibility/reduced_motion", prior)
+	_check(not panel._reduced_motion_active(), "prior reduced-motion setting restored afterward")
+	# Nullable explicit override for focused tests.
+	await _bind(RunCampfireVisit.new(NODE, _party([35, 18, 0])))
+	panel.advance_rest_art(3.0)
+	_check(panel.rest_art_transform() != baseline, "motion is genuinely live before the override")
+	panel.set_reduced_motion_override(true)
+	_check(panel.rest_art_transform() == baseline,
+		"explicit reduced-motion override restores the exact static baseline")
+	panel.advance_rest_art(4.0)
+	_check(panel.rest_art_transform() == baseline,
+		"no motion accumulates while the explicit override is true")
+	panel.set_reduced_motion_override(null)
+	_check(panel.rest_art_transform() == baseline,
+		"lifted override restarts only from the static baseline")
+	panel.advance_rest_art(2.0)
+	_check(panel.rest_art_transform() != baseline,
+		"motion resumes only through fresh presentation time after the override lifts")
+	# Missing art keeps today's readable static panel without errors.
+	var saved_art: Texture2D = panel.rest_art_texture
+	panel.rest_art_texture = null
+	panel.queue_redraw()
+	await _settle()
+	await _bind(RunCampfireVisit.new(NODE, _party([35, 18, 0])))
+	panel.advance_rest_art(5.0)
+	_check(panel.rest_art_transform() == baseline,
+		"missing art keeps the exact static baseline transform")
+	_check(panel.is_visible_in_tree() and panel.title_label.text == "CAMPFIRE"
+		and panel.hero_labels[0].text == panel._hero_text(0)
+		and panel.hero_labels[1].text == panel._hero_text(1)
+		and panel.hero_labels[2].text == panel._hero_text(2)
+		and not panel.heal_button.disabled and not panel.leave_button.disabled
+		and panel.heal_button.has_focus(),
+		"missing art retains today's readable focused static panel")
+	panel.rest_art_texture = saved_art
+	# close() stops and restores; rebinding another visit restarts from baseline.
+	var closing := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
+	intents.clear()
+	panel.bind(closing)
+	panel.advance_rest_art(6.0)
+	_check(panel.rest_art_transform() != baseline, "art is genuinely moving before close")
+	panel.close()
+	await _settle()
+	_check(panel.rest_art_transform() == baseline
+		and not panel.is_visible_in_tree() and panel.heal_button.disabled
+		and panel.leave_button.disabled and panel.hero_labels[0].text.is_empty(),
+		"close() stops and restores the exact static transform on a closed panel")
+	panel.advance_rest_art(7.0)
+	_check(panel.rest_art_transform() == baseline,
+		"no old motion resumes on the closed panel")
+	var reopened := RunCampfireVisit.new("f07_reopen", _party([12, 18, 21], [37, 27, 23]))
+	intents.clear()
+	panel.bind(reopened)
+	_check(panel.is_visible_in_tree() and not panel.leave_button.disabled
+		and panel.rest_art_transform() == baseline,
+		"rebinding another visit reopens actionable from the exact static baseline")
+	panel.hide()
+	await _settle()
+	_check(panel.rest_art_transform() == baseline,
+		"a hidden panel restores the static baseline")
+	panel.advance_rest_art(3.0)
+	_check(panel.rest_art_transform() == baseline,
+		"hidden panels accumulate no motion")
+	panel.show()
+	_check(panel.rest_art_transform() == baseline,
+		"the shown panel resumes only from the static baseline")
+	await _settle()
+	# One genuine decision still submits exactly one intent while the art animates.
+	var deciding := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
+	var deciding_before := deciding.read_state()
+	intents.clear()
+	panel.bind(deciding)
+	panel.advance_rest_art(4.0)
+	var deciding_heal_rect := panel.heal_button.get_global_rect()
+	var deciding_leave_rect := panel.leave_button.get_global_rect()
+	await _activate(panel.heal_button, false)
+	_check(intents.size() == 1 and intents[0].get("action") == "heal"
+		and intents[0].get("source_visit") == deciding
+		and intents[0].get("node_id") == NODE
+		and intents[0].get("expected_heroes") == deciding_before.heroes,
+		"one real mouse intent submits while the art animates")
+	_check(deciding.read_state() == deciding_before,
+		"ambient motion never commits the visit itself")
+	var deciding_oracle: Dictionary = RunRestRecovery.new(deciding_before.heroes).choose_heal()
+	var deciding_receipt := Controller.submit(deciding, intents[0])
+	_check(deciding_receipt.get("ok") == true and deciding_receipt.get("decision") == "heal"
+		and deciding_receipt.get("heroes") == deciding_oracle.get("heroes")
+		and deciding.read_state().heroes == deciding_oracle.heroes,
+		"the heal receipt stays revive-first floor(30%) capped after the visual addition")
+	_check(not Controller.submit(deciding, intents[0]).get("ok"),
+		"the same heal receipt remains once-only")
+	_check(panel.heal_button.get_global_rect() == deciding_heal_rect
+		and panel.leave_button.get_global_rect() == deciding_leave_rect,
+		"real hit rectangles are unchanged after the decision")
+	# The focused 0 Leave shortcut still submits exactly one free Leave at full health.
+	var keyed := RunCampfireVisit.new(NODE, _party([40, 30, 26]))
+	var keyed_before := keyed.read_state()
+	intents.clear()
+	panel.bind(keyed)
+	await _settle()
+	_check(panel.leave_button.has_focus() and panel.heal_button.disabled
+		and not panel.leave_button.disabled,
+		"full-health party stays focused on the free Leave under motion")
+	await _press(KEY_0)
+	_check(intents.size() == 1 and intents[0].get("action") == "leave"
+		and intents[0].get("source_visit") == keyed
+		and intents[0].get("node_id") == NODE
+		and intents[0].get("expected_heroes") == keyed_before.heroes,
+		"the physical 0 Leave shortcut submits exactly one intent under motion")
+	var keyed_receipt := Controller.submit(keyed, intents[0])
+	_check(keyed_receipt.get("ok") == true and keyed_receipt.get("decision") == "leave"
+		and keyed_receipt.get("heroes") == keyed_before.heroes
+		and keyed.read_state().heroes == keyed_before.heroes
+		and keyed.read_state().status == "left",
+		"the free Leave receipt stays free after the visual addition")
+	_check(not Controller.submit(keyed, intents[0]).get("ok"),
+		"the same Leave receipt remains once-only")
 
 
 func _keyboard_positive() -> void:
