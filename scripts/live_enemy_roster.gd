@@ -246,6 +246,9 @@ class Puppet extends Control:
 	const IDLE_SIDE_OFFSET := 0.55
 	## Playback rate of an authored idle loop strip.
 	const IDLE_LOOP_FPS := 12.0
+	## Web battle textures must fit a conservative 8192-pixel atlas budget; an
+	## oversized valid PNG can otherwise sample as a black rectangle on WebGL.
+	const LOOP_ATLAS_MAX_WIDTH := 8192
 	## Tall artwork stops short of the band top, leaving the column room for its intent
 	## ticket and a status plaque above it instead of hiding the plaque.
 	const ART_HEIGHT_SHARE := 0.62
@@ -658,18 +661,43 @@ class Puppet extends Control:
 		fallback_kind = fallback_kind_for(id)
 		idle_texture = art.get("idle") as Texture2D
 		attack_texture = art.get("attack") as Texture2D
-		idle_frames = loop_frames(art.get("idle_loop") as Texture2D if idle_texture != null else null)
-		attack_frames = loop_frames(art.get("attack_loop") as Texture2D if attack_texture != null else null)
+		idle_frames = loop_frames(art.get("idle_loop") as Texture2D, idle_texture)
+		attack_frames = loop_frames(art.get("attack_loop") as Texture2D, attack_texture)
 		queue_redraw()
 
 	func current_texture() -> Texture2D:
 		return idle_texture
 
-	## Cuts a horizontal strip of square cells into frames; anything else is no loop.
-	static func loop_frames(strip: Texture2D) -> Array[Texture2D]:
+	## A transparent still must never be replaced by an opaque-canvas strip. Check
+	## only eight margin pixels per cell, once at bind time (not during _draw).
+	## Four clear samples accommodate legitimate edge overlap by paper artwork.
+	static func _clear_cell_margin(image: Image, x_origin: int, width: int, height: int) -> bool:
+		var clear := 0
+		for point in [Vector2(0.05, 0.05), Vector2(0.5, 0.05), Vector2(0.95, 0.05),
+				Vector2(0.05, 0.5), Vector2(0.95, 0.5),
+				Vector2(0.05, 0.95), Vector2(0.5, 0.95), Vector2(0.95, 0.95)]:
+			if image.get_pixel(x_origin + mini(int(point.x * width), width - 1),
+					mini(int(point.y * height), height - 1)).a < 0.5:
+				clear += 1
+		return clear >= 4
+
+	## Cuts an optional horizontal square-cell strip. Malformed, oversized or
+	## opaque-backed strips fail closed to the still; attack stills remain usable.
+	static func loop_frames(strip: Texture2D, still: Texture2D) -> Array[Texture2D]:
 		var frames: Array[Texture2D] = []
-		if strip == null or strip.get_height() <= 0 or strip.get_width() % strip.get_height() != 0:
+		if strip == null or still == null or strip.get_height() <= 0 \
+				or strip.get_width() <= 0 or strip.get_width() > LOOP_ATLAS_MAX_WIDTH \
+				or strip.get_width() % strip.get_height() != 0:
 			return frames
+		var image := strip.get_image()
+		var reference := still.get_image()
+		if image == null or image.is_empty() or reference == null or reference.is_empty():
+			return frames
+		if _clear_cell_margin(reference, 0, reference.get_width(), reference.get_height()):
+			for index in range(strip.get_width() / strip.get_height()):
+				if not _clear_cell_margin(image, index * strip.get_height(),
+						strip.get_height(), strip.get_height()):
+					return frames
 		var cell := float(strip.get_height())
 		for index in range(strip.get_width() / strip.get_height()):
 			var frame := AtlasTexture.new()

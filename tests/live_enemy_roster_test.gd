@@ -295,6 +295,8 @@ func _v3_hero_fallbacks(app, presenter) -> void:
 		and host.pose_texture() == loop_art.idle and first_frame is AtlasTexture
 		and later_frame is AtlasTexture and first_frame != later_frame,
 		"a standing hero paints its idle loop while placement still uses the still image")
+	_check(loop_art.get("attack_loop") is Texture2D and host.attack_frames.size() == 12,
+		"the shipped transparent Seamstress attack strip retains its twelve committed frames")
 	_check(host.idle_frame(loop_art.attack) == loop_art.attack,
 		"the committed attack pose is never replaced by a loop frame")
 	# An authored attack swing strip follows the lunge: stance at both ends, strike at its peak.
@@ -338,6 +340,124 @@ func _v3_hero_fallbacks(app, presenter) -> void:
 	_check(_snapshot(app) == state and after_tags == tags
 		and [host.get_global_rect(), other.get_global_rect(), third.get_global_rect()] == targets,
 		"all v3 presentation-only art checks leave combat, RNG, tags and targets untouched")
+
+
+## Black or oversized optional strips may never cover a transparent mounted hero.
+## Prove the authored resources are present before exercising the synthetic cases.
+func _idle_strip_safety(app, presenter) -> void:
+	var warden = presenter.hero_puppet("warden")
+	var tinker = presenter.hero_puppet("tinker")
+	var seamstress = presenter.hero_puppet("seamstress")
+	_check(warden != null and tinker != null and seamstress != null
+		and app.party != null and app.deck != null and app.run_rng != null,
+		"all three authoritative heroes and gameplay services exist on the real battle stage")
+	if warden == null or tinker == null or seamstress == null:
+		return
+	var before: Array = _snapshot(app)
+	var original: Dictionary = presenter.art_for("warden")
+	var original_phase: float = warden.idle_phase
+	var actor_rects: Array[Rect2] = []
+	for puppet in presenter._puppets:
+		actor_rects.append(puppet.get_global_rect())
+	var tag_views: Array = []
+	for label in presenter._hero_tags + presenter._labels:
+		tag_views.append([label.text, label.get_global_rect()])
+	var badge_views: Array = []
+	for badge in presenter._badges:
+		badge_views.append([badge.readable_text, badge.get_global_rect()])
+	var input_rects := [app.hand_view.get_global_rect(), app.end_turn_button.get_global_rect(),
+		app.return_button.get_global_rect(), presenter.panel.get_global_rect()]
+	for hero in [warden, tinker]:
+		var art: Dictionary = presenter.art_for(hero.actor_id)
+		var still := art.get("idle") as Texture2D
+		var strip := art.get("idle_loop") as Texture2D
+		_check(still != null and strip != null and still.get_image() != null
+			and strip.get_image() != null
+			and ROSTER_ART.Puppet._clear_cell_margin(still.get_image(), 0,
+				still.get_width(), still.get_height())
+			and strip.get_width() > ROSTER_ART.Puppet.LOOP_ATLAS_MAX_WIDTH,
+			"the imported transparent Warden/Tinker still and oversize strip actually exist: " + hero.actor_id)
+		_check(hero.current_texture() == still and hero.idle_frames.is_empty()
+			and hero.idle_frame(hero.pose_texture()) == still and hero.posed_image_rect().has_area(),
+			"the mounted Warden/Tinker still is painted instead of an unsafe Web strip: " + hero.actor_id)
+	var seam_art: Dictionary = presenter.art_for("seamstress")
+	_check(seam_art.get("idle") is Texture2D and seam_art.get("idle_loop") is Texture2D
+		and seamstress.idle_frames.size() == 16
+		and seamstress.idle_frame(seamstress.pose_texture()) is AtlasTexture,
+		"the real mounted Seamstress retains all sixteen transparent idle frames")
+	var still_image := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	still_image.fill(Color.TRANSPARENT)
+	still_image.fill_rect(Rect2i(5, 3, 6, 12), Color("b38e6f"))
+	var still := ImageTexture.create_from_image(still_image)
+	var black_image := Image.create(48, 16, false, Image.FORMAT_RGBA8)
+	black_image.fill(Color.BLACK)
+	black_image.set_pixel(7, 7, Color.WHITE)
+	var black_strip := ImageTexture.create_from_image(black_image)
+	warden.bind_actor("warden", {"idle": still, "attack": still, "idle_loop": black_strip})
+	_check(warden.idle_frames.is_empty() and warden.current_texture() == still
+		and warden.idle_frame(warden.pose_texture()) == still
+		and warden.posed_image_rect().has_area(),
+		"opaque-black square-cell strip fails closed to the loaded still, not a drawn fallback")
+	var mixed_image := Image.create(48, 16, false, Image.FORMAT_RGBA8)
+	mixed_image.fill(Color.TRANSPARENT)
+	mixed_image.fill_rect(Rect2i(16, 0, 16, 16), Color.BLACK)
+	var mixed_strip := ImageTexture.create_from_image(mixed_image)
+	warden.bind_actor("warden", {"idle": still, "idle_loop": mixed_strip})
+	_check(warden.idle_frames.is_empty() and warden.idle_frame(still) == still,
+		"one opaque-black frame rejects the whole optional strip, including its good cells")
+	var malformed_image := Image.create(35, 16, false, Image.FORMAT_RGBA8)
+	malformed_image.fill(Color.TRANSPARENT)
+	warden.bind_actor("warden", {"idle": still,
+		"idle_loop": ImageTexture.create_from_image(malformed_image)})
+	_check(warden.idle_frames.is_empty() and warden.idle_frame(still) == still,
+		"non-square-cell art also fails closed to the still")
+	var clear_image := Image.create(48, 16, false, Image.FORMAT_RGBA8)
+	clear_image.fill(Color.TRANSPARENT)
+	for index in range(3):
+		clear_image.fill_rect(Rect2i(index * 16 + 5, 3, 6, 12),
+			Color(0.3 + index * 0.2, 0.4, 0.6, 1.0))
+	var clear_strip := ImageTexture.create_from_image(clear_image)
+	warden.bind_actor("warden", {"idle": still, "attack": still,
+		"idle_loop": clear_strip, "attack_loop": clear_strip})
+	warden.idle_phase = 0.0
+	var first: Texture2D = warden.idle_frame(warden.pose_texture())
+	warden._process(0.1)
+	var later: Texture2D = warden.idle_frame(warden.pose_texture())
+	_check(warden.idle_frames.size() == 3 and first is AtlasTexture
+		and later is AtlasTexture and first != later and warden.current_texture() == still,
+		"valid transparent synthetic strip advances through painted idle frames on live delta")
+	_check(warden.attack_frames.size() == 3 and warden.trigger_attack(0.4)
+		and warden.pose_texture() == still
+		and warden.idle_frame(warden.pose_texture()) is AtlasTexture,
+		"transparent authored attack frames remain available only for a committed attack")
+	warden.cancel_attack()
+	warden.fallen = true
+	_check(warden.idle_frame(warden.pose_texture()) == still,
+		"KO skips idle animation and preserves the fallen still pose")
+	warden.fallen = false
+	warden.bind_actor("warden", {"idle_loop": clear_strip})
+	_check(warden.current_texture() == null and warden.idle_frames.is_empty()
+		and warden.posed_fallback_rect().has_area(),
+		"missing still prevents optional animation and retains the generic drawn fallback")
+	warden.bind_actor("warden", original)
+	warden.idle_phase = original_phase
+	_check(warden.current_texture() == original.get("idle") and warden.idle_frames.is_empty()
+		and warden.actor_id == "warden", "live Warden binding restores its own valid still")
+	var restored_rects: Array[Rect2] = []
+	for puppet in presenter._puppets:
+		restored_rects.append(puppet.get_global_rect())
+	var restored_tags: Array = []
+	for label in presenter._hero_tags + presenter._labels:
+		restored_tags.append([label.text, label.get_global_rect()])
+	var restored_badges: Array = []
+	for badge in presenter._badges:
+		restored_badges.append([badge.readable_text, badge.get_global_rect()])
+	_check(_snapshot(app) == before and restored_rects == actor_rects
+		and restored_tags == tag_views and restored_badges == badge_views
+		and input_rects == [app.hand_view.get_global_rect(),
+			app.end_turn_button.get_global_rect(), app.return_button.get_global_rect(),
+			presenter.panel.get_global_rect()],
+		"unsafe and valid frame checks never move hit targets, tags, inputs or seeded gameplay")
 
 
 ## The source of one indented Puppet method, up to the next method, for draw-path inspection.
@@ -2371,6 +2491,7 @@ func _run() -> void:
 			return
 		if session == 0:
 			await _status_ribbons(app, presenter)
+			_idle_strip_safety(app, presenter)
 			_v3_hero_fallbacks(app, presenter)
 			_caption_legibility(app, presenter)
 		var tick_phase: float = presenter._puppets[0].idle_phase
