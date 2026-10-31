@@ -50,18 +50,29 @@ func _open_sixth(f: Dictionary, negatives: bool, warden_rear: bool = false) -> L
 	if not is_instance_valid(wallet):
 		return null
 	var opening_choices: Array = wallet._selector.get_event().choices
-	var chosen := false
+	var opening_buttons: Array = wallet.get_choice_buttons()
+	# Settle the fifth stop on a genuinely free ticket so the opening wallet
+	# (notably its 2 scraps) is intact for the scrap-priced vitality trades.
+	# Some stories name Leave differently, so accept any authored zero-cost choice
+	# before ever falling back to the first affordable one.
+	var settle_index := -1
 	for i in range(opening_choices.size()):
-		if opening_choices[i].id == "leave" and not wallet.get_choice_buttons()[i].disabled:
-			await _click(wallet.get_choice_buttons()[i])
-			chosen = true
+		if opening_buttons[i].disabled:
+			continue
+		var outcome: Dictionary = opening_choices[i].outcome
+		if opening_choices[i].id == "leave" \
+			or (int(outcome.gold) == 0 and int(outcome.scraps) == 0):
+			settle_index = i
 			break
-	if not chosen:
-		for button in wallet.get_choice_buttons():
-			if not button.disabled:
-				await _click(button)
-				chosen = true
+	if settle_index < 0:
+		for i in range(opening_buttons.size()):
+			if not opening_buttons[i].disabled:
+				settle_index = i
 				break
+	var chosen := false
+	if settle_index >= 0:
+		await _click(opening_buttons[settle_index])
+		chosen = true
 	_check(chosen and app.wallet_event_panel == null, "fifth Event physically settled before vitality")
 	if not chosen:
 		return null
