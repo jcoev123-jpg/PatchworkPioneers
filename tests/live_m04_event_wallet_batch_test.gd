@@ -18,6 +18,7 @@ var fixture_fallback_used := false
 ## When this is non-empty the shipped hint seeds no longer cover that ID; the
 ## failure message names them so a new witness seed can be appended below.
 var fixture_fallback_hits: Array = []
+var _pre_transit_gold: int = -1
 
 
 func _party_ids() -> Array:
@@ -483,6 +484,13 @@ func _reach(fixture: Dictionary, funded: bool = true,
 	_check(app.needle_toll_panel == null and app._needle_toll_completed
 		and _wallet() == {"gold": 0, "scraps": 2 if funded else 0},
 		"Skip resumes routing with the exact original wallet including zero-wallet negatives")
+	# Fund before a genuine Unpicker/Campfire transit opens its guarded snapshot.
+	# Supplying gold after that stop closes would invalidate the route authority.
+	if _pre_transit_gold >= 0:
+		app.session_gold = _pre_transit_gold
+		app._sync_bound_wardrobe(app.party_carryover as RunTornCarryover)
+		app._clear_route_view()
+		app._present_connected_route(weakref(app.run_map))
 	await _traverse_treasures(fixture, fixture.path[4])
 
 
