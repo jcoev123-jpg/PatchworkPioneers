@@ -145,6 +145,7 @@ func _check_seats(picker: LiveV3PartyPicker, picks: Array[String], note: String)
 	_check(hint.text == "Seats: " + "  |  ".join(expected),
 		note + " displayed combat seats exactly match admission")
 	_check(picker.selected_ids() == picks, note + " seat projection retains click order")
+	_check_tile_badges(picker, picks, note)
 	var width := hint.get_theme_font("font").get_string_size(
 		hint.text, HORIZONTAL_ALIGNMENT_LEFT, -1, hint.get_theme_font_size("font_size")).x
 	_check(width <= hint.size.x + 1.0
@@ -152,6 +153,50 @@ func _check_seats(picker: LiveV3PartyPicker, picks: Array[String], note: String)
 		and picker.get_node("PaperPanel/Margins/Body/Foot").get_global_rect().encloses(hint.get_global_rect()),
 		note + " every seat label remains visible in footer")
 
+
+## Tags on the mounted hero buttons must reflect authentic combat seat order,
+## never the number in the independent pick-order caption.
+func _check_tile_badges(picker: LiveV3PartyPicker, picks: Array[String],
+		note: String, active: bool = true) -> void:
+	var receipt := RunV3PartyAdmission.admit(picks)
+	var full: bool = active and receipt.get("ok", false) and receipt.get("hero_ids", []).size() == 3
+	var shown := 0
+	for hero_id in ORDER:
+		var tile := _tile(picker, hero_id)
+		_check(tile != null, note + " tile exists for " + hero_id)
+		if tile == null:
+			continue
+		var face := tile.get_node_or_null("Inset/Stack/Face") as Control
+		var badge := face.get_node_or_null("SeatBadge") as Label if face != null else null
+		_check(badge != null, note + " sewn tag exists on " + hero_id)
+		if badge == null:
+			continue
+		_check(badge.get_parent() == face and face.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and badge.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and badge.focus_mode == Control.FOCUS_NONE,
+			note + " tag and portrait are input-transparent: " + hero_id)
+		_check(badge.get_theme_font_size("font_size") >= 15
+			and badge.get_theme_stylebox("normal") is StyleBoxFlat,
+			note + " tag has readable sewn-felt typography: " + hero_id)
+		var seat: int = receipt["hero_ids"].find(hero_id) if full else -1
+		if seat >= 0:
+			shown += 1
+			var expected := "%d  •  %s" % [seat + 1, POSITION_NAMES[seat].to_upper()]
+			_check(badge.visible and badge.is_visible_in_tree()
+				and badge.text == expected and badge.tooltip_text == expected,
+				note + " real admitted seat " + expected + " on " + hero_id)
+			var printed_width := badge.get_theme_font("font").get_string_size(
+				badge.text, HORIZONTAL_ALIGNMENT_LEFT, -1, badge.get_theme_font_size("font_size")).x
+			_check(printed_width <= badge.size.x - 8.0
+				and face.get_global_rect().encloses(badge.get_global_rect())
+				and not badge.get_global_rect().intersects(
+					tile.get_node("Inset/Stack/MotifLabel").get_global_rect()),
+				note + " legible 1280x720 seat tag fits portrait without covering motif: " + hero_id)
+		else:
+			_check(not badge.visible and badge.text.is_empty() and badge.tooltip_text.is_empty(),
+				note + " no false seat on " + hero_id)
+	_check(shown == (3 if full else 0),
+		note + " exactly three badges for accepted full party, zero otherwise")
 
 func _check_inspection(picker: Control, name: String, motif: String,
 		role: String, signature: String, note: String) -> void:
@@ -206,6 +251,7 @@ func _ids(picker: LiveV3PartyPicker, expected: Array[String], note: String, latc
 	var button: Button = picker.get_node(
 		"PaperPanel/Margins/Body/Foot/ContinueButton")
 	_check(button.disabled == (expected.size() != 3 or latched), note + " Continue gate")
+	_check_tile_badges(picker, expected, note, not latched)
 
 
 ## Check every admitted physical starter occurrence against the shipped
@@ -553,6 +599,85 @@ func _source_rewards(hero_id: String) -> Array[Dictionary]:
 	return expected
 
 
+## Source-driven wording checks keep the published catalog as the numeric
+## oracle, while exercising the human explanation rather than raw JSON keys.
+func _check_reward_effect_copy(expected: Dictionary, text_value: String, note: String) -> void:
+	var effects: Dictionary = expected["effects"]
+	var short_line := str(CardShortRules.describe(expected).get("line", "")).replace(
+		CardShortRules.UNKNOWN_SENTENCE, "").strip_edges()
+	if not short_line.is_empty():
+		_check(text_value.contains(short_line), note + " audited short rules retained")
+	for key in effects:
+		var amount: Variant = effects[key]
+		match str(key):
+			"damage", "block", "block_all", "heal", "weak", "bleed", "exposed", \
+					"unravel", "tangled", "draw", "thorns", "riposte", "energy", \
+					"gain_energy", "self_hp_loss":
+				if amount is int and amount > 0:
+					_check(text_value.contains(str(amount)),
+						note + " authentic positive " + str(key) + " amount")
+			"heal_all":
+				_check(text_value.contains("Heal each living ally %d HP" % amount),
+					note + " party healing is visible")
+			"cleanse_one_debuff_each_ally":
+				_check(text_value.contains("Cleanse one debuff from each living ally"),
+					note + " party cleanse visible")
+			"move_self_forward":
+				_check(text_value.contains("Move yourself %d position(s)" % amount),
+					note + " lunge destination visible")
+			"pull_forward":
+				_check(text_value.contains("Pull the foe %d position(s)" % amount),
+					note + " hooked foe movement visible")
+			"max_hp_loss":
+				_check(text_value.contains("First lose %d maximum HP" % amount),
+					note + " max HP loss before healing")
+			"require_owner_block":
+				_check(text_value.contains("Requires at least %d" % amount),
+					note + " Block eligibility before hit")
+			"spend_owner_block":
+				_check(text_value.contains("Spend %d" % amount),
+					note + " Block spend after prerequisite")
+			"buttons_popped_gain":
+				_check(text_value.contains("%d additional popped button" % amount),
+					note + " successful button gain")
+			"swap_with_target_ally":
+				_check(text_value.contains("Swap positions with the chosen living ally"),
+					note + " chosen-ally swap")
+			"block_per_button_popped":
+				_check(text_value.contains("Gain %d Block for each button previously popped" % amount),
+					note + " non-consuming Block scaling")
+			"damage_per_button_popped":
+				_check(text_value.contains("Deal %d damage per button previously popped" % amount),
+					note + " non-consuming damage scaling")
+			"requires_target_status":
+				_check(text_value.contains("Only affects foes already Tangled"),
+					note + " Unspool condition precedes damage")
+				_check(text_value.find("Only affects") < text_value.find("Deal"),
+					note + " conditional damage is never advertised first")
+			"independent_hits":
+				_check(text_value.contains("Each hit resolves independently"),
+					note + " independent hit condition")
+			"duration":
+				_check(text_value.contains("Lasts "), note + " authored duration")
+			"conditional_damage":
+				_check(amount is Dictionary and text_value.contains(
+					"Empowered hit: %d damage" % amount.get("damage", -1))
+					and text_value.contains("Unravelled OR")
+					and text_value.contains("at least half the current threshold"),
+					note + " all nested Snip predicates and alternative amount")
+			"pinned":
+				if amount is Dictionary:
+					_check(text_value.contains("different hero gains 5 damage")
+						and text_value.contains("before Weak/Exposed")
+						and text_value.contains("same hero does not consume"),
+						note + " nested Pin trigger, timing and one-time consumption")
+			"living_targets_only":
+				_check(text_value.contains("Only living foes"), note + " living-only restriction")
+			"random_target_each_hit":
+				_check(text_value.contains("fresh random living foe for each hit"),
+					note + " independent RNG target per hit")
+
+
 func _check_reward_entry(picker: LiveV3PartyPicker, hero_id: String,
 		index: int, expected: Dictionary) -> void:
 	var note := hero_id + " reward " + str(index + 1)
@@ -566,35 +691,55 @@ func _check_reward_entry(picker: LiveV3PartyPicker, hero_id: String,
 			index + 1, picker._reward_candidates.size(), expected["display_name"],
 			String(expected["rarity"]).capitalize(), expected["cost"]],
 		note + " genuine name, rarity, energy and actual pool index")
-	_check(picker.reward_identity.text == "ID: %s  •  Owner: %s" % [
-			expected["id"], expected["owner"]],
-		note + " actual candidate ID and inspected hero owner")
+	_check(picker.reward_identity.text == "Owner: %s  •  Published card preview" % NAMES[ORDER.find(hero_id)],
+		note + " named owner and honest preview, no raw identity")
 	var from: Array[String] = []
 	var to: Array[String] = []
 	for slot in expected["from_positions"]:
-		from.append(str(slot))
+		from.append("%s (%d)" % [POSITION_NAMES[slot - 1], slot])
 	for slot in expected["to_positions"]:
-		to.append(str(slot))
-	_check(picker.reward_target.text == "From slots %s  •  Target: %s  •  To slots: %s" % [
-		", ".join(from), expected["target_kind"],
-		", ".join(to) if not to.is_empty() else "none"],
-		note + " authentic source and target slots and target kind")
+		to.append("%s (%d)" % [POSITION_NAMES[slot - 1], slot])
+	var recipient := ""
+	match expected["target_kind"]:
+		"enemy_single":
+			recipient = "one foe in " + ", ".join(to)
+		"enemy_all":
+			recipient = "all living foes in " + ", ".join(to)
+		"enemy_back":
+			recipient = "backmost living foe (in " + ", ".join(to) + ")"
+		"enemy_random":
+			recipient = "a random living foe per hit (in " + ", ".join(to) + ")"
+		"self":
+			recipient = "yourself"
+		"ally_single":
+			recipient = "one chosen living ally"
+		"party_all":
+			recipient = "your whole living party"
+		"none":
+			recipient = "no target"
+	_check(picker.reward_target.text == "Play from %s  •  Target: %s" % [
+		", ".join(from), recipient],
+		note + " authentic battle positions and human target kind")
 	var effects: String = picker.reward_effects.text
 	_check(expected["effects"] is Dictionary and not expected["effects"].is_empty()
-		and effects.contains("printed intent, not guaranteed live"),
-		note + " nonvacuous authored effects displayed as non-live promise")
-	for effect_key in expected["effects"]:
-		_check(effects.contains("%s: %s" % [
-			str(effect_key), JSON.stringify(expected["effects"][effect_key])]),
-			note + " precise unguessed authored effect " + str(effect_key))
+		and not effects.is_empty() and not effects.contains("Printed rules:")
+		and not effects.contains("Authored effect fields")
+		and not effects.contains("printed intent")
+		and not effects.contains("JSON")
+		and not effects.contains("target_kind")
+		and not effects.contains(str(expected["id"]))
+		and not picker.reward_identity.text.contains(str(expected["id"]))
+		and not picker.reward_target.text.contains("slots"),
+		note + " player-facing wording without developer field dump or card ID")
+	_check_reward_effect_copy(expected, effects, note)
 	_check(effects == picker.reward_effects.tooltip_text
 		and picker.reward_target.tooltip_text == picker.reward_target.text
 		and picker.reward_identity.tooltip_text == picker.reward_identity.text,
-		note + " complete target and effects exposed without clipping via tooltips")
+		note + " full target and effects in tooltips")
 	_check(picker.reward_scroll.focus_mode == Control.FOCUS_ALL
 		and picker.reward_scroll.get_v_scroll_bar() != null
 		and picker.reward_scroll.size.y >= 40,
-		note + " long authored effects accessible through keyboard and scrolling")
+		note + " keyboard and scrolling still available")
 	var clip := picker.inspection_panel.get_global_rect()
 	_check(clip.encloses(picker.reward_readout.get_global_rect())
 		and clip.encloses(picker.reward_heading.get_global_rect())
@@ -602,7 +747,7 @@ func _check_reward_entry(picker: LiveV3PartyPicker, hero_id: String,
 		and clip.encloses(picker.reward_target.get_global_rect())
 		and clip.encloses(picker.reward_scroll.get_global_rect())
 		and clip.encloses(picker.reward_back.get_global_rect()),
-		note + " heading, ID, slots, scroll and Back stay within visible inspection panel")
+		note + " all reward controls stay inside existing 1280x720 inspection area")
 	_check(picker.selected_ids().is_empty() and picker._seat_receipt.is_empty(),
 		note + " reward inspection never selects heroes or makes a deck")
 
@@ -654,6 +799,33 @@ func _check_all_rewards(picker: LiveV3PartyPicker) -> void:
 		var seen: Array[String] = []
 		for index in range(expected.size()):
 			_check_reward_entry(picker, hero_id, index, expected[index])
+			if hero_id == "tinker" and expected[index]["id"] == "tinker_snip_the_seam":
+				# Long nested conditions must be genuinely reachable with scroll,
+				# both at pointer position and through focused keyboard input.
+				await _frames()
+				var bar := picker.reward_scroll.get_v_scroll_bar()
+				_check(bar.max_value > bar.page,
+					"long conditional Reward Cards prose overflows into scrolling")
+				var mouse_move := InputEventMouseMotion.new()
+				mouse_move.position = picker.reward_scroll.get_global_rect().get_center()
+				root.push_input(mouse_move, true)
+				var wheel := InputEventMouseButton.new()
+				wheel.position = mouse_move.position
+				wheel.button_index = MOUSE_BUTTON_WHEEL_DOWN
+				wheel.pressed = true
+				root.push_input(wheel, true)
+				await _frames()
+				_check(picker.reward_scroll.scroll_vertical > 0,
+					"real mouse-wheel scroll reveals the long nested rule")
+				picker.reward_scroll.scroll_vertical = 0
+				picker.reward_scroll.grab_focus()
+				var pagedown := InputEventKey.new()
+				pagedown.keycode = KEY_PAGEDOWN
+				pagedown.pressed = true
+				root.push_input(pagedown, true)
+				await _frames()
+				_check(picker.reward_scroll.scroll_vertical > 0,
+					"focused keyboard PageDown scrolls the Reward Cards explanation")
 			seen.append(picker._reward_candidates[picker._reward_index]["id"])
 			if index + 1 < expected.size():
 				if hero_id == "seamstress" and index == 0:
@@ -687,6 +859,29 @@ func _check_all_rewards(picker: LiveV3PartyPicker) -> void:
 		_check(not picker._reward_mode and not picker.reward_readout.visible
 			and picker.inspection_starters.visible,
 			hero_id + " Back exits reward browse without selecting hero")
+	# The formatter also fails closed for new effect descriptors and altered
+	# nested predicates, without mutating the genuine catalog definition.
+	var snip := RunPoolCardRewardOffers.resolve_reward_definition("tinker_snip_the_seam")
+	var pristine := snip.duplicate(true)
+	_check(not snip.is_empty() and snip["effects"].has("conditional_damage"),
+		"genuine Snip nested-effect fixture exists")
+	var unknown := snip.duplicate(true)
+	unknown["effects"]["unmapped_spell"] = {"when": [{"mystery": 17}]}
+	var unknown_text: String = picker._reward_effect_line(unknown)
+	_check(unknown_text.contains("Some authored effect details are not fully described.")
+		and not unknown_text.contains("unmapped_spell")
+		and not unknown_text.contains("mystery")
+		and not unknown_text.contains("{"),
+		"unknown nested effect is not shown as raw JSON or promised gameplay")
+	var changed_condition := snip.duplicate(true)
+	changed_condition["effects"]["conditional_damage"]["operator"] = "and"
+	var changed_text: String = picker._reward_effect_line(changed_condition)
+	_check(changed_text.contains("Some authored effect details are not fully described.")
+		and not changed_text.contains("Empowered hit:"),
+		"altered nested predicate does not borrow the canonical empowered claim")
+	_check(snip == pristine
+		and RunPoolCardRewardOffers.resolve_reward_definition("tinker_snip_the_seam") == pristine,
+		"test and browser keep original resolved source definitions unchanged")
 	_check(run_rng.state == state and [requests.size(), cancels] == before_signals
 		and picker.selected_ids().is_empty(),
 		"reward browse rolls no supplied run RNG and emits no request/cancel")
@@ -714,7 +909,7 @@ func _check_all_rewards(picker: LiveV3PartyPicker) -> void:
 	# Back; the old hero and its callbacks cannot leak across hover/focus.
 	await _move_to(_tile(picker, "scarecrow"))
 	_check(picker._kit_hero == "scarecrow" and picker._reward_index == 0
-		and picker.reward_identity.text.contains("Owner: scarecrow"),
+		and picker.reward_identity.text.contains("Owner: Scarecrow"),
 		"hover switches reward browse to new owner and resets index")
 	await _key(picker.reward_back, KEY_SPACE)
 	_check(not picker._reward_mode and picker._reward_candidates.is_empty()
@@ -1010,6 +1205,7 @@ func _run() -> void:
 		"duplicate, canceled and mutation presses ignored after Continue")
 	_ids(picker, ["warden", "tinker", "lantern_monk"], "latched snapshot", true)
 	_check(not hint.text.contains("Seats:"), "latched view no longer advertises an active seat projection")
+	_check_tile_badges(picker, picker.selected_ids(), "latched Continue retires tags", false)
 
 	# Reopening replaces the actual buttons; an old generation cannot inject.
 	var stale := _tile(picker, "warden")
@@ -1045,7 +1241,7 @@ func _run() -> void:
 	await _key(picker.reward_cards_button, KEY_ENTER)
 	await _key(picker.reward_next, KEY_SPACE)
 	_check(picker._reward_mode and picker._reward_index == 1
-		and picker.reward_identity.text.contains("Owner: scarecrow"),
+		and picker.reward_identity.text.contains("Owner: Scarecrow"),
 		"Cancel case also visits nonfirst actual Scarecrow reward")
 	await _key(cancel, KEY_ENTER)
 	_check(cancels == 1 and requests.size() == 1,
@@ -1061,6 +1257,7 @@ func _run() -> void:
 	picker.reward_back.pressed.emit()
 	picker.reward_cards_button.pressed.emit()
 	_check(not picker._kit_mode and not picker._reward_mode, "retired kit navigation cannot reopen on Cancel")
+	_check_tile_badges(picker, picker.selected_ids(), "Cancel removes all final tags", false)
 	cancel.pressed.emit()
 	_tile(picker, "scarecrow").pressed.emit()
 	_check(cancels == 1 and picker.selected_ids() == ["scarecrow"],
@@ -1163,8 +1360,28 @@ func _run() -> void:
 	_check(deck_button.disabled and not deck_view.visible
 		and picker._deck_receipt_rows().is_empty(),
 		"invalid admission gates Inspect Deck with no stale or forged list")
+	_check_tile_badges(picker, picker.selected_ids(), "failed admission removes all seat tags")
 	action.pressed.emit()
 	_check(requests.size() == 2, "failed admission cannot emit party_requested")
+
+	# The two-front tie and two-middle tie witnesses are actual picker clicks,
+	# and their explicit expected seat IDs are independent of rendered captions.
+	picker.open_picker()
+	await _frames()
+	for hero_id in ["button_golem", "rag_duelist", "yarn_ranger"]:
+		await _mouse(_tile(picker, hero_id))
+	_check_seats(picker, ["button_golem", "rag_duelist", "yarn_ranger"],
+		"front tie with back Ranger")
+	_check(picker._seat_receipt.get("hero_ids", []) == ["button_golem", "rag_duelist", "yarn_ranger"],
+		"same preferred-front heroes retain actual click-order tie")
+	picker.open_picker()
+	await _frames()
+	for hero_id in ["lantern_monk", "scarecrow", "warden"]:
+		await _mouse(_tile(picker, hero_id))
+	_check_seats(picker, ["lantern_monk", "scarecrow", "warden"],
+		"picked-middle heroes move behind Warden")
+	_check(picker._seat_receipt.get("hero_ids", []) == ["warden", "lantern_monk", "scarecrow"],
+		"late-picked Warden is actual Front, middle tie keeps click order")
 	picker.open_picker()
 	await _frames()  # New tile geometry must settle before synthesizing pointer events.
 	_ids(picker, [], "failed admission full reopen")
@@ -1257,6 +1474,7 @@ func _live_start_checks() -> void:
 			"forged valid/invalid request and cancel allocate and spend nothing")
 	await _mouse(_tile(view, "warden"))
 	await _key(_tile(view, "tinker"), KEY_SPACE)
+	_check_tile_badges(view, view.selected_ids(), "title Start incomplete selection")
 	view.continue_button.pressed.emit()
 	_check(_opening_state(app) == idle and view.continue_button.disabled,
 		"two picks cannot Continue")
@@ -1284,6 +1502,9 @@ func _live_start_checks() -> void:
 			var retired: Callable = view.party_requested.get_connections()[0].callable
 			for id in trio:
 				await _key(_tile(view, id), KEY_SPACE)
+			var live_picks: Array[String] = []
+			live_picks.assign(trio)
+			_check_tile_badges(view, live_picks, "real title Start picker three-seat display")
 			var admission := RunV3PartyAdmission.admit(trio)
 			_check(admission.ok and view.selected_ids().size() == 3, "nondefault request is canonically admitted")
 			await _key(view.continue_button, KEY_ENTER)

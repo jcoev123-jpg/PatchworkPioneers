@@ -264,6 +264,20 @@ func _layout(visit: RunPatchStallVisit) -> void:
 	_check(screen.encloses(panel.leave_button.get_global_rect()) and
 			panel.leave_button.text == "0 Leave  ·  FREE" and not panel.leave_button.disabled,
 			"free Leave visibly numbered 0 and reachable")
+	_check(panel.status_label.get_theme_font_size("font_size") >= 18
+			and panel.status_label.get_theme_color("font_color").get_luminance() > 0.6
+			and panel.status_label.text == "Choose one patch or Leave.  ·  1-3 Buy / 0 Leave",
+			"footer instructions are readable 18px+ light body copy")
+	_check(panel.get_global_rect().encloses(panel.status_label.get_global_rect())
+			and not panel.status_label.get_global_rect().intersects(panel.leave_button.get_global_rect()),
+			"footer band stays inside the sewn panel and never overlaps Leave")
+	var footer_font: Font = panel.status_label.get_theme_font("font")
+	if footer_font != null:
+		var footer_size := footer_font.get_string_size(panel.status_label.text,
+				HORIZONTAL_ALIGNMENT_LEFT, -1,
+				panel.status_label.get_theme_font_size("font_size"))
+		_check(footer_size.x <= panel.status_label.size.x - 4,
+				"footer instructions fit their band without clipping")
 	var focus_seen: Array = []
 	panel.wearer_buttons[0].grab_focus()
 	for i in range(7):

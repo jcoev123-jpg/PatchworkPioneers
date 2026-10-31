@@ -204,6 +204,7 @@ func _ready() -> void:
 	reward_previous.pressed.connect(_reward_step.bind(-1))
 	reward_next.pressed.connect(_reward_step.bind(1))
 	reward_back.pressed.connect(_reward_back_pressed)
+	reward_scroll.gui_input.connect(_reward_scroll_input)
 	kit_previous.pressed.connect(_kit_step.bind(-1))
 	kit_next.pressed.connect(_kit_step.bind(1))
 	kit_back.pressed.connect(_kit_back_pressed)
@@ -603,32 +604,132 @@ func _reward_card(hero_id: String, index: int) -> Dictionary:
 	return card
 
 
+func _reward_position_names(slots: Array) -> String:
+	var names: Array[String] = []
+	for slot in slots:
+		names.append("%s (%d)" % [POSITION_NAMES[int(slot) - 1], int(slot)])
+	return ", ".join(names)
+
+
 func _reward_target_line(card: Dictionary) -> String:
-	var from: Array[String] = []
-	var to: Array[String] = []
-	for slot in card["from_positions"]:
-		from.append(str(slot))
-	for slot in card["to_positions"]:
-		to.append(str(slot))
-	var positions := ", ".join(to) if not to.is_empty() else "none"
-	return "From slots %s  •  Target: %s  •  To slots: %s" % [
-		", ".join(from), card["target_kind"], positions]
+	var from := _reward_position_names(card["from_positions"])
+	var to := _reward_position_names(card["to_positions"])
+	var recipient := ""
+	match String(card["target_kind"]):
+		"enemy_single":
+			recipient = "one foe in " + to
+		"enemy_all":
+			recipient = "all living foes in " + to
+		"enemy_back":
+			recipient = "backmost living foe (in " + to + ")"
+		"enemy_random":
+			recipient = "a random living foe per hit (in " + to + ")"
+		"self":
+			recipient = "yourself"
+		"ally_single":
+			recipient = "one chosen living ally"
+		"party_all":
+			recipient = "your whole living party"
+		"none":
+			recipient = "no target"
+	return "Play from %s  •  Target: %s" % [from, recipient]
+
+
+## The short-rules formatter covers common combat phrases; these are the
+## additional V3 authored descriptors. Never print raw engine fields or guess
+## what an unrecognized shape would do.
+func _reward_extra_effect(card: Dictionary, key: String, value: Variant) -> String:
+	var effects: Dictionary = card["effects"]
+	if key == "conditional_damage":
+		if value is Dictionary and value.size() == 3 and value.get("damage") is int \
+				and int(value["damage"]) > 0 and value.get("operator") == "or" \
+				and value.get("conditions") is Array and value["conditions"].size() == 2 \
+				and value["conditions"][0] == {"status": "unravelled"} \
+				and value["conditions"][1] == {"gauge": "unravel",
+					"comparison": "at_least_half", "threshold": "current_target_threshold"}:
+			return "Empowered hit: %d damage instead of the base hit if the foe is Unravelled OR its Unravel gauge is at least half the current threshold." % int(value["damage"])
+		return "Some authored effect details are not fully described."
+	if key == "pinned":
+		if value is Dictionary:
+			if value.size() == 6 and value.get("pinner_identity") == "source_hero" \
+					and value.get("trigger") == "next_attack_by_different_hero" \
+					and value.get("bonus_damage") == 5 \
+					and value.get("bonus_timing") == "before_weak_exposed" \
+					and value.get("consume_once") == true \
+					and value.get("same_hero_consumes") == false:
+				return "Pinned: the next attack by a different hero gains 5 damage before Weak/Exposed and consumes the pin once; the same hero does not consume it."
+			return "Some authored effect details are not fully described."
+		if value is bool and value:
+			return ""  # The audited face already names Pin.
+	if key == "heal" and card["target_kind"] == "self" and value is int and value > 0:
+		return "Restore %d HP to yourself, up to your missing HP." % value
+	if key == "heal_all" and value is int and value > 0:
+		return "Heal each living ally %d HP." % value
+	if key == "cleanse_one_debuff_each_ally" and value is int and value == 1:
+		return "Cleanse one debuff from each living ally."
+	if key == "move_self_forward" and value is int and value > 0:
+		return "Move yourself %d position(s) toward Front where space permits." % value
+	if key == "pull_forward" and value is int and value > 0:
+		return "Pull the foe %d position(s) toward Front if the destination is empty." % value
+	if key == "max_hp_loss" and value is int and value > 0:
+		return "First lose %d maximum HP; any healing then uses the reduced maximum." % value
+	if key == "require_owner_block" and value is int and value > 0:
+		return "Requires at least %d of your own Block before playing." % value
+	if key == "spend_owner_block" and value is int and value > 0:
+		return "Spend %d of your own Block when this resolves." % value
+	if key == "buttons_popped_gain" and value is int and value > 0:
+		return "After a successful hit, count %d additional popped button(s) this combat." % value
+	if key == "swap_with_target_ally" and value is bool and value:
+		return "Swap positions with the chosen living ally."
+	if key == "block_per_button_popped" and value is int and value > 0:
+		return "Gain %d Block for each button previously popped this combat (no buttons consumed)." % value
+	if key == "damage_per_button_popped" and value is int and value > 0:
+		return "Deal %d damage per button previously popped this combat (no buttons consumed)." % value
+	if key == "requires_target_status" and value is String and value == "tangled":
+		return "Only affects foes already Tangled."
+	if key == "independent_hits" and value is bool and value \
+			and effects.get("hit_count") is int and int(effects["hit_count"]) > 0:
+		return "Each hit resolves independently."
+	if key == "duration":
+		if value is int and value > 0:
+			return "Lasts %d turn(s)." % value
+		if value is String and value == "until_next_turn":
+			return "Lasts until your next turn."
+	if key == "living_targets_only" and value is bool and value:
+		return "Only living foes are affected."
+	if key == "random_target_each_hit" and value is bool and value:
+		return "Choose a fresh random living foe for each hit."
+	if key == "rng_source" and value is String and value == "run":
+		return ""  # Never expose internal run RNG ownership as a card rule.
+	if key in CardShortRules.KNOWN_EFFECT_KEYS:
+		return ""
+	return "Some authored effect details are not fully described."
 
 
 func _reward_effect_line(card: Dictionary) -> String:
-	# The raw authored values (including nested predicates) are printed
-	# verbatim. CardShortRules adds only its audited short *printed* wording.
-	var parts: Array[String] = []
+	var effects: Dictionary = card["effects"]
 	var description := CardShortRules.describe(card)
-	var short_line: String = str(description.get("line", ""))
+	var parts: Array[String] = []
+	# Costs and conditions appear before the damage line, never as footnotes.
+	for key in ["require_owner_block", "requires_target_status", "spend_owner_block"]:
+		if effects.has(key):
+			parts.append(_reward_extra_effect(card, key, effects[key]))
+	var short_line: String = str(description.get("line", "")).replace(
+		CardShortRules.UNKNOWN_SENTENCE, "").strip_edges()
 	if not short_line.is_empty():
-		parts.append("Printed rules: " + short_line)
-	parts.append("Authored effect fields (printed intent, not guaranteed live):")
-	for key in card["effects"]:
-		parts.append("%s: %s" % [str(key), JSON.stringify(card["effects"][key])])
-	if (card["effects"] as Dictionary).is_empty() or description.get("unknown", false):
-		parts.append("Other authored effect semantics: Unavailable.")
-	return "\n".join(parts)
+		parts.append(short_line)
+	for key in effects:
+		if key in ["require_owner_block", "requires_target_status", "spend_owner_block"]:
+			continue
+		var detail := _reward_extra_effect(card, str(key), effects[key])
+		if not detail.is_empty() and not parts.has(detail):
+			parts.append(detail)
+	if effects.is_empty() or description.get("unknown", false):
+		var warning := "Some authored effect details are not fully described."
+		if not parts.has(warning):
+			parts.append(warning)
+	return "
+".join(parts)
 
 
 func _show_reward() -> void:
@@ -647,7 +748,7 @@ func _show_reward() -> void:
 		reward_heading.text = "REWARD %d / %d  •  %s  •  %s  •  %d EN" % [
 			_reward_index + 1, _reward_candidates.size(), card["display_name"],
 			String(card["rarity"]).capitalize(), card["cost"]]
-		reward_identity.text = "ID: %s  •  Owner: %s" % [card["id"], card["owner"]]
+		reward_identity.text = "Owner: %s  •  Published card preview" % String(card["owner"]).replace("_", " ").capitalize()
 		reward_target.text = _reward_target_line(card)
 		reward_effects.text = _reward_effect_line(card)
 	for label in [reward_heading, reward_identity, reward_target, reward_effects]:
@@ -686,6 +787,29 @@ func _reward_step(delta: int) -> void:
 		reward_previous.grab_focus()
 	elif delta < 0 and reward_previous.disabled:
 		reward_next.grab_focus()
+
+
+func _reward_scroll_input(event: InputEvent) -> void:
+	if not _open or _latched or not _reward_mode or not reward_scroll.has_focus() \
+			or not event is InputEventKey:
+		return
+	var key: InputEventKey = event
+	if not key.pressed or key.echo or key.ctrl_pressed or key.alt_pressed or key.meta_pressed:
+		return
+	var delta := 0
+	match key.keycode:
+		KEY_PAGEDOWN:
+			delta = maxi(20, int(reward_scroll.size.y * 0.75))
+		KEY_PAGEUP:
+			delta = -maxi(20, int(reward_scroll.size.y * 0.75))
+		KEY_DOWN:
+			delta = 20
+		KEY_UP:
+			delta = -20
+		_:
+			return
+	reward_scroll.scroll_vertical += delta
+	reward_scroll.accept_event()
 
 
 func _reward_back_pressed() -> void:
@@ -922,9 +1046,24 @@ func _refresh() -> void:
 	reward_cards_button.disabled = not _open or _latched or (_hovered_id.is_empty() and _focused_id.is_empty() and not _reward_mode)
 	if inspect_deck_button.disabled:
 		_deck_mode = false
+	# Only the successful admission receipt allocates combat positions. Pick
+	# numbers below are selection order, which may be different from a seat.
+	var admitted_seats: Dictionary = {}
+	if _seat_receipt.get("ok", false) and _seat_receipt.get("hero_ids", []).size() == 3:
+		for index in range(3):
+			admitted_seats[_seat_receipt["hero_ids"][index]] = index + 1
 	for definition in HEROES:
 		var hero_id: String = definition["id"]
 		var tile: Button = _tiles[hero_id]
+		var badge: Label = tile.get_node("Inset/Stack/Face/SeatBadge")
+		badge.hide()
+		badge.text = ""
+		badge.tooltip_text = ""
+		if admitted_seats.has(hero_id):
+			var seat: int = admitted_seats[hero_id]
+			badge.text = "%d  •  %s" % [seat, POSITION_NAMES[seat - 1].to_upper()]
+			badge.tooltip_text = badge.text
+			badge.show()
 		var number := _ids.find(hero_id) + 1
 		tile.disabled = not _open or _latched
 		tile.get_node("Inset/Stack/PickLabel").text = (
@@ -1036,6 +1175,30 @@ func _mount_tile(definition: Dictionary, generation: int) -> void:
 	motif.add_theme_font_size_override("font_size", 13)
 	motif.add_theme_color_override("font_color", Color(definition["thread"]))
 	motif.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var badge := Label.new()
+	badge.name = "SeatBadge"
+	badge.anchor_left = 1.0
+	badge.anchor_right = 1.0
+	badge.anchor_top = 1.0
+	badge.anchor_bottom = 1.0
+	badge.offset_left = -124.0
+	badge.offset_right = -8.0
+	badge.offset_top = -29.0
+	badge.offset_bottom = -4.0
+	badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.focus_mode = Control.FOCUS_NONE
+	badge.add_theme_color_override("font_color", CREAM)
+	badge.add_theme_font_size_override("font_size", 15)
+	var sewn_felt := StyleBoxFlat.new()
+	sewn_felt.bg_color = Color("#222735ef")
+	sewn_felt.border_color = STITCH
+	sewn_felt.set_border_width_all(2)
+	sewn_felt.set_corner_radius_all(5)
+	badge.add_theme_stylebox_override("normal", sewn_felt)
+	badge.hide()
+	face.add_child(badge)
 	stack.add_child(motif)
 
 	var pick := Label.new()

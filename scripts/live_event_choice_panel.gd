@@ -56,6 +56,12 @@ const CUE_INK := Color("#3a2c22")
 ## so they belong to the open parchment. Body labels (story, ticket actions,
 ## impacts and forecasts) stay in the inherited Patrick Hand face.
 const DISPLAY_VARIATION := "PatchHeading"
+## The open parchment reads as one coherent column, centred inside the sewn sheet:
+## the story, any payer selector / forecast caption and the authored tickets share
+## this bounded measure instead of hugging the parchment's left edge. The bound
+## keeps long paragraphs and wide 1280x720 paper at a readable line length, and it
+## is a maximum only: a narrower viewport just uses all of its width.
+const MAX_COLUMN_WIDTH := 680.0
 
 signal choice_committed(event_id: String, choice_id: String)
 ## Emits exactly one detached RunEventChoice receipt on a successful wallet
@@ -69,16 +75,18 @@ signal wallet_choice_committed(result: Dictionary)
 signal vital_choice_committed(result: Dictionary)
 
 @onready var paper_panel: PanelContainer = $PaperPanel
+@onready var content_margin: MarginContainer = $PaperPanel/ContentMargin
 @onready var backdrop_art: TextureRect = $EventBackdrop
 @onready var scroll_stack: VBoxContainer = $PaperPanel/ContentMargin/ScrollStack
 @onready var story_scroll: ScrollContainer = $PaperPanel/ContentMargin/ScrollStack/StoryScroll
-@onready var event_content: VBoxContainer = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent
+@onready var column_margin: MarginContainer = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/ColumnMargin
+@onready var event_content: VBoxContainer = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/ColumnMargin/EventContent
 @onready var scroll_hint: Label = $PaperPanel/ContentMargin/ScrollStack/ScrollHint
-@onready var title_label: Label = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent/EventTitle
-@onready var description_label: Label = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent/EventDescription
-@onready var choices_container: VBoxContainer = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent/Choices
-@onready var top_stitches: Label = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent/TopStitches
-@onready var bottom_stitches: Label = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/EventContent/BottomStitches
+@onready var title_label: Label = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/ColumnMargin/EventContent/EventTitle
+@onready var description_label: Label = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/ColumnMargin/EventContent/EventDescription
+@onready var choices_container: VBoxContainer = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/ColumnMargin/EventContent/Choices
+@onready var top_stitches: Label = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/ColumnMargin/EventContent/TopStitches
+@onready var bottom_stitches: Label = $PaperPanel/ContentMargin/ScrollStack/StoryScroll/ColumnMargin/EventContent/BottomStitches
 
 var _selector: RunEventChoice = null
 var needle_payer: OptionButton
@@ -273,6 +281,7 @@ func _resolve_event_backdrop(art_path: String) -> Texture2D:
 func _fit_parchment() -> void:
 	if not is_node_ready():
 		return
+	_fit_column()
 	var inner_height := event_content.get_combined_minimum_size().y
 	var paper_insets := paper_panel.get_theme_stylebox("panel").get_minimum_size().y
 	paper_insets += 26.0 + 24.0 # ContentMargin's authored paper insets.
@@ -290,6 +299,46 @@ func _fit_parchment() -> void:
 	# Scrollbars are still usable with a wheel, swipe, keyboard or focus. The
 	# hint also makes the long-story affordance obvious on 1280x720.
 	story_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO if needs_scroll else ScrollContainer.SCROLL_MODE_DISABLED
+
+
+## Centres one bounded story column inside the sewn sheet: equal horizontal paper
+## margins around the EventContent stack, so the title, story, payer controls and
+## tickets all share the same readable measure instead of filling only the left
+## third of the parchment. The measure comes from the sheet's own live anchors and
+## its real stylebox/margin insets, never from the content's minimum width: a long
+## unbroken caption therefore cannot feed back into a growing column. Ordinary
+## offerings keep their natural content height; this only sets two margins.
+func _fit_column() -> void:
+	if not is_node_ready():
+		return
+	var available := _parchment_inner_width()
+	if available <= 0.0:
+		return
+	var column := minf(available, MAX_COLUMN_WIDTH)
+	var pad := int(floorf(maxf(0.0, (available - column) * 0.5)))
+	if column_margin.get_theme_constant("margin_left") != pad:
+		column_margin.add_theme_constant_override("margin_left", pad)
+	if column_margin.get_theme_constant("margin_right") != pad:
+		column_margin.add_theme_constant_override("margin_right", pad)
+
+
+## The parchment's real inner width: its anchored width from the scene, less the
+## sewn stylebox's own content inset and the ContentMargin's authored paper insets,
+## less a vertical scrollbar that is actually showing. It reads live nodes and
+## theme values only, so it stays responsive and cannot be inflated by content.
+func _parchment_inner_width() -> float:
+	var width := size.x * (paper_panel.anchor_right - paper_panel.anchor_left) \
+		+ (paper_panel.offset_right - paper_panel.offset_left)
+	var style := paper_panel.get_theme_stylebox("panel")
+	if style != null:
+		width -= style.content_margin_left + style.content_margin_right
+	if is_instance_valid(content_margin):
+		width -= content_margin.get_theme_constant("margin_left") \
+			+ content_margin.get_theme_constant("margin_right")
+	var bar := story_scroll.get_v_scroll_bar()
+	if bar != null and bar.is_visible_in_tree():
+		width -= bar.size.x
+	return width
 
 
 ## Displays a detached authored offering; refuses invalid records and refuses
@@ -434,7 +483,9 @@ func _mount_vital_offering(offered: RunEventChoice, snapshot: Dictionary, previe
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.focus_mode = Control.FOCUS_ALL if can_take else Control.FOCUS_NONE
 		button.mouse_filter = Control.MOUSE_FILTER_STOP
-		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if String(choice["text"]).length() > 120 else TextServer.AUTOWRAP_OFF
+		# Every ticket wraps inside the centred column: a long authored action can
+		# never widen the parchment or be clipped at its edge.
+		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_style_choice_button(button)
 		button.add_theme_font_size_override("font_size", 18)
 		button.disabled = not can_take
@@ -564,7 +615,9 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.focus_mode = Control.FOCUS_ALL
 		button.mouse_filter = Control.MOUSE_FILTER_STOP
-		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if String(choice["text"]).length() > 120 else TextServer.AUTOWRAP_OFF
+		# Every ticket wraps inside the centred column: a long authored action can
+		# never widen the parchment or be clipped at its edge.
+		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_style_choice_button(button)
 		if wallet_mode:
 			var forecast: Dictionary = (previews[i] as Dictionary).duplicate(true)

@@ -1958,21 +1958,141 @@ func _test_ram_charge_fail_closed() -> void:
 		and fresh.get_enemies() == before_enemies and party.get_heroes() == before_heroes,
 		"AC3: stale unarmed eight-damage intent cannot bypass the telegraph")
 
+	# AC1: Real Spindle Ram with Blind 1 retains Blind and stores charge_pending on unarmed Charge wind-up
 	var blind_party := _party()
-	var blind := CombatEnemies.new([ram])
-	blind._enemies[0]["statuses"] = {"blind_next_attack": 1}
-	var miss := phase.execute_phase(blind_party, blind, solo, null, true)
-	_check(miss.get("ok") and miss.get("events", [])[0].get("applied") == false
-		and blind_party.get_hero(1).get("hp") == 40
-		and not blind.get_enemy(1).has("charge_pending")
-		and not blind.get_enemy(1).get("statuses", {}).has("blind_next_attack"),
-		"AC3: Blind consumes attempted wind-up without arming or damaging")
-	# Arm a fresh living source, then Blind its held strike.
+	_check(blind_party.gain_block(1, 6), "AC1 precondition: Warden carries 6 opening Block")
+	var blind_heroes_before := blind_party.get_heroes()
+	var blind_enemies := CombatEnemies.new([ram])
+	blind_enemies._enemies[0]["statuses"] = {"blind_next_attack": 1}
+	var blind_scheduler := CombatEnemyIntents.new([{"enemy_position": 1,
+		"pattern": [{"type": "block", "amount": 1}]}])
+	var blind_rng := RandomNumberGenerator.new()
+	blind_rng.seed = 690
+	_check(blind_scheduler.bind_battle(blind_enemies, blind_party, blind_rng),
+		"AC1 precondition: genuine Ram bound with seeded scheduler")
+	var announced_windup := blind_scheduler.get_intents()
+	_check(announced_windup.size() == 1 and announced_windup[0] == {"type": "attack",
+		"amount": 0, "target_position": 1, "enemy_position": 1},
+		"AC1: battle-bound scheduler announces actual unarmed Charge {type: attack, amount: 0, target_position: 1}")
+	var blind_rng_before := blind_rng.state
+	var warden_record: Dictionary = blind_party._heroes[0]
+	var ram_record: Dictionary = blind_enemies._enemies[0]
+	var windup_res := phase.execute_phase(blind_party, blind_enemies, announced_windup, null, true)
+	_check(windup_res == {"ok": true, "events": [{"type": "wind_up", "enemy_position": 1,
+		"target_position": 1, "damage": 0, "applied": true}]},
+		"AC1: unarmed Charge executes staged wind_up event with damage 0")
+	_check(blind_party.get_heroes() == blind_heroes_before
+		and blind_party.get_hero(1)["hp"] == 40 and blind_party.get_hero(1)["block"] == 6
+		and blind_enemies.get_enemy(1).get("charge_pending") == {"amount": 8, "target_position": 1}
+		and blind_enemies.get_enemy(1).get("statuses", {}) == {"blind_next_attack": 1}
+		and blind_rng.state == blind_rng_before,
+		"AC1: wind-up skips damage, arms charge_pending {amount: 8, target_position: 1}, retains Blind 1, no HP/Block/RNG change")
+	_check(is_same(blind_party._heroes[0], warden_record) and is_same(blind_enemies._enemies[0], ram_record),
+		"AC1: hero and enemy dictionary identities preserved")
+	# Independently prove CombatStatuses / CombatStatusTurnBatch retains one-shot Blind across enemy owner-turn boundary
+	var ticked := CombatStatusTurnBatch.new().tick_side("enemies", blind_enemies.get_enemies())
+	_check(ticked.get("ok", false)
+		and ticked["actors"][0].get("statuses", {}) == {"blind_next_attack": 1},
+		"AC1: CombatStatusTurnBatch retains one-shot Blind across enemy owner-turn boundary")
+
+	# AC2: Authentic armed follow-up announces 20, Blind consumes and cancels the entire strike
+	_check(blind_scheduler.advance_turn() and blind_rng.state == blind_rng_before,
+		"AC2: advancing genuine scheduler consumes no extra run RNG")
+	var announced_strike := blind_scheduler.get_intents()
+	_check(announced_strike.size() == 1 and announced_strike[0] == {"type": "attack",
+		"amount": 20, "target_position": 1, "enemy_position": 1},
+		"AC2: genuine scheduler announces floor(8 * 2.5) = 20 charged attack")
+	var strike_res := phase.execute_phase(blind_party, blind_enemies, announced_strike, null, true)
+	_check(strike_res == {"ok": true, "events": [{"type": "attack", "enemy_position": 1,
+		"target_position": 1, "applied": false}]},
+		"AC2: still-active Blind makes entire attempted 20-damage strike miss (applied: false)")
+	_check(blind_party.get_heroes() == blind_heroes_before
+		and blind_party.get_hero(1)["hp"] == 40 and blind_party.get_hero(1)["block"] == 6
+		and not blind_enemies.get_enemy(1).has("charge_pending")
+		and not blind_enemies.get_enemy(1).get("statuses", {}).has("blind_next_attack")
+		and blind_rng.state == blind_rng_before,
+		"AC2: miss consumes Blind and charge_pending latch exactly once, no hero HP/Block or RNG change")
+
+	# AC2: Subsequent Ram attack must begin another WIND UP rather than replaying 20 damage
+	_check(blind_scheduler.advance_turn() and blind_rng.state == blind_rng_before,
+		"AC2: advancing scheduler after blinded strike consumes no RNG")
+	var turn3_intents := blind_scheduler.get_intents()
+	_check(turn3_intents.size() == 1 and turn3_intents[0] == {"type": "attack",
+		"amount": 0, "target_position": 1, "enemy_position": 1},
+		"AC2: subsequent attack begins another WIND UP (amount 0) rather than replaying 20 damage")
+	var turn3_res := phase.execute_phase(blind_party, blind_enemies, turn3_intents, null, true)
+	_check(turn3_res.get("ok", false) and turn3_res.get("events", [])[0].get("type") == "wind_up"
+		and blind_enemies.get_enemy(1).get("charge_pending") == {"amount": 8, "target_position": 1},
+		"AC2: subsequent attack executes as WIND UP and re-arms charge_pending")
+
+	# AC2: Unblinded Ram 0 -> 20 cycle to ensure neither damage nor scaling regresses
+	var unblind_party := _party()
+	var unblind_enemies := CombatEnemies.new([ram])
+	var unblind_scheduler := CombatEnemyIntents.new([{"enemy_position": 1,
+		"pattern": [{"type": "block", "amount": 1}]}])
+	var unblind_rng := RandomNumberGenerator.new()
+	unblind_rng.seed = 693
+	_check(unblind_scheduler.bind_battle(unblind_enemies, unblind_party, unblind_rng),
+		"unblinded Ram binds battle")
+	var unblind_w1 := unblind_scheduler.get_intents()
+	_check(unblind_w1[0].get("amount") == 0, "unblinded Ram announces 0")
+	var unblind_res1 := phase.execute_phase(unblind_party, unblind_enemies, unblind_w1, null, true)
+	_check(unblind_res1.get("ok") and unblind_res1["events"][0]["type"] == "wind_up"
+		and unblind_party.get_hero(1)["hp"] == 40
+		and unblind_enemies.get_enemy(1).get("charge_pending") == {"amount": 8, "target_position": 1},
+		"unblinded Ram winds up 0, deals 0 damage, and arms 8")
+	_check(unblind_scheduler.advance_turn(), "advance unblinded Ram")
+	var unblind_w2 := unblind_scheduler.get_intents()
+	_check(unblind_w2[0].get("amount") == 20, "unblinded Ram announces 20")
+	var unblind_res2 := phase.execute_phase(unblind_party, unblind_enemies, unblind_w2, null, true)
+	_check(unblind_res2.get("ok") and unblind_res2["events"][0]["applied"] == true
+		and unblind_party.get_hero(1)["hp"] == 20
+		and not unblind_enemies.get_enemy(1).has("charge_pending"),
+		"unblinded Ram strike delivers 20 damage (Warden 40 -> 20 HP) and clears charge_pending")
+
+	# AC2: Legacy floor-scaled 9 -> 22 charge witness
+	var scaled_party := _party()
+	var scaled_ram: Dictionary = ram.duplicate(true)
+	scaled_ram["intent"] = RunDifficulty.scale_intent(scaled_ram["intent"], 1)
+	var scaled_enemies := CombatEnemies.new([scaled_ram])
+	var scaled_scheduler := CombatEnemyIntents.new([{"enemy_position": 1,
+		"pattern": [{"type": "block", "amount": 1}]}])
+	var scaled_rng := RandomNumberGenerator.new()
+	scaled_rng.seed = 694
+	_check(scaled_scheduler.bind_battle(scaled_enemies, scaled_party, scaled_rng),
+		"scaled Ram binds battle")
+	var scaled_w1 := scaled_scheduler.get_intents()
+	_check(scaled_w1[0].get("amount") == 0, "scaled Ram announces 0")
+	var scaled_res1 := phase.execute_phase(scaled_party, scaled_enemies, scaled_w1, null, true)
+	_check(scaled_res1.get("ok") and scaled_res1["events"][0]["type"] == "wind_up"
+		and scaled_enemies.get_enemy(1).get("charge_pending") == {"amount": 9, "target_position": 1},
+		"scaled Ram winds up 0 and arms 9")
+	_check(scaled_scheduler.advance_turn(), "advance scaled Ram")
+	var scaled_w2 := scaled_scheduler.get_intents()
+	_check(scaled_w2[0].get("amount") == 22, "scaled Ram announces floor(9 * 2.5) = 22")
+	var scaled_res2 := phase.execute_phase(scaled_party, scaled_enemies, scaled_w2, null, true)
+	_check(scaled_res2.get("ok") and scaled_res2["events"][0]["applied"] == true
+		and scaled_party.get_hero(1)["hp"] == 18
+		and not scaled_enemies.get_enemy(1).has("charge_pending"),
+		"scaled Ram delivers 22 damage (Warden 40 -> 18 HP) and clears charge_pending")
+
+	# AC4: Malformed Blind tokens on Ram fail closed without mutation
+	for bad_blind in [true, 1.0, "1", -1, 2, null, [], {}]:
+		var mal_party := _party()
+		var mal_enemies := CombatEnemies.new([ram])
+		mal_enemies._enemies[0]["statuses"] = {"blind_next_attack": bad_blind}
+		var mal_heroes_before := mal_party.get_heroes()
+		var mal_enemies_before := mal_enemies.get_enemies()
+		_check(phase.execute_phase(mal_party, mal_enemies, solo, null, true) == {"ok": false, "events": []}
+			and mal_party.get_heroes() == mal_heroes_before
+			and mal_enemies.get_enemies() == mal_enemies_before,
+			"malformed Blind token on Ram rejects fail-closed: " + str(bad_blind))
+
+	# AC4: A forged near-hit cannot spend or bypass an authentic pending strike.
 	var ready := CombatEnemies.new([ram])
 	_check(phase.execute_phase(blind_party, ready, solo, null, true).get("ok")
 		and ready.get_enemy(1).get("charge_pending", {}).get("amount") == 8,
-		"AC3 precondition: a real unblinded wind-up stored a valid attack")
-	# A forged near-hit cannot spend or bypass an authentic pending strike.
+		"AC4 precondition: a real unblinded wind-up stored a valid attack")
 	var bad_strike := [_attack(1, 19, 1)]
 	before_heroes = blind_party.get_heroes()
 	before_enemies = ready.get_enemies()
@@ -1980,23 +2100,17 @@ func _test_ram_charge_fail_closed() -> void:
 		== {"ok": false, "events": []}
 		and blind_party.get_heroes() == before_heroes
 		and ready.get_enemies() == before_enemies,
-		"AC3: stale held amount fails closed without spending the actor latch")
-	ready._enemies[0]["statuses"] = {"blind_next_attack": 1}
-	var strike := [_attack(1, 20, 1)]
-	before_heroes = blind_party.get_heroes()
-	miss = phase.execute_phase(blind_party, ready, strike, null, true)
-	_check(miss.get("ok") and miss.get("events", [])[0].get("applied") == false
-		and not ready.get_enemy(1).has("charge_pending")
-		and blind_party.get_heroes() == before_heroes
-		and rng.state == rng_before,
-		"AC3: Blind cancels the held strike atomically without HP, Block or RNG changes")
+		"AC4: stale held amount fails closed without spending the actor latch")
+
+	# AC4: Slain Ram cannot strike or mutate state
 	var dead := CombatEnemies.new([ram])
 	_check(phase.execute_phase(blind_party, dead, solo, null, true).get("ok")
 		and dead.get_enemy(1).has("charge_pending")
 		and dead.apply_damage(1, 30) and dead.is_slain(1),
-		"AC3 precondition: armed Ram is genuinely dead before release")
+		"AC4 precondition: armed Ram is genuinely dead before release")
 	before_heroes = blind_party.get_heroes()
+	var strike := [_attack(1, 20, 1)]
 	var slain_receipt := phase.execute_phase(blind_party, dead, strike, null, true)
 	_check(slain_receipt.get("ok") and slain_receipt.get("events", [])[0].get("applied") == false
 		and blind_party.get_heroes() == before_heroes and dead.get_enemy(1).get("hp") == 0,
-		"AC3: dead Ram has no strike, no HP mutation or resurrection")
+		"AC4: dead Ram has no strike, no HP mutation or resurrection")

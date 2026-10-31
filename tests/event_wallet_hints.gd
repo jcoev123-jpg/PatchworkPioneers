@@ -222,4 +222,22 @@ const SEEDS := [
 	44737,
 	310416,
 	283822,
+	# Genuine map/toll/event-rotation witnesses for the six required Events that lost
+	# their pinned coverage when the latest roadside batches grew the sorted draw
+	# pool: needle_gate, v3_raincoat_bridge, v3_patchwork_lighthouse,
+	# v3_seamstress_scarlet_loom, v3_seamstress_needle_oracle and
+	# v3_warden_buckle_checkpoint. The bounded 1..499999 fallback reached five of the
+	# six but never the Needle-Eye Oracle, so each keeps its own pinned witness.
+	501072,
+	653273,
+	771997,
+	1007589,
+	1187708,
+	1227514,
+	# Genuine map/toll/event-rotation witness re-derived for the Frayed Debt Parcel
+	# stitched Unpicker-terminal route after the newest generic-pool stories retired
+	# seed 159691: its five-Event walk has no Campfire, Rest or Unpicker transit
+	# between the first and second Event, so every mounted route button keeps a
+	# matching sewing source after the test installs its stitched ledger.
+	862443,
 ]

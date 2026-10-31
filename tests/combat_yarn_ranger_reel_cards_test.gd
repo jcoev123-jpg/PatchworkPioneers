@@ -3,10 +3,14 @@ extends SceneTree
 ##
 ## The two Reel printings (starter Reel Thread / Reel Thread+, common-pool Reel In / Reel In+)
 ## never attack and never leave the rules layer here: every case drives the real authored party
-## (a 27 HP Yarn Ranger in her printed seat 2 or 3) and a detached three-slot enemy snapshot. The
-## proposal must move exactly one living enemy one slot forward into a truly vacant slot, keep
-## every other record byte-for-byte, add only the printed Tangled, and refuse everything else
-## without touching the party, the snapshot or any seeded RNG.
+## (a 27 HP Yarn Ranger in her printed seat 2 or 3) and a detached enemy snapshot covering the
+## V3-2 floor bands' slots 1-4. The proposal must move exactly one living enemy one slot forward
+## into a truly vacant slot, keep every other record byte-for-byte (including a fourth bystander
+## behind the printed 2-3 target line), add only the printed Tangled, and refuse everything else
+## without touching the party, the snapshot or any seeded RNG. The published map always carries
+## keys 1-4, while only slots 2-3 may ever be *chosen*: the fourth foe is preserved, never pulled.
+## CombatEnemies.MAX_ENEMIES is intentionally not touched or claimed here: this is a detached
+## snapshot contract only, not a live four-foe battle.
 ##
 ## No live hand, energy payment, discard or target-selection hook is claimed: wiring these IDs
 ## into the mounted battle is a separate follow-up task.
@@ -40,7 +44,9 @@ var service := ReelCards.new()
 func _initialize() -> void:
 	_test_authentic_catalog_contract()
 	_test_ac1_one_slot_forward()
+	_test_four_slot_shape()
 	_test_ac2_printed_cost_and_tangled()
+	_test_ac2_target_four_out_of_reach()
 	_test_ac3_owner_refusals()
 	_test_ac3_card_refusals()
 	_test_ac3_target_and_slot_refusals()
@@ -129,9 +135,10 @@ func _test_authentic_catalog_contract() -> void:
 			"forged ID resolves no reel definition: " + str(forged))
 
 
-## AC1: a living Yarn Ranger in seat 2 or 3, a living chosen enemy in slot 2 or 3 and a vacant
-## immediate front slot yields one detached proposal that moves only that enemy one slot forward
-## and vacates its old slot.
+## AC1: a living Yarn Ranger in seat 2 or 3, a living chosen enemy in slot 2 or 3, a vacant
+## immediate front slot and a separate well-formed fourth foe in slot 4 yield one detached
+## proposal that moves only that enemy one slot forward, vacates its old slot and leaves the
+## fourth foe pristine.
 func _test_ac1_one_slot_forward() -> void:
 	var cases: Array[Dictionary] = []
 	for card_id: String in CARD_IDS:
@@ -156,6 +163,13 @@ func _check_projection(card_id: String, seat: int, target: int, slots: Dictionar
 		label + ": the chosen foe really occupies a living slot")
 	_check(slots.get(target - 1, {}).is_empty(),
 		label + ": the destination really starts vacant")
+	# The fourth foe is a genuine, distinctive bystander: real HP, real Block, real statuses.
+	var fourth: Dictionary = slots.get(4, {})
+	var fourth_statuses: Variant = fourth.get("statuses", {})
+	_check(int(fourth.get("hp", 0)) > 0 and int(fourth.get("block", 0)) > 0
+		and typeof(fourth_statuses) == TYPE_DICTIONARY
+		and not (fourth_statuses as Dictionary).is_empty(),
+		label + ": a distinctive living fourth foe really starts in slot 4")
 	var heroes_before: Array = party.get_heroes()
 	var slots_before: Dictionary = slots.duplicate(true)
 	var rng := RandomNumberGenerator.new()
@@ -180,12 +194,11 @@ func _check_projection(card_id: String, seat: int, target: int, slots: Dictionar
 		_check(not result.has(unwanted), label + ": the preview never claims " + unwanted)
 
 	var proposed: Dictionary = result.get("slots", {})
-	_check(proposed.keys().size() == 3, label + ": three explicit slots")
+	_check(proposed.keys().size() == 4, label + ": four explicit slots")
 	var proposed_keys: Array = proposed.keys()
 	proposed_keys.sort()
-	_check(proposed_keys == [1, 2, 3],
-		label + ": exactly the reel slots 1,2,3, never a battle-wide slot 4")
-	for slot: int in [1, 2, 3]:
+	_check(proposed_keys == [1, 2, 3, 4], label + ": exactly the reel slots 1,2,3,4")
+	for slot: int in [1, 2, 3, 4]:
 		_check(proposed.has(slot), label + ": slot " + str(slot) + " is explicit")
 		_check(proposed.get(slot) is Dictionary, label + ": slot " + str(slot) + " is a record")
 	var moved: Dictionary = proposed.get(target - 1, {})
@@ -200,18 +213,25 @@ func _check_projection(card_id: String, seat: int, target: int, slots: Dictionar
 		label + ": every original stat/status moves forward, plus only the printed Tangled")
 	_check(moved.get("id") == source.get("id"), label + ": the pulled identity is preserved")
 	_check(proposed.get(target) == {}, label + ": the old slot is vacated")
-	for slot: int in [1, 2, 3]:
+	for slot: int in [1, 2, 3, 4]:
 		if slot == target or slot == target - 1:
 			continue
 		_check(proposed.get(slot) == slots.get(slot, {}),
 			label + ": slot " + str(slot) + " is copied unchanged")
+	# The fourth foe is never a target, so it may not move, change slot field or gain anything.
+	_check(not fourth.is_empty(), label + ": the fourth foe fixture is really present")
+	_check(proposed.get(4) == fourth,
+		label + ": the fourth foe keeps HP, Block, statuses and its own slot field")
+	_check(int(proposed.get(4, {}).get("hp", 0)) == int(fourth.get("hp", -1))
+		and int(proposed.get(4, {}).get("block", 0)) == int(fourth.get("block", -1)),
+		label + ": the fourth foe takes no damage and gains no Block")
 
 	var occupied_before := 0
-	for slot: int in [1, 2, 3]:
+	for slot: int in [1, 2, 3, 4]:
 		if not slots.get(slot, {}).is_empty():
 			occupied_before += 1
 	var seen: Array[String] = []
-	for slot: int in [1, 2, 3]:
+	for slot: int in [1, 2, 3, 4]:
 		var actor: Dictionary = proposed.get(slot, {})
 		if actor.is_empty():
 			continue
@@ -227,6 +247,47 @@ func _check_projection(card_id: String, seat: int, target: int, slots: Dictionar
 	_check(rng.state == rng_before, label + ": no seeded RNG draw is consumed")
 
 
+## AC1/AC2: the published shape is always the full four-key map, whether the caller's snapshot
+## carries three keys, an explicit living/downed fourth actor, or an explicitly empty slot 4.
+func _test_four_slot_shape() -> void:
+	var three_slots := {2: _foe("spool_stalker", 2, 18, 18),
+		3: _foe("button_guard", 3, 12, 12, 4, {"weak": 2})}
+	_check(not three_slots.has(4), "the three-slot fixture really omits slot 4")
+	var four_slots: Dictionary = three_slots.duplicate(true)
+	four_slots[4] = _fourth_foe()
+	_check(int(four_slots[4].get("hp", 0)) > 0, "the four-slot fixture really holds a living foe")
+	var downed_fourth: Dictionary = three_slots.duplicate(true)
+	downed_fourth[4] = _foe("hoard_beetle", 4, 0, 24, 5, {"exposed": 2})
+	downed_fourth[4]["statuses"]["cannot_buff_next_turn"] = true
+	_check(int(downed_fourth[4].get("hp", -1)) == 0,
+		"the downed fourth fixture really is a valid slain record")
+	var empty_fourth: Dictionary = three_slots.duplicate(true)
+	empty_fourth[4] = {}
+	var fixtures: Array[Dictionary] = [three_slots, four_slots, downed_fourth, empty_fourth]
+	for card_id: String in CARD_IDS:
+		for seat: int in [2, 3]:
+			for fixture: Dictionary in fixtures:
+				var slots: Dictionary = fixture.duplicate(true)
+				var slots_before: Dictionary = slots.duplicate(true)
+				var label := card_id + " seat " + str(seat) + " fixture keys " + str(slots.keys())
+				var result: Dictionary = service.propose_pull(card_id, _party(seat), 2, slots)
+				_check(result.get("ok") == true and result.get("reason") == "proposed",
+					label + ": proposes from a four-foe band snapshot")
+				var keys: Array = result.get("slots", {}).keys()
+				keys.sort()
+				_check(keys == [1, 2, 3, 4], label + ": normalises to exactly keys 1,2,3,4")
+				var published: Dictionary = result.get("slots", {})
+				var expected_fourth: Dictionary = fixture.get(4, {})
+				_check(published.get(4, {"missing": true}) == expected_fourth,
+					label + ": slot 4 is published exactly as given (living, downed or vacant)")
+				_check(published.get(1, {}).get("id") == "spool_stalker",
+					label + ": the chosen foe still lands in slot 1")
+				_check(published.get(1, {}).get("position") == 1,
+					label + ": the moved foe's slot field follows it")
+				_check(published.get(2) == {}, label + ": the chosen foe's old slot is vacated")
+				_check(slots == slots_before, label + ": the caller's snapshot is unchanged")
+
+
 ## AC2: the printed cost and Tangled follow-up are exact, other statuses and stats are preserved,
 ## and nothing else (damage, draw, counters) changes.
 func _test_ac2_printed_cost_and_tangled() -> void:
@@ -236,8 +297,9 @@ func _test_ac2_printed_cost_and_tangled() -> void:
 		var party := _party(3)
 		var foe := _foe("moth_swarm", 3, 14, 20, 6,
 			{"tangled": 1, "bleed": 2, "weak": 1, "exposed": 2})
-		var slots := {1: _foe("button_guard", 1, 12, 12, 3), 3: foe}
+		var slots := {1: _foe("button_guard", 1, 12, 12, 3), 3: foe, 4: _fourth_foe()}
 		var foe_before: Dictionary = foe.duplicate(true)
+		var fourth_before: Dictionary = slots[4].duplicate(true)
 		var result: Dictionary = service.propose_pull(card_id, party, 3, slots)
 		_check(result.get("ok") == true, label + ": a pre-Tangled foe is still pulled")
 		_check(result.get("reason") == "proposed", label + ": proposed")
@@ -269,6 +331,12 @@ func _test_ac2_printed_cost_and_tangled() -> void:
 		_check(result.get("slots", {}).get(1) == slots[1],
 			label + ": the front foe is untouched")
 		_check(result.get("slots", {}).get(3) == {}, label + ": the vacated slot is empty")
+		_check(result.get("slots", {}).get(4) == fourth_before,
+			label + ": the fourth foe keeps HP, Block, statuses and its own slot field")
+		var published_keys: Array = result.get("slots", {}).keys()
+		published_keys.sort()
+		_check(published_keys == [1, 2, 3, 4],
+			label + ": a four-slot snapshot still publishes exactly keys 1,2,3,4")
 		_check(foe == foe_before, label + ": the caller's foe record is unchanged")
 	# Reel Thread is the free printing; Reel Thread+ costs zero and Reel In+ costs one.
 	_check(service.propose_pull(THREAD_PLUS, _party(2), 2, _slots_target_two()).get("cost") == 0,
@@ -287,6 +355,36 @@ func _test_ac2_printed_cost_and_tangled() -> void:
 		_slots_target_two()).get("tangled_added") == 1, "Reel In adds Tangled one")
 	_check(service.propose_pull(REEL_IN_PLUS, _party(2), 2,
 		_slots_target_two()).get("tangled_added") == 2, "Reel In+ adds Tangled two")
+
+
+## AC2: slot 4 is a legal snapshot slot but never a legal TARGET, because every printing's
+## authored TO line stays [2,3]; the fourth foe is preserved, never selected or pulled.
+func _test_ac2_target_four_out_of_reach() -> void:
+	_check(ReelCards.MAX_REEL_SLOTS == 4,
+		"the reel preview declares its own literal four-slot domain")
+	_check(ReelCards.TO_POSITIONS == [2, 3], "the service's authored target line stays 2-3")
+	_check(ReelCards.FROM_POSITIONS == [2, 3], "the service's authored hero line stays 2-3")
+	var slots_two := _slots_target_two()
+	var slots_three := _slots_target_three()
+	_check(not slots_two.get(4, {}).is_empty() and not slots_three.get(4, {}).is_empty(),
+		"both four-slot target fixtures really carry a fourth foe")
+	for card_id: String in CARD_IDS:
+		for seat: int in [2, 3]:
+			var label: String = card_id + " from seat " + str(seat)
+			_rejected(label + ": the fourth foe is never a target", card_id, _party(seat), 4,
+				slots_two, "target_out_of_reach")
+			_rejected(label + ": the fourth foe is never a target (3 -> 2 line)", card_id,
+				_party(seat), 4, slots_three, "target_out_of_reach")
+			var from_two: Dictionary = service.propose_pull(card_id, _party(seat), 2, slots_two)
+			var from_three: Dictionary = service.propose_pull(card_id, _party(seat), 3,
+				slots_three)
+			_check(from_two.get("ok") == true and from_two.get("target_position") == 2,
+				label + ": the same snapshot still pulls foe 2 legally")
+			_check(from_three.get("ok") == true and from_three.get("target_position") == 3,
+				label + ": the same snapshot still pulls foe 3 legally")
+			_check(from_two.get("slots", {}).get(4) == slots_two[4]
+				and from_three.get("slots", {}).get(4) == slots_three[4],
+				label + ": both legal pulls preserve the untouched fourth foe")
 
 
 ## AC3: owner refusals: missing, downed, wrong seat and a malformed roster.
@@ -337,9 +435,12 @@ func _test_ac3_card_refusals() -> void:
 
 ## AC3: invalid, slain and out-of-reach targets, occupied destinations and malformed snapshots.
 func _test_ac3_target_and_slot_refusals() -> void:
-	for bad_target: Variant in [0, 4, -1, 99, "2", 2.0, null, true, [2]]:
+	# 4 is a legal snapshot slot but an out-of-TO-line target; 5 and beyond are out of domain.
+	for bad_target: Variant in [0, 5, -1, 99, "2", 2.0, null, true, [2]]:
 		_rejected("illegal target " + str(bad_target), THREAD, _party(2), bad_target,
 			_slots_target_two(), "invalid_target")
+	_rejected("target slot 4 is outside the printed TO line", THREAD, _party(2), 4,
+		_slots_target_two(), "target_out_of_reach")
 	# Position 1 is a real enemy slot but outside the printed 2-3 target line.
 	var front_occupied := _slots_target_two()
 	front_occupied[1] = _foe("button_guard_front", 1, 12, 12, 3)
@@ -361,6 +462,13 @@ func _test_ac3_target_and_slot_refusals() -> void:
 	living_front[1] = _foe("button_guard_front", 1, 12, 12, 3)
 	_rejected("living foe in the destination", THREAD, _party(2), 2, living_front,
 		"destination_occupied")
+	# A fourth bystander never resolves an occupied destination by being shoved forward or swapped.
+	var shielded_front := _slots_target_two()
+	shielded_front[1] = _foe("button_guard_front", 1, 12, 12, 3)
+	_check(int(shielded_front.get(4, {}).get("hp", 0)) > 0,
+		"the shielded-front fixture really carries a living fourth foe")
+	_rejected("occupied destination beside a fourth bystander", THREAD, _party(2), 2,
+		shielded_front, "destination_occupied")
 	var downed_front := _slots_target_two()
 	downed_front[1] = _foe("button_guard_front", 1, 0, 12)
 	_rejected("downed record in the destination", THREAD, _party(2), 2, downed_front,
@@ -375,13 +483,26 @@ func _test_ac3_target_and_slot_refusals() -> void:
 			"invalid_slots")
 	_rejected("slot key 0", THREAD, _party(2), 2, {0: _foe("x", 0), 2: _foe("y", 2)},
 		"invalid_slots")
-	# The preview keeps its own literal three-slot domain even when the battle-wide
-	# CombatEnemies.MAX_ENEMIES is raised for four-enemy fights by another change.
-	_check(ReelCards.MAX_REEL_SLOTS == 3,
-		"the reel preview declares its own literal three-slot domain")
-	_rejected("slot key 4 only", THREAD, _party(2), 2, {4: _foe("x", 4)}, "invalid_slots")
-	_rejected("slot key 4", THREAD, _party(2), 2, {2: _foe("y", 2), 4: _foe("x", 4)},
-		"invalid_slots")
+	# The preview keeps its own literal four-slot domain, independent of any battle-wide capacity
+	# constant, and refuses anything outside it. Slot 4 is now a real snapshot slot, so the old
+	# blanket "every key 4 is invalid" assertions are rehomed to these focused malformed cases.
+	_rejected("slot key 5 only", THREAD, _party(2), 2, {5: _foe("x", 5)}, "invalid_slots")
+	_rejected("slot key 5 beside real slots", THREAD, _party(2), 2,
+		{2: _foe("y", 2), 5: _foe("x", 5)}, "invalid_slots")
+	_rejected("slot-4 record claiming slot 3", THREAD, _party(2), 2,
+		{2: _foe("y", 2), 4: _foe("x", 3)}, "invalid_slots")
+	_rejected("slot-4 record claiming slot 1", THREAD, _party(2), 2,
+		{2: _foe("y", 2), 4: _foe("x", 1)}, "invalid_slots")
+	_rejected("duplicate identity across slots 2 and 4", THREAD, _party(2), 2,
+		{2: _foe("twin", 2), 4: _foe("twin", 4)}, "invalid_slots")
+	_rejected("invalid status on the fourth foe", THREAD, _party(2), 2,
+		{2: _foe("y", 2), 4: _foe("x", 4, 5, 9, 0, {"slow": 1})}, "invalid_slots")
+	_rejected("string Tangled on the fourth foe", THREAD, _party(2), 2,
+		{2: _foe("y", 2), 4: _foe("x", 4, 5, 9, 0, {"tangled": "1"})}, "invalid_slots")
+	var fourth_float_hp := _foe("x", 4)
+	fourth_float_hp["hp"] = 5.0
+	_rejected("float HP on the fourth foe", THREAD, _party(2), 2,
+		{2: _foe("y", 2), 4: fourth_float_hp}, "invalid_slots")
 	_rejected("string slot key", THREAD, _party(2), 2, {"2": _foe("y", 2)}, "invalid_slots")
 	_rejected("non-dictionary slot value", THREAD, _party(2), 2, {2: "spool_stalker"},
 		"invalid_slots")
@@ -514,12 +635,18 @@ func _test_replay_and_detached_results() -> void:
 		"each proposal is an independent map")
 	_check(not is_same(first.get("slots", {}).get(1), slots.get(2)),
 		"the moved record is a detached copy of the caller's foe")
+	var untouched_fourth: Dictionary = first.get("slots", {}).get(4, {})
+	_check(not untouched_fourth.is_empty() and not is_same(untouched_fourth, slots.get(4)),
+		"the preserved fourth foe is an independent detached copy too")
 	var moved: Dictionary = first.get("slots", {}).get(1, {})
 	_check(not moved.is_empty(), "replay fixture really moved the foe")
 	if not moved.is_empty():
 		moved["hp"] = 0
 		moved["statuses"]["tangled"] = 99
 		moved["id"] = "forged"
+	if not untouched_fourth.is_empty():
+		untouched_fourth["hp"] = 0
+		untouched_fourth["statuses"]["riposte"] = 99
 	first["cost"] = 99
 	first["owner_position"] = 1
 	var third: Dictionary = service.propose_pull(REEL_IN_PLUS, party, 2, slots)
@@ -549,16 +676,27 @@ func _party(seat: int, owner_hp: int = 27) -> CombatParty:
 	return party
 
 
-## Slot 2 is the chosen foe; slot 1 is truly vacant and slot 3 is an untouched companion.
+## Slot 2 is the chosen foe; slot 1 is truly vacant, slot 3 is an untouched companion and slot 4
+## is the untouched fourth foe of the V3-2 2-4 enemy band.
 func _slots_target_two() -> Dictionary:
 	return {2: _foe("spool_stalker", 2, 18, 18),
-		3: _foe("button_guard", 3, 12, 12, 4, {"weak": 2})}
+		3: _foe("button_guard", 3, 12, 12, 4, {"weak": 2}),
+		4: _fourth_foe()}
 
 
-## Slot 3 is the chosen foe; slot 2 is truly vacant and slot 1 is an untouched companion.
+## Slot 3 is the chosen foe; slot 2 is truly vacant, slot 1 is an untouched companion and slot 4
+## is the untouched fourth foe of the V3-2 2-4 enemy band.
 func _slots_target_three() -> Dictionary:
 	return {1: _foe("button_guard", 1, 12, 12, 4, {"exposed": 1}),
-		3: _foe("spool_stalker", 3, 18, 18)}
+		3: _foe("spool_stalker", 3, 18, 18),
+		4: _fourth_foe()}
+
+
+## A well-formed fourth bystander with distinctive HP, Block and statuses, so any mutation of it
+## (a swap, a shove, an added Tangled, a lost status) is visible.
+func _fourth_foe() -> Dictionary:
+	return _foe("hoard_beetle", 4, 21, 24, 7,
+		{"riposte": 2, "cannot_buff_next_turn": true})
 
 
 func _foe(enemy_id: String, slot: int, hp: int = 9, max_hp: int = 9, block: Variant = 0,

@@ -118,8 +118,10 @@ func _ready() -> void:
 		wearer_buttons.append(_button("", Vector2(43 + i * 278, 165), Vector2(264, 57), TEAL, 22))
 	for i in range(3):
 		offer_buttons.append(_button("", Vector2(43, 239 + i * 99), Vector2(814, 90), OXBLOOD, 20))
-	leave_button = _button(LEAVE_CAPTION, Vector2(43, 545), Vector2(814, 60), TEAL, 26)
-	status_label = _label("", Vector2(43, 612), Vector2(814, 15), 12, DIM)
+	# Readable bottom region: the Leave action keeps its own band, and the
+	# footer instructions are honest 18px+ body copy wholly inside the panel.
+	leave_button = _button(LEAVE_CAPTION, Vector2(43, 533), Vector2(814, 56), TEAL, 26)
+	status_label = _label("", Vector2(43, 597), Vector2(814, 28), 18, CREAM)
 	_refresh()
 	_focus_initial()
 

@@ -1306,6 +1306,37 @@ func _check_story_structure(label: String) -> void:
 		_check(balance.get_index() > panel.description_label.get_index()
 			and balance.get_index() < panel.choices_container.get_index(),
 			label + " wallet sits between story and tickets")
+	# AC1: one centred, width-bounded story column on the existing parchment. The
+	# ColumnMargin between the existing ScrollContainer and the content carries the
+	# equal sewn pads that centre the story, selectors and tickets on one readable
+	# measure, and its expand flag is what hands the column the scroll viewport so
+	# those pads act as margins instead of the stack collapsing to its caption width.
+	# The final appearance is confirmed by the relay's 1280x720 Event capture.
+	var column := panel.column_margin
+	_check(column != null and panel.event_content.get_parent() == column
+		and column.get_parent() == panel.story_scroll,
+		label + " story column keeps the existing parchment hierarchy")
+	if column == null:
+		return
+	var pad_left := column.get_theme_constant("margin_left")
+	var pad_right := column.get_theme_constant("margin_right")
+	_check(pad_left > 0 and pad_left == pad_right,
+		label + " equal sewn margins centre the story column")
+	_check((column.size_flags_horizontal & Control.SIZE_EXPAND) != 0
+		and (panel.event_content.size_flags_horizontal & Control.SIZE_EXPAND) != 0,
+		label + " story column fills that measure instead of its caption width")
+	var bar := panel.story_scroll.get_v_scroll_bar()
+	var bar_width := bar.size.x if bar != null and bar.is_visible_in_tree() else 0.0
+	var measure := minf(panel.story_scroll.size.x - bar_width, panel.MAX_COLUMN_WIDTH)
+	_check(panel.event_content.size.x >= panel.event_content.get_combined_minimum_size().x
+		and absf(panel.event_content.size.x - measure) <= 1.0,
+		label + " story column keeps the bounded readable measure without clipping")
+	_check(panel.title_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
+		and panel.title_label.get_combined_minimum_size().x <= panel.event_content.size.x + 0.5,
+		label + " title stays centred in the column, wrapping instead of stretching the paper")
+	for ticket in panel.get_choice_buttons():
+		_check(ticket.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART,
+			label + " ticket wraps inside the centred story column")
 
 
 func _check_ticket_skin(button: Button, label: String, art_expected := true) -> void:
@@ -1455,17 +1486,25 @@ func _check_numbered_cues(record: Dictionary, label: String) -> void:
 		_check(viewport.encloses(cue_rect), label + " tag stays inside 1280x720 " + str(i))
 		_check(button.get_global_rect().encloses(cue_rect),
 			label + " tag sits fully on its ticket " + str(i))
-		# Independent caption geometry: the widest drawn ticket line is centred,
-		# so its left edge is the forbidding boundary for the tag.
-		var font: Font = button.get_theme_font("font")
-		var font_size: int = button.get_theme_font_size("font_size")
-		var widest := 0.0
-		for line in button.text.split("\n"):
-			widest = maxf(widest, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x)
-		var caption_left: float = button.get_global_rect().position.x \
-			+ maxf(0.0, (button.size.x - widest) * 0.5)
-		_check(cue_rect.end.x <= caption_left,
+		# Independent caption geometry: the authored action is drawn inside the
+		# ticket's own content inset (a longer action wraps there), so that inset is
+		# the forbidding boundary for the tag. Unlike an unwrapped widest-line
+		# estimate this stays valid for a wrapped ticket.
+		var ticket_style := button.get_theme_stylebox("normal")
+		var text_left: float = button.get_global_rect().position.x + ticket_style.content_margin_left
+		_check(cue_rect.end.x <= text_left,
 			label + " tag keeps clear of the centred caption " + str(i))
+		# The whole authored caption really fits the mounted ticket: measured with
+		# wrapping at the ticket's own content width, so a too-long action would
+		# fail here instead of being clipped at the parchment edge.
+		var caption_font: Font = button.get_theme_font("font")
+		var caption_size: int = button.get_theme_font_size("font_size")
+		var text_width: float = button.size.x - ticket_style.content_margin_left - ticket_style.content_margin_right
+		var wrapped := caption_font.get_multiline_string_size(button.text,
+			HORIZONTAL_ALIGNMENT_CENTER, text_width, caption_size)
+		_check(wrapped.x <= text_width + 0.5 and wrapped.y <= button.size.y \
+			- ticket_style.content_margin_top - ticket_style.content_margin_bottom + 0.5,
+			label + " wrapped caption fits inside its ticket " + str(i))
 		var patch := cue.get_theme_stylebox("normal") as StyleBoxFlat
 		_check(patch != null and patch.bg_color.a > 0.0,
 			label + " tag is a drawn felt patch " + str(i))
