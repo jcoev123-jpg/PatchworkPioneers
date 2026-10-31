@@ -38,6 +38,7 @@ var _prick := CombatRagDuelistNeedlePrickCards.new()
 var _barrage := CombatRagDuelistNeedleBarrageCards.new()
 var _needle := CombatYarnRangerNeedleCards.new()
 var _monk := CombatLanternMonkBlindStrikeCards.new()
+var _moth_lure := CombatLanternMonkMothLureCards.new()
 ## Button Golem's Knuckle/Snag resolver. It keeps no token store: every cast
 ## and forecast reads this battle's one shared _pinned set.
 var _thread := CombatButtonGolemThreadCards.new()
@@ -798,6 +799,8 @@ func _single(panel) -> bool:
 func _definition(card_id: String) -> Dictionary:
 	if card_id in TETHER_STARTERS:
 		return _tether_definition(card_id)
+	if _moth_lure.is_supported_card(card_id):
+		return _moth_lure._catalog.get_definition(card_id)
 	if _monk.is_supported_card(card_id):
 		return _monk.get_definition(card_id)
 	if _needle.is_supported_card(card_id):
@@ -843,15 +846,20 @@ func _definition(card_id: String) -> Dictionary:
 
 
 func _select(event: InputEvent, panel) -> void:
-	if not event is InputEventMouseButton or not event.pressed or event.button_index != MOUSE_BUTTON_LEFT:
+	var pointer: bool = event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT
+	var key: bool = _moth_lure.is_supported_card(_card_id(panel)) \
+		and event is InputEventKey and event.pressed and not event.echo \
+		and event.keycode in [KEY_ENTER, KEY_SPACE]
+	if not pointer and not key:
 		return
 	if _queued or not _bindings.has(panel) or not _eligible(panel) or _bindings[panel].id != _card_id(panel):
 		return
 	_token += 1
 	_queued = false
 	_armed = panel
-	_dragging = true
-	_drag_origin = panel.get_global_transform() * event.position
+	_dragging = pointer
+	if pointer:
+		_drag_origin = panel.get_global_transform() * event.position
 	_selected = panel
 	_keyboard = true
 	if _is_stitched(panel):
@@ -868,6 +876,8 @@ func _target_preview(id: String) -> Dictionary:
 	var app = get_parent()
 	if id in TETHER_STARTERS:
 		return tether_preview(id)
+	if _moth_lure.is_supported_card(id):
+		return _moth_lure_forecast(app.party, app.enemies, id)
 	if _monk.is_supported_card(id):
 		return _monk_forecast(app.party, app.enemies, id)
 	if _needle.is_supported_card(id):
@@ -932,7 +942,7 @@ func _queue_attack(position: int) -> void:
 	# A single-target target ID plus the held panel's original hand index
 	# prevent an enemy replacement or equivalent-copy panel swap at commit.
 	var target_id := ""
-	if (_monk.is_supported_card(id) or _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _prick.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
+	if (_moth_lure.is_supported_card(id) or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _prick.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
 			or _targeting.is_seamstress_control(id) \
 			or _targeting.is_heavy_pool_attack(id) \
 			or _toss.is_supported_card(id) or _rivet.is_supported_card(id) \
@@ -968,8 +978,9 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var barrage := _barrage.is_supported_card(id)
 	var needle := _needle.is_supported_card(id)
 	var monk := _monk.is_supported_card(id)
+	var moth_lure := _moth_lure.is_supported_card(id)
 	var thread := _thread.is_supported_card(id)
-	var guarded := monk or needle or barrage or lunge or snare or prick or thread or direct or control or combo or path or heavy or toss or rivet or overload or casing_clamp or id in CombatAttackCards.ATTACK_IDS
+	var guarded := moth_lure or monk or needle or barrage or lunge or snare or prick or thread or direct or control or combo or path or heavy or toss or rivet or overload or casing_clamp or id in CombatAttackCards.ATTACK_IDS
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -999,7 +1010,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		_reject_stitch()
 		return
 	var energy_before: int = _deck.energy
-	if (monk or needle or barrage or lunge or snare or prick or thread or direct or combo or path or heavy or toss or rivet or overload or casing_clamp) and (app._battle_closed \
+	if (moth_lure or monk or needle or barrage or lunge or snare or prick or thread or direct or combo or path or heavy or toss or rivet or overload or casing_clamp) and (app._battle_closed \
 			or (target_id.is_empty() and not (_is_warden_card(id) and position == 0)) \
 			or app.deck._rng != rng or (combo and not app._combo_battle_current())):
 		_reject_stitch()
@@ -1008,7 +1019,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
 			or (((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id)) \
-			or ((monk or needle or barrage or lunge or snare or prick or thread or control or combo or path or heavy or toss or rivet or overload or casing_clamp or id in CombatAttackCards.ATTACK_IDS) \
+			or ((moth_lure or monk or needle or barrage or lunge or snare or prick or thread or control or combo or path or heavy or toss or rivet or overload or casing_clamp or id in CombatAttackCards.ATTACK_IDS) \
 				and position > 0 and (app._battle_closed or target_id.is_empty() \
 				or app.enemies.get_enemy(position).get("id") != target_id))):
 		if guarded or _targeting.is_sight_glass(id):
@@ -1038,6 +1049,11 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 
 
 func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, position: int, forecast: bool = false) -> Dictionary:
+	if _moth_lure.is_supported_card(id):
+		if forecast:
+			return _moth_lure_forecast(party, enemies, id)
+		# Control only: the paid resolver draws and arms Blind, never manufactures a hit.
+		return _moth_lure.play_card(_deck, party, enemies, id, position)
 	if _monk.is_supported_card(id):
 		if forecast:
 			return _monk_forecast(party, enemies, id)
@@ -1412,6 +1428,28 @@ func _casing_clamp_forecast(party: CombatParty, enemies: CombatEnemies, id: Stri
 	return preview
 
 
+## The same authenticated, read-only preflight as the paid Moth Lure service.
+## It never predicts damage: the control card only arms Blind and draws one.
+func _moth_lure_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> Dictionary:
+	var preview := {"playable": false, "requires_selection": true,
+		"target_positions": [], "hits": []}
+	var app = get_parent()
+	if app == null or _deck == null or app.deck != _deck or app._battle_closed \
+			or app.enemy_intents == null or _turn != app.enemy_intents._turn_index \
+			or _deck._rng != app.run_rng or party != app.party or enemies != app.enemies \
+			or _session != [party, enemies, app.battle_result, app.run_rng, app.enemy_intents]:
+		return preview
+	for position in CombatLanternMonkMothLureCards.TO_POSITIONS:
+		var plan := _moth_lure._prepare(_deck, party, enemies, id, position)
+		if not plan.get("ok", false):
+			continue
+		preview.target_positions.append(position)
+		preview.hits.append({"position": position, "blind_before": int(plan.blind_before),
+			"blind_after": 1, "draw": CombatLanternMonkMothLureCards.DRAW_COUNT})
+	preview.playable = not preview.target_positions.is_empty()
+	return preview
+
+
 ## The paid Monk preflight is also the live read-only per-slot oracle: it checks
 ## the authentic held printing, living owner/target and all status capacities.
 ## No forecast charges, mutates or consumes Blind, Exposed or RNG.
@@ -1629,7 +1667,7 @@ func _eligible(panel) -> bool:
 	var index: int = panel.get_index()
 	var path_ok: bool = (_is_path_card(id) and not _path_positions(id).is_empty()) \
 		or (_is_warden_card(id) and warden_preview(id).get("playable", false))
-	return (id in TETHER_STARTERS or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _prick.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _rivet.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
+	return (id in TETHER_STARTERS or _moth_lure.is_supported_card(id) or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _prick.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _rivet.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
 func _sync_battle() -> void:
@@ -1780,6 +1818,9 @@ func _sync_battle() -> void:
 			continue
 		# Labels ignore input; the real card panel receives selection.
 		panel.get_child(0).mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# Let Enter/Space arm this targeted control without moving its click area.
+		if _moth_lure.is_supported_card(_card_id(panel)):
+			panel.focus_mode = Control.FOCUS_ALL
 		var entered := _hover.bind(panel)
 		var exited := _leave.bind(panel)
 		var input := _select.bind(panel)
@@ -1925,6 +1966,17 @@ func _refresh() -> void:
 		current_forecast = link_preview.duplicate(true)
 		return
 	var preview := _resolve_attack(app.party, app.enemies, id, 0, true)
+	if _moth_lure.is_supported_card(id):
+		current_forecast = preview.duplicate(true)
+		var readings: PackedStringArray = []
+		for target in preview.hits:
+			readings.append("%d: Blind %d → 1, draw %d" % [
+				target.position, target.blind_before, target.draw])
+		cue.text = "%s | %d energy | P / click card; %s / click enemy; Esc: cancel\n%s" % [
+			definition.display_name, definition.cost, _key_hint(preview.target_positions),
+			"Choose one enemy slot: " + "; ".join(readings) if preview.playable else
+			"Unavailable: no held/affordable Moth Lure, living Monk in 2-3, or legal enemy"]
+		return
 	if _monk.is_supported_card(id):
 		current_forecast = preview.duplicate(true)
 		var choices: PackedStringArray = []
