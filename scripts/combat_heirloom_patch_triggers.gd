@@ -7,6 +7,8 @@ extends RefCounted
 const CATALOG := "res://data/patches/mpw_heirloom_patches.json"
 const NEEDLE := "needle_echo"
 const HEM := "shared_hem"
+const NEEDLE_STARTERS := ["warden_strike", "warden_strike_plus",
+    "warden_shield_bash", "seamstress_prick", "tinker_pop_shot"]
 
 var _wardrobe: RunPatchWardrobe = null
 var _torn: RunTornMending = null
@@ -198,14 +200,29 @@ func start_player_turn() -> bool:
 ## Read the live pin BEFORE a hit. A different hero's hit may consume it
 ## during resolution; finish_needle_hit does not require it to remain set.
 ## Caller adds bonus_damage to the authentic hit resolver's damage input.
-func quote_needle_hit(attacker_id: Variant, position: Variant) -> Dictionary:
+func quote_needle_hit(attacker_id: Variant, position: Variant,
+        card_id: String = "") -> Dictionary:
     _pending_needle.clear()
     var rejected := {"ok": false, "bonus_damage": 0}
     if not attacker_id is String or not position is int or _needle_used or _turn == 0:
         return rejected
+    if not card_id.is_empty():
+        if not NEEDLE_STARTERS.has(card_id) or not CombatAttackCards.ATTACK_IDS.has(card_id):
+            return rejected
+        var definition: Dictionary = StarterCards.new().get_definition(card_id)
+        if definition.get("id") != card_id or definition.get("owner") != attacker_id \
+                or definition.get("target_kind") != "enemy_single" \
+                or not definition.get("to_positions") is Array \
+                or not definition["to_positions"].has(position):
+            return rejected
     var wearer := _wearer(NEEDLE)
     if wearer.is_empty() or wearer["id"] != attacker_id:
         return rejected
+    if not card_id.is_empty():
+        var authored: Dictionary = StarterCards.new().get_definition(card_id)
+        if not authored.get("from_positions") is Array \
+                or not authored["from_positions"].has(wearer.get("position")):
+            return rejected
     var before := _enemies.get_enemy(position)
     if before.is_empty() or before.get("hp", 0) <= 0:
         return rejected
@@ -214,26 +231,41 @@ func quote_needle_hit(attacker_id: Variant, position: Variant) -> Dictionary:
         return rejected
     _ticket += 1
     var quote := {"ok": true, "bonus_damage": 1, "ticket": _ticket, "turn": _turn,
-        "attacker_id": attacker_id, "position": position}
+        "attacker_id": attacker_id, "position": position, "card_id": card_id}
     _pending_needle = {"quote": quote.duplicate(true),
         "before": before.duplicate(true), "pinner": pinner}
     return quote.duplicate(true)
 
 
-## A sealed, still-live quote may authorize ONLY the one supported held-hand
-## Warden starter hit. The caller's claimed bonus is never the authority.
+## Authenticate the actual selected card's definition, not the caller's
+## presented owner or damage. Legacy two-argument scene-free quotes remain
+## valid for canonical same-owner attacks; live commits seal the selected ID.
 func authorizes_needle_hit(quote: Dictionary, party: CombatParty,
         enemies: CombatEnemies, card_id: String, position: int) -> bool:
-    if card_id not in ["warden_strike", "warden_strike_plus"] \
+    if not NEEDLE_STARTERS.has(card_id) or not CombatAttackCards.ATTACK_IDS.has(card_id) \
             or party != _party or enemies != _enemies or _pending_needle.is_empty() \
             or _needle_used or not is_current() or _turn <= 0:
         return false
+    var definition: Dictionary = StarterCards.new().get_definition(card_id)
+    var owner: Variant = definition.get("owner")
+    if definition.get("id") != card_id or definition.get("target_kind") != "enemy_single" \
+            or not owner is String or not RunV3PartyAdmission.HERO_IDS.has(owner) \
+            or not definition.get("effects") is Dictionary \
+            or not definition["effects"].get("damage") is int:
+        return false
     if quote != _pending_needle["quote"] or quote.get("ok") != true \
             or quote.get("bonus_damage") != 1 or quote.get("position") != position \
-            or quote.get("attacker_id") != "warden" or quote.get("turn") != _turn:
+            or quote.get("card_id", "") not in ["", card_id] \
+            or quote.get("attacker_id") != owner \
+            or quote.get("turn") != _turn:
         return false
     var wearer := _wearer(NEEDLE)
-    if wearer.is_empty() or wearer["id"] != "warden":
+    if wearer.is_empty() or wearer["id"] != owner:
+        return false
+    if not definition.get("to_positions") is Array \
+            or not definition["to_positions"].has(position) \
+            or not definition.get("from_positions") is Array \
+            or not definition["from_positions"].has(wearer.get("position")):
         return false
     var old: Dictionary = _pending_needle["before"]
     var now := _enemies.get_enemy(position)
