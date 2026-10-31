@@ -105,6 +105,12 @@ const FEAR_EXPLANATION := "Fear is the authored Scarecrow keyword: the affected 
 ## receive this Help row.
 const BLOCK_PIERCE_KEYWORD := "Pierce Block"
 const BLOCK_PIERCE_EXPLANATION := "Pierce Block strikes the backmost living enemy (the highest-position living enemy): damage reduces that enemy's HP directly without reducing or consuming its Block, leaving enemy Block intact. Weak, Exposed and Tangled still adjust damage normally. This Help explains the authored card rule only; live combat does not yet play this card from the shared hand."
+## Tether is the Seamstress's authored two-foe link and 50% confirmed-hit HP-loss echo.
+## Only the four authentic catalog printings that CardShortRules authenticates
+## receive this Help row, so no same-shaped forged or mis-owned record can
+## borrow the rule.
+const TETHER_KEYWORD := "Tether"
+const TETHER_EXPLANATION := "Tether links two distinct living enemies and deals zero immediate damage on play. When a later confirmed hit against either linked enemy causes positive HP loss, half of that HP loss (50%, rounded down) is echoed as raw damage to the other linked living enemy, with that recipient's Block absorbing before HP. If the primary hit is wholly absorbed by Block, there is no echo. The echo is not a separate card attack and cannot trigger another echo, status, Thorns or Riposte. This Help explains the authored rules helper; it does not specify link lifetime or claim live hand wiring for Tether Stitch."
 
 
 static func describe(definition: Variant) -> Array[Dictionary]:
@@ -184,6 +190,9 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 			"fear":
 				explanation = FEAR_EXPLANATION
 		lines.append({"keyword": keyword, "explanation": explanation})
+	var tether := _tether_line(definition, effects)
+	if not tether.is_empty():
+		lines.append(tether)
 	for key: String in SPECIAL_ORDER:
 		var special := _special_line(key, definition, effects)
 		if not special.is_empty():
@@ -701,6 +710,19 @@ static func _crow_line(definition: Dictionary, _effects: Dictionary) -> Dictiona
 	if not CardShortRules.is_authored_block_pierce(definition):
 		return {}
 	return {"keyword": BLOCK_PIERCE_KEYWORD, "explanation": BLOCK_PIERCE_EXPLANATION}
+
+
+## Tether is the Seamstress's authored two-foe link and confirmed-hit echo.
+## Its single authority is CardShortRules' strict printing check, which validates
+## the complete canonical Seamstress starter/pool record against CombatSeamstressTetherRules.
+static func _tether_line(definition: Dictionary, _effects: Dictionary) -> Dictionary:
+	if not _authored_tether(definition):
+		return {}
+	return {"keyword": TETHER_KEYWORD, "explanation": TETHER_EXPLANATION}
+
+
+static func _authored_tether(definition: Dictionary) -> bool:
+	return CardShortRules.is_authored_tether(definition)
 
 
 ## Fear is the Scarecrow's authored one-turn buff lock. Its single authority is

@@ -123,6 +123,8 @@ func _catalog_test() -> void:
 	var lantern_pool := LanternMonkPoolCards.new()
 	var scarecrow_starter := ScarecrowStarterCards.new()
 	var scarecrow_pool := ScarecrowPoolCards.new()
+	var v3_seamstress_starter := V3SeamstressStarterCards.new()
+	var v3_seamstress_pool := V3SeamstressPoolCards.new()
 	var cases := [
 		[warden, "warden_pinning_jab", ["Pinned"], ["DIFFERENT hero", "+5", "before Weak/Exposed", "expires"]],
 		[warden, "warden_draw_fire", ["Guarding"], ["position 1", "other heroes", "next turn"]],
@@ -233,6 +235,7 @@ func _catalog_test() -> void:
 	_blind_catalog_test(lantern_starters, lantern_pool)
 	_thorns_test(warden, v3_warden)
 	_scarecrow_crow_catalog_test(scarecrow_starter, scarecrow_pool)
+	_tether_catalog_test(v3_seamstress_starter, v3_seamstress_pool)
 	# Exact authored shapes are explained; every unknown, malformed or partial
 	# variant stays silent and leaves the caller's definition untouched. These
 	# effect fixtures mirror the catalog descriptors but are built independently.
@@ -1544,6 +1547,335 @@ func _scarecrow_crow_catalog_test(starter: ScarecrowStarterCards, pool: Scarecro
 		and pool.get_definition("scarecrow_crow_peck") == authentic_peck
 		and pool.get_definition("scarecrow_crow_peck_plus") == authentic_peck_plus,
 		"authentic Scarecrow crow catalog records remain immutable")
+
+
+## Genuine catalog tests asserting that every authentic Seamstress Tether card
+## (starter Tether Loop base/plus and pool Tether Stitch base/plus) produces exactly
+## one Help row titled Tether, whose explanation matches CardKeywordGlossary.TETHER_EXPLANATION,
+## formats face text matching CardShortRules.TETHER_SENTENCE, reports not has_unknown(),
+## and satisfies CardShortRules.is_authored_tether(). Also asserts detached row results,
+## immutable catalog records, and fail-closed negative space.
+func _tether_catalog_test(starter: V3SeamstressStarterCards, pool: V3SeamstressPoolCards) -> void:
+	var cases := [
+		{"catalog": starter, "id": "seamstress_v3_tether_loop", "cost": 2, "upgrades_to": "seamstress_v3_tether_loop_plus"},
+		{"catalog": starter, "id": "seamstress_v3_tether_loop_plus", "cost": 1, "upgrades_to": ""},
+		{"catalog": pool, "id": "seamstress_v3_tether_stitch", "cost": 2, "upgrades_to": "seamstress_v3_tether_stitch_plus"},
+		{"catalog": pool, "id": "seamstress_v3_tether_stitch_plus", "cost": 1, "upgrades_to": ""},
+	]
+	for case: Dictionary in cases:
+		var catalog: Variant = case["catalog"]
+		var card_id: String = String(case["id"])
+		var authored_cost: int = int(case["cost"])
+		_check(catalog.has_card(card_id), "Tether card present in catalog " + card_id)
+		if not catalog.has_card(card_id):
+			continue
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			"actual Tether catalog definition " + card_id)
+		if definition.is_empty():
+			continue
+		var original: Dictionary = definition.duplicate(true)
+		var effects: Dictionary = definition.get("effects", {})
+		_check(effects.get("tether_share_percent") == 50,
+			"authored tether_share_percent 50 for %s" % card_id)
+		_check(String(definition.get("owner", "")) == "seamstress"
+			and int(definition.get("cost", -1)) == authored_cost
+			and String(definition.get("target_kind", "")) == "enemy_pair"
+			and Array(definition.get("from_positions", [])) == [2, 3]
+			and Array(definition.get("to_positions", [])) == [1, 2, 3],
+			"authored owner, cost, target and positions for " + card_id)
+		_check(CardShortRules.is_authored_tether(definition),
+			"CardShortRules authenticates tether " + card_id)
+		_check(not CardShortRules.has_unknown(definition),
+			"CardShortRules reports no unknown effects for authentic " + card_id)
+		var face: String = CardShortRules.line(definition)
+		_check(face == CardShortRules.TETHER_SENTENCE,
+			"face text exact match for %s: '%s'" % [card_id, face])
+		var rows := CardKeywordGlossary.describe(definition)
+		var names := _row_names(rows)
+		_check(names == [CardKeywordGlossary.TETHER_KEYWORD],
+			"exactly one Tether row for %s (got %s)" % [card_id, str(names)])
+		if names != [CardKeywordGlossary.TETHER_KEYWORD]:
+			continue
+		_check(rows[0]["keyword"] == CardKeywordGlossary.TETHER_KEYWORD,
+			"keyword name matches TETHER_KEYWORD for " + card_id)
+		_check(rows[0]["explanation"] == CardKeywordGlossary.TETHER_EXPLANATION,
+			"explanation exact match for " + card_id)
+		var text := str(rows[0]["explanation"])
+		_check(text.contains("links two distinct living enemies"),
+			"Tether Help mentions linking two distinct living enemies: " + card_id)
+		_check(text.contains("deals zero immediate damage on play"),
+			"Tether Help mentions zero immediate damage: " + card_id)
+		_check(text.contains("later confirmed hit against either linked enemy causes positive HP loss"),
+			"Tether Help mentions later confirmed hit with positive HP loss: " + card_id)
+		_check(text.contains("half of that HP loss (50%, rounded down) is echoed as raw damage to the other linked living enemy"),
+			"Tether Help mentions half echoed as raw damage: " + card_id)
+		_check(text.contains("recipient's Block absorbing before HP"),
+			"Tether Help mentions recipient's Block absorbing before HP: " + card_id)
+		_check(text.contains("wholly absorbed by Block, there is no echo"),
+			"Tether Help mentions wholly absorbed -> no echo: " + card_id)
+		_check(text.contains("not a separate card attack and cannot trigger another echo, status, Thorns or Riposte"),
+			"Tether Help mentions echo trigger constraints: " + card_id)
+		_check(text.contains("explains the authored rules helper; it does not specify link lifetime or claim live hand wiring for Tether Stitch"),
+			"Tether Help contains scope and live disclaimer: " + card_id)
+		_check(definition == original and catalog.get_definition(card_id) == original,
+			"Tether Help never mutates catalog definition: " + card_id)
+		_check(CardKeywordGlossary.describe(definition) == rows,
+			"Tether Help stays deterministic for " + card_id)
+		rows[0]["keyword"] = "Tampered"
+		rows[0]["explanation"] = "Tampered"
+		var fresh := CardKeywordGlossary.describe(definition)
+		_check(_row_names(fresh) == [CardKeywordGlossary.TETHER_KEYWORD] and definition == original,
+			"Tether Help results are detached from caller definition: " + card_id)
+
+	var authentic_loop: Dictionary = starter.get_definition("seamstress_v3_tether_loop")
+	var authentic_loop_plus: Dictionary = starter.get_definition("seamstress_v3_tether_loop_plus")
+	var authentic_stitch: Dictionary = pool.get_definition("seamstress_v3_tether_stitch")
+	var authentic_stitch_plus: Dictionary = pool.get_definition("seamstress_v3_tether_stitch_plus")
+
+	var negatives: Array = []
+
+	# Cost tampered
+	var f := authentic_loop.duplicate(true)
+	f["cost"] = 0
+	negatives.append(["wrong loop cost 0", f])
+	f = authentic_loop.duplicate(true)
+	f["cost"] = 1
+	negatives.append(["wrong loop cost 1", f])
+	f = authentic_loop.duplicate(true)
+	f["cost"] = 3
+	negatives.append(["wrong loop cost 3", f])
+	f = authentic_loop.duplicate(true)
+	f["cost"] = "2"
+	negatives.append(["string loop cost", f])
+	f = authentic_loop_plus.duplicate(true)
+	f["cost"] = 2
+	negatives.append(["wrong loop+ cost 2", f])
+	f = authentic_loop_plus.duplicate(true)
+	f["cost"] = 0
+	negatives.append(["wrong loop+ cost 0", f])
+	f = authentic_stitch.duplicate(true)
+	f["cost"] = 1
+	negatives.append(["wrong stitch cost 1", f])
+	f = authentic_stitch.duplicate(true)
+	f["cost"] = 3
+	negatives.append(["wrong stitch cost 3", f])
+	f = authentic_stitch_plus.duplicate(true)
+	f["cost"] = 2
+	negatives.append(["wrong stitch+ cost 2", f])
+	f = authentic_stitch_plus.duplicate(true)
+	f["cost"] = 0
+	negatives.append(["wrong stitch+ cost 0", f])
+
+	# from_positions tampered
+	f = authentic_loop.duplicate(true)
+	f["from_positions"] = [1, 2, 3]
+	negatives.append(["wrong loop from_positions [1, 2, 3]", f])
+	f = authentic_loop.duplicate(true)
+	f["from_positions"] = [1]
+	negatives.append(["wrong loop from_positions [1]", f])
+	f = authentic_loop.duplicate(true)
+	f["from_positions"] = []
+	negatives.append(["empty loop from_positions", f])
+	f = authentic_stitch.duplicate(true)
+	f["from_positions"] = [3]
+	negatives.append(["wrong stitch from_positions [3]", f])
+
+	# to_positions tampered
+	f = authentic_loop.duplicate(true)
+	f["to_positions"] = [1, 2]
+	negatives.append(["wrong loop to_positions [1, 2]", f])
+	f = authentic_loop.duplicate(true)
+	f["to_positions"] = []
+	negatives.append(["empty loop to_positions", f])
+	f = authentic_stitch.duplicate(true)
+	f["to_positions"] = [1]
+	negatives.append(["wrong stitch to_positions [1]", f])
+	f = authentic_stitch.duplicate(true)
+	f["to_positions"] = [1, 2, 3, 4]
+	negatives.append(["wrong stitch to_positions [1, 2, 3, 4]", f])
+
+	# target_kind tampered
+	f = authentic_loop.duplicate(true)
+	f["target_kind"] = "enemy_single"
+	negatives.append(["wrong target enemy_single", f])
+	f = authentic_loop.duplicate(true)
+	f["target_kind"] = "enemy_first_two"
+	negatives.append(["wrong target enemy_first_two", f])
+	f = authentic_loop.duplicate(true)
+	f["target_kind"] = "enemy_all"
+	negatives.append(["wrong target enemy_all", f])
+	f = authentic_loop.duplicate(true)
+	f["target_kind"] = "self"
+	negatives.append(["wrong target self", f])
+	f = authentic_stitch.duplicate(true)
+	f["target_kind"] = "ally_single"
+	negatives.append(["wrong target ally_single", f])
+	f = authentic_stitch.duplicate(true)
+	f.erase("target_kind")
+	negatives.append(["missing target_kind", f])
+
+	# owner tampered
+	f = authentic_loop.duplicate(true)
+	f["owner"] = "warden"
+	negatives.append(["wrong owner warden", f])
+	f = authentic_stitch.duplicate(true)
+	f["owner"] = "tinker"
+	negatives.append(["wrong owner tinker", f])
+	f = authentic_loop.duplicate(true)
+	f.erase("owner")
+	negatives.append(["missing owner", f])
+
+	# effects tampered: tether_share_percent != 50, float/string/null/bool, missing, extra effects
+	f = authentic_loop.duplicate(true)
+	f["effects"]["tether_share_percent"] = 40
+	negatives.append(["tether_share_percent 40", f])
+	f = authentic_loop.duplicate(true)
+	f["effects"]["tether_share_percent"] = 100
+	negatives.append(["tether_share_percent 100", f])
+	f = authentic_loop.duplicate(true)
+	f["effects"]["tether_share_percent"] = 50.0
+	negatives.append(["float tether_share_percent", f])
+	f = authentic_loop.duplicate(true)
+	f["effects"]["tether_share_percent"] = "50"
+	negatives.append(["string tether_share_percent", f])
+	f = authentic_loop.duplicate(true)
+	f["effects"]["tether_share_percent"] = null
+	negatives.append(["null tether_share_percent", f])
+	f = authentic_loop.duplicate(true)
+	f["effects"]["tether_share_percent"] = true
+	negatives.append(["bool tether_share_percent", f])
+	f = authentic_loop.duplicate(true)
+	f["effects"].erase("tether_share_percent")
+	negatives.append(["missing tether_share_percent", f])
+	f = authentic_loop.duplicate(true)
+	f["effects"]["damage"] = 3
+	negatives.append(["extra effect damage", f])
+	f = authentic_loop.duplicate(true)
+	f["effects"]["bleed"] = 2
+	negatives.append(["extra effect bleed", f])
+	f = authentic_stitch.duplicate(true)
+	f["effects"]["block"] = 4
+	negatives.append(["extra effect block", f])
+	f = authentic_stitch.duplicate(true)
+	f["effects"]["weak"] = 1
+	negatives.append(["extra effect weak", f])
+
+	# Forged card IDs
+	f = authentic_loop.duplicate(true)
+	f["id"] = "seamstress_v3_tether_forged"
+	negatives.append(["forged ID seamstress_v3_tether_forged", f])
+	f = authentic_loop.duplicate(true)
+	f["id"] = "warden_tether_loop"
+	negatives.append(["forged ID warden_tether_loop", f])
+	f = authentic_stitch.duplicate(true)
+	f["id"] = "seamstress_tether_stitch"
+	negatives.append(["forged ID seamstress_tether_stitch", f])
+	f = authentic_stitch.duplicate(true)
+	f["id"] = "seamstress_v3_tether_knot"
+	negatives.append(["forged ID seamstress_v3_tether_knot", f])
+
+	# Broken upgrade links
+	f = authentic_loop.duplicate(true)
+	f["upgrade_id"] = "seamstress_v3_tether_loop"
+	negatives.append(["loop upgrade self loop", f])
+	f = authentic_loop.duplicate(true)
+	f["upgrade_id"] = "seamstress_v3_tether_stitch_plus"
+	negatives.append(["loop wrong upgrade link", f])
+	f = authentic_loop.duplicate(true)
+	f.erase("upgrade_id")
+	negatives.append(["loop missing upgrade_id", f])
+	f = authentic_loop.duplicate(true)
+	f["upgrade_of"] = "seamstress_v3_tether_loop"
+	negatives.append(["loop base has upgrade_of", f])
+	f = authentic_loop_plus.duplicate(true)
+	f["upgrade_id"] = "seamstress_v3_tether_loop_plus_plus"
+	negatives.append(["loop+ has upgrade_id", f])
+	f = authentic_loop_plus.duplicate(true)
+	f.erase("upgrade_of")
+	negatives.append(["loop+ missing upgrade_of", f])
+	f = authentic_stitch.duplicate(true)
+	f["upgrade_id"] = "seamstress_v3_tether_stitch"
+	negatives.append(["stitch upgrade self loop", f])
+	f = authentic_stitch.duplicate(true)
+	f.erase("upgrade_id")
+	negatives.append(["stitch missing upgrade_id", f])
+	f = authentic_stitch_plus.duplicate(true)
+	f["upgrade_id"] = "seamstress_v3_tether_stitch_plus_plus"
+	negatives.append(["stitch+ has upgrade_id", f])
+	f = authentic_stitch_plus.duplicate(true)
+	f["upgrade_of"] = "seamstress_v3_tether_loop"
+	negatives.append(["stitch+ wrong upgrade_of", f])
+
+	# Detached canonical field-set negative probes
+	f = authentic_loop.duplicate(true)
+	f.erase("display_name")
+	negatives.append(["deleted display_name on loop", f])
+	f = authentic_loop.duplicate(true)
+	f["display_name"] = "Tether"
+	negatives.append(["changed display_name on loop", f])
+	f = authentic_stitch.duplicate(true)
+	f.erase("display_name")
+	negatives.append(["deleted display_name on stitch", f])
+	f = authentic_stitch.duplicate(true)
+	f["display_name"] = "Stitch"
+	negatives.append(["changed display_name on stitch", f])
+	f = authentic_loop.duplicate(true)
+	f["reward_eligible"] = true
+	negatives.append(["changed reward_eligible on loop", f])
+	f = authentic_stitch.duplicate(true)
+	f["reward_eligible"] = false
+	negatives.append(["changed reward_eligible on stitch", f])
+	f = authentic_stitch.duplicate(true)
+	f["rarity"] = "rare"
+	negatives.append(["changed rarity on stitch", f])
+	f = authentic_stitch.duplicate(true)
+	f.erase("rarity")
+	negatives.append(["deleted rarity on stitch", f])
+	f = authentic_loop.duplicate(true)
+	f["rarity"] = "common"
+	negatives.append(["extra rarity on loop", f])
+	f = authentic_loop.duplicate(true)
+	f["unexpected_field"] = "tampered"
+	negatives.append(["extra top-level field on loop", f])
+	f = authentic_stitch.duplicate(true)
+	f["forged_flag"] = true
+	negatives.append(["extra top-level field on stitch", f])
+	f = authentic_loop.duplicate(true)
+	f["illustration_path"] = "res://other.png"
+	negatives.append(["changed illustration_path on loop", f])
+	f = authentic_loop.duplicate(true)
+	f["starting_copies"] = 2
+	negatives.append(["changed starting_copies on loop", f])
+	f = authentic_stitch.duplicate(true)
+	f["starting_copies"] = 1
+	negatives.append(["changed starting_copies on stitch", f])
+
+	for case_entry in negatives:
+		var label: String = case_entry[0]
+		var bad: Dictionary = case_entry[1]
+		var bad_before := bad.duplicate(true)
+		_check(not CardShortRules.is_authored_tether(bad),
+			"is_authored_tether returns false for %s" % label)
+		var bad_rows := CardKeywordGlossary.describe(bad)
+		_check(not _row_names(bad_rows).has(CardKeywordGlossary.TETHER_KEYWORD),
+			"no Tether row for %s" % label)
+		if (bad.get("effects", {}) as Dictionary).has("tether_share_percent"):
+			_check(CardShortRules.has_unknown(bad),
+				"has_unknown returns true when unauthorized card carries tether_share_percent for %s" % label)
+			var bad_line := CardShortRules.line(bad)
+			_check(not bad_line.contains(CardShortRules.TETHER_SENTENCE),
+				"no Tether sentence on face for %s" % label)
+			_check(bad_line.contains("Other authored effects are not described."),
+				"unknown effect fallback on face for %s" % label)
+		_check(bad == bad_before, "negative fixture %s is not mutated" % label)
+
+	# Verify authentic catalog records are unchanged after negative probes
+	_check(starter.get_definition("seamstress_v3_tether_loop") == authentic_loop
+		and starter.get_definition("seamstress_v3_tether_loop_plus") == authentic_loop_plus
+		and pool.get_definition("seamstress_v3_tether_stitch") == authentic_stitch
+		and pool.get_definition("seamstress_v3_tether_stitch_plus") == authentic_stitch_plus,
+		"authentic Seamstress tether catalog records remain immutable")
 
 
 func _help_in_fixture(fixture: Dictionary, kind: String) -> void:
