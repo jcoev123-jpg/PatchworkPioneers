@@ -29,6 +29,14 @@ extends RefCounted
 ## against an incoming attack and Blind makes its bearer's own next attack miss, so the Golem's
 ## strike still connects and both tokens stay in place for the resolvers that own them.
 ##
+## Fear is the Scarecrow's authored `cannot_buff_next_turn: true`: a one-owner-turn enemy buff
+## lock whose only legal value is the literal boolean true (absent when inactive; `false`, `1`,
+## `1.0` and `"true"` are malformed). It is a non-damage marker, so it is validated here in the
+## same canonical shape as the status owners and deliberately omitted from the damage-status
+## subset: it neither raises nor lowers this strike's damage and is never aged, consumed or
+## rewritten by it. An enemy already bearing genuine Fear is therefore a perfectly legal target
+## for a paid Knuckle or Snag, and keeps its marker afterwards.
+##
 ## Every refusal is a pure no-op: no energy, hand, pile, party record, enemy record, pin token,
 ## status or seeded RNG change. Live hand, reward and app wiring is a later, separately owned
 ## task; this is the callable combat rules layer only.
@@ -41,6 +49,9 @@ const ATTACK_STATUS_KEYS: Array[String] = ["bleed", "weak", "exposed", "tangled"
 ## The authoritative one-shot tokens (integer 0 = inert, 1 = active). Neither modifies this
 ## attack's damage, so both are validated here and omitted from bridge-bound maps.
 const ONE_SHOT_STATUS_KEYS: Array[String] = ["dodge_next_attack", "blind_next_attack"]
+## The Scarecrow's one-owner-turn buff lock. Its only canonical value is the literal boolean
+## true; it modifies no damage and is omitted from bridge-bound maps.
+const FEAR_STATUS_KEY := "cannot_buff_next_turn"
 
 ## The four authentic pool printings, each with the exact catalog line it must still carry.
 ## `effects` is the complete printed descriptor set (no extra keys), `to_positions` the printed
@@ -237,8 +248,9 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 
 	# Reserve the shared Pinned's possible +5 before any payment, then project the exact
 	# bridge-compatible damage-status maps the paid hit will use: the authoritative maps are
-	# already validated in full above (including any Dodge/Blind one-shot token), while
-	# CombatStatusAttacks admits only the damage-status subset.
+	# already validated in full above (including any Dodge/Blind one-shot token and the
+	# Scarecrow's boolean Fear lock), while CombatStatusAttacks admits only the damage-status
+	# subset.
 	var attacker_statuses: Variant = _attack_statuses(owner.get("statuses", {}))
 	if attacker_statuses == null:
 		plan["reason"] = "malformed_statuses"
@@ -370,8 +382,10 @@ func _valid_status_rosters(party: CombatParty, enemies: CombatEnemies) -> bool:
 
 ## A detached copy of one authoritative status map holding only the counts that modify attack
 ## damage. Returns null for a non-Dictionary map, a non-String key, a non-int count, an unknown
-## key, a negative counter or a one-shot token that is not exactly 0 or 1. The authoritative map
-## itself is never modified, so a valid Dodge/Blind token stays on its actor.
+## key, a negative counter, a one-shot token that is not exactly 0 or 1, or a Fear flag that is
+## not exactly the literal boolean true. The one-shot tokens and the Fear flag are non-damage
+## markers: they are validated here and left out of the returned map, so the authoritative
+## record itself is never modified and every legal marker stays on its actor.
 func _attack_statuses(statuses: Variant) -> Variant:
 	if not statuses is Dictionary:
 		return null
@@ -381,6 +395,12 @@ func _attack_statuses(statuses: Variant) -> Variant:
 		if not name is String:
 			return null
 		var count: Variant = authoritative[name]
+		if name == FEAR_STATUS_KEY:
+			# Fear is authored as `cannot_buff_next_turn: true`; any other value is malformed
+			# rather than an inactive flag, exactly as the status owners validate it.
+			if not count is bool or not bool(count):
+				return null
+			continue
 		if not count is int:
 			return null
 		if name in ONE_SHOT_STATUS_KEYS:
