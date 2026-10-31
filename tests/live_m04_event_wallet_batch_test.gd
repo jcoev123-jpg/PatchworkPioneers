@@ -14,6 +14,10 @@ const ORIGINAL_ROADSIDE := ["v3_raincoat_bridge", "v3_puppet_box_office",
 var gold_purchases := 0
 var new_hero_receipts := {}
 var fixture_fallback_used := false
+## Diagnostic: {id, seed} pairs discovered only through the bounded fallback.
+## When this is non-empty the shipped hint seeds no longer cover that ID; the
+## failure message names them so a new witness seed can be appended below.
+var fixture_fallback_hits: Array = []
 
 
 func _party_ids() -> Array:
@@ -107,6 +111,7 @@ func _fixtures() -> Dictionary:
 	ids.sort()
 	var required_ids := _required_ids()
 	fixture_fallback_used = false
+	fixture_fallback_hits = []
 	# Treasure traversal consumes no RNG or wallet; allow it between the six
 	# authentic Events rather than requiring a rare six-consecutive-Event route.
 	# Revalidate the known genuine witness seeds first (tests/event_wallet_hints.gd,
@@ -158,6 +163,19 @@ func _fixtures() -> Dictionary:
 	# v3_seamstress_scarlet_loom, v3_seamstress_needle_oracle and
 	# v3_warden_buckle_checkpoint.
 	hints.append_array([501072, 653273, 771997, 1007589, 1187708, 1227514])
+	# Genuine six-Event witnesses re-derived after the four gothic prop-led
+	# roadside tales (Ink-Blue Coat-Hanger Choir, Bone-Cream Needlecase Hotel,
+	# Moss-Cuff Rocking Horse, Oxblood Stitchglass Kaleidoscope) joined the
+	# sorted generic pool and shifted the authentic draw index. These land on
+	# v3_torn_parasol_caravan, dusk_post_bobbin, v3_nightglass_firefly_hutch,
+	# v3_hushthread_gatehouse, v3_velvet_fox_thread_trick, v3_cloud_hem_windmill,
+	# v3_saffron_thimble_observatory, lantern_bobbin_ferry, thimble_well,
+	# v3_teacup_clockwork_procession, v3_oxblood_moss_garden,
+	# v3_amber_hem_undertaker, v3_lacework_railway, patchwork_ferry,
+	# v3_silver_snail_clocktower and v3_emberglass_campfire. The real oracle
+	# below re-verifies every candidate; none is pinned by index or position.
+	hints.append_array([6227, 39886, 44607, 64427, 72601, 89948, 96323, 101501,
+		107698, 129720, 145986, 154818, 175270, 206049, 325821, 366404])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():
@@ -182,6 +200,8 @@ func _fixtures() -> Dictionary:
 		var before_draw := rng.state
 		var event_id: String = ids[rng.randi_range(0, ids.size() - 1)]
 		if not found.has(event_id):
+			if candidate_index >= hints.size():
+				fixture_fallback_hits.append({"id": event_id, "seed": value})
 			var events: Array = []
 			var transit := {}
 			var treasures: Array = []
@@ -780,7 +800,9 @@ func _run() -> void:
 	var global_next := randi()
 	seed(227227)
 	var fixtures := _fixtures()
-	_check(not fixture_fallback_used, "shipped seed hints cover every required Event without bounded fallback")
+	_check(not fixture_fallback_used,
+		"shipped seed hints cover every required Event without bounded fallback: "
+		+ str(fixture_fallback_hits))
 	for id in _required_ids():
 		_check(fixtures.has(id), "bounded genuine seeded route exists for " + id)
 		if not fixtures.has(id):
