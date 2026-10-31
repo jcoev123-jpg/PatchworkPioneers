@@ -276,6 +276,94 @@ func claim_choice(choice_id: Variant, snapshot: Variant = null) -> Dictionary:
 	return choose_with_vitals(choice_id, snapshot)
 
 
+## Opt-in party selector that qualifies unvisited, authenticated hero vitality
+## events having at least one affordable non-Leave choice for that event's living
+## required hero. Rejects invalid service/bound visits, invalid RNG, malformed
+## exclusions, malformed wallet or hero snapshots, mismatched party IDs, all-Torn
+## parties, and Leave-only pools before touching RNG.
+## Sorts eligible record IDs lexicographically, consumes exactly one
+## randi_range(0, eligible.size() - 1) draw on success, and returns a deep detached record.
+func select_party_actionable_event(
+	rng: Variant,
+	excluded_ids: Variant = null,
+	wallet: Variant = null,
+	heroes: Variant = null
+) -> Dictionary:
+	var rejection := {"ok": false, "event": {}}
+	if not _valid or _bound_visit or _claimed:
+		return rejection
+	if not (rng is RandomNumberGenerator):
+		return rejection
+
+	var parsed_exclusions: Dictionary = _parse_actionable_exclusions(excluded_ids)
+	if not parsed_exclusions.get("ok", false):
+		return rejection
+	var excluded: Dictionary = parsed_exclusions["ids"]
+
+	var parsed_wallet: Dictionary = _parse_actionable_wallet(wallet)
+	if not parsed_wallet.get("ok", false):
+		return rejection
+
+	var parsed_heroes: Dictionary = _parse_actionable_heroes(heroes)
+	if not parsed_heroes.get("ok", false):
+		return rejection
+	var living_by_id: Dictionary = parsed_heroes["living_by_id"]
+	if living_by_id.is_empty():
+		return rejection
+
+	var eligible_ids: Array[String] = []
+	for event_id: String in _eligible:
+		if excluded.has(event_id):
+			continue
+		var record: Dictionary = _eligible[event_id]
+		var req_hero: String = record.get("required_hero", "")
+		if not living_by_id.has(req_hero):
+			continue
+		var hero_info: Dictionary = living_by_id[req_hero]
+		var hero_snapshot := {
+			"gold": parsed_wallet["gold"],
+			"scraps": parsed_wallet["scraps"],
+			"hero": {
+				"id": hero_info["id"],
+				"hp": hero_info["hp"],
+				"max_hp": hero_info["max_hp"],
+			},
+		}
+		var choice_service := RunEventChoice.new(record)
+		if not choice_service.is_valid():
+			continue
+		var preview: Dictionary = choice_service.preview_vital_choices(hero_snapshot)
+		if not preview.get("ok", false):
+			continue
+		var choices_raw: Variant = preview.get("choices")
+		if not (choices_raw is Array):
+			continue
+		var has_actionable_choice := false
+		for choice_entry_raw: Variant in (choices_raw as Array):
+			if not (choice_entry_raw is Dictionary):
+				continue
+			var choice_entry: Dictionary = choice_entry_raw
+			var cid: Variant = choice_entry.get("choice_id")
+			if cid is String and cid != LEAVE_CHOICE_ID and choice_entry.get("affordable", false) == true:
+				has_actionable_choice = true
+				break
+		if has_actionable_choice:
+			eligible_ids.append(event_id)
+
+	if eligible_ids.is_empty():
+		return rejection
+
+	eligible_ids.sort()
+	var generator: RandomNumberGenerator = rng
+	var index: int = generator.randi_range(0, eligible_ids.size() - 1)
+	var picked_id: String = eligible_ids[index]
+	var picked_record: Dictionary = (_eligible[picked_id] as Dictionary).duplicate(true)
+	return {
+		"ok": true,
+		"event": picked_record,
+	}
+
+
 func _bind_visit(event_target: Variant, snapshot: Variant) -> bool:
 	_bound_visit = true
 	_claimed = false
@@ -578,3 +666,82 @@ static func _is_trimmed_nonblank_string(value: Variant) -> bool:
 	var text: String = value
 	var trimmed: String = text.strip_edges()
 	return not trimmed.is_empty() and text == trimmed
+
+
+
+static func _parse_actionable_wallet(wallet: Variant) -> Dictionary:
+	if typeof(wallet) != TYPE_DICTIONARY:
+		return {"ok": false}
+	var dict: Dictionary = wallet
+	if dict.size() != 2 or not dict.has("gold") or not dict.has("scraps"):
+		return {"ok": false}
+	var gold: Variant = dict.get("gold")
+	var scraps: Variant = dict.get("scraps")
+	if typeof(gold) != TYPE_INT or typeof(scraps) != TYPE_INT:
+		return {"ok": false}
+	var gold_int: int = gold
+	var scraps_int: int = scraps
+	if gold_int < 0 or scraps_int < 0:
+		return {"ok": false}
+	return {"ok": true, "gold": gold_int, "scraps": scraps_int}
+
+
+func _parse_actionable_heroes(heroes: Variant) -> Dictionary:
+	if typeof(heroes) != TYPE_ARRAY:
+		return {"ok": false}
+	var list: Array = heroes
+	if list.size() != 3:
+		return {"ok": false}
+	var seen_ids: Dictionary = {}
+	var living_by_id: Dictionary = {}
+	for item: Variant in list:
+		if typeof(item) != TYPE_DICTIONARY:
+			return {"ok": false}
+		var dict: Dictionary = item
+		if dict.size() != 3 or not dict.has("id") or not dict.has("hp") or not dict.has("max_hp"):
+			return {"ok": false}
+		var hero_id_raw: Variant = dict.get("id")
+		var hp_raw: Variant = dict.get("hp")
+		var max_hp_raw: Variant = dict.get("max_hp")
+		if not _is_trimmed_nonblank_string(hero_id_raw) or typeof(hp_raw) != TYPE_INT or typeof(max_hp_raw) != TYPE_INT:
+			return {"ok": false}
+		var hero_id: String = hero_id_raw
+		if not _party_set.has(hero_id):
+			return {"ok": false}
+		if seen_ids.has(hero_id):
+			return {"ok": false}
+		seen_ids[hero_id] = true
+		var hp_int: int = hp_raw
+		var max_hp_int: int = max_hp_raw
+		if max_hp_int < MIN_VITAL_MAX_HP:
+			return {"ok": false}
+		if hp_int < 0 or hp_int > max_hp_int:
+			return {"ok": false}
+		if hp_int > 0:
+			living_by_id[hero_id] = {
+				"id": hero_id,
+				"hp": hp_int,
+				"max_hp": max_hp_int,
+			}
+	if seen_ids.size() != 3:
+		return {"ok": false}
+	for pid: String in _party_ids:
+		if not seen_ids.has(pid):
+			return {"ok": false}
+	return {"ok": true, "living_by_id": living_by_id}
+
+
+static func _parse_actionable_exclusions(excluded_ids: Variant) -> Dictionary:
+	var ids: Dictionary = {}
+	if excluded_ids == null:
+		return {"ok": true, "ids": ids}
+	if not (excluded_ids is Array):
+		return {"ok": false}
+	for value: Variant in excluded_ids:
+		if not (value is String):
+			return {"ok": false}
+		var event_id: String = value
+		if not _is_trimmed_nonblank_string(event_id):
+			return {"ok": false}
+		ids[event_id] = true
+	return {"ok": true, "ids": ids}
