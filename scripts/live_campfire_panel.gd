@@ -14,6 +14,18 @@ const DIM := Color("#c1b6ae")
 const PANEL_SIZE := Vector2(880, 600)
 const HEAL_TEXT := "1 Heal · 30%"
 const LEAVE_TEXT := "0 Leave · free"
+const REST_ART_PATH := "res://assets/paper/backgrounds/rest_camp.png"
+const REST_REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
+## One authored decoration: the already-present rest art, cropped to the sewn
+## frame and slightly dimmed so cream text stays legible above it.
+const REST_ART_ALPHA := 0.85
+## The image stays oversized for the frame by this margin, so the restrained
+## breath and drift below never reveal an image edge at any panel size.
+const REST_ART_OVERSAMPLE := 1.03
+const REST_ART_BREATH := 0.012
+const REST_ART_PAN := Vector2(3.0, 2.0)
+const REST_ART_BREATH_PERIOD := 7.0
+const REST_ART_PAN_PERIOD := 11.0
 
 class Stitches extends Control:
 	func _ready() -> void:
@@ -42,12 +54,22 @@ var _epoch: int = 0
 var _submitted := false
 var _connections: Dictionary = {} # Button -> generation-bound pressed Callable
 
+## Authored rest-art decoration, drawn only inside the panel's own canvas item:
+## never a child node, so it can never take mouse or keyboard focus.
+var rest_art_texture: Texture2D
+## Nullable explicit reduced-motion override for focused tests and hosts; null
+## follows ProjectSettings accessibility/reduced_motion (default false).
+var reduced_motion_override: Variant = null
+var _rest_art_elapsed := 0.0
+
 
 func _ready() -> void:
 	size = PANEL_SIZE
 	custom_minimum_size = PANEL_SIZE
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	resized.connect(queue_redraw)
+	rest_art_texture = _load_rest_art()
+	visibility_changed.connect(_on_rest_art_visibility_changed)
 	title_label = _label("CAMPFIRE", Vector2(48, 31), Vector2(770, 62), 44, MUSTARD)
 	for i in range(3):
 		hero_labels.append(_label("", Vector2(70, 161 + i * 97),
@@ -64,6 +86,7 @@ func _draw() -> void:
 	# Gothic sewn felt and a simple compact flame; never a mouse target.
 	draw_rect(Rect2(Vector2.ZERO, size), INK)
 	draw_rect(Rect2(Vector2(6, 6), size - Vector2(12, 12)), PLUM)
+	_draw_rest_art()
 	draw_rect(Rect2(Vector2(21, 21), size - Vector2(42, 42)), THREAD, false, 2.0)
 	draw_dashed_line(Vector2(32, 111), Vector2(size.x - 32, 111), MUSTARD, 2.0, 10.0)
 	draw_dashed_line(Vector2(32, 471), Vector2(size.x - 32, 471), THREAD, 2.0, 9.0)
@@ -82,6 +105,126 @@ func _draw() -> void:
 	draw_colored_polygon(PackedVector2Array([
 		Vector2(766, 78), Vector2(758, 66), Vector2(771, 54),
 		Vector2(778, 70)]), MUSTARD)
+
+
+## The only decoration this screen ever animates: the already-present authored
+## rest art, painted behind every stitched layer and every actionable child.
+## It lives inside the panel's own canvas item, so it is structurally
+## ineligible for mouse or focus input, and only its visual crop transform moves.
+func _draw_rest_art() -> void:
+	if rest_art_texture == null:
+		return
+	var frame := Rect2(Vector2(6, 6), size - Vector2(12, 12))
+	var crop := rest_art_crop(rest_art_texture.get_size(), frame, rest_art_transform())
+	if crop.is_empty():
+		return
+	var dest: Rect2 = crop["rect"]
+	var region: Rect2 = crop["region"]
+	draw_texture_rect_region(rest_art_texture, dest, region,
+		Color(1.0, 1.0, 1.0, REST_ART_ALPHA))
+
+
+static func _load_rest_art() -> Texture2D:
+	if not FileAccess.file_exists(REST_ART_PATH) or not ResourceLoader.exists(REST_ART_PATH, "Texture2D"):
+		return null
+	return load(REST_ART_PATH) as Texture2D
+
+
+## Pure deterministic presentation transform: a slow ~1% scale breath plus a
+## few pixels of drift, both exactly at rest at elapsed zero. No RNG and no
+## wall clock; the caller accumulates a deterministic delta.
+static func rest_art_transform_at(elapsed: float) -> Dictionary:
+	var breath := 0.5 - 0.5 * cos(TAU * fposmod(elapsed, REST_ART_BREATH_PERIOD) / REST_ART_BREATH_PERIOD)
+	var clock := TAU * fposmod(elapsed, REST_ART_PAN_PERIOD) / REST_ART_PAN_PERIOD
+	return {
+		"scale": 1.0 + REST_ART_BREATH * breath,
+		"offset": Vector2(sin(clock), sin(2.0 * clock)) * REST_ART_PAN,
+	}
+
+
+## Pure crop math shared by the renderer and focused tests: the breathing,
+## drifting image stays oversized for the sewn frame, so the source region never
+## reaches an image edge and the drawn rect is exactly the full frame.
+static func rest_art_crop(image_size: Vector2, frame: Rect2, motion: Dictionary) -> Dictionary:
+	if image_size.x <= 0.0 or image_size.y <= 0.0 or frame.size.x <= 0.0 or frame.size.y <= 0.0:
+		return {}
+	var scale := maxf(1.0, float(motion.get("scale", 1.0)))
+	var offset: Vector2 = motion.get("offset", Vector2.ZERO)
+	var cover := maxf(frame.size.x / image_size.x, frame.size.y / image_size.y) * REST_ART_OVERSAMPLE
+	var full_size := image_size * cover * scale
+	var origin := frame.get_center() + offset - full_size * 0.5
+	return {
+		"rect": frame,
+		"region": Rect2(image_size * (frame.position - origin) / full_size,
+			image_size * frame.size / full_size),
+	}
+
+
+## Motion runs only while a genuinely bound open visit is on a visible mounted
+## panel with the authored asset loaded and reduced motion not requested. Every
+## stop path (close/bind(null)/rebind, hide, free, missing art, reduced motion)
+## restores the exact static baseline transform.
+func rest_art_active() -> bool:
+	return _visit != null and is_visible_in_tree() and rest_art_texture != null \
+		and not _reduced_motion_active()
+
+
+## Current decorative transform: the static baseline whenever motion is stopped,
+## otherwise the deterministic transform at the accumulated presentation time.
+func rest_art_transform() -> Dictionary:
+	if not rest_art_active():
+		return {"scale": 1.0, "offset": Vector2.ZERO}
+	return rest_art_transform_at(_rest_art_elapsed)
+
+
+## Deterministic presentation-time advance for focused tests; live play
+## accumulates the same clock through _process with the engine delta.
+func advance_rest_art(delta: float) -> void:
+	if delta <= 0.0 or not rest_art_active():
+		return
+	_rest_art_elapsed += delta
+	queue_redraw()
+
+
+func set_reduced_motion_override(value: Variant) -> void:
+	reduced_motion_override = value
+	if not rest_art_active():
+		_reset_rest_art()
+
+
+func _reduced_motion_active() -> bool:
+	if reduced_motion_override != null:
+		return bool(reduced_motion_override)
+	return bool(ProjectSettings.get_setting(REST_REDUCED_MOTION_SETTING, false))
+
+
+func _reset_rest_art() -> void:
+	if _rest_art_elapsed == 0.0:
+		return
+	_rest_art_elapsed = 0.0
+	if is_inside_tree():
+		queue_redraw()
+
+
+func _on_rest_art_visibility_changed() -> void:
+	if not is_visible_in_tree():
+		_reset_rest_art()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_EXIT_TREE:
+		_reset_rest_art()
+
+
+## Accumulated presentation delta alone drives the decoration; it never calls the
+## visit, the recovery service, the route or any RNG.
+func _process(delta: float) -> void:
+	if not rest_art_active():
+		_reset_rest_art()
+		return
+	if delta > 0.0:
+		_rest_art_elapsed += delta
+		queue_redraw()
 
 
 func _label(caption: String, at: Vector2, dimensions: Vector2,
@@ -143,6 +286,7 @@ func bind(visit: RunCampfireVisit) -> void:
 	_snapshot = {}
 	_preview = []
 	_submitted = false
+	_reset_rest_art()
 	if visit != null:
 		var state: Dictionary = visit.read_state()
 		if state.get("ok") == true and state.get("status") == RunCampfireVisit.OPEN \
