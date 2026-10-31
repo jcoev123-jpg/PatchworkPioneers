@@ -87,6 +87,94 @@ func _run() -> void:
 	var coverage := (title_back.get_area() + action_back.get_area()) / viewport.get_area()
 	_check(coverage > 0.0 and coverage <= shell.MENU_COVERAGE_LIMIT,
 		"sewn menu covers only a compact share of the title picture")
+	# Real mounted title: presentation time may animate only the textured wordmark.
+	var logo_art: Texture2D = shell._logo
+	var logo_box: Rect2 = shell.logo_rect()
+	var fixed_label: Rect2 = app.title_label.get_global_rect()
+	var fixed_actions: Array[Rect2] = []
+	for button in [app.start_button, app.route_button, app.base_button]:
+		fixed_actions.append(button.get_global_rect())
+	_check(logo_art != null and logo_art.resource_path == shell.TITLE_LOGO
+		and logo_box.has_area() and shell.is_processing() and app.start_button.has_focus(),
+		"authored live title wordmark is mounted and drives presentation processing")
+	var elapsed_at_boot: float = shell._logo_elapsed
+	await process_frame
+	_check(shell._logo_elapsed > elapsed_at_boot, "visible title advances presentation clock in real frames")
+	var distinct_motion := false
+	for beat in [0.0, 1.0, 2.0, 3.0, 4.0, 6.0]:
+		shell._logo_elapsed = beat
+		var pose: Dictionary = shell.logo_motion()
+		var shift: Vector2 = pose["offset"]
+		var tilt: float = pose["rotation"]
+		_check(absf(shift.x) <= shell.LOGO_MOTION_OFFSET.x + 0.001
+			and absf(shift.y) <= shell.LOGO_MOTION_OFFSET.y + 0.001
+			and absf(tilt) <= shell.LOGO_MOTION_ROTATION + 0.001,
+			"logo sway remains within its small authored rectangle allowance")
+		if shift.length() > 0.1 and absf(tilt) > 0.001:
+			distinct_motion = true
+		_check(shell.logo_rect() == logo_box and app.title_label.get_global_rect() == fixed_label,
+			"logo motion leaves the title label and static logo rectangle unchanged")
+		for index in range(fixed_actions.size()):
+			_check([app.start_button, app.route_button, app.base_button][index].get_global_rect() == fixed_actions[index],
+				"sway cannot move the original interactive hit target " + str(index))
+	_check(distinct_motion, "mounted wordmark actually moves and rotates during the cycle")
+	shell._logo_elapsed = 2.0
+	var repeat_pose: Dictionary = shell.logo_motion()
+	shell._logo_elapsed = 2.0 + shell.LOGO_MOTION_PERIOD
+	var repeated_pose: Dictionary = shell.logo_motion()
+	_check(repeat_pose["offset"].distance_to(repeated_pose["offset"]) < 0.001
+		and absf(float(repeat_pose["rotation"]) - float(repeated_pose["rotation"])) < 0.001,
+		"wordmark sway repeats without RNG or accumulating drift")
+	# The reward panel contract: a boolean override wins, null follows ProjectSettings.
+	shell.set_reduced_motion_override(true)
+	_check(not shell.is_processing() and shell._logo_elapsed == 0.0
+		and shell.logo_motion()["offset"] == Vector2.ZERO
+		and shell.logo_motion()["rotation"] == 0.0 and shell.logo_rect() == logo_box,
+		"reduced-motion override stops processing and preserves the static wordmark")
+	shell.set_reduced_motion_override(false)
+	_check(shell.is_processing() and shell._logo_elapsed == 0.0,
+		"enabling motion again starts from its neutral frame")
+	var setting_path := "accessibility/reduced_motion"
+	var previous_setting: Variant = ProjectSettings.get_setting(setting_path, false)
+	ProjectSettings.set_setting(setting_path, true)
+	shell.set_reduced_motion_override(null)
+	_check(not shell.is_processing() and shell.logo_motion()["offset"] == Vector2.ZERO,
+		"project accessibility reduced-motion setting suppresses wordmark sway")
+	ProjectSettings.set_setting(setting_path, false)
+	shell._sync_logo_motion()
+	_check(shell.is_processing() and shell._logo_elapsed == 0.0,
+		"project accessibility setting can restore wordmark motion")
+	ProjectSettings.set_setting(setting_path, previous_setting)
+	shell.set_reduced_motion_override(false)
+	# Missing logo must restore visible live text instead of leaving a blank title.
+	shell._logo = null
+	shell._process(0.0)
+	_check(not shell.is_processing() and shell._logo_elapsed == 0.0
+		and not shell.logo_rect().has_area() and app.title_label.self_modulate.a == 1.0,
+		"missing logo halts sway and restores the readable live title label")
+	shell._logo = logo_art
+	shell._sync_logo_motion()
+	_check(shell.is_processing() and shell.logo_rect() == logo_box
+		and app.title_label.self_modulate.a == 0.0,
+		"restored authored logo resumes from neutral and hides only the painted label")
+	shell._process(1.0)
+	_check(shell._logo_elapsed > 0.0, "logo has motion phase before hiding the title")
+	app.title_view.hide()
+	_check(not shell.visible and not shell.is_processing() and shell._logo_elapsed == 0.0
+		and shell.logo_motion()["offset"] == Vector2.ZERO,
+		"hidden title releases its presentation processing and stale pose")
+	app.title_view.show()
+	_check(shell.visible and shell.is_processing() and shell._logo_elapsed == 0.0
+		and shell.logo_motion()["offset"] == Vector2.ZERO and shell.logo_rect() == logo_box,
+		"title re-entry starts fresh at the untransformed logo rectangle")
+	_check(app.title_label.get_global_rect() == fixed_label
+		and [app.start_button.get_global_rect(), app.route_button.get_global_rect(),
+			app.base_button.get_global_rect()] == fixed_actions,
+		"hide/re-entry preserve label and all three mouse/keyboard action rects")
+	# This direct visibility probe bypasses App's navigation callbacks, so restore the
+	# original focused title action before exercising the physical Tab cycle.
+	app.start_button.grab_focus()
+	_check(app.start_button.has_focus(), "focus is restored after the synthetic visibility probe")
 	if shell._backdrop is Texture2D:
 		var picture: Rect2 = shell.backdrop_rect()
 		var scenery := true
@@ -145,7 +233,9 @@ func _run() -> void:
 		"physical route choice hides decoration and mounts route")
 	var before := _snapshot(app)
 	app.title_view.show()
-	_check(shell.visible, "backdrop follows title show synchronously")
+	_check(shell.visible and shell.is_processing(), "backdrop and title sway follow title show synchronously")
+	shell._process(1.25)
+	_check(shell._logo_elapsed > 0.0, "real seeded route state coexists with the mounted title animation")
 	app.title_view.hide()
 	_check(not shell.visible and _snapshot(app) == before, "decoration visibility leaves real run and RNG unchanged")
 	await _click(app.route_back_button)

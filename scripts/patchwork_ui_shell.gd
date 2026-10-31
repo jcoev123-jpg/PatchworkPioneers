@@ -9,6 +9,10 @@ const TITLE_BACKDROP := "res://assets/paper/backgrounds/title.png"
 const TITLE_LOGO := "res://assets/paper/ui/title_logo.png"
 ## Widest the wordmark may grow, centred on the title banner.
 const LOGO_MAX_WIDTH := 760.0
+## Small periodic presentation drift; independent of both gameplay and global RNG.
+const LOGO_MOTION_PERIOD := 8.0
+const LOGO_MOTION_OFFSET := Vector2(3.0, 1.5)
+const LOGO_MOTION_ROTATION := 0.012
 ## Padded felt the title actions are sewn onto; the drawn felt patch is its fallback.
 const MENU_FELT := "res://assets/paper/ui/panel_felt.png"
 ## The master project Theme owns the Patch* typography variations and the body font.
@@ -27,6 +31,8 @@ var _actions: Array[Button] = []
 var _backdrop: Texture2D
 var _logo: Texture2D
 var _menu_felt: StyleBoxTexture
+var _logo_elapsed := 0.0
+var _reduced_motion_override: Variant = null
 
 
 class ButtonStitches extends Control:
@@ -44,6 +50,7 @@ class ButtonStitches extends Control:
 
 
 func _ready() -> void:
+	set_process(false)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_backdrop = _load_backdrop()
 	_logo = _load_backdrop(TITLE_LOGO)
@@ -231,9 +238,7 @@ func _bind_title() -> void:
 	_label.theme_type_variation = "PatchTitle"
 	_label.add_theme_color_override("font_color", INK)
 	_label.add_theme_constant_override("outline_size", 0)
-	# With the wordmark the label stays for layout and screen readers but paints nothing.
-	if _logo != null:
-		_label.self_modulate = Color(1, 1, 1, 0)
+	# The live label remains in layout and accessible; the sync chooses whether it paints.
 	for button in _actions:
 		# The three original actions speak in the master Theme's Londrina heading face.
 		button.theme_type_variation = "PatchHeadingButton"
@@ -250,6 +255,53 @@ func _bind_title() -> void:
 
 func _sync_visibility() -> void:
 	visible = _title.visible
+	_sync_logo_motion()
+
+
+## Like the reward panel, null follows the accessibility ProjectSetting and a boolean
+## override lets mounted tests exercise both settings without changing player options.
+func set_reduced_motion_override(value: Variant) -> void:
+	_reduced_motion_override = value if value is bool else null
+	_sync_logo_motion()
+
+
+func _reduced_motion() -> bool:
+	if _reduced_motion_override is bool:
+		return _reduced_motion_override
+	return ProjectSettings.get_setting("accessibility/reduced_motion", false) == true
+
+
+func _can_animate_logo() -> bool:
+	return is_node_ready() and visible and is_instance_valid(_title) \
+		and _title.is_visible_in_tree() and not _reduced_motion() \
+		and _logo != null and logo_rect().has_area()
+
+
+func _sync_logo_motion() -> void:
+	set_process(false)
+	_logo_elapsed = 0.0
+	if is_instance_valid(_label):
+		_label.self_modulate = Color(1, 1, 1, 0) if logo_rect().has_area() else Color.WHITE
+	if _can_animate_logo():
+		set_process(true)
+	queue_redraw()
+
+
+## Purely a draw-time transform. Never changes shell, label or hit-target geometry.
+func logo_motion() -> Dictionary:
+	if not _can_animate_logo():
+		return {"offset": Vector2.ZERO, "rotation": 0.0}
+	var phase := TAU * _logo_elapsed / LOGO_MOTION_PERIOD
+	return {"offset": Vector2(LOGO_MOTION_OFFSET.x * sin(phase),
+		LOGO_MOTION_OFFSET.y * sin(2.0 * phase)),
+		"rotation": LOGO_MOTION_ROTATION * sin(phase)}
+
+
+func _process(delta: float) -> void:
+	if not _can_animate_logo():
+		_sync_logo_motion()
+		return
+	_logo_elapsed = fposmod(_logo_elapsed + maxf(delta, 0.0), LOGO_MOTION_PERIOD)
 	queue_redraw()
 
 
@@ -337,4 +389,8 @@ func _draw() -> void:
 		else:
 			_draw_sewn_backing(menu, ACTION_BACKING)
 	if logo.has_area():
-		draw_texture_rect(_logo, logo, false)
+		var motion := logo_motion()
+		draw_set_transform(logo.get_center() + motion["offset"], motion["rotation"], Vector2.ONE)
+		draw_texture_rect(_logo, Rect2(-logo.size * 0.5, logo.size), false)
+		# Reset the CanvasItem draw state so later decorations never inherit the sway.
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
