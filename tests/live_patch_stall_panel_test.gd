@@ -211,6 +211,7 @@ func _run() -> void:
 	await _leave_case(false, true)
 	await _leave_case(true, false)
 	await _fail_closed()
+	await _scarce_stock_cases(slot_map)
 	_check(rng.state == expected_run, "all panel actions preserve seeded run RNG")
 	_check(randi() == expected_global, "all mounted actions preserve global RNG")
 	panel.queue_free()
@@ -1005,3 +1006,245 @@ func _fail_closed() -> void:
 	after_close.call()
 	_check(intents.is_empty() and panel.leave_button.disabled and not panel.visible,
 			"close retires all callbacks and disables controls")
+
+
+## V3-3 late-run scarcity: every priced catalog power is already owned except
+## the authored button_eye and pincushion_arm. The seeded sampler must keep the
+## opened stall genuinely buyable: both remaining unowned choices stay
+## purchasable at their authored 100-gold prices and the third slot is a
+## truthful already-owned SOLD fallback row. The run RNG advances only for the
+## two real stock draws, the sorted fallback completion consumes none, and
+## same-seed replay reproduces the exact stock while the three-plus-unowned
+## fixture keeps its prior reference output and RNG sequence untouched.
+func _scarce_stock_cases(power_slots: Dictionary) -> void:
+	var route_rng_before := rng.state
+	var authored: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/shop/initial_offers.json"))
+	if typeof(authored) != TYPE_DICTIONARY or not authored.has("trinkets"):
+		_check(false, "scarce fixture needs the shipped priced catalog")
+		return
+	var scarce_owned: Array = []
+	var priced_powers := 0
+	for listing in authored["trinkets"]:
+		if typeof(listing) != TYPE_DICTIONARY:
+			continue
+		var listing_id: Variant = listing.get("id")
+		if typeof(listing_id) != TYPE_STRING or not power_slots.has(listing_id):
+			continue
+		priced_powers += 1
+		if listing_id != "button_eye" and listing_id != "pincushion_arm":
+			scarce_owned.append(listing_id)
+	_check(power_slots.has("button_eye") and power_slots.has("pincushion_arm"),
+			"the two named unowned witnesses are genuine priced catalog powers")
+	_check(priced_powers >= 3 and not scarce_owned.has("button_eye")
+				and not scarce_owned.has("pincushion_arm") and scarce_owned.size() >= 1,
+			"scarce fixture owns every priced power except the two named witnesses")
+	var seed_value := 314159
+	var stall_rng := RandomNumberGenerator.new()
+	stall_rng.seed = seed_value
+	var sampled := RunShopPurchases.sample_patch_stall_offers(stall_rng,
+		authored["trinkets"], scarce_owned)
+	_check(sampled.get("ok") == true and sampled.get("offers") is Array
+				and sampled["offers"].size() == 3,
+			"seeded scarce sampler still stocks three distinct power patches")
+	if sampled.get("ok") != true or sampled.get("offers", []).size() != 3:
+		return
+	var scarce_offers: Array = sampled["offers"]
+	var seen_ids := {}
+	var owned_rows := 0
+	var unowned_ids: Array = []
+	for offer in scarce_offers:
+		_check(typeof(offer.get("id")) == TYPE_STRING and not seen_ids.has(offer["id"]),
+			"scarce stock keeps three distinct power IDs")
+		seen_ids[offer["id"]] = true
+		if scarce_owned.has(offer["id"]):
+			owned_rows += 1
+		else:
+			unowned_ids.append(offer["id"])
+		var listed := false
+		for entry in authored["trinkets"]:
+			if entry["id"] == offer["id"] and int(entry["price"]) == offer["price"]:
+				listed = true
+		_check(listed and typeof(offer.get("price")) == TYPE_INT and offer["price"] == 100,
+			"scarce offer keeps its original authored 100-gold price: " + str(offer["id"]))
+	_check(owned_rows == 1 and unowned_ids.size() == 2
+				and unowned_ids.has("button_eye") and unowned_ids.has("pincushion_arm"),
+			"exactly one sold fallback completes the two named buyable choices")
+	_check(scarce_owned.has(scarce_offers[2]["id"]),
+			"the third scarce slot is the already-owned sold fallback")
+	# Independent twin oracle: the same two sorted real stock draws, then the
+	# sorted first owned priced candidate. Its twin RNG proves the fallback
+	# completion consumes no run RNG beyond the genuine stock draws.
+	var oracle := RandomNumberGenerator.new()
+	oracle.seed = seed_value
+	var rare_ids := {}
+	var rare_json: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/mpw_synergy_patches.json"))
+	if typeof(rare_json) == TYPE_ARRAY:
+		for record in rare_json:
+			if typeof(record) == TYPE_DICTIONARY and typeof(record.get("id")) == TYPE_STRING:
+				rare_ids[record["id"]] = true
+	var eligible: Array = ["button_eye", "pincushion_arm"]
+	eligible.sort()
+	var expected: Array = []
+	var total := 200
+	for i in range(2):
+		var ticket: int = oracle.randi_range(0, total - 1)
+		var walked := 0
+		var chosen := ""
+		for id in eligible:
+			walked += 100
+			if ticket < walked:
+				chosen = id
+				break
+		expected.append({"id": chosen, "price": 100})
+		total -= 100
+		eligible.erase(chosen)
+	var fallback_sorted: Array = []
+	for listing in authored["trinkets"]:
+		if scarce_owned.has(listing["id"]) and not rare_ids.has(listing["id"]):
+			fallback_sorted.append(listing["id"])
+	fallback_sorted.sort()
+	_check(not fallback_sorted.is_empty(), "scarce oracle has a priced owned fallback")
+	expected.append({"id": fallback_sorted[0], "price": 100})
+	_check(scarce_offers == expected,
+			"scarce stock matches the independent seeded and sorted oracle")
+	_check(stall_rng.state == oracle.state,
+			"scarce run RNG advances only for the two real stock draws")
+	var replay_rng := RandomNumberGenerator.new()
+	replay_rng.seed = seed_value
+	var replay := RunShopPurchases.sample_patch_stall_offers(replay_rng,
+		authored["trinkets"], scarce_owned)
+	_check(replay == sampled and replay_rng.state == stall_rng.state,
+			"same-seed replay restocks the identical scarce quote and RNG state")
+	# The untouched three-plus-unowned fixture keeps its exact prior reference.
+	var reference_rng := RandomNumberGenerator.new()
+	reference_rng.seed = 2680268
+	var reference := RunShopPurchases.sample_patch_stall_offers(reference_rng,
+		authored["trinkets"], OWNED)
+	_check(reference.get("ok") == true and reference.get("offers") == offers,
+			"three-plus-unowned stock keeps the exact prior reference output")
+	_check(reference_rng.state == rng.state,
+			"three-plus-unowned stock keeps the exact prior run RNG sequence")
+	# Mounted scarce stall: the funded visit advertises all three offers plus
+	# Leave; the owned fallback row is visibly SOLD and unclickable by mouse,
+	# number key, focus and callback, while either unowned choice buys once.
+	var visit := RunPatchStallVisit.new("scarce_funded", PARTY, DECK,
+		scarce_owned.duplicate(true), 240, scarce_offers.duplicate(true))
+	var before := visit.read_state()
+	var quote := visit.quote()
+	_check(visit.is_valid() and quote["offers"].size() == 3
+				and quote.get("decisions") == ["buy_patch", "leave"],
+			"scarce funded visit is a genuine three-offer service")
+	var sold_index := -1
+	var sold_flags := 0
+	for i in range(3):
+		if quote["offers"][i]["sold"] == true:
+			sold_index = i
+			sold_flags += 1
+	var buyable: Array = []
+	for i in range(3):
+		if i != sold_index:
+			buyable.append(i)
+	_check(sold_flags == 1 and sold_index == 2
+				and quote["offers"][sold_index]["id"] == scarce_offers[2]["id"],
+			"admission marks exactly the already-owned fallback sold")
+	await _bind(visit)
+	_check_warning(visit, "scarce funded quote")
+	_check(panel.offer_buttons[sold_index].disabled
+				and panel.offer_buttons[sold_index].text.contains("SOLD")
+				and not panel.offer_buttons[sold_index].text.contains("gold"),
+			"owned fallback row shows SOLD with no payable price or action")
+	for i in buyable:
+		_check(panel.offer_buttons[i].is_visible_in_tree()
+					and not panel.offer_buttons[i].disabled
+					and panel.offer_buttons[i].text.contains("100 gold"),
+				"remaining unowned 100-gold choices stay visible and active: "
+					+ str(scarce_offers[i]["id"]))
+	_check(panel.wearer_buttons.size() == 3
+				and panel.wearer_buttons.all(func(pin: Button): return not pin.disabled)
+				and not panel.leave_button.disabled
+				and panel.leave_button.text == "0 Leave  ·  FREE",
+			"three wearer selectors and the free Leave remain available")
+	_check(root.gui_get_focus_owner() == panel.wearer_buttons[0],
+			"affordable scarce stall focuses the first wearer selector")
+	# Rejections: mouse press, numeric key and a direct service purchase on the
+	# SOLD row change nothing.
+	panel.offer_buttons[sold_index].pressed.emit()
+	await _frames()
+	await _key([KEY_1, KEY_2, KEY_3][sold_index])
+	_check(intents.is_empty() and visit.read_state() == before
+				and visit.quote() == quote and not visit.is_consumed(),
+			"SOLD row presses and its number key emit no intent and mutate nothing")
+	_check(not visit.buy_patch(quote["offers"][sold_index]["id"], before["visit_id"],
+				before["node_id"], before["snapshot"]).get("ok"),
+			"direct SOLD-row purchase is refused by the one-use service")
+	# Poor wallet: no receipt, no gold loss and no route RNG change.
+	var poor := RunPatchStallVisit.new("scarce_poor", PARTY, DECK,
+		scarce_owned.duplicate(true), 50, scarce_offers.duplicate(true))
+	var poor_before := poor.read_state()
+	var poor_quote := poor.quote()
+	await _bind(poor)
+	_check(panel.offer_buttons.all(func(button: Button): return button.disabled),
+			"poor scarce wallet disables every patch row including the SOLD fallback")
+	for i in buyable:
+		_check(panel.offer_buttons[i].text.contains("short 50"),
+				"poor unsold rows show the exact shortfall")
+	_check(root.gui_get_focus_owner() == panel.leave_button
+				and panel.leave_button.has_focus(),
+			"poor scarce stall focuses the free Leave as the only exit")
+	await _key([KEY_1, KEY_2, KEY_3][buyable[0]])
+	await _key([KEY_KP_1, KEY_KP_2, KEY_KP_3][sold_index])
+	_check(intents.is_empty() and poor.read_state() == poor_before
+				and poor.quote() == poor_quote and not poor.is_consumed(),
+			"unaffordable scarce buys emit nothing and mutate no state")
+	_check(not poor.buy_patch(scarce_offers[buyable[0]]["id"], poor_before["visit_id"],
+				"scarce_poor", poor_before["snapshot"]).get("ok")
+				and poor.read_state()["snapshot"]["gold"] == 50,
+			"poor-wallet buy leaves no receipt and no gold loss")
+	await _key(KEY_0)
+	_check(intents.size() == 1, "free 0 Leave still answers the poor scarce stall")
+	if intents.size() == 1:
+		var left := Controller.settle(poor, intents[0], poor_before, poor_quote)
+		_check(left.get("ok") == true and left.get("decision") == "leave"
+					and left["ledger"]["gold"] == 50
+					and left["ledger"]["trinkets"] == scarce_owned
+					and left["ledger"]["deck"] == DECK,
+				"poor scarce Leave settles once with zero spend")
+		_check(not Controller.settle(poor, intents[0], poor_before, poor_quote).get("ok"),
+				"poor scarce Leave replay refused")
+	# One genuine purchase: choose a wearer, buy either unowned choice once
+	# through the existing intent path; replay and stale presses fail.
+	await _bind(visit)
+	await _act(panel.wearer_buttons[2], true, KEY_SPACE)
+	var buy_row: int = buyable[0]
+	var stale: Callable = panel._connections[panel.offer_buttons[buy_row]]
+	await _act(panel.offer_buttons[buy_row], false)
+	_check(intents.size() == 1,
+			"one affordable unsold scarce choice emits exactly one intent")
+	if intents.size() == 1:
+		var intent := intents[0]
+		_check(intent.keys().size() == 6 and intent.get("action") == "buy_patch"
+					and intent.get("patch_id") == scarce_offers[buy_row]["id"]
+					and intent.get("wearer_id") == PARTY[2]
+					and intent.get("node_id") == before["node_id"]
+					and intent.get("visit_id") == before["visit_id"]
+					and intent.get("expected_snapshot") == before["snapshot"],
+				"scarce buy intent matches the exact existing source-bound schema")
+		var receipt := Controller.settle(visit, intent, before, quote)
+		_check(receipt.get("ok") == true and receipt.get("decision") == "buy_patch"
+					and receipt["receipt"] == {"kind": "trinket",
+							"id": scarce_offers[buy_row]["id"], "price": 100}
+					and receipt["ledger"]["gold"] == 140
+					and receipt["ledger"]["trinkets"] == scarce_owned + [scarce_offers[buy_row]["id"]],
+				"controller settles the scarce purchase once at the authored price")
+		_check(visit.is_consumed()
+					and not Controller.settle(visit, intent, before, quote).get("ok"),
+				"scarce purchase is one-use; replay refused")
+		await _act_disabled_replay()
+		if stale.is_valid():
+			stale.call()
+		_check(intents.size() == 1 and visit.is_consumed(),
+				"stale and replayed scarce presses cannot emit or settle twice")
+	_check(rng.state == route_rng_before,
+			"scarce rejections and purchases never touch the route RNG")

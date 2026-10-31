@@ -1855,9 +1855,12 @@ func _needle_state() -> Array:
 
 
 func _needle_mounted_cases(fixture: Dictionary) -> void:
-	for scenario in ["strike", "plus", "nonwearer", "torn", "unworn"]:
+	for scenario in ["strike", "plus", "bash", "prick", "pop", "modifiers",
+			"absorbed", "nonwearer", "foreign_prick", "foreign_pop",
+			"unpinned", "torn", "unworn"]:
 		var owner := "" if scenario == "unworn" else (
-			"seamstress" if scenario == "nonwearer" else "warden")
+			"seamstress" if scenario in ["prick", "modifiers", "nonwearer"] else (
+				"tinker" if scenario == "pop" else "warden"))
 		var upgrading: bool = scenario == "plus"
 		var torn: bool = scenario == "torn"
 		if not await _entry(fixture, owner, torn, false, false, [], false,
@@ -1875,7 +1878,12 @@ func _needle_mounted_cases(fixture: Dictionary) -> void:
 		if rules == null and owner != "":
 			await _click(app.return_button)
 			continue
-		var id := "warden_strike_plus" if upgrading else "warden_strike"
+		var id := "warden_strike_plus" if upgrading else (
+			"warden_shield_bash" if scenario == "bash" else (
+				"seamstress_prick" if scenario in ["prick", "modifiers", "foreign_prick"] else (
+					"tinker_pop_shot" if scenario in ["pop", "foreign_pop"] else "warden_strike")))
+		var card_owner: String = StarterCards.new().get_definition(id).owner
+		var eligible: bool = owner == card_owner and not torn and owner != ""
 		var target: Dictionary = app.enemies.get_enemy(1)
 		_check(target.get("hp", 0) > 0 and presenter._pinned.pin_enemy(
 			app.enemies, 1, "warden") and presenter._pinned.pinner_for_enemy(1) == "warden",
@@ -1906,8 +1914,8 @@ func _needle_mounted_cases(fixture: Dictionary) -> void:
 			await _frames()
 			_check(app.deck.hand.count(id) >= 2, "two genuine held Strike copies for same-turn latch")
 		if rules != null:
-			var forged_source: Dictionary = rules.quote_needle_hit("warden", 1)
-			if scenario in ["strike", "plus"]:
+			var forged_source: Dictionary = rules.quote_needle_hit(card_owner, 1, id)
+			if eligible:
 				_check(forged_source.get("ok", false)
 					and forged_source.get("bonus_damage") == 1,
 					"living wearer receives sealed pre-hit Needle quote")
@@ -1921,7 +1929,7 @@ func _needle_mounted_cases(fixture: Dictionary) -> void:
 					and rules._pending_needle.is_empty() and not rules._needle_used,
 					"forged seal refuses atomically and cancels pending quote")
 				if scenario == "strike":
-					var stale_quote: Dictionary = rules.quote_needle_hit("warden", 1)
+					var stale_quote: Dictionary = rules.quote_needle_hit(card_owner, 1, id)
 					_check(stale_quote.get("ok", false)
 						and presenter._pinned.clear_pin(1), "authentic pin disappears after quote")
 					var without_pin := _live_state()
@@ -1934,20 +1942,70 @@ func _needle_mounted_cases(fixture: Dictionary) -> void:
 						"stale quote after lost Pin refuses without deck, party or RNG mutation")
 					_check(presenter._pinned.pin_enemy(app.enemies, 1, "warden"),
 						"authentic Pinned authority can be restored for actual paid hit")
+					_check(not rules.quote_needle_hit(card_owner, 1, "tinker_scrap_bomb").ok
+						and not rules.quote_needle_hit(card_owner, 1, "seamstress_prick_plus").ok
+						and rules._pending_needle.is_empty(),
+						"area and unsupported upgraded printings cannot mint a Needle quote")
+					var wrong_card_quote := rules.quote_needle_hit(card_owner, 1, id)
+					var wrong_card_before := _live_state()
+					var wrong_card: Dictionary = presenter._play.play_attack(app.deck, app.party,
+						app.enemies, "warden_shield_bash", 1, {}, {}, 0, null, {},
+						rules, wrong_card_quote)
+					_check(wrong_card_quote.ok and not wrong_card.ok
+						and _live_state() == wrong_card_before
+						and rules._pending_needle.is_empty() and not rules._needle_used,
+						"forged different canonical card ID refuses the old sealed quote")
+					var wrong_target_quote := rules.quote_needle_hit(card_owner, 1, id)
+					var wrong_target_before := _live_state()
+					var wrong_target: Dictionary = presenter._play.play_attack(app.deck, app.party,
+						app.enemies, id, 3, {}, {}, 0, null, {}, rules, wrong_target_quote)
+					_check(wrong_target_quote.ok and not wrong_target.ok
+						and _live_state() == wrong_target_before
+						and rules._pending_needle.is_empty() and not rules._needle_used,
+						"illegal target refuses sealed Needle before cost or discard")
+					app.deck.combat_state.energy = 0
+					var no_cost_quote := rules.quote_needle_hit(card_owner, 1, id)
+					var no_cost_before := _live_state()
+					var no_cost: Dictionary = presenter._play.play_attack(app.deck, app.party,
+						app.enemies, id, 1, {}, {}, 0, null, {}, rules, no_cost_quote)
+					_check(no_cost_quote.ok and not no_cost.ok
+						and _live_state() == no_cost_before
+						and rules._pending_needle.is_empty() and not rules._needle_used,
+						"unaffordable held attack clears quote with no energy, deck or RNG effects")
+					app.deck.combat_state.energy = 3
 			else:
 				_check(not forged_source.get("ok", false)
 					and rules._pending_needle.is_empty(),
 					"nonwearer cannot reserve Needle bonus")
-		_check(app.enemies.gain_block(1, 3),
+		if scenario == "unpinned":
+			_check(presenter._pinned.clear_pin(1),
+				"unpinned live recipient lacks a token before commitment")
+		if scenario == "modifiers":
+			app.party._heroes[1]["statuses"] = {"weak": 1}
+			app.enemies._enemies[0]["statuses"] = {"exposed": 1}
+			_check(app.party.get_heroes()[1].statuses == {"weak": 1}
+				and app.enemies.get_enemy(1).statuses == {"exposed": 1},
+				"real pre-hit Weak and Exposed are present for raw-bonus ordering")
+		_check(app.enemies.gain_block(1, 99 if scenario == "absorbed" else 3),
 			"real enemy Block protects the confirmed Needle receipt")
 		var original: Dictionary = app.enemies.get_enemy(1)
 		var payment := [app.deck.energy, app.deck.hand.count(id),
-			app.deck.discard_pile.count(id), app.run_rng.state]
+			app.deck.discard_pile.count(id), app.run_rng.state,
+			presenter._play._tinker.bonus_for_attack(id)]
 		_check(await _choose(id, false), "actual selected held card " + scenario)
 		await _click(app.get_node("LiveEnemyRoster")._labels[0])
 		var receipt: Dictionary = presenter.last_event
-		var expected_damage := (7 if upgrading else 6) + (
-			1 if scenario in ["strike", "plus"] else 0)
+		var raw: int = StarterCards.new().get_definition(id).effects.damage
+		var first_tinker: int = payment[4]
+		var expected_damage: int = CombatStatuses.new().adjusted_attack_damage(
+			raw + first_tinker + (1 if eligible and scenario != "unpinned" else 0),
+			app.party.get_heroes().filter(func(hero): return hero.id == card_owner)[0].get("statuses", {}),
+			original.get("statuses", {}))
+		if scenario == "modifiers":
+			var without_needle: int = CombatStatuses.new().adjusted_attack_damage(
+				raw + first_tinker, {"weak": 1}, {"exposed": 1})
+			_check(expected_damage > without_needle,
+				"Needle adds before Weak/Exposed, not to the adjusted result")
 		var now: Dictionary = app.enemies.get_enemy(1)
 		_check(receipt.get("ok", false) and receipt.get("hits", []).size() == 1
 			and receipt.hits[0].position == 1
@@ -1958,13 +2016,25 @@ func _needle_mounted_cases(fixture: Dictionary) -> void:
 			and now.hp == original.hp - receipt.hits[0].hp_loss
 			and now.block == original.block - receipt.hits[0].block_absorbed,
 			"actual original hit rows exactly reconcile HP/Block " + scenario)
-		_check(app.deck.energy == payment[0] - 1
+		var expected_statuses := {"weak": 1} if id == "warden_shield_bash" else (
+			{"bleed": 3} if id == "seamstress_prick" else {})
+		_check(receipt.get("ok", false) and receipt.get("hits", []).size() == 1
+			and receipt.hits[0].statuses == expected_statuses,
+			"one original on-hit status receipt, never a duplicate application " + scenario)
+		_check(app.deck.energy == payment[0] - StarterCards.new().get_definition(id).cost
 			and app.deck.hand.count(id) == payment[1] - 1
 			and app.deck.discard_pile.count(id) == payment[2] + 1
 			and app.run_rng.state == payment[3]
-			and (rules == null or rules._needle_used == (scenario in ["strike", "plus"]))
+			and (rules == null or rules._needle_used == (eligible and scenario != "unpinned"))
 			and (rules == null or rules._pending_needle.is_empty()),
 			"exactly one paid/discarded card and correct latch with no RNG draw " + scenario)
+		if scenario == "absorbed":
+			_check(receipt.hits[0].block_absorbed == expected_damage
+				and receipt.hits[0].hp_loss == 0 and rules._needle_used,
+				"fully Block-absorbed positive contact consumes only the one Needle latch")
+		if scenario == "unpinned":
+			_check(not rules._needle_used and rules._pending_needle.is_empty(),
+				"real unpinned attack pays normally with no Needle bonus or latch")
 		if scenario == "strike" and app.deck.hand.has(id):
 			var second_before: Dictionary = app.enemies.get_enemy(1)
 			var latch_before := _needle_state()
@@ -1978,13 +2048,17 @@ func _needle_mounted_cases(fixture: Dictionary) -> void:
 				"second genuine same-turn hit cannot earn second +1")
 			_check(_needle_state()[1] == latch_before[1],
 				"same-pinner Pin survives both valid hits")
+			var turn_before: int = rules._turn
 			await _click(app.end_turn_button)
 			_check(app.deck.turn_active and app.enemy_intents._turn_index > 0,
 				"real enemy phase opens a later player turn")
-			if not app.party.is_downed(1) and app.enemies.get_enemy(1).hp > 0:
+			_check(not app.party.is_downed(1) and app.enemies.get_enemy(1).get("hp", 0) > 0,
+				"real next turn retains a living wearer and a living Pinned target")
+			if not app.party.is_downed(1) and app.enemies.get_enemy(1).get("hp", 0) > 0:
 				var fresh: CombatHeirloomPatchTriggers = hand.current_attack_heirloom(
 					app.deck, app.party)
 				_check(fresh == rules and not rules._needle_used
+					and rules._turn == turn_before + 1
 					and rules._pending_needle.is_empty(),
 					"next real scheduler turn re-arms exactly one Needle use")
 		await _click(app.return_button)
