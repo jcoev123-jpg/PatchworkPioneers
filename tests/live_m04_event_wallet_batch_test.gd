@@ -113,6 +113,16 @@ func _fixtures() -> Dictionary:
 	# append-only); the bounded search remains a fallback when the route/pool changes.
 	var hints: Array = EVENT_WALLET_HINTS.SEEDS.duplicate()
 	hints.append_array(HISTORICAL_WITNESS_SEEDS)
+	# Genuine six-Event map/toll/rotation witnesses re-derived after the four
+	# gothic prop-led roadside tales (Umbra Zipper Meteor, Button-Bun Bakery,
+	# Moth-Needle Weather Vane, Clockwork Teacup Parade) joined the sorted generic
+	# pool and shifted the authentic draw index. Eighteen required Events lost
+	# their routed witness, so they are kept here explicitly while another RUNNING
+	# lane holds the shared append-only hints file. The real oracle below
+	# re-verifies every candidate; none is pinned by index or position.
+	hints.append_array([25641, 32125, 35913, 40503, 50550, 59436, 75867, 124098,
+		147778, 154437, 157055, 169502, 194744, 612249, 294711, 312836,
+		432525, 458419])
 	# Accepted genuine witnesses from the earlier lane, retained alongside the
 	# newer append-only helper so both sets remain available after the rebase.
 	# The final six were re-derived after the Candlelit Bargain batch joined the
