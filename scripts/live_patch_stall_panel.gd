@@ -287,10 +287,14 @@ func _valid_receipts(state: Dictionary, quote: Dictionary, slots: Dictionary) ->
 			return false
 		var id: Variant = record.get("id")
 		var price: Variant = record.get("price")
+		# A sold flag is genuine only when it matches the authenticated owned
+		# inventory exactly: late-run scarce stock keeps an already-bought power
+		# visible as a SOLD row, while any forged or missing flag fails closed.
+		var sold: Variant = record.get("sold")
 		if typeof(id) != TYPE_STRING or id.strip_edges().is_empty() or seen.has(id) \
 				or not slots.has(id) or not slots[id] in ["HEAD", "ARM", "COAT"] \
-				or typeof(price) != TYPE_INT or price < 0 or record.get("sold") != false \
-				or snapshot["owned_trinkets"].has(id):
+				or typeof(price) != TYPE_INT or price < 0 or typeof(sold) != TYPE_BOOL \
+				or sold != snapshot["owned_trinkets"].has(id):
 			return false
 		seen[id] = true
 	return true
@@ -376,8 +380,12 @@ func _offer_caption(i: int) -> String:
 	var offer: Dictionary = _quoted["offers"][i]
 	var id: String = offer["id"]
 	var price: int = offer["price"]
+	var sold := bool(offer.get("sold"))
 	var shortfall: int = maxi(0, price - int(_source["snapshot"]["gold"]))
-	var cost := "%d gold" % price if shortfall == 0 else "%d gold  ·  short %d" % [price, shortfall]
+	# An already-owned fallback row is truthfully SOLD: it shows no payable
+	# price or action at any wallet, only its identity, slot and power.
+	var cost := "SOLD" if sold else ("%d gold" % price if shortfall == 0
+			else "%d gold  ·  short %d" % [price, shortfall])
 	var power: String = _descriptions.get(id, {}).get("short", DETAILS_UNAVAILABLE)
 	return "%d  %s  [%s]  ✕ %s  ·  %s\n%s" % [i + 1, _name(id), id, _slots[id], cost, power]
 
@@ -415,7 +423,14 @@ func _refresh() -> void:
 		offer_button.text = _offer_caption(i) if open else ""
 		offer_button.tooltip_text = _offer_tooltip(i) if open else ""
 		offer_button.set_meta("patch_id", _quoted["offers"][i]["id"] if open else "")
-		offer_button.disabled = not open or int(_source["snapshot"]["gold"]) < int(_quoted["offers"][i]["price"]) if open else true
+		# A sold already-owned row is never payable at any wallet; every other
+		# row stays actionable while the source gold covers its quoted price.
+		if open:
+			var offer: Dictionary = _quoted["offers"][i]
+			offer_button.disabled = bool(offer.get("sold")) \
+					or int(_source["snapshot"]["gold"]) < int(offer["price"])
+		else:
+			offer_button.disabled = true
 		if open:
 			_attach(pin, _choose_wearer.bind(i, pin, _epoch, _visit))
 			_attach(offer_button, _request_patch.bind(i, offer_button, _epoch, _visit))
@@ -444,13 +459,14 @@ func _focus_initial() -> void:
 
 ## True when none of the three authenticated quoted patches can be bought from
 ## the bound snapshot's gold and the free Leave button is mounted, visible and
-## enabled: Enter on arrival must then address the only possible exit.
+## enabled: Enter on arrival must then address the only possible exit. A sold
+## already-owned row is never a genuine exit at any wallet.
 func _leave_is_only_exit() -> bool:
 	if not _attached(leave_button) or leave_button.disabled:
 		return false
 	var gold := int(_source["snapshot"]["gold"])
 	for offer in _quoted["offers"]:
-		if gold >= int(offer["price"]):
+		if not bool(offer.get("sold")) and gold >= int(offer["price"]):
 			return false
 	return true
 
@@ -469,7 +485,8 @@ func _auth(epoch: int, source: RunPatchStallVisit) -> bool:
 		if not _attached(offer_buttons[i]) or offer_buttons[i].text != _offer_caption(i) \
 				or offer_buttons[i].get_meta("patch_id") != _quoted["offers"][i]["id"] \
 				or offer_buttons[i].tooltip_text != _offer_tooltip(i) \
-				or offer_buttons[i].disabled != (int(_source["snapshot"]["gold"]) < int(_quoted["offers"][i]["price"])):
+				or offer_buttons[i].disabled != (bool(_quoted["offers"][i].get("sold"))
+					or int(_source["snapshot"]["gold"]) < int(_quoted["offers"][i]["price"])):
 			return false
 	return _attached(leave_button) and not leave_button.disabled
 
@@ -493,7 +510,7 @@ func _request_patch(index: int, button: Button, epoch: int, source: RunPatchStal
 			or _wearer_index < 0 or _wearer_index >= 3:
 		return
 	var offer: Dictionary = _quoted["offers"][index]
-	if int(_source["snapshot"]["gold"]) < int(offer["price"]):
+	if bool(offer.get("sold")) or int(_source["snapshot"]["gold"]) < int(offer["price"]):
 		return
 	_submit({
 		"action": "buy_patch", "patch_id": offer["id"],
