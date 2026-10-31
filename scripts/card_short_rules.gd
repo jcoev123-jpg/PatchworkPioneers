@@ -22,6 +22,7 @@ const KNOWN_EFFECT_KEYS := [
 	"living_targets_only", "duration", "next_attack_damage_bonus",
 	"next_turn_energy", "expires", "blind", "blind_next_attack",
 	"dodge_next_attack", "exhaust", "cannot_buff_next_turn", "ignore_block",
+	"tether_share_percent",
 ]
 ## The two V3 one-shot descriptors the face names beside the classic effects.
 ## They are printed design wording only: this formatter assumes no enemy attack
@@ -106,6 +107,15 @@ const CROW_PRINTINGS := {
 	},
 
 }
+## Tether is the Seamstress's authored two-foe red-thread link (`tether_share_percent: 50`).
+## The face prints 'Link 2 living enemies. Echo 50% of a later confirmed hit's HP loss.'
+## The full mechanics (two distinct living enemies, zero immediate damage, floor-half
+## primary HP loss, secondary Block order, non-recursive echo, and pure helper scope)
+## belong to CardKeywordGlossary's Help row. The whole catalog record is authenticated
+## via CombatSeamstressTetherRules, so rebuilt or forged look-alikes cannot borrow the line.
+const TETHER_KEY := "tether_share_percent"
+const TETHER_OWNER := "seamstress"
+const TETHER_SENTENCE := "Link 2 living enemies. Echo 50% of a later confirmed hit's HP loss."
 
 
 ## One description of a validated card record:
@@ -127,6 +137,7 @@ static func describe(definition: Variant, applied: Dictionary = {}) -> Dictionar
 	if str(card.get("action_kind", "")) == "adjacent_swap":
 		phrases.append(SWAP_SENTENCE)
 	for part in [
+		_tether_sentence(card, effects),
 		_enemy_sentence(card, effects, applied),
 		_other_heal_sentence(card, effects),
 		_ally_sentence(card, effects, applied),
@@ -181,6 +192,11 @@ static func has_unknown(definition: Variant) -> bool:
 	# an honest unknown instead of a guessed Block-piercing clause.
 	if effects.has(CROW_KEY) and not bool(_crow_clause(card, effects).get("valid", false)):
 		return true
+	# `tether_share_percent` is only a known effect in the four authentic Seamstress
+	# Tether printings; every other value, recipient, cost, slots or companion effect
+	# stays an honest unknown instead of a guessed Tether rule.
+	if effects.has(TETHER_KEY) and not is_authored_tether(card):
+		return true
 	return false
 
 
@@ -213,6 +229,24 @@ static func is_authored_block_pierce(definition: Variant) -> bool:
 
 static func is_authored_crow(definition: Variant) -> bool:
 	return is_authored_block_pierce(definition)
+
+
+## True when this exact record is one of the four authentic Seamstress Tether
+## printings (Tether Loop and Tether Stitch, base and '+'). The Help glossary
+## reuses this single authority so the sewn face and Help can never disagree about
+## which cards really author Tether.
+static func is_authored_tether(definition: Variant) -> bool:
+	if not definition is Dictionary:
+		return false
+	return CombatSeamstressTetherRules.new().is_authentic_definition(definition)
+
+
+static func _tether_sentence(card: Dictionary, effects: Dictionary) -> Dictionary:
+	if not effects.has(TETHER_KEY):
+		return {}
+	if not is_authored_tether(card):
+		return {"sentence": "", "unknown": true}
+	return {"sentence": TETHER_SENTENCE, "unknown": false}
 
 
 ## Fear is the Scarecrow's authored one-turn buff lock, never a status stack. The

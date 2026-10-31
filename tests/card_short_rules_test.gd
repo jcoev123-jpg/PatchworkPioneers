@@ -141,6 +141,24 @@ const SCARECROW_CROW_CASES := [
 		"cost": 1, "target": "enemy_back", "damage": 6,
 		"line": "Deal 6 to the backmost living enemy. Pierce Block."},
 ]
+## AC1: the four authentic V3 Seamstress Tether printings (Tether Loop and Tether Stitch,
+## base and '+'), looked up by named ID in their real starter and pool catalogs
+## (never a catalog total or an ordered ID list). The expected line names the two living
+## enemies and states the 50% echo rule.
+const TETHER_CASES := [
+	{"catalog": "starter", "id": "seamstress_v3_tether_loop", "owner": "seamstress",
+		"cost": 2, "target": "enemy_pair", "share": 50,
+		"line": "Link 2 living enemies. Echo 50% of a later confirmed hit's HP loss."},
+	{"catalog": "starter", "id": "seamstress_v3_tether_loop_plus", "owner": "seamstress",
+		"cost": 1, "target": "enemy_pair", "share": 50,
+		"line": "Link 2 living enemies. Echo 50% of a later confirmed hit's HP loss."},
+	{"catalog": "pool", "id": "seamstress_v3_tether_stitch", "owner": "seamstress",
+		"cost": 2, "target": "enemy_pair", "share": 50,
+		"line": "Link 2 living enemies. Echo 50% of a later confirmed hit's HP loss."},
+	{"catalog": "pool", "id": "seamstress_v3_tether_stitch_plus", "owner": "seamstress",
+		"cost": 1, "target": "enemy_pair", "share": 50,
+		"line": "Link 2 living enemies. Echo 50% of a later confirmed hit's HP loss."},
+]
 
 var failures: Array[String] = []
 var checks := 0
@@ -152,6 +170,8 @@ var lantern_monk_starter := LanternMonkStarterCards.new()
 var lantern_monk_pool := LanternMonkPoolCards.new()
 var scarecrow_starter := ScarecrowStarterCards.new()
 var scarecrow_pool := ScarecrowPoolCards.new()
+var v3_seamstress_starter := V3SeamstressStarterCards.new()
+var v3_seamstress_pool := V3SeamstressPoolCards.new()
 
 
 func _initialize() -> void:
@@ -179,6 +199,9 @@ func _initialize() -> void:
 	_test_scarecrow_crow_faces()
 	_test_scarecrow_crow_help()
 	_test_scarecrow_crow_negative()
+	_test_seamstress_tether_faces()
+	_test_seamstress_tether_help()
+	_test_seamstress_tether_negative()
 	_check(randi() == expected_global, "short-line formatting draws no global RNG")
 	for failure in failures:
 		printerr(failure)
@@ -2095,4 +2118,322 @@ func _test_scarecrow_crow_negative() -> void:
 		and CardShortRules.line(dive_after) == "Deal 3 to the backmost living enemy. Pierce Block."
 		and CardShortRules.line(peck_after) == "Deal 4 to the backmost living enemy. Pierce Block.",
 		"malformed probes cannot alter shipped Scarecrow records")
+
+
+## One detached record from the real V3 Seamstress catalogs named by a fixture.
+func _seamstress_tether_definition(catalog: String, card_id: String) -> Dictionary:
+	match catalog:
+		"starter":
+			return v3_seamstress_starter.get_definition(card_id)
+		"pool":
+			return v3_seamstress_pool.get_definition(card_id)
+	return {}
+
+
+## AC1: the four authentic V3 Seamstress Tether printings print their explicit
+## 'two living enemies / 50% of later confirmed HP loss' rule with no unknown fallback
+## and no instant damage printed.
+func _test_seamstress_tether_faces() -> void:
+	for entry in TETHER_CASES:
+		var catalog := str(entry["catalog"])
+		var card_id := str(entry["id"])
+		var expected_line := str(entry["line"])
+		var definition := _seamstress_tether_definition(catalog, card_id)
+		_check(not definition.is_empty(),
+			"Seamstress Tether catalog record exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var effects: Dictionary = definition.get("effects", {})
+		_check(str(definition.get("owner", "")) == "seamstress",
+			"authored Seamstress owner: " + card_id)
+		_check(int(definition.get("cost", -1)) == int(entry["cost"]),
+			"authored Tether cost %d: %s" % [int(entry["cost"]), card_id])
+		_check(str(definition.get("target_kind", "")) == "enemy_pair",
+			"authored Tether target_kind is enemy_pair: " + card_id)
+		_check(Array(definition.get("from_positions", [])) == [2, 3],
+			"authored Tether from_positions is [2, 3]: " + card_id)
+		_check(Array(definition.get("to_positions", [])) == [1, 2, 3],
+			"authored Tether to_positions is [1, 2, 3]: " + card_id)
+		_check(effects == {"tether_share_percent": 50},
+			"authored Tether effects is exactly {tether_share_percent: 50}: " + card_id)
+		_check(not effects.has("damage"),
+			"Tether authors no direct damage rider: " + card_id)
+		_check(CardShortRules.is_authored_tether(definition),
+			"card short rules recognizes authentic Tether definition: " + card_id)
+		var before := definition.duplicate(true)
+		var described := CardShortRules.describe(definition)
+		var line := str(described.get("line", ""))
+		_check(described.get("known") == true, "face record is described: " + card_id)
+		_check(not bool(described.get("unknown", true))
+			and not CardShortRules.has_unknown(definition),
+			"an authentic Tether printing needs no fallback: %s (%s)" % [card_id, line])
+		_check(line == expected_line,
+			"short face for %s: got '%s', want '%s'" % [card_id, line, expected_line])
+		_check(line.contains("Link 2 living enemies"),
+			"face states two living enemies: %s (%s)" % [card_id, line])
+		_check(line.contains("Echo 50% of a later confirmed hit's HP loss"),
+			"face states 50%% later confirmed HP loss echo: %s (%s)" % [card_id, line])
+		_check(not line.to_lower().contains("deal") and not line.to_lower().contains("damage"),
+			"face claims no instant damage: %s (%s)" % [card_id, line])
+		for word in HELP_ONLY_WORDS:
+			_check(not line.contains(word),
+				"face omits Help-only wording '%s': %s (%s)" % [word, card_id, line])
+		_check(definition == before
+			and _seamstress_tether_definition(catalog, card_id) == before,
+			"formatting never mutates the shipped record: " + card_id)
+		_check(CardShortRules.line(_seamstress_tether_definition(catalog, card_id))
+			== expected_line, "repeated formatting is identical: " + card_id)
+
+
+## AC2: Help explains the authentic two-foe Tether link once per record: two distinct
+## living targets, zero immediate damage, floor(50% of positive HP loss) echo on a later
+## confirmed attack, secondary Block absorbing before HP, no echo on fully blocked hits,
+## and non-recursive echo.
+func _test_seamstress_tether_help() -> void:
+	var shared_text := ""
+	for entry in TETHER_CASES:
+		var catalog := str(entry["catalog"])
+		var card_id := str(entry["id"])
+		var definition := _seamstress_tether_definition(catalog, card_id)
+		_check(not definition.is_empty(), "Tether Help catalog record exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var before := definition.duplicate(true)
+		var rows := CardKeywordGlossary.describe(definition)
+		var names := _row_names(rows)
+		_check(names == ["Tether"],
+			"Help produces exactly one Tether row: %s (%s)" % [card_id, str(names)])
+		var tether_rows := _rows_named(rows, "Tether")
+		_check(tether_rows.size() == 1,
+			"exactly one Tether row for %s (got %d)" % [card_id, tether_rows.size()])
+		if tether_rows.size() == 1:
+			var text := str(tether_rows[0].get("explanation", ""))
+			if shared_text.is_empty():
+				shared_text = text
+			_check(text == shared_text,
+				"one compact Tether row serves every authentic Tether printing: " + card_id)
+			_check(text.contains("two distinct living enemies"),
+				"Tether Help states two distinct living enemies: " + card_id)
+			_check(text.contains("zero immediate damage"),
+				"Tether Help states zero immediate damage on play: " + card_id)
+			_check(text.contains("later confirmed hit")
+				and text.contains("positive HP loss")
+				and (text.contains("50%") or text.contains("half"))
+				and text.contains("rounded down"),
+				"Tether Help explains floor-half positive HP loss on later confirmed hit: " + card_id)
+			_check(text.contains("Block absorbing before HP")
+				or (text.contains("Block") and text.contains("before HP")),
+				"Tether Help explains partner Block absorbs before HP: " + card_id)
+			_check(text.contains("wholly absorbed by Block")
+				or text.contains("no echo"),
+				"Tether Help explains wholly Block-absorbed hit causes no echo: " + card_id)
+			_check(text.contains("not a separate card attack")
+				and (text.contains("cannot trigger another echo") or text.contains("cannot spawn another echo")),
+				"Tether Help explains non-recursive echo: " + card_id)
+			_check(text.contains("authored rules helper")
+				or text.contains("pure helper")
+				or text.contains("Tether Stitch"),
+				"Tether Help preserves helper scope without false live claims: " + card_id)
+		_check(CardKeywordGlossary.describe(definition) == rows,
+			"repeated Tether Help reads are identical: " + card_id)
+		_check(definition == before
+			and _seamstress_tether_definition(catalog, card_id) == before,
+			"Help never mutates the shipped Tether record: " + card_id)
+		var detached := CardKeywordGlossary.describe(definition)
+		if detached.size() == 1:
+			detached[0]["keyword"] = "Tampered"
+			detached[0]["explanation"] = "Tampered"
+			_check(_row_names(CardKeywordGlossary.describe(definition)) == ["Tether"],
+				"Tether Help rows are detached from caller mutations: " + card_id)
+	_check(not shared_text.is_empty(), "the Tether Help row was inspected")
+
+
+## AC3: malformed or forged tether_share_percent records (wrong owner/ID/cost/recipient/positions,
+## wrong share percent, extra effect, non-int share, broken upgrade link, changed catalog fields)
+## do not borrow the Tether face or Help wording; preserve honest unknown-effect fallback and immutability.
+func _test_seamstress_tether_negative() -> void:
+	var loop := _seamstress_tether_definition("starter", "seamstress_v3_tether_loop")
+	var stitch := _seamstress_tether_definition("pool", "seamstress_v3_tether_stitch")
+	_check(not loop.is_empty() and not stitch.is_empty()
+		and CardShortRules.line(loop) == "Link 2 living enemies. Echo 50% of a later confirmed hit's HP loss."
+		and CardShortRules.line(stitch) == "Link 2 living enemies. Echo 50% of a later confirmed hit's HP loss.",
+		"the authentic Tether records are the positive controls")
+
+	# Wrong tether_share_percent amounts and types
+	for case in [["100 percent", 100], ["zero percent", 0], ["negative", -50],
+			["text 50", "50"], ["float 50", 50.0], ["boolean true", true],
+			["null", null]]:
+		var probe := loop.duplicate(true)
+		probe["effects"]["tether_share_percent"] = case[1]
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_tether(probe),
+			"a %s tether_share_percent is not an authored Tether card" % str(case[0]))
+		var line := CardShortRules.line(probe)
+		_check(not line.contains("Echo 50%") and not line.contains("Link 2 living enemies"),
+			"no Tether clause on face for %s: %s" % [str(case[0]), line])
+		_check(line.ends_with(UNKNOWN_FALLBACK),
+			"a %s keeps the honest fallback: %s" % [str(case[0]), line])
+		_check(not _has_keyword_row(probe, "Tether"),
+			"no Tether Help row for %s" % str(case[0]))
+		_check(probe == before, "the %s probe is never mutated" % str(case[0]))
+
+	# Wrong target_kind
+	for target: String in ["enemy_single", "enemy_all", "enemy_random", "enemy_back", "self", "ally_single", "party_all"]:
+		var probe := loop.duplicate(true)
+		probe["target_kind"] = target
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_tether(probe),
+			"target_kind %s is not an authored Tether card" % target)
+		var line := CardShortRules.line(probe)
+		_check(not line.contains("Echo 50%") and not line.contains("Link 2 living enemies"),
+			"no Tether on face for target %s: %s" % [target, line])
+		_check(line.ends_with(UNKNOWN_FALLBACK),
+			"target %s keeps honest fallback: %s" % [target, line])
+		_check(not _has_keyword_row(probe, "Tether"),
+			"no Tether Help row for target %s" % target)
+		_check(probe == before, "target %s probe is never mutated" % target)
+
+	# Wrong owner
+	for owner: Variant in ["warden", "tinker", &"seamstress", null, "button_golem"]:
+		var probe := loop.duplicate(true)
+		probe["owner"] = owner
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_tether(probe)
+			and not CardShortRules.line(probe).contains("Echo 50%")
+			and CardShortRules.line(probe).ends_with(UNKNOWN_FALLBACK)
+			and not _has_keyword_row(probe, "Tether"),
+			"owner %s never borrows Tether: %s" % [str(owner), CardShortRules.line(probe)])
+		_check(probe == before, "owner %s probe is never mutated" % str(owner))
+
+	# Forged ID and wrong cost
+	var structural := [
+		["forged ID on loop", "id", "seamstress_v3_tether_loop_forged"],
+		["forged ID on stitch", "id", "seamstress_v3_tether_stitch_forged"],
+		["wrong cost on loop (1 instead of 2)", "cost", 1],
+		["wrong cost on loop (0)", "cost", 0],
+		["wrong cost on loop (3)", "cost", 3],
+	]
+	for case in structural:
+		var probe := loop.duplicate(true)
+		probe[case[1]] = case[2]
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_tether(probe)
+			and not CardShortRules.line(probe).contains("Echo 50%")
+			and CardShortRules.line(probe).ends_with(UNKNOWN_FALLBACK)
+			and not _has_keyword_row(probe, "Tether"),
+			"%s never borrows Tether" % str(case[0]))
+		_check(probe == before, "%s probe is never mutated" % str(case[0]))
+
+	# Wrong positions
+	for case in [["from_positions", [1, 2, 3]], ["from_positions", [1]],
+			["from_positions", null], ["to_positions", [1, 2]],
+			["to_positions", []], ["to_positions", null]]:
+		var probe := loop.duplicate(true)
+		probe[case[0]] = case[1]
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_tether(probe)
+			and not CardShortRules.line(probe).contains("Echo 50%")
+			and CardShortRules.line(probe).ends_with(UNKNOWN_FALLBACK)
+			and not _has_keyword_row(probe, "Tether"),
+			"Tether record with %s %s stays silent" % [str(case[0]), str(case[1])])
+		_check(probe == before, "probe is never mutated")
+
+	# Extra effect keys (unsupported and supported)
+	for extra in [["unsupported", "mystery_status", 9], ["supported damage", "damage", 4],
+			["supported weak", "weak", 1]]:
+		var sibling := loop.duplicate(true)
+		sibling["effects"][str(extra[1])] = extra[2]
+		var before := sibling.duplicate(true)
+		var line := CardShortRules.line(sibling)
+		_check(not CardShortRules.is_authored_tether(sibling)
+			and not line.contains("Echo 50%")
+			and line.ends_with(UNKNOWN_FALLBACK),
+			"Tether sibling with extra %s effect stays honest: %s" % [str(extra[0]), line])
+		_check(not _has_keyword_row(sibling, "Tether"),
+			"extra %s effect adds no Tether Help row" % str(extra[0]))
+		_check(sibling == before, "sibling probe is never mutated")
+
+	# Broken upgrade relationships
+	var loop_base_no_upgrade := loop.duplicate(true)
+	loop_base_no_upgrade.erase("upgrade_id")
+	var loop_base_with_upgrade_of := loop.duplicate(true)
+	loop_base_with_upgrade_of["upgrade_of"] = "seamstress_v3_tether_stitch"
+	var loop_plus := _seamstress_tether_definition("starter", "seamstress_v3_tether_loop_plus")
+	var loop_plus_no_upgrade_of := loop_plus.duplicate(true)
+	loop_plus_no_upgrade_of.erase("upgrade_of")
+	var loop_plus_with_upgrade_id := loop_plus.duplicate(true)
+	loop_plus_with_upgrade_id["upgrade_id"] = "seamstress_v3_tether_loop_plus_plus"
+	for probe: Dictionary in [loop_base_no_upgrade, loop_base_with_upgrade_of,
+			loop_plus_no_upgrade_of, loop_plus_with_upgrade_id]:
+		var before := probe.duplicate(true)
+		var line := CardShortRules.line(probe)
+		_check(not CardShortRules.is_authored_tether(probe)
+			and not line.contains("Echo 50%") and line.ends_with(UNKNOWN_FALLBACK),
+			"broken upgrade link never borrows Tether: " + line)
+		_check(not _has_keyword_row(probe, "Tether"),
+			"broken upgrade link adds no Tether Help row")
+		_check(probe == before, "broken upgrade probe is never mutated")
+
+	# Detached canonical field-set negative probes
+	var canonical_probes := [
+		["deleted display_name on loop", loop.duplicate(true), "erase", "display_name", null],
+		["changed display_name on loop", loop.duplicate(true), "set", "display_name", "Thread Link"],
+		["deleted display_name on stitch", stitch.duplicate(true), "erase", "display_name", null],
+		["changed display_name on stitch", stitch.duplicate(true), "set", "display_name", "Stitch"],
+		["changed reward_eligible on loop", loop.duplicate(true), "set", "reward_eligible", true],
+		["changed reward_eligible on stitch", stitch.duplicate(true), "set", "reward_eligible", false],
+		["changed rarity on stitch", stitch.duplicate(true), "set", "rarity", "rare"],
+		["deleted rarity on stitch", stitch.duplicate(true), "erase", "rarity", null],
+		["extra rarity on loop", loop.duplicate(true), "set", "rarity", "common"],
+		["extra top-level field on loop", loop.duplicate(true), "set", "unexpected_field", "forgery"],
+		["extra top-level field on stitch", stitch.duplicate(true), "set", "forged_flag", true],
+		["changed illustration_path on loop", loop.duplicate(true), "set", "illustration_path", "res://other.png"],
+		["changed starting_copies on loop", loop.duplicate(true), "set", "starting_copies", 0],
+		["changed starting_copies on stitch", stitch.duplicate(true), "set", "starting_copies", 1],
+	]
+	for case_def in canonical_probes:
+		var label: String = str(case_def[0])
+		var probe: Dictionary = case_def[1]
+		var action: String = str(case_def[2])
+		var key: String = str(case_def[3])
+		if action == "erase":
+			probe.erase(key)
+		else:
+			probe[key] = case_def[4]
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_tether(probe),
+			"%s fails is_authored_tether" % label)
+		_check(CardShortRules.has_unknown(probe),
+			"%s reports has_unknown true" % label)
+		var line := CardShortRules.line(probe)
+		_check(not line.contains("Echo 50%") and not line.contains("Link 2 living enemies"),
+			"no Tether on face for %s: %s" % [label, line])
+		_check(line.ends_with(UNKNOWN_FALLBACK),
+			"honest unknown fallback on face for %s: %s" % [label, line])
+		_check(not _has_keyword_row(probe, "Tether"),
+			"no Tether Help row for %s" % label)
+		_check(probe == before, "%s probe is never mutated" % label)
+
+	# Verify existing keyword rows are untouched
+	var cloud := lantern_monk_pool.get_definition("lantern_monk_moth_cloud")
+	_check(CardShortRules.line(cloud) == "Blind to all. Exhaust."
+		and _has_keyword_row(cloud, "Blind") and _has_keyword_row(cloud, "Exhaust")
+		and not _has_keyword_row(cloud, "Tether"),
+		"existing Moth Cloud Blind/Exhaust Help has no Tether")
+	var slip := rag_duelist_starter.get_definition("rag_duelist_cape_slip")
+	_check(CardShortRules.line(slip) == "Dodge the next attack."
+		and _has_keyword_row(slip, "Dodge") and not _has_keyword_row(slip, "Tether"),
+		"existing Cape Slip Dodge Help has no Tether")
+	var dive := scarecrow_starter.get_definition("scarecrow_crow_dive")
+	_check(CardShortRules.line(dive) == "Deal 3 to the backmost living enemy. Pierce Block."
+		and _has_keyword_row(dive, "Pierce Block") and not _has_keyword_row(dive, "Tether"),
+		"existing Crow Dive Pierce Block Help has no Tether")
+
+	# Shipped records are untouched
+	var loop_after := _seamstress_tether_definition("starter", "seamstress_v3_tether_loop")
+	var stitch_after := _seamstress_tether_definition("pool", "seamstress_v3_tether_stitch")
+	_check(loop_after == loop and stitch_after == stitch
+		and CardShortRules.line(loop_after) == "Link 2 living enemies. Echo 50% of a later confirmed hit's HP loss.",
+		"malformed probes cannot alter shipped Seamstress Tether records")
+
 
