@@ -113,6 +113,16 @@ func _fixtures() -> Dictionary:
 	# append-only); the bounded search remains a fallback when the route/pool changes.
 	var hints: Array = EVENT_WALLET_HINTS.SEEDS.duplicate()
 	hints.append_array(HISTORICAL_WITNESS_SEEDS)
+	# Genuine six-Event map/toll/rotation witnesses re-derived after the four
+	# gothic prop-led roadside tales (Umbra Zipper Meteor, Button-Bun Bakery,
+	# Moth-Needle Weather Vane, Clockwork Teacup Parade) joined the sorted generic
+	# pool and shifted the authentic draw index. Eighteen required Events lost
+	# their routed witness, so they are kept here explicitly while another RUNNING
+	# lane holds the shared append-only hints file. The real oracle below
+	# re-verifies every candidate; none is pinned by index or position.
+	hints.append_array([25641, 32125, 35913, 40503, 50550, 59436, 75867, 124098,
+		147778, 154437, 157055, 169502, 194744, 612249, 294711, 312836,
+		432525, 458419])
 	# Accepted genuine witnesses from the earlier lane, retained alongside the
 	# newer append-only helper so both sets remain available after the rebase.
 	# The final six were re-derived after the Candlelit Bargain batch joined the
@@ -142,16 +152,12 @@ func _fixtures() -> Dictionary:
 	# keep the shared append-only hints file untouched while another RUNNING
 	# lane has it locked. The real oracle below re-verifies every candidate.
 	hints.append_array([3101, 11326, 12070, 38791, 329651])
-	# Genuine six-Event map/toll/rotation witnesses re-derived after the four
-	# gothic prop-led roadside tales (Umbra Zipper Meteor, Button-Bun Bakery,
-	# Moth-Needle Weather Vane, Clockwork Teacup Parade) joined the sorted generic
-	# pool and shifted the authentic draw index. Eighteen required Events lost
-	# their routed witness, so they are kept here, as above, while another RUNNING
-	# lane holds the shared append-only hints file. The real oracle below
-	# re-verifies every candidate; none is pinned by index or position.
-	hints.append_array([25641, 32125, 35913, 40503, 50550, 59436, 75867, 124098,
-		147778, 154437, 157055, 169502, 194744, 612249, 294711, 312836,
-		432525, 458419])
+	# Genuine map/toll/event-rotation witnesses for the six required Events that lost
+	# their pinned coverage when the latest roadside batches grew the sorted draw
+	# pool: needle_gate, v3_raincoat_bridge, v3_patchwork_lighthouse,
+	# v3_seamstress_scarlet_loom, v3_seamstress_needle_oracle and
+	# v3_warden_buckle_checkpoint.
+	hints.append_array([501072, 653273, 771997, 1007589, 1187708, 1227514])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():
