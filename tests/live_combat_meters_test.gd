@@ -446,7 +446,7 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 	_assert_next_hit(meter, actor, side, forecast)
 	_check(content.find_children("LossRow", "HBoxContainer", false, false).size() == (1 if side == "hero" else 0),
 		"one hero loss row replaces the direct Block badge; enemies keep their existing structure")
-	_check(content.get_child_count() == (10 if side == "hero" else 9),
+	_check(content.get_child_count() == (10 if side == "hero" else 10),
 		"hero loss row and enemy UnravelThread preserve bounded ribbon child counts: " + meter.name)
 	_assert_thread(app, meter, actor, side)
 	var patches := meter.get_node_or_null("Padding/Content/PatchButtons") as HBoxContainer
@@ -1703,7 +1703,7 @@ func _exercise_live_bleed(app, presenter) -> void:
 				row_ids.append(child.get_instance_id())
 			_check(meters[index].get_instance_id() == ids[index]
 				and button_ids[index] == row_ids
-				and meters[index].get_node("Padding/Content").get_child_count() == (10 if index < 3 else 9),
+				and meters[index].get_node("Padding/Content").get_child_count() == 10,
 				"read-only live refresh never allocates another chip, warning or meter")
 	_check(_state(app) == live_before_refresh and randi() == expected_global
 		and incoming_before == [_incoming(app, 1), _incoming(app, 2), _incoming(app, 3)],
@@ -1948,6 +1948,241 @@ func _assert_wrapped_chips(app, presenter, meter: CombatActorMeter, actor: Dicti
 	_check(_state(app) == before, "mounted wrap fixture restores the identical authoritative state")
 
 
+## Real app scene, real CombatEnemies API, typed shipped authors and stage slots.
+## The enemy ribbon trait is independent of the ten reusable status buttons.
+func _death_trait(meter: CombatActorMeter) -> Button:
+	return meter.get_node_or_null("Padding/Content/DeathTraitRow/DeathTraitTicket") as Button
+
+
+func _trait_reset_stage(app, presenter) -> void:
+	var roster: Node = app.get_node("LiveEnemyRoster")
+	roster._clear()
+	roster._sync_battle()
+	presenter._sync_battle()
+
+
+func _exercise_death_trait_ribbons(app, presenter) -> void:
+	var catalog := RunAuthoredBattleEntry._floor_band_material(null)
+	var records: Dictionary = catalog.get("records", {})
+	var wraith: Dictionary = records.get("razor_ribbon_wraith", {}).duplicate(true)
+	var termite: Dictionary = records.get("quilt_termite", {}).duplicate(true)
+	_check(wraith.get("max_hp") == 27 and wraith.get("revive_once") is bool
+		and wraith.get("revive_once") == true
+		and termite.get("max_hp") == 26 and termite.get("split_on_death") is bool
+		and termite.get("split_on_death") == true
+		and termite.get("intent", {}).get("actions", [])[0].get("amount") == 6,
+		"death-trait precondition: genuine typed live Fight Wraith and Termite catalog records")
+	if wraith.is_empty() or termite.is_empty():
+		return
+	var original: Array[Dictionary] = app.enemies.get_enemies()
+	var before := _state(app)
+	var pair := CombatEnemies.new([wraith, termite])
+	_check(pair.is_valid() and pair.get_enemies().size() == 2,
+		"death-trait case begins with two authentic enemy slots")
+	if not pair.is_valid():
+		return
+	app.enemies._enemies.assign(pair.get_enemies())
+	# Retain the app's real battle service and get_enemy reader, but rebind its live
+	# actor stage to the new genuine identities rather than a test-only widget.
+	_trait_reset_stage(app, presenter)
+	await _frames()
+	var meters := _meters(app)
+	_check(meters.size() == 5 and app.get_node("LiveEnemyRoster")._admitted_ids
+		== ["razor_ribbon_wraith", "quilt_termite"],
+		"both source actors have genuine mounted puppets and matching five ribbons")
+	if meters.size() != 5:
+		app.enemies._enemies.assign(original)
+		_trait_reset_stage(app, presenter)
+		return
+	var w := _death_trait(meters[3])
+	var t := _death_trait(meters[4])
+	_check(w != null and t != null, "each enemy ribbon mounts exactly one dedicated trait control")
+	if w == null or t == null:
+		app.enemies._enemies.assign(original)
+		_trait_reset_stage(app, presenter)
+		return
+	var w_id := w.get_instance_id()
+	var t_id := t.get_instance_id()
+	_check(w.is_visible_in_tree() and w.text == "REVIVE"
+		and w.tooltip_text.contains("ceil(current max HP / 2) = 14 HP")
+		and w.tooltip_text.contains("first lethal 0-HP")
+		and w.tooltip_text.contains("same slot")
+		and t.is_visible_in_tree() and t.text == "SPLITS"
+		and t.tooltip_text.contains("PAID-CARD lethal")
+		and t.tooltip_text.contains("fewer than 3 enemies")
+		and t.tooltip_text.contains("Room now (2/3 enemies)")
+		and t.tooltip_text.contains("13 HP") and t.tooltip_text.contains("3 attack")
+		and t.tooltip_text.contains("Bleed ticks, Thorns, the enemy phase")
+		and t.tooltip_text.contains("failed/free previews"),
+		"AC1/AC2: initial mounted authentic tickets describe 27->14 revival and conditional 26/6->13/3 split")
+	for meter in meters:
+		var trait_ticket := _death_trait(meter)
+		_check((trait_ticket == null) == (meter.name.begins_with("hero"))
+			and _buttons(meter).get_child_count() == 10,
+			"trait pool belongs only to enemy, never consumes any of the ten status controls")
+	for chip in [w, t]:
+		var flow := chip.get_parent() as HFlowContainer
+		_check(chip.focus_mode == Control.FOCUS_NONE and chip.pressed.get_connections().is_empty()
+			and flow.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and chip.mouse_filter == Control.MOUSE_FILTER_STOP
+			and chip.mouse_default_cursor_shape == Control.CURSOR_HELP
+			and chip.get_minimum_size().x <= chip.size.x + 0.5
+			and not chip.get_global_rect().intersects(chip.get_parent().get_parent().get_node("HPBar").get_global_rect()),
+			"one styled, readable, actionless hover trait clears the HP trough")
+	var initial := _state(app)
+	seed(80727)
+	var next_global := randi()
+	seed(80727)
+	for repeat in range(3):
+		presenter._sync_battle()
+		await _frames()
+	_check(_state(app) == initial and randi() == next_global
+		and w.get_instance_id() == w_id and t.get_instance_id() == t_id
+		and _buttons(meters[3]).get_child_count() == 10,
+		"trait refresh consumes no model/global RNG and retains both pooled ticket objects")
+	await _hover(w)
+	_check(root.gui_get_hovered_control() == w, "REVIVE can be hovered in its live stage slot")
+	# Exercise the actual damage authority, including retained authored metadata.
+	app.enemies._enemies[0]["statuses"] = {"weak": 1}
+	_check(app.enemies.gain_block(1, 4)
+		and app.enemies.apply_damage(1, 31)
+		and app.enemies.get_enemy(1)["hp"] == 14
+		and app.enemies.get_enemy(1)["revived"] == true
+		and app.enemies.get_enemy(1)["block"] == 0
+		and app.enemies.get_enemy(1)["statuses"] == {"weak": 1}
+		and app.enemies.get_enemy(1)["position"] == 1,
+		"CombatEnemies actually settles first lethal 27+4 Block hit to 14 in same slot with status")
+	presenter._sync_battle()
+	await _frames()
+	_check(w.visible and w.text == "REVIVED"
+		and w.tooltip_text.contains("already used")
+		and w.tooltip_text.contains("final") and not w.tooltip_text.contains("14 HP"),
+		"spent revival stays visible but never promises a second life")
+	_check(app.enemies.apply_damage(1, 14) and app.enemies.get_enemy(1)["hp"] == 0,
+		"subsequent lethal kills the same Wraith finally")
+	presenter._sync_battle()
+	await _frames()
+	_check(not w.visible and w.text.is_empty() and w.tooltip_text.is_empty()
+		and w.mouse_default_cursor_shape == Control.CURSOR_ARROW,
+		"dead Wraith leaves no hover target, caption or stale promise")
+	# Forged ID/flag combinations never confer a ticket to ordinary enemies.
+	app.enemies._enemies[0] = original[0].duplicate(true)
+	app.enemies._enemies[0]["revive_once"] = true
+	presenter._sync_battle()
+	await _frames()
+	_check(not w.visible and w.tooltip_text.is_empty(), "forged revival on ordinary enemy fails closed")
+	app.enemies._enemies[0] = pair.get_enemy(1)
+	app.enemies._enemies[0]["revive_once"] = 1
+	presenter._sync_battle()
+	await _frames()
+	_check(not w.visible and w.text.is_empty(), "numeric truthy Wraith flag never advertises revival")
+	app.enemies._enemies[0]["revive_once"] = true
+	app.enemies._enemies[0]["revived"] = "true"
+	presenter._sync_battle()
+	await _frames()
+	_check(not w.visible and w.tooltip_text.is_empty(), "malformed spent latch also fails closed")
+	app.enemies._enemies[0] = original[0].duplicate(true)
+	# An authentic Termite can only split at the post-card call site; first prove
+	# this actual parent can stage the same legal detached children.
+	app.enemies._enemies[1]["split_on_death"] = "true"
+	presenter._sync_battle()
+	await _frames()
+	_check(not t.visible and t.tooltip_text.is_empty(), "string truthy split flag never advertises a split")
+	app.enemies._enemies[1]["split_on_death"] = false
+	presenter._sync_battle()
+	await _frames()
+	_check(not t.visible and t.tooltip_text.is_empty(), "literal false split flag is inactive")
+	app.enemies._enemies[1]["split_on_death"] = true
+	presenter._sync_battle()
+	await _frames()
+	_check(t.visible and t.text == "SPLITS" and t.get_instance_id() == t_id,
+		"restored literal flag repaints the same correctly pooled Termite ticket")
+	app.enemies._enemies[1]["statuses"] = {"weak": 2}
+	_check(app.enemies.gain_block(2, 3), "split parent carries real temporary Block")
+	var lethal: int = app.enemies.get_enemy(2)["hp"] + 3
+	_check(app.enemies.apply_damage(2, lethal) and app.enemies.get_enemy(2)["hp"] == 0,
+		"actual lethal Termite damage precedes the dedicated post-card split transaction")
+	var split: Dictionary = app.enemies.stage_split_on_death(2)
+	_check(split.get("ok", false) and split.get("split", false)
+		and app.enemies.get_enemies().size() == 3
+		and app.enemies.get_enemy(2).get("id") == "quilt_termite_half_left"
+		and app.enemies.get_enemy(3).get("id") == "quilt_termite_half_right"
+		and app.enemies.get_enemy(2).get("hp") == 13
+		and app.enemies.get_enemy(3).get("hp") == 13
+		and app.enemies.get_enemy(2).get("intent", {}).get("actions", [])[0].get("amount") == 3
+		and not app.enemies.get_enemy(2).has("split_on_death")
+		and not app.enemies.get_enemy(3).has("split_on_death")
+		and app.enemies.get_enemy(2).get("block") == 0
+		and app.enemies.get_enemy(3).get("block") == 0
+		and not app.enemies.get_enemy(2).has("statuses")
+		and not app.enemies.get_enemy(3).has("statuses"),
+		"real split authority stages two 13-HP/3-attack non-splitting half actors")
+	await _frames()
+	var halves := _meters(app)
+	_check(halves.size() == 6
+		and _death_trait(halves[4]) != null and not _death_trait(halves[4]).visible
+		and _death_trait(halves[5]) != null and not _death_trait(halves[5]).visible
+		and _death_trait(halves[4]).tooltip_text.is_empty()
+		and _death_trait(halves[5]).tooltip_text.is_empty(),
+		"the real three-slot stage rebinds half actors without inheriting a SPLITS ticket")
+	# Full 3/3 occupancy: still show trait and its explicit refusal before lethal.
+	var full := CombatEnemies.new([original[0], termite, original[1]])
+	_check(full.is_valid(), "three-slot split refusal uses a legal occupied CombatEnemies roster")
+	if full.is_valid():
+		app.enemies._enemies.assign(full.get_enemies())
+		_trait_reset_stage(app, presenter)
+		await _frames()
+		var full_meters := _meters(app)
+		if full_meters.size() == 6:
+			var full_ticket := _death_trait(full_meters[4])
+			_check(full_ticket.visible and full_ticket.text == "SPLITS"
+				and full_ticket.tooltip_text.contains("Full roster (3/3): no split")
+				and full_ticket.tooltip_text.contains("only after a confirmed"),
+				"three-foe Termite ticket warns explicitly that the split is blocked")
+			_check(app.enemies.apply_damage(2, 26)
+				and app.enemies.stage_split_on_death(2) == {"ok": true, "split": false}
+				and app.enemies.get_enemies().size() == 3,
+				"full 3/3 roster genuinely refuses split with no extra child")
+			presenter._sync_battle()
+			await _frames()
+			_check(not full_ticket.visible and full_ticket.text.is_empty()
+				and full_ticket.tooltip_text.is_empty(),
+				"dead full-roster parent clears refused SPLITS ticket")
+	# Difficulty-band records scale max HP and authored attack before the split;
+	# hover must use these actual snapshot numbers, not universal base halves.
+	var scaled_termite: Dictionary = termite.duplicate(true)
+	scaled_termite["max_hp"] = 33
+	scaled_termite["intent"]["actions"][0]["amount"] = 8
+	var scaled := CombatEnemies.new([original[0], scaled_termite])
+	_check(scaled.is_valid(), "scaled 33 HP / 8 attack authored parent is a valid roster")
+	if scaled.is_valid():
+		app.enemies._enemies.assign(scaled.get_enemies())
+		_trait_reset_stage(app, presenter)
+		await _frames()
+		var scaled_meters := _meters(app)
+		if scaled_meters.size() == 5:
+			var ticket := _death_trait(scaled_meters[4])
+			_check(ticket.visible and ticket.text == "SPLITS"
+				and ticket.tooltip_text.contains("17 HP")
+				and ticket.tooltip_text.contains("4 attack")
+				and not ticket.tooltip_text.contains("13 HP"),
+				"scaled 1.25x tier reads current 33/8 parent as 17 HP and 4 attack per half")
+			_check(app.enemies.apply_damage(2, 33)
+				and app.enemies.stage_split_on_death(2).get("split", false)
+				and app.enemies.get_enemy(2)["hp"] == 17
+				and app.enemies.get_enemy(3)["hp"] == 17
+				and app.enemies.get_enemy(2).intent.actions[0].amount == 4,
+				"scaled split authority agrees with dynamic hover math")
+	# Restore the exact untouched app fixture before all existing regressions run.
+	app.enemies._enemies.assign(original)
+	_trait_reset_stage(app, presenter)
+	await _frames()
+	_check(_state(app) == before and _meters(app).size() == 5
+		and not _death_trait(_meters(app)[3]).visible
+		and not _death_trait(_meters(app)[4]).visible,
+		"roster replacement clears both trait tickets and restores all pre-existing fight state")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load("res://scenes/app.tscn") as PackedScene
@@ -2006,6 +2241,7 @@ func _run() -> void:
 		await _exercise_blind_ribbon(app, presenter)
 		await _exercise_fear_ribbon(app, presenter)
 		await _exercise_enrage_ribbon(app, presenter)
+		await _exercise_death_trait_ribbons(app, presenter)
 		# Inject only into an existing mounted view: no invented live status persistence.
 		var model_before_status := _state(app)
 		var active_meters := _meters(app)
