@@ -79,6 +79,8 @@ const THREAT_BADGE_MARGIN := 2.0
 const THREAT_BADGE_FELT := Color("3d4a45")
 const THREAT_BADGE_INK := Color("f1e7d2")
 const THREAT_BADGE_THREAD := Color("c9b996")
+## A separately pooled, hover-only enemy trait chip; it never consumes a status slot.
+const DEATH_TRAIT_FONT := 13
 
 var row: Control
 var _battle: Control
@@ -180,6 +182,8 @@ func _sync_battle() -> void:
 		else:
 			# Wipe the reused chip controls when validation rejects the fresh snapshot.
 			_sync_status_buttons(meter, {"hp": 1}, side, null, width)
+		if side == "enemy":
+			_sync_death_trait(meter, snapshot, shown, position, _enemies.get_enemies().size(), width)
 		if side == "hero":
 			_sync_combat_scrap(meter, snapshot)
 			_sync_patch_buttons(meter, snapshot, patches.get(snapshot.get("id", ""), {}))
@@ -405,6 +409,19 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 	buttons.hide()
 	for index in range(STATUS_BUTTONS):
 		buttons.add_child(_make_status_button(index))
+	if side == "enemy":
+		# Separate from StatusButtons: the ten status slots remain the same objects.
+		var traits := HFlowContainer.new()
+		traits.name = "DeathTraitRow"
+		traits.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		traits.focus_mode = Control.FOCUS_NONE
+		content.add_child(traits)
+		var trait_ticket := _make_status_button(STATUS_BUTTONS)
+		trait_ticket.name = "DeathTraitTicket"
+		trait_ticket.add_theme_font_size_override("font_size", DEATH_TRAIT_FONT)
+		trait_ticket.custom_minimum_size.y = _chip_height(DEATH_TRAIT_FONT)
+		traits.add_child(trait_ticket)
+		traits.hide()
 	if side == "hero":
 		# One passive resource line in the existing actor ribbon; no separate HUD bar.
 		var scrap := Label.new()
@@ -977,6 +994,77 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 		buttons.custom_minimum_size = reserved
 	# Collapsing the whole container avoids an empty stitched box or hit target.
 	buttons.visible = not entries.is_empty()
+
+
+## The only two shipped death traits, read directly from the CURRENT enemy snapshot.
+## The parent record is authenticated before a promise is shown. In particular,
+## neither numeric/string truthiness nor a copied trait flag on another enemy is
+## enough to advertise an ability. No rules objects or random draws are changed.
+func _sync_death_trait(meter: CombatActorMeter, enemy: Dictionary, valid: bool,
+		position: int, roster_size: int, ribbon_width: float) -> void:
+	var row_traits := meter.get_node("Padding/Content/DeathTraitRow") as HFlowContainer
+	var ticket := row_traits.get_node("DeathTraitTicket") as Button
+	var caption := ""
+	var help := ""
+	if valid and enemy.get("position") == position and enemy.get("hp") is int \
+			and enemy["hp"] > 0 and enemy.get("max_hp") is int:
+		var id: Variant = enemy.get("id")
+		if id == "razor_ribbon_wraith" and enemy.get("name") == "Razor Ribbon Wraith" \
+				and enemy.get("art_path") == "res://assets/paper/enemies/razor_ribbon_wraith.png" \
+				and enemy["max_hp"] >= 27 and not enemy.has(CombatEnemies.SPLIT_FIELD) \
+				and enemy.get(CombatEnemies.REVIVE_FIELD) is bool \
+				and enemy[CombatEnemies.REVIVE_FIELD] == true \
+				and CombatEnemies.valid_revive_flags(enemy):
+			var restored: int = CombatEnemies.revive_hp(enemy["max_hp"])
+			var spent: bool = enemy.get(CombatEnemies.REVIVED_FIELD, false)
+			caption = "REVIVED" if spent else "REVIVE"
+			help = ("REVIVED: this enemy has already used its one revival. " +
+				"The next lethal 0-HP death is final; it cannot revive again.") if spent else (
+				("REVIVE: the first lethal 0-HP result revives this enemy once, " +
+				"in the same slot, at ceil(current max HP / 2) = %d HP (of %d max HP). " +
+				"Block, statuses and intent persist. A later lethal death is final.") % [
+					restored, enemy["max_hp"]])
+		elif id == CombatEnemies.TERMITE_ID \
+				and enemy.get(CombatEnemies.SPLIT_FIELD) is bool \
+				and enemy[CombatEnemies.SPLIT_FIELD] == true \
+				and not enemy.has(CombatEnemies.REVIVE_FIELD) \
+				and not enemy.has(CombatEnemies.REVIVED_FIELD) \
+				and CombatEnemies.valid_split_flags(enemy):
+			var attack: int = CombatEnemies._termite_parent_attack(enemy, position)
+			if attack >= 0 and roster_size >= 1 and roster_size <= CombatEnemies.MAX_ENEMIES:
+				caption = "SPLITS"
+				var half_hp: int = ceili(float(enemy["max_hp"]) / 2.0)
+				var half_attack: int = ceili(float(attack) / 2.0)
+				var room := ("Room now (%d/%d enemies)." % [
+					roster_size, CombatEnemies.MAX_ENEMIES]) if roster_size < CombatEnemies.MAX_ENEMIES \
+					else "Full roster (3/3): no split while all slots are occupied."
+				help = ("SPLITS: only after a confirmed PAID-CARD lethal hit, and only " +
+					"with fewer than 3 enemies. %s The source becomes a left half; " +
+					"a new right half takes an open slot. Each begins at %d HP and " +
+					"has %d attack (half the current parent max HP and scaled attack, " +
+					"rounded up), with no inherited Block, statuses or split ability. " +
+					"Bleed ticks, Thorns, the enemy phase and failed/free previews never split it.") \
+					% [room, half_hp, half_attack]
+	# Clear ALL presentation state on death, invalid flags, new roster or teardown.
+	if caption.is_empty():
+		ticket.text = ""
+		ticket.tooltip_text = ""
+		ticket.mouse_default_cursor_shape = Control.CURSOR_ARROW
+		ticket.hide()
+		row_traits.hide()
+		return
+	ticket.text = caption
+	ticket.tooltip_text = help
+	ticket.mouse_default_cursor_shape = Control.CURSOR_HELP
+	# The short felt ticket uses only its own row, never the HP/Block or intent band.
+	# Smaller actor slots still use the same readable size and wrapping geometry.
+	ticket.custom_minimum_size.x = 0
+	ticket.custom_minimum_size.y = _chip_height(DEATH_TRAIT_FONT)
+	ticket.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	row_traits.custom_minimum_size.x = 0
+	row_traits.size.x = ribbon_width
+	ticket.show()
+	row_traits.show()
 
 
 ## Exact confirmed-positive-hit contract from CombatEnemyKeywordRules: enemy Block
