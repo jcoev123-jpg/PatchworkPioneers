@@ -156,6 +156,16 @@ static func _shipped_rare_records() -> Dictionary:
 ## replacement from the sorted eligible IDs, always through the supplied run
 ## RNG. All inputs and catalog fields are validated before the first draw, and
 ## on failure no RNG is advanced.
+##
+## Late-run scarce stock: when exactly one or two unowned powers remain and at
+## least three distinct legitimately priced power IDs are available from the
+## supplied candidates, every remaining unowned patch stays buyable at its authored
+## price and the three display slots are completed with distinct already-owned
+## priced power candidates from the supplied data (the RunShopPurchases
+## admission marks those sold). That completion is deterministic sorted order
+## and consumes no RNG. With no unowned power left, or fewer than three
+## distinct legitimately priced power IDs supplied altogether, the stall fails
+## closed before any draw.
 static func sample_patch_stall_offers(rng: Variant, candidates: Variant,
 		owned_ids: Variant, rare_records: Variant = null) -> Dictionary:
 	# Preflight all inputs without touching the RNG.
@@ -228,8 +238,13 @@ static func sample_patch_stall_offers(rng: Variant, candidates: Variant,
 		rare_prices[rare_id] = rare_price
 
 	# Validate every supplied candidate, then keep the eligible unowned powers.
+	# Genuinely priced already-owned power candidates are retained separately:
+	# late-run scarce stock may show them as truthful SOLD fallback rows, never
+	# as buyable stock and never at an invented price.
 	var weights: Dictionary = {}
 	var prices: Dictionary = {}
+	var owned_prices: Dictionary = {}
+	var supplied_powers: Dictionary = {}
 	for value in candidates:
 		if typeof(value) != TYPE_DICTIONARY:
 			return {"ok": false}
@@ -240,7 +255,15 @@ static func sample_patch_stall_offers(rng: Variant, candidates: Variant,
 		var price: Variant = _positive_int(offer["price"])
 		if not _is_id(id_str) or price == null:
 			return {"ok": false}
-		if owned_set.has(id_str) or not power_slots.has(id_str):
+		if not power_slots.has(id_str):
+			continue
+		# Every genuinely priced power record among the supplied candidates,
+		# owned or not, counts toward the scarce-stock admission gate below.
+		supplied_powers[id_str] = true
+		if owned_set.has(id_str):
+			# An owned rare keeps its own catalog as the only price authority.
+			if not rare_tickets.has(id_str) and not owned_prices.has(id_str):
+				owned_prices[id_str] = price
 			continue
 		# A rare listed among ordinary data stays one rare entry at its
 		# authored rare price and weight, never a duplicate ordinary ticket.
@@ -259,10 +282,12 @@ static func sample_patch_stall_offers(rng: Variant, candidates: Variant,
 		weights[rare_id] = rare_tickets[rare_id]
 		prices[rare_id] = rare_prices[rare_id]
 
-	# Three distinct IDs are required; otherwise no draw may be consumed.
+	# Three distinct IDs are required for the ordinary weighted draw; a
+	# genuine late-run scarce pool keeps its remaining stock buyable instead.
 	var remaining: Array = weights.keys()
 	if remaining.size() < 3:
-		return {"ok": false}
+		return _sample_scarce_patch_stall(rng, remaining, weights, prices,
+				owned_prices, supplied_powers.size())
 
 	# Sort eligible IDs for deterministic input-order independence.
 	remaining.sort()
@@ -293,6 +318,62 @@ static func sample_patch_stall_offers(rng: Variant, candidates: Variant,
 	var offers: Array = []
 	for id_str in selected_ids:
 		offers.append({"id": id_str, "price": prices[id_str]})
+	return {"ok": true, "offers": offers}
+
+
+## Late-run scarce stock: only one or two genuine unowned powers remain. Keep
+## every remaining unowned patch buyable through the same weighted ticket draw,
+## then complete the three display slots with distinct already-owned priced
+## power candidates from the supplied data. The RunShopPurchases admission is
+## responsible for marking those fallback rows sold; this helper never invents
+## stock, changes a price or makes an owned patch payable, and the run RNG
+## advances only for the real unowned stock draws. Every refusal below happens
+## before any draw.
+static func _sample_scarce_patch_stall(rng: Variant, remaining: Array,
+		weights: Dictionary, prices: Dictionary,
+		owned_prices: Dictionary, supplied_distinct: int) -> Dictionary:
+	# No unowned power remains, the supplied candidates carry fewer than three
+	# distinct legitimately priced power IDs altogether, or the honest rows
+	# cannot fill three slots: fail closed without spending RNG.
+	if remaining.is_empty() or supplied_distinct < 3 \
+			or remaining.size() + owned_prices.size() < 3:
+		return {"ok": false}
+	# Sort eligible IDs for deterministic input-order independence.
+	remaining.sort()
+	var total := 0
+	for id in remaining:
+		total += weights[id]
+	# Draw every remaining real unowned patch through the supplied run RNG.
+	var selected_ids: Array = []
+	for i in range(remaining.size()):
+		if total <= 0 or remaining.is_empty():
+			return {"ok": false}
+		var ticket: int = rng.randi_range(0, total - 1)
+		var chosen := ""
+		var walked := 0
+		for id in remaining:
+			walked += weights[id]
+			if ticket < walked:
+				chosen = id
+				break
+		if chosen.is_empty():
+			return {"ok": false}
+		selected_ids.append(chosen)
+		total -= weights[chosen]
+		remaining.erase(chosen)
+	# Deterministic sorted fallback completion: distinct already-owned priced
+	# power candidates only, never catalog-known but unsupplied records.
+	var sold_fallback: Array = owned_prices.keys()
+	sold_fallback.sort()
+	var offers: Array = []
+	for id_str in selected_ids:
+		offers.append({"id": id_str, "price": prices[id_str]})
+	for id_str in sold_fallback:
+		if offers.size() >= 3:
+			break
+		offers.append({"id": id_str, "price": owned_prices[id_str]})
+	if offers.size() != 3:
+		return {"ok": false}
 	return {"ok": true, "offers": offers}
 
 

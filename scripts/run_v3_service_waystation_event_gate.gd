@@ -206,6 +206,82 @@ func select_event(rng: Variant, excluded_ids: Variant = null) -> Dictionary:
 	}
 
 
+## Picks one authenticated waystation Event record with an affordable paid service
+## from the catalog using the caller's seeded RandomNumberGenerator.
+## Evaluates genuine paid service affordability via RunEventChoice.preview_wallet_choices();
+## never treats an affordable trade or Leave as proof of service accessibility.
+## Empty service_kind allows any authentic service kind; nonempty kind must be one of
+## Campfire, SewingCircle, Unpicker.
+## Returns exactly {"ok": true, "event": deep_detached_record} on success, or
+## {"ok": false, "event": {}} with zero RNG draws on any refusal.
+func select_affordable_service_event(
+	rng: Variant,
+	excluded_ids: Variant = null,
+	wallet: Variant = null,
+	service_kind: Variant = ""
+) -> Dictionary:
+	if not (rng is RandomNumberGenerator):
+		return _selection_rejection()
+	if not _catalog_valid:
+		return _selection_rejection()
+	if typeof(service_kind) != TYPE_STRING:
+		return _selection_rejection()
+	var kind_filter: String = service_kind
+	if not kind_filter.is_empty() and not VALID_SERVICE_KINDS.has(kind_filter):
+		return _selection_rejection()
+	var parsed_wallet: Dictionary = _parse_wallet(wallet)
+	if not parsed_wallet.get("ok", false):
+		return _selection_rejection()
+	var base_wallet: Dictionary = parsed_wallet["wallet"]
+	var parsed_exclusions: Dictionary = _parse_exclusions(excluded_ids)
+	if not parsed_exclusions.get("ok", false):
+		return _selection_rejection()
+	var excluded: Dictionary = parsed_exclusions["ids"]
+	var eligible: Array = []
+	for record: Dictionary in _catalog_events:
+		var event_id: String = String(record.get("id", ""))
+		if excluded.has(event_id):
+			continue
+		var rec_kind: String = String(record.get("service_kind", ""))
+		if not kind_filter.is_empty() and rec_kind != kind_filter:
+			continue
+		var service_choice_id: String = String(record.get("service_choice_id", ""))
+		if service_choice_id.is_empty():
+			continue
+		var selector := RunEventChoice.new(record)
+		if not selector.is_valid():
+			continue
+		var preview: Dictionary = selector.preview_wallet_choices(base_wallet)
+		if not preview.get("ok", false):
+			continue
+		var choices_preview: Variant = preview.get("choices")
+		if not (choices_preview is Array):
+			continue
+		var is_affordable: bool = false
+		for item_raw: Variant in (choices_preview as Array):
+			if not (item_raw is Dictionary):
+				continue
+			var item: Dictionary = item_raw
+			if String(item.get("choice_id", "")) == service_choice_id:
+				if item.get("affordable", false) == true:
+					is_affordable = true
+				break
+		if is_affordable:
+			eligible.append(event_id)
+	if eligible.is_empty():
+		return _selection_rejection()
+	eligible.sort()
+	var generator: RandomNumberGenerator = rng
+	var picked_id: String = eligible[generator.randi_range(0, eligible.size() - 1)]
+	if not _catalog_by_id.has(picked_id):
+		return _selection_rejection()
+	var selected_record: Dictionary = (_catalog_by_id[picked_id] as Dictionary).duplicate(true)
+	return {
+		"ok": true,
+		"event": selected_record,
+	}
+
+
 static func _selection_rejection() -> Dictionary:
 	return {
 		"ok": false,

@@ -1221,15 +1221,18 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 	# presenter owns the real Pinned identity and committed target.
 	var needle_rules: CombatHeirloomPatchTriggers = null
 	var needle_quote := {}
-	if id in ["warden_strike", "warden_strike_plus"] and position > 0:
-		var hand = get_parent().get_node_or_null("LiveSupportHand")
-		if hand != null:
-			var current: CombatHeirloomPatchTriggers = hand.current_attack_heirloom(_deck, party)
-			if current != null and current._pinned == _pinned and current._enemies == enemies:
-				var offered: Dictionary = current.quote_needle_hit("warden", position)
-				if offered.get("ok", false):
-					needle_rules = current
-					needle_quote = offered
+	if CombatHeirloomPatchTriggers.NEEDLE_STARTERS.has(id) and position > 0:
+		var definition: Dictionary = _catalog.get_definition(id)
+		if definition.get("id") == id and definition.get("target_kind") == "enemy_single" \
+				and definition.get("owner") == owner and _deck.hand.has(id):
+			var hand = get_parent().get_node_or_null("LiveSupportHand")
+			if hand != null:
+				var current: CombatHeirloomPatchTriggers = hand.current_attack_heirloom(_deck, party)
+				if current != null and current._pinned == _pinned and current._enemies == enemies:
+					var offered: Dictionary = current.quote_needle_hit(owner, position, id)
+					if offered.get("ok", false):
+						needle_rules = current
+						needle_quote = offered
 	var committed := _play.play_attack(_deck, party, enemies, id, position,
 		owner_statuses, enemy_statuses, discount, _fray, mitt_quote,
 		needle_rules, needle_quote)

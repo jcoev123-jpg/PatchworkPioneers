@@ -159,7 +159,8 @@ static func art_paths(actor_id: String) -> Dictionary:
 	if not ACTOR_ART.has(actor_id):
 		return {}
 	var base: String = ART_ROOT + String(ACTOR_ART[actor_id])
-	return {"idle": base + ".png", "attack": base + "_attack.png", "idle_loop": base + "_idle.png"}
+	return {"idle": base + ".png", "attack": base + "_attack.png", "idle_loop": base + "_idle.png",
+		"attack_loop": base + "_attack_anim.png"}
 
 
 ## The exact sewn fallback kind of one authoritative actor ID: the four M05 normals
@@ -346,6 +347,9 @@ class Puppet extends Control:
 	var idle_frames: Array[Texture2D] = []
 	## Authored attack pose, drawn only while this actor performs its own committed hit.
 	var attack_texture: Texture2D
+	## Optional authored swing: square cells cut from one `<id>_attack_anim.png` strip running
+	## from the idle stance to the attack pose, at the attack still's own pixel scale.
+	var attack_frames: Array[Texture2D] = []
 	## Seconds left of the one bounded committed attack pose; zero means plain idle.
 	var attack_remaining := 0.0
 	var attack_span := 0.0
@@ -655,6 +659,7 @@ class Puppet extends Control:
 		idle_texture = art.get("idle") as Texture2D
 		attack_texture = art.get("attack") as Texture2D
 		idle_frames = loop_frames(art.get("idle_loop") as Texture2D if idle_texture != null else null)
+		attack_frames = loop_frames(art.get("attack_loop") as Texture2D if attack_texture != null else null)
 		queue_redraw()
 
 	func current_texture() -> Texture2D:
@@ -674,9 +679,12 @@ class Puppet extends Control:
 		return frames
 
 	## The artwork actually painted for the pose image `texture`: a standing actor's still
-	## idle image is swapped for the current loop frame; attack poses and fallen actors keep
-	## their own image. Placement and targets still come from the still image.
+	## idle image is swapped for the current loop frame, and a committed attack pose for the
+	## swing frame matching the lunge (stance, strike at its peak, back to stance); fallen
+	## actors keep their own image. Placement and targets still come from the still image.
 	func idle_frame(texture: Texture2D) -> Texture2D:
+		if texture == attack_texture and attacking() and not attack_frames.is_empty():
+			return attack_frames[roundi(attack_shape() * (attack_frames.size() - 1))]
 		if idle_frames.is_empty() or texture != idle_texture or fallen:
 			return texture
 		var index := int((idle_phase + idle_offset()) * IDLE_LOOP_FPS)
@@ -2408,7 +2416,8 @@ func art_for(actor_id: String) -> Dictionary:
 	var paths: Dictionary = art_paths(actor_id)
 	var art := {"idle": _load_art_texture(String(paths.get("idle", ""))),
 		"attack": _load_art_texture(String(paths.get("attack", ""))),
-		"idle_loop": _load_art_texture(String(paths.get("idle_loop", "")))}
+		"idle_loop": _load_art_texture(String(paths.get("idle_loop", ""))),
+		"attack_loop": _load_art_texture(String(paths.get("attack_loop", "")))}
 	_art_cache[actor_id] = art
 	return art
 

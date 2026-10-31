@@ -14,6 +14,7 @@ const RollResolverScript = preload("res://scripts/combat_button_golem_roll_cards
 const PopResolverScript = preload("res://scripts/combat_button_golem_pop_cards.gd")
 const AreaResolverScript = preload("res://scripts/combat_button_golem_area_cards.gd")
 const EyeletResolverScript = preload("res://scripts/combat_button_golem_eyelet_guard_cards.gd")
+const ThreadResolverScript = preload("res://scripts/combat_button_golem_thread_cards.gd")
 const RewardOffersScript = preload("res://scripts/run_pool_card_reward_offers.gd")
 
 ## A pool catalog source that serves caller-supplied records, so a rewritten field or a relinked
@@ -57,6 +58,19 @@ const EYELET_PRINTINGS := {
 	"button_golem_eyelet_guard_plus": {"block": 9, "thorns": 3},
 }
 
+## The four authentic Button Knuckle / Buttonhole Snag printings, with the printed damage and
+## Tangled rider each authored pool record must still carry.
+const THREAD_PRINTINGS := {
+	"button_golem_button_knuckle": {"name": "Button Knuckle", "damage": 5, "tangled": 0,
+		"pinned": true, "to": [1, 2]},
+	"button_golem_button_knuckle_plus": {"name": "Button Knuckle+", "damage": 7, "tangled": 0,
+		"pinned": true, "to": [1, 2]},
+	"button_golem_buttonhole_snag": {"name": "Buttonhole Snag", "damage": 3, "tangled": 2,
+		"pinned": false, "to": [1, 2, 3]},
+	"button_golem_buttonhole_snag_plus": {"name": "Buttonhole Snag+", "damage": 4, "tangled": 3,
+		"pinned": false, "to": [1, 2, 3]},
+}
+
 var failures: Array[String] = []
 var checks: int = 0
 
@@ -88,6 +102,10 @@ func _initialize() -> void:
 	_test_eyelet_contacts_follow_identity()
 	_test_eyelet_refusals()
 	_test_eyelet_forged_catalog()
+	_test_thread_printings()
+	_test_thread_fear_paid_resolution()
+	_test_thread_fear_status_interactions()
+	_test_thread_fear_refusals()
 	if failures.is_empty():
 		print("v3_button_golem_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -2202,5 +2220,489 @@ func _eyelet_snapshot(deck: CombatDeck, party: CombatParty, resolver) -> Diction
 	snapshot["armed"] = resolver.is_armed()
 	snapshot["armed_thorns"] = resolver.get_armed_thorns()
 	return snapshot
+
+
+# ---------------------------------------------------------------------------------------------
+# Button Knuckle / Buttonhole Snag: paid thread strikes landing through genuine Scarecrow Fear.
+# ---------------------------------------------------------------------------------------------
+
+## AC1: the four authentic thread printings, each read back from the pool catalog that owns them
+## (never a catalog total or a full ordered ID list).
+func _test_thread_printings() -> void:
+	var catalog = ScriptClass.new()
+	var resolver = ThreadResolverScript.new()
+	for card_id: String in THREAD_PRINTINGS:
+		var spec: Dictionary = THREAD_PRINTINGS[card_id]
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			card_id + " is authentically authored in the Button Golem pool")
+		_check(resolver.is_supported_card(card_id),
+			card_id + " is a resolver-supported thread printing")
+		_check(definition.get("owner") == "button_golem", card_id + " is owned by the Golem")
+		_check(definition.get("display_name") == spec["name"],
+			card_id + " prints its authored name")
+		_check(definition.get("cost") == 1, card_id + " costs exactly one energy")
+		_check(definition.get("target_kind") == "enemy_single", card_id + " strikes one enemy")
+		_check(definition.get("from_positions") == [1, 2],
+			card_id + " plays from hero seats 1-2")
+		_check(definition.get("to_positions") == spec["to"],
+			card_id + " reaches exactly its printed enemy window")
+		var effects: Dictionary = definition.get("effects", {})
+		_check(effects.get("damage") == spec["damage"],
+			card_id + " prints its authored " + str(spec["damage"]) + " damage")
+		_check(int(effects.get("tangled", 0)) == int(spec["tangled"]),
+			card_id + " prints its authored Tangled " + str(spec["tangled"]))
+		if bool(spec["pinned"]):
+			_check(effects.get("pinned") == true, card_id + " prints its Pin rider as true")
+		else:
+			_check(not effects.has("pinned"), card_id + " prints no Pin rider")
+		var upgraded: bool = card_id.ends_with("_plus")
+		var base_id: String = card_id.trim_suffix("_plus")
+		_check(definition.get("reward_eligible") == not upgraded,
+			card_id + " reward eligibility matches its base/upgrade role")
+		_check(catalog.get_upgrade_id(base_id) == base_id + "_plus",
+			base_id + " still links to its authored upgrade")
+		_check(catalog.get_definition(base_id + "_plus").get("upgrade_of") == base_id,
+			base_id + "_plus still points back at its base")
+	# Other pool cards, starter cards, aliases and malformed values are never thread printings.
+	for rejected in ["button_golem_pop_button", "button_golem_button_roll",
+			"button_golem_eyelet_guard", "button_golem_popping_volley", "button_golem_sew_on",
+			"button_golem_starter_button_fist", "button_golem_button_knuckle_plus_plus",
+			"button_golem_buttonhole_snag+", ""]:
+		_check(not resolver.is_supported_card(rejected),
+			str(rejected) + " is not a thread printing")
+	for malformed in [null, 0, 3.5, false, [], {}, StringName("button_golem_button_knuckle")]:
+		_check(not resolver.is_supported_card(malformed),
+			"malformed card id is not a thread printing: " + str(malformed))
+
+
+## AC1: every printing paid from a real seeded deck by a real party onto a living enemy that
+## already bears genuine Fear. Each one succeeds, spends exactly one energy and one held copy,
+## applies its printed damage plus Pinned or Tangled, and leaves the Fear marker intact.
+func _test_thread_fear_paid_resolution() -> void:
+	var cases := 0
+	for card_id: String in THREAD_PRINTINGS:
+		for seat in [1, 2]:
+			_play_thread_through_fear(card_id, seat, 1)
+			cases += 1
+	_check(cases == 8,
+		"each thread printing is paid from both legal seats through genuine Fear")
+	# Snag's wider printed window also lands through Fear on its third slot.
+	_play_thread_through_fear("button_golem_buttonhole_snag", 2, 3)
+	_play_thread_through_fear("button_golem_buttonhole_snag_plus", 1, 3)
+
+
+func _play_thread_through_fear(card_id: String, seat: int, target: int) -> void:
+	var label := "%s from seat %d onto slot %d through Fear" % [card_id, seat, target]
+	var printed := _thread_printed(card_id)
+	_check(printed["to_positions"].has(target),
+		label + ": the chosen slot is inside the printed TO window")
+	var deck := _area_deck(card_id)
+	_check(deck.hand.has(card_id) and deck.hand.count(card_id) == 1,
+		label + ": the exact printing is genuinely held once")
+	var party := _roll_party(seat)
+	var enemies := _thread_fear_enemies()
+	var pins := CombatPinned.new()
+	var fear_before: Dictionary = enemies.get_enemy(target).get("statuses")
+	_check(fear_before.get("cannot_buff_next_turn") == true,
+		label + ": the target genuinely bears Fear before the strike")
+	_check(CombatStatuses.new().can_apply_buff(fear_before) == {"ok": true, "allowed": false},
+		label + ": genuine Fear really denies the target's own next buff")
+	var before := _thread_snapshot(deck, party, enemies, pins)
+	var receipt: Dictionary = ThreadResolverScript.new().play_card(
+		deck, party, enemies, card_id, target, pins)
+
+	# Independent expectation from the shared damage rules: Fear is not a damage counter, so the
+	# printed damage reaches the target unmodified.
+	var rules := CombatStatuses.new()
+	var expected_damage: int = rules.adjusted_attack_damage(int(printed["damage"]), {}, {})
+	_check(expected_damage == int(printed["damage"]),
+		label + ": Fear leaves the printed damage untouched")
+	_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+		label + ": the paid strike resolves through genuine Fear")
+	_check(receipt.get("card_id") == card_id and receipt.get("cost") == 1
+		and receipt.get("energy_spent") == 1, label + ": it charges exactly one energy")
+	_check(receipt.get("owner_position") == seat and receipt.get("target_position") == target,
+		label + ": the receipt binds the Golem's real seat and the chosen slot")
+	_check(receipt.get("printed_damage") == int(printed["damage"])
+		and receipt.get("base_damage") == int(printed["damage"])
+		and receipt.get("damage") == expected_damage,
+		label + ": exactly the printed damage lands")
+	_check(receipt.get("pin_bonus") == 0 and receipt.get("block_absorbed") == 0,
+		label + ": no cross-hero bonus and no Block were invented")
+	_check(receipt.get("tangled_added") == int(printed["tangled"])
+		and receipt.get("applies_pinned") == bool(printed["pinned"]),
+		label + ": the receipt reports the printed rider and Pin descriptor")
+
+	# The complete expected authoritative state, written independently before comparing.
+	var expected_enemy: Dictionary = before["enemies"][target - 1].duplicate(true)
+	expected_enemy["hp"] = int(expected_enemy["hp"]) - expected_damage
+	var expected_statuses: Dictionary = (expected_enemy["statuses"] as Dictionary).duplicate(true)
+	if int(printed["tangled"]) > 0:
+		expected_statuses["tangled"] = int(expected_statuses.get("tangled", 0)) \
+			+ int(printed["tangled"])
+	expected_enemy["statuses"] = expected_statuses
+	var expected_hand: Array = before["hand"].duplicate()
+	expected_hand.erase(card_id)
+	var expected_after: Dictionary = before.duplicate(true)
+	expected_after["enemies"][target - 1] = expected_enemy
+	expected_after["hand"] = expected_hand
+	expected_after["discard"] = before["discard"] + [card_id]
+	expected_after["energy"] = int(before["energy"]) - 1
+	expected_after["state_energy"] = int(before["state_energy"]) - 1
+	expected_after["pins"][target - 1] = "button_golem" if bool(printed["pinned"]) else ""
+	_check(_thread_snapshot(deck, party, enemies, pins) == expected_after,
+		label + ": only the spend, the printed hit, its rider and the Pin changed")
+
+	# The Fear marker survives the strike and still denies the target's next buff.
+	var fear_after: Dictionary = enemies.get_enemy(target).get("statuses")
+	_check(fear_after.get("cannot_buff_next_turn") == true,
+		label + ": the Fear marker is preserved exactly")
+	_check(CombatStatuses.new().can_apply_buff(fear_after) == {"ok": true, "allowed": false},
+		label + ": the struck foe still cannot buff on its next turn")
+	if bool(printed["pinned"]):
+		_check(pins.pinner_for_enemy(target) == "button_golem",
+			label + ": Button Knuckle pins the struck enemy for the Golem")
+	else:
+		_check(pins.pinner_for_enemy(target) == "", label + ": a Snag lays no Pin")
+
+
+## AC2: one thread strike over genuinely mixed authoritative statuses, compared with an
+## independently written complete expectation built from the shared rules over the
+## damage-status subset only.
+func _play_thread_status_case(label: String, card_id: String, seat: int, target: int,
+		attacker_statuses: Dictionary, defender_statuses: Dictionary, pin_owner: String,
+		enemy_block: int = 0) -> Dictionary:
+	var printed := _thread_printed(card_id)
+	var deck := _area_deck(card_id)
+	_check(deck.hand.has(card_id), label + ": the exact printing is genuinely held")
+	var party := _roll_party(seat)
+	party._heroes[seat - 1]["statuses"] = attacker_statuses.duplicate(true)
+	var enemies := _thread_enemies({target: defender_statuses})
+	if enemy_block > 0:
+		_check(enemies.gain_block(target, enemy_block),
+			label + ": the target really holds " + str(enemy_block) + " Block")
+	_check(party.get_hero(seat).get("statuses") == attacker_statuses,
+		label + ": the Golem really bears " + str(attacker_statuses))
+	_check(enemies.get_enemy(target).get("statuses") == defender_statuses,
+		label + ": the target really bears " + str(defender_statuses))
+	var pins := CombatPinned.new()
+	if pin_owner != "":
+		_check(pins.pin_enemy(enemies, target, pin_owner),
+			label + ": " + pin_owner + " genuinely pinned the target")
+	var before := _thread_snapshot(deck, party, enemies, pins)
+	var expected_bonus: int = 5 if pin_owner != "" and pin_owner != "button_golem" else 0
+	var rules := CombatStatuses.new()
+	var expected_damage: int = rules.adjusted_attack_damage(
+		int(printed["damage"]) + expected_bonus,
+		_thread_damage_subset(attacker_statuses),
+		_thread_damage_subset(defender_statuses))
+	_check(expected_damage > 0, label + ": the shared rules size a real positive hit")
+	var absorbed: int = mini(enemy_block, expected_damage)
+	var receipt: Dictionary = ThreadResolverScript.new().play_card(
+		deck, party, enemies, card_id, target, pins)
+	_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+		label + ": the paid strike resolves")
+	_check(receipt.get("pin_bonus") == expected_bonus,
+		label + ": the receipt quotes exactly the " + str(expected_bonus) + " extant bonus")
+	_check(receipt.get("damage") == expected_damage
+		and receipt.get("block_absorbed") == absorbed
+		and receipt.get("hp_loss") == expected_damage - absorbed,
+		label + ": only the damage counters size the committed hit")
+	_check(receipt.get("tangled_added") == int(printed["tangled"]),
+		label + ": the receipt reports the printed rider")
+
+	# The complete expected authoritative state, written independently before comparing.
+	var expected_enemy: Dictionary = before["enemies"][target - 1].duplicate(true)
+	expected_enemy["hp"] = int(expected_enemy["hp"]) - (expected_damage - absorbed)
+	expected_enemy["block"] = int(expected_enemy["block"]) - absorbed
+	var expected_statuses: Dictionary = (expected_enemy["statuses"] as Dictionary).duplicate(true)
+	if int(printed["tangled"]) > 0:
+		expected_statuses["tangled"] = int(expected_statuses.get("tangled", 0)) \
+			+ int(printed["tangled"])
+	expected_enemy["statuses"] = expected_statuses
+	var expected_pin := ""
+	if expected_bonus == 0 and pin_owner != "" and not bool(printed["pinned"]):
+		expected_pin = pin_owner
+	if bool(printed["pinned"]):
+		expected_pin = "button_golem"
+	var expected_hand: Array = before["hand"].duplicate()
+	expected_hand.erase(card_id)
+	var expected_after: Dictionary = before.duplicate(true)
+	expected_after["enemies"][target - 1] = expected_enemy
+	expected_after["hand"] = expected_hand
+	expected_after["discard"] = before["discard"] + [card_id]
+	expected_after["energy"] = int(before["energy"]) - 1
+	expected_after["state_energy"] = int(before["state_energy"]) - 1
+	expected_after["pins"][target - 1] = expected_pin
+	_check(_thread_snapshot(deck, party, enemies, pins) == expected_after,
+		label + ": only the spend, the adjusted hit, the rider and the pin token changed")
+	_check(pins.pinner_for_enemy(target) == expected_pin,
+		label + ": the shared pin token ends as "
+		+ ("consumed" if expected_pin == "" else expected_pin))
+	if expected_bonus > 0:
+		_check(not pins.consume_after_attack(target, "button_golem", true),
+			label + ": the cross-hero token is consumed exactly once")
+
+	# Non-damage markers survive untouched, and a fear-bearing target still cannot buff.
+	var after_statuses: Dictionary = enemies.get_enemy(target).get("statuses")
+	for marker: String in ["cannot_buff_next_turn", "blind_next_attack"]:
+		if defender_statuses.has(marker):
+			_check(after_statuses.get(marker) == defender_statuses[marker],
+				label + ": the target keeps its " + marker + " marker")
+	_check(party.get_hero(seat).get("statuses") == attacker_statuses,
+		label + ": the Golem keeps its own authoritative statuses")
+	if defender_statuses.has("cannot_buff_next_turn"):
+		_check(CombatStatuses.new().can_apply_buff(after_statuses).get("allowed") == false,
+			label + ": the struck foe still cannot buff on its next turn")
+	return {"receipt": receipt, "expected_damage": expected_damage,
+		"pin_pending": pins.pinner_for_enemy(target)}
+
+
+## AC2: genuine Fear beside the other canonical statuses. Only the damage counters move the hit,
+## a pre-existing Tangled adds its flat +2, a newly applied Snag Tangled never boosts its own
+## strike, an extant foreign Pin grants +5 once, and every non-damage marker survives.
+func _test_thread_fear_status_interactions() -> void:
+	# 1. A warden pin plus a pre-existing Tangled both land before status math on a feared foe.
+	var relay := _play_thread_status_case(
+		"Snag+ against a warden pin and pre-existing Tangled under Fear",
+		"button_golem_buttonhole_snag_plus", 1, 1, {},
+		{"cannot_buff_next_turn": true, "tangled": 1}, "warden")
+	_check(relay["expected_damage"] == 11,
+		"4 printed + 5 pin, then Tangled's flat +2, gives 11 on the feared target")
+	_check(relay["receipt"].get("damage") == 11 and relay["pin_pending"] == "",
+		"the boosted Snag+ lands 11 and consumes the warden's token once")
+
+	# 2. The Tangled this same Snag adds is a post-hit rider and never boosts its own strike.
+	var rider := _play_thread_status_case(
+		"Snag against a feared foe with no pre-existing Tangled",
+		"button_golem_buttonhole_snag", 2, 3, {},
+		{"cannot_buff_next_turn": true}, "")
+	_check(rider["expected_damage"] == 3 and rider["receipt"].get("damage") == 3,
+		"Snag deals its printed 3 and not the 5 its own Tangled would have added")
+	_check(CombatStatuses.new().adjusted_attack_damage(3, {}, {"tangled": 2}) == 5,
+		"the independent oracle really distinguishes pre-hit from post-hit Tangled")
+
+	# 3. Fear + Weak + Exposed + Tangled + a foreign pin, all at once.
+	var mixed := _play_thread_status_case(
+		"Snag under Fear with Weak, Exposed, Tangled and a warden pin",
+		"button_golem_buttonhole_snag", 2, 1, {"weak": 1},
+		{"cannot_buff_next_turn": true, "exposed": 1, "tangled": 1}, "warden")
+	_check(mixed["expected_damage"] == 11,
+		"weak-and-exposed 9/8 on 8, then Tangled's +2, gives 11")
+	_check(mixed["receipt"].get("pin_bonus") == 5,
+		"only the extant cross-hero pin supplies the +5")
+
+	# 4. A same-hero pin neither pays nor is consumed by the Golem's own Knuckle.
+	var own_pin := _play_thread_status_case(
+		"Knuckle against the Golem's own pin under Fear",
+		"button_golem_button_knuckle", 1, 1, {},
+		{"cannot_buff_next_turn": true}, "button_golem")
+	_check(own_pin["expected_damage"] == 5 and own_pin["receipt"].get("pin_bonus") == 0,
+		"a same-hero pin quotes no bonus")
+	_check(own_pin["pin_pending"] == "button_golem",
+		"the same-hero pin is neither paid nor consumed")
+
+	# 5. Legal one-shot Blind and Dodge ride along with Fear without touching the hit.
+	var tokens := _play_thread_status_case(
+		"Knuckle with a Dodge token against a Blinded, feared foe",
+		"button_golem_button_knuckle", 2, 2,
+		{"dodge_next_attack": 1}, {"blind_next_attack": 1, "cannot_buff_next_turn": true}, "")
+	_check(tokens["expected_damage"] == 5 and tokens["receipt"].get("damage") == 5,
+		"the one-shot tokens are not damage modifiers for this strike")
+	_check((tokens["receipt"] as Dictionary).get("ok") == true,
+		"the Dodge-bearing Golem really struck the Blinded, feared foe")
+
+	# 6. Block-before-HP stays authoritative against a feared target carrying Block.
+	var blocked := _play_thread_status_case(
+		"Knuckle+ against a feared, Blocked foe",
+		"button_golem_button_knuckle_plus", 1, 2, {},
+		{"cannot_buff_next_turn": true}, "", 12)
+	_check(blocked["receipt"].get("block_absorbed") == 7
+		and blocked["receipt"].get("hp_loss") == 0,
+		"enemy Block absorbs the feared target's whole printed hit before HP")
+
+
+## AC3: malformed Fear, a missing or foreign pin authority and every unlawful request refuse
+## before payment, with hand, piles, energy, HP, Block, statuses, Pinned and seeded RNG intact.
+func _test_thread_fear_refusals() -> void:
+	var knuckle := "button_golem_button_knuckle"
+	var snag := "button_golem_buttonhole_snag_plus"
+	# Only the literal boolean true is genuine Fear; everything else is malformed, not inactive.
+	for bad in [false, 1, 0, "true", 1.0, null]:
+		for card_id: String in [knuckle, snag]:
+			var enemies := _thread_enemies({1: {"cannot_buff_next_turn": bad}})
+			_check(enemies.get_enemy(1).get("statuses") == {"cannot_buff_next_turn": bad},
+				"malformed-Fear fixture really stores " + str(bad))
+			_check(CombatStatuses.new().can_apply_buff(
+				{"cannot_buff_next_turn": bad}).get("ok") == false,
+				"the shared status rules also reject Fear " + str(bad))
+			_expect_thread_refusal("malformed Fear " + str(bad) + " for " + card_id,
+				_area_deck(card_id), _roll_party(1), enemies, card_id, 1,
+				CombatPinned.new(), "malformed_statuses")
+	# Fear is validated across the whole roster, including an unselected foe.
+	var bystander := _thread_enemies({1: {"cannot_buff_next_turn": true},
+		2: {"cannot_buff_next_turn": 1}})
+	_check(bystander.get_enemy(2).get("statuses") == {"cannot_buff_next_turn": 1},
+		"bystander fixture really stores malformed Fear on an unselected foe")
+	_expect_thread_refusal("malformed Fear on the unselected foe", _area_deck(knuckle),
+		_roll_party(1), bystander, knuckle, 1, CombatPinned.new(), "malformed_statuses")
+	# A legal Fear flag never licenses an unknown status key beside it.
+	_expect_thread_refusal("Fear beside an unknown status key", _area_deck(knuckle),
+		_roll_party(1), _thread_enemies({1: {"cannot_buff_next_turn": true, "poison": 1}}),
+		knuckle, 1, CombatPinned.new(), "malformed_statuses")
+	# The shared pin authority is mandatory and must be the authentic object.
+	_expect_thread_refusal("no shared pin authority", _area_deck(knuckle), _roll_party(1),
+		_thread_fear_enemies(), knuckle, 1, null, "invalid_pinned_authority")
+	_expect_thread_refusal("a foreign pin authority", _area_deck(knuckle), _roll_party(1),
+		_thread_fear_enemies(), knuckle, 1, RefCounted.new(), "invalid_pinned_authority")
+	_expect_thread_refusal("a dictionary standing in for the pin authority",
+		_area_deck(knuckle), _roll_party(1), _thread_fear_enemies(), knuckle, 1,
+		{"position": 1}, "invalid_pinned_authority")
+	# Unsupported, malformed, aliased and unheld printings.
+	for rejected in ["button_golem_unknown_thread", "button_golem_starter_button_fist",
+			"button_golem_button_knuckle_plus_plus", "button_golem_buttonhole_snag+", ""]:
+		_expect_thread_refusal("unsupported thread id " + str(rejected), _area_deck(knuckle),
+			_roll_party(1), _thread_fear_enemies(), rejected, 1, CombatPinned.new(),
+			"unsupported_card")
+	for malformed in [null, 0, 3.5, false, [], {}]:
+		_expect_thread_refusal("malformed thread id " + str(malformed), _area_deck(knuckle),
+			_roll_party(1), _thread_fear_enemies(), malformed, 1, CombatPinned.new(),
+			"unsupported_card")
+	_expect_thread_refusal("the upgrade is not in this hand", _area_deck(knuckle),
+		_roll_party(1), _thread_fear_enemies(), "button_golem_button_knuckle_plus", 1,
+		CombatPinned.new(), "card_not_held")
+	_expect_thread_refusal("a different Golem card held in its place",
+		_area_deck("button_golem_pop_button"), _roll_party(1), _thread_fear_enemies(),
+		knuckle, 1, CombatPinned.new(), "card_not_held")
+	# An inactive turn and a genuinely broke turn both refuse before any charge.
+	var inactive := _area_inactive_deck(knuckle)
+	_check(not inactive.turn_active and inactive.energy == 0 and inactive.hand.is_empty(),
+		"inactive-turn fixture really has not started its turn")
+	_expect_thread_refusal("inactive turn", inactive, _roll_party(1), _thread_fear_enemies(),
+		knuckle, 1, CombatPinned.new(), "inactive_turn")
+	var broke := _area_deck(knuckle)
+	_check(broke.try_spend_energy(3) and broke.energy == 0 and broke.hand.has(knuckle),
+		"energy-short fixture is genuinely broke and still holds the card")
+	_expect_thread_refusal("insufficient energy", broke, _roll_party(1), _thread_fear_enemies(),
+		knuckle, 1, CombatPinned.new(), "insufficient_energy")
+	# A living Golem in seat 1 or 2 is required.
+	var torn := _roll_party(1)
+	_check(torn.apply_damage(1, 400) and torn.is_downed(1),
+		"torn-Golem fixture has a genuinely downed Golem")
+	_expect_thread_refusal("Torn Golem", _area_deck(knuckle), torn, _thread_fear_enemies(),
+		knuckle, 1, CombatPinned.new(), "owner_torn")
+	_expect_thread_refusal("Knuckle from illegal seat 3", _area_deck(knuckle), _roll_party(3),
+		_thread_fear_enemies(), knuckle, 1, CombatPinned.new(), "invalid_owner_position")
+	_expect_thread_refusal("Snag from illegal seat 3", _area_deck(snag), _roll_party(3),
+		_thread_fear_enemies(), snag, 1, CombatPinned.new(), "invalid_owner_position")
+	_expect_thread_refusal("no Button Golem in the party", _area_deck(knuckle),
+		_roll_party_of(["warden", "seamstress", "tinker"]), _thread_fear_enemies(), knuckle, 1,
+		CombatPinned.new(), "owner_missing")
+	# The chosen enemy must be a living actor inside the printed TO window.
+	for bad_target in [0, 3, 4, -1]:
+		_expect_thread_refusal("Knuckle onto a slot outside 1-2: " + str(bad_target),
+			_area_deck(knuckle), _roll_party(1), _thread_fear_enemies(), knuckle, bad_target,
+			CombatPinned.new(), "invalid_target")
+	var slain := _thread_fear_enemies()
+	_check(slain.apply_damage(1, 40) and slain.is_slain(1),
+		"slain-target fixture has a genuinely dead feared foe")
+	_expect_thread_refusal("a slain feared target", _area_deck(knuckle), _roll_party(1),
+		slain, knuckle, 1, CombatPinned.new(), "invalid_target")
+	# Missing collaborators fail closed as an invalid request.
+	_expect_thread_refusal("missing deck", null, _roll_party(1), _thread_fear_enemies(),
+		knuckle, 1, CombatPinned.new(), "invalid_request")
+	_expect_thread_refusal("missing party", _area_deck(knuckle), null, _thread_fear_enemies(),
+		knuckle, 1, CombatPinned.new(), "invalid_request")
+	_expect_thread_refusal("missing enemies", _area_deck(knuckle), _roll_party(1), null,
+		knuckle, 1, CombatPinned.new(), "invalid_request")
+
+
+func _expect_thread_refusal(label: String, deck: CombatDeck, party: CombatParty,
+		enemies: CombatEnemies, card_id: Variant, target_position: int, pins: Variant,
+		reason: String) -> void:
+	var before := _thread_snapshot(deck, party, enemies, pins)
+	var receipt: Dictionary = ThreadResolverScript.new().play_card(
+		deck, party, enemies, card_id, target_position, pins)
+	_check(receipt.get("ok") == false, label + ": refused")
+	_check(receipt.get("reason") == reason,
+		label + ": refusal reason is " + reason + " (got " + str(receipt.get("reason")) + ")")
+	for key: String in ["ok", "reason", "card_id", "cost", "owner_position", "target_position",
+			"printed_damage", "base_damage", "pin_bonus", "damage", "energy_spent",
+			"block_absorbed", "hp_loss", "pinned", "tangled_added", "applies_pinned"]:
+		_check(receipt.has(key), label + ": refusal receipt carries " + key)
+	_check(receipt.get("energy_spent") == 0 and receipt.get("damage") == 0
+		and receipt.get("pin_bonus") == 0 and receipt.get("tangled_added") == 0
+		and receipt.get("pinned") == false and receipt.get("applies_pinned") == false,
+		label + ": refusal reports no spend, hit, pin or rider")
+	_check(_thread_snapshot(deck, party, enemies, pins) == before,
+		label + ": hand, piles, energy, HP, Block, statuses, Pinned and seeded RNG are unchanged")
+
+
+## Three living enemy slots at forty HP each, with each requested slot's authoritative status map
+## written onto its record. The roster's status API only admits Bleed/Weak/Exposed, so the
+## canonical Fear flag is installed the way the Scarecrow's resolver writes it.
+func _thread_enemies(statuses_by_slot: Dictionary = {}) -> CombatEnemies:
+	var enemies := CombatEnemies.new([
+		{"id": "thread_brute", "max_hp": 40},
+		{"id": "thread_cog", "max_hp": 40},
+		{"id": "thread_spool", "max_hp": 40},
+	])
+	_check(enemies.is_valid() and enemies.get_enemies().size() == 3,
+		"thread fixture has three genuine living enemy slots")
+	for position: int in statuses_by_slot:
+		enemies._enemies[position - 1]["statuses"] = \
+			(statuses_by_slot[position] as Dictionary).duplicate(true)
+		_check(enemies.get_enemy(position).get("statuses") == statuses_by_slot[position],
+			"thread fixture really stores " + str(statuses_by_slot[position])
+			+ " on slot " + str(position))
+	return enemies
+
+
+## Every slot bearing genuine, canonical Fear: the Scarecrow's literal `cannot_buff_next_turn`.
+func _thread_fear_enemies() -> CombatEnemies:
+	return _thread_enemies({1: {"cannot_buff_next_turn": true},
+		2: {"cannot_buff_next_turn": true}, 3: {"cannot_buff_next_turn": true}})
+
+
+## The printed expectations for one thread printing, read back from its authored pool record.
+func _thread_printed(card_id: String) -> Dictionary:
+	var definition: Dictionary = ScriptClass.new().get_definition(card_id)
+	var effects: Dictionary = definition.get("effects", {})
+	_check(not definition.is_empty(), card_id + " has an authored thread record")
+	return {
+		"name": str(definition.get("display_name", "")),
+		"cost": int(definition.get("cost", -1)),
+		"damage": int(effects.get("damage", -1)),
+		"tangled": int(effects.get("tangled", 0)),
+		"pinned": effects.get("pinned") == true,
+		"to_positions": (definition.get("to_positions", []) as Array).duplicate(),
+	}
+
+
+## The damage-status subset of one authoritative map, derived here independently of the
+## resolver: the five counts CombatStatusAttacks admits, and neither one-shot token nor Fear.
+func _thread_damage_subset(statuses: Dictionary) -> Dictionary:
+	var subset := {}
+	for key: String in ["bleed", "weak", "exposed", "tangled", "riposte"]:
+		if statuses.has(key):
+			subset[key] = int(statuses[key])
+	return subset
+
+
+## Detached before/after state for thread refusals: the shared deck/party/enemy snapshot plus
+## every pin token the caller's authority holds, or the fact that no authority was supplied.
+func _thread_snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		pins: Variant) -> Dictionary:
+	var snapshot: Dictionary = _area_snapshot(deck, party, enemies)
+	if pins is CombatPinned and enemies != null:
+		var tokens: Array = []
+		for position in range(1, enemies.get_enemies().size() + 1):
+			tokens.append(pins.pinner_for_enemy(position))
+		snapshot["pins"] = tokens
+	else:
+		snapshot["pins"] = "no_authority"
+	return snapshot
+
 
 

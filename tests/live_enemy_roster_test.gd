@@ -297,6 +297,24 @@ func _v3_hero_fallbacks(app, presenter) -> void:
 		"a standing hero paints its idle loop while placement still uses the still image")
 	_check(host.idle_frame(loop_art.attack) == loop_art.attack,
 		"the committed attack pose is never replaced by a loop frame")
+	# An authored attack swing strip follows the lunge: stance at both ends, strike at its peak.
+	_check(ROSTER_ART.art_paths("seamstress").get("attack_loop") == "res://assets/paper/heroes/seamstress_attack_anim.png",
+		"the attack swing strip path follows the authoritative ID")
+	var swing_image := Image.create(40, 8, false, Image.FORMAT_RGBA8)
+	var swing: ImageTexture = ImageTexture.create_from_image(swing_image)
+	host.bind_actor("seamstress", {"idle": loop_art.idle, "attack": loop_art.attack,
+		"idle_loop": strip, "attack_loop": swing})
+	_check(host.attack_frames.size() == 5 and host.idle_frame(loop_art.attack) == loop_art.attack,
+		"the swing strip is cut into square frames and only plays during a committed hit")
+	host.attack_span = 0.4
+	host.attack_remaining = 0.4 - 0.0001
+	var swing_start: Texture2D = host.idle_frame(host.pose_texture())
+	host.attack_remaining = 0.2
+	var swing_peak: Texture2D = host.idle_frame(host.pose_texture())
+	_check(swing_start == host.attack_frames[0] and swing_peak == host.attack_frames[4],
+		"the swing starts in the stance frame and strikes at the lunge peak")
+	host.cancel_attack()
+	host.bind_actor("seamstress", loop_art)
 	var still_rect: Rect2 = host.image_rect()
 	var painted: Rect2 = host.painted_rect(later_frame, loop_art.idle, still_rect)
 	_check(is_equal_approx(painted.end.y, still_rect.end.y)
