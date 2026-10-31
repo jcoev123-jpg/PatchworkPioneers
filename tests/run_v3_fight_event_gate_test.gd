@@ -180,6 +180,7 @@ func _initialize() -> void:
 	_test_ac2_waystation_service_choices_and_previews(run_rng)
 	_test_ac3_waystation_trades_leave_and_rejections(run_rng)
 	_test_ac3_waystation_forgery_tampering_and_isolation(run_rng)
+	_test_ac_waystation_affordable_service_selection(run_rng)
 
 	_check(catalog_doc == catalog_snapshot, "loaded catalog dictionary unchanged across all test flows")
 	_check(waystation_catalog_doc == waystation_catalog_snapshot, "loaded waystation catalog dictionary unchanged across all test flows")
@@ -2267,3 +2268,315 @@ func _test_ac3_waystation_forgery_tampering_and_isolation(run_rng: RandomNumberG
 	_check(signed_receipt.get("service_request") == {"stop_type": "Campfire"}, "signed integer receipt service_request")
 
 	_check(run_rng.state == rng_before, "waystation tamper and isolation checks consume zero run_rng draws")
+
+
+func _test_ac_waystation_affordable_service_selection(run_rng: RandomNumberGenerator) -> void:
+	var rng_before: int = run_rng.state
+	seed(73401)
+	var expected_global_rng: int = randi()
+	seed(73401)
+
+	var gate := RunV3ServiceWaystationEventGate.new()
+	_check(gate.is_catalog_valid(), "gate validates catalog for affordable selection")
+
+	# AC2: Four single-eligible wallet/kind combinations + Briar-Button 5th authentic ID
+	var test_rng := RandomNumberGenerator.new()
+	test_rng.seed = 20261031
+
+	# 1. Threadmill: 12 gold, 0 scraps with SewingCircle
+	var threadmill_wallet := {"gold": 12, "scraps": 0}
+	var threadmill_snap := threadmill_wallet.duplicate(true)
+	var threadmill_res: Dictionary = gate.select_affordable_service_event(test_rng, null, threadmill_wallet, "SewingCircle")
+	_check(threadmill_res.get("ok") == true, "select_affordable_service_event succeeds for Threadmill")
+	var threadmill_event: Dictionary = threadmill_res.get("event", {})
+	_check(threadmill_event.get("id") == "v3_threadmill_sewing_circle", "Threadmill selected with 12g/0s SewingCircle")
+	_check(threadmill_event.get("service_choice_id") == "borrow_spools", "Threadmill canonical service_choice_id")
+	_check(threadmill_event.get("service_kind") == "SewingCircle", "Threadmill service_kind SewingCircle")
+	_check(threadmill_wallet == threadmill_snap, "caller wallet unmutated by Threadmill selection")
+
+	# 2. Moonlace: 0 gold, 2 scraps with SewingCircle
+	var moonlace_wallet := {"gold": 0, "scraps": 2}
+	var moonlace_snap := moonlace_wallet.duplicate(true)
+	var moonlace_res: Dictionary = gate.select_affordable_service_event(test_rng, null, moonlace_wallet, "SewingCircle")
+	_check(moonlace_res.get("ok") == true, "select_affordable_service_event succeeds for Moonlace")
+	var moonlace_event: Dictionary = moonlace_res.get("event", {})
+	_check(moonlace_event.get("id") == "v3_moonlace_darning_parlor", "Moonlace selected with 0g/2s SewingCircle")
+	_check(moonlace_event.get("service_choice_id") == "sew_at_parlor", "Moonlace canonical service_choice_id")
+	_check(moonlace_event.get("service_kind") == "SewingCircle", "Moonlace service_kind SewingCircle")
+	_check(moonlace_wallet == moonlace_snap, "caller wallet unmutated by Moonlace selection")
+
+	# 3. Inkblack: 10 gold, 0 scraps with Unpicker
+	var inkblack_wallet := {"gold": 10, "scraps": 0}
+	var inkblack_snap := inkblack_wallet.duplicate(true)
+	var inkblack_res: Dictionary = gate.select_affordable_service_event(test_rng, null, inkblack_wallet, "Unpicker")
+	_check(inkblack_res.get("ok") == true, "select_affordable_service_event succeeds for Inkblack")
+	var inkblack_event: Dictionary = inkblack_res.get("event", {})
+	_check(inkblack_event.get("id") == "v3_inkblack_unpicker_van", "Inkblack selected with 10g/0s Unpicker")
+	_check(inkblack_event.get("service_choice_id") == "hire_unpicker", "Inkblack canonical service_choice_id")
+	_check(inkblack_event.get("service_kind") == "Unpicker", "Inkblack service_kind Unpicker")
+	_check(inkblack_wallet == inkblack_snap, "caller wallet unmutated by Inkblack selection")
+
+	# 4. Emberglass: 0 gold, 1 scrap with Campfire
+	var emberglass_wallet := {"gold": 0, "scraps": 1}
+	var emberglass_snap := emberglass_wallet.duplicate(true)
+	var emberglass_res: Dictionary = gate.select_affordable_service_event(test_rng, null, emberglass_wallet, "Campfire")
+	_check(emberglass_res.get("ok") == true, "select_affordable_service_event succeeds for Emberglass")
+	var emberglass_event: Dictionary = emberglass_res.get("event", {})
+	_check(emberglass_event.get("id") == "v3_emberglass_campfire", "Emberglass selected with 0g/1s Campfire")
+	_check(emberglass_event.get("service_choice_id") == "light_the_embers", "Emberglass canonical service_choice_id")
+	_check(emberglass_event.get("service_kind") == "Campfire", "Emberglass service_kind Campfire")
+	_check(emberglass_wallet == emberglass_snap, "caller wallet unmutated by Emberglass selection")
+
+	# 5. Briar-Button: 0 gold, 2 scraps with Campfire, excluding Emberglass (covers all 5 authentic IDs)
+	var briar_wallet := {"gold": 0, "scraps": 2}
+	var briar_snap := briar_wallet.duplicate(true)
+	var briar_excl := ["v3_emberglass_campfire"]
+	var briar_excl_snap := briar_excl.duplicate(true)
+	var briar_res: Dictionary = gate.select_affordable_service_event(test_rng, briar_excl, briar_wallet, "Campfire")
+	_check(briar_res.get("ok") == true, "select_affordable_service_event succeeds for Briar-Button")
+	var briar_event: Dictionary = briar_res.get("event", {})
+	_check(briar_event.get("id") == "v3_briar_button_mending_bench", "Briar-Button selected with 0g/2s Campfire excluding Emberglass")
+	_check(briar_event.get("service_choice_id") == "fuel_button_fire", "Briar-Button canonical service_choice_id")
+	_check(briar_event.get("service_kind") == "Campfire", "Briar-Button service_kind Campfire")
+	_check(briar_wallet == briar_snap, "caller wallet unmutated by Briar-Button selection")
+	_check(briar_excl == briar_excl_snap, "caller exclusions unmutated by Briar-Button selection")
+
+	# Empty wallet rejection: {0 gold, 0 scraps} offers none
+	var zero_wallet := {"gold": 0, "scraps": 0}
+	var zero_rng := RandomNumberGenerator.new()
+	zero_rng.seed = 998877
+	var zero_rng_before: int = zero_rng.state
+	for kind_to_test: String in ["", "Campfire", "SewingCircle", "Unpicker"]:
+		var zero_res: Dictionary = gate.select_affordable_service_event(zero_rng, null, zero_wallet, kind_to_test)
+		_check(
+			zero_res == {"ok": false, "event": {}},
+			"empty wallet {0, 0} offers none for kind: '" + kind_to_test + "'"
+		)
+		_check(zero_rng.state == zero_rng_before, "zero RNG consumption on empty wallet rejection for kind: " + kind_to_test)
+
+	# Trade and Leave affordability does NOT satisfy paid service requirement:
+	# With {gold: 5, scraps: 0}, trade choices (sell cinders +12g, untie scraps +2s, sell trim +1s, take rivets +14g, trade lace +10g)
+	# and Leave (0g, 0s) are all fully affordable, but NO paid service is affordable.
+	var trade_only_wallet := {"gold": 5, "scraps": 0}
+	var trade_only_rng := RandomNumberGenerator.new()
+	trade_only_rng.seed = 887766
+	var trade_only_rng_before: int = trade_only_rng.state
+	for kind_to_test: String in ["", "Campfire", "SewingCircle", "Unpicker"]:
+		var trade_only_res: Dictionary = gate.select_affordable_service_event(trade_only_rng, null, trade_only_wallet, kind_to_test)
+		_check(
+			trade_only_res == {"ok": false, "event": {}},
+			"wallet with affordable trade/leave but unaffordable paid service offers none for kind: '" + kind_to_test + "'"
+		)
+		_check(trade_only_rng.state == trade_only_rng_before, "zero RNG consumption on trade/leave only wallet for kind: " + kind_to_test)
+
+	# Near-miss wallets: exactly 1 unit short of paid service cost
+	var near_miss_sewing := {"gold": 11, "scraps": 0} # Threadmill needs 12g, Moonlace needs 2s
+	_check(
+		gate.select_affordable_service_event(trade_only_rng, null, near_miss_sewing, "SewingCircle") == {"ok": false, "event": {}},
+		"near-miss 11g/0s SewingCircle offers none"
+	)
+	var near_miss_unpicker := {"gold": 9, "scraps": 0} # Inkblack needs 10g
+	_check(
+		gate.select_affordable_service_event(trade_only_rng, null, near_miss_unpicker, "Unpicker") == {"ok": false, "event": {}},
+		"near-miss 9g/0s Unpicker offers none"
+	)
+	_check(trade_only_rng.state == trade_only_rng_before, "zero RNG consumption on near-miss wallet checks")
+
+	# Multi-eligible funded case: {gold: 12, scraps: 2} with reordered catalog
+	# All 5 events are affordable with {12 gold, 2 scraps}
+	var funded_multi_wallet := {"gold": 12, "scraps": 2}
+	var reordered_events: Array[Dictionary] = gate.get_catalog_events()
+	reordered_events.reverse()
+	var reordered_cat_doc := {"events": reordered_events}
+	var reordered_gate := RunV3ServiceWaystationEventGate.new(&"__omitted_event_target__", reordered_cat_doc)
+	_check(reordered_gate.is_catalog_valid(), "reordered waystation catalog is valid")
+
+	var multi_seed: int = 13579
+	var multi_rng1 := RandomNumberGenerator.new()
+	multi_rng1.seed = multi_seed
+	var multi_res1: Dictionary = gate.select_affordable_service_event(multi_rng1, null, funded_multi_wallet, "")
+	_check(multi_res1.get("ok") == true, "multi-eligible selection succeeds on canonical catalog")
+
+	var expected_draw_rng := RandomNumberGenerator.new()
+	expected_draw_rng.seed = multi_seed
+	expected_draw_rng.randi_range(0, 4) # 5 eligible sorted options
+	_check(multi_rng1.state == expected_draw_rng.state, "multi-eligible selection consumes precisely one RNG draw")
+
+	var multi_rng2 := RandomNumberGenerator.new()
+	multi_rng2.seed = multi_seed
+	var multi_res2: Dictionary = reordered_gate.select_affordable_service_event(multi_rng2, null, funded_multi_wallet, "")
+	_check(multi_res2.get("ok") == true, "multi-eligible selection succeeds on reordered catalog")
+	_check(multi_rng2.state == expected_draw_rng.state, "multi-eligible reordered selection consumes precisely one RNG draw")
+	_check(
+		multi_res1.get("event", {}).get("id") == multi_res2.get("event", {}).get("id"),
+		"same seed and authenticated records select identically regardless of catalog order"
+	)
+
+	# Selection alone claims nothing; a fresh visit settles previewed price once
+	var selected_event: Dictionary = multi_res1.get("event", {})
+	var sel_id: String = String(selected_event.get("id", ""))
+	var sel_service_cid: String = String(selected_event.get("service_choice_id", ""))
+	var sel_kind: String = String(selected_event.get("service_kind", ""))
+	_check(not gate.is_claimed(), "selection alone claims nothing on catalog gate")
+
+	var fresh_visit := gate.open_visit(sel_id)
+	_check(fresh_visit != null and fresh_visit.is_valid() and not fresh_visit.is_claimed(), "fresh visit opens for selected event")
+	var visit_preview: Dictionary = fresh_visit.preview_choices(funded_multi_wallet)
+	_check(visit_preview.get("ok") == true, "fresh visit preview succeeds")
+	var preview_row: Dictionary = {}
+	for row_raw: Variant in visit_preview.get("choices", []):
+		var row: Dictionary = row_raw
+		if String(row.get("choice_id", "")) == sel_service_cid:
+			preview_row = row
+			break
+	_check(not preview_row.is_empty(), "preview row found for canonical service_choice_id")
+	_check(preview_row.get("affordable") == true, "preview row is affordable")
+	var expected_post_wallet: Dictionary = preview_row.get("wallet", {}).duplicate(true)
+
+	var settle_receipt: Dictionary = fresh_visit.choose_with_wallet(sel_service_cid, funded_multi_wallet)
+	_check(settle_receipt.get("ok") == true, "fresh visit settles service choice successfully")
+	_check(settle_receipt.get("event_id") == sel_id, "settle receipt event_id matches")
+	_check(settle_receipt.get("choice_id") == sel_service_cid, "settle receipt choice_id matches")
+	_check(settle_receipt.get("wallet") == expected_post_wallet, "committed wallet matches previewed amount")
+	_check(settle_receipt.get("service_request") == {"stop_type": sel_kind}, "committed service_request matches kind")
+	_check(fresh_visit.is_claimed() and not fresh_visit.is_valid(), "visit latched after settlement")
+
+	var replay_denied: Dictionary = fresh_visit.choose_with_wallet(sel_service_cid, funded_multi_wallet)
+	_check(replay_denied.get("ok") == false, "replay on settled visit rejected")
+	_check(replay_denied.get("service_request") == {}, "replay service_request empty")
+
+	# Deep-detached isolation check: mutating returned event does not mutate catalog
+	var record_snapshot: Dictionary = gate.get_event_record(sel_id)
+	selected_event["title"] = "Mutated Title"
+	(selected_event["choices"] as Array).clear()
+	_check(gate.get_event_record(sel_id) == record_snapshot, "mutating selected event does not mutate catalog")
+
+	# AC3: Comprehensive rejection coverage with zero RNG consumption
+	var probe_rng := RandomNumberGenerator.new()
+	probe_rng.seed = 314159
+	var probe_before: int = probe_rng.state
+
+	# 1. Invalid RNG
+	_check(gate.select_affordable_service_event(null, null, funded_multi_wallet, "") == {"ok": false, "event": {}}, "null RNG rejected")
+	_check(gate.select_affordable_service_event("not_rng", null, funded_multi_wallet, "") == {"ok": false, "event": {}}, "string RNG rejected")
+	_check(gate.select_affordable_service_event(12345, null, funded_multi_wallet, "") == {"ok": false, "event": {}}, "int RNG rejected")
+	_check(gate.select_affordable_service_event([], null, funded_multi_wallet, "") == {"ok": false, "event": {}}, "array RNG rejected")
+	_check(gate.select_affordable_service_event({}, null, funded_multi_wallet, "") == {"ok": false, "event": {}}, "dict RNG rejected")
+
+	# 2. Invalid wallets
+	var bad_wallets: Array = [
+		null,
+		12,
+		"wallet",
+		[],
+		{},
+		{"gold": 20},
+		{"scraps": 2},
+		{"gold": 20, "scraps": 2, "extra": 1},
+		{"gold": -1, "scraps": 2},
+		{"gold": 20, "scraps": -1},
+		{"gold": 20.0, "scraps": 2},
+		{"gold": 20, "scraps": 2.0},
+		{"gold": "20", "scraps": 2},
+		{"gold": true, "scraps": 2},
+		{"gold": 20, "scraps": false},
+	]
+	for bad_w: Variant in bad_wallets:
+		var bad_w_res: Dictionary = gate.select_affordable_service_event(probe_rng, null, bad_w, "")
+		_check(bad_w_res == {"ok": false, "event": {}}, "bad wallet rejected: " + str(bad_w))
+		_check(probe_rng.state == probe_before, "zero RNG draw on bad wallet rejection: " + str(bad_w))
+
+	# 3. Invalid service kinds
+	var bad_kinds: Array = [
+		null,
+		123,
+		[],
+		{},
+		"Fight",
+		"Campfire ",
+		" Campfire",
+		"campfire",
+		"Sewing",
+		"Unpick",
+		"unknown_kind",
+	]
+	for bad_k: Variant in bad_kinds:
+		var bad_k_res: Dictionary = gate.select_affordable_service_event(probe_rng, null, funded_multi_wallet, bad_k)
+		_check(bad_k_res == {"ok": false, "event": {}}, "bad kind rejected: " + str(bad_k))
+		_check(probe_rng.state == probe_before, "zero RNG draw on bad kind rejection: " + str(bad_k))
+
+	# 4. Invalid exclusions
+	var bad_exclusions: Array = [
+		"not_an_array",
+		123,
+		{},
+		[123],
+		[""],
+		["   "],
+		[null],
+	]
+	for bad_ex: Variant in bad_exclusions:
+		var bad_ex_res: Dictionary = gate.select_affordable_service_event(probe_rng, bad_ex, funded_multi_wallet, "")
+		_check(bad_ex_res == {"ok": false, "event": {}}, "bad exclusions rejected: " + str(bad_ex))
+		_check(probe_rng.state == probe_before, "zero RNG draw on bad exclusions rejection: " + str(bad_ex))
+
+	# 5. Exhausted exclusions (all 5 authentic IDs excluded)
+	var all_auth_ids: Array = [
+		"v3_emberglass_campfire",
+		"v3_threadmill_sewing_circle",
+		"v3_inkblack_unpicker_van",
+		"v3_briar_button_mending_bench",
+		"v3_moonlace_darning_parlor",
+	]
+	var exhausted_res: Dictionary = gate.select_affordable_service_event(probe_rng, all_auth_ids, funded_multi_wallet, "")
+	_check(exhausted_res == {"ok": false, "event": {}}, "exhausted exclusions return refusal")
+	_check(probe_rng.state == probe_before, "zero RNG draw on exhausted exclusions")
+
+	# 6. Unaffordable service kind (e.g. Unpicker with 0 gold, 2 scraps)
+	var unaffordable_kind_res: Dictionary = gate.select_affordable_service_event(probe_rng, null, {"gold": 0, "scraps": 2}, "Unpicker")
+	_check(unaffordable_kind_res == {"ok": false, "event": {}}, "unaffordable kind returns refusal")
+	_check(probe_rng.state == probe_before, "zero RNG draw on unaffordable kind")
+
+	# 7. Invalid catalogs (missing required event and forged sixth event)
+	var missing_cat_doc: Dictionary = waystation_catalog_doc.duplicate(true)
+	var filtered_cat_events: Array = []
+	for ev_raw: Variant in missing_cat_doc["events"]:
+		if (ev_raw as Dictionary).get("id") != "v3_emberglass_campfire":
+			filtered_cat_events.append(ev_raw)
+	missing_cat_doc["events"] = filtered_cat_events
+	var missing_gate := RunV3ServiceWaystationEventGate.new(&"__omitted_event_target__", missing_cat_doc)
+	_check(not missing_gate.is_catalog_valid(), "missing event catalog is invalid")
+	var missing_sel: Dictionary = missing_gate.select_affordable_service_event(probe_rng, null, funded_multi_wallet, "")
+	_check(missing_sel == {"ok": false, "event": {}}, "invalid catalog rejects select_affordable_service_event")
+	_check(probe_rng.state == probe_before, "zero RNG draw on invalid catalog rejection")
+
+	var forged_sixth_cat_doc: Dictionary = waystation_catalog_doc.duplicate(true)
+	(forged_sixth_cat_doc["events"] as Array).append({
+		"id": "v3_forged_sixth_waystation",
+		"title": "The Forged Hearth",
+		"description": "An authentic-looking but never-shipped extra waystation event.",
+		"service_choice_id": "service_action",
+		"service_kind": "Campfire",
+		"choices": [
+			{"id": "service_action", "text": "Stitch embers (spend 1 scrap, Campfire)", "outcome": {"gold": 0, "scraps": -1}},
+			{"id": "trade_action", "text": "Trade cinders (gain 10 gold)", "outcome": {"gold": 10, "scraps": 0}},
+			{"id": "leave", "text": "Leave", "outcome": {"gold": 0, "scraps": 0}},
+		],
+	})
+	var forged_sixth_gate := RunV3ServiceWaystationEventGate.new(&"__omitted_event_target__", forged_sixth_cat_doc)
+	_check(not forged_sixth_gate.is_catalog_valid(), "forged sixth catalog is invalid")
+	var forged_sixth_sel: Dictionary = forged_sixth_gate.select_affordable_service_event(probe_rng, null, funded_multi_wallet, "")
+	_check(forged_sixth_sel == {"ok": false, "event": {}}, "forged sixth catalog rejects select_affordable_service_event")
+	_check(probe_rng.state == probe_before, "zero RNG draw on forged sixth catalog rejection")
+
+	# Legacy select_event remains intact and functional
+	var leg_rng := RandomNumberGenerator.new()
+	leg_rng.seed = 771122
+	var leg_sel: Dictionary = gate.select_event(leg_rng)
+	_check(leg_sel.get("ok") == true, "legacy select_event succeeds")
+	_check(EXPECTED_WAYSTATION_EVENTS.has(leg_sel.get("event", {}).get("id")), "legacy select_event returns valid waystation")
+
+	_check(probe_rng.state == probe_before, "probe RNG unmutated across all refusal checks")
+	_check(randi() == expected_global_rng, "global RNG untouched across affordable service selection checks")
+	seed(73401)
+	_check(run_rng.state == rng_before, "waystation affordable selection checks consume zero run_rng draws")
