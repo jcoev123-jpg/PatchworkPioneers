@@ -291,11 +291,12 @@ static func generate_peddler_stock(rng: Variant, party_ids: Variant,
 	# accepted whole while its two powerless starter records are filtered out
 	# of BOTH draw pools. An unknown or inert candidate is never promoted to a
 	# payable power.
-	var power_patch_ids := _power_patch_ids(false)
-	# P12 is Peddler-only: the implemented ARM power unlocks, but the
-	# unimplemented HEAD power remains withheld in every run and shop.
-	if heirloom_unlocked and _power_patch_ids(true).has("shared_hem"):
-		power_patch_ids["shared_hem"] = true
+	var power_patch_ids := _power_patch_ids(heirloom_unlocked)
+	var authored_ids := {}
+	for definition in RunAuthoredPatchDefinitions.load_definitions():
+		authored_ids[definition["id"]] = true
+	if power_patch_ids.is_empty() or authored_ids.is_empty():
+		return rejected
 	var patch_prices := {}
 	var eligible_patch_ids: Array[String] = []
 	var owned_candidate_patch_ids: Array[String] = []
@@ -303,16 +304,17 @@ static func generate_peddler_stock(rng: Variant, party_ids: Variant,
 		if not (candidate is Dictionary):
 			return rejected
 		var entry: Dictionary = candidate
-		if not entry.has("id") or not entry.has("price"):
+		if entry.size() != 2 or not entry.has("id") or not entry.has("price"):
 			return rejected
 		if not (entry["id"] is String):
 			return rejected
 		var patch_id: String = entry["id"]
-		if patch_id.strip_edges().is_empty() or patch_prices.has(patch_id):
+		if patch_id.strip_edges().is_empty() or patch_prices.has(patch_id) \
+				or not authored_ids.has(patch_id):
 			return rejected
 		var price := _read_price(entry["price"])
-		if price < 0 or (patch_id == "shared_hem" and price != \
-				RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED["shared_hem"]["shop_price_gold"]):
+		if price < 0 or (RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED.has(patch_id) \
+				and price != RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED[patch_id]["shop_price_gold"]):
 			return rejected
 		patch_prices[patch_id] = price
 		if not power_patch_ids.has(patch_id):
@@ -421,8 +423,7 @@ static func _read_price(value: Variant) -> int:
 ## record can never be priced as a patch offer. An unreadable catalog yields an
 ## empty set, which refuses the visit instead of offering a powerless patch.
 ## Prospective stock filter runs before any RNG draw, quote or inventory
-## mutation. The actual Peddler stock path intentionally remains locked
-## until a future cycle implements both powers in real combat.
+## mutation. The live Peddler unlock uses the same authenticated two powers.
 static func filter_patch_candidates(candidates: Variant, unlocked: Variant) -> Dictionary:
 	var rejected := {"ok": false, "candidates": []}
 	if typeof(unlocked) != TYPE_BOOL or not (candidates is Array):
@@ -441,7 +442,10 @@ static func filter_patch_candidates(candidates: Variant, unlocked: Variant) -> D
 			return rejected
 		var id: String = candidate["id"]
 		if id.strip_edges().is_empty() or seen.has(id) or not all_ids.has(id) \
-				or _read_price(candidate["price"]) < 0:
+				or _read_price(candidate["price"]) < 0 \
+				or (RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED.has(id) \
+					and _read_price(candidate["price"]) != \
+					RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED[id]["shop_price_gold"]):
 			return rejected
 		seen[id] = true
 		if eligible.has(id):

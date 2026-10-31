@@ -1046,9 +1046,24 @@ func _refresh() -> void:
 	reward_cards_button.disabled = not _open or _latched or (_hovered_id.is_empty() and _focused_id.is_empty() and not _reward_mode)
 	if inspect_deck_button.disabled:
 		_deck_mode = false
+	# Only the successful admission receipt allocates combat positions. Pick
+	# numbers below are selection order, which may be different from a seat.
+	var admitted_seats: Dictionary = {}
+	if _seat_receipt.get("ok", false) and _seat_receipt.get("hero_ids", []).size() == 3:
+		for index in range(3):
+			admitted_seats[_seat_receipt["hero_ids"][index]] = index + 1
 	for definition in HEROES:
 		var hero_id: String = definition["id"]
 		var tile: Button = _tiles[hero_id]
+		var badge: Label = tile.get_node("Inset/Stack/Face/SeatBadge")
+		badge.hide()
+		badge.text = ""
+		badge.tooltip_text = ""
+		if admitted_seats.has(hero_id):
+			var seat: int = admitted_seats[hero_id]
+			badge.text = "%d  •  %s" % [seat, POSITION_NAMES[seat - 1].to_upper()]
+			badge.tooltip_text = badge.text
+			badge.show()
 		var number := _ids.find(hero_id) + 1
 		tile.disabled = not _open or _latched
 		tile.get_node("Inset/Stack/PickLabel").text = (
@@ -1160,6 +1175,30 @@ func _mount_tile(definition: Dictionary, generation: int) -> void:
 	motif.add_theme_font_size_override("font_size", 13)
 	motif.add_theme_color_override("font_color", Color(definition["thread"]))
 	motif.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var badge := Label.new()
+	badge.name = "SeatBadge"
+	badge.anchor_left = 1.0
+	badge.anchor_right = 1.0
+	badge.anchor_top = 1.0
+	badge.anchor_bottom = 1.0
+	badge.offset_left = -124.0
+	badge.offset_right = -8.0
+	badge.offset_top = -29.0
+	badge.offset_bottom = -4.0
+	badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.focus_mode = Control.FOCUS_NONE
+	badge.add_theme_color_override("font_color", CREAM)
+	badge.add_theme_font_size_override("font_size", 15)
+	var sewn_felt := StyleBoxFlat.new()
+	sewn_felt.bg_color = Color("#222735ef")
+	sewn_felt.border_color = STITCH
+	sewn_felt.set_border_width_all(2)
+	sewn_felt.set_corner_radius_all(5)
+	badge.add_theme_stylebox_override("normal", sewn_felt)
+	badge.hide()
+	face.add_child(badge)
 	stack.add_child(motif)
 
 	var pick := Label.new()

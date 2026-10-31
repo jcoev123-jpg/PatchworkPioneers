@@ -50,9 +50,12 @@ const STATUS_CLOSED := "No open Peddler visit. No offer can be submitted."
 const DETAILS_UNAVAILABLE := "Card details unavailable"
 const PATCH_DETAILS_UNAVAILABLE := "Power details unavailable"
 const PATCH_TORN_WARNING := "Patch powers do not work while the wearer is Torn."
-## The ONE unlocked P12 power the patch projection may supplement its ordinary/
-## P8 audit with: the authored ARM Shared Hem at its canonical 100 gold. The
-## withheld, still unimplemented HEAD Needle Echo is never described here.
+## The two unlocked P12 Heirlooms supplement the ordinary/P8 audit only
+## after their complete authored records pass canonical authentication.
+const NEEDLE_ECHO_ID := "needle_echo"
+const NEEDLE_ECHO_SLOT := "HEAD"
+const NEEDLE_ECHO_SHORT := "+1 damage on the first confirmed Pinned-enemy hit each turn"
+const NEEDLE_ECHO_FULL := "Once per turn, the first confirmed hit by this living, untorn wearer on a Pinned enemy deals exactly +1 damage."
 const SHARED_HEM_ID := "shared_hem"
 const SHARED_HEM_SLOT := "ARM"
 const SHARED_HEM_SHORT := "+1 Block once/turn when a different living hero actually gains Block"
@@ -832,12 +835,10 @@ func _trusted_patch_previews(slots: Dictionary) -> Dictionary:
 ## PATCH_DETAILS_UNAVAILABLE instead of guessing a rule. The optional source
 ## lets tests supply contradictory records without editing the shipped files,
 ## mirroring the Patch Stall preview seam.
-func _verified_shared_hem(offer_id: String, catalog_source: Variant = null) -> Dictionary:
-	if offer_id != SHARED_HEM_ID:
+func _verified_heirloom(offer_id: String, catalog_source: Variant = null) -> Dictionary:
+	if not RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED.has(offer_id):
 		return {}
-	var required: Dictionary = RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED.get(SHARED_HEM_ID, {})
-	if required.is_empty() or str(required.get("slot", "")) != SHARED_HEM_SLOT:
-		return {}
+	var required: Dictionary = RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED[offer_id]
 	var catalog: Variant = catalog_source
 	if catalog == null:
 		catalog = JSON.parse_string(FileAccess.get_file_as_string(
@@ -848,21 +849,29 @@ func _verified_shared_hem(offer_id: String, catalog_source: Variant = null) -> D
 	var matched: Dictionary = {}
 	for record in catalog:
 		if typeof(record) != TYPE_DICTIONARY:
-			continue
-		if str(record.get("id", "")) != SHARED_HEM_ID:
+			return {}
+		if str(record.get("id", "")) != offer_id:
 			continue
 		if not matched.is_empty():
 			return {}
 		matched = record
-	if matched.is_empty() or not RunAuthoredPatchDefinitions._valid_heirloom(matched):
+	if matched.is_empty() or not RunAuthoredPatchDefinitions._valid_heirloom(matched) \
+			or str(matched["slot"]) != str(required["slot"]):
 		return {}
 	return {
-		"id": SHARED_HEM_ID,
+		"id": offer_id,
 		"slot": str(matched["slot"]),
 		"name": str(matched["name"]),
-		"short": SHARED_HEM_SHORT,
-		"full": SHARED_HEM_FULL,
+		"short": NEEDLE_ECHO_SHORT if offer_id == NEEDLE_ECHO_ID else SHARED_HEM_SHORT,
+		"full": NEEDLE_ECHO_FULL if offer_id == NEEDLE_ECHO_ID else SHARED_HEM_FULL,
 	}
+
+
+## Retain the focused Shared Hem authentication seam for negative regressions.
+func _verified_shared_hem(offer_id: String, catalog_source: Variant = null) -> Dictionary:
+	if offer_id != SHARED_HEM_ID:
+		return {}
+	return _verified_heirloom(offer_id, catalog_source)
 
 
 ## The audited patch description reuses the one existing Patch Stall
@@ -873,7 +882,7 @@ func _verified_shared_hem(offer_id: String, catalog_source: Variant = null) -> D
 ## contradictory or unknown record - yields no details at all, so the view
 ## fails closed with PATCH_DETAILS_UNAVAILABLE instead of guessing a rule.
 func _patch_details() -> Dictionary:
-	if _source.is_empty():
+	if not _source_current():
 		return {}
 	var offer := _patch_offer()
 	var offer_id := str(offer.get("id", ""))
@@ -893,7 +902,7 @@ func _patch_details() -> Dictionary:
 	else:
 		# The one P12 supplement: only a canonically verified authored
 		# Shared Hem record may complete this projection.
-		var verified := _verified_shared_hem(offer_id)
+		var verified := _verified_heirloom(offer_id)
 		if verified.is_empty():
 			return {}
 		slot = str(verified["slot"])

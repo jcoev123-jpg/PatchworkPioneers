@@ -6559,15 +6559,16 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	var candidates := _validated_patch_candidates(authored.trinkets)
 	if candidates.is_empty():
 		return false
-	# Only the actual routed Peddler can append the implemented P12 ARM power.
-	# Its price and slot come from the validated authored Heirloom record.
+	# Only the actual completed-run-unlocked Peddler appends the two
+	# fully authenticated P12 powers into its existing one-patch lottery.
 	if heirloom_unlocked:
-		var hem: Dictionary = RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED["shared_hem"]
-		if not RunAuthoredPatchDefinitions.load_eligible_power_definitions(true).has(
-				{"id": hem["id"], "slot": hem["slot"]}) \
-				or hem["shop_price_gold"] != 100:
-			return false
-		candidates.append({"id": hem["id"], "price": hem["shop_price_gold"]})
+		var eligible_heirlooms := RunAuthoredPatchDefinitions.load_eligible_power_definitions(true)
+		for heirloom_id in RunAuthoredPatchDefinitions.HEIRLOOM_IDS:
+			var heirloom: Dictionary = RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED[heirloom_id]
+			if not eligible_heirlooms.has({"id": heirloom["id"], "slot": heirloom["slot"]}) \
+					or heirloom["shop_price_gold"] != 100:
+				return false
+			candidates.append({"id": heirloom["id"], "price": heirloom["shop_price_gold"]})
 	var canonical_slots := {}
 	for definition in definitions:
 		canonical_slots[definition.id] = definition.slot

@@ -146,8 +146,13 @@ func _check_tiles(picker: LiveV3PartyPicker) -> void:
 			"tile %d exact original name has no overlapping key glyph" % (i + 1))
 		_check(motif.is_visible_in_tree() and not motif.text.is_empty()
 			and pick.is_visible_in_tree() and face.is_visible_in_tree()
-			and face.size.y >= 60 and face.get_child_count() == 1
-			and (face.get_child(0).name == "Portrait" or face.get_child(0).name == "FallbackMotif"),
+			and face.size.y >= 60 and face.get_child_count() == 2
+			and (face.get_child(0).name == "Portrait" or face.get_child(0).name == "FallbackMotif")
+			and face.get_child(1).name == "SeatBadge"
+			and face.get_child(1) is Label
+			and face.get_child(1).mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and not face.get_child(1).visible
+			and (face.get_child(1) as Label).text.is_empty(),
 			"tile %d original portrait/fallback and labels remain present" % (i + 1))
 		_check(tile.get_global_rect().encloses(face.get_global_rect()),
 			"tile %d face bounded: %s vs %s" % [i + 1, tile.get_global_rect(), face.get_global_rect()])

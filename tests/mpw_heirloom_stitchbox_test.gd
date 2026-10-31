@@ -1,6 +1,6 @@
 extends SceneTree
-## P12 remains catalog-authenticated; the completed-run Shared Hem is now
-## payable at the real Peddler and live on held Brace, not on Needle Echo.
+## P12 remains catalog-authenticated; both completed-run Heirlooms are payable
+## at the real Peddler, while Shared Hem remains live on held Brace.
 
 var checks := 0
 var failures: Array[String] = []
@@ -109,15 +109,20 @@ func _run() -> void:
 	_check(real.ok and real.patches.size() == 1 and real.patches[0].id == "relay_bobbin",
 		"locked Peddler preserves its single ordinary patch despite P12 candidates")
 	var offered_hem := false
+	var offered_needle := false
 	for seed_value in range(1, 70):
 		var probe := RandomNumberGenerator.new()
 		probe.seed = seed_value
 		var stock := RunShopStockOffers.generate_peddler_stock(probe, party, cards, samples, [], true)
-		_check(stock.ok and stock.patches.size() == 1 and stock.patches[0].id != "needle_echo",
-			"unlocked Peddler still refuses unimplemented Needle Echo")
+		_check(stock.ok and stock.patches.size() == 1
+			and ["relay_bobbin", "needle_echo", "shared_hem"].has(stock.patches[0].id),
+			"unlocked Peddler selects a single legitimate patch")
 		if stock.patches[0].id == "shared_hem":
 			offered_hem = offered_hem or stock.patches[0].price == 100
-	_check(offered_hem, "a real seeded unlocked Peddler draw offers Hem for its authored 100 gold")
+		if stock.patches[0].id == "needle_echo":
+			offered_needle = offered_needle or stock.patches[0].price == 100
+	_check(offered_hem and offered_needle,
+		"authentic unlocked stock draws either canonical 100-gold Heirloom")
 
 	# App envelope accepts old two-field records and new versioned records,
 	# without adding fields to RunDifficulty itself.
@@ -144,6 +149,7 @@ func _run() -> void:
 		_check(not app.restore_profile_state(bad_profile) and app.profile_state() == before,
 			"malformed profile rejects atomically and retains unlock and difficulty")
 	await _test_routed_peddler_to_battle(app)
+	await _test_routed_needle_echo_purchase(app)
 	app.free()
 	_test_heirloom_needle()
 	_test_heirloom_hem()
@@ -284,9 +290,8 @@ func _test_routed_peddler_to_battle(app) -> void:
 			_check(false, "real Peddler opens with authenticated stock")
 			return
 		var stock: Dictionary = app.peddler_visit.read_state().stock
-		_check(stock.trinkets.size() == 1
-			and stock.trinkets[0].id != "needle_echo",
-			"real Peddler never leaks Needle Echo and keeps one patch slot")
+		_check(stock.trinkets.size() == 1 and not stock.trinkets[0].id.is_empty(),
+			"real Peddler keeps its one authentic patch slot")
 		if stock.trinkets[0].id != "shared_hem":
 			app._return_to_title()
 			await process_frame
@@ -594,3 +599,179 @@ func _test_heirloom_binding_and_immutability() -> void:
 	_check(other_party.is_valid() and not rules.bind_battle(
 		wardrobe, torn, other_party, foes, pins),
 		"different valid party cannot reuse unrelated wardrobe and torn ledger")
+
+## The real app path, not a detached visit: completed-run unlock -> chosen
+## Fight -> earned route -> one seeded Peddler -> chosen HEAD wearer. Exercise
+## physical mouse and number-4 inputs against the mounted quote and sewing
+## bridge, including stale/replay refusals and unchanged seeded RNG.
+func _test_routed_needle_echo_purchase(app) -> void:
+	_check(app.heirloom_unlocked and app.run_map == null and app.deck == null,
+		"Needle Echo app witness starts at completed-run-unlocked title")
+	for keyboard in [false, true]:
+		var purchased := false
+		var eligible_routes := 0
+		for seed_value in range(1, 4000):
+			var graph := RunMap.new()
+			var graph_rng := RandomNumberGenerator.new()
+			graph_rng.seed = seed_value
+			graph.generate(graph_rng)
+			var first_id := ""
+			var shop_id := ""
+			for initial in graph.get_legal_choices():
+				if graph.get_node(initial).get("type") != "Fight":
+					continue
+				for middle in graph.get_node(initial).get("outgoing", []):
+					if graph.get_node(middle).get("type") == "Shop":
+						first_id = initial
+						shop_id = middle
+						break
+				if not shop_id.is_empty():
+					break
+			if shop_id.is_empty():
+				continue
+			eligible_routes += 1
+			app.run_seed = seed_value
+			app.route_button.pressed.emit()
+			await process_frame
+			await process_frame
+			if app.run_map == null:
+				preload("res://tests/party_choice.gd").choose(app)
+				await process_frame
+				await process_frame
+			var fight_button: Button = null
+			for button in app.route_buttons:
+				if button.get_meta("route_id") == first_id:
+					fight_button = button
+			_check(fight_button != null and not fight_button.disabled,
+				"Needle witness enters genuinely connected first Fight")
+			if fight_button == null:
+				return
+			fight_button.pressed.emit()
+			await process_frame
+			await process_frame
+			_check(app._current_carryover_fight() and app.enemies != null,
+				"Needle witness has a real mounted combat before Peddler")
+			if app.enemies == null:
+				return
+			for enemy in app.enemies.get_enemies():
+				_check(app.enemies.apply_damage(enemy.position, 999),
+					"Needle route prerequisite fight resolves via real enemy ledger")
+			app._observe_battle_result()
+			await process_frame
+			await process_frame
+			_check(app._battle_closed and app.fight_rewards != null
+				and app.reward_buttons.size() >= 4,
+				"Needle route prerequisite opens legitimate victory rewards")
+			if app.reward_buttons.size() < 4:
+				return
+			app.reward_buttons[3].pressed.emit()
+			await process_frame
+			_check(app.continue_button != null,
+				"Needle route reward Skip legitimately continues")
+			if app.continue_button == null:
+				return
+			app.continue_button.pressed.emit()
+			await process_frame
+			await process_frame
+			var shop_button: Button = null
+			for button in app.route_buttons:
+				if button.get_meta("route_id") == shop_id:
+					shop_button = button
+			_check(shop_button != null and not shop_button.disabled,
+				"Needle route enters a genuinely connected Shop tile")
+			if shop_button == null:
+				return
+			app.session_gold = maxi(app.session_gold, 200)
+			shop_button.pressed.emit()
+			await process_frame
+			await process_frame
+			_check(app.peddler_visit != null and app.shop_view is LivePeddlerPanel
+				and app.peddler_visit.is_open(),
+				"Needle witness reaches live bound Peddler from app map")
+			if app.peddler_visit == null or not app.peddler_visit.is_open():
+				return
+			var offered: Dictionary = app.peddler_visit.read_state()
+			_check(offered.stock.trinkets.size() == 1,
+				"live Peddler keeps its single patch slot")
+			if offered.stock.trinkets[0].id != "needle_echo":
+				app._return_to_title()
+				await process_frame
+				await process_frame
+				continue
+			var panel := app.shop_view as LivePeddlerPanel
+			var wallet_before: int = app.session_gold
+			var rng_before: int = app.run_rng.state
+			var deck_before: Array = app.run_deck.duplicate(true)
+			var owned_before: Array = app.run_trinkets.duplicate(true)
+			var carry := app.party_carryover as RunTornCarryover
+			var wardrobe: RunPatchWardrobe = app._peddler_wardrobe
+			_check(wardrobe != null and wardrobe.is_valid(),
+				"live Peddler has a real preflight sewing wardrobe")
+			if wardrobe == null:
+				return
+			var sewn_before := wardrobe.get_snapshot()
+			_check(offered.stock.trinkets[0].price == 100 and wallet_before >= 100
+				and not owned_before.has("needle_echo")
+				and panel.patch_button.get_meta("offer_id") == "needle_echo"
+				and not panel.patch_button.disabled
+				and panel.patch_button.text.contains("HEAD")
+				and panel.patch_button.text.contains("100 gold")
+				and panel.patch_button.tooltip_text.contains(LivePeddlerPanel.NEEDLE_ECHO_FULL),
+				"live unlocked Peddler actually displays payable HEAD Needle +1 trigger")
+			app.peddler_heroes.select(2)
+			_check(app.peddler_heroes.selected == 2
+				and app.peddler_heroes.get_item_metadata(2) == app.run_heroes[2].id
+				and sewn_before.worn[app.run_heroes[2].id]["HEAD"] == "",
+				"real wearer selector chooses an empty HEAD slot on third living hero")
+			if keyboard:
+				for down in [true, false]:
+					var key_event := InputEventKey.new()
+					key_event.keycode = KEY_4
+					key_event.pressed = down
+					root.push_input(key_event)
+					await process_frame
+			else:
+				var point := panel.patch_button.get_global_rect().get_center()
+				var motion := InputEventMouseMotion.new()
+				motion.position = point
+				root.push_input(motion, true)
+				await process_frame
+				for down in [true, false]:
+					var click := InputEventMouseButton.new()
+					click.button_index = MOUSE_BUTTON_LEFT
+					click.position = point
+					click.pressed = down
+					root.push_input(click, true)
+					await process_frame
+			await process_frame
+			await process_frame
+			var sewn: Dictionary = wardrobe.get_snapshot()
+			_check(app.peddler_visit.is_consumed() and app.peddler_receipt.get("ok") == true
+				and app.peddler_receipt.id == "needle_echo" and app.peddler_receipt.price == 100
+				and app.session_gold == wallet_before - 100
+				and app.run_trinkets.has("needle_echo")
+				and app.run_trinkets.size() == owned_before.size() + 1
+				and sewn.worn[app.run_heroes[2].id]["HEAD"] == "needle_echo"
+				and sewn.gold == app.session_gold and sewn.owned == app.run_trinkets
+				and app.run_deck == deck_before and app.run_rng.state == rng_before
+				and carry._wardrobe == wardrobe
+				and carry.can_bind_wardrobe(wardrobe, carry.torn, sewn),
+				"live mouse/key-4 settles one 100g HEAD purchase and durable selected wearer")
+			var paid_state: Dictionary = app.peddler_visit.read_state()
+			_check(not app.peddler_visit.choose_purchase(offered.node_id,
+				offered.state, offered.stock, "trinket", "needle_echo").ok
+				and not app.peddler_visit.leave(offered.node_id, offered.state, offered.stock).ok
+				and app.peddler_visit.read_state() == paid_state
+				and wardrobe.get_snapshot() == sewn
+				and app.session_gold == wallet_before - 100
+				and app.run_rng.state == rng_before,
+				"stale buy/replay and post-buy Leave cannot double-spend or alter wardrobe/RNG")
+			purchased = true
+			app._return_to_title()
+			await process_frame
+			await process_frame
+			break
+		_check(purchased, "real routed Needle Echo %s purchase sews once (%d eligible routes)"
+			% ["key-4" if keyboard else "mouse", eligible_routes])
+	_check(app.run_map == null and app.heirloom_unlocked,
+		"both Needle Echo mounted purchase routes return to unlocked title")

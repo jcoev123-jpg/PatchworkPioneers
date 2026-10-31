@@ -217,6 +217,7 @@ func _run() -> void:
 	await _patch_preview_cases()
 	await _unaudited_patch_case()
 	await _shared_hem_case()
+	await _needle_echo_case()
 	_check(rng.state == expected_run,
 			"all panel previews, intents and refusals preserve seeded run RNG")
 	_check(randi() == expected_global, "all mounted actions preserve global RNG")
@@ -1741,11 +1742,11 @@ func _unaudited_patch_case() -> void:
 		"unaudited patch inspection never buys, emits an intent or mutates anything")
 
 
-## V3-3 P12: the already-unlocked rare ARM Shared Hem competes for the ONE
+## V3-3 P12: both unlocked Heirlooms compete for the ONE
 ## Peddler patch draw at its authored 100 gold, and the mounted panel explains
 ## it truthfully before any spend. Everything comes from the real sampler and
-## genuine visits on the mounted controls: the withheld HEAD Needle Echo and
-## the default locked flag stay out of every draw, hover/keyboard previews pay
+## genuine visits on the mounted controls: the default locked flag keeps both
+## out of each draw, and hover/keyboard previews pay
 ## nothing, one real buy settles once at 100 gold, Leave stays free, and the
 ## ordinary/P8 audited descriptions above are untouched.
 func _shared_hem_case() -> void:
@@ -1770,7 +1771,7 @@ func _shared_hem_case() -> void:
 		return
 
 	# The seeded P12 candidate fixture: every authored priced patch plus the
-	# canonical Shared Hem and the withheld Needle Echo (no data change).
+	# canonical Shared Hem and Needle Echo (no data change).
 	var hem_candidates: Array = authored_patches.duplicate(true)
 	hem_candidates.append({"id": "shared_hem",
 		"price": int(required["shop_price_gold"])})
@@ -1783,8 +1784,8 @@ func _shared_hem_case() -> void:
 		var unlocked := RunShopStockOffers.generate_peddler_stock(unlocked_rng,
 			PARTY, authored_cards, hem_candidates, [], true)
 		_check(unlocked.ok and unlocked.patches.size() == 1
-			and str(unlocked.patches[0].id) != "needle_echo",
-			"unlocked seeded stock keeps one patch and still withholds Needle Echo")
+			and not str(unlocked.patches[0].id).is_empty(),
+			"unlocked seeded stock keeps one valid patch slot")
 		var locked_rng := RandomNumberGenerator.new()
 		locked_rng.seed = seed_value
 		var locked := RunShopStockOffers.generate_peddler_stock(locked_rng,
@@ -1874,14 +1875,14 @@ func _shared_hem_case() -> void:
 	panel._source["stock"]["trinkets"][0]["id"] = "needle_echo"
 	_check(panel._patch_details().is_empty()
 		and panel._patch_preview().contains(LivePeddlerPanel.PATCH_DETAILS_UNAVAILABLE),
-		"a Needle Echo row shows unavailable, never a guessed or borrowed Hem power")
+		"stale relabelled offer cannot borrow Needle Echo details")
 	panel._source = authentic_source
 	_check(panel._source_current() and hem_visit.read_state() == hem_before,
 		"restoring the genuine Hem row restores its bound source untouched")
 	# Contradictory/missing/unreadable P12 catalog material fails closed too.
 	_check(panel._verified_shared_hem("needle_echo").is_empty()
 		and panel._verified_shared_hem("stitched_badge").is_empty(),
-		"the withheld and unknown IDs resolve to no P12 details at all")
+		"the Hem-only authentication seam refuses other IDs")
 	_check(not panel._verified_shared_hem("shared_hem").is_empty()
 		and not panel._verified_shared_hem("shared_hem", authored_heirloom).is_empty(),
 		"the shipped and supplied genuine catalogs both verify the Hem")
@@ -1933,3 +1934,130 @@ func _shared_hem_case() -> void:
 				and leave_receipt["state"]["gold"] == GOLD
 				and leave_receipt["state"]["trinkets"].is_empty(),
 				"Leave on the Hem visit spends nothing and adds no patch")
+
+## Completed-run P12 HEAD is not a placeholder: a seeded, genuine visit
+## displays the authenticated confirmed-Pinned +1 rule and accepts both
+## physical mouse and numeral-4 purchase actions, once only.
+func _needle_echo_case() -> void:
+	var required: Dictionary = RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED["needle_echo"]
+	var records: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/mpw_heirloom_patches.json"))
+	var needle: Dictionary = {}
+	if records is Array:
+		for record in records:
+			if record is Dictionary and record.get("id") == "needle_echo":
+				needle = record
+	_check(not needle.is_empty() and RunAuthoredPatchDefinitions._valid_heirloom(needle)
+		and needle.get("slot") == "HEAD" and needle.get("shop_price_gold") == 100
+		and needle.get("bonus_damage") == 1 and needle.get("uses_per_turn") == 1
+		and needle.get("requires_confirmed_receipt") == true
+		and needle.get("requires_pinned_enemy") == true,
+		"authored Needle Echo requires confirmed Pinned contact for HEAD +1 once/turn")
+	var candidates: Array = authored_patches.duplicate(true)
+	for heirloom_id in ["needle_echo", "shared_hem"]:
+		var spec: Dictionary = RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED[heirloom_id]
+		candidates.append({"id": heirloom_id, "price": spec["shop_price_gold"]})
+	var chosen := {}
+	var chosen_seed := -1
+	for value in range(1, 400):
+		var probe := RandomNumberGenerator.new()
+		probe.seed = value
+		var stock := RunShopStockOffers.generate_peddler_stock(
+			probe, PARTY, authored_cards, candidates, [], true)
+		if stock.ok and stock.patches.size() == 1 and stock.patches[0].id == "needle_echo":
+			chosen = stock
+			chosen_seed = value
+			break
+	_check(chosen_seed > 0 and chosen.get("patches", []).size() == 1
+		and int(chosen.get("patches", [{}])[0].get("price", -1)) == 100,
+		"genuine seeded unlocked Peddler selects one canonical 100-gold Needle Echo")
+	if chosen.is_empty():
+		return
+	var first := RandomNumberGenerator.new()
+	first.seed = chosen_seed
+	var second := RandomNumberGenerator.new()
+	second.seed = chosen_seed
+	var reversed := candidates.duplicate(true)
+	reversed.reverse()
+	_check(RunShopStockOffers.generate_peddler_stock(first, PARTY, authored_cards, candidates, [], true)
+		== RunShopStockOffers.generate_peddler_stock(second, PARTY, authored_cards, reversed, [], true)
+		and first.state == second.state,
+		"Needle Echo seeded lottery ignores candidate order and preserves RNG stream")
+	var broken: Array = (records as Array).duplicate(true)
+	for record in broken:
+		if record.get("id") == "needle_echo":
+			record["bonus_damage"] = 2
+	_check(not panel._verified_heirloom("needle_echo").is_empty()
+		and not panel._verified_heirloom("needle_echo", records).is_empty()
+		and panel._verified_heirloom("needle_echo", broken).is_empty()
+		and panel._verified_heirloom("unverified_patch").is_empty(),
+		"HEAD details require an exact authenticated Heirloom record")
+	for keyboard in [false, true]:
+		var visit := _party_visit("needle_echo_" + str(keyboard), PARTY, DECK, chosen)
+		var before := visit.read_state()
+		_check(visit.is_open() and before.stock.trinkets[0].id == "needle_echo"
+			and before.stock.trinkets[0].price == 100 and before.state.gold == GOLD,
+			"real open Needle Echo visit has payable HEAD offer and funded wallet")
+		await _bind(visit)
+		var ticket: Array = panel.patch_button.text.split("\n")
+		var details := panel._patch_details()
+		_check(ticket.size() == 2 and ticket[0] == "4  ·  Needle Echo  ·  100 gold"
+			and ticket[1].begins_with("HEAD  ·  ") and _fits(panel.patch_button)
+			and not details.is_empty() and details.slot == "HEAD"
+			and details.short == LivePeddlerPanel.NEEDLE_ECHO_SHORT
+			and details.full == LivePeddlerPanel.NEEDLE_ECHO_FULL,
+			"mounted key-4 ticket fits and explains authentic HEAD triggered +1 damage")
+		_check(panel.patch_button.tooltip_text.contains("needle_echo")
+			and panel.patch_button.tooltip_text.contains("HEAD")
+			and panel.patch_button.tooltip_text.contains("100 gold")
+			and panel.patch_button.tooltip_text.contains(LivePeddlerPanel.NEEDLE_ECHO_FULL)
+			and panel.patch_button.tooltip_text.contains(LivePeddlerPanel.PATCH_TORN_WARNING)
+			and not panel.patch_button.tooltip_text.contains(LivePeddlerPanel.PATCH_DETAILS_UNAVAILABLE),
+			"mounted Needle Echo tooltip names precise trigger, torn suppression and quote")
+		await _move_pointer(panel.patch_button.get_global_rect().get_center())
+		_check(panel.status_label.text.contains("HEAD") and _status_fits()
+			and visit.read_state() == before and intents.is_empty(),
+			"Needle Echo mouse hover gives no-cost, non-mutating HEAD preview")
+		await _hover_none()
+		panel.patch_button.grab_focus()
+		await _frames()
+		_check(panel.patch_button.has_focus()
+			and panel.status_label.text.contains("Needle Echo")
+			and visit.read_state() == before and intents.is_empty(),
+			"Needle Echo keyboard focus previews without spend or intent")
+		if keyboard:
+			_check(not await _push_shortcut(KEY_4), "number 4 is consumed by mounted Peddler")
+		else:
+			await _act(panel.patch_button, false)
+		_check(intents.size() == 1 and intents[0].get("id") == "needle_echo"
+			and intents[0].get("kind") == "trinket",
+			"physical Needle Echo buy emits one source-bound patch purchase")
+		if intents.size() != 1:
+			continue
+		var paid := Controller.settle(visit, intents[0], before)
+		var accepted := visit.read_state()
+		_check(paid.ok and paid.price == 100
+			and accepted.state.gold == GOLD - 100
+			and accepted.state.trinkets == ["needle_echo"]
+			and accepted.state.deck == DECK and accepted.status == "used",
+			"genuine Needle Echo purchase debits 100 once, owns HEAD and preserves deck")
+		_check(not Controller.settle(visit, intents[0], before).get("ok")
+			and visit.read_state() == accepted,
+			"duplicate/stale Needle Echo purchase preserves accepted wallet and inventory")
+	var broke := _party_visit("needle_echo_unfunded", PARTY, DECK, chosen, 99)
+	var broke_before := broke.read_state()
+	await _bind(broke)
+	_check(broke.is_open() and panel.patch_button.disabled
+		and panel.patch_button.text.contains("short 1"),
+		"unaffordable Needle Echo stays visible but cannot be bought")
+	await _push_shortcut(KEY_4)
+	_check(intents.is_empty() and broke.read_state() == broke_before,
+		"unfunded key-4 attempt leaves gold, deck and inventory untouched")
+	await _act(panel.leave_button, false)
+	_check(intents.size() == 1 and intents[0].kind == "leave",
+		"Needle Echo visit still provides a free physical Leave")
+	if intents.size() == 1:
+		var left := Controller.settle(broke, intents[0], broke_before)
+		_check(left.ok and left.state.gold == 99 and left.state.trinkets.is_empty()
+			and left.state.deck == DECK,
+			"leaving a Needle Echo visit preserves wallet, owned patches and deck")

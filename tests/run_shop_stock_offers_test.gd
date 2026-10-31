@@ -3045,8 +3045,8 @@ func _test_peddler_cards(party: Array[String], deck: Array[String], catalog: Sta
 	_check(peddler_cards.size() == 6, "peddler leaves candidate input unchanged")
 
 
-## The implemented P12 ARM Heirloom competes for the existing ONE Peddler
-## patch draw only after eligibility. HEAD's unimplemented Needle Echo stays out.
+## Both completed-run P12 Heirlooms compete for the existing ONE Peddler
+## patch draw only after eligibility.
 func _test_unlocked_shared_hem_stock(party: Array[String], catalog: StarterCards) -> void:
 	var authored := _authored_shop_offers()
 	var cards := _card_pool(catalog, party, authored)
@@ -3054,23 +3054,29 @@ func _test_unlocked_shared_hem_stock(party: Array[String], catalog: StarterCards
 		{"id": "shared_hem", "price": RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED["shared_hem"]["shop_price_gold"]},
 		{"id": "needle_echo", "price": 100}]
 	var found := -1
+	var found_needle := -1
 	for seed_value in range(1, 70):
 		var unlocked_rng := _rng(seed_value)
 		var unlocked := RunShopStockOffers.generate_peddler_stock(
 			unlocked_rng, party, cards, patches, [], true)
 		_check(unlocked.ok and unlocked.cards.size() == 3 and unlocked.patches.size() == 1
-			and unlocked.patches[0].id != "needle_echo",
-			"unlocked Peddler preserves one patch and withholds unimplemented HEAD")
+			and ["relay_bobbin", "shared_hem", "needle_echo"].has(unlocked.patches[0].id),
+			"unlocked Peddler preserves one authentic patch slot for either Heirloom")
 		var locked_rng := _rng(seed_value)
 		var locked := RunShopStockOffers.generate_peddler_stock(
 			locked_rng, party, cards, patches, [])
 		_check(locked.ok and locked.patches == [{"id": "relay_bobbin", "price": 100}],
-			"first-run default lock keeps the unimplemented P12 out of Peddler")
+			"first-run default lock keeps both P12 Heirlooms out of Peddler")
 		if unlocked.patches[0].id == "shared_hem" and found < 0:
 			found = seed_value
 			_check(unlocked.patches[0].price == 100 and unlocked_rng.state == locked_rng.state,
 				"authored 100-gold Hem actually competes in weighted seeded draw")
-	_check(found > 0, "a deterministic genuine stock seed offers 100-gold Shared Hem")
+		if unlocked.patches[0].id == "needle_echo" and found_needle < 0:
+			found_needle = seed_value
+			_check(unlocked.patches[0].price == 100 and unlocked_rng.state == locked_rng.state,
+				"authored 100-gold Needle Echo competes in the same seeded slot")
+	_check(found > 0 and found_needle > 0,
+		"separate deterministic genuine stock seeds offer each 100-gold Heirloom")
 	var original := patches.duplicate(true)
 	var funded := {"gold": 100, "owned": [], "deck": ["warden_brace"]}
 	var wallet_before := funded.duplicate(true)
@@ -3082,15 +3088,28 @@ func _test_unlocked_shared_hem_stock(party: Array[String], catalog: StarterCards
 		_check(not rejected.ok and rejected.cards.is_empty() and rejected.patches.is_empty()
 			and rng.state == before and funded == wallet_before,
 			"malformed P12 eligibility rejects atomically without spending/RNG")
-	for bad_price in [99, -1, 99.5]:
-		var corrupted := patches.duplicate(true)
-		corrupted[1].price = bad_price
-		var rng := _rng(found)
-		var before := rng.state
-		var rejected := RunShopStockOffers.generate_peddler_stock(
-			rng, party, cards, corrupted, [], true)
-		_check(not rejected.ok and rng.state == before and funded == wallet_before,
-			"forged P12 price rejects before RNG/payment")
+	for id_index in [1, 2]:
+		for bad_price in [99, -1, 99.5]:
+			var corrupted := patches.duplicate(true)
+			corrupted[id_index].price = bad_price
+			var rng := _rng(found)
+			var before := rng.state
+			var rejected := RunShopStockOffers.generate_peddler_stock(
+				rng, party, cards, corrupted, [], true)
+			_check(not rejected.ok and rng.state == before and funded == wallet_before,
+				"forged P12 price rejects before RNG/payment")
+	for forged_record in [{"id": "__forged_heirloom__", "price": 100},
+			{"id": "needle_echo", "price": 100, "slot": "HEAD"}]:
+		var forged_candidates := patches.duplicate(true)
+		forged_candidates[2] = forged_record
+		var denied_rng := _rng(found_needle)
+		var denied_before := denied_rng.state
+		var denied := RunShopStockOffers.generate_peddler_stock(
+			denied_rng, party, cards, forged_candidates, [], true)
+		_check(not denied.ok and denied.cards.is_empty() and denied.patches.is_empty()
+			and denied_rng.state == denied_before and funded == wallet_before
+			and patches == original,
+			"forged heirloom ID or extra candidate metadata rejects before any RNG or spend")
 	var a := _rng(found)
 	var b := _rng(found)
 	var reverse := patches.duplicate(true)
