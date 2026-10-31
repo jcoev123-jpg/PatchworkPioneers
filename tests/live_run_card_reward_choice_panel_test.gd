@@ -148,6 +148,127 @@ func _snapshot(fixture: Dictionary) -> Dictionary:
 
 ## Independent, explicit authored contract: protect against a formatter and
 ## catalog drifting together. Additional catalog entries may coexist.
+## Only the authored camp background moves; real Fight/Elite receipts and
+## physical target bounds must remain identical throughout the cycle.
+func _test_camp_motion(fight: Dictionary, elite: Dictionary) -> void:
+	var camp := panel.get_node_or_null("CampBackdrop") as TextureRect
+	_check(camp != null and camp.texture != null,
+		"authored camp exists on the real reward scene")
+	if camp == null or camp.texture == null:
+		return
+	var shade := panel.get_node_or_null("CampShade") as ColorRect
+	_check(camp.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and camp.focus_mode == Control.FOCUS_NONE and shade != null
+		and shade.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"camp artwork and shade cannot capture pointer or keyboard")
+	var preference: Variant = ProjectSettings.get_setting(panel.REDUCED_MOTION_SETTING, false)
+	ProjectSettings.set_setting(panel.REDUCED_MOTION_SETTING, false)
+	panel.set_reduced_motion_override(null)
+	_check(not panel.is_processing() and camp.scale == Vector2.ONE
+		and camp.position == Vector2.ZERO, "closed presentation is static")
+	var invalid: Dictionary = fight["receipt"].duplicate(true)
+	invalid["ok"] = false
+	_check(not panel.open_rewards("bad", "Fight", invalid) and not panel.is_processing(),
+		"invalid open never starts motion")
+	for kind in ["Fight", "Elite"]:
+		var fixture: Dictionary = elite if kind == "Elite" else fight
+		var before := _snapshot(fixture)
+		requests.clear()
+		_check(panel.open_rewards("motion_" + kind, kind, fixture["receipt"]),
+			"actual prepared " + kind + " mounts and starts presentation")
+		await _frames()
+		var actions := panel.get_choice_buttons()
+		_check(actions.size() == 4 and panel.choices_container.get_child_count() == 3
+			and panel.is_processing() and panel._camp_elapsed > 0.0,
+			kind + " has four real actions and an active elapsed-time loop")
+		if actions.size() != 4:
+			panel.close_rewards()
+			continue
+		var targets: Array[Control] = []
+		targets.append_array(actions)
+		for help in panel._help_buttons:
+			targets.append(help)
+		var bounds: Array[Rect2] = []
+		for target in targets:
+			bounds.append(target.get_global_rect())
+		var paper_bounds := panel.paper_panel.get_global_rect()
+		_check(camp.scale.x > 1.0 and is_equal_approx(camp.scale.x, camp.scale.y)
+			and camp.pivot_offset.is_equal_approx(camp.size * 0.5),
+			kind + " camp overfills with aspect-preserving uniform scale")
+		var initial_position := camp.position
+		var initial_scale := camp.scale
+		panel._process(panel.CAMP_MOTION_PERIOD * 0.25)
+		_check(not camp.position.is_equal_approx(initial_position)
+			and not camp.scale.is_equal_approx(initial_scale),
+			kind + " actual elapsed-time motion changes camp transform")
+		for quarter in range(4):
+			# Geometric overfill invariant, not a brittle per-pixel snapshot.
+			var covered := Rect2(camp.position - camp.pivot_offset * (camp.scale - Vector2.ONE),
+				camp.size * camp.scale)
+			_check(covered.encloses(Rect2(Vector2.ZERO, panel.size)),
+				kind + " camp image covers viewport at phase " + str(quarter))
+			panel._process(panel.CAMP_MOTION_PERIOD * 0.25)
+		for index in range(targets.size()):
+			_check(targets[index].get_global_rect() == bounds[index],
+				kind + " card/Help/Skip hitbox does not move " + str(index))
+		_check(panel.paper_panel.get_global_rect() == paper_bounds,
+			kind + " stationary paper bounds preserved")
+		_check(panel._receipt == fixture["receipt"] and requests.is_empty()
+			and _snapshot(fixture) == before,
+			kind + " same offers, ledger, battle and RNG after animation")
+		panel.close_rewards()
+		_check(not panel.is_processing() and panel._camp_elapsed == 0.0
+			and camp.position == Vector2.ZERO and camp.scale == Vector2.ONE
+			and camp.pivot_offset == Vector2.ZERO,
+			kind + " close clears phase and transform")
+
+	ProjectSettings.set_setting(panel.REDUCED_MOTION_SETTING, true)
+	panel.set_reduced_motion_override(null)
+	_check(panel.open_rewards("motion_reduced", "Fight", fight["receipt"]),
+		"reduced-motion reward still opens")
+	await _frames()
+	panel._process(panel.CAMP_MOTION_PERIOD)
+	_check(not panel.is_processing() and camp.scale == Vector2.ONE
+		and camp.position == Vector2.ZERO and panel.get_choice_buttons().size() == 4,
+		"project preference keeps mounted art completely static")
+	panel.close_rewards()
+	panel.set_reduced_motion_override(false)
+	_check(panel.open_rewards("motion_override", "Elite", elite["receipt"])
+		and panel.is_processing(), "false override enables motion despite preference")
+	await _frames()
+	panel.set_reduced_motion_override(true)
+	_check(not panel.is_processing() and camp.position == Vector2.ZERO
+		and camp.scale == Vector2.ONE and panel._camp_elapsed == 0.0,
+		"true override resets live animated scene")
+	panel.close_rewards()
+	panel.set_reduced_motion_override(false)
+	var authored_texture := camp.texture
+	camp.texture = null
+	_check(panel.open_rewards("motion_no_art", "Fight", fight["receipt"])
+		and panel.get_choice_buttons().size() == 4 and not panel.is_processing(),
+		"no-art fallback retains choices but does not animate")
+	await _frames()
+	_check(camp.scale == Vector2.ONE and camp.position == Vector2.ZERO,
+		"missing texture remains untransformed")
+	panel.close_rewards()
+	camp.texture = authored_texture
+	_check(panel.open_rewards("motion_reopen", "Fight", fight["receipt"])
+		and panel.is_processing() and panel._camp_elapsed == 0.0,
+		"reopened scene starts from zero elapsed time")
+	await _frames()
+	panel.close_rewards()
+	var spare := (load(SCENE) as PackedScene).instantiate() as LiveRunCardRewardChoicePanel
+	root.add_child(spare)
+	await _frames()
+	spare.set_reduced_motion_override(false)
+	_check(spare.open_rewards("motion_free", "Fight", fight["receipt"])
+		and spare.is_processing(), "mounted spare animates before free")
+	spare.free()
+	_check(not is_instance_valid(spare), "free removes animated panel and process loop")
+	panel.set_reduced_motion_override(null)
+	ProjectSettings.set_setting(panel.REDUCED_MOTION_SETTING, preference)
+
+
 func _expected_cards() -> Dictionary:
 	return {
 		"warden_strike": {"from": [1, 2], "to": [1, 2], "kind": "enemy_single",
@@ -3474,6 +3595,7 @@ func _run() -> void:
 		return
 	var original_fight: Dictionary = fight["receipt"].duplicate(true)
 	var original_elite: Dictionary = elite["receipt"].duplicate(true)
+	await _test_camp_motion(fight, elite)
 	await _exercise(fight, "Fight", 0)
 	await _exercise(elite, "Elite", 1)
 	await _test_all_catalog_rules(original_fight)

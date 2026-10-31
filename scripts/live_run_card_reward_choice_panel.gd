@@ -95,6 +95,13 @@ const HELP_TAB_TEXT_BREATH := 6
 ## StyleBoxFlat styles stay underneath to carry palette, hover glow and focus.
 const ART_DIR := "res://assets/paper/"
 const CAMP_BACKDROP := ART_DIR + "backgrounds/reward_camp.png"
+## One slow deterministic cycle, confined to the existing camp image.
+## Uniform overfill leaves room for the small pan even at the zoom trough.
+const CAMP_MOTION_PERIOD := 18.0
+const CAMP_MOTION_ZOOM := 1.065
+const CAMP_MOTION_BREATH := 0.008
+const CAMP_MOTION_PAN := Vector2(8.0, 5.0)
+const REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
 const QUILT_PANEL := ART_DIR + "ui/reward_panel.png"
 const TITLE_BANNER := ART_DIR + "ui/reward_banner.png"
 const BURLAP_BUTTON := ART_DIR + "ui/reward_button.png"
@@ -135,11 +142,75 @@ var _help_buttons: Array[Button] = []
 var _help_ids: Dictionary = {}
 var _help_overlay: PanelContainer = null
 var _help_invoker: Button = null
+var _camp_backdrop: TextureRect = null
+var _camp_elapsed := 0.0
+var _reduced_motion_override: Variant = null
 
 
 func _ready() -> void:
+	set_process(false)
 	_apply_patchwork_style()
 	close_rewards()
+
+
+## The setting defaults to off. Tests/accessibility can override on a panel.
+func set_reduced_motion_override(value: Variant) -> void:
+	_reduced_motion_override = value if value is bool else null
+	_sync_camp_motion()
+
+
+func _reduced_motion() -> bool:
+	if _reduced_motion_override is bool:
+		return _reduced_motion_override
+	return ProjectSettings.get_setting(REDUCED_MOTION_SETTING, false) == true
+
+
+func _sync_camp_motion() -> void:
+	_reset_camp_motion()
+	if not is_node_ready() or not _is_open or not is_visible_in_tree() \
+			or _reduced_motion() or not is_instance_valid(_camp_backdrop) \
+			or _camp_backdrop.texture == null:
+		return
+	_apply_camp_motion()
+	set_process(true)
+
+
+func _reset_camp_motion() -> void:
+	set_process(false)
+	_camp_elapsed = 0.0
+	if is_instance_valid(_camp_backdrop):
+		_camp_backdrop.position = Vector2.ZERO
+		_camp_backdrop.scale = Vector2.ONE
+		_camp_backdrop.pivot_offset = Vector2.ZERO
+
+
+func _apply_camp_motion() -> void:
+	if not is_instance_valid(_camp_backdrop):
+		return
+	var phase := TAU * _camp_elapsed / CAMP_MOTION_PERIOD
+	var zoom := CAMP_MOTION_ZOOM + CAMP_MOTION_BREATH * sin(phase)
+	_camp_backdrop.pivot_offset = _camp_backdrop.size * 0.5
+	_camp_backdrop.scale = Vector2.ONE * zoom
+	_camp_backdrop.position = Vector2(
+		CAMP_MOTION_PAN.x * sin(phase), CAMP_MOTION_PAN.y * cos(phase))
+
+
+func _process(delta: float) -> void:
+	if not _is_open or not is_visible_in_tree() or _reduced_motion() \
+			or not is_instance_valid(_camp_backdrop) or _camp_backdrop.texture == null:
+		_reset_camp_motion()
+		return
+	_camp_elapsed = fposmod(_camp_elapsed + maxf(delta, 0.0), CAMP_MOTION_PERIOD)
+	_apply_camp_motion()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_VISIBILITY_CHANGED and is_node_ready():
+		_sync_camp_motion()
+
+
+func _exit_tree() -> void:
+	_reset_camp_motion()
 
 
 ## Display only a detached valid RunFightVictoryRewards.prepare() receipt.
@@ -198,6 +269,7 @@ func open_rewards(node_id: Variant, node_kind: Variant, prepared: Variant) -> bo
 		button.focus_next = button.get_path_to(_choice_buttons[(index + 1) % _choice_buttons.size()])
 		button.focus_previous = button.get_path_to(_choice_buttons[(index + _choice_buttons.size() - 1) % _choice_buttons.size()])
 	show()
+	_sync_camp_motion()
 	call_deferred("_focus_first", _generation)
 	return true
 
@@ -512,6 +584,7 @@ func acknowledge(accepted: bool) -> void:
 
 
 func close_rewards() -> void:
+	_reset_camp_motion()
 	_dismiss_help(false)
 	_generation += 1
 	_is_open = false
@@ -1070,6 +1143,7 @@ func _apply_sewn_art(paper: StyleBoxFlat, content_margin: MarginContainer) -> vo
 		var backdrop := TextureRect.new()
 		backdrop.name = "CampBackdrop"
 		backdrop.texture = camp
+		_camp_backdrop = backdrop
 		backdrop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		backdrop.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 		backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
