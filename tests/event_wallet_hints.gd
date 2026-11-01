@@ -240,4 +240,16 @@ const SEEDS := [
 	# between the first and second Event, so every mounted route button keeps a
 	# matching sewing source after the test installs its stitched ledger.
 	862443,
+	# Genuine map/toll/rotation witnesses after the Ironboot, Lockgate,
+	# Fireglass and Moonkite roadside bargains expanded the sorted pool.
+	# These eight were discovered by the bounded live fallback and are
+	# independently revalidated by live_m04_event_wallet_batch_test.
+	30939,
+	51612,
+	56700,
+	163528,
+	268564,
+	276124,
+	329277,
+	425526,
 ]

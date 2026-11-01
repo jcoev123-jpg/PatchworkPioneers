@@ -364,7 +364,8 @@ func _physical_hit(id: String, position: int, keyboard: bool, damage: int,
 func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 		mitt: bool = false, stitch_pair: Array = [], scope: bool = false,
 		head_status: bool = false, visor: String = "", heavy: bool = false,
-		needle: bool = false, upgrade_strike: bool = false) -> bool:
+		needle: bool = false, upgrade_strike: bool = false,
+		pool_id: String = "") -> bool:
 	worn_wardrobe = null
 	# Only the predecessor is terminally settled to reach a genuine connected
 	# route quickly. Every asserted patch attack below hits a live next Fight.
@@ -427,6 +428,17 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 		if not upgraded.get("ok", false):
 			return false
 		app.run_deck.assign(upgraded.deck)
+	if not pool_id.is_empty():
+		# Real owned run deck; only canonical pool printings can be seeded.
+		_check(CombatPoolPlainStrikes.SUPPORTED_IDS.has(pool_id)
+			and (WardenPoolCards.new().get_definition(pool_id).get("id") == pool_id
+				or SeamstressPoolCards.new().get_definition(pool_id).get("id") == pool_id),
+			"canonical earned pool printing admitted to the run")
+		if not CombatPoolPlainStrikes.SUPPORTED_IDS.has(pool_id):
+			return false
+		# Two owned copies permit a same-turn second physical cast.
+		app.run_deck.append(pool_id)
+		app.run_deck.append(pool_id)
 	if visor == "absent":
 		# A genuinely unpatched run: the real deck owns both Rivet variants but
 		# no wardrobe is ever bound for this battle.
@@ -1014,6 +1026,7 @@ func _run() -> void:
 	await _visor_cases(fixture)
 	await _mitt_heavy_cases(fixture)
 	await _needle_mounted_cases(fixture)
+	await _needle_pool_mounted_cases(fixture)
 	await _finish_patch_play()
 
 
@@ -2061,4 +2074,160 @@ func _needle_mounted_cases(fixture: Dictionary) -> void:
 					and rules._turn == turn_before + 1
 					and rules._pending_needle.is_empty(),
 					"next real scheduler turn re-arms exactly one Needle use")
+		await _click(app.return_button)
+
+
+## Cycle 417: actual mounted cards, the real hand renderer and paid enemy
+## callbacks prove the four earned pool strikes share the existing Needle latch.
+func _needle_pool_mounted_cases(fixture: Dictionary) -> void:
+	var cases := [
+		{"id": "warden_brass_buckle", "wearer": "warden", "second": true},
+		{"id": "warden_brass_buckle_plus", "wearer": "warden", "absorbed": true},
+		{"id": "seamstress_thread_whip", "wearer": "seamstress", "statuses": true},
+		{"id": "seamstress_thread_whip_plus", "wearer": "seamstress", "cross": true},
+		{"id": "warden_brass_buckle", "wearer": "seamstress"},
+		{"id": "seamstress_thread_whip", "wearer": "warden"},
+		{"id": "warden_brass_buckle", "wearer": "warden", "unpinned": true},
+	]
+	for scenario in cases:
+		var id: String = scenario.id
+		var wearer: String = scenario.wearer
+		var definition: Dictionary = (WardenPoolCards.new().get_definition(id)
+			if id.begins_with("warden_") else SeamstressPoolCards.new().get_definition(id))
+		var owner: String = definition.owner
+		var eligible: bool = owner == wearer and not scenario.get("unpinned", false)
+		if not await _entry(fixture, wearer, false, false, false, [], false,
+				false, "", false, true, false, id):
+			_check(false, "real mounted Needle earned pool Fight " + id + " / " + wearer)
+			continue
+		var hand = app.get_node("LiveSupportHand")
+		var rules: CombatHeirloomPatchTriggers = hand._heirloom
+		_check(rules != null and rules._party == app.party
+			and rules._enemies == app.enemies and rules._pinned == presenter._pinned
+			and presenter._pool_strikes.get_patches() == presenter._play._patches
+			and presenter._pool_strikes.get_mitt() == presenter._fray
+			and presenter._deck == app.deck and app.deck.turn_active
+			and not app.enemies.get_enemy(1).is_empty()
+			and definition.get("target_kind") == "enemy_single",
+			"one real paid pool, hand, heirloom and Pinned authority")
+		if rules == null or not await _ensure_held(id):
+			_check(false, "actual held pool card ready " + id)
+			await _click(app.return_button)
+			continue
+		var pinner: String = "warden" if scenario.get("cross", false) else owner
+		_check(app.enemies.get_enemy(1).hp > 0
+			and presenter._pinned.pin_enemy(app.enemies, 1, pinner)
+			and presenter._pinned.pinner_for_enemy(1) == pinner,
+			"original living target Pinned by real hero before paid pool click")
+		if scenario.get("second", false):
+			while app.deck.hand.count(id) < 2 and not app.deck.draw_pile.is_empty():
+				_check(app.deck.draw_extra(1) == 1, "second authentic pool copy drawn")
+			app._refresh_hand()
+			await _frames()
+			_check(app.deck.hand.count(id) >= 2, "two actual held paid pool copies")
+		var before_preview := _needle_state()
+		var forecast: Dictionary = presenter._resolve_attack(
+			app.party, app.enemies, id, 0, true)
+		_check(forecast.get("playable", false)
+			and forecast.get("hits", []).any(func(hit): return hit.position == 1)
+			and _needle_state() == before_preview,
+			"mounted earned pool forecast read-only and target truly legal")
+		if scenario.get("second", false):
+			var genuine: Dictionary = rules.quote_needle_hit(owner, 1, id)
+			var forged: Dictionary = genuine.duplicate(true)
+			forged["ticket"] = -7
+			var untouched := _live_state()
+			var refused: Dictionary = presenter._pool_strikes.play_card(app.deck, app.party,
+				app.enemies, id, 1, presenter._pinned, null, null, {}, rules, forged)
+			_check(genuine.get("ok", false) and not refused.get("ok", false)
+				and _live_state() == untouched and not rules._needle_used
+				and rules._pending_needle.is_empty(),
+				"forged real pool quote rejects with no payment/discard or RNG")
+			var stale := rules.quote_needle_hit(owner, 1, id)
+			_check(stale.get("ok", false) and presenter._pinned.clear_pin(1),
+				"live pool quote made stale by removing a genuine pin")
+			untouched = _live_state()
+			refused = presenter._pool_strikes.play_card(app.deck, app.party,
+				app.enemies, id, 1, presenter._pinned, null, null, {}, rules, stale)
+			_check(not refused.get("ok", false) and _live_state() == untouched
+				and rules._pending_needle.is_empty() and not rules._needle_used,
+				"stale live pool quote rejects with no effect")
+			_check(presenter._pinned.pin_enemy(app.enemies, 1, owner),
+				"live target re-pinned for authenticated retry")
+			var wrong := rules.quote_needle_hit(owner, 1, id)
+			untouched = _live_state()
+			refused = presenter._pool_strikes.play_card(app.deck, app.party,
+				app.enemies, id, 3, presenter._pinned, null, null, {}, rules, wrong)
+			_check(not refused.get("ok", false) and _live_state() == untouched
+				and not rules._needle_used, "invalid pool target never spends")
+			app.deck.combat_state.energy = 0
+			var unaffordable := rules.quote_needle_hit(owner, 1, id)
+			untouched = _live_state()
+			refused = presenter._pool_strikes.play_card(app.deck, app.party,
+				app.enemies, id, 1, presenter._pinned, null, null, {}, rules, unaffordable)
+			_check(not refused.get("ok", false) and _live_state() == untouched
+				and not rules._needle_used, "unaffordable held pool quote never spends")
+			app.deck.combat_state.energy = 3
+		if scenario.get("unpinned", false):
+			_check(presenter._pinned.clear_pin(1), "actual recipient unpinned before paid hit")
+		if scenario.get("statuses", false):
+			var owner_position: int = 1 if owner == "warden" else 2
+			app.party._heroes[owner_position - 1]["statuses"] = {"weak": 1}
+			app.enemies._enemies[0]["statuses"] = {"exposed": 1}
+			_check(app.party.get_hero(owner_position).statuses == {"weak": 1}
+				and app.enemies.get_enemy(1).statuses == {"exposed": 1},
+				"real Weak/Exposed exist before earned pool bonus adjustment")
+		var blocked: int = 99 if scenario.get("absorbed", false) else 3
+		_check(app.enemies.gain_block(1, blocked), "real enemy Block before Needle pool hit")
+		var target_before: Dictionary = app.enemies.get_enemy(1)
+		var paid_before := _needle_state()
+		var quote_now: Dictionary = rules.quote_needle_hit(owner, 1, id)
+		_check(quote_now.get("ok", false) == eligible,
+			"real run owner, slot and current Pinned determine Needle eligibility")
+		rules.cancel_needle_hit()
+		_check(await _choose(id, false), "physical earned pool hand panel armed " + id)
+		await _click(app.get_node("LiveEnemyRoster")._labels[0])
+		var receipt: Dictionary = presenter.last_event
+		var actual: Dictionary = app.enemies.get_enemy(1)
+		var pin_bonus: int = 5 if scenario.get("cross", false) else 0
+		var raw: int = definition.effects.damage + pin_bonus + (1 if eligible else 0)
+		var expected_damage: int = CombatStatuses.new().adjusted_attack_damage(raw,
+			app.party.get_hero(1 if owner == "warden" else 2).get("statuses", {}),
+			target_before.get("statuses", {}))
+		_check(receipt.get("ok", false) and receipt.get("hits", []).size() == 1
+			and receipt.hits[0].position == 1
+			and receipt.hits[0].damage == expected_damage
+			and receipt.hits[0].block_absorbed == mini(target_before.block, expected_damage)
+			and receipt.hits[0].hp_loss == mini(target_before.hp,
+				maxi(0, expected_damage - target_before.block))
+			and actual.block == target_before.block - receipt.hits[0].block_absorbed
+			and actual.hp == target_before.hp - receipt.hits[0].hp_loss,
+			"physical earned pool damage combines authentic Needle/Pinned before statuses")
+		_check(app.deck.energy == paid_before[0][15] - definition.cost
+			and app.deck.hand.count(id) == paid_before[0][12].count(id) - 1
+			and app.deck.discard_pile.count(id) == paid_before[0][14].count(id) + 1
+			and app.run_rng.state == paid_before[0][10]
+			and rules._needle_used == eligible and rules._pending_needle.is_empty(),
+			"one paid earned pool cast, real hand/discard, RNG and latch reconcile")
+		if scenario.get("absorbed", false):
+			_check(receipt.hits[0].hp_loss == 0
+				and receipt.hits[0].block_absorbed == expected_damage
+				and rules._needle_used, "fully Block-absorbed real pool contact uses Needle")
+		if scenario.get("second", false):
+			_check(app.deck.hand.has(id) and app.enemies.get_enemy(1).hp > 0,
+				"second same-turn pool cast remains actually held and alive")
+			if app.deck.hand.has(id) and app.enemies.get_enemy(1).hp > 0:
+				_check(await _choose(id, false), "second physical same-turn pool card selected")
+				await _click(app.get_node("LiveEnemyRoster")._labels[0])
+				_check(presenter.last_event.get("ok", false)
+					and presenter.last_event.hits[0].damage == definition.effects.damage
+					and rules._needle_used, "second genuine paid pool hit cannot reuse Needle")
+				var turn_before: int = rules._turn
+				await _click(app.end_turn_button)
+				var fresh: CombatHeirloomPatchTriggers = hand.current_attack_heirloom(
+					app.deck, app.party)
+				_check(app.deck.turn_active and app.enemy_intents._turn_index > 0
+					and fresh == rules and rules._turn == turn_before + 1
+					and not rules._needle_used and rules._pending_needle.is_empty(),
+					"actual later player turn refreshes current hand Needle authority")
 		await _click(app.return_button)

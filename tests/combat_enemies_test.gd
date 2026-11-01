@@ -8,6 +8,7 @@ var rules := CombatEnemyKeywordRules.new()
 
 func _initialize() -> void:
 	_test_construction()
+	_test_explicit_four_capacity()
 	_test_broodling_model()
 	_test_invalid_construction()
 	_test_required_queries()
@@ -595,3 +596,46 @@ func _test_replay(count: int) -> void:
 		_check(first.is_victorious() == second.is_victorious(), "identical replay has identical required victory query")
 	_check(first.is_defeated() and second.is_defeated(), "replay actually reaches victory")
 	_check(first.is_victorious() and second.is_victorious(), "replay reaches victory through the required query")
+
+## Four is a per-roster permission, not a change to the public three-foe limit.
+func _test_explicit_four_capacity() -> void:
+	var definitions := _definitions(4)
+	var original := definitions.duplicate(true)
+	var legacy := CombatEnemies.new(definitions)
+	_check(CombatEnemies.MAX_ENEMIES == 3 and legacy.get_capacity() == 3
+		and not legacy.is_valid() and legacy.get_enemies().is_empty(),
+		"AC1: four definitions do not silently enter a default three-slot fight")
+	for bad in [null, false, true, 2, 5, 4.0, "4", [], {}]:
+		var rejected := CombatEnemies.new(definitions, bad)
+		_check(not rejected.is_valid() and rejected.get_enemies().is_empty()
+			and rejected.get_capacity() == 3,
+			"AC1: non-literal-four capacity fails closed: " + str(bad))
+	var malformed := definitions.duplicate(true)
+	malformed[3]["id"] = malformed[0]["id"]
+	_check(not CombatEnemies.new(malformed, 4).is_valid(),
+		"AC1: opt-in does not bypass unique fourth-source validation")
+	var oversized := definitions.duplicate(true)
+	oversized.append({"id": "fifth", "max_hp": 11})
+	_check(not CombatEnemies.new(oversized, 4).is_valid(),
+		"AC1: four permission never admits a fifth source")
+	var enemies := CombatEnemies.new(definitions, 4)
+	_check(enemies.is_valid() and enemies.get_capacity() == 4
+		and enemies.get_enemies().size() == 4 and enemies.get_enemy(4).id == "fixture_3"
+		and enemies.get_enemy(4).position == 4 and enemies.get_enemy(4).hp == 14,
+		"AC1: four independent sources occupy the genuine fourth slot")
+	_check(not CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies()).ok
+		and CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies(), 4).ok,
+		"AC1: status service requires explicit four capacity for snapshot validation")
+	var fourth: Dictionary = enemies._enemies[3]
+	_check(enemies.gain_block(4, 5) and enemies.apply_statuses({4: {"weak": 2}})
+		and enemies.apply_damage(4, 10) and enemies.get_enemy(4).hp == 9
+		and enemies.get_enemy(4).block == 0
+		and enemies.get_enemy(4).statuses == {"weak": 2}
+		and is_same(fourth, enemies._enemies[3]),
+		"AC1: fourth slot can take Block, statuses and HP changes in place")
+	var before := enemies.get_enemies()
+	_check(not enemies.gain_block(5, 1) and not enemies.apply_damage(5, 1)
+		and not enemies.apply_statuses({5: {"weak": 1}})
+		and enemies.get_enemies() == before,
+		"AC1: fifth-slot targeting fails without side effects")
+	_check(definitions == original, "AC1: capacity and fourth-slot operations do not mutate definitions")

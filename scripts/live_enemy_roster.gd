@@ -95,7 +95,7 @@ const STAGE_INTENT_BAND := 36.0
 const STAGE_INTENT_SAFE_MARGIN := 8.0
 ## Breathing room between a seated ticket's bottom edge and its actor's resting artwork, so
 ## the paper patch never sits on the art while the drawing bobs and breathes.
-const INTENT_ART_CLEARANCE := 8.0
+const INTENT_ART_CLEARANCE := 4.0
 const STAGE_HEM := Color("2a3431")
 const STAGE_THREAD := Color("c9b996")
 ## One continuous quilt: regular, axis-aligned patches whose edges are shared, so the
@@ -2463,7 +2463,7 @@ func _refresh() -> void:
 ## Presentation only: seat one already-mounted ticket on its own source's resting artwork.
 ## Never use posed bounds, attack textures or transient transforms, so a lunge, recoil or
 ## fall never drags the ticket. The whole ticket stays inside its source column and inside
-## the viewport; at constrained sizes that safety wins over the animation clearance.
+## the viewport; when the safe gap cannot fit, hide it instead of overlapping the actor.
 func _place_intent_ticket(puppet: Puppet, badge: LiveEnemyIntentBadge) -> void:
 	if not is_instance_valid(puppet) or not is_instance_valid(badge):
 		return
@@ -2474,21 +2474,23 @@ func _place_intent_ticket(puppet: Puppet, badge: LiveEnemyIntentBadge) -> void:
 	var slot := _visible_slot(puppet).intersection(
 		Rect2(0.0, 0.0, puppet.size.x, puppet.tag_band().position.y))
 	var top := maxf(slot.position.y, viewport.position.y + STAGE_INTENT_SAFE_MARGIN)
+	var height := badge.custom_minimum_size.y
+	# The small seam gap must cover the resting actor's full bob/breathing envelope;
+	# the silhouette rim is only a drawn outline, not another animation offset.
+	var clearance := maxf(INTENT_ART_CLEARANCE, puppet.art_safety_inset())
 	badge.visible = art.has_area() and slot.has_area() \
 		and slot.size.x >= badge.custom_minimum_size.x \
-		and slot.end.y - top >= badge.custom_minimum_size.y
+		and art.position.y - clearance - height >= top \
+		and slot.end.y - top >= height
 	if not badge.visible:
 		return
 	var width := maxf(badge.custom_minimum_size.x, slot.size.x)
-	var height := badge.custom_minimum_size.y
-	var clearance := maxf(INTENT_ART_CLEARANCE, puppet.art_safety_inset() + Puppet.RIM_RADIUS)
-	# Centre the ticket on its own art, keeping it inside the source column (and the viewport
-	# where the column crosses the edge) and above that art with its animation clearance.
+	# Centre the ticket on its own resting art; the no-room check above makes
+	# the vertical placement exact and prevents top clamping onto the actor.
 	var left := slot.position.x
 	var right := maxf(left, slot.end.x - width)
-	var bottom := maxf(top, slot.end.y - height)
 	badge.position = Vector2(clampf(art.get_center().x - width * 0.5, left, right),
-		clampf(art.position.y - clearance - height, top, bottom))
+		art.position.y - clearance - height)
 	badge.size = Vector2(width, height)
 
 

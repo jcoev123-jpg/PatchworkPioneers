@@ -176,7 +176,7 @@ func _bind_battle_with_phase_data(enemies: CombatEnemies, party: CombatParty,
 	for actor in roster:
 		if not valid_charge_actor(actor):
 			return false
-	if roster.size() != _definitions.size() or roster.size() > CombatEnemies.MAX_ENEMIES \
+	if roster.size() != _definitions.size() or roster.size() > enemies.get_capacity() \
 			or living_positions(party).is_empty():
 		return false
 	var boss_slot := 0
@@ -479,7 +479,7 @@ func _split_proposal(enemies: CombatEnemies, source: Variant,
 	else:
 		return {}
 	var old_size := _slots.size()
-	if old_size < 1 or old_size >= CombatEnemies.MAX_ENEMIES \
+	if old_size < 1 or old_size >= enemies.get_capacity() \
 			or roster.size() != old_size + 1 or _cache.size() != old_size:
 		return {}
 	if not source is int or source < 1 or source > old_size:
@@ -628,7 +628,8 @@ static func valid_action(action: Variant) -> bool:
 		return action.size() == 3 and amount == 0
 	if kind == "debuff":
 		return action.size() == 4 and amount > 0 and action.get("status") is String \
-			and action.status in ["bleed", "weak", "exposed"]
+			and (action.status in ["bleed", "weak", "exposed"] \
+				or (action.status == "blind_next_attack" and amount == 1))
 	var direction = action.get("direction")
 	return action.size() == 4 and amount == 0 and direction is int \
 		and direction in [-1, 1] and target + direction >= 1 and target + direction <= 3
@@ -669,7 +670,7 @@ func advance_turn() -> bool:
 		# Validate the complete battle-only child before any next-turn RNG draw.
 		var roster := _enemies.get_enemies()
 		if roster.size() != _slots.size():
-			if roster.size() != _slots.size() + 1 or roster.size() > CombatEnemies.MAX_ENEMIES:
+			if roster.size() != _slots.size() + 1 or roster.size() > _enemies.get_capacity():
 				return false
 			var child: Dictionary = roster[roster.size() - 1]
 			var expected := CombatEnemies.broodling_definition()

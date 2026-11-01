@@ -4,6 +4,7 @@ extends RefCounted
 ## Invalid construction is atomic and inert; slain enemies keep their original positions.
 
 const MAX_ENEMIES := 3
+const OPT_IN_MAX_ENEMIES := 4
 const MAX_INT := 9223372036854775807
 ## Authored once-only revival. The first HP loss that leaves a living
 ## `revive_once` foe at 0 HP instead leaves it at half its max HP (rounded up)
@@ -84,7 +85,7 @@ static func _half_termite(id: String, position: int, hp: int, attack: int,
 func stage_split_on_death(source: Variant) -> Dictionary:
 	var rejected := {"ok": false, "split": false}
 	if not source is int or source < 1 or source > _enemies.size() \
-			or _enemies.is_empty() or _enemies.size() > MAX_ENEMIES:
+			or _enemies.is_empty() or _enemies.size() > _capacity:
 		return rejected
 	var ids: Array[String] = []
 	for index in range(_enemies.size()):
@@ -109,7 +110,7 @@ func stage_split_on_death(source: Variant) -> Dictionary:
 	var attack := _termite_parent_attack(parent, source)
 	if attack < 0:
 		return rejected
-	if parent["hp"] > 0 or _enemies.size() == MAX_ENEMIES:
+	if parent["hp"] > 0 or _enemies.size() == _capacity:
 		return {"ok": true, "split": false}
 	if HALF_LEFT_ID in ids or HALF_RIGHT_ID in ids:
 		return rejected
@@ -207,7 +208,7 @@ func stage_broodling(source: int) -> Dictionary:
 	var child := broodling_definition()
 	if CombatEnemyIntents._weighted_slot(_enemies.size() + 1, child.intent).is_empty():
 		return failure
-	if mother["hp"] == 0 or latch or _enemies.size() >= MAX_ENEMIES:
+	if mother["hp"] == 0 or latch or _enemies.size() >= _capacity:
 		return {"ok": true, "spawned": false}
 	for existing in _enemies:
 		if existing.get("id") == BROODLING_ID:
@@ -222,11 +223,16 @@ func stage_broodling(source: int) -> Dictionary:
 
 
 var _enemies: Array[Dictionary] = []
+var _capacity := MAX_ENEMIES
 
 
-func _init(definitions: Array) -> void:
-	if definitions.is_empty() or definitions.size() > MAX_ENEMIES:
+## Only an explicit literal four admits one extra battle actor; default stays three.
+## Invalid capacity requests never create a valid roster or grant extra slots.
+func _init(definitions: Array, capacity: Variant = MAX_ENEMIES) -> void:
+	if not capacity is int or capacity not in [MAX_ENEMIES, OPT_IN_MAX_ENEMIES] \
+			or definitions.is_empty() or definitions.size() > capacity:
 		return
+	_capacity = capacity
 	var ids: Array[String] = []
 	for definition in definitions:
 		if not definition is Dictionary:
@@ -248,9 +254,13 @@ func _init(definitions: Array) -> void:
 		_enemies.append(enemy)
 
 
+func get_capacity() -> int:
+	return _capacity
+
+
 func is_valid() -> bool:
 	_settle_revivals()
-	return not _enemies.is_empty() and _enemies.size() <= MAX_ENEMIES
+	return not _enemies.is_empty() and _enemies.size() <= _capacity
 
 
 ## `revive_once` and `revived` are each absent or a literal boolean, and a
@@ -308,7 +318,7 @@ func get_enemy(position: int) -> Dictionary:
 ## Validate the complete roster and additions before writing any counter.
 ## Slain slots remain valid recipients so a confirmed lethal hit can persist.
 func can_apply_statuses(applications: Dictionary) -> bool:
-	if not CombatStatusTurnBatch.new().tick_side("enemies", get_enemies())["ok"]:
+	if not CombatStatusTurnBatch.new().tick_side("enemies", get_enemies(), _capacity)["ok"]:
 		return false
 	for position in applications:
 		if not position is int or not _valid_position(position):

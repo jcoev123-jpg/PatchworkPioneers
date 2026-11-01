@@ -13,6 +13,7 @@ func _initialize() -> void:
 	_test_three_enemies_and_wrap()
 	_test_four_enemies_and_wrap()
 	_test_four_source_copy_isolation_and_replay()
+	_test_four_catalog_binding()
 	_test_copy_isolation_and_replay()
 	_test_no_combat_mutation()
 	_test_invalid_schedules()
@@ -22,6 +23,7 @@ func _initialize() -> void:
 	_test_weighted_announcement_reads_and_rerolls()
 	_test_weighted_dead_slots_and_legacy_isolation()
 	_test_weighted_rejections()
+	_test_inkbrush_blind_schema()
 	_test_behemoth_phase_transition_cache()
 	_test_behemoth_phase_fail_closed()
 	_test_termite_split_admission()
@@ -1642,3 +1644,133 @@ func _test_ram_charge_seeded_cache() -> void:
 			party.get_heroes()])
 	_check(traces.size() == 2 and traces[0] == traces[1],
 		"AC2: fresh same-seed fights replay complete charge and actor/RNG history")
+
+
+func _test_inkbrush_blind_schema() -> void:
+	var catalog := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var imp: Dictionary = {}
+	for record in catalog:
+		if record.get("id") == "inkbrush_imp":
+			imp = record
+	_check(not imp.is_empty() and imp.get("max_hp") == 23
+		and imp.get("intent", {}).get("target") == "lowest_living_hp",
+		"real Inkbrush Imp retains 23 HP and lowest living HP targeting")
+	if imp.is_empty():
+		return
+	var slot := CombatEnemyIntents._weighted_slot(1, imp.intent)
+	_check(not slot.is_empty() and slot.actions.size() == 3,
+		"real Imp binds all three authored choices")
+	var options: Array = []
+	for item in slot.get("actions", []):
+		options.append({"action": item.action, "weight": item.weight})
+	_check(options == [
+		{"action": {"type": "debuff", "amount": 2, "status": "exposed"}, "weight": 2},
+		{"action": {"type": "attack", "amount": 6}, "weight": 3},
+		{"action": {"type": "debuff", "amount": 1, "status": "blind_next_attack"}, "weight": 2}],
+		"Imp preserves original Exposed/attack alternatives and exact Blind 1/2")
+	var legal := {"type": "debuff", "amount": 1,
+		"status": "blind_next_attack", "target_position": 3}
+	_check(CombatEnemyIntents.valid_action(legal), "canonical Blind 1 announcement accepted")
+	for amount in [0, 2, -1, true, 1.0, "1"]:
+		var bad := legal.duplicate(true)
+		bad["amount"] = amount
+		_check(not CombatEnemyIntents.valid_action(bad),
+			"Blind noncanonical amount rejected: " + str(amount))
+	for status in ["blind", "blind_next_attack_extra", "weak_next_attack"]:
+		var bad := legal.duplicate(true)
+		bad["status"] = status
+		_check(not CombatEnemyIntents.valid_action(bad), "unknown blind-like token rejected")
+
+## These are four *different authored actors*, not a fabricated four-entry schedule.
+## The weighted choices and target policies come from both shipped normal catalogs.
+func _four_authored_normal_definitions() -> Array:
+	var wanted := ["moth_swarm", "button_guard", "spool_stalker", "ragling_guard"]
+	var found := {}
+	for catalog_path in ["res://data/enemies/run_enemies.json",
+			"res://data/enemies/starter_enemies.json"]:
+		var catalog: Variant = JSON.parse_string(FileAccess.get_file_as_string(catalog_path))
+		if not catalog is Array:
+			return []
+		for entry in catalog:
+			if entry is Dictionary and entry.get("id") in wanted:
+				var actor: Dictionary = entry.duplicate(true)
+				actor["max_hp"] = int(actor["max_hp"])
+				found[actor["id"]] = actor
+	var definitions := []
+	for id in wanted:
+		if not found.has(id):
+			return []
+		definitions.append(found[id])
+	return definitions
+
+
+func _test_four_catalog_binding() -> void:
+	var definitions := _four_authored_normal_definitions()
+	_check(definitions.size() == 4, "AC1 precondition: both actual normal catalogs supply four distinct authored foes")
+	if definitions.size() != 4:
+		return
+	var scheduler_definitions: Array = []
+	for position in range(1, 5):
+		scheduler_definitions.append(_enemy(position, [_block(1)]))
+	var denied := CombatEnemies.new(definitions)
+	var party := _party_fixture()
+	var denied_rng := RandomNumberGenerator.new()
+	denied_rng.seed = 422404
+	var rejected := CombatEnemyIntents.new(scheduler_definitions)
+	var denied_state := denied_rng.state
+	_check(not denied.is_valid() and rejected.is_valid()
+		and not rejected.bind_battle(denied, party, denied_rng)
+		and not rejected.is_bound() and denied_rng.state == denied_state,
+		"AC1/AC3: default roster refuses a real four-source bind without an RNG draw")
+	var broken := definitions.duplicate(true)
+	broken[3]["intent"]["actions"][0]["weight"] = 0
+	var invalid_foes := CombatEnemies.new(broken, 4)
+	var invalid_schedule := CombatEnemyIntents.new(scheduler_definitions)
+	var invalid_rng := RandomNumberGenerator.new()
+	invalid_rng.seed = 422405
+	var invalid_state := invalid_rng.state
+	var invalid_before := invalid_foes.get_enemies()
+	_check(invalid_foes.is_valid() and not invalid_schedule.bind_battle(
+		invalid_foes, party, invalid_rng) and invalid_rng.state == invalid_state
+		and invalid_foes.get_enemies() == invalid_before and not invalid_schedule.is_bound(),
+		"AC3: malformed fourth weighted catalog choice rejects atomically before RNG")
+	var four := CombatEnemies.new(definitions, 4)
+	var replay_four := CombatEnemies.new(definitions, 4)
+	var rng := RandomNumberGenerator.new()
+	var replay_rng := RandomNumberGenerator.new()
+	rng.seed = 422406
+	replay_rng.seed = 422406
+	var bound := CombatEnemyIntents.new(scheduler_definitions)
+	var replay := CombatEnemyIntents.new(scheduler_definitions)
+	_check(four.is_valid() and replay_four.is_valid() and party.is_valid()
+		and bound.bind_battle(four, party, rng)
+		and replay.bind_battle(replay_four, _party_fixture(), replay_rng)
+		and bound.is_bound() and replay.is_bound(),
+		"AC1: real four-source weighted catalog bind succeeds only after explicit opt-in")
+	if not bound.is_bound() or not replay.is_bound():
+		return
+	var input_snapshot := definitions.duplicate(true)
+	for turn in range(10):
+		var actions := bound.get_intents()
+		var mirror := replay.get_intents()
+		var source_ids: Array = []
+		var valid := actions.size() == 4
+		for index in range(actions.size()):
+			var action: Dictionary = actions[index].duplicate(true)
+			var source: int = action["enemy_position"]
+			source_ids.append(four.get_enemy(source).id)
+			action.erase("enemy_position")
+			valid = valid and source == index + 1 and CombatEnemyIntents.valid_action(action)
+		_check(valid and source_ids == [
+			"moth_swarm", "button_guard", "spool_stalker", "ragling_guard"],
+			"AC1: every announced beat belongs to one original catalog actor in slot order")
+		_check(actions == mirror and rng.state == replay_rng.state,
+			"AC3: seeded weighted four-actor replay matches full cached actions and RNG state")
+		actions[0]["amount"] = -404
+		_check(bound.get_intents() == mirror and rng.state == replay_rng.state,
+			"AC3: editing detached fourth-roster announcements cannot mutate the cache or RNG")
+		_check(bound.advance_turn() and replay.advance_turn(),
+			"AC1: bound four-source schedule advances all four original catalogs")
+	_check(definitions == input_snapshot,
+		"AC3: seeded four-way selection does not alter authored catalog definitions")

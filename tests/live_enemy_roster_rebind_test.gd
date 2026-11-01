@@ -121,10 +121,11 @@ func _mounted(app, presenter) -> bool:
 		var badge_rect: Rect2 = badge.get_global_rect()
 		var actor_rect: Rect2 = puppet.get_global_rect() if is_instance_valid(puppet) else Rect2()
 		var art_rect: Rect2 = puppet.get_global_transform() * puppet.rest_drawn_rect()
-		var clearance: float = maxf(ROSTER_ART.INTENT_ART_CLEARANCE,
-			puppet.art_safety_inset() + ROSTER_ART.Puppet.RIM_RADIUS)
-		var expected_top: float = maxf(actor_rect.position.y,
-			maxf(ROSTER_ART.STAGE_INTENT_SAFE_MARGIN, art_rect.position.y - clearance - badge_rect.size.y))
+		# The seam is the resting actor's bob/breathing reserve only: the silhouette rim is
+		# a drawn outline, not another animation offset, so it no longer lifts the ticket.
+		var clearance: float = maxf(ROSTER_ART.INTENT_ART_CLEARANCE, puppet.art_safety_inset())
+		var expected_top: float = art_rect.position.y - clearance - badge_rect.size.y
+		var measured_gap: float = art_rect.position.y - badge_rect.end.y
 		var patch_rect: Rect2 = Rect2(badge_rect.position + badge.patch_rect().position,
 			badge.patch_rect().size)
 		_check(badge.tooltip_text.contains("%d damage" % action.amount)
@@ -138,6 +139,11 @@ func _mounted(app, presenter) -> bool:
 			and badge_rect.size.y >= badge.custom_minimum_size.y - 0.01
 			and art_rect.has_area()
 			and is_equal_approx(badge_rect.position.y, expected_top)
+			and expected_top >= ROSTER_ART.STAGE_INTENT_SAFE_MARGIN
+			and is_equal_approx(measured_gap, clearance)
+			and measured_gap >= ROSTER_ART.INTENT_ART_CLEARANCE - 0.01
+			and measured_gap >= puppet.art_safety_inset() - 0.01
+			and measured_gap <= 6.0
 			and badge_rect.end.y <= art_rect.position.y + 0.01
 			and actor_rect.grow(0.01).encloses(badge_rect)
 			and Rect2(0, 0, 1280, 720).encloses(badge_rect),

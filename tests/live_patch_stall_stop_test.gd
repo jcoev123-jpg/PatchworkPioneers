@@ -150,6 +150,50 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 	_check(panel.position == Vector2(190, 45) and panel.size == Vector2(900, 630)
 		and panel._visit == service and panel._source == service_state and panel._quoted == service.quote(),
 		"one authentic centered sewn panel binds exact service after node commit")
+	# Verify the real map-mounted stop, not a detached preview, owns one
+	# authored-image renderer behind its unchanged interactive controls.
+	var live_ambient: Control = panel.ambient_layer
+	var backing := panel.get_child(0) as Panel
+	_check(live_ambient != null and backing.clip_contents
+			and live_ambient.get_parent() == backing
+			and live_ambient.get_index() < backing.get_child(1).get_index()
+			and backing.get_index() < panel.title_label.get_index()
+			and panel.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
+			"real routed Patch Stall has one clipped renderer under sewn GUI")
+	_check(live_ambient.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and live_ambient.focus_mode == Control.FOCUS_NONE
+			and live_ambient.size == Vector2(900, 630)
+			and live_ambient.profile == "scraps" and live_ambient.fast
+			and live_ambient._visit_dressing and live_ambient.visible_budget() == 7
+			and is_equal_approx(live_ambient.self_modulate.a, 0.42),
+			"real routed visit uses seven quiet input-inert authored motes")
+	var ambient_controls_before: Array = []
+	for b in panel.wearer_buttons + panel.offer_buttons + [panel.leave_button]:
+		ambient_controls_before.append([b.get_global_rect(), b.text, b.disabled,
+			b.focus_mode, b.focus_next, b.has_focus()])
+	var ambient_focus := root.gui_get_focus_owner()
+	var ambient_source := service.read_state()
+	var ambient_quote := service.quote()
+	var ambient_run_rng: int = app.run_rng.state
+	var ambient_context: Dictionary = app._sewing_context()
+	var ambient_motifs: Array = live_ambient.motif_metadata()
+	var ambient_light: float = live_ambient.light_alpha(live_ambient._time, true)
+	seed(99187)
+	var expected_global := randi()
+	seed(99187)
+	live_ambient._process(3.75)
+	var ambient_controls_after: Array = []
+	for b in panel.wearer_buttons + panel.offer_buttons + [panel.leave_button]:
+		ambient_controls_after.append([b.get_global_rect(), b.text, b.disabled,
+			b.focus_mode, b.focus_next, b.has_focus()])
+	_check(ambient_motifs.size() == 7 and live_ambient.motif_metadata() != ambient_motifs
+			and live_ambient.light_alpha(live_ambient._time, true) != ambient_light,
+			"real mounted VFX motion updates deterministic motes and candlelight")
+	_check(ambient_controls_after == ambient_controls_before
+			and root.gui_get_focus_owner() == ambient_focus and panel._wearer_index == 0
+			and service.read_state() == ambient_source and service.quote() == ambient_quote
+			and app._sewing_context() == ambient_context and app.run_rng.state == ambient_run_rng
+			and randi() == expected_global, "mounted animation changes no quote, input, wearer or RNG")
 	var mounted: Array = []
 	for child in app.get_children():
 		if child.name == "PatchStall":
@@ -310,6 +354,8 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 		await _click(chosen)
 	await _frames()
 	_check(app._patch_stall_closed and app.patch_stall_view == null and retired.get_ref() == null and app._can_choose_connected_route(), "one decision closes visit and admits onward play")
+	_check(not is_instance_valid(live_ambient),
+			"real paid or free settlement frees the renderer with the retired stop")
 	_check(service.is_consumed() and service.read_state().snapshot == service_state.snapshot,
 		"physical decision consumes exactly the bound service without replacing its source")
 	_check(app.run_rng.state == original.rng_state and app.run_deck == original.deck

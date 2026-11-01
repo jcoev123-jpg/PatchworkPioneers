@@ -128,6 +128,12 @@ const ACTION_INK_STATES := ["font_color", "font_hover_color", "font_pressed_colo
 const MASKED_ROW_MIN_HEIGHT := 12.0
 const TILE_MIN_HEIGHT := 184.0
 const TILE_ART_SIZE := Vector2(96, 80)
+## Rest's before/after comparisons use a shorter sewn face than Shop's offers
+## and removals. Text remains at the published 15/16 px minima, and the panel
+## can still grow freely when an authored name or rule wraps.
+const REST_UPGRADE_MIN_HEIGHT := 144.0
+const REST_UPGRADE_ART_SIZE := Vector2(60, 52)
+const REST_UPGRADE_FRAME_INSET := 14.0
 const OWNER_STRIP_HEIGHT := 20.0
 ## The SELECTED stamp's own point size, and the paper insets and reserved row
 ## height its dedicated face row keeps. The row is reserved even while the stamp
@@ -1373,6 +1379,20 @@ func _apply_arrow_face(spec: Dictionary, label: Label, heading := false) -> void
 		label.add_theme_font_override("font", face)
 
 
+## The reward renderer supplies the same sewn frame for both visits; Rest's
+## comparison cards need less empty paper inside that frame. Re-apply after
+## hover/selection repaints, since the reward style recreates its StyleBox.
+## No minimum width/height is fixed here: long authored effects grow the tile.
+func _compact_rest_frame(panel: PanelContainer) -> void:
+	var frame := panel.get_theme_stylebox("panel") as StyleBoxFlat
+	if frame == null:
+		return
+	frame.content_margin_top = REST_UPGRADE_FRAME_INSET
+	frame.content_margin_bottom = REST_UPGRADE_FRAME_INSET
+	frame.content_margin_left = REST_UPGRADE_FRAME_INSET
+	frame.content_margin_right = REST_UPGRADE_FRAME_INSET
+
+
 ## A full sewn card face built exactly like the reward card: owner felt strip,
 ## authored illustration (then hero emblem, then drawn paper patch), name and
 ## the reward panel's own rules text. Presentation only; no game state.
@@ -1380,21 +1400,23 @@ func _apply_arrow_face(spec: Dictionary, label: Label, heading := false) -> void
 ## The returned "tile" is the layout element to mount: its sewn panel grows with
 ## its own readable text, while the transparent "button" laid over the face is
 ## the single mouse/keyboard target.
-func build_card_face(spec: Dictionary) -> Dictionary:
+func build_card_face(spec: Dictionary, rest_upgrade := false) -> Dictionary:
 	var panel := PanelContainer.new()
 	panel.name = "SewnFace"
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.focus_mode = Control.FOCUS_NONE
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	panel.custom_minimum_size = Vector2(0, TILE_MIN_HEIGHT)
+	panel.custom_minimum_size = Vector2(0, REST_UPGRADE_MIN_HEIGHT if rest_upgrade else TILE_MIN_HEIGHT)
 	var owner := String(spec.get("owner", ""))
 	var art_id := String(spec.get("art_id", spec.get("card_id", "")))
 	_face._style_card(panel, owner, false)
+	if rest_upgrade:
+		_compact_rest_frame(panel)
 
 	var row := HBoxContainer.new()
 	row.name = "FaceRow"
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_theme_constant_override("separation", 10)
+	row.add_theme_constant_override("separation", 6 if rest_upgrade else 10)
 	panel.add_child(row)
 
 	# Resolve the face's art once, with the reward renderer's own contract, and
@@ -1409,7 +1431,7 @@ func build_card_face(spec: Dictionary) -> Dictionary:
 	picture.mode = String(art.get("mode",
 		LiveRunCardRewardChoicePanel._CardIllustration.MODE_NONE))
 	picture.owner_color = LiveRunCardRewardChoicePanel.OWNER_COLORS.get(owner, FELT_FALLBACK)
-	picture.custom_minimum_size = TILE_ART_SIZE
+	picture.custom_minimum_size = REST_UPGRADE_ART_SIZE if rest_upgrade else TILE_ART_SIZE
 	picture.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(picture)
 
@@ -1533,7 +1555,7 @@ func build_card_face(spec: Dictionary) -> Dictionary:
 
 
 func _mount_tile(spec: Dictionary, row: int, group: String) -> void:
-	var face := build_card_face(spec)
+	var face := build_card_face(spec, group == "upgrade" and _kind == "Rest")
 	var button: Button = face["button"]
 	button.name = "Tile_%s_%d" % [group, row]
 	var record := {
@@ -1543,6 +1565,7 @@ func _mount_tile(spec: Dictionary, row: int, group: String) -> void:
 		"selected": face["selected_label"],
 		"row": row,
 		"group": group,
+		"rest_upgrade": group == "upgrade" and _kind == "Rest",
 		"owner": String(spec.get("owner", "")),
 		"hovered": false,
 		"focused": false,
@@ -1689,6 +1712,8 @@ func _paint_tile(record: Dictionary) -> void:
 	var label: Label = record["selected"]
 	var active: bool = record["hovered"] or record["focused"] or label.visible
 	_face._style_card(panel, String(record["owner"]), active)
+	if record.get("rest_upgrade", false):
+		_compact_rest_frame(panel)
 
 
 ## Keep Tab traversal on the visible tiles instead of the masked dropdowns, and
