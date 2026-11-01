@@ -2451,16 +2451,30 @@ func _refresh() -> void:
 			pending = unravel.get_snapshot(position).get("skip_pending", false)
 		# Target policy and full action wording are unchanged by a contact passive.
 		var policy := ""
-		if live_source and unravel != null and app.enemy_intents != null \
-				and app.enemy_intents.is_bound():
+		# A real opted four-foe scheduler has an authentic policy even when the
+		# optional Unravel service is absent. Default battles keep their guard.
+		if trusted_source and (unravel != null or live_capacity == CombatEnemies.OPT_IN_MAX_ENEMIES):
 			policy = CombatEnemyIntents.policy_for(enemies, position)
 		var enrage_stacks := _enrage_stacks(enemy) if live_source else -1
 		# Blind belongs to this exact living source, not another occupant of its
 		# slot or a stale cached announcement. This read cannot consume the token.
 		var attack_blind := trusted_source and _has_attack_blind(enemy)
 		var charge_context := _charge_context(trusted_source, enemy, action)
+		# Summon wording needs the live model's own room and one-use latch; a
+		# disconnected or stale badge gets no positive birth claim.
+		var summon_context: Dictionary = {}
+		if trusted_source and live_capacity > 0 and action.get("type") == "summon":
+			var broodling_present := false
+			for occupant in roster:
+				if occupant.get("id") == CombatEnemies.BROODLING_ID:
+					broodling_present = true
+			var latch: Variant = enemy.get(CombatEnemies.BROODLING_LATCH, false)
+			summon_context = {"capacity": live_capacity, "occupied": roster.size(),
+				"can_spawn": roster.size() < live_capacity and not broodling_present
+					and latch is bool and latch == false
+					and CombatEnemies.authentic_broodling_mother(enemy, position)}
 		badge.show_intent(action, enemies.is_slain(position), pending, policy,
-			enrage_stacks, contact_traits, attack_blind, charge_context)
+			enrage_stacks, contact_traits, attack_blind, charge_context, summon_context)
 		# Only a live, source-owned, already-announced attack can preview an actual
 		# redirect. Keep the printed target, amount and policy ticket untouched.
 		if reactions != null and live_source and not pending and not badge.blind_miss and badge.charge_state != "wind_up" \

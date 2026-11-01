@@ -153,7 +153,7 @@ static func is_two_hit_attack(action: Dictionary) -> bool:
 			return false
 	if action.has("enemy_position"):
 		var source: Variant = action["enemy_position"]
-		if not source is int or source < 1 or source > 3:
+		if not source is int or source < 1 or source > CombatEnemies.OPT_IN_MAX_ENEMIES:
 			return false
 	return true
 
@@ -587,7 +587,7 @@ static func load_icon_texture(path: String) -> Texture2D:
 func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		policy: String = "", source_enrage_stacks: int = -1,
 		contact_traits: Dictionary = {}, source_blind: bool = false,
-		charge_context: Dictionary = {}) -> void:
+		charge_context: Dictionary = {}, summon_context: Dictionary = {}) -> void:
 	# Never affect or advance the scheduler: the caller passes a copied announcement.
 	# Only targeted, active, authored actions receive the small policy tag.
 	policy_cue = ""
@@ -685,7 +685,20 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		amount = 0
 		target_position = 0
 		readable_text = "Summon Broodling"
-		tip = "Call one 8 HP Moth Broodling (maximum three enemies); its attack 5 is announced for the following turn, not its birth turn."
+		# The caller supplies the currently bound roster's real limit and eligibility.
+		# Never promise a birth from a standalone or untrusted announcement.
+		var capacity: Variant = summon_context.get("capacity")
+		var occupied: Variant = summon_context.get("occupied")
+		var can_spawn: Variant = summon_context.get("can_spawn")
+		if capacity is int and capacity in [CombatEnemies.MAX_ENEMIES,
+				CombatEnemies.OPT_IN_MAX_ENEMIES] and occupied is int \
+				and occupied >= 1 and occupied <= capacity and can_spawn is bool:
+			if can_spawn and occupied < capacity:
+				tip = "Summon: one 8 HP Moth Broodling will be born into slot %d (maximum %d enemies). It does not attack on its birth turn; its attack 5 is announced for the following turn." % [occupied + 1, capacity]
+			else:
+				tip = "Summon: no Broodling is born (maximum %d enemies; no free slot or already summoned). An 8 HP Broodling's attack 5 is announced for the following turn, not its birth turn." % capacity
+		else:
+			tip = "Summon attempt: an 8 HP Moth Broodling can be born only with a free enemy slot and an unused summon. Its attack 5 is announced for the following turn, not its birth turn."
 	elif action.get("type") == "block":
 		icon_mode = "block"
 		intent_type = "block"

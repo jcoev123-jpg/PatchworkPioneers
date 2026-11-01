@@ -2690,6 +2690,9 @@ func _run() -> void:
 	await _mounted_plaque_reflow(scene)
 	await _survival_ribbons(scene)
 	await _four_capacity_ribbons(scene)
+	await _mounted_fourth_wasp(scene)
+	for mode in [[3, 2], [3, 3], [4, 3], [4, 4]]:
+		await _mounted_summon_help(scene, mode[0], mode[1])
 	app.free()
 	reference.free()
 	_finish()
@@ -4121,6 +4124,182 @@ func _survival_ribbons(scene: PackedScene) -> void:
 			"slain full-roster source never keeps a stale warning")
 	app.free()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
+
+
+## Find a deterministic, legal weighted choice from shipped specs. Never assign
+## _cache or call show_intent in place of the live bound scheduler.
+func _intent_witness_seed(roster: CombatEnemies, party: CombatParty,
+		source: int, kind: String) -> int:
+	var slots: Array[Dictionary] = []
+	for actor in roster.get_enemies():
+		var slot := CombatEnemyIntents._weighted_slot(int(actor.position), actor.get("intent"))
+		_check(not slot.is_empty(), "weighted witness has a normalized shipped actor spec")
+		if slot.is_empty():
+			return -1
+		slots.append(slot)
+	for candidate in range(1, 1025):
+		var random := RandomNumberGenerator.new()
+		random.seed = candidate
+		var drawn: Array[Dictionary] = CombatEnemyIntents._draw_batch(slots, party, random)
+		if drawn.size() == slots.size() and drawn[source - 1].get("type") == kind:
+			return candidate
+	_check(false, "a seeded authentic weighted selection can produce " + kind)
+	return -1
+
+
+## Source four is bound through the very same app and public roster sync as a
+## normal fight; the fourth action is selected by a real weighted draw.
+func _mounted_fourth_wasp(scene: PackedScene) -> void:
+	var ids := ["fray_scavenger", "button_guard", "spool_stalker", "needle_wasp"]
+	var definitions: Array = []
+	for id in ids:
+		var authored := _authored_enemy(id)
+		_check(not authored.is_empty(), "source-four fixture finds shipped enemy " + id)
+		if authored.is_empty():
+			return
+		definitions.append(authored)
+	var roster := CombatEnemies.new(definitions, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(roster.is_valid() and roster.get_capacity() == 4
+		and roster.get_enemies().size() == 4 and roster.get_enemy(4).id == "needle_wasp",
+		"AC1 precondition: a genuine distinct four-actor roster has Wasp in position four")
+	if not roster.is_valid():
+		return
+	var app = scene.instantiate()
+	root.add_child(app)
+	await process_frame
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	_check(app.party != null and app.run_rng != null and app.party.is_valid(),
+		"AC1 precondition: real Start Run supplies a valid live hero party and seeded RNG")
+	if app.party == null or app.run_rng == null:
+		app.free()
+		return
+	var candidate := _intent_witness_seed(roster, app.party, 4, "attack")
+	if candidate < 1:
+		app.free()
+		return
+	app.run_rng.seed = candidate
+	var presenter = app.get_node("LiveEnemyRoster")
+	_check(_mount_roster(app, presenter, roster), "AC1 precondition: actual app binds real weighted four-source combat")
+	await process_frame
+	await process_frame
+	var announcements: Array[Dictionary] = app.enemy_intents.get_intents()
+	_check(announcements.size() == 4 and announcements[3].get("enemy_position") == 4
+		and announcements[3].get("type") == "attack"
+		and announcements[3].get("amount") == 8 and announcements[3].get("hits") == 2
+		and announcements[3].get("target_position") in [1, 2, 3],
+		"AC1 precondition: actual seeded scheduler publishes Wasp's authored A-2 with a real hero target")
+	_check(presenter.enemies == roster and presenter._badges.size() == 4
+		and presenter._puppets.size() == 7
+		and presenter._puppets[6].actor_id == "needle_wasp",
+		"AC1 precondition: player-facing stage mounts fourth Wasp puppet and its fourth badge")
+	if announcements.size() != 4 or presenter._badges.size() != 4:
+		app.free()
+		return
+	var action: Dictionary = announcements[3]
+	var badge: LiveEnemyIntentBadge = presenter._badges[3]
+	var hero: int = int(action.get("target_position", 0))
+	var output: Array = [badge.readable_text, badge.tooltip_text, badge.hit_count,
+		badge.hit_damage, badge.target_position, badge.policy_cue]
+	_check(LiveEnemyIntentBadge.is_two_hit_attack(action)
+		and badge.source_position == 4 and badge.intent_type == "attack"
+		and badge.amount == 8 and badge.hit_count == 2 and badge.hit_damage == 4
+		and badge.target_position == hero and badge.policy_cue == "Aim low HP"
+		and badge.readable_text in badge.compact_caption_forms()
+		and badge.readable_text.contains("8") and badge.readable_text.contains("A-2"),
+		"AC1: mounted genuine fourth Wasp reads as eight power, two four-point hits at real target: " + str(output))
+	_check(badge.tooltip_text.contains("8A-2: two hits")
+		and badge.tooltip_text.contains("4 + 4 base damage")
+		and badge.tooltip_text.contains(LiveEnemyIntentBadge.hero_target_label(hero))
+		and badge.tooltip_text.contains("Target policy (AIM LOW HP)")
+		and badge.tooltip_text.contains("independently"),
+		"AC1: real fourth-slot hover names both packets, actual hero and low-HP policy: " + badge.tooltip_text)
+	var before: Array = _snapshot(app)
+	for repeat in range(4):
+		presenter._refresh()
+		_check([badge.readable_text, badge.tooltip_text, badge.hit_count, badge.hit_damage,
+			badge.target_position, badge.policy_cue] == output and _snapshot(app) == before,
+			"AC1: replayed mounted Wasp refresh leaves combat, run RNG and exact badge unchanged")
+	# Neither skip nor a slain source may continue announcing damage.
+	_check(roster.apply_damage(4, 22) and roster.is_slain(4),
+		"AC2 precondition: fourth authentic Wasp can be slain in authoritative roster")
+	presenter._refresh()
+	_check(badge.readable_text == "SLAIN" and badge.hit_count == 1
+		and not badge.tooltip_text.contains("two hits"),
+		"AC2: slain fourth source clears its real two-hit cue")
+	app.free()
+	await process_frame
+
+
+## A source-owned Moth's weighted Summon must tell the truth in each legal
+## capacity, both with a vacancy and when the last slot is already occupied.
+func _mounted_summon_help(scene: PackedScene, capacity: int, count: int) -> void:
+	var ids := ["moth_swarm", "fray_scavenger", "button_guard", "spool_stalker"]
+	var definitions: Array = []
+	for index in range(count):
+		var authored := _authored_enemy(ids[index])
+		_check(not authored.is_empty(), "summon fixture finds shipped actor " + ids[index])
+		if authored.is_empty():
+			return
+		definitions.append(authored)
+	var roster := CombatEnemies.new(definitions, capacity)
+	_check(roster.is_valid() and roster.get_capacity() == capacity
+		and roster.get_enemies().size() == count
+		and CombatEnemies.authentic_broodling_mother(roster.get_enemy(1), 1),
+		"AC3 precondition: mounted summon source is real Moth with valid capacity")
+	if not roster.is_valid():
+		return
+	var app = scene.instantiate()
+	root.add_child(app)
+	await process_frame
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	if app.party == null or app.run_rng == null:
+		_check(false, "AC3 precondition: actual game supplies party and RNG")
+		app.free()
+		return
+	var candidate := _intent_witness_seed(roster, app.party, 1, "summon")
+	if candidate < 1:
+		app.free()
+		return
+	app.run_rng.seed = candidate
+	var presenter = app.get_node("LiveEnemyRoster")
+	_check(_mount_roster(app, presenter, roster),
+		"AC3 precondition: real app binds Moth's weighted Summon")
+	await process_frame
+	await process_frame
+	var actions: Array[Dictionary] = app.enemy_intents.get_intents()
+	_check(actions.size() == count and actions[0].get("type") == "summon"
+		and actions[0].get("enemy_position") == 1
+		and presenter._badges.size() == count,
+		"AC3 precondition: live weighted scheduler selected actual source-one Summon")
+	if presenter._badges.size() != count or actions.size() != count:
+		app.free()
+		return
+	var badge: LiveEnemyIntentBadge = presenter._badges[0]
+	var can_birth := count < capacity
+	_check(badge.readable_text == "Summon Broodling"
+		and badge.tooltip_text.contains("maximum %d enemies" % capacity)
+		and badge.tooltip_text.contains("8 HP")
+		and badge.tooltip_text.contains("5")
+		and badge.tooltip_text.contains("birth turn")
+		and badge.tooltip_text.contains("following turn")
+		and badge.tooltip_text.contains("will be born") == can_birth
+		and badge.tooltip_text.contains("no Broodling is born") == not can_birth,
+		"AC3: authentic %d-of-%d Summon hover truthfully describes vacancy and later attack: %s" % [
+			count, capacity, badge.tooltip_text])
+	var tip := badge.tooltip_text
+	var before := _snapshot(app)
+	for repeat in range(3):
+		presenter._refresh()
+	_check(badge.tooltip_text == tip and _snapshot(app) == before
+		and roster.get_enemies().size() == count
+		and not roster.get_enemy(1).has(CombatEnemies.BROODLING_LATCH),
+		"AC3: repeated Summon tooltip viewing spends no latch, HP or RNG and is replayable")
+	app.free()
+	await process_frame
 
 
 ## A bound four-capacity fight is the only Termite battle that may still promise a
