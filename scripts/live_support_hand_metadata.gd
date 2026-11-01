@@ -69,7 +69,7 @@ func _rules(id: String) -> String:
 		var record: Dictionary = _definition(id)
 		if record.is_empty():
 			return ""
-		return "Once per combat, copy the last other card played: Tune Up draws 1, Tune Up+ draws 2, free."
+		return "Once per combat, copy the last other card played free: Tune Up/+ draw 1 or 2; Spare Parts/+ give 3 or 4 Block and draw 1."
 	if _loom_rules.is_supported_party_card(id):
 		var record: Dictionary = _definition(id)
 		if record.is_empty():
@@ -111,7 +111,7 @@ func base_effect_text(card_id: String, include_pips: bool = true) -> String:
 		if card.is_empty():
 			return "Unknown card"
 		return ("%s; Tinker; %d energy\nFrom %s; To self\n"
-			+ "Once per combat, copy the last OTHER card genuinely played this combat and play that copy once at 0 energy. This build can copy only Tune Up or Tune Up+: the copy keeps that card's printed draw (1 or 2) from the live deck, with no second source-card payment. Any other preceding card leaves Jury-rig disabled. No target choice.\n%s") % [
+			+ "Once per combat, copy the last OTHER card genuinely played this combat and play that copy once at 0 energy. This build can copy only Tune Up or Tune Up+ (its printed draw, 1 or 2) or Spare Parts or Spare Parts+ (3 or 4 Block plus draw 1): the copy keeps exactly that card's printed effects on the living Tinker, with no second source-card payment. Any other preceding card leaves Jury-rig disabled. No target choice.\n%s") % [
 				str(card.get("display_name", card_id)), int(card.get("cost", -1)),
 				_positions(card.get("from_positions", [])),
 				_pip_legend(card) if include_pips else ""]
@@ -151,8 +151,9 @@ func base_effect_text(card_id: String, include_pips: bool = true) -> String:
 
 
 ## The shared renderer knows only catalog affordability. Jury-rig is useful only after
-## the live presenter observed a verified Tune Up/+ commit, so the drawn face and its
-## reported state use the presenter's truthful admission instead of printed cost alone.
+## the live presenter observed a verified supported-source (Tune Up/+ or Spare Parts/+)
+## commit, so the drawn face and its reported state use the presenter's truthful
+## admission instead of printed cost alone.
 ## The shared `visual` array is left to `super`: it keeps hover/aim tracking exact and
 ## avoids a per-frame playable flip. The brightness is reconciled on EVERY pass, because
 ## `super` rewrites it from catalog affordability: returning early on an unchanged
