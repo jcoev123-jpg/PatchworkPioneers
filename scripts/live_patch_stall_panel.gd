@@ -121,6 +121,11 @@ var reduced_motion_override: Variant = null:
 		reduced_motion_override = value
 		if is_node_ready():
 			_sync_ambient()
+			# The override takes effect the moment it is set: an in-flight
+			# backing returns to the exact static baseline (position, scale and
+			# clock) without waiting for the next presentation frame.
+			if _reduced_motion():
+				_reset_backdrop_motion()
 
 var _visit: RunPatchStallVisit
 var _source: Dictionary = {}

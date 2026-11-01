@@ -1509,22 +1509,35 @@ func _backdrop_motion_cases(visit: RunPatchStallVisit) -> void:
 			and backing.scale == Vector2.ONE and backing.position == base,
 			"ProjectSettings accessibility/reduced_motion keeps the backdrop exactly static")
 	ProjectSettings.set_setting("accessibility/reduced_motion", prior_setting)
+	panel.advance_backdrop_motion(4.5)
+	var inflight: Dictionary = panel.backdrop_motion_transform()
+	var inflight_offset: Vector2 = inflight["offset"]
+	_check(panel.backdrop_motion_elapsed() == 4.5 and inflight != baseline
+			and absf(float(inflight["scale"]) - 1.005) < 0.001
+			and absf(inflight_offset.x - 3.0) < 0.01
+			and backing.scale != Vector2.ONE and backing.position != base,
+			"the backdrop is genuinely translated and scaled before the override")
 	panel.reduced_motion_override = true
 	_check(not panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline
-			and backing.position == base,
-			"an explicit reduced-motion override restores the exact static baseline immediately")
+			and backing.scale == Vector2.ONE and backing.position == base
+			and panel.backdrop_motion_elapsed() == 0.0,
+			"an explicit reduced-motion override retires an in-flight transform immediately")
 	panel.advance_backdrop_motion(4.0)
-	_check(panel.backdrop_motion_transform() == baseline,
+	_check(panel.backdrop_motion_transform() == baseline
+			and backing.scale == Vector2.ONE and backing.position == base,
 			"no presentation time accumulates while the explicit override is true")
 	panel.reduced_motion_override = false
-	_check(panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline,
-			"lifting the override resumes only from the static baseline")
+	_check(panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline
+			and panel.backdrop_motion_elapsed() == 0.0,
+			"lifting the override restarts only from zero phase at the static baseline")
 	panel.advance_backdrop_motion(2.0)
 	_check(panel.backdrop_motion_transform() == LivePatchStallPanel.backdrop_motion_at(2.0),
 			"motion resumes only through fresh presentation time after the override lifts")
 	ProjectSettings.set_setting("accessibility/reduced_motion", true)
 	panel.reduced_motion_override = null
-	_check(not panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline,
+	_check(not panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline
+			and backing.scale == Vector2.ONE and backing.position == base
+			and panel.backdrop_motion_elapsed() == 0.0,
 			"a null override follows the ProjectSettings reduced-motion request again")
 	ProjectSettings.set_setting("accessibility/reduced_motion", prior_setting)
 	panel.reduced_motion_override = null
