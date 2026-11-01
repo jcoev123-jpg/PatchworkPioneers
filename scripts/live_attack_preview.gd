@@ -1176,7 +1176,23 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 		var direct_discount: int = tinker_cost_discount(id)
 		if forecast:
 			return _direct_fire_preview.get_preview(_deck, party, enemies, id, _direct_fire, direct_discount)
-		return _direct_fire.play_attack(_deck, party, enemies, id, position, _pinned, direct_discount)
+		# The battle's one carried Heirloom, its real Pinned identity and this
+		# held copy gate the +1 before the paid resolver touches energy or HP.
+		var needle_rules: CombatHeirloomPatchTriggers = null
+		var needle_quote := {}
+		if CombatHeirloomPatchTriggers.NEEDLE_TINKER.has(id) and position > 0 \
+				and _deck != null and _deck.hand.has(id):
+			var hand = get_parent().get_node_or_null("LiveSupportHand")
+			if hand != null:
+				var current: CombatHeirloomPatchTriggers = hand.current_attack_heirloom(_deck, party)
+				if current != null and current._pinned == _pinned and current._enemies == enemies:
+					var offered: Dictionary = current.quote_needle_hit(
+						String(_definition(id).get("owner", "")), position, id)
+					if offered.get("ok", false):
+						needle_rules = current
+						needle_quote = offered
+		return _direct_fire.play_attack(_deck, party, enemies, id, position, _pinned,
+			direct_discount, needle_rules, needle_quote)
 	if _targeting.is_pool_combo_attack(id):
 		if forecast:
 			return _combo_preview(id)

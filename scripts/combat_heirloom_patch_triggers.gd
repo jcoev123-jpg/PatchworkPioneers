@@ -13,12 +13,23 @@ const NEEDLE_POOL := [
     "warden_brass_buckle", "warden_brass_buckle_plus",
     "seamstress_thread_whip", "seamstress_thread_whip_plus",
 ]
+## Tinker's three canonical enemy_single pool families, base and +. Spring Trap,
+## Scatter Bolts, Ricochet and the other pool printings stay outside this authority.
+const NEEDLE_TINKER := [
+    "tinker_rivet_shot", "tinker_rivet_shot_plus",
+    "tinker_long_barrel", "tinker_long_barrel_plus",
+    "tinker_bobbin_cannon", "tinker_bobbin_cannon_plus",
+]
 
 
-## Only the four exact authored pool printings extend the starter authority.
+## Only the exact authored printings extend the starter authority. Tinker's six
+## single-target pool records come from their own canonical catalog, never from an
+## ID-prefix guess.
 func _needle_definition(card_id: String) -> Dictionary:
     if NEEDLE_STARTERS.has(card_id) and CombatAttackCards.ATTACK_IDS.has(card_id):
         return StarterCards.new().get_definition(card_id)
+    if NEEDLE_TINKER.has(card_id):
+        return TinkerPoolCards.new().get_definition(card_id)
     if NEEDLE_POOL.has(card_id):
         return (WardenPoolCards.new().get_definition(card_id)
             if card_id.begins_with("warden_")

@@ -365,7 +365,7 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 		mitt: bool = false, stitch_pair: Array = [], scope: bool = false,
 		head_status: bool = false, visor: String = "", heavy: bool = false,
 		needle: bool = false, upgrade_strike: bool = false,
-		pool_id: String = "") -> bool:
+		pool_id: String = "", direct_id: String = "") -> bool:
 	worn_wardrobe = null
 	# Only the predecessor is terminally settled to reach a genuine connected
 	# route quickly. Every asserted patch attack below hits a live next Fight.
@@ -439,6 +439,19 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 		# Two owned copies permit a same-turn second physical cast.
 		app.run_deck.append(pool_id)
 		app.run_deck.append(pool_id)
+	if not direct_id.is_empty():
+		# Real owned run deck; only the six canonical Tinker single-target
+		# printings (the Rest-stitch seam's exact list) can be seeded.
+		var direct: Dictionary = TinkerPoolCards.new().get_definition(direct_id)
+		_check(CombatTinkerPoolAttacks.STITCHED_IDS.has(direct_id)
+			and direct.get("id") == direct_id and direct.get("owner") == "tinker"
+			and direct.get("target_kind") == "enemy_single",
+			"canonical earned Tinker single-target printing admitted to the run")
+		if not CombatTinkerPoolAttacks.STITCHED_IDS.has(direct_id):
+			return false
+		# Two owned copies permit a same-turn second physical cast.
+		app.run_deck.append(direct_id)
+		app.run_deck.append(direct_id)
 	if visor == "absent":
 		# A genuinely unpatched run: the real deck owns both Rivet variants but
 		# no wardrobe is ever bound for this battle.
@@ -1027,6 +1040,7 @@ func _run() -> void:
 	await _mitt_heavy_cases(fixture)
 	await _needle_mounted_cases(fixture)
 	await _needle_pool_mounted_cases(fixture)
+	await _tinker_direct_needle_cases(fixture)
 	await _finish_patch_play()
 
 
@@ -2230,4 +2244,186 @@ func _needle_pool_mounted_cases(fixture: Dictionary) -> void:
 					and fresh == rules and rules._turn == turn_before + 1
 					and not rules._needle_used and rules._pending_needle.is_empty(),
 					"actual later player turn refreshes current hand Needle authority")
+		await _click(app.return_button)
+
+
+## Cycle 432: Tinker's three earned single-target pool families (base and +) take
+## the same carried Needle Echo +1 the starter and plain-strike routes already
+## use, paid through the real hand and reconciled by the resolver's receipt.
+func _tinker_direct_needle_cases(fixture: Dictionary) -> void:
+	var cases := [
+		{"id": "tinker_rivet_shot", "wearer": "tinker", "second": true},
+		{"id": "tinker_rivet_shot_plus", "wearer": "tinker", "absorbed": true},
+		{"id": "tinker_long_barrel", "wearer": "tinker", "statuses": true},
+		{"id": "tinker_long_barrel_plus", "wearer": "tinker"},
+		{"id": "tinker_bobbin_cannon", "wearer": "tinker"},
+		{"id": "tinker_bobbin_cannon_plus", "wearer": "tinker"},
+		{"id": "tinker_rivet_shot", "wearer": "tinker", "unpinned": true},
+		{"id": "tinker_rivet_shot", "wearer": "warden"},
+		{"id": "tinker_rivet_shot", "wearer": "tinker", "torn": true},
+	]
+	for scenario in cases:
+		var id: String = scenario.id
+		var wearer: String = scenario.wearer
+		var definition: Dictionary = TinkerPoolCards.new().get_definition(id)
+		_check(definition.get("id") == id and definition.get("owner") == "tinker"
+			and definition.get("target_kind") == "enemy_single"
+			and definition.get("from_positions").has(3)
+			and CombatHeirloomPatchTriggers.NEEDLE_TINKER.has(id),
+			"real canonical Needle-eligible Tinker printing " + id)
+		if not await _entry(fixture, wearer, scenario.get("torn", false), false, false,
+				[], false, false, "", false, true, false, "", id):
+			_check(false, "real mounted Needle Tinker Fight " + id + " / " + wearer)
+			continue
+		var hand = app.get_node("LiveSupportHand")
+		var rules: CombatHeirloomPatchTriggers = hand._heirloom
+		var target: Dictionary = app.enemies.get_enemy(1)
+		_check(rules != null and rules._party == app.party and rules._enemies == app.enemies
+			and rules._pinned == presenter._pinned
+			and presenter._direct_fire.get_pinned() == presenter._pinned
+			and presenter._deck == app.deck and app.deck.turn_active
+			and target.get("hp", 0) > 0,
+			"one real paid direct-fire, hand, heirloom and Pinned authority")
+		if rules == null:
+			await _click(app.return_button)
+			continue
+		if scenario.get("torn", false):
+			_check(app.party.is_downed(3)
+				and app.party_carryover.torn.read_state().tear_counts.tinker == 1
+				and not rules.quote_needle_hit("tinker", 1, id).ok
+				and not rules._needle_used and rules._pending_needle.is_empty(),
+				"torn and downed Tinker cannot quote or spend Needle")
+			await _click(app.return_button)
+			continue
+		var tinker: Dictionary = app.party.get_hero(3)
+		_check(tinker.id == "tinker" and tinker.hp > 0,
+			"living Tinker stands in the authored FROM slot")
+		if not await _ensure_held(id):
+			_check(false, "actual held Tinker pool card " + id)
+			await _click(app.return_button)
+			continue
+		if scenario.get("statuses", false):
+			app.party._heroes[2]["statuses"] = {"weak": 1}
+			app.enemies._enemies[0]["statuses"] = {"exposed": 1}
+			_check(app.party.get_hero(3).statuses == {"weak": 1}
+				and app.enemies.get_enemy(1).statuses == {"exposed": 1},
+				"real pre-hit Weak and Exposed exist before the Needle pool hit")
+		var eligible: bool = wearer == "tinker" and not scenario.get("unpinned", false)
+		if scenario.get("unpinned", false):
+			_check(presenter._pinned.pinner_for_enemy(1) == "",
+				"actual recipient genuinely unpinned before the paid hit")
+		else:
+			_check(presenter._pinned.pin_enemy(app.enemies, 1, "warden")
+				and presenter._pinned.pinner_for_enemy(1) == "warden",
+				"living target genuinely Pinned before the paid pool click")
+		var before_preview := _needle_state()
+		var forecast: Dictionary = presenter._resolve_attack(
+			app.party, app.enemies, id, 0, true)
+		_check(forecast.get("playable", false)
+			and forecast.get("hits", []).any(func(hit): return hit.position == 1)
+			and _needle_state() == before_preview,
+			"mounted Tinker pool forecast stays read-only and target truly legal")
+		if scenario.get("second", false):
+			var genuine: Dictionary = rules.quote_needle_hit("tinker", 1, id)
+			var forged: Dictionary = genuine.duplicate(true)
+			forged["ticket"] = -7
+			var untouched := _live_state()
+			var refused: Dictionary = presenter._direct_fire.play_attack(app.deck,
+				app.party, app.enemies, id, 1, presenter._pinned, 0, rules, forged)
+			_check(genuine.get("ok", false) and not refused.get("ok", false)
+				and _live_state() == untouched and not rules._needle_used
+				and rules._pending_needle.is_empty(),
+				"forged real direct-fire quote rejects with no payment or RNG")
+			var stale := rules.quote_needle_hit("tinker", 1, id)
+			_check(stale.get("ok", false) and presenter._pinned.clear_pin(1),
+				"live direct-fire quote made stale by removing a genuine pin")
+			untouched = _live_state()
+			refused = presenter._direct_fire.play_attack(app.deck, app.party,
+				app.enemies, id, 1, presenter._pinned, 0, rules, stale)
+			_check(not refused.get("ok", false) and _live_state() == untouched
+				and rules._pending_needle.is_empty() and not rules._needle_used,
+				"stale live direct-fire quote rejects with no effect")
+			_check(presenter._pinned.pin_enemy(app.enemies, 1, "warden"),
+				"live target re-pinned for authenticated retry")
+			var wrong := rules.quote_needle_hit("tinker", 1, id)
+			untouched = _live_state()
+			refused = presenter._direct_fire.play_attack(app.deck, app.party,
+				app.enemies, id, 3, presenter._pinned, 0, rules, wrong)
+			_check(not refused.get("ok", false) and _live_state() == untouched
+				and not rules._needle_used, "invalid direct-fire target never spends")
+		var blocked: int = 99 if scenario.get("absorbed", false) else 3
+		_check(app.enemies.gain_block(1, blocked),
+			"real enemy Block protects the confirmed Needle direct-fire receipt")
+		var target_before: Dictionary = app.enemies.get_enemy(1)
+		var paid_before := _needle_state()
+		var first_bonus: int = presenter._play._tinker.bonus_for_attack(id)
+		var quote_now: Dictionary = rules.quote_needle_hit("tinker", 1, id)
+		_check(quote_now.get("ok", false) == eligible,
+			"real run owner, slot and current Pinned determine Needle eligibility")
+		rules.cancel_needle_hit()
+		_check(await _choose(id, false), "physical Tinker pool hand panel armed " + id)
+		await _click(app.get_node("LiveEnemyRoster")._labels[0])
+		var receipt: Dictionary = presenter.last_event
+		var actual: Dictionary = app.enemies.get_enemy(1)
+		var pin_bonus: int = 5 if not scenario.get("unpinned", false) else 0
+		var owner_statuses: Dictionary = app.party.get_hero(3).get("statuses", {})
+		var expected_raw: int = int(definition.effects.damage) + first_bonus + pin_bonus \
+			+ (1 if eligible else 0)
+		var expected_damage: int = CombatStatuses.new().adjusted_attack_damage(
+			expected_raw, owner_statuses, target_before.get("statuses", {}))
+		_check(receipt.get("ok", false) and receipt.get("hits", []).size() == 1
+			and receipt.hits[0].position == 1
+			and receipt.hits[0].damage == expected_damage
+			and receipt.hits[0].block_absorbed == mini(target_before.block, expected_damage)
+			and receipt.hits[0].hp_loss == mini(target_before.hp,
+				maxi(0, expected_damage - target_before.block))
+			and actual.block == target_before.block - receipt.hits[0].block_absorbed
+			and actual.hp == target_before.hp - receipt.hits[0].hp_loss,
+			"physical Tinker pool damage combines authentic Needle, Pinned and statuses")
+		_check(app.deck.energy == paid_before[0][15] - int(definition.cost)
+			and app.deck.hand.count(id) == paid_before[0][12].count(id) - 1
+			and app.deck.discard_pile.count(id) == paid_before[0][14].count(id) + 1
+			and app.run_rng.state == paid_before[0][10]
+			and rules._needle_used == eligible and rules._pending_needle.is_empty(),
+			"one paid Tinker pool cast, real hand/discard, RNG and Needle latch reconcile")
+		if scenario.get("absorbed", false):
+			_check(receipt.hits[0].hp_loss == 0
+				and receipt.hits[0].block_absorbed == expected_damage
+				and rules._needle_used,
+				"fully Block-absorbed real Tinker contact still spends the one Needle use")
+		if scenario.get("statuses", false):
+			var without_needle: int = CombatStatuses.new().adjusted_attack_damage(
+				int(definition.effects.damage) + first_bonus + pin_bonus,
+				owner_statuses, target_before.get("statuses", {}))
+			_check(expected_damage > without_needle,
+				"Needle adds before Weak/Exposed, not to the adjusted result")
+		if not eligible:
+			_check(not rules._needle_used,
+				"a non-wearer or unpinned Tinker pool hit awards no Needle")
+		if scenario.get("second", false) and app.deck.hand.has(id) and actual.hp > 0:
+			_check(not rules.quote_needle_hit("tinker", 1, id).ok,
+				"spent Needle latch cannot quote a second Tinker pool hit")
+			var second_before: Dictionary = app.enemies.get_enemy(1)
+			var second_expected: int = CombatStatuses.new().adjusted_attack_damage(
+				int(definition.effects.damage), owner_statuses,
+				second_before.get("statuses", {}))
+			_check(await _choose(id, false),
+				"second physical Tinker pool card selected in the same turn")
+			await _click(app.get_node("LiveEnemyRoster")._labels[0])
+			_check(presenter.last_event.get("ok", false)
+				and presenter.last_event.hits.size() == 1
+				and presenter.last_event.hits[0].damage == second_expected
+				and app.enemies.get_enemy(1).hp == second_before.hp - second_expected
+				and rules._needle_used,
+				"second genuine same-turn Tinker pool hit cannot reuse Needle")
+			var turn_before: int = rules._turn
+			await _click(app.end_turn_button)
+			_check(app.deck.turn_active and app.enemy_intents._turn_index > 0,
+				"real enemy phase opens a later player turn")
+			if app.party.get_hero(3).hp > 0 and app.enemies.get_enemy(1).hp > 0:
+				var fresh: CombatHeirloomPatchTriggers = hand.current_attack_heirloom(
+					app.deck, app.party)
+				_check(fresh == rules and not rules._needle_used
+					and rules._turn == turn_before + 1 and rules._pending_needle.is_empty(),
+					"next real scheduler turn re-arms exactly one Needle use for Tinker pools")
 		await _click(app.return_button)
