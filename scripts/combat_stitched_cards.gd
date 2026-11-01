@@ -113,7 +113,9 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 	staged_deck.combat_state.energy = deck.energy
 	var staged_party := CombatParty.new(party.get_heroes())
 	staged_party._heroes = party.get_heroes()
-	var staged_enemies := CombatEnemies.new(enemies.get_enemies())
+	# Preserve the live roster's own authenticated capacity so an opted-in
+	# four-foe battle stages all four slots instead of a three-slot default.
+	var staged_enemies := CombatEnemies.new(enemies.get_enemies(), enemies.get_capacity())
 	staged_enemies._enemies = enemies.get_enemies()
 	var attacks := _attacks.stage_transaction()
 	# Pool direct-fire halves read and spend the very same staged latches.
@@ -166,6 +168,12 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 				return failure
 			results.append(sight)
 		elif kind in ["enemy_single", "enemy_all"]:
+			# The shared starter area resolver sweeps every living slot. On an
+			# opted-in four-foe roster a living slot outside this half's authored
+			# TO positions is not a target the ordinary card accepts, so the whole
+			# composite fails closed instead of resolving an unauthored target.
+			if kind == "enemy_all" and not _area_targets_are_authored(half, staged_enemies):
+				return failure
 			var result := attacks.resolve_staged_half(staged_party, staged_enemies,
 				half.id, target, bonuses[index])
 			if not result.ok:
@@ -281,6 +289,20 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 			_button_heals._notify_borrowed_button(party, healed_half.owner,
 				healed_half.observations, "stitched_half_%d" % healed_half.index)
 	return {"ok": true, "halves": results}
+
+
+## A starter area half must be able to cover every living slot it sweeps. A
+## living slot outside its authored TO positions (only an explicitly opted-in
+## four-foe roster can hold one) refuses the whole composite, exactly as the
+## ordinary card itself refuses that roster.
+func _area_targets_are_authored(half: Dictionary, enemies: CombatEnemies) -> bool:
+	var allowed: Variant = half.get("to_positions")
+	if not allowed is Array or allowed.is_empty():
+		return false
+	for foe in enemies.get_enemies():
+		if int(foe.get("hp", 0)) > 0 and not allowed.has(foe.get("position")):
+			return false
+	return true
 
 
 ## Knit halves retain both printed effects without a separate payment or discard.

@@ -117,7 +117,7 @@ func commit_enrage_after_hit(enemies: CombatEnemies, enemy_position: int,
 		pre_hit_enemy: Dictionary, receipt: Dictionary) -> Dictionary:
 	if enemies == null or not enemies.is_valid():
 		return _enrage_failure()
-	if enemy_position < 1 or enemy_position > CombatEnemies.MAX_ENEMIES:
+	if enemy_position < 1 or enemy_position > enemies.get_capacity():
 		return _enrage_failure()
 	var live: Dictionary = enemies.get_enemy(enemy_position)
 	if live.is_empty() or not _matching_enrage_source(live, enemy_position, pre_hit_enemy):

@@ -273,7 +273,7 @@ func end_turn() -> bool:
 		return false
 	var batch := CombatStatusTurnBatch.new()
 	var tick := batch.tick_side("heroes", _party.get_heroes())
-	if not tick["ok"] or not batch.tick_side("enemies", _enemies.get_enemies())["ok"]:
+	if not tick["ok"] or not batch.tick_side("enemies", _enemies.get_enemies(), _enemies.get_capacity())["ok"]:
 		return false
 	if not _started or not _valid_bindings() or not _deck.turn_active:
 		return false
@@ -325,7 +325,7 @@ func end_turn() -> bool:
 	if _taunt_service.has_pending_taunt() and not turret_plan["victorious"]:
 		var projected_party := CombatParty.new(tick["actors"])
 		projected_party._heroes.assign(tick["actors"].duplicate(true))
-		var projected_enemies := CombatEnemies.new(turret_plan["roster"])
+		var projected_enemies := CombatEnemies.new(turret_plan["roster"], _enemies.get_capacity())
 		projected_enemies._enemies.assign(turret_plan["roster"].duplicate(true))
 		var preview_reactions := _phase_reactions()
 		var ordered: Array = effective.duplicate(true)
@@ -401,7 +401,7 @@ func end_turn() -> bool:
 				_unravel.consume_action_skip(_enemies, position)
 	# Latch a phase defeat before enemy Bleed can also kill the last enemy.
 	_result.evaluate()
-	var enemy_tick := batch.tick_side("enemies", _enemies.get_enemies())
+	var enemy_tick := batch.tick_side("enemies", _enemies.get_enemies(), _enemies.get_capacity())
 	for index in range(_enemies._enemies.size()):
 		var enemy: Dictionary = _enemies._enemies[index]
 		var next: Dictionary = enemy_tick["actors"][index]
@@ -480,7 +480,7 @@ func _valid_bindings() -> bool:
 		ids.append(hero["id"])
 	var preflight := CombatStatusTurnBatch.new()
 	if not preflight.tick_side("heroes", _party.get_heroes())["ok"] \
-			or not preflight.tick_side("enemies", _enemies.get_enemies())["ok"]:
+			or not preflight.tick_side("enemies", _enemies.get_enemies(), _enemies.get_capacity())["ok"]:
 		return false
 	# The scheduler must contain exactly one action per actual occupied enemy
 	# position: no phantom sources, gaps or omitted living/blocked enemies.
@@ -533,7 +533,7 @@ func _turrets_are_executable() -> Dictionary:
 	var roster := _enemies.get_enemies()
 	if _turrets.is_empty():
 		return {"ok": true, "victorious": false, "roster": roster}
-	var enemies := CombatEnemies.new(roster)
+	var enemies := CombatEnemies.new(roster, _enemies.get_capacity())
 	enemies._enemies.assign(roster.duplicate(true))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = _deck._rng.seed
@@ -562,9 +562,9 @@ func _phase_is_executable(next_heroes: Array, effective: Array, roster: Array = 
 	party._heroes.assign(next_heroes.duplicate(true))
 	if roster.is_empty():
 		roster = _enemies.get_enemies()
-	var enemies := CombatEnemies.new(roster)
+	var enemies := CombatEnemies.new(roster, _enemies.get_capacity())
 	enemies._enemies.assign(roster.duplicate(true))
 	if not CombatEnemyPhase.new().execute_phase(party, enemies, effective, _phase_reactions(),
 			_intents.is_bound(), _eyelet_guard)["ok"]:
 		return false
-	return CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies())["ok"]
+	return CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies(), enemies.get_capacity())["ok"]
