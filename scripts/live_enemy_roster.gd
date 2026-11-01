@@ -160,7 +160,8 @@ static func art_paths(actor_id: String) -> Dictionary:
 		return {}
 	var base: String = ART_ROOT + String(ACTOR_ART[actor_id])
 	return {"idle": base + ".png", "attack": base + "_attack.png", "idle_loop": base + "_idle.png",
-		"attack_loop": base + "_attack_anim.png"}
+		"attack_loop": base + "_attack_anim.png", "hit_loop": base + "_hit_anim.png",
+		"death_loop": base + "_death_anim.png"}
 
 
 ## The exact sewn fallback kind of one authoritative actor ID: the four M05 normals
@@ -200,6 +201,23 @@ static func fight_backdrop_path(floor_number: int) -> String:
 
 ## The exact scene of one admitted battle: a Fight follows its node's area floor, a
 ## standalone Fight (floor 0) stays the meadow, and Elite/Boss keep their own scene.
+## Stage light per authored backdrop, measured from each painting's own palette and its
+## brightest source: [art grade, rim light colour, direction toward the light (screen
+## space), ground mist colour]. A stage outside this table keeps the actors unlit.
+const STAGE_LIGHTS := {
+	"battle_meadow.png": [Color("e2d2d8"), Color("ffd890"), Vector2(0.7, -0.7), Color("c9b9c4")],
+	"battle_woods.png": [Color("dcd4c4"), Color("fff0c8"), Vector2(0.25, -0.97), Color("b9c4a8")],
+	"battle_marsh.png": [Color("d0d8d4"), Color("ffcf80"), Vector2(-0.8, -0.6), Color("b8cfc4")],
+	"battle_peaks.png": [Color("d6d8ec"), Color("eef4ff"), Vector2(-0.7, -0.7), Color("e6ecf4")],
+	"battle_ruins.png": [Color("e2c2ba"), Color("ffc878"), Vector2(0.0, -1.0), Color("c8aea4")],
+	"battle_boss.png": [Color("d6bcd0"), Color("ffd890"), Vector2(0.8, -0.6), Color("b89cb4")],
+}
+
+
+static func stage_light(kind: String, floor_number: int) -> Array:
+	return STAGE_LIGHTS.get(stage_backdrop_path(kind, floor_number).get_file(), [])
+
+
 static func stage_backdrop_path(kind: String, floor_number: int) -> String:
 	if kind != STANDALONE_BATTLE_KIND:
 		return backdrop_path(kind)
@@ -334,6 +352,38 @@ class Puppet extends Control:
 	const FALL_MAX_SECONDS := 0.6
 	const FALL_TILT := 0.7
 
+	## Stage lighting: a shared canvas shader grades only the full-opacity artwork, darkens
+	## its feet toward the ground and turns the RIM_LIGHT_MARK copy into a flat rim of
+	## light; every untextured draw (shadow, tag, fallback) passes through unchanged.
+	const RIM_LIGHT_MARK := 0.65
+	const RIM_LIGHT_STRENGTH := 0.6
+	const MIST_PATH := "res://assets/paper/vfx/ground_mist.png"
+	const MIST_ALPHA := 0.3
+	const STAGE_LIGHT_SHADER := """shader_type canvas_item;
+uniform vec3 light_tint = vec3(1.0);
+uniform float ground_shade = 0.0;
+uniform float rim_strength = 0.0;
+varying vec4 draw_color;
+void vertex() { draw_color = COLOR; }
+void fragment() {
+	if (TEXTURE_PIXEL_SIZE.x < 0.5) {
+		vec4 tex = texture(TEXTURE, UV);
+		if (draw_color.a > 0.99) {
+			float feet = smoothstep(0.55, 1.0, UV.y) * ground_shade;
+			COLOR = vec4(tex.rgb * draw_color.rgb * light_tint * (1.0 - feet), tex.a);
+		} else if (abs(draw_color.a - 0.65) < 0.02) {
+			COLOR = vec4(draw_color.rgb, tex.a * rim_strength);
+		}
+	}
+}
+"""
+	static var _light_shader: Shader
+	static var _mist_texture: Texture2D
+	var lit := false
+	var rim_color := Color.WHITE
+	var rim_dir := Vector2.ZERO
+	var mist_color := Color.WHITE
+
 	var facing := 1.0
 	var slot := 1
 	var fallen := false
@@ -353,6 +403,10 @@ class Puppet extends Control:
 	## Optional authored swing: square cells cut from one `<id>_attack_anim.png` strip running
 	## from the idle stance to the attack pose, at the attack still's own pixel scale.
 	var attack_frames: Array[Texture2D] = []
+	## Optional authored reactions (elites and bosses): a flinch played across the recoil and
+	## a collapse played across the fall settle, both at the idle still's pixel scale.
+	var hit_frames: Array[Texture2D] = []
+	var death_frames: Array[Texture2D] = []
 	## Seconds left of the one bounded committed attack pose; zero means plain idle.
 	var attack_remaining := 0.0
 	var attack_span := 0.0
@@ -560,7 +614,7 @@ class Puppet extends Control:
 	## The fallen tilt this actor draws now, in its own facing direction. It is the existing
 	## still fallen pose once settled and upright otherwise; a standing actor never tilts.
 	func fallen_tilt() -> float:
-		if not fallen:
+		if not fallen or not death_frames.is_empty():
 			return 0.0
 		return -FALL_TILT * facing * fall_shape()
 
@@ -663,6 +717,8 @@ class Puppet extends Control:
 		attack_texture = art.get("attack") as Texture2D
 		idle_frames = loop_frames(art.get("idle_loop") as Texture2D, idle_texture)
 		attack_frames = loop_frames(art.get("attack_loop") as Texture2D, attack_texture)
+		hit_frames = loop_frames(art.get("hit_loop") as Texture2D, idle_texture)
+		death_frames = loop_frames(art.get("death_loop") as Texture2D, idle_texture)
 		queue_redraw()
 
 	func current_texture() -> Texture2D:
@@ -713,6 +769,11 @@ class Puppet extends Control:
 	func idle_frame(texture: Texture2D) -> Texture2D:
 		if texture == attack_texture and attacking() and not attack_frames.is_empty():
 			return attack_frames[roundi(attack_shape() * (attack_frames.size() - 1))]
+		if texture == idle_texture and fallen and not death_frames.is_empty():
+			return death_frames[roundi(fall_shape() * (death_frames.size() - 1))]
+		if texture == idle_texture and recoiling() and not hit_frames.is_empty():
+			var flinch := clampf(1.0 - recoil_remaining / recoil_span, 0.0, 1.0) if recoil_span > 0.0 else 0.0
+			return hit_frames[roundi(flinch * (hit_frames.size() - 1))]
 		if idle_frames.is_empty() or texture != idle_texture or fallen:
 			return texture
 		var index := int((idle_phase + idle_offset()) * IDLE_LOOP_FPS)
@@ -855,6 +916,32 @@ class Puppet extends Control:
 			bounds = bounds.expand(points[index])
 		return bounds
 
+	## Applies one STAGE_LIGHTS entry, or clears the light for an empty one.
+	func set_stage_light(light: Array) -> void:
+		lit = light.size() == 4
+		if not lit:
+			material = null
+			queue_redraw()
+			return
+		if _light_shader == null:
+			_light_shader = Shader.new()
+			_light_shader.code = STAGE_LIGHT_SHADER
+		if _mist_texture == null and ResourceLoader.exists(MIST_PATH, "Texture2D"):
+			_mist_texture = load(MIST_PATH) as Texture2D
+		var shade := material as ShaderMaterial
+		if shade == null:
+			shade = ShaderMaterial.new()
+			shade.shader = _light_shader
+			material = shade
+		var tint: Color = light[0]
+		shade.set_shader_parameter("light_tint", Vector3(tint.r, tint.g, tint.b))
+		shade.set_shader_parameter("ground_shade", 0.45)
+		shade.set_shader_parameter("rim_strength", RIM_LIGHT_STRENGTH)
+		rim_color = light[1]
+		rim_dir = (light[2] as Vector2).normalized()
+		mist_color = light[3]
+		queue_redraw()
+
 	func _draw() -> void:
 		# Ground the actor first: a fixed contact patch on the foot line, then the dark rim,
 		# then the artwork itself, then the pinned tag. Every layer is drawn here, so the
@@ -932,10 +1019,22 @@ class Puppet extends Control:
 		var painted := idle_frame(texture)
 		var paint_rect := painted_rect(painted, texture, rect)
 		# Heroes face right, enemies left; the fallen actor keeps the drawn tilt treatment.
+		if lit and not fallen:
+			# The stage light's rim: a flat copy nudged toward the light, peeking out on that side.
+			var nudge := rim_dir * clampf(paint_rect.size.y * 0.008, 1.0, 2.5)
+			draw_set_transform_matrix(idle_transform(paint_rect.get_center() + nudge, 1.0))
+			draw_texture_rect(painted, Rect2(-paint_rect.size / 2.0, paint_rect.size), false,
+				Color(rim_color, RIM_LIGHT_MARK))
 		draw_set_transform_matrix(idle_transform(paint_rect.get_center(), 1.0))
 		draw_texture_rect(painted, Rect2(-paint_rect.size / 2.0, paint_rect.size), false,
 			Color("8c8b86") if fallen else Color.WHITE)
 		draw_set_transform(Vector2.ZERO)
+		if lit and _mist_texture != null:
+			# Low ground mist over the feet sinks the actor into the painted field.
+			var shadow := contact_shadow_rect()
+			var mist := Vector2(maxf(shadow.size.x * 1.8, 40.0), maxf(shadow.size.y * 6.0, 28.0))
+			draw_texture_rect(_mist_texture, Rect2(shadow.get_center() - mist * Vector2(0.5, 0.75), mist),
+				false, Color(mist_color, MIST_ALPHA))
 
 	func _draw_fallback() -> void:
 		var band := art_band()
@@ -2445,7 +2544,9 @@ func art_for(actor_id: String) -> Dictionary:
 	var art := {"idle": _load_art_texture(String(paths.get("idle", ""))),
 		"attack": _load_art_texture(String(paths.get("attack", ""))),
 		"idle_loop": _load_art_texture(String(paths.get("idle_loop", ""))),
-		"attack_loop": _load_art_texture(String(paths.get("attack_loop", "")))}
+		"attack_loop": _load_art_texture(String(paths.get("attack_loop", ""))),
+		"hit_loop": _load_art_texture(String(paths.get("hit_loop", ""))),
+		"death_loop": _load_art_texture(String(paths.get("death_loop", "")))}
 	_art_cache[actor_id] = art
 	return art
 
@@ -2559,6 +2660,10 @@ func _bind_backdrop(app) -> void:
 	if is_instance_valid(backdrop) and backdrop is StageBackdrop:
 		backdrop.bind_battle(_backdrop_kind,
 			stage_texture(stage_backdrop_path(_backdrop_kind, _backdrop_floor)))
+	var light := stage_light(_backdrop_kind, _backdrop_floor)
+	for puppet in _puppets:
+		if is_instance_valid(puppet) and puppet is Puppet:
+			puppet.set_stage_light(light)
 
 
 ## The admitted node's own integer floor. A standalone battle has no map and reports the

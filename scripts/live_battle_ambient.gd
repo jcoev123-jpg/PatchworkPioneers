@@ -7,6 +7,7 @@ extends Control
 
 const ROSTER := preload("res://scripts/live_enemy_roster.gd")
 const ROUTE_MAP := preload("res://scripts/run_map.gd")
+const CRITTERS := preload("res://scripts/live_battle_critters.gd")
 const FELT_PATH := "res://assets/paper/vfx/felt_mote.png"
 const LIGHT_PATH := "res://assets/paper/vfx/warm_light_pool.png"
 const FLUFF_PATH := "res://assets/paper/vfx/fluff_puff.png"
@@ -37,6 +38,7 @@ var light_texture: Texture2D
 var fluff_texture: Texture2D
 var wisp_texture: Texture2D
 var vignette_texture: Texture2D
+var critter_strips := {}
 
 
 func _init() -> void:
@@ -51,6 +53,7 @@ func _init() -> void:
 	fluff_texture = _load_texture(FLUFF_PATH)
 	wisp_texture = _load_texture(WISP_PATH)
 	vignette_texture = _load_texture(VIGNETTE_PATH)
+	critter_strips = CRITTERS.load_strips()
 	resized.connect(queue_redraw)
 
 
@@ -220,6 +223,14 @@ func added_metadata() -> Array:
 	return marks
 
 
+## Perched animal loops for this profile; Fast holds each on its first cell.
+func critter_metadata() -> Array:
+	var sizes := {}
+	for id in critter_strips:
+		sizes[id] = critter_strips[id].get_size()
+	return CRITTERS.critters_for(profile, size, _time, fast, sizes)
+
+
 ## Nothing is synthesised when an image is unavailable.
 func _draw() -> void:
 	if profile.is_empty() or size.x < 40.0 or size.y < 40.0:
@@ -232,6 +243,8 @@ func _draw() -> void:
 		var extent := Vector2(size.x * 0.38, size.y * 0.48)
 		draw_texture_rect(light_texture, Rect2(size * Vector2(0.26, 0.62) - extent * 0.5, extent),
 			false, Color(1, 1, 1, light_alpha(_time, fast)))
+	for mark in critter_metadata():
+		draw_texture_rect_region(critter_strips[mark["id"]], mark["rect"], mark["src"])
 	if felt_texture != null:
 		for i in range(FAST_MOTIFS if fast else NORMAL_MOTIFS):
 			var mark := mote_at(profile, size, _time, fast, i)

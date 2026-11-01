@@ -1342,7 +1342,8 @@ func _fallen_stillness(puppets: Array) -> void:
 		puppet._process(puppet.FALL_MAX_SECONDS)
 		var pose: Rect2 = puppet.posed_actor_rect()
 		_check(not puppet.settling_fall()
-			and is_equal_approx(puppet.fallen_tilt(), -puppet.FALL_TILT * puppet.facing),
+			and is_equal_approx(puppet.fallen_tilt(),
+				0.0 if not puppet.death_frames.is_empty() else -puppet.FALL_TILT * puppet.facing),
 			"a settled fall ends exactly at the existing still fallen tilt: " + puppet.name)
 		puppet._process(0.5)
 		_check(is_equal_approx(puppet.idle_phase, phase),
