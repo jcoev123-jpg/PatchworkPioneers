@@ -1,15 +1,27 @@
 extends "res://tests/live_attack_preview_test.gd"
 
-## Mounted, actual hand-panel Tether starter integrations. The attack following
-## the link runs the real paid Warden Strike resolver, not a forged hit receipt.
-const TETHERS := ["seamstress_v3_tether_loop", "seamstress_v3_tether_loop_plus"]
+## Mounted, actual hand-panel integrations for all four authentic Tether
+## printings: the starter Tether Loop pair and the reward-pool Tether Stitch pair.
+## The attack following the link runs the real paid Warden Strike resolver, not a
+## forged hit receipt.
+const TETHERS := ["seamstress_v3_tether_loop", "seamstress_v3_tether_loop_plus",
+	"seamstress_v3_tether_stitch", "seamstress_v3_tether_stitch_plus"]
+
+
+## The one authentic, detached definition per printing. The owning catalog (starter
+## or reward pool) is chosen by CombatSeamstressTetherRules itself, never guessed.
+func _tether(id: String) -> Dictionary:
+	return CombatSeamstressTetherRules.new().get_tether_definition(id)
 
 
 func _hold_tether(id: String) -> bool:
 	if not await _start(_seed_for("warden_strike")):
 		return false
+	var definition := _tether(id)
+	_check(not definition.is_empty() and definition.id == id, "authentic Tether record: " + id)
 	_check(app.enemies.get_enemies().size() >= 2 and app.party.get_hero(2).id == "seamstress"
-		and app.deck.energy >= 2, "authentic living owner, enemy pair and energy")
+		and app.deck.energy >= int(definition.get("cost", 99)),
+		"authentic living owner, enemy pair and energy: " + id)
 	if app.enemies.get_enemies().size() < 2:
 		return false
 	app.deck.draw_pile.append(id)
@@ -44,17 +56,33 @@ func _success(id: String, keyboard: bool, blocked_primary: bool, reverse: bool =
 	var panel: Control = _panel(id)
 	var primary_position: int = 2 if reverse else 1
 	var partner_position: int = 1 if reverse else 2
-	var definition := V3SeamstressStarterCards.new().get_definition(id)
+	var definition := _tether(id)
+	_check(not definition.is_empty() and int(definition.cost) == (1 if id.ends_with("_plus") else 2),
+		"authentic 2/1 cost variant for this printing: " + id)
 	var tooltip: String = panel.tooltip_text
 	_check(tooltip.contains(definition.display_name) and tooltip.contains("%d energy" % definition.cost)
 		and tooltip.contains("two distinct living") and tooltip.contains("50%"),
-		"authentic cost, TWO targets and echo semantics printed on real hand face")
+		"authentic cost, TWO targets and echo semantics printed on real hand face: " + id)
 	_check(app.get_node("LiveSupportHand")._metadata.short_line(id).contains("Link 2"), "drawn short rule tells two-target link")
 	var before := _snapshot()
 	var token: int = presenter._token
 	var hand_before: Array = app.deck.hand.duplicate()
 	await _arm_tether(panel, keyboard)
 	var selected_token: int = presenter._token
+	_check(presenter._armed == panel and presenter.cue.is_visible_in_tree()
+		and presenter.cue.text.contains(definition.display_name)
+		and presenter.cue.text.contains("%d energy" % definition.cost)
+		and presenter.cue.text.contains("TWO distinct living foes") and presenter.cue.text.contains("50%"),
+		"mounted combat cue names authentic cost, two-foe link and echo: " + id)
+	var living: Array = []
+	for position in definition.to_positions:
+		var enemy: Dictionary = app.enemies.get_enemy(int(position))
+		if not enemy.is_empty() and not app.enemies.is_slain(int(position)) and int(enemy.get("hp", 0)) > 0:
+			living.append(int(position))
+	var mounted: Dictionary = presenter.tether_preview(id)
+	_check(living.size() >= 2 and mounted.get("playable", false)
+		and mounted.get("requires_selection", false) and mounted.get("target_positions", []) == living,
+		"mounted admission offers both living foe slots without paying: " + id)
 	await _choose_foe(1, keyboard)
 	_check(presenter._tether_positions == [1] and _snapshot() == before,
 		"first mounted choice changes only target selection")
@@ -115,14 +143,15 @@ func _success(id: String, keyboard: bool, blocked_primary: bool, reverse: bool =
 	_check(presenter._tether_link.is_empty(), "battle exit retires authoritative link")
 
 
-func _refusal(mode: String) -> void:
-	var id := TETHERS[0]
+func _refusal(mode: String, id: String = "") -> void:
+	if id.is_empty():
+		id = TETHERS[0]
 	if not await _hold_tether(id):
 		return
 	var panel: Control = _panel(id)
 	if mode in ["admit_energy", "admit_seat", "admit_downed", "admit_targets"]:
 		match mode:
-			"admit_energy": app.deck.combat_state.energy = 1
+			"admit_energy": app.deck.combat_state.energy = int(_tether(id).cost) - 1
 			"admit_seat":
 				var swap := CombatPositionSwaps.preview_adjacent_swap(app.party, 2, -1)
 				_check(swap.ok, "valid real hero swap")
@@ -158,7 +187,7 @@ func _refusal(mode: String) -> void:
 		var stale: int = presenter._token
 		presenter._choose_tether(2)
 		match mode:
-			"energy": app.deck.combat_state.energy = 1
+			"energy": app.deck.combat_state.energy = int(_tether(id).cost) - 1
 			"owner": _check(app.party.apply_damage(2, 10000), "owner genuinely downed")
 			"seat":
 				var swap := CombatPositionSwaps.preview_adjacent_swap(app.party, 2, -1)
@@ -193,6 +222,13 @@ func _run() -> void:
 	for mode in ["duplicate", "cancel", "energy", "owner", "seat", "dead", "replace", "hand", "battle",
 			"turn", "panel", "admit_energy", "admit_seat", "admit_downed", "admit_targets"]:
 		await _refusal(mode)
+	# The two reward-pool printings get their own fail-closed coverage: admission
+	# (energy, seat, downed owner, too few living foes), duplicate targets, cancellation
+	# and a genuine precondition corrupted after the pair was queued.
+	for id in ["seamstress_v3_tether_stitch", "seamstress_v3_tether_stitch_plus"]:
+		for mode in ["admit_energy", "admit_seat", "admit_downed", "admit_targets", "duplicate",
+				"cancel", "energy", "owner", "seat", "dead", "replace", "hand", "battle", "turn", "panel"]:
+			await _refusal(mode, id)
 	app.queue_free()
 	await _frames()
 	_finish()
