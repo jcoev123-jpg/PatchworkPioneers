@@ -37,6 +37,9 @@ func _initialize() -> void:
 	_test_frayfinder_mitt_ac2_gauge_latches_rejections()
 	_test_frayfinder_mitt_ac3_consumption_replay_and_turns()
 	_test_frayfinder_mitt_ac4_status_pinned_and_dual_patches()
+	_test_needle_pool_quotes_and_paid_receipts()
+	_test_needle_pool_rejection_and_turn_latch()
+	_test_needle_pool_stacked_powers()
 	for failure in failures:
 		printerr(failure)
 	print("combat_pool_plain_strikes_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -1916,3 +1919,193 @@ func _test_frayfinder_mitt_ac4_status_pinned_and_dual_patches() -> void:
 	_check(res_brow["hits"][0]["damage"] == 7, "deals 5+2=7 damage")
 	_check(res_brow["block_deltas"] == {1: 6} and b_brow.party.get_hero(1)["block"] == 6, "gains printed 4 + 2 browband = 6 block")
 	_check(b_brow.mitt.latch_snapshot().get("warden") == true, "Mitt latch consumed")
+
+
+## A genuine paid CombatDeck card is the only authority for the P12 HEAD
+## Needle Echo. These tests exercise all four printed pool definitions.
+func _needle_pool_context(id: String, wearer: String = "") -> Dictionary:
+	var party := _party()
+	var foes := _enemies([90, 90])
+	var deck := _deck([id, id])
+	var torn := RunTornMending.new(party.get_heroes())
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), ["needle_echo"],
+		RunAuthoredPatchDefinitions.load_definitions(), 5)
+	_check(torn.is_valid() and wardrobe.is_valid(), "real Needle run ledgers")
+	if not wearer.is_empty():
+		_check(wardrobe.sew("needle_echo", wearer, "HEAD",
+			"needle_pool_sew", wardrobe.get_snapshot()).get("ok", false),
+			"sew one authored Needle HEAD")
+	var pinned := CombatPinned.new()
+	_check(pinned.pin_enemy(foes, 1, "warden")
+		and pinned.pinner_for_enemy(1) == "warden",
+		"living original slot has a real Pinned token")
+	var rules := CombatHeirloomPatchTriggers.new()
+	_check(rules.bind_battle(wardrobe, torn, party, foes, pinned)
+		and rules.start_player_turn(), "Needle bound to genuine party/pins/wardrobe turn")
+	return {"deck": deck, "party": party, "foes": foes, "pinned": pinned,
+		"rules": rules, "wardrobe": wardrobe, "torn": torn}
+
+
+func _test_needle_pool_quotes_and_paid_receipts() -> void:
+	for id in IDS:
+		var owner := "warden" if id.begins_with("warden_") else "seamstress"
+		var battle := _needle_pool_context(id, owner)
+		var def := _definition(id)
+		_check(battle.deck.hand.count(id) >= 2 and def.get("owner") == owner
+			and def.get("target_kind") == "enemy_single"
+			and def.get("to_positions", []).has(1), "authentic held legal pool preconditions " + id)
+		var before := _snapshot(battle.deck, battle.party, battle.foes, battle.pinned)
+		var owner_pos := 1 if owner == "warden" else 2
+		_check(battle.foes.gain_block(1, 3), "real target gains blocking")
+		var target: Dictionary = battle.foes.get_enemy(1)
+		var quote: Dictionary = battle.rules.quote_needle_hit(owner, 1, id)
+		_check(quote.get("ok", false) and quote.get("bonus_damage") == 1
+			and battle.rules.authorizes_needle_hit(quote, battle.party, battle.foes, id, 1),
+			"sealed canonical Needle quote authorized " + id)
+		var result := CombatPoolPlainStrikes.new().play_card(battle.deck, battle.party,
+			battle.foes, id, 1, battle.pinned, null, null, {}, battle.rules, quote)
+		var base: int = def.effects.damage
+		var pin_bonus: int = 0 if owner == "warden" else 5
+		var actual: int = base + pin_bonus + 1
+		var after: Dictionary = battle.foes.get_enemy(1)
+		_check(result.get("ok", false) and result.hits.size() == 1
+			and result.hits[0].damage == actual
+			and result.hits[0].block_absorbed == 3
+			and result.hits[0].hp_loss == actual - 3
+			and after.hp == target.hp - actual + 3 and after.block == 0,
+			"pool Needle exactly +1 pre-status, real HP/Block and Pinned " + id)
+		_check(battle.deck.energy == before.energy - def.cost
+			and battle.deck.hand.count(id) == before.hand.count(id) - 1
+			and battle.deck.discard_pile.count(id) == before.discard.count(id) + 1
+			and battle.deck._rng.state == before.rng_state and battle.rules._needle_used
+			and battle.rules._pending_needle.is_empty()
+			and battle.party.get_hero(owner_pos).block == def.effects.get("block", 0),
+			"paid canonical card/Block and one confirmed Needle latch " + id)
+		_check(not battle.rules.quote_needle_hit(owner, 1, id).get("ok", false),
+			"same-turn second Needle quote refused " + id)
+		var second := CombatPoolPlainStrikes.new().play_card(battle.deck, battle.party,
+			battle.foes, id, 1, battle.pinned)
+		_check(second.get("ok", false) and second.hits[0].damage == base
+			and battle.rules._needle_used, "second paid same-turn pool attack has no Needle " + id)
+		_check(battle.rules.start_player_turn() and not battle.rules._needle_used,
+			"real authority turn boundary rearms Needle " + id)
+
+
+func _test_needle_pool_rejection_and_turn_latch() -> void:
+	var id := "warden_brass_buckle"
+	var battle := _needle_pool_context(id, "warden")
+	var resolver := CombatPoolPlainStrikes.new()
+	var quote: Dictionary = battle.rules.quote_needle_hit("warden", 1, id)
+	var forged: Dictionary = quote.duplicate(true)
+	forged["ticket"] = -1
+	var before := _snapshot(battle.deck, battle.party, battle.foes, battle.pinned)
+	_check(not resolver.play_card(battle.deck, battle.party, battle.foes,
+		id, 1, battle.pinned, null, null, {}, battle.rules, forged).ok
+		and _snapshot(battle.deck, battle.party, battle.foes, battle.pinned) == before
+		and not battle.rules._needle_used and battle.rules._pending_needle.is_empty(),
+		"forged sealed pool quote fails without spend, mutation, RNG or latch")
+	var stale: Dictionary = battle.rules.quote_needle_hit("warden", 1, id)
+	_check(stale.get("ok", false) and battle.pinned.clear_pin(1),
+		"authentic quote becomes stale when Pinned vanishes")
+	before = _snapshot(battle.deck, battle.party, battle.foes, battle.pinned)
+	_check(not resolver.play_card(battle.deck, battle.party, battle.foes,
+		id, 1, battle.pinned, null, null, {}, battle.rules, stale).ok
+		and _snapshot(battle.deck, battle.party, battle.foes, battle.pinned) == before
+		and not battle.rules._needle_used and battle.rules._pending_needle.is_empty(),
+		"stale pin quote rejects without mutation")
+	_check(battle.pinned.pin_enemy(battle.foes, 1, "warden"), "restore living pinned foe")
+	for target in [0, 3]:
+		var wrong: Dictionary = battle.rules.quote_needle_hit("warden", 1, id)
+		before = _snapshot(battle.deck, battle.party, battle.foes, battle.pinned)
+		_check(not resolver.play_card(battle.deck, battle.party, battle.foes,
+			id, target, battle.pinned, null, null, {}, battle.rules, wrong).ok
+			and _snapshot(battle.deck, battle.party, battle.foes, battle.pinned) == before
+			and not battle.rules._needle_used, "wrong target rejects before debit")
+	var underfunded: Dictionary = battle.rules.quote_needle_hit("warden", 1, id)
+	battle.deck.combat_state.energy = 0
+	before = _snapshot(battle.deck, battle.party, battle.foes, battle.pinned)
+	_check(not resolver.play_card(battle.deck, battle.party, battle.foes,
+		id, 1, battle.pinned, null, null, {}, battle.rules, underfunded).ok
+		and _snapshot(battle.deck, battle.party, battle.foes, battle.pinned) == before
+		and not battle.rules._needle_used, "unaffordable sealed pool quote fails atomically")
+	battle.deck.combat_state.energy = 3
+	var blocked := _needle_pool_context(id, "warden")
+	_check(blocked.foes.gain_block(1, 99), "full contact can be absorbed by genuine Block")
+	var absorbed_quote: Dictionary = blocked.rules.quote_needle_hit("warden", 1, id)
+	var absorbed := resolver.play_card(blocked.deck, blocked.party, blocked.foes,
+		id, 1, blocked.pinned, null, null, {}, blocked.rules, absorbed_quote)
+	_check(absorbed.get("ok", false) and absorbed.hits.size() == 1
+		and absorbed.hits[0].block_absorbed == _definition(id).effects.damage + 1
+		and absorbed.hits[0].hp_loss == 0 and blocked.rules._needle_used,
+		"fully absorbed authentic contact consumes Needle exactly once")
+	for wearer in ["seamstress", ""]:
+		var foreign := _needle_pool_context(id, wearer)
+		var absent: Dictionary = foreign.rules.quote_needle_hit("warden", 1, id)
+		_check(not absent.get("ok", false) and not foreign.rules._needle_used,
+			"foreign/unworn Needle cannot authorize Warden pool strike")
+	var dead := _needle_pool_context(id, "warden")
+	_check(dead.foes.apply_damage(1, 9999), "original target genuinely dead")
+	_check(not dead.rules.quote_needle_hit("warden", 1, id).get("ok", false),
+		"dead target cannot reserve Needle")
+	var stage := CombatPoolPlainStrikes.stage_for_stitch(CombatAttackCards.new())
+	var half := _definition(id)
+	_check(stage.resolve_staged_half(_party(), _enemies(), half, 1).hits[0].damage
+		== half.effects.damage, "canonical stitched half inherits no free Needle point")
+
+
+## The same sealed +1 must stack with existing ARM/Pinned/Frayfinder raw
+## bonuses BEFORE Weak/Exposed, never as a second hit or free stitched rider.
+func _test_needle_pool_stacked_powers() -> void:
+	for arm in ["frayfinder_mitt", "pincushion_arm"]:
+		var party := _party()
+		var foes := _enemies([80, 80])
+		var deck := _deck(["warden_brass_buckle"])
+		var torn := RunTornMending.new(party.get_heroes())
+		var wardrobe := RunPatchWardrobe.new(party.get_heroes(),
+			["needle_echo", arm], RunAuthoredPatchDefinitions.load_definitions(), 5)
+		_check(torn.is_valid() and wardrobe.is_valid()
+			and wardrobe.sew("needle_echo", "warden", "HEAD",
+				"stack_needle", wardrobe.get_snapshot()).get("ok", false)
+			and wardrobe.sew(arm, "warden", "ARM",
+				"stack_arm", wardrobe.get_snapshot()).get("ok", false),
+			"genuine two-slot HEAD/ARM wearer for stacked Needle and " + arm)
+		var patches := CombatPatchAttackRules.new()
+		_check(patches.bind_wardrobe(wardrobe, torn),
+			"stacked wearable ARM rules bound to the same run")
+		var pin := CombatPinned.new()
+		_check(pin.pin_enemy(foes, 1, "seamstress"), "different real hero pinned target")
+		var needle := CombatHeirloomPatchTriggers.new()
+		_check(needle.bind_battle(wardrobe, torn, party, foes, pin)
+			and needle.start_player_turn(), "same real Needle battle bound")
+		var mitt: CombatFrayfinderMitt = null
+		if arm == "frayfinder_mitt":
+			var gauge := CombatUnravel.new()
+			_check(gauge.bind_roster(foes, {1: "normal", 2: "normal"})
+				and gauge.apply_unravel(foes, 1, 4),
+				"real half-threshold Unravel for Frayfinder")
+			mitt = CombatFrayfinderMitt.new()
+			_check(mitt.bind_battle(deck, party, foes, gauge, wardrobe, torn)
+				and mitt.begin_player_turn(), "real Frayfinder tied to paid deck")
+		party._heroes[0]["statuses"] = {"weak": 1}
+		foes._enemies[0]["statuses"] = {"exposed": 1}
+		var quote: Dictionary = needle.quote_needle_hit("warden", 1, "warden_brass_buckle")
+		_check(quote.get("ok", false), "sealed Needle pending before combined bonus")
+		var snapshot := _snapshot(deck, party, foes, pin)
+		var resolver := CombatPoolPlainStrikes.new()
+		var paid := resolver.play_card(deck, party, foes, "warden_brass_buckle", 1,
+			pin, patches, mitt, {}, needle, quote)
+		var expected_raw := 5 + 5 + 1 + (2 if mitt != null else 1)
+		var expected: int = CombatStatuses.new().adjusted_attack_damage(
+			expected_raw, {"weak": 1}, {"exposed": 1})
+		_check(paid.get("ok", false) and paid.hits.size() == 1
+			and paid.hits[0].damage == expected
+			and foes.get_enemy(1).hp == snapshot.foes[0].hp - expected
+			and pin.pinner_for_enemy(1) == "" and needle._needle_used
+			and deck.energy == snapshot.energy - 1
+			and deck.discard_pile.count("warden_brass_buckle") ==
+				snapshot.discard.count("warden_brass_buckle") + 1
+			and deck._rng.state == snapshot.rng_state,
+			"Needle + " + arm + " + foreign Pinned sum once before Weak/Exposed")
+		if mitt != null:
+			_check(mitt.latch_snapshot().get("warden", false),
+				"authentic Frayfinder latches once on the shared pool hit")

@@ -1201,12 +1201,25 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 			return {"ok": false}
 		return _controls.play_card(_deck, party, enemies, _pinned, _unravel, id, position)
 	if _targeting.is_pool_strike(id):
-		# Reward-pool strikes have their own resolver. Starter on-hit counters,
-		# Tinker bonuses, Seamstress passives and worn-patch bonuses must never
-		# be layered onto them.
+		# The real paid pool resolver applies damage modifiers without borrowing
+		# starter-only Tinker or Seamstress on-hit passives.
 		if forecast:
 			return _pool_forecast(party, enemies, id)
-		return _pool_strikes.play_card(_deck, party, enemies, id, position, _pinned)
+		var needle_rules: CombatHeirloomPatchTriggers = null
+		var needle_quote := {}
+		if CombatHeirloomPatchTriggers.NEEDLE_POOL.has(id) and position > 0 \
+				and _deck != null and _deck.hand.has(id):
+			var hand = get_parent().get_node_or_null("LiveSupportHand")
+			if hand != null:
+				var current: CombatHeirloomPatchTriggers = hand.current_attack_heirloom(_deck, party)
+				if current != null and current._pinned == _pinned and current._enemies == enemies:
+					var offered: Dictionary = current.quote_needle_hit(
+						String(_definition(id).get("owner", "")), position, id)
+					if offered.get("ok", false):
+						needle_rules = current
+						needle_quote = offered
+		return _pool_strikes.play_card(_deck, party, enemies, id, position,
+			_pinned, null, null, {}, needle_rules, needle_quote)
 	if _targeting.is_heavy_pool_attack(id):
 		if forecast:
 			return _heavy_forecast(party, enemies, id)
@@ -1700,6 +1713,7 @@ func _sync_battle() -> void:
 		_deck = app.deck
 		_session = [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents]
 		_play = CombatAttackCards.new()
+		_pool_strikes = CombatPoolPlainStrikes.new()
 		_fray = null
 		_controls = CombatSeamstressPoolControl.new()
 		var head_rules: CombatM05HeadPatchRules = null
@@ -1756,6 +1770,8 @@ func _sync_battle() -> void:
 				_fray = mitt
 		_heavy_attacks.set_pinned(_pinned)
 		_heavy_attacks.set_mitt(_fray)
+		_pool_strikes.set_patches(_play._patches)
+		_pool_strikes.set_mitt(_fray)
 		var warden_receipt: Variant = app._warden_battle_receipt()
 		if app.run_map != null and warden_receipt is Dictionary \
 				and warden_receipt.get("path_id") == "vanguard":
@@ -2284,6 +2300,7 @@ func _clear() -> void:
 	_routed_gauge_shared = false
 	_fray = null
 	_heavy_attacks = CombatWardenPoolHeavyAttacks.new()
+	_pool_strikes = CombatPoolPlainStrikes.new()
 	_play = CombatAttackCards.new() # Return/title retires the prior battle's wearer latch.
 	_controls = CombatSeamstressPoolControl.new()
 	_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)
