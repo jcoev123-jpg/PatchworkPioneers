@@ -64,7 +64,9 @@ func get_preview(ledger: Variant, ledger_snapshot: Variant, deck: Variant,
 	# state may have been changed since; never trust is_valid() alone.
 	var party_slots: Array[Dictionary] = heroes.get_heroes()
 	var enemy_slots: Array[Dictionary] = foes.get_enemies()
-	if not _valid_party(party_slots) or not _valid_enemies(enemy_slots):
+	# The roster's own authenticated capacity, never a global default: an
+	# explicitly opted-in four-foe battle keeps offering its authored choices.
+	if not _valid_party(party_slots) or not _valid_enemies(enemy_slots, foes.get_capacity()):
 		return rejected
 	var owner_gate: Dictionary = rest.preview_play(id, party_slots)
 	if not owner_gate.get("ok", false) or owner_gate.get("cost") != cost:
@@ -119,8 +121,10 @@ func _valid_party(slots: Array[Dictionary]) -> bool:
 	return ids.size() == CombatParty.PARTY_SIZE
 
 
-func _valid_enemies(slots: Array[Dictionary]) -> bool:
-	if slots.is_empty() or slots.size() > CombatEnemies.MAX_ENEMIES:
+func _valid_enemies(slots: Array[Dictionary], capacity: int) -> bool:
+	if capacity not in [CombatEnemies.MAX_ENEMIES, CombatEnemies.OPT_IN_MAX_ENEMIES]:
+		return false
+	if slots.is_empty() or slots.size() > capacity:
 		return false
 	var ids: Array[String] = []
 	for index in range(slots.size()):
@@ -147,7 +151,8 @@ func _half_preview(half: Dictionary, index: int, party_slots: Array[Dictionary],
 		return {}
 	# The Rest validator already checked the full descriptor; read target
 	# shape from the real authored card, never from a caller-supplied half.
-	var authored := _catalog.get_definition(id)
+	var starter := _catalog.get_definition(id)
+	var authored := starter
 	if CombatYarnRangerKnitCards.CARDS.has(id):
 		authored = CombatYarnRangerKnitCards.knit_definition(id)
 	if authored.is_empty() and id in POOL_HEAL_IDS:
@@ -185,15 +190,27 @@ func _half_preview(half: Dictionary, index: int, party_slots: Array[Dictionary],
 		"enemy_single", "enemy_all", "enemy_random":
 			side = "enemy"
 			select = kind == "enemy_single"
+			var living_enemies := 0
 			for enemy in enemy_slots:
 				var position: int = enemy["position"]
-				if enemy["hp"] > 0 and allowed.has(position):
+				if enemy["hp"] <= 0:
+					continue
+				living_enemies += 1
+				if allowed.has(position):
 					if select:
 						choices.append(position)
 					else:
 						affected.append(position)
 			# Both attack kinds need at least one living eligible enemy.
 			if choices.is_empty() and affected.is_empty():
+				return {}
+			# A starter area half sweeps every living slot in the shared attack
+			# resolver, so a living slot outside its authored TO positions (only an
+			# explicitly opted-in four-foe roster can hold one) is not a resolvable
+			# target: refuse the half like the ordinary card does instead of
+			# advertising a play that would fail at commit.
+			if kind == "enemy_all" and starter.get("id") == id \
+					and affected.size() != living_enemies:
 				return {}
 		"ally_single":
 			side = "ally"

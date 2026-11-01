@@ -46,7 +46,9 @@ func get_forecast(run_cards: Variant, expected_ledger: Variant, deck: Variant,
 	var foes: Array[Dictionary] = live_enemies.get_enemies()
 	var staged_party := CombatParty.new(heroes)
 	staged_party._heroes = heroes.duplicate(true)
-	var staged_enemies := CombatEnemies.new(foes)
+	# The detached roster must keep the live battle's own authenticated capacity,
+	# so an opted-in four-foe forecast covers every occupied slot.
+	var staged_enemies := CombatEnemies.new(foes, live_enemies.get_capacity())
 	staged_enemies._enemies = foes.duplicate(true)
 
 	# The supplied live transaction is the only optional passive/patch authority.

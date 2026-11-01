@@ -19,6 +19,7 @@ func _initialize() -> void:
 	_test_ricochet_previews()
 	_test_plain_strike_previews()
 	_test_positions_and_recipients()
+	_test_four_foe_roster()
 	_test_refusals()
 	_test_replay_and_isolation()
 	for message in failures:
@@ -165,6 +166,52 @@ func _enemies(count: int = 3) -> CombatEnemies:
 		definitions.append(enemy)
 	var enemies := CombatEnemies.new(definitions)
 	_check(enemies.is_valid(), "real CombatEnemies valid for " + str(count) + " occupied slots")
+	return enemies
+
+
+## The four explicitly admitted authored foes, selected by ID from both shipped
+## catalogs (never by catalog position or a hard-coded total).
+func _four_enemy_records() -> Array:
+	var catalog := _json("res://data/enemies/starter_enemies.json")
+	catalog.append_array(_json("res://data/enemies/v3_tough_normals.json"))
+	var selected: Array = []
+	for required in ["ragling", "ragling_guard", "spindle_ram", "razor_ribbon_wraith"]:
+		var matches: Array = catalog.filter(func(entry): return entry is Dictionary and entry.get("id") == required)
+		_check(matches.size() == 1, "authored four-foe source present exactly once: " + required)
+		if matches.size() == 1:
+			var record: Dictionary = matches[0].duplicate(true)
+			_check(record.get("max_hp") == floor(float(record.get("max_hp"))), "integral four-foe max HP")
+			record["max_hp"] = int(record.get("max_hp"))
+			selected.append(record)
+	return selected
+
+
+func _four_enemies() -> CombatEnemies:
+	var records := _four_enemy_records()
+	_check(records.size() == 4, "four distinct authenticated enemy records selected")
+	var enemies := CombatEnemies.new(records, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(enemies.is_valid() and enemies.get_capacity() == CombatEnemies.OPT_IN_MAX_ENEMIES
+		and enemies.get_enemies().size() == 4
+		and enemies.get_enemies().map(func(foe): return foe.get("position")) == [1, 2, 3, 4],
+		"explicit opt-in roster really holds four authored occupied slots")
+	return enemies
+
+
+## The same four authored records forced into the DEFAULT three-slot capacity:
+## exactly the unopted battle the roster-capacity gate must refuse.
+func _unopted_four_foes() -> CombatEnemies:
+	var records := _four_enemy_records()
+	var enemies := CombatEnemies.new(records.slice(0, 3))
+	_check(enemies.is_valid() and enemies.get_capacity() == CombatEnemies.MAX_ENEMIES,
+		"default three-capacity roster is valid before a fourth record appears")
+	var roster: Array[Dictionary] = []
+	for index in range(records.size()):
+		var foe: Dictionary = records[index].duplicate(true)
+		foe["position"] = index + 1
+		foe["hp"] = foe["max_hp"]
+		foe["block"] = 0
+		roster.append(foe)
+	enemies._enemies = roster
 	return enemies
 
 
@@ -393,6 +440,111 @@ func _test_positions_and_recipients() -> void:
 	s["party"] = _party(["tinker", "seamstress", "warden"])
 	_accepted(s, _half(0, "seamstress_stitch_up", [1, 2, 3]),
 			_half(1, "tinker_tune_up", []), "Stitch/none legal after live-roster reorder")
+
+
+## Explicitly opted-in four-foe battle: preview admission follows the roster's own
+## authenticated capacity, while every authored half keeps exactly its printed
+## legal targets. Unopted rosters and forged receipts stay refused.
+func _test_four_foe_roster() -> void:
+	_check(CombatEnemies.MAX_ENEMIES == 3 and CombatEnemies.OPT_IN_MAX_ENEMIES == 4,
+		"existing default three and explicit opt-in literal four are unchanged")
+	var cases := [
+		{"first": "seamstress_prick", "second": "tinker_pop_shot",
+			"halves": [["seamstress_prick", [1, 2, 3], []], ["tinker_pop_shot", [1, 2, 3], []]]},
+		{"first": "warden_brass_buckle", "second": "tinker_pop_shot",
+			"halves": [["warden_brass_buckle", [1, 2], []], ["tinker_pop_shot", [1, 2, 3], []]]},
+	]
+	for case in cases:
+		var s := _pair(case["first"], case["second"], 42411)
+		s["enemies"] = _four_enemies()
+		s.party = _party()
+		var first := _half(0, case["halves"][0][0], case["halves"][0][1], case["halves"][0][2])
+		var second := _half(1, case["halves"][1][0], case["halves"][1][1], case["halves"][1][2])
+		var label: String = str(case["first"]) + " / " + str(case["second"]) + " with four foes"
+		var result := _accepted(s, first, second, label)
+		_check(result.get("playable", false) and result.get("cost") == s["cost"],
+			label + ": authentic paid composite admitted against four occupied slots")
+		if not result.get("playable", false):
+			continue
+		for index in range(2):
+			var half: Dictionary = result["halves"][index]
+			var definition := RunRestStitchCards.resolve_card_definition(half["card_id"])
+			var authored_living: Array = []
+			for foe in s["enemies"].get_enemies():
+				if foe["hp"] > 0 and definition["to_positions"].has(foe["position"]):
+					authored_living.append(foe["position"])
+			var offered: Array = half["target_positions"] if half["requires_selection"] \
+				else half["affected_positions"]
+			_check(offered == authored_living,
+				label + ": half " + str(index) + " offers exactly its authored target positions")
+			_check(not offered.has(4),
+				label + ": no authored half advertises the fourth occupied slot")
+		_check(s["enemies"].get_capacity() == CombatEnemies.OPT_IN_MAX_ENEMIES
+			and s["enemies"].get_enemies().size() == 4 and s["enemies"].is_valid(),
+			label + ": observation-only preview retained all four authenticated enemy slots")
+
+	# A slain slot is never offered, and the living fourth foe keeps its position.
+	var s := _pair("seamstress_prick", "tinker_pop_shot", 42412)
+	s["enemies"] = _four_enemies()
+	_check(s["enemies"].apply_damage(3, 30) and s["enemies"].is_slain(3),
+		"authored third foe genuinely slain in place")
+	_accepted(s, _half(0, "seamstress_prick", [1, 2]),
+		_half(1, "tinker_pop_shot", [1, 2]),
+		"four-foe roster omits the slain third slot without compacting")
+	_check(s["enemies"].get_enemies().size() == 4
+		and s["enemies"].get_enemies()[3]["position"] == 4
+		and s["enemies"].get_enemies()[3]["hp"] > 0,
+		"slain third slot keeps the living fourth foe at position four")
+
+	# The living fourth foe is real to the roster but never an authored target.
+	s = _pair("seamstress_prick", "tinker_pop_shot", 42413)
+	s["enemies"] = _four_enemies()
+	var live_four := _guarded_call(s, "four-foe exact choices")
+	_check(live_four.get("playable") == true
+		and live_four["first_half"]["target_positions"] == [1, 2, 3]
+		and live_four["second_half"]["target_positions"] == [1, 2, 3]
+		and s["enemies"].get_enemies()[3]["hp"] > 0,
+		"living fourth foe is occupied yet never an authored half target")
+
+	# A starter area half sweeps every living slot in the shared attack resolver,
+	# so a living fourth foe it may not target refuses the half (and the whole
+	# composite) exactly as the ordinary card refuses that roster.
+	s = _pair("seamstress_prick", "tinker_scrap_bomb", 42415)
+	s["enemies"] = _four_enemies()
+	_rejected(s, "starter area half cannot sweep an unauthored living fourth foe")
+	s = _pair("tinker_scrap_bomb", "seamstress_prick", 42416)
+	s["enemies"] = _four_enemies()
+	_rejected(s, "starter area half first also refuses the four-foe roster")
+	var whittled := _pair("seamstress_prick", "tinker_scrap_bomb", 42417)
+	whittled["enemies"] = _four_enemies()
+	_check(whittled["enemies"].apply_damage(4, 999)
+		and whittled["enemies"].apply_damage(4, 999)
+		and whittled["enemies"].is_slain(4),
+		"fourth foe genuinely slain (its one authored revival spent), leaving only authored area slots alive")
+	var area := _accepted(whittled, _half(0, "seamstress_prick", [1, 2, 3]),
+		_half(1, "tinker_scrap_bomb", [], [1, 2, 3]),
+		"area half is admitted once only its authored slots stay alive")
+	_check(area.get("playable", false) and whittled["enemies"].get_enemies().size() == 4,
+		"slain fourth slot is retained in the roster, never compacted")
+
+	# A forged receipt with an otherwise valid held composite stays refused.
+	var forged_pair := _pair("seamstress_prick", "tinker_pop_shot", 42418)
+	forged_pair["enemies"] = _four_enemies()
+	var forged: Dictionary = forged_pair["snapshot"].duplicate(true)
+	forged["descriptors"][forged_pair["id"]]["first_half"]["effects"]["damage"] = 999
+	_rejected(forged_pair, "forged Rest descriptor against four foes", forged)
+	_accepted(forged_pair, _half(0, "seamstress_prick", [1, 2, 3]),
+		_half(1, "tinker_pop_shot", [1, 2, 3]),
+		"valid four-foe preview after the forged receipt")
+
+	# An unopted roster (four records at the default three-capacity) refuses.
+	s = _pair("seamstress_prick", "tinker_pop_shot", 42414)
+	s["enemies"] = _unopted_four_foes()
+	_check(not s["enemies"].is_valid() and s["enemies"].get_enemies().size() == 4,
+		"unopted fixture really holds four slots at the default capacity")
+	_rejected(s, "unopted four-slot roster")
+	_check(s["enemies"].get_enemies().size() == 4,
+		"unopted refusal never compacts or drops the fourth record")
 
 
 func _test_refusals() -> void:
