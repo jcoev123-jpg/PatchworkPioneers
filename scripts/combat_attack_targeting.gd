@@ -8,7 +8,7 @@ extends RefCounted
 const SIGHT_GLASS_IDS := ["tinker_sight_glass", "tinker_sight_glass_plus"]
 
 const ATTACK_IDS := [
-	"warden_strike_plus",
+	"warden_strike_plus", "warden_shield_bash_plus", "seamstress_prick_plus",
 	"warden_strike", "warden_shield_bash", "seamstress_prick",
 	"tinker_pop_shot", "tinker_scrap_bomb"
 ]
