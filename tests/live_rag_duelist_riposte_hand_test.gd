@@ -11,13 +11,27 @@ const FORMS := {
 const BASE := "rag_duelist_cape_parry"
 
 
+## The Cape self-Dodge printings are owned by the shared support hand (V3-1); the
+## Riposte printings by this battle-scoped adapter. Exactly one of the two binds a
+## drawn card, so every mounted case drives the genuine input owner of that ID.
+func _presenter_for(id: String):
+	return app.get_node("LiveSupportHand") if CombatRagDuelistDodgeCards.CARDS.has(id) \
+		else app.get_node("LiveRagDuelistRiposteHand")
+
+
+## The one real input callback of a mounted panel, whichever presenter shape owns it.
+func _callback(panel: Control) -> Callable:
+	var binding = presenter._bindings[panel]
+	return binding if binding is Callable else binding.callback
+
+
 func _begin(id: String, seat: int = 2) -> Control:
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await _frames()
 	app.run_seed = 337
 	_check(app._start_battle(), "real standalone battle starts")
-	presenter = app.get_node("LiveRagDuelistRiposteHand")
+	presenter = _presenter_for(id)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 337
 	var cards: Array[String] = [id, id, "warden_strike", "warden_brace", "tinker_tune_up"]
@@ -61,7 +75,7 @@ func _cast(panel: Control, keyboard: bool) -> void:
 
 
 func _assert_cast(panel: Control, id: String, seat: int, keyboard: bool) -> void:
-	var callback: Callable = presenter._bindings[panel].callback
+	var callback: Callable = _callback(panel)
 	var before := _state()
 	await _cast(panel, keyboard)
 	var expected := before.duplicate(true)
@@ -96,7 +110,7 @@ func _assert_cast(panel: Control, id: String, seat: int, keyboard: bool) -> void
 func _negative(mode: String, queued: bool) -> void:
 	var id: String = "rag_duelist_duelist_reprise" if mode == "seat" else BASE
 	var panel := await _begin(id, 3 if mode == "seat" else 2)
-	var callback: Callable = presenter._bindings[panel].callback
+	var callback: Callable = _callback(panel)
 	if queued:
 		callback.call(_press())
 	var token: int = presenter._token
@@ -235,9 +249,15 @@ func _mixed_dodge_riposte() -> void:
 	await _frames()
 	var dodge_panel := _pool_panel(dodge_id)
 	var riposte_panel := _pool_panel(BASE)
+	var shared = app.get_node("LiveSupportHand")
+	# The shared support hand owns the cape and this adapter owns the Riposte card:
+	# exactly one genuine input owner each, never two controllers on one panel.
 	_check(dodge_panel != null and riposte_panel != null
-		and presenter._bindings.has(dodge_panel) and presenter._bindings.has(riposte_panel),
-		"shared adapter binds Dodge and Riposte together in the actual hand")
+		and shared._bindings.has(dodge_panel) and not presenter._bindings.has(dodge_panel)
+		and presenter._bindings.has(riposte_panel) and not shared._bindings.has(riposte_panel)
+		and dodge_panel.gui_input.get_connections().size() == 1
+		and riposte_panel.gui_input.get_connections().size() == 1,
+		"shared hand and riposte adapter split the mixed hand with one input owner each")
 	if dodge_panel != null and riposte_panel != null:
 		await _cast(dodge_panel, false)
 		_check(app.party.get_hero(2).statuses.get("dodge_next_attack") == 1,

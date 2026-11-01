@@ -1,4 +1,16 @@
 extends "res://tests/live_rag_duelist_riposte_hand_test.gd"
+## Rag Duelist Cape Slip / Cape Flourish played from the REAL shared support hand (V3-1).
+##
+## The cape printings moved out of the older battle-scoped Riposte adapter into the
+## one shared card-input controller, so every case here starts a genuine mounted app
+## battle, draws authentic copies into a real CombatDeck hand with a living Rag
+## Duelist in the chosen seat, and then clicks or keyboard-activates the mounted
+## panel through LiveSupportHand. The older adapter must bind NONE of these panels,
+## so a drawn cape has exactly one real input owner.
+##
+## The shipped paid resolver charges the printed cost, discards exactly one held copy
+## and keeps the owner's one-shot integer Dodge at 1. Every refusal and stale
+## callback leaves deck, party, enemies, intents, result and RNG byte-identical.
 
 const DODGE_FORMS := {
 	"rag_duelist_cape_slip": 1,
@@ -27,7 +39,11 @@ func _assert_dodge(panel: Control, id: String, seat: int, keyboard: bool) -> voi
 	metadata._update_visual(panel)
 	_check(metadata.visual_state(panel).playable, "live metadata enables affordable Dodge: " + id)
 	_check(panel.tooltip_text.to_lower().contains("dodge the next attack"), "authored Dodge tooltip")
-	var callback: Callable = presenter._bindings[panel].callback
+	_check(panel.gui_input.get_connections().size() == 1,
+		"the shared hand is the ONLY input owner of the cape: " + id)
+	_check(not app.get_node("LiveRagDuelistRiposteHand")._bindings.has(panel),
+		"the older battle-scoped adapter yields every cape: " + id)
+	var callback: Callable = _callback(panel)
 	var before := _state()
 	await _cast(panel, keyboard)
 	var expected := before.duplicate(true)
@@ -38,9 +54,9 @@ func _assert_dodge(panel: Control, id: String, seat: int, keyboard: bool) -> voi
 	_check(_state() == expected, "exact one-copy spend and only owner integer Dodge; no draw/HP/Block/enemy/RNG effects: " + id)
 	_check(typeof(app.party.get_hero(seat).statuses.get("dodge_next_attack")) == TYPE_INT,
 		"Dodge is integer token")
-	_check(presenter.last_event.get("ok", false) and presenter.last_event.get("self_target", false)
-		and presenter.last_event.get("target_position") == seat, "paid service confirms implicit self target")
-	_check(presenter._pending.is_empty(), "self card never opens a target picker")
+	_check(presenter._pending.is_empty() and presenter._targets.is_empty()
+		and not presenter.cancel_button.is_visible_in_tree(),
+		"self card never opens a target picker")
 	_check(app.pile_label.text.contains("Discard: %d" % app.deck.discard_pile.size())
 		and app.get_node("LiveSupportHand").energy_label.text == str(app.deck.energy)
 		and app.hand_view.get_child_count() == app.deck.hand.size(), "mounted resources and hand refresh")
@@ -66,12 +82,12 @@ func _assert_dodge(panel: Control, id: String, seat: int, keyboard: bool) -> voi
 
 func _dodge_negative(mode: String, queued: bool) -> void:
 	var panel := await _dodge_begin(SLIP)
-	var callback: Callable = presenter._bindings[panel].callback
+	var callback: Callable = _callback(panel)
+	var bound: Array = presenter._bindings[panel].get_bound_arguments()
 	if queued:
 		callback.call(_press())
 		_check(not presenter._pending.is_empty(), "valid queued intent exists before tampering: " + mode)
 	var token: int = presenter._token
-	var receipt: Dictionary = presenter._pending.get("receipt", {}).duplicate()
 	match mode:
 		"energy": app.deck.combat_state.energy = 0
 		"owner": app.party._heroes[1].id = "missing"
@@ -92,18 +108,17 @@ func _dodge_negative(mode: String, queued: bool) -> void:
 		"rng_state": app.run_rng.randi()
 		"index": app.hand_view.move_child(panel, (panel.get_index() + 1) % 5)
 	var before := _state()
-	if mode == "energy":
+	if queued:
+		# The queued transaction still names the fight it was armed against.
+		presenter._activate(bound[0], bound[1], bound[2], bound[3], bound[4], token)
+	else:
+		callback.call(_press())
+		_check(presenter._pending.is_empty(), "a refused cape never even arms: " + mode)
+	_check(_state() == before, "Dodge refusal preserves all resources/statuses/RNG: %s queued=%s" % [mode, queued])
+	if not queued and mode == "energy":
 		var metadata = app.get_node("LiveSupportHand")._metadata
 		metadata._update_visual(panel)
 		_check(not metadata.visual_state(panel).playable, "unaffordable base Dodge is dimmed")
-	if queued:
-		presenter._commit(panel, SLIP, token, receipt)
-	else:
-		callback.call(_press())
-		var release := _press()
-		release.pressed = false
-		callback.call(release)
-	_check(_state() == before, "Dodge refusal preserves all resources/statuses/RNG: %s queued=%s" % [mode, queued])
 	if mode != "result":
 		await _frames()
 		_check(_state() == before, "deferred Dodge refusal remains inert: " + mode)
@@ -112,16 +127,16 @@ func _dodge_negative(mode: String, queued: bool) -> void:
 
 func _retry() -> void:
 	var panel := await _dodge_begin(SLIP)
-	var callback: Callable = presenter._bindings[panel].callback
+	var callback: Callable = _callback(panel)
+	var bound: Array = presenter._bindings[panel].get_bound_arguments()
 	callback.call(_press())
 	var token: int = presenter._token
-	var receipt: Dictionary = presenter._pending.receipt.duplicate()
 	app.deck.combat_state.energy = 0
 	var before := _state()
-	presenter._commit(panel, SLIP, token, receipt)
+	presenter._activate(bound[0], bound[1], bound[2], bound[3], bound[4], token)
 	_check(_state() == before and presenter._pending.is_empty(), "failed commit consumes pending intent without spend")
 	app.deck.combat_state.energy = 1
-	presenter._commit(panel, SLIP, token, receipt)
+	presenter._activate(bound[0], bound[1], bound[2], bound[3], bound[4], token)
 	_check(app.deck.hand.count(SLIP) == 2, "restoring resources cannot revive old receipt")
 	await _assert_dodge(panel, SLIP, 2, true)
 	await _dispose()
@@ -148,11 +163,14 @@ func _routed_dodge(keyboard: bool) -> void:
 	if app.deck == null:
 		await _dispose()
 		return
-	presenter = app.get_node("LiveRagDuelistRiposteHand")
+	presenter = app.get_node("LiveSupportHand")
+	var legacy = app.get_node("LiveRagDuelistRiposteHand")
 	var cast := false
 	for turn in range(5):
 		var panel := _pool_panel(SLIP)
-		if panel != null and presenter._eligible(panel, SLIP):
+		if panel != null and presenter.rag_duelist_cape_actionable(panel, SLIP):
+			_check(not legacy._bindings.has(panel) and panel.gui_input.get_connections().size() == 1,
+				"routed Cape has exactly one real input owner")
 			var before := _state()
 			await _cast(panel, keyboard)
 			var expected := before.duplicate(true)
@@ -182,7 +200,7 @@ func _run() -> void:
 				await _assert_dodge(panel, id, seat, keyboard)
 				await _dispose()
 	for mode in ["energy", "owner", "down", "hand", "label", "status", "ally_status", "redraw",
-		"closed", "turn", "inactive", "result", "session", "party", "enemies", "rng", "index"]:
+			"closed", "turn", "inactive", "result", "session", "party", "enemies", "rng", "index"]:
 		for queued in [false, true]:
 			await _dodge_negative(mode, queued)
 	await _dodge_negative("rng_state", true)
