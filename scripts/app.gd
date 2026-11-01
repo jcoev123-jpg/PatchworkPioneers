@@ -1032,7 +1032,7 @@ func _settle_pending_termite_split() -> bool:
 	var roster := enemies.get_enemies()
 	if not source is int or source < 1 or source > roster.size():
 		return true
-	var probe := CombatEnemies.new(roster)
+	var probe := CombatEnemies.new(roster, enemies.get_capacity())
 	# The constructor normalizes HP to max_hp, so restore the exact live records
 	# before the detached splitter sees the just-confirmed zero-HP source.
 	probe._enemies.assign(roster.duplicate(true))
