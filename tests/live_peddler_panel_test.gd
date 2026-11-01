@@ -218,6 +218,7 @@ func _run() -> void:
 	await _unaudited_patch_case()
 	await _shared_hem_case()
 	await _needle_echo_case()
+	await _ambient_art_cases()
 	_check(rng.state == expected_run,
 			"all panel previews, intents and refusals preserve seeded run RNG")
 	_check(randi() == expected_global, "all mounted actions preserve global RNG")
@@ -2061,3 +2062,259 @@ func _needle_echo_case() -> void:
 		_check(left.ok and left.state.gold == 99 and left.state.trinkets.is_empty()
 			and left.state.deck == DECK,
 			"leaving a Needle Echo visit preserves wallet, owned patches and deck")
+
+
+## VIS-B ambient art: the authored sewn panel's decorative market image alone
+## breathes/drifts on a slow deterministic cycle, while every priced ticket,
+## status label, sewn outline, route-added wearer selector, quote, receipt
+## and RNG stay exactly unchanged. Every stop path (reduced motion via the
+## project setting or the nullable override, absent art, hide/show, close,
+## rebind, a stale or consumed visit, exit-tree) restores the exact static
+## baseline. Equality checks follow only synchronous operations so headless
+## frame deltas cannot disturb them; the cycle math is asserted through the
+## panel's own pure transform function.
+func _ambient_art_cases() -> void:
+	var baseline := {"scale": 1.0, "offset": Vector2.ZERO}
+	var visit := _visit(GOLD, "peddler_ambient_motion")
+	var before := visit.read_state()
+	_check(visit.is_open(), "ambient fixture is a genuine open visit")
+	intents.clear()
+	panel.bind(visit)
+	var art_host := panel.get_node_or_null("PanelArt") as Panel
+	var drift := panel.get_node_or_null("PanelArt/PanelArtDrift") as Panel
+	if art_host == null or drift == null:
+		# A checkout without the authored image still shows the static
+		# readable panel; the motion simply has nothing to move.
+		panel.advance_art_motion(2.0)
+		_check(panel.art_motion_transform() == baseline
+				and panel.title_label.text.contains("PEDDLER"),
+				"absent art keeps the exact static readable baseline panel")
+		return
+	_check(panel.art_motion_transform() == baseline,
+			"freshly bound mounted visit starts the art at the exact static baseline")
+	_check(drift.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and drift.focus_mode == Control.FOCUS_NONE
+			and art_host.clip_contents and drift.get_index() == 0
+			and art_host.get_index() < panel.card_buttons[0].get_index(),
+			"the decorative image is input-inert, clipped and under the fixed outline and tickets")
+	var static_face := art_host.get_theme_stylebox("panel") as StyleBoxTexture
+	_check(static_face != null and static_face.texture != null
+			and static_face.texture.resource_path == LivePeddlerPanel.PANEL_ART,
+			"the static authored market copy beneath the drift stays the readable fallback")
+	# The route's own wearer selector and moved patch row, exactly as app.gd
+	# mounts them on this screen: the selector must stay a real fixed target.
+	var wearer := OptionButton.new()
+	wearer.position = Vector2(39, 440)
+	wearer.size = Vector2(240, 44)
+	for hero in PARTY:
+		wearer.add_item(str(hero).capitalize())
+	panel.add_child(wearer)
+	panel.patch_button.position = Vector2(295, 406)
+	panel.patch_button.custom_minimum_size = Vector2(566, 78)
+	panel.patch_button.size = Vector2(566, 78)
+	await _frames()
+	var art_rect := art_host.get_global_rect()
+	var drift_base := drift.position
+	var panel_rect := panel.get_global_rect()
+	var wearer_rect := wearer.get_global_rect()
+	var fabric := panel.get_node_or_null("FabricBacking") as Panel
+	var action_rects: Array[Rect2] = []
+	var quotes: Array[String] = []
+	for button in panel.card_buttons + [panel.patch_button, panel.leave_button]:
+		action_rects.append(button.get_global_rect())
+		quotes.append(button.text)
+	var wallet_text := panel.wallet_label.text
+	var run_state := rng.state
+	panel.advance_art_motion(2.0)
+	var moved := panel.art_motion_transform()
+	var moved_offset: Vector2 = moved["offset"]
+	_check(float(moved["scale"]) > 1.0
+			and float(moved["scale"]) - 1.0 <= LivePeddlerPanel.ART_MOTION_BREATH
+			and moved_offset != Vector2.ZERO
+			and moved_offset.length() <= LivePeddlerPanel.ART_MOTION_PAN.length(),
+			"elapsed presentation time moves only the restrained decorative transform")
+	_check(drift.position != drift_base and drift.scale.x > 1.0,
+			"the mounted decorative image itself visibly breathes and drifts")
+	_check(drift.get_global_rect().encloses(panel.get_global_rect()),
+			"the breathing image still covers the whole sewn panel with no crop gaps")
+	var stationary := true
+	var index := 0
+	for button in panel.card_buttons + [panel.patch_button, panel.leave_button]:
+		if button.get_global_rect() != action_rects[index] or button.text != quotes[index]:
+			stationary = false
+		index += 1
+	_check(stationary and panel.get_global_rect() == panel_rect
+			and wearer.get_global_rect() == wearer_rect
+			and art_host.get_global_rect() == art_rect,
+			"buttons, quotes, panel, sewn outline and route wearer selector stay fixed under motion")
+	_check(fabric != null and fabric.get_global_rect() == panel.get_global_rect(),
+			"the opaque static fabric backing stays fixed while the art moves")
+	_check(panel.wallet_label.text == wallet_text
+			and visit.read_state() == before and intents.is_empty()
+			and rng.state == run_state,
+			"ambient motion consumes no quote, wallet, ledger, intent or seeded RNG")
+	# The unchanged source-bound one-shot signal path still works under motion.
+	panel.card_buttons[0].grab_focus()
+	await _frames()
+	var motion_counts := _press_totals()
+	_check(not await _push_shortcut(KEY_1) and _pressed_only("card0", motion_counts)
+			and intents.size() == 1,
+			"the 1 shortcut still follows the unchanged source-bound path under motion")
+	if intents.size() == 1:
+		var receipt := Controller.settle(visit, intents[0], before)
+		_check(receipt.get("ok") == true
+				and receipt["state"]["gold"] == GOLD - int(before["stock"]["cards"][0]["price"])
+				and receipt["state"]["deck"] == DECK + [before["stock"]["cards"][0]["id"]],
+				"one genuine purchase settles at its authored quote while the art animates")
+	wearer.queue_free()
+	await process_frame
+
+	# --- deterministic cycle: exact transform values at half and full periods ---
+	var cycled := _visit(GOLD, "peddler_ambient_cycle")
+	intents.clear()
+	panel.bind(cycled)
+	var half := LivePeddlerPanel.ART_MOTION_PERIOD * 0.5
+	panel.advance_art_motion(half)
+	var at_half := panel.art_motion_transform()
+	var half_offset: Vector2 = at_half["offset"]
+	_check(absf(float(at_half["scale"])
+				- (1.0 + LivePeddlerPanel.ART_MOTION_BREATH)) < 0.001,
+			"half the deterministic cycle reaches the full gentle 1% breath")
+	_check(half_offset.length() < 0.25,
+			"the drift is back at rest at the half cycle")
+	panel.advance_art_motion(half)
+	_check(panel.art_motion_transform() == baseline,
+			"one full deterministic period returns the art to the exact static baseline")
+	_check(LivePeddlerPanel.art_motion_transform_at(0.0) == baseline
+			and LivePeddlerPanel.art_motion_transform_at(
+					LivePeddlerPanel.ART_MOTION_PERIOD) == baseline
+			and LivePeddlerPanel.art_motion_transform_at(2.5) == LivePeddlerPanel.art_motion_transform_at(
+					2.5 + LivePeddlerPanel.ART_MOTION_PERIOD * 3.0),
+			"the pure presentation transform is deterministic and periodic")
+
+	# --- ProjectSettings accessibility/reduced_motion (default false), restored ---
+	var prior: Variant = ProjectSettings.get_setting(
+			"accessibility/reduced_motion", false)
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	panel.advance_art_motion(5.0)
+	_check(panel.art_motion_transform() == baseline,
+			"accessibility/reduced_motion keeps the authored art exactly static")
+	_check(panel.is_visible_in_tree() and not panel.card_buttons[0].disabled
+			and not panel.patch_button.disabled and not panel.leave_button.disabled
+			and panel.title_label.text.contains("PEDDLER"),
+			"reduced motion still mounts the readable actionable panel")
+	ProjectSettings.set_setting("accessibility/reduced_motion", prior)
+	_check(not panel._reduced_motion_active(),
+			"prior reduced-motion setting restored afterward")
+
+	# --- nullable explicit override for focused tests ---
+	panel.set_reduced_motion_override(true)
+	_check(panel.art_motion_transform() == baseline,
+			"explicit reduced-motion override restores the exact static baseline")
+	panel.advance_art_motion(4.0)
+	_check(panel.art_motion_transform() == baseline,
+			"no motion accumulates while the explicit override is true")
+	panel.set_reduced_motion_override(null)
+	_check(panel.art_motion_transform() == baseline,
+			"lifted override restarts only from the static baseline")
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_transform() != baseline,
+			"motion resumes only through fresh presentation time after the override lifts")
+
+	# --- absent art keeps the static readable fallback without errors ---
+	var saved_drift: Panel = panel._art_drift
+	panel._art_drift = null
+	panel.advance_art_motion(5.0)
+	_check(panel.art_motion_transform() == baseline,
+			"absent art keeps the exact static baseline transform without errors")
+	_check(panel.is_visible_in_tree() and panel.title_label.text.contains("PEDDLER")
+			and panel.wallet_label.text.contains("%d gold" % GOLD)
+			and not panel.leave_button.disabled and not panel.card_buttons[0].disabled,
+			"absent art retains the same readable actionable static panel")
+	panel._art_drift = saved_drift
+	_check(panel.art_motion_transform() != baseline,
+			"restoring the authored art resumes the honest mounted decoration")
+
+	# --- hide stops and restores; show resumes only from the baseline ---
+	panel.advance_art_motion(3.0)
+	_check(panel.art_motion_transform() != baseline,
+			"art is genuinely moving before hide")
+	panel.hide()
+	_check(panel.art_motion_transform() == baseline,
+			"a hidden panel restores the static baseline")
+	panel.advance_art_motion(3.0)
+	_check(panel.art_motion_transform() == baseline,
+			"hidden panels accumulate no motion")
+	panel.show()
+	_check(panel.art_motion_transform() == baseline,
+			"the shown panel resumes only from the static baseline")
+	await _frames()
+
+	# --- close() stops and restores; rebinding restarts from the baseline ---
+	var closing := _visit(GOLD, "peddler_ambient_close")
+	await _bind(closing)
+	panel.advance_art_motion(6.0)
+	_check(panel.art_motion_transform() != baseline,
+			"art is genuinely moving before close")
+	panel.close()
+	_check(panel.art_motion_transform() == baseline
+			and not panel.is_visible_in_tree() and panel.leave_button.disabled,
+			"close() stops and restores the exact static transform on the closed panel")
+	panel.advance_art_motion(7.0)
+	_check(panel.art_motion_transform() == baseline,
+			"no old motion resumes on the closed panel")
+
+	# --- rebinding another authentic visit restarts from the baseline ---
+	var rebound := _party_visit("peddler_ambient_rebind", PARTY_V3, DECK_V3,
+			_seeded_stock(PARTY_V3, V3_SEED))
+	intents.clear()
+	panel.bind(rebound)
+	_check(panel.is_visible_in_tree() and not panel.leave_button.disabled
+			and panel.art_motion_transform() == baseline,
+			"rebinding another authentic visit restarts from the exact static baseline")
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_transform() != baseline,
+			"the rebound visit's art moves through fresh presentation time")
+
+	# --- a stale bound visit stops the decoration ---
+	var stale := _visit(GOLD, "peddler_ambient_stale")
+	await _bind(stale)
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_transform() != baseline,
+			"art moves before the bound source drifts")
+	stale._purchases._state["gold"] += 1
+	await _frames()
+	_check(panel.art_motion_transform() == baseline,
+			"a stale bound visit stops and restores the static baseline")
+	stale._purchases._state["gold"] -= 1
+
+	# --- a consumed bound visit stops the decoration ---
+	var used := _visit(GOLD, "peddler_ambient_used")
+	var used_open := used.read_state()
+	await _bind(used)
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_transform() != baseline,
+			"art moves before the visit is consumed")
+	_check(used.leave(used_open["node_id"], used_open["state"],
+			used_open["stock"]).get("ok") == true,
+			"ambient fixture visit is really consumed")
+	await _frames()
+	_check(panel.art_motion_transform() == baseline,
+			"a consumed bound visit stops and restores the static baseline")
+
+	# --- leaving the tree restores the decorative image's exact baseline ---
+	var detached := _visit(GOLD, "peddler_ambient_exit_tree")
+	await _bind(detached)
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_transform() != baseline,
+			"art moves before the panel leaves the tree")
+	var drift_node: Panel = panel._art_drift
+	host.remove_child(panel)
+	await _frames()
+	_check(drift_node.position == panel._art_drift_base
+			and drift_node.scale == Vector2.ONE
+			and drift_node.pivot_offset == drift_node.size * 0.5,
+			"exit-tree restores the decorative image's exact baseline position, scale and pivot")
+	host.add_child(panel)
+	_check(panel.art_motion_transform() == baseline,
+			"a remounted panel resumes only from the static baseline")

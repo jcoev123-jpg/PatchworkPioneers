@@ -39,6 +39,14 @@ extends Control
 ## the five actions is a compact, clearly bordered sewn ticket: the illustrated
 ## market stays visible beside the quotes instead of behind a muddy,
 ## translucent, edge-to-edge slab.
+##
+## VIS-B: that same authored market image is the only animated decoration: a
+## gentle deterministic ~17-second breathe/pan confined to an input-inert,
+## clipped decorative layer under the fixed sewn outline, priced tickets,
+## status labels and route-added wearer selector. It starts only for a
+## visible, OPEN, still-current bound visit with loadable art, stops and
+## resets on every close/hide/rebind/stale path, and honors
+## accessibility/reduced_motion (default false) with a nullable override.
 signal intent_requested(intent: Dictionary)
 
 const PANEL_ART := "res://assets/paper/ui/reward_panel.png"
@@ -99,6 +107,17 @@ const DIM := Color("#655b58")
 const CARD_FABRIC := Color("#f1e3cf")
 const PATCH_FABRIC := Color("#dbe8dd")
 const EXIT_FABRIC := Color("#efd2a4")
+const REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
+## One slow deterministic presentation cycle (~17s) for the authored market
+## image: about a 1% scale breath plus a 3-4 px drift, both exactly at rest
+## at elapsed zero, driven only by accumulated presentation delta (never
+## seeded or global RNG, never the wall clock).
+const ART_MOTION_PERIOD := 17.0
+const ART_MOTION_BREATH := 0.01
+const ART_MOTION_PAN := Vector2(3.0, 4.0)
+## The drifting market image stays oversized by this margin, so its gentle
+## breath/pan never reveals an unpainted edge inside the clipped layer.
+const ART_MOTION_MARGIN := 10.0
 
 
 ## Input-transparent running stitch over the sewn paper surface.
@@ -136,6 +155,16 @@ var _hover_index := -1 # Card row under the pointer; -1 when no card is hovered.
 var _patch_hover_active := false # Whether the patch button is under the pointer.
 var _catalogs: Array = [] # Read-only authored catalogs for the preview, built once.
 var _patch_projection: Dictionary = {} # Cached audited patch slots/previews, built once.
+## The authored market image as one input-inert decorative layer UNDER the
+## fixed sewn outline, priced tickets, status labels and any route-added
+## wearer selector. Only this layer's gentle presentation transform moves;
+## the panel itself and every action descendant stay exactly fixed.
+var _art_drift: Panel = null
+var _art_drift_base := Vector2.ZERO
+var _art_motion_elapsed := 0.0
+## Nullable explicit reduced-motion override for focused tests and hosts;
+## null follows ProjectSettings accessibility/reduced_motion (default false).
+var reduced_motion_override: Variant = null
 
 
 func _ready() -> void:
@@ -162,7 +191,16 @@ func _ready() -> void:
 	add_child(backing)
 	backing.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	backing.add_theme_stylebox_override("panel", _panel_style())
+	# VIS-B: the authored market image itself becomes an input-inert clipped
+	# decoration UNDER the fixed sewn outline (SewnBorder below) and every
+	# priced ticket, status label and route-added wearer selector; the opaque
+	# static FabricBacking and the static PanelArt copy underneath keep the
+	# sewn surface readable whether or not the gentle deterministic drift
+	# below is running.
+	backing.clip_contents = true
+	_install_art_drift(backing)
 	backing.add_child(SewnBorder.new())
+	visibility_changed.connect(_on_art_visibility_changed)
 	title_label = _label(TITLE_TEXT, Vector2(36, 20), Vector2(828, 44), 29, GOLD)
 	wallet_label = _label("", Vector2(39, 68), Vector2(822, 32), 22, CREAM)
 	status_label = _label("", Vector2(39, 102), Vector2(822, 30), 18, CREAM)
@@ -338,6 +376,127 @@ func _button(value: String, at: Vector2, extent: Vector2, fill: Color, font_size
 	return button
 
 
+## The one animated decoration this panel ever shows: the already-authored
+## reward_panel.png market image, mounted as an input-inert child UNDER the
+## fixed sewn outline, priced tickets, status labels and any route-added
+## wearer selector. A missing or unreadable image installs no layer at all,
+## keeps the same static readable fabric fallback and never raises an error.
+func _install_art_drift(host_panel: Panel) -> void:
+	if not ResourceLoader.exists(PANEL_ART, "Texture2D"):
+		return
+	var texture := ResourceLoader.load(PANEL_ART) as Texture2D
+	if texture == null:
+		return
+	var layer := Panel.new()
+	layer.name = "PanelArtDrift"
+	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.focus_mode = Control.FOCUS_NONE
+	layer.add_theme_stylebox_override("panel", _panel_style())
+	host_panel.add_child(layer)
+	_art_drift_base = Vector2.ONE * -ART_MOTION_MARGIN
+	layer.position = _art_drift_base
+	layer.size = PANEL_SIZE + Vector2.ONE * (ART_MOTION_MARGIN * 2.0)
+	layer.custom_minimum_size = layer.size
+	layer.pivot_offset = layer.size * 0.5
+	_art_drift = layer
+
+
+## Pure deterministic presentation transform: a slow ~1% scale breath plus a
+## few pixels of drift, both exactly at rest at elapsed zero and at every
+## full period. No RNG and no wall clock; the caller accumulates the delta.
+static func art_motion_transform_at(elapsed: float) -> Dictionary:
+	var cycle := fposmod(elapsed, ART_MOTION_PERIOD) / ART_MOTION_PERIOD
+	var breath := 0.5 - 0.5 * cos(TAU * cycle)
+	var clock := TAU * cycle
+	return {
+		"scale": 1.0 + ART_MOTION_BREATH * breath,
+		"offset": Vector2(sin(clock), sin(2.0 * clock)) * ART_MOTION_PAN,
+	}
+
+
+## Motion runs only while a genuinely mounted, visible panel holds a valid
+## OPEN, still-current bound visit with the authored art loaded and reduced
+## motion not requested. A consumed, stale or hidden panel stops it here.
+func art_motion_active() -> bool:
+	return _art_drift != null and is_instance_valid(_art_drift) \
+			and _active() and not _reduced_motion_active()
+
+
+## Current decorative transform: the static baseline whenever motion is
+## stopped, otherwise the deterministic transform at the accumulated
+## presentation time.
+func art_motion_transform() -> Dictionary:
+	if not art_motion_active():
+		return {"scale": 1.0, "offset": Vector2.ZERO}
+	return art_motion_transform_at(_art_motion_elapsed)
+
+
+## Deterministic presentation-time advance for focused tests; live play
+## accumulates the very same clock through _process with the engine delta.
+func advance_art_motion(delta: float) -> void:
+	if delta <= 0.0 or not art_motion_active():
+		return
+	_art_motion_elapsed += delta
+	_apply_art_motion()
+
+
+## The setting defaults to off; a nullable explicit override lets tests and
+## hosts force the presentation on or off deterministically.
+func set_reduced_motion_override(value: Variant) -> void:
+	reduced_motion_override = value
+	if not art_motion_active():
+		_reset_art_motion()
+
+
+func _reduced_motion_active() -> bool:
+	if reduced_motion_override != null:
+		return bool(reduced_motion_override)
+	return bool(ProjectSettings.get_setting(REDUCED_MOTION_SETTING, false))
+
+
+## Every stop path (bind(null)/close(), hide, exit-tree, consumed or stale
+## visit, reduced motion) restores the exact static baseline position, scale
+## and pivot of the decorative image.
+func _reset_art_motion() -> void:
+	if _art_motion_elapsed == 0.0:
+		return
+	_art_motion_elapsed = 0.0
+	if is_instance_valid(_art_drift):
+		_art_drift.position = _art_drift_base
+		_art_drift.scale = Vector2.ONE
+		_art_drift.pivot_offset = _art_drift.size * 0.5
+
+
+func _apply_art_motion() -> void:
+	if not is_instance_valid(_art_drift):
+		return
+	var motion := art_motion_transform_at(_art_motion_elapsed)
+	_art_drift.pivot_offset = _art_drift.size * 0.5
+	_art_drift.scale = Vector2.ONE * float(motion["scale"])
+	_art_drift.position = _art_drift_base + motion["offset"]
+
+
+func _on_art_visibility_changed() -> void:
+	if not is_visible_in_tree():
+		_reset_art_motion()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_EXIT_TREE:
+		_reset_art_motion()
+
+
+## Accumulated presentation delta alone drives the decoration; it never calls
+## the visit, the purchase service, the route or any RNG.
+func _process(delta: float) -> void:
+	if not art_motion_active():
+		_reset_art_motion()
+		return
+	if delta > 0.0:
+		_art_motion_elapsed += delta
+		_apply_art_motion()
+
+
 ## Only a genuine valid OPEN Peddler projection may be quoted. A rejected,
 ## USED or LEFT visit, a malformed stock/state or a shape this panel cannot
 ## label binds closed with no payable action.
@@ -348,6 +507,9 @@ func bind(visit: RunPeddlerVisit) -> void:
 	_source = {}
 	_submitted = false
 	_pending_intent.clear()
+	# A different bound visit (or none at all) restarts the ambient art
+	# decoration from its exact static baseline.
+	_reset_art_motion()
 	if visit != null and visit.is_valid() and visit.is_open():
 		var state: Dictionary = visit.read_state()
 		if _valid_open_state(state):
