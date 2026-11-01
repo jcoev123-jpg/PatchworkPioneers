@@ -210,7 +210,7 @@ func _valid_action_enemy(enemy: Dictionary) -> bool:
 		return false
 	if enemy.has("position"):
 		var pos: Variant = enemy.get("position")
-		if not pos is int or pos < 1 or pos > CombatEnemies.MAX_ENEMIES:
+		if not pos is int or pos < 1 or pos > CombatEnemies.OPT_IN_MAX_ENEMIES:
 			return false
 	return true
 
