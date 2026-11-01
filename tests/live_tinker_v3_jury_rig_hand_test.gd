@@ -7,6 +7,7 @@ extends "res://tests/live_warden_v3_taunt_hand_test.gd"
 
 const JURY_IDS := ["tinker_v3_jury_rig", "tinker_v3_jury_rig_plus"]
 const SOURCE_IDS := ["tinker_tune_up", "tinker_tune_up_plus"]
+const SPARE_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
 const FILLERS := ["warden_brace", "seamstress_mend", "seamstress_stitch_up",
 	"tinker_scrap_bomb", "warden_brace_plus", "seamstress_mend_plus"]
 
@@ -40,13 +41,20 @@ func _seed_for(cards: Array[String], required: Dictionary) -> int:
 	return -1
 
 
+## The authentic printed record for a last-play source, from the catalog that owns it.
+func _source_definition(source_id: String) -> Dictionary:
+	if TinkerPoolCards.new().has_card(source_id):
+		return TinkerPoolCards.new().get_definition(source_id)
+	return StarterCards.new().get_definition(source_id)
+
+
 ## The same opening hand as `_seed_for`, but the genuine FOLLOWING turn must also hold
 ## a Jury-rig copy: the cost-zero source is committed, its printed draw runs, End Turn
 ## disposes the hand and the next hand draws. That is exactly the real deck API, so the
 ## stale-turn case can click a really held card instead of inventing one.
 func _seed_for_next(cards: Array[String], required: Dictionary, source_id: String,
 		jury_id: String) -> int:
-	var source_draw: int = int(StarterCards.new().get_definition(source_id).get("effects", {}).get("draw", 0))
+	var source_draw: int = int(_source_definition(source_id).get("effects", {}).get("draw", 0))
 	for candidate in range(3000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = candidate
@@ -232,6 +240,7 @@ func _case(jury_id: String, source_id: String, keyboard: bool, tinker_seat: int 
 		app.deck.hand.duplicate(), app.deck.draw_pile.duplicate(),
 		app.deck.discard_pile.duplicate(), app.run_rng.state]
 	var receipts: Array = presenter._jury_receipts.duplicate(true)
+	var block_before: int = app.party.get_hero(tinker_seat).block
 	_check(app.deck.draw_pile.size() >= source_draw,
 		"fixture keeps enough live cards for the copied draw")
 	await _input_card(_panel(jury_id), keyboard)
@@ -239,6 +248,8 @@ func _case(jury_id: String, source_id: String, keyboard: bool, tinker_seat: int 
 	_check(app.deck.hand == expected[0] and app.deck.draw_pile == expected[1]
 		and app.deck.discard_pile == expected[2],
 		"paid copy draws exactly the source's printed amount from the live deck")
+	_check(app.party.get_hero(tinker_seat).block == block_before,
+		"a copied Tune Up grants no Block to the Tinker")
 	_check(app.deck.energy == 3 - cost and app.deck.hand.count(jury_id) == 1,
 		"exactly one printed cost is paid and one held copy is discarded")
 	_check(app.run_rng.state == before[4],
@@ -319,17 +330,19 @@ func _jury_refusals(jury_id: String, source_id: String) -> void:
 		return
 	await _input_card(_panel(source_id), false)
 	_check(presenter._jury_can_cast(jury_id), "refusal fixture starts with a verified source")
-	# The mounted face must state the real price, the one supported source family and
+	# The mounted face must state the real price, both supported source families and
 	# that every other preceding card leaves it disabled.
 	var cost: int = int(CombatTinkerV3JuryRigCards.CARDS[jury_id]["cost"])
 	var tooltip: String = presenter._metadata.base_effect_text(jury_id)
 	_check(tooltip.contains("%d energy" % cost) and tooltip.contains("Tune Up")
-		and tooltip.contains("Tune Up+") and tooltip.contains("0 energy")
-		and tooltip.contains("disabled"),
-		"the mounted face names the printed cost, the supported sources and the disabled rule")
+		and tooltip.contains("Tune Up+") and tooltip.contains("Spare Parts")
+		and tooltip.contains("Spare Parts+") and tooltip.contains("Block")
+		and tooltip.contains("0 energy") and tooltip.contains("disabled"),
+		"the mounted face names the printed cost, both supported sources and the disabled rule")
 	_check(presenter._metadata._rules(jury_id).contains("Tune Up")
+		and presenter._metadata._rules(jury_id).contains("Spare Parts")
 		and presenter._metadata._rules(jury_id).contains("free"),
-		"the drawn face line names the supported source and the free copy")
+		"the drawn face line names both supported sources and the free copy")
 	# Wrong owner identity.
 	app.party._heroes[2]["id"] = "not_tinker"
 	var wrong_owner := _state()
@@ -451,15 +464,15 @@ func _stale_turn(jury_id: String, source_id: String) -> void:
 
 
 ## Independent oracle for one reshuffling copy: the same authored deck and seed, driven
-## with the genuine deck operations (the starter source draws before it discards; the
-## paid Jury-rig copy pays, discards, then draws). Nothing here reads our presenter.
+## with the genuine deck operations (the source draws before it discards; the paid
+## Jury-rig copy pays, discards, then draws). Nothing here reads our presenter.
 func _reference_copy_state(cards: Array[String], seed_value: int, source_id: String,
 		jury_id: String) -> Array:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 	var deck := CombatDeck.new(cards, rng)
 	deck.start_turn()
-	var draw: int = int(StarterCards.new().get_definition(source_id).get("effects", {}).get("draw", 0))
+	var draw: int = int(_source_definition(source_id).get("effects", {}).get("draw", 0))
 	deck.draw_extra(draw)
 	deck.discard_played(source_id)
 	deck.try_spend_energy(int(CombatTinkerV3JuryRigCards.CARDS[jury_id]["cost"]))
@@ -840,6 +853,183 @@ func _quilt_third_source(jury_id: String, source_id: String, keyboard: bool) -> 
 	await _complete()
 
 
+## AC1: a genuine Spare Parts/+ commit is the last-play source and the paid Jury-rig
+## resolves exactly one free copy: the source's printed Block on the living Tinker plus
+## one draw, with no second source card, payment or scrap transaction.
+func _spare_parts_case(jury_id: String, source_id: String, keyboard: bool,
+		tinker_seat: int = 3) -> Array:
+	var panel := await _mount(jury_id, [source_id], [],
+		{jury_id: 2, source_id: 1}, tinker_seat)
+	if panel == null:
+		await _complete()
+		return []
+	var source_face: Dictionary = _source_definition(source_id)
+	var source_block: int = int(source_face.get("effects", {}).get("block", 0))
+	var source_draw: int = int(source_face.get("effects", {}).get("draw", 0))
+	var cost: int = int(CombatTinkerV3JuryRigCards.CARDS[jury_id]["cost"])
+	_check(source_face.get("cost") == 0 and source_face.get("target_kind") == "self" \
+		and source_face.get("from_positions") == [2, 3] \
+		and source_face.get("to_positions") == [] and source_draw == 1 \
+		and source_block == (3 if source_id == "tinker_spare_parts" else 4),
+		"authentic Spare Parts printing is 0-cost, FROM 2-3, self, with its exact Block and draw")
+	_check(app.deck.energy == 3 and app.party.get_hero(tinker_seat).id == "tinker",
+		"fixture has printed energy and a living Tinker at the required seat")
+	_check(not presenter._jury_can_cast(jury_id) and _dimmed(_panel(jury_id)),
+		"before any source the mounted Jury-rig is truthfully disabled and drawn dim")
+	var source_panel := _panel(source_id)
+	_check(source_panel != null, "Spare Parts is genuinely held before play")
+	await _input_card(source_panel, keyboard)
+	_check(not app.deck.hand.has(source_id) and app.deck.discard_pile.count(source_id) == 1,
+		"the real Spare Parts play committed exactly one held copy to the discard")
+	_check(app.party.get_hero(tinker_seat).block == source_block,
+		"the real Spare Parts play grants only its printed Block to the living Tinker")
+	_check(presenter._jury_receipts.size() == 1 \
+		and presenter._jury_receipts[0].get("card_id") == source_id \
+		and presenter._jury_receipts[0].get("from_positions") == [2, 3] \
+		and presenter._jury_receipts[0].get("target_kind") == "self",
+		"the presenter witnessed only the genuine committed Spare Parts source")
+	_check(presenter._jury_witness_valid() and presenter._jury_can_cast(jury_id),
+		"living Tinker, energy and the Spare Parts source admit Jury-rig")
+	var armed_panel := _panel(jury_id)
+	_check(armed_panel != null \
+		and bool(presenter._metadata.visual_state(armed_panel).get("playable", false)) \
+		and _bright(armed_panel),
+		"mounted Jury-rig face becomes playable at full colour after the Spare Parts commit")
+	var others: Dictionary = {}
+	for seat in [1, 2, 3]:
+		if seat != tinker_seat:
+			others[seat] = app.party.get_hero(seat).block
+	var armed := _state()
+	await _hover(armed_panel)
+	_check(_state() == armed, "hovering the armed Jury-rig changes no state")
+	var point := await _press_at(armed_panel)
+	_check(presenter._pending.get("id") == jury_id and presenter._jury_selection_valid(),
+		"real mouse press snapshots the exact deck, battle and Spare Parts witness")
+	_check(_state() == armed, "selecting Jury-rig spends, draws, blocks and latches nothing")
+	await _keyboard(KEY_ESCAPE)
+	_check(presenter._pending.is_empty() and _state() == armed,
+		"Cancel leaves the Spare Parts witness, piles, Block, RNG and latch unchanged")
+	await _release_at(point)
+	_check(_state() == armed, "releasing the cancelled press cannot replay the selection")
+	var before: Array = [app.deck.hand.duplicate(), app.deck.draw_pile.duplicate(),
+		app.deck.discard_pile.duplicate(), app.run_rng.state]
+	var block_before: int = app.party.get_hero(tinker_seat).block
+	_check(app.deck.draw_pile.size() >= source_draw,
+		"fixture keeps enough live cards for the copied draw")
+	await _input_card(_panel(jury_id), keyboard)
+	var expected := _expected_draw([before[0], before[1], before[2]], jury_id, source_draw)
+	_check(app.deck.hand == expected[0] and app.deck.draw_pile == expected[1]
+		and app.deck.discard_pile == expected[2],
+		"the free copy draws exactly one from the live deck and discards only the held Jury-rig")
+	_check(app.party.get_hero(tinker_seat).block == block_before + source_block,
+		"the free copy grants exactly the printed Block once more on the living Tinker")
+	var untouched := true
+	for seat in others:
+		if app.party.get_hero(seat).block != others[seat]:
+			untouched = false
+	_check(untouched, "no other hero's Block changes for the self-targeted Spare Parts copy")
+	_check(app.deck.energy == 3 - cost and app.deck.hand.count(jury_id) == 1,
+		"exactly one printed Jury-rig cost is paid and one held copy is discarded")
+	_check(app.deck.discard_pile.count(source_id) == 1 and not app.deck.hand.has(source_id),
+		"the source card is never paid for, replayed or discarded a second time")
+	_check(app.run_rng.state == before[3],
+		"the live deck's seeded RNG is untouched when no reshuffle is needed")
+	_check(presenter._jury.has_used_this_combat()
+		and presenter._jury.committed_history().size() == 1
+		and presenter._jury.committed_history()[0].get("card_id") == source_id,
+		"accepted play latches once and records only the genuine Spare Parts source")
+	_check(presenter._jury_receipts.is_empty(),
+		"the presenter consumes the witness after the paid copy")
+	var second := _panel(jury_id)
+	var locked := _state()
+	var locked_block: int = app.party.get_hero(tinker_seat).block
+	await _input_card(second, not keyboard)
+	_check(_state() == locked and app.deck.energy == 3 - cost \
+		and app.party.get_hero(tinker_seat).block == locked_block,
+		"a second held Jury-rig spends, draws, blocks or latches nothing more")
+	var trace := _state()
+	await _complete()
+	return trace
+
+
+## Another real committed card replaces the Spare Parts witness, so Jury-rig disables
+## instead of copying an older Block/draw.
+func _spare_parts_unsupported(jury_id: String, source_id: String, keyboard: bool) -> void:
+	var panel := await _mount(jury_id, [source_id], ["warden_brace"],
+		{jury_id: 2, source_id: 1, "warden_brace": 1})
+	if panel == null:
+		await _complete()
+		return
+	await _input_card(_panel(source_id), keyboard)
+	_check(presenter._jury_can_cast(jury_id), "the genuine Spare Parts source briefly arms Jury-rig")
+	var tinker_block: int = app.party.get_hero(3).block
+	await _input_card(_panel("warden_brace"), not keyboard)
+	_check(app.deck.discard_pile.count("warden_brace") == 1
+		and presenter._jury_receipts.is_empty(),
+		"a later real committed card replaces the Spare Parts witness")
+	_check(not presenter._jury_can_cast(jury_id)
+		and not presenter._metadata.visual_state(_panel(jury_id)).get("playable", false)
+		and _dimmed(_panel(jury_id)),
+		"an unsupported preceding card leaves Jury-rig truthfully disabled and drawn dim")
+	var before := _state()
+	await _input_card(_panel(jury_id), keyboard)
+	_check(_state() == before and not presenter._jury.has_used_this_combat()
+		and app.party.get_hero(3).block == tinker_block,
+		"the disabled Jury-rig copies no Spare Parts Block, draw or spend")
+	await _complete()
+
+
+## A Spare Parts witness belongs to the turn it was played in: End Turn expires it.
+func _spare_parts_stale_turn(jury_id: String, source_id: String) -> void:
+	var panel := await _mount(jury_id, [source_id], [], {jury_id: 2, source_id: 1},
+		3, 9, source_id)
+	if panel == null:
+		await _complete()
+		return
+	await _input_card(_panel(source_id), false)
+	_check(presenter._jury_can_cast(jury_id),
+		"the Spare Parts source arms Jury-rig inside its own turn")
+	await _end(true)
+	_check(app.deck.turn_active and app.deck.energy == 3 and app.deck.hand.has(jury_id),
+		"the next genuine turn opened a fresh hand really holding a Jury-rig copy")
+	_check(presenter._jury_receipts.size() == 1 and not presenter._jury_witness_valid()
+		and not presenter._jury_can_cast(jury_id) and _dimmed(_panel(jury_id)),
+		"End Turn invalidates the previous turn's Spare Parts witness instead of reusing it")
+	var before := _state()
+	var block_now: int = app.party.get_hero(3).block
+	await _input_card(_panel(jury_id), false)
+	_check(_state() == before and not presenter._jury.has_used_this_combat()
+		and app.party.get_hero(3).block == block_now,
+		"a later turn's stale Jury-rig copies no Spare Parts Block, draw or spend")
+	await _complete()
+
+
+## A genuinely printed but unsupported Tinker card is never accepted as a copy source,
+## even when a forged receipt and witness are handed to the presenter directly.
+func _forged_spare_parts_source(jury_id: String) -> void:
+	var panel := await _mount(jury_id, ["tinker_spare_parts"], [],
+		{jury_id: 2, "tinker_spare_parts": 1})
+	if panel == null:
+		await _complete()
+		return
+	_check(not presenter._play_jury_rig(app.deck, app.party, jury_id),
+		"Jury-rig cannot mint a copy without any witnessed source")
+	var forged: Dictionary = {"ok": true, "card_id": "tinker_long_barrel", "owner": "tinker",
+		"from_positions": [3], "to_positions": [1, 2, 3], "target_kind": "enemy_single"}
+	presenter._jury_receipts.clear()
+	presenter._jury_receipts.append(forged)
+	presenter._jury_witness = {"receipt": forged.duplicate(true), "state": presenter._jury_state()}
+	_check(not presenter._jury_witness_valid() and not presenter._jury_can_cast(jury_id)
+		and _dimmed(_panel(jury_id)),
+		"a forged receipt naming a real but unsupported card never witnesses a copy")
+	var before := _state()
+	_check(not presenter._play_jury_rig(app.deck, app.party, jury_id) and _state() == before
+		and not presenter._jury.has_used_this_combat(),
+		"the forged source charges, blocks, draws and latches nothing")
+	await _complete()
+
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	root.gui_embed_subwindows = true
@@ -864,6 +1054,21 @@ func _run() -> void:
 		await _source_replacement(jury_id)
 		await _reshuffle_draw(jury_id, "tinker_tune_up")
 		await _fresh_fight(jury_id, "tinker_tune_up_plus")
+		# V3-1: Spare Parts/+ are supported last-play sources too.
+		for spare_id in SPARE_IDS:
+			var spare_mouse: Array = await _spare_parts_case(jury_id, spare_id, false)
+			var spare_keyboard: Array = await _spare_parts_case(jury_id, spare_id, true)
+			_check(not spare_mouse.is_empty() and spare_mouse == spare_keyboard,
+				"same-seed mouse/keyboard exact Spare Parts copy state and RNG: %s + %s" % [jury_id, spare_id])
+		var spare_middle: Array = await _spare_parts_case(jury_id, "tinker_spare_parts_plus", true, 2)
+		_check(not spare_middle.is_empty(),
+			"living middle Tinker can copy Spare Parts+ with " + jury_id)
+		await _spare_parts_unsupported(jury_id, "tinker_spare_parts", false)
+		await _spare_parts_stale_turn(jury_id, "tinker_spare_parts")
+		await _insufficient_energy(jury_id, "tinker_spare_parts")
+		await _downed_tinker(jury_id, "tinker_spare_parts")
+		await _forged_spare_parts_source(jury_id)
+		await _reshuffle_draw(jury_id, "tinker_spare_parts")
 	# The source's own automatic combat rewards settle after its commit snapshot.
 	await _switchback_source("tinker_v3_jury_rig", "tinker_tune_up", false)
 	await _switchback_source("tinker_v3_jury_rig_plus", "tinker_tune_up_plus", true)

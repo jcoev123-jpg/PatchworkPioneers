@@ -5,10 +5,14 @@ const SUPPORT_IDS := ["warden_brace", "warden_brace_plus", "tinker_tune_up", "ti
 	"seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up", "seamstress_stitch_up_plus"]
 const STRAW_WRAP_IDS := ["scarecrow_straw_wrap", "scarecrow_straw_wrap_plus"]
 const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
-## The only preceding cards this build can genuinely copy: the starter Tune Up pair.
-## Jury-rig itself remains authentic; an unsupported preceding card leaves it disabled.
-const JURY_SOURCE_IDS := ["tinker_tune_up", "tinker_tune_up_plus"]
+## The only preceding cards this build can genuinely copy, each authenticated against the
+## catalog that genuinely prints it: the starter Tune Up pair (printed draw only) and
+## Tinker's pool Spare Parts pair (printed Block plus draw 1). Jury-rig itself remains
+## authentic; any other preceding card leaves it disabled.
+const JURY_TUNE_UP_IDS := ["tinker_tune_up", "tinker_tune_up_plus"]
+const JURY_SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
 const JURY_SOURCE_FROM := [1, 2, 3]
+const JURY_SPARE_PARTS_FROM := [2, 3]
 ## The leading `_jury_state()` fields that name the fight itself (deck, party, battle,
 ## enemies, result, intent scheduler, turn). The trailing fields are the live piles,
 ## energy and hero records that a source's own post-commit rewards may legitimately
@@ -117,11 +121,12 @@ var _vigil := CombatLanternMonkPartyCards.new()
 ## One authentic Jury-rig resolver per genuine fight. Its once-per-combat latch and
 ## witnessed history are never shared with a replaced deck or battle.
 var _jury: CombatTinkerV3JuryRigCards
-## The last GENUINE support-hand commit that is an authentic Tune Up/+. Only this
-## presenter observes it; no caller or discard pile may supply the receipt.
+## The last GENUINE support-hand commit that is an authentic Jury-rig source (Tune Up/+
+## or Spare Parts/+). Only this presenter observes it; no caller or discard pile may
+## supply the receipt.
 var _jury_receipts: Array[Dictionary] = []
-## The observed Tune Up/+ receipt plus the exact live deck/turn snapshot taken at
-## that commit, so a later play or turn invalidates the witness instead of reusing it.
+## The observed source receipt plus the exact live deck/turn snapshot taken at that
+## commit, so a later play or turn invalidates the witness instead of reusing it.
 var _jury_witness: Dictionary = {}
 var cleanse_choices: HBoxContainer
 ## Display-only extension of the shared hand metadata service: the service itself
@@ -855,11 +860,19 @@ func _clear_jury_witness() -> void:
 	_jury_witness.clear()
 
 
-## The authentic starter record for a Tune Up/+ source, or {} for any other record.
-## Its printed draw amount is the only draw Jury-rig executes.
+## The authentic printed record for a supported last-play source, read from the catalog
+## that genuinely owns that ID, or {} for any other record. Its printed draw is the only
+## draw the free copy executes and (Spare Parts only) its printed Block the only Block.
 func _jury_source_definition(card_id: String) -> Dictionary:
-	if not card_id in JURY_SOURCE_IDS:
-		return {}
+	if card_id in JURY_TUNE_UP_IDS:
+		return _jury_tune_up_definition(card_id)
+	if card_id in JURY_SPARE_PARTS_IDS:
+		return _jury_spare_parts_definition(card_id)
+	return {}
+
+
+## Starter Tune Up/+: cost 0, no target, FROM every seat and exactly one printed draw.
+func _jury_tune_up_definition(card_id: String) -> Dictionary:
 	var record := StarterCards.new().get_definition(card_id)
 	if record.is_empty() or record.get("id") != card_id or record.get("owner") != "tinker":
 		return {}
@@ -867,7 +880,7 @@ func _jury_source_definition(card_id: String) -> Dictionary:
 		return {}
 	if record.get("target_kind") != "none":
 		return {}
-	if record.get("from_positions") != JURY_SOURCE_FROM:
+	if not _jury_seats_match(record.get("from_positions"), JURY_SOURCE_FROM):
 		return {}
 	var to_positions: Variant = record.get("to_positions")
 	if typeof(to_positions) != TYPE_ARRAY or not (to_positions as Array).is_empty():
@@ -883,6 +896,58 @@ func _jury_source_definition(card_id: String) -> Dictionary:
 	return record
 
 
+## Tinker's pool Spare Parts/+: cost 0, self target, FROM 2-3 and exactly the printed
+## {block, draw} effects. CombatTinkerPoolGadgets prints the same shape for the paid play,
+## so the free copy can never grant a different Block or draw than the real card.
+func _jury_spare_parts_definition(card_id: String) -> Dictionary:
+	var record := TinkerPoolCards.new().get_definition(card_id)
+	if record.is_empty() or record.get("id") != card_id or record.get("owner") != "tinker":
+		return {}
+	if typeof(record.get("cost")) != TYPE_INT or int(record.get("cost")) != 0:
+		return {}
+	if record.get("target_kind") != "self":
+		return {}
+	if not _jury_seats_match(record.get("from_positions"), JURY_SPARE_PARTS_FROM):
+		return {}
+	var to_positions: Variant = record.get("to_positions")
+	if typeof(to_positions) != TYPE_ARRAY or not (to_positions as Array).is_empty():
+		return {}
+	var effects: Variant = record.get("effects")
+	if typeof(effects) != TYPE_DICTIONARY:
+		return {}
+	var authored: Dictionary = effects
+	if authored.size() != 2 or not authored.has("block") or not authored.has("draw"):
+		return {}
+	if typeof(authored["block"]) != TYPE_INT or int(authored["block"]) <= 0:
+		return {}
+	if typeof(authored["draw"]) != TYPE_INT or int(authored["draw"]) != 1:
+		return {}
+	return record
+
+
+## A detached plain-int seat list, so a typed catalog Array[int] and a receipt's plain
+## Array compare and read identically.
+func _jury_seats(value: Variant) -> Array:
+	var seats: Array = []
+	if typeof(value) == TYPE_ARRAY:
+		for seat in (value as Array):
+			seats.append(int(seat))
+	return seats
+
+
+## Exact seat-list equality: same length, every element a real int in the authored order.
+func _jury_seats_match(value: Variant, expected: Array) -> bool:
+	if typeof(value) != TYPE_ARRAY:
+		return false
+	var seats: Array = value
+	if seats.size() != expected.size():
+		return false
+	for index in range(seats.size()):
+		if typeof(seats[index]) != TYPE_INT or int(seats[index]) != int(expected[index]):
+			return false
+	return true
+
+
 func _jury_receipt_for(card_id: String) -> Dictionary:
 	var record := _jury_source_definition(card_id)
 	if record.is_empty():
@@ -891,8 +956,8 @@ func _jury_receipt_for(card_id: String) -> Dictionary:
 		"ok": true,
 		"card_id": card_id,
 		"owner": str(record.get("owner", "")),
-		"from_positions": (record.get("from_positions", []) as Array).duplicate(),
-		"to_positions": (record.get("to_positions", []) as Array).duplicate(),
+		"from_positions": _jury_seats(record.get("from_positions", [])),
+		"to_positions": _jury_seats(record.get("to_positions", [])),
 		"target_kind": str(record.get("target_kind", "")),
 	}
 
@@ -918,6 +983,11 @@ func _jury_witness_valid() -> bool:
 	if _jury == null or _jury_witness.is_empty() or _jury_receipts.size() != 1:
 		return false
 	if _jury_witness.get("receipt") != _jury_receipts[0]:
+		return false
+	# Only a receipt this presenter itself authenticated against a real source catalog may
+	# witness a copy: a forged or unsupported series never becomes a source.
+	var authentic := _jury_receipt_for(str(_jury_receipts[0].get("card_id", "")))
+	if authentic.is_empty() or authentic != _jury_receipts[0]:
 		return false
 	var state: Variant = _jury_witness.get("state", [])
 	return state is Array and not (state as Array).is_empty() and state == _jury_state()
@@ -988,7 +1058,10 @@ func _jury_selection_valid() -> bool:
 
 ## Revalidate the plan and its cost-zero copy instruction BEFORE payment, then let
 ## the accepted resolver charge/discard/latch exactly once. Only the copied printed
-## draw is executed; no source card is placed in hand, paid for or discarded again.
+## effects are executed: Spare Parts' printed Block once on the living Tinker and the
+## source's printed draw once from the live deck, or for Tune Up/+ only its printed draw.
+## No source card is placed in hand, paid for or discarded again, no scrap currency moves
+## and no RNG beyond the deck's own draw/reshuffle is touched.
 func _play_jury_rig(deck: CombatDeck, party: CombatParty, card_id: String) -> bool:
 	if _jury == null or not _jury.CARD_IDS.has(card_id):
 		return false
@@ -1006,18 +1079,34 @@ func _play_jury_rig(deck: CombatDeck, party: CombatParty, card_id: String) -> bo
 	if record.is_empty() or str(plan.get("source_card_id", "")) != str(record.get("id", "")):
 		return false
 	if str(source_card.get("owner", "")) != str(record.get("owner", "")) \
-			or source_card.get("from_positions") != record.get("from_positions") \
-			or source_card.get("to_positions") != record.get("to_positions") \
+			or not _jury_seats_match(source_card.get("from_positions"), record.get("from_positions", [])) \
+			or not _jury_seats_match(source_card.get("to_positions"), record.get("to_positions", [])) \
 			or str(source_card.get("target_kind", "")) != str(record.get("target_kind", "")):
 		return false
 	var copy := _jury.copy_instruction(source_card)
 	if not _jury_copy_authentic(copy, record):
 		return false
+	# The copy's one genuine recipient and printed amounts, authenticated BEFORE payment:
+	# only the living Tinker in an authored source seat receives them, and an overflowing
+	# Block total refuses instead of charging for a copy that cannot land.
+	var owner_position: int = int(plan.get("owner_position", 0))
+	if owner_position != int(plan.get("target_position", 0)):
+		return false
+	var owner: Dictionary = party.get_hero(owner_position)
+	if owner.get("id") != str(record.get("owner", "")) or int(owner.get("hp", 0)) <= 0 \
+			or not _jury_seats(record.get("from_positions", [])).has(owner_position):
+		return false
+	var effects: Dictionary = record.get("effects", {})
+	var block: int = int(effects.get("block", 0))
+	var draw: int = int(effects.get("draw", 0))
+	if block < 0 or draw < 0:
+		return false
+	if block > CombatParty.MAX_INT - int(owner.get("block", 0)):
+		return false
 	var result: Dictionary = _jury.play_card(deck, party, card_id, receipts)
 	if not result.get("ok", false) or result.get("copy", {}) != copy:
 		return false
-	var draw: int = int((record.get("effects", {}) as Dictionary).get("draw", 0))
-	if draw <= 0:
+	if block > 0 and not party.gain_block(owner_position, block):
 		return false
 	if deck.draw_extra(draw) < 0:
 		return false
@@ -1036,8 +1125,8 @@ func _jury_copy_authentic(copy: Dictionary, record: Dictionary) -> bool:
 	if str(copy.get("card_id", "")) != str(record.get("id", "")) \
 			or str(copy.get("owner", "")) != str(record.get("owner", "")):
 		return false
-	return copy.get("from_positions") == record.get("from_positions") \
-		and copy.get("to_positions") == record.get("to_positions") \
+	return _jury_seats_match(copy.get("from_positions"), record.get("from_positions", [])) \
+		and _jury_seats_match(copy.get("to_positions"), record.get("to_positions", [])) \
 		and str(copy.get("target_kind", "")) == str(record.get("target_kind", ""))
 
 
