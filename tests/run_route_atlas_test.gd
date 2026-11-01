@@ -2106,6 +2106,171 @@ func _exercise_seeded_fight_danger(view: RunRouteAtlas) -> void:
 		view.bind_map(null)
 
 
+## AC1-AC3: real seeded route, mounted scene art, and the same model/RNG witnesses.
+## This exercises the live NodeToken processor; a synthetic or null atlas cannot pass.
+func _exercise_token_pulse(view: RunRouteAtlas) -> void:
+	var rng := _rng(6214)
+	var map := RunMap.new()
+	_check(map.generate(rng), "pulse fixture generates an authentic seeded route")
+	if not map.is_generated():
+		return
+	var before := _state(map, rng)
+	view.set_reduced_motion_override(false)
+	view.bind_map(map)
+	var legal_id := ""
+	for id in map.get_legal_choices():
+		var candidate := view.get_node_or_null("Node_" + id) as RunRouteAtlas.RouteTag
+		if candidate == null:
+			continue
+		var art := candidate.get_node_or_null("Art") as RunRouteAtlas.NodeToken
+		if art != null and art.token_texture != null and art.token_rect().has_area():
+			legal_id = id
+			break
+	_check(not legal_id.is_empty() and map.get_legal_choices().has(legal_id),
+		"pulse requires a real legal choice with imported authored token art")
+	if legal_id.is_empty():
+		view.bind_map(null)
+		view.set_reduced_motion_override(null)
+		return
+	var marker := view.get_node("Node_" + legal_id) as RunRouteAtlas.RouteTag
+	var art := marker.get_node("Art") as RunRouteAtlas.NodeToken
+	var caption := marker.get_node("Identity") as Label
+	var action := marker.get_node("Action") as Button
+	_check(art != null and action != null and caption != null
+		and marker.get_meta("route_state") == "legal"
+		and art.token_state == "legal" and art.token_texture != null
+		and art.is_inside_tree() and art.token_pulse_active() and art.is_processing(),
+		"live mounted legal authored token owns an active visual processor")
+	await create_timer(0.08).timeout
+	_check(art.is_processing() and art._pulse_elapsed > 0.0
+		and art._pulse_elapsed < RunRouteAtlas.NodeToken.PULSE_PERIOD
+		and art.token_pulse_alpha() < 1.0,
+		"mounted SceneTree actually advances the live visible token timer")
+	art.sync_token_pulse()
+	var art_rect := art.token_rect()
+	var tag_rect := Rect2(marker.position, marker.size)
+	var action_rect := Rect2(action.position, action.size)
+	var identity_rect := Rect2(caption.position, caption.size)
+	var identity_text := caption.text
+	var hover_text := marker.tooltip_text
+	var action_help := action.tooltip_text
+	var line_paths: Array[PackedVector2Array] = []
+	for child in view.get_children():
+		if child is Line2D:
+			line_paths.append((child as Line2D).points.duplicate())
+	var clock_before := _state(map, rng)
+	_check(is_equal_approx(art.token_pulse_alpha(), 1.0)
+		and RunRouteAtlas.NodeToken.PULSE_MIN_ALPHA >= 0.7
+		and RunRouteAtlas.NodeToken.PULSE_MIN_ALPHA < 1.0
+		and RunRouteAtlas.NodeToken.PULSE_PERIOD > 2.0,
+		"new legal tag begins fully opaque with a gently bounded deterministic period")
+	art.advance_token_pulse(RunRouteAtlas.NodeToken.PULSE_PERIOD * 0.5)
+	_check(is_equal_approx(art.token_pulse_alpha(), RunRouteAtlas.NodeToken.PULSE_MIN_ALPHA),
+		"half-period produces only the deterministic minimum authored-image alpha")
+	art.advance_token_pulse(RunRouteAtlas.NodeToken.PULSE_PERIOD * 0.5)
+	_check(is_equal_approx(art.token_pulse_alpha(), 1.0)
+		and is_equal_approx(art._pulse_elapsed, 0.0),
+		"full-period wraps to the same neutral phase without accumulating time")
+	var current_lines: Array[PackedVector2Array] = []
+	for child in view.get_children():
+		if child is Line2D:
+			current_lines.append((child as Line2D).points.duplicate())
+	_check(art.token_rect() == art_rect and Rect2(marker.position, marker.size) == tag_rect
+		and Rect2(action.position, action.size) == action_rect
+		and Rect2(caption.position, caption.size) == identity_rect
+		and caption.text == identity_text and marker.tooltip_text == hover_text
+		and action.tooltip_text == action_help and current_lines == line_paths
+		and _state(map, rng) == clock_before,
+		"visual clock leaves fitted art, tag, caption, Action, Help, stitches and RNG fixed")
+	# Future off-window/current-floor nodes are genuine RunMap records, not stand-ins.
+	var future: RunRouteAtlas.NodeToken = null
+	for child in view.get_children():
+		if child is RunRouteAtlas.RouteTag and child.get_meta("route_state") == "other":
+			var candidate := child.get_node_or_null("Art") as RunRouteAtlas.NodeToken
+			if candidate != null and candidate.token_texture != null and candidate.token_rect().has_area():
+				future = candidate
+				break
+	_check(future != null and future.token_state == "other"
+		and future.get_parent().get_meta("route_state") == "other",
+		"future/noncurrent negative is a real mounted map marker with authored artwork")
+	if future != null:
+		future.advance_token_pulse(RunRouteAtlas.NodeToken.PULSE_PERIOD * 0.5)
+		_check(not future.token_pulse_active() and not future.is_processing()
+			and is_equal_approx(future.token_pulse_alpha(), 1.0)
+			and is_equal_approx(future._pulse_elapsed, 0.0),
+			"future authored images remain still and never own processors")
+	# Simulate missing token art on this actual legal tag, retaining its drawn fallback.
+	var original_texture := art.token_texture
+	art.token_texture = null
+	art.sync_token_pulse()
+	art.advance_token_pulse(RunRouteAtlas.NodeToken.PULSE_PERIOD * 0.5)
+	_check(art.token_rect() == Rect2() and not art.token_pulse_active()
+		and not art.is_processing() and is_equal_approx(art.token_pulse_alpha(), 1.0)
+		and is_equal_approx(art._pulse_elapsed, 0.0),
+		"forced missing art draws a static fallback and has no visual processor")
+	art.token_texture = original_texture
+	art.sync_token_pulse()
+	art.advance_token_pulse(RunRouteAtlas.NodeToken.PULSE_PERIOD * 0.5)
+	view.set_reduced_motion_override(true)
+	_check(view._reduced_motion() and not art.token_pulse_active()
+		and not art.is_processing() and is_equal_approx(art.token_pulse_alpha(), 1.0)
+		and is_equal_approx(art._pulse_elapsed, 0.0),
+		"accessibility reduced-motion override stops and resets the live token")
+	view.set_reduced_motion_override(false)
+	_check(art.token_pulse_active() and art.is_processing()
+		and is_equal_approx(art.token_pulse_alpha(), 1.0),
+		"motion re-enable begins at the neutral phase, not a stale phase")
+	art.advance_token_pulse(RunRouteAtlas.NodeToken.PULSE_PERIOD * 0.5)
+	view.hide()
+	_check(not art.token_pulse_active() and not art.is_processing()
+		and is_equal_approx(art.token_pulse_alpha(), 1.0)
+		and is_equal_approx(art._pulse_elapsed, 0.0),
+		"hiding the actual atlas stops the clock and resets alpha immediately")
+	view.show()
+	_check(art.token_pulse_active() and art.is_processing()
+		and is_equal_approx(art.token_pulse_alpha(), 1.0),
+		"showing the atlas restarts only the visible authored legal image")
+	# The selected node is the real RunMap commit, not a manufactured chosen state.
+	_check(map.choose_node(legal_id), "pulse fixture commits its actual legal source node")
+	var committed := _state(map, rng)
+	view.refresh()
+	_check(not is_instance_valid(art),
+		"refresh frees the former legal token rather than retaining its processor")
+	var current_tag := view.get_node_or_null("Node_" + legal_id) as RunRouteAtlas.RouteTag
+	var current_art := current_tag.get_node_or_null("Art") as RunRouteAtlas.NodeToken if current_tag != null else null
+	_check(current_tag != null and current_art != null
+		and current_tag.get_meta("route_state") == "chosen"
+		and current_art.token_state == "chosen" and current_art.token_texture != null
+		and current_art.token_pulse_active() and current_art.is_processing()
+		and is_equal_approx(current_art.token_pulse_alpha(), 1.0),
+		"the genuinely visited current tag pulses on its first fresh mounted frame")
+	if current_art != null:
+		current_art.advance_token_pulse(RunRouteAtlas.NodeToken.PULSE_PERIOD * 0.5)
+		_check(is_equal_approx(current_art.token_pulse_alpha(),
+			RunRouteAtlas.NodeToken.PULSE_MIN_ALPHA),
+			"visited current art shares the legal token's deterministic visual interval")
+	view.refresh()
+	current_tag = view.get_node_or_null("Node_" + legal_id) as RunRouteAtlas.RouteTag
+	current_art = current_tag.get_node_or_null("Art") as RunRouteAtlas.NodeToken if current_tag != null else null
+	_check(current_art != null and current_art.is_processing()
+		and is_equal_approx(current_art.token_pulse_alpha(), 1.0)
+		and is_equal_approx(current_art._pulse_elapsed, 0.0),
+		"refresh replaces old token clocks with a neutral single processor")
+	view.bind_map(null)
+	_check(view.get_child_count() == 0 and not view._has_snapshot
+		and view._map == null, "unbind clears all token processors and stale animation state")
+	view.bind_map(map)
+	current_tag = view.get_node_or_null("Node_" + legal_id) as RunRouteAtlas.RouteTag
+	current_art = current_tag.get_node_or_null("Art") as RunRouteAtlas.NodeToken if current_tag != null else null
+	_check(current_art != null and current_art.is_processing()
+		and is_equal_approx(current_art.token_pulse_alpha(), 1.0),
+		"rebind rebuilds a fresh current token with no retained phase")
+	_check(_state(map, rng) == committed and committed["rng"] == before["rng"],
+		"pulse, hide, refresh and rebind leave seeded model, legal IDs and RNG authoritative")
+	view.bind_map(null)
+	view.set_reduced_motion_override(null)
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	_check(RunRouteAtlas.stop_consequence("Rest") == EXPECTED_HELP.Rest,
@@ -2140,6 +2305,7 @@ func _run() -> void:
 	_check(first.is_inside_tree(), "read-only Control actually mounted in window")
 	_verify_normal_fight_scaler()
 	await _exercise_seeded_fight_danger(first)
+	await _exercise_token_pulse(first)
 
 	var empty := RunMap.new()
 	first.bind_map(empty)

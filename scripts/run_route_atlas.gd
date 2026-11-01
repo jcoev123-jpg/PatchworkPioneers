@@ -147,6 +147,10 @@ var _board_texture: Texture2D = null
 var _node_tokens: Dictionary = {}
 ## Owner or data may hand the board image in directly; null falls back to the path.
 var board_texture_override: Texture2D = null
+## Mirrors the accessible enemy-intent art pulse; null consults the project setting.
+var _reduced_motion_override: Variant = null
+const REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
+
 var board_texture_path := MAP_BOARD_PATH
 
 
@@ -274,13 +278,64 @@ class NodeToken extends Control:
 				canvas.draw_line(Vector2(30, 15), Vector2(19, 33), ink, 1.6, true)
 		canvas.draw_set_transform(Vector2.ZERO)
 
+	## Only the mounted current or legal authored image breathes; no geometry moves.
+	const PULSE_PERIOD := 3.2
+	const PULSE_MIN_ALPHA := 0.78
 	var token_kind := ""
 	var token_texture: Texture2D = null
+	var token_state := "other"
+	var _pulse_elapsed := 0.0
 
 	func _init() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 		focus_mode = Control.FOCUS_NONE
 		resized.connect(queue_redraw)
+		set_process(false)
+
+	func _atlas() -> RunRouteAtlas:
+		var tag := get_parent() as RunRouteAtlas.RouteTag
+		return tag.get_parent() as RunRouteAtlas if tag != null else null
+
+	func token_pulse_active() -> bool:
+		var atlas := _atlas()
+		return atlas != null and atlas._map != null and atlas._has_snapshot \
+			and atlas.is_visible_in_tree() and is_visible_in_tree() \
+			and token_state in ["chosen", "legal"] and not atlas._reduced_motion() \
+			and token_rect().has_area()
+
+	func token_pulse_alpha() -> float:
+		if not token_pulse_active():
+			return 1.0
+		return 1.0 - (1.0 - PULSE_MIN_ALPHA) * \
+			(0.5 - 0.5 * cos(TAU * _pulse_elapsed / PULSE_PERIOD))
+
+	## The live frame and mounted test share one bounded clock, without model or RNG calls.
+	func advance_token_pulse(delta: float) -> void:
+		if delta <= 0.0 or not token_pulse_active():
+			return
+		_pulse_elapsed = fposmod(_pulse_elapsed + delta, PULSE_PERIOD)
+		queue_redraw()
+
+	func sync_token_pulse() -> void:
+		_pulse_elapsed = 0.0
+		set_process(token_pulse_active())
+		queue_redraw()
+
+	func _ready() -> void:
+		sync_token_pulse()
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_EXIT_TREE:
+			_pulse_elapsed = 0.0
+			set_process(false)
+		elif what == NOTIFICATION_VISIBILITY_CHANGED and is_node_ready():
+			sync_token_pulse()
+
+	func _process(delta: float) -> void:
+		if not token_pulse_active():
+			sync_token_pulse()
+			return
+		advance_token_pulse(delta)
 
 	## Keep art centred in the upper portion of the tag, leaving the lower row for
 	## the readable kind and live shortcut number.
@@ -298,7 +353,8 @@ class NodeToken extends Control:
 	func _draw() -> void:
 		var rect := token_rect()
 		if rect.size.x > 0.0 and rect.size.y > 0.0:
-			draw_texture_rect(token_texture, rect, false)
+			draw_texture_rect(token_texture, rect, false,
+				Color(1.0, 1.0, 1.0, token_pulse_alpha()))
 			return
 		var plan := fallback_plan(token_kind)
 		if not emblem_contours(str(plan["emblem"])).is_empty():
@@ -687,9 +743,30 @@ func _exit_tree() -> void:
 	_teardown_reveal()
 
 
+## A hidden atlas immediately stops and resets every art clock, not only its parent.
 func _on_atlas_visibility_changed() -> void:
 	if not is_visible_in_tree():
 		_clear_comparison()
+	_sync_token_pulses()
+
+
+func _reduced_motion() -> bool:
+	if _reduced_motion_override is bool:
+		return _reduced_motion_override
+	return ProjectSettings.get_setting(REDUCED_MOTION_SETTING, false) == true
+
+
+func set_reduced_motion_override(value: Variant) -> void:
+	_reduced_motion_override = value if value is bool else null
+	_sync_token_pulses()
+
+
+func _sync_token_pulses() -> void:
+	for marker in get_children():
+		if marker is RouteTag:
+			var art := marker.get_node_or_null("Art") as NodeToken
+			if art != null:
+				art.sync_token_pulse()
 
 
 ## Presentation-only switch: the same reveal settles in 0.15 s instead of 0.6 s.
@@ -1661,6 +1738,7 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	var art := NodeToken.new()
 	art.name = "Art"
 	art.token_kind = shown
+	art.token_state = state
 	var token_path := node_token_path(shown)
 	art.token_texture = node_token_texture(token_path)
 	art.set_meta("route_kind", kind)
