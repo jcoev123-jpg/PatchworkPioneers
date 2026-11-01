@@ -375,11 +375,11 @@ func _idle_strip_safety(app, presenter) -> void:
 			and strip.get_image() != null
 			and ROSTER_ART.Puppet._clear_cell_margin(still.get_image(), 0,
 				still.get_width(), still.get_height())
-			and strip.get_width() > ROSTER_ART.Puppet.LOOP_ATLAS_MAX_WIDTH,
-			"the imported transparent Warden/Tinker still and oversize strip actually exist: " + hero.actor_id)
-		_check(hero.current_texture() == still and hero.idle_frames.is_empty()
-			and hero.idle_frame(hero.pose_texture()) == still and hero.posed_image_rect().has_area(),
-			"the mounted Warden/Tinker still is painted instead of an unsafe Web strip: " + hero.actor_id)
+			and strip.get_width() <= ROSTER_ART.Puppet.LOOP_ATLAS_MAX_WIDTH,
+			"the imported transparent Warden/Tinker still and Web-safe strip actually exist: " + hero.actor_id)
+		_check(hero.current_texture() == still and not hero.idle_frames.is_empty()
+			and hero.idle_frame(hero.pose_texture()) is AtlasTexture and hero.posed_image_rect().has_area(),
+			"the mounted Warden/Tinker play their Web-safe idle strip: " + hero.actor_id)
 	var seam_art: Dictionary = presenter.art_for("seamstress")
 	_check(seam_art.get("idle") is Texture2D and seam_art.get("idle_loop") is Texture2D
 		and seamstress.idle_frames.size() == 16
@@ -441,7 +441,7 @@ func _idle_strip_safety(app, presenter) -> void:
 		"missing still prevents optional animation and retains the generic drawn fallback")
 	warden.bind_actor("warden", original)
 	warden.idle_phase = original_phase
-	_check(warden.current_texture() == original.get("idle") and warden.idle_frames.is_empty()
+	_check(warden.current_texture() == original.get("idle") and not warden.idle_frames.is_empty()
 		and warden.actor_id == "warden", "live Warden binding restores its own valid still")
 	var restored_rects: Array[Rect2] = []
 	for puppet in presenter._puppets:
