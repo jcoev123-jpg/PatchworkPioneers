@@ -3,7 +3,10 @@ extends Node
 ## services; this node never mutates a roster to preview.
 const IDS := ["lantern_monk_pole_shelter", "lantern_monk_pole_shelter_plus"]
 const WAX_IDS := ["lantern_monk_wax_ward", "lantern_monk_wax_ward_plus"]
-const SHROUD_IDS := ["lantern_monk_moth_shroud", "lantern_monk_moth_shroud_plus"]
+## Moth Shroud/+ is owned by the shared support hand (V3-1), which supplies the
+## real living-ally target control. This presenter keeps its own binding only for
+## Pole Shelter and Wax Ward, so a drawn Shroud copy has exactly ONE input owner.
+const SHROUD_IDS: Array[String] = []
 const DEBUFFS := ["bleed", "weak", "exposed"]
 var _service := CombatLanternMonkPoleShelterCards.new()
 var _wax_service := CombatLanternMonkWaxWardCards.new()

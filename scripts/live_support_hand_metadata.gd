@@ -1,6 +1,7 @@
 extends "res://scripts/live_hand_card_metadata.gd"
 ## Display-only extension of the shared live-hand card metadata service for Button
-## Golem's two Eyelet Guard printings and (cycle 390) Tinker's two Jury-rig printings.
+## Golem's two Eyelet Guard printings, (cycle 390) Tinker's two Jury-rig printings and
+## (V3-1) the Lantern Monk's ally-targeting Moth Shroud pair.
 ##
 ## The shared service (scripts/live_hand_card_metadata.gd) belongs to another
 ## coding lane, so this presenter-local subclass never edits it: every other ID
@@ -22,6 +23,10 @@ var _jury_rules := CombatTinkerV3JuryRigCards.new()
 ## tooltip authority for its two printings: the printed heal, Block and one explicit
 ## party cleanse are read from the very catalog record that paid resolver authenticates.
 var _loom_rules := CombatSeamstressV3CleansingCards.new()
+## The Lantern Monk's accepted ally-targeting Moth Shroud resolver (V3-1) is the only
+## face and tooltip authority for its two printings: the printed Block and the
+## one-shot Dodge token come from the very catalog record that paid resolver authenticates.
+var _shroud_rules := CombatLanternMonkShroudCards.new()
 
 ## Read-only catalog authenticator. It never plays a card, never owns an armed
 ## mode and is never handed to the fight: the ONE armed authority lives on
@@ -29,9 +34,14 @@ var _loom_rules := CombatSeamstressV3CleansingCards.new()
 var _catalog_rules := CombatButtonGolemEyeletGuardCards.new()
 
 
-## The authentic pool record for one Eyelet Guard printing, detached. Anything
-## else, and a rewritten or relinked pair, keeps the shared unknown/foreign face.
+## The authentic pool record for one of this presenter's own printings (Eyelet Guard,
+## Moth Shroud), detached. Anything else, and a rewritten or relinked pair, keeps the
+## shared unknown/foreign face.
 func _definition(card_id: String) -> Dictionary:
+	if _shroud_rules.is_supported_card(card_id):
+		# `is_supported_card` authenticates the exact catalog record and its base/'+'
+		# link before this read-only face ever shows a name, cost, Block or Dodge.
+		return _shroud_rules._catalog_definition(card_id)
 	if _jury_rules.is_supported_card(card_id):
 		return CombatTinkerV3JuryRigCards.jury_rig_definition(card_id)
 	if _loom_rules.is_supported_party_card(card_id):
@@ -47,8 +57,14 @@ func _definition(card_id: String) -> Dictionary:
 	return ButtonGolemPoolCards.new().get_definition(card_id)
 
 
-## The terse drawn face line: only the printed Block and the one-turn Thorns.
+## The terse drawn face line: only the printed Block and the Dodge token (or the
+## one-turn Thorns for Eyelet Guard).
 func _rules(id: String) -> String:
+	if _shroud_rules.is_supported_card(id):
+		var record: Dictionary = _definition(id)
+		if record.is_empty():
+			return ""
+		return "Give a living ally %d Block. Dodge: their next incoming attack misses once." % int(record.get("effects", {}).get("block", 0))
 	if _jury_rules.is_supported_card(id):
 		var record: Dictionary = _definition(id)
 		if record.is_empty():
@@ -79,6 +95,17 @@ func _rules(id: String) -> String:
 ## The complete hover tooltip: authentic owner, cost, self target, both printed
 ## effects, the one-turn duration and the refresh rule, then the usual pip legend.
 func base_effect_text(card_id: String, include_pips: bool = true) -> String:
+	if _shroud_rules.is_supported_card(card_id):
+		var shroud: Dictionary = _definition(card_id)
+		if shroud.is_empty():
+			return "Unknown card"
+		var shroud_effects: Dictionary = shroud.get("effects", {})
+		var shroud_block: int = int(shroud_effects.get("block", 0))
+		var shroud_pips: String = _pip_legend(shroud) if include_pips else ""
+		return ("%s; Lantern Monk; %d energy\nFrom %s; Choose one living ally\n"
+			+ "Give the chosen ally %d Block and arm Dodge: the next incoming attack on that ally misses and spends the one-shot Dodge, so it deals no damage. Moth Shroud keeps an already-armed Dodge at 1 instead of stacking it, and casting the card never spends Dodge. Torn heroes are excluded; the Monk may veil itself.\n%s") % [
+				str(shroud.get("display_name", card_id)), int(shroud.get("cost", -1)),
+				_positions(shroud.get("from_positions", [])), shroud_block, shroud_pips]
 	if _jury_rules.is_supported_card(card_id):
 		var card: Dictionary = _definition(card_id)
 		if card.is_empty():
@@ -131,6 +158,9 @@ func base_effect_text(card_id: String, include_pips: bool = true) -> String:
 ## `super` rewrites it from catalog affordability: returning early on an unchanged
 ## verdict would leave a dim card drawn at full colour after that rewrite.
 var _jury_playable: Dictionary = {}
+## The shared renderer knows only catalog affordability. Moth Shroud is useful only
+## while the mounted shared hand really admits it, so the face follows that preflight.
+var _shroud_playable: Dictionary = {}
 
 
 func _update_visual(panel: Control) -> void:
@@ -138,6 +168,9 @@ func _update_visual(panel: Control) -> void:
 	if not _bindings.has(panel):
 		return
 	var card_id: String = _bindings[panel].get("id", "")
+	if _shroud_rules.is_supported_card(card_id):
+		_apply_shroud_visual(panel, card_id)
+		return
 	if not _jury_rules.CARD_IDS.has(card_id):
 		return
 	var presenter = _app.get_node_or_null("LiveSupportHand") if _app != null else null
@@ -156,10 +189,27 @@ func visual_state(panel) -> Dictionary:
 	var state: Dictionary = super.visual_state(panel)
 	if _jury_playable.has(panel):
 		state["playable"] = bool(_jury_playable[panel])
+	if _shroud_playable.has(panel):
+		state["playable"] = bool(_shroud_playable[panel])
 	return state
+
+
+## Moth Shroud is enable-able only by the mounted shared hand's own paid admission:
+## a living Monk in an authored seat, the held copy, energy and a living ally.
+func _apply_shroud_visual(panel: Control, card_id: String) -> void:
+	var presenter = _app.get_node_or_null("LiveSupportHand") if _app != null else null
+	var playable: bool = presenter != null and is_instance_valid(presenter) \
+		and presenter.has_method("moth_shroud_actionable") \
+		and bool(presenter.moth_shroud_actionable(panel, card_id))
+	_shroud_playable[panel] = playable
+	var colour := Color.WHITE if playable or _app == null else Color(0.72, 0.70, 0.68)
+	if panel.self_modulate != colour:
+		panel.self_modulate = colour
+		panel.queue_redraw()
 
 
 ## Drop this face's own admission when the shared service unbinds its panel.
 func _unbind(panel) -> void:
 	_jury_playable.erase(panel)
+	_shroud_playable.erase(panel)
 	super._unbind(panel)

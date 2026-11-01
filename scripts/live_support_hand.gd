@@ -30,7 +30,8 @@ const ALLY_IDS := ["seamstress_v3_shielding_hem", "seamstress_v3_shielding_hem_p
 	"seamstress_stitch_up_plus", "warden_patch_guard", "warden_patch_guard_plus",
 	"seamstress_darning", "seamstress_darning_plus", "seamstress_thimble_tea", "seamstress_thimble_tea_plus",
 	"warden_v3_shield_catch", "warden_v3_shield_catch_plus",
-	"warden_v3_guard_stitch", "warden_v3_guard_stitch_plus"]
+	"warden_v3_guard_stitch", "warden_v3_guard_stitch_plus",
+	"lantern_monk_moth_shroud", "lantern_monk_moth_shroud_plus"]
 const TABLE_ID := "SupportTableBacking"
 const QUILT_IDS := ["warden", "seamstress", "tinker"]
 const QUILT_RULE := "Play cards from all living heroes: each living hero gains 3 Block; draw 1 once per turn"
@@ -102,6 +103,7 @@ var _v3_tinker_scrap := CombatTinkerV3ScrapSupportCards.new()
 var _turret := CombatTinkerV3TurretCards.new()
 var _heal_cards := CombatSeamstressPoolHeals.new()
 var _hem := CombatSeamstressV3HemCards.new()
+var _shroud := CombatLanternMonkShroudCards.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
 var _pitchfork := CombatScarecrowPitchforkCards.new()
@@ -624,6 +626,14 @@ func _is_warden_guard_card(card_id: String) -> bool:
 func _is_loom_card(card_id: String) -> bool:
 	return _cleansing != null and _cleansing.is_supported_party_card(card_id)
 
+
+## True only for the two authentic ally-targeting Moth Shroud printings. The paid
+## resolver's own authenticating table is the authority, so a rewritten, relinked or
+## aliased ID can never be mounted by a stale local list. None after battle teardown.
+func _is_shroud_card(card_id: String) -> bool:
+	return _shroud != null and _shroud.is_supported_card(card_id)
+
+
 ## True only for the six authored Seamstress healing pool records the resolver owns.
 func _is_heal_card(card_id: String) -> bool:
 	return card_id in CombatSeamstressPoolHeals.DARNING_IDS \
@@ -699,6 +709,8 @@ func _is_actionable(card_id: String) -> bool:
 		return true
 	if _hem.is_supported_card(card_id):
 		return true
+	if _is_shroud_card(card_id):
+		return true
 	if _v3_tinker_scrap != null and _v3_tinker_scrap.is_supported_card(card_id):
 		return true
 	if _turret.is_supported_card(card_id) or CombatWardenV3TauntCards.CARDS.has(card_id):
@@ -737,6 +749,10 @@ func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position:
 func _commit_held(deck: CombatDeck, party: CombatParty, card_id: String, position: int, debuff: String = "") -> bool:
 	if _hem.is_supported_card(card_id):
 		return bool(_hem.play_card(deck, party, card_id, position).get("ok", false))
+	if _is_shroud_card(card_id):
+		# The shipped paid resolver authenticates the held copy, the Monk's current
+		# authored seat and the chosen living ally, then pays, discards and arms Dodge.
+		return bool(_shroud.play_card(deck, party, card_id, position).get("ok", false))
 	if _v3_tinker_scrap != null and _v3_tinker_scrap.is_supported_card(card_id):
 		return bool(_v3_tinker_scrap.play_card(deck, party, card_id, 0).get("ok", false))
 	if _turret.is_supported_card(card_id):
@@ -1032,6 +1048,12 @@ func jury_rig_actionable(panel, card_id: String) -> bool:
 	return _eligible(panel, card_id, _deck, _party, _battle)
 
 
+## Public read-only admission for the two Moth Shroud printings, read by the sewn
+## card face so it is bright only while the paid resolver's own preflight admits it.
+func moth_shroud_actionable(panel, card_id: String) -> bool:
+	return _is_shroud_card(card_id) and _eligible(panel, card_id, _deck, _party, _battle)
+
+
 ## Only a bound authentic battle can advance the Heirloom once on the
 ## scheduler's real turn index. UI redraws, failed plays and stale views cannot.
 func _current_heirloom_rules(deck: CombatDeck, party: CombatParty) -> CombatHeirloomPatchTriggers:
@@ -1140,6 +1162,7 @@ func _sync_battle() -> void:
 		_tinker_gadgets = CombatTinkerPoolGadgets.new()
 		_v3_tinker_scrap = CombatTinkerV3ScrapSupportCards.new()
 		_heal_cards = CombatSeamstressPoolHeals.new()
+		_shroud = CombatLanternMonkShroudCards.new()
 		var carry = app.party_carryover
 		if carry is RunTornCarryover and carry._wardrobe != null:
 			var state: Dictionary = carry._wardrobe.get_snapshot()
@@ -1378,7 +1401,7 @@ func _sync_battle() -> void:
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_card_input.bind(panel, label.text, _deck, _party, _battle)
 		_bindings[panel] = callback
-		if (_jury != null and _jury.CARD_IDS.has(label.text)) or _hem.is_supported_card(label.text) or CombatYarnRangerKnitCards.CARDS.has(label.text) or label.text in VIGIL_IDS or label.text in GLOW_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text) or _turret.is_supported_card(label.text) or CombatWardenV3TauntCards.CARDS.has(label.text) or _is_eyelet_card(label.text) or _is_warden_guard_card(label.text) or _is_loom_card(label.text):
+		if (_jury != null and _jury.CARD_IDS.has(label.text)) or _hem.is_supported_card(label.text) or CombatYarnRangerKnitCards.CARDS.has(label.text) or label.text in VIGIL_IDS or label.text in GLOW_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text) or _turret.is_supported_card(label.text) or CombatWardenV3TauntCards.CARDS.has(label.text) or _is_eyelet_card(label.text) or _is_warden_guard_card(label.text) or _is_loom_card(label.text) or _is_shroud_card(label.text):
 			_move_context[panel] = _current_move_context(panel)
 		panel.gui_input.connect(callback)
 	# Keep the existing End/Return Tab cycle; Up enters the card row, Down exits it.
@@ -1676,6 +1699,24 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 				legal = true
 		if not legal:
 			return false
+	if _is_shroud_card(card_id):
+		# The shipped paid resolver's own read-only preflight decides the whole cast:
+		# held copy, active turn, printed energy, living Monk in an authored FROM seat,
+		# and at least one living ally (including the Monk itself) with representable
+		# Block. A stale panel, a replaced fight or a forged hand entry never arms.
+		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
+				or _move_context.get(panel, []) != _current_move_context(panel):
+			return false
+		if app._battle_closed or app.battle_result == null or not app.battle_result.can_continue() \
+				or app.battle_result._party != party or app.battle_result._enemies != app.enemies \
+				or app.enemies == null or not app.enemies.is_valid() or app.enemies.is_victorious():
+			return false
+		var shroud_legal := false
+		for slot in [1, 2, 3]:
+			if _shroud._prepare(deck, party, card_id, slot).get("ok", false):
+				shroud_legal = true
+		if not shroud_legal:
+			return false
 	if _roll.is_supported_card(card_id):
 		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
 				or _move_context.get(panel, []) != _current_move_context(panel):
@@ -1826,7 +1867,7 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		_pending.heroes = party.get_heroes()
 		_pending.hand = deck.hand.duplicate()
 		_pending.selections = {}
-	if _hem.is_supported_card(card_id) or _is_warden_guard_card(card_id) or CombatYarnRangerKnitCards.CARDS.has(card_id) or _bolas.is_supported_card(card_id) or card_id in VIGIL_IDS or card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id) or _roll.is_supported_card(card_id) or _turret.is_supported_card(card_id) or CombatWardenV3TauntCards.CARDS.has(card_id) or _is_eyelet_card(card_id) or _is_loom_card(card_id):
+	if _hem.is_supported_card(card_id) or _is_warden_guard_card(card_id) or CombatYarnRangerKnitCards.CARDS.has(card_id) or _bolas.is_supported_card(card_id) or card_id in VIGIL_IDS or card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id) or _roll.is_supported_card(card_id) or _turret.is_supported_card(card_id) or CombatWardenV3TauntCards.CARDS.has(card_id) or _is_eyelet_card(card_id) or _is_loom_card(card_id) or _is_shroud_card(card_id):
 		_pending.owner_roster = _party.get_heroes().map(func(hero): return [hero.id, hero.position])
 	if _is_warden_guard_card(card_id):
 		_pending.guard_hand = deck.hand.duplicate()
@@ -1963,7 +2004,8 @@ func _selection_valid() -> bool:
 		return false
 	if (_pop.is_supported_card(_pending.id) or _bolas.is_supported_card(_pending.id) or _sew.is_supported_card(_pending.id) or _roll.is_supported_card(_pending.id) or _is_eyelet_card(_pending.id)) and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
 		return false
-	if (_hem.is_supported_card(_pending.id) or _is_warden_guard_card(_pending.id)) \
+	if (_hem.is_supported_card(_pending.id) or _is_warden_guard_card(_pending.id) \
+			or _is_shroud_card(_pending.id)) \
 			and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
 		return false
 	if _turret.is_supported_card(_pending.id) or CombatWardenV3TauntCards.CARDS.has(_pending.id):
@@ -2035,6 +2077,8 @@ func _choose_target() -> void:
 		var panel: Control = _target_panels()[index]
 		if _hem.is_supported_card(_pending.id) and not _hem._prepare(_deck, _party, _pending.id, index + 1).get("ok", false):
 			continue
+		if _is_shroud_card(_pending.id) and not _shroud._prepare(_deck, _party, _pending.id, index + 1).get("ok", false):
+			continue
 		if _is_warden_guard_card(_pending.id):
 			var guard_flow = _turret_flow(_deck, _party)
 			if guard_flow == null or not guard_flow.can_play_warden_guard_card(_pending.id, index + 1):
@@ -2074,7 +2118,7 @@ func _choose_target() -> void:
 			"mouse_filter": previous_filter}
 		if _pop.is_supported_card(_pending.id) or _pitchfork.is_supported_card(_pending.id) or _bolas.is_supported_card(_pending.id) or _is_fear_card(_pending.id):
 			_targets[panel].actor_ref = app.enemies._enemies[index]
-		if _roll.is_supported_card(_pending.id) or _hem.is_supported_card(_pending.id) or _is_warden_guard_card(_pending.id):
+		if _roll.is_supported_card(_pending.id) or _hem.is_supported_card(_pending.id) or _is_warden_guard_card(_pending.id) or _is_shroud_card(_pending.id):
 			_targets[panel].actor_ref = _party._heroes[index]
 		panel.gui_input.connect(callback)
 	for index in range(panels.size()):
@@ -2287,6 +2331,9 @@ func _resolve_target(position: int, token: int) -> void:
 	if _roll.is_supported_card(id) and not _roll._prepare(_deck, _party, id, position).get("ok", false):
 		_cancel_pending()
 		return
+	if _is_shroud_card(id) and not _shroud._prepare(_deck, _party, id, position).get("ok", false):
+		_cancel_pending()
+		return
 	if _cleansing.is_supported_card(id) and not _cleansing._prepare(_deck, _party, id, position, debuff).get("ok", false):
 		_cancel_pending()
 		return
@@ -2409,6 +2456,7 @@ func _clear() -> void:
 	_tinker_gadgets = null
 	_v3_tinker_scrap = null
 	_heal_cards = null
+	_shroud = null
 	_heirloom = null
 	_heirloom_pinned = null
 	_heirloom_enemies = null
