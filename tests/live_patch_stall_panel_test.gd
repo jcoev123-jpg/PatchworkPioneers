@@ -202,6 +202,7 @@ func _run() -> void:
 	seed(268)
 	var expected_run := rng.state
 	await _layout(valid)
+	await _atmosphere_cases(valid)
 	await _focus_cases()
 	await _named_power_cases(slot_map)
 	await _number_key_cases()
@@ -1248,3 +1249,182 @@ func _scarce_stock_cases(power_slots: Dictionary) -> void:
 				"stale and replayed scarce presses cannot emit or settle twice")
 	_check(rng.state == route_rng_before,
 			"scarce rejections and purchases never touch the route RNG")
+
+
+func _ambient_controls() -> Array:
+	var result: Array = []
+	for b in panel.wearer_buttons + panel.offer_buttons + [panel.leave_button]:
+		result.append([b.get_global_rect(), b.text, b.tooltip_text, b.disabled,
+			b.focus_mode, b.focus_next, b.focus_previous, b.has_focus(),
+			b.get_meta("wearer_id", ""), b.get_meta("patch_id", "")])
+	return result
+
+
+func _ambient_retired(reason: String) -> void:
+	var layer: Control = panel.ambient_layer
+	_check(layer.profile.is_empty() and layer._time == 0.0 and not layer.visible
+			and not layer.is_processing() and layer.motif_metadata().is_empty(),
+			reason + " retires its animation and clock")
+	layer._process(6.0)
+	_check(layer._time == 0.0 and layer.motif_metadata().is_empty(),
+			reason + " cannot drift when presentation delta advances")
+
+
+func _atmosphere_cases(original: RunPatchStallVisit) -> void:
+	var layer: Control = panel.ambient_layer
+	var backing := panel.get_child(0) as Panel
+	_check(layer != null and backing != null and layer.get_parent() == backing
+			and backing.clip_contents and backing.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and layer.get_index() < backing.get_child(1).get_index()
+			and backing.get_index() < panel.title_label.get_index(),
+			"one clipped layer sits beneath sewn border and all original controls")
+	_check(panel.find_children("LiveBattleAmbient", "Control", true, false).size() == 1
+			and layer.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and layer.focus_mode == Control.FOCUS_NONE and layer.size == Vector2(900, 630)
+			and panel.position == Vector2(190, 45),
+			"one input-inert renderer fits fixed stitched panel")
+	_check(layer.profile == "scraps" and layer.fast and layer._visit_dressing
+			and layer.visible_budget() == 7 and layer.is_processing()
+			and is_equal_approx(layer.self_modulate.a, 0.42),
+			"authentic visit enables quiet seven-mote nonbattle scraps profile")
+	var marks: Array = layer.motif_metadata()
+	_check(marks.size() == 7 and layer._time < 1.0 and layer.felt_texture != null
+			and layer.light_texture != null and layer.fluff_texture != null
+			and layer.wisp_texture != null, "shipped imported VFX textures supply seven motifs")
+	for mark in marks:
+		_check(Rect2(Vector2.ZERO, layer.size).encloses(mark["rect"]),
+			"quiet motif lies inside the clipped sewn panel")
+	var before_state := original.read_state()
+	var before_quote := original.quote()
+	var before_controls := _ambient_controls()
+	var before_focus := root.gui_get_focus_owner()
+	var before_labels := [panel.title_label.text, panel.wallet_label.text,
+		panel.wearer_label.text, panel.status_label.text, panel._wearer_index]
+	var before_intents := intents.duplicate(true)
+	var before_run_rng := rng.state
+	seed(812732)
+	var expected_global := randi()
+	seed(812732)
+	var before_light: float = layer.light_alpha(layer._time, layer.fast)
+	layer._process(3.25)
+	_check(layer.motif_metadata() != marks and layer._time > 0.0
+			and layer.light_alpha(layer._time, layer.fast) != before_light,
+			"presentation-only delta visibly drifts motes and warm image")
+	_check(_ambient_controls() == before_controls and root.gui_get_focus_owner() == before_focus
+			and [panel.title_label.text, panel.wallet_label.text, panel.wearer_label.text,
+				panel.status_label.text, panel._wearer_index] == before_labels,
+			"all real button rects, captions, disabled flags and focus stay invariant")
+	_check(original.read_state() == before_state and original.quote() == before_quote
+			and intents == before_intents and rng.state == before_run_rng
+			and randi() == expected_global, "presentation never mutates source, intents or RNG")
+	seed(268)
+	await _bind(original)
+	_check(panel.ambient_layer == layer and layer._time < 1.0
+			and panel.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
+			"authentic rebind resets one reused renderer")
+	panel.hide()
+	_ambient_retired("hidden view")
+	panel.show()
+	await _frames()
+	_check(layer.profile == "scraps" and layer._time < 1.0 and layer.is_processing(),
+			"visible re-show of open quote starts fresh clock")
+	layer._process(2.0)
+	root.remove_child(panel)
+	_ambient_retired("detached view")
+	root.add_child(panel)
+	await _frames()
+	_check(layer.profile == "scraps" and layer._time < 1.0 and layer.is_processing(),
+			"tree reattach restarts the same renderer")
+
+	panel.reduced_motion_override = true
+	_ambient_retired("local reduced-motion override")
+	panel.reduced_motion_override = false
+	_check(layer.profile == "scraps" and layer._time == 0.0,
+			"disabling local override resumes true visit")
+	var previous_setting: Variant = ProjectSettings.get_setting("accessibility/reduced_motion", false)
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	panel.reduced_motion_override = null
+	_ambient_retired("ProjectSettings reduced motion")
+	panel.reduced_motion_override = false
+	_check(layer.profile == "scraps" and layer._time == 0.0,
+			"false override permits animation while global setting is true")
+	panel.reduced_motion_override = null
+	_ambient_retired("null override follows global setting")
+	ProjectSettings.set_setting("accessibility/reduced_motion", previous_setting)
+	panel._process(0.016)
+	_check(layer.profile == "scraps" and layer._time == 0.0,
+			"restored project setting resumes authentic view")
+	layer._process(1.0)
+	original._snapshot.gold += 1
+	panel._process(0.016)
+	_ambient_retired("stale source at render frame")
+	original._snapshot.gold -= 1
+	await _bind(original)
+	_check(layer.profile == "scraps" and layer._time < 1.0,
+			"fresh bind after stale source starts at zero")
+	var used := _visit("ambient_consumed")
+	var used_state := used.read_state()
+	await _bind(used)
+	layer._process(2.0)
+	_check(used.leave(used_state.visit_id, used_state.node_id,
+			used_state.snapshot).get("ok"), "external consumption uses real one-use service")
+	panel._process(0.016)
+	_ambient_retired("externally consumed visit")
+	var invalid := _visit("", 240)
+	_check(not invalid.is_valid(), "unavailable fixture genuinely fails validation")
+	await _bind(invalid)
+	_ambient_retired("invalid mounted visit")
+	var pre := LivePatchStallPanel.new()
+	pre.bind(invalid)
+	root.add_child(pre)
+	await _frames()
+	_check(pre.ambient_layer != null and pre.ambient_layer.profile.is_empty()
+			and not pre.ambient_layer.is_processing(), "invalid pre-mount bind never animates")
+	pre.queue_free()
+	await process_frame
+	await _ambient_fallback_case()
+	await _bind(original)
+	panel.close()
+	_ambient_retired("explicit close")
+	await _bind(original)
+	_check(layer.profile == "scraps" and layer._time < 1.0
+			and panel.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
+			"fresh genuine show/bind after close has one zero-clock renderer")
+
+
+func _ambient_fallback_case() -> void:
+	var fallback := LivePatchStallPanel.new()
+	fallback.position = Vector2(190, 45)
+	fallback.panel_art_path = "res://assets/paper/ui/missing_test_stall.png"
+	var visit := _visit("ambient_no_art")
+	var state := visit.read_state()
+	var quote := visit.quote()
+	var received: Array[Dictionary] = []
+	fallback.intent_requested.connect(func(intent: Dictionary): received.append(intent))
+	fallback.bind(visit)
+	root.add_child(fallback)
+	await _frames()
+	var backing := fallback.get_child(0) as Panel
+	_check(backing.get_theme_stylebox("panel") is StyleBoxFlat
+			and fallback.wearer_buttons.all(func(b: Button): return not b.disabled)
+			and fallback.offer_buttons.all(func(b: Button): return not b.disabled)
+			and not fallback.leave_button.disabled,
+			"missing panel image retains solid sewn border and genuine buttons")
+	fallback.ambient_layer.felt_texture = null
+	fallback.ambient_layer.light_texture = null
+	fallback.ambient_layer.fluff_texture = null
+	fallback.ambient_layer.wisp_texture = null
+	fallback.ambient_layer.vignette_texture = null
+	fallback.ambient_layer.queue_redraw()
+	fallback.ambient_layer._process(3.0)
+	_check(fallback.ambient_layer.profile == "scraps" and received.is_empty()
+			and visit.read_state() == state and visit.quote() == quote,
+			"missing optional VFX changes no purchase quote or action")
+	fallback.leave_button.pressed.emit()
+	var settled := false
+	if received.size() == 1:
+		settled = Controller.settle(visit, received[0], state, quote).get("ok")
+	_check(settled and received.size() == 1 and received[0].get("action") == "leave",
+			"missing art still forwards authentic free Leave to independent controller")
+	fallback.queue_free()
+	await process_frame
