@@ -78,6 +78,14 @@ const HERO_DETAIL_INK := Color("#334750")
 ## so a substituted or reparented button can never receive the player's keyboard.
 const RETURN_BUTTON_PATH := "PaperPanel/ContentMargin/ResultContent/ReturnButton"
 
+## The imported puppet portraits alone sway within their fixed sewn tickets.
+## Each seat has an independent phase, but the start and every 9-second loop
+## land exactly on the neutral transform; no gameplay clock or RNG is sampled.
+const HERO_MOTION_PERIOD := 9.0
+const HERO_MOTION_TILT := 0.0045
+const HERO_MOTION_BREATH := 0.004
+const HERO_MOTION_PHASES := [0.0, TAU / 3.0, 2.0 * TAU / 3.0]
+
 @onready var backdrop_art: TextureRect = $ResultBackdropArt
 @onready var felt_mat: PanelContainer = $FeltMat
 @onready var paper_panel: PanelContainer = $PaperPanel
@@ -104,10 +112,21 @@ var _can_return: bool = false
 var _presented_status: String = ""
 var _button_connection: Callable
 
+var _hero_motion_elapsed: float = 0.0
+
+var _hero_motion_portraits: Array[TextureRect] = []
+
+## Null follows the accessibility project setting; tests may override it.
+
+var _reduced_motion_override: Variant = null
+
 
 func _ready() -> void:
 	_apply_patchwork_style()
 	stitched_scroll.gui_input.connect(_on_stitched_scroll_input)
+	visibility_changed.connect(_on_result_visibility_changed)
+	if ProjectSettings.has_signal("settings_changed"):
+		ProjectSettings.settings_changed.connect(_sync_hero_motion)
 	close_result()
 
 
@@ -174,11 +193,101 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 		return_button.pressed.connect(_button_connection)
 	visible = true
 	_fit_result_height()
+	_sync_hero_motion()
 	# Only an authorized result is handed the keyboard, and only once the opened
 	# view has genuinely been laid out and drawn.
 	if _can_return:
 		_defer_return_focus()
 	return true
+
+
+
+## This clock belongs to the already-mounted terminal artwork, not to battle
+## time, the encounter RNG, or a moving Control hit rectangle.
+func set_reduced_motion_override(value: Variant) -> void:
+	if value != null and not value is bool:
+		return
+	_reduced_motion_override = value
+	_sync_hero_motion()
+
+
+func _reduced_motion_enabled() -> bool:
+	if _reduced_motion_override != null:
+		return _reduced_motion_override
+	return bool(ProjectSettings.get_setting("accessibility/reduced_motion", false))
+
+
+func _hero_motion_allowed() -> bool:
+	return is_node_ready() and _is_open and _can_return and is_visible_in_tree() \
+		and not _reduced_motion_enabled()
+
+
+func _on_result_visibility_changed() -> void:
+	_sync_hero_motion()
+	if visible and _is_open and _can_return:
+		# Child visibility/layout is finalized after the parent show signal.
+		_sync_hero_motion.call_deferred()
+		if not _return_requested:
+			_defer_return_focus()
+
+
+## Visibility changes and accessibility setting changes may restart a fresh
+## loop; closing/disappearing never leaves a timer running on freed portraits.
+func _sync_hero_motion() -> void:
+	if not _hero_motion_allowed():
+		_stop_hero_motion()
+		return
+	var has_art := false
+	for portrait in _hero_motion_portraits:
+		if is_instance_valid(portrait) and portrait.texture != null and portrait.is_visible_in_tree():
+			has_art = true
+		elif is_instance_valid(portrait):
+			portrait.rotation = 0.0
+			portrait.scale = Vector2.ONE
+	if not has_art:
+		_stop_hero_motion()
+		return
+	if not is_processing():
+		_hero_motion_elapsed = 0.0
+		_pose_hero_portraits(0.0)
+	set_process(true)
+
+
+func _stop_hero_motion() -> void:
+	set_process(false)
+	_hero_motion_elapsed = 0.0
+	for portrait in _hero_motion_portraits:
+		if is_instance_valid(portrait):
+			portrait.rotation = 0.0
+			portrait.scale = Vector2.ONE
+
+
+func _process(delta: float) -> void:
+	if not _hero_motion_allowed():
+		_stop_hero_motion()
+		return
+	_hero_motion_elapsed = fposmod(_hero_motion_elapsed + maxf(0.0, delta), HERO_MOTION_PERIOD)
+	_pose_hero_portraits(_hero_motion_elapsed)
+
+
+## Absolute time means a deterministic loop, including exact neutral poses at
+## t=0 and t=period, regardless of prior opens or engine-frame intervals.
+func _pose_hero_portraits(seconds: float) -> void:
+	var angle := TAU * seconds / HERO_MOTION_PERIOD
+	for index in range(_hero_motion_portraits.size()):
+		var portrait: TextureRect = _hero_motion_portraits[index]
+		if not is_instance_valid(portrait):
+			continue
+		if portrait.texture == null or not portrait.is_visible_in_tree():
+			portrait.rotation = 0.0
+			portrait.scale = Vector2.ONE
+			continue
+		var phase: float = HERO_MOTION_PHASES[index]
+		var tilt := sin(angle + phase) - sin(phase)
+		var breath := sin(angle + phase + PI / 3.0) - sin(phase + PI / 3.0)
+		portrait.pivot_offset = portrait.size * 0.5
+		portrait.rotation = HERO_MOTION_TILT * tilt
+		portrait.scale = Vector2.ONE * (1.0 + HERO_MOTION_BREATH * breath)
 
 
 ## Defeat never commits combat HP to carryover. Require the exact combat witness
@@ -299,6 +408,7 @@ func close_result() -> void:
 	_return_requested = false
 	_can_return = false
 	_presented_status = ""
+	_stop_hero_motion()
 	visible = false
 	if not is_node_ready():
 		return
@@ -647,6 +757,7 @@ func _mount_hero_rows(rows: Array) -> void:
 		# Unillustrated V3 heroes keep their named cream sewn ticket. The
 		# absent portrait reserves no blank column or fabricated character art.
 		portrait.visible = apply_hero_portrait(portrait, HERO_PORTRAITS.get(parts["hero_id"], ""))
+		_hero_motion_portraits.append(portrait)
 		if parts.get("is_torn", false):
 			portrait.modulate = Color(0.6, 0.6, 0.62, 1.0)
 		else:
@@ -719,14 +830,20 @@ func _mount_hero_rows(rows: Array) -> void:
 ## Optional imported portrait; the cream felt ticket remains its fallback.
 ## This presentation seam also permits synthetic unavailable-art checks.
 func apply_hero_portrait(portrait: TextureRect, path: String) -> bool:
+	portrait.rotation = 0.0
+	portrait.scale = Vector2.ONE
 	portrait.texture = guarded_texture(path)
 	portrait.visible = portrait.texture != null
+	if _hero_motion_portraits.has(portrait):
+		_sync_hero_motion()
 	return portrait.visible
 
 
 ## Remove every ribbon and hide the recap block, so a closed or refused view
 ## can never show a stale hero, HP, tear or patch name.
 func _clear_hero_rows() -> void:
+	_stop_hero_motion()
+	_hero_motion_portraits.clear()
 	if not is_node_ready():
 		return
 	hero_recap.hide()

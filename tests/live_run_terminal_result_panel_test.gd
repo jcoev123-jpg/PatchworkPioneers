@@ -833,6 +833,164 @@ func _test_missing_backdrop_art(ctx: Dictionary, battle: Dictionary, label: Stri
 		label + " remounting the illustrated stage preserves authoritative state")
 
 
+
+## Freeze everything except imported hero pixels: positions, layout,
+## typography, result receipts, keyboard target and outcome backdrop.
+func _motion_static_snapshot() -> Dictionary:
+	var controls: Array = [panel.title_label, panel.description_label,
+		panel.summary_label, panel.hero_recap_title, panel.hero_rows,
+		panel.run_ledger, panel.stitched_section, panel.return_button]
+	var receipts: Array = []
+	for row in panel.hero_rows.get_children():
+		controls.append(row)
+		for part in ["RowInset/RowLine/SeatLabel", "RowInset/RowLine/HeroName",
+				"RowInset/RowLine/HeroDetail"]:
+			var label := row.get_node(part) as Control
+			controls.append(label)
+			receipts.append((label as Label).text)
+		var badge := row.get_node_or_null("RowInset/RowLine/TornBadge") as Label
+		if badge != null:
+			controls.append(badge)
+			receipts.append(badge.text)
+	var rects: Array = []
+	for control in controls:
+		rects.append((control as Control).get_global_rect())
+	var backdrop := panel.get_node("ResultBackdropArt") as TextureRect
+	return {"rects": rects, "texts": receipts, "title": panel.title_label.text,
+		"description": panel.description_label.text, "ledger": panel.summary_label.text,
+		"status": panel.get_presented_status(), "backdrop": backdrop.texture.resource_path,
+		"focus": panel.return_button.has_focus(), "disabled": panel.return_button.disabled,
+		"button_count": panel.find_children("*", "Button", true, false).size(),
+		"button_connections": panel.return_button.pressed.get_connections().size()}
+
+
+## Same live App-mounted screen, witnessed Boss and Fight outcomes: inject
+## deterministic frame deltas rather than depending on headless frame timing.
+func _test_portrait_motion(victory: Dictionary, defeat: Dictionary) -> void:
+	var original_setting: Variant = ProjectSettings.get_setting("accessibility/reduced_motion", false)
+	ProjectSettings.set_setting("accessibility/reduced_motion", false)
+	panel.set_reduced_motion_override(false)
+	for entry in [{"fixture": victory, "status": "Victory"},
+			{"fixture": defeat, "status": "Defeat"}]:
+		var fixture: Dictionary = entry["fixture"]
+		var status: String = entry["status"]
+		var before_run := _snapshot(fixture["ctx"], fixture["battle"])
+		var before_app := _app_snapshot()
+		var prior_returns := returns
+		_check(panel.open_result(fixture["ctx"]["latch"]),
+			"AC1: authentic mounted %s permits portrait motion" % status)
+		await _frames()
+		var rows := panel.hero_rows.get_children()
+		_check(rows.size() == CombatParty.PARTY_SIZE and panel.is_processing()
+			and panel._hero_motion_portraits.size() == CombatParty.PARTY_SIZE,
+			"AC1: genuine %s mounts three active puppet picture nodes" % status)
+		if rows.size() != CombatParty.PARTY_SIZE:
+			panel.close_result()
+			continue
+		var portraits: Array[TextureRect] = []
+		var paths: Array[String] = []
+		for index in range(rows.size()):
+			var portrait := rows[index].get_node("RowInset/HeroPortrait") as TextureRect
+			portraits.append(portrait)
+			var expected: String = "res://assets/paper/heroes/%s.png" % ["warden", "seamstress", "tinker"][index]
+			paths.append(expected)
+			_check(portrait.texture != null and portrait.texture.resource_path == expected
+				and portrait.is_visible_in_tree() and portrait.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+				"AC1: %s seat %d is the correct inert imported sewn hero" % [status, index + 1])
+			var tint := Color(0.6, 0.6, 0.62, 1.0) if status == "Defeat" else Color.WHITE
+			_check(portrait.modulate == tint, "AC4: %s preserves original TORN tint" % status)
+		var fixed := _motion_static_snapshot()
+		panel._hero_motion_elapsed = 0.0
+		panel._pose_hero_portraits(0.0)
+		for portrait in portraits:
+			_check(is_zero_approx(portrait.rotation) and portrait.scale.is_equal_approx(Vector2.ONE)
+				and portrait.pivot_offset.is_equal_approx(portrait.size / 2.0),
+				"AC1: %s centered neutral zero-time puppet pose" % status)
+		panel._process(LiveRunTerminalResultPanel.HERO_MOTION_PERIOD / 4.0)
+		var phase_rotations: Array = []
+		var moving := 0
+		for portrait in portraits:
+			phase_rotations.append(portrait.rotation)
+			if absf(portrait.rotation) > 0.0001 or absf(portrait.scale.x - 1.0) > 0.0001:
+				moving += 1
+			_check(absf(portrait.rotation) <= 0.00901
+				and absf(portrait.scale.x - 1.0) <= 0.00801
+				and is_equal_approx(portrait.scale.x, portrait.scale.y),
+				"AC1: %s portrait stays within safe tilt/breath limits" % status)
+		_check(moving == 3 and not is_equal_approx(phase_rotations[0], phase_rotations[1])
+			and not is_equal_approx(phase_rotations[1], phase_rotations[2]),
+			"AC1: %s each seat has independently phased non-neutral motion" % status)
+		panel._process(3.0 * LiveRunTerminalResultPanel.HERO_MOTION_PERIOD / 4.0)
+		for portrait in portraits:
+			_check(is_zero_approx(portrait.rotation) and portrait.scale.is_equal_approx(Vector2.ONE),
+				"AC1: %s exact full-period loop returns to neutral" % status)
+		await _frames()
+		_check(_motion_static_snapshot() == fixed and returns == prior_returns
+			and _app_snapshot() == before_app
+			and _snapshot(fixture["ctx"], fixture["battle"]) == before_run,
+			"AC2: %s motion never moves tickets/text/Return or changes App, run, RNG" % status)
+		panel.set_reduced_motion_override(true)
+		_check(not panel.is_processing() and panel._hero_motion_elapsed == 0.0,
+			"AC3: %s reduced-motion stops processing and clears the clock" % status)
+		panel._process(2.25)
+		for portrait in portraits:
+			_check(is_zero_approx(portrait.rotation) and portrait.scale == Vector2.ONE,
+				"AC3: %s no drift in reduced-motion mode" % status)
+		panel.set_reduced_motion_override(false)
+		_check(panel.is_processing() and panel._hero_motion_elapsed == 0.0,
+			"AC3: %s restored motion starts a fresh loop" % status)
+		panel._process(2.25)
+		panel.hide()
+		_check(not panel.is_processing() and panel._hero_motion_elapsed == 0.0,
+			"AC3: %s hidden panel has no portrait clock" % status)
+		for portrait in portraits:
+			_check(portrait.rotation == 0.0 and portrait.scale == Vector2.ONE,
+				"AC3: %s hidden portrait is neutral" % status)
+		panel.show()
+		await _frames()
+		_check(panel.is_processing() and panel._hero_motion_elapsed < 0.2,
+			"AC3: %s visible result restarts from neutral (process=%s elapsed=%s visible=%s art=%s)" % [status, panel.is_processing(), panel._hero_motion_elapsed, panel.is_visible_in_tree(), portraits[0].is_visible_in_tree()])
+		panel.set_reduced_motion_override(null)
+		ProjectSettings.set_setting("accessibility/reduced_motion", true)
+		await _frames()
+		_check(not panel.is_processing(), "AC3: live project reduced-motion setting stops %s" % status)
+		ProjectSettings.set_setting("accessibility/reduced_motion", false)
+		await _frames()
+		_check(panel.is_processing(), "AC3: live project setting lets %s resume" % status)
+		for portrait in portraits:
+			_check(not panel.apply_hero_portrait(portrait, MISSING_ART)
+				and portrait.texture == null and portrait.rotation == 0.0
+				and portrait.scale == Vector2.ONE,
+				"AC3: %s missing imported art neutralizes its own visual" % status)
+		_check(not panel.is_processing() and panel._hero_motion_elapsed == 0.0,
+			"AC3: %s all missing art disables the picture clock" % status)
+		for index in range(portraits.size()):
+			_check(panel.apply_hero_portrait(portraits[index], paths[index]),
+				"AC3: %s real hero portrait remounts after missing art" % status)
+		_check(panel.is_processing() and panel._hero_motion_elapsed == 0.0,
+			"AC3: %s restored art starts its own fresh loop" % status)
+		_check(_motion_static_snapshot() == fixed and returns == prior_returns
+			and _app_snapshot() == before_app
+			and _snapshot(fixture["ctx"], fixture["battle"]) == before_run,
+			"AC2/AC4: %s all presentation toggles preserve receipts and authority" % status)
+		panel._process(2.25)
+		panel.close_result()
+		_check(not panel.is_processing() and panel._hero_motion_elapsed == 0.0
+			and panel._hero_motion_portraits.is_empty() and panel.hero_rows.get_child_count() == 0
+			and not panel.visible and panel.return_button.disabled,
+			"AC3/AC4: %s close clears clock, references and Return action" % status)
+		for portrait in portraits:
+			_check(portrait.rotation == 0.0 and portrait.scale == Vector2.ONE,
+				"AC3: %s old portrait resets before release" % status)
+		await _frames()
+		for portrait in portraits:
+			_check(not is_instance_valid(portrait), "AC4: %s released old picture" % status)
+		_check(returns == prior_returns and _snapshot(fixture["ctx"], fixture["battle"]) == before_run,
+			"AC4: %s release cannot signal or mutate run" % status)
+	panel.set_reduced_motion_override(null)
+	ProjectSettings.set_setting("accessibility/reduced_motion", original_setting)
+
+
 func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> void:
 	var victory_ctx: Dictionary = victory["ctx"]
 	var victory_battle: Dictionary = victory["battle"]
@@ -2946,6 +3104,7 @@ func _run() -> void:
 	var defeat := _defeat()
 	if not defeat.is_empty():
 		_test_defeat_witness_rejections(defeat)
+		await _test_portrait_motion(victory, defeat)
 		await _test_terminal_interactions(victory, defeat)
 		await _test_crafted_recap(defeat)
 		await _test_compact_hero_recap(defeat)
