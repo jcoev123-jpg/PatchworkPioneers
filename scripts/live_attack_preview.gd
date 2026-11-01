@@ -743,7 +743,7 @@ func _input(event: InputEvent) -> void:
 					if _is_stitched(_armed):
 						_choose_stitch(index + 1, "enemy")
 					else:
-						_queue_attack(index + 1 if _single(_armed) or _card_id(_armed) in TETHER_STARTERS else 0)
+						_queue_attack(index + 1 if _single(_armed) or _card_id(_armed) in TETHER_CARDS else 0)
 					get_viewport().set_input_as_handled()
 		return
 	if not event is InputEventKey or not event.pressed or event.echo:
@@ -793,7 +793,7 @@ func _input(event: InputEvent) -> void:
 
 
 func _single(panel) -> bool:
-	if _card_id(panel) in TETHER_STARTERS:
+	if _card_id(panel) in TETHER_CARDS:
 		return true
 	if _is_stitched(panel):
 		return _choices.size() < 2
@@ -803,7 +803,7 @@ func _single(panel) -> bool:
 ## Starter, plain-strike, heavy-pool, Seamstress control attacks and this
 ## battle's selected Path card use separate authored catalogs.
 func _definition(card_id: String) -> Dictionary:
-	if card_id in TETHER_STARTERS:
+	if card_id in TETHER_CARDS:
 		return _tether_definition(card_id)
 	if _moth_lure.is_supported_card(card_id):
 		return _moth_lure._catalog.get_definition(card_id)
@@ -880,7 +880,7 @@ func _select(event: InputEvent, panel) -> void:
 ## service itself validates each original enemy slot before it is offered.
 func _target_preview(id: String) -> Dictionary:
 	var app = get_parent()
-	if id in TETHER_STARTERS:
+	if id in TETHER_CARDS:
 		return tether_preview(id)
 	if _moth_lure.is_supported_card(id):
 		return _moth_lure_forecast(app.party, app.enemies, id)
@@ -938,7 +938,7 @@ func _queue_attack(position: int) -> void:
 		return
 	var app = get_parent()
 	var id: String = _card_id(_armed)
-	if id in TETHER_STARTERS:
+	if id in TETHER_CARDS:
 		_choose_tether(position)
 		return
 	var preview := _target_preview(id)
@@ -1697,7 +1697,7 @@ func _eligible(panel) -> bool:
 	var index: int = panel.get_index()
 	var path_ok: bool = (_is_path_card(id) and not _path_positions(id).is_empty()) \
 		or (_is_warden_card(id) and warden_preview(id).get("playable", false))
-	return (id in TETHER_STARTERS or _moth_lure.is_supported_card(id) or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _prick.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _rivet.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
+	return (id in TETHER_CARDS or _moth_lure.is_supported_card(id) or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _prick.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _rivet.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
 func _sync_battle() -> void:
@@ -1988,7 +1988,7 @@ func _refresh() -> void:
 		cue.text = "%s | %d energy | P / click card; %s / click enemy\n%s" % [
 			definition.display_name, definition.cost, _key_hint(path_slots), path_reading]
 		return
-	if id in TETHER_STARTERS:
+	if id in TETHER_CARDS:
 		var link_preview := tether_preview(id)
 		var first := ""
 		if _selected == _armed and _tether_positions.size() == 1:
@@ -2617,9 +2617,11 @@ func _lunge_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> 
 		"destination_position": seat - 1}
 
 
-## Only the starter Tether Loop pair is payable here. The pool Stitch pair
-## remains a rules-layer definition, not a live hand action.
-const TETHER_STARTERS := ["seamstress_v3_tether_loop", "seamstress_v3_tether_loop_plus"]
+## All four authentic Tether printings (starter Loop and pool Stitch, base and
+## '+') share this one mounted two-foe flow. CombatSeamstressTetherRules still
+## owns which records are authentic, so an unknown or forged ID fails closed.
+const TETHER_CARDS := ["seamstress_v3_tether_loop", "seamstress_v3_tether_loop_plus",
+	"seamstress_v3_tether_stitch", "seamstress_v3_tether_stitch_plus"]
 var _tether_rules := CombatSeamstressTetherRules.new()
 var _tether_link: Dictionary = {}
 var _tether_link_session: Array = []
@@ -2629,7 +2631,7 @@ var _tether_enemy_ids: Array[String] = []
 
 
 func _tether_definition(card_id: String) -> Dictionary:
-	if card_id not in TETHER_STARTERS:
+	if card_id not in TETHER_CARDS:
 		return {}
 	return _tether_rules.get_tether_definition(card_id)
 
