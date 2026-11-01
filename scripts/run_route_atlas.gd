@@ -281,10 +281,14 @@ class NodeToken extends Control:
 	## Only the mounted current or legal authored image breathes; no geometry moves.
 	const PULSE_PERIOD := 3.2
 	const PULSE_MIN_ALPHA := 0.78
+	## Image-only breathing; independent of the existing 3.2-second alpha pulse.
+	const BOB_PERIOD := 4.8
+	const BOB_MAX_OFFSET := 2.0
 	var token_kind := ""
 	var token_texture: Texture2D = null
 	var token_state := "other"
 	var _pulse_elapsed := 0.0
+	var _bob_elapsed := 0.0
 
 	func _init() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -300,6 +304,7 @@ class NodeToken extends Control:
 		var atlas := _atlas()
 		return atlas != null and atlas._map != null and atlas._has_snapshot \
 			and atlas.is_visible_in_tree() and is_visible_in_tree() \
+			and atlas._snapshot_is_current() \
 			and token_state in ["chosen", "legal"] and not atlas._reduced_motion() \
 			and token_rect().has_area()
 
@@ -309,15 +314,29 @@ class NodeToken extends Control:
 		return 1.0 - (1.0 - PULSE_MIN_ALPHA) * \
 			(0.5 - 0.5 * cos(TAU * _pulse_elapsed / PULSE_PERIOD))
 
-	## The live frame and mounted test share one bounded clock, without model or RNG calls.
+	## Pure draw offset. The token's Control, sewn tag, Action, caption and threads stay put.
+	func token_bob_offset() -> float:
+		if not token_pulse_active():
+			return 0.0
+		return BOB_MAX_OFFSET * sin(TAU * _bob_elapsed / BOB_PERIOD)
+
+	func token_draw_rect() -> Rect2:
+		var base := token_rect()
+		if not base.has_area():
+			return base
+		return Rect2(base.position + Vector2(0.0, token_bob_offset()), base.size)
+
+	## The live frame and mounted test share bounded clocks, without model or RNG calls.
 	func advance_token_pulse(delta: float) -> void:
 		if delta <= 0.0 or not token_pulse_active():
 			return
 		_pulse_elapsed = fposmod(_pulse_elapsed + delta, PULSE_PERIOD)
+		_bob_elapsed = fposmod(_bob_elapsed + delta, BOB_PERIOD)
 		queue_redraw()
 
 	func sync_token_pulse() -> void:
 		_pulse_elapsed = 0.0
+		_bob_elapsed = 0.0
 		set_process(token_pulse_active())
 		queue_redraw()
 
@@ -327,6 +346,7 @@ class NodeToken extends Control:
 	func _notification(what: int) -> void:
 		if what == NOTIFICATION_EXIT_TREE:
 			_pulse_elapsed = 0.0
+			_bob_elapsed = 0.0
 			set_process(false)
 		elif what == NOTIFICATION_VISIBILITY_CHANGED and is_node_ready():
 			sync_token_pulse()
@@ -351,7 +371,7 @@ class NodeToken extends Control:
 		return Rect2(Vector2((size.x - drawn.x) * 0.5, 4.0), drawn)
 
 	func _draw() -> void:
-		var rect := token_rect()
+		var rect := token_draw_rect()
 		if rect.size.x > 0.0 and rect.size.y > 0.0:
 			draw_texture_rect(token_texture, rect, false,
 				Color(1.0, 1.0, 1.0, token_pulse_alpha()))

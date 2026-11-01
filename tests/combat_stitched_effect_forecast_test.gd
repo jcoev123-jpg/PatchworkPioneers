@@ -29,6 +29,7 @@ func _run() -> void:
 	_test_real_torn_and_mend()
 	_test_pool_heal_forecasts()
 	_test_pool_self_forecasts()
+	_test_four_foe_forecast()
 	_test_borrowed_button_stitched_parity()
 	_test_borrowed_button_spent_latch()
 	_test_borrowed_button_negatives()
@@ -218,6 +219,81 @@ func _test_pool_self_forecasts() -> void:
 		_check(not _real(late, 0, 0).ok and _whole(late) == before_late, "real late overflow rolls back all authorities")
 
 
+## AC2: on an opted-in four-foe roster the detached forecast must equal the real
+## committed energy, HP/Block/status, hand, enemy and RNG results, must never
+## mutate the source, and must reproduce exactly from the same seed. AC3: every
+## unauthored target, unsweepable area half and unopted roster fails closed with
+## the same no-spend result in the matching real commit.
+func _test_four_foe_forecast() -> void:
+	for seed_value in [0, 42401]:
+		for reverse in [false, true]:
+			var outcomes: Array = []
+			for attempt in range(2):
+				var c := _fixture(POP if reverse else PRICK, PRICK if reverse else POP, seed_value)
+				c.enemies = _four_foes()
+				var foes_before: Array = c.enemies.get_enemies()
+				var label := "four-foe forecast seed %d order %s" % [seed_value, str(reverse)]
+				var result := _compare(c, 2 if reverse else 1, 1 if reverse else 2, label)
+				_check(result.get("playable", false), label + ": real two-half play is forecast")
+				if result.get("playable", false):
+					var projected: Dictionary = result.projected
+					_check(result.cost == 2 and projected.energy == 1
+						and projected.discard_pile == [c.id] and projected.hand.is_empty(),
+						label + ": one capped payment and exactly one discard")
+					var projected_foes: Array = projected.enemies
+					_check(projected_foes.size() == 4
+						and projected_foes[3].position == 4
+						and projected_foes[2].hp == foes_before[2].hp
+						and projected_foes[3].hp == foes_before[3].hp,
+						label + ": all four enemy slots projected, untargeted slots untouched")
+					_check(projected.heroes == c.party.get_heroes()
+						and projected.rng_state == c.deck._rng.state,
+						label + ": committed party and RNG equal the projection")
+				outcomes.append(result)
+			_check(outcomes.size() == 2 and outcomes[0].get("playable", false)
+				and outcomes[0] == outcomes[1],
+				"repeated seeds reproduce the exact four-foe receipt")
+
+	# Unauthored targets and a failed second half refuse without any spend.
+	var c := _fixture(PRICK, POP)
+	c.enemies = _four_foes()
+	_reject(c, 4, 0, "four-foe forecast refuses an unauthored first target")
+	_reject(c, 1, 4, "four-foe forecast refuses an unauthored second target")
+	_reject(c, 1, 0, "four-foe forecast refuses a missing second target")
+	var before := _whole(c)
+	_check(_real(c, 1, 4) == {"ok": false, "halves": []} and _whole(c) == before,
+		"the matching real commit refuses the same play without spending")
+
+	# A starter area half cannot sweep a living slot outside its authored TO
+	# positions; once that foe dies the forecast and the commit agree again.
+	var area := _fixture(PRICK, BOMB, 42406)
+	area.enemies = _four_foes()
+	_reject(area, 1, 0, "four-foe forecast refuses an unsweepable starter area half")
+	var area_before := _whole(area)
+	_check(_real(area, 1, 0) == {"ok": false, "halves": []} and _whole(area) == area_before,
+		"the same area refusal publishes no Block, damage, spend or latch")
+	_check(area.enemies.apply_damage(4, 999) and area.enemies.apply_damage(4, 999)
+		and area.enemies.is_slain(4),
+		"fourth foe genuinely slain (its one authored revival spent)")
+	var allowed := _compare(area, 1, 0, "four-foe area forecast after the fourth foe dies")
+	_check(allowed.get("playable", false)
+		and (allowed.projected.enemies as Array).size() == 4
+		and area.enemies.is_slain(4),
+		"area half forecasts and commits once only its authored slots stay alive")
+
+	# An unopted four-record roster at the default capacity fails closed.
+	var unopted := _fixture(PRICK, POP, 42403)
+	unopted.enemies = _unopted_four_foes()
+	_check(not unopted.enemies.is_valid() and unopted.enemies.get_enemies().size() == 4,
+		"unopted fixture really holds four records at the default three capacity")
+	_reject(unopted, 1, 2, "unopted four-slot roster refuses the forecast")
+	var unopted_before := _whole(unopted)
+	_check(_real(unopted, 1, 2) == {"ok": false, "halves": []} and _whole(unopted) == unopted_before,
+		"the unopted roster refuses the real commit with no state change")
+	_check(unopted.enemies.get_enemies().size() == 4,
+		"unopted refusal never compacts or drops the fourth record")
+
+
 func _test_warden_block_forecasts() -> void:
 	for id in CombatStitchedTargetPreview.WARDEN_BLOCK_IDS:
 		for reverse in [false, true]:
@@ -278,6 +354,48 @@ func _authored(path: String) -> Array:
 			and entry["max_hp"] == floor(entry["max_hp"]), "integral starter HP")
 		entry["max_hp"] = int(entry["max_hp"])
 	return parsed
+
+
+## The four explicitly admitted authored foes (two shipped starter enemies and the
+## two shipped tough normals), selected by ID under the existing literal opt-in.
+func _four_foes() -> CombatEnemies:
+	var catalog := _authored("res://data/enemies/starter_enemies.json")
+	catalog.append_array(_authored("res://data/enemies/v3_tough_normals.json"))
+	var selected: Array = []
+	for required in ["ragling", "ragling_guard", "spindle_ram", "razor_ribbon_wraith"]:
+		var matches: Array = catalog.filter(func(entry): return entry is Dictionary and entry.get("id") == required)
+		_check(matches.size() == 1, "authored four-foe source present exactly once: " + required)
+		if matches.size() == 1:
+			selected.append(matches[0])
+	var enemies := CombatEnemies.new(selected, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(enemies.is_valid() and enemies.get_capacity() == CombatEnemies.OPT_IN_MAX_ENEMIES
+		and enemies.get_enemies().size() == 4
+		and enemies.get_enemies().map(func(foe): return foe.get("position")) == [1, 2, 3, 4],
+		"explicit opt-in roster really holds four authored occupied slots")
+	return enemies
+
+
+## The same four authored records forced into the DEFAULT three-slot capacity.
+func _unopted_four_foes() -> CombatEnemies:
+	var catalog := _authored("res://data/enemies/starter_enemies.json")
+	catalog.append_array(_authored("res://data/enemies/v3_tough_normals.json"))
+	var records: Array = []
+	for required in ["ragling", "ragling_guard", "spindle_ram", "razor_ribbon_wraith"]:
+		var matches: Array = catalog.filter(func(entry): return entry is Dictionary and entry.get("id") == required)
+		if matches.size() == 1:
+			records.append(matches[0])
+	var enemies := CombatEnemies.new(records.slice(0, 3))
+	_check(enemies.is_valid() and enemies.get_capacity() == CombatEnemies.MAX_ENEMIES,
+		"default three-capacity roster is valid before a fourth record appears")
+	var roster: Array[Dictionary] = []
+	for index in range(records.size()):
+		var foe: Dictionary = records[index].duplicate(true)
+		foe["position"] = index + 1
+		foe["hp"] = foe["max_hp"]
+		foe["block"] = 0
+		roster.append(foe)
+	enemies._enemies = roster
+	return enemies
 
 
 func _fixture(first: String, second: String, seed_value: int = 9527) -> Dictionary:

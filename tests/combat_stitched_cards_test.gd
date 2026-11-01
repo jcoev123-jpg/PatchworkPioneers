@@ -27,6 +27,7 @@ func _initialize() -> void:
 	_test_spare_spool()
 	_test_pool_healing_halves()
 	_test_pool_heal_failures()
+	_test_four_foe_halves()
 	_test_pool_energy_halves()
 	_test_pool_energy_failures()
 	_test_pool_energy_replay()
@@ -346,6 +347,49 @@ func _rest_fixture(first: String, second: String, seed_value: int) -> Dictionary
 	_check(c.deck.start_turn() and c.deck.energy == 3 and c.deck.hand == [c.id],
 		"Rest-to-combat deck holds the composite with three energy")
 	return c
+
+
+## The four explicitly admitted authored foe records, by ID, from both shipped
+## catalogs: two starter enemies and the two shipped tough normals.
+func _four_foes() -> CombatEnemies:
+	var catalog := _definitions("res://data/enemies/starter_enemies.json")
+	catalog.append_array(_definitions("res://data/enemies/v3_tough_normals.json"))
+	var selected: Array = []
+	for required in ["ragling", "ragling_guard", "spindle_ram", "razor_ribbon_wraith"]:
+		var matches: Array = catalog.filter(func(entry): return entry is Dictionary and entry.get("id") == required)
+		_check(matches.size() == 1, "authored four-foe source present exactly once: " + required)
+		if matches.size() == 1:
+			selected.append(matches[0])
+	var enemies := CombatEnemies.new(selected, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(enemies.is_valid() and enemies.get_capacity() == CombatEnemies.OPT_IN_MAX_ENEMIES
+		and enemies.get_enemies().size() == 4
+		and enemies.get_enemies().map(func(foe): return foe.get("position")) == [1, 2, 3, 4],
+		"explicit opt-in roster really holds four authored occupied slots")
+	return enemies
+
+
+## The same four authored records forced into the DEFAULT three-slot capacity:
+## exactly the unopted battle the staged transaction must refuse.
+func _unopted_four_foes() -> CombatEnemies:
+	var catalog := _definitions("res://data/enemies/starter_enemies.json")
+	catalog.append_array(_definitions("res://data/enemies/v3_tough_normals.json"))
+	var records: Array = []
+	for required in ["ragling", "ragling_guard", "spindle_ram", "razor_ribbon_wraith"]:
+		var matches: Array = catalog.filter(func(entry): return entry is Dictionary and entry.get("id") == required)
+		if matches.size() == 1:
+			records.append(matches[0])
+	var enemies := CombatEnemies.new(records.slice(0, 3))
+	_check(enemies.is_valid() and enemies.get_capacity() == CombatEnemies.MAX_ENEMIES,
+		"default three-capacity roster is valid before a fourth record appears")
+	var roster: Array[Dictionary] = []
+	for index in range(records.size()):
+		var foe: Dictionary = records[index].duplicate(true)
+		foe["position"] = index + 1
+		foe["hp"] = foe["max_hp"]
+		foe["block"] = 0
+		roster.append(foe)
+	enemies._enemies = roster
+	return enemies
 
 
 func _position_of(party: CombatParty, hero_id: String) -> int:
@@ -1037,6 +1081,120 @@ func _test_pool_heal_failures() -> void:
 				_check(c.wardrobe.start_rest("future-rest", w).ok,
 					"genuine bound wardrobe ledger drift")
 		_reject(c, 0, 0, mode + ": stitched pool binding fails closed")
+
+
+## AC1/AC3: an authentic paid Rest composite stays playable on an explicitly
+## opted-in four-foe roster: one capped payment, one discard, every slot retained,
+## and every illegal, forged, stale or failed-half play still atomic.
+func _test_four_foe_halves() -> void:
+	for reverse in [false, true]:
+		var replays: Array = []
+		for attempt in range(2):
+			var c := _rest_fixture(POP if reverse else PRICK, PRICK if reverse else POP, 42401)
+			c.enemies = _four_foes()
+			var pop_target := 1 if reverse else 2
+			var prick_target := 2 if reverse else 1
+			var before := _snapshot(c)
+			var expected := before.duplicate(true)
+			expected[1] = []
+			expected[2] = [c.id]
+			expected[3] = 1
+			expected[7][pop_target - 1]["hp"] -= 8
+			expected[7][prick_target - 1]["hp"] -= 3
+			expected[7][prick_target - 1]["statuses"] = {"bleed": 3}
+			expected[8] = true
+			var label := "four-foe Prick/Pop " + ("Pop first" if reverse else "Prick first")
+			var receipt := _play(c, pop_target if reverse else prick_target,
+				prick_target if reverse else pop_target)
+			_check(receipt.ok and receipt.halves.size() == 2, label + ": both authored halves commit")
+			var foes: Array = c.enemies.get_enemies()
+			_check(foes.size() == 4
+				and foes.map(func(foe): return foe.get("position")) == [1, 2, 3, 4]
+				and foes[2]["hp"] == before[7][2]["hp"]
+				and foes[3]["hp"] == before[7][3]["hp"],
+				label + ": all four enemy slots retained, the two untargeted slots untouched")
+			_check(c.deck.energy == 1 and c.deck.discard_pile == [c.id]
+				and c.deck.hand.is_empty() and c.deck._rng.state == before[5],
+				label + ": one capped charge, exactly one discard and no RNG movement")
+			_check(_snapshot(c) == expected,
+				label + ": exact HP, statuses, deck, energy, latches and untouched run ledger")
+			replays.append([receipt, _snapshot(c)])
+		_check(replays.size() == 2 and replays[0] == replays[1],
+			"independent same-seed four-foe replay is exact")
+
+	# A starter area half sweeps every living slot in the shared attack resolver,
+	# so a living fourth foe it may not target refuses the whole composite with
+	# no spend, publish or latch change; once that foe is slain it plays normally.
+	var area := _rest_fixture(PRICK, BOMB, 42406)
+	area.enemies = _four_foes()
+	var area_initial := _snapshot(area)
+	_reject(area, 1, 0, "starter area half cannot sweep an unauthored living fourth foe")
+	_check(_snapshot(area) == area_initial and area.enemies.get_enemies().size() == 4,
+		"refused area play left all four enemy slots and every authority intact")
+	_check(area.enemies.apply_damage(4, 999) and area.enemies.apply_damage(4, 999)
+		and area.enemies.is_slain(4),
+		"fourth foe genuinely slain (its one authored revival spent)")
+	var area_playable := _snapshot(area)
+	_check(_play(area, 1, 0).ok, "area half plays once only its authored slots stay alive")
+	var played_foes: Array = area.enemies.get_enemies()
+	_check(played_foes.size() == 4 and area.enemies.is_slain(4)
+		and played_foes[3]["position"] == 4
+		and played_foes[0]["hp"] < area_playable[7][0]["hp"]
+		and played_foes[1]["hp"] < area_playable[7][1]["hp"]
+		and played_foes[2]["hp"] < area_playable[7][2]["hp"],
+		"authored area recipients stay in their printed slots and never compact")
+
+	# An already slain middle slot stays in place with the fourth foe behind it.
+	var slain := _rest_fixture(PRICK, POP, 42404)
+	slain.enemies = _four_foes()
+	_check(slain.enemies.apply_damage(3, slain.enemies.get_enemy(3).hp)
+		and slain.enemies.is_slain(3), "authored third foe genuinely slain before the play")
+	var slain_before := _snapshot(slain)
+	_check(_play(slain, 1, 2).ok, "composite plays around the slain third slot")
+	_check(slain.enemies.get_enemies().size() == 4 and slain.enemies.is_slain(3)
+		and slain.enemies.get_enemy(4).get("position") == 4
+		and slain.enemies.get_enemy(4).get("hp") == slain_before[7][3]["hp"],
+		"slain slot is never compacted and the fourth foe is retained")
+
+	# Illegal targets, forged and stale receipts, and a failed second half.
+	var c := _rest_fixture(PRICK, POP, 42402)
+	c.enemies = _four_foes()
+	_reject(c, 4, 0, "authored first half never reaches the fourth slot")
+	_reject(c, 0, 4, "authored second half never reaches the fourth slot")
+	_reject(c, 1, 0, "missing second target against four foes")
+	_reject(c, 0, 0, "missing first target against four foes")
+	_reject(c, 4, 4, "both authored halves refuse the fourth occupied slot")
+	_reject(c, 1, 4, "late failure after a staged first half fully rolls back")
+	var forged: Dictionary = c.rest.get_snapshot()
+	forged.descriptors[c.id].first_half.effects.damage = 999
+	c.rest = RunRestStitchCards.new(forged.deck, forged.descriptors,
+		forged.remaining_scraps, forged.next_stitch_id)
+	_check(not c.rest.is_valid(), "forged four-foe descriptor really invalidates the ledger")
+	_reject(c, 1, 2, "forged four-foe Rest receipt")
+	c = _rest_fixture(PRICK, POP, 42403)
+	c.enemies = _four_foes()
+	c.rest._deck.clear()
+	_check(not c.rest.get_snapshot()["deck"].has(c.id)
+		and not c.rest.preview_play(c.id, c.party.get_heroes()).get("ok", false),
+		"stale four-foe ledger really no longer authorises the composite")
+	_reject(c, 1, 2, "stale four-foe Rest ledger")
+
+	# An unopted four-record roster at the default capacity fails closed.
+	c = _rest_fixture(PRICK, POP, 42405)
+	c.enemies = _unopted_four_foes()
+	_check(not c.enemies.is_valid() and c.enemies.get_enemies().size() == 4,
+		"unopted fixture really holds four records at the default three capacity")
+	_reject(c, 1, 2, "unopted four-slot roster")
+	_check(c.enemies.get_enemies().size() == 4,
+		"unopted refusal never compacts or drops the fourth record")
+
+	# The unchanged default roster still pays and discards exactly once.
+	var small := _rest_fixture(PRICK, POP, 42407)
+	_check(small.enemies.get_capacity() == CombatEnemies.MAX_ENEMIES
+		and small.enemies.is_valid(), "default two/three-slot roster is genuinely unopted")
+	_check(_play(small, 1, 2).ok and small.deck.energy == 1
+		and small.deck.discard_pile == [small.id],
+		"existing default roster play is unchanged")
 
 
 ## Every base/+ Overclock and Tailor's Trance half must keep its printed

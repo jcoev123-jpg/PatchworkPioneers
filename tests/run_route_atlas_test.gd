@@ -2106,6 +2106,45 @@ func _exercise_seeded_fight_danger(view: RunRouteAtlas) -> void:
 		view.bind_map(null)
 
 
+## Check the authored image's draw rectangle, not its Control or parent geometry.
+## Each sample is an explicit deterministic delta on a live, seeded, imported token.
+func _assert_bob_cycle(art: RunRouteAtlas.NodeToken, label: String) -> void:
+	_check(art != null and art.token_texture != null and art.token_pulse_active()
+		and art.token_rect().has_area(), label + ": loadable visible current/legal art")
+	if art == null or not art.token_pulse_active() or not art.token_rect().has_area():
+		return
+	art.sync_token_pulse()
+	var base := art.token_rect()
+	var bounds := Rect2(Vector2.ZERO, art.size)
+	_check(is_equal_approx(RunRouteAtlas.NodeToken.BOB_PERIOD, 4.8)
+		and is_equal_approx(RunRouteAtlas.NodeToken.BOB_MAX_OFFSET, 2.0)
+		and art.token_draw_rect() == base
+		and is_zero_approx(art.token_bob_offset()) and is_zero_approx(art._bob_elapsed),
+		label + ": phase zero draws at the original baseline")
+	art.advance_token_pulse(RunRouteAtlas.NodeToken.BOB_PERIOD * 0.25)
+	var upper := art.token_draw_rect()
+	_check(is_equal_approx(art.token_bob_offset(), 2.0)
+		and upper.position.is_equal_approx(base.position + Vector2(0, 2))
+		and upper.size == base.size and bounds.encloses(upper) and upper.end.y <= 52.0
+		and art.token_rect() == base and art.token_pulse_alpha() >= 0.78
+		and art.token_pulse_alpha() <= 1.0,
+		label + ": quarter cycle moves image only 2px and keeps alpha range")
+	art.advance_token_pulse(RunRouteAtlas.NodeToken.BOB_PERIOD * 0.5)
+	var lower := art.token_draw_rect()
+	_check(is_equal_approx(art.token_bob_offset(), -2.0)
+		and lower.position.is_equal_approx(base.position - Vector2(0, 2))
+		and lower.size == base.size and bounds.encloses(lower) and lower.end.y <= 52.0
+		and art.token_rect() == base and art.token_pulse_alpha() >= 0.78
+		and art.token_pulse_alpha() <= 1.0,
+		label + ": opposite quarter stays within upper image slot")
+	art.advance_token_pulse(RunRouteAtlas.NodeToken.BOB_PERIOD * 0.25)
+	_check(is_zero_approx(art.token_bob_offset())
+		and art.token_draw_rect().position.is_equal_approx(base.position)
+		and is_zero_approx(art._bob_elapsed) and art.token_rect() == base,
+		label + ": full cycle wraps to the identical baseline")
+	art.sync_token_pulse()
+
+
 ## AC1-AC3: real seeded route, mounted scene art, and the same model/RNG witnesses.
 ## This exercises the live NodeToken processor; a synthetic or null atlas cannot pass.
 func _exercise_token_pulse(view: RunRouteAtlas) -> void:
@@ -2146,6 +2185,7 @@ func _exercise_token_pulse(view: RunRouteAtlas) -> void:
 		and art._pulse_elapsed < RunRouteAtlas.NodeToken.PULSE_PERIOD
 		and art.token_pulse_alpha() < 1.0,
 		"mounted SceneTree actually advances the live visible token timer")
+	_assert_bob_cycle(art, "seeded legal token")
 	art.sync_token_pulse()
 	var art_rect := art.token_rect()
 	var tag_rect := Rect2(marker.position, marker.size)
@@ -2194,6 +2234,11 @@ func _exercise_token_pulse(view: RunRouteAtlas) -> void:
 		and future.get_parent().get_meta("route_state") == "other",
 		"future/noncurrent negative is a real mounted map marker with authored artwork")
 	if future != null:
+		future.advance_token_pulse(RunRouteAtlas.NodeToken.BOB_PERIOD * 0.25)
+		_check(future.token_draw_rect() == future.token_rect()
+			and is_zero_approx(future.token_bob_offset())
+			and is_zero_approx(future._bob_elapsed),
+			"future authored image stays motionless in the real seeded snapshot")
 		future.advance_token_pulse(RunRouteAtlas.NodeToken.PULSE_PERIOD * 0.5)
 		_check(not future.token_pulse_active() and not future.is_processing()
 			and is_equal_approx(future.token_pulse_alpha(), 1.0)
@@ -2204,8 +2249,9 @@ func _exercise_token_pulse(view: RunRouteAtlas) -> void:
 	art.token_texture = null
 	art.sync_token_pulse()
 	art.advance_token_pulse(RunRouteAtlas.NodeToken.PULSE_PERIOD * 0.5)
-	_check(art.token_rect() == Rect2() and not art.token_pulse_active()
-		and not art.is_processing() and is_equal_approx(art.token_pulse_alpha(), 1.0)
+	_check(art.token_rect() == Rect2() and art.token_draw_rect() == Rect2()
+		and is_zero_approx(art.token_bob_offset()) and is_zero_approx(art._bob_elapsed)
+		and not art.token_pulse_active() and not art.is_processing() and is_equal_approx(art.token_pulse_alpha(), 1.0)
 		and is_equal_approx(art._pulse_elapsed, 0.0),
 		"forced missing art draws a static fallback and has no visual processor")
 	art.token_texture = original_texture
@@ -2213,26 +2259,35 @@ func _exercise_token_pulse(view: RunRouteAtlas) -> void:
 	art.advance_token_pulse(RunRouteAtlas.NodeToken.PULSE_PERIOD * 0.5)
 	view.set_reduced_motion_override(true)
 	_check(view._reduced_motion() and not art.token_pulse_active()
+		and art.token_draw_rect() == art.token_rect()
+		and is_zero_approx(art.token_bob_offset()) and is_zero_approx(art._bob_elapsed)
 		and not art.is_processing() and is_equal_approx(art.token_pulse_alpha(), 1.0)
 		and is_equal_approx(art._pulse_elapsed, 0.0),
 		"accessibility reduced-motion override stops and resets the live token")
 	view.set_reduced_motion_override(false)
 	_check(art.token_pulse_active() and art.is_processing()
+		and is_zero_approx(art.token_bob_offset()) and is_zero_approx(art._bob_elapsed)
 		and is_equal_approx(art.token_pulse_alpha(), 1.0),
 		"motion re-enable begins at the neutral phase, not a stale phase")
 	art.advance_token_pulse(RunRouteAtlas.NodeToken.PULSE_PERIOD * 0.5)
 	view.hide()
 	_check(not art.token_pulse_active() and not art.is_processing()
+		and art.token_draw_rect() == art.token_rect()
+		and is_zero_approx(art.token_bob_offset()) and is_zero_approx(art._bob_elapsed)
 		and is_equal_approx(art.token_pulse_alpha(), 1.0)
 		and is_equal_approx(art._pulse_elapsed, 0.0),
 		"hiding the actual atlas stops the clock and resets alpha immediately")
 	view.show()
 	_check(art.token_pulse_active() and art.is_processing()
+		and is_zero_approx(art.token_bob_offset()) and is_zero_approx(art._bob_elapsed)
 		and is_equal_approx(art.token_pulse_alpha(), 1.0),
 		"showing the atlas restarts only the visible authored legal image")
 	# The selected node is the real RunMap commit, not a manufactured chosen state.
 	_check(map.choose_node(legal_id), "pulse fixture commits its actual legal source node")
 	var committed := _state(map, rng)
+	_check(not art.token_pulse_active() and is_zero_approx(art.token_bob_offset())
+		and art.token_draw_rect() == art.token_rect(),
+		"externally advanced RunMap invalidates the unrefreshed token presentation")
 	view.refresh()
 	_check(not is_instance_valid(art),
 		"refresh frees the former legal token rather than retaining its processor")
@@ -2245,6 +2300,7 @@ func _exercise_token_pulse(view: RunRouteAtlas) -> void:
 		and is_equal_approx(current_art.token_pulse_alpha(), 1.0),
 		"the genuinely visited current tag pulses on its first fresh mounted frame")
 	if current_art != null:
+		_assert_bob_cycle(current_art, "seeded current chosen token")
 		current_art.advance_token_pulse(RunRouteAtlas.NodeToken.PULSE_PERIOD * 0.5)
 		_check(is_equal_approx(current_art.token_pulse_alpha(),
 			RunRouteAtlas.NodeToken.PULSE_MIN_ALPHA),
@@ -2254,7 +2310,9 @@ func _exercise_token_pulse(view: RunRouteAtlas) -> void:
 	current_art = current_tag.get_node_or_null("Art") as RunRouteAtlas.NodeToken if current_tag != null else null
 	_check(current_art != null and current_art.is_processing()
 		and is_equal_approx(current_art.token_pulse_alpha(), 1.0)
-		and is_equal_approx(current_art._pulse_elapsed, 0.0),
+		and is_equal_approx(current_art._pulse_elapsed, 0.0)
+		and is_zero_approx(current_art._bob_elapsed)
+		and is_zero_approx(current_art.token_bob_offset()),
 		"refresh replaces old token clocks with a neutral single processor")
 	view.bind_map(null)
 	_check(view.get_child_count() == 0 and not view._has_snapshot
@@ -2263,10 +2321,25 @@ func _exercise_token_pulse(view: RunRouteAtlas) -> void:
 	current_tag = view.get_node_or_null("Node_" + legal_id) as RunRouteAtlas.RouteTag
 	current_art = current_tag.get_node_or_null("Art") as RunRouteAtlas.NodeToken if current_tag != null else null
 	_check(current_art != null and current_art.is_processing()
+		and is_zero_approx(current_art._bob_elapsed)
+		and current_art.token_draw_rect() == current_art.token_rect()
 		and is_equal_approx(current_art.token_pulse_alpha(), 1.0),
 		"rebind rebuilds a fresh current token with no retained phase")
 	_check(_state(map, rng) == committed and committed["rng"] == before["rng"],
 		"pulse, hide, refresh and rebind leave seeded model, legal IDs and RNG authoritative")
+	# Exiting the live chosen tag resets both clocks before it is freed.
+	if current_tag != null and current_art != null:
+		current_art.advance_token_pulse(RunRouteAtlas.NodeToken.BOB_PERIOD * 0.25)
+		_check(current_art.token_bob_offset() > 0.0,
+			"current authored art is bobbing before exit")
+		view.remove_child(current_tag)
+		_check(not current_art.is_inside_tree() and not current_art.is_processing()
+			and is_zero_approx(current_art._bob_elapsed)
+			and is_zero_approx(current_art._pulse_elapsed),
+			"exit-tree stops and resets both presentation clocks")
+		current_tag.free()
+		_check(not is_instance_valid(current_art),
+			"free destroys the exited art with no surviving processor")
 	view.bind_map(null)
 	view.set_reduced_motion_override(null)
 

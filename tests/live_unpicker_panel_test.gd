@@ -213,6 +213,7 @@ func _run() -> void:
 	await _test_stitched()
 	await _test_frayed_debt_negatives()
 	await _test_rejections()
+	await _test_backdrop_motion()
 	_check(randi() == global_next, "mounting completed before guard; all browsing/decisions preserve global RNG")
 	panel.queue_free()
 	await process_frame
@@ -1125,3 +1126,260 @@ func _test_rejections() -> void:
 	panel.remove_button.pressed.emit()
 	_check(intents.is_empty() and newer.read_state() == consumed_state,
 			"changed original source disables stale removal and Leave")
+
+
+## ART v3 / owner priority 7: the already-authored sewn panel image is the only
+## thing that breathes and drifts on the Unpicker. This section pauses automatic
+## processing and drives presentation delta by hand, then proves every removal
+## choice, scroll area, focus rectangle and quoted price stayed exactly still,
+## and that every stop path (hide, close, bind(null), rebind, invalid/consumed
+## source, missing art, reduced motion) returns the art to its static baseline.
+func _test_backdrop_motion() -> void:
+	var baseline := {"scale": 1.0, "offset": Vector2.ZERO}
+	var art: Texture2D = panel.panel_art_texture
+	_check(art != null and art.resource_path == LiveUnpickerPanel.PANEL_ART,
+			"mounted Unpicker loads the already-present authored sewn panel art")
+	_check(panel.get_child(0) is Panel and (panel.get_child(0) as Panel).clip_contents
+			and panel._art_drift != null and panel._art_drift.get_parent() == panel.get_child(0)
+			and panel._art_drift.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and panel._art_drift.focus_mode == Control.FOCUS_NONE,
+			"animated art is a clipped, input-inert layer under the first-child Panel backing")
+	if art == null or panel._art_drift == null:
+		return
+	_check(panel._art_drift.get_index() < (panel.get_child(0) as Panel).get_child_count() - 1,
+			"the fixed stitched outline still draws above the drifting art")
+	_check(panel.find_children("*", "Button", true, false).size() == panel.card_buttons.size() + 2,
+			"the decoration is never a Button, so it receives no mouse or keyboard action")
+	# Pure presentation transform: exact static baseline at zero and at every
+	# shared period, a ~1.2% breath on 7 s and a 3 x 2 px drift on 11 s at most.
+	_check(LiveUnpickerPanel.art_motion_transform_at(0.0) == baseline
+			and LiveUnpickerPanel.art_motion_transform_at(LiveUnpickerPanel.PANEL_ART_BREATH_PERIOD
+				* LiveUnpickerPanel.PANEL_ART_PAN_PERIOD) == baseline,
+			"presentation motion is exactly at rest at elapsed zero and at every shared period")
+	var breath_peak: Dictionary = LiveUnpickerPanel.art_motion_transform_at(3.5)
+	var pan_peak: Dictionary = LiveUnpickerPanel.art_motion_transform_at(2.75)
+	var pan_rest: Dictionary = LiveUnpickerPanel.art_motion_transform_at(5.5)
+	var pan_peak_offset: Vector2 = pan_peak["offset"]
+	var pan_rest_offset: Vector2 = pan_rest["offset"]
+	_check(absf(float(breath_peak["scale"]) - 1.012) < 0.0005
+			and absf(pan_peak_offset.x - LiveUnpickerPanel.PANEL_ART_PAN.x) < 0.001
+			and absf(float(LiveUnpickerPanel.art_motion_transform_at(7.0)["scale"]) - 1.0) < 0.0001
+			and absf(pan_rest_offset.x) < 0.001,
+			"approximately 7 s breathing and 11 s drift cycles")
+	_check(LiveUnpickerPanel.art_motion_transform_at(4.0) == LiveUnpickerPanel.art_motion_transform_at(4.0)
+			and LiveUnpickerPanel.art_motion_transform_at(4.0) != LiveUnpickerPanel.art_motion_transform_at(5.0),
+			"the presentation transform is deterministic and reproducible")
+	var layer_rect := Rect2(panel._art_drift_base, panel._art_drift.size)
+	var frame := Rect2(Vector2.ZERO, panel.size)
+	var no_edge := true
+	for step in range(221):
+		var motion := LiveUnpickerPanel.art_motion_transform_at(float(step) * 0.5)
+		var scale: float = motion["scale"]
+		var offset: Vector2 = motion["offset"]
+		var half := layer_rect.size * (scale - 1.0) * 0.5
+		var drawn := Rect2(layer_rect.position + offset - half, layer_rect.size * scale)
+		if not drawn.encloses(frame):
+			no_edge = false
+	_check(no_edge,
+			"the drifting copy stays oversized and clipped for the whole cycle, so no image edge is exposed")
+	# Deterministic presentation-delta test on the mounted 1280x720 panel.
+	panel.set_process(false)
+	var visit := _make(150)
+	await _bind(visit)
+	var source := visit.read_state()
+	var quote := visit.quote()
+	var start := panel.art_motion_transform()
+	_check(start == baseline and panel._art_drift.scale == Vector2.ONE
+			and panel._art_drift.position == panel._art_drift_base,
+			"a freshly bound authentic visit starts at the exact static baseline")
+	var focused: Control = root.gui_get_focus_owner()
+	var panel_rect := panel.get_global_rect()
+	var title_rect := panel.title_label.get_global_rect()
+	var wallet_rect := panel.wallet_label.get_global_rect()
+	var status_rect := panel.status_label.get_global_rect()
+	var scroll_rect := panel.choice_scroll.get_global_rect()
+	var remove_rect := panel.remove_button.get_global_rect()
+	var leave_rect := panel.leave_button.get_global_rect()
+	var row_rect := panel.card_buttons[0].get_global_rect()
+	var scroll_offset := panel.choice_scroll.scroll_vertical
+	panel.advance_art_motion(2.0)
+	var moved := panel.art_motion_transform()
+	var moved_offset: Vector2 = moved["offset"]
+	_check(moved == LiveUnpickerPanel.art_motion_transform_at(2.0) and moved != baseline
+			and float(moved["scale"]) > 1.0
+			and float(moved["scale"]) - 1.0 <= LiveUnpickerPanel.PANEL_ART_BREATH
+			and moved_offset != Vector2.ZERO
+			and moved_offset.length() <= LiveUnpickerPanel.PANEL_ART_PAN.length(),
+			"accumulated presentation delta alone drives the restrained decorative transform")
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_transform() == LiveUnpickerPanel.art_motion_transform_at(4.0)
+			and panel.art_motion_transform() != moved,
+			"presentation time accumulates deterministically from the forced deltas")
+	var applied := panel.art_motion_transform()
+	var applied_offset: Vector2 = applied["offset"]
+	_check(panel._art_drift.scale == Vector2.ONE * float(applied["scale"])
+			and panel._art_drift.position == panel._art_drift_base + applied_offset,
+			"only the decorative layer's own position and scale follow the transform")
+	_check(panel.get_global_rect() == panel_rect
+			and panel.title_label.get_global_rect() == title_rect
+			and panel.wallet_label.get_global_rect() == wallet_rect
+			and panel.status_label.get_global_rect() == status_rect
+			and panel.choice_scroll.get_global_rect() == scroll_rect
+			and panel.remove_button.get_global_rect() == remove_rect
+			and panel.leave_button.get_global_rect() == leave_rect
+			and panel.card_buttons[0].get_global_rect() == row_rect
+			and panel.size == Vector2(880, 600)
+			and panel.remove_button.position == Vector2(30, 510)
+			and panel.remove_button.size == Vector2(390, 62)
+			and panel.leave_button.position == Vector2(450, 510)
+			and panel.leave_button.size == Vector2(400, 62),
+			"the 880x600 panel, sewn frame, wallet/forecast, card rows and hit rectangles never move")
+	_check(root.gui_get_focus_owner() == focused and focused == panel.card_buttons[0]
+			and panel.choice_scroll.scroll_vertical == scroll_offset
+			and panel.wallet_label.text == "Wallet: 150 gold    •    Remove: 75 gold"
+			and panel.remove_button.text == "1 Remove · 75 gold"
+			and panel.leave_button.text == "0 Leave · free"
+			and panel.status_label.text == "Choose one card, then Remove it once. Or Leave."
+			and visit.quote() == quote and visit.read_state() == source
+			and not visit.is_consumed() and intents.is_empty(),
+			"motion never moves focus or scroll and never reads, spends or consumes the visit")
+	# ProjectSettings accessibility/reduced_motion (default false), restored after.
+	var prior: Variant = ProjectSettings.get_setting(LiveUnpickerPanel.REDUCED_MOTION_SETTING, false)
+	ProjectSettings.set_setting(LiveUnpickerPanel.REDUCED_MOTION_SETTING, true)
+	panel.advance_art_motion(5.0)
+	_check(panel.art_motion_transform() == baseline and panel._art_drift.scale == Vector2.ONE
+			and panel._art_drift.position == panel._art_drift_base,
+			"accessibility/reduced_motion keeps the authored art exactly static at its baseline")
+	ProjectSettings.set_setting(LiveUnpickerPanel.REDUCED_MOTION_SETTING, prior)
+	_check(not panel._reduced_motion_active(), "prior reduced-motion setting restored afterward")
+	# Nullable explicit override for focused tests and hosts.
+	panel.set_reduced_motion_override(true)
+	_check(not panel.art_motion_active() and panel.art_motion_transform() == baseline
+			and panel._art_drift.position == panel._art_drift_base,
+			"an explicit reduced-motion override restores the exact static baseline immediately")
+	panel.advance_art_motion(4.0)
+	_check(panel.art_motion_transform() == baseline,
+			"no presentation time accumulates while the explicit override is true")
+	panel.set_reduced_motion_override(false)
+	_check(panel.art_motion_active() and panel.art_motion_transform() == baseline,
+			"lifting the override resumes only from the static baseline")
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_transform() == LiveUnpickerPanel.art_motion_transform_at(2.0),
+			"motion resumes only through fresh presentation time after the override lifts")
+	ProjectSettings.set_setting(LiveUnpickerPanel.REDUCED_MOTION_SETTING, true)
+	panel.set_reduced_motion_override(null)
+	_check(panel._reduced_motion_active() and panel.art_motion_transform() == baseline,
+			"a lifted override follows the ProjectSettings reduced-motion request again")
+	ProjectSettings.set_setting(LiveUnpickerPanel.REDUCED_MOTION_SETTING, prior)
+	# Hide / show keeps the panel and its choices exactly where they are.
+	panel.set_reduced_motion_override(null)
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_transform() != baseline, "art is genuinely moving before hiding")
+	panel.hide()
+	await _settle()
+	_check(panel.art_motion_transform() == baseline and panel._art_drift.position == panel._art_drift_base,
+			"a hidden Unpicker restores the exact static baseline")
+	panel.advance_art_motion(3.0)
+	_check(panel.art_motion_transform() == baseline, "a hidden Unpicker accumulates no motion")
+	panel.show()
+	_check(panel.art_motion_transform() == baseline and panel._art_drift.scale == Vector2.ONE,
+			"the shown Unpicker resumes only from the static baseline")
+	await _settle()
+	# bind(null) and rebinding another authentic visit.
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_transform() != baseline, "art is genuinely moving before bind(null)")
+	panel.bind(null)
+	_check(not panel.art_motion_active() and panel.art_motion_transform() == baseline
+			and panel._art_drift.position == panel._art_drift_base,
+			"bind(null) stops and restores the exact static baseline")
+	panel.advance_art_motion(7.0)
+	_check(panel.art_motion_transform() == baseline, "a panel without a source accumulates no motion")
+	var closing := _make(150)
+	await _bind(closing)
+	panel.advance_art_motion(3.0)
+	_check(panel.art_motion_transform() != baseline, "art is genuinely moving before close()")
+	panel.close()
+	await _settle()
+	_check(not panel.is_visible_in_tree() and not panel.art_motion_active()
+			and panel.art_motion_transform() == baseline
+			and panel._art_drift.position == panel._art_drift_base
+			and panel.remove_button.disabled and panel.leave_button.disabled,
+			"close() stops and restores the exact static baseline on a closed Unpicker")
+	panel.advance_art_motion(7.0)
+	_check(panel.art_motion_transform() == baseline,
+			"no old motion resumes on the closed Unpicker")
+	await _bind(_make(150))
+	_check(panel.art_motion_active() and panel.art_motion_transform() == baseline
+			and panel._art_drift.scale == Vector2.ONE,
+			"a new authentic bind restarts the art from the exact static baseline")
+	panel.advance_art_motion(3.0)
+	_check(panel.art_motion_transform() != baseline, "art moves on the rebound authentic visit")
+	await _bind(_make(100, 1))
+	_check(panel.art_motion_transform() == baseline and panel._art_drift.position == panel._art_drift_base,
+			"rebinding yet another visit restarts the art at the static baseline")
+	# Invalid, consumed and externally advanced sources never animate.
+	await _bind(RunUnpickerVisit.new(NODE, [], 75, 0, {}, 1))
+	panel.advance_art_motion(4.0)
+	_check(not panel.art_motion_active() and panel.art_motion_transform() == baseline
+			and panel._art_drift.position == panel._art_drift_base,
+			"an invalid visit never animates the authored art")
+	var already := _make()
+	var already_state := already.read_state()
+	_check(already.leave(already_state.visit_id, already_state.node_id, already_state).ok,
+			"already-used real visit prerequisite")
+	await _bind(already)
+	panel.advance_art_motion(4.0)
+	_check(not panel.art_motion_active() and panel.art_motion_transform() == baseline,
+			"a consumed visit never animates the authored art")
+	var stale := _make(150)
+	await _bind(stale)
+	panel.advance_art_motion(1.0)
+	_check(panel.art_motion_transform() != baseline, "art moves while the bound visit is genuinely open")
+	var stale_state := stale.read_state()
+	_check(stale.leave(stale_state.visit_id, stale_state.node_id, stale_state).ok,
+			"external owner really consumed the animated visit")
+	panel.advance_art_motion(1.0)
+	_check(not panel.art_motion_active() and panel.art_motion_transform() == baseline
+			and panel._art_drift.position == panel._art_drift_base,
+			"an externally consumed source stops the art at the static baseline")
+	# Missing optional artwork keeps today's static readable fallback.
+	var saved_art: Texture2D = panel.panel_art_texture
+	panel.panel_art_texture = null
+	await _bind(_make(150))
+	panel.advance_art_motion(5.0)
+	_check(not panel.art_motion_active() and panel.art_motion_transform() == baseline
+			and panel._art_drift.position == panel._art_drift_base
+			and panel._art_drift.scale == Vector2.ONE,
+			"missing optional art keeps the exact static baseline transform")
+	_check(panel.get_child(0) is Panel and panel.get_child(0).get_theme_stylebox("panel") != null
+			and panel.is_visible_in_tree() and not panel.leave_button.disabled
+			and not panel.card_buttons.is_empty() and panel.wallet_label.text != ""
+			and panel.remove_button.text == "1 Remove · 75 gold",
+			"missing art retains today's readable, actionable static sewn panel")
+	panel.panel_art_texture = saved_art
+	await _bind(_make(150))
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_active() and panel.art_motion_transform() == LiveUnpickerPanel.art_motion_transform_at(2.0),
+			"restored authored art animates again from the static baseline")
+	# The real mouse Remove and focused Enter Leave paths are unchanged while the
+	# backdrop moves, and each still submits exactly one authentic intent.
+	await _bind(_make(150))
+	panel.advance_art_motion(2.5)
+	var moving_row := panel.card_buttons[0]
+	var moving_id: String = panel._source["deck"][0]
+	await _activate(moving_row, false)
+	await _activate(panel.remove_button, false)
+	_check(intents.size() == 1 and intents[0].get("action") == "remove_card"
+			and intents[0].get("selected_card_id") == moving_id,
+			"a real mouse removal still submits one source-bound intent while the art animates")
+	panel.remove_button.pressed.emit()
+	panel.leave_button.pressed.emit()
+	_check(intents.size() == 1, "the animated panel still refuses duplicate intents")
+	await _bind(_make(150, 0))
+	panel.advance_art_motion(3.0)
+	await _activate(panel.leave_button, true)
+	_check(intents.size() == 1 and intents[0].get("action") == "leave"
+			and not intents[0].has("selected_card_id"),
+			"a focused Enter Leave still submits one free intent while the art animates")
+	panel.set_process(true)
+
