@@ -113,9 +113,17 @@ func get_head_patches() -> CombatM05HeadPatchRules:
 
 func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, pinned: Variant = null,
-		patches: Variant = null, mitt: Variant = null, quote: Dictionary = {}) -> Dictionary:
-	return _play_card(deck, party, enemies, card_id, target_position,
-		pinned, patches, mitt, quote)
+		patches: Variant = null, mitt: Variant = null, quote: Dictionary = {},
+		needle_rules: CombatHeirloomPatchTriggers = null,
+		needle_quote: Dictionary = {}) -> Dictionary:
+	var result := _play_card(deck, party, enemies, card_id, target_position,
+		pinned, patches, mitt, quote, false, 0, needle_rules, needle_quote)
+	if needle_rules != null and not needle_quote.is_empty():
+		if result.get("ok", false):
+			needle_rules.finish_needle_hit(needle_quote, result)
+		else:
+			needle_rules.cancel_needle_hit()
+	return result
 
 
 ## Share only the enclosing transaction's detached wearer latches/projection.
@@ -143,7 +151,9 @@ func resolve_staged_half(party: CombatParty, enemies: CombatEnemies,
 func _play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, pinned: Variant = null,
 		patches: Variant = null, mitt: Variant = null, quote: Dictionary = {},
-		staged: bool = false, base_bonus: int = 0) -> Dictionary:
+		staged: bool = false, base_bonus: int = 0,
+		needle_rules: CombatHeirloomPatchTriggers = null,
+		needle_quote: Dictionary = {}) -> Dictionary:
 	var active_pinned: CombatPinned = _pinned
 	var active_patches: CombatPatchAttackRules = _patches
 	var active_mitt: CombatFrayfinderMitt = _mitt
@@ -217,7 +227,19 @@ func _play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	elif not active_quote.is_empty() and active_quote.get("bonus", 0) != 0:
 		return _failure()
 
-	if damage > CombatStatuses.MAX_INT - 5 - patch_damage - mitt_bonus:
+	# Only an authenticated paid quote grants Needle; stitched halves never
+	# receive the quote or an implicit Heirloom bonus.
+	var needle_bonus := 0
+	if staged and (needle_rules != null or not needle_quote.is_empty()):
+		return _failure()
+	if needle_rules != null and not needle_quote.is_empty():
+		if not needle_rules.authorizes_needle_hit(needle_quote, party, enemies,
+				card_id, target_position):
+			return _failure()
+		needle_bonus = 1
+	elif not needle_quote.is_empty():
+		return _failure()
+	if damage > CombatStatuses.MAX_INT - 5 - patch_damage - mitt_bonus - needle_bonus:
 		return _failure()
 	if warden_card and block_amount <= 0:
 		return _failure()
@@ -285,7 +307,7 @@ func _play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if active_pinned != null:
 		pin_bonus = active_pinned.bonus_for_attack(enemies, target_position, owner_id)
 	var hit: Dictionary = _attacks.resolve_vs_enemy(enemies, target_position,
-		damage + pin_bonus + patch_damage + mitt_bonus,
+		damage + pin_bonus + patch_damage + mitt_bonus + needle_bonus,
 		owner.get("statuses", {}), target.get("statuses", {}))
 	if not hit.get("ok", false):
 		return _failure()

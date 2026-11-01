@@ -681,6 +681,23 @@ func _run() -> void:
 	_check(rng.seed == rng_seed and rng.state == rng_state,
 		"show_intent leaves a seeded run RNG's seed and state untouched")
 	_check(randi() == global_expected, "show_intent leaves the global RNG untouched")
+	# The same mounted ribbon announces the real Imp's newly executable Blind.
+	var imp := _record(_records(), "inkbrush_imp")
+	_check(not imp.is_empty() and imp.intent.target == "lowest_living_hp",
+		"authored Inkbrush Imp is present with lowest-HP living target policy")
+	var blind := {"type": "debuff", "amount": 1, "status": "blind_next_attack",
+		"target_position": 3, "enemy_position": 1}
+	badge.show_intent(blind, false, false, "lowest_living_hp")
+	_check(badge.intent_type == "debuff" and badge.action_status == "blind_next_attack"
+		and badge.amount == 1 and badge.target_position == 3
+		and badge.readable_text.contains("Blind 1")
+		and badge.tooltip_text.contains("Hero 3 (back)")
+		and badge.tooltip_text.contains("next attempted attack misses once"),
+		"mounted Imp Blind 1 names the real recipient and exact one-shot consequence")
+	_assert_layout(badge, LiveEnemyIntentBadge.COMPACT_MIN_FONT, "mounted Imp Blind")
+	badge.show_intent(crab_action, false, false, "front")
+	_check(badge.action_status.is_empty() and _two_hit_caption(badge.readable_text),
+		"subsequent reused ribbon restores original two-hit icon and text")
 	await _assert_icon_pulse(crab_action, wasp_action)
 	_finish()
 

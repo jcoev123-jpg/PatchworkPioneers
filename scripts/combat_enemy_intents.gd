@@ -628,7 +628,8 @@ static func valid_action(action: Variant) -> bool:
 		return action.size() == 3 and amount == 0
 	if kind == "debuff":
 		return action.size() == 4 and amount > 0 and action.get("status") is String \
-			and action.status in ["bleed", "weak", "exposed"]
+			and (action.status in ["bleed", "weak", "exposed"] \
+				or (action.status == "blind_next_attack" and amount == 1))
 	var direction = action.get("direction")
 	return action.size() == 4 and amount == 0 and direction is int \
 		and direction in [-1, 1] and target + direction >= 1 and target + direction <= 3

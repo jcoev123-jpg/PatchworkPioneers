@@ -2031,13 +2031,28 @@ func _point_in_hand_copy(point, id: String) -> bool:
 func _fast_mode() -> void:
 	if not await _enter_fight(fight_seed):
 		return
+	_assert_presenter_mounted()
 	var button: Button = juice.fast_button
-	_check(not juice.fast_animations and juice.duration_seconds() <= 0.6
-		and button.text == "Fast: Off", "normal mode by default")
+	_check(is_instance_valid(button) and button.get_parent() == app.action_corner_row
+		and button.is_visible_in_tree() and button.focus_mode == Control.FOCUS_ALL,
+		"the actual mounted Fast button is visible, focusable and beside Return")
+	if not is_instance_valid(button):
+		await _leave_fight()
+		return
+	_check(button.tooltip_text.is_empty(),
+		"the real Fast button has no developer timing tooltip before toggles")
+	# The live action row may reuse a button: even a stale label must be cleared.
+	button.tooltip_text = "stale timing tooltip"
+	var reused: Button = juice.attach_fast_button(app.action_corner_row)
+	_check(reused == button and app.find_children("FastAnimationsButton", "Button", true, false).size() == 1
+		and button.tooltip_text.is_empty(), "reusing Fast clears its tooltip without another button")
+	_check(not juice.fast_animations and is_equal_approx(juice.duration_seconds(), 0.6)
+		and button.text == "Fast: Off", "normal mode by default at exactly 0.6 s")
 	var before_toggle := _state()
 	await _mouse(button)
-	_check(juice.fast_animations and juice.duration_seconds() <= 0.15
-		and button.text == "Fast: On", "mouse reaches a fast mode of at most 0.15 s")
+	_check(juice.fast_animations and is_equal_approx(juice.duration_seconds(), 0.15)
+		and button.text == "Fast: On", "mouse reaches a fast mode of exactly 0.15 s")
+	_check(button.tooltip_text.is_empty(), "mouse toggling leaves the mounted Fast button tooltip-free")
 	_check(_state() == before_toggle, "toggling fast changes no combat state")
 	_check(not app.end_turn_button.disabled, "fast mode never locks the End Turn action")
 	# A real attack in fast mode commits normally and keeps its cue for at most 0.15 s.
@@ -2066,7 +2081,8 @@ func _fast_mode() -> void:
 		"fast mode still announces the committed hit on screen")
 	var announced: Array = juice.history.slice(known)
 	_check(announced.size() == 1 and bool(announced[0]["fast"])
-		and float(announced[0]["duration"]) <= 0.15, "fast cues are recorded at 0.15 s or less")
+		and is_equal_approx(float(announced[0]["duration"]), 0.15),
+		"the committed fast hit records the exact 0.15 s cue")
 	var fast_puffs: Array = juice.puff_history.slice(puffs_before)
 	_check(fast_puffs.size() == 1 and bool(fast_puffs[0]["fast"])
 		and _shipped_puff_art(fast_puffs)
@@ -2152,11 +2168,13 @@ func _fast_mode() -> void:
 	_check(button.has_focus(), "Tab reaches the Fast animations toggle")
 	var before_key := _state()
 	await _key(KEY_SPACE)
-	_check(not juice.fast_animations and juice.duration_seconds() <= 0.6
-		and button.text == "Fast: Off", "Space returns to normal-speed cues")
+	_check(not juice.fast_animations and is_equal_approx(juice.duration_seconds(), 0.6)
+		and button.text == "Fast: Off", "Space returns to exactly 0.6 s normal cues")
+	_check(button.tooltip_text.is_empty(), "keyboard toggling leaves the mounted Fast button tooltip-free")
 	_check(_state() == before_key, "keyboard toggling changes no combat state")
 	# Normal mode gameplay is not gated by the previous fast cue either.
 	var normal_state := _state()
+	var normal_cues_before: int = juice.history.size()
 	var held := _attacks_in_hand()
 	_check(not held.is_empty(), "a second attack is still held after the toggle")
 	if not held.is_empty() and _target_position(String(held[0])) > 0:
@@ -2164,6 +2182,11 @@ func _fast_mode() -> void:
 		await _mouse(_enemy_label(_target_position(String(held[0]))))
 		await _frames()
 		_check(_state() != normal_state, "a normal-speed attack still commits immediately")
+		var normal_receipts: Array = juice.history.slice(normal_cues_before)
+		_check(not normal_receipts.is_empty(), "the real normal-speed hit emits a committed cue")
+		for receipt in normal_receipts:
+			_check(not bool(receipt["fast"]) and is_equal_approx(float(receipt["duration"]), 0.6),
+				"the real normal-speed hit uses the exact 0.6 s cue")
 	await _leave_fight()
 
 
@@ -2242,6 +2265,8 @@ func _teardown_and_reentry() -> void:
 		"fresh reentry starts without any stale hit, card flight, pose, recoil or puff")
 	_check(app.find_children("FastAnimationsButton", "Button", true, false).size() == 1,
 		"fresh reentry mounts exactly one Fast animations toggle")
+	_check(is_instance_valid(juice.fast_button) and juice.fast_button.tooltip_text.is_empty(),
+		"fresh battle rebinds a real Fast button without a timing tooltip")
 	await _leave_fight()
 
 

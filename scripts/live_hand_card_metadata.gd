@@ -53,6 +53,8 @@ var _bolas := CombatYarnRangerBolasCards.new()
 var _skein := CombatYarnRangerEndlessSkeinCards.new()
 var _vigil := CombatLanternMonkPartyCards.new()
 var _re_stuff := CombatScarecrowReStuffCards.new()
+## The accepted Crow Flock paid resolver is the only authenticator for its two face records.
+var _crow_flock := CombatScarecrowCrowFlockCards.new()
 var _riposte := CombatRagDuelistRiposteCards.new()
 var _rag_dodge := CombatRagDuelistDodgeCards.new()
 var _warden_pool := WardenPoolCards.new()
@@ -159,6 +161,8 @@ func _definition(card_id: String) -> Dictionary:
 		return _feint._catalog_definition(card_id)
 	if CombatScarecrowCrowCards.CARDS.has(card_id):
 		return CombatScarecrowCrowCards.new()._catalog_definition(card_id)
+	if _crow_flock.is_supported_card(card_id):
+		return _crow_flock._catalog_definition(card_id)
 	if card_id in CombatYarnRangerUnspoolCards.CARD_IDS or CombatYarnRangerSnareCards.CARDS.has(card_id):
 		return YarnRangerPoolCards.new().get_definition(card_id)
 	if _re_stuff.is_supported_card(card_id):
@@ -1218,6 +1222,12 @@ func _update_visual(panel: Control) -> void:
 			playable = _app.deck.turn_active and _app.deck.energy >= int(move.get("cost", -1)) \
 				and _owner_position(move.get("owner", "")) in move.get("from_positions", []) \
 				and CombatPositionSwaps.preview_adjacent_swap(_app.party, _owner_position(move.get("owner", "")), move.get("direction", 0)).get("ok", false)
+		elif _crow_flock.is_supported_card(id):
+			# Crow Flock is enable-able only by the mounted area presenter's own
+			# paid admission: catalog cost and owner alone never light the face.
+			var flock_presenter = _app.get_node_or_null("LiveAreaAttackAction")
+			playable = flock_presenter != null and is_instance_valid(flock_presenter) \
+				and flock_presenter._eligible(panel, id)
 		else:
 			var support := _definition(id)
 			var position := _owner_position(str(support.get("owner", "")))

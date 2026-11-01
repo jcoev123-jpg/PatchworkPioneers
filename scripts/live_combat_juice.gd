@@ -182,8 +182,6 @@ func attach_fast_button(actions: HBoxContainer) -> Button:
 	button.custom_minimum_size = Vector2(120, 40)
 	button.focus_mode = Control.FOCUS_ALL
 	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	button.tooltip_text = "Fast animations: cues settle in %.2f s instead of %.1f s" % [
-		FAST_SECONDS, NORMAL_SECONDS]
 	button.pressed.connect(_on_fast_pressed)
 	actions.add_child(button)
 	fast_button = button
@@ -199,6 +197,8 @@ func _sync_button() -> void:
 	if not is_instance_valid(fast_button):
 		fast_button = null
 		return
+	# Clear even a stale tooltip when the mounted button is reused or rebound.
+	fast_button.tooltip_text = ""
 	fast_button.text = "Fast: %s" % ("On" if fast_animations else "Off")
 
 
