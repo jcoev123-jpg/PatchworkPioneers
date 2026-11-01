@@ -295,6 +295,10 @@ func _refresh() -> void:
 	visible = true
 	_clear_options()
 	var active := _active()
+	# An inactive/confirmed visit must restore the physical art layer now, even
+	# when _process is paused (e.g. a mounted deterministic test).
+	if not active:
+		_reset_art_motion()
 	var quoted: Array = _visit.quote().get("choices", []) if active else []
 	upgrade_button.disabled = not active or not quoted.has("upgrade") or _visit.upgrade_options().is_empty()
 	stitch_button.disabled = not active or not quoted.has("stitch") or _visit.stitch_first_options().is_empty()
