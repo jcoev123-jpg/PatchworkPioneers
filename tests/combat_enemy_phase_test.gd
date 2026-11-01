@@ -7,6 +7,7 @@ var phase := CombatEnemyPhase.new()
 
 func _initialize() -> void:
 	_test_two_hits_and_blind()
+	_test_four_catalog_phase_and_refusals()
 	_test_ordered_specials()
 	_test_fear_buff_dispatch()
 	_test_status_sensitive_attacks()
@@ -2114,3 +2115,183 @@ func _test_ram_charge_fail_closed() -> void:
 	_check(slain_receipt.get("ok") and slain_receipt.get("events", [])[0].get("applied") == false
 		and blind_party.get_heroes() == before_heroes and dead.get_enemy(1).get("hp") == 0,
 		"AC4: dead Ram has no strike, no HP mutation or resurrection")
+
+## Two actual normal catalogs feed these weighted combat actors. No test-only
+## action shapes replace their authored choices or target policies.
+func _phase_four_authored_normals() -> Array:
+	var wanted := ["moth_swarm", "button_guard", "spool_stalker", "ragling_guard"]
+	var found := {}
+	for catalog_path in ["res://data/enemies/run_enemies.json",
+			"res://data/enemies/starter_enemies.json"]:
+		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(catalog_path))
+		if not parsed is Array:
+			return []
+		for entry in parsed:
+			if entry is Dictionary and entry.get("id") in wanted:
+				var actor: Dictionary = entry.duplicate(true)
+				actor["max_hp"] = int(actor["max_hp"])
+				found[actor["id"]] = actor
+	var records: Array = []
+	for id in wanted:
+		if not found.has(id):
+			return []
+		records.append(found[id])
+	return records
+
+
+func _four_phase_scheduler() -> CombatEnemyIntents:
+	var slots: Array = []
+	for position in range(1, 5):
+		slots.append({"enemy_position": position, "pattern": [
+			{"type": "block", "amount": 1}]})
+	return CombatEnemyIntents.new(slots)
+
+
+func _test_four_catalog_phase_and_refusals() -> void:
+	var authored := _phase_four_authored_normals()
+	_check(authored.size() == 4, "AC2 precondition: four distinct actors loaded from real normal catalogs")
+	if authored.size() != 4:
+		return
+	var enemies := CombatEnemies.new(authored, 4)
+	var party := _party()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 422407
+	var scheduler := _four_phase_scheduler()
+	_check(enemies.is_valid() and enemies.get_capacity() == 4
+		and scheduler.is_valid() and scheduler.bind_battle(enemies, party, rng)
+		and scheduler.get_intents().size() == 4,
+		"AC2 precondition: four authenticated living source slots bind their weighted policies")
+	if not scheduler.is_bound():
+		return
+	_check(party.gain_block(1, 12) and enemies.gain_block(4, 3)
+		and enemies.apply_statuses({4: {"weak": 1}})
+		and enemies.get_enemy(4).id == "ragling_guard",
+		"AC2 precondition: real front Block and fourth-slot enemy Block/Weak exist")
+	var announced := scheduler.get_intents()
+	var enemy_before := enemies.get_enemies()
+	var hero_before := party.get_heroes()
+	var state_before := rng.state
+	var references := [enemies._enemies[0], enemies._enemies[1],
+		enemies._enemies[2], enemies._enemies[3]]
+	# A forged fourth action cannot spend a status, one weighted draw, HP or Block.
+	var forged := announced.duplicate(true)
+	forged[3]["amount"] = -1
+	_check(not phase.execute_phase(party, enemies, forged, null, true).ok
+		and enemies.get_enemies() == enemy_before
+		and party.get_heroes() == hero_before and rng.state == state_before,
+		"AC3: invalid fourth beat rejects before any actor/state/RNG mutation")
+	var invented := announced.duplicate(true)
+	invented.append({"type": "block", "amount": 4, "enemy_position": 5})
+	_check(not phase.execute_phase(party, enemies, invented, null, true).ok
+		and enemies.get_enemies() == enemy_before and party.get_heroes() == hero_before
+		and rng.state == state_before,
+		"AC3: nonexistent fifth source is rejected atomically")
+	# Reverse the caller array: execution still uses the authentic source slots.
+	var reversed := announced.duplicate(true)
+	reversed.reverse()
+	var trace := phase.execute_phase(party, enemies, reversed, null, true)
+	var ordered: bool = bool(trace.get("ok", false)) and trace.get("events", []).size() == 4
+	if ordered:
+		for index in range(4):
+			ordered = ordered and trace["events"][index].enemy_position == index + 1
+			ordered = ordered and trace["events"][index].type == announced[index].type
+	_check(ordered and announced.size() == 4 and reversed.size() == 4,
+		"AC2: all four original authored weighted beats execute once in slot order")
+	_check(rng.state == state_before and scheduler.get_intents() == announced
+		and announced[3].enemy_position == 4
+		and enemies.get_enemy(4).get("statuses", {}).get("weak") == 1
+		and enemies.get_enemy(4).get("hp") == enemy_before[3].hp
+		and is_same(enemies._enemies[3], references[3]),
+		"AC2/AC3: fourth source keeps its own identity/Weak/HP and phase consumes no RNG")
+	_check(party.get_heroes() != hero_before or enemies.get_enemies() != enemy_before,
+		"AC2: a nonempty genuine four-source phase writes actual combat results")
+	# Independent same-seed replay reaches the identical real phase, including
+	# fourth-slot statuses, Block changes and the complete ordered event trace.
+	var replay_party := _party()
+	var replay_enemies := CombatEnemies.new(authored, 4)
+	var replay_rng := RandomNumberGenerator.new()
+	replay_rng.seed = 422407
+	var replay_scheduler := _four_phase_scheduler()
+	_check(replay_scheduler.bind_battle(replay_enemies, replay_party, replay_rng)
+		and replay_party.gain_block(1, 12)
+		and replay_enemies.gain_block(4, 3)
+		and replay_enemies.apply_statuses({4: {"weak": 1}})
+		and replay_scheduler.get_intents() == announced,
+		"AC3 precondition: second authentic four-source fight announces exact seeded choices")
+	var replay_trace := phase.execute_phase(
+		replay_party, replay_enemies, replay_scheduler.get_intents(), null, true)
+	_check(replay_trace == trace and replay_enemies.get_enemies() == enemies.get_enemies()
+		and replay_party.get_heroes() == party.get_heroes() and replay_rng.state == rng.state,
+		"AC3: independent seeded four-source phase replays exact events, statuses, HP, Block and RNG")
+	# Slay the fourth real source: it stays in slot four but its next announced
+	# action is skipped; the first three living actors still resolve.
+	var next_party := _party()
+	var slain_enemies := CombatEnemies.new(authored, 4)
+	var slain_rng := RandomNumberGenerator.new()
+	slain_rng.seed = 422407
+	var slain_scheduler := _four_phase_scheduler()
+	_check(slain_scheduler.bind_battle(slain_enemies, next_party, slain_rng)
+		and slain_enemies.apply_damage(4, 1000) and slain_enemies.is_slain(4)
+		and slain_enemies.get_enemy(4).id == "ragling_guard",
+		"AC2 precondition: fourth authentic source is slain but retains its slot")
+	var dead_announcement := slain_scheduler.get_intents()
+	var dead_state := slain_rng.state
+	var dead_result := phase.execute_phase(next_party, slain_enemies, dead_announcement, null, true)
+	_check(dead_result.get("ok", false) and dead_result.get("events", []).size() == 4
+		and not dead_result["events"][3].applied and slain_enemies.is_slain(4)
+		and slain_rng.state == dead_state,
+		"AC2: slain fourth beat is inert; three other sources still execute")
+	# The genuine Moth Swarm can summon only into a free opted-in slot. Search
+	# successive cached authored phases with one fixed seed, never forge summon.
+	var birth_party := _party()
+	var birth_enemies := CombatEnemies.new([authored[0], authored[1], authored[2]], 4)
+	var birth_rng := RandomNumberGenerator.new()
+	birth_rng.seed = 422408
+	var birth_slots: Array = []
+	for position in range(1, 4):
+		birth_slots.append({"enemy_position": position, "pattern": [
+			{"type": "block", "amount": 1}]})
+	var birth_schedule := CombatEnemyIntents.new(birth_slots)
+	_check(birth_enemies.is_valid()
+		and birth_schedule.bind_battle(birth_enemies, birth_party, birth_rng),
+		"AC2 precondition: three genuine authored living sources have room for one birth")
+	var found_summon := false
+	for turn in range(80):
+		var preview := birth_schedule.get_intents()
+		if preview.size() == 3 and preview[0].type == "summon":
+			found_summon = true
+			break
+		if not birth_schedule.advance_turn():
+			break
+	_check(found_summon, "AC2: seeded authentic mother chooses its authored summon alternative")
+	if not found_summon:
+		return
+	var birth_actions := birth_schedule.get_intents()
+	var birth_rng_before := birth_rng.state
+	var born := phase.execute_phase(birth_party, birth_enemies, birth_actions, null, true)
+	_check(born.get("ok", false) and born.get("events", []).size() == 3
+		and born["events"][0].type == "summon" and born["events"][0].applied
+		and born["events"][0].get("spawn_position") == 4
+		and birth_enemies.get_enemies().size() == 4
+		and birth_enemies.get_enemy(4).id == CombatEnemies.BROODLING_ID
+		and birth_enemies.get_enemy(4).hp == 8 and birth_rng.state == birth_rng_before,
+		"AC2: authored summon commits fourth child after all three current-phase beats")
+	_check(birth_schedule.get_intents().size() == 3 and birth_schedule.advance_turn()
+		and birth_schedule.get_intents().size() == 4
+		and birth_schedule.get_intents()[3].enemy_position == 4,
+		"AC2: newborn cannot act in its birth phase; it first receives next-phase intent")
+	var born_before := birth_enemies.get_enemies()
+	var full_rng := birth_rng.state
+	var blocked_birth := birth_enemies.stage_broodling(1)
+	_check(blocked_birth == {"ok": true, "spawned": false}
+		and birth_enemies.get_enemies() == born_before and birth_rng.state == full_rng,
+		"AC3: a full opted-in roster refuses another birth without RNG, latch or state mutation")
+	# Non-opt-in rosters cannot impersonate four by injecting the same content.
+	var default_four := CombatEnemies.new(authored)
+	var deny_rng := RandomNumberGenerator.new()
+	deny_rng.seed = 422409
+	var deny_state := deny_rng.state
+	var deny_result := phase.execute_phase(_party(), default_four, announced, null, true)
+	_check(not default_four.is_valid() and not deny_result.ok
+		and deny_rng.state == deny_state,
+		"AC3: default three-actor battle refuses a detached four-source phase")

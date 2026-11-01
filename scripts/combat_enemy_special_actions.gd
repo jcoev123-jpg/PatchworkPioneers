@@ -18,7 +18,7 @@ func execute_actions(party: CombatParty, enemies: CombatEnemies, actions: Array)
 	var staged_enemies: Array[Dictionary] = enemies.get_enemies()
 	var turn_batch := CombatStatusTurnBatch.new()
 	if not turn_batch.tick_side("heroes", staged_heroes)["ok"] \
-			or not turn_batch.tick_side("enemies", staged_enemies)["ok"]:
+			or not turn_batch.tick_side("enemies", staged_enemies, enemies.get_capacity())["ok"]:
 		return failure
 
 	var ordered: Array[Dictionary] = []

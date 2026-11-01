@@ -4,10 +4,10 @@ extends RefCounted
 ## This does not write to CombatParty, CombatEnemies, or the live game.
 
 
-## "heroes" takes exactly three positions; "enemies" takes one to three.
-## The entire input must be valid before any actor's statuses are advanced.
-func tick_side(side: String, actors: Array) -> Dictionary:
-	if not _valid_roster(side, actors):
+## "heroes" takes exactly three positions; "enemies" defaults to one to three.
+## Only the owning opted-in combat roster may pass its explicit four capacity.
+func tick_side(side: String, actors: Array, enemy_capacity: int = CombatEnemies.MAX_ENEMIES) -> Dictionary:
+	if not _valid_roster(side, actors, enemy_capacity):
 		return {"ok": false, "actors": [], "events": []}
 
 	var rules := CombatStatuses.new()
@@ -37,12 +37,13 @@ func tick_side(side: String, actors: Array) -> Dictionary:
 	return {"ok": true, "actors": next_actors, "events": events}
 
 
-func _valid_roster(side: String, actors: Array) -> bool:
+func _valid_roster(side: String, actors: Array, enemy_capacity: int = CombatEnemies.MAX_ENEMIES) -> bool:
 	if side == "heroes":
 		if actors.size() != CombatParty.PARTY_SIZE:
 			return false
 	elif side == "enemies":
-		if actors.is_empty() or actors.size() > CombatEnemies.MAX_ENEMIES:
+		if enemy_capacity not in [CombatEnemies.MAX_ENEMIES, CombatEnemies.OPT_IN_MAX_ENEMIES] \
+				or actors.is_empty() or actors.size() > enemy_capacity:
 			return false
 	else:
 		return false

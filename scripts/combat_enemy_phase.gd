@@ -40,7 +40,7 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 	if not _attack_metadata_valid(roster):
 		return failure
 	var validator := CombatStatusTurnBatch.new()
-	if not validator.tick_side("heroes", heroes).ok or not validator.tick_side("enemies", roster).ok:
+	if not validator.tick_side("heroes", heroes).ok or not validator.tick_side("enemies", roster, enemies.get_capacity()).ok:
 		return failure
 	var ordered: Array[Dictionary] = []
 	var seen: Array[int] = []
@@ -70,7 +70,7 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		return a.enemy_position < b.enemy_position)
 	var staged_party := CombatParty.new(heroes)
 	staged_party._heroes = heroes
-	var staged_enemies := CombatEnemies.new(roster)
+	var staged_enemies := CombatEnemies.new(roster, enemies.get_capacity())
 	# Keep the pre-phase source snapshot distinct from the appendable staged roster.
 	staged_enemies._enemies = roster.duplicate(true)
 	var events: Array[Dictionary] = []
