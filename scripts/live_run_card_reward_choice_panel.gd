@@ -57,15 +57,17 @@ const OWNER_NAME_SIDE_INSET := 8
 
 ## The card's own authored picture gets a dedicated, inert illustration window
 ## above the name; the name keeps a plain cream strip of its own instead of
-## cropping art behind its text. The window takes the card's leftover height
-## (see _mount_card); its minimum leaves 96px for the cropped picture and
+## cropping art behind its text. The picture is a *bounded* window: it keeps its
+## readable minimum and never grows with the card's spare height (see
+## _mount_card), so a tall card cannot turn the illustration into the loudest
+## thing on the face. Its minimum leaves 96px for the cropped picture and
 ## 8px of sewn backing on each edge while every face stays aligned.
 const CARD_ART_HEIGHT := 112
-const CARD_ART_STRETCH_RATIO := 2.0
 const NAME_STRIP_HEIGHT := 32
-## Card-local rhythm: every strip gives up only the pixels the taller picture
-## needs, so the name, cost coin, position marks, full effects and Choose stay
-## separate, legible and inside the 1280x720 screen.
+## Card-local rhythm: every strip keeps its own measured height and the bounded
+## picture gives its spare pixels to the rules well, so the name, cost coin,
+## position marks, full effects and Choose stay separate, legible and inside the
+## 1280x720 screen.
 const CARD_CONTENT_SEPARATION := 2
 const CARD_SIDE_MARGIN := 10
 const PIPS_STRIP_HEIGHT := 20
@@ -76,6 +78,16 @@ const CHOOSE_HEIGHT := 48
 ## 18 px instead of the earlier 15 px. The card's own name stays on its 21 px
 ## display strip, so a taller body line only needs the rules strip's own room.
 const BODY_FONT_SIZE := 18
+## The rules well is the card's largest text region. It is a sewn cream inset
+## (light paper inside a darker running seam, padded clear of the stitches) that
+## takes every spare pixel the bounded picture leaves, so the authored effects
+## get the card's unused height instead of the illustration. Ordinary sentences
+## sit in it in full; only genuinely longer rules ever need the wheel.
+const EFFECTS_WELL_MIN_HEIGHT := 54
+const EFFECTS_WELL_PAPER := Color("#fbf3e4")
+const EFFECTS_WELL_STITCH := Color("#b9a984")
+const EFFECTS_WELL_PAD_X := 9
+const EFFECTS_WELL_PAD_Y := 6
 ## Keyword Help gets its own sewn cell beside the owner felt, never sewn onto the
 ## hero's ribbon: a 10px gap of card paper separates the two patches so the full
 ## hero name and the Help label read independently. Its 24px cell is too short
@@ -386,8 +398,10 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	illustration.mode = String(art.get("mode", _CardIllustration.MODE_NONE))
 	illustration.owner_color = OWNER_COLORS[owner]
 	illustration.custom_minimum_size = Vector2(0, CARD_ART_HEIGHT)
-	illustration.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	illustration.size_flags_stretch_ratio = CARD_ART_STRETCH_RATIO
+	# Bounded window: SIZE_FILL keeps the picture at its readable minimum even
+	# when the card is taller. Only the rules well below takes the spare height,
+	# so the illustration can never dwarf the authored effects again.
+	illustration.size_flags_vertical = Control.SIZE_FILL
 	content.add_child(illustration)
 
 	# Name on its own readable torn-paper strip, never cropped illustration art
@@ -479,16 +493,22 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	var rules_label := _card_label("RulesLabel", effect_line, BODY_FONT_SIZE)
 	rules_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	rules_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Inside the well the sentence fills the scroll child, so one short line is
+	# centred in the sewn inset instead of hugging its top seam while the rest of
+	# the well reads as blank parchment.
+	rules_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	rules_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	rules_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# The authored text is never truncated: a fixed viewport gives the Choose
-	# action stable placement, while long sentences remain wheel/trackpad scrollable.
+	# The authored text is never truncated: the well takes the card's spare
+	# height for the words, while long sentences remain wheel/trackpad scrollable.
 	var effects := ScrollContainer.new()
 	effects.name = "EffectsScroll"
-	effects.custom_minimum_size = Vector2(0, 54)
+	effects.custom_minimum_size = Vector2(0, EFFECTS_WELL_MIN_HEIGHT)
 	effects.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	effects.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	effects.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	effects.mouse_filter = Control.MOUSE_FILTER_PASS
+	effects.add_theme_stylebox_override("panel", _effects_well_style())
 	effects.add_child(rules_label)
 	content.add_child(effects)
 
@@ -591,6 +611,23 @@ func _card_label(label_name: String, value: String, point_size: int) -> Label:
 	label.add_theme_color_override("font_color", DARK_INK)
 	label.add_theme_font_size_override("font_size", point_size)
 	return label
+
+
+## The sewn inset the authored rules are read in: light cream paper inside a
+## darker running seam, padded clear of the stitches. It is drawn paper, not a
+## generated texture, exactly like the name strip beside it, and it only owns
+## the card's own spare height (see _mount_card).
+func _effects_well_style() -> StyleBoxFlat:
+	var well := StyleBoxFlat.new()
+	well.bg_color = EFFECTS_WELL_PAPER
+	well.border_color = EFFECTS_WELL_STITCH
+	well.set_border_width_all(1)
+	well.set_corner_radius_all(5)
+	well.content_margin_left = EFFECTS_WELL_PAD_X
+	well.content_margin_right = EFFECTS_WELL_PAD_X
+	well.content_margin_top = EFFECTS_WELL_PAD_Y
+	well.content_margin_bottom = EFFECTS_WELL_PAD_Y
+	return well
 
 
 ## A caller rejection re-enables this exact prepared offer; acceptance latches it.

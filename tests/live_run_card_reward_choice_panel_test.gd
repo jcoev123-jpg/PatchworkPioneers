@@ -2667,8 +2667,12 @@ func _test_illustration_source() -> void:
 	var mount := _source_slice("func _mount_card", "## The hover legend for the six painted marks")
 	_check(mount.contains("resolve_card_art(") and mount.contains("illustration.mode ="),
 		"the live card mounts the resolved mode instead of a bare texture")
-	_check(mount.contains("CARD_ART_HEIGHT") and mount.contains("SIZE_EXPAND_FILL"),
-		"the mounted picture window keeps its readable minimum and takes card slack")
+	_check(mount.contains("CARD_ART_HEIGHT")
+		and mount.contains("illustration.size_flags_vertical = Control.SIZE_FILL"),
+		"the mounted picture window is bounded to its readable height, never the card's slack")
+	_check(mount.contains("EffectsScroll") and mount.contains("size_flags_vertical = Control.SIZE_EXPAND_FILL")
+		and mount.contains("_effects_well_style()"),
+		"the mounted rules well owns the card's spare height in its own sewn inset")
 	_check(mount.contains("CardShortRules.line("),
 		"the mounted reward face gets its effect text from the shared formatter")
 	_check(mount.contains("card.tooltip_text = _pip_legend("),
@@ -3665,6 +3669,133 @@ func _check_three_face_layout(kind: String) -> void:
 		kind + " Skip remains distinct and reachable under the three faces")
 
 
+## The playtest imbalance: the illustration must stay a bounded window and the
+## authored effects must own the card's spare height in their own sewn region.
+## Measured on the same live scene that receives genuine prepared Fight/Elite
+## receipts, never on a miniature test-only card.
+func _test_rules_well(fight: Dictionary, elite: Dictionary) -> void:
+	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
+	var measured: Dictionary = {}
+	for kind in ["Fight", "Elite"]:
+		var fixture: Dictionary = elite if kind == "Elite" else fight
+		var receipt: Dictionary = fixture["receipt"]
+		var before := _snapshot(fixture)
+		requests.clear()
+		_check(panel.open_rewards("rules_well_" + kind.to_lower(), kind, receipt),
+			kind + " genuine prepared receipt mounts for the rules-well check")
+		if not panel.has_open_rewards():
+			continue
+		await _frames()
+		_check(panel.choices_container.get_child_count() == 3
+			and panel.get_choice_buttons().size() == 4,
+			kind + " rules well is measured on three real faces and four actions")
+		if panel.choices_container.get_child_count() != 3:
+			panel.close_rewards()
+			continue
+		var art_heights: Array[float] = []
+		var well_heights: Array[float] = []
+		var well_rects: Array[Rect2] = []
+		var rules_texts: Array[String] = []
+		for slot in range(3):
+			var card := panel.choices_container.get_child(slot) as PanelContainer
+			var content := card.get_node("CardMargin/CardContent") as VBoxContainer
+			var art := content.get_node("CardArt") as LiveRunCardRewardChoicePanel._CardIllustration
+			var effects := content.get_node("EffectsScroll") as ScrollContainer
+			var rules := effects.get_node("RulesLabel") as Label
+			var offer: Dictionary = receipt["offers"][slot]
+			var card_id := String(offer["id"])
+			var definition := RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+			_check(not definition.is_empty(),
+				kind + " rules-well offer resolves in the catalog: " + card_id)
+			if definition.is_empty():
+				continue
+			art_heights.append(art.size.y)
+			well_heights.append(effects.size.y)
+			well_rects.append(effects.get_global_rect())
+			rules_texts.append(rules.text)
+			# AC1 bounded art: the picture keeps exactly its readable window and
+			# never requests the card's leftover height.
+			_check(is_equal_approx(art.size.y, float(LiveRunCardRewardChoicePanel.CARD_ART_HEIGHT))
+				and art.size_flags_vertical == Control.SIZE_FILL
+				and art.custom_minimum_size.y == float(LiveRunCardRewardChoicePanel.CARD_ART_HEIGHT),
+				kind + " illustration is bounded and takes no card slack: " + card_id)
+			# AC1 the rules well is the strip that grows with the card.
+			_check(effects.size_flags_vertical == Control.SIZE_EXPAND_FILL
+				and effects.size.y >= float(LiveRunCardRewardChoicePanel.EFFECTS_WELL_MIN_HEIGHT),
+				kind + " rules well takes the card's spare height: " + card_id)
+			# AC1 distinct region: its own sewn paper inset, not bare card colour.
+			var well := effects.get_theme_stylebox("panel") as StyleBoxFlat
+			_check(well != null and well.bg_color.a > 0.9
+				and well.bg_color.get_luminance()
+					> LiveRunCardRewardChoicePanel.CARD_PAPER.get_luminance()
+				and well.border_width_left >= 1 and well.border_width_top >= 1
+				and well.border_color.get_luminance() < well.bg_color.get_luminance(),
+				kind + " rules well has its own sewn paper inset: " + card_id)
+			if well != null:
+				_check(well.content_margin_left >= 4.0 and well.content_margin_right >= 4.0
+					and well.content_margin_top >= 2.0 and well.content_margin_bottom >= 2.0,
+					kind + " rules text stays clear of the well's stitches: " + card_id)
+				_check(LiveRunCardRewardChoicePanel.contrast_ratio(
+					rules.get_theme_color("font_color"), well.bg_color) >= 4.5,
+					kind + " rules ink is legible inside the sewn well: " + card_id)
+			var pad_top := float(well.content_margin_top) if well != null else 0.0
+			# AC1/AC2 complete ordinary authored rule, no wheel or clipping.
+			_check(rules.text == CardShortRules.line(definition) and not rules.text.is_empty(),
+				kind + " well prints the shared complete authored rule: " + card_id)
+			_check(rules.get_line_count() >= 1
+				and rules.get_visible_line_count() == rules.get_line_count()
+				and rules.size.y <= effects.size.y + 0.5,
+				kind + " ordinary authored rule is fully visible in the well: " + card_id)
+			# AC1 nonoverlapping strips around the well.
+			var metadata_rect := (content.get_node("MetadataRow") as Control).get_global_rect()
+			var choose_rect := (content.get_node("ChooseButton") as Control).get_global_rect()
+			var art_rect := art.get_global_rect()
+			var well_rect := effects.get_global_rect()
+			_check(metadata_rect.end.y <= well_rect.position.y
+				and well_rect.end.y <= choose_rect.position.y
+				and art_rect.end.y <= well_rect.position.y
+				and not art_rect.intersects(well_rect)
+				and not metadata_rect.intersects(well_rect)
+				and not well_rect.intersects(choose_rect),
+				kind + " illustration, marks, rules and Choose stay separate strips: " + card_id)
+			_check(well_rect.encloses(rules.get_global_rect())
+				and rules.get_global_rect().position.y >= well_rect.position.y + pad_top - 0.5,
+				kind + " authored rule sits inside the well's sewn padding: " + card_id)
+			_check(card.get_global_rect().encloses(well_rect) and screen.encloses(well_rect),
+				kind + " rules well fits its card and 1280x720: " + card_id)
+		_check(art_heights.size() == 3 and art_heights[0] == art_heights[1]
+			and art_heights[1] == art_heights[2],
+			kind + " all three bounded illustrations share one height")
+		_check(well_heights.size() == 3 and well_heights[0] == well_heights[1]
+			and well_heights[1] == well_heights[2],
+			kind + " all three rules wells share one height, keeping the faces aligned")
+		_check(rules_texts.size() == 3 and rules_texts.all(
+			func(text: String) -> bool: return not text.is_empty()),
+			kind + " each of the three wells prints its own authored effect")
+		for first in range(well_rects.size()):
+			for second in range(first + 1, well_rects.size()):
+				_check(not well_rects[first].intersects(well_rects[second]),
+					kind + " rules wells stay physically distinct: %d/%d" % [first, second])
+		measured[kind] = {"art": art_heights, "well": well_heights}
+		_check(panel._receipt == receipt and requests.is_empty()
+			and _snapshot(fixture) == before,
+			kind + " rules-well inspection changes no offer, ledger, battle or RNG")
+		panel.close_rewards()
+		await _frames()
+	_check(measured.size() == 2, "both genuine reward kinds were measured")
+	if measured.size() != 2:
+		return
+	# The taller Fight card hands its extra height to the well, never the art:
+	# that is exactly the imbalance PLAYTEST_416 reported.
+	_check(measured["Fight"]["art"] == measured["Elite"]["art"],
+		"card height never changes the bounded illustration")
+	_check(measured["Fight"]["well"][0] > measured["Elite"]["well"][0],
+		"the rules well absorbs the taller Fight card instead of the picture")
+	_check(measured["Elite"]["well"][0]
+			>= float(LiveRunCardRewardChoicePanel.EFFECTS_WELL_MIN_HEIGHT),
+		"the shortest card still gives the rules a real well above its minimum")
+
+
 ## The longest actual authored pool description is an adversarial live card
 ## without editing any card definition, changing battle rewards, or forging IDs.
 func _test_verbose_mounted_receipt(fixture: Dictionary, kind: String) -> void:
@@ -3817,6 +3948,7 @@ func _run() -> void:
 	await _test_camp_motion(fight, elite)
 	await _test_verbose_mounted_receipt(fight, "Fight")
 	await _test_verbose_mounted_receipt(elite, "Elite")
+	await _test_rules_well(fight, elite)
 	await _exercise(fight, "Fight", 0)
 	await _exercise(elite, "Elite", 1)
 	await _test_all_catalog_rules(original_fight)
