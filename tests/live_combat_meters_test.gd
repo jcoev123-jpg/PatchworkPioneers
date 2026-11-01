@@ -354,6 +354,7 @@ func _assert_thread(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 		"thin stitched input-inert fraction immediately follows HP in the real enemy ribbon")
 	var service: CombatUnravel = app.round_flow._unravel if app.round_flow != null else null
 	var authorized: bool = service != null and is_instance_valid(service) \
+		and app.round_flow._started and app.round_flow._battle_enemies == app.enemies \
 		and app.round_flow._deck == app.deck and app.round_flow._party == app.party \
 		and app.round_flow._enemies == app.enemies and app.round_flow._intents == app.enemy_intents \
 		and app.round_flow._result == app.battle_result \
@@ -2447,6 +2448,7 @@ func _run() -> void:
 	await _status_end_turns(app, presenter)
 	await _next_hit_cases(app, presenter)
 	await _three_enemy_stage(app, presenter)
+	await _four_enemy_stage(app, presenter)
 	await _block_art_case(app, presenter)
 	await _worn_coat_ribbons_test(app, presenter)
 	await _m05_patch_ribbons_test(app, presenter)
@@ -2720,6 +2722,167 @@ func _three_enemy_fixture() -> Dictionary:
 
 
 ## Seeded three-enemy stage: the same ribbons must follow all six live actor slots.
+
+## A separate real running app session tests opt-in four-capacity presentation.
+## Rebind both stage and meter presenters to one genuine authored roster,
+## the same intent/result/round-flow contract used by LiveEnemyRoster tests.
+func _four_enemy_stage(app, presenter) -> void:
+	_fixture_start(app)
+	await _frames()
+	var stage = app.get_node_or_null("LiveEnemyRoster")
+	_check(stage != null and app.battle_view.is_visible_in_tree()
+		and app.party != null and app.party.is_valid() and app.deck != null
+		and app.enemy_intents != null and app.run_rng != null,
+		"four-enemy session starts from a real running app battle")
+	if stage == null or app.party == null or app.deck == null or app.run_rng == null:
+		return
+	var catalog: Array = RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var ids := ["fray_scavenger", "button_guard", "spool_stalker", "seam_ripper"]
+	var definitions: Array = []
+	for id in ids:
+		for candidate in catalog:
+			if candidate is Dictionary and candidate.get("id") == id:
+				definitions.append(candidate.duplicate(true))
+				break
+	_check(definitions.size() == 4, "four distinct real run catalog records are available")
+	if definitions.size() != 4:
+		return
+	var roster := CombatEnemies.new(definitions, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	var actors := roster.get_enemies()
+	_check(roster.is_valid() and roster.get_capacity() == 4
+		and actors.size() == 4 and actors[3]["id"] == ids[3]
+		and roster.get_enemy(4) == actors[3] and actors[3]["position"] == 4,
+		"fourth enemy exists in a real four-capacity authority before any presenter sync")
+	if not roster.is_valid() or actors.size() != 4:
+		return
+	var patterns: Array = []
+	for position in range(1, 5):
+		patterns.append({"enemy_position": position,
+			"pattern": [{"type": "block", "amount": 0}]})
+	var intents := CombatEnemyIntents.new(patterns)
+	_check(intents.bind_battle(roster, app.party, app.run_rng)
+		and intents.is_bound() and intents.get_intents().size() == 4,
+		"the genuine four-slot battle binds one authored announcement per enemy")
+	if not intents.is_bound():
+		return
+	var result := CombatBattleResult.new(app.party, roster)
+	var unravel := CombatUnravel.new()
+	_check(unravel.bind_roster(roster, {1: "normal", 2: "normal",
+		3: "normal", 4: "normal"}) and unravel._bound_enemies == roster,
+		"real four-slot Unravel service binds every authored enemy position")
+	_check(unravel.apply_unravel(roster, 4, 3)
+		and unravel.get_snapshot(4).get("gauge") == 3,
+		"nonempty fourth-slot Unravel state is genuinely owned by the roster-bound service")
+	var flow := CombatRoundFlow.new(app.deck, app.party, roster, intents, result, unravel)
+	app.enemies = roster
+	app.enemy_intents = intents
+	app.battle_result = result
+	app.round_flow = flow
+	app.enemy_attacks = intents.get_intents()
+	stage._sync_battle()
+	presenter._sync_battle()
+	await _frames()
+	_check(stage.enemies == roster and presenter._enemies == roster
+		and stage._admitted_ids.size() == 4 and stage._puppets.size() == 7
+		and stage._puppets[6].actor_id == ids[3]
+		and stage._puppets[6].slot == 4,
+		"the live stage mounts seven actual puppets including catalog enemy four")
+	var meters := _meters(app)
+	_check(meters.size() == 7 and presenter.row.get_child_count() == 7
+		and meters[0].name == "hero1" and meters[2].name == "hero3"
+		and meters[3].name == "enemy1" and meters[6].name == "enemy4",
+		"public sync mounts exactly three hero plus four enemy ribbons")
+	if meters.size() != 7:
+		return
+	_visible(app)
+	var fourth_meter := meters[6]
+	var fourth := roster.get_enemy(4)
+	_check(fourth_meter.actor_heading.text == "4. " + String(fourth["name"])
+		and not fourth_meter.actor_heading.is_visible_in_tree()
+		and fourth_meter.hp_text.text == "%d/%d" % [fourth["hp"], fourth["max_hp"]]
+		and fourth_meter.hp_bar.value == fourth["hp"]
+		and fourth_meter.hp_bar.max_value == fourth["max_hp"]
+		and fourth_meter.block_text.text.is_empty() and not fourth_meter.block_badge.visible
+		and _visible_buttons(fourth_meter).is_empty(),
+		"compact mounted fourth ribbon retains authentic hidden heading, HP bar and empty Block/status")
+
+	_check(roster.gain_block(4, 9) and roster.apply_statuses(
+		{4: {"bleed": 2, "weak": 1}}),
+		"real fourth-slot APIs grant Block and two positive status stacks")
+	_check(roster.apply_damage(4, 4), "real fourth-slot hit spends Block before HP")
+	fourth = roster.get_enemy(4)
+	_check(fourth["position"] == 4 and fourth["id"] == ids[3] and fourth["block"] == 5
+		and fourth["hp"] == definitions[3]["max_hp"]
+		and fourth["statuses"] == {"bleed": 2, "weak": 1},
+		"authoritative fourth-slot snapshot incorporates valid damage and statuses")
+	var before := _state(app)
+	var unravel_before: Dictionary = unravel._gauges.duplicate(true)
+	_check(unravel_before.size() == 4 and unravel.get_snapshot(4)["gauge"] == 3
+		and flow._unravel == unravel and flow._unravel._bound_enemies == app.enemies,
+		"non-vacuous bound fourth-slot Unravel state is present before renderer refresh")
+	var intents_before: Array[Dictionary] = intents.get_intents()
+	var cache_before: Array[Dictionary] = intents._cache.duplicate(true)
+	var fourth_before := fourth.duplicate(true)
+	var global_seed := 428429
+	seed(global_seed)
+	var next_random := randi()
+	seed(global_seed)
+	stage._sync_battle()
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	_assert_ribbon(app, _meters(app)[6], fourth, "enemy", _forecast(app))
+	var chips := _visible_buttons(_meters(app)[6])
+	_check(chips.size() == 2 and chips[0].text == "Bleed 2" and chips[1].text == "Weak 1"
+		and chips[0].tooltip_text == _expected_chip_tooltip(fourth, "enemy", _forecast(app), "Bleed 2")
+		and _meters(app)[6].actor_heading.text == "4. " + String(fourth["name"])
+		and _meters(app)[6].block_badge.visible and _meters(app)[6].block_text.text == "5"
+		and _meters(app)[6].hp_bar.value == fourth["hp"],
+		"fourth ribbon displays exactly its own HP, Block, full status chips and truthful hover")
+	_check(_state(app) == before and roster.get_enemy(4) == fourth_before
+		and intents.get_intents() == intents_before and intents._cache == cache_before
+		and unravel._gauges == unravel_before and unravel.get_snapshot(4)["gauge"] == 3
+		and randi() == next_random,
+		"stage and meter refresh never spend RNG or mutate actors, deck, intents or Unravel")
+
+	var old_ids: Array[int] = []
+	for meter in _meters(app):
+		old_ids.append(meter.get_instance_id())
+	_check(roster.apply_damage(4, 8) and roster.apply_statuses({4: {"exposed": 1}}),
+		"fourth enemy receives a second real damage/status update")
+	var changed := roster.get_enemy(4)
+	_check(changed["hp"] == fourth["hp"] - 3 and changed["block"] == 0
+		and changed["statuses"] == {"bleed": 2, "weak": 1, "exposed": 1},
+		"the later fourth-slot snapshot is genuinely updated")
+	before = _state(app)
+	stage._sync_battle()
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	_assert_ribbon(app, _meters(app)[6], changed, "enemy", _forecast(app))
+	_check(_meters(app)[6].actor_heading.text == "4. " + String(changed["name"])
+		and _meters(app)[6].hp_bar.value == changed["hp"]
+		and _meters(app)[6].hp_text.text == "%d/%d" % [changed["hp"], changed["max_hp"]]
+		and not _meters(app)[6].block_badge.visible
+		and _meters(app)[6].block_text.text.is_empty()
+		and _visible_buttons(_meters(app)[6]).size() == 3,
+		"fourth ribbon refreshes real HP/Block/status and clears its obsolete Block badge")
+	var fresh_ids: Array[int] = []
+	for meter in _meters(app):
+		fresh_ids.append(meter.get_instance_id())
+	_check(old_ids == fresh_ids and _state(app) == before and intents._cache == cache_before
+		and unravel._gauges == unravel_before and unravel._bound_enemies == roster,
+		"four-capacity redraw reuses seven ribbons without modifying combat or cached intents")
+	await _mouse(app.return_button)
+	await _frames()
+	_check(app.title_view.is_visible_in_tree() and presenter.row == null
+		and _meters(app).is_empty() and stage.battle_row == null
+		and not is_instance_valid(fourth_meter),
+		"Return clears both live stage and complete seven-meter row")
+	for id in old_ids:
+		_check(not is_instance_id_valid(id), "Return frees every four-capacity ribbon node")
+
 func _three_enemy_stage(app, presenter) -> void:
 	var fixture := _three_enemy_fixture()
 	_check(not fixture.is_empty(), "seeded Fight rotation supplies an authentic three-enemy roster")
