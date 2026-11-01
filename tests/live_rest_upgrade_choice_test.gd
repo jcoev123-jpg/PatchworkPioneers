@@ -96,6 +96,79 @@ func _check_rest_gallery_labels(gallery) -> void:
 			"every Rest tile keeps its body-face effects at 16 px or more")
 
 
+## Verify the real scroll viewport rather than pinning the layout to brittle
+## fixed coordinates. Every part of the first three sewn comparisons must be
+## visible before a player scrolls; later rows must remain scroll-reachable.
+func _check_rest_first_three(gallery, rows: Array) -> void:
+	var tiles: Array = gallery.upgrade_tiles()
+	var scroll: ScrollContainer = gallery.gallery_scroll()
+	_check(scroll != null and rows.size() >= 3 and tiles.size() == rows.size(),
+		"a real Rest publishes at least three mapped upgrade tiles")
+	if scroll == null or tiles.size() < 3:
+		return
+	var window: Rect2 = scroll.get_global_rect()
+	_check(scroll.scroll_vertical == 0, "first three Rest choices start without gallery scroll")
+	for index in range(3):
+		var face := tiles[index].get_parent() as PanelContainer
+		var picture := face.find_child("CardArt", true, false) as Control
+		var owner := face.find_child("OwnerLabel", true, false) as Label
+		var title := face.find_child("TileName", true, false) as Label
+		var meta := face.find_child("TileMeta", true, false) as Label
+		var effect := face.find_child("TileEffects", true, false) as Label
+		var stamp_row := face.find_child("SelectedRow", true, false) as Control
+		_check(face.custom_minimum_size.y == LiveVisitCardTiles.REST_UPGRADE_MIN_HEIGHT
+			and picture != null and picture.custom_minimum_size == LiveVisitCardTiles.REST_UPGRADE_ART_SIZE,
+			"Rest face %d uses compact presentation without changing Shop defaults" % index)
+		_check(window.encloses(face.get_global_rect()) and window.encloses(owner.get_global_rect())
+			and window.encloses(title.get_global_rect()) and window.encloses(meta.get_global_rect())
+			and window.encloses(effect.get_global_rect()) and window.encloses(stamp_row.get_global_rect()),
+			"Rest upgrade %d has a complete sewn face, comparison and stamp row in the initial viewport" % index)
+		_check(effect.text.begins_with("Before: ") and effect.text.contains("\nAfter: ")
+			and title.text.contains(" → ") and meta.text.contains(" → ")
+			and meta.get_theme_font_size("font_size") >= 15
+			and effect.get_theme_font_size("font_size") >= 16,
+			"Rest upgrade %d keeps exact before/after details and readable type" % index)
+
+
+func _check_rest_navigation(gallery, rows: Array) -> void:
+	var tiles: Array = gallery.upgrade_tiles()
+	var scroll: ScrollContainer = gallery.gallery_scroll()
+	if tiles.size() < 4:
+		return
+	var choice: OptionButton = app.rest_upgrade_cards
+	var first: Button = tiles.front()
+	var last: Button = tiles.back()
+	var unchanged := [app.session_gold, app.run_scraps, app.run_deck.duplicate(),
+		app.run_rng.state, app.rest_upgrade.is_consumed(), app.rest_recovery.is_consumed()]
+	await _click_tile(first)
+	_check(choice.selected == 0 and gallery.tile_details(first).selected,
+		"mouse selects the first real Rest occurrence, without upgrading")
+	var first_stamp := first.get_parent().find_child("TileSelected", true, false) as Label
+	_check(first_stamp != null and first_stamp.is_visible_in_tree()
+		and first.get_parent().get_global_rect().encloses(first_stamp.get_global_rect()),
+		"early Rest selection stamp remains completely on sewn paper")
+	await _select_tile_by_key(last)
+	_check(last.has_focus() and choice.selected == rows.size() - 1
+		and gallery.tile_details(last).selected and scroll.scroll_vertical > 0
+		and scroll.get_global_rect().encloses(last.get_parent().get_global_rect()),
+		"keyboard focus follows scrolling to the final canonical Rest occurrence")
+	var last_stamp := last.get_parent().find_child("TileSelected", true, false) as Label
+	_check(last_stamp != null and last_stamp.is_visible_in_tree()
+		and last.get_parent().get_global_rect().encloses(last_stamp.get_global_rect()),
+		"late Rest selection stamp stays inside its own card")
+	await _select_tile_by_key(first)
+	_check(choice.selected == 0 and gallery.tile_details(first).selected,
+		"keyboard returns to the first canonical Rest occurrence")
+	await _click_tile(last)
+	_check(choice.selected == rows.size() - 1 and gallery.tile_details(last).selected,
+		"mouse selects the last canonical occurrence after scrolling")
+	_check([app.session_gold, app.run_scraps, app.run_deck, app.run_rng.state,
+		app.rest_upgrade.is_consumed(), app.rest_recovery.is_consumed()] == unchanged,
+		"early/late mouse and keyboard selections leave wallet, deck, RNG and Rest unspent")
+	first.grab_focus()
+	await _frames()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -192,6 +265,8 @@ func _run() -> void:
 			and choices.focus_mode == Control.FOCUS_NONE,
 			"masked Rest upgrade dropdown keeps its validated contract but takes no pointer or focus")
 		_check_rest_gallery_labels(gallery)
+		await _frames()
+		_check_rest_first_three(gallery, rows)
 		# Independent authored expectations: exact short combat prose and the
 		# canonical amount each half must print, never borrowed from the view.
 		var effect_contract := {
@@ -271,6 +346,8 @@ func _run() -> void:
 					and tooltip_halves[0] != tooltip_halves[1],
 					"hover Before and After halves carry their own distinct authored amount: "
 						+ String(row["source_id"]))
+		if session == 0:
+			await _check_rest_navigation(gallery, rows)
 		# The Rest half renders the CANONICAL row's effects on the authored
 		# definition: a different supplied amount changes the sentence, the
 		# source definition is never mutated, and empty/unknown stay honest.
