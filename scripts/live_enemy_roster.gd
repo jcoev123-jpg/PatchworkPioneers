@@ -205,12 +205,12 @@ static func fight_backdrop_path(floor_number: int) -> String:
 ## brightest source: [art grade, rim light colour, direction toward the light (screen
 ## space), ground mist colour]. A stage outside this table keeps the actors unlit.
 const STAGE_LIGHTS := {
-	"battle_meadow.png": [Color("e2d2d8"), Color("ffd890"), Vector2(0.7, -0.7), Color("c9b9c4")],
-	"battle_woods.png": [Color("dcd4c4"), Color("fff0c8"), Vector2(0.25, -0.97), Color("b9c4a8")],
-	"battle_marsh.png": [Color("d0d8d4"), Color("ffcf80"), Vector2(-0.8, -0.6), Color("b8cfc4")],
-	"battle_peaks.png": [Color("d6d8ec"), Color("eef4ff"), Vector2(-0.7, -0.7), Color("e6ecf4")],
-	"battle_ruins.png": [Color("e2c2ba"), Color("ffc878"), Vector2(0.0, -1.0), Color("c8aea4")],
-	"battle_boss.png": [Color("d6bcd0"), Color("ffd890"), Vector2(0.8, -0.6), Color("b89cb4")],
+	"battle_meadow.png": [Color("b4a6b0"), Color("ffc070"), Vector2(0.7, -0.7), Color("8a7c88")],
+	"battle_woods.png": [Color("a8a698"), Color("ffd890"), Vector2(0.25, -0.97), Color("7c8872")],
+	"battle_marsh.png": [Color("9eaaa6"), Color("ffb860"), Vector2(-0.8, -0.6), Color("7a9088")],
+	"battle_peaks.png": [Color("a6a8bc"), Color("d6e0f4"), Vector2(-0.7, -0.7), Color("a0a8b8")],
+	"battle_ruins.png": [Color("b49690"), Color("ffae58"), Vector2(0.0, -1.0), Color("8c7470")],
+	"battle_boss.png": [Color("a88ca0"), Color("ff9c58"), Vector2(0.8, -0.6), Color("7a5c74")],
 }
 
 
@@ -357,12 +357,16 @@ class Puppet extends Control:
 	## light; every untextured draw (shadow, tag, fallback) passes through unchanged.
 	const RIM_LIGHT_MARK := 0.65
 	const RIM_LIGHT_STRENGTH := 0.6
+	## Dark gothic grade: how much colour drains toward grey and how deep the feet sink in shadow.
+	const GRIM_DESATURATION := 0.35
+	const GROUND_SHADE := 0.6
 	const MIST_PATH := "res://assets/paper/vfx/ground_mist.png"
 	const MIST_ALPHA := 0.3
 	const STAGE_LIGHT_SHADER := """shader_type canvas_item;
 uniform vec3 light_tint = vec3(1.0);
 uniform float ground_shade = 0.0;
 uniform float rim_strength = 0.0;
+uniform float grim = 0.0;
 varying vec4 draw_color;
 void vertex() { draw_color = COLOR; }
 void fragment() {
@@ -370,7 +374,9 @@ void fragment() {
 		vec4 tex = texture(TEXTURE, UV);
 		if (draw_color.a > 0.99) {
 			float feet = smoothstep(0.55, 1.0, UV.y) * ground_shade;
-			COLOR = vec4(tex.rgb * draw_color.rgb * light_tint * (1.0 - feet), tex.a);
+			vec3 lit_rgb = tex.rgb * draw_color.rgb;
+			lit_rgb = mix(lit_rgb, vec3(dot(lit_rgb, vec3(0.3, 0.59, 0.11))), grim);
+			COLOR = vec4(lit_rgb * light_tint * (1.0 - feet), tex.a);
 		} else if (abs(draw_color.a - 0.65) < 0.02) {
 			COLOR = vec4(draw_color.rgb, tex.a * rim_strength);
 		}
@@ -935,7 +941,8 @@ void fragment() {
 			material = shade
 		var tint: Color = light[0]
 		shade.set_shader_parameter("light_tint", Vector3(tint.r, tint.g, tint.b))
-		shade.set_shader_parameter("ground_shade", 0.45)
+		shade.set_shader_parameter("ground_shade", GROUND_SHADE)
+		shade.set_shader_parameter("grim", GRIM_DESATURATION)
 		shade.set_shader_parameter("rim_strength", RIM_LIGHT_STRENGTH)
 		rim_color = light[1]
 		rim_dir = (light[2] as Vector2).normalized()
