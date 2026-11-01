@@ -18,6 +18,10 @@ const PRINTINGS := CombatButtonGolemEyeletGuardCards.PRINTINGS
 var _v3_guard_rules := CombatWardenV3GuardCards.new()
 ## The accepted Jury-rig authenticator is the only face authority for its two printings.
 var _jury_rules := CombatTinkerV3JuryRigCards.new()
+## The Seamstress's accepted whole-party Midnight Loom resolver is the only face and
+## tooltip authority for its two printings: the printed heal, Block and one explicit
+## party cleanse are read from the very catalog record that paid resolver authenticates.
+var _loom_rules := CombatSeamstressV3CleansingCards.new()
 
 ## Read-only catalog authenticator. It never plays a card, never owns an armed
 ## mode and is never handed to the fight: the ONE armed authority lives on
@@ -30,6 +34,10 @@ var _catalog_rules := CombatButtonGolemEyeletGuardCards.new()
 func _definition(card_id: String) -> Dictionary:
 	if _jury_rules.is_supported_card(card_id):
 		return CombatTinkerV3JuryRigCards.jury_rig_definition(card_id)
+	if _loom_rules.is_supported_party_card(card_id):
+		var loom: Dictionary = _loom_rules._catalog_definition(card_id)
+		var printing: Dictionary = _loom_rules.PARTY_CARDS.get(card_id, {})
+		return loom if _loom_rules._authentic_party(loom, card_id, printing) else {}
 	if _v3_guard_rules.is_supported_card(card_id):
 		return _v3_guard_rules._catalog_definition(card_id) if _v3_guard_rules.is_authentic_card(card_id) else {}
 	if not PRINTINGS.has(card_id):
@@ -46,6 +54,13 @@ func _rules(id: String) -> String:
 		if record.is_empty():
 			return ""
 		return "Once per combat, copy the last other card played: Tune Up draws 1, Tune Up+ draws 2, free."
+	if _loom_rules.is_supported_party_card(id):
+		var record: Dictionary = _definition(id)
+		if record.is_empty():
+			return ""
+		var effects: Dictionary = record.get("effects", {})
+		return "Each living hero: heal %d HP, gain %d Block; remove one chosen Bleed/Weak/Exposed." % [
+			int(effects.get("heal", 0)), int(effects.get("block", 0))]
 	if _v3_guard_rules.is_supported_card(id):
 		var record: Dictionary = _definition(id)
 		if record.is_empty():
@@ -82,6 +97,17 @@ func base_effect_text(card_id: String, include_pips: bool = true) -> String:
 				str(card.get("display_name", card_id)), int(card.get("cost", -1)),
 				_positions(card.get("from_positions", [])), int(card.get("effects", {}).get("block", 0)),
 				_pip_legend(card) if include_pips else ""]
+	if _loom_rules.is_supported_party_card(card_id):
+		var loom: Dictionary = _definition(card_id)
+		if loom.is_empty():
+			return "Unknown card"
+		var loom_effects: Dictionary = loom.get("effects", {})
+		var loom_pips: String = _pip_legend(loom) if include_pips else ""
+		return ("%s; Seamstress; %d energy\nFrom %s; all living heroes\n"
+			+ "Heal each living hero %d HP, capped at max HP; each living hero gains %d Block. For each living hero choose one present Bleed, Weak or Exposed to remove completely; heal and Block alone if none are present. Torn heroes are excluded.\n%s") % [
+				str(loom.get("display_name", card_id)), int(loom.get("cost", -1)),
+				_positions(loom.get("from_positions", [])),
+				int(loom_effects.get("heal", 0)), int(loom_effects.get("block", 0)), loom_pips]
 	if not PRINTINGS.has(card_id):
 		return super.base_effect_text(card_id, include_pips)
 	var record: Dictionary = _definition(card_id)
