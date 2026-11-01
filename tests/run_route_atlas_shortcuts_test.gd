@@ -530,6 +530,69 @@ func _assert_mouse_action(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGen
 	_check(_state(map, rng) == before, where + ": mouse request is presentation-only")
 
 
+## Exercise the same real Action and focus circuit while its authored image moves.
+## A draw-only offset must not touch the physical hitbox or trigger a route commit.
+func _assert_motion_preserves_action(view: RunRouteAtlas, map: RunMap,
+		rng: RandomNumberGenerator, id: String, where: String) -> void:
+	var marker := _marker(view, id)
+	var action := _action(view, id)
+	var art := marker.get_node_or_null("Art") as RunRouteAtlas.NodeToken if marker != null else null
+	_check(marker != null and action != null and art != null
+		and map.get_legal_choices().has(id) and view._snapshot_is_current()
+		and art.token_texture != null and art.token_pulse_active(),
+		where + ": real seeded, visible legal Action has imported bobbing art")
+	if marker == null or action == null or art == null or not art.token_pulse_active():
+		return
+	# A freshly refreshed PanelContainer resolves its content margins on layout frames.
+	# Measure only after those native layout passes, not across an unrelated reflow.
+	await process_frame
+	await process_frame
+	var identity := marker.get_node("Identity") as Label
+	action.grab_focus()
+	var before := _state(map, rng)
+	var tag_rect := Rect2(marker.position, marker.size)
+	var action_rect := action.get_global_rect()
+	var caption_rect := Rect2(identity.position, identity.size)
+	var caption := identity.text
+	var tooltip := action.tooltip_text
+	var paths: Array[PackedVector2Array] = []
+	for child in view.get_children():
+		if child is Line2D:
+			paths.append((child as Line2D).points.duplicate())
+	var reveals := view.revealing_edges()
+	art.sync_token_pulse()
+	var resting := art.token_rect()
+	_check(art.token_draw_rect() == resting and is_zero_approx(art.token_bob_offset()),
+		where + ": original draw baseline starts without geometry change")
+	art.advance_token_pulse(RunRouteAtlas.NodeToken.BOB_PERIOD * 0.25)
+	_check(is_equal_approx(art.token_bob_offset(), 2.0)
+		and art.token_draw_rect().position.is_equal_approx(resting.position + Vector2(0, 2))
+		and art.token_rect() == resting and action.has_focus()
+		and Rect2(marker.position, marker.size) == tag_rect
+		and action.get_global_rect() == action_rect
+		and Rect2(identity.position, identity.size) == caption_rect
+		and identity.text == caption and action.tooltip_text == tooltip,
+		where + ": bob changes only authored image draw rectangle, not focus or click target")
+	var paths_after: Array[PackedVector2Array] = []
+	for child in view.get_children():
+		if child is Line2D:
+			paths_after.append((child as Line2D).points.duplicate())
+	_check(paths_after == paths and view.revealing_edges() == reveals
+		and _state(map, rng) == before,
+		where + ": bob does not change stitched paths, reveal state or RunMap/RNG")
+	await _assert_key(view, map, rng, NUMBER_KEYS[_ordered_legal(map).find(id)], id,
+		where + ": physical shortcut during bob")
+	_check(action.has_focus(), where + ": physical shortcut preserves current legal focus")
+	await _assert_mouse_action(view, map, rng, id, where + ": physical mouse during bob")
+	_check(action.has_focus() and action.get_global_rect() == action_rect
+		and _state(map, rng) == before,
+		where + ": genuine pointer leaves exact legal focus and route authority intact; focus=" + str(action.has_focus()) + " rect=" + str(action.get_global_rect()) + " expected=" + str(action_rect))
+	art.advance_token_pulse(RunRouteAtlas.NodeToken.BOB_PERIOD)
+	_check(absf(art.token_bob_offset()) <= RunRouteAtlas.NodeToken.BOB_MAX_OFFSET + 0.001
+		and art.token_rect() == resting,
+		where + ": clock stays bounded after inputs and a further full cycle; offset=" + str(art.token_bob_offset()) + " rect=" + str(art.token_rect()) + " expected=" + str(resting))
+
+
 ## Bounded deterministic witness for a genuinely generated legal Shop opening.
 func _opening_shop_fixture() -> Dictionary:
 	for seed_value in range(1, 201):
@@ -707,6 +770,8 @@ func _run() -> void:
 			"Shift+Tab walks backwards", true)
 		await _assert_mouse_action(view, map, rng, first_legal.back(),
 			"mouse still clicks a legal round patch")
+		await _assert_motion_preserves_action(view, map, rng, first_legal[0],
+			"seed %d opening artwork motion" % seed_value)
 		_action(view, first_legal.back()).grab_focus()
 		view.refresh()
 		_assert_ticket(view, map, first_legal.back(), "same-map focus ticket survives refresh")
@@ -770,6 +835,31 @@ func _run() -> void:
 		_check(_focused_id(view).is_empty() or _ordered_legal(map).has(_focused_id(view)),
 			"route refresh never preserves a newly nonlegal focused node")
 		var fresh := _verify_labels(view, map, rng, "seed %d advanced" % seed_value)
+		var revealing := view.revealing_edges()
+		_check(not revealing.is_empty() and view.is_revealing(),
+			"newly legal stitches still start gradient reveal on real route advancement")
+		for edge in revealing:
+			var parts := edge.split("->")
+			var thread := view.get_node_or_null("Thread_%s_%s" % [parts[0], parts[1]]) as Line2D
+			_check(thread != null and thread.gradient != null
+				and thread.default_color == RunRouteAtlas.LEGAL_THREAD,
+				"moving artwork leaves new stitched legal gradient and thread colour " + edge)
+		if not fresh.is_empty():
+			await _assert_motion_preserves_action(view, map, rng, fresh[0],
+				"seed %d advancing-stitch artwork motion" % seed_value)
+		await create_timer(0.7).timeout
+		_check(not view.is_revealing() and view.revealing_edges().is_empty(),
+			"gradient reveals finish at normal duration despite artwork animation")
+		for edge in revealing:
+			var parts := edge.split("->")
+			var thread := view.get_node_or_null("Thread_%s_%s" % [parts[0], parts[1]]) as Line2D
+			_check(thread != null and thread.gradient == null
+				and thread.default_color == RunRouteAtlas.LEGAL_THREAD,
+				"settled path keeps its canonical legal colour " + edge)
+		view.refresh()
+		_check(not view.is_revealing() and view.revealing_edges().is_empty(),
+			"identical snapshot does not replay already-sewn path after motion")
+		fresh = _verify_labels(view, map, rng, "seed %d settled advance" % seed_value)
 		await _assert_pointer_switch(view, map, rng, fresh,
 			"seed %d pointer connected" % seed_value)
 		_check(not fresh.is_empty(), "new floor exposes real outgoing destinations")
