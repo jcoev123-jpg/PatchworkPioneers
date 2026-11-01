@@ -3,8 +3,8 @@ extends "res://tests/live_m04_event_wallet_batch_test.gd"
 
 
 func _parcel_path(map: RunMap, choices: Array, events: int, terminal: String = "Fight") -> Array:
-	# Transit stops used here are the ones with a genuine free Leave control:
-	# Treasure, Campfire (typed Leave callback) and Unpicker (typed Leave).
+	# Only actual free, mounted transit is eligible: Treasure, Campfire, Unpicker,
+	# Sewing Circle (Leave then Confirm), and Patch Stall (Leave).
 	# A real Rest stop needs its own rest decision and Continue, so it is never
 	# treated as zero-effect transit: this oracle would otherwise bypass it.
 	for id in choices:
@@ -17,7 +17,7 @@ func _parcel_path(map: RunMap, choices: Array, events: int, terminal: String = "
 				if not onward.is_empty():
 					return [id] + onward
 			continue
-		if node.type not in ["Event", "Treasure", "Campfire", "Unpicker"]:
+		if node.type not in ["Event", "Treasure", "Campfire", "Unpicker", "SewingCircle", "PatchStall"]:
 			continue
 		var tail := _parcel_path(map, node.outgoing, events - (1 if node.type == "Event" else 0), terminal)
 		if not tail.is_empty():
@@ -31,7 +31,11 @@ func _parcel_fixture(terminal: String = "Fight", stitched: bool = false) -> Dict
 	ids.sort()
 	var hints: Array = preload("res://tests/event_wallet_hints.gd").SEEDS.duplicate()
 	hints.push_front(39502)
+	# Revalidate the post-catalog five-Event-to-Fight witness first; fallback stays intact.
+	hints.push_front(68181)
 	if terminal == "Unpicker":
+		hints.push_front(392622) # Revalidated actual post-catalog Unpicker terminal.
+		hints.push_front(862443) # Shipped real Unpicker-terminal witness; independently revalidated below.
 		hints.push_front(159691)
 	# Genuine Unpicker-terminal Parcel witnesses re-derived after the four gothic
 	# prop-led roadside tales joined the sorted generic pool; kept local while
@@ -86,6 +90,11 @@ func _parcel_transit(id: String) -> void:
 		await _click(app.campfire_leave_button)
 	elif kind == "Unpicker":
 		await _click(app.unpicker_leave_button)
+	elif kind == "SewingCircle":
+		await _click(app.sewing_leave_button)
+		await _click(app.sewing_view.confirm_button)
+	elif kind == "PatchStall":
+		await _click(app.patch_stall_view.leave_button)
 	_check([app.run_deck, app.run_heroes, _wallet(), app.run_rng.state] == before
 		and app.run_map.get_current_node_id() == id, "legal free transit preserves source and RNG")
 

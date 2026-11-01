@@ -6,12 +6,10 @@ const INKBLACK := "v3_inkblack_unpicker_van"
 
 
 func _open_inkblack(fixture: Dictionary, gold: int = 100) -> LiveEventChoicePanel:
+	_pre_transit_gold = gold
 	await _reach(fixture)
-	# The historical six-Event path starts with zero gold. Supply an explicit
-	# coherent funded run wallet before *physical* Event admission so the service
-	# itself still has to authenticate the real run/map/deck/selector and debit.
-	app.session_gold = gold
-	app._sync_bound_wardrobe(app.party_carryover as RunTornCarryover)
+	_pre_transit_gold = -1
+	# Funding is installed before the last guarded transit binds its real ledger.
 	var route: Array = app.run_map.get_route()
 	var before_rng: int = app.run_rng.state
 	var route_button := _route_action(fixture.path[4])

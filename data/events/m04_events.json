@@ -558,6 +558,94 @@
         { "id": "deliver_letters", "text": "Wrap letters for delivery wages (spend 1 scrap; earn 17 gold)", "outcome": { "gold": 17, "scraps": -1 } },
         { "id": "ignore_post", "text": "Pass the postbox (no cost or gain)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_inkblue_coathanger_choir",
+      "title": "The Ink-Blue Coat-Hanger Choir",
+      "description": "Four plump, button-eyed coats dangle from an enormous bent silver hanger; each dangling hook hums through a velvet night-road archway.",
+      "choices": [
+        {
+          "id": "rent_stitch_hooks",
+          "text": "Pay 18 gold to borrow two singing stitch hooks (+2 scraps)",
+          "outcome": { "gold": -18, "scraps": 2 }
+        },
+        {
+          "id": "tune_bent_hangers",
+          "text": "Repair the bent hooks with 3 scraps for 40 gold",
+          "outcome": { "gold": 40, "scraps": -3 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the hanging coats finish their chorus",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_bonecream_needlecase_hotel",
+      "title": "The Bone-Cream Needlecase Hotel",
+      "description": "A giant bone-cream needle case opens like a tiny hotel, its padded rooms lit by mustard lanterns and watched by a sleepy button-eyed bellhop.",
+      "choices": [
+        {
+          "id": "book_thread_room",
+          "text": "Pay 24 gold for three traveller-thread bundles (+3 scraps)",
+          "outcome": { "gold": -24, "scraps": 3 }
+        },
+        {
+          "id": "mend_room_hem",
+          "text": "Mend the split pillow hems with 2 scraps for 27 gold",
+          "outcome": { "gold": 27, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the bellhop close the padded doors",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_moss_cuff_rocking_horse",
+      "title": "The Moss-Cuff Rocking Horse",
+      "description": "An enormous moss-green cloth cuff wraps a wooden rocking horse with floppy ragdoll ears; loose brass buttons tick like hooves against the road.",
+      "choices": [
+        {
+          "id": "buy_saddle_thread",
+          "text": "Pay 11 gold for a spare saddle stitch (+1 scrap)",
+          "outcome": { "gold": -11, "scraps": 1 }
+        },
+        {
+          "id": "sew_rocking_saddle",
+          "text": "Use 1 scrap to stitch the horse's saddle (gain 17 gold)",
+          "outcome": { "gold": 17, "scraps": -1 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the brass-button hooves rocking softly",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_oxblood_stitchglass_kaleidoscope",
+      "title": "The Oxblood Stitchglass Kaleidoscope",
+      "description": "A squat glass kaleidoscope turns inside an oxblood felt sleeve; button-eyed silhouettes dance among its pinwheel of velvet thread.",
+      "choices": [
+        {
+          "id": "buy_prism_threads",
+          "text": "Spend 31 gold for four glimmering thread bundles (+4 scraps)",
+          "outcome": { "gold": -31, "scraps": 4 }
+        },
+        {
+          "id": "reset_prism_spokes",
+          "text": "Trade 3 scraps to fix the fractured wheel (gain 36 gold)",
+          "outcome": { "gold": 36, "scraps": -3 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the velvet pinwheel settle to stillness",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }
