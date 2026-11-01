@@ -33,6 +33,8 @@ const PROFILE_SEEDS := {
 var profile := ""
 var fast := false
 var _time := 0.0
+## A quiet, visit-only presentation mode. Normal battles never use it.
+var _visit_dressing := false
 var felt_texture: Texture2D
 var light_texture: Texture2D
 var fluff_texture: Texture2D
@@ -97,14 +99,32 @@ func configure(kind: String, floor_number: int, fast_mode: bool) -> bool:
 	if chosen.is_empty():
 		retire()
 		return false
-	var changed := profile != chosen
+	var changed := profile != chosen or _visit_dressing
+	_visit_dressing = false
+	self_modulate = Color.WHITE
 	profile = chosen
 	fast = fast_mode
 	if changed:
 		_time = 0.0
 	show()
+	set_process(is_visible_in_tree())
 	queue_redraw()
 	return true
+
+
+## Dedicated nonbattle visit profile. Never pass "Event" through the battle
+## roster, and never change its admitted kind/floor lookup or motif budgets.
+## Fast scraps use seven existing textured marks; parent-independent opacity
+## softens all authored light/motes without altering battle draw mathematics.
+func configure_visit_scraps() -> void:
+	_visit_dressing = true
+	profile = "scraps"
+	fast = true
+	_time = 0.0
+	self_modulate = Color(1.0, 1.0, 1.0, 0.42)
+	show()
+	set_process(is_visible_in_tree())
+	queue_redraw()
 
 
 func set_fast(enabled: bool) -> void:
@@ -124,12 +144,21 @@ func visible_budget() -> int:
 func retire() -> void:
 	profile = ""
 	_time = 0.0
+	_visit_dressing = false
+	self_modulate = Color.WHITE
+	set_process(false)
 	hide()
 	queue_redraw()
 
 
+## Ancestor visibility also gates the clock (a hidden parent must not drift).
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_VISIBILITY_CHANGED and is_inside_tree():
+		set_process(not profile.is_empty() and is_visible_in_tree())
+
+
 func _process(delta: float) -> void:
-	if profile.is_empty() or not visible or delta <= 0.0:
+	if profile.is_empty() or not is_visible_in_tree() or delta <= 0.0:
 		return
 	_time = fposmod(_time + delta, 120.0)
 	queue_redraw()

@@ -43,6 +43,7 @@ const NEUTRAL_WALLET := {"gold": 0, "scraps": 0}
 ## does not resolve, and the opaque SlateBackdrop underneath still shows.
 const EVENT_BACKDROP_ART := "res://assets/paper/backgrounds/event_crossroads.png"
 const EVENT_PANEL_ART := "res://assets/paper/ui/reward_panel.png"
+const EVENT_AMBIENT := preload("res://scripts/live_battle_ambient.gd")
 ## Sewn number tag geometry on a choice ticket: a small felt square pinned to
 ## the left edge, clear of the centred authored text and the wallet forecast.
 const CUE_INSET := 9.0
@@ -240,11 +241,18 @@ var _vital_mode: bool = false
 var _offered_snapshot: Dictionary = {}
 var _vital_previews: Dictionary = {}
 var _vital_label: Label = null
+## Nullable test-only override; normal visits honor the project's accessibility
+## switch. The layer never reads, owns or draws gameplay state.
+var ambient_reduced_motion_override: Variant = null
+var event_ambient: Control = null
 
 
 func _ready() -> void:
 	_apply_patchwork_style()
 	bind_event_backdrop()
+	# Visibility signals may fire before the effective ancestor visibility flips.
+	# Reconcile on idle so hide/show always uses the final mounted tree state.
+	visibility_changed.connect(_sync_event_ambient, CONNECT_DEFERRED)
 	paper_panel.minimum_size_changed.connect(_fit_parchment, CONNECT_DEFERRED)
 	event_content.minimum_size_changed.connect(_fit_parchment, CONNECT_DEFERRED)
 	resized.connect(_fit_parchment, CONNECT_DEFERRED)
@@ -262,12 +270,57 @@ func _ready() -> void:
 func bind_event_backdrop(art_path: String = EVENT_BACKDROP_ART) -> void:
 	if not is_instance_valid(backdrop_art):
 		return
+	# Rebinding invalidates the old image's animation clock, even when the new
+	# texture also resolves. Keep the same single parked renderer for reopening.
+	if is_instance_valid(event_ambient):
+		event_ambient.retire()
 	var texture := _resolve_event_backdrop(art_path)
 	backdrop_art.texture = texture
 	backdrop_art.visible = texture != null
+	_sync_event_ambient()
 
 
 ## The guarded optional load: an absent committed image is simply no picture.
+
+## Live Event decor is available only with the real mounted authored picture.
+## Keeping it a root-level sibling after EventBackdrop and before PaperPanel
+## means neither the slate nor any paper/control hit rectangle is modified.
+func _sync_event_ambient() -> void:
+	if not is_node_ready():
+		return
+	var reduced: bool = bool(ProjectSettings.get_setting("accessibility/reduced_motion", false))
+	if typeof(ambient_reduced_motion_override) == TYPE_BOOL:
+		reduced = ambient_reduced_motion_override
+	var eligible := _is_open and is_visible_in_tree() and not reduced \
+		and backdrop_art.texture != null and backdrop_art.is_visible_in_tree()
+	if not eligible:
+		if is_instance_valid(event_ambient):
+			event_ambient.retire()
+		return
+	if not is_instance_valid(event_ambient):
+		event_ambient = EVENT_AMBIENT.new()
+		event_ambient.name = "LiveBattleAmbient"
+		add_child(event_ambient)
+		move_child(event_ambient, paper_panel.get_index())
+		event_ambient.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# A repeated refresh must not reset the running deterministic clock.
+	if event_ambient.profile != "scraps" or not event_ambient._visit_dressing \
+			or not event_ambient.visible:
+		event_ambient.configure_visit_scraps()
+
+
+func set_ambient_reduced_motion_override(value: Variant) -> void:
+	if value != null and typeof(value) != TYPE_BOOL:
+		return
+	ambient_reduced_motion_override = value
+	_sync_event_ambient()
+
+
+func _exit_tree() -> void:
+	if is_instance_valid(event_ambient):
+		event_ambient.retire()
+
+
 func _resolve_event_backdrop(art_path: String) -> Texture2D:
 	if art_path.is_empty() or not ResourceLoader.exists(art_path):
 		return null
@@ -495,6 +548,7 @@ func _mount_vital_offering(offered: RunEventChoice, snapshot: Dictionary, previe
 		_bound_choices[button] = choice_id
 		button.pressed.connect(_on_choice_pressed.bind(offered, choice_id, _generation, button))
 	visible = true
+	_sync_event_ambient()
 	story_scroll.scroll_vertical = 0
 	_fit_parchment.call_deferred()
 
@@ -645,6 +699,7 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 		# and closed/reopened offerings cannot redirect an old pressed signal.
 		button.pressed.connect(_on_choice_pressed.bind(offered, choice_id, _generation, button))
 	visible = true
+	_sync_event_ambient()
 	story_scroll.scroll_vertical = 0
 	_fit_parchment.call_deferred()
 
@@ -794,6 +849,7 @@ func close_event() -> void:
 	_offered_snapshot.clear()
 	_vital_previews.clear()
 	visible = false
+	_sync_event_ambient()
 	if is_node_ready():
 		story_scroll.scroll_vertical = 0
 		scroll_hint.visible = false
