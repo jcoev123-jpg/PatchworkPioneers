@@ -341,7 +341,9 @@ func _valid_snapshot(snapshot: Dictionary, side: String) -> bool:
 	var protection = snapshot["block"]
 	if not actor_name is String or actor_name.strip_edges().is_empty():
 		return false
-	if not position is int or position < 1 or position > 3:
+	# An explicitly opted-in fourth enemy needs an HP ribbon; heroes remain three.
+	var limit := CombatParty.PARTY_SIZE if side == "hero" else CombatEnemies.OPT_IN_MAX_ENEMIES
+	if not position is int or position < 1 or position > limit:
 		return false
 	if not maximum is int or maximum <= 0:
 		return false
