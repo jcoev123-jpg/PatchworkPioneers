@@ -613,7 +613,7 @@ func _mount_hero_rows(rows: Array) -> void:
 		var parts: Dictionary = rows[index]
 		var row := PanelContainer.new()
 		row.name = "HeroRow%d" % index
-		row.custom_minimum_size = Vector2(0, 200)
+		row.custom_minimum_size = Vector2(0, 224)
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var felt := StyleBoxFlat.new()
@@ -633,10 +633,11 @@ func _mount_hero_rows(rows: Array) -> void:
 		row.add_child(inset)
 		var portrait := TextureRect.new()
 		portrait.name = "HeroPortrait"
-		# Reserve a compact illustration column, leaving enough width for real
-		# HP, tear and three-slot text to wrap without clipping. A missing V3
-		# portrait collapses the entire column rather than faking a character.
-		portrait.custom_minimum_size = Vector2(76, 128)
+		# Give the authored art a substantial, portrait-shaped column. The
+		# adjacent text retains its own expanding width and wraps all genuine
+		# HP, tears and worn slots; the row can grow if those lines need space.
+		# Missing art collapses this column instead of inventing a character.
+		portrait.custom_minimum_size = Vector2(118, 168)
 		portrait.size_flags_horizontal = Control.SIZE_FILL
 		portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		portrait.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
@@ -719,7 +720,8 @@ func _mount_hero_rows(rows: Array) -> void:
 ## This presentation seam also permits synthetic unavailable-art checks.
 func apply_hero_portrait(portrait: TextureRect, path: String) -> bool:
 	portrait.texture = guarded_texture(path)
-	return portrait.texture != null
+	portrait.visible = portrait.texture != null
+	return portrait.visible
 
 
 ## Remove every ribbon and hide the recap block, so a closed or refused view

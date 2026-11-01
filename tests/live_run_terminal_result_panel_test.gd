@@ -638,6 +638,12 @@ func _validate_view(status: String, label: String) -> void:
 			and portrait.texture.resource_path == "res://assets/paper/heroes/%s.png" % hero_id,
 			label + " matching shipped portrait for " + hero_id)
 		if portrait != null:
+			_check(portrait.visible and portrait.texture != null
+				and portrait.custom_minimum_size.x >= 112.0
+				and portrait.get_global_rect().size.x >= 112.0
+				and portrait.get_global_rect().size.y >= 160.0
+				and row.get_global_rect().encloses(portrait.get_global_rect()),
+				label + " authored portrait is materially larger than 76px and inside its ticket")
 			_check(portrait.mouse_filter == Control.MOUSE_FILTER_IGNORE
 				and portrait.focus_mode == Control.FOCUS_NONE
 				and portrait.expand_mode == TextureRect.EXPAND_IGNORE_SIZE
@@ -671,6 +677,10 @@ func _validate_view(status: String, label: String) -> void:
 			label + " hero portrait ticket is prominent and bounded, height %s" % str(row.size.y))
 	_check(panel.hero_recap.size.y <= 290.0,
 		label + " three portrait tickets leave space for the ledger and Return")
+	_check(panel.hero_recap.get_global_rect().end.y <= panel.run_ledger.get_global_rect().position.y + 0.5
+		and panel.run_ledger.get_global_rect().end.y <= button.get_global_rect().position.y + 0.5
+		and panel.paper_panel.get_global_rect().encloses(button.get_global_rect()),
+		label + " enlarged tickets stay above the complete ledger and accessible Return")
 	var controls: Array = [panel.paper_panel, panel.title_label, panel.description_label,
 		panel.top_stitches, panel.bottom_stitches, button, panel.summary_label,
 		panel.hero_recap, panel.hero_recap_title, panel.hero_rows]
@@ -2952,6 +2962,7 @@ func _run() -> void:
 		await _test_depth_beyond_battle_count()
 		await _test_unverified_floor()
 		await _test_v3_chosen_mounted_results()
+		await _test_dense_v3_layout()
 	_finish()
 
 
@@ -2964,6 +2975,93 @@ func _finish() -> void:
 	if is_instance_valid(panel):
 		panel.free()
 	quit(0 if failures.is_empty() else 1)
+
+## Dense, genuinely sewn V3 result: all three worn slots on the longest
+## chosen-name ticket, retained authored halves, and a witnessed Boss victory.
+## This is the compact page's difficult case, not a synthetic label-only row.
+func _test_dense_v3_layout() -> void:
+	var admission := RunV3PartyAdmission.admit(["lantern_monk", "scarecrow", "yarn_ranger"])
+	_check(admission.ok and admission.party.size() == CombatParty.PARTY_SIZE,
+		"AC2 dense V3: authentic three-hero selection admitted")
+	if not admission.ok:
+		return
+	var chosen: Array = admission.party
+	var deck: Array[String] = []
+	deck.assign(admission.deck)
+	var halves: Array[String] = []
+	for hero in chosen:
+		for card_id in deck:
+			if RunRestStitchCards.resolve_card_definition(card_id).get("owner") == hero.id:
+				halves.append(card_id)
+				break
+		if halves.size() >= 2:
+			break
+	_check(halves.size() == 2, "AC2 dense V3: real halves from two chosen heroes")
+	if halves.size() != 2:
+		return
+	var sewn := _stitch_pairs(deck, [[halves[0], halves[1]]], 6)
+	_check(not sewn.is_empty(), "AC2 dense V3: retained card has genuine stitch receipt")
+	if sewn.is_empty():
+		return
+	var authentic_party := CombatParty.new(chosen)
+	_check(authentic_party.is_valid(), "AC2 dense V3: three chosen heroes form a real combat party")
+	if not authentic_party.is_valid():
+		return
+	var wardrobe := RunPatchWardrobe.new(authentic_party.get_heroes(),
+		["stitched_badge", "pincushion_arm", "quilted_coat"], PATCH_DEFINITIONS.duplicate(true),
+		7, 43, sewn.deck, 4408, true)
+	_check(wardrobe.is_valid(), "AC2 dense V3: actual long-name wardrobe is valid")
+	if not wardrobe.is_valid():
+		return
+	for op in [["stitched_badge", "HEAD"], ["pincushion_arm", "ARM"], ["quilted_coat", "COAT"]]:
+		_check(wardrobe.sew(op[0], "lantern_monk", op[1],
+			"dense_v3_%s" % op[1], wardrobe.get_snapshot()).ok,
+			"AC2 dense V3: authentic sewn receipt for " + op[1])
+	var oracle := _signature(sewn, wardrobe)
+	_check(oracle.get("ok") == true and oracle.get("worn_total") == 3
+		and oracle.get("current_stitched_cards", []).size() == 1,
+		"AC2 dense V3: signed ledger has three worn slots and a retained card")
+	_install_run(sewn, wardrobe, chosen)
+	var before := _app_snapshot()
+	var terminal := _victory(chosen)
+	_check(not terminal.is_empty(), "AC2 dense V3: real witnessed Boss victory exists")
+	if terminal.is_empty():
+		return
+	var witnessed := _snapshot(terminal.ctx, terminal.battle)
+	_check(panel.open_result(terminal.ctx.latch),
+		"AC2 dense V3: settled live result admits the authentic run")
+	await _frames()
+	var ticket := panel.hero_rows.get_child(0) as PanelContainer
+	var name_label := ticket.get_node("RowInset/RowLine/HeroName") as Label
+	var detail_label := ticket.get_node("RowInset/RowLine/HeroDetail") as Label
+	var portrait := ticket.get_node("RowInset/HeroPortrait") as TextureRect
+	_check(name_label.text == "Lantern Monk"
+		and detail_label.text.contains("HEAD Stitched Badge")
+		and detail_label.text.contains("ARM Pincushion Arm")
+		and detail_label.text.contains("COAT Quilted Coat")
+		and detail_label.text.contains("HP") and detail_label.text.contains("tears"),
+		"AC2 dense V3: complete long-name HP, tear and three authentic patch labels")
+	_check(portrait.texture != null and portrait.visible and portrait.size.x >= 112.0
+		and ticket.get_global_rect().encloses(portrait.get_global_rect())
+		and detail_label.get_visible_line_count() == detail_label.get_line_count()
+		and _printed_text_size(detail_label, detail_label.size.x).y <= detail_label.size.y + 0.5
+		and ticket.get_global_rect().encloses(detail_label.get_global_rect()),
+		"AC1/AC2 dense V3: enlarged authored portrait and complete long text fit")
+	_check(panel.stitched_section.visible and panel.stitched_rows.get_child_count() == 1
+		and panel.hero_recap.get_global_rect().end.y <= panel.run_ledger.get_global_rect().position.y + 0.5
+		and panel.run_ledger.get_global_rect().end.y <= panel.return_button.get_global_rect().position.y + 0.5
+		and panel.paper_panel.get_global_rect().encloses(panel.return_button.get_global_rect())
+		and panel.return_button.is_visible_in_tree() and not panel.return_button.disabled,
+		"AC2 dense V3: fully sewn tickets, retained card, ledger and Return never overlap")
+	_check_hero_rows(_oracle_hero_lines(oracle), "AC2 dense V3 authentic hero facts")
+	var earlier_returns := returns
+	await _mouse(panel.return_button)
+	_check(returns == earlier_returns + 1 and panel.return_button.disabled,
+		"AC3 dense V3: actual mouse Return still works exactly once")
+	_check(_app_snapshot() == before and _snapshot(terminal.ctx, terminal.battle) == witnessed,
+		"AC3 dense V3: read and mouse Return never mutate the run or RNG")
+	panel.close_result()
+
 
 ## Two real admitted V3 trios, with genuine stitched halves, sewn patches and
 ## witnessed terminal outcomes. The source ledgers (not panel-derived fields)
@@ -3134,7 +3232,34 @@ func _test_v3_chosen_mounted_results() -> void:
 				_check(ticket.get_global_rect().position.x >= right - 0.5
 					and Rect2(Vector2.ZERO, Vector2(root.size)).encloses(ticket.get_global_rect()),
 					name + " 1280x720 nonoverlapping sewn hero tickets")
+				_check(_printed_text_size(name_label, name_label.size.x).x <= name_label.size.x + 0.5
+					and _printed_text_size(detail_label, detail_label.size.x).y <= detail_label.size.y + 0.5
+					and detail_label.get_visible_line_count() == detail_label.get_line_count()
+					and ticket.get_global_rect().encloses(detail_label.get_global_rect()),
+					name + " long V3 identity, HP, tear and sewn-patch labels fit on real tickets")
+				if i == 0 and portrait.texture != null:
+					var art_width := detail_label.size.x
+					_check(not panel.apply_hero_portrait(portrait, MISSING_ART),
+						name + " guarded missing-art probe rejects an originally loaded portrait")
+					await _frames()
+					_check(portrait.texture == null and not portrait.visible
+						and detail_label.size.x > art_width + 60.0
+						and _printed_text_size(detail_label, detail_label.size.x).y <= detail_label.size.y + 0.5
+						and ticket.get_global_rect().encloses(detail_label.get_global_rect()),
+						name + " missing art collapses its column and preserves signed text")
+					_check(panel.apply_hero_portrait(portrait, image_path),
+						name + " restores the authentic art after fallback")
+					await _frames()
+					_check(portrait.visible and portrait.texture != null
+						and portrait.get_global_rect().size.x >= 112.0
+						and ticket.get_global_rect().encloses(portrait.get_global_rect()),
+						name + " restored authored portrait is still large and in bounds")
 				right = ticket.get_global_rect().end.x
+			_check(panel.hero_recap.get_global_rect().end.y <= panel.run_ledger.get_global_rect().position.y + 0.5
+				and panel.run_ledger.get_global_rect().end.y <= panel.return_button.get_global_rect().position.y + 0.5
+				and panel.paper_panel.get_global_rect().encloses(panel.return_button.get_global_rect())
+				and panel.return_button.is_visible_in_tree() and not panel.return_button.disabled,
+				name + " long V3 tickets and retained card leave the ledger and Return exposed")
 			_check(_app_snapshot() == before_panel and wardrobe.get_snapshot() == wardrobe_pre
 				and carry.torn.read_state() == torn_pre and ctx.rng.state == rng_pre
 				and _snapshot(ctx, terminal.battle) == witnessed,
