@@ -215,6 +215,9 @@ func _run() -> void:
 		elif CombatScarecrowPitchforkCards.CARDS.has(id):
 			_check(metadata.definition(id) == ScarecrowPoolCards.new().get_definition(id),
 				"live pitchfork definitions use their exact pool catalog: " + id)
+		elif id in CombatScarecrowCrowFlockCards.CARDS:
+			_check(metadata.definition(id) == ScarecrowPoolCards.new().get_definition(id),
+				"live crow flock definitions resolve their exact pool catalog: " + id)
 		elif not id in RESTUFF:
 			_check(metadata.definition(id).is_empty(), "unrelated Scarecrow definitions stay unregistered: " + id)
 	_finish()
