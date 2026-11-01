@@ -1,6 +1,16 @@
 class_name LiveUnpickerPanel
 extends Control
 ## Standalone Unpicker view. The route owner alone may validate and settle intents.
+##
+## ART v3 (owner priority 7): the already-authored sewn panel image is the only
+## decoration this stop animates. One input-inert, clipped copy of that same
+## image drifts and breathes behind the fixed sewn outline, labels, scrolling
+## card rows and Remove/Leave hit rectangles; no actual control, price, focus or
+## scroll position ever moves. The motion is a pure deterministic function of
+## accumulated presentation delta (7 s breath, 11 s drift, no RNG, no wall
+## clock), stops and returns to the exact static baseline on every close, hide,
+## rebind, invalid/consumed source, missing art or accessibility/reduced_motion
+## request, and has a nullable override for focused tests.
 signal decision_requested(intent: Dictionary)
 
 const PANEL_ART := "res://assets/paper/ui/reward_panel.png"
@@ -10,6 +20,18 @@ const THREAD := Color("#c9b996")
 const FELT := Color("#343c39")
 const GOLD := Color("#f1d18b")
 const DIM := Color("#b8aca0")
+## Decorative drift of the authored panel image: about a 1% scale breath plus a
+## few pixels of drift, both exactly at rest at elapsed zero and at every shared
+## period. No RNG and no wall clock; the caller accumulates a deterministic delta.
+const PANEL_ART_BREATH := 0.012
+const PANEL_ART_PAN := Vector2(3.0, 2.0)
+const PANEL_ART_BREATH_PERIOD := 7.0
+const PANEL_ART_PAN_PERIOD := 11.0
+## The drifting copy stays oversized for the sewn frame by this margin, so its
+## breath and drift never expose an image edge or an empty seam; the host panel
+## additionally clips it to its own 880x600 rect.
+const PANEL_ART_OVERSCAN := 10.0
+const REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
 
 ## The stitched outline is input-transparent; every actual action is a Button.
 class SewnOutline extends Control:
@@ -45,17 +67,38 @@ var _selected_button: Button
 var _rows: Dictionary = {} # Button -> immutable card ID, first index and caption.
 var _connections: Dictionary = {} # Only view-owned pressed callbacks; retired on rebind.
 
+## The already-authored sewn panel image, honoured by the static backing stylebox
+## and by the drifting decorative copy. A missing image keeps the flat felt
+## fallback and installs no drifting layer at all.
+var panel_art_texture: Texture2D
+## Nullable explicit reduced-motion override for focused tests and hosts; null
+## follows ProjectSettings accessibility/reduced_motion (default false).
+var reduced_motion_override: Variant = null
+## The one animated decoration: an input-inert child Panel of the sewn backing,
+## under its SewnOutline, holding a second static-image stylebox that only ever
+## breathes and drifts. Never a button, never focusable, never a layout member.
+var _art_drift: Panel = null
+var _art_drift_base := Vector2.ZERO
+var _art_motion_elapsed := 0.0
+
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(880, 600)
 	size = custom_minimum_size
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	if panel_art_texture == null:
+		panel_art_texture = _load_panel_art()
 	var backing := Panel.new()
 	backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(backing)
 	backing.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	backing.add_theme_stylebox_override("panel", _panel_style())
+	# Anything the drifting copy paints outside the sewn frame is clipped away, so
+	# the animation can never show an image edge or an empty seam.
+	backing.clip_contents = true
+	_install_art_drift(backing)
 	backing.add_child(SewnOutline.new())
+	visibility_changed.connect(_on_art_visibility_changed)
 
 	title_label = _label("UNPICKER  ·  remove one card", Vector2(30, 23), Vector2(820, 43), 30, GOLD)
 	wallet_label = _label("", Vector2(30, 73), Vector2(820, 34), 22, CREAM)
@@ -103,20 +146,149 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 
 func _panel_style() -> StyleBox:
-	if ResourceLoader.exists(PANEL_ART, "Texture2D"):
-		var image := ResourceLoader.load(PANEL_ART) as Texture2D
-		if image != null:
-			var texture := StyleBoxTexture.new()
-			texture.texture = image
-			texture.modulate_color = Color("#647269")
-			texture.set_texture_margin_all(24)
-			return texture
+	if panel_art_texture != null:
+		var texture := StyleBoxTexture.new()
+		texture.texture = panel_art_texture
+		texture.modulate_color = Color("#647269")
+		texture.set_texture_margin_all(24)
+		return texture
 	var style := StyleBoxFlat.new()
 	style.bg_color = FELT
 	style.border_color = THREAD
 	style.set_border_width_all(4)
 	style.set_corner_radius_all(6)
 	return style
+
+
+## The optional authored panel art; a missing or unreadable file stays null and
+## the panel keeps today's flat felt fallback with no drifting layer at all.
+static func _load_panel_art() -> Texture2D:
+	if not FileAccess.file_exists(PANEL_ART) \
+			or not ResourceLoader.exists(PANEL_ART, "Texture2D"):
+		return null
+	return load(PANEL_ART) as Texture2D
+
+
+## The one animated decoration: a second, input-inert copy of the authored sewn
+## panel image mounted UNDER the fixed SewnOutline and every label, row and
+## action of this panel. Only its own presentation transform ever moves; the
+## panel itself, the stitched frame and every real rectangle stay exactly fixed.
+func _install_art_drift(host_panel: Panel) -> void:
+	if panel_art_texture == null:
+		return
+	var layer := Panel.new()
+	layer.name = "PanelArtDrift"
+	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.focus_mode = Control.FOCUS_NONE
+	layer.add_theme_stylebox_override("panel", _panel_style())
+	host_panel.add_child(layer)
+	_art_drift_base = Vector2.ONE * -PANEL_ART_OVERSCAN
+	layer.custom_minimum_size = custom_minimum_size + Vector2.ONE * (PANEL_ART_OVERSCAN * 2.0)
+	layer.size = layer.custom_minimum_size
+	layer.position = _art_drift_base
+	layer.pivot_offset = layer.size * 0.5
+	_art_drift = layer
+
+
+## Pure deterministic presentation transform: a slow ~1% scale breath on a 7 s
+## period plus a few pixels of drift on an 11 s period, both exactly at rest at
+## elapsed zero and at every shared period. No RNG and no wall clock.
+static func art_motion_transform_at(elapsed: float) -> Dictionary:
+	var breath := 0.5 - 0.5 * cos(TAU * fposmod(elapsed, PANEL_ART_BREATH_PERIOD) / PANEL_ART_BREATH_PERIOD)
+	var clock := TAU * fposmod(elapsed, PANEL_ART_PAN_PERIOD) / PANEL_ART_PAN_PERIOD
+	return {
+		"scale": 1.0 + PANEL_ART_BREATH * breath,
+		"offset": Vector2(sin(clock), sin(2.0 * clock)) * PANEL_ART_PAN,
+	}
+
+
+## Motion runs only while a genuinely mounted, visible panel holds an authentic,
+## unconsumed, not-yet-submitted bound visit with the authored art loaded and
+## reduced motion not requested. It never reads a snapshot, quotes a price,
+## touches the visit or draws randomness; every stop path restores the exact
+## static baseline transform.
+func art_motion_active() -> bool:
+	return _art_drift != null and is_instance_valid(_art_drift) and panel_art_texture != null \
+			and _visit != null and not _submitted and _visit.is_valid() and not _visit.is_consumed() \
+			and is_inside_tree() and is_visible_in_tree() and not _reduced_motion_active()
+
+
+## Current decorative transform: the static baseline whenever motion is stopped,
+## otherwise the deterministic transform at the accumulated presentation time.
+func art_motion_transform() -> Dictionary:
+	if not art_motion_active():
+		return {"scale": 1.0, "offset": Vector2.ZERO}
+	return art_motion_transform_at(_art_motion_elapsed)
+
+
+## Deterministic presentation-time advance for focused tests; live play
+## accumulates the very same clock through _process with the engine delta.
+func advance_art_motion(delta: float) -> void:
+	if not art_motion_active():
+		_reset_art_motion()
+		return
+	if delta <= 0.0:
+		return
+	_art_motion_elapsed += delta
+	_apply_art_motion()
+
+
+## The setting defaults to off; a nullable explicit override lets tests and
+## hosts force the presentation on or off deterministically.
+func set_reduced_motion_override(value: Variant) -> void:
+	reduced_motion_override = value
+	if not art_motion_active():
+		_reset_art_motion()
+
+
+func _reduced_motion_active() -> bool:
+	if reduced_motion_override != null:
+		return bool(reduced_motion_override)
+	return bool(ProjectSettings.get_setting(REDUCED_MOTION_SETTING, false))
+
+
+## Every stop path (close/bind(null)/rebind, hide, exit-tree, invalid or
+## consumed visit, missing art, reduced motion) restores the exact static
+## baseline position and scale of the decorative image.
+func _reset_art_motion() -> void:
+	if _art_motion_elapsed == 0.0:
+		return
+	_art_motion_elapsed = 0.0
+	if is_instance_valid(_art_drift):
+		_art_drift.pivot_offset = _art_drift.size * 0.5
+		_art_drift.scale = Vector2.ONE
+		_art_drift.position = _art_drift_base
+
+
+func _apply_art_motion() -> void:
+	if not is_instance_valid(_art_drift):
+		return
+	var motion := art_motion_transform_at(_art_motion_elapsed)
+	var offset: Vector2 = motion.get("offset", Vector2.ZERO)
+	_art_drift.pivot_offset = _art_drift.size * 0.5
+	_art_drift.scale = Vector2.ONE * float(motion["scale"])
+	_art_drift.position = _art_drift_base + offset
+
+
+func _on_art_visibility_changed() -> void:
+	if not is_visible_in_tree():
+		_reset_art_motion()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_EXIT_TREE:
+		_reset_art_motion()
+
+
+## Accumulated presentation delta alone drives the decoration; it never calls the
+## visit, the removal service, the route or any RNG.
+func _process(delta: float) -> void:
+	if not art_motion_active():
+		_reset_art_motion()
+		return
+	if delta > 0.0:
+		_art_motion_elapsed += delta
+		_apply_art_motion()
 
 
 func _button_style(fill: Color, edge: Color) -> StyleBoxFlat:
@@ -174,6 +346,9 @@ func _button(value: String, at: Vector2, dimensions: Vector2) -> Button:
 func bind(visit: RunUnpickerVisit) -> void:
 	_epoch += 1
 	_retire_callbacks()
+	# A different bound visit (or none at all) restarts the decorative drift from
+	# its exact static baseline; the motion never influences the binding.
+	_reset_art_motion()
 	_visit = visit if visit != null and visit.is_valid() and not visit.is_consumed() else null
 	_source = _visit.read_state().duplicate(true) if _visit != null else {}
 	_submitted = false
