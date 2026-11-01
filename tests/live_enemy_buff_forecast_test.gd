@@ -54,21 +54,32 @@ func _visible(app, before: int, after: int) -> void:
 		return
 	_check(label is Label and app.battle_view.is_ancestor_of(label) and label.is_visible_in_tree(),
 		"forecast is mounted and visible")
-	_check(label.text == "Next enemy phase: Guard Ragling Block: %d -> %d" % [before, after],
-		"forecast names precise Guard before/after Block")
+	_check(after - before == 5 and label.text == "Guard Ragling braces: +5 Block",
+		"forecast names Guard and its exact +5 gain without exposing before/after telemetry")
 	var rect: Rect2 = label.get_global_rect()
 	_check(rect.size.x > 0 and rect.size.y > 0 and Rect2(0, 0, 1280, 720).encloses(rect),
 		"forecast fits viewport")
 	var meters = app.get_node("LiveCombatMeters").row
+	_check(is_instance_valid(meters) and meters.is_visible_in_tree()
+		and meters.get_child_count() == CombatParty.PARTY_SIZE + app.enemies.get_enemies().size(),
+		"all real actor HP and Block meters stay mounted")
+	var roster = app.get_node("LiveEnemyRoster")
+	_check(roster._badges.size() == app.enemies.get_enemies().size()
+		and roster._badges[1].is_visible_in_tree()
+		and Rect2(0, 0, 1280, 720).encloses(roster._badges[1].get_global_rect()),
+		"Guard source intent badge remains independently mounted and in viewport")
 	_check(is_instance_valid(meters) and rect.position.y >= meters.get_global_rect().end.y
 		and not rect.intersects(meters.get_global_rect()), "forecast remains directly below the consolidated actor readouts")
-	_check(Rect2(0, 0, 1280, 720).encloses(app.end_turn_button.get_global_rect()) \
+	_check(app.end_turn_button.is_visible_in_tree() and app.return_button.is_visible_in_tree()
+		and Rect2(0, 0, 1280, 720).encloses(app.end_turn_button.get_global_rect()) \
 		and Rect2(0, 0, 1280, 720).encloses(app.return_button.get_global_rect()),
 		"battle actions remain inside viewport")
 
 
 func _immutable_refresh(app) -> void:
 	var before := _snapshot(app)
+	var cue_before: String = app.enemy_buff_forecast_label.text
+	var visible_before: bool = app.enemy_buff_forecast_label.visible
 	seed(51601)
 	var expected := randi()
 	seed(51601)
@@ -78,6 +89,8 @@ func _immutable_refresh(app) -> void:
 		app._refresh_enemy_roster()
 	_check(randi() == expected, "refresh does not consume global RNG")
 	_check(_snapshot(app) == before, "repeated refresh preserves full actors, piles, energy, RNG and announcements")
+	_check(app.enemy_buff_forecast_label.text == cue_before and app.enemy_buff_forecast_label.visible == visible_before,
+		"repeated refresh preserves the projected player cue and its visibility")
 
 
 func _detached_cases(app) -> void:
@@ -121,11 +134,13 @@ func _detached_cases(app) -> void:
 	_check(rules.forecast(app.party, app.enemies, zero).is_empty(), "zero Block has no forecast")
 	app.enemy_attacks = zero
 	app._refresh_intents()
-	_check(app.enemy_buff_forecast_label.text.is_empty(), "stale announcement clears mounted forecast")
+	_check(app.enemy_buff_forecast_label.text.is_empty() and not app.enemy_buff_forecast_label.visible,
+		"stale announcement clears mounted forecast")
 	app.enemy_intents._cache[1]["amount"] = 0
 	app.enemy_attacks = app.enemy_intents.get_intents()
 	app._refresh_intents()
-	_check(app.enemy_buff_forecast_label.text.is_empty(), "valid announced zero Block clears mounted forecast")
+	_check(app.enemy_buff_forecast_label.text.is_empty() and not app.enemy_buff_forecast_label.visible,
+		"valid announced zero Block clears mounted forecast")
 	app.enemy_intents._cache[1]["amount"] = 5
 	app.enemy_attacks = app.enemy_intents.get_intents()
 	app._refresh_intents()
@@ -152,6 +167,21 @@ func _detached_cases(app) -> void:
 		result[0].after = -1
 	_check(rules.forecast(app.party, app.enemies, ordered)[0].after == 11 \
 		and ordered == ordered_before and _snapshot(app) == before, "results and nested inputs are detached")
+	# Only the presentation sees these two valid projections; restore the real announcements.
+	var saved_cache: Array[Dictionary] = app.enemy_intents._cache.duplicate(true)
+	var scripted: Array[Dictionary] = []
+	scripted.assign(ordered)
+	app.enemy_intents._cache = scripted
+	app.enemy_attacks = app.enemy_intents.get_intents()
+	app._refresh_intents()
+	_check(app.enemy_buff_forecast_label.text ==
+		"Guard Ragling braces: +1 Block; Ragling braces: +2 Block"
+		and app.enemy_buff_forecast_label.is_visible_in_tree(),
+		"multiple admitted source-owned buffs join compactly in announcement order")
+	app.enemy_intents._cache = saved_cache
+	app.enemy_attacks = app.enemy_intents.get_intents()
+	app._refresh_intents()
+	_check(_snapshot(app) == before, "mounted multi-buff presentation restores real announcements without model writes")
 
 
 func _run() -> void:
