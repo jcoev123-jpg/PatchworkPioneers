@@ -2,6 +2,8 @@ class_name CombatYarnRangerUnspoolCards
 extends RefCounted
 ## Scene-free paid resolver for Yarn Ranger's Unspool (damage 7) and Unspool+
 ## (damage 10). Only hits living enemies with an authoritative Tangled counter.
+## Status admission is role-aware, exactly as CombatStatusAttacks.resolve_vs_enemy:
+## a Dodging/Feared attacker and a Blind/Feared defender are legal and untouched.
 ## No status mutation, no RNG use, no scene dependency.
 
 const CARD_IDS := [
@@ -94,8 +96,13 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if eligible.is_empty():
 		return {"ok": false}
 
-	# Preflight status validation (same rules as CombatStatusAttacks).
-	if not _valid_statuses(yr_statuses):
+	# Preflight status validation: exactly the role-aware policy that the paid
+	# hit itself uses (CombatStatusAttacks.resolve_vs_enemy). The attacking Yarn
+	# Ranger may carry Dodge and Fear; a defending enemy may already carry Blind
+	# and Fear. Both are admitted untouched, so a Blinded or Feared foe is still a
+	# legal Tangled target and a Dodging owner can still attack. The opposite
+	# role tokens and every malformed value are still refused before any spend.
+	if not _valid_attacker_statuses(yr_statuses):
 		return {"ok": false}
 	for pos in eligible:
 		var enemy_pre: Dictionary = enemies.get_enemy(pos)
@@ -103,7 +110,7 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if not defender_raw is Dictionary:
 			return {"ok": false}
 		var defender_statuses: Dictionary = defender_raw
-		if not _valid_statuses(defender_statuses):
+		if not _valid_defender_statuses(defender_statuses):
 			return {"ok": false}
 
 	# Determine base damage from the printed descriptor.
@@ -154,15 +161,22 @@ func _read_statuses(actor: Dictionary) -> Variant:
 	return actor.get("statuses")
 
 
-## Replicates CombatStatusAttacks' private validation exactly, without
-## mutating any input dictionary.
+## The role-neutral damage-status vocabulary, delegated to the shared attack
+## bridge. Retained for read-only callers; the paid play below always uses the
+## role-aware attacker/defender policy, never this looser union.
 func _valid_statuses(statuses: Dictionary) -> bool:
-	if not statuses is Dictionary:
-		return false
-	for name in statuses:
-		if not name is String or name not in ["bleed", "weak", "exposed", "tangled"]:
-			return false
-		var count = statuses[name]
-		if not count is int or count < 0:
-			return false
-	return true
+	return _attacks._valid_statuses(statuses)
+
+
+## An attacking hero may carry the canonical Dodge token (`dodge_next_attack`
+## integer 0 or 1) and Fear (`cannot_buff_next_turn: true`). Both are inert for
+## this outgoing hit and are never consumed here; a hero-side Blind stays refused.
+func _valid_attacker_statuses(statuses: Dictionary) -> bool:
+	return _attacks._valid_attacker_statuses(statuses)
+
+
+## A defending enemy may already carry the canonical Blind token
+## (`blind_next_attack` integer 0 or 1) and Fear. Neither protects it from this
+## incoming hit; an enemy-side Dodge stays refused.
+func _valid_defender_statuses(statuses: Dictionary) -> bool:
+	return _attacks._valid_defender_statuses(statuses)
