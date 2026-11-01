@@ -55,6 +55,10 @@ const PATCH_CONTENT_HEIGHT := 39.0
 ## The sewn icon area left of the caption: the patch's inner box, inset so no stitch of
 ## the paper perimeter is covered by an icon.
 const ICON_INSET := Vector2(4.0, 2.5)
+## Slow, presentation-only opacity breathing of the authored icon; never moves its rect.
+const ICON_PULSE_PERIOD := 3.2
+const ICON_PULSE_MIN_ALPHA := 0.78
+const REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
 ## Committed HUD icon per announced action mode. Attack and block map to the authored
 ## attack/defend art; anything without an entry (shove, Unravelled, slain, unknown) keeps
 ## the drawn sewn glyph, so no PNG is required.
@@ -200,6 +204,8 @@ var heading_font_path := HEADING_FONT_PATH
 ## Key: icon art path, value: Texture2D or null. A negative entry is cached too, so an
 ## unavailable image is never probed twice and the drawn glyph stays the fallback.
 var _icon_cache: Dictionary = {}
+var _icon_pulse_elapsed := 0.0
+var _reduced_motion_override: Variant = null
 ## The display-face path actually probed, so redraws never reload the shipped font file.
 var _heading_probed_path := ""
 var _fallback_heading: Font = null
@@ -211,7 +217,66 @@ func _ready() -> void:
 	# The fitted caption depends on the mounted width, so a relayout re-fits the compact
 	# policy caption and repaints the tag.
 	resized.connect(_relayout)
+	set_process(false)
 	queue_redraw()
+
+
+## An optional bool override follows the other shipped UI art motions.
+func set_reduced_motion_override(value: Variant) -> void:
+	_reduced_motion_override = value if value is bool else null
+	_sync_icon_pulse()
+
+
+func _reduced_motion() -> bool:
+	if _reduced_motion_override is bool:
+		return _reduced_motion_override
+	return ProjectSettings.get_setting(REDUCED_MOTION_SETTING, false) == true
+
+
+## A real visible mounted action with actual imported artwork is the only pulse owner.
+## Slain, Unravelled, empty actions and sewn fallback glyphs remain static.
+func icon_pulse_active() -> bool:
+	return is_inside_tree() and is_visible_in_tree() and not _reduced_motion() \
+		and not intent_type.is_empty() and icon_texture_rect().has_area()
+
+
+## Deterministic icon alpha; the authored texture rect, caption, policy and patch do not move.
+func icon_pulse_alpha() -> float:
+	if not icon_pulse_active():
+		return 1.0
+	return 1.0 - (1.0 - ICON_PULSE_MIN_ALPHA) * \
+		(0.5 - 0.5 * cos(TAU * _icon_pulse_elapsed / ICON_PULSE_PERIOD))
+
+
+## Testable clock advance, shared with the live SceneTree process path. No RNG or game state.
+func advance_icon_pulse(delta: float) -> void:
+	if delta <= 0.0 or not icon_pulse_active():
+		return
+	_icon_pulse_elapsed = fposmod(_icon_pulse_elapsed + delta, ICON_PULSE_PERIOD)
+	queue_redraw()
+
+
+func _sync_icon_pulse() -> void:
+	_icon_pulse_elapsed = 0.0
+	set_process(icon_pulse_active())
+	if is_inside_tree():
+		queue_redraw()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_EXIT_TREE:
+		_icon_pulse_elapsed = 0.0
+		set_process(false)
+	elif what in [NOTIFICATION_VISIBILITY_CHANGED, NOTIFICATION_ENTER_TREE] \
+			and is_node_ready():
+		_sync_icon_pulse()
+
+
+func _process(delta: float) -> void:
+	if not icon_pulse_active():
+		_sync_icon_pulse()
+		return
+	advance_icon_pulse(delta)
 
 
 ## Re-fit the displayed caption after the mounted width changes, so a compact policy
@@ -704,7 +769,7 @@ func _update_visuals() -> void:
 	# Every transition re-selects the icon, so a preceding action's texture is cleared
 	# (assigned null) before the new mode draws.
 	icon_texture = icon_texture_for(icon_mode)
-	queue_redraw()
+	_sync_icon_pulse()
 
 
 func _draw() -> void:
@@ -727,7 +792,7 @@ func _draw() -> void:
 	draw_set_transform(Vector2.ZERO)
 	var icon := icon_texture_rect()
 	if icon.size.x > 0.0 and icon.size.y > 0.0:
-		draw_texture_rect(icon_texture, icon, false)
+		draw_texture_rect(icon_texture, icon, false, Color(1.0, 1.0, 1.0, icon_pulse_alpha()))
 	else:
 		draw_set_transform(Vector2(0.0, patch.position.y - 3.0 * scale_y), 0, Vector2(1.0, scale_y))
 		_draw_glyph()

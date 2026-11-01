@@ -174,6 +174,138 @@ func _presentation(target: LiveEnemyIntentBadge) -> Array:
 		target.policy_text_rect(), target.icon_art_path()]
 
 
+## The real mounted view's presentation clock must touch only the authored image alpha.
+## Authentic catalog-backed action dictionaries are passed through show_intent throughout.
+func _assert_icon_pulse(crab_action: Dictionary, wasp_action: Dictionary) -> void:
+	badge.set_reduced_motion_override(false)
+	badge.show_intent(crab_action, false, false, "front")
+	var initial := _presentation(badge)
+	var patch := badge.patch_rect()
+	var icon := badge.icon_texture_rect()
+	var icon_space := badge.icon_rect()
+	var dimensions := badge.size
+	var location := badge.position
+	var minimum := badge.custom_minimum_size
+	var original_art := badge.icon_texture
+	var original_tooltip := badge.tooltip_text
+	_check(badge.is_inside_tree() and badge.is_visible_in_tree()
+		and original_art != null and icon.has_area() and icon_space.encloses(icon)
+		and badge.intent_type == "attack" and badge.hit_count == 2
+		and badge.is_processing() and badge.icon_pulse_active(),
+		"authentic mounted image-backed attack enables icon-only animation")
+	_check(badge.get_child_count() == 0
+		and badge.mouse_filter == Control.MOUSE_FILTER_PASS
+		and badge.focus_mode == Control.FOCUS_NONE,
+		"sewn badge remains one input-inert drawing surface with no roster buttons changed")
+	_check(is_equal_approx(badge.icon_pulse_alpha(), 1.0),
+		"fresh announcement begins fully opaque, without a previous phase")
+	badge.advance_icon_pulse(LiveEnemyIntentBadge.ICON_PULSE_PERIOD * 0.25)
+	var quarter := badge.icon_pulse_alpha()
+	badge.advance_icon_pulse(LiveEnemyIntentBadge.ICON_PULSE_PERIOD * 0.25)
+	var dimmed := badge.icon_pulse_alpha()
+	_check(quarter < 1.0 and quarter > LiveEnemyIntentBadge.ICON_PULSE_MIN_ALPHA
+		and is_equal_approx(dimmed, LiveEnemyIntentBadge.ICON_PULSE_MIN_ALPHA),
+		"deterministic quarter/half periods soften only the imported icon within 0.78..1 alpha")
+	_check(_presentation(badge) == initial and badge.icon_texture == original_art
+		and badge.tooltip_text == original_tooltip and badge.patch_rect() == patch
+		and badge.icon_rect() == icon_space and badge.icon_texture_rect() == icon
+		and badge.size == dimensions and badge.position == location
+		and badge.custom_minimum_size == minimum,
+		"icon pulse leaves patch, texture destination, caption, policy, outer rect and authority identical")
+	_check(root.size == Vector2i(1280, 720),
+		"mounted viewport remains 1280x720 with unchanged intent layout")
+	badge.advance_icon_pulse(LiveEnemyIntentBadge.ICON_PULSE_PERIOD * 0.5)
+	_check(is_equal_approx(badge.icon_pulse_alpha(), 1.0)
+		and _presentation(badge) == initial,
+		"completed deterministic cycle restores full alpha without changing a combat announcement")
+
+	badge.advance_icon_pulse(LiveEnemyIntentBadge.ICON_PULSE_PERIOD * 0.5)
+	badge.show_intent(wasp_action, false, false, "lowest_living_hp")
+	_check(badge.is_processing() and badge.icon_pulse_active()
+		and is_equal_approx(badge.icon_pulse_alpha(), 1.0)
+		and badge.hit_count == 2 and badge.amount == 8 and badge.target_position == 2
+		and badge.policy_cue == "Aim low HP" and badge.icon_mode == "attack",
+		"new authenticated target, amount and policy reset the icon phase without stale contents")
+	badge.advance_icon_pulse(LiveEnemyIntentBadge.ICON_PULSE_PERIOD * 0.5)
+	badge.show_intent({"type": "block", "amount": 3, "enemy_position": 1}, false)
+	_check(badge.icon_texture != null and badge.icon_texture != original_art
+		and badge.icon_art_path() == LiveEnemyIntentBadge.icon_path_for("block")
+		and badge.icon_pulse_active() and badge.is_processing()
+		and is_equal_approx(badge.icon_pulse_alpha(), 1.0)
+		and badge.readable_text == "Block +3" and badge.tooltip_text == "3 Block on the acting enemy.",
+		"new block action chooses authored defend icon with fresh phase and original wording")
+
+	badge.advance_icon_pulse(LiveEnemyIntentBadge.ICON_PULSE_PERIOD * 0.5)
+	badge.hide()
+	_check(not badge.is_visible_in_tree() and not badge.is_processing()
+		and not badge.icon_pulse_active() and is_equal_approx(badge.icon_pulse_alpha(), 1.0),
+		"hidden badge stops processing and loses its old opacity phase")
+	badge.advance_icon_pulse(0.7)
+	badge.show()
+	_check(badge.is_visible_in_tree() and badge.is_processing()
+		and badge.icon_pulse_active() and is_equal_approx(badge.icon_pulse_alpha(), 1.0),
+		"reopened badge resumes at the full-alpha start rather than stale half-phase")
+
+	badge.advance_icon_pulse(LiveEnemyIntentBadge.ICON_PULSE_PERIOD * 0.5)
+	badge.get_parent().remove_child(badge)
+	_check(not badge.is_inside_tree() and not badge.is_processing()
+		and not badge.icon_pulse_active() and is_equal_approx(badge.icon_pulse_alpha(), 1.0),
+		"detached badge stops its clock and returns to the exact static icon")
+	badge.advance_icon_pulse(0.9)
+	root.add_child(badge)
+	_check(badge.is_inside_tree() and badge.is_visible_in_tree()
+		and badge.icon_pulse_active() and badge.is_processing()
+		and is_equal_approx(badge.icon_pulse_alpha(), 1.0),
+		"remounting restores a fresh cycle with no texture or phase leak")
+
+	badge.advance_icon_pulse(LiveEnemyIntentBadge.ICON_PULSE_PERIOD * 0.5)
+	badge.set_reduced_motion_override(true)
+	_check(not badge.is_processing() and not badge.icon_pulse_active()
+		and is_equal_approx(badge.icon_pulse_alpha(), 1.0),
+		"reduced motion immediately disables icon pulse and restores the baseline")
+	badge.advance_icon_pulse(1.1)
+	_check(is_equal_approx(badge.icon_pulse_alpha(), 1.0),
+		"manual time cannot animate reduced-motion artwork")
+	badge.set_reduced_motion_override(false)
+	_check(badge.is_processing() and is_equal_approx(badge.icon_pulse_alpha(), 1.0),
+		"lifting override begins a new clean image-backed cycle")
+	var old_setting: Variant = ProjectSettings.get_setting("accessibility/reduced_motion", false)
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	badge.set_reduced_motion_override(null)
+	_check(not badge.icon_pulse_active() and not badge.is_processing()
+		and is_equal_approx(badge.icon_pulse_alpha(), 1.0),
+		"shipped accessibility setting also suppresses pulse without test override")
+	ProjectSettings.set_setting("accessibility/reduced_motion", old_setting)
+	badge.set_reduced_motion_override(false)
+
+	var saved_root := badge.icon_root
+	badge.icon_root = "res://assets/paper/ui/no_such_icons/"
+	badge.show_intent(crab_action, false)
+	_check(badge.icon_mode == "attack" and badge.intent_type == "attack"
+		and badge.icon_texture == null and badge.icon_texture_rect() == Rect2()
+		and not badge.is_processing() and not badge.icon_pulse_active()
+		and is_equal_approx(badge.icon_pulse_alpha(), 1.0)
+		and _two_hit_caption(badge.readable_text),
+		"missing authored art keeps readable drawn-glyph fallback strictly static")
+	badge.icon_root = saved_root
+	badge.show_intent(crab_action, false)
+	_check(badge.icon_texture == original_art and badge.icon_pulse_active()
+		and badge.is_processing() and is_equal_approx(badge.icon_pulse_alpha(), 1.0),
+		"returning from missing artwork selects the current art with zero stale phase")
+	for row in [[crab_action, true, false, "SLAIN"], [crab_action, false, true, "UNRAVELLED"],
+			[{}, false, false, "NO ACTION"]]:
+		badge.advance_icon_pulse(LiveEnemyIntentBadge.ICON_PULSE_PERIOD * 0.5)
+		badge.show_intent(row[0], row[1], row[2])
+		_check(badge.readable_text == row[3] and badge.intent_type.is_empty()
+			and not badge.icon_pulse_active() and not badge.is_processing()
+			and is_equal_approx(badge.icon_pulse_alpha(), 1.0),
+			"%s retires image pulse with an inert, unchanged caption" % row[3])
+	badge.show_intent(crab_action, false)
+	_check(badge.icon_texture == original_art and badge.icon_pulse_active()
+		and badge.is_processing() and is_equal_approx(badge.icon_pulse_alpha(), 1.0),
+		"real next attack after retirement restarts with a fresh icon and no false state")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	badge = _mount_badge()
@@ -549,6 +681,7 @@ func _run() -> void:
 	_check(rng.seed == rng_seed and rng.state == rng_state,
 		"show_intent leaves a seeded run RNG's seed and state untouched")
 	_check(randi() == global_expected, "show_intent leaves the global RNG untouched")
+	await _assert_icon_pulse(crab_action, wasp_action)
 	_finish()
 
 
