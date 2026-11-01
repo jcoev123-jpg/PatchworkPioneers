@@ -203,6 +203,7 @@ func _run() -> void:
 	var expected_run := rng.state
 	await _layout(valid)
 	await _atmosphere_cases(valid)
+	await _backdrop_motion_cases(valid)
 	await _focus_cases()
 	await _named_power_cases(slot_map)
 	await _number_key_cases()
@@ -1392,6 +1393,278 @@ func _atmosphere_cases(original: RunPatchStallVisit) -> void:
 			"fresh genuine show/bind after close has one zero-clock renderer")
 
 
+## VIS V5/V3-3: the authored backdrop's gentle 18-second idle loop, advanced
+## only by accumulated presentation delta. The moving oversized backing always
+## covers the fixed 900x630 window and never touches an offer, price, wearer
+## choice, caption, focus or authority; every stop path restores the exact
+## static baseline and restarts a genuinely open visit from zero phase.
+func _backdrop_motion_cases(visit: RunPatchStallVisit) -> void:
+	var baseline := {"scale": 1.0, "offset": Vector2.ZERO}
+	var base := Vector2.ONE * -LivePatchStallPanel.BACKDROP_OVERSCAN
+	var art: Texture2D = panel.panel_art_texture
+	_check(art != null and str(art.resource_path) == LivePatchStallPanel.PANEL_ART,
+			"mounted Patch Stall loads the already-present authored sewn panel art")
+	# Freeze automatic processing: only deterministic hand-fed deltas advance.
+	panel.set_process(false)
+	var backing := panel.get_child(0) as Panel
+	panel.bind(visit)
+	_check(panel.clip_contents and backing.get_index() == 0 and backing.clip_contents
+			and backing.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and backing.size == LivePatchStallPanel.PANEL_SIZE
+					+ Vector2.ONE * (LivePatchStallPanel.BACKDROP_OVERSCAN * 2.0)
+			and backing.position == base and backing.scale == Vector2.ONE,
+			"one oversized clipped input-inert backing stays the panel's first child")
+	_check(panel.ambient_layer.get_parent() == backing
+			and backing.get_child(0) == panel.ambient_layer
+			and panel.ambient_layer.size == LivePatchStallPanel.PANEL_SIZE
+			and panel.ambient_layer.position == Vector2.ONE * LivePatchStallPanel.BACKDROP_OVERSCAN
+			and backing.get_child(1).size == LivePatchStallPanel.PANEL_SIZE
+			and backing.get_child(1).position == Vector2.ONE * LivePatchStallPanel.BACKDROP_OVERSCAN
+			and panel.find_children("*", "Button", true, false).size() == 7,
+			"retained ambient and border children stay framed at the fixed window")
+	_check(LivePatchStallPanel.backdrop_motion_at(0.0) == baseline
+			and LivePatchStallPanel.backdrop_motion_at(LivePatchStallPanel.BACKDROP_LOOP) == baseline,
+			"backdrop motion rests exactly at phase zero and the completed 18 s loop")
+	var breath_peak: Dictionary = LivePatchStallPanel.backdrop_motion_at(9.0)
+	var drift_peak: Dictionary = LivePatchStallPanel.backdrop_motion_at(4.5)
+	var drift_lift: Dictionary = LivePatchStallPanel.backdrop_motion_at(2.25)
+	var peak_offset: Vector2 = drift_peak["offset"]
+	var lift_offset: Vector2 = drift_lift["offset"]
+	_check(absf(float(breath_peak["scale"]) - 1.01) < 0.0005
+			and absf(peak_offset.x - 3.0) < 0.001 and absf(peak_offset.y) < 0.001
+			and absf(lift_offset.y - 3.0) < 0.001,
+			"an eased 18 s breath to 1% plus at most 3 px of horizontal and vertical drift")
+	_check(LivePatchStallPanel.backdrop_motion_at(4.0) == LivePatchStallPanel.backdrop_motion_at(4.0)
+			and LivePatchStallPanel.backdrop_motion_at(4.0) != LivePatchStallPanel.backdrop_motion_at(5.0)
+			and LivePatchStallPanel.backdrop_motion_at(3.0)
+					== LivePatchStallPanel.backdrop_motion_at(3.0 + LivePatchStallPanel.BACKDROP_LOOP),
+			"the backdrop transform is deterministic and periodic on the 18 s loop")
+	var in_bounds := true
+	var no_edge := true
+	for step in range(73):
+		var motion := LivePatchStallPanel.backdrop_motion_at(float(step) * 0.25)
+		var breath: float = motion["scale"]
+		var offset: Vector2 = motion["offset"]
+		if breath < 1.0 or breath > 1.01 or absf(offset.x) > 3.0 or absf(offset.y) > 3.0:
+			in_bounds = false
+		var grown := backing.size * breath
+		var drawn := Rect2(base + offset - (grown - backing.size) * 0.5, grown)
+		if not drawn.encloses(Rect2(Vector2.ZERO, LivePatchStallPanel.PANEL_SIZE)):
+			no_edge = false
+	_check(in_bounds, "every sampled loop phase keeps the 0%-1% breath and 3 px drift bounds")
+	_check(no_edge,
+			"the breathing backing stays oversized for the whole cycle, exposing no image edge")
+	_check(panel.backdrop_motion_active() and panel.backdrop_motion_elapsed() == 0.0
+			and panel.backdrop_motion_transform() == baseline,
+			"a freshly bound authentic visit starts at the exact static baseline")
+	var focused: Control = root.gui_get_focus_owner()
+	var panel_rect := panel.get_global_rect()
+	var title_rect := panel.title_label.get_global_rect()
+	var wallet_rect := panel.wallet_label.get_global_rect()
+	var wearer_rect := panel.wearer_label.get_global_rect()
+	var status_rect := panel.status_label.get_global_rect()
+	var before_controls := _ambient_controls()
+	var before_state := visit.read_state()
+	var before_quote := visit.quote()
+	var before_run_rng := rng.state
+	seed(812733)
+	var expected_global := randi()
+	seed(812733)
+	panel._process(0.25)
+	_check(panel.backdrop_motion_elapsed() == 0.25
+			and panel.backdrop_motion_transform() == LivePatchStallPanel.backdrop_motion_at(0.25),
+			"the real _process presentation delta advances the same deterministic clock")
+	panel.advance_backdrop_motion(4.25)
+	var moved: Dictionary = panel.backdrop_motion_transform()
+	var moved_offset: Vector2 = moved["offset"]
+	_check(panel.backdrop_motion_elapsed() == 4.5
+			and moved == LivePatchStallPanel.backdrop_motion_at(4.5) and moved != baseline
+			and absf(float(moved["scale"]) - 1.005) < 0.001
+			and absf(moved_offset.x - 3.0) < 0.01,
+			"accumulated presentation delta alone drives the restrained backdrop transform")
+	_check(backing.scale == Vector2.ONE * float(moved["scale"])
+			and backing.position == base + moved_offset,
+			"only the decorative backing's own position and scale follow the transform")
+	_check(panel.get_global_rect() == panel_rect
+			and panel.title_label.get_global_rect() == title_rect
+			and panel.wallet_label.get_global_rect() == wallet_rect
+			and panel.wearer_label.get_global_rect() == wearer_rect
+			and panel.status_label.get_global_rect() == status_rect
+			and _ambient_controls() == before_controls
+			and root.gui_get_focus_owner() == focused,
+			"the fixed panel, captions, all seven hit rectangles and focus never move")
+	_check(visit.read_state() == before_state and visit.quote() == before_quote
+			and intents.is_empty() and rng.state == before_run_rng
+			and randi() == expected_global,
+			"backdrop motion never reads, quotes, spends or consumes the visit or any RNG")
+	panel.advance_backdrop_motion(13.5)
+	_check(panel.backdrop_motion_elapsed() == 18.0
+			and panel.backdrop_motion_transform() == baseline
+			and backing.scale == Vector2.ONE and backing.position == base,
+			"one exactly complete 18 s cycle restores the exact static baseline")
+	var prior_setting: Variant = ProjectSettings.get_setting("accessibility/reduced_motion", false)
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	panel.advance_backdrop_motion(5.0)
+	_check(not panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline
+			and backing.scale == Vector2.ONE and backing.position == base,
+			"ProjectSettings accessibility/reduced_motion keeps the backdrop exactly static")
+	ProjectSettings.set_setting("accessibility/reduced_motion", prior_setting)
+	panel.advance_backdrop_motion(4.5)
+	var inflight: Dictionary = panel.backdrop_motion_transform()
+	var inflight_offset: Vector2 = inflight["offset"]
+	_check(panel.backdrop_motion_elapsed() == 4.5 and inflight != baseline
+			and absf(float(inflight["scale"]) - 1.005) < 0.001
+			and absf(inflight_offset.x - 3.0) < 0.01
+			and backing.scale != Vector2.ONE and backing.position != base,
+			"the backdrop is genuinely translated and scaled before the override")
+	panel.reduced_motion_override = true
+	_check(not panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline
+			and backing.scale == Vector2.ONE and backing.position == base
+			and panel.backdrop_motion_elapsed() == 0.0,
+			"an explicit reduced-motion override retires an in-flight transform immediately")
+	panel.advance_backdrop_motion(4.0)
+	_check(panel.backdrop_motion_transform() == baseline
+			and backing.scale == Vector2.ONE and backing.position == base,
+			"no presentation time accumulates while the explicit override is true")
+	panel.reduced_motion_override = false
+	_check(panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline
+			and panel.backdrop_motion_elapsed() == 0.0,
+			"lifting the override restarts only from zero phase at the static baseline")
+	panel.advance_backdrop_motion(2.0)
+	_check(panel.backdrop_motion_transform() == LivePatchStallPanel.backdrop_motion_at(2.0),
+			"motion resumes only through fresh presentation time after the override lifts")
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	panel.reduced_motion_override = null
+	_check(not panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline
+			and backing.scale == Vector2.ONE and backing.position == base
+			and panel.backdrop_motion_elapsed() == 0.0,
+			"a null override follows the ProjectSettings reduced-motion request again")
+	ProjectSettings.set_setting("accessibility/reduced_motion", prior_setting)
+	panel.reduced_motion_override = null
+	panel.advance_backdrop_motion(2.0)
+	_check(panel.backdrop_motion_transform() != baseline,
+			"the backdrop is genuinely moving before hiding")
+	panel.hide()
+	_check(not panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline
+			and backing.position == base,
+			"a hidden view restores the exact static baseline")
+	panel.advance_backdrop_motion(3.0)
+	_check(panel.backdrop_motion_transform() == baseline,
+			"a hidden view accumulates no motion")
+	panel.show()
+	_check(panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline
+			and backing.scale == Vector2.ONE,
+			"the shown view resumes only from the static baseline")
+	panel.advance_backdrop_motion(2.0)
+	_check(panel.backdrop_motion_transform() != baseline,
+			"the backdrop is genuinely moving before bind(null)")
+	panel.bind(null)
+	_check(not panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline
+			and backing.position == base,
+			"bind(null) stops and restores the exact static baseline")
+	panel.advance_backdrop_motion(7.0)
+	_check(panel.backdrop_motion_transform() == baseline,
+			"a panel without a source accumulates no motion")
+	panel.bind(visit)
+	panel.advance_backdrop_motion(3.0)
+	_check(panel.backdrop_motion_transform() != baseline,
+			"the backdrop is genuinely moving before close()")
+	panel.close()
+	_check(not panel.is_visible_in_tree() and not panel.backdrop_motion_active()
+			and panel.backdrop_motion_transform() == baseline
+			and backing.position == base and backing.scale == Vector2.ONE,
+			"close() stops and restores the exact static baseline on the closed panel")
+	panel.advance_backdrop_motion(7.0)
+	_check(panel.backdrop_motion_transform() == baseline,
+			"no old motion resumes on the closed panel")
+	panel.bind(visit)
+	_check(panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline
+			and backing.scale == Vector2.ONE,
+			"a new authentic bind restarts the backdrop from the exact static baseline")
+	panel.advance_backdrop_motion(3.0)
+	_check(panel.backdrop_motion_transform() != baseline,
+			"the backdrop moves on the rebound authentic visit")
+	panel.bind(visit)
+	_check(panel.backdrop_motion_transform() == baseline,
+			"rebinding an open visit restarts at the static baseline, never resuming stale state")
+	var invalid := _visit("", 240)
+	_check(not invalid.is_valid(), "backdrop fixture is a real invalid service")
+	panel.bind(invalid)
+	panel.advance_backdrop_motion(4.0)
+	_check(not panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline,
+			"an invalid visit never animates the backdrop")
+	var already := _visit("backdrop_already_used")
+	var already_state := already.read_state()
+	_check(already.leave(already_state.visit_id, already_state.node_id,
+				already_state.snapshot).get("ok"), "already-used real visit prerequisite")
+	panel.bind(already)
+	panel.advance_backdrop_motion(4.0)
+	_check(not panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline,
+			"a consumed visit never animates the backdrop")
+	panel.bind(visit)
+	panel.advance_backdrop_motion(1.0)
+	_check(panel.backdrop_motion_transform() != baseline,
+			"the backdrop moves while the bound visit is genuinely open")
+	visit._snapshot.gold += 1
+	panel.advance_backdrop_motion(1.0)
+	_check(not panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline
+			and backing.position == base,
+			"a stale source stops the backdrop at the static baseline")
+	visit._snapshot.gold -= 1
+	panel.advance_backdrop_motion(1.0)
+	_check(panel.backdrop_motion_active()
+			and panel.backdrop_motion_transform() == LivePatchStallPanel.backdrop_motion_at(1.0),
+			"a restored current source resumes only from the static baseline")
+	var external := _visit("backdrop_external")
+	var external_state := external.read_state()
+	panel.bind(external)
+	panel.advance_backdrop_motion(1.0)
+	_check(panel.backdrop_motion_transform() != baseline,
+			"the backdrop moves before the external consumption")
+	_check(external.leave(external_state.visit_id, external_state.node_id,
+				external_state.snapshot).get("ok"), "external owner really consumed the animated visit")
+	panel.advance_backdrop_motion(1.0)
+	_check(not panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline
+			and backing.position == base,
+			"an externally consumed source stops the backdrop at the static baseline")
+	panel.bind(visit)
+	panel.advance_backdrop_motion(2.0)
+	_check(panel.backdrop_motion_transform() != baseline,
+			"the backdrop is genuinely moving before detach")
+	root.remove_child(panel)
+	_check(panel.backdrop_motion_elapsed() == 0.0 and backing.scale == Vector2.ONE
+			and backing.position == base,
+			"an exit-tree view resets the exact static baseline")
+	root.add_child(panel)
+	_check(panel.backdrop_motion_active() and panel.backdrop_motion_transform() == baseline,
+			"a reattached open visit restarts only from the static baseline")
+	var moving := _visit("backdrop_buy")
+	var moving_before := moving.read_state()
+	var moving_quote := moving.quote()
+	await _bind(moving)
+	panel.advance_backdrop_motion(2.5)
+	await _act(panel.wearer_buttons[1], true, KEY_SPACE)
+	await _act(panel.offer_buttons[0], false)
+	_check(intents.size() == 1 and intents[0].get("action") == "buy_patch"
+			and intents[0].get("patch_id") == moving_quote["offers"][0]["id"]
+			and intents[0].get("wearer_id") == PARTY[1]
+			and intents[0].get("node_id") == moving_before["node_id"]
+			and intents[0].get("visit_id") == moving_before["visit_id"]
+			and intents[0].get("expected_snapshot") == moving_before["snapshot"],
+			"a real keyboard-wearer mouse purchase submits one source-bound intent while the backdrop animates")
+	if intents.size() == 1:
+		var receipt := Controller.settle(moving, intents[0], moving_before, moving_quote)
+		_check(receipt.get("ok") == true and receipt["ledger"]["gold"]
+					== 240 - int(moving_quote["offers"][0]["price"]),
+				"the independent controller settles the animated purchase exactly once")
+		_check(moving.is_consumed() and not Controller.settle(moving, intents[0],
+					moving_before, moving_quote).get("ok"),
+				"the animated visit is consumed exactly once and replay is refused")
+	panel.bind(visit)
+	panel.set_process(true)
+	seed(268)
+
+
 func _ambient_fallback_case() -> void:
 	var fallback := LivePatchStallPanel.new()
 	fallback.position = Vector2(190, 45)
@@ -1410,6 +1683,18 @@ func _ambient_fallback_case() -> void:
 			and fallback.offer_buttons.all(func(b: Button): return not b.disabled)
 			and not fallback.leave_button.disabled,
 			"missing panel image retains solid sewn border and genuine buttons")
+	_check(fallback.panel_art_texture == null and not fallback.backdrop_motion_active()
+			and fallback.backdrop_motion_transform()["scale"] == 1.0
+			and fallback.backdrop_motion_elapsed() == 0.0
+			and backing.scale == Vector2.ONE
+			and backing.position == Vector2.ONE * -LivePatchStallPanel.BACKDROP_OVERSCAN,
+			"missing authored art installs no backdrop motion at all")
+	fallback.advance_backdrop_motion(6.0)
+	_check(not fallback.backdrop_motion_active()
+			and fallback.backdrop_motion_elapsed() == 0.0
+			and backing.scale == Vector2.ONE
+			and backing.position == Vector2.ONE * -LivePatchStallPanel.BACKDROP_OVERSCAN,
+			"absent texture ignores presentation advances without drifting")
 	fallback.ambient_layer.felt_texture = null
 	fallback.ambient_layer.light_texture = null
 	fallback.ambient_layer.fluff_texture = null
