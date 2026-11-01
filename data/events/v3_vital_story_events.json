@@ -759,6 +759,46 @@
         { "id": "gather_silver_pins", "text": "Gather sharp fallen pins (lose 3 HP; gain 17 gold and 1 scrap)", "outcome": { "gold": 17, "scraps": 1, "hp": -3, "max_hp": 0 } },
         { "id": "leave", "text": "Let the owl fold its glass wings", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_needlebeak_kingfisher_post",
+      "title": "The Needlebeak Kingfisher Post",
+      "description": "A round midnight-teal kingfisher doll balances a huge silver needle-beak over a rack of oxblood mailbags, each sealed with a glowing amber button.",
+      "choices": [
+        { "id": "patch_parcel_padding", "text": "Pay 14 gold for warm parcel padding (heal 7 HP)", "outcome": { "gold": -14, "scraps": 0, "hp": 7, "max_hp": 0 } },
+        { "id": "carry_needle_sacks", "text": "Carry the sharp mail sacks (lose 3 HP; gain 16 gold and 1 scrap)", "outcome": { "gold": 16, "scraps": 1, "hp": -3, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the kingfisher sort its last letter", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_velvet_cricket_tuning_fork",
+      "title": "The Velvet Cricket Tuning Fork",
+      "description": "A squat plum-velvet cricket puppet strikes an immense silver tuning fork with its button-studded knee; a tiny lantern glows between the prongs.",
+      "choices": [
+        { "id": "buy_humming_thread", "text": "Spend 1 scrap for a lasting humming heart-seam (+2 max HP)", "outcome": { "gold": 0, "scraps": -1, "hp": 0, "max_hp": 2 } },
+        { "id": "strike_fork_for_coins", "text": "Strike the fork until its sharp note bites (lose 4 HP; gain 19 gold)", "outcome": { "gold": 19, "scraps": 0, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the tuning fork hum into silence", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_ink_eel_sluice",
+      "title": "The Ink-Eel Sluice",
+      "description": "A plump ink-blue eel ragdoll coils around an enormous brass sluice wheel, its cream cross-stitches shining in the lantern-lit black canal.",
+      "choices": [
+        { "id": "line_sluice_seam", "text": "Pay 18 gold and 1 scrap to line a warm sluice seam (heal 6 HP; +1 max HP)", "outcome": { "gold": -18, "scraps": -1, "hp": 6, "max_hp": 1 } },
+        { "id": "trade_ink_wick", "text": "Give up 2 lasting heart stitches for the eel's purse (lose 2 max HP; gain 27 gold)", "outcome": { "gold": 27, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the black canal undisturbed", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_quilted_pangolin_spinner",
+      "title": "The Quilted Pangolin Spinner",
+      "description": "A broad moss-cloth pangolin doll rolls a huge copper spinning bobbin beneath overlapping gingham shell-scales, with amber button eyes peering from the hem.",
+      "choices": [
+        { "id": "buy_spool_scales", "text": "Pay 20 gold to stitch three lasting shell-scales (+3 max HP)", "outcome": { "gold": -20, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "gather_needle_shells", "text": "Gather the thorny dropped scales (lose 5 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the heavy spinning bobbin roll on", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
