@@ -627,6 +627,94 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_ironboot_badger_cobbler",
+      "title": "The Ironboot Badger",
+      "description": "A barrel-shaped oxblood badger doll punches an enormous copper awl through a velvet boot bigger than its body; two mismatched button eyes gleam in lanternlight.",
+      "choices": [
+        {
+          "id": "sell_boot_hems",
+          "text": "Sell two scrap bundles of boot hems (spend 2 scraps; gain 32 gold)",
+          "outcome": { "gold": 32, "scraps": -2 }
+        },
+        {
+          "id": "buy_spare_awls",
+          "text": "Buy spare copper awls (spend 15 gold; gain 3 scraps)",
+          "outcome": { "gold": -15, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the cobbler to its hammering",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_midnight_seahorse_lockgate",
+      "title": "The Midnight Seahorse Lockgate",
+      "description": "A plump midnight-teal seahorse puppet winds its corkscrew tail around an oversized brass canal key; an amber lantern glows inside the quilted lock gate.",
+      "choices": [
+        {
+          "id": "wind_rusty_gate",
+          "text": "Turn the old gate wheel (spend 1 scrap; gain 23 gold)",
+          "outcome": { "gold": 23, "scraps": -1 }
+        },
+        {
+          "id": "buy_key_thread",
+          "text": "Buy new key-thread (spend 20 gold; gain 4 scraps)",
+          "outcome": { "gold": -20, "scraps": 4 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the gate to the tide",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_fireglass_salamander",
+      "title": "The Fireglass Salamander",
+      "description": "A round moss-cloth salamander with stitched-X eyes puffs a glowing amber glass button into a thimble mould; its oversized bellows flap like quilted wings.",
+      "choices": [
+        {
+          "id": "sell_cooling_glass",
+          "text": "Sell cooled button glass (spend 3 scraps; gain 39 gold)",
+          "outcome": { "gold": 39, "scraps": -3 }
+        },
+        {
+          "id": "buy_fine_filament",
+          "text": "Buy fireglass filament (spend 18 gold; gain 3 scraps)",
+          "outcome": { "gold": -18, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the bellows cool",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_moonkite_hare_crossroads",
+      "title": "The Moonkite Hare",
+      "description": "A squat bone-cream hare ragdoll braces an enormous plum-gingham kite against the wind; four brass-button tails tap on the moonlit crossroads.",
+      "choices": [
+        {
+          "id": "repair_kite_tails",
+          "text": "Repair the four kite tails (spend 2 scraps; gain 29 gold)",
+          "outcome": { "gold": 29, "scraps": -2 }
+        },
+        {
+          "id": "buy_windproof_seams",
+          "text": "Buy windproof kite seams (spend 16 gold; gain 3 scraps)",
+          "outcome": { "gold": -16, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Wave goodbye to the moonkite",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }
