@@ -63,7 +63,7 @@ func admit_broodling(enemies: CombatEnemies) -> bool:
 	if enemies == null or enemies != _bound_enemies or not enemies.is_valid():
 		return false
 	var position := enemies.get_enemies().size()
-	if position < 2 or position > MAX_ENEMIES or _gauges.size() != position - 1:
+	if position < 2 or position > enemies.get_capacity() or _gauges.size() != position - 1:
 		return false
 	var child := enemies.get_enemy(position)
 	if child.get("id") != CombatEnemies.BROODLING_ID or child.get("max_hp") != 8 \
@@ -166,7 +166,7 @@ func _split_proposal(enemies: CombatEnemies, source: Variant,
 	else:
 		return {}
 	var old_size := _gauges.size()
-	if old_size < 1 or old_size >= MAX_ENEMIES or roster.size() != old_size + 1:
+	if old_size < 1 or old_size >= enemies.get_capacity() or roster.size() != old_size + 1:
 		return {}
 	if not source is int or source < 1 or source > old_size:
 		return {}
