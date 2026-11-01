@@ -4,6 +4,7 @@ extends Control
 signal intent_requested(intent: Dictionary)
 
 const PANEL_ART := "res://assets/paper/ui/reward_panel.png"
+const AMBIENT_SCENE := preload("res://scripts/live_battle_ambient.gd")
 const CREAM := Color("#f3e6cf")
 const GOLD := Color("#e9c47d")
 const THREAD := Color("#b9a58d")
@@ -90,6 +91,16 @@ var status_label: Label
 var wearer_buttons: Array[Button] = []
 var offer_buttons: Array[Button] = []
 var leave_button: Button
+## One authored-image layer, owned by the live view; never an input surface.
+var ambient_layer: Control
+## Injectable before mounting to exercise the existing optional-art fallback.
+var panel_art_path := PANEL_ART
+## null follows ProjectSettings; true/false overrides it for accessibility and tests.
+var reduced_motion_override: Variant = null:
+	set(value):
+		reduced_motion_override = value
+		if is_node_ready():
+			_sync_ambient()
 
 var _visit: RunPatchStallVisit
 var _source: Dictionary = {}
@@ -107,9 +118,14 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	var backing := Panel.new()
 	backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	backing.clip_contents = true
 	add_child(backing)
 	backing.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	backing.add_theme_stylebox_override("panel", _panel_style())
+	ambient_layer = AMBIENT_SCENE.new()
+	backing.add_child(ambient_layer)
+	ambient_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ambient_layer.retire()
 	backing.add_child(SewnBorder.new())
 	title_label = _label("PATCH STALL    ✕    sewn power patches", Vector2(40, 24), Vector2(820, 48), 32, GOLD)
 	wallet_label = _label("", Vector2(43, 76), Vector2(808, 36), 25, CREAM)
@@ -124,6 +140,39 @@ func _ready() -> void:
 	status_label = _label("", Vector2(43, 597), Vector2(814, 28), 18, CREAM)
 	_refresh()
 	_focus_initial()
+	_sync_ambient()
+
+## The real source, visibility and current accessibility setting gate the
+## renderer, including when another controller consumes or invalidates a visit
+## without calling this view. A hidden/detached view retires its clock.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_EXIT_TREE:
+		_retire_ambient()
+	elif what == NOTIFICATION_VISIBILITY_CHANGED or what == NOTIFICATION_ENTER_TREE:
+		if is_node_ready():
+			_sync_ambient()
+
+func _process(_delta: float) -> void:
+	_sync_ambient()
+
+func _reduced_motion() -> bool:
+	if reduced_motion_override != null:
+		return bool(reduced_motion_override)
+	return bool(ProjectSettings.get_setting("accessibility/reduced_motion", false))
+
+func _retire_ambient() -> void:
+	if is_instance_valid(ambient_layer) and (not ambient_layer.profile.is_empty()
+			or ambient_layer.visible or ambient_layer.is_processing()):
+		ambient_layer.retire()
+
+func _sync_ambient() -> void:
+	if not is_instance_valid(ambient_layer):
+		return
+	if not is_inside_tree() or not is_visible_in_tree() or _reduced_motion() or not _source_current():
+		_retire_ambient()
+		return
+	if ambient_layer.profile != "scraps" or not ambient_layer._visit_dressing or not ambient_layer.visible:
+		ambient_layer.configure_visit_scraps()
 
 ## The physical number keys are an alias for the four mounted Buttons: a valid
 ## press only forwards to that Button's own `pressed` signal, so keyboard,
@@ -169,8 +218,8 @@ func _input(event: InputEvent) -> void:
 	button.pressed.emit()
 
 func _panel_style() -> StyleBox:
-	if ResourceLoader.exists(PANEL_ART, "Texture2D"):
-		var texture := ResourceLoader.load(PANEL_ART) as Texture2D
+	if ResourceLoader.exists(panel_art_path, "Texture2D"):
+		var texture := ResourceLoader.load(panel_art_path) as Texture2D
 		if texture != null:
 			var style := StyleBoxTexture.new()
 			style.texture = texture
@@ -229,6 +278,7 @@ func _button(value: String, at: Vector2, extent: Vector2, fill: Color, font_size
 ## A valid bind captures both independently returned service receipts; no prices
 ## or identities can be supplied separately by the caller.
 func bind(visit: RunPatchStallVisit) -> void:
+	_retire_ambient()
 	_epoch += 1
 	_retire_callbacks()
 	_visit = null
@@ -256,6 +306,7 @@ func bind(visit: RunPatchStallVisit) -> void:
 		show()
 		_refresh()
 		_focus_initial()
+		_sync_ambient()
 
 func close() -> void:
 	bind(null)
@@ -530,6 +581,7 @@ func _request_leave(epoch: int, source: RunPatchStallVisit) -> void:
 
 func _submit(intent: Dictionary) -> void:
 	_submitted = true
+	_retire_ambient()
 	for button in wearer_buttons + offer_buttons + [leave_button]:
 		button.disabled = true
 	_retire_callbacks()
