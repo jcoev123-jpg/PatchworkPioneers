@@ -23,8 +23,10 @@ extends RefCounted
 ## authoritative status dictionary). Nothing here draws, shuffles or otherwise advances the run
 ## RNG; a refusal is strictly inert.
 ##
-## This is callable rules-layer behaviour only. It does not register these IDs in the live hand,
-## rewards, run deck or the app flow; that wiring is a later task.
+## This is callable rules-layer behaviour. The Midnight Loom pair is wired into the live
+## support hand by `scripts/live_support_hand.gd` (which reuses the Lantern Glow per-living-hero
+## choice flow); the one-ally pair is wired through the same presenter's target picker. Deeper
+## run/deck/reward wiring stays outside this service.
 
 const OWNER := "seamstress"
 const TARGET_KIND := "ally_single"

@@ -16,7 +16,9 @@ const JURY_SOURCE_FROM := [1, 2, 3]
 const JURY_IDENTITY_FIELDS := 7
 const VIGIL_IDS := ["lantern_monk_vigil_ring", "lantern_monk_vigil_ring_plus"]
 ## Party heal plus one explicit whole-debuff cleanse per living ally: the pool Lantern Glow
-## and (cycle 346) the Lantern Monk starter Lamplight Wash share one choice flow.
+## and (cycle 346) the Lantern Monk starter Lamplight Wash share one choice flow. The
+## Seamstress's authored Midnight Loom pair (V3-1) reuses that very selector below and
+## commits through its own party-wide cleansing resolver.
 const GLOW_IDS := ["lantern_monk_lantern_glow", "lantern_monk_lantern_glow_plus",
 	"lantern_monk_lamplight_wash", "lantern_monk_lamplight_wash_plus"]
 const ALLY_IDS := ["seamstress_v3_shielding_hem", "seamstress_v3_shielding_hem_plus",
@@ -616,6 +618,12 @@ func _is_eyelet_card(card_id: String) -> bool:
 func _is_warden_guard_card(card_id: String) -> bool:
 	return CombatWardenV3GuardCards.CARDS.has(card_id)
 
+## True only for the two authentic whole-party Midnight Loom printings. The cleansing
+## resolver's own printing table is the authority, so a rewritten or aliased ID is never
+## admitted by a stale local list.
+func _is_loom_card(card_id: String) -> bool:
+	return _cleansing != null and _cleansing.is_supported_party_card(card_id)
+
 ## True only for the six authored Seamstress healing pool records the resolver owns.
 func _is_heal_card(card_id: String) -> bool:
 	return card_id in CombatSeamstressPoolHeals.DARNING_IDS \
@@ -710,6 +718,8 @@ func _is_actionable(card_id: String) -> bool:
 	if _re_stuff.is_supported_card(card_id):
 		return true
 	if _cleansing.is_supported_card(card_id):
+		return true
+	if _is_loom_card(card_id):
 		return true
 	return card_id in SUPPORT_IDS or card_id in SPARE_PARTS_IDS or card_id in M02PositionCards.IDS or _is_block_card(card_id) or _is_energy_card(card_id) or _is_heal_card(card_id) or _is_path_card(card_id)
 
@@ -1322,7 +1332,7 @@ func _sync_battle() -> void:
 			help_text = "%s: 1 energy; heal %d; %s | Esc: cancel" % [_metadata.definition(_pending.id).display_name,
 				_metadata.definition(_pending.id).effects.heal,
 				"choose Bleed / Weak / Exposed below (Tab, Enter / Space)" if is_instance_valid(cleanse_choices) else "choose a living ally, then a debuff"]
-		if _pending.id in GLOW_IDS:
+		if _pending.id in GLOW_IDS or _is_loom_card(_pending.id):
 			help_text = "%s: %s; choose a debuff (Tab, Enter / Space) | Esc: cancel" % [_metadata.definition(_pending.id).get("display_name", _pending.id), _party.get_hero(_pending.choice_position).name]
 	if help_label.text != help_text:
 		help_label.text = help_text
@@ -1368,7 +1378,7 @@ func _sync_battle() -> void:
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_card_input.bind(panel, label.text, _deck, _party, _battle)
 		_bindings[panel] = callback
-		if (_jury != null and _jury.CARD_IDS.has(label.text)) or _hem.is_supported_card(label.text) or CombatYarnRangerKnitCards.CARDS.has(label.text) or label.text in VIGIL_IDS or label.text in GLOW_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text) or _turret.is_supported_card(label.text) or CombatWardenV3TauntCards.CARDS.has(label.text) or _is_eyelet_card(label.text) or _is_warden_guard_card(label.text):
+		if (_jury != null and _jury.CARD_IDS.has(label.text)) or _hem.is_supported_card(label.text) or CombatYarnRangerKnitCards.CARDS.has(label.text) or label.text in VIGIL_IDS or label.text in GLOW_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text) or _turret.is_supported_card(label.text) or CombatWardenV3TauntCards.CARDS.has(label.text) or _is_eyelet_card(label.text) or _is_warden_guard_card(label.text) or _is_loom_card(label.text):
 			_move_context[panel] = _current_move_context(panel)
 		panel.gui_input.connect(callback)
 	# Keep the existing End/Return Tab cycle; Up enters the card row, Down exits it.
@@ -1626,6 +1636,19 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 		# A missing explicit choice is the only admissible incomplete preflight.
 		if not plan.get("ok", false) and not (card_id in GLOW_IDS and plan.get("reason") == "cleanse_required"):
 			return false
+	if _is_loom_card(card_id):
+		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
+				or _move_context.get(panel, []) != _current_move_context(panel):
+			return false
+		if app._battle_closed or app.battle_result == null or not app.battle_result.can_continue() \
+				or app.battle_result._party != party or app.battle_result._enemies != app.enemies \
+				or app.enemies == null or not app.enemies.is_valid() or app.enemies.is_victorious():
+			return false
+		# The party-wide cleansing resolver's own read-only preflight decides: the only
+		# admissible incomplete result is the explicit cleanse each living hero still owes.
+		var loom_plan: Dictionary = _cleansing._prepare_party(deck, party, card_id, {})
+		if not loom_plan.get("ok", false) and loom_plan.get("reason") != "cleanse_required":
+			return false
 	if _is_enemy_card(card_id):
 		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
 				or _move_context.get(panel, []) != _current_move_context(panel):
@@ -1799,11 +1822,11 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		_pending.hero_refs = _party._heroes.duplicate()
 		_pending.enemy_refs = get_parent().enemies._enemies.duplicate()
 		_pending.enemy_panels = get_parent().get_node("LiveEnemyRoster")._labels.duplicate()
-	if card_id in GLOW_IDS:
+	if card_id in GLOW_IDS or _is_loom_card(card_id):
 		_pending.heroes = party.get_heroes()
 		_pending.hand = deck.hand.duplicate()
 		_pending.selections = {}
-	if _hem.is_supported_card(card_id) or _is_warden_guard_card(card_id) or CombatYarnRangerKnitCards.CARDS.has(card_id) or _bolas.is_supported_card(card_id) or card_id in VIGIL_IDS or card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id) or _roll.is_supported_card(card_id) or _turret.is_supported_card(card_id) or CombatWardenV3TauntCards.CARDS.has(card_id) or _is_eyelet_card(card_id):
+	if _hem.is_supported_card(card_id) or _is_warden_guard_card(card_id) or CombatYarnRangerKnitCards.CARDS.has(card_id) or _bolas.is_supported_card(card_id) or card_id in VIGIL_IDS or card_id in CombatSupportCards.SCARECROW_STRAW_IDS or _cleansing.is_supported_card(card_id) or _pop.is_supported_card(card_id) or _sew.is_supported_card(card_id) or _roll.is_supported_card(card_id) or _turret.is_supported_card(card_id) or CombatWardenV3TauntCards.CARDS.has(card_id) or _is_eyelet_card(card_id) or _is_loom_card(card_id):
 		_pending.owner_roster = _party.get_heroes().map(func(hero): return [hero.id, hero.position])
 	if _is_warden_guard_card(card_id):
 		_pending.guard_hand = deck.hand.duplicate()
@@ -1850,7 +1873,7 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 		_sync_battle()
 		jury_app.end_turn_button.grab_focus()
 		return
-	if card_id in GLOW_IDS:
+	if card_id in GLOW_IDS or _is_loom_card(card_id):
 		if not _selection_valid():
 			_cancel_pending()
 		elif not _pending.get("choosing", false):
@@ -1928,9 +1951,12 @@ func _selection_valid() -> bool:
 		for index in range(_pending.enemy_refs.size()):
 			if not is_same(_pending.enemy_refs[index], get_parent().enemies._enemies[index]):
 				return false
-	if _pending.id in GLOW_IDS:
+	if _pending.id in GLOW_IDS or _is_loom_card(_pending.id):
 		if _pending.heroes != _party.get_heroes() or _pending.hand != _deck.hand:
 			return false
+	if _is_loom_card(_pending.id) \
+			and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
+		return false
 	if _pending.id in VIGIL_IDS and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
 		return false
 	if (_pending.id in CombatSupportCards.SCARECROW_STRAW_IDS or CombatYarnRangerKnitCards.CARDS.has(_pending.id)) and _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
@@ -2129,7 +2155,10 @@ func _on_target_input(event: InputEvent, panel, position: int, token: int) -> vo
 	_resolve_target.call_deferred(position, token)
 
 
-## Collect explicit choices without paying. Only the existing party resolver commits.
+## Collect explicit choices without paying. Only the existing party resolver commits: Lantern
+## Glow/Lamplight Wash through the Lantern Monk service, Midnight Loom/+ through the
+## Seamstress party-wide cleansing service. Both share this one sequential per-living-hero
+## selector, so no second target picker is ever displayed.
 func _advance_glow(token: int) -> void:
 	if token != _token or _pending.is_empty():
 		return
@@ -2142,12 +2171,13 @@ func _advance_glow(token: int) -> void:
 	for hero in _pending.heroes:
 		if hero.hp == 0 or _pending.selections.has(hero.position):
 			continue
-		var options: Array[String] = _vigil._present_debuffs(hero)
+		var options: Array[String] = _present_cleanse_kinds(hero, _is_loom_card(_pending.id))
 		if options.is_empty():
 			continue
 		_pending.choice_position = hero.position
 		cleanse_choices = HBoxContainer.new()
-		cleanse_choices.name = "LanternGlowDebuffChoices"
+		cleanse_choices.name = "MidnightLoomDebuffChoices" if _is_loom_card(_pending.id) \
+			else "LanternGlowDebuffChoices"
 		help_disclosure.hide()
 		_help_slot.add_child(cleanse_choices)
 		cancel_button.show()
@@ -2168,7 +2198,12 @@ func _advance_glow(token: int) -> void:
 	var id: String = _pending.id
 	var selections: Dictionary = _pending.selections.duplicate()
 	_cancel_pending()
-	if _vigil.play_card(_deck, _party, id, 0, selections).get("ok", false):
+	var receipt: Dictionary
+	if _is_loom_card(id):
+		receipt = _cleansing.play_party_card(_deck, _party, id, selections)
+	else:
+		receipt = _vigil.play_card(_deck, _party, id, 0, selections)
+	if receipt.get("ok", false):
 		_clear_jury_witness()
 		_forward_switchback_ordinary_play(id)
 		var app = get_parent()
@@ -2179,7 +2214,8 @@ func _advance_glow(token: int) -> void:
 
 
 func _choose_glow_debuff(debuff: String, position: int, token: int) -> void:
-	if token != _token or _pending.is_empty() or _pending.id not in GLOW_IDS:
+	if token != _token or _pending.is_empty() \
+			or not (_pending.id in GLOW_IDS or _is_loom_card(_pending.id)):
 		return
 	if not _selection_valid():
 		_cancel_pending()
@@ -2187,10 +2223,26 @@ func _choose_glow_debuff(debuff: String, position: int, token: int) -> void:
 	if _pending.get("choice_position", 0) != position or _pending.selections.has(position):
 		return
 	if not is_instance_valid(cleanse_choices) or not cleanse_choices.is_visible_in_tree() \
-			or not _vigil._present_debuffs(_party.get_hero(position)).has(debuff):
+			or not _present_cleanse_kinds(_party.get_hero(position), _is_loom_card(_pending.id)).has(debuff):
 		return
 	_pending.selections[position] = debuff
 	_advance_glow.call_deferred(token)
+
+
+## The positive eligible Bleed/Weak/Exposed kinds on one hero record, in the fixed vocabulary
+## order of the resolver that will really cleanse it: the Seamstress's own cleansing list for
+## Midnight Loom/+, the Lantern Monk's for Glow/Lamplight Wash. Never invents a priority.
+func _present_cleanse_kinds(hero: Dictionary, seamstress: bool) -> Array[String]:
+	if not seamstress:
+		return _vigil._present_debuffs(hero)
+	var present: Array[String] = []
+	var statuses: Variant = hero.get("statuses", {})
+	if not statuses is Dictionary:
+		return present
+	for debuff: String in CombatSeamstressV3CleansingCards.ELIGIBLE_DEBUFFS:
+		if int((statuses as Dictionary).get(debuff, 0)) > 0:
+			present.append(debuff)
+	return present
 
 
 func _choose_debuff(debuff: String, position: int, token: int) -> void:
