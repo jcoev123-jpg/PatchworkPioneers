@@ -114,7 +114,9 @@ const TETHER_EXPLANATION := "Tether links two distinct living enemies and deals 
 ## Guard is the Warden's V3 one-hit redirection contract.
 ## Only authentic catalog printings that CardShortRules authenticates receive this Help row.
 const GUARD_KEYWORD := "Guard"
-const GUARD_EXPLANATION := "Guard redirects the chosen ally's next incoming enemy attack hit to the Warden once. The Warden's own Block absorbs that incoming damage before HP loss. The protection is spent on the first redirected hit; an unused Guard expires at the end of the combat round. This Help explains the authored card rule; live combat resolves the interception."
+const GUARD_EXPLANATION := "Guard redirects the chosen living ally's next incoming enemy attack hit to the Warden's current seat once. The pending single interception lasts until an eligible confirmed enemy hit consumes it; a miss or non-attack never consumes it. The Warden's own Block absorbs incoming damage before HP loss. Choosing the Warden himself as ally grants him Block, but does not redirect attacks aimed at other heroes."
+const GUARD_UNIVERSAL_EXPLANATION := "Guard arms a universal pending single interception protecting any other living ally: the next confirmed enemy attack hit aimed at any other living ally redirects to the Warden's current seat once and consumes the guard. The pending single interception lasts until an eligible confirmed enemy hit consumes it; a miss or non-attack never consumes it. The Warden's own Block absorbs incoming damage before HP loss. Attacks aimed at the Warden himself are not redirected and do not consume the universal guard."
+const FINAL_BASTION_GUARD_EXPLANATION := GUARD_UNIVERSAL_EXPLANATION
 ## Taunt is the Warden's V3 full next enemy turn target redirection contract.
 ## Only authentic catalog printings that CardShortRules authenticates receive this Help row.
 const TAUNT_KEYWORD := "Taunt"
@@ -736,6 +738,9 @@ static func _crow_line(definition: Dictionary, _effects: Dictionary) -> Dictiona
 static func _warden_guard_line(definition: Dictionary) -> Dictionary:
 	if not CardShortRules.is_authored_v3_guard(definition):
 		return {}
+	var card_id := str(definition.get("id", ""))
+	if card_id == "warden_v3_final_bastion" or card_id == "warden_v3_final_bastion_plus":
+		return {"keyword": GUARD_KEYWORD, "explanation": GUARD_UNIVERSAL_EXPLANATION}
 	return {"keyword": GUARD_KEYWORD, "explanation": GUARD_EXPLANATION}
 
 

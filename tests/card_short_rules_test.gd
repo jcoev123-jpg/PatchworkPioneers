@@ -2581,10 +2581,34 @@ func _test_warden_v3_help() -> void:
 			var explanation := str(rows[i].get("explanation", ""))
 			match exp_kw:
 				"Guard":
-					_check(explanation == CardKeywordGlossary.GUARD_EXPLANATION,
-						"Guard explanation matches GUARD_EXPLANATION for " + card_id)
-					_check(explanation.contains("redirects") and (explanation.contains("one-hit") or explanation.contains("once")),
-						"Guard explanation mentions one-hit / once interception")
+					var is_bastion: bool = (card_id == "warden_v3_final_bastion" or card_id == "warden_v3_final_bastion_plus")
+					if is_bastion:
+						_check(explanation == CardKeywordGlossary.GUARD_UNIVERSAL_EXPLANATION,
+							"Guard explanation matches GUARD_UNIVERSAL_EXPLANATION for " + card_id)
+						_check(explanation.contains("universal") and explanation.contains("any other living ally"),
+							"Bastion Guard explains universal protection for any other living ally: " + card_id)
+						_check(not explanation.contains("chosen") and not explanation.contains("selected"),
+							"Bastion Guard has no falsely chosen ally: " + card_id)
+						_check(explanation.contains("Warden himself are not redirected"),
+							"Bastion Guard explains hits on Warden are not redirected: " + card_id)
+					else:
+						_check(explanation == CardKeywordGlossary.GUARD_EXPLANATION,
+							"Guard explanation matches GUARD_EXPLANATION for " + card_id)
+						_check(explanation.contains("chosen") and explanation.contains("ally"),
+							"Guard explains chosen ally for " + card_id)
+						_check(explanation.contains("Warden himself") and explanation.contains("does not redirect"),
+							"Guard explains self-selection exception for " + card_id)
+					_check(explanation.contains("redirects") and explanation.contains("once"),
+						"Guard explanation mentions redirection once for " + card_id)
+					_check(explanation.contains("lasts until") and explanation.contains("eligible confirmed"),
+						"Guard explanation states single interception lasts until confirmed hit for " + card_id)
+					_check(explanation.contains("miss or non-attack"),
+						"Guard explanation mentions miss or non-attack does not consume for " + card_id)
+					_check(not explanation.contains("combat round") and not explanation.contains("round end")
+						and not explanation.contains("expires"),
+						"Guard explanation has no premature expiry for " + card_id)
+					_check(explanation.contains("Block absorbs incoming damage before HP loss"),
+						"Guard explanation states Block absorbs before HP for " + card_id)
 				"Taunt":
 					_check(explanation == CardKeywordGlossary.TAUNT_EXPLANATION,
 						"Taunt explanation matches TAUNT_EXPLANATION for " + card_id)
@@ -2601,6 +2625,53 @@ func _test_warden_v3_help() -> void:
 			_check(CardKeywordGlossary.describe(definition)[0]["keyword"] != "TAMPERED",
 				"glossary return dictionaries are detached for " + card_id)
 		_check(definition == original, "Warden V3 record never mutated: " + card_id)
+
+	# Dedicated verification for Final Bastion and Final Bastion+:
+	# Exactly one Guard plus one Taunt row, independent semantics, no premature expiry, and no falsely chosen ally.
+	for bastion_id: String in ["warden_v3_final_bastion", "warden_v3_final_bastion_plus"]:
+		var def := _warden_v3_definition("pool", bastion_id)
+		var b_rows: Array[Dictionary] = CardKeywordGlossary.describe(def)
+		_check(b_rows.size() == 2, "Final Bastion has exactly two help rows: " + bastion_id)
+		_check(str(b_rows[0].get("keyword", "")) == "Guard", "Final Bastion first row is Guard: " + bastion_id)
+		_check(str(b_rows[1].get("keyword", "")) == "Taunt", "Final Bastion second row is Taunt: " + bastion_id)
+		var guard_text := str(b_rows[0].get("explanation", ""))
+		var taunt_text := str(b_rows[1].get("explanation", ""))
+		_check(not guard_text.contains("chosen") and not guard_text.contains("selected"),
+			"Bastion Guard row has no falsely chosen ally: " + bastion_id)
+		_check(guard_text.contains("any other living ally") and guard_text.contains("universal"),
+			"Bastion Guard row explains universal protection for any other living ally: " + bastion_id)
+		_check(not guard_text.contains("combat round") and not guard_text.contains("round end")
+			and not guard_text.contains("expires"),
+			"Bastion Guard row has no premature combat round expiry: " + bastion_id)
+		_check(guard_text.contains("lasts until") and guard_text.contains("eligible confirmed"),
+			"Bastion Guard row asserts interception lasts until eligible confirmed hit: " + bastion_id)
+		_check(guard_text.contains("miss or non-attack"),
+			"Bastion Guard row asserts miss or non-attack never consumes: " + bastion_id)
+		_check(not taunt_text.contains("chosen") and not taunt_text.contains("selected"),
+			"Bastion Taunt row has no falsely chosen ally: " + bastion_id)
+		_check(taunt_text.contains("next enemy turn"),
+			"Bastion Taunt row explains next enemy turn: " + bastion_id)
+
+	# Dedicated verification for Shield Catch and Guard Stitch (base and +):
+	# Chosen-ally explanation, self-selection exception, and no premature expiry.
+	for ally_guard_id: String in ["warden_v3_shield_catch", "warden_v3_shield_catch_plus",
+			"warden_v3_guard_stitch", "warden_v3_guard_stitch_plus"]:
+		var cat: String = "starter" if ally_guard_id.begins_with("warden_v3_shield_catch") else "pool"
+		var def := _warden_v3_definition(cat, ally_guard_id)
+		var g_rows: Array[Dictionary] = CardKeywordGlossary.describe(def)
+		_check(g_rows.size() == 1, "Ally Guard card has exactly one help row: " + ally_guard_id)
+		_check(str(g_rows[0].get("keyword", "")) == "Guard", "Ally Guard row is Guard: " + ally_guard_id)
+		var text := str(g_rows[0].get("explanation", ""))
+		_check(text.contains("chosen living ally"), "Ally Guard row explains chosen living ally: " + ally_guard_id)
+		_check(text.contains("Warden himself") and text.contains("does not redirect"),
+			"Ally Guard row explains self-selection exception: " + ally_guard_id)
+		_check(not text.contains("combat round") and not text.contains("round end")
+			and not text.contains("expires"),
+			"Ally Guard row has no premature combat round expiry: " + ally_guard_id)
+		_check(text.contains("lasts until") and text.contains("eligible confirmed"),
+			"Ally Guard row asserts interception lasts until eligible confirmed hit: " + ally_guard_id)
+		_check(text.contains("miss or non-attack"),
+			"Ally Guard row asserts miss or non-attack never consumes: " + ally_guard_id)
 
 
 func _test_warden_v3_negative() -> void:
