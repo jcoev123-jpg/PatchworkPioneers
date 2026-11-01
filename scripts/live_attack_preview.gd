@@ -49,6 +49,7 @@ var _warden_turn := -1
 var _tinker_gadgets := CombatTinkerPoolGadgets.new()
 var _statuses := CombatStatuses.new()
 var _on_hit := CombatOnHitStatuses.new()
+var _hero_blind_miss := CombatHeroBlindMiss.new()
 ## One Pinned token set and one Unravel gauge per battle session. They survive
 ## every hand rebuild and turn refresh, and are never reset by a preview.
 var _controls := CombatSeamstressPoolControl.new()
@@ -655,6 +656,11 @@ func _commit_stitch(panel, id: String, token: int, session: Array, turn: int, ch
 		elif choices[index] != 0:
 			_reject_stitch()
 			return
+	# Ordered stitched-half miss semantics are not supported. Fail closed before
+	# the paid composite can bypass a blinded attack owner.
+	if CombatHeroBlindMiss.blocks_stitched(app.party, preview.first_half, preview.second_half):
+		_reject_stitch()
+		return
 	# Reuse the mounted hand's exact battle-bound healing service (and its live
 	# wardrobe/torn authorities) so a genuinely held stitched half notifies the same
 	# once-per-combat COAT latch as an ordinary held heal. Without those bindings
@@ -1026,6 +1032,17 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 			_reject_stitch()
 		return
 	var definition := _definition(id)
+	# Legal, current mounted attack selection: settle a blinded owner's paid
+	# miss BEFORE any confirmed-hit observers, card attack effects or RNG work.
+	var blind_paid := _hero_blind_miss.attempt(_deck, party, enemies, id, position,
+		definition, tinker_cost_discount(id))
+	if blind_paid.get("handled", false):
+		if blind_paid.get("ok", false):
+			last_event = blind_paid
+			_after_attack()
+		else:
+			_reject_stitch()
+		return
 	_pinned.begin_confirmed_cast(id, str(definition.get("owner", "")),
 		int(definition.cost) if (overload or casing_clamp) else maxi(0, int(definition.get("cost", 0)) - tinker_cost_discount(id)))
 	# The lethal-card boundary needs the exact pre-hit roster of this one paid

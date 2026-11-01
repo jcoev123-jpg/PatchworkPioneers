@@ -244,7 +244,7 @@ func _status_modifiers() -> void:
 	if panel == null:
 		await _dispose()
 		return
-	app.party._heroes[0].statuses = {"weak": 1, "blind_next_attack": 1}
+	app.party._heroes[0].statuses = {"weak": 1, "dodge_next_attack": 1}
 	app.enemies._enemies[1].statuses = {"bleed": 2, "exposed": 1,
 		"tangled": 1, "cannot_buff_next_turn": true}
 	var before := _state()
@@ -262,7 +262,7 @@ func _status_modifiers() -> void:
 		and app.enemies.get_enemy(2).hp == 34
 		and app.enemies.get_enemy(2).statuses == {
 			"bleed": 4, "exposed": 1, "tangled": 1, "cannot_buff_next_turn": true}
-		and app.party.get_hero(1).statuses == {"weak": 1, "blind_next_attack": 1}
+		and app.party.get_hero(1).statuses == {"weak": 1, "dodge_next_attack": 1}
 		and app.run_rng.state == before[0][7],
 		"paid mounted hit preserves valid non-damage statuses and RNG")
 	await _dispose()

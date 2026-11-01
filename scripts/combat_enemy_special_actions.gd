@@ -62,7 +62,9 @@ func execute_actions(party: CombatParty, enemies: CombatEnemies, actions: Array)
 				var target = action["target_position"]
 				var status = action["status"]
 				if not target is int or target < 1 or target > CombatParty.PARTY_SIZE \
-						or not status is String or status not in ["bleed", "weak", "exposed", "tangled"]:
+						or not status is String or (status not in ["bleed", "weak", "exposed", "tangled"] \
+					and not (status == "blind_next_attack" and amount == 1)) \
+					or (status == "blind_next_attack" and amount != 1):
 					return failure
 			"buff":
 				if action.size() != 3 or amount <= 0:
@@ -108,11 +110,11 @@ func execute_actions(party: CombatParty, enemies: CombatEnemies, actions: Array)
 					return failure
 				var statuses: Dictionary = hero.get("statuses", {})
 				var previous: int = statuses.get(action["status"], 0)
-				if action["amount"] > MAX_INT - previous:
+				if action["status"] != "blind_next_attack" and action["amount"] > MAX_INT - previous:
 					return failure
 				if not hero.has("statuses"):
 					hero["statuses"] = {}
-				hero["statuses"][action["status"]] = previous + action["amount"]
+				hero["statuses"][action["status"]] = 1 if action["status"] == "blind_next_attack" else previous + action["amount"]
 		else:  # buff
 			if applied:
 				var enemy: Dictionary = staged_enemies[source - 1]

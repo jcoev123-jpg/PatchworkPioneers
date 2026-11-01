@@ -17,6 +17,8 @@ func _initialize() -> void:
 	_test_dead_sources_and_rejections()
 	_test_replay_and_detached_results()
 	_test_tangled_enemy_debuff()
+	_test_inkbrush_blind_transaction()
+	_test_stitched_blind_guard()
 	for failure in failures:
 		printerr(failure)
 	print("combat_enemy_special_actions_test: ",
@@ -873,3 +875,78 @@ func _test_tangled_enemy_debuff() -> void:
 	p3._heroes[1]["statuses"] = {"tangled": MAX_INT}
 	_reject("AC3: late Tangled overflow rolls back valid buff",
 		[_buff(1, 1), _debuff(2, 2, "tangled", 1)], p3, e3)
+
+
+func _test_inkbrush_blind_transaction() -> void:
+	var catalog := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var imp: Dictionary = {}
+	for record in catalog:
+		if record.get("id") == "inkbrush_imp":
+			imp = record
+	_check(not imp.is_empty() and imp.get("max_hp") == 23,
+		"real living Imp source and HP exist in authored catalog")
+	if imp.is_empty():
+		return
+	var party := _party()
+	var enemies := CombatEnemies.new([imp])
+	var blind := _debuff(1, 3, "blind_next_attack", 1)
+	var before_foes := enemies.get_enemies()
+	var before_heroes := party.get_heroes()
+	var result := rules.execute_actions(party, enemies, [blind])
+	_check(result.get("ok") == true and result.events.size() == 1
+		and result.events[0].applied == true
+		and party.get_hero(3).get("statuses", {}).get("blind_next_attack") == 1
+		and party.get_hero(3).hp == before_heroes[2].hp
+		and enemies.get_enemies() == before_foes,
+		"living authored Imp commits exactly one Blind to actual back hero without damage")
+	_check(rules.execute_actions(party, enemies, [blind]).get("ok") == true
+		and party.get_hero(3).statuses.get("blind_next_attack") == 1,
+		"second Blind re-arms at 1, never stacks to 2")
+	for bad_amount in [0, 2, -1]:
+		var bad := _debuff(1, 3, "blind_next_attack", bad_amount)
+		var saved := _snapshot(party, enemies)
+		_check(not rules.execute_actions(party, enemies, [bad]).ok
+			and _snapshot(party, enemies) == saved,
+			"invalid Blind amount rejects atomically without spend")
+	var snapshot := _snapshot(party, enemies)
+	_check(not rules.execute_actions(party, enemies,
+		[_buff(1, 1), _debuff(1, 3, "blind_next_attack", 1)]).ok
+		and _snapshot(party, enemies) == snapshot,
+		"duplicate-source batch rejects and rolls back")
+	_check(enemies.apply_damage(1, 23) and enemies.is_slain(1),
+		"source really downed for inert action witness")
+	var saved := _snapshot(party, enemies)
+	var dead := rules.execute_actions(party, enemies, [blind])
+	_check(dead.ok and dead.events.size() == 1 and not dead.events[0].applied
+		and _snapshot(party, enemies) == saved,
+		"dead Imp cannot re-arm Blind")
+	party = _party()
+	enemies = CombatEnemies.new([imp])
+	_check(party.apply_damage(3, 26) and party.is_downed(3),
+		"target really downed for fail-closed witness")
+	saved = _snapshot(party, enemies)
+	_check(not rules.execute_actions(party, enemies, [blind]).ok
+		and _snapshot(party, enemies) == saved,
+		"living Imp cannot Blind a downed hero")
+
+
+func _test_stitched_blind_guard() -> void:
+	var party := _party()
+	var cards := StarterCards.new()
+	var strike := cards.get_definition("warden_strike")
+	var brace := cards.get_definition("warden_brace")
+	_check(not strike.is_empty() and not brace.is_empty()
+		and strike.effects.get("damage") == 6 and brace.effects.get("block") == 7,
+		"real authored damage and support halves are available for stitched gate")
+	_check(not CombatHeroBlindMiss.blocks_stitched(party, strike, brace),
+		"unblinded stitched half is not rejected by the Blind gate")
+	party._heroes[0]["statuses"] = {"blind_next_attack": 1}
+	_check(CombatHeroBlindMiss.blocks_stitched(party, strike, brace)
+		and CombatHeroBlindMiss.blocks_stitched(party, brace, strike),
+		"blinded attack in either ordered stitched half is rejected before payment")
+	_check(not CombatHeroBlindMiss.blocks_stitched(party, brace, brace),
+		"nonattack-only stitched combination stays usable while Blind waits")
+	party._heroes[0]["statuses"].erase("blind_next_attack")
+	_check(not CombatHeroBlindMiss.blocks_stitched(party, strike, brace),
+		"once consumed Blind no longer blocks genuine stitched attacks")
