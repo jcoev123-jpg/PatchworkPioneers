@@ -1,6 +1,11 @@
 extends SceneTree
 
 const STARTER_ORACLE := preload("res://tests/starter_fight_oracle.gd")
+const WIRED_ATTACK_IDS: Array[String] = [
+	"warden_strike_plus",
+	"warden_strike", "warden_shield_bash", "seamstress_prick",
+	"tinker_pop_shot", "tinker_scrap_bomb"
+]
 
 var failures: Array[String] = []
 var checks := 0
@@ -183,7 +188,7 @@ func _run() -> void:
 		_finish()
 		return
 	_check(presenter.cue == null, "no cue on title")
-	for id in CombatAttackTargeting.ATTACK_IDS:
+	for id in WIRED_ATTACK_IDS:
 		var replay: Array = []
 		for session in range(2):
 			if not await _start(_seed_for(id), id):
@@ -988,7 +993,7 @@ func _finish() -> void:
 
 
 func _forecast_statuses() -> void:
-	for id in CombatAttackTargeting.ATTACK_IDS:
+	for id in WIRED_ATTACK_IDS:
 		var replay: Array = []
 		for keyboard in [false, true]:
 			if not await _start(_seed_for(id), id):

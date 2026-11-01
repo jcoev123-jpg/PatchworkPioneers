@@ -34,6 +34,7 @@ func _initialize() -> void:
 	_test_pool_combos_targeting()
 	_test_pool_combo_forecasts()
 	_test_seeded_replay()
+	_test_upgraded_starter_targeting()
 	for failure in failures:
 		printerr(failure)
 	print("combat_attack_targeting_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -911,3 +912,136 @@ func _test_pool_combo_forecasts() -> void:
 	_check(not rejected["playable"] and rejected["targets"].is_empty()
 		and _combo_state(fixture) == before,
 		"missing first-attack latch fails closed without side effects")
+
+
+func _test_upgraded_starter_targeting() -> void:
+	# Authoritative admission
+	_check(service.supports("seamstress_prick_plus"), "seamstress_prick_plus is supported")
+	_check(service.supports("warden_shield_bash_plus"), "warden_shield_bash_plus is supported")
+	_check(CombatAttackTargeting.ATTACK_IDS.has("seamstress_prick_plus"), "seamstress_prick_plus in ATTACK_IDS")
+	_check(CombatAttackTargeting.ATTACK_IDS.has("warden_shield_bash_plus"), "warden_shield_bash_plus in ATTACK_IDS")
+
+	# Unsupported upgrades fail closed
+	for unsupported_id in ["tinker_pop_shot_plus", "tinker_scrap_bomb_plus", "warden_brace_plus", "seamstress_mend_plus"]:
+		_check(not service.supports(unsupported_id), unsupported_id + " is not supported")
+		_check(not CombatAttackTargeting.ATTACK_IDS.has(unsupported_id), unsupported_id + " not in ATTACK_IDS")
+
+	# Real deck with upgraded cards
+	var catalog := StarterCards.new()
+	var starting_cards := catalog.get_starting_deck()
+	var prick_idx := starting_cards.find("seamstress_prick")
+	var upgraded_prick := RunRestCardUpgrade.new(starting_cards, {"seamstress_prick": "seamstress_prick_plus"}).choose_upgrade(prick_idx)
+	_check(upgraded_prick.ok, "upgraded prick created via Rest upgrade")
+	var bash_idx := (upgraded_prick.deck as Array[String]).find("warden_shield_bash")
+	var upgraded_both := RunRestCardUpgrade.new(upgraded_prick.deck, {"warden_shield_bash": "warden_shield_bash_plus"}).choose_upgrade(bash_idx)
+	_check(upgraded_both.ok, "upgraded both cards via Rest upgrade")
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 991
+	var deck := CombatDeck.new(upgraded_both.deck, rng)
+	_check(deck.start_turn() and deck.energy == 3, "start turn with 3 energy")
+	while (not deck.hand.has("seamstress_prick_plus") or not deck.hand.has("warden_shield_bash_plus")) and not deck.draw_pile.is_empty():
+		deck.draw_extra(1)
+	_check(deck.hand.has("seamstress_prick_plus") and deck.hand.has("warden_shield_bash_plus"),
+		"both upgraded cards held in real hand")
+
+	# AC1: Seamstress Prick+
+	# Living Seamstress in positions 1, 2, or 3 reaches all living enemies in positions 1, 2, 3
+	for pos in [1, 2, 3]:
+		var party_order: Array[String] = []
+		if pos == 1:
+			party_order.assign(["seamstress", "warden", "tinker"])
+		elif pos == 2:
+			party_order.assign(["warden", "seamstress", "tinker"])
+		else:
+			party_order.assign(["warden", "tinker", "seamstress"])
+		var party := _party(party_order)
+		var enemies := _enemies(3)
+		_assert_preview(deck, party, enemies, "seamstress_prick_plus", true, true, [1, 2, 3],
+			"Prick+ from Seamstress position %d reaches [1, 2, 3]" % pos)
+
+	# Slain enemy slots: skips slain slot 2 -> [1, 3]
+	var foes := _enemies(3)
+	_check(foes.apply_damage(2, 999) and foes.is_slain(2), "slay enemy 2")
+	_assert_preview(deck, _party(), foes, "seamstress_prick_plus", true, true, [1, 3],
+		"Prick+ skips slain enemy 2")
+	_check(foes.apply_damage(1, 999) and foes.is_slain(1), "slay enemy 1")
+	_assert_preview(deck, _party(), foes, "seamstress_prick_plus", true, true, [3],
+		"Prick+ targets surviving enemy 3")
+	_check(foes.apply_damage(3, 999) and foes.is_victorious(), "slay enemy 3 (all slain)")
+	_reject(deck, _party(), foes, "seamstress_prick_plus", "Prick+ all slain rejects")
+
+	# Negative checks for Prick+
+	var downed_seamstress := _party()
+	_check(downed_seamstress.apply_damage(2, 999) and downed_seamstress.is_downed(2), "down Seamstress")
+	_reject(deck, downed_seamstress, _enemies(), "seamstress_prick_plus", "Prick+ downed Seamstress rejects")
+
+	var absent_seamstress_order: Array[String] = []
+	absent_seamstress_order.assign(["warden", "tinker", "other"])
+	var absent_seamstress := _party(absent_seamstress_order)
+	_reject(deck, absent_seamstress, _enemies(), "seamstress_prick_plus", "Prick+ absent Seamstress rejects")
+
+	# AC2: Warden Shield Bash+
+	# Cost 2, FROM [1], TO [1]
+	var warden_front := _party()
+	var standard_foes := _enemies(3)
+	_assert_preview(deck, warden_front, standard_foes, "warden_shield_bash_plus", true, true, [1],
+		"Shield Bash+ exposes only position 1")
+
+	# Warden in position 2 or 3 is rejected
+	var warden_mid_order: Array[String] = []
+	warden_mid_order.assign(["seamstress", "warden", "tinker"])
+	_reject(deck, _party(warden_mid_order), standard_foes, "warden_shield_bash_plus",
+		"Shield Bash+ Warden in position 2 rejects")
+	var warden_back_order: Array[String] = []
+	warden_back_order.assign(["seamstress", "tinker", "warden"])
+	_reject(deck, _party(warden_back_order), standard_foes, "warden_shield_bash_plus",
+		"Shield Bash+ Warden in position 3 rejects")
+
+	# Downed Warden
+	var downed_warden := _party()
+	_check(downed_warden.apply_damage(1, 999) and downed_warden.is_downed(1), "down Warden")
+	_reject(deck, downed_warden, standard_foes, "warden_shield_bash_plus", "Shield Bash+ downed Warden rejects")
+
+	# Absent Warden
+	var absent_warden_order: Array[String] = []
+	absent_warden_order.assign(["seamstress", "tinker", "other"])
+	var absent_warden := _party(absent_warden_order)
+	_reject(deck, absent_warden, standard_foes, "warden_shield_bash_plus", "Shield Bash+ absent Warden rejects")
+
+	# Enemy 1 slain: Shield Bash+ reaches only slot 1, so even with enemies 2 & 3 alive, it rejects!
+	var foe_1_slain := _enemies(3)
+	_check(foe_1_slain.apply_damage(1, 999) and foe_1_slain.is_slain(1), "slay enemy 1")
+	_reject(deck, warden_front, foe_1_slain, "warden_shield_bash_plus",
+		"Shield Bash+ rejects when enemy 1 is slain")
+
+	# Energy checks:
+	# Cost 2 for Shield Bash+: affordable at 2 energy, rejected at 1 energy
+	var two_energy_deck := CombatDeck.new(upgraded_both.deck, rng)
+	_check(two_energy_deck.start_turn() and two_energy_deck.try_spend_energy(1), "spend 1 energy -> 2 remain")
+	while not two_energy_deck.hand.has("warden_shield_bash_plus") and not two_energy_deck.draw_pile.is_empty():
+		two_energy_deck.draw_extra(1)
+	_assert_preview(two_energy_deck, warden_front, standard_foes, "warden_shield_bash_plus", true, true, [1],
+		"Shield Bash+ affordable at 2 energy")
+	_check(two_energy_deck.try_spend_energy(1) and two_energy_deck.energy == 1, "spend 1 energy -> 1 remains")
+	_reject(two_energy_deck, warden_front, standard_foes, "warden_shield_bash_plus",
+		"Shield Bash+ unaffordable at 1 energy")
+
+	# Cost 1 for Prick+: affordable at 1 energy, rejected at 0 energy
+	while not two_energy_deck.hand.has("seamstress_prick_plus") and not two_energy_deck.draw_pile.is_empty():
+		two_energy_deck.draw_extra(1)
+	_assert_preview(two_energy_deck, _party(), standard_foes, "seamstress_prick_plus", true, true, [1, 2, 3],
+		"Prick+ affordable at 1 energy")
+	_check(two_energy_deck.try_spend_energy(1) and two_energy_deck.energy == 0, "spend 1 energy -> 0 remain")
+	_reject(two_energy_deck, _party(), standard_foes, "seamstress_prick_plus",
+		"Prick+ unaffordable at 0 energy")
+
+	# Inactive turn
+	var inactive := CombatDeck.new(upgraded_both.deck, rng)
+	_reject(inactive, _party(), standard_foes, "seamstress_prick_plus", "Prick+ inactive turn")
+	_reject(inactive, warden_front, standard_foes, "warden_shield_bash_plus", "Shield Bash+ inactive turn")
+
+	# Absent hand card
+	var unheld_deck := _deck(["warden_strike"])
+	_reject(unheld_deck, _party(), standard_foes, "seamstress_prick_plus", "Prick+ not in hand")
+	_reject(unheld_deck, warden_front, standard_foes, "warden_shield_bash_plus", "Shield Bash+ not in hand")

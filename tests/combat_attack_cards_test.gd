@@ -15,6 +15,8 @@ func _initialize() -> void:
 	_test_enrage_rejections()
 	_test_enrage_zero_damage()
 	_test_strike_plus()
+	_test_prick_plus()
+	_test_shield_bash_plus()
 	_test_thorns_starter_attacks()
 	_test_thorns_bomb_and_downed_owner()
 	_test_thorns_rejections()
@@ -55,18 +57,23 @@ func _check(condition: bool, label: String) -> void:
 		failures.append(label)
 
 
-func _plus_deck() -> CombatDeck:
+func _plus_deck(plus_id: String = "warden_strike_plus") -> CombatDeck:
+	var base_id := "warden_strike"
+	if plus_id == "warden_shield_bash_plus":
+		base_id = "warden_shield_bash"
+	elif plus_id == "seamstress_prick_plus":
+		base_id = "seamstress_prick"
 	var cards := StarterCards.new().get_starting_deck()
-	var index := cards.find("warden_strike")
-	var upgraded := RunRestCardUpgrade.new(cards, {"warden_strike": "warden_strike_plus"}).choose_upgrade(index)
+	var index := cards.find(base_id)
+	var upgraded := RunRestCardUpgrade.new(cards, {base_id: plus_id}).choose_upgrade(index)
 	_check(upgraded.ok, "real upgrade transaction supplies attack fixture")
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 78
 	var deck := CombatDeck.new(upgraded.deck, rng)
 	_check(deck.start_turn(), "upgraded deck starts real turn")
-	while not deck.hand.has("warden_strike_plus") and not deck.draw_pile.is_empty():
+	while not deck.hand.has(plus_id) and not deck.draw_pile.is_empty():
 		deck.draw_extra(1)
-	_check(deck.hand.has("warden_strike_plus"), "actual upgraded copy held")
+	_check(deck.hand.has(plus_id), "actual upgraded copy held")
 	return deck
 
 
@@ -92,6 +99,205 @@ func _test_strike_plus() -> void:
 	var roster := _enemies()
 	_check(CombatBasicAttacks.new().play(basic, _party(), roster, "warden_strike_plus", 1)
 		and roster.get_enemy(1).hp == 11 and basic.energy == 2 and basic.discard_pile.has("warden_strike_plus"), "basic resolver also reads seven damage from catalog")
+
+
+
+func _test_prick_plus() -> void:
+	# AC1: living Seamstress in positions 1, 2, 3 reaches enemies in positions 1, 2, 3
+	# Hits deal authored 4 damage and Bleed 4 (printed 3 + Seamstress passive 1).
+	for hero_pos in [1, 2, 3]:
+		var party_order := ["seamstress", "warden", "tinker"] if hero_pos == 1 else (
+			["warden", "seamstress", "tinker"] if hero_pos == 2 else ["warden", "tinker", "seamstress"]
+		)
+		for target in [1, 2, 3]:
+			var enemies := _enemies([20, 20, 20])
+			_accept(CombatAttackCards.new(), _plus_deck("seamstress_prick_plus"), _party(party_order), enemies,
+				"seamstress_prick_plus", target, [_hit(target, 4, 0, 4, {"bleed": 4})], 1,
+				"Prick+ hero pos %d to target %d" % [hero_pos, target])
+
+	# Hit through Block before HP
+	var block_enemies := _enemies([20, 20, 20])
+	_check(block_enemies.gain_block(2, 2), "target 2 gains 2 Block")
+	_accept(CombatAttackCards.new(), _plus_deck("seamstress_prick_plus"), _party(), block_enemies,
+		"seamstress_prick_plus", 2, [_hit(2, 4, 2, 2, {"bleed": 4})], 1, "Prick+ absorbs 2 Block, 2 HP loss")
+
+	# Full absorption: Block >= 4, 0 HP loss, Bleed 4 still persists
+	var heavy_block := _enemies([20, 20, 20])
+	_check(heavy_block.gain_block(1, 10), "target 1 gains 10 Block")
+	_accept(CombatAttackCards.new(), _plus_deck("seamstress_prick_plus"), _party(), heavy_block,
+		"seamstress_prick_plus", 1, [_hit(1, 4, 4, 0, {"bleed": 4})], 1, "Prick+ full absorption retains Bleed 4")
+	_check(heavy_block.get_enemy(1).statuses == {"bleed": 4} and heavy_block.get_enemy(1).block == 6,
+		"Prick+ persistent status on blocked target")
+
+	# Repeated hits accumulate Bleed: 4 + 4 = 8
+	var multi_deck := _plus_deck("seamstress_prick_plus")
+	multi_deck.hand.append("seamstress_prick_plus")
+	multi_deck.combat_state.energy = 3
+	var multi_service := CombatAttackCards.new()
+	var first_hit := multi_service.play_attack(multi_deck, _party(), heavy_block, "seamstress_prick_plus", 1)
+	_check(first_hit.ok and heavy_block.get_enemy(1).statuses == {"bleed": 8}, "Prick+ Bleed stacks to 8")
+	var tick := CombatStatusTurnBatch.new().tick_side("enemies", heavy_block.get_enemies())
+	_check(tick.ok and tick.actors[0].statuses == {"bleed": 7} and tick.actors[0].hp == 12,
+		"Bleed loss bypasses Block and decrements by one")
+
+	# Lethal hit clamps HP loss and slays enemy
+	var low_hp := _enemies([3, 20, 20])
+	_accept(CombatAttackCards.new(), _plus_deck("seamstress_prick_plus"), _party(), low_hp,
+		"seamstress_prick_plus", 1, [_hit(1, 4, 0, 3, {"bleed": 4})], 1, "Prick+ lethal hit clamps HP loss")
+	_check(low_hp.is_slain(1) and low_hp.get_enemy(1).statuses == {"bleed": 4},
+		"Prick+ lethal hit persists Bleed on slain slot")
+
+	# AC3: Negative/rejection cases
+	# Downed Seamstress
+	var downed_party := _party()
+	_check(downed_party.apply_damage(2, 999) and downed_party.is_downed(2), "down Seamstress")
+	_reject(CombatAttackCards.new(), _plus_deck("seamstress_prick_plus"), downed_party, _enemies(),
+		"seamstress_prick_plus", 1, "Prick+ downed Seamstress")
+
+	# Absent Seamstress owner
+	var absent_party := _party(["warden", "tinker", "other"])
+	_reject(CombatAttackCards.new(), _plus_deck("seamstress_prick_plus"), absent_party, _enemies(),
+		"seamstress_prick_plus", 1, "Prick+ absent Seamstress")
+
+	# Insufficient energy (0 energy)
+	var empty_energy := _plus_deck("seamstress_prick_plus")
+	_check(empty_energy.try_spend_energy(3), "drain all energy")
+	_reject(CombatAttackCards.new(), empty_energy, _party(), _enemies(),
+		"seamstress_prick_plus", 1, "Prick+ no energy")
+
+	# Inactive turn
+	var inactive_deck := _plus_deck("seamstress_prick_plus")
+	_check(inactive_deck.end_turn(), "end turn")
+	_reject(CombatAttackCards.new(), inactive_deck, _party(), _enemies(),
+		"seamstress_prick_plus", 1, "Prick+ inactive turn")
+
+	# Absent from hand
+	var absent_deck := _plus_deck("seamstress_prick_plus")
+	_check(absent_deck.discard_played("seamstress_prick_plus"), "discard held card")
+	_reject(CombatAttackCards.new(), absent_deck, _party(), _enemies(),
+		"seamstress_prick_plus", 1, "Prick+ absent from hand")
+
+	# Illegal target positions: 0, 4, -1
+	for bad_target in [0, 4, -1]:
+		_reject(CombatAttackCards.new(), _plus_deck("seamstress_prick_plus"), _party(), _enemies(),
+			"seamstress_prick_plus", bad_target, "Prick+ illegal target " + str(bad_target))
+
+	# Slain target
+	var slain_enemies := _enemies()
+	_check(slain_enemies.apply_damage(1, 999), "slay enemy 1")
+	_reject(CombatAttackCards.new(), _plus_deck("seamstress_prick_plus"), _party(), slain_enemies,
+		"seamstress_prick_plus", 1, "Prick+ slain target")
+
+	# Absent enemy slot (roster of 1 enemy, target 2)
+	_reject(CombatAttackCards.new(), _plus_deck("seamstress_prick_plus"), _party(), _enemies([20]),
+		"seamstress_prick_plus", 2, "Prick+ absent slot 2")
+
+	# Status overflow rejection
+	var overflow_enemies := _enemies([20, 20, 20])
+	overflow_enemies._enemies[0]["statuses"] = {"bleed": CombatEnemies.MAX_INT - 2}
+	_reject(CombatAttackCards.new(), _plus_deck("seamstress_prick_plus"), _party(), overflow_enemies,
+		"seamstress_prick_plus", 1, "Prick+ status overflow")
+
+
+func _test_shield_bash_plus() -> void:
+	# AC2: active real turn with 2+ energy, held warden_shield_bash_plus,
+	# living Warden in position 1, living enemy in position 1.
+	# Spends 2 energy, deals authored 11 damage and Weak 1.
+	_accept(CombatAttackCards.new(), _plus_deck("warden_shield_bash_plus"), _party(), _enemies([30, 30, 30]),
+		"warden_shield_bash_plus", 1, [_hit(1, 11, 0, 11, {"weak": 1})], 2, "Shield Bash+ normal hit unblocked")
+
+	# Partial Block absorption: Block 5 -> absorbs 5, HP loss 6, Weak 1
+	var block_enemies := _enemies([30, 30, 30])
+	_check(block_enemies.gain_block(1, 5), "target 1 gains 5 Block")
+	_accept(CombatAttackCards.new(), _plus_deck("warden_shield_bash_plus"), _party(), block_enemies,
+		"warden_shield_bash_plus", 1, [_hit(1, 11, 5, 6, {"weak": 1})], 2, "Shield Bash+ partial Block absorption")
+
+	# Full Block absorption: Block 20 -> absorbs 11, HP loss 0, Weak 1
+	var heavy_block := _enemies([30, 30, 30])
+	_check(heavy_block.gain_block(1, 20), "target 1 gains 20 Block")
+	_accept(CombatAttackCards.new(), _plus_deck("warden_shield_bash_plus"), _party(), heavy_block,
+		"warden_shield_bash_plus", 1, [_hit(1, 11, 11, 0, {"weak": 1})], 2, "Shield Bash+ full Block absorption retains Weak 1")
+	_check(heavy_block.get_enemy(1).statuses == {"weak": 1} and heavy_block.get_enemy(1).block == 9,
+		"Shield Bash+ persistent Weak on blocked target")
+
+	# Stacking Weak: consecutive hit adds Weak 1 -> Weak 2
+	var multi_deck := _plus_deck("warden_shield_bash_plus")
+	multi_deck.hand.append("warden_shield_bash_plus")
+	multi_deck.combat_state.energy = 3
+	var multi_service := CombatAttackCards.new()
+	var first_hit := multi_service.play_attack(multi_deck, _party(), heavy_block, "warden_shield_bash_plus", 1)
+	_check(first_hit.ok and heavy_block.get_enemy(1).statuses == {"weak": 2}, "Shield Bash+ Weak stacks to 2")
+	var tick := CombatStatusTurnBatch.new().tick_side("enemies", heavy_block.get_enemies())
+	_check(tick.ok and tick.actors[0].statuses == {"weak": 1}, "Weak decrements by 1 on turn boundary")
+
+	# Lethal hit clamps HP loss and slays enemy
+	var low_hp := _enemies([5, 30, 30])
+	_accept(CombatAttackCards.new(), _plus_deck("warden_shield_bash_plus"), _party(), low_hp,
+		"warden_shield_bash_plus", 1, [_hit(1, 11, 0, 5, {"weak": 1})], 2, "Shield Bash+ lethal hit clamps HP loss")
+	_check(low_hp.is_slain(1) and low_hp.get_enemy(1).statuses == {"weak": 1},
+		"Shield Bash+ lethal hit persists Weak on slain slot")
+
+	# Modified damage with Weak/Exposed:
+	# Attacker Weak 1: floor(11 * 0.75) = 8
+	var weak_party := _party()
+	weak_party._heroes[0]["statuses"] = {"weak": 1}
+	var weak_foes := _enemies([30, 30, 30])
+	_accept(CombatAttackCards.new(), _plus_deck("warden_shield_bash_plus"), weak_party, weak_foes,
+		"warden_shield_bash_plus", 1, [_hit(1, 8, 0, 8, {"weak": 1})], 2, "Shield Bash+ with attacker Weak",
+		{"weak": 1})
+
+	# AC3: Negative/rejection cases
+	# Warden not in position 1: position 2 or 3
+	_reject(CombatAttackCards.new(), _plus_deck("warden_shield_bash_plus"), _party(["seamstress", "warden", "tinker"]), _enemies(),
+		"warden_shield_bash_plus", 1, "Shield Bash+ Warden in position 2")
+	_reject(CombatAttackCards.new(), _plus_deck("warden_shield_bash_plus"), _party(["seamstress", "tinker", "warden"]), _enemies(),
+		"warden_shield_bash_plus", 1, "Shield Bash+ Warden in position 3")
+
+	# Downed Warden
+	var downed_party := _party()
+	_check(downed_party.apply_damage(1, 999) and downed_party.is_downed(1), "down Warden")
+	_reject(CombatAttackCards.new(), _plus_deck("warden_shield_bash_plus"), downed_party, _enemies(),
+		"warden_shield_bash_plus", 1, "Shield Bash+ downed Warden")
+
+	# Absent Warden owner
+	var absent_party := _party(["seamstress", "tinker", "other"])
+	_reject(CombatAttackCards.new(), _plus_deck("warden_shield_bash_plus"), absent_party, _enemies(),
+		"warden_shield_bash_plus", 1, "Shield Bash+ absent Warden")
+
+	# Insufficient energy (energy = 1, cost = 2)
+	var poor_deck := _plus_deck("warden_shield_bash_plus")
+	_check(poor_deck.try_spend_energy(2) and poor_deck.energy == 1, "leave 1 energy")
+	_reject(CombatAttackCards.new(), poor_deck, _party(), _enemies(),
+		"warden_shield_bash_plus", 1, "Shield Bash+ insufficient energy 1")
+
+	# Inactive turn
+	var inactive_deck := _plus_deck("warden_shield_bash_plus")
+	_check(inactive_deck.end_turn(), "end turn")
+	_reject(CombatAttackCards.new(), inactive_deck, _party(), _enemies(),
+		"warden_shield_bash_plus", 1, "Shield Bash+ inactive turn")
+
+	# Absent from hand
+	var absent_deck := _plus_deck("warden_shield_bash_plus")
+	_check(absent_deck.discard_played("warden_shield_bash_plus"), "discard held card")
+	_reject(CombatAttackCards.new(), absent_deck, _party(), _enemies(),
+		"warden_shield_bash_plus", 1, "Shield Bash+ absent from hand")
+
+	# Illegal target positions: 0, 2, 3, 4
+	for bad_target in [0, 2, 3, 4]:
+		_reject(CombatAttackCards.new(), _plus_deck("warden_shield_bash_plus"), _party(), _enemies(),
+			"warden_shield_bash_plus", bad_target, "Shield Bash+ illegal target " + str(bad_target))
+
+	# Slain target 1
+	var slain_enemies := _enemies()
+	_check(slain_enemies.apply_damage(1, 999), "slay enemy 1")
+	_reject(CombatAttackCards.new(), _plus_deck("warden_shield_bash_plus"), _party(), slain_enemies,
+		"warden_shield_bash_plus", 1, "Shield Bash+ slain target 1")
+
+	# Weak overflow on enemy 1
+	var overflow_enemies := _enemies([30, 30, 30])
+	overflow_enemies._enemies[0]["statuses"] = {"weak": CombatEnemies.MAX_INT}
+	_reject(CombatAttackCards.new(), _plus_deck("warden_shield_bash_plus"), _party(), overflow_enemies,
+		"warden_shield_bash_plus", 1, "Shield Bash+ Weak overflow")
 
 
 func _test_area_bridge_atomicity() -> void:
@@ -2108,10 +2314,10 @@ func _test_enrage_starter_hits() -> void:
 		if id == "tinker_scrap_bomb":
 			continue
 		for blocked in [false, true]:
-			var deck := _plus_deck() if id == "warden_strike_plus" else _deck([id])
+			var deck := _plus_deck(id) if id.ends_with("_plus") else _deck([id])
 			var party := _party()
 			var foes := _enemies([40, 40, 40])
-			var target := 1 if id == "warden_shield_bash" else 2
+			var target := 1 if id in ["warden_shield_bash", "warden_shield_bash_plus"] else 2
 			for enemy in foes._enemies:
 				enemy["enrage"] = true
 				enemy["tag"] = {"preserved": [1, 2]}
@@ -2119,13 +2325,15 @@ func _test_enrage_starter_hits() -> void:
 			var definition: Dictionary = StarterCards.new().get_definition(id)
 			var damage: int = definition.effects.damage + (3 if id == "tinker_pop_shot" else 0)
 			var statuses := {}
-			if id == "warden_shield_bash":
+			if id in ["warden_shield_bash", "warden_shield_bash_plus"]:
 				statuses = {"weak": 1}
 			elif id == "seamstress_prick":
 				statuses = {"bleed": 3}
+			elif id == "seamstress_prick_plus":
+				statuses = {"bleed": 4}
 			if blocked:
 				_check(foes.gain_block(target, damage + 1), "fully blocked Enrage fixture")
-			var owner: int = 3 if id == "tinker_pop_shot" else (2 if id == "seamstress_prick" else 1)
+			var owner: int = 3 if id == "tinker_pop_shot" else (2 if id in ["seamstress_prick", "seamstress_prick_plus"] else 1)
 			var owner_hp: int = party.get_hero(owner).hp - 2
 			_thorns_check_play(CombatAttackCards.new(), deck, party, foes, id, target,
 				[_hit(target, damage, damage if blocked else 0, 0 if blocked else damage, statuses)],
@@ -2139,7 +2347,7 @@ func _test_enrage_starter_hits() -> void:
 			var intents := [{"type": "attack", "enemy_position": target, "amount": 5, "target_position": 1}]
 			var phase := CombatEnemyPhase.new().execute_phase(party, foes, intents)
 			var expected := before.duplicate(true)
-			var phase_damage := 7 if id == "warden_shield_bash" else 10
+			var phase_damage := 7 if id in ["warden_shield_bash", "warden_shield_bash_plus"] else 10
 			expected.party[0].block = 0
 			expected.party[0].hp -= phase_damage - 2
 			_check(phase == {"ok": true, "events": [{"type": "attack", "enemy_position": target,
