@@ -66,11 +66,11 @@ const NAME_STRIP_HEIGHT := 32
 ## Card-local rhythm: every strip gives up only the pixels the taller picture
 ## needs, so the name, cost coin, position marks, full effects and Choose stay
 ## separate, legible and inside the 1280x720 screen.
-const CARD_CONTENT_SEPARATION := 1
+const CARD_CONTENT_SEPARATION := 2
 const CARD_SIDE_MARGIN := 10
 const PIPS_STRIP_HEIGHT := 20
 const COST_COIN_SIZE := 38
-const CHOOSE_HEIGHT := 44
+const CHOOSE_HEIGHT := 48
 ## VIS V2 body floor at 1280x720: the short rules and the rarity tag are read
 ## from arm's length at the sewing table, so both keep the project body face at
 ## 18 px instead of the earlier 15 px. The card's own name stays on its 21 px
@@ -409,9 +409,21 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	name_label.add_theme_stylebox_override("normal", name_box)
 	content.add_child(name_label)
 
+	# Cost, rarity and six positional stitches share one measured row.
+	# This frees the effects and Choose strips from competing for the same height.
+	var metadata := HBoxContainer.new()
+	metadata.name = "MetadataRow"
+	metadata.custom_minimum_size = Vector2(0, COST_COIN_SIZE)
+	metadata.add_theme_constant_override("separation", 8)
+	metadata.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(metadata)
+
 	# Rarity tag (only for pool cards with authored rarity)
 	var rarity_label := _card_label("RarityLabel", "", BODY_FONT_SIZE)
-	rarity_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# A rarity is a single sewn tag: never split its letters into a tall column
+	# when the adjacent pips request horizontal expansion.
+	rarity_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	rarity_label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	var rarity: String = String(definition.get("rarity", "")).strip_edges().to_lower()
 	if RARITY_COLORS.has(rarity):
 		rarity_label.text = rarity.capitalize()
@@ -430,7 +442,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	else:
 		rarity_label.text = ""
 		rarity_label.visible = false
-	content.add_child(rarity_label)
+	metadata.add_child(rarity_label)
 
 	# Cost as a round sewn button (numeric only)
 	var cost_value: int = definition["cost"]
@@ -442,7 +454,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	cost_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	cost_button.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cost_button.focus_mode = Control.FOCUS_NONE
-	content.add_child(cost_button)
+	metadata.add_child(cost_button)
 
 	# Position/target pips
 	var pips_container := _PositionPips.new()
@@ -457,16 +469,28 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	pips_container.to_positions = to_positions
 	pips_container.target_kind = String(definition.get("target_kind", ""))
 	pips_container.owner_color = OWNER_COLORS[offer["owner"]]
-	pips_container.custom_minimum_size = Vector2(0, PIPS_STRIP_HEIGHT)
-	content.add_child(pips_container)
+	pips_container.custom_minimum_size = Vector2(108, PIPS_STRIP_HEIGHT)
+	pips_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	metadata.add_child(pips_container)
 
 	# Effects text: the same detached short-sentence formatter the held hand
 	# uses. No live passive boost is predicted for a detached reward offer.
 	var effect_line := CardShortRules.line(definition)
 	var rules_label := _card_label("RulesLabel", effect_line, BODY_FONT_SIZE)
 	rules_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	rules_label.custom_minimum_size = Vector2(0, 60)
-	content.add_child(rules_label)
+	rules_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rules_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# The authored text is never truncated: a fixed viewport gives the Choose
+	# action stable placement, while long sentences remain wheel/trackpad scrollable.
+	var effects := ScrollContainer.new()
+	effects.name = "EffectsScroll"
+	effects.custom_minimum_size = Vector2(0, 54)
+	effects.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	effects.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	effects.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	effects.mouse_filter = Control.MOUSE_FILTER_PASS
+	effects.add_child(rules_label)
+	content.add_child(effects)
 
 	# The face never prints a position sentence, so the hover explains the six
 	# painted marks (and the slots they fill) without taking the card's action.
@@ -1158,8 +1182,8 @@ func _apply_sewn_art(paper: StyleBoxFlat, content_margin: MarginContainer) -> vo
 		add_child(shade)
 		move_child(shade, 2)
 		# The quilt can now reach almost to the top; the camp shows around it.
-		paper_panel.anchor_top = 0.025
-		paper_panel.anchor_bottom = 0.975
+		paper_panel.anchor_top = 0.015
+		paper_panel.anchor_bottom = 0.985
 		paper_panel.anchor_left = 0.02
 		paper_panel.anchor_right = 0.98
 	var quilt := art_texture(QUILT_PANEL)

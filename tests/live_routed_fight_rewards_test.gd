@@ -161,7 +161,7 @@ func _run() -> void:
 			if index < 3:
 				var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(expected_offers[index].id)
 				var owner_node: Control = button.get_parent().get_node_or_null("CardHeader/OwnerPatch") if button.get_parent().get_node_or_null("CardHeader") != null else button.get_parent().get_node("OwnerPatch")
-				_check(owner_node.get("owner_color") == LiveRunCardRewardChoicePanel.OWNER_COLORS[expected_offers[index].owner] and button.get_parent().get_node("NameLabel").text == definition.get("display_name", "") and button.get_parent().get_node("RarityLabel").text == definition.get("rarity", "").capitalize(),
+				_check(owner_node.get("owner_color") == LiveRunCardRewardChoicePanel.OWNER_COLORS[expected_offers[index].owner] and button.get_parent().get_node("NameLabel").text == definition.get("display_name", "") and button.get_parent().get_node("MetadataRow/RarityLabel").text == definition.get("rarity", "").capitalize(),
 					"visible actual authored name, owner and rarity")
 		var before := _persistent()
 		var service: RunFightVictoryRewards = app.fight_rewards

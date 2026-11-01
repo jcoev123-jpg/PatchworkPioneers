@@ -954,9 +954,9 @@ func _check_mounted_face(receipt: Dictionary, slot: int) -> void:
 	if card == null or definition.is_empty():
 		return
 	var content := card.get_node("CardMargin/CardContent") as VBoxContainer
-	var cost_button := content.get_node("CostButton") as LiveRunCardRewardChoicePanel._CostButton
-	var pips := content.get_node("PositionPips") as LiveRunCardRewardChoicePanel._PositionPips
-	var rules_label := content.get_node("RulesLabel") as Label
+	var cost_button := content.get_node("MetadataRow/CostButton") as LiveRunCardRewardChoicePanel._CostButton
+	var pips := content.get_node("MetadataRow/PositionPips") as LiveRunCardRewardChoicePanel._PositionPips
+	var rules_label := content.get_node("EffectsScroll/RulesLabel") as Label
 	_check(cost_button != null and pips != null and rules_label != null,
 		"cost/target card mounts its coin, marks and rules: " + card_id)
 	if cost_button == null or pips == null or rules_label == null:
@@ -1176,14 +1176,14 @@ func _check_reward_typography(receipt: Dictionary) -> void:
 			and name_label.text == String(definition.get("display_name", ""))
 			and name_label.get_theme_font_size(&"font_size") == 21,
 			"mounted name retains authored text and size, including after reopen: " + card_id)
-		for label_name in ["RulesLabel", "RarityLabel"]:
+		for label_name in ["EffectsScroll/RulesLabel", "MetadataRow/RarityLabel"]:
 			var label := content.get_node(label_name) as Label
 			_check(label.theme_type_variation == &""
 				and label.get_theme_font(&"font") == project_theme.default_font
 				and label.get_theme_font_size(&"font_size") == 18,
 				"body/rarity keep default font and 18px VIS floor: %s %s"
 					% [card_id, label_name])
-		var cost := content.get_node("CostButton") as LiveRunCardRewardChoicePanel._CostButton
+		var cost := content.get_node("MetadataRow/CostButton") as LiveRunCardRewardChoicePanel._CostButton
 		_check(cost.theme_type_variation == &""
 			and cost.get_theme_default_font() == project_theme.default_font,
 			"cost coin keeps default font: " + card_id)
@@ -1306,10 +1306,10 @@ func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 		var header := content.get_node_or_null("CardHeader") as HBoxContainer
 		var owner_patch := (header.get_node("OwnerPatch") as Control) if header != null else (content.get_node("OwnerPatch") as Control)
 		var name_label := content.get_node("NameLabel") as Label
-		var rarity_label := content.get_node("RarityLabel") as Label
-		var cost_button := content.get_node("CostButton") as Control
-		var pips_container := content.get_node("PositionPips") as Control
-		var rules_label := content.get_node_or_null("RulesLabel") as Label
+		var rarity_label := content.get_node("MetadataRow/RarityLabel") as Label
+		var cost_button := content.get_node("MetadataRow/CostButton") as Control
+		var pips_container := content.get_node("MetadataRow/PositionPips") as Control
+		var rules_label := content.get_node_or_null("EffectsScroll/RulesLabel") as Label
 		var action := content.get_node("ChooseButton") as Button
 		_check(action == actions[index], "real action bound to card " + str(index))
 		_check(cost_button != null and (cost_button as LiveRunCardRewardChoicePanel._CostButton).cost_value == definition.get("cost", 0),
@@ -1413,6 +1413,7 @@ func _exercise(fixture: Dictionary, kind: String, physical: int) -> void:
 	_check(panel.open_rewards(node_id, kind, receipt), kind + " scene opens service receipt")
 	await _frames()
 	_validate(receipt, kind, node_id)
+	_check_three_face_layout(kind)
 	await _test_long_name_wrap()
 	var actions := panel.get_choice_buttons()
 	if actions.size() != 4:
@@ -1609,15 +1610,15 @@ func _replay_and_stale(base: Dictionary) -> void:
 			var content := panel.choices_container.get_child(index).get_node("CardMargin/CardContent")
 			var header := content.get_node_or_null("CardHeader") as HBoxContainer
 			var owner_patch_node := (header.get_node("OwnerPatch") if header != null else content.get_node("OwnerPatch")) as LiveRunCardRewardChoicePanel._OwnerPatch
-			var cost_btn := content.get_node("CostButton") as LiveRunCardRewardChoicePanel._CostButton
-			var pips := content.get_node("PositionPips") as LiveRunCardRewardChoicePanel._PositionPips
+			var cost_btn := content.get_node("MetadataRow/CostButton") as LiveRunCardRewardChoicePanel._CostButton
+			var pips := content.get_node("MetadataRow/PositionPips") as LiveRunCardRewardChoicePanel._PositionPips
 			var owner_name := (header.get_node_or_null("OwnerPatch/OwnerLabel") if header != null else content.get_node_or_null("OwnerPatch/OwnerLabel")) as Label
 			ui.append([owner_patch_node.owner_color if owner_patch_node != null else Color.WHITE,
 				owner_name.text if owner_name != null else "",
 				content.get_node("NameLabel").text,
-				content.get_node("RarityLabel").text,
+				content.get_node("MetadataRow/RarityLabel").text,
 				cost_btn.cost_value if cost_btn != null else -1,
-				content.get_node("RulesLabel").text,
+				content.get_node("EffectsScroll/RulesLabel").text,
 				pips.from_positions if pips != null else [],
 				pips.to_positions if pips != null else [],
 				pips.target_kind if pips != null else ""])
@@ -1935,10 +1936,10 @@ func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 		var header := content.get_node_or_null("CardHeader") as HBoxContainer
 		var owner_patch := (header.get_node("OwnerPatch") as Control) if header != null else (content.get_node("OwnerPatch") as Control)
 		var name_label := content.get_node("NameLabel") as Label
-		var rarity_label := content.get_node("RarityLabel") as Label
-		var cost_button := content.get_node("CostButton") as Control
-		var pips_container := content.get_node("PositionPips") as Control
-		var rules_label := content.get_node("RulesLabel") as Label
+		var rarity_label := content.get_node("MetadataRow/RarityLabel") as Label
+		var cost_button := content.get_node("MetadataRow/CostButton") as Control
+		var pips_container := content.get_node("MetadataRow/PositionPips") as Control
+		var rules_label := content.get_node("EffectsScroll/RulesLabel") as Label
 		var action := content.get_node("ChooseButton") as Button
 		_check(action == actions[index], "real pool action bound to card " + str(index))
 		_check(cost_button != null and (cost_button as LiveRunCardRewardChoicePanel._CostButton).cost_value == definition.get("cost", 0),
@@ -2107,15 +2108,15 @@ func _test_pool_replay(first: Dictionary) -> void:
 			var content := panel.choices_container.get_child(index).get_node("CardMargin/CardContent")
 			var header := content.get_node_or_null("CardHeader") as HBoxContainer
 			var owner_patch_node := (header.get_node("OwnerPatch") if header != null else content.get_node("OwnerPatch")) as LiveRunCardRewardChoicePanel._OwnerPatch
-			var cost_btn := content.get_node("CostButton") as LiveRunCardRewardChoicePanel._CostButton
-			var pips := content.get_node("PositionPips") as LiveRunCardRewardChoicePanel._PositionPips
+			var cost_btn := content.get_node("MetadataRow/CostButton") as LiveRunCardRewardChoicePanel._CostButton
+			var pips := content.get_node("MetadataRow/PositionPips") as LiveRunCardRewardChoicePanel._PositionPips
 			var owner_name := (header.get_node_or_null("OwnerPatch/OwnerLabel") if header != null else content.get_node_or_null("OwnerPatch/OwnerLabel")) as Label
 			ui.append([owner_patch_node.owner_color if owner_patch_node != null else Color.WHITE,
 				owner_name.text if owner_name != null else "",
 				content.get_node("NameLabel").text,
-				content.get_node("RarityLabel").text,
+				content.get_node("MetadataRow/RarityLabel").text,
 				cost_btn.cost_value if cost_btn != null else -1,
-				content.get_node("RulesLabel").text,
+				content.get_node("EffectsScroll/RulesLabel").text,
 				pips.from_positions if pips != null else [],
 				pips.to_positions if pips != null else [],
 				pips.target_kind if pips != null else ""])
@@ -2227,7 +2228,7 @@ func _test_three_tier_rarities(base: Dictionary) -> void:
 	for i in range(3):
 		var card := panel.choices_container.get_child(i) as PanelContainer
 		var content := card.get_node("CardMargin/CardContent") as VBoxContainer
-		var rarity_label := content.get_node("RarityLabel") as Label
+		var rarity_label := content.get_node("MetadataRow/RarityLabel") as Label
 		_check(rarity_label != null and rarity_label.visible and rarity_label.text == expected_tiers[i],
 			"card %d displays exact stitched rarity %s" % [i, expected_tiers[i]])
 		var sewn_box := rarity_label.get_theme_stylebox("normal") as StyleBoxFlat
@@ -2437,7 +2438,7 @@ func _test_illustration_art(base: Dictionary, kind: String) -> void:
 		_check_mounted_art_clearance(card, card_id)
 		if slot > 0:
 			var first := panel.choices_container.get_child(0) as Control
-			for strip_name in ["CardArt", "NameLabel", "CostButton", "PositionPips", "RulesLabel", "ChooseButton"]:
+			for strip_name in ["CardArt", "NameLabel", "MetadataRow", "EffectsScroll", "ChooseButton"]:
 				var peer := first.get_node("CardMargin/CardContent/" + strip_name) as Control
 				var current := content.get_node(strip_name) as Control
 				_check(absf(peer.global_position.y - current.global_position.y) <= 0.5,
@@ -2526,7 +2527,7 @@ func _check_mounted_art_clearance(card: PanelContainer, context: String) -> void
 	var content := card.get_node("CardMargin/CardContent") as VBoxContainer
 	var art := content.get_node("CardArt") as Control
 	var screen := Rect2(Vector2.ZERO, Vector2(1280, 720))
-	for strip in ["CardHeader", "NameLabel", "CostButton", "PositionPips", "RulesLabel", "ChooseButton"]:
+	for strip in ["CardHeader", "NameLabel", "MetadataRow", "EffectsScroll", "ChooseButton"]:
 		var control := content.get_node(strip) as Control
 		_check(control.is_visible_in_tree() and control.size.x > 0 and control.size.y > 0
 			and screen.encloses(control.get_global_rect())
@@ -2978,8 +2979,8 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 		var art := content.get_node("CardArt") as LiveRunCardRewardChoicePanel._CardIllustration
 		var picture := Rect2(art.global_position + art.picture_rect().position,
 			art.picture_rect().size) if art != null and art.has_picture() else Rect2()
-		for other: String in ["CardArt", "NameLabel", "RulesLabel", "ChooseButton",
-				"CostButton", "PositionPips"]:
+		for other: String in ["CardArt", "NameLabel", "EffectsScroll", "ChooseButton",
+				"MetadataRow"]:
 			var control := content.get_node_or_null(other) as Control
 			_check(control != null, "clearance sibling exists: %s (%s)" % [other, card_id])
 			if control == null:
@@ -3067,7 +3068,7 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 		_check(requests.is_empty() and panel._receipt == receipt_before
 			and not panel._awaiting_ack,
 			"mouse/keyboard Help never requests or changes the prepared choice: " + card_id)
-	_check(clearance_checks >= 18, "help clearance really inspected every sibling")
+	_check(clearance_checks >= 15, "help clearance really inspected every sibling")
 	_check(mounted_owners == ["warden", "seamstress", "tinker"],
 		"clearance mounts keyword Help beside all three full hero names: " + str(mounted_owners))
 	_check(burlap_checks == (3 if burlap_art != null else 0),
@@ -3493,9 +3494,9 @@ func _test_number_shortcuts(is_elite: bool) -> void:
 				var content := panel.choices_container.get_child(slot).get_node(
 					"CardMargin/CardContent") as VBoxContainer
 				var name := content.get_node("NameLabel") as Label
-				var rules := content.get_node("RulesLabel") as Label
-				var cost := content.get_node("CostButton") as Control
-				var marks := content.get_node("PositionPips") as Control
+				var rules := content.get_node("EffectsScroll/RulesLabel") as Label
+				var cost := content.get_node("MetadataRow/CostButton") as Control
+				var marks := content.get_node("MetadataRow/PositionPips") as Control
 				_check(not button.get_global_rect().intersects(name.get_global_rect())
 					and not button.get_global_rect().intersects(rules.get_global_rect())
 					and not button.get_global_rect().intersects(cost.get_global_rect())
@@ -3568,6 +3569,224 @@ func _test_number_shortcuts(is_elite: bool) -> void:
 		await _frames()
 
 
+## Geometry is checked on the same live scene that receives the prepared
+## Fight/Elite service receipt, never on a miniature test-only card.
+func _check_three_face_layout(kind: String) -> void:
+	_check(panel.has_open_rewards() and panel._node_kind == kind
+		and panel.choices_container.get_child_count() == 3,
+		kind + " has three real mounted faces for a 1280x720 clearance check")
+	if not panel.has_open_rewards() or panel.choices_container.get_child_count() != 3:
+		return
+	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
+	var choices_rect := panel.choices_container.get_global_rect()
+	var previous := Rect2()
+	var row_positions: Array[float] = []
+	for slot in range(3):
+		var card := panel.choices_container.get_child(slot) as PanelContainer
+		_check(card != null and card.is_visible_in_tree(), kind + " card exists: " + str(slot))
+		if card == null:
+			return
+		var rect := card.get_global_rect()
+		_check(rect.size.x > 240.0 and rect.size.y > 300.0
+			and screen.encloses(rect) and choices_rect.encloses(rect),
+			kind + " card face is entirely within reward panel: " + str(slot))
+		if slot > 0:
+			_check(previous.end.x <= rect.position.x - 4.0,
+				kind + " three faces are separate and do not overlap")
+		previous = rect
+		var content := card.get_node("CardMargin/CardContent") as VBoxContainer
+		var paths := ["CardHeader", "CardArt", "NameLabel", "MetadataRow",
+			"EffectsScroll", "ChooseButton"]
+		var last_y: float = -1.0
+		for path: String in paths:
+			var row := content.get_node_or_null(path) as Control
+			_check(row != null and row.is_visible_in_tree(),
+				kind + " mounted " + path + " is visible " + str(slot))
+			if row == null:
+				continue
+			var bounds := row.get_global_rect()
+			_check(bounds.size.x > 0 and bounds.size.y > 0
+				and rect.encloses(bounds) and screen.encloses(bounds),
+				kind + " " + path + " fits card and viewport " + str(slot))
+			if last_y >= 0:
+				_check(last_y <= bounds.position.y + 0.5,
+					kind + " " + path + " never overlaps preceding strip " + str(slot))
+			last_y = bounds.end.y
+		var header := content.get_node("CardHeader") as HBoxContainer
+		var owner := header.get_node("OwnerPatch") as Control
+		var details := header.get_node("HelpButton") as Button
+		_check(not owner.get_global_rect().intersects(details.get_global_rect())
+			and header.get_global_rect().encloses(owner.get_global_rect())
+			and header.get_global_rect().encloses(details.get_global_rect()),
+			kind + " owner and Details each keep a measured header cell")
+		var metadata := content.get_node("MetadataRow") as HBoxContainer
+		var cost := metadata.get_node("CostButton") as Control
+		var pips := metadata.get_node("PositionPips") as Control
+		var rarity := metadata.get_node("RarityLabel") as Label
+		_check(metadata.get_global_rect().encloses(cost.get_global_rect())
+			and metadata.get_global_rect().encloses(pips.get_global_rect())
+			and (not rarity.visible or metadata.get_global_rect().encloses(rarity.get_global_rect()))
+			and not cost.get_global_rect().intersects(pips.get_global_rect())
+			and pips.size.x >= 108.0,
+			kind + " cost, rarity and six pips share a nonoverlapping row")
+		var art := content.get_node("CardArt") as LiveRunCardRewardChoicePanel._CardIllustration
+		_check(art.size.y >= LiveRunCardRewardChoicePanel.CARD_ART_HEIGHT
+			and art.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+			kind + " card picture gets an inert readable window")
+		var effects := content.get_node("EffectsScroll") as ScrollContainer
+		var rules := effects.get_node("RulesLabel") as Label
+		var offer: Dictionary = panel._receipt["offers"][slot]
+		var definition := RunPoolCardRewardOffers.resolve_reward_definition(offer["id"])
+		_check(not definition.is_empty() and rules.text == CardShortRules.line(definition)
+			and not rules.text.is_empty() and rules.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART,
+			kind + " rules are the complete resolved authored effects")
+		_check(effects.size.y >= 54.0 and rules.size.x <= effects.size.x + 0.5
+			and (rules.size.y <= effects.size.y + 0.5
+				or effects.get_v_scroll_bar().max_value > effects.get_v_scroll_bar().page),
+			kind + " full rules are visible or wheel-scrollable rather than clipped")
+		var button := content.get_node("ChooseButton") as Button
+		_check(button.size.y >= 48.0 and button.text == "%d Choose card" % (slot + 1)
+			and button.get_global_rect().end.y <= rect.end.y
+			and button.is_visible_in_tree() and not button.disabled,
+			kind + " distinct padded Choose remains reachable")
+		if slot == 0:
+			row_positions = [header.global_position.y, art.global_position.y,
+				metadata.global_position.y, effects.global_position.y,
+				button.global_position.y]
+		else:
+			var current := [header.global_position.y, art.global_position.y,
+				metadata.global_position.y, effects.global_position.y,
+				button.global_position.y]
+			for i in range(current.size()):
+				_check(absf(current[i] - row_positions[i]) <= 0.5,
+					kind + " sibling faces align their strips " + str(i))
+	_check(screen.encloses(panel.skip_button.get_global_rect())
+		and panel.skip_button.is_visible_in_tree() and not panel.skip_button.disabled,
+		kind + " Skip remains distinct and reachable under the three faces")
+
+
+## The longest actual authored pool description is an adversarial live card
+## without editing any card definition, changing battle rewards, or forging IDs.
+func _test_verbose_mounted_receipt(fixture: Dictionary, kind: String) -> void:
+	var base: Dictionary = fixture["receipt"]
+	var before := _snapshot(fixture)
+	var verbose_id := ""
+	var verbose_line := ""
+	for card_id: String in _authored_base_ids():
+		var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+		if definition.is_empty():
+			continue
+		var candidate: String = CardShortRules.line(definition)
+		if candidate.length() > verbose_line.length():
+			verbose_id = card_id
+			verbose_line = candidate
+	_check(not verbose_id.is_empty() and verbose_line.length() >= 35,
+		kind + " selects a genuinely verbose authored reward definition")
+	if verbose_id.is_empty():
+		return
+	var receipt: Dictionary = base.duplicate(true)
+	var offered: Array[Dictionary] = []
+	var seen: Dictionary = {}
+	for card_id in [verbose_id] + _authored_base_ids():
+		if offered.size() == 3:
+			break
+		var definition := RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+		if definition.is_empty() or seen.has(card_id):
+			continue
+		seen[card_id] = true
+		offered.append({"id": card_id, "owner": definition["owner"]})
+	_check(offered.size() == 3 and (base["offers"] as Array).size() == 3,
+		kind + " constructed from a prepared receipt and three eligible catalog cards")
+	if offered.size() != 3:
+		return
+	receipt["offers"] = offered
+	requests.clear()
+	var node_id := "verbose_" + kind.to_lower()
+	_check(panel.open_rewards(node_id, kind, receipt),
+		kind + " mounts verbose authenticated catalog offer")
+	if not panel.has_open_rewards():
+		return
+	await _frames()
+	_check_three_face_layout(kind)
+	var card := panel.choices_container.get_child(0) as PanelContainer
+	var content := card.get_node("CardMargin/CardContent") as VBoxContainer
+	var effects := content.get_node("EffectsScroll") as ScrollContainer
+	var rules := effects.get_node("RulesLabel") as Label
+	_check(rules.text == verbose_line and rules.get_visible_line_count() == rules.get_line_count(),
+		kind + " longest real authored sentence is shown in full")
+	# Stress the real mounted label with repeated authored text; this changes
+	# display content only, never a catalog definition or prepared receipt.
+	var extended := verbose_line
+	for repeat_index in range(7):
+		extended += " " + verbose_line
+	var actions_before := panel.get_choice_buttons()
+	var action_bounds: Array[Rect2] = []
+	for action_button in actions_before:
+		action_bounds.append(action_button.get_global_rect())
+	rules.text = extended
+	await _frames()
+	var bar := effects.get_v_scroll_bar()
+	_check(rules.text == extended and rules.get_line_count() >= 4
+		and rules.size.y > effects.size.y and bar.max_value > bar.page,
+		kind + " overflow of genuinely authored rules gets a real vertical scroll range")
+	effects.scroll_vertical = 10000
+	await _frames()
+	_check(effects.scroll_vertical > 0 and effects.scroll_vertical
+		<= int(bar.max_value - bar.page + 1.0),
+		kind + " scroll reaches the final line without clipping the Choose action")
+	for index in range(actions_before.size()):
+		_check(actions_before[index].get_global_rect() == action_bounds[index],
+			kind + " long effects scroll never moves a Choice or Skip target")
+	rules.text = verbose_line
+	effects.scroll_vertical = 0
+	await _frames()
+	_check(rules.text == CardShortRules.line(
+		RunPoolCardRewardOffers.resolve_reward_definition(verbose_id)),
+		kind + " restores exact authored rules after the scroll stress")
+	# Missing optional art is not a missing action, receipt, or rule.
+	var art := content.get_node("CardArt") as LiveRunCardRewardChoicePanel._CardIllustration
+	var installed := art.picture
+	var installed_mode := art.mode
+	art.picture = null
+	art.mode = art.MODE_NONE
+	art.queue_redraw()
+	await _frames()
+	_check(art.is_paper_patch() and art.picture_rect() == Rect2()
+		and rules.text == verbose_line and content.get_node("ChooseButton").is_visible_in_tree()
+		and panel._help_buttons[0].is_visible_in_tree()
+		and panel.skip_button.is_visible_in_tree(),
+		kind + " absent optional art preserves Details, Choose and Skip")
+	art.picture = installed
+	art.mode = installed_mode
+	art.queue_redraw()
+	var actions := panel.get_choice_buttons()
+	_check(actions.size() == 4, kind + " verbose panel keeps four input targets")
+	if actions.size() != 4:
+		panel.close_rewards()
+		return
+	await _mouse(actions[0])
+	_check(requests == [{"node": node_id, "card": verbose_id}],
+		kind + " mouse requests the actual verbose card exactly once")
+	panel.acknowledge(false)
+	actions[1].grab_focus()
+	await _frames()
+	await _key(KEY_ENTER)
+	_check(requests.size() == 2 and requests[1]
+		== {"node": node_id, "card": offered[1]["id"]},
+		kind + " keyboard selects the second authored card exactly once")
+	panel.acknowledge(false)
+	actions[3].grab_focus()
+	await _frames()
+	await _key(KEY_SPACE)
+	_check(requests.size() == 3 and requests[2] == {"node": node_id, "card": ""},
+		kind + " keyboard Skip emits one empty card ID")
+	panel.acknowledge(true)
+	_check(_snapshot(fixture) == before and base == fixture["receipt"],
+		kind + " preview/choices/Skip never spend gold, alter deck or advance RNG")
+	panel.close_rewards()
+	await _frames()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var loaded := load(SCENE) as PackedScene
@@ -3596,6 +3815,8 @@ func _run() -> void:
 	var original_fight: Dictionary = fight["receipt"].duplicate(true)
 	var original_elite: Dictionary = elite["receipt"].duplicate(true)
 	await _test_camp_motion(fight, elite)
+	await _test_verbose_mounted_receipt(fight, "Fight")
+	await _test_verbose_mounted_receipt(elite, "Elite")
 	await _exercise(fight, "Fight", 0)
 	await _exercise(elite, "Elite", 1)
 	await _test_all_catalog_rules(original_fight)

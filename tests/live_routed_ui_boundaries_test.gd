@@ -204,7 +204,7 @@ func _complete_node(kind: String, mode: int, step: int) -> void:
 			for index in range(3):
 				var button: Button = panel.get_choice_buttons()[index]
 				var def: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(receipt.offers[index].id)
-				_check(button.get_parent().get_node("NameLabel").text == def.get("display_name", "") and button.get_parent().get_node("RarityLabel").text == def.get("rarity", "").capitalize()
+				_check(button.get_parent().get_node("NameLabel").text == def.get("display_name", "") and button.get_parent().get_node("MetadataRow/RarityLabel").text == def.get("rarity", "").capitalize()
 					and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect()), "prepared card is visible inside viewport")
 			var gold: int = app.session_gold
 			var scraps: int = app.run_scraps
