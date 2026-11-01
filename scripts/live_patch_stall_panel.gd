@@ -14,6 +14,18 @@ const OXBLOOD := Color("#713544")
 const INK := Color("#191b2a")
 const DIM := Color("#b6a9a2")
 const PANEL_SIZE := Vector2(900, 630)
+## VIS V5/V3-3: the authored sewn backdrop's gentle idle loop. One 18-second
+## period of accumulated presentation delta only - an eased 0%-to-1% scale
+## breath plus at most 3 physical px of horizontal/vertical drift - is exactly
+## at rest at phase zero and at every completed loop. No timer, no RNG, no wall
+## clock; the offers, prices, wearer choices and the panel root never move.
+const BACKDROP_LOOP := 18.0
+const BACKDROP_BREATH := 0.01
+const BACKDROP_DRIFT := Vector2(3.0, 3.0)
+## The moving decorative backing is oversized by this margin around the fixed
+## 900x630 window, so its breath and drift always keep the backdrop fully
+## covered; the panel clips the small spill outside its own rect.
+const BACKDROP_OVERSCAN := 10.0
 const DETAILS_UNAVAILABLE := "Power details unavailable"
 # Canonical Leave caption for construction, refresh and authentication: the
 # physical/keypad 0 alias must be visible on the honest button itself.
@@ -93,6 +105,14 @@ var offer_buttons: Array[Button] = []
 var leave_button: Button
 ## One authored-image layer, owned by the live view; never an input surface.
 var ambient_layer: Control
+## The authored panel image; when it is missing or unloadable the solid sewn
+## StyleBoxFlat fallback stays and no backdrop motion is installed at all.
+var panel_art_texture: Texture2D
+## The one node this view ever transforms: its oversized decorative backing.
+## Every stop path restores its exact static baseline transform.
+var _backdrop: Panel
+var _backdrop_base := Vector2.ONE * -BACKDROP_OVERSCAN
+var _backdrop_elapsed := 0.0
 ## Injectable before mounting to exercise the existing optional-art fallback.
 var panel_art_path := PANEL_ART
 ## null follows ProjectSettings; true/false overrides it for accessibility and tests.
@@ -116,17 +136,31 @@ func _ready() -> void:
 	size = PANEL_SIZE
 	custom_minimum_size = PANEL_SIZE
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	# The gently moving backing paints a small overscan margin around this
+	# window; clipping it keeps any image edge or seam from ever showing.
+	clip_contents = true
+	if panel_art_texture == null:
+		panel_art_texture = _load_panel_art()
 	var backing := Panel.new()
 	backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	backing.clip_contents = true
 	add_child(backing)
-	backing.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# Overscanned decorative rect: the breathing, drifting backing always
+	# covers the whole fixed 900x630 window, while the ambient layer and the
+	# sewn border keep their checked child order framed at the panel window.
+	backing.position = _backdrop_base
+	backing.size = PANEL_SIZE + Vector2.ONE * (BACKDROP_OVERSCAN * 2.0)
 	backing.add_theme_stylebox_override("panel", _panel_style())
+	_backdrop = backing
 	ambient_layer = AMBIENT_SCENE.new()
 	backing.add_child(ambient_layer)
-	ambient_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ambient_layer.position = Vector2.ONE * BACKDROP_OVERSCAN
+	ambient_layer.size = PANEL_SIZE
 	ambient_layer.retire()
-	backing.add_child(SewnBorder.new())
+	var border := SewnBorder.new()
+	backing.add_child(border)
+	border.position = Vector2.ONE * BACKDROP_OVERSCAN
+	border.size = PANEL_SIZE
 	title_label = _label("PATCH STALL    ✕    sewn power patches", Vector2(40, 24), Vector2(820, 48), 32, GOLD)
 	wallet_label = _label("", Vector2(43, 76), Vector2(808, 36), 25, CREAM)
 	wearer_label = _label(WEARER_WARNING, Vector2(43, 128), Vector2(760, 31), 22, GOLD)
@@ -148,12 +182,16 @@ func _ready() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_EXIT_TREE:
 		_retire_ambient()
+		_reset_backdrop_motion()
 	elif what == NOTIFICATION_VISIBILITY_CHANGED or what == NOTIFICATION_ENTER_TREE:
 		if is_node_ready():
 			_sync_ambient()
+			if not is_visible_in_tree():
+				_reset_backdrop_motion()
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	_sync_ambient()
+	_advance_backdrop(delta)
 
 func _reduced_motion() -> bool:
 	if reduced_motion_override != null:
@@ -173,6 +211,82 @@ func _sync_ambient() -> void:
 		return
 	if ambient_layer.profile != "scraps" or not ambient_layer._visit_dressing or not ambient_layer.visible:
 		ambient_layer.configure_visit_scraps()
+
+## Pure deterministic backdrop transform at an accumulated presentation time:
+## an eased 0%-to-1% scale breath plus at most 3 physical px of drift per axis,
+## exactly at rest at phase zero and at every completed 18-second loop.
+static func backdrop_motion_at(elapsed: float) -> Dictionary:
+	var phase := fposmod(elapsed, BACKDROP_LOOP)
+	var breath := 0.5 - 0.5 * cos(TAU * phase / BACKDROP_LOOP)
+	var clock := TAU * phase / BACKDROP_LOOP
+	return {
+		"scale": 1.0 + BACKDROP_BREATH * breath,
+		"offset": Vector2(sin(clock), sin(2.0 * clock)) * BACKDROP_DRIFT,
+	}
+
+
+## The backdrop moves only on a mounted, visible, source-current open visit
+## with the authored image loaded and reduced motion not requested - the same
+## gate as the ambient renderer. It never quotes, spends, mutates the visit or
+## draws randomness.
+func backdrop_motion_active() -> bool:
+	if panel_art_texture == null or not is_instance_valid(_backdrop):
+		return false
+	if not is_inside_tree() or not is_visible_in_tree() or _reduced_motion():
+		return false
+	return _source_current()
+
+
+## Current decorative transform relative to the static baseline: the exact
+## baseline whenever motion is stopped, otherwise the 18-second loop at the
+## accumulated presentation time.
+func backdrop_motion_transform() -> Dictionary:
+	if not backdrop_motion_active():
+		return {"scale": 1.0, "offset": Vector2.ZERO}
+	return backdrop_motion_at(_backdrop_elapsed)
+
+
+## Loop-phase query and deterministic presentation-time advance seam for
+## focused headless tests; live play accumulates the very same clock through
+## _process with the engine's presentation delta, never a timer or wall clock.
+func backdrop_motion_elapsed() -> float:
+	return _backdrop_elapsed
+
+
+func advance_backdrop_motion(delta: float) -> void:
+	_advance_backdrop(delta)
+
+
+func _advance_backdrop(delta: float) -> void:
+	if not backdrop_motion_active():
+		_reset_backdrop_motion()
+		return
+	if delta > 0.0:
+		_backdrop_elapsed += delta
+		_apply_backdrop_motion()
+
+
+## Every stop path - rebind or close, hide, exit-tree, reduced motion, invalid,
+## stale or consumed visit, missing authored art - restores the exact static
+## baseline transform and clock.
+func _reset_backdrop_motion() -> void:
+	if _backdrop_elapsed == 0.0:
+		return
+	_backdrop_elapsed = 0.0
+	if is_instance_valid(_backdrop):
+		_backdrop.pivot_offset = _backdrop.size * 0.5
+		_backdrop.scale = Vector2.ONE
+		_backdrop.position = _backdrop_base
+
+
+func _apply_backdrop_motion() -> void:
+	if not is_instance_valid(_backdrop):
+		return
+	var motion := backdrop_motion_at(_backdrop_elapsed)
+	var offset: Vector2 = motion["offset"]
+	_backdrop.pivot_offset = _backdrop.size * 0.5
+	_backdrop.scale = Vector2.ONE * float(motion["scale"])
+	_backdrop.position = _backdrop_base + offset
 
 ## The physical number keys are an alias for the four mounted Buttons: a valid
 ## press only forwards to that Button's own `pressed` signal, so keyboard,
@@ -218,15 +332,23 @@ func _input(event: InputEvent) -> void:
 	button.pressed.emit()
 
 func _panel_style() -> StyleBox:
-	if ResourceLoader.exists(panel_art_path, "Texture2D"):
-		var texture := ResourceLoader.load(panel_art_path) as Texture2D
-		if texture != null:
-			var style := StyleBoxTexture.new()
-			style.texture = texture
-			style.modulate_color = Color("#635264")
-			style.set_texture_margin_all(24)
-			return style
+	if panel_art_texture != null:
+		var style := StyleBoxTexture.new()
+		style.texture = panel_art_texture
+		style.modulate_color = Color("#635264")
+		style.set_texture_margin_all(24)
+		return style
 	return _style(PLUM, THREAD, 5)
+
+
+## The optional authored panel image. Missing or unloadable art stays null, the
+## panel keeps its solid sewn fallback and no backdrop motion is installed.
+## ResourceLoader follows the PNG's .import remap to its imported texture, so
+## FileAccess must never gate this load.
+func _load_panel_art() -> Texture2D:
+	if not ResourceLoader.exists(panel_art_path, "Texture2D"):
+		return null
+	return ResourceLoader.load(panel_art_path, "Texture2D") as Texture2D
 
 func _style(fill: Color, edge: Color, width: int = 3) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
@@ -279,6 +401,7 @@ func _button(value: String, at: Vector2, extent: Vector2, fill: Color, font_size
 ## or identities can be supplied separately by the caller.
 func bind(visit: RunPatchStallVisit) -> void:
 	_retire_ambient()
+	_reset_backdrop_motion()
 	_epoch += 1
 	_retire_callbacks()
 	_visit = null
@@ -582,6 +705,7 @@ func _request_leave(epoch: int, source: RunPatchStallVisit) -> void:
 func _submit(intent: Dictionary) -> void:
 	_submitted = true
 	_retire_ambient()
+	_reset_backdrop_motion()
 	for button in wearer_buttons + offer_buttons + [leave_button]:
 		button.disabled = true
 	_retire_callbacks()
