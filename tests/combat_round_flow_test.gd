@@ -13,6 +13,8 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	_test_four_weighted_rounds()
+	_test_four_weighted_atomic_refusals()
 	_test_special_round_atomicity()
 	_test_lazy_coordinator_variants()
 	_test_lazy_coordinator_combo()
@@ -1978,3 +1980,233 @@ func _test_taunt_phase_boundaries() -> void:
 			_check(flow.end_turn() and party.get_hero(3).hp == 14
 				and party.get_hero(1).hp == 37,
 				"next completed turn preserves original third-seat attack after Taunt expiry")
+
+
+# Four distinct shipped weighted sources, bound to the same seeded generator
+# that shuffles the genuine player deck. No fabricated enemy attacks are used.
+func _four_catalog_records() -> Array:
+	var catalog := _load_json(ENEMIES_PATH)
+	catalog.append_array(_load_json("res://data/enemies/v3_tough_normals.json"))
+	var selected: Array = []
+	for required_id in ["ragling", "ragling_guard", "spindle_ram", "razor_ribbon_wraith"]:
+		var matches := catalog.filter(func(e): return e.get("id") == required_id)
+		_check(matches.size() == 1, "AC1: authored source present exactly once: " + required_id)
+		if matches.size() == 1:
+			selected.append(matches[0])
+	return selected
+
+
+func _four_weighted_fight(seed_value: int, held: Array[String] = []) -> Dictionary:
+	var authored := _four_catalog_records()
+	_check(authored.size() == 4,
+		"AC1: four distinct authentic enemy records selected from both catalogs")
+	var enemies := CombatEnemies.new(authored, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	var party := CombatParty.new(_load_json(HEROES_PATH))
+	var cards := StarterCards.new().get_starting_deck() if held.is_empty() else held.duplicate()
+	var rng := _rng(seed_value)
+	var deck := CombatDeck.new(cards, rng)
+	var entries: Array = []
+	for position in range(1, 5):
+		entries.append({"enemy_position": position,
+			"pattern": [{"type": "block", "amount": 1}]})
+	var intents := CombatEnemyIntents.new(entries)
+	var bound := intents.bind_battle(enemies, party, rng)
+	var result := CombatBattleResult.new(party, enemies)
+	var flow := CombatRoundFlow.new(deck, party, enemies, intents, result)
+	_check(enemies.is_valid() and enemies.get_capacity() == 4
+		and enemies.get_enemies().size() == 4 and party.is_valid()
+		and bound and intents.is_bound() and intents.get_intents().size() == 4
+		and intents.get_intents().map(func(a): return a.enemy_position) == [1, 2, 3, 4]
+		and result.can_continue() and deck.hand.is_empty(),
+		"AC1: authentic four-source weighted intents bind the real seeded party/deck before opening")
+	return {"deck": deck, "rng": rng, "party": party, "enemies": enemies,
+		"intents": intents, "result": result, "flow": flow, "cards": cards}
+
+
+# An independently executed phase and owner status ticks are the comparison
+# oracle. For Taunt, project one source at a time on detached intermediate
+# actors, exactly as a shove/charge/earlier hit requires.
+func _four_phase_oracle(fight: Dictionary) -> Dictionary:
+	var flow: CombatRoundFlow = fight.flow
+	var owner := CombatStatusTurnBatch.new().tick_side("heroes", fight.party.get_heroes())
+	_check(owner.ok, "AC1: real hero owner tick can be staged")
+	var plan: Dictionary = flow._turrets_are_executable()
+	_check(plan.get("ok", false) and plan.get("roster", []).size() == 4
+		and not plan.get("victorious", true),
+		"AC2: detached turret preflight retains all four enemies: " + str(plan))
+	if not plan.get("ok", false) or not plan.has("roster"):
+		return {"ok": false}
+	var party := CombatParty.new(owner.actors)
+	party._heroes.assign(owner.actors.duplicate(true))
+	var enemies := CombatEnemies.new(plan.roster, 4)
+	enemies._enemies.assign(plan.roster.duplicate(true))
+	var announced: Array = fight.intents.get_intents()
+	var actions: Array = announced.duplicate(true)
+	if flow._taunt_service.has_pending_taunt():
+		var projected: Array = []
+		for action in announced:
+			var resolved: Dictionary = CombatEnemyIntents.resolve_announced_action(party, action, enemies)
+			var beat: Dictionary = action
+			if action.type == "attack":
+				var proposal := flow._taunt_service.project_enemy_action(party, resolved)
+				_check(proposal.ok, "AC2: Warden Taunt projects a real authored weighted attack")
+				if not proposal.ok:
+					return {"ok": false}
+				beat = proposal.action
+			projected.append(beat)
+			var step := CombatEnemyPhase.new().execute_phase(party, enemies,
+				[beat], null, true)
+			_check(step.ok, "AC2: each Taunt-projected source is independently executable")
+			if not step.ok:
+				return {"ok": false}
+		actions = projected
+		party = CombatParty.new(owner.actors)
+		party._heroes.assign(owner.actors.duplicate(true))
+		enemies = CombatEnemies.new(plan.roster, 4)
+		enemies._enemies.assign(plan.roster.duplicate(true))
+	var phase := CombatEnemyPhase.new().execute_phase(party, enemies, actions, null, true)
+	var tick := CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies(), 4)
+	_check(phase.ok and tick.ok and phase.events.size() == 4
+		and phase.events.map(func(e): return e.enemy_position) == [1, 2, 3, 4],
+		"AC1: real weighted sources 1-4 independently resolve in their original order")
+	if not phase.ok or not tick.ok:
+		return {"ok": false}
+	var expected_enemies: Array = enemies.get_enemies()
+	for i in range(4):
+		expected_enemies[i]["hp"] = tick.actors[i].hp
+		expected_enemies[i]["block"] = tick.actors[i].block
+		expected_enemies[i]["statuses"] = tick.actors[i].statuses
+	party.start_player_turn()
+	return {"ok": true, "heroes": party.get_heroes(), "enemies": expected_enemies,
+		"actions": actions, "plan": plan}
+
+
+# Cover all four owner ticks, the independently resolved phase, paid one-turn
+# Taunt and genuine paid turret shots; repeat exact seeded models/hand/RNG.
+func _test_four_weighted_rounds() -> void:
+	for mode in ["plain", "taunt", "turret"]:
+		var replay: Array = []
+		for session in range(2):
+			var chosen: Array[String] = []
+			if mode == "taunt":
+				chosen.assign(["warden_v3_iron_challenge", "warden_strike",
+					"seamstress_prick", "tinker_pop_shot", "warden_brace"])
+			elif mode == "turret":
+				chosen.assign(["tinker_v3_wind_up_turret", "warden_strike",
+					"seamstress_prick", "tinker_pop_shot", "warden_brace"])
+			var fight := _four_weighted_fight(42310, chosen)
+			var flow: CombatRoundFlow = fight.flow
+			var deck: CombatDeck = fight.deck
+			_check(flow.begin_fight() and deck.turn_active and deck.hand.size() == 5,
+				"AC1: four-source roster opens a genuine seeded CombatRoundFlow turn")
+			if mode == "taunt":
+				_check(deck.hand.has("warden_v3_iron_challenge")
+					and flow.can_play_warden_taunt_card("warden_v3_iron_challenge")
+					and flow.play_warden_taunt_card("warden_v3_iron_challenge")
+					and flow._taunt_service.has_pending_taunt(),
+					"AC2: real held, paid Warden Taunt arms this admitted fight")
+			elif mode == "turret":
+				var service := CombatTinkerV3TurretCards.new()
+				_check(deck.hand.has("tinker_v3_wind_up_turret"), "AC2: genuine turret is held")
+				var paid := service.play_card(deck, fight.party, "tinker_v3_wind_up_turret")
+				_check(paid.ok and flow.register_turret(paid.state)
+					and flow.get_turrets().size() == 1,
+					"AC2: real paid turret is registered with the admitted round owner")
+			var fourth: Dictionary = fight.enemies._enemies[3]
+			fourth["statuses"] = {"bleed": 2, "weak": 2}
+			fourth["source_metadata"] = {"original_slot": 4}
+			var before := _snapshot(fight)
+			var latch := flow._taunt_service.has_pending_taunt()
+			var turrets := flow.get_turrets()
+			var oracle := _four_phase_oracle(fight)
+			_check(oracle.get("ok", false), "AC1/AC2: four-source oracle is nonvacuous")
+			if not oracle.get("ok", false):
+				continue
+			# The live commit retains missing status keys on untouched source records;
+			# an independent status proposal exposes equivalent empty dictionaries.
+			for i in range(CombatParty.PARTY_SIZE):
+				if not before[0][i].has("statuses") and oracle.heroes[i].get("statuses", {}).is_empty():
+					oracle.heroes[i].erase("statuses")
+			for i in range(4):
+				if not before[1][i].has("statuses") and oracle.enemies[i].get("statuses", {}).is_empty():
+					oracle.enemies[i].erase("statuses")
+			var staged := CombatStatusTurnBatch.new().tick_side("heroes", fight.party.get_heroes())
+			_check(flow._phase_is_executable(staged.actors, oracle.actions, oracle.plan.roster)
+				and before == _snapshot(fight) and latch == flow._taunt_service.has_pending_taunt()
+				and turrets == flow.get_turrets(),
+				"AC2: detached four-capacity phase/turret/Taunt preflight is read-only")
+			_check(flow.end_turn(), "AC1: complete four-source End Turn is accepted")
+			_check(fight.party.get_heroes() == oracle.heroes
+				and fight.enemies.get_enemies() == oracle.enemies,
+				"AC1/AC2: authoritative hero/enemy commits match independently staged four-source phase")
+			_check(is_same(fourth, fight.enemies._enemies[3])
+				and fourth.get("source_metadata") == {"original_slot": 4}
+				and fourth.statuses == {"bleed": 1, "weak": 1}
+				and fourth.hp == oracle.enemies[3].hp
+				and fight.intents._turn_index == 1 and fight.intents.get_intents().size() == 4
+				and deck.turn_active and deck.hand.size() == 5,
+				"AC1: source 4 ticks once in place; next weighted turn and shared hand are ready")
+			_check(not flow._taunt_service.has_pending_taunt()
+				and (flow.get_turrets().size() == 1
+					and flow.get_turrets()[0].remaining == 2 if mode == "turret" else true),
+				"AC2: accepted phase consumes Taunt; real turret advances exactly once")
+			_conserved(fight)
+			replay.append([before, _snapshot(fight), flow.get_turrets()])
+		_check(replay.size() == 2 and replay[0] == replay[1],
+			"AC1/AC2: seeded " + mode + " four-source announcements, actors, next hand and RNG replay exactly")
+
+
+# Invalid capacity and fourth-source announcements are refused before any
+# hand, RNG, result, pending Taunt or turret may be consumed.
+func _test_four_weighted_atomic_refusals() -> void:
+	var default_enemies := CombatEnemies.new(_four_catalog_records())
+	var rng := _rng(42312)
+	var cards := StarterCards.new().get_starting_deck()
+	var deck := CombatDeck.new(cards, rng)
+	var party := CombatParty.new(_load_json(HEROES_PATH))
+	var definitions: Array = []
+	for pos in range(1, 5):
+		definitions.append({"enemy_position": pos,
+			"pattern": [{"type": "block", "amount": 1}]})
+	var intents := CombatEnemyIntents.new(definitions)
+	var result := CombatBattleResult.new(party, default_enemies)
+	var flow := CombatRoundFlow.new(deck, party, default_enemies, intents, result)
+	var pre := [party.get_heroes(), default_enemies.get_enemies(), _deck_snapshot(deck),
+		intents.get_intents(), intents._turn_index, result.get_outcome(),
+		flow._started, flow._opening_block._consumed]
+	_check(not default_enemies.is_valid() and default_enemies.get_capacity() == 3
+		and default_enemies.get_enemies().is_empty() and not intents.bind_battle(default_enemies, party, rng)
+		and not flow.begin_fight() and not flow.end_turn()
+		and pre == [party.get_heroes(), default_enemies.get_enemies(), _deck_snapshot(deck),
+			intents.get_intents(), intents._turn_index, result.get_outcome(),
+			flow._started, flow._opening_block._consumed],
+		"AC3: four authored sources refuse in default three-capacity without deck, actor, latch or RNG changes")
+	for mode in ["plain", "taunt", "turret"]:
+		var held: Array[String] = []
+		if mode == "taunt":
+			held.assign(["warden_v3_iron_challenge", "warden_strike", "seamstress_prick",
+				"tinker_pop_shot", "warden_brace"])
+		elif mode == "turret":
+			held.assign(["tinker_v3_wind_up_turret", "warden_strike", "seamstress_prick",
+				"tinker_pop_shot", "warden_brace"])
+		var fight := _four_weighted_fight(42314, held)
+		_check(fight.flow.begin_fight(), "AC3: refusal fixture is a begun four-source round")
+		if mode == "taunt":
+			_check(fight.flow.play_warden_taunt_card("warden_v3_iron_challenge"),
+				"AC3: malformed-source refusal holds a paid Taunt")
+		if mode == "turret":
+			var paid := CombatTinkerV3TurretCards.new().play_card(fight.deck, fight.party,
+				"tinker_v3_wind_up_turret")
+			_check(paid.ok and fight.flow.register_turret(paid.state),
+				"AC3: malformed-source refusal holds a paid turret")
+		fight.intents._cache[3]["enemy_position"] = 5
+		var before := [_snapshot(fight), fight.intents._cache.duplicate(true),
+			fight.flow.get_turrets(), fight.flow._taunt_service.has_pending_taunt(),
+			fight.intents._turn_index, fight.rng.state]
+		_check(fight.intents.get_intents().size() == 4
+			and fight.intents.get_intents()[3].enemy_position == 5
+			and not fight.flow.end_turn()
+			and before == [_snapshot(fight), fight.intents._cache.duplicate(true),
+				fight.flow.get_turrets(), fight.flow._taunt_service.has_pending_taunt(),
+				fight.intents._turn_index, fight.rng.state],
+			"AC3: malformed fourth weighted announcement refuses atomically with " + mode + " pending")

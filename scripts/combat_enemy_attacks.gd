@@ -7,8 +7,10 @@ extends RefCounted
 const DODGE_STATUS_KEY := "dodge_next_attack"
 
 
-func execute_attacks(party: CombatParty, attacks: Array) -> Dictionary:
-	if party == null or not party.is_valid():
+func execute_attacks(party: CombatParty, attacks: Array,
+		enemy_capacity: int = CombatEnemies.MAX_ENEMIES) -> Dictionary:
+	if party == null or not party.is_valid() or enemy_capacity not in [
+			CombatEnemies.MAX_ENEMIES, CombatEnemies.OPT_IN_MAX_ENEMIES]:
 		return {"ok": false, "events": []}
 	var sources: Array[int] = []
 	for attack in attacks:
@@ -17,7 +19,7 @@ func execute_attacks(party: CombatParty, attacks: Array) -> Dictionary:
 		var source = attack.get("enemy_position")
 		var target = attack.get("target_position")
 		var amount = attack.get("amount")
-		if not source is int or source < 1 or source > 3 or source in sources:
+		if not source is int or source < 1 or source > enemy_capacity or source in sources:
 			return {"ok": false, "events": []}
 		if not target is int or target < 1 or target > CombatParty.PARTY_SIZE:
 			return {"ok": false, "events": []}
