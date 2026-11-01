@@ -238,6 +238,7 @@ func _run() -> void:
 			_assert_preview(id)
 			_check(_snapshot() == before, "rebuild and stale callback preserve rules state")
 			await _return()
+	await _blind_mounted_attack()
 	await _needle_mount_cases()
 	await _monk_mount_cases()
 	await _combo_route_case()
@@ -2725,3 +2726,62 @@ func _monk_mount_cases() -> void:
 		_check(_monk_state() == before and app.deck.discard_pile.is_empty(),
 			"stale/illegal Monk callback leaves complete battle and RNG unchanged: " + scenario)
 		await _return()
+
+
+func _blind_mounted_attack() -> void:
+	var id := "warden_strike"
+	if not await _start(_seed_for(id)):
+		return
+	_check(app.party.get_hero(1).id == "warden" and app.party.get_hero(1).hp > 0
+		and not app.enemies.is_slain(1) and app.deck.hand.has(id),
+		"Blind mounted preconditions: living Warden, enemy and genuine held Strike")
+	app.deck.hand.assign([id, "warden_brace", id])
+	app.deck.combat_state.energy = 3
+	app._refresh_hand()
+	await _frames()
+	app.party._heroes[0]["statuses"] = {"blind_next_attack": 1}
+	var enemy_before: Array[Dictionary] = app.enemies.get_enemies()
+	var rng_before: int = app.run_rng.state
+	var party_before: Array[Dictionary] = app.party.get_heroes()
+	var pinned_before: Dictionary = presenter._pinned._pinner_by_position.duplicate(true)
+	var tinker_before = presenter._play._tinker._consumed
+	# A nonattack card is still physically playable, not a token consumer.
+	var brace = _panel("warden_brace")
+	_check(brace != null and brace.gui_input.get_connections().size() == 1,
+		"mounted nonattack Brace remains bound under Blind")
+	if brace != null:
+		await _click(brace)
+	_check(app.party.get_hero(1).statuses.get("blind_next_attack") == 1
+		and app.party.get_hero(1).block > party_before[0].block
+		and app.deck.energy == 2 and app.deck.hand.has(id),
+		"actual nonattack spends normally, leaves Blind token intact")
+	# Choosing an unsupported enemy slot must not pay or consume.
+	await _choose(id, true)
+	var before := _snapshot()
+	await _key(KEY_3)
+	_check(_snapshot() == before and app.party.get_hero(1).statuses.get("blind_next_attack") == 1,
+		"real rejected keyboard target has zero payment and preserves Blind")
+	await _choose(id, true)
+	await _key(KEY_1)
+	_check(presenter.last_event.get("ok") == true and presenter.last_event.get("miss") == true
+		and presenter.last_event.get("hits") == []
+		and presenter.last_event.get("damage") == 0,
+		"actual mounted held Strike resolves one paid miss, not an attack hit")
+	_check(app.deck.energy == 1 and app.deck.hand.count(id) == 1
+		and app.deck.discard_pile.count(id) == 1,
+		"one energy and precisely one of two real held copies paid")
+	_check(app.party.get_hero(1).get("statuses", {}).get("blind_next_attack", 0) == 0
+		and app.enemies.get_enemies() == enemy_before
+		and app.run_rng.state == rng_before
+		and presenter._pinned._pinner_by_position == pinned_before
+		and presenter._play._tinker._consumed == tinker_before,
+		"paid miss changes no enemy HP/status, seeded RNG or confirmed-hit bonuses")
+	# With the one-shot consumed, the next legal held attack truly lands.
+	await _choose(id, true)
+	await _key(KEY_1)
+	_check(presenter.last_event.get("ok") == true
+		and not presenter.last_event.get("miss", false)
+		and not presenter.last_event.get("hits", []).is_empty()
+		and app.enemies.get_enemy(1).hp < enemy_before[0].hp,
+		"next ordinary attack hits normally after precisely one Blind miss")
+	await _return()

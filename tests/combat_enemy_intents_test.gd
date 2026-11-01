@@ -22,6 +22,7 @@ func _initialize() -> void:
 	_test_weighted_announcement_reads_and_rerolls()
 	_test_weighted_dead_slots_and_legacy_isolation()
 	_test_weighted_rejections()
+	_test_inkbrush_blind_schema()
 	_test_behemoth_phase_transition_cache()
 	_test_behemoth_phase_fail_closed()
 	_test_termite_split_admission()
@@ -1642,3 +1643,40 @@ func _test_ram_charge_seeded_cache() -> void:
 			party.get_heroes()])
 	_check(traces.size() == 2 and traces[0] == traces[1],
 		"AC2: fresh same-seed fights replay complete charge and actor/RNG history")
+
+
+func _test_inkbrush_blind_schema() -> void:
+	var catalog := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var imp: Dictionary = {}
+	for record in catalog:
+		if record.get("id") == "inkbrush_imp":
+			imp = record
+	_check(not imp.is_empty() and imp.get("max_hp") == 23
+		and imp.get("intent", {}).get("target") == "lowest_living_hp",
+		"real Inkbrush Imp retains 23 HP and lowest living HP targeting")
+	if imp.is_empty():
+		return
+	var slot := CombatEnemyIntents._weighted_slot(1, imp.intent)
+	_check(not slot.is_empty() and slot.actions.size() == 3,
+		"real Imp binds all three authored choices")
+	var options: Array = []
+	for item in slot.get("actions", []):
+		options.append({"action": item.action, "weight": item.weight})
+	_check(options == [
+		{"action": {"type": "debuff", "amount": 2, "status": "exposed"}, "weight": 2},
+		{"action": {"type": "attack", "amount": 6}, "weight": 3},
+		{"action": {"type": "debuff", "amount": 1, "status": "blind_next_attack"}, "weight": 2}],
+		"Imp preserves original Exposed/attack alternatives and exact Blind 1/2")
+	var legal := {"type": "debuff", "amount": 1,
+		"status": "blind_next_attack", "target_position": 3}
+	_check(CombatEnemyIntents.valid_action(legal), "canonical Blind 1 announcement accepted")
+	for amount in [0, 2, -1, true, 1.0, "1"]:
+		var bad := legal.duplicate(true)
+		bad["amount"] = amount
+		_check(not CombatEnemyIntents.valid_action(bad),
+			"Blind noncanonical amount rejected: " + str(amount))
+	for status in ["blind", "blind_next_attack_extra", "weak_next_attack"]:
+		var bad := legal.duplicate(true)
+		bad["status"] = status
+		_check(not CombatEnemyIntents.valid_action(bad), "unknown blind-like token rejected")

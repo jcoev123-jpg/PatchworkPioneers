@@ -462,7 +462,7 @@ func compact_caption_forms() -> Array[String]:
 				forms.append("Hit %d → %d" % [amount, target_position])
 				forms.append("Hit %d→%d" % [amount, target_position])
 		"debuff":
-			var label := action_status.capitalize()
+			var label := "Blind" if action_status == "blind_next_attack" else action_status.capitalize()
 			forms.append("%s %d → %d" % [label, amount, target_position])
 			forms.append("%s %d→%d" % [label, amount, target_position])
 		"shove":
@@ -708,7 +708,10 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 			# The three authored debuffs explain their own rule in full: the affected hero,
 			# the amount, the turn duration, Bleed's Block bypass and the rounded damage of
 			# Weak and Exposed. Only attack damage and the Bleed tick are described here.
-			if status_name == "bleed":
+			if status_name == "blind_next_attack":
+				readable_text = "Blind 1: %s" % rank_caption(target_position)
+				tip = "Blind 1 to %s — that hero\'s next attempted attack misses once. The token is consumed only by a legal paid attack, not by a preview or a nonattack card." % hero_target_label(target_position)
+			elif status_name == "bleed":
 				tip = "Bleed %d to %s — that hero loses %d HP at its turn end, ignoring Block; Bleed then decreases by 1 (from %d to %d)." % [
 					amount, hero_target_label(target_position), amount, amount, maxi(0, amount - 1)]
 			elif status_name == "weak":

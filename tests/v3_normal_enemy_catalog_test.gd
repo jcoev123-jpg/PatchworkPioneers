@@ -17,6 +17,7 @@ func _initialize() -> void:
 	_test_harder_normal_catalog_records()
 	_test_harder_normal_seeded_announcements()
 	_test_harder_normal_phase_actions()
+	_test_imp_authored_blind_paid_miss()
 	_test_hound_enrage()
 	_test_needle_wasp_bleeding_sting()
 	_test_moth_swarm_block_chew_catalog()
@@ -960,7 +961,8 @@ func _harder_expected() -> Dictionary:
 			"max_hp": 23, "art_path": "res://assets/paper/enemies/inkbrush_imp.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
 				{"type": "debuff", "amount": 2, "status": "exposed", "weight": 2},
-				{"type": "attack", "amount": 6, "weight": 3}]}}
+				{"type": "attack", "amount": 6, "weight": 3},
+				{"type": "debuff", "amount": 1, "status": "blind_next_attack", "weight": 2}]}}
 	}
 
 ## The canonical authored two-hit marker, either as JSON delivers it (an integral
@@ -1060,6 +1062,11 @@ func _test_harder_normal_catalog_records() -> void:
 	var imp := _find(parsed, "inkbrush_imp")
 	_check(_has_alternative(imp, "debuff", 2, "exposed") and _has_alternative(imp, "attack", 6),
 		"Inkbrush Imp marks Exposed 2 or hits for 6")
+	_check(_has_alternative(imp, "debuff", 1, "blind_next_attack")
+		and imp.intent.actions[2].get("weight") == 2
+		and imp.intent.actions[0].get("weight") == 2
+		and imp.intent.actions[1].get("weight") == 3,
+		"Inkbrush Imp keeps Exposed 2/2, Attack 6/3 and Blind 1/2 exactly")
 	_check(imp.get("intent", {}).get("target") == "lowest_living_hp",
 		"Inkbrush Imp marks the lowest-living hero")
 
@@ -1145,7 +1152,8 @@ func _test_harder_normal_seeded_announcements() -> void:
 		var slot := CombatEnemyIntents._weighted_slot(1, spec)
 		_check(not slot.is_empty(), "authored harder slot validates: " + id)
 		var actions: Array = slot.get("actions", [])
-		_check(actions.size() == 2, "authored harder slot keeps both alternatives: " + id)
+		_check(actions.size() == (3 if id == "inkbrush_imp" else 2),
+			"authored harder slot keeps all required alternatives: " + id)
 		for entry in actions:
 			_check(int(entry.get("weight", 0)) > 0,
 				"authored harder alternative has a positive weight: " + id)
@@ -4464,3 +4472,71 @@ func _test_bobbin_bat_quilt_termite_live_bands() -> void:
 			and selected.get("block") == 0,
 			"AC4: the selected slot keeps its authored full HP and zero Block: " + enemy_id)
 
+
+
+func _test_imp_authored_blind_paid_miss() -> void:
+	var imp := _find(_load_parsed(), "inkbrush_imp")
+	_check(not imp.is_empty() and imp.intent.actions.size() == 3,
+		"Blind paid-miss fixture reads genuine three-option Imp")
+	if imp.is_empty():
+		return
+	var party := _party()
+	var bound := _force_normal_alternative(imp, imp.intent.actions[2], party)
+	_check(not bound.is_empty(), "genuine Imp Blind alternative bound to seeded scheduler")
+	if bound.is_empty():
+		return
+	var announced: Array = bound.intents
+	var enemies: CombatEnemies = bound.enemies
+	var rng: RandomNumberGenerator = bound.rng
+	_check(announced.size() == 1 and announced[0].get("status") == "blind_next_attack"
+		and announced[0].get("amount") == 1 and announced[0].get("target_position") == 3,
+		"living Imp announces Blind 1 on unique lowest-HP Tinker")
+	var rng_before: int = rng.state
+	var phase := CombatEnemyPhase.new().execute_phase(party, enemies, announced, null, true)
+	_check(phase.get("ok") == true and phase.events.size() == 1
+		and phase.events[0].get("applied") == true
+		and party.get_hero(3).get("statuses", {}).get("blind_next_attack") == 1
+		and rng.state == rng_before,
+		"real enemy-phase dispatch arms one canonical hero Blind without RNG draws")
+	var deck := CombatDeck.new(["tinker_pop_shot", "tinker_pop_shot", "tinker_tune_up"], rng)
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3,
+		"real shared deck starts with two affordable printed Tinker attacks")
+	deck.hand.assign(["tinker_pop_shot", "tinker_pop_shot", "tinker_tune_up"])
+	var original_foes: Array[Dictionary] = enemies.get_enemies()
+	var original_heroes: Array[Dictionary] = party.get_heroes()
+	var original_deck: Array[String] = deck.hand.duplicate()
+	var definition := StarterCards.new().get_definition("tinker_pop_shot")
+	var service := CombatHeroBlindMiss.new()
+	var rng_unspent: int = rng.state
+	var refused := service.attempt(deck, party, enemies, "tinker_pop_shot", 3, definition)
+	_check(refused.get("handled") == true and not refused.get("ok", false)
+		and deck.hand == original_deck and deck.energy == 3
+		and party.get_heroes() == original_heroes and enemies.get_enemies() == original_foes
+		and rng.state == rng_unspent,
+		"unprinted enemy target rejects without paying or consuming Blind")
+	refused = service.attempt(deck, party, enemies, "tinker_pop_shot", 1, definition, 2)
+	_check(not refused.get("ok", false) and deck.energy == 3
+		and party.get_heroes() == original_heroes and rng.state == rng_unspent,
+		"invalid discount cannot forge free Blind consumption")
+	deck.combat_state.energy = 0
+	var cheap := service.attempt(deck, party, enemies, "tinker_pop_shot", 1, definition)
+	_check(not cheap.get("ok", false) and deck.hand == original_deck
+		and party.get_heroes() == original_heroes and enemies.get_enemies() == original_foes,
+		"unaffordable attack neither spends nor disarms Blind")
+	deck.combat_state.energy = 3
+	var paid := service.attempt(deck, party, enemies, "tinker_pop_shot", 1, definition)
+	_check(paid.get("ok") == true and paid.get("miss") == true
+		and paid.get("hits") == [] and paid.get("cost") == 1
+		and deck.energy == 2 and deck.hand.count("tinker_pop_shot") == 1
+		and deck.discard_pile.count("tinker_pop_shot") == 1
+		and not party.get_hero(3).get("statuses", {}).has("blind_next_attack"),
+		"Imp's Blind produces exactly one paid and discarded missing attack")
+	_check(enemies.get_enemies() == original_foes
+		and party.get_hero(3).hp == original_heroes[2].hp
+		and rng.state == rng_unspent,
+		"paid miss applies zero enemy damage/status/retaliation and consumes zero RNG")
+	var second := service.attempt(deck, party, enemies, "tinker_pop_shot", 1, definition)
+	_check(second.get("handled") == false and not second.get("ok", false)
+		and deck.energy == 2 and deck.hand.count("tinker_pop_shot") == 1
+		and enemies.get_enemies() == original_foes,
+		"spent token cannot swallow the next ordinary attack or spend twice")
