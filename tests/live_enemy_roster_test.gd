@@ -1615,6 +1615,11 @@ func _assert_badges(app, presenter, expected_target: int = -1, expected_amount: 
 		positions.append(position)
 		_check(position >= 1 and position <= roster.size() and
 			roster[position - 1].position == position, "badge source_position matches its enemy")
+		if position >= 1 and position <= roster.size():
+			var source = presenter._puppets[CombatParty.PARTY_SIZE + position - 1]
+			_check(badge.get_parent() == source and source.actor_id == roster[position - 1].id
+				and presenter._admitted_ids[position - 1] == source.actor_id,
+				"visible ticket is mounted on its actual admitted enemy ID, not a neighboring source")
 		_check(by_position.has(position), "authoritative scheduler supplies this enemy position")
 		if not by_position.has(position):
 			continue
@@ -3686,13 +3691,16 @@ func _ticket_at_rest(badge: LiveEnemyIntentBadge) -> void:
 		return
 	var art: Rect2 = puppet.rest_drawn_rect()
 	var rect: Rect2 = badge.get_rect()
-	var clearance: float = maxf(ROSTER_ART.INTENT_ART_CLEARANCE,
-		puppet.art_safety_inset() + puppet.RIM_RADIUS)
-	# The independent expected seat: the ticket hangs on its own resting artwork with the
-	# animation clearance, kept inside its source column and the viewport's top margin.
+	var safety: float = puppet.art_safety_inset()
+	var gap: float = art.position.y - rect.end.y
+	var expected_gap: float = maxf(ROSTER_ART.INTENT_ART_CLEARANCE, safety)
+	# Measured from the real mounted badge's bottom to its own resting art's top:
+	# bob and breathing fit in a narrow 4-6px seam, without the old rim-sized lift.
+	_check(gap >= safety - 0.05 and gap >= ROSTER_ART.INTENT_ART_CLEARANCE - 0.05
+		and gap <= 6.0 and absf(gap - expected_gap) <= 0.05,
+		"mounted intent has a small bob-safe seam directly above its own resting artwork")
 	var slot_top: float = maxf(0.0, ROSTER_ART.STAGE_INTENT_SAFE_MARGIN - puppet.global_position.y)
-	var expected_y: float = clampf(art.position.y - clearance - rect.size.y, slot_top,
-		maxf(slot_top, puppet.size.y - rect.size.y))
+	var expected_y: float = art.position.y - expected_gap - rect.size.y
 	var centred: bool = is_equal_approx(rect.get_center().x, art.get_center().x)
 	var flush: bool = is_equal_approx(rect.position.x, 0.0) \
 		or is_equal_approx(rect.end.x, puppet.size.x)
@@ -3725,6 +3733,7 @@ func _plaque_bounds(app, presenter) -> void:
 			_check(world.has_area() and slot.grow(0.01).encloses(world)
 				and (puppet.get_global_transform() * local).is_equal_approx(world)
 				and not world.intersects(neighbor.get_global_rect())
+				and not world.intersects(puppet.get_global_transform() * puppet.rest_drawn_rect())
 				and not world.intersects(name_rect)
 				and not world.intersects(meters.get_child(3 + index).get_global_rect()),
 				"visible plaque belongs to its current source in local/global space, clear of neighbor/name/HP")
@@ -3798,11 +3807,16 @@ func _mounted_plaque_reflow(scene: PackedScene) -> void:
 	puppet.custom_minimum_size = Vector2.ZERO
 	puppet.size = Vector2(original_size.x, 65)
 	_check(badge.visible and not status.visible and not presenter._thorns_tags[0].visible,
-		"shrunken source hides nonfitting secondary plaques and retains available intent")
+		"shrunken source retains the available safe intent but hides nonfitting secondary plaques")
 	_plaque_bounds(app, presenter)
+	# The actor can still draw in a narrow slot, but its 192px sewn ticket cannot:
+	# hiding it is safer than crossing into the neighboring enemy's column.
+	puppet.size = Vector2(170, original_size.y)
+	_check(puppet.rest_drawn_rect().has_area() and not badge.visible,
+		"under-width mounted actor keeps artwork but fails closed on an unplaceable intent")
 	puppet.size = original_size
 	puppet.custom_minimum_size = original_minimum
-	_check(status.visible and presenter._thorns_tags[0].visible
+	_check(badge.visible and status.visible and presenter._thorns_tags[0].visible
 		and presenter._labels[0].get_global_rect().is_equal_approx(original_target),
 		"resize signal restores both plaques and unchanged full-actor target area")
 	_plaque_bounds(app, presenter)
