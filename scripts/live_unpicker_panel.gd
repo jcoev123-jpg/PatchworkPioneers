@@ -160,13 +160,16 @@ func _panel_style() -> StyleBox:
 	return style
 
 
-## The optional authored panel art; a missing or unreadable file stays null and
-## the panel keeps today's flat felt fallback with no drifting layer at all.
+## The optional authored panel art; a missing or unloadable resource stays null
+## and the panel keeps today's flat felt fallback with no drifting layer at all.
+## ResourceLoader follows the .import remap of this PNG to its exported
+## CompressedTexture2D (.ctex), so the source PNG need not exist as a loose file
+## (for example inside an exported Web PCK); FileAccess cannot follow that
+## remap and must never gate this load.
 static func _load_panel_art() -> Texture2D:
-	if not FileAccess.file_exists(PANEL_ART) \
-			or not ResourceLoader.exists(PANEL_ART, "Texture2D"):
+	if not ResourceLoader.exists(PANEL_ART, "Texture2D"):
 		return null
-	return load(PANEL_ART) as Texture2D
+	return ResourceLoader.load(PANEL_ART, "Texture2D") as Texture2D
 
 
 ## The one animated decoration: a second, input-inert copy of the authored sewn
