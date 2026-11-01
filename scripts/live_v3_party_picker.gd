@@ -32,6 +32,12 @@ const SOFT := Color("#d4c4ad")
 const GOLD := Color("#f7d68b")
 const STITCH := Color("#efcba1")
 
+## Only the imported TextureRect artwork moves. Pick targets and labels do not.
+const PORTRAIT_PERIOD := 9.0
+const PORTRAIT_MAX_TILT := 0.005
+const PORTRAIT_MAX_BREATH := 0.006
+const REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
+
 @onready var paper_panel: PanelContainer = $PaperPanel
 @onready var grid: GridContainer = $PaperPanel/Margins/Body/HeroGrid
 @onready var selection_count: Label = $PaperPanel/Margins/Body/Foot/SelectionCount
@@ -92,6 +98,13 @@ var _kit_index: int = 0
 var _reward_mode: bool = false
 var _reward_index: int = 0
 var _reward_candidates: Array[Dictionary] = []
+
+## Indexed by authored HEROES order so missing pictures never shift phases.
+var _portrait_art: Dictionary = {}
+var _portrait_elapsed: float = 0.0
+var _reduced_motion_override: Variant = null
+## Optional path substitution for absent-art fallback verification; normally empty.
+var portrait_path_overrides: Dictionary = {}
 
 
 ## A drawn stand-in for not-yet-delivered portraits. These five faces are
@@ -195,6 +208,9 @@ class HeroMotif:
 
 
 func _ready() -> void:
+	set_process(false)
+	if ProjectSettings.has_signal("settings_changed"):
+		ProjectSettings.settings_changed.connect(_sync_portrait_motion)
 	_style_screen()
 	continue_button.pressed.connect(_continue_pressed)
 	cancel_button.pressed.connect(_cancel_pressed)
@@ -216,6 +232,7 @@ func _ready() -> void:
 func open_picker() -> void:
 	if not is_node_ready():
 		return
+	_discard_portrait_motion()
 	_generation += 1
 	_open = true
 	_latched = false
@@ -245,7 +262,104 @@ func open_picker() -> void:
 		focus_owner.release_focus()
 	_refresh()
 	_update_inspection()  # Neutral until actual pointer motion or keyboard focus.
+	_sync_portrait_motion()
 
+
+
+## A single view-local frame clock, never a timer/tween or gameplay clock.
+## Accessibility and visibility changes retire it immediately.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_EXIT_TREE:
+		_stop_portrait_motion()
+		_portrait_art.clear()
+	elif what == NOTIFICATION_VISIBILITY_CHANGED and is_node_ready():
+		_sync_portrait_motion()
+		if visible:
+			# The CanvasItem visibility notification can precede final tree visibility.
+			_sync_portrait_motion.call_deferred()
+
+
+func set_reduced_motion_override(value: Variant) -> void:
+	if value != null and not value is bool:
+		return
+	_reduced_motion_override = value
+	_sync_portrait_motion()
+
+
+func _reduced_motion_enabled() -> bool:
+	if _reduced_motion_override is bool:
+		return _reduced_motion_override
+	return bool(ProjectSettings.get_setting(REDUCED_MOTION_SETTING, false))
+
+
+func _portrait_motion_allowed() -> bool:
+	return is_node_ready() and _open and not _latched and is_visible_in_tree() \
+		and not _reduced_motion_enabled() and not _portrait_art.is_empty()
+
+
+func _sync_portrait_motion() -> void:
+	if not _portrait_motion_allowed():
+		_stop_portrait_motion()
+		return
+	var has_image := false
+	for portrait in _portrait_art.values():
+		if is_instance_valid(portrait) and portrait.texture != null and portrait.is_visible_in_tree():
+			has_image = true
+			break
+	if not has_image:
+		_stop_portrait_motion()
+		return
+	if not is_processing():
+		_portrait_elapsed = 0.0
+		_pose_portraits_at(0.0)
+	set_process(true)
+
+
+func _stop_portrait_motion() -> void:
+	set_process(false)
+	_portrait_elapsed = 0.0
+	for portrait in _portrait_art.values():
+		if is_instance_valid(portrait):
+			portrait.rotation = 0.0
+			portrait.scale = Vector2.ONE
+
+
+func _discard_portrait_motion() -> void:
+	_stop_portrait_motion()
+	_portrait_art.clear()
+
+
+func _process(delta: float) -> void:
+	if not _portrait_motion_allowed():
+		_stop_portrait_motion()
+		return
+	_portrait_elapsed = fposmod(_portrait_elapsed + maxf(delta, 0.0), PORTRAIT_PERIOD)
+	_pose_portraits_at(_portrait_elapsed)
+
+
+## Absolute time is also driven by mounted headless tests. The common zero
+## envelope makes every opening and completed cycle exactly neutral, while
+## fixed authored-index phases keep eight portraits from swaying in lockstep.
+func _pose_portraits_at(seconds: float) -> void:
+	if not _portrait_motion_allowed():
+		_stop_portrait_motion()
+		return
+	var angle := TAU * fposmod(seconds, PORTRAIT_PERIOD) / PORTRAIT_PERIOD
+	var envelope := 0.5 * (1.0 - cos(angle))
+	for index in range(HEROES.size()):
+		var portrait: TextureRect = _portrait_art.get(HEROES[index]["id"])
+		if not is_instance_valid(portrait):
+			continue
+		if portrait.texture == null or not portrait.is_visible_in_tree():
+			portrait.rotation = 0.0
+			portrait.scale = Vector2.ONE
+			continue
+		var phase := TAU * float(index) / float(HEROES.size())
+		var tilt := PORTRAIT_MAX_TILT * sin(angle) * cos(angle + phase)
+		var breath := PORTRAIT_MAX_BREATH * envelope * (0.7 + 0.3 * sin(angle + phase))
+		portrait.pivot_offset = portrait.size * 0.5
+		portrait.rotation = tilt
+		portrait.scale = Vector2.ONE * (1.0 + breath)
 
 
 ## An input-transparent comparison readout. Pointer preview takes precedence
@@ -999,6 +1113,7 @@ func _continue_pressed() -> void:
 		return
 	_latched = true
 	_open = false
+	_stop_portrait_motion()
 	_deck_mode = false
 	_kit_mode = false
 	_kit_hero = ""
@@ -1014,6 +1129,7 @@ func _cancel_pressed() -> void:
 		return
 	_latched = true
 	_open = false
+	_stop_portrait_motion()
 	_deck_mode = false
 	_kit_mode = false
 	_kit_hero = ""
@@ -1143,9 +1259,11 @@ func _mount_tile(definition: Dictionary, generation: int) -> void:
 	face.custom_minimum_size = Vector2(0, 86)
 	face.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.clip_contents = true
 	stack.add_child(face)
 
-	var path := "res://assets/paper/heroes/%s.png" % hero_id
+	var path: String = portrait_path_overrides.get(hero_id,
+		"res://assets/paper/heroes/%s.png" % hero_id)
 	var portrait: Texture2D = null
 	if ResourceLoader.exists(path, "Texture2D"):
 		portrait = ResourceLoader.load(path, "Texture2D") as Texture2D
@@ -1159,6 +1277,7 @@ func _mount_tile(definition: Dictionary, generation: int) -> void:
 		picture.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 		picture.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		face.add_child(picture)
+		_portrait_art[hero_id] = picture
 	else:
 		var drawing := HeroMotif.new()
 		drawing.name = "FallbackMotif"

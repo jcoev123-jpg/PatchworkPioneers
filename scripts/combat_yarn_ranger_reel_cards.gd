@@ -20,9 +20,14 @@ extends RefCounted
 ##
 ## The result is a NEW detached slot map that preserves every actor's unique identity and all of
 ## its original stats/statuses, moves only the chosen enemy, and adds Tangled only on Reel In.
-## This helper never charges energy, discards a card, mutates the party or the enemies object,
-## consumes RNG or alters any core combat state: the live held-card payment and target-selection
-## hook is a separate follow-on wiring task, and nothing here claims live playability.
+## `propose_pull` never charges energy, discards a card, mutates the party or the enemies object,
+## consumes RNG or alters any core combat state. `play_held_pull` is the paid entry point for a
+## mounted hand: it authenticates the printing, preflights the whole request against the REAL
+## CombatDeck and the existing detached proposal, then spends the printed energy and discards
+## exactly one held copy. Both the proposal and the paid receipt stay detached: neither places an
+## actor into the authoritative live CombatEnemies roster, and the caller must apply the proposed
+## map explicitly. Registering these IDs in the live hand, card admission and enemy-target choice
+## remains a separate follow-on wiring task, so nothing here claims live playability.
 
 const OWNER := "yarn_ranger"
 const FROM_POSITIONS := [2, 3]
@@ -242,6 +247,76 @@ func propose_pull(card_id: Variant, party: CombatParty, target_position: Variant
 		"pull_forward": PULL_FORWARD,
 		"tangled_added": added,
 		"slots": proposed,
+	}
+
+
+## The paid held-card entry point for one authentic reel printing. The complete request is
+## preflighted first: the ID is authenticated against its own catalog (or the authenticated seam),
+## the shared deck is a real active turn that genuinely holds the card and can afford it, and the
+## existing `propose_pull` accepts the party, owner seat, target and detached slot snapshot. Only
+## then does it spend the printed energy once and discard exactly one held copy once, using the
+## deck's standard operations. A refusal is a pure no-op on the deck, party, snapshot and RNG.
+##
+## The success receipt is still detached: it carries the card ID, paid cost, owner/source/
+## destination seats, the Tangled delta and the proposed four-slot map, but it never places the
+## moved actor into a live CombatEnemies roster. The caller applies that map explicitly later.
+func play_held_pull(deck: CombatDeck, party: CombatParty, card_id: Variant,
+		target_position: Variant, enemy_slots: Variant,
+		definition_lookup: Variant = null) -> Dictionary:
+	if not is_supported_card(card_id):
+		return _refusal("unsupported_card")
+	var id: String = card_id
+	var card: Dictionary = CARDS[id]
+	if not is_authentic_definition(_lookup(id, definition_lookup), id):
+		return _refusal("catalog_mismatch")
+	if deck == null:
+		return _refusal("invalid_request")
+	if deck.combat_state == null or deck._rng == null:
+		return _refusal("invalid_deck")
+	if not deck.turn_active:
+		return _refusal("inactive_turn")
+	if not deck.hand.has(id):
+		return _refusal("card_not_held")
+	var cost: int = int(card["cost"])
+	if deck.energy < cost:
+		return _refusal("insufficient_energy")
+	# The existing proposal is the full rules preflight: valid roster, living owner in a printed
+	# seat, authenticated catalog, printed target line, living target, truly vacant destination,
+	# well-formed four-slot snapshot and a non-overflowing printed Tangled. Its detached map is
+	# what the receipt publishes.
+	var proposal: Dictionary = propose_pull(id, party, target_position, enemy_slots,
+		definition_lookup)
+	if not proposal.get("ok", false):
+		return _refusal(str(proposal.get("reason", "invalid_request")))
+	# Every operation below is guaranteed by the complete preflight above; keep the defensive
+	# returns so an unexpected model change still fails closed. Nothing here draws a card, touches
+	# the run RNG or mutates the caller's snapshot or party.
+	if not deck.try_spend_energy(cost):
+		return _refusal("insufficient_energy")
+	if not deck.discard_played(id):
+		return _refusal("card_not_held")
+	var source: int = int(proposal["target_position"])
+	var destination: int = int(proposal["destination_position"])
+	var moved: Dictionary = proposal["slots"].get(destination, {})
+	var moved_statuses: Dictionary = moved.get("statuses", {})
+	var tangled_added: int = int(proposal["tangled_added"])
+	var tangled_after: int = int(moved_statuses.get("tangled", 0))
+	return {
+		"ok": true,
+		"reason": "played",
+		"card_id": id,
+		"catalog": card["catalog"],
+		"cost": cost,
+		"energy_spent": cost,
+		"owner_position": int(proposal["owner_position"]),
+		"source_position": source,
+		"target_position": source,
+		"destination_position": destination,
+		"pull_forward": int(proposal["pull_forward"]),
+		"tangled_added": tangled_added,
+		"tangled_before": tangled_after - tangled_added,
+		"tangled_after": tangled_after,
+		"slots": proposal["slots"],
 	}
 
 

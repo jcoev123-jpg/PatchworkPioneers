@@ -21,6 +21,8 @@ func _run() -> void:
 	_test_seeded_replay()
 	_test_termite_split_gauges()
 	_test_termite_split_round_flow()
+	_test_four_capacity_moth_birth()
+	_test_four_capacity_termite_paid_split()
 	if failures.is_empty():
 		print("combat_round_unravel_test: PASS (", checks, " checks)")
 	else:
@@ -395,12 +397,12 @@ func _split_peer(id: String) -> Dictionary:
 			{"type": "attack", "amount": 2, "weight": 1}]}}
 
 
-func _termite_gauge_fixture(count: int = 2, seed_value: int = 733) -> Dictionary:
+func _termite_gauge_fixture(count: int = 2, seed_value: int = 733, capacity: int = CombatEnemies.MAX_ENEMIES) -> Dictionary:
 	var source := _termite_source()
 	var records: Array = [source]
 	for index in range(1, count):
 		records.append(_split_peer("split_peer_%d" % index))
-	var enemies := CombatEnemies.new(records)
+	var enemies := CombatEnemies.new(records, capacity)
 	var gauge := CombatUnravel.new()
 	var tiers := {}
 	for index in range(count):
@@ -528,3 +530,264 @@ func _test_termite_split_round_flow() -> void:
 	_check(enemies.apply_damage(2, 13) and enemies.is_victorious()
 		and enemies.get_enemies().size() == 2,
 		"AC2: legitimate victory arrives only after both halves die, with no third split")
+
+## The normal Fight catalog, not a fabricated summon source, supplies the mother
+## and two peers. The fourth slot exists only because this battle opted in.
+func _four_moth_session(seed_value: int) -> Array:
+	var catalog := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var definitions: Array = []
+	for id in [CombatEnemies.MOTH_ID, "fray_scavenger", "felt_bulwark"]:
+		for actor in catalog:
+			if actor.get("id") == id:
+				definitions.append(actor.duplicate(true))
+				break
+	_check(definitions.size() == 3 and CombatEnemies.authentic_broodling_mother(
+		definitions[0], 1), "AC1 precondition: three genuine authored enemies include weighted Moth")
+	if definitions.size() != 3:
+		return []
+	var enemies := CombatEnemies.new(definitions, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	var party := CombatParty.new(_load_authored(HEROES))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var deck := CombatDeck.new(StarterCards.new().get_starting_deck(), rng)
+	var schedule_definitions: Array = []
+	for position in range(1, 4):
+		schedule_definitions.append({"enemy_position": position, "pattern": [
+			{"type": "block", "amount": 0}]})
+	var intents := CombatEnemyIntents.new(schedule_definitions)
+	var gauge := CombatUnravel.new()
+	_check(enemies.is_valid() and enemies.get_capacity() == 4 and party.is_valid()
+		and intents.is_valid() and intents.bind_battle(enemies, party, rng)
+		and intents.is_bound() and gauge.bind_roster(enemies,
+			{1: "normal", 2: "normal", 3: "elite"}),
+		"AC1 precondition: explicit capacity four binds three real actors, weighted intents and tiers")
+	if not intents.is_bound() or gauge.get_snapshot(3).is_empty():
+		return []
+	var found := false
+	for step in range(80):
+		var announced := intents.get_intents()
+		if announced.size() == 3 and announced[0].get("type") == "summon":
+			found = true
+			break
+		if not intents.advance_turn():
+			break
+	_check(found, "AC1 precondition: actual weighted scheduler selects Moth's Summon")
+	if not found:
+		return []
+	var result := CombatBattleResult.new(party, enemies)
+	var flow := CombatRoundFlow.new(deck, party, enemies, intents, result, gauge)
+	_check(flow.begin_fight() and flow._valid_bindings() and deck.hand.size() == 5,
+		"AC1 precondition: real hand and round flow open on the bound three-foe roster")
+	_check(gauge.apply_unravel(enemies, 1, 3)
+		and gauge.apply_unravel(enemies, 2, 8)
+		and gauge.apply_unravel(enemies, 3, 5),
+		"AC1 precondition: mother and peers have distinct charges, including a pending peer skip")
+	var before_1 := gauge.get_snapshot(1)
+	var before_3 := gauge.get_snapshot(3)
+	var before_rng := rng.state
+	_check(flow.end_turn(), "AC1: real Moth enemy phase publishes the fourth child")
+	var born := enemies.get_enemy(4)
+	_check(enemies.get_enemies().size() == 4 and born.get("id") == CombatEnemies.BROODLING_ID
+		and born.get("position") == 4 and born.get("hp") == 8
+		and born.get("max_hp") == 8 and born.get("block") == 0
+		and enemies.get_enemy(1).get(CombatEnemies.BROODLING_LATCH) == true,
+		"AC1: authentic weighted Summon appends one living, latched fourth-slot broodling")
+	_check(gauge.get_snapshot(1) == before_1 and gauge.get_snapshot(3) == before_3
+		and gauge.get_snapshot(2) == {"gauge": 0, "threshold": 12,
+			"unravelled": false, "skip_pending": false}
+		and gauge.get_snapshot(4) == {"gauge": 0, "threshold": 8,
+			"unravelled": false, "skip_pending": false},
+		"AC1: original gauges stay exact except the consumed peer skip; child starts normal-tier clean")
+	var announcements := intents.get_intents()
+	_check(flow._valid_bindings() and intents.is_bound()
+		and announcements.size() == 4 and announcements[3] == {
+			"enemy_position": 4, "type": "attack", "amount": 5, "target_position": 1}
+		and result.get_outcome() == CombatBattleResult.ACTIVE
+		and rng.state != before_rng,
+		"AC1: bound scheduler announces the real fourth actor on next turn")
+	var purity := [gauge.get_snapshot(1), gauge.get_snapshot(2),
+		gauge.get_snapshot(3), gauge.get_snapshot(4), rng.state, intents.get_intents()]
+	_check(not gauge.admit_broodling(enemies)
+		and purity == [gauge.get_snapshot(1), gauge.get_snapshot(2),
+			gauge.get_snapshot(3), gauge.get_snapshot(4), rng.state, intents.get_intents()],
+		"AC3: duplicate child admission refuses without gauge, intent or RNG mutation")
+	_check(gauge.apply_unravel(enemies, 4, 8)
+		and gauge.get_snapshot(4).skip_pending,
+		"AC1: actual fourth child is addressable and arms its own threshold skip")
+	var turn_before := intents._turn_index
+	_check(flow.end_turn() and intents._turn_index == turn_before + 1
+		and gauge.get_snapshot(4) == {"gauge": 0, "threshold": 12,
+			"unravelled": false, "skip_pending": false}
+		and gauge.get_snapshot(1) == before_1 and gauge.get_snapshot(3) == before_3,
+		"AC1: next real four-source phase executes, consumes child's skip and retains peers")
+	return [party.get_heroes(), enemies.get_enemies(), intents.get_intents(),
+		gauge.get_snapshot(1), gauge.get_snapshot(2), gauge.get_snapshot(3),
+		gauge.get_snapshot(4), deck.hand.duplicate(), deck.draw_pile.duplicate(),
+		deck.discard_pile.duplicate(), rng.state, result.get_outcome()]
+
+
+func _test_four_capacity_moth_birth() -> void:
+	var first := _four_moth_session(20025)
+	var replay := _four_moth_session(20025)
+	_check(not first.is_empty() and first == replay,
+		"AC3: authored four-capacity birth and subsequent round replay exactly")
+	var catalog := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var mother := {}
+	for record in catalog:
+		if record.get("id") == CombatEnemies.MOTH_ID:
+			mother = record.duplicate(true)
+	var records: Array = [mother, _split_peer("moth_peer_a"), _split_peer("moth_peer_b")]
+	var default_enemies := CombatEnemies.new(records)
+	var default_gauge := CombatUnravel.new()
+	_check(default_enemies.is_valid() and default_enemies.get_capacity() == 3
+		and default_gauge.bind_roster(default_enemies,
+			{1: "normal", 2: "normal", 3: "normal"}),
+		"AC3 precondition: ordinary three-slot mother remains default capacity")
+	var default_before := default_enemies.get_enemies()
+	var gauges_before := _split_snapshots(default_enemies, default_gauge)
+	_check(default_enemies.stage_broodling(1) == {"ok": true, "spawned": false}
+		and default_enemies.get_enemies() == default_before
+		and not default_gauge.admit_broodling(default_enemies)
+		and _split_snapshots(default_enemies, default_gauge) == gauges_before,
+		"AC3: default full roster never appends a broodling or spends its latch")
+	var foreign := CombatEnemies.new(records, 4)
+	_check(foreign.is_valid() and foreign.stage_broodling(1).get("spawned", false),
+		"AC3 precondition: separate genuine mother can stage its own fourth child")
+	_check(not default_gauge.admit_broodling(foreign)
+		and _split_snapshots(default_enemies, default_gauge) == gauges_before,
+		"AC3: unbound foreign fourth child cannot write another battle's gauges")
+	var pending := CombatEnemies.new(records, 4)
+	var pending_gauge := CombatUnravel.new()
+	_check(pending_gauge.bind_roster(pending,
+		{1: "normal", 2: "normal", 3: "normal"})
+		and pending.stage_broodling(1).get("spawned", false),
+		"AC3 precondition: unadmitted fourth actor exists before malformed receipt")
+	pending._enemies[3]["max_hp"] = 9
+	var malformed_before := _split_snapshots(pending, pending_gauge)
+	_check(not pending_gauge.admit_broodling(pending)
+		and _split_snapshots(pending, pending_gauge) == malformed_before
+		and pending_gauge.get_snapshot(4).is_empty(),
+		"AC3: malformed fourth child fails closed without partial gauge writes")
+
+
+## The same authoritative card-play service that the hand uses delivers the
+## lethal paid hit; only then does the existing split model publish the halves.
+func _four_termite_session(seed_value: int) -> Array:
+	var f := _termite_gauge_fixture(3, seed_value, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(not f.is_empty(), "AC2 precondition: genuine Termite plus two living peers bind four-capacity gauges")
+	if f.is_empty():
+		return []
+	var enemies: CombatEnemies = f.enemies
+	var gauge: CombatUnravel = f.gauge
+	var party := CombatParty.new(_load_authored(HEROES))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var deck := CombatDeck.new(StarterCards.new().get_starting_deck(), rng)
+	var specs: Array = []
+	for position in range(1, 4):
+		specs.append({"enemy_position": position, "pattern": [
+			{"type": "block", "amount": 0}]})
+	var intents := CombatEnemyIntents.new(specs)
+	_check(party.is_valid() and enemies.is_valid() and enemies.get_capacity() == 4
+		and intents.is_valid() and intents.bind_battle(enemies, party, rng),
+		"AC2 precondition: genuine three-actor weighted Termite schedule is bound")
+	if not intents.is_bound():
+		return []
+	var result := CombatBattleResult.new(party, enemies)
+	var flow := CombatRoundFlow.new(deck, party, enemies, intents, result, gauge)
+	_check(flow.begin_fight() and flow._valid_bindings(),
+		"AC2 precondition: the real shared-hand round begins before lethal card play")
+	_check(gauge.apply_unravel(enemies, 1, 8)
+		and gauge.apply_unravel(enemies, 2, 4)
+		and gauge.apply_unravel(enemies, 3, 8),
+		"AC2 precondition: source and trailing peer have pending skips, other peer is charged")
+	var peer_2 := gauge.get_snapshot(2)
+	var peer_3 := gauge.get_snapshot(3)
+	var originals := intents.get_intents()
+	while not deck.hand.has("warden_strike") and not deck.draw_pile.is_empty():
+		if not deck.draw_extra(1):
+			break
+	var strike := StarterCards.new().get_definition("warden_strike")
+	_check(deck.hand.has("warden_strike") and strike.get("cost", -1) > 0
+		and strike.get("effects", {}).get("damage", 0) > 0 and deck.energy >= strike.cost,
+		"AC2 precondition: actual paid Warden Strike is held and affordable")
+	if not deck.hand.has("warden_strike"):
+		return []
+	var finishing_damage: int = strike.effects.damage
+	_check(enemies.apply_damage(1, enemies.get_enemy(1).hp - finishing_damage)
+		and enemies.get_enemy(1).hp == finishing_damage,
+		"AC2 precondition: genuine Termite remains alive at paid-card lethal range")
+	var energy_before := deck.energy
+	var played := CombatAttackCards.new().play_attack(deck, party, enemies, "warden_strike", 1)
+	_check(played.get("ok", false) and enemies.is_slain(1)
+		and deck.energy == energy_before - strike.cost and not deck.hand.has("warden_strike"),
+		"AC2: authenticated held attack spends energy and lands real lethal Termite hit")
+	if not played.get("ok", false) or not enemies.is_slain(1):
+		return []
+	var detached := CombatEnemies.new(enemies.get_enemies(), 4)
+	detached._enemies.assign(enemies.get_enemies().duplicate(true))
+	var staged := detached.stage_split_on_death(1)
+	_check(staged == {"ok": true, "split": true, "positions": [1, 4]},
+		"AC2 precondition: authentic defeated Termite proposes a source replacement and fourth half")
+	if not staged.get("split", false):
+		return []
+	var proposed := detached.get_enemies()
+	var before := [gauge.get_snapshot(1), gauge.get_snapshot(2),
+		gauge.get_snapshot(3), rng.state, intents.get_intents()]
+	var malformed := proposed.duplicate(true)
+	malformed[3]["hp"] = 0
+	_check(not gauge.can_admit_split(enemies, 1, malformed)
+		and not intents.can_admit_split(enemies, 1, malformed)
+		and before == [gauge.get_snapshot(1), gauge.get_snapshot(2),
+			gauge.get_snapshot(3), rng.state, intents.get_intents()],
+		"AC3: malformed fourth half refuses both preflights with unchanged gauges and RNG")
+	_check(not gauge.can_admit_split(enemies, 2, proposed)
+		and not intents.can_admit_split(enemies, 2, proposed)
+		and before == [gauge.get_snapshot(1), gauge.get_snapshot(2),
+			gauge.get_snapshot(3), rng.state, intents.get_intents()],
+		"AC3: stale/wrong original source cannot claim authenticated halves")
+	_check(gauge.can_admit_split(enemies, 1, proposed)
+		and intents.can_admit_split(enemies, 1, proposed)
+		and before == [gauge.get_snapshot(1), gauge.get_snapshot(2),
+			gauge.get_snapshot(3), rng.state, intents.get_intents()],
+		"AC2: authentic four-slot split preflights both bound ledgers without writes or RNG")
+	_check(enemies.stage_split_on_death(1) == staged and enemies.get_enemies() == proposed
+		and intents.admit_split(enemies, 1) and gauge.admit_split(enemies, 1),
+		"AC2: actual published fourth half and replacement commit atomically to both ledgers")
+	var clean := {"gauge": 0, "threshold": 8, "unravelled": false, "skip_pending": false}
+	_check(_split_snapshots(enemies, gauge) == [clean, peer_2, peer_3, clean],
+		"AC2: both half gauges are clean while both original peer gauges retain exact charges/skip")
+	var announcements := intents.get_intents()
+	_check(announcements.size() == 4 and announcements[1] == originals[1]
+		and announcements[2] == originals[2]
+		and announcements[0].get("enemy_position") == 1
+		and announcements[3] == {"enemy_position": 4, "type": "attack",
+			"amount": 3, "target_position": 1}
+		and flow._valid_bindings() and result.get_outcome() == CombatBattleResult.ACTIVE,
+		"AC2: bound scheduler retains peer announcements, admits both genuine halves and flow is valid")
+	var purity := [gauge.get_snapshot(1), gauge.get_snapshot(2),
+		gauge.get_snapshot(3), gauge.get_snapshot(4), intents.get_intents(), rng.state]
+	_check(not gauge.admit_split(enemies, 1) and not intents.admit_split(enemies, 1)
+		and purity == [gauge.get_snapshot(1), gauge.get_snapshot(2),
+			gauge.get_snapshot(3), gauge.get_snapshot(4), intents.get_intents(), rng.state],
+		"AC3: duplicated/stale split cannot change gauges, cached actions or RNG")
+	var before_turn := intents._turn_index
+	_check(flow.end_turn() and intents._turn_index == before_turn + 1
+		and gauge.get_snapshot(2) == peer_2
+		and gauge.get_snapshot(3) == {"gauge": 0, "threshold": 12,
+			"unravelled": false, "skip_pending": false}
+		and gauge.get_snapshot(4) == clean
+		and result.get_outcome() == CombatBattleResult.ACTIVE,
+		"AC2: genuine four-foe end turn executes; peer skip advances threshold, halves retain clean gauges")
+	return [party.get_heroes(), enemies.get_enemies(), intents.get_intents(),
+		_split_snapshots(enemies, gauge), deck.hand.duplicate(), deck.draw_pile.duplicate(),
+		deck.discard_pile.duplicate(), rng.state, result.get_outcome()]
+
+
+func _test_four_capacity_termite_paid_split() -> void:
+	var first := _four_termite_session(91225)
+	var replay := _four_termite_session(91225)
+	_check(not first.is_empty() and first == replay,
+		"AC3: same-seed paid lethal split, bound fourth-slot intents and next round replay exactly")

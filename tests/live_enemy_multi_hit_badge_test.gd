@@ -354,6 +354,63 @@ func _run() -> void:
 		_assert_two_hit_tooltip(badge, base, hero, reason)
 		_assert_layout(badge, LiveEnemyIntentBadge.CAPTION_MIN_FONT, reason)
 
+	# An opt-in four-foe fight uses the same shipped normalized Needle Wasp A-2,
+	# only the genuine enemy source is slot four; the hero lineup remains three.
+	var fourth_wasp := wasp_action.duplicate(true)
+	fourth_wasp["enemy_position"] = CombatEnemies.OPT_IN_MAX_ENEMIES
+	var fourth_before := fourth_wasp.duplicate(true)
+	_check(LiveEnemyIntentBadge.is_two_hit_attack(fourth_wasp),
+		"authentic source-four Wasp attack is accepted without changing the hero target guard")
+	badge.show_intent(fourth_wasp, false)
+	_check(badge.readable_text == "Hit 8 (2 hits): Middle" and badge.hit_count == 2
+		and badge.hit_damage == 4 and badge.target_position == 2
+		and badge.tooltip_text.contains("8A-2: two hits")
+		and badge.tooltip_text.contains("4 + 4 base damage")
+		and badge.tooltip_text.contains("Hero 2 (middle)")
+		and fourth_wasp == fourth_before,
+		"source-four genuine Wasp shows its exact two-packet caption, target and hover")
+	badge.show_intent(fourth_wasp, false, false, "lowest_living_hp")
+	_check(badge.policy_cue == "Aim low HP" and _two_hit_caption(badge.readable_text)
+		and badge.tooltip_text.contains("Target policy (AIM LOW HP)")
+		and badge.tooltip_text.contains("4 + 4 base damage"),
+		"source-four Wasp keeps the real target policy and split on its compact ticket")
+	_assert_layout(badge, LiveEnemyIntentBadge.COMPACT_MIN_FONT, "fourth-slot Wasp")
+	replay_badge.show_intent(fourth_wasp, false, false, "lowest_living_hp")
+	_check(_presentation(badge) == _presentation(replay_badge),
+		"two genuine source-four Wasp presentations replay exactly")
+	for malformed_source in [0, 5, -1, "4", 4.0, true, null]:
+		var bad_source := fourth_wasp.duplicate(true)
+		bad_source["enemy_position"] = malformed_source
+		_check(not LiveEnemyIntentBadge.is_two_hit_attack(bad_source),
+			"invalid fifth or malformed source never authorizes two hits: " + str(malformed_source))
+		_assert_single_hit(badge, bad_source, 8, 2, "invalid source " + str(malformed_source))
+	var bad_hero := fourth_wasp.duplicate(true)
+	bad_hero["target_position"] = 4
+	_check(not LiveEnemyIntentBadge.is_two_hit_attack(bad_hero),
+		"fourth enemy is legal but fourth hero is not")
+	_assert_single_hit(badge, bad_hero, 8, 4, "invalid fourth hero target")
+	for malformed in [0, 1, 3, true, "2", null, 2.0]:
+		var bad_hits := fourth_wasp.duplicate(true)
+		bad_hits["hits"] = malformed
+		_assert_single_hit(badge, bad_hits, 8, 2, "source-four malformed hits " + str(malformed))
+	var extra_fourth := fourth_wasp.duplicate(true)
+	extra_fourth["extra_packet"] = true
+	_assert_single_hit(badge, extra_fourth, 8, 2, "source-four unknown key")
+	badge.show_intent(fourth_wasp, false, false, "lowest_living_hp", -1, {}, true)
+	_check(badge.blind_miss and badge.hit_count == 2 and badge.hit_damage == 4
+		and badge.readable_text == "BLIND · MISS"
+		and badge.tooltip_text.contains("Neither of the two authored hit packets resolves"),
+		"source-four genuine Blind suppresses both packet effects without erasing packet metadata")
+	badge.show_intent(fourth_wasp, false, true)
+	_check(badge.readable_text == "UNRAVELLED" and badge.hit_count == 1,
+		"source-four Unravelled suppresses the attack")
+	badge.show_intent(fourth_wasp, true)
+	_check(badge.readable_text == "SLAIN" and badge.hit_count == 1,
+		"source-four slain suppresses the attack")
+	badge.show_intent(fourth_wasp, false)
+	_check(badge.readable_text == "Hit 8 (2 hits): Middle" and fourth_wasp == fourth_before,
+		"normal source-four two-hit caption returns after Blind, skip and death")
+
 	# Blind is an opt-in view of the same two authentic catalog attacks. It
 	# announces that the entire attempted action misses without resolving either
 	# of the authored packets, and restores the exact baseline once consumed.

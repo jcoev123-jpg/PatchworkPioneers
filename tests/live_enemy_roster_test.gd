@@ -2689,6 +2689,10 @@ func _run() -> void:
 	await _expanded_meadow_layout(scene)
 	await _mounted_plaque_reflow(scene)
 	await _survival_ribbons(scene)
+	await _four_capacity_ribbons(scene)
+	await _mounted_fourth_wasp(scene)
+	for mode in [[3, 2], [3, 3], [4, 3], [4, 4]]:
+		await _mounted_summon_help(scene, mode[0], mode[1])
 	app.free()
 	reference.free()
 	_finish()
@@ -3900,6 +3904,43 @@ func _survival_plaque_bounds(presenter) -> void:
 					"survival plaques never overlap another actor's warning")
 
 
+## One genuine shipped actor record by ID from the same catalog the live run uses.
+func _authored_enemy(id: String) -> Dictionary:
+	var records: Array = RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	for record in records:
+		if record is Dictionary and record.get("id") == id:
+			return record.duplicate(true)
+	return {}
+
+
+## Inert legacy schedule slots: bind_battle replaces them with each roster's own
+## authored weighted spec, so only the genuine slot count matters here.
+func _inert_patterns(count: int) -> Array:
+	var specs: Array = []
+	for position in range(1, count + 1):
+		specs.append({"enemy_position": position,
+			"pattern": [{"type": "block", "amount": 0}]})
+	return specs
+
+
+## Binds one real roster to the mounted app battle exactly as a live admission does,
+## so the presenter, its plaques and the app's post-card boundary all read it.
+func _mount_roster(app, app_presenter, roster: CombatEnemies) -> bool:
+	var intents := CombatEnemyIntents.new(_inert_patterns(roster.get_enemies().size()))
+	if not intents.bind_battle(roster, app.party, app.run_rng):
+		return false
+	var result := CombatBattleResult.new(app.party, roster)
+	var flow := CombatRoundFlow.new(app.deck, app.party, roster, intents, result)
+	app.enemies = roster
+	app.enemy_intents = intents
+	app.battle_result = result
+	app.round_flow = flow
+	app.enemy_attacks = intents.get_intents()
+	app_presenter._sync_battle()
+	return app_presenter.enemies == roster
+
+
 func _survival_ribbons(scene: PackedScene) -> void:
 	var authored := _survival_records()
 	_check(authored.has("razor_ribbon_wraith") and authored.has("quilt_termite")
@@ -3950,6 +3991,8 @@ func _survival_ribbons(scene: PackedScene) -> void:
 		and termite.is_visible_in_tree() and termite_label.text == "Splits if room"
 		and termite.tooltip_text.contains("confirmed paid-card lethal hit")
 		and termite.tooltip_text.contains("slot is available")
+		and termite.tooltip_text.contains("fewer than 3 foes")
+		and not termite.tooltip_text.contains("fewer than 4 foes")
 		and termite.tooltip_text.contains("13-HP Half Quilt Termites")
 		and termite.tooltip_text.contains("Bleed and the enemy phase do not trigger"),
 		"ready Wraith and conditional Termite display exact source-owned captions and help")
@@ -4081,6 +4124,319 @@ func _survival_ribbons(scene: PackedScene) -> void:
 			"slain full-roster source never keeps a stale warning")
 	app.free()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
+
+
+## Find a deterministic, legal weighted choice from shipped specs. Never assign
+## _cache or call show_intent in place of the live bound scheduler.
+func _intent_witness_seed(roster: CombatEnemies, party: CombatParty,
+		source: int, kind: String) -> int:
+	var slots: Array[Dictionary] = []
+	for actor in roster.get_enemies():
+		var slot := CombatEnemyIntents._weighted_slot(int(actor.position), actor.get("intent"))
+		_check(not slot.is_empty(), "weighted witness has a normalized shipped actor spec")
+		if slot.is_empty():
+			return -1
+		slots.append(slot)
+	for candidate in range(1, 1025):
+		var random := RandomNumberGenerator.new()
+		random.seed = candidate
+		var drawn: Array[Dictionary] = CombatEnemyIntents._draw_batch(slots, party, random)
+		if drawn.size() == slots.size() and drawn[source - 1].get("type") == kind:
+			return candidate
+	_check(false, "a seeded authentic weighted selection can produce " + kind)
+	return -1
+
+
+## Source four is bound through the very same app and public roster sync as a
+## normal fight; the fourth action is selected by a real weighted draw.
+func _mounted_fourth_wasp(scene: PackedScene) -> void:
+	var ids := ["fray_scavenger", "button_guard", "spool_stalker", "needle_wasp"]
+	var definitions: Array = []
+	for id in ids:
+		var authored := _authored_enemy(id)
+		_check(not authored.is_empty(), "source-four fixture finds shipped enemy " + id)
+		if authored.is_empty():
+			return
+		definitions.append(authored)
+	var roster := CombatEnemies.new(definitions, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(roster.is_valid() and roster.get_capacity() == 4
+		and roster.get_enemies().size() == 4 and roster.get_enemy(4).id == "needle_wasp",
+		"AC1 precondition: a genuine distinct four-actor roster has Wasp in position four")
+	if not roster.is_valid():
+		return
+	var app = scene.instantiate()
+	root.add_child(app)
+	await process_frame
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	_check(app.party != null and app.run_rng != null and app.party.is_valid(),
+		"AC1 precondition: real Start Run supplies a valid live hero party and seeded RNG")
+	if app.party == null or app.run_rng == null:
+		app.free()
+		return
+	var candidate := _intent_witness_seed(roster, app.party, 4, "attack")
+	if candidate < 1:
+		app.free()
+		return
+	app.run_rng.seed = candidate
+	var presenter = app.get_node("LiveEnemyRoster")
+	_check(_mount_roster(app, presenter, roster), "AC1 precondition: actual app binds real weighted four-source combat")
+	await process_frame
+	await process_frame
+	var announcements: Array[Dictionary] = app.enemy_intents.get_intents()
+	_check(announcements.size() == 4 and announcements[3].get("enemy_position") == 4
+		and announcements[3].get("type") == "attack"
+		and announcements[3].get("amount") == 8 and announcements[3].get("hits") == 2
+		and announcements[3].get("target_position") in [1, 2, 3],
+		"AC1 precondition: actual seeded scheduler publishes Wasp's authored A-2 with a real hero target")
+	_check(presenter.enemies == roster and presenter._badges.size() == 4
+		and presenter._puppets.size() == 7
+		and presenter._puppets[6].actor_id == "needle_wasp",
+		"AC1 precondition: player-facing stage mounts fourth Wasp puppet and its fourth badge")
+	if announcements.size() != 4 or presenter._badges.size() != 4:
+		app.free()
+		return
+	var action: Dictionary = announcements[3]
+	var badge: LiveEnemyIntentBadge = presenter._badges[3]
+	var hero: int = int(action.get("target_position", 0))
+	var output: Array = [badge.readable_text, badge.tooltip_text, badge.hit_count,
+		badge.hit_damage, badge.target_position, badge.policy_cue]
+	_check(LiveEnemyIntentBadge.is_two_hit_attack(action)
+		and badge.source_position == 4 and badge.intent_type == "attack"
+		and badge.amount == 8 and badge.hit_count == 2 and badge.hit_damage == 4
+		and badge.target_position == hero and badge.policy_cue == "Aim low HP"
+		and badge.readable_text in badge.compact_caption_forms()
+		and badge.readable_text.contains("8") and badge.readable_text.contains("A-2"),
+		"AC1: mounted genuine fourth Wasp reads as eight power, two four-point hits at real target: " + str(output))
+	_check(badge.tooltip_text.contains("8A-2: two hits")
+		and badge.tooltip_text.contains("4 + 4 base damage")
+		and badge.tooltip_text.contains(LiveEnemyIntentBadge.hero_target_label(hero))
+		and badge.tooltip_text.contains("Target policy (AIM LOW HP)")
+		and badge.tooltip_text.contains("independently"),
+		"AC1: real fourth-slot hover names both packets, actual hero and low-HP policy: " + badge.tooltip_text)
+	var before: Array = _snapshot(app)
+	for repeat in range(4):
+		presenter._refresh()
+		_check([badge.readable_text, badge.tooltip_text, badge.hit_count, badge.hit_damage,
+			badge.target_position, badge.policy_cue] == output and _snapshot(app) == before,
+			"AC1: replayed mounted Wasp refresh leaves combat, run RNG and exact badge unchanged")
+	# Neither skip nor a slain source may continue announcing damage.
+	_check(roster.apply_damage(4, 22) and roster.is_slain(4),
+		"AC2 precondition: fourth authentic Wasp can be slain in authoritative roster")
+	presenter._refresh()
+	_check(badge.readable_text == "SLAIN" and badge.hit_count == 1
+		and not badge.tooltip_text.contains("two hits"),
+		"AC2: slain fourth source clears its real two-hit cue")
+	app.free()
+	await process_frame
+
+
+## A source-owned Moth's weighted Summon must tell the truth in each legal
+## capacity, both with a vacancy and when the last slot is already occupied.
+func _mounted_summon_help(scene: PackedScene, capacity: int, count: int) -> void:
+	var ids := ["moth_swarm", "fray_scavenger", "button_guard", "spool_stalker"]
+	var definitions: Array = []
+	for index in range(count):
+		var authored := _authored_enemy(ids[index])
+		_check(not authored.is_empty(), "summon fixture finds shipped actor " + ids[index])
+		if authored.is_empty():
+			return
+		definitions.append(authored)
+	var roster := CombatEnemies.new(definitions, capacity)
+	_check(roster.is_valid() and roster.get_capacity() == capacity
+		and roster.get_enemies().size() == count
+		and CombatEnemies.authentic_broodling_mother(roster.get_enemy(1), 1),
+		"AC3 precondition: mounted summon source is real Moth with valid capacity")
+	if not roster.is_valid():
+		return
+	var app = scene.instantiate()
+	root.add_child(app)
+	await process_frame
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	if app.party == null or app.run_rng == null:
+		_check(false, "AC3 precondition: actual game supplies party and RNG")
+		app.free()
+		return
+	var candidate := _intent_witness_seed(roster, app.party, 1, "summon")
+	if candidate < 1:
+		app.free()
+		return
+	app.run_rng.seed = candidate
+	var presenter = app.get_node("LiveEnemyRoster")
+	_check(_mount_roster(app, presenter, roster),
+		"AC3 precondition: real app binds Moth's weighted Summon")
+	await process_frame
+	await process_frame
+	var actions: Array[Dictionary] = app.enemy_intents.get_intents()
+	_check(actions.size() == count and actions[0].get("type") == "summon"
+		and actions[0].get("enemy_position") == 1
+		and presenter._badges.size() == count,
+		"AC3 precondition: live weighted scheduler selected actual source-one Summon")
+	if presenter._badges.size() != count or actions.size() != count:
+		app.free()
+		return
+	var badge: LiveEnemyIntentBadge = presenter._badges[0]
+	var can_birth := count < capacity
+	_check(badge.readable_text == "Summon Broodling"
+		and badge.tooltip_text.contains("maximum %d enemies" % capacity)
+		and badge.tooltip_text.contains("8 HP")
+		and badge.tooltip_text.contains("5")
+		and badge.tooltip_text.contains("birth turn")
+		and badge.tooltip_text.contains("following turn")
+		and badge.tooltip_text.contains("will be born") == can_birth
+		and badge.tooltip_text.contains("no Broodling is born") == not can_birth,
+		"AC3: authentic %d-of-%d Summon hover truthfully describes vacancy and later attack: %s" % [
+			count, capacity, badge.tooltip_text])
+	var tip := badge.tooltip_text
+	var before := _snapshot(app)
+	for repeat in range(3):
+		presenter._refresh()
+	_check(badge.tooltip_text == tip and _snapshot(app) == before
+		and roster.get_enemies().size() == count
+		and not roster.get_enemy(1).has(CombatEnemies.BROODLING_LATCH),
+		"AC3: repeated Summon tooltip viewing spends no latch, HP or RNG and is replayable")
+	app.free()
+	await process_frame
+
+
+## A bound four-capacity fight is the only Termite battle that may still promise a
+## split. The real mounted plaque, the app's own post-card boundary and the genuine
+## model split into slot four are exercised here, alongside every fail-closed refusal.
+func _four_capacity_ribbons(scene: PackedScene) -> void:
+	var authored := _survival_records()
+	var extra := _authored_enemy("spool_stalker")
+	_check(authored.has("quilt_termite") and authored.has("fray_scavenger")
+		and authored.has("button_guard") and not extra.is_empty()
+		and int(extra.get("max_hp", 0)) > 0,
+		"four-capacity ribbons start from genuine shipped actor records")
+	if not (authored.has("quilt_termite") and authored.has("fray_scavenger")
+			and authored.has("button_guard")) or extra.is_empty():
+		return
+	var witness := CombatEnemies.new([authored["fray_scavenger"],
+		authored["quilt_termite"], authored["button_guard"]],
+		CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(witness.is_valid() and witness.get_capacity() == CombatEnemies.OPT_IN_MAX_ENEMIES
+		and witness.get_enemies().size() == 3
+		and witness.get_enemy(2).get("id") == CombatEnemies.TERMITE_ID,
+		"AC1 precondition: three authentic actors bind a legal four-capacity roster")
+	if not witness.is_valid():
+		return
+	var app = scene.instantiate()
+	root.add_child(app)
+	await process_frame
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	var presenter = app.get_node("LiveEnemyRoster")
+	_check(_mount_roster(app, presenter, witness), "AC1 precondition: the real app battle binds the roster")
+	await process_frame
+	await process_frame
+	presenter._refresh()
+	_check(app.enemies == witness and presenter.enemies == witness
+		and presenter._status_tags.size() == 3 and presenter._puppets.size() == 6,
+		"AC1 precondition: the mounted battle shows all three authentic actors")
+	if app.enemies != witness or presenter._status_tags.size() != 3:
+		app.free()
+		return
+	var termite: PanelContainer = presenter._status_tags[1]
+	var caption := termite.get_node("Caption") as Label
+	_check(termite.is_visible_in_tree() and caption.text == "Splits if room"
+		and termite.tooltip_text.contains("fewer than 4 foes")
+		and not termite.tooltip_text.contains("fewer than 3 foes")
+		and termite.tooltip_text.contains("13-HP Half Quilt Termites"),
+		"AC1: the three-of-four living Termite promises the real fourth slot")
+	_survival_plaque_bounds(presenter)
+	var before: Array = _snapshot(app)
+	var outcome_before: String = app.battle_result.get_outcome()
+	for repeat in range(3):
+		presenter._refresh()
+	_check(_snapshot(app) == before and app.battle_result.get_outcome() == outcome_before
+		and witness.get_enemies().size() == 3,
+		"AC3: repeated four-capacity refresh keeps actors, turn, deck, RNG and outcome")
+	witness._capacity = CombatEnemies.OPT_IN_MAX_ENEMIES + 1
+	presenter._refresh()
+	_check(not termite.visible and termite.tooltip_text.is_empty(),
+		"AC2: a forged capacity above the legal limit promises no split")
+	witness._capacity = CombatEnemies.OPT_IN_MAX_ENEMIES
+	var live = app.enemies
+	app.enemies = CombatEnemies.new([extra])
+	presenter._refresh()
+	_check(not termite.visible and termite.tooltip_text.is_empty(),
+		"AC2: a stale binding never keeps another battle's split promise")
+	app.enemies = live
+	presenter._refresh()
+	_check(termite.is_visible_in_tree() and caption.text == "Splits if room",
+		"AC1: restoring the same bound battle restores its genuine warning")
+	var roster_before := witness.get_enemies()
+	_check(witness.apply_damage(2, 26) and witness.is_slain(2),
+		"AC1 precondition: the four-capacity Termite takes a lethal paid-card hit")
+	presenter._refresh()
+	_check(not termite.visible and termite.tooltip_text.is_empty(),
+		"AC2: a slain Termite displays no split warning")
+	_check(app._note_card_damage(witness, roster_before),
+		"AC1 precondition: the real post-card boundary records the authentic lethal")
+	_check(app._observe_battle_result()
+		and witness.get_enemies().size() == 4
+		and witness.get_enemy(2).get("id") == CombatEnemies.HALF_LEFT_ID
+		and witness.get_enemy(4).get("id") == CombatEnemies.HALF_RIGHT_ID
+		and witness.get_enemy(2).get("hp") == 13 and witness.get_enemy(4).get("hp") == 13,
+		"AC1: the real app boundary fills slot four with both half-Termites")
+	await process_frame
+	await process_frame
+	presenter._refresh()
+	_check(presenter._status_tags.size() == 4 and presenter._puppets.size() == 7
+		and presenter._puppets[3].actor_id == "fray_scavenger"
+		and presenter._puppets[4].actor_id == CombatEnemies.HALF_LEFT_ID
+		and presenter._puppets[5].actor_id == "button_guard"
+		and presenter._puppets[6].actor_id == CombatEnemies.HALF_RIGHT_ID,
+		"AC1: the genuine fourth-slot split remounts one plaque and puppet per actor")
+	for plaque in presenter._status_tags:
+		var text: String = (plaque.get_node("Caption") as Label).text
+		_check(not text.contains("Splits if room") and not text.contains("Revive")
+			and not plaque.tooltip_text.contains("paid-card lethal"),
+			"AC1: the split halves inherit no survival cue")
+	app.free()
+	await process_frame
+	# Four genuine actors in a four-capacity roster can never promise or stage a split.
+	var full := CombatEnemies.new([authored["quilt_termite"], authored["fray_scavenger"],
+		authored["button_guard"], extra], CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(full.is_valid() and full.get_capacity() == CombatEnemies.OPT_IN_MAX_ENEMIES
+		and full.get_enemies().size() == 4,
+		"AC2 precondition: four authentic actors really fill a four-capacity roster")
+	if not full.is_valid():
+		return
+	app = scene.instantiate()
+	root.add_child(app)
+	await process_frame
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	presenter = app.get_node("LiveEnemyRoster")
+	_check(_mount_roster(app, presenter, full), "AC2 precondition: the real app battle binds the full roster")
+	await process_frame
+	await process_frame
+	presenter._refresh()
+	_check(app.enemies == full and presenter._status_tags.size() == 4
+		and presenter._puppets.size() == 7,
+		"AC2 precondition: the mounted battle shows all four authentic actors")
+	if app.enemies != full or presenter._status_tags.size() != 4:
+		app.free()
+		return
+	var full_termite: PanelContainer = presenter._status_tags[0]
+	_check(not full_termite.is_visible_in_tree() and full_termite.tooltip_text.is_empty(),
+		"AC2: four occupied slots at capacity four never promise a split")
+	_check(full.apply_damage(1, 26)
+		and full.stage_split_on_death(1) == {"ok": true, "split": false}
+		and full.get_enemies().size() == 4 and full.is_slain(1),
+		"AC2: the full four-capacity roster refuses the split after genuine lethal")
+	presenter._refresh()
+	_check(not full_termite.visible and full_termite.tooltip_text.is_empty(),
+		"AC2: the slain full-roster Termite keeps no stale warning")
+	app.free()
+	await process_frame
 
 
 func _finish() -> void:

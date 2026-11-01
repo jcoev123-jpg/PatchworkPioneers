@@ -111,6 +111,20 @@ const BLOCK_PIERCE_EXPLANATION := "Pierce Block strikes the backmost living enem
 ## borrow the rule.
 const TETHER_KEYWORD := "Tether"
 const TETHER_EXPLANATION := "Tether links two distinct living enemies and deals zero immediate damage on play. When a later confirmed hit against either linked enemy causes positive HP loss, half of that HP loss (50%, rounded down) is echoed as raw damage to the other linked living enemy, with that recipient's Block absorbing before HP. If the primary hit is wholly absorbed by Block, there is no echo. The echo is not a separate card attack and cannot trigger another echo, status, Thorns or Riposte. This Help explains the authored rules helper; it does not specify link lifetime or claim live hand wiring for Tether Stitch."
+## Guard is the Warden's V3 one-hit redirection contract.
+## Only authentic catalog printings that CardShortRules authenticates receive this Help row.
+const GUARD_KEYWORD := "Guard"
+const GUARD_EXPLANATION := "Guard redirects the chosen living ally's next incoming enemy attack hit to the Warden's current seat once. The pending single interception lasts until an eligible confirmed enemy hit consumes it; a miss or non-attack never consumes it. The Warden's own Block absorbs incoming damage before HP loss. Choosing the Warden himself as ally grants him Block, but does not redirect attacks aimed at other heroes."
+const GUARD_UNIVERSAL_EXPLANATION := "Guard arms a universal pending single interception protecting any other living ally: the next confirmed enemy attack hit aimed at any other living ally redirects to the Warden's current seat once and consumes the guard. The pending single interception lasts until an eligible confirmed enemy hit consumes it; a miss or non-attack never consumes it. The Warden's own Block absorbs incoming damage before HP loss. Attacks aimed at the Warden himself are not redirected and do not consume the universal guard."
+const FINAL_BASTION_GUARD_EXPLANATION := GUARD_UNIVERSAL_EXPLANATION
+## Taunt is the Warden's V3 full next enemy turn target redirection contract.
+## Only authentic catalog printings that CardShortRules authenticates receive this Help row.
+const TAUNT_KEYWORD := "Taunt"
+const TAUNT_EXPLANATION := "Taunt forces all targetable enemy attacks during the next enemy turn to aim at the living Warden instead of their normal targets. The Warden's Block absorbs incoming damage normally before HP loss. Taunt expires at the end of that enemy turn. This Help explains the authored card rule; live combat resolves the redirection."
+## Shield Toss is the Warden's V3 unspent current Block + bonus damage contract.
+## Only authentic catalog printings that CardShortRules authenticates receive this Help row.
+const SHIELD_TOSS_KEYWORD := "Shield Toss"
+const SHIELD_TOSS_EXPLANATION := "Shield Toss deals damage equal to the Warden's unspent current Block at the moment the attack resolves, plus any authored bonus damage. Resolving the attack does not consume or spend the Warden's Block, leaving that Block intact to absorb later damage."
 
 
 static func describe(definition: Variant) -> Array[Dictionary]:
@@ -206,6 +220,15 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 	var crow := _crow_line(definition, effects)
 	if not crow.is_empty():
 		lines.append(crow)
+	var v3_guard := _warden_guard_line(definition)
+	if not v3_guard.is_empty():
+		lines.append(v3_guard)
+	var v3_taunt := _warden_taunt_line(definition)
+	if not v3_taunt.is_empty():
+		lines.append(v3_taunt)
+	var v3_toss := _warden_toss_line(definition)
+	if not v3_toss.is_empty():
+		lines.append(v3_toss)
 	return lines
 
 
@@ -710,6 +733,27 @@ static func _crow_line(definition: Dictionary, _effects: Dictionary) -> Dictiona
 	if not CardShortRules.is_authored_block_pierce(definition):
 		return {}
 	return {"keyword": BLOCK_PIERCE_KEYWORD, "explanation": BLOCK_PIERCE_EXPLANATION}
+
+
+static func _warden_guard_line(definition: Dictionary) -> Dictionary:
+	if not CardShortRules.is_authored_v3_guard(definition):
+		return {}
+	var card_id := str(definition.get("id", ""))
+	if card_id == "warden_v3_final_bastion" or card_id == "warden_v3_final_bastion_plus":
+		return {"keyword": GUARD_KEYWORD, "explanation": GUARD_UNIVERSAL_EXPLANATION}
+	return {"keyword": GUARD_KEYWORD, "explanation": GUARD_EXPLANATION}
+
+
+static func _warden_taunt_line(definition: Dictionary) -> Dictionary:
+	if not CardShortRules.is_authored_v3_taunt(definition):
+		return {}
+	return {"keyword": TAUNT_KEYWORD, "explanation": TAUNT_EXPLANATION}
+
+
+static func _warden_toss_line(definition: Dictionary) -> Dictionary:
+	if not CardShortRules.is_authored_v3_shield_toss(definition):
+		return {}
+	return {"keyword": SHIELD_TOSS_KEYWORD, "explanation": SHIELD_TOSS_EXPLANATION}
 
 
 ## Tether is the Seamstress's authored two-foe link and confirmed-hit echo.

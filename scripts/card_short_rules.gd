@@ -22,7 +22,8 @@ const KNOWN_EFFECT_KEYS := [
 	"living_targets_only", "duration", "next_attack_damage_bonus",
 	"next_turn_energy", "expires", "blind", "blind_next_attack",
 	"dodge_next_attack", "exhaust", "cannot_buff_next_turn", "ignore_block",
-	"tether_share_percent",
+	"tether_share_percent", "guard_next_hit", "damage_equal_to_owner_block",
+	"bonus_damage", "taunt_next_enemy_turn",
 ]
 ## The two V3 one-shot descriptors the face names beside the classic effects.
 ## They are printed design wording only: this formatter assumes no enemy attack
@@ -117,6 +118,34 @@ const TETHER_KEY := "tether_share_percent"
 const TETHER_OWNER := "seamstress"
 const TETHER_SENTENCE := "Link 2 living enemies. Echo 50% of a later confirmed hit's HP loss."
 
+## The authentic V3 Warden Guard, Taunt and Shield Toss printings.
+const V3_WARDEN_GUARD_IDS: Array[String] = [
+	"warden_v3_shield_catch",
+	"warden_v3_shield_catch_plus",
+	"warden_v3_guard_stitch",
+	"warden_v3_guard_stitch_plus",
+	"warden_v3_final_bastion",
+	"warden_v3_final_bastion_plus",
+]
+
+const V3_WARDEN_TAUNT_IDS: Array[String] = [
+	"warden_v3_iron_challenge",
+	"warden_v3_iron_challenge_plus",
+	"warden_v3_iron_taunt",
+	"warden_v3_iron_taunt_plus",
+	"warden_v3_shieldwall_chorus",
+	"warden_v3_shieldwall_chorus_plus",
+	"warden_v3_final_bastion",
+	"warden_v3_final_bastion_plus",
+]
+
+const V3_WARDEN_SHIELD_TOSS_IDS: Array[String] = [
+	"warden_v3_rim_toss",
+	"warden_v3_rim_toss_plus",
+	"warden_v3_shield_toss",
+	"warden_v3_shield_toss_plus",
+]
+
 
 ## One description of a validated card record:
 ## {known: bool, phrases: Array[String], line: String, unknown: bool}
@@ -143,6 +172,8 @@ static func describe(definition: Variant, applied: Dictionary = {}) -> Dictionar
 		_ally_sentence(card, effects, applied),
 		_party_sentence(card, effects),
 		_self_sentence(card, effects),
+		_v3_guard_sentence(card, effects),
+		_v3_taunt_sentence(card, effects),
 	]:
 		var sentence := str(part.get("sentence", ""))
 		if bool(part.get("unknown", false)):
@@ -197,6 +228,15 @@ static func has_unknown(definition: Variant) -> bool:
 	# stays an honest unknown instead of a guessed Tether rule.
 	if effects.has(TETHER_KEY) and not is_authored_tether(card):
 		return true
+	# V3 Warden effect keys are known only in their authentic catalog printings;
+	# any forged, altered, mis-owned or re-scoped card stays an honest unknown.
+	if effects.has("guard_next_hit") and not is_authored_v3_guard(card):
+		return true
+	if effects.has("taunt_next_enemy_turn") and not is_authored_v3_taunt(card):
+		return true
+	if (effects.has("damage_equal_to_owner_block") or effects.has("bonus_damage")) \
+			and not is_authored_v3_shield_toss(card):
+		return true
 	return false
 
 
@@ -247,6 +287,120 @@ static func _tether_sentence(card: Dictionary, effects: Dictionary) -> Dictionar
 	if not is_authored_tether(card):
 		return {"sentence": "", "unknown": true}
 	return {"sentence": TETHER_SENTENCE, "unknown": false}
+
+
+## True when this exact record is one of the authentic V3 Warden Guard printings
+## (Shield Catch, Guard Stitch, Final Bastion, base and '+').
+static func is_authored_v3_guard(definition: Variant) -> bool:
+	return _is_authentic_v3_warden_card(definition, V3_WARDEN_GUARD_IDS)
+
+
+static func is_authored_guard(definition: Variant) -> bool:
+	return is_authored_v3_guard(definition)
+
+
+## True when this exact record is one of the authentic V3 Warden Taunt printings
+## (Iron Challenge, Iron Taunt, Shieldwall Chorus, Final Bastion, base and '+').
+static func is_authored_v3_taunt(definition: Variant) -> bool:
+	return _is_authentic_v3_warden_card(definition, V3_WARDEN_TAUNT_IDS)
+
+
+static func is_authored_taunt(definition: Variant) -> bool:
+	return is_authored_v3_taunt(definition)
+
+
+## True when this exact record is one of the authentic V3 Warden Shield Toss printings
+## (Rim Toss and Shield Toss, base and '+').
+static func is_authored_v3_shield_toss(definition: Variant) -> bool:
+	return _is_authentic_v3_warden_card(definition, V3_WARDEN_SHIELD_TOSS_IDS)
+
+
+static func is_authored_shield_toss(definition: Variant) -> bool:
+	return is_authored_v3_shield_toss(definition)
+
+
+static func _v3_guard_sentence(card: Dictionary, effects: Dictionary) -> Dictionary:
+	if not effects.has("guard_next_hit"):
+		return {}
+	if not is_authored_v3_guard(card):
+		return {"sentence": "", "unknown": true}
+	var flag: Variant = effects["guard_next_hit"]
+	if not flag is bool or not bool(flag):
+		return {"sentence": "", "unknown": true}
+	return {"sentence": "Guard.", "unknown": false}
+
+
+static func _v3_taunt_sentence(card: Dictionary, effects: Dictionary) -> Dictionary:
+	if not effects.has("taunt_next_enemy_turn"):
+		return {}
+	if not is_authored_v3_taunt(card):
+		return {"sentence": "", "unknown": true}
+	var flag: Variant = effects["taunt_next_enemy_turn"]
+	if not flag is bool or not bool(flag):
+		return {"sentence": "", "unknown": true}
+	return {"sentence": "Taunt.", "unknown": false}
+
+
+## Reads the detached canonical record from the V3 Warden catalogs.
+static func _catalog_v3_warden_definition(card_id: String) -> Dictionary:
+	match card_id:
+		"warden_v3_shield_catch", "warden_v3_shield_catch_plus", \
+		"warden_v3_rim_toss", "warden_v3_rim_toss_plus", \
+		"warden_v3_iron_challenge", "warden_v3_iron_challenge_plus":
+			return V3WardenStarterCards.new().get_definition(card_id)
+		"warden_v3_shield_toss", "warden_v3_shield_toss_plus", \
+		"warden_v3_guard_stitch", "warden_v3_guard_stitch_plus", \
+		"warden_v3_iron_taunt", "warden_v3_iron_taunt_plus", \
+		"warden_v3_shieldwall_chorus", "warden_v3_shieldwall_chorus_plus", \
+		"warden_v3_final_bastion", "warden_v3_final_bastion_plus":
+			return V3WardenPoolCards.new().get_definition(card_id)
+	return {}
+
+
+static func _is_authentic_v3_warden_card(definition: Variant, valid_ids: Array[String]) -> bool:
+	if not definition is Dictionary:
+		return false
+	var card: Dictionary = definition
+	var id_value: Variant = card.get("id")
+	if not id_value is String:
+		return false
+	var card_id: String = id_value
+	if not valid_ids.has(card_id):
+		return false
+	var canonical: Dictionary = _catalog_v3_warden_definition(card_id)
+	if canonical.is_empty():
+		return false
+	if not _deep_exact_equal(card, canonical):
+		return false
+	var effects_value: Variant = card.get("effects")
+	if not effects_value is Dictionary:
+		return false
+	if not _deep_exact_equal(effects_value, canonical.get("effects", {})):
+		return false
+	# Verify reciprocal upgrade link
+	if canonical.has("upgrade_id"):
+		if canonical.has("upgrade_of"):
+			return false
+		var plus_id_val: Variant = canonical["upgrade_id"]
+		if not plus_id_val is String:
+			return false
+		var plus_id: String = plus_id_val
+		var plus_canonical: Dictionary = _catalog_v3_warden_definition(plus_id)
+		if plus_canonical.is_empty() or str(plus_canonical.get("upgrade_of", "")) != card_id:
+			return false
+	elif canonical.has("upgrade_of"):
+		if canonical.has("upgrade_id"):
+			return false
+		var base_id_val: Variant = canonical["upgrade_of"]
+		if not base_id_val is String:
+			return false
+		var base_id: String = base_id_val
+		var base_canonical: Dictionary = _catalog_v3_warden_definition(base_id)
+		if base_canonical.is_empty() or str(base_canonical.get("upgrade_id", "")) != card_id:
+			return false
+	else:
+		return false
+	return true
 
 
 ## Fear is the Scarecrow's authored one-turn buff lock, never a status stack. The
@@ -394,7 +548,7 @@ static func _recipient(card: Dictionary) -> String:
 static func _has_enemy_effects(effects: Dictionary) -> bool:
 	for key in ["damage", "conditional_damage", "exposed", "weak", "bleed",
 			"unravel", "bleed_multiplier", "pinned", "tangled", "blind",
-			"blind_next_attack", FEAR_KEY, CROW_KEY]:
+			"blind_next_attack", FEAR_KEY, CROW_KEY, "damage_equal_to_owner_block"]:
 		if effects.has(key):
 			return true
 	return false
@@ -437,6 +591,28 @@ static func _enemy_sentence(card: Dictionary, effects: Dictionary,
 		else:
 			# The empowered amount replaces the base damage; it is not a second hit.
 			damage += ", or %d if %s" % [empowered, _condition_text(condition)]
+	if effects.has("damage_equal_to_owner_block"):
+		if is_authored_v3_shield_toss(card) and not effects.has("damage"):
+			var flag: Variant = effects["damage_equal_to_owner_block"]
+			if flag is bool and bool(flag):
+				var bonus_val: Variant = effects.get("bonus_damage")
+				var bonus := 0
+				if bonus_val != null:
+					if bonus_val is int and int(bonus_val) > 0:
+						bonus = int(bonus_val)
+					else:
+						unknown = true
+				if not unknown:
+					if bonus > 0:
+						damage = "deal damage equal to current Block + %d" % bonus
+					else:
+						damage = "deal damage equal to current Block"
+			else:
+				unknown = true
+		else:
+			unknown = true
+	if effects.has("bonus_damage") and not effects.has("damage_equal_to_owner_block"):
+		unknown = true
 	if not damage.is_empty():
 		clauses.append(damage)
 	if effects.has(CROW_KEY):

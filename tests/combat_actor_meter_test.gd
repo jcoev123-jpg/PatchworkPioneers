@@ -26,6 +26,21 @@ func _enemies() -> Array:
 	return [{"id": "ragling", "name": "Ragling", "max_hp": 12}]
 
 
+## Four different authored definitions from the identical run catalog used by the app.
+## No synthetic position is supplied: CombatEnemies itself owns all four slots.
+func _shipped_four() -> Array:
+	var catalog: Array = RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var wanted := ["fray_scavenger", "button_guard", "spool_stalker", "seam_ripper"]
+	var records: Array = []
+	for id in wanted:
+		for candidate in catalog:
+			if candidate is Dictionary and candidate.get("id") == id:
+				records.append(candidate.duplicate(true))
+				break
+	return records
+
+
 func _view(meter: CombatActorMeter, snapshot: Dictionary, side: String,
 		party: CombatParty, enemies: CombatEnemies, rng: RandomNumberGenerator) -> void:
 	var original: Dictionary = snapshot.duplicate(true)
@@ -178,6 +193,97 @@ func _assert_cleared(meter: CombatActorMeter, note: String) -> void:
 		note + ": invalid source does not append or leak either label or the badge")
 
 
+
+## An actual opt-in roster owns slot four from construction through every update.
+## The meter never receives a forged positive fourth-position dictionary.
+func _fourth_enemy_meter(meter: CombatActorMeter, party: CombatParty,
+		rng: RandomNumberGenerator) -> void:
+	var definitions := _shipped_four()
+	var required := ["fray_scavenger", "button_guard", "spool_stalker", "seam_ripper"]
+	var ids: Array[String] = []
+	for record in definitions:
+		ids.append(String(record.get("id", "")))
+	_check(definitions.size() == 4 and ids == required,
+		"four distinct named definitions are loaded from the shipped run catalog")
+	if definitions.size() != 4 or ids != required:
+		return
+	var ordinary := CombatEnemies.new(definitions)
+	_check(not ordinary.is_valid() and ordinary.get_enemy(4).is_empty()
+		and ordinary.get_capacity() == CombatEnemies.MAX_ENEMIES,
+		"default-three roster never silently admits four enemies")
+	var roster := CombatEnemies.new(definitions, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	var initial := roster.get_enemies()
+	_check(roster.is_valid() and roster.get_capacity() == 4
+		and initial.size() == 4 and roster.get_enemy(4) == initial[3]
+		and initial[3]["position"] == 4 and initial[3]["id"] == required[3]
+		and initial[3]["name"] == definitions[3]["name"]
+		and initial[3]["hp"] == definitions[3]["max_hp"],
+		"real four-capacity roster owns the authentic fourth actor and its source values")
+	if not roster.is_valid() or initial.size() != 4:
+		return
+	_check(roster.gain_block(4, 11) and roster.apply_statuses(
+		{4: {"bleed": 2, "weak": 1}}),
+		"fourth enemy gains positive Block and statuses through real roster methods")
+	var fourth := roster.get_enemy(4)
+	_check(fourth["block"] == 11 and fourth["statuses"] == {"bleed": 2, "weak": 1}
+		and fourth["hp"] == initial[3]["hp"] and fourth["position"] == 4,
+		"fourth-slot positive witness remains roster-owned")
+	var before := [party.get_heroes(), roster.get_enemies(), rng.state]
+	_view(meter, fourth, "enemy", party, roster, rng)
+	_assert_actor(meter, "4. " + String(definitions[3]["name"]), fourth["hp"],
+		fourth["max_hp"], 11, "real fourth enemy with Block and Bleed/Weak",
+		"Statuses: Bleed 2 · Weak 1", "Bleed next: -2 HP (bypasses Block)",
+		"Weak: -25% attack damage")
+	var visual := _visual(meter)
+	var status_id := meter.status_text.get_instance_id()
+	_view(meter, roster.get_enemy(4), "enemy", party, roster, rng)
+	_check(_visual(meter) == visual and meter.status_text.get_instance_id() == status_id
+		and [party.get_heroes(), roster.get_enemies(), rng.state] == before,
+		"fourth-slot repeated rendering is idempotent, preserves actor/roster and consumes no RNG")
+
+	_check(roster.apply_damage(4, 14), "real damage spends Block 11 before fourth HP")
+	var damaged := roster.get_enemy(4)
+	_check(damaged["block"] == 0 and damaged["hp"] == fourth["hp"] - 3
+		and damaged["statuses"] == fourth["statuses"],
+		"authoritative fourth-slot HP/Block update is exact")
+	_view(meter, damaged, "enemy", party, roster, rng)
+	_assert_actor(meter, "4. " + String(definitions[3]["name"]), damaged["hp"],
+		damaged["max_hp"], 0, "fourth enemy after actual Block-absorbing damage",
+		"Statuses: Bleed 2 · Weak 1", "Bleed next: -2 HP (bypasses Block)",
+		"Weak: -25% attack damage")
+	_check(roster.gain_block(4, 6) and roster.apply_statuses({4: {"exposed": 1}}),
+		"real fourth enemy restores Block and gains an additional positive status")
+	var updated := roster.get_enemy(4)
+	_view(meter, updated, "enemy", party, roster, rng)
+	_assert_actor(meter, "4. " + String(definitions[3]["name"]), updated["hp"],
+		updated["max_hp"], 6, "fourth enemy refreshed from authoritative APIs",
+		"Statuses: Bleed 2 · Weak 1 · Exposed 1",
+		"Bleed next: -2 HP (bypasses Block)",
+		"Weak: -25% attack damage\nExposed: +50% attack damage taken")
+
+	# Start each rejection from truly visible positive fourth-slot data.
+	var fifth := updated.duplicate(true)
+	fifth["position"] = 5
+	var bad_status := updated.duplicate(true)
+	bad_status["statuses"] = {"bleed": -1}
+	var bad_hp := updated.duplicate(true)
+	bad_hp["hp"] = updated["max_hp"] + 1
+	var hero_four := party.get_hero(3)
+	hero_four["position"] = 4
+	var full_before := [party.get_heroes(), roster.get_enemies(), rng.state]
+	for bad in [fifth, bad_status, bad_hp, hero_four]:
+		_check(meter.show_actor(roster.get_enemy(4), "enemy")
+			and meter.block_badge.visible and meter.status_text.text.contains("Exposed 1"),
+			"positive real fourth-slot status and Block precede every fail-closed probe")
+		var before_bad: Dictionary = bad.duplicate(true)
+		var side := "hero" if bad == hero_four else "enemy"
+		_check(not meter.show_actor(bad, side),
+			"fifth enemy, malformed fourth or fourth hero must be rejected: " + str(bad))
+		_assert_cleared(meter, "rejected fourth-slot or out-of-range snapshot")
+		_check(bad == before_bad, "rejected source remains unmodified")
+	_check([party.get_heroes(), roster.get_enemies(), rng.state] == full_before,
+		"fourth-slot rejected refreshes preserve all combat state and RNG")
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	root.content_scale_size = Vector2i(1280, 720)
@@ -206,6 +312,7 @@ func _run() -> void:
 	_check(meter.has_method("show_actor") and meter.is_inside_tree()
 		and meter.get_parent() == stage, "required public API and mounted instance exist")
 	_check(not meter.visible, "new meter does not pretend an actor exists")
+	_fourth_enemy_meter(meter, party, rng)
 
 	var expected_heroes := party.get_heroes()
 	var expected_enemies := enemies.get_enemies()

@@ -1914,7 +1914,8 @@ func _sync_battle() -> void:
 		puppet.stage_height = STAGE_ACTOR_HEIGHT
 		puppet.intent_band = STAGE_INTENT_BAND
 		puppet.tag_height = STAGE_TAG_HEIGHT
-		puppet.felt = [Color("b78373"), Color("8b9470"), Color("93839e")][enemy.position - 1]
+		puppet.felt = [Color("b78373"), Color("8b9470"), Color("93839e"),
+			Color("b49a55")][enemy.position - 1]
 		column.add_child(puppet)
 		_puppets.append(puppet)
 		# The authoritative target label still covers its whole actor, so aiming anywhere
@@ -2168,18 +2169,33 @@ func _status_copy(enemy: Dictionary, contact_traits: Dictionary = {},
 		else:
 			help.append("Revive spent: this Wraith has already revived once; its next lethal HP loss is final.")
 	if survival_traits.get("split") == true:
-		visible.append("Splits if room")
-		help.append("Splits if room: only a confirmed paid-card lethal hit can replace this Quilt Termite with two %d-HP Half Quilt Termites, and only while an enemy slot is available (fewer than %d foes). Bleed and the enemy phase do not trigger a split." % [CombatEnemies.revive_hp(enemy["max_hp"]), CombatEnemies.MAX_ENEMIES])
+		# The promised room is this battle's own authenticated capacity; a forged or
+		# missing one never prints a split claim at all.
+		var capacity := _authentic_capacity(survival_traits.get("capacity"))
+		if capacity > 0:
+			visible.append("Splits if room")
+			help.append("Splits if room: only a confirmed paid-card lethal hit can replace this Quilt Termite with two %d-HP Half Quilt Termites, and only while an enemy slot is available (fewer than %d foes). Bleed and the enemy phase do not trigger a split." % [CombatEnemies.revive_hp(enemy["max_hp"]), capacity])
 	if visible.is_empty():
 		return {}
 	return {"caption": "\n".join(visible), "help": "\n".join(help)}
+
+
+## The only enemy room this stage may promise: the live bound roster's own explicit
+## capacity. A default three-slot fight never borrows an opted four-slot limit, and a
+## malformed, missing or forged value promises nothing.
+static func _authentic_capacity(capacity: Variant) -> int:
+	if not capacity is int or capacity not in [
+			CombatEnemies.MAX_ENEMIES, CombatEnemies.OPT_IN_MAX_ENEMIES]:
+		return 0
+	return capacity
 
 
 ## Survival warnings are never inferred from an ID alone: this is called only
 ## for a living, ID-matched puppet in the currently mounted authoritative roster.
 ## Its strings describe the model's latch and post-paid-card staging conditions;
 ## reading these flags never stages a split or settles HP.
-static func _survival_traits(enemy: Dictionary, occupied_slots: int) -> Dictionary:
+static func _survival_traits(enemy: Dictionary, occupied_slots: int,
+		capacity: Variant) -> Dictionary:
 	var hp: Variant = enemy.get("hp")
 	var maximum: Variant = enemy.get("max_hp")
 	if not hp is int or not maximum is int or hp <= 0 or maximum <= 0 or hp > maximum:
@@ -2190,13 +2206,14 @@ static func _survival_traits(enemy: Dictionary, occupied_slots: int) -> Dictiona
 			and enemy[CombatEnemies.REVIVE_FIELD] == true \
 			and CombatEnemies.valid_revive_flags(enemy):
 		return {"revival": "ready" if CombatEnemies.revive_pending(enemy) else "spent"}
-	if occupied_slots < CombatEnemies.MAX_ENEMIES \
+	var split_capacity := _authentic_capacity(capacity)
+	if split_capacity > 0 and occupied_slots >= 0 and occupied_slots < split_capacity \
 			and enemy.get("id") == CombatEnemies.TERMITE_ID \
 			and enemy.get(CombatEnemies.SPLIT_FIELD) is bool \
 			and enemy[CombatEnemies.SPLIT_FIELD] == true \
 			and CombatEnemies.valid_split_flags(enemy) \
 			and CombatEnemies._termite_parent_attack(enemy, int(enemy.get("position", 0))) >= 0:
-		return {"split": true}
+		return {"split": true, "capacity": split_capacity}
 	return {}
 
 
@@ -2339,6 +2356,8 @@ func _refresh() -> void:
 	if enemies == null or not is_instance_valid(panel):
 		return
 	var roster := enemies.get_enemies()
+	# Only this live roster's own explicit capacity may promise split room.
+	var live_capacity := _authentic_capacity(enemies.get_capacity())
 	var announcements: Dictionary = {}
 	var app = get_parent()
 	var unravel := _bound_unravel(app)
@@ -2410,13 +2429,15 @@ func _refresh() -> void:
 		# real mounted Blind token must remain visible when that service is absent.
 		var trusted_contact: bool = trusted_source and unravel != null
 		var contact_traits: Dictionary = _contact_traits(enemy) if trusted_contact else {}
-		var trusted_survival: bool = position == index + 1 and enemy.get("hp") is int \
+		var trusted_survival: bool = live_capacity > 0 and position == index + 1 \
+			and enemy.get("hp") is int \
 			and enemy["hp"] > 0 and enemies == app.enemies and _battle == app.battle_view \
 			and roster.size() == _status_tags.size() \
 			and _admitted_ids.size() == roster.size() \
 			and enemy.get("id") is String and _admitted_ids[index] == enemy["id"] \
 			and puppet.actor_id == enemy["id"]
-		var survival_traits: Dictionary = _survival_traits(enemy, roster.size()) if trusted_survival else {}
+		var survival_traits: Dictionary = _survival_traits(
+			enemy, roster.size(), live_capacity) if trusted_survival else {}
 		var status_tag := _status_tags[index]
 		var status_copy: Dictionary = _status_copy(enemy, contact_traits, survival_traits) if show_hazard or (
 			position == index + 1 and enemy.get("hp") is int and enemy["hp"] > 0
@@ -2430,16 +2451,30 @@ func _refresh() -> void:
 			pending = unravel.get_snapshot(position).get("skip_pending", false)
 		# Target policy and full action wording are unchanged by a contact passive.
 		var policy := ""
-		if live_source and unravel != null and app.enemy_intents != null \
-				and app.enemy_intents.is_bound():
+		# A real opted four-foe scheduler has an authentic policy even when the
+		# optional Unravel service is absent. Default battles keep their guard.
+		if trusted_source and (unravel != null or live_capacity == CombatEnemies.OPT_IN_MAX_ENEMIES):
 			policy = CombatEnemyIntents.policy_for(enemies, position)
 		var enrage_stacks := _enrage_stacks(enemy) if live_source else -1
 		# Blind belongs to this exact living source, not another occupant of its
 		# slot or a stale cached announcement. This read cannot consume the token.
 		var attack_blind := trusted_source and _has_attack_blind(enemy)
 		var charge_context := _charge_context(trusted_source, enemy, action)
+		# Summon wording needs the live model's own room and one-use latch; a
+		# disconnected or stale badge gets no positive birth claim.
+		var summon_context: Dictionary = {}
+		if trusted_source and live_capacity > 0 and action.get("type") == "summon":
+			var broodling_present := false
+			for occupant in roster:
+				if occupant.get("id") == CombatEnemies.BROODLING_ID:
+					broodling_present = true
+			var latch: Variant = enemy.get(CombatEnemies.BROODLING_LATCH, false)
+			summon_context = {"capacity": live_capacity, "occupied": roster.size(),
+				"can_spawn": roster.size() < live_capacity and not broodling_present
+					and latch is bool and latch == false
+					and CombatEnemies.authentic_broodling_mother(enemy, position)}
 		badge.show_intent(action, enemies.is_slain(position), pending, policy,
-			enrage_stacks, contact_traits, attack_blind, charge_context)
+			enrage_stacks, contact_traits, attack_blind, charge_context, summon_context)
 		# Only a live, source-owned, already-announced attack can preview an actual
 		# redirect. Keep the printed target, amount and policy ticket untouched.
 		if reactions != null and live_source and not pending and not badge.blind_miss and badge.charge_state != "wind_up" \

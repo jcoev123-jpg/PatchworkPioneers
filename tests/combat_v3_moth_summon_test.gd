@@ -334,6 +334,234 @@ func _mounted_routed_fight() -> void:
 	app.free()
 
 
+## A separate opt-in three-of-four mounted Fight witness. Its three records come
+## from the shipped enemy catalog, but are NOT injected into run encounter pools.
+## Only the actual weighted Moth draw and the app's visible End Turn can birth.
+func _mounted_fourth_slot_input() -> void:
+	var scene := load("res://scenes/app.tscn") as PackedScene
+	_check(scene != null, "AC1 precondition: real app scene can mount four-capacity witness")
+	if scene == null:
+		return
+	var catalog := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var definitions: Array = []
+	for id in [CombatEnemies.MOTH_ID, "fray_scavenger", "felt_bulwark"]:
+		for record in catalog:
+			if record.get("id") == id:
+				definitions.append(record.duplicate(true))
+				break
+	_check(definitions.size() == 3 and (definitions.is_empty() or
+		CombatEnemies.authentic_broodling_mother(definitions[0], 1)),
+		"AC1 precondition: three different catalog actors include the full genuine Moth spec")
+	if definitions.size() != 3:
+		return
+	var roster := CombatEnemies.new(definitions, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	var slots: Array = []
+	for position in range(1, 4):
+		slots.append({"enemy_position": position, "pattern": [
+			{"type": "block", "amount": 0}]})
+	_check(roster.is_valid() and roster.get_capacity() == 4 and roster.get_enemies().size() == 3,
+		"AC1 precondition: explicitly opted-in roster has exactly one free slot")
+	if not roster.is_valid():
+		return
+	var app = scene.instantiate()
+	root.add_child(app)
+	await process_frame
+	# Rehearse the same real deck shuffle and weighted scheduler on a copied RNG.
+	# Choose a seed where both peers Block, isolating the Moth's birth phase.
+	var found := {}
+	for seed_value in range(1, 1501):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		var fight_id := ""
+		for node_id in map.get_legal_choices():
+			if map.get_node(node_id).get("type") == "Fight":
+				fight_id = node_id
+				break
+		if fight_id.is_empty() or not map.choose_node(fight_id):
+			continue
+		var witness_rng := RandomNumberGenerator.new()
+		witness_rng.seed = rng.seed
+		witness_rng.state = rng.state
+		var pre_bind_state: int = witness_rng.state
+		var admission_deck := CombatDeck.new([], witness_rng)
+		admission_deck.draw_pile.assign(app._load_starter_deck())
+		admission_deck._shuffle_draw_pile()
+		var scheduler := CombatEnemyIntents.new(slots)
+		if not scheduler.bind_battle(CombatEnemies.new(definitions, 4),
+				CombatParty.new(app._load_party_definitions()), witness_rng):
+			continue
+		var announced: Array = scheduler.get_intents()
+		if announced.size() == 3 and announced[0].get("type") == "summon" \
+				and announced[1].get("type") == "block" and announced[2].get("type") == "block":
+			found = {"rng": rng, "map": map, "seed": seed_value,
+				"before_shuffle": pre_bind_state}
+			break
+	_check(not found.is_empty(),
+		"AC1 precondition: a reproducible seeded live-input battle announces weighted Summon with two harmless peer beats")
+	if found.is_empty():
+		app.free()
+		return
+	app.run_map = found.map
+	app.run_seed = found.seed
+	_check(app._start_battle(found.rng, slots, roster),
+		"AC1 precondition: actual app battle boots its real deck, party, weighted scheduler and opt-in roster")
+	if app.round_flow == null or app.enemies != roster:
+		app.free()
+		return
+	await process_frame
+	await process_frame
+	var first: Array = app.enemy_intents.get_intents()
+	var stage = app.get_node("LiveEnemyRoster")
+	var meters = app.get_node("LiveCombatMeters")
+	var gauge: CombatUnravel = app.round_flow._unravel
+	_check(app.run_map.get_node(app.run_map.get_current_node_id()).get("type") == "Fight"
+		and app.enemy_intents.is_bound() and app.enemy_intents._enemies == roster
+		and app.deck.turn_active and first.size() == 3
+		and first[0].get("type") == "summon"
+		and first[1].get("type") == "block" and first[2].get("type") == "block"
+		and stage._labels.size() == 3 and meters.row.get_child_count() == 6
+		and app.end_turn_button.is_visible_in_tree() and not app.end_turn_button.disabled,
+		"AC1 precondition: three actual puppets and a playable End Turn show the genuine first announcement")
+	_check(gauge != null and gauge._bound_enemies == roster
+		and app.round_flow._valid_unravel_binding(),
+		"AC2 precondition: routed UI shares its real bound Unravel service with the app round flow")
+	if gauge == null or not app.round_flow._valid_unravel_binding():
+		app.free()
+		return
+	_check(gauge.apply_unravel(roster, 1, 2) and gauge.apply_unravel(roster, 2, 3)
+		and gauge.apply_unravel(roster, 3, 1),
+		"AC3 precondition: all three original actors have distinct nonzero live gauges")
+	var old_gauges := [gauge.get_snapshot(1), gauge.get_snapshot(2), gauge.get_snapshot(3)]
+	var old_roster: Array = roster.get_enemies()
+	var old_heroes: Array = app.party.get_heroes()
+	var old_rng: int = app.run_rng.state
+	# Same fully authored roster at DEFAULT capacity must refuse with no latch/RNG spend.
+	var full := CombatEnemies.new(definitions)
+	var default_rng := RandomNumberGenerator.new()
+	default_rng.seed = app.run_rng.seed
+	default_rng.state = found.before_shuffle
+	var default_deck := CombatDeck.new([], default_rng)
+	default_deck.draw_pile.assign(app._load_starter_deck())
+	default_deck._shuffle_draw_pile()
+	var default_intents := CombatEnemyIntents.new(slots)
+	var default_party := CombatParty.new(app._load_party_definitions())
+	var default_bound := default_intents.bind_battle(full, default_party, default_rng)
+	_check(default_bound and default_intents.get_intents() == first and full.get_capacity() == 3,
+		"AC3 precondition: default-capacity comparison has identical genuine first weighted action")
+	if default_bound:
+		var no_room_rng: int = default_rng.state
+		var no_room_actors: Array = full.get_enemies()
+		var no_room_heroes: Array = default_party.get_heroes()
+		var no_room := CombatEnemyPhase.new().execute_phase(
+			default_party, full, default_intents.get_intents(), null, true)
+		_check(no_room.get("ok", false) and full.get_enemies().size() == 3
+			and full.get_enemy(1) == no_room_actors[0]
+			and full.get_enemy(2).get("id") == no_room_actors[1].id
+			and full.get_enemy(3).get("id") == no_room_actors[2].id
+			and default_party.get_heroes() == no_room_heroes
+			and not no_room.events[0].applied
+			and not full.get_enemy(1).has(CombatEnemies.BROODLING_LATCH)
+			and default_rng.state == no_room_rng,
+			"AC3: full default-three roster refuses birth without latch or extra RNG")
+	var button = app.end_turn_button
+	button.pressed.emit()
+	button.pressed.emit() # A duplicated input before the deferred re-enable is inert.
+	await process_frame
+	await process_frame
+	var born := roster.get_enemy(4)
+	_check(roster.get_enemies().size() == 4 and born.get("id") == CombatEnemies.BROODLING_ID
+		and born.get("name") == "Moth Broodling" and born.get("hp") == 8
+		and born.get("max_hp") == 8 and born.get("block") == 0
+		and born.get("position") == 4
+		and roster.get_enemy(1).get(CombatEnemies.BROODLING_LATCH) == true
+		and roster.get_enemy(2).id == old_roster[1].id
+		and roster.get_enemy(3).id == old_roster[2].id
+		and roster.get_enemy(2).position == 2 and roster.get_enemy(3).position == 3
+		and roster.get_enemy(2).hp == old_roster[1].hp
+		and roster.get_enemy(3).hp == old_roster[2].hp,
+		"AC1: one and only one 8 HP, zero Block fourth-position child follows real End Turn; peers stay put")
+	_check(app.party.get_heroes().map(func(hero): return hero.get("hp")) ==
+		old_heroes.map(func(hero): return hero.get("hp")),
+		"AC1: the newborn cannot strike on its birth turn with only harmless peer beats")
+	var next_actions: Array = app.enemy_intents.get_intents()
+	_check(next_actions.size() == 4 and next_actions[3] == {
+			"enemy_position": 4, "type": "attack", "amount": 5, "target_position": 1}
+		and app.enemy_attacks == next_actions and app.enemy_intents.is_bound()
+		and app.run_rng.state != old_rng
+		and app.round_flow._valid_bindings() and app.battle_result.get_outcome() == CombatBattleResult.ACTIVE
+		and not app.result_label.visible,
+		"AC2: fourth attack is cached for NEXT round and the real battle result remains ACTIVE")
+	_check(gauge.get_snapshot(1) == old_gauges[0] and gauge.get_snapshot(2) == old_gauges[1]
+		and gauge.get_snapshot(3) == old_gauges[2] and gauge.get_snapshot(4) == {
+			"gauge": 0, "threshold": CombatUnravel.THRESHOLD_NORMAL,
+			"unravelled": false, "skip_pending": false},
+		"AC2/AC3: the child's clean normal Unravel gauge is admitted without changing any peer charge")
+	var meter = meters.row.get_child(6) as CombatActorMeter if meters.row != null and meters.row.get_child_count() == 7 else null
+	var thread := meter.get_node("Padding/Content/UnravelThread") as ProgressBar if meter != null else null
+	var fraction := thread.get_node("ThreadFraction") as Label if thread != null else null
+	_check(stage._labels.size() == 4 and stage._labels[3].text == "Moth Broodling"
+		and stage._puppets.size() == 7 and stage._puppets[6].actor_id == CombatEnemies.BROODLING_ID,
+		"AC2: fourth named enemy puppet has correct authoritative ID and label")
+	_check(stage._badges.size() == 4 and stage._badges[3].source_position == 4
+		and stage._badges[3].intent_type == "attack",
+		"AC2: fourth puppet shows its genuine next attack badge")
+	_check(meter != null and meter.hp_bar.value == 8 and meter.hp_bar.max_value == 8
+		and meter.hp_text.text == "8/8" and meter.is_visible_in_tree(),
+		"AC2: fourth enemy has a mounted 8/8 HP ribbon: " +
+		(str([meter.hp_bar.value, meter.hp_bar.max_value, meter.hp_text.text])
+			if meter != null else "no meter"))
+	_check(thread != null and thread.visible and fraction != null and fraction.text == "0/8",
+		"AC2: fourth enemy has its own visible clean 0/8 Unravel gauge: " +
+		(str([thread.visible, fraction.text if fraction != null else "no fraction"])
+			if thread != null else "no thread"))
+	_check(meter != null and meter._valid_snapshot(born, "enemy")
+		and not meter._valid_snapshot(born, "hero")
+		and not meter._valid_snapshot(born.merged({"position": 5}, true), "enemy"),
+		"AC3: position four is an enemy-only meter slot; hero four and enemy five still fail closed")
+	var after_birth := [roster.get_enemies(), app.party.get_heroes(),
+		gauge.get_snapshot(1), gauge.get_snapshot(2),
+		gauge.get_snapshot(3), gauge.get_snapshot(4), app.run_rng.state,
+		app.enemy_intents.get_intents()]
+	_check(roster.stage_broodling(1) == {"ok": true, "spawned": false}
+		and after_birth == [roster.get_enemies(), app.party.get_heroes(),
+			gauge.get_snapshot(1), gauge.get_snapshot(2),
+			gauge.get_snapshot(3), gauge.get_snapshot(4), app.run_rng.state,
+			app.enemy_intents.get_intents()],
+		"AC3: latched mother refuses repeat birth without touching any actors, gauges, intents or RNG")
+	# A stale announcement must be refused by the genuine button callback.
+	app.enemy_attacks = first.duplicate(true)
+	button.pressed.emit()
+	_check(after_birth == [roster.get_enemies(), app.party.get_heroes(),
+			gauge.get_snapshot(1), gauge.get_snapshot(2),
+			gauge.get_snapshot(3), gauge.get_snapshot(4), app.run_rng.state,
+			app.enemy_intents.get_intents()],
+		"AC3: stale mounted End Turn is fail-closed, with no RNG or gauge change")
+	app.enemy_attacks = next_actions
+	# Validate the next legitimate phase with a detached oracle, then commit only
+	# through the same on-screen control (never feed staged actions into the app).
+	var oracle_party := CombatParty.new(app._load_party_definitions())
+	oracle_party._heroes.assign(app.party.get_heroes())
+	var oracle_enemies := CombatEnemies.new(definitions, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	oracle_enemies._enemies.assign(roster.get_enemies())
+	var next_phase := CombatEnemyPhase.new().execute_phase(
+		oracle_party, oracle_enemies, next_actions, null, true)
+	_check(next_phase.get("ok", false) and next_phase.events.size() == 4
+		and next_phase.events[3].applied and next_phase.events[3].enemy_position == 4,
+		"AC2 precondition: authentic cached child attack actually resolves in the next enemy phase")
+	button.pressed.emit()
+	await process_frame
+	await process_frame
+	_check(app.party.get_heroes() == oracle_party.get_heroes()
+		and app.battle_result.get_outcome() == CombatBattleResult.ACTIVE
+		and roster.get_enemies().size() == 4,
+		"AC2: following real End Turn commits the newborn attack exactly once, not on birth")
+	app.free()
+
+
 ## A committed final-Boss entry and genuine bound round (not a forged
 ## single-action summon) exercise the Queen's own weighted RNG.
 ## Both authentic parents must pass the real bound scheduler/phase refusal and
@@ -504,6 +732,7 @@ func _run() -> void:
 	_check(not queen_first.is_empty() and queen_first == queen_replay,
 		"independent genuine Queen boss rounds and child replays are identical")
 	await _mounted_routed_fight()
+	await _mounted_fourth_slot_input()
 	var first := _round_session(9452)
 	var replay := _round_session(9452)
 	_check(not first.is_empty() and first == replay, "seeded bound rounds replay identically")

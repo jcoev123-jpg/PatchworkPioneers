@@ -1007,6 +1007,10 @@ func _crow_preflight(card_id: String) -> Dictionary:
 
 
 ## Read-only admission; the existing resolver remains the paid rules authority.
+## The attacker/defender status checks below are the SAME role-aware policy the
+## paid hit uses, so authentic Dodge/Fear on the owner and Blind/Fear on a
+## Tangled foe keep a genuinely playable card enabled. Wrong-role tokens
+## (owner Blind, defender Dodge) and malformed values still disable the face.
 func _yarn_playable(card_id: String) -> bool:
 	var definition := _definition(card_id)
 	if _deck.energy < definition.cost or card_id not in _deck.hand:
@@ -1018,7 +1022,7 @@ func _yarn_playable(card_id: String) -> bool:
 			if hero.position not in definition.from_positions or _party.is_downed(hero.position):
 				return false
 			var statuses: Variant = hero.get("statuses", {})
-			if not statuses is Dictionary or not resolver._valid_statuses(statuses):
+			if not statuses is Dictionary or not resolver._valid_attacker_statuses(statuses):
 				return false
 			owners += 1
 	if owners != 1:
@@ -1032,7 +1036,7 @@ func _yarn_playable(card_id: String) -> bool:
 			return false
 		var tangled: Variant = statuses.get("tangled", 0)
 		if tangled is int and tangled > 0:
-			if not resolver._valid_statuses(statuses):
+			if not resolver._valid_defender_statuses(statuses):
 				return false
 			eligible = true
 	return eligible
