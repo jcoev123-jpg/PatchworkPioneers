@@ -18,6 +18,7 @@ func _initialize() -> void:
 	_test_enrage_attack_bonus()
 	_test_enrage_status_and_replay()
 	_test_enrage_legacy_and_fail_closed()
+	_test_enrage_fourth_slot_opt_in()
 	_test_drain_after_confirmed_hit()
 	_test_drain_inert_and_fail_closed()
 	_test_rejections()
@@ -797,6 +798,159 @@ func _test_enrage_legacy_and_fail_closed() -> void:
 			and party.get_heroes() == heroes_before and enemies.get_enemies() == roster_before,
 			"AC3: malformed metadata fails before any beat is staged " + str(extra))
 	_check(randi() == next_global, "AC3: rejected malformed Enrage batches consume no RNG")
+
+
+func _phase_four_distinct_enrage_roster(marshal_stacks: int = 2) -> CombatEnemies:
+	var wanted := ["fray_scavenger", "button_guard", "spool_hexer", "needle_marshal"]
+	var found := {}
+	for path in ["res://data/enemies/run_enemies.json", "res://data/enemies/m04_elites.json"]:
+		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+		if parsed is Array:
+			for entry in parsed:
+				if entry is Dictionary and entry.get("id") in wanted and not found.has(entry.get("id")):
+					var actor: Dictionary = entry.duplicate(true)
+					actor["max_hp"] = int(actor["max_hp"])
+					found[actor["id"]] = actor
+	var records: Array = []
+	for id in wanted:
+		_check(found.has(id), "precondition: authentic enemy %s loaded" % id)
+		records.append(found[id].duplicate(true))
+	if records.size() == 4:
+		records[3]["enrage_stacks"] = marshal_stacks
+	var enemies := CombatEnemies.new(records, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(enemies.is_valid() and enemies.get_capacity() == 4 and enemies.get_enemies().size() == 4,
+		"precondition: four-capacity roster with four distinct living IDs")
+	return enemies
+
+
+## AC3: real enemy-phase effect from fourth-slot Needle Marshal in an explicit
+## four-capacity fight, Block-before-HP, ordered trace, replay, and zero extra stack/RNG.
+func _test_enrage_fourth_slot_opt_in() -> void:
+	# Case 1: Hero Block >= 9 (Warden starts with 12 Block, 40 HP).
+	# Needle Marshal at slot 4 with 2 stacks deals 5 + 4 = 9 damage.
+	var party := _party()
+	var enemies := _phase_four_distinct_enrage_roster(2)
+	_check(party.gain_block(1, 12), "AC3 precondition: Warden gains 12 block (>= 9)")
+	_check(enemies.get_enemy(4).get("id") == "needle_marshal"
+		and enemies.get_enemy(4).get("enrage") == true
+		and enemies.get_enemy(4).get("enrage_stacks") == 2,
+		"AC3 precondition: fourth-slot Needle Marshal has 2 Enrage stacks")
+	var peer1_before: Dictionary = enemies.get_enemy(1)
+	var peer2_before: Dictionary = enemies.get_enemy(2)
+	var peer3_before: Dictionary = enemies.get_enemy(3)
+	var slot4_before: Dictionary = enemies.get_enemy(4)
+	var intents := [_attack(4, 5, 1)]
+	var input := intents.duplicate(true)
+
+	var result := phase.execute_phase(party, enemies, intents)
+	_check(result == {"ok": true, "events": [_event("attack", 4, true, 1)]},
+		"AC3: slot-4 Enrage attack produces single applied attack event")
+	_check(party.get_hero(1)["block"] == 3 and party.get_hero(1)["hp"] == 40,
+		"AC3: hero Block >= 9 absorbs 9 damage (12 - 9 = 3), HP intact at 40")
+	_check(enemies.get_enemy(4) == slot4_before and enemies.get_enemy(4).get("enrage_stacks") == 2,
+		"AC3: slot 4 awards no extra stack during enemy phase and mutates nothing")
+	_check(enemies.get_enemy(1) == peer1_before
+		and enemies.get_enemy(2) == peer2_before
+		and enemies.get_enemy(3) == peer3_before,
+		"AC3: three peer enemies in slots 1-3 remain completely untouched")
+	_check(intents == input, "AC3: caller announcements are never rewritten")
+
+	# Case 2: Insufficient Block (Warden starts with 4 Block, 40 HP).
+	# 9 damage arrives: 4 absorbed by Block (0 remaining), 5 lost from HP (40 -> 35).
+	party = _party()
+	enemies = _phase_four_distinct_enrage_roster(2)
+	_check(party.gain_block(1, 4), "AC3 precondition: Warden gains 4 block (< 9)")
+	result = phase.execute_phase(party, enemies, [_attack(4, 5, 1)])
+	_check(result.get("ok") == true and result["events"].size() == 1
+		and result["events"][0]["applied"] == true,
+		"AC3: attack event applied with insufficient block")
+	_check(party.get_hero(1)["block"] == 0 and party.get_hero(1)["hp"] == 35,
+		"AC3: exact HP loss witnessed when Block insufficient (4 absorbed, 5 HP loss -> 35 HP)")
+
+	# Case 3: Zero Block direct HP loss.
+	party = _party()
+	enemies = _phase_four_distinct_enrage_roster(2)
+	result = phase.execute_phase(party, enemies, [_attack(4, 5, 2)])
+	_check(party.get_hero(2)["block"] == 0 and party.get_hero(2)["hp"] == 21,
+		"AC3: zero Block loses exactly 9 HP (30 -> 21 on middle hero)")
+
+	# Case 4: Ordered trace with peers in source-slot order.
+	# Slot 2 announces attack 4 on hero 2; Slot 4 announces attack 5 (+4 = 9) on hero 1.
+	party = _party()
+	enemies = _phase_four_distinct_enrage_roster(2)
+	_check(party.gain_block(1, 10) and party.gain_block(2, 10),
+		"AC3 precondition: heroes 1 and 2 gain 10 block each")
+	var mixed_intents := [_attack(4, 5, 1), _attack(2, 4, 2)]
+	var ordered_res := phase.execute_phase(party, enemies, mixed_intents)
+	_check(ordered_res == {"ok": true, "events": [
+		_event("attack", 2, true, 2),
+		_event("attack", 4, true, 1)]},
+		"AC3: phase executes in source-slot order (slot 2 then slot 4)")
+	_check(party.get_hero(2)["block"] == 6 and party.get_hero(2)["hp"] == 30,
+		"AC3: peer slot 2 deals exactly its un-enraged 4 damage (10 - 4 = 6 block)")
+	_check(party.get_hero(1)["block"] == 1 and party.get_hero(1)["hp"] == 40,
+		"AC3: slot 4 deals enraged 9 damage (10 - 9 = 1 block)")
+	_check(enemies.get_enemy(1).get("hp") == 14 and enemies.get_enemy(3).get("hp") == 24,
+		"AC3: non-acting peer records in slots 1 and 3 are untouched")
+
+	# Case 5: Independent deterministic replay (3 repetitions).
+	var expected_res: Dictionary = {}
+	var expected_h: Array = []
+	var expected_e: Array = []
+	for rep in range(3):
+		var rep_party := _party()
+		var rep_enemies := _phase_four_distinct_enrage_roster(2)
+		_check(rep_party.gain_block(1, 10) and rep_party.gain_block(2, 10),
+			"AC3 replay precondition: block assigned")
+		var rep_res := phase.execute_phase(rep_party, rep_enemies, [_attack(2, 4, 2), _attack(4, 5, 1)])
+		_check(rep_res == {"ok": true, "events": [
+			_event("attack", 2, true, 2), _event("attack", 4, true, 1)]},
+			"AC3 replay: iteration %d produces exact ordered events" % rep)
+		if rep == 0:
+			expected_res = rep_res.duplicate(true)
+			expected_h = rep_party.get_heroes()
+			expected_e = rep_enemies.get_enemies()
+		else:
+			_check(rep_res == expected_res and rep_party.get_heroes() == expected_h
+				and rep_enemies.get_enemies() == expected_e,
+				"AC3 replay: iteration %d identically matches first run" % rep)
+
+	# Case 6: RNG isolation (seeded RandomNumberGenerator and global randi).
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 66551
+	var rng_before := rng.state
+	seed(54321)
+	var global_before := randi()
+	seed(54321)
+	party = _party()
+	enemies = _phase_four_distinct_enrage_roster(2)
+	phase.execute_phase(party, enemies, [_attack(4, 5, 1)])
+	_check(rng.state == rng_before and randi() == global_before,
+		"AC3: slot 4 Enrage enemy phase consumes zero local or global RNG")
+
+	# Case 7: Rejection of invalid fifth position and negatives.
+	party = _party()
+	enemies = _phase_four_distinct_enrage_roster(2)
+	var h_before := party.get_heroes()
+	var e_before := enemies.get_enemies()
+	seed(11223)
+	var g_before_pos5 := randi()
+	seed(11223)
+	var pos5_res := phase.execute_phase(party, enemies, [_attack(5, 5, 1)])
+	_check(pos5_res == {"ok": false, "events": []},
+		"AC4: announcement from position 5 rejected fail-closed")
+	_check(party.get_heroes() == h_before and enemies.get_enemies() == e_before,
+		"AC4: rejected position 5 announcement leaves party and enemies completely untouched")
+	_check(randi() == g_before_pos5,
+		"AC4: rejected position 5 announcement consumes no RNG")
+
+	# Slain slot 4 is skipped: applied = false, no damage, no stacks
+	_check(enemies.apply_damage(4, 28) and enemies.is_slain(4),
+		"AC4 precondition: fourth-slot Needle Marshal slain")
+	var slain_res := phase.execute_phase(party, enemies, [_attack(4, 5, 1)])
+	_check(slain_res == {"ok": true, "events": [_event("attack", 4, false, 1)]}
+		and party.get_hero(1)["hp"] == 40,
+		"AC4: slain slot 4 Enrage source is skipped with applied: false and no damage")
 
 
 func _drain_roster(definitions: Array) -> CombatEnemies:
