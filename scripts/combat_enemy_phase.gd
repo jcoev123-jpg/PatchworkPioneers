@@ -195,7 +195,7 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 						event.retaliatory_damage = reaction_result.retaliatory_damage
 						hit_target = reaction_result.actual_target_position
 					else:
-						var result := CombatEnemyAttacks.new().execute_attacks(staged_party, [attack])
+						var result := CombatEnemyAttacks.new().execute_attacks(staged_party, [attack], staged_enemies.get_capacity())
 						if not result.ok:
 							return failure
 						event.applied = result.events[0].applied
