@@ -160,6 +160,75 @@ const TETHER_CASES := [
 		"line": "Link 2 living enemies. Echo 50% of a later confirmed hit's HP loss."},
 ]
 
+## AC1/AC2: the 16 authentic V3 Warden shield, Guard and Taunt printings (8 pairs),
+## looked up by named ID in V3WardenStarterCards and V3WardenPoolCards.
+const WARDEN_V3_CASES := [
+	{"catalog": "starter", "id": "warden_v3_shield_catch",
+		"line": "Ally gains 4 Block. Guard.",
+		"phrases": ["Ally gains 4 Block.", "Guard."],
+		"keywords": ["Guard"], "guard": true, "taunt": false, "toss": false},
+	{"catalog": "starter", "id": "warden_v3_shield_catch_plus",
+		"line": "Ally gains 6 Block. Guard.",
+		"phrases": ["Ally gains 6 Block.", "Guard."],
+		"keywords": ["Guard"], "guard": true, "taunt": false, "toss": false},
+	{"catalog": "pool", "id": "warden_v3_guard_stitch",
+		"line": "Ally gains 5 Block. Guard.",
+		"phrases": ["Ally gains 5 Block.", "Guard."],
+		"keywords": ["Guard"], "guard": true, "taunt": false, "toss": false},
+	{"catalog": "pool", "id": "warden_v3_guard_stitch_plus",
+		"line": "Ally gains 7 Block. Guard.",
+		"phrases": ["Ally gains 7 Block.", "Guard."],
+		"keywords": ["Guard"], "guard": true, "taunt": false, "toss": false},
+	{"catalog": "starter", "id": "warden_v3_rim_toss",
+		"line": "Deal damage equal to current Block.",
+		"phrases": ["Deal damage equal to current Block."],
+		"keywords": ["Shield Toss"], "guard": false, "taunt": false, "toss": true},
+	{"catalog": "starter", "id": "warden_v3_rim_toss_plus",
+		"line": "Deal damage equal to current Block + 2.",
+		"phrases": ["Deal damage equal to current Block + 2."],
+		"keywords": ["Shield Toss"], "guard": false, "taunt": false, "toss": true},
+	{"catalog": "pool", "id": "warden_v3_shield_toss",
+		"line": "Deal damage equal to current Block.",
+		"phrases": ["Deal damage equal to current Block."],
+		"keywords": ["Shield Toss"], "guard": false, "taunt": false, "toss": true},
+	{"catalog": "pool", "id": "warden_v3_shield_toss_plus",
+		"line": "Deal damage equal to current Block + 3.",
+		"phrases": ["Deal damage equal to current Block + 3."],
+		"keywords": ["Shield Toss"], "guard": false, "taunt": false, "toss": true},
+	{"catalog": "starter", "id": "warden_v3_iron_challenge",
+		"line": "Gain 3 Block. Taunt.",
+		"phrases": ["Gain 3 Block.", "Taunt."],
+		"keywords": ["Taunt"], "guard": false, "taunt": true, "toss": false},
+	{"catalog": "starter", "id": "warden_v3_iron_challenge_plus",
+		"line": "Gain 5 Block. Taunt.",
+		"phrases": ["Gain 5 Block.", "Taunt."],
+		"keywords": ["Taunt"], "guard": false, "taunt": true, "toss": false},
+	{"catalog": "pool", "id": "warden_v3_iron_taunt",
+		"line": "Gain 4 Block. Taunt.",
+		"phrases": ["Gain 4 Block.", "Taunt."],
+		"keywords": ["Taunt"], "guard": false, "taunt": true, "toss": false},
+	{"catalog": "pool", "id": "warden_v3_iron_taunt_plus",
+		"line": "Gain 6 Block. Taunt.",
+		"phrases": ["Gain 6 Block.", "Taunt."],
+		"keywords": ["Taunt"], "guard": false, "taunt": true, "toss": false},
+	{"catalog": "pool", "id": "warden_v3_shieldwall_chorus",
+		"line": "All allies gain 4 Block. Taunt.",
+		"phrases": ["All allies gain 4 Block.", "Taunt."],
+		"keywords": ["Taunt"], "guard": false, "taunt": true, "toss": false},
+	{"catalog": "pool", "id": "warden_v3_shieldwall_chorus_plus",
+		"line": "All allies gain 6 Block. Taunt.",
+		"phrases": ["All allies gain 6 Block.", "Taunt."],
+		"keywords": ["Taunt"], "guard": false, "taunt": true, "toss": false},
+	{"catalog": "pool", "id": "warden_v3_final_bastion",
+		"line": "Gain 12 Block. Guard. Taunt.",
+		"phrases": ["Gain 12 Block.", "Guard.", "Taunt."],
+		"keywords": ["Guard", "Taunt"], "guard": true, "taunt": true, "toss": false},
+	{"catalog": "pool", "id": "warden_v3_final_bastion_plus",
+		"line": "Gain 16 Block. Guard. Taunt.",
+		"phrases": ["Gain 16 Block.", "Guard.", "Taunt."],
+		"keywords": ["Guard", "Taunt"], "guard": true, "taunt": true, "toss": false},
+]
+
 var failures: Array[String] = []
 var checks := 0
 var warden := WardenPoolCards.new()
@@ -172,6 +241,8 @@ var scarecrow_starter := ScarecrowStarterCards.new()
 var scarecrow_pool := ScarecrowPoolCards.new()
 var v3_seamstress_starter := V3SeamstressStarterCards.new()
 var v3_seamstress_pool := V3SeamstressPoolCards.new()
+var v3_warden_starter := V3WardenStarterCards.new()
+var v3_warden_pool := V3WardenPoolCards.new()
 
 
 func _initialize() -> void:
@@ -202,6 +273,9 @@ func _initialize() -> void:
 	_test_seamstress_tether_faces()
 	_test_seamstress_tether_help()
 	_test_seamstress_tether_negative()
+	_test_warden_v3_faces()
+	_test_warden_v3_help()
+	_test_warden_v3_negative()
 	_check(randi() == expected_global, "short-line formatting draws no global RNG")
 	for failure in failures:
 		printerr(failure)
@@ -2435,5 +2509,318 @@ func _test_seamstress_tether_negative() -> void:
 	_check(loop_after == loop and stitch_after == stitch
 		and CardShortRules.line(loop_after) == "Link 2 living enemies. Echo 50% of a later confirmed hit's HP loss.",
 		"malformed probes cannot alter shipped Seamstress Tether records")
+
+
+func _warden_v3_definition(catalog: String, card_id: String) -> Dictionary:
+	match catalog:
+		"starter":
+			return v3_warden_starter.get_definition(card_id)
+		"pool":
+			return v3_warden_pool.get_definition(card_id)
+	return {}
+
+
+func _test_warden_v3_faces() -> void:
+	for entry in WARDEN_V3_CASES:
+		var catalog: String = str(entry["catalog"])
+		var card_id: String = str(entry["id"])
+		var expected_line: String = str(entry["line"])
+		var expected_phrases: Array = entry["phrases"]
+		var definition := _warden_v3_definition(catalog, card_id)
+		_check(not definition.is_empty(), "Warden V3 record exists in %s: %s" % [catalog, card_id])
+		if definition.is_empty():
+			continue
+		var original: Dictionary = definition.duplicate(true)
+		var described: Dictionary = CardShortRules.describe(definition)
+		var line := str(described.get("line", ""))
+		_check(described.get("known") == true, "Warden V3 face known: " + card_id)
+		_check(not bool(described.get("unknown", true)),
+			"Warden V3 face fully described (no unknown): " + card_id)
+		_check(not CardShortRules.has_unknown(definition),
+			"has_unknown is false for authentic Warden V3 record: " + card_id)
+		_check(line == expected_line,
+			"Warden V3 line for %s: got '%s', want '%s'" % [card_id, line, expected_line])
+		_check(CardShortRules.line(definition) == expected_line,
+			"CardShortRules.line direct match for: " + card_id)
+		var actual_phrases: Array = described.get("phrases", [])
+		_check(actual_phrases.size() == expected_phrases.size(),
+			"Warden V3 phrases count for %s: got %d, want %d" % [card_id, actual_phrases.size(), expected_phrases.size()])
+		for i in range(mini(actual_phrases.size(), expected_phrases.size())):
+			_check(str(actual_phrases[i]) == str(expected_phrases[i]),
+				"Warden V3 phrase %d for %s: got '%s', want '%s'" % [i, card_id, str(actual_phrases[i]), str(expected_phrases[i])])
+		_check(CardShortRules.is_authored_v3_guard(definition) == bool(entry["guard"]),
+			"is_authored_v3_guard match for " + card_id)
+		_check(CardShortRules.is_authored_guard(definition) == bool(entry["guard"]),
+			"is_authored_guard alias match for " + card_id)
+		_check(CardShortRules.is_authored_v3_taunt(definition) == bool(entry["taunt"]),
+			"is_authored_v3_taunt match for " + card_id)
+		_check(CardShortRules.is_authored_taunt(definition) == bool(entry["taunt"]),
+			"is_authored_taunt alias match for " + card_id)
+		_check(CardShortRules.is_authored_v3_shield_toss(definition) == bool(entry["toss"]),
+			"is_authored_v3_shield_toss match for " + card_id)
+		_check(CardShortRules.is_authored_shield_toss(definition) == bool(entry["toss"]),
+			"is_authored_shield_toss alias match for " + card_id)
+		_check(definition == original, "Warden V3 record never mutated: " + card_id)
+
+
+func _test_warden_v3_help() -> void:
+	for entry in WARDEN_V3_CASES:
+		var catalog: String = str(entry["catalog"])
+		var card_id: String = str(entry["id"])
+		var expected_keywords: Array = entry["keywords"]
+		var definition := _warden_v3_definition(catalog, card_id)
+		var original: Dictionary = definition.duplicate(true)
+		var rows: Array[Dictionary] = CardKeywordGlossary.describe(definition)
+		_check(rows.size() == expected_keywords.size(),
+			"Warden V3 Help rows count for %s: got %d, want %d" % [card_id, rows.size(), expected_keywords.size()])
+		for i in range(mini(rows.size(), expected_keywords.size())):
+			var row_kw := str(rows[i].get("keyword", ""))
+			var exp_kw := str(expected_keywords[i])
+			_check(row_kw == exp_kw,
+				"Warden V3 Help row %d keyword for %s: got '%s', want '%s'" % [i, card_id, row_kw, exp_kw])
+			var explanation := str(rows[i].get("explanation", ""))
+			match exp_kw:
+				"Guard":
+					var is_bastion: bool = (card_id == "warden_v3_final_bastion" or card_id == "warden_v3_final_bastion_plus")
+					if is_bastion:
+						_check(explanation == CardKeywordGlossary.GUARD_UNIVERSAL_EXPLANATION,
+							"Guard explanation matches GUARD_UNIVERSAL_EXPLANATION for " + card_id)
+						_check(explanation.contains("universal") and explanation.contains("any other living ally"),
+							"Bastion Guard explains universal protection for any other living ally: " + card_id)
+						_check(not explanation.contains("chosen") and not explanation.contains("selected"),
+							"Bastion Guard has no falsely chosen ally: " + card_id)
+						_check(explanation.contains("Warden himself are not redirected"),
+							"Bastion Guard explains hits on Warden are not redirected: " + card_id)
+					else:
+						_check(explanation == CardKeywordGlossary.GUARD_EXPLANATION,
+							"Guard explanation matches GUARD_EXPLANATION for " + card_id)
+						_check(explanation.contains("chosen") and explanation.contains("ally"),
+							"Guard explains chosen ally for " + card_id)
+						_check(explanation.contains("Warden himself") and explanation.contains("does not redirect"),
+							"Guard explains self-selection exception for " + card_id)
+					_check(explanation.contains("redirects") and explanation.contains("once"),
+						"Guard explanation mentions redirection once for " + card_id)
+					_check(explanation.contains("lasts until") and explanation.contains("eligible confirmed"),
+						"Guard explanation states single interception lasts until confirmed hit for " + card_id)
+					_check(explanation.contains("miss or non-attack"),
+						"Guard explanation mentions miss or non-attack does not consume for " + card_id)
+					_check(not explanation.contains("combat round") and not explanation.contains("round end")
+						and not explanation.contains("expires"),
+						"Guard explanation has no premature expiry for " + card_id)
+					_check(explanation.contains("Block absorbs incoming damage before HP loss"),
+						"Guard explanation states Block absorbs before HP for " + card_id)
+				"Taunt":
+					_check(explanation == CardKeywordGlossary.TAUNT_EXPLANATION,
+						"Taunt explanation matches TAUNT_EXPLANATION for " + card_id)
+					_check(explanation.contains("next enemy turn"),
+						"Taunt explanation mentions next enemy turn")
+				"Shield Toss":
+					_check(explanation == CardKeywordGlossary.SHIELD_TOSS_EXPLANATION,
+						"Shield Toss explanation matches SHIELD_TOSS_EXPLANATION for " + card_id)
+					_check(explanation.contains("unspent") or explanation.contains("current Block"),
+						"Shield Toss explanation mentions unspent current Block")
+		# Assert detached results (mutating rows array doesn't affect subsequent calls)
+		if not rows.is_empty():
+			rows[0]["keyword"] = "TAMPERED"
+			_check(CardKeywordGlossary.describe(definition)[0]["keyword"] != "TAMPERED",
+				"glossary return dictionaries are detached for " + card_id)
+		_check(definition == original, "Warden V3 record never mutated: " + card_id)
+
+	# Dedicated verification for Final Bastion and Final Bastion+:
+	# Exactly one Guard plus one Taunt row, independent semantics, no premature expiry, and no falsely chosen ally.
+	for bastion_id: String in ["warden_v3_final_bastion", "warden_v3_final_bastion_plus"]:
+		var def := _warden_v3_definition("pool", bastion_id)
+		var b_rows: Array[Dictionary] = CardKeywordGlossary.describe(def)
+		_check(b_rows.size() == 2, "Final Bastion has exactly two help rows: " + bastion_id)
+		_check(str(b_rows[0].get("keyword", "")) == "Guard", "Final Bastion first row is Guard: " + bastion_id)
+		_check(str(b_rows[1].get("keyword", "")) == "Taunt", "Final Bastion second row is Taunt: " + bastion_id)
+		var guard_text := str(b_rows[0].get("explanation", ""))
+		var taunt_text := str(b_rows[1].get("explanation", ""))
+		_check(not guard_text.contains("chosen") and not guard_text.contains("selected"),
+			"Bastion Guard row has no falsely chosen ally: " + bastion_id)
+		_check(guard_text.contains("any other living ally") and guard_text.contains("universal"),
+			"Bastion Guard row explains universal protection for any other living ally: " + bastion_id)
+		_check(not guard_text.contains("combat round") and not guard_text.contains("round end")
+			and not guard_text.contains("expires"),
+			"Bastion Guard row has no premature combat round expiry: " + bastion_id)
+		_check(guard_text.contains("lasts until") and guard_text.contains("eligible confirmed"),
+			"Bastion Guard row asserts interception lasts until eligible confirmed hit: " + bastion_id)
+		_check(guard_text.contains("miss or non-attack"),
+			"Bastion Guard row asserts miss or non-attack never consumes: " + bastion_id)
+		_check(not taunt_text.contains("chosen") and not taunt_text.contains("selected"),
+			"Bastion Taunt row has no falsely chosen ally: " + bastion_id)
+		_check(taunt_text.contains("next enemy turn"),
+			"Bastion Taunt row explains next enemy turn: " + bastion_id)
+
+	# Dedicated verification for Shield Catch and Guard Stitch (base and +):
+	# Chosen-ally explanation, self-selection exception, and no premature expiry.
+	for ally_guard_id: String in ["warden_v3_shield_catch", "warden_v3_shield_catch_plus",
+			"warden_v3_guard_stitch", "warden_v3_guard_stitch_plus"]:
+		var cat: String = "starter" if ally_guard_id.begins_with("warden_v3_shield_catch") else "pool"
+		var def := _warden_v3_definition(cat, ally_guard_id)
+		var g_rows: Array[Dictionary] = CardKeywordGlossary.describe(def)
+		_check(g_rows.size() == 1, "Ally Guard card has exactly one help row: " + ally_guard_id)
+		_check(str(g_rows[0].get("keyword", "")) == "Guard", "Ally Guard row is Guard: " + ally_guard_id)
+		var text := str(g_rows[0].get("explanation", ""))
+		_check(text.contains("chosen living ally"), "Ally Guard row explains chosen living ally: " + ally_guard_id)
+		_check(text.contains("Warden himself") and text.contains("does not redirect"),
+			"Ally Guard row explains self-selection exception: " + ally_guard_id)
+		_check(not text.contains("combat round") and not text.contains("round end")
+			and not text.contains("expires"),
+			"Ally Guard row has no premature combat round expiry: " + ally_guard_id)
+		_check(text.contains("lasts until") and text.contains("eligible confirmed"),
+			"Ally Guard row asserts interception lasts until eligible confirmed hit: " + ally_guard_id)
+		_check(text.contains("miss or non-attack"),
+			"Ally Guard row asserts miss or non-attack never consumes: " + ally_guard_id)
+
+
+func _test_warden_v3_negative() -> void:
+	var catch := v3_warden_starter.get_definition("warden_v3_shield_catch")
+	var rim := v3_warden_starter.get_definition("warden_v3_rim_toss")
+	var challenge := v3_warden_starter.get_definition("warden_v3_iron_challenge")
+	var toss := v3_warden_pool.get_definition("warden_v3_shield_toss")
+	var stitch := v3_warden_pool.get_definition("warden_v3_guard_stitch")
+	var taunt := v3_warden_pool.get_definition("warden_v3_iron_taunt")
+	var chorus := v3_warden_pool.get_definition("warden_v3_shieldwall_chorus")
+	var bastion := v3_warden_pool.get_definition("warden_v3_final_bastion")
+
+	# 1. Non-dictionary inputs
+	_check(not CardShortRules.is_authored_v3_guard(null), "guard null is false")
+	_check(not CardShortRules.is_authored_v3_taunt(null), "taunt null is false")
+	_check(not CardShortRules.is_authored_v3_shield_toss(null), "shield toss null is false")
+	_check(not CardShortRules.is_authored_v3_guard({}), "guard empty is false")
+	_check(not CardShortRules.is_authored_v3_taunt({}), "taunt empty is false")
+	_check(not CardShortRules.is_authored_v3_shield_toss({}), "shield toss empty is false")
+	_check(CardKeywordGlossary.describe(null).is_empty(), "glossary null produces no rows")
+	_check(CardKeywordGlossary.describe({}).is_empty(), "glossary empty produces no rows")
+
+	# 2. Forged flag types and values
+	var flag_probes := [
+		["guard_next_hit integer 1", catch.duplicate(true), "guard_next_hit", 1],
+		["guard_next_hit false", catch.duplicate(true), "guard_next_hit", false],
+		["guard_next_hit string", catch.duplicate(true), "guard_next_hit", "true"],
+		["taunt_next_enemy_turn integer 1", challenge.duplicate(true), "taunt_next_enemy_turn", 1],
+		["taunt_next_enemy_turn false", challenge.duplicate(true), "taunt_next_enemy_turn", false],
+		["taunt_next_enemy_turn string", challenge.duplicate(true), "taunt_next_enemy_turn", "true"],
+		["damage_equal_to_owner_block integer 1", rim.duplicate(true), "damage_equal_to_owner_block", 1],
+		["damage_equal_to_owner_block false", rim.duplicate(true), "damage_equal_to_owner_block", false],
+		["damage_equal_to_owner_block string", rim.duplicate(true), "damage_equal_to_owner_block", "true"],
+	]
+	for case_def in flag_probes:
+		var label: String = str(case_def[0])
+		var probe: Dictionary = case_def[1]
+		var key: String = str(case_def[2])
+		(probe["effects"] as Dictionary)[key] = case_def[3]
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_v3_guard(probe), "%s fails is_authored_v3_guard" % label)
+		_check(not CardShortRules.is_authored_v3_taunt(probe), "%s fails is_authored_v3_taunt" % label)
+		_check(not CardShortRules.is_authored_v3_shield_toss(probe), "%s fails is_authored_v3_shield_toss" % label)
+		_check(CardShortRules.has_unknown(probe), "%s reports has_unknown" % label)
+		var line := CardShortRules.line(probe)
+		_check(line.ends_with(UNKNOWN_FALLBACK), "%s ends with fallback: %s" % [label, line])
+		_check(not _has_keyword_row(probe, "Guard") and not _has_keyword_row(probe, "Taunt")
+			and not _has_keyword_row(probe, "Shield Toss"), "%s receives no V3 help row" % label)
+		_check(probe == before, "%s probe not mutated" % label)
+
+	# 3. Forged bonus damage on shield toss
+	var toss_plus := v3_warden_pool.get_definition("warden_v3_shield_toss_plus")
+	var bonus_probes := [
+		["bonus_damage string", toss_plus.duplicate(true), "bonus_damage", "3"],
+		["bonus_damage 0", toss_plus.duplicate(true), "bonus_damage", 0],
+		["bonus_damage negative", toss_plus.duplicate(true), "bonus_damage", -2],
+	]
+	for case_def in bonus_probes:
+		var label: String = str(case_def[0])
+		var probe: Dictionary = case_def[1]
+		var key: String = str(case_def[2])
+		(probe["effects"] as Dictionary)[key] = case_def[3]
+		_check(not CardShortRules.is_authored_v3_shield_toss(probe), "%s fails is_authored_v3_shield_toss" % label)
+		_check(CardShortRules.has_unknown(probe), "%s reports has_unknown" % label)
+		var line := CardShortRules.line(probe)
+		_check(line.ends_with(UNKNOWN_FALLBACK), "%s ends with fallback" % label)
+		_check(not _has_keyword_row(probe, "Shield Toss"), "%s receives no Shield Toss row" % label)
+
+	# 4. Standalone bonus_damage without damage_equal_to_owner_block
+	var forged_bonus := catch.duplicate(true)
+	(forged_bonus["effects"] as Dictionary)["bonus_damage"] = 3
+	_check(not CardShortRules.is_authored_v3_shield_toss(forged_bonus), "forged bonus fails shield toss")
+	_check(CardShortRules.has_unknown(forged_bonus), "forged bonus has_unknown")
+
+	# 5. Broken upgrade links
+	var catch_no_up := catch.duplicate(true)
+	catch_no_up.erase("upgrade_id")
+	var catch_with_up_of := catch.duplicate(true)
+	catch_with_up_of["upgrade_of"] = "warden_v3_shield_catch"
+	var catch_plus := v3_warden_starter.get_definition("warden_v3_shield_catch_plus")
+	var catch_plus_no_up_of := catch_plus.duplicate(true)
+	catch_plus_no_up_of.erase("upgrade_of")
+	var catch_plus_with_up_id := catch_plus.duplicate(true)
+	catch_plus_with_up_id["upgrade_id"] = "warden_v3_shield_catch_plus_plus"
+	var catch_mismatched_up := catch.duplicate(true)
+	catch_mismatched_up["upgrade_id"] = "warden_v3_rim_toss_plus"
+
+	for probe in [catch_no_up, catch_with_up_of, catch_plus_no_up_of, catch_plus_with_up_id, catch_mismatched_up]:
+		_check(not CardShortRules.is_authored_v3_guard(probe), "broken upgrade link fails is_authored_v3_guard")
+		_check(CardShortRules.has_unknown(probe), "broken upgrade link has_unknown")
+		_check(not _has_keyword_row(probe, "Guard"), "broken upgrade link has no Guard row")
+
+	# 6. Core metadata mutation probes
+	var meta_probes := [
+		["changed id", catch.duplicate(true), "id", "warden_v3_forged_guard"],
+		["deleted id", catch.duplicate(true), "id", null],
+		["non-string id", catch.duplicate(true), "id", 12345],
+		["changed display_name", catch.duplicate(true), "display_name", "Fake Guard"],
+		["deleted display_name", catch.duplicate(true), "display_name", null],
+		["changed owner", catch.duplicate(true), "owner", "seamstress"],
+		["changed cost", catch.duplicate(true), "cost", 0],
+		["changed target_kind", catch.duplicate(true), "target_kind", "self"],
+		["changed from_positions", catch.duplicate(true), "from_positions", [3]],
+		["changed to_positions", rim.duplicate(true), "to_positions", [1]],
+		["changed rarity", stitch.duplicate(true), "rarity", "rare"],
+		["changed reward_eligible", stitch.duplicate(true), "reward_eligible", false],
+		["changed starting_copies", catch.duplicate(true), "starting_copies", 0],
+		["changed illustration_path", catch.duplicate(true), "illustration_path", "res://other.png"],
+		["extra top-level field", catch.duplicate(true), "forgery", true],
+		["extra effect weak", catch.duplicate(true), "effects", {"block": 4, "guard_next_hit": true, "weak": 1}],
+		["extra effect damage", bastion.duplicate(true), "effects", {"block": 12, "guard_next_hit": true, "taunt_next_enemy_turn": true, "damage": 5}],
+	]
+	for case_def in meta_probes:
+		var label: String = str(case_def[0])
+		var probe: Dictionary = case_def[1]
+		var field: String = str(case_def[2])
+		var val: Variant = case_def[3]
+		if val == null:
+			probe.erase(field)
+		else:
+			probe[field] = val
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_v3_guard(probe), "%s fails is_authored_v3_guard" % label)
+		_check(not CardShortRules.is_authored_v3_taunt(probe), "%s fails is_authored_v3_taunt" % label)
+		_check(not CardShortRules.is_authored_v3_shield_toss(probe), "%s fails is_authored_v3_shield_toss" % label)
+		_check(CardShortRules.has_unknown(probe), "%s has_unknown" % label)
+		var line := CardShortRules.line(probe)
+		_check(line.ends_with(UNKNOWN_FALLBACK), "%s face ends with fallback" % label)
+		_check(not _has_keyword_row(probe, "Guard") and not _has_keyword_row(probe, "Taunt")
+			and not _has_keyword_row(probe, "Shield Toss"), "%s receives no V3 help row" % label)
+		_check(probe == before, "%s probe not mutated" % label)
+
+	# 7. Unrelated cards do not borrow Guard, Taunt, or Shield Toss
+	var draw_fire := warden.get_definition("warden_draw_fire")
+	_check(CardShortRules.line(draw_fire) == "Gain 6 Block. Guard.", "legacy Draw Fire line preserved")
+	_check(_has_keyword_row(draw_fire, "Guarding"), "legacy Draw Fire keeps Guarding row")
+	_check(not _has_keyword_row(draw_fire, "Guard"), "legacy Draw Fire does not borrow V3 Guard")
+	_check(not CardShortRules.is_authored_v3_guard(draw_fire), "legacy Draw Fire fails is_authored_v3_guard")
+
+	var cloud := lantern_monk_pool.get_definition("lantern_monk_moth_cloud")
+	_check(not _has_keyword_row(cloud, "Guard") and not _has_keyword_row(cloud, "Taunt")
+		and not _has_keyword_row(cloud, "Shield Toss"), "Moth Cloud has no V3 Warden rows")
+
+	var dive := scarecrow_starter.get_definition("scarecrow_crow_dive")
+	_check(not _has_keyword_row(dive, "Guard") and not _has_keyword_row(dive, "Taunt")
+		and not _has_keyword_row(dive, "Shield Toss"), "Crow Dive has no V3 Warden rows")
+
+	var tether_card := v3_seamstress_starter.get_definition("seamstress_v3_tether_loop")
+	_check(not _has_keyword_row(tether_card, "Guard") and not _has_keyword_row(tether_card, "Taunt")
+		and not _has_keyword_row(tether_card, "Shield Toss"), "Tether Loop has no V3 Warden rows")
 
 
