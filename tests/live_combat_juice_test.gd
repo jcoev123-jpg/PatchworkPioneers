@@ -555,6 +555,7 @@ func _assert_committed_pose(card_id: String, owner: String, target: int, changed
 	_check(puppet.attack_texture != null and puppet.pose_texture() == puppet.attack_texture
 		and puppet.attack_texture.resource_path == puppet.idle_texture.resource_path.trim_suffix(".png") + "_attack.png",
 		"the pose draws that hero's own authored attack image")
+	_assert_stage_focus(owner, String(pose["target_id"]), presentation)
 	var settled := _state()
 	puppet._process(puppet.ATTACK_MAX_SECONDS)
 	_check(not puppet.attacking() and puppet.pose_texture() == puppet.current_texture(),
@@ -564,6 +565,47 @@ func _assert_committed_pose(card_id: String, owner: String, target: int, changed
 		"the finished pose puts the hero's artwork back exactly where it rested")
 	_check(_state() == settled,
 		"settling the pose mutates no HP, deck, energy, RNG, intent or settlement value")
+
+
+func _assert_stage_focus(owner: String, victim: String, presentation: Dictionary) -> void:
+	var roster = _roster()
+	var stage = roster.backdrop
+	var attacker = roster.hero_puppet(owner)
+	var target = roster.presented_puppet("enemy", victim)
+	_check(is_instance_valid(stage) and is_instance_valid(attacker) and is_instance_valid(target),
+		"focus checks use both real mounted actor anchors")
+	if not is_instance_valid(stage) or not is_instance_valid(attacker) or not is_instance_valid(target):
+		return
+	if bool(ProjectSettings.get_setting("accessibility/reduced_motion", false)):
+		_check(stage.focus_serial == 0 and stage.focus_zoom() == 1.0 and attacker.attacking(),
+			"reduced motion skips only zoom and preserves the committed attack still")
+		return
+	_check(stage.focus_serial == juice.pose_history.size() and stage.focus_anchors == [attacker, target],
+		"each real paid mouse or keyboard strike starts exactly one focus at its actual actors")
+	var midpoint: Vector2 = (attacker.get_global_transform() * attacker.rest_drawn_rect().get_center()
+		+ target.get_global_transform() * target.rest_drawn_rect().get_center()) * 0.5
+	_check(stage.focus_center.is_equal_approx(midpoint), "focus uses the real resting artwork midpoint")
+	var state := _state()
+	# Reset only the presentation clock, then sample the exact envelope without frame timing.
+	stage.focus_elapsed = 0.0
+	var samples := [[0.0, 1.0], [0.075, 1.15], [0.075, 1.30], [0.50, 1.30],
+		[0.10, 1.15], [0.10, 1.0]]
+	for sample in samples:
+		stage.advance_focus(sample[0])
+		_check(is_equal_approx(stage.focus_zoom(), sample[1]), "focus follows deterministic in/hold/out envelope")
+		var camera: Transform2D = stage.focus_transform()
+		_check((camera * midpoint).is_equal_approx(midpoint), "zoom keeps the strike midpoint fixed")
+		for painting in roster._puppets + [stage]:
+			var world: Transform2D = painting.get_global_transform()
+			_check((world * painting.art_focus_transform()).is_equal_approx(camera * world),
+				"backdrop and every puppet share the same world draw transform")
+		_check(_presentation() == presentation and _state() == state,
+			"zoom preserves actual target/UI bounds and authoritative state including RNG")
+	_check(stage.focus_transform() == Transform2D.IDENTITY and stage.focus_anchors.is_empty(),
+		"completed focus returns exactly to neutral and releases its anchors")
+	juice._sync()
+	_check(stage.focus_serial == juice.pose_history.size() and stage.focus_zoom() == 1.0,
+		"repeat polling cannot replay a completed focus")
 
 
 func _run() -> void:
@@ -590,6 +632,9 @@ func _run() -> void:
 	_check(not is_instance_valid(juice.fast_button), "no Fast toggle before a battle mounts")
 	await _commit_attack()
 	await _keyboard_pose()
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	await _keyboard_pose(true)
+	ProjectSettings.set_setting("accessibility/reduced_motion", false)
 	await _non_damaging_play()
 	await _ambiguous_cast()
 	await _end_turn()
@@ -689,13 +734,20 @@ func _commit_attack() -> void:
 	await _mouse(panel)
 	_check(juice.flight_history.size() == flights_before and app.deck.hand == hand_before,
 		"a queued target/preview has no discard flight")
+	_check(_roster().backdrop.focus_serial == juice.pose_history.size(), "focus starts only alongside a committed pose")
 	_check(juice.pose_history.size() == poses_before, "a queued target/preview fabricates no hero pose")
 	_check(juice.recoil_history.size() == recoils_before,
 		"a queued target/preview fabricates no hit recoil")
 	_check(juice.puff_history.size() == puffs_before and juice.live_puffs() == 0,
 		"a queued target/preview kicks up no sewn puff")
+	await _key(KEY_ESCAPE)
+	_check(_roster().backdrop.focus_serial == poses_before and _actors() == before
+		and app.deck.hand == hand_before, "cancelling a queued attack never zooms, spends or hits")
+	await _mouse(panel)
+	var energy_before: int = app.deck.energy
 	await _mouse(_enemy_label(position))
 	await _frames()
+	_check(energy_before > app.deck.energy, "the focused mouse strike really pays energy")
 	_check(randi() == global_next, "committed play through the listener draws no global RNG")
 	var after := _actors()
 	_check(hand_before.size() == app.deck.hand.size() + 1
@@ -838,6 +890,7 @@ func _commit_attack() -> void:
 		app._process(0.0)
 	await _frames()
 	_check(juice.history.size() == known, "refresh and repeated polling never duplicate a cue")
+	_check(_roster().backdrop.focus_serial == juice.pose_history.size(), "focus starts only alongside a committed pose")
 	_check(juice.pose_history.size() == settled_poses,
 		"refresh and repeated polling never replay a committed pose")
 	_check(_state() == settled, "presentation polling preserves completely unchanged state")
@@ -860,6 +913,7 @@ func _commit_attack() -> void:
 	await _mouse(_enemy_label(_target_position(String(held[0])) if _target_position(String(held[0])) > 0 else 1))
 	await _frames()
 	_check(juice.history.size() == known, "a rejected card play fabricates no cue")
+	_check(_roster().backdrop.focus_serial == juice.pose_history.size(), "focus starts only alongside a committed pose")
 	_check(juice.pose_history.size() == poses_before_failure,
 		"a rejected card play fabricates no hero attack pose")
 	_check(juice.recoil_history.size() == recoils_before_failure,
@@ -875,10 +929,11 @@ func _commit_attack() -> void:
 
 ## AC1: the same committed pose follows a real keyboard card play (P arms the held
 ## attack, the target digit commits it), so the trigger is not tied to the pointer.
-func _keyboard_pose() -> void:
+func _keyboard_pose(reduced: bool = false) -> void:
 	if not await _enter_fight(fight_seed):
 		return
-	_assert_presenter_mounted()
+	if not reduced:
+		_assert_presenter_mounted()
 	var id := _strike_choice()
 	var position := _target_position(id)
 	var panel = _panel(id)
@@ -910,8 +965,14 @@ func _keyboard_pose() -> void:
 		return
 	var before := _actors()
 	var recoils_before: int = juice.recoil_history.size()
+	var energy_before: int = app.deck.energy
+	var hand_before: Array = app.deck.hand.duplicate()
+	var discard_before: Array = app.deck.discard_pile.duplicate()
 	await _key([KEY_1, KEY_2, KEY_3][position - 1])
 	await _frames()
+	_check(energy_before > app.deck.energy and hand_before.size() == app.deck.hand.size() + 1
+		and _discard_gains(discard_before, app.deck.discard_pile) == _card_counts([id]),
+		"the focused keyboard strike really pays and discards its held card")
 	_check(_actors() != before, "the keyboard target digit commits a real attack")
 	_check(juice.pose_history.size() == poses_before + 1,
 		"a genuinely committed keyboard card play triggers exactly one pose")
@@ -971,6 +1032,7 @@ func _ambiguous_cast() -> void:
 		"the area cast really commits one held copy and hits more than one actor")
 	_check(juice.history.size() > cues_before,
 		"the area cast still announces its own committed HP cues")
+	_check(_roster().backdrop.focus_serial == juice.pose_history.size(), "focus starts only alongside a committed pose")
 	_check(juice.pose_history.size() == poses_before,
 		"a multi-actor area cast fabricates no single-source attack pose")
 	# Every actor whose HP really fell still recoils, and nothing else does: the hit
@@ -1066,6 +1128,7 @@ func _ambiguous_cast() -> void:
 		and _receipt_counts(juice.flight_history.slice(single_flights_before)) == _card_counts(
 			["tinker_scrap_bomb"]) and juice.live_flights() > 0,
 		"the single-survivor area cast still flies its discarded card")
+	_check(_roster().backdrop.focus_serial == juice.pose_history.size(), "focus starts only alongside a committed pose")
 	_check(juice.pose_history.size() == single_poses_before,
 		"a single-survivor area cast fabricates no single-source attack pose")
 	_check(not is_instance_valid(survivor_puppet) or not survivor_puppet.attacking(),
@@ -1110,6 +1173,7 @@ func _non_damaging_play() -> void:
 		"the non-damaging play changes only its own hero's Block")
 	_check(juice.history.size() > cues_before,
 		"a non-damaging play still announces its own committed Block cue")
+	_check(_roster().backdrop.focus_serial == juice.pose_history.size(), "focus starts only alongside a committed pose")
 	_check(juice.pose_history.size() == poses_before,
 		"a non-damaging card play fabricates no attack pose")
 	_check(juice.recoil_history.size() == recoils_before,
@@ -1153,6 +1217,7 @@ func _closed_battle() -> void:
 	await _frames()
 	_check(app._battle_closed and app.battle_result.get_outcome() == CombatBattleResult.VICTORY,
 		"the closing committed hit really ends the fight")
+	_check(_roster().backdrop.focus_serial == juice.pose_history.size(), "focus starts only alongside a committed pose")
 	_check(juice.pose_history.size() == poses_before,
 		"a hit that closes the battle fabricates no stale pose")
 	_check(not is_instance_valid(puppet) or not puppet.attacking(),
@@ -1234,6 +1299,7 @@ func _end_turn() -> void:
 	_check(juice.history.size() == known and _state() == settled
 		and juice.flight_history.size() == baseline_flights + old_hand.size(),
 		"post-phase refresh and polling add no HP/Block or discard replay")
+	_check(_roster().backdrop.focus_serial == juice.pose_history.size(), "focus starts only alongside a committed pose")
 	_check(juice.pose_history.size() == poses_before,
 		"a real End Turn enemy phase fabricates no card attack pose")
 	_check(_recoils_only_from_hp_losses(juice.recoil_history.slice(recoils_before), changed),
@@ -1287,6 +1353,7 @@ func _enemy_phase_recoil() -> void:
 		_check(not phase_changed.is_empty(), "the real enemy phase commits HP/Block changes")
 		_check(_recoils_only_from_hp_losses(phase_receipts, phase_changed),
 			"an enemy phase recoils only actors whose committed HP really fell")
+		_check(_roster().backdrop.focus_serial == juice.pose_history.size(), "focus starts only alongside a committed pose")
 		_check(juice.pose_history.size() == poses_before,
 			"an enemy phase HP hit fabricates no card attack pose")
 		if _hp_losses(phase_changed).is_empty():
@@ -2106,6 +2173,9 @@ func _fast_mode() -> void:
 		if juice.pose_history.size() > poses_before else null
 	_check(not is_instance_valid(pose_puppet) or pose_puppet.attack_span <= 0.15,
 		"the mounted fast pose is bounded by the fast span")
+	_check(_roster().backdrop.focus_serial == juice.pose_history.size()
+		and is_equal_approx(_roster().backdrop.focus_rate, 0.85 / 0.15),
+		"fast paid hit starts one compressed stage focus")
 	var fast_recoil: Control = null
 	_check(juice.recoil_history.size() == recoils_before + 1
 		and bool(juice.recoil_history.back()["fast"])
@@ -2243,6 +2313,7 @@ func _teardown_and_reentry() -> void:
 		"Return clears the snapshot, overlay and every cue")
 	_check(not is_instance_valid(posed) or not posed.attacking(),
 		"Return ends the mounted pose instead of leaving a stale lunge")
+	_check(not is_instance_valid(_roster().backdrop), "Return removes the focused stage")
 	_check(not is_instance_valid(recoiling) or not recoiling.recoiling(),
 		"Return settles the mounted recoil instead of leaving a stale shake")
 	_check(not is_instance_id_valid(overlay_id), "the old overlay is really freed")

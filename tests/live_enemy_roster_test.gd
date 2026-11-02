@@ -644,7 +644,63 @@ func _staging(app, presenter) -> void:
 ## lives only in the drawn transform, so target rectangles, pinned names, intent badges,
 ## the hand and the action row stay put and no HP, deck, energy, turn, intent or RNG value
 ## moves. A fallen actor and a detached puppet never start one.
+func _stage_focus(app, presenter) -> void:
+	var stage = presenter.backdrop
+	var hero: Control
+	var enemy: Control
+	for actor in presenter._puppets:
+		if not actor.fallen and actor.is_visible_in_tree():
+			if actor.facing > 0.0:
+				hero = actor
+			else:
+				enemy = actor
+	_check(is_instance_valid(stage) and is_instance_valid(hero) and is_instance_valid(enemy),
+		"focus lifecycle uses real standing mounted puppets")
+	if not is_instance_valid(stage) or not is_instance_valid(hero) or not is_instance_valid(enemy):
+		return
+	var state := _snapshot(app)
+	var serial: int = stage.focus_serial
+	_check(not presenter.focus_hit("missing", enemy.actor_id, false)
+		and stage.focus_zoom() == 1.0 and stage.focus_serial == serial,
+		"unbound attacker cannot create a focus")
+	_check(not presenter.focus_hit(hero.actor_id, "missing", false)
+		and stage.focus_serial == serial, "unbound target cannot create a focus")
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, true), "real anchors admit a fast focus")
+	stage.advance_focus(0.15 * 0.15 / 0.85)
+	_check(is_equal_approx(stage.focus_zoom(), 1.30), "fast focus reaches the same authored zoom")
+	stage.advance_focus(0.15 * 0.50 / 0.85)
+	_check(is_equal_approx(stage.focus_zoom(), 1.30), "fast focus retains the compressed hold")
+	stage.advance_focus(0.15 * 0.20 / 0.85)
+	_check(stage.focus_zoom() == 1.0 and stage.focus_transform() == Transform2D.IDENTITY,
+		"fast focus ends exactly within 0.15 seconds")
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, false), "missing-anchor test starts a real focus")
+	enemy.hide()
+	stage.advance_focus(0.0)
+	_check(stage.focus_zoom() == 1.0 and stage.focus_anchors.is_empty(),
+		"a disappearing anchor immediately retires the visual focus")
+	enemy.show()
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, false), "rebind test starts a real focus")
+	var identity: String = enemy.actor_id
+	enemy.actor_id = "rebound"
+	stage.advance_focus(0.0)
+	_check(stage.focus_zoom() == 1.0, "an actor identity replacement cannot retain focus")
+	enemy.actor_id = identity
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, false), "teardown test starts a real focus")
+	presenter.cancel_poses()
+	_check(stage.focus_transform() == Transform2D.IDENTITY and stage.focus_anchors.is_empty(),
+		"teardown cancels focus exactly")
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, false), "motion-setting test starts a real focus")
+	var previous: Variant = ProjectSettings.get_setting("accessibility/reduced_motion", false)
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	stage.advance_focus(0.0)
+	_check(stage.focus_zoom() == 1.0 and stage.focus_anchors.is_empty(),
+		"enabling reduced motion immediately cancels an active focus")
+	ProjectSettings.set_setting("accessibility/reduced_motion", previous)
+	_check(_snapshot(app) == state, "focus lifecycle never changes authoritative state or seeded RNG")
+
+
 func _attack_pose(app, presenter) -> void:
+	_stage_focus(app, presenter)
 	_check(is_instance_valid(presenter.panel) and presenter.enemies != null
 		and not presenter._puppets.is_empty()
 		and presenter._puppets.size() == CombatParty.PARTY_SIZE + presenter.enemies.get_enemies().size(),
@@ -2351,6 +2407,11 @@ func _mouse_attack(app, reference, presenter) -> void:
 	_check(chosen != null and target > 0, "real seeded hand supplies a playable targeted attack")
 	if chosen == null or target == 0:
 		return
+	var owner: String = StarterCards.new().get_definition(card_id).get("owner", "")
+	var target_id: String = app.enemies.get_enemy(target)["id"]
+	_check(presenter.focus_hit(owner, target_id, false), "input test starts focus on actual mounted actors")
+	presenter.backdrop.advance_focus(0.15)
+	_check(is_equal_approx(presenter.backdrop.focus_zoom(), 1.30), "mouse targeting runs during full stage focus")
 	var before := _snapshot(app)
 	await _input_mouse(chosen)
 	_check(_snapshot(app) == before, "mouse card selection alone changes no combat state")

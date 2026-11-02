@@ -250,6 +250,15 @@ static func crop_rect(view: Rect2, texture_size: Vector2) -> Rect2:
 
 
 class Puppet extends Control:
+	var stage_focus: Control
+
+	## Conjugate the shared world-space camera into this painting's local space.
+	func art_focus_transform() -> Transform2D:
+		if not is_instance_valid(stage_focus):
+			return Transform2D.IDENTITY
+		var world := get_global_transform()
+		return world.affine_inverse() * stage_focus.focus_transform() * world
+
 	const TAG_FELT := Color("2f2a25")
 	const TAG_THREAD := Color("c9b996")
 	## Idle presentation only: the drawn artwork breathes about one percent and bobs a
@@ -949,12 +958,14 @@ void fragment() {
 		# Ground the actor first: a fixed contact patch on the foot line, then the dark rim,
 		# then the artwork itself, then the pinned tag. Every layer is drawn here, so the
 		# shadow and rim add no control and can never take pointer or keyboard input.
+		draw_set_transform_matrix(art_focus_transform())
 		_draw_contact_shadow()
 		_draw_silhouette()
 		if current_texture() != null:
 			_draw_actor(pose_texture())
 		else:
 			_draw_fallback()
+		draw_set_transform_matrix(Transform2D.IDENTITY)
 		_draw_tag()
 
 	## A few concentric translucent ovals: soft at the rim and darkest where the feet meet
@@ -983,9 +994,9 @@ void fragment() {
 			var painted := idle_frame(texture)
 			var paint_rect := painted_rect(painted, texture, rect)
 			var grown := paint_rect.size + Vector2(RIM_RADIUS, RIM_RADIUS) * 2.0
-			draw_set_transform_matrix(idle_transform(paint_rect.get_center() - Vector2(0.0, RIM_RADIUS), 1.0))
+			draw_set_transform_matrix(art_focus_transform() * idle_transform(paint_rect.get_center() - Vector2(0.0, RIM_RADIUS), 1.0))
 			draw_texture_rect(painted, Rect2(-grown / 2.0, grown), false, Color(RIM_INK, RIM_ALPHA))
-			draw_set_transform(Vector2.ZERO)
+			draw_set_transform_matrix(art_focus_transform())
 			return
 		var band := art_band()
 		if band.size.x <= 0.0 or band.size.y <= 0.0:
@@ -993,9 +1004,9 @@ void fragment() {
 		var scale := fallback_scale()
 		var anchor := fallback_anchor()
 		anchor.y -= FALLBACK_EXTENTS.end.y * scale * (RIM_SCALE - 1.0)
-		draw_set_transform_matrix(idle_transform(anchor, scale * RIM_SCALE))
+		draw_set_transform_matrix(art_focus_transform() * idle_transform(anchor, scale * RIM_SCALE))
 		_draw_fallback_shapes(true)
-		draw_set_transform(Vector2.ZERO)
+		draw_set_transform_matrix(art_focus_transform())
 
 	## A small pinned felt tag below the art; its name text is drawn by a child Label.
 	func _draw_tag() -> void:
@@ -1025,13 +1036,13 @@ void fragment() {
 		if lit and not fallen:
 			# The stage light's rim: a flat copy nudged toward the light, peeking out on that side.
 			var nudge := rim_dir * clampf(paint_rect.size.y * 0.008, 1.0, 2.5)
-			draw_set_transform_matrix(idle_transform(paint_rect.get_center() + nudge, 1.0))
+			draw_set_transform_matrix(art_focus_transform() * idle_transform(paint_rect.get_center() + nudge, 1.0))
 			draw_texture_rect(painted, Rect2(-paint_rect.size / 2.0, paint_rect.size), false,
 				Color(rim_color, RIM_LIGHT_MARK))
-		draw_set_transform_matrix(idle_transform(paint_rect.get_center(), 1.0))
+		draw_set_transform_matrix(art_focus_transform() * idle_transform(paint_rect.get_center(), 1.0))
 		draw_texture_rect(painted, Rect2(-paint_rect.size / 2.0, paint_rect.size), false,
 			Color("8c8b86") if fallen else Color.WHITE)
-		draw_set_transform(Vector2.ZERO)
+		draw_set_transform_matrix(art_focus_transform())
 		if lit and _mist_texture != null:
 			# Low ground mist over the feet sinks the actor into the painted field.
 			var shadow := contact_shadow_rect()
@@ -1043,9 +1054,9 @@ void fragment() {
 		var band := art_band()
 		if band.size.x <= 0.0 or band.size.y <= 0.0:
 			return
-		draw_set_transform_matrix(idle_transform(fallback_anchor(), fallback_scale()))
+		draw_set_transform_matrix(art_focus_transform() * idle_transform(fallback_anchor(), fallback_scale()))
 		_draw_fallback_shapes(false)
-		draw_set_transform(Vector2.ZERO)
+		draw_set_transform_matrix(art_focus_transform())
 
 	## Body, head, limbs and the slot-specific sewn prop in one local pose. With
 	## `silhouette` the same shapes are painted as one dark rim copy behind the actor.
@@ -1547,6 +1558,95 @@ void fragment() {
 ## axis-aligned patches. Both keep the same stitched ground hem. Presentation only, so
 ## it never takes pointer or keyboard input.
 class StageBackdrop extends Control:
+	const FOCUS_IN := 0.15
+	const FOCUS_HOLD := 0.50
+	const FOCUS_OUT := 0.20
+	const FOCUS_ZOOM := 1.30
+	var focus_serial := 0
+	var focus_elapsed := 0.0
+	var focus_rate := 1.0
+	var focus_center := Vector2.ZERO
+	var focus_anchors: Array[Control] = []
+	var focus_ids: Array[String] = []
+
+	func start_focus(attacker: Control, target: Control, fast: bool) -> bool:
+		cancel_focus()
+		if bool(ProjectSettings.get_setting("accessibility/reduced_motion", false)):
+			return false
+		for actor in [attacker, target]:
+			if not is_instance_valid(actor) or not actor.is_inside_tree() or not actor.is_visible_in_tree():
+				return false
+		focus_anchors.assign([attacker, target])
+		focus_ids.assign([attacker.actor_id, target.actor_id])
+		_update_focus_center()
+		focus_rate = (FOCUS_IN + FOCUS_HOLD + FOCUS_OUT) / 0.15 if fast else 1.0
+		focus_serial += 1
+		_redraw_focus()
+		return true
+
+	func _update_focus_center() -> void:
+		# Container layout can settle after the paid card leaves the hand. Follow the
+		# real resting anchors, never a transient lunge/recoil or a cached slot.
+		var attacker = focus_anchors[0]
+		var target = focus_anchors[1]
+		focus_center = (attacker.get_global_transform() * attacker.rest_drawn_rect().get_center()
+			+ target.get_global_transform() * target.rest_drawn_rect().get_center()) * 0.5
+
+	func cancel_focus() -> void:
+		focus_anchors.clear()
+		focus_ids.clear()
+		focus_elapsed = 0.0
+		_redraw_focus()
+
+	func _redraw_focus() -> void:
+		queue_redraw()
+		if is_instance_valid(stage_row):
+			for actor in stage_row.find_children("*", "Control", true, false):
+				if actor is Puppet:
+					actor.queue_redraw()
+
+	func _process(delta: float) -> void:
+		advance_focus(delta)
+
+	func advance_focus(delta: float) -> void:
+		if focus_anchors.is_empty():
+			return
+		if bool(ProjectSettings.get_setting("accessibility/reduced_motion", false)) \
+				or not is_visible_in_tree():
+			cancel_focus()
+			return
+		for index in range(focus_anchors.size()):
+			var actor = focus_anchors[index]
+			if not is_instance_valid(actor) or not actor.is_inside_tree() \
+					or not actor.is_visible_in_tree() or actor.actor_id != focus_ids[index]:
+				cancel_focus()
+				return
+		_update_focus_center()
+		focus_elapsed += maxf(delta, 0.0) * focus_rate
+		if focus_elapsed >= FOCUS_IN + FOCUS_HOLD + FOCUS_OUT - 0.000001:
+			cancel_focus()
+		else:
+			_redraw_focus()
+
+	func focus_zoom() -> float:
+		if focus_anchors.is_empty():
+			return 1.0
+		var weight := 1.0
+		if focus_elapsed < FOCUS_IN:
+			weight = smoothstep(0.0, FOCUS_IN, focus_elapsed)
+		elif focus_elapsed > FOCUS_IN + FOCUS_HOLD:
+			weight = 1.0 - smoothstep(0.0, FOCUS_OUT, focus_elapsed - FOCUS_IN - FOCUS_HOLD)
+		return lerpf(1.0, FOCUS_ZOOM, weight)
+
+	## One world-space transform, shared by every stage painting only.
+	func focus_transform() -> Transform2D:
+		var zoom := focus_zoom()
+		return Transform2D(Vector2(zoom, 0.0), Vector2(0.0, zoom), focus_center * (1.0 - zoom))
+
+	func art_focus_transform() -> Transform2D:
+		var world := get_global_transform()
+		return world.affine_inverse() * focus_transform() * world
+
 	## The battle view this stage paints, so the scene covers the whole battle area
 	## (including its margins) instead of one actor box.
 	var battle_view: Control
@@ -1661,8 +1761,10 @@ class StageBackdrop extends Control:
 
 	func _draw() -> void:
 		if has_image():
+			draw_set_transform_matrix(art_focus_transform())
 			_draw_backdrop_image()
 		else:
+			draw_set_transform_matrix(art_focus_transform())
 			_draw_quilt()
 		# Lay the painted ground in before piling the actors on it: an even dim wash, then
 		# soft dark edges. The quiet hem is stitched over both, so the ground line stays
@@ -1670,6 +1772,7 @@ class StageBackdrop extends Control:
 		_draw_dim()
 		_draw_vignette()
 		_draw_ground_hem()
+		draw_set_transform_matrix(Transform2D.IDENTITY)
 
 	## The painted ground this stage dims: the whole battle view the scene covers, or the
 	## quilt cloth when the drawn fallback is on stage.
@@ -2612,6 +2715,12 @@ func hero_puppet(actor_id: String) -> Control:
 	return puppet_for("hero", actor_id)
 
 
+func focus_hit(hero_id: String, enemy_id: String, fast: bool) -> bool:
+	if not is_instance_valid(backdrop):
+		return false
+	return backdrop.start_focus(hero_puppet(hero_id), presented_puppet("enemy", enemy_id), fast)
+
+
 ## The one mounted puppet of `side` bound to this authoritative actor ID, for a hit
 ## reaction that must never land on the wrong actor. Identity comes from the bound side and
 ## ID, never from a slot or a screen position; an unknown side, a stale ID or an ambiguous
@@ -2666,6 +2775,8 @@ func _bound_puppet(side: String, actor_id: String, standing_only: bool) -> Contr
 ## or a rebind), so no mounted actor is left mid-lunge, mid-shake or mid-fall and the
 ## artwork returns exactly to its own rest or fallen pose.
 func cancel_poses() -> void:
+	if is_instance_valid(backdrop):
+		backdrop.cancel_focus()
 	for puppet in _puppets:
 		if is_instance_valid(puppet):
 			puppet.cancel_attack()
@@ -2703,6 +2814,7 @@ func _bind_backdrop(app) -> void:
 	var light := stage_light(_backdrop_kind, _backdrop_floor)
 	for puppet in _puppets:
 		if is_instance_valid(puppet) and puppet is Puppet:
+			puppet.stage_focus = backdrop
 			puppet.set_stage_light(light)
 
 
