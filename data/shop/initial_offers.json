@@ -55,7 +55,13 @@
     {"id": "button_golem_button_roll", "owner": "button_golem", "price": 50},
     {"id": "warden_v3_helmet_rattle", "owner": "warden", "price": 50},
     {"id": "seamstress_v3_darn_the_tear", "owner": "seamstress", "price": 65},
-    {"id": "tinker_v3_gear_brace", "owner": "tinker", "price": 55}
+    {"id": "tinker_v3_gear_brace", "owner": "tinker", "price": 55},
+    {"id": "lantern_monk_wick_flicker", "owner": "lantern_monk", "price": 50},
+    {"id": "lantern_monk_wax_ward", "owner": "lantern_monk", "price": 50},
+    {"id": "lantern_monk_moth_shroud", "owner": "lantern_monk", "price": 65},
+    {"id": "lantern_monk_snuff_flame", "owner": "lantern_monk", "price": 65},
+    {"id": "lantern_monk_vigil_ring", "owner": "lantern_monk", "price": 65},
+    {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk", "price": 90}
   ],
   "trinkets": [
     {"id": "stitched_badge", "price": 100},

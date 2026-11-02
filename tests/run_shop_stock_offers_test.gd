@@ -238,6 +238,51 @@ const YARN_RANGER_PEDDLER_SPECS := {
 	},
 }
 
+const LANTERN_MONK_PEDDLER_SPECS := {
+	"lantern_monk_wick_flicker": {
+		"owner": "lantern_monk", "price": 50, "rarity": "common",
+		"cost": 1, "plus_cost": 1, "from": [2, 3], "to": [1, 2, 3],
+		"target": "enemy_single",
+		"effects": {"damage": 4, "blind_next_attack": true},
+		"plus_effects": {"damage": 6, "blind_next_attack": true},
+	},
+	"lantern_monk_wax_ward": {
+		"owner": "lantern_monk", "price": 50, "rarity": "common",
+		"cost": 1, "plus_cost": 1, "from": [1, 2, 3], "to": [],
+		"target": "self",
+		"effects": {"block": 5},
+		"plus_effects": {"block": 7},
+	},
+	"lantern_monk_moth_shroud": {
+		"owner": "lantern_monk", "price": 65, "rarity": "uncommon",
+		"cost": 1, "plus_cost": 1, "from": [2, 3], "to": [],
+		"target": "ally_single",
+		"effects": {"block": 6, "dodge_next_attack": 1},
+		"plus_effects": {"block": 8, "dodge_next_attack": 1},
+	},
+	"lantern_monk_snuff_flame": {
+		"owner": "lantern_monk", "price": 65, "rarity": "uncommon",
+		"cost": 1, "plus_cost": 1, "from": [2, 3], "to": [1, 2, 3],
+		"target": "enemy_single",
+		"effects": {"damage": 3, "blind_next_attack": true, "exposed": 1},
+		"plus_effects": {"damage": 4, "blind_next_attack": true, "exposed": 2},
+	},
+	"lantern_monk_vigil_ring": {
+		"owner": "lantern_monk", "price": 65, "rarity": "uncommon",
+		"cost": 2, "plus_cost": 2, "from": [2, 3], "to": [],
+		"target": "party_all",
+		"effects": {"heal_all": 4, "block_all": 4},
+		"plus_effects": {"heal_all": 6, "block_all": 6},
+	},
+	"lantern_monk_moth_cloud": {
+		"owner": "lantern_monk", "price": 90, "rarity": "rare",
+		"cost": 2, "plus_cost": 1, "from": [2, 3], "to": [1, 2, 3],
+		"target": "enemy_all",
+		"effects": {"blind_next_attack": true, "exhaust": true},
+		"plus_effects": {"blind_next_attack": true, "exhaust": true},
+	},
+}
+
 
 ## The three look-driven v3 raw printings this task appends to the shipped
 ## Peddler stock. Rules are copied from their own authored catalogs
@@ -299,6 +344,7 @@ func _initialize() -> void:
 		_test_v3_peddler_party_stock(deck, catalog)
 		_test_yarn_ranger_peddler_stock(deck, catalog)
 		_test_v3_original_hero_peddler_stock(deck, catalog)
+		_test_lantern_monk_peddler_stock(deck, catalog)
 	else:
 		_check(false, "preconditions for non-vacuous shop stock tests failed")
 	if failures.is_empty():
@@ -4284,6 +4330,198 @@ func _test_v3_peddler_visit(party: Array[String], deck: Array[String],
 		leave_open["state"], leave_open["stock"], "card",
 		leave_open["stock"]["cards"][0]["id"]).get("ok", true),
 		"mixed v3 Leave ends the visit without a purchase")
+
+
+func _test_lantern_monk_peddler_stock(deck: Array[String], catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var candidates: Array = authored.get("cards", [])
+	var patches: Array = []
+	for entry in authored.get("trinkets", []):
+		if entry is Dictionary and entry.get("id") is String:
+			patches.append({"id": entry["id"], "price": _whole_price(entry.get("price"))})
+	var monk_pool := LanternMonkPoolCards.new()
+	var candidates_before := candidates.duplicate(true)
+	var patches_before := patches.duplicate(true)
+	_check(candidates.size() > 0 and patches.size() >= 2,
+		"the shipped stock source carries priced cards and patches for the Lantern Monk check")
+	if candidates.is_empty() or patches.size() < 2:
+		return
+
+	# AC1: per-ID facts only. Every shipped Lantern Monk base is listed exactly
+	# once at its authored quote and resolves to its genuine unupgraded pool card.
+	for card_id in LANTERN_MONK_PEDDLER_SPECS:
+		var spec: Dictionary = LANTERN_MONK_PEDDLER_SPECS[card_id]
+		var upgrade_id: String = card_id + "_plus"
+		var matches: Array = candidates.filter(
+			func(entry): return entry is Dictionary and entry.get("id") == card_id)
+		_check(matches.size() == 1,
+			"shipped Lantern Monk stock lists " + card_id + " exactly once")
+		if matches.size() == 1:
+			_check(matches[0].get("owner") == spec["owner"]
+				and _whole_price(matches[0].get("price")) == int(spec["price"]),
+				card_id + ": shipped Lantern Monk owner and exact authored quote")
+			_check(matches[0].size() == 3,
+				card_id + ": shipped record carries only id, owner and price")
+		_check(not _pool_has_id(candidates, upgrade_id),
+			card_id + ": the + upgrade is absent from the shipped candidate list")
+
+		_check(monk_pool.get_base_ids().has(card_id)
+			and not catalog.has_card(card_id),
+			card_id + ": genuine Lantern Monk pool base, not a starter card")
+		var base: Dictionary = monk_pool.get_definition(card_id)
+		_check(base.get("id") == card_id and base.get("owner") == spec["owner"]
+			and base.get("rarity") == spec["rarity"]
+			and base.get("cost") == spec["cost"]
+			and base.get("from_positions") == spec["from"]
+			and base.get("target_kind") == spec["target"]
+			and base.get("to_positions") == spec["to"]
+			and base.get("effects") == spec["effects"]
+			and base.get("reward_eligible") == true
+			and base.get("starting_copies") == 0
+			and base.get("upgrade_id") == upgrade_id
+			and not base.has("upgrade_of"),
+			card_id + ": authentic unupgraded base definition")
+		_check(base.get("illustration_path") == "res://assets/paper/cards/" + card_id + ".png",
+			card_id + ": keeps its pre-existing card art path")
+		var plus: Dictionary = monk_pool.get_definition(upgrade_id)
+		_check(plus.get("id") == upgrade_id and plus.get("owner") == spec["owner"]
+			and plus.get("cost") == spec["plus_cost"]
+			and plus.get("from_positions") == spec["from"]
+			and plus.get("target_kind") == spec["target"]
+			and plus.get("to_positions") == spec["to"]
+			and plus.get("effects") == spec["plus_effects"]
+			and plus.get("upgrade_of") == card_id
+			and plus.get("reward_eligible") == false
+			and plus.get("starting_copies") == 0,
+			card_id + ": the authored + stays Rest-only")
+
+	# Retain previously listed cards at 50 gold.
+	for retained in ["lantern_monk_moth_lure", "lantern_monk_lantern_glow"]:
+		var matches: Array = candidates.filter(
+			func(entry): return entry is Dictionary and entry.get("id") == retained)
+		_check(matches.size() == 1 and matches[0].get("owner") == "lantern_monk"
+			and _whole_price(matches[0].get("price")) == 50,
+			"retained Lantern Monk card survives at 50 gold: " + retained)
+
+	# AC2: bounded fixed seed sweep over one authentic three-hero party that
+	# includes Lantern Monk.
+	var party: Array[String] = ["lantern_monk", "scarecrow", "button_golem"]
+	var monk_seat: int = party.find("lantern_monk")
+	_check(monk_seat >= 0, "the authentic sweep party includes Lantern Monk")
+	var reached := {}
+	var witness_seeds := {}
+	var witness_stocks := {}
+	var witness_rng_states := {}
+	var sweep: int = 160
+	var sampled_visits := 0
+	for offset in range(sweep):
+		var seed_value: int = SEED + 60000 + offset
+		var rng := _rng(seed_value)
+		var oracle_rng := _rng(seed_value)
+		var stock := RunShopStockOffers.generate_peddler_stock(rng, party, candidates,
+			patches, [])
+		var expected := _peddler_stock_oracle(catalog, party, candidates, patches, [],
+			oracle_rng)
+		_check(stock.get("ok", false),
+			"Lantern Monk sweep seed " + str(seed_value) + ": Peddler 3+1 stock generates")
+		if not stock.get("ok", false):
+			continue
+		sampled_visits += 1
+		var cards: Array = stock.get("cards", [])
+		var offered_patches: Array = stock.get("patches", [])
+		_check(cards.size() == 3 and offered_patches.size() == 1,
+			"Lantern Monk sweep seed " + str(seed_value) + ": three cards and one patch")
+		_check(cards == expected.get("cards", [])
+			and offered_patches == expected.get("patches", []),
+			"Lantern Monk sweep seed " + str(seed_value) + ": stock matches the independent oracle")
+		_check(rng.state == oracle_rng.state,
+			"Lantern Monk sweep seed " + str(seed_value) + ": same four RNG draws")
+		var monk_cards := 0
+		for position in range(cards.size()):
+			var offer: Dictionary = cards[position]
+			_check(offer.get("owner") == party[position],
+				"Lantern Monk sweep seed " + str(seed_value) + ": offer " + str(position)
+					+ " follows party order")
+			if offer.get("owner") != "lantern_monk":
+				continue
+			monk_cards += 1
+			_check(position == monk_seat,
+				"Lantern Monk sweep seed " + str(seed_value)
+					+ ": the Lantern Monk card fills its own party seat")
+			var monk_id: String = str(offer.get("id", ""))
+			_check(_pool_has_id(candidates, monk_id)
+				and _catalog_definition(monk_id, _all_party_catalogs())
+					.get("owner") == "lantern_monk",
+				"Lantern Monk sweep seed " + str(seed_value)
+					+ ": the seat offers an authored priced Lantern Monk base")
+			_check(int(offer.get("price")) == _pool_price(candidates, monk_id)
+				and int(offer.get("price")) > 0,
+				"Lantern Monk sweep seed " + str(seed_value)
+					+ ": the offered base keeps its authored quote")
+			reached[monk_id] = true
+			if not witness_seeds.has(monk_id):
+				witness_seeds[monk_id] = seed_value
+				witness_stocks[monk_id] = stock
+				witness_rng_states[monk_id] = rng.state
+		_check(monk_cards == 1,
+			"Lantern Monk sweep seed " + str(seed_value)
+				+ ": exactly one Lantern Monk card, never two")
+
+	_check(sampled_visits == sweep,
+		"every bounded Lantern Monk sweep seed samples genuine stock")
+	for card_id in LANTERN_MONK_PEDDLER_SPECS:
+		_check(reached.has(card_id),
+			"the bounded sweep reaches the shipped Lantern Monk offer: " + card_id)
+		if witness_seeds.has(card_id):
+			var rep_rng := _rng(witness_seeds[card_id])
+			var rep_stock := RunShopStockOffers.generate_peddler_stock(rep_rng, party,
+				candidates, patches, [])
+			_check(rep_stock == witness_stocks[card_id]
+				and rep_rng.state == witness_rng_states[card_id],
+				card_id + ": exact RNG replay matches offer IDs, prices, and state")
+
+	# AC2: A party without Lantern Monk cannot draw them.
+	var non_monk_party: Array[String] = ["warden", "seamstress", "tinker"]
+	for offset in range(20):
+		var rng := _rng(SEED + 71000 + offset)
+		var stock := RunShopStockOffers.generate_peddler_stock(rng, non_monk_party,
+			candidates, patches, [])
+		if not stock.get("ok", false):
+			continue
+		for offer in stock.get("cards", []):
+			_check(offer.get("owner") != "lantern_monk",
+				"party without Monk never receives a Lantern Monk card")
+			_check(not LANTERN_MONK_PEDDLER_SPECS.has(offer.get("id")),
+				"party without Monk never receives any new Lantern Monk card ID")
+
+	# AC2: Rejection coverage for invalid price, owner, duplicate ID, upgrades.
+	var focus_pool: Array = [
+		{"id": "lantern_monk_wick_flicker", "owner": "lantern_monk", "price": 50},
+		{"id": "scarecrow_crow_peck", "owner": "scarecrow", "price": 50},
+		{"id": "button_golem_button_roll", "owner": "button_golem", "price": 50},
+	]
+	var monk_refusals := {
+		"monk upgrade candidate": _with_card(focus_pool, 0,
+			{"id": "lantern_monk_wick_flicker_plus", "owner": "lantern_monk", "price": 50}),
+		"monk unknown candidate": _with_card(focus_pool, 0,
+			{"id": "__unknown_monk_card__", "owner": "lantern_monk", "price": 50}),
+		"monk spoofed owner": _with_card(focus_pool, 0,
+			{"id": "lantern_monk_wick_flicker", "owner": "scarecrow", "price": 50}),
+		"monk duplicated candidate": _with_appended(focus_pool,
+			{"id": "lantern_monk_wick_flicker", "owner": "lantern_monk", "price": 50}),
+		"monk negative quote": _with_card(focus_pool, 0,
+			{"id": "lantern_monk_wick_flicker", "owner": "lantern_monk", "price": -50}),
+		"monk fractional quote": _with_card(focus_pool, 0,
+			{"id": "lantern_monk_wick_flicker", "owner": "lantern_monk", "price": 50.5}),
+		"monk foreign party": focus_pool,
+	}
+	for label in monk_refusals:
+		var use_party := non_monk_party if label == "monk foreign party" else party
+		_reject_peddler_stock(label, _rng(SEED + 73000), use_party, monk_refusals[label],
+			patches, [])
+
+	_check(candidates == candidates_before and patches == patches_before,
+		"the shipped candidate arrays survive the Lantern Monk sweep unchanged")
 
 
 ## Independent sorted-pool oracle for Peddler stock (3 hero cards + 1 patch).
