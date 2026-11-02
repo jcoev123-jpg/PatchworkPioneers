@@ -62,6 +62,11 @@ const TABLE_HELP_DETAIL := "Click, drag or focus a card and press Enter / Space 
 const HELP_IDLE_FACE := &"PatchHeading"
 const HELP_BODY_FACE := &""
 const HELP_FONT_SIZE := 18
+const HUD_REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
+const HUD_PULSE_SECONDS := 0.26
+const HUD_PULSE_PEAK := 1.055
+const HUD_PILE_PERIOD := 5.4
+const HUD_PILE_BOB := 1.35
 var _battle: Control
 var _deck: CombatDeck
 var _party: CombatParty
@@ -137,6 +142,20 @@ var cleanse_choices: HBoxContainer
 ## in the extension and every other card keeps the shared behaviour.
 var _metadata = preload("res://scripts/live_support_hand_metadata.gd").new()
 var _receipt_seq := 0
+
+## Only paint transforms change. A snapshot of the bound fight's real shared hand,
+## active turn and payment is observed; this never calls a gameplay service.
+## null follows the global accessibility setting, like the other live panels.
+var reduced_motion_override: Variant = null
+var _hud_motion_clock := 0.0
+var _hud_pulse_time := -1.0
+var _hud_witness_deck: CombatDeck
+var _hud_witness_battle: Control
+var _hud_witness_turn := -1
+var _hud_witness_energy := -1
+var _hud_witness_hand: Array[String] = []
+var _hud_witness_active := false
+var _hud_motion_enabled := false
 
 
 ## Resolved path of one committed HUD image under the current presentation-only root.
@@ -315,6 +334,14 @@ class EnergyOrb extends Control:
 	## Committed energy-spool art, optional: null keeps the drawn felt disc.
 	var texture: Texture2D = null
 	var art_draw_count := 0
+	## Pure image transform: the Control and the number Label never scale or move.
+	var picture_scale := 1.0
+
+	func picture_rect() -> Rect2:
+		var disc := disc_rect()
+		# Leave room for the entire 1.055x pulse INSIDE the original inset disc.
+		var safe := disc.size * (0.94 * picture_scale)
+		return Rect2(disc.get_center() - safe * 0.5, safe)
 
 	func _ready() -> void:
 		custom_minimum_size = Vector2(76, 76)
@@ -341,7 +368,7 @@ class EnergyOrb extends Control:
 		draw_count += 1
 		if texture != null:
 			art_draw_count += 1
-			draw_texture_rect(texture, disc_rect(), false)
+			draw_texture_rect(texture, picture_rect(), false)
 			return
 		draw_circle(center, radius, DISK)
 		draw_arc(center, radius, 0, TAU, 64, RIM, 2, true)
@@ -362,6 +389,16 @@ class PileToken extends Control:
 	var kind := "draw"
 	var texture: Texture2D = null
 	var draw_count := 0
+	## Local image offset only; the 24px Control and sibling count stay stationary.
+	var picture_offset_y := 0.0
+
+	func picture_rect() -> Rect2:
+		var base := art_rect()
+		if base.size == Vector2.ZERO:
+			return base
+		# Retain room at both ends for the quiet 1.35px vertical bob.
+		var safe := base.size * 0.83
+		return Rect2(base.get_center() - safe * 0.5 + Vector2(0, picture_offset_y), safe)
 
 	func _ready() -> void:
 		custom_minimum_size = SIZE
@@ -390,7 +427,7 @@ class PileToken extends Control:
 			return
 		draw_count += 1
 		if texture != null:
-			draw_texture_rect(texture, art_rect(), false)
+			draw_texture_rect(texture, picture_rect(), false)
 			return
 		# Drawn fallback: a small stitched felt packet with a card leaving or arriving.
 		var box := Rect2(Vector2(2, 2), size - Vector2(4, 4))
@@ -527,8 +564,102 @@ func _ready() -> void:
 	get_parent().start_run_requested.connect(_sync_battle, CONNECT_DEFERRED)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	_sync_battle()
+	advance_hud_motion(delta)
+
+
+## Read-only battle witness. A mere click or energy setter cannot trigger a receipt:
+## an active same-turn hand copy must actually leave AND energy must decrease.
+## Every new turn, deck/battle binding, or disabled interval re-arms the baseline.
+func _hud_motion_allowed() -> bool:
+	var app = get_parent()
+	return _deck != null and is_instance_valid(_battle) and _battle.is_visible_in_tree() 		and app.deck == _deck and app.battle_view == _battle and app.party == _party 		and not app._battle_closed and _deck.turn_active and _party != null 		and _party.is_valid() and not _party.is_defeated() 		and app.battle_result != null and app.battle_result.can_continue() 		and app.enemies != null and app.enemies.is_valid() and not app.enemies.is_victorious()
+
+
+func _hud_motion_reduced() -> bool:
+	if reduced_motion_override != null:
+		return bool(reduced_motion_override)
+	return bool(ProjectSettings.get_setting(HUD_REDUCED_MOTION_SETTING, false))
+
+
+func _hud_motion_reset() -> void:
+	_hud_motion_clock = 0.0
+	_hud_pulse_time = -1.0
+	_hud_witness_deck = null
+	_hud_witness_battle = null
+	_hud_witness_turn = -1
+	_hud_witness_energy = -1
+	_hud_witness_hand.clear()
+	_hud_witness_active = false
+	_hud_motion_enabled = false
+	_hud_motion_paint_baseline()
+
+
+func _hud_motion_paint_baseline() -> void:
+	if is_instance_valid(energy_orb) and energy_orb.picture_scale != 1.0:
+		energy_orb.picture_scale = 1.0
+		energy_orb.queue_redraw()
+	for token in [draw_token, discard_token]:
+		if is_instance_valid(token) and token.picture_offset_y != 0.0:
+			token.picture_offset_y = 0.0
+			token.queue_redraw()
+
+
+## Deterministic presentation-only advance, called by the real mounted _process
+## and available to headless tests. Does not call RNG or mutate deck/party/enemies.
+func advance_hud_motion(delta: float) -> void:
+	if _hud_motion_reduced() or not _hud_motion_allowed():
+		_hud_motion_reset()
+		return
+	var app = get_parent()
+	var turn: int = int(app.enemy_intents._turn_index) if app.enemy_intents != null else -1
+	if not _hud_motion_enabled or _hud_witness_deck != _deck 			or _hud_witness_battle != _battle or _hud_witness_turn != turn 			or not _hud_witness_active:
+		_hud_motion_clock = 0.0
+		_hud_pulse_time = -1.0
+		_hud_motion_paint_baseline()
+		_hud_motion_enabled = true
+	else:
+		var removed := false
+		var previous := _hud_witness_hand.duplicate()
+		for id in _deck.hand:
+			previous.erase(id)
+		removed = not previous.is_empty()
+		if _deck.energy < _hud_witness_energy and removed 				and is_instance_valid(energy_orb) and energy_orb.texture != null:
+			_hud_pulse_time = 0.0
+	_hud_witness_deck = _deck
+	_hud_witness_battle = _battle
+	_hud_witness_turn = turn
+	_hud_witness_energy = _deck.energy
+	_hud_witness_hand = _deck.hand.duplicate()
+	_hud_witness_active = _deck.turn_active
+	var step := maxf(delta, 0.0)
+	_hud_motion_clock = fposmod(_hud_motion_clock + step, HUD_PILE_PERIOD)
+	if is_instance_valid(energy_orb):
+		var new_scale := 1.0
+		if energy_orb.texture == null:
+			_hud_pulse_time = -1.0
+		elif _hud_pulse_time >= 0.0:
+			_hud_pulse_time += step
+			if _hud_pulse_time >= HUD_PULSE_SECONDS:
+				_hud_pulse_time = -1.0
+			else:
+				new_scale += (HUD_PULSE_PEAK - 1.0) * sin(PI * _hud_pulse_time / HUD_PULSE_SECONDS)
+		if energy_orb.picture_scale != new_scale:
+			energy_orb.picture_scale = new_scale
+			energy_orb.queue_redraw()
+	var i := 0
+	for token in [draw_token, discard_token]:
+		if not is_instance_valid(token):
+			i += 1
+			continue
+		var offset := 0.0
+		if token.texture != null:
+			offset = HUD_PILE_BOB * sin(TAU * _hud_motion_clock / HUD_PILE_PERIOD + float(i) * 2.1)
+		if token.picture_offset_y != offset:
+			token.picture_offset_y = offset
+			token.queue_redraw()
+		i += 1
 
 
 func _toggle_help() -> void:
@@ -2535,6 +2666,7 @@ func _unbind(panel) -> void:
 
 
 func _clear() -> void:
+	_hud_motion_reset()
 	_restore_action_fonts()
 	_receipt_seq = 0
 	_metadata.clear()
