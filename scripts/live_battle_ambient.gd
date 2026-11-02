@@ -57,6 +57,38 @@ func _init() -> void:
 	vignette_texture = _load_texture(VIGNETTE_PATH)
 	critter_strips = CRITTERS.load_strips()
 	resized.connect(queue_redraw)
+	set_process(false)
+
+
+func _enter_tree() -> void:
+	ProjectSettings.settings_changed.connect(_sync_motion)
+	_sync_motion()
+
+
+func _exit_tree() -> void:
+	ProjectSettings.settings_changed.disconnect(_sync_motion)
+	if get_tree().process_frame.is_connected(_sync_motion):
+		get_tree().process_frame.disconnect(_sync_motion)
+	set_process(false)
+	_time = 0.0
+
+
+## Runtime set_setting does not always emit settings_changed. Watch only an
+## admitted visible layer, even while its animation processor is stopped.
+## This uses no extra nodes and never advances the presentation clock.
+func _sync_motion() -> void:
+	var active := is_inside_tree() and not profile.is_empty() and is_visible_in_tree()
+	var reduced := bool(ProjectSettings.get_setting("accessibility/reduced_motion", false))
+	if reduced and _time != 0.0:
+		_time = 0.0
+		queue_redraw()
+	set_process(active and not reduced)
+	if is_inside_tree():
+		var watching := get_tree().process_frame.is_connected(_sync_motion)
+		if active and not watching:
+			get_tree().process_frame.connect(_sync_motion)
+		elif not active and watching:
+			get_tree().process_frame.disconnect(_sync_motion)
 
 
 static func _load_texture(path: String) -> Texture2D:
@@ -107,7 +139,7 @@ func configure(kind: String, floor_number: int, fast_mode: bool) -> bool:
 	if changed:
 		_time = 0.0
 	show()
-	set_process(is_visible_in_tree())
+	_sync_motion()
 	queue_redraw()
 	return true
 
@@ -123,7 +155,7 @@ func configure_visit_scraps() -> void:
 	_time = 0.0
 	self_modulate = Color(1.0, 1.0, 1.0, 0.42)
 	show()
-	set_process(is_visible_in_tree())
+	_sync_motion()
 	queue_redraw()
 
 
@@ -148,17 +180,19 @@ func retire() -> void:
 	self_modulate = Color.WHITE
 	set_process(false)
 	hide()
+	_sync_motion()
 	queue_redraw()
 
 
 ## Ancestor visibility also gates the clock (a hidden parent must not drift).
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_VISIBILITY_CHANGED and is_inside_tree():
-		set_process(not profile.is_empty() and is_visible_in_tree())
+		_sync_motion()
 
 
 func _process(delta: float) -> void:
-	if profile.is_empty() or not is_visible_in_tree() or delta <= 0.0:
+	_sync_motion()
+	if not is_processing() or delta <= 0.0:
 		return
 	_time = fposmod(_time + delta, 120.0)
 	queue_redraw()
