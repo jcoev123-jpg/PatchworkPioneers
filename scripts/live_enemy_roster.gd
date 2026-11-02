@@ -406,8 +406,7 @@ void fragment() {
 	var idle_frames: Array[Texture2D] = []
 	## Authored attack pose, drawn only while this actor performs its own committed hit.
 	var attack_texture: Texture2D
-	## Optional authored swing: square cells cut from one `<id>_attack_anim.png` strip running
-	## from the idle stance to the attack pose, at the attack still's own pixel scale.
+	## Optional legacy swing data; committed attacks always paint the authored still.
 	var attack_frames: Array[Texture2D] = []
 	## Optional authored reactions (elites and bosses): a flinch played across the recoil and
 	## a collapse played across the fall settle, both at the idle still's pixel scale.
@@ -769,12 +768,11 @@ void fragment() {
 		return frames
 
 	## The artwork actually painted for the pose image `texture`: a standing actor's still
-	## idle image is swapped for the current loop frame, and a committed attack pose for the
-	## swing frame matching the lunge (stance, strike at its peak, back to stance); fallen
-	## actors keep their own image. Placement and targets still come from the still image.
+	## idle image is swapped for the current loop frame; committed attacks hold their still.
+	## Fallen actors keep their own reaction image. Placement and targets use the still.
 	func idle_frame(texture: Texture2D) -> Texture2D:
-		if texture == attack_texture and attacking() and not attack_frames.is_empty():
-			return attack_frames[roundi(attack_shape() * (attack_frames.size() - 1))]
+		if texture == attack_texture and attacking():
+			return texture
 		if texture == idle_texture and fallen and not death_frames.is_empty():
 			return death_frames[roundi(fall_shape() * (death_frames.size() - 1))]
 		if texture == idle_texture and recoiling() and not hit_frames.is_empty():
@@ -836,16 +834,14 @@ void fragment() {
 			return attack_texture
 		return idle_texture
 
-	## Placement of the drawn pose inside the same art band: fitted at its own
-	## proportions with its bottom edge on the same foot line as the idle artwork, so the
-	## pose can never stretch a shorter attack image or float an actor off the ground.
+	## Every pose keeps the fitted idle still's pixel scale and foot line. A wider or
+	## taller attack can extend beyond the idle rectangle without shrinking the figure.
 	func pose_rect(texture: Texture2D) -> Rect2:
 		var base := image_rect()
 		if texture == null or texture.get_width() <= 0 or texture.get_height() <= 0 \
 				or base.size.x <= 0.0 or base.size.y <= 0.0:
 			return Rect2()
-		var fit := minf(base.size.x / float(texture.get_width()),
-			base.size.y / float(texture.get_height()))
+		var fit := base.size.y / float(idle_texture.get_height())
 		var drawn := Vector2(texture.get_width(), texture.get_height()) * fit
 		return Rect2(Vector2(base.get_center().x - drawn.x / 2.0, base.end.y - drawn.y), drawn)
 

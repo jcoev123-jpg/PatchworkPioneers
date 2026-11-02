@@ -1,5 +1,5 @@
 {
- "_doc": "Named move poses (owner 11-02). enemies: the intent action types each pose covers; heroes: card roles (block = Block/defend cards, skill = other skills/powers; attack cards use <id>_attack.png). A pose whose art file is missing falls back to <id>_attack.png. Claude makes the art for new entries.",
+ "_doc": "Named move poses (owner 11-02). enemies: the intent action types each pose covers; heroes: card roles (block = Block/defend cards, skill = other skills/powers; attack cards use <id>_attack.png). An enemy may have several attacks (attack, attack2, attack3, bosses attack4): an intent action picks one with a \"move\" key (e.g. \"move\": \"attack2\"), else attack. A pose whose art file is missing falls back to <id>_attack.png. Claude makes the art for new entries.",
  "enemies": {
   "clothespin_crusher": {
    "attack": {
@@ -16,6 +16,20 @@
      "snip_block"
     ],
     "art": "res://assets/paper/enemies/clothespin_crusher_skill.png"
+   },
+   "attack2": {
+    "name": "Pin Pitch",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/clothespin_crusher_attack2.png"
+   },
+   "attack3": {
+    "name": "Wringer",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/clothespin_crusher_attack3.png"
    }
   },
   "pincushion_hedgehog": {
@@ -32,6 +46,13 @@
      "block"
     ],
     "art": "res://assets/paper/enemies/pincushion_hedgehog_skill.png"
+   },
+   "attack2": {
+    "name": "Quill Roll",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/pincushion_hedgehog_attack2.png"
    }
   },
   "thread_biter": {
@@ -49,6 +70,13 @@
      "debuff"
     ],
     "art": "res://assets/paper/enemies/thread_biter_skill.png"
+   },
+   "attack2": {
+    "name": "Thread Lash",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/thread_biter_attack2.png"
    }
   },
   "zipper_hauler": {
@@ -66,6 +94,20 @@
      "shove"
     ],
     "art": "res://assets/paper/enemies/zipper_hauler_skill.png"
+   },
+   "attack2": {
+    "name": "Tusk Gore",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/zipper_hauler_attack2.png"
+   },
+   "attack3": {
+    "name": "Pull Tab Fling",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/zipper_hauler_attack3.png"
    }
   },
   "zipper_snake": {
@@ -82,6 +124,13 @@
      "shove"
     ],
     "art": "res://assets/paper/enemies/zipper_snake_skill.png"
+   },
+   "attack2": {
+    "name": "Coil Crush",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/zipper_snake_attack2.png"
    }
   },
   "ragling_guard": {
@@ -99,6 +148,13 @@
      "shove"
     ],
     "art": "res://assets/paper/enemies/ragling_guard_skill.png"
+   },
+   "attack2": {
+    "name": "Shield Bash",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/ragling_guard_attack2.png"
    }
   },
   "moth_swarm_broodling": {
@@ -108,6 +164,13 @@
      "attack"
     ],
     "art": "res://assets/paper/enemies/moth_swarm_broodling_attack.png"
+   },
+   "attack2": {
+    "name": "Dust Puff",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/moth_swarm_broodling_attack2.png"
    }
   },
   "patchwork_behemoth": {
@@ -118,6 +181,27 @@
      "debuff"
     ],
     "art": "res://assets/paper/boss/patchwork_behemoth_skill.png"
+   },
+   "attack2": {
+    "name": "Knuckle Slam",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/boss/patchwork_behemoth_attack2.png"
+   },
+   "attack3": {
+    "name": "Stuffing Hurl",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/boss/patchwork_behemoth_attack3.png"
+   },
+   "attack4": {
+    "name": "Rope Lash",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/boss/patchwork_behemoth_attack4.png"
    }
   },
   "sewing_machine_colossus": {
@@ -128,6 +212,27 @@
      "debuff"
     ],
     "art": "res://assets/paper/enemies/sewing_machine_colossus_skill.png"
+   },
+   "attack2": {
+    "name": "Needle Drive",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/sewing_machine_colossus_attack2.png"
+   },
+   "attack3": {
+    "name": "Bobbin Shot",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/sewing_machine_colossus_attack3.png"
+   },
+   "attack4": {
+    "name": "Treadle Stomp",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/sewing_machine_colossus_attack4.png"
    }
   },
   "needle_marshal": {
@@ -138,6 +243,20 @@
      "shove"
     ],
     "art": "res://assets/paper/enemies/needle_marshal_skill.png"
+   },
+   "attack2": {
+    "name": "Pike Charge",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/needle_marshal_attack2.png"
+   },
+   "attack3": {
+    "name": "Needle Volley",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/needle_marshal_attack3.png"
    }
   },
   "spool_hexer": {
@@ -147,6 +266,20 @@
      "debuff"
     ],
     "art": "res://assets/paper/enemies/spool_hexer_skill.png"
+   },
+   "attack2": {
+    "name": "Hex Bolt",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spool_hexer_attack2.png"
+   },
+   "attack3": {
+    "name": "Spindle Jab",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spool_hexer_attack3.png"
    }
   },
   "scissor_bailiff": {
@@ -157,6 +290,20 @@
      "snip_block"
     ],
     "art": "res://assets/paper/enemies/scissor_bailiff_skill.png"
+   },
+   "attack2": {
+    "name": "Scissor Cut",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/scissor_bailiff_attack2.png"
+   },
+   "attack3": {
+    "name": "Hook Pull",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/scissor_bailiff_attack3.png"
    }
   },
   "fray_scavenger": {
@@ -167,6 +314,20 @@
      "debuff"
     ],
     "art": "res://assets/paper/enemies/fray_scavenger_skill.png"
+   },
+   "attack2": {
+    "name": "Pin Flick",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/fray_scavenger_attack2.png"
+   },
+   "attack3": {
+    "name": "Sack Swing",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/fray_scavenger_attack3.png"
    }
   },
   "button_guard": {
@@ -178,6 +339,20 @@
      "shove"
     ],
     "art": "res://assets/paper/enemies/button_guard_skill.png"
+   },
+   "attack2": {
+    "name": "Button Toss",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/button_guard_attack2.png"
+   },
+   "attack3": {
+    "name": "Pin Thrust",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/button_guard_attack3.png"
    }
   },
   "spool_stalker": {
@@ -189,6 +364,20 @@
      "debuff"
     ],
     "art": "res://assets/paper/enemies/spool_stalker_skill.png"
+   },
+   "attack2": {
+    "name": "Web Spit",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spool_stalker_attack2.png"
+   },
+   "attack3": {
+    "name": "Leg Stab",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spool_stalker_attack3.png"
    }
   },
   "seam_ripper": {
@@ -200,6 +389,20 @@
      "debuff"
     ],
     "art": "res://assets/paper/enemies/seam_ripper_skill.png"
+   },
+   "attack2": {
+    "name": "Hook Rip",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/seam_ripper_attack2.png"
+   },
+   "attack3": {
+    "name": "Ripper Throw",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/seam_ripper_attack3.png"
    }
   },
   "felt_bulwark": {
@@ -210,6 +413,20 @@
      "buff"
     ],
     "art": "res://assets/paper/enemies/felt_bulwark_skill.png"
+   },
+   "attack2": {
+    "name": "Roll Charge",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/felt_bulwark_attack2.png"
+   },
+   "attack3": {
+    "name": "Felt Slam",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/felt_bulwark_attack3.png"
    }
   },
   "moth_scribe": {
@@ -220,6 +437,20 @@
      "debuff"
     ],
     "art": "res://assets/paper/enemies/moth_scribe_skill.png"
+   },
+   "attack2": {
+    "name": "Quill Stab",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/moth_scribe_attack2.png"
+   },
+   "attack3": {
+    "name": "Ink Flick",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/moth_scribe_attack3.png"
    }
   },
   "pin_skitter": {
@@ -230,6 +461,13 @@
      "shove"
     ],
     "art": "res://assets/paper/enemies/pin_skitter_skill.png"
+   },
+   "attack2": {
+    "name": "Pin Leap",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/pin_skitter_attack2.png"
    }
   },
   "scissor_crab": {
@@ -239,6 +477,20 @@
      "snip_block"
     ],
     "art": "res://assets/paper/enemies/scissor_crab_skill.png"
+   },
+   "attack2": {
+    "name": "Pinch",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/scissor_crab_attack2.png"
+   },
+   "attack3": {
+    "name": "Blade Spin",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/scissor_crab_attack3.png"
    }
   },
   "thimble_beetle": {
@@ -248,6 +500,13 @@
      "block"
     ],
     "art": "res://assets/paper/enemies/thimble_beetle_skill.png"
+   },
+   "attack2": {
+    "name": "Shell Ram",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/thimble_beetle_attack2.png"
    }
   },
   "moth_swarm": {
@@ -259,6 +518,20 @@
      "summon"
     ],
     "art": "res://assets/paper/enemies/moth_swarm_skill.png"
+   },
+   "attack2": {
+    "name": "Swarm Engulf",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/moth_swarm_attack2.png"
+   },
+   "attack3": {
+    "name": "Dust Spit",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/moth_swarm_attack3.png"
    }
   },
   "needle_wasp": {
@@ -268,6 +541,20 @@
      "debuff"
     ],
     "art": "res://assets/paper/enemies/needle_wasp_skill.png"
+   },
+   "attack2": {
+    "name": "Sting Dive",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/needle_wasp_attack2.png"
+   },
+   "attack3": {
+    "name": "Needle Spit",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/needle_wasp_attack3.png"
    }
   },
   "shearwing_mantis": {
@@ -277,6 +564,20 @@
      "snip_block"
     ],
     "art": "res://assets/paper/enemies/shearwing_mantis_skill.png"
+   },
+   "attack2": {
+    "name": "Shear Slash",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/shearwing_mantis_attack2.png"
+   },
+   "attack3": {
+    "name": "Pounce",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/shearwing_mantis_attack3.png"
    }
   },
   "spoolback_hound": {
@@ -286,6 +587,20 @@
      "shove"
     ],
     "art": "res://assets/paper/enemies/spoolback_hound_skill.png"
+   },
+   "attack2": {
+    "name": "Savage Bite",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spoolback_hound_attack2.png"
+   },
+   "attack3": {
+    "name": "Thread Snap",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spoolback_hound_attack3.png"
    }
   },
   "inkbrush_imp": {
@@ -295,6 +610,20 @@
      "debuff"
     ],
     "art": "res://assets/paper/enemies/inkbrush_imp_skill.png"
+   },
+   "attack2": {
+    "name": "Brush Swat",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/inkbrush_imp_attack2.png"
+   },
+   "attack3": {
+    "name": "Ink Spit",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/inkbrush_imp_attack3.png"
    }
   },
   "spindle_ram": {
@@ -305,6 +634,20 @@
      "shove"
     ],
     "art": "res://assets/paper/enemies/spindle_ram_skill.png"
+   },
+   "attack2": {
+    "name": "Horn Charge",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spindle_ram_attack2.png"
+   },
+   "attack3": {
+    "name": "Yarn Hurl",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spindle_ram_attack3.png"
    }
   },
   "razor_ribbon_wraith": {
@@ -314,6 +657,20 @@
      "debuff"
     ],
     "art": "res://assets/paper/enemies/razor_ribbon_wraith_skill.png"
+   },
+   "attack2": {
+    "name": "Ribbon Lash",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/razor_ribbon_wraith_attack2.png"
+   },
+   "attack3": {
+    "name": "Wail",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/razor_ribbon_wraith_attack3.png"
    }
   },
   "crochet_hook_harrier": {
@@ -324,6 +681,20 @@
      "shove"
     ],
     "art": "res://assets/paper/enemies/crochet_hook_harrier_skill.png"
+   },
+   "attack2": {
+    "name": "Talon Dive",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/crochet_hook_harrier_attack2.png"
+   },
+   "attack3": {
+    "name": "Hook Snag",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/crochet_hook_harrier_attack3.png"
    }
   },
   "thistle_patch_doll": {
@@ -333,6 +704,20 @@
      "block"
     ],
     "art": "res://assets/paper/enemies/thistle_patch_doll_skill.png"
+   },
+   "attack2": {
+    "name": "Burr Throw",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/thistle_patch_doll_attack2.png"
+   },
+   "attack3": {
+    "name": "Thorn Punch",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/thistle_patch_doll_attack3.png"
    }
   },
   "bobbin_bat": {
@@ -343,6 +728,20 @@
      "debuff"
     ],
     "art": "res://assets/paper/enemies/bobbin_bat_skill.png"
+   },
+   "attack2": {
+    "name": "Fang Bite",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/bobbin_bat_attack2.png"
+   },
+   "attack3": {
+    "name": "Bobbin Drop",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/bobbin_bat_attack3.png"
    }
   },
   "quilt_termite": {
@@ -353,6 +752,29 @@
      "debuff"
     ],
     "art": "res://assets/paper/enemies/quilt_termite_skill.png"
+   },
+   "attack2": {
+    "name": "Chew",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/quilt_termite_attack2.png"
+   },
+   "attack3": {
+    "name": "Lint Spit",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/quilt_termite_attack3.png"
+   }
+  },
+  "ragling": {
+   "attack2": {
+    "name": "Rag Slap",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/ragling_attack2.png"
    }
   }
  },
