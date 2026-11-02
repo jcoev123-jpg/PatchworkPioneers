@@ -162,7 +162,7 @@ static func get_authored_base_candidates() -> Array[Dictionary]:
 			"owner": String(definition.get("owner", "")),
 			"rarity": String(definition.get("rarity", ""))
 		})
-	for pool in [LanternMonkPoolCards.new(), RagDuelistPoolCards.new(), ScarecrowPoolCards.new(),
+	for pool in [V3SeamstressPoolCards.new(), LanternMonkPoolCards.new(), RagDuelistPoolCards.new(), ScarecrowPoolCards.new(),
 		YarnRangerPoolCards.new(), ButtonGolemPoolCards.new()]:
 		for card_id in pool.get_base_ids():
 			var definition: Dictionary = pool.get_definition(card_id)
@@ -204,7 +204,7 @@ static func resolve_reward_definition(card_id: Variant) -> Dictionary:
 	var tinker := TinkerPoolCards.new()
 	if tinker.get_pool_card_ids().has(id):
 		return tinker.get_definition(id)
-	for pool in [LanternMonkPoolCards.new(), RagDuelistPoolCards.new(), ScarecrowPoolCards.new(),
+	for pool in [V3SeamstressPoolCards.new(), LanternMonkPoolCards.new(), RagDuelistPoolCards.new(), ScarecrowPoolCards.new(),
 		YarnRangerPoolCards.new(), ButtonGolemPoolCards.new()]:
 		if pool.get_base_ids().has(id):
 			return pool.get_definition(id)

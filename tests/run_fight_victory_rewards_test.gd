@@ -46,6 +46,7 @@ func _initialize() -> void:
 			["relay_bobbin", "hearth_lining", "button_eye"], [])
 		_test_choices(definitions, ids, deck, candidates)
 		_test_weighted_records(definitions, ids, deck)
+		_test_v3_seamstress_earned_chain(definitions, ids, deck)
 		_test_weighted_two_survivors(definitions, ids, deck, false)
 		_test_weighted_two_survivors(definitions, ids, deck, true)
 		_test_weighted_two_survivors_ws(definitions, ids, deck)
@@ -451,6 +452,82 @@ func _test_choices(definitions: Array, ids: Array[String], deck: Array[String],
 
 
 ## Authored D2-1 base records: exactly what the routed run supplies.
+func _test_v3_seamstress_earned_chain(definitions: Array, ids: Array[String], deck: Array[String]) -> void:
+	var pool := V3SeamstressPoolCards.new()
+	var records := _pool_records()
+	for base_id in pool.get_base_ids():
+		var witness := -1
+		for trial in range(512):
+			var expected := _weighted_oracle(ids, records, trial, false)
+			if expected.offers.has({"id": base_id, "owner": "seamstress"}):
+				witness = trial
+				break
+		_check(witness >= 0, "seeded Fight can earn V3 base: " + base_id)
+		if witness < 0:
+			continue
+		var fight := _fight(definitions)
+		_win(fight)
+		var rng := _rng(witness)
+		var service := _session(fight, rng, ids, records, deck, 100, false)
+		var ready := service.prepare()
+		var oracle := _weighted_oracle(ids, records, witness, false)
+		_check(ready.ok and ready.offers == oracle.offers and ready.gold_award == oracle.gold
+			and rng.state == oracle.rng_state, "V3 real preparation matches gold/card/RNG oracle: " + base_id)
+		if not ready.ok:
+			continue
+		var state := rng.state
+		_check(service.prepare() == ready and rng.state == state, "V3 prepare replay is inert")
+		var forged_claim := service.choose(base_id + "_fake")
+		_check(not forged_claim.ok and forged_claim.deck == deck and forged_claim.gold == 100 and rng.state == state,
+			"forged V3 selection rejected without payout, mutation or RNG drift")
+		var denied := service.choose(pool.get_upgrade_id(base_id))
+		_check(not denied.ok and denied.deck == deck and denied.gold == 100 and rng.state == state,
+			"V3 plus cannot be claimed directly and failure leaves choice open")
+		var claimed := service.choose(base_id)
+		var expected_deck := deck.duplicate()
+		expected_deck.append(base_id)
+		_check(claimed.ok and claimed.deck == expected_deck and claimed.deck.count(base_id) == 1
+			and claimed.gold == 100 + oracle.gold and rng.state == state, "V3 one durable earned occurrence")
+		_check(not service.choose(base_id).ok and rng.state == state, "V3 claim replay cannot pay twice")
+		if not claimed.ok:
+			continue
+		var choices := RunRestCardUpgrade.list_authored_choices(claimed.deck)
+		_check(choices.ok and choices.permitted_upgrades.get(base_id) == pool.get_upgrade_id(base_id),
+			"earned V3 occurrence has authentic Rest choice")
+		var upgrade := RunRestCardUpgrade.new(claimed.deck, choices.permitted_upgrades).choose_upgrade(deck.size())
+		_check(upgrade.ok, "earned V3 occurrence upgrades")
+		if not upgrade.ok:
+			continue
+		var stitch := RunRestStitchCards.new(upgrade.deck, {}, 3)
+		var made := stitch.choose_stitch(deck.size(), deck.find("warden_strike"), stitch.get_snapshot())
+		_check(made.ok, "earned V3 plus stitches with different owner")
+		if not made.ok:
+			continue
+		_check(made.descriptor.half_ids == [pool.get_upgrade_id(base_id), "warden_strike"]
+			and made.descriptor.first_half == pool.get_definition(pool.get_upgrade_id(base_id))
+			and made.descriptor.second_half == StarterCards.new().get_definition("warden_strike"),
+			"earned stitch keeps exact ordered definitions")
+		for elite in [false, true]:
+			for ledger in [{"deck": claimed.deck, "descriptors": {}, "cursor": 1},
+				{"deck": upgrade.deck, "descriptors": {}, "cursor": 1},
+				{"deck": made.deck, "descriptors": made.descriptors, "cursor": made.next_stitch_id}]:
+				var later_rng := _rng(602)
+				var later := RunFightVictoryRewards.new(fight.battle, later_rng, ids, records,
+					ledger.deck, claimed.gold, elite, TRINKET_POOL, OWNED_TRINKETS, ledger.descriptors, ledger.cursor)
+				var prepared := later.prepare()
+				var expected := _weighted_oracle(ids, records, 602, elite, TRINKET_POOL, OWNED_TRINKETS)
+				_check(prepared.ok and prepared.gold_award == expected.gold and prepared.offers == expected.offers
+					and prepared.trinket_drop_id == expected.trinket_drop_id and later_rng.state == expected.rng_state,
+					"ordinary/Elite preparation retains earned base, plus and composite: " + base_id)
+		var bad_deck := deck.duplicate()
+		bad_deck.append(base_id + "_fake")
+		_reject("forged V3 deck ID", fight, _rng(), ids, records, bad_deck, 100)
+		var stale: Dictionary = made.descriptors.duplicate(true)
+		stale[made.stitched_id].first_half.effects["damage"] = 999
+		_reject("forged V3 stitch ledger", fight, _rng(), ids, records, made.deck, 100,
+			false, [], [], stale, made.next_stitch_id)
+
+
 func _pool_records() -> Array[Dictionary]:
 	return RunPoolCardRewardOffers.get_authored_base_candidates()
 
@@ -459,7 +536,9 @@ func _base_pool_ids(owner: String) -> Array[String]:
 	if owner == "warden":
 		return WardenPoolCards.new().get_base_ids()
 	if owner == "seamstress":
-		return SeamstressPoolCards.new().get_base_ids()
+		var bases := SeamstressPoolCards.new().get_base_ids()
+		bases.append_array(V3SeamstressPoolCards.new().get_base_ids())
+		return bases
 	if owner == "tinker":
 		return TinkerPoolCards.new().get_pool_card_ids()
 	var ids: Array[String] = []
@@ -473,6 +552,8 @@ func _pool_definition(owner: String, card_id: String) -> Dictionary:
 	if owner == "warden":
 		return WardenPoolCards.new().get_definition(card_id)
 	if owner == "seamstress":
+		if V3SeamstressPoolCards.new().has_card(card_id):
+			return V3SeamstressPoolCards.new().get_definition(card_id)
 		return SeamstressPoolCards.new().get_definition(card_id)
 	if owner == "tinker":
 		return TinkerPoolCards.new().get_definition(card_id)

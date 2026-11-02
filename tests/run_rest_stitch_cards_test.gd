@@ -21,6 +21,7 @@ func _initialize() -> void:
 	_test_pool_base_cards_stitch()
 	_test_pool_plus_cards_stitch_and_reload()
 	_test_pool_negative_matrix()
+	_test_v3_seamstress_stitches()
 	if failures.is_empty():
 		print("run_rest_stitch_cards_test: PASS (", checks, " checks)")
 	else:
@@ -28,6 +29,41 @@ func _initialize() -> void:
 			printerr(failure)
 		print("run_rest_stitch_cards_test: FAIL (", failures.size(), " failures)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_v3_seamstress_stitches() -> void:
+	var pool := V3SeamstressPoolCards.new()
+	for base_id in pool.get_base_ids():
+		for id in [base_id, pool.get_upgrade_id(base_id)]:
+			_check(RunRestStitchCards.resolve_card_definition(id) == pool.get_definition(id), "V3 exact stitch definition: " + id)
+			var deck := [id, STRIKE, id]
+			var visit := RunRestStitchCards.new(deck, {}, 3)
+			_check(visit.is_valid(), "V3 stitch visit authentic")
+			var opening := visit.get_snapshot()
+			_reject(visit, 0, 2, opening, "V3 same-owner halves")
+			var stale := opening.duplicate(true)
+			stale.remaining_scraps = 9
+			_reject(visit, 2, 1, stale, "V3 stale scraps receipt")
+			var poor := RunRestStitchCards.new(deck, {}, 2)
+			_reject(poor, 2, 1, poor.get_snapshot(), "V3 insufficient scraps")
+			var made := visit.choose_stitch(2, 1, opening)
+			_check(made.ok and made.deck == [id, "stitched_000001"] and made.remaining_scraps == 0
+				and made.next_stitch_id == 2, "V3 selected occurrence stitch spends exactly once")
+			if not made.ok:
+				continue
+			_check(made.descriptor.half_ids == [id, STRIKE] and made.descriptor.owners == ["seamstress", "warden"]
+				and made.descriptor.first_half == pool.get_definition(id)
+				and made.descriptor.second_half == StarterCards.new().get_definition(STRIKE), "V3 ordered authentic halves")
+			_check(RunRestStitchCards.new(made.deck, made.descriptors, 0, 2).is_valid()
+				and RunRestCardUpgrade.list_authored_choices(made.deck, made.descriptors, 2).ok,
+				"V3 stitched ledger reloads in Rest stitch and upgrade")
+			_check(RunRestStitchCards.new(deck, {}, 3).choose_stitch(2, 1, opening) == made, "V3 exact stitch receipt replay")
+			_reject(visit, 2, 1, opening, "V3 consumed stitch cannot spend twice")
+			var forged: Dictionary = made.descriptors.duplicate(true)
+			forged[made.stitched_id].first_half.cost = 99
+			_check(not RunRestStitchCards.new(made.deck, forged, 3, 2).is_valid(), "V3 forged half rejected on reload")
+			_check(not RunRestCardUpgrade.list_authored_choices(made.deck, forged, 2).ok, "V3 forged half rejected by upgrade ledger")
+		_check(not RunRestStitchCards.new([base_id + "_fake_plus", STRIKE], {}, 3).is_valid(), "V3 counterfeit plus ID rejected")
 
 
 func _test_frayed_debt_deck_only() -> void:

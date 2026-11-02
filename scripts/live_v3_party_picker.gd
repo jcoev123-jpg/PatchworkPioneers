@@ -708,7 +708,7 @@ func _reward_card(hero_id: String, index: int) -> Dictionary:
 			or not card.get("to_positions") is Array \
 			or not card.get("target_kind") is String:
 		return {}
-	if card["target_kind"] not in ["enemy_single", "enemy_all", "enemy_back",
+	if card["target_kind"] not in ["enemy_single", "enemy_pair", "enemy_all", "enemy_back",
 			"enemy_random", "self", "ally_single", "party_all", "none"]:
 		return {}
 	for field in ["from_positions", "to_positions"]:
@@ -732,6 +732,8 @@ func _reward_target_line(card: Dictionary) -> String:
 	match String(card["target_kind"]):
 		"enemy_single":
 			recipient = "one foe in " + to
+		"enemy_pair":
+			recipient = "two distinct living foes in " + to
 		"enemy_all":
 			recipient = "all living foes in " + to
 		"enemy_back":

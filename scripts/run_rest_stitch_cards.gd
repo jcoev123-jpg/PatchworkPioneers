@@ -245,7 +245,7 @@ static func resolve_card_definition(card_id: Variant) -> Dictionary:
 	if not reward_def.is_empty():
 		return reward_def
 	for pool in [
-		WardenPoolCards.new(), SeamstressPoolCards.new(), TinkerPoolCards.new(),
+		WardenPoolCards.new(), SeamstressPoolCards.new(), V3SeamstressPoolCards.new(), TinkerPoolCards.new(),
 		LanternMonkPoolCards.new(), RagDuelistPoolCards.new(), ScarecrowPoolCards.new(),
 		YarnRangerPoolCards.new(), ButtonGolemPoolCards.new()
 	]:
@@ -260,7 +260,7 @@ static func resolve_card_definition(card_id: Variant) -> Dictionary:
 ## and the authored base-to-plus link agree.
 static func is_authored_pool_plus(card_id: String) -> bool:
 	for pool in [
-		WardenPoolCards.new(), SeamstressPoolCards.new(), TinkerPoolCards.new(),
+		WardenPoolCards.new(), SeamstressPoolCards.new(), V3SeamstressPoolCards.new(), TinkerPoolCards.new(),
 		LanternMonkPoolCards.new(), RagDuelistPoolCards.new(), ScarecrowPoolCards.new(),
 		YarnRangerPoolCards.new(), ButtonGolemPoolCards.new()
 	]:

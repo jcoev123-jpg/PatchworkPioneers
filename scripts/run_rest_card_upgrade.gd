@@ -234,6 +234,9 @@ static func _resolve_pool_card_definition(owner: String, card_id: String) -> Dic
 		"warden":
 			return WardenPoolCards.new().get_definition(card_id)
 		"seamstress":
+			var v3 := V3SeamstressPoolCards.new()
+			if v3.has_card(card_id):
+				return v3.get_definition(card_id)
 			return SeamstressPoolCards.new().get_definition(card_id)
 		"tinker":
 			return TinkerPoolCards.new().get_definition(card_id)
