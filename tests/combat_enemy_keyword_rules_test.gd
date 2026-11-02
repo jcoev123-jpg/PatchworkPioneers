@@ -398,8 +398,8 @@ func _test_needle_marshal_thorns() -> void:
 		"AC1: the Enrage Marshal keeps genuine integer HP and Thorns metadata")
 	var marshal_intent: Dictionary = marshal.get("intent", {})
 	_check(marshal_intent.get("target") == "front"
-		and marshal_intent.get("actions", []).size() == 4,
-		"AC1: the Enrage Marshal keeps its front target and four alternatives")
+		and marshal_intent.get("actions", []).size() == 5,
+		"AC1: the Enrage Marshal keeps its front target with three attacks and two support actions")
 	var marshal_actions: Array = []
 	for raw in marshal_intent.get("actions", []):
 		var weighted := CombatEnemyIntents.weighted_action(raw)
@@ -408,10 +408,11 @@ func _test_needle_marshal_thorns() -> void:
 		marshal_actions.append(body)
 	_check(marshal_actions == [
 			{"type": "attack", "amount": 5, "weight": 2},
-			{"type": "attack", "amount": 4, "weight": 2},
+			{"type": "attack", "amount": 4, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 6, "move": "attack3", "weight": 1},
 			{"type": "buff", "amount": 3, "weight": 1},
 			{"type": "shove", "amount": 0, "direction": 1, "weight": 1}],
-		"AC1: the four exact weighted alternatives are unchanged")
+		"AC1: the five exact weighted alternatives preserve attack weight four")
 	var enraged_records: Array = _catalog_records(ELITE_CATALOG_PATH).filter(
 		func(record: Dictionary) -> bool:
 			return record.get("enrage") is bool and record.get("enrage") == true)

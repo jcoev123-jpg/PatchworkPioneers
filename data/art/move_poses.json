@@ -236,6 +236,13 @@
    }
   },
   "needle_marshal": {
+   "attack": {
+    "name": "Needle Jab",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/needle_marshal_attack.png"
+   },
    "skill": {
     "name": "Rally Whistle",
     "covers": [

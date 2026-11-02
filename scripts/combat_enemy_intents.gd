@@ -625,7 +625,7 @@ static func valid_action(action: Variant) -> bool:
 	if kind == "attack":
 		var extra := 0
 		if action.has("move"):
-			if not action.move is String or action.move != "attack2":
+			if not action.move is String or action.move not in ["attack2", "attack3"]:
 				return false
 			extra = 1
 		if action.has("hits"):
