@@ -108,6 +108,7 @@ func _run() -> void:
 	var seeded_next := randi()
 	seed(RNG_SEED)
 	await _test_layout()
+	await _test_dark_style()
 	await _test_owner_filters()
 	_check(panel._effects({"z_other": 9, "bleed": 2, "damage": 3, "a_other": 4})
 		== "Deal 3 damage; apply Bleed 2; a other: 4; z other: 9",
@@ -166,14 +167,8 @@ func _test_layout() -> void:
 		"number-key mapping is printed on the four existing actions")
 	for action in [panel.upgrade_button, panel.stitch_button, panel.leave_button, panel.confirm_button]:
 		_check(_fits(action), "shortcut caption fits its existing button at 1280x720")
-	# Every interaction state of a sewn action keeps dark, readable ink instead of
-	# the shared theme's near-white defaults on this cream felt.
-	for ink_state in ["font_color", "font_hover_color", "font_pressed_color",
-			"font_hover_pressed_color", "font_focus_color"]:
-		_check(panel.upgrade_button.get_theme_color(ink_state).get_luminance() < 0.45,
-			"action ink stays readable in " + ink_state)
-	_check(panel.stitch_button.get_theme_color("font_disabled_color").get_luminance() < 0.6,
-		"an unaffordable action keeps readable ink")
+	# State-to-face contrast is checked on the actual mounted tickets (including
+	# hover, focus and disabled) by _test_dark_style, not by old cream-era ink luminance.
 	panel.upgrade_button.grab_focus()
 	var tab := InputEventKey.new()
 	tab.keycode = KEY_TAB
@@ -225,6 +220,103 @@ func _test_layout() -> void:
 	await _settle_layout()
 	_check(panel.choice_scroll.scroll_vertical > 0, "keyboard focus reveals offscreen copy")
 	_check(visit.read_state() == source and intents.is_empty(), "browse does not change any ledger")
+
+
+## Actual paired ink/background contrast on the mounted gothic ticket surfaces.
+## Pure luminance of the foreground alone is insufficient for dark-mode UI.
+func _contrast(foreground: Color, background: Color) -> float:
+	var front := foreground.srgb_to_linear()
+	var back := background.srgb_to_linear()
+	var a := 0.2126 * front.r + 0.7152 * front.g + 0.0722 * front.b
+	var b := 0.2126 * back.r + 0.7152 * back.g + 0.0722 * back.b
+	return (maxf(a, b) + 0.05) / (minf(a, b) + 0.05)
+
+
+func _check_ticket(button: Button, name: String) -> void:
+	var pairs := {
+		"normal": "font_color", "hover": "font_hover_color",
+		"pressed": "font_pressed_color", "hover_pressed": "font_hover_pressed_color",
+		"disabled": "font_disabled_color",
+	}
+	for state in pairs:
+		var face := button.get_theme_stylebox(state) as StyleBoxFlat
+		_check(face != null and _contrast(button.get_theme_color(pairs[state]), face.bg_color) >= 4.5,
+			name + " readable against its real " + state + " face")
+	var normal := button.get_theme_stylebox("normal") as StyleBoxFlat
+	var hover := button.get_theme_stylebox("hover") as StyleBoxFlat
+	var pressed := button.get_theme_stylebox("pressed") as StyleBoxFlat
+	var disabled := button.get_theme_stylebox("disabled") as StyleBoxFlat
+	var focus := button.get_theme_stylebox("focus") as StyleBoxFlat
+	_check(normal != null and hover != null and pressed != null and disabled != null and focus != null
+		and normal.bg_color != hover.bg_color and pressed.bg_color != hover.bg_color
+		and disabled.bg_color != normal.bg_color and focus.border_width_left >= 3
+		and _contrast(button.get_theme_color("font_focus_color"), normal.bg_color) >= 4.5,
+		name + " has distinguishable hover, pressed, disabled and visible keyboard focus")
+
+
+func _test_dark_style() -> void:
+	var visit := _make()
+	await _bind(visit)
+	var original := visit.read_state()
+	_check(visit.is_valid() and visit.quote().choices == ["upgrade", "stitch", "leave"]
+		and original.deck == [STRIKE, STRIKE, PRICK] and original.remaining_scraps == 7,
+		"dark UI checked against genuine 7-scrap, duplicate-copy quoted stop")
+	var backdrop := panel.get_child(0) as Panel
+	var surface := backdrop.get_theme_stylebox("panel") as StyleBoxFlat
+	_check(surface != null and surface.bg_color.get_luminance() < 0.2
+		and surface.border_color.get_luminance() > surface.bg_color.get_luminance()
+		and _contrast(panel.status_label.get_theme_color("font_color"), surface.bg_color) >= 4.5,
+		"real mounted frame is dark fabric, gold-seamed, with readable status")
+	var heading: Label = null
+	var wells: Array[Panel] = []
+	for child in panel.get_children():
+		if child is Label and child.text.begins_with("SEWING CIRCLE"):
+			heading = child
+		if child is Panel and child != backdrop:
+			wells.append(child)
+	_check(heading != null and _contrast(heading.get_theme_color("font_color"), surface.bg_color) >= 4.5,
+		"mounted gold heading contrasts with dark fabric")
+	var preview_well: StyleBoxFlat = null
+	for well in wells:
+		if well.position == panel.preview_scroll.position and well.size == panel.preview_scroll.size:
+			preview_well = well.get_theme_stylebox("panel") as StyleBoxFlat
+	_check(preview_well != null and preview_well.bg_color.get_luminance() > 0.6
+		and _contrast(panel.preview_label.get_theme_color("font_color"), preview_well.bg_color) >= 4.5
+		and panel.preview_scroll.clip_contents,
+		"full rules preview is dark ink on a readable light parchment well")
+	for action in [panel.upgrade_button, panel.stitch_button, panel.leave_button, panel.confirm_button]:
+		_check_ticket(action, "existing " + action.text)
+	await _activate(panel.upgrade_button, false)
+	_check(panel.filter_buttons.size() == 3 and panel.option_buttons.size() == 3,
+		"visible genuine owner chips and every duplicate upgrade row exist")
+	for chip in panel.filter_buttons:
+		_check_ticket(chip, "owner chip " + chip.text)
+	for row in panel.option_buttons:
+		var normal := row.get_theme_stylebox("normal") as StyleBoxFlat
+		var hover := row.get_theme_stylebox("hover") as StyleBoxFlat
+		_check(normal != null and hover != null and normal.bg_color.get_luminance() < 0.2
+			and hover.bg_color.get_luminance() < 0.3,
+			"authentic compact row uses dark tickets in normal and hover")
+		for label in row.find_children("*", "Label", true, false):
+			var background := normal.bg_color
+			if label.get_parent() is Panel:
+				background = (label.get_parent() as Panel).get_theme_stylebox("panel").bg_color
+			_check(_contrast(label.get_theme_color("font_color"), background) >= 4.5,
+				"visible card/energy ink contrasts against its sewn ticket or coin")
+	await _activate(panel.option_buttons[1], false)
+	var selected := panel.option_buttons[1].get_theme_stylebox("normal") as StyleBoxFlat
+	_check(panel.option_buttons[1].get_meta("selected") and selected != null
+		and selected.border_color.get_luminance() > selected.bg_color.get_luminance()
+		and _contrast((panel.option_buttons[1].get_child(1) as Label).get_theme_color("font_color"), selected.bg_color) >= 4.5,
+		"second Warden copy gets a bright sewn selection edge and readable identity")
+	_check(intents.is_empty() and visit.read_state() == original,
+		"hover, style inspection and selection do not spend, settle or emit")
+	var broke := _make([STRIKE, STRIKE, PRICK], 2)
+	await _bind(broke)
+	_check(broke.is_valid() and panel.stitch_button.disabled and not panel.upgrade_button.disabled
+		and not panel.leave_button.disabled and panel.stitch_button.text.contains("3 scraps"),
+		"genuine unaffordable Stitch remains an explicit, readable disabled price")
+	_check_ticket(panel.stitch_button, "physically disabled 3-scrap Stitch")
 
 
 func _filter_at(owner: String) -> Button:
