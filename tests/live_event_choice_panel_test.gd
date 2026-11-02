@@ -1979,7 +1979,7 @@ func _test_needle_toll(seed_value: int = 245, require_empty_targets: bool = fals
 	for index in range(2):
 		# Query the authored catalogs directly, independently of the UI resolver.
 		var definition: Dictionary = {}
-		for catalog in [WardenPoolCards.new(), SeamstressPoolCards.new(), TinkerPoolCards.new()]:
+		for catalog in [WardenPoolCards.new(), SeamstressPoolCards.new(), V3SeamstressPoolCards.new(), TinkerPoolCards.new()]:
 			var candidate: Dictionary = catalog.get_definition(offered[index])
 			if not candidate.is_empty():
 				definition = candidate
@@ -2428,7 +2428,7 @@ func _run() -> void:
 	await _test_backdrop_fallback()
 	await _test_wallet_rejection_and_generation()
 	await _test_needle_toll()
-	await _test_needle_toll(1, true)
+	await _test_needle_toll(2, true)
 	_test_needle_carryover()
 	_finish()
 

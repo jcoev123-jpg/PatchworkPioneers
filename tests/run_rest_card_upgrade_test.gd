@@ -22,6 +22,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_frayed_debt_upgrades()
 	_test_authored_pool_upgrade_cases()
+	_test_v3_seamstress_upgrades()
 	_test_newer_hero_pool_upgrade_cases()
 	_test_pool_mapping_and_membership_rejections()
 	_test_pool_plus_in_stitched_upgrade_ledger()
@@ -45,6 +46,39 @@ func _initialize() -> void:
 	_test_choice_map_integration_and_canonical_authoring()
 	_test_list_authored_choices_negative_and_isolation()
 	_finish()
+
+
+func _test_v3_seamstress_upgrades() -> void:
+	var pool := V3SeamstressPoolCards.new()
+	for base_id in pool.get_base_ids():
+		var plus_id := pool.get_upgrade_id(base_id)
+		var base := pool.get_definition(base_id)
+		var plus := pool.get_definition(plus_id)
+		var deck := [base_id, "warden_strike", base_id]
+		var before := deck.duplicate()
+		var projection := RunRestCardUpgrade.list_authored_choices(deck)
+		_check(projection.ok and projection.permitted_upgrades.get(base_id) == plus_id
+			and projection.choices.size() == 3, "V3 choices list both owned occurrences: " + base_id)
+		var matches: Array = []
+		for row in projection.choices:
+			if row.source_id == base_id:
+				matches.append(row.index)
+				_check(row.owner == base.owner and row.effects == base.effects and row.plus_effects == plus.effects
+					and row.cost == base.cost and row.plus_cost == plus.cost
+					and row.plus_display_name == plus.display_name, "V3 exact choice metadata")
+		_check(matches == [0, 2], "V3 choices preserve original occurrence indices")
+		var visit := RunRestCardUpgrade.new(deck, projection.permitted_upgrades)
+		_assert_rejected(visit, -1, deck, "V3 invalid index leaves visit open")
+		var result := visit.choose_upgrade(2)
+		_check(result.ok and result.deck == [base_id, "warden_strike", plus_id] and deck == before,
+			"V3 upgrades only selected duplicate occurrence")
+		_assert_rejected_while_used(visit, 0, deck, "V3 used upgrade visit")
+		_check(RunRestCardUpgrade.list_authored_choices(result.deck).ok, "V3 upgraded deck reloads")
+		for forged in [base_id + "_fake_plus", "seamstress_running_stitch_plus", "warden_iron_hem_plus"]:
+			_assert_rejected(RunRestCardUpgrade.new(deck, {base_id: forged}), 2, deck,
+				"V3 forged/cross-catalog plus mapping")
+		_check(RunRestCardUpgrade.new(deck, projection.permitted_upgrades).choose_upgrade(2) == result,
+			"V3 upgrade deterministic replay")
 
 
 func _test_frayed_debt_upgrades() -> void:

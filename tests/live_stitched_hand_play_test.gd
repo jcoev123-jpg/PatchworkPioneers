@@ -1223,8 +1223,8 @@ func _finish_hand() -> void:
 ## uses the canonical upgrade transaction before Rest, not a forged descriptor.
 const BUCKLE_FIXTURE := {"seed": 3354, "fight": "f01_n0", "elite": ["f02_n3"],
 	"rest": ["f03_n2"], "next": "f04_n2"}
-const WHIP_FIXTURE := {"seed": 1219, "fight": "f01_n0", "elite": ["f02_n1"],
-	"rest": ["f03_n1"], "next": "f04_n1"}
+const WHIP_FIXTURE := {"seed": 6580, "fight": "f01_n0", "elite": ["f02_n1"],
+	"rest": ["f03_n3"], "next": "f04_n2"}
 
 
 func _plain_strike_cases() -> void:

@@ -703,6 +703,8 @@ func _check_reward_entry(picker: LiveV3PartyPicker, hero_id: String,
 	match expected["target_kind"]:
 		"enemy_single":
 			recipient = "one foe in " + ", ".join(to)
+		"enemy_pair":
+			recipient = "two distinct living foes in " + ", ".join(to)
 		"enemy_all":
 			recipient = "all living foes in " + ", ".join(to)
 		"enemy_back":

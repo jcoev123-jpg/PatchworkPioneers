@@ -66,7 +66,7 @@ func _initialize() -> void:
 	_test_mutation_isolation()
 	_test_deterministic_and_rng_free()
 	_test_existing_catalogs_untouched()
-	_test_not_in_reward_draws()
+	_test_base_reward_admission()
 	_test_bobbin_snag_resolver()
 	_test_blanket_resolver()
 	_finish()
@@ -870,23 +870,23 @@ func _test_existing_catalogs_untouched() -> void:
 			_check(not json_deck.has(v3_id), "starter_deck.json does not contain v3 card " + v3_id)
 
 
-func _test_not_in_reward_draws() -> void:
+func _test_base_reward_admission() -> void:
 	var v3: V3SeamstressPoolCards = _get_catalog()
 	var v3_all_ids: Array[String] = v3.get_all_card_ids()
 	_check(not v3_all_ids.is_empty(), "v3 catalog has IDs to check (precondition)")
 
-	# The live reward candidate list still comes from the v2 authored pools only.
+	# V3 bases now join legacy rewards; plus printings remain excluded.
 	var candidates: Array[Dictionary] = RunPoolCardRewardOffers.get_authored_base_candidates()
 	_check(not candidates.is_empty(), "authored reward candidates are non-empty (precondition)")
 	var candidate_ids: Dictionary = {}
 	for record: Dictionary in candidates:
 		candidate_ids[String(record.get("id", ""))] = true
 	for v3_id: String in v3_all_ids:
-		_check(not candidate_ids.has(v3_id), "reward candidates exclude v3 card " + v3_id)
+		_check(candidate_ids.has(v3_id) == v3.get_base_ids().has(v3_id), "only V3 bases enter reward candidates: " + v3_id)
 	for existing_id: String in EXISTING_SEAMSTRESS_POOL_IDS:
 		_check(candidate_ids.has(existing_id), "reward candidates still include " + existing_id)
 
-	# A real seeded reward draw never offers a v3 Seamstress ID.
+	# A real seeded reward draw offers only authenticated bases.
 	var run_rng: RandomNumberGenerator = RandomNumberGenerator.new()
 	run_rng.seed = 255031
 	var generated: Dictionary = RunPoolCardRewardOffers.generate_from_authored_pools(
@@ -897,12 +897,13 @@ func _test_not_in_reward_draws() -> void:
 	for offer: Dictionary in offers:
 		var offered_id: String = String(offer.get("id", ""))
 		_check(not offered_id.is_empty(), "offered card has an ID (precondition)")
-		_check(not v3_all_ids.has(offered_id), "reward draw does not offer v3 card " + offered_id)
+		_check(candidate_ids.has(offered_id) and not offered_id.ends_with("_plus"), "reward draw offers an authored base: " + offered_id)
 
-	# Fail-closed reward resolution: the v3 IDs stay unresolvable until the later wiring task.
+	# Bases resolve exactly; plus printings still fail closed for direct rewards.
 	for v3_id: String in v3_all_ids:
-		_check(RunPoolCardRewardOffers.resolve_reward_definition(v3_id).is_empty(),
-			"v3 card is not reward-resolvable yet: " + v3_id)
+		var expected: Dictionary = v3.get_definition(v3_id) if v3.get_base_ids().has(v3_id) else {}
+		_check(RunPoolCardRewardOffers.resolve_reward_definition(v3_id) == expected,
+			"V3 reward resolution admits exact bases only: " + v3_id)
 	_check(not RunPoolCardRewardOffers.resolve_reward_definition("seamstress_running_stitch").is_empty(),
 		"v2 Seamstress card still reward-resolvable")
 

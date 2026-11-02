@@ -616,6 +616,10 @@ func _target_slots_text(definition: Dictionary) -> String:
 ## The face must never print the old targeting/position prose again: legal
 ## positions live only in the painted marks and the hover legend.
 func _assert_no_position_prose(text: String, card_id: String) -> void:
+	# The authored Tether rule uses "living" to constrain the linked enemies.
+	# Its full sentence is checked independently by the pool rules oracle.
+	if V3SeamstressPoolCards.new().get_definition(card_id).get("effects", {}).has("tether_share_percent"):
+		text = text.replace("Link 2 living enemies.", "")
 	for banned in ["From:", "Target:", "living", "pick 1", "front", "middle", "back"]:
 		_check(not text.contains(banned),
 			"face prints no old position prose '%s': %s" % [banned, card_id])
@@ -1670,6 +1674,9 @@ func _base_pool_definition(card_id: String) -> Dictionary:
 	var seamstress := SeamstressPoolCards.new()
 	if seamstress.get_base_ids().has(card_id):
 		return seamstress.get_definition(card_id)
+	var v3 := V3SeamstressPoolCards.new()
+	if v3.get_base_ids().has(card_id):
+		return v3.get_definition(card_id)
 	var tinker := TinkerPoolCards.new()
 	if tinker.get_pool_card_ids().has(card_id):
 		return tinker.get_definition(card_id)
@@ -1698,6 +1705,8 @@ func _expected_rules(definition: Dictionary) -> String:
 		hits = maxi(1, int(effects["hit_count"]))
 	var random_each: bool = bool(effects.get("random_target_each_hit", false))
 	var sentences: Array[String] = []
+	if effects.has("tether_share_percent"):
+		sentences.append("Link 2 living enemies. Echo %d%% of a later confirmed hit's HP loss." % effects.tether_share_percent)
 	# One combat sentence for damage, statuses, Unravel and Pin.
 	var enemy_keys := ["damage", "conditional_damage", "exposed", "weak", "bleed",
 		"unravel", "bleed_multiplier", "pinned"]
@@ -1869,7 +1878,7 @@ func _covered_effect_keys() -> Array[String]:
 	return ["damage", "block", "block_all", "other_ally_block", "heal", "draw", "weak",
 		"bleed", "bleed_multiplier", "unravel", "exposed", "pinned", "guarding", "thorns",
 		"energy", "gain_energy", "self_hp_loss", "conditional_damage", "hits", "hit_count",
-		"random_target_each_hit", "rng_source", "living_targets_only", "duration"]
+		"random_target_each_hit", "rng_source", "living_targets_only", "duration", "tether_share_percent"]
 
 
 ## Explicit authored phrases the mounted preview must show, so a shared
@@ -1926,7 +1935,8 @@ func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 			"prepared pool offer backed by its authored catalog: " + card_id)
 		if definition.is_empty():
 			continue
-		_check(_authored_base_ids().has(card_id) and not card_id.ends_with("_plus"),
+		_check((_authored_base_ids().has(card_id) or V3SeamstressPoolCards.new().get_base_ids().has(card_id))
+			and not card_id.ends_with("_plus"),
 			"only reward-eligible base pool cards are offered: " + card_id)
 		var card := panel.choices_container.get_child(index) as PanelContainer
 		_check(card != null and card.name == "Card_%d" % index, "stable pool card index")
