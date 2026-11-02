@@ -124,10 +124,16 @@ func _draw_rest_art() -> void:
 		Color(1.0, 1.0, 1.0, REST_ART_ALPHA))
 
 
-static func _load_rest_art() -> Texture2D:
-	if not FileAccess.file_exists(REST_ART_PATH) or not ResourceLoader.exists(REST_ART_PATH, "Texture2D"):
+## Export-safe art loading: a Web/PCK build ships the imported remap, not the
+## raw PNG, so raw source-file existence is never required. ResourceLoader
+## alone decides existence and type; any resource it cannot read as a
+## Texture2D yields null so the drawn placeholder stays the fallback. The
+## optional path exists solely for tests proving an absent resource is null;
+## live code always keeps the authored REST_ART_PATH default.
+static func _load_rest_art(path: String = REST_ART_PATH) -> Texture2D:
+	if path.is_empty() or not ResourceLoader.exists(path, "Texture2D"):
 		return null
-	return load(REST_ART_PATH) as Texture2D
+	return ResourceLoader.load(path, "Texture2D") as Texture2D
 
 
 ## Pure deterministic presentation transform: a slow ~1% scale breath plus a
