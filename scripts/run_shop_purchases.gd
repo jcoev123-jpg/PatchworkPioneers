@@ -120,6 +120,9 @@ func _init(party_ids: Variant, deck_card_ids: Variant, owned_trinket_ids: Varian
 
 
 const RARE_CATALOG_PATH := "res://data/patches/mpw_synergy_patches.json"
+## The authored P12 Heirloom records; only their own catalog may price or
+## weight the two completed-run unlock powers.
+const HEIRLOOM_CATALOG_PATH := "res://data/patches/mpw_heirloom_patches.json"
 ## One ordinary eligible power patch is always worth this many tickets. A
 ## P8 rare's authored stock_weight_percent is a percentage of ONE ordinary
 ## patch's weight, never a share of the whole stock or a reserved slot.
@@ -140,6 +143,21 @@ static func _shipped_rare_records() -> Dictionary:
 	if typeof(parsed) != TYPE_ARRAY:
 		return {"ok": false}
 	return {"ok": true, "records": parsed}
+
+
+## The shipped authored P12 Heirloom records, or {"ok": false} when the
+## catalog is missing or unparseable. An unlocked stall fails closed instead
+## of quietly stocking ordinary patches only.
+static func _shipped_heirloom_records() -> Dictionary:
+	if not FileAccess.file_exists(HEIRLOOM_CATALOG_PATH):
+		return {"ok": false}
+	var text := FileAccess.get_file_as_string(HEIRLOOM_CATALOG_PATH)
+	if text.is_empty():
+		return {"ok": false}
+	var parsed_heirloom: Variant = JSON.parse_string(text)
+	if typeof(parsed_heirloom) != TYPE_ARRAY:
+		return {"ok": false}
+	return {"ok": true, "records": parsed_heirloom}
 
 
 ## Static sampling helper for Patch Stall deterministic three-patch selection.
@@ -166,8 +184,19 @@ static func _shipped_rare_records() -> Dictionary:
 ## and consumes no RNG. With no unowned power left, or fewer than three
 ## distinct legitimately priced power IDs supplied altogether, the stall fails
 ## closed before any draw.
+##
+## An optional fifth argument, the completed-run Heirloom unlock flag
+## (default false), admits the two authored Heirloom powers (needle_echo,
+## shared_hem) into the same ordinary weighted pool at exactly their
+## catalog-authored tickets and price: their own catalog is the sole price
+## and weight authority, they are never appended to the shared
+## initial-offer catalog, and each enters the pool exactly once even when
+## also supplied as an ordinary candidate. A locked run excludes both even
+## when a caller supplies them among the candidates, and any non-boolean
+## unlock flag refuses the whole stall before any draw.
 static func sample_patch_stall_offers(rng: Variant, candidates: Variant,
-		owned_ids: Variant, rare_records: Variant = null) -> Dictionary:
+		owned_ids: Variant, rare_records: Variant = null,
+		heirloom_unlocked: Variant = false) -> Dictionary:
 	# Preflight all inputs without touching the RNG.
 	if not rng is RandomNumberGenerator:
 		return {"ok": false}
@@ -175,9 +204,19 @@ static func sample_patch_stall_offers(rng: Variant, candidates: Variant,
 		return {"ok": false}
 	if typeof(owned_ids) != TYPE_ARRAY:
 		return {"ok": false}
+	# The completed-run Heirloom gate is a real boolean, never a truthy value.
+	if typeof(heirloom_unlocked) != TYPE_BOOL:
+		return {"ok": false}
 
 	# Load real power definitions; reject if any catalog is missing or invalid.
-	var powers := RunAuthoredPatchDefinitions.load_power_definitions()
+	# An unlocked run uses the same shared validation pass through the
+	# eligible projection, which also admits the two authored Heirloom powers;
+	# a locked run keeps the unchanged projection that never knows them.
+	var powers: Array = []
+	if heirloom_unlocked:
+		powers = RunAuthoredPatchDefinitions.load_eligible_power_definitions(true)
+	else:
+		powers = RunAuthoredPatchDefinitions.load_power_definitions()
 	if typeof(powers) != TYPE_ARRAY or powers.is_empty():
 		return {"ok": false}
 
@@ -237,6 +276,48 @@ static func sample_patch_stall_offers(rng: Variant, candidates: Variant,
 		rare_tickets[rare_id] = tickets
 		rare_prices[rare_id] = rare_price
 
+	# A completed-run unlock admits the two authored Heirloom powers from
+	# their own catalog, which stays their sole price and weight authority.
+	# Malformed, duplicate, unknown or missing Heirloom metadata refuses the
+	# whole stall before any draw, exactly like a corrupt rare catalog.
+	var heirloom_tickets: Dictionary = {}
+	var heirloom_prices: Dictionary = {}
+	if heirloom_unlocked:
+		var shipped_heirloom := _shipped_heirloom_records()
+		if shipped_heirloom.get("ok") != true:
+			return {"ok": false}
+		for value in shipped_heirloom["records"]:
+			if typeof(value) != TYPE_DICTIONARY:
+				return {"ok": false}
+			var record: Dictionary = value
+			var heirloom_id: Variant = record.get("id")
+			var heirloom_slot: Variant = record.get("slot")
+			if not _is_id(heirloom_id) or typeof(heirloom_slot) != TYPE_STRING:
+				return {"ok": false}
+			if not power_slots.has(heirloom_id) \
+					or power_slots[heirloom_id] != heirloom_slot:
+				return {"ok": false}
+			# Only the two authored IDs are ever admitted, exactly once each.
+			if not RunAuthoredPatchDefinitions.HEIRLOOM_IDS.has(heirloom_id) \
+					or heirloom_tickets.has(heirloom_id):
+				return {"ok": false}
+			if record.get("rarity") != "rare" \
+					or record.get("stock_weight_basis") != ORDINARY_WEIGHT_BASIS \
+					or record.get("stock_competes_for_existing_slot") != true:
+				return {"ok": false}
+			var heirloom_price: Variant = _positive_int(record.get("shop_price_gold"))
+			var heirloom_percent: Variant = _positive_int(record.get("stock_weight_percent"))
+			if heirloom_price == null or heirloom_percent == null:
+				return {"ok": false}
+			var heirloom_ticket_count: int = ORDINARY_PATCH_TICKETS * heirloom_percent / 100
+			if heirloom_ticket_count <= 0:
+				return {"ok": false}
+			heirloom_tickets[heirloom_id] = heirloom_ticket_count
+			heirloom_prices[heirloom_id] = heirloom_price
+		for authored_id in RunAuthoredPatchDefinitions.HEIRLOOM_IDS:
+			if not heirloom_tickets.has(authored_id):
+				return {"ok": false}
+
 	# Validate every supplied candidate, then keep the eligible unowned powers.
 	# Genuinely priced already-owned power candidates are retained separately:
 	# late-run scarce stock may show them as truthful SOLD fallback rows, never
@@ -261,13 +342,16 @@ static func sample_patch_stall_offers(rng: Variant, candidates: Variant,
 		# owned or not, counts toward the scarce-stock admission gate below.
 		supplied_powers[id_str] = true
 		if owned_set.has(id_str):
-			# An owned rare keeps its own catalog as the only price authority.
-			if not rare_tickets.has(id_str) and not owned_prices.has(id_str):
+			# An owned rare or authored Heirloom keeps its own catalog as the
+			# only price authority.
+			if not rare_tickets.has(id_str) and not heirloom_tickets.has(id_str) \
+					and not owned_prices.has(id_str):
 				owned_prices[id_str] = price
 			continue
-		# A rare listed among ordinary data stays one rare entry at its
-		# authored rare price and weight, never a duplicate ordinary ticket.
-		if rare_tickets.has(id_str):
+		# A rare or unlocked Heirloom listed among ordinary data stays one
+		# catalog-authored entry at its authored price and weight, never a
+		# duplicate ordinary ticket.
+		if rare_tickets.has(id_str) or heirloom_tickets.has(id_str):
 			continue
 		if weights.has(id_str):
 			return {"ok": false}
@@ -281,6 +365,15 @@ static func sample_patch_stall_offers(rng: Variant, candidates: Variant,
 			continue
 		weights[rare_id] = rare_tickets[rare_id]
 		prices[rare_id] = rare_prices[rare_id]
+
+	# Admit each unowned authored Heirloom from its validated catalog record
+	# exactly once. Ordinary data never needs to list it, and owning it
+	# removes it from the pool.
+	for heirloom_id in heirloom_tickets:
+		if owned_set.has(heirloom_id):
+			continue
+		weights[heirloom_id] = heirloom_tickets[heirloom_id]
+		prices[heirloom_id] = heirloom_prices[heirloom_id]
 
 	# Three distinct IDs are required for the ordinary weighted draw; a
 	# genuine late-run scarce pool keeps its remaining stock buyable instead.
