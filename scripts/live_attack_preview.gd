@@ -1159,8 +1159,20 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 		var snapshots := _toss_statuses(party, enemies, position)
 		if not snapshots.get("ok", false):
 			return {"ok": false}
+		var needle_rules: CombatHeirloomPatchTriggers = null
+		var needle_quote := {}
+		if position > 0 and _deck != null and _deck.hand.has(id):
+			var hand = get_parent().get_node_or_null("LiveSupportHand")
+			if hand != null:
+				var current: CombatHeirloomPatchTriggers = hand.current_attack_heirloom(_deck, party)
+				if current != null and current._pinned == _pinned and current._enemies == enemies:
+					var offered: Dictionary = current.quote_needle_hit(
+						"warden", position, id)
+					if offered.get("ok", false):
+						needle_rules = current
+						needle_quote = offered
 		return _toss.play_card(_deck, party, enemies, id, position,
-			snapshots.attacker, snapshots.defender)
+			snapshots.attacker, snapshots.defender, needle_rules, needle_quote)
 	if _rivet.is_supported_card(id):
 		if forecast:
 			return _rivet_forecast(party, enemies, id)

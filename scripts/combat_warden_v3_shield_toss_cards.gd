@@ -60,26 +60,44 @@ var _keywords := CombatEnemyKeywordRules.new()
 ## resolution; both default to no active statuses.
 func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int = 0, attacker_statuses: Dictionary = {},
-		defender_statuses: Dictionary = {}) -> Dictionary:
+		defender_statuses: Dictionary = {},
+		needle_rules: CombatHeirloomPatchTriggers = null,
+		needle_quote: Dictionary = {}) -> Dictionary:
+	var needle_bonus := 0
+	if needle_rules != null or not needle_quote.is_empty():
+		if needle_rules == null or not needle_rules.authorizes_needle_hit(
+				needle_quote, party, enemies, card_id, target_position):
+			if needle_rules != null:
+				needle_rules.cancel_needle_hit()
+			return _failure()
+		needle_bonus = 1
 	var plan: Dictionary = _prepare(deck, party, enemies, card_id, target_position,
-		attacker_statuses, defender_statuses)
+		attacker_statuses, defender_statuses, needle_bonus)
 	if not plan.get("ok", false):
+		if needle_rules != null:
+			needle_rules.cancel_needle_hit()
 		return _failure()
 	# Every operation below is guaranteed by the complete preflight above: the turn is active,
 	# the held ID exists, the cost is affordable and the target is a living roster slot. Keep the
 	# defensive returns so an unexpected model change still fails closed.
 	var pre_hit_enemy: Dictionary = enemies.get_enemy(plan["target_position"])
 	if not deck.try_spend_energy(plan["cost"]):
+		if needle_rules != null:
+			needle_rules.cancel_needle_hit()
 		return _failure()
 	if not deck.discard_played(card_id):
+		if needle_rules != null:
+			needle_rules.cancel_needle_hit()
 		return _failure()
 	var event: Dictionary = _damage.resolve_vs_enemy(enemies, plan["target_position"],
 		plan["base_damage"], plan["attacker_statuses"], plan["defender_statuses"])
 	if not event.get("ok", false):
+		if needle_rules != null:
+			needle_rules.cancel_needle_hit()
 		return _failure()
 	_keywords.commit_enrage_after_hit(enemies, plan["target_position"], pre_hit_enemy, event)
 	_keywords.resolve_thorns_retaliation(party, plan["owner_position"], pre_hit_enemy, event)
-	return {
+	var receipt := {
 		"ok": true,
 		"card_id": card_id,
 		"cost": plan["cost"],
@@ -92,6 +110,9 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"block_absorbed": event["block_absorbed"],
 		"hp_loss": event["hp_loss"],
 	}
+	if needle_rules != null:
+		needle_rules.finish_needle_hit(needle_quote, receipt)
+	return receipt
 
 
 ## True only for the four authentic catalog IDs. Pure lookup; nothing is charged or mutated.
@@ -102,7 +123,7 @@ func is_supported_card(card_id: Variant) -> bool:
 ## Read-only preflight of the whole transaction. Returns a detached plan or a failure record.
 func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, attacker_statuses: Dictionary,
-		defender_statuses: Dictionary) -> Dictionary:
+		defender_statuses: Dictionary, needle_bonus: int = 0) -> Dictionary:
 	if deck == null or party == null or enemies == null:
 		return _failure()
 	if deck.combat_state == null or deck._rng == null or not deck.turn_active:
@@ -196,9 +217,11 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if not _valid_statuses(attacker_statuses) or not _valid_statuses(defender_statuses):
 		return _failure()
 
+	if needle_bonus not in [0, 1]:
+		return _failure()
 	var owner_block: int = heroes[owner_position - 1]["block"]
 	var bonus_damage: int = card["bonus_damage"]
-	if owner_block > CombatParty.MAX_INT - bonus_damage:
+	if owner_block > CombatParty.MAX_INT - bonus_damage - needle_bonus:
 		return _failure()
 	return {
 		"ok": true,
@@ -206,7 +229,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"owner_position": owner_position,
 		"owner_block": owner_block,
 		"bonus_damage": bonus_damage,
-		"base_damage": owner_block + bonus_damage,
+		"base_damage": owner_block + bonus_damage + needle_bonus,
 		"target_position": target_position,
 		"attacker_statuses": attacker_statuses.duplicate(true),
 		"defender_statuses": defender_statuses.duplicate(true),
