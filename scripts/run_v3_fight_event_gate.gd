@@ -176,6 +176,83 @@ func select_event(rng: Variant, excluded_ids: Variant = null) -> Dictionary:
 	}
 
 
+## Picks one authenticated Fight-choice Event record whose authentic paid toll choice
+## is affordable for the provided wallet, using the caller's seeded RandomNumberGenerator.
+## Evaluates genuine paid toll affordability via RunEventChoice.preview_wallet_choices();
+## never treats the always-free Fight or Leave choices as affordable paid escapes.
+## Fails closed ({"ok": false, "event": {}}) on invalid RNG, invalid catalog, invalid
+## exclusions, invalid wallet, or when no unexcluded event has an affordable toll.
+## Eligible records are sorted lexicographically by event ID, and a successful selection
+## consumes precisely one randi_range(0, eligible.size() - 1) draw.
+func select_affordable_toll_event(
+	rng: Variant,
+	excluded_ids: Variant = null,
+	wallet: Variant = null
+) -> Dictionary:
+	if not (rng is RandomNumberGenerator):
+		return _selection_rejection()
+	if not _catalog_valid:
+		return _selection_rejection()
+	var parsed_wallet: Dictionary = _parse_wallet(wallet)
+	if not parsed_wallet.get("ok", false):
+		return _selection_rejection()
+	var base_wallet: Dictionary = parsed_wallet["wallet"]
+	var parsed_exclusions: Dictionary = _parse_exclusions(excluded_ids)
+	if not parsed_exclusions.get("ok", false):
+		return _selection_rejection()
+	var excluded: Dictionary = parsed_exclusions["ids"]
+	var eligible: Array = []
+	for record: Dictionary in _catalog_events:
+		var event_id: String = String(record.get("id", ""))
+		if excluded.has(event_id):
+			continue
+		var fight_choice_id: String = String(record.get("fight_choice_id", ""))
+		if fight_choice_id.is_empty():
+			continue
+		var selector := RunEventChoice.new(record)
+		if not selector.is_valid():
+			continue
+		var preview: Dictionary = selector.preview_wallet_choices(base_wallet)
+		if not preview.get("ok", false):
+			continue
+		var preview_choices: Variant = preview.get("choices")
+		if not (preview_choices is Array):
+			continue
+		var is_affordable: bool = false
+		for item_raw: Variant in (preview_choices as Array):
+			if not (item_raw is Dictionary):
+				continue
+			var item: Dictionary = item_raw
+			var cid: String = String(item.get("choice_id", ""))
+			if cid.is_empty() or cid == fight_choice_id or cid == LEAVE_CHOICE_ID:
+				continue
+			var gold_delta: Variant = item.get("gold_delta")
+			var scraps_delta: Variant = item.get("scraps_delta")
+			if typeof(gold_delta) != TYPE_INT or typeof(scraps_delta) != TYPE_INT:
+				continue
+			var g: int = int(gold_delta)
+			var s: int = int(scraps_delta)
+			if g > 0 or s > 0 or (g == 0 and s == 0):
+				continue
+			if item.get("affordable", false) == true:
+				is_affordable = true
+				break
+		if is_affordable:
+			eligible.append(event_id)
+	if eligible.is_empty():
+		return _selection_rejection()
+	eligible.sort()
+	var generator: RandomNumberGenerator = rng
+	var picked_id: String = eligible[generator.randi_range(0, eligible.size() - 1)]
+	if not _catalog_by_id.has(picked_id):
+		return _selection_rejection()
+	var selected_record: Dictionary = (_catalog_by_id[picked_id] as Dictionary).duplicate(true)
+	return {
+		"ok": true,
+		"event": selected_record,
+	}
+
+
 static func _selection_rejection() -> Dictionary:
 	return {
 		"ok": false,
