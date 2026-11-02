@@ -9,6 +9,8 @@ var failures: Array[String] = []
 var checks := 0
 var app
 var juice
+var had_motion_setting := false
+var saved_motion_setting: Variant
 
 
 func _initialize() -> void:
@@ -372,10 +374,125 @@ func _mounted() -> void:
 	_check(root.gui_get_hovered_control() != layer,
 		"hero-side glow never intercepts a real pointer hit test")
 	_check(randi() == global_sample, "real Fast toggles and drawing avoid global RNG drift")
+	await _reduced_motion(layer, roster)
+
+
+func _visual_frame(layer) -> Array:
+	return [layer.motif_metadata(), layer.added_metadata(), layer.critter_metadata(),
+		AMBIENT.light_alpha(layer._time, layer.fast)]
+
+
+func _reduced_motion(layer, roster) -> void:
+	_check(layer.is_visible_in_tree() and layer.is_processing() and layer.size.x > 900.0,
+		"reduced-motion witness is the actual visible running battle renderer")
+	var state := _snapshot()
+	var hit_rects := [layer.get_global_rect(), app.hero_view.get_global_rect(),
+		juice.fast_button.get_global_rect()]
+	var saved_added := [layer.fluff_texture, layer.wisp_texture, layer.vignette_texture]
+	var saved_strips: Dictionary = layer.critter_strips.duplicate()
+	# In-memory witnesses ensure optional art and multi-cell critters exercise
+	# metadata even before the art pipeline provides a particular strip.
+	var texture := GradientTexture2D.new()
+	texture.width = 480
+	texture.height = 60
+	layer.fluff_texture = texture
+	layer.wisp_texture = texture
+	layer.vignette_texture = texture
+	for family in AMBIENT.CRITTERS.PLACEMENTS:
+		for spot in AMBIENT.CRITTERS.PLACEMENTS[family]:
+			layer.critter_strips[spot[0]] = texture
+	seed(39271)
+	var next_global := randi()
+	seed(39271)
+	for fast_mode in [false, true]:
+		juice.fast_animations = fast_mode
+		juice._sync()
+		layer._process(0.37)
+		_check(layer._time > 0.0 and not layer.critter_metadata().is_empty()
+			and layer.added_metadata().size() == (4 if fast_mode else 11),
+			"all atmospheric families have nonempty mounted witnesses before toggle")
+		ProjectSettings.set_setting("accessibility/reduced_motion", true)
+		# Direct ticks must obey the setting even before the next frame watcher.
+		layer._process(3.0)
+		var neutral := _visual_frame(layer)
+		_check(layer._time == 0.0 and not layer.is_processing()
+			and layer.is_visible_in_tree() and not layer.profile.is_empty()
+			and neutral[0] == AMBIENT.motifs_for(layer.profile, layer.size, 0.0, fast_mode)
+			and layer.visible_budget() == (7 if fast_mode else 30),
+			"mid-flight reduced motion resets to authored zero without removing art or budget")
+		await _frames()
+		layer._process(91.0)
+		_check(_visual_frame(layer) == neutral and layer._time == 0.0,
+			"elapsed frames and direct ticks preserve motifs, drifts, critters and light")
+		_check(layer.configure(roster._backdrop_kind, roster._backdrop_floor, fast_mode)
+			and _visual_frame(layer) == neutral and not layer.is_processing(),
+			"same-scene refresh cannot restart a reduced-motion clock")
+		ProjectSettings.set_setting("accessibility/reduced_motion", false)
+		await _frames()
+		_check(layer.is_processing() and layer._time > 0.0 and _visual_frame(layer) != neutral,
+			"setting alone rearms deterministic movement on the same layer")
+		_check(layer.motif_metadata() == AMBIENT.motifs_for(layer.profile, layer.size,
+			layer._time, fast_mode), "resumed motion retains original placement arithmetic")
+	# A setting-only toggle must also stop the real processor without manual ticks.
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	await _frames()
+	_check(layer._time == 0.0 and not layer.is_processing(),
+		"mounted frame watcher observes runtime setting changes without host refresh")
+	app.battle_view.hide()
+	await _frames()
+	app.battle_view.show()
+	await _frames()
+	_check(layer.is_visible_in_tree() and layer._time == 0.0 and not layer.is_processing(),
+		"show while reduced motion remains enabled preserves the neutral frame")
+	app.battle_view.hide()
+	await _frames()
+	ProjectSettings.set_setting("accessibility/reduced_motion", false)
+	layer._process(7.0)
+	_check(not layer.is_visible_in_tree() and not layer.is_processing() and layer._time == 0.0
+		and not process_frame.is_connected(layer._sync_motion),
+		"hidden ancestor leaves neither animation nor a setting poll active")
+	app.battle_view.show()
+	await _frames()
+	_check(layer.is_visible_in_tree() and layer.is_processing() and layer._time > 0.0,
+		"show after hidden setting toggle rearms the original renderer")
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	layer.configure_visit_scraps()
+	var visit_frame := _visual_frame(layer)
+	layer._process(8.0)
+	_check(layer._visit_dressing and layer.profile == "scraps" and layer._time == 0.0
+		and not layer.is_processing() and layer.visible_budget() == 7
+		and _visual_frame(layer) == visit_frame,
+		"visit configure also respects the static frame without changing Event host policy")
+	layer.retire()
+	ProjectSettings.set_setting("accessibility/reduced_motion", false)
+	layer._process(5.0)
+	_check(layer.profile.is_empty() and not layer.visible and not layer.is_processing()
+		and layer._time == 0.0 and not process_frame.is_connected(layer._sync_motion),
+		"retirement removes clock and watcher and cannot resurrect on setting toggle")
+	juice.fast_animations = false
+	juice._sync()
+	await _frames()
+	_check(juice.ambient == layer and layer.is_visible_in_tree() and layer.is_processing()
+		and layer.profile == AMBIENT.profile_for(roster._backdrop_kind, roster._backdrop_floor)
+		and app.battle_view.find_children("LiveBattleAmbient", "Control", true, false).size() == 1
+		and layer.get_child_count() == 0 and _particles(layer).is_empty(),
+		"real host rebinds one renderer with one setting watcher and no added nodes")
+	_check(_snapshot() == state and randi() == next_global
+		and [layer.get_global_rect(), app.hero_view.get_global_rect(),
+			juice.fast_button.get_global_rect()] == hit_rects
+		and layer.mouse_filter == Control.MOUSE_FILTER_IGNORE and layer.focus_mode == Control.FOCUS_NONE,
+		"all motion lifecycle transitions preserve combat, RNG, hit rectangles and input policy")
+	layer.fluff_texture = saved_added[0]
+	layer.wisp_texture = saved_added[1]
+	layer.vignette_texture = saved_added[2]
+	layer.critter_strips = saved_strips
 
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	had_motion_setting = ProjectSettings.has_setting("accessibility/reduced_motion")
+	saved_motion_setting = ProjectSettings.get_setting("accessibility/reduced_motion", false)
+	ProjectSettings.set_setting("accessibility/reduced_motion", false)
 	_profiles()
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
@@ -413,6 +530,8 @@ func _run() -> void:
 			and layer.profile.is_empty()
 			and layer.motif_metadata().is_empty() and layer.visible_budget() == 0
 			and layer.added_metadata().is_empty()
+			and not layer.is_processing() and layer._time == 0.0
+			and not process_frame.is_connected(layer._sync_motion)
 			and layer.get_child_count() == 0 and _particles(layer).is_empty()
 			and not juice.bound and juice.overlay == null,
 			"title retires all ambient texture drawing and the old battle binding")
@@ -425,6 +544,10 @@ func _run() -> void:
 
 
 func _finish() -> void:
+	if had_motion_setting:
+		ProjectSettings.set_setting("accessibility/reduced_motion", saved_motion_setting)
+	else:
+		ProjectSettings.clear("accessibility/reduced_motion")
 	if failures.is_empty():
 		print("live_battle_ambient_test: PASS (%d checks)" % checks)
 		quit(0)

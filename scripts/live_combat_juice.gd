@@ -1051,6 +1051,7 @@ func _emit_attack_pose(app, current: Dictionary) -> void:
 		return
 	if not puppet.trigger_attack(duration_seconds()):
 		return
+	roster.focus_hit(String(hero["id"]), String(hit["id"]), fast_animations)
 	pose_history.append({"side": "hero", "position": int(hero["position"]),
 		"id": String(hero["id"]), "card_id": card_id, "anchor": "presentation",
 		"target_position": int(hit["position"]), "target_id": String(hit["id"]),

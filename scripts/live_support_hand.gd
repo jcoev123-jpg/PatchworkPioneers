@@ -62,6 +62,11 @@ const TABLE_HELP_DETAIL := "Click, drag or focus a card and press Enter / Space 
 const HELP_IDLE_FACE := &"PatchHeading"
 const HELP_BODY_FACE := &""
 const HELP_FONT_SIZE := 18
+const HUD_REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
+const HUD_PULSE_SECONDS := 0.26
+const HUD_PULSE_PEAK := 1.055
+const HUD_PILE_PERIOD := 5.4
+const HUD_PILE_BOB := 1.35
 var _battle: Control
 var _deck: CombatDeck
 var _party: CombatParty
@@ -108,6 +113,9 @@ var _turret := CombatTinkerV3TurretCards.new()
 var _heal_cards := CombatSeamstressPoolHeals.new()
 var _hem := CombatSeamstressV3HemCards.new()
 var _shroud := CombatLanternMonkShroudCards.new()
+## The Rag Duelist's accepted self-Dodge resolver (V3-1). Its own authenticating
+## table is the only authority for the four cape printings.
+var _cape := CombatRagDuelistDodgeCards.new()
 var _cleansing := CombatSeamstressV3CleansingCards.new()
 var _feint := CombatRagDuelistFeintCards.new()
 var _pitchfork := CombatScarecrowPitchforkCards.new()
@@ -134,6 +142,20 @@ var cleanse_choices: HBoxContainer
 ## in the extension and every other card keeps the shared behaviour.
 var _metadata = preload("res://scripts/live_support_hand_metadata.gd").new()
 var _receipt_seq := 0
+
+## Only paint transforms change. A snapshot of the bound fight's real shared hand,
+## active turn and payment is observed; this never calls a gameplay service.
+## null follows the global accessibility setting, like the other live panels.
+var reduced_motion_override: Variant = null
+var _hud_motion_clock := 0.0
+var _hud_pulse_time := -1.0
+var _hud_witness_deck: CombatDeck
+var _hud_witness_battle: Control
+var _hud_witness_turn := -1
+var _hud_witness_energy := -1
+var _hud_witness_hand: Array[String] = []
+var _hud_witness_active := false
+var _hud_motion_enabled := false
 
 
 ## Resolved path of one committed HUD image under the current presentation-only root.
@@ -312,6 +334,14 @@ class EnergyOrb extends Control:
 	## Committed energy-spool art, optional: null keeps the drawn felt disc.
 	var texture: Texture2D = null
 	var art_draw_count := 0
+	## Pure image transform: the Control and the number Label never scale or move.
+	var picture_scale := 1.0
+
+	func picture_rect() -> Rect2:
+		var disc := disc_rect()
+		# Leave room for the entire 1.055x pulse INSIDE the original inset disc.
+		var safe := disc.size * (0.94 * picture_scale)
+		return Rect2(disc.get_center() - safe * 0.5, safe)
 
 	func _ready() -> void:
 		custom_minimum_size = Vector2(76, 76)
@@ -338,7 +368,7 @@ class EnergyOrb extends Control:
 		draw_count += 1
 		if texture != null:
 			art_draw_count += 1
-			draw_texture_rect(texture, disc_rect(), false)
+			draw_texture_rect(texture, picture_rect(), false)
 			return
 		draw_circle(center, radius, DISK)
 		draw_arc(center, radius, 0, TAU, 64, RIM, 2, true)
@@ -359,6 +389,16 @@ class PileToken extends Control:
 	var kind := "draw"
 	var texture: Texture2D = null
 	var draw_count := 0
+	## Local image offset only; the 24px Control and sibling count stay stationary.
+	var picture_offset_y := 0.0
+
+	func picture_rect() -> Rect2:
+		var base := art_rect()
+		if base.size == Vector2.ZERO:
+			return base
+		# Retain room at both ends for the quiet 1.35px vertical bob.
+		var safe := base.size * 0.83
+		return Rect2(base.get_center() - safe * 0.5 + Vector2(0, picture_offset_y), safe)
 
 	func _ready() -> void:
 		custom_minimum_size = SIZE
@@ -387,7 +427,7 @@ class PileToken extends Control:
 			return
 		draw_count += 1
 		if texture != null:
-			draw_texture_rect(texture, art_rect(), false)
+			draw_texture_rect(texture, picture_rect(), false)
 			return
 		# Drawn fallback: a small stitched felt packet with a card leaving or arriving.
 		var box := Rect2(Vector2(2, 2), size - Vector2(4, 4))
@@ -524,8 +564,102 @@ func _ready() -> void:
 	get_parent().start_run_requested.connect(_sync_battle, CONNECT_DEFERRED)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	_sync_battle()
+	advance_hud_motion(delta)
+
+
+## Read-only battle witness. A mere click or energy setter cannot trigger a receipt:
+## an active same-turn hand copy must actually leave AND energy must decrease.
+## Every new turn, deck/battle binding, or disabled interval re-arms the baseline.
+func _hud_motion_allowed() -> bool:
+	var app = get_parent()
+	return _deck != null and is_instance_valid(_battle) and _battle.is_visible_in_tree() 		and app.deck == _deck and app.battle_view == _battle and app.party == _party 		and not app._battle_closed and _deck.turn_active and _party != null 		and _party.is_valid() and not _party.is_defeated() 		and app.battle_result != null and app.battle_result.can_continue() 		and app.enemies != null and app.enemies.is_valid() and not app.enemies.is_victorious()
+
+
+func _hud_motion_reduced() -> bool:
+	if reduced_motion_override != null:
+		return bool(reduced_motion_override)
+	return bool(ProjectSettings.get_setting(HUD_REDUCED_MOTION_SETTING, false))
+
+
+func _hud_motion_reset() -> void:
+	_hud_motion_clock = 0.0
+	_hud_pulse_time = -1.0
+	_hud_witness_deck = null
+	_hud_witness_battle = null
+	_hud_witness_turn = -1
+	_hud_witness_energy = -1
+	_hud_witness_hand.clear()
+	_hud_witness_active = false
+	_hud_motion_enabled = false
+	_hud_motion_paint_baseline()
+
+
+func _hud_motion_paint_baseline() -> void:
+	if is_instance_valid(energy_orb) and energy_orb.picture_scale != 1.0:
+		energy_orb.picture_scale = 1.0
+		energy_orb.queue_redraw()
+	for token in [draw_token, discard_token]:
+		if is_instance_valid(token) and token.picture_offset_y != 0.0:
+			token.picture_offset_y = 0.0
+			token.queue_redraw()
+
+
+## Deterministic presentation-only advance, called by the real mounted _process
+## and available to headless tests. Does not call RNG or mutate deck/party/enemies.
+func advance_hud_motion(delta: float) -> void:
+	if _hud_motion_reduced() or not _hud_motion_allowed():
+		_hud_motion_reset()
+		return
+	var app = get_parent()
+	var turn: int = int(app.enemy_intents._turn_index) if app.enemy_intents != null else -1
+	if not _hud_motion_enabled or _hud_witness_deck != _deck 			or _hud_witness_battle != _battle or _hud_witness_turn != turn 			or not _hud_witness_active:
+		_hud_motion_clock = 0.0
+		_hud_pulse_time = -1.0
+		_hud_motion_paint_baseline()
+		_hud_motion_enabled = true
+	else:
+		var removed := false
+		var previous := _hud_witness_hand.duplicate()
+		for id in _deck.hand:
+			previous.erase(id)
+		removed = not previous.is_empty()
+		if _deck.energy < _hud_witness_energy and removed 				and is_instance_valid(energy_orb) and energy_orb.texture != null:
+			_hud_pulse_time = 0.0
+	_hud_witness_deck = _deck
+	_hud_witness_battle = _battle
+	_hud_witness_turn = turn
+	_hud_witness_energy = _deck.energy
+	_hud_witness_hand = _deck.hand.duplicate()
+	_hud_witness_active = _deck.turn_active
+	var step := maxf(delta, 0.0)
+	_hud_motion_clock = fposmod(_hud_motion_clock + step, HUD_PILE_PERIOD)
+	if is_instance_valid(energy_orb):
+		var new_scale := 1.0
+		if energy_orb.texture == null:
+			_hud_pulse_time = -1.0
+		elif _hud_pulse_time >= 0.0:
+			_hud_pulse_time += step
+			if _hud_pulse_time >= HUD_PULSE_SECONDS:
+				_hud_pulse_time = -1.0
+			else:
+				new_scale += (HUD_PULSE_PEAK - 1.0) * sin(PI * _hud_pulse_time / HUD_PULSE_SECONDS)
+		if energy_orb.picture_scale != new_scale:
+			energy_orb.picture_scale = new_scale
+			energy_orb.queue_redraw()
+	var i := 0
+	for token in [draw_token, discard_token]:
+		if not is_instance_valid(token):
+			i += 1
+			continue
+		var offset := 0.0
+		if token.texture != null:
+			offset = HUD_PILE_BOB * sin(TAU * _hud_motion_clock / HUD_PILE_PERIOD + float(i) * 2.1)
+		if token.picture_offset_y != offset:
+			token.picture_offset_y = offset
+			token.queue_redraw()
+		i += 1
 
 
 func _toggle_help() -> void:
@@ -639,6 +773,13 @@ func _is_shroud_card(card_id: String) -> bool:
 	return _shroud != null and _shroud.is_supported_card(card_id)
 
 
+## True only for the four authentic Rag Duelist cape self-Dodge printings. The paid
+## resolver's own authenticating table is the authority, so a rewritten, relinked or
+## aliased ID can never be mounted by a stale local list. None after battle teardown.
+func _is_cape_card(card_id: String) -> bool:
+	return _cape != null and _cape.is_supported_card(card_id)
+
+
 ## True only for the six authored Seamstress healing pool records the resolver owns.
 func _is_heal_card(card_id: String) -> bool:
 	return card_id in CombatSeamstressPoolHeals.DARNING_IDS \
@@ -716,6 +857,8 @@ func _is_actionable(card_id: String) -> bool:
 		return true
 	if _is_shroud_card(card_id):
 		return true
+	if _is_cape_card(card_id):
+		return true
 	if _v3_tinker_scrap != null and _v3_tinker_scrap.is_supported_card(card_id):
 		return true
 	if _turret.is_supported_card(card_id) or CombatWardenV3TauntCards.CARDS.has(card_id):
@@ -758,6 +901,11 @@ func _commit_held(deck: CombatDeck, party: CombatParty, card_id: String, positio
 		# The shipped paid resolver authenticates the held copy, the Monk's current
 		# authored seat and the chosen living ally, then pays, discards and arms Dodge.
 		return bool(_shroud.play_card(deck, party, card_id, position).get("ok", false))
+	if _is_cape_card(card_id):
+		# The shipped paid resolver authenticates the held copy and the living Duelist's
+		# current authored seat, pays the printed cost, discards the copy and arms his own
+		# one-shot Dodge. A self card names nobody else, so 0 means its own seat.
+		return bool(_cape.play_card(deck, party, card_id, 0).get("ok", false))
 	if _v3_tinker_scrap != null and _v3_tinker_scrap.is_supported_card(card_id):
 		return bool(_v3_tinker_scrap.play_card(deck, party, card_id, 0).get("ok", false))
 	if _turret.is_supported_card(card_id):
@@ -1143,6 +1291,13 @@ func moth_shroud_actionable(panel, card_id: String) -> bool:
 	return _is_shroud_card(card_id) and _eligible(panel, card_id, _deck, _party, _battle)
 
 
+## Public read-only admission for the four Rag Duelist cape self-Dodge printings,
+## read by the sewn card face so it is bright only while the paid resolver's own
+## self preflight admits it against this exact fight, hand and turn.
+func rag_duelist_cape_actionable(panel, card_id: String) -> bool:
+	return _is_cape_card(card_id) and _eligible(panel, card_id, _deck, _party, _battle)
+
+
 ## Only a bound authentic battle can advance the Heirloom once on the
 ## scheduler's real turn index. UI redraws, failed plays and stale views cannot.
 func _current_heirloom_rules(deck: CombatDeck, party: CombatParty) -> CombatHeirloomPatchTriggers:
@@ -1252,6 +1407,7 @@ func _sync_battle() -> void:
 		_v3_tinker_scrap = CombatTinkerV3ScrapSupportCards.new()
 		_heal_cards = CombatSeamstressPoolHeals.new()
 		_shroud = CombatLanternMonkShroudCards.new()
+		_cape = CombatRagDuelistDodgeCards.new()
 		var carry = app.party_carryover
 		if carry is RunTornCarryover and carry._wardrobe != null:
 			var state: Dictionary = carry._wardrobe.get_snapshot()
@@ -1490,7 +1646,7 @@ func _sync_battle() -> void:
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_card_input.bind(panel, label.text, _deck, _party, _battle)
 		_bindings[panel] = callback
-		if (_jury != null and _jury.CARD_IDS.has(label.text)) or _hem.is_supported_card(label.text) or CombatYarnRangerKnitCards.CARDS.has(label.text) or label.text in VIGIL_IDS or label.text in GLOW_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text) or _turret.is_supported_card(label.text) or CombatWardenV3TauntCards.CARDS.has(label.text) or _is_eyelet_card(label.text) or _is_warden_guard_card(label.text) or _is_loom_card(label.text) or _is_shroud_card(label.text):
+		if (_jury != null and _jury.CARD_IDS.has(label.text)) or _hem.is_supported_card(label.text) or CombatYarnRangerKnitCards.CARDS.has(label.text) or label.text in VIGIL_IDS or label.text in GLOW_IDS or label.text in CombatSupportCards.SCARECROW_STRAW_IDS or label.text in M02PositionCards.IDS or _re_stuff.is_supported_card(label.text) or _is_enemy_card(label.text) or _sew.is_supported_card(label.text) or _roll.is_supported_card(label.text) or _turret.is_supported_card(label.text) or CombatWardenV3TauntCards.CARDS.has(label.text) or _is_eyelet_card(label.text) or _is_warden_guard_card(label.text) or _is_loom_card(label.text) or _is_shroud_card(label.text) or _is_cape_card(label.text):
 			_move_context[panel] = _current_move_context(panel)
 		panel.gui_input.connect(callback)
 	# Keep the existing End/Return Tab cycle; Up enters the card row, Down exits it.
@@ -1806,6 +1962,21 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 				shroud_legal = true
 		if not shroud_legal:
 			return false
+	if _is_cape_card(card_id):
+		# The shipped paid resolver's own read-only preflight decides the whole cast:
+		# held copy, active turn, printed energy, the unique living Duelist in an
+		# authored FROM seat and well-formed statuses. A stale panel, a replaced fight
+		# or a forged hand entry never stages, charges or arms anything.
+		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
+				or _move_context.get(panel, []) != _current_move_context(panel):
+			return false
+		if app._battle_closed or app.battle_result == null or not app.battle_result.can_continue() \
+				or app.battle_result._party != party or app.battle_result._enemies != app.enemies \
+				or app.enemies == null or not app.enemies.is_valid() or app.enemies.is_victorious() \
+				or app.run_rng == null or app.run_rng != deck._rng:
+			return false
+		if not _cape._prepare(deck, party, card_id, 0).get("ok", false):
+			return false
 	if _roll.is_supported_card(card_id):
 		if _bindings[panel].get_bound_arguments() != [panel, card_id, deck, party, battle] \
 				or _move_context.get(panel, []) != _current_move_context(panel):
@@ -1947,6 +2118,10 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 	_pending = {"panel": panel, "id": card_id, "choosing": false, "queued": false, "context": _current_move_context(panel)}
 	if _jury != null and _jury.CARD_IDS.has(card_id):
 		_pending.jury_state = _jury_selection_state()
+	if _is_cape_card(card_id):
+		# The exact live deck, heroes, enemies and seeded deck RNG this target-free
+		# self cast was armed against; any draw, play or roster replacement retires it.
+		_pending.cape_state = _fear_selection_state()
 	if _is_fear_card(card_id):
 		_pending.fear_state = _fear_selection_state()
 		_pending.hero_refs = _party._heroes.duplicate()
@@ -2010,7 +2185,7 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 			_pending.choosing = true
 			_advance_glow(_token)
 		return
-	if (card_id in VIGIL_IDS or card_id in SPARE_PARTS_IDS or _sew.is_supported_card(card_id) or _turret.is_supported_card(card_id) or CombatWardenV3TauntCards.CARDS.has(card_id) or _is_eyelet_card(card_id)) and not _selection_valid():
+	if (card_id in VIGIL_IDS or card_id in SPARE_PARTS_IDS or _sew.is_supported_card(card_id) or _turret.is_supported_card(card_id) or CombatWardenV3TauntCards.CARDS.has(card_id) or _is_eyelet_card(card_id) or _is_cape_card(card_id)) and not _selection_valid():
 		_cancel_pending()
 		return
 	if (card_id in ALLY_IDS or CombatYarnRangerKnitCards.CARDS.has(card_id)) or _roll.is_supported_card(card_id) or _is_enemy_card(card_id):
@@ -2070,6 +2245,9 @@ func _selection_valid() -> bool:
 	if _pending.get("context", []) != _current_move_context(_pending.panel):
 		return false
 	if _jury != null and _jury.CARD_IDS.has(_pending.id) and not _jury_selection_valid():
+		return false
+	if _is_cape_card(_pending.id) \
+			and _pending.get("cape_state", []) != _fear_selection_state():
 		return false
 	if _is_fear_card(_pending.id):
 		if _pending.fear_state != _fear_selection_state() \
@@ -2488,6 +2666,7 @@ func _unbind(panel) -> void:
 
 
 func _clear() -> void:
+	_hud_motion_reset()
 	_restore_action_fonts()
 	_receipt_seq = 0
 	_metadata.clear()
@@ -2546,6 +2725,7 @@ func _clear() -> void:
 	_v3_tinker_scrap = null
 	_heal_cards = null
 	_shroud = null
+	_cape = null
 	_heirloom = null
 	_heirloom_pinned = null
 	_heirloom_enemies = null

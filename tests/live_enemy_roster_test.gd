@@ -283,23 +283,23 @@ func _v3_hero_fallbacks(app, presenter) -> void:
 	# An authored idle loop strip is cut into square frames and only replaces the still at rest.
 	var loop_art: Dictionary = presenter.art_for("seamstress")
 	var strip := loop_art.get("idle_loop") as Texture2D
-	_check(strip != null and strip.get_width() == strip.get_height() * 16
+	_check(strip != null and strip.get_width() == strip.get_height() * 13
 		and ROSTER_ART.art_paths("seamstress").get("idle_loop") == "res://assets/paper/heroes/seamstress_idle.png",
-		"the Seamstress idle loop strip resolves by authoritative ID as sixteen square frames")
+		"the Seamstress idle loop strip resolves by authoritative ID as thirteen square frames")
 	host.bind_actor("seamstress", loop_art)
 	host.idle_phase = 0.0
 	var first_frame: Texture2D = host.idle_frame(host.pose_texture())
 	host.idle_phase = 0.25
 	var later_frame: Texture2D = host.idle_frame(host.pose_texture())
-	_check(host.idle_frames.size() == 16 and host.current_texture() == loop_art.idle
+	_check(host.idle_frames.size() == 13 and host.current_texture() == loop_art.idle
 		and host.pose_texture() == loop_art.idle and first_frame is AtlasTexture
 		and later_frame is AtlasTexture and first_frame != later_frame,
 		"a standing hero paints its idle loop while placement still uses the still image")
-	_check(loop_art.get("attack_loop") is Texture2D and host.attack_frames.size() == 12,
-		"the shipped transparent Seamstress attack strip retains its twelve committed frames")
+	_check(loop_art.get("attack") is Texture2D,
+		"the dark Seamstress has an authored held attack pose")
 	_check(host.idle_frame(loop_art.attack) == loop_art.attack,
 		"the committed attack pose is never replaced by a loop frame")
-	# An authored attack swing strip follows the lunge: stance at both ends, strike at its peak.
+	# Even a valid optional swing strip cannot override the authored attack still.
 	_check(ROSTER_ART.art_paths("seamstress").get("attack_loop") == "res://assets/paper/heroes/seamstress_attack_anim.png",
 		"the attack swing strip path follows the authoritative ID")
 	var swing_image := Image.create(40, 8, false, Image.FORMAT_RGBA8)
@@ -307,14 +307,13 @@ func _v3_hero_fallbacks(app, presenter) -> void:
 	host.bind_actor("seamstress", {"idle": loop_art.idle, "attack": loop_art.attack,
 		"idle_loop": strip, "attack_loop": swing})
 	_check(host.attack_frames.size() == 5 and host.idle_frame(loop_art.attack) == loop_art.attack,
-		"the swing strip is cut into square frames and only plays during a committed hit")
-	host.attack_span = 0.4
-	host.attack_remaining = 0.4 - 0.0001
-	var swing_start: Texture2D = host.idle_frame(host.pose_texture())
-	host.attack_remaining = 0.2
-	var swing_peak: Texture2D = host.idle_frame(host.pose_texture())
-	_check(swing_start == host.attack_frames[0] and swing_peak == host.attack_frames[4],
-		"the swing starts in the stance frame and strikes at the lunge peak")
+		"five-frame swing fixture is valid and the resting attack still is available")
+	_check(host.trigger_attack(0.4), "mounted Seamstress accepts the bounded attack")
+	for remaining in [0.4, 0.2, 0.0001]:
+		host.attack_remaining = remaining
+		_check(host.attacking() and host.pose_texture() == loop_art.attack
+			and host.idle_frame(host.pose_texture()) == loop_art.attack,
+			"Seamstress holds the authored still at attack start, peak and near completion")
 	host.cancel_attack()
 	host.bind_actor("seamstress", loop_art)
 	var still_rect: Rect2 = host.image_rect()
@@ -382,9 +381,9 @@ func _idle_strip_safety(app, presenter) -> void:
 			"the mounted Warden/Tinker play their Web-safe idle strip: " + hero.actor_id)
 	var seam_art: Dictionary = presenter.art_for("seamstress")
 	_check(seam_art.get("idle") is Texture2D and seam_art.get("idle_loop") is Texture2D
-		and seamstress.idle_frames.size() == 16
+		and seamstress.idle_frames.size() == 13
 		and seamstress.idle_frame(seamstress.pose_texture()) is AtlasTexture,
-		"the real mounted Seamstress retains all sixteen transparent idle frames")
+		"the real mounted Seamstress retains all thirteen transparent idle frames")
 	var still_image := Image.create(16, 16, false, Image.FORMAT_RGBA8)
 	still_image.fill(Color.TRANSPARENT)
 	still_image.fill_rect(Rect2i(5, 3, 6, 12), Color("b38e6f"))
@@ -426,11 +425,34 @@ func _idle_strip_safety(app, presenter) -> void:
 	_check(warden.idle_frames.size() == 3 and first is AtlasTexture
 		and later is AtlasTexture and first != later and warden.current_texture() == still,
 		"valid transparent synthetic strip advances through painted idle frames on live delta")
-	_check(warden.attack_frames.size() == 3 and warden.trigger_attack(0.4)
-		and warden.pose_texture() == still
-		and warden.idle_frame(warden.pose_texture()) is AtlasTexture,
-		"transparent authored attack frames remain available only for a committed attack")
+	_check(warden.attack_frames.size() == 3 and warden.trigger_attack(0.4),
+		"valid three-frame swing fixture accompanies an accepted mounted attack")
+	for remaining in [0.4, 0.2, 0.0001]:
+		warden.attack_remaining = remaining
+		_check(warden.attacking() and warden.pose_texture() == still
+			and warden.idle_frame(warden.pose_texture()) == still,
+			"Warden holds the authored still even when idle and attack textures are identical")
 	warden.cancel_attack()
+	# Synthetic wide and tall poses preserve source-pixel scale, rather than fitting
+	# themselves into the idle rectangle. All surrounding mounted bounds are checked below.
+	for dimensions in [Vector2i(48, 16), Vector2i(16, 32)]:
+		var pose_image := Image.create(dimensions.x, dimensions.y, false, Image.FORMAT_RGBA8)
+		var pose := ImageTexture.create_from_image(pose_image)
+		warden.bind_actor("warden", {"idle": still, "attack": pose, "attack_loop": clear_strip})
+		var idle_rect: Rect2 = warden.image_rect()
+		_check(idle_rect.has_area() and warden.trigger_attack(0.4),
+			"synthetic proportion witness has fitted idle art and an accepted attack")
+		for remaining in [0.4, 0.2, 0.0001]:
+			warden.attack_remaining = remaining
+			var pose_rect: Rect2 = warden.pose_rect(warden.pose_texture())
+			_check(warden.idle_frame(warden.pose_texture()) == pose
+				and is_equal_approx(pose_rect.size.x / idle_rect.size.x, dimensions.x / 16.0)
+				and is_equal_approx(pose_rect.size.y / idle_rect.size.y, dimensions.y / 16.0)
+				and is_equal_approx(pose_rect.get_center().x, idle_rect.get_center().x)
+				and is_equal_approx(pose_rect.end.y, idle_rect.end.y),
+				"wide/tall attack holds idle pixel scale, aspect ratio and bottom-centred foot line")
+		warden.cancel_attack()
+	warden.bind_actor("warden", {"idle": still, "attack": still, "idle_loop": clear_strip})
 	warden.fallen = true
 	_check(warden.idle_frame(warden.pose_texture()) == still,
 		"KO skips idle animation and preserves the fallen still pose")
@@ -622,7 +644,63 @@ func _staging(app, presenter) -> void:
 ## lives only in the drawn transform, so target rectangles, pinned names, intent badges,
 ## the hand and the action row stay put and no HP, deck, energy, turn, intent or RNG value
 ## moves. A fallen actor and a detached puppet never start one.
+func _stage_focus(app, presenter) -> void:
+	var stage = presenter.backdrop
+	var hero: Control
+	var enemy: Control
+	for actor in presenter._puppets:
+		if not actor.fallen and actor.is_visible_in_tree():
+			if actor.facing > 0.0:
+				hero = actor
+			else:
+				enemy = actor
+	_check(is_instance_valid(stage) and is_instance_valid(hero) and is_instance_valid(enemy),
+		"focus lifecycle uses real standing mounted puppets")
+	if not is_instance_valid(stage) or not is_instance_valid(hero) or not is_instance_valid(enemy):
+		return
+	var state := _snapshot(app)
+	var serial: int = stage.focus_serial
+	_check(not presenter.focus_hit("missing", enemy.actor_id, false)
+		and stage.focus_zoom() == 1.0 and stage.focus_serial == serial,
+		"unbound attacker cannot create a focus")
+	_check(not presenter.focus_hit(hero.actor_id, "missing", false)
+		and stage.focus_serial == serial, "unbound target cannot create a focus")
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, true), "real anchors admit a fast focus")
+	stage.advance_focus(0.15 * 0.15 / 0.85)
+	_check(is_equal_approx(stage.focus_zoom(), 1.30), "fast focus reaches the same authored zoom")
+	stage.advance_focus(0.15 * 0.50 / 0.85)
+	_check(is_equal_approx(stage.focus_zoom(), 1.30), "fast focus retains the compressed hold")
+	stage.advance_focus(0.15 * 0.20 / 0.85)
+	_check(stage.focus_zoom() == 1.0 and stage.focus_transform() == Transform2D.IDENTITY,
+		"fast focus ends exactly within 0.15 seconds")
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, false), "missing-anchor test starts a real focus")
+	enemy.hide()
+	stage.advance_focus(0.0)
+	_check(stage.focus_zoom() == 1.0 and stage.focus_anchors.is_empty(),
+		"a disappearing anchor immediately retires the visual focus")
+	enemy.show()
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, false), "rebind test starts a real focus")
+	var identity: String = enemy.actor_id
+	enemy.actor_id = "rebound"
+	stage.advance_focus(0.0)
+	_check(stage.focus_zoom() == 1.0, "an actor identity replacement cannot retain focus")
+	enemy.actor_id = identity
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, false), "teardown test starts a real focus")
+	presenter.cancel_poses()
+	_check(stage.focus_transform() == Transform2D.IDENTITY and stage.focus_anchors.is_empty(),
+		"teardown cancels focus exactly")
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, false), "motion-setting test starts a real focus")
+	var previous: Variant = ProjectSettings.get_setting("accessibility/reduced_motion", false)
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	stage.advance_focus(0.0)
+	_check(stage.focus_zoom() == 1.0 and stage.focus_anchors.is_empty(),
+		"enabling reduced motion immediately cancels an active focus")
+	ProjectSettings.set_setting("accessibility/reduced_motion", previous)
+	_check(_snapshot(app) == state, "focus lifecycle never changes authoritative state or seeded RNG")
+
+
 func _attack_pose(app, presenter) -> void:
+	_stage_focus(app, presenter)
 	_check(is_instance_valid(presenter.panel) and presenter.enemies != null
 		and not presenter._puppets.is_empty()
 		and presenter._puppets.size() == CombatParty.PARTY_SIZE + presenter.enemies.get_enemies().size(),
@@ -2329,6 +2407,11 @@ func _mouse_attack(app, reference, presenter) -> void:
 	_check(chosen != null and target > 0, "real seeded hand supplies a playable targeted attack")
 	if chosen == null or target == 0:
 		return
+	var owner: String = StarterCards.new().get_definition(card_id).get("owner", "")
+	var target_id: String = app.enemies.get_enemy(target)["id"]
+	_check(presenter.focus_hit(owner, target_id, false), "input test starts focus on actual mounted actors")
+	presenter.backdrop.advance_focus(0.15)
+	_check(is_equal_approx(presenter.backdrop.focus_zoom(), 1.30), "mouse targeting runs during full stage focus")
 	var before := _snapshot(app)
 	await _input_mouse(chosen)
 	_check(_snapshot(app) == before, "mouse card selection alone changes no combat state")

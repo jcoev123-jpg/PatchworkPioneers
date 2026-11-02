@@ -565,9 +565,14 @@ func _rest_art_ambient() -> void:
 	intents.clear()
 	panel.bind(deciding)
 	panel.advance_rest_art(4.0)
+	_check(panel.rest_art_active() and panel.rest_art_transform() != baseline,
+		"the authored backdrop is genuinely breathing before the Heal submission")
 	var deciding_heal_rect := panel.heal_button.get_global_rect()
 	var deciding_leave_rect := panel.leave_button.get_global_rect()
 	await _activate(panel.heal_button, false)
+	_check(not panel.rest_art_active() and panel.rest_art_transform() == baseline
+		and panel._rest_art_elapsed == 0.0,
+		"a valid Heal submission immediately stops and retires the backdrop motion")
 	_check(intents.size() == 1 and intents[0].get("action") == "heal"
 		and intents[0].get("source_visit") == deciding
 		and intents[0].get("node_id") == NODE
@@ -581,6 +586,9 @@ func _rest_art_ambient() -> void:
 		and deciding_receipt.get("heroes") == deciding_oracle.get("heroes")
 		and deciding.read_state().heroes == deciding_oracle.heroes,
 		"the heal receipt stays revive-first floor(30%) capped after the visual addition")
+	_check(deciding.read_state().status == RunCampfireVisit.HEALED
+		and not panel.rest_art_active() and panel.rest_art_transform() == baseline,
+		"the externally settled HEALED visit keeps the backdrop exactly static")
 	_check(not Controller.submit(deciding, intents[0]).get("ok"),
 		"the same heal receipt remains once-only")
 	_check(panel.heal_button.get_global_rect() == deciding_heal_rect
@@ -595,7 +603,13 @@ func _rest_art_ambient() -> void:
 	_check(panel.leave_button.has_focus() and panel.heal_button.disabled
 		and not panel.leave_button.disabled,
 		"full-health party stays focused on the free Leave under motion")
+	panel.advance_rest_art(2.0)
+	_check(panel.rest_art_active() and panel.rest_art_transform() != baseline,
+		"the authored backdrop keeps moving while the free Leave is still open")
 	await _press(KEY_0)
+	_check(not panel.rest_art_active() and panel.rest_art_transform() == baseline
+		and panel._rest_art_elapsed == 0.0,
+		"a valid Leave submission immediately stops and retires the backdrop motion")
 	_check(intents.size() == 1 and intents[0].get("action") == "leave"
 		and intents[0].get("source_visit") == keyed
 		and intents[0].get("node_id") == NODE
@@ -609,6 +623,49 @@ func _rest_art_ambient() -> void:
 		"the free Leave receipt stays free after the visual addition")
 	_check(not Controller.submit(keyed, intents[0]).get("ok"),
 		"the same Leave receipt remains once-only")
+	# A bound visit consumed directly by its real service stops the backdrop
+	# without any view call; the stale clock retires on the next presentation tick.
+	for external_action in ["heal", "leave"]:
+		var external := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
+		var external_before := external.read_state()
+		intents.clear()
+		panel.bind(external)
+		panel.advance_rest_art(3.0)
+		_check(panel.rest_art_active() and panel.rest_art_transform() != baseline,
+			"the backdrop genuinely moves before external " + external_action)
+		var external_receipt: Dictionary
+		if external_action == "heal":
+			external_receipt = external.choose_heal(external_before.node_id, external_before.heroes)
+		else:
+			external_receipt = external.leave(external_before.node_id, external_before.heroes)
+		var expected_status: String = "healed" if external_action == "heal" else "left"
+		_check(external_receipt.get("ok") == true
+			and external.read_state().status == expected_status,
+			"genuine external service consumption for " + external_action)
+		_check(panel.is_visible_in_tree() and not panel._submitted
+			and intents.is_empty(),
+			"external " + external_action + " needs no view call or submission")
+		_check(not panel.rest_art_active()
+			and panel.rest_art_transform() == baseline,
+			"external " + external_action + " stops the very next art query")
+		_check(panel._rest_art_elapsed > 0.0,
+			"stale motion time is still held before the next presentation tick")
+		await process_frame
+		_check(panel._rest_art_elapsed == 0.0,
+			"the next presentation tick retires the accumulated motion clock")
+		panel.advance_rest_art(2.0)
+		_check(panel.rest_art_transform() == baseline
+			and panel._rest_art_elapsed == 0.0,
+			"a consumed source never resumes old animation")
+	# A fresh independently OPEN visit rebind starts clean, then moves again.
+	var fresh := RunCampfireVisit.new("f09_fresh", _party([35, 18, 0]))
+	intents.clear()
+	panel.bind(fresh)
+	_check(panel.rest_art_active() and panel.rest_art_transform() == baseline,
+		"a fresh OPEN rebind starts from the exact static baseline")
+	panel.advance_rest_art(1.0)
+	_check(panel.rest_art_active() and panel.rest_art_transform() != baseline,
+		"a fresh OPEN visit moves again on a new positive presentation delta")
 
 
 func _keyboard_positive() -> void:

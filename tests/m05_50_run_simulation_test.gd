@@ -92,8 +92,8 @@ const EVENT_AFFORDABILITY_WITNESS_SEED := 604
 ## held hand with its authored receipt.
 const EARNED_CARD_WITNESS_SEEDS := {
 	"seamstress_tailors_trance": 114,
-	"seamstress_snag": 201,
-	"seamstress_blanket_stitch": 210,
+	"seamstress_snag": 33,
+	"seamstress_blanket_stitch": 90,
 }
 ## Cards whose genuine offer/acquire/play chain the pinned witnesses proved.
 var witnessed_cards := {}

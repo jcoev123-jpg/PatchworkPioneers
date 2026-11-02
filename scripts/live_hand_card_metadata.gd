@@ -126,6 +126,10 @@ func _definition(card_id: String) -> Dictionary:
 		return _riposte._catalog_definition(card_id)
 	if _needle.is_supported_card(card_id):
 		return CombatYarnRangerNeedleCards.needle_definition(card_id)
+	# Both authenticated Purling Barrage printings resolve through the same
+	# scene-free needle service that owns their paid two-hit cast.
+	if _needle.is_supported_purling_card(card_id):
+		return CombatYarnRangerNeedleCards.purling_definition(card_id)
 	if _barrage.is_supported_card(card_id):
 		return _barrage._catalog_definition(card_id)
 	if _lunge.is_supported_card(card_id):
@@ -617,6 +621,10 @@ func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[Str
 		if effects.has("exposed"):
 			text += " AFTER that hit, apply Exposed %d; it never boosts this hit." % int(effects.exposed)
 		return [text]
+	if _needle.is_supported_purling_card(card_id):
+		var effects: Dictionary = definition.effects
+		return ["BASE deal %d damage as TWO independent hits on the chosen enemy, Block before HP each time; Weak/Exposed/Tangled modify each hit. A lethal first hit stops the second. THEN add %d Unravel ONCE to that same enemy if it survives." % [
+			int(effects.damage), int(effects.unravel)]]
 	if _rag_dodge.is_supported_card(card_id):
 		return [_rules(card_id)]
 	if _v3_tinker_scrap.is_supported_card(card_id):
@@ -1189,7 +1197,7 @@ func _update_visual(panel: Control) -> void:
 			var support_presenter = _app.get_node_or_null("LiveSupportHand")
 			playable = support_presenter != null and support_presenter._eligible(
 				panel, id, _app.deck, _app.party, _app.battle_view)
-		elif _moth_lure.is_supported_card(id) or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _thread.is_supported_card(id) or id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
+		elif _moth_lure.is_supported_card(id) or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _needle.is_supported_purling_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _thread.is_supported_card(id) or id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
 			# The mounted battle owns both the legal picker and its shared pin.
 			# Catalog knowledge alone cannot enable Spring Trap.
 			playable = battle_preview != null and is_instance_valid(battle_preview) \
@@ -1342,6 +1350,10 @@ func _rules(id: String) -> String:
 		var card := _definition(id)
 		return "" if card.is_empty() else "Deal %d; then Unravel %d if target survives." % [
 			int(card.effects.damage), int(card.effects.unravel)]
+	if _needle.is_supported_purling_card(id):
+		var purling := _definition(id)
+		return "" if purling.is_empty() else "Two hits of %d; then Unravel %d once if target survives." % [
+			int(purling.effects.damage), int(purling.effects.unravel)]
 	if _bolas.is_supported_card(id):
 		var card := _definition(id)
 		return "" if card.is_empty() else "Deal %d; then apply Tangled %d." % [card.effects.damage, card.effects.tangled]

@@ -160,12 +160,14 @@ static func rest_art_crop(image_size: Vector2, frame: Rect2, motion: Dictionary)
 	}
 
 
-## Motion runs only while a genuinely bound open visit is on a visible mounted
-## panel with the authored asset loaded and reduced motion not requested. Every
-## stop path (close/bind(null)/rebind, hide, free, missing art, reduced motion)
-## restores the exact static baseline transform.
+## Motion runs only while the authenticated bound visit is still genuinely open
+## and actionable (not submitted, not consumed, snapshot and preview intact) on
+## a visible mounted panel with the authored asset loaded and reduced motion not
+## requested. Every stop path (submission, an externally consumed visit, close,
+## bind(null)/rebind, hide, free, missing art, reduced motion) restores the
+## exact static baseline transform. Strictly read-only: it commits no state.
 func rest_art_active() -> bool:
-	return _visit != null and is_visible_in_tree() and rest_art_texture != null \
+	return _source_current() and is_visible_in_tree() and rest_art_texture != null \
 		and not _reduced_motion_active()
 
 
@@ -417,6 +419,10 @@ func _request(action: String, generation: int, source: RunCampfireVisit) -> bool
 	_submitted = true
 	heal_button.disabled = true
 	leave_button.disabled = true
+	# The visit stops being actionable the moment its intent is submitted: retire
+	# the presentation clock and queue the static baseline redraw before the
+	# controller receives the request. The view still commits no run state.
+	_reset_rest_art()
 	decision_requested.emit({
 		"action": action,
 		"source_visit": source,

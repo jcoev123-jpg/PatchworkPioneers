@@ -270,7 +270,7 @@ func _play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var heroes: Array[Dictionary] = party.get_heroes()
 	var foes: Array[Dictionary] = enemies.get_enemies()
 	if not CombatStatusTurnBatch.new().tick_side("heroes", heroes)["ok"] \
-			or not CombatStatusTurnBatch.new().tick_side("enemies", foes)["ok"]:
+			or not CombatStatusTurnBatch.new().tick_side("enemies", foes, enemies.get_capacity())["ok"]:
 		return _failure()
 	var owner: Dictionary = {}
 	for hero in heroes:

@@ -35,6 +35,10 @@ extends RefCounted
 
 const OWNER := "seamstress"
 const TARGET_KIND := "enemy_single"
+const STITCHED_IDS := [
+	"seamstress_v3_needle_rain", "seamstress_v3_needle_rain_plus",
+	"seamstress_v3_scarlet_knot", "seamstress_v3_scarlet_knot_plus",
+]
 
 ## GAME_DESIGN.md's authored Seamstress passive: when she applies Bleed, add one more Bleed.
 ## It is applied here at resolution and is never baked into the printed catalog entries.
@@ -134,6 +138,25 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return _refusal("insufficient_energy")
 	if not deck.discard_played(plan["card_id"]):
 		return _refusal("card_not_held")
+	return _resolve_plan(enemies, plan)
+
+
+## Only detached transaction authorities are supplied here. The enclosing stitch
+## owns holding, payment, discard and publication; this half owns only its effect.
+func resolve_staged_half(party: CombatParty, enemies: CombatEnemies,
+		half: Dictionary, target_position: int) -> Dictionary:
+	var id: Variant = half.get("id")
+	if typeof(id) != TYPE_STRING or id not in STITCHED_IDS:
+		return _refusal("unsupported_card")
+	if half != _catalog_definition(id) or not is_authentic_card(id):
+		return _refusal("catalog_mismatch")
+	var plan := _prepare(null, party, enemies, id, target_position, true)
+	if not plan.get("ok", false):
+		return plan
+	return _resolve_plan(enemies, plan)
+
+
+func _resolve_plan(enemies: CombatEnemies, plan: Dictionary) -> Dictionary:
 
 	var damage := 0
 	var block_absorbed := 0
@@ -192,10 +215,10 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 
 ## Read-only preflight of the whole transaction. Returns a detached plan or a refusal receipt.
 func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		card_id: Variant, target_position: int) -> Dictionary:
-	if deck == null or party == null or enemies == null:
+		card_id: Variant, target_position: int, staged: bool = false) -> Dictionary:
+	if (deck == null and not staged) or party == null or enemies == null:
 		return _refusal("invalid_request")
-	if deck.combat_state == null or deck._rng == null or not deck.turn_active:
+	if not staged and (deck.combat_state == null or deck._rng == null or not deck.turn_active):
 		return _refusal("inactive_turn")
 	if not party.is_valid() or party._heroes.size() != CombatParty.PARTY_SIZE:
 		return _refusal("invalid_party")
@@ -250,10 +273,10 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if int(heroes[owner_position - 1]["hp"]) == 0:
 		return _refusal("owner_downed")
 	# Hand membership is the actual held copy, never just a catalog lookup.
-	if not deck.hand.has(id):
+	if not staged and not deck.hand.has(id):
 		return _refusal("card_not_held")
 	var cost: int = card["cost"]
-	if cost < 0 or deck.energy < cost:
+	if cost < 0 or (not staged and deck.energy < cost):
 		return _refusal("insufficient_energy")
 
 	# Verify every enemy slot's authoritative shape before the target query, so a malformed roster

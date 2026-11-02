@@ -16,6 +16,7 @@ func _initialize() -> void:
 	_test_authored_candidate_aggregation()
 	_test_authored_pool_roll()
 	_test_v3_pools()
+	_test_v3_seamstress_living_admission()
 
 	if failures.is_empty():
 		print("run_pool_card_reward_offers_test: PASS (", checks, " checks)")
@@ -35,7 +36,7 @@ func _check(condition: bool, description: String) -> void:
 func _test_v3_pools() -> void:
 	var candidates := RunPoolCardRewardOffers.get_authored_base_candidates()
 	var before := candidates.duplicate(true)
-	for pool in [LanternMonkPoolCards.new(), RagDuelistPoolCards.new(), ScarecrowPoolCards.new(),
+	for pool in [V3SeamstressPoolCards.new(), LanternMonkPoolCards.new(), RagDuelistPoolCards.new(), ScarecrowPoolCards.new(),
 		YarnRangerPoolCards.new(), ButtonGolemPoolCards.new()]:
 		var owner := ""
 		for id in pool.get_base_ids():
@@ -71,6 +72,36 @@ func _test_v3_pools() -> void:
 		_check(admission.ok and RunRestStitchCards.new(admission.deck, {}, 0).is_valid(),
 			"V3 admitted four-per-owner starters all resolve in legal run ledger")
 	_check(candidates == before, "V3 generation/resolution leaves authored candidates unchanged")
+
+
+func _test_v3_seamstress_living_admission() -> void:
+	var pool := V3SeamstressPoolCards.new()
+	var candidates := RunPoolCardRewardOffers.get_authored_base_candidates()
+	var reached := {}
+	for seed_value in range(128):
+		for party in [["warden", "seamstress", "tinker"], ["warden", "lantern_monk", "tinker"]]:
+			for living in [party, ["warden", "tinker"]]:
+				var rng := _rng(seed_value)
+				var generated := RunPoolCardRewardOffers.generate_for_living_from_authored(rng, party, living)
+				_check(generated.ok and generated.offers.size() == 3, "three seeded living-owner offers")
+				for offer in generated.offers:
+					_check(living.has(offer.owner) and not String(offer.id).ends_with("_plus"), "only living party owners and bases offered")
+					if pool.has_card(offer.id):
+						_check(party.has("seamstress") and living.has("seamstress"), "V3 Seamstress requires active living owner")
+						reached[offer.id] = true
+	for id in pool.get_base_ids():
+		_check(reached.has(id), "each V3 Seamstress base reached through seeded living offers: " + id)
+		var matches := 0
+		for row in candidates:
+			if row.id == id:
+				matches += 1
+		_check(matches == 1, "each V3 ID occurs exactly once regardless of record metadata")
+	var rng := _rng()
+	var state := rng.state
+	var invalid := RunPoolCardRewardOffers.generate_for_living_from_authored(rng,
+		["warden", "tinker", "lantern_monk"], ["seamstress"])
+	_check(not invalid.ok and invalid.offers.is_empty() and rng.state == state,
+		"nonparty Seamstress living request rejected before RNG")
 
 
 func _rng(seed_value: int = TEST_SEED) -> RandomNumberGenerator:
