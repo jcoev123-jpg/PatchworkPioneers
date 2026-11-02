@@ -36,6 +36,7 @@ func _required_ids() -> Array:
 	ids.append("v3_emberglass_campfire")
 	ids.append("v3_briar_button_mending_bench")
 	ids.append("v3_inkblack_unpicker_van")
+	ids.append("v3_threadmill_sewing_circle")
 	return ids
 
 
@@ -47,7 +48,7 @@ func _combined_catalog(include_party: bool = true) -> Dictionary:
 	var waystation := RunV3ServiceWaystationEventGate.new()
 	_check(waystation.is_catalog_valid(), "fixture validates shipped service-waystation catalog")
 	for id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench",
-			"v3_inkblack_unpicker_van"]:
+			"v3_inkblack_unpicker_van", "v3_threadmill_sewing_circle"]:
 		var record := waystation.get_event_record(id)
 		_check(not record.is_empty(), "fixture contains authenticated Campfire record: " + id)
 		if not record.is_empty():
@@ -177,6 +178,11 @@ func _fixtures() -> Dictionary:
 	# below re-verifies every candidate; none is pinned by index or position.
 	hints.append_array([6227, 39886, 44607, 64427, 72601, 89948, 96323, 101501,
 		107698, 129720, 145986, 154818, 175270, 206049, 325821, 366404])
+	# Genuine map/toll/rotation witnesses for the shifted sorted pool after admitting
+	# Threadmill Sewing Circle; IDs and draws are always revalidated below.
+	hints.append_array([14522, 86462, 122179, 164251, 170539, 214827, 218480,
+		245085, 258112, 273654, 329026, 377428, 392622, 400253, 429319,
+		704452, 828490])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():
@@ -232,7 +238,7 @@ func _catalog_contract() -> void:
 	_check(rotation.is_catalog_valid(), "combined catalog validates for the real rotation")
 	var ids := rotation.get_generic_event_ids()
 	for id in REQUIRED + ["v3_emberglass_campfire", "v3_briar_button_mending_bench",
-			"v3_inkblack_unpicker_van"]:
+			"v3_inkblack_unpicker_van", "v3_threadmill_sewing_circle"]:
 		_check(ids.count(id) == 1, "combined eligible pool contains required ID exactly once: " + id)
 	for id in PROMOTED_CANDLELIT:
 		_check(ids.count(id) == 1, "live two-source loader carries promoted Candlelit story exactly once: " + id)

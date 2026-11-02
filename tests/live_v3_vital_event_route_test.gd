@@ -44,7 +44,10 @@ func _open_sixth(f: Dictionary, negatives: bool, warden_rear: bool = false) -> L
 	if warden_rear:
 		_check(app.run_heroes[1].id == "warden" and app.run_heroes[0].id != "warden",
 			"real pick-three places required Warden behind another living hero")
+	var btn := _route_action(f.path[4])
+	print("VITAL_DEBUG: seed=", f.seed, " path[4]=", f.path[4], " btn_valid=", is_instance_valid(btn), " btn_dis=", btn.disabled if is_instance_valid(btn) else "none", " party=", app.run_heroes.map(func(h): return h.id))
 	await _click(_route_action(f.path[4]))
+	print("VITAL_DEBUG: panel=", is_instance_valid(app.wallet_event_panel), " mode=", app.wallet_event_panel._wallet_mode if is_instance_valid(app.wallet_event_panel) else "none")
 	var wallet: LiveEventChoicePanel = app.wallet_event_panel
 	_check(is_instance_valid(wallet) and wallet._wallet_mode, "first generic remains actual wallet story")
 	if not is_instance_valid(wallet):
