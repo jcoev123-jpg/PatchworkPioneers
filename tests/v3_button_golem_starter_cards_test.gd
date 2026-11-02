@@ -1,8 +1,9 @@
 extends SceneTree
-## V3-1 Button Golem starter-card catalog contract plus the callable Block-paid Pop Button and
-## counted-button Sew resolvers. The catalogs stay descriptor-only and nothing here claims live
-## hand, party-picker, reward or map wiring: these cases drive the scene-free combat rules layer
-## directly with real CombatDeck/CombatParty/CombatEnemies state.
+## V3-1 Button Golem starter-card catalog contract plus the callable Block-paid Pop Button,
+## counted-button Sew and Button Plating start-of-turn resolvers. The catalogs stay
+## descriptor-only and nothing here claims live hand, party-picker, reward or map wiring: these
+## cases drive the scene-free combat rules layer directly with real CombatDeck/CombatParty/
+## CombatEnemies state. The mounted turn flow is reserved for a later integration task.
 
 const ButtonGolemStarterCards = preload("res://data/cards/button_golem_starter_cards.gd")
 const ButtonGolemRewardCards = preload("res://data/cards/button_golem_pool_cards.gd")
@@ -74,6 +75,10 @@ func _initialize() -> void:
 	_test_thread_one_shot_tokens()
 	_test_thread_refusals()
 	_test_thread_replay()
+	_test_plating_all_seats()
+	_test_plating_turn_dedup()
+	_test_plating_pop_synergy()
+	_test_plating_refusals()
 	if failures.is_empty():
 		print("v3_button_golem_starter_cards_test: PASS (", checks, " checks)")
 	else:
@@ -1945,3 +1950,291 @@ func _thread_snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemi
 		tokens[position] = pins.pinner_for_enemy(position) if pins is CombatPinned else "NO_AUTHORITY"
 	snapshot["pins"] = tokens
 	return snapshot
+
+
+# ---------------------------------------------------------------------------------------------
+# Button Plating: the authored start-of-player-turn passive (gain 2 Block) of the Button Golem.
+# ---------------------------------------------------------------------------------------------
+
+## AC1: every genuine seat, immediately after the authentic CombatParty.start_player_turn()
+## reset. Exactly +2 Block to that one Golem, nothing to either other hero, and no card, energy,
+## enemy or seeded RNG state touched anywhere in the surrounding combat.
+func _test_plating_all_seats() -> void:
+	for seat in [1, 2, 3]:
+		var label := "Button Plating with the Golem in seat " + str(seat)
+		var party := _plating_party(seat)
+		_check(party.gain_block(seat, 7),
+			label + ": the Golem genuinely holds seven Block before the turn")
+		_check(party.start_player_turn(), label + ": the authentic turn reset runs")
+		_check(party.get_hero(seat).get("block") == 0,
+			label + ": the reset cleared the Golem's previous Block")
+		var deck := _pop_deck(["button_golem_starter_loose_pop"])
+		var enemies := _pop_enemies([40])
+		var before_heroes: Array = party.get_heroes()
+		var before_state := _pop_snapshot(deck, party, enemies)
+		_check(not before_heroes[seat - 1].has("button_plating_turn"),
+			label + ": no plating marker exists before the first grant")
+		var receipt := PopResolver.new().apply_button_plating_start_turn(party, 1)
+		_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+			label + ": the start-of-turn rule applies")
+		_check(receipt.get("owner_position") == seat,
+			label + ": the rule binds the Golem by ID to its actual seat")
+		_check(receipt.get("block_gained") == 2 and receipt.get("block_after") == 2,
+			label + ": the receipt reports exactly two Block")
+		_check(receipt.get("turn_ordinal") == 1 and receipt.get("previous_turn_ordinal") == 0,
+			label + ": the receipt reports the applied ordinal and no earlier grant")
+		var after_heroes: Array = party.get_heroes()
+		var expected_golem: Dictionary = before_heroes[seat - 1].duplicate(true)
+		expected_golem["block"] = 2
+		expected_golem["button_plating_turn"] = 1
+		_check(after_heroes[seat - 1] == expected_golem,
+			label + ": only Block and the combat-local turn marker changed on the Golem")
+		for other in [1, 2, 3]:
+			if other == seat:
+				continue
+			_check(after_heroes[other - 1] == before_heroes[other - 1],
+				label + ": the hero in seat " + str(other) + " gains no Block and no marker")
+		_check(after_heroes[seat - 1].get("hp") == 48
+			and after_heroes[seat - 1].get("max_hp") == 48,
+			label + ": the Golem keeps its canonical 48 HP")
+		_check(not after_heroes[seat - 1].has("buttons_popped"),
+			label + ": the passive pops no button")
+		_check(party.get_hero(seat).get("block") == 2,
+			label + ": the Golem really holds the two granted Block")
+		var after_state := _pop_snapshot(deck, party, enemies)
+		_check(after_state["hand"] == before_state["hand"]
+			and after_state["draw"] == before_state["draw"]
+			and after_state["discard"] == before_state["discard"]
+			and after_state["energy"] == before_state["energy"]
+			and after_state["state_energy"] == before_state["state_energy"]
+			and after_state["foes"] == before_state["foes"]
+			and after_state["rng_state"] == before_state["rng_state"]
+			and after_state["rng_seed"] == before_state["rng_seed"],
+			label + ": no card, energy, enemy or seeded RNG state changed")
+
+
+## AC2: one grant per ordinal. Repeated and stale calls are pure refusals, the next real turn
+## reset plus a greater ordinal grants exactly two again, and a fresh combat remembers nothing.
+func _test_plating_turn_dedup() -> void:
+	var party := _plating_party(2)
+	_check(party.start_player_turn(), "dedup fixture: the first turn reset runs")
+	var first := PopResolver.new().apply_button_plating_start_turn(party, 4)
+	_check(first.get("ok") == true and party.get_hero(2).get("block") == 2,
+		"turn four grants exactly two Block")
+	_check(party.get_hero(2).get("button_plating_turn") == 4,
+		"turn four is remembered on the Golem's own party record")
+	var after_first: Array = party.get_heroes()
+	for replay in range(3):
+		var duplicate := PopResolver.new().apply_button_plating_start_turn(party, 4)
+		_check(duplicate.get("ok") == false and duplicate.get("reason") == "duplicate_turn",
+			"a repeated turn-four call is refused")
+		_check(duplicate.get("block_gained") == 0 and duplicate.get("owner_position") == 0,
+			"a repeated call reports no Block and no owner commit")
+		_check(party.get_heroes() == after_first,
+			"a repeated call changes no Block and publishes no second marker")
+	for stale in [3, 1]:
+		var older := PopResolver.new().apply_button_plating_start_turn(party, stale)
+		_check(older.get("ok") == false and older.get("reason") == "duplicate_turn",
+			"an older ordinal " + str(stale) + " is refused")
+		_check(party.get_heroes() == after_first, "an older ordinal changes nothing")
+	_check(party.start_player_turn(), "the second turn reset runs")
+	_check(party.get_hero(2).get("block") == 0,
+		"the second reset cleared the Block the passive granted")
+	_check(party.get_hero(2).get("button_plating_turn") == 4,
+		"the combat-local marker survives the reset boundary")
+	var second := PopResolver.new().apply_button_plating_start_turn(party, 5)
+	_check(second.get("ok") == true and second.get("previous_turn_ordinal") == 4,
+		"turn five applies after turn four")
+	_check(party.get_hero(2).get("block") == 2,
+		"turn five grants precisely two Block, never an accumulated four")
+	_check(party.get_hero(2).get("button_plating_turn") == 5,
+		"the marker advances to the applied ordinal")
+	var duplicate_five := PopResolver.new().apply_button_plating_start_turn(party, 5)
+	_check(duplicate_five.get("ok") == false
+		and duplicate_five.get("reason") == "duplicate_turn",
+		"turn five cannot grant twice either")
+	# A fresh CombatParty is a fresh combat: no remembered ordinal at all.
+	var fresh := _plating_party(1)
+	_check(not fresh.get_hero(1).has("button_plating_turn"),
+		"a newly constructed combat party is not pre-set with a plating marker")
+	_check(fresh.start_player_turn(), "the fresh party's first turn reset runs")
+	var fresh_receipt := PopResolver.new().apply_button_plating_start_turn(fresh, 1)
+	_check(fresh_receipt.get("ok") == true and fresh.get_hero(1).get("block") == 2,
+		"the fresh combat grants its own first-turn two Block")
+	_check(party.get_hero(2).get("button_plating_turn") == 5
+		and party.get_hero(2).get("block") == 2,
+		"another combat party's marker and Block are untouched by the fresh one")
+
+
+## AC3: the granted Block is ordinary owned Block. Two alone cannot pay the five-Block Pop;
+## three more legitimate Block make an authentic held base or upgraded Pop payable with its
+## printed hit, exactly five own Block, one energy and one popped button.
+func _test_plating_pop_synergy() -> void:
+	for card_id: String in POP_PRINTINGS:
+		var printed: int = POP_PRINTINGS[card_id]["damage"]
+		var label := "Button Plating then " + card_id
+		var deck := _pop_deck([card_id])
+		var party := _plating_party(1)
+		_check(party.start_player_turn(), label + ": the authentic turn reset runs")
+		var plating := PopResolver.new().apply_button_plating_start_turn(party, 1)
+		_check(plating.get("ok") == true and party.get_hero(1).get("block") == 2,
+			label + ": the passive grants exactly two Block")
+		_check(deck.hand == [card_id] and deck.energy == 3 and deck.discard_pile.is_empty(),
+			label + ": the passive itself spends no card or energy")
+		_check(not party.get_hero(1).has("buttons_popped"),
+			label + ": the passive pops no button")
+		var enemies := _pop_enemies([40, 40])
+		var refused_before := _pop_snapshot(deck, party, enemies)
+		var refused := PopResolver.new().play_card(deck, party, enemies, card_id, 1)
+		_check(refused.get("ok") == false and refused.get("reason") == "insufficient_block",
+			label + ": two Block alone cannot pay the five-Block Pop")
+		_check(refused.get("block_spent") == 0 and refused.get("buttons_popped") == 0,
+			label + ": the refused Pop reports no payment and no button")
+		_check(_pop_snapshot(deck, party, enemies) == refused_before,
+			label + ": the refused Pop changes no card, energy, Block, foe or RNG state")
+		_check(party.gain_block(1, 3),
+			label + ": the Golem legitimately gains three more ordinary Block")
+		_check(party.get_hero(1).get("block") == 5, label + ": it holds exactly five Block")
+		var paid_before := _pop_snapshot(deck, party, enemies)
+		var receipt := PopResolver.new().play_card(deck, party, enemies, card_id, 1)
+		_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+			label + ": the authentic Pop now resolves")
+		_check(receipt.get("damage") == printed and receipt.get("block_spent") == 5
+			and receipt.get("buttons_popped") == 1,
+			label + ": it keeps its printed hit, five-Block spend and one popped button")
+		_check(party.get_hero(1).get("block") == 0,
+			label + ": exactly the printed five Block are spent")
+		_check(deck.energy == 2 and deck.hand.is_empty() and deck.discard_pile == [card_id],
+			label + ": it spends one energy and exactly one held card")
+		_check(enemies.get_enemy(1).get("hp") == 40 - printed,
+			label + ": the printed " + str(printed) + " damage reaches HP")
+		_check(deck._rng.state == paid_before["rng_state"]
+			and deck._rng.seed == paid_before["rng_seed"],
+			label + ": neither the passive nor the Pop consumes a seeded RNG draw")
+	# The passive is not a played card or Quilt contribution: a real bound tracker is untouched.
+	var quilt_deck := _pop_deck(["button_golem_starter_loose_pop"])
+	var quilt_party := _plating_party(1)
+	var quilt := CombatQuiltBonus.new(quilt_party, quilt_deck)
+	_check(quilt.begin_player_turn(), "quilt fixture opens a real player turn")
+	_check(quilt_party.start_player_turn(), "quilt fixture resets the party Block")
+	var quilt_before: Dictionary = quilt.get_patch_progress()
+	_check(quilt_before.get("active") == true and quilt_before.get("awarded") == false,
+		"quilt fixture starts an unawarded real turn")
+	var quilt_plating := PopResolver.new().apply_button_plating_start_turn(quilt_party, 1)
+	_check(quilt_plating.get("ok") == true and quilt_party.get_hero(1).get("block") == 2,
+		"the quilt fixture really granted the plating Block")
+	_check(quilt.get_patch_progress() == quilt_before,
+		"Button Plating adds no played-card or Quilt progress")
+	_check(quilt.get_patch_progress().get("awarded") == false,
+		"Button Plating awards no Quilt Block")
+
+
+## AC4: every absent, downed, duplicated, malformed or overflowing request is a pure refusal
+## that leaves the whole party record exactly as it was and publishes no turn marker.
+func _test_plating_refusals() -> void:
+	_expect_plating_refusal("no Button Golem in the party",
+		_pop_party(["warden", "seamstress", "tinker"]), 1, "owner_missing")
+	var downed := _plating_party(2)
+	_check(downed.apply_damage(2, 400) and downed.is_downed(2),
+		"downed-Golem fixture has a genuinely torn Golem")
+	_expect_plating_refusal("downed Button Golem", downed, 1, "owner_torn")
+	var duplicate := _plating_party(1)
+	duplicate._heroes[1]["id"] = "button_golem"
+	_check(duplicate.get_hero(2).get("id") == "button_golem",
+		"duplicate-Golem fixture really carries a second Golem record")
+	_expect_plating_refusal("two Button Golems", duplicate, 1, "duplicate_owner")
+	var duplicate_hero := _plating_party(1)
+	duplicate_hero._heroes[2]["id"] = "warden"
+	_check(duplicate_hero.get_hero(2).get("id") == duplicate_hero.get_hero(3).get("id"),
+		"duplicate-hero fixture really repeats a non-Golem id")
+	_expect_plating_refusal("duplicate non-Golem hero id", duplicate_hero, 1, "invalid_roster")
+	var malformed_roster := _plating_party(1)
+	malformed_roster._heroes[1]["position"] = 9
+	_check(malformed_roster.get_hero(2).get("position") == 9,
+		"malformed-roster fixture really stores a wrong seat")
+	_expect_plating_refusal("malformed roster seat", malformed_roster, 1, "invalid_roster")
+	_expect_plating_refusal("invalid party", CombatParty.new([]), 1, "invalid_roster")
+	_expect_plating_refusal("missing party", null, 1, "invalid_request")
+	for bad_ordinal in [0, -1, -100, -9223372036854775807]:
+		_expect_plating_refusal("nonpositive turn ordinal " + str(bad_ordinal),
+			_plating_party(1), bad_ordinal, "invalid_turn_ordinal")
+	for bad_marker in ["3", 3.0, -1, null, true]:
+		var malformed_marker := _plating_party(1)
+		malformed_marker._heroes[0]["button_plating_turn"] = bad_marker
+		_check(malformed_marker.get_hero(1).get("button_plating_turn") == bad_marker,
+			"malformed-marker fixture really stores " + str(bad_marker))
+		_expect_plating_refusal("malformed plating marker " + str(bad_marker),
+			malformed_marker, 4, "malformed_turn_marker")
+	var stale := _plating_party(3)
+	stale._heroes[2]["button_plating_turn"] = 7
+	_check(stale.get_hero(3).get("button_plating_turn") == 7,
+		"stale-marker fixture really remembers turn seven")
+	for stale_ordinal in [7, 6]:
+		_expect_plating_refusal("stale turn ordinal " + str(stale_ordinal), stale,
+			stale_ordinal, "duplicate_turn")
+	var malformed_block := _plating_party(1)
+	malformed_block._heroes[0]["block"] = "5"
+	_check(malformed_block.get_hero(1).get("block") == "5",
+		"malformed-Block fixture really stores a string")
+	_expect_plating_refusal("malformed own Block", malformed_block, 1, "malformed_block")
+	var negative_block := _plating_party(1)
+	negative_block._heroes[0]["block"] = -3
+	_check(negative_block.get_hero(1).get("block") == -3,
+		"negative-Block fixture really stores a negative value")
+	_expect_plating_refusal("negative own Block", negative_block, 1, "malformed_block")
+	var full := _plating_party(1)
+	_check(full.gain_block(1, CombatParty.MAX_INT - 1),
+		"near-cap fixture holds MAX_INT - 1 Block")
+	_expect_plating_refusal("Block gain above MAX_INT", full, 1, "block_overflow")
+	# The exact boundary still commits, atomically, marker included.
+	var exact := _plating_party(2)
+	_check(exact.gain_block(2, CombatParty.MAX_INT - 2),
+		"exact-cap fixture holds MAX_INT - 2 Block")
+	var exact_receipt := PopResolver.new().apply_button_plating_start_turn(exact, 1)
+	_check(exact_receipt.get("ok") == true
+		and exact_receipt.get("block_after") == CombatParty.MAX_INT,
+		"the legitimate sum of exactly MAX_INT succeeds")
+	_check(exact.get_hero(2).get("block") == CombatParty.MAX_INT,
+		"exactly MAX_INT Block is committed")
+	_check(exact.get_hero(2).get("button_plating_turn") == 1,
+		"the exact-boundary grant marks its turn")
+
+
+func _expect_plating_refusal(label: String, party: CombatParty, turn_ordinal: int,
+		reason: String) -> void:
+	var before: Array = party.get_heroes() if party != null else []
+	var receipt := PopResolver.new().apply_button_plating_start_turn(party, turn_ordinal)
+	_check(receipt.get("ok") == false, label + ": refused")
+	_check(receipt.get("reason") == reason,
+		label + ": refusal reason is " + reason + " (got " + str(receipt.get("reason")) + ")")
+	for key: String in ["ok", "reason", "owner_position", "turn_ordinal",
+			"block_gained", "block_after", "previous_turn_ordinal"]:
+		_check(receipt.has(key), label + ": refusal receipt carries " + key)
+	_check(receipt.get("block_gained") == 0 and receipt.get("block_after") == 0
+		and receipt.get("owner_position") == 0,
+		label + ": refusal reports no Block, resulting Block or owner commit")
+	_check(receipt.get("turn_ordinal") == turn_ordinal,
+		label + ": refusal echoes the requested ordinal")
+	if party != null:
+		_check(party.get_heroes() == before,
+			label + ": no hero Block, turn marker or other field changed")
+
+
+## A real three-hero party with the canonical 48 HP Button Golem in the requested genuine seat
+## and two other distinct heroes beside it.
+func _plating_party(seat: int) -> CombatParty:
+	var order: Array = ["warden", "tinker"]
+	order.insert(seat - 1, "button_golem")
+	var hp := {"button_golem": 48, "warden": 40, "tinker": 26}
+	var definitions: Array = []
+	for hero_id: String in order:
+		definitions.append({"id": hero_id, "max_hp": hp[hero_id]})
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid() and party.get_heroes().size() == CombatParty.PARTY_SIZE,
+		"plating fixture has three distinct living heroes")
+	_check(party.get_hero(seat).get("id") == "button_golem"
+		and party.get_hero(seat).get("position") == seat
+		and party.get_hero(seat).get("max_hp") == 48,
+		"plating fixture has the canonical Golem living in seat " + str(seat))
+	return party
+

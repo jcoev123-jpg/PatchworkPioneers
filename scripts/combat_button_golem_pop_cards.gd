@@ -7,6 +7,11 @@ extends RefCounted
 ## Block-before-HP and status-adjusted attack rules, and counts one popped button on
 ## that Golem's authoritative per-combat hero record.
 ##
+## The file also owns the callable Button Plating start-of-turn rule (2 ordinary Block to the
+## single living Golem) beside that paid Pop resolver. It is a preparatory rules entrypoint: the
+## mounted turn flow must call it immediately AFTER CombatParty.start_player_turn() with that
+## path's real turn ordinal, and no live caller does yet.
+##
 ## Data only elsewhere: the starter and reward catalogs are descriptor-only and no live
 ## hand, party-picker, reward or map path registers these IDs yet. This helper is the
 ## callable combat rules layer a later wiring task must call, never a second live attack
@@ -21,6 +26,10 @@ const OWNER_ID := "button_golem"
 const COST := 1
 const BLOCK_COST := 5
 const BUTTONS_KEY := "buttons_popped"
+## Authored Button Plating passive: start of each of the player's turns, gain 2 Block.
+const PLATING_BLOCK := 2
+## Combat-local marker on the Golem's own party record: the last turn ordinal it was granted.
+const PLATING_TURN_KEY := "button_plating_turn"
 const FROM_POSITIONS: Array[int] = [1, 2]
 const TO_POSITIONS: Array[int] = [1, 2]
 
@@ -66,6 +75,82 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	plan["hp_loss"] = hp_loss
 	plan["buttons_popped"] = owner[BUTTONS_KEY]
 	return plan
+
+
+## Button Plating: the authored start-of-player-turn passive of the Button Golem.
+##
+## Call immediately after a successful CombatParty.start_player_turn(), which is the reset
+## boundary that clears the previous turn's Block for every hero. A valid, unique and living
+## Golem may sit in any of the three real seats; it is bound by its unique ID, never by the
+## canonical default seat 1. One successful call adds exactly 2 ordinary Block to that Golem
+## and nothing to either other hero, and remembers the applied turn ordinal on that Golem's
+## own combat-local party record. The same or an older ordinal can never grant Block twice.
+##
+## This helper never resets Block, spends energy, moves a card, draws, touches an enemy, pops a
+## button, adds a Quilt contribution or consumes RNG: it only gains Block and marks the turn,
+## and it marks the turn only when that gain actually succeeded. Every refusal returns the same
+## field set with reason "..." and changes nothing at all.
+func apply_button_plating_start_turn(party: CombatParty, turn_ordinal: int) -> Dictionary:
+	var receipt := {
+		"ok": false, "reason": "invalid_request", "owner_position": 0,
+		"turn_ordinal": turn_ordinal, "block_gained": 0, "block_after": 0,
+		"previous_turn_ordinal": 0,
+	}
+	if party == null:
+		return receipt
+	receipt["reason"] = "invalid_roster"
+	if not _valid_roster(party):
+		return receipt
+	# Bind the Golem to its actual current ID/seat; never assume the canonical seat 1.
+	var owner_position := 0
+	for hero: Dictionary in party._heroes:
+		if hero.get("id") != OWNER_ID:
+			continue
+		if owner_position != 0:
+			receipt["reason"] = "duplicate_owner"
+			return receipt
+		owner_position = int(hero["position"])
+	if owner_position == 0:
+		receipt["reason"] = "owner_missing"
+		return receipt
+	if not _distinct_hero_ids(party):
+		receipt["reason"] = "invalid_roster"
+		return receipt
+	var owner: Dictionary = party._heroes[owner_position - 1]
+	if owner["hp"] <= 0:
+		receipt["reason"] = "owner_torn"
+		return receipt
+	if turn_ordinal <= 0:
+		receipt["reason"] = "invalid_turn_ordinal"
+		return receipt
+	var marker: Variant = owner.get(PLATING_TURN_KEY, 0)
+	if not marker is int or marker < 0:
+		receipt["reason"] = "malformed_turn_marker"
+		return receipt
+	receipt["previous_turn_ordinal"] = marker
+	# The same ordinal, or any older one, is a replayed/stale request.
+	if turn_ordinal <= marker:
+		receipt["reason"] = "duplicate_turn"
+		return receipt
+	var block_value: Variant = owner.get("block")
+	if not block_value is int or block_value < 0:
+		receipt["reason"] = "malformed_block"
+		return receipt
+	var block_now: int = block_value
+	if PLATING_BLOCK > CombatParty.MAX_INT - block_now:
+		receipt["reason"] = "block_overflow"
+		return receipt
+	# gain_block is the authoritative writer; the turn marker follows a real gain only.
+	if not party.gain_block(owner_position, PLATING_BLOCK):
+		receipt["reason"] = "block_refused"
+		return receipt
+	owner[PLATING_TURN_KEY] = turn_ordinal
+	receipt["ok"] = true
+	receipt["reason"] = "applied"
+	receipt["owner_position"] = owner_position
+	receipt["block_gained"] = PLATING_BLOCK
+	receipt["block_after"] = block_now + PLATING_BLOCK
+	return receipt
 
 
 func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
@@ -221,3 +306,38 @@ func _valid_status_rosters(party: CombatParty, enemies: CombatEnemies) -> bool:
 	if not batch.tick_side("heroes", party.get_heroes()).get("ok", false):
 		return false
 	return batch.tick_side("enemies", enemies.get_enemies()).get("ok", false)
+
+
+## Three genuine seats in order with nonempty string IDs and sane per-combat HP records.
+## ID uniqueness is checked separately so a second Golem reports duplicate_owner first.
+func _valid_roster(party: CombatParty) -> bool:
+	if not party.is_valid() or party._heroes.size() != CombatParty.PARTY_SIZE:
+		return false
+	for index in range(CombatParty.PARTY_SIZE):
+		var hero: Variant = party._heroes[index]
+		if not hero is Dictionary:
+			return false
+		var hero_dict: Dictionary = hero
+		if hero_dict.get("position") != index + 1:
+			return false
+		var hero_id: Variant = hero_dict.get("id")
+		if not hero_id is String or hero_id.is_empty():
+			return false
+		var max_hp: Variant = hero_dict.get("max_hp")
+		if not max_hp is int or max_hp <= 0:
+			return false
+		var hp: Variant = hero_dict.get("hp")
+		if not hp is int or hp < 0 or hp > max_hp:
+			return false
+	return true
+
+
+func _distinct_hero_ids(party: CombatParty) -> bool:
+	var seen: Dictionary = {}
+	for hero: Dictionary in party._heroes:
+		var hero_id: String = hero["id"]
+		if seen.has(hero_id):
+			return false
+		seen[hero_id] = true
+	return true
+
