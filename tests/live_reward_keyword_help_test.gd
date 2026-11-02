@@ -1263,8 +1263,9 @@ func _thorns_test(warden: WardenPoolCards, v3_warden: V3WardenPoolCards) -> void
 ## Genuine catalog tests asserting that every authentic shoulder-crow printing
 ## produces exactly one Help row titled Pierce Block, whose explanation mentions
 ## the backmost living enemy, direct damage straight to HP without reducing or
-## consuming enemy Block, Weak / Exposed / Tangled adjustment, and the explicit
-## disclaimer that live hand wiring is pending. Also asserts detached row results,
+## consuming enemy Block, Weak / Exposed / Tangled adjustment, and the truthful
+## statement that the 1-energy cards play from the shared-hand area-action path
+## (cross-checked by tests/live_scarecrow_crow_hand_test.gd). Also asserts detached row results,
 ## immutable catalog records, and fail-closed negative space.
 func _scarecrow_crow_catalog_test(starter: ScarecrowStarterCards, pool: ScarecrowPoolCards) -> void:
 	var cases := [
@@ -1320,8 +1321,14 @@ func _scarecrow_crow_catalog_test(starter: ScarecrowStarterCards, pool: Scarecro
 			"Pierce Block Help mentions direct HP without reducing Block: " + card_id)
 		_check(text.contains("Weak") and text.contains("Exposed") and text.contains("Tangled"),
 			"Pierce Block Help mentions Weak, Exposed and Tangled adjustments: " + card_id)
-		_check(text.contains("authored card rule only") and text.contains("live combat does not yet play"),
-			"Pierce Block Help contains explicit live hand disclaimer: " + card_id)
+		_check(text.contains("Crow Dive (3 damage, 5 upgraded)")
+			and text.contains("Crow Peck (4 damage, 6 upgraded)")
+			and text.contains("cost 1 energy")
+			and text.contains("hero positions 1-3")
+			and text.contains("through the shared-hand area-card action"),
+			"Pierce Block Help states live area-action availability, cost and positions: " + card_id)
+		_check(not text.contains("does not yet play") and not text.contains("authored card rule only"),
+			"Pierce Block Help drops the obsolete live-wiring disclaimer: " + card_id)
 		_check(definition == original and catalog.get_definition(card_id) == original,
 			"Pierce Block Help never mutates catalog definition: " + card_id)
 		_check(CardKeywordGlossary.describe(definition) == rows,

@@ -1510,6 +1510,20 @@ func _scarecrow_any_definition(card_id: String) -> Dictionary:
 	return {}
 
 
+## True when the shipped shared-hand area-action script dispatches this card ID in
+## one of its authored family lists (read from the real script, never a stand-in).
+func _live_area_handles(card_id: String) -> bool:
+	var script: GDScript = load("res://scripts/live_area_attack_action.gd")
+	if script == null:
+		return false
+	var constants := script.get_script_constant_map()
+	for family in ["CROW_IDS", "HARVEST_IDS", "CROW_FLOCK_IDS"]:
+		var ids: Variant = constants.get(family, [])
+		if ids is Array and card_id in ids:
+			return true
+	return false
+
+
 func _row_names(rows: Array[Dictionary]) -> Array[String]:
 	var names: Array[String] = []
 	for row: Dictionary in rows:
@@ -1609,9 +1623,9 @@ func _test_scarecrow_fear_faces() -> void:
 ## every existing row in place with Fear appended last.
 ## AC1: the same row never repeats the obsolete claim that the Scarecrow cannot
 ## be in a live party; it names the Scarecrow as one of the eight selectable
-## heroes that may join any three-hero party, and truthfully says the four
-## single-target sack printings already play Fear from the shared hand while the
-## two area-card families are not applied by that live path.
+## heroes that may join any three-hero party, and truthfully says all eight Fear
+## printings play from the shared hand: the single-target Sack Glare/Grin pair and
+## the all-foe Crow Flock and Harvest Fright through their own area handler.
 func _test_scarecrow_fear_help() -> void:
 	var keyword_order := CardKeywordGlossary.KEYWORD_ORDER
 	_check(keyword_order.count("fear") == 1
@@ -1638,6 +1652,14 @@ func _test_scarecrow_fear_help() -> void:
 			"Fear Help only reads an authentic printing: " + card_id)
 		_check(CardShortRules.is_authored_fear(definition),
 			"the face and Help share one Fear authority: " + card_id)
+		var expected_from: Array = [2, 3] if card_id.begins_with("scarecrow_crow_flock") \
+			else [1, 2, 3]
+		_check(Array(definition.get("from_positions", [])) == expected_from
+			and Array(definition.get("to_positions", [])) == [1, 2, 3],
+			"authored Fear hero and enemy positions match the Help: " + card_id)
+		_check(_live_area_handles(card_id) == (str(entry["target"]) == "enemy_all"),
+			"the live area-action path dispatches exactly the all-foe Fear cards: "
+			+ card_id)
 		var before := definition.duplicate(true)
 		var rows := CardKeywordGlossary.describe(definition)
 		var names := _row_names(rows)
@@ -1671,17 +1693,28 @@ func _test_scarecrow_fear_help() -> void:
 				"Fear Help states Harvest Fright's Weak 2/3: " + card_id)
 			_check(text.contains("adds no damage, Bleed or Blind"),
 				"Fear Help is not extra damage, Bleed or Blind: " + card_id)
-			_check(text.contains("four live sack variants")
-				and text.contains("Sack Glare and Sack Grin")
-				and text.contains("already play from the shared hand")
-				and text.contains("apply this Fear lock to the chosen living enemy"),
-				"Fear Help names the four live held sack variants: " + card_id)
-			_check(text.contains("Crow Flock and Harvest Fright")
-				and text.contains("two authored area-card families")
-				and text.contains("live sack-card path does not play them")
-				and text.contains("their Fear is not yet applied in battle"),
-				"Fear Help keeps both area families out of the live sack path: "
-				+ card_id)
+			_check(text.contains("All eight Fear printings are playable from the shared hand")
+				and text.contains("apply this Fear lock in battle, base and '+' alike")
+				and text.contains("Sack Glare and Sack Grin cost 1 energy from hero positions 1-3")
+				and text.contains("target one living enemy in positions 1-3"),
+				"Fear Help names the playable single-target sack families: " + card_id)
+			_check(text.contains("Crow Flock costs 2 energy from hero positions 2-3")
+				and text.contains("Harvest Fright costs 3 energy from hero positions 1-3")
+				and text.contains("area cards played through the shared-hand area-card action"),
+				"Fear Help names the live area families, costs and positions: " + card_id)
+			_check(text.contains("Crow Flock applies Weak and Fear, with no damage, to every "
+					+ "living enemy in slots 1-3")
+				and text.contains("Harvest Fright first hits every living enemy in slots 1-3 "
+					+ "for 4 damage (6 upgraded), then applies Weak and Fear only to the "
+					+ "survivors"),
+				"Fear Help states the all-foe effects and survivors-only Fear: " + card_id)
+			_check(not text.contains("does not play them")
+				and not text.contains("not yet applied")
+				and not text.contains("not applied by that"),
+				"Fear Help never claims the area families are unwired: " + card_id)
+			_check(not text.contains("sack-card path")
+				and not text.contains("sack handler"),
+				"Fear Help does not imply the sack handler plays area cards: " + card_id)
 			_check(not text.contains("no held card resolves Fear"),
 				"Fear Help no longer denies every held Fear card: " + card_id)
 			_check(not text.contains("not yet part of a live party")
@@ -1710,19 +1743,19 @@ func _test_scarecrow_fear_help() -> void:
 				"Fear Help rows are detached from the caller's record: " + card_id)
 	_check(not shared_text.is_empty(), "the Fear Help row was really inspected")
 	# AC2: the shared explanation itself carries the corrected live-party fact
-	# and distinguishes the four live held sack variants from the two area
-	# families instead of denying every held Fear card.
+	# and names the playable sack and area families instead of denying any
+	# held Fear card.
 	_check(not CardKeywordGlossary.FEAR_EXPLANATION.contains("not yet part of a live party")
 		and not CardKeywordGlossary.FEAR_EXPLANATION.contains("not part of a live party"),
 		"the Fear explanation carries no unselectable-live-party claim")
 	_check(not CardKeywordGlossary.FEAR_EXPLANATION.contains("no held card resolves Fear")
-		and CardKeywordGlossary.FEAR_EXPLANATION.contains("four live sack variants")
-		and CardKeywordGlossary.FEAR_EXPLANATION.contains("already play from the shared hand"),
-		"the Fear explanation names the four live held sack variants")
-	_check(CardKeywordGlossary.FEAR_EXPLANATION.contains("Crow Flock and Harvest Fright")
-		and CardKeywordGlossary.FEAR_EXPLANATION.contains("two authored area-card families")
-		and CardKeywordGlossary.FEAR_EXPLANATION.contains("their Fear is not yet applied in battle"),
-		"the Fear explanation keeps the area families distinct from the live sack path")
+		and CardKeywordGlossary.FEAR_EXPLANATION.contains("Sack Glare and Sack Grin cost 1 energy")
+		and CardKeywordGlossary.FEAR_EXPLANATION.contains("playable from the shared hand"),
+		"the Fear explanation names the playable held sack variants")
+	_check(CardKeywordGlossary.FEAR_EXPLANATION.contains("Crow Flock costs 2 energy")
+		and CardKeywordGlossary.FEAR_EXPLANATION.contains("Harvest Fright costs 3 energy")
+		and not CardKeywordGlossary.FEAR_EXPLANATION.contains("not yet applied"),
+		"the Fear explanation names the live area families")
 	# The base and '+' halves differ only in the authored Weak (and Harvest
 	# Fright's damage): the one-turn lock is never the upgraded number.
 	for pair in [["scarecrow_sack_glare", "scarecrow_sack_glare_plus"],
@@ -1969,6 +2002,10 @@ func _test_scarecrow_crow_help() -> void:
 		_check(not definition.is_empty(), "Crow Help catalog record exists: " + card_id)
 		if definition.is_empty():
 			continue
+		_check(_live_area_handles(card_id)
+			and Array(definition.get("from_positions", [])) == [1, 2, 3]
+			and int(definition.get("cost", -1)) == 1,
+			"the live area-action path plays the 1-energy crow card from 1-3: " + card_id)
 		var before := definition.duplicate(true)
 		var rows := CardKeywordGlossary.describe(definition)
 		var names := _row_names(rows)
@@ -1990,11 +2027,17 @@ func _test_scarecrow_crow_help() -> void:
 				"Crow Help explains HP reduction without consuming Block: " + card_id)
 			_check(text.contains("Weak") and text.contains("Exposed") and text.contains("Tangled"),
 				"Crow Help confirms Weak/Exposed/Tangled adjustments: " + card_id)
-			_check(text.contains("authored card rule only")
-				or text.contains("does not yet play this card"),
-				"Crow Help gives no false promise of live hand wiring: " + card_id)
-			_check(not text.contains("already plays from the shared hand"),
-				"Crow Help does not claim live hand wiring: " + card_id)
+			_check(text.contains("Crow Dive (3 damage, 5 upgraded)")
+				and text.contains("Crow Peck (4 damage, 6 upgraded)")
+				and text.contains("cost 1 energy")
+				and text.contains("hero positions 1-3")
+				and text.contains("through the shared-hand area-card action")
+				and text.contains("choose their target automatically"),
+				"Crow Help states the real playable area-action path: " + card_id)
+			_check(not text.contains("does not yet play")
+				and not text.contains("authored card rule only")
+				and not text.contains("not yet"),
+				"Crow Help drops the obsolete unwired disclaimer: " + card_id)
 		_check(CardKeywordGlossary.describe(definition) == rows,
 			"repeated Crow Help reads are identical: " + card_id)
 		_check(definition == before
