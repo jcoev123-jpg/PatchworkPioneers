@@ -121,9 +121,16 @@ const TEAL := Color("#214b50")
 const OXBLOOD := Color("#713544")
 const INK := Color("#191b2a")
 const DIM := Color("#655b58")
-const CARD_FABRIC := Color("#f1e3cf")
-const PATCH_FABRIC := Color("#dbe8dd")
-const EXIT_FABRIC := Color("#efd2a4")
+## BAL 2026-11-02 Art-v3 dark repair: the five offer tickets are distinct
+## dark gothic fabrics - midnight-slate cards, deep moss patch, oxblood Leave
+## - with candle-gold sewn edges and warm bone-cream lettering instead of
+## the old pale cream slab.
+const CARD_FABRIC := Color("#2b3148")
+const PATCH_FABRIC := Color("#29473a")
+const EXIT_FABRIC := Color("#542b38")
+const DISABLED_FABRIC := Color("#413c49")
+const FADED_CREAM := Color("#b5a795")
+const TICKET_EDGE := Color("#c9a45f")
 const REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
 ## One slow deterministic presentation cycle (~17s) for the authored market
 ## image: about a 1% scale breath plus a 3-4 px drift, both exactly at rest
@@ -369,14 +376,21 @@ func _button(value: String, at: Vector2, extent: Vector2, fill: Color, font_size
 	button.focus_mode = Control.FOCUS_ALL
 	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	button.add_theme_font_size_override("font_size", font_size)
-	for state in ["font_color", "font_hover_color", "font_pressed_color",
-			"font_hover_pressed_color", "font_focus_color"]:
-		button.add_theme_color_override(state, INK)
-	button.add_theme_color_override("font_disabled_color", DIM)
-	button.add_theme_stylebox_override("normal", _style(fill, THREAD))
-	button.add_theme_stylebox_override("hover", _style(fill.lightened(0.06), OXBLOOD))
-	button.add_theme_stylebox_override("pressed", _style(fill.darkened(0.10), OXBLOOD))
-	button.add_theme_stylebox_override("disabled", _style(Color("#dad1c5"), DIM))
+	# Warm legible lettering on dark fabric: bone cream at rest and on
+	# focus, candle gold while hovered or pressed, and a dimmed cream that
+	# still reads on the muted disabled cloth.
+	for state in ["font_color", "font_focus_color"]:
+		button.add_theme_color_override(state, CREAM)
+	for state in ["font_hover_color", "font_pressed_color",
+			"font_hover_pressed_color"]:
+		button.add_theme_color_override(state, GOLD)
+	button.add_theme_color_override("font_disabled_color", FADED_CREAM)
+	button.add_theme_stylebox_override("normal", _style(fill, TICKET_EDGE))
+	button.add_theme_stylebox_override("hover", _style(fill.lightened(0.10),
+			TICKET_EDGE.lightened(0.10)))
+	button.add_theme_stylebox_override("pressed", _style(fill.darkened(0.15),
+			TICKET_EDGE.darkened(0.15)))
+	button.add_theme_stylebox_override("disabled", _style(DISABLED_FABRIC, THREAD))
 	button.add_theme_stylebox_override("focus", _focus_style())
 	add_child(button)
 	# Opaque contrasting fabric carries the text; the imported sewn-button
@@ -1285,8 +1299,8 @@ func _refresh() -> void:
 		# fresh rebind drop the previous visit's text instead of keeping it.
 		button.tooltip_text = _card_tooltip(i) if open else ""
 		button.add_theme_stylebox_override("normal", _style(
-				CARD_FABRIC if open else Color("#dad1c5"),
-				OXBLOOD if open and not button.disabled else DIM))
+				CARD_FABRIC if open else DISABLED_FABRIC,
+				TICKET_EDGE if open and not button.disabled else THREAD))
 		# The normal style is replaced above; preserve its matching text
 		# pocket instead of letting refresh reset only this state's inset.
 		var face := button.get_theme_stylebox("normal") as StyleBoxFlat
@@ -1300,8 +1314,8 @@ func _refresh() -> void:
 	patch_button.set_meta("offer_kind", PATCH_KIND if open else "")
 	patch_button.set_meta("offer_id", str(_patch_offer()["id"]) if open else "")
 	patch_button.add_theme_stylebox_override("normal", _style(
-			PATCH_FABRIC if open else Color("#dad1c5"),
-			TEAL if open and not patch_button.disabled else DIM))
+			PATCH_FABRIC if open else DISABLED_FABRIC,
+			TICKET_EDGE if open and not patch_button.disabled else THREAD))
 	if open:
 		_attach(patch_button, _request_buy.bind(0, true, patch_button, _epoch, _visit))
 	leave_button.text = LEAVE_TEXT

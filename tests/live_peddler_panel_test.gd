@@ -10,6 +10,9 @@ extends SceneTree
 ## or keyboard focus, without changing a quote, minting an intent, spending gold
 ## or consuming RNG. The panel mounts under a 1280x720 Control; every settlement
 ## still goes through RunPeddlerVisit itself.
+## BAL 2026-11-02 Art-v3: the mounted layout also proves the dark gothic
+## ticket palette (opaque dark fabrics, warm cream/gold lettering, distinct
+## hover/pressed/disabled faces) instead of the retired pale-face checks.
 
 const NODE := "v3_peddler_stop"
 const PARTY := ["warden", "seamstress", "tinker"]
@@ -560,6 +563,19 @@ func _sold_card_projection_case(visit: RunPeddlerVisit) -> void:
 			"restored authentic card caption cannot generate an intent during inspection")
 
 
+## WCAG-style relative luminance/contrast: the dark Art-v3 repair is proven
+## by text/background contrast, not by the old pale-surface color checks.
+func _linear_luminance(color: Color) -> float:
+	var linear := color.srgb_to_linear()
+	return 0.2126 * linear.r + 0.7152 * linear.g + 0.0722 * linear.b
+
+
+func _contrast_ratio(ink: Color, paper: Color) -> float:
+	var high := maxf(_linear_luminance(ink), _linear_luminance(paper))
+	var low := minf(_linear_luminance(ink), _linear_luminance(paper))
+	return (high + 0.05) / (low + 0.05)
+
+
 func _layout(visit: RunPeddlerVisit) -> void:
 	var screen := Rect2(host.get_global_rect().position, host.size)
 	_check(screen.encloses(panel.get_global_rect()) and panel.size == LivePeddlerPanel.PANEL_SIZE,
@@ -625,13 +641,15 @@ func _layout(visit: RunPeddlerVisit) -> void:
 		var face := button.get_theme_stylebox("normal") as StyleBoxFlat
 		var edge := button.get_node_or_null("FabricEdging") as Panel
 		_check(face != null and face.bg_color.a == 1.0
-				and face.bg_color.get_luminance() > 0.6
+				and face.bg_color.get_luminance() < 0.3
 				and face.border_width_top >= 4
 				and face.get_corner_radius(CORNER_TOP_LEFT) > 0
-				and button.get_theme_color("font_color").get_luminance() < 0.25
+				and button.get_theme_color("font_color").get_luminance() > 0.65
+				and _contrast_ratio(button.get_theme_color("font_color"),
+						face.bg_color) >= 4.5
 				and edge != null and edge.mouse_filter == Control.MOUSE_FILTER_IGNORE
 				and edge.get_theme_stylebox("panel") is StyleBoxTexture,
-				"opaque, clearly bordered card fabric uses imported sewn-button edge")
+				"opaque, clearly bordered dark card fabric uses imported sewn-button edge")
 	_check(panel.patch_button.get_node_or_null("HeroPortrait") == null
 			and panel.leave_button.get_node_or_null("HeroPortrait") == null,
 			"patch and Leave remain original text-only actions without hero art")
@@ -671,6 +689,62 @@ func _layout(visit: RunPeddlerVisit) -> void:
 			and not panel.leave_button.disabled,
 			"free Leave is visible, carries its 0 key label and is enabled")
 	_check(_fits(panel.leave_button), "Leave text fits its sewn button")
+	# BAL 2026-11-02 Art-v3 dark repair: all five mounted tickets are distinct
+	# dark gothic fabrics with warm cream/gold lettering, and hover, pressed
+	# and disabled keep visibly different faces on every one of them.
+	var leave_face := panel.leave_button.get_theme_stylebox("normal") as StyleBoxFlat
+	_check(card_face != null and patch_face != null and leave_face != null
+			and card_face.bg_color.a == 1.0 and patch_face.bg_color.a == 1.0
+			and leave_face.bg_color.a == 1.0
+			and card_face.bg_color.get_luminance() < 0.3
+			and patch_face.bg_color.get_luminance() < 0.3
+			and leave_face.bg_color.get_luminance() < 0.3
+			and card_face.bg_color != patch_face.bg_color
+			and card_face.bg_color != leave_face.bg_color
+			and patch_face.bg_color != leave_face.bg_color
+			and card_face.bg_color.b > card_face.bg_color.r
+			and patch_face.bg_color.g > patch_face.bg_color.r
+			and leave_face.bg_color.r > leave_face.bg_color.g
+			and panel.leave_button.get_node_or_null("FabricEdging") != null,
+			"midnight-slate cards, deep moss patch and oxblood Leave are distinct opaque dark fabrics")
+	for choice in panel.card_buttons + [panel.patch_button, panel.leave_button]:
+		var normal := choice.get_theme_stylebox("normal") as StyleBoxFlat
+		var hover := choice.get_theme_stylebox("hover") as StyleBoxFlat
+		var pressed := choice.get_theme_stylebox("pressed") as StyleBoxFlat
+		var disabled := choice.get_theme_stylebox("disabled") as StyleBoxFlat
+		if normal == null or hover == null or pressed == null or disabled == null:
+			_check(false, "mounted ticket defines normal, hover, pressed and disabled faces")
+			continue
+		_check(hover.bg_color.a == 1.0 and pressed.bg_color.a == 1.0
+				and disabled.bg_color.a == 1.0
+				and hover.bg_color != normal.bg_color
+				and hover.bg_color.get_luminance() > normal.bg_color.get_luminance()
+				and pressed.bg_color != normal.bg_color
+				and pressed.bg_color != hover.bg_color
+				and pressed.bg_color.get_luminance() < normal.bg_color.get_luminance()
+				and disabled.bg_color != normal.bg_color,
+				"hover, pressed and disabled are visibly distinct opaque faces")
+		var ink: Color = choice.get_theme_color("font_color")
+		var hover_ink: Color = choice.get_theme_color("font_hover_color")
+		var pressed_ink: Color = choice.get_theme_color("font_pressed_color")
+		var focus_ink: Color = choice.get_theme_color("font_focus_color")
+		var disabled_ink: Color = choice.get_theme_color("font_disabled_color")
+		_check(ink.get_luminance() > 0.65 and hover_ink.get_luminance() > 0.5
+				and pressed_ink.get_luminance() > 0.5 and focus_ink.get_luminance() > 0.65
+				and _contrast_ratio(ink, normal.bg_color) >= 4.5
+				and _contrast_ratio(hover_ink, hover.bg_color) >= 4.5
+				and _contrast_ratio(pressed_ink, pressed.bg_color) >= 4.5
+				and disabled_ink.get_luminance() > 0.35
+				and disabled.bg_color.get_luminance() < 0.5
+				and _contrast_ratio(disabled_ink, disabled.bg_color) >= 4.0,
+				"warm bone-cream and candle-gold lettering reads on every dark state")
+		if ResourceLoader.exists(LivePeddlerPanel.BUTTON_ART, "Texture2D"):
+			var focus_ring := choice.get_theme_stylebox("focus") as StyleBoxTexture
+			_check(focus_ring != null and not focus_ring.draw_center,
+					"sewn gold focus ring stays an authored texture-only outline")
+		else:
+			_check(choice.get_theme_stylebox("focus") != null,
+					"focus fallback ring remains defined")
 	# VIS-A: each of the five actions is one compact, clearly bordered sewn
 	# ticket, so the illustrated market column stays uncovered beside them
 	# instead of one edge-to-edge slab.
