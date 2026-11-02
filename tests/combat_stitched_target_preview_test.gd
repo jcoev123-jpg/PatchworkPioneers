@@ -9,6 +9,7 @@ var catalog := StarterCards.new()
 
 
 func _initialize() -> void:
+	_test_red_thread_previews()
 	_test_knit_previews()
 	_test_warden_blocks()
 	_test_legal_halves()
@@ -27,6 +28,34 @@ func _initialize() -> void:
 	print("combat_stitched_target_preview_test: ", "PASS" if failures.is_empty() else "FAIL",
 			" (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_red_thread_previews() -> void:
+	for id in ["seamstress_v3_needle_rain", "seamstress_v3_needle_rain_plus",
+			"seamstress_v3_scarlet_knot", "seamstress_v3_scarlet_knot_plus"]:
+		for reverse in [false, true]:
+			var c := _pair("warden_strike" if reverse else id, id if reverse else "warden_strike")
+			c.enemies = _four_enemies()
+			_check(c.enemies.apply_damage(1, 999) and c.enemies.is_slain(1), "red-thread preview has dead original front")
+			var preview := _guarded_call(c, "authentic held red-thread preview")
+			_check(preview.playable and preview.halves.size() == 2, "all four red-thread printings preview in either order")
+			if preview.playable:
+				var half: Dictionary = preview.halves[1 if reverse else 0]
+				_check(half.card_id == id and half.owner == "seamstress" and half.requires_selection
+					and half.target_kind == "enemy_single" and half.side == "enemy"
+					and half.target_positions == [2, 3] and half.affected_positions.is_empty(),
+					"only living original printed slots, excluding dead one and living fourth")
+			for field in ["id", "owner", "effects", "to_positions", "cost"]:
+				var forged := _pair("warden_strike" if reverse else id, id if reverse else "warden_strike")
+				var key := "second_half" if reverse else "first_half"
+				match field:
+					"id": forged.rest._descriptors[forged.id][key].id = "seamstress_v3_foreign_rain"
+					"owner": forged.rest._descriptors[forged.id][key].owner = "warden"
+					"effects": forged.rest._descriptors[forged.id][key].effects.bleed = 99
+					"to_positions": forged.rest._descriptors[forged.id][key].to_positions = [4]
+					"cost": forged.rest._descriptors[forged.id][key].cost = 0
+				forged.snapshot = forged.rest.get_snapshot()
+				_rejected(forged, "forged red-thread " + field)
 
 
 func _test_knit_previews() -> void:

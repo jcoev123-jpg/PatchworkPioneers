@@ -167,6 +167,18 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 			if not sight.get("ok", false):
 				return failure
 			results.append(sight)
+		elif half.id in CombatSeamstressV3RedThreadCards.STITCHED_IDS:
+			if bonuses[index] != 0:
+				return failure
+			if _support._torn != null:
+				for hero in _support._torn.read_state().get("heroes", []):
+					if hero.get("id") == "seamstress" and int(hero.get("hp", 0)) <= 0:
+						return failure
+			var red_thread := CombatSeamstressV3RedThreadCards.new().resolve_staged_half(
+				staged_party, staged_enemies, half, target)
+			if not red_thread.get("ok", false):
+				return failure
+			results.append(red_thread)
 		elif kind in ["enemy_single", "enemy_all"]:
 			# The shared starter area resolver sweeps every living slot. On an
 			# opted-in four-foe roster a living slot outside this half's authored

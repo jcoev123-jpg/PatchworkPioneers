@@ -13,6 +13,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_red_thread_halves()
 	_test_four_foe_plain_halves()
 	_test_knit_halves()
 	_test_plain_pool_halves()
@@ -53,6 +54,76 @@ func _initialize() -> void:
 		printerr(failure)
 	print("combat_stitched_cards_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_red_thread_halves() -> void:
+	var ids := ["seamstress_v3_needle_rain", "seamstress_v3_needle_rain_plus",
+		"seamstress_v3_scarlet_knot", "seamstress_v3_scarlet_knot_plus"]
+	for i in range(ids.size()):
+		var id: String = ids[i]
+		for reverse in [false, true]:
+			for block in [1, 30]:
+				var replay: Array = []
+				for attempt in range(2):
+					var c := _rest_fixture("warden_shield_bash" if reverse else id,
+						id if reverse else "warden_shield_bash", 44001)
+					_check(c.enemies.gain_block(2, block), "real Block before red-thread hit")
+					c.party._heroes[1].statuses = {"weak": 1}
+					c.enemies._enemies[1].statuses = {"exposed": 1, "bleed": 2, "weak": 2}
+					var descriptor: Dictionary = c.rest.get_snapshot().descriptors[c.id]
+					_check(descriptor.cost == 3 and descriptor.first_half.owner != descriptor.second_half.owner
+						and c.deck.hand == [c.id] and c.party.get_hero(2).statuses == {"weak": 1},
+						"authentic capped cross-owner descriptor and genuinely Weak owner held")
+					var before := _snapshot(c)
+					var result := _play(c, 1 if reverse else 2, 2 if reverse else 1)
+					_check(result.ok and result.halves.size() == 2, "red-thread and Bash both resolve in either order")
+					if not result.ok:
+						continue
+					var half: Dictionary = result.halves[1 if reverse else 0]
+					var damage: int = [2, 3, 0, 0][i]
+					var bleed: int = [4, 5, 3, 4][i]
+					var weak: int = 1 if i >= 2 else 0
+					_check(half.card_id == id and half.target_position == 2 and half.damage == damage
+						and half.printed_damage == damage and half.bleed_applied == bleed and half.passive_bleed == 1
+						and half.weak_applied == weak and half.block_absorbed == mini(block, damage)
+						and half.hp_loss == maxi(0, damage - block), "exact single-floor Weak/Exposed, passive and Block-before-HP receipt")
+					_check(c.enemies.get_enemy(2).hp == 12 - maxi(0, damage - block)
+						and c.enemies.get_enemy(2).block == maxi(0, block - damage)
+						and c.enemies.get_enemy(2).statuses == {"exposed": 1, "bleed": 2 + bleed, "weak": 2 + weak},
+						"exact target HP, Block and additive statuses; Knot never attacks")
+					_check(c.enemies.get_enemy(1).hp == 4 and c.enemies.get_enemy(1).statuses == {"weak": 1}, "other owner's ordered Bash resolves exactly once")
+					_check(c.deck.energy == 0 and c.deck.hand.is_empty() and c.deck.discard_pile == [c.id]
+						and c.deck._rng.state == before[5] and c.rest.get_snapshot() == before[10], "one capped composite charge/discard, stable ledger and RNG")
+					replay.append([result, _snapshot(c)])
+					_reject(c, 1 if reverse else 2, 2 if reverse else 1, "red-thread replay refused")
+				_check(replay.size() == 2 and replay[0] == replay[1], "seeded red-thread exact replay")
+			for mode in ["dead", "target", "negative", "owner", "missing", "descriptor", "resource", "overflow", "late", "inactive"]:
+				var c := _rest_fixture("warden_strike" if reverse else id, id if reverse else "warden_strike", 44002)
+				var target := 2
+				match mode:
+					"dead": _check(c.enemies.apply_damage(2, 999), "dead red-thread target precondition")
+					"target": target = 4
+					"negative": target = -1
+					"owner": _check(c.party.apply_damage(2, 999), "downed actual red-thread owner")
+					"missing": c.party._heroes[1].id = "lantern_monk"
+					"descriptor": c.rest._descriptors[c.id]["second_half" if reverse else "first_half"].effects.bleed = 99
+					"resource": c.deck.combat_state.energy = 0
+					"overflow": c.enemies._enemies[1].statuses = {"bleed": CombatEnemies.MAX_INT}
+					"inactive": _check(c.deck.end_turn(), "real turn ended")
+				_reject(c, 1 if reverse else target, (4 if mode == "late" else target) if reverse else (4 if mode == "late" else 1), "red-thread atomic refusal " + mode)
+	# Sight Glass sets Exposed before or after Rain: order changes the real hit.
+	for reverse in [false, true]:
+		var c := _rest_fixture("tinker_sight_glass" if reverse else ids[1], ids[1] if reverse else "tinker_sight_glass", 44003)
+		_check(c.enemies.apply_damage(1, 999) and c.enemies.gain_block(2, 1), "dead original front, live second with Block")
+		var before := _snapshot(c)
+		var result := _play(c, 2, 2)
+		_check(result.ok and result.halves.size() == 2, "real Sight Glass and Rain+ ordered halves")
+		if result.ok:
+			var half: Dictionary = result.halves[1 if reverse else 0]
+			_check(half.damage == (4 if reverse else 3) and half.block_absorbed == 1
+				and c.enemies.get_enemy(2).hp == (9 if reverse else 10)
+				and c.enemies.get_enemy(2).statuses == {"exposed": 2, "bleed": 5}
+				and c.deck.energy == 1 and c.deck.discard_pile == [c.id] and c.deck._rng.state == before[5], "pre-hit snapshots respect half order and original slot without RNG drift")
 
 
 func _test_knit_halves() -> void:

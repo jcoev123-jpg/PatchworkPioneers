@@ -153,6 +153,11 @@ func _half_preview(half: Dictionary, index: int, party_slots: Array[Dictionary],
 	# shape from the real authored card, never from a caller-supplied half.
 	var starter := _catalog.get_definition(id)
 	var authored := starter
+	if id in CombatSeamstressV3RedThreadCards.STITCHED_IDS:
+		var red_thread := CombatSeamstressV3RedThreadCards.new()
+		if not red_thread.is_authentic_card(id):
+			return {}
+		authored = V3SeamstressPoolCards.new().get_definition(id)
 	if CombatYarnRangerKnitCards.CARDS.has(id):
 		authored = CombatYarnRangerKnitCards.knit_definition(id)
 	if authored.is_empty() and id in POOL_HEAL_IDS:
