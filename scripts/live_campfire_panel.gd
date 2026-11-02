@@ -15,6 +15,7 @@ const PANEL_SIZE := Vector2(880, 600)
 const HEAL_TEXT := "1 Heal · 30%"
 const LEAVE_TEXT := "0 Leave · free"
 const REST_ART_PATH := "res://assets/paper/backgrounds/rest_camp.png"
+const AMBIENT_SCENE := preload("res://scripts/live_battle_ambient.gd")
 const REST_REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
 ## One authored decoration: the already-present rest art, cropped to the sewn
 ## frame and slightly dimmed so cream text stays legible above it.
@@ -61,15 +62,22 @@ var rest_art_texture: Texture2D
 ## follows ProjectSettings accessibility/reduced_motion (default false).
 var reduced_motion_override: Variant = null
 var _rest_art_elapsed := 0.0
+## One recycled authored-image scraps layer, never a focus or mouse target.
+var ambient_layer: Control
 
 
 func _ready() -> void:
 	size = PANEL_SIZE
 	custom_minimum_size = PANEL_SIZE
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	clip_contents = true
 	resized.connect(queue_redraw)
 	rest_art_texture = _load_rest_art()
 	visibility_changed.connect(_on_rest_art_visibility_changed)
+	ambient_layer = AMBIENT_SCENE.new()
+	add_child(ambient_layer) # first child: below every HP label and action
+	ambient_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ambient_layer.retire()
 	title_label = _label("CAMPFIRE", Vector2(48, 31), Vector2(770, 62), 44, MUSTARD)
 	for i in range(3):
 		hero_labels.append(_label("", Vector2(70, 161 + i * 97),
@@ -80,6 +88,7 @@ func _ready() -> void:
 	leave_button.tooltip_text = "0 → Leave (2 also works)"
 	_refresh()
 	_focus_default()
+	_sync_ambient()
 
 
 func _draw() -> void:
@@ -198,6 +207,26 @@ func set_reduced_motion_override(value: Variant) -> void:
 	reduced_motion_override = value
 	if not rest_art_active():
 		_reset_rest_art()
+	_sync_ambient()
+
+
+## The visit is the sole admission authority. No script-level art or run
+## randomness is consulted; the renderer is parked until every gate holds.
+func _retire_ambient() -> void:
+	if is_instance_valid(ambient_layer) and (not ambient_layer.profile.is_empty() \
+			or ambient_layer.visible or ambient_layer.is_processing()):
+		ambient_layer.retire()
+
+
+func _sync_ambient() -> void:
+	if not is_instance_valid(ambient_layer):
+		return
+	if not is_inside_tree() or not is_visible_in_tree() or rest_art_texture == null \
+			or _reduced_motion_active() or not _source_current():
+		_retire_ambient()
+		return
+	if ambient_layer.profile != "scraps" or not ambient_layer._visit_dressing or not ambient_layer.visible:
+		ambient_layer.configure_visit_scraps()
 
 
 func _reduced_motion_active() -> bool:
@@ -217,16 +246,21 @@ func _reset_rest_art() -> void:
 func _on_rest_art_visibility_changed() -> void:
 	if not is_visible_in_tree():
 		_reset_rest_art()
+	_sync_ambient()
 
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_EXIT_TREE:
 		_reset_rest_art()
+		_retire_ambient()
+	elif what == NOTIFICATION_VISIBILITY_CHANGED and is_node_ready():
+		_sync_ambient()
 
 
 ## Accumulated presentation delta alone drives the decoration; it never calls the
 ## visit, the recovery service, the route or any RNG.
 func _process(delta: float) -> void:
+	_sync_ambient()
 	if not rest_art_active():
 		_reset_rest_art()
 		return
@@ -288,6 +322,11 @@ func _button(caption: String, at: Vector2, dimensions: Vector2, fill: Color) -> 
 
 ## Binding before mount is allowed; only the actual service creates the snapshot.
 func bind(visit: RunCampfireVisit) -> void:
+	# A repeated authentic same-source bind preserves the motes phase; a new,
+	# modified, consumed or invalid source starts fresh on its next admission.
+	var same_current := visit != null and is_same(visit, _visit) and _source_current()
+	if not same_current:
+		_retire_ambient()
 	_epoch += 1
 	_retire_callbacks()
 	_visit = null
@@ -311,6 +350,7 @@ func bind(visit: RunCampfireVisit) -> void:
 		show()
 		_refresh()
 		_focus_default()
+		_sync_ambient()
 
 
 func close() -> void:
@@ -429,6 +469,7 @@ func _request(action: String, generation: int, source: RunCampfireVisit) -> bool
 	# the presentation clock and queue the static baseline redraw before the
 	# controller receives the request. The view still commits no run state.
 	_reset_rest_art()
+	_retire_ambient()
 	decision_requested.emit({
 		"action": action,
 		"source_visit": source,

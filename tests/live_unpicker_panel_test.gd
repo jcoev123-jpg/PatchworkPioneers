@@ -213,6 +213,7 @@ func _run() -> void:
 	await _test_stitched()
 	await _test_frayed_debt_negatives()
 	await _test_rejections()
+	await _test_scraps_ambient()
 	await _test_backdrop_motion()
 	_check(randi() == global_next, "mounting completed before guard; all browsing/decisions preserve global RNG")
 	panel.queue_free()
@@ -1383,3 +1384,173 @@ func _test_backdrop_motion() -> void:
 			"a focused Enter Leave still submits one free intent while the art animates")
 	panel.set_process(true)
 
+
+
+
+## True quoted source, selection and one-time controller settlement remain
+## authoritative while a clipped seven-mote sewn ambience is mounted beneath.
+func _test_scraps_ambient() -> void:
+	panel.set_process(true)
+	panel.set_reduced_motion_override(false)
+	var visit := _make(150, 0)
+	var source := visit.read_state()
+	_check(visit.is_valid() and not visit.is_consumed()
+			and source.price == 75 and visit.quote().price == 75
+			and panel.panel_art_texture != null,
+			"scraps: genuine priced open visit and imported reward panel")
+	await _bind(visit)
+	var layer := panel.ambient_layer
+	var backing := panel.get_child(0) as Panel
+	_check(is_instance_valid(layer) and backing != null and backing.clip_contents
+			and layer.get_parent() == backing and layer.get_index() < backing.get_child_count() - 1
+			and panel.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
+			"scraps: exactly one clipped backing child below stitched outline and actions")
+	_check(layer.profile == "scraps" and layer.fast and layer._visit_dressing
+			and layer.visible_budget() == 7 and is_equal_approx(layer.self_modulate.a, 0.42)
+			and layer.is_visible_in_tree() and layer.is_processing()
+			and layer.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and layer.focus_mode == Control.FOCUS_NONE,
+			"scraps: seven authored inert motes at 0.42 opacity")
+	var rects := [panel.title_label.get_global_rect(), panel.wallet_label.get_global_rect(),
+			panel.choice_scroll.get_global_rect(), panel.remove_button.get_global_rect(),
+			panel.leave_button.get_global_rect(), panel.card_buttons[0].get_global_rect()]
+	var initial_scroll := panel.choice_scroll.scroll_vertical
+	layer._time = 2.5
+	panel._sync_ambient()
+	panel._refresh()
+	_check(is_equal_approx(layer._time, 2.5),
+			"scraps: repeat refresh of the same source does not restart clock")
+	panel.bind(visit)
+	_check(is_equal_approx(layer._time, 2.5) and layer.profile == "scraps"
+			and panel.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
+			"scraps: a second genuine same-source bind keeps one renderer and phase")
+	await _settle()
+	_check(panel.title_label.get_global_rect() == rects[0]
+			and panel.wallet_label.get_global_rect() == rects[1]
+			and panel.choice_scroll.get_global_rect() == rects[2]
+			and panel.remove_button.get_global_rect() == rects[3]
+			and panel.leave_button.get_global_rect() == rects[4]
+			and panel.card_buttons[0].get_global_rect() == rects[5]
+			and panel.choice_scroll.scroll_vertical == initial_scroll
+			and panel.card_buttons[0].has_focus()
+			and panel.remove_button.disabled and not panel.leave_button.disabled
+			and intents.is_empty() and visit.read_state() == source,
+			"scraps: scroll, focus, price, all hit rectangles and source unchanged")
+	await _activate(panel.card_buttons[0], false)
+	_check(not panel.remove_button.disabled and intents.is_empty(),
+			"scraps: physical row selection only previews the authentic card")
+	await _activate(panel.remove_button, false)
+	_check(intents.size() == 1 and layer.profile.is_empty() and not layer.visible
+			and not layer.is_processing() and layer._time == 0.0,
+			"scraps: physical Remove emits just one intent and parks immediately")
+	var receipt := Controller.apply(visit, intents[0]) if intents.size() == 1 else {}
+	_check(receipt.get("ok") == true and receipt.get("charged_gold") == 75
+			and receipt.get("gold") == 75 and receipt.get("prior_removals") == 1
+			and visit.is_consumed(),
+			"scraps: controller alone removes one card and charges exactly 75")
+	panel.remove_button.pressed.emit()
+	panel.leave_button.pressed.emit()
+	_check(intents.size() == 1, "scraps: spent visit never emits another signal")
+
+	var escalated := _make(200, 1)
+	var quote := escalated.quote()
+	panel.bind(escalated)
+	_check(escalated.is_valid() and quote.price == 100
+			and panel.remove_button.text == "1 Remove · 100 gold"
+			and layer.profile == "scraps" and layer._time == 0.0,
+			"scraps: replacement source restarts at zero with true 75+25*N quote")
+	intents.clear()
+	var before_leave := escalated.read_state()
+	panel.leave_button.pressed.emit()
+	var free := Controller.apply(escalated, intents[0]) if intents.size() == 1 else {}
+	_check(intents.size() == 1 and free.get("ok") == true
+			and free.get("charged_gold") == 0 and free.get("gold") == before_leave.gold
+			and free.get("deck") == before_leave.deck and layer.profile.is_empty(),
+			"scraps: free Leave preserves deck/wallet and immediately retires")
+	var external := _make(125, 2)
+	panel.bind(external)
+	layer._time = 3.0
+	var external_state := external.read_state()
+	_check(external.leave(external_state.visit_id, external_state.node_id, external_state).ok,
+			"scraps: direct external service consumption prerequisite")
+	await _settle()
+	_check(layer.profile.is_empty() and not layer.is_processing() and layer._time == 0.0
+			and intents.size() == 1,
+			"scraps: externally consumed source retires without a new choice")
+	var changed := _make(150)
+	panel.bind(changed)
+	layer._time = 1.5
+	changed._gold = 149
+	await _settle()
+	_check(layer.profile.is_empty() and layer._time == 0.0,
+			"scraps: stale source/read_state mismatch auto-retires")
+	var invalid := RunUnpickerVisit.new(NODE, [], 75, 0, {}, 1)
+	panel.bind(invalid)
+	_check(not invalid.is_valid() and layer.profile.is_empty() and layer._time == 0.0,
+			"scraps: invalid service remains dark")
+	var consumed := _make(150)
+	var consumed_state := consumed.read_state()
+	consumed.leave(consumed_state.visit_id, consumed_state.node_id, consumed_state)
+	panel.bind(consumed)
+	_check(consumed.is_consumed() and layer.profile.is_empty(),
+			"scraps: consumed service never re-admits")
+	panel.bind(null)
+	_check(layer.profile.is_empty() and not layer.visible and layer._time == 0.0,
+			"scraps: null bind immediately parks all presentation")
+
+	var fresh := _make(150)
+	panel.bind(fresh)
+	layer._time = 4.0
+	panel.hide()
+	await _settle()
+	_check(layer.profile.is_empty() and layer._time == 0.0 and not layer.is_processing(),
+			"scraps: hide immediately retires the motes")
+	panel.show()
+	await _settle()
+	_check(layer.profile == "scraps", "scraps: visible unspent visit can resume fresh")
+	var host := Control.new()
+	root.add_child(host)
+	panel.reparent(host)
+	await _settle()
+	layer._time = 2.0
+	host.hide()
+	await _settle()
+	_check(layer.profile.is_empty() and layer._time == 0.0 and not layer.is_processing(),
+			"scraps: hidden ancestor retires immediately")
+	host.show()
+	await _settle()
+	_check(layer.profile == "scraps", "scraps: ancestor reopening admits same renderer")
+	panel.reparent(root)
+	host.queue_free()
+	await _settle()
+	var saved_art := panel.panel_art_texture
+	panel.panel_art_texture = null
+	panel._sync_ambient()
+	_check(layer.profile.is_empty() and layer._time == 0.0,
+			"scraps: no panel texture means no animation")
+	panel.panel_art_texture = saved_art
+	panel._sync_ambient()
+	_check(layer.profile == "scraps", "scraps: restored import re-admits authored motes")
+	panel.set_reduced_motion_override(true)
+	_check(layer.profile.is_empty() and layer._time == 0.0 and not layer.is_processing(),
+			"scraps: focused reduced-motion override immediately parks renderer")
+	panel.set_reduced_motion_override(null)
+	var setting: Variant = ProjectSettings.get_setting(LiveUnpickerPanel.REDUCED_MOTION_SETTING, false)
+	ProjectSettings.set_setting(LiveUnpickerPanel.REDUCED_MOTION_SETTING, true)
+	panel._sync_ambient()
+	_check(layer.profile.is_empty(), "scraps: project reduced motion is respected")
+	ProjectSettings.set_setting(LiveUnpickerPanel.REDUCED_MOTION_SETTING, setting)
+	panel._sync_ambient()
+	_check(layer.profile == "scraps", "scraps: restoring motion restarts one renderer")
+	root.remove_child(panel)
+	_check(layer.profile.is_empty() and layer._time == 0.0 and not layer.is_processing(),
+			"scraps: detached panel immediately parks")
+	root.add_child(panel)
+	await _settle()
+	panel.close()
+	_check(layer.profile.is_empty() and layer._time == 0.0 and not layer.visible,
+			"scraps: close retires even after attach")
+	panel.bind(_make(150, 0))
+	_check(layer.profile == "scraps" and layer._time == 0.0
+			and panel.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
+			"scraps: fresh clean reopen reuses precisely one renderer")
