@@ -2,7 +2,13 @@ class_name LiveRagDuelistRiposteHand
 extends Node
 ## Battle-scoped paid self-card adapter. The Riposte and Dodge services own all effects.
 
-var _allowed_card_ids: Array = CombatRagDuelistRiposteCards.CARDS.keys() + CombatRagDuelistDodgeCards.CARDS.keys()
+## Cape Slip/+ and Cape Flourish/+ are owned by the shared support hand (V3-1),
+## which presents the real mounted self-cast and its one-shot Dodge. This presenter
+## keeps its own binding only for the Riposte printings, so a drawn cape copy has
+## exactly ONE input owner. The paid Dodge service stays available to
+## `_can_pay`, which therefore never admits an ID this presenter does not bind.
+const DODGE_IDS: Array[String] = []
+var _allowed_card_ids: Array = CombatRagDuelistRiposteCards.CARDS.keys() + DODGE_IDS
 
 var _service := CombatRagDuelistRiposteCards.new()
 var _dodge := CombatRagDuelistDodgeCards.new()

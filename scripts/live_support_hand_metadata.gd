@@ -1,7 +1,8 @@
 extends "res://scripts/live_hand_card_metadata.gd"
 ## Display-only extension of the shared live-hand card metadata service for Button
-## Golem's two Eyelet Guard printings, (cycle 390) Tinker's two Jury-rig printings and
-## (V3-1) the Lantern Monk's ally-targeting Moth Shroud pair.
+## Golem's two Eyelet Guard printings, (cycle 390) Tinker's two Jury-rig printings,
+## (V3-1) the Lantern Monk's ally-targeting Moth Shroud pair and the Rag Duelist's
+## four cape self-Dodge printings.
 ##
 ## The shared service (scripts/live_hand_card_metadata.gd) belongs to another
 ## coding lane, so this presenter-local subclass never edits it: every other ID
@@ -27,6 +28,10 @@ var _loom_rules := CombatSeamstressV3CleansingCards.new()
 ## face and tooltip authority for its two printings: the printed Block and the
 ## one-shot Dodge token come from the very catalog record that paid resolver authenticates.
 var _shroud_rules := CombatLanternMonkShroudCards.new()
+## The Rag Duelist's accepted self-Dodge resolver (V3-1) is the only face and tooltip
+## authority for its four cape printings: the printed cost and the one-shot Dodge
+## come from the very catalog record that paid resolver authenticates.
+var _cape_rules := CombatRagDuelistDodgeCards.new()
 
 ## Read-only catalog authenticator. It never plays a card, never owns an armed
 ## mode and is never handed to the fight: the ONE armed authority lives on
@@ -42,6 +47,10 @@ func _definition(card_id: String) -> Dictionary:
 		# `is_supported_card` authenticates the exact catalog record and its base/'+'
 		# link before this read-only face ever shows a name, cost, Block or Dodge.
 		return _shroud_rules._catalog_definition(card_id)
+	if _cape_rules.is_supported_card(card_id):
+		# The same authenticating read for the four self-only cape printings: a rewritten
+		# owner, cost, seat, target, effect or upgrade link keeps the unknown face.
+		return _cape_rules._catalog_definition(card_id)
 	if _jury_rules.is_supported_card(card_id):
 		return CombatTinkerV3JuryRigCards.jury_rig_definition(card_id)
 	if _loom_rules.is_supported_party_card(card_id):
@@ -65,6 +74,11 @@ func _rules(id: String) -> String:
 		if record.is_empty():
 			return ""
 		return "Give a living ally %d Block. Dodge: their next incoming attack misses once." % int(record.get("effects", {}).get("block", 0))
+	if _cape_rules.is_supported_card(id):
+		var cape: Dictionary = _definition(id)
+		if cape.is_empty():
+			return ""
+		return "Dodge the next attack aimed at this hero once; unused, it expires at your turn end."
 	if _jury_rules.is_supported_card(id):
 		var record: Dictionary = _definition(id)
 		if record.is_empty():
@@ -106,6 +120,15 @@ func base_effect_text(card_id: String, include_pips: bool = true) -> String:
 			+ "Give the chosen ally %d Block and arm Dodge: the next incoming attack on that ally misses and spends the one-shot Dodge, so it deals no damage. Moth Shroud keeps an already-armed Dodge at 1 instead of stacking it, and casting the card never spends Dodge. Torn heroes are excluded; the Monk may veil itself.\n%s") % [
 				str(shroud.get("display_name", card_id)), int(shroud.get("cost", -1)),
 				_positions(shroud.get("from_positions", [])), shroud_block, shroud_pips]
+	if _cape_rules.is_supported_card(card_id):
+		var cape: Dictionary = _definition(card_id)
+		if cape.is_empty():
+			return "Unknown card"
+		var cape_pips: String = _pip_legend(cape) if include_pips else ""
+		return ("%s; Rag Duelist; %d energy\nFrom %s; To self\n"
+			+ "Dodge the next attack aimed at this hero once: it misses and deals no HP or Block damage, and that attempt spends the one-shot Dodge. Playing another cape refreshes an armed Dodge to 1 instead of stacking it, and an unused token expires at this hero's turn end. No target choice.\n%s") % [
+				str(cape.get("display_name", card_id)), int(cape.get("cost", -1)),
+				_positions(cape.get("from_positions", [])), cape_pips]
 	if _jury_rules.is_supported_card(card_id):
 		var card: Dictionary = _definition(card_id)
 		if card.is_empty():
@@ -162,6 +185,10 @@ var _jury_playable: Dictionary = {}
 ## The shared renderer knows only catalog affordability. Moth Shroud is useful only
 ## while the mounted shared hand really admits it, so the face follows that preflight.
 var _shroud_playable: Dictionary = {}
+## The self-only cape printings follow the mounted shared hand's own paid
+## admission: held copy, living Duelist in an authored seat, printed energy and
+## this exact fight, turn and hand.
+var _cape_playable: Dictionary = {}
 
 
 func _update_visual(panel: Control) -> void:
@@ -169,6 +196,9 @@ func _update_visual(panel: Control) -> void:
 	if not _bindings.has(panel):
 		return
 	var card_id: String = _bindings[panel].get("id", "")
+	if _cape_rules.is_supported_card(card_id):
+		_apply_cape_visual(panel, card_id)
+		return
 	if _shroud_rules.is_supported_card(card_id):
 		_apply_shroud_visual(panel, card_id)
 		return
@@ -192,7 +222,24 @@ func visual_state(panel) -> Dictionary:
 		state["playable"] = bool(_jury_playable[panel])
 	if _shroud_playable.has(panel):
 		state["playable"] = bool(_shroud_playable[panel])
+	if _cape_playable.has(panel):
+		state["playable"] = bool(_cape_playable[panel])
 	return state
+
+
+## A cape is enable-able only by the mounted shared hand's own paid admission:
+## the held copy, a living Rag Duelist in an authored seat, printed energy and an
+## active turn. Catalog knowledge alone never lights the face.
+func _apply_cape_visual(panel: Control, card_id: String) -> void:
+	var presenter = _app.get_node_or_null("LiveSupportHand") if _app != null else null
+	var playable: bool = presenter != null and is_instance_valid(presenter) \
+		and presenter.has_method("rag_duelist_cape_actionable") \
+		and bool(presenter.rag_duelist_cape_actionable(panel, card_id))
+	_cape_playable[panel] = playable
+	var colour := Color.WHITE if playable or _app == null else Color(0.72, 0.70, 0.68)
+	if panel.self_modulate != colour:
+		panel.self_modulate = colour
+		panel.queue_redraw()
 
 
 ## Moth Shroud is enable-able only by the mounted shared hand's own paid admission:
@@ -213,4 +260,5 @@ func _apply_shroud_visual(panel: Control, card_id: String) -> void:
 func _unbind(panel) -> void:
 	_jury_playable.erase(panel)
 	_shroud_playable.erase(panel)
+	_cape_playable.erase(panel)
 	super._unbind(panel)
