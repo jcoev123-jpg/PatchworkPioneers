@@ -1392,6 +1392,17 @@ func _test_fallback_tickets() -> void:
 			panel._style_choice_button(button, "res://assets/paper/ui/event_ticket_missing_test.png")
 			button.add_theme_font_size_override("font_size", font_size)
 			_check_ticket_skin(button, "fallback wallet=" + str(wallet_mode), false)
+		var flat_faces: Array[Color] = []
+		var rectangles: Array[Rect2] = []
+		for button in panel.get_choice_buttons():
+			flat_faces.append((button.get_theme_stylebox("normal") as StyleBoxFlat).bg_color)
+			rectangles.append(button.get_global_rect())
+		panel._advance_ticket_motion(0.45)
+		for i in range(panel.get_choice_buttons().size()):
+			var button: Button = panel.get_choice_buttons()[i]
+			_check((button.get_theme_stylebox("normal") as StyleBoxFlat).bg_color == flat_faces[i]
+				and button.get_global_rect() == rectangles[i],
+				"missing ticket PNG stays flat/static and leaves original hit rectangle " + str(i))
 		await _check_ticket_input_states(false)
 		panel.close_event()
 		await _frames()
