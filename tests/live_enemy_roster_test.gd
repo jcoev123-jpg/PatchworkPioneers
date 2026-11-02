@@ -283,20 +283,20 @@ func _v3_hero_fallbacks(app, presenter) -> void:
 	# An authored idle loop strip is cut into square frames and only replaces the still at rest.
 	var loop_art: Dictionary = presenter.art_for("seamstress")
 	var strip := loop_art.get("idle_loop") as Texture2D
-	_check(strip != null and strip.get_width() == strip.get_height() * 16
+	_check(strip != null and strip.get_width() == strip.get_height() * 13
 		and ROSTER_ART.art_paths("seamstress").get("idle_loop") == "res://assets/paper/heroes/seamstress_idle.png",
-		"the Seamstress idle loop strip resolves by authoritative ID as sixteen square frames")
+		"the Seamstress idle loop strip resolves by authoritative ID as thirteen square frames")
 	host.bind_actor("seamstress", loop_art)
 	host.idle_phase = 0.0
 	var first_frame: Texture2D = host.idle_frame(host.pose_texture())
 	host.idle_phase = 0.25
 	var later_frame: Texture2D = host.idle_frame(host.pose_texture())
-	_check(host.idle_frames.size() == 16 and host.current_texture() == loop_art.idle
+	_check(host.idle_frames.size() == 13 and host.current_texture() == loop_art.idle
 		and host.pose_texture() == loop_art.idle and first_frame is AtlasTexture
 		and later_frame is AtlasTexture and first_frame != later_frame,
 		"a standing hero paints its idle loop while placement still uses the still image")
-	_check(loop_art.get("attack_loop") is Texture2D and host.attack_frames.size() == 12,
-		"the shipped transparent Seamstress attack strip retains its twelve committed frames")
+	_check(loop_art.get("attack_loop") == null and host.attack_frames.is_empty(),
+		"the dark Seamstress ships a held attack pose and no swing strip")
 	_check(host.idle_frame(loop_art.attack) == loop_art.attack,
 		"the committed attack pose is never replaced by a loop frame")
 	# An authored attack swing strip follows the lunge: stance at both ends, strike at its peak.
@@ -382,9 +382,9 @@ func _idle_strip_safety(app, presenter) -> void:
 			"the mounted Warden/Tinker play their Web-safe idle strip: " + hero.actor_id)
 	var seam_art: Dictionary = presenter.art_for("seamstress")
 	_check(seam_art.get("idle") is Texture2D and seam_art.get("idle_loop") is Texture2D
-		and seamstress.idle_frames.size() == 16
+		and seamstress.idle_frames.size() == 13
 		and seamstress.idle_frame(seamstress.pose_texture()) is AtlasTexture,
-		"the real mounted Seamstress retains all sixteen transparent idle frames")
+		"the real mounted Seamstress retains all thirteen transparent idle frames")
 	var still_image := Image.create(16, 16, false, Image.FORMAT_RGBA8)
 	still_image.fill(Color.TRANSPARENT)
 	still_image.fill_rect(Rect2i(5, 3, 6, 12), Color("b38e6f"))
