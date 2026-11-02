@@ -44,10 +44,7 @@ func _open_sixth(f: Dictionary, negatives: bool, warden_rear: bool = false) -> L
 	if warden_rear:
 		_check(app.run_heroes[1].id == "warden" and app.run_heroes[0].id != "warden",
 			"real pick-three places required Warden behind another living hero")
-	var btn := _route_action(f.path[4])
-	print("VITAL_DEBUG: seed=", f.seed, " path[4]=", f.path[4], " btn_valid=", is_instance_valid(btn), " btn_dis=", btn.disabled if is_instance_valid(btn) else "none", " party=", app.run_heroes.map(func(h): return h.id))
 	await _click(_route_action(f.path[4]))
-	print("VITAL_DEBUG: panel=", is_instance_valid(app.wallet_event_panel), " mode=", app.wallet_event_panel._wallet_mode if is_instance_valid(app.wallet_event_panel) else "none")
 	var wallet: LiveEventChoicePanel = app.wallet_event_panel
 	_check(is_instance_valid(wallet) and wallet._wallet_mode, "first generic remains actual wallet story")
 	if not is_instance_valid(wallet):
@@ -255,6 +252,16 @@ func _later_wallet() -> void:
 			continue
 		var path := _event_path(map, map.get_legal_choices(), 7)
 		if path.is_empty():
+			continue
+		# The fifth Event must be an ordinary wallet story: replay the real toll and
+		# single-draw oracle, and skip seeds whose draw reaches a dedicated-visit Event.
+		var toll := RunNeedleToll.new({"heroes": CombatParty.new(app._load_party_definitions()).get_heroes(),
+			"wallet": {"gold": 0, "scraps": 0}, "deck": app._load_starter_deck()}, rng)
+		if not toll.pay_toll("warden").ok:
+			continue
+		var pool: Array = _generic_route_ids()
+		pool.sort()
+		if pool[rng.randi_range(0, pool.size() - 1)] in ["frayed_debt_parcel", RunFatePinAuction.EVENT_ID]:
 			continue
 		var events: Array = []
 		var transit := {}

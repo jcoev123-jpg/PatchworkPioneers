@@ -180,7 +180,7 @@ func _fixtures() -> Dictionary:
 		107698, 129720, 145986, 154818, 175270, 206049, 325821, 366404])
 	# Genuine map/toll/rotation witnesses for the shifted sorted pool after admitting
 	# Threadmill Sewing Circle; IDs and draws are always revalidated below.
-	hints.append_array([14522, 86462, 122179, 164251, 170539, 214827, 218480,
+	hints.append_array([2172745, 14522, 86462, 122179, 164251, 170539, 214827, 218480,
 		245085, 258112, 273654, 329026, 377428, 392622, 400253, 429319,
 		704452, 828490])
 	for candidate_index in range(hints.size() + 499999):

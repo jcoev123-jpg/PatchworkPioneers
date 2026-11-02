@@ -17,7 +17,8 @@ func _parcel_path(map: RunMap, choices: Array, events: int, terminal: String = "
 				if not onward.is_empty():
 					return [id] + onward
 			continue
-		if node.type not in ["Event", "Treasure", "Campfire", "Unpicker", "SewingCircle", "PatchStall"]:
+		# A Patch Stall visit advances the run RNG even on Leave, so it is not RNG-neutral transit.
+		if node.type not in ["Event", "Treasure", "Campfire", "Unpicker", "SewingCircle"]:
 			continue
 		var tail := _parcel_path(map, node.outgoing, events - (1 if node.type == "Event" else 0), terminal)
 		if not tail.is_empty():
