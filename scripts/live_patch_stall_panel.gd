@@ -80,6 +80,12 @@ const RARE_IDENTITIES := {
 		"heal_cap": "max_hp", "uses_per_combat": 1,
 	},
 }
+## The two unlocked P12 Heirlooms supplement the ordinary/P8 audit only
+## after their complete authored records pass canonical authentication.
+const NEEDLE_ECHO_SHORT := "+1 damage on the first confirmed Pinned-enemy hit each turn"
+const NEEDLE_ECHO_FULL := "Once per turn, the first confirmed hit by this living, untorn wearer on a Pinned enemy deals exactly +1 damage."
+const SHARED_HEM_SHORT := "+1 Block once/turn when a different living hero actually gains Block"
+const SHARED_HEM_FULL := "Once per turn, after a different living hero actually gains Block, this living, untorn wearer gains exactly +1 Block."
 
 class SewnBorder extends Control:
 	func _ready() -> void:
@@ -419,7 +425,7 @@ func bind(visit: RunPatchStallVisit) -> void:
 	if visit != null and visit.is_valid() and not visit.is_consumed():
 		var state: Dictionary = visit.read_state()
 		var quote: Dictionary = visit.quote()
-		var powers := RunAuthoredPatchDefinitions.load_power_definitions()
+		var powers := RunAuthoredPatchDefinitions.load_eligible_power_definitions(true)
 		var slots: Dictionary = {}
 		for record in powers:
 			if typeof(record) == TYPE_DICTIONARY and record.has("id") and record.has("slot"):
@@ -503,12 +509,13 @@ func _wearer_caption(i: int) -> String:
 ## The optional inputs allow tests to supply contradictory records without
 ## editing the shipped files or undermining source quote validation.
 func _trusted_power_previews(slots: Dictionary, catalogs: Dictionary = {},
-		rare_source: Variant = null) -> Dictionary:
+		rare_source: Variant = null, heirloom_source: Variant = null) -> Dictionary:
 	var verified: Dictionary = RunPatchWearerSummary._authority(catalogs)
 	var known_slots: Dictionary = verified.get("slots", {})
 	var previews: Dictionary = {}
 	for id in slots:
-		if RARE_IDENTITIES.has(id) or not SHORT_RULES.has(id) 				or not known_slots.has(id) or slots[id] != known_slots[id]:
+		if RARE_IDENTITIES.has(id) or RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED.has(id) \
+				or not SHORT_RULES.has(id) or not known_slots.has(id) or slots[id] != known_slots[id]:
 			continue
 		var full: String = RunPatchWearerSummary._resolve_rules_text(id, known_slots)
 		if not full.is_empty():
@@ -516,43 +523,82 @@ func _trusted_power_previews(slots: Dictionary, catalogs: Dictionary = {},
 
 	var rares: Variant = rare_source
 	if rares == null:
-		rares = JSON.parse_string(FileAccess.get_file_as_string(
-				"res://data/patches/mpw_synergy_patches.json"))
-	if typeof(rares) != TYPE_ARRAY:
-		return previews
-	var matched := {}
-	var duplicates := {}
-	for record in rares:
-		if typeof(record) != TYPE_DICTIONARY:
-			continue
-		var id: Variant = record.get("id")
-		if typeof(id) != TYPE_STRING or not RARE_IDENTITIES.has(id):
-			continue
-		if matched.has(id):
-			duplicates[id] = true
-			continue
-		matched[id] = record
-	for id in RARE_IDENTITIES:
-		if duplicates.has(id) or not slots.has(id) or not matched.has(id) 				or slots[id] != RARE_IDENTITIES[id]["slot"]:
-			continue
-		var record: Dictionary = matched[id]
-		var consistent := true
-		for key in RARE_IDENTITIES[id]:
-			if not record.has(key) or record[key] != RARE_IDENTITIES[id][key]:
-				consistent = false
-				break
-		if not consistent:
-			continue
-		if id == "relay_bobbin":
-			previews[id] = {
-				"short": "+1 shared energy (cap 3) when ally uses your Pin, 1/combat",
-				"full": "Once per combat, if a different living hero consumes a Pinned token placed by this living, untorn wearer (confirmed receipt), gain +1 shared energy, capped at 3."
-			}
-		elif id == "hearth_lining":
-			previews[id] = {
-				"short": "First earned Quilt bonus/combat heals wearer 2 HP",
-				"full": "Once per combat, at the first EARNED Quilt bonus, heal this living, untorn wearer 2 HP, up to maximum HP."
-			}
+		var rare_path := "res://data/patches/mpw_synergy_patches.json"
+		if FileAccess.file_exists(rare_path):
+			rares = JSON.parse_string(FileAccess.get_file_as_string(rare_path))
+	if typeof(rares) == TYPE_ARRAY:
+		var matched := {}
+		var duplicates := {}
+		for record in rares:
+			if typeof(record) != TYPE_DICTIONARY:
+				continue
+			var id: Variant = record.get("id")
+			if typeof(id) != TYPE_STRING or not RARE_IDENTITIES.has(id):
+				continue
+			if matched.has(id):
+				duplicates[id] = true
+				continue
+			matched[id] = record
+		for id in RARE_IDENTITIES:
+			if duplicates.has(id) or not slots.has(id) or not matched.has(id) \
+					or slots[id] != RARE_IDENTITIES[id]["slot"]:
+				continue
+			var record: Dictionary = matched[id]
+			var consistent := true
+			for key in RARE_IDENTITIES[id]:
+				if not record.has(key) or record[key] != RARE_IDENTITIES[id][key]:
+					consistent = false
+					break
+			if not consistent:
+				continue
+			if id == "relay_bobbin":
+				previews[id] = {
+					"short": "+1 shared energy (cap 3) when ally uses your Pin, 1/combat",
+					"full": "Once per combat, if a different living hero consumes a Pinned token placed by this living, untorn wearer (confirmed receipt), gain +1 shared energy, capped at 3."
+				}
+			elif id == "hearth_lining":
+				previews[id] = {
+					"short": "First earned Quilt bonus/combat heals wearer 2 HP",
+					"full": "Once per combat, at the first EARNED Quilt bonus, heal this living, untorn wearer 2 HP, up to maximum HP."
+				}
+
+	var heirlooms: Variant = heirloom_source
+	if heirlooms == null:
+		var heirloom_path := "res://data/patches/mpw_heirloom_patches.json"
+		if FileAccess.file_exists(heirloom_path):
+			heirlooms = JSON.parse_string(FileAccess.get_file_as_string(heirloom_path))
+	if typeof(heirlooms) == TYPE_ARRAY:
+		var matched_heirlooms := {}
+		var duplicate_heirlooms := {}
+		for record in heirlooms:
+			if typeof(record) != TYPE_DICTIONARY:
+				continue
+			var id: Variant = record.get("id")
+			if typeof(id) != TYPE_STRING or not RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED.has(id):
+				continue
+			if matched_heirlooms.has(id):
+				duplicate_heirlooms[id] = true
+				continue
+			matched_heirlooms[id] = record
+		for id in RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED:
+			if duplicate_heirlooms.has(id) or not slots.has(id) or not matched_heirlooms.has(id):
+				continue
+			var record: Dictionary = matched_heirlooms[id]
+			if not RunAuthoredPatchDefinitions._valid_heirloom(record):
+				continue
+			var required: Dictionary = RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED[id]
+			if slots[id] != required["slot"]:
+				continue
+			if id == "needle_echo":
+				previews[id] = {
+					"short": NEEDLE_ECHO_SHORT,
+					"full": NEEDLE_ECHO_FULL
+				}
+			elif id == "shared_hem":
+				previews[id] = {
+					"short": SHARED_HEM_SHORT,
+					"full": SHARED_HEM_FULL
+				}
 	return previews
 
 func _offer_caption(i: int) -> String:

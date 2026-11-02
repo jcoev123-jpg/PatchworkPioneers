@@ -214,6 +214,7 @@ func _run() -> void:
 	await _leave_case(true, false)
 	await _fail_closed()
 	await _scarce_stock_cases(slot_map)
+	await _unlocked_heirloom_cases(slot_map)
 	_check(rng.state == expected_run, "all panel actions preserve seeded run RNG")
 	_check(randi() == expected_global, "all mounted actions preserve global RNG")
 	panel.queue_free()
@@ -724,6 +725,75 @@ func _named_power_cases(power_slots: Dictionary) -> void:
 		var wrong_rares := panel._trusted_power_previews(power_slots, {}, corrupted)
 		_check(not wrong_rares.has("relay_bobbin") and not wrong_rares.has("hearth_lining"),
 				"rare wrong energy cap or unearned Quilt condition cannot be advertised")
+	var heirloom_source: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/mpw_heirloom_patches.json"))
+	_check(heirloom_source is Array and heirloom_source.size() >= 2,
+			"authored P12 heirloom catalog exists")
+	var eligible_slots := {}
+	for record in RunAuthoredPatchDefinitions.load_eligible_power_definitions(true):
+		eligible_slots[record["id"]] = record["slot"]
+	_check(eligible_slots.has("needle_echo") and eligible_slots["needle_echo"] == "HEAD",
+			"eligible power projection knows needle_echo in HEAD slot")
+	_check(eligible_slots.has("shared_hem") and eligible_slots["shared_hem"] == "ARM",
+			"eligible power projection knows shared_hem in ARM slot")
+	var canonical_heirlooms := panel._trusted_power_previews(eligible_slots, {}, null, heirloom_source)
+	_check(canonical_heirlooms.has("needle_echo") and canonical_heirlooms.has("shared_hem"),
+			"canonical heirloom catalog provides previews for needle_echo and shared_hem")
+	if canonical_heirlooms.has("needle_echo"):
+		_check(canonical_heirlooms["needle_echo"]["short"] == LivePatchStallPanel.NEEDLE_ECHO_SHORT,
+				"needle_echo short text matches canonical specification")
+		_check(canonical_heirlooms["needle_echo"]["full"] == LivePatchStallPanel.NEEDLE_ECHO_FULL,
+				"needle_echo full tooltip matches canonical specification")
+	if canonical_heirlooms.has("shared_hem"):
+		_check(canonical_heirlooms["shared_hem"]["short"] == LivePatchStallPanel.SHARED_HEM_SHORT,
+				"shared_hem short text matches canonical specification")
+		_check(canonical_heirlooms["shared_hem"]["full"] == LivePatchStallPanel.SHARED_HEM_FULL,
+				"shared_hem full tooltip matches canonical specification")
+	if heirloom_source is Array:
+		var corrupted_amount: Array = heirloom_source.duplicate(true)
+		for record in corrupted_amount:
+			if record.get("id") == "needle_echo":
+				record["bonus_damage"] = 99
+			if record.get("id") == "shared_hem":
+				record["block"] = 99
+		var wrong_amount := panel._trusted_power_previews(eligible_slots, {}, null, corrupted_amount)
+		_check(not wrong_amount.has("needle_echo") and not wrong_amount.has("shared_hem"),
+				"corrupted heirloom bonus_damage/block amount refuses power preview")
+
+		var corrupted_trigger: Array = heirloom_source.duplicate(true)
+		for record in corrupted_trigger:
+			if record.get("id") == "needle_echo":
+				record["trigger"] = "wrong_trigger"
+			if record.get("id") == "shared_hem":
+				record["trigger"] = "wrong_trigger"
+		var wrong_trigger := panel._trusted_power_previews(eligible_slots, {}, null, corrupted_trigger)
+		_check(not wrong_trigger.has("needle_echo") and not wrong_trigger.has("shared_hem"),
+				"corrupted heirloom trigger refuses power preview")
+
+		var corrupted_slot: Array = heirloom_source.duplicate(true)
+		for record in corrupted_slot:
+			if record.get("id") == "needle_echo":
+				record["slot"] = "ARM"
+			if record.get("id") == "shared_hem":
+				record["slot"] = "HEAD"
+		var wrong_cat_slot := panel._trusted_power_previews(eligible_slots, {}, null, corrupted_slot)
+		_check(not wrong_cat_slot.has("needle_echo") and not wrong_cat_slot.has("shared_hem"),
+				"mismatched heirloom catalog slot refuses power preview")
+
+		var wrong_map := eligible_slots.duplicate()
+		wrong_map["needle_echo"] = "ARM"
+		wrong_map["shared_hem"] = "HEAD"
+		var wrong_slot_previews := panel._trusted_power_previews(wrong_map, {}, null, heirloom_source)
+		_check(not wrong_slot_previews.has("needle_echo") and not wrong_slot_previews.has("shared_hem"),
+				"mismatched slot mapping refuses power preview")
+
+		var duplicate_catalog: Array = heirloom_source.duplicate(true)
+		for record in heirloom_source:
+			if record.get("id") == "needle_echo":
+				duplicate_catalog.append(record.duplicate(true))
+		var dup_previews := panel._trusted_power_previews(eligible_slots, {}, null, duplicate_catalog)
+		_check(not dup_previews.has("needle_echo"),
+				"duplicate heirloom catalog record refuses power preview")
 	# A real quoted visit with unknown power stock fails at bind rather than
 	# creating a fictitious click or hiding its authoritative identity.
 	var unknown := RunPatchStallVisit.new("unsupported_patch", PARTY, DECK, [], 70,
@@ -1713,3 +1783,184 @@ func _ambient_fallback_case() -> void:
 			"missing art still forwards authentic free Leave to independent controller")
 	fallback.queue_free()
 	await process_frame
+
+func _unlocked_heirloom_cases(power_slots: Dictionary) -> void:
+	var authored: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/shop/initial_offers.json"))
+	if typeof(authored) != TYPE_DICTIONARY or not authored.has("trinkets"):
+		_check(false, "heirloom fixture needs the shipped priced catalog")
+		return
+
+	var late_owned: Array = []
+	for listing in authored["trinkets"]:
+		if typeof(listing) != TYPE_DICTIONARY:
+			continue
+		var id: Variant = listing.get("id")
+		if typeof(id) != TYPE_STRING:
+			continue
+		if id != "button_eye":
+			late_owned.append(id)
+	_check(not late_owned.has("needle_echo") and not late_owned.has("shared_hem"),
+			"Heirlooms are unowned in late-run fixture")
+
+	# Locked/default sampler excludes the two P12 IDs:
+	var locked_rng := RandomNumberGenerator.new()
+	locked_rng.seed = 424242
+	var locked_sample := RunShopPurchases.sample_patch_stall_offers(
+			locked_rng, authored["trinkets"], late_owned, null, false)
+	_check(locked_sample.get("ok") == true, "locked sampler succeeds")
+	for offer in locked_sample.get("offers", []):
+		_check(offer.get("id") != "needle_echo" and offer.get("id") != "shared_hem",
+				"locked sampler excludes Heirloom ID: " + str(offer.get("id")))
+
+	var default_rng := RandomNumberGenerator.new()
+	default_rng.seed = 424242
+	var default_sample := RunShopPurchases.sample_patch_stall_offers(
+			default_rng, authored["trinkets"], late_owned)
+	_check(default_sample.get("ok") == true, "default sampler succeeds")
+	for offer in default_sample.get("offers", []):
+		_check(offer.get("id") != "needle_echo" and offer.get("id") != "shared_hem",
+				"default sampler excludes Heirloom ID: " + str(offer.get("id")))
+
+	# Genuine unlocked deterministic quote containing both authored Heirlooms:
+	var unlocked_rng := RandomNumberGenerator.new()
+	unlocked_rng.seed = 424242
+	var unlocked_sample := RunShopPurchases.sample_patch_stall_offers(
+			unlocked_rng, authored["trinkets"], late_owned, null, true)
+	_check(unlocked_sample.get("ok") == true and unlocked_sample.get("offers") is Array
+			and unlocked_sample["offers"].size() == 3,
+			"unlocked sampler returns exactly three offers")
+	if unlocked_sample.get("ok") != true or unlocked_sample.get("offers", []).size() != 3:
+		return
+
+	var sample_offers: Array = unlocked_sample["offers"]
+	var sampled_ids := {}
+	for offer in sample_offers:
+		sampled_ids[offer.get("id")] = offer
+	_check(sampled_ids.has("needle_echo") and sampled_ids.has("shared_hem"),
+			"unlocked late-run sampler drew both authored Heirlooms")
+	_check(sampled_ids.get("needle_echo", {}).get("price") == 100,
+			"Needle Echo quoted at canonical 100 gold")
+	_check(sampled_ids.get("shared_hem", {}).get("price") == 100,
+			"Shared Hem quoted at canonical 100 gold")
+
+	# Pass through a genuine RunPatchStallVisit:
+	var gold := 250
+	var visit := RunPatchStallVisit.new("heirloom_stall_visit", PARTY, DECK, late_owned, gold, sample_offers)
+	_check(visit.is_valid() and visit.read_state().get("status") == "available",
+			"unlocked heirloom visit is valid and available")
+	var before_state: Dictionary = visit.read_state()
+	var before_quote: Dictionary = visit.quote()
+	var before_run_rng := rng.state
+
+	for offer in before_quote.get("offers", []):
+		if offer.get("id") == "needle_echo" or offer.get("id") == "shared_hem":
+			_check(offer.get("sold") == false, "authored heirloom in unowned visit is unsold: " + str(offer.get("id")))
+
+	await _bind(visit)
+
+	# Assert visit, wallet, RNG, and purchase ledger unchanged
+	_check(visit.read_state() == before_state, "bind leaves authentic visit state unchanged")
+	_check(visit.quote() == before_quote, "bind leaves authentic quote unchanged")
+	_check(visit.read_state()["snapshot"]["gold"] == gold, "bind leaves wallet unchanged")
+	_check(rng.state == before_run_rng, "bind leaves seeded run RNG unchanged")
+	_check(intents.is_empty(), "bind emits no purchase intent")
+
+	# Controls and admission:
+	_check(panel._active(), "panel is active for genuine unlocked heirloom visit")
+	_check(panel.offer_buttons.size() == 3, "panel has three offer buttons")
+	for i in range(3):
+		var button := panel.offer_buttons[i]
+		var quoted: Dictionary = before_quote["offers"][i]
+		var offer_id: String = quoted["id"]
+		_check(not button.disabled, "affordable unsold offer button is enabled: " + offer_id)
+		_check(button.get_meta("patch_id") == offer_id, "offer button meta matches quoted ID: " + offer_id)
+		var lines := button.text.split("\n")
+		_check(lines.size() == 2, "offer button has two lines: " + offer_id)
+		_check(lines[0].contains(str(quoted["price"]) + " gold"), "offer caption shows quoted price: " + offer_id)
+
+		if offer_id == "needle_echo":
+			_check(lines[0].contains("Needle Echo") and lines[0].contains("HEAD"),
+					"Needle Echo caption shows name and HEAD slot")
+			_check(lines[1] == LivePatchStallPanel.NEEDLE_ECHO_SHORT,
+					"Needle Echo caption shows exact short rule")
+			var tooltip := button.tooltip_text
+			_check(tooltip.contains("Needle Echo [needle_echo]"), "Needle Echo tooltip has title and ID")
+			_check(tooltip.contains(LivePatchStallPanel.NEEDLE_ECHO_FULL),
+					"Needle Echo tooltip contains exact full rule")
+			_check(tooltip.contains("Once per turn") and tooltip.contains("+1 damage")
+					and tooltip.contains("first confirmed hit") and tooltip.contains("Pinned enemy")
+					and tooltip.contains("living, untorn wearer"),
+					"Needle Echo tooltip retains all trigger/eligibility limits")
+			_check(tooltip.contains("HEAD slot") and tooltip.contains("+1 scrap"),
+					"Needle Echo tooltip contains HEAD slot scrap warning")
+			_check(not tooltip.contains(panel.DETAILS_UNAVAILABLE),
+					"Needle Echo tooltip does not show details unavailable")
+		elif offer_id == "shared_hem":
+			_check(lines[0].contains("Shared Hem") and lines[0].contains("ARM"),
+					"Shared Hem caption shows name and ARM slot")
+			_check(lines[1] == LivePatchStallPanel.SHARED_HEM_SHORT,
+					"Shared Hem caption shows exact short rule")
+			var tooltip := button.tooltip_text
+			_check(tooltip.contains("Shared Hem [shared_hem]"), "Shared Hem tooltip has title and ID")
+			_check(tooltip.contains(LivePatchStallPanel.SHARED_HEM_FULL),
+					"Shared Hem tooltip contains exact full rule")
+			_check(tooltip.contains("Once per turn") and tooltip.contains("+1 Block")
+					and tooltip.contains("different living hero") and tooltip.contains("actually gains Block")
+					and tooltip.contains("living, untorn wearer"),
+					"Shared Hem tooltip retains all trigger/eligibility limits")
+			_check(tooltip.contains("ARM slot") and tooltip.contains("+1 scrap"),
+					"Shared Hem tooltip contains ARM slot scrap warning")
+			_check(not tooltip.contains(panel.DETAILS_UNAVAILABLE),
+					"Shared Hem tooltip does not show details unavailable")
+
+	# Negative source checks:
+	var bad_slot_visit := RunPatchStallVisit.new("bad_slot_visit", PARTY, DECK, [], 200,
+			[{"id": "needle_echo", "price": 100}, {"id": "button_eye", "price": 100}, {"id": "pincushion_arm", "price": 100}])
+	var invalid_slots := {"needle_echo": "INVALID_SLOT", "button_eye": "HEAD", "pincushion_arm": "ARM"}
+	_check(not panel._valid_receipts(bad_slot_visit.read_state(), bad_slot_visit.quote(), invalid_slots),
+			"slot map with invalid slot name is rejected by receipt validation")
+
+	var unknown_visit := RunPatchStallVisit.new("unknown_visit", PARTY, DECK, [], 200,
+			[{"id": "unknown_heirloom", "price": 100}, {"id": "button_eye", "price": 100}, {"id": "pincushion_arm", "price": 100}])
+	await _bind(unknown_visit)
+	_check(not panel._active(), "unknown patch offer fails bind closed")
+	_check(panel.offer_buttons.all(func(b: Button): return b.disabled),
+			"offer buttons disabled on rejected unknown visit")
+
+	var consumed_visit := RunPatchStallVisit.new("consumed_visit", PARTY, DECK, [], 200, sample_offers)
+	consumed_visit.leave(consumed_visit.read_state()["visit_id"], "consumed_visit", consumed_visit.read_state()["snapshot"])
+	_check(consumed_visit.is_consumed(), "visit is consumed after leave")
+	await _bind(consumed_visit)
+	_check(not panel._active(), "consumed visit fails bind closed")
+
+	var dup_offers := [{"id": "needle_echo", "price": 100}, {"id": "needle_echo", "price": 100}, {"id": "shared_hem", "price": 100}]
+	var dup_visit := RunPatchStallVisit.new("dup_visit", PARTY, DECK, [], 200, dup_offers)
+	await _bind(dup_visit)
+	_check(not panel._active(), "duplicate offer ID in quote fails bind closed")
+
+	# Affordability: insufficient gold disables buttons and shows shortfall
+	var broke_visit := RunPatchStallVisit.new("broke_heirloom_visit", PARTY, DECK, late_owned, 50, sample_offers)
+	await _bind(broke_visit)
+	_check(panel._active(), "panel active for broke visit")
+	for i in range(3):
+		if sample_offers[i]["id"] == "needle_echo" or sample_offers[i]["id"] == "shared_hem":
+			_check(panel.offer_buttons[i].disabled, "unaffordable heirloom button is disabled")
+			_check(panel.offer_buttons[i].text.contains("short 50"), "caption displays shortfall")
+
+	# Pre-owned heirloom shows as SOLD and is disabled
+	var preowned: Array = late_owned.duplicate()
+	preowned.append("needle_echo")
+	var preowned_offers := [
+		{"id": "needle_echo", "price": 100},
+		{"id": "shared_hem", "price": 100},
+		{"id": "button_eye", "price": 100}
+	]
+	var sold_visit := RunPatchStallVisit.new("sold_heirloom_visit", PARTY, DECK, preowned, 200, preowned_offers)
+	await _bind(sold_visit)
+	_check(panel._active(), "panel active for sold heirloom visit")
+	for i in range(3):
+		if preowned_offers[i]["id"] == "needle_echo":
+			_check(panel.offer_buttons[i].disabled, "sold heirloom button is disabled")
+			_check(panel.offer_buttons[i].text.contains("SOLD"), "caption displays SOLD")
+			_check(not panel.offer_buttons[i].text.contains("gold"), "sold caption displays no price")
