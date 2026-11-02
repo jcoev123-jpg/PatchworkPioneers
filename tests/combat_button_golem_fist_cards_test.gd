@@ -11,6 +11,11 @@ const ThreadResolver := preload("res://scripts/combat_button_golem_thread_cards.
 const StarterCatalog := preload("res://data/cards/button_golem_starter_cards.gd")
 const PoolCatalog := preload("res://data/cards/button_golem_pool_cards.gd")
 
+const ENEMIES_PATH := "res://data/enemies/run_enemies.json"
+## Four distinct authored run foes, chosen by ID (never by catalog position or a hard-coded
+## catalog total) for the explicitly opted-in four-slot roster.
+const FOUR_FOE_IDS := ["button_guard", "spool_stalker", "seam_ripper", "felt_bulwark"]
+
 ## A starter-catalog source that serves caller-supplied records, so a rewritten field or a relinked
 ## upgrade can be proven inert before any energy, hand, HP, Block, status or RNG state moves.
 class ForgedFist extends "res://scripts/combat_button_golem_fist_cards.gd":
@@ -40,6 +45,7 @@ func _initialize() -> void:
 	_test_authentic_printings()
 	_test_foreign_and_forged_definitions()
 	_test_paid_hits()
+	_test_four_enemy_roster()
 	_test_status_adjusted_hits()
 	_test_absorbed_and_lethal_hits()
 	_test_refusals()
@@ -294,8 +300,109 @@ func _play_fist_success(card_id: String, golem_seat: int, target_position: int) 
 
 
 # ---------------------------------------------------------------------------------------------
-# AC2: one Weak/Exposed/Tangled pre-hit case, expected straight from the shared status rules.
+# AC2/AC3: a legal opted-in four-enemy battle still pays for a Fist on slots 1-2, and slots 3-4
+# stay outside the printed window as complete no-ops.
 # ---------------------------------------------------------------------------------------------
+
+func _test_four_enemy_roster() -> void:
+	for card_id: String in FIST_PRINTINGS:
+		var spec: Dictionary = FIST_PRINTINGS[card_id]
+		var damage: int = int(spec["damage"])
+		var block_self: int = int(spec["block_self"])
+		for target_position in [1, 2]:
+			var label := "%s from seat 1 onto living slot %d of four authored foes" % [
+				card_id, target_position]
+			var deck := _deck([card_id])
+			var party := _party(1)
+			_check(party.gain_block(1, 4), label + ": the Golem starts with four prior Block")
+			party._heroes[0]["buttons_popped"] = 1
+			var enemies := _four_enemies()
+			var before := _snapshot(deck, party, enemies)
+			var receipt = FistResolver.new().play_card(
+				deck, party, enemies, card_id, target_position)
+			_check(receipt.get("ok") == true and receipt.get("reason") == "applied",
+				label + ": an authentic four-enemy roster is a legal paid Fist state")
+			_check(receipt.get("card_id") == card_id and receipt.get("cost") == 1
+				and receipt.get("energy_spent") == 1,
+				label + ": the receipt reports the card, its cost and one energy spent")
+			_check(receipt.get("owner_position") == 1
+				and receipt.get("target_position") == target_position,
+				label + ": the receipt reports the real owner and target seats")
+			_check(receipt.get("printed_damage") == damage and receipt.get("damage") == damage
+				and receipt.get("block_absorbed") == 0 and receipt.get("hp_loss") == damage,
+				label + ": one printed " + str(damage) + " hit reaches the selected foe")
+			_check(receipt.get("block_gained") == block_self,
+				label + ": it grants the printed " + str(block_self) + " self Block")
+			_check(deck.energy == before["energy"] - 1
+				and deck.combat_state.energy == before["state_energy"] - 1
+				and deck.hand.is_empty() and deck.discard_pile == [card_id]
+				and deck.draw_pile == before["draw"] and deck.turn_active,
+				label + ": exactly one energy and one held copy were paid with no draw")
+			_check(deck._rng.state == before["rng_state"]
+				and deck._rng.seed == before["rng_seed"],
+				label + ": the four-enemy cast consumes no seeded RNG draw")
+			var struck: Dictionary = enemies.get_enemy(target_position)
+			_check(struck.get("hp") == before["foes"][target_position - 1]["hp"] - damage
+				and struck.get("block") == 0,
+				label + ": the selected foe lost exactly " + str(damage) + " HP")
+			var golem: Dictionary = party.get_hero(1)
+			_check(golem.get("block") == 4 + block_self and golem.get("buttons_popped") == 1,
+				label + ": prior Block is kept, the printed Block is added, no button pops")
+			for other_enemy in [1, 2, 3, 4]:
+				if other_enemy == target_position:
+					continue
+				_check(enemies.get_enemy(other_enemy) == before["foes"][other_enemy - 1],
+					label + ": unselected foe slot " + str(other_enemy) + " is untouched")
+			for other_hero in [2, 3]:
+				_check(party.get_hero(other_hero) == before["heroes"][other_hero - 1],
+					label + ": ally seat " + str(other_hero) + " gains no Block")
+
+	# The Golem may also sit in hero seat 2 while a fourth enemy occupies the roster.
+	var seat_two_deck := _deck([plus_id_of()])
+	var seat_two_party := _party(2)
+	var seat_two_enemies := _four_enemies()
+	var seat_two_before := _snapshot(seat_two_deck, seat_two_party, seat_two_enemies)
+	var seat_two = FistResolver.new().play_card(
+		seat_two_deck, seat_two_party, seat_two_enemies, plus_id_of(), 2)
+	_check(seat_two.get("ok") == true and seat_two.get("owner_position") == 2
+		and seat_two.get("damage") == 7 and seat_two.get("block_gained") == 3,
+		"a seat-2 Golem still pays for Button Fist+ beside four authored foes")
+	_check(seat_two_deck.energy == 2 and seat_two_deck.discard_pile == [plus_id_of()]
+		and seat_two_party.get_hero(2).get("block") == 3
+		and seat_two_enemies.get_enemy(2).get("hp") == seat_two_before["foes"][1]["hp"] - 7
+		and seat_two_deck._rng.state == seat_two_before["rng_state"],
+		"the four-enemy seat-2 cast spends one energy, discards one copy and draws no RNG")
+
+	# A legal four-enemy roster may carry a slain fourth slot; slot 1 stays payable.
+	var broken_roster := _four_enemies()
+	_check(broken_roster.apply_damage(4, 999) and broken_roster.is_slain(4),
+		"four-enemy fixture really has a slain fourth slot")
+	var broken_deck := _deck([base_id_of()])
+	var broken_party := _party(1)
+	var broken_before := _snapshot(broken_deck, broken_party, broken_roster)
+	var beside_slain = FistResolver.new().play_card(
+		broken_deck, broken_party, broken_roster, base_id_of(), 1)
+	_check(beside_slain.get("ok") == true and beside_slain.get("damage") == 5
+		and broken_roster.get_enemy(1).get("hp") == broken_before["foes"][0]["hp"] - 5
+		and broken_roster.is_slain(4) and broken_deck.energy == 2,
+		"a living slot 1 remains payable beside a slain fourth enemy slot")
+
+	# Slots 3 and 4 (and anything past the roster) are outside the printed [1,2] window.
+	for bad_target in [3, 4, 5, 0, -1]:
+		_expect_refusal("four-enemy target outside the printed window: " + str(bad_target),
+			_deck([base_id_of()]), _party(1), _four_enemies(), base_id_of(), bad_target,
+			"invalid_target")
+	for card_id: String in FIST_PRINTINGS:
+		for bad_target in [3, 4]:
+			_expect_refusal("%s never strikes four-enemy slot %d" % [card_id, bad_target],
+				_deck([card_id]), _party(1), _four_enemies(), card_id, bad_target,
+				"invalid_target")
+	var slain_target := _four_enemies()
+	_check(slain_target.apply_damage(2, 999) and slain_target.is_slain(2),
+		"four-enemy fixture really has a slain second slot")
+	_expect_refusal("four-enemy dead selected slot 2",
+		_deck([plus_id_of()]), _party(1), slain_target, plus_id_of(), 2, "invalid_target")
+
 
 func _test_status_adjusted_hits() -> void:
 	var rules := CombatStatuses.new()
@@ -569,6 +676,41 @@ func _enemies(hps: Array[int]) -> CombatEnemies:
 	var enemies := CombatEnemies.new(definitions)
 	_check(enemies.is_valid() and enemies.get_enemies().size() == hps.size(),
 		"fixture has a valid enemy roster")
+	return enemies
+
+
+## Four distinct records authenticated from the shipped run catalog by ID.
+func _four_enemy_records() -> Array:
+	var catalog: Array = RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string(ENEMIES_PATH))
+	_check(not catalog.is_empty(), "shipped run_enemies.json enemy catalog loads")
+	var selected: Array = []
+	for required: String in FOUR_FOE_IDS:
+		var matches: Array = catalog.filter(func(entry: Variant) -> bool:
+			return entry is Dictionary and entry.get("id") == required)
+		_check(matches.size() == 1,
+			"authored four-foe source present exactly once: " + required)
+		if matches.size() == 1:
+			selected.append(matches[0].duplicate(true))
+	return selected
+
+
+## A genuinely opted-in four-slot roster of four distinct authored living foes.
+func _four_enemies() -> CombatEnemies:
+	var records := _four_enemy_records()
+	_check(records.size() == FOUR_FOE_IDS.size(),
+		"four distinct authenticated enemy records selected")
+	var enemies := CombatEnemies.new(records, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(enemies.is_valid()
+			and enemies.get_capacity() == CombatEnemies.OPT_IN_MAX_ENEMIES
+			and enemies.get_enemies().size() == records.size()
+			and enemies.get_enemies().map(func(foe: Dictionary) -> Variant:
+				return foe.get("id")) == FOUR_FOE_IDS
+			and enemies.get_enemies().map(func(foe: Dictionary) -> Variant:
+				return foe.get("position")) == [1, 2, 3, 4]
+			and enemies.get_enemies().all(func(foe: Dictionary) -> bool:
+				return foe.get("hp") == foe.get("max_hp") and foe.get("hp") > 0),
+		"explicit opt-in roster really holds four living authored slots")
 	return enemies
 
 

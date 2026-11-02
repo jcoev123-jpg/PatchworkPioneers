@@ -360,13 +360,18 @@ func _valid_heroes(party: CombatParty) -> bool:
 	return true
 
 
-## One to three genuine enemy slots in order with nonempty distinct string IDs and sane records.
-## Slain slots remain valid; target eligibility is checked separately against the printed window.
+## One to three (or an explicitly opted-in four) genuine enemy slots in order with nonempty
+## distinct string IDs and sane records. The bound is the roster's own authoritative capacity,
+## never a fixed three, so a legal four-actor battle is still payable. Slain slots remain valid;
+## target eligibility is checked separately against the printed [1,2] window.
 func _valid_enemies(enemies: CombatEnemies) -> bool:
 	if not enemies.is_valid():
 		return false
+	var capacity: int = enemies.get_capacity()
+	if capacity != CombatEnemies.MAX_ENEMIES and capacity != CombatEnemies.OPT_IN_MAX_ENEMIES:
+		return false
 	var roster: Array[Dictionary] = enemies.get_enemies()
-	if roster.is_empty() or roster.size() > CombatEnemies.MAX_ENEMIES:
+	if roster.is_empty() or roster.size() > capacity:
 		return false
 	var seen: Dictionary = {}
 	for index in range(roster.size()):
@@ -407,12 +412,13 @@ func _distinct_hero_ids(party: CombatParty) -> bool:
 ## Fail closed on a malformed authoritative status map on either side, using the shared turn-batch
 ## validator over the COMPLETE authoritative rosters (unknown keys, wrong Variant types, negative
 ## counters and a non-0/1 Dodge or Blind token all refuse here), so preflight accepts exactly the
-## vocabulary the status owners define.
+## vocabulary the status owners define. The enemy side passes the roster's own capacity so its
+## legal third or opted-in fourth actor is validated instead of refused.
 func _valid_status_rosters(party: CombatParty, enemies: CombatEnemies) -> bool:
 	var batch := CombatStatusTurnBatch.new()
 	if not batch.tick_side("heroes", party.get_heroes()).get("ok", false):
 		return false
-	return batch.tick_side("enemies", enemies.get_enemies()).get("ok", false)
+	return batch.tick_side("enemies", enemies.get_enemies(), enemies.get_capacity()).get("ok", false)
 
 
 ## A detached copy of one authoritative status map holding only the counts that modify attack
