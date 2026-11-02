@@ -63,6 +63,17 @@ const DISPLAY_VARIATION := "PatchHeading"
 ## keeps long paragraphs and wide 1280x720 paper at a readable line length, and it
 ## is a maximum only: a narrower viewport just uses all of its width.
 const MAX_COLUMN_WIDTH := 680.0
+## Presentation clock only: 0.24s settle plus 0.045s per authored slot.
+## All movement is StyleBoxTexture ink, never a Control or its hit rectangle.
+const TICKET_SETTLE_SECONDS := 0.24
+const TICKET_STAGGER_SECONDS := 0.045
+const TICKET_START_ALPHA := 0.84
+const TICKET_SETTLE_SHIFT := 1.5
+const TICKET_BASE_TINTS := {
+	"normal": Color.WHITE, "hover": Color(1.02, 1.02, 1.02),
+	"pressed": Color(0.88, 0.88, 0.88),
+	"disabled": Color(0.94, 0.92, 0.88),
+}
 
 signal choice_committed(event_id: String, choice_id: String)
 ## Emits exactly one detached RunEventChoice receipt on a successful wallet
@@ -245,6 +256,11 @@ var _vital_label: Label = null
 ## switch. The layer never reads, owns or draws gameplay state.
 var ambient_reduced_motion_override: Variant = null
 var event_ambient: Control = null
+## No Tween, children, signals or RNG: the real mounted button's existing
+## authored StyleBoxTexture is painted from a tiny deterministic phase clock.
+var _ticket_clock := 0.0
+var _ticket_suspended := false
+var _ticket_focus_amount: Dictionary = {}
 
 
 func _ready() -> void:
@@ -253,6 +269,7 @@ func _ready() -> void:
 	# Visibility signals may fire before the effective ancestor visibility flips.
 	# Reconcile on idle so hide/show always uses the final mounted tree state.
 	visibility_changed.connect(_sync_event_ambient, CONNECT_DEFERRED)
+	visibility_changed.connect(_sync_ticket_visibility, CONNECT_DEFERRED)
 	paper_panel.minimum_size_changed.connect(_fit_parchment, CONNECT_DEFERRED)
 	event_content.minimum_size_changed.connect(_fit_parchment, CONNECT_DEFERRED)
 	resized.connect(_fit_parchment, CONNECT_DEFERRED)
@@ -316,7 +333,79 @@ func set_ambient_reduced_motion_override(value: Variant) -> void:
 	_sync_event_ambient()
 
 
+## Advance only the authored backing's appearance. Manual calls give headless tests
+## exact phases; the normal process loop uses the same path in real Event visits.
+func _process(delta: float) -> void:
+	_advance_ticket_motion(delta)
+
+
+func _restart_ticket_motion() -> void:
+	_ticket_clock = 0.0
+	_ticket_focus_amount.clear()
+	_ticket_suspended = bool(ProjectSettings.get_setting("accessibility/reduced_motion", false))
+	_paint_ticket_visuals(0.0)
+
+
+func _sync_ticket_visibility() -> void:
+	if _is_open and not is_visible_in_tree():
+		_ticket_clock = 0.0
+		_ticket_suspended = true
+		_paint_ticket_visuals(0.0)
+
+
+func _advance_ticket_motion(delta: float) -> void:
+	if not _is_open or not is_visible_in_tree():
+		return
+	# A mid-reveal accessibility change settles immediately, not on the next
+	# frame of a Tween. Once settled, toggling motion back on cannot replay.
+	if bool(ProjectSettings.get_setting("accessibility/reduced_motion", false)):
+		_ticket_suspended = true
+	if not _ticket_suspended:
+		_ticket_clock += maxf(delta, 0.0)
+	_paint_ticket_visuals(maxf(delta, 0.0))
+
+
+func _paint_ticket_visuals(delta: float) -> void:
+	for i in range(_choice_buttons.size()):
+		var button: Button = _choice_buttons[i]
+		if not is_instance_valid(button):
+			continue
+		# Missing authored PNG: preserve the existing flat fallback verbatim.
+		if not button.get_theme_stylebox("normal") is StyleBoxTexture:
+			continue
+		var resting := _ticket_suspended or not _is_open or not is_visible_in_tree()
+		var progress := 1.0
+		if not resting:
+			progress = clampf((_ticket_clock - i * TICKET_STAGGER_SECONDS) /
+				TICKET_SETTLE_SECONDS, 0.0, 1.0)
+		var eased := progress * progress * (3.0 - 2.0 * progress)
+		var alpha := lerpf(TICKET_START_ALPHA, 1.0, eased)
+		var focus_amount: float = float(_ticket_focus_amount.get(button, 0.0))
+		var active := not resting and not button.disabled and button.is_visible_in_tree()
+		var wants_focus := active and (button.is_hovered() or button.has_focus())
+		if not active:
+			focus_amount = 0.0
+		else:
+			focus_amount = move_toward(focus_amount, 1.0 if wants_focus else 0.0, delta * 8.0)
+		_ticket_focus_amount[button] = focus_amount
+		# <= 4.7% on a hovered ticket (including its static hover tint).
+		var glow := focus_amount * (0.024 + 0.002 * sin(_ticket_clock * 6.0))
+		# Extra top *paint* margin, not a Button offset or layout margin.
+		# At worst 1.5px reveal + 0.4px focused breathing.
+		var image_shift := TICKET_SETTLE_SHIFT * (1.0 - eased) + 0.4 * focus_amount
+		for state in TICKET_BASE_TINTS:
+			var style := button.get_theme_stylebox(state) as StyleBoxTexture
+			if style == null:
+				continue
+			var base: Color = TICKET_BASE_TINTS[state]
+			var factor := 1.0 + glow if state == "normal" or state == "hover" else 1.0
+			style.modulate_color = Color(base.r * factor, base.g * factor, base.b * factor, alpha)
+			style.set_expand_margin(SIDE_TOP, image_shift)
+
+
 func _exit_tree() -> void:
+	_ticket_suspended = true
+	_paint_ticket_visuals(0.0)
 	if is_instance_valid(event_ambient):
 		event_ambient.retire()
 
@@ -548,6 +637,7 @@ func _mount_vital_offering(offered: RunEventChoice, snapshot: Dictionary, previe
 		_bound_choices[button] = choice_id
 		button.pressed.connect(_on_choice_pressed.bind(offered, choice_id, _generation, button))
 	visible = true
+	_restart_ticket_motion()
 	_sync_event_ambient()
 	story_scroll.scroll_vertical = 0
 	_fit_parchment.call_deferred()
@@ -699,6 +789,7 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 		# and closed/reopened offerings cannot redirect an old pressed signal.
 		button.pressed.connect(_on_choice_pressed.bind(offered, choice_id, _generation, button))
 	visible = true
+	_restart_ticket_motion()
 	_sync_event_ambient()
 	story_scroll.scroll_vertical = 0
 	_fit_parchment.call_deferred()
@@ -839,6 +930,9 @@ func close_event() -> void:
 		needle_payer.queue_free()
 	needle_payer = null
 	_committed_choice.clear()
+	_ticket_clock = 0.0
+	_ticket_suspended = true
+	_ticket_focus_amount.clear()
 	_generation += 1
 	_is_open = false
 	_selector = null
@@ -1013,8 +1107,7 @@ func bind_event_paper(art_path: String = EVENT_PANEL_ART) -> void:
 func _style_choice_button(button: Button, art_path := "res://assets/paper/ui/reward_button.png") -> void:
 	var fabric: Texture2D = load(art_path) as Texture2D if ResourceLoader.exists(art_path) else null
 	button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	var tints := {"normal": Color.WHITE, "hover": Color(1.12, 1.12, 1.12),
-		"pressed": Color(0.88, 0.88, 0.88), "disabled": Color(0.94, 0.92, 0.88)}
+	var tints := TICKET_BASE_TINTS
 	for state in ["normal", "hover", "pressed", "disabled"]:
 		var style: StyleBox
 		if fabric != null:

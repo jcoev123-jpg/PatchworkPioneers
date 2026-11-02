@@ -142,9 +142,90 @@ func _assert_layer(label: String) -> void:
 		label + " actual paper is legible-sized and unchanged")
 
 
+## Inspect the real sewn StyleBoxTexture, not a simulated copy of its state.
+func _ticket_face(button: Button) -> StyleBoxTexture:
+	return button.get_theme_stylebox("normal") as StyleBoxTexture
+
+
+func _move_pointer_to(control: Control) -> void:
+	var move := InputEventMouseMotion.new()
+	move.position = control.get_global_rect().get_center()
+	root.push_input(move, true)
+	await _frames()
+
+
+func _ticket_motion(mode: String, buttons: Array[Button]) -> void:
+	_check(ResourceLoader.exists("res://assets/paper/ui/reward_button.png"),
+		mode + " shipped ticket art exists for image-only test")
+	var face0 := _ticket_face(buttons[0])
+	var face1 := _ticket_face(buttons[1])
+	var face2 := _ticket_face(buttons[2])
+	_check(face0 != null and face1 != null and face2 != null,
+		mode + " mounted art-backed controls have sewn surfaces")
+	if face0 == null or face1 == null or face2 == null:
+		return
+	var before := _state()
+	var start_alpha := face0.modulate_color.a
+	_check(is_equal_approx(start_alpha, panel.TICKET_START_ALPHA)
+		and is_equal_approx(face2.modulate_color.a, start_alpha)
+		and face0.expand_margin_top <= 2.0,
+		mode + " real tickets start visible, all backing fade/offset only")
+	_check(panel._ticket_clock == 0.0 and panel.get_choice_cues().size() == 3,
+		mode + " fresh phase has three inert cues")
+	panel._advance_ticket_motion(0.12)
+	_check(face0.modulate_color.a > face1.modulate_color.a
+		and face1.modulate_color.a >= face2.modulate_color.a
+		and face0.modulate_color.a > start_alpha and face2.modulate_color.a < 1.0,
+		mode + " middle alpha settles in original authored ticket order")
+	_check(face0.expand_margin_top < 1.5 and face2.expand_margin_top <= 2.0,
+		mode + " stagger moves only <2px backing ink")
+	panel._advance_ticket_motion(0.25)
+	_check(is_equal_approx(face0.modulate_color.a, 1.0)
+		and is_equal_approx(face1.modulate_color.a, 1.0)
+		and is_equal_approx(face2.modulate_color.a, 1.0)
+		and is_zero_approx(face0.expand_margin_top)
+		and is_zero_approx(face2.expand_margin_top),
+		mode + " third backing finishes by .33s, no leftover reveal")
+	_check(_state() == before, mode + " all text, button rects, order, prices, tooltips, selection and focus unchanged")
+	# Both keyboard focus and real pointer motion feed this same inert art.
+	buttons[0].grab_focus()
+	panel._advance_ticket_motion(0.16)
+	_check(buttons[0].has_focus() and face0.modulate_color.r > 1.0
+		and face0.modulate_color.r <= 1.05
+		and face0.expand_margin_top <= 2.0,
+		mode + " focus highlights only normal authored backing within 5% / 2px")
+	buttons[0].release_focus()
+	await _move_pointer_to(panel.description_label)
+	panel._advance_ticket_motion(0.16)
+	_check(is_equal_approx(face0.modulate_color.r, 1.0)
+		and is_zero_approx(face0.expand_margin_top),
+		mode + " keyboard emphasis returns exactly to rest")
+	await _move_pointer_to(buttons[1])
+	panel._advance_ticket_motion(0.16)
+	_check(buttons[1].is_hovered()
+		and face1.modulate_color.r > 1.0 and face1.modulate_color.r <= 1.05,
+		mode + " physical hover brightens a real enabled ticket")
+	await _move_pointer_to(panel.description_label)
+	panel._advance_ticket_motion(0.16)
+	_check(is_equal_approx(face1.modulate_color.r, 1.0),
+		mode + " mouse exit returns normal backing to rest")
+	if mode != "legacy":
+		await _move_pointer_to(buttons[2])
+		panel._advance_ticket_motion(0.18)
+		var disabled_skin := buttons[2].get_theme_stylebox("disabled") as StyleBoxTexture
+		_check(buttons[2].disabled and buttons[2].focus_mode == Control.FOCUS_NONE
+			and not buttons[2].has_focus() and disabled_skin != null
+			and is_equal_approx(disabled_skin.modulate_color.r, 0.94)
+			and is_zero_approx(disabled_skin.expand_margin_top),
+			mode + " unaffordable ticket cannot glow or take focus even under pointer")
+		await _move_pointer_to(panel.description_label)
+
+
 func _mode(mode: String, activation: String) -> void:
 	if not _open(mode):
 		return
+	# Freeze only the new ticket clock; the independent ambient still processes.
+	panel.set_process(false)
 	await _frames()
 	_assert_layer(mode)
 	var buttons := panel.get_choice_buttons()
@@ -156,6 +237,7 @@ func _mode(mode: String, activation: String) -> void:
 	_check(buttons[0].is_visible_in_tree() and not buttons[0].disabled
 		and (mode == "legacy" or buttons[2].disabled),
 		mode + " enabled and unavailable controls are authentic")
+	await _ticket_motion(mode, buttons)
 	buttons[0].grab_focus()
 	await _frames()
 	var before := _state()
@@ -209,11 +291,46 @@ func _mode(mode: String, activation: String) -> void:
 	_check(legacy.size() + wallet_receipts.size() + vital_receipts.size() == count_before + 1,
 		mode + " no replay from keyboard or pressed callback")
 	panel.close_event()
+	panel.set_process(true)
 	await _frames()
 	_check(not panel.visible and not panel.has_open_event()
 		and panel.get_choice_buttons().is_empty() and layer.profile.is_empty()
 		and not layer.is_processing() and not layer.visible and layer._time == 0.0,
 		mode + " close retires layer and clears choices")
+
+
+func _two_choice_motion() -> void:
+	var event := _event()
+	(event["choices"] as Array).resize(2)
+	_check(RunEventChoice.new(event).is_valid(), "short two-choice service fixture is valid")
+	_check(panel.open_event(event), "real short two-choice scene opens")
+	panel.set_process(false)
+	await _frames()
+	var buttons := panel.get_choice_buttons()
+	_check(buttons.size() == 2 and panel.get_choice_cues().size() == 2,
+		"two authored buttons and exactly two numbered noninteractive cues")
+	if buttons.size() == 2:
+		var rects := [buttons[0].get_global_rect(), buttons[1].get_global_rect()]
+		var alpha0 := _ticket_face(buttons[0]).modulate_color.a
+		panel._advance_ticket_motion(0.16)
+		_check(_ticket_face(buttons[0]).modulate_color.a > alpha0
+			and _ticket_face(buttons[1]).modulate_color.a < 1.0,
+			"two tickets stagger before settling")
+		panel._advance_ticket_motion(0.2)
+		_check(is_equal_approx(_ticket_face(buttons[1]).modulate_color.a, 1.0)
+			and buttons[0].get_global_rect() == rects[0]
+			and buttons[1].get_global_rect() == rects[1],
+			"two-choice settle leaves both authentic hitboxes fixed")
+		var before := legacy.size()
+		await _key(KEY_3)
+		_check(legacy.size() == before and panel._selector.is_valid(),
+			"missing third ticket's physical key still cannot claim")
+		await _key(KEY_2)
+		_check(legacy.size() == before + 1 and legacy.back().choice_id == "wait",
+			"two-choice second ticket remains the real settled callback")
+	panel.close_event()
+	panel.set_process(true)
+	await _frames()
 
 
 func _lifecycle() -> void:
@@ -224,10 +341,16 @@ func _lifecycle() -> void:
 	var rect := panel.paper_panel.get_global_rect()
 	panel.hide()
 	await _frames()
+	_check(panel._ticket_suspended and panel._ticket_clock == 0.0
+		and is_equal_approx(_ticket_face(panel.get_choice_buttons()[0]).modulate_color.a, 1.0),
+		"hide settles ticket image clock immediately")
 	_check(layer.profile.is_empty() and layer._time == 0.0 and not layer.is_processing(),
 		"explicit hide stops/retire the ambient clock")
 	panel.show()
 	await _frames()
+	_check(panel._ticket_suspended
+		and is_equal_approx(_ticket_face(panel.get_choice_buttons()[0]).modulate_color.a, 1.0),
+		"hide/show never leaves a stale fade or replays a half-complete ticket")
 	_check(panel.event_ambient == layer and layer.profile == "scraps" and layer._time >= 0.0
 		and _layer_count() == 1, "show rearms same renderer: profile=%s time=%s count=%d visible=%s tree=%s" % [layer.profile, layer._time, _layer_count(), panel.visible, panel.is_visible_in_tree()])
 	panel.set_ambient_reduced_motion_override(true)
@@ -270,12 +393,39 @@ func _lifecycle() -> void:
 	panel.close_event()
 	await _frames()
 	if _open("legacy"):
+		panel.set_process(false)
 		await _frames()
 		_assert_layer("restored and reopened")
-		_check(panel.event_ambient == layer and _layer_count() == 1,
-			"closed and reopened after detach still has exactly the original renderer")
+		_check(panel.event_ambient == layer and _layer_count() == 1
+			and panel._ticket_clock == 0.0 and not panel._ticket_suspended,
+			"reopen has one ambient renderer and a fresh, independent ticket phase")
+		var ticket := _ticket_face(panel.get_choice_buttons()[0])
+		_check(is_equal_approx(ticket.modulate_color.a, panel.TICKET_START_ALPHA),
+			"reopen starts ticket fade from original alpha instead of previous state")
+		panel.set_ambient_reduced_motion_override(true)
+		panel._advance_ticket_motion(0.12)
+		_check(layer.profile.is_empty() and ticket.modulate_color.a < 1.0
+			and ticket.modulate_color.a > panel.TICKET_START_ALPHA,
+			"ambient-only override stops backdrop without cancelling independent tickets")
+		panel.set_ambient_reduced_motion_override(null)
+		ProjectSettings.set_setting("accessibility/reduced_motion", true)
+		panel.set_ambient_reduced_motion_override(null)
+		panel._advance_ticket_motion(0.0)
+		_check(panel._ticket_suspended and is_equal_approx(ticket.modulate_color.a, 1.0)
+			and is_zero_approx(ticket.expand_margin_top)
+			and not layer.is_processing(),
+			"project reduced motion instantly settles mid-reveal even with zero delta")
+		ProjectSettings.set_setting("accessibility/reduced_motion", false)
+		panel._advance_ticket_motion(0.1)
+		_check(is_equal_approx(ticket.modulate_color.a, 1.0)
+			and is_zero_approx(ticket.expand_margin_top),
+			"turning reduced motion back off cannot replay a partially spent fade")
 		panel.close_event()
+		panel.set_process(true)
 		await _frames()
+		_check(panel._ticket_clock == 0.0 and panel._ticket_focus_amount.is_empty()
+			and panel.get_choice_cues().is_empty() and _layer_count() == 1,
+			"close clears phase, focus cache and cues without duplicating ambient")
 
 
 func _run() -> void:
@@ -301,6 +451,7 @@ func _run() -> void:
 	await _mode("legacy", "pointer")
 	await _mode("wallet", "key1")
 	await _mode("vital", "key2")
+	await _two_choice_motion()
 	await _lifecycle()
 	panel.free()
 	if had_setting:
