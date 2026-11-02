@@ -6,6 +6,7 @@ var phase := CombatEnemyPhase.new()
 
 
 func _initialize() -> void:
+	_test_thread_lash_phase()
 	_test_scavenger_gold_phase()
 	_test_scavenger_gold_refusals()
 	_test_two_hits_and_blind()
@@ -45,6 +46,142 @@ func _check(value: bool, message: String) -> void:
 		failures.append(message)
 
 
+func _test_thread_lash_phase() -> void:
+	var records := RunTypedBattleRoster._parse_catalog_text(FileAccess.get_file_as_string(
+		"res://data/enemies/run_enemies.json"))
+	var biter := {}
+	var scavenger := {}
+	for record in records:
+		if record.id == "thread_biter":
+			biter = record
+		if record.id == "fray_scavenger":
+			scavenger = record
+	_check(not biter.is_empty() and not scavenger.is_empty(), "Lash requires shipped actors")
+	if biter.is_empty() or scavenger.is_empty():
+		return
+	for floor_number in [1, 5, 9]:
+		for bonus in [0, 1, 2]:
+			var scaled := biter.duplicate(true)
+			for action in scaled.intent.actions:
+				if action.type == "attack":
+					action.amount = RunNormalAttackFloorScaling.scale_normal_attack(int(action.amount), floor_number).amount
+			scaled.intent = RunDifficulty.scale_intent(scaled.intent, bonus)
+			for index in [0, 1]:
+				var action := CombatEnemyIntents.weighted_action(scaled.intent.actions[index])["action"] as Dictionary
+				action.target_position = 3
+				action.enemy_position = 1
+				var expected: int = ([5, 6] if floor_number == 1 else ([6, 7] if floor_number == 5 else [7, 9]))[index] + bonus
+				var party := _party()
+				var enemies := CombatEnemies.new([scaled])
+				_check(phase.execute_phase(party, enemies, [action]).ok
+					and party.get_hero(3).hp == 26 - expected,
+					"both authored attacks take floor then tier bonus once, phase never rescales")
+	for amount in [5, 6]:
+		for guarded in [false, true]:
+			for block in [0, 2, 9]:
+				var party := _party()
+				var enemies := CombatEnemies.new([biter])
+				_check(enemies.is_valid() and enemies.apply_damage(1, 10), "real wounded Drain source")
+				var reactions := CombatWardenGuardReactions.new()
+				reactions.guarding = guarded
+				reactions.thorns = 1 if guarded else 0
+				var target := 1 if guarded else 3
+				_check(party.gain_block(target, block), "real recipient Block")
+				var action := _attack(1, amount, 3)
+				if amount == 6:
+					action.move = "attack2"
+				var hp: int = party.get_hero(target).hp
+				var result := phase.execute_phase(party, enemies, [action], reactions, true)
+				var loss := maxi(0, amount - block)
+				_check(result.ok and result.events.size() == 1, "one real named attack hit")
+				_check(party.get_hero(target).hp == hp - loss
+					and party.get_hero(target).block == maxi(0, block - amount)
+					and enemies.get_enemy(1).hp == 5 - (1 if guarded else 0) + loss,
+					"five/six damage, Guard, Block, Thorns and Drain apply exactly once")
+				if result.ok:
+					_check(result.events[0].get("move", "") == ("attack2" if amount == 6 else "")
+						and result.events[0].actual_target_position == target
+						and result.events[0].redirected == guarded, "truthful keyed reaction event")
+	# A valid earlier theft/Block must never publish on any later forged pair.
+	for source in [1, 2]:
+		for amount in [5, 6, 7]:
+			if source == 2 and amount == 6:
+				continue
+			var party := _party()
+			var enemies := CombatEnemies.new([scavenger, biter])
+			var before := [party.get_heroes(), enemies.get_enemies()]
+			var forged := _attack(source, amount, 3)
+			forged.move = "attack2"
+			var first := {"type": "steal_gold", "amount": 2, "enemy_position": 1}
+			if source == 1:
+				first = {"type": "block", "amount": 2, "enemy_position": 2}
+			var result := phase.execute_phase(party, enemies, [first, forged], null, true, null, 7)
+			_check(result == {"ok": false, "events": []}
+				and [party.get_heroes(), enemies.get_enemies()] == before,
+				"unowned/wrong amount move refuses whole batch including wallet")
+	var party := _party()
+	var enemies := CombatEnemies.new([biter, scavenger])
+	var keyed := _attack(1, 6, 3)
+	keyed.move = "attack2"
+	var detached := keyed.duplicate(true)
+	detached.erase("type")
+	detached.erase("move")
+	_check(detached.size() == 3 and CombatEnemyAttacks.new().execute_attacks(party, [detached]).ok
+		and CombatWardenGuardReactions.new().resolve_enemy_attack(party, enemies, detached).ok,
+		"canonical detached three-field attack remains accepted by damage and Guard layers")
+	detached.amount = "6"
+	_check(not CombatEnemyAttacks.new().execute_attacks(party, [detached]).ok
+		and not CombatWardenGuardReactions.new().resolve_enemy_attack(party, enemies, detached).ok,
+		"lower-layer amount types remain strict")
+	var before := [party.get_heroes(), enemies.get_enemies()]
+	enemies._enemies[0].intent.actions[1].amount = 7
+	before = [party.get_heroes(), enemies.get_enemies()]
+	_check(phase.execute_phase(party, enemies, [keyed]) == {"ok": false, "events": []}
+		and [party.get_heroes(), enemies.get_enemies()] == before, "stale-to-actor keyed pair refuses")
+	var plain := _attack(1, 6, 3)
+	_check(not phase.execute_phase(party, CombatEnemies.new([biter]), [plain], null, true).ok,
+		"removing the real key cannot disguise six as Lint Spit")
+	for malformed in ["bogus", null, 2, true]:
+		var invalid_roster := CombatEnemies.new([biter])
+		invalid_roster._enemies[0].intent.actions[1].move = malformed
+		var snapshot := [party.get_heroes(), invalid_roster.get_enemies()]
+		_check(phase.execute_phase(party, invalid_roster, [_attack(1, 5, 3)], null, true) == {"ok": false, "events": []}
+			and [party.get_heroes(), invalid_roster.get_enemies()] == snapshot,
+			"malformed current keyed definition cannot downgrade unkeyed attack authentication")
+	var legacy_party := _party()
+	_check(phase.execute_phase(legacy_party, CombatEnemies.new([biter]), [_attack(1, 3, 1)])
+		== {"ok": true, "events": [{"type": "attack", "enemy_position": 1, "target_position": 1, "applied": true}]}
+		and legacy_party.get_hero(1).hp == 37, "unbound legacy plain attack keeps independent amount and exact receipt")
+	for defense in ["blind", "dodge", "slain", "lethal_thorns"]:
+		var miss_party := _party()
+		var miss_enemies := CombatEnemies.new([biter])
+		var reactions := CombatWardenGuardReactions.new()
+		_check(miss_enemies.apply_damage(1, 10), "miss case uses real wounded Biter")
+		if defense == "blind":
+			miss_enemies._enemies[0].statuses = {"blind_next_attack": 1}
+			_check(miss_enemies.get_enemy(1).statuses.get("blind_next_attack") == 1, "real Blind token")
+		elif defense == "dodge":
+			miss_party._heroes[2].statuses = {"dodge_next_attack": 1}
+		elif defense == "slain":
+			_check(miss_enemies.apply_damage(1, 99), "source truly slain")
+		else:
+			reactions.guarding = true
+			reactions.thorns = 5
+		var hp_before := miss_party.get_heroes()
+		var result := phase.execute_phase(miss_party, miss_enemies, [keyed], reactions, true)
+		_check(result.ok and result.events.size() == 1 and result.events[0].get("move") == "attack2",
+			"keyed skip/miss/retaliation retains truthful one-event move")
+		if defense == "lethal_thorns":
+			_check(miss_enemies.is_slain(1) and miss_party.get_hero(1).hp == 34,
+				"lethal Thorns prevents Drain revival after keyed Guard hit")
+		else:
+			_check(not result.events[0].applied and miss_enemies.get_enemy(1).hp == (0 if defense == "slain" else 5),
+				"keyed misses/skips do not hit or Drain")
+			for index in range(3):
+				_check(miss_party.get_hero(index + 1).hp == hp_before[index].hp,
+					"miss/skip leaves every hero HP unchanged")
+
+
 func _gold_fight(source: int = 1, count: int = 3) -> Dictionary:
 	var catalog := RunTypedBattleRoster._parse_catalog_text(
 		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
@@ -59,8 +196,6 @@ func _gold_fight(source: int = 1, count: int = 3) -> Dictionary:
 		if not by_id.has(id):
 			return {}
 		var record: Dictionary = by_id[id].duplicate(true)
-		if position == source:
-			record.intent.actions.append({"type": "steal_gold", "amount": 2, "weight": 2})
 		records.append(record)
 		definitions.append({"enemy_position": position, "pattern": [{"type": "block", "amount": 1}]})
 	var enemies := CombatEnemies.new(records, 4 if count == 4 else 3)

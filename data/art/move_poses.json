@@ -236,6 +236,13 @@
    }
   },
   "needle_marshal": {
+   "attack": {
+    "name": "Needle Jab",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/needle_marshal_attack.png"
+   },
    "skill": {
     "name": "Rally Whistle",
     "covers": [
@@ -260,6 +267,13 @@
    }
   },
   "spool_hexer": {
+   "attack": {
+    "name": "Spool Lash",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spool_hexer_attack.png"
+   },
    "skill": {
     "name": "Unravel Curse",
     "covers": [

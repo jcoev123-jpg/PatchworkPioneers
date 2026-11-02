@@ -12,6 +12,12 @@ var _unravel: CombatUnravel
 var _reactions: CombatWardenGuardReactions
 var _opening_block: CombatStartingBlock
 var _started := false
+var _gold: Variant = null
+
+
+## Last accepted fight wallet, or null for legacy callers.
+func get_gold() -> Variant:
+	return _gold
 # Immutable admission identities for the paid-card entry point.
 var _battle_deck: CombatDeck
 var _battle_party: CombatParty
@@ -36,7 +42,8 @@ func _init(deck: CombatDeck = null, party: CombatParty = null,
 		enemies: CombatEnemies = null, intents: CombatEnemyIntents = null,
 		result: CombatBattleResult = null, unravel: CombatUnravel = null,
 		reactions: CombatWardenGuardReactions = null,
-		path_receipt: Variant = null) -> void:
+		path_receipt: Variant = null, run_gold: Variant = null) -> void:
+	_gold = run_gold
 	_deck = deck
 	_party = party
 	_enemies = enemies
@@ -332,6 +339,7 @@ func end_turn() -> bool:
 		ordered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 			return a.enemy_position < b.enemy_position)
 		var projected: Array = []
+		var projected_gold: Variant = _gold
 		for action in ordered:
 			var beat: Dictionary = action
 			if action.get("type") == "attack":
@@ -348,10 +356,12 @@ func end_turn() -> bool:
 			# damage and source deaths. No authoritative party, deck or RNG writes.
 			# The same Eyelet authority is quoted here, so a projected Thorns kill
 			# matches what the committed phase will really do.
-			if not CombatEnemyPhase.new().execute_phase(projected_party,
+			var projected_phase := CombatEnemyPhase.new().execute_phase(projected_party,
 					projected_enemies, [beat], preview_reactions, bound_policies,
-					_eyelet_guard).get("ok", false):
+					_eyelet_guard, projected_gold)
+			if not projected_phase.get("ok", false):
 				return false
+			projected_gold = projected_phase.get("gold")
 		effective = projected
 	if not turret_plan["victorious"] \
 			and not _phase_is_executable(tick["actors"], effective, turret_plan["roster"]):
@@ -375,10 +385,11 @@ func end_turn() -> bool:
 		return true
 	var committed_reactions := _phase_reactions()
 	var phase := CombatEnemyPhase.new().execute_phase(_party, _enemies, effective, committed_reactions,
-		_intents.is_bound(), _eyelet_guard)
+		_intents.is_bound(), _eyelet_guard, _gold)
 	# _phase_is_executable prevalidates the entire batch against this roster.
 	if not phase["ok"]:
 		return false
+	_gold = phase.get("gold")
 	# Even a lethal enemy phase is complete: consume the one armed Taunt now,
 	# not during preflight or on a refused End Turn.
 	_taunt_service.complete_enemy_turn()
@@ -446,6 +457,8 @@ func get_outcome() -> String:
 
 
 func _valid_bindings() -> bool:
+	if _gold != null and (not _gold is int or _gold < 0):
+		return false
 	if _deck == null or _party == null or _enemies == null \
 			or _intents == null or _result == null:
 		return false
@@ -565,6 +578,6 @@ func _phase_is_executable(next_heroes: Array, effective: Array, roster: Array = 
 	var enemies := CombatEnemies.new(roster, _enemies.get_capacity())
 	enemies._enemies.assign(roster.duplicate(true))
 	if not CombatEnemyPhase.new().execute_phase(party, enemies, effective, _phase_reactions(),
-			_intents.is_bound(), _eyelet_guard)["ok"]:
+			_intents.is_bound(), _eyelet_guard, _gold)["ok"]:
 		return false
 	return CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies(), enemies.get_capacity())["ok"]

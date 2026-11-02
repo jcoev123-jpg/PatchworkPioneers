@@ -684,6 +684,13 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		else:
 			readable_text = "Hit %d: %s" % [amount, rank_caption(target_position)]
 			tip = "%d damage aimed at %s." % [amount, hero_target_label(target_position)]
+	elif action.get("type") == "steal_gold":
+		icon_mode = "steal_gold"
+		intent_type = "steal_gold"
+		amount = action.get("amount", 0)
+		target_position = 0
+		readable_text = "Steal %d gold" % amount
+		tip = "Steal %d gold from the run wallet, down to zero. No hero target, HP damage or Block consumption." % amount
 	elif action.get("type") == "snip_block":
 		icon_mode = "snip_block"
 		intent_type = "snip_block"
@@ -877,7 +884,9 @@ func _draw_caption() -> void:
 ## Drawn sewn-glyph fallback in the patch's own scaled art coordinates. Used for every
 ## mode without a loaded committed icon, so the badge stays readable without any PNG.
 func _draw_glyph() -> void:
-	if icon_mode == "attack":
+	if icon_mode == "steal_gold":
+		draw_string(get_theme_default_font(), Vector2(20, 31), "$", HORIZONTAL_ALIGNMENT_LEFT, -1, 25, RUST)
+	elif icon_mode == "attack":
 		# Rust-red diagonal spearhead, visibly different from the shield.
 		draw_line(Vector2(15, 31), Vector2(40, 11), RUST, 4.0, true)
 		draw_colored_polygon(PackedVector2Array([

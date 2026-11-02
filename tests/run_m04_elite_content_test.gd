@@ -3,6 +3,11 @@ extends SceneTree
 var failures: Array[String] = []
 
 var checks := 0
+
+class MissingMoveArt extends LiveMovePoseCatalog:
+	func _art_available(_path: String) -> bool:
+		return false
+
 const ELITES := "res://data/enemies/m04_elites.json"
 const STARTER := "res://data/enemies/starter_enemies.json"
 const RUN := "res://data/enemies/run_enemies.json"
@@ -47,7 +52,8 @@ const LEGACY_ELITES := {
 		"target": "front",
 		"actions": [
 			{"type": "attack", "amount": 5, "weight": 2},
-			{"type": "attack", "amount": 4, "weight": 2},
+			{"type": "attack", "amount": 4, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 6, "move": "attack3", "weight": 1},
 			{"type": "buff", "amount": 3, "weight": 1},
 			{"type": "shove", "amount": 0, "direction": 1, "weight": 1}]},
 	"spool_hexer": {
@@ -55,7 +61,9 @@ const LEGACY_ELITES := {
 		"art_path": "res://assets/paper/enemies/spool_hexer.png",
 		"target": "random",
 		"actions": [
-			{"type": "attack", "amount": 9, "weight": 3},
+			{"type": "attack", "amount": 9, "weight": 1},
+			{"type": "attack", "amount": 8, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 10, "move": "attack3", "weight": 1},
 			{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
 			{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}]}}
 ## V3-2 appends two further harder Elites that reuse existing needle and spool
@@ -142,9 +150,11 @@ func _initialize() -> void:
 	_test_cycles()
 	_test_selection()
 	_test_live_weighted_elites()
+	_test_marshal_named_attacks()
 	_test_marshal_sting()
 	_test_scissor_sting()
 	_test_hexer_lash()
+	_test_hexer_named_attacks()
 	_test_v3_elites()
 	_test_zipper_pull_rng()
 	_test_v3_2_elites()
@@ -605,11 +615,14 @@ func _test_live_weighted_elites() -> void:
 	var expected_specs := {
 		"needle_marshal": {"target": "front", "actions": [
 			{"type": "attack", "amount": 5, "weight": 2},
-			{"type": "attack", "amount": 4, "weight": 2},
+			{"type": "attack", "amount": 4, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 6, "move": "attack3", "weight": 1},
 			{"type": "buff", "amount": 3, "weight": 1},
 			{"type": "shove", "amount": 0, "direction": 1, "weight": 1}]},
 		"spool_hexer": {"target": "random", "actions": [
-			{"type": "attack", "amount": 9, "weight": 3},
+			{"type": "attack", "amount": 9, "weight": 1},
+			{"type": "attack", "amount": 8, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 10, "move": "attack3", "weight": 1},
 			{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
 			{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}]}}
 	var elites := _catalog(ELITES)
@@ -626,7 +639,7 @@ func _test_live_weighted_elites() -> void:
 				action["weight"] = normalized.get("weight", 0)
 				_check(action == expected_specs[source_id].actions[i],
 					"exact attack/nonattack amount, action type and weight " + source_id + "/" + str(i))
-		var original_attacks := [4, 3] if source_id == "needle_marshal" else [3]
+		var original_attacks := [4, 3, 3] if source_id == "needle_marshal" else [3, 3, 3]
 		var attack_index := 0
 		for action in expected_specs[source_id].actions:
 			if action.type == "attack":
@@ -702,7 +715,7 @@ func _test_live_weighted_elites() -> void:
 			var escort := announced[1]
 			_check(attack.get("type") == "attack"
 				and escort.get("type") in ["block", "buff"]
-				and attack.get("amount") in ([5, 4] if source_id == "needle_marshal" else [9])
+				and attack.get("amount") in ([5, 4, 6] if source_id == "needle_marshal" else [9, 8, 10])
 				and attack.get("enemy_position") == 1 and escort.get("enemy_position") == 2,
 				"exact strengthened attack and harmless companion weighted beat " + encounter_id)
 			var target: int = attack.get("target_position", 0)
@@ -739,9 +752,304 @@ func _test_live_weighted_elites() -> void:
 					"identical real typed Elite entry, bound weighted attack, phase and RNG replay " + encounter_id)
 
 
-## A genuine two-source roster built from the shipped catalog whose Marshal
-## authors exactly one real weighted alternative and the guard ragling keeps its
-## own authored beat. Binding a seeded scheduler announces those real actions.
+## Discover witnesses through the shipped typed pool and its untouched roster.
+## No forced alternatives: selection and binding use the run's single RNG.
+func _test_marshal_named_attacks() -> void:
+	var witnesses := {}
+	for attempt in range(1, 2001):
+		var route := _elite_route(attempt)
+		if route.is_empty():
+			continue
+		var entry := RunAuthoredBattleEntry.new().entry_current_battle(
+			route.map, route.rng, RunFightEncounterSelection.new())
+		if not entry.get("success", false) or entry.get("encounter_id") != "needle_marshal_elite":
+			continue
+		var party := _party()
+		if not entry.intents.bind_battle(entry.enemies, party, route.rng):
+			continue
+		var actions: Array = entry.intents.get_intents()
+		if actions.size() == 2 and actions[0].type == "attack" and actions[1].type == "block":
+			witnesses[actions[0].get("move", "attack")] = attempt
+		if witnesses.has("attack") and witnesses.has("attack2") and witnesses.has("attack3"):
+			break
+	var specs := {"attack": [5, "Needle Jab"], "attack2": [4, "Pike Charge"],
+		"attack3": [6, "Needle Volley"]}
+	for pose in specs:
+		_check(witnesses.has(pose), "real seeded typed Marshal witness exists: " + pose)
+		if not witnesses.has(pose):
+			continue
+		print("Marshal ", pose, " witness seed: ", witnesses[pose])
+		var history: Array = []
+		for mode in ["partial", "blocked", "enraged", "dead"]:
+			for replay in range(2):
+				var route := _elite_route(witnesses[pose])
+				_check(not route.is_empty(), "replay has a real legal Elite route")
+				if route.is_empty():
+					continue
+				var entry := RunAuthoredBattleEntry.new().entry_current_battle(
+					route.map, route.rng, RunFightEncounterSelection.new())
+				_check(entry.get("success", false) and entry.get("node_type") == "Elite"
+					and entry.get("encounter_id") == "needle_marshal_elite",
+					"replay enters genuine typed Marshal battle")
+				if not entry.get("success", false):
+					continue
+				var enemies: CombatEnemies = entry.enemies
+				var party := _party()
+				var bound: CombatEnemyIntents = entry.intents
+				_check(enemies.is_valid() and enemies.get_enemy(1).id == "needle_marshal"
+					and enemies.get_enemy(2).id == "ragling_guard"
+					and CombatEnemyIntents._weighted_slot(1, enemies.get_enemy(1).intent)
+						== CombatEnemyIntents._weighted_slot(1, {
+							"target": "front", "actions": LEGACY_ELITES.needle_marshal.actions}),
+					"typed entry preserves authentic Marshal policy and escort")
+				_check(bound.bind_battle(enemies, party, route.rng), "real weighted binding succeeds")
+				var announced := bound.get_intents()
+				_check(announced.size() == 2, "two real cached source announcements")
+				if announced.size() != 2:
+					continue
+				var attack := announced[0]
+				var expected := {"type": "attack", "amount": specs[pose][0],
+					"enemy_position": 1, "target_position": 1}
+				if pose != "attack":
+					expected["move"] = pose
+				_check(attack == expected and announced[1] == {
+					"type": "block", "amount": ESCORT_BLOCK, "enemy_position": 2},
+					"exact authentic amount/move, front target and escort Block")
+				var rng_before: int = route.rng.state
+				var catalog := LiveMovePoseCatalog.new()
+				var fallback := "res://assets/paper/enemies/needle_marshal_attack.png"
+				var receipt := catalog.lookup_enemy("needle_marshal", attack, fallback)
+				var named_art: String = "res://assets/paper/enemies/needle_marshal_%s.png" % pose
+				_check(receipt.get("name") == specs[pose][1] and receipt.get("pose") == pose
+					and receipt.get("covers") == ["attack"] and receipt.get("named_art") == named_art
+					and receipt.get("art_available") == ResourceLoader.exists(named_art, "Texture2D")
+					and receipt.get("art") == (named_art if receipt.get("art_available") else fallback),
+					"real move catalog returns exact name, pose and checked art")
+				_check(MissingMoveArt.new().lookup_enemy("needle_marshal", attack, fallback) == {
+					"name": specs[pose][1], "pose": pose, "covers": ["attack"],
+					"named_art": named_art, "art": fallback, "art_available": false, "fallback_used": true},
+					"unavailable art preserves authored identity and established fallback")
+				receipt["name"] = "forged"
+				_check(catalog.lookup_enemy("needle_marshal", attack, fallback).get("name") == specs[pose][1]
+					and bound.get_intents() == announced and route.rng.state == rng_before,
+					"cached announcements and detached name receipts consume no RNG")
+				var bonus := 0
+				if mode == "enraged":
+					var pre := enemies.get_enemy(1)
+					var hit := CombatStatusAttacks.new().resolve_vs_enemy(enemies, 1, 1, {}, {})
+					_check(hit.get("ok", false) and hit.get("hp_loss") == 1
+						and CombatEnemyKeywordRules.new().commit_enrage_after_hit(enemies, 1, pre, hit) == {
+							"ok": true, "applied": true, "enrage_stacks": 1, "attack_bonus": 2},
+						"real confirmed hit commits existing Enrage +2")
+					bonus = 2
+				if mode == "dead":
+					_check(enemies.apply_damage(1, 28) and enemies.is_slain(1), "source genuinely dies after announcement")
+				var block: int = specs[pose][0] if mode == "blocked" else 2
+				_check(party.gain_block(1, block), "real Block precondition")
+				var before := [party.get_heroes(), enemies.get_enemies(), route.rng.state, bound.get_intents()]
+				# Every forgery is rejected before wallet publication or actor mutation.
+				var forgeries: Array = []
+				for field in ["move", "amount", "enemy_position"]:
+					var forged := attack.duplicate(true)
+					forged[field] = "attack4" if field == "move" else (99 if field == "amount" else 2)
+					if field == "enemy_position":
+						forged["move"] = "attack2"
+					forgeries.append(forged)
+				var mismatched := attack.duplicate(true)
+				mismatched["move"] = "attack3" if pose != "attack3" else "attack2"
+				forgeries.append(mismatched)
+				for forged in forgeries:
+					_check(CombatEnemyPhase.new().execute_phase(party, enemies, [forged], null, true, null, 73)
+						== {"ok": false, "events": []}
+						and before == [party.get_heroes(), enemies.get_enemies(), route.rng.state, bound.get_intents()],
+						"forged move/source/amount publishes no effects, wallet or RNG changes")
+				# Remove this exact alternative from the current source: old keyed AND
+				# unkeyed receipts must fail authentication against stale source data.
+				var original_spec: Dictionary = enemies._enemies[0].intent.duplicate(true)
+				enemies._enemies[0].intent.actions = original_spec.actions.filter(
+					func(a: Dictionary) -> bool: return int(a.amount) != specs[pose][0])
+				var stale_before := enemies.get_enemies()
+				_check(CombatEnemyPhase.new().execute_phase(party, enemies, [attack], null, true, null, 73)
+					== {"ok": false, "events": []} and enemies.get_enemies() == stale_before
+					and party.get_heroes() == before[0] and route.rng.state == rng_before,
+					"stale source alternative fails closed without partial effects")
+				enemies._enemies[0].intent = original_spec
+				var settled := CombatEnemyPhase.new().execute_phase(party, enemies, announced, null, true, null, 73)
+				var event := _event(attack)
+				event["applied"] = mode != "dead"
+				var damage: int = 0 if mode == "dead" else specs[pose][0] + bonus
+				var loss := maxi(0, damage - block)
+				_check(settled == {"ok": true, "events": [event, _event(announced[1])], "gold": 73}
+					and party.get_hero(1).hp == 40 - loss and party.get_hero(1).block == maxi(0, block - damage)
+					and party.get_hero(1).get("statuses", {}) == ({"bleed": 1} if loss > 0 else {})
+					and party.get_hero(2) == before[0][1] and party.get_hero(3) == before[0][2]
+					and enemies.get_enemy(2).block == ESCORT_BLOCK
+					and enemies.get_enemy(1) == before[1][0] and route.rng.state == rng_before,
+					"exact named phase events, Block/HP/confirmed Bleed, Enrage, escort and wallet")
+				var trace := [announced, settled, party.get_heroes(), enemies.get_enemies(), route.rng.state]
+				if replay == 0:
+					history = trace
+				else:
+					_check(history == trace, "same-seed full attack/effect/RNG replay: " + pose + "/" + mode)
+
+
+## Real routed Hexer witnesses use the untouched weighted catalog and escort.
+func _test_hexer_named_attacks() -> void:
+	var witnesses := {}
+	var targets := {}
+	for attempt in range(1, 2001):
+		var route := _elite_route(attempt)
+		if route.is_empty():
+			continue
+		var entry := RunAuthoredBattleEntry.new().entry_current_battle(
+			route.map, route.rng, RunFightEncounterSelection.new())
+		if not entry.get("success", false) or entry.get("encounter_id") != "spool_hexer_elite":
+			continue
+		var party := _party()
+		if not entry.intents.bind_battle(entry.enemies, party, route.rng):
+			continue
+		var actions: Array = entry.intents.get_intents()
+		if actions.size() == 2 and actions[0].type == "attack" and actions[1].type == "block":
+			witnesses[actions[0].get("move", "attack")] = attempt
+			targets[actions[0].target_position] = true
+		if witnesses.has("attack") and witnesses.has("attack2") and witnesses.has("attack3") \
+				and targets.has(1) and targets.has(2) and targets.has(3):
+			break
+	_check(targets.has(1) and targets.has(2) and targets.has(3),
+		"real Hexer random policy reaches every living hero within bounded seeds")
+	var specs := {"attack": [9, "Spool Lash"], "attack2": [8, "Hex Bolt"],
+		"attack3": [10, "Spindle Jab"]}
+	for pose in specs:
+		_check(witnesses.has(pose), "real typed Hexer attack seed exists: " + pose)
+		if not witnesses.has(pose):
+			continue
+		print("Hexer ", pose, " witness seed: ", witnesses[pose])
+		for mode in ["partial", "blocked", "exposed", "dead"]:
+			var history: Array = []
+			for replay in range(2):
+				var route := _elite_route(witnesses[pose])
+				_check(not route.is_empty(), "Hexer replay has genuine legal Elite route")
+				if route.is_empty():
+					continue
+				var entry := RunAuthoredBattleEntry.new().entry_current_battle(
+					route.map, route.rng, RunFightEncounterSelection.new())
+				_check(entry.get("success", false) and entry.get("node_type") == "Elite"
+					and entry.get("encounter_id") == "spool_hexer_elite", "real typed Hexer entry")
+				if not entry.get("success", false):
+					continue
+				var party := _party()
+				var enemies: CombatEnemies = entry.enemies
+				var bound: CombatEnemyIntents = entry.intents
+				_check(enemies.is_valid() and enemies.get_enemies().size() == 2
+					and enemies.get_enemy(1).id == "spool_hexer" and enemies.get_enemy(1).max_hp == 24
+					and enemies.get_enemy(1).intent == _record(_catalog(ELITES), "spool_hexer").intent
+					and enemies.get_enemy(2).id == "spool_stalker"
+					and enemies.get_enemy(2).intent == _record(_catalog(RUN), "spool_stalker").intent,
+					"genuine typed roster keeps exact Hexer policy, weights and unchanged escort")
+				# Independently account for weighted choice, random living target and escort choice.
+				var expected_rng := _rng(1)
+				expected_rng.state = route.rng.state
+				var roll := expected_rng.randi_range(1, 5)
+				var expected_target := expected_rng.randi_range(0, 2) + 1
+				var escort_roll := expected_rng.randi_range(1, 8)
+				_check(bound.bind_battle(enemies, party, route.rng) and bound.is_bound(),
+					"real Hexer weighted cache binds successfully")
+				var announced := bound.get_intents()
+				_check(announced.size() == 2, "two nonempty real Hexer announcements")
+				if announced.size() != 2:
+					continue
+				var attack := announced[0]
+				var target: int = attack.get("target_position", 0)
+				var expected := {"type": "attack", "amount": specs[pose][0],
+					"enemy_position": 1, "target_position": expected_target}
+				if pose != "attack":
+					expected["move"] = pose
+				_check(attack == expected and roll == ["attack", "attack2", "attack3"].find(pose) + 1
+					and escort_roll in [4, 5] and announced[1] == {
+						"type": "block", "amount": 2, "enemy_position": 2}
+					and route.rng.state == expected_rng.state and target in [1, 2, 3]
+					and not party.is_downed(target), "exact weighted variant, living random target and RNG draw count")
+				if target not in [1, 2, 3]:
+					continue
+				var rng_before: int = route.rng.state
+				var catalog := LiveMovePoseCatalog.new()
+				var fallback := "res://assets/paper/enemies/spool_hexer_attack.png"
+				var named_art := "res://assets/paper/enemies/spool_hexer_%s.png" % pose
+				var receipt := catalog.lookup_enemy("spool_hexer", attack, fallback)
+				_check(receipt.get("name") == specs[pose][1] and receipt.get("pose") == pose
+					and receipt.get("covers") == ["attack"] and receipt.get("named_art") == named_art
+					and receipt.get("art_available") == ResourceLoader.exists(named_art, "Texture2D")
+					and receipt.get("art") == (named_art if receipt.get("art_available") else fallback),
+					"Hexer catalog returns exact cached move name and authored art path")
+				_check(MissingMoveArt.new().lookup_enemy("spool_hexer", attack, fallback) == {
+					"name": specs[pose][1], "pose": pose, "covers": ["attack"], "named_art": named_art,
+					"art": fallback, "art_available": false, "fallback_used": true}, "Hexer missing art fallback retains name")
+				receipt["name"] = "forged"
+				_check(catalog.lookup_enemy("spool_hexer", attack, fallback).get("name") == specs[pose][1]
+					and bound.get_intents() == announced and route.rng.state == rng_before,
+					"detached name receipts and cached reads spend no RNG")
+				var damage: int = specs[pose][0]
+				if mode == "exposed":
+					party._heroes[target - 1]["statuses"] = {"exposed": 1}
+					damage = int(damage * 1.5)
+				if mode == "dead":
+					_check(enemies.apply_damage(1, 24) and enemies.is_slain(1), "Hexer source genuinely dies after caching")
+					damage = 0
+				var block: int = specs[pose][0] if mode == "blocked" else 2
+				_check(party.gain_block(target, block), "chosen living hero really gains Block")
+				var before := [party.get_heroes(), enemies.get_enemies(), route.rng.state, bound.get_intents()]
+				var forgeries: Array = []
+				for field in ["move", "amount", "enemy_position", "target_position"]:
+					var values: Array = {"move": ["attack4", "skill", 2, "attack3" if pose != "attack3" else "attack2"],
+						"amount": [99, 8 if pose != "attack2" else 9], "enemy_position": [0, 2, 3, "1"],
+						"target_position": [0, 4, "1"]}[field]
+					for value in values:
+						var forged := attack.duplicate(true)
+						forged[field] = value
+						forgeries.append(forged)
+				for forged in forgeries:
+					# Preserve the full cached phase: a forged source cannot impersonate
+					# the escort's already-announced slot, even on the unkeyed lash.
+					_check(CombatEnemyPhase.new().execute_phase(party, enemies, [forged, announced[1]], null, true, null, 73)
+						== {"ok": false, "events": []}
+						and before == [party.get_heroes(), enemies.get_enemies(), route.rng.state, bound.get_intents()],
+						"wrong move/amount/source/target rejects without actors, statuses, wallet or RNG publication: " + str(forged) + "/" + mode)
+				var malformed := attack.duplicate(true)
+				malformed["move"] = "attack4"
+				_check(CombatEnemyPhase.new().execute_phase(party, enemies,
+					[announced[1], malformed], null, true, null, 73) == {"ok": false, "events": []}
+					and before == [party.get_heroes(), enemies.get_enemies(), route.rng.state, bound.get_intents()],
+					"invalid later attack rolls back the valid escort Block too")
+				var original_spec: Dictionary = enemies._enemies[0].intent.duplicate(true)
+				enemies._enemies[0].intent.actions = original_spec.actions.filter(
+					func(a: Dictionary) -> bool: return int(a.amount) != specs[pose][0])
+				var stale_before := enemies.get_enemies()
+				_check(CombatEnemyPhase.new().execute_phase(party, enemies,
+					[announced[1], attack], null, true, null, 73) == {"ok": false, "events": []}
+					and enemies.get_enemies() == stale_before and party.get_heroes() == before[0]
+					and route.rng.state == rng_before and bound.get_intents() == announced,
+					"stale keyed and unkeyed source alternatives reject atomically without RNG")
+				enemies._enemies[0].intent = original_spec
+				var settled := CombatEnemyPhase.new().execute_phase(party, enemies, announced, null, true, null, 73)
+				var event := _event(attack)
+				event["applied"] = mode != "dead"
+				var expected_heroes: Array = before[0].duplicate(true)
+				expected_heroes[target - 1].block = maxi(0, block - damage)
+				expected_heroes[target - 1].hp -= maxi(0, damage - block)
+				var expected_enemies: Array = before[1].duplicate(true)
+				expected_enemies[1].block = 2
+				_check(settled == {"ok": true, "events": [event, _event(announced[1])], "gold": 73}
+					and party.get_heroes() == expected_heroes and enemies.get_enemies() == expected_enemies
+					and bound.get_intents() == announced and route.rng.state == rng_before,
+					"exact once-only named phase, Block then HP, Exposed, untouched bystanders and wallet")
+				var trace := [announced, settled, party.get_heroes(), enemies.get_enemies(), route.rng.state]
+				if replay == 0:
+					history = trace
+				else:
+					_check(history == trace, "same-seed real Hexer action/effect/RNG replay: " + pose + "/" + mode)
+
+
+## A genuine two-source roster narrowed to one authored Marshal alternative.
 func _forced_marshal(alternative: Dictionary, seed_value: int,
 		party: CombatParty, stings := true) -> Dictionary:
 	var records := _all_catalogs()
@@ -1042,10 +1350,8 @@ func _forced_hexer(alternative: Dictionary, seed_value: int,
 	return {"enemies": enemies, "scheduler": scheduler, "intents": scheduler.get_intents()}
 
 
-## AC1/AC2/AC3: the shipped Spool Hexer's lone elite lash is the established
-## 9-point size instead of the historical 45 outlier, and only that amount
-## changed. Identity, 24 HP, random targeting, both one-point status alternatives
-## and all three weights stay exactly as authored.
+## Retain the original lash, Exposed, debuff and forgery regressions alongside
+## the three named weighted attacks. Identity and random targeting stay intact.
 func _test_hexer_lash() -> void:
 	seed(64717)
 	var expected_rng := randi()
@@ -1068,14 +1374,16 @@ func _test_hexer_lash() -> void:
 		body["weight"] = weighted.get("weight", 0)
 		alternatives.append(body)
 	_check(alternatives == [
-		{"type": "attack", "amount": 9, "weight": 3},
+		{"type": "attack", "amount": 9, "weight": 1},
+		{"type": "attack", "amount": 8, "move": "attack2", "weight": 1},
+		{"type": "attack", "amount": 10, "move": "attack3", "weight": 1},
 		{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
 		{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}],
-		"AC1: the three authored alternatives are attack 9/3, Exposed 1/1 and Weak 1/1")
+		"AC1: attack 9/8/10 each weigh one; Exposed and Weak stay 1/1")
 	# Read by ID, never as a catalog total: the correction is bounded to the one
 	# outlier, so every other shipped elite keeps its own authored attack sizes.
 	var peers := {
-		"needle_marshal": [5, 4], "scissor_bailiff": [9], "zipper_hauler": [8],
+		"needle_marshal": [5, 4, 6], "scissor_bailiff": [9], "zipper_hauler": [8],
 		"needle_briar_guard": [9], "spool_snarekeeper": [8],
 		"pincushion_matriarch": [9], "spool_leech": [8]}
 	for id in peers:
@@ -1087,7 +1395,7 @@ func _test_hexer_lash() -> void:
 			amounts.append(CombatEnemyIntents.weighted_action(raw).get("action", {}).get("amount"))
 		_check(not peer.is_empty() and amounts == peers[id],
 			"AC1: the unchanged elite keeps its authored attack sizes " + id)
-	if alternatives.size() != 3:
+	if alternatives.size() != 5:
 		return
 
 	# AC2: the source-owned 9 resolved by the real enemy phase through Block then HP.
@@ -1153,7 +1461,7 @@ func _test_hexer_lash() -> void:
 				"AC2: the authored 9 is multiplied by Exposed before Block resolves")
 
 	# AC2: both untouched status alternatives remain available and deal no damage.
-	for index in [1, 2]:
+	for index in [3, 4]:
 		var alternative: Dictionary = alternatives[index]
 		var status_party := _party()
 		var status_case := _forced_hexer(alternative, 64725 + index, status_party)

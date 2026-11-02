@@ -5,6 +5,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_attack_move_schema()
 	_test_scavenger_gold_cache()
 	_test_two_hit_schema()
 	_test_special_schema()
@@ -44,13 +45,36 @@ func _check(condition: bool, message: String) -> void:
 		failures.append(message)
 
 
+func _test_attack_move_schema() -> void:
+	var raw := {"type": "attack", "amount": 6, "weight": 1, "move": "attack2"}
+	var normalized := CombatEnemyIntents.weighted_action(raw)
+	_check(normalized == {"weight": 1, "action": {"type": "attack", "amount": 6, "move": "attack2"}},
+		"keyed attack normalizes without losing move")
+	for value in [null, 2, true, [], {}, "", "attack", "unknown", " attack2"]:
+		var bad := raw.duplicate(true)
+		bad.move = value
+		_check(CombatEnemyIntents.weighted_action(bad).is_empty(), "invalid weighted move value rejects")
+		bad.erase("weight")
+		bad.target_position = 1
+		_check(not CombatEnemyIntents.valid_action(bad), "invalid executable move value rejects")
+	for kind in ["block", "buff", "debuff", "shove", "snip_block", "summon", "steal_gold"]:
+		var bad := raw.duplicate(true)
+		bad.type = kind
+		_check(CombatEnemyIntents.weighted_action(bad).is_empty(), "move forbidden on " + kind)
+	var extra := raw.duplicate(true)
+	extra["pose"] = "attack2"
+	_check(CombatEnemyIntents.weighted_action(extra).is_empty(), "arbitrary extra key rejects with real move")
+	extra.erase("weight")
+	extra.target_position = 1
+	_check(not CombatEnemyIntents.valid_action(extra), "arbitrary executable key rejects")
+
+
 func _scavenger_gold_record() -> Dictionary:
 	var catalog := RunTypedBattleRoster._parse_catalog_text(
 		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
 	for record in catalog:
 		if record.get("id") == "fray_scavenger":
 			var copy: Dictionary = record.duplicate(true)
-			copy.intent.actions.append({"type": "steal_gold", "amount": 2, "weight": 2})
 			return copy
 	return {}
 

@@ -2183,7 +2183,7 @@ func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitio
 	var starting_deck := CombatDeck.new([], starting_rng)
 	var starting_result := CombatBattleResult.new(starting_party, starting_enemies)
 	var starting_flow := CombatRoundFlow.new(starting_deck, starting_party,
-		starting_enemies, selector, starting_result, null, null, _warden_battle_receipt())
+		starting_enemies, selector, starting_result, null, null, _warden_battle_receipt(), 0)
 	if not starting_flow._valid_bindings():
 		push_warning("Starter combat bindings are invalid; run was not started")
 		return false
@@ -3437,7 +3437,7 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 			else:
 				next_result = CombatBattleResult.new(next_party, entry.enemies)
 				next_flow = CombatRoundFlow.new(next_deck, next_party, entry.enemies,
-					battle_intents, next_result, null, null, _warden_battle_receipt())
+					battle_intents, next_result, null, null, _warden_battle_receipt(), session_gold)
 				staged = next_flow.begin_fight()
 				if staged:
 					staged = torn_carry.begin_battle(id, next_result, next_party)
@@ -7810,6 +7810,8 @@ func _refresh_intents() -> void:
 			announcements.append("Enemy %d: Shove Hero %d %s" % [attack.enemy_position, attack.target_position, "back" if attack.direction == 1 else "front"])
 		elif attack.icon_key == "summon":
 			announcements.append("Enemy %d: Summon Moth Broodling" % attack.enemy_position)
+		elif attack.icon_key == "steal_gold":
+			announcements.append("Enemy %d: Steal %d gold" % [attack.enemy_position, attack.amount])
 		else:
 			announcements.append("Enemy %d -> Hero %d (%s): %d damage" % [
 				attack["enemy_position"], attack["target_position"],
@@ -7854,6 +7856,8 @@ func _end_turn(button = null) -> void:
 	if not round_flow.end_turn():
 		button.disabled = false
 		return
+	if round_flow.get_gold() != null:
+		session_gold = round_flow.get_gold()
 	# A committed End Turn opens the next hand: reset before it can earn receipts.
 	var attack_presenter := get_node_or_null("LiveAttackPreview")
 	if attack_presenter != null:

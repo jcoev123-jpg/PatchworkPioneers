@@ -418,9 +418,11 @@ func _run() -> void:
 	await _mixed_rejection_replay(app)
 	await _mounted_ram_charge(app)
 	await _mounted_ram_guard_redirect(app)
+	await _mounted_thread_lash(app)
 	app.starter_enemies_path = app.STARTER_ENEMIES_PATH
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://live_enemy_phase_guard.json"))
 	app.free()
+	await _mounted_scavenger_wallet()
 	_finish()
 
 
@@ -677,6 +679,206 @@ func _mixed_rejection_replay(app) -> void:
 		else:
 			_check(trace == replay, "seeded mounted rejection/recovery phase, party, enemy and hand replay exactly")
 		app.return_button.pressed.emit()
+		await process_frame
+
+
+func _mounted_thread_lash(app) -> void:
+	var biter := {}
+	for record in RunTypedBattleRoster._parse_catalog_text(FileAccess.get_file_as_string(
+			"res://data/enemies/run_enemies.json")):
+		if record.id == "thread_biter":
+			biter = record
+	var guards: Array = JSON.parse_string(FileAccess.get_file_as_string("user://live_enemy_phase_guard.json"))
+	var guard := {}
+	for record in guards:
+		if record.id == "ragling_guard":
+			guard = record
+	_check(not biter.is_empty() and not guard.is_empty(), "mounted Lash uses genuine Biter and pinned authored Guard")
+	if biter.is_empty() or guard.is_empty():
+		return
+	var path := "user://live_enemy_phase_thread_lash.json"
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	_check(file != null, "mounted Lash fixture writes outside repository")
+	if file == null:
+		return
+	file.store_string(JSON.stringify([biter, guard]))
+	file.close()
+	app.starter_enemies_path = path
+	for amount in [5, 6]:
+		_fixture_start(app)
+		await process_frame
+		_check(app.enemies != null and app.enemy_intents.is_bound(), "mounted genuine Biter binds weighted scheduler")
+		if app.enemies == null or not app.enemy_intents.is_bound():
+			break
+		for turn in range(64):
+			var action: Dictionary = app.enemy_intents.get_intents()[0]
+			if action.type == "attack" and action.amount == amount:
+				break
+			_check(app.enemy_intents.advance_turn(), "mounted Lash seeks real cached attack")
+		app.enemy_attacks = app.enemy_intents.get_intents()
+		app._refresh_intents()
+		var attack: Dictionary = app.enemy_attacks[0]
+		_check(attack.type == "attack" and attack.amount == amount
+			and attack.get("move", "") == ("attack2" if amount == 6 else ""), "real selected five/six precondition")
+		_check(app.enemies.apply_damage(1, 10), "real Drain source wounded before End Turn")
+		for hero in app.party._heroes:
+			hero.block = 0
+		var target: int = attack.target_position
+		var hp: int = app.party.get_hero(target).hp
+		var authored: Dictionary = app.enemies._enemies[0].intent.duplicate(true)
+		# Stale to the actor, even though RoundFlow still owns the exact cache.
+		for action in app.enemies._enemies[0].intent.actions:
+			if action.type == "attack" and int(action.amount) == amount:
+				action.amount = amount + 2
+		var before := _snapshot(app)
+		app.end_turn_button.pressed.emit()
+		_check(_snapshot(app) == before and not app.end_turn_button.disabled,
+			"stale authored pair rejects mounted End Turn atomically including hand and RNG")
+		app.enemies._enemies[0].intent = authored
+		app.end_turn_button.pressed.emit()
+		await process_frame
+		_check(app.party.get_hero(target).hp == hp - amount
+			and app.enemies.get_enemy(1).hp == 5 + amount,
+			"real mounted End Turn deals five/six once and Drains actual HP loss")
+		app.return_button.pressed.emit()
+		await process_frame
+	app.starter_enemies_path = "user://live_enemy_phase_guard.json"
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+
+
+## Discover through the shipped Fight router and weighted scheduler, never inject
+## an action or narrow the Scavenger's policy.
+func _wallet_route_fixture() -> Dictionary:
+	var receipt := RunV3PartyAdmission.admit(["warden", "seamstress", "tinker"])
+	_check(receipt.ok, "wallet route has genuine party admission")
+	for seed_value in range(1, 513):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		var treasure := ""
+		for id in map.get_legal_choices():
+			if map.get_node(id).type == "Treasure":
+				treasure = id
+				break
+		if treasure.is_empty() or not map.choose_node(treasure):
+			continue
+		for id in map.get_legal_choices():
+			if map.get_node(id).type != "Fight":
+				continue
+			map.choose_node(id)
+			var entry := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
+			if entry.get("success", false):
+				var cards: Array[String] = []
+				cards.assign(receipt.deck)
+				var deck := CombatDeck.new(cards, rng)
+				if entry.intents.bind_battle(entry.enemies, CombatParty.new(receipt.party), rng):
+					for action in entry.intents.get_intents():
+						if action.type == "steal_gold":
+							return {"seed": seed_value, "id": id, "source": action.enemy_position, "treasure": treasure}
+			break
+	return {}
+
+
+func _mounted_scavenger_wallet() -> void:
+	var fixture := _wallet_route_fixture()
+	_check(not fixture.is_empty(), "real routed Fight can announce Scavenger theft on entry")
+	if fixture.is_empty():
+		return
+	var replay: Array = []
+	for gold in [0, 1, 9, 9, 5]:
+		var app = load("res://scenes/app.tscn").instantiate()
+		root.add_child(app)
+		await process_frame
+		app.run_seed = fixture.seed
+		app.start_button.pressed.emit()
+		preload("res://tests/party_choice.gd").choose(app)
+		_check(app.run_map != null and app.route_view != null, "wallet test entered real run chooser")
+		if app.run_map == null:
+			app.free()
+			return
+		for button in app.route_buttons:
+			if button.get_meta("route_id") == fixture.treasure:
+				button.pressed.emit()
+				break
+		_check(app.run_map.get_current_node_id() == fixture.treasure, "real Treasure route precedes funded Fight fixture")
+		app.session_gold = gold
+		var route_action: Button = null
+		for button in app.route_buttons:
+			if button.get_meta("route_id") == fixture.id:
+				route_action = button
+		_check(route_action != null, "wallet route has mounted Fight action")
+		if route_action == null:
+			app.free()
+			return
+		route_action.pressed.emit()
+		await process_frame
+		_check(app.round_flow != null and app.enemies.get_enemy(fixture.source).id == "fray_scavenger"
+			and app.round_flow.get_gold() == gold, "real Fight binds carried wallet and authored Scavenger")
+		if app.round_flow == null:
+			app.free()
+			return
+		var theft: Dictionary = app.enemy_attacks[fixture.source - 1]
+		_check(theft == {"type": "steal_gold", "amount": 2, "enemy_position": fixture.source},
+			"mounted Fight really cached non-targeted two-gold theft")
+		var presenter = app.get_node("LiveEnemyRoster")
+		var badge = presenter._badges[fixture.source - 1]
+		_check(badge.is_visible_in_tree() and badge.readable_text == "Steal 2 gold"
+			and badge.target_position == 0 and badge.policy_cue.is_empty()
+			and badge.icon_mode == "steal_gold" and badge.tooltip_text.contains("run wallet")
+			and app.intent_label.text.contains("Steal 2 gold"), "mounted badge and label disclose theft before payment")
+		# Remove the other living sources through real damage to isolate this action.
+		for index in range(app.enemies.get_enemies().size()):
+			if index + 1 != fixture.source:
+				_check(app.enemies.apply_damage(index + 1, 999), "other source is truly slain")
+		var heroes: Array = app.party.get_heroes()
+		var cached: Array = app.enemy_attacks.duplicate(true)
+		app.enemy_attacks = []
+		var before := _snapshot(app)
+		app._end_turn(app.end_turn_button)
+		_check(_snapshot(app) == before and app.session_gold == gold, "stale mounted theft rejects without state/RNG/wallet changes")
+		app.enemy_attacks = cached
+		app.end_turn_button.pressed.emit()
+		var balance: int = maxi(0, gold - 2)
+		_check(app.session_gold == balance and app.round_flow.get_gold() == balance,
+			"one mounted accepted End Turn publishes floored run wallet")
+		before = _snapshot(app)
+		app.end_turn_button.pressed.emit()
+		_check(_snapshot(app) == before and app.session_gold == balance, "duplicate input cannot debit or advance anything twice")
+		for index in range(3):
+			_check(app.party.get_hero(index + 1).hp == heroes[index].hp, "isolated live theft never damages heroes")
+		if gold == 9:
+			var trace := [_snapshot(app), app.session_gold]
+			if replay.is_empty():
+				replay = trace
+			else:
+				_check(trace == replay, "real routed wallet and RNG replay with same seed")
+		if gold == 5:
+			for position in range(1, 4):
+				_check(app.party.apply_damage(position, 999), "defeat witness really downs each hero")
+			app._observe_battle_result()
+			_check(app._battle_closed and app.battle_result.get_outcome() == CombatBattleResult.DEFEAT
+				and app.session_gold == balance, "defeat preserves committed reduced wallet")
+			app.free()
+			await process_frame
+			continue
+		_check(app.enemies.apply_damage(fixture.source, 999), "finish genuine Fight after theft")
+		app._observe_battle_result()
+		_check(app._battle_closed and app.battle_result.get_outcome() == CombatBattleResult.VICTORY
+			and app._routed_reward_service() != null, "victory opens real onward reward service")
+		var offering = app._routed_reward_service()
+		if offering != null:
+			var carried_gold: int = offering.read_state().gold if offering is RunMultiFightRewards else offering._starting_gold
+			_check(carried_gold == balance, "subsequent run reward wallet reads reduced balance")
+			var award: int = app.fight_reward_gold
+			app.reward_buttons[3].pressed.emit()
+			_check(app.session_gold == balance + award and app.fight_reward_claimed,
+				"real reward settlement preserves theft and adds only earned gold")
+			app.continue_button.pressed.emit()
+			_check(app.route_view != null and app.route_view.is_visible_in_tree()
+				and app.session_gold == balance + award, "onward run chooser preserves settled wallet")
+		app.free()
 		await process_frame
 
 
