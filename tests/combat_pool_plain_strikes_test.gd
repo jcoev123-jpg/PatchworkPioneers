@@ -11,6 +11,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_four_foe_plain_strikes()
 	_test_stage_only_contract()
 	_test_catalog_contract()
 	_test_brass_buckle()
@@ -78,6 +79,88 @@ func _check(condition: bool, label: String) -> void:
 func _definition(id: String) -> Dictionary:
 	return (WardenPoolCards.new().get_definition(id) if id.begins_with("warden_")
 		else SeamstressPoolCards.new().get_definition(id))
+
+
+func _four_foes() -> CombatEnemies:
+	var catalog: Array = JSON.parse_string(FileAccess.get_file_as_string("res://data/enemies/starter_enemies.json"))
+	catalog.append_array(JSON.parse_string(FileAccess.get_file_as_string("res://data/enemies/v3_tough_normals.json")))
+	var selected: Array = []
+	for required in ["ragling", "ragling_guard", "spindle_ram", "razor_ribbon_wraith"]:
+		var matches := catalog.filter(func(entry): return entry.get("id") == required)
+		_check(matches.size() == 1, "unique authored foe " + required)
+		if matches.size() == 1:
+			_check(matches[0].max_hp == floor(matches[0].max_hp), "integral authored foe HP")
+			matches[0].max_hp = int(matches[0].max_hp)
+			selected.append(matches[0])
+	var foes := CombatEnemies.new(selected, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(foes.is_valid() and foes.get_capacity() == 4 and foes.get_enemies().size() == 4,
+		"four distinct authored foes explicitly opted in")
+	return foes
+
+
+func _test_four_foe_plain_strikes() -> void:
+	for id in IDS:
+		var definition := _definition(id)
+		for from_position in definition.from_positions:
+			for target in definition.to_positions:
+				for with_statuses in [false, true]:
+					var replays: Array = []
+					for attempt in range(2):
+						var order: Array = ["warden", "seamstress", "tinker"]
+						var owner_index := order.find(definition.owner)
+						var displaced: String = order[from_position - 1]
+						order[from_position - 1] = definition.owner
+						order[owner_index] = displaced
+						var party := _party(order)
+						var foes := _four_foes()
+						var deck := _deck([id], 43601)
+						_check(deck.hand.has(id) and foes.gain_block(target, 2), "held printing and real target Block")
+						if with_statuses:
+							party._heroes[from_position - 1].statuses = {"weak": 2}
+							foes._enemies[target - 1].statuses = {"exposed": 2}
+						foes._enemies[3].statuses = {"bleed": 2, "weak": 1}
+						var fourth := foes.get_enemy(4)
+						var damage: int = definition.effects.damage
+						if with_statuses:
+							damage = damage * 9 / 8
+						_play(deck, party, foes, id, target, damage, 2, damage - 2,
+							definition.effects.get("block", 0), from_position, "four-foe " + id)
+						_check(foes.get_enemy(4) == fourth, "fourth foe including revival and statuses untouched")
+						replays.append(_snapshot(deck, party, foes))
+					_check(replays[0] == replays[1], "four-foe direct same-seed replay")
+		for mode in ["fourth", "zero", "to", "from", "owner", "death", "downed", "capacity", "status", "roster", "energy"]:
+			if mode == "from" and definition.from_positions.size() == 3:
+				continue # All three FROM slots are printed for Thread Whip.
+			if mode == "to" and definition.to_positions.size() == 3:
+				continue
+			var party := _party()
+			var foes := _four_foes()
+			var deck := _deck([id])
+			var pin := CombatPinned.new()
+			_check(pin.pin_enemy(foes, 1, "tinker"), "real different-owner pin before refusal")
+			var wardrobe := RunPatchWardrobe.new(party.get_heroes(), ["button_eye"], RunAuthoredPatchDefinitions.load_definitions(), 5)
+			var torn := RunTornMending.new(party.get_heroes())
+			_check(wardrobe.sew("button_eye", definition.owner, "HEAD", "four-eye", wardrobe.get_snapshot()).ok, "real refusal patch")
+			var resolver := CombatPoolPlainStrikes.new()
+			_check(resolver.bind_patch_wardrobe(wardrobe, torn), "refusal patch authority bound")
+			var target := 1
+			var owner_position := 1 if definition.owner == "warden" else 2
+			match mode:
+				"fourth": target = 4
+				"zero": target = 0
+				"to": target = 3
+				"from": party = _party(["tinker", "seamstress", "warden"])
+				"owner": party._heroes[owner_position - 1].id = "absent_owner"
+				"death": _check(foes.apply_damage(1, 999) and foes.is_slain(1), "target really dead")
+				"downed": _check(party.apply_damage(owner_position, 999) and party.is_downed(owner_position), "owner really downed")
+				"capacity": foes._capacity = CombatEnemies.MAX_ENEMIES
+				"status": foes._enemies[3].statuses = {"weak": -1}
+				"roster": foes._enemies[3].position = 3
+				"energy": _check(deck.try_spend_energy(3), "really insufficient energy")
+			var authority := [wardrobe.get_snapshot(), torn.read_state(), resolver.get_patches().latch_snapshot(), resolver.get_head_patches().read_projection()]
+			_reject(deck, party, foes, id, target, "four-foe " + mode + id, pin, resolver)
+			_check(authority == [wardrobe.get_snapshot(), torn.read_state(), resolver.get_patches().latch_snapshot(), resolver.get_head_patches().read_projection()],
+				"refusal preserves patch ledgers, projection and first-hit latch")
 
 
 func _party(order: Array = ["warden", "seamstress", "tinker"]) -> CombatParty:

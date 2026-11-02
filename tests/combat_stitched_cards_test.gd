@@ -13,6 +13,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_four_foe_plain_halves()
 	_test_knit_halves()
 	_test_plain_pool_halves()
 	_test_plain_pool_failures()
@@ -161,6 +162,95 @@ func _test_plain_pool_halves() -> void:
 		_check(c.attacks.bind_patch_wardrobe(wardrobe, torn) and heads.bind_wardrobe(wardrobe, torn)
 			and c.attacks.bind_head_patch_rules(heads), "dual Block authority")
 		_check(_play(c, 1, 2).ok and c.party.get_hero(1).block == (10 if wearer == "warden" else 6), "only Buckle owner's ARM/HEAD increase Block")
+
+
+func _test_four_foe_plain_halves() -> void:
+	for buckle in ["warden_brass_buckle", "warden_brass_buckle_plus"]:
+		for whip in ["seamstress_thread_whip", "seamstress_thread_whip_plus"]:
+			for reverse in [false, true]:
+				var replays: Array = []
+				for attempt in range(2):
+					var first: String = whip if reverse else buckle
+					var second: String = buckle if reverse else whip
+					var c := _rest_fixture(first, second, 43602)
+					c.enemies = _four_foes()
+					c.wardrobe = RunPatchWardrobe.new(c.party.get_heroes(), ["button_eye"], RunAuthoredPatchDefinitions.load_definitions(), 5)
+					c.torn = RunTornMending.new(c.party.get_heroes())
+					_check(c.wardrobe.sew("button_eye", "warden", "HEAD", "four-eye", c.wardrobe.get_snapshot()).ok
+						and c.attacks.bind_patch_wardrobe(c.wardrobe, c.torn), "genuine stitched first-hit patch authority")
+					var preview: Dictionary = c.rest.preview_play(c.id, c.party.get_heroes())
+					_check(preview.ok and preview.halves[0].id == first and preview.halves[1].id == second
+						and preview.halves[0].owner != preview.halves[1].owner and c.deck.hand == [c.id],
+						"canonical different-owner Rest halves held in authored order")
+					_check(c.enemies.gain_block(2, 30), "real shared target can survive both staged hits")
+					c.enemies._enemies[3].statuses = {"bleed": 2, "weak": 1}
+					var before := _snapshot(c)
+					# Both legal halves succeed in isolation from this prestate. A
+					# subsequent invalid target therefore exercises actual rollback.
+					var stage := CombatPoolPlainStrikes.stage_for_stitch(c.attacks.stage_transaction())
+					var detached_party := CombatParty.new(c.party.get_heroes())
+					var detached_foes := _four_foes()
+					_check(stage.resolve_staged_half(detached_party, detached_foes, preview.halves[0], 2).ok,
+						"first half really succeeds before later-half failure")
+					_reject(c, 2, 4, "late unprinted fourth target rolls back hit, Block, patch and latch")
+					_reject(c, 4, 2, "first unprinted fourth target")
+					var expected := before.duplicate(true)
+					expected[1] = []
+					expected[2] = [c.id]
+					expected[3] = 1
+					var buckle_damage: int = 7 if buckle.ends_with("_plus") else 5
+					var whip_damage: int = 8 if whip.ends_with("_plus") else 6
+					# Warden's Button Eye lands AFTER its hit; a later Whip
+					# sees Exposed, whereas an earlier Whip does printed damage.
+					if not reverse:
+						whip_damage = whip_damage * 3 / 2
+					var gain: int = 6 if buckle.ends_with("_plus") else 4
+					expected[6][0].block = gain
+					expected[7][1].block -= buckle_damage + whip_damage
+					expected[7][1].statuses = {"exposed": 1}
+					expected[9]["warden"] = true
+					var buckle_receipt := {"ok": true, "hits": [_expected_hit(2, buckle_damage, buckle_damage, {"exposed": 1})], "block_deltas": {1: gain}}
+					var whip_receipt := {"ok": true, "hits": [_expected_hit(2, whip_damage, whip_damage)], "block_deltas": {}}
+					var receipt := _play(c, 2, 2)
+					_check(receipt == {"ok": true, "halves": [whip_receipt, buckle_receipt] if reverse else [buckle_receipt, whip_receipt]},
+						"both ordered receipts include exact damage, Block and patch status")
+					_check(_snapshot(c) == expected and c.enemies.get_enemy(4) == before[7][3],
+						"one atomic charge/discard; exact complete state, fourth foe, ledgers, latches and RNG")
+					replays.append([receipt, _snapshot(c)])
+				_check(replays[0] == replays[1], "four-foe plain composite deterministic replay")
+	for id in CombatPoolPlainStrikes.SUPPORTED_IDS:
+		var other := "seamstress_thread_whip" if id.begins_with("warden") else "warden_brass_buckle"
+		for reverse in [false, true]:
+			for mode in ["energy", "dead", "downed", "owner", "from", "to", "capacity", "status", "roster", "forged", "stale", "lethal"]:
+				if mode == "from" and not id.begins_with("warden"):
+					continue
+				if mode == "to" and not id.begins_with("seamstress"):
+					continue
+				var c := _rest_fixture(other if reverse else id, id if reverse else other, 43603)
+				c.enemies = _four_foes()
+				var a := 1
+				var b := 2
+				var owner := 1 if id.begins_with("warden") else 2
+				match mode:
+					"energy": _check(c.deck.try_spend_energy(2), "composite really underfunded")
+					"dead": _check(c.enemies.apply_damage(2 if reverse else 1, 999), "selected foe really slain")
+					"downed": _check(c.party.apply_damage(owner, 999), "plain owner really downed")
+					"owner": c.party._heroes[owner - 1].id = "absent_owner"
+					"from":
+						var heroes: Array = c.party.get_heroes()
+						c.party = CombatParty.new([heroes[2], heroes[1], heroes[0]])
+					"to":
+						if reverse: b = 3
+						else: a = 3
+					"capacity": c.enemies = _unopted_four_foes()
+					"status": c.enemies._enemies[3].statuses = {"weak": -1}
+					"roster": c.enemies._enemies[3].position = 3
+					"forged": c.rest._descriptors[c.id].second_half.effects.damage = 999
+					"stale": c.rest._deck.clear()
+					"lethal":
+						_check(c.enemies.apply_damage(1, 11), "one HP shared target before first hit")
+						b = 1
+				_reject(c, a, b, "four-foe plain composite refusal " + mode + id)
 
 
 func _test_plain_pool_failures() -> void:
