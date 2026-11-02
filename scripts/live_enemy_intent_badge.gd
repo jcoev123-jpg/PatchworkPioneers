@@ -584,11 +584,23 @@ static func load_icon_texture(path: String) -> Texture2D:
 	return load(path) as Texture2D
 
 
+## Set only after the roster authenticates this refresh's announced source.
+var move_name := ""
+
+
+func append_verified_move_name(title: String) -> void:
+	if title.is_empty() or not move_name.is_empty() or intent_type.is_empty():
+		return
+	move_name = title
+	tooltip_text += "\nMove: " + title
+
+
 func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		policy: String = "", source_enrage_stacks: int = -1,
 		contact_traits: Dictionary = {}, source_blind: bool = false,
 		charge_context: Dictionary = {}, summon_context: Dictionary = {}) -> void:
 	# Never affect or advance the scheduler: the caller passes a copied announcement.
+	move_name = ""
 	# Only targeted, active, authored actions receive the small policy tag.
 	policy_cue = ""
 	action_status = ""

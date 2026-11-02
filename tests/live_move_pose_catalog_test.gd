@@ -1,0 +1,141 @@
+extends SceneTree
+
+const Catalog = preload("res://scripts/live_move_pose_catalog.gd")
+const FALLBACK := "res://assets/paper/heroes/warden_attack.png"
+var failures := 0
+
+class CountingCatalog extends Catalog:
+	var reads := 0
+	func _read_manifest() -> Variant:
+		reads += 1
+		return super._read_manifest()
+
+class FixtureCatalog extends Catalog:
+	var source: Variant
+	var reads := 0
+	var available := true
+	var checked: Array[String] = []
+	func _read_manifest() -> Variant:
+		reads += 1
+		return source
+	func _art_available(path: String) -> bool:
+		checked.append(path)
+		return available
+
+
+func _initialize() -> void:
+	var manifest: Variant = JSON.parse_string(FileAccess.get_file_as_string(Catalog.MANIFEST_PATH))
+	check(manifest is Dictionary and manifest.get("enemies") is Dictionary,
+		"real manifest exists and parses")
+	var catalog := FixtureCatalog.new()
+	catalog.source = manifest
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 445
+	var rng_before := rng.state
+	var original: Dictionary = manifest.duplicate(true)
+	var attack := {"type": "attack", "amount": 5, "target_position": 1, "enemy_position": 1}
+	var action_before := attack.duplicate(true)
+	var first := catalog.lookup_enemy("thread_biter", attack, FALLBACK)
+	check_move(first, "Lint Spit", "attack")
+	var lash := attack.duplicate(true)
+	lash["move"] = "attack2"
+	check_move(catalog.lookup_enemy("thread_biter", lash, FALLBACK), "Thread Lash", "attack2")
+	check_move(catalog.lookup_hero("warden", "block", FALLBACK), "Shield Wall", "guard")
+	check_move(catalog.lookup_hero("seamstress", "skill", FALLBACK), "Mending Stitch", "skill")
+	check_move(catalog.lookup_enemy("thread_biter", {"type": "block", "amount": 2}, FALLBACK),
+		"Fraying Coil", "skill")
+	for pair in [["attack3", "Stuffing Hurl"], ["attack4", "Rope Lash"]]:
+		var boss_action := attack.duplicate(true)
+		boss_action["move"] = pair[0]
+		check_move(catalog.lookup_enemy("patchwork_behemoth", boss_action, FALLBACK), pair[1], pair[0])
+	first["name"] = "changed"
+	first["covers"].append("changed")
+	for repeat in range(5):
+		var again := catalog.lookup_enemy("thread_biter", attack, FALLBACK)
+		check_move(again, "Lint Spit", "attack")
+		check(again.get("covers") == ["attack"], "receipt is detached")
+	check(catalog.reads == 1, "one manifest read for repeated enemy and hero lookups")
+	check(attack == action_before and manifest == original and rng.state == rng_before,
+		"lookups preserve actions, source records and RNG")
+	check(lash.get("move") == "attack2", "explicit move preserved")
+	for invalid in [null, [], {}, {"type": "attack"}, {"type": "attack", "amount": -1, "target_position": 1},
+		{"type": "block", "amount": 2, "move": "attack"},
+		{"type": "block", "amount": 2, "move": "attack2"},
+		{"type": "block", "amount": 2, "move": "attack3"},
+		{"type": "block", "amount": 2, "move": "attack4"},
+		{"type": "attack", "amount": 2, "target_position": 1, "move": "skill"},
+		{"type": "attack", "amount": 2, "target_position": 1, "move": "unknown"},
+		{"type": "attack", "amount": 2, "target_position": 1, "move": 2}]:
+		check(catalog.lookup_enemy("thread_biter", invalid, FALLBACK).is_empty(), "invalid action fails closed")
+	check(catalog.lookup_enemy("unknown", attack, FALLBACK).is_empty(), "unknown enemy")
+	check(catalog.lookup_enemy("thread_biter", {"type": "summon", "amount": 0}, FALLBACK).is_empty(), "uncovered action")
+	for role in ["attack", "attack2", "guard", "power", "", "unknown"]:
+		check(catalog.lookup_hero("warden", role, FALLBACK).is_empty(), "invalid/unmapped hero role")
+	check(catalog.lookup_hero("unknown", "block", FALLBACK).is_empty(), "unknown hero")
+	# Force unavailable art without depending on whether pipeline PNGs exist.
+	catalog.available = false
+	var missing := catalog.lookup_hero("seamstress", "skill", FALLBACK)
+	check_move(missing, "Mending Stitch", "skill")
+	check(missing.get("art") == FALLBACK and missing.get("fallback_used") == true
+		and missing.get("art_available") == false, "unavailable art uses supplied attack path")
+	var real := CountingCatalog.new()
+	var real_receipt := real.lookup_enemy("thread_biter", attack, FALLBACK)
+	check_move(real_receipt, "Lint Spit", "attack")
+	check(real_receipt.get("art") == (real_receipt.get("named_art")
+		if ResourceLoader.exists(real_receipt.get("named_art", ""), "Texture2D") else FALLBACK),
+		"production availability check chooses usable art")
+	check(ResourceLoader.exists(FALLBACK, "Texture2D"), "fallback witness is a usable established texture")
+	check_move(real.lookup_enemy("thread_biter", lash, FALLBACK), "Thread Lash", "attack2")
+	check_move(real.lookup_hero("warden", "block", FALLBACK), "Shield Wall", "guard")
+	check_move(real.lookup_hero("seamstress", "skill", FALLBACK), "Mending Stitch", "skill")
+	check(real.reads == 1, "production parser runs once per instance")
+	_test_malformed(attack)
+	print("live_move_pose_catalog_test: %s" % ("PASS" if failures == 0 else "FAIL (%d)" % failures))
+	quit(0 if failures == 0 else 1)
+
+
+func _test_malformed(attack: Dictionary) -> void:
+	for source in [null, [], "bad JSON", {}, {"enemies": []}, {"enemies": {"thread_biter": []}},
+		{"enemies": {"thread_biter": {"attack": []}}}]:
+		var catalog := FixtureCatalog.new()
+		catalog.source = source
+		for repeat in range(2):
+			check(catalog.lookup_enemy("thread_biter", attack, FALLBACK).is_empty(), "malformed manifest")
+		check(catalog.reads == 1 and catalog.checked.is_empty(), "failed manifest cached; no texture access")
+	var valid := {"name": "Witness", "covers": ["attack"], "art": FALLBACK}
+	var values: Dictionary = {"name": [null, 2, "", "  "], "art": [null, 2, "", "bad", "res://bad.tres"],
+		"covers": [null, {}, [], ["block"], ["attack", "unknown"], ["attack", 2]]}
+	for field in values:
+		for value in values[field]:
+			var entry := valid.duplicate(true)
+			entry[field] = value
+			var catalog := FixtureCatalog.new()
+			catalog.source = {"enemies": {"thread_biter": {"attack": entry}}}
+			check(catalog.lookup_enemy("thread_biter", attack, FALLBACK).is_empty(), "malformed entry " + field)
+			check(catalog.checked.is_empty(), "invalid entry never checks/loads art")
+	var detached := FixtureCatalog.new()
+	var source := {"enemies": {"thread_biter": {"attack": valid}}}
+	detached.source = source
+	check_move(detached.lookup_enemy("thread_biter", attack, FALLBACK), "Witness", "attack")
+	source["enemies"].clear()
+	check_move(detached.lookup_enemy("thread_biter", attack, FALLBACK), "Witness", "attack")
+	for group in ["enemies", "heroes"]:
+		var catalog := FixtureCatalog.new()
+		catalog.source = {group: {"warden": {"skill": valid, "guard": valid}}}
+		check(catalog.lookup_hero("warden", "block", FALLBACK).is_empty(), "incompatible guard covers")
+		check(catalog.lookup_hero("warden", "skill", FALLBACK).is_empty(), "incompatible skill covers")
+		check(catalog.lookup_enemy("warden", {"type": "block", "amount": 2}, FALLBACK).is_empty(), "enemy nonattack cannot use attack covers")
+
+
+func check_move(receipt: Dictionary, title: String, pose: String) -> void:
+	check(not receipt.is_empty() and receipt.get("name") == title and receipt.get("pose") == pose,
+		"named move " + title + " / " + pose)
+	if receipt.get("art_available") == true:
+		check(receipt.get("art") == receipt.get("named_art") and receipt.get("fallback_used") == false,
+			"available named art selected")
+
+
+func check(ok: bool, message: String) -> void:
+	if not ok:
+		failures += 1
+		printerr("FAIL: " + message)

@@ -7,6 +7,15 @@ var checks := 0
 const SOURCE := "res://data/enemies/starter_enemies.json"
 const FIXTURE := "user://live_enemy_roster_invalid.json"
 const ROSTER_ART := preload("res://scripts/live_enemy_roster.gd")
+
+class CountingMoveCatalog extends LiveMovePoseCatalog:
+	var reads := 0
+	func _read_manifest() -> Variant:
+		reads += 1
+		return super._read_manifest()
+	func _art_available(_path: String) -> bool:
+		return false # Exercise missing authored textures without changing any art files.
+
 ## The shipped display face every pinned actor name wears, independent of the view.
 const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 ## Authored battle scene per admitted route kind; selection must never come from screen text.
@@ -644,7 +653,63 @@ func _staging(app, presenter) -> void:
 ## lives only in the drawn transform, so target rectangles, pinned names, intent badges,
 ## the hand and the action row stay put and no HP, deck, energy, turn, intent or RNG value
 ## moves. A fallen actor and a detached puppet never start one.
+func _stage_focus(app, presenter) -> void:
+	var stage = presenter.backdrop
+	var hero: Control
+	var enemy: Control
+	for actor in presenter._puppets:
+		if not actor.fallen and actor.is_visible_in_tree():
+			if actor.facing > 0.0:
+				hero = actor
+			else:
+				enemy = actor
+	_check(is_instance_valid(stage) and is_instance_valid(hero) and is_instance_valid(enemy),
+		"focus lifecycle uses real standing mounted puppets")
+	if not is_instance_valid(stage) or not is_instance_valid(hero) or not is_instance_valid(enemy):
+		return
+	var state := _snapshot(app)
+	var serial: int = stage.focus_serial
+	_check(not presenter.focus_hit("missing", enemy.actor_id, false)
+		and stage.focus_zoom() == 1.0 and stage.focus_serial == serial,
+		"unbound attacker cannot create a focus")
+	_check(not presenter.focus_hit(hero.actor_id, "missing", false)
+		and stage.focus_serial == serial, "unbound target cannot create a focus")
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, true), "real anchors admit a fast focus")
+	stage.advance_focus(0.15 * 0.15 / 0.85)
+	_check(is_equal_approx(stage.focus_zoom(), 1.30), "fast focus reaches the same authored zoom")
+	stage.advance_focus(0.15 * 0.50 / 0.85)
+	_check(is_equal_approx(stage.focus_zoom(), 1.30), "fast focus retains the compressed hold")
+	stage.advance_focus(0.15 * 0.20 / 0.85)
+	_check(stage.focus_zoom() == 1.0 and stage.focus_transform() == Transform2D.IDENTITY,
+		"fast focus ends exactly within 0.15 seconds")
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, false), "missing-anchor test starts a real focus")
+	enemy.hide()
+	stage.advance_focus(0.0)
+	_check(stage.focus_zoom() == 1.0 and stage.focus_anchors.is_empty(),
+		"a disappearing anchor immediately retires the visual focus")
+	enemy.show()
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, false), "rebind test starts a real focus")
+	var identity: String = enemy.actor_id
+	enemy.actor_id = "rebound"
+	stage.advance_focus(0.0)
+	_check(stage.focus_zoom() == 1.0, "an actor identity replacement cannot retain focus")
+	enemy.actor_id = identity
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, false), "teardown test starts a real focus")
+	presenter.cancel_poses()
+	_check(stage.focus_transform() == Transform2D.IDENTITY and stage.focus_anchors.is_empty(),
+		"teardown cancels focus exactly")
+	_check(presenter.focus_hit(hero.actor_id, enemy.actor_id, false), "motion-setting test starts a real focus")
+	var previous: Variant = ProjectSettings.get_setting("accessibility/reduced_motion", false)
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	stage.advance_focus(0.0)
+	_check(stage.focus_zoom() == 1.0 and stage.focus_anchors.is_empty(),
+		"enabling reduced motion immediately cancels an active focus")
+	ProjectSettings.set_setting("accessibility/reduced_motion", previous)
+	_check(_snapshot(app) == state, "focus lifecycle never changes authoritative state or seeded RNG")
+
+
 func _attack_pose(app, presenter) -> void:
+	_stage_focus(app, presenter)
 	_check(is_instance_valid(presenter.panel) and presenter.enemies != null
 		and not presenter._puppets.is_empty()
 		and presenter._puppets.size() == CombatParty.PARTY_SIZE + presenter.enemies.get_enemies().size(),
@@ -2351,6 +2416,11 @@ func _mouse_attack(app, reference, presenter) -> void:
 	_check(chosen != null and target > 0, "real seeded hand supplies a playable targeted attack")
 	if chosen == null or target == 0:
 		return
+	var owner: String = StarterCards.new().get_definition(card_id).get("owner", "")
+	var target_id: String = app.enemies.get_enemy(target)["id"]
+	_check(presenter.focus_hit(owner, target_id, false), "input test starts focus on actual mounted actors")
+	presenter.backdrop.advance_focus(0.15)
+	_check(is_equal_approx(presenter.backdrop.focus_zoom(), 1.30), "mouse targeting runs during full stage focus")
 	var before := _snapshot(app)
 	await _input_mouse(chosen)
 	_check(_snapshot(app) == before, "mouse card selection alone changes no combat state")
@@ -2713,6 +2783,7 @@ func _run() -> void:
 	await _survival_ribbons(scene)
 	await _four_capacity_ribbons(scene)
 	await _mounted_fourth_wasp(scene)
+	await _mounted_move_names(scene)
 	for mode in [[3, 2], [3, 3], [4, 3], [4, 4]]:
 		await _mounted_summon_help(scene, mode[0], mode[1])
 	app.free()
@@ -4457,6 +4528,138 @@ func _four_capacity_ribbons(scene: PackedScene) -> void:
 	presenter._refresh()
 	_check(not full_termite.visible and full_termite.tooltip_text.is_empty(),
 		"AC2: the slain full-roster Termite keeps no stale warning")
+	app.free()
+	await process_frame
+
+
+func _mounted_move_names(scene: PackedScene) -> void:
+	var definition := _authored_enemy("thread_biter")
+	_check(not definition.is_empty() and definition.get("max_hp") == 15,
+		"move-name precondition: genuine shipped Thread Biter record exists")
+	if definition.is_empty():
+		return
+	var app = scene.instantiate()
+	root.add_child(app)
+	await process_frame
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	_check(app.party != null and app.run_rng != null and app.party.is_valid(),
+		"move-name precondition: mounted real battle supplies party and seeded RNG")
+	if app.party == null or app.run_rng == null:
+		app.free()
+		return
+	var presenter = app.get_node("LiveEnemyRoster")
+	var prior_catalog: LiveMovePoseCatalog
+	for kind in ["attack", "block"]:
+		var roster := CombatEnemies.new([definition])
+		_check(roster.is_valid() and roster.get_enemy(1).id == "thread_biter",
+			"move-name precondition: authentic living roster is valid")
+		var seed_value := _intent_witness_seed(roster, app.party, 1, kind)
+		if seed_value < 1:
+			continue
+		app.run_rng.seed = seed_value
+		_check(_mount_roster(app, presenter, roster), "move-name precondition: real scheduler binds authored " + kind)
+		await process_frame
+		await process_frame
+		var actions: Array[Dictionary] = app.enemy_intents.get_intents()
+		_check(actions.size() == 1 and actions[0].get("type") == kind
+			and actions[0].get("enemy_position") == 1 and presenter._badges.size() == 1,
+			"move-name precondition: actual cached announcement and mounted badge exist")
+		if actions.size() != 1 or presenter._badges.size() != 1:
+			continue
+		var badge: LiveEnemyIntentBadge = presenter._badges[0]
+		var title := "Lint Spit" if kind == "attack" else "Fraying Coil"
+		_check(presenter._move_catalog != prior_catalog and presenter._move_catalog._loaded
+			and badge.move_name == title and badge.tooltip_text.ends_with("\nMove: " + title),
+			"live rebind owns a fresh loaded catalog and the actual authored move: " + badge.tooltip_text)
+		prior_catalog = presenter._move_catalog
+		# Compare against the authoritative detailed renderer, with identical context.
+		var expected := LiveEnemyIntentBadge.new()
+		expected.show_intent(actions[0], false)
+		# This fixture has no started round-flow service, so no policy/contact extras.
+		_check(badge.tooltip_text == expected.tooltip_text + "\nMove: " + title
+			and badge.amount == (5 if kind == "attack" else 2)
+			and badge.target_position == actions[0].get("target_position", 0),
+			"move label preserves exact detailed action, damage and target help")
+		expected.free()
+		var catalog := CountingMoveCatalog.new()
+		presenter._move_catalog = catalog
+		var before := _snapshot(app)
+		var tip := badge.tooltip_text
+		var geometry := [badge.position, badge.size, badge.mouse_filter, badge.focus_mode]
+		for repeat in range(4):
+			presenter._sync_battle()
+			presenter._refresh()
+			_check(badge.move_name == title and badge.tooltip_text == tip
+				and _snapshot(app) == before and presenter._move_catalog == catalog
+				and [badge.position, badge.size, badge.mouse_filter, badge.focus_mode] == geometry,
+				"refresh is exact, single-name, geometry-stable and combat/RNG-neutral without named art")
+		_check(catalog.reads == 1, "mounted catalog reads authored manifest once across repeated refreshes")
+		var schedule = app.enemy_intents
+		app.enemy_intents = CombatEnemyIntents.new(_inert_patterns(1))
+		presenter._refresh()
+		_check(badge.move_name.is_empty() and not badge.tooltip_text.contains("Move:"),
+			"unbound announcement cannot borrow preceding move name")
+		app.enemy_intents = schedule
+		app.enemies = CombatEnemies.new([definition])
+		presenter._refresh()
+		_check(badge.move_name.is_empty() and not badge.tooltip_text.contains("Move:"),
+			"replaced authoritative roster clears previous move")
+		app.enemies = roster
+		roster._enemies[0]["id"] = "unknown_move_source"
+		presenter._refresh()
+		_check(badge.move_name.is_empty() and not badge.tooltip_text.contains("Move:"),
+			"replaced actor identity cannot borrow an admitted source's move")
+		roster._enemies[0]["id"] = "thread_biter"
+		presenter._refresh()
+		_check(badge.move_name == title, "restored exact binding recovers current move")
+		var skip := CombatUnravel.new()
+		_check(skip.bind_roster(roster, {1: "normal"}) and skip.apply_unravel(roster, 1, 8),
+			"move-name precondition: real Unravel service has pending skip")
+		var flow = app.round_flow
+		flow._started = true
+		flow._battle_deck = app.deck
+		flow._battle_party = app.party
+		flow._battle_enemies = roster
+		flow._battle_intents = schedule
+		flow._battle_result = app.battle_result
+		flow._unravel = skip
+		presenter._refresh()
+		_check(badge.readable_text == "UNRAVELLED" and badge.move_name.is_empty()
+			and not badge.tooltip_text.contains("Move:"), "pending genuine skip clears authored name")
+		_check(skip.consume_action_skip(roster, 1), "real skip can be consumed")
+		presenter._refresh()
+		_check(badge.move_name == title, "cleared skip restores current authored move")
+		if kind == "attack":
+			_check(badge.policy_cue == "Aim low HP"
+				and badge.tooltip_text.contains("5 damage aimed at " + LiveEnemyIntentBadge.hero_target_label(badge.target_position))
+				and badge.tooltip_text.contains("Target policy (AIM LOW HP): aims at the living hero with the lowest current HP.")
+				and badge.tooltip_text.contains("Passive (not the announced action)")
+				and badge.tooltip_text.ends_with("\nMove: Lint Spit"),
+				"authenticated flow preserves full damage, policy and passive help before authored move")
+		app._battle_closed = true
+		presenter._refresh()
+		_check(badge.move_name.is_empty() and not badge.tooltip_text.contains("Move:"),
+			"closed battle clears preceding move name")
+		app._battle_closed = false
+		_check(roster.apply_damage(1, 999) and roster.is_slain(1), "real source takes lethal damage")
+		presenter._refresh()
+		_check(badge.move_name.is_empty() and badge.tooltip_text == "Slain: no action.",
+			"slain source clears move and detailed action")
+	# A genuine uncovered base attack must not be inferred from its attack2 pose.
+	for id in ["fray_scavenger", "unknown_move_source"]:
+		var record := _authored_enemy("fray_scavenger") if id == "fray_scavenger" else definition.duplicate(true)
+		record["id"] = id
+		var roster := CombatEnemies.new([record])
+		app.run_rng.seed = _intent_witness_seed(roster, app.party, 1, "attack")
+		_check(_mount_roster(app, presenter, roster), "negative move witness binds real weighted scheduler: " + id)
+		presenter._refresh()
+		_check(app.enemy_intents.get_intents()[0].get("type") == "attack"
+			and presenter._badges[0].intent_type == "attack"
+			and presenter._badges[0].move_name.is_empty()
+			and not presenter._badges[0].tooltip_text.contains("Move:"),
+			"uncovered action or unknown admitted ID never fabricates a move: " + id)
 	app.free()
 	await process_frame
 

@@ -33,7 +33,7 @@ func _combined_wallet_catalog() -> Dictionary:
 	var waystation := RunV3ServiceWaystationEventGate.new()
 	_check(waystation.is_catalog_valid(), "wallet oracle validates service-waystation source")
 	for id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench",
-			"v3_inkblack_unpicker_van"]:
+			"v3_inkblack_unpicker_van", "v3_threadmill_sewing_circle"]:
 		var record := waystation.get_event_record(id)
 		_check(not record.is_empty(), "full-run oracle authenticates Campfire ID: " + id)
 		events.append(record)
@@ -335,7 +335,9 @@ func _node(id: String, index: int) -> bool:
 					or (record.get("id") == "v3_briar_button_mending_bench" \
 					and record.choices[choice_index].id == "fuel_button_fire") \
 					or (record.get("id") == "v3_inkblack_unpicker_van" \
-					and record.choices[choice_index].id == "hire_unpicker"):
+					and record.choices[choice_index].id == "hire_unpicker") \
+					or (record.get("id") == "v3_threadmill_sewing_circle" \
+					and record.choices[choice_index].id == "borrow_spools"):
 					continue
 				var receipt := RunEventChoice.new(record).choose_with_vitals(record.choices[choice_index].id,
 					panel._offered_snapshot) if panel._vital_mode else \
@@ -1125,6 +1127,8 @@ func _auction_fixture() -> Dictionary:
 	hints.push_front(422169)
 	# Genuine six-Event map/toll witness for the expanded hero-story pool.
 	hints.push_front(2431350)
+	# Genuine six-Event Auction witness after Threadmill changed the sorted lottery.
+	hints.push_front(8405118)
 	hints.append_array(range(1, 200000))
 	for value in hints:
 		var rng := RandomNumberGenerator.new()

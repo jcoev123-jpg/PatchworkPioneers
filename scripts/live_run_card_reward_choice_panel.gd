@@ -113,6 +113,12 @@ const CAMP_MOTION_PERIOD := 18.0
 const CAMP_MOTION_ZOOM := 1.065
 const CAMP_MOTION_BREATH := 0.008
 const CAMP_MOTION_PAN := Vector2(8.0, 5.0)
+## View-only movement of authored images inside the fixed CardArt illustration.
+const CARD_MOTION_PERIOD := 8.0
+const CARD_IDLE_DRIFT := 2.0
+const CARD_IDLE_TILT := 1.0
+const CARD_FOCUS_LIFT := 4.0
+const CARD_LIFT_SPEED := 8.0
 const REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
 const QUILT_PANEL := ART_DIR + "ui/reward_panel.png"
 const TITLE_BANNER := ART_DIR + "ui/reward_banner.png"
@@ -156,6 +162,8 @@ var _help_overlay: PanelContainer = null
 var _help_invoker: Button = null
 var _camp_backdrop: TextureRect = null
 var _camp_elapsed := 0.0
+var _card_elapsed := 0.0
+var _card_lifts: Array[float] = []
 var _reduced_motion_override: Variant = null
 
 
@@ -177,18 +185,36 @@ func _reduced_motion() -> bool:
 	return ProjectSettings.get_setting(REDUCED_MOTION_SETTING, false) == true
 
 
+func _motion_visible() -> bool:
+	return is_node_ready() and _is_open and is_visible_in_tree() and not _reduced_motion()
+
+
+func _card_motion_available() -> bool:
+	if not _motion_visible() or _awaiting_ack or _accepted:
+		return false
+	for card in _card_panels:
+		if is_instance_valid(card):
+			var art := card.get_node_or_null("CardMargin/CardContent/CardArt") as _CardIllustration
+			if art != null and art.has_picture():
+				return true
+	return false
+
+
 func _sync_camp_motion() -> void:
 	_reset_camp_motion()
-	if not is_node_ready() or not _is_open or not is_visible_in_tree() \
-			or _reduced_motion() or not is_instance_valid(_camp_backdrop) \
-			or _camp_backdrop.texture == null:
-		return
-	_apply_camp_motion()
-	set_process(true)
+	_reset_card_motion()
+	if _motion_visible() and is_instance_valid(_camp_backdrop) \
+			and _camp_backdrop.texture != null:
+		_apply_camp_motion()
+	_sync_motion_processing()
+
+
+func _sync_motion_processing() -> void:
+	set_process((_motion_visible() and is_instance_valid(_camp_backdrop)
+		and _camp_backdrop.texture != null) or _card_motion_available())
 
 
 func _reset_camp_motion() -> void:
-	set_process(false)
 	_camp_elapsed = 0.0
 	if is_instance_valid(_camp_backdrop):
 		_camp_backdrop.position = Vector2.ZERO
@@ -207,13 +233,62 @@ func _apply_camp_motion() -> void:
 		CAMP_MOTION_PAN.x * sin(phase), CAMP_MOTION_PAN.y * cos(phase))
 
 
-func _process(delta: float) -> void:
-	if not _is_open or not is_visible_in_tree() or _reduced_motion() \
-			or not is_instance_valid(_camp_backdrop) or _camp_backdrop.texture == null:
-		_reset_camp_motion()
+## A bounded, deterministic clock: neither screen geometry nor gameplay RNG is touched.
+## Every card starts at its neutral draw transform, with a different idle phase.
+func _reset_card_motion() -> void:
+	_card_elapsed = 0.0
+	_card_lifts.clear()
+	if _is_open:
+		for index in range(3):
+			_card_lifts.append(0.0)
+	for card in _card_panels:
+		if is_instance_valid(card):
+			var art := card.get_node_or_null("CardMargin/CardContent/CardArt") as _CardIllustration
+			if art != null:
+				art.set_picture_motion(Vector2.ZERO, 0.0)
+
+
+func _advance_card_motion(delta: float) -> void:
+	if not _card_motion_available():
+		_reset_card_motion()
 		return
-	_camp_elapsed = fposmod(_camp_elapsed + maxf(delta, 0.0), CAMP_MOTION_PERIOD)
-	_apply_camp_motion()
+	var step := maxf(delta, 0.0)
+	_card_elapsed = fposmod(_card_elapsed + step, CARD_MOTION_PERIOD)
+	var time_phase := TAU * _card_elapsed / CARD_MOTION_PERIOD
+	for index in range(_card_panels.size()):
+		var card := _card_panels[index]
+		if not is_instance_valid(card):
+			continue
+		var art := card.get_node_or_null("CardMargin/CardContent/CardArt") as _CardIllustration
+		if art == null or not art.has_picture():
+			if art != null:
+				art.set_picture_motion(Vector2.ZERO, 0.0)
+			continue
+		var active: bool = _card_hovered[index] or _card_focused[index]
+		var goal := CARD_FOCUS_LIFT if active else 0.0
+		_card_lifts[index] = move_toward(_card_lifts[index], goal, CARD_LIFT_SPEED * step)
+		var phase := TAU * float(index) / 3.0
+		# Subtract the phase's initial value so open/rebind begins neutral,
+		# while retaining index-staggered periodic movement within fixed bounds.
+		var breath := 0.5 * (sin(time_phase + phase) - sin(phase))
+		var tilt := 0.5 * (sin(time_phase + phase + PI / 3.0) - sin(phase + PI / 3.0))
+		art.set_picture_motion(Vector2(0.0, CARD_IDLE_DRIFT * breath - _card_lifts[index]),
+			CARD_IDLE_TILT * tilt)
+
+
+func _process(delta: float) -> void:
+	if not _motion_visible():
+		_reset_camp_motion()
+		_reset_card_motion()
+		set_process(false)
+		return
+	if is_instance_valid(_camp_backdrop) and _camp_backdrop.texture != null:
+		_camp_elapsed = fposmod(_camp_elapsed + maxf(delta, 0.0), CAMP_MOTION_PERIOD)
+		_apply_camp_motion()
+	else:
+		_reset_camp_motion()
+	_advance_card_motion(delta)
+	_sync_motion_processing()
 
 
 func _notification(what: int) -> void:
@@ -223,6 +298,8 @@ func _notification(what: int) -> void:
 
 func _exit_tree() -> void:
 	_reset_camp_motion()
+	_reset_card_motion()
+	set_process(false)
 
 
 ## Display only a detached valid RunFightVictoryRewards.prepare() receipt.
@@ -638,14 +715,20 @@ func acknowledge(accepted: bool) -> void:
 	_awaiting_ack = false
 	if accepted:
 		_accepted = true
+		_reset_card_motion()
+		_sync_motion_processing()
 		return
 	for button in _choice_buttons:
 		if is_instance_valid(button):
 			button.disabled = false
+	_reset_card_motion()
+	_sync_motion_processing()
 
 
 func close_rewards() -> void:
 	_reset_camp_motion()
+	_reset_card_motion()
+	set_process(false)
 	_dismiss_help(false)
 	_generation += 1
 	_is_open = false
@@ -677,6 +760,7 @@ func close_rewards() -> void:
 	_card_panels.clear()
 	_card_hovered.clear()
 	_card_focused.clear()
+	_card_lifts.clear()
 	skip_button.disabled = true
 	skip_button.release_focus()
 
@@ -711,6 +795,8 @@ func _on_choice_pressed(generation: int, node_id: String, selected_card_id: Stri
 		return
 	_dismiss_help(false)
 	_awaiting_ack = true
+	_reset_card_motion()
+	_sync_motion_processing()
 	for choice in _choice_buttons:
 		choice.disabled = true
 	choice_requested.emit(_node_id, selected_card_id)
@@ -1451,11 +1537,32 @@ class _CardIllustration extends Control:
 	## asks for the broad sewn-felt mode when only an owner emblem was available.
 	@export var mode: String = MODE_CARD_ART
 	@export var owner_color: Color = Color.WHITE
+	## Paint-only offsets. The Control, its hit rect, and its sewn seam never move.
+	var picture_offset := Vector2.ZERO
+	var picture_degrees := 0.0
 
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 		focus_mode = Control.FOCUS_NONE
+		clip_contents = true
 		resized.connect(queue_redraw)
+
+	func set_picture_motion(offset: Vector2, degrees: float) -> void:
+		if picture == null:
+			offset = Vector2.ZERO
+			degrees = 0.0
+		if picture_offset == offset and picture_degrees == degrees:
+			return
+		picture_offset = offset
+		picture_degrees = degrees
+		queue_redraw()
+
+	func _paint_picture_transform() -> void:
+		# Rotate around the image window centre, *inside* the clipped window.
+		draw_set_transform(size * 0.5 + picture_offset, deg_to_rad(picture_degrees))
+
+	func _end_picture_transform() -> void:
+		draw_set_transform(Vector2.ZERO)
 
 	## True when a real authored picture or hero emblem is bound.
 	func has_picture() -> bool:
@@ -1560,14 +1667,18 @@ class _CardIllustration extends Control:
 		var source: Rect2 = picture_source_rect()
 		if source.size.x <= 0.0 or source.size.y <= 0.0:
 			return
-		draw_texture_rect_region(picture, target, source)
+		_paint_picture_transform()
+		draw_texture_rect_region(picture, Rect2(target.position - size * 0.5, target.size), source)
+		_end_picture_transform()
 
 	## The whole emblem, contained (never distorted) and centred.
 	func _draw_contained_picture() -> void:
 		var target: Rect2 = picture_rect()
 		if target.size.x <= 0.0 or target.size.y <= 0.0:
 			return
-		draw_texture_rect(picture, target, false)
+		_paint_picture_transform()
+		draw_texture_rect(picture, Rect2(target.position - size * 0.5, target.size), false)
+		_end_picture_transform()
 
 	## A matte felt landscape patch, off-centre corner pieces and running seams.
 	## The sewn backing is wide; no empty cream box surrounds a tiny emblem.

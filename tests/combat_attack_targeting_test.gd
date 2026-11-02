@@ -24,6 +24,7 @@ const SNAG_IDS := ["seamstress_snag", "seamstress_snag_plus"]
 
 
 func _initialize() -> void:
+	_test_four_enemy_bomb()
 	_test_authored_cards_and_freshness()
 	_test_slain_positions()
 	_test_hand_energy_and_turn()
@@ -84,12 +85,12 @@ func _party(order: Array[String] = ["warden", "seamstress", "tinker"]) -> Combat
 	return party
 
 
-func _enemies(count: int = 3) -> CombatEnemies:
+func _enemies(count: int = 3, capacity: int = CombatEnemies.MAX_ENEMIES) -> CombatEnemies:
 	var definitions: Array = []
 	for i in range(count):
 		definitions.append({"id": "synthetic_%d" % (i + 1), "max_hp": 12 + i,
 			"tags": ["fixture"]})
-	var enemies := CombatEnemies.new(definitions)
+	var enemies := CombatEnemies.new(definitions, capacity)
 	_check(enemies.is_valid() and enemies.get_enemies().size() == count,
 		"real CombatEnemies fixture has " + str(count) + " occupied slots")
 	return enemies
@@ -141,6 +142,23 @@ func _assert_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemie
 func _reject(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		id: String, label: String) -> void:
 	_assert_preview(deck, party, enemies, id, false, false, [], label)
+
+
+func _test_four_enemy_bomb() -> void:
+	var deck := _five_attacks()
+	var party := _party()
+	var enemies := _enemies(4, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_assert_preview(deck, party, enemies, "tinker_scrap_bomb", true, false, [1, 2, 3, 4],
+		"Bomb previews all four validated living slots without selection")
+	_assert_preview(deck, party, enemies, "tinker_pop_shot", true, true, [1, 2, 3],
+		"single target restrictions unchanged on four-roster")
+	_check(enemies.apply_damage(4, 999) and enemies.get_enemy(4).position == 4,
+		"slain fourth retains original slot")
+	_assert_preview(deck, party, enemies, "tinker_scrap_bomb", true, false, [1, 2, 3],
+		"slain fourth omitted")
+	for position in [1, 2, 3]:
+		_check(enemies.apply_damage(position, 999), "slay remaining actor")
+	_reject(deck, party, enemies, "tinker_scrap_bomb", "all four slain rejects")
 
 
 func _test_authored_cards_and_freshness() -> void:
