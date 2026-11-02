@@ -462,6 +462,11 @@ func _run() -> void:
 			_check(meta.definition(id) == CombatYarnRangerBolasCards.bolas_definition(id), "bolas IDs use authentic definitions")
 		elif CombatYarnRangerNeedleCards.CARDS.has(id):
 			_check(meta.definition(id) == CombatYarnRangerNeedleCards.needle_definition(id), "needle IDs use authentic definitions")
+		elif CombatYarnRangerNeedleCards.PURLING_CARDS.has(id):
+			# Purling Barrage is now a real mounted hand card, so its two authentic
+			# printings must resolve through the service that owns their paid cast.
+			_check(meta.definition(id) == CombatYarnRangerNeedleCards.purling_definition(id),
+				"Purling Barrage IDs use authenticated live definitions")
 		elif CombatYarnRangerEndlessSkeinCards.CARDS.has(id):
 			_check(meta.definition(id) == CombatYarnRangerEndlessSkeinCards.skein_definition(id),
 				"Endless Skein IDs use authenticated live definitions")
