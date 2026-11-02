@@ -715,6 +715,94 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_copper_crab_shears_cart",
+      "title": "The Copper Crab's Shears Cart",
+      "description": "A stout oxblood crab ragdoll spreads enormous silver shears over a lace-lined cart; mismatched buttons glimmer on its quilted pincers by candlelight.",
+      "choices": [
+        {
+          "id": "sell_shear_offcuts",
+          "text": "Sell two spools of scissor offcuts (spend 2 scraps; gain 32 gold)",
+          "outcome": { "gold": 32, "scraps": -2 }
+        },
+        {
+          "id": "buy_hem_silk",
+          "text": "Buy the crab's stormproof silk hem (spend 21 gold; gain 4 scraps)",
+          "outcome": { "gold": -21, "scraps": 4 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the crab fold its silver shears",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_mourning_clock_armadillo",
+      "title": "The Mourning-Clock Armadillo",
+      "description": "A squat midnight-teal armadillo curls around an enormous cracked bone-cream clock; four brass-button paws rewind its long thread hour hand.",
+      "choices": [
+        {
+          "id": "rewind_thread_hand",
+          "text": "Rewind the clock with a spool (spend 1 scrap; gain 18 gold)",
+          "outcome": { "gold": 18, "scraps": -1 }
+        },
+        {
+          "id": "buy_spring_thread",
+          "text": "Buy a spring-thread winding (spend 17 gold; gain 3 scraps)",
+          "outcome": { "gold": -17, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the thread clock tick in the fog",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_blacklace_puffin_ferry",
+      "title": "The Blacklace Puffin Ferry",
+      "description": "A round bone-cream puffin doll in a plum patchwork cape paddles a tiny black-lace ferry with an oversized red knitting needle beneath an amber locklight.",
+      "choices": [
+        {
+          "id": "mend_needle_oar",
+          "text": "Mend the huge needle-oar (spend 2 scraps; gain 28 gold)",
+          "outcome": { "gold": 28, "scraps": -2 }
+        },
+        {
+          "id": "buy_canal_wool",
+          "text": "Buy canal-warmed wool (spend 12 gold; gain 2 scraps)",
+          "outcome": { "gold": -12, "scraps": 2 }
+        },
+        {
+          "id": "leave",
+          "text": "Watch the puffin ferry slip into the mist",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_thimbleback_beaver_dam",
+      "title": "The Thimbleback Beaver Dam",
+      "description": "A plump moss-cloth beaver ragdoll stacks giant quilted log patches into a little canal dam; a silver thimble caps one tooth and button eyes catch the lantern glow.",
+      "choices": [
+        {
+          "id": "gather_dam_offcuts",
+          "text": "Gather abandoned dam offcuts (gain 1 scrap)",
+          "outcome": { "gold": 0, "scraps": 1 }
+        },
+        {
+          "id": "reinforce_button_gate",
+          "text": "Reinforce the giant button sluice (spend 3 scraps; gain 42 gold)",
+          "outcome": { "gold": 42, "scraps": -3 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the beaver to its midnight repairs",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }
