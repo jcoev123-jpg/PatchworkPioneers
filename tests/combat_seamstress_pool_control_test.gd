@@ -12,6 +12,13 @@ const SNAG_PLUS := "seamstress_snag_plus"
 const UNPICK := "seamstress_unpick"
 const UNPICK_PLUS := "seamstress_unpick_plus"
 
+const ENEMIES_PATH := "res://data/enemies/run_enemies.json"
+## Four distinct authored run foes, chosen by ID (never by catalog position or
+## a hard-coded catalog total) for the explicitly opted-in four-slot roster.
+const FOUR_FOE_IDS := ["button_guard", "spool_stalker", "seam_ripper", "felt_bulwark"]
+## Tier-bound gauge for all four occupied slots: 8 / 12 / 16 / 8.
+const FOUR_TIERS := {1: "normal", 2: "elite", 3: "boss", 4: "normal"}
+
 
 func _initialize() -> void:
 	_test_needle_pin()
@@ -19,6 +26,9 @@ func _initialize() -> void:
 	_test_unpick()
 	_test_rejections()
 	_test_replay()
+	_test_four_foe_legal_targets()
+	_test_four_foe_rejections()
+	_test_four_foe_replay()
 	_test_sewn_attack_patches()
 	_test_head_weak()
 	if failures.is_empty():
@@ -36,8 +46,7 @@ func _check(condition: bool, message: String) -> void:
 		failures.append(message)
 
 
-func _fixture(cards: Array[String], seamstress_position: int = 2,
-		seed_value: int = 241) -> Dictionary:
+func _party(seamstress_position: int = 2) -> CombatParty:
 	var party := CombatParty.new([
 		{"id": "warden", "max_hp": 40},
 		{"id": "seamstress", "max_hp": 30},
@@ -50,6 +59,12 @@ func _fixture(cards: Array[String], seamstress_position: int = 2,
 		party._heroes[1] = exchanged
 		party._heroes[seamstress_position - 1]["position"] = seamstress_position
 		party._heroes[1]["position"] = 2
+	return party
+
+
+func _fixture(cards: Array[String], seamstress_position: int = 2,
+		seed_value: int = 241) -> Dictionary:
+	var party := _party(seamstress_position)
 	var enemies := CombatEnemies.new([
 		{"id": "normal_foe", "max_hp": 18},
 		{"id": "elite_foe", "max_hp": 22},
@@ -71,6 +86,65 @@ func _fixture(cards: Array[String], seamstress_position: int = 2,
 	_check(deck.start_turn() and deck.turn_active and deck.energy == 3
 			and deck.hand.size() == 5 and deck._rng == rng,
 			"seeded CombatDeck begins real active five-card turn")
+	for card_id: String in cards:
+		_check(deck.hand.has(card_id), "authored play is genuinely held: " + card_id)
+	return {"deck": deck, "party": party, "enemies": enemies,
+		"pinned": pinned, "unravel": unravel}
+
+
+## Four distinct records authenticated from the shipped run catalog by ID.
+func _four_records() -> Array:
+	var catalog: Array = RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string(ENEMIES_PATH))
+	_check(not catalog.is_empty(), "shipped run_enemies.json enemy catalog loads")
+	var selected: Array = []
+	for required: String in FOUR_FOE_IDS:
+		var matches: Array = catalog.filter(func(entry: Variant) -> bool:
+			return entry is Dictionary and entry.get("id") == required)
+		_check(matches.size() == 1,
+			"authored four-foe source present exactly once: " + required)
+		if matches.size() == 1:
+			selected.append(matches[0].duplicate(true))
+	return selected
+
+
+## The same resolvers, party and seeded deck as `_fixture`, but over an
+## explicitly opted-in four-capacity roster of four genuine authored foes.
+func _four_fixture(cards: Array[String], seamstress_position: int = 3,
+		seed_value: int = 1307) -> Dictionary:
+	var records := _four_records()
+	_check(records.size() == 4, "four distinct authenticated enemy records selected")
+	var enemies := CombatEnemies.new(records, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	var party := _party(seamstress_position)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var deck_ids: Array[String] = cards.duplicate()
+	while deck_ids.size() < 5:
+		deck_ids.append("filler_%d" % deck_ids.size())
+	var deck := CombatDeck.new(deck_ids, rng)
+	var pinned := CombatPinned.new()
+	var unravel := CombatUnravel.new()
+	_check(enemies.is_valid() and enemies.get_capacity() == CombatEnemies.OPT_IN_MAX_ENEMIES
+			and enemies.get_enemies().size() == 4
+			and enemies.get_enemies().map(func(foe: Dictionary) -> Variant:
+				return foe.get("id")) == FOUR_FOE_IDS
+			and enemies.get_enemies().map(func(foe: Dictionary) -> Variant:
+				return foe.get("position")) == [1, 2, 3, 4]
+			and enemies.get_enemies().all(func(foe: Dictionary) -> bool:
+				return foe.get("hp") == foe.get("max_hp") and foe.get("hp") > 0),
+			"explicit opt-in roster really holds four living authored slots")
+	_check(party.is_valid() and party.get_hero(seamstress_position)["id"] == "seamstress"
+			and party.get_hero(seamstress_position)["hp"] == 30,
+			"four-foe fixture has genuine living Seamstress at current slot %d" % seamstress_position)
+	_check(unravel.bind_roster(enemies, FOUR_TIERS)
+			and unravel.get_snapshot(1).threshold == 8
+			and unravel.get_snapshot(2).threshold == 12
+			and unravel.get_snapshot(3).threshold == 16
+			and unravel.get_snapshot(4).threshold == 8,
+			"gauge is bound to all four exact original slots and tiers")
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3
+			and deck.hand.size() == 5 and deck._rng == rng,
+			"seeded CombatDeck begins real active five-card turn beside four foes")
 	for card_id: String in cards:
 		_check(deck.hand.has(card_id), "authored play is genuinely held: " + card_id)
 	return {"deck": deck, "party": party, "enemies": enemies,
@@ -344,6 +418,179 @@ func _test_replay() -> void:
 		return r["ok"]), "independent equal-seed replay matches every resolved event")
 	_check(a == b and a["rng"] == rng_before and b["rng"] == rng_before,
 		"independent replay matches all authoritative snapshots without RNG draws")
+
+
+## The shipped cards' printed reach is unchanged by the fourth occupied slot:
+## every printed living target 1-3 resolves for real, and slot four is inert.
+func _test_four_foe_legal_targets() -> void:
+	var authored := SeamstressPoolCards.new()
+	for card_id: String in [PIN, PIN_PLUS, SNAG, SNAG_PLUS, UNPICK, UNPICK_PLUS]:
+		var definition: Dictionary = authored.get_definition(card_id)
+		var effects: Dictionary = definition["effects"]
+		_check(definition["to_positions"] == [1, 2, 3],
+			card_id + " still prints exactly the three authored enemy target slots")
+		for target in [1, 2, 3]:
+			var f: Dictionary = _four_fixture([card_id])
+			var enemies: CombatEnemies = f["enemies"]
+			var gauges: CombatUnravel = f["unravel"]
+			var before: Dictionary = _state(f)
+			var label := "%s against four foes at slot %d" % [card_id, target]
+			var r: Dictionary = _play(f, card_id, target)
+			_check(r.get("ok", false),
+				label + " is a legal cast beside the authored fourth foe")
+			if not r.get("ok", false):
+				continue
+			if effects.has("damage"):
+				var expected: int = int(effects["damage"])
+				_check(r["damage"] == expected and r["hp_loss"] == expected
+					and r["block_absorbed"] == 0 and r["pinned_bonus"] == 0
+					and r["pinner"] == "seamstress" and r["weak_applied"] == 0
+					and r["unravel_applied"] == 0
+					and _state(f)["gauges"] == before["gauges"],
+					label + " deals exactly the authored Needle Pin damage and repins")
+				_check(enemies.get_enemy(target)["hp"]
+						== before["enemies"][target - 1]["hp"] - expected
+					and enemies.get_enemy(target)["block"] == 0
+					and enemies.get_enemy(target).get("statuses", {})
+						== before["enemies"][target - 1].get("statuses", {}),
+					label + " reduces only the selected foe HP")
+			elif effects.has("weak"):
+				var charge: int = int(effects["unravel"])
+				var gauge: Dictionary = gauges.get_snapshot(target)
+				_check(r["weak_applied"] == int(effects["weak"])
+					and r["unravel_applied"] == charge
+					and r["damage"] == 0 and r["hp_loss"] == 0
+					and r["block_absorbed"] == 0
+					and r["unravel_snapshot"] == gauge
+					and gauge["gauge"] == charge
+					and enemies.get_enemy(target)["statuses"] == {"weak": int(effects["weak"])}
+					and enemies.get_enemy(target)["hp"] == before["enemies"][target - 1]["hp"],
+					label + " commits exactly the authored Weak and Unravel receipt")
+			else:
+				var charge: int = int(effects["unravel"])
+				_check(r["unravel_applied"] == charge and r["weak_applied"] == 0
+					and r["damage"] == 0 and r["hp_loss"] == 0
+					and gauges.get_snapshot(target)["gauge"] == charge
+					and r["unravel_snapshot"] == gauges.get_snapshot(target)
+					and enemies.get_enemies() == before["enemies"],
+					label + " commits exactly the authored Unravel receipt and no other change")
+			var after: Array = [enemies.get_enemy(1), enemies.get_enemy(2),
+				enemies.get_enemy(3), enemies.get_enemy(4)]
+			_check(after.map(func(foe: Dictionary) -> Variant: return foe.get("id"))
+					== FOUR_FOE_IDS
+				and after.map(func(foe: Dictionary) -> Variant: return foe.get("position"))
+					== [1, 2, 3, 4],
+				label + " keeps all four authored enemy IDs in their original slots")
+			_check(after[3] == before["enemies"][3],
+				label + " leaves slot four HP/Block/statuses exactly untouched")
+			_check(gauges.get_snapshot(4) == before["gauges"][4]
+				and gauges.get_snapshot(4)["gauge"] == 0,
+				label + " never charges the fourth foe's Unravel gauge")
+			for position in [1, 2, 3]:
+				if position != target:
+					_check(after[position - 1] == before["enemies"][position - 1],
+						label + " leaves unselected slot %d untouched" % position)
+			_spent_once(before, f, card_id, label)
+
+
+func _test_four_foe_rejections() -> void:
+	for card_id: String in [PIN, PIN_PLUS, SNAG, SNAG_PLUS, UNPICK, UNPICK_PLUS]:
+		for target in [4, 5]:
+			var f: Dictionary = _four_fixture([card_id])
+			_reject(f, card_id, target, f["pinned"], f["unravel"],
+				card_id + " target %d beyond the printed [1,2,3]" % target)
+
+	for card_id: String in [PIN, PIN_PLUS, SNAG, SNAG_PLUS, UNPICK, UNPICK_PLUS]:
+		var f: Dictionary = _four_fixture([card_id])
+		_check(f["enemies"].apply_damage(2, 999) and f["enemies"].is_slain(2),
+			card_id + " four-foe slain target precondition")
+		_reject(f, card_id, 2, f["pinned"], f["unravel"],
+			card_id + " at a slain slot beside a fourth foe")
+
+	for card_id: String in [PIN, PIN_PLUS, SNAG, SNAG_PLUS, UNPICK, UNPICK_PLUS]:
+		var f: Dictionary = _four_fixture([card_id])
+		_check(f["party"].apply_damage(3, 30) and f["party"].is_downed(3),
+			card_id + " four-foe downed owner precondition")
+		_reject(f, card_id, 1, f["pinned"], f["unravel"],
+			card_id + " from a downed Seamstress beside a fourth foe")
+
+	for card_id: String in [PIN, PIN_PLUS, SNAG, SNAG_PLUS, UNPICK, UNPICK_PLUS]:
+		var f: Dictionary = _four_fixture([card_id])
+		_check(f["deck"].try_spend_energy(3), card_id + " four-foe zero-energy precondition")
+		_reject(f, card_id, 1, f["pinned"], f["unravel"],
+			card_id + " with insufficient energy beside a fourth foe")
+
+	var five: Array = _four_records()
+	for record: Dictionary in _four_records():
+		five.append(record.duplicate(true))
+	var malformed := CombatEnemies.new(five, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(not malformed.is_valid() and malformed.get_enemies().is_empty()
+			and malformed.get_enemies().size() != CombatEnemies.OPT_IN_MAX_ENEMIES,
+			"five-record four-capacity roster is inert, not a legal fifth slot")
+	var broken: Dictionary = _four_fixture([PIN])
+	broken["enemies"] = malformed
+	_reject(broken, PIN, 1, broken["pinned"], broken["unravel"],
+		"malformed over-capacity four-foe roster")
+
+	var alien_records: Array = _four_records()
+	var alien := CombatEnemies.new(alien_records, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	var other_gauge := CombatUnravel.new()
+	_check(alien.is_valid() and alien.get_enemies().size() == 4
+			and other_gauge.bind_roster(alien, FOUR_TIERS),
+			"separate four-foe roster gauge is genuinely bound")
+	for card_id: String in [SNAG, SNAG_PLUS, UNPICK, UNPICK_PLUS]:
+		var f: Dictionary = _four_fixture([card_id])
+		_reject(f, card_id, 1, f["pinned"], other_gauge,
+			card_id + " with a gauge bound to another four-foe roster")
+	var three_tier := CombatUnravel.new()
+	_check(not three_tier.bind_roster(_four_fixture([PIN])["enemies"],
+			{1: "normal", 2: "elite", 3: "boss"}),
+		"a three-tier gauge cannot bind a four-slot roster")
+	var unbound: Dictionary = _four_fixture([UNPICK])
+	_reject(unbound, UNPICK, 1, unbound["pinned"], three_tier,
+		"Unpick with an unbound four-foe gauge")
+	for card_id: String in [PIN, PIN_PLUS]:
+		var f: Dictionary = _four_fixture([card_id])
+		_reject(f, card_id, 1, null, f["unravel"],
+			card_id + " without any Pinned authority beside a fourth foe")
+
+	resolver.bind_patch_rules(CombatPatchAttackRules.new())
+	var invalid_patch: Dictionary = _four_fixture([PIN])
+	_reject(invalid_patch, PIN, 1, invalid_patch["pinned"], invalid_patch["unravel"],
+		"explicit failed patch binding on a four-foe roster")
+	resolver.bind_patch_rules(null)
+	resolver.bind_head_patch_rules(CombatM05HeadPatchRules.new())
+	var invalid_head: Dictionary = _four_fixture([SNAG])
+	_reject(invalid_head, SNAG, 1, invalid_head["pinned"], invalid_head["unravel"],
+		"explicit unbound HEAD binding on a four-foe roster")
+	resolver.bind_head_patch_rules(null)
+
+
+func _test_four_foe_replay() -> void:
+	var left: Dictionary = _four_fixture([PIN, SNAG_PLUS, UNPICK_PLUS], 3, 4471)
+	var right: Dictionary = _four_fixture([PIN, SNAG_PLUS, UNPICK_PLUS], 3, 4471)
+	var slot_four: Dictionary = left["enemies"].get_enemy(4)
+	_check(_state(left) == _state(right)
+			or _state(left)["rng"] == _state(right)["rng"],
+			"identical seed begins with identical run RNG beside four foes")
+	var rng_before: int = left["deck"]._rng.state
+	var results_left: Array[Dictionary] = [
+		_play(left, PIN, 1), _play(left, SNAG_PLUS, 2), _play(left, UNPICK_PLUS, 3)]
+	var results_right: Array[Dictionary] = [
+		_play(right, PIN, 1), _play(right, SNAG_PLUS, 2), _play(right, UNPICK_PLUS, 3)]
+	var a: Dictionary = _state(left)
+	var b: Dictionary = _state(right)
+	a.erase("bound_roster")
+	b.erase("bound_roster")
+	_check(results_left == results_right and results_left.all(func(r: Dictionary) -> bool:
+		return r.get("ok", false)),
+		"equal-seed four-foe replay matches every resolved event")
+	_check(a == b and a["rng"] == rng_before and b["rng"] == rng_before,
+		"equal-seed four-foe replay matches all snapshots without RNG draws")
+	_check(a["enemies"].map(func(foe: Dictionary) -> Variant: return foe.get("id"))
+			== FOUR_FOE_IDS
+		and a["enemies"][3] == slot_four,
+		"replayed control casts leave all four IDs and slot four intact")
 
 
 ## Run-ledger projection, intentionally shared with the existing starter service.

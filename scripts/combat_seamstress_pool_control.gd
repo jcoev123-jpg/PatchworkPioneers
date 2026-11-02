@@ -72,8 +72,12 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var cost: int = definition["cost"]
 	if not deck.turn_active or not deck.hand.has(card_id) or deck.energy < cost:
 		return {"ok": false}
+	# The enemy preflight must admit exactly the roster's own opted-in size:
+	# a default three would reject a legal cast merely because an authored
+	# fourth foe occupies slot four. Heroes stay at the fixed party size.
 	if not CombatStatusTurnBatch.new().tick_side("heroes", party.get_heroes())["ok"] \
-			or not CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies())["ok"]:
+			or not CombatStatusTurnBatch.new().tick_side(
+				"enemies", enemies.get_enemies(), enemies.get_capacity())["ok"]:
 		return {"ok": false}
 
 	var actor: Dictionary = {}
