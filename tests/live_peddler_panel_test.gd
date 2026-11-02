@@ -27,6 +27,10 @@ const SEED := 2611790
 const V3_SEED := 90210
 const V3_UNKNOWN_SEED := 424247
 const GOLD := 500
+## VIS-A narrow-reflow fixture: the authored 100-gold long-name power patch.
+const REFLOW_PATCH_ID := "reinforced_patchcoat"
+const REFLOW_PATCH_NAME := "Reinforced Patchcoat"
+const REFLOW_SEED := 314159
 
 var checks := 0
 var failures: Array[String] = []
@@ -220,6 +224,7 @@ func _run() -> void:
 	await _fail_closed()
 	await _rare_patch_panels()
 	await _patch_preview_cases()
+	await _patch_reflow_cases()
 	await _unaudited_patch_case()
 	await _shared_hem_case()
 	await _needle_echo_case()
@@ -1910,6 +1915,339 @@ func _patch_preview_cases() -> void:
 		and left_state["stock"] == before["stock"],
 		"deliberate test leave changes only the lifecycle status")
 	_check(intents.is_empty(), "no purchase or leave intent was emitted during preview")
+
+
+## The exact first-line suffix the panel quotes for one offered patch at the
+## supplied wallet: the printed price plus its SOLD/shortfall state, nothing
+## else.
+func _reflow_suffix(offer: Dictionary, gold: int) -> String:
+	var suffix := "  ·  %d gold" % int(offer["price"])
+	if bool(offer["sold"]):
+		return suffix + "  ·  SOLD"
+	if gold < int(offer["price"]):
+		return suffix + "  ·  short %d" % (int(offer["price"]) - gold)
+	return suffix
+
+
+## One rendered patch row against the quoted visit: line one keeps the exact
+## leading 4, printed price and SOLD/shortfall suffix with only the readable
+## name shortened; line two keeps the audited slot and fitted summary; both
+## lines are measured with the row's own real font against its actual text
+## interior, and the complete tooltip power, ID and quote survive reflow.
+func _check_reflow_row(label: String, offer: Dictionary, gold: int,
+		expect_shortened: bool) -> void:
+	var button := panel.patch_button
+	var font := button.get_theme_font("font")
+	var px := button.get_theme_font_size("font_size")
+	var budget: float = panel._patch_text_width(button)
+	var lines := button.text.split("\n")
+	_check(font != null and lines.size() == 2 and budget > 0.0,
+			label + " row: renders two informative lines on its real font")
+	if font == null or lines.size() != 2:
+		return
+	var prefix := LivePeddlerPanel.ACTION_KEY_LABELS[3] + "  ·  "
+	var suffix := _reflow_suffix(offer, gold)
+	_check(lines[0].begins_with(prefix) and lines[0].ends_with(suffix)
+			and not lines[0].contains("_"),
+			label + " row: leading 4, exact quoted gold and state suffix stay intact")
+	var shown := lines[0].substr(prefix.length(),
+			lines[0].length() - prefix.length() - suffix.length())
+	if expect_shortened:
+		_check(shown.ends_with(LivePeddlerPanel.ELLIPSIS)
+				and shown != REFLOW_PATCH_NAME
+				and REFLOW_PATCH_NAME.begins_with(
+						shown.trim_suffix(LivePeddlerPanel.ELLIPSIS).strip_edges()),
+				label + " row: only the readable patch name is ellipsized")
+	else:
+		_check(shown == REFLOW_PATCH_NAME,
+				label + " row: the complete ordinary patch name is shown unshortened")
+	for line in lines:
+		_check(not line.is_empty()
+				and panel._row_width(font, line, px) <= budget,
+				label + " row: every rendered line fits the actual button/font width")
+	var details: Dictionary = panel._patch_details()
+	_check(not details.is_empty() and str(details["id"]) == REFLOW_PATCH_ID
+			and lines[1].begins_with(str(details["slot"]) + "  ·  "),
+			label + " row: second line keeps the audited slot")
+	if details.is_empty():
+		return
+	var power := lines[1].trim_prefix(str(details["slot"]) + "  ·  ")
+	_check(power == str(details["short"])
+			or (power.ends_with(LivePeddlerPanel.ELLIPSIS)
+				and str(details["short"]).begins_with(
+						power.trim_suffix(LivePeddlerPanel.ELLIPSIS).strip_edges())),
+			label + " row: second line keeps the fitted audited power summary")
+	_check(button.tooltip_text.contains(REFLOW_PATCH_ID)
+			and button.tooltip_text.contains(str(details["full"]))
+			and button.tooltip_text.contains("%d gold" % int(offer["price"])),
+			label + " row: the complete tooltip power, ID and quote survive reflow")
+
+
+## One wallet state through the full reflow cycle: the complete unshortened
+## name at the shipped 640-pixel ticket, then the real Button narrowed on the
+## mounted panel (the existing resize callback repaints it), then the
+## original full-width caption restored - with the ledger, intent log and
+## seeded RNG provably untouched by the resize itself.
+func _check_reflow_state(visit: RunPeddlerVisit, before: Dictionary,
+		label: String, narrow: float) -> void:
+	var gold := int(before["state"]["gold"])
+	var offer: Dictionary = before["stock"]["trinkets"][0]
+	_check(visit.is_open(), label + " fixture is a genuine open visit")
+	if not visit.is_open():
+		return
+	await _bind(visit)
+	_check(panel.patch_button.size == LivePeddlerPanel.PATCH_TICKET_SIZE,
+			label + " reflow starts from the full 640-pixel patch ticket")
+	_check_reflow_row(label + " full-width", offer, gold, false)
+	var full_text := panel.patch_button.text
+	var full_tooltip := panel.patch_button.tooltip_text
+	var run_state := rng.state
+	panel.patch_button.custom_minimum_size = Vector2(narrow,
+			LivePeddlerPanel.PATCH_TICKET_SIZE.y)
+	panel.patch_button.size = Vector2(narrow,
+			LivePeddlerPanel.PATCH_TICKET_SIZE.y)
+	await _frames()
+	_check(panel.patch_button.size.x < LivePeddlerPanel.TICKET_WIDTH,
+			label + " reflow narrows the real mounted patch Button")
+	_check(panel.patch_button.text != full_text,
+			label + " reflow genuinely repaints the caption")
+	_check_reflow_row(label + " narrow", offer, gold, true)
+	_check(panel.patch_button.tooltip_text == full_tooltip,
+			label + " reflow never rewrites the complete audited tooltip")
+	_check(intents.is_empty() and visit.read_state() == before
+			and rng.state == run_state,
+			label + " resize alone emits no intent, mutates nothing and draws no RNG")
+	panel.patch_button.custom_minimum_size = LivePeddlerPanel.PATCH_TICKET_SIZE
+	panel.patch_button.size = LivePeddlerPanel.PATCH_TICKET_SIZE
+	await _frames()
+	_check(panel.patch_button.text == full_text,
+			label + " restored full width shows the original unshortened name")
+
+
+## VIS-A narrow patch-ticket reflow: after the hosting route narrows the
+## mounted patch Button, its FIRST line is re-budgeted against the ACTUAL
+## button width and font so the visible 4 label, the exact quoted gold and
+## the SOLD/shortfall suffix stay readable, with only the readable patch
+## name shortened - exactly as the card rows shorten only a display name.
+## All three wallet states (funded, zero gold, already-owned) come from
+## separately opened authenticated visits of the authored 100-gold
+## reinforced_patchcoat stock; the audited slot, fitted summary, complete
+## tooltip, the other four original input rectangles, keyboard dispatch and
+## the no-spend/no-RNG/no-intent guarantees are re-proven at the real
+## narrowed geometry, a genuine narrowed click and key-4 press still settle
+## once through the visit, and the full 640-pixel ticket keeps showing the
+## complete unshortened name.
+func _patch_reflow_cases() -> void:
+	var coat_price := -1
+	for entry in authored_patches:
+		if str(entry["id"]) == REFLOW_PATCH_ID:
+			coat_price = int(entry["price"])
+	_check(coat_price == 100,
+			"reflow fixture is the authored 100-gold reinforced_patchcoat")
+	if coat_price != 100:
+		return
+	# The seeded generator with the eligible patch candidate limited to the
+	# authored reinforced_patchcoat: a stable long-name stock without any
+	# fabricated price or patch.
+	var coat_rng := RandomNumberGenerator.new()
+	coat_rng.seed = REFLOW_SEED
+	var coat_stock := RunShopStockOffers.generate_peddler_stock(coat_rng, PARTY,
+			authored_cards, [{"id": REFLOW_PATCH_ID, "price": coat_price}], [])
+	_check(coat_stock.get("ok") == true and coat_stock["patches"].size() == 1
+			and str(coat_stock["patches"][0]["id"]) == REFLOW_PATCH_ID
+			and int(coat_stock["patches"][0]["price"]) == 100,
+			"seeded stock genuinely offers the authored 100-gold Patchcoat")
+	if coat_stock.get("ok") != true:
+		return
+
+	var funded := RunPeddlerVisit.new("peddler_reflow_funded", PARTY, DECK,
+			[], GOLD, coat_stock)
+	var funded_before := funded.read_state()
+	_check(funded.is_open(), "reflow funded fixture is a genuine open visit")
+	if not funded.is_open():
+		return
+	await _bind(funded)
+	# Measure the realistic narrow width (about 400 pixels) with the mounted
+	# button's own font: it must genuinely be too small for the complete
+	# first line while the exact quote, a readable name fragment and the
+	# longest shortfall suffix still fit inside the measured interior.
+	var reflow_font := panel.patch_button.get_theme_font("font")
+	var reflow_px := panel.patch_button.get_theme_font_size("font_size")
+	var prefix_w := panel._row_width(reflow_font,
+			LivePeddlerPanel.ACTION_KEY_LABELS[3] + "  ·  ", reflow_px)
+	var shortfall_w := panel._row_width(reflow_font,
+			"  ·  100 gold  ·  short 100", reflow_px)
+	var fragment_w := panel._row_width(reflow_font, "Re", reflow_px)
+	var ellipsis_w := panel._row_width(reflow_font,
+			LivePeddlerPanel.ELLIPSIS, reflow_px)
+	var quote_w := panel._row_width(reflow_font,
+			LivePeddlerPanel.ACTION_KEY_LABELS[3] + "  ·  "
+			+ REFLOW_PATCH_NAME + "  ·  100 gold", reflow_px)
+	var overflow_at := quote_w + 16.0
+	var readable_at := prefix_w + fragment_w + ellipsis_w + shortfall_w + 16.0
+	_check(reflow_font != null and quote_w > 0.0 and readable_at < overflow_at,
+			"a realistic narrowed ticket can force the reflow and stay readable")
+	if reflow_font == null or quote_w <= 0.0 or readable_at >= overflow_at:
+		return
+	var narrow := 400.0
+	if narrow < readable_at + 4.0 or narrow >= overflow_at - 4.0:
+		narrow = (readable_at + overflow_at) * 0.5
+	_check(narrow - 16.0 < quote_w and narrow - 16.0 >= readable_at - 16.0,
+			"the narrowed interior provably cannot hold the complete quote")
+	await _check_reflow_state(funded, funded_before, "funded", narrow)
+
+	# While narrowed, the funded ticket stays a working input target: the
+	# other four original rectangles are untouched, Tab still visits all
+	# five actions and hover still previews truthfully without spend or
+	# intent.
+	var others_before: Array[Rect2] = []
+	for button in panel.card_buttons + [panel.leave_button]:
+		others_before.append(button.get_global_rect())
+	panel.patch_button.custom_minimum_size = Vector2(narrow,
+			LivePeddlerPanel.PATCH_TICKET_SIZE.y)
+	panel.patch_button.size = Vector2(narrow,
+			LivePeddlerPanel.PATCH_TICKET_SIZE.y)
+	await _frames()
+	var others_kept := true
+	var rect_index := 0
+	for button in panel.card_buttons + [panel.leave_button]:
+		if button.get_global_rect() != others_before[rect_index]:
+			others_kept = false
+		rect_index += 1
+	_check(others_kept and panel.patch_button.get_global_rect().size.x
+			< LivePeddlerPanel.TICKET_WIDTH,
+			"narrowing moves only the patch row; the other four rectangles stay")
+	var focus_seen: Array = []
+	panel.card_buttons[0].grab_focus()
+	for _i in range(5):
+		focus_seen.append(root.gui_get_focus_owner())
+		var tab := InputEventKey.new()
+		tab.keycode = KEY_TAB
+		tab.pressed = true
+		root.push_input(tab)
+		await process_frame
+	for button in panel.card_buttons + [panel.patch_button, panel.leave_button]:
+		_check(focus_seen.has(button),
+				"Tab visits every one of the five actions while narrowed")
+	var reflow_details: Dictionary = panel._patch_details()
+	var expected_preview := "%s  ·  %s  ·  %s  ·  %s" % [str(reflow_details["slot"]),
+			str(reflow_details["name"]), REFLOW_PATCH_ID, str(reflow_details["short"])]
+	await _move_pointer(panel.patch_button.get_global_rect().get_center())
+	_check(panel.status_label.text == expected_preview
+			or panel.status_label.text == panel._clamp_status(expected_preview),
+			"narrowed hover still shows exactly the trusted patch preview")
+	_check(_status_fits() and intents.is_empty()
+			and funded.read_state() == funded_before,
+			"narrowed hover emits no intent and spends nothing")
+	await _hover_none()
+	panel.patch_button.custom_minimum_size = LivePeddlerPanel.PATCH_TICKET_SIZE
+	panel.patch_button.size = LivePeddlerPanel.PATCH_TICKET_SIZE
+	await _frames()
+
+	# --- zero gold: the exact quote and shortfall stay readable narrowed ---
+	var broke := RunPeddlerVisit.new("peddler_reflow_broke", PARTY, DECK, [], 0,
+			coat_stock)
+	var broke_before := broke.read_state()
+	_check(broke.is_open() and int(broke_before["state"]["gold"]) == 0,
+			"reflow broke fixture is a genuine open zero-gold visit")
+	if broke.is_open():
+		await _check_reflow_state(broke, broke_before, "broke", narrow)
+		# The narrowed unaffordable patch refuses key 4; Leave stays free.
+		panel.patch_button.custom_minimum_size = Vector2(narrow,
+				LivePeddlerPanel.PATCH_TICKET_SIZE.y)
+		panel.patch_button.size = Vector2(narrow,
+				LivePeddlerPanel.PATCH_TICKET_SIZE.y)
+		await _frames()
+		panel.leave_button.grab_focus()
+		await _frames()
+		var broke_counts := _press_totals()
+		_check(await _push_shortcut(KEY_4) and _pressed_only("", broke_counts)
+				and intents.is_empty() and broke.read_state() == broke_before,
+				"narrowed unaffordable key 4 presses nothing, spends nothing and is not consumed")
+		var leave_counts := _press_totals()
+		_check(not await _push_shortcut(KEY_0) and _pressed_only("leave", leave_counts)
+				and intents.size() == 1 and intents[0]["kind"] == "leave",
+				"the narrowed broke panel still leaves free through key 0")
+		if intents.size() == 1:
+			_check(Controller.settle(broke, intents[0], broke_before).get("ok") == true,
+					"the narrowed free Leave settles through the authentic service")
+		panel.patch_button.custom_minimum_size = LivePeddlerPanel.PATCH_TICKET_SIZE
+		panel.patch_button.size = LivePeddlerPanel.PATCH_TICKET_SIZE
+		await _frames()
+
+	# --- already-owned offered patch: SOLD stays readable narrowed ---
+	var owned := RunPeddlerVisit.new("peddler_reflow_owned", PARTY, DECK,
+			[REFLOW_PATCH_ID], GOLD, coat_stock)
+	var owned_before := owned.read_state()
+	_check(owned.is_open() and bool(owned_before["stock"]["trinkets"][0]["sold"]) == true
+			and owned_before["state"]["trinkets"] == [REFLOW_PATCH_ID],
+			"reflow owned fixture is a genuine open visit with the patch already owned")
+	if owned.is_open():
+		await _check_reflow_state(owned, owned_before, "owned", narrow)
+		panel.patch_button.custom_minimum_size = Vector2(narrow,
+				LivePeddlerPanel.PATCH_TICKET_SIZE.y)
+		panel.patch_button.size = Vector2(narrow,
+				LivePeddlerPanel.PATCH_TICKET_SIZE.y)
+		await _frames()
+		panel.card_buttons[0].grab_focus()
+		await _frames()
+		var owned_counts := _press_totals()
+		_check(await _push_shortcut(KEY_4) and _pressed_only("", owned_counts)
+				and intents.is_empty() and owned.read_state() == owned_before,
+				"narrowed owned patch: key 4 presses nothing and changes no quote")
+		var card_counts := _press_totals()
+		_check(not await _push_shortcut(KEY_1) and _pressed_only("card0", card_counts)
+				and intents.size() == 1 and intents[0]["kind"] == "card",
+				"narrowed owned patch: enabled key 1 still sends a valid card intent")
+		if intents.size() == 1:
+			var card_receipt := Controller.settle(owned, intents[0], owned_before)
+			_check(card_receipt.get("ok") == true
+					and card_receipt["state"]["trinkets"] == [REFLOW_PATCH_ID]
+					and card_receipt["price"] == int(owned_before["stock"]["cards"][0]["price"]),
+					"the narrowed card shortcut still settles at its authored quote")
+		panel.patch_button.custom_minimum_size = LivePeddlerPanel.PATCH_TICKET_SIZE
+		panel.patch_button.size = LivePeddlerPanel.PATCH_TICKET_SIZE
+		await _frames()
+
+	# --- a narrowed funded ticket still buys once, by mouse and by key 4 ---
+	for keyboard in [false, true]:
+		var visit := RunPeddlerVisit.new("peddler_reflow_buy_"
+				+ ("key" if keyboard else "mouse"), PARTY, DECK, [], GOLD, coat_stock)
+		var before := visit.read_state()
+		_check(visit.is_open(), "reflow buy fixture is a genuine open visit")
+		if not visit.is_open():
+			continue
+		await _bind(visit)
+		panel.patch_button.custom_minimum_size = Vector2(narrow,
+				LivePeddlerPanel.PATCH_TICKET_SIZE.y)
+		panel.patch_button.size = Vector2(narrow,
+				LivePeddlerPanel.PATCH_TICKET_SIZE.y)
+		await _frames()
+		_check_reflow_row("narrow " + ("key-4" if keyboard else "mouse") + " buy",
+				before["stock"]["trinkets"][0], GOLD, true)
+		if keyboard:
+			panel.card_buttons[0].grab_focus()
+			await _frames()
+			_check(not await _push_shortcut(KEY_4),
+					"narrow key 4 is consumed by the mounted Peddler")
+		else:
+			await _act(panel.patch_button, false)
+		_check(intents.size() == 1 and intents[0]["kind"] == "trinket"
+				and intents[0]["id"] == REFLOW_PATCH_ID,
+				"the narrowed genuine press emits exactly one source-bound patch intent")
+		if intents.size() == 1:
+			var receipt := Controller.settle(visit, intents[0], before)
+			_check(receipt.get("ok") == true and receipt.get("price") == 100
+					and receipt["state"]["gold"] == GOLD - 100
+					and receipt["state"]["trinkets"] == [REFLOW_PATCH_ID],
+					"the narrowed patch purchase settles once at the authored 100 gold")
+			_check(visit.is_consumed()
+					and not Controller.settle(visit, intents[0], before).get("ok"),
+					"the narrowed purchase is once-only; the replayed intent is refused")
+		panel.patch_button.custom_minimum_size = LivePeddlerPanel.PATCH_TICKET_SIZE
+		panel.patch_button.size = LivePeddlerPanel.PATCH_TICKET_SIZE
+		await _frames()
+	await _hover_none()
 
 
 ## A genuinely priced, open visit whose offered patch is an authored inert

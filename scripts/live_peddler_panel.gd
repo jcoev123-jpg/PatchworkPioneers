@@ -812,21 +812,47 @@ func _fit_card_rule(line: String, width: float, font: Font, px: int) -> String:
 	return _fit_row_text(line, width, font, px)
 
 
+## Line one opens with the row's own visible "4" key label, then the readable
+## patch name; the whole source-quoted price and sale/shortfall state stays on
+## line one exactly as every card keeps its full quote on line one. Only the
+## human-readable NAME is ever shortened (the same loss the card rows apply
+## to their display names), and the first line is measured against the ACTUAL
+## button geometry and its real font instead of autowrap/clipping, so a host
+## that narrows the sewn patch ticket after bind still shows the honest
+## complete quote. _on_patch_resized() re-fits it on geometry changes; the
+## offer ID, quoted price, slot authority, tooltip and focus stay untouched.
 func _patch_caption() -> String:
 	var offer := _patch_offer()
-	# The patch row is the fourth action: its caption opens with its own "4"
-	# key label exactly as the card rows open with 1/2/3 and Leave with 0.
-	var quote := _caption(ACTION_KEY_LABELS[CARD_COUNT], str(offer["id"]),
-			int(offer["price"]), bool(offer["sold"]))
 	var details := _patch_details()
-	if details.is_empty():
-		return quote + "\n" + PATCH_DETAILS_UNAVAILABLE
 	var font := patch_button.get_theme_font("font")
 	var px := patch_button.get_theme_font_size("font_size")
+	var width := _patch_text_width(patch_button)
+	# The patch row is the fourth action: its caption opens with its own "4"
+	# key label exactly as the card rows open with 1/2/3 and Leave with 0.
+	var prefix := "%s  ·  " % ACTION_KEY_LABELS[CARD_COUNT]
+	var suffix := "  ·  %d gold" % int(offer["price"])
+	if bool(offer["sold"]):
+		suffix += "  ·  SOLD"
+	elif _gold() < int(offer["price"]):
+		suffix += "  ·  short %d" % (int(offer["price"]) - _gold())
+	var name := readable_id(str(offer["id"]))
+	var quote := prefix + _fit_row_text(name,
+			width - _row_width(font, prefix + suffix, px), font, px) + suffix
+	if details.is_empty():
+		return quote + "\n" + PATCH_DETAILS_UNAVAILABLE
 	var slot := "%s  ·  " % str(details["slot"])
 	var short := _fit_row_text(str(details["short"]),
 			maxf(0.0, patch_button.size.x - 32.0 - _row_width(font, slot, px)), font, px)
 	return quote + "\n" + slot + short
+
+
+## The patch ticket's available text interior at its ACTUAL mounted width:
+## the same sewn content insets both authored lines are measured against, so
+## the first-line quote always fits the real button a host has re-flowed.
+func _patch_text_width(button: Button) -> float:
+	var face := button.get_theme_stylebox("normal")
+	return maxf(0.0, button.size.x - face.get_content_margin(SIDE_LEFT)
+			- face.get_content_margin(SIDE_RIGHT))
 
 
 func _wallet_caption() -> String:
