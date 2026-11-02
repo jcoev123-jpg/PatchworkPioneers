@@ -172,7 +172,8 @@ func _key_select_path(view: BaseScreen, path_id: String) -> void:
 	_check(target != null, "keyboard Path option is mounted: " + path_id)
 	if target == null:
 		return
-	for attempt in range(view.path_buttons.size() + 4):
+	for attempt in range(view.path_buttons.size() + view.tinker_buttons.size()
+			+ view.warden_buttons.size() + view.difficulty_buttons.size() + 5):
 		if target.has_focus():
 			break
 		await _key(KEY_TAB)
@@ -684,7 +685,11 @@ func _check_deck_gallery(app, view: BaseScreen) -> void:
 	# Reopen by a genuinely focused Tab/Enter, then use physical Close and Space.
 	view.back_button.grab_focus()
 	await _key(KEY_TAB)
-	_check(view.deck_button.has_focus(), "Tab from Back reaches the real Deck house")
+	_check(view.heroes_house_button.has_focus(), "Tab from Back reaches Heroes house")
+	await _key(KEY_TAB)
+	_check(view.camp_house_button.has_focus(), "Tab from Heroes reaches Camp tent")
+	await _key(KEY_TAB)
+	_check(view.deck_button.has_focus(), "Tab from Camp reaches the real Deck house")
 	await _key(KEY_ENTER)
 	_check(gallery.is_open() and gallery.hero_buttons["warden"].has_focus(),
 		"Enter opens a fresh canonical gallery")
@@ -1026,6 +1031,10 @@ func _run() -> void:
 	await _key(KEY_TAB)
 	_check(view.back_button.has_focus(), "Tab reaches Back to title")
 	await _key(KEY_TAB)
+	_check(view.heroes_house_button.has_focus(), "Tab reaches Heroes house")
+	await _key(KEY_TAB)
+	_check(view.camp_house_button.has_focus(), "Tab reaches Camp tent")
+	await _key(KEY_TAB)
 	_check(view.deck_button.has_focus(), "Tab reaches the Deck house")
 	await _key(KEY_TAB)
 	_check(view.path_buttons[0].has_focus()
@@ -1061,7 +1070,8 @@ func _run() -> void:
 		"leaving all boards restores their prompts")
 	for control in [view.warden_buttons[1], view.warden_buttons[0],
 			view.tinker_buttons[1], view.tinker_buttons[0], view.path_buttons[1],
-			view.path_buttons[0], view.deck_button, view.back_button, view.difficulty_buttons[0], view.set_out_button]:
+			view.path_buttons[0], view.deck_button, view.camp_house_button,
+			view.heroes_house_button, view.back_button, view.difficulty_buttons[0], view.set_out_button]:
 		for down in [true, false]:
 			var reverse := InputEventKey.new()
 			reverse.keycode = KEY_TAB
@@ -1120,6 +1130,9 @@ func _run() -> void:
 	_check(view.difficulty_buttons[0].has_focus(), "Tier remains reachable after Path selection")
 	await _key(KEY_TAB)
 	_check(view.back_button.has_focus(), "Tab reaches Back to title")
+	await _key(KEY_TAB)
+	_check(view.camp_house_button.has_focus() and view.heroes_house_button.disabled,
+		"Tab skips the confirmed Heroes Path but still reaches Camp")
 	await _key(KEY_TAB)
 	_check(view.deck_button.has_focus(), "Tab reaches Deck after a Path is chosen")
 	await _key(KEY_TAB)
