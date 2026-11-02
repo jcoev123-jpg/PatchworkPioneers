@@ -63,6 +63,27 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		if not CombatEnemyIntents.valid_action(action):
 			return failure
 		var actor: Dictionary = roster[source - 1]
+		var has_authored_move := false
+		var spec: Variant = actor.get("intent")
+		# Raw presence also opts in: malformed keyed data must not silently
+		# downgrade the source to the legacy unkeyed execution contract.
+		if spec is Dictionary and spec.get("actions") is Array:
+			for entry in spec.actions:
+				if entry is Dictionary and entry.has("move"):
+					has_authored_move = true
+		if action.has("move") or (policy_targets and action.get("type") == "attack" and has_authored_move):
+			# Only this source's current authored amount/move pair is authority.
+			# RoundFlow owns cache identity; presentation metadata owns neither.
+			# Unbound legacy schedules retain their independent plain amounts.
+			var slot := CombatEnemyIntents._weighted_slot(source, actor.get("intent"))
+			var candidate := action.duplicate(true)
+			candidate.erase("target_position")
+			var authored := false
+			for entry in slot.get("actions", []):
+				if entry["action"] == candidate:
+					authored = true
+			if not authored:
+				return failure
 		if action.get("type") == "steal_gold":
 			if run_gold == null:
 				return failure
@@ -135,6 +156,8 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 			staged_enemies._enemies[source - 1].erase(CombatEnemyIntents.CHARGE_PENDING)
 			var miss := {"type": "attack", "enemy_position": source,
 				"target_position": effective.target_position, "applied": false}
+			if effective.has("move"):
+				miss["move"] = effective.move
 			if reactions != null:
 				miss.merge({"actual_target_position": effective.target_position,
 					"redirected": false, "retaliation_damage": 0, "retaliatory_damage": 0})
@@ -146,7 +169,7 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 			if effective.type == "steal_gold":
 				event["amount"] = 0
 				event["gold"] = staged_gold
-			for field in ["target_position", "status", "direction"]:
+			for field in ["target_position", "status", "direction", "move"]:
 				if effective.has(field):
 					event[field] = effective[field]
 			if not staged_enemies.is_slain(source):
@@ -205,6 +228,7 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 					var attack: Dictionary = effective.duplicate(true)
 					attack.erase("type")
 					attack.erase("hits")
+					attack.erase("move")
 					attack.amount = damage
 					if reactions != null:
 						var reaction_result: Dictionary = reactions.resolve_enemy_attack(

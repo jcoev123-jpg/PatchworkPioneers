@@ -13,6 +13,7 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	_test_run_gold()
 	_test_four_weighted_rounds()
 	_test_four_weighted_atomic_refusals()
 	_test_special_round_atomicity()
@@ -47,6 +48,55 @@ func _run() -> void:
 			printerr(failure)
 		print("combat_round_flow_test: FAIL (", failures.size(), " failures)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_run_gold() -> void:
+	var record: Dictionary = {}
+	for enemy in RunTypedBattleRoster._parse_catalog_text(FileAccess.get_file_as_string(
+			"res://data/enemies/run_enemies.json")):
+		if enemy.id == "fray_scavenger":
+			record = enemy
+	_check(not record.is_empty(), "wallet uses actual authored Scavenger")
+	if record.is_empty():
+		return
+	var replay: Array = []
+	for repeat_index in range(2):
+		for gold in [0, 1, 9]:
+			var f := _fight(438, [], [record], [{"enemy_position": 1,
+				"pattern": [{"type": "block", "amount": 1}]}])
+			_check(f.intents.bind_battle(f.enemies, f.party, f.rng), "real weighted wallet schedule binds")
+			for turn in range(64):
+				if f.intents.get_intents()[0].type == "steal_gold":
+					break
+				f.intents.advance_turn()
+			_check(f.intents.get_intents()[0].type == "steal_gold", "real seeded cache selected theft")
+			var flow := CombatRoundFlow.new(f.deck, f.party, f.enemies, f.intents,
+				f.result, null, null, null, gold)
+			_check(flow.begin_fight(), "wallet fight begins")
+			var before := [f.party.get_heroes(), f.enemies.get_enemies(), f.deck.hand.duplicate(),
+				f.deck.draw_pile.duplicate(), f.deck.discard_pile.duplicate(), f.rng.state,
+				f.intents.get_intents(), f.intents._turn_index]
+			for bad in [-1, 2.0, true, "2", {}]:
+				flow._gold = bad
+				_check(not flow.end_turn() and before == [f.party.get_heroes(), f.enemies.get_enemies(),
+					f.deck.hand, f.deck.draw_pile, f.deck.discard_pile, f.rng.state,
+					f.intents.get_intents(), f.intents._turn_index], "malformed wallet refuses atomically")
+			flow._gold = gold
+			f.intents._cache[0].amount = 3
+			_check(not flow.end_turn() and flow.get_gold() == gold
+				and before.slice(0, 6) == [f.party.get_heroes(), f.enemies.get_enemies(), f.deck.hand,
+					f.deck.draw_pile, f.deck.discard_pile, f.rng.state], "forged cached amount refuses entire wallet round")
+			f.intents._cache[0].amount = 2
+			_check(flow.end_turn() and flow.get_gold() == maxi(0, gold - 2), "accepted cached theft floors wallet")
+			for index in range(3):
+				_check(f.party.get_hero(index + 1).hp == before[0][index].hp,
+					"wallet-only phase never hurts heroes")
+			var trace := [flow.get_gold(), f.party.get_heroes(), f.enemies.get_enemies(),
+				f.deck.hand.duplicate(), f.rng.state, f.intents.get_intents()]
+			if repeat_index == 0:
+				replay.append(trace)
+			else:
+				_check(trace == replay[[0, 1, 9].find(gold)], "wallet round same-seed replay")
 
 
 func _check(condition: bool, message: String) -> void:

@@ -54,7 +54,7 @@ const M05_NORMALS := {
 	"pin_skitter": {"name": "Pin Skitter", "max_hp": 13, "target": "random",
 		"attack": {"amount": 5, "weight": 4}},
 	"thread_biter": {"name": "Thread Biter", "max_hp": 15, "target": "lowest_living_hp",
-		"attack": {"amount": 5, "weight": 3}},
+		"attack": {"amount": 5, "weight": 2}},
 }
 
 
@@ -2551,6 +2551,7 @@ func _run() -> void:
 		_finish()
 		return
 	var app = scene.instantiate()
+	await _routed_thread_lash(scene)
 	var reference = scene.instantiate()
 	var reference_presenter = reference.get_node("LiveEnemyRoster")
 	reference.remove_child(reference_presenter)
@@ -3033,7 +3034,7 @@ func _m05_pairs(pool: Dictionary) -> Array:
 
 ## Find a real first-floor Fight whose independent shrinking-array draws actually
 ## admit the requested M05 actor; the named encounter only owns the schedule.
-func _m05_pair_seed(pool: Dictionary, target_id: String) -> Dictionary:
+func _m05_pair_seed(pool: Dictionary, target_id: String, count: int = 0) -> Dictionary:
 	var fight = pool.get("Fight")
 	if not fight is Dictionary or fight.is_empty():
 		return {}
@@ -3054,7 +3055,7 @@ func _m05_pair_seed(pool: Dictionary, target_id: String) -> Dictionary:
 				continue
 			var group: Array = preload("res://tests/floor_band_oracle.gd").group(
 				map.get_current_floor(), entry.enemy_ids.size(), rng)
-			if group.has(target_id):
+			if group.has(target_id) and (count == 0 or group.size() == count):
 				return {"seed": seed_value, "node": node_id, "group": group,
 					"encounter": picked, "selection_rng": rng.state}
 	return {}
@@ -3395,7 +3396,7 @@ func _m05_fallbacks(app, presenter) -> void:
 		var intent: Dictionary = record.get("intent", {})
 		var attack := {}
 		for action in intent.get("actions", []):
-			if action.get("type") == "attack":
+			if action.get("type") == "attack" and not action.has("move"):
 				attack = action
 		_check(record.get("name") == expected.name and record.get("max_hp") == expected.max_hp
 			and record.get("art_path") == "res://assets/paper/enemies/%s.png" % actor_id,
@@ -4532,6 +4533,92 @@ func _four_capacity_ribbons(scene: PackedScene) -> void:
 	await process_frame
 
 
+func _routed_thread_lash(scene: PackedScene) -> void:
+	var pool: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(RunAuthoredBattleEntry.POOLS_PATH))
+	for count in [2, 3]:
+		var witness := _m05_pair_seed(pool, "thread_biter", count)
+		_check(not witness.is_empty(), "Thread Biter has real %d-source Fight witness" % count)
+		if witness.is_empty():
+			continue
+		var replay: Array = []
+		for repeat_index in range(2):
+			var app = scene.instantiate()
+			root.add_child(app)
+			await process_frame
+			app.run_seed = witness.seed
+			app.route_button.pressed.emit()
+			await process_frame
+			var route: Button = null
+			for candidate in app.route_buttons:
+				if candidate.get_meta("route_id") == witness.node:
+					route = candidate
+			_check(route != null and not route.disabled, "real Thread Biter route button is enabled")
+			if route == null:
+				app.free()
+				continue
+			route.pressed.emit()
+			for frame in range(3):
+				await process_frame
+			_check(app.enemies != null and app.enemy_intents.is_bound(), "real route binds weighted roster")
+			if app.enemies == null or not app.enemy_intents.is_bound():
+				app.free()
+				continue
+			var ids: Array = app.enemies.get_enemies().map(func(a): return a.id)
+			_check(ids == witness.group and ids.size() == count and ids.has("thread_biter"),
+				"mounted actual group equals independently seeded floor-band witness")
+			var source: int = ids.find("thread_biter") + 1
+			if source < 1:
+				app.free()
+				continue
+			var presenter = app.get_node("LiveEnemyRoster")
+			var seen := {}
+			var trace: Array = []
+			for turn in range(64):
+				var actions: Array = app.enemy_intents.get_intents()
+				var action: Dictionary = actions[source - 1]
+				var rng_before: int = app.run_rng.state
+				presenter._sync_battle()
+				presenter._refresh()
+				var badge = presenter._badges[source - 1]
+				trace.append([actions, rng_before])
+				if action.type == "attack":
+					var keyed: bool = action.has("move")
+					seen["lash" if keyed else "spit"] = true
+					_check(action.amount == (6 if keyed else 5)
+						and action.target_position == CombatEnemyIntents.priority_target(app.party, "lowest_living_hp")
+						and badge.move_name == ("Thread Lash" if keyed else "Lint Spit"),
+						"real weighted amount, low-HP target and bound named badge agree")
+				else:
+					seen[action.type] = true
+				_check(app.run_rng.state == rng_before and app.enemy_intents.get_intents() == actions,
+					"live badge reads preserve exact cached action and run RNG")
+				_check(app.enemy_intents.advance_turn(), "real scheduler advances weighted choices")
+			_check(seen.has("lash") and seen.has("spit") and seen.has("debuff") and seen.has("block"),
+				"admitted routed Fight selects both attacks and unchanged Bleed/Block")
+			if repeat_index == 0:
+				replay = trace
+			else:
+				_check(trace == replay, "exact routed seed replays all choices and RNG states")
+			# Drive the real round owner with each attack, never inject a forged cache.
+			var desired := 5 if repeat_index == 0 else 6
+			for turn in range(64):
+				var selected: Dictionary = app.enemy_intents.get_intents()[source - 1]
+				if selected.type == "attack" and selected.amount == desired:
+					break
+				_check(app.enemy_intents.advance_turn(), "seek cached real End Turn attack")
+			_check(app.enemy_intents.get_intents()[source - 1].get("amount") == desired,
+				"actual End Turn has requested five/six attack precondition")
+			var turn_before: int = app.enemy_intents._turn_index
+			app.enemy_attacks = app.enemy_intents.get_intents()
+			app._refresh_intents()
+			app.end_turn_button.pressed.emit()
+			await process_frame
+			_check(app.enemy_intents._turn_index == turn_before + 1,
+				"live RoundFlow executes the named attack and advances the real turn")
+			app.free()
+			await process_frame
+
+
 func _mounted_move_names(scene: PackedScene) -> void:
 	var definition := _authored_enemy("thread_biter")
 	_check(not definition.is_empty() and definition.get("max_hp") == 15,
@@ -4569,7 +4656,7 @@ func _mounted_move_names(scene: PackedScene) -> void:
 		if actions.size() != 1 or presenter._badges.size() != 1:
 			continue
 		var badge: LiveEnemyIntentBadge = presenter._badges[0]
-		var title := "Lint Spit" if kind == "attack" else "Fraying Coil"
+		var title := ("Thread Lash" if actions[0].has("move") else "Lint Spit") if kind == "attack" else "Fraying Coil"
 		_check(presenter._move_catalog != prior_catalog and presenter._move_catalog._loaded
 			and badge.move_name == title and badge.tooltip_text.ends_with("\nMove: " + title),
 			"live rebind owns a fresh loaded catalog and the actual authored move: " + badge.tooltip_text)
@@ -4579,7 +4666,7 @@ func _mounted_move_names(scene: PackedScene) -> void:
 		expected.show_intent(actions[0], false)
 		# This fixture has no started round-flow service, so no policy/contact extras.
 		_check(badge.tooltip_text == expected.tooltip_text + "\nMove: " + title
-			and badge.amount == (5 if kind == "attack" else 2)
+			and badge.amount == actions[0].amount
 			and badge.target_position == actions[0].get("target_position", 0),
 			"move label preserves exact detailed action, damage and target help")
 		expected.free()
@@ -4633,10 +4720,10 @@ func _mounted_move_names(scene: PackedScene) -> void:
 		_check(badge.move_name == title, "cleared skip restores current authored move")
 		if kind == "attack":
 			_check(badge.policy_cue == "Aim low HP"
-				and badge.tooltip_text.contains("5 damage aimed at " + LiveEnemyIntentBadge.hero_target_label(badge.target_position))
+				and badge.tooltip_text.contains("%d damage aimed at " % actions[0].amount + LiveEnemyIntentBadge.hero_target_label(badge.target_position))
 				and badge.tooltip_text.contains("Target policy (AIM LOW HP): aims at the living hero with the lowest current HP.")
 				and badge.tooltip_text.contains("Passive (not the announced action)")
-				and badge.tooltip_text.ends_with("\nMove: Lint Spit"),
+				and badge.tooltip_text.ends_with("\nMove: " + title),
 				"authenticated flow preserves full damage, policy and passive help before authored move")
 		app._battle_closed = true
 		presenter._refresh()

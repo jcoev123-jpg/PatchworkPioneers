@@ -87,7 +87,8 @@ func _old_expected() -> Dictionary:
 			"intent": {"target": "lowest_living_hp", "actions": [
 				{"type": "attack", "amount": 5, "weight": 3},
 				{"type": "block", "amount": 2, "weight": 2},
-				{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1}]}},
+				{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
+				{"type": "steal_gold", "amount": 2, "weight": 1}]}},
 		"button_guard": {"id": "button_guard", "name": "Button Guard", "max_hp": 16, "art_path": "res://assets/paper/enemies/button_guard.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "attack", "amount": 5, "weight": 3},
@@ -123,7 +124,8 @@ func _old_expected() -> Dictionary:
 				{"type": "block", "amount": 1, "weight": 1}]}},
 		"thread_biter": {"id": "thread_biter", "name": "Thread Biter", "max_hp": 15, "drain": true, "art_path": "res://assets/paper/enemies/thread_biter.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
-				{"type": "attack", "amount": 5, "weight": 3},
+				{"type": "attack", "amount": 5, "weight": 2},
+				{"type": "attack", "amount": 6, "weight": 1, "move": "attack2"},
 				{"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
 				{"type": "block", "amount": 2, "weight": 1}]}}
 	}
@@ -1865,8 +1867,11 @@ func _test_thread_biter_lifesteal_catalog() -> void:
 	_check(spec is Dictionary and spec.get("target") == "lowest_living_hp",
 		"AC1: Thread Biter keeps its lowest-living target policy")
 	var bite := _authored_alternative(biter, "attack", 5)
-	_check(not bite.is_empty() and int(bite.get("weight", 0)) == 3,
-		"AC1: the authored 5-damage bite keeps weight 3")
+	_check(not bite.is_empty() and int(bite.get("weight", 0)) == 2 and not bite.has("move"),
+		"AC1: the authored 5-damage Lint Spit has weight 2 without a move key")
+	var lash := _authored_alternative(biter, "attack", 6)
+	_check(not lash.is_empty() and int(lash.get("weight", 0)) == 1 and lash.get("move") == "attack2",
+		"AC1: the authored 6-damage Thread Lash has weight 1 and attack2")
 	var bleed := _authored_alternative(biter, "debuff", 1)
 	_check(not bleed.is_empty() and bleed.get("status") == "bleed"
 		and int(bleed.get("weight", 0)) == 1,
@@ -1875,8 +1880,8 @@ func _test_thread_biter_lifesteal_catalog() -> void:
 	_check(not block.is_empty() and int(block.get("weight", 0)) == 1,
 		"AC1: the authored Block 2 alternative keeps weight 1")
 	var slot := CombatEnemyIntents._weighted_slot(1, spec)
-	_check(not slot.is_empty() and slot.get("actions", []).size() == 3,
-		"AC1: the intent still validates as exactly three weighted alternatives")
+	_check(not slot.is_empty() and slot.get("actions", []).size() == 4,
+		"AC1: the intent validates as exactly four weighted alternatives")
 	# The live entry service derives the ordinary normal records and the three
 	# HP-sorted floor bands from the shipped catalogs.
 	var material := RunAuthoredBattleEntry._floor_band_material(null)

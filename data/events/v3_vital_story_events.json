@@ -879,6 +879,46 @@
         { "id": "pump_broken_keys", "text": "Pump the cracked organ until it bites (lose 3 HP; gain 20 gold)", "outcome": { "gold": 20, "scraps": 0, "hp": -3, "max_hp": 0 } },
         { "id": "leave", "text": "Let the last organ note die in the fog", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_ironlace_heron_bell",
+      "title": "The Ironlace Heron Bell",
+      "description": "A tall ink-blue heron ragdoll with a silver needle beak rings a cracked iron mourning bell through damp candle fog.",
+      "choices": [
+        { "id": "ring_iron_bell", "text": "Pull the bell rope (lose 5 HP; gain 2 max HP)", "outcome": { "gold": 0, "scraps": 0, "hp": -5, "max_hp": 2 } },
+        { "id": "buy_quiet_wax", "text": "Pay 13 gold for warm bell-wax balm (+8 HP)", "outcome": { "gold": -13, "scraps": 0, "hp": 8, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the iron bell fall silent", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_oxblood_mole_pinwheel",
+      "title": "The Oxblood Mole Pinwheel",
+      "description": "A stout button-eyed mole cranks a giant rusted needle pinwheel above an oxblood quilt burrow lit by one amber lamp.",
+      "choices": [
+        { "id": "turn_pinwheel", "text": "Spend 2 scraps to stitch a stronger seam (+3 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 3 } },
+        { "id": "mine_rust_pins", "text": "Pull the sharp old pins (lose 6 HP; gain 22 gold)", "outcome": { "gold": 22, "scraps": 0, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the mole winding its wheel", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_sable_fox_candle_cage",
+      "title": "The Sable Fox Candle Cage",
+      "description": "A round sable fox puppet holds an oversized brass birdcage of guttering candles; red stitches glow along its velvet muzzle.",
+      "choices": [
+        { "id": "buy_caged_light", "text": "Pay 20 gold and 1 scrap for a warm seam (+7 HP; +1 max HP)", "outcome": { "gold": -20, "scraps": -1, "hp": 7, "max_hp": 1 } },
+        { "id": "trade_wick_thread", "text": "Unpick the candle wicks (lose 4 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the fox shutter its candle cage", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_bonewhite_finch_sundial",
+      "title": "The Bonewhite Finch Sundial",
+      "description": "A plump bone-cream finch doll balances a cracked brass sundial on its back, casting a needle-thin shadow across the fog.",
+      "choices": [
+        { "id": "rewind_sundial", "text": "Pay 16 gold to set the healing dial (+10 HP)", "outcome": { "gold": -16, "scraps": 0, "hp": 10, "max_hp": 0 } },
+        { "id": "borrow_sun_needle", "text": "Surrender 2 max HP for the finch's purse (+28 gold)", "outcome": { "gold": 28, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Pass before the last shadow turns", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
