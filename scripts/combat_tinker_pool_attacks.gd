@@ -103,13 +103,33 @@ func preview_ricochet_route(deck: CombatDeck, party: CombatParty,
 
 func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int = 0, pinned: CombatPinned = null,
-		cost_discount: int = 0) -> Dictionary:
+		cost_discount: int = 0, needle_rules: CombatHeirloomPatchTriggers = null,
+		needle_quote: Dictionary = {}) -> Dictionary:
 	var active_pinned: CombatPinned = pinned if pinned != null else _pinned
+	# Seal and validate the battle-bound Heirloom quote BEFORE any paid mutation.
+	# Only an authenticated, unexpired quote grants the one +1; a supplied bonus
+	# alone, a mismatched card/target or an already-spent turn refuses atomically
+	# and cancels the provisional quote. An ordinary unquoted play is unchanged.
+	var needle_bonus := 0
+	if needle_rules != null or not needle_quote.is_empty():
+		if needle_rules == null or not needle_rules.authorizes_needle_hit(
+				needle_quote, party, enemies, card_id, target_position):
+			if needle_rules != null:
+				needle_rules.cancel_needle_hit()
+			return _failure()
+		needle_bonus = 1
 	var plan: Dictionary = _prepare(deck, party, enemies, card_id, target_position,
-		active_pinned, cost_discount)
+		active_pinned, cost_discount, 0, needle_bonus)
 	if not plan.get("ok", false):
+		if needle_rules != null:
+			needle_rules.cancel_needle_hit()
 		return _failure()
-	return _resolve(deck, enemies, card_id, plan, active_pinned)
+	var receipt := _resolve(deck, enemies, card_id, plan, active_pinned)
+	if needle_rules != null:
+		# The resolver's own original hit rows decide contact; a zero-contact or
+		# failed receipt leaves the Heirloom unspent instead of awarding it.
+		needle_rules.finish_needle_hit(needle_quote, receipt)
+	return receipt
 
 
 ## Detached resolver for one Rest-stitched half, sharing a composite transaction's
@@ -208,10 +228,14 @@ func _resolve(deck: CombatDeck, enemies: CombatEnemies, card_id: String,
 
 func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, active_pinned: CombatPinned,
-		cost_discount: int = 0, base_bonus: int = 0) -> Dictionary:
+		cost_discount: int = 0, base_bonus: int = 0,
+		needle_bonus: int = 0) -> Dictionary:
 	if deck == null or party == null or enemies == null or deck._rng == null:
 		return _failure()
 	if base_bonus not in [0, 2]:
+		return _failure()
+	# The authenticated Needle Echo rider is exactly one point, never a caller's value.
+	if needle_bonus not in [0, 1]:
 		return _failure()
 	if _patches != null and not _patches.is_valid():
 		return _failure()
@@ -320,9 +344,9 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var patch_exposed: int = patch_first_status.get("exposed", 0)
 	var bonus: int = _first_attack.bonus_for_attack(card_id)
 	# Reserve both Pinned's possible +5 and the bound wearer bonus.
-	if damage_value > CombatStatuses.MAX_INT - bonus - 5 - patch_damage - base_bonus:
+	if damage_value > CombatStatuses.MAX_INT - bonus - 5 - patch_damage - base_bonus - needle_bonus:
 		return _failure()
-	var base_damage: int = damage_value + bonus + patch_damage + base_bonus
+	var base_damage: int = damage_value + bonus + patch_damage + base_bonus + needle_bonus
 
 	var roster: Array[Dictionary] = enemies.get_enemies()
 	for index in range(roster.size()):

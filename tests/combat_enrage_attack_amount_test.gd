@@ -9,6 +9,7 @@ extends SceneTree
 
 const ELITE_CATALOG_PATH := "res://data/enemies/m04_elites.json"
 const STARTER_CATALOG_PATH := "res://data/enemies/starter_enemies.json"
+const RUN_CATALOG_PATH := "res://data/enemies/run_enemies.json"
 const MARSHAL_ENCOUNTER_PATH := "res://data/encounters/needle_marshal_elite.json"
 
 var failures: Array[String] = []
@@ -18,10 +19,13 @@ var rules := CombatEnemyKeywordRules.new()
 
 func _initialize() -> void:
 	_test_ac1_needle_marshal_attack_projection()
+	_test_ac1_fourth_slot_needle_marshal_projection()
 	_test_ac2_non_attack_and_non_enrage_passthrough()
+	_test_ac2_fourth_slot_confirmed_hit_commits()
 	_test_ac3_malformed_slain_and_rejections()
 	_test_ac3_isolation_replay_and_rng()
 	_test_ac3_existing_regressions_green()
+	_test_ac4_fourth_slot_fail_closed_and_negatives()
 	if failures.is_empty():
 		print("combat_enrage_attack_amount_test: PASS (", checks, " checks)")
 	else:
@@ -336,7 +340,7 @@ func _test_ac3_malformed_slain_and_rejections() -> void:
 		{"hp": 28, "max_hp": 28, "id": 123, "enrage": true},
 		{"hp": 28, "max_hp": 28, "id": "", "enrage": true},
 		{"hp": 28, "max_hp": 28, "position": 0, "enrage": true},
-		{"hp": 28, "max_hp": 28, "position": 4, "enrage": true},
+		{"hp": 28, "max_hp": 28, "position": 5, "enrage": true},
 		{"hp": 28, "max_hp": 28, "position": -1, "enrage": true},
 		{"hp": 28, "max_hp": 28, "enrage": 1},
 		{"hp": 28, "max_hp": 28, "enrage": "true"},
@@ -501,3 +505,239 @@ func _test_ac3_existing_regressions_green() -> void:
 	var alias2 := rules.project_enrage_attack(marshal, atk)
 	_check(canonical == alias1 and canonical == alias2 and canonical["action"]["amount"] == 7,
 		"API: project_enrage_attack_action and project_enrage_attack aliases match project_enrage_action")
+
+
+func _test_ac1_fourth_slot_needle_marshal_projection() -> void:
+	var marshal_raw := _catalog_record(ELITE_CATALOG_PATH, "needle_marshal")
+	_check(marshal_raw.get("id") == "needle_marshal"
+		and marshal_raw.get("max_hp") == 28
+		and marshal_raw.get("thorns") == 3
+		and marshal_raw.get("enrage") == true,
+		"AC1: authored Needle Marshal has max_hp: 28, thorns: 3, enrage: true")
+
+	var actions: Array = marshal_raw.get("intent", {}).get("actions", [])
+	var attack_5: Dictionary = {}
+	for raw in actions:
+		var weighted := CombatEnemyIntents.weighted_action(raw)
+		var act: Dictionary = weighted.get("action", {}).duplicate(true)
+		act["weight"] = weighted.get("weight", 0)
+		if act.get("type") == "attack" and act.get("amount") == 5:
+			attack_5 = act.duplicate(true)
+			break
+	_check(not attack_5.is_empty() and attack_5.get("amount") == 5,
+		"AC1: Needle Marshal authored intent contains attack amount: 5")
+	if attack_5.is_empty():
+		attack_5 = {"type": "attack", "amount": 5, "target_position": 1}
+
+	var distinct_enemies: Array = [
+		_catalog_record(RUN_CATALOG_PATH, "fray_scavenger"),
+		_catalog_record(RUN_CATALOG_PATH, "button_guard"),
+		_catalog_record(ELITE_CATALOG_PATH, "spool_hexer"),
+		marshal_raw.duplicate(true)
+	]
+	var roster := CombatEnemies.new(distinct_enemies, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(roster.is_valid() and roster.get_capacity() == 4 and roster.get_enemies().size() == 4,
+		"AC1: deliberately opt-in four-capacity fight constructed with 4 distinct authentic enemies")
+	_check(roster.get_enemy(4).get("id") == "needle_marshal" and roster.get_enemy(4).get("position") == 4,
+		"AC1: fourth slot is Needle Marshal at position 4")
+
+	var expected_5 := [
+		{"stacks": 0, "amount": 5, "bonus": 0, "applied": false},
+		{"stacks": 1, "amount": 7, "bonus": 2, "applied": true},
+		{"stacks": 2, "amount": 9, "bonus": 4, "applied": true},
+		{"stacks": 3, "amount": 11, "bonus": 6, "applied": true},
+	]
+	for exp in expected_5:
+		var snapshot: Dictionary = roster.get_enemy(4)
+		if exp["stacks"] > 0:
+			snapshot["enrage_stacks"] = exp["stacks"]
+		else:
+			snapshot.erase("enrage_stacks")
+		var receipt := _project(snapshot, attack_5, "AC1: slot 4 attack 5 at %d stacks" % exp["stacks"])
+		_check(receipt["ok"] == true, "AC1: slot 4 attack 5 projection succeeds at stack %d" % exp["stacks"])
+		_check(receipt["applied"] == exp["applied"],
+			"AC1: slot 4 attack 5 applied is %s at stack %d" % [exp["applied"], exp["stacks"]])
+		_check(receipt["enrage_stacks"] == exp["stacks"],
+			"AC1: slot 4 receipt reflects %d enrage_stacks" % exp["stacks"])
+		_check(receipt["attack_bonus"] == exp["bonus"],
+			"AC1: slot 4 attack bonus is %d at stack %d" % [exp["bonus"], exp["stacks"]])
+		_check(receipt["action"]["amount"] == exp["amount"],
+			"AC1: slot 4 attack 5 projects to %d damage at stack %d" % [exp["amount"], exp["stacks"]])
+		_check(receipt["action"]["type"] == "attack",
+			"AC1: slot 4 action type remains attack")
+
+	var max_snap: Dictionary = roster.get_enemy(4)
+	max_snap["enrage_stacks"] = 3
+	var max_res := _project(max_snap, attack_5, "AC1: slot 4 ceiling check")
+	_check(max_res["attack_bonus"] == 6 and max_res["action"]["amount"] == 11,
+		"AC1: slot 4 hard ceiling of +6 bonus confirmed at stack 3 (amount 11)")
+
+	var pos1_snap := _living_marshal(2)
+	_check(pos1_snap.get("position") == 1, "AC1: position-1 snapshot check")
+	var pos1_res := _project(pos1_snap, attack_5, "AC1: position 1 unchanged check")
+	_check(pos1_res["ok"] == true and pos1_res["attack_bonus"] == 4 and pos1_res["action"]["amount"] == 9,
+		"AC1: position 1 still projects identically (5 + 4 = 9)")
+
+
+func _test_ac2_fourth_slot_confirmed_hit_commits() -> void:
+	var attacks_bridge := CombatStatusAttacks.new()
+	var marshal_raw := _catalog_record(ELITE_CATALOG_PATH, "needle_marshal")
+	var distinct_enemies: Array = [
+		_catalog_record(RUN_CATALOG_PATH, "fray_scavenger"),
+		_catalog_record(RUN_CATALOG_PATH, "button_guard"),
+		_catalog_record(ELITE_CATALOG_PATH, "spool_hexer"),
+		marshal_raw.duplicate(true)
+	]
+	var enemies := CombatEnemies.new(distinct_enemies, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(enemies.is_valid() and enemies.get_capacity() == 4 and enemies.get_enemies().size() == 4,
+		"AC2: four-capacity roster valid with 4 living distinct enemies")
+
+	var initial_roster := enemies.get_enemies()
+	var pre_hit_1 := enemies.get_enemy(4)
+	_check(pre_hit_1.get("id") == "needle_marshal" and pre_hit_1.get("position") == 4
+		and pre_hit_1.get("hp") == 28 and not pre_hit_1.has("enrage_stacks"),
+		"AC2: slot 4 starts as fresh living Needle Marshal at 0 stacks")
+
+	var receipt_1 := attacks_bridge.resolve_vs_enemy(enemies, 4, 4, {}, {})
+	_check(receipt_1 == {"ok": true, "damage": 4, "block_absorbed": 0, "hp_loss": 4},
+		"AC2: confirmed hit 1 on slot 4 deals 4 damage")
+	_check(enemies.get_enemy(4).get("hp") == 24, "AC2: authoritative slot 4 HP reduced to 24")
+
+	var commit_1 := rules.commit_enrage_after_hit(enemies, 4, pre_hit_1, receipt_1)
+	_check(commit_1 == {"ok": true, "applied": true, "enrage_stacks": 1, "attack_bonus": 2},
+		"AC2: commit 1 awards 1 stack (+2 attack bonus)")
+	_check(enemies.get_enemy(4).get("enrage_stacks") == 1,
+		"AC2: authoritative slot 4 now has 1 enrage stack")
+	_check(enemies.get_enemy(4).get("hp") == 24 and enemies.get_enemy(4).get("max_hp") == 28
+		and enemies.get_enemy(4).get("block") == 0 and enemies.get_enemy(4).get("position") == 4,
+		"AC2: commit 1 preserves slot 4 HP, max_hp, block, position")
+	for p in [1, 2, 3]:
+		_check(enemies.get_enemy(p) == initial_roster[p - 1],
+			"AC2: peer slot %d completely untouched by slot 4 commit" % p)
+
+	_check(enemies.gain_block(4, 5), "AC2: grant 5 block to slot 4")
+	var pre_hit_2 := enemies.get_enemy(4)
+	var receipt_2 := attacks_bridge.resolve_vs_enemy(enemies, 4, 3, {}, {})
+	_check(receipt_2 == {"ok": true, "damage": 3, "block_absorbed": 3, "hp_loss": 0},
+		"AC2: confirmed hit 2 fully absorbed by block")
+	var commit_2 := rules.commit_enrage_after_hit(enemies, 4, pre_hit_2, receipt_2)
+	_check(commit_2 == {"ok": true, "applied": true, "enrage_stacks": 2, "attack_bonus": 4},
+		"AC2: commit 2 on block-absorbed hit awards 2nd stack (+4 bonus)")
+	_check(enemies.get_enemy(4).get("enrage_stacks") == 2 and enemies.get_enemy(4).get("block") == 2,
+		"AC2: slot 4 has 2 stacks and 2 remaining block")
+
+	var pre_hit_3 := enemies.get_enemy(4)
+	var receipt_3 := attacks_bridge.resolve_vs_enemy(enemies, 4, 4, {}, {})
+	_check(receipt_3 == {"ok": true, "damage": 4, "block_absorbed": 2, "hp_loss": 2},
+		"AC2: confirmed hit 3 deals 4 damage (2 absorbed, 2 hp loss)")
+	var commit_3 := rules.commit_enrage_after_hit(enemies, 4, pre_hit_3, receipt_3)
+	_check(commit_3 == {"ok": true, "applied": true, "enrage_stacks": 3, "attack_bonus": 6},
+		"AC2: commit 3 awards 3rd stack (+6 bonus)")
+	_check(enemies.get_enemy(4).get("enrage_stacks") == 3 and enemies.get_enemy(4).get("hp") == 22,
+		"AC2: slot 4 reaches maximum 3 stacks")
+
+	var pre_hit_4 := enemies.get_enemy(4)
+	var receipt_4 := attacks_bridge.resolve_vs_enemy(enemies, 4, 2, {}, {})
+	_check(receipt_4 == {"ok": true, "damage": 2, "block_absorbed": 0, "hp_loss": 2},
+		"AC2: confirmed hit 4 deals 2 damage")
+	var commit_4 := rules.commit_enrage_after_hit(enemies, 4, pre_hit_4, receipt_4)
+	_check(commit_4 == {"ok": true, "applied": false, "enrage_stacks": 3, "attack_bonus": 6},
+		"AC2: commit at cap returns applied: false and unchanged 3 stacks")
+	_check(enemies.get_enemy(4).get("enrage_stacks") == 3,
+		"AC2: slot 4 enrage_stacks never exceeds 3")
+
+	var zero_enemies := CombatEnemies.new(distinct_enemies, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	var zero_pre := zero_enemies.get_enemy(4)
+	var zero_receipt := attacks_bridge.resolve_vs_enemy(zero_enemies, 4, 0, {}, {})
+	_check(zero_receipt == {"ok": true, "damage": 0, "block_absorbed": 0, "hp_loss": 0},
+		"AC2: zero damage receipt on slot 4")
+	var zero_commit := rules.commit_enrage_after_hit(zero_enemies, 4, zero_pre, zero_receipt)
+	_check(zero_commit == {"ok": true, "applied": false, "enrage_stacks": 0, "attack_bonus": 0},
+		"AC2: zero-damage hit awards no stack (applied: false, stacks: 0)")
+	_check(not zero_enemies.get_enemy(4).has("enrage_stacks"),
+		"AC2: zero-damage hit writes no stack to roster")
+
+	var replay_commit := rules.commit_enrage_after_hit(enemies, 4, pre_hit_1, receipt_1)
+	_check(replay_commit == {"ok": false, "applied": false, "enrage_stacks": 0, "attack_bonus": 0},
+		"AC2: replay commit with already-applied receipt fails closed")
+	var stale_snap := zero_pre.duplicate(true)
+	stale_snap["hp"] = 10
+	var stale_commit := rules.commit_enrage_after_hit(zero_enemies, 4, stale_snap, zero_receipt)
+	_check(stale_commit == {"ok": false, "applied": false, "enrage_stacks": 0, "attack_bonus": 0},
+		"AC2: stale pre-hit snapshot with mismatched HP fails closed")
+
+
+func _test_ac4_fourth_slot_fail_closed_and_negatives() -> void:
+	var marshal_raw := _catalog_record(ELITE_CATALOG_PATH, "needle_marshal")
+	var valid_attack := {"type": "attack", "amount": 5, "target_position": 1}
+	var failure_receipt := {
+		"ok": false,
+		"applied": false,
+		"action": {},
+		"enrage_stacks": 0,
+		"attack_bonus": 0,
+	}
+
+	var pos5_snap := marshal_raw.duplicate(true)
+	pos5_snap["hp"] = 28
+	pos5_snap["max_hp"] = 28
+	pos5_snap["position"] = 5
+	pos5_snap["enrage"] = true
+	var res_pos5 := _project(pos5_snap, valid_attack, "AC4: position 5 rejected")
+	_check(res_pos5 == failure_receipt, "AC4: position 5 snapshot fails closed")
+
+	var pos0_snap := pos5_snap.duplicate(true)
+	pos0_snap["position"] = 0
+	var res_pos0 := _project(pos0_snap, valid_attack, "AC4: position 0 rejected")
+	_check(res_pos0 == failure_receipt, "AC4: position 0 snapshot fails closed")
+
+	var pos_neg_snap := pos5_snap.duplicate(true)
+	pos_neg_snap["position"] = -1
+	var res_pos_neg := _project(pos_neg_snap, valid_attack, "AC4: position -1 rejected")
+	_check(res_pos_neg == failure_receipt, "AC4: position -1 snapshot fails closed")
+
+	var slain_pos4 := pos5_snap.duplicate(true)
+	slain_pos4["position"] = 4
+	slain_pos4["hp"] = 0
+	var res_slain4 := _project(slain_pos4, valid_attack, "AC4: slain position 4 rejected")
+	_check(res_slain4 == failure_receipt, "AC4: slain position 4 snapshot fails closed")
+
+	var valid_pos4 := pos5_snap.duplicate(true)
+	valid_pos4["position"] = 4
+	valid_pos4["hp"] = 28
+	var res_valid4 := _project(valid_pos4, valid_attack, "AC4: valid position 4 accepted")
+	_check(res_valid4["ok"] == true and res_valid4["action"]["amount"] == 5,
+		"AC4: valid living position 4 snapshot succeeds")
+
+	var enemies_3 := CombatEnemies.new([
+		_catalog_record(RUN_CATALOG_PATH, "fray_scavenger"),
+		_catalog_record(RUN_CATALOG_PATH, "button_guard"),
+		marshal_raw.duplicate(true)
+	])
+	_check(enemies_3.is_valid() and enemies_3.get_capacity() == 3,
+		"AC4: default capacity roster has capacity 3")
+	var fake_receipt := {"ok": true, "damage": 4, "block_absorbed": 0, "hp_loss": 4}
+	var commit_pos4_on_3 := rules.commit_enrage_after_hit(enemies_3, 4, valid_pos4, fake_receipt)
+	_check(commit_pos4_on_3 == {"ok": false, "applied": false, "enrage_stacks": 0, "attack_bonus": 0},
+		"AC4: committing on slot 4 in default 3-capacity roster fails closed")
+
+	var five_enemies := [
+		_catalog_record(RUN_CATALOG_PATH, "fray_scavenger"),
+		_catalog_record(RUN_CATALOG_PATH, "button_guard"),
+		_catalog_record(RUN_CATALOG_PATH, "spool_stalker"),
+		_catalog_record(ELITE_CATALOG_PATH, "spool_hexer"),
+		marshal_raw.duplicate(true)
+	]
+	var bad_roster := CombatEnemies.new(five_enemies, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(not bad_roster.is_valid(), "AC4: CombatEnemies rejects 5 enemies even with opt-in capacity 4")
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 88291
+	var rng_before := rng.state
+	seed(77331)
+	var global_before := randi()
+	seed(77331)
+	for i in range(5):
+		rules.project_enrage_action(pos5_snap, valid_attack)
+	_check(rng.state == rng_before and randi() == global_before,
+		"AC4: rejected position 5 snapshot consumes no seeded or global RNG")

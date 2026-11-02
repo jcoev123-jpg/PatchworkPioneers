@@ -7747,8 +7747,8 @@ func _refresh_enemy_buff_forecast() -> void:
 		and party != null and enemies != null and not party.is_defeated() and not enemies.is_defeated() \
 		and enemy_intents != null and enemy_intents.is_valid() and enemy_attacks == enemy_intents.get_intents():
 		for buff in LiveEnemyBuffForecast.new().forecast(party, enemies, enemy_attacks):
-			lines.append("%s Block: %d -> %d" % [buff.name, buff.before, buff.after])
-	enemy_buff_forecast_label.text = "" if lines.is_empty() else "Next enemy phase: " + "; ".join(lines)
+			lines.append("%s braces: +%d Block" % [buff.name, buff.after - buff.before])
+	enemy_buff_forecast_label.text = "; ".join(lines)
 	enemy_buff_forecast_label.visible = not lines.is_empty()
 
 

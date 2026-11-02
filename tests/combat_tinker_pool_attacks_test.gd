@@ -29,6 +29,7 @@ func _initialize() -> void:
 	_test_visor_stale_failed_and_torn_rejections()
 	_test_staged_stitch_halves()
 	_test_staged_random_ricochet()
+	_test_needle_echo_pool_attacks()
 	for failure in failures:
 		printerr(failure)
 	print("combat_tinker_pool_attacks_test: ",
@@ -2194,3 +2195,233 @@ func _test_staged_random_ricochet() -> void:
 			id + ": exact independent three-hit RNG, HP, Block and shared latch")
 		_check(party.get_heroes() == before[0] and oracle.hits.size() == 3,
 			id + ": genuine three-hit staged cast never touches party")
+
+
+## A genuine run-owned Needle Echo HEAD, real tear ledger and the six canonical
+## Tinker single-target printings. Nothing here is a substitute authority.
+func _needle_echo_context(wearer: String = "tinker",
+		sew: bool = true) -> Dictionary:
+	var party := _party(["warden", "seamstress", "tinker"])
+	var torn := RunTornMending.new(party.get_heroes())
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), ["needle_echo"],
+		RunAuthoredPatchDefinitions.load_definitions(), 5, 125, [], 19651)
+	_check(party.is_valid() and torn.is_valid() and wardrobe.is_valid(),
+		"real party, tear ledger and owned authored patch definitions")
+	_check(RunAuthoredPatchDefinitions.HEIRLOOM_REQUIRED.get("needle_echo", {}).get("slot") == "HEAD",
+		"Needle Echo is an authored HEAD heirloom")
+	if not wardrobe.is_valid():
+		return {}
+	if sew:
+		var sewn: Dictionary = wardrobe.sew("needle_echo", wearer, "HEAD",
+			"sew_needle_pool", wardrobe.get_snapshot())
+		_check(sewn.get("ok", false)
+			and wardrobe.get_snapshot()["worn"][wearer]["HEAD"] == "needle_echo",
+			"Needle Echo genuinely sewn on " + wearer + "'s HEAD")
+		if not sewn.get("ok", false):
+			return {}
+	var foes := _enemies([90, 90, 90])
+	var pins := CombatPinned.new()
+	var rules := CombatHeirloomPatchTriggers.new()
+	_check(foes.is_valid() and rules.bind_battle(wardrobe, torn, party, foes, pins)
+		and rules.start_player_turn(),
+		"battle-bound Needle authority with an explicit first player turn")
+	if not rules.is_current():
+		return {}
+	return {"party": party, "torn": torn, "wardrobe": wardrobe, "foes": foes,
+		"pins": pins, "rules": rules}
+
+
+## Every rejected/refused call must leave deck, energy, HP, Block, statuses,
+## Pinned and the run RNG exactly as they were; the latch is asserted beside it.
+func _needle_echo_snapshot(deck: CombatDeck, ctx: Dictionary) -> Dictionary:
+	return {"draw": deck.draw_pile.duplicate(), "hand": deck.hand.duplicate(),
+		"discard": deck.discard_pile.duplicate(), "energy": deck.energy,
+		"turn": deck.turn_active, "rng": deck._rng.state,
+		"party": ctx.party.get_heroes(), "enemies": ctx.foes.get_enemies(),
+		"pins": ctx.pins._pinner_by_position.duplicate(true),
+		"wardrobe": ctx.wardrobe.get_snapshot(), "torn": ctx.torn.read_state()}
+
+
+## Cycle 432: a genuinely worn Needle Echo gives Tinker's three earned
+## single-target pool families (base and +) exactly +1 on the first confirmed
+## paid contact of a player turn, inside the resolver's own preflight/receipt.
+func _test_needle_echo_pool_attacks() -> void:
+	_check(CombatHeirloomPatchTriggers.NEEDLE_TINKER.size() == 6
+		and CombatHeirloomPatchTriggers.NEEDLE_TINKER.has("tinker_rivet_shot")
+		and CombatHeirloomPatchTriggers.NEEDLE_TINKER.has("tinker_long_barrel_plus")
+		and CombatHeirloomPatchTriggers.NEEDLE_TINKER.has("tinker_bobbin_cannon_plus"),
+		"the six canonical Tinker single-target printings are the only new authority")
+	for closed in ["tinker_spring_trap", "tinker_spring_trap_plus", "tinker_scatter_bolts",
+			"tinker_scatter_bolts_plus", "tinker_ricochet", "tinker_ricochet_plus",
+			"tinker_spool_launcher", "tinker_spool_launcher_plus", "tinker_snip_the_seam",
+			"tinker_sight_glass", "tinker_spare_parts", "tinker_pop_shot"]:
+		_check(not CombatHeirloomPatchTriggers.NEEDLE_TINKER.has(closed),
+			closed + " stays outside the extended Needle authority")
+
+	for base_id in ["tinker_rivet_shot", "tinker_long_barrel", "tinker_bobbin_cannon"]:
+		for upgrade in [false, true]:
+			var card_id: String = base_id + "_plus" if upgrade else base_id
+			var printed: Dictionary = TinkerPoolCards.new().get_definition(card_id)
+			_check(printed.get("id") == card_id and printed.get("owner") == "tinker"
+				and printed.get("target_kind") == "enemy_single"
+				and printed.get("from_positions").has(3),
+				"canonical Tinker single-target printing " + card_id)
+			var ctx := _needle_echo_context("tinker")
+			if ctx.is_empty():
+				continue
+			var party: CombatParty = ctx.party
+			var foes: CombatEnemies = ctx.foes
+			var pins: CombatPinned = ctx.pins
+			var rules: CombatHeirloomPatchTriggers = ctx.rules
+			var deck := _deck([card_id, card_id])
+			var resolver := CombatTinkerPoolAttacks.new(CombatTinkerFirstAttack.new(), pins)
+			_check(pins.pin_enemy(foes, 1, "warden"),
+				"genuine cross-hero Pin before " + card_id)
+			var quote: Dictionary = rules.quote_needle_hit("tinker", 1, card_id)
+			_check(quote.get("ok", false) and quote.get("bonus_damage") == 1
+				and quote.get("card_id") == card_id and quote.get("attacker_id") == "tinker",
+				card_id + ": living Tinker wearing Needle quotes exactly +1")
+			var before: Dictionary = foes.get_enemy(1)
+			var rng_before: int = deck._rng.state
+			var play: Dictionary = resolver.play_attack(deck, party, foes, card_id, 1,
+				null, 0, rules, quote)
+			var printed_damage: int = int(printed.effects.damage)
+			var expected: int = printed_damage + 3 + 5 + 1
+			_check(play.get("ok", false) and play.get("hits", []).size() == 1
+				and play.hits[0].position == 1 and play.hits[0].damage == expected
+				and play.hits[0].block_absorbed == 0 and play.hits[0].hp_loss == expected
+				and foes.get_enemy(1).hp == before.hp - expected,
+				card_id + ": paid hit carries authored + first-attack + Pinned + Needle")
+			_check(deck.energy == 3 - int(printed.cost)
+				and deck.hand.count(card_id) == 1
+				and deck.discard_pile.count(card_id) == 1 and deck._rng.state == rng_before
+				and rules._needle_used and rules._pending_needle.is_empty()
+				and pins.pinner_for_enemy(1) == "",
+				card_id + ": one paid cast, real Pinned consumption and one Needle latch")
+			_check(not rules.quote_needle_hit("tinker", 1, card_id).get("ok", false),
+				card_id + ": the same turn cannot quote a second Needle +1")
+			if card_id == "tinker_rivet_shot":
+				var second_before: Dictionary = foes.get_enemy(1)
+				# The first hit's own Exposed is already on the defender; the
+				# only thing that must not repeat is the Needle point.
+				var second_expected: int = CombatStatuses.new().adjusted_attack_damage(
+					printed_damage, {}, second_before.get("statuses", {}))
+				var second: Dictionary = resolver.play_attack(deck, party, foes, card_id, 1)
+				_check(second.get("ok", false) and second.hits[0].damage == second_expected
+					and foes.get_enemy(1).hp == second_before.hp - second_expected
+					and rules._needle_used,
+					"second paid Rivet Shot in the same turn never replays Needle")
+			_check(rules.start_player_turn() and pins.pin_enemy(foes, 1, "seamstress")
+				and rules.quote_needle_hit("tinker", 1, card_id).get("bonus_damage") == 1,
+				card_id + ": the next explicit player turn re-arms exactly one use")
+
+	# Wrong owner: the wearer is not the attacking Tinker.
+	var foreign := _needle_echo_context("warden")
+	if not foreign.is_empty():
+		var foreign_rules: CombatHeirloomPatchTriggers = foreign.rules
+		_check(foreign.pins.pin_enemy(foreign.foes, 1, "seamstress")
+			and not foreign_rules.quote_needle_hit("tinker", 1, "tinker_rivet_shot").ok,
+			"a Warden-worn Needle never quotes Tinker's pool shot")
+		var foreign_deck := _deck(["tinker_rivet_shot"])
+		var foreign_resolver := CombatTinkerPoolAttacks.new(
+			CombatTinkerFirstAttack.new(), foreign.pins)
+		var foreign_play: Dictionary = foreign_resolver.play_attack(foreign_deck,
+			foreign.party, foreign.foes, "tinker_rivet_shot", 1)
+		_check(foreign_play.get("ok", false)
+			and foreign_play.hits[0].damage == 4 + 3 + 5
+			and not foreign_rules._needle_used,
+			"ordinary unquoted pool shot keeps its previous contract")
+
+	# Absent/unworn/torn wearers and unreachable targets never quote or spend.
+	var unworn := _needle_echo_context("tinker", false)
+	if not unworn.is_empty():
+		var unworn_rules: CombatHeirloomPatchTriggers = unworn.rules
+		_check(unworn.pins.pin_enemy(unworn.foes, 1, "warden")
+			and not unworn_rules.quote_needle_hit("tinker", 1, "tinker_rivet_shot").ok,
+			"an owned but unworn Needle never quotes")
+	var torn_ctx := _needle_echo_context("tinker")
+	if not torn_ctx.is_empty():
+		var torn_rules: CombatHeirloomPatchTriggers = torn_ctx.rules
+		var torn_state: Dictionary = torn_ctx.torn.read_state()
+		var ending: Array = torn_state.heroes.duplicate(true)
+		ending[2]["hp"] = 0
+		_check(torn_ctx.torn.observe_battle_end("needle_pool_torn",
+			torn_state.heroes, ending).ok,
+			"authentic torn-ledger tear on the Needle wearer")
+		_check(not torn_rules.is_current()
+			and not torn_rules.quote_needle_hit("tinker", 1, "tinker_rivet_shot").ok,
+			"a torn wearer's stale authority never quotes")
+	var dead_ctx := _needle_echo_context("tinker")
+	if not dead_ctx.is_empty():
+		var dead_rules: CombatHeirloomPatchTriggers = dead_ctx.rules
+		_check(dead_ctx.pins.pin_enemy(dead_ctx.foes, 1, "warden"), "pin for dead-target case")
+		_check(dead_ctx.foes.apply_damage(1, 500)
+			and not dead_rules.quote_needle_hit("tinker", 1, "tinker_rivet_shot").ok,
+			"a dead target never quotes Needle")
+		_check(dead_ctx.pins.pin_enemy(dead_ctx.foes, 2, "warden")
+			and dead_ctx.party.apply_damage(3, 500)
+			and not dead_rules.quote_needle_hit("tinker", 2, "tinker_rivet_shot").ok,
+			"a downed wearer never quotes Needle")
+
+	# Forged, stale, mismatched and unpaid commits refuse atomically.
+	var ctx := _needle_echo_context("tinker")
+	if not ctx.is_empty():
+		var party: CombatParty = ctx.party
+		var foes: CombatEnemies = ctx.foes
+		var pins: CombatPinned = ctx.pins
+		var rules: CombatHeirloomPatchTriggers = ctx.rules
+		var deck := _deck(["tinker_rivet_shot", "tinker_long_barrel"])
+		var resolver := CombatTinkerPoolAttacks.new(CombatTinkerFirstAttack.new(), pins)
+		_check(pins.pin_enemy(foes, 1, "warden"), "pin for refusal cases")
+		var forged: Dictionary = rules.quote_needle_hit("tinker", 1, "tinker_rivet_shot")
+		forged["ticket"] = -999
+		var untouched := _needle_echo_snapshot(deck, ctx)
+		_check(forged.get("bonus_damage") == 1
+			and resolver.play_attack(deck, party, foes, "tinker_rivet_shot", 1,
+				null, 0, rules, forged) == _failed_play()
+			and _needle_echo_snapshot(deck, ctx) == untouched
+			and not rules._needle_used and rules._pending_needle.is_empty(),
+			"a forged ticket refuses before cost, discard or HP change")
+		var lost_pin := rules.quote_needle_hit("tinker", 1, "tinker_rivet_shot")
+		_check(lost_pin.get("ok", false) and pins.clear_pin(1),
+			"authentic Pin removed after the quote")
+		untouched = _needle_echo_snapshot(deck, ctx)
+		_check(resolver.play_attack(deck, party, foes, "tinker_rivet_shot", 1,
+			null, 0, rules, lost_pin) == _failed_play()
+			and _needle_echo_snapshot(deck, ctx) == untouched
+			and rules._pending_needle.is_empty(),
+			"an expired quote after lost Pin refuses with no mutation")
+		_check(pins.pin_enemy(foes, 1, "warden"), "target re-pinned for a genuine retry")
+		var wrong_card := rules.quote_needle_hit("tinker", 1, "tinker_rivet_shot")
+		untouched = _needle_echo_snapshot(deck, ctx)
+		_check(resolver.play_attack(deck, party, foes, "tinker_long_barrel", 1,
+			null, 0, rules, wrong_card) == _failed_play()
+			and _needle_echo_snapshot(deck, ctx) == untouched
+			and rules._pending_needle.is_empty(),
+			"a quote sealed for another card refuses the mismatched play")
+		var wrong_target := rules.quote_needle_hit("tinker", 1, "tinker_rivet_shot")
+		untouched = _needle_echo_snapshot(deck, ctx)
+		_check(resolver.play_attack(deck, party, foes, "tinker_rivet_shot", 3,
+			null, 0, rules, wrong_target) == _failed_play()
+			and _needle_echo_snapshot(deck, ctx) == untouched
+			and rules._pending_needle.is_empty(),
+			"a quote sealed for another slot refuses the mismatched target")
+		deck.combat_state.energy = 0
+		var unpaid := rules.quote_needle_hit("tinker", 1, "tinker_rivet_shot")
+		untouched = _needle_echo_snapshot(deck, ctx)
+		_check(resolver.play_attack(deck, party, foes, "tinker_rivet_shot", 1,
+			null, 0, rules, unpaid) == _failed_play()
+			and _needle_echo_snapshot(deck, ctx) == untouched
+			and not rules._needle_used and rules._pending_needle.is_empty(),
+			"a rejected card payment never spends energy or HP")
+		deck.combat_state.energy = 3
+		# A stitched half owns no Heirloom authority even while a quote is pending.
+		var staged := CombatTinkerPoolAttacks.stage_for_stitch(CombatAttackCards.new())
+		var pending := rules.quote_needle_hit("tinker", 1, "tinker_rivet_shot")
+		var staged_half: Dictionary = staged.resolve_staged_half(party, foes,
+			"tinker_rivet_shot", 1)
+		_check(pending.get("ok", false) and staged_half.get("ok", false)
+			and staged_half.hits[0].damage == 4 + 3
+			and rules._pending_needle["quote"] == pending
+			and not rules._needle_used,
+			"a stitched half neither reads nor spends the pending Needle quote")

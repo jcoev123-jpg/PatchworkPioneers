@@ -125,6 +125,7 @@ func _run() -> void:
 	await _test_shortcuts()
 	await _test_confirmation_handoff()
 	await _test_rejections()
+	await _test_art_motion()
 	_check(randi() == seeded_next, "mounted browsing and decisions consume no global RNG")
 	panel.queue_free()
 	await process_frame
@@ -1219,6 +1220,282 @@ func _test_rejections() -> void:
 		and panel.stitch_button.disabled and panel.leave_button.disabled
 		and panel.preview_label.text == "Choose Upgrade, Stitch or Leave, then confirm.",
 		"invalid source binding retires all active choice Help and Confirm")
+
+
+## ART v3: the already-authored sewn panel image is this stop's only animated
+## decoration. One input-inert, clipped, faint copy of reward_panel.png breathes
+## and drifts behind the fixed cream felt, labels, scrollers, buttons and focus
+## rectangles; nothing else ever moves, and every stop path restores the exact
+## static baseline. The whole session runs with the panel's own _process off,
+## so only the forced deterministic deltas below can accumulate.
+func _test_art_motion() -> void:
+	var baseline := {"scale": 1.0, "offset": Vector2.ZERO}
+	var art: Texture2D = panel.panel_art_texture
+	_check(art != null and art.resource_path == LiveSewingCirclePanel.PANEL_ART,
+		"mounted Sewing Circle loads the already-present authored panel art")
+	_check(Rect2(0, 0, 1280, 720).encloses(panel.get_global_rect())
+		and panel.size == Vector2(940, 620),
+		"the framed 940x620 panel stays inside the 1280x720 viewport")
+	var backing: Control = panel.get_child(0)
+	_check(backing is Panel and backing.clip_contents
+		and panel._art_drift != null and panel._art_drift.get_parent() == backing
+		and panel._art_drift.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and panel._art_drift.focus_mode == Control.FOCUS_NONE,
+		"animated art is a clipped, input-inert layer under the first-child felt backing")
+	if art == null or panel._art_drift == null:
+		return
+	# Pure presentation transform: exact static baseline at zero and at every
+	# shared period, a ~1% breath on 7 s and a 3 x 2 px drift on 11 s at most.
+	_check(LiveSewingCirclePanel.art_motion_transform_at(0.0) == baseline
+		and LiveSewingCirclePanel.art_motion_transform_at(LiveSewingCirclePanel.PANEL_ART_BREATH_PERIOD
+			* LiveSewingCirclePanel.PANEL_ART_PAN_PERIOD) == baseline,
+		"presentation motion is exactly at rest at elapsed zero and at every shared period")
+	var breath_peak: Dictionary = LiveSewingCirclePanel.art_motion_transform_at(3.5)
+	var pan_peak: Dictionary = LiveSewingCirclePanel.art_motion_transform_at(2.75)
+	var pan_rest: Dictionary = LiveSewingCirclePanel.art_motion_transform_at(5.5)
+	var pan_peak_offset: Vector2 = pan_peak["offset"]
+	var pan_rest_offset: Vector2 = pan_rest["offset"]
+	_check(absf(float(breath_peak["scale"]) - 1.012) < 0.0005
+		and absf(pan_peak_offset.x - LiveSewingCirclePanel.PANEL_ART_PAN.x) < 0.001
+		and absf(float(LiveSewingCirclePanel.art_motion_transform_at(7.0)["scale"]) - 1.0) < 0.0001
+		and absf(pan_rest_offset.x) < 0.001,
+		"approximately 1% scale breath and 2-4 px drift on repeatable periods")
+	_check(LiveSewingCirclePanel.art_motion_transform_at(4.0) == LiveSewingCirclePanel.art_motion_transform_at(4.0)
+		and LiveSewingCirclePanel.art_motion_transform_at(4.0) != LiveSewingCirclePanel.art_motion_transform_at(5.0),
+		"the presentation transform is deterministic and reproducible")
+	var layer_rect := Rect2(panel._art_drift_base, panel._art_drift.size)
+	var frame := Rect2(Vector2.ZERO, panel.size)
+	var no_edge := true
+	for step in range(221):
+		var motion := LiveSewingCirclePanel.art_motion_transform_at(float(step) * 0.5)
+		var scale: float = motion["scale"]
+		var offset: Vector2 = motion["offset"]
+		var half := layer_rect.size * (scale - 1.0) * 0.5
+		var drawn := Rect2(layer_rect.position + offset - half, layer_rect.size * scale)
+		if not drawn.encloses(frame):
+			no_edge = false
+	_check(no_edge,
+		"the drifting copy stays oversized and clipped for the whole cycle, so no image edge is exposed")
+	# Deterministic presentation-delta test on the mounted 1280x720 panel.
+	panel.set_process(false)
+	var visit := _make()
+	await _bind(visit)
+	var source := visit.read_state()
+	var quote := visit.quote()
+	await _activate(panel.upgrade_button, false)
+	_check(panel.art_motion_active() and panel.art_motion_transform() == baseline
+		and panel._art_drift.scale == Vector2.ONE
+		and panel._art_drift.position == panel._art_drift_base,
+		"a freshly bound authentic visit starts at the exact static baseline")
+	var focused: Control = root.gui_get_focus_owner()
+	var panel_rect := panel.get_global_rect()
+	var status_rect := panel.status_label.get_global_rect()
+	var preview_rect := panel.preview_label.get_global_rect()
+	var choice_rect := panel.choice_scroll.get_global_rect()
+	var preview_scroll_rect := panel.preview_scroll.get_global_rect()
+	var upgrade_rect := panel.upgrade_button.get_global_rect()
+	var stitch_rect := panel.stitch_button.get_global_rect()
+	var leave_rect := panel.leave_button.get_global_rect()
+	var confirm_rect := panel.confirm_button.get_global_rect()
+	var row_rect := panel.option_buttons[0].get_global_rect()
+	var scroll_offset := panel.choice_scroll.scroll_vertical
+	panel.advance_art_motion(2.0)
+	var moved := panel.art_motion_transform()
+	var moved_offset: Vector2 = moved["offset"]
+	_check(moved == LiveSewingCirclePanel.art_motion_transform_at(2.0) and moved != baseline
+		and float(moved["scale"]) > 1.0
+		and float(moved["scale"]) - 1.0 <= LiveSewingCirclePanel.PANEL_ART_BREATH
+		and moved_offset != Vector2.ZERO
+		and moved_offset.length() <= LiveSewingCirclePanel.PANEL_ART_PAN.length(),
+		"accumulated presentation delta alone drives the restrained decorative transform")
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_transform() == LiveSewingCirclePanel.art_motion_transform_at(4.0)
+		and panel.art_motion_transform() != moved,
+		"presentation time accumulates deterministically from the forced deltas")
+	var applied := panel.art_motion_transform()
+	var applied_offset: Vector2 = applied["offset"]
+	_check(panel._art_drift.scale == Vector2.ONE * float(applied["scale"])
+		and panel._art_drift.position == panel._art_drift_base + applied_offset,
+		"only the decorative layer's own position and scale follow the transform")
+	_check(panel.get_global_rect() == panel_rect
+		and panel.status_label.get_global_rect() == status_rect
+		and panel.preview_label.get_global_rect() == preview_rect
+		and panel.choice_scroll.get_global_rect() == choice_rect
+		and panel.preview_scroll.get_global_rect() == preview_scroll_rect
+		and panel.upgrade_button.get_global_rect() == upgrade_rect
+		and panel.stitch_button.get_global_rect() == stitch_rect
+		and panel.leave_button.get_global_rect() == leave_rect
+		and panel.confirm_button.get_global_rect() == confirm_rect
+		and panel.option_buttons[0].get_global_rect() == row_rect
+		and panel.size == Vector2(940, 620)
+		and panel.upgrade_button.position == Vector2(24, 62)
+		and panel.confirm_button.position == Vector2(24, 556),
+		"the 940x620 panel, labels, scrollers, buttons and hit rectangles never move")
+	_check(root.gui_get_focus_owner() == focused and focused == panel.option_buttons[0]
+		and panel.choice_scroll.scroll_vertical == scroll_offset
+		and visit.read_state() == source and visit.quote() == quote
+		and not visit.is_consumed() and intents.is_empty(),
+		"motion never moves focus or scroll and never reads, spends or consumes the visit")
+	# ProjectSettings accessibility/reduced_motion (default false), restored after.
+	var prior: Variant = ProjectSettings.get_setting(LiveSewingCirclePanel.REDUCED_MOTION_SETTING, false)
+	ProjectSettings.set_setting(LiveSewingCirclePanel.REDUCED_MOTION_SETTING, true)
+	panel.advance_art_motion(5.0)
+	_check(panel.art_motion_transform() == baseline and panel._art_drift.scale == Vector2.ONE
+		and panel._art_drift.position == panel._art_drift_base,
+		"accessibility/reduced_motion keeps the authored art exactly static at its baseline")
+	ProjectSettings.set_setting(LiveSewingCirclePanel.REDUCED_MOTION_SETTING, prior)
+	_check(not panel._reduced_motion_active(), "prior reduced-motion setting restored afterward")
+	# Nullable explicit override for focused tests and hosts.
+	panel.set_reduced_motion_override(true)
+	_check(not panel.art_motion_active() and panel.art_motion_transform() == baseline
+		and panel._art_drift.position == panel._art_drift_base,
+		"an explicit reduced-motion override restores the exact static baseline immediately")
+	panel.advance_art_motion(4.0)
+	_check(panel.art_motion_transform() == baseline,
+		"no presentation time accumulates while the explicit override is true")
+	panel.set_reduced_motion_override(false)
+	_check(panel.art_motion_active() and panel.art_motion_transform() == baseline,
+		"lifting the override resumes only from the static baseline")
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_transform() == LiveSewingCirclePanel.art_motion_transform_at(2.0),
+		"motion resumes only through fresh presentation time after the override lifts")
+	ProjectSettings.set_setting(LiveSewingCirclePanel.REDUCED_MOTION_SETTING, true)
+	panel.set_reduced_motion_override(null)
+	_check(panel._reduced_motion_active() and panel.art_motion_transform() == baseline,
+		"a lifted override follows the ProjectSettings reduced-motion request again")
+	ProjectSettings.set_setting(LiveSewingCirclePanel.REDUCED_MOTION_SETTING, prior)
+	# Hide / show keeps the panel and its choices exactly where they are.
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_transform() != baseline, "art is genuinely moving before hiding")
+	panel.hide()
+	await _settle_layout()
+	_check(panel.art_motion_transform() == baseline and panel._art_drift.position == panel._art_drift_base,
+		"a hidden panel restores the exact static baseline")
+	panel.advance_art_motion(3.0)
+	_check(panel.art_motion_transform() == baseline, "a hidden panel accumulates no motion")
+	panel.show()
+	_check(panel.art_motion_transform() == baseline and panel._art_drift.scale == Vector2.ONE,
+		"the shown panel resumes only from the static baseline")
+	await _settle_layout()
+	# bind(null), close() and a fresh rebind all restart from the baseline.
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_transform() != baseline, "art is genuinely moving before bind(null)")
+	panel.bind(null)
+	_check(not panel.art_motion_active() and panel.art_motion_transform() == baseline
+		and panel._art_drift.position == panel._art_drift_base,
+		"bind(null) stops and restores the exact static baseline")
+	panel.advance_art_motion(7.0)
+	_check(panel.art_motion_transform() == baseline, "a panel without a source accumulates no motion")
+	var closing := _make()
+	await _bind(closing)
+	panel.advance_art_motion(3.0)
+	_check(panel.art_motion_transform() != baseline, "art is genuinely moving before close()")
+	panel.close()
+	await _settle_layout()
+	_check(not panel.is_visible_in_tree() and not panel.art_motion_active()
+		and panel.art_motion_transform() == baseline
+		and panel._art_drift.position == panel._art_drift_base
+		and panel.upgrade_button.disabled and panel.confirm_button.disabled,
+		"close() stops and restores the exact static baseline on a closed panel")
+	panel.advance_art_motion(7.0)
+	_check(panel.art_motion_transform() == baseline,
+		"no old motion resumes on the closed panel")
+	await _bind(_make())
+	_check(panel.art_motion_active() and panel.art_motion_transform() == baseline
+		and panel._art_drift.scale == Vector2.ONE,
+		"a new authentic bind restarts the art from the exact static baseline")
+	panel.advance_art_motion(3.0)
+	_check(panel.art_motion_transform() != baseline, "art moves on the rebound authentic visit")
+	await _bind(_make())
+	_check(panel.art_motion_transform() == baseline and panel._art_drift.position == panel._art_drift_base,
+		"rebinding yet another visit restarts the art at the static baseline")
+	# Equal accumulated delta yields one identical transform regardless of how
+	# it was grouped, and the shared period returns exactly to the baseline.
+	await _activate(panel.upgrade_button, false)
+	panel.advance_art_motion(1.0)
+	panel.advance_art_motion(3.0)
+	var grouped := panel.art_motion_transform()
+	await _bind(_make())
+	await _activate(panel.upgrade_button, false)
+	panel.advance_art_motion(4.0)
+	_check(panel.art_motion_transform() == grouped
+		and grouped == LiveSewingCirclePanel.art_motion_transform_at(4.0),
+		"equal accumulated delta yields the same transform independent of step grouping")
+	panel.advance_art_motion(LiveSewingCirclePanel.PANEL_ART_BREATH_PERIOD
+		* LiveSewingCirclePanel.PANEL_ART_PAN_PERIOD - 4.0)
+	_check(panel.art_motion_transform() == baseline,
+		"the motion returns exactly to the static baseline at every shared period")
+	# Invalid, consumed, stale and self-submitted sources never animate.
+	var invalid := RunSewingCircleVisit.new("circle-motion-invalid", ["not_a_card"], {}, 3, 1)
+	_check(not invalid.is_valid(), "malformed visit prerequisite")
+	panel.bind(invalid)
+	await _settle_layout()
+	panel.advance_art_motion(4.0)
+	_check(not panel.art_motion_active() and panel.art_motion_transform() == baseline
+		and panel._art_drift.position == panel._art_drift_base,
+		"an invalid visit never animates the authored art")
+	var already := _make()
+	var already_state := already.read_state()
+	_check(already.leave(already_state.visit_id, already_state.node_id, already_state).ok,
+		"already-used real visit prerequisite")
+	panel.bind(already)
+	await _settle_layout()
+	panel.advance_art_motion(4.0)
+	_check(not panel.art_motion_active() and panel.art_motion_transform() == baseline,
+		"a consumed visit never animates the authored art")
+	var stale := _make()
+	await _bind(stale)
+	panel.advance_art_motion(1.0)
+	_check(panel.art_motion_transform() != baseline, "art moves while the bound visit is genuinely open")
+	var stale_state := stale.read_state()
+	_check(stale.leave(stale_state.visit_id, stale_state.node_id, stale_state).ok,
+		"external owner really consumed the animated visit")
+	panel.advance_art_motion(1.0)
+	_check(not panel.art_motion_active() and panel.art_motion_transform() == baseline
+		and panel._art_drift.position == panel._art_drift_base,
+		"an externally consumed source stops the art at the static baseline")
+	# The panel's own used Confirm is also a stop path, and the very same
+	# mouse and number-key routes keep emitting one authentic intent while the
+	# art is genuinely moving.
+	var moving := _make()
+	await _bind(moving)
+	var moving_source := moving.read_state()
+	panel.advance_art_motion(2.5)
+	await _activate(panel.leave_button, false)
+	await _activate(panel.confirm_button, false)
+	_check(intents.size() == 1 and intents[0].action == "leave"
+		and intents[0].source_snapshot == moving_source
+		and panel._submitted and not panel.art_motion_active()
+		and panel.art_motion_transform() == baseline
+		and panel._art_drift.position == panel._art_drift_base,
+		"a real mouse Leave still confirms one source-bound intent and stops the art at baseline")
+	await _bind(_make())
+	panel.advance_art_motion(2.0)
+	panel.upgrade_button.grab_focus()
+	await _settle_layout()
+	await _key(KEY_0)
+	await _key(KEY_3)
+	_check(intents.size() == 1 and intents[0].action == "leave",
+		"number keys 0 and 3 still confirm one Leave while the art animates")
+	# Missing optional artwork keeps today's static readable fallback.
+	var saved_art: Texture2D = panel.panel_art_texture
+	panel.panel_art_texture = null
+	await _bind(_make())
+	panel.advance_art_motion(5.0)
+	_check(not panel.art_motion_active() and panel.art_motion_transform() == baseline,
+		"missing optional art keeps the exact static baseline transform")
+	_check(backing is Panel and backing.get_theme_stylebox("panel") != null
+		and panel.is_visible_in_tree() and not panel.upgrade_button.disabled
+		and not panel.stitch_button.disabled and not panel.leave_button.disabled
+		and panel.status_label.text.contains("3 scraps"),
+		"missing art retains today's readable, actionable static sewn panel")
+	panel.panel_art_texture = saved_art
+	await _bind(_make())
+	panel.advance_art_motion(2.0)
+	_check(panel.art_motion_active()
+		and panel.art_motion_transform() == LiveSewingCirclePanel.art_motion_transform_at(2.0),
+		"restored authored art animates again from the static baseline")
+	panel.set_process(true)
 
 
 ## Measured against the shipped font: a printed shortcut must fit the sewn

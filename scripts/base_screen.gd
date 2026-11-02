@@ -26,6 +26,9 @@ var _difficulty_row: HBoxContainer
 
 const BASE_BACKDROP := "res://assets/paper/backgrounds/base_village.png"
 const DESIGN_SIZE := Vector2(1280.0, 720.0)
+const BACKDROP_IDLE_PERIOD := 14.0
+const BACKDROP_IDLE_MAX_SHIFT := 3.0
+const BACKDROP_IDLE_MAX_GROWTH := 0.02
 ## The Heroes house's pinned Path board sits below it, clear of the Camp tent.
 const HEROES_PANEL_RECT := Rect2(96, 392, 352, 218)
 ## The Tinker's own pinned board sits beside the Seamstress one, in the same lower
@@ -103,6 +106,8 @@ var _warden_focus_id := ""
 var _selected_warden_id := ""
 var _selected_warden_name := ""
 var _backdrop: Texture2D
+var _backdrop_elapsed := 0.0
+var _motion_setting_poll: Timer
 var _buildings: Array = []
 var _paths: Array = []
 var _spool_rect := Rect2()
@@ -136,6 +141,13 @@ func _ready() -> void:
 	focus_mode = Control.FOCUS_NONE
 	_build_layout()
 	_backdrop = load_base_backdrop()
+	# ProjectSettings.set_setting() does not emit settings_changed in every
+	# runtime; poll only while reduced motion has stopped the visual clock.
+	_motion_setting_poll = Timer.new()
+	_motion_setting_poll.name = "ReducedMotionWatch"
+	_motion_setting_poll.wait_time = 0.25
+	_motion_setting_poll.timeout.connect(_sync_backdrop_motion)
+	add_child(_motion_setting_poll)
 	_build_top_strip()
 	_build_heroes_choice()
 	_build_tinker_choice()
@@ -146,6 +158,8 @@ func _ready() -> void:
 	_build_deck_gallery()
 	_wire_focus()
 	visibility_changed.connect(_on_base_visibility_changed)
+	if ProjectSettings.has_signal("settings_changed"):
+		ProjectSettings.settings_changed.connect(_sync_backdrop_motion)
 	resized.connect(queue_redraw)
 	_apply_closed_state()
 
@@ -194,6 +208,67 @@ func cover_rect_for(texture: Texture2D, view_size: Vector2 = Vector2.ZERO) -> Re
 
 func backdrop_rect() -> Rect2:
 	return cover_rect_for(_backdrop)
+
+
+## Only the image is zoomed/panned, in view coordinates. A shared breath
+## envelope takes both axes' drift to zero as the cover reaches neutral:
+## even a source that fits exactly never exposes an unpainted edge.
+func backdrop_image_rect_at(elapsed: float) -> Rect2:
+	var neutral := backdrop_rect()
+	if neutral.has_area() == false:
+		return neutral
+	var phase := TAU * fposmod(elapsed, BACKDROP_IDLE_PERIOD) / BACKDROP_IDLE_PERIOD
+	var breath := 0.5 - 0.5 * cos(phase)
+	var zoom := 1.0 + BACKDROP_IDLE_MAX_GROWTH * breath
+	var shift := BACKDROP_IDLE_MAX_SHIFT * breath * Vector2(sin(phase), cos(phase))
+	var center := size * 0.5
+	return Rect2(center + (neutral.position - center) * zoom + shift, neutral.size * zoom)
+
+
+func backdrop_image_rect() -> Rect2:
+	if not _backdrop_motion_enabled():
+		return backdrop_rect()
+	return backdrop_image_rect_at(_backdrop_elapsed)
+
+
+func _backdrop_motion_enabled() -> bool:
+	return _open and is_inside_tree() and is_visible_in_tree() and _backdrop != null \
+		and not bool(ProjectSettings.get_setting("accessibility/reduced_motion", false))
+
+
+## The project-setting signal re-arms motion when reduced motion is turned
+## back off; no idle processor or stale clock survives hidden/closed states.
+func _sync_backdrop_motion() -> void:
+	var enabled := _backdrop_motion_enabled()
+	if not enabled:
+		_backdrop_elapsed = 0.0
+	set_process(enabled)
+	if is_instance_valid(_motion_setting_poll):
+		var watch_reduced := _open and is_inside_tree() and is_visible_in_tree() \
+			and _backdrop != null and bool(ProjectSettings.get_setting("accessibility/reduced_motion", false))
+		if watch_reduced and _motion_setting_poll.is_stopped():
+			_motion_setting_poll.start()
+		elif not watch_reduced:
+			_motion_setting_poll.stop()
+	queue_redraw()
+
+
+func _process(delta: float) -> void:
+	if not _backdrop_motion_enabled():
+		_sync_backdrop_motion()
+		return
+	_backdrop_elapsed = fposmod(_backdrop_elapsed + maxf(delta, 0.0), BACKDROP_IDLE_PERIOD)
+	queue_redraw()
+
+
+func _exit_tree() -> void:
+	if is_instance_valid(_motion_setting_poll):
+		_motion_setting_poll.stop()
+	set_process(false)
+	_backdrop_elapsed = 0.0
+	if ProjectSettings.has_signal("settings_changed") \
+			and ProjectSettings.settings_changed.is_connected(_sync_backdrop_motion):
+		ProjectSettings.settings_changed.disconnect(_sync_backdrop_motion)
 
 
 func backdrop_path() -> String:
@@ -254,7 +329,8 @@ func open_village(gold: int = 0, scraps: int = 0) -> bool:
 	if is_instance_valid(wallet_label):
 		wallet_label.text = "Gold %d  ·  Scraps %d" % [gold, scraps]
 	visible = true
-	queue_redraw()
+	_backdrop_elapsed = 0.0
+	_sync_backdrop_motion()
 	_wire_focus()
 	set_out_button.grab_focus()
 	return true
@@ -690,6 +766,7 @@ func _apply_closed_state() -> void:
 	_warden_hover_id = ""
 	_warden_focus_id = ""
 	visible = false
+	_sync_backdrop_motion()
 	if is_instance_valid(path_panel):
 		path_panel.visible = false
 	if is_instance_valid(tinker_panel):
@@ -1097,6 +1174,7 @@ func _on_deck_closed() -> void:
 
 
 func _on_base_visibility_changed() -> void:
+	_sync_backdrop_motion()
 	if not is_visible_in_tree() and is_instance_valid(deck_gallery):
 		deck_gallery.dismiss()
 
@@ -1386,7 +1464,7 @@ func _draw() -> void:
 		return
 	draw_rect(Rect2(Vector2.ZERO, size), MATTE)
 	if _backdrop != null:
-		draw_texture_rect(_backdrop, backdrop_rect(), false)
+		draw_texture_rect(_backdrop, backdrop_image_rect(), false)
 	var scale_to_view := size / DESIGN_SIZE
 	draw_set_transform(Vector2.ZERO, 0.0, scale_to_view)
 	if _backdrop == null:
