@@ -25,7 +25,7 @@ const PARTY_MORE := ["scarecrow", "yarn_ranger", "button_golem"]
 const DECK_MORE := ["scarecrow_fork_jab", "yarn_ranger_wool_bolas", "button_golem_starter_button_fist"]
 const SEED := 2611790
 const V3_SEED := 90210
-const V3_UNKNOWN_SEED := 424242
+const V3_UNKNOWN_SEED := 424247
 const GOLD := 500
 
 var checks := 0

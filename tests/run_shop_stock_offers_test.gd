@@ -284,6 +284,56 @@ const LANTERN_MONK_PEDDLER_SPECS := {
 }
 
 
+## The six previously missing Scarecrow pool bases this task stocks at the
+## Peddler, with rules copied verbatim from data/cards/scarecrow_pool_cards.gd.
+## Prices are bounded quotes inside the shipped common/uncommon/rare stock
+## bands. Only the base IDs are priced stock, never their _plus upgrades.
+const SCARECROW_PEDDLER_SPECS := {
+	"scarecrow_pitchfork_prick": {
+		"owner": "scarecrow", "price": 50, "rarity": "common",
+		"cost": 1, "plus_cost": 1, "from": [1, 2], "to": [1, 2],
+		"target": "enemy_single",
+		"effects": {"damage": 5, "bleed": 1},
+		"plus_effects": {"damage": 7, "bleed": 2},
+	},
+	"scarecrow_sack_grin": {
+		"owner": "scarecrow", "price": 50, "rarity": "common",
+		"cost": 1, "plus_cost": 1, "from": [1, 2, 3], "to": [1, 2, 3],
+		"target": "enemy_single",
+		"effects": {"weak": 1, "cannot_buff_next_turn": true},
+		"plus_effects": {"weak": 2, "cannot_buff_next_turn": true},
+	},
+	"scarecrow_straw_wrap": {
+		"owner": "scarecrow", "price": 50, "rarity": "common",
+		"cost": 1, "plus_cost": 1, "from": [1, 2, 3], "to": [],
+		"target": "ally_single",
+		"effects": {"block": 6, "draw": 1},
+		"plus_effects": {"block": 8, "draw": 1},
+	},
+	"scarecrow_crow_flock": {
+		"owner": "scarecrow", "price": 70, "rarity": "uncommon",
+		"cost": 2, "plus_cost": 2, "from": [2, 3], "to": [1, 2, 3],
+		"target": "enemy_all",
+		"effects": {"weak": 1, "cannot_buff_next_turn": true},
+		"plus_effects": {"weak": 2, "cannot_buff_next_turn": true},
+	},
+	"scarecrow_pitchfork_hook": {
+		"owner": "scarecrow", "price": 65, "rarity": "uncommon",
+		"cost": 2, "plus_cost": 2, "from": [1, 2], "to": [2, 3],
+		"target": "enemy_single",
+		"effects": {"damage": 7, "pull_forward": 1},
+		"plus_effects": {"damage": 10, "pull_forward": 1},
+	},
+	"scarecrow_harvest_fright": {
+		"owner": "scarecrow", "price": 90, "rarity": "rare",
+		"cost": 3, "plus_cost": 3, "from": [1, 2, 3], "to": [1, 2, 3],
+		"target": "enemy_all",
+		"effects": {"damage": 4, "weak": 2, "cannot_buff_next_turn": true},
+		"plus_effects": {"damage": 6, "weak": 3, "cannot_buff_next_turn": true},
+	},
+}
+
+
 ## The three look-driven v3 raw printings this task appends to the shipped
 ## Peddler stock. Rules are copied from their own authored catalogs
 ## (data/cards/v3_{warden,seamstress,tinker}_pool_cards.gd); each quote matches
@@ -345,6 +395,7 @@ func _initialize() -> void:
 		_test_yarn_ranger_peddler_stock(deck, catalog)
 		_test_v3_original_hero_peddler_stock(deck, catalog)
 		_test_lantern_monk_peddler_stock(deck, catalog)
+		_test_scarecrow_peddler_stock(deck, catalog)
 	else:
 		_check(false, "preconditions for non-vacuous shop stock tests failed")
 	if failures.is_empty():
@@ -4522,6 +4573,332 @@ func _test_lantern_monk_peddler_stock(deck: Array[String], catalog: StarterCards
 
 	_check(candidates == candidates_before and patches == patches_before,
 		"the shipped candidate arrays survive the Lantern Monk sweep unchanged")
+
+
+## One shipped priced record check by ID: present exactly once with the exact
+## owner and quote, never by catalog total or ordered position.
+func _priced_once(candidates: Array, card_id: String, owner: String, price: int) -> bool:
+	var matches: Array = candidates.filter(
+		func(entry): return entry is Dictionary and entry.get("id") == card_id)
+	return (matches.size() == 1 and matches[0].get("owner") == owner
+		and _whole_price(matches[0].get("price")) == price)
+
+
+## AC1-AC4: the six previously missing authored Scarecrow pool bases become
+## genuine priced Peddler stock. Every new ID is checked per entry against the
+## real initial_offers.json and its own authored catalog (never a catalog total
+## or a full ordered list), each base is independently eligible through a
+## seeded candidate-isolated draw against the independent four-draw oracle, the
+## complete shipped catalog still samples a genuine seeded 3+1 stock, a party
+## without Scarecrow is never offered one, and the real RunPeddlerVisit settles
+## one quoted debit per isolated witness while every forged, replayed,
+## wrong-party or unaffordable decision fails closed with all ledgers, source
+## arrays and RNG state intact.
+func _test_scarecrow_peddler_stock(deck: Array[String], catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var candidates: Array = authored.get("cards", [])
+	var patches: Array = []
+	for entry in authored.get("trinkets", []):
+		if entry is Dictionary and entry.get("id") is String:
+			patches.append({"id": entry["id"], "price": _whole_price(entry.get("price"))})
+	var crow_pool := ScarecrowPoolCards.new()
+	var candidates_before := candidates.duplicate(true)
+	var patches_before := patches.duplicate(true)
+	var deck_before := deck.duplicate()
+	_check(candidates.size() > 0 and patches.size() >= 2,
+		"the shipped stock source carries priced cards and patches for the Scarecrow check")
+	if candidates.is_empty() or patches.size() < 2:
+		return
+
+	# AC1: per-ID facts only. Every shipped Scarecrow base is listed exactly
+	# once at its bounded quote and resolves to its genuine unupgraded pool card.
+	for card_id in SCARECROW_PEDDLER_SPECS:
+		var spec: Dictionary = SCARECROW_PEDDLER_SPECS[card_id]
+		var upgrade_id: String = card_id + "_plus"
+		var matches: Array = candidates.filter(
+			func(entry): return entry is Dictionary and entry.get("id") == card_id)
+		_check(matches.size() == 1,
+			"shipped Scarecrow stock lists " + card_id + " exactly once")
+		if matches.size() == 1:
+			_check(matches[0].get("owner") == spec["owner"]
+				and _whole_price(matches[0].get("price")) == int(spec["price"]),
+				card_id + ": shipped Scarecrow owner and exact bounded quote")
+			_check(matches[0].size() == 3,
+				card_id + ": shipped record carries only id, owner and price")
+		_check(not _pool_has_id(candidates, upgrade_id),
+			card_id + ": the + upgrade is absent from the shipped candidate list")
+		_check(crow_pool.get_base_ids().has(card_id) and not catalog.has_card(card_id),
+			card_id + ": genuine Scarecrow pool base, not a starter card")
+		var base: Dictionary = crow_pool.get_definition(card_id)
+		_check(base.get("id") == card_id and base.get("owner") == spec["owner"]
+			and base.get("rarity") == spec["rarity"]
+			and base.get("cost") == spec["cost"]
+			and base.get("from_positions") == spec["from"]
+			and base.get("target_kind") == spec["target"]
+			and base.get("to_positions") == spec["to"]
+			and base.get("effects") == spec["effects"]
+			and base.get("reward_eligible") == true
+			and base.get("starting_copies") == 0
+			and base.get("upgrade_id") == upgrade_id
+			and not base.has("upgrade_of"),
+			card_id + ": authentic unupgraded base definition")
+		_check(base.get("illustration_path") == "res://assets/paper/cards/" + card_id + ".png",
+			card_id + ": keeps its pre-existing card art path")
+		var plus: Dictionary = crow_pool.get_definition(upgrade_id)
+		_check(plus.get("id") == upgrade_id and plus.get("owner") == spec["owner"]
+			and plus.get("cost") == spec["plus_cost"]
+			and plus.get("from_positions") == spec["from"]
+			and plus.get("target_kind") == spec["target"]
+			and plus.get("to_positions") == spec["to"]
+			and plus.get("effects") == spec["plus_effects"]
+			and plus.get("upgrade_of") == card_id
+			and plus.get("reward_eligible") == false
+			and plus.get("starting_copies") == 0,
+			card_id + ": the authored + stays Rest-only")
+
+	# AC1/AC4: the two earlier Scarecrow records and every priced Lantern Monk
+	# record survive at their own IDs, owners and quotes.
+	_check(_priced_once(candidates, "scarecrow_crow_peck", "scarecrow", 50),
+		"earlier Scarecrow card survives at 50 gold: scarecrow_crow_peck")
+	_check(_priced_once(candidates, "scarecrow_re_stuff", "scarecrow", 65),
+		"earlier Scarecrow card survives at 65 gold: scarecrow_re_stuff")
+	_check(_priced_once(candidates, "lantern_monk_moth_lure", "lantern_monk", 50),
+		"earlier Lantern Monk card survives at 50 gold: lantern_monk_moth_lure")
+	_check(_priced_once(candidates, "lantern_monk_lantern_glow", "lantern_monk", 50),
+		"earlier Lantern Monk card survives at 50 gold: lantern_monk_lantern_glow")
+	for monk_id in LANTERN_MONK_PEDDLER_SPECS:
+		var monk_spec: Dictionary = LANTERN_MONK_PEDDLER_SPECS[monk_id]
+		_check(_priced_once(candidates, monk_id, str(monk_spec["owner"]),
+				int(monk_spec["price"])),
+			"merged Lantern Monk stock survives unchanged: " + monk_id)
+	for patch_id in ["relay_bobbin", "hearth_lining"]:
+		var p_matches: Array = patches.filter(func(entry): return entry.get("id") == patch_id)
+		_check(p_matches.size() == 1 and _whole_price(p_matches[0].get("price")) == 100,
+			"the priced patch candidate survives at 100 gold: " + patch_id)
+
+	# AC2: a per-ID candidate-isolated draw: each new base is the sole eligible
+	# Scarecrow record beside genuine priced cards for the other two party heroes.
+	var party: Array[String] = ["scarecrow", "warden", "tinker"]
+	var seat: int = party.find("scarecrow")
+	var card_index := 0
+	for card_id in SCARECROW_PEDDLER_SPECS:
+		var spec: Dictionary = SCARECROW_PEDDLER_SPECS[card_id]
+		var price: int = int(spec["price"])
+		var isolated: Array = [
+			{"id": card_id, "owner": "scarecrow", "price": price},
+			{"id": "warden_strike", "owner": "warden", "price": 50},
+			{"id": "tinker_pop_shot", "owner": "tinker", "price": 50},
+		]
+		var isolated_before := isolated.duplicate(true)
+		var seed_value: int = SEED + 81000 + card_index * 100
+		card_index += 1
+		var rng := _rng(seed_value)
+		var oracle_rng := _rng(seed_value)
+		var stock := RunShopStockOffers.generate_peddler_stock(rng, party,
+			isolated, patches, [])
+		var expected := _peddler_stock_oracle(catalog, party, isolated, patches, [],
+			oracle_rng)
+		_check(stock.get("ok", false),
+			card_id + ": the isolated candidate draw generates genuine 3+1 stock")
+		if not stock.get("ok", false):
+			continue
+		var cards: Array = stock.get("cards", [])
+		var offered: Array = stock.get("patches", [])
+		_check(cards.size() == 3 and offered.size() == 1,
+			card_id + ": one card per owner and exactly one patch")
+		_check(cards == expected.get("cards", [])
+			and offered == expected.get("patches", []),
+			card_id + ": isolated draw matches the independent four-draw oracle")
+		_check(rng.state == oracle_rng.state and rng.randi() == oracle_rng.randi(),
+			card_id + ": the RNG continues after exactly the four draws")
+		for position in range(cards.size()):
+			_check(cards[position].get("owner") == party[position],
+				card_id + ": offer " + str(position) + " fills its own party seat")
+		_check(cards[seat].get("id") == card_id and int(cards[seat].get("price")) == price,
+			card_id + ": the sole eligible Scarecrow record is drawn at its quote")
+		_check(isolated == isolated_before,
+			card_id + ": the isolated source pool is unchanged by the draw")
+
+		# AC3: the isolated stock opens the real visit and settles the purchase.
+		var node: String = "peddler_scarecrow_" + card_id
+		var visit := RunPeddlerVisit.new(node, party, deck, [], 500, stock)
+		_check(visit.is_open(),
+			card_id + ": the isolated stock opens a real Peddler visit")
+		if not visit.is_open():
+			continue
+		var open := visit.read_state()
+		var listing: Dictionary = open["stock"]["cards"][seat]
+		_check(listing.get("id") == card_id and int(listing.get("price")) == price
+			and listing.get("sold") == false,
+			card_id + ": the open visit lists it unsold at the authored quote")
+		var receipt := visit.choose_purchase(node, open["state"], open["stock"],
+			"card", card_id)
+		_check(receipt.get("ok") == true and receipt.get("kind") == "card"
+			and receipt.get("id") == card_id and receipt.get("price") == price,
+			card_id + ": buys with the exact authored receipt")
+		_check(receipt.get("state", {}).get("gold") == 500 - price
+			and receipt.get("state", {}).get("deck") == deck + [card_id]
+			and receipt.get("state", {}).get("trinkets").is_empty(),
+			card_id + ": debits exactly its quote once and appends only that card")
+		_check(visit.is_consumed() and not visit.is_open(),
+			card_id + ": the paid buy consumes the one-decision visit")
+		var after_stock: Dictionary = receipt.get("stock", {})
+		_check(after_stock.get("cards", []).size() == 3
+			and after_stock.get("cards", [])[seat].get("sold") == true
+			and after_stock.get("trinkets", [{}])[0].get("sold") == false,
+			card_id + ": only that card is sold; the patch listing is unchanged")
+		var after := visit.read_state()
+		_check(not visit.choose_purchase(node, open["state"], open["stock"],
+			"card", card_id).get("ok", true),
+			card_id + ": a stale pre-buy snapshot cannot debit again")
+		_check(not visit.choose_purchase(node, after["state"], after["stock"],
+			"card", card_id).get("ok", true)
+			and visit.read_state() == after,
+			card_id + ": a replayed decision leaves every ledger intact")
+		var poor := RunPeddlerVisit.new(node + "_poor", party, deck, [], price - 1, stock)
+		var poor_open := poor.read_state()
+		var denied := poor.choose_purchase(node + "_poor", poor_open["state"],
+			poor_open["stock"], "card", card_id)
+		_check(poor.is_open() and not denied.get("ok", true)
+			and poor.read_state() == poor_open,
+			card_id + ": unaffordable stock refuses without a debit")
+		var poor_left := poor.leave(node + "_poor", poor_open["state"], poor_open["stock"])
+		_check(poor_left.get("ok") == true and poor.is_consumed()
+			and poor_left.get("state", {}).get("gold") == price - 1,
+			card_id + ": the refused buy keeps the free Leave available")
+
+	# AC3: forged +, wrong-party and unknown candidates are refused on an open
+	# visit; a changed snapshot fails; Leave itself costs nothing.
+	var target_id := "scarecrow_harvest_fright"
+	var target_price: int = int(SCARECROW_PEDDLER_SPECS[target_id]["price"])
+	var witness_pool: Array = [
+		{"id": target_id, "owner": "scarecrow", "price": target_price},
+		{"id": "warden_shield_bash", "owner": "warden", "price": 65},
+		{"id": "tinker_scrap_bomb", "owner": "tinker", "price": 65},
+	]
+	var witness := RunShopStockOffers.generate_peddler_stock(_rng(SEED + 83000),
+		party, witness_pool, patches, [])
+	_check(witness.get("ok", false) and witness.get("cards", []).size() == 3,
+		"the refusal fixture samples a genuine isolated 3+1 Scarecrow stock")
+	if witness.get("ok", false):
+		var refusal_node := "peddler_scarecrow_refusals"
+		var refuser := RunPeddlerVisit.new(refusal_node, party, deck, [], 500, witness)
+		_check(refuser.is_open(), "the refusal fixture opens a real Peddler visit")
+		if refuser.is_open():
+			var refusal_open := refuser.read_state()
+			for forged in [
+				["card", target_id + "_plus"],
+				["card", "scarecrow_crow_peck"],
+				["card", "lantern_monk_wick_flicker"],
+				["card", "__unknown_scarecrow_card__"],
+				["trinket", target_id],
+			]:
+				_check(not refuser.choose_purchase(refusal_node, refusal_open["state"],
+					refusal_open["stock"], forged[0], forged[1]).get("ok", true),
+					"a forged " + str(forged[0]) + " candidate " + str(forged[1])
+					+ " is refused without a debit")
+			var stale_state: Dictionary = refusal_open["state"].duplicate(true)
+			stale_state["gold"] -= 1
+			_check(not refuser.choose_purchase(refusal_node, stale_state,
+					refusal_open["stock"], "card", target_id).get("ok", true),
+				"a changed snapshot cannot buy the offered card")
+			_check(refuser.read_state() == refusal_open and refuser.is_open(),
+				"every refusal leaves the open visit and its ledgers intact")
+			var leaving := RunPeddlerVisit.new(refusal_node + "_leave", party, deck,
+				[], 500, witness)
+			var leave_open := leaving.read_state()
+			var left := leaving.leave(refusal_node + "_leave", leave_open["state"],
+				leave_open["stock"])
+			_check(left.get("ok") == true and left.get("decision") == "leave"
+				and left.get("state", {}).get("gold") == 500
+				and left.get("state", {}).get("deck") == deck
+				and left.get("state", {}).get("trinkets").is_empty(),
+				"Leave costs nothing and appends nothing")
+			_check(leaving.is_consumed() and not leaving.choose_purchase(
+				refusal_node + "_leave", leave_open["state"], leave_open["stock"],
+				"card", target_id).get("ok", true),
+				"a closed visit refuses any later decision")
+
+	# AC2: the complete shipped candidate pool samples a genuine seeded 3+1
+	# stock for the Scarecrow party, matched by the independent oracle.
+	var smoke_seed: int = SEED + 84000
+	var smoke_rng := _rng(smoke_seed)
+	var smoke_oracle_rng := _rng(smoke_seed)
+	var smoke := RunShopStockOffers.generate_peddler_stock(smoke_rng, party,
+		candidates, patches, [])
+	var smoke_expected := _peddler_stock_oracle(catalog, party, candidates, patches,
+		[], smoke_oracle_rng)
+	_check(smoke.get("ok", false),
+		"the complete shipped catalog samples a seeded 3+1 Scarecrow party stock")
+	if smoke.get("ok", false):
+		var smoke_cards: Array = smoke.get("cards", [])
+		var smoke_patches: Array = smoke.get("patches", [])
+		_check(smoke_cards.size() == 3 and smoke_patches.size() == 1,
+			"the full-catalog smoke stock is exactly three cards and one patch")
+		_check(smoke_cards == smoke_expected.get("cards", [])
+			and smoke_patches == smoke_expected.get("patches", []),
+			"the full-catalog smoke stock matches the independent oracle")
+		_check(smoke_rng.state == smoke_oracle_rng.state,
+			"the full-catalog smoke stock consumes exactly the four draws")
+		var scarecrow_offers := 0
+		for position in range(smoke_cards.size()):
+			var offer: Dictionary = smoke_cards[position]
+			_check(offer.get("owner") == party[position]
+				and _pool_has_id(candidates, str(offer.get("id")))
+				and int(offer.get("price")) == _pool_price(candidates, str(offer.get("id"))),
+				"full-catalog smoke offer " + str(position)
+					+ " keeps its party owner and authored quote")
+			if offer.get("owner") == "scarecrow":
+				scarecrow_offers += 1
+		_check(scarecrow_offers == 1,
+			"the full-catalog smoke stock holds exactly one Scarecrow card")
+
+	# AC2: a party without Scarecrow is never offered a Scarecrow card.
+	var non_scarecrow_party: Array[String] = ["warden", "seamstress", "tinker"]
+	for offset in range(20):
+		var absent_rng := _rng(SEED + 85000 + offset)
+		var absent := RunShopStockOffers.generate_peddler_stock(absent_rng,
+			non_scarecrow_party, candidates, patches, [])
+		if not absent.get("ok", false):
+			continue
+		for offer in absent.get("cards", []):
+			_check(offer.get("owner") != "scarecrow",
+				"a party without Scarecrow never receives a Scarecrow card")
+			_check(not SCARECROW_PEDDLER_SPECS.has(offer.get("id")),
+				"a party without Scarecrow never receives any new Scarecrow card ID")
+
+	# Negative coverage for the new records: an upgrade, unknown, spoofed-owner,
+	# duplicated, negative or fractional candidate refuses whole before any draw,
+	# and the foreign party never samples the new Scarecrow stock.
+	var focus_pool: Array = [
+		{"id": "scarecrow_pitchfork_prick", "owner": "scarecrow", "price": 50},
+		{"id": "warden_strike", "owner": "warden", "price": 50},
+		{"id": "tinker_pop_shot", "owner": "tinker", "price": 50},
+	]
+	var scarecrow_refusals := {
+		"scarecrow upgrade candidate": _with_card(focus_pool, 0,
+			{"id": "scarecrow_pitchfork_prick_plus", "owner": "scarecrow", "price": 50}),
+		"scarecrow unknown candidate": _with_card(focus_pool, 0,
+			{"id": "__unknown_scarecrow_card__", "owner": "scarecrow", "price": 50}),
+		"scarecrow spoofed owner": _with_card(focus_pool, 0,
+			{"id": "scarecrow_pitchfork_prick", "owner": "warden", "price": 50}),
+		"scarecrow duplicated candidate": _with_appended(focus_pool,
+			{"id": "scarecrow_pitchfork_prick", "owner": "scarecrow", "price": 50}),
+		"scarecrow negative quote": _with_card(focus_pool, 0,
+			{"id": "scarecrow_pitchfork_prick", "owner": "scarecrow", "price": -50}),
+		"scarecrow fractional quote": _with_card(focus_pool, 0,
+			{"id": "scarecrow_pitchfork_prick", "owner": "scarecrow", "price": 50.5}),
+		"scarecrow foreign party": focus_pool,
+	}
+	for label in scarecrow_refusals:
+		var use_party := non_scarecrow_party if label == "scarecrow foreign party" else party
+		_reject_peddler_stock(label, _rng(SEED + 86000), use_party,
+			scarecrow_refusals[label], patches, [])
+
+	_check(deck == deck_before,
+		"no Scarecrow witness visit mutates the shared deck")
+	_check(candidates == candidates_before and patches == patches_before,
+		"the shipped candidate arrays survive the Scarecrow checks unchanged")
 
 
 ## Independent sorted-pool oracle for Peddler stock (3 hero cards + 1 patch).
