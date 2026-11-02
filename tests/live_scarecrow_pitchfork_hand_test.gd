@@ -4,7 +4,8 @@ const IDS := ["scarecrow_fork_jab", "scarecrow_fork_jab_plus",
 	"scarecrow_pitchfork_prick", "scarecrow_pitchfork_prick_plus"]
 var _last_result: Array = []
 
-func _begin(id: String, seat: int = 2) -> Control:
+func _begin(id: String, seat: int = 2, extras: Dictionary = {},
+		owner_block: int = 0) -> Control:
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await _frames()
@@ -22,13 +23,24 @@ func _begin(id: String, seat: int = 2) -> Control:
 		{"id": "tinker", "name": "Tinker", "max_hp": 25, "statuses": {"dodge_next_attack": 1}}]
 	heroes.insert(seat - 1, {"id": "scarecrow", "name": "Scarecrow", "max_hp": 30})
 	app.party = CombatParty.new(heroes)
-	app.enemies = CombatEnemies.new([
+	# Authentic enemy-side keyword fields (thorns / enrage / enrage_stacks) per target slot.
+	var enemy_definitions: Array = [
 		{"id": "tangled", "name": "Tangled", "max_hp": 50, "statuses": {"tangled": 2, "exposed": 1, "blind_next_attack": 1, "cannot_buff_next_turn": true}},
 		{"id": "untangled", "name": "Blocked", "max_hp": 50, "statuses": {"bleed": 2, "blind_next_attack": 1, "cannot_buff_next_turn": true}},
-		{"id": "rear", "name": "Rear", "max_hp": 50, "statuses": {"tangled": 3}}])
+		{"id": "rear", "name": "Rear", "max_hp": 50, "statuses": {"tangled": 3}}]
+	for slot in extras:
+		var index: int = int(slot) - 1
+		if index < 0 or index >= enemy_definitions.size() or not extras[slot] is Dictionary:
+			_check(false, "keyword fixture names a real enemy slot")
+			continue
+		enemy_definitions[index].merge(extras[slot], true)
+	app.enemies = CombatEnemies.new(enemy_definitions)
 	_check(app.party.is_valid() and app.enemies.is_valid(), "real valid rosters")
 	_check(app.enemies.gain_block(1, 2) and app.enemies.gain_block(2, 20), "partial and full Block fixtures")
-	_check(app.party.get_hero(seat).id == "scarecrow" and app.enemies.get_enemy(2).block == 20,
+	if owner_block > 0:
+		_check(app.party.gain_block(seat, owner_block), "authentic Scarecrow Block fixture")
+	_check(app.party.get_hero(seat).id == "scarecrow" and app.enemies.get_enemy(2).block == 20
+		and app.party.get_hero(seat).block == owner_block,
 		"non-vacuous owner seat and real Block preconditions")
 	var ally_seat: int = 3 if seat != 3 else 2
 	_check(app.party.get_hero(ally_seat).statuses.get("dodge_next_attack") == 1
@@ -428,6 +440,215 @@ func _attacker_weak_and_status_formula() -> void:
 	await _dispose()
 
 
+## One real mounted pitchfork strike against an authentic Thorns/Enrage enemy. Every expectation
+## is derived independently from the printed catalog line, the fixture's authored statuses, the
+## frozen pre-hit enemy record and the Scarecrow's own Block -- never from the resolver's receipt.
+## `thorns` is the authored N (0 = no Thorns metadata); `stacks` is -1 for an enemy without Enrage
+## metadata, otherwise the authentic 0/2/3 count; `pre_damage` genuinely wounds/kills the target.
+func _keyword_strike(id: String, seat: int, input: int, thorns: int, stacks: int,
+		owner_block: int, pre_damage: int = 0) -> void:
+	var target: int = 1 if input == 0 else 2
+	var extras: Dictionary = {}
+	if thorns > 0:
+		extras[target] = {"thorns": thorns}
+	if stacks >= 0:
+		if not extras.has(target):
+			extras[target] = {}
+		extras[target]["enrage"] = true
+		if stacks > 0:
+			extras[target]["enrage_stacks"] = stacks
+	var label: String = "%s seat %d target %d thorns %d stacks %d" % [id, seat, target, thorns,
+		stacks]
+	var panel := await _begin(id, seat, extras, owner_block)
+	if panel == null:
+		await _dispose()
+		return
+	var definition := CombatScarecrowPitchforkCards.new()._catalog_definition(id)
+	_check(not definition.is_empty(), label + ": authentic printed definition")
+	# Independent printed-damage expectation. Slot 1 is the Exposed+Tangled fixture (floor-once
+	# 1.5x, then its flat +2); slot 2 carries no defensive status.
+	var damage: int = int(definition.effects.damage)
+	if target == 1:
+		damage = int(floor(damage * 1.5)) + 2
+	if pre_damage > 0:
+		_check(app.enemies.apply_damage(target, pre_damage), label + ": genuine wounded target")
+		app._refresh_intents()
+		app._refresh_enemy_roster()
+		await _frames()
+	var before := _pool_state()
+	var pre_enemy: Dictionary = app.enemies.get_enemy(target).duplicate(true)
+	var pre_owner: Dictionary = app.party.get_hero(seat).duplicate(true)
+	_check(pre_enemy.get("thorns", 0) == thorns
+		and pre_enemy.get("enrage", false) == (stacks >= 0)
+		and int(pre_enemy.get("enrage_stacks", 0)) == (stacks if stacks > 0 else 0)
+		and int(pre_owner.block) == owner_block and int(pre_owner.hp) == int(pre_owner.max_hp),
+		label + ": real pre-hit keyword and Block preconditions")
+	if pre_damage > 0:
+		_check(int(pre_enemy.hp) > 0 and int(pre_enemy.hp) <= damage,
+			label + ": target is genuinely wounded but still living")
+	var absorbed: int = mini(int(pre_enemy.block), damage)
+	var expected_enemy: Dictionary = pre_enemy.duplicate(true)
+	expected_enemy.block = int(pre_enemy.block) - absorbed
+	expected_enemy.hp = maxi(0, int(pre_enemy.hp) - (damage - absorbed))
+	expected_enemy.statuses.bleed = int(pre_enemy.statuses.get("bleed", 0)) \
+		+ int(definition.effects.bleed)
+	var expected_stacks: int = stacks
+	if stacks >= 0:
+		expected_stacks = mini(CombatEnemyKeywordRules.ENRAGE_MAX_STACKS, stacks + 1)
+		expected_enemy.enrage_stacks = expected_stacks
+	# Thorns is one retaliation of N through the Scarecrow's own Block before HP.
+	var taken: int = thorns if thorns > 0 and damage > 0 else 0
+	var thorns_block: int = mini(int(pre_owner.block), taken)
+	var expected_owner: Dictionary = pre_owner.duplicate(true)
+	expected_owner.block = int(pre_owner.block) - thorns_block
+	expected_owner.hp = int(pre_owner.hp) - (taken - thorns_block)
+	var lethal: bool = int(expected_enemy.hp) == 0
+	await _arm_pitchfork(panel, input != 0)
+	_check(_pool_state() == before, label + ": arming preserves complete state and RNG")
+	var labels: Array = app.get_node("LiveEnemyRoster")._labels
+	var target_panel: Control = labels[target - 1]
+	var callback: Callable = presenter._targets[target_panel].callback
+	if input == 0:
+		await _mouse(target_panel)
+	elif input == 1:
+		target_panel.grab_focus()
+		await _keyboard(KEY_ENTER)
+	else:
+		root.push_input(_key(KEY_2), true)
+		root.push_input(_key(KEY_2), true)
+		root.push_input(_key(KEY_2, false), true)
+		await _frames()
+	_check(app.enemies.get_enemy(target) == expected_enemy,
+		label + ": exact printed damage, Bleed and the one committed Enrage stack")
+	_check(app.party.get_hero(seat) == expected_owner,
+		label + ": Thorns N retaliated exactly once through the Scarecrow's Block before HP")
+	var expected_hand: Array = before[1].duplicate()
+	expected_hand.erase(id)
+	var expected_discard: Array = before[2].duplicate()
+	expected_discard.append(id)
+	_check(app.deck.hand == expected_hand and app.deck.discard_pile == expected_discard
+		and app.deck.draw_pile == before[0] and app.deck.energy == before[3] - 1,
+		label + ": one energy and exactly one held copy paid without drawing")
+	_check(app.run_rng.seed == before[10] and app.run_rng.state == before[11],
+		label + ": seeded RNG untouched by the keyword reactions")
+	for slot in [1, 2, 3]:
+		if slot != target:
+			_check(app.enemies.get_enemy(slot) == before[6][slot - 1],
+				label + ": other enemy %d unchanged" % slot)
+	for index in range(3):
+		if index != seat - 1:
+			_check(app.party.get_hero(index + 1) == before[5][index],
+				label + ": other ally %d unchanged" % (index + 1))
+	var rules := CombatEnemyKeywordRules.new()
+	var pre_projection: Dictionary = rules.project_enrage_action(pre_enemy,
+		{"type": "attack", "amount": 3})
+	var pre_bonus: int = maxi(0, stacks) * CombatEnemyKeywordRules.ENRAGE_ATTACK_BONUS_PER_STACK
+	_check(pre_projection.get("ok", false) and int(pre_projection.attack_bonus) == pre_bonus
+		and int(pre_projection.action.amount) == 3 + pre_bonus,
+		label + ": established +2-per-stack projection before the hit")
+	var projection: Dictionary = rules.project_enrage_action(app.enemies.get_enemy(target),
+		{"type": "attack", "amount": 3})
+	var projected_stacks: int = expected_stacks if stacks >= 0 else 0
+	var bonus: int = projected_stacks * CombatEnemyKeywordRules.ENRAGE_ATTACK_BONUS_PER_STACK
+	if lethal:
+		_check(not projection.get("ok", false),
+			label + ": a slain enemy has no later attack projection to boost")
+	else:
+		_check(projection.get("ok", false) and int(projection.enrage_stacks) == projected_stacks
+			and int(projection.attack_bonus) == bonus and int(projection.action.amount) == 3 + bonus,
+			label + ": +2/+4/+6 capped projection after the committed hit")
+	if not lethal:
+		var roster = app.get_node("LiveEnemyRoster")
+		_check(roster._status_tags[target - 1].get_node("Caption").text.contains(
+			"Bleed %d" % int(expected_enemy.statuses.bleed)),
+			label + ": real mounted status plaque shows the exact post-hit Bleed")
+		if thorns > 0:
+			_check(roster._thorns_tags[target - 1].visible
+				and roster._thorns_tags[target - 1].get_node("Caption").text == "Thorns %d" % thorns,
+				label + ": real mounted Thorns hazard tag names the authored N")
+		if stacks >= 0:
+			_check(roster._status_tags[target - 1].get_node("Caption").text.contains(
+				"Enrage %d/3" % expected_stacks),
+				label + ": real mounted Enrage plaque shows the committed stack")
+	_check(app.hero_panels[seat - 1].get_child(0).text.contains(
+		"HP: %d/%d | Block: %d" % [expected_owner.hp, expected_owner.max_hp,
+			expected_owner.block]),
+		label + ": mounted Scarecrow meter shows the exact Thorns cost")
+	var after := _pool_state()
+	callback.call(_press())
+	await _frames()
+	_check(_pool_state() == after and presenter._pending.is_empty()
+		and app.deck.hand.count(id) == 1, label + ": spent keyword strike cannot replay")
+	await _dispose()
+
+
+## AC4: malformed Thorns/Enrage metadata is preflighted, so it refuses the real mounted play
+## before any payment, HP/Block change, stack or bleed, and the refused receipt cannot replay.
+func _malformed_keywords() -> void:
+	var cases: Array[Dictionary] = [
+		{"name": "thorns_negative", "field": {"thorns": -1}},
+		{"name": "thorns_float", "field": {"thorns": 2.0}},
+		{"name": "thorns_string", "field": {"thorns": "2"}},
+		{"name": "thorns_bool", "field": {"thorns": true}},
+		{"name": "thorns_null", "field": {"thorns": null}},
+		{"name": "enrage_int", "field": {"enrage": 1}},
+		{"name": "enrage_string", "field": {"enrage": "true"}},
+		{"name": "stacks_negative", "field": {"enrage": true, "enrage_stacks": -1}},
+		{"name": "stacks_over", "field": {"enrage": true, "enrage_stacks": 4}},
+		{"name": "stacks_float", "field": {"enrage": true, "enrage_stacks": 2.0}},
+		{"name": "stacks_null", "field": {"enrage": true, "enrage_stacks": null}},
+	]
+	# A malformed roster field also dims the authentic face before the player can even arm it.
+	var panel := await _begin(IDS[0], 2, {1: {"thorns": 2, "enrage": true}})
+	app.enemies._enemies[0].enrage = "true"
+	app._refresh_intents()
+	presenter._metadata._update_visual(panel)
+	_check(not presenter._metadata.visual_state(panel).playable,
+		"malformed roster keywords disable the pitchfork face before input")
+	var blocked := _pool_state()
+	await _mouse(panel)
+	_check(_pool_state() == blocked and presenter._pending.is_empty(),
+		"malformed roster keywords cannot arm or spend")
+	await _dispose()
+
+	for case in cases:
+		panel = await _begin(IDS[0], 2, {1: {"thorns": 2, "enrage": true, "enrage_stacks": 2}})
+		if panel == null:
+			await _dispose()
+			return
+		await _arm_pitchfork(panel, true)
+		var target: Control = app.get_node("LiveEnemyRoster")._labels[0]
+		var callback: Callable = presenter._targets[target].callback
+		for key in case["field"]:
+			app.enemies._enemies[0][key] = case["field"][key]
+		app._refresh_intents()
+		var before := _pool_state()
+		callback.call(_press())
+		await _frames()
+		_check(_pool_state() == before and presenter._pending.is_empty(),
+			"malformed keyword metadata refuses BEFORE payment: " + case["name"])
+		callback.call(_press())
+		await _frames()
+		_check(_pool_state() == before,
+			"rejected malformed keyword receipt cannot replay: " + case["name"])
+		await _dispose()
+
+	# A forged lookalike ID in the real hand is never wired to this family's resolver.
+	panel = await _begin(IDS[0], 2, {1: {"thorns": 2}})
+	app.deck.hand.append("scarecrow_fork_jab_forged")
+	app._refresh_hand()
+	await _frames()
+	var forged := _pool_panel("scarecrow_fork_jab_forged")
+	_check(forged != null and not presenter._bindings.has(forged),
+		"forged lookalike ID mounts a panel with no pitchfork binding")
+	var forged_before := _pool_state()
+	if forged != null:
+		await _mouse(forged)
+	_check(_pool_state() == forged_before and presenter._pending.is_empty(),
+		"forged lookalike ID cannot arm or spend")
+	await _dispose()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	for id in IDS:
@@ -448,4 +669,16 @@ func _run() -> void:
 	await _malformed_tokens()
 	await _mixed_status_continuation()
 	await _attacker_weak_and_status_formula()
+	# AC2/AC3: all four authentic printings, both seats and all three real input paths, against
+	# enemies carrying authentic Thorns N and/or Enrage metadata.
+	await _keyword_strike(IDS[0], 1, 0, 2, -1, 3)
+	await _keyword_strike(IDS[1], 2, 1, 2, -1, 1)
+	await _keyword_strike(IDS[2], 1, 2, 3, -1, 0)
+	await _keyword_strike(IDS[3], 2, 0, 1, -1, 0)
+	await _keyword_strike(IDS[0], 2, 2, 0, 0, 0)
+	await _keyword_strike(IDS[3], 1, 1, 0, 2, 0)
+	await _keyword_strike(IDS[1], 2, 0, 0, 3, 0)
+	await _keyword_strike(IDS[2], 1, 0, 2, 1, 1)
+	await _keyword_strike(IDS[2], 1, 0, 2, -1, 0, 45)
+	await _malformed_keywords()
 	_finish()
