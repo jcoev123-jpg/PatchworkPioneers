@@ -839,6 +839,46 @@
         { "id": "rake_copper_cinders", "text": "Rake hot cinders (lose 4 HP; gain 19 gold)", "outcome": { "gold": 19, "scraps": 0, "hp": -4, "max_hp": 0 } },
         { "id": "leave", "text": "Walk on as the thimble furnace cools", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_cinder_moth_candlestick",
+      "title": "The Cinder Moth Candlestick",
+      "description": "A rotund charcoal moth puppet in a frayed velvet cape carries an iron candlestick taller than its wings; one saffron flame stains the fog.",
+      "choices": [
+        { "id": "buy_warm_wick", "text": "Pay 13 gold and 1 scrap for a warm wick seam (heal 7 HP; +1 max HP)", "outcome": { "gold": -13, "scraps": -1, "hp": 7, "max_hp": 1 } },
+        { "id": "strip_hot_wax", "text": "Strip wax from the burning iron (lose 4 HP; gain 16 gold and 1 scrap)", "outcome": { "gold": 16, "scraps": 1, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the moth carry its flame into the mist", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rustwax_crow_sealpress",
+      "title": "The Rustwax Crow Sealpress",
+      "description": "A button-eyed crow doll stamps wax letters under a rusted seal press; crimson drips across the black quilt road.",
+      "choices": [
+        { "id": "seal_heart_patch", "text": "Spend 2 scraps to emboss a lasting heart seam (+3 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 3 } },
+        { "id": "pawn_heart_stamp", "text": "Surrender 2 max HP for the crow's purse (gain 25 gold)", "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the crow to its silent correspondence", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_ashcloth_lamb_lantern_tram",
+      "title": "The Ashcloth Lamb Lantern Tram",
+      "description": "A squat ash-blue lamb doll drags a crooked lantern tram through cinder fog, its wheels made of mismatched brass buttons.",
+      "choices": [
+        { "id": "ride_warm_car", "text": "Pay 17 gold for a warm tram berth (heal 9 HP)", "outcome": { "gold": -17, "scraps": 0, "hp": 9, "max_hp": 0 } },
+        { "id": "haul_soot_lamps", "text": "Haul soot-heavy lamps (lose 5 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Watch the little tram disappear into ash", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_gloam_marionette_pipe_organ",
+      "title": "The Gloam Marionette Pipe Organ",
+      "description": "A tiny stitched-X marionette turns an enormous cracked pipe organ; candlelight leaks through the torn bellows into violet mist.",
+      "choices": [
+        { "id": "stitch_bellows", "text": "Pay 21 gold and 1 scrap to sew the bellows (heal 4 HP; +2 max HP)", "outcome": { "gold": -21, "scraps": -1, "hp": 4, "max_hp": 2 } },
+        { "id": "pump_broken_keys", "text": "Pump the cracked organ until it bites (lose 3 HP; gain 20 gold)", "outcome": { "gold": 20, "scraps": 0, "hp": -3, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the last organ note die in the fog", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
