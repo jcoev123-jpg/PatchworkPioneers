@@ -623,9 +623,14 @@ static func valid_action(action: Variant) -> bool:
 	if not target is int or target < 1 or target > 3:
 		return false
 	if kind == "attack":
+		var extra := 0
+		if action.has("move"):
+			if not action.move is String or action.move != "attack2":
+				return false
+			extra = 1
 		if action.has("hits"):
-			return action.size() == 4 and action.hits is int and action.hits == 2
-		return action.size() == 3
+			return action.size() == 4 + extra and action.hits is int and action.hits == 2
+		return action.size() == 3 + extra
 	if kind == "snip_block":
 		return action.size() == 3 and amount == 0
 	if kind == "debuff":

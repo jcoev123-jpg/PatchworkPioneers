@@ -418,6 +418,7 @@ func _run() -> void:
 	await _mixed_rejection_replay(app)
 	await _mounted_ram_charge(app)
 	await _mounted_ram_guard_redirect(app)
+	await _mounted_thread_lash(app)
 	app.starter_enemies_path = app.STARTER_ENEMIES_PATH
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://live_enemy_phase_guard.json"))
 	app.free()
@@ -678,6 +679,70 @@ func _mixed_rejection_replay(app) -> void:
 			_check(trace == replay, "seeded mounted rejection/recovery phase, party, enemy and hand replay exactly")
 		app.return_button.pressed.emit()
 		await process_frame
+
+
+func _mounted_thread_lash(app) -> void:
+	var biter := {}
+	for record in RunTypedBattleRoster._parse_catalog_text(FileAccess.get_file_as_string(
+			"res://data/enemies/run_enemies.json")):
+		if record.id == "thread_biter":
+			biter = record
+	var guards: Array = JSON.parse_string(FileAccess.get_file_as_string("user://live_enemy_phase_guard.json"))
+	var guard := {}
+	for record in guards:
+		if record.id == "ragling_guard":
+			guard = record
+	_check(not biter.is_empty() and not guard.is_empty(), "mounted Lash uses genuine Biter and pinned authored Guard")
+	if biter.is_empty() or guard.is_empty():
+		return
+	var path := "user://live_enemy_phase_thread_lash.json"
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	_check(file != null, "mounted Lash fixture writes outside repository")
+	if file == null:
+		return
+	file.store_string(JSON.stringify([biter, guard]))
+	file.close()
+	app.starter_enemies_path = path
+	for amount in [5, 6]:
+		_fixture_start(app)
+		await process_frame
+		_check(app.enemies != null and app.enemy_intents.is_bound(), "mounted genuine Biter binds weighted scheduler")
+		if app.enemies == null or not app.enemy_intents.is_bound():
+			break
+		for turn in range(64):
+			var action: Dictionary = app.enemy_intents.get_intents()[0]
+			if action.type == "attack" and action.amount == amount:
+				break
+			_check(app.enemy_intents.advance_turn(), "mounted Lash seeks real cached attack")
+		app.enemy_attacks = app.enemy_intents.get_intents()
+		app._refresh_intents()
+		var attack: Dictionary = app.enemy_attacks[0]
+		_check(attack.type == "attack" and attack.amount == amount
+			and attack.get("move", "") == ("attack2" if amount == 6 else ""), "real selected five/six precondition")
+		_check(app.enemies.apply_damage(1, 10), "real Drain source wounded before End Turn")
+		for hero in app.party._heroes:
+			hero.block = 0
+		var target: int = attack.target_position
+		var hp: int = app.party.get_hero(target).hp
+		var authored: Dictionary = app.enemies._enemies[0].intent.duplicate(true)
+		# Stale to the actor, even though RoundFlow still owns the exact cache.
+		for action in app.enemies._enemies[0].intent.actions:
+			if action.type == "attack" and int(action.amount) == amount:
+				action.amount = amount + 2
+		var before := _snapshot(app)
+		app.end_turn_button.pressed.emit()
+		_check(_snapshot(app) == before and not app.end_turn_button.disabled,
+			"stale authored pair rejects mounted End Turn atomically including hand and RNG")
+		app.enemies._enemies[0].intent = authored
+		app.end_turn_button.pressed.emit()
+		await process_frame
+		_check(app.party.get_hero(target).hp == hp - amount
+			and app.enemies.get_enemy(1).hp == 5 + amount,
+			"real mounted End Turn deals five/six once and Drains actual HP loss")
+		app.return_button.pressed.emit()
+		await process_frame
+	app.starter_enemies_path = "user://live_enemy_phase_guard.json"
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
 
 func _finish() -> void:

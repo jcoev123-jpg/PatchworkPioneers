@@ -20,7 +20,8 @@ const NEW := {
 			{"type": "block", "amount": 1, "weight": 1}]},
 	"thread_biter": {"name": "Thread Biter", "max_hp": 15, "target": "lowest_living_hp",
 		"drain": true,
-		"actions": [{"type": "attack", "amount": 5, "weight": 3},
+		"actions": [{"type": "attack", "amount": 5, "weight": 2},
+			{"type": "attack", "amount": 6, "weight": 1, "move": "attack2"},
 			{"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
 			{"type": "block", "amount": 2, "weight": 1}]},
 }
