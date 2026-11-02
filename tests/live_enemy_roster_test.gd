@@ -295,11 +295,11 @@ func _v3_hero_fallbacks(app, presenter) -> void:
 		and host.pose_texture() == loop_art.idle and first_frame is AtlasTexture
 		and later_frame is AtlasTexture and first_frame != later_frame,
 		"a standing hero paints its idle loop while placement still uses the still image")
-	_check(loop_art.get("attack_loop") == null and host.attack_frames.is_empty(),
-		"the dark Seamstress ships a held attack pose and no swing strip")
+	_check(loop_art.get("attack") is Texture2D,
+		"the dark Seamstress has an authored held attack pose")
 	_check(host.idle_frame(loop_art.attack) == loop_art.attack,
 		"the committed attack pose is never replaced by a loop frame")
-	# An authored attack swing strip follows the lunge: stance at both ends, strike at its peak.
+	# Even a valid optional swing strip cannot override the authored attack still.
 	_check(ROSTER_ART.art_paths("seamstress").get("attack_loop") == "res://assets/paper/heroes/seamstress_attack_anim.png",
 		"the attack swing strip path follows the authoritative ID")
 	var swing_image := Image.create(40, 8, false, Image.FORMAT_RGBA8)
@@ -307,14 +307,13 @@ func _v3_hero_fallbacks(app, presenter) -> void:
 	host.bind_actor("seamstress", {"idle": loop_art.idle, "attack": loop_art.attack,
 		"idle_loop": strip, "attack_loop": swing})
 	_check(host.attack_frames.size() == 5 and host.idle_frame(loop_art.attack) == loop_art.attack,
-		"the swing strip is cut into square frames and only plays during a committed hit")
-	host.attack_span = 0.4
-	host.attack_remaining = 0.4 - 0.0001
-	var swing_start: Texture2D = host.idle_frame(host.pose_texture())
-	host.attack_remaining = 0.2
-	var swing_peak: Texture2D = host.idle_frame(host.pose_texture())
-	_check(swing_start == host.attack_frames[0] and swing_peak == host.attack_frames[4],
-		"the swing starts in the stance frame and strikes at the lunge peak")
+		"five-frame swing fixture is valid and the resting attack still is available")
+	_check(host.trigger_attack(0.4), "mounted Seamstress accepts the bounded attack")
+	for remaining in [0.4, 0.2, 0.0001]:
+		host.attack_remaining = remaining
+		_check(host.attacking() and host.pose_texture() == loop_art.attack
+			and host.idle_frame(host.pose_texture()) == loop_art.attack,
+			"Seamstress holds the authored still at attack start, peak and near completion")
 	host.cancel_attack()
 	host.bind_actor("seamstress", loop_art)
 	var still_rect: Rect2 = host.image_rect()
@@ -426,11 +425,34 @@ func _idle_strip_safety(app, presenter) -> void:
 	_check(warden.idle_frames.size() == 3 and first is AtlasTexture
 		and later is AtlasTexture and first != later and warden.current_texture() == still,
 		"valid transparent synthetic strip advances through painted idle frames on live delta")
-	_check(warden.attack_frames.size() == 3 and warden.trigger_attack(0.4)
-		and warden.pose_texture() == still
-		and warden.idle_frame(warden.pose_texture()) is AtlasTexture,
-		"transparent authored attack frames remain available only for a committed attack")
+	_check(warden.attack_frames.size() == 3 and warden.trigger_attack(0.4),
+		"valid three-frame swing fixture accompanies an accepted mounted attack")
+	for remaining in [0.4, 0.2, 0.0001]:
+		warden.attack_remaining = remaining
+		_check(warden.attacking() and warden.pose_texture() == still
+			and warden.idle_frame(warden.pose_texture()) == still,
+			"Warden holds the authored still even when idle and attack textures are identical")
 	warden.cancel_attack()
+	# Synthetic wide and tall poses preserve source-pixel scale, rather than fitting
+	# themselves into the idle rectangle. All surrounding mounted bounds are checked below.
+	for dimensions in [Vector2i(48, 16), Vector2i(16, 32)]:
+		var pose_image := Image.create(dimensions.x, dimensions.y, false, Image.FORMAT_RGBA8)
+		var pose := ImageTexture.create_from_image(pose_image)
+		warden.bind_actor("warden", {"idle": still, "attack": pose, "attack_loop": clear_strip})
+		var idle_rect: Rect2 = warden.image_rect()
+		_check(idle_rect.has_area() and warden.trigger_attack(0.4),
+			"synthetic proportion witness has fitted idle art and an accepted attack")
+		for remaining in [0.4, 0.2, 0.0001]:
+			warden.attack_remaining = remaining
+			var pose_rect: Rect2 = warden.pose_rect(warden.pose_texture())
+			_check(warden.idle_frame(warden.pose_texture()) == pose
+				and is_equal_approx(pose_rect.size.x / idle_rect.size.x, dimensions.x / 16.0)
+				and is_equal_approx(pose_rect.size.y / idle_rect.size.y, dimensions.y / 16.0)
+				and is_equal_approx(pose_rect.get_center().x, idle_rect.get_center().x)
+				and is_equal_approx(pose_rect.end.y, idle_rect.end.y),
+				"wide/tall attack holds idle pixel scale, aspect ratio and bottom-centred foot line")
+		warden.cancel_attack()
+	warden.bind_actor("warden", {"idle": still, "attack": still, "idle_loop": clear_strip})
 	warden.fallen = true
 	_check(warden.idle_frame(warden.pose_texture()) == still,
 		"KO skips idle animation and preserves the fallen still pose")
