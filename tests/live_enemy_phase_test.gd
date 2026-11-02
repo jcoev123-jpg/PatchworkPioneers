@@ -423,6 +423,7 @@ func _run() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://live_enemy_phase_guard.json"))
 	app.free()
 	await _mounted_scavenger_wallet()
+	await _mounted_scavenger_moves()
 	_finish()
 
 
@@ -748,10 +749,10 @@ func _mounted_thread_lash(app) -> void:
 
 ## Discover through the shipped Fight router and weighted scheduler, never inject
 ## an action or narrow the Scavenger's policy.
-func _wallet_route_fixture() -> Dictionary:
+func _wallet_route_fixture(move: String = "") -> Dictionary:
 	var receipt := RunV3PartyAdmission.admit(["warden", "seamstress", "tinker"])
 	_check(receipt.ok, "wallet route has genuine party admission")
-	for seed_value in range(1, 513):
+	for seed_value in range(1, 4097):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = seed_value
 		var map := RunMap.new()
@@ -775,10 +776,93 @@ func _wallet_route_fixture() -> Dictionary:
 				var deck := CombatDeck.new(cards, rng)
 				if entry.intents.bind_battle(entry.enemies, CombatParty.new(receipt.party), rng):
 					for action in entry.intents.get_intents():
-						if action.type == "steal_gold":
+						if (move.is_empty() and action.type == "steal_gold") or (not move.is_empty()
+								and entry.enemies.get_enemy(action.enemy_position).id == "fray_scavenger"
+								and action.get("move", "") == move):
 							return {"seed": seed_value, "id": id, "source": action.enemy_position, "treasure": treasure}
 			break
 	return {}
+
+
+func _mounted_scavenger_moves() -> void:
+	for move in ["attack2", "attack3"]:
+		var fixture := _wallet_route_fixture(move)
+		_check(not fixture.is_empty(), "connected seeded Fight witnesses " + move)
+		if fixture.is_empty():
+			continue
+		var replay: Array = []
+		for repeat_index in range(2):
+			var app = load("res://scenes/app.tscn").instantiate()
+			root.add_child(app)
+			await process_frame
+			app.run_seed = fixture.seed
+			app.start_button.pressed.emit()
+			preload("res://tests/party_choice.gd").choose(app)
+			for button in app.route_buttons:
+				if button.get_meta("route_id") == fixture.treasure:
+					button.pressed.emit()
+					break
+			app.session_gold = 9
+			for button in app.route_buttons:
+				if button.get_meta("route_id") == fixture.id:
+					button.pressed.emit()
+					break
+			await process_frame
+			_check(app.round_flow != null and app.run_map.get_current_node_id() == fixture.id
+				and app.enemy_intents.is_bound() and app.enemy_intents._rng == app.run_rng
+				and app.enemies.get_enemy(fixture.source).id == "fray_scavenger"
+				and not app.enemies.is_slain(fixture.source), "mounted live Scavenger uses single run RNG")
+			if app.round_flow == null or app.enemy_attacks.size() < fixture.source:
+				app.free()
+				continue
+			var cached: Array = app.enemy_attacks.duplicate(true)
+			var action: Dictionary = cached[fixture.source - 1]
+			var amount := 6 if move == "attack2" else 7
+			var target := 1
+			for position in range(1, 4):
+				if app.party.get_hero(position).hp > 0 and app.party.get_hero(position).hp < app.party.get_hero(target).hp:
+					target = position
+			_check(action == {"enemy_position": fixture.source, "type": "attack",
+				"amount": amount, "move": move, "target_position": target}, "real cache retains named move and lowest-HP front tie target")
+			var before := _snapshot(app)
+			_check(app.enemy_intents.get_intents() == cached and app.enemy_intents.get_intents() == cached
+				and _snapshot(app) == before, "mounted repeated announcement reads are pure")
+			var presenter = app.get_node("LiveEnemyRoster")
+			var pose: Dictionary = presenter._move_catalog.lookup_enemy("fray_scavenger", action,
+				"res://assets/paper/enemies/fray_scavenger_attack.png")
+			var title := "Pin Flick" if move == "attack2" else "Sack Swing"
+			_check(pose.get("name") == title and pose.get("pose") == move
+				and pose.get("art") == (pose.get("named_art") if pose.get("art_available") else
+					"res://assets/paper/enemies/fray_scavenger_attack.png")
+				and presenter._badges[fixture.source - 1].tooltip_text.contains(title)
+				and _snapshot(app) == before, "mounted named pose receipt and badge preserve authored name and fallback")
+			for position in range(1, app.enemies.get_enemies().size() + 1):
+				if position != fixture.source:
+					_check(app.enemies.apply_damage(position, 999), "isolate named attack by slaying other sources")
+			_check(app.party.start_player_turn() and app.party.gain_block(target, 3), "real three Block before named hit")
+			var heroes: Array = app.party.get_heroes()
+			# Forged and stale snapshots must fail before any gameplay/RNG changes.
+			for forged in ["unknown", "attack2" if move == "attack3" else "attack3"]:
+				app.enemy_attacks[fixture.source - 1].move = forged
+				before = _snapshot(app)
+				app._end_turn(app.end_turn_button)
+				_check(_snapshot(app) == before and app.session_gold == 9, "forged move refuses without mutation")
+			app.enemy_attacks = cached.duplicate(true)
+			app.end_turn_button.pressed.emit()
+			_check(app.session_gold == 9 and app.round_flow.get_gold() == 9, "named attack never debits wallet")
+			for position in range(1, 4):
+				_check(app.party.get_hero(position).hp == heroes[position - 1].hp - (amount - 3 if position == target else 0)
+					and app.party.get_hero(position).block == 0, "mounted exact Block-before-HP named damage")
+			before = _snapshot(app)
+			app.end_turn_button.pressed.emit()
+			_check(_snapshot(app) == before and app.session_gold == 9, "named attack duplicate submission inert")
+			var trace := [_snapshot(app), app.session_gold]
+			if replay.is_empty():
+				replay = trace
+			else:
+				_check(trace == replay, "named attack same-seed mounted replay")
+			app.free()
+			await process_frame
 
 
 func _mounted_scavenger_wallet() -> void:

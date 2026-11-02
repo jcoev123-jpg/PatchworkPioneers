@@ -112,6 +112,10 @@ func _test_thread_lash_phase() -> void:
 			var before := [party.get_heroes(), enemies.get_enemies()]
 			var forged := _attack(source, amount, 3)
 			forged.move = "attack2"
+			# Scavenger now owns the six-point attack2; keep this case an
+			# actually unowned move so it still proves whole-batch refusal.
+			if source == 1 and amount == 6:
+				forged.move = "attack4"
 			var first := {"type": "steal_gold", "amount": 2, "enemy_position": 1}
 			if source == 1:
 				first = {"type": "block", "amount": 2, "enemy_position": 2}

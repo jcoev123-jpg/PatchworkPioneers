@@ -82,7 +82,7 @@ func _scavenger_gold_record() -> Dictionary:
 func _test_scavenger_gold_cache() -> void:
 	var record := _scavenger_gold_record()
 	_check(not record.is_empty() and record.get("name") == "Fray Scavenger"
-		and record.get("max_hp") == 14 and record.intent.actions.size() == 4,
+		and record.get("max_hp") == 14 and record.intent.actions.size() == 6,
 		"gold precondition: authentic copied Scavenger retains old choices plus theft")
 	if record.is_empty():
 		return
@@ -115,7 +115,7 @@ func _test_scavenger_gold_cache() -> void:
 	var traces: Array = []
 	for repeat_index in range(2):
 		var enemies := CombatEnemies.new([record])
-		var party := _party_fixture()
+		var party := _party_fixture(20, 20, 20)
 		var rng := RandomNumberGenerator.new()
 		rng.seed = 438
 		var selector := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
@@ -124,6 +124,7 @@ func _test_scavenger_gold_cache() -> void:
 			return
 		var trace: Array = []
 		var thefts := 0
+		var moves := {}
 		for turn in range(64):
 			var cached := selector.get_intents()
 			var state := rng.state
@@ -133,11 +134,28 @@ func _test_scavenger_gold_cache() -> void:
 				thefts += 1
 				_check(cached == [{"type": "steal_gold", "amount": 2, "enemy_position": 1}]
 					and not enemies.is_slain(1), "weighted theft names living source without hero target")
+			if cached[0].get("move", "") in ["attack2", "attack3"]:
+				var action: Dictionary = cached[0]
+				moves[action.move] = true
+				_check(action.type == "attack" and action.amount == (6 if action.move == "attack2" else 7)
+					and action.target_position == 1 and not enemies.is_slain(1),
+					"bound named attack retains amount and front lowest-HP living target")
+				var resolved_party := _party_fixture(20, 20, 20)
+				var resolved_enemies := CombatEnemies.new([record])
+				_check(resolved_party.gain_block(1, 3), "bound named hit has real partial Block")
+				var phase := CombatEnemyPhase.new().execute_phase(resolved_party, resolved_enemies,
+					cached, null, true, null, 9)
+				_check(phase.get("ok", false) and phase.get("gold") == 9
+					and resolved_party.get_hero(1).hp == 20 - action.amount + 3
+					and resolved_party.get_hero(1).block == 0
+					and resolved_party.get_hero(2).hp == 20 and resolved_party.get_hero(3).hp == 20
+					and rng.state == state, "bound named attack resolves exact Block-before-HP without wallet/RNG debit")
 			trace.append([cached.duplicate(true), state])
 			cached[0].amount = -9
 			_check(selector.get_intents() == trace[-1][0], "gold cache is detached from returned edits")
 			_check(selector.advance_turn(), "extended policy advances normally")
 		_check(thefts > 0, "seeded real weighted policy actually selected theft")
+		_check(moves.has("attack2") and moves.has("attack3"), "seeded bound policy announces both added moves")
 		traces.append(trace)
 	_check(traces[0] == traces[1], "same-seed extended Scavenger actions and RNG replay exactly")
 

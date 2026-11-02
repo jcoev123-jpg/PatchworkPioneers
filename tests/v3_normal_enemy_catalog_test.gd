@@ -86,6 +86,8 @@ func _old_expected() -> Dictionary:
 		"fray_scavenger": {"id": "fray_scavenger", "name": "Fray Scavenger", "max_hp": 14, "art_path": "res://assets/paper/enemies/fray_scavenger.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
 				{"type": "attack", "amount": 5, "weight": 3},
+				{"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
 				{"type": "block", "amount": 2, "weight": 2},
 				{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
 				{"type": "steal_gold", "amount": 2, "weight": 1}]}},

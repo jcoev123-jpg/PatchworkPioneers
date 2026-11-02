@@ -548,7 +548,7 @@ func _mounted_fourth_slot_input() -> void:
 	var oracle_enemies := CombatEnemies.new(definitions, CombatEnemies.OPT_IN_MAX_ENEMIES)
 	oracle_enemies._enemies.assign(roster.get_enemies())
 	var next_phase := CombatEnemyPhase.new().execute_phase(
-		oracle_party, oracle_enemies, next_actions, null, true)
+		oracle_party, oracle_enemies, next_actions, null, true, null, app.session_gold)
 	_check(next_phase.get("ok", false) and next_phase.events.size() == 4
 		and next_phase.events[3].applied and next_phase.events[3].enemy_position == 4,
 		"AC2 precondition: authentic cached child attack actually resolves in the next enemy phase")
@@ -556,6 +556,8 @@ func _mounted_fourth_slot_input() -> void:
 	await process_frame
 	await process_frame
 	_check(app.party.get_heroes() == oracle_party.get_heroes()
+		and app.session_gold == next_phase.get("gold")
+		and app.round_flow.get_gold() == next_phase.get("gold")
 		and app.battle_result.get_outcome() == CombatBattleResult.ACTIVE
 		and roster.get_enemies().size() == 4,
 		"AC2: following real End Turn commits the newborn attack exactly once, not on birth")
