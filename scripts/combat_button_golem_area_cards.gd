@@ -7,8 +7,10 @@ extends RefCounted
 ## One successful call spends 2 energy, discards exactly one genuinely held copy and resolves the
 ## printed area attack against the real CombatEnemies roster through CombatStatusAttacks, so every
 ## hit is status-adjusted on its own and absorbed Block-before-HP by the roster. No enemy slot is
-## selected: both printings are authored `enemy_all` with TO slots 1-3, so every enemy that is alive
-## when its hit is due is hit, and slain slots are skipped without ever compacting positions.
+## selected: both printings are authored `enemy_all`, so every living slot of the ACTUAL validated
+## roster is hit - the default three foes, or the explicit opt-in four - and slain slots are skipped
+## without ever compacting positions. The printed TO array stays the authored [1,2,3] contract and
+## is never rewritten or used as a cap: it is an authentication fact, not the target list.
 ##
 ## Popping Volley prints two INDEPENDENT hits of base 3 (4 upgraded) per living enemy. Survival is
 ## re-checked before every hit, so an enemy slain by its first hit never receives the second, and
@@ -42,7 +44,8 @@ const ATTACK_STATUS_KEYS: Array[String] = ["bleed", "weak", "exposed", "tangled"
 ## An authoritative one-attack Dodge token: one unspent Dodge, or an explicit zero. It is not a
 ## damage modifier for this attack, so it is validated here and omitted from bridge-bound maps.
 const DODGE_STATUS_KEY := "dodge_next_attack"
-## `enemy_all` selects no slot at all; the catalog's TO list is the whole living roster.
+## `enemy_all` selects no slot at all; the real living roster is what resolves. The authored TO
+## window below is still authenticated exactly, but it never limits a genuine opt-in fourth foe.
 const NO_TARGET_SLOT := 0
 const TO_POSITIONS: Array[int] = [1, 2, 3]
 const VOLLEY_FROM_POSITIONS: Array[int] = [1, 2]
@@ -386,13 +389,20 @@ func _distinct_hero_ids(party: CombatParty) -> bool:
 	return true
 
 
-## One to three genuine enemy slots in order with nonempty distinct string IDs and sane records.
-## Slain slots remain valid; target eligibility is checked separately.
+## One to the roster's genuine capacity of enemy slots in order with nonempty distinct string IDs
+## and sane records. The capacity must be one the model can legitimately hold: the default three, or
+## an explicit opt-in four that only `CombatEnemies.new(definitions, OPT_IN_MAX_ENEMIES)` grants.
+## A default-capacity four-definition construction is empty and inert, and a tampered capacity is
+## refused here, so four foes are never admitted silently. A roster that fills only part of its
+## capacity stays legal. Slain slots remain valid; target eligibility is checked separately.
 func _valid_enemies(enemies: CombatEnemies) -> bool:
 	if not enemies.is_valid():
 		return false
+	var capacity: int = enemies.get_capacity()
+	if capacity != CombatEnemies.MAX_ENEMIES and capacity != CombatEnemies.OPT_IN_MAX_ENEMIES:
+		return false
 	var roster: Array[Dictionary] = enemies.get_enemies()
-	if roster.is_empty() or roster.size() > CombatEnemies.MAX_ENEMIES:
+	if roster.is_empty() or roster.size() > capacity:
 		return false
 	var seen: Dictionary = {}
 	for index in range(roster.size()):
@@ -430,7 +440,9 @@ func _valid_statuses(party: CombatParty, enemies: CombatEnemies) -> bool:
 	var batch := CombatStatusTurnBatch.new()
 	if not batch.tick_side("heroes", heroes).get("ok", false):
 		return false
-	return batch.tick_side("enemies", roster).get("ok", false)
+	# The batch validates one to three enemy actors by default; only this roster's own genuine
+	# capacity (three, or an explicit opt-in four) may pass its four-actor path.
+	return batch.tick_side("enemies", roster, enemies.get_capacity()).get("ok", false)
 
 
 ## Actor records reduced to their bridge-valid attack statuses; null when any map is malformed.
