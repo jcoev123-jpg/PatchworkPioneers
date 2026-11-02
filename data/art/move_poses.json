@@ -1,0 +1,489 @@
+{
+ "_doc": "Named move poses (owner 11-02). enemies: the intent action types each pose covers; heroes: card roles (block = Block/defend cards, skill = other skills/powers; attack cards use <id>_attack.png). A pose whose art file is missing falls back to <id>_attack.png. Claude makes the art for new entries.",
+ "enemies": {
+  "clothespin_crusher": {
+   "attack": {
+    "name": "Clamp Crush",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/clothespin_crusher_attack.png"
+   },
+   "skill": {
+    "name": "Pin Guard",
+    "covers": [
+     "block",
+     "snip_block"
+    ],
+    "art": "res://assets/paper/enemies/clothespin_crusher_skill.png"
+   }
+  },
+  "pincushion_hedgehog": {
+   "attack": {
+    "name": "Pin Burst",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/pincushion_hedgehog_attack.png"
+   },
+   "skill": {
+    "name": "Bristle Ball",
+    "covers": [
+     "block"
+    ],
+    "art": "res://assets/paper/enemies/pincushion_hedgehog_skill.png"
+   }
+  },
+  "thread_biter": {
+   "attack": {
+    "name": "Lint Spit",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/thread_biter_attack.png"
+   },
+   "skill": {
+    "name": "Fraying Coil",
+    "covers": [
+     "block",
+     "debuff"
+    ],
+    "art": "res://assets/paper/enemies/thread_biter_skill.png"
+   }
+  },
+  "zipper_hauler": {
+   "attack": {
+    "name": "Zipper Lash",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/zipper_hauler_attack.png"
+   },
+   "skill": {
+    "name": "Haul",
+    "covers": [
+     "debuff",
+     "shove"
+    ],
+    "art": "res://assets/paper/enemies/zipper_hauler_skill.png"
+   }
+  },
+  "zipper_snake": {
+   "attack": {
+    "name": "Zip Fang",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/zipper_snake_attack.png"
+   },
+   "skill": {
+    "name": "Tail Shove",
+    "covers": [
+     "shove"
+    ],
+    "art": "res://assets/paper/enemies/zipper_snake_skill.png"
+   }
+  },
+  "ragling_guard": {
+   "attack": {
+    "name": "Needle Jab",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/ragling_guard_attack.png"
+   },
+   "skill": {
+    "name": "Shield Wall",
+    "covers": [
+     "block",
+     "shove"
+    ],
+    "art": "res://assets/paper/enemies/ragling_guard_skill.png"
+   }
+  },
+  "moth_swarm_broodling": {
+   "attack": {
+    "name": "Swarm Dive",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/moth_swarm_broodling_attack.png"
+   }
+  },
+  "patchwork_behemoth": {
+   "skill": {
+    "name": "Lint Belch",
+    "covers": [
+     "block",
+     "debuff"
+    ],
+    "art": "res://assets/paper/boss/patchwork_behemoth_skill.png"
+   }
+  },
+  "sewing_machine_colossus": {
+   "skill": {
+    "name": "Thread Snare",
+    "covers": [
+     "block",
+     "debuff"
+    ],
+    "art": "res://assets/paper/enemies/sewing_machine_colossus_skill.png"
+   }
+  },
+  "needle_marshal": {
+   "skill": {
+    "name": "Rally Whistle",
+    "covers": [
+     "buff",
+     "shove"
+    ],
+    "art": "res://assets/paper/enemies/needle_marshal_skill.png"
+   }
+  },
+  "spool_hexer": {
+   "skill": {
+    "name": "Unravel Curse",
+    "covers": [
+     "debuff"
+    ],
+    "art": "res://assets/paper/enemies/spool_hexer_skill.png"
+   }
+  },
+  "scissor_bailiff": {
+   "skill": {
+    "name": "Cut Loose",
+    "covers": [
+     "debuff",
+     "snip_block"
+    ],
+    "art": "res://assets/paper/enemies/scissor_bailiff_skill.png"
+   }
+  },
+  "fray_scavenger": {
+   "skill": {
+    "name": "Rag Cloak",
+    "covers": [
+     "block",
+     "debuff"
+    ],
+    "art": "res://assets/paper/enemies/fray_scavenger_skill.png"
+   }
+  },
+  "button_guard": {
+   "skill": {
+    "name": "Shield Shove",
+    "covers": [
+     "block",
+     "debuff",
+     "shove"
+    ],
+    "art": "res://assets/paper/enemies/button_guard_skill.png"
+   }
+  },
+  "spool_stalker": {
+   "skill": {
+    "name": "Spool Brace",
+    "covers": [
+     "block",
+     "buff",
+     "debuff"
+    ],
+    "art": "res://assets/paper/enemies/spool_stalker_skill.png"
+   }
+  },
+  "seam_ripper": {
+   "skill": {
+    "name": "Whet",
+    "covers": [
+     "block",
+     "buff",
+     "debuff"
+    ],
+    "art": "res://assets/paper/enemies/seam_ripper_skill.png"
+   }
+  },
+  "felt_bulwark": {
+   "skill": {
+    "name": "Thicken",
+    "covers": [
+     "block",
+     "buff"
+    ],
+    "art": "res://assets/paper/enemies/felt_bulwark_skill.png"
+   }
+  },
+  "moth_scribe": {
+   "skill": {
+    "name": "Dust Scrawl",
+    "covers": [
+     "block",
+     "debuff"
+    ],
+    "art": "res://assets/paper/enemies/moth_scribe_skill.png"
+   }
+  },
+  "pin_skitter": {
+   "skill": {
+    "name": "Skitter Curl",
+    "covers": [
+     "block",
+     "shove"
+    ],
+    "art": "res://assets/paper/enemies/pin_skitter_skill.png"
+   }
+  },
+  "scissor_crab": {
+   "skill": {
+    "name": "Snip",
+    "covers": [
+     "snip_block"
+    ],
+    "art": "res://assets/paper/enemies/scissor_crab_skill.png"
+   }
+  },
+  "thimble_beetle": {
+   "skill": {
+    "name": "Shell Up",
+    "covers": [
+     "block"
+    ],
+    "art": "res://assets/paper/enemies/thimble_beetle_skill.png"
+   }
+  },
+  "moth_swarm": {
+   "skill": {
+    "name": "Dust Cloud",
+    "covers": [
+     "debuff",
+     "snip_block",
+     "summon"
+    ],
+    "art": "res://assets/paper/enemies/moth_swarm_skill.png"
+   }
+  },
+  "needle_wasp": {
+   "skill": {
+    "name": "Barbed Drop",
+    "covers": [
+     "debuff"
+    ],
+    "art": "res://assets/paper/enemies/needle_wasp_skill.png"
+   }
+  },
+  "shearwing_mantis": {
+   "skill": {
+    "name": "Blade Snip",
+    "covers": [
+     "snip_block"
+    ],
+    "art": "res://assets/paper/enemies/shearwing_mantis_skill.png"
+   }
+  },
+  "spoolback_hound": {
+   "skill": {
+    "name": "Shoulder Barge",
+    "covers": [
+     "shove"
+    ],
+    "art": "res://assets/paper/enemies/spoolback_hound_skill.png"
+   }
+  },
+  "inkbrush_imp": {
+   "skill": {
+    "name": "Ink Blot",
+    "covers": [
+     "debuff"
+    ],
+    "art": "res://assets/paper/enemies/inkbrush_imp_skill.png"
+   }
+  },
+  "spindle_ram": {
+   "skill": {
+    "name": "Brace",
+    "covers": [
+     "block",
+     "shove"
+    ],
+    "art": "res://assets/paper/enemies/spindle_ram_skill.png"
+   }
+  },
+  "razor_ribbon_wraith": {
+   "skill": {
+    "name": "Bleeding Ribbons",
+    "covers": [
+     "debuff"
+    ],
+    "art": "res://assets/paper/enemies/razor_ribbon_wraith_skill.png"
+   }
+  },
+  "crochet_hook_harrier": {
+   "skill": {
+    "name": "Snag and Yank",
+    "covers": [
+     "debuff",
+     "shove"
+    ],
+    "art": "res://assets/paper/enemies/crochet_hook_harrier_skill.png"
+   }
+  },
+  "thistle_patch_doll": {
+   "skill": {
+    "name": "Burr Shield",
+    "covers": [
+     "block"
+    ],
+    "art": "res://assets/paper/enemies/thistle_patch_doll_skill.png"
+   }
+  },
+  "bobbin_bat": {
+   "skill": {
+    "name": "Screech",
+    "covers": [
+     "block",
+     "debuff"
+    ],
+    "art": "res://assets/paper/enemies/bobbin_bat_skill.png"
+   }
+  },
+  "quilt_termite": {
+   "skill": {
+    "name": "Sawdust Spit",
+    "covers": [
+     "block",
+     "debuff"
+    ],
+    "art": "res://assets/paper/enemies/quilt_termite_skill.png"
+   }
+  }
+ },
+ "heroes": {
+  "seamstress": {
+   "guard": {
+    "name": "Thimble Ward",
+    "covers": [
+     "block"
+    ],
+    "art": "res://assets/paper/heroes/seamstress_guard.png"
+   },
+   "skill": {
+    "name": "Mending Stitch",
+    "covers": [
+     "skill"
+    ],
+    "art": "res://assets/paper/heroes/seamstress_skill.png"
+   }
+  },
+  "tinker": {
+   "guard": {
+    "name": "Cog Shield",
+    "covers": [
+     "block"
+    ],
+    "art": "res://assets/paper/heroes/tinker_guard.png"
+   },
+   "skill": {
+    "name": "Gadget Toss",
+    "covers": [
+     "skill"
+    ],
+    "art": "res://assets/paper/heroes/tinker_skill.png"
+   }
+  },
+  "warden": {
+   "guard": {
+    "name": "Shield Wall",
+    "covers": [
+     "block"
+    ],
+    "art": "res://assets/paper/heroes/warden_guard.png"
+   },
+   "skill": {
+    "name": "Rallying Cry",
+    "covers": [
+     "skill"
+    ],
+    "art": "res://assets/paper/heroes/warden_skill.png"
+   }
+  },
+  "yarn_ranger": {
+   "guard": {
+    "name": "Duck and Cover",
+    "covers": [
+     "block"
+    ],
+    "art": "res://assets/paper/heroes/yarn_ranger_guard.png"
+   },
+   "skill": {
+    "name": "Volley",
+    "covers": [
+     "skill"
+    ],
+    "art": "res://assets/paper/heroes/yarn_ranger_skill.png"
+   }
+  },
+  "lantern_monk": {
+   "guard": {
+    "name": "Lantern Ward",
+    "covers": [
+     "block"
+    ],
+    "art": "res://assets/paper/heroes/lantern_monk_guard.png"
+   },
+   "skill": {
+    "name": "Blinding Flare",
+    "covers": [
+     "skill"
+    ],
+    "art": "res://assets/paper/heroes/lantern_monk_skill.png"
+   }
+  },
+  "scarecrow": {
+   "guard": {
+    "name": "Straw Stand",
+    "covers": [
+     "block"
+    ],
+    "art": "res://assets/paper/heroes/scarecrow_guard.png"
+   },
+   "skill": {
+    "name": "Crow Call",
+    "covers": [
+     "skill"
+    ],
+    "art": "res://assets/paper/heroes/scarecrow_skill.png"
+   }
+  },
+  "button_golem": {
+   "guard": {
+    "name": "Button Brace",
+    "covers": [
+     "block"
+    ],
+    "art": "res://assets/paper/heroes/button_golem_guard.png"
+   },
+   "skill": {
+    "name": "Ground Pound",
+    "covers": [
+     "skill"
+    ],
+    "art": "res://assets/paper/heroes/button_golem_skill.png"
+   }
+  },
+  "rag_duelist": {
+   "guard": {
+    "name": "Parry",
+    "covers": [
+     "block"
+    ],
+    "art": "res://assets/paper/heroes/rag_duelist_guard.png"
+   },
+   "skill": {
+    "name": "Feint",
+    "covers": [
+     "skill"
+    ],
+    "art": "res://assets/paper/heroes/rag_duelist_skill.png"
+   }
+  }
+ }
+}
