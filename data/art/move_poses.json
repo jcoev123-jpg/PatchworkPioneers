@@ -267,6 +267,13 @@
    }
   },
   "spool_hexer": {
+   "attack": {
+    "name": "Spool Lash",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spool_hexer_attack.png"
+   },
    "skill": {
     "name": "Unravel Curse",
     "covers": [
