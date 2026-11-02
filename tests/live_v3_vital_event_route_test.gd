@@ -253,6 +253,16 @@ func _later_wallet() -> void:
 		var path := _event_path(map, map.get_legal_choices(), 7)
 		if path.is_empty():
 			continue
+		# The fifth Event must be an ordinary wallet story: replay the real toll and
+		# single-draw oracle, and skip seeds whose draw reaches a dedicated-visit Event.
+		var toll := RunNeedleToll.new({"heroes": CombatParty.new(app._load_party_definitions()).get_heroes(),
+			"wallet": {"gold": 0, "scraps": 0}, "deck": app._load_starter_deck()}, rng)
+		if not toll.pay_toll("warden").ok:
+			continue
+		var pool: Array = _generic_route_ids()
+		pool.sort()
+		if pool[rng.randi_range(0, pool.size() - 1)] in ["frayed_debt_parcel", RunFatePinAuction.EVENT_ID]:
+			continue
 		var events: Array = []
 		var transit := {}
 		var treasures: Array = []

@@ -848,6 +848,7 @@ var _wallet_event_history: Array = []
 var _emberglass_gate: RunV3ServiceWaystationEventGate
 var _emberglass_campfire_auth: Array = []
 var _inkblack_unpicker_auth: Array = []
+var _threadmill_sewing_auth: Array = []
 var quiet_spool_panel: LiveEventChoicePanel
 var _quiet_spool_outcome: RunQuietSpoolOutcome
 var _quiet_spool_context: Array = []
@@ -3211,6 +3212,22 @@ func _inkblack_unpicker_active(id: String) -> bool:
 		and run_map.get_node(id).get("type") == "Event"
 
 
+## A claimed Threadmill borrow grants exactly one on-Event Sewing Circle, not a new node.
+func _threadmill_sewing_active(id: String) -> bool:
+	if _threadmill_sewing_auth.size() != 6 or run_map == null:
+		return false
+	var gate: RunV3ServiceWaystationEventGate = _threadmill_sewing_auth[5]
+	return gate != null and gate.is_claimed() \
+		and gate.get_event_id() == "v3_threadmill_sewing_circle" \
+		and gate.get_service_choice_id() == "borrow_spools" \
+		and gate.get_service_kind() == "SewingCircle" \
+		and _threadmill_sewing_auth.slice(0, 5) == [run_map,
+			run_map.get_generation_revision(), run_map.get_floors(),
+			run_map.get_route(), id] \
+		and run_map.get_current_node_id() == id \
+		and run_map.get_node(id).get("type") == "Event"
+
+
 func _can_choose_connected_route() -> bool:
 	if is_instance_valid(debt_booth_panel):
 		return false
@@ -3283,10 +3300,18 @@ func _can_choose_connected_route() -> bool:
 				and _unpicker_visits.get(current_id, []) == [run_map,
 					run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()] \
 				and is_instance_valid(unpicker_view) and not unpicker_view.visible
+		if _threadmill_sewing_active(current_id) or _sewing_visits.has(current_id):
+			return _sewing_closed and _sewing_original == _sewing_context() \
+				and _sewing_visits.get(current_id, []) == [run_map,
+					run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()] \
+				and is_instance_valid(sewing_view) and not sewing_view.visible
 		# A stale claim cannot bypass its own Event. A completed earlier
 		# Inkblack visit must not block subsequent ordinary Event receipts.
 		if not _inkblack_unpicker_auth.is_empty() and (_inkblack_unpicker_auth.size() != 6 \
 			or _inkblack_unpicker_auth[4] == current_id):
+			return false
+		if not _threadmill_sewing_auth.is_empty() and (_threadmill_sewing_auth.size() != 6 \
+			or _threadmill_sewing_auth[4] == current_id):
 			return false
 		return _placeholder_map != null and _placeholder_map.get_ref() == run_map \
 			and not _placeholder_route.is_empty() and run_map.get_route() == _placeholder_route
@@ -3761,7 +3786,7 @@ func _load_wallet_event_catalog() -> Dictionary:
 	if not waystations.is_catalog_valid():
 		return {}
 	for service_id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench",
-			"v3_inkblack_unpicker_van"]:
+			"v3_inkblack_unpicker_van", "v3_threadmill_sewing_circle"]:
 		var service_record := waystations.get_event_record(service_id)
 		if service_record.is_empty() or seen.has(service_id) \
 			or not RunEventChoice.new(service_record).is_valid():
@@ -4242,7 +4267,7 @@ func _open_wallet_event(id: String, source: WeakRef) -> bool:
 		return _open_fate_pin_auction(id, source, staged_rng)
 	var emberglass_gate: RunV3ServiceWaystationEventGate = null
 	if record.id in ["v3_emberglass_campfire", "v3_briar_button_mending_bench",
-			"v3_inkblack_unpicker_van"]:
+			"v3_inkblack_unpicker_van", "v3_threadmill_sewing_circle"]:
 		var waystations := RunV3ServiceWaystationEventGate.new()
 		emberglass_gate = waystations.open_visit(record)
 		if emberglass_gate == null or not emberglass_gate.is_valid() \
@@ -4303,10 +4328,12 @@ func _commit_wallet_event(receipt: Dictionary, panel, source: WeakRef) -> void:
 		return
 	var paid_emberglass := false
 	var paid_inkblack := false
+	var paid_threadmill := false
 	var pending_visit: RunCampfireVisit = null
 	var pending_unpicker: RunUnpickerVisit = null
+	var pending_sewing: RunSewingCircleVisit = null
 	if _wallet_event_record.get("id") in ["v3_emberglass_campfire", "v3_briar_button_mending_bench",
-			"v3_inkblack_unpicker_van"]:
+			"v3_inkblack_unpicker_van", "v3_threadmill_sewing_circle"]:
 		if _emberglass_gate == null or not _emberglass_gate.is_valid() \
 			or _emberglass_gate.get_event() != _wallet_event_record:
 			return
@@ -4315,9 +4342,13 @@ func _commit_wallet_event(receipt: Dictionary, panel, source: WeakRef) -> void:
 		paid_inkblack = _emberglass_gate.get_event_id() == "v3_inkblack_unpicker_van" \
 			and receipt.get("choice_id") == "hire_unpicker" \
 			and _emberglass_gate.get_service_kind() == "Unpicker"
+		paid_threadmill = _emberglass_gate.get_event_id() == "v3_threadmill_sewing_circle" \
+			and receipt.get("choice_id") == "borrow_spools" \
+			and _emberglass_gate.get_service_kind() == "SewingCircle"
 		if paid_inkblack:
 			# Preflight every live ledger using the *post-hire* wallet before the debit.
-			if not _inkblack_unpicker_auth.is_empty() or not _emberglass_campfire_auth.is_empty():
+			if not _inkblack_unpicker_auth.is_empty() or not _emberglass_campfire_auth.is_empty() \
+				or not _threadmill_sewing_auth.is_empty():
 				return
 			pending_unpicker = _preflight_unpicker_visit(run_map.get_current_node_id(),
 				expected.wallet.gold)
@@ -4328,17 +4359,26 @@ func _commit_wallet_event(receipt: Dictionary, panel, source: WeakRef) -> void:
 			# Preflight a real Campfire before spending either canonical price.
 			var carry := party_carryover as RunTornCarryover
 			if carry == null or carry._observer() == null or carry.read_state().heroes != run_heroes \
-				or not _emberglass_campfire_auth.is_empty():
+				or not _emberglass_campfire_auth.is_empty() or not _inkblack_unpicker_auth.is_empty() \
+				or not _threadmill_sewing_auth.is_empty():
 				return
 			pending_visit = RunCampfireVisit.new(run_map.get_current_node_id(), run_heroes)
 			if not pending_visit.read_state().ok:
+				return
+		if paid_threadmill:
+			if not _threadmill_sewing_auth.is_empty() or not _inkblack_unpicker_auth.is_empty() \
+				or not _emberglass_campfire_auth.is_empty():
+				return
+			pending_sewing = _preflight_sewing_visit(run_map.get_current_node_id())
+			if pending_sewing == null:
 				return
 		var service := _emberglass_gate.choose_with_wallet(receipt.get("choice_id"),
 			{"gold": session_gold, "scraps": run_scraps})
 		if not service.get("ok", false) or service.event_id != expected.event_id \
 			or service.choice_id != expected.choice_id or service.wallet != expected.wallet \
 			or service.service_request != ({"stop_type": "Campfire"} if paid_emberglass else \
-				({"stop_type": "Unpicker"} if paid_inkblack else {})):
+				({"stop_type": "Unpicker"} if paid_inkblack else \
+				({"stop_type": "SewingCircle"} if paid_threadmill else {}))):
 			return
 		if paid_emberglass:
 			_emberglass_campfire_auth = [run_map, run_map.get_generation_revision(),
@@ -4348,9 +4388,13 @@ func _commit_wallet_event(receipt: Dictionary, panel, source: WeakRef) -> void:
 			_inkblack_unpicker_auth = [run_map, run_map.get_generation_revision(),
 				run_map.get_floors(), run_map.get_route(), run_map.get_current_node_id(),
 				_emberglass_gate]
+		if paid_threadmill:
+			_threadmill_sewing_auth = [run_map, run_map.get_generation_revision(),
+				run_map.get_floors(), run_map.get_route(), run_map.get_current_node_id(),
+				_emberglass_gate]
 	session_gold = expected.wallet.gold
 	run_scraps = expected.wallet.scraps
-	if paid_inkblack:
+	if paid_inkblack or paid_threadmill:
 		# The paid visit and any bound wardrobe must see one coherent wallet.
 		_sync_bound_wardrobe(party_carryover as RunTornCarryover)
 	_placeholder_map = source
@@ -4360,6 +4404,8 @@ func _commit_wallet_event(receipt: Dictionary, panel, source: WeakRef) -> void:
 		_mount_campfire_visit(pending_visit)
 	elif paid_inkblack:
 		_mount_unpicker_visit(pending_unpicker)
+	elif paid_threadmill:
+		_mount_sewing_visit(pending_sewing)
 	else:
 		_present_connected_route(source)
 
@@ -5632,6 +5678,53 @@ func _sewing_context() -> Dictionary:
 		"descriptors": run_stitch_descriptors.duplicate(true), "cursor": run_next_stitch_id}
 
 
+## Event service preflight is a read-only check of the live run's actual deck,
+## stitch allocator, scraps and carryover/wardrobe identity.
+func _preflight_sewing_visit(id: String) -> RunSewingCircleVisit:
+	if run_map == null or run_map.get_current_node_id() != id or run_rng == null \
+		or run_map.get_node(id).get("type") != "Event" \
+		or (is_instance_valid(sewing_view) and not _sewing_closed):
+		return null
+	var carry := party_carryover as RunTornCarryover
+	if carry == null or carry._observer() == null or carry.read_state().heroes != run_heroes:
+		return null
+	if carry._wardrobe != null:
+		var state := carry._wardrobe.get_snapshot()
+		if not carry._wardrobe.is_valid() or state.heroes != run_heroes or state.cards != run_deck \
+			or state.owned != run_trinkets or state.scraps != run_scraps or state.gold != session_gold \
+			or state.seed != run_seed or state.rest_id != "" \
+			or not carry.can_bind_wardrobe(carry._wardrobe, carry.torn, state):
+			return null
+	var canonical := RunRestCardUpgrade.list_authored_choices(run_deck, run_stitch_descriptors, run_next_stitch_id)
+	if not canonical.ok or not RunRestStitchCards.new(run_deck, run_stitch_descriptors,
+			run_scraps, run_next_stitch_id).is_valid():
+		return null
+	var visit := RunSewingCircleVisit.new(id, run_deck, run_stitch_descriptors,
+		run_scraps, run_next_stitch_id)
+	return visit if visit.is_valid() else null
+
+
+func _mount_sewing_visit(visit: RunSewingCircleVisit) -> void:
+	if visit == null or not visit.is_valid():
+		return
+	if is_instance_valid(sewing_view):
+		remove_child(sewing_view)
+		sewing_view.queue_free()
+	_sewing_closed = false
+	sewing_visit = visit
+	_sewing_source = visit.read_state()
+	sewing_view = LiveSewingCirclePanel.new()
+	sewing_view.name = "SewingCircle"
+	sewing_view.position = Vector2(170, 50)
+	sewing_view.bind(visit)
+	add_child(sewing_view)
+	sewing_upgrade_button = sewing_view.upgrade_button
+	sewing_stitch_button = sewing_view.stitch_button
+	sewing_leave_button = sewing_view.leave_button
+	_sewing_original = _sewing_context()
+	sewing_view.intent_requested.connect(_sewing_intent.bind(sewing_view, visit))
+
+
 func _choose_sewing_route(id: String, source: WeakRef, prior: Array[String], button) -> bool:
 	if not _can_choose_connected_route() or source == null or source.get_ref() != run_map \
 		or not is_instance_valid(route_view) or not route_view.is_visible_in_tree() \
@@ -5660,22 +5753,7 @@ func _choose_sewing_route(id: String, source: WeakRef, prior: Array[String], but
 	if not visit.is_valid() or not run_map.choose_node(id):
 		return false
 	_clear_route_view()
-	if is_instance_valid(sewing_view):
-		remove_child(sewing_view)
-		sewing_view.queue_free()
-	_sewing_closed = false
-	sewing_visit = visit
-	_sewing_source = visit.read_state()
-	sewing_view = LiveSewingCirclePanel.new()
-	sewing_view.name = "SewingCircle"
-	sewing_view.position = Vector2(170, 50)
-	sewing_view.bind(visit)
-	add_child(sewing_view)
-	sewing_upgrade_button = sewing_view.upgrade_button
-	sewing_stitch_button = sewing_view.stitch_button
-	sewing_leave_button = sewing_view.leave_button
-	_sewing_original = _sewing_context()
-	sewing_view.intent_requested.connect(_sewing_intent.bind(sewing_view, visit))
+	_mount_sewing_visit(visit)
 	return true
 
 
@@ -5688,7 +5766,8 @@ func _sewing_intent(intent: Dictionary, view, visit: RunSewingCircleVisit) -> vo
 		return
 	if _sewing_original != _sewing_context() \
 		or run_map.get_current_node_id() != _sewing_source.node_id \
-		or run_map.get_node(_sewing_source.node_id).get("type") != "SewingCircle" \
+		or (run_map.get_node(_sewing_source.node_id).get("type") != "SewingCircle" \
+			and not _threadmill_sewing_active(_sewing_source.node_id)) \
 		or intent.get("node_id") != _sewing_source.node_id \
 		or intent.get("visit_id") != _sewing_source.visit_id \
 		or intent.get("source_snapshot") != _sewing_source:
@@ -5738,6 +5817,7 @@ func _sewing_intent(intent: Dictionary, view, visit: RunSewingCircleVisit) -> vo
 	_sewing_visits[run_map.get_current_node_id()] = [run_map, run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()]
 	view.close()
 	_clear_visit_backdrop()
+	_threadmill_sewing_auth.clear()
 	_present_connected_route(weakref(run_map))
 
 
@@ -7875,6 +7955,7 @@ func _return_to_title() -> void:
 	_sewing_original.clear()
 	_sewing_visits.clear()
 	_sewing_closed = false
+	_threadmill_sewing_auth.clear()
 	# Only an uncommitted Base-launched opening returns to the village.
 	var restore_base: bool = _route_from_base and run_map != null \
 		and run_map.get_route().is_empty()
@@ -7911,6 +7992,7 @@ func _return_to_title() -> void:
 	_clear_wallet_event()
 	_emberglass_campfire_auth.clear()
 	_inkblack_unpicker_auth.clear()
+	_threadmill_sewing_auth.clear()
 	_wallet_event_history.clear()
 	_vital_event_history.clear()
 	_clear_rest_patch_overlay()
