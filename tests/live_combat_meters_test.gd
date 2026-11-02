@@ -2760,11 +2760,22 @@ func _four_enemy_stage(app, presenter) -> void:
 	for position in range(1, 5):
 		patterns.append({"enemy_position": position,
 			"pattern": [{"type": "block", "amount": 0}]})
-	var intents := CombatEnemyIntents.new(patterns)
-	_check(intents.bind_battle(roster, app.party, app.run_rng)
-		and intents.is_bound() and intents.get_intents().size() == 4,
-		"the genuine four-slot battle binds one authored announcement per enemy")
-	if not intents.is_bound():
+	# Find a reproducible run-RNG seed whose genuine weighted cache chooses
+	# the fourth catalog enemy's single attack, not a fabricated display intent.
+	var intents: CombatEnemyIntents
+	for trial in range(64):
+		app.run_rng.seed = 433700 + trial
+		var candidate := CombatEnemyIntents.new(patterns)
+		if candidate.bind_battle(roster, app.party, app.run_rng):
+			var announcement := candidate.get_intents()
+			if announcement.size() == 4 and announcement[3].get("type") == "attack":
+				intents = candidate
+				break
+	_check(intents != null and intents.is_bound() and intents.get_intents().size() == 4
+		and intents.get_intents()[3]["enemy_position"] == 4
+		and intents.get_intents()[3]["amount"] == 5,
+		"genuine four-slot weighted cache contains fourth catalog foe's actual five-damage hit")
+	if intents == null:
 		return
 	var result := CombatBattleResult.new(app.party, roster)
 	var unravel := CombatUnravel.new()
@@ -2816,6 +2827,18 @@ func _four_enemy_stage(app, presenter) -> void:
 		and fourth["hp"] == definitions[3]["max_hp"]
 		and fourth["statuses"] == {"bleed": 2, "weak": 1},
 		"authoritative fourth-slot snapshot incorporates valid damage and statuses")
+	_check(app.party.gain_block(3, 3), "real third hero owns three absorbable Block")
+	app.party._heroes[2]["statuses"] = {"exposed": 2}
+	var four_hit := _forecast(app)
+	var no_fourth: Array = intents.get_intents()
+	no_fourth[3] = {"enemy_position": 4, "type": "block", "amount": 0}
+	var without_fourth := CombatIncomingAttackPreview.new().forecast(
+		app.party.get_heroes(), roster.get_enemies(), no_fourth, true)
+	_check(four_hit["ok"] and without_fourth["ok"]
+		and four_hit["heroes"].size() == 3
+		and four_hit["heroes"][2]["incoming"] > without_fourth["heroes"][2]["incoming"]
+		and four_hit["heroes"][2]["block_absorbed"] + four_hit["heroes"][2]["hp_lost"] > 0,
+		"living fourth attacker adds real status-adjusted damage to Tinker's authenticated forecast")
 	var before := _state(app)
 	var unravel_before: Dictionary = unravel._gauges.duplicate(true)
 	_check(unravel_before.size() == 4 and unravel.get_snapshot(4)["gauge"] == 3
@@ -2833,6 +2856,24 @@ func _four_enemy_stage(app, presenter) -> void:
 	await _frames()
 	_visible(app)
 	_assert_ribbon(app, _meters(app)[6], fourth, "enemy", _forecast(app))
+	var shown_four := _forecast(app)
+	_check(shown_four == four_hit and shown_four["ok"],
+		"live meter reads the same authenticated four-source combat forecast")
+	for hero_index in range(3):
+		_assert_next_hit(_meters(app)[hero_index], app.party.get_hero(hero_index + 1),
+			"hero", shown_four)
+	var next_hit := _meters(app)[2].get_node("Padding/Content/LossRow/NextHit") as Button
+	_check(next_hit.visible and next_hit.text.contains("Lost ")
+		and _incoming(app, 3) != "Incoming: unavailable"
+		and next_hit.tooltip_text.contains("Incoming: "),
+		"fourth foe's real damage appears on the existing Tinker Next Hit ticket")
+	for refresh in range(3):
+		stage._sync_battle()
+		presenter._sync_battle()
+		await _frames()
+		_check(_forecast(app) == shown_four and next_hit.visible
+			and next_hit.text.contains("Lost "),
+			"repeated live four-foe refresh preserves the displayed forecast and ticket")
 	var chips := _visible_buttons(_meters(app)[6])
 	_check(chips.size() == 2 and chips[0].text == "Bleed 2" and chips[1].text == "Weak 1"
 		and chips[0].tooltip_text == _expected_chip_tooltip(fourth, "enemy", _forecast(app), "Bleed 2")

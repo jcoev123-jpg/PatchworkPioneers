@@ -161,6 +161,7 @@ func _run() -> void:
 	]:
 		_reject(heroes, roster, bad, "bad intent " + str(bad))
 	_mixed_cases()
+	_four_foe_cases()
 
 
 func _load_actors(path: String) -> Array:
@@ -557,3 +558,128 @@ func _mixed_cases() -> void:
 		{"type": "block", "enemy_position": 1, "amount": 1, "target_position": 1},
 	]:
 		_reject_mixed(party, enemies, [bad, _beat(2, 1)], "malformed mixed action " + str(bad))
+
+## Real run-catalog four-slot authority, not a fifth actor jammed into a
+## legacy three-slot fixture. The committed phase, not a second arithmetic
+## oracle, supplies the exact HP/Block proof.
+func _four_foe_cases() -> void:
+	var catalog: Array = RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var ids := ["fray_scavenger", "button_guard", "spool_stalker", "seam_ripper"]
+	var definitions: Array = []
+	for id in ids:
+		for candidate in catalog:
+			if candidate is Dictionary and candidate.get("id") == id:
+				definitions.append(candidate.duplicate(true))
+				break
+	_check(definitions.size() == 4, "four original, distinct run-catalog enemy records exist")
+	if definitions.size() != 4:
+		return
+	var party := _party()
+	var enemies := CombatEnemies.new(definitions, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(party.is_valid() and enemies.is_valid() and enemies.get_capacity() == 4
+		and enemies.get_enemies().size() == 4 and enemies.get_enemy(4)["id"] == ids[3],
+		"real four-capacity enemy authority has a living fourth combat source")
+	_check(party.gain_block(3, 3) and party.get_hero(3)["block"] == 3,
+		"real third hero begins with absorbable Block")
+	party._heroes[2]["statuses"] = {"exposed": 2}
+	enemies._enemies[3]["statuses"] = {"weak": 1}
+	# The fourth authentic source targets the lowest-HP living hero (Tinker).
+	var actions: Array = [_block(1, 2), _block(2, 0), _block(3, 0), _attack(4, 8, 3)]
+	var heroes := party.get_heroes()
+	var roster := enemies.get_enemies()
+	var pristine := [heroes.duplicate(true), roster.duplicate(true), actions.duplicate(true)]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 433224
+	var rng_before := rng.state
+	seed(433225)
+	var global_expected := randi()
+	seed(433225)
+	var forecast := helper.forecast(heroes, roster, actions, true)
+	_check(forecast.get("ok", false) and forecast["heroes"].size() == 3,
+		"complete four-slot single-hit/Block announcements forecast every fixed hero")
+	for repeat in range(3):
+		_check(helper.forecast(heroes, roster, actions, true) == forecast,
+			"four-slot projected phase repeats exactly without RNG draws")
+	_check([heroes, roster, actions] == pristine and party.get_heroes() == heroes
+		and enemies.get_enemies() == roster and rng.state == rng_before
+		and randi() == global_expected,
+		"four-slot forecast never edits caller actors, intents or either RNG")
+	if not forecast.get("ok", false):
+		return
+	var third: Dictionary = forecast["heroes"][2]
+	_check(third["incoming"] == 9 and third["block_absorbed"] == 3
+		and third["hp_lost"] == 6 and third["hp_remaining"] == 20
+		and third["block_remaining"] == 0,
+		"fourth source's Weak and hero Exposed multiply once, then three Block absorb")
+	for index in range(2):
+		_check(forecast["heroes"][index]["incoming"] == 0
+			and forecast["heroes"][index]["hp_lost"] == 0,
+			"enemy Block beats do not become phantom incoming hero damage")
+	var tick := CombatStatusTurnBatch.new().tick_side("heroes", party.get_heroes())
+	_check(tick["ok"] and CombatStatusTurnBatch.new().tick_side(
+		"enemies", enemies.get_enemies(), enemies.get_capacity())["ok"],
+		"actual four-slot pre-phase status validation accepts all four records")
+	if not tick["ok"]:
+		return
+	party._heroes.assign(tick["actors"].duplicate(true))
+	var phase := CombatEnemyPhase.new().execute_phase(party, enemies, actions, null, true)
+	_check(phase["ok"] and phase["events"].size() == 4
+		and phase["events"][3].get("enemy_position") == 4
+		and phase["events"][3].get("applied", false),
+		"committed real phase executes fourth-slot single hit, not an inert preview")
+	if phase["ok"]:
+		for index in range(3):
+			var result: Dictionary = forecast["heroes"][index]
+			var actual := party.get_hero(index + 1)
+			_check(result["hp_remaining"] == actual["hp"]
+				and result["block_remaining"] == actual["block"],
+				"committed four-foe phase matches detached hero HP/Block %d" % (index + 1))
+	# Fail-closed batches must not publish even a zero-damage invented ticket.
+	_reject(heroes, roster, actions.slice(0, 3), "four foes with missing fourth beat")
+	var duplicate := actions.duplicate(true)
+	duplicate[1]["enemy_position"] = 4
+	_reject(heroes, roster, duplicate, "four foes with duplicate source four")
+	var out_of_range := actions.duplicate(true)
+	out_of_range[3]["enemy_position"] = 5
+	_reject(heroes, roster, out_of_range, "fifth source on four-foe roster")
+	var fifth := roster.duplicate(true)
+	var extra: Dictionary = definitions[0].duplicate(true)
+	extra["id"] = "extra_catalog_witness"
+	extra["position"] = 5
+	extra["hp"] = extra["max_hp"]
+	extra["block"] = 0
+	fifth.append(extra)
+	_reject(heroes, fifth, actions + [_block(5, 1)], "five foes cannot opt in")
+	var malformed := roster.duplicate(true)
+	malformed[3]["statuses"] = {"weak": -1}
+	_reject(heroes, malformed, actions, "invalid fourth-slot status")
+	var unexecutable := actions.duplicate(true)
+	unexecutable[3] = {"type": "shove", "amount": 0,
+		"enemy_position": 4, "target_position": 3, "direction": 1}
+	_reject(heroes, roster, unexecutable, "fourth-slot off-edge shove")
+	var multi := actions.duplicate(true)
+	multi[3]["hits"] = 2
+	_reject(heroes, roster, multi, "multi-hit fourth-slot cannot be modeled as one hit")
+	var spawn := actions.duplicate(true)
+	spawn[3] = {"type": "summon", "amount": 0, "enemy_position": 4}
+	_reject(heroes, roster, spawn, "fourth-slot summon cannot be predicted")
+	var blinded := roster.duplicate(true)
+	blinded[3]["statuses"] = {"blind_next_attack": 1}
+	_reject(heroes, blinded, actions, "Blind attack cannot be forecast as a hit")
+	for complex_id in ["shearwing_mantis", "spoolback_hound", "spindle_ram"]:
+		var complex_roster := roster.duplicate(true)
+		for record in catalog:
+			if record is Dictionary and record.get("id") == complex_id:
+				var fourth: Dictionary = record.duplicate(true)
+				fourth["position"] = 4
+				fourth["hp"] = fourth["max_hp"]
+				fourth["block"] = 0
+				if complex_id == "spoolback_hound":
+					fourth["enrage_stacks"] = 2
+				complex_roster[3] = fourth
+				break
+		_check(complex_roster[3]["id"] == complex_id,
+			"genuine complex enemy %s supplies fourth-slot precondition" % complex_id)
+		_reject(heroes, complex_roster, actions,
+			"complex fourth-slot attack %s cannot produce misleading damage" % complex_id)

@@ -11,11 +11,13 @@ const MAX_INT := 9223372036854775807
 func forecast(heroes: Array, enemies: Array, intents: Array,
 		policy_targets := false) -> Dictionary:
 	var invalid := {"ok": false, "heroes": []}
-	if heroes.size() != CombatParty.PARTY_SIZE or enemies.is_empty() or enemies.size() > 3 or intents.size() != enemies.size():
+	if heroes.size() != CombatParty.PARTY_SIZE or enemies.is_empty() \
+			or enemies.size() > CombatEnemies.OPT_IN_MAX_ENEMIES or intents.size() != enemies.size():
 		return invalid
+	var capacity := CombatEnemies.OPT_IN_MAX_ENEMIES if enemies.size() == CombatEnemies.OPT_IN_MAX_ENEMIES else CombatEnemies.MAX_ENEMIES
 	var batch := CombatStatusTurnBatch.new()
 	var tick := batch.tick_side("heroes", heroes)
-	if not tick["ok"] or not batch.tick_side("enemies", enemies)["ok"]:
+	if not tick["ok"] or not batch.tick_side("enemies", enemies, capacity)["ok"]:
 		return invalid
 	for index in range(heroes.size()):
 		if not _valid_actor(heroes[index], index + 1):
@@ -24,17 +26,47 @@ func forecast(heroes: Array, enemies: Array, intents: Array,
 		if not _valid_actor(enemies[index], index + 1):
 			return invalid
 	var ordered := _validated_actions(enemies.size(), intents)
-	if ordered.is_empty():
+	if ordered.is_empty() or not _supported_actions(enemies, ordered, tick["actors"]):
 		return invalid
 	# The committed phase is the sole authority on whether the complete roster
 	# is legal, including effects that depend on an earlier source.
 	if not CombatEnemyPhase.new().execute_phase(_detached_party(tick["actors"]),
-			_detached_enemies(enemies), ordered, null, policy_targets)["ok"]:
+			_detached_enemies(enemies, capacity), ordered, null, policy_targets)["ok"]:
 		return invalid
 	# A shove changes positions, so every total follows the original actor id:
 	# the returned rows stay on each actor's currently presented slot.
-	return _simulate(_detached_party(tick["actors"]), _detached_enemies(enemies), ordered,
+	return _simulate(_detached_party(tick["actors"]), _detached_enemies(enemies, capacity), ordered,
 		heroes, policy_targets)
+
+
+## Some real phase beats carry extra effects that this detached damage-only
+## replay does not reproduce. Never turn an accepted complex phase into a
+## plausible but false numerical ticket.
+func _supported_actions(roster: Array, ordered: Array[Dictionary], heroes: Array) -> bool:
+	for action in ordered:
+		var kind: String = action["type"]
+		if kind == "summon" or kind == "snip_block" or action.has("hits"):
+			return false
+		var actor: Dictionary = roster[action["enemy_position"] - 1]
+		var charge: Variant = actor.get(CombatEnemyIntents.CHARGE_FLAG, false)
+		if charge is bool and charge:
+			return false
+		if kind == "attack" and actor["hp"] > 0:
+			for flag in [CombatEnemyPhase.CHEW_BLOCK_ON_ATTACK_FIELD,
+					CombatEnemyPhase.DRAIN_FIELD, CombatEnemyPhase.BLEED_ON_ATTACK_FIELD,
+					CombatEnemyPhase.ENRAGE_FIELD]:
+				var value: Variant = actor.get(flag, false)
+				if value is bool and value:
+					return false
+			var blind: Variant = actor.get("statuses", {}).get("blind_next_attack", 0)
+			if blind is int and blind == 1:
+				return false
+			# Riposte can kill a source between beats; this replay only accounts
+			# for hero damage, not the retaliatory enemy death and its later skips.
+			for hero in heroes:
+				if hero.get("statuses", {}).get("riposte", 0) > 0:
+					return false
+	return true
 
 
 ## The caller's schedule must be complete: exactly one announcement per source.
@@ -88,7 +120,7 @@ func _simulate(party: CombatParty, enemies: CombatEnemies,
 				var attack: Dictionary = effective.duplicate(true)
 				attack.erase("type")
 				attack.amount = damage
-				var hit := CombatEnemyAttacks.new().execute_attacks(party, [attack])
+				var hit := CombatEnemyAttacks.new().execute_attacks(party, [attack], enemies.get_capacity())
 				if not hit["ok"]:
 					return invalid
 				if hit["events"][0]["applied"]:
@@ -142,8 +174,8 @@ func _detached_party(actors: Array) -> CombatParty:
 	return party
 
 
-func _detached_enemies(roster: Array) -> CombatEnemies:
-	var enemies := CombatEnemies.new(roster)
+func _detached_enemies(roster: Array, capacity: int) -> CombatEnemies:
+	var enemies := CombatEnemies.new(roster, capacity)
 	enemies._enemies.assign(roster.duplicate(true))
 	return enemies
 
