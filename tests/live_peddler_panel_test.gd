@@ -201,9 +201,11 @@ func _run() -> void:
 	var expected_run := rng.state
 
 	await _layout(visit)
+	await _portrait_missing_and_rebind_case(visit)
 	_long_rule_case()
 	_sold_card_projection_case(visit)
 	await _preview_cases()
+	await _portrait_click_case()
 	for index in range(3):
 		await _buy_case(index, "card", index % 2 == 0)
 	await _buy_case(0, "trinket", true)
@@ -293,7 +295,7 @@ func _fits(button: Button) -> bool:
 	if size_px < 18:
 		return false
 	var lines := button.text.split("\n")
-	var allowance := button.size.x - (32.0 if panel.card_buttons.has(button) else 16.0)
+	var allowance := panel._card_text_width(button) if panel.card_buttons.has(button) else button.size.x - 16.0
 	for line in lines:
 		if line.is_empty() or font.get_string_size(line,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, size_px).x > allowance:
@@ -350,6 +352,20 @@ func _check_card_row(index: int, offer: Dictionary, context: String) -> void:
 			and (effect == full or (effect.ends_with(LivePeddlerPanel.ELLIPSIS)
 			and effect.contains(first_word))) ,
 			label + ": measured row exposes real energy and recognisable authored mechanic")
+	# A priced condition remains visible when its whole qualifier can fit
+	# beside the shortened mechanic; the tooltip still holds the full rule.
+	var font := button.get_theme_font("font")
+	var px := button.get_theme_font_size("font_size")
+	var rule_budget := panel._card_text_width(button) - panel._row_width(font, energy, px)
+	for marker in [" if ", " when ", " while ", " after ", " unless ", " per "]:
+		var split := full.find(marker)
+		if split > 0:
+			var qualifier := full.substr(split)
+			if panel._row_width(font, qualifier, px) + panel._row_width(
+					font, LivePeddlerPanel.ELLIPSIS, px) < rule_budget:
+				_check(effect.ends_with(qualifier),
+						label + ": fitted rule keeps its meaningful authored condition")
+			break
 	_check(button.tooltip_text.contains(str(offer["id"]))
 			and button.tooltip_text.contains("%d energy" % int(definition["cost"]))
 			and button.tooltip_text.contains(full)
@@ -358,6 +374,134 @@ func _check_card_row(index: int, offer: Dictionary, context: String) -> void:
 	_check(_fits(button) and button.size == LivePeddlerPanel.CARD_TICKET_SIZE
 			and button.get_theme_font_size("font_size") >= 18,
 			label + ": both lines fit the actual compact ticket font geometry")
+
+
+## The actual three source-bound card Buttons, not detached picture buttons,
+## carry one input-inert, unfocusable authored owner image each.
+func _check_offer_portrait(index: int, offer: Dictionary, context: String) -> void:
+	var button := panel.card_buttons[index]
+	var owner := str(offer["owner"])
+	var path := str(LivePeddlerPanel.HERO_PORTRAITS.get(owner, ""))
+	var images := button.find_children("HeroPortrait", "TextureRect", false, false)
+	var portrait := button.get_node_or_null("HeroPortrait") as TextureRect
+	var label := context + " card " + str(index)
+	_check(not path.is_empty() and ResourceLoader.exists(path, "Texture2D"),
+			label + ": offered canonical owner has a shipped imported portrait")
+	_check(images.size() == 1 and portrait != null and portrait.get_parent() == button,
+			label + ": actual buy Button owns exactly one persistent portrait")
+	if portrait == null:
+		return
+	_check(portrait.visible and portrait.texture != null
+			and portrait.get_meta("art_path") == path
+			and portrait.texture.resource_path == path,
+			label + ": portrait is imported from the authenticated offer owner")
+	_check(portrait.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and portrait.focus_mode == Control.FOCUS_NONE
+			and portrait.expand_mode == TextureRect.EXPAND_IGNORE_SIZE
+			and portrait.stretch_mode == TextureRect.STRETCH_KEEP_ASPECT_CENTERED,
+			label + ": illustration never intercepts mouse or keyboard focus and fits without stretch")
+	_check(button.position == Vector2(39, 142 + 88 * index)
+			and button.size == LivePeddlerPanel.CARD_TICKET_SIZE
+			and button.focus_mode == Control.FOCUS_ALL
+			and Rect2(Vector2.ZERO, button.size).encloses(Rect2(portrait.position, portrait.size))
+			and portrait.position.x + portrait.size.x < LivePeddlerPanel.CARD_PORTRAIT_TEXT_LEFT,
+			label + ": original fixed input rectangle and stitched edge remain clear")
+	var face := button.get_theme_stylebox("normal") as StyleBoxFlat
+	var inset_ok := face != null 			and face.get_content_margin(SIDE_LEFT) == LivePeddlerPanel.CARD_PORTRAIT_TEXT_LEFT
+	for state in ["hover", "pressed", "disabled"]:
+		var other := button.get_theme_stylebox(state) as StyleBoxFlat
+		inset_ok = inset_ok and other != null 				and other.get_content_margin(SIDE_LEFT) == LivePeddlerPanel.CARD_PORTRAIT_TEXT_LEFT
+	_check(inset_ok and button.alignment == HORIZONTAL_ALIGNMENT_LEFT
+			and _fits(button), label + ": all states reserve a measured text pocket with 18px+ rows")
+
+
+## Missing imports must not leave a blank reserved gutter, obscure captions,
+## duplicate portraits, change source state or replace any purchase control.
+func _portrait_missing_and_rebind_case(visit: RunPeddlerVisit) -> void:
+	var prior := visit.read_state()
+	_check(visit.is_open() and _offer_owners(prior) == PARTY,
+			"portrait fallback starts with an authentic seeded three-owner visit")
+	var portraits: Array = []
+	for button in panel.card_buttons:
+		portraits.append(button.get_node("HeroPortrait"))
+	var missing_owner := str(prior["stock"]["cards"][0]["owner"])
+	var real_path := str(panel._portrait_paths[missing_owner])
+	panel._portrait_paths[missing_owner] = "res://assets/paper/heroes/missing_peddler_offer_art.png"
+	_check(not ResourceLoader.exists(panel._portrait_paths[missing_owner], "Texture2D"),
+			"art-less seam points at a genuinely missing import")
+	panel._refresh()
+	var button := panel.card_buttons[0]
+	var image := button.get_node("HeroPortrait") as TextureRect
+	var face := button.get_theme_stylebox("normal") as StyleBoxFlat
+	_check(not image.visible and image.texture == null and image.get_meta("art_path") == ""
+			and face.get_content_margin(SIDE_LEFT) == 8.0
+			and panel._card_text_width(button) > LivePeddlerPanel.TICKET_WIDTH - LivePeddlerPanel.CARD_PORTRAIT_TEXT_LEFT - LivePeddlerPanel.CARD_TEXT_RIGHT,
+			"missing image restores the wider text-first caption, not an empty portrait pocket")
+	_check_card_row(0, prior["stock"]["cards"][0], "portrait-less fallback")
+	_check(button.size == LivePeddlerPanel.CARD_TICKET_SIZE and not button.disabled
+			and button.get_theme_stylebox("focus") != null,
+			"portrait-less real card retains its fixed, usable focusable Button")
+	_check(visit.read_state() == prior and intents.is_empty(),
+			"simulated missing import neither spends nor emits a purchase intent")
+	panel._portrait_paths[missing_owner] = real_path
+	panel._refresh()
+	for index in range(3):
+		var offered: Dictionary = prior["stock"]["cards"][index]
+		_check(panel.card_buttons[index].get_node("HeroPortrait") == portraits[index],
+				"repeated same-visit refresh retains the sole existing image child")
+		_check_offer_portrait(index, offered, "recovered import")
+	await _bind(_visit(GOLD, "peddler_portrait_renewed"))
+	var renewed := panel._source.duplicate(true)
+	_check(renewed.get("status") == "open", "portrait rebind is another real open visit")
+	for index in range(3):
+		_check(panel.card_buttons[index].get_node("HeroPortrait") == portraits[index]
+				and panel.card_buttons[index].find_children("HeroPortrait", "TextureRect", false, false).size() == 1,
+				"fresh authenticated visit reuses its existing portrait child")
+		_check_offer_portrait(index, renewed["stock"]["cards"][index], "renewed visit")
+	_check(intents.is_empty() and visit.read_state() == prior,
+			"rebind of a portrait never submits or mutates the earlier visit")
+	await _bind(visit)
+
+
+## A physical click in the image area must be handled by the SAME authentic
+## card Button exactly once; only the controller is allowed to spend gold.
+func _portrait_click_case() -> void:
+	var visit := _visit(GOLD, "peddler_portrait_click")
+	var prior := visit.read_state()
+	_check(visit.is_open(), "portrait click starts with a genuine funded visit")
+	await _bind(visit)
+	var button := panel.card_buttons[0]
+	var portrait := button.get_node("HeroPortrait") as TextureRect
+	_check_offer_portrait(0, prior["stock"]["cards"][0], "picture-area hit")
+	var target := portrait.get_global_rect().get_center()
+	_check(button.get_global_rect().has_point(target),
+			"physical portrait center remains inside the original card Button")
+	var motion := InputEventMouseMotion.new()
+	motion.position = target
+	root.push_input(motion)
+	await process_frame
+	_check(intents.is_empty() and visit.read_state() == prior,
+			"pointer movement across authored art cannot emit an intent or spend")
+	for down in [true, false]:
+		var click := InputEventMouseButton.new()
+		click.button_index = MOUSE_BUTTON_LEFT
+		click.position = target
+		click.pressed = down
+		root.push_input(click)
+		await process_frame
+	await _frames()
+	_check(intents.size() == 1 and visit.read_state() == prior,
+			"picture-area click emits a single intent without charging the wallet")
+	if intents.size() == 1:
+		var offer: Dictionary = prior["stock"]["cards"][0]
+		_check(intents[0] == {
+			"node_id": prior["node_id"], "kind": "card", "id": offer["id"],
+			"expected_state": prior["state"], "expected_stock": prior["stock"],
+		}, "picture-area hit forwards exactly the original authenticated card request")
+		var receipt := Controller.settle(visit, intents[0], prior)
+		_check(receipt.get("ok") == true and receipt["price"] == offer["price"]
+				and receipt["state"]["gold"] == GOLD - int(offer["price"]),
+				"picture-area request settles once at the unmodified authored price")
 
 
 ## Exercise the bounded rule formatter with the longest genuinely authored
@@ -402,6 +546,13 @@ func _sold_card_projection_case(visit: RunPeddlerVisit) -> void:
 			sold_caption.split("\n")[0].ends_with("  ·  SOLD") and
 			sold_caption.contains(" energy"),
 			"an explicitly sold card still presents its original priced energy/rule row")
+	var font := button.get_theme_font("font")
+	var px := button.get_theme_font_size("font_size")
+	var sold_lines := sold_caption.split("\n")
+	_check(font != null and sold_lines.size() == 2
+			and panel._row_width(font, sold_lines[0], px) <= panel._card_text_width(button)
+			and panel._row_width(font, sold_lines[1], px) <= panel._card_text_width(button),
+			"priced SOLD caption remains inside the portrait-adjusted two-line text interior")
 	_check(not panel._source_current() and visit.read_state() == original,
 			"a forged SOLD projection cannot become an authenticated live offer")
 	panel._source = original
@@ -470,6 +621,7 @@ func _layout(visit: RunPeddlerVisit) -> void:
 				"funded card row is actionable and source-tagged")
 		_check(_fits(button) and button.get_theme_stylebox("focus") != null,
 				"card row text fits its sewn button and has a focus ring")
+		_check_offer_portrait(index, offer, "mounted main")
 		var face := button.get_theme_stylebox("normal") as StyleBoxFlat
 		var edge := button.get_node_or_null("FabricEdging") as Panel
 		_check(face != null and face.bg_color.a == 1.0
@@ -480,6 +632,9 @@ func _layout(visit: RunPeddlerVisit) -> void:
 				and edge != null and edge.mouse_filter == Control.MOUSE_FILTER_IGNORE
 				and edge.get_theme_stylebox("panel") is StyleBoxTexture,
 				"opaque, clearly bordered card fabric uses imported sewn-button edge")
+	_check(panel.patch_button.get_node_or_null("HeroPortrait") == null
+			and panel.leave_button.get_node_or_null("HeroPortrait") == null,
+			"patch and Leave remain original text-only actions without hero art")
 	var patch_button := panel.patch_button
 	var patch_offer: Dictionary = open["stock"]["trinkets"][0]
 	_check(screen.encloses(patch_button.get_global_rect())
@@ -709,6 +864,7 @@ func _assert_card_previews(context: String, before: Dictionary) -> void:
 		var offer: Dictionary = before["stock"]["cards"][index]
 		var definition := _authored_definition(offer)
 		_check_card_row(index, offer, context + " pre-hover")
+		_check_offer_portrait(index, offer, context + " portrait")
 		await _hover_card(index)
 		_check_preview(index, offer, definition, context + " hover card " + str(index))
 		_check(intents.is_empty() and panel._source_current(),
@@ -1297,6 +1453,8 @@ func _affordability_cases() -> void:
 	for index in range(buttons.size()):
 		var button: Button = buttons[index]
 		var price := int(offers[index]["price"])
+		if index < 3:
+			_check_offer_portrait(index, offers[index], "unaffordable source")
 		_check(button.disabled and button.text.contains("short " + str(price)),
 				"unaffordable " + str(offers[index]["id"]) + " is disabled with its exact shortfall")
 		button.pressed.emit()

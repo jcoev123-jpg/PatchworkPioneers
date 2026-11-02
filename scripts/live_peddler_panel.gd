@@ -91,6 +91,23 @@ const STATUS_WIDTH := 822.0
 ## quotes at 1280x720.
 const TICKET_WIDTH := 640.0
 const CARD_TICKET_SIZE := Vector2(TICKET_WIDTH, 78)
+## Each card keeps its 640x78 interactive rectangle. The portrait lives
+## entirely inside a small fixed pocket, clear of the stitched ticket edge.
+const CARD_PORTRAIT_POSITION := Vector2(16, 11)
+const CARD_PORTRAIT_SIZE := Vector2(60, 56)
+const CARD_PORTRAIT_TEXT_LEFT := 94.0
+const CARD_TEXT_RIGHT := 16.0
+## Explicitly authored hero images; no art is inferred from card IDs or order.
+const HERO_PORTRAITS := {
+	"warden": "res://assets/paper/heroes/warden.png",
+	"seamstress": "res://assets/paper/heroes/seamstress.png",
+	"tinker": "res://assets/paper/heroes/tinker.png",
+	"lantern_monk": "res://assets/paper/heroes/lantern_monk.png",
+	"rag_duelist": "res://assets/paper/heroes/rag_duelist.png",
+	"scarecrow": "res://assets/paper/heroes/scarecrow.png",
+	"yarn_ranger": "res://assets/paper/heroes/yarn_ranger.png",
+	"button_golem": "res://assets/paper/heroes/button_golem.png",
+}
 const PATCH_TICKET_SIZE := Vector2(TICKET_WIDTH, 78)
 const LEAVE_TICKET_SIZE := Vector2(TICKET_WIDTH, 58)
 ## The illustrated market column the compact tickets must leave visible on
@@ -154,6 +171,10 @@ var _preview_index := -1 # Card row whose read-only preview fills the status ban
 var _hover_index := -1 # Card row under the pointer; -1 when no card is hovered.
 var _patch_hover_active := false # Whether the patch button is under the pointer.
 var _catalogs: Array = [] # Read-only authored catalogs for the preview, built once.
+## Private lookup can point at a missing art path in headless regressions;
+## the canonical table above is the only source of normal portrait paths.
+var _portrait_paths: Dictionary = HERO_PORTRAITS.duplicate()
+var _portrait_textures: Dictionary = {} # Successful imports cached by path.
 var _patch_projection: Dictionary = {} # Cached audited patch slots/previews, built once.
 ## The authored market image as one input-inert decorative layer UNDER the
 ## fixed sewn outline, priced tickets, status labels and any route-added
@@ -205,7 +226,9 @@ func _ready() -> void:
 	wallet_label = _label("", Vector2(39, 68), Vector2(822, 32), 22, CREAM)
 	status_label = _label("", Vector2(39, 102), Vector2(822, 30), 18, CREAM)
 	for i in range(CARD_COUNT):
-		card_buttons.append(_button("", Vector2(39, 142 + i * 88), CARD_TICKET_SIZE, CARD_FABRIC, 20))
+		var card := _button("", Vector2(39, 142 + i * 88), CARD_TICKET_SIZE, CARD_FABRIC, 20)
+		_install_card_portrait(card)
+		card_buttons.append(card)
 	patch_button = _button("", Vector2(39, 406), PATCH_TICKET_SIZE, PATCH_FABRIC, 20)
 	leave_button = _button(LEAVE_TEXT, Vector2(39, 498), LEAVE_TICKET_SIZE, EXIT_FABRIC, 24)
 	_wire_previews()
@@ -374,6 +397,57 @@ func _button(value: String, at: Vector2, extent: Vector2, fill: Color, font_size
 			edging.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	button.add_child(SewnBorder.new())
 	return button
+
+
+## The portrait is merely part of the existing clickable card surface.
+## One instance per card for its entire lifetime; never a proxy Button.
+func _install_card_portrait(button: Button) -> void:
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	var portrait := TextureRect.new()
+	portrait.name = "HeroPortrait"
+	portrait.position = CARD_PORTRAIT_POSITION
+	portrait.size = CARD_PORTRAIT_SIZE
+	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	portrait.focus_mode = Control.FOCUS_NONE
+	portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	portrait.set_meta("art_path", "")
+	button.add_child(portrait)
+
+
+func _owner_portrait_texture(owner: String) -> Texture2D:
+	var path := str(_portrait_paths.get(owner, ""))
+	if path.is_empty() or not ResourceLoader.exists(path, "Texture2D"):
+		return null
+	if _portrait_textures.has(path):
+		return _portrait_textures[path] as Texture2D
+	var image := ResourceLoader.load(path) as Texture2D
+	if image != null:
+		_portrait_textures[path] = image
+	return image
+
+
+## A failed import restores the full text-first interior (no empty pocket).
+## All button states share the same inset, including disabled and focus.
+func _bind_card_portrait(index: int, owner: String) -> void:
+	var button := card_buttons[index]
+	var portrait := button.get_node("HeroPortrait") as TextureRect
+	var image := _owner_portrait_texture(owner) if not owner.is_empty() else null
+	portrait.texture = image
+	portrait.visible = image != null
+	portrait.set_meta("art_path", str(_portrait_paths.get(owner, "")) if image != null else "")
+	var left := CARD_PORTRAIT_TEXT_LEFT if image != null else 8.0
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		var face := button.get_theme_stylebox(state) as StyleBoxFlat
+		if face != null:
+			face.set_content_margin(SIDE_LEFT, left)
+
+
+## Available button text interior, including the portrait pocket and right
+## sewn inset. The very same budget is used to measure both authored lines.
+func _card_text_width(button: Button) -> float:
+	var face := button.get_theme_stylebox("normal")
+	return maxf(0.0, button.size.x - face.get_content_margin(SIDE_LEFT) - CARD_TEXT_RIGHT)
 
 
 ## The one animated decoration this panel ever shows: the already-authored
@@ -657,7 +731,7 @@ func _card_caption(index: int) -> String:
 	var button := card_buttons[index]
 	var font := button.get_theme_font("font")
 	var px := button.get_theme_font_size("font_size")
-	var width := maxf(0.0, button.size.x - 32.0)
+	var width := _card_text_width(button)
 	var prefix := "%s  ·  %s  ·  " % [ACTION_KEY_LABELS[index],
 			str(offer["owner"]).capitalize()]
 	var suffix := "  ·  %d gold" % int(offer["price"])
@@ -1199,6 +1273,9 @@ func _refresh() -> void:
 	status_label.text = STATUS_OPEN if open else STATUS_CLOSED
 	for i in range(CARD_COUNT):
 		var button := card_buttons[i]
+		# Bind only from the immutable authenticated offer owner, never from
+		# card name, row index, hover/focus or a sampled replacement.
+		_bind_card_portrait(i, str(_offer(i)["owner"]) if open else "")
 		button.text = _card_caption(i) if open else ""
 		button.disabled = true if not open else not _card_buyable(i)
 		button.set_meta("offer_kind", CARD_KIND if open else "")
@@ -1210,6 +1287,11 @@ func _refresh() -> void:
 		button.add_theme_stylebox_override("normal", _style(
 				CARD_FABRIC if open else Color("#dad1c5"),
 				OXBLOOD if open and not button.disabled else DIM))
+		# The normal style is replaced above; preserve its matching text
+		# pocket instead of letting refresh reset only this state's inset.
+		var face := button.get_theme_stylebox("normal") as StyleBoxFlat
+		face.set_content_margin(SIDE_LEFT,
+				CARD_PORTRAIT_TEXT_LEFT if button.get_node("HeroPortrait").visible else 8.0)
 		if open:
 			_attach(button, _request_buy.bind(i, false, button, _epoch, _visit))
 	patch_button.text = _patch_caption() if open else ""
