@@ -103,7 +103,6 @@ func _test_thread_lash_phase() -> void:
 						and result.events[0].actual_target_position == target
 						and result.events[0].redirected == guarded, "truthful keyed reaction event")
 	# A valid earlier theft/Block must never publish on any later forged pair.
-	scavenger.intent.actions.append({"type": "steal_gold", "amount": 2, "weight": 1})
 	for source in [1, 2]:
 		for amount in [5, 6, 7]:
 			if source == 2 and amount == 6:
@@ -197,8 +196,6 @@ func _gold_fight(source: int = 1, count: int = 3) -> Dictionary:
 		if not by_id.has(id):
 			return {}
 		var record: Dictionary = by_id[id].duplicate(true)
-		if position == source:
-			record.intent.actions.append({"type": "steal_gold", "amount": 2, "weight": 2})
 		records.append(record)
 		definitions.append({"enemy_position": position, "pattern": [{"type": "block", "amount": 1}]})
 	var enemies := CombatEnemies.new(records, 4 if count == 4 else 3)

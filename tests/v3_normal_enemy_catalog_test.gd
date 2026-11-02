@@ -87,7 +87,8 @@ func _old_expected() -> Dictionary:
 			"intent": {"target": "lowest_living_hp", "actions": [
 				{"type": "attack", "amount": 5, "weight": 3},
 				{"type": "block", "amount": 2, "weight": 2},
-				{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1}]}},
+				{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
+				{"type": "steal_gold", "amount": 2, "weight": 1}]}},
 		"button_guard": {"id": "button_guard", "name": "Button Guard", "max_hp": 16, "art_path": "res://assets/paper/enemies/button_guard.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "attack", "amount": 5, "weight": 3},

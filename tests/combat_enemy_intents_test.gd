@@ -75,7 +75,6 @@ func _scavenger_gold_record() -> Dictionary:
 	for record in catalog:
 		if record.get("id") == "fray_scavenger":
 			var copy: Dictionary = record.duplicate(true)
-			copy.intent.actions.append({"type": "steal_gold", "amount": 2, "weight": 2})
 			return copy
 	return {}
 
