@@ -75,6 +75,11 @@ const REQUIRED_EVENTS := {
 	},
 }
 
+const SEWING_CIRCLE_EVENT_IDS := [
+	"v3_threadmill_sewing_circle",
+	"v3_moonlace_darning_parlor",
+]
+
 const REQUIRED_EVENT_IDS := [
 	"v3_emberglass_campfire",
 	"v3_threadmill_sewing_circle",
@@ -279,6 +284,191 @@ func select_affordable_service_event(
 	return {
 		"ok": true,
 		"event": selected_record,
+	}
+
+
+## Picks one authenticated Sewing Circle waystation Event record from the catalog
+## using the caller's seeded RandomNumberGenerator, offering it only when the
+## paid service choice is affordable and can actually upgrade at least one canonical
+## card OR stitch a legal cross-owner pair from the caller's deck after paying the entry fee.
+##
+## Evaluates genuine paid service affordability via RunEventChoice.preview_wallet_choices();
+## projects post-toll scraps and verifies legal actions with a throwaway RunSewingCircleVisit.
+## Never treats trade choices or Leave as proof of paid service usability.
+## Never mutates caller wallet, deck, descriptors, cursor or RNG on rejection.
+##
+## On success, sorts eligible authentic IDs lexicographically, consumes exactly one
+## randi_range draw, and returns {"ok": true, "event": deep_detached_record}.
+## On refusal or invalid input, returns {"ok": false, "event": {}} with zero RNG draws.
+func select_actionable_sewing_event(
+	rng: Variant,
+	excluded_ids: Variant = null,
+	wallet: Variant = null,
+	deck_or_snapshot: Variant = null,
+	descriptors: Variant = null,
+	next_stitch_id: Variant = null
+) -> Dictionary:
+	if not (rng is RandomNumberGenerator):
+		return _selection_rejection()
+	if not _catalog_valid:
+		return _selection_rejection()
+	var parsed_exclusions: Dictionary = _parse_exclusions(excluded_ids)
+	if not parsed_exclusions.get("ok", false):
+		return _selection_rejection()
+	var excluded: Dictionary = parsed_exclusions["ids"]
+	var parsed_wallet: Dictionary = _parse_wallet(wallet)
+	if not parsed_wallet.get("ok", false):
+		return _selection_rejection()
+	var base_wallet: Dictionary = parsed_wallet["wallet"]
+	var parsed_deck: Dictionary = _parse_deck_snapshot(deck_or_snapshot, descriptors, next_stitch_id)
+	if not parsed_deck.get("ok", false):
+		return _selection_rejection()
+	var deck: Array = parsed_deck["deck"]
+	var registry: Dictionary = parsed_deck["descriptors"]
+	var cursor: int = parsed_deck["next_stitch_id"]
+
+	var eligible: Array = []
+	for record: Dictionary in _catalog_events:
+		var event_id: String = String(record.get("id", ""))
+		if not SEWING_CIRCLE_EVENT_IDS.has(event_id):
+			continue
+		if excluded.has(event_id):
+			continue
+		var rec_kind: String = String(record.get("service_kind", ""))
+		if rec_kind != "SewingCircle":
+			continue
+		var service_choice_id: String = String(record.get("service_choice_id", ""))
+		if service_choice_id.is_empty():
+			continue
+		var selector := RunEventChoice.new(record)
+		if not selector.is_valid():
+			continue
+		var preview: Dictionary = selector.preview_wallet_choices(base_wallet)
+		if not preview.get("ok", false):
+			continue
+		var choices_preview: Variant = preview.get("choices")
+		if not (choices_preview is Array):
+			continue
+		var paid_choice_preview: Dictionary = {}
+		for item_raw: Variant in (choices_preview as Array):
+			if item_raw is Dictionary and String((item_raw as Dictionary).get("choice_id", "")) == service_choice_id:
+				paid_choice_preview = item_raw
+				break
+		if paid_choice_preview.is_empty():
+			continue
+		if paid_choice_preview.get("affordable", false) != true:
+			continue
+		var post_toll_wallet_raw: Variant = paid_choice_preview.get("wallet")
+		if typeof(post_toll_wallet_raw) != TYPE_DICTIONARY:
+			continue
+		var post_toll_wallet: Dictionary = post_toll_wallet_raw
+		var post_toll_scraps: Variant = post_toll_wallet.get("scraps")
+		if typeof(post_toll_scraps) != TYPE_INT or post_toll_scraps < 0:
+			continue
+
+		var visit := RunSewingCircleVisit.new(
+			event_id,
+			deck.duplicate(true),
+			registry.duplicate(true),
+			int(post_toll_scraps),
+			cursor
+		)
+		if not visit.is_valid():
+			continue
+		var quote: Dictionary = visit.quote()
+		if not quote.get("ok", false):
+			continue
+		var offered_choices: Variant = quote.get("choices")
+		if not (offered_choices is Array):
+			continue
+		var has_action := false
+		for ch_name: Variant in (offered_choices as Array):
+			if String(ch_name) == "upgrade" or String(ch_name) == "stitch":
+				has_action = true
+				break
+		if not has_action:
+			continue
+		eligible.append(event_id)
+
+	if eligible.is_empty():
+		return _selection_rejection()
+	eligible.sort()
+	var generator: RandomNumberGenerator = rng
+	var picked_id: String = eligible[generator.randi_range(0, eligible.size() - 1)]
+	if not _catalog_by_id.has(picked_id):
+		return _selection_rejection()
+	var selected_record: Dictionary = (_catalog_by_id[picked_id] as Dictionary).duplicate(true)
+	return {
+		"ok": true,
+		"event": selected_record,
+	}
+
+
+static func _parse_deck_snapshot(
+	deck_or_snapshot: Variant,
+	descriptors_arg: Variant,
+	next_stitch_id_arg: Variant
+) -> Dictionary:
+	var deck: Variant = null
+	var descriptors: Variant = null
+	var next_stitch_id: Variant = null
+
+	if deck_or_snapshot is Dictionary:
+		var snap: Dictionary = deck_or_snapshot
+		if snap.has("deck"):
+			deck = snap["deck"]
+		elif snap.has("deck_ids"):
+			deck = snap["deck_ids"]
+		else:
+			return {"ok": false}
+
+		if snap.has("descriptors"):
+			descriptors = snap["descriptors"]
+		else:
+			return {"ok": false}
+
+		if snap.has("next_stitch_id"):
+			next_stitch_id = snap["next_stitch_id"]
+		elif snap.has("cursor"):
+			next_stitch_id = snap["cursor"]
+		elif descriptors_arg != null and typeof(descriptors_arg) == TYPE_INT:
+			next_stitch_id = descriptors_arg
+		else:
+			return {"ok": false}
+	elif deck_or_snapshot is Array:
+		deck = deck_or_snapshot
+		if descriptors_arg == null:
+			descriptors = {}
+		elif descriptors_arg is Dictionary:
+			descriptors = descriptors_arg
+		else:
+			return {"ok": false}
+
+		if next_stitch_id_arg == null:
+			next_stitch_id = 1
+		elif typeof(next_stitch_id_arg) == TYPE_INT:
+			next_stitch_id = next_stitch_id_arg
+		else:
+			return {"ok": false}
+	else:
+		return {"ok": false}
+
+	if typeof(deck) != TYPE_ARRAY or typeof(descriptors) != TYPE_DICTIONARY or typeof(next_stitch_id) != TYPE_INT:
+		return {"ok": false}
+
+	var cursor: int = next_stitch_id
+	if cursor < 1 or cursor >= RunRestStitchCards.MAX_INT:
+		return {"ok": false}
+
+	var validator := RunRestStitchCards.new(deck, descriptors, 0, cursor)
+	if not validator.is_valid():
+		return {"ok": false}
+
+	return {
+		"ok": true,
+		"deck": (deck as Array).duplicate(true),
+		"descriptors": (descriptors as Dictionary).duplicate(true),
+		"next_stitch_id": cursor,
 	}
 
 
