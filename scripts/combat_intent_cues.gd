@@ -8,7 +8,7 @@ func get_cues(selector: CombatEnemyIntents, roster: CombatEnemies) -> Array[Dict
 		return cues
 	var intents := selector.get_intents()
 	var enemies := roster.get_enemies()
-	if not CombatStatusTurnBatch.new().tick_side("enemies", enemies).ok:
+	if not CombatStatusTurnBatch.new().tick_side("enemies", enemies, roster.get_capacity()).ok:
 		return []
 	for index in range(intents.size()):
 		var intent: Dictionary = intents[index].duplicate(true)

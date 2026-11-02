@@ -5,6 +5,8 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_special_cues()
+	_test_four_bound_authored_cues()
+	_test_four_and_three_roster_validation()
 	_test_happy_path_first_turn()
 	_test_happy_path_after_advance()
 	_test_copy_isolation_and_repeat_calls()
@@ -512,3 +514,204 @@ func _test_special_cues() -> void:
 		_check(cues == [expected], "exact typed special cue fields")
 		cues[0].amount = 999
 		_check(CombatIntentCues.new().get_cues(selector, roster) == [expected], "special cue detached")
+
+
+## These are distinct authored weighted foes, not four synthetic pattern actions.
+## Read the source catalog by ID so unrelated catalog additions cannot change the fixture.
+func _four_authored_run_foes() -> Array:
+	var parsed: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	if not parsed is Array:
+		return []
+	var wanted := ["fray_scavenger", "button_guard", "spool_stalker", "seam_ripper"]
+	var by_id := {}
+	for record in parsed:
+		if record is Dictionary and record.get("id") in wanted:
+			by_id[record["id"]] = record.duplicate(true)
+	var result: Array = []
+	for id in wanted:
+		if not by_id.has(id):
+			return []
+		var actor: Dictionary = by_id[id]
+		actor["max_hp"] = int(actor["max_hp"])
+		result.append(actor)
+	return result
+
+
+func _bound_four_fixture(definitions: Array, capacity: int = 4) -> Dictionary:
+	var roster := CombatEnemies.new(definitions, capacity)
+	var party := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26}])
+	var legacy: Array = []
+	for position in range(1, definitions.size() + 1):
+		legacy.append({"enemy_position": position,
+			"pattern": [{"type": "block", "amount": 1}]})
+	var selector := CombatEnemyIntents.new(legacy)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4342026
+	var bound := roster.is_valid() and party.is_valid() and selector.is_valid() \
+		and selector.bind_battle(roster, party, rng)
+	return {"roster": roster, "party": party, "selector": selector, "rng": rng,
+		"bound": bound}
+
+
+## Convert the actual cached announcements into their public presentation contract.
+## This is an oracle over the genuine scheduler, not a second RNG choice.
+func _cues_from_cached(cached: Array[Dictionary], enemies: Array,
+		omitted: int = 0) -> Array[Dictionary]:
+	var expected: Array[Dictionary] = []
+	for action in cached:
+		var position: int = action["enemy_position"]
+		if position == omitted:
+			continue
+		var cue: Dictionary = action.duplicate(true)
+		cue["enemy_id"] = enemies[position - 1]["id"]
+		cue["icon_key"] = cue["type"]
+		cue.erase("type")
+		expected.append(cue)
+	return expected
+
+
+func _test_four_bound_authored_cues() -> void:
+	var definitions := _four_authored_run_foes()
+	_check(definitions.size() == 4, "AC1 precondition: four distinct authored run foes exist")
+	if definitions.size() != 4:
+		return
+	var f := _bound_four_fixture(definitions)
+	var roster: CombatEnemies = f["roster"]
+	var selector: CombatEnemyIntents = f["selector"]
+	var rng: RandomNumberGenerator = f["rng"]
+	_check(f["bound"] and selector.is_bound() and roster.get_capacity() == 4 \
+		and roster.get_enemies().size() == 4 and f["party"].get_heroes().size() == 3,
+		"AC1 precondition: genuine opted-in four-foe weighted schedule bound to real three-hero party")
+	if not f["bound"]:
+		return
+	for position in range(1, 5):
+		_check(not roster.is_slain(position) and roster.get_enemy(position).id == definitions[position - 1].id \
+			and definitions[position - 1]["intent"]["actions"].size() > 1,
+			"AC1 precondition: living source %d has its own authored weighted alternatives" % position)
+	# Nonzero defense and status make read-only roster verification meaningful.
+	_check(roster.gain_block(4, 7) and roster.apply_statuses({4: {"weak": 1}}),
+		"AC2 precondition: fourth foe owns Block and a persistent status")
+	var original_roster := _snapshot_roster(roster)
+	var original_selector := _snapshot_selector(selector)
+	var original_rng: int = rng.state
+	var cached: Array[Dictionary] = selector.get_intents()
+	_check(cached.size() == 4, "AC1 precondition: bound scheduler cached all four announcements")
+	if cached.size() != 4:
+		return
+	var expected := _cues_from_cached(cached, original_roster["enemies"])
+	var helper := CombatIntentCues.new()
+	var first := helper.get_cues(selector, roster)
+	_check(first == expected and first.size() == 4,
+		"AC1: public cues exactly match every cached weighted announcement, including slot four")
+	for position in range(1, 5):
+		var actual = _find_cue(first, position, definitions[position - 1]["id"])
+		var announcement: Dictionary = cached[position - 1]
+		_check(actual != null, "AC1: original source ID and position %d are preserved" % position)
+		if actual == null:
+			continue
+		_check(actual["icon_key"] == announcement["type"] \
+			and actual["amount"] == announcement["amount"] \
+			and actual.get("target_position") == announcement.get("target_position") \
+			and actual.has("target_position") == announcement.has("target_position"),
+			"AC1: source %d has authentic icon, amount, and target policy resolution" % position)
+	_assert_roster_snapshots_equal(original_roster, _snapshot_roster(roster), "AC1 four-foe query")
+	_assert_selector_snapshots_equal(original_selector, _snapshot_selector(selector), "AC1 four-foe query")
+	_check(rng.state == original_rng, "AC1: reading all four announcements draws no run RNG")
+
+	# A middle source is genuinely killed, without compacting the schedule.
+	_check(roster.apply_damage(2, roster.get_enemy(2)["max_hp"]) \
+		and roster.is_slain(2) and not roster.is_slain(4),
+		"AC2 precondition: middle foe slain while original fourth source lives")
+	var slain_roster := _snapshot_roster(roster)
+	var slain_selector := _snapshot_selector(selector)
+	var slain_rng: int = rng.state
+	var expected_survivors := _cues_from_cached(cached, slain_roster["enemies"], 2)
+	var surviving := helper.get_cues(selector, roster)
+	var repeated := helper.get_cues(selector, roster)
+	_check(surviving == expected_survivors and repeated == expected_survivors \
+		and surviving.size() == 3,
+		"AC2: repeated calls omit only slain middle source and retain cached fields")
+	_check(_find_cue(surviving, 2, definitions[1]["id"]) == null \
+		and _find_cue(surviving, 4, definitions[3]["id"]) != null \
+		and surviving.map(func(c: Dictionary): return c["enemy_position"]) == [1, 3, 4],
+		"AC2: positions and IDs remain [1,3,4] with the fourth foe uncompacted")
+	_assert_roster_snapshots_equal(slain_roster, _snapshot_roster(roster), "AC2 repeated read")
+	_assert_selector_snapshots_equal(slain_selector, _snapshot_selector(selector), "AC2 repeated read")
+	_check(rng.state == slain_rng, "AC2: repeated reads do not draw run RNG")
+
+	# Public deep copies, including source metadata, cannot poison later reads.
+	if surviving.size() == 3:
+		surviving[0]["amount"] = -999
+		surviving[0]["enemy_position"] = 99
+		surviving[2]["enemy_id"] = "forged"
+		surviving[2]["icon_key"] = "forged"
+		surviving.append({"invalid": true})
+	var after_edits := helper.get_cues(selector, roster)
+	_check(after_edits == expected_survivors and after_edits == repeated,
+		"AC2: caller edits cannot alter later cue values or surviving source identities")
+	_assert_roster_snapshots_equal(slain_roster, _snapshot_roster(roster), "AC2 returned-copy edits")
+	_assert_selector_snapshots_equal(slain_selector, _snapshot_selector(selector), "AC2 returned-copy edits")
+	_check(rng.state == slain_rng and selector.get_intents() == cached,
+		"AC2: edits preserve authoritative cached announcements and RNG state")
+
+
+func _test_four_and_three_roster_validation() -> void:
+	var definitions := _four_authored_run_foes()
+	_check(definitions.size() == 4, "AC3 precondition: authored negative/legacy rosters available")
+	if definitions.size() != 4:
+		return
+	var default_four := CombatEnemies.new(definitions)
+	var oversize := CombatEnemies.new(definitions + [definitions[0]], 4)
+	var valid_schedule: CombatEnemyIntents = _bound_four_fixture(definitions)["selector"]
+	_check(not default_four.is_valid() and not oversize.is_valid(),
+		"AC3: default three-slot capacity and explicit four-slot capacity both reject oversized rosters")
+	_check(CombatIntentCues.new().get_cues(valid_schedule, default_four).is_empty() \
+		and CombatIntentCues.new().get_cues(valid_schedule, oversize).is_empty(),
+		"AC3: neither rejected roster fabricates fourth-source cues")
+
+	# A four-capacity opt-in is not permission to bypass shape/status validation.
+	var malformed_roster := CombatEnemies.new(definitions, 4)
+	malformed_roster._enemies[3]["statuses"] = {"weak": -2}
+	var before := _snapshot_roster(malformed_roster)
+	var before_intents := _snapshot_selector(valid_schedule)
+	_check(CombatIntentCues.new().get_cues(valid_schedule, malformed_roster).is_empty(),
+		"AC3: malformed fourth actor status is rejected by full status validation")
+	_assert_roster_snapshots_equal(before, _snapshot_roster(malformed_roster), "AC3 malformed four-roster")
+	_assert_selector_snapshots_equal(before_intents, _snapshot_selector(valid_schedule),
+		"AC3 malformed four-roster selector")
+
+	var invalid_actions: Array = []
+	for position in range(1, 5):
+		invalid_actions.append({"enemy_position": position,
+			"pattern": [{"type": "block", "amount": 1}]})
+	invalid_actions[3]["pattern"][0]["target_position"] = 2
+	var malformed_selector := CombatEnemyIntents.new(invalid_actions)
+	var good_roster := CombatEnemies.new(definitions, 4)
+	var good_before := _snapshot_roster(good_roster)
+	_check(not malformed_selector.is_valid() \
+		and CombatIntentCues.new().get_cues(malformed_selector, good_roster).is_empty(),
+		"AC3: malformed slot-four action fails closed, no fabricated cue")
+	_assert_roster_snapshots_equal(good_before, _snapshot_roster(good_roster),
+		"AC3 malformed action")
+
+	# The ordinary three-source bound battle remains supported by default.
+	var three := _bound_four_fixture(definitions.slice(0, 3), CombatEnemies.MAX_ENEMIES)
+	var three_roster: CombatEnemies = three["roster"]
+	var three_selector: CombatEnemyIntents = three["selector"]
+	_check(three["bound"] and three_roster.get_capacity() == CombatEnemies.MAX_ENEMIES,
+		"AC3 precondition: standard three-foe seeded schedule binds without opt-in")
+	if not three["bound"]:
+		return
+	var three_before := _snapshot_roster(three_roster)
+	var three_cached := _snapshot_selector(three_selector)
+	var three_rng_state: int = three["rng"].state
+	_check(CombatIntentCues.new().get_cues(three_selector, three_roster) \
+		== _cues_from_cached(three_selector.get_intents(), three_roster.get_enemies()),
+		"AC3: default three-foe cues continue to match real cached intentions")
+	_assert_roster_snapshots_equal(three_before, _snapshot_roster(three_roster), "AC3 three-foe")
+	_assert_selector_snapshots_equal(three_cached, _snapshot_selector(three_selector), "AC3 three-foe")
+	_check(three["rng"].state == three_rng_state, "AC3: legacy capacity read draws no RNG")
