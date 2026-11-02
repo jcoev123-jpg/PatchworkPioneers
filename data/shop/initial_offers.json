@@ -61,7 +61,13 @@
     {"id": "lantern_monk_moth_shroud", "owner": "lantern_monk", "price": 65},
     {"id": "lantern_monk_snuff_flame", "owner": "lantern_monk", "price": 65},
     {"id": "lantern_monk_vigil_ring", "owner": "lantern_monk", "price": 65},
-    {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk", "price": 90}
+    {"id": "lantern_monk_moth_cloud", "owner": "lantern_monk", "price": 90},
+    {"id": "scarecrow_pitchfork_prick", "owner": "scarecrow", "price": 50},
+    {"id": "scarecrow_sack_grin", "owner": "scarecrow", "price": 50},
+    {"id": "scarecrow_straw_wrap", "owner": "scarecrow", "price": 50},
+    {"id": "scarecrow_crow_flock", "owner": "scarecrow", "price": 70},
+    {"id": "scarecrow_pitchfork_hook", "owner": "scarecrow", "price": 65},
+    {"id": "scarecrow_harvest_fright", "owner": "scarecrow", "price": 90}
   ],
   "trinkets": [
     {"id": "stitched_badge", "price": 100},
