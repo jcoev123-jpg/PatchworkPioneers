@@ -148,6 +148,8 @@ var _hero_fonts: Dictionary = {}
 var _puppets: Array[Control] = []
 var _intent_visible := true
 var _art_cache: Dictionary = {}
+## One lazy manifest reader for this mounted stage; refreshes only read receipts.
+var _move_catalog: LiveMovePoseCatalog
 var _backdrop_kind := ""
 var _backdrop_floor := STANDALONE_FLOOR
 var _backdrop_key := ""
@@ -1948,6 +1950,7 @@ func _sync_battle() -> void:
 			_bind_backdrop(app)
 		return
 	_clear()
+	_move_catalog = LiveMovePoseCatalog.new()
 	_battle = app.battle_view
 	_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 	enemies = app.enemies
@@ -2574,6 +2577,10 @@ func _refresh() -> void:
 					and CombatEnemies.authentic_broodling_mother(enemy, position)}
 		badge.show_intent(action, enemies.is_slain(position), pending, policy,
 			enrage_stacks, contact_traits, attack_blind, charge_context, summon_context)
+		if trusted_source and not pending and not app._battle_closed and _move_catalog != null:
+			var move := _move_catalog.lookup_enemy(enemy["id"], action,
+				String(art_paths(enemy["id"]).get("attack", "")))
+			badge.append_verified_move_name(String(move.get("name", "")))
 		# Only a live, source-owned, already-announced attack can preview an actual
 		# redirect. Keep the printed target, amount and policy ticket untouched.
 		if reactions != null and live_source and not pending and not badge.blind_miss and badge.charge_state != "wind_up" \
@@ -2859,6 +2866,7 @@ static func _load_art_texture(path: String) -> Texture2D:
 
 
 func _clear() -> void:
+	_move_catalog = null
 	if is_instance_valid(_battle) and _battle.tree_exiting.is_connected(_clear):
 		_battle.tree_exiting.disconnect(_clear)
 	# A closed or replaced battle never keeps a mounted actor mid-lunge or mid-shake.

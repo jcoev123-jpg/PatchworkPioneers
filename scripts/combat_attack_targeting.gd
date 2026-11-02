@@ -309,8 +309,9 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, c
 
 	# Scan slots in position order, never compacting slain or absent enemies.
 	# For enemy_all these are affected slots, not selectable target choices.
-	for position in range(1, CombatEnemies.MAX_ENEMIES + 1):
-		if not to_positions.has(position):
+	var all_bomb: bool = card_id == CombatAreaAttacks.SCRAP_BOMB_ID and target_kind == "enemy_all"
+	for position in range(1, enemies.get_enemies().size() + 1):
+		if not all_bomb and not to_positions.has(position):
 			continue
 		if enemies.get_enemy(position).is_empty() or enemies.is_slain(position):
 			continue

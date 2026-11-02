@@ -266,7 +266,9 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if not _valid_attacker_statuses(attacker_statuses):
 		return _failure()
 	for position in enemy_statuses_by_position:
-		if not position is int or position < 1 or position > CombatEnemies.MAX_ENEMIES:
+		var max_position := (enemies.get_enemies().size()
+			if card_id == CombatAreaAttacks.SCRAP_BOMB_ID else CombatEnemies.MAX_ENEMIES)
+		if not position is int or position < 1 or position > max_position:
 			return _failure()
 		if enemies.get_enemy(position).is_empty():
 			return _failure()

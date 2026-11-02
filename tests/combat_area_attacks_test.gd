@@ -8,6 +8,7 @@ var resolver := CombatAreaAttacks.new()
 
 
 func _initialize() -> void:
+	_test_four_enemies()
 	_test_catalog_and_real_fixture()
 	_test_one_enemy()
 	_test_three_enemies()
@@ -93,11 +94,11 @@ func _party(ids: Array[String] = ["warden", "seamstress", "tinker"]) -> CombatPa
 	return CombatParty.new(definitions)
 
 
-func _enemies(hit_points: Array[int]) -> CombatEnemies:
+func _enemies(hit_points: Array[int], capacity: int = CombatEnemies.MAX_ENEMIES) -> CombatEnemies:
 	var definitions: Array = []
 	for index in range(hit_points.size()):
 		definitions.append({"id": "enemy_%d" % index, "max_hp": hit_points[index]})
-	return CombatEnemies.new(definitions)
+	return CombatEnemies.new(definitions, capacity)
 
 
 func _deck(cards: Array[String], seed_value: int = 42) -> CombatDeck:
@@ -174,6 +175,36 @@ func _test_catalog_and_real_fixture() -> void:
 		and not enemies.is_victorious(), "positive fixture owns living Tinker and living real enemy")
 	_check(resolver.play_scrap_bomb(deck, party, enemies), "real starter fixture resolves correctly")
 	_check(catalog.get_definition(CARD_ID) == pristine, "playing never modifies the card catalog")
+
+
+func _test_four_enemies() -> void:
+	var replay: Array = []
+	for repetition in range(2):
+		var deck := _starter_deck()
+		var party := _party()
+		var enemies := _enemies([20, 20, 20, 20], CombatEnemies.OPT_IN_MAX_ENEMIES)
+		_check(enemies.is_valid() and enemies.get_enemies().size() == 4, "genuine opt-in roster")
+		_check(enemies.gain_block(4, 3), "fourth has Block")
+		var before := _snapshot(deck, party, enemies)
+		_check(resolver.play_scrap_bomb(deck, party, enemies), "standalone paid Bomb hits four")
+		var expected: Array = before.enemies.duplicate(true)
+		for actor in expected:
+			actor.hp -= 1 if actor.position == 4 else 4
+			actor.block = 0
+		_check(_snapshot(deck, party, enemies) == _played_snapshot(before, expected, false),
+			"fourth Block and all four damage with single payment/discard and unchanged RNG")
+		replay.append(_snapshot(deck, party, enemies))
+	_check(replay[0] == replay[1], "standalone seeded four-actor replay")
+	var dead := _enemies([20, 20, 20, 20], CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(dead.apply_damage(4, 999), "standalone slay fourth")
+	var slain := dead.get_enemy(4)
+	_check(resolver.play_scrap_bomb(_starter_deck(), _party(), dead)
+		and dead.get_enemy(4) == slain and dead.get_enemy(3).hp == 16,
+		"standalone omits slain fourth in original slot")
+	for field in ["position", "hp", "block", "statuses"]:
+		var bad := _enemies([20, 20, 20, 20], CombatEnemies.OPT_IN_MAX_ENEMIES)
+		bad._enemies[3][field] = {"exposed": -1} if field == "statuses" else -1
+		_reject(_starter_deck(), _party(), bad, "invalid fourth " + field)
 
 
 func _test_one_enemy() -> void:

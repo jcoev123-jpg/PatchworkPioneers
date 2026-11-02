@@ -245,8 +245,9 @@ func _test_camp_motion(fight: Dictionary, elite: Dictionary) -> void:
 	var authored_texture := camp.texture
 	camp.texture = null
 	_check(panel.open_rewards("motion_no_art", "Fight", fight["receipt"])
-		and panel.get_choice_buttons().size() == 4 and not panel.is_processing(),
-		"no-art fallback retains choices but does not animate")
+		and panel.get_choice_buttons().size() == 4
+		and panel.is_processing() == panel._card_motion_available(),
+		"missing camp texture keeps choices and only independently available card-art motion")
 	await _frames()
 	_check(camp.scale == Vector2.ONE and camp.position == Vector2.ZERO,
 		"missing texture remains untransformed")
@@ -2639,8 +2640,11 @@ func _test_illustration_source() -> void:
 		and art.contains("draw_colored_polygon(") and art.contains("draw_dashed_line("),
 		"fallback source draws wide owner felt, corner patches and sewn seams")
 	_check(art.contains("func _draw_contained_picture(")
-		and art.contains("draw_texture_rect(picture, target, false)"),
-		"emblem is drawn contained from its measured aspect rect, never tiled")
+		and art.contains("draw_texture_rect(picture, Rect2(target.position - size * 0.5, target.size), false)")
+		and art.contains("_paint_picture_transform()")
+		and art.contains("_end_picture_transform()")
+		and art.contains("clip_contents = true"),
+		"emblem is drawn contained, centred for clipped draw-only motion, never tiled")
 	var draw := art.substr(art.find("func _draw()"),
 		art.find("func _draw_cover_picture()") - art.find("func _draw()")).replace("\r\n", "\n")
 	_check(draw.contains("if is_card_art():\n\t\t\t\t_draw_cover_picture()")
@@ -2650,7 +2654,9 @@ func _test_illustration_source() -> void:
 		art.find("func _draw_contained_picture()") - art.find("func _draw_cover_picture()"))
 	_check(cover.contains("var target: Rect2 = picture_rect()")
 		and cover.contains("var source: Rect2 = picture_source_rect()")
-		and cover.contains("draw_texture_rect_region(picture, target, source)")
+		and cover.contains("draw_texture_rect_region(picture, Rect2(target.position - size * 0.5, target.size), source)")
+		and cover.contains("_paint_picture_transform()")
+		and cover.contains("_end_picture_transform()")
 		and not cover.contains("draw_texture_rect(picture"),
 		"authored art draws the measured source crop into the measured cover destination")
 	var felt := art.substr(art.find("func _draw_felt_fallback()"),

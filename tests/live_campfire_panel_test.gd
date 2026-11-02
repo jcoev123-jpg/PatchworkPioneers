@@ -418,6 +418,26 @@ func _rest_art_ambient() -> void:
 	var art: Texture2D = panel.rest_art_texture
 	_check(art != null and art.resource_path == "res://assets/paper/backgrounds/rest_camp.png",
 		"mounted panel loads the already-present authored rest art")
+	# AC1: the default loader reads the imported remap directly, with no raw
+	# source-file dependency, so a Web/PCK that ships only the imported
+	# texture still paints the authored backdrop.
+	var loaded: Texture2D = LiveCampfirePanel._load_rest_art()
+	_check(loaded != null and loaded.resource_path == "res://assets/paper/backgrounds/rest_camp.png"
+		and loaded.get_width() > 0 and loaded.get_height() > 0,
+		"default resource loader reads the imported remap as a genuine Texture2D")
+	_check(art != null and loaded == art,
+		"the direct default loader and the mounted backdrop share one cached texture")
+	# Normalize CRLF checkouts: source_code keeps the file's raw line endings.
+	var loader_source: String = panel.get_script().source_code.replace("\r\n", "\n")
+	var loader_start: int = loader_source.find("static func _load_rest_art")
+	var loader_body: String = loader_source.substr(loader_start,
+		loader_source.find("\n\n", loader_start) - loader_start)
+	_check(loader_start >= 0 and not loader_body.contains("FileAccess"),
+		"loader never requires raw source-file existence on the source PNG")
+	_check(loader_body.contains("ResourceLoader.exists")
+		and loader_body.contains("ResourceLoader.load")
+		and loader_body.contains("REST_ART_PATH"),
+		"loader goes through Godot's resource remap with the unchanged live default path")
 	_check(panel.find_children("*", "TextureRect", true, false).is_empty()
 		and panel.find_children("*", "Button", true, false).size() == 2,
 		"decoration lives in the panel canvas, never as an input-receiving node")
@@ -512,7 +532,17 @@ func _rest_art_ambient() -> void:
 		"motion resumes only through fresh presentation time after the override lifts")
 	# Missing art keeps today's readable static panel without errors.
 	var saved_art: Texture2D = panel.rest_art_texture
-	panel.rest_art_texture = null
+	# AC2: the loader's optional path proves absent and non-texture resources
+	# fail closed to null without errors, never breaking the mounted fallback.
+	var absent: Texture2D = LiveCampfirePanel._load_rest_art(
+		"res://assets/paper/backgrounds/definitely_absent_rest_camp.png")
+	_check(absent == null,
+		"a definitely absent resource path returns null without errors")
+	var unloadable: Texture2D = LiveCampfirePanel._load_rest_art(
+		"res://scripts/run_campfire_visit.gd")
+	_check(unloadable == null,
+		"an existing non-texture resource cannot pose as the backdrop")
+	panel.rest_art_texture = absent
 	panel.queue_redraw()
 	await _settle()
 	await _bind(RunCampfireVisit.new(NODE, _party([35, 18, 0])))
