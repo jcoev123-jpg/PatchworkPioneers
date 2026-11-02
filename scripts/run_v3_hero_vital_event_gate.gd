@@ -343,8 +343,7 @@ func select_party_actionable_event(
 			if not (choice_entry_raw is Dictionary):
 				continue
 			var choice_entry: Dictionary = choice_entry_raw
-			var cid: Variant = choice_entry.get("choice_id")
-			if cid is String and cid != LEAVE_CHOICE_ID and choice_entry.get("affordable", false) == true:
+			if is_choice_actionable(choice_entry, hero_info["hp"]):
 				has_actionable_choice = true
 				break
 		if has_actionable_choice:
@@ -362,6 +361,11 @@ func select_party_actionable_event(
 		"ok": true,
 		"event": picked_record,
 	}
+
+
+## Row eligibility helper delegating to RunV3VitalEventRotation.is_choice_actionable.
+static func is_choice_actionable(entry: Dictionary, opening_hp: int) -> bool:
+	return RunV3VitalEventRotation.is_choice_actionable(entry, opening_hp)
 
 
 func _bind_visit(event_target: Variant, snapshot: Variant) -> bool:

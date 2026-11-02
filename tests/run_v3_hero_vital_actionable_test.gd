@@ -14,6 +14,7 @@ func _initialize() -> void:
 	_test_ac2_affordability_and_vital_floors()
 	_test_ac3_seeded_uniformity_purity_and_detachment()
 	_test_ac4_gate_enter_preview_and_claim_handoff()
+	_test_ac5_rivet_choir_full_health_paid_heal_suppression()
 	_finish()
 
 
@@ -494,3 +495,163 @@ func _test_ac4_gate_enter_preview_and_claim_handoff() -> void:
 
 	# Original gate remains valid and unclaimed
 	_check(gate.is_valid() and not gate.is_claimed(), "AC4: original gate remains valid and unclaimed")
+
+
+# AC1/AC2/AC3/AC4: Rivet Choir full-health paid heal suppression, wounded admission, absence/Torn, non-heal path, and gate handoff.
+func _test_ac5_rivet_choir_full_health_paid_heal_suppression() -> void:
+	var party_ids := ["warden", "button_golem", "tinker"]
+	var gate := RunV3HeroVitalEventGate.new(party_ids)
+	_check(gate.is_valid(), "AC5: gate with Button Golem is valid")
+
+	var bg_event_id := "v3_button_golem_rivet_choir"
+	var found_bg := false
+	var other_offers: Array[String] = []
+	for offer: Dictionary in gate.get_offers():
+		var oid: String = offer.get("id", "")
+		if oid == bg_event_id:
+			found_bg = true
+		else:
+			other_offers.append(oid)
+	_check(found_bg, "AC5: Rivet Choir is offered to Button Golem party")
+
+	var wallet_17 := _wallet(17, 0)
+	var wallet_before := wallet_17.duplicate(true)
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 91001
+	var rng_before := rng.state
+
+	# 1. 10/10 HP Button Golem with 17 gold:
+	# polish_chest_buttons: -17 gold, +9 HP (0 actual HP at 10/10 max 10) -> suppressed!
+	# lend_bass_button: 10 max HP - 3 = 7 < 10 floor -> unaffordable!
+	# Both non-Leave choices nonactionable -> must reject without RNG draw!
+	var heroes_full := [
+		_hero("warden", 20, 30),
+		_hero("button_golem", 10, 10),
+		_hero("tinker", 20, 30),
+	]
+	var heroes_full_before := heroes_full.duplicate(true)
+	var other_copy := other_offers.duplicate(true)
+
+	var res_full := gate.select_party_actionable_event(rng, other_offers, wallet_17, heroes_full)
+	_check(res_full == {"ok": false, "event": {}},
+		"AC5: 10/10 Button Golem with 17 gold rejects Rivet Choir (paid heal suppressed, Leave does not rescue)")
+	_check(rng.state == rng_before,
+		"AC5: suppressed paid heal rejection consumes zero RNG")
+	_check(wallet_17 == wallet_before and heroes_full == heroes_full_before and other_offers == other_copy,
+		"AC5: caller inputs preserved on rejection")
+
+	# 2. 9/10 HP Button Golem with 17 gold (missing just 1 HP):
+	# polish_chest_buttons restores 1 HP (9 to 10) for 17 gold -> actionable!
+	var heroes_wounded := [
+		_hero("warden", 20, 30),
+		_hero("button_golem", 9, 10),
+		_hero("tinker", 20, 30),
+	]
+	var heroes_wounded_before := heroes_wounded.duplicate(true)
+	var oracle_rng := RandomNumberGenerator.new()
+	oracle_rng.seed = 91001
+	oracle_rng.randi_range(0, 0)
+
+	var res_wounded := gate.select_party_actionable_event(rng, other_offers, wallet_17, heroes_wounded)
+	_check(res_wounded.get("ok") == true,
+		"AC5: 9/10 Button Golem with 17 gold admits Rivet Choir (restores 1 HP)")
+	_check(res_wounded.get("event", {}).get("id") == bg_event_id,
+		"AC5: admitted event is Rivet Choir")
+	_check(rng.state == oracle_rng.state,
+		"AC5: single admission consumes exactly one randi_range draw")
+	_check(heroes_wounded == heroes_wounded_before and wallet_17 == wallet_before,
+		"AC5: caller inputs preserved on admission")
+
+	# Replay agreement:
+	var replay_rng := RandomNumberGenerator.new()
+	replay_rng.seed = 91001
+	var res_replay := gate.select_party_actionable_event(replay_rng, other_offers, wallet_17, heroes_wounded)
+	_check(res_replay["event"].get("id") == res_wounded["event"].get("id"),
+		"AC5: seeded replay returns identical event")
+
+	# Detachment: mutating returned event leaves gate offers untouched:
+	var returned_event: Dictionary = res_wounded["event"]
+	returned_event["title"] = "MUTATED"
+	(returned_event["choices"] as Array).clear()
+	for offer: Dictionary in gate.get_offers():
+		if offer.get("id") == bg_event_id:
+			_check(offer.get("title") != "MUTATED" and offer.get("choices", []).size() == 3,
+				"AC5: returned event is deeply detached from gate")
+
+	# 3. Torn Button Golem (hp == 0):
+	var heroes_torn_bg := [
+		_hero("warden", 20, 30),
+		_hero("button_golem", 0, 10),
+		_hero("tinker", 20, 30),
+	]
+	var res_torn := gate.select_party_actionable_event(rng, other_offers, wallet_17, heroes_torn_bg)
+	_check(res_torn == {"ok": false, "event": {}},
+		"AC5: Torn Button Golem cannot admit hero-gated Rivet Choir")
+	_check(rng.state == oracle_rng.state,
+		"AC5: Torn hero rejection consumes zero RNG")
+
+	# 4. Absent Button Golem case:
+	var party_no_bg := ["warden", "scarecrow", "tinker"]
+	var gate_no_bg := RunV3HeroVitalEventGate.new(party_no_bg)
+	var no_bg_offers: Array = []
+	for offer: Dictionary in gate_no_bg.get_offers():
+		if offer.get("id") == bg_event_id:
+			no_bg_offers.append(offer)
+	_check(no_bg_offers.is_empty(), "AC5: Rivet Choir absent from party without Button Golem")
+	var heroes_no_bg := [
+		_hero("warden", 20, 30),
+		_hero("scarecrow", 20, 30),
+		_hero("tinker", 20, 30),
+	]
+	var res_no_bg := gate_no_bg.select_party_actionable_event(rng, null, wallet_17, heroes_no_bg)
+	_check(res_no_bg.get("event", {}).get("id") != bg_event_id,
+		"AC5: absent hero's event cannot be returned")
+
+	# 5. Eligible non-heal path:
+	# Button Golem at 10/13 HP, 0 gold, 0 scraps:
+	# polish_chest_buttons is unaffordable (0 gold).
+	# lend_bass_button (+27 gold, -3 max HP) has max HP 13 - 3 = 10 >= 10 floor -> affordable!
+	var heroes_non_heal := [
+		_hero("warden", 20, 30),
+		_hero("button_golem", 10, 13),
+		_hero("tinker", 20, 30),
+	]
+	var res_non_heal := gate.select_party_actionable_event(rng, other_offers, _wallet(0, 0), heroes_non_heal)
+	_check(res_non_heal.get("ok") == true and res_non_heal.get("event", {}).get("id") == bg_event_id,
+		"AC5: eligible non-heal choice admits Rivet Choir even with 0 gold")
+
+	# 6. Selected event handoff through RunEventChoice gate and settlement:
+	var clean_bg_event: Dictionary = res_replay["event"]
+	var bg_snap := {
+		"gold": 17,
+		"scraps": 0,
+		"hero": {"id": "button_golem", "hp": 9, "max_hp": 10},
+	}
+	var bg_snap_before := bg_snap.duplicate(true)
+	var visit := gate.enter(clean_bg_event, bg_snap)
+	_check(visit != null and visit.is_valid() and not visit.is_claimed(),
+		"AC5: gate.enter admits selected authentic Rivet Choir")
+	if visit != null:
+		var preview := visit.preview_vital_choices(bg_snap)
+		_check(preview.get("ok") == true and preview.get("choices", []).size() == 3,
+			"AC5: visit preview returns 3 choices")
+		var polish_choice: Dictionary = {}
+		for c: Dictionary in preview.get("choices", []):
+			if c.get("choice_id") == "polish_chest_buttons":
+				polish_choice = c
+		_check(polish_choice.get("affordable") == true
+			and polish_choice.get("state", {}).get("hero", {}).get("hp") == 10,
+			"AC5: polish_chest_buttons projects capped healing from 9 to 10 HP")
+		var receipt := visit.choose_with_vitals("polish_chest_buttons", bg_snap)
+		_check(receipt.get("ok") == true and receipt.get("choice_id") == "polish_chest_buttons"
+			and receipt.get("state", {}).get("gold") == 0
+			and receipt.get("state", {}).get("hero", {}).get("hp") == 10,
+			"AC5: polish_chest_buttons settles to 0 gold, 10/10 HP")
+		_check(visit.is_claimed() and not visit.is_valid(),
+			"AC5: visit is claimed and invalidated after choice")
+		_check(visit.choose_with_vitals("leave", bg_snap).get("ok") == false,
+			"AC5: second choice on claimed visit refuses")
+		_check(bg_snap == bg_snap_before,
+			"AC5: caller snapshot is untouched by choice settlement")
+

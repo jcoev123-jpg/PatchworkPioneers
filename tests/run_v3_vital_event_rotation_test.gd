@@ -139,6 +139,7 @@ func _initialize() -> void:
 	_test_party_actionable_ac2_denials()
 	_test_party_actionable_ac3_replay_and_settlement()
 	_test_party_actionable_ac4_malformed_inputs()
+	_test_full_health_paid_heal_suppression()
 	_check(source_document == source_snapshot, "the shipped vitality document is unchanged by every flow")
 	_report()
 
@@ -1194,11 +1195,29 @@ func _vital_state_for_hero(hero_id: String, gold: int, scraps: int, hp: int, max
 	return {"gold": gold, "scraps": scraps, "hero": {"id": hero_id, "hp": hp, "max_hp": max_hp}}
 
 
+func _independent_actionable_choice(entry: Dictionary, opening_hp: int) -> bool:
+	if not entry.get("affordable", false):
+		return false
+	if entry.get("choice_id") == "leave":
+		return false
+	var hp_delta: int = int(entry.get("hp_delta", 0))
+	var max_hp_delta: int = int(entry.get("max_hp_delta", 0))
+	var gold_delta: int = int(entry.get("gold_delta", 0))
+	var scraps_delta: int = int(entry.get("scraps_delta", 0))
+	var state: Dictionary = entry.get("state", {})
+	var hero: Dictionary = state.get("hero", {})
+	var projected_hp: int = int(hero.get("hp", opening_hp))
+	if hp_delta > 0 and max_hp_delta == 0 and gold_delta <= 0 and scraps_delta <= 0 and (gold_delta < 0 or scraps_delta < 0) and projected_hp == opening_hp:
+		return false
+	return true
+
+
 func _independent_actionable_ids(rotation: RunV3VitalEventRotation, excluded_ids: Array, snapshot: Dictionary) -> Array:
 	var excluded_lookup: Dictionary = {}
 	for raw_id in excluded_ids:
 		excluded_lookup[raw_id] = true
 	var qualified: Array = []
+	var opening_hp: int = int(snapshot.get("hero", {}).get("hp", 0))
 	for record in rotation.get_vital_events():
 		if not record is Dictionary:
 			continue
@@ -1210,7 +1229,7 @@ func _independent_actionable_ids(rotation: RunV3VitalEventRotation, excluded_ids
 		if preview.get("ok") != true:
 			continue
 		for entry in preview.get("choices", []):
-			if entry is Dictionary and entry.get("choice_id") != "leave" and entry.get("affordable") == true:
+			if entry is Dictionary and _independent_actionable_choice(entry, opening_hp):
 				qualified.append(event_id)
 				break
 	qualified.sort()
@@ -1661,8 +1680,9 @@ func _independent_party_actionable_ids(
 			})
 			if preview.get("ok") != true:
 				continue
+			var opening_hp: int = int(hero.get("hp", 0))
 			for entry in preview.get("choices", []):
-				if entry is Dictionary and entry.get("choice_id") != "leave" and entry.get("affordable") == true:
+				if entry is Dictionary and _independent_actionable_choice(entry, opening_hp):
 					actionable = true
 					break
 			if actionable:
@@ -2000,3 +2020,184 @@ func _test_party_actionable_ac4_malformed_inputs() -> void:
 	_check(valid_wallet == valid_wallet_before and valid_heroes == valid_heroes_before
 		and valid_excluded == valid_excluded_before,
 		"caller containers remain untouched after all rejection checks")
+
+
+func _test_full_health_paid_heal_suppression() -> void:
+	var rotation := RunV3VitalEventRotation.new()
+	_check(rotation.is_catalog_valid(), "shipped rotation is valid for full-health heal suppression tests")
+	var bath_id := "v3_midnight_thimble_bath"
+	_check(rotation.get_vital_event_ids().has(bath_id), "shipped catalog contains " + bath_id)
+	var bath_record: Dictionary = source_by_id.get(bath_id, {})
+	_check(not bath_record.is_empty(), "bath record is present in source catalog")
+
+	# Force v3_midnight_thimble_bath by excluding every other ID (no fixed total or sorted catalog position assumed).
+	var bath_excluded: Array = rotation.get_vital_event_ids()
+	bath_excluded.erase(bath_id)
+	var excluded_before: Array = bath_excluded.duplicate(true)
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 81001
+	var rng_before := rng.state
+	var global_next := _global_rng_start(81002)
+
+	# 1. Single-hero at 10/10 HP with 15 gold:
+	# pay_attendant costs 15 gold for +6 HP (0 actual HP gain), borrow_lining cuts max HP to 9 < 10 floor (unaffordable).
+	# Solely paid HP-only heal at full health: must be suppressed. Free Leave does not rescue.
+	var full_10_snap := _vital_state(15, 0, 10, 10)
+	var full_10_before := full_10_snap.duplicate(true)
+	var service_10 := RunEventChoice.new(bath_record)
+	var preview_10 := service_10.preview_vital_choices(full_10_snap)
+	_check(preview_10.get("ok") == true, "bath preview succeeds for 10/10 hero")
+	var pay_entry_10 := _preview_choice(preview_10, "pay_attendant")
+	_check(pay_entry_10.get("affordable") == true and pay_entry_10.get("hp_delta") == 6
+		and pay_entry_10.get("max_hp_delta") == 0 and pay_entry_10.get("gold_delta") == -15
+		and pay_entry_10.get("state", {}).get("hero", {}).get("hp") == 10,
+		"pay_attendant is nominally affordable but projects unchanged 10 HP at full health")
+	var borrow_entry_10 := _preview_choice(preview_10, "borrow_lining")
+	_check(borrow_entry_10.get("affordable") == false,
+		"borrow_lining at max_hp=10 is unaffordable due to max-HP floor 10")
+	var leave_entry_10 := _preview_choice(preview_10, "leave")
+	_check(leave_entry_10.get("affordable") == true, "free Leave remains affordable")
+
+	var rej_single := rotation.select_actionable_event(rng, bath_excluded, full_10_snap)
+	_check(rej_single == {"ok": false, "event": {}},
+		"AC1: 10/10 HP hero with 15 gold rejects v3_midnight_thimble_bath (paid heal suppressed)")
+	_check(rng.state == rng_before and randi() == global_next,
+		"AC1/AC4: suppressed paid heal rejection consumes zero RNG")
+	_check(bath_excluded == excluded_before and full_10_snap == full_10_before,
+		"AC4: rejected selection preserves caller snapshot and exclusions")
+
+	# 2. Wounded-hero at 9/10 HP with 15 gold (missing just 1 HP):
+	# pay_attendant restores 1 HP (from 9 to 10), capped at max HP 10. Must be admitted!
+	var wounded_9_snap := _vital_state(15, 0, 9, 10)
+	var wounded_9_before := wounded_9_snap.duplicate(true)
+	var oracle_rng := RandomNumberGenerator.new()
+	oracle_rng.seed = 81001
+	oracle_rng.randi_range(0, 0)
+	var admit_single := rotation.select_actionable_event(rng, bath_excluded, wounded_9_snap)
+	_check(_selection_shape_ok(admit_single) and admit_single.get("ok") == true,
+		"AC2: 9/10 HP hero with 15 gold admits v3_midnight_thimble_bath (restores 1 HP)")
+	_check(admit_single.get("event", {}).get("id") == bath_id,
+		"AC2: admitted event is v3_midnight_thimble_bath")
+	_check(rng.state == oracle_rng.state,
+		"AC2/AC3: single admission consumes exactly one randi_range draw")
+	_check(wounded_9_snap == wounded_9_before and bath_excluded == excluded_before,
+		"AC4: admitted selection preserves caller snapshot and exclusions")
+
+	# Handoff to RunEventChoice and verify choice settlement:
+	var admit_event: Dictionary = admit_single.get("event", {})
+	admit_event["title"] = "MUTATED"
+	_check(bath_record["title"] != "MUTATED", "AC4: selected event is detached from source")
+	var visit_service := RunEventChoice.new(source_by_id[bath_id])
+	var claim_receipt := visit_service.choose_with_vitals("pay_attendant", wounded_9_snap)
+	_check(claim_receipt.get("ok") == true and claim_receipt.get("choice_id") == "pay_attendant"
+		and _vital_state_is(claim_receipt.get("state"), 0, 0, 10, 10),
+		"AC4: pay_attendant settles through RunEventChoice to 0 gold, 10/10 HP")
+	_check(visit_service.is_claimed() and not visit_service.is_valid(),
+		"AC4: visit claims once")
+	_check(visit_service.choose_with_vitals("leave", wounded_9_snap).get("ok") == false,
+		"AC4: second claim refuses")
+
+	# 3. 10/11 HP hero with 15 gold:
+	# pay_attendant heals from 10 to 11 (+1 HP); borrow_lining cuts max HP from 11 to 10 (floor satisfied).
+	# Both are actionable.
+	var snap_10_11 := _vital_state(15, 0, 10, 11)
+	var admit_10_11 := rotation.select_actionable_event(rng, bath_excluded, snap_10_11)
+	_check(admit_10_11.get("ok") == true and admit_10_11.get("event", {}).get("id") == bath_id,
+		"AC2: 10/11 HP hero admits bath via service-projected healing and max-HP trade")
+
+	# 4. 11/11 HP hero with 0 gold:
+	# pay_attendant unaffordable (0 gold); borrow_lining has max_hp -1 (11->10 >= 10 floor, max_hp_delta != 0).
+	# Must be admitted as a genuine max-HP trade even at full HP!
+	var snap_11_11_poor := _vital_state(0, 0, 11, 11)
+	var admit_11_11 := rotation.select_actionable_event(rng, bath_excluded, snap_11_11_poor)
+	_check(admit_11_11.get("ok") == true and admit_11_11.get("event", {}).get("id") == bath_id,
+		"AC2: 11/11 HP hero with 0 gold admits bath via borrow_lining max-HP trade")
+
+	# 5. Party selection: All-full party vs wounded party members
+	var full_party := _party_heroes("h1", 10, 10, "h2", 10, 10, "h3", 10, 10)
+	var full_party_before := full_party.duplicate(true)
+	var wallet_15 := {"gold": 15, "scraps": 0}
+	var wallet_15_before := wallet_15.duplicate(true)
+
+	var party_rng := RandomNumberGenerator.new()
+	party_rng.seed = 82001
+	var party_rng_before := party_rng.state
+	var party_global_next := _global_rng_start(82002)
+
+	# a) All-full party: rejects bath
+	var party_rej := rotation.select_party_actionable_event(party_rng, bath_excluded, wallet_15, full_party)
+	_check(party_rej == {"ok": false, "event": {}},
+		"AC1/AC3: all-full party rejects bath (all living heroes waste paid heal)")
+	_check(party_rng.state == party_rng_before and randi() == party_global_next,
+		"AC3/AC4: all-full party rejection consumes zero RNG")
+	_check(full_party == full_party_before and wallet_15 == wallet_15_before,
+		"AC4: party rejection preserves caller party and wallet")
+
+	# b) Other wounded party members: h2 wounded (9/10), others full (10/10)
+	var h2_wounded := _party_heroes("h1", 10, 10, "h2", 9, 10, "h3", 10, 10)
+	var party_oracle := RandomNumberGenerator.new()
+	party_oracle.seed = 82001
+	party_oracle.randi_range(0, 0)
+	var party_adm_h2 := rotation.select_party_actionable_event(party_rng, bath_excluded, wallet_15, h2_wounded)
+	_check(party_adm_h2.get("ok") == true and party_adm_h2.get("event", {}).get("id") == bath_id,
+		"AC2/AC3: party with wounded h2 admits bath")
+	_check(party_rng.state == party_oracle.state,
+		"AC3: party admission consumes exactly one draw")
+
+	# c) h1 wounded (9/10), others full
+	var h1_wounded := _party_heroes("h1", 9, 10, "h2", 10, 10, "h3", 10, 10)
+	var party_adm_h1 := rotation.select_party_actionable_event(party_rng, bath_excluded, wallet_15, h1_wounded)
+	_check(party_adm_h1.get("ok") == true and party_adm_h1.get("event", {}).get("id") == bath_id,
+		"AC2/AC3: party with wounded h1 admits bath")
+
+	# d) h3 wounded (9/10), others full
+	var h3_wounded := _party_heroes("h1", 10, 10, "h2", 10, 10, "h3", 9, 10)
+	var party_adm_h3 := rotation.select_party_actionable_event(party_rng, bath_excluded, wallet_15, h3_wounded)
+	_check(party_adm_h3.get("ok") == true and party_adm_h3.get("event", {}).get("id") == bath_id,
+		"AC2/AC3: party with wounded h3 admits bath")
+
+	# e) Torn hero (0/10) + remaining heroes full (10/10): rejects
+	var torn_and_full := _party_heroes("h1", 0, 10, "h2", 10, 10, "h3", 10, 10)
+	var party_rej_torn := rotation.select_party_actionable_event(party_rng, bath_excluded, wallet_15, torn_and_full)
+	_check(party_rej_torn == {"ok": false, "event": {}},
+		"AC1/AC3: torn hero + full heroes rejects bath")
+
+	# f) Torn hero (0/10) + wounded hero (9/10) + full hero (10/10): admits
+	var torn_and_wounded := _party_heroes("h1", 0, 10, "h2", 9, 10, "h3", 10, 10)
+	var party_adm_torn := rotation.select_party_actionable_event(party_rng, bath_excluded, wallet_15, torn_and_wounded)
+	_check(party_adm_torn.get("ok") == true and party_adm_torn.get("event", {}).get("id") == bath_id,
+		"AC2/AC3: torn hero + wounded hero admits bath")
+
+	# 6. Max-HP-raising event: v3_button_heart_shrine (reinforce_heart: -2 scraps, +3 max HP, 0 heal)
+	var shrine_id := "v3_button_heart_shrine"
+	var shrine_excluded: Array = rotation.get_vital_event_ids()
+	shrine_excluded.erase(shrine_id)
+	var shrine_wallet := {"gold": 0, "scraps": 2}
+
+	# Single-hero at full HP (40/40) with 2 scraps:
+	var shrine_single := rotation.select_actionable_event(rng, shrine_excluded, _vital_state(0, 2, 40, 40))
+	_check(shrine_single.get("ok") == true and shrine_single.get("event", {}).get("id") == shrine_id,
+		"AC2: permanent max-HP shrine is actionable even when hero is already at full HP")
+
+	# Party with all heroes at full HP with 2 scraps:
+	var shrine_party := rotation.select_party_actionable_event(party_rng, shrine_excluded, shrine_wallet, full_party)
+	_check(shrine_party.get("ok") == true and shrine_party.get("event", {}).get("id") == shrine_id,
+		"AC2/AC3: permanent max-HP shrine is actionable for all-full party")
+
+	# 7. Beneficial alternative choice: v3_lantern_quilt_infirmary
+	# buy_bandages: -12 gold, +8 HP; blood_receipt: -4 HP, +18 gold.
+	# At full health (40/40) with 12 gold: buy_bandages is suppressed, but blood_receipt is actionable!
+	var inf_id := "v3_lantern_quilt_infirmary"
+	var inf_excluded: Array = rotation.get_vital_event_ids()
+	inf_excluded.erase(inf_id)
+	var inf_full := rotation.select_actionable_event(rng, inf_excluded, _vital_state(12, 0, 40, 40))
+	_check(inf_full.get("ok") == true and inf_full.get("event", {}).get("id") == inf_id,
+		"AC2: infirmary is actionable at full HP via beneficial blood_receipt choice")
+
+	# Seeded replay agreement on party selection
+	var replay_rng := RandomNumberGenerator.new()
+	replay_rng.seed = 82001
+	var replay_pick := rotation.select_party_actionable_event(replay_rng, bath_excluded, wallet_15, h2_wounded)
+	_check(replay_pick.get("ok") == true and replay_pick.get("event", {}).get("id") == party_adm_h2.get("event", {}).get("id"),
+		"AC3: seeded replay returns identical party actionable event")
