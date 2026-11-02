@@ -82,7 +82,9 @@ func play_scrap_bomb(deck: CombatDeck, party: CombatParty, enemies: CombatEnemie
 	var cost: int = cost_value
 	var damage: int = damage_value
 	var from_positions: Array = from_value
-	var to_positions: Array = to_value
+	# The authored three-slot schema stays unchanged; enemy_all uses the real roster.
+	if to_value != [1, 2, 3] or not can_resolve(enemies, damage):
+		return false
 	if deck.energy < cost:
 		return false
 
@@ -110,8 +112,6 @@ func play_scrap_bomb(deck: CombatDeck, party: CombatParty, enemies: CombatEnemie
 			return false
 		if enemies.is_dead(position):
 			continue
-		if not to_positions.has(position):
-			return false
 		targets.append(position)
 	if targets.is_empty():
 		return false

@@ -10,6 +10,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_four_enemy_bomb()
 	_test_enrage_starter_hits()
 	_test_enrage_bomb_and_replay()
 	_test_enrage_rejections()
@@ -336,11 +337,11 @@ func _party(order: Array = ["warden", "seamstress", "tinker"]) -> CombatParty:
 	return party
 
 
-func _enemies(hp: Array[int] = [18, 19, 20]) -> CombatEnemies:
+func _enemies(hp: Array[int] = [18, 19, 20], capacity: int = CombatEnemies.MAX_ENEMIES) -> CombatEnemies:
 	var definitions: Array = []
 	for i in range(hp.size()):
 		definitions.append({"id": "foe_%d" % i, "max_hp": hp[i]})
-	var enemies := CombatEnemies.new(definitions)
+	var enemies := CombatEnemies.new(definitions, capacity)
 	_check(enemies.is_valid() and enemies.get_enemies().size() == hp.size(),
 		"fixture has live enemies in their original slots")
 	return enemies
@@ -500,6 +501,65 @@ func _reject(service: CombatAttackCards, deck: CombatDeck, party: CombatParty,
 		label + ": rejection does not alter supplied statuses")
 	_check(service._tinker._consumed == first_attack_before,
 		label + ": rejection preserves first-attack state")
+
+
+func _test_four_enemy_bomb() -> void:
+	var replay: Array = []
+	for repetition in range(2):
+		var service := CombatAttackCards.new()
+		var deck := _deck(["tinker_scrap_bomb"])
+		var party := _party()
+		var enemies := _enemies([30, 30, 30, 30], CombatEnemies.OPT_IN_MAX_ENEMIES)
+		_check(enemies.gain_block(2, 3) and enemies.gain_block(4, 10), "four-slot Block fixture")
+		_seed_modifiers(party, enemies, "tinker_scrap_bomb", {"weak": 1}, {4: {"exposed": 1}})
+		_accept(service, deck, party, enemies, "tinker_scrap_bomb", 0,
+			[_hit(1, 5, 0, 5), _hit(2, 5, 3, 2), _hit(3, 5, 0, 5), _hit(4, 7, 7, 0)],
+			2, "four living foes paid once", {"weak": 1}, {4: {"exposed": 1}})
+		_check(service._tinker._consumed and enemies.get_enemy(4).statuses == {"exposed": 1},
+			"fourth stored modifier persists and first-attack latch consumed")
+		replay.append(_snapshot(deck, party, enemies))
+	_check(replay[0] == replay[1], "four-actor full real-state seeded replay")
+	var ctx := _patch_context([{"id": "button_eye", "hero": "tinker", "slot": "HEAD"}])
+	var patched := _patch_service(ctx)
+	var patched_foes := _enemies([30, 30, 30, 30], CombatEnemies.OPT_IN_MAX_ENEMIES)
+	var patched_deck := _deck(["tinker_scrap_bomb"])
+	patched_foes._enemies[3]["statuses"] = {"exposed": CombatEnemies.MAX_INT}
+	_patch_reject(patched, patched_deck, ctx.party, patched_foes,
+		"tinker_scrap_bomb", 0, ctx, "fourth on-hit application overflows before payment")
+	patched_foes._enemies[3]["statuses"] = {}
+	_check(patched_foes.gain_block(4, 20), "fourth fully blocked on-hit fixture")
+	_accept(patched, patched_deck, ctx.party, patched_foes, "tinker_scrap_bomb", 0,
+		[_hit(1, 7, 0, 7, {"exposed": 1}), _hit(2, 7, 0, 7, {"exposed": 1}),
+		_hit(3, 7, 0, 7, {"exposed": 1}), _hit(4, 7, 7, 0, {"exposed": 1})],
+		2, "all four validated on-hit applications persist even through full Block")
+	_check(patched._patches.latch_snapshot().tinker, "four-enemy cast consumes HEAD latch once")
+	var dead := _enemies([30, 30, 30, 30], CombatEnemies.OPT_IN_MAX_ENEMIES)
+	_check(dead.apply_damage(4, 999) and dead.is_slain(4), "fourth actor slain in place")
+	_accept(CombatAttackCards.new(), _deck(["tinker_scrap_bomb"]), _party(), dead,
+		"tinker_scrap_bomb", 0, [_hit(1, 7, 0, 7), _hit(2, 7, 0, 7), _hit(3, 7, 0, 7)],
+		2, "slain fourth slot omitted")
+	for statuses in [{4: {"exposed": -1}}, {4: {"dodge_next_attack": 1}},
+			{4: {"invented": 1}}, {4: []}, {"4": {}}, {5: {}}]:
+		_reject(CombatAttackCards.new(), _deck(["tinker_scrap_bomb"]), _party(),
+			_enemies([30, 30, 30, 30], CombatEnemies.OPT_IN_MAX_ENEMIES),
+			"tinker_scrap_bomb", 0, "invalid fourth snapshot", {}, statuses)
+	for target in [-1, 1, 4, 5]:
+		_reject(CombatAttackCards.new(), _deck(["tinker_scrap_bomb"]), _party(),
+			_enemies([30, 30, 30, 30], CombatEnemies.OPT_IN_MAX_ENEMIES),
+			"tinker_scrap_bomb", target, "Bomb cannot select explicit target")
+	var poor := _deck(["tinker_scrap_bomb"])
+	_check(poor.try_spend_energy(2) and poor.energy == 1, "four-enemy unaffordable precondition")
+	_reject(CombatAttackCards.new(), poor, _party(),
+		_enemies([30, 30, 30, 30], CombatEnemies.OPT_IN_MAX_ENEMIES),
+		"tinker_scrap_bomb", 0, "four-enemy no spend")
+	for field in ["position", "hp", "block", "statuses", "thorns", "enrage_stacks"]:
+		var bad := _enemies([30, 30, 30, 30], CombatEnemies.OPT_IN_MAX_ENEMIES)
+		bad._enemies[3][field] = {"exposed": -1} if field == "statuses" else -1
+		_reject(CombatAttackCards.new(), _deck(["tinker_scrap_bomb"]), _party(), bad,
+			"tinker_scrap_bomb", 0, "invalid fourth actor " + field)
+	_reject(CombatAttackCards.new(), _deck(["tinker_pop_shot"]), _party(),
+		_enemies([30, 30, 30, 30], CombatEnemies.OPT_IN_MAX_ENEMIES),
+		"tinker_pop_shot", 4, "single attack still cannot select fourth")
 
 
 func _test_contract_and_five_attacks() -> void:
