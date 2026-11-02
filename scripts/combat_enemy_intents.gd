@@ -613,6 +613,8 @@ static func valid_action(action: Variant) -> bool:
 		return false
 	if kind == "summon":
 		return action.size() == 2 and amount == 0
+	if kind == "steal_gold":
+		return action.size() == 2 and amount > 0
 	if kind in ["block", "buff"]:
 		return action.size() == 2 and (kind == "block" or amount > 0)
 	if kind not in ["attack", "shove", "debuff", "snip_block"]:

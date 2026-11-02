@@ -6,6 +6,8 @@ var phase := CombatEnemyPhase.new()
 
 
 func _initialize() -> void:
+	_test_scavenger_gold_phase()
+	_test_scavenger_gold_refusals()
 	_test_two_hits_and_blind()
 	_test_four_catalog_phase_and_refusals()
 	_test_ordered_specials()
@@ -41,6 +43,158 @@ func _check(value: bool, message: String) -> void:
 	checks += 1
 	if not value:
 		failures.append(message)
+
+
+func _gold_fight(source: int = 1, count: int = 3) -> Dictionary:
+	var catalog := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	var by_id := {}
+	for record in catalog:
+		by_id[record.id] = record
+	var ids := ["button_guard", "spool_stalker", "seam_ripper"]
+	var records: Array = []
+	var definitions: Array = []
+	for position in range(1, count + 1):
+		var id: String = "fray_scavenger" if position == source else ids.pop_front()
+		if not by_id.has(id):
+			return {}
+		var record: Dictionary = by_id[id].duplicate(true)
+		if position == source:
+			record.intent.actions.append({"type": "steal_gold", "amount": 2, "weight": 2})
+		records.append(record)
+		definitions.append({"enemy_position": position, "pattern": [{"type": "block", "amount": 1}]})
+	var enemies := CombatEnemies.new(records, 4 if count == 4 else 3)
+	var party := _party()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 438
+	var selector := CombatEnemyIntents.new(definitions)
+	if not enemies.is_valid() or not selector.bind_battle(enemies, party, rng):
+		return {}
+	# Select through the genuine mixed weighted policy rather than injecting a
+	# synthetic enemy or bypassing the announcement cache.
+	for turn in range(64):
+		var actions := selector.get_intents()
+		if actions[source - 1].type == "steal_gold":
+			return {"party": party, "enemies": enemies, "rng": rng,
+				"selector": selector, "theft": actions[source - 1]}
+		if not selector.advance_turn():
+			return {}
+	return {}
+
+
+func _test_scavenger_gold_phase() -> void:
+	var replay: Array = []
+	for repeat_index in range(2):
+		var trace: Array = []
+		for source in [1, 4]:
+			for wallet in [0, 1, 2, 7, CombatParty.MAX_INT]:
+				var f := _gold_fight(source, 4 if source == 4 else 3)
+				_check(not f.is_empty(), "gold precondition: authentic mixed weighted fight selected theft")
+				if f.is_empty():
+					return
+				_check(f.enemies.get_enemy(source).id == "fray_scavenger"
+					and not f.enemies.is_slain(source) and f.party.gain_block(1, 5),
+					"gold precondition: living real Scavenger and hero Block")
+				f.party._heroes[0]["cards"] = ["strike", "guard"]
+				var before := [f.party.get_heroes(), f.enemies.get_enemies()]
+				var state: int = f.rng.state
+				var cached: Array = f.selector.get_intents()
+				var actions := [f.theft.duplicate(true)]
+				var result := phase.execute_phase(f.party, f.enemies, actions, null, true, null, wallet)
+				var stolen: int = mini(2, wallet)
+				_check(result == {"ok": true, "gold": wallet - stolen, "events": [
+					{"type": "steal_gold", "enemy_position": source, "applied": true,
+						"amount": stolen, "gold": wallet - stolen}]},
+					"gold receipt reports actual theft including empty wallet and fourth slot")
+				_check([f.party.get_heroes(), f.enemies.get_enemies()] == before
+					and f.rng.state == state and f.selector.get_intents() == cached
+					and actions == [f.theft], "theft preserves HP, Block, cards, roster, input, cache and RNG")
+				trace.append([result, before, state])
+		if repeat_index == 0:
+			replay = trace
+		else:
+			_check(trace == replay, "wallet-aware complete phase receipts replay exactly from same seed")
+	var f := _gold_fight(2)
+	_check(not f.is_empty(), "gold source-order precondition")
+	if f.is_empty():
+		return
+	var ordered := phase.execute_phase(f.party, f.enemies,
+		[f.theft, _block(1, 3)], null, true, null, 5)
+	_check(ordered.get("ok", false) and ordered.gold == 3
+		and ordered.events[0].enemy_position == 1 and ordered.events[1].enemy_position == 2
+		and f.enemies.get_enemy(1).block == 3 and ordered.events[1].amount == 2,
+		"reverse input executes by source order with other successful staged changes")
+	_check(f.enemies.apply_damage(2, 14) and f.enemies.is_slain(2), "gold source really killed after caching")
+	var dead := phase.execute_phase(f.party, f.enemies, [f.theft], null, true, null, 5)
+	_check(dead == {"ok": true, "gold": 5, "events": [
+		{"type": "steal_gold", "enemy_position": 2, "applied": false, "amount": 0, "gold": 5}]},
+		"cached killed source is inert and cannot steal")
+	var legacy := phase.execute_phase(f.party, f.enemies, [_block(1, 1)])
+	_check(legacy == {"ok": true, "events": [_event("block", 1, true)]},
+		"legacy no-theft caller keeps exact return shape")
+	var aware := phase.execute_phase(f.party, f.enemies, [], null, false, null, 9)
+	_check(aware == {"ok": true, "events": [], "gold": 9}, "wallet-aware empty phase returns unchanged balance")
+	var two := _gold_fight()
+	_check(not two.is_empty(), "shared-wallet precondition: genuine catalog actors")
+	if two.is_empty():
+		return
+	# A second copied catalog actor also authors the same generic action. This
+	# proves both debits see the staged wallet, never the original input balance.
+	two.enemies._enemies[1].intent.actions.append({"type": "steal_gold", "amount": 2, "weight": 1})
+	var second: Dictionary = two.theft.duplicate(true)
+	second.enemy_position = 2
+	var shared := phase.execute_phase(two.party, two.enemies,
+		[second, two.theft], null, true, null, 3)
+	_check(shared == {"ok": true, "gold": 0, "events": [
+		{"type": "steal_gold", "enemy_position": 1, "applied": true, "amount": 2, "gold": 1},
+		{"type": "steal_gold", "enemy_position": 2, "applied": true, "amount": 1, "gold": 0}]},
+		"multiple authored sources debit staged wallet in source order without underflow")
+
+
+func _test_scavenger_gold_refusals() -> void:
+	var f := _gold_fight()
+	_check(not f.is_empty(), "gold refusal precondition: real selected theft")
+	if f.is_empty():
+		return
+	var before := [f.party.get_heroes(), f.enemies.get_enemies(), f.rng.state]
+	for wallet in [null, -1, true, false, 2.0, 2.5, "2", {}, [], INF, NAN]:
+		var result := phase.execute_phase(f.party, f.enemies, [f.theft], null, true, null, wallet)
+		_check(result == {"ok": false, "events": []}
+			and [f.party.get_heroes(), f.enemies.get_enemies(), f.rng.state] == before,
+			"absent/invalid wallet rejects theft atomically: " + str(wallet))
+	_check(phase.execute_phase(f.party, f.enemies, [f.theft]) == {"ok": false, "events": []},
+		"omitted legacy wallet cannot silently execute theft")
+	var malformed: Array = [[f.theft, f.theft], [f.theft.merged({"enemy_position": 4}, true)],
+		[f.theft.merged({"enemy_position": 2}, true)], [f.theft.merged({"amount": 3}, true)]]
+	for amount in [0, -1, true, 2.0, "2", null]:
+		malformed.append([f.theft.merged({"amount": amount}, true)])
+	for field in ["target_position", "target_policy", "hits", "status", "direction", "extra"]:
+		var bad: Dictionary = f.theft.duplicate(true)
+		bad[field] = 1
+		malformed.append([bad])
+	for actions in malformed:
+		_check(phase.execute_phase(f.party, f.enemies, actions, null, true, null, 5)
+			== {"ok": false, "events": []}
+			and [f.party.get_heroes(), f.enemies.get_enemies(), f.rng.state] == before,
+			"duplicate/stale source or forged theft rejects atomically: " + str(actions))
+	# Exercise failures during execution, after theft and another real mutation
+	# have staged, rather than only testing the upfront shape checks.
+	_check(f.enemies.gain_block(3, CombatParty.MAX_INT), "rollback precondition: final enemy Block full")
+	before = [f.party.get_heroes(), f.enemies.get_enemies(), f.rng.state]
+	var wallet := 5
+	var rejected := phase.execute_phase(f.party, f.enemies,
+		[_block(3, 1), _block(2, 4), f.theft], null, true, null, wallet)
+	_check(rejected == {"ok": false, "events": []} and wallet == 5
+		and [f.party.get_heroes(), f.enemies.get_enemies(), f.rng.state] == before,
+		"later overflowing Block rolls back staged theft and enemy Block; no wallet receipt")
+	_check(f.party.apply_damage(3, 26) and f.party.is_downed(3), "rollback precondition: real third hero down")
+	before = [f.party.get_heroes(), f.enemies.get_enemies(), f.rng.state]
+	rejected = phase.execute_phase(f.party, f.enemies, [f.theft, _attack(2, 3, 1),
+		{"type": "debuff", "enemy_position": 3, "amount": 1, "status": "bleed", "target_position": 3}],
+		null, false, null, wallet)
+	_check(rejected == {"ok": false, "events": []} and wallet == 5
+		and [f.party.get_heroes(), f.enemies.get_enemies(), f.rng.state] == before,
+		"later invalid special rolls back staged theft and actual hero HP loss")
 
 
 func _party() -> CombatParty:

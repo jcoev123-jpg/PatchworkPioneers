@@ -5,6 +5,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_scavenger_gold_cache()
 	_test_two_hit_schema()
 	_test_special_schema()
 	_test_snip_schema()
@@ -41,6 +42,80 @@ func _check(condition: bool, message: String) -> void:
 	checks += 1
 	if not condition:
 		failures.append(message)
+
+
+func _scavenger_gold_record() -> Dictionary:
+	var catalog := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	for record in catalog:
+		if record.get("id") == "fray_scavenger":
+			var copy: Dictionary = record.duplicate(true)
+			copy.intent.actions.append({"type": "steal_gold", "amount": 2, "weight": 2})
+			return copy
+	return {}
+
+
+func _test_scavenger_gold_cache() -> void:
+	var record := _scavenger_gold_record()
+	_check(not record.is_empty() and record.get("name") == "Fray Scavenger"
+		and record.get("max_hp") == 14 and record.intent.actions.size() == 4,
+		"gold precondition: authentic copied Scavenger retains old choices plus theft")
+	if record.is_empty():
+		return
+	_check(CombatEnemyIntents.weighted_action(
+		{"type": "steal_gold", "amount": 2.0, "weight": 2.0}) ==
+		{"weight": 2, "action": {"type": "steal_gold", "amount": 2}},
+		"gold authored JSON integers normalize through the existing validator")
+	var malformed: Array = []
+	for amount in [0, -1, true, "2", null, 2.5, INF, NAN, [], {}]:
+		malformed.append({"type": "steal_gold", "amount": amount, "weight": 2})
+	for field in ["target_position", "enemy_position", "target_policy", "hits", "status", "direction", "extra"]:
+		var bad := {"type": "steal_gold", "amount": 2, "weight": 2}
+		bad[field] = 1
+		malformed.append(bad)
+	malformed.append({"type": "steal_gold", "weight": 2})
+	for raw in malformed:
+		var broken := record.duplicate(true)
+		broken.intent.actions.append(raw)
+		var enemies := CombatEnemies.new([broken])
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 438
+		var state := rng.state
+		var selector := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+		_check(enemies.is_valid() and not selector.bind_battle(enemies, _party_fixture(), rng)
+			and not selector.is_bound() and rng.state == state,
+			"malformed theft fails whole bind before any weighted draw: " + str(raw))
+	for amount in [0, -1, true, "2", null, 2.0, 2.5]:
+		_check(not CombatEnemyIntents.valid_action({"type": "steal_gold", "amount": amount}),
+			"gold runtime announcement requires strictly positive literal integer")
+	var traces: Array = []
+	for repeat_index in range(2):
+		var enemies := CombatEnemies.new([record])
+		var party := _party_fixture()
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 438
+		var selector := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+		_check(selector.bind_battle(enemies, party, rng), "extended Scavenger policy binds")
+		if not selector.is_bound():
+			return
+		var trace: Array = []
+		var thefts := 0
+		for turn in range(64):
+			var cached := selector.get_intents()
+			var state := rng.state
+			_check(cached.size() == 1 and selector.get_intents() == cached and rng.state == state,
+				"repeated gold announcement reads preserve cache and run RNG")
+			if cached[0].type == "steal_gold":
+				thefts += 1
+				_check(cached == [{"type": "steal_gold", "amount": 2, "enemy_position": 1}]
+					and not enemies.is_slain(1), "weighted theft names living source without hero target")
+			trace.append([cached.duplicate(true), state])
+			cached[0].amount = -9
+			_check(selector.get_intents() == trace[-1][0], "gold cache is detached from returned edits")
+			_check(selector.advance_turn(), "extended policy advances normally")
+		_check(thefts > 0, "seeded real weighted policy actually selected theft")
+		traces.append(trace)
+	_check(traces[0] == traces[1], "same-seed extended Scavenger actions and RNG replay exactly")
 
 
 func _attack(amount: int, target: int) -> Dictionary:

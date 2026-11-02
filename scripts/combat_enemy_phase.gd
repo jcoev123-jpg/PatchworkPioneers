@@ -27,10 +27,18 @@ const ENRAGE_STACKS_FIELD := "enrage_stacks"
 ## by CombatRoundFlow. It is quoted read-only on this phase's detached actors and
 ## only ever writes retaliation into the staged enemy roster, so a rejected batch
 ## publishes neither its damage nor its thorns.
+## Optional `run_gold` is a carried nonnegative integer. Wallet-aware success
+## adds `gold`; each theft event reports actual `amount` and remaining `gold`.
+## The caller adopts that final balance only when the entire phase succeeds.
 func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		reactions: CombatWardenGuardReactions = null, policy_targets := false,
-		eyelet: CombatButtonGolemEyeletGuardCards = null) -> Dictionary:
+		eyelet: CombatButtonGolemEyeletGuardCards = null, run_gold: Variant = null) -> Dictionary:
 	var failure := {"ok": false, "events": []}
+	# Null preserves the exact legacy receipt. A supplied wallet is strictly an
+	# integer balance; only the successful final receipt publishes its new value.
+	if run_gold != null and (not run_gold is int or run_gold < 0):
+		return failure
+	var staged_gold: int = run_gold if run_gold is int else 0
 	if party == null or enemies == null or not party.is_valid() or not enemies.is_valid():
 		return failure
 	var heroes := party.get_heroes()
@@ -55,6 +63,18 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		if not CombatEnemyIntents.valid_action(action):
 			return failure
 		var actor: Dictionary = roster[source - 1]
+		if action.get("type") == "steal_gold":
+			if run_gold == null:
+				return failure
+			# Authenticate the amount against this source's data, never a caller's
+			# forged receipt. Validate the whole policy before staging any beat.
+			var slot := CombatEnemyIntents._weighted_slot(source, actor.get("intent"))
+			var authored := false
+			for entry in slot.get("actions", []):
+				if entry["action"] == action:
+					authored = true
+			if not authored:
+				return failure
 		if actor.get(CombatEnemyIntents.CHARGE_FLAG, false) == true and actor["hp"] > 0:
 			var armed := actor.has(CombatEnemyIntents.CHARGE_PENDING)
 			if armed and action.get("type") != "attack":
@@ -123,6 +143,9 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		# One cached choice/target, independently resolved hits; no RNG per strike.
 		for hit_index in range(hit_count):
 			var event := {"type": effective.type, "enemy_position": source, "applied": false}
+			if effective.type == "steal_gold":
+				event["amount"] = 0
+				event["gold"] = staged_gold
 			for field in ["target_position", "status", "direction"]:
 				if effective.has(field):
 					event[field] = effective[field]
@@ -239,6 +262,12 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 					if sting and not staged_enemies.is_slain(source) \
 							and not _sting_bleed(staged_party, actual_target, hp_before):
 						return failure
+				elif effective.type == "steal_gold":
+					var stolen := mini(effective.amount, staged_gold)
+					staged_gold -= stolen
+					event.applied = true
+					event.amount = stolen
+					event.gold = staged_gold
 				elif effective.type == "summon":
 					# Spawn only in this detached batch; the original mother and
 					# appended child publish together after every beat succeeds.
@@ -322,7 +351,10 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 	# Only a successfully staged birth may extend the real battle roster.
 	for index in range(roster.size(), staged_enemies._enemies.size()):
 		enemies._enemies.append(staged_enemies._enemies[index].duplicate(true))
-	return {"ok": true, "events": events}
+	var receipt := {"ok": true, "events": events}
+	if run_gold != null:
+		receipt["gold"] = staged_gold
+	return receipt
 
 
 ## True only for a roster record that authors the boolean bleeding sting.
