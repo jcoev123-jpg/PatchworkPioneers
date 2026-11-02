@@ -358,7 +358,9 @@ func _check_deck_rows(picker: LiveV3PartyPicker, picks: Array[String], note: Str
 ## picker's caption, admission projection, or its kit lookup helper.
 func _source_catalog(hero_id: String) -> Object:
 	match hero_id:
-		"warden", "seamstress", "tinker":
+		"seamstress":
+			return V3SeamstressStarterCards.new()
+		"warden", "tinker":
 			return StarterCards.new()
 		"lantern_monk":
 			return LanternMonkStarterCards.new()
@@ -406,6 +408,8 @@ func _oracle_effect_fragment(key: String, amount: Variant) -> String:
 			return "Draw %d card" % amount
 		"cleanse_debuff":
 			return "Cleanse %d debuff" % amount
+		"tether_share_percent":
+			return "share %d%% damage" % amount
 		"move_self_forward":
 			return "Advance self %d slot" % amount
 		"riposte":
@@ -456,6 +460,8 @@ func _check_kit_occurrence(picker: LiveV3PartyPicker, hero_id: String,
 	match card.target_kind:
 		"enemy_single":
 			scope = "one foe in slots " + ", ".join(to_parts)
+		"enemy_pair":
+			scope = "two distinct living foes in slots " + ", ".join(to_parts)
 		"enemy_all":
 			scope = "all foes in slots " + ", ".join(to_parts)
 		"enemy_back":
@@ -516,8 +522,10 @@ func _check_all_kits(picker: LiveV3PartyPicker) -> void:
 		var copies: Dictionary = {}
 		for id in actual:
 			copies[id] = int(copies.get(id, 0)) + 1
-		if hero_id in ["warden", "seamstress", "tinker"]:
+		if hero_id in ["warden", "tinker"]:
 			_check(copies.values().has(2), hero_id + " duplicated starter is traversable twice")
+		if hero_id == "seamstress":
+			_check(copies.size() == 4 and not copies.values().has(2), "Seamstress browses four distinct V3 starters")
 		# A mouse hover or keyboard focus drives the actual UI, not the helper.
 		await _key_focus(_tile(picker, hero_id))
 		await _key(picker.inspect_cards_button, KEY_ENTER)
@@ -1132,8 +1140,9 @@ func _run() -> void:
 	await _key(deck_button, KEY_SPACE)
 	_check_deck_rows(picker, ["warden", "seamstress", "tinker"], "legacy three seat deck via keyboard")
 	_check(deck_view.get_node("DeckScroll/DeckRows/DeckSeat1").text.contains("1 EN Strike x2")
-		and deck_view.get_node("DeckScroll/DeckRows/DeckSeat2").text.contains("1 EN Prick x2"),
-		"genuine legacy duplicate starters count exactly twice, not collapsed or repeated")
+		and deck_view.get_node("DeckScroll/DeckRows/DeckSeat2").text.contains("1 EN Thread Prick")
+		and deck_view.get_node("DeckScroll/DeckRows/DeckSeat2").text.contains("2 EN Tether Loop"),
+		"Warden duplicates and distinct V3 Seamstress starters retain exact printed costs")
 	_check(requests.is_empty() and cancels == 0, "Inspect Deck fires no run or cancel signals")
 	picker.inspect_cards_button.pressed.emit()
 	picker.reward_cards_button.pressed.emit()

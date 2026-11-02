@@ -162,8 +162,8 @@ func _receipt(path_id: String, starter: Array[String]) -> Dictionary:
 ## An independent seed/route oracle for one routed Fight: the canonical admitted
 ## deck, the optional appended Path card and the one shuffle the app records.
 ## The Path case rewinds to the pre-admission state, exactly like the app.
-func _oracle(seed_value: int, node_id: String, card_id: String) -> Dictionary:
-	var starter: Array[String] = StarterCards.new().get_starting_deck()
+func _oracle(seed_value: int, node_id: String, card_id: String, direct_route: bool = false) -> Dictionary:
+	var starter: Array[String] = StarterCards.new().get_starting_deck() if direct_route else RunV3PartyAdmission.admit(["warden", "seamstress", "tinker"]).deck
 	var ledger := RunRestStitchCards.new(starter, {}, 0, 1)
 	if not ledger.is_valid():
 		return {}
@@ -603,7 +603,7 @@ func _unselected_case() -> void:
 	_check(not fixture.is_empty(), "unselected fixture: an opening Fight exists")
 	if fixture.is_empty():
 		return
-	var twelve := _oracle(int(fixture["seed"]), String(fixture["node_id"]), "")
+	var twelve := _oracle(int(fixture["seed"]), String(fixture["node_id"]), "", true)
 	app = (load(APP_SCENE) as PackedScene).instantiate()
 	root.add_child(app)
 	await _frames()

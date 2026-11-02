@@ -59,7 +59,8 @@ func _click(button: Button) -> void:
 
 func _catalog(id: String) -> Object:
 	match id:
-		"warden", "seamstress", "tinker": return StarterCards.new()
+		"seamstress": return V3SeamstressStarterCards.new()
+		"warden", "tinker": return StarterCards.new()
 		"lantern_monk": return LanternMonkStarterCards.new()
 		"rag_duelist": return RagDuelistStarterCards.new()
 		"scarecrow": return ScarecrowStarterCards.new()

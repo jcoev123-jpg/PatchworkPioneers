@@ -49,11 +49,17 @@ func _initialize() -> void:
 
 
 func _test_v3_seamstress_upgrades() -> void:
-	var pool := V3SeamstressPoolCards.new()
-	for base_id in pool.get_base_ids():
-		var plus_id := pool.get_upgrade_id(base_id)
-		var base := pool.get_definition(base_id)
-		var plus := pool.get_definition(plus_id)
+	_check_v3_seamstress_upgrades(V3SeamstressPoolCards.new())
+	_check_v3_seamstress_upgrades(V3SeamstressStarterCards.new())
+
+
+func _check_v3_seamstress_upgrades(pool: Object) -> void:
+	var ids: Array = pool.get_starting_deck() if pool is V3SeamstressStarterCards else pool.get_base_ids()
+	_check(not ids.is_empty(), "V3 upgrade catalog loaded")
+	for base_id in ids:
+		var plus_id: String = pool.get_upgrade_id(base_id)
+		var base: Dictionary = pool.get_definition(base_id)
+		var plus: Dictionary = pool.get_definition(plus_id)
 		var deck := [base_id, "warden_strike", base_id]
 		var before := deck.duplicate()
 		var projection := RunRestCardUpgrade.list_authored_choices(deck)
@@ -74,6 +80,8 @@ func _test_v3_seamstress_upgrades() -> void:
 			"V3 upgrades only selected duplicate occurrence")
 		_assert_rejected_while_used(visit, 0, deck, "V3 used upgrade visit")
 		_check(RunRestCardUpgrade.list_authored_choices(result.deck).ok, "V3 upgraded deck reloads")
+		_assert_rejected(RunRestCardUpgrade.new([plus_id], {plus_id: base_id}), 0, [plus_id],
+			"V3 plus cannot be upgraded again or downgraded")
 		for forged in [base_id + "_fake_plus", "seamstress_running_stitch_plus", "warden_iron_hem_plus"]:
 			_assert_rejected(RunRestCardUpgrade.new(deck, {base_id: forged}), 2, deck,
 				"V3 forged/cross-catalog plus mapping")

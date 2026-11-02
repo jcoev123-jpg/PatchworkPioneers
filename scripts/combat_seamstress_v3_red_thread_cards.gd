@@ -36,6 +36,7 @@ extends RefCounted
 const OWNER := "seamstress"
 const TARGET_KIND := "enemy_single"
 const STITCHED_IDS := [
+	"seamstress_v3_thread_prick", "seamstress_v3_thread_prick_plus",
 	"seamstress_v3_needle_rain", "seamstress_v3_needle_rain_plus",
 	"seamstress_v3_scarlet_knot", "seamstress_v3_scarlet_knot_plus",
 ]

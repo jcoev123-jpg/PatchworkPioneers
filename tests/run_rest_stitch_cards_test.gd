@@ -22,6 +22,7 @@ func _initialize() -> void:
 	_test_pool_plus_cards_stitch_and_reload()
 	_test_pool_negative_matrix()
 	_test_v3_seamstress_stitches()
+	_test_peddler_v3_printings_resolve()
 	if failures.is_empty():
 		print("run_rest_stitch_cards_test: PASS (", checks, " checks)")
 	else:
@@ -31,9 +32,38 @@ func _initialize() -> void:
 	quit(0 if failures.is_empty() else 1)
 
 
+## The Peddler's look-driven v3 Warden/Tinker printings are sold in real runs, so
+## an owned copy must stay a legal deck member (the next Fight is refused
+## otherwise) while still never being sampled as a Fight reward.
+func _test_peddler_v3_printings_resolve() -> void:
+	for catalog in [V3WardenPoolCards.new(), V3TinkerPoolCards.new()]:
+		var bases: Array = catalog.get_base_ids() if catalog.has_method("get_base_ids") \
+			else catalog.get_pool_card_ids()
+		_check(not bases.is_empty(), "Peddler v3 catalog loaded")
+		for base_id in bases:
+			for id in [base_id, catalog.get_upgrade_id(base_id)]:
+				var definition: Dictionary = catalog.get_definition(id)
+				_check(not definition.is_empty(), "Peddler v3 printing exists: " + String(id))
+				_check(RunRestStitchCards.resolve_card_definition(id) == definition,
+					"owned Peddler v3 printing keeps the run deck resolvable: " + String(id))
+				_check(RunPoolCardRewardOffers.resolve_reward_definition(id).is_empty(),
+					"Peddler v3 printing is never sampled as a Fight reward: " + String(id))
+				_check(RunRestStitchCards.new([id, STRIKE, id], {}, 3).is_valid(),
+					"a deck holding the bought Peddler printing can enter the next Fight: " + String(id))
+	_check(RunRestStitchCards.resolve_card_definition("tinker_v3_gear_brace_counterfeit").is_empty()
+		and RunRestStitchCards.resolve_card_definition("warden_v3_helmet_rattle_plus_plus").is_empty(),
+		"counterfeit Peddler printings still resolve to nothing")
+
+
 func _test_v3_seamstress_stitches() -> void:
-	var pool := V3SeamstressPoolCards.new()
-	for base_id in pool.get_base_ids():
+	_check_v3_seamstress_stitches(V3SeamstressPoolCards.new())
+	_check_v3_seamstress_stitches(V3SeamstressStarterCards.new())
+
+
+func _check_v3_seamstress_stitches(pool: Object) -> void:
+	var ids: Array = pool.get_starting_deck() if pool is V3SeamstressStarterCards else pool.get_base_ids()
+	_check(not ids.is_empty(), "V3 stitch catalog loaded")
+	for base_id in ids:
 		for id in [base_id, pool.get_upgrade_id(base_id)]:
 			_check(RunRestStitchCards.resolve_card_definition(id) == pool.get_definition(id), "V3 exact stitch definition: " + id)
 			var deck := [id, STRIKE, id]

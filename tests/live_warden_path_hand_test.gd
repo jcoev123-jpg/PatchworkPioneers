@@ -139,7 +139,7 @@ func _norm(value: Variant) -> Variant:
 ## deck, the optional appended Path card and the one shuffle the app records.
 ## The Path case rewinds to the pre-admission state, exactly like the app.
 func _oracle(seed_value: int, node_id: String, card_id: String) -> Dictionary:
-	var starter: Array[String] = StarterCards.new().get_starting_deck()
+	var starter: Array[String] = RunV3PartyAdmission.admit(["warden", "seamstress", "tinker"]).deck
 	var ledger := RunRestStitchCards.new(starter, {}, 0, 1)
 	if not ledger.is_valid():
 		return {}

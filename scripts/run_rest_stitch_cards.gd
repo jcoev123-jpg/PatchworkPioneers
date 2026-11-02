@@ -228,7 +228,8 @@ func _validate_input(deck_ids: Array, registry: Dictionary, next_stitch_id: int)
 
 
 ## Resolves any authentic stitchable card definition: starter cards (and starter+),
-## reward-eligible pool base cards, and canonical authored pool + cards.
+## reward-eligible pool base cards, canonical authored pool + cards, and the
+## Peddler's v3 Warden/Tinker printings an owned run deck may hold.
 ## Stitched composite IDs and counterfeit/unregistered cards resolve to {}.
 static func resolve_card_definition(card_id: Variant) -> Dictionary:
 	if typeof(card_id) != TYPE_STRING:
@@ -244,6 +245,14 @@ static func resolve_card_definition(card_id: Variant) -> Dictionary:
 	var reward_def: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(id)
 	if not reward_def.is_empty():
 		return reward_def
+	# The Peddler's look-driven v3 Warden and Tinker printings are sold in real
+	# runs, so an owned copy is a legitimate deck member even though it is never
+	# sampled as a Fight reward. Resolve both printings (base and +) so a run that
+	# buys one can still enter its next Fight.
+	for printing in [V3WardenPoolCards.new(), V3TinkerPoolCards.new()]:
+		var v3_def: Dictionary = printing.get_definition(id)
+		if not v3_def.is_empty():
+			return v3_def
 	for pool in [
 		WardenPoolCards.new(), SeamstressPoolCards.new(), V3SeamstressPoolCards.new(), TinkerPoolCards.new(),
 		LanternMonkPoolCards.new(), RagDuelistPoolCards.new(), ScarecrowPoolCards.new(),

@@ -222,6 +222,8 @@ static func _starters(hero_id: String, override: Variant) -> Array[String]:
 
 
 static func _shipped_catalog(hero_id: String) -> Object:
+	if hero_id == "seamstress":
+		return V3SeamstressStarterCards.new()
 	if hero_id in LEGACY_IDS:
 		return StarterCards.new()
 	var script: Variant = load(V3_CATALOGS[hero_id])

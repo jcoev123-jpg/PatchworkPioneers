@@ -473,7 +473,9 @@ func _update_inspection() -> void:
 ## independent of the summary caption and of any currently selected party.
 func _kit_catalog(hero_id: String) -> Object:
 	match hero_id:
-		"warden", "seamstress", "tinker":
+		"seamstress":
+			return V3SeamstressStarterCards.new()
+		"warden", "tinker":
 			return StarterCards.new()
 		"lantern_monk":
 			return LanternMonkStarterCards.new()
@@ -509,7 +511,7 @@ func _kit_card_by_id(hero_id: String, card_id: String) -> Dictionary:
 		for slot in card[field]:
 			if not slot is int or slot not in [1, 2, 3]:
 				return {}
-	if not card["target_kind"] in ["enemy_single", "enemy_all", "enemy_back",
+	if not card["target_kind"] in ["enemy_single", "enemy_pair", "enemy_all", "enemy_back",
 			"self", "ally_single", "party_all", "none"]:
 		return {}
 	return card
@@ -537,6 +539,8 @@ func _kit_target_line(card: Dictionary) -> String:
 	match kind:
 		"enemy_single":
 			recipient = "one foe in slots " + ", ".join(to)
+		"enemy_pair":
+			recipient = "two distinct living foes in slots " + ", ".join(to)
 		"enemy_all":
 			recipient = "all foes in slots " + ", ".join(to)
 		"enemy_back":
@@ -577,6 +581,8 @@ func _kit_effect_clause(key: String, value: Variant) -> String:
 			return "Draw %d card(s)" % value
 		"cleanse_debuff":
 			return "Cleanse %d debuff(s) per target" % value
+		"tether_share_percent":
+			return "Tether two distinct living foes: share %d%% damage" % value
 		"move_self_forward":
 			return "Advance self %d slot(s)" % value
 		"riposte":

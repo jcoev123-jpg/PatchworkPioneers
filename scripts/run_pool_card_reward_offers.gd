@@ -190,7 +190,7 @@ static func resolve_reward_definition(card_id: Variant) -> Dictionary:
 	if not card_id is String or String(card_id).is_empty():
 		return {}
 	var id: String = card_id
-	for catalog in [StarterCards.new(), LanternMonkStarterCards.new(), RagDuelistStarterCards.new(),
+	for catalog in [StarterCards.new(), V3SeamstressStarterCards.new(), LanternMonkStarterCards.new(), RagDuelistStarterCards.new(),
 		ScarecrowStarterCards.new(), YarnRangerStarterCards.new(), ButtonGolemStarterCards.new()]:
 		var starter: Dictionary = catalog.get_definition(id)
 		if not starter.is_empty():

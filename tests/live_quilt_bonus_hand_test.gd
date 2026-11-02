@@ -225,6 +225,8 @@ func _owners(card_id: String) -> Array[String]:
 func _definition(card_id: String) -> Dictionary:
 	var definition := catalog.get_definition(card_id)
 	if definition.is_empty():
+		definition = V3SeamstressStarterCards.new().get_definition(card_id)
+	if definition.is_empty():
 		definition = M02PositionCards.new().get_definition(card_id)
 	if definition.is_empty():
 		definition = WardenPoolCards.new().get_definition(card_id)
@@ -239,7 +241,7 @@ func _definition(card_id: String) -> Dictionary:
 ## hand, with the requested Warden card held.
 func _find_fixture(warden_id: String) -> Dictionary:
 	var cards: Array[String] = []
-	cards.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
+	cards.assign(RunV3PartyAdmission.admit(["warden", "seamstress", "tinker"]).deck)
 	for value in range(1, SEED_LIMIT + 1):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
@@ -271,20 +273,20 @@ func _find_fixture(warden_id: String) -> Dictionary:
 ## Warden first, then Seamstress, then Tinker; a fourth still-held attack proves
 ## that a zero-energy attempt is rejected without a receipt.
 func _plan(hand: Array[String], warden_id: String) -> Dictionary:
-	if not hand.has(warden_id) or not hand.has("seamstress_prick") \
+	if not hand.has(warden_id) or not hand.has("seamstress_v3_thread_prick") \
 			or not hand.has("tinker_pop_shot"):
 		return {}
 	var warden := warden_id
 	var spare := ""
 	for id in hand:
-		if id in [warden, "seamstress_prick", "tinker_pop_shot"]:
+		if id in [warden, "seamstress_v3_thread_prick", "tinker_pop_shot"]:
 			continue
 		if id in CombatAttackCards.ATTACK_IDS:
 			spare = id
 			break
 	if spare.is_empty():
 		return {}
-	return {"warden": warden, "seamstress": "seamstress_prick",
+	return {"warden": warden, "seamstress": "seamstress_v3_thread_prick",
 		"tinker": "tinker_pop_shot", "spare": spare}
 
 
@@ -318,6 +320,13 @@ func _arm(card_id: String, keyboard: bool) -> bool:
 	_check(panel != null, "held card panel exists: " + card_id)
 	if panel == null:
 		return false
+	if card_id == "seamstress_v3_thread_prick":
+		if keyboard:
+			panel.grab_focus()
+			await _key(KEY_ENTER)
+		else:
+			await _click(panel)
+		return app.get_node("LiveAreaAttackAction/LiveSeamstressSingleBleedHand")._choice.get("id") == card_id
 	if keyboard:
 		for attempt in range(app.hand_view.get_child_count() + 1):
 			await _key(KEY_P)
@@ -344,8 +353,19 @@ func _play_support(card_id: String, keyboard: bool, target: int) -> void:
 func _play_attack(card_id: String, keyboard: bool, target: int) -> bool:
 	if not await _arm(card_id, keyboard):
 		return false
+	if card_id == "seamstress_v3_thread_prick":
+		var adapter = app.get_node("LiveAreaAttackAction/LiveSeamstressSingleBleedHand")
+		if adapter._targets.has(target):
+			await _click(adapter._targets[target])
+			return true
+		return false
 	if keyboard:
-		await _key(KEY_1 + target - 1)
+		if target > 0:
+			await _key(KEY_1 + target - 1)
+		else:
+			# A target-free attack (area/random) owns Enter/Space; a digit key
+			# would neither pick a slot nor commit the armed card.
+			await _key(KEY_ENTER)
 	else:
 		await _click(app.get_node("LiveEnemyRoster")._labels[target - 1])
 	return true
@@ -354,7 +374,10 @@ func _play_attack(card_id: String, keyboard: bool, target: int) -> bool:
 ## One committed play on the mounted hand, mirrored exactly by the detached oracle.
 func _commit(card_id: String, keyboard: bool, target: int, oracle: Dictionary) -> void:
 	_check(app.deck.hand.has(card_id), "card is genuinely held before its committed play: " + card_id)
-	if card_id in CombatAttackCards.ATTACK_IDS:
+	if card_id == "seamstress_v3_thread_prick":
+		await _play_attack(card_id, keyboard, target)
+		CombatSeamstressV3RedThreadCards.new().play_card(oracle["deck"], oracle["party"], oracle["enemies"], card_id, target)
+	elif card_id in CombatAttackCards.ATTACK_IDS:
 		await _play_attack(card_id, keyboard, target)
 		var attacks: CombatAttackCards = oracle["attacks"]
 		attacks.play_attack(oracle["deck"], oracle["party"], oracle["enemies"], card_id, target)
@@ -386,9 +409,14 @@ func _bound_callback(card_id: String) -> Callable:
 ## The first held card the real hand can legally play right now, with its target.
 func _first_playable() -> Dictionary:
 	for card_id in app.deck.hand:
-		var definition := catalog.get_definition(card_id)
+		var definition := _definition(card_id)
 		var cost := int(definition.get("cost", -1))
 		if definition.is_empty() or cost < 0 or cost > app.deck.energy:
+			continue
+		if card_id == "seamstress_v3_thread_prick":
+			var adapter = app.get_node("LiveAreaAttackAction/LiveSeamstressSingleBleedHand")
+			if adapter._v3_service._prepare(app.deck, app.party, app.enemies, card_id, 1).get("ok", false):
+				return {"id": card_id, "target": 1}
 			continue
 		if card_id in CombatAttackCards.ATTACK_IDS:
 			var preview := CombatAttackTargeting.new().get_preview(
@@ -601,6 +629,7 @@ func _scenario_three_owners(seed_fixture: Dictionary) -> Array:
 	if not next_play.is_empty():
 		var before_first := _state()
 		await _commit(next_play.id, true, int(next_play.target), mirror)
+
 		_check(_state() != before_first, "the next turn's play really committed")
 		_check(not app._quilt_bonus.get_patch_progress().awarded,
 			"one receipt in the next turn does not award")
@@ -743,9 +772,9 @@ func _scenario_stitched_owners() -> void:
 	if not ledger.is_valid():
 		return
 	var made := ledger.choose_stitch(app.run_deck.find("warden_strike"),
-		app.run_deck.find("seamstress_prick"), ledger.get_snapshot())
+		app.run_deck.find("seamstress_v3_thread_prick"), ledger.get_snapshot())
 	_check(bool(made.get("ok", false)) and made.descriptor.half_ids ==
-		["warden_strike", "seamstress_prick"], "real Rest action publishes the two-owner descriptor")
+		["warden_strike", "seamstress_v3_thread_prick"], "real Rest action publishes the two-owner descriptor")
 	if not bool(made.get("ok", false)):
 		return
 	app.run_deck = made.deck.duplicate()
@@ -980,7 +1009,7 @@ func _scenario_switchback_stitched(seed_fixture: Dictionary) -> void:
 		return
 	# Create the stitch first so run_deck and run_scraps are published before wardrobe binding:
 	var ledger := RunRestStitchCards.new(app.run_deck, {}, 3, 1)
-	var made := ledger.choose_stitch(app.run_deck.find("seamstress_prick"),
+	var made := ledger.choose_stitch(app.run_deck.find("seamstress_v3_thread_prick"),
 		app.run_deck.find("warden_strike"), ledger.get_snapshot())
 	_check(bool(made.get("ok", false)), "Switchback stitched: created composite seamstress + warden")
 	if not bool(made.get("ok", false)):

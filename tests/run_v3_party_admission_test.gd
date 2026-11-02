@@ -85,6 +85,8 @@ func _expected_order(picks: Array) -> Array[String]:
 
 
 func _shipped(id: String) -> Object:
+	if id == "seamstress":
+		return V3SeamstressStarterCards.new()
 	if id in LEGACY_HP:
 		return StarterCards.new()
 	return load(_authored(id).starter_cards).new()
@@ -209,8 +211,11 @@ func _test_original_trio() -> void:
 		for record in receipt.get("party", []):
 			hp.append(record.max_hp)
 		_check(hp == [40, 30, 26], "original trio keeps 40/30/26 HP")
-		_check(_multiset(receipt.get("deck", [])) == _multiset(combined),
-			"original trio deck is the original starter multiset")
+		var expected: Array[String] = []
+		for owner in ["warden", "seamstress", "tinker"]:
+			expected.append_array(_owner_starters(owner))
+		_check(_multiset(receipt.get("deck", [])) == _multiset(expected),
+			"original trio replaces only Seamstress with her four V3 starters")
 	_check(StarterCards.new().get_starting_deck() == combined, "default combined starter deck is unaltered")
 	var warden := _multiset(_owner_starters("warden"))
 	_check(warden.get("warden_strike") == 2 and warden.size() == 3, "Warden keeps two Strikes among four starters")
@@ -396,12 +401,14 @@ func _test_rejected_catalogs() -> void:
 		_check_rejects(picks, {"catalogs": {"yarn_ranger": entry[0]}}, "catalog " + entry[1])
 	var plus := _fake("seamstress")
 	for index in range(plus.deck.size()):
-		if plus.deck[index] == "seamstress_prick":
-			plus.deck[index] = "seamstress_prick_plus"
+		if plus.deck[index] == "seamstress_v3_thread_prick":
+			plus.deck[index] = "seamstress_v3_thread_prick_plus"
 			break
 	var short_legacy := _fake("seamstress")
-	short_legacy.deck.erase("seamstress_mend")
-	_check_rejects(picks, {"catalogs": {"seamstress": plus}}, "legacy upgraded starter")
-	_check_rejects(picks, {"catalogs": {"seamstress": short_legacy}}, "legacy missing starter")
+	short_legacy.deck.erase("seamstress_v3_mending_knot")
+	_check(plus.deck.has("seamstress_v3_thread_prick_plus") and short_legacy.deck.size() == 3,
+		"Seamstress rejection fixtures actually alter the shipped starters")
+	_check_rejects(picks, {"catalogs": {"seamstress": plus}}, "V3 upgraded starter")
+	_check_rejects(picks, {"catalogs": {"seamstress": short_legacy}}, "V3 missing starter")
 	_check_rejects(picks, {"catalogs": []}, "array catalogs")
 	_check(RunV3PartyAdmission.admit(picks) == shipped, "rejections leave later admissions unchanged")

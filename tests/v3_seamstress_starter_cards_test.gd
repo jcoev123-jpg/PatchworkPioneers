@@ -701,7 +701,7 @@ func _test_existing_catalogs_unchanged() -> void:
 				card_id + " carries no pool rarity")
 
 
-## AC3: until the later wiring task, the live reward routing cannot offer or resolve these starters.
+## AC3: starter definitions are canonical run-deck members but never earned reward candidates.
 func _test_not_reward_offered() -> void:
 	var catalog := V3SeamstressStarterCards.new()
 	var cases: Dictionary = _cases()
@@ -716,8 +716,8 @@ func _test_not_reward_offered() -> void:
 	for base_id: String in cases:
 		for card_id: String in [base_id, base_id + "_plus"]:
 			_check(not candidate_ids.has(card_id), "reward candidates exclude " + card_id)
-			_check(RunPoolCardRewardOffers.resolve_reward_definition(card_id).is_empty(),
-				"starter is not reward-resolvable yet: " + card_id)
+			_check(RunPoolCardRewardOffers.resolve_reward_definition(card_id) == catalog.get_definition(card_id),
+				"starter resolves to exact canonical run-deck definition: " + card_id)
 	_check(not RunPoolCardRewardOffers.resolve_reward_definition("seamstress_running_stitch").is_empty(),
 		"an existing Seamstress reward card is still reward-resolvable (precondition)")
 

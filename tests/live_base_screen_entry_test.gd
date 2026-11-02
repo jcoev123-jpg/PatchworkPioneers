@@ -231,7 +231,7 @@ func _fresh_path_run(path_id: String, use_mouse: bool, enter_fight: bool) -> voi
 	var expected := _expected_receipt(path_id)
 	var other_id := "unpicker" if path_id == "bloodline" else "bloodline"
 	var card_id := String((expected["card"] as Dictionary).get("id", ""))
-	var starter: Array[String] = StarterCards.new().get_starting_deck()
+	var starter: Array[String] = RunV3PartyAdmission.admit(["warden", "seamstress", "tinker"]).deck
 	_check(not _authored_path(path_id).is_empty() and not (expected["card"] as Dictionary).is_empty()
 		and not card_id.is_empty() and app.run_seamstress_path_receipt.is_empty()
 		and app.title_view.is_visible_in_tree(),
@@ -1186,7 +1186,7 @@ func _run() -> void:
 	_check(app.base_screen == null, "Base hides only after the route was created")
 	_check(app.run_seamstress_path_receipt == _expected_receipt("unpicker"),
 		"Set out commits the validated detached Path receipt")
-	_check(app.run_deck == StarterCards.new().get_starting_deck()
+	_check(app.run_deck == RunV3PartyAdmission.admit(["warden", "seamstress", "tinker"]).deck
 		and not app.run_deck.has("seamstress_fray")
 		and (app.run_seamstress_path_receipt["deck"] as Array).size() == 13,
 		"the playable deck stays twelve cards while the proposal stays in the receipt")
@@ -1194,7 +1194,7 @@ func _run() -> void:
 		and app.run_map.get_generation_revision() == 1,
 		"exactly one seeded map with no combat or committed node")
 	var base_route := _route_snapshot(app)
-	_check(app.run_deck == StarterCards.new().get_starting_deck() and app.run_heroes.size() == 3
+	_check(app.run_deck == RunV3PartyAdmission.admit(["warden", "seamstress", "tinker"]).deck and app.run_heroes.size() == 3
 		and app.session_gold == 0 and app.run_scraps == 0 and app.run_seed == 42,
 		"Base preserves the authored deck, three heroes, seed and currency")
 	_check(app.route_buttons.size() == app.run_map.get_legal_choices().size(),
@@ -1277,8 +1277,11 @@ func _run() -> void:
 	_check(is_instance_valid(app.route_view) and app.run_map != null,
 		"direct Choose a route still opens the chooser")
 	var direct_route := _route_snapshot(app)
-	_check(direct_route == base_route,
-		"Base Set out and direct Choose a route share the exact seeded model")
+	_check(direct_route[3] == StarterCards.new().get_starting_deck()
+		and direct_route.slice(0, 3) == base_route.slice(0, 3)
+		and direct_route.slice(4, 10) == base_route.slice(4, 10)
+		and direct_route.slice(11) == base_route.slice(11),
+		"Base and direct route share seeded map, party and controls; each keeps its authorized deck")
 	_check(app.run_map.get_generation_revision() == 1 and app.run_rng != null,
 		"direct route allocates one map and one run RNG")
 	await _click(app.route_back_button)

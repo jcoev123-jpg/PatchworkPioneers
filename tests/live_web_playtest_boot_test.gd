@@ -81,7 +81,7 @@ func _run() -> void:
 			else:
 				_check(app.run_seed == {"rest": 14, "shop": 14, "event": 6}.get(screen, 1), "fixed seed: " + screen)
 				_check(app.session_gold == 100 and app.run_scraps == 10, "consistent currency fixture: " + screen)
-				_check(app.run_deck == StarterCards.new().get_starting_deck(), "authored complete starter deck: " + screen)
+				_check(app.run_deck == RunV3PartyAdmission.admit(["warden", "seamstress", "tinker"]).deck, "authored complete starter deck: " + screen)
 				var heroes: Array = app.run_heroes
 				_check(heroes.size() == 3, "three actual heroes")
 				for index in range(heroes.size()):

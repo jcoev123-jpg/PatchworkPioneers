@@ -40,6 +40,13 @@ const STARTER_UPGRADE_PAIRS := {
 		"to_positions": [], "effects": {"block": 5}, "plus_effects": {"block": 7}},
 }
 
+const V3_STARTER_UPGRADE_PAIRS := {
+	"seamstress_v3_thread_prick": "seamstress_v3_thread_prick_plus",
+	"seamstress_v3_tether_loop": "seamstress_v3_tether_loop_plus",
+	"seamstress_v3_mending_knot": "seamstress_v3_mending_knot_plus",
+	"seamstress_v3_shielding_hem": "seamstress_v3_shielding_hem_plus",
+}
+
 var _source: Array = []
 var _deck: Array[String] = []
 var _upgrades: Dictionary = {}
@@ -152,7 +159,11 @@ func choose_upgrade(index: Variant) -> Dictionary:
 		return _failure()
 	# Starter replacements retain the original caller-authorized transaction
 	# semantics. Pool bases, by contrast, require their exact authored plus.
-	if not _catalog.has_card(original_id) and not _is_canonical_pool_upgrade(original_id, upgraded_id):
+	if V3SeamstressStarterCards.new().has_card(original_id):
+		var info := _get_canonical_upgrade_info(original_id)
+		if info.is_empty() or info.get("plus_id") != upgraded_id:
+			return _failure()
+	elif not _catalog.has_card(original_id) and not _is_canonical_pool_upgrade(original_id, upgraded_id):
 		return _failure()
 	_deck[selected] = upgraded_id
 	_consumed = true
@@ -255,6 +266,24 @@ static func _resolve_pool_card_definition(owner: String, card_id: String) -> Dic
 
 
 static func _get_canonical_upgrade_info(card_id: String) -> Dictionary:
+	if V3_STARTER_UPGRADE_PAIRS.has(card_id):
+		var catalog := V3SeamstressStarterCards.new()
+		var plus_id: String = V3_STARTER_UPGRADE_PAIRS[card_id]
+		var base := catalog.get_definition(card_id)
+		var plus := catalog.get_definition(plus_id)
+		if base.is_empty() or plus.is_empty() or base.get("id") != card_id \
+				or plus.get("id") != plus_id or base.get("upgrade_id") != plus_id \
+				or plus.get("upgrade_of") != card_id or base.get("owner") != "seamstress" \
+				or plus.get("owner") != base.get("owner") or base.get("starting_copies") != 1 \
+				or plus.get("starting_copies") != 0 or base.get("reward_eligible") != false \
+				or plus.get("reward_eligible") != false:
+			return {}
+		return {
+			"plus_id": plus_id, "owner": base.owner,
+			"display_name": base.display_name, "plus_display_name": plus.display_name,
+			"cost": base.cost, "plus_cost": plus.cost,
+			"effects": base.effects.duplicate(true), "plus_effects": plus.effects.duplicate(true),
+		}
 	if STARTER_UPGRADE_PAIRS.has(card_id):
 		var expected: Dictionary = STARTER_UPGRADE_PAIRS[card_id]
 		var starter := StarterCards.new()

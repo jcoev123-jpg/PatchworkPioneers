@@ -613,7 +613,7 @@ func _run() -> void:
 			var map := RunMap.new()
 			_check(map.generate(rng), "independent map generated")
 			_check(app.run_map.get_floors() == map.get_floors() and app.run_map.get_floors().size() == 12
-				and app.run_rng.state == rng.state and app.run_deck == app._load_starter_deck()
+				and app.run_rng.state == rng.state and app.run_deck == RunV3PartyAdmission.admit(["warden", "seamstress", "tinker"]).deck
 				and app.run_heroes == CombatParty.new(app._load_party_definitions()).get_heroes()
 				and app.run_deck.size() == 12 and app.party_carryover is RunTornCarryover,
 				"Start publishes canonical seeded map, twelve cards and three heroes before combat")

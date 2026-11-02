@@ -157,7 +157,11 @@ func _half_preview(half: Dictionary, index: int, party_slots: Array[Dictionary],
 		var red_thread := CombatSeamstressV3RedThreadCards.new()
 		if not red_thread.is_authentic_card(id):
 			return {}
-		authored = V3SeamstressPoolCards.new().get_definition(id)
+		# Thread Prick is a starter printing and Needle Rain/Scarlet Knot are pool
+		# printings; read the record from the catalog that actually owns the ID.
+		authored = (V3SeamstressStarterCards.new().get_definition(id)
+			if CombatSeamstressV3RedThreadCards.CARDS[id]["catalog"] == "starter"
+			else V3SeamstressPoolCards.new().get_definition(id))
 	if CombatYarnRangerKnitCards.CARDS.has(id):
 		authored = CombatYarnRangerKnitCards.knit_definition(id)
 	if authored.is_empty() and id in POOL_HEAL_IDS:

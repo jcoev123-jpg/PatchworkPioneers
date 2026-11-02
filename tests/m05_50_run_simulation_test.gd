@@ -314,8 +314,11 @@ func _run_seed(value: int) -> Dictionary:
 			if not unravel.bind_roster(enemies, tiers):
 				return _fail("Unravel roster")
 			var result := CombatBattleResult.new(party, enemies)
-			var flow := CombatRoundFlow.new(combat_deck, party, enemies, intents, result, unravel)
-			if not flow.begin_fight() or not carry.begin_battle(choice, result, party):
+			var flow := CombatRoundFlow.new(combat_deck, party, enemies, intents, result, unravel,
+				null, null, gold)
+			var began := flow.begin_fight()
+			var carried := carry.begin_battle(choice, result, party)
+			if not began or not carried:
 				return _fail("genuine combat start and observed carryover %s" % choice)
 			if combat_deck.energy != CombatState.TURN_ENERGY or combat_deck.hand.size() != 5:
 				return _fail("turn draws five with three energy")
@@ -471,6 +474,10 @@ func _run_seed(value: int) -> Dictionary:
 				var before_turn: int = intents._turn_index
 				if not flow.end_turn():
 					return _fail("bounded authoritative enemy turn refused %s" % choice)
+				# Publish only the committed enemy phase's wallet; a theft the
+				# phase actually executed must reduce the simulated run gold.
+				if typeof(flow.get_gold()) == TYPE_INT:
+					gold = flow.get_gold()
 				if intents._turn_index > before_turn:
 					phases += 1
 					attacks.start_player_turn()

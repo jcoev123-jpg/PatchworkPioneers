@@ -1,6 +1,13 @@
 extends "res://tests/live_run_map_entry_test.gd"
 ## Mounted twelve-floor gate. Only physical input mutates gameplay state.
 const SEED_LIMIT := 5000
+## The genuine V3 Seamstress starters this run now carries: Thread Prick is paid
+## by the mounted single-bleed adapter, and the two ally printings by the shared
+## support presenter. Tether Loop is a setup card with no damage, so the winning
+## pilot leaves it for its dedicated hand test.
+const V3_THREAD_PRICK_IDS := ["seamstress_v3_thread_prick", "seamstress_v3_thread_prick_plus"]
+const V3_SUPPORT_IDS := ["seamstress_v3_mending_knot", "seamstress_v3_mending_knot_plus",
+	"seamstress_v3_shielding_hem", "seamstress_v3_shielding_hem_plus"]
 var app
 var trace: Array = []
 var stale: Array[Callable] = []
@@ -173,6 +180,24 @@ func _fixture() -> Dictionary:
 		if not path.is_empty():
 			return {"seed": value, "path": path, "graph": map.get_floors()}
 	return {}
+
+
+## The canonical printing this run can genuinely hold: the legacy starter
+## catalog first, then the V3 Seamstress starters the selected party now admits.
+func _definition(card_id: String) -> Dictionary:
+	var definition := StarterCards.new().get_definition(card_id)
+	if definition.is_empty():
+		definition = V3SeamstressStarterCards.new().get_definition(card_id)
+	return definition
+
+
+## The lowest living enemy slot this printing can actually reach, or 0.
+func _first_living_foe(positions: Array) -> int:
+	for position in positions:
+		var enemy: Dictionary = app.enemies.get_enemy(int(position))
+		if not enemy.is_empty() and int(enemy.get("hp", 0)) > 0:
+			return int(position)
+	return 0
 
 
 func _state() -> Array:
@@ -403,7 +428,7 @@ func _quilt_award_pending(id: String) -> bool:
 	var progress: Dictionary = app._quilt_bonus.get_patch_progress()
 	if not bool(progress.get("active", false)) or bool(progress.get("awarded", false)):
 		return false
-	var owner: String = str(StarterCards.new().get_definition(id).get("owner", ""))
+	var owner: String = str(_definition(id).get("owner", ""))
 	if owner.is_empty():
 		return false
 	var patches: Dictionary = progress.get("patches", {})
@@ -430,7 +455,7 @@ func _play_mirror(id: String, award: bool) -> CombatDeck:
 	mirror.discard_pile.assign(app.deck.discard_pile)
 	mirror.combat_state.player_turn_active = app.deck.turn_active
 	mirror.combat_state.energy = app.deck.energy
-	mirror.try_spend_energy(int(StarterCards.new().get_definition(id).get("cost", 0)))
+	mirror.try_spend_energy(int(_definition(id).get("cost", 0)))
 	if id == "tinker_tune_up":
 		mirror.draw_extra(1)
 	mirror.discard_played(id)
@@ -444,16 +469,38 @@ func _play(id: String, target: int, keyboard: bool) -> void:
 	_check(index >= 0, "selected card is actually held")
 	if index < 0:
 		return
-	var definition := StarterCards.new().get_definition(id)
+	var definition := _definition(id)
 	var energy: int = app.deck.energy
 	var rng: int = app.run_rng.state
 	var award := _quilt_award_pending(id)
 	var mirror := _play_mirror(id, award)
 	var panel: Control = app.hand_view.get_child(index)
 	_check(Rect2(0, 0, 1280, 720).encloses(panel.get_global_rect()), "held card fits: %s %s route=%s" % [id, panel.get_global_rect(), app.run_map.get_route()])
+	var thread_prick: bool = id in V3_THREAD_PRICK_IDS
 	var attack: bool = id in CombatAttackCards.ATTACK_IDS
 	var callback: Callable
-	if attack:
+	if thread_prick:
+		# The authentic single-bleed adapter owns Thread Prick's payment and effect;
+		# its own held-panel input and target buttons are the real mounted controls.
+		var adapter = app.get_node("LiveAreaAttackAction/LiveSeamstressSingleBleedHand")
+		callback = adapter._bindings[panel].callback
+		if keyboard:
+			panel.grab_focus()
+			await _key(KEY_ENTER)
+		else:
+			await _click_point(panel.get_global_rect().get_center())
+		_check(adapter._choice.get("id") == id, "held Thread Prick arms its authentic mounted adapter")
+		_check(adapter._targets.has(target), "Thread Prick adapter offers the living authored target")
+		if adapter._targets.has(target):
+			await _click_point(adapter._targets[target].get_global_rect().get_center())
+		_check(adapter.last_event.get("ok", false)
+			and int(adapter.last_event.get("target_position", 0)) == target
+			and int(adapter.last_event.get("printed_damage", 0)) > 0,
+			"real held Thread Prick witnesses its authored hit receipt")
+		attacks += 1
+		keyboard_attacks += 1 if keyboard else 0
+		mouse_attacks += 0 if keyboard else 1
+	elif attack:
 		var presenter = app.get_node("LiveAttackPreview")
 		callback = presenter._bindings[panel].input
 		if keyboard:
@@ -488,7 +535,8 @@ func _play(id: String, target: int, keyboard: bool) -> void:
 		keyboard_attacks += 1 if keyboard else 0
 		mouse_attacks += 0 if keyboard else 1
 	else:
-		callback = app.get_node("LiveSupportHand")._bindings[panel]
+		var support = app.get_node("LiveSupportHand")
+		callback = support._bindings[panel]
 		if keyboard:
 			panel.grab_focus()
 			await _key(KEY_ENTER)
@@ -496,6 +544,13 @@ func _play(id: String, target: int, keyboard: bool) -> void:
 			await _click_point(panel.get_global_rect().get_center())
 		if definition.target_kind == "ally_single":
 			await _click_point(app.hero_panels[target - 1].get_global_rect().get_center())
+		if id in V3_SUPPORT_IDS and is_instance_valid(support.cleanse_choices):
+			# Mending Knot's printed cleanse is a real second choice when the chosen
+			# ally carries a counter; the shared presenter's own button commits it.
+			var counters = support.cleanse_choices.get_children()
+			_check(not counters.is_empty(), "Mending Knot offers the real printed counter choices")
+			if not counters.is_empty():
+				await _click_point(counters[0].get_global_rect().get_center())
 		supports += 1
 	await _frames()
 	_check(app.deck.energy == (0 if app._battle_closed else energy - definition.cost),
@@ -530,6 +585,12 @@ func _battle(loss: bool = false) -> bool:
 		return false
 	var pools: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(RunAuthoredBattleEntry.POOLS_PATH))
 	var kind: String = app.run_map.get_node(app.run_map.get_current_node_id()).type
+	# A selected encounter is always a typed battle. Fail clearly instead of
+	# indexing the authored pools with a non-battle node kind.
+	_check(pools.has(kind) and kind in ["Fight", "Elite", "Boss"],
+		"selected encounter is an authored typed battle: " + kind)
+	if not pools.has(kind) or kind not in ["Fight", "Elite", "Boss"]:
+		return false
 	_check(pools[kind].has(app.encounter_id), "encounter belongs to selected authored type")
 	var entry: Dictionary = pools[kind][app.encounter_id]
 	var ids: Array = []
@@ -587,6 +648,17 @@ func _battle(loss: bool = false) -> bool:
 				var target := 0
 				# Authored damage first; support spends only energy left after attacks.
 				for id in app.deck.hand:
+					var attack_definition := _definition(id)
+					if attack_definition.is_empty() or int(attack_definition.cost) > app.deck.energy:
+						continue
+					if id in V3_THREAD_PRICK_IDS:
+						var living_foe := _first_living_foe(attack_definition.to_positions)
+						if living_foe > 0 and CombatSeamstressV3RedThreadCards.new()._prepare(
+								app.deck, app.party, app.enemies, id, living_foe).get("ok", false):
+							selected = id
+							target = living_foe
+							break
+						continue
 					if id not in CombatAttackCards.ATTACK_IDS:
 						continue
 					var preview := CombatAttackTargeting.new().get_preview(app.deck, app.party, app.enemies, id)
@@ -596,9 +668,9 @@ func _battle(loss: bool = false) -> bool:
 						break
 				if selected.is_empty():
 					for id in app.deck.hand:
-						if id not in app.get_node("LiveSupportHand").SUPPORT_IDS:
+						if id not in app.get_node("LiveSupportHand").SUPPORT_IDS and id not in V3_SUPPORT_IDS:
 							continue
-						var def := StarterCards.new().get_definition(id)
+						var def := _definition(id)
 						var owner: Dictionary = {}
 						for hero in app.party.get_heroes():
 							if hero.id == def.owner:
@@ -620,7 +692,7 @@ func _battle(loss: bool = false) -> bool:
 		for id in app.deck.hand:
 			if id not in CombatAttackCards.ATTACK_IDS:
 				continue
-			var definition := StarterCards.new().get_definition(id)
+			var definition := _definition(id)
 			if definition.cost <= app.deck.energy:
 				continue
 			var owner: Dictionary = {}

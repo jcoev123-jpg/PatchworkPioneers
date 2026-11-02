@@ -170,8 +170,8 @@ func _tinker_card(path_id: String) -> Dictionary:
 
 ## The exact canonical admitted deck plus the selected Path cards, from the same
 ## ledger admission and one shuffle the app performs.
-func _oracle(seed_value: int, node_id: String, path_cards: Array) -> Dictionary:
-	var starter: Array[String] = StarterCards.new().get_starting_deck()
+func _oracle(seed_value: int, node_id: String, path_cards: Array, direct_route: bool = false) -> Dictionary:
+	var starter: Array[String] = StarterCards.new().get_starting_deck() if direct_route else RunV3PartyAdmission.admit(["warden", "seamstress", "tinker"]).deck
 	var ledger := RunRestStitchCards.new(starter, {}, 0, 1)
 	if not ledger.is_valid():
 		return {}
@@ -1028,7 +1028,7 @@ func _unselected_case() -> void:
 	_check(not fixture.is_empty(), "unselected fixture: an opening Fight exists")
 	if fixture.is_empty():
 		return
-	var twelve := _oracle(int(fixture["seed"]), String(fixture["node_id"]), [])
+	var twelve := _oracle(int(fixture["seed"]), String(fixture["node_id"]), [], true)
 	app = (load(APP_SCENE) as PackedScene).instantiate()
 	root.add_child(app)
 	await _frames()
