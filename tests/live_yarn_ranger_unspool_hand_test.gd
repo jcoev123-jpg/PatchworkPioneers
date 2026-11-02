@@ -12,7 +12,7 @@ const STATUS_NEGATIVE_MODES := ["owner_blind", "defender_dodge", "blind_bool",
 ## statuses replace the fixture's own attacker and first-slot defender records so
 ## the same mounted fixture can carry authentic Dodge/Fear/Blind tokens.
 func _begin(id: String, seat: int = 2, owner_statuses: Variant = null,
-		first_enemy_statuses: Variant = null) -> Control:
+		first_enemy_statuses: Variant = null, keyword_case: String = "") -> Control:
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await _frames()
@@ -37,12 +37,33 @@ func _begin(id: String, seat: int = 2, owner_statuses: Variant = null,
 	var tangled_foe := {"id": "tangled", "max_hp": 50, "statuses": {"tangled": 2, "exposed": 1}}
 	if first_enemy_statuses is Dictionary:
 		tangled_foe["statuses"] = (first_enemy_statuses as Dictionary).duplicate(true)
-	app.enemies = CombatEnemies.new([
-		tangled_foe,
-		{"id": "untangled", "max_hp": 50, "statuses": {"bleed": 2}},
-		{"id": "slain", "max_hp": 50, "statuses": {"tangled": 3}}])
+	# Opt-in keyword scenarios leave the old unkeyed fixture untouched.
+	var second_foe := {"id": "untangled", "max_hp": 50, "statuses": {"bleed": 2}}
+	var slain_foe := {"id": "slain", "max_hp": 50, "statuses": {"tangled": 3}}
+	if keyword_case in ["shielded", "two_targets"]:
+		tangled_foe["thorns"] = 4
+		tangled_foe["enrage"] = true
+		tangled_foe["enrage_stacks"] = 2 if keyword_case == "shielded" else 0
+		second_foe["thorns"] = 9
+		second_foe["enrage"] = true
+		second_foe["enrage_stacks"] = 1
+		slain_foe["thorns"] = 9
+		slain_foe["enrage"] = true
+		slain_foe["enrage_stacks"] = 1
+		if keyword_case == "two_targets":
+			second_foe["id"] = "second_tangled"
+			second_foe["statuses"]["tangled"] = 1
+			second_foe["thorns"] = 2
+			second_foe["enrage_stacks"] = 2
+	app.enemies = CombatEnemies.new([tangled_foe, second_foe, slain_foe])
 	_check(app.party.is_valid() and app.enemies.is_valid(), "real valid rosters")
 	_check(app.enemies.gain_block(1, 3) and app.enemies.apply_damage(3, 50), "Block and slain Tangled fixture")
+	if keyword_case in ["shielded", "two_targets"]:
+		_check(app.party.gain_block(seat, 3), "Ranger Block protects from authentic Thorns")
+		if keyword_case == "shielded":
+			_check(app.enemies.gain_block(1, 20), "full enemy Block before contact")
+		else:
+			_check(app.enemies.gain_block(2, 2), "second Tangled foe Block")
 	app.battle_result = CombatBattleResult.new(app.party, app.enemies)
 	app.victory_gold = RunVictoryGold.new(app.battle_result)
 	app.round_flow = CombatRoundFlow.new(app.deck, app.party, app.enemies, app.enemy_intents, app.battle_result)
@@ -178,6 +199,108 @@ func _blind_fear_success(id: String, keyboard: bool, seat: int) -> void:
 		"retired listener cannot charge the remaining copy: " + id)
 	await _dispose()
 
+
+## Real mounted keyword contact: both printings, two Ranger seats, physical
+## mouse/keyboard input. The shielded case has zero HP loss but a confirmed hit.
+func _keyword_success(id: String, keyword_case: String, seat: int,
+		keyboard: bool) -> Array:
+	var panel := await _begin(id, seat, null, null, keyword_case)
+	if panel == null:
+		await _dispose()
+		return []
+	var meta = app.get_node("LiveSupportHand")._metadata
+	var face: Dictionary = presenter.face_text(panel)
+	var base := 10 if id.ends_with("_plus") else 7
+	_check(meta.visual_state(panel).playable and panel.gui_input.get_connections().size() == 1
+		and face.cost == "2 energy" and face.effect == "Deal %d to living Tangled enemies only." % base
+		and face.from_pips == [false, true, true] and face.to_pips == [true, true, true],
+		"real keyword-equipped held panel, authored cost and legal positions: " + id)
+	var ranger: Dictionary = app.party.get_hero(seat)
+	var first: Dictionary = app.enemies.get_enemy(1)
+	var second: Dictionary = app.enemies.get_enemy(2)
+	var slain: Dictionary = app.enemies.get_enemy(3)
+	_check(ranger.get("id") == "yarn_ranger" and ranger.get("block") == 3
+		and ranger.get("hp") == 27 and app.deck.hand.count(id) == 2 and app.deck.energy == 6
+		and first.get("hp") == 50 and first.get("statuses", {}).get("tangled") == 2
+		and first.get("thorns") == 4 and first.get("enrage") == true
+		and first.get("enrage_stacks") == (2 if keyword_case == "shielded" else 0)
+		and first.get("block") == (23 if keyword_case == "shielded" else 3),
+		"nonvacuous real Ranger Block, genuine Thorns/Enrage source and foe Block")
+	_check(second.get("enrage") == true
+		and second.get("thorns") == (2 if keyword_case == "two_targets" else 9)
+		and second.get("statuses", {}).has("tangled") == (keyword_case == "two_targets")
+		and slain.get("hp") == 0 and slain.get("thorns") == 9
+		and slain.get("enrage") == true and slain.get("enrage_stacks") == 1,
+		"second living/untangled and slain keyword-equipped witnesses")
+	var before := _state().duplicate(true)
+	var expected := before.duplicate(true)
+	var deck_snapshot: Array = expected[0][0]
+	deck_snapshot[1].erase(id)
+	deck_snapshot[2].append(id)
+	deck_snapshot[3] -= 2
+	# Weak (-25%) and Exposed (+50%) floor together, then Tangled +2.
+	var damage := int(floor(base * 9.0 / 8.0)) + 2
+	var absorbed := mini((23 if keyword_case == "shielded" else 3), damage)
+	expected[0][5][0].block -= absorbed
+	expected[0][5][0].hp -= damage - absorbed
+	expected[0][5][0].enrage_stacks = 3 if keyword_case == "shielded" else 1
+	var hits: Array = [{"position": 1, "damage": damage,
+		"block_absorbed": absorbed, "hp_loss": damage - absorbed}]
+	if keyword_case == "two_targets":
+		# Second foe has Weak but not Exposed; a distinct Block and Enrage stack.
+		var second_damage := int(floor(base * 0.75)) + 2
+		expected[0][5][1].block = 0
+		expected[0][5][1].hp -= second_damage - 2
+		expected[0][5][1].enrage_stacks = 3
+		hits.append({"position": 2, "damage": second_damage,
+			"block_absorbed": 2, "hp_loss": second_damage - 2})
+	# Thorns 4 (and then 2) exhausts Ranger Block 3 before touching HP.
+	expected[0][0][5][seat - 1].block = 0
+	expected[0][0][5][seat - 1].hp -= 1 if keyword_case == "shielded" else 3
+	var callback: Callable = presenter._bindings[panel].callback
+	if keyboard:
+		panel.grab_focus()
+		root.push_input(_key(KEY_ENTER), true)
+		root.push_input(_key(KEY_ENTER), true)
+		root.push_input(_key(KEY_ENTER, false), true)
+		await _frames()
+	else:
+		await _mouse(panel)
+	var after := _state().duplicate(true)
+	_check(after == expected, "exact real battle, hand, energy and seeded RNG after physical input: " + id + "/" + keyword_case)
+	_check(presenter.last_event.get("ok") == true
+		and presenter.last_event.get("hits", []) == hits
+		and presenter.last_event.keys() == ["ok", "hits"],
+		"original mounted last_event hit dictionary shape, amounts and slot order: " + id + "/" + keyword_case)
+	_check(app.deck.energy == 4 and app.deck.hand.count(id) == 1
+		and app.deck.discard_pile.count(id) == 1
+		and [app.run_rng.seed, app.run_rng.state] == [before[0][0][6], before[0][0][7]],
+		"exactly one two-energy charge, one discard, unchanged RNG: " + id + "/" + keyword_case)
+	_check(app.party.get_hero(seat).get("block") == 0
+		and app.party.get_hero(seat).get("hp") == (26 if keyword_case == "shielded" else 24)
+		and app.enemies.get_enemy(1).get("enrage_stacks") ==
+			(3 if keyword_case == "shielded" else 1)
+		and app.enemies.get_enemy(3).get("hp") == 0
+		and app.enemies.get_enemy(3).get("enrage_stacks") == 1,
+		"Thorns applies through Ranger Block; own-slot Enrage only; slain foe stays slain")
+	if keyword_case == "shielded":
+		_check(hits[0]["hp_loss"] == 0 and app.enemies.get_enemy(1).get("hp") == 50
+			and app.enemies.get_enemy(2).get("hp") == 50
+			and app.enemies.get_enemy(2).get("enrage_stacks") == 1,
+			"fully blocked contact retaliates/enrages, living untangled target does neither")
+	else:
+		_check(app.enemies.get_enemy(2).get("enrage_stacks") == 3
+			and app.enemies.get_enemy(2).get("hp") == 50 - hits[1]["hp_loss"],
+			"second living Tangled Enrage gains one capped stack after its hit")
+	var frozen_event: Dictionary = presenter.last_event.duplicate(true)
+	callback.call(_press())
+	await _frames()
+	_check(_state() == after and presenter.last_event == frozen_event
+		and app.deck.hand.count(id) == 1,
+		"retired callback cannot spend or repeat Thorns/Enrage: " + id + "/" + keyword_case)
+	var result := [after, frozen_event]
+	await _dispose()
+	return result
 
 func _refusal(id: String, mode: String, queued: bool) -> void:
 	var panel := await _begin(id)
@@ -438,6 +561,14 @@ func _run() -> void:
 		for keyboard in [false, true]:
 			for seat in [2, 3]:
 				await _success(id, keyboard, seat)
+		# Test both printings through genuine mouse and keyboard with the same
+		# seeded battle state, including full Block and two target receipts.
+		for keyword_case: String in ["shielded", "two_targets"]:
+			var keyword_seat := 2 if keyword_case == "shielded" else 3
+			var mouse_run: Array = await _keyword_success(id, keyword_case, keyword_seat, false)
+			var keyboard_run: Array = await _keyword_success(id, keyword_case, keyword_seat, true)
+			_check(not mouse_run.is_empty() and keyboard_run == mouse_run,
+				"same-seed mounted physical inputs match: " + id + "/" + keyword_case)
 		# Authentic Dodge/Blind/Fear tokens from both seats, by mouse and keyboard.
 		await _blind_fear_success(id, false, 2)
 		await _blind_fear_success(id, true, 3)
