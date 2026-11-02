@@ -175,6 +175,7 @@ func _initialize() -> void:
 	_test_ac2_selected_open_visit_and_receipt_branches(run_rng)
 	_test_ac3_selection_refusals_and_isolation(run_rng)
 	_test_ac_bellspool_picket_dedicated(run_rng)
+	_test_ac_affordable_toll_event_selection(run_rng)
 
 	_test_ac1_waystation_catalog_and_choices(run_rng)
 	_test_ac2_waystation_service_choices_and_previews(run_rng)
@@ -1802,6 +1803,424 @@ func _test_ac_bellspool_picket_dedicated(run_rng: RandomNumberGenerator) -> void
 	_check(not missing_bell_gate.is_catalog_valid(), "catalog missing required v3_bellspool_picket fails validation")
 
 	_check(run_rng.state == rng_before, "dedicated bellspool checks consume zero run_rng draws")
+
+
+func _oracle_select_affordable_toll_id(catalog_events: Array, excluded_ids: Variant, wallet: Variant, seed_value: int) -> Dictionary:
+	if typeof(wallet) != TYPE_DICTIONARY:
+		return {"ok": false, "id": "", "rng_state": 0}
+	var wallet_dict: Dictionary = wallet
+	if wallet_dict.size() != 2 or not wallet_dict.has("gold") or not wallet_dict.has("scraps"):
+		return {"ok": false, "id": "", "rng_state": 0}
+	if typeof(wallet_dict.get("gold")) != TYPE_INT or typeof(wallet_dict.get("scraps")) != TYPE_INT:
+		return {"ok": false, "id": "", "rng_state": 0}
+	var gold_val: int = wallet_dict["gold"]
+	var scraps_val: int = wallet_dict["scraps"]
+	if gold_val < 0 or scraps_val < 0:
+		return {"ok": false, "id": "", "rng_state": 0}
+
+	var excluded_dict: Dictionary = {}
+	if excluded_ids != null:
+		if not (excluded_ids is Array):
+			return {"ok": false, "id": "", "rng_state": 0}
+		for value: Variant in (excluded_ids as Array):
+			if not (value is String):
+				return {"ok": false, "id": "", "rng_state": 0}
+			var s: String = value
+			if s.strip_edges().is_empty():
+				return {"ok": false, "id": "", "rng_state": 0}
+			excluded_dict[s] = true
+
+	var eligible_ids: Array = []
+	for item_raw: Variant in catalog_events:
+		if not (item_raw is Dictionary):
+			continue
+		var rec: Dictionary = item_raw
+		var id_val: Variant = rec.get("id")
+		if not (id_val is String):
+			continue
+		var eid: String = String(id_val)
+		if excluded_dict.has(eid):
+			continue
+		var fight_cid: String = String(rec.get("fight_choice_id", ""))
+		var choice_service := RunEventChoice.new(rec)
+		if not choice_service.is_valid():
+			continue
+		var preview: Dictionary = choice_service.preview_wallet_choices({"gold": gold_val, "scraps": scraps_val})
+		if not preview.get("ok", false):
+			continue
+		var is_affordable := false
+		for ch_raw: Variant in preview.get("choices", []):
+			if not (ch_raw is Dictionary):
+				continue
+			var ch: Dictionary = ch_raw
+			var cid: String = String(ch.get("choice_id", ""))
+			if cid == fight_cid or cid == "leave":
+				continue
+			var g: Variant = ch.get("gold_delta")
+			var s: Variant = ch.get("scraps_delta")
+			if typeof(g) != TYPE_INT or typeof(s) != TYPE_INT:
+				continue
+			if (int(g) < 0 or int(s) < 0) and int(g) <= 0 and int(s) <= 0:
+				if ch.get("affordable", false) == true:
+					is_affordable = true
+					break
+		if is_affordable:
+			eligible_ids.append(eid)
+
+	if eligible_ids.is_empty():
+		return {"ok": false, "id": "", "rng_state": 0}
+	eligible_ids.sort()
+	var oracle_rng := RandomNumberGenerator.new()
+	oracle_rng.seed = seed_value
+	var picked_index: int = oracle_rng.randi_range(0, eligible_ids.size() - 1)
+	return {
+		"ok": true,
+		"id": String(eligible_ids[picked_index]),
+		"rng_state": oracle_rng.state,
+	}
+
+
+func _test_ac_affordable_toll_event_selection(run_rng: RandomNumberGenerator) -> void:
+	var rng_before: int = run_rng.state
+	seed(73401)
+	var expected_global_rng: int = randi()
+	seed(73401)
+
+	var gate := RunV3FightEventGate.new()
+	_check(gate.is_catalog_valid(), "gate validates catalog for affordable toll selection")
+	var catalog_events: Array[Dictionary] = gate.get_catalog_events()
+	var canonical_ids: Dictionary = {}
+	for rec: Dictionary in catalog_events:
+		canonical_ids[String(rec.get("id", ""))] = true
+
+	# AC1: Six named toll witnesses from EXPECTED_EVENTS (exact, shortfall, zero)
+	for event_id: String in EXPECTED_EVENTS.keys():
+		var spec: Dictionary = EXPECTED_EVENTS[event_id]
+		var fight_cid: String = String(spec["fight_choice_id"])
+		var paid_cid: String = String(spec["paid_choice_id"])
+		var exact_w: Dictionary = spec["exact_wallet"]
+		var short_w: Dictionary = spec["short_wallet"]
+
+		var rec: Dictionary = gate.get_event_record(event_id)
+		_check(not rec.is_empty(), "witness event record found: " + event_id)
+
+		# Exclude all other IDs using the loaded catalog dynamically (no hardcoded size or ordered list)
+		var other_ids: Array = []
+		for other_rec: Dictionary in catalog_events:
+			var other_id: String = String(other_rec.get("id", ""))
+			if other_id != event_id:
+				other_ids.append(other_id)
+
+		# Preview assertions on RunEventChoice
+		var choice_service := RunEventChoice.new(rec)
+		_check(choice_service.is_valid(), "RunEventChoice valid for witness: " + event_id)
+
+		# Exact wallet preview: paid toll affordable, fight/leave affordable
+		var preview_exact: Dictionary = choice_service.preview_wallet_choices(exact_w)
+		_check(preview_exact.get("ok") == true, "preview_wallet_choices succeeds with exact wallet for " + event_id)
+		var paid_row_exact: Dictionary = {}
+		var fight_row_exact: Dictionary = {}
+		var leave_row_exact: Dictionary = {}
+		for ch_raw: Variant in preview_exact.get("choices", []):
+			var ch: Dictionary = ch_raw
+			var cid: String = String(ch.get("choice_id", ""))
+			if cid == paid_cid:
+				paid_row_exact = ch
+			elif cid == fight_cid:
+				fight_row_exact = ch
+			elif cid == "leave":
+				leave_row_exact = ch
+		_check(not paid_row_exact.is_empty(), "paid choice present in exact preview for " + event_id)
+		_check(paid_row_exact.get("affordable") == true, "paid choice affordable at exact toll for " + event_id)
+		_check(fight_row_exact.get("affordable") == true, "fight choice affordable at exact toll for " + event_id)
+		_check(leave_row_exact.get("affordable") == true, "leave choice affordable at exact toll for " + event_id)
+
+		# Shortfall wallet preview: paid toll NOT affordable, fight and leave remain affordable
+		var preview_short: Dictionary = choice_service.preview_wallet_choices(short_w)
+		_check(preview_short.get("ok") == true, "preview_wallet_choices succeeds with short wallet for " + event_id)
+		var paid_row_short: Dictionary = {}
+		var fight_row_short: Dictionary = {}
+		var leave_row_short: Dictionary = {}
+		for ch_raw: Variant in preview_short.get("choices", []):
+			var ch: Dictionary = ch_raw
+			var cid: String = String(ch.get("choice_id", ""))
+			if cid == paid_cid:
+				paid_row_short = ch
+			elif cid == fight_cid:
+				fight_row_short = ch
+			elif cid == "leave":
+				leave_row_short = ch
+		_check(paid_row_short.get("affordable") == false, "paid choice NOT affordable at shortfall for " + event_id)
+		_check(fight_row_short.get("affordable") == true, "fight choice remains affordable at shortfall for " + event_id)
+		_check(leave_row_short.get("affordable") == true, "leave choice remains affordable at shortfall for " + event_id)
+
+		# Selection at exact toll succeeds with precisely 1 RNG draw
+		var sel_rng := RandomNumberGenerator.new()
+		sel_rng.seed = 20261103
+		var expected_sel_rng := RandomNumberGenerator.new()
+		expected_sel_rng.seed = 20261103
+		expected_sel_rng.randi_range(0, 0)
+		var exact_w_snap: Dictionary = exact_w.duplicate(true)
+		var other_ids_snap: Array = other_ids.duplicate(true)
+		var sel_res: Dictionary = gate.select_affordable_toll_event(sel_rng, other_ids, exact_w)
+		_check(sel_res.get("ok") == true, "select_affordable_toll_event succeeds at exact toll for " + event_id)
+		var sel_event: Dictionary = sel_res.get("event", {})
+		_check(sel_event.get("id") == event_id, "selected event ID matches witness: " + event_id)
+		_check(sel_rng.state == expected_sel_rng.state, "single-eligible selection consumes precisely one RNG draw for " + event_id)
+		_check(exact_w == exact_w_snap, "caller wallet unmutated by selection for " + event_id)
+		_check(other_ids == other_ids_snap, "caller exclusions unmutated by selection for " + event_id)
+
+		# Deterministic replay on equal inputs
+		var replay_rng := RandomNumberGenerator.new()
+		replay_rng.seed = 20261103
+		var replay_res: Dictionary = gate.select_affordable_toll_event(replay_rng, other_ids, exact_w)
+		_check(replay_res.get("event") == sel_event, "replaying with equal inputs returns identical record for " + event_id)
+
+		# Record detachment
+		var snap_before_mut: Dictionary = gate.get_event_record(event_id)
+		sel_event["title"] = "MUTATED_WITNESS_TITLE"
+		(sel_event["choices"] as Array).clear()
+		_check(gate.get_event_record(event_id) == snap_before_mut, "mutating selected event does not mutate catalog record for " + event_id)
+
+		# Shortfall wallet rejection: fail-closed, zero RNG draws, no wallet mutation
+		var short_rng := RandomNumberGenerator.new()
+		short_rng.seed = 30303
+		var short_rng_before: int = short_rng.state
+		var short_w_snap: Dictionary = short_w.duplicate(true)
+		var short_res: Dictionary = gate.select_affordable_toll_event(short_rng, other_ids, short_w)
+		_check(short_res == {"ok": false, "event": {}}, "shortfall wallet rejected for " + event_id)
+		_check(short_rng.state == short_rng_before, "zero RNG consumption on shortfall rejection for " + event_id)
+		_check(short_w == short_w_snap, "caller wallet unmutated on shortfall rejection for " + event_id)
+
+		# Zero wallet rejection: fail-closed, zero RNG draws
+		var zero_w := {"gold": 0, "scraps": 0}
+		var zero_w_snap: Dictionary = zero_w.duplicate(true)
+		var zero_res: Dictionary = gate.select_affordable_toll_event(short_rng, other_ids, zero_w)
+		_check(zero_res == {"ok": false, "event": {}}, "zero wallet rejected for " + event_id)
+		_check(short_rng.state == short_rng_before, "zero RNG consumption on zero wallet rejection for " + event_id)
+		_check(zero_w == zero_w_snap, "caller wallet unmutated on zero wallet rejection for " + event_id)
+
+	# AC2: Multi-eligible selection, ID-based sort, catalog-order independence, seeded oracle, and full settlement branches
+	var multi_wallet := {"gold": 50, "scraps": 10}
+	var multi_wallet_snap: Dictionary = multi_wallet.duplicate(true)
+	var expected_multi_eligible: Array = []
+	for rec: Dictionary in catalog_events:
+		var eid: String = String(rec.get("id", ""))
+		var fight_cid: String = String(rec.get("fight_choice_id", ""))
+		var svc := RunEventChoice.new(rec)
+		var prev: Dictionary = svc.preview_wallet_choices(multi_wallet)
+		for ch_raw: Variant in prev.get("choices", []):
+			var ch: Dictionary = ch_raw
+			var cid: String = String(ch.get("choice_id", ""))
+			if cid != fight_cid and cid != "leave" and ch.get("affordable", false) == true:
+				expected_multi_eligible.append(eid)
+				break
+	expected_multi_eligible.sort()
+	_check(expected_multi_eligible.size() >= 6, "at least six events eligible with funded wallet")
+
+	var multi_seed: int = 84729
+	var mrng1 := RandomNumberGenerator.new()
+	mrng1.seed = multi_seed
+	var expected_mrng := RandomNumberGenerator.new()
+	expected_mrng.seed = multi_seed
+	expected_mrng.randi_range(0, expected_multi_eligible.size() - 1)
+	var mres1: Dictionary = gate.select_affordable_toll_event(mrng1, null, multi_wallet)
+	_check(mres1.get("ok") == true, "multi-eligible selection succeeds on canonical catalog")
+	_check(mrng1.state == expected_mrng.state, "multi-eligible selection consumes precisely one RNG draw")
+	_check(multi_wallet == multi_wallet_snap, "caller wallet unmutated by multi-eligible selection")
+
+	# Reordered catalog test: sorted IDs mean selection is independent of catalog ordering
+	var rev_events: Array[Dictionary] = catalog_events.duplicate(true)
+	rev_events.reverse()
+	var rev_cat_doc := {"events": rev_events}
+	var rev_gate := RunV3FightEventGate.new(&"__omitted_event_target__", rev_cat_doc)
+	_check(rev_gate.is_catalog_valid(), "reversed catalog is valid")
+	var mrng2 := RandomNumberGenerator.new()
+	mrng2.seed = multi_seed
+	var mres2: Dictionary = rev_gate.select_affordable_toll_event(mrng2, null, multi_wallet)
+	_check(mres2.get("ok") == true, "multi-eligible selection succeeds on reordered catalog")
+	_check(mrng2.state == expected_mrng.state, "reordered selection consumes precisely one RNG draw")
+	_check(mres1.get("event", {}).get("id") == mres2.get("event", {}).get("id"), "same seed selects identical event ID regardless of catalog order")
+
+	# Seeded oracle across multiple seeds with and without exclusions
+	var test_oracle_seeds: Array[int] = [1234, 5678, 91011, 44444, 88888, 999999]
+	for s_val: int in test_oracle_seeds:
+		var orng := RandomNumberGenerator.new()
+		orng.seed = s_val
+		var ores: Dictionary = gate.select_affordable_toll_event(orng, null, multi_wallet)
+		var oracle_res: Dictionary = _oracle_select_affordable_toll_id(catalog_events, null, multi_wallet, s_val)
+		_check(ores.get("ok") == true and oracle_res.get("ok") == true, "oracle and gate both succeed for seed: " + str(s_val))
+		_check(ores.get("event", {}).get("id") == oracle_res.get("id"), "selected ID matches oracle for seed: " + str(s_val))
+		_check(orng.state == int(oracle_res.get("rng_state")), "RNG state matches oracle RNG state for seed: " + str(s_val))
+
+		# Oracle with exclusion
+		var excl_seed := [String(catalog_events[0]["id"])]
+		var orng_ex := RandomNumberGenerator.new()
+		orng_ex.seed = s_val
+		var ores_ex: Dictionary = gate.select_affordable_toll_event(orng_ex, excl_seed, multi_wallet)
+		var oracle_res_ex: Dictionary = _oracle_select_affordable_toll_id(catalog_events, excl_seed, multi_wallet, s_val)
+		_check(ores_ex.get("ok") == true and oracle_res_ex.get("ok") == true, "excluded oracle and gate both succeed for seed: " + str(s_val))
+		_check(ores_ex.get("event", {}).get("id") == oracle_res_ex.get("id"), "excluded selected ID matches oracle for seed: " + str(s_val))
+		_check(orng_ex.state == int(oracle_res_ex.get("rng_state")), "excluded RNG state matches oracle for seed: " + str(s_val))
+
+	# Selection alone claims nothing; fresh visits settle previewed branches once
+	_check(not gate.is_claimed(), "selection alone claims nothing on gate")
+	var chosen_event: Dictionary = mres1.get("event", {})
+	var chosen_id: String = String(chosen_event.get("id", ""))
+	var chosen_fight_cid: String = String(chosen_event.get("fight_choice_id", ""))
+	var chosen_paid_cid: String = ""
+	var chosen_paid_outcome: Dictionary = {}
+	for ch_raw: Variant in chosen_event.get("choices", []):
+		var ch: Dictionary = ch_raw
+		var cid: String = String(ch.get("id", ""))
+		if cid != chosen_fight_cid and cid != "leave":
+			chosen_paid_cid = cid
+			chosen_paid_outcome = ch.get("outcome", {})
+
+	# Branch A: Fight produces pending Fight request without wallet debit
+	var v_fight := gate.open_visit(chosen_id)
+	_check(v_fight != null and v_fight.is_valid() and not v_fight.is_claimed(), "fresh visit opens for fight choice")
+	var rec_fight: Dictionary = v_fight.choose_with_wallet(chosen_fight_cid, multi_wallet)
+	_check(rec_fight.get("ok") == true, "fight choice settles successfully")
+	_check(rec_fight.get("event_id") == chosen_id, "fight receipt event_id matches")
+	_check(rec_fight.get("choice_id") == chosen_fight_cid, "fight receipt choice_id matches")
+	_check(rec_fight.get("wallet") == multi_wallet, "fight choice debits no wallet currency")
+	_check(rec_fight.get("fight_request") == {"node_type": "Fight"}, "fight choice returns pending Fight request")
+	_check(v_fight.is_claimed() and not v_fight.is_valid(), "visit latched after fight choice")
+	var replay_fight: Dictionary = v_fight.choose_with_wallet(chosen_fight_cid, multi_wallet)
+	_check(replay_fight.get("ok") == false, "replay on settled visit rejected")
+	_check(replay_fight.get("fight_request") == {}, "replay fight_request is empty")
+
+	# Branch B: Paid escape charges authored toll with no Fight request
+	var v_paid := gate.open_visit(chosen_id)
+	_check(v_paid != null and v_paid.is_valid() and not v_paid.is_claimed(), "fresh visit opens for paid choice")
+	var rec_paid: Dictionary = v_paid.choose_with_wallet(chosen_paid_cid, multi_wallet)
+	_check(rec_paid.get("ok") == true, "paid choice settles successfully")
+	_check(rec_paid.get("event_id") == chosen_id, "paid receipt event_id matches")
+	_check(rec_paid.get("choice_id") == chosen_paid_cid, "paid receipt choice_id matches")
+	var expected_paid_w := {
+		"gold": multi_wallet["gold"] + int(chosen_paid_outcome["gold"]),
+		"scraps": multi_wallet["scraps"] + int(chosen_paid_outcome["scraps"]),
+	}
+	_check(rec_paid.get("wallet") == expected_paid_w, "paid choice debits exact authored toll from wallet")
+	_check(rec_paid.get("fight_request") == {}, "paid choice returns empty fight_request")
+	_check(v_paid.is_claimed() and not v_paid.is_valid(), "visit latched after paid choice")
+	var replay_paid: Dictionary = v_paid.choose_with_wallet(chosen_paid_cid, multi_wallet)
+	_check(replay_paid.get("ok") == false, "replay on settled visit rejected")
+	_check(replay_paid.get("fight_request") == {}, "replay fight_request is empty")
+
+	# Branch C: Leave choice debits nothing and has no Fight request
+	var v_leave := gate.open_visit(chosen_id)
+	_check(v_leave != null and v_leave.is_valid() and not v_leave.is_claimed(), "fresh visit opens for leave choice")
+	var rec_leave: Dictionary = v_leave.choose_with_wallet("leave", multi_wallet)
+	_check(rec_leave.get("ok") == true, "leave choice settles successfully")
+	_check(rec_leave.get("event_id") == chosen_id, "leave receipt event_id matches")
+	_check(rec_leave.get("choice_id") == "leave", "leave receipt choice_id matches")
+	_check(rec_leave.get("wallet") == multi_wallet, "leave choice debits no wallet currency")
+	_check(rec_leave.get("fight_request") == {}, "leave choice returns empty fight_request")
+	_check(v_leave.is_claimed() and not v_leave.is_valid(), "visit latched after leave choice")
+	var replay_leave: Dictionary = v_leave.choose_with_wallet("leave", multi_wallet)
+	_check(replay_leave.get("ok") == false, "replay on settled visit rejected")
+	_check(replay_leave.get("fight_request") == {}, "replay fight_request is empty")
+
+	# AC3: Comprehensive rejection coverage with zero RNG consumption
+	var probe_rng := RandomNumberGenerator.new()
+	probe_rng.seed = 314159
+	var probe_before: int = probe_rng.state
+
+	# 1. Invalid RNG
+	_check(gate.select_affordable_toll_event(null, null, multi_wallet) == {"ok": false, "event": {}}, "null RNG rejected")
+	_check(gate.select_affordable_toll_event("not_rng", null, multi_wallet) == {"ok": false, "event": {}}, "string RNG rejected")
+	_check(gate.select_affordable_toll_event(12345, null, multi_wallet) == {"ok": false, "event": {}}, "int RNG rejected")
+	_check(gate.select_affordable_toll_event([], null, multi_wallet) == {"ok": false, "event": {}}, "array RNG rejected")
+	_check(gate.select_affordable_toll_event({}, null, multi_wallet) == {"ok": false, "event": {}}, "dict RNG rejected")
+
+	# 2. Invalid wallets
+	var bad_wallets: Array = [
+		null,
+		12,
+		"wallet",
+		[],
+		{},
+		{"gold": 20},
+		{"scraps": 2},
+		{"gold": 20, "scraps": 2, "extra": 1},
+		{"gold": -1, "scraps": 2},
+		{"gold": 20, "scraps": -1},
+		{"gold": 20.0, "scraps": 2},
+		{"gold": 20, "scraps": 2.0},
+		{"gold": "20", "scraps": 2},
+		{"gold": 20, "scraps": "2"},
+		{"gold": true, "scraps": 2},
+		{"gold": 20, "scraps": false},
+	]
+	for bad_w: Variant in bad_wallets:
+		var bad_w_res: Dictionary = gate.select_affordable_toll_event(probe_rng, null, bad_w)
+		_check(bad_w_res == {"ok": false, "event": {}}, "bad wallet rejected: " + str(bad_w))
+		_check(probe_rng.state == probe_before, "zero RNG draw on bad wallet rejection: " + str(bad_w))
+
+	# 3. Invalid exclusions
+	var bad_exclusions: Array = [
+		"not_an_array",
+		123,
+		{},
+		[123],
+		[""],
+		["   "],
+		[null],
+	]
+	for bad_ex: Variant in bad_exclusions:
+		var bad_ex_res: Dictionary = gate.select_affordable_toll_event(probe_rng, bad_ex, multi_wallet)
+		_check(bad_ex_res == {"ok": false, "event": {}}, "bad exclusions rejected: " + str(bad_ex))
+		_check(probe_rng.state == probe_before, "zero RNG draw on bad exclusions rejection: " + str(bad_ex))
+
+	# 4. Exhausted exclusions (all catalog IDs excluded)
+	var all_cat_ids: Array = []
+	for rec: Dictionary in catalog_events:
+		all_cat_ids.append(String(rec.get("id", "")))
+	var exhausted_res: Dictionary = gate.select_affordable_toll_event(probe_rng, all_cat_ids, multi_wallet)
+	_check(exhausted_res == {"ok": false, "event": {}}, "exhausted exclusions return refusal")
+	_check(probe_rng.state == probe_before, "zero RNG draw on exhausted exclusions")
+
+	# 5. Unaffordable wallet
+	var unaffordable_res: Dictionary = gate.select_affordable_toll_event(probe_rng, null, {"gold": 0, "scraps": 0})
+	_check(unaffordable_res == {"ok": false, "event": {}}, "zero wallet returns refusal")
+	_check(probe_rng.state == probe_before, "zero RNG draw on zero wallet")
+
+	# 6. Invalid catalogs (missing required event and forged catalog)
+	var missing_cat_doc: Dictionary = catalog_doc.duplicate(true)
+	var filtered_cat_events: Array = []
+	for ev_raw: Variant in missing_cat_doc["events"]:
+		if (ev_raw as Dictionary).get("id") != "v3_stitchline_roadblock":
+			filtered_cat_events.append(ev_raw)
+	missing_cat_doc["events"] = filtered_cat_events
+	var missing_gate := RunV3FightEventGate.new(&"__omitted_event_target__", missing_cat_doc)
+	_check(not missing_gate.is_catalog_valid(), "missing event catalog is invalid")
+	var missing_sel: Dictionary = missing_gate.select_affordable_toll_event(probe_rng, null, multi_wallet)
+	_check(missing_sel == {"ok": false, "event": {}}, "invalid catalog rejects select_affordable_toll_event")
+	_check(probe_rng.state == probe_before, "zero RNG draw on invalid catalog rejection")
+
+	# 7. Legacy unconditional select_event remains intact and functional even at zero wallet
+	var leg_rng := RandomNumberGenerator.new()
+	leg_rng.seed = 771122
+	var leg_before: int = leg_rng.state
+	var leg_sel: Dictionary = gate.select_event(leg_rng)
+	_check(leg_sel.get("ok") == true, "legacy select_event succeeds even at zero wallet")
+	_check(leg_rng.state != leg_before, "legacy select_event consumes RNG")
+	var leg_eid: String = String(leg_sel.get("event", {}).get("id", ""))
+	_check(canonical_ids.has(leg_eid), "legacy select_event returns valid catalog event")
+
+	# Open visit and choose Fight at zero wallet
+	var zero_visit := gate.open_visit(leg_eid)
+	_check(zero_visit != null and zero_visit.is_valid(), "fresh visit opens at zero wallet from select_event")
+	var zero_fight: Dictionary = zero_visit.choose_with_wallet(String(leg_sel.get("event", {}).get("fight_choice_id", "")), {"gold": 0, "scraps": 0})
+	_check(zero_fight.get("ok") == true, "fight choice succeeds at zero wallet")
+	_check(zero_fight.get("fight_request") == {"node_type": "Fight"}, "pending fight request produced at zero wallet")
+
+	_check(probe_rng.state == probe_before, "probe RNG unmutated across all refusal checks")
+	_check(randi() == expected_global_rng, "global RNG untouched across affordable toll selection checks")
+	seed(73401)
+	_check(run_rng.state == rng_before, "affordable toll selection checks consume zero run_rng draws")
 
 
 func _test_ac1_waystation_catalog_and_choices(run_rng: RandomNumberGenerator) -> void:
