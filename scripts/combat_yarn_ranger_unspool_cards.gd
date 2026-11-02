@@ -4,6 +4,8 @@ extends RefCounted
 ## (damage 10). Only hits living enemies with an authoritative Tangled counter.
 ## Status admission is role-aware, exactly as CombatStatusAttacks.resolve_vs_enemy:
 ## a Dodging/Feared attacker and a Blind/Feared defender are legal and untouched.
+## Each confirmed hit also triggers the defender's Thorns retaliation against the
+## Ranger and its Enrage stack gain through CombatEnemyKeywordRules.
 ## No status mutation, no RNG use, no scene dependency.
 
 const CARD_IDS := [
@@ -13,6 +15,7 @@ const CARD_IDS := [
 
 var _catalog := preload("res://data/cards/yarn_ranger_pool_cards.gd").new()
 var _attacks := CombatStatusAttacks.new()
+var _keywords := CombatEnemyKeywordRules.new()
 
 
 func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
@@ -112,6 +115,10 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		var defender_statuses: Dictionary = defender_raw
 		if not _valid_defender_statuses(defender_statuses):
 			return {"ok": false}
+		# Thorns/Enrage metadata and arithmetic of every proposed hit actor, so a
+		# malformed keyword can never leave a paid, partially applied cast.
+		if not _valid_keyword_metadata(enemy_pre):
+			return {"ok": false}
 
 	# Determine base damage from the printed descriptor.
 	var base_damage: int = int(effects.get("damage", 0))
@@ -126,8 +133,12 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	# Resolve each eligible target independently in original slot order.
 	# Read real defender statuses directly from the authoritative roster.
 	var hits: Array[Dictionary] = []
+	# Detached PRE-HIT records and the authentic bridge receipt of each hit.
+	var pre_hits: Dictionary = {}
+	var receipts: Dictionary = {}
 	for pos in eligible:
 		var defender_dict: Dictionary = enemies.get_enemy(pos)
+		pre_hits[pos] = defender_dict.duplicate(true)
 		var defender_raw: Variant = _read_statuses(defender_dict)
 		# Re-read attacker statuses from the real party hero.
 		var hero_dict: Dictionary = party.get_hero(owner_position)
@@ -143,6 +154,7 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if not event.get("ok", false):
 			# A validated target should never fail here, but fail closed.
 			return {"ok": false, "hits": []}
+		receipts[pos] = event
 		hits.append({
 			"position": pos,
 			"damage": event.get("damage", 0),
@@ -150,7 +162,38 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			"hp_loss": event.get("hp_loss", 0)
 		})
 
+	# Keyword consequences of each confirmed hit, in original slot order, after
+	# the whole paid area has landed (the starter area pattern). An earlier Thorns
+	# that downs the Ranger never cancels a hit or the payment; later Thorns simply
+	# cannot retaliate from a downed attacker.
+	for pos in eligible:
+		_keywords.commit_enrage_after_hit(enemies, pos, pre_hits[pos], receipts[pos])
+		_keywords.resolve_thorns_retaliation(party, owner_position, pre_hits[pos],
+			receipts[pos])
+
 	return {"ok": true, "hits": hits}
+
+
+## Fail-closed keyword metadata check for one living eligible enemy snapshot:
+## Thorns is a nonnegative int, Enrage a bool and its stacks an int in 0..3.
+## Absent keys mean a plain unkeyed foe, which stays valid.
+func _valid_keyword_metadata(enemy: Dictionary) -> bool:
+	var hp: Variant = enemy.get("hp")
+	if not hp is int or hp <= 0:
+		return false
+	var block: Variant = enemy.get("block", 0)
+	if not block is int or block < 0:
+		return false
+	var thorns: Variant = enemy.get("thorns", 0)
+	if not thorns is int or thorns < 0:
+		return false
+	var enrage: Variant = enemy.get("enrage", false)
+	if not enrage is bool:
+		return false
+	var stacks: Variant = enemy.get("enrage_stacks", 0)
+	if not stacks is int or stacks < 0 or stacks > CombatEnemyKeywordRules.ENRAGE_MAX_STACKS:
+		return false
+	return true
 
 
 ## Absent statuses mean "no counters". A present non-Dictionary value is

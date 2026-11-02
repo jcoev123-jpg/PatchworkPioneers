@@ -49,6 +49,8 @@ func _initialize() -> void:
 	_test_invalid_ids()
 	_test_starters_unchanged()
 	_test_unspool_combat_behavior()
+	_test_unspool_keyword_hits()
+	_test_unspool_keyword_preflight()
 	_test_snare_net_catalog_contract()
 	_test_snare_net_paid_play()
 	_test_snare_net_living_slots_and_stacking()
@@ -2924,3 +2926,242 @@ func _rejected_skein(resolver: CombatYarnRangerEndlessSkeinCards, deck: CombatDe
 
 
 
+## Unspool keyword consequences: every confirmed Unspool hit triggers its defender's
+## Thorns retaliation against the Ranger (hero Block before HP) and one Enrage stack
+## (capped at three). Real CombatDeck/CombatParty/CombatEnemies, exact full snapshots.
+const UNSPOOL_IDS := ["yarn_ranger_unspool", "yarn_ranger_unspool_plus"]
+
+
+func _unspool_party(seat: int, block: int = 0, max_hp: int = 30) -> CombatParty:
+	var heroes: Array = [{"id": "warden", "max_hp": 40}, {"id": "seamstress", "max_hp": 26}]
+	heroes.insert(seat - 1, {"id": "yarn_ranger", "max_hp": max_hp})
+	var party := CombatParty.new(heroes)
+	if block > 0:
+		_check(party.gain_block(seat, block), "Ranger Block fixture applied")
+	return party
+
+
+func _unspool_fixture(specs: Array, enemy_block: Dictionary, slain: Array) -> CombatEnemies:
+	var enemies := CombatEnemies.new(specs)
+	for position: int in enemy_block:
+		_check(enemies.gain_block(position, enemy_block[position]), "enemy Block fixture applied")
+	for position: int in slain:
+		_check(enemies.apply_damage(position, 1000), "slain fixture applied")
+	return enemies
+
+
+func _unspool_snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		rng: RandomNumberGenerator) -> Dictionary:
+	var snapshot := _combat_snapshot(deck, party, enemies)
+	snapshot["rng"] = [rng.seed, rng.state]
+	return snapshot
+
+
+## Independent model of one paid Unspool: 2 energy, one discard, base+2 hit on every
+## living Tangled slot with Block first, then per slot in order Enrage and Thorns.
+func _unspool_expected(id: String, before: Dictionary, seat: int) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	var damage := (10 if id.ends_with("_plus") else 7) + 2
+	expected["energy"] = before["energy"] - 2
+	expected["hand"].erase(id)
+	expected["discard"].append(id)
+	var hits: Array[Dictionary] = []
+	var struck: Array[int] = []
+	for record: Dictionary in expected["enemies"]:
+		if record["hp"] > 0 and record.get("statuses", {}).get("tangled", 0) > 0:
+			var absorbed: int = mini(record["block"], damage)
+			var hp_loss: int = mini(record["hp"], damage - absorbed)
+			record["block"] -= absorbed
+			record["hp"] -= hp_loss
+			hits.append({"position": record["position"], "damage": damage,
+				"block_absorbed": absorbed, "hp_loss": hp_loss})
+			struck.append(record["position"])
+	var hero: Dictionary = expected["party"][seat - 1]
+	for position in struck:
+		var foe: Dictionary = expected["enemies"][position - 1]
+		if foe.get("enrage", false) and foe.get("enrage_stacks", 0) < 3:
+			foe["enrage_stacks"] = foe.get("enrage_stacks", 0) + 1
+		var thorns: int = foe.get("thorns", 0)
+		if thorns > 0 and hero["hp"] > 0:
+			var hero_absorbed: int = mini(hero["block"], thorns)
+			hero["block"] -= hero_absorbed
+			hero["hp"] = maxi(0, hero["hp"] - (thorns - hero_absorbed))
+	return {"snapshot": expected, "hits": hits}
+
+
+func _unspool_play(id: String, seat: int, label: String, party: CombatParty,
+		enemies: CombatEnemies) -> Dictionary:
+	var resolver := CombatYarnRangerUnspoolCards.new()
+	var rng := _seeded_rng()
+	var deck := CombatDeck.new([id], rng)
+	deck.combat_state.start_player_turn()
+	deck.hand.clear()
+	deck.hand.append(id)
+	var tag := "%s / %s / seat %d" % [label, id, seat]
+	var before := _unspool_snapshot(deck, party, enemies, rng)
+	var expected := _unspool_expected(id, before, seat)
+	_check(not expected["hits"].is_empty() and deck.energy == 3, tag + ": real fixture has eligible hits")
+	var result := resolver.play_card(deck, party, enemies, id)
+	_check(result.get("ok") == true and result.get("hits") == expected["hits"],
+		tag + ": paid cast returns the unchanged hit rows")
+	for hit: Dictionary in result.get("hits", []):
+		_check(hit.keys() == ["position", "damage", "block_absorbed", "hp_loss"],
+			tag + ": hit dictionary shape preserved")
+	var after := _unspool_snapshot(deck, party, enemies, rng)
+	_check(after == expected["snapshot"], tag + ": exact energy, discard, party, enemy and RNG state")
+	_check(after["energy"] == 1 and after["discard"] == [id] and after["hand"].is_empty(),
+		tag + ": one 2-energy payment and exactly the held copy discarded")
+	_check(after["rng"] == before["rng"], tag + ": no RNG consumed")
+	var replay := resolver.play_card(deck, party, enemies, id)
+	_check(replay.get("ok") == false and _unspool_snapshot(deck, party, enemies, rng) == after,
+		tag + ": replay of the spent copy changes nothing")
+	return {"before": before, "after": after}
+
+
+func _test_unspool_keyword_hits() -> void:
+	var keywords := CombatEnemyKeywordRules.new()
+	var cases: Array[Dictionary] = [
+		{"label": "Thorns and Enrage 2->3, Ranger Block first", "ranger_block": 2, "ranger_hp": 30,
+			"specs": [
+				{"id": "thorn", "max_hp": 50, "thorns": 3, "statuses": {"tangled": 1}},
+				{"id": "rage", "max_hp": 50, "enrage": true, "enrage_stacks": 2, "statuses": {"tangled": 2}},
+				{"id": "plain", "max_hp": 50, "thorns": 9, "enrage": true, "statuses": {"bleed": 1}}],
+			"enemy_block": {}, "slain": [],
+			"ranger_after": [29, 0], "stacks_after": {2: 3}, "absent_stacks": [1, 3]},
+		{"label": "single eligible Enrage 0->1 with untangled and slain keyword foes", "ranger_block": 0,
+			"ranger_hp": 30,
+			"specs": [
+				{"id": "untangled", "max_hp": 50, "thorns": 9, "enrage": true, "enrage_stacks": 1,
+					"statuses": {"bleed": 1}},
+				{"id": "rage", "max_hp": 50, "thorns": 4, "enrage": true, "statuses": {"tangled": 1}},
+				{"id": "slain", "max_hp": 50, "thorns": 9, "enrage": true, "enrage_stacks": 1,
+					"statuses": {"tangled": 3}}],
+			"enemy_block": {}, "slain": [3],
+			"ranger_after": [26, 0], "stacks_after": {1: 1, 2: 1, 3: 1}, "absent_stacks": []},
+		{"label": "Enrage capped at three, plain Thorns foe", "ranger_block": 1, "ranger_hp": 30,
+			"specs": [
+				{"id": "capped", "max_hp": 50, "thorns": 1, "enrage": true, "enrage_stacks": 3,
+					"statuses": {"tangled": 1}},
+				{"id": "untangled", "max_hp": 50, "statuses": {}},
+				{"id": "thorn", "max_hp": 50, "thorns": 5, "statuses": {"tangled": 2}}],
+			"enemy_block": {}, "slain": [],
+			"ranger_after": [25, 0], "stacks_after": {1: 3}, "absent_stacks": [3]},
+		{"label": "enemy Block absorbs the whole strike yet contact triggers Thorns and Enrage",
+			"ranger_block": 0, "ranger_hp": 30,
+			"specs": [
+				{"id": "walled", "max_hp": 50, "thorns": 2, "enrage": true, "enrage_stacks": 1,
+					"statuses": {"tangled": 1}},
+				{"id": "partial", "max_hp": 50, "enrage": true, "statuses": {"tangled": 1}}],
+			"enemy_block": {1: 60, 2: 5}, "slain": [],
+			"ranger_after": [28, 0], "stacks_after": {1: 2, 2: 1}, "absent_stacks": []},
+		{"label": "lethal hit keeps the foe slain but still retaliates", "ranger_block": 0, "ranger_hp": 30,
+			"specs": [
+				{"id": "fragile", "max_hp": 8, "thorns": 2, "enrage": true, "statuses": {"tangled": 1}},
+				{"id": "sturdy", "max_hp": 50, "statuses": {"tangled": 1}}],
+			"enemy_block": {}, "slain": [],
+			"ranger_after": [28, 0], "stacks_after": {}, "absent_stacks": [2]},
+		{"label": "Thorns downs the Ranger mid-area; every paid hit still lands", "ranger_block": 0,
+			"ranger_hp": 3,
+			"specs": [
+				{"id": "first", "max_hp": 50, "thorns": 5, "statuses": {"tangled": 1}},
+				{"id": "second", "max_hp": 50, "thorns": 5, "enrage": true, "enrage_stacks": 1,
+					"statuses": {"tangled": 1}},
+				{"id": "third", "max_hp": 50, "thorns": 5, "statuses": {"tangled": 1}}],
+			"enemy_block": {}, "slain": [],
+			"ranger_after": [0, 0], "stacks_after": {2: 2}, "absent_stacks": [1, 3]},
+	]
+	for entry: Dictionary in cases:
+		for id: String in UNSPOOL_IDS:
+			for seat in [2, 3]:
+				var party := _unspool_party(seat, entry["ranger_block"], entry["ranger_hp"])
+				var enemies := _unspool_fixture(entry["specs"], entry["enemy_block"], entry["slain"])
+				var outcome := _unspool_play(id, seat, entry["label"], party, enemies)
+				var tag := "%s / %s / seat %d" % [entry["label"], id, seat]
+				var ranger: Dictionary = party.get_hero(seat)
+				_check([ranger["hp"], ranger["block"]] == entry["ranger_after"],
+					tag + ": exact Ranger HP/Block after retaliation (Block absorbs before HP)")
+				_check(party.is_downed(seat) == (ranger["hp"] == 0), tag + ": Ranger downed only at zero HP")
+				for position: int in entry["stacks_after"]:
+					var foe := enemies.get_enemy(position)
+					_check(foe.get("enrage_stacks", 0) == entry["stacks_after"][position],
+						tag + ": Enrage stacks of slot %d" % position)
+					if foe["hp"] > 0:
+						# The existing pure projection is the oracle for the later +2/+4/+6 attack.
+						var projected := keywords.project_enrage_action(foe, {"type": "attack", "amount": 5})
+						_check(projected.get("ok") == true
+							and projected["attack_bonus"] == 2 * entry["stacks_after"][position]
+							and projected["action"]["amount"] == 5 + 2 * entry["stacks_after"][position],
+							tag + ": future Enrage attack bonus of slot %d" % position)
+				for position: int in entry["absent_stacks"]:
+					_check(not enemies.get_enemy(position).has("enrage_stacks")
+						or enemies.get_enemy(position).get("enrage_stacks") == 0
+						or entry["specs"][position - 1].has("enrage_stacks"),
+						tag + ": untouched slot %d gains no Enrage stack" % position)
+				for position in range(1, entry["specs"].size() + 1):
+					var spec: Dictionary = entry["specs"][position - 1]
+					var foe_after := enemies.get_enemy(position)
+					if not spec.get("enrage", false):
+						_check(not foe_after.has("enrage_stacks"), tag + ": non-Enrage slot %d keeps no stacks" % position)
+					if spec.get("statuses", {}).get("tangled", 0) == 0 or position in entry["slain"]:
+						_check(foe_after["hp"] == (0 if position in entry["slain"] else 50)
+							and foe_after.get("enrage_stacks", 0) == spec.get("enrage_stacks", 0),
+							tag + ": untangled/slain slot %d is never a hit" % position)
+					_check(foe_after["hp"] > 0 or enemies.is_slain(position), tag + ": slain foes stay slain")
+	# The lethal case really kills the foe it hits.
+	var lethal_enemies := _unspool_fixture([
+		{"id": "fragile", "max_hp": 8, "thorns": 2, "enrage": true, "statuses": {"tangled": 1}}], {}, [])
+	var lethal_party := _unspool_party(2)
+	_unspool_play("yarn_ranger_unspool", 2, "lethal precondition", lethal_party, lethal_enemies)
+	_check(lethal_enemies.is_slain(1) and lethal_enemies.get_enemy(1)["hp"] == 0,
+		"lethal Unspool hit leaves the foe dead")
+	_check(lethal_party.get_hero(2)["hp"] == 28, "a foe killed by the hit still retaliated for its Thorns")
+
+
+func _test_unspool_keyword_preflight() -> void:
+	var resolver := CombatYarnRangerUnspoolCards.new()
+	var malformed: Array[Dictionary] = [
+		{"label": "Thorns negative", "key": "thorns", "value": -1},
+		{"label": "Thorns string", "key": "thorns", "value": "2"},
+		{"label": "Thorns float", "key": "thorns", "value": 2.5},
+		{"label": "Thorns bool", "key": "thorns", "value": true},
+		{"label": "Thorns null", "key": "thorns", "value": null},
+		{"label": "Enrage string", "key": "enrage", "value": "true"},
+		{"label": "Enrage int", "key": "enrage", "value": 1},
+		{"label": "Enrage null", "key": "enrage", "value": null},
+		{"label": "Enrage stacks four", "key": "enrage_stacks", "value": 4},
+		{"label": "Enrage stacks negative", "key": "enrage_stacks", "value": -1},
+		{"label": "Enrage stacks string", "key": "enrage_stacks", "value": "1"},
+		{"label": "Enrage stacks float", "key": "enrage_stacks", "value": 1.0},
+	]
+	for id: String in UNSPOOL_IDS:
+		for seat in [2, 3]:
+			for entry: Dictionary in malformed:
+				# A valid Thorns/Enrage foe first, so a refusal can never be a partial cast.
+				var specs: Array = [
+					{"id": "valid", "max_hp": 50, "thorns": 2, "enrage": true, "statuses": {"tangled": 1}},
+					{"id": "broken", "max_hp": 50, "enrage": true, "statuses": {"tangled": 2}},
+				]
+				specs[1][entry["key"]] = entry["value"]
+				var rng := _seeded_rng()
+				var deck := CombatDeck.new([id], rng)
+				deck.combat_state.start_player_turn()
+				deck.hand.clear()
+				deck.hand.append(id)
+				var party := _unspool_party(seat, 2)
+				var enemies := CombatEnemies.new(specs)
+				var before := _unspool_snapshot(deck, party, enemies, rng)
+				var result := resolver.play_card(deck, party, enemies, id)
+				var tag := "%s / %s / seat %d" % [entry["label"], id, seat]
+				_check(result.get("ok") == false, tag + ": malformed keyword metadata refused")
+				_check(_unspool_snapshot(deck, party, enemies, rng) == before,
+					tag + ": no payment, discard, hit, Thorns, Enrage or RNG change")
+				# The same malformed metadata on a foe that is not a hit actor is irrelevant.
+				var idle_specs: Array = [
+					{"id": "valid", "max_hp": 50, "thorns": 2, "enrage": true, "statuses": {"tangled": 1}},
+					{"id": "idle", "max_hp": 50, "statuses": {"bleed": 1}},
+				]
+				idle_specs[1][entry["key"]] = entry["value"]
+				var idle_deck := _active_deck(id)
+				_check(resolver.play_card(idle_deck, _unspool_party(seat, 2),
+					CombatEnemies.new(idle_specs), id).get("ok") == true,
+					tag + ": malformed metadata on an untangled foe is never a hit actor")
