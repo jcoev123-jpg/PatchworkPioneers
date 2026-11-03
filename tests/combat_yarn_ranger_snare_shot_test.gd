@@ -19,6 +19,8 @@ const YarnRangerStarterCards = preload("res://data/cards/yarn_ranger_starter_car
 const YarnRangerPoolCards = preload("res://data/cards/yarn_ranger_pool_cards.gd")
 const CombatStatuses = preload("res://scripts/combat_statuses.gd")
 const CombatStatusTurnBatch = preload("res://scripts/combat_status_turn_batch.gd")
+const CombatYarnRangerBolasCards = preload("res://scripts/combat_yarn_ranger_bolas_cards.gd")
+const CombatYarnRangerEndlessSkeinCards = preload("res://scripts/combat_yarn_ranger_endless_skein_cards.gd")
 
 const NEEDLE_NOCK := "yarn_ranger_needle_nock"
 const NEEDLE_NOCK_PLUS := "yarn_ranger_needle_nock_plus"
@@ -59,6 +61,8 @@ var checks: int = 0
 var service := SnareCards.new()
 var _starter := YarnRangerStarterCards.new()
 var _pool := YarnRangerPoolCards.new()
+var _bolas := CombatYarnRangerBolasCards.new()
+var _skein := CombatYarnRangerEndlessSkeinCards.new()
 
 
 func _initialize() -> void:
@@ -77,6 +81,13 @@ func _initialize() -> void:
 	_test_ac3_snapshot_and_recipient_refusals()
 	_test_ac3_purity_and_retry()
 	_test_snare_net_unchanged()
+	_test_ac1_commit_after_real_paid_bolas()
+	_test_ac2_commit_blocked_and_stacked()
+	_test_ac2_commit_multi_recipient()
+	_test_ac3_commit_repeat_and_slots()
+	_test_ac4_commit_refusals_match_proposal()
+	_test_ac4_commit_refusals_write_nothing()
+	_test_ac5_commit_purity_and_seeded_equivalence()
 	if failures.is_empty():
 		print("combat_yarn_ranger_snare_shot_test: PASS (", checks, " checks)")
 	else:
@@ -867,6 +878,458 @@ func _test_snare_net_unchanged() -> void:
 		"a real battle object is never mutated by the passive proposal")
 
 
+# --- AC1: commit after a genuine paid attack ------------------------------------------------
+
+## AC1: a real held Wool Bolas / Tangle Bolas is paid through its authentic resolver, and the
+## post-hit commit — driven from that paid result at the trusted boundary — adds exactly one Tangled
+## on top of the card's own printed count, against the actual CombatEnemies roster.
+func _test_ac1_commit_after_real_paid_bolas() -> void:
+	for card_id: String in [WOOL_BOLAS, TANGLE_BOLAS]:
+		var printed: int = int(_card_record(card_id)["effects"]["tangled"])
+		for seat: int in [2, 3]:
+			var label: String = card_id + " from seat " + str(seat)
+			var battle := _battle(card_id, seat, _three_foes(), 470200 + seat * 10 + printed)
+			var deck: CombatDeck = battle["deck"]
+			var party: CombatParty = battle["party"]
+			var enemies: CombatEnemies = battle["enemies"]
+			var rng: RandomNumberGenerator = battle["rng"]
+			var fresh := SnareCards.fresh_snare_shot_state()
+			var fresh_before: Dictionary = fresh.duplicate(true)
+			var heroes_before: Array = party.get_heroes()
+
+			var played: Dictionary = _bolas.play_card(deck, party, enemies, card_id, 2)
+			var receipt := _paid_receipt(played, [2])
+			var receipt_before: Dictionary = receipt.duplicate(true)
+			var after_play: Array = enemies.get_enemies()
+			_check(int(after_play[1]["hp"]) < 30, label + ": the paid bolas really dealt its damage")
+			_check(_status_tangled(after_play[1]) == printed,
+				label + ": the card's own printed Tangled already landed")
+			var deck_after_play: Dictionary = _deck_state(deck)
+			var rng_after_play: int = rng.state
+
+			var result: Dictionary = service.commit_snare_shot(card_id, party, enemies, receipt, fresh)
+
+			_check(result.get("ok") == true and result.get("reason") == "applied",
+				label + ": the post-hit commit applies the rider")
+			_check(result.get("passive") == "snare_shot", label + ": the commit names the passive")
+			_check(result.get("card_id") == card_id, label + ": the commit names the authentic card")
+			_check(result.get("catalog") == _catalog_name(card_id),
+				label + ": the commit names the owning catalog")
+			_check(result.get("cost_paid") == int(_card_record(card_id)["cost"]),
+				label + ": the commit reports the printed cost")
+			_check(result.get("owner_position") == seat, label + ": the commit reports her seat")
+			_check(result.get("tangled_added") == 1, label + ": exactly one Tangled is committed")
+			_check(result.get("recipient_positions") == [2],
+				label + ": only the confirmed recipient is named")
+			_check(result.get("status_updates") == [{"position": 2, "enemy_id": "spool_stalker",
+				"tangled_before": printed, "tangled_after": printed + 1}],
+				label + ": one receipt entry reports the exact before/after count")
+			var flag: Variant = result.get("passive_state")
+			_check(flag == {"available": false, "consumed": true},
+				label + ": the returned flag is consumed")
+			_check(not is_same(flag, fresh), label + ": the returned flag is a new dictionary")
+			_check(fresh == fresh_before, label + ": the caller's flag is never mutated")
+
+			var after_commit: Array = enemies.get_enemies()
+			_check(_status_tangled(after_commit[1]) == printed + 1,
+				label + ": the authoritative recipient gains exactly one more Tangled")
+			_check(after_commit[0] == after_play[0] and after_commit[2] == after_play[2],
+				label + ": no other foe changes HP, Block, status or metadata")
+			_check(int(after_commit[1]["hp"]) == int(after_play[1]["hp"])
+				and int(after_commit[1]["block"]) == int(after_play[1]["block"])
+				and int(after_commit[1]["position"]) == 2
+				and after_commit[1]["id"] == after_play[1]["id"],
+				label + ": the recipient takes no second damage hit and keeps its slot")
+			_check(after_commit[1].keys() == after_play[1].keys(),
+				label + ": the recipient record gains and loses no field")
+			_check(_deck_state(deck) == deck_after_play,
+				label + ": the commit spends no energy and discards no card")
+			_check(rng.state == rng_after_play, label + ": the commit advances no RNG")
+			_check(party.get_heroes() == heroes_before, label + ": the commit changes no hero")
+			_check(receipt == receipt_before, label + ": the commit rewrites no caller receipt")
+
+			var roster_before_repeat: Array = enemies.get_enemies()
+			var repeat: Dictionary = service.commit_snare_shot(card_id, party, enemies, receipt, flag)
+			_check(repeat.get("ok") == false and repeat.get("reason") == "passive_spent",
+				label + ": the returned flag refuses the next attack")
+			_check(not repeat.has("passive_state") and not repeat.has("status_updates"),
+				label + ": the repeat refusal publishes no flag or update")
+			_check(enemies.get_enemies() == roster_before_repeat,
+				label + ": the repeat refusal adds no second Tangled")
+
+
+# --- AC2: commit against the real roster ------------------------------------------------------
+
+## AC2: a fully Block-absorbed confirmed hit still carries the rider, and a genuine paid Snare Net
+## chain proves the commit stacks exactly one count on the authoritative record.
+func _test_ac2_commit_blocked_and_stacked() -> void:
+	var blocked := _battle(WOOL_BOLAS, 3, _three_foes(), 470301)
+	var blocked_enemies: CombatEnemies = blocked["enemies"]
+	var blocked_party: CombatParty = blocked["party"]
+	_check(blocked_enemies.gain_block(1, 9), "blocked fixture: the front foe really holds Block")
+	var blocked_play: Dictionary = _bolas.play_card(blocked["deck"], blocked_party,
+		blocked_enemies, WOOL_BOLAS, 1)
+	_check(blocked_play.get("ok") == true and int(blocked_play["block_absorbed"]) == 2
+		and int(blocked_play["hp_loss"]) == 0,
+		"blocked hit: the paid damage is fully absorbed by Block")
+	var blocked_before: Dictionary = blocked_enemies.get_enemy(1)
+	var blocked_commit: Dictionary = service.commit_snare_shot(WOOL_BOLAS, blocked_party,
+		blocked_enemies, _paid_receipt(blocked_play, [1]), SnareCards.fresh_snare_shot_state())
+	_check(blocked_commit.get("ok") == true,
+		"blocked hit: the Block-absorbed confirmed hit still carries the rider")
+	var blocked_after: Dictionary = blocked_enemies.get_enemy(1)
+	_check(int(blocked_after["hp"]) == int(blocked_before["hp"])
+		and int(blocked_after["block"]) == int(blocked_before["block"]),
+		"blocked hit: the commit changes no HP and no Block")
+	_check(_status_tangled(blocked_after) == 2,
+		"blocked hit: the printed Tangled 1 plus exactly one rider")
+
+	# A real paid Snare Net (Tangled 1 to every foe), then a paid Wool Bolas (its own Tangled 1),
+	# then the rider: the authoritative count stacks 1 -> 2 -> 3 with one addition each time.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 470302
+	var deck := CombatDeck.new([SNARE_NET, WOOL_BOLAS, NEEDLE_NOCK, HOOD_KNIT, REEL_IN], rng)
+	_check(deck.start_turn() and deck.hand.has(SNARE_NET) and deck.hand.has(WOOL_BOLAS),
+		"stacked fixture: the seeded turn holds the net and the bolas")
+	var party := _party(3)
+	var enemies := CombatEnemies.new(_three_foes())
+	var net: Dictionary = service.play_card(deck, party, enemies, SNARE_NET)
+	_check(net.get("ok") == true and _status_tangled(enemies.get_enemy(1)) == 1,
+		"stacked fixture: the paid net binds the front foe with Tangled 1")
+	var bolas: Dictionary = _bolas.play_card(deck, party, enemies, WOOL_BOLAS, 1)
+	_check(bolas.get("ok") == true and _status_tangled(enemies.get_enemy(1)) == 2,
+		"stacked fixture: the paid bolas adds its own printed Tangled 1")
+	var stacked: Dictionary = service.commit_snare_shot(WOOL_BOLAS, party, enemies,
+		_paid_receipt(bolas, [1]), SnareCards.fresh_snare_shot_state())
+	_check(stacked.get("ok") == true, "stacked: the rider applies after the paid chain")
+	_check(_status_tangled(enemies.get_enemy(1)) == 3,
+		"stacked: exactly one more Tangled lands on the existing count")
+	_check(_status_tangled(enemies.get_enemy(2)) == 1
+		and _status_tangled(enemies.get_enemy(3)) == 1,
+		"stacked: the net's untouched foes keep only their own Tangled 1")
+	_check((stacked.get("status_updates") as Array)[0] == {"position": 1,
+		"enemy_id": "button_guard", "tangled_before": 2, "tangled_after": 3},
+		"stacked: the receipt entry reports the exact stacked count")
+
+
+## AC2: a real paid Endless Skein hits every living foe; the commit adds one Tangled to each
+## distinct recipient, skips the slain slot and never compacts or retargets a position.
+func _test_ac2_commit_multi_recipient() -> void:
+	var battle := _battle(ENDLESS_SKEIN, 3, _three_foes(), 470410)
+	var deck: CombatDeck = battle["deck"]
+	var party: CombatParty = battle["party"]
+	var enemies: CombatEnemies = battle["enemies"]
+	_check(enemies.apply_damage(2, 99), "multi fixture: the middle foe is really slain")
+	_check(enemies.is_slain(2), "multi fixture: slot 2 is a corpse")
+	var slain_before: Dictionary = enemies.get_enemy(2)
+	var played: Dictionary = _skein.play_card(deck, party, enemies, ENDLESS_SKEIN)
+	_check(played.get("ok") == true and played.get("target_positions") == [1, 3],
+		"multi: the paid skein hits exactly the living foes in slot order")
+	var after_play: Array = enemies.get_enemies()
+	var result: Dictionary = service.commit_snare_shot(ENDLESS_SKEIN, party, enemies,
+		_paid_receipt(played, played["target_positions"]), SnareCards.fresh_snare_shot_state())
+	_check(result.get("ok") == true, "multi: the confirmed multi-target hit commits")
+	_check(result.get("recipient_positions") == [1, 3],
+		"multi: each distinct living recipient is named once, in order")
+	_check((result.get("status_updates") as Array).size() == 2,
+		"multi: one receipt entry per recipient")
+	var after_commit: Array = enemies.get_enemies()
+	for slot: int in [1, 3]:
+		_check(_status_tangled(after_commit[slot - 1]) == 3,
+			"multi: slot " + str(slot) + " stacks printed Tangled 2 plus one rider")
+		_check(int(after_commit[slot - 1]["hp"]) == int(after_play[slot - 1]["hp"]),
+			"multi: slot " + str(slot) + " takes no second damage")
+		_check(int(after_commit[slot - 1]["position"]) == slot,
+			"multi: slot " + str(slot) + " keeps its own position")
+	_check(enemies.get_enemy(2) == slain_before, "multi: the slain slot is untouched")
+	_check(after_commit.size() == 3, "multi: no slot is created or removed")
+
+	# A real multi-hit list that names one foe twice still affects it exactly once.
+	var dup_battle := _battle(ENDLESS_SKEIN, 3, _three_foes(), 470411)
+	var dup_enemies: CombatEnemies = dup_battle["enemies"]
+	var dup_party: CombatParty = dup_battle["party"]
+	var dup_receipt := _multi_receipt(ENDLESS_SKEIN, 3, 3, [1, 1, 3])
+	var dup_result: Dictionary = service.commit_snare_shot(ENDLESS_SKEIN, dup_party, dup_enemies,
+		dup_receipt, SnareCards.fresh_snare_shot_state())
+	_check(dup_result.get("ok") == true, "duplicate hit: the confirmed hit commits")
+	_check(dup_result.get("recipient_positions") == [1, 3],
+		"duplicate hit: a foe named twice is one recipient")
+	_check(_status_tangled(dup_enemies.get_enemy(1)) == 1
+		and _status_tangled(dup_enemies.get_enemy(3)) == 1,
+		"duplicate hit: exactly one Tangled per distinct foe")
+	_check(not dup_enemies.get_enemy(2).has("statuses"),
+		"duplicate hit: the unnamed middle foe stays untangled")
+
+
+# --- AC3: repeat refusal and the opt-in fourth slot -------------------------------------------
+
+## AC3: the returned flag refuses a second addition, a real three-foe Fight never grows, and the
+## opt-in fourth slot is addressed only when the real roster holds that foe.
+func _test_ac3_commit_repeat_and_slots() -> void:
+	var default_four := CombatEnemies.new([{"id": "a", "max_hp": 10}, {"id": "b", "max_hp": 10},
+		{"id": "c", "max_hp": 10}, {"id": "d", "max_hp": 10}])
+	_check(not default_four.is_valid(),
+		"the default Fight still admits at most three foes (no capacity change)")
+
+	var three := CombatEnemies.new(_three_foes())
+	var three_before: Array = three.get_enemies()
+	var refused := service.commit_snare_shot(WOOL_BOLAS, _party(3), three,
+		_single_receipt(WOOL_BOLAS, 3, 1, 4), SnareCards.fresh_snare_shot_state())
+	_check(refused.get("ok") == false and refused.get("reason") == "recipient_missing",
+		"a fourth-slot hit is refused when the real roster has three foes")
+	_check(three.get_enemies() == three_before,
+		"the fourth-slot refusal writes nothing into the three-foe roster")
+
+	var battle := _battle(WOOL_BOLAS, 3, [{"id": "button_guard", "max_hp": 30},
+		{"id": "spool_stalker", "max_hp": 30}, {"id": "moth_swarm", "max_hp": 30},
+		{"id": "hoard_beetle", "max_hp": 30}], 470520, CombatEnemies.OPT_IN_MAX_ENEMIES)
+	var party: CombatParty = battle["party"]
+	var enemies: CombatEnemies = battle["enemies"]
+	_check(enemies.get_capacity() == 4 and enemies.get_enemies().size() == 4,
+		"opt-in fixture: the real roster really holds four slots")
+	# Every paid Yarn Ranger attack keeps its printed TO 1-3 line and validates the roster at the
+	# shipped three-foe capacity, so no paid cast can reach a fourth slot; the opt-in slot is
+	# representable only through the canonical receipt, which is what this passive accepts.
+	var paid_fourth: Dictionary = _bolas.play_card(battle["deck"], party, enemies, WOOL_BOLAS, 4)
+	_check(paid_fourth.get("ok") == false,
+		"opt-in fixture: the paid bolas never reaches a fourth slot")
+	var receipt := _single_receipt(WOOL_BOLAS, 3, 1, 4)
+	var result: Dictionary = service.commit_snare_shot(WOOL_BOLAS, party, enemies, receipt,
+		SnareCards.fresh_snare_shot_state())
+	_check(result.get("ok") == true and result.get("recipient_positions") == [4],
+		"opt-in: the fourth foe is addressed when the real roster holds it")
+	var roster: Array = enemies.get_enemies()
+	_check(roster.size() == 4, "opt-in: no slot is created or removed")
+	_check(_status_tangled(roster[3]) == 1,
+		"opt-in: the fourth foe gains exactly one rider")
+	for index in range(4):
+		_check(int(roster[index]["position"]) == index + 1,
+			"opt-in: slot " + str(index + 1) + " keeps its own position (no gap, no move)")
+		if index < 3:
+			_check(not roster[index].has("statuses"),
+				"opt-in: the untargeted slot " + str(index + 1) + " stays untangled")
+	var before_repeat: Array = enemies.get_enemies()
+	var repeat: Dictionary = service.commit_snare_shot(WOOL_BOLAS, party, enemies, receipt,
+		result.get("passive_state"))
+	_check(repeat.get("ok") == false and repeat.get("reason") == "passive_spent",
+		"opt-in: the returned flag refuses a second rider")
+	_check(enemies.get_enemies() == before_repeat,
+		"opt-in: the second attempt adds no Tangled")
+
+
+# --- AC4: refusals -----------------------------------------------------------------------------
+
+## AC4: the commit accepts exactly the proposal's catalog/receipt/owner/seat/flag/roster rules.
+## Every refusal must match the pure proposal's reason and must write nothing.
+func _test_ac4_commit_refusals_match_proposal() -> void:
+	var fresh := SnareCards.fresh_snare_shot_state()
+	var cases: Array[Dictionary] = [
+		{"label": "support Hood Knit", "card": HOOD_KNIT, "seat": 2,
+			"receipt": _single_receipt(HOOD_KNIT, 2, 1, 1), "expect": "not_an_attack"},
+		{"label": "support Snare Net", "card": SNARE_NET, "seat": 2,
+			"receipt": _single_receipt(SNARE_NET, 2, 2, 1), "expect": "not_an_attack"},
+		{"label": "support Reel Thread", "card": REEL_THREAD, "seat": 2,
+			"receipt": _single_receipt(REEL_THREAD, 2, 1, 1), "expect": "not_an_attack"},
+		{"label": "support Reel In", "card": REEL_IN, "seat": 2,
+			"receipt": _single_receipt(REEL_IN, 2, 1, 1), "expect": "not_an_attack"},
+		{"label": "forged spelling", "card": WOOL_BOLAS + "_plus_plus", "seat": 3,
+			"receipt": _single_receipt(WOOL_BOLAS, 3, 1, 1), "expect": "unsupported_card"},
+		{"label": "foreign ID", "card": "warden_strike", "seat": 3,
+			"receipt": _single_receipt(WOOL_BOLAS, 3, 1, 1), "expect": "unsupported_card"},
+		{"label": "non-string ID", "card": 7, "seat": 3,
+			"receipt": _single_receipt(WOOL_BOLAS, 3, 1, 1), "expect": "unsupported_card"},
+		{"label": "receipt names another seat", "card": WOOL_BOLAS, "seat": 3,
+			"receipt": _single_receipt(WOOL_BOLAS, 2, 1, 1), "expect": "owner_mismatch"},
+		{"label": "ranger in the front seat", "card": WOOL_BOLAS, "seat": 1,
+			"receipt": _single_receipt(WOOL_BOLAS, 1, 1, 1), "expect": "owner_illegal_position"},
+		{"label": "Purling Barrage from seat 2", "card": PURLING_BARRAGE, "seat": 2,
+			"receipt": _single_receipt(PURLING_BARRAGE, 2, 2, 1),
+			"expect": "owner_illegal_position"},
+		{"label": "downed owner", "card": WOOL_BOLAS, "seat": 3, "hp": 0,
+			"receipt": _single_receipt(WOOL_BOLAS, 3, 1, 1), "expect": "owner_downed"},
+		{"label": "absent owner", "card": WOOL_BOLAS,
+			"party": CombatParty.new([{"id": "warden", "max_hp": 40},
+				{"id": "seamstress", "max_hp": 30}, {"id": "tinker", "max_hp": 26}]),
+			"receipt": _single_receipt(WOOL_BOLAS, 2, 1, 1), "expect": "owner_missing"},
+		{"label": "one-hero party", "card": WOOL_BOLAS,
+			"party": CombatParty.new([{"id": "yarn_ranger", "max_hp": 27}]),
+			"receipt": _single_receipt(WOOL_BOLAS, 2, 1, 1), "expect": "invalid_party"},
+		{"label": "null party", "card": WOOL_BOLAS, "party": null,
+			"receipt": _single_receipt(WOOL_BOLAS, 3, 1, 1), "expect": "invalid_request"},
+		{"label": "unpaid receipt", "card": WOOL_BOLAS, "seat": 3,
+			"receipt": _unpaid_receipt(WOOL_BOLAS, 3, 1, 1), "expect": "unpaid_attack"},
+		{"label": "unconfirmed hit", "card": WOOL_BOLAS, "seat": 3,
+			"receipt": _unconfirmed_receipt(WOOL_BOLAS, 3, 1, 1), "expect": "unconfirmed_hit"},
+		{"label": "missed attack", "card": WOOL_BOLAS, "seat": 3,
+			"receipt": _missed_receipt(WOOL_BOLAS, 3, 1, 1), "expect": "missed_attack"},
+		{"label": "wrong paid cost", "card": WOOL_BOLAS, "seat": 3,
+			"receipt": _single_receipt(WOOL_BOLAS, 3, 0, 1), "expect": "receipt_cost_mismatch"},
+		{"label": "extra receipt field", "card": WOOL_BOLAS, "seat": 3,
+			"receipt": _receipt_with(good_wool_receipt(), "damage", 99),
+			"expect": "malformed_receipt"},
+		{"label": "both target forms", "card": WOOL_BOLAS, "seat": 3,
+			"receipt": _receipt_with(good_wool_receipt(), "hit_positions", [1]),
+			"expect": "malformed_receipt"},
+		{"label": "spent flag", "card": WOOL_BOLAS, "seat": 3,
+			"receipt": good_wool_receipt(), "state": {"available": false, "consumed": true},
+			"expect": "passive_spent"},
+		{"label": "stale flag", "card": WOOL_BOLAS, "seat": 3,
+			"receipt": good_wool_receipt(), "state": {"available": true, "consumed": true},
+			"expect": "invalid_passive_state"},
+		{"label": "vacant fourth slot", "card": WOOL_BOLAS, "seat": 3,
+			"receipt": _single_receipt(WOOL_BOLAS, 3, 1, 4), "expect": "recipient_missing"},
+		{"label": "slain recipient", "card": WOOL_BOLAS, "seat": 3, "slain": 1,
+			"receipt": good_wool_receipt(), "expect": "recipient_downed"},
+		{"label": "overflowing Tangled", "card": WOOL_BOLAS, "seat": 3, "ceiling": 1,
+			"receipt": good_wool_receipt(), "expect": "status_overflow"},
+		{"label": "malformed roster status", "card": WOOL_BOLAS, "seat": 3, "bad_statuses": 1,
+			"receipt": good_wool_receipt(), "expect": "invalid_enemies"},
+	]
+	for entry: Dictionary in cases:
+		var label: String = str(entry["label"])
+		var party: CombatParty = _case_party(entry)
+		var enemies: CombatEnemies = _case_roster(entry)
+		var snapshot: Dictionary = _snapshot_of(enemies)
+		var receipt: Variant = entry["receipt"]
+		var state: Variant = entry.get("state", fresh)
+		var expected: String = str(entry["expect"])
+		var roster_before: Array = enemies.get_enemies()
+		var proposed: Dictionary = service.propose_snare_shot(entry["card"], party, snapshot,
+			receipt, state)
+		var committed: Dictionary = service.commit_snare_shot(entry["card"], party, enemies,
+			receipt, state)
+		_check(proposed.get("ok") == false and proposed.get("reason") == expected,
+			label + ": the proposal refuses with " + expected + " (got "
+				+ str(proposed.get("reason")) + ")")
+		_check(committed.get("ok") == false and committed.get("reason") == expected,
+			label + ": the commit refuses with the same reason (got "
+				+ str(committed.get("reason")) + ")")
+		_check(not committed.has("passive_state") and not committed.has("status_updates")
+			and not committed.has("enemies"), label + ": the commit publishes no flag or update")
+		_check(enemies.get_enemies() == roster_before,
+			label + ": the authoritative roster is unchanged")
+
+	# A legal confirmed hit is accepted by both, with the same published contract.
+	var legal_party := _party(3)
+	var legal_enemies := CombatEnemies.new(_three_foes())
+	var legal_receipt := _single_receipt(WOOL_BOLAS, 3, 1, 1)
+	var legal_state := SnareCards.fresh_snare_shot_state()
+	var legal_proposal: Dictionary = service.propose_snare_shot(WOOL_BOLAS, legal_party,
+		_snapshot_of(legal_enemies), legal_receipt, legal_state)
+	_check(legal_proposal.get("ok") == true, "the proposal accepts a legal confirmed hit")
+	var legal_commit: Dictionary = service.commit_snare_shot(WOOL_BOLAS, legal_party,
+		legal_enemies, legal_receipt, legal_state)
+	_check(legal_commit.get("ok") == true and legal_commit.get("reason") == "applied",
+		"the commit accepts the same legal confirmed hit")
+	for key: String in ["card_id", "catalog", "cost_paid", "owner_position", "tangled_added",
+			"recipient_positions", "status_updates", "passive_state"]:
+		_check(legal_commit.get(key) == legal_proposal.get(key),
+			"the commit and the proposal agree on " + key)
+	_check(_status_tangled(legal_enemies.get_enemy(1)) == 1,
+		"the legal commit really wrote the Tangled onto the roster")
+
+
+## AC4: refusals change nothing at all — no enemy, party, deck, energy, hand, RNG or supplied flag.
+func _test_ac4_commit_refusals_write_nothing() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 470700
+	var deck := CombatDeck.new([WOOL_BOLAS, NEEDLE_NOCK, HOOD_KNIT, REEL_IN, SNARE_NET], rng)
+	_check(deck.start_turn() and deck.hand.has(WOOL_BOLAS),
+		"refusal purity: a real fully paid three-energy turn")
+	var party := _party(3)
+	var enemies := CombatEnemies.new(_three_foes())
+	enemies.gain_block(1, 4)
+	var wallet := 13
+	var before: Dictionary = _world(deck, party, enemies, rng, wallet)
+	var receipt := _single_receipt(WOOL_BOLAS, 3, 1, 1)
+	var fresh := SnareCards.fresh_snare_shot_state()
+	var spent := {"available": false, "consumed": true}
+	var refusals: Array[Dictionary] = [
+		{"card": HOOD_KNIT, "receipt": _single_receipt(HOOD_KNIT, 3, 1, 1), "state": fresh},
+		{"card": WOOL_BOLAS, "receipt": _single_receipt(WOOL_BOLAS, 2, 1, 1), "state": fresh},
+		{"card": WOOL_BOLAS, "receipt": _single_receipt(WOOL_BOLAS, 3, 0, 1), "state": fresh},
+		{"card": WOOL_BOLAS, "receipt": _single_receipt(WOOL_BOLAS, 3, 1, 4), "state": fresh},
+		{"card": WOOL_BOLAS, "receipt": receipt, "state": spent},
+		{"card": WOOL_BOLAS, "receipt": receipt, "state": {"available": true}},
+		{"card": WOOL_BOLAS + "_plus_plus", "receipt": receipt, "state": fresh},
+	]
+	for entry: Dictionary in refusals:
+		var receipt_before: Dictionary = (entry["receipt"] as Dictionary).duplicate(true)
+		var state_before: Dictionary = (entry["state"] as Dictionary).duplicate(true)
+		var result: Dictionary = service.commit_snare_shot(entry["card"], party, enemies,
+			entry["receipt"], entry["state"])
+		_check(result.get("ok") == false, "commit refusal " + str(entry["card"]) + ": refused")
+		_check(_world(deck, party, enemies, rng, wallet) == before,
+			"commit refusal: deck, energy, hand, party, enemies, wallet and RNG are unchanged")
+		_check(entry["receipt"] == receipt_before and entry["state"] == state_before,
+			"commit refusal: the supplied receipt and flag are unchanged")
+
+	var null_roster: Dictionary = service.commit_snare_shot(WOOL_BOLAS, party, null, receipt, fresh)
+	_check(null_roster.get("ok") == false and null_roster.get("reason") == "invalid_request",
+		"commit refusal: a null roster is refused")
+	_check(_world(deck, party, enemies, rng, wallet) == before,
+		"commit refusal: the null-roster refusal changes nothing")
+	var null_party: Dictionary = service.commit_snare_shot(WOOL_BOLAS, null, enemies, receipt, fresh)
+	_check(null_party.get("ok") == false and null_party.get("reason") == "invalid_request",
+		"commit refusal: a null party is refused")
+	_check(_world(deck, party, enemies, rng, wallet) == before,
+		"commit refusal: the null-party refusal changes nothing")
+
+	# A genuine commit after all those refusals still writes exactly one Tangled.
+	var deck_before_commit: Dictionary = _deck_state(deck)
+	var committed: Dictionary = service.commit_snare_shot(WOOL_BOLAS, party, enemies, receipt, fresh)
+	_check(committed.get("ok") == true, "commit purity: the genuine commit still succeeds")
+	_check(_status_tangled(enemies.get_enemy(1)) == 1,
+		"commit purity: exactly one Tangled landed on the authoritative record")
+	_check(_deck_state(deck) == deck_before_commit,
+		"commit purity: the commit itself spends no energy and discards no card")
+
+
+# --- AC5: purity and seeded equivalence -------------------------------------------------------
+
+## AC5: the commit replays deterministically from the same seed and never touches the deck, the
+## party or the RNG beyond the passive itself.
+func _test_ac5_commit_purity_and_seeded_equivalence() -> void:
+	var first: Dictionary = _seeded_commit_run(470610)
+	var second: Dictionary = _seeded_commit_run(470610)
+	_check(first.get("ok") == true and second.get("ok") == true,
+		"seeded equivalence: both deterministic runs commit")
+	_check(first == second, "seeded equivalence: the same seed reproduces the same commit")
+	_check(first.get("enemies") == second.get("enemies"),
+		"seeded equivalence: the resulting rosters are identical")
+	_check(not is_same(first.get("enemies"), second.get("enemies")),
+		"seeded equivalence: each run reports its own detached roster")
+	_check((first.get("enemies") as Array)[1]["statuses"] == {"tangled": 2},
+		"seeded equivalence: the paid bolas plus the rider is Tangled 2")
+	var other: Dictionary = _seeded_commit_run(470611)
+	_check(other.get("ok") == true, "seeded equivalence: another seed also commits")
+	_check((other.get("enemies") as Array)[1]["statuses"] == {"tangled": 2},
+		"seeded equivalence: the committed count does not depend on the shuffle")
+
+
+func _seeded_commit_run(seed_value: int) -> Dictionary:
+	var battle := _battle(WOOL_BOLAS, 3, _three_foes(), seed_value)
+	var deck: CombatDeck = battle["deck"]
+	var party: CombatParty = battle["party"]
+	var enemies: CombatEnemies = battle["enemies"]
+	var rng: RandomNumberGenerator = battle["rng"]
+	var played: Dictionary = _bolas.play_card(deck, party, enemies, WOOL_BOLAS, 2)
+	var receipt := _paid_receipt(played, [2])
+	var deck_before: Dictionary = _deck_state(deck)
+	var party_before: Array = party.get_heroes()
+	var rng_before: int = rng.state
+	var result: Dictionary = service.commit_snare_shot(WOOL_BOLAS, party, enemies, receipt,
+		SnareCards.fresh_snare_shot_state())
+	_check(_deck_state(deck) == deck_before,
+		"commit purity: no energy is spent and no card is discarded a second time")
+	_check(party.get_heroes() == party_before, "commit purity: no hero changes")
+	_check(rng.state == rng_before, "commit purity: the run RNG does not advance")
+	var roster: Array = enemies.get_enemies()
+	return {"ok": result.get("ok"), "result": result, "enemies": roster,
+		"deck": _deck_state(deck), "party": party.get_heroes(), "rng": rng.state,
+		"played": played}
+
+
 # --- fixtures ----------------------------------------------------------------------------------
 
 ## A real three-hero party with a living 27 HP Yarn Ranger in the named seat.
@@ -917,11 +1380,121 @@ func _multi_receipt(card_id: String, seat: int, cost: int, hits: Array) -> Dicti
 		"hit_confirmed": true, "hit_positions": hits.duplicate()}
 
 
+## The canonical confirmed paid receipt for a Wool Bolas hit on the front foe from her back seat.
+func good_wool_receipt() -> Dictionary:
+	return _single_receipt(WOOL_BOLAS, 3, 1, 1)
+
+
+func _receipt_with(receipt: Dictionary, key: String, value: Variant) -> Dictionary:
+	var copy: Dictionary = receipt.duplicate(true)
+	copy[key] = value
+	return copy
+
+
+func _unpaid_receipt(card_id: String, seat: int, cost: int, target: int) -> Dictionary:
+	return _receipt_with(_single_receipt(card_id, seat, cost, target), "paid", false)
+
+
+func _unconfirmed_receipt(card_id: String, seat: int, cost: int, target: int) -> Dictionary:
+	return _receipt_with(_single_receipt(card_id, seat, cost, target), "hit_confirmed", false)
+
+
+func _missed_receipt(card_id: String, seat: int, cost: int, target: int) -> Dictionary:
+	return _receipt_with(_single_receipt(card_id, seat, cost, target), "missed", true)
+
+
 ## A detached copy of a receipt with one required field removed, for the malformed cases.
 func _receipt_without(receipt: Dictionary, key: String) -> Dictionary:
 	var copy: Dictionary = receipt.duplicate(true)
 	copy.erase(key)
 	return copy
+
+
+# --- commit fixtures ---------------------------------------------------------------------------
+
+## The three authentic-shaped foes the commit fixtures run against.
+func _three_foes() -> Array:
+	return [{"id": "button_guard", "max_hp": 30}, {"id": "spool_stalker", "max_hp": 30},
+		{"id": "moth_swarm", "max_hp": 30}]
+
+
+## A real seeded battle: a five-card deck (so the seeded turn always holds the card under test),
+## the real three-hero party and a real enemy roster of the requested capacity.
+func _battle(card_id: String, seat: int, definitions: Array, seed_value: int,
+		capacity: int = CombatEnemies.MAX_ENEMIES) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var deck := CombatDeck.new([card_id, NEEDLE_NOCK, HOOD_KNIT, REEL_IN, PURLING_BARRAGE], rng)
+	var started: bool = deck.start_turn()
+	var party := _party(seat)
+	var enemies := CombatEnemies.new(definitions, capacity)
+	_check(started and deck.turn_active and deck.energy == 3,
+		"battle fixture: a real three-energy turn started")
+	_check(deck.hand.has(card_id), "battle fixture: the seeded hand holds " + card_id)
+	_check(enemies.is_valid(), "battle fixture: a real " + str(definitions.size()) + "-foe roster")
+	return {"deck": deck, "party": party, "enemies": enemies, "rng": rng}
+
+
+## Adapt the real paid resolver's own success receipt into the canonical post-hit receipt at the
+## trusted already-paid boundary. Only a genuinely paid, resolved hit can produce one.
+func _paid_receipt(result: Dictionary, hits: Array) -> Dictionary:
+	_check(result.get("ok") == true and result.get("reason") == "applied",
+		"trusted boundary: the paid attack really resolved")
+	var receipt := {"card_id": str(result["card_id"]),
+		"owner_position": int(result["owner_position"]), "cost_paid": int(result["cost"]),
+		"paid": true, "hit_confirmed": true}
+	if hits.size() == 1:
+		receipt["target_position"] = int(hits[0])
+	else:
+		receipt["hit_positions"] = hits.duplicate()
+	return receipt
+
+
+## The Tangled count a real enemy record carries; an absent map means no counter.
+func _status_tangled(record: Dictionary) -> int:
+	var statuses: Variant = record.get("statuses", {})
+	if typeof(statuses) != TYPE_DICTIONARY:
+		return -1
+	return int((statuses as Dictionary).get("tangled", 0))
+
+
+## A detached four-slot snapshot of a real enemy roster, keyed by its own slot positions.
+func _snapshot_of(enemies: CombatEnemies) -> Dictionary:
+	var snapshot: Dictionary = {}
+	var roster: Array[Dictionary] = enemies.get_enemies()
+	for index in range(roster.size()):
+		snapshot[index + 1] = roster[index]
+	return snapshot
+
+
+func _deck_state(deck: CombatDeck) -> Dictionary:
+	return {"energy": deck.energy, "turn": deck.turn_active, "hand": deck.hand.duplicate(),
+		"draw": deck.draw_pile.duplicate(), "discard": deck.discard_pile.duplicate(),
+		"exhausted": deck.exhausted.duplicate()}
+
+
+## The party a refusal case asks for: an explicit override, or a real party with the Yarn Ranger in
+## the named seat at the named HP.
+func _case_party(entry: Dictionary) -> CombatParty:
+	if entry.has("party"):
+		return entry["party"]
+	return _party(int(entry.get("seat", 3)), int(entry.get("hp", 27)))
+
+
+## The real enemy roster a refusal case asks for, including its optional deliberate defects.
+func _case_roster(entry: Dictionary) -> CombatEnemies:
+	var definitions: Variant = entry.get("definitions", _three_foes())
+	var capacity: int = int(entry.get("capacity", CombatEnemies.MAX_ENEMIES))
+	var enemies := CombatEnemies.new(definitions, capacity)
+	if entry.has("slain"):
+		enemies.apply_damage(int(entry["slain"]), 999)
+	if entry.has("ceiling"):
+		enemies._enemies[int(entry["ceiling"]) - 1]["statuses"] = {
+			"tangled": CombatStatuses.MAX_INT}
+	if entry.has("bad_statuses"):
+		enemies._enemies[int(entry["bad_statuses"]) - 1]["statuses"] = {"slow": 1}
+	return enemies
+
 
 
 ## One refusal case: labelled reason, no proposal escapes, and every input stays untouched.
