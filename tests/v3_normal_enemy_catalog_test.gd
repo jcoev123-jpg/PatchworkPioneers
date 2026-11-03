@@ -46,6 +46,7 @@ func _initialize() -> void:
 	_test_bobbin_bat_quilt_termite_live_bands()
 	_test_negative_fixtures()
 	_test_wraith_named_moves()
+	_test_front_normal_named_strikes()
 	if failures.is_empty():
 		print("v3_normal_enemy_catalog_test: PASS (", checks, " checks)")
 	else:
@@ -162,7 +163,8 @@ func _new_expected() -> Dictionary:
 		"thimble_beetle": {"id": "thimble_beetle", "name": "Thimble Beetle", "max_hp": 29, "art_path": "res://assets/paper/enemies/thimble_beetle.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "block", "amount": 9, "weight": 3},
-				{"type": "attack", "amount": 5, "weight": 2}]}},
+				{"type": "attack", "amount": 5, "weight": 2},
+				{"type": "attack", "amount": 7, "move": "attack2", "weight": 1}]}},
 		"zipper_snake": {"id": "zipper_snake", "name": "Zipper Snake", "max_hp": 24, "art_path": "res://assets/paper/enemies/zipper_snake.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "shove", "amount": 0, "direction": -1, "weight": 2},
@@ -448,7 +450,8 @@ func _trio_expected() -> Dictionary:
 			"art_path": "res://assets/paper/enemies/pincushion_hedgehog.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "attack", "amount": 6, "weight": 3},
-				{"type": "block", "amount": 6, "weight": 2}]}},
+				{"type": "block", "amount": 6, "weight": 2},
+				{"type": "attack", "amount": 6, "hits": 2, "move": "attack2", "weight": 1}]}},
 		"moth_swarm": {"id": "moth_swarm", "name": "Moth Swarm", "max_hp": 21,
 			"chew_block_on_attack": true,
 			"art_path": "res://assets/paper/enemies/moth_swarm.png",
@@ -4713,6 +4716,109 @@ func _test_imp_authored_blind_paid_miss() -> void:
 		and deck.energy == 2 and deck.hand.count("tinker_pop_shot") == 1
 		and enemies.get_enemies() == original_foes,
 		"spent token cannot swallow the next ordinary attack or spend twice")
+
+
+func _test_front_normal_named_strikes() -> void:
+	var parsed := _load_parsed()
+	var material := RunAuthoredBattleEntry._floor_band_material(null)
+	_check(material.get("ok") == true, "front normals: real Fight material builds")
+	if not material.get("ok", false):
+		return
+	for id in ["thimble_beetle", "pincushion_hedgehog"]:
+		var record := _find(parsed, id)
+		_check(not record.is_empty() and record.get("intent", {}).get("actions", []).size() == 3,
+			"front normal retains two old alternatives and appends one strike: " + id)
+		if record.is_empty() or record.intent.actions.size() != 3:
+			continue
+		_check(_norm(material.get("records", {}).get(id)) == _norm(record),
+			"complete canonical source survives live Fight material: " + id)
+		var has_band := false
+		for pool in material.get("pools", {}).values():
+			has_band = has_band or pool.has(id)
+		_check(has_band, "front normal belongs to a live floor band: " + id)
+		var beetle: bool = id == "thimble_beetle"
+		# Execute the unchanged original attack as well as the new canonical tail.
+		for index in ([1, 2] if beetle else [0, 2]):
+			var raw: Dictionary = record.intent.actions[index]
+			var named: bool = index == 2
+			var amount: int = (7 if beetle else 6) if named else (5 if beetle else 6)
+			var hit_count := 2 if named and not beetle else 1
+			_check(_norm(raw) == ({"type": "attack", "amount": 7, "move": "attack2", "weight": 1}
+				if beetle else {"type": "attack", "amount": 6, "hits": 2, "move": "attack2", "weight": 1})
+				if named else _norm(raw) == {"type": "attack", "amount": amount, "weight": 2 if beetle else 3},
+				"exact canonical new or original attack: " + id)
+			for block in [2, 4, 9]:
+				var traces: Array = []
+				for replay in range(2):
+					var party := _party()
+					_check(party.is_valid() and party.get_hero(1).hp == 40 and party.gain_block(1, block),
+						"living front hero has actual Block")
+					var bound := _force_normal_alternative(record, raw, party)
+					_check(not bound.is_empty(), "canonical front strike binds")
+					if bound.is_empty():
+						continue
+					_check(bound.scheduler.is_bound() and bound.intents.size() == 1,
+						"real scheduler produces one announcement")
+					if bound.intents.size() != 1:
+						continue
+					var action: Dictionary = bound.intents[0]
+					var expected: Dictionary = CombatEnemyIntents.weighted_action(raw).action.duplicate(true)
+					expected.merge({"enemy_position": 1, "target_position": 1})
+					_check(action == expected, "announcement preserves canonical move, target, damage and hits")
+					var before := [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()]
+					_check(bound.enemies.get_enemy(1).get("thorns", 0) == (0 if beetle else 3),
+						"real roster retains authored Thorns metadata")
+					if named:
+						var fallback := "res://assets/paper/enemies/%s_attack.png" % id
+						for catalog in [LiveMovePoseCatalog.new(), MissingCrusherPose.new()]:
+							var pose: Dictionary = catalog.lookup_enemy(id, action, fallback)
+							_check(pose.get("name") == ("Shell Ram" if beetle else "Quill Roll")
+								and pose.get("pose") == "attack2"
+								and pose.get("named_art") == "res://assets/paper/enemies/%s_attack2.png" % id
+								and pose.get("art") == (pose.get("named_art") if pose.get("art_available") else fallback),
+								"manifest selects authored name/pose and checked art or established fallback")
+							if catalog is MissingCrusherPose:
+								_check(pose.get("fallback_used") == true and pose.get("art") == fallback,
+									"forced missing art keeps named fallback")
+						for field in ["hits", "move"]:
+							for value in ([0, 3, "2", null] if field == "hits" else ["", "attack5", 2, null]):
+								var malformed := raw.duplicate(true)
+								malformed[field] = value
+								_check(CombatEnemyIntents.weighted_action(malformed).is_empty(),
+									"malformed authored move/hits rejected")
+								var bad := action.duplicate(true)
+								bad[field] = value
+								_check(CombatEnemyPhase.new().execute_phase(party, bound.enemies, [bad], null, true)
+									== {"ok": false, "events": []}, "malformed phase rejects")
+					_check([party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()] == before,
+						"pose previews and rejected actions preserve actors, announcements and RNG")
+					var witness := WraithHitWitness.new()
+					var receipt := CombatEnemyPhase.new().execute_phase(party, bound.enemies, bound.intents, witness, true)
+					var events: Array = []
+					var packets: Array = []
+					var hp := 40
+					var remaining: int = block
+					for hit in range(hit_count):
+						var event := {"type": "attack", "enemy_position": 1, "target_position": 1,
+							"applied": true, "actual_target_position": 1, "redirected": false,
+							"retaliation_damage": 0, "retaliatory_damage": 0}
+						if named:
+							event.move = "attack2"
+						events.append(event)
+						var packet := 3 if hit_count == 2 else amount
+						var next_hp := hp - maxi(0, packet - remaining)
+						var next_block := maxi(0, remaining - packet)
+						packets.append([packet, hp, remaining, next_hp, next_block])
+						hp = next_hp
+						remaining = next_block
+					_check(receipt == {"ok": true, "events": events} and witness.hits == packets,
+						"exact ordered single or two-hit receipts spend Block before HP")
+					_check(party.get_hero(1).hp == hp and party.get_hero(1).block == remaining
+						and party.get_hero(2) == before[0][1] and party.get_hero(3) == before[0][2]
+						and bound.enemies.get_enemies() == before[1] and bound.rng.state == before[2],
+						"strikes preserve peers, enemy Thorns metadata and RNG")
+					traces.append([action, receipt, witness.hits, party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state])
+				_check(traces.size() == 2 and traces[0] == traces[1], "same-seed strike execution replays exactly")
 
 
 class WraithHitWitness extends CombatWardenGuardReactions:
