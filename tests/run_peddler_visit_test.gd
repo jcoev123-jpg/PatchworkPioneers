@@ -137,7 +137,8 @@ func _initialize() -> void:
 	_test_yarn_ranger_snare_purchase()
 	_test_look_driven_peddler_stock()
 	_test_lantern_monk_peddler_stock()
-	_check(randi() == expected_global,
+	_test_rag_duelist_peddler_stock()
+	_check(randi()== expected_global,
 		"all stock sampling, decisions, refusals and Leave consume no global RNG")
 	_finish()
 
@@ -751,6 +752,158 @@ func _test_lantern_monk_peddler_stock() -> void:
 	_check(DECK == deck_before, "no Lantern Monk witness visit mutates the supplied deck")
 	_check(authored_cards == authored_before and authored_patches == patches_before,
 		"the shipped candidate arrays survive every Lantern Monk witness visit unchanged")
+
+
+## Rag Duelist candidate diversity: three more priced pool bases, each keyed by
+## exact ID against the real JSON and RagDuelistPoolCards, then sampled and
+## bought through a genuine one-decision visit in a warden/rag_duelist/tinker party.
+func _test_rag_duelist_peddler_stock() -> void:
+	var catalog := RagDuelistPoolCards.new()
+	var starter := StarterCards.new()
+	var specs := {
+		"rag_duelist_needle_prick": {"price": 50, "rarity": "common", "from": [1, 2],
+			"target": "enemy_single", "to": [1, 2],
+			"effects": {"damage": 4, "bleed": 2}, "plus_effects": {"damage": 6, "bleed": 3}},
+		"rag_duelist_cape_guard": {"price": 50, "rarity": "common", "from": [1, 2, 3],
+			"target": "self", "to": [],
+			"effects": {"block": 5, "riposte": 3, "duration": 1},
+			"plus_effects": {"block": 7, "riposte": 4, "duration": 1}},
+		"rag_duelist_tattered_snare": {"price": 65, "rarity": "uncommon", "from": [1, 2],
+			"target": "enemy_single", "to": [1, 2, 3],
+			"effects": {"tangled": 2}, "plus_effects": {"tangled": 3}},
+	}
+	var party: Array[String] = ["warden", "rag_duelist", "tinker"]
+	var owner_seat := 1
+	var authored_before := authored_cards.duplicate(true)
+	var deck_before := DECK.duplicate()
+
+	# AC1: each record is present once, owner/price only, and an authentic base.
+	for card_id in specs:
+		var spec: Dictionary = specs[card_id]
+		var matches: Array = authored_cards.filter(
+			func(entry): return entry is Dictionary and entry.get("id") == card_id)
+		_check(matches.size() == 1, "Rag Duelist stock lists " + card_id + " exactly once")
+		if matches.size() != 1:
+			continue
+		_check(matches[0].get("owner") == "rag_duelist"
+			and float(matches[0].get("price", -1.0)) == float(spec["price"])
+			and matches[0].size() == 3,
+			card_id + ": owner rag_duelist, exact quote, no extra field")
+		_check(not card_authored.has(card_id + "_plus"),
+			card_id + ": the + variant is never priced stock")
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(catalog.get_base_ids().has(card_id) and not starter.has_card(card_id)
+			and definition.get("id") == card_id and definition.get("owner") == "rag_duelist"
+			and definition.get("cost") == 1
+			and definition.get("rarity") == spec["rarity"]
+			and definition.get("from_positions") == spec["from"]
+			and definition.get("target_kind") == spec["target"]
+			and definition.get("to_positions") == spec["to"]
+			and definition.get("effects") == spec["effects"]
+			and definition.get("reward_eligible") == true
+			and definition.get("starting_copies") == 0
+			and not definition.has("upgrade_of"),
+			card_id + ": authentic unupgraded Rag Duelist pool base")
+		var plus: Dictionary = catalog.get_definition(card_id + "_plus")
+		_check(plus.get("effects") == spec["plus_effects"] and plus.get("reward_eligible") == false,
+			card_id + ": the + keeps its authored Rest-only effects")
+	# Older candidates stay untouched.
+	var velvet: Array = authored_cards.filter(
+		func(entry): return entry is Dictionary and entry.get("id") == "rag_duelist_velvet_feint")
+	_check(velvet.size() == 1 and velvet[0].get("owner") == "rag_duelist"
+		and velvet[0].get("price") == 50, "velvet feint stays listed once at 50 gold")
+	for retained in {"warden_strike": 50, "seamstress_prick": 50, "tinker_pop_shot": 50}:
+		_check(card_authored.has(retained) and card_authored[retained]["price"] == {
+			"warden_strike": 50, "seamstress_prick": 50, "tinker_pop_shot": 50}[retained],
+			"older hero quote survives: " + retained)
+
+	var card_index := 0
+	for card_id in specs:
+		var price: int = specs[card_id]["price"]
+		var seed_base: int = SEED + 90000 + card_index * 1000
+		card_index += 1
+		var witness_seed := -1
+		var witness: Dictionary = {}
+		var witness_state := 0
+		for offset in range(LOOK_DRIVEN_SWEEP):
+			var candidate_seed: int = seed_base + offset
+			var rng := _rng(candidate_seed)
+			var stock := RunShopStockOffers.generate_peddler_stock(rng, party,
+				authored_cards, authored_patches, [])
+			if stock.get("ok") != true or stock["cards"].size() != 3:
+				continue
+			if stock["cards"][owner_seat].get("id") != card_id:
+				continue
+			witness_seed = candidate_seed
+			witness = stock
+			witness_state = rng.state
+			break
+		_check(witness_seed >= 0, card_id + ": seed sweep offers it as Rag Duelist's card")
+		if witness_seed < 0:
+			continue
+		var replay_rng := _rng(witness_seed)
+		var replay := RunShopStockOffers.generate_peddler_stock(replay_rng, party,
+			authored_cards, authored_patches, [])
+		_check(replay == witness and replay_rng.state == witness_state,
+			card_id + ": same seed replays identical stock and RNG state")
+		var witness_before := witness.duplicate(true)
+		var offers: Array = witness["cards"]
+		for position in range(3):
+			_check(offers[position].get("owner") == party[position]
+				and card_authored.has(offers[position].get("id"))
+				and card_authored[offers[position]["id"]]["price"] == offers[position].get("price"),
+				card_id + ": seat " + str(position) + " holds its own owner's authored card")
+		_check(offers[owner_seat].get("price") == price,
+			card_id + ": offered at its exact quote")
+		_check(witness["patches"].size() == 1
+			and patch_prices.has(witness["patches"][0].get("id")),
+			card_id + ": one authored patch beside the three cards")
+
+		var node: String = "peddler_" + card_id
+		var visit := RunPeddlerVisit.new(node, party, DECK, [], 100, witness)
+		_check(visit.is_open(), card_id + ": witnessed stock opens a real visit")
+		if not visit.is_open():
+			continue
+		var open := visit.read_state()
+		var receipt := visit.choose_purchase(node, open["state"], open["stock"], "card", card_id)
+		_check(receipt.get("ok") == true and receipt.get("kind") == "card"
+			and receipt.get("id") == card_id and receipt.get("price") == price,
+			card_id + ": buys with the exact quote receipt")
+		_check(receipt.get("state", {}).get("gold") == 100 - price
+			and receipt.get("state", {}).get("deck") == DECK + [card_id]
+			and receipt.get("state", {}).get("trinkets").is_empty(),
+			card_id + ": pays once and adds only that ID")
+		var after_stock: Dictionary = receipt.get("stock", {})
+		var others_unsold := true
+		for position in range(3):
+			if position != owner_seat and after_stock["cards"][position]["sold"]:
+				others_unsold = false
+		_check(after_stock["cards"][owner_seat]["sold"] == true and others_unsold
+			and after_stock["trinkets"][0]["sold"] == false,
+			card_id + ": other stock and the patch ledger are retained")
+		_check(visit.is_consumed() and not visit.is_open() and witness == witness_before,
+			card_id + ": visit consumed; supplied stock untouched")
+		_assert_refused(visit, open, node, "card", card_id, card_id + ": stale replay")
+		var after := visit.read_state()
+		_assert_refused(visit, after, node, "card", card_id, card_id + ": repeat buy")
+		_check(visit.read_state() == after and after["state"]["gold"] == 100 - price,
+			card_id + ": replays never charge again")
+
+		# AC4: too little gold refuses with no mutation and Leave stays free.
+		var poor_node: String = node + "_poor"
+		var poor := RunPeddlerVisit.new(poor_node, party, DECK, [], price - 1, witness)
+		var poor_open := poor.read_state()
+		var denied := poor.choose_purchase(poor_node, poor_open["state"], poor_open["stock"],
+			"card", card_id)
+		_check(poor.is_open() and not denied.get("ok", true) and poor.read_state() == poor_open,
+			card_id + ": insufficient gold refuses without mutation")
+		var poor_left := poor.leave(poor_node, poor_open["state"], poor_open["stock"])
+		_check(poor_left.get("ok") == true and poor.is_consumed()
+			and poor_left.get("state", {}).get("gold") == price - 1
+			and poor_left.get("state", {}).get("deck") == DECK,
+			card_id + ": free Leave still works after a refused buy")
+	_check(DECK == deck_before and authored_cards == authored_before,
+		"Rag Duelist witnesses leave the deck and shipped candidates unchanged")
 
 
 func _state(gold: int, deck: Variant = null, trinkets: Variant = null) -> Dictionary:

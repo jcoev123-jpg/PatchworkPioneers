@@ -160,6 +160,7 @@ func _initialize() -> void:
 	_test_v3_2_elites()
 	_test_briar_guard_thorns(_catalog(ELITES))
 	_test_briar_snare_schedule()
+	_test_briar_snare_live_registry()
 	_test_keyword_elites()
 	_test_rejections()
 	for failure in failures:
@@ -3434,3 +3435,179 @@ func _test_briar_snare_schedule() -> void:
 		"AC3: the shipped catalog and the new on-disk source stay untouched")
 	_check(randi() == expected_global,
 		"AC3: the complete briar-and-snare case uses no global RNG")
+
+
+
+## Replay the real production entry's returned actors and scheduler, not a
+## manually assembled local-only Briar test roster.
+func _briar_snare_live_trace(entry: Dictionary) -> Array:
+	var party := _party()
+	var foes: CombatEnemies = entry["enemies"]
+	var scheduler: CombatEnemyIntents = entry["intents"]
+	_check(CombatStartingBlock.new(party).apply()
+		and party.get_hero(1).get("block") == CombatStartingBlock.BLOCK_AMOUNT,
+		"live Briar replay starts with authentic Warden Block")
+	party._heroes[2]["statuses"] = {"exposed": 2}
+	var trace: Array = []
+	for beat in range(4):
+		var announced := scheduler.get_intents()
+		_check(announced == _briar_snare_beat(beat),
+			"live Briar registry entry announces exact attack/Bleed/Block and shove/Weak/attack beat " + str(beat))
+		var settled := CombatEnemyPhase.new().execute_phase(party, foes, announced)
+		_check(settled.get("ok", false) and settled.get("events", []).size() == 2,
+			"live Briar roster executes both authored sources on beat " + str(beat))
+		var stage := {"announced": announced, "settled": settled,
+			"heroes": party.get_heroes(), "enemies": foes.get_enemies()}
+		_commit_hero_tick(party)
+		stage["tick"] = party.get_heroes()
+		trace.append(stage)
+		_check(scheduler.advance_turn(), "live Briar scheduler advances beat " + str(beat))
+	return trace
+
+
+## Full shipped pool, real committed Elite route and real production entry.
+## A bounded search finds one actual Briar selection; it does not force a
+## one-candidate selector or assume a fixed RNG outcome.
+func _test_briar_snare_live_registry() -> void:
+	var registry = JSON.parse_string(FileAccess.get_file_as_string(
+		RunAuthoredBattleEntry.POOLS_PATH))
+	_check(registry is Dictionary and registry.get("Elite") is Dictionary
+		and registry["Elite"].has(BRIAR_SNARE_ID),
+		"AC1: shipped typed registry includes the Briar Snare Elite")
+	if not registry is Dictionary or not registry.get("Elite") is Dictionary:
+		return
+	var binding: Dictionary = registry["Elite"].get(BRIAR_SNARE_ID, {})
+	_check(binding.get("schedule") == BRIAR_SNARE and
+		binding.get("enemy_ids") == BRIAR_SNARE_ROSTER[BRIAR_SNARE_ID],
+		"AC1: shipped Briar entry retains canonical schedule and ordered actors")
+	var found: Dictionary = {}
+	var service := RunAuthoredBattleEntry.new()
+	for trial in range(1, 513):
+		var route := _elite_route(trial)
+		if route.is_empty():
+			continue
+		var selector := RunFightEncounterSelection.new()
+		var entry := service.entry_current_battle(route.map, route.rng, selector)
+		if entry.get("success", false) and entry.get("node_type") == "Elite" \
+				and entry.get("encounter_id") == BRIAR_SNARE_ID:
+			found = {"seed": trial, "route": route, "selector": selector,
+				"entry": entry}
+			break
+	_check(not found.is_empty(),
+		"AC2: within 512 seeds the full production pool selects Briar on a legal Elite node")
+	if found.is_empty():
+		return
+	var route: Dictionary = found["route"]
+	var map: RunMap = route["map"]
+	var rng: RandomNumberGenerator = route["rng"]
+	var selector: RunFightEncounterSelection = found["selector"]
+	var selected: Dictionary = found["entry"]
+	_check(map.get_current_node_id() == route["node"]
+		and map.get_route().has(route["node"])
+		and map.get_node(route["node"]).get("type") == "Elite"
+		and registry["Elite"].size() > 1,
+		"AC2 precondition: a genuinely chosen Elite node uses multiple shipped candidates")
+	_check(selected.get("definitions") == BRIAR_SNARE_PATTERNS
+		and selected.get("intents") is CombatEnemyIntents
+		and selected["intents"].is_valid(),
+		"AC2: production entry publishes the exact two-source three-beat schedule")
+	var foes: CombatEnemies = selected.get("enemies")
+	_check(foes is CombatEnemies and foes.is_valid() and foes.get_enemies().size() == 2,
+		"AC2 precondition: live entry has exactly two living real enemies")
+	if not foes is CombatEnemies or not foes.is_valid():
+		return
+	var guard: Dictionary = foes.get_enemy(1)
+	var snare: Dictionary = foes.get_enemy(2)
+	_check(guard.get("id") == "needle_briar_guard"
+		and guard.get("hp") == 42 and guard.get("max_hp") == 42
+		and guard.get("thorns") == 3
+		and guard.get("art_path") == "res://assets/paper/enemies/needle_briar_guard.png"
+		and snare.get("id") == "spool_snarekeeper"
+		and snare.get("hp") == 40 and snare.get("max_hp") == 40
+		and snare.get("art_path") == "res://assets/paper/enemies/spool_snarekeeper.png",
+		"AC2: real entry mounts the exact 42 HP thorned Guard and 40 HP Snarekeeper")
+	var initial_defs: Array = selected["definitions"].duplicate(true)
+	var after_selection := _snapshot(map, rng, selector)
+	var original_trace := _briar_snare_live_trace(selected)
+	_check(original_trace.size() == 4
+		and original_trace[0]["heroes"][0].get("hp") == 37
+		and original_trace[1]["heroes"][0].get("statuses", {}).get("bleed") == 2
+		and original_trace[2]["enemies"][0].get("block") == 8
+		and original_trace[2]["heroes"][1].get("hp") == 18,
+		"AC2: real Briar phase resolves attack 9, Bleed 2, Block 8, shove and Weak")
+	_check(_snapshot(map, rng, selector) == after_selection,
+		"AC2: live four-beat combat does not redraw the run selector or RNG")
+
+	var replay_route := _elite_route(found["seed"])
+	_check(not replay_route.is_empty() and replay_route["node"] == route["node"],
+		"AC2: independent same-seed map reconstructs the same legal Elite route")
+	if replay_route.is_empty():
+		return
+	var replay_selector := RunFightEncounterSelection.new()
+	var replay := service.entry_current_battle(replay_route.map, replay_route.rng, replay_selector)
+	_check(replay.get("success", false) and replay.get("encounter_id") == BRIAR_SNARE_ID
+		and replay.get("definitions") == initial_defs and replay_route.rng.state == rng.state,
+		"AC2: independent same-seed production entry reselects Briar without RNG drift")
+	if not replay.get("success", false):
+		return
+	var replay_trace := _briar_snare_live_trace(replay)
+	_check(replay_trace == original_trace,
+		"AC2: independent production battle replays all four announced and resolved phases")
+
+	# Exercise rejection on the same seed that legally selects Briar. None of
+	# the invalid production candidate registries may publish a selector entry.
+	var clean_route := _elite_route(found["seed"])
+	var rejected_selector := RunFightEncounterSelection.new()
+	var before := _snapshot(clean_route.map, clean_route.rng, rejected_selector)
+	var bad_registries: Array = []
+	for mutation in ["wrong_path", "missing_ids", "short_ids", "duplicate_ids", "unknown_id"]:
+		var forged: Dictionary = registry.duplicate(true)
+		var entry_binding: Dictionary = forged["Elite"][BRIAR_SNARE_ID]
+		match mutation:
+			"wrong_path":
+				entry_binding["schedule"] = "res://data/encounters/needle_marshal_elite.json"
+			"missing_ids":
+				entry_binding.erase("enemy_ids")
+			"short_ids":
+				entry_binding["enemy_ids"] = ["needle_briar_guard"]
+			"duplicate_ids":
+				entry_binding["enemy_ids"] = ["needle_briar_guard", "needle_briar_guard"]
+			"unknown_id":
+				entry_binding["enemy_ids"] = ["needle_briar_guard", "missing_snarekeeper"]
+		bad_registries.append({"label": mutation, "registry": forged})
+	for invalid_case in bad_registries:
+		_check(service._entry_from_data(clean_route.map, clean_route.rng,
+			rejected_selector, invalid_case["registry"]) == {"success": false}
+			and _snapshot(clean_route.map, clean_route.rng, rejected_selector) == before,
+			"AC3: rejected real Briar binding leaves map/selector/cache/RNG untouched: " + invalid_case["label"])
+	var duplicate_source := selected.duplicate()
+	duplicate_source["definitions"] = initial_defs.duplicate(true)
+	duplicate_source["definitions"][1]["enemy_position"] = 1
+	var before_duplicate := _snapshot(clean_route.map, clean_route.rng, rejected_selector)
+	_check(RunTypedBattleRoster.new().assemble(duplicate_source,
+		BRIAR_SNARE_ROSTER, [ELITES, STARTER, RUN]) == {"ok": false}
+		and _snapshot(clean_route.map, clean_route.rng, rejected_selector) == before_duplicate,
+		"AC3: duplicate authentic Elite source position fails closed without map/RNG/cache spend")
+	var corrected := service.entry_current_battle(
+		clean_route.map, clean_route.rng, rejected_selector)
+	_check(corrected.get("success", false)
+		and corrected.get("encounter_id") == BRIAR_SNARE_ID
+		and corrected.get("definitions") == initial_defs
+		and clean_route.rng.state == rng.state,
+		"AC3: corrected full-registry retry chooses the authentic Elite after all rejections")
+
+	# Returned receipts and actor instances are detached from the cache.
+	var cache_before: Dictionary = selector._selected.duplicate(true)
+	var cached_rng := rng.state
+	selected["definitions"][0]["pattern"].clear()
+	selected["enemies"].apply_damage(1, 5)
+	selected["encounter_id"] = "forged"
+	var cached := service.entry_current_battle(map, rng, selector)
+	_check(cached.get("success", false) and cached.get("encounter_id") == BRIAR_SNARE_ID
+		and cached.get("definitions") == initial_defs
+		and cached.get("enemies") is CombatEnemies
+		and cached["enemies"].get_enemy(1).get("hp") == 42
+		and cached["enemies"].get_enemy(2).get("hp") == 40
+		and rng.state == cached_rng and selector._selected == cache_before
+		and _snapshot(map, rng, selector) == after_selection,
+		"AC3: detached cache replay returns pristine HP and three beats without extra RNG")

@@ -41,6 +41,7 @@ var _pop := CombatButtonGolemPopCards.new()
 var _sew := CombatButtonGolemSewCards.new()
 var _roll := CombatButtonGolemRollCards.new()
 var _thread := CombatButtonGolemThreadCards.new()
+var _fist := CombatButtonGolemFistCards.new()
 var _lunge := CombatRagDuelistLungeCards.new()
 var _snare := CombatRagDuelistTatteredSnareCards.new()
 var _barrage := CombatRagDuelistNeedleBarrageCards.new()
@@ -165,6 +166,8 @@ func _definition(card_id: String) -> Dictionary:
 		return ButtonGolemStarterCards.new().get_definition(card_id) if _pop.STARTER_PRINTINGS.has(card_id) else ButtonGolemPoolCards.new().get_definition(card_id)
 	if _thread.is_supported_card(card_id):
 		return ButtonGolemPoolCards.new().get_definition(card_id) if not _thread._authenticate(card_id).is_empty() else {}
+	if _fist.is_supported_card(card_id):
+		return ButtonGolemStarterCards.new().get_definition(card_id) if not _fist.printed_definition(card_id).is_empty() else {}
 	if _feint.is_supported_card(card_id):
 		return _feint._catalog_definition(card_id)
 	if CombatScarecrowCrowCards.CARDS.has(card_id):
@@ -612,6 +615,9 @@ func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[Str
 			return ["No attack or damage. " + line + " Apply Weak %d to that same enemy." % int(effects.weak)]
 		return ["BASE deal %d attack damage through Block before HP; pre-hit Weak/Exposed/Tangled modify it. THEN %s New Bleed cannot boost its own strike." % [
 			int(effects.damage), line]]
+	if _fist.is_supported_card(card_id):
+		var effects: Dictionary = definition.effects
+		return ["BASE deal %d attack damage through enemy Block before HP; Weak/Exposed and pre-existing Tangled modify this hit. Then the Button Golem (self) gains %d Block, even on an absorbed or lethal hit. No Block is spent." % [int(effects.damage), int(effects.block_self)]]
 	if _moth_lure.is_supported_card(card_id):
 		var effects: Dictionary = definition.effects
 		return ["Arm Blind on the selected living enemy (next real attack misses; nonattacks do not consume it); draw %d from the shared deck after discarding. No attack or damage." % int(effects.draw)]
@@ -1197,7 +1203,7 @@ func _update_visual(panel: Control) -> void:
 			var support_presenter = _app.get_node_or_null("LiveSupportHand")
 			playable = support_presenter != null and support_presenter._eligible(
 				panel, id, _app.deck, _app.party, _app.battle_view)
-		elif _moth_lure.is_supported_card(id) or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _needle.is_supported_purling_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _thread.is_supported_card(id) or id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
+		elif _moth_lure.is_supported_card(id) or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _needle.is_supported_purling_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _thread.is_supported_card(id) or _fist.is_supported_card(id) or id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id) or _helmet.is_supported_card(id):
 			# The mounted battle owns both the legal picker and its shared pin.
 			# Catalog knowledge alone cannot enable Spring Trap.
 			playable = battle_preview != null and is_instance_valid(battle_preview) \
@@ -1337,6 +1343,9 @@ func _rules(id: String) -> String:
 		if effects.has("weak"):
 			return "Bleed %d. Weak %d. No damage." % [bleed, int(effects.weak)]
 		return "Deal %d. Bleed %d." % [int(effects.damage), bleed]
+	if _fist.is_supported_card(id):
+		var card := _definition(id)
+		return "" if card.is_empty() else "Deal %d; gain %d self Block." % [int(card.effects.damage), int(card.effects.block_self)]
 	if _moth_lure.is_supported_card(id):
 		var effects: Dictionary = _definition(id).effects
 		return "Blind next attack; draw %d. No damage." % int(effects.draw)
