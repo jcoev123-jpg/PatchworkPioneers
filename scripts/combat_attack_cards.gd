@@ -6,7 +6,9 @@ extends RefCounted
 const ATTACK_IDS := [
 	"warden_strike_plus", "warden_shield_bash_plus", "seamstress_prick_plus",
 	"warden_strike", "warden_shield_bash", "seamstress_prick",
-	"tinker_pop_shot", "tinker_scrap_bomb"
+	"tinker_pop_shot", "tinker_scrap_bomb",
+	"tinker_v3_cog_shot", "tinker_v3_cog_shot_plus",
+	"tinker_v3_scrap_bomb", "tinker_v3_scrap_bomb_plus"
 ]
 
 ## Supplied preview snapshots keep their legacy damage-status shape, plus the one
@@ -192,12 +194,34 @@ func _play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 				"statuses": statuses
 			})
 	deck.discard_played(card_id)
+	if CombatAttackTargeting.TINKER_V3_IDS.has(card_id):
+		# One gain per paid cast, independent of hits, HP contact or retaliation.
+		party._heroes[plan.owner_position - 1]["combat_scrap"] = plan.v3.combat_scrap_before + 1
 	enemies.apply_statuses(applications)
 	_tinker.record_successful_attack(card_id)
 	if _patches != null:
 		_patches.record_successful_attack(owner_id)
 	_retaliate_hits(party, enemies, plan.owner_position, hits, pre_hits)
+	if CombatAttackTargeting.TINKER_V3_IDS.has(card_id):
+		return _v3_receipt(plan.v3, card_id, target_position, deck, hits, pre_hits)
 	return {"ok": true, "hits": hits}
+
+
+## Preserve the accepted paid receipt while exposing actual live hit damage and
+## statuses to the existing confirmed-hit observers. Raw damage stays printed.
+func _v3_receipt(plan: Dictionary, card_id: String, target: int, deck: CombatDeck,
+		hits: Array[Dictionary], before: Dictionary) -> Dictionary:
+	for hit in hits:
+		var old: Dictionary = before[hit.position]
+		hit.merge({"raw_damage": plan.raw_damage, "block_before": old.block,
+			"block_after": old.block - hit.block_absorbed, "hp_before": old.hp,
+			"hp_after": old.hp - hit.hp_loss})
+	return {"ok": true, "reason": "applied", "card_id": card_id,
+		"owner_position": plan.owner_position, "target_position": target,
+		"target_kind": plan.target_kind, "hits": hits, "cost": plan.cost,
+		"raw_damage": plan.raw_damage, "energy_before": plan.energy_before,
+		"energy_after": deck.energy, "combat_scrap_before": plan.combat_scrap_before,
+		"combat_scrap_gain": 1, "combat_scrap_after": plan.combat_scrap_before + 1}
 
 
 ## Reconstruct the authentic bridge receipt without changing public hit rows.
@@ -228,6 +252,20 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return _failure()
 	if deck == null or party == null or enemies == null:
 		return _failure()
+	var v3 := {}
+	if CombatAttackTargeting.TINKER_V3_IDS.has(card_id):
+		var service := CombatTinkerV3StarterAttackCards.new()
+		# Forecast uses any authenticated living choice; commits authenticate the
+		# actual selected slot. No reader or payment precedes this preflight.
+		if not select_target and card_id.contains("cog_shot"):
+			for choice in [1, 2, 3]:
+				v3 = service.preflight(deck, party, enemies, card_id, choice, cost_discount)
+				if v3.ok:
+					break
+		else:
+			v3 = service.preflight(deck, party, enemies, card_id, target_position, cost_discount)
+		if not v3.ok:
+			return _failure()
 	# A frozen battle-start validity flag is not authority on its own: the live
 	# wardrobe and torn ledger must still carry the receipts it was bound to.
 	if _patches != null and (not _patches.is_valid() or not _patches.is_current()):
@@ -375,6 +413,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"printed_cost": cost_value,
 		"requires_selection": preview["requires_selection"],
 		"owner_id": owner_id, "owner_position": owner_position,
+		"v3": v3,
 		"owner_statuses": owner_statuses, "target_statuses": target_statuses}
 
 

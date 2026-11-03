@@ -13,6 +13,9 @@ const ATTACK_IDS := [
 	"tinker_pop_shot", "tinker_scrap_bomb"
 ]
 
+const TINKER_V3_IDS := ["tinker_v3_cog_shot", "tinker_v3_cog_shot_plus",
+	"tinker_v3_scrap_bomb", "tinker_v3_scrap_bomb_plus"]
+
 var _warden_pool := WardenPoolCards.new()
 var _seamstress_pool := SeamstressPoolCards.new()
 var _tinker_pool := TinkerPoolCards.new()
@@ -163,7 +166,7 @@ func sight_glass_definition(card_id: String) -> Dictionary:
 
 ## True for enemy-targeted actions this read-only preview can describe.
 func supports(card_id: String) -> bool:
-	return ATTACK_IDS.has(card_id) or is_pool_strike(card_id) or is_heavy_pool_attack(card_id) \
+	return ATTACK_IDS.has(card_id) or TINKER_V3_IDS.has(card_id) or is_pool_strike(card_id) or is_heavy_pool_attack(card_id) \
 		or is_sight_glass(card_id) or is_seamstress_control(card_id) or is_pool_combo_attack(card_id)
 
 
@@ -240,6 +243,19 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, c
 	}
 	if deck == null or party == null or enemies == null:
 		return rejected
+	if TINKER_V3_IDS.has(card_id):
+		# Authenticate against the accepted resolver BEFORE roster readers can
+		# settle revivals. Each single choice must independently pass preflight.
+		var service := CombatTinkerV3StarterAttackCards.new()
+		var area: bool = card_id.contains("scrap_bomb")
+		for position in ([0] if area else [1, 2, 3]):
+			var plan := service.preflight(deck, party, enemies, card_id, position, cost_discount)
+			if plan.ok:
+				for target in plan.targets:
+					target_positions.append(target.position)
+		return {"playable": not target_positions.is_empty(),
+			"requires_selection": not area and not target_positions.is_empty(),
+			"target_positions": target_positions}
 	if not deck.turn_active or not party.is_valid() or not enemies.is_valid():
 		return rejected
 	if not supports(card_id) or not deck.hand.has(card_id):

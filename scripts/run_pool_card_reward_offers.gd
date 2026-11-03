@@ -190,6 +190,10 @@ static func resolve_reward_definition(card_id: Variant) -> Dictionary:
 	if not card_id is String or String(card_id).is_empty():
 		return {}
 	var id: String = card_id
+	# These live-hand lookup aliases are owned V3 starters, never Fight rewards.
+	# Keep their pre-existing reward exclusion despite the shared face bridge.
+	if CombatTinkerV3StarterAttackCards.CARDS.has(id):
+		return {}
 	for catalog in [StarterCards.new(), V3SeamstressStarterCards.new(), LanternMonkStarterCards.new(), RagDuelistStarterCards.new(),
 		ScarecrowStarterCards.new(), YarnRangerStarterCards.new(), ButtonGolemStarterCards.new()]:
 		var starter: Dictionary = catalog.get_definition(id)
