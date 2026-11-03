@@ -35,7 +35,9 @@
     "intent": {"target": "front", "actions": [
       {"type": "debuff", "amount": 2, "status": "bleed", "weight": 2},
       {"type": "block", "amount": 8, "weight": 2},
-      {"type": "attack", "amount": 9, "weight": 3}
+      {"type": "attack", "amount": 9, "weight": 3},
+      {"type": "attack", "amount": 8, "hits": 2, "move": "attack2", "weight": 1},
+      {"type": "attack", "amount": 7, "move": "attack3", "weight": 1}
     ]}},
   {"id": "spool_snarekeeper", "name": "Spool Snarekeeper", "max_hp": 40, "art_path": "res://assets/paper/enemies/spool_snarekeeper.png",
     "intent": {"target": "front", "actions": [

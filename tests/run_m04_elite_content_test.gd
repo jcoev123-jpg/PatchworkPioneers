@@ -83,7 +83,9 @@ const V3_2_ELITES := {
 		"actions": [
 			{"type": "debuff", "amount": 2, "status": "bleed", "weight": 2},
 			{"type": "block", "amount": 8, "weight": 2},
-			{"type": "attack", "amount": 9, "weight": 3}]},
+			{"type": "attack", "amount": 9, "weight": 3},
+			{"type": "attack", "amount": 8, "hits": 2, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 7, "move": "attack3", "weight": 1}]},
 	"spool_snarekeeper": {
 		"name": "Spool Snarekeeper", "max_hp": 40,
 		"art_path": "res://assets/paper/enemies/spool_snarekeeper.png",
@@ -164,6 +166,7 @@ func _initialize() -> void:
 	_test_zipper_pull_rng()
 	_test_v3_2_elites()
 	_test_briar_guard_thorns(_catalog(ELITES))
+	_test_briar_named_strikes(_record(_catalog(ELITES), "needle_briar_guard"))
 	_test_briar_snare_schedule()
 	_test_briar_snare_live_registry()
 	_test_keyword_elites()
@@ -1391,7 +1394,7 @@ func _test_hexer_lash() -> void:
 	# outlier, so every other shipped elite keeps its own authored attack sizes.
 	var peers := {
 		"needle_marshal": [5, 4, 6], "scissor_bailiff": [9, 8, 7], "zipper_hauler": [8, 10, 6],
-		"needle_briar_guard": [9], "spool_snarekeeper": [8],
+		"needle_briar_guard": [9, 8, 7], "spool_snarekeeper": [8],
 		"pincushion_matriarch": [9], "spool_leech": [8]}
 	for id in peers:
 		var peer := _record(elites, id)
@@ -2869,7 +2872,7 @@ func _test_briar_guard_thorns(catalog: Array) -> void:
 		body["weight"] = weighted.get("weight", 0)
 		actions.append(body)
 	_check(actions == V3_2_ELITES["needle_briar_guard"]["actions"],
-		"AC1: the Guard keeps its three exact weighted alternatives")
+		"AC1: the Guard keeps its original three and two appended exact weighted alternatives")
 	# Earlier Elite entries stay present with exactly their own keyword state,
 	# checked by ID: only the Guard newly authors Thorns 3.
 	var earlier := {
@@ -3835,3 +3838,150 @@ func _test_briar_snare_live_registry() -> void:
 		and rng.state == cached_rng and selector._selected == cache_before
 		and _snapshot(map, rng, selector) == after_selection,
 		"AC3: detached cache replay returns pristine HP and three beats without extra RNG")
+
+
+## Authentic catalog policy, forced alternatives and real per-hit Block settlement.
+func _test_briar_named_strikes(record: Dictionary) -> void:
+	var first := _briar_weighted_phase_replay(record, 41771)
+	_check(first.size() == 18 and first == _briar_weighted_phase_replay(record, 41771),
+		"full Guard weighted schedules, receipts, actor states and RNG replay for equal seeds")
+	var witnesses := {}
+	for seed_value in range(1, 201):
+		var announced := _announcements(record, seed_value, 1)
+		if announced.size() == 1 and announced[0].size() == 1:
+			var move: String = announced[0][0].get("move", "")
+			if move in ["attack2", "attack3"]:
+				witnesses[move] = seed_value
+		if witnesses.size() == 2:
+			break
+	for move in ["attack2", "attack3"]:
+		_check(witnesses.has(move), "authentic weighted Briar witness exists: " + move)
+		if not witnesses.has(move):
+			continue
+		var amount := 8 if move == "attack2" else 7
+		var hits := 2 if move == "attack2" else 1
+		var title := "Needle Volley" if move == "attack2" else "Briar Sweep"
+		for forced in [false, true]:
+			for shield in [0, 2, 4, 6, 8, 10]:
+				var history: Array = []
+				for replay in range(2):
+					var source := record.duplicate(true)
+					if forced:
+						source.intent.actions = source.intent.actions.filter(
+							func(a: Dictionary) -> bool: return a.get("move") == move)
+						_check(source.intent.actions.size() == 1,
+							"forced policy retains exactly one genuine catalog alternative")
+					var f := _new_elite_fixture(source)
+					var rng := _rng(witnesses[move])
+					var scheduler := CombatEnemyIntents.new([
+						{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+					_check(scheduler.bind_battle(f.enemies, f.party, rng), "Briar policy binds real actors")
+					var oracle := _rng(witnesses[move])
+					if not forced:
+						var roll := oracle.randi_range(1, 9)
+						_check(roll == (8 if move == "attack2" else 9),
+							"independent weighted roll reaches appended weight-one alternative")
+					_check(rng.state == oracle.state, "full policy spends one weighted draw; forced policy spends none")
+					var expected := {"type": "attack", "amount": amount, "move": move,
+						"enemy_position": 1, "target_position": 1}
+					if hits == 2:
+						expected.hits = 2
+					var input := scheduler.get_intents()
+					_check(input == [expected], "weighted/forced named announcement has exact front target and total/hits")
+					var fallback := "res://assets/paper/enemies/needle_briar_guard_attack.png"
+					var named_art := "res://assets/paper/enemies/needle_briar_guard_%s.png" % move
+					var pose := LiveMovePoseCatalog.new().lookup_enemy("needle_briar_guard", expected, fallback)
+					_check(pose.get("name") == title and pose.get("pose") == move
+						and pose.get("named_art") == named_art and pose.get("covers") == ["attack"]
+						and pose.get("art_available") == ResourceLoader.exists(named_art, "Texture2D")
+						and pose.get("art") == (named_art if pose.get("art_available") else fallback),
+						"Briar named pose retains identity and checked asset path")
+					_check(MissingMoveArt.new().lookup_enemy("needle_briar_guard", expected, fallback) == {
+						"name": title, "pose": move, "covers": ["attack"], "named_art": named_art,
+						"art": fallback, "art_available": false, "fallback_used": true},
+						"missing Briar art uses established fallback with named identity")
+					_check(f.party.gain_block(1, shield), "real front hero Block precondition")
+					var before := [f.party.get_heroes(), f.enemies.get_enemies(), rng.state,
+						scheduler.get_intents(), input.duplicate(true)]
+					for changes in [{"move": "attack4"}, {"move": "attack3" if move == "attack2" else "attack2"},
+							{"amount": 6}, {"hits": 3}, {"hits": 1 if hits == 2 else 2},
+							{"enemy_position": 0}, {"enemy_position": 2}, {"enemy_position": "1"},
+							{"target_position": 2}, {"target_position": 0}, {"target_position": 4}, {"target_position": "1"}]:
+						var bad := [expected.merged(changes, true)]
+						var bad_before := bad.duplicate(true)
+						_check(CombatEnemyPhase.new().execute_phase(f.party, f.enemies, bad, null, true)
+							== {"ok": false, "events": []} and bad == bad_before
+							and before == [f.party.get_heroes(), f.enemies.get_enemies(), rng.state,
+								scheduler.get_intents(), input],
+							"forged move/amount/hits/target rejects without actors, inputs or RNG writes")
+					var original: Dictionary = f.enemies.get_enemy(1).intent
+					f.enemies._enemies[0].intent.actions = original.actions.filter(
+						func(a: Dictionary) -> bool: return a.get("move") != move)
+					var stale_before: Array = f.enemies.get_enemies()
+					_check(CombatEnemyPhase.new().execute_phase(f.party, f.enemies, input, null, true)
+						== {"ok": false, "events": []} and f.enemies.get_enemies() == stale_before
+						and f.party.get_heroes() == before[0] and rng.state == before[2]
+						and input == before[4] and scheduler.get_intents() == before[3],
+						"expired genuine Briar alternative rejects atomically")
+					f.enemies._enemies[0].intent = original
+					var witness := ZipperHitWitness.new()
+					var receipt := CombatEnemyPhase.new().execute_phase(f.party, f.enemies, input, witness, true)
+					var packets: Array = []
+					var events: Array = []
+					var hp := 40
+					var block: int = shield
+					for hit in range(hits):
+						var packet := 7 if hits == 1 else 4
+						var next_hp := hp - maxi(0, packet - block)
+						var next_block := maxi(0, block - packet)
+						packets.append([packet, hp, block, next_hp, next_block])
+						hp = next_hp
+						block = next_block
+						events.append({"type": "attack", "enemy_position": 1, "target_position": 1,
+							"move": move, "applied": true, "actual_target_position": 1, "redirected": false,
+							"retaliation_damage": 0, "retaliatory_damage": 0})
+					var heroes: Array = before[0].duplicate(true)
+					heroes[0].hp = hp
+					heroes[0].block = block
+					_check(receipt == {"ok": true, "events": events} and witness.packets == packets
+						and f.party.get_heroes() == heroes and f.enemies.get_enemies() == before[1]
+						and rng.state == before[2] and scheduler.get_intents() == input and input == before[4],
+						"exact one 7 or ordered 4+4 packets through Block; every other actor/input unchanged")
+					_check(scheduler.advance_turn(), "real seeded scheduler advances after accepted phase")
+					var trace := [input, receipt, witness.packets, f.party.get_heroes(),
+						f.enemies.get_enemies(), scheduler.get_intents(), rng.state]
+					if replay == 0:
+						history = trace
+					else:
+						_check(history == trace, "same-seed Briar announcements, phase, next draw and RNG replay exactly")
+
+
+## Replay every weighted choice through production settlement on healthy actors.
+## Restoring hero health between beats keeps all eighteen phases exercised.
+func _briar_weighted_phase_replay(record: Dictionary, seed_value: int) -> Array:
+	var f := _new_elite_fixture(record)
+	var rng := _rng(seed_value)
+	var scheduler := CombatEnemyIntents.new([
+		{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+	_check(scheduler.bind_battle(f.enemies, f.party, rng), "full Guard weighted replay binds")
+	var trace: Array = []
+	var seen := {}
+	for turn in range(18):
+		_check(f.party.heal(1, 40) and f.party.get_hero(1).hp == 40,
+			"weighted replay has a living healthy front recipient")
+		_check(f.party.gain_block(1, turn % 7), "weighted replay varies actual front Block")
+		var announced := scheduler.get_intents()
+		_check(announced.size() == 1, "weighted replay announces a real Guard action")
+		if announced.size() != 1:
+			return []
+		seen[announced[0].get("move", announced[0].type)] = true
+		var before_rng := rng.state
+		var receipt := CombatEnemyPhase.new().execute_phase(f.party, f.enemies, announced, null, true)
+		_check(receipt.get("ok", false) and not receipt.get("events", []).is_empty()
+			and rng.state == before_rng, "every weighted Guard phase settles without RNG draws")
+		trace.append([announced, receipt, f.party.get_heroes(), f.enemies.get_enemies(), rng.state])
+		_check(scheduler.advance_turn(), "full weighted Guard replay advances")
+	_check(seen.has("attack2") and seen.has("attack3") and seen.has("attack")
+		and seen.has("block") and seen.has("debuff"), "full weighted replay exercises all five alternatives")
+	trace[-1].append([scheduler.get_intents(), rng.state])
+	return trace
