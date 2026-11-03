@@ -234,13 +234,16 @@ func _test_camp_motion(fight: Dictionary, elite: Dictionary) -> void:
 	panel.close_rewards()
 	panel.set_reduced_motion_override(false)
 	_check(panel.open_rewards("motion_override", "Elite", elite["receipt"])
-		and panel.is_processing(), "false override enables motion despite preference")
+		and not panel.is_processing(), "false override cannot bypass global reduced motion")
 	await _frames()
 	panel.set_reduced_motion_override(true)
 	_check(not panel.is_processing() and camp.position == Vector2.ZERO
 		and camp.scale == Vector2.ONE and panel._camp_elapsed == 0.0,
 		"true override resets live animated scene")
 	panel.close_rewards()
+	# The local false no longer opts out of global accessibility. Restore the
+	# global setting before testing ordinary animated reopening and free.
+	ProjectSettings.set_setting(panel.REDUCED_MOTION_SETTING, false)
 	panel.set_reduced_motion_override(false)
 	var authored_texture := camp.texture
 	camp.texture = null

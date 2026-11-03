@@ -120,6 +120,7 @@ const CARD_IDLE_TILT := 1.0
 const CARD_FOCUS_LIFT := 4.0
 const CARD_LIFT_SPEED := 8.0
 const REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
+const REWARD_AMBIENT := preload("res://scripts/live_battle_ambient.gd")
 const QUILT_PANEL := ART_DIR + "ui/reward_panel.png"
 const TITLE_BANNER := ART_DIR + "ui/reward_banner.png"
 const BURLAP_BUTTON := ART_DIR + "ui/reward_button.png"
@@ -161,6 +162,8 @@ var _help_ids: Dictionary = {}
 var _help_overlay: PanelContainer = null
 var _help_invoker: Button = null
 var _camp_backdrop: TextureRect = null
+## Inert authored scraps, mounted once over the opaque quilt and under its contents.
+var _reward_ambient: Control = null
 var _camp_elapsed := 0.0
 var _card_elapsed := 0.0
 var _card_lifts: Array[float] = []
@@ -170,7 +173,45 @@ var _reduced_motion_override: Variant = null
 func _ready() -> void:
 	set_process(false)
 	_apply_patchwork_style()
+	_mount_reward_ambient()
 	close_rewards()
+
+
+## The panel quilt is opaque, so the atmosphere must be a first child of
+## PaperPanel (after its drawn backing, before ContentMargin/reward controls).
+## Reusing this one node preserves every original action and its hit rectangle.
+func _mount_reward_ambient() -> void:
+	if is_instance_valid(_reward_ambient):
+		return
+	_reward_ambient = REWARD_AMBIENT.new() as Control
+	_reward_ambient.name = "RewardAmbient"
+	_reward_ambient.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_reward_ambient.focus_mode = Control.FOCUS_NONE
+	paper_panel.add_child(_reward_ambient)
+	paper_panel.move_child(_reward_ambient, 0)
+	_reward_ambient.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_reward_ambient.call("retire")
+
+
+func _retire_reward_ambient() -> void:
+	if is_instance_valid(_reward_ambient) and not String(_reward_ambient.get("profile")).is_empty():
+		_reward_ambient.call("retire")
+
+
+func _sync_reward_ambient() -> void:
+	if not is_instance_valid(_reward_ambient):
+		return
+	# The shared renderer owns its deterministic 120-second clock and observes
+	# global reduced_motion itself. Keep that profile paused at neutral under a
+	# global setting so it can resume on preference change; a local true override,
+	# an unmounted/hidden receipt, or pending settlement retires it completely.
+	var admitted: bool = is_node_ready() and _is_open and is_visible_in_tree() \
+		and not _awaiting_ack and not _accepted and _reduced_motion_override != true
+	if not admitted:
+		_retire_reward_ambient()
+	elif String(_reward_ambient.get("profile")) != "scraps" \
+			or not bool(_reward_ambient.get("fast")):
+		_reward_ambient.call("configure_visit_scraps")
 
 
 ## The setting defaults to off. Tests/accessibility can override on a panel.
@@ -180,9 +221,9 @@ func set_reduced_motion_override(value: Variant) -> void:
 
 
 func _reduced_motion() -> bool:
-	if _reduced_motion_override is bool:
-		return _reduced_motion_override
-	return ProjectSettings.get_setting(REDUCED_MOTION_SETTING, false) == true
+	# A local false never overrules the system's accessibility preference.
+	return ProjectSettings.get_setting(REDUCED_MOTION_SETTING, false) == true \
+		or _reduced_motion_override == true
 
 
 func _motion_visible() -> bool:
@@ -203,6 +244,7 @@ func _card_motion_available() -> bool:
 func _sync_camp_motion() -> void:
 	_reset_camp_motion()
 	_reset_card_motion()
+	_sync_reward_ambient()
 	if _motion_visible() and is_instance_valid(_camp_backdrop) \
 			and _camp_backdrop.texture != null:
 		_apply_camp_motion()
@@ -278,6 +320,7 @@ func _advance_card_motion(delta: float) -> void:
 
 func _process(delta: float) -> void:
 	if not _motion_visible():
+		_sync_reward_ambient()
 		_reset_camp_motion()
 		_reset_card_motion()
 		set_process(false)
@@ -297,6 +340,7 @@ func _notification(what: int) -> void:
 
 
 func _exit_tree() -> void:
+	_retire_reward_ambient()
 	_reset_camp_motion()
 	_reset_card_motion()
 	set_process(false)
@@ -715,17 +759,20 @@ func acknowledge(accepted: bool) -> void:
 	_awaiting_ack = false
 	if accepted:
 		_accepted = true
+		_retire_reward_ambient()
 		_reset_card_motion()
 		_sync_motion_processing()
 		return
 	for button in _choice_buttons:
 		if is_instance_valid(button):
 			button.disabled = false
+	_sync_reward_ambient()
 	_reset_card_motion()
 	_sync_motion_processing()
 
 
 func close_rewards() -> void:
+	_retire_reward_ambient()
 	_reset_camp_motion()
 	_reset_card_motion()
 	set_process(false)
@@ -795,6 +842,7 @@ func _on_choice_pressed(generation: int, node_id: String, selected_card_id: Stri
 		return
 	_dismiss_help(false)
 	_awaiting_ack = true
+	_retire_reward_ambient()
 	_reset_card_motion()
 	_sync_motion_processing()
 	for choice in _choice_buttons:
