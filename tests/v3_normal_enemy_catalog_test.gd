@@ -93,7 +93,9 @@ func _old_expected() -> Dictionary:
 				{"type": "steal_gold", "amount": 2, "weight": 1}]}},
 		"button_guard": {"id": "button_guard", "name": "Button Guard", "max_hp": 16, "art_path": "res://assets/paper/enemies/button_guard.png",
 			"intent": {"target": "front", "actions": [
-				{"type": "attack", "amount": 5, "weight": 3},
+				{"type": "attack", "amount": 5, "weight": 1},
+				{"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
 				{"type": "block", "amount": 2, "weight": 2},
 				{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
 				{"type": "shove", "amount": 0, "direction": 1, "weight": 1}]}},
