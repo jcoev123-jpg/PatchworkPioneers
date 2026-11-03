@@ -17,12 +17,26 @@ extends RefCounted
 ## rounding and Tangled's flat +2. Bleed is applied exactly as printed: the Seamstress-only
 ## +1 passive never applies here, and nothing ticks, ages or removes a status.
 ##
-## Every rejection is a strict no-op: the complete roster, the target slot, the affordability and
-## the status addition are preflighted before the first mutation, and no shuffle, draw or random
-## target can advance the run RNG.
+## Every rejection is a strict no-op: the complete roster, the target slot, the authenticity and
+## shape of every enemy keyword field, the affordability and the status addition are preflighted
+## before the first mutation, and no shuffle, draw or random target can advance the run RNG.
 ##
-## This is callable rules-layer behaviour only. It does not register these IDs in the live hand,
-## rewards, run deck or the app flow; a later wiring task owns that integration.
+## The strike also answers the enemy's V3-2 keywords exactly like the other paid single-hit
+## resolvers, by reusing CombatEnemyKeywordRules instead of hand-rolling stacks or damage:
+##   Thorns N     - one retaliation of N against the ORIGINAL attacking Scarecrow, resolved through
+##                  CombatParty so his Block absorbs before HP. It reads the pre-hit enemy record,
+##                  so a blow fully absorbed by enemy Block still retaliates, and it runs once for
+##                  this one confirmed hit (a lethal puncture still provokes it).
+##   Enrage       - one committed stack (0->1, 1->2, 2->3, capped at 3) for the same confirmed
+##                  positive-damage hit, committed after the damage but before the printed Bleed so
+##                  the frozen pre-hit source still matches the authoritative slot.
+## Both hooks receive a receipt derived from the ACTUAL applied hit (its real Block absorption and
+## HP loss), so a preview, miss, rejected input, zero-damage strike or another card's hit can never
+## trigger them.
+##
+## The mounted shared hand (scripts/live_support_hand.gd) instantiates this resolver and dispatches
+## these four IDs, so the behaviour above is reachable in real play; the catalogs still own the
+## printings, the payment and the target selection.
 
 const OWNER := "scarecrow"
 const TARGET_KIND := "enemy_single"
@@ -64,6 +78,7 @@ const ONE_SHOT_STATUS_KEYS: Array[String] = ["dodge_next_attack", "blind_next_at
 const FEAR_STATUS_KEY := "cannot_buff_next_turn"
 
 var _statuses := CombatStatuses.new()
+var _keywords := CombatEnemyKeywordRules.new()
 
 
 ## True only for the four authentic catalog IDs. Pure lookup; nothing is charged or mutated.
@@ -83,20 +98,42 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return _refusal(str(plan.get("reason", "refused")))
 	# Every operation below is guaranteed by the complete preflight above: the turn is active, the
 	# exact held ID is affordable, the owner sits in an authored seat, the target is a living enemy
-	# in the printed window and the printed Bleed stack is admissible. Keep the defensive returns so
-	# an unexpected model change still fails closed.
+	# in the printed window, its keyword metadata is authentic and the printed Bleed stack is
+	# admissible. Keep the defensive returns so an unexpected model change still fails closed.
+	var target_position_value: int = plan["target_position"]
+	# The authentic PRE-HIT source record: Thorns N and this enemy's Enrage metadata are frozen
+	# here, before the strike, so reacting afterwards can never read a value the hit itself changed.
+	var pre_hit_enemy: Dictionary = enemies.get_enemy(target_position_value)
+	if pre_hit_enemy.is_empty() or not pre_hit_enemy.get("hp") is int \
+			or int(pre_hit_enemy["hp"]) <= 0 or pre_hit_enemy.get("id") != plan["target_id"]:
+		return _refusal("invalid_target")
 	if not deck.try_spend_energy(plan["cost"]):
 		return _refusal("insufficient_energy")
 	if not deck.discard_played(plan["card_id"]):
 		return _refusal("card_not_held")
-	var target_position_value: int = plan["target_position"]
 	if not enemies.apply_damage(target_position_value, plan["damage"]):
 		return _refusal("invalid_target")
+	# One confirmed receipt for this one real hit, computed from the applied Block/HP transition
+	# rather than from the preflight intent: a fully Block-absorbed strike still reports positive
+	# damage, so both keywords can react to it honestly.
+	var hit: Dictionary = _confirmed_hit(plan["damage"], pre_hit_enemy,
+		enemies.get_enemy(target_position_value))
+	if not hit.get("ok", false):
+		return _refusal("invalid_target")
+	# Enrage commits before the printed Bleed, while the frozen pre-hit source still matches the
+	# authoritative slot; it writes only that slot's stack count.
+	var enrage: Dictionary = _keywords.commit_enrage_after_hit(enemies, target_position_value,
+		pre_hit_enemy, hit)
+	# Thorns is one retaliation against the original attacker, through CombatParty so the
+	# Scarecrow's own Block absorbs before HP. A lethal puncture still provokes it.
+	var thorns: Dictionary = _keywords.resolve_thorns_retaliation(party, plan["owner_position"],
+		pre_hit_enemy, hit)
 	# Block absorbed the hit before HP (CombatEnemies owns that split); the rip still opens, so the
 	# printed Bleed lands even when Block soaked the entire puncture.
 	if not enemies.apply_statuses({target_position_value: {"bleed": plan["bleed"]}}):
 		return _refusal("malformed_statuses")
 	var after: Dictionary = enemies.get_enemy(target_position_value)
+	var owner_after: Dictionary = party.get_hero(plan["owner_position"])
 	return {
 		"ok": true,
 		"reason": "applied",
@@ -115,6 +152,14 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"bleed_applied": plan["bleed"],
 		"bleed_before": plan["bleed_before"],
 		"bleed_after": int(after.get("statuses", {}).get("bleed", 0)),
+		"hit_receipt": hit,
+		"thorns_retaliation": thorns,
+		"owner_hp_before": plan["owner_hp_before"],
+		"owner_hp_after": int(owner_after["hp"]),
+		"owner_block_before": plan["owner_block_before"],
+		"owner_block_after": int(owner_after["block"]),
+		"enrage_commit": enrage,
+		"enrage_stacks_after": int(after.get("enrage_stacks", 0)),
 	}
 
 
@@ -203,6 +248,11 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			return _refusal("invalid_enemies")
 		if not _valid_status_map(enemy.get("statuses", {})):
 			return _refusal("malformed_statuses")
+		# Authored keyword metadata drives a real post-hit reaction, so it is part of the roster's
+		# authoritative shape: Thorns N is a non-negative whole count and Enrage is a literal flag
+		# with an optional 0-3 stack count. Nothing is coerced or normalized here.
+		if not _valid_keyword_metadata(enemy):
+			return _refusal("malformed_keywords")
 
 	# The pitchfork only reaches the authored front two enemy slots, and only a living one.
 	if not target_position is int or target_position < 1 or target_position > roster.size():
@@ -212,6 +262,11 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if int(roster[target_position - 1]["hp"]) == 0:
 		return _refusal("invalid_target")
 	var target_statuses: Dictionary = _live_statuses(roster[target_position - 1])
+	# The chosen source must also satisfy the keyword engine's own living-Enrage record contract,
+	# so its quote/commit is never invoked against a slot that engine would reject.
+	if not _keywords.quote_enrage_after_hit(roster[target_position - 1],
+			{"ok": true, "damage": 0, "block_absorbed": 0, "hp_loss": 0}).get("ok", false):
+		return _refusal("malformed_keywords")
 
 	# CombatStatuses owns the Weak/Exposed/Tangled rounding: integer floor once, then a positive-
 	# base Tangled defender adds its flat +2. The status maps are read, never consumed.
@@ -233,12 +288,15 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"cost": cost,
 		"owner_position": owner_position,
 		"target_position": target_position,
+		"target_id": str(roster[target_position - 1].get("id", "")),
 		"base_damage": base_damage,
 		"damage": damage,
 		"bleed": bleed,
 		"hp_before": int(roster[target_position - 1]["hp"]),
 		"block_before": int(roster[target_position - 1]["block"]),
 		"bleed_before": int(target_statuses.get("bleed", 0)),
+		"owner_hp_before": int(heroes[owner_position - 1]["hp"]),
+		"owner_block_before": int(heroes[owner_position - 1]["block"]),
 	}
 
 
@@ -284,6 +342,48 @@ func _live_statuses(record: Dictionary) -> Dictionary:
 	if not value is Dictionary:
 		return {}
 	return value
+
+
+## The authored keyword fields an enemy record may carry, in the exact shape
+## CombatEnemyKeywordRules accepts: an absent flag/count means "not that keyword", Thorns is a
+## non-negative whole count, Enrage is a literal boolean and its optional stack count spans 0..3.
+## A malformed field refuses the whole play instead of being treated as zero.
+func _valid_keyword_metadata(enemy: Dictionary) -> bool:
+	if enemy.has("thorns"):
+		var thorns = enemy["thorns"]
+		if not thorns is int or thorns < 0:
+			return false
+	if enemy.has("enrage") and not enemy["enrage"] is bool:
+		return false
+	if enemy.has("enrage_stacks"):
+		var stacks = enemy["enrage_stacks"]
+		if not stacks is int or stacks < 0 \
+				or stacks > CombatEnemyKeywordRules.ENRAGE_MAX_STACKS:
+			return false
+	return true
+
+
+## The confirmed-hit receipt for ONE real strike, derived from the frozen pre-hit record and the
+## authoritative slot after CombatEnemies applied the damage. `damage` is the printed (adjusted)
+## amount that was actually dealt, so a strike fully absorbed by Block still reports positive
+## damage while its `hp_loss` is zero. A slot that moved backwards, a missing field or a slot that
+## was not actually hit fails closed to ok=false.
+func _confirmed_hit(damage: int, pre_hit: Dictionary, struck: Dictionary) -> Dictionary:
+	var failure := {"ok": false, "damage": 0, "block_absorbed": 0, "hp_loss": 0}
+	if damage <= 0 or pre_hit.is_empty() or struck.is_empty():
+		return failure
+	var pre_hp = pre_hit.get("hp")
+	var pre_block = pre_hit.get("block")
+	var hp = struck.get("hp")
+	var block = struck.get("block")
+	if not pre_hp is int or not pre_block is int or not hp is int or not block is int:
+		return failure
+	if pre_hp <= 0 or pre_block < 0 or hp < 0 or block < 0 or block > pre_block:
+		return failure
+	# An authored once-only revival may leave more HP than before; the strike still happened, so
+	# the HP loss is clamped at zero rather than reporting a negative (invalid) receipt.
+	return {"ok": true, "damage": damage, "block_absorbed": pre_block - block,
+		"hp_loss": maxi(0, pre_hp - hp)}
 
 
 ## CombatStatuses' own vocabulary and counter shape; anything else is malformed.
