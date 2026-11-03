@@ -13,6 +13,9 @@ extends SceneTree
 ## BAL 2026-11-02 Art-v3: the mounted layout also proves the dark gothic
 ## ticket palette (opaque dark fabrics, warm cream/gold lettering, distinct
 ## hover/pressed/disabled faces) instead of the retired pale-face checks.
+## BAL 2026-11-03 Art-v3: the market surface itself is proven warm too - the
+## imported art wears a full-alpha warm candlelit sepia wash (not the
+## retired saturated plum/maroon tint) with high-contrast bone lettering.
 
 const NODE := "v3_peddler_stop"
 const PARTY := ["warden", "seamstress", "tinker"]
@@ -591,6 +594,14 @@ func _layout(visit: RunPeddlerVisit) -> void:
 			"exactly three card buys, one patch buy and Leave (five buttons)")
 	_check(LivePeddlerPanel.ACTION_KEY_LABELS == ["1", "2", "3", "4", "0"],
 			"the five visible labels are the exact keys the panel routes: 1/2/3 cards, 4 patch, 0 Leave")
+	# AC1 Art-v3 contrast repair: the market wash is a full-alpha warm
+	# candlelit sepia (red over blue), never the retired saturated plum
+	# maroon tint, and bone lettering keeps high contrast over it.
+	_check(LivePeddlerPanel.MARKET_TINT.a == 1.0
+			and LivePeddlerPanel.MARKET_TINT.r > LivePeddlerPanel.MARKET_TINT.b
+			and LivePeddlerPanel.MARKET_TINT.get_luminance() < 0.3
+			and _contrast_ratio(LivePeddlerPanel.CREAM, LivePeddlerPanel.MARKET_TINT) >= 7.0,
+			"market art wash is an opaque warm dark sepia with high-contrast bone lettering")
 	# VIS-A: a genuinely opaque sewn-fabric backdrop keeps the illustrated
 	# market from showing through under the labels; the imported art floats
 	# on it and the art-less fallback is that same solid fabric.
@@ -602,18 +613,22 @@ func _layout(visit: RunPeddlerVisit) -> void:
 	_check(fabric_backing != null and art_backing != null
 			and fabric_face != null and fabric_face.bg_color.a == 1.0
 			and fabric_face.bg_color.get_luminance() < 0.3
+			and fabric_face.bg_color.r > fabric_face.bg_color.b
 			and fabric_backing.get_global_rect() == panel.get_global_rect()
 			and fabric_backing.mouse_filter == Control.MOUSE_FILTER_IGNORE
 			and art_backing.mouse_filter == Control.MOUSE_FILTER_IGNORE,
-			"alpha-1 deep-jewel fabric backs the whole sewn panel under the labels")
+			"alpha-1 warm dark fabric backs the whole sewn panel under the labels")
 	if art_backing != null and ResourceLoader.exists(LivePeddlerPanel.PANEL_ART, "Texture2D"):
 		var art_face := art_backing.get_theme_stylebox("panel") as StyleBoxTexture
 		_check(art_face != null and art_face.texture != null
-				and art_face.texture.resource_path == LivePeddlerPanel.PANEL_ART,
-				"the imported reward_panel market art overlays the opaque fabric")
-	_check(panel._fabric_style().bg_color.a == 1.0
-			and panel._fabric_style().bg_color.get_luminance() < 0.3,
-			"the art-less fallback backing is the same fully opaque dark fabric")
+				and art_face.texture.resource_path == LivePeddlerPanel.PANEL_ART
+				and art_face.modulate_color == LivePeddlerPanel.MARKET_TINT,
+				"the imported reward_panel market art overlays the opaque fabric in the warm sepia wash")
+	_check(panel._fabric_style().bg_color == LivePeddlerPanel.MARKET_FABRIC
+			and panel._fabric_style().bg_color.a == 1.0
+			and panel._fabric_style().bg_color.get_luminance() < 0.3
+			and panel._fabric_style().bg_color.r > panel._fabric_style().bg_color.b,
+			"the art-less fallback backing is the same fully opaque warm dark fabric")
 	_check(panel.title_label.text.contains("PEDDLER")
 			and panel.wallet_label.text.contains("500 gold"), "title and wallet are readable")
 	# The band opens on the neutral hint or on the genuine preview of the card
@@ -2675,6 +2690,10 @@ func _ambient_art_cases() -> void:
 	_check(static_face != null and static_face.texture != null
 			and static_face.texture.resource_path == LivePeddlerPanel.PANEL_ART,
 			"the static authored market copy beneath the drift stays the readable fallback")
+	var drift_face := drift.get_theme_stylebox("panel") as StyleBoxTexture
+	_check(drift_face != null and drift_face.texture != null
+			and drift_face.modulate_color == LivePeddlerPanel.MARKET_TINT,
+			"the breathing market copy wears the same warm sepia wash as the static art")
 	# The route's own wearer selector and moved patch row, exactly as app.gd
 	# mounts them on this screen: the selector must stay a real fixed target.
 	var wearer := OptionButton.new()
