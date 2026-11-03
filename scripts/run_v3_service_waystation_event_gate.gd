@@ -20,6 +20,7 @@ extends RefCounted
 const CATALOG_PATH := "res://data/events/v3_service_waystation_events.json"
 const LEAVE_CHOICE_ID := "leave"
 const _OMITTED := &"__omitted_event_target__"
+const _OMITTED_PRIOR := &"__omitted_prior__"
 
 const VALID_SERVICE_KINDS := [
 	"Campfire",
@@ -83,6 +84,10 @@ const CAMPFIRE_EVENT_IDS := [
 const SEWING_CIRCLE_EVENT_IDS := [
 	"v3_threadmill_sewing_circle",
 	"v3_moonlace_darning_parlor",
+]
+
+const UNPICKER_EVENT_IDS := [
+	"v3_inkblack_unpicker_van",
 ]
 
 const REQUIRED_EVENT_IDS := [
@@ -516,6 +521,133 @@ func select_actionable_campfire_event(
 	}
 
 
+## Picks one authenticated Unpicker waystation Event record from the catalog
+## using the caller's seeded RandomNumberGenerator, offering it only when the
+## paid service choice is affordable and the projected wallet can actually fund
+## an authentic card removal at RunUnpickerVisit (10 gold hire + 75 + 25*prior_removals).
+##
+## Evaluates genuine paid service affordability via RunEventChoice.preview_wallet_choices();
+## validates canonical ledger through RunRestStitchCards/RunUnpickerVisit;
+## stages throwaway removal through RunShopCardRemoval.try_remove_with_stitch_ledger.
+## Never treats trade choices or Leave as proof of paid service usability.
+## Never mutates caller wallet, deck, descriptors, cursor, prior count or RNG on rejection.
+##
+## On success, sorts eligible authentic IDs lexicographically, consumes exactly one
+## randi_range draw, and returns {"ok": true, "event": deep_detached_record}.
+## On refusal or invalid input, returns {"ok": false, "event": {}} with zero RNG draws.
+func select_actionable_unpicker_event(
+	rng: Variant,
+	excluded_ids: Variant = null,
+	wallet: Variant = null,
+	deck_snapshot: Variant = null,
+	prior_removals: Variant = _OMITTED_PRIOR,
+	descriptors: Variant = null,
+	next_stitch_id: Variant = null
+) -> Dictionary:
+	if not (rng is RandomNumberGenerator):
+		return _selection_rejection()
+	if not _catalog_valid:
+		return _selection_rejection()
+	var parsed_exclusions: Dictionary = _parse_exclusions(excluded_ids)
+	if not parsed_exclusions.get("ok", false):
+		return _selection_rejection()
+	var excluded: Dictionary = parsed_exclusions["ids"]
+	var parsed_wallet: Dictionary = _parse_wallet(wallet)
+	if not parsed_wallet.get("ok", false):
+		return _selection_rejection()
+	var base_wallet: Dictionary = parsed_wallet["wallet"]
+	var parsed_deck: Dictionary = _parse_unpicker_deck_and_prior(
+		deck_snapshot, prior_removals, descriptors, next_stitch_id
+	)
+	if not parsed_deck.get("ok", false):
+		return _selection_rejection()
+	var deck: Array = parsed_deck["deck"]
+	var registry: Dictionary = parsed_deck["descriptors"]
+	var cursor: int = parsed_deck["next_stitch_id"]
+	var prior_count: int = parsed_deck["prior_removals"]
+
+	var eligible: Array = []
+	for record: Dictionary in _catalog_events:
+		var event_id: String = String(record.get("id", ""))
+		if not UNPICKER_EVENT_IDS.has(event_id):
+			continue
+		if excluded.has(event_id):
+			continue
+		var rec_kind: String = String(record.get("service_kind", ""))
+		if rec_kind != "Unpicker":
+			continue
+		var service_choice_id: String = String(record.get("service_choice_id", ""))
+		if service_choice_id.is_empty():
+			continue
+		var selector := RunEventChoice.new(record)
+		if not selector.is_valid():
+			continue
+		var preview: Dictionary = selector.preview_wallet_choices(base_wallet)
+		if not preview.get("ok", false):
+			continue
+		var choices_preview: Variant = preview.get("choices")
+		if not (choices_preview is Array):
+			continue
+		var paid_choice_preview: Dictionary = {}
+		for item_raw: Variant in (choices_preview as Array):
+			if item_raw is Dictionary and String((item_raw as Dictionary).get("choice_id", "")) == service_choice_id:
+				paid_choice_preview = item_raw
+				break
+		if paid_choice_preview.is_empty():
+			continue
+		if paid_choice_preview.get("affordable", false) != true:
+			continue
+		var post_toll_wallet_raw: Variant = paid_choice_preview.get("wallet")
+		if typeof(post_toll_wallet_raw) != TYPE_DICTIONARY:
+			continue
+		var post_toll_wallet: Dictionary = post_toll_wallet_raw
+		var post_toll_gold: Variant = post_toll_wallet.get("gold")
+		if typeof(post_toll_gold) != TYPE_INT or post_toll_gold < 0:
+			continue
+
+		var visit := RunUnpickerVisit.new(
+			event_id,
+			deck.duplicate(true),
+			int(post_toll_gold),
+			prior_count,
+			registry.duplicate(true),
+			cursor
+		)
+		if not visit.is_valid():
+			continue
+
+		var has_action := false
+		for card_id: String in deck:
+			var test_removal := RunShopCardRemoval.try_remove_with_stitch_ledger(
+				deck.duplicate(true),
+				registry.duplicate(true),
+				cursor,
+				int(post_toll_gold),
+				prior_count,
+				card_id
+			)
+			if test_removal.get("ok", false) == true:
+				has_action = true
+				break
+		if not has_action:
+			continue
+
+		eligible.append(event_id)
+
+	if eligible.is_empty():
+		return _selection_rejection()
+	eligible.sort()
+	var generator: RandomNumberGenerator = rng
+	var picked_id: String = eligible[generator.randi_range(0, eligible.size() - 1)]
+	if not _catalog_by_id.has(picked_id):
+		return _selection_rejection()
+	var selected_record: Dictionary = (_catalog_by_id[picked_id] as Dictionary).duplicate(true)
+	return {
+		"ok": true,
+		"event": selected_record,
+	}
+
+
 static func _parse_run_heroes(heroes_or_snapshot: Variant) -> Dictionary:
 	var raw_heroes: Variant = null
 	if heroes_or_snapshot is Array:
@@ -605,6 +737,89 @@ static func _parse_deck_snapshot(
 		"deck": (deck as Array).duplicate(true),
 		"descriptors": (descriptors as Dictionary).duplicate(true),
 		"next_stitch_id": cursor,
+	}
+
+
+static func _parse_unpicker_deck_and_prior(
+	deck_snapshot: Variant,
+	prior_removals_arg: Variant,
+	descriptors_arg: Variant,
+	next_stitch_id_arg: Variant
+) -> Dictionary:
+	var deck: Variant = null
+	var descriptors: Variant = null
+	var next_stitch_id: Variant = null
+	var prior: Variant = null
+
+	if deck_snapshot is Dictionary:
+		var snap: Dictionary = deck_snapshot
+		if snap.has("deck"):
+			deck = snap["deck"]
+		elif snap.has("deck_ids"):
+			deck = snap["deck_ids"]
+		else:
+			return {"ok": false}
+
+		if snap.has("descriptors"):
+			descriptors = snap["descriptors"]
+		else:
+			return {"ok": false}
+
+		if snap.has("next_stitch_id"):
+			next_stitch_id = snap["next_stitch_id"]
+		elif snap.has("cursor"):
+			next_stitch_id = snap["cursor"]
+		elif next_stitch_id_arg != null and typeof(next_stitch_id_arg) == TYPE_INT:
+			next_stitch_id = next_stitch_id_arg
+		else:
+			return {"ok": false}
+
+		if typeof(prior_removals_arg) == TYPE_STRING_NAME and prior_removals_arg == _OMITTED_PRIOR:
+			if snap.has("prior_removals"):
+				prior = snap["prior_removals"]
+			elif snap.has("prior"):
+				prior = snap["prior"]
+			else:
+				prior = 0
+		else:
+			prior = prior_removals_arg
+	elif deck_snapshot is Array:
+		deck = deck_snapshot
+		if prior_removals_arg is Dictionary:
+			descriptors = prior_removals_arg
+			next_stitch_id = descriptors_arg
+			if next_stitch_id_arg == null:
+				prior = 0
+			else:
+				prior = next_stitch_id_arg
+		else:
+			prior = 0 if (typeof(prior_removals_arg) == TYPE_STRING_NAME and prior_removals_arg == _OMITTED_PRIOR) else prior_removals_arg
+			descriptors = descriptors_arg if descriptors_arg != null else {}
+			next_stitch_id = next_stitch_id_arg if next_stitch_id_arg != null else 1
+	else:
+		return {"ok": false}
+
+	if typeof(deck) != TYPE_ARRAY or typeof(descriptors) != TYPE_DICTIONARY or typeof(next_stitch_id) != TYPE_INT or typeof(prior) != TYPE_INT:
+		return {"ok": false}
+
+	var cursor: int = next_stitch_id
+	if cursor < 1 or cursor >= RunRestStitchCards.MAX_INT:
+		return {"ok": false}
+
+	var prior_int: int = prior
+	if prior_int < 0 or prior_int > (RunShopCardRemoval.MAX_INT - RunShopCardRemoval.BASE_PRICE) / RunShopCardRemoval.PRICE_STEP:
+		return {"ok": false}
+
+	var validator := RunRestStitchCards.new(deck, descriptors, 0, cursor)
+	if not validator.is_valid():
+		return {"ok": false}
+
+	return {
+		"ok": true,
+		"deck": (deck as Array).duplicate(true),
+		"descriptors": (descriptors as Dictionary).duplicate(true),
+		"next_stitch_id": cursor,
+		"prior_removals": prior_int,
 	}
 
 
