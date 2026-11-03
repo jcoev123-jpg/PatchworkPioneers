@@ -217,8 +217,8 @@ func _test_ram_authentication() -> void:
         var forged: Array = raw.duplicate(true)
         forged[wraith_index].intent[field] = "front" if field == "target" else []
         invalid.append(JSON.stringify(forged))
-    for index in range(3):
-        for field in ["amount", "weight", "type"]:
+    for index in range(5):
+        for field in ["amount", "weight", "type", "hits", "move"]:
             var forged: Array = raw.duplicate(true)
             forged[wraith_index].intent.actions[index][field] = "block" if field == "type" else 99
             invalid.append(JSON.stringify(forged))
@@ -226,6 +226,17 @@ func _test_ram_authentication() -> void:
         var forged: Array = raw.duplicate(true)
         forged[wraith_index].intent.actions[index].status = "weak"
         invalid.append(JSON.stringify(forged))
+    for index in range(5):
+        for field in raw[wraith_index].intent.actions[index]:
+            var missing_field: Array = raw.duplicate(true)
+            missing_field[wraith_index].intent.actions[index].erase(field)
+            invalid.append(JSON.stringify(missing_field))
+        var missing: Array = raw.duplicate(true)
+        missing[wraith_index].intent.actions.remove_at(index)
+        invalid.append(JSON.stringify(missing))
+        var extra: Array = raw.duplicate(true)
+        extra[wraith_index].intent.actions.append(extra[wraith_index].intent.actions[index].duplicate(true))
+        invalid.append(JSON.stringify(extra))
     for text in invalid:
         var before := _snap(map, rng, selector)
         _check(RunAuthoredBattleEntry.new()._entry_from_data(map, rng, selector,

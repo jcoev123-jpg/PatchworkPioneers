@@ -372,15 +372,17 @@ func _wraith_phases() -> Array:
 		and _normalized_numbers(wraith.intent.actions) == [
 			{"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
 			{"type": "debuff", "status": "exposed", "amount": 1, "weight": 1},
-			{"type": "attack", "amount": 13, "weight": 3}],
-		"Wraith scales HP 27 to 40 and Attack 9 to 13, preserving traits and 2:1:3 weights")
+			{"type": "attack", "amount": 13, "weight": 3},
+			{"type": "attack", "amount": 12, "hits": 2, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 9, "move": "attack3", "weight": 1}],
+		"Wraith scales HP 27 to 40 and Attack 9 to 13, preserving traits and all five weights")
 	for actor in actors:
 		if actor.position != position:
 			_check(app.enemies.apply_damage(actor.position, 99999), "isolate the authentic routed Wraith")
 	var witnessed := {}
 	var attacks := 0
 	for turn in range(50):
-		if witnessed.has("bleed") and witnessed.has("exposed") and attacks >= 2:
+		if witnessed.has("bleed") and witnessed.has("exposed") and attacks >= 2 and witnessed.has("attack") and witnessed.has("attack2") and witnessed.has("attack3"):
 			break
 		_check(not app._battle_closed and app.deck.turn_active, "Wraith witness has a playable real turn")
 		if app._battle_closed or not app.deck.turn_active:
@@ -400,7 +402,7 @@ func _wraith_phases() -> Array:
 			hero.hp = 20 if hero.position == target else hero.max_hp
 			hero.block = 0
 			hero.statuses = {}
-		var shield := 3 if action.type == "attack" and attacks > 0 else 0
+		var shield := (7 if action.get("move", "") == "attack2" else 3) if action.type == "attack" and attacks > 0 else 0
 		if shield > 0:
 			_check(app.party.gain_block(target, shield), "real Block mitigates Wraith's second attack")
 		app._refresh_enemy_roster()
@@ -412,7 +414,48 @@ func _wraith_phases() -> Array:
 		if action.type == "debuff":
 			_check(badge.action_status == action.status and badge.readable_text.contains(action.status.capitalize()),
 				"visible Wraith debuff names its authentic status")
-		trace.append([action.duplicate(true), _mounted_state()])
+		var projected_party := CombatParty.new(app.party.get_heroes())
+		projected_party._heroes = app.party.get_heroes()
+		var projected_enemies := CombatEnemies.new(app.enemies.get_enemies())
+		projected_enemies._enemies = app.enemies.get_enemies()
+		var hit_witness := WraithHitWitness.new()
+		var receipt := CombatEnemyPhase.new().execute_phase(projected_party, projected_enemies,
+			[action], hit_witness, true)
+		_check(receipt.get("ok") == true, "mounted authentic Wraith announcement executes through real phase")
+		if action.type == "attack":
+			var move: String = action.get("move", "attack")
+			var amount: int = {"attack": 13, "attack2": 12, "attack3": 9}[move]
+			var hits := 2 if move == "attack2" else 1
+			_check(action.amount == amount and action.get("hits", 1) == hits,
+				"mounted slash/Lash/Wail retain exact floor-scaled totals and hits")
+			var pose := LiveMovePoseCatalog.new().lookup_enemy("razor_ribbon_wraith", action,
+				"res://assets/paper/enemies/razor_ribbon_wraith_attack.png")
+			_check(badge.hit_count == hits, "mounted badge preserves exact strike hit count")
+			if action.has("move"):
+				_check(pose.get("name") == {"attack2": "Ribbon Lash", "attack3": "Wail"}[move]
+					and pose.get("pose") == move,
+					"mounted announcement resolves the authentic named Wraith pose")
+			var expected_events: Array = []
+			var expected_hits: Array = []
+			var hp := 20
+			var block := shield
+			for hit in range(hits):
+				var event := {"type": "attack", "enemy_position": position, "target_position": target,
+					"applied": true, "actual_target_position": target, "redirected": false,
+					"retaliation_damage": 0, "retaliatory_damage": 0}
+				if action.has("move"):
+					event.move = move
+				expected_events.append(event)
+				var packet := 6 if hits == 2 else amount
+				var next_hp := hp - maxi(0, packet - block)
+				var next_block := maxi(0, block - packet)
+				expected_hits.append([packet, hp, block, next_hp, next_block])
+				hp = next_hp
+				block = next_block
+			_check(receipt == {"ok": true, "events": expected_events} and hit_witness.hits == expected_hits,
+				"mounted announcement yields ordered phase receipts and exact per-hit Block/HP, including Lash 6+6")
+			witnessed[move] = true
+		trace.append([action.duplicate(true), receipt, hit_witness.hits.duplicate(true), _mounted_state()])
 		await _click(app.end_turn_button)
 		for hero in app.party.get_heroes():
 			if hero.position != target:
@@ -420,8 +463,10 @@ func _wraith_phases() -> Array:
 					"Wraith affects only the uniquely lowest living HP hero")
 		var affected: Dictionary = app.party.get_hero(target)
 		if action.type == "attack":
-			_check(action.amount == 13 and affected.hp == 20 - (13 - shield) and affected.block == 0,
-				"real Wraith Attack 13 deals exact unblocked or Block-mitigated damage")
+			_check(affected.hp == 20 - maxi(0, action.amount - shield) and affected.block == 0,
+				"real mounted Wraith strike deals exact damage after Block")
+			_check(app.party.get_heroes() == projected_party.get_heroes(),
+				"actual End Turn commits the ordered real phase projection")
 			attacks += 1
 		else:
 			_check(action.type == "debuff" and action.status in ["bleed", "exposed"]
@@ -430,8 +475,9 @@ func _wraith_phases() -> Array:
 				"real weighted Bleed 2 and Exposed 1 resolve unchanged on lowest-HP hero")
 			witnessed[action.status] = true
 		trace.append(_mounted_state())
-	_check(witnessed.has("bleed") and witnessed.has("exposed") and witnessed.has("low_target") and attacks >= 2,
-		"non-vacuous Wraith trace resolves both weighted debuffs and two scaled attacks")
+	_check(witnessed.has("bleed") and witnessed.has("exposed") and witnessed.has("low_target") and attacks >= 2
+		and witnessed.has("attack") and witnessed.has("attack2") and witnessed.has("attack3"),
+		"non-vacuous Wraith trace resolves both weighted debuffs and all three scaled attacks")
 	var before: Dictionary = app.enemies.get_enemy(position)
 	var rng_before: int = app.run_rng.state
 	_check(app.enemies.apply_damage(position, 99999), "first lethal hit reaches actual routed Wraith")
@@ -747,3 +793,13 @@ func _run() -> void:
 			printerr(failure)
 		print("live_v3_normal_attack_band_test: FAIL (", failures.size(), " failures)")
 	quit(0 if failures.is_empty() else 1)
+
+
+class WraithHitWitness extends CombatWardenGuardReactions:
+	var hits: Array = []
+	func resolve_enemy_attack(party_val: Variant, enemies_val: Variant, attack_val: Variant) -> Dictionary:
+		var before: Dictionary = party_val.get_hero(attack_val.target_position)
+		var result := super.resolve_enemy_attack(party_val, enemies_val, attack_val)
+		var after: Dictionary = party_val.get_hero(attack_val.target_position)
+		hits.append([attack_val.amount, before.hp, before.block, after.hp, after.block])
+		return result

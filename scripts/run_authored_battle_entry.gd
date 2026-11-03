@@ -357,6 +357,8 @@ static func _floor_band_material(band_pools: Variant, tough_catalog_text: Varian
             {"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
             {"type": "debuff", "status": "exposed", "amount": 1, "weight": 1},
             {"type": "attack", "amount": 9, "weight": 3},
+            {"type": "attack", "amount": 8, "hits": 2, "move": "attack2", "weight": 1},
+            {"type": "attack", "amount": 6, "move": "attack3", "weight": 1},
         ]},
     }
     var expected_wraith := RunTypedBattleRoster._parse_catalog_text(JSON.stringify([authentic_wraith]))

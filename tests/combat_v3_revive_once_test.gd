@@ -82,9 +82,11 @@ func _test_catalog_record() -> void:
 	_check(wraith.get("revive_once") == true and wraith.get("max_hp") == 27,
 		"the live entry Wraith carries the boolean revive_once and keeps 27 HP")
 	var actions: Array = wraith.get("intent", {}).get("actions", [])
-	_check(wraith.get("intent", {}).get("target") == "lowest_living_hp" and actions.size() == 3
+	_check(wraith.get("intent", {}).get("target") == "lowest_living_hp" and actions.size() == 5
 		and actions[0].get("status") == "bleed" and actions[2].get("type") == "attack",
 		"the Wraith keeps its weighted Bleed / Exposed / attack intent")
+	_check(actions == JSON.parse_string('[{"type":"debuff","status":"bleed","amount":2,"weight":2},{"type":"debuff","status":"exposed","amount":1,"weight":1},{"type":"attack","amount":9,"weight":3},{"type":"attack","amount":8,"hits":2,"move":"attack2","weight":1},{"type":"attack","amount":6,"move":"attack3","weight":1}]'),
+		"all five Wraith options keep exact authored amounts, hit/move metadata and weights")
 	var material := RunAuthoredBattleEntry._floor_band_material(null)
 	var banded := false
 	for key in material.get("pools", {}):
