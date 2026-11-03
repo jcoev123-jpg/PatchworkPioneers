@@ -74,7 +74,7 @@ const LEGACY_ELITES := {
 const V3_2_ELITES := {
 	"needle_briar_guard": {
 		"name": "Needle Briar Guard", "max_hp": 42, "thorns": 3,
-		"art_path": "res://assets/paper/enemies/needle_marshal.png",
+		"art_path": "res://assets/paper/enemies/needle_briar_guard.png",
 		"target": "front",
 		"actions": [
 			{"type": "debuff", "amount": 2, "status": "bleed", "weight": 2},
@@ -82,7 +82,7 @@ const V3_2_ELITES := {
 			{"type": "attack", "amount": 9, "weight": 3}]},
 	"spool_snarekeeper": {
 		"name": "Spool Snarekeeper", "max_hp": 40,
-		"art_path": "res://assets/paper/enemies/spool_hexer.png",
+		"art_path": "res://assets/paper/enemies/spool_snarekeeper.png",
 		"target": "front",
 		"actions": [
 			{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
@@ -113,14 +113,14 @@ const BRIAR_SNARE_PATTERNS := [
 const KEYWORD_ELITES := {
 	"pincushion_matriarch": {
 		"name": "Pincushion Matriarch", "max_hp": 44, "thorns": 4,
-		"art_path": "res://assets/paper/enemies/pincushion_hedgehog.png",
+		"art_path": "res://assets/paper/enemies/pincushion_matriarch.png",
 		"target": "front", "actions": [
 			{"type": "attack", "amount": 9, "weight": 3},
 			{"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
 			{"type": "block", "amount": 9, "weight": 2}]},
 	"spool_leech": {
 		"name": "Spool Leech", "max_hp": 42, "drain": true, "chew_block_on_attack": true,
-		"art_path": "res://assets/paper/enemies/spool_hexer.png",
+		"art_path": "res://assets/paper/enemies/spool_leech.png",
 		"target": "lowest_living_hp", "actions": [
 			{"type": "attack", "amount": 8, "weight": 4},
 			{"type": "debuff", "status": "weak", "amount": 2, "weight": 2},
@@ -2634,7 +2634,7 @@ func _test_briar_guard_thorns(catalog: Array) -> void:
 		"AC1: the shipped Guard record authors a genuine integer Thorns 3")
 	_check(record.get("name") == "Needle Briar Guard" and record.get("max_hp") is int
 		and record.get("max_hp") == 42
-		and record.get("art_path") == "res://assets/paper/enemies/needle_marshal.png"
+		and record.get("art_path") == "res://assets/paper/enemies/needle_briar_guard.png"
 		and record.get("intent", {}).get("target") == "front",
 		"AC1: the thorned Guard keeps its name, 42 HP, art and front target")
 	var actions: Array = []
@@ -3122,14 +3122,14 @@ func _test_briar_snare_schedule() -> void:
 	var snare := _record(elites, "spool_snarekeeper")
 	_check(guard.get("name") == "Needle Briar Guard" and guard.get("max_hp") == 42
 		and guard.get("max_hp") is int
-		and guard.get("art_path") == "res://assets/paper/enemies/needle_marshal.png"
+		and guard.get("art_path") == "res://assets/paper/enemies/needle_briar_guard.png"
 		and guard.get("thorns") is int and guard.get("thorns") == 3,
-		"AC1: Guard keeps its exact name, 42 HP, reused art and integer Thorns 3")
+		"AC1: Guard keeps its exact name, 42 HP, own art and integer Thorns 3")
 	_check(snare.get("name") == "Spool Snarekeeper" and snare.get("max_hp") == 40
 		and snare.get("max_hp") is int
-		and snare.get("art_path") == "res://assets/paper/enemies/spool_hexer.png"
+		and snare.get("art_path") == "res://assets/paper/enemies/spool_snarekeeper.png"
 		and not snare.has("thorns"),
-		"AC1: Snarekeeper keeps its exact name, 40 HP, reused art and no Thorns")
+		"AC1: Snarekeeper keeps its exact name, 40 HP, own art and no Thorns")
 	for id in V3_2_ELITES:
 		var record := _record(elites, id)
 		var actions: Array = []

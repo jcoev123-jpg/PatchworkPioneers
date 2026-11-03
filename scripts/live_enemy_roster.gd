@@ -76,10 +76,10 @@ const ACTOR_ART := {
 	"pin_skitter": "enemies/pin_skitter",
 	"thread_biter": "enemies/thread_biter",
 	"sewing_machine_colossus": "enemies/sewing_machine_colossus",
-	"needle_briar_guard": "enemies/needle_marshal",
-	"spool_snarekeeper": "enemies/spool_hexer",
-	"spool_leech": "enemies/spool_hexer",
-	"pincushion_matriarch": "enemies/pincushion_hedgehog",
+	"needle_briar_guard": "enemies/needle_briar_guard",
+	"spool_snarekeeper": "enemies/spool_snarekeeper",
+	"spool_leech": "enemies/spool_leech",
+	"pincushion_matriarch": "enemies/pincushion_matriarch",
 }
 
 ## One large stage for both sides: heroes and enemies share this minimum actor height,
