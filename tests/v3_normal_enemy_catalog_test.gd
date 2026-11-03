@@ -23,6 +23,7 @@ func _initialize() -> void:
 	_test_harder_normal_phase_actions()
 	_test_imp_authored_blind_paid_miss()
 	_test_hound_enrage()
+	_test_hound_named_strikes()
 	_test_needle_wasp_bleeding_sting()
 	_test_moth_swarm_block_chew_catalog()
 	_test_moth_swarm_block_chew_phase()
@@ -1001,7 +1002,9 @@ func _harder_expected() -> Dictionary:
 			"max_hp": 28, "enrage": true, "art_path": "res://assets/paper/enemies/spoolback_hound.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
-				{"type": "attack", "amount": 7, "weight": 3}]}},
+				{"type": "attack", "amount": 7, "weight": 3},
+				{"type": "attack", "amount": 8, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 6, "hits": 2, "move": "attack3", "weight": 1}]}},
 		"inkbrush_imp": {"id": "inkbrush_imp", "name": "Inkbrush Imp",
 			"max_hp": 23, "art_path": "res://assets/paper/enemies/inkbrush_imp.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
@@ -5652,3 +5655,176 @@ func _test_wraith_named_moves() -> void:
 				and party.get_hero(1) == before[0][0] and party.get_hero(3) == before[0][2]
 				and bound.enemies.get_enemies() == before[1] and bound.rng.state == before[2],
 				"named attacks leave other actors and run RNG unchanged")
+
+
+func _test_hound_named_strikes() -> void:
+	var id := "spoolback_hound"
+	var record := _find(_load_parsed(), id)
+	_check(not record.is_empty() and _norm(record) == _harder_expected()[id],
+		"Hound strictly parses with its exact original fields and ordered four actions")
+	if record.is_empty() or record.intent.actions.size() != 4:
+		return
+	var material := RunAuthoredBattleEntry._floor_band_material(null)
+	_check(material.get("ok") == true and _norm(material.get("records", {}).get(id)) == _norm(record),
+		"derived Fight material retains the complete canonical Hound")
+	var has_band := false
+	for pool in material.get("pools", {}).values():
+		has_band = has_band or pool.has(id)
+	_check(has_band, "Hound remains eligible in derived Fight bands")
+	var reached: Array = []
+	for seed_value in range(128):
+		var bound := _bind_records(seed_value, [record])
+		_check(bound.ok and bound.scheduler.is_bound(), "complete weighted Hound record binds")
+		if not bound.ok:
+			break
+		var move: String = bound.scheduler.get_intents()[0].get("move", "")
+		if move not in ["attack2", "attack3"] or reached.has(move):
+			continue
+		var replay := _bind_records(seed_value, [record])
+		_check(replay.ok and replay.scheduler.get_intents() == bound.scheduler.get_intents()
+			and replay.rng.state == bound.rng.state, "complete Hound weighted choice and RNG replay")
+		var traces: Array = []
+		for battle in [bound, replay]:
+			_check(battle.party.is_valid() and battle.enemies.is_valid()
+				and battle.party.gain_block(1, 4), "complete Hound choice faces actual front Block")
+			var before: Array = [battle.party.get_heroes(), battle.enemies.get_enemies(), battle.rng.state]
+			var actions: Array = battle.scheduler.get_intents()
+			var input: Array = actions.duplicate(true)
+			var result := CombatEnemyPhase.new().execute_phase(battle.party, battle.enemies, actions, null, true)
+			_check(result.get("ok") == true and result.get("events", []).size() == (2 if move == "attack3" else 1)
+				and battle.party.get_hero(1).hp == (38 if move == "attack3" else 36)
+				and battle.party.get_hero(1).block == 0
+				and battle.party.get_hero(2) == before[0][1] and battle.party.get_hero(3) == before[0][2]
+				and battle.enemies.get_enemies() == before[1] and battle.rng.state == before[2] and actions == input,
+				"complete weighted Hound selection executes real damage without collateral, input or RNG mutation")
+			traces.append([result, battle.party.get_heroes(), battle.enemies.get_enemies(), battle.rng.state])
+		_check(traces[0] == traces[1], "complete weighted Hound phase replays exactly")
+		reached.append(move)
+		if reached.size() == 2:
+			break
+	_check(reached.has("attack2") and reached.has("attack3"), "both named moves are reachable in the full weighted record")
+	# Preserve both announcements made with a downed front and cached-front fallback.
+	for amount in [8, 6]:
+		for down_before_binding in [true, false]:
+			var party := _party()
+			_check(party.gain_block(2, 4), "fallback recipient has actual Block")
+			if down_before_binding:
+				_check(party.apply_damage(1, 40), "front is down before announcement")
+			var bound := _force_normal_alternative(record, _authored_alternative(record, "attack", amount), party)
+			_check(not bound.is_empty(), "named Hound fallback binds")
+			if bound.is_empty():
+				continue
+			_check(bound.intents[0].target_position == (2 if down_before_binding else 1),
+				"announcement retains its original living front seat")
+			if not down_before_binding:
+				_check(party.apply_damage(1, 40), "cached front falls before phase")
+			var before := [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state]
+			var receipt := CombatEnemyPhase.new().execute_phase(party, bound.enemies, bound.intents, null, true)
+			_check(receipt.get("ok") == true and receipt.events.size() == (1 if amount == 8 else 2),
+				"front-policy authentication preserves genuine downed-front resolution")
+			for event in receipt.get("events", []):
+				_check(event.target_position == 2 and event.applied, "each fallback packet reaches the living middle")
+			_check(party.get_hero(2).hp == (26 if amount == 8 else 28) and party.get_hero(2).block == 0
+				and party.get_hero(1) == before[0][0] and party.get_hero(3) == before[0][2]
+				and bound.enemies.get_enemies() == before[1] and bound.rng.state == before[2],
+				"fallback preserves dead front, back, enemy Enrage and RNG")
+	# Keep a real execution proof of the old seven-damage strike beside both new moves.
+	for amount in [7, 8, 6]:
+		var raw := _authored_alternative(record, "attack", amount)
+		var move: String = raw.get("move", "")
+		var hit_count := 2 if amount == 6 else 1
+		for block in [0, 2, 4, 12]:
+			var traces: Array = []
+			for replay in range(2):
+				var party := _party()
+				_check(party.is_valid() and party.get_hero(1).hp == 40
+					and party.get_hero(2).hp > 0 and party.get_hero(3).hp > 0
+					and party.gain_block(1, block), "Hound faces a real blocked front and living peers")
+				var bound := _force_normal_alternative(record, raw, party)
+				_check(not bound.is_empty(), "genuine Hound alternative binds through scheduler")
+				if bound.is_empty():
+					continue
+				var expected: Dictionary = CombatEnemyIntents.weighted_action(raw).action.duplicate(true)
+				expected.merge({"enemy_position": 1, "target_position": 1})
+				_check(bound.scheduler.is_bound() and bound.intents == [expected],
+					"Hound announcement retains exact move, hits, amount and front target")
+				var before := [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()]
+				if not move.is_empty():
+					var fallback := "res://assets/paper/enemies/spoolback_hound_attack.png"
+					for catalog in [LiveMovePoseCatalog.new(), MissingCrusherPose.new()]:
+						var pose: Dictionary = catalog.lookup_enemy(id, expected, fallback)
+						_check(pose.get("name") == ("Savage Bite" if move == "attack2" else "Thread Snap")
+							and pose.get("pose") == move
+							and pose.get("named_art") == "res://assets/paper/enemies/spoolback_hound_%s.png" % move
+							and pose.get("art") == (pose.get("named_art") if pose.get("art_available") else fallback),
+							"Hound manifest resolves authored name, pose path and normal fallback")
+						if catalog is MissingCrusherPose:
+							_check(pose.get("fallback_used") == true and pose.get("art") == fallback,
+								"forced missing Hound texture uses established fallback")
+				for field in ["move", "hits", "amount", "target_position"]:
+					for value in (["", "attack5", 2, null] if field == "move" else
+							[0, 3, "2", null] if field == "hits" else
+							[0, 2, 3, 4, "1", null] if field == "target_position" else [-1, "6", 1.5, null, 99]):
+						# The isolated unkeyed legacy fixture retains its independent target contract.
+						if field == "target_position" and value is int and value in [2, 3] and move.is_empty():
+							continue
+						# The isolated legacy strike retains its independent plain-amount contract.
+						if field == "amount" and value is int and value == 99 and move.is_empty():
+							continue
+						var malformed := raw.duplicate(true)
+						malformed[field] = value
+						if field != "amount" or not value is int or value != 99:
+							_check(CombatEnemyIntents.weighted_action(malformed).is_empty(),
+								"malformed Hound move/hits/amount/target fails authored validation")
+						var bad := expected.duplicate(true)
+						bad[field] = value
+						var input := [bad.duplicate(true)]
+						_check(CombatEnemyPhase.new().execute_phase(party, bound.enemies, [bad], null, true)
+							== {"ok": false, "events": []} and [bad] == input
+							and [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()] == before,
+							"malformed or forged Hound request rejects without state or RNG spend")
+				if not move.is_empty():
+					var forged_move := expected.duplicate(true)
+					forged_move.move = "attack3" if move == "attack2" else "attack2"
+					var forged_hits := expected.duplicate(true)
+					if forged_hits.has("hits"):
+						forged_hits.erase("hits")
+					else:
+						forged_hits.hits = 2
+					var missing_move := expected.duplicate(true)
+					missing_move.erase("move")
+					for forged in [forged_move, forged_hits, missing_move]:
+						var body: Dictionary = forged.duplicate(true)
+						body.erase("enemy_position")
+						_check(CombatEnemyIntents.valid_action(body)
+							and CombatEnemyPhase.new().execute_phase(party, bound.enemies, [forged], null, true)
+							== {"ok": false, "events": []}, "well-shaped forged Hound move/hits fails source authentication")
+				_check([party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()] == before,
+					"Hound previews and rejected requests spend nothing")
+				var witness := WraithHitWitness.new()
+				var receipt := CombatEnemyPhase.new().execute_phase(party, bound.enemies, bound.intents, witness, true)
+				var events: Array = []
+				var packets: Array = []
+				var hp := 40
+				var remaining: int = block
+				for hit in range(hit_count):
+					var packet: int = 3 if hit_count == 2 else amount
+					var next_hp := hp - maxi(0, packet - remaining)
+					var next_block := maxi(0, remaining - packet)
+					packets.append([packet, hp, remaining, next_hp, next_block])
+					hp = next_hp
+					remaining = next_block
+					var event := {"type": "attack", "enemy_position": 1, "target_position": 1,
+						"applied": true, "actual_target_position": 1, "redirected": false,
+						"retaliation_damage": 0, "retaliatory_damage": 0}
+					if not move.is_empty():
+						event.move = move
+					events.append(event)
+				_check(receipt == {"ok": true, "events": events} and witness.hits == packets,
+					"Hound resolves ordered 3+3, single 8 or original 7, spending real Block before HP")
+				_check(party.get_hero(1).hp == hp and party.get_hero(1).block == remaining
+					and party.get_hero(2) == before[0][1] and party.get_hero(3) == before[0][2]
+					and bound.enemies.get_enemies() == before[1] and bound.rng.state == before[2]
+					and bound.scheduler.get_intents() == before[3], "Hound attacks preserve peers, source, cache and RNG")
+				traces.append([bound.intents, receipt, witness.hits, party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state])
+			_check(traces.size() == 2 and traces[0] == traces[1], "same-seed Hound phase and RNG replay exactly")

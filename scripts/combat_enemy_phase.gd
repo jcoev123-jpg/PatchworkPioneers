@@ -84,6 +84,14 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 					authored = true
 			if not authored:
 				return failure
+			# A front-policy announcement cannot select a later living seat while
+			# an earlier seat is alive. Downed cached targets still use the existing
+			# execution-time fallback below, including deaths earlier in the phase.
+			if policy_targets and slot.get("target") == "front":
+				var target: int = action.get("target_position", 0)
+				for position in range(1, target):
+					if not party.is_downed(position):
+						return failure
 		if action.get("type") == "steal_gold":
 			if run_gold == null:
 				return failure
