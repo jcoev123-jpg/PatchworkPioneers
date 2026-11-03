@@ -803,6 +803,94 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_sootglass_letterpress",
+      "title": "The Sootglass Letterpress",
+      "description": "Under a leaking midnight awning, a masked paper-doll printer winds a giant sootglass letterpress; its black keys punch red-thread seals into quilt labels.",
+      "choices": [
+        {
+          "id": "sell_inked_offcuts",
+          "text": "Sell inked fabric offcuts (spend 2 scraps; gain 27 gold)",
+          "outcome": { "gold": 27, "scraps": -2 }
+        },
+        {
+          "id": "buy_label_shavings",
+          "text": "Buy pressed label shavings (spend 14 gold; gain 2 scraps)",
+          "outcome": { "gold": -14, "scraps": 2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the press to its rattling",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_ashen_bell_foundry",
+      "title": "The Ashen Bell Foundry",
+      "description": "A squat candlekeeper feeds a vast bone-cream bell mould with frayed seam strips; every low toll drops a warm button of slag into the dark.",
+      "choices": [
+        {
+          "id": "gather_casting_threads",
+          "text": "Gather loose casting threads (gain 1 scrap)",
+          "outcome": { "gold": 0, "scraps": 1 }
+        },
+        {
+          "id": "patch_bell_mould",
+          "text": "Patch the cracked bell mould (spend 3 scraps; gain 38 gold)",
+          "outcome": { "gold": 38, "scraps": -3 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the foundry bells sleeping",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_oxblood_quilt_scale",
+      "title": "The Oxblood Quilt Scale",
+      "description": "A bent velvet clerk balances a massive embroidered quilt on two hanging brass scales; tarnished safety pins mark each weight beneath an oxblood canopy.",
+      "choices": [
+        {
+          "id": "weigh_seam_scraps",
+          "text": "Weigh a spool of seam scraps (spend 1 scrap; gain 18 gold)",
+          "outcome": { "gold": 18, "scraps": -1 }
+        },
+        {
+          "id": "buy_counterweight_thread",
+          "text": "Buy three counterweight threads (spend 20 gold; gain 3 scraps)",
+          "outcome": { "gold": -20, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the scales unbalanced",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_midnight_wickwork_jetty",
+      "title": "The Midnight Wickwork Jetty",
+      "description": "A canal pier woven from stitched candlewick sinks into dark fog; a hollow-eyed doll boatman hoists an enormous patched lantern above floating black-felt parcels.",
+      "choices": [
+        {
+          "id": "repair_wick_ladder",
+          "text": "Repair the lantern wick-ladder (spend 2 scraps; gain 30 gold)",
+          "outcome": { "gold": 30, "scraps": -2 }
+        },
+        {
+          "id": "buy_waxed_thread",
+          "text": "Buy salvaged waxed thread (spend 11 gold; gain 2 scraps)",
+          "outcome": { "gold": -11, "scraps": 2 }
+        },
+        {
+          "id": "leave",
+          "text": "Walk past the unlit jetty",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }

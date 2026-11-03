@@ -252,4 +252,28 @@ const SEEDS := [
 	276124,
 	329277,
 	425526,
+	# Genuine map/toll/event-rotation witnesses re-derived after the four gothic
+	# nightwork roadside wallet stories (Sootglass Letterpress, Ashen Bell
+	# Foundry, Oxblood Quilt Scale, Midnight Wickwork Jetty) joined the sorted
+	# generic pool: Briar-Button Mending Bench and Tinker Thunder-Spool Dock lost
+	# their routed witnesses and thirteen other required Events were reachable
+	# only through the bounded fallback. Each seed is re-checked by the live test.
+	46523,
+	63293,
+	740600,
+	903088,
+	117383,
+	212134,
+	214516,
+	260737,
+	341157,
+	345243,
+	346210,
+	348742,
+	403301,
+	447793,
+	486991,
+	# Revalidated five-Event Parcel-to-Fight witness after nightwork additions:
+	# genuine map, paid Warden toll and one sorted generic draw.
+	770644,
 ]
