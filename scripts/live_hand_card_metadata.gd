@@ -22,6 +22,10 @@ const EXPOSED_EXPLANATION := "EXPOSED: for N turns the affected actor takes 50% 
 ## The ready-made patchwork card art. Every load here is optional and cached:
 ## a missing file always leaves the drawn paper face exactly as it was.
 const ART_DIR := "res://assets/paper/"
+const HAND_MOTION_SECONDS := 0.28
+const HAND_FAST_SECONDS := 0.12
+const HAND_ENTRY_OFFSET := Vector2(-34.0, -9.0)
+const HAND_TILT_RADIANS := 0.026
 ## Source corner size of the sewn card frames. Corners are redrawn at their own
 ## size while only the frame edges stretch, so the felt buttons and stitches
 ## keep their detail on a landscape hand panel.
@@ -959,6 +963,8 @@ func _bind(panel: Control, card_id: String) -> void:
 		"id": card_id, "facts": describe(card_id), "draw": draw_callback,
 		"resize": resize_callback, "exit": exit_callback, "draw_count": 0,
 		"original_tooltip": original_tooltip, "faces": _face_assets(card_id),
+		"motion_level": 0.0, "motion_target": false, "entry_progress": 1.0,
+		"entry_started": false, "focused": false,
 	}
 	panel.get_child(0).hide()
 	panel.tooltip_text = base_effect_text(card_id)
@@ -1003,6 +1009,98 @@ func _unbind(panel) -> void:
 func clear() -> void:
 	for panel in _bindings.keys():
 		_unbind(panel)
+
+
+## Motion lives only in the CanvasItem draw transform; no Control geometry moves.
+## All tweens belong to their actual panel and die with a refreshed hand.
+func _motion_reduced() -> bool:
+	if bool(ProjectSettings.get_setting("accessibility/reduced_motion", false)):
+		return true
+	if _app != null:
+		var presenter = _app.get_node_or_null("LiveSupportHand")
+		if presenter != null and presenter.reduced_motion_override is bool:
+			return bool(presenter.reduced_motion_override)
+	return false
+
+
+func _motion_duration() -> float:
+	if _app != null:
+		var juice = _app.get_node_or_null("LiveCombatJuice")
+		if juice != null and juice.fast_animations:
+			return HAND_FAST_SECONDS
+	return HAND_MOTION_SECONDS
+
+
+func _set_motion_level(value: float, panel: Control) -> void:
+	if _bindings.has(panel) and is_instance_valid(panel):
+		_bindings[panel]["motion_level"] = clampf(value, 0.0, 1.0)
+		panel.queue_redraw()
+
+
+func _set_entry_progress(value: float, panel: Control) -> void:
+	if _bindings.has(panel) and is_instance_valid(panel):
+		_bindings[panel]["entry_progress"] = clampf(value, 0.0, 1.0)
+		panel.queue_redraw()
+
+
+func begin_draw_entry(panel: Control) -> bool:
+	if not _bindings.has(panel) or not is_instance_valid(panel) or _motion_reduced() \
+			or not panel.is_visible_in_tree():
+		return false
+	var binding: Dictionary = _bindings[panel]
+	if bool(binding.get("entry_started", false)):
+		return false
+	binding["entry_started"] = true
+	binding["entry_progress"] = 0.0
+	panel.queue_redraw()
+	var tween := panel.create_tween()
+	binding["entry_tween"] = tween
+	tween.tween_method(_set_entry_progress.bind(panel), 0.0, 1.0, _motion_duration()) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	return true
+
+
+func motion_state(panel: Control) -> Dictionary:
+	if not _bindings.has(panel):
+		return {}
+	var binding: Dictionary = _bindings[panel]
+	return {"lift": float(binding.get("motion_level", 0.0)),
+		"entry": float(binding.get("entry_progress", 1.0)),
+		"entry_started": bool(binding.get("entry_started", false)),
+		"focused": bool(binding.get("focused", false)),
+		"tilt_limit": HAND_TILT_RADIANS,
+		"reduced": _motion_reduced()}
+
+
+## The departing face is a *second*, pointer-inert drawing of the exact held
+## metadata, not a gameplay card and not a new input handler. Its source panel
+## is still alive at the synchronous, committed-play boundary.
+func mount_discard_echo(source: Control, parent: Control) -> Control:
+	if not _bindings.has(source) or not is_instance_valid(parent):
+		return null
+	var id: String = str(_bindings[source].get("id", ""))
+	var echo := PanelContainer.new()
+	echo.name = "HandDiscardFaceEcho"
+	echo.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	echo.focus_mode = Control.FOCUS_NONE
+	echo.size = source.size
+	var label := Label.new()
+	label.text = id
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.focus_mode = Control.FOCUS_NONE
+	echo.add_child(label)
+	parent.add_child(echo)
+	# A detached decorator owns the echo, so the real mounted metadata's
+	# exact-one-binding-per-held-panel invariant is never disturbed.
+	var ghost = get_script().new()
+	ghost._bind(echo, id)
+	ghost._bindings[echo]["facts"] = (_bindings[source]["facts"] as Dictionary).duplicate(true)
+	ghost._bindings[echo]["faces"] = (_bindings[source]["faces"] as Dictionary).duplicate()
+	ghost._bindings[echo]["visual"] = [true, false, Vector2.ZERO, false]
+	echo.set_meta("_hand_ghost_decorator", ghost)
+	echo.self_modulate = Color.WHITE
+	echo.queue_redraw()
+	return echo
 
 
 func get_facts(panel: Control) -> Dictionary:
@@ -1261,7 +1359,32 @@ func _update_visual(panel: Control) -> void:
 		hovered = under == panel or (under != null and panel.is_ancestor_of(under))
 	var aiming := bool(panel.get_meta("aiming", false))
 	var aim: Vector2 = panel.get_meta("aim_point", Vector2.ZERO) if aiming else Vector2.ZERO
+	var focused := panel.has_focus()
 	var visual := [playable, hovered, aim, aiming]
+	_bindings[panel]["focused"] = focused
+	# Runtime accessibility changes retire any in-flight entry, not merely hide
+	# its painted offset while the old tween continues.
+	if _motion_reduced() and float(_bindings[panel].get("entry_progress", 1.0)) < 1.0:
+		var entry_tween = _bindings[panel].get("entry_tween")
+		if entry_tween is Tween and entry_tween.is_valid():
+			entry_tween.kill()
+		_set_entry_progress(1.0, panel)
+	var target := (hovered or focused or aiming) and not _motion_reduced()
+	if bool(_bindings[panel].get("motion_target", false)) != target \
+			or (_motion_reduced() and float(_bindings[panel].get("motion_level", 0.0)) > 0.0):
+		_bindings[panel]["motion_target"] = target
+		var old_tween = _bindings[panel].get("motion_tween")
+		if old_tween is Tween and old_tween.is_valid():
+			old_tween.kill()
+		if _motion_reduced():
+			_set_motion_level(0.0, panel)
+			_set_entry_progress(1.0, panel)
+		else:
+			var tween := panel.create_tween()
+			tween.tween_method(_set_motion_level.bind(panel),
+				float(_bindings[panel].get("motion_level", 0.0)), 1.0 if target else 0.0,
+				_motion_duration()).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+			_bindings[panel]["motion_tween"] = tween
 	panel.self_modulate = Color.WHITE if playable or _app == null else Color(0.72, 0.70, 0.68)
 	panel.z_index = 3 if hovered or aiming else 0
 	if _bindings[panel].get("visual", []) != visual:
@@ -1635,14 +1758,17 @@ func _draw_panel(panel: Control) -> void:
 	var layout := _panel_layout(panel.size, faces)
 	if layout.is_empty():
 		return
-	# Hover (or an armed drag) lifts the drawn card and enlarges it around its
-	# centre. Only the drawing transforms: the panel hitbox, layout and input
-	# stay untouched.
-	var raised: bool = visual["hovered"] or visual["aiming"]
-	var grow := 1.04 if raised else 1.0
-	var lift := -6.0 if visual["hovered"] else 0.0
+	# Only paint moves: bounded hover/focus tilt and a short draw-side arrival.
+	# Rebuilds never compound transforms, and the clickable Control stays fixed.
+	var binding: Dictionary = _bindings[panel]
+	var level := 0.0 if _motion_reduced() else clampf(float(binding.get("motion_level", 0.0)), 0.0, 1.0)
+	var entry := 1.0 if _motion_reduced() else clampf(float(binding.get("entry_progress", 1.0)), 0.0, 1.0)
+	var grow := 1.0 + 0.04 * level
+	var tilt := HAND_TILT_RADIANS * level
+	var shift := Vector2(0.0, -6.0 * level) + HAND_ENTRY_OFFSET * (1.0 - entry)
 	var centre: Vector2 = panel.size * 0.5
-	panel.draw_set_transform(centre * (1.0 - grow) + Vector2(0, lift), 0.0, Vector2(grow, grow))
+	panel.draw_set_transform(centre - centre.rotated(tilt) * grow + shift,
+		tilt, Vector2(grow, grow))
 	var frame: Rect2 = layout["frame"]
 	panel.draw_rect(frame, CREAM)
 	var frame_texture: Texture2D = faces.get("frame")

@@ -1036,9 +1036,14 @@ func _refresh_preserves_everything(observed: Dictionary) -> void:
 	await _frames()
 	_check(_snapshot() == before, "repeated UI-only synchronization preserves full battle, intents and RNG")
 	for panel in panels:
-		_check(presenter._metadata._bindings.has(panel)
-			and presenter._metadata._bindings[panel]["draw_count"] == old_draws[panel],
-			"unchanged facts and geometry never queue redundant redraws")
+		var binding: Dictionary = presenter._metadata._bindings.get(panel, {})
+		var state: Dictionary = presenter._metadata.motion_state(panel)
+		var draws_now: int = int(binding.get("draw_count", -1))
+		_check(not binding.is_empty() and draws_now >= int(old_draws[panel])
+			and (draws_now == int(old_draws[panel])
+				or (bool(state.get("entry_started", false))
+					or bool(binding.get("motion_target", false)))),
+			"unchanged facts and geometry draw only during a genuine entry/focus animation")
 		_check(panel.get_global_rect() == original_rects[panel], "decoration preserves original card hitbox")
 	# Byte-for-byte tooltip stability across repeated sync.
 	for panel in panels:
@@ -1112,6 +1117,42 @@ func _visual_feedback() -> void:
 	await _frames()
 	_check(not presenter._metadata.visual_state(playable)["hovered"] and playable.z_index == 0,
 		"leaving the card drops it back")
+	# Keyboard focus is admitted only on controls that the real presenter
+	# exposes to Tab/Enter; recognized but unwired cards must remain inert.
+	var focusable: Control = null
+	for candidate in panels:
+		if candidate.focus_mode == Control.FOCUS_ALL and presenter._metadata._bindings.has(candidate):
+			focusable = candidate
+			break
+	_check(focusable != null, "mounted battle offers a keyboard-focusable card")
+	if focusable != null:
+		var focus_hitbox: Rect2 = focusable.get_global_rect()
+		focusable.grab_focus()
+		await _frames()
+		presenter._metadata._update_visual(focusable)
+		var focused_motion: Dictionary = presenter._metadata.motion_state(focusable)
+		_check(focused_motion.get("focused", false)
+			and bool(presenter._metadata._bindings[focusable].get("motion_target", false))
+			and float(focused_motion.get("tilt_limit", 1.0)) <= 0.04,
+			"real focused face has a bounded visual tilt target")
+		_check(focusable.get_global_rect() == focus_hitbox
+			and focusable.focus_mode == Control.FOCUS_ALL,
+			"keyboard focus never moves input geometry or removes its action")
+		focusable.release_focus()
+		await _frames()
+		presenter._metadata._update_visual(focusable)
+		_check(not bool(presenter._metadata._bindings[focusable].get("motion_target", true)),
+			"focus departure reverses only the painted face")
+	# The shared accessibility setting forces a static face even during a tween.
+	var saved_motion = ProjectSettings.get_setting("accessibility/reduced_motion", false)
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	presenter._metadata._update_visual(playable)
+	var reduced: Dictionary = presenter._metadata.motion_state(playable)
+	_check(reduced.get("reduced", false) and is_zero_approx(float(reduced.get("lift", -1.0)))
+		and is_equal_approx(float(reduced.get("entry", 0.0)), 1.0),
+		"reduced motion cancels face tilt and draw entry without touching play")
+	ProjectSettings.set_setting("accessibility/reduced_motion", saved_motion)
+	presenter._metadata._update_visual(playable)
 	# A real press arms an attack; the drag arrow follows the pointer until Esc.
 	var attack: Control = null
 	for panel in panels:
