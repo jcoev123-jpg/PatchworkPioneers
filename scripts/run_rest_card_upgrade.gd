@@ -219,12 +219,63 @@ static func _is_valid_deck(deck: Array) -> bool:
 			return false
 		if RunPoolCardRewardOffers.resolve_reward_definition(card_id).is_empty() \
 				and not RunRestStitchCards.is_authored_pool_plus(card_id) \
+				and not _is_peddler_v3_card(card_id) \
 				and card_id != MpwFrayedDebt.CARD_ID:
 			return false
 	return true
 
 
+## The Peddler sells V3 Warden/Tinker printings that are never Fight rewards.
+## Validates a base's authored pair in both catalogs; returns {} when anything
+## disagrees. Result: {plus_id, owner, base, plus}.
+static func _peddler_v3_pair(base_id: String) -> Dictionary:
+	var families: Array = [
+		{"pool": V3WardenPoolCards.new(), "owner": "warden", "tinker": false},
+		{"pool": V3TinkerPoolCards.new(), "owner": "tinker", "tinker": true},
+	]
+	for family in families:
+		var pool: Object = family["pool"]
+		var owner: String = family["owner"]
+		var base_ids: Array = pool.get_pool_card_ids() if family["tinker"] else pool.get_base_ids()
+		if not base_ids.has(base_id):
+			continue
+		var plus_id: String = pool.get_upgrade_id(base_id)
+		if plus_id.is_empty() or plus_id == base_id:
+			return {}
+		var base: Dictionary = pool.get_definition(base_id)
+		var plus: Dictionary = pool.get_definition(plus_id)
+		if base.is_empty() or plus.is_empty() or base.get("id") != base_id or plus.get("id") != plus_id \
+				or base.get("owner") != owner or plus.get("owner") != owner \
+				or base.get("upgrade_id") != plus_id or not pool.get_upgrade_id(plus_id).is_empty():
+			return {}
+		if family["tinker"]:
+			if base.get("is_upgrade") != false or plus.get("is_upgrade") != true \
+					or base.get("base_id") != base_id or plus.get("base_id") != base_id:
+				return {}
+		elif plus.get("upgrade_of") != base_id or base.get("reward_eligible") != true \
+				or plus.get("reward_eligible") != false:
+			return {}
+		return {"plus_id": plus_id, "owner": owner, "base": base, "plus": plus}
+	return {}
+
+
+## True for an authentic Peddler V3 Warden/Tinker base or its canonical plus.
+static func _is_peddler_v3_card(card_id: String) -> bool:
+	if not _peddler_v3_pair(card_id).is_empty():
+		return true
+	for pool in [V3WardenPoolCards.new(), V3TinkerPoolCards.new()]:
+		var ids: Array = pool.get_pool_card_ids() if pool is V3TinkerPoolCards else pool.get_base_ids()
+		for base_id in ids:
+			var pair := _peddler_v3_pair(base_id)
+			if not pair.is_empty() and pair["plus_id"] == card_id:
+				return true
+	return false
+
+
 static func _is_canonical_pool_upgrade(original_id: String, upgraded_id: String) -> bool:
+	var peddler := _peddler_v3_pair(original_id)
+	if not peddler.is_empty():
+		return peddler["plus_id"] == upgraded_id
 	# Look up the source through the reward-base catalog, not by an ID suffix.
 	# Every pool has its own schema, so validate the canonical pair in BOTH
 	# directions and require the same authored owner and definition.
@@ -313,6 +364,19 @@ static func _get_canonical_upgrade_info(card_id: String) -> Dictionary:
 	var starter := StarterCards.new()
 	if starter.has_card(card_id):
 		return {}
+
+	var peddler := _peddler_v3_pair(card_id)
+	if not peddler.is_empty():
+		var v3_base: Dictionary = peddler["base"]
+		var v3_plus: Dictionary = peddler["plus"]
+		return {
+			"plus_id": String(peddler["plus_id"]), "owner": String(peddler["owner"]),
+			"display_name": String(v3_base.get("display_name", "")),
+			"plus_display_name": String(v3_plus.get("display_name", "")),
+			"cost": int(v3_base.get("cost", 0)), "plus_cost": int(v3_plus.get("cost", 0)),
+			"effects": v3_base.get("effects", {}).duplicate(true),
+			"plus_effects": v3_plus.get("effects", {}).duplicate(true),
+		}
 
 	var pool_def: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(card_id)
 	if pool_def.is_empty() or pool_def.get("id") != card_id:

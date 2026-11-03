@@ -15,6 +15,7 @@ func _initialize() -> void:
 	seed(263)
 	_test_choices_and_upgrades()
 	_test_newer_hero_pool_upgrade()
+	_test_peddler_v3_upgrades()
 	_test_stitches()
 	_test_rejections()
 	_test_invalid()
@@ -132,6 +133,100 @@ func _test_newer_hero_pool_upgrade() -> void:
 	stale.remaining_scraps += 1
 	_check(not _upgrade(v, 1, stale).ok and v.read_state() == after,
 		"stale snapshot request fails after consumption")
+
+
+## Peddler-bought V3 Warden/Tinker base printings are genuine Upgrade choices.
+func _test_peddler_v3_upgrades() -> void:
+	var warden := V3WardenPoolCards.new()
+	var tinker := V3TinkerPoolCards.new()
+	var toss := "warden_v3_shield_toss"
+	var casing := "tinker_v3_brass_casing"
+	var toss_def: Dictionary = warden.get_definition(toss)
+	var toss_plus: Dictionary = warden.get_definition(warden.get_upgrade_id(toss))
+	var casing_def: Dictionary = tinker.get_definition(casing)
+	var casing_plus: Dictionary = tinker.get_definition(tinker.get_upgrade_id(casing))
+	_check(not toss_def.is_empty() and not toss_plus.is_empty() and not casing_def.is_empty()
+		and not casing_plus.is_empty(), "V3 witness definitions exist")
+	if toss_plus.is_empty() or casing_plus.is_empty():
+		return
+	var deck := [toss, PRICK, casing, toss, POOL]
+	var v := _make(deck)
+	var s := v.read_state()
+	_check(v.is_valid() and not v.is_consumed() and v.quote().choices == ["upgrade", "stitch", "leave"],
+		"purchased V3 deck opens a full Sewing Circle visit")
+	var options := v.upgrade_options()
+	var by_index := {}
+	for option in options:
+		by_index[option.index] = option
+	_check(by_index.has(0) and by_index.has(2) and by_index.has(3),
+		"both duplicate Shield Toss indices and Brass Casing are offered")
+	if not (by_index.has(0) and by_index.has(2) and by_index.has(3)):
+		return
+	_check(by_index[0].source_id == toss and by_index[3].source_id == toss
+		and by_index[0].plus_id == toss_plus.id and by_index[0].owner == "warden"
+		and by_index[0].display_name == "Shield Toss" and by_index[0].cost == 1
+		and by_index[0].plus_cost == 1 and by_index[0].effects == toss_def.effects
+		and by_index[0].plus_effects == toss_plus.effects
+		and by_index[0].plus_effects.get("bonus_damage") == 3, "Shield Toss choice metadata")
+	_check(by_index[2].source_id == casing and by_index[2].plus_id == casing_plus.id
+		and by_index[2].owner == "tinker" and by_index[2].display_name == "Brass Casing"
+		and by_index[2].effects == {"damage": 4, "combat_scrap_gain": 1}
+		and by_index[2].plus_effects == {"damage": 6, "combat_scrap_gain": 1},
+		"Brass Casing choice metadata")
+	_check(options == RunRestCardUpgrade.list_authored_choices(deck, {}, 1).choices,
+		"visit options equal the canonical projection")
+	# Invalid indices and forged/stale snapshots leave the visit open.
+	var before := v.read_state()
+	var forged := s.duplicate(true)
+	forged.deck[3] = toss_plus.id
+	_check(not _upgrade(v, 5, s).ok and not _upgrade(v, -1, s).ok and not _upgrade(v, "3", s).ok
+		and not _upgrade(v, 3, forged).ok and v.read_state() == before and not v.is_consumed(),
+		"invalid index and forged snapshot change nothing")
+	var result := _upgrade(v, 3, s)
+	var expected: Array = s.deck.duplicate()
+	expected[3] = toss_plus.id
+	_check(result.get("ok", false) and result.deck == expected and result.deck[0] == toss,
+		"only the selected duplicate occurrence upgrades")
+	_check(result.remaining_scraps == 7 and result.charged_scraps == 0 and result.descriptors == {}
+		and result.next_stitch_id == 1 and result.consumed and result.source_snapshot == s,
+		"purchased-card upgrade is free and preserves the ledger")
+	var after := v.read_state()
+	_check(not _upgrade(v, 2, s).ok and not _stitch(v, 0, 2, s).ok and not _leave(v, s).ok
+		and v.read_state() == after and v.quote().choices.is_empty(),
+		"consumed visit rejects further upgrade and stitch")
+	# Already-plus printings are valid deck members but not upgradable.
+	var plus_deck := [toss_plus.id, casing_plus.id]
+	var pv := _make(plus_deck)
+	var ps := pv.read_state()
+	_check(pv.is_valid() and pv.upgrade_options().is_empty(), "plus printings are admitted but ineligible")
+	_check(not _upgrade(pv, 0, ps).ok and not _upgrade(pv, 1, ps).ok and not pv.is_consumed(),
+		"already-upgraded printings cannot upgrade again")
+	# Stitching still works across owners, costs 3, and fails when short of scraps.
+	var sv := _make([toss, casing, PRICK], 7)
+	var ss := sv.read_state()
+	var stitched := _stitch(sv, 0, 1, ss)
+	_check(stitched.get("ok", false) and stitched.remaining_scraps == 4, "Warden + Tinker stitch costs 3 scraps")
+	var poor := _make([toss, casing, PRICK], 2)
+	var poor_before := poor.read_state()
+	_check(not _stitch(poor, 0, 1, poor_before).ok and poor.read_state() == poor_before
+		and not poor.is_consumed(), "insufficient scraps stitch is refused")
+	# A stitched ledger beside an owned purchased base still offers only the base.
+	if stitched.get("ok", false):
+		var ledger_deck: Array = stitched.deck.duplicate()
+		ledger_deck.append(toss)
+		var lv := _make(ledger_deck, stitched.remaining_scraps, stitched.descriptors, stitched.next_stitch_id)
+		var ls := lv.read_state()
+		_check(lv.is_valid(), "stitched ledger plus purchased base is valid")
+		var offered: Array = []
+		for option in lv.upgrade_options():
+			offered.append(option.source_id)
+		var stitched_id: String = String(stitched.descriptors.keys()[0])
+		_check(offered.has(toss) and not offered.has(stitched_id),
+			"purchased base offered, stitched card never")
+		var lres := _upgrade(lv, ledger_deck.size() - 1, ls)
+		_check(lres.get("ok", false) and lres.deck[lres.deck.size() - 1] == toss_plus.id
+			and lres.descriptors == stitched.descriptors and lres.remaining_scraps == 4,
+			"ledger upgrade replaces only the bought base")
 
 
 func _test_stitches() -> void:
