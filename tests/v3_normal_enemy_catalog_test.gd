@@ -50,6 +50,7 @@ func _initialize() -> void:
 	_test_flying_normal_named_strikes()
 	_test_mantis_named_strikes()
 	_test_harrier_named_strikes()
+	_test_doll_named_strikes()
 	if failures.is_empty():
 		print("v3_normal_enemy_catalog_test: PASS (", checks, " checks)")
 	else:
@@ -2599,7 +2600,9 @@ func _crusher_harrier_doll_expected() -> Dictionary:
 			"art_path": "res://assets/paper/enemies/thistle_patch_doll.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "block", "amount": 8, "weight": 2},
-				{"type": "attack", "amount": 6, "weight": 3}]}}
+				{"type": "attack", "amount": 6, "weight": 3},
+				{"type": "attack", "amount": 7, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 6, "hits": 2, "move": "attack3", "weight": 1}]}}
 	}
 
 ## Per-ID catalog validation for the appended batch: unique occurrence, exact
@@ -2762,7 +2765,11 @@ func _test_crusher_harrier_doll_seeded_announcements() -> void:
 		{"id": "thistle_patch_doll",
 			"action": {"type": "block", "amount": 8, "weight": 1}},
 		{"id": "thistle_patch_doll",
-			"action": {"type": "attack", "amount": 6, "weight": 1}}]
+			"action": {"type": "attack", "amount": 6, "weight": 1}},
+		{"id": "thistle_patch_doll",
+			"action": {"type": "attack", "amount": 7, "move": "attack2", "weight": 1}},
+		{"id": "thistle_patch_doll",
+			"action": {"type": "attack", "amount": 6, "hits": 2, "move": "attack3", "weight": 1}}]
 	for case in forced:
 		var record := _find(parsed, String(case.id))
 		_check(not record.is_empty(), "forced alternative source present: " + String(case.id))
@@ -2782,7 +2789,9 @@ func _test_crusher_harrier_doll_seeded_announcements() -> void:
 			continue
 		var announced: Dictionary = forced_scheduler.get_intents()[0]
 		_check(announced.get("type") == case.action.type
-			and int(announced.get("amount", -1)) == int(case.action.amount),
+			and int(announced.get("amount", -1)) == int(case.action.amount)
+			and announced.get("move", "") == case.action.get("move", "")
+			and announced.get("hits", 1) == case.action.get("hits", 1),
 			"forced alternative announces its authored effect: %s %s"
 				% [case.id, str(case.action)])
 		if case.action.has("status"):
@@ -5224,6 +5233,148 @@ func _test_harrier_named_strikes() -> void:
 					and bound.scheduler.get_intents() == before[3], "Harrier attacks preserve peers, source, cache and RNG")
 				traces.append([bound.intents, receipt, witness.hits, party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state])
 			_check(traces.size() == 2 and traces[0] == traces[1], "same-seed Harrier phase and RNG replay exactly")
+
+
+func _test_doll_named_strikes() -> void:
+	var id := "thistle_patch_doll"
+	var record := _find(_load_parsed(), id)
+	_check(not record.is_empty() and _norm(record) == _crusher_harrier_doll_expected()[id],
+		"Doll strictly parses with its exact original fields and ordered four actions")
+	if record.is_empty() or record.intent.actions.size() != 4:
+		return
+	var reached: Array = []
+	for seed_value in range(128):
+		var bound := _bind_records(seed_value, [record])
+		_check(bound.ok and bound.scheduler.is_bound(), "complete weighted Doll record binds")
+		if not bound.ok:
+			break
+		var move: String = bound.scheduler.get_intents()[0].get("move", "")
+		if move not in ["attack2", "attack3"] or reached.has(move):
+			continue
+		var replay := _bind_records(seed_value, [record])
+		_check(replay.ok and replay.scheduler.get_intents() == bound.scheduler.get_intents()
+			and replay.rng.state == bound.rng.state, "complete Doll weighted choice and RNG replay")
+		var traces: Array = []
+		for battle in [bound, replay]:
+			_check(battle.party.is_valid() and battle.enemies.is_valid()
+				and battle.party.gain_block(1, 4), "complete Doll choice faces actual front Block")
+			var before: Array = [battle.party.get_heroes(), battle.enemies.get_enemies(), battle.rng.state]
+			var actions: Array = battle.scheduler.get_intents()
+			var input: Array = actions.duplicate(true)
+			var result := CombatEnemyPhase.new().execute_phase(battle.party, battle.enemies, actions, null, true)
+			_check(result.get("ok") == true and result.get("events", []).size() == (1 if move == "attack2" else 2)
+				and battle.party.get_hero(1).hp == (37 if move == "attack2" else 38)
+				and battle.party.get_hero(1).block == 0
+				and battle.party.get_hero(2) == before[0][1] and battle.party.get_hero(3) == before[0][2]
+				and battle.enemies.get_enemies() == before[1] and battle.rng.state == before[2] and actions == input,
+				"complete weighted Doll selection executes real damage without collateral, input or RNG mutation")
+			traces.append([result, battle.party.get_heroes(), battle.enemies.get_enemies(), battle.rng.state])
+		_check(traces[0] == traces[1], "complete weighted Doll phase replays exactly")
+		reached.append(move)
+		if reached.size() == 2:
+			break
+	_check(reached.has("attack2") and reached.has("attack3"), "both named moves are reachable in the full weighted record")
+	# Keep the original six-damage strike beside the two named alternatives.
+	for index in [1, 2, 3]:
+		var raw: Dictionary = record.intent.actions[index]
+		var amount: int = raw.amount
+		var move: String = raw.get("move", "")
+		var hit_count := 2 if move == "attack3" else 1
+		for block in [0, 2, 4, 12]:
+			var traces: Array = []
+			for replay in range(2):
+				var party := _party()
+				_check(party.is_valid() and party.get_hero(1).hp == 40
+					and party.get_hero(2).hp > 0 and party.get_hero(3).hp > 0
+					and party.gain_block(1, block), "Doll faces a real blocked front and living peers")
+				var bound := _force_normal_alternative(record, raw, party)
+				_check(not bound.is_empty(), "genuine Doll alternative binds through scheduler")
+				if bound.is_empty():
+					continue
+				var expected: Dictionary = CombatEnemyIntents.weighted_action(raw).action.duplicate(true)
+				expected.merge({"enemy_position": 1, "target_position": 1})
+				_check(bound.scheduler.is_bound() and bound.intents == [expected],
+					"Doll announcement retains exact move, hits, amount and front target")
+				var before := [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()]
+				if not move.is_empty():
+					var fallback := "res://assets/paper/enemies/thistle_patch_doll_attack.png"
+					for catalog in [LiveMovePoseCatalog.new(), MissingCrusherPose.new()]:
+						var pose: Dictionary = catalog.lookup_enemy(id, expected, fallback)
+						_check(pose.get("name") == ("Burr Throw" if move == "attack2" else "Thorn Punch")
+							and pose.get("pose") == move
+							and pose.get("covers") == ["attack"]
+							and pose.get("named_art") == "res://assets/paper/enemies/thistle_patch_doll_%s.png" % move
+							and pose.get("art") == (pose.get("named_art") if pose.get("art_available") else fallback),
+							"Doll manifest resolves authored name, pose path and normal fallback")
+						if catalog is MissingCrusherPose:
+							_check(pose.get("fallback_used") == true and pose.get("art") == fallback,
+								"forced missing Doll texture uses established fallback")
+				for field in ["move", "hits", "amount", "target_position"]:
+					for value in (["", "attack5", 2, null] if field == "move" else
+							[0, 3, "2", null] if field == "hits" else
+							[0, 4, "1", null] if field == "target_position" else [-1, "6", 1.5, null, 99]):
+						# The isolated legacy strike retains its independent plain-amount contract.
+						if field == "amount" and value is int and value == 99 and move.is_empty():
+							continue
+						var malformed := raw.duplicate(true)
+						malformed[field] = value
+						if field != "amount" or not value is int or value != 99:
+							_check(CombatEnemyIntents.weighted_action(malformed).is_empty(),
+								"malformed Doll move/hits/amount/target fails authored validation")
+						var bad := expected.duplicate(true)
+						bad[field] = value
+						var input := [bad.duplicate(true)]
+						_check(CombatEnemyPhase.new().execute_phase(party, bound.enemies, [bad], null, true)
+							== {"ok": false, "events": []} and [bad] == input
+							and [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()] == before,
+							"malformed or forged Doll request rejects without state or RNG spend")
+				if not move.is_empty():
+					var forged_move := expected.duplicate(true)
+					forged_move.move = "attack3" if move == "attack2" else "attack2"
+					var forged_hits := expected.duplicate(true)
+					if forged_hits.has("hits"):
+						forged_hits.erase("hits")
+					else:
+						forged_hits.hits = 2
+					var missing_move := expected.duplicate(true)
+					missing_move.erase("move")
+					var forged_amount := expected.duplicate(true)
+					forged_amount.amount = amount + 1
+					for forged in [forged_move, forged_hits, missing_move, forged_amount]:
+						var body: Dictionary = forged.duplicate(true)
+						body.erase("enemy_position")
+						_check(CombatEnemyIntents.valid_action(body)
+							and CombatEnemyPhase.new().execute_phase(party, bound.enemies, [forged], null, true)
+							== {"ok": false, "events": []}, "well-shaped forged Doll move/hits/amount fails source authentication")
+				_check([party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()] == before,
+					"Doll previews and rejected requests spend nothing")
+				var witness := WraithHitWitness.new()
+				var receipt := CombatEnemyPhase.new().execute_phase(party, bound.enemies, bound.intents, witness, true)
+				var events: Array = []
+				var packets: Array = []
+				var hp := 40
+				var remaining: int = block
+				for hit in range(hit_count):
+					var packet: int = 3 if hit_count == 2 else amount
+					var next_hp := hp - maxi(0, packet - remaining)
+					var next_block := maxi(0, remaining - packet)
+					packets.append([packet, hp, remaining, next_hp, next_block])
+					hp = next_hp
+					remaining = next_block
+					var event := {"type": "attack", "enemy_position": 1, "target_position": 1,
+						"applied": true, "actual_target_position": 1, "redirected": false,
+						"retaliation_damage": 0, "retaliatory_damage": 0}
+					if not move.is_empty():
+						event.move = move
+					events.append(event)
+				_check(receipt == {"ok": true, "events": events} and witness.hits == packets,
+					"Doll resolves single 7, ordered 3+3 or original 6, spending real Block before HP")
+				_check(party.get_hero(1).hp == hp and party.get_hero(1).block == remaining
+					and party.get_hero(2) == before[0][1] and party.get_hero(3) == before[0][2]
+					and bound.enemies.get_enemies() == before[1] and bound.rng.state == before[2]
+					and bound.scheduler.get_intents() == before[3], "Doll attacks preserve peers, source, cache and RNG")
+				traces.append([bound.intents, receipt, witness.hits, party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state])
+			_check(traces.size() == 2 and traces[0] == traces[1], "same-seed Doll phase and RNG replay exactly")
 
 
 class WraithHitWitness extends CombatWardenGuardReactions:
