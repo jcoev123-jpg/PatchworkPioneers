@@ -14,9 +14,16 @@ extends RefCounted
 ## persisted through CombatEnemies.apply_statuses, so no new status system, lifecycle or time
 ## boundary is introduced here.
 ##
-## This is a callable combat rules slice only. It does not admit these IDs into a live party deck,
-## the reward pool, the mounted hand or any app flow; that wiring is a later task. It also never
-## touches the run RNG: no draw, shuffle or target selection happens here.
+## The chosen foe's authentic Thorns and Enrage metadata is read from the same roster snapshot and
+## validated before any paid change. One confirmed positive-damage hit then runs the shared
+## CombatEnemyKeywordRules reactions exactly once each, against the genuine Warden slot: the Enrage
+## commit must land before the Weak write (it compares the pre-hit and current enemy records), and
+## Thorns retaliates through the Warden's own Block before HP. A plain foe, an enemy miss or a
+## forged receipt never triggers either reaction.
+##
+## This scene-free service is the paid transaction behind the mounted hand's helmet cards (the live
+## presenter calls it with the real deck, party and enemy roster). It never touches the run RNG:
+## no draw, shuffle or target selection happens here.
 
 const OWNER := "warden"
 const TARGET_KIND := "enemy_single"
@@ -65,17 +72,28 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if not plan.get("ok", false):
 		return _failure()
 	# Every operation below is guaranteed by the complete preflight above: the turn is active,
-	# the held ID exists, the cost is affordable, the target is a living legal slot and the Weak
-	# addition is accepted by the enemy roster. Keep the defensive returns so an unexpected model
-	# change still fails closed.
+	# the held ID exists, the cost is affordable, the target is a living legal slot with valid
+	# keyword metadata and the Weak addition is accepted by the enemy roster. Keep the defensive
+	# returns so an unexpected model change still fails closed.
 	if not deck.try_spend_energy(plan["cost"]):
 		return _failure()
 	if not deck.discard_played(card_id):
 		return _failure()
+	# The foe's authentic full pre-hit record was captured during preflight, BEFORE any damage.
+	var pre_hit_enemy: Dictionary = plan["pre_hit_enemy"]
 	var event: Dictionary = _damage.resolve_vs_enemy(enemies, plan["target_position"],
 		plan["base_damage"], plan["attacker_statuses"], plan["defender_statuses"])
 	if not event.get("ok", false):
 		return _failure()
+	var keywords := CombatEnemyKeywordRules.new()
+	# Enrage compares the pre-hit and current enemy records, so it must be committed after the
+	# confirmed hit and BEFORE the Weak status write changes the same slot. Thorns retaliates once
+	# against the real Warden position through his own Block; both ignore plain, missed and
+	# zero-damage hits inside the shared rules.
+	var enrage: Dictionary = keywords.commit_enrage_after_hit(enemies,
+		plan["target_position"], pre_hit_enemy, event)
+	var thorns: Dictionary = keywords.resolve_thorns_retaliation(party,
+		plan["owner_position"], pre_hit_enemy, event)
 	# A confirmed hit Weakens the target even when its Block absorbed the whole strike, and even
 	# when the strike was lethal: slain slots stay valid status recipients.
 	if not enemies.apply_statuses({plan["target_position"]: {"weak": plan["weak"]}}):
@@ -92,6 +110,8 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"block_absorbed": event["block_absorbed"],
 		"hp_loss": event["hp_loss"],
 		"weak": plan["weak"],
+		"thorns": thorns,
+		"enrage": enrage,
 		"target_statuses": target.get("statuses", {}).duplicate(true),
 	}
 
@@ -177,7 +197,13 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	# The printed TO line is 1-2 and never widens to a third slot, even when one exists.
 	if not TO_POSITIONS.has(target_position) or target_position > enemy_records.size():
 		return _failure()
-	if enemy_records[target_position - 1]["hp"] == 0:
+	var pre_hit_enemy: Dictionary = enemy_records[target_position - 1]
+	if pre_hit_enemy["hp"] == 0:
+		return _failure()
+	# Thorns N and Enrage (+n stacks, 0..3) are authoritative enemy metadata, not hero status
+	# counters. Read and validate the chosen foe's fields here, before any spend, discard, damage,
+	# status or keyword reaction; the captured record is the real pre-hit snapshot.
+	if not _valid_keyword_metadata(pre_hit_enemy):
 		return _failure()
 
 	# Validate both supplied snapshots and preflight the Weak addition here, before any spend,
@@ -199,6 +225,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"weak": weak,
 		"attacker_statuses": attacker_statuses.duplicate(true),
 		"defender_statuses": defender_statuses.duplicate(true),
+		"pre_hit_enemy": pre_hit_enemy,
 	}
 
 
@@ -242,5 +269,34 @@ func _valid_statuses(statuses: Dictionary) -> bool:
 	return true
 
 
+## Thorns N is a nonnegative int and Enrage is a literal boolean with 0..3 integer stacks,
+## exactly as CombatEnemyKeywordRules reads them. An absent key is a plain foe; any other shape
+## is malformed metadata that must refuse the play before payment or faction damage.
+func _valid_keyword_metadata(enemy: Dictionary) -> bool:
+	if enemy.has("thorns"):
+		var thorns = enemy["thorns"]
+		if not thorns is int or thorns < 0:
+			return false
+	if enemy.has("enrage"):
+		var enrage = enemy["enrage"]
+		if not enrage is bool:
+			return false
+	if enemy.has("enrage_stacks"):
+		var stacks = enemy["enrage_stacks"]
+		if not stacks is int or stacks < 0 \
+				or stacks > CombatEnemyKeywordRules.ENRAGE_MAX_STACKS:
+			return false
+	return true
+
+
 func _failure() -> Dictionary:
-	return {"ok": false, "damage": 0, "block_absorbed": 0, "hp_loss": 0, "weak": 0}
+	return {
+		"ok": false,
+		"damage": 0,
+		"block_absorbed": 0,
+		"hp_loss": 0,
+		"weak": 0,
+		"thorns": {"ok": false, "applied": false, "thorns": 0,
+			"block_absorbed": 0, "hp_loss": 0},
+		"enrage": {"ok": false, "applied": false, "enrage_stacks": 0, "attack_bonus": 0},
+	}
