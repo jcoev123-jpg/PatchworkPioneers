@@ -891,6 +891,94 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_mourning_gramophone",
+      "title": "The Mourning Gramophone",
+      "description": "A round oxblood gramophone doll cranks a brass horn broader than its body, coughing black ribbon notes onto a candlelit cobblestone lane.",
+      "choices": [
+        {
+          "id": "mend_silent_horn",
+          "text": "Mend the silent horn (spend 2 scraps; gain 31 gold)",
+          "outcome": { "gold": 31, "scraps": -2 }
+        },
+        {
+          "id": "buy_whisper_record",
+          "text": "Buy a whisper record (spend 17 gold; gain 3 scraps)",
+          "outcome": { "gold": -17, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the last black ribbon note fade",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_candlewick_airship",
+      "title": "The Candlewick Airship",
+      "description": "A squat plum-cloth balloon captain steadies an enormous patched airship tethered by glowing candlewicks above a fog-bound roadside mast.",
+      "choices": [
+        {
+          "id": "collect_mooring_knots",
+          "text": "Gather loose mooring knots (gain 2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2 }
+        },
+        {
+          "id": "buy_waxed_balloontwine",
+          "text": "Buy waxed balloon twine (spend 21 gold; gain 4 scraps)",
+          "outcome": { "gold": -21, "scraps": 4 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the candlewick airship drift in the fog",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_iron_glove_well",
+      "title": "The Iron-Glove Well",
+      "description": "An enormous black stitched glove rises from a moss-dark well, each silver-thimbled finger holding a tiny amber lamp.",
+      "choices": [
+        {
+          "id": "stitch_glove_cuff",
+          "text": "Re-sew the heavy glove cuff (spend 1 scrap; gain 20 gold)",
+          "outcome": { "gold": 20, "scraps": -1 }
+        },
+        {
+          "id": "buy_thimble_lamps",
+          "text": "Buy two thimble lamps (spend 13 gold; gain 2 scraps)",
+          "outcome": { "gold": -13, "scraps": 2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the giant glove reaching into darkness",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_mothglass_orrery",
+      "title": "The Mothglass Orrery",
+      "description": "A button-eyed midnight-blue astrologer turns a towering brass orrery whose quilted moth-wing moons glow in a narrow candlelit alcove.",
+      "choices": [
+        {
+          "id": "oil_silver_orbits",
+          "text": "Oil the silver orbit wheels (spend 2 scraps; gain 33 gold)",
+          "outcome": { "gold": 33, "scraps": -2 }
+        },
+        {
+          "id": "buy_moonwheel_thread",
+          "text": "Buy moonwheel thread (spend 18 gold; gain 3 scraps)",
+          "outcome": { "gold": -18, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the moth-wing moons turn alone",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }
