@@ -1,9 +1,11 @@
 extends SceneTree
-## V3-1 Scarecrow catalog contract plus scene-free paid Re-Stuff, pitchfork and sack-face Fear
-## resolution. The pitchfork suites cover Fork Jab and Pitchfork Prick (base and "+") and the Fear
-## suites cover Sack Glare and Sack Grin (base and "+") as callable rules-layer transactions only:
-## they do not prove mounted hand/reward integration, live combat availability or any later
-## dispatcher/UI wiring, and no live enemy-intent suppression is claimed.
+## V3-1 Scarecrow catalog contract plus scene-free paid Re-Stuff, pitchfork, sack-face Fear,
+## Straw Wrap and Pitchfork Hook resolution. The pitchfork suites cover Fork Jab and Pitchfork
+## Prick (base and "+"); the Fear suites cover Sack Glare and Sack Grin (base and "+"); the Hook
+## suites cover the uncommon pool Pitchfork Hook pair's paid strike-plus-forward-pull proposal.
+## All are callable rules-layer transactions only: they do not prove mounted hand/reward
+## integration, live combat availability or any later dispatcher/UI wiring, and no live
+## enemy-intent suppression or true enemy-roster movement is claimed.
 
 const ScriptClass = preload("res://data/cards/scarecrow_pool_cards.gd")
 
@@ -42,6 +44,12 @@ func _initialize() -> void:
 	_test_straw_wrap_catalog_preserved()
 	_test_straw_wrap_once_only_payment()
 	_test_straw_wrap_seeded_replay()
+	_test_hook_authentic_records()
+	_test_hook_paid_strikes()
+	_test_hook_block_and_status_math()
+	_test_hook_lethal_keeps_corpse()
+	_test_hook_refusals()
+	_test_hook_seeded_replay()
 	if failures.is_empty():
 		print("v3_scarecrow_pool_cards_test: PASS (", checks, " checks)")
 	else:
@@ -1936,5 +1944,700 @@ func _straw_wrap_replay(seed_value: int) -> Dictionary:
 		"hand": deck.hand.duplicate(), "draw": deck.draw_pile.duplicate(),
 		"discard": deck.discard_pile.duplicate(), "heroes": party.get_heroes(),
 		"results": results}
+
+
+# --- Scarecrow Pitchfork Hook: paid strike plus one-slot forward pull -------------------------
+## Authentic printings, stated independently of the resolver: both are uncommon Scarecrow reward
+## pool cards with two energy, hero seats 1-2, a single enemy target in slot 2-3, one forward pull
+## and damage 7 (base) / 10 (+). The complete expected records are compared field by field below.
+
+const HOOK_IDS := ["scarecrow_pitchfork_hook", "scarecrow_pitchfork_hook_plus"]
+
+const HOOK_CARDS := {
+	"scarecrow_pitchfork_hook": {
+		"cost": 2, "damage": 7,
+		"record": {
+			"id": "scarecrow_pitchfork_hook",
+			"display_name": "Pitchfork Hook",
+			"owner": "scarecrow",
+			"cost": 2,
+			"from_positions": [1, 2],
+			"target_kind": "enemy_single",
+			"to_positions": [2, 3],
+			"effects": {"damage": 7, "pull_forward": 1},
+			"illustration_path": "res://assets/paper/cards/scarecrow_pitchfork_hook.png",
+			"starting_copies": 0,
+			"rarity": "uncommon",
+			"reward_eligible": true,
+			"upgrade_id": "scarecrow_pitchfork_hook_plus",
+		},
+	},
+	"scarecrow_pitchfork_hook_plus": {
+		"cost": 2, "damage": 10,
+		"record": {
+			"id": "scarecrow_pitchfork_hook_plus",
+			"display_name": "Pitchfork Hook+",
+			"owner": "scarecrow",
+			"cost": 2,
+			"from_positions": [1, 2],
+			"target_kind": "enemy_single",
+			"to_positions": [2, 3],
+			"effects": {"damage": 10, "pull_forward": 1},
+			"illustration_path": "res://assets/paper/cards/scarecrow_pitchfork_hook.png",
+			"starting_copies": 0,
+			"rarity": "uncommon",
+			"reward_eligible": false,
+			"upgrade_of": "scarecrow_pitchfork_hook",
+		},
+	},
+}
+
+
+## AC1: both Hook printings are authenticated from the Scarecrow reward pool with their exact
+## complete records, reciprocal one-way links and only the two IDs accepted. The other seven
+## authored reward bases and named foreign starters remain intact (named presence only: no catalog
+## total, full ordered list or ordinal assumption).
+func _test_hook_authentic_records() -> void:
+	var pool = ScriptClass.new()
+	var service := CombatScarecrowPitchforkHookCards.new()
+	for card_id: String in HOOK_IDS:
+		var spec: Dictionary = HOOK_CARDS[card_id]
+		var record: Dictionary = pool.get_definition(card_id)
+		_check(not record.is_empty(), card_id + " has an authored Scarecrow pool record")
+		_check(record == spec["record"], card_id + " is the exact complete authored record")
+		for field: String in spec["record"]:
+			_check(record.get(field) == spec["record"][field],
+				card_id + " keeps the authored " + field)
+		_check(record.size() == (spec["record"] as Dictionary).size(),
+			card_id + " carries exactly the authored field set")
+		_check(record.get("owner") == "scarecrow", card_id + " is Scarecrow-owned")
+		_check(record.get("cost") == 2, card_id + " prints two energy")
+		_check(record.get("from_positions") == [1, 2], card_id + " is played from hero seat 1-2")
+		_check(record.get("target_kind") == "enemy_single", card_id + " hooks one enemy")
+		_check(record.get("to_positions") == [2, 3], card_id + " reaches enemy slot 2-3 only")
+		_check(record.get("effects") == {"damage": spec["damage"], "pull_forward": 1},
+			card_id + " prints exactly its damage plus one forward pull")
+		_check(record.get("starting_copies") == 0, card_id + " is never a starter copy")
+		_check(record.get("rarity") == "uncommon", card_id + " stays uncommon")
+		_check(record.get("reward_eligible") == (card_id == "scarecrow_pitchfork_hook"),
+			card_id + " keeps base-only reward eligibility")
+		_check(service.is_supported_card(card_id), card_id + ": service authenticates the ID")
+		_check(CombatScarecrowPitchforkHookCards.is_authentic_definition(record, card_id),
+			card_id + ": the authored record passes exact authentication")
+		_check(CombatScarecrowPitchforkHookCards.hook_definition(card_id) == record,
+			card_id + ": resolves to its exact detached pool record")
+	_check(pool.get_upgrade_id("scarecrow_pitchfork_hook") == "scarecrow_pitchfork_hook_plus"
+		and pool.get_upgrade_id("scarecrow_pitchfork_hook_plus") == "",
+		"Pitchfork Hook keeps its one-way pool upgrade link")
+	# Detached: a mutated resolution cannot poison the next one.
+	var sample: Dictionary = CombatScarecrowPitchforkHookCards.hook_definition(
+		"scarecrow_pitchfork_hook")
+	_check(not sample.is_empty(), "hook resolution fixture loaded")
+	if not sample.is_empty():
+		sample["effects"]["damage"] = 99
+		sample["effects"]["pull_forward"] = 3
+		sample["cost"] = 0
+		sample["from_positions"].clear()
+		_check(CombatScarecrowPitchforkHookCards.hook_definition("scarecrow_pitchfork_hook")
+			== pool.get_definition("scarecrow_pitchfork_hook"),
+			"a mutated resolution cannot rewrite the next one")
+	# Every other Scarecrow pool printing, every foreign card and every forged spelling is refused.
+	for other: Variant in ["scarecrow_pitchfork_prick", "scarecrow_pitchfork_prick_plus",
+			"scarecrow_crow_peck", "scarecrow_crow_peck_plus", "scarecrow_sack_grin",
+			"scarecrow_sack_grin_plus", "scarecrow_straw_wrap", "scarecrow_straw_wrap_plus",
+			"scarecrow_crow_flock", "scarecrow_crow_flock_plus", "scarecrow_re_stuff",
+			"scarecrow_re_stuff_plus", "scarecrow_harvest_fright",
+			"scarecrow_harvest_fright_plus", "warden_strike", "seamstress_prick",
+			"tinker_pop_shot", "scarecrow_pitchfork_hook+", "scarecrow_pitchfork_hook_plus_plus",
+			"pitchfork_hook", " scarecrow_pitchfork_hook", "SCARECROW_PITCHFORK_HOOK", "",
+			StringName("scarecrow_pitchfork_hook"), null, 0, 3.5, false, [], {}]:
+		_check(not service.is_supported_card(other), str(other) + ": not a supported Hook printing")
+		_check(CombatScarecrowPitchforkHookCards.hook_definition(other).is_empty(),
+			str(other) + ": resolves no Hook definition")
+	# The eight authored Scarecrow reward bases and their "+" partners remain unchanged.
+	var cases: Dictionary = _cases()
+	for base_id: String in cases:
+		var expected: Dictionary = _expected_record(base_id, cases[base_id], false)
+		_check(pool.has_card(base_id), base_id + " remains an authored Scarecrow reward base")
+		_check(pool.get_definition(base_id) == expected, base_id + " record is unchanged")
+		_check(pool.has_card(base_id + "_plus"), base_id + "_plus remains authored")
+		_check(pool.get_upgrade_id(base_id) == base_id + "_plus",
+			base_id + " keeps its one-way upgrade link")
+	# Named foreign starters are still intact.
+	var starter := StarterCards.new()
+	for foreign_id: String in ["warden_strike", "warden_brace", "seamstress_prick",
+			"seamstress_mend", "tinker_pop_shot", "tinker_tune_up"]:
+		_check(not starter.get_definition(foreign_id).is_empty(),
+			foreign_id + " remains another hero's authored starter")
+
+
+## AC2: each printing is genuinely held in a real active shared deck, pays exactly two energy and
+## one held copy, lands its printed 7/10 through Block-before-HP on the detached target and
+## proposes moving that same surviving identity one slot forward. The untouched companion and the
+## fourth bystander keep every field; the party, input snapshot and seeded RNG stay unchanged.
+func _test_hook_paid_strikes() -> void:
+	var cases := 0
+	for card_id: String in HOOK_IDS:
+		var spec: Dictionary = HOOK_CARDS[card_id]
+		for seat: int in [1, 2]:
+			for target: int in [2, 3]:
+				cases += 1
+				var slots: Dictionary = _hook_slots(target)
+				var f := _hook_fixture(card_id, seat, 424242 + seat * 10 + target)
+				var before := _hook_state(f, slots)
+				_check(f["party"].get_hero(seat).get("id") == "scarecrow"
+					and f["party"].get_hero(seat).get("position") == seat,
+					card_id + ": the authoritative Scarecrow really sits in seat " + str(seat))
+				_check(f["deck"].hand.count(card_id) == 1 and f["deck"].energy == 3,
+					card_id + ": the real seeded hand really holds one copy at three energy")
+				var source: Dictionary = slots[target].duplicate(true)
+				var companion_slot: int = 3 if target == 2 else 1
+				var companion: Dictionary = slots[companion_slot].duplicate(true)
+				var bystander: Dictionary = slots[4].duplicate(true)
+				var result := CombatScarecrowPitchforkHookCards.new().play_held_hook(
+					f["deck"], f["party"], card_id, target, slots)
+				_check(result.get("ok") == true and result.get("reason") == "applied",
+					card_id + ": paid Hook from seat " + str(seat) + " onto slot " + str(target))
+				_check(result.get("card_id") == card_id and result.get("cost") == 2
+					and result.get("energy_spent") == 2,
+					card_id + ": receipt names the authentic card and its two energy")
+				_check(result.get("owner_position") == seat
+					and result.get("source_position") == target
+					and result.get("target_position") == target
+					and result.get("destination_position") == target - 1,
+					card_id + ": receipt names owner, source and one-slot-forward destination")
+				_check(result.get("base_damage") == spec["damage"]
+					and result.get("damage") == spec["damage"],
+					card_id + ": receipt prints base " + str(spec["damage"]) + " and no multiplier")
+				var expected_hp: int = int(source["hp"]) - int(spec["damage"])
+				_check(result.get("hp_before") == source["hp"]
+					and result.get("hp_after") == expected_hp
+					and result.get("hp_loss") == int(spec["damage"]),
+					card_id + ": receipt proves the exact printed HP loss")
+				_check(result.get("block_before") == source["block"]
+					and result.get("block_after") == source["block"]
+					and result.get("block_absorbed") == 0,
+					card_id + ": a Block-free target absorbs nothing")
+				_check(result.get("moved") == true and result.get("slain") == false,
+					card_id + ": the surviving foe is pulled forward")
+				var proposed: Dictionary = result.get("slots", {})
+				var keys: Array = proposed.keys()
+				keys.sort()
+				_check(keys == [1, 2, 3, 4], card_id + ": publishes exactly the four Hook slots")
+				var expected_moved: Dictionary = source.duplicate(true)
+				expected_moved["hp"] = expected_hp
+				expected_moved["position"] = target - 1
+				_check(proposed.get(target - 1) == expected_moved,
+					card_id + ": every field of the surviving foe moves one slot forward")
+				_check(proposed.get(target) == {}, card_id + ": the old slot is vacated")
+				_check(proposed.get(4) == bystander,
+					card_id + ": the fourth bystander keeps HP, Block, statuses and slot")
+				_check(proposed.get(companion_slot) == companion,
+					card_id + ": the untouched companion is preserved byte-for-byte")
+				_check(slots == before["slots"], card_id + ": the caller's snapshot is unchanged")
+				var after := _hook_state(f, slots)
+				_check(after["energy"] == 1 and after["state_energy"] == 1,
+					card_id + ": exactly two energy are spent")
+				_check(after["hand"].size() == before["hand"].size() - 1
+					and after["hand"].count(card_id) == 0,
+					card_id + ": exactly one held copy leaves the hand")
+				_check(after["discard"] == [card_id],
+					card_id + ": exactly one copy lands in the discard pile")
+				_check(after["draw"] == before["draw"] and after["exhausted"] == before["exhausted"]
+					and after["active"] == true,
+					card_id + ": no card is drawn or exhausted and the turn stays active")
+				_check(after["rng"] == before["rng"],
+					card_id + ": a fixed-target Hook never advances the seeded run RNG")
+				_check(after["heroes"] == before["heroes"],
+					card_id + ": the source party is unchanged")
+				var fresh := CombatScarecrowPitchforkHookCards.new().propose_hook(
+					card_id, f["party"], target, slots)
+				_check(fresh.get("ok") == true and fresh.get("slots") == proposed,
+					card_id + ": a legal replay has the same detached proposal")
+				# The receipt is detached: mutating it cannot rewrite the authorities.
+				result["slots"][target - 1]["hp"] = -999
+				result["damage"] = -999
+				_check(_hook_state(f, slots) == after,
+					card_id + ": the paid receipt is detached from every authority")
+	_check(cases == 8, "AC2 exercises both printings from both legal seats onto both legal targets")
+
+
+## AC2: explicit Block absorption plus Weak/Exposed/Tangled arithmetic through the real
+## CombatStatuses rules. Tangled adds its flat +2 after scaling and never blocks the hero-side
+## pull; no status is added, consumed or aged.
+func _test_hook_block_and_status_math() -> void:
+	for card_id: String in HOOK_IDS:
+		var damage: int = int(HOOK_CARDS[card_id]["damage"])
+		var block := 12
+		var slots := {2: _hook_foe("spool_stalker", 2, 20, 20, block, {"bleed": 1}),
+			4: _hook_bystander()}
+		var f := _hook_fixture(card_id, 2, 424300 + damage)
+		var result := CombatScarecrowPitchforkHookCards.new().play_held_hook(
+			f["deck"], f["party"], card_id, 2, slots)
+		_check(result.get("ok") == true, card_id + ": a fully blocked Hook still resolves")
+		_check(result.get("block_before") == block and result.get("block_after") == block - damage
+			and result.get("block_absorbed") == damage,
+			card_id + ": enemy Block absorbs the whole printed hit")
+		_check(result.get("hp_before") == 20 and result.get("hp_after") == 20
+			and result.get("hp_loss") == 0,
+			card_id + ": fully blocked damage leaves HP untouched")
+		_check(result.get("moved") == true, card_id + ": the blocked foe is still pulled forward")
+		var moved: Dictionary = result.get("slots", {}).get(1, {})
+		_check(moved.get("hp") == 20 and moved.get("block") == block - damage
+			and moved.get("position") == 1,
+			card_id + ": the moved copy carries the post-Block HP/Block and its new slot")
+		_check(moved.get("statuses") == {"bleed": 1},
+			card_id + ": the Hook adds, consumes and ages no status")
+		_check(_hook_state(f, slots)["energy"] == 1, card_id + ": the blocked hit still pays")
+	var cases: Array = [
+		["Weak takes 25 percent off", {"weak": 1}, {},
+			{"scarecrow_pitchfork_hook": 5, "scarecrow_pitchfork_hook_plus": 7}],
+		["Exposed adds 50 percent", {}, {"exposed": 1},
+			{"scarecrow_pitchfork_hook": 10, "scarecrow_pitchfork_hook_plus": 15}],
+		["Weak plus Exposed combines at nine eighths", {"weak": 2}, {"exposed": 3},
+			{"scarecrow_pitchfork_hook": 7, "scarecrow_pitchfork_hook_plus": 11}],
+		["positive-base Tangled adds two after scaling", {}, {"tangled": 2},
+			{"scarecrow_pitchfork_hook": 9, "scarecrow_pitchfork_hook_plus": 12}],
+		["Exposed then one Tangled +2", {}, {"exposed": 1, "tangled": 1},
+			{"scarecrow_pitchfork_hook": 12, "scarecrow_pitchfork_hook_plus": 17}],
+	]
+	for entry: Array in cases:
+		var label_base: String = entry[0]
+		var attacker: Dictionary = entry[1]
+		var defender: Dictionary = entry[2]
+		var printed: Dictionary = entry[3]
+		for card_id: String in HOOK_IDS:
+			var label: String = label_base + " (" + card_id + ")"
+			var slots := {2: _hook_foe("spool_stalker", 2, 60, 60, 0,
+				defender.duplicate(true)), 4: _hook_bystander()}
+			var f := _hook_fixture(card_id, 2, 424400 + int(printed[card_id]))
+			f["party"]._heroes[1]["statuses"] = attacker.duplicate(true)
+			var expected_damage: int = int(printed[card_id])
+			var result := CombatScarecrowPitchforkHookCards.new().play_held_hook(
+				f["deck"], f["party"], card_id, 2, slots)
+			_check(result.get("ok") == true, label + ": resolves")
+			_check(result.get("damage") == expected_damage,
+				label + ": adjusted damage is " + str(expected_damage))
+			_check(result.get("hp_after") == 60 - expected_damage,
+				label + ": the adjusted damage lands on HP")
+			_check(result.get("moved") == true,
+				label + ": a Tangled foe is still pulled by the hero side")
+			var moved: Dictionary = result.get("slots", {}).get(1, {})
+			_check(moved.get("statuses") == defender,
+				label + ": the defender's statuses are preserved, not consumed or aged")
+			_check(f["party"].get_hero(2).get("statuses") == attacker,
+				label + ": the attacker's statuses are not consumed or aged")
+			# Independent oracle through the same shared rules.
+			_check(CombatStatuses.new().adjusted_attack_damage(
+				int(HOOK_CARDS[card_id]["damage"]), attacker, defender) == expected_damage,
+				label + ": matches CombatStatuses' own projection")
+
+
+## AC2: a lethal Hook leaves the defeated actor in its original slot at 0 HP, creates no living
+## duplicate, drags no corpse forward and still pays its two energy and one held copy.
+func _test_hook_lethal_keeps_corpse() -> void:
+	for card_id: String in HOOK_IDS:
+		var damage: int = int(HOOK_CARDS[card_id]["damage"])
+		for hp: int in [damage, 1]:
+			var slots := {2: _hook_foe("spool_stalker", 2, hp, 18, 0, {"bleed": 2}),
+				3: _hook_foe("button_guard", 3, 12, 12, 4),
+				4: _hook_bystander()}
+			var f := _hook_fixture(card_id, 1, 424500 + hp)
+			var result := CombatScarecrowPitchforkHookCards.new().play_held_hook(
+				f["deck"], f["party"], card_id, 2, slots)
+			_check(result.get("ok") == true, card_id + ": a lethal Hook still resolves")
+			_check(result.get("slain") == true and result.get("moved") == false,
+				card_id + ": a lethal hit moves no corpse")
+			_check(result.get("hp_after") == 0 and result.get("hp_loss") == hp,
+				card_id + ": the defeated foe is left at zero HP")
+			var proposed: Dictionary = result.get("slots", {})
+			_check(proposed.get(2, {}).get("id") == "spool_stalker"
+				and proposed.get(2, {}).get("hp") == 0
+				and proposed.get(2, {}).get("position") == 2,
+				card_id + ": the corpse stays in its original slot")
+			_check(proposed.get(1) == {}, card_id + ": no living duplicate appears in slot 1")
+			var living := 0
+			var seen: Array[String] = []
+			for slot: int in [1, 2, 3, 4]:
+				var actor: Dictionary = proposed.get(slot, {})
+				if actor.is_empty():
+					continue
+				if int(actor.get("hp", 0)) > 0:
+					living += 1
+				_check(not seen.has(actor.get("id")), card_id + ": identity stays unique")
+				seen.append(actor.get("id"))
+			_check(living == 2, card_id + ": exactly the two living bystanders survive")
+			_check(proposed.get(3) == slots[3] and proposed.get(4) == slots[4],
+				card_id + ": the other actors are byte-for-byte unchanged")
+			var after := _hook_state(f, slots)
+			_check(after["energy"] == 1 and after["discard"] == [card_id],
+				card_id + ": the lethal hit still pays two energy and one copy")
+
+
+## AC3: every invalid request is refused before payment and leaves the deck, party, detached
+## snapshot and seeded RNG byte-for-byte unchanged.
+func _test_hook_refusals() -> void:
+	var service := CombatScarecrowPitchforkHookCards.new()
+	var base_id := "scarecrow_pitchfork_hook"
+	var slots_two := _hook_slots(2)
+	var slots_three := _hook_slots(3)
+
+	var f := _hook_fixture(base_id, 2, 424600)
+	for broken: Variant in [null, 5, 3.5, true, [], {}, StringName(base_id), "",
+			"scarecrow_pitchfork_hook_plus_plus", "SCARECROW_PITCHFORK_HOOK",
+			" scarecrow_pitchfork_hook", "scarecrow_pitchfork_hook ",
+			"scarecrow_pitchfork_prick", "scarecrow_re_stuff", "warden_strike",
+			"scarecrow_pitchfork_hook+"]:
+		_hook_refused(f, broken, 2, slots_two, "unsupported_card")
+
+	# Null authorities.
+	var heroes_before: Array = f["party"].get_heroes()
+	var slots_before: Dictionary = slots_two.duplicate(true)
+	_check(service.play_held_hook(null, f["party"], base_id, 2, slots_two)
+		.get("reason") == "invalid_request", "a null shared deck is refused")
+	_check(service.play_held_hook(f["deck"], null, base_id, 2, slots_two)
+		.get("reason") == "invalid_request", "a null party is refused")
+	_check(f["party"].get_heroes() == heroes_before and slots_two == slots_before,
+		"null authorities mutate nothing")
+
+	# Malformed shared deck state.
+	var no_state := _hook_fixture(base_id, 2, 424601)
+	no_state["deck"].combat_state = null
+	_hook_refused(no_state, base_id, 2, slots_two, "invalid_deck")
+	var no_rng := _hook_fixture(base_id, 2, 424602)
+	no_rng["deck"]._rng = null
+	_hook_refused(no_rng, base_id, 2, slots_two, "invalid_deck")
+
+	var inactive := _hook_fixture(base_id, 2, 424603)
+	_check(inactive["deck"].end_turn(), "inactive Hook fixture really ends the shared turn")
+	_hook_refused(inactive, base_id, 2, slots_two, "inactive_turn")
+
+	var unheld := _hook_fixture(base_id, 2, 424604)
+	_hook_refused(unheld, "scarecrow_pitchfork_hook_plus", 2, slots_two, "card_not_held")
+	var poor := _hook_fixture(base_id, 2, 424605)
+	_check(poor["deck"].try_spend_energy(3) and poor["deck"].energy == 0,
+		"insufficient-energy Hook fixture really spent the whole budget")
+	_hook_refused(poor, base_id, 2, slots_two, "insufficient_energy")
+
+	# Owner roster and seat.
+	var no_owner := _hook_fixture(base_id, 2, 424606)
+	no_owner["party"] = CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 25},
+	])
+	_check(no_owner["party"].is_valid() and no_owner["party"].get_hero(2).get("id") == "seamstress",
+		"missing-owner Hook fixture is a valid living party without a Scarecrow")
+	_hook_refused(no_owner, base_id, 2, slots_two, "owner_missing")
+	var torn := _hook_fixture(base_id, 1, 424607)
+	_check(torn["party"].apply_damage(1, 32) and torn["party"].is_downed(1),
+		"downed-owner Hook fixture really has zero HP on the Scarecrow")
+	_hook_refused(torn, base_id, 2, slots_two, "owner_downed")
+	var rear_seat := _hook_fixture(base_id, 3, 424608)
+	_check(rear_seat["party"].get_hero(3).get("id") == "scarecrow"
+		and not rear_seat["party"].is_downed(3),
+		"rear-seat Hook fixture is a valid, living Scarecrow outside the printed FROM seats")
+	_hook_refused(rear_seat, base_id, 2, slots_two, "owner_illegal_position")
+	var duplicate := _hook_fixture(base_id, 2, 424609)
+	duplicate["party"]._heroes[0]["id"] = "scarecrow"
+	_hook_refused(duplicate, base_id, 2, slots_two, "invalid_party")
+	var short_party := _hook_fixture(base_id, 2, 424610)
+	short_party["party"] = CombatParty.new([{"id": "scarecrow", "max_hp": 32},
+		{"id": "warden", "max_hp": 40}])
+	_hook_refused(short_party, base_id, 2, slots_two, "invalid_party")
+	var bad_hp := _hook_fixture(base_id, 2, 424611)
+	bad_hp["party"]._heroes[1]["hp"] = 99
+	_hook_refused(bad_hp, base_id, 2, slots_two, "invalid_party")
+	var bad_block := _hook_fixture(base_id, 2, 424612)
+	bad_block["party"]._heroes[0]["block"] = "0"
+	_hook_refused(bad_block, base_id, 2, slots_two, "invalid_party")
+	var bad_status := _hook_fixture(base_id, 2, 424613)
+	bad_status["party"]._heroes[0]["statuses"] = {"forged": 1}
+	_hook_refused(bad_status, base_id, 2, slots_two, "invalid_party")
+
+	# Target line, missing/slain targets and occupied destinations.
+	var target_f := _hook_fixture(base_id, 2, 424614)
+	for bad_target: Variant in [0, 5, -1, "2", 2.0, null, true, [2]]:
+		_hook_refused(target_f, base_id, bad_target, slots_two, "invalid_target")
+	_hook_refused(target_f, base_id, 1,
+		{1: _hook_foe("button_guard_front", 1, 12, 12), 4: _hook_bystander()},
+		"target_out_of_reach")
+	_hook_refused(target_f, base_id, 4, slots_two, "target_out_of_reach")
+	_hook_refused(target_f, base_id, 2, {3: _hook_foe("button_guard", 3)}, "target_missing")
+	_hook_refused(target_f, base_id, 2, {1: {}, 2: {}, 3: _hook_foe("button_guard", 3)},
+		"target_missing")
+	var slain_slots := _hook_slots(2)
+	slain_slots[2]["hp"] = 0
+	_hook_refused(target_f, base_id, 2, slain_slots, "target_downed")
+	var occupied_front := _hook_slots(2)
+	occupied_front[1] = _hook_foe("button_guard_front", 1, 12, 12, 3)
+	_hook_refused(target_f, base_id, 2, occupied_front, "destination_occupied")
+	var occupied_middle := _hook_slots(3)
+	occupied_middle[2] = _hook_foe("button_guard_middle", 2, 12, 12)
+	_hook_refused(target_f, base_id, 3, occupied_middle, "destination_occupied")
+
+	# Malformed detached snapshots: whole-snapshot validation, never coercion.
+	for malformed: Variant in [null, [], "slots", 7, true]:
+		_hook_refused(target_f, base_id, 2, malformed, "invalid_slots")
+	_hook_refused(target_f, base_id, 2,
+		{0: _hook_foe("x", 0), 2: _hook_foe("y", 2)}, "invalid_slots")
+	_hook_refused(target_f, base_id, 2,
+		{2: _hook_foe("y", 2), 5: _hook_foe("x", 5)}, "invalid_slots")
+	_hook_refused(target_f, base_id, 2, {"2": _hook_foe("y", 2)}, "invalid_slots")
+	_hook_refused(target_f, base_id, 2, {2: "spool_stalker"}, "invalid_slots")
+	_hook_refused(target_f, base_id, 2, {2: _hook_foe("y", 1)}, "invalid_slots")
+	var no_position := _hook_foe("y", 2)
+	no_position.erase("position")
+	_hook_refused(target_f, base_id, 2, {2: no_position}, "invalid_slots")
+	var float_hp := _hook_foe("y", 2)
+	float_hp["hp"] = 5.0
+	_hook_refused(target_f, base_id, 2, {2: float_hp}, "invalid_slots")
+	_hook_refused(target_f, base_id, 2, {2: _hook_foe("y", 2, 12, 9)}, "invalid_slots")
+	_hook_refused(target_f, base_id, 2, {2: _hook_foe("y", 2, 5, 9, "0")}, "invalid_slots")
+	_hook_refused(target_f, base_id, 2, {2: _hook_foe("", 2)}, "invalid_slots")
+	_hook_refused(target_f, base_id, 2,
+		{2: _hook_foe("twin", 2), 3: _hook_foe("twin", 3)}, "invalid_slots")
+	_hook_refused(target_f, base_id, 2,
+		{2: _hook_foe("y", 2, 5, 9, 0, "tangled")}, "invalid_slots")
+	_hook_refused(target_f, base_id, 2,
+		{2: _hook_foe("y", 2, 5, 9, 0, {"slow": 1})}, "invalid_slots")
+	_hook_refused(target_f, base_id, 2,
+		{2: _hook_foe("y", 2, 5, 9, 0, {"tangled": "1"})}, "invalid_slots")
+	_hook_refused(target_f, base_id, 2,
+		{2: _hook_foe("y", 2, 5, 9, 0, {"tangled": -1})}, "invalid_slots")
+	_hook_refused(target_f, base_id, 2,
+		{2: _hook_foe("y", 2, 5, 9, 0, {"dodge_next_attack": 2})}, "invalid_slots")
+	_hook_refused(target_f, base_id, 2,
+		{2: _hook_foe("y", 2), 4: _hook_foe("z", 3)}, "invalid_slots")
+
+	# Forged catalog records: rewritten numbers, extra keys, wrong owner, broken links and seams.
+	var pool = ScriptClass.new()
+	var authentic: Dictionary = pool.get_definition(base_id)
+	_check(CombatScarecrowPitchforkHookCards.is_authentic_definition(authentic, base_id),
+		"the unmutated Hook fixture record really authenticates")
+	var mutations: Array = [
+		["damage", func(record: Dictionary) -> void: record["effects"]["damage"] = 99],
+		["pull_two", func(record: Dictionary) -> void: record["effects"]["pull_forward"] = 2],
+		["extra_effect", func(record: Dictionary) -> void: record["effects"]["bleed"] = 1],
+		["owner", func(record: Dictionary) -> void: record["owner"] = "warden"],
+		["free_cost", func(record: Dictionary) -> void: record["cost"] = 0],
+		["float_cost", func(record: Dictionary) -> void: record["cost"] = 2.0],
+		["seats", func(record: Dictionary) -> void: record["from_positions"] = [1]],
+		["target_line", func(record: Dictionary) -> void: record["to_positions"] = [1, 2, 3]],
+		["name", func(record: Dictionary) -> void: record["display_name"] = "Pitchfork Hook+"],
+		["rarity", func(record: Dictionary) -> void: record["rarity"] = "rare"],
+		["reward", func(record: Dictionary) -> void: record["reward_eligible"] = false],
+		["unlink", func(record: Dictionary) -> void:
+			record["upgrade_id"] = "scarecrow_pitchfork_hook_plus_plus"],
+		["extra_key", func(record: Dictionary) -> void: record["action_kind"] = "hook"],
+		["missing_art", func(record: Dictionary) -> void: record.erase("illustration_path")],
+	]
+	for entry: Array in mutations:
+		var label: String = entry[0]
+		var mutate: Callable = entry[1]
+		var forged := _hook_fixture(base_id, 2, 424700)
+		var record: Dictionary = pool.get_definition(base_id)
+		mutate.call(record)
+		var lookup := func(_id: String) -> Dictionary: return record
+		_check(not CombatScarecrowPitchforkHookCards.is_authentic_definition(record, base_id),
+			"forged Hook record fails authentication: " + label)
+		_hook_refused(forged, base_id, 2, slots_two, "catalog_mismatch", lookup)
+	# A broken "+" link is refused in both directions.
+	var plus := _hook_fixture("scarecrow_pitchfork_hook_plus", 2, 424701)
+	var plus_record: Dictionary = pool.get_definition("scarecrow_pitchfork_hook_plus")
+	plus_record["upgrade_of"] = "scarecrow_pitchfork_prick"
+	_hook_refused(plus, "scarecrow_pitchfork_hook_plus", 2, slots_two, "catalog_mismatch",
+		func(_id: String) -> Dictionary: return plus_record)
+	var plus_with_id: Dictionary = pool.get_definition("scarecrow_pitchfork_hook_plus")
+	plus_with_id["upgrade_id"] = "scarecrow_pitchfork_hook_plus_plus"
+	_hook_refused(plus, "scarecrow_pitchfork_hook_plus", 2, slots_two, "catalog_mismatch",
+		func(_id: String) -> Dictionary: return plus_with_id)
+	# A seam that returns a foreign record, nothing, a non-record or is not callable.
+	_hook_refused(f, base_id, 2, slots_two, "catalog_mismatch",
+		func(_id: String) -> Dictionary: return pool.get_definition("scarecrow_pitchfork_prick"))
+	_hook_refused(f, base_id, 2, slots_two, "catalog_mismatch",
+		func(_id: String) -> Dictionary: return {})
+	_hook_refused(f, base_id, 2, slots_two, "catalog_mismatch",
+		func(_id: String) -> Variant: return null)
+	_hook_refused(f, base_id, 2, slots_two, "catalog_mismatch", {})
+	_hook_refused(f, base_id, 2, slots_two, "catalog_mismatch", Callable())
+	# The authenticated seam is honoured only for a genuinely exact record.
+	_check(CombatScarecrowPitchforkHookCards.new().propose_hook(base_id, f["party"], 2, slots_two,
+		func(_id: String) -> Dictionary: return pool.get_definition(base_id)).get("ok") == true,
+		"an exact authenticated seam proposes normally")
+	# A refused attempt never poisons the next authentic play on the same objects.
+	var recovery := _hook_fixture(base_id, 2, 424800)
+	var recovered := CombatScarecrowPitchforkHookCards.new().play_held_hook(
+		recovery["deck"], recovery["party"], base_id, 2, slots_two)
+	_check(recovered.get("ok") == true and recovery["deck"].energy == 1
+		and recovery["deck"].discard_pile == [base_id],
+		"a valid Hook still resolves after every refusal")
+
+
+## AC3: the same seed and request order produce identical state, a legal replay repeats the same
+## detached proposal, the paid replay is refused, and no Hook consumes a run RNG draw.
+func _test_hook_seeded_replay() -> void:
+	var first := _hook_replay(7331)
+	var second := _hook_replay(7331)
+	_check(not (first["results"] as Array).is_empty(), "seeded Hook replay ran real plays")
+	_check(first == second, "seeded Hook replay produces identical final state")
+	_check(first["rng"] == second["rng"], "seeded Hook replay consumes no run RNG draws")
+	_check((first["results"] as Array).size() == 2
+		and first["results"][0].get("ok") == true
+		and first["results"][1].get("ok") == false,
+		"seeded Hook replay keeps one paid Hook and the replay refusal")
+	_check(first["results"][1].get("reason") == "card_not_held",
+		"the replay is refused specifically for the missing held copy")
+	_check(first["hp"] == [11, 12] and first["energy"] == 1
+		and first["discard"] == ["scarecrow_pitchfork_hook"],
+		"seeded Hook replay lands the exact HP, spends two energy and discards one copy")
+	_check(first["slot_one"] == "spool_stalker" and first["slot_two"] == {},
+		"seeded Hook replay moves the surviving foe exactly one slot forward")
+	_check(first["bystander"] == _hook_bystander(),
+		"seeded Hook replay preserves the fourth bystander exactly")
+	# Two identical proposals are independent copies, and mutating one cannot poison the next.
+	var f := _hook_fixture("scarecrow_pitchfork_hook_plus", 2, 7332)
+	var slots := _hook_slots(2)
+	var slots_before: Dictionary = slots.duplicate(true)
+	var proposal_a := CombatScarecrowPitchforkHookCards.new().propose_hook(
+		"scarecrow_pitchfork_hook_plus", f["party"], 2, slots)
+	var proposal_b := CombatScarecrowPitchforkHookCards.new().propose_hook(
+		"scarecrow_pitchfork_hook_plus", f["party"], 2, slots)
+	_check(proposal_a.get("ok") == true and proposal_a == proposal_b,
+		"a legal replay has the same detached proposal")
+	_check(not is_same(proposal_a.get("slots"), proposal_b.get("slots")),
+		"each proposal is an independent map")
+	proposal_a["slots"][1]["hp"] = -999
+	proposal_a["slots"][1]["statuses"]["bleed"] = 99
+	proposal_a["damage"] = -999
+	var proposal_c := CombatScarecrowPitchforkHookCards.new().propose_hook(
+		"scarecrow_pitchfork_hook_plus", f["party"], 2, slots)
+	_check(proposal_c == proposal_b, "mutating one proposal cannot poison the next")
+	_check(slots == slots_before, "the caller's snapshot is still pristine")
+
+
+func _hook_replay(seed_value: int) -> Dictionary:
+	var f := _hook_fixture("scarecrow_pitchfork_hook", 2, seed_value)
+	var slots := _hook_slots(2)
+	var service := CombatScarecrowPitchforkHookCards.new()
+	var results: Array = []
+	results.append(service.play_held_hook(f["deck"], f["party"],
+		"scarecrow_pitchfork_hook", 2, slots))
+	results.append(service.play_held_hook(f["deck"], f["party"],
+		"scarecrow_pitchfork_hook", 2, slots))
+	var state := _hook_state(f, slots)
+	var published: Dictionary = results[0].get("slots", {})
+	return {"rng": state["rng"], "energy": state["energy"],
+		"hand": state["hand"], "draw": state["draw"], "discard": state["discard"],
+		"heroes": state["heroes"], "slots": published, "results": results,
+		"hp": [int(published.get(1, {}).get("hp", -1)),
+			int(published.get(3, {}).get("hp", -1))],
+		"slot_one": published.get(1, {}).get("id", ""),
+		"slot_two": published.get(2, {}),
+		"bystander": published.get(4, {})}
+
+
+## A real seeded five-card hand holding exactly one genuine copy of `card_id`, with the
+## authoritative Scarecrow seated where the test asks.
+func _hook_fixture(card_id: String, seat: int, seed_value: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var ids: Array[String] = [card_id]
+	for filler: String in PITCHFORK_FILLERS:
+		ids.append(filler)
+	var deck := CombatDeck.new(ids, rng)
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3
+		and deck.hand.size() == 5 and deck.hand.count(card_id) == 1,
+		card_id + ": real seeded five-card hand holding exactly one genuine copy")
+	return {"deck": deck, "party": _hook_party(seat), "rng": rng}
+
+
+func _hook_party(seat: int) -> CombatParty:
+	var ids: Array[String] = ["warden", "tinker", "seamstress"]
+	ids[seat - 1] = "scarecrow"
+	var definitions: Array = []
+	for hero_id: String in ids:
+		definitions.append({"id": hero_id, "max_hp": int(PITCHFORK_MAX_HP[hero_id])})
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid() and party.get_hero(seat).get("id") == "scarecrow"
+		and party.get_hero(seat).get("position") == seat,
+		"valid real party with the Scarecrow in seat " + str(seat))
+	return party
+
+
+## A canonical detached enemy record with extra authored fields, so any lost or rewritten field is
+## visible. `statuses` stays absent when null and is validated exactly when present.
+func _hook_foe(enemy_id: String, slot: int, hp: int = 18, max_hp: int = 18,
+		block: Variant = 0, statuses: Variant = null) -> Dictionary:
+	var record := {
+		"id": enemy_id,
+		"name": enemy_id.capitalize(),
+		"max_hp": max_hp,
+		"hp": hp,
+		"block": block,
+		"position": slot,
+		"art_path": "res://assets/paper/enemies/" + enemy_id + ".png",
+	}
+	if statuses != null:
+		record["statuses"] = statuses
+	return record
+
+
+## A distinctive living fourth bystander (post-summon band) with real HP, Block and statuses.
+func _hook_bystander() -> Dictionary:
+	return _hook_foe("hoard_beetle", 4, 21, 24, 7,
+		{"riposte": 2, "cannot_buff_next_turn": true})
+
+
+## Slot `target` holds the chosen foe with its immediate forward slot truly vacant; a companion
+## occupies the other printed enemy slot and slot 4 is the untouched bystander.
+func _hook_slots(target: int) -> Dictionary:
+	if target == 2:
+		return {2: _hook_foe("spool_stalker", 2, 18, 18, 0, {"bleed": 2}),
+			3: _hook_foe("button_guard", 3, 12, 12, 4, {"weak": 2}),
+			4: _hook_bystander()}
+	return {1: _hook_foe("button_guard", 1, 12, 12, 4, {"exposed": 1}),
+		3: _hook_foe("spool_stalker", 3, 18, 18, 0, {"bleed": 2}),
+		4: _hook_bystander()}
+
+
+## The full authoritative state used by the Hook suites: hand, both piles, energy, turn, heroes,
+## the caller's detached snapshot and the seeded run RNG. Guards the deliberately malformed deck
+## fixtures used by the refusal suite.
+func _hook_state(f: Dictionary, slots: Variant) -> Dictionary:
+	var deck: CombatDeck = f["deck"]
+	var party: CombatParty = f["party"]
+	var energy: Variant = null
+	var state_energy: Variant = null
+	var active: Variant = null
+	if deck.combat_state != null:
+		energy = deck.energy
+		state_energy = deck.combat_state.energy
+		active = deck.turn_active
+	var rng_state: Variant = null
+	if deck._rng != null:
+		rng_state = deck._rng.state
+	return {"hand": deck.hand.duplicate(), "draw": deck.draw_pile.duplicate(),
+		"discard": deck.discard_pile.duplicate(), "exhausted": deck.exhausted.duplicate(),
+		"energy": energy, "state_energy": state_energy, "active": active,
+		"heroes": party.get_heroes(),
+		"slots": slots.duplicate(true) if slots is Dictionary else slots,
+		"rng": rng_state}
+
+
+## Assert one Hook refusal: no receipt map and no payment, and the complete deck, party, detached
+## snapshot and seeded RNG are byte-for-byte unchanged.
+func _hook_refused(f: Dictionary, card_id: Variant, target: Variant, slots: Variant,
+		reason: String, lookup: Variant = null) -> void:
+	var before := _hook_state(f, slots)
+	var result := CombatScarecrowPitchforkHookCards.new().play_held_hook(
+		f["deck"], f["party"], card_id, target, slots, lookup)
+	_check(result.get("ok") == false, str(card_id) + ": refuses " + reason)
+	_check(result.get("reason") == reason,
+		str(card_id) + ": reason " + reason + " (got " + str(result.get("reason")) + ")")
+	_check(not result.has("slots") and not result.has("energy_spent") and not result.has("cost"),
+		reason + ": publishes no proposal and no payment")
+	_check(_hook_state(f, slots) == before,
+		reason + ": preserves hand, draw, discard, energy, party, snapshot, turn and RNG")
 
 
