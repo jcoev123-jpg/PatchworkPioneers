@@ -129,7 +129,8 @@ func _old_expected() -> Dictionary:
 				{"type": "block", "amount": 2, "weight": 1}]}},
 		"pin_skitter": {"id": "pin_skitter", "name": "Pin Skitter", "max_hp": 13, "thorns": 2, "art_path": "res://assets/paper/enemies/pin_skitter.png",
 			"intent": {"target": "random", "actions": [
-				{"type": "attack", "amount": 5, "weight": 4},
+				{"type": "attack", "amount": 5, "weight": 3},
+				{"type": "attack", "amount": 6, "weight": 1, "move": "attack2"},
 				{"type": "shove", "amount": 0, "direction": 1, "weight": 1},
 				{"type": "block", "amount": 1, "weight": 1}]}},
 		"thread_biter": {"id": "thread_biter", "name": "Thread Biter", "max_hp": 15, "drain": true, "art_path": "res://assets/paper/enemies/thread_biter.png",
@@ -2865,7 +2866,7 @@ func _test_thistle_patch_doll_thorns() -> void:
 		"a non-integral Doll Thorns value rejects the whole catalog")
 
 ## AC1-AC3: Pin Skitter's pin-prick. The shipped 13 HP normal keeps its random
-## policy and its three weighted alternatives and adds only integer Thorns 2,
+## policy, its four weighted alternatives and integer Thorns 2,
 ## which the existing CombatAttackCards contact reaction reads for ONE confirmed
 ## held-card hit. Previews, rejected plays and its unthorned Fight partner never
 ## retaliate; no shared combat rule, encounter or balance value changes here.
@@ -2889,14 +2890,16 @@ func _test_pin_skitter_thorns() -> void:
 		and String(skitter.get("art_path", "")) == "res://assets/paper/enemies/pin_skitter.png",
 		"AC1: Pin Skitter keeps its name, 13 HP, random hero target and existing art path")
 	var pinned := _authored_alternative(skitter, "attack", 5)
+	var leap := _authored_alternative(skitter, "attack", 6)
 	var shoved := _authored_alternative(skitter, "shove", 0)
 	var clamped := _authored_alternative(skitter, "block", 1)
 	_check(not pinned.is_empty() and not shoved.is_empty() and not clamped.is_empty()
-		and int(pinned.get("weight", 0)) == 4 and int(shoved.get("weight", 0)) == 1
+		and int(pinned.get("weight", 0)) == 3 and int(shoved.get("weight", 0)) == 1
 		and int(shoved.get("direction", 0)) == 1 and int(clamped.get("weight", 0)) == 1,
-		"AC1: the existing attack 5 / shove +1 / Block 1 alternatives keep weights 4/1/1")
-	_check(skitter.get("intent", {}).get("actions", []).size() == 3,
-		"AC1: the new keyword adds no weighted alternative to Pin Skitter")
+		"AC1: attack 5 / shove +1 / Block 1 alternatives have weights 3/1/1")
+	_check(skitter.get("intent", {}).get("actions", []).size() == 4
+		and _norm(leap) == _norm({"type": "attack", "amount": 6, "weight": 1, "move": "attack2"}),
+		"AC1: Pin Leap is the fourth weighted alternative, attack2 at damage 6 and weight 1")
 	# The authored keyword must be the only new field, never a rewritten record.
 	var without_thorns: Dictionary = skitter.duplicate(true)
 	without_thorns.erase("thorns")

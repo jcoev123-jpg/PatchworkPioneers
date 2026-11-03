@@ -516,6 +516,131 @@ func _trace_route(fixture: Dictionary, witness: String = "") -> Array:
 	return []
 
 
+func _pin_fixture() -> Dictionary:
+	for value in range(1, 401):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		map.generate(rng)
+		for id in map.get_legal_choices():
+			if map.get_node(id).type != "Fight":
+				continue
+			var state: int = rng.state
+			if not map.choose_node(id):
+				continue
+			var entry := RunAuthoredBattleEntry.new().entry_current_battle(
+				map, rng, RunFightEncounterSelection.new())
+			if entry.get("success", false):
+				for actor in entry.enemies.get_enemies():
+					if actor.id == "pin_skitter":
+						return {"seed": value, "node": id}
+			map.undo_choice(id, [])
+			rng.state = state
+	return {}
+
+
+func _pin_state() -> Array:
+	return [_mounted_state(), app.deck.discard_pile.duplicate(),
+		app.deck.exhausted.duplicate(), app.deck.energy, app.deck.turn_active,
+		app.session_gold, app.run_deck.duplicate(), app.battle_result.get_outcome(),
+		app.enemy_intents._slots.duplicate(true)]
+
+
+func _pin_phases(fixture: Dictionary) -> Array:
+	app.run_seed = fixture.seed
+	await _click(app.route_button)
+	var expected := _oracle(fixture.node)
+	await _click(_route_action(fixture.node))
+	_check(not expected.is_empty() and _mounted_state() == expected,
+		"Pin witness enters by real generated route with exact seeded admission")
+	var actors: Array = app.enemies.get_enemies()
+	var position := 0
+	for actor in actors:
+		if actor.id == "pin_skitter":
+			position = actor.position
+	_check(position > 0 and actors.size() >= 2 and actors.size() <= 3
+		and FLOOR_BAND_ORACLE.legal_group(actors.map(func(a): return a.id),
+			app.run_map.get_node(fixture.node).floor), "Pin witness is a legal two-or-three enemy Fight")
+	if position == 0:
+		return []
+	_verify_band(app.run_map.get_node(fixture.node).floor)
+	for actor in actors:
+		if actor.position != position:
+			_check(app.enemies.apply_damage(actor.position, 99999), "isolate genuine routed Pin Skitter")
+	var trace: Array = [_pin_state()]
+	var counts := {"base": 0, "attack2": 0}
+	for turn in range(80):
+		if counts.base >= 2 and counts.attack2 >= 2:
+			break
+		_check(not app._battle_closed and app.deck.turn_active, "Pin trace has a live playable turn")
+		if app._battle_closed or not app.deck.turn_active:
+			break
+		for hero in app.party._heroes:
+			hero.hp = hero.max_hp
+			hero.block = 0
+			hero.statuses = {}
+		var action: Dictionary = app.enemy_intents.get_intents()[position - 1]
+		if action.type == "attack":
+			var move: String = action.get("move", "base")
+			_check(move in counts, "Pin scheduler chooses only its two authored attacks")
+			if move not in counts:
+				return []
+			var base := 6 if move == "attack2" else 5
+			var floor_number: int = app.run_map.get_node(fixture.node).floor
+			var amount: int = BASE_TO_BAND[base][1 if floor_number <= 4 else (5 if floor_number <= 8 else 9)]
+			var shield := 3 if counts[move] > 0 else 0
+			if shield > 0:
+				_check(app.party.gain_block(action.target_position, shield), "Pin target gains real mitigating Block")
+			app._refresh_enemy_roster()
+			var badge: LiveEnemyIntentBadge = app.get_node("LiveEnemyRoster")._badges[position - 1]
+			_check(action.amount == amount and badge.is_visible_in_tree()
+				and badge.source_position == position and badge.target_position == action.target_position
+				and badge.amount == amount and badge.readable_text.contains(str(amount))
+				and badge.tooltip_text.contains(str(amount)), "visible Pin cue quotes exact floor-scaled cached attack")
+			if move == "attack2":
+				_check(badge.move_name == "Pin Leap" and badge.tooltip_text.contains("Pin Leap"),
+					"mounted named cue identifies the genuine Pin Leap")
+			# Old base amount paired with the new name is stale; unknown names,
+			# removed names and altered amounts must all fail the real transaction.
+			var cache: Array = app.enemy_intents._cache.duplicate(true)
+			for bad in [{"move": "attack2", "amount": 5},
+					{"move": "attack3", "amount": amount},
+					{"move": "attack2", "amount": 7}]:
+				app.enemy_intents._cache[position - 1] = action.merged(bad, true)
+				var before := _pin_state()
+				_check(not app.round_flow.end_turn() and _pin_state() == before,
+					"stale/forged Pin name or amount rejects without HP, Block, wallet, deck or RNG changes")
+				app.enemy_intents._cache.assign(cache.duplicate(true))
+			if move == "attack2":
+				app.enemy_intents._cache[position - 1].erase("move")
+				var unnamed := _pin_state()
+				_check(not app.round_flow.end_turn() and _pin_state() == unnamed,
+					"removing Pin Leap's name cannot execute six damage as the base attack")
+				app.enemy_intents._cache.assign(cache.duplicate(true))
+				# Expire the genuine announcement's authored authority without
+				# redrawing it: the previously valid cached named beat is now stale.
+				var spec: Dictionary = app.enemies.get_enemy(position).intent
+				app.enemies._enemies[position - 1].intent.actions.remove_at(1)
+				var stale := _pin_state()
+				_check(not app.round_flow.end_turn() and _pin_state() == stale,
+					"genuine cached Pin Leap rejects atomically after its source authority expires")
+				app.enemies._enemies[position - 1].intent = spec
+			var heroes: Array = app.party.get_heroes()
+			trace.append([action.duplicate(true), _pin_state()])
+			await _click(app.end_turn_button)
+			for hero in app.party.get_heroes():
+				var old: Dictionary = heroes[hero.position - 1]
+				_check(hero.hp == old.hp - (maxi(0, amount - shield) if hero.position == action.target_position else 0)
+					and hero.block == 0, "real Pin end-turn applies Block before exact HP loss only to announced target")
+			counts[move] += 1
+		else:
+			await _click(app.end_turn_button)
+		trace.append(_pin_state())
+	_check(counts.base >= 2 and counts.attack2 >= 2,
+		"genuine weighted Pin scheduler executes both base and Pin Leap, each unmitigated and mitigated")
+	return trace
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -567,6 +692,21 @@ func _run() -> void:
 			traces.append(await _trace_route(wraith_fixture, "wraith"))
 		_check(not traces[0].is_empty() and traces[0] == traces[1],
 			"same-seed genuine Wraith entry, weighted effects, revival, hand and RNG replay exactly")
+
+	var pin_fixture := _pin_fixture()
+	_check(not pin_fixture.is_empty(), "bounded genuine seeded Fight search finds Pin Skitter")
+	if not pin_fixture.is_empty():
+		var traces: Array = []
+		for replay in range(2):
+			app.queue_free()
+			await _frames()
+			app = load("res://scenes/app.tscn").instantiate()
+			root.add_child(app)
+			await _frames()
+			presenter = app.get_node("LiveAttackPreview")
+			traces.append(await _pin_phases(pin_fixture))
+		_check(not traces[0].is_empty() and traces[0] == traces[1],
+			"same-seed mounted Pin admission, intents, targets, hits, deck, wallet and RNG replay exactly")
 
 	if failures.is_empty():
 		print("live_v3_normal_attack_band_test: PASS (", checks, " checks)")
