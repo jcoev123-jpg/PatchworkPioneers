@@ -756,7 +756,234 @@ func _run() -> void:
 	_check(badge.action_status.is_empty() and _two_hit_caption(badge.readable_text),
 		"subsequent reused ribbon restores original two-hit icon and text")
 	await _assert_icon_pulse(crab_action, wasp_action)
+	_assert_named_two_hit_attacks(crab, wasp, crab_action)
 	_finish()
+
+
+func _assert_named_two_hit_attacks(crab: Dictionary, wasp: Dictionary, unnamed_crab_action: Dictionary) -> void:
+	# AC1: derive from normalized Scissor Crab and Needle Wasp actions
+	var crab_alt := _authored_alternative(crab, "attack", 6)
+	var crab_weighted := CombatEnemyIntents.weighted_action(crab_alt)
+	_check(not crab_weighted.is_empty(),
+		"Scissor Crab attack normalizes through weighted_action contract")
+	var crab_body: Dictionary = crab_weighted.get("action", {}).duplicate(true)
+	crab_body["move"] = "attack2"
+	crab_body["target_position"] = 1
+	_check(CombatEnemyIntents.valid_action(crab_body),
+		"underlying named two-hit action body is accepted by CombatEnemyIntents.valid_action")
+
+	var wasp_alt := _authored_alternative(wasp, "attack", 8)
+	var wasp_weighted := CombatEnemyIntents.weighted_action(wasp_alt)
+	_check(not wasp_weighted.is_empty(),
+		"Needle Wasp attack normalizes through weighted_action contract")
+	var wasp_body: Dictionary = wasp_weighted.get("action", {}).duplicate(true)
+	wasp_body["move"] = "attack3"
+	wasp_body["target_position"] = 2
+	_check(CombatEnemyIntents.valid_action(wasp_body),
+		"underlying named attack3 action body is accepted by CombatEnemyIntents.valid_action")
+
+	# Canonical copied announcement adding only enemy_position
+	var named_crab := crab_body.duplicate(true)
+	named_crab["enemy_position"] = 1
+	var named_wasp := wasp_body.duplicate(true)
+	named_wasp["enemy_position"] = 2
+
+	# AC1: predicate returns true for canonical copied announcement with optional enemy_position 1..4
+	_check(LiveEnemyIntentBadge.is_two_hit_attack(named_crab),
+		"is_two_hit_attack accepts canonical copied named two-hit Crab action")
+	_check(LiveEnemyIntentBadge.is_two_hit_attack(crab_body),
+		"is_two_hit_attack accepts canonical named two-hit Crab action without enemy_position")
+	_check(LiveEnemyIntentBadge.is_two_hit_attack(named_wasp),
+		"is_two_hit_attack accepts canonical copied named attack3 Wasp action")
+	for pos in range(1, 5):
+		var pos_crab := crab_body.duplicate(true)
+		pos_crab["enemy_position"] = pos
+		_check(LiveEnemyIntentBadge.is_two_hit_attack(pos_crab),
+			"is_two_hit_attack accepts legal enemy_position %d with named move" % pos)
+
+	# AC2: compare normal 6->3+3 and odd 7->4+3 cases on already-mounted badge
+	var odd_crab_body: Dictionary = crab_body.duplicate(true)
+	odd_crab_body["amount"] = 7
+	_check(CombatEnemyIntents.valid_action(odd_crab_body),
+		"odd 7 named two-hit action body is accepted by CombatEnemyIntents.valid_action")
+	var odd_crab := odd_crab_body.duplicate(true)
+	odd_crab["enemy_position"] = 1
+	_check(LiveEnemyIntentBadge.is_two_hit_attack(odd_crab),
+		"is_two_hit_attack accepts odd 7 named two-hit Crab action")
+
+	# Display normal 6->3+3
+	var crab_before := named_crab.duplicate(true)
+	badge.show_intent(named_crab, false)
+	_check(named_crab == crab_before, "show_intent never mutates named action")
+	_check(badge.hit_count == 2 and badge.hit_damage == 3 and badge.amount == 6
+		and badge.target_position == 1 and badge.intent_type == "attack"
+		and badge.icon_mode == "attack"
+		and badge.readable_text == "Hit 6 (2 hits): Front"
+		and _two_hit_caption(badge.readable_text)
+		and badge.tooltip_text.contains("6A-2: two hits")
+		and badge.tooltip_text.contains("3 + 3 base damage")
+		and badge.tooltip_text.contains("Hero 1 (front)")
+		and badge.tooltip_text.contains("not guaranteed to deal 12 HP of damage"),
+		"mounted badge truthfully presents normal 6->3+3 named two-hit attack")
+	_assert_layout(badge, LiveEnemyIntentBadge.CAPTION_MIN_FONT, "named 6->3+3")
+
+	# Display odd 7->4+3
+	var odd_before := odd_crab.duplicate(true)
+	badge.show_intent(odd_crab, false)
+	_check(odd_crab == odd_before, "show_intent never mutates odd named action")
+	_check(badge.hit_count == 2 and badge.hit_damage == 4 and badge.amount == 7
+		and badge.target_position == 1 and badge.intent_type == "attack"
+		and badge.icon_mode == "attack"
+		and badge.readable_text == "Hit 7 (2 hits): Front"
+		and _two_hit_caption(badge.readable_text)
+		and badge.tooltip_text.contains("7A-2: two hits")
+		and badge.tooltip_text.contains("4 + 3 base damage")
+		and badge.tooltip_text.contains("Hero 1 (front)")
+		and badge.tooltip_text.contains("not guaranteed to deal 14 HP of damage"),
+		"mounted badge truthfully presents odd-first 7->4+3 named two-hit attack")
+	_assert_layout(badge, LiveEnemyIntentBadge.CAPTION_MIN_FONT, "named 7->4+3")
+	_check(LiveEnemyIntentBadge.two_hit_damages(6) == [3, 3]
+		and LiveEnemyIntentBadge.two_hit_damages(7) == [4, 3],
+		"compare: 6 splits 3+3 evenly while 7 splits 4+3 with odd point first")
+
+	# Display with policy
+	badge.show_intent(named_crab, false, false, "front")
+	_check(badge.policy_cue == "Front" and badge.hit_count == 2 and badge.hit_damage == 3
+		and _two_hit_caption(badge.readable_text)
+		and badge.tooltip_text.contains("Target policy (FRONT)")
+		and badge.tooltip_text.contains("3 + 3 base damage"),
+		"named two-hit attack with Front policy keeps compact ticket and 3+3 packet split")
+	_assert_layout(badge, LiveEnemyIntentBadge.COMPACT_MIN_FONT, "named 6 Front")
+
+	# Display with Enrage
+	badge.show_intent(named_crab, false, false, "front", 2)
+	_check(badge.hit_count == 2 and badge.enrage_bonus == 4 and badge.hit_damage == 5
+		and _two_hit_caption(badge.readable_text)
+		and badge.tooltip_text.contains("Base 6")
+		and badge.tooltip_text.contains("+ 4 Enrage (2/3 stacks)")
+		and badge.tooltip_text.contains("split into 5 + 5 base damage"),
+		"named two-hit attack with Enrage adds bonus once before splitting into 5+5")
+	_assert_layout(badge, LiveEnemyIntentBadge.COMPACT_MIN_FONT, "named 6 Enrage Front")
+
+	# Verified move name retention
+	badge.show_intent(named_crab, false)
+	_check(badge.move_name == "", "badge.move_name is initially empty")
+	badge.append_verified_move_name("Snip Claws")
+	_check(badge.move_name == "Snip Claws"
+		and badge.tooltip_text.contains("\nMove: Snip Claws")
+		and badge.tooltip_text.ends_with("\nMove: Snip Claws"),
+		"optional verified move name is retained in badge.move_name and tooltip_text suffix")
+	badge.append_verified_move_name("Duplicate Move")
+	_check(badge.move_name == "Snip Claws", "duplicate verified move name does not overwrite")
+	badge.show_intent(named_crab, false)
+	_check(badge.move_name == "" and not badge.tooltip_text.contains("Move: Snip Claws"),
+		"fresh show_intent clears verified move name cleanly")
+
+	# Seeded RNG and replayability
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 556677
+	var rng_seed := rng.seed
+	var rng_state := rng.state
+	seed(887766)
+	var global_expected := randi()
+	seed(887766)
+
+	badge.show_intent(named_crab, false, false, "front")
+	var snap1 := _presentation(badge)
+	replay_badge.show_intent(named_crab, false, false, "front")
+	var snap2 := _presentation(replay_badge)
+	_check(snap1 == snap2, "two mounted badges render named two-hit attack identically")
+
+	badge.show_intent(named_crab, false, false, "front")
+	var snap3 := _presentation(badge)
+	_check(snap1 == snap3, "replaying named two-hit attack produces identical presentation")
+	_check(named_crab == crab_before, "show_intent never mutates passed named action")
+	_check(rng.seed == rng_seed and rng.state == rng_state,
+		"show_intent leaves seeded RNG seed and state unchanged")
+	_check(randi() == global_expected, "show_intent leaves global RNG untouched")
+
+	# Existing unnamed two-hit receipt remains identical
+	badge.show_intent(unnamed_crab_action, false)
+	_check(badge.hit_count == 2 and badge.hit_damage == 3
+		and badge.readable_text == "Hit 6 (2 hits): Front"
+		and badge.tooltip_text.contains("6A-2: two hits"),
+		"existing unnamed two-hit receipt remains completely identical")
+
+	# AC3: negative tests for named attacks
+	# Hits other than integer 2
+	for bad_hits in [0, 1, 3, -1, 4, true, false, "2", null, [], {}, 2.0]:
+		var bad_hits_action := named_crab.duplicate(true)
+		bad_hits_action["hits"] = bad_hits
+		_check(not LiveEnemyIntentBadge.is_two_hit_attack(bad_hits_action),
+			"is_two_hit_attack rejects named attack with non-2 hits: " + str(bad_hits))
+		_assert_single_hit(badge, bad_hits_action, 6, 1, "named attack bad hits " + str(bad_hits))
+
+	# Invalid move IDs
+	for bad_move in ["attack1", "attack4", "strike", "", 2, null, true, false, [], {}]:
+		var bad_move_action := named_crab.duplicate(true)
+		bad_move_action["move"] = bad_move
+		_check(not LiveEnemyIntentBadge.is_two_hit_attack(bad_move_action),
+			"is_two_hit_attack rejects named attack with invalid move: " + str(bad_move))
+		_assert_single_hit(badge, bad_move_action, 6, 1, "named attack invalid move " + str(bad_move))
+
+	# Target not in 1..3
+	for bad_target in [0, 4, -1, 5]:
+		var bad_target_action := named_crab.duplicate(true)
+		bad_target_action["target_position"] = bad_target
+		_check(not LiveEnemyIntentBadge.is_two_hit_attack(bad_target_action),
+			"is_two_hit_attack rejects target not in 1..3: " + str(bad_target))
+		_assert_single_hit(badge, bad_target_action, 6, bad_target, "named attack bad target " + str(bad_target))
+	for bad_target in ["1", 1.0, null, true]:
+		var bad_target_action := named_crab.duplicate(true)
+		bad_target_action["target_position"] = bad_target
+		_check(not LiveEnemyIntentBadge.is_two_hit_attack(bad_target_action),
+			"is_two_hit_attack rejects non-int target: " + str(bad_target))
+
+	# Source not in 1..4
+	for bad_source in [0, 5, -1, "4", 4.0, true, null]:
+		var bad_source_action := named_crab.duplicate(true)
+		bad_source_action["enemy_position"] = bad_source
+		_check(not LiveEnemyIntentBadge.is_two_hit_attack(bad_source_action),
+			"invalid source with move never authorizes two hits: " + str(bad_source))
+		_assert_single_hit(badge, bad_source_action, 6, 1, "invalid source with move " + str(bad_source))
+
+	# Unknown metadata / extra keys
+	for extra in ["bonus", "extra_packet", "shield", "power"]:
+		var bad_extra := named_crab.duplicate(true)
+		bad_extra[extra] = 1
+		_check(not LiveEnemyIntentBadge.is_two_hit_attack(bad_extra),
+			"is_two_hit_attack rejects unknown key %s on named attack" % extra)
+		_assert_single_hit(badge, bad_extra, 6, 1, "unknown key %s on named attack" % extra)
+
+	# Blind state
+	badge.show_intent(named_crab, false, false, "front", -1, {}, true)
+	_check(badge.blind_miss and badge.hit_count == 2 and badge.hit_damage == 3
+		and badge.readable_text == "BLIND · MISS"
+		and badge.tooltip_text.contains("Neither of the two authored hit packets resolves")
+		and badge.tooltip_text.contains("entire next attempted attack")
+		and not badge.tooltip_text.contains("guaranteed HP loss"),
+		"named two-hit attack with Blind shows BLIND · MISS and preserves 2 packets without damage")
+	_assert_layout(badge, LiveEnemyIntentBadge.CAPTION_MIN_FONT, "named Blind miss")
+
+	# Unravelled state
+	badge.show_intent(named_crab, false, true, "front")
+	_check(badge.readable_text == "UNRAVELLED" and badge.hit_count == 1
+		and badge.tooltip_text == "Unravelled: next action is skipped.",
+		"named two-hit attack with Unravelled skip shows UNRAVELLED")
+	_assert_reset(badge, "named Unravelled")
+
+	# Slain state
+	badge.show_intent(named_crab, true, false, "front")
+	_check(badge.readable_text == "SLAIN" and badge.hit_count == 1
+		and badge.tooltip_text == "Slain: no action.",
+		"named two-hit attack on slain enemy shows SLAIN")
+	_assert_reset(badge, "named slain")
+
+	# Restoration after non-acting visual
+	badge.show_intent(named_crab, false)
+	_check(badge.readable_text == "Hit 6 (2 hits): Front" and badge.hit_count == 2
+		and badge.hit_damage == 3,
+		"normal named two-hit display returns after Blind, skip and death")
 
 
 func _finish() -> void:

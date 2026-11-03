@@ -149,7 +149,11 @@ static func is_two_hit_attack(action: Dictionary) -> bool:
 	if not hits is int or hits != 2:
 		return false
 	for key in action:
-		if not (key in ["type", "amount", "target_position", "hits", "enemy_position"]):
+		if not (key in ["type", "amount", "target_position", "hits", "enemy_position", "move"]):
+			return false
+	if action.has("move"):
+		var move: Variant = action["move"]
+		if not move is String or move not in ["attack2", "attack3"]:
 			return false
 	if action.has("enemy_position"):
 		var source: Variant = action["enemy_position"]
