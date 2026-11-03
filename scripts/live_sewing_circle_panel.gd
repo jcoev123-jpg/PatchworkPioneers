@@ -4,9 +4,16 @@ extends Control
 signal intent_requested(intent: Dictionary)
 
 const BUTTON_ART := "res://assets/paper/ui/reward_button.png"
+## Deep stitched fabrics with readable bone ink; parchment is reserved for the
+## full rules preview so its small, long-form text stays dark on a light well.
 const INK := Color("#28313c")
-## Readable, visibly duller ink for an action the visit cannot pay for.
-const DISABLED_INK := Color("#7a7267")
+const BONE := Color("#f5e9d7")
+const GOLD := Color("#e4bc76")
+const MUTED_BONE := Color("#d3c5b6")
+const DISABLED_INK := Color("#c9c0b5")
+const FABRIC := Color("#191e2b")
+const TICKET := Color("#29313d")
+const PARCHMENT := Color("#eee0c9")
 ## Printed shortcuts. Each caption names the physical key that activates the
 ## very same Button, so the mapping stays visible on the shipped screen.
 const UPGRADE_TEXT := "1 Upgrade - free"
@@ -35,9 +42,8 @@ const PANEL_ART_PAN_PERIOD := 11.0
 ## breath and drift never expose an image edge or an empty seam; the felt
 ## backing additionally clips it to the panel's own 940x620 rect.
 const PANEL_ART_OVERSCAN := 10.0
-## Faint draw of the authored image over the cream felt, so the dark ink, costs
-## and stitched outline keep their readable contrast.
-const PANEL_ART_TINT := Color(1.0, 1.0, 1.0, 0.18)
+## Subtle sewn artwork beneath the fixed dark fabric and readable controls.
+const PANEL_ART_TINT := Color(0.64, 0.59, 0.68, 0.13)
 const REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
 var upgrade_button: Button
 var stitch_button: Button
@@ -73,8 +79,8 @@ var _confirmed: Dictionary = {}
 var _session: Dictionary = {}
 
 ## The already-authored sewn panel image, honoured by the optional faint
-## drifting layer. A missing image keeps the flat cream felt fallback and
-## installs no drifting layer at all.
+## drifting layer. Missing art keeps the dark fabric fallback and installs
+## no drifting layer at all.
 var panel_art_texture: Texture2D
 ## Nullable explicit reduced-motion override for focused tests and hosts; null
 ## follows ProjectSettings accessibility/reduced_motion (default false).
@@ -94,9 +100,10 @@ func _ready() -> void:
 	var paper := Panel.new()
 	paper.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color("#f4e9d1")
-	style.border_color = INK
+	style.bg_color = FABRIC
+	style.border_color = GOLD
 	style.set_border_width_all(3)
+	style.set_corner_radius_all(12)
 	paper.add_theme_stylebox_override("panel", style)
 	add_child(paper)
 	# Anything the faint drifting copy paints outside the sewn frame is clipped
@@ -109,10 +116,13 @@ func _ready() -> void:
 	var title := _label("SEWING CIRCLE - choose once", Vector2(24, 16), Vector2(890, 36))
 	title.theme_type_variation = "PatchHeading"
 	title.add_theme_font_size_override("font_size", 26)
+	title.add_theme_color_override("font_color", GOLD)
 	upgrade_button = _button(UPGRADE_TEXT, Vector2(24, 62), Vector2(280, 48))
 	stitch_button = _button(STITCH_TEXT % RunRestStitchCards.SCRAP_COST, Vector2(330, 62), Vector2(280, 48))
 	leave_button = _button(LEAVE_TEXT, Vector2(636, 62), Vector2(280, 48))
 	status_label = _label("", Vector2(24, 120), Vector2(892, 54))
+	_well(Vector2(24, 184), Vector2(440, 350), Color("#202632"))
+	_well(Vector2(488, 184), Vector2(428, 350), PARCHMENT)
 	choice_scroll = ScrollContainer.new()
 	choice_scroll.position = Vector2(24, 184)
 	choice_scroll.size = Vector2(440, 350)
@@ -175,16 +185,45 @@ func _shortcut_action(keycode: int) -> Button:
 	return null
 
 
+## A fixed sewn inset, added beneath its scroll container. No focus or input.
+func _well(at: Vector2, dimensions: Vector2, fill: Color) -> void:
+	var well := Panel.new()
+	well.position = at
+	well.size = dimensions
+	well.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	well.focus_mode = Control.FOCUS_NONE
+	var sewn := StyleBoxFlat.new()
+	sewn.bg_color = fill
+	sewn.border_color = Color("#84715e")
+	sewn.set_border_width_all(2)
+	sewn.set_corner_radius_all(6)
+	well.add_theme_stylebox_override("panel", sewn)
+	add_child(well)
+
+
 func _label(text: String, at: Vector2, dimensions: Vector2) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.position = at
 	label.size = dimensions
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.add_theme_color_override("font_color", INK)
+	label.add_theme_color_override("font_color", BONE)
 	label.add_theme_font_size_override("font_size", 18)
 	add_child(label)
 	return label
+
+
+## Fixed dark tickets, not theme-default pale Button faces. Each enabled
+## state is distinct and legible whether or not the optional sewn PNG imports.
+static func _ticket_style(fill: Color, seam: Color, width: int = 2) -> StyleBoxFlat:
+	var ticket := StyleBoxFlat.new()
+	ticket.bg_color = fill
+	ticket.border_color = seam
+	ticket.set_border_width_all(width)
+	ticket.set_corner_radius_all(6)
+	ticket.content_margin_left = 8
+	ticket.content_margin_right = 8
+	return ticket
 
 
 func _button(text: String, at: Vector2, dimensions: Vector2) -> Button:
@@ -195,27 +234,22 @@ func _button(text: String, at: Vector2, dimensions: Vector2) -> Button:
 	button.size = dimensions
 	button.focus_mode = Control.FOCUS_ALL
 	button.add_theme_font_size_override("font_size", 18)
-	# The shared theme leaves Button ink at engine defaults, where hover, press
-	# and focus are near-white on this cream felt: every state keeps dark ink,
-	# and an action the visit cannot pay for stays legible but visibly duller.
-	for color_name in ["font_color", "font_hover_color", "font_pressed_color",
-			"font_hover_pressed_color", "font_focus_color"]:
-		button.add_theme_color_override(color_name, INK)
+	button.add_theme_color_override("font_color", BONE)
+	button.add_theme_color_override("font_hover_color", GOLD)
+	button.add_theme_color_override("font_pressed_color", BONE)
+	button.add_theme_color_override("font_hover_pressed_color", GOLD)
+	button.add_theme_color_override("font_focus_color", GOLD)
 	button.add_theme_color_override("font_disabled_color", DISABLED_INK)
-	if ResourceLoader.exists(BUTTON_ART, "Texture2D"):
-		var fabric := StyleBoxTexture.new()
-		fabric.texture = load(BUTTON_ART)
-		fabric.set_texture_margin_all(22)
-		button.add_theme_stylebox_override("normal", fabric)
-		var dimmed := StyleBoxTexture.new()
-		dimmed.texture = fabric.texture
-		dimmed.set_texture_margin_all(22)
-		dimmed.modulate_color = Color(0.72, 0.72, 0.74)
-		button.add_theme_stylebox_override("disabled", dimmed)
+	button.add_theme_stylebox_override("normal", _ticket_style(TICKET, Color("#79695d")))
+	button.add_theme_stylebox_override("hover", _ticket_style(Color("#414457"), GOLD))
+	button.add_theme_stylebox_override("pressed", _ticket_style(Color("#55313f"), GOLD, 3))
+	button.add_theme_stylebox_override("hover_pressed", _ticket_style(Color("#663b48"), GOLD, 3))
+	button.add_theme_stylebox_override("disabled", _ticket_style(Color("#48454c"), Color("#81796e")))
 	var focus := StyleBoxFlat.new()
-	focus.bg_color = Color(0, 0, 0, 0)
-	focus.border_color = Color("#2e5b88")
+	focus.bg_color = Color.TRANSPARENT
+	focus.border_color = GOLD
 	focus.set_border_width_all(3)
+	focus.set_corner_radius_all(6)
 	button.add_theme_stylebox_override("focus", focus)
 	add_child(button)
 	return button
@@ -355,31 +389,10 @@ func _add_filters(options: Array) -> void:
 		var chip := _button("All" if owner.is_empty() else owner.capitalize(),
 			Vector2.ZERO, Vector2(0, 32))
 		chip.add_theme_font_size_override("font_size", 14)
-		var sewn := chip.get_theme_stylebox("normal").duplicate() as StyleBox
-		if sewn is StyleBoxTexture:
-			sewn.set_texture_margin_all(8)
-		if not ResourceLoader.exists(BUTTON_ART, "Texture2D"):
-			var flat := StyleBoxFlat.new()
-			flat.bg_color = Color("#e5d6b6")
-			flat.border_color = INK
-			flat.set_border_width_all(1)
-			sewn = flat
-		sewn.content_margin_left = 6
-		sewn.content_margin_right = 6
-		sewn.content_margin_top = 4
-		sewn.content_margin_bottom = 4
-		chip.add_theme_stylebox_override("normal", sewn)
-		chip.add_theme_stylebox_override("hover", sewn)
-		var selected := StyleBoxFlat.new()
-		selected.bg_color = Color("#e5d6b6")
-		selected.border_color = INK
-		selected.set_border_width_all(2)
-		selected.content_margin_left = 6
-		selected.content_margin_right = 6
-		selected.content_margin_top = 4
-		selected.content_margin_bottom = 4
-		chip.add_theme_stylebox_override("pressed", selected)
-		chip.add_theme_stylebox_override("hover_pressed", selected)
+		chip.add_theme_stylebox_override("normal", _ticket_style(Color("#353b48"), Color("#84705c")))
+		chip.add_theme_stylebox_override("hover", _ticket_style(Color("#4c4b58"), GOLD))
+		chip.add_theme_stylebox_override("pressed", _ticket_style(Color("#604153"), GOLD, 3))
+		chip.add_theme_stylebox_override("hover_pressed", _ticket_style(Color("#61404d"), GOLD, 3))
 		chip.toggle_mode = true
 		chip.set_pressed_no_signal(owner == _owner_filter)
 		remove_child(chip)
@@ -746,22 +759,13 @@ func _option_row(option: Dictionary, upgrade: bool) -> Button:
 	coin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	coin.focus_mode = Control.FOCUS_NONE
 	var coin_style: StyleBox
-	if ResourceLoader.exists(BUTTON_ART, "Texture2D"):
-		var fabric := StyleBoxTexture.new()
-		fabric.texture = ResourceLoader.load(BUTTON_ART)
-		fabric.set_texture_margin_all(12)
-		coin_style = fabric
-	else:
-		var flat := StyleBoxFlat.new()
-		flat.bg_color = Color("#dfc99a")
-		flat.border_color = INK
-		flat.set_border_width_all(1)
-		coin_style = flat
+	coin_style = _ticket_style(GOLD, Color("#7e6249"), 2)
 	coin.add_theme_stylebox_override("panel", coin_style)
 	button.add_child(coin)
 	var cost_label := _card_label(coin, "%d energy" % option.get("cost", 0),
 		Vector2(2, 3), Vector2(94, 25), 16)
 	cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cost_label.add_theme_color_override("font_color", INK)
 	if upgrade:
 		_card_label(button, "Free upgrade: %s | %d energy" % [after.display_name, after.cost],
 			Vector2(24, 72), Vector2(375, 40), 16)
@@ -785,7 +789,7 @@ func _card_label(parent: Control, message: String, at: Vector2,
 	label.position = at
 	label.size = dimensions
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.add_theme_color_override("font_color", INK)
+	label.add_theme_color_override("font_color", BONE)
 	label.add_theme_font_size_override("font_size", font_size)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.focus_mode = Control.FOCUS_NONE
@@ -807,8 +811,8 @@ func _mark_selected(index: int, owner: String) -> void:
 		button.set_meta("selected", selected)
 		if selected:
 			var sewn := StyleBoxFlat.new()
-			sewn.bg_color = Color("#e5d6b6")
-			sewn.border_color = _owner_color(owner)
+			sewn.bg_color = Color("#4b4051")
+			sewn.border_color = GOLD
 			sewn.set_border_width_all(3)
 			button.add_theme_stylebox_override("normal", sewn)
 			button.add_theme_stylebox_override("hover", sewn)
@@ -828,8 +832,8 @@ static func _load_panel_art() -> Texture2D:
 	return ResourceLoader.load(PANEL_ART, "Texture2D") as Texture2D
 
 
-## The faint authored backdrop style of the drifting layer: the sewn panel
-## image drawn gently over the cream felt so dark ink stays readable.
+## The faint authored sewn image remains behind the fixed dark fabric and
+## controls; the light preview well keeps its separate dark rules text.
 func _art_layer_style() -> StyleBoxTexture:
 	var texture := StyleBoxTexture.new()
 	texture.texture = panel_art_texture
