@@ -248,6 +248,12 @@ func get_definition(card_id: String) -> Dictionary:
 		var v3 := V3TinkerStarterCards.new().get_definition(card_id)
 		if CombatTinkerV3StarterAttackCards.is_authentic_definition(v3, card_id):
 			return v3
+		# The authored V3 Seamstress starters stay out of legacy membership, but their
+		# canonical records are readable through this shared lookup. The source catalog
+		# returns a detached record, and every other ID still fails closed below.
+		var seamstress_v3 := V3SeamstressStarterCards.new()
+		if seamstress_v3.has_card(card_id):
+			return seamstress_v3.get_definition(card_id)
 		return {}
 	return _definitions[card_id].duplicate(true)
 
