@@ -271,7 +271,12 @@ func _enter_routed_fight(fixture: Dictionary, path_id: String, use_mouse: bool) 
 	if use_mouse:
 		await _click(target)
 	else:
-		for attempt in range(view.path_buttons.size() + 4):
+		# Include both new village house stops and all host-offered buttons.
+		view.back_button.grab_focus()
+		await _frames()
+		var focus_limit := view.path_buttons.size() + view.tinker_buttons.size() \
+			+ view.warden_buttons.size() + view.difficulty_buttons.size() + 6
+		for attempt in range(focus_limit):
 			if target.has_focus():
 				break
 			await _key(KEY_TAB)

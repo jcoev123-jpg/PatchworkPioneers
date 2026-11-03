@@ -474,7 +474,8 @@ func _typography_case(offered: Array) -> void:
 
 
 func _focus_loop(view: BaseScreen) -> void:
-	var loop: Array[Button] = [view.back_button, view.deck_button]
+	var loop: Array[Button] = [view.back_button, view.heroes_house_button,
+		view.camp_house_button, view.deck_button]
 	loop.append_array(view.path_buttons)
 	loop.append_array(view.tinker_buttons)
 	loop.append_array(view.warden_buttons)

@@ -62,6 +62,8 @@ const PATH_OPTION_SIZE := 18
 var set_out_button: Button
 var back_button: Button
 var deck_button: Button
+var heroes_house_button: Button
+var camp_house_button: Button
 var deck_gallery: VillageStarterKitGallery
 var village_title_label: Label
 var wallet_label: Label
@@ -154,6 +156,7 @@ func _ready() -> void:
 	_build_warden_choice()
 	_build_actions()
 	_build_deck_house_action()
+	_build_house_shortcuts()
 	_build_difficulty()
 	_build_deck_gallery()
 	_wire_focus()
@@ -797,6 +800,7 @@ func _apply_closed_state() -> void:
 	if is_instance_valid(back_button):
 		back_button.disabled = true
 		back_button.release_focus()
+	_wire_focus()
 
 
 ## The host refused Set out (no run was created): restore the sewn action.
@@ -1148,10 +1152,82 @@ func _build_deck_house_action() -> void:
 	add_child(deck_button)
 
 
+## The landing patches sit inside the actual Heroes house and Camp tent, above
+## their Path boards. Their familiar sewn style matches the existing Deck door.
+func _build_house_shortcuts() -> void:
+	heroes_house_button = _house_shortcut("HeroesHouseButton", "Path choices",
+		Vector2(132, 333), "Heroes: focus Path choices", _on_heroes_house_pressed)
+	camp_house_button = _house_shortcut("CampHouseButton", "Set out",
+		Vector2(369, 333), "Camp: Set out", _on_camp_house_pressed)
+
+
+func _house_shortcut(button_name: String, caption: String, at: Vector2,
+		tip: String, action: Callable) -> Button:
+	var button := Button.new()
+	button.name = button_name
+	button.text = caption
+	button.position = at
+	button.size = Vector2(146, 47)
+	button.custom_minimum_size = button.size
+	button.theme_type_variation = &"PatchHeadingButton"
+	button.add_theme_font_size_override("font_size", 19)
+	button.focus_mode = Control.FOCUS_ALL
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	button.tooltip_text = tip
+	button.pressed.connect(action)
+	button.add_child(SewnEdge.new())
+	add_child(button)
+	button.disabled = true
+	return button
+
+
+func _house_shortcuts_legal() -> bool:
+	return _open and not _set_out_pending and not _back_pending \
+		and not _gallery_is_open() and is_inside_tree() and is_visible_in_tree()
+
+
+func _first_enabled_hero_path() -> Button:
+	if not is_instance_valid(path_panel) or not path_panel.is_visible_in_tree() \
+			or _path_pending or not _selected_path_id.is_empty():
+		return null
+	for button in path_buttons:
+		if is_instance_valid(button) and button.is_visible_in_tree() and not button.disabled:
+			return button
+	return null
+
+
+func _sync_house_shortcuts() -> void:
+	var legal := _house_shortcuts_legal()
+	if is_instance_valid(heroes_house_button):
+		heroes_house_button.disabled = not legal or _first_enabled_hero_path() == null
+	if is_instance_valid(camp_house_button):
+		camp_house_button.disabled = not legal or not is_instance_valid(set_out_button) \
+			or set_out_button.disabled
+
+
+## Focus only: never request or confirm a Path, or select a party.
+func _on_heroes_house_pressed() -> void:
+	if not _house_shortcuts_legal() or not is_instance_valid(heroes_house_button) \
+			or heroes_house_button.disabled:
+		return
+	var target := _first_enabled_hero_path()
+	if target != null:
+		target.grab_focus()
+
+
+## Route through the exact SetOutButton handler and its one-shot latch.
+func _on_camp_house_pressed() -> void:
+	if not _house_shortcuts_legal() or not is_instance_valid(camp_house_button) \
+			or camp_house_button.disabled:
+		return
+	_on_set_out_pressed()
+
+
 func _build_deck_gallery() -> void:
 	deck_gallery = VillageStarterKitGallery.new()
 	add_child(deck_gallery)
 	deck_gallery.close_requested.connect(_on_deck_closed)
+	deck_gallery.visibility_changed.connect(_on_gallery_visibility_changed)
 
 
 func _gallery_is_open() -> bool:
@@ -1173,18 +1249,28 @@ func _on_deck_closed() -> void:
 		deck_button.grab_focus()
 
 
+func _on_gallery_visibility_changed() -> void:
+	_wire_focus()
+
+
 func _on_base_visibility_changed() -> void:
 	_sync_backdrop_motion()
+	_wire_focus()
 	if not is_visible_in_tree() and is_instance_valid(deck_gallery):
 		deck_gallery.dismiss()
 
 
-## Every live sewn action forms one forward/reverse Tab loop: Back, Deck, both authored
-## Path options, both authored Tinker options (while still choosable), then Set out.
+## Every live sewn action forms a forward/reverse Tab loop, including the
+## Heroes and Camp landmarks without bypassing their original actions.
 func _wire_focus() -> void:
+	_sync_house_shortcuts()
 	var loop: Array[Control] = []
 	if is_instance_valid(back_button) and not back_button.disabled:
 		loop.append(back_button)
+	if is_instance_valid(heroes_house_button) and not heroes_house_button.disabled:
+		loop.append(heroes_house_button)
+	if is_instance_valid(camp_house_button) and not camp_house_button.disabled:
+		loop.append(camp_house_button)
 	if is_instance_valid(deck_button) and not deck_button.disabled and deck_button.is_visible_in_tree():
 		loop.append(deck_button)
 	for button in path_buttons:
@@ -1441,6 +1527,7 @@ func _on_set_out_pressed() -> void:
 	set_out_button.disabled = true
 	if is_instance_valid(back_button):
 		back_button.disabled = true
+	_wire_focus()
 	set_out_requested.emit()
 
 
@@ -1456,6 +1543,7 @@ func _on_back_pressed() -> void:
 	back_button.disabled = true
 	if is_instance_valid(set_out_button):
 		set_out_button.disabled = true
+	_wire_focus()
 	back_requested.emit()
 
 
