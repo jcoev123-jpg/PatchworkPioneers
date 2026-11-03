@@ -176,6 +176,7 @@ func _initialize() -> void:
 	_test_ac3_selection_refusals_and_isolation(run_rng)
 	_test_ac_bellspool_picket_dedicated(run_rng)
 	_test_ac_affordable_toll_event_selection(run_rng)
+	_test_fight_or_toll_offers()
 
 	_test_ac1_waystation_catalog_and_choices(run_rng)
 	_test_ac2_waystation_service_choices_and_previews(run_rng)
@@ -192,6 +193,114 @@ func _initialize() -> void:
 		printerr(failure)
 	print("run_v3_fight_event_gate_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_fight_or_toll_offers() -> void:
+	var gate := RunV3FightEventGate.new()
+	_check(gate.is_catalog_valid(), "offer uses valid shipped catalog")
+	var records := gate.get_catalog_events()
+	var ids: Array[String] = []
+	for record: Dictionary in records:
+		ids.append(record["id"])
+	_check(not ids.is_empty(), "offer catalog is nonempty")
+	var snapshot := records.duplicate(true)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 466
+	for event_id: String in EXPECTED_EVENTS:
+		_check(ids.has(event_id), "offer anchor exists: " + event_id)
+		var spec: Dictionary = EXPECTED_EVENTS[event_id]
+		var excluded := ids.duplicate()
+		excluded.erase(event_id)
+		var excluded_before := excluded.duplicate()
+		for wallet: Dictionary in [{"gold": 0, "scraps": 0}, spec["exact_wallet"]]:
+			var wallet_before := wallet.duplicate(true)
+			var oracle := RandomNumberGenerator.new()
+			oracle.state = rng.state
+			oracle.randi_range(0, 0)
+			var offer := gate.select_fight_or_toll_offer(rng, excluded, wallet)
+			_check(offer.get("ok") == true, "offer succeeds: " + event_id)
+			_check(rng.state == oracle.state, "single-option offer draws exactly once")
+			if not offer.get("ok", false):
+				continue
+			_check(offer["event"] == gate.get_event_record(event_id), "offer returns canonical named event")
+			var visit := gate.open_visit(offer["event"])
+			_check(visit != null and visit.is_valid(), "offered record opens authentic visit")
+			if visit == null:
+				continue
+			_check(offer["preview"] == visit.preview_choices(wallet), "offer matches authentic preview")
+			var rows: Dictionary = {}
+			for row: Dictionary in offer["preview"]["choices"]:
+				rows[row["choice_id"]] = row
+			for cid: String in [spec["fight_choice_id"], spec["paid_choice_id"], "leave"]:
+				_check(rows.has(cid), "offer contains actual choice: " + cid)
+				if not rows.has(cid):
+					continue
+				var row: Dictionary = rows[cid]
+				var paid: bool = cid == spec["paid_choice_id"]
+				var delta: Dictionary = spec["paid_outcome"] if paid else {"gold": 0, "scraps": 0}
+				var affordable: bool = not paid or wallet == spec["exact_wallet"]
+				var request: Dictionary = {"node_type": "Fight"} if cid == spec["fight_choice_id"] else {}
+				_check(row["gold_delta"] == delta["gold"] and row["scraps_delta"] == delta["scraps"], "authored offer deltas: " + cid)
+				_check(row["affordable"] == affordable and row["fight_request"] == request, "authentic affordability and request: " + cid)
+				var fresh := gate.open_visit(offer["event"])
+				_check(fresh != null, "fresh settlement visit exists")
+				if fresh == null:
+					continue
+				var receipt := fresh.choose_with_wallet(cid, wallet)
+				_check(receipt["ok"] == affordable, "offer affordability agrees with settlement")
+				_check(receipt["fight_request"] == (request if affordable else {}), "receipt request distinguishes Fight/toll/Leave")
+				_check(receipt["wallet"] == row["wallet"], "receipt wallet agrees with preview")
+				_check(fresh.is_claimed() == affordable, "only successful settlement claims visit")
+			_check(wallet == wallet_before and excluded == excluded_before, "offer and settlement preserve caller inputs")
+			(offer["event"]["choices"] as Array).clear()
+			for row: Dictionary in offer["preview"]["choices"]:
+				row["wallet"]["gold"] = 999
+				row["fight_request"]["node_type"] = "Boss"
+			_check(visit.preview_choices(wallet) == gate.open_visit(event_id).preview_choices(wallet), "nested preview mutations detached from visits")
+	_check(gate.get_catalog_events() == snapshot and not gate.is_claimed(), "offering preserves catalog and claim state")
+	_check(gate.prepare("v3_stitchline_roadblock"), "offering leaves factory unbound")
+	var bound_before := gate.get_event()
+
+	# Sorting, replay and additions use the actual authenticated ID set.
+	var reversed := records.duplicate(true)
+	reversed.reverse()
+	var reordered := RunV3FightEventGate.new(&"__omitted_event_target__", {"events": reversed})
+	_check(reordered.is_catalog_valid(), "reversed injected catalog is valid")
+	ids.sort()
+	for seed_value: int in [1, 466, 73401, 998877]:
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = seed_value
+		var expected_id: String = ids[oracle.randi_range(0, ids.size() - 1)]
+		rng.seed = seed_value
+		var first := gate.select_fight_or_toll_offer(rng, [], {"gold": 0, "scraps": 0})
+		_check(first.get("event", {}).get("id") == expected_id and rng.state == oracle.state, "sorted-ID offer oracle and one draw")
+		rng.seed = seed_value
+		var replay := reordered.select_fight_or_toll_offer(rng, [], {"gold": 0, "scraps": 0})
+		_check(first == replay and rng.state == oracle.state, "reversed catalog seeded replay agrees")
+	_check(gate.is_valid() and gate.get_event() == bound_before, "offering preserves existing bound visit")
+
+	var denied := {"ok": false, "event": {}, "preview": {}}
+	var before: int = rng.state
+	for bad_rng: Variant in [null, 123, "rng", {}, []]:
+		_check(gate.select_fight_or_toll_offer(bad_rng, [], {"gold": 0, "scraps": 0}) == denied, "invalid offer RNG refused")
+	for bad_wallet: Variant in [null, 1, [], {}, {"gold": 0}, {"scraps": 0}, {"gold": 0, "scraps": 0, "extra": 1}, {"gold": -1, "scraps": 0}, {"gold": 0, "scraps": -1}, {"gold": 0.0, "scraps": 0}, {"gold": 0, "scraps": 0.0}, {"gold": true, "scraps": 0}, {"gold": 0, "scraps": "0"}]:
+		_check(gate.select_fight_or_toll_offer(rng, [], bad_wallet) == denied, "invalid offer wallet refused")
+		_check(rng.state == before, "invalid wallet spends no RNG")
+	for bad_exclusions: Variant in [1, {}, "id", [1], [null], [""], ["   "], ids]:
+		_check(gate.select_fight_or_toll_offer(rng, bad_exclusions, {"gold": 0, "scraps": 0}) == denied, "invalid or exhausted exclusions refused")
+		_check(rng.state == before, "invalid/exhausted exclusions spend no RNG")
+	var missing := records.duplicate(true)
+	for index: int in range(missing.size() - 1, -1, -1):
+		if missing[index]["id"] == "v3_stitchline_roadblock":
+			missing.remove_at(index)
+	var duplicated := records.duplicate(true)
+	duplicated.append(gate.get_event_record("v3_stitchline_roadblock"))
+	for malformed: Array in [missing, duplicated]:
+		var invalid := RunV3FightEventGate.new(&"__omitted_event_target__", {"events": malformed})
+		_check(not invalid.is_catalog_valid(), "missing/duplicate offer catalog rejected")
+		_check(invalid.select_fight_or_toll_offer(rng, [], {"gold": 0, "scraps": 0}) == denied, "invalid catalog has no offer")
+		_check(rng.state == before, "invalid catalog spends no RNG")
+	_check(gate.is_valid() and gate.get_event() == bound_before, "refusals preserve bound visit")
 
 
 func _check(condition: bool, message: String) -> void:
