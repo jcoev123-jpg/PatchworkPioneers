@@ -125,7 +125,9 @@ const KEYWORD_ELITES := {
 		"target": "front", "actions": [
 			{"type": "attack", "amount": 9, "weight": 3},
 			{"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
-			{"type": "block", "amount": 9, "weight": 2}]},
+			{"type": "block", "amount": 9, "weight": 2},
+			{"type": "attack", "amount": 8, "hits": 2, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 10, "move": "attack3", "weight": 1}]},
 	"spool_leech": {
 		"name": "Spool Leech", "max_hp": 42, "drain": true, "chew_block_on_attack": true,
 		"art_path": "res://assets/paper/enemies/spool_leech.png",
@@ -1398,7 +1400,7 @@ func _test_hexer_lash() -> void:
 	var peers := {
 		"needle_marshal": [5, 4, 6], "scissor_bailiff": [9, 8, 7], "zipper_hauler": [8, 10, 6],
 		"needle_briar_guard": [9, 8, 7], "spool_snarekeeper": [8, 9, 6],
-		"pincushion_matriarch": [9], "spool_leech": [8]}
+		"pincushion_matriarch": [9, 8, 10], "spool_leech": [8]}
 	for id in peers:
 		var peer := _record(elites, id)
 		var amounts: Array = []
@@ -3206,6 +3208,7 @@ func _test_keyword_elites() -> void:
 		_keyword_beats(record)
 		if id == "pincushion_matriarch":
 			_pincushion_thorns(record)
+			_test_weighted_named_strikes(record)
 		else:
 			_leech_drain(record)
 	# Earlier tests validate every field of all six earlier identities by ID.
@@ -3847,6 +3850,7 @@ func _test_briar_snare_live_registry() -> void:
 func _test_weighted_named_strikes(record: Dictionary) -> void:
 	var id: String = record.id
 	var snare := id == "spool_snarekeeper"
+	var matriarch := id == "pincushion_matriarch"
 	var first := _weighted_phase_replay(record, 41771)
 	_check(first.size() == 18 and first == _weighted_phase_replay(record, 41771),
 		"full Elite weighted schedules, receipts, actor states and RNG replay for equal seeds")
@@ -3866,6 +3870,9 @@ func _test_weighted_named_strikes(record: Dictionary) -> void:
 		var amount := (9 if move == "attack2" else 6) if snare else (8 if move == "attack2" else 7)
 		var hits := (1 if move == "attack2" else 2) if snare else (2 if move == "attack2" else 1)
 		var title := ("Hook Yank" if move == "attack2" else "Spool Barrage") if snare else ("Needle Volley" if move == "attack2" else "Briar Sweep")
+		if matriarch:
+			amount = 8 if move == "attack2" else 10
+			title = "Pin Storm" if move == "attack2" else "Bonnet Charge"
 		for forced in [false, true]:
 			for shield in [0, 2, 3, 4, 6, 8, 9, 10]:
 				var history: Array = []
@@ -3937,6 +3944,8 @@ func _test_weighted_named_strikes(record: Dictionary) -> void:
 					var block: int = shield
 					for hit in range(hits):
 						var packet := (9 if hits == 1 else 3) if snare else (7 if hits == 1 else 4)
+						if matriarch:
+							packet = 10 if hits == 1 else 4
 						var next_hp := hp - maxi(0, packet - block)
 						var next_block := maxi(0, block - packet)
 						packets.append([packet, hp, block, next_hp, next_block])
