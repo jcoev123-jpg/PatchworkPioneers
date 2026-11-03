@@ -47,6 +47,7 @@ func _initialize() -> void:
 	_test_negative_fixtures()
 	_test_wraith_named_moves()
 	_test_front_normal_named_strikes()
+	_test_flying_normal_named_strikes()
 	if failures.is_empty():
 		print("v3_normal_enemy_catalog_test: PASS (", checks, " checks)")
 	else:
@@ -459,13 +460,15 @@ func _trio_expected() -> Dictionary:
 				{"type": "snip_block", "amount": 0, "weight": 2},
 				{"type": "attack", "amount": 7, "weight": 3},
 				{"type": "debuff", "status": "weak", "amount": 1, "weight": 1},
-				{"type": "summon", "amount": 0, "weight": 1}]}},
+				{"type": "summon", "amount": 0, "weight": 1},
+				{"type": "attack", "amount": 6, "hits": 2, "move": "attack2", "weight": 1}]}},
 		"needle_wasp": {"id": "needle_wasp", "name": "Needle Wasp", "max_hp": 22,
 			"bleed_on_attack": true,
 			"art_path": "res://assets/paper/enemies/needle_wasp.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
 				{"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
-				{"type": "attack", "amount": 8, "hits": 2, "weight": 3}]}}
+				{"type": "attack", "amount": 8, "hits": 2, "weight": 3},
+				{"type": "attack", "amount": 7, "move": "attack2", "weight": 1}]}}
 	}
 
 ## True when the record really authors this action alternative.
@@ -542,8 +545,7 @@ func _test_trio_catalog_records() -> void:
 		"Needle Wasp stings Bleed 2 or hits for 8")
 	_check(wasp.get("intent", {}).get("target") == "lowest_living_hp",
 		"Needle Wasp hunts the lowest-living hero")
-	# The bleeding sting is one authored boolean on this enemy alone; it is not
-	# a new weighted alternative, so the two authored choices stay untouched.
+	# The bleeding trait remains separate from the three weighted choices.
 	_check(wasp.get("bleed_on_attack") is bool and wasp.get("bleed_on_attack") == true,
 		"Needle Wasp alone authors the boolean bleeding sting")
 	var carriers: Array[String] = []
@@ -554,8 +556,8 @@ func _test_trio_catalog_records() -> void:
 	_check(carriers == ["needle_wasp"],
 		"bleed_on_attack=true is authored by Needle Wasp and nobody else: " + str(carriers))
 	var wasp_actions: Array = wasp.get("intent", {}).get("actions", [])
-	_check(wasp_actions.size() == 2,
-		"the bleeding sting adds no extra weighted action to Needle Wasp")
+	_check(_norm(wasp_actions) == _trio_expected()["needle_wasp"].intent.actions,
+		"Wasp retains Bleed and the original two-hit sting before appending Sting Dive")
 
 ## Local typed-selection fixture for this authored slice: these enemies are not
 ## wired into any live encounter pool yet, so the schedule is supplied here while
@@ -799,6 +801,10 @@ func _test_trio_seeded_announcements() -> void:
 		_check(not record.is_empty(), "forced alternative source present: " + String(case.id))
 		if record.is_empty():
 			continue
+		case.action = _authored_alternative(record, case.action.type, case.action.amount)
+		_check(not case.action.is_empty(), "forced older choice comes from its real parsed record")
+		if case.action.is_empty():
+			continue
 		var forced_record: Dictionary = record.duplicate(true)
 		forced_record["intent"] = {"target": case.target, "actions": [case.action]}
 		var forced_enemies := CombatEnemies.new([forced_record])
@@ -811,6 +817,11 @@ func _test_trio_seeded_announcements() -> void:
 		if not did_bind:
 			continue
 		var announced: Dictionary = forced_scheduler.get_intents()[0]
+		var expected_action: Dictionary = CombatEnemyIntents.weighted_action(case.action).action.duplicate(true)
+		expected_action["enemy_position"] = 1
+		if expected_action.type in ["attack", "debuff", "snip_block"]:
+			expected_action["target_position"] = 1 if case.target == "front" else 3
+		_check(announced == expected_action, "forced older choice retains all authored action fields")
 		_check(announced.get("type") == case.action.type
 			and int(announced.get("amount", -1)) == int(case.action.amount),
 			"forced alternative announces its authored effect: %s %s" % [case.id, str(case.action)])
@@ -1776,8 +1787,12 @@ func _test_needle_wasp_bleeding_sting() -> void:
 	var false_enemies := CombatEnemies.new([false_record])
 	_check(false_enemies.is_valid() and false_enemies.get_enemy(1).get("bleed_on_attack") == false,
 		"precondition: a real roster carries the explicit false flag")
-	var false_receipt := CombatEnemyPhase.new().execute_phase(false_party, false_enemies,
-		[_raw_attack_intent(3)], null, true)
+	var false_case := _force_normal_alternative(false_record, attack, false_party)
+	_check(not false_case.is_empty(), "explicit false flag binds the authentic two-hit sting")
+	if false_case.is_empty():
+		return
+	var false_receipt := CombatEnemyPhase.new().execute_phase(false_party, false_case.enemies,
+		false_case.intents, null, true)
 	_check(false_receipt.get("ok") == true and false_party.get_hero(3).get("hp") == 18
 		and false_party.get_hero(3).get("statuses", {}).get("bleed", 0) == 0,
 		"AC3: an explicit false flag still deals the 8 damage but grants no Bleed")
@@ -3224,7 +3239,7 @@ func _test_moth_swarm_block_chew_catalog() -> void:
 	var without_trait: Dictionary = moth.duplicate(true)
 	without_trait.erase("chew_block_on_attack")
 	_check(_norm(without_trait) == _norm(established),
-		"AC1: the new boolean is the only difference from the established Moth record")
+		"AC1: removing the trait preserves the exact current alternatives and other fields")
 	_check(moth.get("intent", {}).get("target") == "front"
 		and int(moth.get("max_hp", 0)) == 21
 		and String(moth.get("art_path", "")) == "res://assets/paper/enemies/moth_swarm.png",
@@ -4819,6 +4834,118 @@ func _test_front_normal_named_strikes() -> void:
 						"strikes preserve peers, enemy Thorns metadata and RNG")
 					traces.append([action, receipt, witness.hits, party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state])
 				_check(traces.size() == 2 and traces[0] == traces[1], "same-seed strike execution replays exactly")
+
+
+func _test_flying_normal_named_strikes() -> void:
+	var parsed := _load_parsed()
+	var material := RunAuthoredBattleEntry._floor_band_material(null)
+	_check(material.get("ok") == true, "flying strikes: live Fight material builds")
+	if not material.get("ok", false):
+		return
+	for id in ["moth_swarm", "needle_wasp"]:
+		var moth: bool = id == "moth_swarm"
+		var record := _find(parsed, id)
+		_check(not record.is_empty(), "flying strike source strictly parses: " + id)
+		if record.is_empty():
+			continue
+		var raw: Dictionary = record.intent.actions.back()
+		_check(_norm(raw) == ({"type": "attack", "amount": 6, "hits": 2, "move": "attack2", "weight": 1}
+			if moth else {"type": "attack", "amount": 7, "move": "attack2", "weight": 1}),
+			"exact weighted flying strike appended last: " + id)
+		_check(_norm(material.get("records", {}).get(id)) == _norm(record),
+			"live Fight material preserves entire flying source: " + id)
+		var has_band := false
+		for pool in material.get("pools", {}).values():
+			has_band = has_band or pool.has(id)
+		_check(has_band, "flying source remains eligible in derived floor bands: " + id)
+		# The complete weighted record can actually select the new move, too.
+		var selected := false
+		for seed_value in range(128):
+			var bound := _bind_records(seed_value, [record])
+			_check(bound.ok and bound.scheduler.is_bound(), "full flying record binds")
+			if not bound.ok:
+				break
+			if bound.scheduler.get_intents()[0].get("move") != "attack2":
+				continue
+			var replay := _bind_records(seed_value, [record])
+			_check(replay.ok and replay.scheduler.get_intents() == bound.scheduler.get_intents()
+				and replay.rng.state == bound.rng.state, "full weighted flying strike replays its RNG")
+			selected = true
+			break
+		_check(selected, "new flying move is reachable from complete weighted record: " + id)
+		for block in [0, 2, 12]:
+			var traces: Array = []
+			for replay in range(2):
+				var party := _party()
+				var target := 1 if moth else 3
+				var start_hp := 40 if moth else 26
+				_check(party.is_valid() and party.get_hero(target).hp == start_hp
+					and party.gain_block(target, block), "flying target has real HP and Block")
+				var bound := _force_normal_alternative(record, raw, party)
+				_check(not bound.is_empty(), "canonical flying alternative binds")
+				if bound.is_empty():
+					continue
+				var expected: Dictionary = CombatEnemyIntents.weighted_action(raw).action.duplicate(true)
+				expected.merge({"enemy_position": 1, "target_position": target})
+				_check(bound.scheduler.is_bound() and bound.intents == [expected],
+					"flying announcement preserves move, target, amount and hits")
+				var before := [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()]
+				var fallback := "res://assets/paper/enemies/%s_attack.png" % id
+				for catalog in [LiveMovePoseCatalog.new(), MissingCrusherPose.new()]:
+					var pose: Dictionary = catalog.lookup_enemy(id, expected, fallback)
+					_check(pose.get("name") == ("Swarm Engulf" if moth else "Sting Dive")
+						and pose.get("pose") == "attack2"
+						and pose.get("named_art") == "res://assets/paper/enemies/%s_attack2.png" % id
+						and pose.get("art") == (pose.get("named_art") if pose.get("art_available") else fallback),
+						"flying manifest resolves authored name/path and checked fallback")
+					if catalog is MissingCrusherPose:
+						_check(pose.get("fallback_used") == true and pose.get("art") == fallback,
+							"missing flying texture retains named fallback")
+				for field in ["hits", "move", "amount"]:
+					for value in ([0, 3, "2", null] if field == "hits" else
+							["", "attack5", 2, null] if field == "move" else [99]):
+						var malformed := raw.duplicate(true)
+						malformed[field] = value
+						if field != "amount":
+							_check(CombatEnemyIntents.weighted_action(malformed).is_empty(),
+								"unsupported flying move/hits fails authored validation")
+						var bad := expected.duplicate(true)
+						bad[field] = value
+						_check(CombatEnemyPhase.new().execute_phase(party, bound.enemies, [bad], null, true)
+							== {"ok": false, "events": []}
+							and [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()] == before,
+							"invalid flying move/hits or forged amount rejects with unchanged state/RNG")
+				_check([party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()] == before,
+					"flying pose lookups and rejection checks spend nothing")
+				var witness := WraithHitWitness.new()
+				var receipt := CombatEnemyPhase.new().execute_phase(party, bound.enemies, bound.intents, witness, true)
+				var events: Array = []
+				var packets: Array = []
+				var hp: int = start_hp
+				var remaining: int = 0 if moth else block
+				for hit in range(2 if moth else 1):
+					var packet := 3 if moth else 7
+					var next_hp := hp - maxi(0, packet - remaining)
+					var next_block := maxi(0, remaining - packet)
+					packets.append([packet, hp, remaining, next_hp, next_block])
+					events.append({"type": "attack", "enemy_position": 1, "target_position": target,
+						"move": "attack2", "applied": true, "actual_target_position": target,
+						"redirected": false, "retaliation_damage": 0, "retaliatory_damage": 0})
+					hp = next_hp
+					remaining = next_block
+				_check(receipt == {"ok": true, "events": events} and witness.hits == packets,
+					"ordered flying hit receipts prove Block removed before Moth's 3+3 HP damage")
+				var hero := party.get_hero(target)
+				_check(hero.hp == hp and hero.block == remaining
+					and hero.get("statuses", {}).get("bleed", 0) == (1 if not moth and hp < start_hp else 0),
+					"Sting Dive bleeds only positive HP loss; full Block prevents Bleed")
+				for position in range(1, 4):
+					if position != target:
+						_check(party.get_hero(position) == before[0][position - 1], "flying strike preserves other heroes")
+				_check(bound.enemies.get_enemies() == before[1] and bound.rng.state == before[2]
+					and bound.scheduler.get_intents() == before[3], "flying phase preserves source, announcement and RNG")
+				traces.append([receipt, witness.hits, party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state])
+			_check(traces.size() == 2 and traces[0] == traces[1], "same-seed flying phase replays exactly")
 
 
 class WraithHitWitness extends CombatWardenGuardReactions:

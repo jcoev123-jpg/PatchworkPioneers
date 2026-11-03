@@ -114,13 +114,25 @@ func _phase_cases() -> void:
 		var oracle := RandomNumberGenerator.new()
 		oracle.seed = rng.seed
 		oracle.state = rng_before
-		oracle.randi_range(1, 7)
+		var parent_weight := 0
+		for entry in enemies.get_enemy(1).intent.actions:
+			parent_weight += int(entry.weight)
+		oracle.randi_range(1, parent_weight)
 		_check(rng.state == oracle.state,
 			"child admission draws no RNG beyond the authored parent choice")
-		var hp_before: int = party.get_hero(1).hp
+		# The mother's new attack2 can also hit this phase. Resolve the same
+		# parents independently, then prove the child's additional five HP loss.
+		var parent_party := CombatParty.new(party.get_heroes())
+		var parent_enemies := CombatEnemies.new(enemies.get_enemies())
+		var parent_phase := CombatEnemyPhase.new().execute_phase(parent_party, parent_enemies,
+			intents.get_intents().slice(0, 2), null, true)
+		_check(parent_phase.ok and parent_party.get_hero(1).hp > 5,
+			"precondition: authentic parent beats leave a living front target for the child")
 		var next := CombatEnemyPhase.new().execute_phase(party, enemies, intents.get_intents(), null, true)
-		_check(next.ok and party.get_hero(1).hp == hp_before - 5
-			and next.events[2].applied and next.events[2].enemy_position == 3,
+		_check(next.ok and party.get_hero(1).hp == parent_party.get_hero(1).hp - 5
+			and next.events.size() == parent_phase.events.size() + 1
+			and next.events.back() == {"type": "attack", "enemy_position": 3,
+				"target_position": 1, "applied": true},
 			"child acts only in the following genuine enemy phase and hits for five")
 		var after := enemies.get_enemies()
 		_check(CombatEnemyPhase.new().execute_phase(party, enemies, selected, null, true).ok
