@@ -13,6 +13,9 @@ func _initialize() -> void:
 	_test_seamstress_cards()
 	_test_tinker_cards()
 	_test_starting_deck_multiplicities()
+	_test_v3_seamstress_starter_lookup()
+	_test_v3_seamstress_records_are_detached()
+	_test_v3_seamstress_unknown_ids_fail_closed()
 	_test_unknown_id_returns_empty()
 	_test_returned_data_is_deep_copy()
 	_test_starting_deck_is_fresh_copy()
@@ -277,6 +280,194 @@ func _test_starting_deck_multiplicities() -> void:
 	
 	# Total should be 12
 	_check(deck.size() == 12, "starting deck has 12 cards total")
+
+
+## Independent literal facts for the four authored V3 Seamstress starter pairs, copied from
+## data/cards/v3_seamstress_starter_cards.gd and the V3-1 design notes, never read back from the
+## catalog under test.
+func _v3_seamstress_starter_cases() -> Dictionary:
+	return {
+		"seamstress_v3_thread_prick": {
+			"name": "Thread Prick", "cost": 1, "plus_cost": 1,
+			"from": [1, 2, 3], "target": "enemy_single", "to": [1, 2, 3],
+			"effects": {"damage": 3, "bleed": 2},
+			"plus_effects": {"damage": 4, "bleed": 3}},
+		"seamstress_v3_tether_loop": {
+			"name": "Tether Loop", "cost": 2, "plus_cost": 1,
+			"from": [2, 3], "target": "enemy_pair", "to": [1, 2, 3],
+			"effects": {"tether_share_percent": 50},
+			"plus_effects": {"tether_share_percent": 50}},
+		"seamstress_v3_mending_knot": {
+			"name": "Mending Knot", "cost": 1, "plus_cost": 1,
+			"from": [2, 3], "target": "ally_single", "to": [],
+			"effects": {"heal": 4, "cleanse_debuff": 1},
+			"plus_effects": {"heal": 6, "cleanse_debuff": 1}},
+		"seamstress_v3_shielding_hem": {
+			"name": "Shielding Hem", "cost": 1, "plus_cost": 1,
+			"from": [1, 2, 3], "target": "ally_single", "to": [],
+			"effects": {"block": 4, "heal": 2},
+			"plus_effects": {"block": 6, "heal": 3}},
+	}
+
+
+## V3-1: the shared StarterCards lookup serves the eight authored V3 Seamstress records without
+## adopting them into the legacy deck, enumeration or membership.
+func _test_v3_seamstress_starter_lookup() -> void:
+	var shared := StarterCards.new()
+	var source := V3SeamstressStarterCards.new()
+	var cases: Dictionary = _v3_seamstress_starter_cases()
+	_check(cases.size() == 4, "V3 Seamstress fixture enumerates four authored starter pairs")
+	var v3_deck: Array[String] = source.get_starting_deck()
+	_check(not v3_deck.is_empty(), "V3 Seamstress dedicated starting deck is populated (precondition)")
+	for base_id: String in cases:
+		var spec: Dictionary = cases[base_id]
+		var plus_id: String = base_id + "_plus"
+		_check(source.get_upgrade_id(base_id) == plus_id, base_id + " maps to its authored upgrade")
+		for upgraded: bool in [false, true]:
+			var card_id: String = plus_id if upgraded else base_id
+			var shared_record: Dictionary = shared.get_definition(card_id)
+			var source_record: Dictionary = source.get_definition(card_id)
+			_check(not source_record.is_empty(), card_id + " is an authored V3 record (precondition)")
+			_check(not shared_record.is_empty(), card_id + " resolves through the shared starter lookup")
+			_check(shared_record == source_record, card_id + " shared lookup equals the full authored V3 record")
+			_check(shared_record.get("id") == card_id, card_id + " keeps its authored ID")
+			_check(shared_record.get("display_name")
+				== str(spec["name"]) + ("+" if upgraded else ""), card_id + " keeps its printed name")
+			_check(shared_record.get("owner") == "seamstress", card_id + " stays Seamstress-owned")
+			_check(shared_record.get("cost") == (spec["plus_cost"] if upgraded else spec["cost"]),
+				card_id + " keeps its printed energy cost")
+			_check(shared_record.get("from_positions") == spec["from"],
+				card_id + " keeps its legal FROM positions")
+			_check(shared_record.get("target_kind") == spec["target"],
+				card_id + " keeps its target shape")
+			_check(shared_record.get("to_positions") == spec["to"],
+				card_id + " keeps its legal TO positions")
+			_check(shared_record.get("effects") == (spec["plus_effects"] if upgraded else spec["effects"]),
+				card_id + " keeps its printed effects")
+			_check(shared_record.get("illustration_path")
+				== "res://assets/paper/cards/" + base_id + ".png",
+				card_id + " keeps its authored illustration path")
+			_check(shared_record.get("starting_copies") == (0 if upgraded else 1),
+				card_id + " keeps its authored V3 starting copy count")
+			_check(shared_record.get("reward_eligible") == false,
+				card_id + " stays out of rewards")
+			if upgraded:
+				_check(shared_record.get("upgrade_of") == base_id, card_id + " points back at its base")
+				_check(not shared_record.has("upgrade_id"), card_id + " is a terminal upgrade")
+			else:
+				_check(shared_record.get("upgrade_id") == plus_id, card_id + " points at its own upgrade")
+				_check(not shared_record.has("upgrade_of"), card_id + " is not itself an upgrade")
+		var shared_base: Dictionary = shared.get_definition(base_id)
+		var shared_plus: Dictionary = shared.get_definition(plus_id)
+		_check(shared_base.get("illustration_path") == shared_plus.get("illustration_path"),
+			base_id + " base and upgrade share one illustration")
+		_check(v3_deck.count(base_id) == 1, base_id + " is exactly one authored V3 starting copy")
+		_check(not v3_deck.has(plus_id), plus_id + " adds no V3 starting copy")
+	for deck_id: String in v3_deck:
+		_check(cases.has(deck_id), deck_id + " in the V3 dedicated deck is one of its four authored bases")
+	# The shared catalog keeps its legacy definitions, membership, enumeration and deck.
+	var legacy_ids: Array[String] = shared.get_all_card_ids()
+	var legacy_deck: Array[String] = shared.get_starting_deck()
+	_check(not legacy_ids.is_empty(), "legacy enumeration is populated (precondition)")
+	_check(not legacy_deck.is_empty(), "legacy starting deck is populated (precondition)")
+	for base_id: String in cases:
+		for card_id: String in [base_id, base_id + "_plus"]:
+			_check(not shared.has_card(card_id), card_id + " is not legacy shared-catalog membership")
+			_check(not legacy_ids.has(card_id), card_id + " stays out of legacy enumeration")
+			_check(not legacy_deck.has(card_id), card_id + " stays out of the legacy starting deck")
+	var authored_legacy: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/cards/starter_deck.json"))
+	_check(authored_legacy is Array and legacy_deck == authored_legacy,
+		"legacy starting deck still matches its authored membership and order")
+	# A legacy ID is answered by the legacy data, not by any V3 fallback.
+	_check(shared.get_definition("seamstress_prick").get("display_name") == "Prick",
+		"legacy Seamstress Prick still resolves directly")
+	_check(shared.get_definition("seamstress_prick").get("effects") == {"damage": 3, "bleed": 2},
+		"legacy Seamstress Prick keeps its authored effects")
+	# The existing V3 Tinker fallback still works after the Seamstress bridge.
+	var tinker_v3: Dictionary = shared.get_definition("tinker_v3_cog_shot")
+	_check(not tinker_v3.is_empty() and tinker_v3.get("owner") == "tinker",
+		"existing V3 Tinker lookup bridge is preserved")
+
+
+## AC1: a record returned through the shared lookup is detached from both catalogs.
+func _test_v3_seamstress_records_are_detached() -> void:
+	var shared := StarterCards.new()
+	var source := V3SeamstressStarterCards.new()
+	var source_before: Dictionary = source.get_definition("seamstress_v3_thread_prick")
+	_check(not source_before.is_empty(), "V3 source mutation fixture is loaded (precondition)")
+	var record: Dictionary = shared.get_definition("seamstress_v3_thread_prick")
+	_check(not record.is_empty(), "shared mutation fixture is loaded (precondition)")
+	if record.is_empty() or source_before.is_empty():
+		return
+	record["effects"]["damage"] = 999
+	record["effects"]["bleed"] = 999
+	record["effects"]["forged_effect"] = 1
+	record["from_positions"].clear()
+	record["from_positions"].append(9)
+	record["to_positions"][0] = 9
+	record["to_positions"].append(9)
+	record["display_name"] = "Mutated"
+	record["cost"] = 99
+	record["starting_copies"] = 99
+	record["upgrade_id"] = "seamstress_v3_forged_upgrade"
+	var again: Dictionary = shared.get_definition("seamstress_v3_thread_prick")
+	_check(again.get("effects") == {"damage": 3, "bleed": 2},
+		"mutating a shared record's nested effects leaves later shared lookups pristine")
+	_check(again.get("from_positions") == [1, 2, 3],
+		"mutating a shared record's FROM positions leaves later shared lookups pristine")
+	_check(again.get("to_positions") == [1, 2, 3],
+		"mutating a shared record's TO positions leaves later shared lookups pristine")
+	_check(again.get("display_name") == "Thread Prick" and again.get("cost") == 1
+		and again.get("starting_copies") == 1,
+		"mutating a shared record's metadata leaves later shared lookups pristine")
+	_check(again.get("upgrade_id") == "seamstress_v3_thread_prick_plus",
+		"mutating a shared record's upgrade link leaves the reciprocal link pristine")
+	_check(source.get_definition("seamstress_v3_thread_prick") == source_before,
+		"mutating a shared record never touches the authored V3 source catalog")
+	# A record mutated at the V3 source itself still never leaks into the shared lookup.
+	var source_record: Dictionary = source.get_definition("seamstress_v3_shielding_hem_plus")
+	_check(not source_record.is_empty(), "V3 source upgrade fixture is loaded (precondition)")
+	source_record["effects"]["block"] = 900
+	source_record["effects"]["heal"] = 900
+	source_record["from_positions"].append(900)
+	var shared_plus: Dictionary = shared.get_definition("seamstress_v3_shielding_hem_plus")
+	_check(shared_plus.get("effects") == {"block": 6, "heal": 3},
+		"a record mutated at the V3 source cannot leak into the shared lookup")
+	_check(shared_plus.get("from_positions") == [1, 2, 3],
+		"a position array mutated at the V3 source cannot leak into the shared lookup")
+	_check(source.get_definition("seamstress_v3_shielding_hem_plus").get("effects")
+		== {"block": 6, "heal": 3}, "the V3 source catalog itself stays pristine")
+
+
+## AC1: unknown, invented and foreign IDs still fail closed through the shared lookup.
+func _test_v3_seamstress_unknown_ids_fail_closed() -> void:
+	var shared := StarterCards.new()
+	var source := V3SeamstressStarterCards.new()
+	var invented: Array[String] = [
+		"seamstress_v3_", "seamstress_v3_forged_starter", "seamstress_v3_forged_card",
+		"seamstress_v3_thread_prick_plus_plus", "seamstress_v3_tether_loop_plus_plus",
+		"seamstress_v3_mending_knot_plus_plus", "seamstress_v3_shielding_hem_plus_plus",
+		"SEAMSTRESS_V3_THREAD_PRICK", " seamstress_v3_thread_prick",
+		"seamstress_v3_thread_prick ", "seamstress_v3_thread_prick+",
+		# Reward-pool IDs belong to their own catalog and are never starters.
+		"seamstress_v3_needle_rain", "seamstress_v3_needle_rain_plus",
+		"seamstress_v3_darn_the_tear", "seamstress_v3_tether_stitch",
+		"seamstress_v3_blanket_of_barbs", "seamstress_v3_patchwork_poultice",
+		# Legacy and other-hero IDs are never answered by the V3 Seamstress bridge.
+		"seamstress_running_stitch", "warden_v3_pot_helm_bonk", "unknown_card", "",
+	]
+	_check(not invented.is_empty(), "invented-ID fixture is populated (precondition)")
+	for card_id: String in invented:
+		_check(not source.has_card(card_id),
+			card_id + " is not an authored V3 Seamstress starter (precondition)")
+		_check(shared.get_definition(card_id).is_empty(),
+			card_id + " still refuses a definition through the shared lookup")
+		_check(not shared.has_card(card_id), card_id + " still fails shared membership")
+	_check(shared.get_definition("seamstress_v3_thread_prick_plus").get("id")
+		== "seamstress_v3_thread_prick_plus", "a real plus ID still resolves (precondition)")
+	_check(shared.get_definition("seamstress_prick").get("display_name") == "Prick",
+		"a legacy ID is still answered by legacy data, not the V3 bridge")
 
 
 func _test_unknown_id_returns_empty() -> void:

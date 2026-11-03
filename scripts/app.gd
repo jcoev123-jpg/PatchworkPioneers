@@ -754,6 +754,20 @@ var _quilt_hand_snapshot: Array[String] = []
 var _quilt_draw_snapshot: Array[String] = []
 var _quilt_discard_snapshot: Array[String] = []
 var _quilt_card_total := 0
+## Last *mounted* physical card occurrences and the authoritative piles at that
+## mount. A hand redraw cannot manufacture a draw or a paid discard receipt.
+var _hand_motion_deck: CombatDeck
+var _hand_motion_battle: Control
+var _hand_motion_ids: Array[String] = []
+var _hand_motion_draw: Array[String] = []
+var _hand_motion_discard: Array[String] = []
+var _hand_motion_turn := -1
+# The actual mounted panel activated before a presenter commits a paid play.
+# This is only a visual witness; CombatDeck and the quilt receipt remain authoritative.
+var _hand_motion_source: Control
+var _hand_motion_source_card := ""
+var _hand_motion_source_hand: Array[String] = []
+var hand_motion_history: Array[Dictionary] = []
 var session_gold := 0
 var run_deck: Array[String] = []
 var run_scraps := 0
@@ -941,6 +955,39 @@ func _process(_delta: float) -> void:
 ## the live attack preview cycles attack cards, Esc retires the forecast. When
 ## another live selection owns P, this handler stays out of its way.
 func _input(event: InputEvent) -> void:
+	# Observe the genuine GUI destination without installing another card signal
+	# listener: unwired cards must still have exactly ZERO input connections.
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
+			and event.pressed and _hand_motion_allowed():
+		var hovered: Control = get_viewport().gui_get_hovered_control()
+		var captured := false
+		for panel in hand_view.get_children():
+			if panel.gui_input.get_connections().is_empty():
+				continue
+			if (hovered == panel or (hovered != null and panel.is_ancestor_of(hovered))) \
+					and panel.get_global_rect().has_point(event.position):
+				_hand_motion_capture_input(event, panel, (panel.get_child(0) as Label).text)
+				captured = true
+				break
+		if not captured:
+			# P-selected targeted attacks may be confirmed by clicking an enemy,
+			# not by clicking the card again; retain the physically armed panel.
+			var preview = get_node_or_null("LiveAttackPreview")
+			if preview != null and is_instance_valid(preview._armed) \
+					and not preview._armed.gui_input.get_connections().is_empty():
+				_hand_motion_capture_input(event, preview._armed, \
+						(preview._armed.get_child(0) as Label).text)
+	elif event is InputEventKey and event.pressed and not event.echo:
+		var focused: Control = get_viewport().gui_get_focus_owner()
+		if focused != null and focused.get_parent() == hand_view \
+				and not focused.gui_input.get_connections().is_empty():
+			_hand_motion_capture_input(event, focused, (focused.get_child(0) as Label).text)
+		elif event.keycode in [KEY_1, KEY_2, KEY_3, KEY_ENTER, KEY_SPACE]:
+			var preview = get_node_or_null("LiveAttackPreview")
+			if preview != null and is_instance_valid(preview._armed) \
+					and not preview._armed.gui_input.get_connections().is_empty():
+				_hand_motion_capture_input(event, preview._armed, \
+						(preview._armed.get_child(0) as Label).text)
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
 	if event.keycode == KEY_ESCAPE:
@@ -1092,6 +1139,9 @@ func _observe_battle_result() -> bool:
 		enemy_buff_forecast_label.hide()
 	if not _battle_closed:
 		_battle_closed = true
+		var hand_juice = get_node_or_null("LiveCombatJuice")
+		if hand_juice != null:
+			hand_juice.retire_hand_echoes()
 		var tether_presenter := get_node_or_null("LiveAttackPreview")
 		if tether_presenter != null:
 			tether_presenter.retire_tether_battle()
@@ -7450,10 +7500,149 @@ func _path_card_owner(card_id: String) -> String:
 	return ""
 
 
+## One battle's saved physical copies, not just the set of distinct card IDs.
+## The turn index distinguishes a genuine new five-card deal from a refresh.
+func _hand_motion_clear() -> void:
+	_hand_motion_deck = null
+	_hand_motion_battle = null
+	_hand_motion_ids.clear()
+	_hand_motion_draw.clear()
+	_hand_motion_discard.clear()
+	_hand_motion_turn = -1
+	_hand_motion_source = null
+	_hand_motion_source_card = ""
+	_hand_motion_source_hand.clear()
+	hand_motion_history.clear()
+	var juice = get_node_or_null("LiveCombatJuice")
+	if juice != null:
+		juice.retire_hand_echoes()
+
+
+func _hand_motion_allowed() -> bool:
+	if deck == null or _battle_closed or not deck.turn_active or not is_instance_valid(hand_view) \
+			or not hand_view.is_visible_in_tree() or not is_instance_valid(battle_view) \
+			or not battle_view.is_visible_in_tree():
+		return false
+	if bool(ProjectSettings.get_setting("accessibility/reduced_motion", false)):
+		return false
+	var support = get_node_or_null("LiveSupportHand")
+	return support == null or not (support.reduced_motion_override is bool \
+		and bool(support.reduced_motion_override))
+
+
+## Listen before the real presenters bind their callbacks; they can commit on a
+## deferred target choice. No action is taken here, and only a later verified
+## CombatDeck hand-to-discard transition can use this physical panel witness.
+func _hand_motion_capture_input(event: InputEvent, panel: Control, card_id: String) -> void:
+	var click: bool = event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed
+	var preview = get_node_or_null("LiveAttackPreview")
+	var keyboard_target: bool = event is InputEventKey and event.pressed and not event.echo \
+		and event.keycode in [KEY_1, KEY_2, KEY_3, KEY_ENTER, KEY_SPACE] \
+		and preview != null and preview._armed == panel
+	var accept: bool = event is InputEventKey and not event.echo \
+		and ((panel.has_focus() and event.is_action_pressed("ui_accept")) or keyboard_target)
+	if not (click or accept) or not _hand_motion_allowed() \
+			or _hand_motion_deck != deck or _hand_motion_battle != battle_view \
+			or deck.hand != _hand_motion_ids or panel.get_parent() != hand_view:
+		return
+	var index := panel.get_index()
+	if index < 0 or index >= deck.hand.size() or deck.hand[index] != card_id:
+		return
+	_hand_motion_source = panel
+	_hand_motion_source_card = card_id
+	_hand_motion_source_hand.assign(deck.hand)
+
+
+func _hand_motion_reconcile(committed_id: String) -> Dictionary:
+	var entry: Array[int] = []
+	var removed := -1
+	var receipt := {"entries": entry, "exit": removed}
+	if not _hand_motion_allowed():
+		return receipt
+	if _hand_motion_deck != deck or _hand_motion_battle != battle_view:
+		for index in range(deck.hand.size()):
+			entry.append(index)
+		return {"entries": entry, "exit": -1}
+	var turn := int(enemy_intents._turn_index) if enemy_intents != null else -1
+	if turn != _hand_motion_turn and turn >= 0:
+		for index in range(deck.hand.size()):
+			entry.append(index)
+		return {"entries": entry, "exit": -1}
+	var old_total := _hand_motion_ids.size() + _hand_motion_draw.size() + _hand_motion_discard.size()
+	var new_total := deck.hand.size() + deck.draw_pile.size() + deck.discard_pile.size()
+	if old_total != new_total:
+		return receipt
+	var remaining: Array[String] = _hand_motion_ids.duplicate()
+	if not committed_id.is_empty() and deck.discard_pile.has(committed_id):
+		for index in range(_hand_motion_ids.size()):
+			if _hand_motion_ids[index] != committed_id:
+				continue
+			var candidate: Array[String] = _hand_motion_ids.duplicate()
+			candidate.remove_at(index)
+			if deck.hand.size() >= candidate.size() \
+					and deck.hand.slice(0, candidate.size()) == candidate:
+				remaining = candidate
+				# CombatDeck removes the first matching ID, but the physical source
+				# can be the second copy. Require the captured mounted activation.
+				if is_instance_valid(_hand_motion_source) \
+						and _hand_motion_source.get_parent() == hand_view \
+						and _hand_motion_source_card == committed_id \
+						and _hand_motion_source_hand == _hand_motion_ids:
+					var source_index := _hand_motion_source.get_index()
+					if source_index >= 0 and source_index < _hand_motion_ids.size() \
+							and _hand_motion_ids[source_index] == committed_id:
+						removed = source_index
+				# A single held ID is unambiguous even when a programmatic or
+				# P-selected resolver committed without a captured GUI witness.
+				if removed < 0 and _hand_motion_ids.count(committed_id) == 1:
+					removed = index
+				break
+	# Every entry must be an appended copy, corroborated by a real pile change.
+	# The old prefix survives even a reshuffle in the middle of draw_extra().
+	if deck.hand.size() > remaining.size() \
+			and deck.hand.slice(0, remaining.size()) == remaining \
+			and (deck.draw_pile != _hand_motion_draw \
+				or deck.discard_pile != _hand_motion_discard):
+		for index in range(remaining.size(), deck.hand.size()):
+			entry.append(index)
+	return {"entries": entry, "exit": removed}
+
+
+func _hand_motion_record() -> void:
+	_hand_motion_deck = deck
+	_hand_motion_battle = battle_view
+	_hand_motion_ids.assign(deck.hand)
+	_hand_motion_draw.assign(deck.draw_pile)
+	_hand_motion_discard.assign(deck.discard_pile)
+	_hand_motion_turn = int(enemy_intents._turn_index) if enemy_intents != null else -1
+	_hand_motion_source = null
+	_hand_motion_source_card = ""
+	_hand_motion_source_hand.clear()
+
+
+func _hand_motion_log(kind: String, card_id: String, index: int) -> void:
+	hand_motion_history.append({"kind": kind, "card_id": card_id, "index": index})
+	if hand_motion_history.size() > 64:
+		hand_motion_history.pop_front()
+
+
 func _refresh_hand() -> void:
 	# Reconcile real committed plays of this battle before the hand is rebuilt,
 	# so any awarded Block and extra draw render through the existing refreshes.
+	# Snapshot the synchronous, genuine paid transaction before the quilt bridge
+	# consumes it or awards its own optional draw.
+	var committed := _quilt_committed_card() if _quilt_deck == deck and deck != null \
+		and not _battle_closed else ""
 	_quilt_sync_hand()
+	var motion := _hand_motion_reconcile(committed)
+	var old_ids: Array[String] = _hand_motion_ids.duplicate()
+	var removed: int = int(motion["exit"])
+	if removed >= 0 and removed < hand_view.get_child_count() \
+			and removed < old_ids.size():
+		var juice = get_node_or_null("LiveCombatJuice")
+		var source := hand_view.get_child(removed) as Control
+		if juice != null and juice.spawn_hand_discard_echo(source, $LiveSupportHand._metadata):
+			_hand_motion_log("discard", old_ids[removed], removed)
 	$LiveSupportHand._cancel_pending()
 	# Rebuilt panels invalidate every previous combo forecast selection/listener.
 	_combo_clear()
@@ -7479,6 +7668,13 @@ func _refresh_hand() -> void:
 	# Heirloom receipts; neither authority is recreated by a hand redraw.
 	$LiveAttackPreview._sync_battle()
 	$LiveSupportHand._sync_battle()
+	if _hand_motion_allowed():
+		for index in motion["entries"]:
+			if index < hand_view.get_child_count() and index < deck.hand.size():
+				var panel := hand_view.get_child(index) as Control
+				if $LiveSupportHand._metadata.begin_draw_entry(panel):
+					_hand_motion_log("draw", deck.hand[index], index)
+	_hand_motion_record()
 	_sync_combo_forecast()
 
 
@@ -8096,6 +8292,7 @@ func _return_to_title() -> void:
 		round_flow.clear_taunt()
 	round_flow = null
 	_quilt_detach()
+	_hand_motion_clear()
 	_combo_clear(true)
 	if is_instance_valid(battle_view):
 		remove_child(battle_view)

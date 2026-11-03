@@ -959,6 +959,94 @@
         { "id": "haul_glass_lenses", "text": "Haul the heavy telescope lenses (lose 6 HP; gain 3 scraps)", "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 } },
         { "id": "leave", "text": "Let the cat watch the misty moon", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_ashen_goat_lantern_horns",
+      "title": "The Ashen Goat's Lantern Horns",
+      "description": "A plump slate-grey goat ragdoll balances two enormous curled felt horns threaded with amber lanterns; candlelit stitches gleam above its mismatched button eyes.",
+      "choices": [
+        {
+          "id": "polish_horn_wicks",
+          "text": "Pay 13 gold and 1 scrap to mend the lantern seams (heal 6 HP; gain 1 max HP)",
+          "outcome": { "gold": -13, "scraps": -1, "hp": 6, "max_hp": 1 }
+        },
+        {
+          "id": "unlace_horn_bells",
+          "text": "Unlace the heavy horn bells (lose 4 HP; gain 21 gold)",
+          "outcome": { "gold": 21, "scraps": 0, "hp": -4, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the goat keep its lantern vigil",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_garnet_otter_quilt_raft",
+      "title": "The Garnet Otter's Quilt Raft",
+      "description": "A round garnet-cloth otter pilots a house-sized folded quilt across an ink-dark canal, its stout paddle tied with pale running stitches beneath a mustard lantern.",
+      "choices": [
+        {
+          "id": "sew_raft_hem",
+          "text": "Spend 2 scraps on a lasting raft seam (+3 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 3 }
+        },
+        {
+          "id": "paddle_for_fare",
+          "text": "Paddle through the freezing canal (lose 5 HP; gain 2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Watch the quilt raft drift into the fog",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_inkblue_jellyfish_belljar",
+      "title": "The Ink-Blue Jellyfish Bell Jar",
+      "description": "A round ink-blue jellyfish doll bobs inside a house-sized cracked glass bell jar, its short quilted ribbons glowing beneath a ring of candle-warmed lace.",
+      "choices": [
+        {
+          "id": "buy_glass_balm",
+          "text": "Pay 16 gold for warm bell-jar balm (heal 10 HP)",
+          "outcome": { "gold": -16, "scraps": 0, "hp": 10, "max_hp": 0 }
+        },
+        {
+          "id": "donate_glass_seam",
+          "text": "Give up 2 lasting heart seams for the glass keeper (lose 2 max HP; gain 26 gold)",
+          "outcome": { "gold": 26, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the jellyfish dim its lace lanterns",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_bonecream_bison_banner",
+      "title": "The Bone-Cream Bison Banner",
+      "description": "A squat bone-cream bison ragdoll braces an enormous moth-eaten oxblood banner on a stitched pole, its heavy padded horns haloed by a single brass lantern.",
+      "choices": [
+        {
+          "id": "reweave_bison_standard",
+          "text": "Spend 3 scraps reweaving the great banner (+4 max HP)",
+          "outcome": { "gold": 0, "scraps": -3, "hp": 0, "max_hp": 4 }
+        },
+        {
+          "id": "pawn_banner_lining",
+          "text": "Pawn three lasting banner seams (lose 3 max HP; gain 35 gold)",
+          "outcome": { "gold": 35, "scraps": 0, "hp": 0, "max_hp": -3 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the bison guarding its faded standard",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }

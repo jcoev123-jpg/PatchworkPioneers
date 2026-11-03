@@ -276,4 +276,30 @@ const SEEDS := [
 	# Revalidated five-Event Parcel-to-Fight witness after nightwork additions:
 	# genuine map, paid Warden toll and one sorted generic draw.
 	770644,
+	# Revalidated after the four gothic mechanical-oddity stories joined the
+	# sorted generic pool; each comes from the genuine six-Event map, paid Warden
+	# toll and one-draw rotation oracle used by the live regression.
+	# Re-check old hints rather than pinning indices, and retain every prior seed.
+	106412, # v3_midnight_seahorse_lockgate
+	112388, # v3_briar_button_mending_bench
+	114838, # v3_copper_moth_almanac
+	128862, # v3_needlefall_star
+	191521, # ragpicker_cart
+	215232, # thimble_star_reading
+	253408, # v3_threadbare_aviary
+	277020, # crooked_marionette
+	329825, # v3_raincoat_bridge
+	363370, # v3_mothlamp_tannery
+	399457, # v3_lantern_snail_posthouse
+	430007, # v3_mossbutton_weather_station
+	438333, # v3_seamstress_needle_oracle
+	449809, # v3_tinker_spring_marionette
+	# Out-of-bound genuine six-Event witnesses, derived with the same map/toll/draw
+	# oracle; the original bounded 1..499999 fallback could not reach them.
+	1252670884, # lantern_moth_clearing
+	4850251000, # v3_puppet_box_office
+	6456823612, # button_moon_festival
+	# Genuine five-Event to Fight Parcel witness after the expanded pool;
+	# both ordinary and stitched mounted Parcel visits revalidate this seed.
+	4280583421, # frayed_debt_parcel to Fight
 ]

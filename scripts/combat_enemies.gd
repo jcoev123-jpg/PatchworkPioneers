@@ -52,7 +52,7 @@ static func _termite_parent_attack(record: Dictionary, position: int) -> int:
 	if slot.is_empty() or slot.get("target") != "front":
 		return -1
 	var actions: Array = slot["actions"]
-	if actions.size() != 3:
+	if actions.size() not in [3, 5]:
 		return -1
 	var first: Dictionary = actions[0]
 	var body: Variant = first.get("action")
@@ -64,6 +64,18 @@ static func _termite_parent_attack(record: Dictionary, position: int) -> int:
 			or actions[2] != {"weight": 1, "action": {
 				"type": "debuff", "amount": 1, "status": "exposed"}}:
 		return -1
+	# Named strikes extend the canonical record; children still inherit only
+	# the original scaled bite. Keep legacy three-action records supported.
+	if actions.size() == 5:
+		if actions[3] != {"weight": 1, "action": {"type": "attack",
+				"amount": body["amount"], "hits": 2, "move": "attack2"}} \
+				or actions[4].get("weight") != 1:
+			return -1
+		var spit: Dictionary = actions[4].get("action", {})
+		if spit.keys().size() != 3 or spit.get("type") != "attack" \
+				or spit.get("move") != "attack3" or not spit.get("amount") is int \
+				or spit["amount"] <= body["amount"]:
+			return -1
 	return body["amount"]
 
 

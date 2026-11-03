@@ -21,10 +21,10 @@ signal return_to_title_requested
 ## is exists-guarded: a missing picture hides only this layer and never the result.
 const CAMP_BACKDROP := "res://assets/paper/backgrounds/reward_camp.png"
 const BOSS_BACKDROP := "res://assets/paper/backgrounds/battle_boss.png"
-## Conspicuous stitched perimeter: cream thread walked on the dark felt mat and
-## dark thread sewn just inside the parchment's own border.
+## Conspicuous stitched perimeter: cream thread on the outer dark felt and
+## candlelit thread just inside the plum inner panel's border.
 const FELT_THREAD := Color("#e6d6b5")
-const PAPER_THREAD := Color("#6b5343")
+const PAPER_THREAD := Color("#dcc4a0")
 const FELT_STITCH_INSET := 8.0
 const PAPER_STITCH_INSET := 6.0
 ## Readable body/detail text at 1280x720 (VIS V2: body >= 18 px). The sewn
@@ -68,7 +68,7 @@ const HERO_PORTRAITS := {
 	"yarn_ranger": "res://assets/paper/heroes/yarn_ranger.png",
 	"button_golem": "res://assets/paper/heroes/button_golem.png",
 }
-const HERO_ROW_BG := Color("#f2e5cb")
+const HERO_ROW_BG := Color("#eddec3")
 const HERO_ROW_BORDER := Color("#8d7560")
 const HERO_SEAT_COLORS := [Color("#40576b"), Color("#67465d"), Color("#52604a")]
 const HERO_SEAT_NAMES := ["FRONT", "MIDDLE", "BACK"]
@@ -347,15 +347,17 @@ func _with_defeat_hp(summary: Dictionary, latch: RunActBattleOutcome, state: Dic
 func _fit_result_height() -> void:
 	if not is_node_ready():
 		return
-	var kept_cards: bool = stitched_section.visible
-	# Empty-card verdicts centre the three seat tickets and concise ledger as
-	# one compact group; retained-card runs share the page with the scroll.
-	result_content.alignment = (BoxContainer.ALIGNMENT_BEGIN if kept_cards
-		else BoxContainer.ALIGNMENT_CENTER)
-	hero_recap.size_flags_vertical = (Control.SIZE_EXPAND_FILL if kept_cards
-		else Control.SIZE_FILL)
-	run_ledger.size_flags_vertical = (Control.SIZE_EXPAND_FILL if kept_cards
-		else Control.SIZE_FILL)
+	# The three seats never surrender height to an arbitrarily long deck.
+	# Empty and one-card ledgers shrink to their actual content; a larger
+	# committed collection uses a bounded scroll window above the fixed Return.
+	var kept_count: int = stitched_rows.get_child_count()
+	result_content.alignment = BoxContainer.ALIGNMENT_CENTER
+	hero_recap.size_flags_vertical = Control.SIZE_FILL
+	run_ledger.size_flags_vertical = Control.SIZE_FILL
+	stitched_section.custom_minimum_size = Vector2(0, 0 if kept_count == 0
+		else (134 if kept_count == 1 else 172))
+	stitched_scroll.custom_minimum_size = Vector2(0, 0 if kept_count == 0
+		else (78 if kept_count == 1 else 116))
 
 
 ## The achieved terminal depth in floors, proven read-only from the settled
@@ -535,6 +537,7 @@ func _populate_details(summary: Dictionary) -> void:
 			return
 		var row := PanelContainer.new()
 		row.name = "KeptCard%d" % index
+		row.set_meta("stitched_id", descriptor["id"])
 		var felt := StyleBoxFlat.new()
 		felt.bg_color = Color("#f2e5cb")
 		felt.border_color = Color("#8d7560")
@@ -723,7 +726,7 @@ func _mount_hero_rows(rows: Array) -> void:
 		var parts: Dictionary = rows[index]
 		var row := PanelContainer.new()
 		row.name = "HeroRow%d" % index
-		row.custom_minimum_size = Vector2(0, 224)
+		row.custom_minimum_size = Vector2(0, 208)
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var felt := StyleBoxFlat.new()
@@ -958,8 +961,8 @@ func _on_return_pressed(generation: int, button: Button) -> void:
 func _apply_patchwork_style() -> void:
 	_style_felt_stage()
 	var paper := StyleBoxFlat.new()
-	paper.bg_color = Color("#e8d9ba")
-	paper.border_color = Color("#5a4738")
+	paper.bg_color = Color("#302637")
+	paper.border_color = Color("#c1a281")
 	paper.set_border_width_all(5)
 	paper.set_corner_radius_all(12)
 	paper.shadow_color = Color(0.03, 0.05, 0.06, 0.85)
@@ -968,12 +971,12 @@ func _apply_patchwork_style() -> void:
 	if paper_panel.draw.get_connections().is_empty():
 		paper_panel.draw.connect(_draw_paper_stitches.bind(paper_panel))
 		paper_panel.resized.connect(paper_panel.queue_redraw)
-	# The outcome is sewn onto its own pale plaque, above a bounded ledger
-	# strip, so the heading, the sentence and the run summary read as three
-	# distinct layers instead of one flat block of text.
+	# A jewel-plum outcome plaque and bordered ledger sit on the dark felt
+	# backing. Bone ink and candlelit hero tickets make the authentic data
+	# readable without a huge blank cream sheet.
 	var plaque := StyleBoxFlat.new()
-	plaque.bg_color = Color("#f4e9d0")
-	plaque.border_color = Color("#6e5a46")
+	plaque.bg_color = Color("#49334b")
+	plaque.border_color = Color("#dfbd8d")
 	plaque.set_border_width_all(3)
 	plaque.set_corner_radius_all(9)
 	plaque.content_margin_left = 26
@@ -981,13 +984,13 @@ func _apply_patchwork_style() -> void:
 	plaque.content_margin_top = 4
 	plaque.content_margin_bottom = 6
 	title_label.add_theme_stylebox_override("normal", plaque)
-	title_label.add_theme_color_override("font_color", Color("#24343b"))
+	title_label.add_theme_color_override("font_color", Color("#f6e5c7"))
 	title_label.add_theme_font_size_override("font_size", 50)
-	description_label.add_theme_color_override("font_color", Color("#33454b"))
+	description_label.add_theme_color_override("font_color", Color("#e7d5c2"))
 	description_label.add_theme_font_size_override("font_size", 21)
 	var ledger := StyleBoxFlat.new()
-	ledger.bg_color = Color("#f0e5cd")
-	ledger.border_color = Color("#a08a6d")
+	ledger.bg_color = Color("#3c3046")
+	ledger.border_color = Color("#b49382")
 	ledger.set_border_width_all(2)
 	ledger.set_corner_radius_all(7)
 	ledger.content_margin_left = 18
@@ -995,29 +998,29 @@ func _apply_patchwork_style() -> void:
 	ledger.content_margin_top = 6
 	ledger.content_margin_bottom = 6
 	summary_label.add_theme_stylebox_override("normal", ledger)
-	summary_label.add_theme_color_override("font_color", Color("#2f4147"))
+	summary_label.add_theme_color_override("font_color", Color("#f2e3c9"))
 	summary_label.add_theme_font_size_override("font_size", LEDGER_FONT_SIZE)
 	summary_label.add_theme_constant_override("line_spacing", 1)
 	# Outcome and stitched-detail headings use the master Theme's Londrina heading face;
 	# the sentence, ledger and half descriptions stay in the inherited body font.
 	title_label.theme_type_variation = "PatchHeading"
 	stitched_heading.theme_type_variation = "PatchHeading"
-	stitched_heading.add_theme_color_override("font_color", Color("#28363c"))
+	stitched_heading.add_theme_color_override("font_color", Color("#f2ddb6"))
 	stitched_heading.add_theme_font_size_override("font_size", DETAIL_HEADING_FONT_SIZE)
 	# The recap block's own heading uses the same sewn heading face as the kept
 	# sewn-card title, so both groups read as one patchwork ledger.
 	hero_recap_title.theme_type_variation = "PatchHeading"
-	hero_recap_title.add_theme_color_override("font_color", Color("#28363c"))
+	hero_recap_title.add_theme_color_override("font_color", Color("#f2ddb6"))
 	hero_recap_title.add_theme_font_size_override("font_size", DETAIL_HEADING_FONT_SIZE)
 	var detail_paper := StyleBoxFlat.new()
-	detail_paper.bg_color = Color("#e9dabc")
-	detail_paper.border_color = Color("#78614e")
+	detail_paper.bg_color = Color("#3c3046")
+	detail_paper.border_color = Color("#ba9684")
 	detail_paper.set_border_width_all(3)
 	detail_paper.set_corner_radius_all(7)
 	stitched_section.add_theme_stylebox_override("panel", detail_paper)
 	var scrollbar := stitched_scroll.get_v_scroll_bar()
 	var track := StyleBoxFlat.new()
-	track.bg_color = Color("#d1bc99")
+	track.bg_color = Color("#211e2b")
 	track.set_corner_radius_all(3)
 	# A real width, so the enlarged retained-card list always shows that more
 	# rows are sewn below instead of hiding them behind a zero-width bar.
@@ -1026,13 +1029,13 @@ func _apply_patchwork_style() -> void:
 	scrollbar.add_theme_stylebox_override("scroll", track)
 	for state in ["grabber", "grabber_highlight", "grabber_pressed"]:
 		var grip := StyleBoxFlat.new()
-		grip.bg_color = Color("#75614f")
+		grip.bg_color = Color("#cbb18b")
 		grip.set_corner_radius_all(3)
 		grip.content_margin_left = SCROLLBAR_WIDTH
 		grip.content_margin_right = SCROLLBAR_WIDTH
 		scrollbar.add_theme_stylebox_override(state, grip)
 	for label in [top_stitches, bottom_stitches]:
-		label.add_theme_color_override("font_color", Color("#85715b"))
+		label.add_theme_color_override("font_color", Color("#c8a88b"))
 		label.add_theme_font_size_override("font_size", 16)
 
 	for state in ["normal", "hover", "pressed", "disabled"]:

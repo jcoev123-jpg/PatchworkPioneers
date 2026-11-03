@@ -77,23 +77,35 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return {"ok": false}
 	var owner_position: int = yr_positions[0]
 
-	# Enemy roster must be valid.
-	if enemies == null or not enemies.is_valid():
+	# Enemy roster must be valid and a genuine model-configured roster: the
+	# ordinary three-slot default or the explicit four-slot battle opt-in. An
+	# unused capacity slot is never a target, so eligibility below enumerates
+	# the actual occupied records rather than any fixed slot list.
+	if enemies == null or not _valid_roster(enemies):
 		return {"ok": false}
 
-	# Identify eligible targets: living slots 1-3 with authoritative tangled > 0.
+	# Identify eligible targets by walking the authoritative records in their
+	# original slot order. The printed TO metadata stays [1, 2, 3] because
+	# enemy_all means the real living roster: every occupied slot that is alive
+	# and authentically Tangled > 0 is a target, including a summoned, split or
+	# otherwise opted-in fourth foe. Untangled, slain and unused slots are never
+	# targets, and no position is ever compacted.
 	var eligible: Array[int] = []
-	for pos in [1, 2, 3]:
-		if not enemies.is_slain(pos):
-			var enemy_dict: Dictionary = enemies.get_enemy(pos)
-			if not enemy_dict.is_empty():
-				var raw_statuses: Variant = _read_statuses(enemy_dict)
-				if not raw_statuses is Dictionary:
-					return {"ok": false}
-				var statuses: Dictionary = raw_statuses
-				var tangled_val: Variant = statuses.get("tangled", 0)
-				if tangled_val is int and tangled_val > 0:
-					eligible.append(pos)
+	var roster: Array[Dictionary] = enemies.get_enemies()
+	for index in range(roster.size()):
+		var pos := index + 1
+		var enemy_dict: Dictionary = roster[index]
+		if int(enemy_dict.get("position", 0)) != pos:
+			return {"ok": false}
+		if enemies.is_slain(pos):
+			continue
+		var raw_statuses: Variant = _read_statuses(enemy_dict)
+		if not raw_statuses is Dictionary:
+			return {"ok": false}
+		var statuses: Dictionary = raw_statuses
+		var tangled_val: Variant = statuses.get("tangled", 0)
+		if tangled_val is int and tangled_val > 0:
+			eligible.append(pos)
 
 	# No eligible target -> reject before any spend or change.
 	if eligible.is_empty():
@@ -172,6 +184,48 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			receipts[pos])
 
 	return {"ok": true, "hits": hits}
+
+
+## One to the roster's genuine capacity of occupied enemy slots in original
+## order. Only the model's own default three or explicit four-slot battle opt-in
+## is admitted, so a tampered capacity is refused and a fourth foe is never
+## admitted silently. A roster may fill only part of its capacity (a fourth foe
+## joins later) and a default-capacity four-definition construction is inert.
+## Structural validity only: target eligibility and keyword metadata are checked
+## separately for the actual hit actors.
+func _valid_roster(enemies: CombatEnemies) -> bool:
+	if enemies == null or not enemies.is_valid():
+		return false
+	var capacity: int = enemies.get_capacity()
+	if capacity != CombatEnemies.MAX_ENEMIES \
+			and capacity != CombatEnemies.OPT_IN_MAX_ENEMIES:
+		return false
+	var roster: Array[Dictionary] = enemies.get_enemies()
+	if roster.is_empty() or roster.size() > capacity:
+		return false
+	var seen: Dictionary = {}
+	for index in range(roster.size()):
+		var record: Dictionary = roster[index]
+		var enemy_id: Variant = record.get("id")
+		if not enemy_id is String or (enemy_id as String).is_empty() \
+				or seen.has(enemy_id):
+			return false
+		seen[enemy_id] = true
+		var position: Variant = record.get("position")
+		if not position is int or position != index + 1:
+			return false
+		var max_hp: Variant = record.get("max_hp")
+		if not max_hp is int or max_hp <= 0:
+			return false
+		var hp: Variant = record.get("hp")
+		if not hp is int or hp < 0 or hp > max_hp:
+			return false
+		var block: Variant = record.get("block")
+		if not block is int or block < 0:
+			return false
+		if not record.get("statuses", {}) is Dictionary:
+			return false
+	return true
 
 
 ## Fail-closed keyword metadata check for one living eligible enemy snapshot:

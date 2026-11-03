@@ -74,6 +74,11 @@ var overlay: Control
 var history: Array[Dictionary] = []
 ## Separate bounded receipts for actually spawned, authoritative discard flights.
 var flight_history: Array[Dictionary] = []
+## The real full sewn faces that departed on app's synchronous paid boundary.
+var hand_echo_history: Array[Dictionary] = []
+## Full faces are a separate visual layer from the legacy tiny discard scraps.
+## Existing combat-juice flight receipts remain byte-for-byte authoritative.
+var _hand_echoes: Array[Dictionary] = []
 ## Separate bounded receipts for really spawned draw/cast card flights
 ## ({"kind","card_id","panel_id","source","destination","fast","duration", ...}).
 var card_flight_history: Array[Dictionary] = []
@@ -226,6 +231,11 @@ func _sync() -> void:
 		_sync_ambient(app)
 		return
 	_sync_ambient(app)
+	# A hidden/retired hand or accessibility change retires any departing face
+	# immediately; it can never linger invisibly into another encounter.
+	if not is_instance_valid(app.hand_view) or not app.hand_view.is_visible_in_tree() \
+			or bool(ProjectSettings.get_setting("accessibility/reduced_motion", false)):
+		retire_hand_echoes()
 	if not is_instance_valid(fast_button):
 		fast_button = null
 	if not is_instance_valid(overlay) or not overlay.is_inside_tree():
@@ -265,6 +275,8 @@ func _bind(app) -> void:
 	overlay = _make_overlay()
 	history.clear()
 	flight_history.clear()
+	hand_echo_history.clear()
+	_hand_echoes.clear()
 	card_flight_history.clear()
 	pose_history.clear()
 	recoil_history.clear()
@@ -306,6 +318,8 @@ func _teardown() -> void:
 	bound = false
 	history.clear()
 	flight_history.clear()
+	hand_echo_history.clear()
+	_hand_echoes.clear()
 	card_flight_history.clear()
 	pose_history.clear()
 	recoil_history.clear()
@@ -857,6 +871,7 @@ func _same_node(a, b) -> bool:
 
 
 func _kill_cues() -> void:
+	retire_hand_echoes()
 	_kill_puffs()
 	for entry in _flights:
 		var flight_tween = entry.get("tween")
@@ -1096,6 +1111,79 @@ func _read_held_sources(app) -> Array[Dictionary]:
 ## A loss from the previous held multiset AND a gain to the real discard
 ## multiset are both mandatory. A pile reshuffle or replacement cannot be
 ## treated as a committed discard; uncertain transactions are dropped.
+## An echo is a detached drawing of the same authored sewn face as the old
+## held panel, created while that panel still exists. It can never be clicked.
+## The app calls this only after its real paid-play receipt was verified.
+func spawn_hand_discard_echo(source: Control, metadata) -> bool:
+	var app = get_parent()
+	if not _battle_ready(app) or _battle != app.battle_view or _deck != app.deck \
+			or not is_instance_valid(overlay) or not is_instance_valid(source) \
+			or not source.is_visible_in_tree() or not is_instance_valid(app.pile_label) \
+			or not app.pile_label.is_visible_in_tree() \
+			or bool(ProjectSettings.get_setting("accessibility/reduced_motion", false)) \
+			or metadata._motion_reduced():
+		return false
+	var source_rect := source.get_global_rect()
+	var destination: Rect2 = app.pile_label.get_global_rect()
+	if source_rect.size.x <= 0.0 or source_rect.size.y <= 0.0 \
+			or destination.size.x <= 0.0 or destination.size.y <= 0.0:
+		return false
+	var echo = metadata.mount_discard_echo(source, overlay)
+	if not is_instance_valid(echo):
+		return false
+	var source_id := source.get_instance_id()
+	var card_id := (source.get_child(0) as Label).text
+	var origin := _to_overlay(source_rect.position)
+	var target := _to_overlay(destination.position + Vector2(
+		destination.size.x * 0.8, destination.size.y * 0.5))
+	echo.position = origin
+	echo.z_index = 2
+	echo.pivot_offset = source_rect.size * 0.5
+	var duration := 0.12 if fast_animations else 0.32
+	var tween: Tween = echo.create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(echo, "position", target - source_rect.size * 0.18,
+		duration).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tween.tween_property(echo, "scale", Vector2(0.36, 0.36), duration)
+	tween.tween_property(echo, "modulate:a", 0.0, duration)
+	tween.finished.connect(_retire_hand_echo.bind(weakref(echo)))
+	_hand_echoes.append({"echo": echo, "tween": tween})
+	var receipt := {"card_id": card_id, "panel_id": source_id,
+		"destination": "pile_label", "duration": duration,
+		"fast": fast_animations, "face": true}
+	hand_echo_history.append(receipt)
+	if hand_echo_history.size() > FLIGHT_HISTORY_LIMIT:
+		hand_echo_history.pop_front()
+	return true
+
+
+func _retire_hand_echo(ref: WeakRef) -> void:
+	var node = ref.get_ref()
+	if is_instance_valid(node):
+		node.queue_free()
+	_hand_echoes = _hand_echoes.filter(func(entry: Dictionary) -> bool:
+		return not _same_node(entry.get("echo"), node))
+
+
+func retire_hand_echoes() -> void:
+	for entry in _hand_echoes:
+		var tween = entry.get("tween")
+		if tween is Tween and tween.is_valid():
+			tween.kill()
+		var echo = entry.get("echo")
+		if is_instance_valid(echo):
+			echo.queue_free()
+	_hand_echoes.clear()
+
+
+func live_hand_echoes() -> int:
+	var count := 0
+	for entry in _hand_echoes:
+		if is_instance_valid(entry.get("echo")):
+			count += 1
+	return count
+
+
 func _emit_discard_flights(app) -> void:
 	var before_draw := _card_counts(_draw_before)
 	var after_draw := _card_counts(app.deck.draw_pile)
@@ -1122,6 +1210,8 @@ func _emit_discard_flights(app) -> void:
 		return
 	var used_sources := {}
 	for source in _held_sources:
+		# Legacy pile-scrap receipts remain unchanged; the sewn face is an
+		# additional pointer-inert layer drawn above the small moving scrap.
 		var card_id: String = source["card_id"]
 		var drawn: int = int(before_draw.get(card_id, 0)) - int(after_draw.get(card_id, 0))
 		var lost: int = maxi(0, int(before_hand.get(card_id, 0)) + drawn - int(after_hand.get(card_id, 0)))

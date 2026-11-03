@@ -90,6 +90,19 @@ func _run() -> void:
 	var detail_label: Label = warden_row.get_node("RowInset/RowLine/HeroDetail") as Label
 	_check(detail_label != null and detail_label.text == torn_warden.detail,
 		"AC1: torn hero detail text unchanged")
+	# Even a missing authored portrait must leave the witnessed TORN status,
+	# exact HP, tears and patch copy on its own readable ticket.
+	_check(not panel.apply_hero_portrait(portrait,
+		"res://assets/paper/heroes/__missing_terminal_portrait__.png")
+		and portrait.texture == null and not portrait.visible
+		and detail_label.text == torn_warden.detail
+		and badge != null and badge.text == "TORN",
+		"AC3: missing portrait leaves the complete torn ticket and badge")
+	_check(panel.apply_hero_portrait(portrait,
+		LiveRunTerminalResultPanel.HERO_PORTRAITS["warden"])
+		and portrait.texture != null and portrait.visible
+		and portrait.modulate.is_equal_approx(Color(0.6, 0.6, 0.62, 1.0)),
+		"AC3: authored Warden portrait restores without erasing torn tint")
 
 	# AC2: living heroes have no badge and normal portrait tint.
 	var seamstress_row: Control = panel.hero_rows.get_child(1) as Control

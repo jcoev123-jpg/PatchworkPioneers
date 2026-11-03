@@ -45,7 +45,9 @@ const V3_ELITES := {
 		"actions": [
 			{"type": "shove", "amount": 0, "direction": -1, "weight": 2},
 			{"type": "debuff", "amount": 1, "status": "exposed", "weight": 2},
-			{"type": "attack", "amount": 8, "weight": 2}]}}
+			{"type": "attack", "amount": 8, "weight": 2},
+			{"type": "attack", "amount": 10, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 6, "hits": 2, "move": "attack3", "weight": 1}]}}
 ## The two earlier Elite records must survive the append unchanged.
 const LEGACY_ELITES := {
 	"needle_marshal": {
@@ -81,7 +83,9 @@ const V3_2_ELITES := {
 		"actions": [
 			{"type": "debuff", "amount": 2, "status": "bleed", "weight": 2},
 			{"type": "block", "amount": 8, "weight": 2},
-			{"type": "attack", "amount": 9, "weight": 3}]},
+			{"type": "attack", "amount": 9, "weight": 3},
+			{"type": "attack", "amount": 8, "hits": 2, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 7, "move": "attack3", "weight": 1}]},
 	"spool_snarekeeper": {
 		"name": "Spool Snarekeeper", "max_hp": 40,
 		"art_path": "res://assets/paper/enemies/spool_snarekeeper.png",
@@ -89,7 +93,9 @@ const V3_2_ELITES := {
 		"actions": [
 			{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
 			{"type": "debuff", "amount": 2, "status": "weak", "weight": 2},
-			{"type": "attack", "amount": 8, "weight": 3}]}}
+			{"type": "attack", "amount": 8, "weight": 3},
+			{"type": "attack", "amount": 9, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 6, "hits": 2, "move": "attack3", "weight": 1}]}}
 ## Authored slot order for the two-record V3-2 roster fixtures.
 const V3_2_ORDER := ["needle_briar_guard", "spool_snarekeeper"]
 ## Synthetic typed-encounter key used only to drive the production roster
@@ -119,14 +125,18 @@ const KEYWORD_ELITES := {
 		"target": "front", "actions": [
 			{"type": "attack", "amount": 9, "weight": 3},
 			{"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
-			{"type": "block", "amount": 9, "weight": 2}]},
+			{"type": "block", "amount": 9, "weight": 2},
+			{"type": "attack", "amount": 8, "hits": 2, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 10, "move": "attack3", "weight": 1}]},
 	"spool_leech": {
 		"name": "Spool Leech", "max_hp": 42, "drain": true, "chew_block_on_attack": true,
 		"art_path": "res://assets/paper/enemies/spool_leech.png",
 		"target": "lowest_living_hp", "actions": [
 			{"type": "attack", "amount": 8, "weight": 4},
 			{"type": "debuff", "status": "weak", "amount": 2, "weight": 2},
-			{"type": "block", "amount": 6, "weight": 1}]}}
+			{"type": "block", "amount": 6, "weight": 1},
+			{"type": "attack", "amount": 6, "hits": 2, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 10, "move": "attack3", "weight": 1}]}}
 const PATTERNS := {
 	"needle_marshal_elite": [
 		{"enemy_position":1,"pattern":[
@@ -162,6 +172,8 @@ func _initialize() -> void:
 	_test_zipper_pull_rng()
 	_test_v3_2_elites()
 	_test_briar_guard_thorns(_catalog(ELITES))
+	_test_weighted_named_strikes(_record(_catalog(ELITES), "needle_briar_guard"))
+	_test_weighted_named_strikes(_record(_catalog(ELITES), "spool_snarekeeper"))
 	_test_briar_snare_schedule()
 	_test_briar_snare_live_registry()
 	_test_keyword_elites()
@@ -1388,9 +1400,9 @@ func _test_hexer_lash() -> void:
 	# Read by ID, never as a catalog total: the correction is bounded to the one
 	# outlier, so every other shipped elite keeps its own authored attack sizes.
 	var peers := {
-		"needle_marshal": [5, 4, 6], "scissor_bailiff": [9, 8, 7], "zipper_hauler": [8],
-		"needle_briar_guard": [9], "spool_snarekeeper": [8],
-		"pincushion_matriarch": [9], "spool_leech": [8]}
+		"needle_marshal": [5, 4, 6], "scissor_bailiff": [9, 8, 7], "zipper_hauler": [8, 10, 6],
+		"needle_briar_guard": [9, 8, 7], "spool_snarekeeper": [8, 9, 6],
+		"pincushion_matriarch": [9, 8, 10], "spool_leech": [8, 6, 10]}
 	for id in peers:
 		var peer := _record(elites, id)
 		var amounts: Array = []
@@ -2089,7 +2101,131 @@ func _test_scissor_sting() -> void:
 ## shove is a forward pull (direction -1). A real CombatEnemyPhase yanks the
 ## living middle hero in slot 2 forward into slot 1 instead of shoving the front
 ## hero back, exchanging exactly those two actors.
+class ZipperHitWitness extends CombatWardenGuardReactions:
+	var packets: Array = []
+	func resolve_enemy_attack(party: Variant, enemies: Variant, attack: Variant) -> Dictionary:
+		var before: Dictionary = party.get_hero(attack.target_position)
+		var result := super.resolve_enemy_attack(party, enemies, attack)
+		var after: Dictionary = party.get_hero(attack.target_position)
+		packets.append([attack.amount, before.hp, before.block, after.hp, after.block])
+		return result
+
+
+## Catalog-only Elite: bind its authentic policy directly, without claiming an
+## encounter route. A narrowed copy forces each authored alternative as well.
+func _test_zipper_named_strikes(record: Dictionary) -> void:
+	var witnesses := {}
+	for seed_value in range(1, 201):
+		var announced := _announcements(record, seed_value, 1)
+		if announced.size() == 1 and announced[0].size() == 1:
+			var move: String = announced[0][0].get("move", "")
+			if move in ["attack2", "attack3"]:
+				witnesses[move] = seed_value
+		if witnesses.size() == 2:
+			break
+	for move in ["attack2", "attack3"]:
+		_check(witnesses.has(move), "authentic weighted Zipper witness exists: " + move)
+		if not witnesses.has(move):
+			continue
+		var amount := 10 if move == "attack2" else 6
+		var hits := 1 if move == "attack2" else 2
+		var title := "Tusk Gore" if move == "attack2" else "Pull Tab Fling"
+		for forced in [false, true]:
+			for shield in [0, 2, 4, 10]:
+				var history: Array = []
+				for replay in range(2):
+					var source := record.duplicate(true)
+					if forced:
+						source.intent.actions = source.intent.actions.filter(
+							func(a: Dictionary) -> bool: return a.get("move") == move)
+						_check(source.intent.actions.size() == 1,
+							"forced policy retains exactly one genuine catalog alternative")
+					var f := _new_elite_fixture(source)
+					var rng := _rng(witnesses[move])
+					var scheduler := CombatEnemyIntents.new([
+						{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+					_check(scheduler.bind_battle(f.enemies, f.party, rng), "Zipper policy binds real actors")
+					var oracle := _rng(witnesses[move])
+					if not forced:
+						var roll := oracle.randi_range(1, 8)
+						_check(roll == (7 if move == "attack2" else 8),
+							"independent weighted roll reaches appended weight-one alternative")
+					_check(rng.state == oracle.state, "full policy spends one weighted draw; forced policy spends none")
+					var expected := {"type": "attack", "amount": amount, "move": move,
+						"enemy_position": 1, "target_position": 1}
+					if hits == 2:
+						expected.hits = 2
+					var input := scheduler.get_intents()
+					_check(input == [expected], "weighted/forced named announcement has exact front target and total/hits")
+					var fallback := "res://assets/paper/enemies/zipper_hauler_attack.png"
+					var named_art := "res://assets/paper/enemies/zipper_hauler_%s.png" % move
+					var pose := LiveMovePoseCatalog.new().lookup_enemy("zipper_hauler", expected, fallback)
+					_check(pose.get("name") == title and pose.get("pose") == move
+						and pose.get("named_art") == named_art and pose.get("covers") == ["attack"]
+						and pose.get("art_available") == ResourceLoader.exists(named_art, "Texture2D")
+						and pose.get("art") == (named_art if pose.get("art_available") else fallback),
+						"Zipper named pose retains identity and checked asset path")
+					_check(MissingMoveArt.new().lookup_enemy("zipper_hauler", expected, fallback) == {
+						"name": title, "pose": move, "covers": ["attack"], "named_art": named_art,
+						"art": fallback, "art_available": false, "fallback_used": true},
+						"missing Zipper art uses established fallback with named identity")
+					_check(f.party.gain_block(1, shield), "real front hero Block precondition")
+					var before := [f.party.get_heroes(), f.enemies.get_enemies(), rng.state,
+						scheduler.get_intents(), input.duplicate(true)]
+					for changes in [{"move": "attack4"}, {"move": "attack3" if hits == 1 else "attack2"},
+							{"amount": 8}, {"hits": 3}, {"hits": 1 if hits == 2 else 2},
+							{"target_position": 0}, {"target_position": 4}, {"target_position": "1"}]:
+						var bad := [expected.merged(changes, true)]
+						var bad_before := bad.duplicate(true)
+						_check(CombatEnemyPhase.new().execute_phase(f.party, f.enemies, bad, null, true)
+							== {"ok": false, "events": []} and bad == bad_before
+							and before == [f.party.get_heroes(), f.enemies.get_enemies(), rng.state,
+								scheduler.get_intents(), input],
+							"forged move/amount/hits/target rejects without actors, inputs or RNG writes")
+					var original: Dictionary = f.enemies.get_enemy(1).intent
+					f.enemies._enemies[0].intent.actions = original.actions.filter(
+						func(a: Dictionary) -> bool: return a.get("move") != move)
+					var stale_before: Array = f.enemies.get_enemies()
+					_check(CombatEnemyPhase.new().execute_phase(f.party, f.enemies, input, null, true)
+						== {"ok": false, "events": []} and f.enemies.get_enemies() == stale_before
+						and f.party.get_heroes() == before[0] and rng.state == before[2]
+						and input == before[4] and scheduler.get_intents() == before[3],
+						"expired genuine Zipper alternative rejects atomically")
+					f.enemies._enemies[0].intent = original
+					var witness := ZipperHitWitness.new()
+					var receipt := CombatEnemyPhase.new().execute_phase(f.party, f.enemies, input, witness, true)
+					var packets: Array = []
+					var events: Array = []
+					var hp := 40
+					var block: int = shield
+					for hit in range(hits):
+						var packet := 10 if hits == 1 else 3
+						var next_hp := hp - maxi(0, packet - block)
+						var next_block := maxi(0, block - packet)
+						packets.append([packet, hp, block, next_hp, next_block])
+						hp = next_hp
+						block = next_block
+						events.append({"type": "attack", "enemy_position": 1, "target_position": 1,
+							"move": move, "applied": true, "actual_target_position": 1, "redirected": false,
+							"retaliation_damage": 0, "retaliatory_damage": 0})
+					var heroes: Array = before[0].duplicate(true)
+					heroes[0].hp = hp
+					heroes[0].block = block
+					_check(receipt == {"ok": true, "events": events} and witness.packets == packets
+						and f.party.get_heroes() == heroes and f.enemies.get_enemies() == before[1]
+						and rng.state == before[2] and scheduler.get_intents() == input and input == before[4],
+						"exact one 10 or ordered 3+3 packets through Block; every other actor/input unchanged")
+					_check(scheduler.advance_turn(), "real seeded scheduler advances after accepted phase")
+					var trace := [input, receipt, witness.packets, f.party.get_heroes(),
+						f.enemies.get_enemies(), scheduler.get_intents(), rng.state]
+					if replay == 0:
+						history = trace
+					else:
+						_check(history == trace, "same-seed Zipper announcements, phase, next draw and RNG replay exactly")
+
+
 func _test_zipper_beats(record: Dictionary) -> void:
+	_test_zipper_named_strikes(record)
 	var fixture := _new_elite_fixture(record)
 	var party: CombatParty = fixture["party"]
 	var enemies: CombatEnemies = fixture["enemies"]
@@ -2743,7 +2879,7 @@ func _test_briar_guard_thorns(catalog: Array) -> void:
 		body["weight"] = weighted.get("weight", 0)
 		actions.append(body)
 	_check(actions == V3_2_ELITES["needle_briar_guard"]["actions"],
-		"AC1: the Guard keeps its three exact weighted alternatives")
+		"AC1: the Guard keeps its original three and two appended exact weighted alternatives")
 	# Earlier Elite entries stay present with exactly their own keyword state,
 	# checked by ID: only the Guard newly authors Thorns 3.
 	var earlier := {
@@ -3074,8 +3210,10 @@ func _test_keyword_elites() -> void:
 		_keyword_beats(record)
 		if id == "pincushion_matriarch":
 			_pincushion_thorns(record)
+			_test_weighted_named_strikes(record)
 		else:
 			_leech_drain(record)
+			_test_leech_named_strikes(record)
 	# Earlier tests validate every field of all six earlier identities by ID.
 	_check(catalog == untouched and _catalog(ELITES) == untouched,
 		"keyword elite tests preserve the real catalog and parsed inputs")
@@ -3709,3 +3847,328 @@ func _test_briar_snare_live_registry() -> void:
 		and rng.state == cached_rng and selector._selected == cache_before
 		and _snapshot(map, rng, selector) == after_selection,
 		"AC3: detached cache replay returns pristine HP and three beats without extra RNG")
+
+
+## Authentic catalog policy, forced alternatives and real per-hit Block settlement.
+func _test_weighted_named_strikes(record: Dictionary) -> void:
+	var id: String = record.id
+	var snare := id == "spool_snarekeeper"
+	var matriarch := id == "pincushion_matriarch"
+	var first := _weighted_phase_replay(record, 41771)
+	_check(first.size() == 18 and first == _weighted_phase_replay(record, 41771),
+		"full Elite weighted schedules, receipts, actor states and RNG replay for equal seeds")
+	var witnesses := {}
+	for seed_value in range(1, 201):
+		var announced := _announcements(record, seed_value, 1)
+		if announced.size() == 1 and announced[0].size() == 1:
+			var move: String = announced[0][0].get("move", "")
+			if move in ["attack2", "attack3"]:
+				witnesses[move] = seed_value
+		if witnesses.size() == 2:
+			break
+	for move in ["attack2", "attack3"]:
+		_check(witnesses.has(move), "authentic weighted named Elite witness exists: " + move)
+		if not witnesses.has(move):
+			continue
+		var amount := (9 if move == "attack2" else 6) if snare else (8 if move == "attack2" else 7)
+		var hits := (1 if move == "attack2" else 2) if snare else (2 if move == "attack2" else 1)
+		var title := ("Hook Yank" if move == "attack2" else "Spool Barrage") if snare else ("Needle Volley" if move == "attack2" else "Briar Sweep")
+		if matriarch:
+			amount = 8 if move == "attack2" else 10
+			title = "Pin Storm" if move == "attack2" else "Bonnet Charge"
+		for forced in [false, true]:
+			for shield in [0, 2, 3, 4, 6, 8, 9, 10]:
+				var history: Array = []
+				for replay in range(2):
+					var source := record.duplicate(true)
+					if forced:
+						source.intent.actions = source.intent.actions.filter(
+							func(a: Dictionary) -> bool: return a.get("move") == move)
+						_check(source.intent.actions.size() == 1,
+							"forced policy retains exactly one genuine catalog alternative")
+					var f := _new_elite_fixture(source)
+					var rng := _rng(witnesses[move])
+					var scheduler := CombatEnemyIntents.new([
+						{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+					_check(scheduler.bind_battle(f.enemies, f.party, rng), "named Elite policy binds real actors")
+					var oracle := _rng(witnesses[move])
+					if not forced:
+						var roll := oracle.randi_range(1, 9)
+						_check(roll == (8 if move == "attack2" else 9),
+							"independent weighted roll reaches appended weight-one alternative")
+					_check(rng.state == oracle.state, "full policy spends one weighted draw; forced policy spends none")
+					var expected := {"type": "attack", "amount": amount, "move": move,
+						"enemy_position": 1, "target_position": 1}
+					if hits == 2:
+						expected.hits = 2
+					var input := scheduler.get_intents()
+					_check(input == [expected], "weighted/forced named announcement has exact front target and total/hits")
+					var fallback := "res://assets/paper/enemies/%s_attack.png" % id
+					var named_art := "res://assets/paper/enemies/%s_%s.png" % [id, move]
+					var pose := LiveMovePoseCatalog.new().lookup_enemy(id, expected, fallback)
+					_check(pose.get("name") == title and pose.get("pose") == move
+						and pose.get("named_art") == named_art and pose.get("covers") == ["attack"]
+						and pose.get("art_available") == ResourceLoader.exists(named_art, "Texture2D")
+						and pose.get("art") == (named_art if pose.get("art_available") else fallback),
+						"named Elite named pose retains identity and checked asset path")
+					_check(MissingMoveArt.new().lookup_enemy(id, expected, fallback) == {
+						"name": title, "pose": move, "covers": ["attack"], "named_art": named_art,
+						"art": fallback, "art_available": false, "fallback_used": true},
+						"missing named Elite art uses established fallback with named identity")
+					_check(f.party.gain_block(1, shield), "real front hero Block precondition")
+					var before := [f.party.get_heroes(), f.enemies.get_enemies(), rng.state,
+						scheduler.get_intents(), input.duplicate(true)]
+					for changes in [{"move": "attack4"}, {"move": "attack3" if move == "attack2" else "attack2"},
+							{"amount": amount + 1}, {"hits": 3}, {"hits": 1 if hits == 2 else 2},
+							{"enemy_position": 0}, {"enemy_position": 2}, {"enemy_position": "1"},
+							{"target_position": 2}, {"target_position": 0}, {"target_position": 4}, {"target_position": "1"}]:
+						var bad := [expected.merged(changes, true)]
+						var bad_before := bad.duplicate(true)
+						_check(CombatEnemyPhase.new().execute_phase(f.party, f.enemies, bad, null, true)
+							== {"ok": false, "events": []} and bad == bad_before
+							and before == [f.party.get_heroes(), f.enemies.get_enemies(), rng.state,
+								scheduler.get_intents(), input],
+							"forged move/amount/hits/target rejects without actors, inputs or RNG writes")
+					var original: Dictionary = f.enemies.get_enemy(1).intent
+					f.enemies._enemies[0].intent.actions = original.actions.filter(
+						func(a: Dictionary) -> bool: return a.get("move") != move)
+					var stale_before: Array = f.enemies.get_enemies()
+					_check(CombatEnemyPhase.new().execute_phase(f.party, f.enemies, input, null, true)
+						== {"ok": false, "events": []} and f.enemies.get_enemies() == stale_before
+						and f.party.get_heroes() == before[0] and rng.state == before[2]
+						and input == before[4] and scheduler.get_intents() == before[3],
+						"expired genuine named Elite alternative rejects atomically")
+					f.enemies._enemies[0].intent = original
+					var witness := ZipperHitWitness.new()
+					var receipt := CombatEnemyPhase.new().execute_phase(f.party, f.enemies, input, witness, true)
+					var packets: Array = []
+					var events: Array = []
+					var hp := 40
+					var block: int = shield
+					for hit in range(hits):
+						var packet := (9 if hits == 1 else 3) if snare else (7 if hits == 1 else 4)
+						if matriarch:
+							packet = 10 if hits == 1 else 4
+						var next_hp := hp - maxi(0, packet - block)
+						var next_block := maxi(0, block - packet)
+						packets.append([packet, hp, block, next_hp, next_block])
+						hp = next_hp
+						block = next_block
+						events.append({"type": "attack", "enemy_position": 1, "target_position": 1,
+							"move": move, "applied": true, "actual_target_position": 1, "redirected": false,
+							"retaliation_damage": 0, "retaliatory_damage": 0})
+					var heroes: Array = before[0].duplicate(true)
+					heroes[0].hp = hp
+					heroes[0].block = block
+					_check(receipt == {"ok": true, "events": events} and witness.packets == packets
+						and f.party.get_heroes() == heroes and f.enemies.get_enemies() == before[1]
+						and rng.state == before[2] and scheduler.get_intents() == input and input == before[4],
+						"exact independent authored hit packets through Block; every other actor/input unchanged")
+					_check(scheduler.advance_turn(), "real seeded scheduler advances after accepted phase")
+					var trace := [input, receipt, witness.packets, f.party.get_heroes(),
+						f.enemies.get_enemies(), scheduler.get_intents(), rng.state]
+					if replay == 0:
+						history = trace
+					else:
+						_check(history == trace, "same-seed named Elite announcements, phase, next draw and RNG replay exactly")
+
+
+## Replay every weighted choice through production settlement on healthy actors.
+## Restoring hero health between beats keeps all eighteen phases exercised.
+func _weighted_phase_replay(record: Dictionary, seed_value: int) -> Array:
+	var f := _new_elite_fixture(record)
+	var rng := _rng(seed_value)
+	var scheduler := CombatEnemyIntents.new([
+		{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+	_check(scheduler.bind_battle(f.enemies, f.party, rng), "full Elite weighted replay binds")
+	var trace: Array = []
+	var seen := {}
+	for turn in range(18):
+		if record.id == "spool_snarekeeper":
+			for position in range(1, 4):
+				_check(f.party.heal(position, 40), "Snare replay restores every living hero")
+		_check(f.party.heal(1, 40) and f.party.get_hero(1).hp == f.party.get_hero(1).max_hp,
+			"weighted replay has a living healthy front recipient")
+		_check(f.party.gain_block(1, turn % 7), "weighted replay varies actual front Block")
+		var announced := scheduler.get_intents()
+		_check(announced.size() == 1, "weighted replay announces a real Elite action")
+		if announced.size() != 1:
+			return []
+		seen[announced[0].get("move", announced[0].type)] = true
+		var before_rng := rng.state
+		var receipt := CombatEnemyPhase.new().execute_phase(f.party, f.enemies, announced, null, true)
+		_check(receipt.get("ok", false) and not receipt.get("events", []).is_empty()
+			and rng.state == before_rng, "every weighted Elite phase settles without RNG draws")
+		trace.append([announced, receipt, f.party.get_heroes(), f.enemies.get_enemies(), rng.state])
+		_check(scheduler.advance_turn(), "full weighted Elite replay advances")
+	_check(seen.has("attack2") and seen.has("attack3") and seen.has("attack")
+		and seen.has("shove" if record.id == "spool_snarekeeper" else "block") and seen.has("debuff"), "full weighted replay exercises all five alternatives")
+	trace[-1].append([scheduler.get_intents(), rng.state])
+	return trace
+
+
+## Catalog-backed Spool Leech: the two shipped named alternatives must bind to
+## a real wounded source and a uniquely lowest-HP, living hero. No encounter is
+## claimed; this is the production weighted scheduler/phase/pose contract.
+func _test_leech_named_strikes(record: Dictionary) -> void:
+	_check(record.get("id") == "spool_leech"
+		and record.get("drain") == true and record.get("chew_block_on_attack") == true
+		and record.get("max_hp") == 42 and record.get("intent", {}).get("target") == "lowest_living_hp",
+		"Leech named attack prerequisites are real authored metadata")
+	var witnesses := {}
+	for seed_value in range(1, 201):
+		var oracle := _rng(seed_value)
+		var roll := oracle.randi_range(1, 9)
+		if roll in [8, 9]:
+			var move := "attack2" if roll == 8 else "attack3"
+			if not witnesses.has(move):
+				var result := _announcements(record, seed_value, 1)
+				_check(result.size() == 1 and result[0].size() == 1
+					and result[0][0].get("move") == move,
+					"real Leech weighted schedule admits " + move)
+				witnesses[move] = seed_value
+		if witnesses.size() == 2:
+			break
+	for move in ["attack2", "attack3"]:
+		_check(witnesses.has(move), "seeded weight-one Leech witness: " + move)
+		if not witnesses.has(move):
+			continue
+		var amount := 6 if move == "attack2" else 10
+		var hits := 2 if move == "attack2" else 1
+		var title := "Thread Drain" if move == "attack2" else "Body Slam"
+		var fallback := "res://assets/paper/enemies/spool_leech_attack.png"
+		var named_art := "res://assets/paper/enemies/spool_leech_%s.png" % move
+		for forced in [false, true]:
+			# Missing HP, target Block, target HP. The last case proves two
+			# separate 3-point receipts (3+2 HP loss, never a six-point hit).
+			for scenario in [[12, 0, 10], [12, 7, 10], [2, 7, 10], [12, 0, 5]]:
+				var history: Array = []
+				for replay in range(2):
+					var source := record.duplicate(true)
+					if forced:
+						source.intent.actions = source.intent.actions.filter(
+							func(a: Dictionary) -> bool: return a.get("move", "") == move)
+						_check(source.intent.actions.size() == 1
+							and source.intent.actions[0] in record.intent.actions,
+							"forced Leech retains exactly one genuine authored alternative")
+					var f := _new_elite_fixture(source)
+					var party: CombatParty = f.party
+					var enemies: CombatEnemies = f.enemies
+					var missing: int = scenario[0]
+					var shield: int = scenario[1]
+					var hp: int = scenario[2]
+					_check(enemies.apply_damage(1, missing)
+						and party.apply_damage(2, 30 - hp) and party.gain_block(2, shield)
+						and not party.is_downed(2) and party.get_hero(2).hp == hp
+						and party.get_hero(2).block == shield
+						and party.get_hero(1).hp > hp and party.get_hero(3).hp > hp
+						and enemies.get_enemy(1).hp == 42 - missing,
+						"wounded genuine Leech faces living uniquely lowest-HP hero")
+					var rng := _rng(witnesses[move])
+					var oracle := _rng(witnesses[move])
+					var scheduler := CombatEnemyIntents.new([
+						{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+					var bound := scheduler.is_valid() and scheduler.bind_battle(enemies, party, rng)
+					_check(bound and scheduler.is_bound(), "wounded Leech binds real policy scheduler")
+					if not bound:
+						continue
+					if not forced:
+						_check(oracle.randi_range(1, 9) == (8 if move == "attack2" else 9),
+							"independent nine-weight oracle chooses the named Leech strike")
+					var expected := {"type": "attack", "amount": amount,
+						"move": move, "enemy_position": 1, "target_position": 2}
+					if hits == 2:
+						expected["hits"] = 2
+					var input := scheduler.get_intents()
+					_check(input == [expected] and rng.state == oracle.state
+						and scheduler.get_intents() == input,
+						"genuine weighted/forced announcement chooses lowest living HP without extra RNG")
+					var pose := LiveMovePoseCatalog.new().lookup_enemy("spool_leech", expected, fallback)
+					_check(pose.get("name") == title and pose.get("pose") == move
+						and pose.get("covers") == ["attack"] and pose.get("named_art") == named_art
+						and pose.get("art_available") == ResourceLoader.exists(named_art, "Texture2D")
+						and pose.get("art") == (named_art if pose.get("art_available") else fallback),
+						"Leech manifest provides exact named pose and real asset/fallback")
+					_check(MissingMoveArt.new().lookup_enemy("spool_leech", expected, fallback) == {
+						"name": title, "pose": move, "covers": ["attack"], "named_art": named_art,
+						"art": fallback, "art_available": false, "fallback_used": true},
+						"Leech missing named art preserves identity using normal fallback")
+					var before := [party.get_heroes(), enemies.get_enemies(), rng.state, input.duplicate(true)]
+					for change in [{"move": "attack4"},
+							{"move": "attack3" if move == "attack2" else "attack2"},
+							{"amount": amount + 1}, {"hits": 3},
+							{"hits": 1 if hits == 2 else 2},
+							{"target_position": 0}, {"target_position": 4},
+							{"target_position": "2"}, {"enemy_position": 2}]:
+						var forged := [expected.merged(change, true)]
+						var forged_before := forged.duplicate(true)
+						_check(CombatEnemyPhase.new().execute_phase(party, enemies, forged, null, true)
+							== {"ok": false, "events": []} and forged == forged_before
+							and [party.get_heroes(), enemies.get_enemies(), rng.state, scheduler.get_intents()] ==
+							[before[0], before[1], before[2], before[3]],
+							"forged Leech move/amount/hits/target/source fails atomically: " + str(change))
+					var original: Dictionary = enemies.get_enemy(1).intent
+					enemies._enemies[0].intent.actions = original.actions.filter(
+						func(a: Dictionary) -> bool: return a.get("move", "") != move)
+					var stale_actors := enemies.get_enemies()
+					_check(CombatEnemyPhase.new().execute_phase(party, enemies, input, null, true)
+						== {"ok": false, "events": []}
+						and enemies.get_enemies() == stale_actors and party.get_heroes() == before[0]
+						and rng.state == before[2] and scheduler.get_intents() == input,
+						"expired Leech named alternative fails closed with no actor/RNG spend")
+					enemies._enemies[0].intent = original
+					var witness := ZipperHitWitness.new()
+					var receipt := CombatEnemyPhase.new().execute_phase(party, enemies, input, witness, true)
+					var expected_packets: Array = []
+					var expected_events: Array = []
+					var remaining: int = hp
+					for hit in range(hits):
+						var packet: int = amount / hits
+						var after_hp: int = maxi(0, remaining - packet)
+						expected_packets.append([packet, remaining, 0, after_hp, 0])
+						expected_events.append({"type": "attack", "enemy_position": 1,
+							"target_position": 2, "move": move, "applied": true,
+							"actual_target_position": 2, "redirected": false,
+							"retaliation_damage": 0, "retaliatory_damage": 0})
+						remaining = after_hp
+					var heroes: Array = before[0].duplicate(true)
+					heroes[1].hp = remaining
+					heroes[1].block = 0
+					var foes: Array = before[1].duplicate(true)
+					foes[0].hp = mini(42, 42 - missing + hp - remaining)
+					_check(receipt == {"ok": true, "events": expected_events}
+						and witness.packets == expected_packets
+						and party.get_heroes() == heroes and enemies.get_enemies() == foes
+						and rng.state == before[2] and scheduler.get_intents() == input
+						and input == before[3],
+						"Leech named hits chew Block, drain per actual packet and cap at 42")
+					var trace := [input, receipt, witness.packets, party.get_heroes(),
+						enemies.get_enemies(), rng.state]
+					if replay == 0:
+						history = trace
+					else:
+						_check(trace == history, "same-seed named Leech phase/packet/RNG replay")
+
+		# Negative control: with chew absent, protective Block prevents all
+		# damage and heals zero despite the valid Drain flag.
+		var plain := record.duplicate(true)
+		plain.erase("chew_block_on_attack")
+		plain.intent.actions = plain.intent.actions.filter(
+			func(a: Dictionary) -> bool: return a.get("move", "") == move)
+		var no_chew := _new_elite_fixture(plain)
+		var p: CombatParty = no_chew.party
+		var e: CombatEnemies = no_chew.enemies
+		_check(e.apply_damage(1, 12) and p.apply_damage(2, 20)
+			and p.gain_block(2, 10) and p.get_hero(2).hp == 10,
+			"negative Leech has 30 HP and ten real Block on lowest living hero")
+		var seed_rng := _rng(witnesses[move])
+		var scheduler := CombatEnemyIntents.new([
+			{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+		_check(scheduler.bind_battle(e, p, seed_rng), "no-chew control is a genuine bound fight")
+		var announced := scheduler.get_intents()
+		var before_rng := seed_rng.state
+		var no_chew_result := CombatEnemyPhase.new().execute_phase(p, e, announced, null, true)
+		_check(no_chew_result.get("ok", false) and no_chew_result.get("events", []).size() == hits
+			and p.get_hero(2).hp == 10 and p.get_hero(2).block == 10 - amount
+			and e.get_enemy(1).hp == 30 and seed_rng.state == before_rng,
+			"absent Block-chew preserves HP/Drain zero; packets spend only Block")
