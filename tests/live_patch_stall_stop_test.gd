@@ -418,6 +418,194 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 	return result
 
 
+## Fixed seeded live witnesses for the completed-run Heirloom unlock. Seed
+## 2360 genuinely draws BOTH authored P12 powers into one real three-offer
+## stock; the exhaustive ticket, ownership and rarity sweeps stay in
+## tests/mpw_patch_stall_heirloom_stock_test.gd and the live panel test.
+const HEIRLOOM_WITNESS_SEED := 2360
+const HEIRLOOM_WITNESS_PURCHASE := "needle_echo"
+const HEIRLOOM_WITNESS_PRESENT := "shared_hem"
+
+
+func _stall_fixture_at(value: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = value
+	var map := RunMap.new()
+	map.generate(rng)
+	for id in map.get_legal_choices():
+		if map.get_node(id).type == "PatchStall":
+			for next in map.get_node(id).outgoing:
+				if map.get_node(next).type == "Fight":
+					return {"seed": value, "id": id, "next": next}
+	return {}
+
+
+## Independent three-offer oracle replaying the same shipped candidate,
+## P8 rare and P12 Heirloom catalogs on the live run RNG state. The
+## unlocked projection admits the two authored Heirlooms at their own
+## catalog tickets and price; the locked projection never knows them.
+func _stall_stock_oracle(unlocked: bool) -> Dictionary:
+	var oracle := RandomNumberGenerator.new()
+	oracle.state = app.run_rng.state
+	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	var powers: Array = RunAuthoredPatchDefinitions.load_eligible_power_definitions(true) \
+		if unlocked else RunAuthoredPatchDefinitions.load_power_definitions()
+	var power_ids: Dictionary = {}
+	for record in powers:
+		power_ids[record.id] = record.slot
+	var weights := {}
+	var prices := {}
+	for offer in authored.trinkets:
+		if power_ids.has(offer.id) and not app.run_trinkets.has(offer.id):
+			weights[offer.id] = 100
+			prices[offer.id] = int(offer.price)
+	var rare_records: Array = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/mpw_synergy_patches.json"))
+	for record in rare_records:
+		if app.run_trinkets.has(record.id):
+			continue
+		weights[record.id] = 100 * int(record.stock_weight_percent) / 100
+		prices[record.id] = int(record.shop_price_gold)
+	if unlocked:
+		var heirloom_records: Array = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/mpw_heirloom_patches.json"))
+		_check(typeof(heirloom_records) == TYPE_ARRAY and not heirloom_records.is_empty(),
+			"shipped P12 Heirloom catalog is readable for the unlocked stock oracle")
+		for record in heirloom_records:
+			if app.run_trinkets.has(record.id):
+				continue
+			weights[record.id] = 100 * int(record.stock_weight_percent) / 100
+			prices[record.id] = int(record.shop_price_gold)
+	var remaining: Array = weights.keys()
+	remaining.sort()
+	var expected: Array = []
+	for i in range(3):
+		var total := 0
+		for id in remaining:
+			total += weights[id]
+		var ticket := oracle.randi_range(0, total - 1)
+		var walked := 0
+		var chosen := ""
+		for id in remaining:
+			walked += weights[id]
+			if ticket < walked:
+				chosen = id
+				break
+		expected.append({"id": chosen, "price": prices[chosen], "sold": false})
+		remaining.erase(chosen)
+	return {"expected": expected, "power_ids": power_ids, "rng_state": oracle.state}
+
+
+## One unlocked and one locked seeded case on the SAME fixed live route
+## fixture. The unlock comes only from the versioned completed-run profile
+## envelope the genuine terminal flow writes, never from a direct flag set.
+func _stall_heirloom_scenario(unlocked: bool, wearer: int) -> Array:
+	var witness := _stall_fixture_at(HEIRLOOM_WITNESS_SEED)
+	_check(not witness.is_empty(), "genuine seeded live Patch Stall witness for the Heirloom unlock")
+	if witness.is_empty():
+		return []
+	app = load("res://scenes/app.tscn").instantiate()
+	app.difficulty_save_path = ""
+	root.add_child(app)
+	current_scene = app
+	await _frames()
+	var envelope := {"version": 1, "difficulty": app.difficulty_state().duplicate(true),
+		"heirloom_unlocked": unlocked}
+	_check(app.restore_profile_state(envelope) and app.heirloom_unlocked == unlocked,
+		"saved completed-run profile restores the genuine live unlock state")
+	app.run_seed = witness.seed
+	await _click(app.start_button)
+	preload("res://tests/party_choice.gd").choose(app)
+	await _frames()
+	# Same explicit funded opening wallet authority as the shipped scenarios.
+	app.session_gold = 100
+	app.run_scraps = 10
+	root.get_node("LiveWebPlaytestBoot")._preview_map = weakref(app.run_map)
+	app._clear_route_view()
+	app._present_connected_route(weakref(app.run_map))
+	await _frames()
+	var route := _button(witness.id)
+	var prior: Array = app.run_map.get_route()
+	var oracle := _stall_stock_oracle(unlocked)
+	await _click(route)
+	await _frames()
+	_check(is_instance_valid(app.patch_stall_view) and app.patch_stall_view.is_visible_in_tree()
+		and app.run_map.get_route() == prior + [witness.id],
+		"Heirloom witness physical input advances exactly once into Patch Stall")
+	var stock: Dictionary = app.patch_stall_purchases.get_stock()
+	_check(stock == {"cards": [], "trinkets": oracle.expected}
+		and app.run_rng.state == oracle.rng_state,
+		"exact independently seeded %s three-offer stock and RNG" % ["unlocked" if unlocked else "locked"])
+	var offered: Array = []
+	for offer in oracle.expected:
+		offered.append(offer.id)
+	_check(app.patch_stall_service != null and app.patch_stall_service.is_valid()
+		and not app.patch_stall_service.is_consumed(), "Heirloom witness constructs open one-use service")
+	var panel: LivePatchStallPanel = app.patch_stall_view
+	var original: Dictionary = app._sewing_context()
+	if unlocked:
+		var purchase_index := offered.find(HEIRLOOM_WITNESS_PURCHASE)
+		var present_index := offered.find(HEIRLOOM_WITNESS_PRESENT)
+		_check(purchase_index >= 0 and present_index >= 0,
+			"unlocked live stock includes both authored Heirlooms on the fixed witness seed")
+		if purchase_index < 0 or present_index < 0:
+			app.free()
+			await _frames()
+			return []
+		for heirloom in [HEIRLOOM_WITNESS_PURCHASE, HEIRLOOM_WITNESS_PRESENT]:
+			var index := offered.find(heirloom)
+			_check(oracle.expected[index].price == 100 and stock.trinkets[index].price == 100,
+				"live Heirloom %s is priced at exactly 100 gold" % heirloom)
+			_check(panel.offer_buttons[index].text.contains("100 gold")
+				and panel.offer_buttons[index].tooltip_text.contains(
+					"%s slot:" % oracle.power_ids[heirloom]),
+				"live Heirloom %s shows its exact price and authored existing slot" % heirloom)
+			_check(not panel.offer_buttons[index].disabled,
+				"live Heirloom %s is purchasable with sufficient gold" % heirloom)
+		await _click(panel.wearer_buttons[wearer])
+		await _frames()
+		_check(panel._wearer_index == wearer
+			and panel.wearer_buttons[wearer].get_meta("wearer_id") == app.run_heroes[wearer].id,
+			"chosen physical wearer pin for the Heirloom purchase")
+		await _click(panel.offer_buttons[purchase_index])
+		await _frames()
+		_check(app._patch_stall_closed and app.patch_stall_view == null
+			and app.patch_stall_service.is_consumed(),
+			"one Heirloom purchase closes the one-use visit")
+		_check(app.session_gold == original.gold - 100
+			and app.run_trinkets == original.patches + [HEIRLOOM_WITNESS_PURCHASE]
+			and app.run_scraps == original.scraps,
+			"one exact 100-gold Heirloom debit and receipt, no scrap sewing fee")
+		var w: Dictionary = app._patch_stall_wardrobe.get_snapshot()
+		for i in range(3):
+			_check(w.worn[app.run_heroes[i].id][w.definitions[HEIRLOOM_WITNESS_PURCHASE]]
+				== (HEIRLOOM_WITNESS_PURCHASE if i == wearer else ""),
+				"exactly the chosen wearer receives the Heirloom in its one real slot")
+		_check(app.party_carryover._wardrobe == app._patch_stall_wardrobe
+			and app.patch_stall_purchases.get_state().trinkets == w.owned
+			and app.patch_stall_visit.get_state().trinkets == w.owned
+			and app.patch_stall_purchases.patch_stall_choice_used(),
+			"all ownership and carry ledgers agree after the Heirloom purchase")
+		_check(app.patch_stall_purchases.get_stock().trinkets[purchase_index].sold
+			and app.run_rng.state == original.rng_state,
+			"purchased Heirloom is sold, never a buyable duplicate, and the choice spends no further RNG")
+	else:
+		_check(not offered.has("needle_echo") and not offered.has("shared_hem"),
+			"locked live stock offers no Heirloom")
+		await _click(panel.leave_button)
+		await _frames()
+		_check(app._patch_stall_closed and app.patch_stall_view == null
+			and not app.patch_stall_purchases.patch_stall_choice_used(),
+			"locked Leave closes the visit without a purchase")
+		_check(app.session_gold == original.gold and app.run_trinkets == original.patches
+			and app.run_scraps == original.scraps and app.run_deck == original.deck,
+			"locked Leave is entirely inert on gold, patches and deck")
+	var result: Array = [offered.duplicate(), app.run_rng.state]
+	app.free()
+	await _frames()
+	return result
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	for wearer in range(3):
@@ -431,6 +619,13 @@ func _run() -> void:
 	var connected := await _stall_scenario(false, false, false, 0, true)
 	var replay := await _stall_scenario(true, false, false, 0, true)
 	_check(not connected.is_empty() and connected == replay, "post-victory connected map and atlas entry replay")
+	var unlocked := await _stall_heirloom_scenario(true, 1)
+	var unlocked_replay := await _stall_heirloom_scenario(true, 1)
+	_check(not unlocked.is_empty() and unlocked == unlocked_replay,
+		"same unlocked seed reproduces live Heirloom stock and final RNG state")
+	var locked := await _stall_heirloom_scenario(false, 0)
+	_check(not locked.is_empty() and not unlocked.is_empty() and locked[0] != unlocked[0],
+		"locked same-seed run keeps every Heirloom out of the live stock")
 	await _open_title_teardown()
 	_finish()
 
