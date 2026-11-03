@@ -48,9 +48,9 @@ const IDLE_ART := {
 ## target policies and strongest weighted attacks are pinned here, never read from the view.
 const M05_NORMALS := {
 	"felt_bulwark": {"name": "Felt Bulwark", "max_hp": 18, "target": "front",
-		"attack": {"amount": 5, "weight": 3}},
+		"attack": {"amount": 5, "weight": 1}},
 	"moth_scribe": {"name": "Moth Scribe", "max_hp": 14, "target": "exposed",
-		"attack": {"amount": 5, "weight": 3}},
+		"attack": {"amount": 5, "weight": 1}},
 	"pin_skitter": {"name": "Pin Skitter", "max_hp": 13, "target": "random",
 		"attack": {"amount": 5, "weight": 4}},
 	"thread_biter": {"name": "Thread Biter", "max_hp": 15, "target": "lowest_living_hp",

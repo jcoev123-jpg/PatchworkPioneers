@@ -111,12 +111,16 @@ func _old_expected() -> Dictionary:
 				{"type": "buff", "amount": 2, "weight": 1}]}},
 		"felt_bulwark": {"id": "felt_bulwark", "name": "Felt Bulwark", "max_hp": 18, "art_path": "res://assets/paper/enemies/felt_bulwark.png",
 			"intent": {"target": "front", "actions": [
-				{"type": "attack", "amount": 5, "weight": 3},
+				{"type": "attack", "amount": 5, "weight": 1},
+				{"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
 				{"type": "block", "amount": 3, "weight": 3},
 				{"type": "buff", "amount": 2, "weight": 1}]}},
 		"moth_scribe": {"id": "moth_scribe", "name": "Moth Scribe", "max_hp": 14, "chew_block_on_attack": true, "art_path": "res://assets/paper/enemies/moth_scribe.png",
 			"intent": {"target": "exposed", "actions": [
-				{"type": "attack", "amount": 5, "weight": 3},
+				{"type": "attack", "amount": 5, "weight": 1},
+				{"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
 				{"type": "debuff", "amount": 1, "status": "weak", "weight": 2},
 				{"type": "block", "amount": 2, "weight": 1}]}},
 		"pin_skitter": {"id": "pin_skitter", "name": "Pin Skitter", "max_hp": 13, "thorns": 2, "art_path": "res://assets/paper/enemies/pin_skitter.png",
@@ -3135,9 +3139,9 @@ func _test_moth_scribe_block_chew_catalog() -> void:
 	var brace := _authored_alternative(scribe, "block", 2)
 	_check(not bite.is_empty() and not weaken.is_empty() and not brace.is_empty()
 		and weaken.get("status") == "weak"
-		and int(bite.get("weight", 0)) == 3 and int(weaken.get("weight", 0)) == 2
+		and int(bite.get("weight", 0)) == 1 and int(weaken.get("weight", 0)) == 2
 		and int(brace.get("weight", 0)) == 1,
-		"AC1: the authored 5, Weak 1 and Block 2 alternatives keep weights 3/2/1")
+		"AC1: the authored 5, Weak 1 and Block 2 alternatives have exact weights 1/2/1")
 	_check(_norm(scribe) == _norm(_old_expected()["moth_scribe"]),
 		"AC1: the full Moth Scribe record matches the exact expectation")
 	_check(not _find(parsed, "felt_bulwark").has("chew_block_on_attack"),

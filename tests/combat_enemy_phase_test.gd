@@ -6,6 +6,7 @@ var phase := CombatEnemyPhase.new()
 
 
 func _initialize() -> void:
+	_test_bulwark_scribe_named_phases()
 	_test_thread_lash_phase()
 	_test_scavenger_gold_phase()
 	_test_scavenger_gold_refusals()
@@ -2742,3 +2743,90 @@ func _test_four_catalog_phase_and_refusals() -> void:
 	_check(not default_four.is_valid() and not deny_result.ok
 		and deny_rng.state == deny_state,
 		"AC3: default three-actor battle refuses a detached four-source phase")
+
+## Real parsed alternatives retain their keys through floor/tier scaling,
+## seeded selection, phase authentication and independent receipt replay.
+func _test_bulwark_scribe_named_phases() -> void:
+	var catalog := RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+	for id in ["felt_bulwark", "moth_scribe"]:
+		var original := {}
+		for record in catalog:
+			if record.id == id:
+				original = record
+		_check(not original.is_empty(), "named phase precondition: parsed " + id)
+		if original.is_empty():
+			continue
+		for floor_number in [1, 5, 9]:
+			var scaled := original.duplicate(true)
+			for raw in scaled.intent.actions:
+				if raw.type == "attack":
+					raw.amount = RunNormalAttackFloorScaling.scale_normal_attack(int(raw.amount), floor_number).amount
+			scaled.intent = RunDifficulty.scale_intent(scaled.intent, 1)
+			for move in ["attack2", "attack3"]:
+				var seed_value := 0
+				for candidate in range(1, 161):
+					var probe_party := _party()
+					probe_party._heroes[1].statuses = {"exposed": 1}
+					var probe_rng := RandomNumberGenerator.new()
+					probe_rng.seed = candidate
+					var probe := CombatEnemyIntents.new([{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+					if probe.bind_battle(CombatEnemies.new([scaled]), probe_party, probe_rng) \
+							and probe.get_intents()[0].get("move") == move:
+						seed_value = candidate
+						break
+				_check(seed_value > 0, "real weighted named selection reached: " + id + move)
+				if seed_value == 0:
+					continue
+				var replay: Array = []
+				for repeat_index in range(2):
+					var party := _party()
+					party._heroes[1].statuses = {"exposed": 1}
+					var enemies := CombatEnemies.new([scaled])
+					var rng := RandomNumberGenerator.new()
+					rng.seed = seed_value
+					var scheduler := CombatEnemyIntents.new([{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+					_check(scheduler.bind_battle(enemies, party, rng), "named independent phase binds")
+					var action: Dictionary = scheduler.get_intents()[0]
+					var target := 1 if id == "felt_bulwark" else 2
+					var base := 6 if move == "attack2" else 7
+					var amount: int = ({1: [6, 7], 5: [7, 8], 9: [9, 10]}[floor_number][0 if base == 6 else 1]) + 1
+					_check(action == {"type": "attack", "amount": amount, "move": move,
+						"enemy_position": 1, "target_position": target}, "exact scaled source-owned named announcement")
+					_check(party.gain_block(target, 3), "named phase recipient holds mitigating Block")
+					var state := rng.state
+					var before := [party.get_heroes(), enemies.get_enemies()]
+					for refusal in ["amount", "move", "stale"]:
+						var forged := action.duplicate(true)
+						if refusal == "amount":
+							forged.amount += 1
+						elif refusal == "move":
+							forged.move = "attack4"
+						else:
+							for raw in enemies._enemies[0].intent.actions:
+								if raw.get("move") == move:
+									raw.amount += 1
+						var refused_before := [party.get_heroes(), enemies.get_enemies(), rng.state]
+						_check(phase.execute_phase(party, enemies, [forged], null, true, null, 17)
+							== {"ok": false, "events": []}
+							and refused_before == [party.get_heroes(), enemies.get_enemies(), rng.state],
+							"named wrong amount/move/stale rejects without actor, wallet receipt or RNG writes")
+						enemies._enemies[0].intent = scaled.intent.duplicate(true)
+					var receipt := phase.execute_phase(party, enemies, [action], null, true, null, 17)
+					var damage := amount if target == 1 else floori(amount * 1.5)
+					var expected_heroes: Array = before[0].duplicate(true)
+					expected_heroes[target - 1].hp -= damage - (3 if target == 1 else 0)
+					expected_heroes[target - 1].block = 0
+					_check(receipt == {"ok": true, "gold": 17, "events": [{"type": "attack", "enemy_position": 1,
+						"target_position": target, "move": move, "applied": true}]}
+						and party.get_heroes() == expected_heroes and enemies.get_enemies() == before[1]
+						and rng.state == state and scheduler.get_intents() == [action],
+						"selected legal named hit applies once with exact HP/Block, chew and unchanged wallet/RNG")
+					replay.append([action, receipt, party.get_heroes(), enemies.get_enemies(), rng.state])
+					_check(enemies.apply_damage(1, 99999) and enemies.is_slain(1), "named dead-source precondition")
+					var dead_before := [party.get_heroes(), enemies.get_enemies(), rng.state]
+					var dead_receipt := phase.execute_phase(party, enemies, [action], null, true, null, 17)
+					_check(dead_receipt == {"ok": true, "gold": 17, "events": [{"type": "attack", "enemy_position": 1,
+						"target_position": target, "move": move, "applied": false}]}
+						and dead_before == [party.get_heroes(), enemies.get_enemies(), rng.state], "dead named action is entirely inert")
+				_check(replay.size() == 2 and replay[0] == replay[1], "independent named phase receipt, actor and RNG replay")

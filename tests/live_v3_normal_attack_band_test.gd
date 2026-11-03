@@ -229,7 +229,13 @@ func _actual_attack_phases(floor_number: int) -> void:
 			var target: int = announced.target_position
 			var amount: int = announced.amount
 			if floor_number <= 4:
-				_check(amount == 5, "formerly weak early actor announces exactly five damage")
+				var source: Dictionary = FLOOR_BAND_ORACLE.records()[app.enemies.get_enemy(selected).id]
+				var expected := 0
+				for option in source.intent.actions:
+					if option.type == "attack" and option.get("move", "") == announced.get("move", ""):
+						expected = int(option.amount)
+				_check(expected > 0 and amount == expected,
+					"early actor announces its exact source-owned move amount")
 			var is_wasp: bool = app.enemies.get_enemy(selected).id == "needle_wasp"
 			if is_wasp and not wasp_blind:
 				_check(floor_number >= 5 and floor_number <= 8 and amount == 10

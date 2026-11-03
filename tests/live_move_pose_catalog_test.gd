@@ -74,6 +74,20 @@ func _initialize() -> void:
 	check(catalog.lookup_hero("unknown", "block", FALLBACK).is_empty(), "unknown hero")
 	# Force unavailable art without depending on whether pipeline PNGs exist.
 	catalog.available = false
+	for actor in [["felt_bulwark", "Roll Charge", "Felt Slam"], ["moth_scribe", "Quill Stab", "Ink Flick"]]:
+		for index in [1, 2]:
+			var named := attack.duplicate(true)
+			named["move"] = "attack%d" % (index + 1)
+			for available in [false, true]:
+				catalog.available = available
+				var receipt := catalog.lookup_enemy(actor[0], named, FALLBACK)
+				check_move(receipt, actor[index], named.move)
+				check(receipt.get("art_available") == available
+					and receipt.get("fallback_used") == not available
+					and receipt.get("named_art") == "res://assets/paper/enemies/%s_%s.png" % [actor[0], named.move]
+					and receipt.get("art") == (receipt.get("named_art") if available else FALLBACK),
+					"exact named pose and forced availability fallback: " + actor[index])
+	catalog.available = false
 	var missing := catalog.lookup_hero("seamstress", "skill", FALLBACK)
 	check_move(missing, "Mending Stitch", "skill")
 	check(missing.get("art") == FALLBACK and missing.get("fallback_used") == true

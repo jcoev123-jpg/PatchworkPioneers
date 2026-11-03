@@ -6,12 +6,16 @@ const POOLS := "res://data/encounters/m03_typed_battle_pools.json"
 const CATALOGS := RunAuthoredBattleEntry.CATALOG_PATHS
 const NEW := {
 	"felt_bulwark": {"name": "Felt Bulwark", "max_hp": 18, "target": "front",
-		"actions": [{"type": "attack", "amount": 5, "weight": 3},
+		"actions": [{"type": "attack", "amount": 5, "weight": 1},
+			{"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
 			{"type": "block", "amount": 3, "weight": 3},
 			{"type": "buff", "amount": 2, "weight": 1}]},
 	"moth_scribe": {"name": "Moth Scribe", "max_hp": 14, "target": "exposed",
 		"chew_block_on_attack": true,
-		"actions": [{"type": "attack", "amount": 5, "weight": 3},
+		"actions": [{"type": "attack", "amount": 5, "weight": 1},
+			{"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
 			{"type": "debuff", "amount": 1, "status": "weak", "weight": 2},
 			{"type": "block", "amount": 2, "weight": 1}]},
 	"pin_skitter": {"name": "Pin Skitter", "max_hp": 13, "target": "random", "thorns": 2,
@@ -164,10 +168,12 @@ func _catalog_and_bindings() -> void:
 		and not bulwark_record.has("chew_block_on_attack"),
 		"AC1: only the Moth Scribe in the real felt_moth_pressure pair chews Block")
 	_check(scribe_record.get("intent", {}).get("actions") == [
-			{"type": "attack", "amount": 5, "weight": 3},
+			{"type": "attack", "amount": 5, "weight": 1},
+			{"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
 			{"type": "debuff", "amount": 1, "status": "weak", "weight": 2},
 			{"type": "block", "amount": 2, "weight": 1}],
-		"AC1: the Scribe keeps its exact 5/Weak-1/Block-2 weighted 3/2/1 actions")
+		"AC1: the Scribe has exact attack/attack2/attack3/Weak/Block weighted 1/1/1/2/1 actions")
 	for id in OLD:
 		_check(catalog.has(id), "original normal still present " + id)
 		if not catalog.has(id):
@@ -309,7 +315,7 @@ func _weighted(id: String, assembled: Dictionary) -> void:
 				else:
 					_check(not action.has("target_position"),
 						"Block/buff never invent a hero target " + id)
-				present[PAIRS[id].enemy_ids[index] + "/" + action.type] = true
+				present[PAIRS[id].enemy_ids[index] + "/" + action.get("move", action.type)] = true
 			_check(rng.state == oracle.state,
 				"only expected weighted and random-target RNG draws consumed " + id)
 			first.append(announced)
@@ -325,8 +331,8 @@ func _weighted(id: String, assembled: Dictionary) -> void:
 			"two same-seed announcements and committed phases replay identically " + id)
 	for actor_id in PAIRS[id].enemy_ids:
 		for raw in NEW[actor_id].actions:
-			_check(present.has(actor_id + "/" + raw.type),
-				"actual seeded phase covered authored alternative " + actor_id + "/" + raw.type)
+			_check(present.has(actor_id + "/" + raw.get("move", raw.type)),
+				"actual seeded phase covered authored alternative " + actor_id + "/" + raw.get("move", raw.type))
 	# Preannounced targets downed after admission fall back at execution time
 	# without a second roll, for both deterministic and random policies.
 	for source in range(2):
@@ -457,9 +463,9 @@ func _scribe_chew(assembled: Dictionary) -> void:
 	var weaken := _pair_action(assembled, "moth_scribe", "debuff", 1)
 	var brace := _pair_action(assembled, "moth_scribe", "block", 2)
 	_check(_normalized(bite) == _normalized(NEW["moth_scribe"].actions[0])
-		and _normalized(weaken) == _normalized(NEW["moth_scribe"].actions[1])
-		and _normalized(brace) == _normalized(NEW["moth_scribe"].actions[2]),
-		"AC1: the assembled 5/Weak-1/Block-2 alternatives keep weights 3/2/1")
+		and _normalized(weaken) == _normalized(NEW["moth_scribe"].actions[3])
+		and _normalized(brace) == _normalized(NEW["moth_scribe"].actions[4]),
+		"AC1: the assembled 5/Weak-1/Block-2 alternatives have exact weights 1/2/1")
 
 	# AC2: the exposed policy selects the living Exposed hero, and the real
 	# production phase eats all six of its Block before the bite resolves.
@@ -650,7 +656,7 @@ func _click(button: Control) -> void:
 		root.push_input(event, true)
 		await process_frame
 
-func _mounted() -> void:
+func _mounted(wanted: String = "") -> void:
 	# Find a real run seed that picks an M05 candidate from the entire pool,
 	# without forcing a test-only entry in the app.
 	var fixture := {}
@@ -669,6 +675,8 @@ func _mounted() -> void:
 			var group: Array = preload("res://tests/floor_band_oracle.gd").group(
 				map.get_current_floor(), PAIRS[selected_id].enemy_ids.size(), rng)
 			if not group.any(func(actor_id): return NEW.has(actor_id)):
+				continue
+			if not wanted.is_empty() and not group.has(wanted):
 				continue
 			fixture = {"seed": seed_value, "node": node, "encounter": selected_id,
 				"group": group, "rng_state": rng.state}
@@ -775,7 +783,81 @@ func _mounted() -> void:
 	_check(app.enemy_intents._turn_index == prior_turn + 1
 		and app.deck.hand.size() == 5 and app.deck.hand != prior_hand,
 		"mounted End Turn resolves weighted enemy phase and draws next hand")
+	if not wanted.is_empty():
+		await _mounted_named_moves(app, presenter, wanted)
 	app.free()
+
+## Keep the real route, run RNG, deck, scheduler and mounted presenter. Only
+## isolate the admitted source and replenish heroes to witness its next moves.
+func _mounted_named_moves(app, presenter, wanted: String) -> void:
+	var source := _slot_for(app.enemies, wanted)
+	_check(source > 0 and app.enemies.get_enemies().size() <= 3,
+		"named mounted precondition: real admitted source in a two/three-enemy Fight")
+	if source == 0:
+		return
+	for actor in app.enemies.get_enemies():
+		if actor.position != source:
+			_check(app.enemies.apply_damage(actor.position, 99999), "isolate admitted named source")
+	var seen := {}
+	var names: Array = ["Roll Charge", "Felt Slam"] if wanted == "felt_bulwark" else ["Quill Stab", "Ink Flick"]
+	for turn in range(40):
+		for hero in app.party._heroes:
+			hero.hp = hero.max_hp
+			hero.block = 0
+			hero.statuses = {}
+		app.party._heroes[1].statuses = {"exposed": 2}
+		var action := _announced_for(app.enemy_intents.get_intents(), source)
+		var move: String = action.get("move", "")
+		if move in ["attack2", "attack3"]:
+			var index := 0 if move == "attack2" else 1
+			var target: int = action.target_position
+			_check(target == (1 if wanted == "felt_bulwark" else 2)
+				and action.amount == (6 if index == 0 else 7), "mounted named source, amount and policy")
+			_check(app.party.gain_block(target, 3), "mounted named recipient has real Block")
+			app._refresh_enemy_roster()
+			var before: Array = [app.party.get_heroes(), app.enemies.get_enemies(), app.run_rng.state]
+			var pose := LiveMovePoseCatalog.new().lookup_enemy(wanted, action,
+				"res://assets/paper/enemies/" + wanted + "_attack.png")
+			_check(presenter._badges[source - 1].tooltip_text.contains(names[index])
+				and pose.get("name") == names[index] and pose.get("pose") == move,
+				"genuine mounted tooltip and pose receipt: " + names[index])
+			_check(before == [app.party.get_heroes(), app.enemies.get_enemies(), app.run_rng.state],
+				"mounted named presentation leaves actors and run RNG unchanged")
+			if not seen.has(move):
+				var cache: Array = app.enemy_intents._cache.duplicate(true)
+				var authored: Dictionary = app.enemies._enemies[source - 1].intent.duplicate(true)
+				for refusal in ["amount", "move", "stale"]:
+					if refusal == "amount":
+						app.enemy_intents._cache[source - 1].amount += 1
+					elif refusal == "move":
+						app.enemy_intents._cache[source - 1].move = "attack4"
+					else:
+						for raw in app.enemies._enemies[source - 1].intent.actions:
+							if raw.get("move") == move:
+								raw.amount += 1
+					var protected := _named_flow_state(app)
+					_check(not app.round_flow.end_turn() and _named_flow_state(app) == protected,
+						"real flow refuses named " + refusal + " without party/enemy/deck/wallet/RNG mutation")
+					app.enemy_intents._cache.assign(cache.duplicate(true))
+					app.enemies._enemies[source - 1].intent = authored.duplicate(true)
+			var hp: int = app.party.get_hero(target).hp
+			var damage: int = int(action.amount) if wanted == "felt_bulwark" else (9 if index == 0 else 10)
+			await _click(app.end_turn_button)
+			_check(app.party.get_hero(target).hp == hp - damage + (3 if wanted == "felt_bulwark" else 0)
+				and app.party.get_hero(target).block == 0,
+				"physical End Turn resolves named damage once with mitigation/chew: " + names[index])
+			seen[move] = true
+		else:
+			await _click(app.end_turn_button)
+		if seen.size() == 2:
+			break
+	_check(seen.has("attack2") and seen.has("attack3"), "both genuine mounted named moves reached: " + wanted)
+
+func _named_flow_state(app) -> Array:
+	return [app.party.get_heroes(), app.enemies.get_enemies(), app.run_rng.state,
+		app.deck.hand.duplicate(), app.deck.draw_pile.duplicate(), app.deck.discard_pile.duplicate(),
+		app.deck.exhausted.duplicate(), app.deck.energy, app.deck.turn_active,
+		app.round_flow.get_gold(), app.session_gold, app.enemy_intents.get_intents(), app.enemy_intents._turn_index]
 
 func _run() -> void:
 	_catalog_and_bindings()
@@ -794,6 +876,8 @@ func _run() -> void:
 				if id == "felt_moth_pressure":
 					_scribe_chew(first)
 		await _mounted()
+		await _mounted("felt_bulwark")
+		await _mounted("moth_scribe")
 	if failures.is_empty():
 		print("m05_normal_enemy_rotation_test: PASS (", checks, " checks)")
 	else:
