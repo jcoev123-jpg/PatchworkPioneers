@@ -289,14 +289,52 @@ static func _is_actionable_for_snapshot(record: Dictionary, snapshot: Variant) -
 	var choices: Variant = preview.get("choices")
 	if not choices is Array:
 		return false
+	var opening_hp: int = -1
+	if snapshot is Dictionary:
+		var hero_data: Variant = (snapshot as Dictionary).get("hero")
+		if hero_data is Dictionary:
+			var hp_val: Variant = (hero_data as Dictionary).get("hp")
+			if typeof(hp_val) == TYPE_INT:
+				opening_hp = hp_val
 	for entry in (choices as Array):
 		if not entry is Dictionary:
 			return false
-		var entry_dict: Dictionary = entry
-		var choice_id: Variant = entry_dict.get("choice_id")
-		if choice_id is String and choice_id != "leave" and entry_dict.get("affordable", false) == true:
+		if is_choice_actionable(entry as Dictionary, opening_hp):
 			return true
 	return false
+
+
+static func is_choice_actionable(entry: Dictionary, opening_hp: int) -> bool:
+	if not entry.get("affordable", false):
+		return false
+	var choice_id: Variant = entry.get("choice_id")
+	if not (choice_id is String) or choice_id == "leave":
+		return false
+	var hp_delta: Variant = entry.get("hp_delta")
+	var max_hp_delta: Variant = entry.get("max_hp_delta")
+	var gold_delta: Variant = entry.get("gold_delta")
+	var scraps_delta: Variant = entry.get("scraps_delta")
+	if typeof(hp_delta) != TYPE_INT or typeof(max_hp_delta) != TYPE_INT or typeof(gold_delta) != TYPE_INT or typeof(scraps_delta) != TYPE_INT:
+		return false
+	var projected_state: Variant = entry.get("state")
+	if not (projected_state is Dictionary):
+		return false
+	var hero_dict: Variant = (projected_state as Dictionary).get("hero")
+	if not (hero_dict is Dictionary):
+		return false
+	var projected_hp: Variant = (hero_dict as Dictionary).get("hp")
+	if typeof(projected_hp) != TYPE_INT:
+		return false
+
+	var is_suppressed: bool = (
+		hp_delta > 0
+		and max_hp_delta == 0
+		and gold_delta <= 0
+		and scraps_delta <= 0
+		and (gold_delta < 0 or scraps_delta < 0)
+		and (projected_hp as int) == opening_hp
+	)
+	return not is_suppressed
 
 
 func _rejection() -> Dictionary:
