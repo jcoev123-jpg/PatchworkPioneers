@@ -108,6 +108,7 @@ func _run() -> void:
 	var seeded_next := randi()
 	seed(RNG_SEED)
 	await _test_layout()
+	await _test_long_authored_upgrade()
 	await _test_dark_style()
 	await _test_owner_filters()
 	_check(panel._effects({"z_other": 9, "bleed": 2, "damage": 3, "a_other": 4})
@@ -136,6 +137,48 @@ func _run() -> void:
 	quit(0 if failures.is_empty() else 1)
 
 
+## Find a real eligible base with the widest authored upgraded caption; do
+## not rely on a fixture-only invented name or a fixed catalog count/order.
+func _test_long_authored_upgrade() -> void:
+	var longest: Dictionary = {}
+	var longest_width := -1.0
+	var label_font := panel.status_label.get_theme_font("font")
+	for candidate in RunPoolCardRewardOffers.get_authored_base_candidates():
+		var id: String = str(candidate.get("id", ""))
+		var listed := RunRestCardUpgrade.list_authored_choices([id], {}, 1)
+		if not listed.get("ok", false) or listed.choices.size() != 1:
+			continue
+		var option: Dictionary = listed.choices[0]
+		var caption := "Free upgrade: %s | %d energy" % [option.plus_display_name, option.plus_cost]
+		var width := label_font.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x
+		if width > longest_width:
+			longest_width = width
+			longest = option
+	_check(not longest.is_empty() and longest_width > 0.0,
+		"nonvacuous longest authentic authored + printing found in live catalog")
+	if longest.is_empty():
+		return
+	var visit := _make([longest.source_id, STRIKE], 3)
+	await _bind(visit)
+	var source := visit.read_state()
+	await _activate(panel.upgrade_button, false)
+	var row := _row_at(0)
+	if row == null:
+		return
+	_check(panel.option_buttons.size() == visit.upgrade_options().size()
+		and row.get_meta("option") == longest and row.text.contains(longest.display_name),
+		"long-name row is the actual mounted source-authentic upgrade option")
+	row.grab_focus()
+	await _settle_layout()
+	panel.choice_scroll.ensure_control_visible(row)
+	await _settle_layout()
+	_check(panel.choice_scroll.get_global_rect().encloses(row.get_global_rect()),
+		"focused longest actual + printing stays completely visible in 350px scroller")
+	_assert_visible_action(row, longest, true)
+	await _activate(row, false)
+	_check(panel.preview().index == 0 and panel.preview_label.text.contains(longest.plus_display_name)
+		and intents.is_empty() and visit.read_state() == source,
+		"longest authentic upgrade name is mouse-selectable without settlement")
 func _test_layout() -> void:
 	var deck: Array = []
 	for i in range(30):
@@ -202,6 +245,7 @@ func _test_layout() -> void:
 			and _card_ink(panel.option_buttons[i]).contains("%d energy" % canonical_upgrades[i].plus_cost),
 			"sewn ink exposes original, upgraded name, costs and canonical copy")
 		_assert_decorations(panel.option_buttons[i])
+		_assert_visible_action(panel.option_buttons[i], canonical_upgrades[i], true)
 	_check(panel.size == Vector2(940, 620) and panel.option_buttons.size() >= 2,
 		"real mounted panel has at least two upgrade rows to measure")
 	for i in range(2):
@@ -211,7 +255,7 @@ func _test_layout() -> void:
 	for button in panel.option_buttons:
 		var clipped := button.get_global_rect().intersection(panel.choice_scroll.get_global_rect())
 		_check(not clipped.intersects(panel.confirm_button.get_global_rect())
-			and button.size.x <= panel.choice_scroll.size.x and button.size.y >= 110 and button.size.y <= 120,
+			and button.size.x <= panel.choice_scroll.size.x and button.size.y >= 140 and button.size.y <= 150,
 			"even offscreen copies only paint inside the choice scroll, never Confirm")
 	_check(panel.choice_scroll.clip_contents and panel.choice_scroll.size == Vector2(440, 350)
 		and panel.preview_scroll.size == Vector2(428, 350), "fixed clipped two-column layout")
@@ -219,6 +263,7 @@ func _test_layout() -> void:
 	panel.option_buttons.back().grab_focus()
 	await _settle_layout()
 	_check(panel.choice_scroll.scroll_vertical > 0, "keyboard focus reveals offscreen copy")
+	_assert_visible_action(panel.option_buttons.back(), canonical_upgrades.back(), true)
 	_check(visit.read_state() == source and intents.is_empty(), "browse does not change any ledger")
 
 
@@ -342,6 +387,7 @@ func _check_filtered(options: Array, owner: String = "") -> void:
 		_check(panel.option_buttons[i].get_meta("option") == expected[i]
 			and panel._row_indices[panel.option_buttons[i]] == expected[i].index,
 			"filtered duplicate keeps canonical metadata, order and original index")
+		_assert_visible_action(panel.option_buttons[i], expected[i], panel._mode == "upgrade")
 	_check(panel.filter_buttons.size() == owners.size(), "only stage owners plus All offered")
 	for i in range(mini(owners.size(), panel.filter_buttons.size())):
 		var chip := panel.filter_buttons[i]
@@ -647,6 +693,7 @@ func _test_stitch(keyboard: bool) -> void:
 		and _card_ink(panel.option_buttons[1]).contains("FIRST")
 		and panel.option_buttons[1].tooltip_text.contains("FIRST | " + _expected_detail(first_def, 1)),
 		"compact FIRST identity keeps Warden's full canonical Help")
+	_assert_visible_action(panel.option_buttons[1], visit.stitch_first_options()[1], false)
 	for i in range(panel.option_buttons.size()):
 		_check(panel.option_buttons[i].get_meta("option") == visit.stitch_first_options()[i], "exact canonical stitch first occurrence metadata")
 	await _activate(panel.option_buttons[1], keyboard)
@@ -661,6 +708,7 @@ func _test_stitch(keyboard: bool) -> void:
 		and panel.option_buttons[0].tooltip_text.contains(_expected_detail(second_def, 2)),
 		"real FIRST preview and THEN row Help show full catalog rules")
 	_assert_decorations(panel.option_buttons[0])
+	_assert_visible_action(panel.option_buttons[0], visit.stitch_second_options(1)[0], false)
 	await _activate(panel.option_buttons[0], keyboard)
 	_check(panel.preview() == expected and panel.preview_label.text.contains("Scraps: 7 -> 4"), "exact detached genuine stitch forecast")
 	_check(panel.option_buttons[0].get_meta("selected")
@@ -738,6 +786,7 @@ func _test_pool_upgrade(keyboard: bool) -> void:
 			and row.tooltip_text.contains("AFTER | " + _expected_detail(after, option.index))
 			and _compact_ink(row, before, option.index, after),
 			"compact pool identity retains both full canonical definitions in hover/focus Help")
+		_assert_visible_action(row, option, true)
 		row.grab_focus()
 		await _settle_layout()
 		var prior_preview := panel.preview()
@@ -829,6 +878,7 @@ func _test_pool_stitch(keyboard: bool) -> void:
 		return
 	_check(first_row.tooltip_text.contains("FIRST | " + _expected_detail(first, first_option.index))
 		and panel.confirm_button.disabled, "FIRST Help shows real Warden positions and Pin")
+	_assert_visible_action(first_row, first_option, false)
 	first_row.grab_focus()
 	await _settle_layout()
 	await _activate(first_row, keyboard)
@@ -838,6 +888,7 @@ func _test_pool_stitch(keyboard: bool) -> void:
 	_check(second_row.tooltip_text.contains("THEN | " + _expected_detail(second, second_option.index))
 		and panel.preview_label.text.contains("FIRST | " + _expected_detail(first, first_option.index))
 		and panel.confirm_button.disabled, "THEN Help preserves source-order and nonactionable half pair")
+	_assert_visible_action(second_row, second_option, false)
 	second_row.grab_focus()
 	await _settle_layout()
 	_check(intents.is_empty() and visit.read_state() == source,
@@ -1618,6 +1669,47 @@ func _compact_ink(button: Button, card: Dictionary, index: int, after: Dictionar
 		str(card.owner).capitalize(), index + 1, card.display_name, card.cost, summary]
 
 
+## The full Button caption is intentionally transparent; assert the actual
+## Label glyph geometry against its painted ticket/row, not its hidden text.
+## This covers exact, source-authentic Upgrade, FIRST and THEN snapshots,
+## including rows rebuilt after owner filtering or scrolled into focus.
+func _assert_visible_action(button: Button, option: Dictionary, upgrade: bool) -> void:
+	var labels := button.find_children("*", "Label", true, false)
+	_check(labels.size() == 4, "mounted row has four real visible ink labels")
+	if labels.size() != 4:
+		return
+	var identity: Label = labels[0]
+	var name: Label = labels[1]
+	var energy: Label = labels[2]
+	var outcome: Label = labels[3]
+	var expected_result := "Free upgrade: %s | %d energy" % [option.plus_display_name, option.plus_cost] if upgrade else \
+		"%s | Stitch pair: %d scraps" % ["FIRST" if panel._first < 0 else "THEN", RunRestStitchCards.SCRAP_COST]
+	_check(identity.text == "%s | copy #%d" % [str(option.owner).capitalize(), option.index + 1]
+		and name.text == str(option.get("display_name", option.get("name", "")))
+		and energy.text == "%d energy" % option.cost
+		and outcome.text == expected_result,
+		"visible identity, energy and free/3-scrap outcome are from the actual bound option")
+	var row_ink := button.get_global_rect().grow(-4)
+	var ticket := energy.get_parent() as Panel
+	_check(ticket != null and row_ink.encloses(outcome.get_global_rect())
+		and row_ink.encloses(name.get_global_rect())
+		and row_ink.encloses(identity.get_global_rect()),
+		"actual identity, complete name and result labels remain inset in painted row")
+	if ticket != null:
+		_check(ticket.get_global_rect().grow(-2).encloses(energy.get_global_rect())
+			and row_ink.encloses(ticket.get_global_rect()),
+			"18px current-energy label remains inset in its painted ticket")
+	for label: Label in labels:
+		var font := label.get_theme_font("font")
+		var font_size := label.get_theme_font_size("font_size")
+		if font == null:
+			_check(false, "action label has a real mounted font")
+			continue
+		var glyphs := font.get_multiline_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, label.size.x, font_size)
+		_check(font_size >= 18 and label.get_line_count() > 0
+			and glyphs.x <= label.size.x + 1.0 and glyphs.y <= label.size.y + 1.0
+			and label.get_line_count() * font.get_height(font_size) <= label.size.y + 1.0,
+			"18px+ visible multiline font glyphs fit label width and height: " + label.text)
 func _assert_decorations(button: Button) -> void:
 	_check(button.focus_mode == Control.FOCUS_ALL and button.mouse_filter == Control.MOUSE_FILTER_STOP,
 		"canonical option Button alone owns click and keyboard focus")
@@ -1633,9 +1725,9 @@ func _assert_decorations(button: Button) -> void:
 	_check(labels.size() == 4, "compact identity, name, cost and summary replace repeated rules")
 	for label: Label in labels:
 		var font_size := label.get_theme_font_size("font_size")
-		_check(font_size >= 16 and button.get_global_rect().encloses(label.get_global_rect())
+		_check(font_size >= 18 and button.get_global_rect().encloses(label.get_global_rect())
 			and label.get_line_count() * label.get_theme_font("font").get_height(font_size) <= label.size.y,
-			"essential ink is at least 16-point and fits inside the compact row")
+			"all visible card ink uses body-size text and fits inside the compact row")
 		for other: Label in labels:
 			if other != label:
 				_check(not label.get_global_rect().intersects(other.get_global_rect()),
