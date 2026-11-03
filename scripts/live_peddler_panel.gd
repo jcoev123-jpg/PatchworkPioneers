@@ -34,7 +34,7 @@ extends Control
 ## in the patch Button's tooltip), and anything that audit cannot prove reads
 ## PATCH_DETAILS_UNAVAILABLE instead of a guessed buff.
 ##
-## VIS-A: the sewn market art floats on a genuinely opaque jewel-toned fabric
+## VIS-A: the sewn market art floats on a genuinely opaque warm dark fabric
 ## (the shipped reward_panel.png source alpha may be transparent), and each of
 ## the five actions is a compact, clearly bordered sewn ticket: the illustrated
 ## market stays visible beside the quotes instead of behind a muddy,
@@ -131,6 +131,13 @@ const EXIT_FABRIC := Color("#542b38")
 const DISABLED_FABRIC := Color("#413c49")
 const FADED_CREAM := Color("#b5a795")
 const TICKET_EDGE := Color("#c9a45f")
+## BAL 2026-11-03 Art-v3 contrast repair: the imported market image wears a
+## full-alpha warm candlelit sepia wash (red over blue) instead of the
+## retired saturated plum tint that flattened it into one washed maroon
+## full-width panel, and the backing/fallback fabric is the same warm deep
+## umber, so the illustration stays visible in warm dark gothic light.
+const MARKET_TINT := Color("#4a3a30")
+const MARKET_FABRIC := Color("#322721")
 const REDUCED_MOTION_SETTING := "accessibility/reduced_motion"
 ## One slow deterministic presentation cycle (~17s) for the authored market
 ## image: about a 1% scale breath plus a 3-4 px drift, both exactly at rest
@@ -203,7 +210,7 @@ func _ready() -> void:
 	if master != null:
 		theme = master
 	# Genuinely opaque sewn fabric first: the shipped reward_panel.png may
-	# carry transparent alpha, so a solid jewel-toned backing keeps the
+	# carry transparent alpha, so a solid warm dark backing keeps the
 	# illustrated market from showing through under the labels (VIS-A).
 	var fabric := Panel.new()
 	fabric.name = "FabricBacking"
@@ -301,10 +308,11 @@ static func _load_theme() -> Theme:
 
 
 ## The genuinely opaque sewn fabric behind the imported market art: solid
-## deep-jewel paper with a stitched edge, whether or not that art loads. This
-## is the one alpha-1 backdrop under every label and ticket (VIS-A).
+## warm dark umber paper with a stitched edge, whether or not that art
+## loads. This is the one alpha-1 backdrop under every label and ticket
+## (VIS-A): no violet or maroon cast can surround the warm sepia market.
 func _fabric_style() -> StyleBoxFlat:
-	return _style(PLUM, THREAD, 5)
+	return _style(MARKET_FABRIC, THREAD, 5)
 
 
 func _panel_style() -> StyleBox:
@@ -313,7 +321,7 @@ func _panel_style() -> StyleBox:
 		if texture != null:
 			var style := StyleBoxTexture.new()
 			style.texture = texture
-			style.modulate_color = Color("#5a4272")
+			style.modulate_color = MARKET_TINT
 			style.set_texture_margin_all(24)
 			return style
 	return _fabric_style()
