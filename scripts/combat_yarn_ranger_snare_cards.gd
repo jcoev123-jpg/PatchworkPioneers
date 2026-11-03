@@ -23,11 +23,14 @@ extends RefCounted
 ## rewards, run deck or the app flow; that wiring is a later task.
 ##
 ## The file also owns the Yarn Ranger's Snare Shot combat passive ("her first attack each combat
-## also applies Tangled 1") as a detached rules receipt. `propose_snare_shot` charges and writes
-## nothing: the caller supplies an already confirmed paid attack receipt, its authenticated card ID,
-## a detached party/enemy snapshot and the combat-level once-per-combat flag, and receives a NEW
-## four-slot enemy map plus an updated flag. The once-per-combat flag's storage and consumption, and
-## applying the proposal after a real paid attack, belong to the still-reserved mounted flow.
+## also applies Tangled 1"). `propose_snare_shot` charges and writes nothing: the caller supplies an
+## already confirmed paid attack receipt, its authenticated card ID, a detached party/enemy snapshot
+## and the combat-level once-per-combat flag, and receives a NEW four-slot enemy map plus an updated
+## flag. `commit_snare_shot` is the authoritative post-hit step: it derives its own read-only
+## snapshot from a real CombatEnemies, keeps every propose_snare_shot precondition, re-checks each
+## proposed recipient against the live records and only then writes that one Tangled count. The
+## once-per-combat flag's storage and the live hand/UI dispatch still belong to the mounted flow;
+## this file keeps no latch of its own and returns the consumed flag to its caller.
 
 const OWNER := "yarn_ranger"
 const TARGET_KIND := "enemy_all"
@@ -310,6 +313,103 @@ func propose_snare_shot(card_id: Variant, party: CombatParty, enemy_slots: Varia
 		"recipient_positions": recipients.duplicate(),
 		"status_updates": updates,
 		"enemies": proposed,
+		"passive_state": {"available": false, "consumed": true},
+	}
+
+
+# --- Snare Shot: authoritative post-hit commit ------------------------------------------------
+
+
+## The post-hit commit for an already paid, already confirmed Yarn Ranger attack.
+##
+## This method is the authoritative counterpart of `propose_snare_shot` and shares every one of its
+## rules: the same authenticated attack catalog, the same canonical paid/hit-confirmed receipt, the
+## same living owner in her current printed seat, the same combat-level flag and the same recipient
+## capacity. `enemies` is the actual CombatEnemies of the battle, and this method builds its OWN
+## read-only four-slot snapshot from that roster, so a caller can never hand in enemy data that
+## stands in for the real battle. It never claims that a receipt proves a hit by itself: the caller
+## supplies the confirmed receipt at the trusted already-paid boundary, exactly as the proposal
+## contract requires.
+##
+## The whole batch is preflighted before the first write. Each proposed recipient must still be the
+## same living enemy in the same slot of the live roster, with a well-formed status map that can
+## take exactly one more Tangled count; any stale, moved, slain or malformed recipient refuses the
+## rider whole, leaving every enemy record untouched. Only then is that one Tangled count written
+## into each recipient's authoritative record. No Damage, Block, HP, position, slot, metadata or
+## capacity changes, no enemy is created or moved, no card is played, no energy is spent, no card is
+## discarded and no RNG is advanced.
+##
+## The returned `passive_state` is a NEW consumed flag for the caller to persist. This helper keeps
+## no static or global once-per-combat latch and never rewrites the flag dictionary it was given, so
+## feeding the returned flag back in refuses the next attack without a second addition. The mounted
+## dispatcher still owns storing that flag, authenticating the real paid source and wiring this into
+## the live hand.
+func commit_snare_shot(card_id: Variant, party: CombatParty, enemies: CombatEnemies,
+		hit_receipt: Variant, passive_state: Variant) -> Dictionary:
+	if enemies == null:
+		return _refusal("invalid_request")
+	# The read-only snapshot of exactly the records this commit would write. Slots are the live
+	# roster's own 1..n positions (never compacted, never caller-authored), so the shared proposal
+	# contract authenticates the same roster shape the owner-turn tick already validates.
+	var roster: Array[Dictionary] = enemies.get_enemies()
+	var snapshot: Dictionary = {}
+	for index in range(roster.size()):
+		snapshot[index + 1] = (roster[index] as Dictionary).duplicate(true)
+	var proposal: Dictionary = propose_snare_shot(card_id, party, snapshot, hit_receipt,
+		passive_state)
+	if not proposal.get("ok", false):
+		return _refusal(str(proposal.get("reason", "refused")))
+	var updates: Array = proposal.get("status_updates", [])
+	if updates.is_empty():
+		return _refusal("no_hit_recipients")
+
+	# Preflight the whole batch against the live records before any write: every proposed recipient
+	# must still map to the same living enemy id in the same slot, its status map must still be
+	# canonical, and its counter must still accept exactly one more Tangled. A single mismatch
+	# refuses the rider without touching the roster.
+	var live: Array[Dictionary] = enemies._enemies
+	if live.is_empty() or live.size() != roster.size():
+		return _refusal("invalid_enemies")
+	for update: Dictionary in updates:
+		var position: int = int(update.get("position", 0))
+		if position < 1 or position > live.size():
+			return _refusal("recipient_missing")
+		var record: Dictionary = live[position - 1]
+		if str(record.get("id", "")) != str(update.get("enemy_id", "")):
+			return _refusal("recipient_mismatch")
+		if int(record.get("hp", 0)) <= 0:
+			return _refusal("recipient_downed")
+		if typeof(record.get("position")) != TYPE_INT or int(record["position"]) != position:
+			return _refusal("invalid_enemies")
+		var statuses: Variant = record.get("statuses", {})
+		if typeof(statuses) != TYPE_DICTIONARY or not _statuses_valid(statuses):
+			return _refusal("invalid_enemies")
+		if SNARE_SHOT_TANGLED > CombatStatuses.MAX_INT - _current_tangled(record):
+			return _refusal("status_overflow")
+
+	# The batch is fully preflighted: write that one Tangled count into each recipient's real record.
+	var applied: Array[Dictionary] = []
+	for update: Dictionary in updates:
+		var position: int = int(update["position"])
+		var record: Dictionary = live[position - 1]
+		if not record.has("statuses"):
+			record["statuses"] = {}
+		var statuses: Dictionary = record["statuses"]
+		var before: int = int(statuses.get("tangled", 0))
+		statuses["tangled"] = before + SNARE_SHOT_TANGLED
+		applied.append({"position": position, "enemy_id": str(record["id"]),
+			"tangled_before": before, "tangled_after": before + SNARE_SHOT_TANGLED})
+	return {
+		"ok": true,
+		"reason": "applied",
+		"passive": SNARE_SHOT_PASSIVE,
+		"card_id": str(proposal["card_id"]),
+		"catalog": proposal["catalog"],
+		"cost_paid": int(proposal["cost_paid"]),
+		"owner_position": int(proposal["owner_position"]),
+		"tangled_added": SNARE_SHOT_TANGLED,
+		"recipient_positions": (proposal["recipient_positions"] as Array).duplicate(),
+		"status_updates": applied,
 		"passive_state": {"available": false, "consumed": true},
 	}
 
