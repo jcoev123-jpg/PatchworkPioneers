@@ -111,6 +111,35 @@ func select_actionable_event(rng: Variant, excluded_ids: Variant = null, wallet:
 	return {"ok": true, "event": _eligible[chosen_id].duplicate(true)}
 
 
+## Uniformly samples one party-eligible authored event that is not in excluded_ids
+## and has at least one affordable non-Leave choice for wallet, returning the
+## detached canonical event record and an authentic RunEventChoice wallet preview.
+## Rejects with {ok: false, event: {}, preview: {}} without advancing rng when the
+## service, rng, excluded_ids or wallet is invalid, or when no actionable record remains.
+func select_actionable_event_with_preview(rng: Variant, excluded_ids: Variant = null, wallet: Variant = null) -> Dictionary:
+	var rejected := {"ok": false, "event": {}, "preview": {}}
+	var selection := select_actionable_event(rng, excluded_ids, wallet)
+	if not selection.get("ok", false):
+		return rejected
+	var selected_event: Variant = selection.get("event")
+	if not selected_event is Dictionary:
+		return rejected
+	var event_id: Variant = selected_event.get("id")
+	if not event_id is String or not _eligible.has(event_id):
+		return rejected
+	var visit := enter(event_id)
+	if visit == null or not visit.is_valid():
+		return rejected
+	var preview := visit.preview_wallet_choices(wallet)
+	if not preview.get("ok", false) or preview.get("event_id") != event_id:
+		return rejected
+	return {
+		"ok": true,
+		"event": (selected_event as Dictionary).duplicate(true),
+		"preview": preview.duplicate(true),
+	}
+
+
 func _valid_wallet(wallet: Variant) -> bool:
 	if typeof(wallet) != TYPE_DICTIONARY:
 		return false
