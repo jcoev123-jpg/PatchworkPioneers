@@ -101,7 +101,9 @@ func _old_expected() -> Dictionary:
 				{"type": "shove", "amount": 0, "direction": 1, "weight": 1}]}},
 		"spool_stalker": {"id": "spool_stalker", "name": "Spool Stalker", "max_hp": 14, "art_path": "res://assets/paper/enemies/spool_stalker.png",
 			"intent": {"target": "exposed", "actions": [
-				{"type": "attack", "amount": 5, "weight": 3},
+				{"type": "attack", "amount": 5, "weight": 1},
+				{"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
 				{"type": "block", "amount": 2, "weight": 2},
 				{"type": "debuff", "amount": 1, "status": "exposed", "weight": 2},
 				{"type": "buff", "amount": 2, "weight": 1}]}},
