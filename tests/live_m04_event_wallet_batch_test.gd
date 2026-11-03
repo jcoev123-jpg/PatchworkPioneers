@@ -183,6 +183,17 @@ func _fixtures() -> Dictionary:
 	hints.append_array([2172745, 14522, 86462, 122179, 164251, 170539, 214827, 218480,
 		245085, 258112, 273654, 329026, 377428, 392622, 400253, 429319,
 		704452, 828490])
+	# Genuine map/toll/rotation witnesses for the shifted sorted pool after the
+	# four gothic creature-and-tool roadside trades (Copper Crab's Shears Cart,
+	# Mourning-Clock Armadillo, Blacklace Puffin Ferry, Thimbleback Beaver Dam)
+	# joined the generic pool and moved the authentic draw index for
+	# v3_briar_pin_checkpoint, v3_saffron_button_harvest, thimble_well,
+	# v3_warden_copper_chain_ferry, lantern_bobbin_ferry, v3_snowquilt_waystation,
+	# v3_nightjar_ribbon_exchange, v3_seamstress_thread_cart, v3_mothlace_clock
+	# and v3_button_orchard. The real oracle below re-verifies every candidate;
+	# none is pinned by index or position.
+	hints.append_array([10931, 19449, 25847, 26864, 30368, 38150, 65096, 236841,
+		318470, 323038])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():
