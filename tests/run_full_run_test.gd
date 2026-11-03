@@ -167,10 +167,11 @@ func _search(map: RunMap, choices: Array, path: Array, counts: Dictionary) -> Ar
 
 
 func _fixture() -> Dictionary:
-	# The expanded stop pool repins the retained fixture with a funded Shop, final recovery and a
-	# witnessed full win using the unchanged held-card pilot. Seed 309 preserves
-	# that victory after two genuine seeded Boss candidates changed RNG cadence.
-	for value in [309] + range(128, SEED_LIMIT + 1):
+	# The Bosses' authored named attacks changed the final fight's cadence, so the
+	# retained witness was re-derived: seed 1718 keeps a legal twelve-floor route
+	# (two Fights, an Elite, a funded Shop and a final Rest) and a genuine full
+	# win with the unchanged held-card pilot.
+	for value in [1718] + range(128, SEED_LIMIT + 1):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()

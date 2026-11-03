@@ -10,6 +10,25 @@ const PHASE_TWO_THRESHOLD := 21
 const PHASE_ONE := 1
 const PHASE_TWO := 2
 const PHASE_TWO_PATH := "res://data/enemies/m05_behemoth_phase_two.json"
+const PHASE_ACTION_COUNT := 6
+## The authored kit this validator authenticates: the original attack, Block
+## and Weak plus the three weight-1 named attacks, in their authored order.
+const PHASE_ONE_KIT := [
+	{"weight": 4, "action": {"type": "attack", "amount": 34}},
+	{"weight": 2, "action": {"type": "block", "amount": 3}},
+	{"weight": 1, "action": {"type": "debuff", "amount": 1, "status": "weak"}},
+	{"weight": 1, "action": {"type": "attack", "amount": 30, "move": "attack2"}},
+	{"weight": 1, "action": {"type": "attack", "amount": 22, "hits": 2, "move": "attack3"}},
+	{"weight": 1, "action": {"type": "attack", "amount": 38, "move": "attack4"}},
+]
+const PHASE_TWO_KIT := [
+	{"weight": 4, "action": {"type": "attack", "amount": 40}},
+	{"weight": 2, "action": {"type": "block", "amount": 3}},
+	{"weight": 1, "action": {"type": "debuff", "amount": 1, "status": "weak"}},
+	{"weight": 1, "action": {"type": "attack", "amount": 36, "move": "attack2"}},
+	{"weight": 1, "action": {"type": "attack", "amount": 28, "hits": 2, "move": "attack3"}},
+	{"weight": 1, "action": {"type": "attack", "amount": 44, "move": "attack4"}},
+]
 
 var _boss_definition: Variant = null
 var _phase_two_record: Variant = null
@@ -22,6 +41,17 @@ func _init(boss_definition: Variant = null, phase_two_record: Variant = null) ->
 		_phase_two_record = phase_two_record.duplicate(true) if (phase_two_record is Dictionary or phase_two_record is Array) else phase_two_record
 
 
+## The authorized maximum for one earned Quilt tier: the authored 84 HP plus
+## that tier's RunDifficulty max-HP bonus, which is exactly what
+## RunDifficulty.scale_definitions() applies to the real Boss roster. -1 marks
+## a tier this rule set does not authorize.
+static func maximum_hp_for_tier(tier: int) -> int:
+	if tier not in [0, 1, 2]:
+		return -1
+	var modifiers := RunDifficulty.new().modifiers_for_tier(tier)
+	return BOSS_MAX_HP + int(ceil(BOSS_MAX_HP * modifiers.max_hp_percent_bonus / 100.0))
+
+
 ## Main public selector. Evaluates detached boss definition, current integer HP,
 ## and parsed phase-two record. Returns explicit detached {ok, phase, intent}.
 static func select_phase(boss_definition: Variant, current_hp: Variant, phase_two_record: Variant, tier: int = 0) -> Dictionary:
@@ -32,11 +62,9 @@ static func select_phase(boss_definition: Variant, current_hp: Variant, phase_tw
 	if typeof(current_hp) != TYPE_INT:
 		return {"ok": false, "phase": 0, "intent": {}}
 	var hp := int(current_hp)
-	if tier not in [0, 1, 2]:
-		return {"ok": false, "phase": 0, "intent": {}}
+	var maximum := maximum_hp_for_tier(tier)
 	var modifiers := RunDifficulty.new().modifiers_for_tier(tier)
-	var maximum := BOSS_MAX_HP + int(ceil(BOSS_MAX_HP * modifiers.max_hp_percent_bonus / 100.0))
-	if hp < 1 or hp > maximum:
+	if maximum < 1 or hp < 1 or hp > maximum:
 		return {"ok": false, "phase": 0, "intent": {}}
 
 	if hp > PHASE_TWO_THRESHOLD:
@@ -100,9 +128,9 @@ static func validate_boss_definition(boss_definition: Variant) -> bool:
 	if target != "front" or not CombatEnemyIntents.TARGET_POLICIES.has(target):
 		return false
 	var actions = intent.get("actions")
-	if not actions is Array or actions.size() != 3:
+	if not actions is Array or actions.size() != PHASE_ACTION_COUNT:
 		return false
-	return _validate_phase_actions(actions, 34, 3, 1)
+	return _validate_phase_actions(actions, PHASE_ONE_KIT)
 
 
 ## Validates that a phase-two record contains the exact valid Patchwork Behemoth phase-two schema.
@@ -125,9 +153,9 @@ static func validate_phase_two_record(phase_two_record: Variant) -> bool:
 	if target != "lowest_living_hp" or not CombatEnemyIntents.TARGET_POLICIES.has(target):
 		return false
 	var actions = intent.get("actions")
-	if not actions is Array or actions.size() != 3:
+	if not actions is Array or actions.size() != PHASE_ACTION_COUNT:
 		return false
-	return _validate_phase_actions(actions, 40, 3, 1)
+	return _validate_phase_actions(actions, PHASE_TWO_KIT)
 
 
 static func _extract_boss_dict(boss_input: Variant) -> Dictionary:
@@ -166,40 +194,15 @@ static func _is_exact_int(val: Variant) -> bool:
 	return false
 
 
-static func _validate_phase_actions(actions: Array, expected_attack: int, expected_block: int, expected_weak: int) -> bool:
-	if actions.size() != 3:
+static func _validate_phase_actions(actions: Array, kit: Array) -> bool:
+	if actions.size() != kit.size():
 		return false
-	var has_attack := false
-	var has_block := false
-	var has_weak := false
-	for raw in actions:
-		var weighted := CombatEnemyIntents.weighted_action(raw)
-		if weighted.is_empty():
+	# Compare the whole normalized alternative, so a forged amount, weight,
+	# hits count, move key, status or invented key all fail closed.
+	for index in range(actions.size()):
+		if CombatEnemyIntents.weighted_action(actions[index]) != kit[index]:
 			return false
-		if not raw is Dictionary or not raw.has("weight"):
-			return false
-		var weight = raw["weight"]
-		if typeof(weight) == TYPE_FLOAT and floorf(weight) != weight:
-			return false
-		var int_weight := int(weighted.get("weight", 0))
-		var action: Dictionary = weighted.get("action", {})
-		var type = action.get("type")
-		var amount = action.get("amount")
-		if type == "attack":
-			if has_attack or int_weight != 4 or amount != expected_attack:
-				return false
-			has_attack = true
-		elif type == "block":
-			if has_block or int_weight != 2 or amount != expected_block:
-				return false
-			has_block = true
-		elif type == "debuff":
-			if has_weak or int_weight != 1 or amount != expected_weak or action.get("status") != "weak":
-				return false
-			has_weak = true
-		else:
-			return false
-	return has_attack and has_block and has_weak
+	return true
 
 
 static func _normalize_intent_numbers(intent: Dictionary) -> void:

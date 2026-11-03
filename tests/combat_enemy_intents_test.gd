@@ -30,6 +30,7 @@ func _initialize() -> void:
 	_test_inkbrush_blind_schema()
 	_test_behemoth_phase_transition_cache()
 	_test_behemoth_phase_fail_closed()
+	_test_boss_named_kits()
 	_test_termite_split_admission()
 	_test_ram_charge_seeded_cache()
 	if failures.is_empty():
@@ -1703,17 +1704,14 @@ func _phase_two_fixture() -> Dictionary:
 	return phase if phase is Dictionary else {}
 
 
-func _assert_boss_slot(slot: Dictionary, amount: int, policy: String, label: String) -> void:
+func _assert_boss_slot(slot: Dictionary, kit: Array, policy: String, label: String) -> void:
 	_check(slot.get("enemy_position") == 1 and slot.get("target") == policy,
 		label + ": original slot and precise policy")
 	var actions: Array = slot.get("actions", [])
-	_check(actions.size() == 3, label + ": three authored alternatives")
-	if actions.size() != 3:
+	_check(actions.size() == kit.size(), label + ": every authored alternative is normalized")
+	if actions.size() != kit.size():
 		return
-	_check(actions[0] == {"weight": 4, "action": {"type": "attack", "amount": amount}}
-		and actions[1] == {"weight": 2, "action": {"type": "block", "amount": 3}}
-		and actions[2] == {"weight": 1, "action": {"type": "debuff", "amount": 1, "status": "weak"}},
-		label + ": exact 4:2:1 weights, attack, Block 3 and Weak 1")
+	_check(actions == kit, label + ": exact authored weights, totals, packets and named moves")
 
 
 func _test_behemoth_phase_transition_cache() -> void:
@@ -1730,7 +1728,7 @@ func _test_behemoth_phase_transition_cache() -> void:
 		"canonical real Behemoth binds at 84 HP")
 	if not schedule.is_bound():
 		return
-	_assert_boss_slot(schedule._slots[0], 34, "front", "84 HP")
+	_assert_boss_slot(schedule._slots[0], BOSS_PHASE_ONE_KIT, "front", "84 HP")
 	_check(CombatEnemyIntents.policy_for(enemies, 1) == "front",
 		"executor policy is front for phase one")
 	var first := schedule.get_intents()
@@ -1743,7 +1741,7 @@ func _test_behemoth_phase_transition_cache() -> void:
 		"Block and read cannot transition or spend RNG")
 	_check(enemies.apply_damage(1, 62) and enemies.get_enemy(1).hp == 22
 		and schedule.advance_turn(), "22 HP advances in phase one")
-	_assert_boss_slot(schedule._slots[0], 34, "front", "22 HP")
+	_assert_boss_slot(schedule._slots[0], BOSS_PHASE_ONE_KIT, "front", "22 HP")
 	var locked := schedule.get_intents()
 	before = rng.state
 	_check(enemies.apply_damage(1, 1) and enemies.get_enemy(1).hp == 21,
@@ -1755,13 +1753,13 @@ func _test_behemoth_phase_transition_cache() -> void:
 		and CombatEnemyIntents.policy_for(enemies, 1) == "front",
 		"threshold does not rewrite the current announcement or policy on reads")
 	_check(schedule.advance_turn(), "next committed roll transitions phase")
-	_assert_boss_slot(schedule._slots[0], 40, "lowest_living_hp", "21 HP")
+	_assert_boss_slot(schedule._slots[0], BOSS_PHASE_TWO_KIT, "lowest_living_hp", "21 HP")
 	_check(schedule._boss_phase == 2 and
 		CombatEnemyIntents.policy_for(enemies, 1) == "lowest_living_hp",
 		"cached phase and authoritative executor policy switch together")
 	var next := schedule.get_intents()
 	_check(next.size() == 1 and next[0].get("enemy_position") == 1
-		and (next[0].get("amount") in [1, 3, 40]),
+		and (next[0].get("amount") in [1, 3, 40, 36, 28, 44]),
 		"21 HP publishes one phase-two action with authored amount")
 	before = rng.state
 	_check(next == schedule.get_intents() and rng.state == before,
@@ -1769,15 +1767,18 @@ func _test_behemoth_phase_transition_cache() -> void:
 	_check(enemies.apply_damage(1, 20) and enemies.get_enemy(1).hp == 1
 		and schedule.advance_turn() and schedule._boss_phase == 2,
 		"living 1 HP Behemoth retains phase two")
-	_assert_boss_slot(schedule._slots[0], 40, "lowest_living_hp", "1 HP")
+	_assert_boss_slot(schedule._slots[0], BOSS_PHASE_TWO_KIT, "lowest_living_hp", "1 HP")
 	_check(enemies.apply_damage(1, 1) and enemies.is_slain(1)
 		and schedule.advance_turn() and enemies.get_enemy(1).hp == 0,
 		"slain Behemoth stays in its slot and advances inertly")
 	var heroes_before := party.get_heroes()
+	var dead_action: Array = schedule.get_intents()
+	var expected_events: int = int(dead_action[0].get("hits", 1))
 	var result := CombatEnemyPhase.new().execute_phase(
-		party, enemies, schedule.get_intents(), null, true)
-	_check(result.get("ok", false) and result.events.size() == 1
-		and not result.events[0].applied and party.get_heroes() == heroes_before,
+		party, enemies, dead_action, null, true)
+	_check(result.get("ok", false) and result.events.size() == expected_events
+		and result.events.all(func(beat): return not beat.applied)
+		and party.get_heroes() == heroes_before,
 		"0 HP Behemoth never executes its cached action")
 	# Authored caller-owned data cannot mutate phase choices after binding.
 	source["intent"]["actions"][0]["amount"] = 999
@@ -1793,7 +1794,8 @@ func _test_behemoth_phase_fail_closed() -> void:
 	if boss.is_empty() or phase.is_empty():
 		return
 	for variant in ["missing", "wrong_threshold", "wrong_action", "counterfeit",
-			"wrong_roster_name", "mixed_boss_roster"]:
+			"wrong_roster_name", "mixed_boss_roster", "forged_move", "forged_hits",
+			"forged_weight", "extra_action"]:
 		var source: Variant = boss.duplicate(true)
 		var p2: Variant = phase.duplicate(true)
 		var roster := [boss.duplicate(true)]
@@ -1803,6 +1805,15 @@ func _test_behemoth_phase_fail_closed() -> void:
 			p2["threshold_hp"] = 20
 		elif variant == "wrong_action":
 			p2["intent"]["actions"][0]["amount"] = 3
+		elif variant == "forged_move":
+			source["intent"]["actions"][3]["move"] = "attack3"
+		elif variant == "forged_hits":
+			p2["intent"]["actions"][4]["hits"] = 3
+		elif variant == "forged_weight":
+			source["intent"]["actions"][5]["weight"] = 2
+		elif variant == "extra_action":
+			p2["intent"]["actions"].append(
+				{"type": "attack", "amount": 44, "move": "attack4", "weight": 1})
 		elif variant == "counterfeit":
 			source["id"] = "false_behemoth"
 		elif variant == "wrong_roster_name":
@@ -1827,6 +1838,228 @@ func _test_behemoth_phase_fail_closed() -> void:
 			and rng.state == initial_rng and enemies.get_enemies() == initial_enemies
 			and party.get_heroes() == initial_party,
 			variant + ": rejection publishes no cache, RNG draw or combat mutation")
+
+
+## The three canonical floor-12 Bosses author the original attack and skills plus
+## three weight-1 named attacks each. These are the exact authored kits.
+const BOSS_KIT_CATALOG := "res://data/enemies/boss.json"
+const BOSS_PHASE_ONE_KIT := [
+	{"weight": 4, "action": {"type": "attack", "amount": 34}},
+	{"weight": 2, "action": {"type": "block", "amount": 3}},
+	{"weight": 1, "action": {"type": "debuff", "amount": 1, "status": "weak"}},
+	{"weight": 1, "action": {"type": "attack", "amount": 30, "move": "attack2"}},
+	{"weight": 1, "action": {"type": "attack", "amount": 22, "hits": 2, "move": "attack3"}},
+	{"weight": 1, "action": {"type": "attack", "amount": 38, "move": "attack4"}},
+]
+const BOSS_PHASE_TWO_KIT := [
+	{"weight": 4, "action": {"type": "attack", "amount": 40}},
+	{"weight": 2, "action": {"type": "block", "amount": 3}},
+	{"weight": 1, "action": {"type": "debuff", "amount": 1, "status": "weak"}},
+	{"weight": 1, "action": {"type": "attack", "amount": 36, "move": "attack2"}},
+	{"weight": 1, "action": {"type": "attack", "amount": 28, "hits": 2, "move": "attack3"}},
+	{"weight": 1, "action": {"type": "attack", "amount": 44, "move": "attack4"}},
+]
+## Manifest title plus authored total damage and packet count per named attack.
+const BOSS_NAMED_ATTACKS := {
+	"patchwork_behemoth": {
+		"attack2": ["Knuckle Slam", 30, 1],
+		"attack3": ["Stuffing Hurl", 22, 2],
+		"attack4": ["Rope Lash", 38, 1],
+	},
+	"sewing_machine_colossus": {
+		"attack2": ["Needle Drive", 28, 1],
+		"attack3": ["Bobbin Shot", 20, 2],
+		"attack4": ["Treadle Stomp", 32, 1],
+	},
+	"moth_queen": {
+		"attack2": ["Dust Gale", 18, 2],
+		"attack3": ["Pin Crown Dive", 28, 1],
+		"attack4": ["Devour", 32, 1],
+	},
+}
+## Each Boss keeps the original non-attack alternatives it shipped with.
+const BOSS_KEPT_SKILLS := {
+	"patchwork_behemoth": ["block", "debuff"],
+	"sewing_machine_colossus": ["block", "debuff"],
+	"moth_queen": ["summon"],
+}
+
+
+func _boss_catalog_record(id: String) -> Dictionary:
+	var matches: Array = _catalog_records(BOSS_KIT_CATALOG).filter(
+		func(record: Variant) -> bool: return record is Dictionary and record.get("id") == id)
+	_check(matches.size() == 1, "Boss catalog has exactly one record: " + id)
+	if matches.size() != 1:
+		return {}
+	var record: Dictionary = matches[0].duplicate(true)
+	record["max_hp"] = int(record["max_hp"])
+	return record
+
+
+## One genuinely bound fight's ordered announcements and RNG states, used only
+## to prove two identical seeds replay the real weighted kit identically.
+func _boss_announcement_trace(record: Dictionary, seed_value: int) -> Array:
+	var party := _party_fixture()
+	var enemies := CombatEnemies.new([record.duplicate(true)])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var scheduler := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+	if not enemies.is_valid() or not scheduler.bind_battle(enemies, party, rng):
+		return []
+	var trace: Array = []
+	for turn in range(24):
+		trace.append([scheduler.get_intents(), rng.state])
+		if not scheduler.advance_turn():
+			return []
+	return trace
+
+
+## Resolve one announced named strike on a fresh real party. Block equal to one
+## packet proves the exact authored total and the exact number of packets.
+func _execute_boss_strike(enemies: CombatEnemies, action: Dictionary,
+		total: int, hits: int) -> bool:
+	var party := _party_fixture()
+	var target := int(action.get("target_position", 0))
+	if target < 1 or target > CombatParty.PARTY_SIZE or not party.is_valid():
+		return false
+	# Block one point short of the authored total: a real resolution then spends
+	# every point of Block and costs exactly one HP, whatever the packet split.
+	var hp_before: int = party.get_hero(target).hp
+	if not party.gain_block(target, total - 1):
+		return false
+	var result := CombatEnemyPhase.new().execute_phase(party, enemies, [action], null, true)
+	return result.get("ok", false) and result.events.size() == hits \
+		and result.events.all(func(beat: Dictionary) -> bool: return beat.applied) \
+		and hp_before - party.get_hero(target).hp == 1 \
+		and party.get_hero(target).block == 0
+
+
+## Every canonical Boss really announces and resolves each authored named attack
+## from its shipped catalog entry, the live manifest names that pose, the
+## original skills still appear, forged alternatives refuse atomically and the
+## same seed replays the identical weighted choices.
+func _test_boss_named_kits() -> void:
+	for id in BOSS_NAMED_ATTACKS:
+		var record := _boss_catalog_record(id)
+		if record.is_empty():
+			continue
+		var spec: Dictionary = record.get("intent")
+		_check(spec.get("target") == "front"
+			and String(record.get("art_path", "")).begins_with("res://assets/paper/enemies/"),
+			"original Boss policy and art path preserved: " + id)
+		var raw_actions: Array = spec.get("actions", [])
+		var authored: Array = []
+		var attack_keys: Array = []
+		var kinds: Array = []
+		for raw in raw_actions:
+			var normalized := CombatEnemyIntents.weighted_action(raw)
+			_check(not normalized.is_empty(), "authored Boss alternative validates: " + id + " " + str(raw))
+			if normalized.is_empty():
+				continue
+			authored.append(normalized.action)
+			kinds.append(String(normalized.action.type))
+			if normalized.action.type == "attack":
+				var key := String(normalized.action.get("move", "attack"))
+				_check(not attack_keys.has(key), "no duplicate Boss attack key: " + id + " " + key)
+				attack_keys.append(key)
+		_check(attack_keys.size() == 4 and attack_keys.has("attack"),
+			"exactly four distinct Boss attacks including the original: " + id)
+		for move in BOSS_NAMED_ATTACKS[id]:
+			_check(attack_keys.has(move), "authored Boss named attack present: " + id + " " + move)
+		for skill in BOSS_KEPT_SKILLS[id]:
+			_check(kinds.has(skill), "original Boss skill retained: " + id + " " + skill)
+
+		var party := _party_fixture()
+		var enemies := CombatEnemies.new([record.duplicate(true)])
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 48701
+		var scheduler := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+		_check(enemies.is_valid() and scheduler.bind_battle(enemies, party, rng),
+			"shipped Boss catalog binds the real weighted kit: " + id)
+		if not scheduler.is_bound():
+			continue
+		var strike_path := "res://assets/paper/enemies/%s_attack.png" % id
+		var seen := {}
+		var captured: Dictionary = {}
+		for turn in range(160):
+			var announced := scheduler.get_intents()
+			var state := rng.state
+			if announced.size() != 1 or announced[0].get("enemy_position") != 1:
+				_check(false, "one Boss announcement for its single slot: " + id)
+				break
+			var action: Dictionary = announced[0]
+			_check(scheduler.get_intents() == announced and rng.state == state,
+				"reading the announced Boss action spends no RNG: " + id)
+			var bare := action.duplicate(true)
+			bare.erase("enemy_position")
+			bare.erase("target_position")
+			_check(authored.has(bare),
+				"announced Boss action is an authored alternative: " + id + " " + str(action))
+			if action.type == "attack" and action.has("move"):
+				var move := String(action.move)
+				var expected: Array = BOSS_NAMED_ATTACKS[id][move]
+				_check(action.get("amount") == expected[1]
+					and int(action.get("hits", 1)) == expected[2],
+					"announced %s keeps authored total and packets: %s" % [move, id])
+				var receipt := LiveMovePoseCatalog.new().lookup_enemy(id, action, strike_path)
+				_check(receipt.get("name") == expected[0] and receipt.get("pose") == move
+					and String(receipt.get("named_art", "")).ends_with("/%s_%s.png" % [id, move]),
+					"manifest names the announced %s: %s" % [move, id])
+				_check(_execute_boss_strike(enemies, action, expected[1], expected[2]),
+					"living Boss resolves %s for its exact total in packets: %s" % [move, id])
+				seen[move] = true
+				captured = action.duplicate(true)
+			else:
+				seen[String(action.type)] = true
+			if not scheduler.advance_turn():
+				_check(false, "real Boss weighted turn advances: " + id)
+				break
+		for move in BOSS_NAMED_ATTACKS[id]:
+			_check(seen.has(move), "genuine weighted selection announced " + id + " " + move)
+		for skill in BOSS_KEPT_SKILLS[id]:
+			_check(seen.has(skill), "genuine weighted selection retained " + id + " " + skill)
+		_check(seen.has("attack"), "genuine weighted selection retained the base attack: " + id)
+		_check(not captured.is_empty(), "captured a real named Boss announcement: " + id)
+		if captured.is_empty():
+			continue
+		var first := _boss_announcement_trace(record, 7301)
+		var second := _boss_announcement_trace(record, 7301)
+		_check(not first.is_empty() and first == second,
+			"identically seeded Boss catalog replays every announcement and RNG state: " + id)
+		# Forged move, total or packet count and a stale (removed) alternative
+		# must each refuse the whole phase without spend, mutation or RNG drift.
+		var forgeries: Array = []
+		for move in BOSS_NAMED_ATTACKS[id]:
+			if move != String(captured.move):
+				var swapped := captured.duplicate(true)
+				swapped.move = move
+				forgeries.append(swapped)
+				break
+		var inflated := captured.duplicate(true)
+		inflated.amount = int(inflated.amount) + 1
+		forgeries.append(inflated)
+		var repacked := captured.duplicate(true)
+		if repacked.has("hits"):
+			repacked.erase("hits")
+		else:
+			repacked.hits = 2
+		forgeries.append(repacked)
+		var phase := CombatEnemyPhase.new()
+		var snapshot := [party.get_heroes(), enemies.get_enemies(), rng.state]
+		for forged in forgeries:
+			_check(phase.execute_phase(party, enemies, [forged], null, true)
+				== {"ok": false, "events": []}
+				and snapshot == [party.get_heroes(), enemies.get_enemies(), rng.state],
+				"forged Boss move/total/packets refuses without spend or RNG drift: " + id)
+		var original_intent: Dictionary = enemies._enemies[0].intent.duplicate(true)
+		enemies._enemies[0].intent.actions = original_intent.actions.filter(
+			func(raw: Dictionary) -> bool: return raw.get("move") != captured.move)
+		var stale_before := [party.get_heroes(), enemies.get_enemies(), rng.state]
+		_check(phase.execute_phase(party, enemies, [captured], null, true)
+			== {"ok": false, "events": []}
+			and stale_before == [party.get_heroes(), enemies.get_enemies(), rng.state],
+			"stale removed Boss alternative refuses without spend or RNG drift: " + id)
+		enemies._enemies[0].intent = original_intent
 
 
 func _test_two_hit_schema() -> void:

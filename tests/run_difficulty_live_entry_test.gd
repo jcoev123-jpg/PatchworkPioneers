@@ -149,10 +149,13 @@ func _run() -> void:
 				# shipping her four V3 needle/thread starters: the authentic kit
 				# changes the pilot's draws and RNG cadence, so seed 2404's
 				# tier-2 Colossus now kills all three heroes at 44 HP. Seed 2855
-				# meets the same twelve-floor/Shop/Rest/Event prerequisites and
-				# the same held-card pilot genuinely wins tier 1, its replay and
-				# tier 2.
-				var witness_seed := 2855
+				# met the same twelve-floor/Shop/Rest/Event prerequisites and the
+				# same held-card pilot genuinely won tier 1, its replay and tier 2.
+				# Repinned to seed 1718 when every Boss received its three authored
+				# named attacks: the same genuine twelve-floor seed and held-card
+				# pilot genuinely win tier 1, its replay and tier 2 again, where seed
+				# 2855's tier-2 Boss left all three heroes down with it at 10 HP.
+				var witness_seed := 1718
 				rng.seed = witness_seed
 				var map := RunMap.new()
 				_check(map.generate(rng), "higher-tier witness generates the actual map")

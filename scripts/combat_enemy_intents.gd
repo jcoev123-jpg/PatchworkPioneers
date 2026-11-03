@@ -625,7 +625,7 @@ static func valid_action(action: Variant) -> bool:
 	if kind == "attack":
 		var extra := 0
 		if action.has("move"):
-			if not action.move is String or action.move not in ["attack2", "attack3"]:
+			if not action.move is String or action.move not in ["attack2", "attack3", "attack4"]:
 				return false
 			extra = 1
 		if action.has("hits"):
@@ -703,8 +703,12 @@ func advance_turn() -> bool:
 		if _boss_slot > 0:
 			var boss := _enemies.get_enemy(_boss_slot)
 			var hp = boss.get("hp")
+			# The live roster is legitimately tier-scaled (93/101 HP), so the
+			# upper bound is the authorized tier maximum, never the authored
+			# base. The canonical identity check stays beside it.
+			var maximum := CombatBehemothPhaseRules.maximum_hp_for_tier(_quilt_tier)
 			if boss.get("id") != CombatBehemothPhaseRules.BOSS_ID \
-					or not hp is int or hp < 0 or hp > CombatBehemothPhaseRules.BOSS_MAX_HP:
+					or not hp is int or hp < 0 or maximum < 1 or hp > maximum:
 				return false
 			if hp > 0:
 				var choice := CombatBehemothPhaseRules.select_phase(
