@@ -351,6 +351,47 @@ func _run() -> void:
 		if _vital_oracle(witness, party).event.id == "v3_warden_buckle_heart_ward":
 			warden_fixture = candidate
 			break
+	# The generic pool grows independently of the vitality pool. The first
+	# witness retained per generic story is not guaranteed to draw Buckle-Heart
+	# on the following stop, so seek a real additional seed when needed.
+	if warden_fixture.is_empty():
+		var ids := _generic_route_ids()
+		var party := CombatParty.new(app._load_party_definitions()).get_heroes()
+		for value in range(1, 500000):
+			var candidate_rng := RandomNumberGenerator.new()
+			candidate_rng.seed = value
+			var candidate_map := RunMap.new()
+			if not candidate_map.generate(candidate_rng):
+				continue
+			var candidate_path := _event_path(candidate_map, candidate_map.get_legal_choices(), 6)
+			if candidate_path.is_empty():
+				continue
+			var toll := RunNeedleToll.new({"heroes": party, "wallet": {"gold": 0, "scraps": 0},
+				"deck": app._load_starter_deck()}, candidate_rng)
+			if not toll.pay_toll("warden").ok:
+				continue
+			var before_draw := candidate_rng.state
+			var event_id: String = ids[candidate_rng.randi_range(0, ids.size() - 1)]
+			if event_id in ["frayed_debt_parcel", RunFatePinAuction.EVENT_ID]:
+				continue
+			var witness := RandomNumberGenerator.new()
+			witness.state = candidate_rng.state
+			if _vital_oracle(witness, party).event.id != "v3_warden_buckle_heart_ward":
+				continue
+			var events: Array = []
+			var transit := {}
+			var treasures: Array = []
+			for id in candidate_path:
+				if candidate_map.get_node(id).type != "Event":
+					treasures.append(id)
+				else:
+					transit[id] = treasures.duplicate()
+					treasures.clear()
+					events.append(id)
+			warden_fixture = {"seed": value, "path": events.slice(0, 5),
+				"next": events[5], "transit": transit, "before_draw": before_draw,
+				"after_draw": candidate_rng.state}
+			break
 	_check(not warden_fixture.is_empty(), "genuine seeded map and single RNG draw offer Buckle-Heart")
 	if not warden_fixture.is_empty():
 		var warden_caps := cap_claims
