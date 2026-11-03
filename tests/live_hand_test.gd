@@ -139,6 +139,11 @@ func _run() -> void:
 				_check(app.deck.draw_pile.size() == 7 and app.deck.discard_pile.is_empty(), "opening piles 7/0")
 			if turn == 1:
 				_check(app.deck.draw_pile.size() == 2 and app.deck.discard_pile == trace[0][1], "first end discards entire opening hand")
+				var entered: Array = app.hand_motion_history.filter(func(receipt: Dictionary) -> bool:
+					return receipt.kind == "draw")
+				_check(entered.size() == 10 and app.deck.hand.size() == 5
+					and entered.slice(5).map(func(receipt: Dictionary): return receipt.card_id) == app.deck.hand,
+					"committed End Turn deals exactly five new physical faces in real order")
 			if turn == 2:
 				_check(app.deck.draw_pile.size() == 7 and app.deck.discard_pile.is_empty(), "third hand crosses seeded reshuffle")
 			if turn < 11:
@@ -161,8 +166,222 @@ func _run() -> void:
 		app._return_to_title()
 		_check(app.deck == null and app.get_child_count() == child_count - 1, "inactive actions do not recreate stale session")
 	await _pool_faces()
+	await _hand_motion_cases()
+	await _second_duplicate_echo_case()
 	app.free()
 	_finish()
+
+
+## Live entry/exit receipts use a seeded mounted deck, not synthetic UI nodes.
+## Every physical copy keeps a separate real hand panel even for repeated IDs.
+func _hand_motion_cases() -> void:
+	if not await _open_battle("hand motion"):
+		return
+	await _frames()
+	var juice = app.get_node("LiveCombatJuice")
+	var metadata = app.get_node("LiveSupportHand")._metadata
+	var opening: Array = app.hand_motion_history.filter(func(item: Dictionary) -> bool:
+		return item.kind == "draw")
+	_check(juice.bound and opening.size() == 5 and app.deck.hand.size() == 5,
+		"seeded real opening draws five distinct held physical occurrences")
+	for index in range(5):
+		_check(opening[index].card_id == app.deck.hand[index] and opening[index].index == index
+			and bool(metadata.motion_state(app.hand_view.get_child(index)).get("entry_started", false)),
+			"opening draw enters only the real held slot, including occurrence identity")
+	var receipt_count: int = app.hand_motion_history.size()
+	var rng_state: int = app.run_rng.state
+	app._refresh_hand()
+	await _frames()
+	_check(app.hand_motion_history.size() == receipt_count and app.run_rng.state == rng_state,
+		"unchanged presentational redraw consumes no random draw or flight")
+	var duplicate_found := false
+	for count in _copies(app.deck.hand).values():
+		if int(count) > 1:
+			duplicate_found = true
+	# Draw only real seeded remaining cards until both a supported paid brace and
+	# a repeated-ID copy are physically present, with no replacement of deck.hand.
+	while (not duplicate_found or not app.deck.hand.has("warden_brace")) \
+			and not app.deck.draw_pile.is_empty():
+		var before_size: int = app.deck.hand.size()
+		var state_before: int = app.run_rng.state
+		_check(app.deck.draw_extra(1) == 1, "extra draw admitted by real CombatDeck")
+		app._refresh_hand()
+		await _frames()
+		_check(app.deck.hand.size() == before_size + 1
+			and app.hand_motion_history.size() == receipt_count + 1
+			and app.hand_motion_history.back().kind == "draw"
+			and app.hand_motion_history.back().card_id == app.deck.hand.back()
+			and app.hand_motion_history.back().index == before_size,
+			"exactly one extra physical face enters its assigned real slot")
+		_check(app.run_rng.state == state_before, "drawing without reshuffle uses no UI RNG")
+		receipt_count += 1
+		duplicate_found = false
+		for count in _copies(app.deck.hand).values():
+			if int(count) > 1:
+				duplicate_found = true
+	_check(duplicate_found and app.deck.hand.has("warden_brace"),
+		"seeded deck actually contains a repeated physical ID and an actionable paid card")
+	var ids: Array[String] = []
+	var panel_instances := {}
+	for panel in app.hand_view.get_children():
+		var card_id: String = panel.get_child(0).text
+		ids.append(card_id)
+		var copies: Array = panel_instances.get(card_id, [])
+		copies.append(panel.get_instance_id())
+		panel_instances[card_id] = copies
+	_check(ids == app.deck.hand and _copies(ids) == _copies(app.deck.hand),
+		"physical panel occurrences still equal real ordered deck cards")
+	for value in panel_instances.values():
+		if (value as Array).size() > 1:
+			_check((value as Array)[0] != (value as Array)[1],
+				"duplicate ID copies retain different panel identities")
+	var brace := _panel_for("warden_brace")
+	if brace == null:
+		await _close_battle("hand motion")
+		return
+	var before := _combat_state()
+	app.deck.combat_state.energy = 0
+	var refused := InputEventMouseButton.new()
+	refused.button_index = MOUSE_BUTTON_LEFT
+	refused.pressed = true
+	refused.position = brace.size * 0.5
+	brace.gui_input.emit(refused)
+	await _frames()
+	_check(app.deck.hand == before[0] and app.deck.discard_pile == before[2]
+		and app.deck.energy == 0 and app.run_rng.state == before[9]
+		and app.hand_motion_history.size() == receipt_count
+		and juice.hand_echo_history.is_empty(),
+		"unaffordable real input rejects without hand changes or a discard ghost")
+	app.deck.combat_state.energy = int(before[3])
+	app.get_node("LiveSupportHand")._sync_battle()
+	await _frames()
+	var energy_before: int = app.deck.energy
+	var discard_before: int = app.deck.discard_pile.size()
+	var hand_before: int = app.deck.hand.size()
+	var history_before: int = juice.hand_echo_history.size()
+	# Dispatch the actual mounted card's keyboard activation, with all ordinary
+	# hand/presenter admission checks and the deferred paid resolver intact.
+	var support = app.get_node("LiveSupportHand")
+	_check(brace.focus_mode == Control.FOCUS_ALL and support._bindings.has(brace)
+		and support._eligible(brace, "warden_brace", app.deck, app.party, app.battle_view),
+		"paid brace is genuinely wired and affordable on the real hand")
+	await _click_center(brace)
+	_check(app.deck.energy == energy_before - 1
+		and app.deck.discard_pile.size() == discard_before + 1
+		and app.deck.discard_pile.back() == "warden_brace"
+		and app.deck.hand.size() == hand_before - 1,
+		"legal real keyboard play pays exactly once and discards exactly one held copy (energy %d/%d discard %d/%d hand %d/%d)" % [
+			app.deck.energy, energy_before, app.deck.discard_pile.size(), discard_before,
+			app.deck.hand.size(), hand_before])
+	_check(juice.hand_echo_history.size() == history_before + 1
+		and juice.hand_echo_history.back().card_id == "warden_brace"
+		and bool(juice.hand_echo_history.back().get("face", false))
+		and app.hand_motion_history.back().kind == "discard",
+		"only paid brace launches a full sewn face toward the real discard label (echoes %d/%d motion %s)" % [
+			juice.hand_echo_history.size(), history_before,
+			JSON.stringify(app.hand_motion_history.slice(-2))])
+	_check(juice.live_hand_echoes() == 1,
+		"one detached sewn face is animated without changing legacy discard flight receipts")
+	for flight in juice._hand_echoes:
+		var echo = flight.echo
+		_check(echo.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and echo.focus_mode == Control.FOCUS_NONE
+			and echo.get_parent() == juice.overlay
+			and echo.get_meta("_hand_ghost_decorator") != null,
+			"departing original sewn face is entirely pointer/focus inert")
+	var after_count: int = juice.hand_echo_history.size()
+	app._refresh_hand()
+	await _frames()
+	_check(juice.hand_echo_history.size() == after_count
+		and app.deck.energy == energy_before - 1,
+		"stale redraw cannot duplicate a committed discard or spend energy twice")
+	app.return_button.pressed.emit()
+	await _frames()
+	_check(app.deck == null and app.hand_motion_history.is_empty()
+		and juice.hand_echo_history.is_empty() and juice.live_flights() == 0,
+		"battle teardown kills every ghost and retires saved hand occurrences (deck %s history %d echo %d flights %d)" % [
+			str(app.deck), app.hand_motion_history.size(), juice.hand_echo_history.size(), juice.live_flights()])
+	var prior = ProjectSettings.get_setting("accessibility/reduced_motion", false)
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	if await _open_battle("reduced hand motion"):
+		await _frames()
+		_check(app.hand_motion_history.is_empty() and app.deck.hand.size() == 5
+			and not bool(app.get_node("LiveSupportHand")._metadata.motion_state(
+				app.hand_view.get_child(0)).get("entry_started", true)),
+			"accessibility static mode keeps the authentic five-card opening playable")
+		await _close_battle("reduced hand motion")
+	ProjectSettings.set_setting("accessibility/reduced_motion", prior)
+
+
+## Click the SECOND of two adjacent identical, genuine starter copies. The
+## authoritative deck removes its first ID match, but the discarded face must
+## originate from the exact second physical panel the player activated.
+func _second_duplicate_echo_case() -> void:
+	if not await _open_battle("second duplicate physical discard"):
+		return
+	var card_id := "warden_strike"
+	while app.deck.hand.count(card_id) < 2 and not app.deck.draw_pile.is_empty():
+		_check(app.deck.draw_extra(1) == 1, "duplicate witness uses a genuine seeded deck draw")
+		app._refresh_hand()
+		await _frames()
+	_check(app.deck.hand.count(card_id) == 2,
+		"both genuine Warden Strike starter copies must be physically held")
+	if app.deck.hand.count(card_id) != 2:
+		await _close_battle("second duplicate physical discard")
+		return
+	var first: int = app.deck.hand.find(card_id)
+	var second: int = app.deck.hand.find(card_id, first + 1)
+	if second != first + 1:
+		# Change ordering only, not the number or identity of seeded cards.
+		app.deck.hand.remove_at(second)
+		app.deck.hand.insert(first + 1, card_id)
+		app._refresh_hand()
+		await _frames()
+	_check(app.deck.hand[first] == card_id and app.deck.hand[first + 1] == card_id
+		and app.hand_view.get_child_count() == app.deck.hand.size(),
+		"adjacent equal IDs have two real mounted panels")
+	var clicked := app.hand_view.get_child(first + 1) as Control
+	var unplayed := app.hand_view.get_child(first) as Control
+	var clicked_id := clicked.get_instance_id()
+	var unplayed_id := unplayed.get_instance_id()
+	var attack = app.get_node("LiveAttackPreview")
+	_check(clicked_id != unplayed_id and attack._eligible(clicked),
+		"second panel is a distinct legally activated attack")
+	var before := _combat_state()
+	var juice = app.get_node("LiveCombatJuice")
+	var echoes_before: int = juice.hand_echo_history.size()
+	var receipts_before: int = app.hand_motion_history.size()
+	var cost: int = int(attack._definition(card_id).get("cost", -1))
+	_check(cost >= 0 and cost <= app.deck.energy
+		and int(app.enemies.get_enemy(1).get("hp", 0)) > 0,
+		"seeded Warden Strike has a living legal enemy and payable cost")
+	await _click_center(clicked)
+	_check(attack._armed == clicked, "actual pointer activation arms the second copy")
+	var target := InputEventKey.new()
+	target.keycode = KEY_1
+	target.pressed = true
+	root.push_input(target, true)
+	await _frames()
+	var expected_hand: Array[String] = before[0].duplicate()
+	expected_hand.remove_at(first) # The deck's specified first-ID removal.
+	_check(app.deck.hand == expected_hand
+		and app.deck.energy == int(before[3]) - cost
+		and app.deck.discard_pile.size() == (before[2] as Array).size() + 1
+		and app.deck.discard_pile.back() == card_id
+		and app.run_rng.state == before[9],
+		"second clicked copy commits once: exact deck removal, energy, discard, and unchanged RNG")
+	_check(juice.hand_echo_history.size() == echoes_before + 1
+		and int(juice.hand_echo_history.back().get("panel_id", -1)) == clicked_id
+		and int(juice.hand_echo_history.back().get("panel_id", -1)) != unplayed_id
+		and juice.hand_echo_history.back().card_id == card_id
+		and app.hand_motion_history.size() == receipts_before + 1
+		and app.hand_motion_history.back().kind == "discard",
+		"one paid echo uses the clicked SECOND physical copy, never the first duplicate")
+	app._refresh_hand()
+	await _frames()
+	_check(juice.hand_echo_history.size() == echoes_before + 1,
+		"subsequent no-op refresh cannot replay the duplicate discard flight")
+	await _close_battle("second duplicate physical discard")
 
 
 func _finish() -> void:
