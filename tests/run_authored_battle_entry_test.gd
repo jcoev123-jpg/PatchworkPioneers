@@ -26,6 +26,7 @@ const SOURCES := [
     "res://data/encounters/spool_hexer_elite.json",
     "res://data/encounters/marshal_threadclamp_elite.json",
     "res://data/encounters/hexer_patchguard_elite.json",
+    "res://data/encounters/briar_snare_elite.json",
     "res://data/encounters/patchwork_behemoth.json",
     "res://data/encounters/sewing_machine_colossus.json",
     "res://data/encounters/moth_queen.json",
@@ -37,6 +38,7 @@ const HP := {
     "ragling": 12, "ragling_guard": 12, "fray_scavenger": 14,
     "spool_stalker": 14, "button_guard": 16, "seam_ripper": 18,
     "needle_marshal": 28, "spool_hexer": 24,
+    "needle_briar_guard": 42, "spool_snarekeeper": 40,
     "patchwork_behemoth": 84, "sewing_machine_colossus": 96,
     "moth_queen": 90,
 }
@@ -45,6 +47,7 @@ const NAMES := {
     "fray_scavenger": "Fray Scavenger", "spool_stalker": "Spool Stalker",
     "button_guard": "Button Guard", "seam_ripper": "Seam Ripper",
     "needle_marshal": "Needle Marshal", "spool_hexer": "Spool Hexer",
+    "needle_briar_guard": "Needle Briar Guard", "spool_snarekeeper": "Spool Snarekeeper",
     "patchwork_behemoth": "Patchwork Behemoth",
     "sewing_machine_colossus": "Sewing-Machine Colossus",
     "moth_queen": "Moth Queen",
@@ -58,6 +61,8 @@ const ART_PATHS := {
     "seam_ripper": "res://assets/paper/enemies/seam_ripper.png",
     "needle_marshal": "res://assets/paper/enemies/needle_marshal.png",
     "spool_hexer": "res://assets/paper/enemies/spool_hexer.png",
+    "needle_briar_guard": "res://assets/paper/enemies/needle_briar_guard.png",
+    "spool_snarekeeper": "res://assets/paper/enemies/spool_snarekeeper.png",
     "patchwork_behemoth": "res://assets/paper/enemies/patchwork_behemoth.png",
     "sewing_machine_colossus": "res://assets/paper/enemies/sewing_machine_colossus.png",
     "moth_queen": "res://assets/paper/enemies/moth_queen.png",
@@ -87,6 +92,7 @@ const BINDINGS := {
         "spool_hexer_elite": ["spool_hexer", "spool_stalker"],
         "marshal_threadclamp_elite": ["needle_marshal", "spool_stalker"],
         "hexer_patchguard_elite": ["spool_hexer", "button_guard"],
+        "briar_snare_elite": ["needle_briar_guard", "spool_snarekeeper"],
     },
     "Boss": {"patchwork_behemoth": ["patchwork_behemoth"],
         "sewing_machine_colossus": ["sewing_machine_colossus"],
@@ -574,6 +580,14 @@ func _expected_actions() -> Dictionary:
              {"type": "attack", "amount": 2, "target_position": 1},
              {"type": "buff", "amount": 2},
              {"type": "attack", "amount": 2, "target_position": 3}],
+        ],
+        "briar_snare_elite": [
+            [{"type": "attack", "amount": 9, "target_position": 1},
+             {"type": "debuff", "amount": 2, "status": "bleed", "target_position": 1},
+             {"type": "block", "amount": 8}],
+            [{"type": "shove", "amount": 0, "target_position": 2, "direction": 1},
+             {"type": "debuff", "amount": 2, "status": "weak", "target_position": 3},
+             {"type": "attack", "amount": 8, "target_position": 2}],
         ],
         "patchwork_behemoth": [
             [{"type": "attack", "amount": 2, "target_position": 1},
@@ -2016,6 +2030,7 @@ func _test_m04_elite_pool_bindings() -> void:
         "spool_hexer_elite": ["spool_hexer", "spool_stalker"],
         "marshal_threadclamp_elite": ["needle_marshal", "spool_stalker"],
         "hexer_patchguard_elite": ["spool_hexer", "button_guard"],
+        "briar_snare_elite": ["needle_briar_guard", "spool_snarekeeper"],
     }
     for elite_id in expected_elites:
         _check(elite_pool.has(elite_id), "Elite/" + elite_id + " present by ID")
@@ -2054,6 +2069,10 @@ func _test_m04_elite_pool_bindings() -> void:
             "res://assets/paper/enemies/needle_marshal.png"],
         ["res://data/enemies/m04_elites.json", "spool_hexer", "Spool Hexer", 24,
             "res://assets/paper/enemies/spool_hexer.png"],
+        ["res://data/enemies/m04_elites.json", "needle_briar_guard", "Needle Briar Guard", 42,
+            "res://assets/paper/enemies/needle_briar_guard.png"],
+        ["res://data/enemies/m04_elites.json", "spool_snarekeeper", "Spool Snarekeeper", 40,
+            "res://assets/paper/enemies/spool_snarekeeper.png"],
         ["res://data/enemies/starter_enemies.json", "ragling_guard", "Guard Ragling", 12,
             "res://assets/paper/enemies/ragling_guard.png"],
         ["res://data/enemies/run_enemies.json", "spool_stalker", "Spool Stalker", 14,
@@ -2150,7 +2169,7 @@ func _test_m04_elite_direct_entries() -> void:
         return
 
     for elite_id in ["needle_marshal_elite", "spool_hexer_elite",
-            "marshal_threadclamp_elite", "hexer_patchguard_elite"]:
+            "marshal_threadclamp_elite", "hexer_patchguard_elite", "briar_snare_elite"]:
         _check(base_registry["Elite"].has(elite_id),
             "production registry contains " + elite_id)
         if not base_registry["Elite"].has(elite_id):
@@ -2196,7 +2215,7 @@ func _test_m04_elite_direct_entries() -> void:
                     "%s slot %d exact ID/name/position/HP/zero Block/art" % [elite_id, slot])
 
         # Verify full joint cycle including wraparound on a fresh intent scheduler.
-        var period := 12 if elite_id == "spool_hexer_elite" else 4
+        var period := 3 if elite_id == "briar_snare_elite" else (12 if elite_id == "spool_hexer_elite" else 4)
         var full_cycle := CombatEnemyIntents.new(first["definitions"])
         _check(full_cycle.is_valid(), elite_id + " detached definitions build valid intents")
         for step in range(period + 1):
@@ -2326,7 +2345,7 @@ func _test_m04_elite_full_pool_selection() -> void:
     if not pools.get("Elite") is Dictionary:
         return
     for required_id in ["thimble_crossfire", "needle_marshal_elite", "spool_hexer_elite",
-            "marshal_threadclamp_elite", "hexer_patchguard_elite"]:
+            "marshal_threadclamp_elite", "hexer_patchguard_elite", "briar_snare_elite"]:
         _check(pools["Elite"].has(required_id),
             "full Elite pool includes " + required_id)
     var sorted_ids: Array = pools["Elite"].keys()

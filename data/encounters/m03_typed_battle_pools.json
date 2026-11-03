@@ -150,6 +150,10 @@
         "spool_hexer",
         "button_guard"
       ]
+    },
+    "briar_snare_elite": {
+      "schedule": "res://data/encounters/briar_snare_elite.json",
+      "enemy_ids": ["needle_briar_guard", "spool_snarekeeper"]
     }
   },
   "Boss": {

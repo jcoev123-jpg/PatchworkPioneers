@@ -465,7 +465,8 @@ func _wraith_phases() -> Array:
 	return trace
 
 
-func _trace_route(fixture: Dictionary, witness: String = "") -> Array:
+func _trace_route(fixture: Dictionary, witness: String = "",
+		witness_only: bool = false) -> Array:
 	app.run_seed = fixture.seed
 	await _click(app.route_button)
 	var first_entry: Dictionary = {}
@@ -487,14 +488,25 @@ func _trace_route(fixture: Dictionary, witness: String = "") -> Array:
 			"one seeded encounter, roster draw, first intents and five-card hand match oracle")
 		_check(randi() == global_expected, "real Fight entry leaves global RNG untouched")
 		var floor_number: int = node.floor
-		if node.type == "Fight":
+		if node.type == "Fight" and not witness_only:
 			_verify_band(floor_number)
 		if first_entry.is_empty():
 			first_entry = _mounted_state()
 		if node.type == "Fight":
 			if floor_number >= 9 and not witness.is_empty():
+				# The shipped Elite pool is allowed to grow. Intermediate Elite
+				# selections can move the downstream Fight group RNG, so a
+				# previously successful seed is not guaranteed to admit this actor.
+				var wanted := "spindle_ram" if witness == "ram" else "razor_ribbon_wraith"
+				var present: bool = app.enemies.get_enemies().any(
+					func(enemy: Dictionary) -> bool: return enemy.get("id") == wanted)
+				if not present:
+					return []
 				return await _ram_phases() if witness == "ram" else await _wraith_phases()
-			await _actual_attack_phases(floor_number)
+			# Earlier three-band attack coverage belongs to the dedicated route;
+			# witness searches only settle transit battles before their high Fight.
+			if not witness_only:
+				await _actual_attack_phases(floor_number)
 			if floor_number >= 9:
 				break
 		for enemy in app.enemies.get_enemies():
@@ -641,6 +653,26 @@ func _pin_phases(fixture: Dictionary) -> Array:
 	return trace
 
 
+## Find a genuinely mounted late Fight carrying the requested high-band actor.
+## Search remains bounded; every candidate is a legal generated route, and the
+## mounted trace (not an injected roster) must execute before accepting it.
+func _find_live_witness(witness: String) -> Dictionary:
+	for skipped in range(24):
+		var fixture := _seeded_route(skipped)
+		if fixture.is_empty():
+			continue
+		app.queue_free()
+		await _frames()
+		app = load("res://scenes/app.tscn").instantiate()
+		root.add_child(app)
+		await _frames()
+		presenter = app.get_node("LiveAttackPreview")
+		var trace: Array = await _trace_route(fixture, witness, true)
+		if not trace.is_empty():
+			return {"fixture": fixture, "trace": trace}
+	return {}
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -663,34 +695,34 @@ func _run() -> void:
 	_check(phase_hits >= 6 and phase_bands.has(1) and phase_bands.has(5) and phase_bands.has(9),
 		"actual normal-Fight damage and Block mitigation exercised in every band")
 	_check(wasp_hits == 2 and wasp_blind, "bounded genuine route exercised Wasp two hits and Blind")
-	if not fixture.is_empty():
-		var traces: Array = []
-		for replay in range(2):
-			app.queue_free()
-			await _frames()
-			app = load("res://scenes/app.tscn").instantiate()
-			root.add_child(app)
-			await _frames()
-			presenter = app.get_node("LiveAttackPreview")
-			wasp_blind = false
-			traces.append(await _trace_route(fixture, "ram"))
-		_check(not traces[0].is_empty() and traces[0] == traces[1],
+	# The old fifth-route Ram and second-route Wraith witnesses depend on
+	# intermediate Elite RNG draws. Retain both full mounted replay gates while
+	# finding their real high-band actor in a bounded set of legal routes.
+	var ram_witness := await _find_live_witness("ram")
+	_check(not ram_witness.is_empty(),
+		"bounded live-route search admits Ram in a genuine late two-or-three foe Fight")
+	if not ram_witness.is_empty():
+		app.queue_free()
+		await _frames()
+		app = load("res://scenes/app.tscn").instantiate()
+		root.add_child(app)
+		await _frames()
+		presenter = app.get_node("LiveAttackPreview")
+		var ram_replay: Array = await _trace_route(ram_witness["fixture"], "ram", true)
+		_check(not ram_replay.is_empty() and ram_witness["trace"] == ram_replay,
 			"same-seed genuine late Ram entry, actions, damage, hand and RNG replay exactly")
-	# The second band-covering generated route (seed 75) reaches a Wraith;
-	# retain the earlier route's independent Ram/Wasp/band witnesses above.
-	var wraith_fixture := _seeded_route(1)
-	_check(not wraith_fixture.is_empty(), "bounded generated route search supplies a Wraith fixture")
-	if not wraith_fixture.is_empty():
-		var traces: Array = []
-		for replay in range(2):
-			app.queue_free()
-			await _frames()
-			app = load("res://scenes/app.tscn").instantiate()
-			root.add_child(app)
-			await _frames()
-			presenter = app.get_node("LiveAttackPreview")
-			traces.append(await _trace_route(wraith_fixture, "wraith"))
-		_check(not traces[0].is_empty() and traces[0] == traces[1],
+	var wraith_witness := await _find_live_witness("wraith")
+	_check(not wraith_witness.is_empty(),
+		"bounded live-route search admits Wraith in a genuine late two-or-three foe Fight")
+	if not wraith_witness.is_empty():
+		app.queue_free()
+		await _frames()
+		app = load("res://scenes/app.tscn").instantiate()
+		root.add_child(app)
+		await _frames()
+		presenter = app.get_node("LiveAttackPreview")
+		var wraith_replay: Array = await _trace_route(wraith_witness["fixture"], "wraith", true)
+		_check(not wraith_replay.is_empty() and wraith_witness["trace"] == wraith_replay,
 			"same-seed genuine Wraith entry, weighted effects, revival, hand and RNG replay exactly")
 
 	var pin_fixture := _pin_fixture()
