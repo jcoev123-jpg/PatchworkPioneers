@@ -20,6 +20,10 @@ const NEEDLE_TINKER := [
     "tinker_long_barrel", "tinker_long_barrel_plus",
     "tinker_bobbin_cannon", "tinker_bobbin_cannon_plus",
 ]
+const NEEDLE_WARDEN_TOSS := [
+    "warden_v3_rim_toss", "warden_v3_rim_toss_plus",
+    "warden_v3_shield_toss", "warden_v3_shield_toss_plus",
+]
 
 
 ## Only the exact authored printings extend the starter authority. Tinker's six
@@ -34,6 +38,11 @@ func _needle_definition(card_id: String) -> Dictionary:
         return (WardenPoolCards.new().get_definition(card_id)
             if card_id.begins_with("warden_")
             else SeamstressPoolCards.new().get_definition(card_id))
+    if NEEDLE_WARDEN_TOSS.has(card_id):
+        if card_id == "warden_v3_rim_toss" or card_id == "warden_v3_rim_toss_plus":
+            return V3WardenStarterCards.new().get_definition(card_id)
+        if card_id == "warden_v3_shield_toss" or card_id == "warden_v3_shield_toss_plus":
+            return V3WardenPoolCards.new().get_definition(card_id)
     return {}
 
 var _wardrobe: RunPatchWardrobe = null
@@ -275,8 +284,21 @@ func authorizes_needle_hit(quote: Dictionary, party: CombatParty,
     var owner: Variant = definition.get("owner")
     if definition.get("id") != card_id or definition.get("target_kind") != "enemy_single" \
             or not owner is String or not RunV3PartyAdmission.HERO_IDS.has(owner) \
-            or not definition.get("effects") is Dictionary \
-            or not definition["effects"].get("damage") is int:
+            or not definition.get("effects") is Dictionary:
+        return false
+    if NEEDLE_WARDEN_TOSS.has(card_id):
+        if owner != "warden":
+            return false
+        var effects: Dictionary = definition["effects"]
+        var expected_effects: Dictionary = {
+            "warden_v3_rim_toss": {"damage_equal_to_owner_block": true},
+            "warden_v3_rim_toss_plus": {"damage_equal_to_owner_block": true, "bonus_damage": 2},
+            "warden_v3_shield_toss": {"damage_equal_to_owner_block": true},
+            "warden_v3_shield_toss_plus": {"damage_equal_to_owner_block": true, "bonus_damage": 3},
+        }.get(card_id, {})
+        if effects != expected_effects:
+            return false
+    elif not definition["effects"].get("damage") is int:
         return false
     if quote != _pending_needle["quote"] or quote.get("ok") != true \
             or quote.get("bonus_damage") != 1 or quote.get("position") != position \
