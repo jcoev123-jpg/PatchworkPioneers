@@ -273,4 +273,7 @@ const SEEDS := [
 	403301,
 	447793,
 	486991,
+	# Revalidated five-Event Parcel-to-Fight witness after nightwork additions:
+	# genuine map, paid Warden toll and one sorted generic draw.
+	770644,
 ]
