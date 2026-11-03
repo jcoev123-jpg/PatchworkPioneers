@@ -8,6 +8,7 @@ const STARTER_ATTACKS := [
 	"seamstress_prick", "tinker_pop_shot", "tinker_scrap_bomb"
 ]
 const EFFECTIVE_PATCH_EXCLUSIONS := ["stitched_badge", "spare_spool"]
+const V3_SEAMSTRESS_STARTER_CARDS := preload("res://data/cards/v3_seamstress_starter_cards.gd")
 const EARNED_POOL_ATTACKS := [
 	"warden_brass_buckle", "warden_brass_buckle_plus",
 	"seamstress_thread_whip", "seamstress_thread_whip_plus",
@@ -47,6 +48,10 @@ const V3_SERVICES := {
 	"button_golem_starter_threadwheel_roll": "roll",
 	"button_golem_starter_seam_resew": "sew",
 }
+
+## Read-only V3 Seamstress starter records: readable through StarterCards, but played by
+## their own services rather than this legacy generic support branch.
+var _v3_seamstress_starters := V3_SEAMSTRESS_STARTER_CARDS.new()
 
 
 ## Pure candidate selection. The paid service still authenticates every effect,
@@ -402,6 +407,11 @@ func choose_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 				best_score = 45
 				best = {"kind": "stitched", "id": id,
 					"first": target_values[0], "second": target_values[1]}
+			continue
+		# The shared StarterCards lookup also serves the authored V3 Seamstress
+		# starters, but this legacy generic branch must not decide or play them:
+		# their own services own target selection and effect execution.
+		if _v3_seamstress_starters.has_card(id):
 			continue
 		var def := StarterCards.new().get_definition(id)
 		if def.is_empty() or def.cost > deck.energy or not _living_owner_in_from(party.get_heroes(), def):
