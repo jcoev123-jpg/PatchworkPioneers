@@ -16,6 +16,7 @@ var eligible_mid := 0
 var eligible_high := 0
 var phase_hits := 0
 var wasp_hits := 0
+var wasp_named_hits := 0
 var wasp_blind := false
 
 
@@ -153,12 +154,20 @@ func _verify_band(floor_number: int) -> void:
 		_check(action.enemy_position == actor.position and badge.source_position == actor.position,
 			"first announcement, roster and sewn cue use the same source position")
 		if action.type == "attack":
-			var text_matches: bool = (badge.readable_text.contains("WIND UP") if badge.charge_state == "wind_up"
-				else badge.readable_text.contains(str(action.amount)))
-			_check(badge.intent_type == "attack" and badge.amount == action.amount
-				and badge.tooltip_text.contains(str(action.amount))
-				and text_matches,
-				"real visible sewn caption and tooltip match bound attack amount")
+			if badge.charge_state == "wind_up":
+				_check(actor.id == "spindle_ram" and badge.intent_type == "attack"
+					and action.amount == 0 and badge.amount == 0
+					and badge.charge_base_damage == BASE_TO_BAND[8][band_key]
+					and badge.charge_projected_damage == floori(BASE_TO_BAND[8][band_key] * 2.5)
+					and badge.readable_text.contains("WIND UP")
+					and badge.tooltip_text.contains(str(badge.charge_projected_damage)),
+					"real Ram wind-up caption announces no current hit and the exact projected charge")
+			else:
+				_check(badge.intent_type == "attack" and badge.amount == action.amount
+					and badge.tooltip_text.contains(str(action.amount))
+					and badge.readable_text.contains(str(action.amount)),
+					"real visible sewn caption and tooltip match bound attack amount: %s %s %s"
+						% [actor.id, str(action), badge.readable_text])
 	var before: Array = [app.enemies.get_enemies(), app.enemy_intents.get_intents(),
 		app.enemy_intents._slots.duplicate(true), app.run_rng.state]
 	seed(45898)
@@ -229,10 +238,6 @@ func _actual_attack_phases(floor_number: int) -> void:
 		for action in app.enemy_intents.get_intents():
 			if action.enemy_position == selected and action.type == "attack":
 				announced = action
-		var is_wasp_selected: bool = app.enemies.get_enemy(selected).id == "needle_wasp"
-		if is_wasp_selected and announced.get("hits") != 2:
-			await _click(app.end_turn_button)
-			continue
 		if not announced.is_empty():
 			var target: int = announced.target_position
 			var amount: int = announced.amount
@@ -245,7 +250,8 @@ func _actual_attack_phases(floor_number: int) -> void:
 				_check(expected > 0 and amount == expected,
 					"early actor announces its exact source-owned move amount")
 			var is_wasp: bool = app.enemies.get_enemy(selected).id == "needle_wasp"
-			if is_wasp and not wasp_blind:
+			var is_sting: bool = is_wasp and not announced.has("move")
+			if is_sting and not wasp_blind:
 				_check(floor_number >= 5 and floor_number <= 8 and amount == 10
 					and announced.get("hits") == 2, "routed Wasp announces total ten and two hits")
 				app.enemies._enemies[selected - 1].statuses = {"blind_next_attack": 1}
@@ -266,21 +272,36 @@ func _actual_attack_phases(floor_number: int) -> void:
 			var badge: LiveEnemyIntentBadge = app.get_node("LiveEnemyRoster")._badges[selected - 1]
 			_check(badge.amount == amount and badge.tooltip_text.contains(str(amount)),
 				"sewn current-phase badge announces exactly the attack to execute")
+			if is_wasp:
+				_check(badge.is_visible_in_tree() and badge.source_position == selected
+					and badge.target_position == target and badge.readable_text.contains(str(amount))
+					and badge.hit_count == (2 if is_sting else 1)
+					and badge.hit_damage == (5 if is_sting else -1)
+					and badge.move_name == ("" if is_sting else "Sting Dive"),
+					"mounted Wasp badge distinguishes unnamed 5+5 from named single-hit Sting Dive")
 			await _click(app.end_turn_button)
 			var hero: Dictionary = app.party.get_hero(target)
 			_check(hero.hp == first_hp - maxi(0, amount - first_block)
 				and hero.block == maxi(0, first_block - amount),
 				"current real enemy phase loses exact announced HP after Block absorbs first")
 			if is_wasp:
-				_check(amount == 10 and announced.get("hits") == 2
-					and hero.get("statuses", {}).get("bleed", 0) == (2 if shield == 0 else 1),
-					"mounted Wasp deals 5+5: exact first-hit Block prevents only first Bleed")
-				wasp_hits += 1
+				if is_sting:
+					_check(amount == 10 and announced.get("hits") == 2
+						and hero.get("statuses", {}).get("bleed", 0) == (2 if shield == 0 else 1),
+						"mounted Wasp deals 5+5: exact first-hit Block prevents only first Bleed")
+					wasp_hits += 1
+				else:
+					_check(announced.get("move") == "attack2" and amount == 8
+						and not announced.has("hits") and hero.get("statuses", {}).get("bleed", 0) == 1,
+						"mounted Sting Dive deals its single mid-band eight and one HP-contact Bleed")
+					wasp_named_hits += 1
 			phase_hits += 1
-			if shield == 0:
-				unblocked = true
-			else:
-				blocked = true
+			# Only the original two-hit sting satisfies its two mitigation witnesses.
+			if not is_wasp or is_sting:
+				if shield == 0:
+					unblocked = true
+				else:
+					blocked = true
 		else:
 			await _click(app.end_turn_button)
 	_check(unblocked and blocked, "both unmitigated and Block-mitigated real attacks resolved")
@@ -747,6 +768,8 @@ func _run() -> void:
 	_check(phase_hits >= 6 and phase_bands.has(1) and phase_bands.has(5) and phase_bands.has(9),
 		"actual normal-Fight damage and Block mitigation exercised in every band")
 	_check(wasp_hits == 2 and wasp_blind, "bounded genuine route exercised Wasp two hits and Blind")
+	_check(wasp_named_hits > 0,
+		"bounded genuine route also executes named single-hit Sting Dive; receipt and badge checks cannot be vacuous")
 	# The old fifth-route Ram and second-route Wraith witnesses depend on
 	# intermediate Elite RNG draws. Retain both full mounted replay gates while
 	# finding their real high-band actor in a bounded set of legal routes.
