@@ -1,13 +1,18 @@
 extends SceneTree
 ## V3-1 Tinker starter-card catalog contract.
 ## Data only: these four bases and their "+" printings are authored starter data for the Tinker.
-## Nothing here claims the IDs are admitted to a live hand, the active three-hero deck, reward
-## offers or a combat resolver; a later wiring task owns that. Combat Scrap is a COMBAT counter,
-## never the run's wallet `scraps`; nothing in this file is ever granted by a lookup.
+## Casing Ward and Tune Up (base and '+') are now also resolved as paid, deterministic, scene-free
+## effects by CombatTinkerV3ScrapSupportCards; admitting them to a live hand, the active three-hero
+## deck or reward offers is still a later wiring task. Combat Scrap is a COMBAT counter, never the
+## run's wallet `scraps`; nothing in this file is ever granted by a lookup.
 
 const V3TinkerStarterCards = preload("res://data/cards/v3_tinker_starter_cards.gd")
 const StarterCards = preload("res://data/cards/starter_cards.gd")
 const V3TinkerPoolCards = preload("res://data/cards/v3_tinker_pool_cards.gd")
+const CombatDeck = preload("res://scripts/combat_deck.gd")
+const CombatParty = preload("res://scripts/combat_party.gd")
+const CombatTinkerV3ScrapSupportCards = preload(
+	"res://scripts/combat_tinker_v3_scrap_support_cards.gd")
 
 const COG := "tinker_v3_cog_shot"
 const COG_PLUS := "tinker_v3_cog_shot_plus"
@@ -21,6 +26,14 @@ const ALL_PRINTINGS: Array[String] = [COG, COG_PLUS, WARD, WARD_PLUS, BOMB, BOMB
 	TUNE, TUNE_PLUS]
 ## Authored starter order: one copy of each base, no upgrades.
 const STARTER_ORDER: Array[String] = [COG, WARD, BOMB, TUNE]
+## The four starter printings this helper now resolves as paid support effects.
+const STARTER_SUPPORT_IDS: Array[String] = [WARD, WARD_PLUS, TUNE, TUNE_PLUS]
+## The unchanged reward-pool support IDs resolved by the same helper.
+const POOL_SUPPORT_IDS: Array[String] = ["tinker_v3_gear_brace",
+	"tinker_v3_gear_brace_plus", "tinker_v3_spare_screws", "tinker_v3_spare_screws_plus"]
+## The three genuine discard-refill cards of the Tune Up reshuffle fixture.
+const REFILL_CARDS: Array[String] = ["v3_support_refill_a", "v3_support_refill_b",
+	"v3_support_refill_c"]
 
 ## The only effect keys these four starters may print. Anything else would be an invented
 ## status, resource or combat-state descriptor.
@@ -62,6 +75,11 @@ func _initialize() -> void:
 	_test_detached_records()
 	_test_invalid_and_upgraded_ids()
 	_test_deterministic_and_rng_free()
+	_test_support_printings_and_authentication()
+	_test_casing_ward_paid_plays()
+	_test_tune_up_paid_plays()
+	_test_tune_up_draw_supply()
+	_test_support_refusals()
 	if failures.is_empty():
 		print("v3_tinker_starter_cards_test: PASS (", checks, " checks)")
 	else:
@@ -819,3 +837,732 @@ func _test_deterministic_and_rng_free() -> void:
 	fresh.get_definition(null)
 	fresh.get_starting_deck()
 	_check(randi() == expected_next, "construction and lookups never draw global RNG")
+
+
+## AC1: the helper authenticates exactly the four authored starter printings against
+## V3TinkerStarterCards, keeps the four reward-pool printings on their own schema, and refuses a
+## forged, rewritten, cross-catalog or foreign record.
+func _test_support_printings_and_authentication() -> void:
+	var catalog := V3TinkerStarterCards.new()
+	var pool := V3TinkerPoolCards.new()
+	var resolver := CombatTinkerV3ScrapSupportCards.new()
+	var expected := {
+		WARD: {"display": "Casing Ward", "cost": 1, "target": "self", "block": 5, "draw": 0,
+			"scrap": 1, "copies": 1, "effects": {"block": 5, "combat_scrap_gain": 1}},
+		WARD_PLUS: {"display": "Casing Ward+", "cost": 1, "target": "self", "block": 7, "draw": 0,
+			"scrap": 1, "copies": 0, "effects": {"block": 7, "combat_scrap_gain": 1}},
+		TUNE: {"display": "Tune Up", "cost": 0, "target": "none", "block": 0, "draw": 1,
+			"scrap": 1, "copies": 1, "effects": {"draw": 1, "combat_scrap_gain": 1}},
+		TUNE_PLUS: {"display": "Tune Up+", "cost": 0, "target": "none", "block": 0, "draw": 2,
+			"scrap": 1, "copies": 0, "effects": {"draw": 2, "combat_scrap_gain": 1}},
+	}
+	for card_id: String in STARTER_SUPPORT_IDS:
+		var row: Dictionary = expected[card_id]
+		var record: Dictionary = catalog.get_definition(card_id)
+		_check(not record.is_empty(), card_id + " is authored in the starter catalog")
+		if record.is_empty():
+			continue
+		_check(record.get("owner") == "tinker", card_id + " is owned by Tinker")
+		_check(record.get("display_name") == row["display"], card_id + " keeps its printed name")
+		_check(typeof(record.get("cost")) == TYPE_INT and record.get("cost") == row["cost"],
+			card_id + " prints its exact integer cost")
+		_check(record.get("from_positions") == [1, 2, 3], card_id + " prints FROM 1-3")
+		_check(record.get("target_kind") == row["target"],
+			card_id + " prints its authored target kind")
+		_check(record.get("to_positions") == [], card_id + " prints an empty TO line")
+		_check(record.get("effects") == row["effects"], card_id + " prints its exact effects")
+		_check(record.get("starting_copies") == row["copies"],
+			card_id + " prints its authored starting-copy count")
+		_check(record.get("reward_eligible") == false, card_id + " is never reward eligible")
+		_check(record.get("illustration_path")
+			== ART_DIR + card_id.trim_suffix("_plus") + ".png",
+			card_id + " keeps the starter art path of its base")
+		_check(not record.has("base_id") and not record.has("is_upgrade")
+			and not record.has("rarity"), card_id + " keeps the starter schema, not the pool schema")
+		if card_id.ends_with("_plus"):
+			_check(record.get("upgrade_of") == card_id.trim_suffix("_plus"),
+				card_id + " names its base")
+			_check(not record.has("upgrade_id"), card_id + " has no onward upgrade")
+			_check(catalog.get_upgrade_id(card_id) == "", card_id + " cannot upgrade again")
+		else:
+			_check(record.get("upgrade_id") == card_id + "_plus",
+				card_id + " names its one upgrade")
+			_check(not record.has("upgrade_of"), card_id + " is not itself an upgrade")
+			_check(catalog.get_upgrade_id(card_id) == card_id + "_plus",
+				card_id + " maps to its printed upgrade")
+		_check(not pool.has_card(card_id), card_id + " is not served by the reward pool")
+		_check(resolver.is_supported_card(card_id), card_id + " is a supported paid support")
+		_check(CombatTinkerV3ScrapSupportCards.is_authentic_definition(record, card_id),
+			card_id + " passes the catalog-specific authenticator")
+		_check(CombatTinkerV3ScrapSupportCards.is_authentic_starter_definition(record, card_id),
+			card_id + " passes the starter authenticator")
+		_check(CombatTinkerV3ScrapSupportCards.scrap_support_definition(card_id) == record,
+			card_id + " resolves to its exact detached starter record")
+
+	# The four existing reward-pool supports keep their own schema and stay supported.
+	for pool_id: String in POOL_SUPPORT_IDS:
+		var pool_record: Dictionary = pool.get_definition(pool_id)
+		_check(not pool_record.is_empty() and not catalog.has_card(pool_id),
+			pool_id + " remains a reward-pool-only printing")
+		_check(pool_record.get("base_id") is String and pool_record.get("is_upgrade") is bool
+			and not pool_record.has("upgrade_of"),
+			pool_id + " keeps the pool base_id/upgrade_id/is_upgrade link")
+		_check(resolver.is_supported_card(pool_id), pool_id + " remains a supported paid support")
+		_check(CombatTinkerV3ScrapSupportCards.is_authentic_definition(pool_record, pool_id),
+			pool_id + " still passes the pool authenticator")
+		_check(CombatTinkerV3ScrapSupportCards.scrap_support_definition(pool_id) == pool_record,
+			pool_id + " still resolves to its exact pool record")
+		_check(not CombatTinkerV3ScrapSupportCards.is_authentic_starter_definition(
+			pool_record, pool_id), pool_id + " is never a starter record")
+
+	# Cross-catalog substitutes and cross-printing records never authenticate.
+	_check(not CombatTinkerV3ScrapSupportCards.is_authentic_definition(
+		catalog.get_definition(WARD), POOL_SUPPORT_IDS[0]),
+		"a starter Casing Ward record cannot pass as Gear Brace")
+	_check(not CombatTinkerV3ScrapSupportCards.is_authentic_definition(
+		pool.get_definition(POOL_SUPPORT_IDS[0]), WARD),
+		"a pool Gear Brace record cannot pass as Casing Ward")
+	_check(not CombatTinkerV3ScrapSupportCards.is_authentic_definition(
+		catalog.get_definition(WARD_PLUS), WARD),
+		"an upgraded starter record cannot authenticate as its base")
+	_check(not CombatTinkerV3ScrapSupportCards.is_authentic_definition(
+		catalog.get_definition(WARD), WARD_PLUS),
+		"a base starter record cannot authenticate as its upgrade")
+	_check(not CombatTinkerV3ScrapSupportCards.is_authentic_definition(
+		catalog.get_definition(TUNE_PLUS), TUNE),
+		"Tune Up+ cannot authenticate as Tune Up")
+	_check(not CombatTinkerV3ScrapSupportCards.is_authentic_definition(
+		catalog.get_definition(TUNE), TUNE_PLUS),
+		"Tune Up cannot authenticate as Tune Up+")
+
+	# Other starter cards and every forged spelling stay unrelated to this helper.
+	var unrelated: Array = [COG, COG_PLUS, BOMB, BOMB_PLUS, "tinker_v3_casing_ward+",
+		"tinker_v3_casing_ward_plus_plus", "tinker_v3_tune_up+", "tinker_v3_tune_up_plus_plus",
+		"casing_ward", "tune_up", "TINKER_V3_CASING_WARD", "TINKER_V3_TUNE_UP", "",
+		"tinker_v3_missing_card", "tinker_pop_shot", "tinker_tune_up", StringName(WARD),
+		StringName(TUNE), null, 0, 3.5, false, [], {}]
+	for other_id: Variant in unrelated:
+		_check(not resolver.is_supported_card(other_id),
+			"unrelated or non-string ID is not supported: " + str(other_id))
+		_check(CombatTinkerV3ScrapSupportCards.scrap_support_definition(other_id).is_empty(),
+			"unrelated or non-string ID never resolves: " + str(other_id))
+
+	# Adversarial copies of the real Casing Ward record: every altered contract field is refused.
+	var base_record: Dictionary = catalog.get_definition(WARD)
+	_check(not base_record.is_empty()
+		and CombatTinkerV3ScrapSupportCards.is_authentic_definition(base_record, WARD),
+		"authenticator positive fixture really is the authored Casing Ward")
+	var mutations: Array[Callable] = [
+		func(record: Dictionary) -> void: record["effects"]["block"] = 6,
+		func(record: Dictionary) -> void: record["effects"]["block"] = 5.0,
+		func(record: Dictionary) -> void: record["effects"]["block"] = "5",
+		func(record: Dictionary) -> void: record["effects"]["combat_scrap_gain"] = 2,
+		func(record: Dictionary) -> void: record["effects"].erase("combat_scrap_gain"),
+		func(record: Dictionary) -> void: record["effects"]["draw"] = 1,
+		func(record: Dictionary) -> void: record["effects"] = {"block": 5},
+		func(record: Dictionary) -> void: record["effects"] = "block",
+		func(record: Dictionary) -> void: record["cost"] = 0,
+		func(record: Dictionary) -> void: record["cost"] = 2,
+		func(record: Dictionary) -> void: record["cost"] = 1.0,
+		func(record: Dictionary) -> void: record["owner"] = "warden",
+		func(record: Dictionary) -> void: record["from_positions"] = [2, 3],
+		func(record: Dictionary) -> void: record["from_positions"] = ["1", "2", "3"],
+		func(record: Dictionary) -> void: record["from_positions"] = "1,2,3",
+		func(record: Dictionary) -> void: record["to_positions"] = [1],
+		func(record: Dictionary) -> void: record["target_kind"] = "none",
+		func(record: Dictionary) -> void: record["target_kind"] = "ally_single",
+		func(record: Dictionary) -> void: record["id"] = WARD_PLUS,
+		func(record: Dictionary) -> void: record["display_name"] = "Casing Ward +",
+		func(record: Dictionary) -> void: record["starting_copies"] = 0,
+		func(record: Dictionary) -> void: record["starting_copies"] = 1.0,
+		func(record: Dictionary) -> void: record["reward_eligible"] = true,
+		func(record: Dictionary) -> void: record["reward_eligible"] = 0,
+		func(record: Dictionary) -> void: record["illustration_path"] = ART_DIR + "tinker_v3_tune_up.png",
+		func(record: Dictionary) -> void: record["upgrade_id"] = WARD_PLUS + "_plus",
+		func(record: Dictionary) -> void: record.erase("upgrade_id"),
+		func(record: Dictionary) -> void: record["upgrade_of"] = WARD,
+		func(record: Dictionary) -> void: record["base_id"] = WARD,
+		func(record: Dictionary) -> void: record["is_upgrade"] = false,
+		func(record: Dictionary) -> void: record["rarity"] = "common",
+		func(record: Dictionary) -> void: record.erase("to_positions"),
+		func(record: Dictionary) -> void: record.erase("effects"),
+	]
+	for index in range(mutations.size()):
+		var tampered: Dictionary = base_record.duplicate(true)
+		mutations[index].call(tampered)
+		_check(not CombatTinkerV3ScrapSupportCards.is_authentic_definition(tampered, WARD),
+			"tampered Casing Ward record " + str(index) + " is refused")
+
+	# Tune Up's none target and free draw are equally authentic-only.
+	var tune_record: Dictionary = catalog.get_definition(TUNE)
+	_check(not tune_record.is_empty()
+		and CombatTinkerV3ScrapSupportCards.is_authentic_definition(tune_record, TUNE),
+		"authenticator positive fixture really is the authored Tune Up")
+	var tune_mutations: Array[Callable] = [
+		func(record: Dictionary) -> void: record["target_kind"] = "self",
+		func(record: Dictionary) -> void: record["effects"]["draw"] = 2,
+		func(record: Dictionary) -> void: record["effects"]["block"] = 5,
+		func(record: Dictionary) -> void: record["cost"] = 1,
+		func(record: Dictionary) -> void: record["starting_copies"] = 0,
+	]
+	for index in range(tune_mutations.size()):
+		var tampered: Dictionary = tune_record.duplicate(true)
+		tune_mutations[index].call(tampered)
+		_check(not CombatTinkerV3ScrapSupportCards.is_authentic_definition(tampered, TUNE),
+			"tampered Tune Up record " + str(index) + " is refused")
+
+
+## AC2: a real held Casing Ward or Casing Ward+ pays one energy once, discards exactly one copy,
+## grants the printed Block and one Combat Scrap to the living Tinker at his actual seat only, and
+## consumes no RNG.
+func _test_casing_ward_paid_plays() -> void:
+	var resolver := CombatTinkerV3ScrapSupportCards.new()
+	var cases := [
+		{"id": WARD, "seat": 1, "block": 5},
+		{"id": WARD_PLUS, "seat": 2, "block": 7},
+		{"id": WARD, "seat": 3, "block": 5},
+		{"id": WARD_PLUS, "seat": 1, "block": 7},
+	]
+	for index in range(cases.size()):
+		var entry: Dictionary = cases[index]
+		var card_id: String = entry["id"]
+		var seat: int = entry["seat"]
+		var printed_block: int = entry["block"]
+		var label := card_id + " from seat " + str(seat)
+		var party := _support_party(seat)
+		_check(party.gain_block(seat, 2), label + ": the owner fixture really carries Block")
+		var deck := _support_deck([card_id], 701100 + index, 6)
+		_check(deck.energy == 3 and deck.turn_active and deck.discard_pile.is_empty(),
+			label + ": a real three-energy turn is active")
+		var blocks_before: Array = [
+			party.get_hero(1).get("block"), party.get_hero(2).get("block"),
+			party.get_hero(3).get("block"),
+		]
+		var wallet := {"gold": 9, "scraps": 4}
+		var wallet_before: Dictionary = wallet.duplicate(true)
+		var rng_before: int = deck._rng.state
+		var draw_before: int = deck.draw_pile.size()
+		var before := _support_snapshot(deck, party)
+		var result: Dictionary = resolver.play_card(deck, party, card_id)
+		_check(result.get("ok") == true and result.get("reason") == "applied",
+			label + ": authorized paid play")
+		_check(result.get("card_id") == card_id and result.get("cost") == 1,
+			label + ": receipt names the authentic card and its one energy")
+		_check(result.get("owner_position") == seat and result.get("target_position") == seat,
+			label + ": receipt reports the real owner seat as the self recipient")
+		_check(result.get("block_gained") == printed_block,
+			label + ": receipt reports the printed Block")
+		_check(result.get("draw_requested") == 0 and result.get("drawn") == 0,
+			label + ": Casing Ward prints no draw")
+		_check(result.get("combat_scrap_before") == 0
+			and result.get("combat_scrap_gained") == 1
+			and result.get("combat_scrap_after") == 1,
+			label + ": receipt reports exactly one Combat Scrap from zero")
+		_check(result.get("energy_before") == 3 and result.get("energy_after") == 2,
+			label + ": receipt reports the exact energy change")
+		_check(not result.has("scraps") and not result.has("wallet"),
+			label + ": receipt carries no wallet state")
+		_check(deck.energy == 2, label + ": exactly one energy was paid")
+		_check(deck.hand.count(card_id) == 0, label + ": the held copy left the hand")
+		_check(deck.discard_pile == [card_id],
+			label + ": exactly one played copy reached the discard")
+		_check(deck.draw_pile.size() == draw_before, label + ": Casing Ward drew nothing")
+		_check(deck._rng.state == rng_before, label + ": no RNG was consumed")
+		_check(party.get_hero(seat).get("block") == int(blocks_before[seat - 1]) + printed_block,
+			label + ": the Tinker gained exactly the printed Block on existing Block")
+		_check(party.get_hero(seat).get("combat_scrap") == 1
+			and party._heroes[seat - 1].get("combat_scrap") == 1,
+			label + ": the authoritative Tinker record holds one Combat Scrap")
+		_check(party.get_hero(seat).get("hp") == 26, label + ": the Tinker's HP is untouched")
+		for position: int in [1, 2, 3]:
+			if position == seat:
+				continue
+			_check(party.get_hero(position).get("block") == int(blocks_before[position - 1]),
+				label + ": seat " + str(position) + " gained no Block")
+			_check(not party.get_hero(position).has("combat_scrap"),
+				label + ": seat " + str(position) + " gained no Combat Scrap")
+		_check(wallet == wallet_before, label + ": wallet scraps are never modified")
+		_check(_support_snapshot(deck, party)
+			== _expected_support(before, card_id, seat, 1, printed_block, 0),
+			label + ": exact hand, piles, energy, turn, party, counter and RNG state")
+
+	# Two genuine held copies: one legal play discards exactly one of them.
+	var copy_party := _support_party(2)
+	var copy_deck := _support_duplicate_deck(WARD, 701199)
+	_check(copy_deck.hand.count(WARD) == 2, "duplicate-copy fixture really holds two Wards")
+	var copy_result: Dictionary = resolver.play_card(copy_deck, copy_party, WARD)
+	_check(copy_result.get("ok") == true, "a hand with two copies is one legal play")
+	_check(copy_deck.hand.count(WARD) == 1, "exactly one held Ward was discarded")
+	_check(copy_deck.discard_pile == [WARD], "only the played Ward reached the discard")
+	_check(copy_party.get_hero(2).get("block") == 5
+		and copy_party.get_hero(2).get("combat_scrap") == 1,
+		"the duplicate-copy play still grants its Block and one Combat Scrap")
+
+
+## AC3: a real held Tune Up or Tune Up+ pays its zero printed energy, draws 1/2 shared cards before
+## discarding its own copy, grants one Combat Scrap and zero Block to the Tinker only, and leaves a
+## true zero-energy turn untouched.
+func _test_tune_up_paid_plays() -> void:
+	var resolver := CombatTinkerV3ScrapSupportCards.new()
+	var cases := [
+		{"id": TUNE, "seat": 1, "draw": 1},
+		{"id": TUNE_PLUS, "seat": 2, "draw": 2},
+		{"id": TUNE, "seat": 3, "draw": 1},
+		{"id": TUNE_PLUS, "seat": 1, "draw": 2},
+	]
+	for index in range(cases.size()):
+		var entry: Dictionary = cases[index]
+		var card_id: String = entry["id"]
+		var seat: int = entry["seat"]
+		var draw: int = entry["draw"]
+		var label := card_id + " from seat " + str(seat)
+		var party := _support_party(seat)
+		var deck := _support_deck([card_id], 702100 + index, 6)
+		_check(deck.energy == 3 and deck.draw_pile.size() == 2,
+			label + ": a real turn leaves two genuine shared cards to draw")
+		var expected_draws: Array[String] = []
+		for offset in range(draw):
+			expected_draws.append(deck.draw_pile[deck.draw_pile.size() - 1 - offset])
+		var wallet := {"gold": 9, "scraps": 4}
+		var wallet_before: Dictionary = wallet.duplicate(true)
+		var rng_before: int = deck._rng.state
+		var before := _support_snapshot(deck, party)
+		var result: Dictionary = resolver.play_card(deck, party, card_id)
+		_check(result.get("ok") == true and result.get("reason") == "applied",
+			label + ": authorized paid play")
+		_check(result.get("card_id") == card_id and result.get("cost") == 0,
+			label + ": receipt names the authentic card and its zero cost")
+		_check(result.get("owner_position") == seat and result.get("target_position") == 0,
+			label + ": the none target uses the helper's sentinel 0")
+		_check(result.get("block_gained") == 0, label + ": Tune Up grants no Block")
+		_check(result.get("draw_requested") == draw and result.get("drawn") == draw,
+			label + ": receipt reports its printed shared draw")
+		_check(result.get("combat_scrap_before") == 0
+			and result.get("combat_scrap_gained") == 1
+			and result.get("combat_scrap_after") == 1,
+			label + ": receipt reports exactly one Combat Scrap from zero")
+		_check(result.get("energy_before") == 3 and result.get("energy_after") == 3,
+			label + ": receipt reports no energy change")
+		_check(not result.has("scraps") and not result.has("wallet"),
+			label + ": receipt carries no wallet state")
+		_check(deck.energy == 3, label + ": its zero printed energy was paid")
+		_check(deck.hand.count(card_id) == 0, label + ": the played copy left the hand")
+		_check(deck.hand.size() == 4 + draw, label + ": exactly its printed draw reached the hand")
+		for expected_id: String in expected_draws:
+			_check(deck.hand.has(expected_id),
+				label + ": the seeded shared draw reached the hand: " + expected_id)
+		_check(deck.draw_pile.size() == 2 - draw, label + ": the draw consumed its supply")
+		_check(deck.discard_pile == [card_id],
+			label + ": exactly one played copy reached the discard after the draw")
+		_check(deck._rng.state == rng_before,
+			label + ": drawing from a nonempty supply consumes no RNG")
+		_check(party.get_hero(seat).get("combat_scrap") == 1
+			and party._heroes[seat - 1].get("combat_scrap") == 1,
+			label + ": the authoritative Tinker record holds one Combat Scrap")
+		for position: int in [1, 2, 3]:
+			_check(party.get_hero(position).get("block") == 0,
+				label + ": seat " + str(position) + " gained no Block")
+			if position == seat:
+				continue
+			_check(not party.get_hero(position).has("combat_scrap"),
+				label + ": seat " + str(position) + " gained no Combat Scrap")
+		_check(wallet == wallet_before, label + ": wallet scraps are never modified")
+		_check(_support_snapshot(deck, party)
+			== _expected_support(before, card_id, seat, 0, 0, draw),
+			label + ": exact hand, piles, energy, turn, party, counter and RNG state")
+
+	# A genuine zero-energy turn still pays Tune Up's printed zero and plays normally.
+	var free_party := _support_party(2)
+	var free_deck := _support_deck([TUNE], 702200, 5)
+	free_deck.combat_state.energy = 0
+	_check(free_deck.energy == 0 and free_deck.hand.has(TUNE),
+		"zero-energy fixture really holds a Tune Up with no energy")
+	var free_result: Dictionary = resolver.play_card(free_deck, free_party, TUNE)
+	_check(free_result.get("ok") == true and free_result.get("cost") == 0
+		and free_deck.energy == 0,
+		"Tune Up is legal at zero energy and pays nothing")
+	_check(free_result.get("drawn") == 1
+		and free_deck.discard_pile == [TUNE]
+		and free_party.get_hero(2).get("combat_scrap") == 1
+		and free_party.get_hero(2).get("block") == 0,
+		"the zero-energy play still draws one, discards one and gains one Combat Scrap")
+
+
+## AC3: a shared discard refill is drawn through the seeded RNG, never recycles the still-held
+## played copy into its own draw, and replays identically on the same seed.
+func _test_tune_up_draw_supply() -> void:
+	var resolver := CombatTinkerV3ScrapSupportCards.new()
+	var fixture := _support_refill_fixture(TUNE_PLUS, 704100)
+	_check(not fixture.is_empty(), "refill fixture built")
+	if fixture.is_empty():
+		return
+	var deck: CombatDeck = fixture["deck"]
+	var party: CombatParty = fixture["party"]
+	_check(deck.hand == [TUNE_PLUS] and deck.draw_pile.is_empty()
+		and deck.discard_pile.size() == 3,
+		"refill fixture really leaves an empty draw pile and three genuine discards")
+	var rng_before: int = deck._rng.state
+	var result: Dictionary = resolver.play_card(deck, party, TUNE_PLUS)
+	_check(result.get("ok") == true and result.get("drawn") == 2,
+		"the discard refill supplies both printed shared draws")
+	_check(not deck.hand.has(TUNE_PLUS),
+		"the still-held played copy cannot refill itself into its own draw")
+	_check(deck.hand.size() == 2 and deck.draw_pile.size() == 1
+		and deck.discard_pile == [TUNE_PLUS],
+		"the reshuffle conserves every card: two drawn, one left, only the played copy discarded")
+	var seen: Array[String] = []
+	for card_id: String in deck.hand:
+		_check(REFILL_CARDS.has(card_id), "the drawn card is one of the genuine discards: " + card_id)
+		seen.append(card_id)
+	_check(seen.size() == 2 and seen[0] != seen[1],
+		"the two drawn refill cards are distinct")
+	_check(REFILL_CARDS.has(deck.draw_pile[0]) and not seen.has(deck.draw_pile[0]),
+		"the other genuine discard stays in the reshuffled draw pile")
+	_check(deck._rng.state != rng_before,
+		"the genuine reshuffle is drawn through the already-seeded RNG")
+	_check(deck.energy == 3, "the free Tune Up+ refill play pays nothing")
+	_check(party.get_hero(2).get("combat_scrap") == 1
+		and party.get_hero(2).get("block") == 0,
+		"the refill play gains one Combat Scrap and no Block")
+
+	# Same seed, same fixture: an identical replay of the reshuffle and its draw.
+	var replay := _support_refill_fixture(TUNE_PLUS, 704100)
+	_check(not replay.is_empty(), "replay fixture built")
+	if replay.is_empty():
+		return
+	var replay_deck: CombatDeck = replay["deck"]
+	var replay_party: CombatParty = replay["party"]
+	var replay_result: Dictionary = resolver.play_card(replay_deck, replay_party, TUNE_PLUS)
+	_check(replay_result.get("ok") == true, "the replay refill play also succeeds")
+	_check(_support_snapshot(replay_deck, replay_party)
+		== _support_snapshot(deck, party),
+		"the same seed replays the identical drawn cards, piles, counter and RNG state")
+
+
+## AC4: every failed identity, turn, owner, seat, energy, held-copy, target, roster, counter or
+## overflow precondition is refused with its reason and mutates no deck, party, counter or RNG
+## state; the four pool supports keep their contract.
+func _test_support_refusals() -> void:
+	var resolver := CombatTinkerV3ScrapSupportCards.new()
+	var party := _support_party(2)
+	var deck := _support_deck([WARD], 703100, 6)
+	var tune_deck := _support_deck([TUNE], 703101, 6)
+	var wallet := {"gold": 9, "scraps": 4}
+	var wallet_before: Dictionary = wallet.duplicate(true)
+
+	_rejected_support(resolver, null, party, WARD, 0, "invalid_request", "null deck")
+	_rejected_support(resolver, deck, null, WARD, 0, "invalid_request", "null party")
+
+	# An inactive turn is never paid, even with a real copy in hand.
+	var inactive := CombatDeck.new([WARD], _support_rng(703102))
+	inactive.hand.append(WARD)
+	_check(not inactive.turn_active and inactive.hand.has(WARD),
+		"inactive fixture really holds a Ward outside a turn")
+	_rejected_support(resolver, inactive, party, WARD, 0, "inactive_turn", "inactive Ward turn")
+	var inactive_tune := CombatDeck.new([TUNE], _support_rng(703103))
+	inactive_tune.hand.append(TUNE)
+	_rejected_support(resolver, inactive_tune, party, TUNE, 0, "inactive_turn",
+		"inactive Tune Up turn")
+
+	# Unsupported identities: other authentic starter and v2 cards, forged spellings, non-strings.
+	var wrong_ids: Array = [COG, COG_PLUS, BOMB, BOMB_PLUS, "tinker_v3_casing_ward+",
+		"tinker_v3_casing_ward_plus_plus", "tinker_v3_tune_up+", "tinker_v3_tune_up_plus_plus",
+		"casing_ward", "tune_up", "TINKER_V3_CASING_WARD", "TINKER_V3_TUNE_UP", "",
+		"tinker_v3_missing_card", "tinker_pop_shot", "tinker_tune_up", StringName(WARD), null, 0,
+		3.5, false, [], {}]
+	for wrong_id: Variant in wrong_ids:
+		_rejected_support(resolver, deck, party, wrong_id, 0, "unsupported_card",
+			"unsupported ID " + str(wrong_id))
+
+	# Authentic supports the hand does not hold are still unheld, including a pool support.
+	_rejected_support(resolver, deck, party, WARD_PLUS, 0, "card_not_held",
+		"authentic but unheld Casing Ward+")
+	_rejected_support(resolver, deck, party, TUNE_PLUS, 0, "card_not_held",
+		"authentic but unheld Tune Up+")
+	_rejected_support(resolver, deck, party, POOL_SUPPORT_IDS[0], 0, "card_not_held",
+		"authentic but unheld pool Gear Brace")
+
+	# Ward's one printed energy is required before any partial charge.
+	var poor := _support_deck([WARD], 703104, 6)
+	poor.combat_state.energy = 0
+	_check(poor.energy == 0 and poor.hand.has(WARD),
+		"short-energy fixture really holds a Ward on no energy")
+	_rejected_support(resolver, poor, party, WARD, 0, "insufficient_energy", "no Ward energy")
+
+	# Both starter targets use the sentinel: any named slot is an invalid request.
+	for slot: int in [1, 2, 3, 4, -1, 99]:
+		_rejected_support(resolver, deck, party, WARD, slot, "invalid_target",
+			"Ward target slot " + str(slot))
+		_rejected_support(resolver, tune_deck, party, TUNE, slot, "invalid_target",
+			"Tune Up target slot " + str(slot))
+
+	# A party without Tinker never authorizes the play.
+	var absent_owner := CombatParty.new([{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30}, {"id": "yarn_ranger", "max_hp": 28}])
+	_check(absent_owner.is_valid() and absent_owner.get_hero(2).get("id") == "seamstress",
+		"absent-owner fixture is a valid party without a Tinker")
+	_rejected_support(resolver, deck, absent_owner, WARD, 0, "owner_missing", "absent Tinker")
+
+	# A second Tinker identity is a malformed roster, never a second owner.
+	var duplicate := _support_party(2)
+	duplicate._heroes[0]["id"] = "tinker"
+	_check(duplicate.get_hero(1).get("id") == "tinker"
+		and duplicate.get_hero(2).get("id") == "tinker",
+		"duplicate-identity fixture really repeats the owner ID")
+	_rejected_support(resolver, deck, duplicate, WARD, 0, "invalid_party",
+		"duplicate Tinker identity")
+
+	# A torn (downed) owner may not play either starter.
+	var torn_owner := _support_party(3)
+	_check(torn_owner.apply_damage(3, 26) and torn_owner.is_downed(3),
+		"torn-owner fixture really has a downed Tinker")
+	_rejected_support(resolver, deck, torn_owner, WARD, 0, "owner_downed", "downed Tinker Ward")
+
+	# Malformed party records fail closed before the counter or Block is touched.
+	var shorten := CombatParty.new([{"id": "tinker", "max_hp": 26}])
+	_rejected_support(resolver, deck, shorten, WARD, 0, "invalid_party", "one-hero party")
+	var bad_hp := _support_party(2)
+	bad_hp._heroes[0]["hp"] = 999
+	_rejected_support(resolver, deck, bad_hp, WARD, 0, "invalid_party", "malformed hero HP")
+	var bad_block := _support_party(2)
+	bad_block._heroes[0]["block"] = -1
+	_rejected_support(resolver, deck, bad_block, WARD, 0, "invalid_party",
+		"malformed hero Block")
+	var bad_position := _support_party(2)
+	bad_position._heroes[0]["position"] = 3
+	_rejected_support(resolver, deck, bad_position, WARD, 0, "invalid_party",
+		"malformed hero slot index")
+	var bad_identity := _support_party(2)
+	bad_identity._heroes[0]["id"] = ""
+	_rejected_support(resolver, deck, bad_identity, WARD, 0, "invalid_party",
+		"empty hero identity")
+
+	# Block and counter capacity are proven before any payment.
+	var block_overflow := _support_party(2)
+	block_overflow._heroes[1]["block"] = CombatParty.MAX_INT - 1
+	_check(block_overflow.get_hero(2).get("block") == CombatParty.MAX_INT - 1,
+		"Block-overflow fixture really sits one Block below the integer limit")
+	_rejected_support(resolver, deck, block_overflow, WARD, 0, "block_overflow", "Block overflow")
+	var counter_overflow := _support_party(2)
+	counter_overflow._heroes[1]["combat_scrap"] = CombatParty.MAX_INT
+	_rejected_support(resolver, deck, counter_overflow, WARD, 0, "combat_scrap_overflow",
+		"Ward Combat Scrap overflow")
+	var tune_overflow := _support_party(2)
+	tune_overflow._heroes[1]["combat_scrap"] = CombatParty.MAX_INT
+	_rejected_support(resolver, tune_deck, tune_overflow, TUNE, 0, "combat_scrap_overflow",
+		"Tune Up Combat Scrap overflow")
+
+	# A malformed stored counter is never coerced into a legal number.
+	for bad_counter: Variant in ["3", -1, 1.0]:
+		var text_counter := _support_party(2)
+		text_counter._heroes[1]["combat_scrap"] = bad_counter
+		_rejected_support(resolver, deck, text_counter, WARD, 0, "malformed_combat_scrap",
+			"Ward malformed Combat Scrap " + str(bad_counter))
+		var tune_counter := _support_party(2)
+		tune_counter._heroes[1]["combat_scrap"] = bad_counter
+		_rejected_support(resolver, tune_deck, tune_counter, TUNE, 0, "malformed_combat_scrap",
+			"Tune Up malformed Combat Scrap " + str(bad_counter))
+
+	# A rewritten starter record is refused through this instance's catalog seam; the static
+	# authentic lookup still returns the authored printing.
+	var forged_catalog := V3TinkerStarterCards.new()
+	forged_catalog._definitions[WARD]["effects"]["block"] = 9
+	forged_catalog._definitions[TUNE_PLUS]["cost"] = 2
+	var forged_resolver := CombatTinkerV3ScrapSupportCards.new()
+	forged_resolver._starter_catalog = forged_catalog
+	_check(not forged_resolver.is_supported_card(WARD)
+		and not forged_resolver.is_supported_card(TUNE_PLUS),
+		"rewritten starter records are not supported paid printings")
+	_check(CombatTinkerV3ScrapSupportCards.scrap_support_definition(WARD).get("effects")
+		.get("block") == 5,
+		"the authentic static resolution still returns the printed Block")
+	_rejected_support(forged_resolver, deck, party, WARD, 0, "catalog_mismatch",
+		"forged Casing Ward record")
+	_rejected_support(forged_resolver, _support_deck([TUNE_PLUS], 703105, 6), party, TUNE_PLUS,
+		0, "catalog_mismatch", "forged Tune Up+ record")
+
+	# A consumed copy cannot be played twice.
+	var repeat_party := _support_party(3)
+	var repeat_deck := _support_deck([TUNE], 703106, 5)
+	_check(resolver.play_card(repeat_deck, repeat_party, TUNE).get("ok") == true,
+		"duplicate-play fixture really casts once")
+	_check(repeat_deck.energy == 3 and repeat_deck.discard_pile == [TUNE],
+		"duplicate-play fixture really paid nothing and discarded the copy")
+	_rejected_support(resolver, repeat_deck, repeat_party, TUNE, 0, "card_not_held",
+		"duplicate play of the consumed Tune Up")
+
+	_check(wallet == wallet_before, "every refusal left the run wallet's scraps untouched")
+
+	# The shared fixture decks and party survived every refusal untouched.
+	_check(deck.energy == 3 and deck.hand.has(WARD) and deck.discard_pile.is_empty()
+		and tune_deck.energy == 3 and tune_deck.hand.has(TUNE)
+		and tune_deck.discard_pile.is_empty()
+		and party.get_hero(2).get("block") == 0
+		and not party.get_hero(2).has("combat_scrap"),
+		"every refusal left the shared fixture decks and party untouched")
+
+	# A refused attempt never poisons the next authentic play on the same objects.
+	var retry: Dictionary = resolver.play_card(deck, party, WARD, 0)
+	_check(retry.get("ok") == true and retry.get("block_gained") == 5
+		and retry.get("combat_scrap_after") == 1,
+		"the authentic play then succeeds exactly once")
+	_check(deck.energy == 2 and deck.discard_pile == [WARD]
+		and party.get_hero(2).get("block") == 5
+		and party.get_hero(2).get("combat_scrap") == 1,
+		"the retry paid once, granted only the Tinker its Block and one Combat Scrap")
+	for position: int in [1, 3]:
+		_check(party.get_hero(position).get("block") == 0
+			and not party.get_hero(position).has("combat_scrap"),
+			"the retry left teammate seat " + str(position) + " untouched")
+	_rejected_support(resolver, deck, party, WARD, 0, "card_not_held",
+		"a second claim of the same Ward copy")
+
+
+## A real seeded shared hand holding the named support printing, with further filler in the shared
+## draw pile. Swaps only move real cards between the real hand and draw pile.
+func _support_deck(held_ids: Array, seed_value: int, supply: int) -> CombatDeck:
+	var ids: Array[String] = []
+	for card_id in held_ids:
+		ids.append(str(card_id))
+	for index in range(supply):
+		ids.append("v3_support_filler_" + str(index))
+	var deck := CombatDeck.new(ids, _support_rng(seed_value))
+	_check(deck.start_turn() and deck.energy == 3,
+		"fixture starts a real three-energy shared turn for " + str(held_ids))
+	var hand_slot := 0
+	for card_id: String in held_ids:
+		if deck.hand.has(card_id):
+			continue
+		var source: int = deck.draw_pile.find(card_id)
+		if source < 0:
+			continue
+		while hand_slot < deck.hand.size() and deck.hand[hand_slot] in held_ids:
+			hand_slot += 1
+		if hand_slot >= deck.hand.size():
+			continue
+		var swap: String = deck.hand[hand_slot]
+		deck.draw_pile[source] = swap
+		deck.hand[hand_slot] = card_id
+		hand_slot += 1
+	for card_id: String in held_ids:
+		_check(deck.hand.has(card_id), "fixture hand really holds " + card_id)
+	_check(deck.discard_pile.is_empty(), "fixture discard starts empty")
+	return deck
+
+
+## A genuine seeded hand already holding two copies of the named support printing.
+func _support_duplicate_deck(card_id: String, seed_value: int) -> CombatDeck:
+	var deck := CombatDeck.new([card_id, card_id, "v3_support_filler_a",
+		"v3_support_filler_b", "v3_support_filler_c", "v3_support_filler_d"],
+		_support_rng(seed_value))
+	_check(deck.start_turn(), "duplicate-copy fixture starts a real turn")
+	while deck.hand.count(card_id) < 2 and deck.draw_pile.has(card_id):
+		var spare_slot := -1
+		for hand_index in range(deck.hand.size()):
+			if deck.hand[hand_index] != card_id:
+				spare_slot = hand_index
+				break
+		var pile_index: int = deck.draw_pile.find(card_id)
+		if spare_slot < 0 or pile_index < 0:
+			break
+		var moved: String = deck.hand[spare_slot]
+		deck.draw_pile[pile_index] = moved
+		deck.hand[spare_slot] = card_id
+	return deck
+
+
+## Empty draw pile with three genuine discards behind the held zero-cost Tune Up+.
+func _support_refill_fixture(card_id: String, seed_value: int) -> Dictionary:
+	var deck := CombatDeck.new([card_id, "v3_support_refill_a", "v3_support_refill_b",
+		"v3_support_refill_c"], _support_rng(seed_value))
+	if not deck.start_turn():
+		return {}
+	deck.hand.clear()
+	deck.hand.append(card_id)
+	deck.discard_pile.append("v3_support_refill_a")
+	deck.discard_pile.append("v3_support_refill_b")
+	deck.discard_pile.append("v3_support_refill_c")
+	return {"deck": deck, "party": _support_party(2)}
+
+
+func _support_rng(seed_value: int) -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	return rng
+
+
+## A real three-hero party with the living Tinker in the named seat. A fresh CombatParty never
+## carries the optional combat_scrap key.
+func _support_party(tinker_position: int) -> CombatParty:
+	var roster: Array = []
+	var others: Array[String] = ["warden", "seamstress"]
+	var next_other := 0
+	for index in range(3):
+		if index + 1 == tinker_position:
+			roster.append({"id": "tinker", "max_hp": 26})
+		else:
+			roster.append({"id": others[next_other], "max_hp": 40 - next_other * 6})
+			next_other += 1
+	var party := CombatParty.new(roster)
+	_check(party.is_valid() and party.get_hero(tinker_position).get("id") == "tinker"
+		and party.get_hero(tinker_position).get("hp") == 26,
+		"valid three-hero party with a living Tinker in seat " + str(tinker_position))
+	_check(not party.get_hero(tinker_position).has("combat_scrap")
+		and party.get_hero(tinker_position).get("combat_scrap", 0) == 0,
+		"a real fresh party begins at zero Combat Scrap in seat " + str(tinker_position))
+	return party
+
+
+func _support_snapshot(deck: CombatDeck, party: CombatParty) -> Dictionary:
+	var snapshot: Dictionary = {
+		"deck_present": deck != null, "party_present": party != null
+	}
+	if deck != null:
+		snapshot["turn"] = deck.turn_active
+		snapshot["energy"] = deck.energy
+		snapshot["state_energy"] = deck.combat_state.energy
+		snapshot["state_turn"] = deck.combat_state.player_turn_active
+		snapshot["hand"] = deck.hand.duplicate()
+		snapshot["draw"] = deck.draw_pile.duplicate()
+		snapshot["discard"] = deck.discard_pile.duplicate()
+		snapshot["rng_state"] = deck._rng.state if deck._rng != null else -1
+	if party != null:
+		snapshot["party"] = party.get_heroes()
+		snapshot["party_valid"] = party.is_valid()
+	return snapshot
+
+
+## The exact support outcome: the printed cost, one real shared draw per printed draw (from the
+## nonempty supply this helper uses), the held copy moved to discard, Block on the owner's record
+## only when printed, and one more Combat Scrap on that same hero only.
+func _expected_support(before: Dictionary, card_id: String, seat: int, cost: int,
+		block: int, draw: int) -> Dictionary:
+	var expected: Dictionary = before.duplicate(true)
+	expected["energy"] = int(expected["energy"]) - cost
+	expected["state_energy"] = int(expected["state_energy"]) - cost
+	var hand: Array = expected["hand"]
+	_check(hand.count(card_id) == 1, "expected snapshot: exactly one played copy is held")
+	hand.remove_at(hand.find(card_id))
+	var draw_pile: Array = expected["draw"]
+	for _slot in range(draw):
+		_check(not draw_pile.is_empty(), "expected snapshot: the printed draw has supply")
+		if not draw_pile.is_empty():
+			hand.append(draw_pile.pop_back())
+	(expected["discard"] as Array).append(card_id)
+	var hero: Dictionary = expected["party"][seat - 1]
+	if block > 0:
+		hero["block"] = int(hero["block"]) + block
+	hero["combat_scrap"] = int(hero.get("combat_scrap", 0)) + 1
+	return expected
+
+
+func _rejected_support(resolver: CombatTinkerV3ScrapSupportCards, deck: CombatDeck,
+		party: CombatParty, card_id: Variant, target: int, reason: String,
+		label: String) -> void:
+	var before := _support_snapshot(deck, party)
+	var result: Dictionary = resolver.play_card(deck, party, card_id, target)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("reason") == reason,
+		label + ": refusal reason is " + reason + " (got " + str(result.get("reason")) + ")")
+	_check(_support_snapshot(deck, party) == before,
+		label + ": unchanged energy, hand, piles, turn, party, counters and RNG")
