@@ -10,6 +10,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_v3_tinker_paid_bridge()
 	_test_four_enemy_bomb()
 	_test_enrage_starter_hits()
 	_test_enrage_bomb_and_replay()
@@ -50,6 +51,56 @@ func _initialize() -> void:
 	print("combat_attack_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
 		" (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_v3_tinker_paid_bridge() -> void:
+	for id in CombatAttackTargeting.TINKER_V3_IDS:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 465
+		var deck := CombatDeck.new([id, id], rng)
+		_check(deck.start_turn(), "V3 actual held active deck")
+		var party := _party()
+		var enemies := _enemies([40, 40, 40])
+		var play := CombatAttackCards.new()
+		var target := 0 if id.contains("scrap_bomb") else 3
+		var before := _snapshot(deck, party, enemies)
+		var original_hp: int = enemies._enemies[0].hp
+		enemies._enemies[0].hp = "invalid"
+		var malformed := enemies._enemies.duplicate(true)
+		_check(not play.forecast_attack(deck, party, enemies, id).playable
+			and enemies._enemies == malformed and deck.energy == 3,
+			"V3 malformed roster forecast refuses before readers or payment")
+		enemies._enemies[0].hp = original_hp
+		_check(not play.play_attack(deck, party, enemies, id + "_forged", target).ok
+			and _snapshot(deck, party, enemies) == before, "V3 forged paid ID inert")
+		_check(not play.play_attack(deck, party, enemies, id, 1 if target == 0 else 0).ok
+			and _snapshot(deck, party, enemies) == before, "V3 invalid selection inert")
+		var paid := play.play_attack(deck, party, enemies, id, target)
+		_check(paid.ok and paid.card_id == id and paid.combat_scrap_gain == 1
+			and party.get_hero(3).combat_scrap == 1 and play._tinker._consumed,
+			"V3 paid receipt and shared passive " + id)
+		_check(deck.hand.count(id) == 1 and deck.discard_pile.count(id) == 1
+			and deck.energy == 3 - paid.cost, "V3 exactly one held copy and printed charge")
+		var ctx := _patch_context([
+			{"id": "button_eye", "hero": "tinker", "slot": "HEAD"},
+			{"id": "pincushion_arm", "hero": "tinker", "slot": "ARM"}])
+		var patched := _patch_service(ctx)
+		var patch_rng := RandomNumberGenerator.new()
+		patch_rng.seed = 465
+		var patch_deck := CombatDeck.new([id], patch_rng)
+		_check(patch_deck.start_turn(), "V3 patched held deck")
+		var foes := _enemies([40, 40, 40])
+		var expected: int = V3TinkerStarterCards.new().get_definition(id).effects.damage + 4
+		var forecast := patched.forecast_attack(patch_deck, ctx.party, foes, id)
+		_check(forecast.playable and forecast.hits[0].damage == expected,
+			"V3 preview includes real ARM +1 and Tinker +3")
+		var patched_paid := patched.play_attack(patch_deck, ctx.party, foes, id, target)
+		_check(patched_paid.ok and ctx.party.get_hero(3).combat_scrap == 1
+			and patched._patches.latch_snapshot().tinker, "V3 paid cast consumes genuine HEAD once")
+		for hit in patched_paid.hits:
+			_check(hit.damage == expected and hit.statuses == {"exposed": 1}
+				and foes.get_enemy(hit.position).statuses == {"exposed": 1},
+				"V3 patch effects persist per actual hit without amplifying their own hit")
 
 
 func _check(condition: bool, label: String) -> void:
@@ -2370,7 +2421,9 @@ func _test_thorns_rejections() -> void:
 
 ## The same full-snapshot helper checks Enrage alongside authentic Thorns hits.
 func _test_enrage_starter_hits() -> void:
-	for id in CombatAttackCards.ATTACK_IDS:
+	# This fixture draws the legacy starting deck; V3's paid/counter receipt and
+	# selected-party live hooks have their own authenticated regression below.
+	for id in CombatAttackTargeting.ATTACK_IDS:
 		if id == "tinker_scrap_bomb":
 			continue
 		for blocked in [false, true]:

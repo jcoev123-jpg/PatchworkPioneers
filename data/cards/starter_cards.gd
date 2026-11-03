@@ -243,6 +243,11 @@ func _init() -> void:
 ## Returns a deep copy of the definition for the given card ID, or an empty dictionary if unknown.
 func get_definition(card_id: String) -> Dictionary:
 	if not _definitions.has(card_id):
+		# Lookup bridge only: preserve the legacy deck and enumeration. The shared
+		# hand and its passive readers use this catalog for mounted starter faces.
+		var v3 := V3TinkerStarterCards.new().get_definition(card_id)
+		if CombatTinkerV3StarterAttackCards.is_authentic_definition(v3, card_id):
+			return v3
 		return {}
 	return _definitions[card_id].duplicate(true)
 

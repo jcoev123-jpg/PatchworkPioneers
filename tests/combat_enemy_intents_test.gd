@@ -6,6 +6,7 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_attack_move_schema()
+	_test_seam_ripper_routed_named_attacks()
 	_test_scavenger_gold_cache()
 	_test_two_hit_schema()
 	_test_special_schema()
@@ -67,6 +68,152 @@ func _test_attack_move_schema() -> void:
 	extra.erase("weight")
 	extra.target_position = 1
 	_check(not CombatEnemyIntents.valid_action(extra), "arbitrary executable key rejects")
+
+
+class MissingSeamPose extends LiveMovePoseCatalog:
+	func _art_available(_path: String) -> bool:
+		return false
+
+
+func _seam_route(count: int) -> Dictionary:
+	# Seam Ripper belongs to the middle floor band. Commit legal map choices to it.
+	for seed_value in range(1, 180):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		while map.get_current_floor() < 8:
+			var choices := map.get_legal_choices()
+			if choices.is_empty():
+				break
+			var node: String = choices[0]
+			for candidate in choices:
+				if map.get_node(candidate).get("type") == "Fight":
+					node = candidate
+					break
+			if not map.choose_node(node):
+				break
+			if map.get_current_floor() < 5 or map.get_node(node).get("type") != "Fight":
+				continue
+			var entry := RunAuthoredBattleEntry.new().entry_current_battle(
+				map, rng, RunFightEncounterSelection.new())
+			if entry.get("success", false):
+				var ids: Array = entry.enemies.get_enemies().map(func(actor): return actor.id)
+				if ids.size() == count and ids.has("seam_ripper"):
+					return {"seed": seed_value, "route": map.get_route(), "ids": ids}
+	return {}
+
+
+func _test_seam_ripper_routed_named_attacks() -> void:
+	for count in [2, 3]:
+		var fixture := _seam_route(count)
+		_check(not fixture.is_empty(), "Seam Ripper has an authentic routed %d-foe Fight" % count)
+		if fixture.is_empty():
+			continue
+		for floor_number in [1, 5, 9]:
+			var traces := []
+			for replay in range(2):
+				var rng := RandomNumberGenerator.new()
+				rng.seed = fixture.seed
+				var map := RunMap.new()
+				_check(map.generate(rng), "real map generates")
+				# Earlier encounter admissions spend the same run RNG as fixture discovery.
+				for node in fixture.route:
+					_check(map.choose_node(node), "real Fight route commits a legal step")
+					if node != fixture.route.back() and map.get_current_floor() >= 5 \
+							and map.get_node(node).get("type") == "Fight":
+						_check(RunAuthoredBattleEntry.new().entry_current_battle(
+							map, rng, RunFightEncounterSelection.new()).get("success", false), "prior routed Fight admits")
+				var entry := RunAuthoredBattleEntry.new().entry_current_battle(
+					map, rng, RunFightEncounterSelection.new())
+				_check(entry.get("success", false), "real Seam Ripper entry succeeds")
+				if not entry.get("success", false):
+					return
+				var definitions: Array = entry.enemies.get_enemies()
+				_check(definitions.map(func(actor): return actor.id) == fixture.ids,
+					"same-seed route supplies the original living group")
+				# Apply the shipped floor transform before binding, as the live caller does.
+				for actor in definitions:
+					actor.max_hp = RunNormalAttackFloorScaling.scale_normal_max_hp(actor.max_hp, floor_number).max_hp
+					for raw in actor.intent.actions:
+						if raw.type == "attack":
+							raw.amount = RunNormalAttackFloorScaling.scale_normal_attack(int(raw.amount), floor_number).amount
+				var enemies := CombatEnemies.new(definitions)
+				var target := 2 if count == 2 else 3
+				var party := _party_fixture(0, 20 if target == 2 else 22, 20 if target == 3 else 22)
+				party._heroes[target - 1].statuses = {"bleed": 2}
+				var scheduler: CombatEnemyIntents = entry.intents
+				_check(enemies.is_valid() and party.is_downed(1) and not party.is_downed(target)
+					and scheduler.bind_battle(enemies, party, rng), "weighted real group binds with living lowest-HP recipient")
+				if not scheduler.is_bound():
+					return
+				var source: int = fixture.ids.find("seam_ripper") + 1
+				var seen := {}
+				var trace := []
+				for turn in range(128):
+					var actions := scheduler.get_intents()
+					var state := rng.state
+					_check(actions.size() == count and scheduler.get_intents() == actions and rng.state == state,
+						"all real sources announce and repeated previews spend no RNG")
+					trace.append([actions.duplicate(true), state])
+					var action: Dictionary = actions[source - 1]
+					if action.has("move"):
+						var move: String = action.move
+						var amount: int = {1: [6, 7], 5: [7, 8], 9: [9, 10]}[floor_number][0 if move == "attack2" else 1]
+						_check(move in ["attack2", "attack3"] and action.type == "attack"
+							and action.amount == amount and action.target_position == target,
+							"distinct keyed base hit retains truncating floor scaling and lowest-living-HP target")
+						var snapshot := [party.get_heroes(), enemies.get_enemies(), rng.state, scheduler.get_intents()]
+						var fallback := "res://assets/paper/enemies/seam_ripper_attack.png"
+						var title := "Hook Rip" if move == "attack2" else "Ripper Throw"
+						for catalog in [LiveMovePoseCatalog.new(), MissingSeamPose.new()]:
+							var receipt: Dictionary = catalog.lookup_enemy("seam_ripper", action, fallback)
+							_check(receipt.get("name") == title and receipt.get("pose") == move
+								and receipt.get("named_art") == "res://assets/paper/enemies/seam_ripper_%s.png" % move
+								and receipt.get("art") == (receipt.get("named_art") if receipt.get("art_available") else fallback),
+								"routed action projects its authentic name and usable art/fallback")
+							if catalog is MissingSeamPose:
+								_check(receipt.get("fallback_used") == true, "forced unavailable Seam Ripper pose falls back")
+						_check(snapshot == [party.get_heroes(), enemies.get_enemies(), rng.state, scheduler.get_intents()],
+							"named previews preserve all actors, statuses, intent cache and RNG")
+						var phase := CombatEnemyPhase.new()
+						for bad_move in [null, 2, "unknown", "attack4"]:
+							var forged := action.duplicate(true)
+							forged.move = bad_move
+							_check(phase.execute_phase(party, enemies, [forged], null, true, null, 19)
+								== {"ok": false, "events": []}
+								and snapshot == [party.get_heroes(), enemies.get_enemies(), rng.state, scheduler.get_intents()],
+								"malformed or unauthored move refuses atomically without wallet/actor/RNG effects")
+						# Isolate this authentic source's beat so companions cannot mask collateral.
+						for block in [3, 12]:
+							_check(party.gain_block(target, block), "living recipient gains real Block")
+							var before := party.get_heroes()
+							var expected: Array = before.duplicate(true)
+							expected[target - 1].hp -= maxi(0, amount - block)
+							expected[target - 1].block = maxi(0, block - amount)
+							var result := phase.execute_phase(party, enemies, [action], null, true, null, 19)
+							_check(result == {"ok": true, "gold": 19, "events": [{"type": "attack",
+								"enemy_position": source, "target_position": target, "move": move, "applied": true}]}
+								and party.get_heroes() == expected and enemies.get_enemies() == snapshot[1]
+								and rng.state == state and scheduler.get_intents() == actions,
+								"named hit spends Block before HP exactly once; wallets, statuses and all other actors intact")
+							trace.append([result, party.get_heroes(), enemies.get_enemies(), rng.state])
+							party._heroes = snapshot[0].duplicate(true)
+						seen[move] = true
+						_check(enemies.apply_damage(source, 99999) and enemies.is_slain(source), "dead named source precondition")
+						var dead := [party.get_heroes(), enemies.get_enemies(), rng.state]
+						_check(phase.execute_phase(party, enemies, [action], null, true, null, 19)
+							== {"ok": true, "gold": 19, "events": [{"type": "attack", "enemy_position": source,
+								"target_position": target, "move": move, "applied": false}]}
+							and dead == [party.get_heroes(), enemies.get_enemies(), rng.state], "dead named source cannot strike or mutate state")
+						enemies._enemies = snapshot[1].duplicate(true)
+						if seen.has("attack2") and seen.has("attack3"):
+							break
+					_check(scheduler.advance_turn(), "real weighted alternatives advance with the run RNG")
+				_check(seen.has("attack2") and seen.has("attack3"), "both weighted Seam Ripper alternatives were actually selected and executed")
+				traces.append(trace)
+			_check(not traces[0].is_empty() and traces[0] == traces[1], "same-seed route, choices, phase receipts, actors and RNG replay exactly")
 
 
 func _scavenger_gold_record() -> Dictionary:

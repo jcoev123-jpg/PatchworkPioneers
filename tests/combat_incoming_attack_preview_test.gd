@@ -575,6 +575,11 @@ func _four_foe_cases() -> void:
 	_check(definitions.size() == 4, "four original, distinct run-catalog enemy records exist")
 	if definitions.size() != 4:
 		return
+	# Keep the eight-damage status/Block witness authentic now that this source
+	# authenticates named moves: floor-5 Ripper Throw truncates 7 * 1.25 to 8.
+	for raw in definitions[3].intent.actions:
+		if raw.type == "attack":
+			raw.amount = RunNormalAttackFloorScaling.scale_normal_attack(int(raw.amount), 5).amount
 	var party := _party()
 	var enemies := CombatEnemies.new(definitions, CombatEnemies.OPT_IN_MAX_ENEMIES)
 	_check(party.is_valid() and enemies.is_valid() and enemies.get_capacity() == 4
@@ -586,6 +591,7 @@ func _four_foe_cases() -> void:
 	enemies._enemies[3]["statuses"] = {"weak": 1}
 	# The fourth authentic source targets the lowest-HP living hero (Tinker).
 	var actions: Array = [_block(1, 2), _block(2, 0), _block(3, 0), _attack(4, 8, 3)]
+	actions[3]["move"] = "attack3"
 	var heroes := party.get_heroes()
 	var roster := enemies.get_enemies()
 	var pristine := [heroes.duplicate(true), roster.duplicate(true), actions.duplicate(true)]

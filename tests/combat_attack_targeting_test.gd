@@ -24,6 +24,7 @@ const SNAG_IDS := ["seamstress_snag", "seamstress_snag_plus"]
 
 
 func _initialize() -> void:
+	_test_v3_tinker()
 	_test_four_enemy_bomb()
 	_test_authored_cards_and_freshness()
 	_test_slain_positions()
@@ -41,6 +42,29 @@ func _initialize() -> void:
 	print("combat_attack_targeting_test: ", "PASS" if failures.is_empty() else "FAIL",
 		" (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _test_v3_tinker() -> void:
+	for id in CombatAttackTargeting.TINKER_V3_IDS:
+		var deck := _deck([id, id])
+		var party := _party()
+		var enemies := _enemies()
+		_check(enemies.apply_damage(2, 10000), "V3 gap is genuinely dead")
+		var before := _snapshot(deck, party, enemies)
+		var preview := service.get_preview(deck, party, enemies, id)
+		_check(service.supports(id) and preview.playable and preview.target_positions == [1, 3]
+			and preview.requires_selection == id.contains("cog_shot"), "V3 authentic living original slots " + id)
+		_check(_snapshot(deck, party, enemies) == before, "V3 preview pure")
+		var middle := _party(["warden", "tinker", "seamstress"])
+		_check(service.get_preview(deck, middle, enemies, id).playable == id.contains("cog_shot"),
+			"V3 middle seat admits Cog and refuses Bomb")
+		var wide := _enemies(4, 4)
+		var wide_before := _snapshot(deck, party, wide)
+		_check(not service.get_preview(deck, party, wide, id).playable
+			and _snapshot(deck, party, wide) == wide_before, "V3 rejects unsupported four-slot roster atomically")
+		party._heroes[2].combat_scrap = CombatParty.MAX_INT
+		_check(not service.get_preview(deck, party, enemies, id).playable, "V3 overflow not advertised")
+		_check(not service.supports(id + "_forged"), "V3 forged ID unsupported")
 
 
 func _check(condition: bool, message: String) -> void:

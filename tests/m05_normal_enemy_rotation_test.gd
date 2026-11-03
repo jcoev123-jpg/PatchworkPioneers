@@ -59,7 +59,10 @@ const OLD := {
 			{"type": "debuff", "amount": 1, "status": "exposed", "weight": 2},
 			{"type": "buff", "amount": 2, "weight": 1}]],
 	"seam_ripper": ["Seam Ripper", 18, "lowest_living_hp",
-		[{"type": "attack", "amount": 5, "weight": 3}, {"type": "block", "amount": 2, "weight": 2},
+		[{"type": "attack", "amount": 5, "weight": 3},
+			{"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
+			{"type": "block", "amount": 2, "weight": 2},
 			{"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
 			{"type": "buff", "amount": 2, "weight": 1}]],
 }

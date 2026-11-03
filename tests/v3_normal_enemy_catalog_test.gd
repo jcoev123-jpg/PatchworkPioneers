@@ -110,6 +110,8 @@ func _old_expected() -> Dictionary:
 		"seam_ripper": {"id": "seam_ripper", "name": "Seam Ripper", "max_hp": 18, "art_path": "res://assets/paper/enemies/seam_ripper.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
 				{"type": "attack", "amount": 5, "weight": 3},
+				{"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
 				{"type": "block", "amount": 2, "weight": 2},
 				{"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
 				{"type": "buff", "amount": 2, "weight": 1}]}},

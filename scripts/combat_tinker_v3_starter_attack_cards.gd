@@ -1,6 +1,6 @@
 class_name CombatTinkerV3StarterAttackCards
 extends RefCounted
-## Scene-free paid starter attacks. Live hand dispatch is owned by a later task.
+## Scene-free paid starter attacks; shared-hand dispatch reuses this preflight.
 ## enemy_all uses target 0; original enemy slots are never compacted.
 
 const CATALOG := preload("res://data/cards/v3_tinker_starter_cards.gd")
@@ -59,7 +59,7 @@ func is_supported_card(card_id: Variant) -> bool:
 
 
 func preflight(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		card_id: Variant, target_position: int = 0) -> Dictionary:
+		card_id: Variant, target_position: int = 0, cost_discount: int = 0) -> Dictionary:
 	if deck == null or party == null or enemies == null:
 		return _refusal("invalid_request")
 	if deck.combat_state == null or deck._rng == null or not deck.turn_active:
@@ -67,6 +67,8 @@ func preflight(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if not is_supported_card(card_id):
 		return _refusal("unsupported_card")
 	var spec: Dictionary = CARDS[card_id]
+	if cost_discount < 0 or cost_discount > 1 or (cost_discount > 0 and spec.cost < 2):
+		return _refusal("invalid_discount")
 	if not _valid_roster(party._heroes, 3, 3, true):
 		return _refusal("invalid_party")
 	# Do not call enemy readers here: they settle revivals, even on refused requests.
@@ -97,11 +99,11 @@ func preflight(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return _refusal("no_living_target")
 	if not deck.hand.has(card_id):
 		return _refusal("card_not_held")
-	if deck.energy < spec["cost"]:
+	if deck.energy < spec["cost"] - cost_discount:
 		return _refusal("insufficient_energy")
 	return {"ok": true, "card_id": card_id, "owner_position": owner,
 		"target_kind": "enemy_all" if area else "enemy_single", "targets": targets,
-		"cost": spec["cost"], "raw_damage": spec["damage"],
+		"cost": spec["cost"] - cost_discount, "raw_damage": spec["damage"],
 		"combat_scrap_before": scrap, "energy_before": deck.energy}
 
 

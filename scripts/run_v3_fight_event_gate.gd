@@ -253,6 +253,44 @@ func select_affordable_toll_event(
 	}
 
 
+## Read-only Fight-or-toll offer, including unaffordable optional tolls. Preflight
+## authentic visits and their previews before spending exactly one sorted-ID draw.
+## Does not bind or claim this gate, debit the wallet, or enter a battle.
+func select_fight_or_toll_offer(
+	rng: Variant,
+	excluded_ids: Variant = null,
+	wallet: Variant = null
+) -> Dictionary:
+	var denied := {"ok": false, "event": {}, "preview": {}}
+	if not (rng is RandomNumberGenerator) or not _catalog_valid:
+		return denied
+	var parsed_wallet: Dictionary = _parse_wallet(wallet)
+	var parsed_exclusions: Dictionary = _parse_exclusions(excluded_ids)
+	if not parsed_wallet.get("ok", false) or not parsed_exclusions.get("ok", false):
+		return denied
+	var excluded: Dictionary = parsed_exclusions["ids"]
+	var eligible: Array[String] = []
+	var offers: Dictionary = {}
+	for record: Dictionary in _catalog_events:
+		var event_id: String = record["id"]
+		if excluded.has(event_id):
+			continue
+		var visit := open_visit(record)
+		if visit == null:
+			return denied
+		var preview: Dictionary = visit.preview_choices(parsed_wallet["wallet"])
+		if not preview.get("ok", false):
+			return denied
+		eligible.append(event_id)
+		offers[event_id] = {"ok": true, "event": visit.get_event(), "preview": preview}
+	if eligible.is_empty():
+		return denied
+	eligible.sort()
+	var generator: RandomNumberGenerator = rng
+	var picked_id: String = eligible[generator.randi_range(0, eligible.size() - 1)]
+	return (offers[picked_id] as Dictionary).duplicate(true)
+
+
 static func _selection_rejection() -> Dictionary:
 	return {
 		"ok": false,

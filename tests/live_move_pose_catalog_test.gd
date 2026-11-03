@@ -74,7 +74,8 @@ func _initialize() -> void:
 	check(catalog.lookup_hero("unknown", "block", FALLBACK).is_empty(), "unknown hero")
 	# Force unavailable art without depending on whether pipeline PNGs exist.
 	catalog.available = false
-	for actor in [["felt_bulwark", "Roll Charge", "Felt Slam"], ["moth_scribe", "Quill Stab", "Ink Flick"]]:
+	for actor in [["felt_bulwark", "Roll Charge", "Felt Slam"], ["moth_scribe", "Quill Stab", "Ink Flick"],
+			["seam_ripper", "Hook Rip", "Ripper Throw"]]:
 		for index in [1, 2]:
 			var named := attack.duplicate(true)
 			named["move"] = "attack%d" % (index + 1)
