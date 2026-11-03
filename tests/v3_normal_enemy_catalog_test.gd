@@ -2,6 +2,10 @@
 
 const PATH := "res://data/enemies/run_enemies.json"
 
+class MissingCrusherPose extends LiveMovePoseCatalog:
+	func _art_available(_path: String) -> bool:
+		return false
+
 var failures: Array[String] = []
 var checks := 0
 
@@ -32,6 +36,7 @@ func _initialize() -> void:
 	_test_crusher_harrier_doll_catalog_records()
 	_test_crusher_harrier_doll_seeded_announcements()
 	_test_crusher_harrier_doll_phase_actions()
+	_test_crusher_named_moves()
 	_test_thistle_patch_doll_thorns()
 	_test_pin_skitter_thorns()
 	_test_bobbin_bat_quilt_termite_catalog()
@@ -999,13 +1004,16 @@ func _alternative_shape_is_exact(raw: Variant) -> bool:
 	var expected: Array = []
 	match String(raw.get("type", "")):
 		"attack":
-			# A plain attack keeps the legacy keys; the only accepted extra is
-			# the canonical two-hit marker this batch authors on the Bat.
+			# Only canonical two-hit and named attack metadata may extend an attack.
 			expected = ["amount", "type", "weight"]
 			if raw.has("hits"):
 				if not _is_authored_two_hits(raw["hits"]):
 					return false
 				expected = ["amount", "hits", "type", "weight"]
+			if raw.has("move"):
+				if not raw.move is String or raw.move not in ["attack2", "attack3"]:
+					return false
+				expected.append("move")
 		"snip_block", "block":
 			expected = ["amount", "type", "weight"]
 		"shove":
@@ -2403,10 +2411,145 @@ func _test_tough_normal_pair_phase_actions() -> void:
 			and slash_party.get_hero(2).get("hp") == 30,
 			"the Wraith slash touches no other hero")
 
-## The three harder look-driven normals of this V3-2 batch. Identity, HP and the
-## exact weighted intent are author-set; the design fixes each foe's look and the
-## 5-9 floor-1-4 normal attack band, not the individual weights. These records are
-## catalog content only: no encounter pool, floor band or route wiring is claimed.
+## Discover the genuine routed band, then replay its unmodified weighted roster.
+func _crusher_routed_fixture() -> Dictionary:
+	var material := RunAuthoredBattleEntry._floor_band_material(null)
+	_check(material.get("ok") == true, "Crusher shipped Fight material loads")
+	if not material.get("ok", false):
+		return {}
+	var floors: Array = []
+	for floor_number in [1, 5, 9]:
+		if material.pools.get(RunV3FloorBandRoster._band_for_floor(floor_number), []).has("clothespin_crusher"):
+			floors.append(floor_number)
+	_check(floors.size() == 1, "Crusher belongs to exactly one shipped Fight band")
+	if floors.size() != 1:
+		return {}
+	for seed_value in range(1, 101):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		while map.get_current_floor() < int(floors[0]) - 1:
+			var choices := map.get_legal_choices()
+			if choices.is_empty() or not map.choose_node(choices[0]):
+				break
+		var prior := map.get_route()
+		var before := rng.state
+		for node in map.get_legal_choices():
+			if map.get_node(node).get("type") != "Fight":
+				continue
+			rng.state = before
+			if not map.choose_node(node):
+				continue
+			var entry := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
+			map.undo_choice(node, prior)
+			if not entry.get("success", false):
+				continue
+			var records: Array = entry.enemies.get_enemies()
+			for index in range(records.size()):
+				if records[index].id == "clothespin_crusher":
+					_check(records.size() in [2, 3], "routed Crusher Fight has legal two/three-foe capacity")
+					return {"records": records, "source": index + 1, "rng_state": rng.state,
+						"definitions": entry.definitions, "seed": seed_value}
+	return {}
+
+func _test_crusher_named_moves() -> void:
+	var fixture := _crusher_routed_fixture()
+	_check(not fixture.is_empty(), "a legal seeded routed Fight admits Crusher")
+	if fixture.is_empty():
+		return
+	var source: int = fixture.source
+	var authored := _find(_load_parsed(), "clothespin_crusher")
+	var routed: Dictionary = fixture.records[source - 1]
+	for field in ["id", "name", "max_hp", "art_path", "intent"]:
+		_check(_norm(routed.get(field)) == _norm(authored.get(field)), "routed Crusher retains authored " + field)
+	for floor_number in [1, 5, 9]:
+		var traces: Array = []
+		for replay in range(2):
+			var records: Array = fixture.records.duplicate(true)
+			# Same production scaling service, before binding, as app's Fight entry.
+			for record in records:
+				for raw in record.intent.actions:
+					if raw.type == "attack":
+						var scaled := RunNormalAttackFloorScaling.scale_normal_attack(int(raw.amount), floor_number)
+						_check(scaled.get("ok") == true, "authored attack scales once before binding")
+						raw.amount = scaled.amount
+			var enemies := CombatEnemies.new(records)
+			var party := _party()
+			var rng := RandomNumberGenerator.new()
+			rng.seed = int(fixture.seed)
+			rng.state = int(fixture.rng_state)
+			var scheduler := CombatEnemyIntents.new(fixture.definitions)
+			_check(enemies.is_valid() and party.is_valid() and scheduler.bind_battle(enemies, party, rng),
+				"real routed alternatives bind to a living three-hero party")
+			if not scheduler.is_bound():
+				return
+			var seen := {}
+			var trace: Array = []
+			for turn in range(128):
+				var actions := scheduler.get_intents()
+				_check(actions.size() == records.size(), "every routed foe announces")
+				var action: Dictionary = actions[source - 1]
+				if action.has("move"):
+					var pitch: bool = action.move == "attack2"
+					var amount: int = ({1: 6, 5: 7, 9: 9} if pitch else {1: 9, 5: 11, 9: 13})[floor_number]
+					var hits := 1 if pitch else 2
+					_check(action.type == "attack" and action.amount == amount and action.target_position == 1
+						and action.get("hits", 1) == hits, "keyed move keeps front target, hit count and exactly one floor multiplier")
+					var before := [party.get_heroes(), enemies.get_enemies(), rng.state, actions.duplicate(true)]
+					var fallback := "res://assets/paper/enemies/clothespin_crusher_attack.png"
+					for catalog in [LiveMovePoseCatalog.new(), MissingCrusherPose.new()]:
+						var pose: Dictionary = catalog.lookup_enemy("clothespin_crusher", action, fallback)
+						_check(pose.get("name") == ("Pin Pitch" if pitch else "Wringer") and pose.get("pose") == action.move
+							and pose.get("named_art") == "res://assets/paper/enemies/clothespin_crusher_%s.png" % action.move
+							and pose.get("art") == (pose.get("named_art") if pose.get("art_available") else fallback),
+							"authored pose names resolve with safe art fallback")
+						if catalog is MissingCrusherPose:
+							_check(pose.get("fallback_used") == true and pose.get("art") == fallback,
+								"forced unavailable art retains named receipt and established fallback")
+					_check([party.get_heroes(), enemies.get_enemies(), rng.state, scheduler.get_intents()] == before,
+						"repeated intent and pose previews consume no RNG or actor state")
+					for invalid in ["attack4", "", 2, null, "stale_amount", "bad_hits", "missing_move"]:
+						var bad := action.duplicate(true)
+						if invalid is String and invalid == "stale_amount":
+							bad.amount += 1
+						elif invalid is String and invalid == "bad_hits":
+							bad.hits = 3
+						elif invalid is String and invalid == "missing_move":
+							bad.erase("move")
+						else:
+							bad.move = invalid
+							_check(LiveMovePoseCatalog.new().lookup_enemy("clothespin_crusher", bad, fallback).is_empty(),
+								"invalid pose metadata rejected")
+						_check(CombatEnemyPhase.new().execute_phase(party, enemies, [bad], null, true) == {"ok": false, "events": []}
+							and [party.get_heroes(), enemies.get_enemies(), rng.state, scheduler.get_intents()] == before,
+							"invalid move phase rejects atomically without RNG mutation")
+					# Multi-hit amounts are total damage, split into two packets.
+					for block in [3, amount / hits + 1, amount + 2]:
+						_check(party.gain_block(1, block), "front recipient gains actual Block")
+						var result := CombatEnemyPhase.new().execute_phase(party, enemies, [action], null, true)
+						var expected_events: Array = []
+						for hit in range(hits):
+							expected_events.append({"type": "attack", "enemy_position": source, "target_position": 1, "move": action.move, "applied": true})
+						_check(result == {"ok": true, "events": expected_events}, "exact single/two-hit attack receipts")
+						_check(party.get_hero(1).hp == 40 - maxi(0, amount - block)
+							and party.get_hero(1).block == maxi(0, block - amount)
+							and [party.get_hero(2), party.get_hero(3)] == [before[0][1], before[0][2]]
+							and enemies.get_enemies() == before[1] and rng.state == before[2],
+							"each packet spends Block before HP, with no collateral, enemy mutation or RNG draw")
+						trace.append([action.duplicate(true), result, party.get_heroes(), rng.state])
+						party._heroes[0].hp = 40
+						party._heroes[0].block = 0
+					seen[action.move] = true
+				if seen.has("attack2") and seen.has("attack3"):
+					break
+				_check(scheduler.advance_turn(), "seeded routed weighted scheduler advances")
+			_check(seen.has("attack2") and seen.has("attack3"), "both named moves actually selected from complete authored alternatives")
+			traces.append(trace)
+		_check(not traces[0].is_empty() and traces[0] == traces[1], "same seed replays announcements, receipts, HP/Block and RNG")
+
+## Exact authored identities and alternatives; Crusher's route is exercised above.
 func _crusher_harrier_doll_expected() -> Dictionary:
 	return {
 		"clothespin_crusher": {"id": "clothespin_crusher", "name": "Clothespin Crusher",
@@ -2414,7 +2557,9 @@ func _crusher_harrier_doll_expected() -> Dictionary:
 			"intent": {"target": "front", "actions": [
 				{"type": "snip_block", "amount": 0, "weight": 2},
 				{"type": "attack", "amount": 8, "weight": 3},
-				{"type": "block", "amount": 7, "weight": 1}]}},
+				{"type": "block", "amount": 7, "weight": 1},
+				{"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 9, "hits": 2, "move": "attack3", "weight": 1}]}},
 		"crochet_hook_harrier": {"id": "crochet_hook_harrier",
 			"name": "Crochet Hook Harrier",
 			"max_hp": 26, "art_path": "res://assets/paper/enemies/crochet_hook_harrier.png",

@@ -1270,6 +1270,11 @@ func _plain_strike_cases() -> void:
 				deck.combat_state.player_turn_active = true
 				var party := CombatParty.new(app.party.get_heroes())
 				party._heroes = app.party.get_heroes()
+				# Independent defender snapshots from the real routed Fight, before either
+				# ordered half hits. Retaliation reads the pre-hit Thorns value.
+				var pre_hit_targets: Dictionary = {}
+				pre_hit_targets[a] = app.enemies.get_enemy(a)
+				pre_hit_targets[b] = app.enemies.get_enemy(b)
 				var enemies := CombatEnemies.new(app.enemies.get_enemies())
 				enemies._enemies = app.enemies.get_enemies()
 				var attacks := CombatAttackCards.new()
@@ -1297,6 +1302,23 @@ func _plain_strike_cases() -> void:
 				var before_discard: Array = app.deck.discard_pile.duplicate()
 				var before_energy: int = app.deck.energy
 				var before_warden_block: int = app.party.get_hero(_hero_position("warden")).block
+				var before_warden_hp: int = app.party.get_hero(_hero_position("warden")).hp
+				# Only a confirmed damaging hit from a Warden-owned half can
+				# retaliate against him: Buckle is first, Shield Bash is second
+				# when the Seamstress owns Whip. Read the actual pre-hit defenders.
+				var warden_hits: Array = first.hits if base_id.begins_with("warden_") else second.hits
+				var warden_thorns_absorbed := 0
+				for hit in warden_hits:
+					var pre_hit: Dictionary = pre_hit_targets.get(int(hit.position), {})
+					_check(not pre_hit.is_empty() and int(pre_hit.get("hp", 0)) > 0
+						and int(hit.damage) > 0,
+						"Warden half has a confirmed damaging hit against a living routed enemy")
+					if int(hit.damage) > 0:
+						warden_thorns_absorbed += int(pre_hit.get("thorns", 0))
+				_check(warden_thorns_absorbed >= 0
+					and before_warden_block + (printed_block if base_id.begins_with("warden_") else 0)
+						>= warden_thorns_absorbed,
+					"Warden has enough Block to absorb every confirmed pre-hit Thorns retaliation")
 				var stale = presenter._bindings[_panel(id)].input
 				await _arm(id, keyboard)
 				await _pick(a, "enemy", keyboard)
@@ -1313,8 +1335,10 @@ func _plain_strike_cases() -> void:
 					and app.deck.discard_pile == before_discard + [id],
 					"one capped composite energy debit, no duplicate commit, one discard")
 				_check(app.party.get_hero(_hero_position("warden")).block ==
-					before_warden_block + (printed_block if base_id.begins_with("warden_") else 0),
-					"live Warden Block obeys printed additive gain")
+					before_warden_block + (printed_block if base_id.begins_with("warden_") else 0)
+						- warden_thorns_absorbed
+					and app.party.get_hero(_hero_position("warden")).hp == before_warden_hp,
+					"live Warden Block equals printed gain less confirmed Thorns, with no HP loss")
 				var after := _complete_state()
 				await _key(KEY_1)
 				await _key(KEY_2)

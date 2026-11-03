@@ -81,19 +81,15 @@ func _initialize() -> void:
 const EVENT_AFFORDABILITY_WITNESS_SEED := 604
 
 
-## The Guard Ragling's authored shield rush (a three-way weighted intent instead
-## of one passive Block) spends one new run-RNG draw per fight, which shifted the
-## seeded reward and hand stream of the fixed 50-seed cohort: the sample still
-## offers these authored cards but no longer acquires-and-plays each of them.
-## Every lost offer -> acquisition -> played-hand chain is asserted by its own
-## pinned real run instead (same strategy and real services, no injected
-## outcomes, no fabricated offers). Each seed is a genuine completed run that
-## picks the card from a real three-card reward offer and later plays it from a
-## held hand with its authored receipt.
+## Routed encounter and authored enemy-action RNG changes shifted the independent
+## reward/hand streams. Pin three actual complete runs that select each named
+## Seamstress card from a three-card reward, acquire it, play it from the held
+## hand with a successful receipt and replay identically. The protected
+## 50-seed cohort, strategy and its outcome thresholds remain unchanged.
 const EARNED_CARD_WITNESS_SEEDS := {
-	"seamstress_tailors_trance": 114,
-	"seamstress_snag": 33,
-	"seamstress_blanket_stitch": 90,
+	"seamstress_tailors_trance": 615,
+	"seamstress_snag": 600,
+	"seamstress_blanket_stitch": 669,
 }
 ## Cards whose genuine offer/acquire/play chain the pinned witnesses proved.
 var witnessed_cards := {}
