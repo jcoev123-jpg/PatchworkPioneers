@@ -26,7 +26,7 @@ const CATALOG_PATHS := [
     "res://data/enemies/m04_elites.json",
 ]
 ## These catalogs define the incumbent split. The authenticated tough-catalog
-## Ram is appended only to the high band; Boss/Elite catalogs stay excluded.
+## Ram and Wraith are appended only to the high band; Boss/Elite catalogs stay excluded.
 const BAND_CATALOG_PATHS := [
     "res://data/enemies/starter_enemies.json",
     "res://data/enemies/run_enemies.json",
@@ -328,11 +328,14 @@ static func _floor_band_material(band_pools: Variant, tough_catalog_text: Varian
     if tough.is_empty():
         return {"ok": false}
     var ram := {}
+    var wraith := {}
     for record in tough:
         if not _is_playable_normal(record):
             return {"ok": false}
         if record["id"] == "spindle_ram":
             ram = record
+        if record["id"] == "razor_ribbon_wraith":
+            wraith = record
     var authentic := {
         "id": "spindle_ram", "name": "Spindle Ram", "max_hp": 30, "charge": true,
         "art_path": "res://assets/paper/enemies/spindle_ram.png",
@@ -347,14 +350,28 @@ static func _floor_band_material(band_pools: Variant, tough_catalog_text: Varian
     var expected := RunTypedBattleRoster._parse_catalog_text(JSON.stringify([authentic]))
     if ram != expected[0]:
         return {"ok": false}
-    if records.has("spindle_ram") and records["spindle_ram"] != ram:
+    var authentic_wraith := {
+        "id": "razor_ribbon_wraith", "name": "Razor Ribbon Wraith", "max_hp": 27,
+        "revive_once": true, "art_path": "res://assets/paper/enemies/razor_ribbon_wraith.png",
+        "intent": {"target": "lowest_living_hp", "actions": [
+            {"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
+            {"type": "debuff", "status": "exposed", "amount": 1, "weight": 1},
+            {"type": "attack", "amount": 9, "weight": 3},
+        ]},
+    }
+    var expected_wraith := RunTypedBattleRoster._parse_catalog_text(JSON.stringify([authentic_wraith]))
+    if wraith != expected_wraith[0]:
         return {"ok": false}
-    for band in [RunV3FloorBandRoster.BAND_LOW, RunV3FloorBandRoster.BAND_MID]:
-        if pools[band].has("spindle_ram"):
+    for record in [ram, wraith]:
+        var id: String = record["id"]
+        if records.has(id) and records[id] != record:
             return {"ok": false}
-    records["spindle_ram"] = ram.duplicate(true)
-    if not pools[RunV3FloorBandRoster.BAND_HIGH].has("spindle_ram"):
-        pools[RunV3FloorBandRoster.BAND_HIGH].append("spindle_ram")
+        for band in [RunV3FloorBandRoster.BAND_LOW, RunV3FloorBandRoster.BAND_MID]:
+            if pools[band].has(id):
+                return {"ok": false}
+        records[id] = record.duplicate(true)
+        if not pools[RunV3FloorBandRoster.BAND_HIGH].has(id):
+            pools[RunV3FloorBandRoster.BAND_HIGH].append(id)
     if band_pools != null:
         if not band_pools is Dictionary:
             return {"ok": false}

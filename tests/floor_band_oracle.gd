@@ -3,7 +3,7 @@ extends RefCounted
 ## It reads only the authored ordinary normal-enemy catalogs and restates the
 ## documented live band rule: order the actors by authored max HP and then ID,
 ## then split them into three consecutive bands with the larger remainder first.
-## Append only the tough-catalog Ram to the high band if not already present.
+## Append only the tough-catalog Ram and Wraith to the high band if not already present.
 ## Never import the entry service's own band helpers here.
 
 const NORMAL_CATALOGS := [
@@ -37,7 +37,7 @@ static func records() -> Dictionary:
 	var tough: Array = JSON.parse_string(FileAccess.get_file_as_string(
 		"res://data/enemies/v3_tough_normals.json"))
 	for record in tough:
-		if record.get("id") == "spindle_ram":
+		if record.get("id") in ["spindle_ram", "razor_ribbon_wraith"]:
 			var copy: Dictionary = record.duplicate(true)
 			copy.max_hp = int(copy.max_hp)
 			_records[copy.id] = copy
@@ -68,8 +68,9 @@ static func bands() -> Dictionary:
 		"5-8": ids.slice(low_end, mid_end),
 		"9-11": ids.slice(mid_end, ids.size()),
 	}
-	if not _bands["9-11"].has("spindle_ram"):
-		_bands["9-11"].append("spindle_ram")
+	for id in ["spindle_ram", "razor_ribbon_wraith"]:
+		if not _bands["9-11"].has(id):
+			_bands["9-11"].append(id)
 	return _bands
 
 

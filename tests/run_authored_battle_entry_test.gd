@@ -199,10 +199,31 @@ func _test_ram_authentication() -> void:
     var direction: Array = raw.duplicate(true)
     direction[ram_index].intent.actions[0].direction = -1
     invalid.append(JSON.stringify(direction))
+    var wraith: Dictionary = raw.filter(func(r): return r.id == "razor_ribbon_wraith")[0]
+    var wraith_index := raw.find(wraith)
+    invalid.append(JSON.stringify(raw.filter(func(r): return r.id != "razor_ribbon_wraith")))
+    invalid.append(JSON.stringify(raw + [wraith]))
+    for field in ["max_hp", "revive_once", "name", "art_path"]:
+        var forged: Array = raw.duplicate(true)
+        forged[wraith_index][field] = 28 if field == "max_hp" else (false if field == "revive_once" else "forged")
+        invalid.append(JSON.stringify(forged))
+    for field in ["target", "actions"]:
+        var forged: Array = raw.duplicate(true)
+        forged[wraith_index].intent[field] = "front" if field == "target" else []
+        invalid.append(JSON.stringify(forged))
+    for index in range(3):
+        for field in ["amount", "weight", "type"]:
+            var forged: Array = raw.duplicate(true)
+            forged[wraith_index].intent.actions[index][field] = "block" if field == "type" else 99
+            invalid.append(JSON.stringify(forged))
+    for index in range(2):
+        var forged: Array = raw.duplicate(true)
+        forged[wraith_index].intent.actions[index].status = "weak"
+        invalid.append(JSON.stringify(forged))
     for text in invalid:
         var before := _snap(map, rng, selector)
         _check(RunAuthoredBattleEntry.new()._entry_from_data(map, rng, selector,
-            registry, null, text) == {"success": false}, "missing/duplicate/forged Ram fails closed")
+            registry, null, text) == {"success": false}, "missing/duplicate/forged Ram or Wraith fails closed")
         _check(_snap(map, rng, selector) == before, "invalid tough catalog spends no RNG/cache/map state")
     var good := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
     _check(good.get("success", false), "authentic retry succeeds after catalog rejections")
@@ -210,6 +231,12 @@ func _test_ram_authentication() -> void:
     _check(RunAuthoredBattleEntry.new()._entry_from_data(map, rng, selector,
         registry, null, "[]") == {"success": false} and _snap(map, rng, selector) == before,
         "cached entry still authenticates the catalog without mutation")
+    for text in invalid:
+        var cached_before := _snap(map, rng, selector)
+        _check(RunAuthoredBattleEntry.new()._entry_from_data(map, rng, selector,
+            registry, null, text) == {"success": false}
+            and _snap(map, rng, selector) == cached_before,
+            "cached entry reauthenticates each missing/duplicate/altered source atomically")
     var extra: Array = raw.duplicate(true)
     extra.append({"id": "unselected_tough", "name": "Unselected", "max_hp": 99,
         "art_path": "res://assets/paper/enemies/spindle_ram.png",
@@ -239,7 +266,7 @@ func _normal_records() -> Dictionary:
             _normal_records_cache[copy["id"]] = copy
     for record in JSON.parse_string(FileAccess.get_file_as_string(
             "res://data/enemies/v3_tough_normals.json")):
-        if record.get("id") == "spindle_ram":
+        if record.get("id") in ["spindle_ram", "razor_ribbon_wraith"]:
             var copy: Dictionary = record.duplicate(true)
             copy.max_hp = int(copy.max_hp)
             _normal_records_cache[copy.id] = copy
@@ -274,8 +301,9 @@ func _floor_bands() -> Dictionary:
         "5-8": ids.slice(low_end, mid_end),
         "9-11": ids.slice(mid_end, ids.size()),
     }
-    if not _floor_bands_cache["9-11"].has("spindle_ram"):
-        _floor_bands_cache["9-11"].append("spindle_ram")
+    for id in ["spindle_ram", "razor_ribbon_wraith"]:
+        if not _floor_bands_cache["9-11"].has(id):
+            _floor_bands_cache["9-11"].append(id)
     return _floor_bands_cache
 
 
@@ -1870,8 +1898,9 @@ func _test_new_tough_normals_in_real_fights() -> void:
         for enemy_id in _floor_bands()[key]:
             _check(material.pools[key].has(enemy_id),
                 "independent incumbent band retains " + key + "/" + enemy_id)
-    _check(not material.pools["1-4"].has("spindle_ram")
-        and not material.pools["5-8"].has("spindle_ram"), "Ram is high-band only")
+    for id in wanted:
+        _check(not material.pools["1-4"].has(id) and not material.pools["5-8"].has(id)
+            and material.pools["9-11"].has(id), id + " is high-band only")
     for id in wanted:
         var band := ""
         for key in BAND_KEYS:
@@ -1945,14 +1974,24 @@ func _test_new_tough_normals_in_real_fights() -> void:
             _check(_floor_bands()[_band_key(floor_number)].has(id),
                 "real seed %d drew %s from the floor's own HP-sorted band"
                     % [value, id])
-            if id == "spindle_ram":
+            if id in wanted:
                 var before := _snap(map, rng, selector)
                 entered.enemies._enemies[slot - 1].intent.actions[2].amount = 999
                 var again := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
                 _check(again.get("success", false) and _snap(map, rng, selector) == before
-                    and again.enemies.get_enemy(slot).intent.actions[2].amount == 8
+                    and again.enemies.get_enemy(slot).intent.actions[2].amount == (8 if id == "spindle_ram" else 9)
                     and again.enemies.get_enemies().map(func(e): return e.id) == group,
-                    "cached late Ram re-entry validates and restores detached authored actors without reroll")
+                    "cached late Ram/Wraith re-entry validates and restores detached authored actors without reroll")
+                if id == "razor_ribbon_wraith":
+                    var valid_cache := selector._selected.duplicate(true)
+                    var current_id: String = map.get_current_node_id()
+                    var other_slot := 0 if slot != 1 else 1
+                    selector._selected[current_id].enemy_ids[other_slot] = id
+                    _reject(map, rng, selector, _registry(), "cached late group repeats Wraith", true)
+                    selector._selected = valid_cache
+                    _check(RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector).get("success", false)
+                        and _snap(map, rng, selector) == before,
+                        "restored Wraith cache retries without RNG or state changes")
     for id in wanted:
         _check(found.has(id), "a genuine seeded route admits live normal " + id)
 

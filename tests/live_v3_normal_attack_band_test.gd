@@ -61,7 +61,7 @@ func _target_path(map: RunMap, current: String, path: Array, middle: bool) -> Ar
 const ROUTE_SKIP := 4
 
 
-func _seeded_route() -> Dictionary:
+func _seeded_route(skip_routes: int = ROUTE_SKIP) -> Dictionary:
 	var skipped := 0
 	for value in range(1, 4001):
 		var rng := RandomNumberGenerator.new()
@@ -73,7 +73,7 @@ func _seeded_route() -> Dictionary:
 				continue
 			var path := _target_path(map, id, [], false)
 			if not path.is_empty():
-				if skipped < ROUTE_SKIP:
+				if skipped < skip_routes:
 					skipped += 1
 					break
 				return {"seed": value, "path": path}
@@ -355,7 +355,117 @@ func _ram_phases() -> Array:
 	return trace
 
 
-func _trace_route(fixture: Dictionary, ram_witness: bool = false) -> Array:
+func _wraith_phases() -> Array:
+	var actors: Array = app.enemies.get_enemies()
+	var position := 0
+	for actor in actors:
+		if actor.id == "razor_ribbon_wraith":
+			position = actor.position
+	_check(position > 0 and actors.size() >= 2 and actors.size() <= 3,
+		"genuine late route admits Wraith in an ordinary two-or-three foe Fight")
+	if position == 0:
+		return []
+	var trace: Array = [_mounted_state()]
+	var wraith: Dictionary = app.enemies.get_enemy(position)
+	_check(wraith.hp == 40 and wraith.max_hp == 40 and wraith.revive_once == true
+		and not wraith.get("revived", false) and wraith.intent.target == "lowest_living_hp"
+		and _normalized_numbers(wraith.intent.actions) == [
+			{"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
+			{"type": "debuff", "status": "exposed", "amount": 1, "weight": 1},
+			{"type": "attack", "amount": 13, "weight": 3}],
+		"Wraith scales HP 27 to 40 and Attack 9 to 13, preserving traits and 2:1:3 weights")
+	for actor in actors:
+		if actor.position != position:
+			_check(app.enemies.apply_damage(actor.position, 99999), "isolate the authentic routed Wraith")
+	var witnessed := {}
+	var attacks := 0
+	for turn in range(50):
+		if witnessed.has("bleed") and witnessed.has("exposed") and attacks >= 2:
+			break
+		_check(not app._battle_closed and app.deck.turn_active, "Wraith witness has a playable real turn")
+		if app._battle_closed or not app.deck.turn_active:
+			break
+		var action: Dictionary = app.enemy_intents.get_intents()[position - 1]
+		var target: int = action.target_position
+		var lowest: Dictionary = app.party.get_hero(1)
+		for hero in app.party.get_heroes():
+			if hero.hp > 0 and (lowest.hp <= 0 or hero.hp < lowest.hp):
+				lowest = hero
+		_check(target == lowest.position, "Wraith independently announces the actual lowest living HP hero")
+		if target > 1:
+			witnessed.low_target = true
+		# Keep the announced target uniquely lowest while clearing prior status
+		# effects, so each real action's result has an independent exact expectation.
+		for hero in app.party._heroes:
+			hero.hp = 20 if hero.position == target else hero.max_hp
+			hero.block = 0
+			hero.statuses = {}
+		var shield := 3 if action.type == "attack" and attacks > 0 else 0
+		if shield > 0:
+			_check(app.party.gain_block(target, shield), "real Block mitigates Wraith's second attack")
+		app._refresh_enemy_roster()
+		var badge: LiveEnemyIntentBadge = app.get_node("LiveEnemyRoster")._badges[position - 1]
+		_check(badge.is_visible_in_tree() and badge.source_position == position
+			and badge.intent_type == action.type and badge.amount == action.amount
+			and badge.target_position == target and badge.tooltip_text.contains(str(action.amount)),
+			"visible Wraith cue matches source, action, amount and lowest-HP target")
+		if action.type == "debuff":
+			_check(badge.action_status == action.status and badge.readable_text.contains(action.status.capitalize()),
+				"visible Wraith debuff names its authentic status")
+		trace.append([action.duplicate(true), _mounted_state()])
+		await _click(app.end_turn_button)
+		for hero in app.party.get_heroes():
+			if hero.position != target:
+				_check(hero.hp == hero.max_hp and hero.get("statuses", {}).is_empty(),
+					"Wraith affects only the uniquely lowest living HP hero")
+		var affected: Dictionary = app.party.get_hero(target)
+		if action.type == "attack":
+			_check(action.amount == 13 and affected.hp == 20 - (13 - shield) and affected.block == 0,
+				"real Wraith Attack 13 deals exact unblocked or Block-mitigated damage")
+			attacks += 1
+		else:
+			_check(action.type == "debuff" and action.status in ["bleed", "exposed"]
+				and action.amount == (2 if action.status == "bleed" else 1)
+				and affected.hp == 20 and affected.get("statuses", {}).get(action.status, 0) == action.amount,
+				"real weighted Bleed 2 and Exposed 1 resolve unchanged on lowest-HP hero")
+			witnessed[action.status] = true
+		trace.append(_mounted_state())
+	_check(witnessed.has("bleed") and witnessed.has("exposed") and witnessed.has("low_target") and attacks >= 2,
+		"non-vacuous Wraith trace resolves both weighted debuffs and two scaled attacks")
+	var before: Dictionary = app.enemies.get_enemy(position)
+	var rng_before: int = app.run_rng.state
+	_check(app.enemies.apply_damage(position, 99999), "first lethal hit reaches actual routed Wraith")
+	app._observe_battle_result()
+	app._refresh_enemy_roster()
+	var revived: Dictionary = app.enemies.get_enemy(position)
+	_check(revived.hp == 20 and revived.max_hp == 40 and revived.revived == true
+		and revived.position == position and revived.intent == before.intent
+		and not app._battle_closed and app.battle_result.get_outcome() == CombatBattleResult.ACTIVE
+		and app.run_rng.state == rng_before,
+		"first lethal revives once at half scaled HP in the same slot without victory or RNG")
+	trace.append(_mounted_state())
+	for hero in app.party._heroes:
+		hero.hp = hero.max_hp
+		hero.block = 0
+		hero.statuses = {}
+	_check(app.enemy_intents.get_intents()[position - 1].enemy_position == position,
+		"revived Wraith retains a real bound announcement")
+	await _click(app.end_turn_button)
+	_check(app.enemies.get_enemy(position).hp == 20 and not app._battle_closed and app.deck.turn_active,
+		"revived routed Wraith takes another real enemy phase and leaves a playable turn")
+	trace.append(_mounted_state())
+	_check(app.enemies.apply_damage(position, 99999), "second lethal hit reaches revived Wraith")
+	app._observe_battle_result()
+	await _frames()
+	_check(app.enemies.is_slain(position) and app.enemies.get_enemy(position).hp == 0
+		and app.enemies.get_enemy(position).revived == true and app._battle_closed
+		and app.battle_result.get_outcome() == CombatBattleResult.VICTORY,
+		"second lethal is final and genuine routed victory opens only after it")
+	trace.append(_mounted_state())
+	return trace
+
+
+func _trace_route(fixture: Dictionary, witness: String = "") -> Array:
 	app.run_seed = fixture.seed
 	await _click(app.route_button)
 	var first_entry: Dictionary = {}
@@ -382,8 +492,8 @@ func _trace_route(fixture: Dictionary, ram_witness: bool = false) -> Array:
 		if first_entry.is_empty():
 			first_entry = _mounted_state()
 		if node.type == "Fight":
-			if floor_number >= 9 and ram_witness:
-				return await _ram_phases()
+			if floor_number >= 9 and not witness.is_empty():
+				return await _ram_phases() if witness == "ram" else await _wraith_phases()
 			await _actual_attack_phases(floor_number)
 			if floor_number >= 9:
 				break
@@ -438,9 +548,26 @@ func _run() -> void:
 			await _frames()
 			presenter = app.get_node("LiveAttackPreview")
 			wasp_blind = false
-			traces.append(await _trace_route(fixture, true))
+			traces.append(await _trace_route(fixture, "ram"))
 		_check(not traces[0].is_empty() and traces[0] == traces[1],
 			"same-seed genuine late Ram entry, actions, damage, hand and RNG replay exactly")
+	# The second band-covering generated route (seed 75) reaches a Wraith;
+	# retain the earlier route's independent Ram/Wasp/band witnesses above.
+	var wraith_fixture := _seeded_route(1)
+	_check(not wraith_fixture.is_empty(), "bounded generated route search supplies a Wraith fixture")
+	if not wraith_fixture.is_empty():
+		var traces: Array = []
+		for replay in range(2):
+			app.queue_free()
+			await _frames()
+			app = load("res://scenes/app.tscn").instantiate()
+			root.add_child(app)
+			await _frames()
+			presenter = app.get_node("LiveAttackPreview")
+			traces.append(await _trace_route(wraith_fixture, "wraith"))
+		_check(not traces[0].is_empty() and traces[0] == traces[1],
+			"same-seed genuine Wraith entry, weighted effects, revival, hand and RNG replay exactly")
+
 	if failures.is_empty():
 		print("live_v3_normal_attack_band_test: PASS (", checks, " checks)")
 	else:
