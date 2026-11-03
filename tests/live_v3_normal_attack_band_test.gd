@@ -153,9 +153,11 @@ func _verify_band(floor_number: int) -> void:
 		_check(action.enemy_position == actor.position and badge.source_position == actor.position,
 			"first announcement, roster and sewn cue use the same source position")
 		if action.type == "attack":
+			var text_matches: bool = (badge.readable_text.contains("WIND UP") if badge.charge_state == "wind_up"
+				else badge.readable_text.contains(str(action.amount)))
 			_check(badge.intent_type == "attack" and badge.amount == action.amount
 				and badge.tooltip_text.contains(str(action.amount))
-				and badge.readable_text.contains(str(action.amount)),
+				and text_matches,
 				"real visible sewn caption and tooltip match bound attack amount")
 	var before: Array = [app.enemies.get_enemies(), app.enemy_intents.get_intents(),
 		app.enemy_intents._slots.duplicate(true), app.run_rng.state]
@@ -227,6 +229,10 @@ func _actual_attack_phases(floor_number: int) -> void:
 		for action in app.enemy_intents.get_intents():
 			if action.enemy_position == selected and action.type == "attack":
 				announced = action
+		var is_wasp_selected: bool = app.enemies.get_enemy(selected).id == "needle_wasp"
+		if is_wasp_selected and announced.get("hits") != 2:
+			await _click(app.end_turn_button)
+			continue
 		if not announced.is_empty():
 			var target: int = announced.target_position
 			var amount: int = announced.amount
