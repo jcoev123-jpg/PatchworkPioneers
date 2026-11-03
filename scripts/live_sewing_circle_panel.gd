@@ -733,7 +733,7 @@ func _option_row(option: Dictionary, upgrade: bool) -> Button:
 	else:
 		detail = "%s | %s\nStitch: %d scraps for a different-owner pair. Both owners alive and at their legal FROM positions." % [
 			stage, _card_detail(before, option.index), RunRestStitchCards.SCRAP_COST]
-	var height := 116
+	var height := 150
 	var button := _button(caption, Vector2.ZERO, Vector2(414, height))
 	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	button.tooltip_text = detail
@@ -751,8 +751,8 @@ func _option_row(option: Dictionary, upgrade: bool) -> Button:
 	stripe.focus_mode = Control.FOCUS_NONE
 	button.add_child(stripe)
 	_card_label(button, "%s | copy #%d" % [owner.capitalize(), option.index + 1],
-		Vector2(24, 8), Vector2(292, 22), 16)
-	_card_label(button, name, Vector2(24, 32), Vector2(276, 37), 17)
+		Vector2(24, 7), Vector2(292, 26), 18)
+	_card_label(button, name, Vector2(24, 34), Vector2(276, 40), 18)
 	var coin := Panel.new()
 	coin.position = Vector2(306, 34)
 	coin.size = Vector2(98, 32)
@@ -763,15 +763,15 @@ func _option_row(option: Dictionary, upgrade: bool) -> Button:
 	coin.add_theme_stylebox_override("panel", coin_style)
 	button.add_child(coin)
 	var cost_label := _card_label(coin, "%d energy" % option.get("cost", 0),
-		Vector2(2, 3), Vector2(94, 25), 16)
+		Vector2(4, 2), Vector2(90, 28), 18)
 	cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	cost_label.add_theme_color_override("font_color", INK)
 	if upgrade:
 		_card_label(button, "Free upgrade: %s | %d energy" % [after.display_name, after.cost],
-			Vector2(24, 72), Vector2(375, 40), 16)
+			Vector2(24, 78), Vector2(380, 67), 18)
 	else:
 		_card_label(button, "%s | Stitch pair: %d scraps" % [stage, RunRestStitchCards.SCRAP_COST],
-			Vector2(24, 72), Vector2(375, 40), 16)
+			Vector2(24, 78), Vector2(380, 67), 18)
 	button.set_meta("option", option.duplicate(true))
 	button.set_meta("selected", false)
 	button.set_meta("normal_style", button.get_theme_stylebox("normal"))
