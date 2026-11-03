@@ -86,6 +86,8 @@ func _verify_band(floor_number: int) -> void:
 	var original_texts: Dictionary = {}
 	for path in RunAuthoredBattleEntry.BAND_CATALOG_PATHS:
 		original_texts[path] = FileAccess.get_file_as_string(path)
+	original_texts[RunAuthoredBattleEntry.TOUGH_NORMALS_PATH] = FileAccess.get_file_as_string(
+		RunAuthoredBattleEntry.TOUGH_NORMALS_PATH)
 	var actors: Array[Dictionary] = app.enemies.get_enemies()
 	var actions: Array[Dictionary] = app.enemy_intents.get_intents()
 	var roster = app.get_node("LiveEnemyRoster")
@@ -280,6 +282,130 @@ func _actual_attack_phases(floor_number: int) -> void:
 		phase_bands[1 if floor_number <= 4 else (5 if floor_number <= 8 else 9)] = true
 
 
+func _ram_phases() -> Array:
+	var actors: Array = app.enemies.get_enemies()
+	var ram_slot := 0
+	for actor in actors:
+		if actor.id == "spindle_ram":
+			ram_slot = actor.position
+	_check(ram_slot > 0 and actors.size() >= 2 and actors.size() <= 3,
+		"genuine late route admits Ram in an ordinary two-or-three foe Fight")
+	if ram_slot == 0:
+		return []
+	var trace: Array = [_mounted_state()]
+	var ram: Dictionary = app.enemies.get_enemy(ram_slot)
+	_check(ram.max_hp == 45 and ram.hp == 45 and ram.charge == true
+		and ram.intent.target == "front" and ram.intent.actions[2].amount == 12,
+		"Ram keeps charge/front targeting with existing high-floor HP 45 and base attack 12")
+	for actor in actors:
+		if actor.position != ram_slot:
+			_check(app.enemies.apply_damage(actor.position, 99999), "isolate the authentic routed Ram")
+	var witnessed := {}
+	var strikes := 0
+	for turn in range(50):
+		if witnessed.has("shove") and witnessed.has("block") and strikes >= 2:
+			break
+		_check(not app._battle_closed and app.deck.turn_active, "Ram witness has a playable real turn")
+		if app._battle_closed or not app.deck.turn_active:
+			break
+		for hero in app.party._heroes:
+			hero.hp = hero.max_hp
+			hero.block = 0
+			hero.statuses = {}
+		var action: Dictionary = app.enemy_intents.get_intents()[ram_slot - 1]
+		var armed: bool = app.enemies.get_enemy(ram_slot).has("charge_pending")
+		var shield := 3 if armed and strikes > 0 else 0
+		if shield > 0:
+			_check(app.party.gain_block(action.target_position, shield), "real Block mitigates the second charge")
+		app._refresh_enemy_roster()
+		var badge: LiveEnemyIntentBadge = app.get_node("LiveEnemyRoster")._badges[ram_slot - 1]
+		_check(badge.is_visible_in_tree() and badge.source_position == ram_slot
+			and badge.intent_type == action.type and badge.amount == action.amount,
+			"mounted Ram badge is visible and matches the authoritative source/action/amount")
+		if action.type == "attack":
+			_check(action.amount == (30 if armed else 0)
+				and badge.charge_state == ("strike" if armed else "wind_up")
+				and badge.tooltip_text.contains("30"), "mounted wind-up/strike shows floor(12 * 2.5) = 30")
+		var heroes: Array = app.party.get_heroes()
+		var block_before: int = app.enemies.get_enemy(ram_slot).block
+		trace.append([action.duplicate(true), heroes, app.enemies.get_enemies(), app.run_rng.state])
+		await _click(app.end_turn_button)
+		if action.type == "shove":
+			_check(action.target_position == 1 and action.direction == 1
+				and app.party.get_hero(1).id == heroes[1].id
+				and app.party.get_hero(2).id == heroes[0].id, "authored front shove swaps the actual front and middle heroes")
+			witnessed.shove = true
+		elif action.type == "block":
+			_check(action.amount == 7 and app.enemies.get_enemy(ram_slot).block == block_before + 7,
+				"authored Block 7 resolves on the real Ram")
+			witnessed.block = true
+		elif action.type == "attack":
+			var hero: Dictionary = app.party.get_hero(action.target_position)
+			_check(hero.hp == heroes[action.target_position - 1].hp - maxi(0, action.amount - shield),
+				"real charge phase deals exactly the displayed damage after Block")
+			_check(app.enemies.get_enemy(ram_slot).has("charge_pending") != armed,
+				"wind-up arms and the next real strike consumes the actor-owned latch")
+			if armed:
+				strikes += 1
+			else:
+				witnessed.wind_up = true
+		trace.append(_mounted_state())
+	_check(witnessed.has("shove") and witnessed.has("block") and witnessed.has("wind_up")
+		and strikes >= 2, "non-vacuous Ram trace resolves shove, Block, wind-up and two scaled strikes")
+	return trace
+
+
+func _trace_route(fixture: Dictionary, ram_witness: bool = false) -> Array:
+	app.run_seed = fixture.seed
+	await _click(app.route_button)
+	var first_entry: Dictionary = {}
+	for id in fixture.path:
+		var node: Dictionary = app.run_map.get_node(id)
+		if node.type not in ["Fight", "Elite"]:
+			await _visit_path([id], false)
+			continue
+		var expected_entry := _oracle(id)
+		_check(not expected_entry.is_empty(), "every test battle has independent entry oracle")
+		seed(67713)
+		var global_expected := randi()
+		seed(67713)
+		await _click(_route_action(id))
+		_check(app.run_map.get_current_node_id() == id and app.enemies != null
+			and app.enemy_intents.is_bound() and app.round_flow._started,
+			"genuine route click creates bound playable battle")
+		_check(_mounted_state() == expected_entry,
+			"one seeded encounter, roster draw, first intents and five-card hand match oracle")
+		_check(randi() == global_expected, "real Fight entry leaves global RNG untouched")
+		var floor_number: int = node.floor
+		if node.type == "Fight":
+			_verify_band(floor_number)
+		if first_entry.is_empty():
+			first_entry = _mounted_state()
+		if node.type == "Fight":
+			if floor_number >= 9 and ram_witness:
+				return await _ram_phases()
+			await _actual_attack_phases(floor_number)
+			if floor_number >= 9:
+				break
+		for enemy in app.enemies.get_enemies():
+			if enemy.hp > 0:
+				_check(app.enemies.apply_damage(enemy.position, 99999),
+					"authentic battle settles using real enemy HP models")
+		_check(app.enemies.get_enemies().all(func(enemy): return enemy.hp == 0), "all real sources are slain before settlement")
+		app._observe_battle_result()
+		await _frames()
+		_check(app._battle_closed and app.battle_result.get_outcome() == CombatBattleResult.VICTORY
+			and app.reward_buttons.size() >= 4,
+			"completed routed Fight or Elite offers genuine reward and Continue controls")
+		if app.reward_buttons.size() < 4:
+			break
+		await _click(app.reward_buttons[3])
+		await _click(app.continue_button)
+	_check(first_entry.get("hand", []).size() == 5,
+		"actual seeded opening is dealt a five-card playable hand")
+	return []
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -295,57 +421,26 @@ func _run() -> void:
 	var fixture := _seeded_route()
 	_check(not fixture.is_empty(), "bounded seeded RunMap search finds a legal Fight route through three bands")
 	if not fixture.is_empty():
-		app.run_seed = fixture.seed
-		await _click(app.route_button)
-		var first_entry: Dictionary = {}
-		for id in fixture.path:
-			var node: Dictionary = app.run_map.get_node(id)
-			if node.type not in ["Fight", "Elite"]:
-				await _visit_path([id], false)
-				continue
-			var expected_entry := _oracle(id)
-			_check(not expected_entry.is_empty(), "every test battle has independent entry oracle")
-			seed(67713)
-			var global_expected := randi()
-			seed(67713)
-			await _click(_route_action(id))
-			_check(app.run_map.get_current_node_id() == id and app.enemies != null
-				and app.enemy_intents.is_bound() and app.round_flow._started,
-				"genuine route click creates bound playable battle")
-			_check(_mounted_state() == expected_entry,
-				"one seeded encounter, roster draw, first intents and five-card hand match oracle")
-			_check(randi() == global_expected, "real Fight entry leaves global RNG untouched")
-			var floor_number: int = node.floor
-			if node.type == "Fight":
-				_verify_band(floor_number)
-			if first_entry.is_empty():
-				first_entry = _mounted_state()
-			if node.type == "Fight":
-				await _actual_attack_phases(floor_number)
-				if floor_number >= 9:
-					break
-			for enemy in app.enemies.get_enemies():
-				if enemy.hp > 0:
-					_check(app.enemies.apply_damage(enemy.position, 99999),
-						"authentic battle settles using real enemy HP models")
-			_check(app.enemies.get_enemies().all(func(enemy): return enemy.hp == 0), "all real sources are slain before settlement")
-			app._observe_battle_result()
-			await _frames()
-			_check(app._battle_closed and app.battle_result.get_outcome() == CombatBattleResult.VICTORY
-				and app.reward_buttons.size() >= 4,
-				"completed routed Fight or Elite offers genuine reward and Continue controls")
-			if app.reward_buttons.size() < 4:
-				break
-			await _click(app.reward_buttons[3])
-			await _click(app.continue_button)
-		_check(first_entry.get("hand", []).size() == 5,
-			"actual seeded opening is dealt a five-card playable hand")
+		await _trace_route(fixture)
 	_check(seen_bands.has(1) and seen_bands.has(5) and seen_bands.has(9)
 		and eligible_early > 0 and eligible_mid > 0 and eligible_high > 0,
 		"first, middle and high genuine Fights covered, with eligible authored high-band actions")
 	_check(phase_hits >= 6 and phase_bands.has(1) and phase_bands.has(5) and phase_bands.has(9),
 		"actual normal-Fight damage and Block mitigation exercised in every band")
 	_check(wasp_hits == 2 and wasp_blind, "bounded genuine route exercised Wasp two hits and Blind")
+	if not fixture.is_empty():
+		var traces: Array = []
+		for replay in range(2):
+			app.queue_free()
+			await _frames()
+			app = load("res://scenes/app.tscn").instantiate()
+			root.add_child(app)
+			await _frames()
+			presenter = app.get_node("LiveAttackPreview")
+			wasp_blind = false
+			traces.append(await _trace_route(fixture, true))
+		_check(not traces[0].is_empty() and traces[0] == traces[1],
+			"same-seed genuine late Ram entry, actions, damage, hand and RNG replay exactly")
 	if failures.is_empty():
 		print("live_v3_normal_attack_band_test: PASS (", checks, " checks)")
 	else:

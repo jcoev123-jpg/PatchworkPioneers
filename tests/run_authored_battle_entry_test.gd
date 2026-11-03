@@ -14,6 +14,7 @@ const SOURCES := [
     POOLS,
     "res://data/enemies/starter_enemies.json",
     "res://data/enemies/run_enemies.json",
+    "res://data/enemies/v3_tough_normals.json",
     "res://data/enemies/boss.json",
     "res://data/enemies/m04_elites.json",
     "res://data/encounters/starter_attacks.json",
@@ -145,6 +146,7 @@ func _initialize() -> void:
     _test_stale_cached_group_rejection()
     _test_injected_band_pool_rejection()
     _test_wrong_selector_binding()
+    _test_ram_authentication()
     if failures.is_empty():
         print("run_authored_battle_entry_test: PASS (", checks, " checks)")
     else:
@@ -166,6 +168,57 @@ func _rng(value: int) -> RandomNumberGenerator:
     return rng
 
 
+func _test_ram_authentication() -> void:
+    var rng := _rng(FIGHT_SEED)
+    var map := RunMap.new()
+    _check(map.generate(rng), "Ram negatives generate a real map")
+    var opening := _opening(map)
+    _check(not opening.is_empty() and map.choose_node(opening), "Ram negatives commit a real Fight")
+    var selector := RunFightEncounterSelection.new()
+    var registry := _registry()
+    var raw: Array = JSON.parse_string(FileAccess.get_file_as_string(
+        "res://data/enemies/v3_tough_normals.json"))
+    var ram: Dictionary = raw.filter(func(r): return r.id == "spindle_ram")[0]
+    var ram_index := raw.find(ram)
+    var invalid: Array = ["{", "[]", JSON.stringify(raw.filter(
+        func(r): return r.id != "spindle_ram")), JSON.stringify(raw + [ram])]
+    for field in ["max_hp", "charge", "name", "art_path"]:
+        var forged: Array = raw.duplicate(true)
+        var actor: Dictionary = forged.filter(func(r): return r.id == "spindle_ram")[0]
+        actor[field] = 31 if field == "max_hp" else (false if field == "charge" else "forged")
+        invalid.append(JSON.stringify(forged))
+    for field in ["target", "actions"]:
+        var forged: Array = raw.duplicate(true)
+        forged[ram_index].intent[field] = "back" if field == "target" else []
+        invalid.append(JSON.stringify(forged))
+    for index in range(3):
+        for field in ["amount", "weight", "type"]:
+            var forged: Array = raw.duplicate(true)
+            forged[ram_index].intent.actions[index][field] = ("block" if index == 2 else "attack") if field == "type" else 99
+            invalid.append(JSON.stringify(forged))
+    var direction: Array = raw.duplicate(true)
+    direction[ram_index].intent.actions[0].direction = -1
+    invalid.append(JSON.stringify(direction))
+    for text in invalid:
+        var before := _snap(map, rng, selector)
+        _check(RunAuthoredBattleEntry.new()._entry_from_data(map, rng, selector,
+            registry, null, text) == {"success": false}, "missing/duplicate/forged Ram fails closed")
+        _check(_snap(map, rng, selector) == before, "invalid tough catalog spends no RNG/cache/map state")
+    var good := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
+    _check(good.get("success", false), "authentic retry succeeds after catalog rejections")
+    var before := _snap(map, rng, selector)
+    _check(RunAuthoredBattleEntry.new()._entry_from_data(map, rng, selector,
+        registry, null, "[]") == {"success": false} and _snap(map, rng, selector) == before,
+        "cached entry still authenticates the catalog without mutation")
+    var extra: Array = raw.duplicate(true)
+    extra.append({"id": "unselected_tough", "name": "Unselected", "max_hp": 99,
+        "art_path": "res://assets/paper/enemies/spindle_ram.png",
+        "intent": {"target": "front", "actions": [{"type": "attack", "amount": 1, "weight": 1}]}})
+    var material := RunAuthoredBattleEntry._floor_band_material(null, JSON.stringify(extra))
+    _check(material.get("ok", false) and not material.records.has("unselected_tough")
+        and material.pools == _floor_bands(), "valid additional tough entries never enter the Fight lookup or bands")
+
+
 ## The authored normal-enemy records the live floor bands are built from, read
 ## independently from the data files (never from the entry service's helpers).
 func _normal_records() -> Dictionary:
@@ -184,6 +237,12 @@ func _normal_records() -> Dictionary:
             if copy.get("max_hp") is float:
                 copy["max_hp"] = int(copy["max_hp"])
             _normal_records_cache[copy["id"]] = copy
+    for record in JSON.parse_string(FileAccess.get_file_as_string(
+            "res://data/enemies/v3_tough_normals.json")):
+        if record.get("id") == "spindle_ram":
+            var copy: Dictionary = record.duplicate(true)
+            copy.max_hp = int(copy.max_hp)
+            _normal_records_cache[copy.id] = copy
     return _normal_records_cache
 
 
@@ -193,10 +252,10 @@ func _normal_records() -> Dictionary:
 func _floor_bands() -> Dictionary:
     if not _floor_bands_cache.is_empty():
         return _floor_bands_cache
-    var records := _normal_records()
     var entries: Array = []
-    for enemy_id in records:
-        entries.append({"id": enemy_id, "max_hp": int(records[enemy_id]["max_hp"])})
+    for path in BAND_CATALOGS:
+        for record in JSON.parse_string(FileAccess.get_file_as_string(path)):
+            entries.append({"id": record.id, "max_hp": int(record.max_hp)})
     entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
         if a["max_hp"] != b["max_hp"]:
             return a["max_hp"] < b["max_hp"]
@@ -215,6 +274,8 @@ func _floor_bands() -> Dictionary:
         "5-8": ids.slice(low_end, mid_end),
         "9-11": ids.slice(mid_end, ids.size()),
     }
+    if not _floor_bands_cache["9-11"].has("spindle_ram"):
+        _floor_bands_cache["9-11"].append("spindle_ram")
     return _floor_bands_cache
 
 
@@ -1805,6 +1866,12 @@ func _test_new_tough_normals_in_real_fights() -> void:
     if not material.get("ok", false):
         return
     var wanted := ["spindle_ram", "razor_ribbon_wraith"]
+    for key in BAND_KEYS:
+        for enemy_id in _floor_bands()[key]:
+            _check(material.pools[key].has(enemy_id),
+                "independent incumbent band retains " + key + "/" + enemy_id)
+    _check(not material.pools["1-4"].has("spindle_ram")
+        and not material.pools["5-8"].has("spindle_ram"), "Ram is high-band only")
     for id in wanted:
         var band := ""
         for key in BAND_KEYS:
@@ -1878,6 +1945,14 @@ func _test_new_tough_normals_in_real_fights() -> void:
             _check(_floor_bands()[_band_key(floor_number)].has(id),
                 "real seed %d drew %s from the floor's own HP-sorted band"
                     % [value, id])
+            if id == "spindle_ram":
+                var before := _snap(map, rng, selector)
+                entered.enemies._enemies[slot - 1].intent.actions[2].amount = 999
+                var again := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
+                _check(again.get("success", false) and _snap(map, rng, selector) == before
+                    and again.enemies.get_enemy(slot).intent.actions[2].amount == 8
+                    and again.enemies.get_enemies().map(func(e): return e.id) == group,
+                    "cached late Ram re-entry validates and restores detached authored actors without reroll")
     for id in wanted:
         _check(found.has(id), "a genuine seeded route admits live normal " + id)
 

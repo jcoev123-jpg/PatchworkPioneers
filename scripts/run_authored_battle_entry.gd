@@ -25,13 +25,14 @@ const CATALOG_PATHS := [
     "res://data/enemies/boss.json",
     "res://data/enemies/m04_elites.json",
 ]
-## Only these catalogs hold ordinary normal-Fight actors; the Boss and Elite
-## catalogs are deliberately excluded from every floor band.
+## These catalogs define the incumbent split. The authenticated tough-catalog
+## Ram is appended only to the high band; Boss/Elite catalogs stay excluded.
 const BAND_CATALOG_PATHS := [
     "res://data/enemies/starter_enemies.json",
     "res://data/enemies/run_enemies.json",
 ]
 const BOSS_FLOOR := 12
+const TOUGH_NORMALS_PATH := "res://data/enemies/v3_tough_normals.json"
 
 
 func entry_current_battle(map: RunMap, run_rng: RandomNumberGenerator,
@@ -53,9 +54,10 @@ func entry_current_battle(map: RunMap, run_rng: RandomNumberGenerator,
 ## supplied registry; production always reads POOLS_PATH above. The optional
 ## band_pools argument likewise never leaves tests: production derives the
 ## three floor bands from the authored normal-enemy catalogs.
+## tough_catalog_text allows malformed-catalog tests without editing data files.
 func _entry_from_data(map: RunMap, run_rng: RandomNumberGenerator,
         selector: RunFightEncounterSelection, registry: Variant,
-        band_pools: Variant = null) -> Dictionary:
+        band_pools: Variant = null, tough_catalog_text: Variant = null) -> Dictionary:
     var failure := {"success": false}
     if map == null or run_rng == null or selector == null or not map.is_generated():
         return failure
@@ -152,7 +154,7 @@ func _entry_from_data(map: RunMap, run_rng: RandomNumberGenerator,
     if kind == "Fight":
         if not floor_number is int or floor_number < 1 or floor_number >= BOSS_FLOOR:
             return failure
-        band_material = _floor_band_material(band_pools)
+        band_material = _floor_band_material(band_pools, tough_catalog_text)
         if not band_material.get("ok", false):
             return failure
 
@@ -287,7 +289,7 @@ static func _legal_group(ids: Array, band_candidates: Array,
 ## into the three exact floor bands, ordered by authored max HP and then ID so
 ## the weakest actors fight early and the strongest late. Every band is checked
 ## before any RNG draw. band_pools is the test-only injection seam.
-static func _floor_band_material(band_pools: Variant) -> Dictionary:
+static func _floor_band_material(band_pools: Variant, tough_catalog_text: Variant = null) -> Dictionary:
     var records := {}
     var entries: Array = []
     for path in BAND_CATALOG_PATHS:
@@ -315,6 +317,44 @@ static func _floor_band_material(band_pools: Variant) -> Dictionary:
     for entry in entries:
         ordered_ids.append(entry["id"])
     var pools := _split_floor_bands(ordered_ids)
+    # Keep the incumbent split independent of the tough catalog's HP and size.
+    # Authenticate the entire catalog, but admit only this exact authored Ram.
+    var text: Variant = tough_catalog_text
+    if text == null:
+        text = FileAccess.get_file_as_string(TOUGH_NORMALS_PATH)
+    if not text is String:
+        return {"ok": false}
+    var tough := RunTypedBattleRoster._parse_catalog_text(text)
+    if tough.is_empty():
+        return {"ok": false}
+    var ram := {}
+    for record in tough:
+        if not _is_playable_normal(record):
+            return {"ok": false}
+        if record["id"] == "spindle_ram":
+            ram = record
+    var authentic := {
+        "id": "spindle_ram", "name": "Spindle Ram", "max_hp": 30, "charge": true,
+        "art_path": "res://assets/paper/enemies/spindle_ram.png",
+        "intent": {"target": "front", "actions": [
+            {"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+            {"type": "block", "amount": 7, "weight": 2},
+            {"type": "attack", "amount": 8, "weight": 3},
+        ]},
+    }
+    # Compare in the catalog parser's numeric representation (JSON action
+    # numbers remain floats until the combat intent binder normalizes them).
+    var expected := RunTypedBattleRoster._parse_catalog_text(JSON.stringify([authentic]))
+    if ram != expected[0]:
+        return {"ok": false}
+    if records.has("spindle_ram") and records["spindle_ram"] != ram:
+        return {"ok": false}
+    for band in [RunV3FloorBandRoster.BAND_LOW, RunV3FloorBandRoster.BAND_MID]:
+        if pools[band].has("spindle_ram"):
+            return {"ok": false}
+    records["spindle_ram"] = ram.duplicate(true)
+    if not pools[RunV3FloorBandRoster.BAND_HIGH].has("spindle_ram"):
+        pools[RunV3FloorBandRoster.BAND_HIGH].append("spindle_ram")
     if band_pools != null:
         if not band_pools is Dictionary:
             return {"ok": false}

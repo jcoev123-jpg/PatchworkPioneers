@@ -3,6 +3,7 @@ extends RefCounted
 ## It reads only the authored ordinary normal-enemy catalogs and restates the
 ## documented live band rule: order the actors by authored max HP and then ID,
 ## then split them into three consecutive bands with the larger remainder first.
+## Append only the tough-catalog Ram to the high band if not already present.
 ## Never import the entry service's own band helpers here.
 
 const NORMAL_CATALOGS := [
@@ -33,6 +34,13 @@ static func records() -> Dictionary:
 			if copy.get("thorns") is float:
 				copy["thorns"] = int(copy["thorns"])
 			_records[copy["id"]] = copy
+	var tough: Array = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/enemies/v3_tough_normals.json"))
+	for record in tough:
+		if record.get("id") == "spindle_ram":
+			var copy: Dictionary = record.duplicate(true)
+			copy.max_hp = int(copy.max_hp)
+			_records[copy.id] = copy
 	return _records
 
 
@@ -40,8 +48,10 @@ static func bands() -> Dictionary:
 	if not _bands.is_empty():
 		return _bands
 	var entries: Array = []
-	for enemy_id in records():
-		entries.append({"id": enemy_id, "max_hp": int(records()[enemy_id]["max_hp"])})
+	# Split only the incumbent catalogs, before the separate high-band append.
+	for path in NORMAL_CATALOGS:
+		for record in JSON.parse_string(FileAccess.get_file_as_string(path)):
+			entries.append({"id": record.id, "max_hp": int(record.max_hp)})
 	entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		if a["max_hp"] != b["max_hp"]:
 			return a["max_hp"] < b["max_hp"]
@@ -58,6 +68,8 @@ static func bands() -> Dictionary:
 		"5-8": ids.slice(low_end, mid_end),
 		"9-11": ids.slice(mid_end, ids.size()),
 	}
+	if not _bands["9-11"].has("spindle_ram"):
+		_bands["9-11"].append("spindle_ram")
 	return _bands
 
 
