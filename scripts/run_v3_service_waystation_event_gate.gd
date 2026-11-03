@@ -75,6 +75,11 @@ const REQUIRED_EVENTS := {
 	},
 }
 
+const CAMPFIRE_EVENT_IDS := [
+	"v3_emberglass_campfire",
+	"v3_briar_button_mending_bench",
+]
+
 const SEWING_CIRCLE_EVENT_IDS := [
 	"v3_threadmill_sewing_circle",
 	"v3_moonlace_darning_parlor",
@@ -401,6 +406,137 @@ func select_actionable_sewing_event(
 	return {
 		"ok": true,
 		"event": selected_record,
+	}
+
+
+## Picks one authenticated Campfire waystation Event record from the catalog
+## using the caller's seeded RandomNumberGenerator, offering it only when the
+## paid service choice is affordable and authentic Campfire recovery would
+## change current party HP (reviving a 0-HP hero at 1 HP first, then adding
+## floor(30% max HP) capped at max HP).
+##
+## Evaluates genuine paid service affordability via RunEventChoice.preview_wallet_choices();
+## evaluates party recovery with a throwaway RunCampfireVisit / RunRestRecovery.
+## Never treats trade choices or Leave as proof of paid service usability.
+## Never mutates caller wallet, heroes, or RNG on rejection.
+##
+## On success, sorts eligible authentic IDs lexicographically, consumes exactly one
+## randi_range draw, and returns {"ok": true, "event": deep_detached_record}.
+## On refusal or invalid input, returns {"ok": false, "event": {}} with zero RNG draws.
+func select_actionable_campfire_event(
+	rng: Variant,
+	excluded_ids: Variant = null,
+	wallet: Variant = null,
+	run_heroes: Variant = null
+) -> Dictionary:
+	if not (rng is RandomNumberGenerator):
+		return _selection_rejection()
+	if not _catalog_valid:
+		return _selection_rejection()
+	var parsed_exclusions: Dictionary = _parse_exclusions(excluded_ids)
+	if not parsed_exclusions.get("ok", false):
+		return _selection_rejection()
+	var excluded: Dictionary = parsed_exclusions["ids"]
+	var parsed_wallet: Dictionary = _parse_wallet(wallet)
+	if not parsed_wallet.get("ok", false):
+		return _selection_rejection()
+	var base_wallet: Dictionary = parsed_wallet["wallet"]
+	var parsed_heroes: Dictionary = _parse_run_heroes(run_heroes)
+	if not parsed_heroes.get("ok", false):
+		return _selection_rejection()
+	var base_heroes: Array = parsed_heroes["heroes"]
+
+	var eligible: Array = []
+	for record: Dictionary in _catalog_events:
+		var event_id: String = String(record.get("id", ""))
+		if not CAMPFIRE_EVENT_IDS.has(event_id):
+			continue
+		if excluded.has(event_id):
+			continue
+		var rec_kind: String = String(record.get("service_kind", ""))
+		if rec_kind != "Campfire":
+			continue
+		var service_choice_id: String = String(record.get("service_choice_id", ""))
+		if service_choice_id.is_empty():
+			continue
+		var selector := RunEventChoice.new(record)
+		if not selector.is_valid():
+			continue
+		var preview: Dictionary = selector.preview_wallet_choices(base_wallet)
+		if not preview.get("ok", false):
+			continue
+		var choices_preview: Variant = preview.get("choices")
+		if not (choices_preview is Array):
+			continue
+		var paid_choice_preview: Dictionary = {}
+		for item_raw: Variant in (choices_preview as Array):
+			if item_raw is Dictionary and String((item_raw as Dictionary).get("choice_id", "")) == service_choice_id:
+				paid_choice_preview = item_raw
+				break
+		if paid_choice_preview.is_empty():
+			continue
+		if paid_choice_preview.get("affordable", false) != true:
+			continue
+
+		var visit_heroes: Array = base_heroes.duplicate(true)
+		var visit := RunCampfireVisit.new(event_id, visit_heroes)
+		if visit == null or visit.read_state().get("status") != RunCampfireVisit.OPEN:
+			continue
+		var receipt: Dictionary = visit.choose_heal(event_id, visit_heroes)
+		if not receipt.get("ok", false):
+			continue
+		var healed_heroes_raw: Variant = receipt.get("heroes")
+		if not (healed_heroes_raw is Array):
+			continue
+		var healed_heroes: Array = healed_heroes_raw
+		if healed_heroes.size() != base_heroes.size():
+			continue
+		var hp_changed := false
+		for i in range(base_heroes.size()):
+			var before_hp: int = int(base_heroes[i].get("hp", 0))
+			var after_hp: int = int((healed_heroes[i] as Dictionary).get("hp", 0))
+			if after_hp != before_hp:
+				hp_changed = true
+				break
+		if not hp_changed:
+			continue
+		eligible.append(event_id)
+
+	if eligible.is_empty():
+		return _selection_rejection()
+	eligible.sort()
+	var generator: RandomNumberGenerator = rng
+	var picked_id: String = eligible[generator.randi_range(0, eligible.size() - 1)]
+	if not _catalog_by_id.has(picked_id):
+		return _selection_rejection()
+	var selected_record: Dictionary = (_catalog_by_id[picked_id] as Dictionary).duplicate(true)
+	return {
+		"ok": true,
+		"event": selected_record,
+	}
+
+
+static func _parse_run_heroes(heroes_or_snapshot: Variant) -> Dictionary:
+	var raw_heroes: Variant = null
+	if heroes_or_snapshot is Array:
+		raw_heroes = heroes_or_snapshot
+	elif heroes_or_snapshot is Dictionary:
+		var dict: Dictionary = heroes_or_snapshot
+		if dict.has("heroes") and dict["heroes"] is Array:
+			raw_heroes = dict["heroes"]
+		else:
+			return {"ok": false}
+	else:
+		return {"ok": false}
+
+	if typeof(raw_heroes) != TYPE_ARRAY:
+		return {"ok": false}
+	var roster: Array = raw_heroes
+	if not RunRestRecovery._is_valid_roster(roster):
+		return {"ok": false}
+	return {
+		"ok": true,
+		"heroes": roster.duplicate(true),
 	}
 
 
