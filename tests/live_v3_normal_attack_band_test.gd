@@ -16,6 +16,7 @@ var eligible_mid := 0
 var eligible_high := 0
 var phase_hits := 0
 var wasp_hits := 0
+var wasp_named_hits := 0
 var wasp_blind := false
 
 
@@ -271,6 +272,13 @@ func _actual_attack_phases(floor_number: int) -> void:
 			var badge: LiveEnemyIntentBadge = app.get_node("LiveEnemyRoster")._badges[selected - 1]
 			_check(badge.amount == amount and badge.tooltip_text.contains(str(amount)),
 				"sewn current-phase badge announces exactly the attack to execute")
+			if is_wasp:
+				_check(badge.is_visible_in_tree() and badge.source_position == selected
+					and badge.target_position == target and badge.readable_text.contains(str(amount))
+					and badge.hit_count == (2 if is_sting else 1)
+					and badge.hit_damage == (5 if is_sting else -1)
+					and badge.move_name == ("" if is_sting else "Sting Dive"),
+					"mounted Wasp badge distinguishes unnamed 5+5 from named single-hit Sting Dive")
 			await _click(app.end_turn_button)
 			var hero: Dictionary = app.party.get_hero(target)
 			_check(hero.hp == first_hp - maxi(0, amount - first_block)
@@ -285,7 +293,8 @@ func _actual_attack_phases(floor_number: int) -> void:
 				else:
 					_check(announced.get("move") == "attack2" and amount == 8
 						and not announced.has("hits") and hero.get("statuses", {}).get("bleed", 0) == 1,
-						"mounted Needle Thrust deals its single mid-band eight and one HP-contact Bleed")
+						"mounted Sting Dive deals its single mid-band eight and one HP-contact Bleed")
+					wasp_named_hits += 1
 			phase_hits += 1
 			# Only the original two-hit sting satisfies its two mitigation witnesses.
 			if not is_wasp or is_sting:
@@ -759,6 +768,8 @@ func _run() -> void:
 	_check(phase_hits >= 6 and phase_bands.has(1) and phase_bands.has(5) and phase_bands.has(9),
 		"actual normal-Fight damage and Block mitigation exercised in every band")
 	_check(wasp_hits == 2 and wasp_blind, "bounded genuine route exercised Wasp two hits and Blind")
+	_check(wasp_named_hits > 0,
+		"bounded genuine route also executes named single-hit Sting Dive; receipt and badge checks cannot be vacuous")
 	# The old fifth-route Ram and second-route Wraith witnesses depend on
 	# intermediate Elite RNG draws. Retain both full mounted replay gates while
 	# finding their real high-band actor in a bounded set of legal routes.
