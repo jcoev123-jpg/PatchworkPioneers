@@ -553,8 +553,8 @@ func _validate_view(status: String, label: String) -> void:
 		label + " original Return action resolves to 24 px Londrina via PatchHeadingButton")
 	var paper := panel.paper_panel.get_theme_stylebox("panel") as StyleBoxFlat
 	_check(paper != null and paper.border_width_left >= 4 and paper.border_width_top >= 4
-		and paper.bg_color.get_luminance() > 0.5,
-		label + " cream paper and thick sewn patch border")
+		and paper.bg_color.get_luminance() < 0.3,
+		label + " dark plum backing with a thick sewn border")
 	var backdrop := panel.get_node("SlateBackdrop") as ColorRect
 	_check(backdrop != null and backdrop.color.get_luminance() < 0.3,
 		label + " dark slate ColorRect covers background")
@@ -693,9 +693,9 @@ func _validate_view(status: String, label: String) -> void:
 		controls.append(panel.stitched_heading)
 		controls.append(panel.stitched_scroll)
 		var detail_paper := panel.stitched_section.get_theme_stylebox("panel") as StyleBoxFlat
-		_check(detail_paper != null and detail_paper.bg_color.get_luminance() > 0.5
+		_check(detail_paper != null and detail_paper.bg_color.get_luminance() < 0.3
 			and detail_paper.border_width_left >= 2,
-			label + " bounded sewn-card paper has high contrast and dark stitched border")
+			label + " bounded plum sewn-card ledger has contrasting stitch border")
 	for control in controls:
 		_check(screen.encloses(control.get_global_rect()) and control.size.x > 0
 			and control.size.y > 0, label + " full rectangle within 1280x720: " + control.name)
@@ -814,7 +814,7 @@ func _test_missing_backdrop_art(ctx: Dictionary, battle: Dictionary, label: Stri
 		label + " slate keeps the stage dark without the picture")
 	_check(felt != null and felt.is_visible_in_tree() and felt_box != null
 		and felt_box.bg_color.get_luminance() < 0.3
-		and paper != null and paper.bg_color.get_luminance() > 0.5
+		and paper != null and paper.bg_color.get_luminance() < 0.3
 		and panel.stitched_section.visible == (panel.stitched_rows.get_child_count() > 0),
 		label + " felt and parchment framing stays readable without the picture")
 	_check(_snapshot(ctx, battle) == before,
@@ -1323,8 +1323,10 @@ func _mounted_composites(ledger: Dictionary, wardrobe: RunPatchWardrobe,
 	_validate_view("Defeat", label)
 	var cards: Array = expected.get("current_stitched_cards", [])
 	_check(panel.stitched_section.visible == not cards.is_empty()
-		and panel.stitched_rows.get_child_count() == cards.size(),
-		label + " detail visibility and exact retained count")
+		and panel.stitched_rows.get_child_count() == cards.size()
+		and (cards.is_empty() or panel.stitched_scroll.custom_minimum_size.y > 0)
+		and (not cards.is_empty() or panel.stitched_section.custom_minimum_size.y == 0),
+		label + " compact zero-card state or bounded genuine retained cards")
 	var hero_oracle := _oracle_hero_lines(expected, true)
 	_check(hero_oracle.size() == 3 and _hero_rows_text() == PackedStringArray(hero_oracle),
 		label + " three mounted hero ribbons match the independent oracle")
@@ -1337,6 +1339,8 @@ func _mounted_composites(ledger: Dictionary, wardrobe: RunPatchWardrobe,
 			and first.owner != second.owner,
 			label + " authentic first/second owner pairing")
 		var row := panel.stitched_rows.get_child(i)
+		_check(row.has_meta("stitched_id") and row.get_meta("stitched_id") == card.id,
+			label + " mounted card retains its exact authenticated composite ID")
 		var name_label := row.get_node("CardInset/CardLines/Composite") as Label
 		var halves_label := row.get_node("CardInset/CardLines/Halves") as Label
 		_check(name_label.text == "%s  ·  %d energy" % [card.display_name, card.cost],
@@ -1633,10 +1637,11 @@ func _audit_result_readability(status: String, expected: Dictionary,
 	_check(panel.stitched_section.visible
 		and panel.stitched_rows.get_child_count() == cards.size(),
 		label + ": every retained card is mounted in its signed order")
-	_check(panel.result_content.alignment == BoxContainer.ALIGNMENT_BEGIN
-			and panel.run_ledger.size_flags_vertical == Control.SIZE_EXPAND_FILL
-			and panel.hero_recap.size_flags_vertical == Control.SIZE_EXPAND_FILL,
-			label + ": sewn-card run shares parchment height between tickets and scroll")
+	_check(panel.result_content.alignment == BoxContainer.ALIGNMENT_CENTER
+			and panel.run_ledger.size_flags_vertical == Control.SIZE_FILL
+			and panel.hero_recap.size_flags_vertical == Control.SIZE_FILL
+			and panel.stitched_scroll.custom_minimum_size.y >= 80,
+			label + ": sewn-card list is bounded, leaving full-height tickets and Return")
 	_check(printed.y > 0 and panel.stitched_rows.get_child_count() >= 3,
 		label + ": readability oracle is non-vacuous")
 	for index in range(mini(cards.size(), panel.stitched_rows.get_child_count())):
