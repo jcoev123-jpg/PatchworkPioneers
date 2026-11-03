@@ -124,7 +124,7 @@ func _test_authority() -> void:
 
 	_check(source.get("intent", {}).get("target") == "front"
 
-		and source.get("intent", {}).get("actions", []).size() == 3
+		and source.get("intent", {}).get("actions", []).size() == 5
 
 		and source.intent.actions[0].type == "attack"
 

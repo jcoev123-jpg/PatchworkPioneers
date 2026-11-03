@@ -51,6 +51,8 @@ func _initialize() -> void:
 	_test_mantis_named_strikes()
 	_test_harrier_named_strikes()
 	_test_doll_named_strikes()
+	_test_bobbin_quilt_named_strikes()
+	_test_named_termite_split_authority()
 	if failures.is_empty():
 		print("v3_normal_enemy_catalog_test: PASS (", checks, " checks)")
 	else:
@@ -3988,18 +3990,22 @@ func _bobbin_quilt_expected() -> Dictionary:
 			"intent": {"target": "lowest_living_hp", "actions": [
 				{"type": "attack", "amount": 7, "hits": 2, "weight": 4},
 				{"type": "debuff", "status": "weak", "amount": 1, "weight": 1},
-				{"type": "block", "amount": 4, "weight": 1}]}},
+				{"type": "block", "amount": 4, "weight": 1},
+				{"type": "attack", "amount": 8, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 6, "hits": 2, "move": "attack3", "weight": 1}]}},
 		"quilt_termite": {"id": "quilt_termite", "name": "Quilt Termite", "max_hp": 26,
 			"split_on_death": true, "chew_block_on_attack": true,
 			"art_path": "res://assets/paper/enemies/quilt_termite.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "attack", "amount": 6, "weight": 4},
 				{"type": "block", "amount": 5, "weight": 1},
-				{"type": "debuff", "status": "exposed", "amount": 1, "weight": 1}]}}
+				{"type": "debuff", "status": "exposed", "amount": 1, "weight": 1},
+				{"type": "attack", "amount": 6, "hits": 2, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 7, "move": "attack3", "weight": 1}]}}
 	}
 
 ## AC1: both records ship exactly once in the live normal catalog with their
-## authored identity, target policy, flags and 4/1/1 weighted alternatives, and
+## authored identity, target policy, flags and 4/1/1/1/1 weighted alternatives, and
 ## every earlier named normal stays byte-for-byte equivalent. No catalog total,
 ## ordered ID list or insertion slot is asserted, so parallel appends stay legal.
 func _test_bobbin_bat_quilt_termite_catalog() -> void:
@@ -4048,8 +4054,8 @@ func _test_bobbin_bat_quilt_termite_catalog() -> void:
 		_check(not CombatEnemyIntents._weighted_slot(1, spec).is_empty(),
 			"new normal intent validates as a weighted slot: " + String(new_id))
 		var actions: Variant = spec.get("actions") if spec is Dictionary else null
-		_check(actions is Array and actions.size() == 3,
-			"new normal authors exactly its three weighted alternatives: " + String(new_id))
+		_check(actions is Array and actions.size() == 5,
+			"normal retains three old alternatives and adds exactly two named attacks: " + String(new_id))
 		if not actions is Array:
 			continue
 		var weights: Array[int] = []
@@ -4068,8 +4074,8 @@ func _test_bobbin_bat_quilt_termite_catalog() -> void:
 				var amount := int(raw.get("amount", 0))
 				_check(amount >= 5 and amount <= 9,
 					"new normal attack stays inside the authored 5-9 band: " + String(new_id))
-		_check(weights == [4, 1, 1],
-			"new normal keeps its shipped 4/1/1 weights: " + String(new_id))
+		_check(weights == [4, 1, 1, 1, 1],
+			"normal keeps original 4/1/1 weights and adds two weight-one moves: " + String(new_id))
 		_check(RunTypedBattleRoster._parse_catalog_text(
 			JSON.stringify([record])).size() == 1,
 			"the shipped record survives the strict catalog parser: " + String(new_id))
@@ -4086,7 +4092,7 @@ func _test_bobbin_bat_quilt_termite_catalog() -> void:
 	_check(_norm(bat_bite) == {"type": "attack", "amount": 7, "hits": 2, "weight": 4},
 		"AC1: the shipped Bat attack alternative is exactly attack 7 hits 2 weight 4")
 	var bat_actions: Array = bat.get("intent", {}).get("actions", [])
-	_check(bat_actions.size() == 3 and int(bat_actions[0].get("amount", 0)) == 7
+	_check(bat_actions.size() == 5 and int(bat_actions[0].get("amount", 0)) == 7
 		and int(bat_actions[0].get("weight", 0)) == 4,
 		"AC1: the two-hit marker neither doubles the amount nor changes the weight")
 	var normalized_bite := CombatEnemyIntents.weighted_action(bat_bite)
@@ -5375,6 +5381,195 @@ func _test_doll_named_strikes() -> void:
 					and bound.scheduler.get_intents() == before[3], "Doll attacks preserve peers, source, cache and RNG")
 				traces.append([bound.intents, receipt, witness.hits, party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state])
 			_check(traces.size() == 2 and traces[0] == traces[1], "same-seed Doll phase and RNG replay exactly")
+
+
+func _test_named_termite_split_authority() -> void:
+	var record := _find(_load_parsed(), "quilt_termite")
+	_check(not record.is_empty() and record.get("intent", {}).get("actions", []).size() == 5,
+		"split extension tests require the authentic five-action Termite")
+	if record.is_empty() or record.intent.actions.size() != 5:
+		return
+	for floor_number in [1, 5, 9]:
+		for tier in [0, 1, 2]:
+			var scaled := record.duplicate(true)
+			scaled.max_hp = RunNormalAttackFloorScaling.scale_normal_max_hp(record.max_hp, floor_number).max_hp
+			for action in scaled.intent.actions:
+				if action.type == "attack":
+					var damage := RunNormalAttackFloorScaling.scale_normal_attack(int(action.amount), floor_number)
+					_check(damage.get("ok") == true, "authored attack enters floor scaling as an integer")
+					action.amount = damage.amount
+			var difficulty := RunDifficulty.new()
+			difficulty._selected_tier = tier
+			var definitions: Array = difficulty.scale_definitions([scaled])
+			_check(definitions.size() == 1, "real floor/tier scaling returns one Termite")
+			if definitions.size() != 1:
+				continue
+			var enemies := CombatEnemies.new(definitions)
+			_check(enemies.is_valid() and enemies.apply_damage(1, definitions[0].max_hp)
+				and enemies.is_slain(1), "scaled named parent really dies before split")
+			var original_amount: int = definitions[0].intent.actions[0].amount
+			var split := enemies.stage_split_on_death(1)
+			_check(split == {"ok": true, "split": true, "positions": [1, 2]}
+				and enemies.get_enemy(1).intent.actions[0].amount == ceili(original_amount / 2.0),
+				"expanded floor %d tier %d parent splits from original bite %d: %s" % [floor_number, tier, original_amount, str(split)])
+	var legacy := record.duplicate(true)
+	legacy.intent.actions = legacy.intent.actions.slice(0, 3)
+	var legacy_enemies := CombatEnemies.new([legacy])
+	_check(legacy_enemies.is_valid() and legacy_enemies.apply_damage(1, 26)
+		and legacy_enemies.stage_split_on_death(1).get("split") == true,
+		"legacy three-action split fixtures retain their existing semantics")
+	for index in [3, 4]:
+		for field in ["move", "amount", "weight", "hits"]:
+			var forged := record.duplicate(true)
+			forged.intent.actions[index][field] = "attack2" if field == "move" else 0
+			if field == "move" and index == 3:
+				forged.intent.actions[index][field] = "attack3"
+			var enemies := CombatEnemies.new([forged])
+			_check(enemies.is_valid() and enemies.apply_damage(1, 26), "forged split parent reaches post-lethal validation")
+			var before := enemies.get_enemies()
+			_check(enemies.stage_split_on_death(1) == {"ok": false, "split": false}
+				and enemies.get_enemies() == before, "forged appended named strike cannot authorize a split or mutate roster")
+
+
+func _test_bobbin_quilt_named_strikes() -> void:
+	var parsed := _load_parsed()
+	for id in ["bobbin_bat", "quilt_termite"]:
+		var record := _find(parsed, id)
+		_check(not record.is_empty() and _norm(record) == _bobbin_quilt_expected()[id],
+			"named Bat/Termite tests use the complete authentic parsed record")
+		if record.is_empty() or record.intent.actions.size() != 5:
+			continue
+		# Replay whole weighted schedules, including every old and new alternative.
+		var first := _bind_records(61027, [record])
+		var second := _bind_records(61027, [record])
+		_check(first.ok and second.ok and first.scheduler.is_bound() and second.scheduler.is_bound(),
+			"complete five-alternative schedules bind to real actors")
+		if not first.ok or not second.ok:
+			continue
+		var reached: Array = []
+		for turn in range(128):
+			var announcements: Array = first.scheduler.get_intents()
+			_check(announcements.size() == 1 and announcements == second.scheduler.get_intents()
+				and first.rng.state == second.rng.state, "equal-seed complete weighted schedule replays")
+			if announcements.size() != 1:
+				break
+			var body: Dictionary = announcements[0].duplicate(true)
+			body.erase("enemy_position")
+			body.erase("target_position")
+			_check(_is_authored_alternative(record, announcements[0]), "full schedule selects an authored alternative")
+			if not reached.has(body):
+				reached.append(body)
+			# Fresh actors per turn preserve target prerequisites across the trace.
+			var receipts: Array = []
+			for battle in [first, second]:
+				var party := _party()
+				var enemies := CombatEnemies.new([record])
+				_check(party.is_valid() and enemies.is_valid() and party.gain_block(1, 4)
+					and party.gain_block(3, 4) and enemies.apply_damage(1, 10),
+					"full schedule phase uses living blocked heroes and a wounded real source")
+				var result := CombatEnemyPhase.new().execute_phase(party, enemies,
+					battle.scheduler.get_intents(), null, true)
+				_check(result.get("ok") == true and not result.get("events", []).is_empty(),
+					"each complete weighted announcement executes through the real phase")
+				receipts.append([result, party.get_heroes(), enemies.get_enemies(), battle.rng.state])
+			_check(receipts[0] == receipts[1], "complete weighted phase receipts and actors replay")
+			_check(first.scheduler.advance_turn() and second.scheduler.advance_turn(), "both full schedules advance")
+		_check(reached.size() == 5, "complete seeded schedule reaches every original and named alternative")
+		for index in [3, 4]:
+			var raw: Dictionary = record.intent.actions[index]
+			var move: String = raw.move
+			var amount: int = raw.amount
+			var hit_count: int = raw.get("hits", 1)
+			var target := 3 if id == "bobbin_bat" else 1
+			for block in [0, 2, 4, 12]:
+				for wound in ([2, 19] if id == "bobbin_bat" else [0]):
+					var traces: Array = []
+					for replay in range(2):
+						var party := _party()
+						_check(party.is_valid() and party.gain_block(target, block)
+							and CombatEnemyIntents.priority_target(party, record.intent.target) == target,
+							"named attack has its actual living policy target and Block")
+						var bound := _force_normal_alternative(record, raw, party)
+						_check(not bound.is_empty(), "genuine named weighted alternative binds")
+						if bound.is_empty():
+							continue
+						_check(bound.enemies.apply_damage(1, wound)
+							and bound.enemies.get_enemy(1).hp == record.max_hp - wound,
+							"source HP precondition for HP-only and capped Drain")
+						var expected: Dictionary = CombatEnemyIntents.weighted_action(raw).action.duplicate(true)
+						expected.merge({"enemy_position": 1, "target_position": target})
+						_check(bound.scheduler.is_bound() and bound.intents == [expected],
+							"forced announcement retains exact amount, hits, named move and policy target")
+						var before := [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()]
+						var fallback := "res://assets/paper/enemies/%s_attack.png" % id
+						var names := ["Fang Bite", "Bobbin Drop"] if id == "bobbin_bat" else ["Chew", "Lint Spit"]
+						for catalog in [LiveMovePoseCatalog.new(), MissingCrusherPose.new()]:
+							var pose: Dictionary = catalog.lookup_enemy(id, expected, fallback)
+							_check(pose.get("name") == names[index - 3] and pose.get("pose") == move
+								and pose.get("covers") == ["attack"]
+								and pose.get("named_art") == "res://assets/paper/enemies/%s_%s.png" % [id, move]
+								and pose.get("art") == (pose.get("named_art") if pose.get("art_available") else fallback),
+								"preexisting manifest resolves authored name, pose and texture fallback")
+							if catalog is MissingCrusherPose:
+								_check(pose.get("fallback_used") == true and pose.get("art") == fallback,
+									"forced missing named texture uses normal fallback without assuming files absent")
+						for field in ["move", "hits", "amount", "target_position"]:
+							var values: Array = ["attack5", "", null, 2] if field == "move" else [0, 4, "1", null]
+							if field == "amount":
+								values = [amount + 1, -1, "6", null]
+							if field == "hits":
+								values = [0, 3, "2", null]
+							for value in values:
+								var bad := expected.duplicate(true)
+								bad[field] = value
+								_check(CombatEnemyPhase.new().execute_phase(party, bound.enemies, [bad], null, true)
+									== {"ok": false, "events": []}, "forged move/hits/amount/target rejects atomically")
+						var changed_move := expected.duplicate(true)
+						changed_move.move = "attack3" if move == "attack2" else "attack2"
+						var changed_hits := expected.duplicate(true)
+						if changed_hits.has("hits"):
+							changed_hits.erase("hits")
+						else:
+							changed_hits.hits = 2
+						for forged in [changed_move, changed_hits]:
+							var body: Dictionary = forged.duplicate(true)
+							body.erase("enemy_position")
+							_check(CombatEnemyIntents.valid_action(body)
+								and CombatEnemyPhase.new().execute_phase(party, bound.enemies, [forged], null, true)
+								== {"ok": false, "events": []}, "well-shaped forged move or hits fails source authentication")
+						_check([party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()] == before,
+							"all rejected requests and pose previews preserve HP, Block, roster, cache and RNG")
+						var witness := WraithHitWitness.new()
+						var receipt := CombatEnemyPhase.new().execute_phase(party, bound.enemies, bound.intents, witness, true)
+						var hp: int = before[0][target - 1].hp
+						var remaining: int = block
+						var packets: Array = []
+						var events: Array = []
+						for hit in range(hit_count):
+							if id == "quilt_termite":
+								remaining = 0 # Existing cloth-eating trait removes ALL Block before each hit.
+							var packet := 3 if hit_count == 2 else amount
+							var next_hp := hp - maxi(0, packet - remaining)
+							var next_block := maxi(0, remaining - packet)
+							packets.append([packet, hp, remaining, next_hp, next_block])
+							hp = next_hp
+							remaining = next_block
+							events.append({"type": "attack", "enemy_position": 1, "target_position": target,
+								"move": move, "applied": true, "actual_target_position": target, "redirected": false,
+								"retaliation_damage": 0, "retaliatory_damage": 0})
+						_check(receipt == {"ok": true, "events": events} and witness.hits == packets,
+							"named strikes resolve exact single-hit or ordered 3+3 receipts and Block/HP transitions")
+						var expected_roster: Array = before[1].duplicate(true)
+						if id == "bobbin_bat":
+							expected_roster[0].hp += mini(wound, before[0][target - 1].hp - hp)
+						var expected_heroes: Array = before[0].duplicate(true)
+						expected_heroes[target - 1].hp = hp
+						expected_heroes[target - 1].block = remaining
+						_check(party.get_heroes() == expected_heroes and bound.enemies.get_enemies() == expected_roster
+							and bound.rng.state == before[2] and bound.scheduler.get_intents() == before[3],
+							"actual heroes and capped HP-only Drain match exactly, peers and RNG unchanged")
+						traces.append([receipt, witness.hits, party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state])
+					_check(traces.size() == 2 and traces[0] == traces[1], "forced named phase and RNG replay exactly")
 
 
 class WraithHitWitness extends CombatWardenGuardReactions:

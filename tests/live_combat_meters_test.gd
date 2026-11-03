@@ -2153,7 +2153,9 @@ func _exercise_death_trait_ribbons(app, presenter) -> void:
 	# hover must use these actual snapshot numbers, not universal base halves.
 	var scaled_termite: Dictionary = termite.duplicate(true)
 	scaled_termite["max_hp"] = 33
-	scaled_termite["intent"]["actions"][0]["amount"] = 8
+	for action in scaled_termite["intent"]["actions"]:
+		if action.get("type") == "attack":
+			action["amount"] = int(action["amount"]) + 2
 	var scaled := CombatEnemies.new([original[0], scaled_termite])
 	_check(scaled.is_valid(), "scaled 33 HP / 8 attack authored parent is a valid roster")
 	if scaled.is_valid():
