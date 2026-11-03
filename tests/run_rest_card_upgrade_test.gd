@@ -21,6 +21,7 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_frayed_debt_upgrades()
+	_test_peddler_v3_upgrades()
 	_test_authored_pool_upgrade_cases()
 	_test_v3_seamstress_upgrades()
 	_test_newer_hero_pool_upgrade_cases()
@@ -118,6 +119,94 @@ func _test_frayed_debt_upgrades() -> void:
 		var forged := deck.duplicate()
 		forged[forged.find(curse)] = curse + "_plus"
 		_check(RunRestCardUpgrade.list_authored_choices(forged, registry, cursor).get("ok") == false, "forged curse ID fails projection")
+
+
+## Peddler-sold V3 Warden/Tinker printings: genuine upgrades, never rewards.
+func _test_peddler_v3_upgrades() -> void:
+	var warden := V3WardenPoolCards.new()
+	var tinker := V3TinkerPoolCards.new()
+	var families: Array = [
+		[warden, warden.get_base_ids(), "warden"],
+		[tinker, tinker.get_pool_card_ids(), "tinker"],
+	]
+	for family in families:
+		var pool: Object = family[0]
+		var ids: Array = family[1]
+		_check(not ids.is_empty(), "V3 peddler catalog loaded: " + family[2])
+		for base_id in ids:
+			var plus_id: String = pool.get_upgrade_id(base_id)
+			var base: Dictionary = pool.get_definition(base_id)
+			var plus: Dictionary = pool.get_definition(plus_id)
+			_check(not plus_id.is_empty() and not plus.is_empty() and base.owner == family[2],
+				"V3 pair resolves from catalog: " + base_id)
+			_check(RunPoolCardRewardOffers.resolve_reward_definition(base_id).is_empty(),
+				"purchased V3 base is not a Fight reward: " + base_id)
+			var deck := [base_id, STRIKE_ID, base_id, plus_id]
+			var before := deck.duplicate()
+			var projection := RunRestCardUpgrade.list_authored_choices(deck)
+			_check(projection.ok and projection.permitted_upgrades.get(base_id) == plus_id,
+				"V3 peddler base admitted: " + base_id)
+			var offered: Array = []
+			for row in projection.choices:
+				if row.source_id == base_id:
+					offered.append(row.index)
+					_check(row.plus_id == plus_id and row.owner == base.owner
+						and row.display_name == base.display_name and row.cost == base.cost
+						and row.plus_cost == plus.cost and row.effects == base.effects
+						and row.plus_effects == plus.effects, "V3 peddler exact metadata: " + base_id)
+				_check(row.source_id != plus_id, "plus never offered again: " + plus_id)
+			_check(offered == [0, 2], "V3 peddler duplicates keep indices: " + base_id)
+			var visit := RunRestCardUpgrade.new(deck, projection.permitted_upgrades)
+			_assert_rejected(visit, 3, deck, "already-plus V3 printing refused")
+			_assert_rejected(visit, 99, deck, "V3 out-of-range index refused")
+			var result := visit.choose_upgrade(2)
+			_check(result.ok and result.deck == [base_id, STRIKE_ID, plus_id, plus_id]
+				and result.original_id == base_id and result.upgraded_id == plus_id
+				and deck == before, "V3 peddler upgrades one occurrence: " + base_id)
+			_assert_rejected_while_used(visit, 0, deck, "V3 peddler visit single-use")
+			# Fabricated and cross-owner/catalog mappings fail closed.
+			var cross: String = "warden_strike_plus" if family[2] == "tinker" else "tinker_pop_shot_plus"
+			var other_pool: Object = tinker if family[2] == "warden" else warden
+			var other_ids: Array = other_pool.get_pool_card_ids() if family[2] == "warden" else other_pool.get_base_ids()
+			var other_plus: String = other_pool.get_upgrade_id(other_ids[0])
+			for forged in [base_id + "_fake_plus", cross, other_plus, base_id]:
+				_assert_rejected(RunRestCardUpgrade.new(deck, {base_id: forged}), 0, deck,
+					"V3 forged mapping refused: " + str(forged))
+			_assert_rejected(RunRestCardUpgrade.new(deck, {plus_id: base_id}), 3, deck,
+				"V3 plus cannot downgrade or re-upgrade")
+		# A forged "_plus" ID is not a deck member.
+		_check(RunRestCardUpgrade.list_authored_choices([ids[0] + "_fake_plus"]).ok == false,
+			"fabricated V3 plus ID rejected from plain deck")
+	# Witness numbers straight from the authored cards.
+	var toss: Dictionary = warden.get_definition("warden_v3_shield_toss")
+	var toss_plus: Dictionary = warden.get_definition("warden_v3_shield_toss_plus")
+	_check(toss.cost == 1 and toss.from_positions == [1, 2] and toss.to_positions == [1, 2, 3]
+		and toss_plus.effects.get("bonus_damage") == 3, "Shield Toss witness")
+	var casing: Dictionary = tinker.get_definition("tinker_v3_brass_casing")
+	var casing_plus: Dictionary = tinker.get_definition("tinker_v3_brass_casing_plus")
+	_check(casing.effects == {"damage": 4, "combat_scrap_gain": 1}
+		and casing_plus.effects == {"damage": 6, "combat_scrap_gain": 1}, "Brass Casing witness")
+	# Stitched-ledger admission beside owned purchased bases.
+	var stitcher := RunRestStitchCards.new([toss.id, casing.id, PRICK_ID, toss.id], {}, 3, 1)
+	var stitched := stitcher.choose_stitch(0, 1, stitcher.get_snapshot())
+	_check(stitched.get("ok", false) == true, "V3 Warden + Tinker stitch succeeds for ledger fixture")
+	if stitched.get("ok", false):
+		var ledger_projection := RunRestCardUpgrade.list_authored_choices(
+			stitched.deck, stitched.descriptors, stitched.next_stitch_id)
+		_check(ledger_projection.ok, "stitched ledger with purchased base admitted")
+		var offered_ids: Array = []
+		for row in ledger_projection.choices:
+			offered_ids.append(row.source_id)
+		_check(offered_ids.has(toss.id) and not offered_ids.has(stitched.stitched_id),
+			"purchased base offered, stitched card not")
+		var ledger_visit := RunRestCardUpgrade.new(stitched.deck, ledger_projection.permitted_upgrades,
+			stitched.descriptors, stitched.next_stitch_id)
+		var stitched_index: int = stitched.deck.find(stitched.stitched_id)
+		_assert_rejected(ledger_visit, stitched_index, stitched.deck, "stitched card cannot upgrade")
+		var base_index: int = stitched.deck.find(toss.id)
+		var ledger_result := ledger_visit.choose_upgrade(base_index)
+		_check(ledger_result.ok and ledger_result.deck[base_index] == toss_plus.id,
+			"ledger upgrade of purchased base commits")
 
 
 func _finish() -> void:
