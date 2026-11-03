@@ -790,6 +790,168 @@
     ],
     "art": "res://assets/paper/enemies/ragling_attack2.png"
    }
+  },
+  "needle_briar_guard": {
+   "attack": {
+    "name": "Briar Pike",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/needle_briar_guard_attack.png"
+   },
+   "skill": {
+    "name": "Thorn Wall",
+    "covers": [
+     "block",
+     "buff"
+    ],
+    "art": "res://assets/paper/enemies/needle_briar_guard_skill.png"
+   },
+   "attack2": {
+    "name": "Needle Volley",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/needle_briar_guard_attack2.png"
+   },
+   "attack3": {
+    "name": "Briar Sweep",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/needle_briar_guard_attack3.png"
+   }
+  },
+  "spool_snarekeeper": {
+   "attack": {
+    "name": "Snare Toss",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spool_snarekeeper_attack.png"
+   },
+   "skill": {
+    "name": "Set the Trap",
+    "covers": [
+     "debuff",
+     "buff"
+    ],
+    "art": "res://assets/paper/enemies/spool_snarekeeper_skill.png"
+   },
+   "attack2": {
+    "name": "Hook Yank",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spool_snarekeeper_attack2.png"
+   },
+   "attack3": {
+    "name": "Spool Barrage",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spool_snarekeeper_attack3.png"
+   }
+  },
+  "spool_leech": {
+   "attack": {
+    "name": "Latch",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spool_leech_attack.png"
+   },
+   "skill": {
+    "name": "Gorge",
+    "covers": [
+     "buff",
+     "block"
+    ],
+    "art": "res://assets/paper/enemies/spool_leech_skill.png"
+   },
+   "attack2": {
+    "name": "Thread Drain",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spool_leech_attack2.png"
+   },
+   "attack3": {
+    "name": "Body Slam",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/spool_leech_attack3.png"
+   }
+  },
+  "pincushion_matriarch": {
+   "attack": {
+    "name": "Matron's Pin",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/pincushion_matriarch_attack.png"
+   },
+   "skill": {
+    "name": "Bristle",
+    "covers": [
+     "block",
+     "buff"
+    ],
+    "art": "res://assets/paper/enemies/pincushion_matriarch_skill.png"
+   },
+   "attack2": {
+    "name": "Pin Storm",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/pincushion_matriarch_attack2.png"
+   },
+   "attack3": {
+    "name": "Bonnet Charge",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/pincushion_matriarch_attack3.png"
+   }
+  },
+  "moth_queen": {
+   "attack": {
+    "name": "Wing Rend",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/moth_queen_attack.png"
+   },
+   "skill": {
+    "name": "Call the Brood",
+    "covers": [
+     "summon",
+     "buff"
+    ],
+    "art": "res://assets/paper/enemies/moth_queen_skill.png"
+   },
+   "attack2": {
+    "name": "Dust Gale",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/moth_queen_attack2.png"
+   },
+   "attack3": {
+    "name": "Pin Crown Dive",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/moth_queen_attack3.png"
+   },
+   "attack4": {
+    "name": "Devour",
+    "covers": [
+     "attack"
+    ],
+    "art": "res://assets/paper/enemies/moth_queen_attack4.png"
+   }
   }
  },
  "heroes": {
