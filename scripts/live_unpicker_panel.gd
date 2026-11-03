@@ -14,6 +14,7 @@ extends Control
 signal decision_requested(intent: Dictionary)
 
 const PANEL_ART := "res://assets/paper/ui/reward_panel.png"
+const AMBIENT_SCENE := preload("res://scripts/live_battle_ambient.gd")
 const BUTTON_ART := "res://assets/paper/ui/reward_button.png"
 const CREAM := Color("#f0e4ca")
 const THREAD := Color("#c9b996")
@@ -80,6 +81,8 @@ var reduced_motion_override: Variant = null
 var _art_drift: Panel = null
 var _art_drift_base := Vector2.ZERO
 var _art_motion_elapsed := 0.0
+## One recycled clipped scraps layer, below sewn outline and all action surfaces.
+var ambient_layer: Control
 
 
 func _ready() -> void:
@@ -97,6 +100,10 @@ func _ready() -> void:
 	# the animation can never show an image edge or an empty seam.
 	backing.clip_contents = true
 	_install_art_drift(backing)
+	ambient_layer = AMBIENT_SCENE.new()
+	backing.add_child(ambient_layer)
+	ambient_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ambient_layer.retire()
 	backing.add_child(SewnOutline.new())
 	visibility_changed.connect(_on_art_visibility_changed)
 
@@ -122,6 +129,7 @@ func _ready() -> void:
 	leave_button = _button("0 Leave · free", Vector2(450, 510), Vector2(400, 62))
 	_refresh()
 	_grab_initial_focus()
+	_sync_ambient()
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -242,6 +250,26 @@ func set_reduced_motion_override(value: Variant) -> void:
 	reduced_motion_override = value
 	if not art_motion_active():
 		_reset_art_motion()
+	_sync_ambient()
+
+
+## The backing clips this inert child; source validation and the authored
+## texture are both mandatory before admitting any decorative phase.
+func _retire_ambient() -> void:
+	if is_instance_valid(ambient_layer) and (not ambient_layer.profile.is_empty() \
+			or ambient_layer.visible or ambient_layer.is_processing()):
+		ambient_layer.retire()
+
+
+func _sync_ambient() -> void:
+	if not is_instance_valid(ambient_layer):
+		return
+	if not is_inside_tree() or not is_visible_in_tree() or panel_art_texture == null \
+			or _reduced_motion_active() or not _source_current():
+		_retire_ambient()
+		return
+	if ambient_layer.profile != "scraps" or not ambient_layer._visit_dressing or not ambient_layer.visible:
+		ambient_layer.configure_visit_scraps()
 
 
 func _reduced_motion_active() -> bool:
@@ -276,16 +304,21 @@ func _apply_art_motion() -> void:
 func _on_art_visibility_changed() -> void:
 	if not is_visible_in_tree():
 		_reset_art_motion()
+	_sync_ambient()
 
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_EXIT_TREE:
 		_reset_art_motion()
+		_retire_ambient()
+	elif what == NOTIFICATION_VISIBILITY_CHANGED and is_node_ready():
+		_sync_ambient()
 
 
 ## Accumulated presentation delta alone drives the decoration; it never calls the
 ## visit, the removal service, the route or any RNG.
 func _process(delta: float) -> void:
+	_sync_ambient()
 	if not art_motion_active():
 		_reset_art_motion()
 		return
@@ -347,6 +380,9 @@ func _button(value: String, at: Vector2, dimensions: Vector2) -> Button:
 ## Binding is restricted to a real valid, unconsumed service. Never accept a quote
 ## or deck supplied by a view caller separately from that service.
 func bind(visit: RunUnpickerVisit) -> void:
+	var same_current := visit != null and is_same(visit, _visit) and _source_current()
+	if not same_current:
+		_retire_ambient()
 	_epoch += 1
 	_retire_callbacks()
 	# A different bound visit (or none at all) restarts the decorative drift from
@@ -361,6 +397,7 @@ func bind(visit: RunUnpickerVisit) -> void:
 		visible = true
 		_refresh()
 		_grab_initial_focus()
+		_sync_ambient()
 
 
 func close() -> void:
@@ -815,4 +852,5 @@ func _emit_decision(action: String, card_id: String = "") -> void:
 	remove_button.disabled = true
 	leave_button.disabled = true
 	_retire_callbacks()
+	_retire_ambient()
 	decision_requested.emit(intent.duplicate(true))

@@ -145,6 +145,7 @@ func _run() -> void:
 	await _keyboard_negative()
 	await _fail_closed()
 	await _rest_art_ambient()
+	await _scraps_ambient()
 	_check(randi() == expected_draw,
 		"every mounted browse/commit/rejection and rest-art motion uses zero global RNG")
 	panel.queue_free()
@@ -1282,3 +1283,162 @@ func _keyboard_negative() -> void:
 	_check(genuine_result.get("ok") == true and genuine_result.get("decision") == "leave" and visit.read_state().status == "left", "final genuine KEY_2 commit accepted")
 	_check(visit.read_state().heroes == visit_before.heroes, "Leave roster unchanged")
 	_check(not Controller.submit(visit, genuine_intent).get("ok"), "final genuine action rejects replay")
+
+
+
+## Authored scraps layer mounted on the *real* Campfire visit and never given
+## control of a choice, HP receipt, focus or the global random stream.
+func _scraps_ambient() -> void:
+	panel.set_process(true)
+	panel.set_reduced_motion_override(false)
+	var visit := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
+	var before := visit.read_state()
+	_check(before.ok and before.status == RunCampfireVisit.OPEN
+			and panel.rest_art_texture != null, "scraps: genuine open three-hero visit and imported art")
+	await _bind(visit)
+	var layer := panel.ambient_layer
+	_check(is_instance_valid(layer) and panel.get_child(0) == layer
+			and panel.clip_contents and panel.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
+			"scraps: exactly one clipped renderer below the fixed hero and action controls")
+	_check(layer.profile == "scraps" and layer.fast and layer.visible_budget() == 7
+			and layer._visit_dressing and is_equal_approx(layer.self_modulate.a, 0.42)
+			and layer.is_visible_in_tree() and layer.is_processing()
+			and layer.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and layer.focus_mode == Control.FOCUS_NONE,
+			"scraps: authored seven-mote 0.42-opacity inert renderer is running")
+	var rects := [panel.title_label.get_global_rect(), panel.heal_button.get_global_rect(),
+			panel.leave_button.get_global_rect()]
+	for hero in panel.hero_labels:
+		rects.append(hero.get_global_rect())
+	var focus := root.gui_get_focus_owner()
+	layer._time = 2.5
+	panel._refresh()
+	panel._sync_ambient()
+	_check(is_equal_approx(layer._time, 2.5) and layer.profile == "scraps",
+			"scraps: an unchanged valid refresh does not restart presentation phase")
+	panel.bind(visit)
+	_check(is_equal_approx(layer._time, 2.5),
+			"scraps: repeated bind to the same current source keeps one renderer and its phase")
+	_check(panel.title_label.get_global_rect() == rects[0]
+			and panel.heal_button.get_global_rect() == rects[1]
+			and panel.leave_button.get_global_rect() == rects[2]
+			and panel.hero_labels[0].get_global_rect() == rects[3]
+			and panel.hero_labels[1].get_global_rect() == rects[4]
+			and panel.hero_labels[2].get_global_rect() == rects[5]
+			and panel.heal_button.has_focus() and focus == panel.heal_button
+			and intents.is_empty() and visit.read_state() == before,
+			"scraps: focus, forecast, all rectangles, signals and real source unchanged")
+	panel.heal_button.pressed.emit()
+	_check(intents.size() == 1 and layer.profile.is_empty() and not layer.visible
+			and not layer.is_processing() and layer._time == 0.0,
+			"scraps: Heal emits exactly one request and retires immediately")
+	var expected := RunRestRecovery.new(before.heroes).choose_heal()
+	var receipt := Controller.submit(visit, intents[0]) if intents.size() == 1 else {}
+	_check(receipt.get("ok") == true and receipt.get("heroes") == expected.get("heroes")
+			and visit.read_state().status == RunCampfireVisit.HEALED
+			and not Controller.submit(visit, intents[0]).get("ok"),
+			"scraps: revive-first 30% Heal is settled by controller exactly once")
+	panel.heal_button.pressed.emit()
+	panel.leave_button.pressed.emit()
+	_check(intents.size() == 1, "scraps: submitted visit cannot issue another signal")
+
+	var replacement := RunCampfireVisit.new("f04_new", _party([14, 16, 20]))
+	panel.bind(replacement)
+	_check(layer._time == 0.0 and layer.profile == "scraps"
+			and panel.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
+			"scraps: replacement source reopens the parked renderer at phase zero")
+	var replaced_before := replacement.read_state()
+	intents.clear()
+	panel.leave_button.pressed.emit()
+	var free := Controller.submit(replacement, intents[0]) if intents.size() == 1 else {}
+	_check(intents.size() == 1 and free.get("decision") == "leave"
+			and free.get("heroes") == replaced_before.heroes
+			and replacement.read_state().heroes == replaced_before.heroes
+			and layer.profile.is_empty() and layer._time == 0.0,
+			"scraps: free Leave preserves HP, emits once and parks motes")
+
+	var external := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
+	panel.bind(external)
+	layer._time = 3.0
+	var state := external.read_state()
+	_check(external.leave(state.node_id, state.heroes).ok, "scraps: external consume prerequisite")
+	await _settle()
+	_check(layer.profile.is_empty() and layer._time == 0.0 and not layer.is_processing()
+			and intents.size() == 1, "scraps: externally consumed visit auto-retires without a new signal")
+	var mutated := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
+	panel.bind(mutated)
+	layer._time = 2.0
+	mutated._heroes[0]["hp"] = 1
+	await _settle()
+	_check(layer.profile.is_empty() and layer._time == 0.0,
+			"scraps: changed snapshot invalidates and retires automatically")
+	var invalid := RunCampfireVisit.new(" ", _party([35, 18, 0]))
+	panel.bind(invalid)
+	_check(not invalid.read_state().ok and layer.profile.is_empty()
+			and layer._time == 0.0, "scraps: invalid visit stays retired")
+	var already := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
+	var already_state := already.read_state()
+	already.leave(already_state.node_id, already_state.heroes)
+	panel.bind(already)
+	_check(layer.profile.is_empty() and layer._time == 0.0,
+			"scraps: consumed rebind stays retired")
+	panel.bind(null)
+	_check(layer.profile.is_empty() and not layer.visible and layer._time == 0.0,
+			"scraps: null bind immediately clears profile and clock")
+
+	var fresh := RunCampfireVisit.new(NODE, _party([35, 18, 0]))
+	panel.bind(fresh)
+	layer._time = 4.0
+	panel.hide()
+	await _settle()
+	_check(layer.profile.is_empty() and layer._time == 0.0 and not layer.is_processing(),
+			"scraps: hiding the panel retires the motion")
+	panel.show()
+	await _settle()
+	_check(layer.profile == "scraps" and layer._visit_dressing,
+			"scraps: showing a still-open visit re-admits the same renderer")
+	var host := Control.new()
+	root.add_child(host)
+	panel.reparent(host)
+	await _settle()
+	layer._time = 2.0
+	host.hide()
+	await _settle()
+	_check(layer.profile.is_empty() and layer._time == 0.0 and not layer.is_processing(),
+			"scraps: hidden ancestor immediately retires a mounted visit")
+	host.show()
+	await _settle()
+	_check(layer.profile == "scraps", "scraps: visible ancestor re-admits fresh motes")
+	panel.reparent(root)
+	host.queue_free()
+	await _settle()
+	panel.rest_art_texture = null
+	panel._sync_ambient()
+	_check(layer.profile.is_empty() and layer._time == 0.0,
+			"scraps: absent backdrop never enables decoration")
+	panel.rest_art_texture = LiveCampfirePanel._load_rest_art()
+	panel._sync_ambient()
+	_check(layer.profile == "scraps", "scraps: imported art can be restored without a new renderer")
+	panel.set_reduced_motion_override(true)
+	_check(layer.profile.is_empty() and layer._time == 0.0 and not layer.is_processing(),
+			"scraps: explicit reduced motion immediately retires")
+	panel.set_reduced_motion_override(null)
+	var setting: Variant = ProjectSettings.get_setting(LiveCampfirePanel.REST_REDUCED_MOTION_SETTING, false)
+	ProjectSettings.set_setting(LiveCampfirePanel.REST_REDUCED_MOTION_SETTING, true)
+	panel._sync_ambient()
+	_check(layer.profile.is_empty(), "scraps: accessibility project setting retires")
+	ProjectSettings.set_setting(LiveCampfirePanel.REST_REDUCED_MOTION_SETTING, setting)
+	panel._sync_ambient()
+	_check(layer.profile == "scraps", "scraps: clearing reduced motion permits new phase")
+	root.remove_child(panel)
+	_check(layer.profile.is_empty() and layer._time == 0.0 and not layer.is_processing(),
+			"scraps: detached panel retires immediately")
+	root.add_child(panel)
+	await _settle()
+	panel.close()
+	_check(layer.profile.is_empty() and layer._time == 0.0 and not layer.visible,
+			"scraps: close clears the renderer and hides the visit")
+	panel.bind(RunCampfireVisit.new(NODE, _party([12, 17, 20])))
+	_check(layer.profile == "scraps" and layer._time == 0.0
+			and panel.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
+			"scraps: a clean new visit reuses one renderer at phase zero")
