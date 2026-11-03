@@ -8,7 +8,8 @@ const CATALOG := "res://data/patches/mpw_heirloom_patches.json"
 const NEEDLE := "needle_echo"
 const HEM := "shared_hem"
 const NEEDLE_STARTERS := ["warden_strike", "warden_strike_plus",
-    "warden_shield_bash", "seamstress_prick", "tinker_pop_shot"]
+    "warden_shield_bash", "warden_shield_bash_plus",
+    "seamstress_prick", "seamstress_prick_plus", "tinker_pop_shot"]
 const NEEDLE_POOL := [
     "warden_brass_buckle", "warden_brass_buckle_plus",
     "seamstress_thread_whip", "seamstress_thread_whip_plus",

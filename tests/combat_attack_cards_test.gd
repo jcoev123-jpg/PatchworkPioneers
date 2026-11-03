@@ -46,6 +46,7 @@ func _initialize() -> void:
 	_test_one_shot_token_held_card()
 	_test_one_shot_token_bridge_rejections()
 	_test_one_shot_token_card_rejections()
+	_test_needle_echo_upgraded_starters()
 	for failure in failures:
 		printerr(failure)
 	print("combat_attack_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -3031,3 +3032,370 @@ func _test_one_shot_token_card_rejections() -> void:
 		"seamstress_prick", 3, {"dodge_next_attack": 1}, {3: {"blind_next_attack": 1}})
 		== {"ok": true, "hits": [_hit(3, 3, 0, 3, {"bleed": 3})]},
 		"the corrected supplied token pair still charges and lands the normal hit")
+
+
+func _needle_echo_context(wearer: String = "warden", slot: String = "HEAD",
+		sew: bool = true) -> Dictionary:
+	var party := _party(["warden", "seamstress", "tinker"])
+	var torn := RunTornMending.new(party.get_heroes())
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), ["needle_echo"],
+		RunAuthoredPatchDefinitions.load_definitions(), 5, 125, [], 19651, true)
+	_check(party.is_valid() and torn.is_valid() and wardrobe.is_valid(),
+		"Needle Echo test context: valid party, torn ledger and wardrobe")
+	if not wardrobe.is_valid() or not torn.is_valid() or not party.is_valid():
+		return {}
+	if sew and not wearer.is_empty():
+		var sewn: Dictionary = wardrobe.sew("needle_echo", wearer, slot,
+			"sew_needle", wardrobe.get_snapshot())
+		_check(sewn.get("ok", false)
+			and wardrobe.get_snapshot()["worn"][wearer][slot] == "needle_echo",
+			"Needle Echo sewn on " + wearer + " " + slot)
+		if not sewn.get("ok", false):
+			return {}
+	var foes := _enemies([40, 40, 40])
+	var pins := CombatPinned.new()
+	var rules := CombatHeirloomPatchTriggers.new()
+	_check(foes.is_valid() and rules.bind_battle(wardrobe, torn, party, foes, pins)
+		and rules.start_player_turn(),
+		"Needle Echo battle bound and started turn")
+	if not rules.is_current():
+		return {}
+	return {"party": party, "torn": torn, "wardrobe": wardrobe, "foes": foes,
+		"pins": pins, "rules": rules}
+
+
+func _needle_echo_snapshot(deck: CombatDeck, party: CombatParty, foes: CombatEnemies,
+		pins: CombatPinned, wardrobe: RunPatchWardrobe, torn: RunTornMending) -> Dictionary:
+	return {
+		"hand": deck.hand.duplicate(),
+		"draw": deck.draw_pile.duplicate(),
+		"discard": deck.discard_pile.duplicate(),
+		"energy": deck.energy,
+		"turn": deck.turn_active,
+		"rng": deck._rng.state,
+		"party": party.get_heroes(),
+		"foes": foes.get_enemies(),
+		"pins": pins._pinner_by_position.duplicate(true),
+		"wardrobe": wardrobe.get_snapshot(),
+		"torn": torn.read_state()
+	}
+
+
+func _test_needle_echo_upgraded_starters() -> void:
+	# =========================================================================
+	# AC1: Authored StarterCards definitions, positive quotes, wrong-ID/owner/slot negatives
+	# =========================================================================
+	var catalog := StarterCards.new()
+	var bash_def: Dictionary = catalog.get_definition("warden_shield_bash_plus")
+	_check(bash_def.get("id") == "warden_shield_bash_plus" and bash_def.get("owner") == "warden"
+		and bash_def.get("cost") == 2 and bash_def.get("from_positions") == [1]
+		and bash_def.get("to_positions") == [1] and bash_def.get("target_kind") == "enemy_single"
+		and bash_def.get("effects", {}).get("damage") == 11 and bash_def.get("effects", {}).get("weak") == 1,
+		"AC1: exact authored warden_shield_bash_plus definition (11, Weak 1, cost 2, from 1 to 1)")
+	var prick_def: Dictionary = catalog.get_definition("seamstress_prick_plus")
+	_check(prick_def.get("id") == "seamstress_prick_plus" and prick_def.get("owner") == "seamstress"
+		and prick_def.get("cost") == 1 and prick_def.get("from_positions") == [1, 2, 3]
+		and prick_def.get("to_positions") == [1, 2, 3] and prick_def.get("target_kind") == "enemy_single"
+		and prick_def.get("effects", {}).get("damage") == 4 and prick_def.get("effects", {}).get("bleed") == 3,
+		"AC1: exact authored seamstress_prick_plus definition (4, Bleed 3, cost 1, from 1-3 to 1-3)")
+	var on_hit := CombatOnHitStatuses.new()
+	_check(on_hit.status_for_confirmed_hit("seamstress_prick_plus", true) == {"bleed": 4},
+		"AC1: Seamstress passive commits Bleed 4 for prick_plus")
+	_check(on_hit.status_for_confirmed_hit("warden_shield_bash_plus", true) == {"weak": 1},
+		"AC1: Shield Bash+ commits Weak 1 on hit")
+
+	# Positive quotes and authorizations
+	var warden_ctx := _needle_echo_context("warden")
+	_check(warden_ctx.pins.pin_enemy(warden_ctx.foes, 1, "seamstress"), "pin target 1 with seamstress")
+	var bash_quote: Dictionary = warden_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus")
+	_check(bash_quote.get("ok", false) and bash_quote.get("bonus_damage") == 1
+		and bash_quote.get("card_id") == "warden_shield_bash_plus"
+		and bash_quote.get("attacker_id") == "warden" and bash_quote.get("position") == 1,
+		"AC1: Warden wearing Needle quotes Shield Bash+ for 1 bonus damage")
+	_check(warden_ctx.rules.authorizes_needle_hit(bash_quote, warden_ctx.party, warden_ctx.foes,
+		"warden_shield_bash_plus", 1),
+		"AC1: Needle authority authorizes Shield Bash+ quote")
+	warden_ctx.rules.cancel_needle_hit()
+
+	# Prick+ positive quotes from Seamstress (pos 2) to all 3 enemy positions
+	var seam_ctx := _needle_echo_context("seamstress")
+	for target_pos in [1, 2, 3]:
+		_check(seam_ctx.pins.pin_enemy(seam_ctx.foes, target_pos, "warden"),
+			"pin target %d for seamstress" % target_pos)
+		var prick_quote: Dictionary = seam_ctx.rules.quote_needle_hit("seamstress", target_pos, "seamstress_prick_plus")
+		_check(prick_quote.get("ok", false) and prick_quote.get("bonus_damage") == 1
+			and prick_quote.get("card_id") == "seamstress_prick_plus"
+			and prick_quote.get("attacker_id") == "seamstress" and prick_quote.get("position") == target_pos,
+			"AC1: Seamstress quotes Prick+ to target %d" % target_pos)
+		_check(seam_ctx.rules.authorizes_needle_hit(prick_quote, seam_ctx.party, seam_ctx.foes,
+			"seamstress_prick_plus", target_pos),
+			"AC1: Needle authorizes Prick+ to target %d" % target_pos)
+		seam_ctx.rules.cancel_needle_hit()
+
+	# Wrong-ID negatives
+	for bad_id in ["warden_shield_bash_plus_forged", "seamstress_prick_plus_fake", "tinker_scrap_bomb",
+			"warden_brace_plus", "seamstress_mend_plus"]:
+		_check(not warden_ctx.rules.quote_needle_hit("warden", 1, bad_id).ok,
+			"AC1 negative: invalid or nonattack/area ID " + bad_id)
+	_check(not warden_ctx.rules.quote_needle_hit("warden", 1, "seamstress_prick_plus").ok,
+		"AC1 negative: Warden cannot quote Seamstress Prick+")
+	var seam_basic_ctx := _needle_echo_context("seamstress")
+	_check(seam_basic_ctx.pins.pin_enemy(seam_basic_ctx.foes, 1, "warden"), "pin target")
+	_check(not seam_basic_ctx.rules.quote_needle_hit("seamstress", 1, "warden_shield_bash_plus").ok,
+		"AC1 negative: Seamstress cannot quote Warden Shield Bash+")
+
+	# Wrong-owner negatives
+	_check(not warden_ctx.rules.quote_needle_hit("seamstress", 1, "seamstress_prick_plus").ok,
+		"AC1 negative: foreign wearer cannot quote (Needle on Warden, attacker Seamstress)")
+	_check(not seam_basic_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus").ok,
+		"AC1 negative: foreign wearer cannot quote (Needle on Seamstress, attacker Warden)")
+
+	# Wrong-slot negatives
+	var unworn_ctx := _needle_echo_context("warden", "HEAD", false)
+	_check(unworn_ctx.pins.pin_enemy(unworn_ctx.foes, 1, "seamstress"), "pin target")
+	_check(not unworn_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus").ok,
+		"AC1 negative: unworn Needle Echo cannot quote")
+	var bad_wardrobe := RunPatchWardrobe.new(_party().get_heroes(), ["needle_echo"],
+		RunAuthoredPatchDefinitions.load_definitions(), 5, 125, [], 19651)
+	_check(not bad_wardrobe.sew("needle_echo", "warden", "ARM", "test", bad_wardrobe.get_snapshot()).get("ok", false),
+		"AC1 negative: Needle Echo cannot be sewn on ARM slot")
+	_check(not bad_wardrobe.sew("needle_echo", "warden", "BODY", "test", bad_wardrobe.get_snapshot()).get("ok", false),
+		"AC1 negative: Needle Echo cannot be sewn on BODY slot")
+
+	# Wrong target positions for Shield Bash+ (to_positions is [1])
+	_check(warden_ctx.pins.pin_enemy(warden_ctx.foes, 2, "seamstress"), "pin foe 2")
+	_check(warden_ctx.pins.pin_enemy(warden_ctx.foes, 3, "seamstress"), "pin foe 3")
+	for bad_pos in [0, 2, 3, 4]:
+		_check(not warden_ctx.rules.quote_needle_hit("warden", bad_pos, "warden_shield_bash_plus").ok,
+			"AC1 negative: Shield Bash+ cannot target pos " + str(bad_pos))
+
+	# =========================================================================
+	# AC2: Paid held upgraded attack receipt, exact +1 delta, status, spend/discard, Block/HP
+	# =========================================================================
+	var play := CombatAttackCards.new()
+	# 1. Shield Bash+ paid hit unblocked: deals 11 + 1 = 12 damage and Weak 1
+	var bash_battle := _needle_echo_context("warden")
+	_check(bash_battle.pins.pin_enemy(bash_battle.foes, 1, "seamstress"), "pin target 1")
+	var bash_deck := _plus_deck("warden_shield_bash_plus")
+	var bash_quote_paid: Dictionary = bash_battle.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus")
+	var bash_receipt := play.play_attack(bash_deck, bash_battle.party, bash_battle.foes,
+		"warden_shield_bash_plus", 1, {}, {}, 0, null, {}, bash_battle.rules, bash_quote_paid)
+	_check(bash_receipt.get("ok", false) and bash_receipt.get("hits", []).size() == 1
+		and bash_receipt.hits[0].position == 1 and bash_receipt.hits[0].damage == 12
+		and bash_receipt.hits[0].block_absorbed == 0 and bash_receipt.hits[0].hp_loss == 12
+		and bash_receipt.hits[0].statuses == {"weak": 1},
+		"AC2: Shield Bash+ paid receipt with Needle deals 12 damage and Weak 1")
+	_check(bash_battle.foes.get_enemy(1).hp == 40 - 12
+		and bash_battle.foes.get_enemy(1).statuses == {"weak": 1},
+		"AC2: enemy HP reduced by 12 and carries Weak 1")
+	_check(bash_deck.energy == 3 - 2 and bash_deck.discard_pile.has("warden_shield_bash_plus")
+		and bash_battle.rules._needle_used and bash_battle.rules._pending_needle.is_empty(),
+		"AC2: exact 2 energy spent, Shield Bash+ discarded, Needle latch consumed")
+
+	# 2. Prick+ paid hit unblocked: deals 4 + 1 = 5 damage and Bleed 4
+	var prick_battle := _needle_echo_context("seamstress")
+	_check(prick_battle.pins.pin_enemy(prick_battle.foes, 1, "warden"), "pin target 1")
+	var prick_deck := _plus_deck("seamstress_prick_plus")
+	var prick_quote_paid: Dictionary = prick_battle.rules.quote_needle_hit("seamstress", 1, "seamstress_prick_plus")
+	var prick_receipt := play.play_attack(prick_deck, prick_battle.party, prick_battle.foes,
+		"seamstress_prick_plus", 1, {}, {}, 0, null, {}, prick_battle.rules, prick_quote_paid)
+	_check(prick_receipt.get("ok", false) and prick_receipt.get("hits", []).size() == 1
+		and prick_receipt.hits[0].position == 1 and prick_receipt.hits[0].damage == 5
+		and prick_receipt.hits[0].block_absorbed == 0 and prick_receipt.hits[0].hp_loss == 5
+		and prick_receipt.hits[0].statuses == {"bleed": 4},
+		"AC2: Prick+ paid receipt with Needle deals 5 damage and Bleed 4 (authored 3 + passive 1)")
+	_check(prick_battle.foes.get_enemy(1).hp == 40 - 5
+		and prick_battle.foes.get_enemy(1).statuses == {"bleed": 4},
+		"AC2: enemy HP reduced by 5 and carries Bleed 4")
+	_check(prick_deck.energy == 3 - 1 and prick_deck.discard_pile.has("seamstress_prick_plus")
+		and prick_battle.rules._needle_used and prick_battle.rules._pending_needle.is_empty(),
+		"AC2: exact 1 energy spent, Prick+ discarded, Needle latch consumed")
+
+	# 3. Block-before-HP deltas with Needle Echo:
+	# Shield Bash+ (12 damage) vs 5 Block -> 5 block absorbed, 7 HP loss
+	var block_ctx := _needle_echo_context("warden")
+	_check(block_ctx.foes.gain_block(1, 5) and block_ctx.pins.pin_enemy(block_ctx.foes, 1, "seamstress"), "block 5")
+	var bash_block_deck := _plus_deck("warden_shield_bash_plus")
+	var bquote: Dictionary = block_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus")
+	var breceipt := play.play_attack(bash_block_deck, block_ctx.party, block_ctx.foes,
+		"warden_shield_bash_plus", 1, {}, {}, 0, null, {}, block_ctx.rules, bquote)
+	_check(breceipt.ok and breceipt.hits[0].block_absorbed == 5 and breceipt.hits[0].hp_loss == 7
+		and block_ctx.foes.get_enemy(1).block == 0 and block_ctx.foes.get_enemy(1).hp == 33,
+		"AC2: Shield Bash+ with Needle absorbs 5 Block before 7 HP loss")
+
+	# Prick+ (5 damage) vs 3 Block -> 3 block absorbed, 2 HP loss
+	var prick_block_ctx := _needle_echo_context("seamstress")
+	_check(prick_block_ctx.foes.gain_block(1, 3) and prick_block_ctx.pins.pin_enemy(prick_block_ctx.foes, 1, "warden"), "block 3")
+	var prick_block_deck := _plus_deck("seamstress_prick_plus")
+	var pquote: Dictionary = prick_block_ctx.rules.quote_needle_hit("seamstress", 1, "seamstress_prick_plus")
+	var preceipt := play.play_attack(prick_block_deck, prick_block_ctx.party, prick_block_ctx.foes,
+		"seamstress_prick_plus", 1, {}, {}, 0, null, {}, prick_block_ctx.rules, pquote)
+	_check(preceipt.ok and preceipt.hits[0].block_absorbed == 3 and preceipt.hits[0].hp_loss == 2
+		and prick_block_ctx.foes.get_enemy(1).block == 0 and prick_block_ctx.foes.get_enemy(1).hp == 38
+		and prick_block_ctx.foes.get_enemy(1).statuses == {"bleed": 4},
+		"AC2: Prick+ with Needle absorbs 3 Block before 2 HP loss, Bleed 4 persists")
+
+	# 4. Status rounding order: Needle +1 enters BEFORE Weak/Exposed rounding
+	# Shield Bash+ with Exposed (50% increase rounded down):
+	# (11 + 1) = 12. 12 + 6 = 18 damage. (If +1 was added after: 11 + 5 = 16, + 1 = 17 != 18).
+	var exposed_ctx := _needle_echo_context("warden")
+	exposed_ctx.foes._enemies[0]["statuses"] = {"exposed": 1}
+	_check(exposed_ctx.pins.pin_enemy(exposed_ctx.foes, 1, "seamstress"), "pin exposed enemy")
+	var exp_deck := _plus_deck("warden_shield_bash_plus")
+	var exp_quote: Dictionary = exposed_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus")
+	var exp_receipt := play.play_attack(exp_deck, exposed_ctx.party, exposed_ctx.foes,
+		"warden_shield_bash_plus", 1, {}, {1: {"exposed": 1}}, 0, null, {}, exposed_ctx.rules, exp_quote)
+	_check(exp_receipt.ok and exp_receipt.hits[0].damage == 18,
+		"AC2: Shield Bash+ Needle +1 enters before Exposed rounding (12 + 6 = 18 damage)")
+
+	# Shield Bash+ with Weak (25% reduction rounded down):
+	# (11 + 1) = 12. 12 - 3 = 9 damage.
+	var weak_ctx := _needle_echo_context("warden")
+	weak_ctx.party._heroes[0]["statuses"] = {"weak": 1}
+	_check(weak_ctx.pins.pin_enemy(weak_ctx.foes, 1, "seamstress"), "pin enemy for weak attack")
+	var weak_deck := _plus_deck("warden_shield_bash_plus")
+	var weak_quote: Dictionary = weak_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus")
+	var weak_receipt := play.play_attack(weak_deck, weak_ctx.party, weak_ctx.foes,
+		"warden_shield_bash_plus", 1, {"weak": 1}, {}, 0, null, {}, weak_ctx.rules, weak_quote)
+	_check(weak_receipt.ok and weak_receipt.hits[0].damage == 9,
+		"AC2: Shield Bash+ Needle +1 enters before Weak rounding (12 - 3 = 9 damage)")
+
+	# Prick+ with Exposed: (4 + 1) = 5. 5 + 50%(5) (2) = 7 damage.
+	var p_exp_ctx := _needle_echo_context("seamstress")
+	p_exp_ctx.foes._enemies[0]["statuses"] = {"exposed": 1}
+	_check(p_exp_ctx.pins.pin_enemy(p_exp_ctx.foes, 1, "warden"), "pin exposed foe for prick+")
+	var p_exp_deck := _plus_deck("seamstress_prick_plus")
+	var p_exp_quote: Dictionary = p_exp_ctx.rules.quote_needle_hit("seamstress", 1, "seamstress_prick_plus")
+	var p_exp_receipt := play.play_attack(p_exp_deck, p_exp_ctx.party, p_exp_ctx.foes,
+		"seamstress_prick_plus", 1, {}, {1: {"exposed": 1}}, 0, null, {}, p_exp_ctx.rules, p_exp_quote)
+	_check(p_exp_receipt.ok and p_exp_receipt.hits[0].damage == 7,
+		"AC2: Prick+ Needle +1 enters before Exposed rounding (5 + 2 = 7 damage)")
+
+	# =========================================================================
+	# AC3: Negatives, snapshot preservation, unchanged RNG, Block absorption, same-turn 2nd hit, turn rearm
+	# =========================================================================
+	# 1. Unpinned enemy refuses quote
+	var unpinned_ctx := _needle_echo_context("warden")
+	_check(not unpinned_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus").ok,
+		"AC3 negative: unpinned target refuses quote")
+
+	# Pin cleared between quote and play: authorizes_needle_hit fails, no state changes
+	_check(unpinned_ctx.pins.pin_enemy(unpinned_ctx.foes, 1, "seamstress"), "pin foe")
+	var stale_pin_quote: Dictionary = unpinned_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus")
+	_check(stale_pin_quote.ok and unpinned_ctx.pins.clear_pin(1), "clear pin before attack commit")
+	var snap_before := _needle_echo_snapshot(bash_deck, unpinned_ctx.party, unpinned_ctx.foes,
+		unpinned_ctx.pins, unpinned_ctx.wardrobe, unpinned_ctx.torn)
+	var stale_pin_result := play.play_attack(bash_deck, unpinned_ctx.party, unpinned_ctx.foes,
+		"warden_shield_bash_plus", 1, {}, {}, 0, null, {}, unpinned_ctx.rules, stale_pin_quote)
+	_check(not stale_pin_result.ok and not unpinned_ctx.rules._needle_used
+		and unpinned_ctx.rules._pending_needle.is_empty(),
+		"AC3 negative: lost Pin refuses play_attack and cancels pending quote")
+	_check(_needle_echo_snapshot(bash_deck, unpinned_ctx.party, unpinned_ctx.foes,
+		unpinned_ctx.pins, unpinned_ctx.wardrobe, unpinned_ctx.torn) == snap_before,
+		"AC3 negative: state and RNG unchanged after refused lost-Pin hit")
+
+	# 2. Downed wearer refuses quote
+	var downed_ctx := _needle_echo_context("warden")
+	_check(downed_ctx.pins.pin_enemy(downed_ctx.foes, 1, "seamstress"), "pin foe")
+	_check(downed_ctx.party.apply_damage(1, 999) and downed_ctx.party.is_downed(1), "down Warden")
+	_check(not downed_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus").ok,
+		"AC3 negative: downed wearer cannot quote Needle")
+
+	# Torn wearer in run ledger refuses quote
+	var torn_ctx := _needle_echo_context("warden")
+	var torn_state: Dictionary = torn_ctx.torn.read_state()
+	var torn_heroes: Array = torn_state.heroes.duplicate(true)
+	torn_heroes[0]["hp"] = 0
+	_check(torn_ctx.torn.observe_battle_end("torn_event", torn_state.heroes, torn_heroes).ok,
+		"observe tear on Warden")
+	_check(not torn_ctx.rules.is_current()
+		and not torn_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus").ok,
+		"AC3 negative: torn wearer in run ledger cannot quote Needle")
+
+	# 3. Forged / tampered quote: ticket, turn, card_id
+	var forged_ctx := _needle_echo_context("warden")
+	_check(forged_ctx.pins.pin_enemy(forged_ctx.foes, 1, "seamstress"), "pin target")
+	var real_quote: Dictionary = forged_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus")
+	var forged_ticket := real_quote.duplicate(true)
+	forged_ticket["ticket"] = -999
+	var snap_forged := _needle_echo_snapshot(bash_deck, forged_ctx.party, forged_ctx.foes,
+		forged_ctx.pins, forged_ctx.wardrobe, forged_ctx.torn)
+	_check(not play.play_attack(bash_deck, forged_ctx.party, forged_ctx.foes,
+		"warden_shield_bash_plus", 1, {}, {}, 0, null, {}, forged_ctx.rules, forged_ticket).ok,
+		"AC3 negative: forged ticket refuses play_attack")
+	_check(not forged_ctx.rules._needle_used and forged_ctx.rules._pending_needle.is_empty(),
+		"AC3 negative: pending quote cancelled on refusal")
+	_check(_needle_echo_snapshot(bash_deck, forged_ctx.party, forged_ctx.foes,
+		forged_ctx.pins, forged_ctx.wardrobe, forged_ctx.torn) == snap_forged,
+		"AC3 negative: snapshot and RNG preserved on forged quote")
+
+	# Forged card_id
+	var quote_card: Dictionary = forged_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus")
+	_check(not play.play_attack(bash_deck, forged_ctx.party, forged_ctx.foes,
+		"seamstress_prick_plus", 1, {}, {}, 0, null, {}, forged_ctx.rules, quote_card).ok,
+		"AC3 negative: mismatched card ID in quote refuses play_attack")
+
+	# 4. Wrong target
+	var target_quote: Dictionary = forged_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus")
+	_check(not play.play_attack(bash_deck, forged_ctx.party, forged_ctx.foes,
+		"warden_shield_bash_plus", 2, {}, {}, 0, null, {}, forged_ctx.rules, target_quote).ok,
+		"AC3 negative: wrong target position refuses play_attack")
+
+	# Dead target
+	_check(forged_ctx.foes.apply_damage(1, 999), "slay target 1")
+	var dead_quote: Dictionary = forged_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus")
+	_check(not dead_quote.ok, "AC3 negative: dead target cannot quote Needle")
+
+	# 5. Insufficient energy: quote is valid, but play_attack refuses without spend or latch
+	var poor_ctx := _needle_echo_context("warden")
+	_check(poor_ctx.pins.pin_enemy(poor_ctx.foes, 1, "seamstress"), "pin foe")
+	var poor_deck := _plus_deck("warden_shield_bash_plus")
+	_check(poor_deck.try_spend_energy(2), "drain energy to 1 (card costs 2)")
+	var poor_quote: Dictionary = poor_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus")
+	_check(poor_quote.ok, "quote succeeds before payment check")
+	var snap_poor := _needle_echo_snapshot(poor_deck, poor_ctx.party, poor_ctx.foes,
+		poor_ctx.pins, poor_ctx.wardrobe, poor_ctx.torn)
+	_check(not play.play_attack(poor_deck, poor_ctx.party, poor_ctx.foes,
+		"warden_shield_bash_plus", 1, {}, {}, 0, null, {}, poor_ctx.rules, poor_quote).ok,
+		"AC3 negative: unaffordable attack refuses play_attack")
+	_check(not poor_ctx.rules._needle_used and poor_ctx.rules._pending_needle.is_empty(),
+		"AC3 negative: unaffordable attack clears quote and leaves latch unused")
+	_check(_needle_echo_snapshot(poor_deck, poor_ctx.party, poor_ctx.foes,
+		poor_ctx.pins, poor_ctx.wardrobe, poor_ctx.torn) == snap_poor,
+		"AC3 negative: unaffordable attack preserves snapshot, hand and RNG")
+
+	# 6. Block-absorbed positive contact consumes latch:
+	var abs_ctx := _needle_echo_context("warden")
+	_check(abs_ctx.foes.gain_block(1, 99) and abs_ctx.pins.pin_enemy(abs_ctx.foes, 1, "seamstress"), "block 99")
+	var abs_deck := _plus_deck("warden_shield_bash_plus")
+	var abs_quote: Dictionary = abs_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus")
+	var abs_receipt := play.play_attack(abs_deck, abs_ctx.party, abs_ctx.foes,
+		"warden_shield_bash_plus", 1, {}, {}, 0, null, {}, abs_ctx.rules, abs_quote)
+	_check(abs_receipt.ok and abs_receipt.hits[0].block_absorbed == 12 and abs_receipt.hits[0].hp_loss == 0
+		and abs_ctx.foes.get_enemy(1).hp == 40 and abs_ctx.foes.get_enemy(1).block == 99 - 12
+		and abs_ctx.rules._needle_used,
+		"AC3: positive damage fully absorbed by Block consumes the Needle latch")
+
+	# 7. Quote replay refused
+	_check(not play.play_attack(abs_deck, abs_ctx.party, abs_ctx.foes,
+		"warden_shield_bash_plus", 1, {}, {}, 0, null, {}, abs_ctx.rules, abs_quote).ok,
+		"AC3 negative: quote cannot be replayed after use")
+
+	# 8. Same-turn second hit: cannot quote or gain second +1
+	_check(not abs_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus").ok,
+		"AC3: spent Needle latch refuses second quote in same turn")
+	abs_deck.combat_state.energy = 3
+	abs_deck.hand.append("warden_shield_bash_plus")
+	var second_hit := play.play_attack(abs_deck, abs_ctx.party, abs_ctx.foes,
+		"warden_shield_bash_plus", 1)
+	_check(second_hit.ok and second_hit.hits[0].damage == 11 and abs_ctx.rules._needle_used,
+		"AC3: second hit in same turn deals only base 11 damage without Needle bonus")
+
+	# 9. Next player turn rearms exactly one Needle use
+	_check(abs_ctx.rules.start_player_turn() and not abs_ctx.rules._needle_used
+		and abs_ctx.rules._pending_needle.is_empty(),
+		"AC3: start_player_turn rearms Needle latch")
+	_check(abs_ctx.pins.pin_enemy(abs_ctx.foes, 1, "tinker"), "re-pin target")
+	var rearmed_quote: Dictionary = abs_ctx.rules.quote_needle_hit("warden", 1, "warden_shield_bash_plus")
+	_check(rearmed_quote.ok and rearmed_quote.bonus_damage == 1,
+		"AC3: fresh player turn successfully quotes Needle +1 again")

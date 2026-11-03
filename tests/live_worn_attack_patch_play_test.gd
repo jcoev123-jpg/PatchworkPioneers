@@ -364,7 +364,7 @@ func _physical_hit(id: String, position: int, keyboard: bool, damage: int,
 func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 		mitt: bool = false, stitch_pair: Array = [], scope: bool = false,
 		head_status: bool = false, visor: String = "", heavy: bool = false,
-		needle: bool = false, upgrade_strike: bool = false,
+		needle: bool = false, upgrade_card: Variant = false,
 		pool_id: String = "", direct_id: String = "") -> bool:
 	worn_wardrobe = null
 	# Only the predecessor is terminally settled to reach a genuine connected
@@ -418,13 +418,33 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 	if not stitch_pair.is_empty():
 		_check(stitch_pair.size() == 2 and not _prepare_live_stitch(stitch_pair[0], stitch_pair[1]).is_empty(),
 			"genuine Rest descriptor ready before routed battle")
-	if upgrade_strike:
-		var slot: int = app.run_deck.find("warden_strike")
+	var target_base := ""
+	var target_plus := ""
+	var target_label := ""
+	if upgrade_card is bool and upgrade_card:
+		target_base = "warden_strike"
+		target_plus = "warden_strike_plus"
+		target_label = "Warden Strike+"
+	elif upgrade_card is String and not upgrade_card.is_empty():
+		if upgrade_card in ["warden_strike", "warden_strike_plus", "strike"]:
+			target_base = "warden_strike"
+			target_plus = "warden_strike_plus"
+			target_label = "Warden Strike+"
+		elif upgrade_card in ["warden_shield_bash", "warden_shield_bash_plus", "bash", "bash_plus"]:
+			target_base = "warden_shield_bash"
+			target_plus = "warden_shield_bash_plus"
+			target_label = "Warden Shield Bash+"
+		elif upgrade_card in ["seamstress_prick", "seamstress_prick_plus", "prick", "prick_plus"]:
+			target_base = "seamstress_prick"
+			target_plus = "seamstress_prick_plus"
+			target_label = "Seamstress Prick+"
+	if not target_base.is_empty():
+		var slot: int = app.run_deck.find(target_base)
 		var upgraded := RunRestCardUpgrade.new(app.run_deck,
-			{"warden_strike": "warden_strike_plus"}).choose_upgrade(slot)
+			{target_base: target_plus}).choose_upgrade(slot)
 		_check(slot >= 0 and upgraded.get("ok", false)
-			and upgraded.deck.has("warden_strike_plus"),
-			"genuine upgraded Warden Strike+ joins owned run deck before Fight")
+			and upgraded.deck.has(target_plus),
+			"genuine upgraded %s joins owned run deck before Fight" % target_label)
 		if not upgraded.get("ok", false):
 			return false
 		app.run_deck.assign(upgraded.deck)
@@ -1882,13 +1902,15 @@ func _needle_state() -> Array:
 
 
 func _needle_mounted_cases(fixture: Dictionary) -> void:
-	for scenario in ["strike", "plus", "bash", "prick", "pop", "modifiers",
+	for scenario in ["strike", "plus", "bash", "bash_plus", "prick", "prick_plus", "pop", "modifiers",
 			"absorbed", "nonwearer", "foreign_prick", "foreign_pop",
 			"unpinned", "torn", "unworn"]:
 		var owner := "" if scenario == "unworn" else (
-			"seamstress" if scenario in ["prick", "modifiers", "nonwearer"] else (
+			"seamstress" if scenario in ["prick", "prick_plus", "modifiers", "nonwearer"] else (
 				"tinker" if scenario == "pop" else "warden"))
-		var upgrading: bool = scenario == "plus"
+		var upgrading: Variant = "warden_strike_plus" if scenario == "plus" else (
+			"warden_shield_bash_plus" if scenario == "bash_plus" else (
+				"seamstress_prick_plus" if scenario == "prick_plus" else false))
 		var torn: bool = scenario == "torn"
 		if not await _entry(fixture, owner, torn, false, false, [], false,
 				false, "", false, owner != "", upgrading):
@@ -1905,10 +1927,12 @@ func _needle_mounted_cases(fixture: Dictionary) -> void:
 		if rules == null and owner != "":
 			await _click(app.return_button)
 			continue
-		var id := "warden_strike_plus" if upgrading else (
-			"warden_shield_bash" if scenario == "bash" else (
-				"seamstress_prick" if scenario in ["prick", "modifiers", "foreign_prick"] else (
-					"tinker_pop_shot" if scenario in ["pop", "foreign_pop"] else "warden_strike")))
+		var id := "warden_strike_plus" if scenario == "plus" else (
+			"warden_shield_bash_plus" if scenario == "bash_plus" else (
+				"seamstress_prick_plus" if scenario == "prick_plus" else (
+					"warden_shield_bash" if scenario == "bash" else (
+						"seamstress_prick" if scenario in ["prick", "modifiers", "foreign_prick"] else (
+							"tinker_pop_shot" if scenario in ["pop", "foreign_pop"] else "warden_strike")))))
 		var card_owner: String = StarterCards.new().get_definition(id).owner
 		var eligible: bool = owner == card_owner and not torn and owner != ""
 		var target: Dictionary = app.enemies.get_enemy(1)
@@ -1972,7 +1996,7 @@ func _needle_mounted_cases(fixture: Dictionary) -> void:
 					_check(not rules.quote_needle_hit(card_owner, 1, "tinker_scrap_bomb").ok
 						and not rules.quote_needle_hit(card_owner, 1, "seamstress_prick_plus").ok
 						and rules._pending_needle.is_empty(),
-						"area and unsupported upgraded printings cannot mint a Needle quote")
+						"area card and wrong-owner Prick+ cannot mint a Needle quote")
 					var wrong_card_quote := rules.quote_needle_hit(card_owner, 1, id)
 					var wrong_card_before := _live_state()
 					var wrong_card: Dictionary = presenter._play.play_attack(app.deck, app.party,
@@ -2043,8 +2067,9 @@ func _needle_mounted_cases(fixture: Dictionary) -> void:
 			and now.hp == original.hp - receipt.hits[0].hp_loss
 			and now.block == original.block - receipt.hits[0].block_absorbed,
 			"actual original hit rows exactly reconcile HP/Block " + scenario)
-		var expected_statuses := {"weak": 1} if id == "warden_shield_bash" else (
-			{"bleed": 3} if id == "seamstress_prick" else {})
+		var expected_statuses := {"weak": 1} if id in ["warden_shield_bash", "warden_shield_bash_plus"] else (
+			{"bleed": 4} if id == "seamstress_prick_plus" else (
+				{"bleed": 3} if id == "seamstress_prick" else {}))
 		_check(receipt.get("ok", false) and receipt.get("hits", []).size() == 1
 			and receipt.hits[0].statuses == expected_statuses,
 			"one original on-hit status receipt, never a duplicate application " + scenario)
