@@ -153,10 +153,20 @@ func _verify_band(floor_number: int) -> void:
 		_check(action.enemy_position == actor.position and badge.source_position == actor.position,
 			"first announcement, roster and sewn cue use the same source position")
 		if action.type == "attack":
-			_check(badge.intent_type == "attack" and badge.amount == action.amount
-				and badge.tooltip_text.contains(str(action.amount))
-				and badge.readable_text.contains(str(action.amount)),
-				"real visible sewn caption and tooltip match bound attack amount")
+			if badge.charge_state == "wind_up":
+				_check(actor.id == "spindle_ram" and badge.intent_type == "attack"
+					and action.amount == 0 and badge.amount == 0
+					and badge.charge_base_damage == BASE_TO_BAND[8][band_key]
+					and badge.charge_projected_damage == floori(BASE_TO_BAND[8][band_key] * 2.5)
+					and badge.readable_text.contains("WIND UP")
+					and badge.tooltip_text.contains(str(badge.charge_projected_damage)),
+					"real Ram wind-up caption announces no current hit and the exact projected charge")
+			else:
+				_check(badge.intent_type == "attack" and badge.amount == action.amount
+					and badge.tooltip_text.contains(str(action.amount))
+					and badge.readable_text.contains(str(action.amount)),
+					"real visible sewn caption and tooltip match bound attack amount: %s %s %s"
+						% [actor.id, str(action), badge.readable_text])
 	var before: Array = [app.enemies.get_enemies(), app.enemy_intents.get_intents(),
 		app.enemy_intents._slots.duplicate(true), app.run_rng.state]
 	seed(45898)
@@ -239,7 +249,8 @@ func _actual_attack_phases(floor_number: int) -> void:
 				_check(expected > 0 and amount == expected,
 					"early actor announces its exact source-owned move amount")
 			var is_wasp: bool = app.enemies.get_enemy(selected).id == "needle_wasp"
-			if is_wasp and not wasp_blind:
+			var is_sting: bool = is_wasp and not announced.has("move")
+			if is_sting and not wasp_blind:
 				_check(floor_number >= 5 and floor_number <= 8 and amount == 10
 					and announced.get("hits") == 2, "routed Wasp announces total ten and two hits")
 				app.enemies._enemies[selected - 1].statuses = {"blind_next_attack": 1}
@@ -266,15 +277,22 @@ func _actual_attack_phases(floor_number: int) -> void:
 				and hero.block == maxi(0, first_block - amount),
 				"current real enemy phase loses exact announced HP after Block absorbs first")
 			if is_wasp:
-				_check(amount == 10 and announced.get("hits") == 2
-					and hero.get("statuses", {}).get("bleed", 0) == (2 if shield == 0 else 1),
-					"mounted Wasp deals 5+5: exact first-hit Block prevents only first Bleed")
-				wasp_hits += 1
+				if is_sting:
+					_check(amount == 10 and announced.get("hits") == 2
+						and hero.get("statuses", {}).get("bleed", 0) == (2 if shield == 0 else 1),
+						"mounted Wasp deals 5+5: exact first-hit Block prevents only first Bleed")
+					wasp_hits += 1
+				else:
+					_check(announced.get("move") == "attack2" and amount == 8
+						and not announced.has("hits") and hero.get("statuses", {}).get("bleed", 0) == 1,
+						"mounted Needle Thrust deals its single mid-band eight and one HP-contact Bleed")
 			phase_hits += 1
-			if shield == 0:
-				unblocked = true
-			else:
-				blocked = true
+			# Only the original two-hit sting satisfies its two mitigation witnesses.
+			if not is_wasp or is_sting:
+				if shield == 0:
+					unblocked = true
+				else:
+					blocked = true
 		else:
 			await _click(app.end_turn_button)
 	_check(unblocked and blocked, "both unmitigated and Block-mitigated real attacks resolved")

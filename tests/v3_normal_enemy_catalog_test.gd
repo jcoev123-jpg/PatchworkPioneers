@@ -49,6 +49,7 @@ func _initialize() -> void:
 	_test_front_normal_named_strikes()
 	_test_flying_normal_named_strikes()
 	_test_mantis_named_strikes()
+	_test_harrier_named_strikes()
 	if failures.is_empty():
 		print("v3_normal_enemy_catalog_test: PASS (", checks, " checks)")
 	else:
@@ -2590,7 +2591,9 @@ func _crusher_harrier_doll_expected() -> Dictionary:
 			"intent": {"target": "front", "actions": [
 				{"type": "shove", "amount": 0, "direction": -1, "weight": 2},
 				{"type": "attack", "amount": 7, "weight": 3},
-				{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1}]}},
+				{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
+				{"type": "attack", "amount": 6, "hits": 2, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 9, "move": "attack3", "weight": 1}]}},
 		"thistle_patch_doll": {"id": "thistle_patch_doll", "name": "Thistle Patch Doll",
 			"max_hp": 28, "thorns": 2,
 			"art_path": "res://assets/paper/enemies/thistle_patch_doll.png",
@@ -2673,6 +2676,8 @@ func _test_crusher_harrier_doll_catalog_records() -> void:
 	var harrier := _find(parsed, "crochet_hook_harrier")
 	_check(_has_alternative(harrier, "shove", 0)
 		and _has_alternative(harrier, "attack", 7)
+		and _has_alternative(harrier, "attack", 6)
+		and _has_alternative(harrier, "attack", 9)
 		and _has_alternative(harrier, "debuff", 1, "exposed"),
 		"Crochet Hook Harrier hooks a hero forward, strikes for 7 or marks Exposed 1")
 	_check(int(_authored_alternative(harrier, "shove", 0).get("direction", 0)) == -1,
@@ -2750,6 +2755,10 @@ func _test_crusher_harrier_doll_seeded_announcements() -> void:
 			"action": {"type": "attack", "amount": 7, "weight": 1}},
 		{"id": "crochet_hook_harrier",
 			"action": {"type": "debuff", "amount": 1, "status": "exposed", "weight": 1}},
+		{"id": "crochet_hook_harrier",
+			"action": {"type": "attack", "amount": 6, "hits": 2, "move": "attack2", "weight": 1}},
+		{"id": "crochet_hook_harrier",
+			"action": {"type": "attack", "amount": 9, "move": "attack3", "weight": 1}},
 		{"id": "thistle_patch_doll",
 			"action": {"type": "block", "amount": 8, "weight": 1}},
 		{"id": "thistle_patch_doll",
@@ -5070,6 +5079,151 @@ func _test_mantis_named_strikes() -> void:
 					and bound.scheduler.get_intents() == before[3], "Mantis attacks preserve peers, source, cache and RNG")
 				traces.append([bound.intents, receipt, witness.hits, party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state])
 			_check(traces.size() == 2 and traces[0] == traces[1], "same-seed Mantis phase and RNG replay exactly")
+
+
+func _test_harrier_named_strikes() -> void:
+	var id := "crochet_hook_harrier"
+	var record := _find(_load_parsed(), id)
+	_check(not record.is_empty() and _norm(record) == _crusher_harrier_doll_expected()[id],
+		"Harrier strictly parses with its exact original fields and ordered five actions")
+	if record.is_empty() or record.intent.actions.size() != 5:
+		return
+	var material := RunAuthoredBattleEntry._floor_band_material(null)
+	_check(material.get("ok") == true and _norm(material.get("records", {}).get(id)) == _norm(record),
+		"derived Fight material retains the complete canonical Harrier")
+	var has_band := false
+	for pool in material.get("pools", {}).values():
+		has_band = has_band or pool.has(id)
+	_check(has_band, "Harrier remains eligible in derived Fight bands")
+	var reached: Array = []
+	for seed_value in range(128):
+		var bound := _bind_records(seed_value, [record])
+		_check(bound.ok and bound.scheduler.is_bound(), "complete weighted Harrier record binds")
+		if not bound.ok:
+			break
+		var move: String = bound.scheduler.get_intents()[0].get("move", "")
+		if move not in ["attack2", "attack3"] or reached.has(move):
+			continue
+		var replay := _bind_records(seed_value, [record])
+		_check(replay.ok and replay.scheduler.get_intents() == bound.scheduler.get_intents()
+			and replay.rng.state == bound.rng.state, "complete Harrier weighted choice and RNG replay")
+		var traces: Array = []
+		for battle in [bound, replay]:
+			_check(battle.party.is_valid() and battle.enemies.is_valid()
+				and battle.party.gain_block(1, 4), "complete Harrier choice faces actual front Block")
+			var before: Array = [battle.party.get_heroes(), battle.enemies.get_enemies(), battle.rng.state]
+			var actions: Array = battle.scheduler.get_intents()
+			var input: Array = actions.duplicate(true)
+			var result := CombatEnemyPhase.new().execute_phase(battle.party, battle.enemies, actions, null, true)
+			_check(result.get("ok") == true and result.get("events", []).size() == (2 if move == "attack2" else 1)
+				and battle.party.get_hero(1).hp == (38 if move == "attack2" else 35)
+				and battle.party.get_hero(1).block == 0
+				and battle.party.get_hero(2) == before[0][1] and battle.party.get_hero(3) == before[0][2]
+				and battle.enemies.get_enemies() == before[1] and battle.rng.state == before[2] and actions == input,
+				"complete weighted Harrier selection executes real damage without collateral, input or RNG mutation")
+			traces.append([result, battle.party.get_heroes(), battle.enemies.get_enemies(), battle.rng.state])
+		_check(traces[0] == traces[1], "complete weighted Harrier phase replays exactly")
+		reached.append(move)
+		if reached.size() == 2:
+			break
+	_check(reached.has("attack2") and reached.has("attack3"), "both named moves are reachable in the full weighted record")
+	# Keep a real execution proof of the old seven-damage strike beside both new moves.
+	for amount in [7, 6, 9]:
+		var raw := _authored_alternative(record, "attack", amount)
+		var move: String = raw.get("move", "")
+		var hit_count := 2 if amount == 6 else 1
+		for block in [0, 2, 4, 12]:
+			var traces: Array = []
+			for replay in range(2):
+				var party := _party()
+				_check(party.is_valid() and party.get_hero(1).hp == 40
+					and party.get_hero(2).hp > 0 and party.get_hero(3).hp > 0
+					and party.gain_block(1, block), "Harrier faces a real blocked front and living peers")
+				var bound := _force_normal_alternative(record, raw, party)
+				_check(not bound.is_empty(), "genuine Harrier alternative binds through scheduler")
+				if bound.is_empty():
+					continue
+				var expected: Dictionary = CombatEnemyIntents.weighted_action(raw).action.duplicate(true)
+				expected.merge({"enemy_position": 1, "target_position": 1})
+				_check(bound.scheduler.is_bound() and bound.intents == [expected],
+					"Harrier announcement retains exact move, hits, amount and front target")
+				var before := [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()]
+				if not move.is_empty():
+					var fallback := "res://assets/paper/enemies/crochet_hook_harrier_attack.png"
+					for catalog in [LiveMovePoseCatalog.new(), MissingCrusherPose.new()]:
+						var pose: Dictionary = catalog.lookup_enemy(id, expected, fallback)
+						_check(pose.get("name") == ("Talon Dive" if move == "attack2" else "Hook Snag")
+							and pose.get("pose") == move
+							and pose.get("named_art") == "res://assets/paper/enemies/crochet_hook_harrier_%s.png" % move
+							and pose.get("art") == (pose.get("named_art") if pose.get("art_available") else fallback),
+							"Harrier manifest resolves authored name, pose path and normal fallback")
+						if catalog is MissingCrusherPose:
+							_check(pose.get("fallback_used") == true and pose.get("art") == fallback,
+								"forced missing Harrier texture uses established fallback")
+				for field in ["move", "hits", "amount", "target_position"]:
+					for value in (["", "attack5", 2, null] if field == "move" else
+							[0, 3, "2", null] if field == "hits" else
+							[0, 4, "1", null] if field == "target_position" else [-1, "6", 1.5, null, 99]):
+						# The isolated legacy strike retains its independent plain-amount contract.
+						if field == "amount" and value is int and value == 99 and move.is_empty():
+							continue
+						var malformed := raw.duplicate(true)
+						malformed[field] = value
+						if field != "amount" or not value is int or value != 99:
+							_check(CombatEnemyIntents.weighted_action(malformed).is_empty(),
+								"malformed Harrier move/hits/amount/target fails authored validation")
+						var bad := expected.duplicate(true)
+						bad[field] = value
+						var input := [bad.duplicate(true)]
+						_check(CombatEnemyPhase.new().execute_phase(party, bound.enemies, [bad], null, true)
+							== {"ok": false, "events": []} and [bad] == input
+							and [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()] == before,
+							"malformed or forged Harrier request rejects without state or RNG spend")
+				if not move.is_empty():
+					var forged_move := expected.duplicate(true)
+					forged_move.move = "attack3" if move == "attack2" else "attack2"
+					var forged_hits := expected.duplicate(true)
+					if forged_hits.has("hits"):
+						forged_hits.erase("hits")
+					else:
+						forged_hits.hits = 2
+					var missing_move := expected.duplicate(true)
+					missing_move.erase("move")
+					for forged in [forged_move, forged_hits, missing_move]:
+						var body: Dictionary = forged.duplicate(true)
+						body.erase("enemy_position")
+						_check(CombatEnemyIntents.valid_action(body)
+							and CombatEnemyPhase.new().execute_phase(party, bound.enemies, [forged], null, true)
+							== {"ok": false, "events": []}, "well-shaped forged Harrier move/hits fails source authentication")
+				_check([party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()] == before,
+					"Harrier previews and rejected requests spend nothing")
+				var witness := WraithHitWitness.new()
+				var receipt := CombatEnemyPhase.new().execute_phase(party, bound.enemies, bound.intents, witness, true)
+				var events: Array = []
+				var packets: Array = []
+				var hp := 40
+				var remaining: int = block
+				for hit in range(hit_count):
+					var packet: int = 3 if hit_count == 2 else amount
+					var next_hp := hp - maxi(0, packet - remaining)
+					var next_block := maxi(0, remaining - packet)
+					packets.append([packet, hp, remaining, next_hp, next_block])
+					hp = next_hp
+					remaining = next_block
+					var event := {"type": "attack", "enemy_position": 1, "target_position": 1,
+						"applied": true, "actual_target_position": 1, "redirected": false,
+						"retaliation_damage": 0, "retaliatory_damage": 0}
+					if not move.is_empty():
+						event.move = move
+					events.append(event)
+				_check(receipt == {"ok": true, "events": events} and witness.hits == packets,
+					"Harrier resolves ordered 3+3, single 9 or original 7, spending real Block before HP")
+				_check(party.get_hero(1).hp == hp and party.get_hero(1).block == remaining
+					and party.get_hero(2) == before[0][1] and party.get_hero(3) == before[0][2]
+					and bound.enemies.get_enemies() == before[1] and bound.rng.state == before[2]
+					and bound.scheduler.get_intents() == before[3], "Harrier attacks preserve peers, source, cache and RNG")
+				traces.append([bound.intents, receipt, witness.hits, party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state])
+			_check(traces.size() == 2 and traces[0] == traces[1], "same-seed Harrier phase and RNG replay exactly")
 
 
 class WraithHitWitness extends CombatWardenGuardReactions:
