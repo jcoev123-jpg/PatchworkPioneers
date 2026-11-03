@@ -1145,7 +1145,8 @@ func _test_marshal_sting() -> void:
 		and escort_actions == [
 			{"type": "block", "amount": 5, "weight": 3},
 			{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
-			{"type": "attack", "amount": 6, "weight": 2}],
+			{"type": "attack", "amount": 6, "weight": 1},
+			{"type": "attack", "amount": 7, "weight": 1, "move": "attack2"}],
 		"AC1: the ragling escort keeps its own shield Rush/Block/Hit alternatives and no sting")
 	var roster := _roster("needle_marshal_elite")
 	_check(roster.get_enemy(1).get("bleed_on_attack") is bool

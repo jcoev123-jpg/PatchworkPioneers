@@ -126,7 +126,7 @@ static func intent_clause(action: Dictionary, hero_names: Array) -> String:
 ## Point the mounted app at a detached copy of the shipped enemy catalog whose
 ## Guard Ragling keeps only its own authored Block alternative. A single action
 ## consumes no run RNG, so a seeded viewport/lifecycle test stays deterministic;
-## the shipped record is still asserted to carry all three authored alternatives
+## the shipped record is still asserted to carry all four authored alternatives
 ## before the copy is narrowed.
 static func pin_guard_block(app, path: String) -> bool:
 	if app == null or not is_instance_valid(app) or not path.begins_with("user://"):
@@ -144,7 +144,7 @@ static func pin_guard_block(app, path: String) -> bool:
 		if copy.get("id") == "ragling_guard":
 			var intent: Variant = copy.get("intent")
 			var actions: Variant = intent.get("actions") if intent is Dictionary else null
-			if not actions is Array or actions.size() != 3:
+			if not actions is Array or actions.size() != 4:
 				return false
 			for raw in actions:
 				if CombatEnemyIntents.weighted_action(raw).get("action", {}).get("type") == "block":
@@ -166,7 +166,7 @@ static func pin_guard_block(app, path: String) -> bool:
 
 
 ## The authored Guard Ragling's own alternatives: Block 5, a right shield rush
-## or a real six-point hit. Never a fixed passive Block.
+## or the six-point Needle Jab / seven-point Shield Bash. Never a fixed passive Block.
 static func is_authored_guard_action(action: Dictionary) -> bool:
 	if not action is Dictionary:
 		return false
@@ -178,7 +178,9 @@ static func is_authored_guard_action(action: Dictionary) -> bool:
 			return int(action.get("amount", -1)) == 0 \
 				and int(action.get("direction", 0)) == 1 and target in [1, 2, 3]
 		"attack":
-			return int(action.get("amount", 0)) == 6 and target in [1, 2, 3]
+			return target in [1, 2, 3] and (
+				(int(action.get("amount", 0)) == 6 and not action.has("move"))
+				or (int(action.get("amount", 0)) == 7 and action.get("move") == "attack2"))
 	return false
 
 

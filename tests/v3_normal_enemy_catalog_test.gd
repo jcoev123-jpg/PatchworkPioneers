@@ -167,7 +167,8 @@ func _test_normal_attack_minimum() -> void:
 			"intent": {"target": "front", "actions": [
 				{"type": "block", "amount": 5, "weight": 3},
 				{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
-				{"type": "attack", "amount": 6, "weight": 2}]}}
+				{"type": "attack", "amount": 6, "weight": 1},
+				{"type": "attack", "amount": 7, "weight": 1, "move": "attack2"}]}}
 	]:
 		_check(_norm(_find(starter, expected.id)) == expected,
 			"starter record preserves all fields and the shield-rush Guard: " + expected.id)

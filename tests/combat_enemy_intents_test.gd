@@ -788,7 +788,8 @@ const GUARD_RUSH_INTENT := {
 	"actions": [
 		{"type": "block", "amount": 5, "weight": 3},
 		{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
-		{"type": "attack", "amount": 6, "weight": 2},
+		{"type": "attack", "amount": 6, "weight": 1},
+		{"type": "attack", "amount": 7, "weight": 1, "move": "attack2"},
 	],
 }
 
@@ -840,7 +841,7 @@ func _guard_with_option(record: Dictionary, index: int) -> Dictionary:
 
 
 func _test_guard_ragling_shield_rush() -> void:
-	# AC1: the disk record keeps its identity and authors exactly three
+	# AC1: the disk record keeps its identity and authors exactly four
 	# alternatives; each validates as an executable weighted slot on its own.
 	var record := _authored_enemy(GUARD_STARTER_PATH, "ragling_guard")
 	_check(record.get("name") == "Guard Ragling" and record.get("max_hp") == 12,
@@ -851,13 +852,14 @@ func _test_guard_ragling_shield_rush() -> void:
 	_check(intent is Dictionary and intent.size() == 2 and intent.get("target") == "front",
 		"on-disk Guard Ragling keeps exactly the front target policy")
 	_check(_normalize_ints(intent) == GUARD_RUSH_INTENT,
-		"on-disk Guard Ragling authors exactly Block 5/3, right shove 0/2 and Attack 6/2")
+		"on-disk Guard Ragling authors Block 5/3, right shove 0/2, Jab 6/1 and Bash 7/1")
 	var actions: Array = intent.get("actions", []) if intent is Dictionary else []
-	_check(actions.size() == 3, "the Guard authors exactly three weighted alternatives")
+	_check(actions.size() == 4, "the Guard authors exactly four weighted alternatives")
 	var expected_options := [
 		{"weight": 3, "action": {"type": "block", "amount": 5}},
 		{"weight": 2, "action": {"type": "shove", "amount": 0, "direction": 1}},
-		{"weight": 2, "action": {"type": "attack", "amount": 6}}]
+		{"weight": 1, "action": {"type": "attack", "amount": 6}},
+		{"weight": 1, "action": {"type": "attack", "amount": 7, "move": "attack2"}}]
 	for index in range(mini(actions.size(), expected_options.size())):
 		_check(CombatEnemyIntents.weighted_action(actions[index]) == expected_options[index],
 			"authored Guard alternative %d normalizes to its exact executable action" % index)
@@ -873,7 +875,7 @@ func _test_guard_ragling_shield_rush() -> void:
 	_check(_normalize_ints(ragling.get("intent")) == {"target": "front", "actions": [
 		{"type": "attack", "amount": 5, "weight": 3}]},
 		"the plain Ragling keeps its single Attack 5/3 alternative")
-	if actions.size() != 3:
+	if actions.size() != 4:
 		return
 
 	# AC2: a bound shove from a living three-slot party swaps slots 1 and 2
@@ -964,7 +966,7 @@ func _test_guard_ragling_shield_rush() -> void:
 		and block_fixture.enemies.get_enemy(1).get("hp") == 10,
 		"the Guard's Block persists until spent, then HP takes the remaining two")
 
-	# AC3: two seeded weighted runs over the authentic three-way record replay
+	# AC3: two seeded weighted runs over the authentic four-way record replay
 	# exactly, and reading the cached announcement never advances the run RNG.
 	var weighted_party := _party_fixture()
 	var weighted_fixture := _bind_authored_guard(record, weighted_party, 33604,

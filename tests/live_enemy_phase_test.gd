@@ -26,9 +26,9 @@ func _snapshot(app) -> Array:
 
 
 ## The Guard Ragling now authors Block 5, a right shield rush and a real
-## six-point hit. This mounted phase suite pins the fight to the Guard's own
+## six-point Jab and seven-point Bash. This mounted phase suite pins the fight to the Guard's own
 ## authored Block alternative so every End Turn stays deterministic; the shipped
-## record is asserted to really carry all three alternatives before narrowing it.
+## record is asserted to really carry all four alternatives before narrowing it.
 func _pin_authored_guard(app) -> bool:
 	var source: Variant = JSON.parse_string(
 		FileAccess.get_file_as_string(app.STARTER_ENEMIES_PATH))
@@ -44,8 +44,8 @@ func _pin_authored_guard(app) -> bool:
 		var copy: Dictionary = record.duplicate(true)
 		if copy.get("id") == "ragling_guard":
 			var actions = copy.get("intent", {}).get("actions", [])
-			_check(actions is Array and actions.size() == 3,
-				"shipped Guard Ragling still authors exactly three weighted alternatives")
+			_check(actions is Array and actions.size() == 4,
+				"shipped Guard Ragling authors exactly four weighted alternatives")
 			if not actions is Array:
 				return false
 			for raw in actions:
