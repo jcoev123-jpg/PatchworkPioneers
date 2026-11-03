@@ -1039,12 +1039,30 @@ func _refresh_preserves_everything(observed: Dictionary) -> void:
 		var binding: Dictionary = presenter._metadata._bindings.get(panel, {})
 		var state: Dictionary = presenter._metadata.motion_state(panel)
 		var draws_now: int = int(binding.get("draw_count", -1))
+		var entry_tween = binding.get("entry_tween")
+		var focus_tween = binding.get("motion_tween")
+		var in_flight: bool = (entry_tween is Tween and entry_tween.is_running()) \
+			or (focus_tween is Tween and focus_tween.is_running())
 		_check(not binding.is_empty() and draws_now >= int(old_draws[panel])
-			and (draws_now == int(old_draws[panel])
-				or (bool(state.get("entry_started", false))
-					or bool(binding.get("motion_target", false)))),
-			"unchanged facts and geometry draw only during a genuine entry/focus animation")
+			and (draws_now == int(old_draws[panel]) or in_flight),
+			"unchanged facts redraw only while an actual entry/focus tween is running")
 		_check(panel.get_global_rect() == original_rects[panel], "decoration preserves original card hitbox")
+	# Entry/focus flags may remain set after a completed tween. Freeze an
+	# independent settled draw counter and retain the original no-redraw oracle.
+	await create_timer(0.45).timeout
+	await _frames()
+	var settled_draws := {}
+	for panel in panels:
+		var state: Dictionary = presenter._metadata.motion_state(panel)
+		_check(is_equal_approx(float(state.get("entry", -1.0)), 1.0),
+			"visual entry has settled before the strict no-op redraw regression")
+		settled_draws[panel] = int(presenter._metadata._bindings[panel].get("draw_count", -1))
+	for repeat in range(3):
+		presenter._sync_battle()
+		await _frames()
+	for panel in panels:
+		_check(int(presenter._metadata._bindings[panel].get("draw_count", -1)) == int(settled_draws[panel]),
+			"settled card never redraws after repeated unchanged presenter syncs")
 	# Byte-for-byte tooltip stability across repeated sync.
 	for panel in panels:
 		var original_tooltip: String = panel.tooltip_text

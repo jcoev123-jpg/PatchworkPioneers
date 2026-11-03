@@ -167,6 +167,7 @@ func _run() -> void:
 		_check(app.deck == null and app.get_child_count() == child_count - 1, "inactive actions do not recreate stale session")
 	await _pool_faces()
 	await _hand_motion_cases()
+	await _second_duplicate_echo_case()
 	app.free()
 	_finish()
 
@@ -310,6 +311,77 @@ func _hand_motion_cases() -> void:
 			"accessibility static mode keeps the authentic five-card opening playable")
 		await _close_battle("reduced hand motion")
 	ProjectSettings.set_setting("accessibility/reduced_motion", prior)
+
+
+## Click the SECOND of two adjacent identical, genuine starter copies. The
+## authoritative deck removes its first ID match, but the discarded face must
+## originate from the exact second physical panel the player activated.
+func _second_duplicate_echo_case() -> void:
+	if not await _open_battle("second duplicate physical discard"):
+		return
+	var card_id := "warden_strike"
+	while app.deck.hand.count(card_id) < 2 and not app.deck.draw_pile.is_empty():
+		_check(app.deck.draw_extra(1) == 1, "duplicate witness uses a genuine seeded deck draw")
+		app._refresh_hand()
+		await _frames()
+	_check(app.deck.hand.count(card_id) == 2,
+		"both genuine Warden Strike starter copies must be physically held")
+	if app.deck.hand.count(card_id) != 2:
+		await _close_battle("second duplicate physical discard")
+		return
+	var first: int = app.deck.hand.find(card_id)
+	var second: int = app.deck.hand.find(card_id, first + 1)
+	if second != first + 1:
+		# Change ordering only, not the number or identity of seeded cards.
+		app.deck.hand.remove_at(second)
+		app.deck.hand.insert(first + 1, card_id)
+		app._refresh_hand()
+		await _frames()
+	_check(app.deck.hand[first] == card_id and app.deck.hand[first + 1] == card_id
+		and app.hand_view.get_child_count() == app.deck.hand.size(),
+		"adjacent equal IDs have two real mounted panels")
+	var clicked := app.hand_view.get_child(first + 1) as Control
+	var unplayed := app.hand_view.get_child(first) as Control
+	var clicked_id := clicked.get_instance_id()
+	var unplayed_id := unplayed.get_instance_id()
+	var attack = app.get_node("LiveAttackPreview")
+	_check(clicked_id != unplayed_id and attack._eligible(clicked),
+		"second panel is a distinct legally activated attack")
+	var before := _combat_state()
+	var juice = app.get_node("LiveCombatJuice")
+	var echoes_before: int = juice.hand_echo_history.size()
+	var receipts_before: int = app.hand_motion_history.size()
+	var cost: int = int(attack._definition(card_id).get("cost", -1))
+	_check(cost >= 0 and cost <= app.deck.energy
+		and int(app.enemies.get_enemy(1).get("hp", 0)) > 0,
+		"seeded Warden Strike has a living legal enemy and payable cost")
+	await _click_center(clicked)
+	_check(attack._armed == clicked, "actual pointer activation arms the second copy")
+	var target := InputEventKey.new()
+	target.keycode = KEY_1
+	target.pressed = true
+	root.push_input(target, true)
+	await _frames()
+	var expected_hand: Array[String] = before[0].duplicate()
+	expected_hand.remove_at(first) # The deck's specified first-ID removal.
+	_check(app.deck.hand == expected_hand
+		and app.deck.energy == int(before[3]) - cost
+		and app.deck.discard_pile.size() == (before[2] as Array).size() + 1
+		and app.deck.discard_pile.back() == card_id
+		and app.run_rng.state == before[9],
+		"second clicked copy commits once: exact deck removal, energy, discard, and unchanged RNG")
+	_check(juice.hand_echo_history.size() == echoes_before + 1
+		and int(juice.hand_echo_history.back().get("panel_id", -1)) == clicked_id
+		and int(juice.hand_echo_history.back().get("panel_id", -1)) != unplayed_id
+		and juice.hand_echo_history.back().card_id == card_id
+		and app.hand_motion_history.size() == receipts_before + 1
+		and app.hand_motion_history.back().kind == "discard",
+		"one paid echo uses the clicked SECOND physical copy, never the first duplicate")
+	app._refresh_hand()
+	await _frames()
+	_check(juice.hand_echo_history.size() == echoes_before + 1,
+		"subsequent no-op refresh cannot replay the duplicate discard flight")
+	await _close_battle("second duplicate physical discard")
 
 
 func _finish() -> void:

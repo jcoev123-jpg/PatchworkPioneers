@@ -762,6 +762,11 @@ var _hand_motion_ids: Array[String] = []
 var _hand_motion_draw: Array[String] = []
 var _hand_motion_discard: Array[String] = []
 var _hand_motion_turn := -1
+# The actual mounted panel activated before a presenter commits a paid play.
+# This is only a visual witness; CombatDeck and the quilt receipt remain authoritative.
+var _hand_motion_source: Control
+var _hand_motion_source_card := ""
+var _hand_motion_source_hand: Array[String] = []
 var hand_motion_history: Array[Dictionary] = []
 var session_gold := 0
 var run_deck: Array[String] = []
@@ -950,6 +955,39 @@ func _process(_delta: float) -> void:
 ## the live attack preview cycles attack cards, Esc retires the forecast. When
 ## another live selection owns P, this handler stays out of its way.
 func _input(event: InputEvent) -> void:
+	# Observe the genuine GUI destination without installing another card signal
+	# listener: unwired cards must still have exactly ZERO input connections.
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
+			and event.pressed and _hand_motion_allowed():
+		var hovered: Control = get_viewport().gui_get_hovered_control()
+		var captured := false
+		for panel in hand_view.get_children():
+			if panel.gui_input.get_connections().is_empty():
+				continue
+			if (hovered == panel or (hovered != null and panel.is_ancestor_of(hovered))) \
+					and panel.get_global_rect().has_point(event.position):
+				_hand_motion_capture_input(event, panel, (panel.get_child(0) as Label).text)
+				captured = true
+				break
+		if not captured:
+			# P-selected targeted attacks may be confirmed by clicking an enemy,
+			# not by clicking the card again; retain the physically armed panel.
+			var preview = get_node_or_null("LiveAttackPreview")
+			if preview != null and is_instance_valid(preview._armed) \
+					and not preview._armed.gui_input.get_connections().is_empty():
+				_hand_motion_capture_input(event, preview._armed, \
+						(preview._armed.get_child(0) as Label).text)
+	elif event is InputEventKey and event.pressed and not event.echo:
+		var focused: Control = get_viewport().gui_get_focus_owner()
+		if focused != null and focused.get_parent() == hand_view \
+				and not focused.gui_input.get_connections().is_empty():
+			_hand_motion_capture_input(event, focused, (focused.get_child(0) as Label).text)
+		elif event.keycode in [KEY_1, KEY_2, KEY_3, KEY_ENTER, KEY_SPACE]:
+			var preview = get_node_or_null("LiveAttackPreview")
+			if preview != null and is_instance_valid(preview._armed) \
+					and not preview._armed.gui_input.get_connections().is_empty():
+				_hand_motion_capture_input(event, preview._armed, \
+						(preview._armed.get_child(0) as Label).text)
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
 	if event.keycode == KEY_ESCAPE:
@@ -7471,6 +7509,9 @@ func _hand_motion_clear() -> void:
 	_hand_motion_draw.clear()
 	_hand_motion_discard.clear()
 	_hand_motion_turn = -1
+	_hand_motion_source = null
+	_hand_motion_source_card = ""
+	_hand_motion_source_hand.clear()
 	hand_motion_history.clear()
 	var juice = get_node_or_null("LiveCombatJuice")
 	if juice != null:
@@ -7487,6 +7528,29 @@ func _hand_motion_allowed() -> bool:
 	var support = get_node_or_null("LiveSupportHand")
 	return support == null or not (support.reduced_motion_override is bool \
 		and bool(support.reduced_motion_override))
+
+
+## Listen before the real presenters bind their callbacks; they can commit on a
+## deferred target choice. No action is taken here, and only a later verified
+## CombatDeck hand-to-discard transition can use this physical panel witness.
+func _hand_motion_capture_input(event: InputEvent, panel: Control, card_id: String) -> void:
+	var click: bool = event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed
+	var preview = get_node_or_null("LiveAttackPreview")
+	var keyboard_target: bool = event is InputEventKey and event.pressed and not event.echo \
+		and event.keycode in [KEY_1, KEY_2, KEY_3, KEY_ENTER, KEY_SPACE] \
+		and preview != null and preview._armed == panel
+	var accept: bool = event is InputEventKey and not event.echo \
+		and ((panel.has_focus() and event.is_action_pressed("ui_accept")) or keyboard_target)
+	if not (click or accept) or not _hand_motion_allowed() \
+			or _hand_motion_deck != deck or _hand_motion_battle != battle_view \
+			or deck.hand != _hand_motion_ids or panel.get_parent() != hand_view:
+		return
+	var index := panel.get_index()
+	if index < 0 or index >= deck.hand.size() or deck.hand[index] != card_id:
+		return
+	_hand_motion_source = panel
+	_hand_motion_source_card = card_id
+	_hand_motion_source_hand.assign(deck.hand)
 
 
 func _hand_motion_reconcile(committed_id: String) -> Dictionary:
@@ -7517,8 +7581,21 @@ func _hand_motion_reconcile(committed_id: String) -> Dictionary:
 			candidate.remove_at(index)
 			if deck.hand.size() >= candidate.size() \
 					and deck.hand.slice(0, candidate.size()) == candidate:
-				removed = index
 				remaining = candidate
+				# CombatDeck removes the first matching ID, but the physical source
+				# can be the second copy. Require the captured mounted activation.
+				if is_instance_valid(_hand_motion_source) \
+						and _hand_motion_source.get_parent() == hand_view \
+						and _hand_motion_source_card == committed_id \
+						and _hand_motion_source_hand == _hand_motion_ids:
+					var source_index := _hand_motion_source.get_index()
+					if source_index >= 0 and source_index < _hand_motion_ids.size() \
+							and _hand_motion_ids[source_index] == committed_id:
+						removed = source_index
+				# A single held ID is unambiguous even when a programmatic or
+				# P-selected resolver committed without a captured GUI witness.
+				if removed < 0 and _hand_motion_ids.count(committed_id) == 1:
+					removed = index
 				break
 	# Every entry must be an appended copy, corroborated by a real pile change.
 	# The old prefix survives even a reshuffle in the middle of draw_extra().
@@ -7538,6 +7615,9 @@ func _hand_motion_record() -> void:
 	_hand_motion_draw.assign(deck.draw_pile)
 	_hand_motion_discard.assign(deck.discard_pile)
 	_hand_motion_turn = int(enemy_intents._turn_index) if enemy_intents != null else -1
+	_hand_motion_source = null
+	_hand_motion_source_card = ""
+	_hand_motion_source_hand.clear()
 
 
 func _hand_motion_log(kind: String, card_id: String, index: int) -> void:
