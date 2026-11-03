@@ -47,7 +47,11 @@ func _initialize() -> void:
 	_test_ac1_owner_and_target_slots()
 	_test_ac2_enemy_block_absorbs_first()
 	_test_ac2_status_adjustments_use_existing_rules()
+	_test_ac2_thorns_retaliation()
+	_test_ac3_enrage_stacks()
+	_test_ac3_both_keywords()
 	_test_ac3_rejections()
+	_test_ac4_keyword_metadata_rejections()
 	_test_ac3_repeat_and_retry()
 	_test_seeded_replay()
 	for failure in failures:
@@ -306,6 +310,236 @@ func _test_ac2_status_adjustments_use_existing_rules() -> void:
 		"the same Weak-and-Exposed hit still applies its own Weak 1")
 
 
+## AC2: authentic Thorns N retaliates once against the real Warden for one confirmed positive
+## helmet hit, through his own Block before HP, even when enemy Block absorbed every point.
+func _test_ac2_thorns_retaliation() -> void:
+	for card_id: String in CARD_IDS:
+		var party := _party()
+		var enemies := _two_enemies()
+		enemies._enemies[0]["thorns"] = 2
+		_check(enemies.get_enemy(1).get("thorns") == 2,
+			card_id + ": chosen foe really carries authentic Thorns 2")
+		_check(party.gain_block(1, 5), card_id + ": Warden really holds five Block")
+		_check(party.gain_block(2, 4), card_id + ": companion Block stays out of the retaliation")
+		var target_before: Dictionary = enemies.get_enemy(1)
+		var deck := _deck(card_id)
+		var before := _snapshot(deck, party, enemies)
+		var printed: int = PRINTED_DAMAGE[card_id]
+
+		var result: Dictionary = service.play_card(deck, party, enemies, card_id, 1)
+		_check(result.get("ok") == true, card_id + ": paid play against a thorned foe")
+		_check(result.get("damage") == printed and result.get("hp_loss") == printed,
+			card_id + ": identical printed damage and Weak 1")
+		_check(result.get("weak") == 1
+			and enemies.get_enemy(1).get("statuses", {}) == {"weak": 1},
+			card_id + ": the thorned foe still gains exactly Weak 1")
+		_check(result.get("thorns") == {"ok": true, "applied": true, "thorns": 2,
+			"block_absorbed": 2, "hp_loss": 0},
+			card_id + ": exactly two retaliation damage absorbed by Warden Block")
+		_check(party.get_hero(1)["block"] == 3 and party.get_hero(1)["hp"] == 40,
+			card_id + ": Warden Block 5 -> 3 and HP untouched")
+		_check(party.get_hero(2)["block"] == 4 and party.get_hero(2)["hp"] == 30
+			and party.get_hero(3)["block"] == 0 and party.get_hero(3)["hp"] == 26,
+			card_id + ": no other hero is retaliated against")
+		_check(enemies.get_enemy(1)["hp"] == target_before["hp"] - printed,
+			card_id + ": the thorned foe lost only the printed damage")
+		_check(result.get("enrage") == {"ok": true, "applied": false, "enrage_stacks": 0,
+			"attack_bonus": 0}, card_id + ": a non-Enrage foe never gains a stack")
+		var expected := _expected_success(before, card_id, 1, 0, printed, 1)
+		expected["heroes"][0]["block"] -= 2
+		_check(_snapshot(deck, party, enemies) == expected,
+			card_id + ": one charge, one discard, one hit, one retaliation and untouched RNG")
+
+	# The same authentic retaliation lands from the middle Warden onto the second target.
+	for card_id: String in [BONK, RATTLE_PLUS]:
+		var party := _moved_party(2)
+		var enemies := _two_enemies()
+		enemies._enemies[1]["thorns"] = 2
+		var deck := _deck(card_id)
+		var before := _snapshot(deck, party, enemies)
+		var result: Dictionary = service.play_card(deck, party, enemies, card_id, 2)
+		_check(result.get("ok") == true and result.get("owner_position") == 2
+			and result.get("target_position") == 2,
+			card_id + ": middle Warden hits the second thorned foe")
+		_check(result.get("thorns", {}).get("hp_loss") == 2,
+			card_id + ": no Warden Block means two retaliation reaches his HP")
+		_check(party.get_hero(2)["hp"] == 40 - 2 and party.get_hero(1)["hp"] == 30,
+			card_id + ": only the genuine Warden slot is retaliated against")
+		var expected := _expected_success(before, card_id, 2, 0, PRINTED_DAMAGE[card_id], 1)
+		expected["heroes"][1]["hp"] -= 2
+		_check(_snapshot(deck, party, enemies) == expected,
+			card_id + ": middle-slot retaliation is one exact paid transaction")
+
+	# Enemy Block fully absorbing the hit still counts as a confirmed positive hit for Thorns.
+	var party := _party()
+	var enemies := _two_enemies()
+	enemies._enemies[0]["thorns"] = 2
+	_check(enemies.gain_block(1, 50), "fully blocked thorned foe really holds fifty Block")
+	var deck := _deck(BONK)
+	var before := _snapshot(deck, party, enemies)
+	var result: Dictionary = service.play_card(deck, party, enemies, BONK, 1)
+	_check(result.get("damage") == 4 and result.get("block_absorbed") == 4
+		and result.get("hp_loss") == 0, "four damage is fully absorbed by enemy Block")
+	_check(result.get("thorns", {}).get("applied") == true
+		and result.get("thorns", {}).get("hp_loss") == 2,
+		"a fully absorbed hit still retaliates exactly once")
+	_check(party.get_hero(1)["hp"] == 38
+		and enemies.get_enemy(1).get("statuses", {}) == {"weak": 1},
+		"the Warden loses two HP and the foe still gains its printed Weak 1")
+	var expected := _expected_success(before, BONK, 1, 4, 0, 1)
+	expected["heroes"][0]["hp"] -= 2
+	_check(_snapshot(deck, party, enemies) == expected,
+		"fully blocked retaliation is contained to one charge, hit and reaction")
+
+	# A plain foe and a zero retaliation never touch the Warden.
+	var plain_party := _party()
+	var plain_foes := _two_enemies()
+	var plain_deck := _deck(BONK)
+	var plain_before := _snapshot(plain_deck, plain_party, plain_foes)
+	var plain_result: Dictionary = service.play_card(plain_deck, plain_party, plain_foes, BONK, 1)
+	_check(plain_result.get("thorns") == {"ok": true, "applied": false, "thorns": 0,
+		"block_absorbed": 0, "hp_loss": 0},
+		"a plain foe returns an inert Thorns receipt")
+	_check(plain_party.get_heroes() == plain_before["heroes"],
+		"a plain foe leaves every hero's HP and Block unchanged")
+
+
+## AC3: one confirmed helmet hit grants exactly one Enrage stack (0->1, 2->3, 3->3) to that
+## exact foe and never exceeds the shared cap, with the existing +2/+6 action projection.
+func _test_ac3_enrage_stacks() -> void:
+	var keywords := CombatEnemyKeywordRules.new()
+	for card_id: String in CARD_IDS:
+		for stacks in [0, 2, 3]:
+			var label := "%s enrage=%d" % [card_id, stacks]
+			var party := _party()
+			var enemies := _two_enemies()
+			enemies._enemies[0]["enrage"] = true
+			enemies._enemies[0]["enrage_stacks"] = stacks
+			var bystander_before: Dictionary = enemies.get_enemy(2)
+			var target_before: Dictionary = enemies.get_enemy(1)
+			var deck := _deck(card_id)
+			var before := _snapshot(deck, party, enemies)
+			var printed: int = PRINTED_DAMAGE[card_id]
+			var earned: int = mini(stacks + 1, CombatEnemyKeywordRules.ENRAGE_MAX_STACKS)
+
+			var result: Dictionary = service.play_card(deck, party, enemies, card_id, 1)
+			_check(result.get("ok") == true and result.get("damage") == printed,
+				label + ": identical printed damage")
+			_check(result.get("enrage") == {"ok": true, "applied": stacks < 3,
+				"enrage_stacks": earned, "attack_bonus": earned * 2},
+				label + ": exactly one stack and its +2 bonus per stack")
+			_check(enemies.get_enemy(1).get("enrage_stacks") == earned,
+				label + ": the authoritative foe persisted the earned stack")
+			_check(enemies.get_enemy(1).get("enrage_stacks") - stacks <= 1,
+				label + ": never more than one stack from one hit")
+			_check(enemies.get_enemy(1).get("statuses", {}) == {"weak": 1},
+				label + ": the printed Weak 1 still lands")
+			_check(enemies.get_enemy(1)["hp"] == target_before["hp"] - printed,
+				label + ": HP loses only the printed hit")
+			_check(enemies.get_enemy(2) == bystander_before,
+				label + ": the other enemy keeps every field untouched")
+			_check(party.get_heroes() == before["heroes"],
+				label + ": an Enrage-only foe never damages the Warden")
+			var projection: Dictionary = keywords.project_enrage_action(
+				enemies.get_enemy(1), {"type": "attack", "amount": 5})
+			_check(projection.get("ok") == true
+				and projection.get("action", {}).get("amount") == 5 + earned * 2
+				and projection.get("attack_bonus") == earned * 2,
+				label + ": the existing action projection adds +2 per persisted stack")
+			var expected := _expected_success(before, card_id, 1, 0, printed, 1)
+			expected["enemies"][0]["enrage_stacks"] = earned
+			_check(_snapshot(deck, party, enemies) == expected,
+				label + ": one charge, one discard, one stack and untouched RNG")
+
+	# A confirmed hit fully absorbed by enemy Block still earns one stack.
+	var party := _party()
+	var enemies := _two_enemies()
+	enemies._enemies[0]["enrage"] = true
+	enemies._enemies[0]["enrage_stacks"] = 0
+	_check(enemies.gain_block(1, 50), "fully blocked Enrage foe holds fifty Block")
+	var deck := _deck(BONK)
+	var before := _snapshot(deck, party, enemies)
+	var blocked: Dictionary = service.play_card(deck, party, enemies, BONK, 1)
+	_check(blocked.get("hp_loss") == 0 and blocked.get("block_absorbed") == 4,
+		"the whole four-damage hit is absorbed by enemy Block")
+	_check(blocked.get("enrage") == {"ok": true, "applied": true, "enrage_stacks": 1,
+		"attack_bonus": 2}, "a fully blocked hit still earns exactly one Enrage stack")
+	var expected := _expected_success(before, BONK, 1, 4, 0, 1)
+	expected["enemies"][0]["enrage_stacks"] = 1
+	_check(_snapshot(deck, party, enemies) == expected,
+		"a fully blocked Enrage hit stays one exact paid transaction")
+
+
+## AC3: a foe carrying both keywords reacts once with each and still takes the printed Weak 1.
+func _test_ac3_both_keywords() -> void:
+	for case in [[1, BONK, 0], [2, RATTLE_PLUS, 3]]:
+		var owner_position: int = case[0]
+		var card_id: String = case[1]
+		var starting_stacks: int = case[2]
+		var label := "%s owner=%d both keywords" % [card_id, owner_position]
+		var party := _party() if owner_position == 1 else _moved_party(2)
+		var enemies := _two_enemies()
+		var target := owner_position
+		enemies._enemies[target - 1]["thorns"] = 2
+		enemies._enemies[target - 1]["enrage"] = true
+		enemies._enemies[target - 1]["enrage_stacks"] = starting_stacks
+		var other_before: Dictionary = enemies.get_enemy(3 - target)
+		var deck := _deck(card_id)
+		var before := _snapshot(deck, party, enemies)
+		var printed: int = PRINTED_DAMAGE[card_id]
+		var earned: int = mini(starting_stacks + 1, CombatEnemyKeywordRules.ENRAGE_MAX_STACKS)
+
+		var result: Dictionary = service.play_card(deck, party, enemies, card_id, target)
+		_check(result.get("ok") == true, label + ": legal paid play")
+		_check(result.get("thorns", {}).get("applied") == true
+			and result.get("thorns", {}).get("hp_loss") == 2,
+			label + ": Thorns retaliates exactly once against the Warden")
+		_check(result.get("enrage", {}).get("applied") == (starting_stacks < 3)
+			and result.get("enrage", {}).get("enrage_stacks") == earned,
+			label + ": Enrage commits exactly one stack")
+		_check(result.get("damage") == printed
+			and enemies.get_enemy(target).get("statuses", {}) == {"weak": 1},
+			label + ": the printed hit and Weak 1 are unchanged")
+		_check(party.get_hero(owner_position)["hp"] == 40 - 2,
+			label + ": only the genuine Warden slot pays the retaliation")
+		var projection: Dictionary = CombatEnemyKeywordRules.new().project_enrage_action(
+			enemies.get_enemy(target), {"type": "attack", "amount": 4})
+		_check(projection.get("ok") == true
+			and projection.get("action", {}).get("amount") == 4 + earned * 2,
+			label + ": the persisted stack projects the existing +2 per stack")
+		_check(enemies.get_enemy(3 - target) == other_before,
+			label + ": the other enemy is wholly unchanged")
+		var expected := _expected_success(before, card_id, target, 0, printed, 1)
+		expected["heroes"][owner_position - 1]["hp"] -= 2
+		expected["enemies"][target - 1]["enrage_stacks"] = earned
+		_check(_snapshot(deck, party, enemies) == expected,
+			label + ": one exact transaction with both reactions and untouched RNG")
+
+
+## AC4: malformed Thorns/Enrage metadata on the chosen foe refuses the whole play before payment.
+func _test_ac4_keyword_metadata_rejections() -> void:
+	for value in [-1, -99, 1.5, "2", true, null]:
+		var foes := _two_enemies()
+		foes._enemies[0]["thorns"] = value
+		_rejected(_deck(BONK), _party(), foes, BONK, 1, {}, {},
+			"malformed thorns " + str(value))
+	for value in [1, 0, "true", null]:
+		var foes := _two_enemies()
+		foes._enemies[0]["enrage"] = value
+		_rejected(_deck(BONK), _party(), foes, BONK, 1, {}, {},
+			"malformed enrage flag " + str(value))
+	for value in [-1, 4, 99, 1.5, "2", null]:
+		var foes := _two_enemies()
+		foes._enemies[0]["enrage"] = true
+		foes._enemies[0]["enrage_stacks"] = value
+		_rejected(_deck(BONK), _party(), foes, BONK, 1, {}, {},
+			"malformed enrage stacks " + str(value))
+	var second := _two_enemies()
+	second._enemies[1]["thorns"] = -2
+	_rejected(_deck(BONK), _party(), second, BONK, 2, {}, {},
+		"malformed keyword metadata on the chosen second foe")
+
+
 ## AC3: every invalid request fails closed and leaves the whole transaction untouched.
 func _test_ac3_rejections() -> void:
 	var party := _party()
@@ -527,6 +761,9 @@ func _rejected(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, car
 	_check(result.get("damage") == 0 and result.get("block_absorbed") == 0
 		and result.get("hp_loss") == 0 and result.get("weak") == 0,
 		label + ": refusal reports no hit and no Weak")
+	_check(result.get("thorns", {}).get("applied", false) == false
+		and result.get("enrage", {}).get("applied", false) == false,
+		label + ": refusal reports no Thorns stance and no Enrage stack")
 	_check(_snapshot(deck, party, enemies) == before,
 		label + ": unchanged party, enemies, piles, energy and RNG")
 

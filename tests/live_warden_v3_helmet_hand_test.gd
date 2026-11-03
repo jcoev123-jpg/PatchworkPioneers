@@ -60,10 +60,24 @@ func _helmet_play(id: String, keyboard: bool, position: int, block: int, middle:
 	app.party._heroes[owner_position - 1]["statuses"] = {"weak": 1}
 	_check(app.enemies.apply_statuses({position: {"exposed": 1}})
 		and app.enemies.gain_block(position, 4), "live defender status and Block")
+	# Concise authentic keyed metadata fixtures: the shipped roster otherwise has plain foes.
+	var thorns_amount := 0
+	var enrage_stacks := -1
+	if special in ["thorns", "blocked_thorns", "both"]:
+		app.enemies._enemies[position - 1]["thorns"] = 2
+		thorns_amount = 2
+		_check(app.enemies.get_enemy(position).thorns == 2,
+			"real reactive Thorns 2 metadata on the chosen foe")
+	if special in ["enrage", "both"]:
+		app.enemies._enemies[position - 1]["enrage"] = true
+		app.enemies._enemies[position - 1]["enrage_stacks"] = 2 if special == "both" else 0
+		enrage_stacks = 3 if special == "both" else 1
+		_check(app.enemies.get_enemy(position).enrage == true,
+			"real reactive Enrage metadata on the chosen foe")
 	if special == "plain":
 		app.party._heroes[owner_position - 1]["statuses"] = {}
 		app.enemies._enemies[position - 1]["statuses"] = {}
-	elif special == "blocked":
+	elif special == "blocked" or special == "blocked_thorns":
 		_check(app.enemies.gain_block(position, 50), "entire hit will be blocked")
 	elif special == "lethal":
 		app.enemies._enemies[position - 1].block = 0
@@ -77,6 +91,7 @@ func _helmet_play(id: String, keyboard: bool, position: int, block: int, middle:
 		and definition.effects == {"damage": 6 if id.ends_with("_plus") else 4, "weak": 1},
 		"exact catalog identity, cost, source/target pips and printed damage/Weak")
 	var before := _state()
+	var owner_before: Dictionary = app.party.get_hero(owner_position)
 	if keyboard:
 		_check(await _key_select(id), "keyboard selects actual held copy")
 	else:
@@ -115,10 +130,32 @@ func _helmet_play(id: String, keyboard: bool, position: int, block: int, middle:
 		"complete rosters match oracle; owner Block retained")
 	_check(app.deck.draw_pile == before[0] and app.deck._rng.state == before[12], "seeded RNG and draw unchanged")
 	_check(app.enemies.get_enemy(position).statuses.weak == 1, "exactly one Weak after hit")
-	if special == "blocked":
+	if special == "blocked" or special == "blocked_thorns":
 		_check(presenter.last_event.hp_loss == 0, "fully blocked hit still applies Weak")
 	if special == "lethal":
 		_check(app.enemies.is_slain(position), "lethal hit still applies Weak")
+	if thorns_amount > 0:
+		var retaliated: int = mini(thorns_amount, owner_before.block)
+		var retaliation_hp: int = maxi(0, thorns_amount - owner_before.block)
+		_check(presenter.last_event.get("thorns") == {"ok": true, "applied": true,
+			"thorns": thorns_amount, "block_absorbed": retaliated, "hp_loss": retaliation_hp},
+			"live mounted hit ran real Thorns exactly once through Warden Block")
+		var owner_after: Dictionary = app.party.get_hero(owner_position)
+		_check(owner_after.block == owner_before.block - retaliated
+			and owner_after.hp == owner_before.hp - retaliation_hp,
+			"retaliation spent the real Warden Block before HP")
+		var heroes_before: Array = before[6]
+		for index in range(3):
+			if index + 1 != owner_position:
+				_check(app.party.get_hero(index + 1) == heroes_before[index],
+					"an uninvolved hero keeps its exact HP and Block")
+	if enrage_stacks > 0:
+		_check(presenter.last_event.get("enrage") == {"ok": true, "applied": true,
+			"enrage_stacks": enrage_stacks, "attack_bonus": enrage_stacks * 2},
+			"live mounted hit persisted exactly one Enrage stack")
+		_check(app.enemies.get_enemy(position).enrage_stacks == enrage_stacks
+			and enrage_stacks <= CombatEnemyKeywordRules.ENRAGE_MAX_STACKS,
+			"the chosen foe's authoritative Enrage stacks match the shared cap")
 	var after := _state()
 	await _keyboard(KEY_1 + position - 1)
 	_check(_state() == after, "consumed receipt cannot replay")
@@ -170,6 +207,8 @@ func _refusal(scenario: String, keyboard: bool) -> void:
 			_check(presenter._armed == panel, "third-slot refusal has an armed held card")
 		"turn":
 			app.deck.combat_state.player_turn_active = false
+		"keywords":
+			app.enemies._enemies[1]["thorns"] = -1
 	await _frames()
 	_guard_global()
 	var before := _state()
@@ -180,10 +219,13 @@ func _refusal(scenario: String, keyboard: bool) -> void:
 		_check(quote.playable and quote.target_positions == [1, 2], "living third slot excluded")
 	elif scenario == "dead":
 		_check(quote.playable and not quote.target_positions.has(2), "invalid target excluded, living target retained")
+	elif scenario == "keywords":
+		_check(quote.playable and not quote.target_positions.has(2),
+			"malformed keyword target excluded, living plain target retained")
 	elif scenario not in ["cancel", "rebuild"]:
 		_check(not quote.playable, "service preflight refuses " + scenario)
 	var current := _panel(id)
-	if current != null and scenario not in ["dead", "slot3", "cancel", "rebuild"]:
+	if current != null and scenario not in ["dead", "slot3", "cancel", "rebuild", "keywords"]:
 		_check(not app.get_node("LiveSupportHand")._metadata.visual_state(current).get("playable", false), "invalid face dimmed " + scenario)
 	await _keyboard(KEY_3 if scenario == "slot3" else KEY_2)
 	await _click(app.get_node("LiveEnemyRoster")._labels[2 if scenario == "slot3" else 1])
@@ -236,7 +278,14 @@ func _run() -> void:
 		await _helmet_play(HELMETS[0], true, 2, 0, false)
 		for special in ["plain", "blocked", "lethal"]:
 			await _helmet_play(HELMETS[3], false, 2, 0, false, special)
-		for scenario in ["energy", "downed", "from", "dead", "absent", "statuses", "defender", "cancel", "rebuild", "turn", "slot3"]:
+		# Real reactive metadata through the same mounted hand: both bases and upgrades,
+		# Warden Block and HP, a fully blocked hit, Enrage and both keywords together.
+		await _helmet_play(HELMETS[0], false, 1, 5, false, "thorns")
+		await _helmet_play(HELMETS[3], true, 2, 0, true, "thorns")
+		await _helmet_play(HELMETS[2], true, 1, 0, false, "enrage")
+		await _helmet_play(HELMETS[1], true, 2, 0, false, "both")
+		await _helmet_play(HELMETS[0], false, 1, 0, false, "blocked_thorns")
+		for scenario in ["energy", "downed", "from", "dead", "absent", "statuses", "defender", "cancel", "rebuild", "turn", "keywords", "slot3"]:
 			await _refusal(scenario, false)
 			await _refusal(scenario, true)
 		await _receipts()
