@@ -48,6 +48,7 @@ func _initialize() -> void:
 	_test_wraith_named_moves()
 	_test_front_normal_named_strikes()
 	_test_flying_normal_named_strikes()
+	_test_mantis_named_strikes()
 	if failures.is_empty():
 		print("v3_normal_enemy_catalog_test: PASS (", checks, " checks)")
 	else:
@@ -989,7 +990,9 @@ func _harder_expected() -> Dictionary:
 			"art_path": "res://assets/paper/enemies/shearwing_mantis.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "snip_block", "amount": 0, "weight": 2},
-				{"type": "attack", "amount": 8, "weight": 3}]}},
+				{"type": "attack", "amount": 8, "weight": 3},
+				{"type": "attack", "amount": 6, "hits": 2, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 9, "move": "attack3", "weight": 1}]}},
 		"spoolback_hound": {"id": "spoolback_hound", "name": "Spoolback Hound",
 			"max_hp": 28, "enrage": true, "art_path": "res://assets/paper/enemies/spoolback_hound.png",
 			"intent": {"target": "front", "actions": [
@@ -1193,7 +1196,7 @@ func _test_harder_normal_seeded_announcements() -> void:
 		var slot := CombatEnemyIntents._weighted_slot(1, spec)
 		_check(not slot.is_empty(), "authored harder slot validates: " + id)
 		var actions: Array = slot.get("actions", [])
-		_check(actions.size() == (3 if id == "inkbrush_imp" else 2),
+		_check(actions.size() == _harder_expected()[id].intent.actions.size(),
 			"authored harder slot keeps all required alternatives: " + id)
 		for entry in actions:
 			_check(int(entry.get("weight", 0)) > 0,
@@ -4946,6 +4949,127 @@ func _test_flying_normal_named_strikes() -> void:
 					and bound.scheduler.get_intents() == before[3], "flying phase preserves source, announcement and RNG")
 				traces.append([receipt, witness.hits, party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state])
 			_check(traces.size() == 2 and traces[0] == traces[1], "same-seed flying phase replays exactly")
+
+
+func _test_mantis_named_strikes() -> void:
+	var id := "shearwing_mantis"
+	var record := _find(_load_parsed(), id)
+	_check(not record.is_empty() and _norm(record) == _harder_expected()[id],
+		"Mantis strictly parses with its exact original fields and ordered four actions")
+	if record.is_empty() or record.intent.actions.size() != 4:
+		return
+	var material := RunAuthoredBattleEntry._floor_band_material(null)
+	_check(material.get("ok") == true and _norm(material.get("records", {}).get(id)) == _norm(record),
+		"derived Fight material retains the complete canonical Mantis")
+	var has_band := false
+	for pool in material.get("pools", {}).values():
+		has_band = has_band or pool.has(id)
+	_check(has_band, "Mantis remains eligible in derived Fight bands")
+	var reached: Array = []
+	for seed_value in range(128):
+		var bound := _bind_records(seed_value, [record])
+		_check(bound.ok and bound.scheduler.is_bound(), "complete weighted Mantis record binds")
+		if not bound.ok:
+			break
+		var move: String = bound.scheduler.get_intents()[0].get("move", "")
+		if move not in ["attack2", "attack3"] or reached.has(move):
+			continue
+		var replay := _bind_records(seed_value, [record])
+		_check(replay.ok and replay.scheduler.get_intents() == bound.scheduler.get_intents()
+			and replay.rng.state == bound.rng.state, "complete Mantis weighted choice and RNG replay")
+		reached.append(move)
+		if reached.size() == 2:
+			break
+	_check(reached.has("attack2") and reached.has("attack3"), "both named moves are reachable in the full weighted record")
+	# Keep a real execution proof of the old eight-damage bite beside both new moves.
+	for amount in [8, 6, 9]:
+		var raw := _authored_alternative(record, "attack", amount)
+		var move: String = raw.get("move", "")
+		var hit_count := 2 if amount == 6 else 1
+		for block in [2, 12]:
+			var traces: Array = []
+			for replay in range(2):
+				var party := _party()
+				_check(party.is_valid() and party.get_hero(1).hp == 40
+					and party.get_hero(2).hp > 0 and party.get_hero(3).hp > 0
+					and party.gain_block(1, block), "Mantis faces a real blocked front and living peers")
+				var bound := _force_normal_alternative(record, raw, party)
+				_check(not bound.is_empty(), "genuine Mantis alternative binds through scheduler")
+				if bound.is_empty():
+					continue
+				var expected: Dictionary = CombatEnemyIntents.weighted_action(raw).action.duplicate(true)
+				expected.merge({"enemy_position": 1, "target_position": 1})
+				_check(bound.scheduler.is_bound() and bound.intents == [expected],
+					"Mantis announcement retains exact move, hits, amount and front target")
+				var before := [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()]
+				if not move.is_empty():
+					var fallback := "res://assets/paper/enemies/shearwing_mantis_attack.png"
+					for catalog in [LiveMovePoseCatalog.new(), MissingCrusherPose.new()]:
+						var pose: Dictionary = catalog.lookup_enemy(id, expected, fallback)
+						_check(pose.get("name") == ("Shear Slash" if move == "attack2" else "Pounce")
+							and pose.get("pose") == move
+							and pose.get("named_art") == "res://assets/paper/enemies/shearwing_mantis_%s.png" % move
+							and pose.get("art") == (pose.get("named_art") if pose.get("art_available") else fallback),
+							"Mantis manifest resolves authored name, pose path and normal fallback")
+						if catalog is MissingCrusherPose:
+							_check(pose.get("fallback_used") == true and pose.get("art") == fallback,
+								"forced missing Mantis texture uses established fallback")
+				for field in ["move", "hits", "amount"]:
+					for value in (["", "attack5", 2, null] if field == "move" else
+							[0, 3, "2", null] if field == "hits" else [-1, "6", 1.5, null, 99]):
+						# A one-action legacy bite has no named-move authentication contract.
+						if field == "amount" and value is int and value == 99 and move.is_empty():
+							continue
+						var malformed := raw.duplicate(true)
+						malformed[field] = value
+						if field != "amount" or not value is int or value != 99:
+							_check(CombatEnemyIntents.weighted_action(malformed).is_empty(),
+								"malformed Mantis move/hits/amount fails authored validation")
+						var bad := expected.duplicate(true)
+						bad[field] = value
+						_check(CombatEnemyPhase.new().execute_phase(party, bound.enemies, [bad], null, true)
+							== {"ok": false, "events": []}
+							and [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()] == before,
+							"malformed or forged Mantis request rejects without state or RNG spend")
+				if not move.is_empty():
+					var forged_move := expected.duplicate(true)
+					forged_move.move = "attack3" if move == "attack2" else "attack2"
+					var forged_hits := expected.duplicate(true)
+					if forged_hits.has("hits"):
+						forged_hits.erase("hits")
+					else:
+						forged_hits.hits = 2
+					for forged in [forged_move, forged_hits]:
+						var body: Dictionary = forged.duplicate(true)
+						body.erase("enemy_position")
+						_check(CombatEnemyIntents.valid_action(body)
+							and CombatEnemyPhase.new().execute_phase(party, bound.enemies, [forged], null, true)
+							== {"ok": false, "events": []}, "well-shaped forged Mantis move/hits fails source authentication")
+				_check([party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()] == before,
+					"Mantis previews and rejected requests spend nothing")
+				var witness := WraithHitWitness.new()
+				var receipt := CombatEnemyPhase.new().execute_phase(party, bound.enemies, bound.intents, witness, true)
+				var events: Array = []
+				var packets: Array = []
+				var hp := 40
+				for hit in range(hit_count):
+					var packet: int = 3 if hit_count == 2 else amount
+					packets.append([packet, hp, 0, hp - packet, 0])
+					hp -= packet
+					var event := {"type": "attack", "enemy_position": 1, "target_position": 1,
+						"applied": true, "actual_target_position": 1, "redirected": false,
+						"retaliation_damage": 0, "retaliatory_damage": 0}
+					if not move.is_empty():
+						event.move = move
+					events.append(event)
+				_check(receipt == {"ok": true, "events": events} and witness.hits == packets,
+					"Mantis chews all real Block before ordered 3+3, single 9 or original 8 HP damage")
+				_check(party.get_hero(1).hp == hp and party.get_hero(1).block == 0
+					and party.get_hero(2) == before[0][1] and party.get_hero(3) == before[0][2]
+					and bound.enemies.get_enemies() == before[1] and bound.rng.state == before[2]
+					and bound.scheduler.get_intents() == before[3], "Mantis attacks preserve peers, source, cache and RNG")
+				traces.append([bound.intents, receipt, witness.hits, party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state])
+			_check(traces.size() == 2 and traces[0] == traces[1], "same-seed Mantis phase and RNG replay exactly")
 
 
 class WraithHitWitness extends CombatWardenGuardReactions:
