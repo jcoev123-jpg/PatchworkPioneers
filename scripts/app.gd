@@ -5240,7 +5240,12 @@ func _choose_patch_stall_route(id: String, source: WeakRef, prior: Array[String]
 	if not visit.get_state().valid:
 		return false
 	var rng_before := run_rng.state
-	var sampled := RunShopPurchases.sample_patch_stall_offers(run_rng, authored.trinkets, run_trinkets)
+	# The live route hands the genuine completed-run unlock flag to the stock
+	# service so an unlocked player's real seeded stall can offer the two
+	# authored P12 Heirlooms; the rare catalog stays the shipped one the
+	# service loads itself, and a locked run keeps the legacy draws.
+	var sampled := RunShopPurchases.sample_patch_stall_offers(run_rng, authored.trinkets,
+		run_trinkets, null, heirloom_unlocked)
 	if not sampled.ok:
 		return false
 	var ids: Array = []
