@@ -172,7 +172,8 @@ static func authentic_broodling_mother(mother: Dictionary, position: int) -> boo
 			{"weight": 2, "action": {"type": "snip_block", "amount": 0}},
 			{"weight": 3, "action": {"type": "attack", "amount": 7}},
 			{"weight": 1, "action": {"type": "debuff", "status": "weak", "amount": 1}},
-			{"weight": 1, "action": {"type": "summon", "amount": 0}}
+			{"weight": 1, "action": {"type": "summon", "amount": 0}},
+			{"weight": 1, "action": {"type": "attack", "amount": 6, "hits": 2, "move": "attack2"}}
 		]
 	if actual.size() != expected.size():
 		return false

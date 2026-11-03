@@ -70,7 +70,11 @@
     {"id": "scarecrow_harvest_fright", "owner": "scarecrow", "price": 90},
     {"id": "rag_duelist_needle_prick", "owner": "rag_duelist", "price": 50},
     {"id": "rag_duelist_cape_guard", "owner": "rag_duelist", "price": 50},
-    {"id": "rag_duelist_tattered_snare", "owner": "rag_duelist", "price": 65}
+    {"id": "rag_duelist_tattered_snare", "owner": "rag_duelist", "price": 65},
+    {"id": "rag_duelist_needle_lunge", "owner": "rag_duelist", "price": 50},
+    {"id": "rag_duelist_duelist_reprise", "owner": "rag_duelist", "price": 65},
+    {"id": "rag_duelist_cape_flourish", "owner": "rag_duelist", "price": 65},
+    {"id": "rag_duelist_needle_barrage", "owner": "rag_duelist", "price": 90}
   ],
   "trinkets": [
     {"id": "stitched_badge", "price": 100},

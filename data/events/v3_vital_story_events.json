@@ -919,6 +919,46 @@
         { "id": "borrow_sun_needle", "text": "Surrender 2 max HP for the finch's purse (+28 gold)", "outcome": { "gold": 28, "scraps": 0, "hp": 0, "max_hp": -2 } },
         { "id": "leave", "text": "Pass before the last shadow turns", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_velvet_bat_lantern_loom",
+      "title": "The Velvet Bat Lantern Loom",
+      "description": "A round oxblood bat doll pulls a lantern-sized needle through a towering black-lace loom; amber light catches the frayed wing hems.",
+      "choices": [
+        { "id": "stitch_wing_wick", "text": "Pay 14 gold and 1 scrap to line the wing wick (heal 7 HP; gain 1 max HP)", "outcome": { "gold": -14, "scraps": -1, "hp": 7, "max_hp": 1 } },
+        { "id": "cut_lantern_thread", "text": "Cut the scorching lantern thread (lose 4 HP; gain 19 gold)", "outcome": { "gold": 19, "scraps": 0, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the bat winding its lantern loom", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_brass_toad_hourglass",
+      "title": "The Brass Toad Hourglass",
+      "description": "A squat moss-green toad puppet braces a cracked brass hourglass larger than its head; black sand drips through a blanket of silver stitches.",
+      "choices": [
+        { "id": "reset_heart_sand", "text": "Spend 2 scraps to reset a lasting heart seam (+3 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 3 } },
+        { "id": "carry_hourglass", "text": "Carry the heavy hourglass through briars (lose 5 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the black sand fall in silence", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_oxblood_rabbit_doorbell",
+      "title": "The Oxblood Rabbit Doorbell",
+      "description": "A plump crimson rabbit ragdoll shelters beneath a coffin-shaped porch with an enormous bone-cream doorbell strapped across its shoulders.",
+      "choices": [
+        { "id": "ring_warm_door", "text": "Pay 11 gold to ring for warm stuffing (heal 8 HP)", "outcome": { "gold": -11, "scraps": 0, "hp": 8, "max_hp": 0 } },
+        { "id": "unpick_bell_strap", "text": "Unpick the rabbit's brass bell-strap (lose 2 max HP; gain 25 gold)", "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the doorbell unrung", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_sable_cat_needle_telescope",
+      "title": "The Sable Cat Needle Telescope",
+      "description": "A round black-velvet cat doll peers through a silver needle telescope bolted to a giant thread spool; the moon shines on its mismatched button eyes.",
+      "choices": [
+        { "id": "focus_moon_seam", "text": "Pay 19 gold and 1 scrap to focus a moon seam (heal 4 HP; gain 2 max HP)", "outcome": { "gold": -19, "scraps": -1, "hp": 4, "max_hp": 2 } },
+        { "id": "haul_glass_lenses", "text": "Haul the heavy telescope lenses (lose 6 HP; gain 3 scraps)", "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the cat watch the misty moon", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }

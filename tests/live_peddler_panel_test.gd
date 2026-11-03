@@ -926,7 +926,11 @@ func _check_preview(index: int, offer: Dictionary, definition: Dictionary,
 			and status.contains(str(offer["owner"]).capitalize()),
 			label + ": the preview names the exact offered ID and its authored owner")
 	_check(status.contains(cost), label + ": the preview shows the authored " + cost)
-	_check(status.contains(line), label + ": the preview itself carries the authored effect line")
+	var full_preview: String = panel._card_preview(index)
+	var clamped_preview: String = panel._clamp_status(full_preview)
+	_check(status.contains(line) or (not clamped_preview.contains(line)
+			and status == clamped_preview and status.ends_with(LivePeddlerPanel.ELLIPSIS)),
+			label + ": preview includes full effects or clamps a long line with full tooltip")
 	_check(tooltip.contains(str(offer["id"])) and tooltip.contains(cost)
 			and tooltip.contains(line), label + ": the card tooltip keeps the complete ability text")
 	if bool(described.get("unknown", false)):

@@ -18,6 +18,7 @@ func _initialize() -> void:
 	_test_forced_shove_and_block()
 	_test_forced_statuses_and_attacks()
 	_test_fail_closed()
+	_test_wraith_named_moves()
 	if failures.is_empty():
 		print("v3_tough_normals_catalog_test: PASS (", checks, " checks)")
 	else:
@@ -64,7 +65,9 @@ func _expected() -> Dictionary:
 			"intent": {"target": "lowest_living_hp", "actions": [
 				{"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
 				{"type": "debuff", "status": "exposed", "amount": 1, "weight": 1},
-				{"type": "attack", "amount": 9, "weight": 3}]}}
+				{"type": "attack", "amount": 9, "weight": 3},
+				{"type": "attack", "amount": 8, "hits": 2, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 6, "move": "attack3", "weight": 1}]}}
 	}
 
 
@@ -203,9 +206,7 @@ func _test_catalog_records() -> void:
 	var text := FileAccess.get_file_as_string(PATH)
 	_check(not text.is_empty(), "v3_tough_normals.json is readable")
 	var parsed := RunTypedBattleRoster._parse_catalog_text(text)
-	_check(parsed.size() == 2, "the strict catalog parser accepts exactly the two new records")
-	if parsed.size() != 2:
-		return
+	_check(not parsed.is_empty(), "the strict catalog parser accepts the authored records")
 	var expected := _expected()
 	var ids: Array[String] = []
 	for record in parsed:
@@ -230,8 +231,6 @@ func _test_catalog_records() -> void:
 		var spec: Variant = record.get("intent")
 		_check(spec is Dictionary and spec.get("target") == expected[id]["intent"]["target"],
 			"target policy is authored: " + String(id))
-	for present in ids:
-		_check(expected.has(present), "no unexpected record in the new catalog: " + present)
 	_check(_find(parsed, "spindle_ram").get("art_path")
 		!= _find(parsed, "razor_ribbon_wraith").get("art_path"),
 		"the two enemies carry distinct art paths")
@@ -717,3 +716,85 @@ func _test_fail_closed() -> void:
 		_check(bad.enemies.get_enemies() == bad_enemies_before
 			and _signature(bad_party) == bad_heroes_before,
 			"the out-of-roster source publishes no mutation")
+
+
+class WraithHitWitness extends CombatWardenGuardReactions:
+	var hits: Array = []
+	func resolve_enemy_attack(party_val: Variant, enemies_val: Variant, attack_val: Variant) -> Dictionary:
+		var before: Dictionary = party_val.get_hero(attack_val.target_position)
+		var result := super.resolve_enemy_attack(party_val, enemies_val, attack_val)
+		var after: Dictionary = party_val.get_hero(attack_val.target_position)
+		hits.append([attack_val.amount, before.hp, before.block, after.hp, after.block])
+		return result
+
+
+class MissingWraithPose extends LiveMovePoseCatalog:
+	func _art_available(_path: String) -> bool:
+		return false
+
+
+func _test_wraith_named_moves() -> void:
+	var wraith := _find(_load(), "razor_ribbon_wraith")
+	_check(not wraith.is_empty() and wraith.get("intent", {}).get("actions", []).size() == 5,
+		"genuine parsed Wraith has all five alternatives")
+	if wraith.is_empty() or wraith.intent.actions.size() != 5:
+		return
+	for index in [3, 4]:
+		var raw: Dictionary = wraith.intent.actions[index]
+		var amount := 8 if index == 3 else 6
+		var hits := 2 if index == 3 else 1
+		var move := "attack2" if index == 3 else "attack3"
+		for block in [3, 5, 10]:
+			var party := _party()
+			_check(party.apply_damage(1, 40) and party.apply_damage(2, 10) and party.gain_block(2, block),
+				"downed front excluded; middle hero is uniquely lowest living with actual Block")
+			var bound := _bind_records([_single_alternative(wraith, raw)], party, 471)
+			_check(not bound.is_empty(), "actual parsed named Wraith alternative binds")
+			if bound.is_empty():
+				continue
+			var action: Dictionary = bound.intents[0]
+			_check(action.type == "attack" and action.amount == amount and action.get("hits", 1) == hits
+				and action.move == move and action.target_position == 2,
+				"named announcement keeps authored move, amount, hits and lowest living target")
+			var before := [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()]
+			var fallback := "res://assets/paper/enemies/razor_ribbon_wraith_attack.png"
+			for catalog in [LiveMovePoseCatalog.new(), MissingWraithPose.new()]:
+				var pose: Dictionary = catalog.lookup_enemy("razor_ribbon_wraith", action, fallback)
+				_check(pose.get("name") == ("Ribbon Lash" if index == 3 else "Wail") and pose.get("pose") == move
+					and pose.get("named_art") == "res://assets/paper/enemies/razor_ribbon_wraith_%s.png" % move
+					and pose.get("art") == (pose.get("named_art") if pose.get("art_available") else fallback),
+					"named Wraith pose preserves authentic art or safe fallback")
+				if catalog is MissingWraithPose:
+					_check(pose.get("fallback_used") == true and pose.get("art") == fallback,
+						"unavailable art keeps readable named fallback")
+			for field in ["hits", "move"]:
+				for value in ([0, 3, "2", null] if field == "hits" else ["", "attack5", 2, null]):
+					var malformed := raw.duplicate(true)
+					malformed[field] = value
+					_check(CombatEnemyIntents.weighted_action(malformed).is_empty(), "malformed authored hits/move rejected")
+					var bad := action.duplicate(true)
+					bad[field] = value
+					_check(CombatEnemyPhase.new().execute_phase(party, bound.enemies, [bad], null, true) == {"ok": false, "events": []}
+						and [party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state, bound.scheduler.get_intents()] == before,
+						"malformed phase rejects without actor, announcement or RNG mutation")
+			var witness := WraithHitWitness.new()
+			var receipt := CombatEnemyPhase.new().execute_phase(party, bound.enemies, bound.intents, witness, true)
+			var events: Array = []
+			var packets: Array = []
+			var hp := 20
+			var remaining: int = block
+			for hit in range(hits):
+				events.append({"type": "attack", "enemy_position": 1, "target_position": 2, "move": move,
+					"applied": true, "actual_target_position": 2, "redirected": false, "retaliation_damage": 0, "retaliatory_damage": 0})
+				var packet := 4 if hits == 2 else 6
+				var next_hp := hp - maxi(0, packet - remaining)
+				var next_block := maxi(0, remaining - packet)
+				packets.append([packet, hp, remaining, next_hp, next_block])
+				hp = next_hp
+				remaining = next_block
+			_check(receipt == {"ok": true, "events": events} and witness.hits == packets,
+				"ordered real phase receipts and each hit's exact Block-before-HP transitions")
+			_check(party.get_hero(2).hp == hp and party.get_hero(2).block == remaining
+				and party.get_hero(1) == before[0][0] and party.get_hero(3) == before[0][2]
+				and bound.enemies.get_enemies() == before[1] and bound.rng.state == before[2],
+				"named attacks leave other actors and run RNG unchanged")

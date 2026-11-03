@@ -33,7 +33,9 @@ const V3_ELITES := {
 		"actions": [
 			{"type": "snip_block", "amount": 0, "weight": 2},
 			{"type": "debuff", "amount": 2, "status": "bleed", "weight": 2},
-			{"type": "attack", "amount": 9, "weight": 2}]},
+			{"type": "attack", "amount": 9, "weight": 2},
+			{"type": "attack", "amount": 8, "hits": 2, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 7, "move": "attack3", "weight": 1}]},
 	## The Zipper Hauler looks like a hook: its shove is a forward pull (direction
 	## -1) that yanks the living middle hero in front of its partner.
 	"zipper_hauler": {
@@ -153,6 +155,7 @@ func _initialize() -> void:
 	_test_marshal_named_attacks()
 	_test_marshal_sting()
 	_test_scissor_sting()
+	_test_bailiff_named_attacks()
 	_test_hexer_lash()
 	_test_hexer_named_attacks()
 	_test_v3_elites()
@@ -1385,7 +1388,7 @@ func _test_hexer_lash() -> void:
 	# Read by ID, never as a catalog total: the correction is bounded to the one
 	# outlier, so every other shipped elite keeps its own authored attack sizes.
 	var peers := {
-		"needle_marshal": [5, 4, 6], "scissor_bailiff": [9], "zipper_hauler": [8],
+		"needle_marshal": [5, 4, 6], "scissor_bailiff": [9, 8, 7], "zipper_hauler": [8],
 		"needle_briar_guard": [9], "spool_snarekeeper": [8],
 		"pincushion_matriarch": [9], "spool_leech": [8]}
 	for id in peers:
@@ -1718,6 +1721,101 @@ func _bailiff_fixture(override: Dictionary = {}) -> Dictionary:
 	return {"party": party, "enemies": enemies}
 
 
+## Keep the complete parsed policy; force choices by finding seeded scheduler
+## witnesses rather than replacing the shipped alternatives with test attacks.
+func _test_bailiff_named_attacks() -> void:
+	var record := _record(_catalog(ELITES), "scissor_bailiff")
+	var witnesses := {}
+	for seed_value in range(1, 201):
+		var fixture := _new_elite_fixture(record)
+		var scheduler := CombatEnemyIntents.new([
+			{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+		_check(scheduler.bind_battle(fixture.enemies, fixture.party, _rng(seed_value)),
+			"authentic Bailiff policy binds for seeded witness")
+		var announced := scheduler.get_intents()
+		if announced.size() == 1 and announced[0].get("move") in ["attack2", "attack3"]:
+			witnesses[announced[0].move] = seed_value
+		if witnesses.size() == 2:
+			break
+	for pose in ["attack2", "attack3"]:
+		_check(witnesses.has(pose), "real Bailiff scheduler witness exists: " + pose)
+		if not witnesses.has(pose):
+			continue
+		var total := 8 if pose == "attack2" else 7
+		var hits := 2 if pose == "attack2" else 1
+		var title := "Scissor Cut" if pose == "attack2" else "Hook Pull"
+		# Four HP dies to the first cut; five HP survives it and earns one
+		# Bleed before the second cut kills. Together with the healthy total,
+		# these boundaries prove the independent 4+4 split, not just total 8.
+		for mode in ["healthy", "four_hp", "five_hp", "dead", "blocked_control"]:
+			var history: Array = []
+			for replay in range(2):
+				var source := record.duplicate(true)
+				if mode == "blocked_control":
+					source.erase("chew_block_on_attack")
+				var fixture := _new_elite_fixture(source)
+				var party: CombatParty = fixture.party
+				var enemies: CombatEnemies = fixture.enemies
+				var rng := _rng(witnesses[pose])
+				var scheduler := CombatEnemyIntents.new([
+					{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+				_check(scheduler.bind_battle(enemies, party, rng), "real Bailiff scheduler binds")
+				var announced := scheduler.get_intents()
+				var expected := {"type": "attack", "amount": total, "move": pose,
+					"enemy_position": 1, "target_position": 1}
+				if hits == 2:
+					expected["hits"] = 2
+				_check(announced == [expected], "exact authored named attack and front target")
+				var fallback := "res://assets/paper/enemies/scissor_bailiff_attack.png"
+				var named_art := "res://assets/paper/enemies/scissor_bailiff_%s.png" % pose
+				var receipt := LiveMovePoseCatalog.new().lookup_enemy("scissor_bailiff", expected, fallback)
+				_check(receipt.get("name") == title and receipt.get("pose") == pose
+					and receipt.get("named_art") == named_art and receipt.get("covers") == ["attack"]
+					and receipt.get("art_available") == ResourceLoader.exists(named_art, "Texture2D")
+					and receipt.get("art") == (named_art if receipt.get("art_available") else fallback),
+					"Bailiff real pose lookup retains authored name and checked art")
+				_check(MissingMoveArt.new().lookup_enemy("scissor_bailiff", expected, fallback) == {
+					"name": title, "pose": pose, "covers": ["attack"], "named_art": named_art,
+					"art": fallback, "art_available": false, "fallback_used": true},
+					"missing Bailiff art safely falls back without losing move identity")
+				var hp := 4 if mode == "four_hp" else (5 if mode == "five_hp" else 40)
+				_check(party.apply_damage(1, 40 - hp) and party.gain_block(1, 12),
+					"actual HP and substantial Block preconditions")
+				if mode == "dead":
+					_check(enemies.apply_damage(1, 36) and enemies.is_slain(1), "real source dies after announcement")
+				var before := [party.get_heroes(), enemies.get_enemies(), rng.state, scheduler.get_intents()]
+				for field in ["move", "hits"]:
+					for value in (["skill", "attack4", 2, "attack3" if hits == 2 else "attack2"] if field == "move" else [0, 1, 3, "2", 2.5, 2]):
+						var forged := expected.duplicate(true)
+						forged[field] = value
+						if forged == expected:
+							continue
+						_check(CombatEnemyPhase.new().execute_phase(party, enemies, [forged], null, true, null, 73)
+							== {"ok": false, "events": []}
+							and before == [party.get_heroes(), enemies.get_enemies(), rng.state, scheduler.get_intents()],
+							"invalid or unauthored move/hits publishes no actors, wallet, cache or RNG")
+				var settled := CombatEnemyPhase.new().execute_phase(party, enemies, announced, null, true)
+				var events: Array = []
+				for hit in range(hits):
+					events.append({"type": "attack", "enemy_position": 1, "target_position": 1,
+						"move": pose, "applied": mode != "dead" and not (hit == 1 and hp == 4)})
+				var inert: bool = mode in ["dead", "blocked_control"]
+				var expected_party: Array = before[0].duplicate(true)
+				expected_party[0].hp = hp if inert else maxi(0, hp - total)
+				expected_party[0].block = (12 if mode == "dead" else 12 - total) if inert else 0
+				if not inert and (hp > total or (hits == 2 and hp == 5)):
+					expected_party[0]["statuses"] = {"bleed": hits if hp > total else 1}
+				_check(settled == {"ok": true, "events": events}
+					and party.get_heroes() == expected_party and enemies.get_enemies() == before[1]
+					and scheduler.get_intents() == announced and rng.state == before[2],
+					"exact per-hit receipts, 4+4/7 HP, chew, confirmed Bleed and untouched bystanders: " + pose + "/" + mode)
+				var trace := [announced, settled, party.get_heroes(), enemies.get_enemies(), rng.state]
+				if replay == 0:
+					history = trace
+				else:
+					_check(history == trace, "identical Bailiff inputs replay every receipt and state")
+
+
 ## The legal front-target scissor cut announced by the authentic slot 1.
 func _bailiff_cut() -> Dictionary:
 	return {"type": "attack", "enemy_position": 1, "amount": 9, "target_position": 1}
@@ -1781,7 +1879,7 @@ func _test_scissor_sting() -> void:
 		body["weight"] = weighted.get("weight", 0)
 		actions.append(body)
 	_check(actions == V3_ELITES["scissor_bailiff"]["actions"],
-		"AC1: the three authored actions stay snip 0/2, Bleed 2/2 and attack 9/2")
+		"AC1: original snip, Bleed and cut precede the two named attacks")
 	var cut := _bailiff_cut()
 	_check(cut.get("amount") == 9, "AC1 precondition: the authored scissor cut is 9")
 
