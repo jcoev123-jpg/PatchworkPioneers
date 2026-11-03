@@ -771,6 +771,35 @@ func _test_rag_duelist_peddler_stock() -> void:
 		"rag_duelist_tattered_snare": {"price": 65, "rarity": "uncommon", "from": [1, 2],
 			"target": "enemy_single", "to": [1, 2, 3],
 			"effects": {"tangled": 2}, "plus_effects": {"tangled": 3}},
+		"rag_duelist_needle_lunge": {"price": 50, "rarity": "common", "from": [2, 3],
+			"target": "enemy_single", "to": [1, 2],
+			"effects": {"damage": 6, "move_self_forward": 1},
+			"plus_effects": {"damage": 8, "move_self_forward": 1}},
+		"rag_duelist_duelist_reprise": {"price": 65, "rarity": "uncommon", "from": [1, 2],
+			"target": "self", "to": [],
+			"effects": {"riposte": 5, "duration": 1},
+			"plus_effects": {"riposte": 7, "duration": 1}},
+		"rag_duelist_cape_flourish": {"price": 65, "rarity": "uncommon", "from": [1, 2, 3],
+			"target": "self", "to": [],
+			"effects": {"dodge_next_attack": 1, "duration": 1},
+			"plus_effects": {"dodge_next_attack": 1, "duration": 1}},
+		"rag_duelist_needle_barrage": {"price": 90, "rarity": "rare", "from": [1],
+			"target": "enemy_single", "to": [1, 2],
+			"effects": {"damage": 3, "hit_count": 3, "independent_hits": true},
+			"plus_effects": {"damage": 4, "hit_count": 3, "independent_hits": true}},
+	}
+	# Explicitly keyed cost oracle: base cost and Rest-only + cost per card.
+	var base_costs := {
+		"rag_duelist_needle_prick": 1, "rag_duelist_cape_guard": 1,
+		"rag_duelist_tattered_snare": 1, "rag_duelist_needle_lunge": 1,
+		"rag_duelist_duelist_reprise": 1, "rag_duelist_cape_flourish": 1,
+		"rag_duelist_needle_barrage": 2,
+	}
+	var plus_costs := {
+		"rag_duelist_needle_prick": 1, "rag_duelist_cape_guard": 1,
+		"rag_duelist_tattered_snare": 1, "rag_duelist_needle_lunge": 1,
+		"rag_duelist_duelist_reprise": 1, "rag_duelist_cape_flourish": 0,
+		"rag_duelist_needle_barrage": 2,
 	}
 	var party: Array[String] = ["warden", "rag_duelist", "tinker"]
 	var owner_seat := 1
@@ -794,7 +823,7 @@ func _test_rag_duelist_peddler_stock() -> void:
 		var definition: Dictionary = catalog.get_definition(card_id)
 		_check(catalog.get_base_ids().has(card_id) and not starter.has_card(card_id)
 			and definition.get("id") == card_id and definition.get("owner") == "rag_duelist"
-			and definition.get("cost") == 1
+			and definition.get("cost") == base_costs[card_id]
 			and definition.get("rarity") == spec["rarity"]
 			and definition.get("from_positions") == spec["from"]
 			and definition.get("target_kind") == spec["target"]
@@ -807,6 +836,21 @@ func _test_rag_duelist_peddler_stock() -> void:
 		var plus: Dictionary = catalog.get_definition(card_id + "_plus")
 		_check(plus.get("effects") == spec["plus_effects"] and plus.get("reward_eligible") == false,
 			card_id + ": the + keeps its authored Rest-only effects")
+		_check(plus.get("id") == card_id + "_plus" and plus.get("owner") == "rag_duelist"
+			and plus.get("upgrade_of") == card_id
+			and plus.get("cost") == plus_costs[card_id]
+			and plus.get("from_positions") == spec["from"]
+			and plus.get("target_kind") == spec["target"]
+			and plus.get("to_positions") == spec["to"]
+			and plus.get("starting_copies") == 0,
+			card_id + ": the + has its keyed cost, positions and target")
+		_check(definition.get("upgrade_id") == card_id + "_plus"
+			and definition.get("illustration_path") == "res://assets/paper/cards/" + card_id + ".png",
+			card_id + ": links its genuine + and keeps its art path")
+	_check(plus_costs["rag_duelist_cape_flourish"] == 0
+		and catalog.get_definition("rag_duelist_cape_flourish_plus").get("cost") == 0
+		and catalog.get_definition("rag_duelist_needle_barrage").get("cost") == 2,
+		"Cape Flourish+ costs 0 and Needle Barrage costs 2")
 	# Older candidates stay untouched.
 	var velvet: Array = authored_cards.filter(
 		func(entry): return entry is Dictionary and entry.get("id") == "rag_duelist_velvet_feint")
