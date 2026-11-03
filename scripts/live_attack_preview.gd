@@ -42,6 +42,8 @@ var _moth_lure := CombatLanternMonkMothLureCards.new()
 ## Button Golem's Knuckle/Snag resolver. It keeps no token store: every cast
 ## and forecast reads this battle's one shared _pinned set.
 var _thread := CombatButtonGolemThreadCards.new()
+## The two authentic starter Button Fist printings share their one paid resolver.
+var _fist := CombatButtonGolemFistCards.new()
 var _golem_pool := ButtonGolemPoolCards.new()
 var _helmet := CombatWardenV3HelmetCards.new()
 var _vanguard: CombatWardenVanguardPassive
@@ -826,6 +828,8 @@ func _definition(card_id: String) -> Dictionary:
 		return _prick._catalog_definition(card_id)
 	if _thread.is_supported_card(card_id):
 		return _golem_pool.get_definition(card_id) if not _thread._authenticate(card_id).is_empty() else {}
+	if _fist.is_supported_card(card_id):
+		return ButtonGolemStarterCards.new().get_definition(card_id) if not _fist.printed_definition(card_id).is_empty() else {}
 	if _overload.is_supported_card(card_id):
 		return _overload.overload_definition(card_id)
 	if _casing_clamp.is_supported_card(card_id):
@@ -904,6 +908,8 @@ func _target_preview(id: String) -> Dictionary:
 		return _prick_forecast(app.party, app.enemies, id)
 	if _thread.is_supported_card(id):
 		return _thread_forecast(app.party, app.enemies, id)
+	if _fist.is_supported_card(id):
+		return _fist_forecast(app.party, app.enemies, id)
 	if _overload.is_supported_card(id):
 		return _overload_forecast(app.party, app.enemies, id)
 	if _casing_clamp.is_supported_card(id):
@@ -954,7 +960,7 @@ func _queue_attack(position: int) -> void:
 	# A single-target target ID plus the held panel's original hand index
 	# prevent an enemy replacement or equivalent-copy panel swap at commit.
 	var target_id := ""
-	if (_moth_lure.is_supported_card(id) or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _needle.is_supported_purling_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _prick.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
+	if (_moth_lure.is_supported_card(id) or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _needle.is_supported_purling_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _prick.is_supported_card(id) or _thread.is_supported_card(id) or _fist.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
 			or _targeting.is_seamstress_control(id) \
 			or _targeting.is_heavy_pool_attack(id) \
 			or _toss.is_supported_card(id) or _rivet.is_supported_card(id) \
@@ -993,7 +999,8 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var monk := _monk.is_supported_card(id)
 	var moth_lure := _moth_lure.is_supported_card(id)
 	var thread := _thread.is_supported_card(id)
-	var guarded := moth_lure or monk or needle or purling or barrage or lunge or snare or prick or thread or direct or control or combo or path or heavy or toss or rivet or overload or casing_clamp or id in CombatAttackCards.ATTACK_IDS
+	var fist := _fist.is_supported_card(id)
+	var guarded := moth_lure or monk or needle or purling or barrage or lunge or snare or prick or thread or fist or direct or control or combo or path or heavy or toss or rivet or overload or casing_clamp or id in CombatAttackCards.ATTACK_IDS
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -1023,7 +1030,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		_reject_stitch()
 		return
 	var energy_before: int = _deck.energy
-	if (moth_lure or monk or needle or purling or barrage or lunge or snare or prick or thread or direct or combo or path or heavy or toss or rivet or overload or casing_clamp) and (app._battle_closed \
+	if (moth_lure or monk or needle or purling or barrage or lunge or snare or prick or thread or fist or direct or combo or path or heavy or toss or rivet or overload or casing_clamp) and (app._battle_closed \
 			or (target_id.is_empty() and not (_is_warden_card(id) and position == 0)) \
 			or app.deck._rng != rng or (combo and not app._combo_battle_current())):
 		_reject_stitch()
@@ -1032,7 +1039,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
 			or (((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id)) \
-			or ((moth_lure or monk or needle or purling or barrage or lunge or snare or prick or thread or control or combo or path or heavy or toss or rivet or overload or casing_clamp or id in CombatAttackCards.ATTACK_IDS) \
+			or ((moth_lure or monk or needle or purling or barrage or lunge or snare or prick or thread or fist or control or combo or path or heavy or toss or rivet or overload or casing_clamp or id in CombatAttackCards.ATTACK_IDS) \
 				and position > 0 and (app._battle_closed or target_id.is_empty() \
 				or app.enemies.get_enemy(position).get("id") != target_id))):
 		if guarded or _targeting.is_sight_glass(id):
@@ -1120,6 +1127,15 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 		var paid := _prick.play_card(_deck, party, enemies, id, position)
 		if paid.get("ok", false):
 			# Pass the one confirmed strike to existing hit observers; never hit twice.
+			paid["hits"] = [{"position": paid.target_position, "damage": paid.damage,
+				"hp_loss": paid.hp_loss, "block_absorbed": paid.block_absorbed}]
+		return paid
+	if _fist.is_supported_card(id):
+		if forecast:
+			return _fist_forecast(party, enemies, id)
+		var paid := _fist.play_card(_deck, party, enemies, id, position)
+		if paid.get("ok", false):
+			# Publish the existing single hit to observers; do not strike twice.
 			paid["hits"] = [{"position": paid.target_position, "damage": paid.damage,
 				"hp_loss": paid.hp_loss, "block_absorbed": paid.block_absorbed}]
 		return paid
@@ -1740,7 +1756,7 @@ func _eligible(panel) -> bool:
 	var index: int = panel.get_index()
 	var path_ok: bool = (_is_path_card(id) and not _path_positions(id).is_empty()) \
 		or (_is_warden_card(id) and warden_preview(id).get("playable", false))
-	return (id in TETHER_CARDS or _moth_lure.is_supported_card(id) or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _needle.is_supported_purling_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _prick.is_supported_card(id) or _thread.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _rivet.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
+	return (id in TETHER_CARDS or _moth_lure.is_supported_card(id) or _monk.is_supported_card(id) or _needle.is_supported_card(id) or _needle.is_supported_purling_card(id) or _barrage.is_supported_card(id) or _lunge.is_supported_card(id) or _snare.is_supported_card(id) or _prick.is_supported_card(id) or _thread.is_supported_card(id) or _fist.is_supported_card(id) or _overload.is_supported_card(id) or _casing_clamp.is_supported_card(id) or _targeting.supports(id) or _helmet.is_supported_card(id) or _toss.is_supported_card(id) or _rivet.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
 func _sync_battle() -> void:
@@ -2167,6 +2183,17 @@ func _refresh() -> void:
 		cue.text = "%s | %d energy | P / click card; %s / click enemy; Esc: cancel\n%s" % [
 			definition.display_name, definition.cost, _key_hint(preview.target_positions), reading]
 		return
+	if _fist.is_supported_card(id):
+		current_forecast = preview.duplicate(true)
+		var choices: PackedStringArray = []
+		for hit in preview.hits:
+			choices.append("%d: %d damage (%d Block absorbed, %d HP loss)" % [
+				hit.position, hit.damage, hit.block_absorbed, hit.hp_loss])
+		cue.text = "%s | %d energy | P / click card; %s / click enemy; Esc: cancel\n%s" % [
+			definition.display_name, definition.cost, _key_hint(preview.target_positions),
+			"Choose one enemy slot: " + "; ".join(choices) + " | Golem gains %d self Block" % int(preview.block_gained)
+			if preview.playable else "Unavailable: no held/affordable Fist, living Golem in seat 1-2 or living front/middle enemy"]
+		return
 	if _thread.is_supported_card(id):
 		current_forecast = preview.duplicate(true)
 		var details: PackedStringArray = []
@@ -2520,6 +2547,40 @@ func _thread_forecast(party: CombatParty, enemies: CombatEnemies, id: String) ->
 		return unavailable
 	return {"playable": true, "requires_selection": true, "target_positions": positions,
 		"hits": hits, "owner_position": seat}
+
+
+
+## Authentic Fist preflight on every original roster slot. This projection only
+## calculates the same status-adjusted attack/Block-before-HP arithmetic as the
+## paid bridge; the resolver alone charges the hand and grants self Block.
+func _fist_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> Dictionary:
+	var preview := {"playable": false, "requires_selection": true, "target_positions": [],
+		"hits": [], "block_gained": 0, "owner_position": 0}
+	var app = get_parent()
+	if app == null or _deck == null or app.deck != _deck or app._battle_closed \
+			or app.enemy_intents == null or _turn != app.enemy_intents._turn_index \
+			or _deck._rng != app.run_rng or party != app.party or enemies != app.enemies \
+			or _session != [party, enemies, app.battle_result, app.run_rng, app.enemy_intents]:
+		return preview
+	for position in CombatButtonGolemFistCards.TO_POSITIONS:
+		var plan: Dictionary = _fist._prepare(_deck, party, enemies, id, position)
+		if not plan.get("ok", false):
+			continue
+		var victim: Dictionary = enemies.get_enemy(position)
+		var damage: int = _statuses.adjusted_attack_damage(int(plan.printed_damage),
+			plan.attacker_statuses, plan.defender_statuses)
+		var absorbed: int = mini(int(victim.block), damage)
+		var hp_loss: int = mini(int(victim.hp), damage - absorbed)
+		preview.target_positions.append(position)
+		preview.hits.append({"position": position, "damage": damage,
+			"block_absorbed": absorbed, "hp_loss": hp_loss,
+			"hp_after": int(victim.hp) - hp_loss,
+			"block_after": int(victim.block) - absorbed,
+			"block_gained": int(plan.block_gained)})
+		preview.owner_position = int(plan.owner_position)
+		preview.block_gained = int(plan.block_gained)
+	preview.playable = not preview.target_positions.is_empty()
+	return preview
 
 
 ## A needle preview is read-only and uses the paid resolver's exact preflight
