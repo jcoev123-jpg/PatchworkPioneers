@@ -150,7 +150,9 @@ func _new_expected() -> Dictionary:
 			"art_path": "res://assets/paper/enemies/scissor_crab.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "snip_block", "amount": 0, "weight": 2},
-				{"type": "attack", "amount": 6, "hits": 2, "weight": 3}]}},
+				{"type": "attack", "amount": 6, "hits": 2, "weight": 3},
+				{"type": "attack", "amount": 8, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 7, "hits": 2, "move": "attack3", "weight": 1}]}},
 		"thimble_beetle": {"id": "thimble_beetle", "name": "Thimble Beetle", "max_hp": 29, "art_path": "res://assets/paper/enemies/thimble_beetle.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "block", "amount": 9, "weight": 3},
@@ -3506,8 +3508,8 @@ func _test_scissor_crab_block_snip_catalog() -> void:
 		and CombatEnemyIntents.valid_action(_announced_from(normalized_attack.action, 1)),
 		"AC1: the two-hit Crab attack validates through the live action contract")
 	var crab_actions: Variant = crab.get("intent", {}).get("actions")
-	_check(crab_actions is Array and crab_actions.size() == 2,
-		"AC1: the Crab still authors exactly its attack and snip, never a third action")
+	_check(crab_actions is Array and _norm(crab_actions) == _new_expected().scissor_crab.intent.actions,
+		"AC1: Crab preserves both original actions and appends only Pinch and Blade Spin")
 	var moth_bite := _authored_alternative(_find(parsed, "moth_swarm"), "attack", 7)
 	var beetle_attack := _authored_alternative(_find(parsed, "thimble_beetle"), "attack", 5)
 	_check(not moth_bite.is_empty() and not _alternative_carries_hits(moth_bite),
@@ -3535,6 +3537,8 @@ func _test_scissor_crab_block_snip_catalog() -> void:
 			and live.get("intent", {}).get("target") == "front",
 			"AC4: the live Fight record keeps the Crab's trait, HP and target policy")
 		var live_attack := _authored_alternative(live, "attack", 6)
+		_check(_norm(live) == _new_expected().scissor_crab,
+			"AC1: floor-band admission preserves the complete four-action Crab record")
 		_check(not live_attack.is_empty()
 			and int(live_attack.get("hits", 0)) == 2
 			and int(live_attack.get("weight", 0)) == 3,

@@ -325,6 +325,7 @@ func _run() -> void:
 		return
 	_assert_authored(crab, 6)
 	_assert_authored(wasp, 8)
+	_assert_blade_spin(crab)
 	# The announced action body is the catalog's own normalized alternative with the
 	# concrete source and target the bound scheduler publishes, never a preview shape.
 	var crab_action := _announced(crab, "attack", 6, 1)
@@ -758,6 +759,45 @@ func _run() -> void:
 	await _assert_icon_pulse(crab_action, wasp_action)
 	_assert_named_two_hit_attacks(crab, wasp, crab_action)
 	_finish()
+
+
+func _assert_blade_spin(crab: Dictionary) -> void:
+	var raw := _authored_alternative(crab, "attack", 7)
+	var normalized := CombatEnemyIntents.weighted_action(raw)
+	_check(not normalized.is_empty() and normalized.get("weight") == 1
+		and normalized.get("action") == {"type": "attack", "amount": 7, "hits": 2, "move": "attack3"},
+		"Blade Spin is the authentic weight-one keyed seven-total two-hit alternative")
+	if normalized.is_empty():
+		return
+	var action := _announced(crab, "attack", 7, 1)
+	var before := action.duplicate(true)
+	badge.show_intent(action, false, false, "front")
+	var pose := LiveMovePoseCatalog.new().lookup_enemy("scissor_crab", action,
+		"res://assets/paper/enemies/scissor_crab_attack.png")
+	_check(pose.get("name") == "Blade Spin" and pose.get("pose") == "attack3",
+		"authentic Blade Spin badge derives its verified name from the shipped pose catalog")
+	badge.append_verified_move_name(pose.get("name", ""))
+	_check(LiveEnemyIntentBadge.is_two_hit_attack(action) and badge.hit_count == 2
+		and badge.hit_damage == 4 and badge.amount == 7 and badge.target_position == 1
+		and _two_hit_caption(badge.readable_text) and badge.tooltip_text.contains("4 + 3 base damage")
+		and badge.move_name == "Blade Spin" and badge.tooltip_text.ends_with("\nMove: Blade Spin")
+		and action == before, "mounted Blade Spin shows two hits, 4+3, Front and verified name without mutating action")
+	_assert_layout(badge, LiveEnemyIntentBadge.COMPACT_MIN_FONT, "authentic Blade Spin Front")
+	replay_badge.show_intent(action, false, false, "front")
+	replay_badge.append_verified_move_name(pose.get("name", ""))
+	_check(_presentation(badge) == _presentation(replay_badge), "authentic named Blade Spin badge replays exactly")
+	badge.show_intent(action, false, false, "front", -1, {}, true)
+	_check(badge.blind_miss and badge.hit_count == 2
+		and badge.tooltip_text.contains("Neither of the two authored hit packets resolves"),
+		"Blade Spin Blind badge promises one whole-attack miss")
+	badge.show_intent(action, true, false, "front")
+	_check(badge.readable_text == "SLAIN", "slain Blade Spin source displays no acting promise")
+	_assert_reset(badge, "authentic Blade Spin slain")
+	var pinch := _announced(crab, "attack", 8, 1)
+	badge.show_intent(pinch, false, false, "front")
+	_check(not LiveEnemyIntentBadge.is_two_hit_attack(pinch) and badge.hit_count == 1
+		and badge.amount == 8 and not _two_hit_caption(badge.readable_text),
+		"authentic Pinch remains one hit when the Blade Spin ribbon is reused")
 
 
 func _assert_named_two_hit_attacks(crab: Dictionary, wasp: Dictionary, unnamed_crab_action: Dictionary) -> void:

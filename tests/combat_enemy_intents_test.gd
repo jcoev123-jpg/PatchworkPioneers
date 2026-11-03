@@ -7,6 +7,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_attack_move_schema()
 	_test_seam_ripper_routed_named_attacks()
+	_test_scissor_crab_routed_named_attacks()
 	_test_scavenger_gold_cache()
 	_test_two_hit_schema()
 	_test_special_schema()
@@ -214,6 +215,160 @@ func _test_seam_ripper_routed_named_attacks() -> void:
 				_check(seen.has("attack2") and seen.has("attack3"), "both weighted Seam Ripper alternatives were actually selected and executed")
 				traces.append(trace)
 			_check(not traces[0].is_empty() and traces[0] == traces[1], "same-seed route, choices, phase receipts, actors and RNG replay exactly")
+
+
+func _crab_route(count: int) -> Dictionary:
+	# Discover a legal Fight in the Crab's actual derived floor band, without
+	# injecting a pool, encounter, action or RNG result.
+	for seed_value in range(1, 180):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		while map.get_current_floor() < 11:
+			var choices := map.get_legal_choices()
+			if choices.is_empty():
+				break
+			var node: String = choices[0]
+			for candidate in choices:
+				if map.get_node(candidate).get("type") == "Fight":
+					node = candidate
+					break
+			if not map.choose_node(node):
+				break
+			if map.get_node(node).get("type") != "Fight":
+				continue
+			var entry := RunAuthoredBattleEntry.new().entry_current_battle(
+				map, rng, RunFightEncounterSelection.new())
+			if entry.get("success", false):
+				var ids: Array = entry.enemies.get_enemies().map(func(actor): return actor.id)
+				if ids.size() == count and ids.has("scissor_crab"):
+					return {"seed": seed_value, "route": map.get_route(), "ids": ids}
+	return {}
+
+
+func _test_scissor_crab_routed_named_attacks() -> void:
+	for count in [2, 3]:
+		var fixture := _crab_route(count)
+		_check(not fixture.is_empty(), "Crab is reachable in a real routed %d-foe Fight" % count)
+		if fixture.is_empty():
+			continue
+		for floor_number in [1, 5, 9]:
+			var traces := []
+			for replay in range(2):
+				var rng := RandomNumberGenerator.new()
+				rng.seed = fixture.seed
+				var map := RunMap.new()
+				_check(map.generate(rng), "Crab route map generates")
+				for node in fixture.route:
+					_check(map.choose_node(node), "Crab route commits a legal choice")
+					if node != fixture.route.back() and map.get_node(node).get("type") == "Fight":
+						_check(RunAuthoredBattleEntry.new().entry_current_battle(
+							map, rng, RunFightEncounterSelection.new()).get("success", false), "prior Fight admits")
+				var entry := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
+				_check(entry.get("success", false) and entry.get("node_type") == "Fight", "routed Crab Fight admits")
+				if not entry.get("success", false):
+					return
+				var definitions: Array = entry.enemies.get_enemies()
+				_check(definitions.map(func(actor): return actor.id) == fixture.ids, "routed group replays without replacing companions")
+				# Entry returns authored bases. Apply the same one-time transform as
+				# app._choose_battle_route; exercise all tiers, even outside Crab's band.
+				for actor in definitions:
+					actor.max_hp = RunNormalAttackFloorScaling.scale_normal_max_hp(actor.max_hp, floor_number).max_hp
+					for raw in actor.intent.actions:
+						if raw.type == "attack" and raw.amount >= 5 and raw.amount <= 9:
+							raw.amount = RunNormalAttackFloorScaling.scale_normal_attack(int(raw.amount), floor_number).amount
+				var enemies := CombatEnemies.new(definitions)
+				var source: int = fixture.ids.find("scissor_crab") + 1
+				var target: int = 1 if count == 2 else 2
+				var party := _party_fixture(40 if target == 1 else 0, 40, 40)
+				var scheduler: CombatEnemyIntents = entry.intents
+				_check(enemies.is_valid() and party.is_valid() and not party.is_downed(target)
+					and scheduler.bind_battle(enemies, party, rng), "real Crab group binds to front living hero and run RNG")
+				if not scheduler.is_bound():
+					return
+				var trace := []
+				var seen := {}
+				for turn in range(128):
+					var actions := scheduler.get_intents()
+					var state := rng.state
+					_check(actions.size() == count and scheduler.get_intents() == actions and rng.state == state,
+						"real group previews keep all announcements and spend no RNG")
+					trace.append([actions.duplicate(true), state])
+					var action: Dictionary = actions[source - 1]
+					if action.has("move") and not seen.has(action.move):
+						var move: String = action.move
+						var amount: int = {1: [8, 7], 5: [10, 8], 9: [12, 10]}[floor_number][0 if move == "attack2" else 1]
+						var hits: int = 1 if move == "attack2" else 2
+						_check(move in ["attack2", "attack3"] and action.type == "attack" and action.amount == amount
+							and action.get("hits", 1) == hits and action.target_position == target,
+							"weighted Pinch/Blade Spin retains exact single-scaled total, hit count and front living target")
+						var heroes := party.get_heroes()
+						var foes := enemies.get_enemies()
+						for mode in ["normal", "blind", "dead", "dodge", "riposte"]:
+							party._heroes = heroes.duplicate(true)
+							enemies._enemies = foes.duplicate(true)
+							_check(party.gain_block(target, 19), "Crab recipient really has more Block than either strike total")
+							if mode == "blind":
+								enemies._enemies[source - 1].statuses = {"blind_next_attack": 1}
+							elif mode == "dead":
+								_check(enemies.apply_damage(source, 99999) and enemies.is_slain(source), "Crab source is genuinely slain")
+							elif mode == "dodge":
+								party._heroes[target - 1].statuses = {"dodge_next_attack": 1}
+							elif mode == "riposte":
+								party._heroes[target - 1].statuses = {"riposte": 1}
+								enemies._enemies[source - 1].hp = 1
+							var before := [party.get_heroes(), enemies.get_enemies(), rng.state, scheduler.get_intents()]
+							var expected_heroes: Array = before[0].duplicate(true)
+							var expected_foes: Array = before[1].duplicate(true)
+							var event := {"type": "attack", "enemy_position": source,
+								"target_position": target, "move": move, "applied": true}
+							var events := []
+							for hit in range(1 if mode == "blind" else hits):
+								var beat := event.duplicate(true)
+								beat.applied = not (mode in ["blind", "dead"] or (mode == "dodge" and hit == 0) or (mode == "riposte" and hit == 1))
+								events.append(beat)
+							@warning_ignore("integer_division")
+							var second: int = amount / hits
+							var loss := amount
+							if mode == "blind":
+								expected_foes[source - 1].statuses.erase("blind_next_attack")
+							if mode in ["blind", "dead"]:
+								loss = 0
+							elif mode == "dodge":
+								loss = second if hits == 2 else 0
+								expected_heroes[target - 1].statuses.erase("dodge_next_attack")
+							elif mode == "riposte":
+								loss = amount - second if hits == 2 else amount
+								expected_foes[source - 1].hp = 0
+							if mode not in ["blind", "dead"]:
+								expected_heroes[target - 1].block = 0
+							expected_heroes[target - 1].hp -= loss
+							var phase := CombatEnemyPhase.new()
+							var result := phase.execute_phase(party, enemies, [action], null, true, null, 19)
+							_check(result == {"ok": true, "gold": 19, "events": events}
+								and party.get_heroes() == expected_heroes and enemies.get_enemies() == expected_foes
+								and rng.state == state and scheduler.get_intents() == actions,
+								"Crab %s floor %d %s: exact packets, Block-chew, wallet, companions and RNG" % [move, floor_number, mode])
+							trace.append([mode, result, party.get_heroes(), enemies.get_enemies(), rng.state])
+							party._heroes = before[0].duplicate(true)
+							enemies._enemies = before[1].duplicate(true)
+							for bad_move in [null, 2, "attack4", "unknown"]:
+								var forged := action.duplicate(true)
+								forged.move = bad_move
+								_check(phase.execute_phase(party, enemies, [forged], null, true, null, 19) == {"ok": false, "events": []}
+									and before == [party.get_heroes(), enemies.get_enemies(), rng.state, scheduler.get_intents()],
+									"malformed/unauthored Crab move rejects atomically")
+						party._heroes = heroes.duplicate(true)
+						enemies._enemies = foes.duplicate(true)
+						seen[move] = true
+					if seen.has("attack2") and seen.has("attack3"):
+						break
+					_check(scheduler.advance_turn(), "real Crab weighted turn advances")
+				_check(seen.has("attack2") and seen.has("attack3"), "bounded selection executes both authentic Crab alternatives")
+				traces.append(trace)
+			_check(not traces[0].is_empty() and traces[0] == traces[1], "Crab route, RNG, announcements and all phase receipts replay exactly")
 
 
 func _scavenger_gold_record() -> Dictionary:

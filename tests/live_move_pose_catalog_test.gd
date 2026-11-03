@@ -74,11 +74,29 @@ func _initialize() -> void:
 	check(catalog.lookup_hero("unknown", "block", FALLBACK).is_empty(), "unknown hero")
 	# Force unavailable art without depending on whether pipeline PNGs exist.
 	catalog.available = false
+	var crab := {}
+	for record in RunTypedBattleRoster._parse_catalog_text(FileAccess.get_file_as_string(
+			"res://data/enemies/run_enemies.json")):
+		if record.id == "scissor_crab":
+			crab = record
+	check(not crab.is_empty(), "authentic Crab pose source exists")
 	for actor in [["felt_bulwark", "Roll Charge", "Felt Slam"], ["moth_scribe", "Quill Stab", "Ink Flick"],
-			["seam_ripper", "Hook Rip", "Ripper Throw"]]:
+			["seam_ripper", "Hook Rip", "Ripper Throw"], ["scissor_crab", "Pinch", "Blade Spin"]]:
 		for index in [1, 2]:
 			var named := attack.duplicate(true)
 			named["move"] = "attack%d" % (index + 1)
+			if actor[0] == "scissor_crab":
+				if crab.is_empty():
+					continue
+				var normalized := CombatEnemyIntents.weighted_action(crab.intent.actions[index + 1])
+				check(not normalized.is_empty() and normalized.get("weight") == 1,
+					"authored Crab named alternative normalizes")
+				if normalized.is_empty():
+					continue
+				named = normalized.action.duplicate(true)
+				named.target_position = 1
+				named.enemy_position = 1
+			var named_before := named.duplicate(true)
 			for available in [false, true]:
 				catalog.available = available
 				var receipt := catalog.lookup_enemy(actor[0], named, FALLBACK)
@@ -88,6 +106,8 @@ func _initialize() -> void:
 					and receipt.get("named_art") == "res://assets/paper/enemies/%s_%s.png" % [actor[0], named.move]
 					and receipt.get("art") == (receipt.get("named_art") if available else FALLBACK),
 					"exact named pose and forced availability fallback: " + actor[index])
+			check(named == named_before and manifest == original and rng.state == rng_before,
+				"forced named pose previews preserve action, source manifest and run RNG")
 	catalog.available = false
 	var missing := catalog.lookup_hero("seamstress", "skill", FALLBACK)
 	check_move(missing, "Mending Stitch", "skill")
