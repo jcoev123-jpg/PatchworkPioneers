@@ -96,7 +96,7 @@
         "launch": [1, 2, 3],
         "target": [1, 2, 3],
         "target_side": "enemy",
-        "multi": false,
+        "multi": true,
         "acc": 90,
         "dmg": [1, 2],
         "crit": 0,
@@ -108,7 +108,7 @@
         "2": {"stat": {"dmg": 2}, "ability": {"dmg": [2, 3], "effects": {"bleed": 4}}},
         "3": {"stat": {"dmg": 3}, "ability": {"dmg": [3, 4], "effects": {"bleed": 5}}}
       },
-      "text": "Flurry one foe in ranks 1-3 for 1-2 and a deeper Bleed 3."
+      "text": "Shower each living foe in ranks 1-3 once: 1-2 damage and Bleed 3 on every struck foe."
     },
     {
       "id": "seamstress_shielding_hem_coat",
