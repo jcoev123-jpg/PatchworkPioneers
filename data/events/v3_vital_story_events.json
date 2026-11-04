@@ -1167,6 +1167,46 @@
         { "id": "catch_loose_flags", "text": "Catch the whirling brass flags (lose 4 HP; gain 20 gold)", "outcome": { "gold": 20, "scraps": 0, "hp": -4, "max_hp": 0 } },
         { "id": "leave", "text": "Let the whirligig point into the mist", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_snowdrop_wren_cradle",
+      "title": "The Snowdrop Wren Cradle",
+      "description": "A round midnight-teal wren ragdoll warms a nest of stitched snowdrops beneath an oversized bone-cream quilt canopy; one amber candle shines between the petals.",
+      "choices": [
+        { "id": "warm_nest_seams", "text": "Pay 14 gold to warm a hero's seams (heal 7 HP; gain 1 max HP)", "outcome": { "gold": -14, "scraps": 0, "hp": 7, "max_hp": 1 } },
+        { "id": "gather_sharp_stems", "text": "Gather the needle-stem snowdrops (lose 5 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the wren singing under its quilt", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_amber_acorn_marten",
+      "title": "The Amber Acorn Marten",
+      "description": "A plump mustard-and-plum marten doll guards a doorway-sized stitched acorn, its copper cap fastened with four huge brass buttons in a candlelit hollow.",
+      "choices": [
+        { "id": "sew_acorn_lining", "text": "Spend 2 scraps on an acorn-heart lining (heal 3 HP; gain 2 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 3, "max_hp": 2 } },
+        { "id": "haul_acorn", "text": "Haul the heavy acorn to market (lose 6 HP; gain 24 gold)", "outcome": { "gold": 24, "scraps": 0, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the acorn beneath the sleeping oak", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_blackberry_dormouse",
+      "title": "The Blackberry Dormouse Shelter",
+      "description": "A velvet dormouse with one stitched-X eye sits inside an enormous blackberry-shaped quilt shelter; dark plum button berries hang above a tiny golden lantern.",
+      "choices": [
+        { "id": "buy_berry_lining", "text": "Pay 19 gold for a soft berry lining (heal 10 HP)", "outcome": { "gold": -19, "scraps": 0, "hp": 10, "max_hp": 0 } },
+        { "id": "pluck_thorn_buttons", "text": "Pluck the thorn buttons from the shelter (lose 1 max HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": 0, "max_hp": -1 } },
+        { "id": "leave", "text": "Leave the blackberry shelter undisturbed", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_veilglass_fawn_bell",
+      "title": "The Veilglass Fawn Bell",
+      "description": "A squat bone-cream fawn ragdoll shelters beneath a giant cracked glass bell draped in oxblood lace; its patched ears catch the candlelight at the forest edge.",
+      "choices": [
+        { "id": "bind_glass_hem", "text": "Pay 10 gold and 1 scrap to line the bell's sharp hem (heal 4 HP; gain 1 max HP)", "outcome": { "gold": -10, "scraps": -1, "hp": 4, "max_hp": 1 } },
+        { "id": "carry_shards", "text": "Carry glass shards for the fawn (lose 2 HP and 1 max HP; gain 21 gold)", "outcome": { "gold": 21, "scraps": 0, "hp": -2, "max_hp": -1 } },
+        { "id": "leave", "text": "Leave the fawn beneath its glass shelter", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }

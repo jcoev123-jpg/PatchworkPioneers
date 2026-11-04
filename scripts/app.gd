@@ -676,14 +676,23 @@ var stitched_event_panel: LiveEventChoicePanel
 var stitched_event_gate: RunV3FightEventGate
 var stitched_sewing_panel: Control
 var stitched_sewing_visit: RunStitchedSewingSwap
+var stitched_sewing_mend_visit: RunStitchedSewingMend
 var stitched_preview_satchel: Array = []
+var stitched_preview_scraps := 0
 var _stitched_gear_overrides: Dictionary = {}
 var _stitched_sewing_quote: Dictionary = {}
+var _stitched_mend_quote: Dictionary = {}
+var _stitched_sewing_catalog: Dictionary = {}
 var _stitched_battle_ticket: WeakRef
 const STITCHED_ROADBLOCK_ID := "v3_stitchline_roadblock"
 const STITCHED_SEWING_NODE_ID := "s5_scissor_crab_sewing_circle"
+const STITCHED_SEWING_MEND_COST := 2
 const STITCHED_CLAW_ID := "scissor_crab_claw_arm"
 const STITCHED_SACK_ID := "fray_scavenger_sack_arm"
+const STITCHED_INKBRUSH_ID := "moth_scribe_inkbrush_arm"
+## The title Roadblock's authored trophy order. Each foe is only paid when this exact
+## encounter actually killed it; the ids and parts come from the canonical S5 roster.
+const STITCHED_ROADBLOCK_FOES := ["scissor_crab", "fray_scavenger", "moth_scribe"]
 const STITCHED_TITLE_WALLET := {"gold": 0, "scraps": 0}
 var base_screen: BaseScreen
 ## True only while an uncommitted opening chooser was launched from the Base.
@@ -1363,17 +1372,38 @@ func _build_title() -> void:
 
 
 ## S3's ordinary-title, card-free Stitched encounter. The preview record is only
-## a roster/foe source: none of its prototype Warden parts are admitted here.
+## the title roster: the three foes themselves come from the canonical S5 enemy
+## profiles, so every live Roadblock fight uses the same authored kit as the
+## catalog and every enemy trophy is resolved by the same loader.
 func _stitched_floor_config() -> Dictionary:
 	var preview := StitchedBattleScreen.read_preview()
 	if not preview.get("heroes") is Array or preview["heroes"].size() != 4 \
 			or not preview.get("foes") is Array or preview["foes"].size() != 3 \
 			or not preview.get("parts") is Array:
 		return {}
-	var warden := StitchedParts.load_catalog("res://data/parts/warden_parts.json")
-	var foes := StitchedParts.load_catalog("res://data/parts/enemy_parts.json")
-	if not bool(warden.get("ok", false)) or not bool(foes.get("ok", false)):
+	var roster := StitchedEnemyCatalog.load_catalog()
+	if not bool(roster.get("ok", false)):
 		return {}
+	var owner_ids := ["warden", "seamstress", "tinker", "lantern_monk"]
+	var owner_catalogs: Dictionary = {}
+	for owner_id in owner_ids:
+		var loaded := StitchedParts.load_catalog("res://data/parts/%s_parts.json" % owner_id)
+		if not bool(loaded.get("ok", false)):
+			return {}
+		owner_catalogs[owner_id] = loaded
+	var foes: Array = []
+	var seen_foes: Dictionary = {}
+	for entry in preview["foes"]:
+		if not entry is Dictionary:
+			return {}
+		var foe_id := str(entry.get("id", ""))
+		if foe_id.is_empty() or seen_foes.has(foe_id):
+			return {}
+		seen_foes[foe_id] = true
+		var foe := StitchedEnemyCatalog.foe_for(roster, foe_id)
+		if foe.is_empty():
+			return {}
+		foes.append(foe)
 	var generic: Array = []
 	for entry in preview["parts"]:
 		if not entry is Dictionary:
@@ -1381,52 +1411,91 @@ func _stitched_floor_config() -> Dictionary:
 		if str(entry.get("owner", "")) == "any":
 			generic.append(entry)
 	var definitions: Array = []
-	definitions.append_array(warden["parts"])
+	for owner_id in owner_ids:
+		for part in owner_catalogs[owner_id]["parts"]:
+			if str(part.get("owner", "")) != owner_id:
+				return {}
+			definitions.append(part)
 	definitions.append_array(generic)
-	definitions.append_array(foes["parts"])
+	definitions.append_array(roster["parts"])
+	# One combined validator rejects an ID collision between any two catalogs.
 	var catalog := StitchedParts.build_catalog(definitions)
 	if not bool(catalog.get("ok", false)):
 		return {}
-	var starter := {
-		"head": "warden_head_pot_helm_bonk",
-		"arms": "warden_arms_shield_catch",
-		"torso": "warden_torso_iron_challenge",
-		"legs": "warden_legs_rim_toss",
+	var starters := {
+		"warden": {
+			"head": "warden_head_pot_helm_bonk",
+			"arms": "warden_arms_shield_catch",
+			"torso": "warden_torso_iron_challenge",
+			"legs": "warden_legs_rim_toss",
+		},
+		"seamstress": {
+			"head": "seamstress_mending_knot_hat",
+			"arms": "seamstress_thread_prick_needle",
+			"torso": "seamstress_shielding_hem_coat",
+			"legs": "seamstress_tether_loop_spools",
+		},
+		"tinker": {
+			"head": "tinker_head_cog_shot",
+			"arms": "tinker_arms_scrap_bomb",
+			"torso": "tinker_torso_casing_ward",
+			"legs": "tinker_legs_tune_up",
+		},
+		"lantern_monk": {
+			"head": "lantern_monk_head_moth_wink",
+			"arms": "lantern_monk_arms_wick_spark",
+			"torso": "lantern_monk_torso_lamplight_wash",
+			"legs": "lantern_monk_legs_pole_shelter",
+		},
 	}
-	var fallback := {
-		"head": "any_head_needle_pin",
-		"arms": "any_arm_red_thread",
-		"torso": "any_torso_felt_coat",
-		"legs": "any_legs_stitch_step",
-	}
-	for slot in StitchedParts.SLOTS:
-		if not catalog["by_id"].has(starter[slot]) or not catalog["by_id"].has(fallback[slot]):
-			return {}
-		if str(catalog["by_id"][starter[slot]]["slot"]) != slot \
-				or str(catalog["by_id"][fallback[slot]]["slot"]) != slot:
-			return {}
+	# Authenticate each authored starter before the screen or battle is created.
+	for owner_id in owner_ids:
+		for slot in StitchedParts.SLOTS:
+			var part_id: String = starters[owner_id][slot]
+			var part: Dictionary = catalog["by_id"].get(part_id, {})
+			if part.is_empty() or str(part.get("owner", "")) != owner_id \
+					or str(part.get("slot", "")) != slot \
+					or StitchedParts.ability_at_tier(part, 1).is_empty():
+				return {}
 	var config := preview.duplicate(true)
+	var seen_heroes: Dictionary = {}
 	for hero in config["heroes"]:
 		if not hero is Dictionary or not hero.get("parts") is Dictionary:
 			return {}
-		if str(hero.get("id", "")) == "warden":
-			hero["parts"] = starter.duplicate(true)
-		else:
-			# The S2 Tinker borrowed the prototype Warden IDs. Keep all three
-			# other heroes on the already authored generic kit.
-			for slot in StitchedParts.SLOTS:
-				hero["parts"][slot] = fallback[slot]
-	# Only equipment committed at Sewing Circle travels into the next Fight.
-	for hero in config["heroes"]:
-		var carried: Dictionary = _stitched_gear_overrides.get(str(hero["id"]), {})
+		var hero_id := str(hero.get("id", ""))
+		if not starters.has(hero_id) or seen_heroes.has(hero_id):
+			return {}
+		seen_heroes[hero_id] = true
+		var worn: Dictionary = {}
 		for slot in StitchedParts.SLOTS:
-			if carried.has(slot):
-				var gear: Dictionary = carried[slot]
-				if not catalog["by_id"].has(str(gear.get("id", ""))) \
-						or str(catalog["by_id"][str(gear["id"])]["slot"]) != slot:
-					return {}
-				hero["parts"][slot] = gear.duplicate(true)
+			worn[slot] = {"id": starters[hero_id][slot], "tier": 1, "torn": false}
+		hero["parts"] = worn
+	if seen_heroes.size() != owner_ids.size():
+		return {}
+	# Only equipment committed at Sewing Circle travels into the next Fight.
+	# A compatible foreign trophy is legal; its owner's identity is not the wearer.
+	for hero in config["heroes"]:
+		var carry_value: Variant = _stitched_gear_overrides.get(str(hero["id"]), {})
+		if not carry_value is Dictionary:
+			return {}
+		var carried: Dictionary = carry_value
+		for slot in StitchedParts.SLOTS:
+			if not carried.has(slot):
+				continue
+			if not carried[slot] is Dictionary:
+				return {}
+			var gear: Dictionary = carried[slot]
+			var part_id := str(gear.get("id", ""))
+			var part: Dictionary = catalog["by_id"].get(part_id, {})
+			if part.is_empty() or str(part.get("slot", "")) != slot \
+					or not gear.get("tier") is int \
+					or int(gear["tier"]) < StitchedParts.MIN_TIER \
+					or int(gear["tier"]) > StitchedParts.MAX_TIER \
+					or not gear.get("torn") is bool:
+				return {}
+			hero["parts"][slot] = gear.duplicate(true)
 	config["parts"] = catalog["parts"]
+	config["foes"] = foes
 	config["seed"] = 4982026
 	config["title"] = "Floor 01 · Stitched Crossing"
 	config["subtitle"] = "Four heroes against three foes · sewn parts only"
@@ -1439,6 +1508,7 @@ func _open_stitched_fight() -> bool:
 	# run objects exist until a separately authenticated Fight is committed.
 	if is_instance_valid(stitched_fight_view) or is_instance_valid(stitched_event_panel) \
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+			or stitched_sewing_mend_visit != null \
 			or stitched_event_gate != null or deck != null or run_map != null or run_rng != null \
 			or is_instance_valid(base_screen) or is_instance_valid(party_picker) \
 			or is_instance_valid(route_view) or is_instance_valid(route_atlas_overlay) \
@@ -1608,34 +1678,49 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 			and battle != null and battle.is_valid() and battle.is_over() \
 			and battle.outcome() == "victory" and not stage.receipts.is_empty()
 	var heroes: Array = []
+	var defeated: Array = []
+	var roster: Dictionary = {}
 	if won:
-		var crab: Dictionary = battle.get_unit("scissor_crab")
-		won = str(crab.get("side", "")) == "foe" and bool(crab.get("dead", false)) \
-				and int(crab.get("hp", -1)) == 0
-		for foe in battle.get_foes():
-			won = won and bool(foe.get("dead", false)) and int(foe.get("hp", -1)) == 0
+		roster = StitchedEnemyCatalog.load_catalog()
+		won = bool(roster.get("ok", false))
+		if won:
+			for foe in battle.get_foes():
+				var foe_id := str(foe.get("id", ""))
+				if not foe_id in STITCHED_ROADBLOCK_FOES:
+					won = false
+					continue
+				won = won and bool(foe.get("dead", false)) and int(foe.get("hp", -1)) == 0
+				defeated.append(foe_id)
+			won = won and defeated.size() == STITCHED_ROADBLOCK_FOES.size()
 		for hero in battle.get_heroes():
 			if not bool(hero.get("lost", false)):
 				heroes.append(hero.duplicate(true))
 	_close_stitched_fight()
 	# Retire combat authority before giving the player another interactive node.
 	if won and not heroes.is_empty():
-		if stitched_preview_satchel.size() < RunStitchedSewingSwap.SATCHEL_CAP:
+		# One preview scrap comes from this authenticated victory exit alone.
+		# It never enters the legacy run/title wallets or uses global RNG.
+		stitched_preview_scraps += 1
+		# Only this encounter's own dead foes pay, and each pays through the one
+		# canonical S5 trophy the enemy roster resolved for it.
+		for foe_id in STITCHED_ROADBLOCK_FOES:
+			if not foe_id in defeated:
+				continue
+			if stitched_preview_satchel.size() >= RunStitchedSewingSwap.SATCHEL_CAP:
+				break
+			var trophy := StitchedEnemyCatalog.trophy_for(roster, str(foe_id))
+			var part: Dictionary = roster.get("parts_by_id", {}).get(trophy, {})
+			if trophy.is_empty() or part.is_empty():
+				continue
 			stitched_preview_satchel.append({
-				"id": STITCHED_CLAW_ID, "slot": "arms", "tier": 1, "torn": false,
-			})
-		var scavenger: Dictionary = battle.get_unit("fray_scavenger")
-		if str(scavenger.get("side", "")) == "foe" and bool(scavenger.get("dead", false)) \
-				and int(scavenger.get("hp", -1)) == 0 \
-				and stitched_preview_satchel.size() < RunStitchedSewingSwap.SATCHEL_CAP:
-			stitched_preview_satchel.append({
-				"id": STITCHED_SACK_ID, "slot": "arms", "tier": 1, "torn": false,
+				"id": trophy, "slot": str(part["slot"]), "tier": 1, "torn": false,
 			})
 		_open_stitched_sewing(heroes)
 
 
 func _open_stitched_sewing(heroes: Array) -> bool:
 	if is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+			or stitched_sewing_mend_visit != null \
 			or is_instance_valid(stitched_fight_view) or not is_instance_valid(title_view) \
 			or not title_view.is_visible_in_tree():
 		return false
@@ -1643,12 +1728,21 @@ func _open_stitched_sewing(heroes: Array) -> bool:
 	if config.is_empty():
 		return false
 	var catalog := StitchedParts.build_catalog(config["parts"])
-	if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(STITCHED_CLAW_ID) \
-			or not catalog["by_id"].has(STITCHED_SACK_ID):
+	if not bool(catalog.get("ok", false)):
 		return false
+	var roster := StitchedEnemyCatalog.load_catalog()
+	if not bool(roster.get("ok", false)):
+		return false
+	for foe_id in STITCHED_ROADBLOCK_FOES:
+		var trophy := StitchedEnemyCatalog.trophy_for(roster, str(foe_id))
+		if trophy.is_empty() or not catalog["by_id"].has(trophy):
+			return false
 	var visit := RunStitchedSewingSwap.new(
 		STITCHED_SEWING_NODE_ID, heroes, stitched_preview_satchel, catalog["by_id"])
-	if visit.read_state().get("ok") != true:
+	var mend_visit := RunStitchedSewingMend.new(
+		STITCHED_SEWING_NODE_ID, heroes, stitched_preview_scraps,
+		STITCHED_SEWING_MEND_COST, catalog["by_id"])
+	if visit.read_state().get("ok") != true or mend_visit.read_state().get("ok") != true:
 		return false
 	var panel := Control.new()
 	panel.name = "StitchedSewingCircle"
@@ -1656,6 +1750,8 @@ func _open_stitched_sewing(heroes: Array) -> bool:
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.focus_mode = Control.FOCUS_ALL
 	stitched_sewing_visit = visit
+	stitched_sewing_mend_visit = mend_visit
+	_stitched_sewing_catalog = catalog["by_id"].duplicate(true)
 	stitched_sewing_panel = panel
 	add_child(panel)
 	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1667,15 +1763,21 @@ func _open_stitched_sewing(heroes: Array) -> bool:
 func _refresh_stitched_sewing() -> void:
 	var panel := stitched_sewing_panel
 	var visit := stitched_sewing_visit
-	if not is_instance_valid(panel) or visit == null:
+	var mend_visit := stitched_sewing_mend_visit
+	if not is_instance_valid(panel) or visit == null or mend_visit == null:
 		return
 	for old_child in panel.get_children():
 		panel.remove_child(old_child)
 		old_child.queue_free()
 	var quote: Dictionary = visit.quote()
-	if quote.get("ok") != true or quote.get("open") != true:
+	var mend_quote: Dictionary = mend_visit.quote()
+	if quote.get("ok") != true or quote.get("open") != true \
+			or mend_quote.get("ok") != true or mend_quote.get("open") != true \
+			or quote["state"]["heroes"] != mend_quote["state"]["heroes"] \
+			or int(mend_quote["scraps"]) != stitched_preview_scraps:
 		return
 	_stitched_sewing_quote = quote.duplicate(true)
+	_stitched_mend_quote = mend_quote.duplicate(true)
 	# All the framing is shipped textile artwork, never code-drawn panels.
 	var frame := NinePatchRect.new()
 	var art_path := "res://assets/paper/ui/panel_felt.png"
@@ -1697,15 +1799,16 @@ func _refresh_stitched_sewing() -> void:
 	heading.add_theme_font_size_override("font_size", 27)
 	panel.add_child(heading)
 	var description := Label.new()
-	description.text = "A claw and a scavenger's sack await the needle. Choose a living hero and exchange arms without coin."
+	description.text = "A crab claw, scavenger sack and Scribe inkbrush await the needle. Sew new arms on a living hero without coin."
 	description.position = Vector2(170, 143)
 	description.size = Vector2(950, 64)
 	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	panel.add_child(description)
 	var count := Label.new()
-	count.text = "SATCHEL  %d / %d    ·    No gold, scraps or thread spent" % [
-		int(quote["satchel_count"]), int(quote["satchel_max"])]
+	count.text = "SATCHEL  %d / %d    ·    PREVIEW SCRAPS  %d    ·    Mend torn arms: %d scraps" % [
+		int(quote["satchel_count"]), int(quote["satchel_max"]),
+		stitched_preview_scraps, STITCHED_SEWING_MEND_COST]
 	count.position = Vector2(183, 224)
 	count.size = Vector2(910, 36)
 	panel.add_child(count)
@@ -1719,6 +1822,7 @@ func _refresh_stitched_sewing() -> void:
 	scroll.add_child(offers)
 	var first_button: Button
 	var expected_state: Dictionary = quote["state"].duplicate(true)
+	var mend_state: Dictionary = mend_quote["state"].duplicate(true)
 	for hero_row in quote["heroes"]:
 		for slot_row in hero_row["slots"]:
 			if str(slot_row["slot"]) != "arms":
@@ -1726,6 +1830,30 @@ func _refresh_stitched_sewing() -> void:
 			var worn: Dictionary = slot_row["worn"]
 			var hero_name := str(hero_row["name"])
 			var blocked := str(slot_row["blocked"])
+			# Only actual torn arms are offered a Mend control. Unaffordable
+			# and lost-hero requests remain visible but disabled with a reason.
+			if bool(worn["torn"]):
+				for mend_hero in mend_quote["heroes"]:
+					if str(mend_hero["hero_id"]) != str(hero_row["hero_id"]):
+						continue
+					for mend_slot in mend_hero["slots"]:
+						if str(mend_slot["slot"]) != "arms":
+							continue
+						var mend_button := Button.new()
+						mend_button.name = "Mend_%s_arms" % str(hero_row["hero_id"])
+						mend_button.custom_minimum_size = Vector2(850, 48)
+						mend_button.disabled = not bool(mend_slot["can_mend"])
+						mend_button.focus_mode = Control.FOCUS_NONE if mend_button.disabled else Control.FOCUS_ALL
+						var reason := str(mend_slot["blocked"])
+						mend_button.text = "Mend %s's torn %s · %d scraps%s" % [
+							hero_name, str(worn["name"]), int(mend_slot["cost"]),
+							(" — " + reason) if not reason.is_empty() else ""]
+						mend_button.tooltip_text = reason
+						mend_button.pressed.connect(_stitched_sewing_mend.bind(
+							str(hero_row["hero_id"]), "arms", mend_state.duplicate(true), weakref(panel)))
+						offers.add_child(mend_button)
+						if not mend_button.disabled and first_button == null:
+							first_button = mend_button
 			if not blocked.is_empty():
 				var warning := Label.new()
 				warning.text = "%s · %s — %s" % [hero_name, str(worn["name"]), blocked]
@@ -1755,12 +1883,74 @@ func _refresh_stitched_sewing() -> void:
 		leave_button.grab_focus()
 
 
+# Both independent services must describe the same real node, equipped party,
+# preview balance and displayed snapshots before either can change the visit.
+func _stitched_sewing_consistent() -> bool:
+	if stitched_sewing_visit == null or stitched_sewing_mend_visit == null:
+		return false
+	var swap_state: Dictionary = stitched_sewing_visit.read_state()
+	var mend_state: Dictionary = stitched_sewing_mend_visit.read_state()
+	return swap_state.get("ok") == true and mend_state.get("ok") == true \
+		and swap_state.get("open") == true and mend_state.get("open") == true \
+		and swap_state.get("node_id") == STITCHED_SEWING_NODE_ID \
+		and mend_state.get("node_id") == STITCHED_SEWING_NODE_ID \
+		and swap_state.get("heroes") == mend_state.get("heroes") \
+		and swap_state.get("satchel") == stitched_preview_satchel \
+		and mend_state.get("scraps") == stitched_preview_scraps \
+		and mend_state.get("mend_cost") == STITCHED_SEWING_MEND_COST \
+		and _stitched_sewing_quote.get("state") == swap_state \
+		and _stitched_mend_quote.get("state") == mend_state
+
+
+func _stitched_sewing_mend(hero_id: String, slot: String,
+		expected_state: Dictionary, source: WeakRef) -> Dictionary:
+	var panel: Control = source.get_ref() if source != null else null
+	if panel == null or panel != stitched_sewing_panel or not panel.is_visible_in_tree() \
+			or is_instance_valid(stitched_fight_view) or not _stitched_sewing_consistent() \
+			or _stitched_mend_quote.get("state", {}) != expected_state:
+		return {"ok": false, "error": "stale Sewing Circle mend"}
+	var offered := false
+	for hero_row in _stitched_mend_quote.get("heroes", []):
+		if str(hero_row["hero_id"]) != hero_id:
+			continue
+		for slot_row in hero_row["slots"]:
+			if str(slot_row["slot"]) == slot and slot == "arms" \
+					and bool(slot_row["can_mend"]) and bool(slot_row["worn"]["torn"]):
+				offered = true
+	if not offered:
+		return {"ok": false, "error": "not a quoted affordable torn arm"}
+	var receipt: Dictionary = stitched_sewing_mend_visit.mend(
+		hero_id, slot, STITCHED_SEWING_NODE_ID, expected_state)
+	if receipt.get("ok") != true or receipt.get("source_state") != expected_state \
+			or receipt.get("charged_scraps") != STITCHED_SEWING_MEND_COST \
+			or receipt.get("scraps") != stitched_preview_scraps - STITCHED_SEWING_MEND_COST:
+		return {"ok": false, "error": "mend rejected"}
+	# Rebind the swap ledger to the exact mended party, keeping satchel order;
+	# close its previous authority so an old state cannot be used again.
+	var rebound := RunStitchedSewingSwap.new(
+		STITCHED_SEWING_NODE_ID, receipt["state"]["heroes"],
+		stitched_preview_satchel, _stitched_sewing_catalog)
+	if rebound.read_state().get("ok") != true:
+		return {"ok": false, "error": "could not rebind swap visit"}
+	stitched_sewing_visit.leave(STITCHED_SEWING_NODE_ID, _stitched_sewing_quote["state"])
+	stitched_sewing_visit = rebound
+	stitched_preview_scraps = int(receipt["scraps"])
+	for changed in receipt["changed_heroes"]:
+		var changed_id := str(changed["id"])
+		var carried: Dictionary = _stitched_gear_overrides.get(changed_id, {}).duplicate(true)
+		carried[slot] = changed["parts"][slot].duplicate(true)
+		_stitched_gear_overrides[changed_id] = carried
+	_refresh_stitched_sewing()
+	return receipt
+
+
 func _stitched_sewing_swap(hero_id: String, slot: String, satchel_index: int,
 		expected_state: Dictionary, source: WeakRef) -> Dictionary:
 	var panel: Control = source.get_ref() if source != null else null
 	if panel == null or panel != stitched_sewing_panel or not panel.is_visible_in_tree() \
 			or stitched_sewing_visit == null or is_instance_valid(stitched_fight_view) \
-			or _stitched_sewing_quote.get("state", {}) != expected_state:
+			or _stitched_sewing_quote.get("state", {}) != expected_state \
+			or not _stitched_sewing_consistent():
 		return {"ok": false, "error": "stale Sewing Circle"}
 	# Authorise only a currently displayed compatible quote, not arbitrary
 	# client-supplied indices or a cloned receipt.
@@ -1780,6 +1970,15 @@ func _stitched_sewing_swap(hero_id: String, slot: String, satchel_index: int,
 		hero_id, slot, satchel_index, STITCHED_SEWING_NODE_ID, expected_state)
 	if receipt.get("ok") != true or receipt.get("source_state") != expected_state:
 		return {"ok": false, "error": "swap rejected"}
+	# A successful swap changes the authoritative hero snapshot used by Mend.
+	# Retire the old mend authority and rebind without awarding or spending scrap.
+	var rebound := RunStitchedSewingMend.new(
+		STITCHED_SEWING_NODE_ID, receipt["state"]["heroes"], stitched_preview_scraps,
+		STITCHED_SEWING_MEND_COST, _stitched_sewing_catalog)
+	if rebound.read_state().get("ok") != true:
+		return {"ok": false, "error": "could not rebind mend visit"}
+	stitched_sewing_mend_visit.leave(STITCHED_SEWING_NODE_ID, _stitched_mend_quote["state"])
+	stitched_sewing_mend_visit = rebound
 	stitched_preview_satchel = receipt["satchel"].duplicate(true)
 	for changed in receipt["changed_heroes"]:
 		var changed_id := str(changed["id"])
@@ -1794,11 +1993,15 @@ func _stitched_sewing_leave(expected_state: Dictionary, source: WeakRef) -> Dict
 	var panel: Control = source.get_ref() if source != null else null
 	if panel == null or panel != stitched_sewing_panel or not panel.is_visible_in_tree() \
 			or stitched_sewing_visit == null \
-			or _stitched_sewing_quote.get("state", {}) != expected_state:
+			or _stitched_sewing_quote.get("state", {}) != expected_state \
+			or not _stitched_sewing_consistent():
 		return {"ok": false, "error": "stale Sewing Circle"}
 	var receipt: Dictionary = stitched_sewing_visit.leave(STITCHED_SEWING_NODE_ID, expected_state)
 	if receipt.get("ok") == true:
-		_close_stitched_sewing()
+		var mend_receipt: Dictionary = stitched_sewing_mend_visit.leave(
+			STITCHED_SEWING_NODE_ID, _stitched_mend_quote["state"])
+		if mend_receipt.get("ok") == true:
+			_close_stitched_sewing()
 	return receipt
 
 
@@ -1806,7 +2009,10 @@ func _close_stitched_sewing() -> void:
 	var panel := stitched_sewing_panel
 	stitched_sewing_panel = null
 	stitched_sewing_visit = null
+	stitched_sewing_mend_visit = null
 	_stitched_sewing_quote.clear()
+	_stitched_mend_quote.clear()
+	_stitched_sewing_catalog.clear()
 	if is_instance_valid(panel):
 		if panel.get_parent() == self:
 			remove_child(panel)

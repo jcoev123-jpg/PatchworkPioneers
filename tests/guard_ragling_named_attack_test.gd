@@ -51,7 +51,12 @@ func _catalog() -> void:
 		_check(not parsed.is_empty(), "each parsed weighted alternative is executable")
 		total += int(parsed.get("weight", 0))
 	_check(total == 7, "total weight remains seven")
-	_check(_ints(raglings[0]) == {"id": "ragling", "name": "Ragling", "max_hp": 12,
+	# S5 appends an authored Stitched profile to every canonical enemy; this legacy
+	# record check keeps every card-era field exact, and the S5 catalog test owns the
+	# new profile.
+	var legacy_ragling: Dictionary = raglings[0].duplicate(true)
+	legacy_ragling.erase("stitched")
+	_check(_ints(legacy_ragling) == {"id": "ragling", "name": "Ragling", "max_hp": 12,
 		"art_path": "res://assets/paper/enemies/ragling.png",
 		"intent": {"target": "front", "actions": [{"type": "attack", "amount": 5, "weight": 3}]}},
 		"unrelated Ragling record is unchanged")

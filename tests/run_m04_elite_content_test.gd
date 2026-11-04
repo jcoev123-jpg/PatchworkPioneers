@@ -3198,7 +3198,10 @@ func _test_keyword_elites() -> void:
 		exact["intent"] = {"target": exact["target"], "actions": exact["actions"]}
 		exact.erase("target")
 		exact.erase("actions")
-		_check(record.size() == exact.size(), "exact authored record fields " + id)
+		# S5 appends the authored Stitched profile to every canonical enemy; this
+		# check still protects every legacy card field and keyword exactly.
+		var legacy_size := record.size() - (1 if record.has("stitched") else 0)
+		_check(legacy_size == exact.size(), "exact authored record fields " + id)
 		for field in exact:
 			if field != "intent":
 				_check(record.get(field) == exact[field]

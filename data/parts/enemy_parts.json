@@ -7,7 +7,9 @@
       "name": "Scissor Claw",
       "slot": "arms",
       "owner": "any",
-      "stat": {"dmg": 1},
+      "stat": {
+        "dmg": 1
+      },
       "ability": {
         "id": "snip",
         "name": "Snip",
@@ -19,13 +21,29 @@
         "acc": 90,
         "dmg": [4, 7],
         "crit": 0,
-        "effects": {"bleed": 2},
+        "effects": {
+          "bleed": 2
+        },
         "self_move": 0,
         "move": "attack"
       },
       "tiers": {
-        "2": {"ability": {"dmg": [5, 8], "effects": {"bleed": 3}}},
-        "3": {"ability": {"dmg": [6, 9], "effects": {"bleed": 4}}}
+        "2": {
+          "ability": {
+            "dmg": [5, 8],
+            "effects": {
+              "bleed": 3
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [6, 9],
+            "effects": {
+              "bleed": 4
+            }
+          }
+        }
       },
       "text": "Clip a front foe and open a bleeding seam."
     },
@@ -34,7 +52,9 @@
       "name": "Tatter Wings",
       "slot": "legs",
       "owner": "any",
-      "stat": {"dodge": 5},
+      "stat": {
+        "dodge": 5
+      },
       "ability": {
         "id": "flutter_back",
         "name": "Flutter Back",
@@ -46,13 +66,36 @@
         "acc": 100,
         "dmg": [0, 0],
         "crit": 0,
-        "effects": {"dodge": 5, "duration": 1},
+        "effects": {
+          "dodge": 5,
+          "duration": 1
+        },
         "self_move": 1,
         "move": "skill"
       },
       "tiers": {
-        "2": {"stat": {"dodge": 7}, "ability": {"effects": {"dodge": 7, "duration": 1}}},
-        "3": {"stat": {"dodge": 10}, "ability": {"effects": {"dodge": 10, "duration": 1}}}
+        "2": {
+          "stat": {
+            "dodge": 7
+          },
+          "ability": {
+            "effects": {
+              "dodge": 7,
+              "duration": 1
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "dodge": 10
+          },
+          "ability": {
+            "effects": {
+              "dodge": 10,
+              "duration": 1
+            }
+          }
+        }
       },
       "text": "Flutter one rank back and briefly gain Dodge."
     },
@@ -61,7 +104,9 @@
       "name": "Button Shield Torso",
       "slot": "torso",
       "owner": "any",
-      "stat": {"prot": 10},
+      "stat": {
+        "prot": 10
+      },
       "ability": {
         "id": "button_shield",
         "name": "Button Shield",
@@ -73,13 +118,33 @@
         "acc": 100,
         "dmg": [0, 0],
         "crit": 0,
-        "effects": {"guard": 2},
+        "effects": {
+          "guard": 2
+        },
         "self_move": 0,
         "move": "guard"
       },
       "tiers": {
-        "2": {"stat": {"prot": 12}, "ability": {"effects": {"guard": 3}}},
-        "3": {"stat": {"prot": 15}, "ability": {"effects": {"guard": 4}}}
+        "2": {
+          "stat": {
+            "prot": 12
+          },
+          "ability": {
+            "effects": {
+              "guard": 3
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "prot": 15
+          },
+          "ability": {
+            "effects": {
+              "guard": 4
+            }
+          }
+        }
       },
       "text": "Take the hits meant for one ally behind your shield."
     },
@@ -88,7 +153,9 @@
       "name": "Scavenger Sack Arm",
       "slot": "arms",
       "owner": "any",
-      "stat": {"dmg": 1},
+      "stat": {
+        "dmg": 1
+      },
       "ability": {
         "id": "sack_sweep",
         "name": "Sack Sweep",
@@ -100,15 +167,1588 @@
         "acc": 88,
         "dmg": [3, 5],
         "crit": 0,
-        "effects": {"weak": 1},
+        "effects": {
+          "weak": 1
+        },
         "self_move": 0,
         "move": "attack2"
       },
       "tiers": {
-        "2": {"ability": {"dmg": [4, 6]}},
-        "3": {"ability": {"dmg": [5, 7]}}
+        "2": {
+          "ability": {
+            "dmg": [4, 6]
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [5, 7]
+          }
+        }
       },
       "text": "Sweep a front foe with scavenged scraps and leave them Weak."
+    },
+    {
+      "id": "moth_scribe_inkbrush_arm",
+      "name": "Inkbrush Arm",
+      "slot": "arms",
+      "owner": "any",
+      "stat": {
+        "dmg": 1
+      },
+      "ability": {
+        "id": "ink_stroke",
+        "name": "Ink Stroke",
+        "kind": "ranged",
+        "launch": [2, 3, 4],
+        "target": [1, 2, 3],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 88,
+        "dmg": [3, 5],
+        "crit": 0,
+        "effects": {
+          "weak": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [4, 6]
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [5, 7]
+          }
+        }
+      },
+      "text": "Ink a foe from the back ranks and leave them Weak."
+    },
+    {
+      "id": "ragling_tatter_claw",
+      "name": "Tatter Claw",
+      "slot": "arms",
+      "owner": "any",
+      "stat": {
+        "dmg": 1
+      },
+      "ability": {
+        "id": "tatter_rake",
+        "name": "Tatter Rake",
+        "kind": "melee",
+        "launch": [1, 2],
+        "target": [1],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 85,
+        "dmg": [3, 5],
+        "crit": 0,
+        "effects": {
+          "bleed": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "dmg": 2
+          },
+          "ability": {
+            "dmg": [4, 6]
+          }
+        },
+        "3": {
+          "stat": {
+            "dmg": 3
+          },
+          "ability": {
+            "dmg": [5, 7]
+          }
+        }
+      },
+      "text": "Rake a front foe with a fistful of loose rags and open a Bleed."
+    },
+    {
+      "id": "ragling_guard_button_plate",
+      "name": "Button Plate",
+      "slot": "torso",
+      "owner": "any",
+      "stat": {
+        "prot": 8
+      },
+      "ability": {
+        "id": "button_plate",
+        "name": "Button Plate",
+        "kind": "guard",
+        "launch": [1, 2],
+        "target": [1, 2, 3, 4],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "guard": 2
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "prot": 9
+          },
+          "ability": {
+            "effects": {
+              "guard": 3
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "prot": 10
+          },
+          "ability": {
+            "effects": {
+              "guard": 4
+            }
+          }
+        }
+      },
+      "text": "Take the hits meant for one ally behind a stitched button plate."
+    },
+    {
+      "id": "button_guard_button_buckler",
+      "name": "Button Buckler",
+      "slot": "torso",
+      "owner": "any",
+      "stat": {
+        "prot": 7
+      },
+      "ability": {
+        "id": "button_buckler",
+        "name": "Button Buckler",
+        "kind": "guard",
+        "launch": [1, 2],
+        "target": [1, 2, 3, 4],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "guard": 2
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "prot": 8
+          },
+          "ability": {
+            "effects": {
+              "guard": 3
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "prot": 9
+          },
+          "ability": {
+            "effects": {
+              "guard": 4
+            }
+          }
+        }
+      },
+      "text": "Catch a blow on a padded button buckler aimed at an ally."
+    },
+    {
+      "id": "spool_stalker_thread_legs",
+      "name": "Thread Legs",
+      "slot": "legs",
+      "owner": "any",
+      "stat": {
+        "speed": 1,
+        "dodge": 3
+      },
+      "ability": {
+        "id": "spool_step",
+        "name": "Spool Step",
+        "kind": "move",
+        "launch": [1, 3],
+        "target": [1, 3],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "dodge": 4,
+          "duration": 1
+        },
+        "self_move": 1,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "speed": 2,
+            "dodge": 5
+          },
+          "ability": {
+            "effects": {
+              "dodge": 5,
+              "duration": 1
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "speed": 3,
+            "dodge": 7
+          },
+          "ability": {
+            "effects": {
+              "dodge": 6,
+              "duration": 1
+            }
+          }
+        }
+      },
+      "text": "Spool one rank back and gain a turn of Dodge."
+    },
+    {
+      "id": "seam_ripper_notch_blade",
+      "name": "Notch Blade",
+      "slot": "arms",
+      "owner": "any",
+      "stat": {
+        "dmg": 1
+      },
+      "ability": {
+        "id": "seam_split",
+        "name": "Seam Split",
+        "kind": "melee",
+        "launch": [1, 2],
+        "target": [1],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 86,
+        "dmg": [3, 5],
+        "crit": 0,
+        "effects": {
+          "bleed": 2
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "dmg": 2
+          },
+          "ability": {
+            "dmg": [4, 6]
+          }
+        },
+        "3": {
+          "stat": {
+            "dmg": 3
+          },
+          "ability": {
+            "dmg": [5, 7]
+          }
+        }
+      },
+      "text": "Split a front seam and leave a Bleed 2."
+    },
+    {
+      "id": "pin_skitter_quill_legs",
+      "name": "Quill Legs",
+      "slot": "legs",
+      "owner": "any",
+      "stat": {
+        "speed": 2,
+        "dodge": 2
+      },
+      "ability": {
+        "id": "quill_step",
+        "name": "Quill Step",
+        "kind": "move",
+        "launch": [2, 3, 4],
+        "target": [2, 3, 4],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "dodge": 5,
+          "duration": 1
+        },
+        "self_move": -1,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "speed": 3,
+            "dodge": 4
+          },
+          "ability": {
+            "effects": {
+              "dodge": 6,
+              "duration": 1
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "speed": 4,
+            "dodge": 6
+          },
+          "ability": {
+            "effects": {
+              "dodge": 7,
+              "duration": 1
+            }
+          }
+        }
+      },
+      "text": "Lunge one rank forward on bristling quill legs with a turn of Dodge."
+    },
+    {
+      "id": "thread_biter_lint_gland",
+      "name": "Lint Gland",
+      "slot": "head",
+      "owner": "any",
+      "stat": {
+        "acc": 3
+      },
+      "ability": {
+        "id": "lint_spit",
+        "name": "Lint Spit",
+        "kind": "debuff",
+        "launch": [1, 4],
+        "target": [1, 3],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 88,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "exposed": 2
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "acc": 4
+          },
+          "ability": {
+            "effects": {
+              "exposed": 3
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "acc": 5
+          },
+          "ability": {
+            "effects": {
+              "exposed": 4
+            }
+          }
+        }
+      },
+      "text": "Spit a wad of lint that leaves any rank Exposed 2."
+    },
+    {
+      "id": "thimble_beetle_shell",
+      "name": "Thimble Shell",
+      "slot": "torso",
+      "owner": "any",
+      "stat": {
+        "prot": 10
+      },
+      "ability": {
+        "id": "thimble_shell",
+        "name": "Thimble Shell",
+        "kind": "guard",
+        "launch": [1, 2],
+        "target": [1, 2, 3, 4],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "guard": 3
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "prot": 11
+          },
+          "ability": {
+            "effects": {
+              "guard": 4
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "prot": 12
+          },
+          "ability": {
+            "effects": {
+              "guard": 5
+            }
+          }
+        }
+      },
+      "text": "Guard an ally behind a dented thimble shell for three turns."
+    },
+    {
+      "id": "zipper_snake_zip_teeth",
+      "name": "Zip Teeth",
+      "slot": "head",
+      "owner": "any",
+      "stat": {
+        "crit": 3
+      },
+      "ability": {
+        "id": "zip_bite",
+        "name": "Zip Bite",
+        "kind": "melee",
+        "launch": [1, 2],
+        "target": [1],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 88,
+        "dmg": [3, 5],
+        "crit": 0,
+        "effects": {
+          "bleed": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "crit": 4
+          },
+          "ability": {
+            "dmg": [4, 6]
+          }
+        },
+        "3": {
+          "stat": {
+            "crit": 5
+          },
+          "ability": {
+            "dmg": [5, 7]
+          }
+        }
+      },
+      "text": "Bite a front foe with a row of zipper teeth and open a Bleed."
+    },
+    {
+      "id": "pincushion_hedgehog_quill_mail",
+      "name": "Quill Mail",
+      "slot": "torso",
+      "owner": "any",
+      "stat": {
+        "prot": 4
+      },
+      "ability": {
+        "id": "quill_mail",
+        "name": "Quill Mail",
+        "kind": "buff",
+        "launch": [1, 4],
+        "target": [1, 2, 3, 4],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "thorns": 3
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "prot": 5
+          },
+          "ability": {
+            "effects": {
+              "thorns": 4
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "prot": 6
+          },
+          "ability": {
+            "effects": {
+              "thorns": 5
+            }
+          }
+        }
+      },
+      "text": "Stitch a coat of quills onto an ally: Thorns 3."
+    },
+    {
+      "id": "needle_wasp_stinger",
+      "name": "Needle Stinger",
+      "slot": "arms",
+      "owner": "any",
+      "stat": {
+        "dmg": 2
+      },
+      "ability": {
+        "id": "wasp_sting",
+        "name": "Wasp Sting",
+        "kind": "melee",
+        "launch": [1, 3],
+        "target": [1],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 88,
+        "dmg": [4, 6],
+        "crit": 0,
+        "effects": {
+          "bleed": 2
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "dmg": 3
+          },
+          "ability": {
+            "dmg": [5, 7]
+          }
+        },
+        "3": {
+          "stat": {
+            "dmg": 4
+          },
+          "ability": {
+            "dmg": [6, 8]
+          }
+        }
+      },
+      "text": "Drive a needle stinger into a front foe for Bleed 2."
+    },
+    {
+      "id": "shearwing_mantis_shear_wing",
+      "name": "Shear Wing",
+      "slot": "legs",
+      "owner": "any",
+      "stat": {
+        "speed": 1,
+        "dodge": 2
+      },
+      "ability": {
+        "id": "shear_wing",
+        "name": "Shear Wing",
+        "kind": "melee",
+        "launch": [1, 3],
+        "target": [1, 2],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 85,
+        "dmg": [3, 5],
+        "crit": 0,
+        "effects": {
+          "bleed": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "speed": 2,
+            "dodge": 4
+          },
+          "ability": {
+            "dmg": [4, 6]
+          }
+        },
+        "3": {
+          "stat": {
+            "speed": 3,
+            "dodge": 6
+          },
+          "ability": {
+            "dmg": [5, 7]
+          }
+        }
+      },
+      "text": "Slice an enemy rank with a stiffened wing edge."
+    },
+    {
+      "id": "spoolback_hound_spool_hide",
+      "name": "Spool Hide",
+      "slot": "torso",
+      "owner": "any",
+      "stat": {
+        "prot": 6
+      },
+      "ability": {
+        "id": "spool_hide",
+        "name": "Spool Hide",
+        "kind": "guard",
+        "launch": [1, 2],
+        "target": [1, 2, 3, 4],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "guard": 2
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "prot": 7
+          },
+          "ability": {
+            "effects": {
+              "guard": 3
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "prot": 8
+          },
+          "ability": {
+            "effects": {
+              "guard": 4
+            }
+          }
+        }
+      },
+      "text": "Guard an ally behind a drum-tight spool of hide."
+    },
+    {
+      "id": "inkbrush_imp_ink_horn",
+      "name": "Ink Horn",
+      "slot": "head",
+      "owner": "any",
+      "stat": {
+        "crit": 3
+      },
+      "ability": {
+        "id": "ink_horn",
+        "name": "Ink Horn",
+        "kind": "ranged",
+        "launch": [2, 3, 4],
+        "target": [1, 3],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 88,
+        "dmg": [2, 4],
+        "crit": 0,
+        "effects": {
+          "weak": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "crit": 4
+          },
+          "ability": {
+            "dmg": [3, 5]
+          }
+        },
+        "3": {
+          "stat": {
+            "crit": 5
+          },
+          "ability": {
+            "dmg": [4, 6]
+          }
+        }
+      },
+      "text": "Fling ink from a horned brow and leave a foe Weak."
+    },
+    {
+      "id": "spindle_ram_horn",
+      "name": "Spindle Horn",
+      "slot": "head",
+      "owner": "any",
+      "stat": {
+        "acc": 3
+      },
+      "ability": {
+        "id": "horn_gore",
+        "name": "Horn Gore",
+        "kind": "melee",
+        "launch": [1, 2],
+        "target": [1],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 85,
+        "dmg": [4, 6],
+        "crit": 0,
+        "effects": {},
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "acc": 4
+          },
+          "ability": {
+            "dmg": [5, 7]
+          }
+        },
+        "3": {
+          "stat": {
+            "acc": 5
+          },
+          "ability": {
+            "dmg": [6, 8]
+          }
+        }
+      },
+      "text": "Gore the front rank with a splintered spindle horn."
+    },
+    {
+      "id": "razor_ribbon_wraith_ribbon",
+      "name": "Razor Ribbon",
+      "slot": "legs",
+      "owner": "any",
+      "stat": {
+        "dodge": 4
+      },
+      "ability": {
+        "id": "ribbon_slip",
+        "name": "Ribbon Slip",
+        "kind": "move",
+        "launch": [2, 3, 4],
+        "target": [2, 3, 4],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "dodge": 6,
+          "duration": 1
+        },
+        "self_move": -1,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "dodge": 6
+          },
+          "ability": {
+            "effects": {
+              "dodge": 7,
+              "duration": 1
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "dodge": 8
+          },
+          "ability": {
+            "effects": {
+              "dodge": 8,
+              "duration": 1
+            }
+          }
+        }
+      },
+      "text": "Slip one rank forward on a razor ribbon with a turn of Dodge."
+    },
+    {
+      "id": "clothespin_crusher_clamp",
+      "name": "Clothespin Clamp",
+      "slot": "arms",
+      "owner": "any",
+      "stat": {
+        "dmg": 2
+      },
+      "ability": {
+        "id": "clamp_crush",
+        "name": "Clamp Crush",
+        "kind": "melee",
+        "launch": [1, 2],
+        "target": [1],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 85,
+        "dmg": [4, 6],
+        "crit": 0,
+        "effects": {},
+        "self_move": 0,
+        "move": "attack"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "dmg": 3
+          },
+          "ability": {
+            "dmg": [5, 7]
+          }
+        },
+        "3": {
+          "stat": {
+            "dmg": 4
+          },
+          "ability": {
+            "dmg": [6, 8]
+          }
+        }
+      },
+      "text": "Close a wooden clamp on the front foe."
+    },
+    {
+      "id": "crochet_hook_harrier_hook",
+      "name": "Crochet Hook",
+      "slot": "arms",
+      "owner": "any",
+      "stat": {
+        "dmg": 1
+      },
+      "ability": {
+        "id": "hook_lash",
+        "name": "Hook Lash",
+        "kind": "melee",
+        "launch": [1, 3],
+        "target": [1, 2],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 87,
+        "dmg": [3, 5],
+        "crit": 0,
+        "effects": {
+          "bleed": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "dmg": 2
+          },
+          "ability": {
+            "dmg": [4, 6]
+          }
+        },
+        "3": {
+          "stat": {
+            "dmg": 3
+          },
+          "ability": {
+            "dmg": [5, 7]
+          }
+        }
+      },
+      "text": "Hook an enemy rank and pull the seam open."
+    },
+    {
+      "id": "thistle_patch_doll_patch",
+      "name": "Thistle Patch",
+      "slot": "torso",
+      "owner": "any",
+      "stat": {
+        "max_hp": 6
+      },
+      "ability": {
+        "id": "thistle_patch",
+        "name": "Thistle Patch",
+        "kind": "buff",
+        "launch": [1, 4],
+        "target": [1, 2, 3, 4],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "thorns": 2
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "max_hp": 8
+          },
+          "ability": {
+            "effects": {
+              "thorns": 3
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "max_hp": 10
+          },
+          "ability": {
+            "effects": {
+              "thorns": 4
+            }
+          }
+        }
+      },
+      "text": "Sew a thistle patch onto an ally: Thorns 2."
+    },
+    {
+      "id": "bobbin_bat_wing",
+      "name": "Bobbin Wing",
+      "slot": "legs",
+      "owner": "any",
+      "stat": {
+        "speed": 2,
+        "dodge": 2
+      },
+      "ability": {
+        "id": "bobbin_flit",
+        "name": "Bobbin Flit",
+        "kind": "move",
+        "launch": [1, 3],
+        "target": [1, 3],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "dodge": 5,
+          "duration": 1
+        },
+        "self_move": 1,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "speed": 3,
+            "dodge": 4
+          },
+          "ability": {
+            "effects": {
+              "dodge": 6,
+              "duration": 1
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "speed": 4,
+            "dodge": 6
+          },
+          "ability": {
+            "effects": {
+              "dodge": 7,
+              "duration": 1
+            }
+          }
+        }
+      },
+      "text": "Flit one rank back on a bobbin wing with a turn of Dodge."
+    },
+    {
+      "id": "quilt_termite_mandible",
+      "name": "Termite Mandible",
+      "slot": "head",
+      "owner": "any",
+      "stat": {
+        "acc": 2
+      },
+      "ability": {
+        "id": "quilt_bite",
+        "name": "Quilt Bite",
+        "kind": "melee",
+        "launch": [1, 2],
+        "target": [1],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 88,
+        "dmg": [3, 5],
+        "crit": 0,
+        "effects": {
+          "bleed": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "acc": 3
+          },
+          "ability": {
+            "dmg": [4, 6]
+          }
+        },
+        "3": {
+          "stat": {
+            "acc": 4
+          },
+          "ability": {
+            "dmg": [5, 7]
+          }
+        }
+      },
+      "text": "Chew a front seam with quilt-termite mandibles."
+    },
+    {
+      "id": "needle_marshal_sash",
+      "name": "Marshal Sash",
+      "slot": "torso",
+      "owner": "any",
+      "stat": {
+        "prot": 8
+      },
+      "ability": {
+        "id": "marshal_sash",
+        "name": "Marshal Sash",
+        "kind": "guard",
+        "launch": [1, 2],
+        "target": [1, 2, 3, 4],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "guard": 3
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "prot": 9
+          },
+          "ability": {
+            "effects": {
+              "guard": 4
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "prot": 10
+          },
+          "ability": {
+            "effects": {
+              "guard": 5
+            }
+          }
+        }
+      },
+      "text": "Guard an ally behind a needle-studded marshal's sash."
+    },
+    {
+      "id": "spool_hexer_spool",
+      "name": "Hex Spool",
+      "slot": "head",
+      "owner": "any",
+      "stat": {
+        "acc": 3
+      },
+      "ability": {
+        "id": "hex_bolt",
+        "name": "Hex Bolt",
+        "kind": "ranged",
+        "launch": [1, 4],
+        "target": [1, 3],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 88,
+        "dmg": [3, 5],
+        "crit": 0,
+        "effects": {
+          "weak": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "acc": 4
+          },
+          "ability": {
+            "dmg": [4, 6]
+          }
+        },
+        "3": {
+          "stat": {
+            "acc": 5
+          },
+          "ability": {
+            "dmg": [5, 7]
+          }
+        }
+      },
+      "text": "Loose a hexed spool bolt that leaves a foe Weak."
+    },
+    {
+      "id": "scissor_bailiff_shears",
+      "name": "Bailiff Shears",
+      "slot": "arms",
+      "owner": "any",
+      "stat": {
+        "dmg": 2
+      },
+      "ability": {
+        "id": "bailiff_snip",
+        "name": "Bailiff Snip",
+        "kind": "melee",
+        "launch": [1, 2],
+        "target": [1, 2],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 86,
+        "dmg": [4, 6],
+        "crit": 0,
+        "effects": {
+          "bleed": 2
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "dmg": 3
+          },
+          "ability": {
+            "dmg": [5, 7]
+          }
+        },
+        "3": {
+          "stat": {
+            "dmg": 4
+          },
+          "ability": {
+            "dmg": [6, 8]
+          }
+        }
+      },
+      "text": "Snip two front ranks with borrowed bailiff shears."
+    },
+    {
+      "id": "zipper_hauler_chain",
+      "name": "Hauler Chain",
+      "slot": "legs",
+      "owner": "any",
+      "stat": {
+        "speed": 1,
+        "dodge": 1
+      },
+      "ability": {
+        "id": "hauler_chain",
+        "name": "Hauler Chain",
+        "kind": "melee",
+        "launch": [1, 2],
+        "target": [1],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 85,
+        "dmg": [3, 4],
+        "crit": 0,
+        "effects": {
+          "tangled": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "speed": 2,
+            "dodge": 3
+          },
+          "ability": {
+            "dmg": [4, 5]
+          }
+        },
+        "3": {
+          "stat": {
+            "speed": 3,
+            "dodge": 5
+          },
+          "ability": {
+            "dmg": [5, 6]
+          }
+        }
+      },
+      "text": "Lash the front foe with a heavy zipper chain and leave it Tangled."
+    },
+    {
+      "id": "needle_briar_guard_briar",
+      "name": "Briar Guard",
+      "slot": "torso",
+      "owner": "any",
+      "stat": {
+        "prot": 10
+      },
+      "ability": {
+        "id": "briar_wall",
+        "name": "Briar Wall",
+        "kind": "buff",
+        "launch": [1, 4],
+        "target": [1, 2, 3, 4],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "thorns": 3
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "prot": 11
+          },
+          "ability": {
+            "effects": {
+              "thorns": 4
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "prot": 12
+          },
+          "ability": {
+            "effects": {
+              "thorns": 5
+            }
+          }
+        }
+      },
+      "text": "Wrap an ally in needle-briar: Thorns 3."
+    },
+    {
+      "id": "spool_snarekeeper_snare",
+      "name": "Snare Spool",
+      "slot": "legs",
+      "owner": "any",
+      "stat": {
+        "dodge": 3
+      },
+      "ability": {
+        "id": "snare_lash",
+        "name": "Snare Lash",
+        "kind": "melee",
+        "launch": [1, 3],
+        "target": [1, 2],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 88,
+        "dmg": [2, 4],
+        "crit": 0,
+        "effects": {
+          "tangled": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "dodge": 5
+          },
+          "ability": {
+            "dmg": [3, 5]
+          }
+        },
+        "3": {
+          "stat": {
+            "dodge": 7
+          },
+          "ability": {
+            "dmg": [4, 6]
+          }
+        }
+      },
+      "text": "Snare an enemy rank in looped thread."
+    },
+    {
+      "id": "pincushion_matriarch_crown",
+      "name": "Pin Crown",
+      "slot": "head",
+      "owner": "any",
+      "stat": {
+        "crit": 4
+      },
+      "ability": {
+        "id": "pin_crown",
+        "name": "Pin Crown",
+        "kind": "buff",
+        "launch": [1, 4],
+        "target": [1, 2, 3, 4],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "thorns": 4
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "crit": 5
+          },
+          "ability": {
+            "effects": {
+              "thorns": 5
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "crit": 6
+          },
+          "ability": {
+            "effects": {
+              "thorns": 6
+            }
+          }
+        }
+      },
+      "text": "Crown an ally with pins: Thorns 4."
+    },
+    {
+      "id": "spool_leech_maw",
+      "name": "Leech Maw",
+      "slot": "arms",
+      "owner": "any",
+      "stat": {
+        "dmg": 2
+      },
+      "ability": {
+        "id": "leech_bite",
+        "name": "Leech Bite",
+        "kind": "melee",
+        "launch": [1, 2],
+        "target": [1],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 86,
+        "dmg": [4, 6],
+        "crit": 0,
+        "effects": {
+          "bleed": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "dmg": 3
+          },
+          "ability": {
+            "dmg": [5, 7]
+          }
+        },
+        "3": {
+          "stat": {
+            "dmg": 4
+          },
+          "ability": {
+            "dmg": [6, 8]
+          }
+        }
+      },
+      "text": "Bite the front foe with a rubbery leech maw."
+    },
+    {
+      "id": "patchwork_behemoth_heart_torso",
+      "name": "Behemoth Heart",
+      "slot": "torso",
+      "owner": "any",
+      "stat": {
+        "max_hp": 8,
+        "prot": 6
+      },
+      "ability": {
+        "id": "behemoth_heart",
+        "name": "Behemoth Heart",
+        "kind": "heal",
+        "launch": [1, 4],
+        "target": [1, 2, 3, 4],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {
+          "heal": 6
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "max_hp": 10,
+            "prot": 7
+          },
+          "ability": {
+            "effects": {
+              "heal": 7
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "max_hp": 12,
+            "prot": 8
+          },
+          "ability": {
+            "effects": {
+              "heal": 8
+            }
+          }
+        }
+      },
+      "text": "Pump a heavy stitched heart and mend an ally for 6."
+    },
+    {
+      "id": "sewing_machine_colossus_needle_arm",
+      "name": "Colossus Needle Arm",
+      "slot": "arms",
+      "owner": "any",
+      "stat": {
+        "dmg": 3
+      },
+      "ability": {
+        "id": "colossus_needle",
+        "name": "Colossus Needle",
+        "kind": "ranged",
+        "launch": [1, 4],
+        "target": [1, 3],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 85,
+        "dmg": [5, 8],
+        "crit": 0,
+        "effects": {},
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "dmg": 4
+          },
+          "ability": {
+            "dmg": [6, 9]
+          }
+        },
+        "3": {
+          "stat": {
+            "dmg": 5
+          },
+          "ability": {
+            "dmg": [7, 10]
+          }
+        }
+      },
+      "text": "Fire a sewing-machine needle across the ranks."
+    },
+    {
+      "id": "moth_queen_wing_crown",
+      "name": "Moth Queen Crown",
+      "slot": "head",
+      "owner": "any",
+      "stat": {
+        "crit": 5
+      },
+      "ability": {
+        "id": "queen_dust",
+        "name": "Queen Dust",
+        "kind": "ranged",
+        "launch": [1, 4],
+        "target": [1, 2, 3, 4],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 85,
+        "dmg": [3, 5],
+        "crit": 0,
+        "effects": {
+          "weak": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "crit": 6
+          },
+          "ability": {
+            "dmg": [4, 6]
+          }
+        },
+        "3": {
+          "stat": {
+            "crit": 7
+          },
+          "ability": {
+            "dmg": [5, 7]
+          }
+        }
+      },
+      "text": "Scatter queen-moth dust that leaves any rank Weak."
     }
   ]
 }

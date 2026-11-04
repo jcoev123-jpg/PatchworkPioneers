@@ -4,6 +4,7 @@ var failures: Array[String] = []
 var checks := 0
 const CLAW := "scissor_crab_claw_arm"
 const SACK := "fray_scavenger_sack_arm"
+const INK := "moth_scribe_inkbrush_arm"
 
 
 func _initialize() -> void:
@@ -142,6 +143,7 @@ func _run() -> void:
 	_check(int(witness.get("steps", 0)) > 0 and int(witness.get("abilities", 0)) > 0 \
 		and stage.battle.get_foes().size() == 3 and stage.battle.get_unit("scissor_crab").get("dead") == true \
 		and stage.battle.get_unit("fray_scavenger").get("dead") == true \
+		and stage.battle.get_unit("moth_scribe").get("dead") == true \
 		and witness.get("outcome") == "victory",
 		"mounted hero actions defeat all foes including Crab: " + str(witness.get("outcome", "")) + " / steps=" + str(witness.get("steps", 0)))
 	if witness.get("outcome") != "victory":
@@ -176,12 +178,14 @@ func _run() -> void:
 	await process_frame
 	var quote: Dictionary = visit.quote()
 	_check(quote.get("ok") == true and quote.get("open") == true \
-		and quote.get("satchel_count") == 2 and quote.get("satchel_max") == 6 \
+		and quote.get("satchel_count") == 3 and quote.get("satchel_max") == 6 \
 		and quote["satchel"][0]["id"] == CLAW and quote["satchel"][0]["tier"] == 1 \
 		and quote["satchel"][1]["id"] == SACK and quote["satchel"][1]["tier"] == 1 \
 		and quote["satchel"][1]["slot"] == "arms" and not quote["satchel"][1]["torn"] \
+		and quote["satchel"][2]["id"] == INK and quote["satchel"][2]["tier"] == 1 \
+		and quote["satchel"][2]["slot"] == "arms" and not quote["satchel"][2]["torn"] \
 		and not quote["satchel"][0]["torn"] and _no_wallet(app),
-		"authentic tier-I claw and sack are offered in order in a bounded satchel")
+		"authentic claw, sack and inkbrush are earned in order in the six-slot satchel")
 	var blocked_torn := false
 	for hero_row in quote["heroes"]:
 		if str(hero_row["hero_id"]) != torn_hero:
@@ -195,6 +199,7 @@ func _run() -> void:
 	var buttons: Array = panel.find_children("Swap_*", "Button", true, false)
 	var offers_found := 0
 	var sack_offers := 0
+	var ink_offers := 0
 	var winner_id := ""
 	for hero_row in quote["heroes"]:
 		for slot_row in hero_row["slots"]:
@@ -206,7 +211,10 @@ func _run() -> void:
 							winner_id = str(hero_row["hero_id"])
 					elif option["part"]["id"] == SACK:
 						sack_offers += 1
-	_check(offers_found > 0 and sack_offers == offers_found and buttons.size() == offers_found + sack_offers and not winner_id.is_empty(),
+					elif option["part"]["id"] == INK:
+						ink_offers += 1
+	_check(offers_found > 0 and sack_offers == offers_found and ink_offers == offers_found \
+		and buttons.size() == offers_found + sack_offers + ink_offers and not winner_id.is_empty(),
 		"the displayed choice buttons exactly match real compatible hero/arms quotes")
 	var old_state: Dictionary = quote["state"].duplicate(true)
 	var before_satchel: Array = app.stitched_preview_satchel.duplicate(true)
@@ -222,8 +230,9 @@ func _run() -> void:
 	var equipped_before: Array = app._stitched_floor_config()["heroes"].duplicate(true)
 	old_button.pressed.emit()
 	var committed: Dictionary = visit.read_state()
-	_check(int(committed.get("version", 0)) == 1 and committed["satchel"].size() == 2 \
+	_check(int(committed.get("version", 0)) == 1 and committed["satchel"].size() == 3 \
 		and committed["satchel"][0]["id"] != CLAW and committed["satchel"][1]["id"] == SACK \
+		and committed["satchel"][2]["id"] == INK \
 		and app._stitched_gear_overrides.get(selected_id, {}).get("arms", {}).get("id") == CLAW \
 		and app.stitched_preview_satchel == committed["satchel"] and _no_wallet(app),
 		"visible Sewing Circle click commits once, replacing the old arms without spending")
@@ -249,7 +258,7 @@ func _run() -> void:
 	var leave: Button = panel.get_node("SewingLeave")
 	leave.pressed.emit()
 	_check(app.stitched_sewing_panel == null and app.stitched_sewing_visit == null \
-		and app.title_view.is_visible_in_tree() and app.stitched_preview_satchel.size() == 2,
+		and app.title_view.is_visible_in_tree() and app.stitched_preview_satchel.size() == 3,
 		"mounted Leave closes the Circle exactly once and restores title")
 	_check(not app._stitched_sewing_leave(fresh_state, weakref(panel)).get("ok") \
 		and not app._stitched_sewing_swap(selected_id, "arms", 0, fresh_state, weakref(panel)).get("ok"),
@@ -358,6 +367,8 @@ func _run() -> void:
 	app.free()
 	await process_frame
 	await _run_sack_path()
+	await _run_inkbrush_path()
+	await _run_defeat_path()
 	_finish()
 
 
@@ -403,9 +414,10 @@ func _run_sack_path() -> void:
 	stage._action_buttons["exit"].pressed.emit()
 	var visit: RunStitchedSewingSwap = app.stitched_sewing_visit
 	var panel: Control = app.stitched_sewing_panel
-	_check(visit != null and panel != null and app.stitched_preview_satchel.size() == 2 \
+	_check(visit != null and panel != null and app.stitched_preview_satchel.size() == 3 \
 		and app.stitched_preview_satchel[0]["id"] == CLAW \
 		and app.stitched_preview_satchel[1]["id"] == SACK \
+		and app.stitched_preview_satchel[2]["id"] == INK \
 		and randi() == reward_global and _no_wallet(app),
 		"real win earns one claw then one sack, with global RNG and wallet unchanged")
 	if visit == null or panel == null:
@@ -440,7 +452,7 @@ func _run_sack_path() -> void:
 	seed(903221)
 	button.pressed.emit()
 	var swapped: Dictionary = visit.read_state()
-	_check(swapped.get("version") == 1 and swapped.get("satchel", []).size() == 2 \
+	_check(swapped.get("version") == 1 and swapped.get("satchel", []).size() == 3 \
 		and app._stitched_gear_overrides.get(chosen, {}).get("arms", {}).get("id") == SACK \
 		and app.stitched_preview_satchel == swapped["satchel"] \
 		and randi() == exchange_global and _no_wallet(app),
@@ -516,6 +528,230 @@ func _run_sack_path() -> void:
 	await process_frame
 	_check(app.stitched_preview_satchel == before_exit and app.stitched_sewing_panel == null \
 		and _no_wallet(app), "unwon next Fight leaves sack and no-spend receipt unchanged")
+	app.free()
+	await process_frame
+
+
+## A genuine Roadblock DEFEAT must never pay a trophy. Real mounted hero passes let the
+## authored foes win the fight, then the real Back control retires it: no satchel entry,
+## no Sewing Circle, no wallet and no global RNG draw.
+func _run_defeat_path() -> void:
+	var app := _spawn()
+	await process_frame
+	_check(app.stitched_preview_satchel.is_empty() and _no_wallet(app),
+		"fresh defeat path starts without spoils or a wallet")
+	var stage: StitchedBattleScreen = await _admit(app)
+	if stage == null:
+		_check(false, "defeat witness admits a real Roadblock from the title")
+		app.free()
+		await process_frame
+		return
+	var passes := 0
+	for turn in range(220):
+		if stage.battle.is_over() or stage.battle.current_side() != "hero":
+			break
+		var receipt: Dictionary = stage.submit_pass()
+		if receipt.get("ok") != true:
+			break
+		passes += 1
+	var lost_heroes := 0
+	for hero in stage.battle.get_heroes():
+		if bool(hero.get("lost", false)):
+			lost_heroes += 1
+	_check(passes > 0 and stage.battle.is_over() and stage.battle.outcome() == "defeat"
+		and lost_heroes > 0,
+		"mounted hero passes reach a genuine defeat with a lost hero")
+	var satchel_before: Array = app.stitched_preview_satchel.duplicate(true)
+	seed(661207)
+	var expected_global := randi()
+	seed(661207)
+	stage._action_buttons["exit"].pressed.emit()
+	await process_frame
+	_check(app.stitched_preview_satchel == satchel_before \
+		and app.stitched_preview_satchel.is_empty() \
+		and app.stitched_sewing_visit == null and app.stitched_sewing_panel == null \
+		and app.title_view.is_visible_in_tree() and randi() == expected_global \
+		and _no_wallet(app),
+		"a genuine defeat pays no trophy, opens no Circle, and spends no RNG or wallet")
+	app.free()
+	await process_frame
+
+
+## Independent Inkbrush Arm reward-to-mount witness (not a catalog-only check).
+func _run_inkbrush_path() -> void:
+	var catalog: Dictionary = StitchedParts.load_catalog("res://data/parts/enemy_parts.json")
+	var ink: Dictionary = catalog.get("by_id", {}).get(INK, {})
+	var first: Dictionary = StitchedParts.ability_at_tier(ink, 1) if not ink.is_empty() else {}
+	var second: Dictionary = StitchedParts.ability_at_tier(ink, 2) if not ink.is_empty() else {}
+	var third: Dictionary = StitchedParts.ability_at_tier(ink, 3) if not ink.is_empty() else {}
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/parts/enemy_parts.json"))
+	var id_count := 0
+	if raw is Dictionary:
+		for part in raw.get("parts", []):
+			if part is Dictionary and part.get("id") == INK:
+				id_count += 1
+	_check(catalog.get("ok") == true and id_count == 1 and ink.get("name") == "Inkbrush Arm"
+		and ink.get("slot") == "arms" and ink.get("owner") == "any" and ink.get("stat") == {"dmg": 1}
+		and first.get("id") == "ink_stroke" and first.get("name") == "Ink Stroke"
+		and first.get("kind") == "ranged" and first.get("launch") == [2, 3, 4]
+		and first.get("target") == [1, 2, 3] and first.get("target_side") == "enemy"
+		and first.get("multi") == false and first.get("acc") == 88
+		and first.get("dmg") == [3, 5] and first.get("crit") == 0
+		and first.get("effects") == {"weak": 1} and first.get("self_move") == 0
+		and first.get("move") == "attack2"
+		and second.get("dmg") == [4, 6] and third.get("dmg") == [5, 7]
+		and not StitchedParts.ranks_allowed(int(first.get("launch_mask", 0)), 1),
+		"unique validated Ink Stroke has the authored range, weak effect, tiers and barred front launch")
+	var app := _spawn()
+	await process_frame
+	_check(_no_wallet(app) and app.stitched_preview_satchel.is_empty(),
+		"fresh Inkbrush route starts without virtual wallet, RNG or spoils")
+	var stage: StitchedBattleScreen = await _admit(app)
+	if stage == null:
+		_check(false, "Inkbrush witness admits an authenticated Roadblock from the title")
+		app.free()
+		await process_frame
+		return
+	_check(stage.battle.is_valid() and stage.battle.get_foes().size() == 3
+		and stage.battle.get_unit("moth_scribe").get("side") == "foe",
+		"the real Roadblock contains the actual Moth Scribe")
+	var witness: Dictionary = _fight_to_victory(stage)
+	_check(witness.get("outcome") == "victory" and int(witness.get("abilities", 0)) > 0
+		and stage.battle.get_unit("moth_scribe").get("dead") == true
+		and int(stage.battle.get_unit("moth_scribe").get("hp", -1)) == 0,
+		"mounted hero actions kill the Moth Scribe and win the authenticated fight")
+	if witness.get("outcome") != "victory":
+		stage._action_buttons["exit"].pressed.emit()
+		app.free()
+		await process_frame
+		return
+	seed(502117)
+	var expected_global: int = randi()
+	seed(502117)
+	stage._action_buttons["exit"].pressed.emit()
+	var visit: RunStitchedSewingSwap = app.stitched_sewing_visit
+	var panel: Control = app.stitched_sewing_panel
+	_check(visit != null and panel != null and stage.battle == null
+		and app.stitched_fight_view == null
+		and app.stitched_preview_satchel.size() == 3
+		and app.stitched_preview_satchel[0]["id"] == CLAW
+		and app.stitched_preview_satchel[1]["id"] == SACK
+		and app.stitched_preview_satchel[2] == {"id": INK, "slot": "arms", "tier": 1, "torn": false}
+		and randi() == expected_global and _no_wallet(app),
+		"real win mints ordered claw, sack, Inkbrush once and spends neither RNG nor wallet")
+	if visit == null or panel == null:
+		app.free()
+		await process_frame
+		return
+	await process_frame
+	var quote: Dictionary = visit.quote()
+	var chosen := ""
+	var index := -1
+	for hero_row in quote.get("heroes", []):
+		if not str(hero_row["hero_id"]) in ["seamstress", "tinker", "lantern_monk"]:
+			continue
+		for slot_row in hero_row["slots"]:
+			if str(slot_row["slot"]) != "arms" or not bool(slot_row["can_swap"]):
+				continue
+			for option in slot_row["offers"]:
+				if option["part"]["id"] == INK and chosen.is_empty():
+					chosen = str(hero_row["hero_id"])
+					index = int(option["satchel_index"])
+	var button: Button = (panel.find_child("Swap_%s_%d" % [chosen, index], true, false) as Button) if index >= 0 else null
+	_check(quote.get("ok") == true and quote.get("satchel_count") == 3
+		and button != null and index == 2 and not chosen.is_empty(),
+		"real Circle offers the third trophy as a compatible arms button to a back-rank hero")
+	if button == null:
+		panel.get_node("SewingLeave").pressed.emit()
+		app.free()
+		await process_frame
+		return
+	var prior: Dictionary = visit.read_state()
+	var prior_satchel: Array = app.stitched_preview_satchel.duplicate(true)
+	seed(774123)
+	var reject_rng: int = randi()
+	seed(774123)
+	_check(not app._stitched_sewing_swap("impostor", "arms", index, prior, weakref(panel)).get("ok")
+		and not app._stitched_sewing_swap(chosen, "torso", index, prior, weakref(panel)).get("ok")
+		and not app._stitched_sewing_swap(chosen, "arms", 9, prior, weakref(panel)).get("ok")
+		and visit.read_state() == prior and app.stitched_preview_satchel == prior_satchel
+		and randi() == reject_rng and _no_wallet(app),
+		"forged, incompatible and unoffered inkbrush swaps reject without changes or RNG")
+	button.pressed.emit()
+	var swapped: Dictionary = visit.read_state()
+	_check(int(swapped.get("version", 0)) == 1 and swapped.get("satchel", []).size() == 3
+		and app.stitched_preview_satchel == swapped["satchel"]
+		and app._stitched_gear_overrides.get(chosen, {}).get("arms", {}).get("id") == INK
+		and _no_wallet(app), "quoted Inkbrush click atomically exchanges worn arms at zero cost")
+	seed(714229)
+	var stale_rng: int = randi()
+	seed(714229)
+	_check(not app._stitched_sewing_swap(chosen, "arms", index, prior, weakref(panel)).get("ok")
+		and not visit.swap(chosen, "arms", index, "forged-node", prior).get("ok")
+		and visit.read_state() == swapped and app.stitched_preview_satchel == swapped["satchel"]
+		and randi() == stale_rng and _no_wallet(app),
+		"stale and replayed Inkbrush quotes cannot duplicate parts or spend RNG")
+	panel.get_node("SewingLeave").pressed.emit()
+	await process_frame
+	var carried: Dictionary = app._stitched_floor_config()
+	var equipped := false
+	for hero in carried.get("heroes", []):
+		if str(hero["id"]) == chosen:
+			equipped = hero["parts"]["arms"]["id"] == INK
+	_check(equipped and app.stitched_sewing_visit == null
+		and app.stitched_preview_satchel == swapped["satchel"]
+		and carried.get("seed") == 4982026, "Leave carries Inkbrush into the next genuine title Fight")
+	var next: StitchedBattleScreen = await _admit(app)
+	if next == null:
+		_check(false, "Inkbrush carries into the next mounted title Fight")
+		app.free()
+		await process_frame
+		return
+	_check(next.battle.is_valid() and next.battle.get_unit(chosen).get("parts", {}).get("arms", {}).get("id") == INK,
+		"next real battle has the Inkbrush Arm equipped on its actual hero")
+	var cast := false
+	var weakened := false
+	var illegal := false
+	for turn in range(90):
+		if next.battle.is_over() or next.battle.current_side() != "hero":
+			break
+		var actor_id: String = next.battle.current_actor_id()
+		var actor: Dictionary = next.battle.get_unit(actor_id)
+		if actor_id == chosen and int(actor.get("rank", -1)) in [2, 3, 4] and next.select_part("arms"):
+			var targets: Dictionary = next.legal_targets()
+			var before_state: Dictionary = next.battle.state_snapshot()
+			var before_rng: int = next.battle.rng_state()
+			var before_receipts: int = next.receipts.size()
+			illegal = not next.submit_target("foe", 4).get("ok") \
+				and not next.submit_part(INK, 4).get("ok") \
+				and next.battle.state_snapshot() == before_state \
+				and next.battle.rng_state() == before_rng \
+				and next.receipts.size() == before_receipts
+			for target_key in targets:
+				if not str(target_key) in ["foe_1", "foe_2", "foe_3"]:
+					continue
+				var receipt_before := next.receipts.size()
+				var result: Dictionary = next.submit_target("foe", int(str(target_key).split("_")[1]))
+				if result.get("ok") == true and result.get("ability") == "ink_stroke" \
+						and next.receipts.size() > receipt_before:
+					cast = true
+					for hit in result.get("results", []):
+						if hit.get("hit") == true:
+							for effect in hit.get("statuses", []):
+								if effect.get("status") == "weak" and int(effect.get("duration", 0)) == 1:
+									weakened = true
+				break
+			if weakened:
+				break
+		if next.battle.current_side() == "hero" and not next.battle.is_over():
+			next.submit_pass()
+	_check(illegal, "illegal fourth enemy rank cannot consume a turn, receipt or RNG")
+	_check(cast and weakened, "a legal rear-rank Ink Stroke hits a live foe and receipts Weak 1")
+	var before_exit: Array = app.stitched_preview_satchel.duplicate(true)
+	next._action_buttons["exit"].pressed.emit()
+	await process_frame
+	_check(app.stitched_preview_satchel == before_exit and app.stitched_sewing_panel == null
+		and _no_wallet(app), "unfinished next Fight cannot mint a duplicate Inkbrush")
 	app.free()
 	await process_frame
 

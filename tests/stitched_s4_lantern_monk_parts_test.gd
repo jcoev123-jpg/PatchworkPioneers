@@ -20,19 +20,93 @@ const IDS := [
 	"lantern_monk_head_moth_cloud", "lantern_monk_arms_snuff_flame",
 	"lantern_monk_torso_vigil_ring", "lantern_monk_legs_moth_shroud",
 ]
+## The seven parts this task must leave frozen: base ability shape, slot stat and label.
+const FROZEN_PARTS := {
+	"lantern_monk_head_moth_wink": {
+		"name": "Moth Wink", "launch": [1, 2, 3], "target": [1, 2, 3], "side": "enemy",
+		"multi": false, "acc": 90, "dmg": [0, 0], "effects": {"blind": 1}, "move": "skill",
+		"stat": {"acc": 3},
+	},
+	"lantern_monk_arms_wick_spark": {
+		"name": "Wick Spark", "launch": [2, 3], "target": [1, 2, 3], "side": "enemy",
+		"multi": false, "acc": 91, "dmg": [4, 6], "effects": {"blind": 1}, "move": "attack2",
+		"stat": {"dmg": 1},
+	},
+	"lantern_monk_legs_pole_shelter": {
+		"name": "Pole Shelter", "launch": [1, 2, 3], "target": [1, 2, 3, 4], "side": "ally",
+		"multi": false, "acc": 100, "dmg": [0, 0], "effects": {"guard": 2}, "move": "guard",
+		"stat": {"speed": 1, "dodge": 3},
+	},
+	"lantern_monk_head_moth_cloud": {
+		"name": "Moth Cloud", "launch": [2, 3], "target": [1, 2, 3, 4], "side": "enemy",
+		"multi": true, "acc": 90, "dmg": [0, 0], "effects": {"blind": 1}, "move": "skill",
+		"stat": {"crit": 3},
+	},
+	"lantern_monk_arms_snuff_flame": {
+		"name": "Snuff Flame", "launch": [2, 3], "target": [1, 2, 3], "side": "enemy",
+		"multi": false, "acc": 90, "dmg": [3, 5], "effects": {"blind": 1, "exposed": 1},
+		"move": "attack", "stat": {"dmg": 2},
+	},
+	"lantern_monk_torso_vigil_ring": {
+		"name": "Vigil Ring", "launch": [2, 3], "target": [1, 2, 3, 4], "side": "ally",
+		"multi": true, "acc": 100, "dmg": [0, 0],
+		"effects": {"heal": 4, "dodge": 4, "duration": 1}, "move": "skill",
+		"stat": {"max_hp": 5, "prot": 6},
+	},
+	"lantern_monk_legs_moth_shroud": {
+		"name": "Moth Shroud", "launch": [2, 3], "target": [1, 2, 3, 4], "side": "ally",
+		"multi": false, "acc": 100, "dmg": [0, 0], "effects": {"dodge": 10, "duration": 2},
+		"move": "guard", "stat": {"speed": 1, "dodge": 4},
+	},
+}
+## Authored tier-II/III override fields for those seven unchanged parts.
+const FROZEN_TIERS := {
+	"lantern_monk_head_moth_wink": {
+		"2": {"acc": 94},
+		"3": {"acc": 100, "effects": {"blind": 1, "exposed": 1}},
+	},
+	"lantern_monk_arms_wick_spark": {
+		"2": {"dmg": [5, 8]},
+		"3": {"dmg": [7, 10], "acc": 95},
+	},
+	"lantern_monk_legs_pole_shelter": {
+		"2": {"effects": {"guard": 3}},
+		"3": {"effects": {"guard": 4}},
+	},
+	"lantern_monk_head_moth_cloud": {
+		"2": {"acc": 95},
+		"3": {"acc": 100, "effects": {"blind": 1, "exposed": 1}},
+	},
+	"lantern_monk_arms_snuff_flame": {
+		"2": {"dmg": [4, 6], "effects": {"blind": 1, "exposed": 2}},
+		"3": {"dmg": [5, 8], "effects": {"blind": 1, "exposed": 3}},
+	},
+	"lantern_monk_torso_vigil_ring": {
+		"2": {"effects": {"heal": 5, "dodge": 6, "duration": 1}},
+		"3": {"effects": {"heal": 7, "dodge": 8, "duration": 1}},
+	},
+	"lantern_monk_legs_moth_shroud": {
+		"2": {"effects": {"dodge": 14, "duration": 2}},
+		"3": {"effects": {"dodge": 18, "duration": 2}},
+	},
+}
 var failures: Array[String] = []
 var checks := 0
 
 
 func _initialize() -> void:
 	_test_catalog()
+	_test_lamplight_wash_launch()
 	_test_moth_cloud_fourth_rank()
 	_test_each_tier()
 	_test_multi_blind()
 	_test_blind_next_attack()
 	_test_real_healing()
+	_test_rank4_lamplight_heal(2, 500600, 60, 3, "tier II")
+	_test_rank4_lamplight_heal(3, 500700, 60, 5, "tier III")
 	_test_guard_and_shroud()
 	_test_rejection_no_spend()
+	_test_rank4_launch_rejections()
 	_test_replay()
 	for failure in failures:
 		printerr(failure)
@@ -50,9 +124,12 @@ func _catalog() -> Dictionary:
 	return StitchedParts.load_catalog(CATALOG_PATH)
 
 
-## S2's shipped fixture is NOT modified: move the same four existing heroes in memory
-## so Lantern Monk occupies legal back-line launch rank 2, and give him actual gear.
-func _config(selected: String = "", tier: int = 1, seed_value: int = 500040) -> Dictionary:
+## S2's shipped fixture is NOT modified: the same four existing heroes are re-ordered in
+## memory so Lantern Monk occupies legal launch rank 2, and he gets actual gear. With
+## monk_rank4 the original preview order is kept, which puts him in hero rank 4.
+func _config(
+	selected: String = "", tier: int = 1, seed_value: int = 500040, monk_rank4: bool = false
+) -> Dictionary:
 	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(PREVIEW_PATH))
 	if not parsed is Dictionary:
 		_check(false, "shipped S2 4v3 fixture is a dictionary")
@@ -66,19 +143,26 @@ func _config(selected: String = "", tier: int = 1, seed_value: int = 500040) -> 
 	config["seed"] = seed_value
 	var monk: Dictionary = config["heroes"].pop_back()
 	_check(str(monk.get("id", "")) == "lantern_monk", "real S2 fourth hero is Lantern Monk")
-	config["heroes"].insert(1, monk)
+	var monk_index := 1
+	if monk_rank4:
+		config["heroes"].append(monk)
+		monk_index = config["heroes"].size() - 1
+	else:
+		config["heroes"].insert(1, monk)
 	var gear: Dictionary = {}
 	for slot in STARTERS:
 		var part_id: String = STARTERS[slot]
 		if not selected.is_empty() and catalog["by_id"].has(selected) and str(catalog["by_id"][selected]["slot"]) == slot:
 			part_id = selected
 		gear[slot] = {"id": part_id, "tier": tier}
-	config["heroes"][1]["parts"] = gear
+	config["heroes"][monk_index]["parts"] = gear
 	return config
 
 
-func _battle(selected: String = "", tier: int = 1, seed_value: int = 500040) -> StitchedRules:
-	var config := _config(selected, tier, seed_value)
+func _battle(
+	selected: String = "", tier: int = 1, seed_value: int = 500040, monk_rank4: bool = false
+) -> StitchedRules:
+	var config := _config(selected, tier, seed_value, monk_rank4)
 	if config.is_empty():
 		return null
 	var created := StitchedRules.create(config)
@@ -86,8 +170,9 @@ func _battle(selected: String = "", tier: int = 1, seed_value: int = 500040) -> 
 	if not bool(created.get("ok", false)):
 		return null
 	var b: StitchedRules = created["battle"]
-	_check(b.get_heroes().size() == 4 and b.get_foes().size() == 3 and int(b.get_unit("lantern_monk").get("rank", -1)) == 2,
-		"real four-hero/three-foe S2 battle, Lantern Monk in rank 2")
+	var expected_rank := 4 if monk_rank4 else 2
+	_check(b.get_heroes().size() == 4 and b.get_foes().size() == 3 and int(b.get_unit("lantern_monk").get("rank", -1)) == expected_rank,
+		"real four-hero/three-foe S2 battle, Lantern Monk in rank %d" % expected_rank)
 	_check(b.get_unit("lantern_monk").get("parts", {}).size() == 4,
 		"real Lantern Monk has four actually equipped slots")
 	return b
@@ -170,6 +255,114 @@ func _test_catalog() -> void:
 	bad_mask["ability"]["target"] = [1, 2, 3, 5]
 	_check(not bool(StitchedParts.validate_part(bad_mask).get("ok", false)),
 		"AC3: out-of-bounds target rank rejects")
+
+
+## This task's one data change: the starter torso's launch list gains hero rank 4. Every
+## other field, tier override, label and stat in the eight-part file stays frozen.
+func _test_lamplight_wash_launch() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: catalog with Lamplight Wash's fourth launch rank validates")
+	if not bool(cat.get("ok", false)):
+		return
+	var part: Dictionary = cat["by_id"][STARTERS["torso"]]
+	var ability: Dictionary = part["ability"]
+	var launch_mask := StitchedParts.rank_mask([2, 3, 4])
+	var full_mask := StitchedParts.ALL_RANKS_MASK
+	_check(launch_mask != 0 and launch_mask != full_mask and not StitchedParts.ranks_allowed(launch_mask, 1),
+		"AC1: hero ranks 2-4 derive a launch mask that still excludes rank 1")
+	_check(str(part["id"]) == "lantern_monk_torso_lamplight_wash"
+		and str(part["name"]) == "Lamplight Wash" and str(part["slot"]) == "torso"
+		and str(part["owner"]) == "lantern_monk" and part["stat"] == {"max_hp": 6, "prot": 4},
+		"AC1: Lamplight Wash keeps its name, torso slot, owner and +6 HP/+4 PROT stat")
+	_check(str(ability["id"]) == "lantern_monk_torso_lamplight_wash_move"
+		and str(ability["name"]) == "Lamplight Wash" and str(ability["kind"]) == "heal"
+		and ability["launch"] == [2, 3, 4] and int(ability["launch_mask"]) == launch_mask
+		and ability["target"] == [1, 2, 3, 4] and int(ability["target_mask"]) == full_mask
+		and str(ability["target_side"]) == "ally" and bool(ability["multi"])
+		and int(ability["acc"]) == 100 and ability["dmg"] == [0, 0] and int(ability["crit"]) == 0
+		and int(ability["mark_damage"]) == 0 and ability["effects"] == {"heal": 2}
+		and int(ability["self_move"]) == 0 and str(ability["move"]) == "skill",
+		"AC1: Lamplight Wash is a multi ally heal launched from [2,3,4] with heal 2 and its skill pose")
+	var expected_heal := {1: 2, 2: 3, 3: 5}
+	for tier in [1, 2, 3]:
+		var tiered := StitchedParts.ability_at_tier(part, tier)
+		var valid := StitchedParts.validate_ability(tiered)
+		_check(bool(valid.get("ok", false)), "AC1: Lamplight Wash tier %d ability validates" % tier)
+		if not bool(valid.get("ok", false)):
+			continue
+		var checked: Dictionary = valid["ability"]
+		_check(checked["launch"] == [2, 3, 4] and int(checked["launch_mask"]) == launch_mask
+			and checked["target"] == [1, 2, 3, 4] and int(checked["target_mask"]) == full_mask
+			and str(checked["target_side"]) == "ally" and bool(checked["multi"])
+			and int(checked["acc"]) == 100 and checked["dmg"] == [0, 0]
+			and int(checked["effects"].get("heal", 0)) == int(expected_heal[tier]),
+			"AC1: Lamplight Wash tier %d keeps launch 2-4, all four ally ranks and heal %d"
+				% [tier, int(expected_heal[tier])])
+		_check(StitchedParts.stat_at_tier(part, tier) == {"max_hp": 6, "prot": 4},
+			"AC1: Lamplight Wash tier %d keeps its authored slot stat" % tier)
+		for rank in [2, 3, 4]:
+			_check(StitchedParts.ranks_allowed(int(checked["launch_mask"]), rank),
+				"AC1: Lamplight Wash tier %d may launch from hero rank %d" % [tier, rank])
+		_check(not StitchedParts.ranks_allowed(int(checked["launch_mask"]), 1),
+			"AC1: Lamplight Wash tier %d is still forbidden from hero rank 1" % tier)
+		for rank in [1, 2, 3, 4]:
+			_check(StitchedParts.ranks_allowed(int(checked["target_mask"]), rank),
+				"AC1: Lamplight Wash tier %d reaches ally rank %d" % [tier, rank])
+		for rank in [0, 5]:
+			_check(not StitchedParts.ranks_allowed(int(checked["launch_mask"]), rank)
+				and not StitchedParts.ranks_allowed(int(checked["target_mask"]), rank),
+				"AC1: Lamplight Wash tier %d never allows rank %d" % [tier, rank])
+	_check(ability["launch"] == [2, 3, 4] and ability["target"] == [1, 2, 3, 4]
+		and int(ability["effects"]["heal"]) == 2,
+		"AC3: tier reads never replace Lamplight Wash's base ability in memory")
+	# The seven other parts stay byte-for-byte equivalent in rules terms, including their
+	# base and tier II/III launch masks: none may gain rank-4 launch as a side effect.
+	for id in FROZEN_PARTS:
+		var frozen: Dictionary = FROZEN_PARTS[id]
+		var other: Dictionary = cat["by_id"][id]
+		var other_ability: Dictionary = other["ability"]
+		_check(str(other["name"]) == str(frozen["name"]) and other["stat"] == frozen["stat"]
+			and other_ability["launch"] == frozen["launch"]
+			and int(other_ability["launch_mask"]) == StitchedParts.rank_mask(frozen["launch"])
+			and other_ability["target"] == frozen["target"]
+			and int(other_ability["target_mask"]) == StitchedParts.rank_mask(frozen["target"])
+			and str(other_ability["target_side"]) == str(frozen["side"])
+			and bool(other_ability["multi"]) == bool(frozen["multi"])
+			and int(other_ability["acc"]) == int(frozen["acc"])
+			and other_ability["dmg"] == frozen["dmg"]
+			and other_ability["effects"] == frozen["effects"]
+			and str(other_ability["move"]) == str(frozen["move"]),
+			"AC1: frozen base part unchanged: " + id)
+		_check(not StitchedParts.ranks_allowed(int(other_ability["launch_mask"]), 4),
+			"AC1: frozen base part gains no rank-4 launch: " + id)
+		for tier in [1, 2, 3]:
+			var tier_ability := StitchedParts.ability_at_tier(other, tier)
+			var expected := {
+				"acc": int(frozen["acc"]),
+				"dmg": frozen["dmg"],
+				"effects": frozen["effects"],
+				"self_move": 0,
+			}
+			if tier > 1:
+				var overrides: Dictionary = FROZEN_TIERS[id][str(tier)]
+				for key in overrides:
+					expected[key] = overrides[key]
+			_check(int(tier_ability["acc"]) == int(expected["acc"])
+				and tier_ability["dmg"] == expected["dmg"]
+				and tier_ability["effects"] == expected["effects"]
+				and int(tier_ability["self_move"]) == int(expected["self_move"]),
+				"AC1: frozen %s tier %d keeps its authored override values" % [id, tier])
+			_check(tier_ability["launch"] == frozen["launch"]
+				and int(tier_ability["launch_mask"]) == StitchedParts.rank_mask(frozen["launch"])
+				and not StitchedParts.ranks_allowed(int(tier_ability["launch_mask"]), 4),
+				"AC1: frozen %s tier %d gains no rank-4 launch" % [id, tier])
+			_check(tier_ability["target"] == frozen["target"]
+				and int(tier_ability["target_mask"]) == StitchedParts.rank_mask(frozen["target"])
+				and str(tier_ability["target_side"]) == str(frozen["side"])
+				and bool(tier_ability["multi"]) == bool(frozen["multi"]),
+				"AC1: frozen %s tier %d keeps its authored target ranks and side" % [id, tier])
+			_check(StitchedParts.stat_at_tier(other, tier) == frozen["stat"],
+				"AC1: frozen %s tier %d keeps its slot stat" % [id, tier])
 
 
 ## S4 completion: Moth Cloud's base target list reaches enemy rank 4, which Design v4 only
@@ -361,6 +554,100 @@ func _test_real_healing() -> void:
 		_check(witnessed, "AC2: genuine foe wound is restored by four-target %s with real heal/defence receipts" % id)
 
 
+## A real seeded 4v3 battle in the shipped preview order (Lantern Monk in hero rank 4) with
+## the starter Lamplight Wash genuinely equipped in his torso. The Fray Scavenger's own attack
+## opens a real wound; then the Monk's scheduled turn heals exactly one receipt per living
+## allied rank at his stitch tier. A bounded seed list supplies the authentic hit.
+func _test_rank4_lamplight_heal(
+	tier: int, seed_start: int, seed_count: int, expected_heal: int, label: String
+) -> void:
+	var witnessed := false
+	for seed_value in range(seed_start, seed_start + seed_count):
+		var b := _battle("", tier, seed_value, true)
+		if b == null:
+			continue
+		if int(b.get_unit("lantern_monk").get("rank", -1)) != 4:
+			continue
+		if not _to(b, "fray_scavenger"):
+			continue
+		var strike := b.use_foe_ability("sack_swing", 1)
+		if not bool(strike.get("ok", false)) or strike.get("results", []).is_empty():
+			continue
+		if not bool(strike["results"][0].get("hit", false)):
+			continue
+		var wounded := str(strike["results"][0].get("target", ""))
+		if wounded.is_empty() or bool(b.get_unit(wounded).get("lost", false)):
+			continue
+		if not _to(b, "lantern_monk"):
+			continue
+		if int(b.get_unit("lantern_monk")["rank"]) != 4:
+			continue
+		if int(b.get_unit(wounded)["hp"]) >= int(b.get_unit(wounded)["max_hp"]):
+			continue
+		var living := {}
+		for hero in b.get_heroes():
+			if not bool(hero["lost"]):
+				living[str(hero["id"])] = {
+					"hp": int(hero["hp"]),
+					"max_hp": int(hero["max_hp"]),
+					"rank": int(hero["rank"]),
+				}
+		if living.size() != 4 or not living.has(wounded):
+			continue
+		var before := b.state_snapshot()
+		var heal := b.use_part(STARTERS["torso"], 1)
+		if not bool(heal.get("ok", false)):
+			continue
+		witnessed = true
+		var after := b.state_snapshot()
+		var receipts: Array = heal.get("results", [])
+		var targets := {}
+		for receipt in receipts:
+			targets[str(receipt["target"])] = true
+		_check(str(heal.get("action", "")) == "ability"
+			and str(heal.get("actor", "")) == "lantern_monk"
+			and str(heal.get("part", "")) == STARTERS["torso"]
+			and str(heal.get("ability", "")) == "lantern_monk_torso_lamplight_wash_move",
+			"%s: hero rank 4 Lamplight Wash runs as the equipped Monk torso part (seed %d)"
+				% [label, seed_value])
+		_check(int(b.get_unit("lantern_monk")["rank"]) == 4,
+			"%s: the acting Monk really stands in hero rank 4 (seed %d)" % [label, seed_value])
+		_check(receipts.size() == 4 and targets.size() == 4
+			and targets.has(wounded) and targets.keys().all(func(id): return living.has(str(id))),
+			"%s: exactly one ally heal receipt per living allied rank 1-4 (seed %d)"
+				% [label, seed_value])
+		var all_correct := true
+		for receipt in receipts:
+			var id := str(receipt["target"])
+			if not living.has(id):
+				all_correct = false
+				continue
+			var healed_by := int(b.get_unit(id)["hp"]) - int(living[id]["hp"])
+			var cap := int(living[id]["max_hp"]) - int(living[id]["hp"])
+			var expected := mini(expected_heal, cap)
+			var heal_status := false
+			for status in receipt.get("statuses", []):
+				if str(status.get("status", "")) == "heal" and int(status.get("amount", -1)) == expected:
+					heal_status = true
+			all_correct = all_correct and bool(receipt.get("hit", false)) \
+				and healed_by == expected and heal_status
+		_check(all_correct,
+			"%s: every living ally is mended by exactly %d HP up to its max (seed %d)"
+				% [label, expected_heal, seed_value])
+		var wounded_gain := int(b.get_unit(wounded)["hp"]) - int(living[wounded]["hp"])
+		_check(wounded_gain == mini(expected_heal, int(living[wounded]["max_hp"]) - int(living[wounded]["hp"]))
+			and wounded_gain > 0,
+			"%s: the real foe wound is genuinely restored on the wounded ally (seed %d)"
+				% [label, seed_value])
+		var advanced := int(after["round"]) > int(before["round"]) \
+			or (int(after["round"]) == int(before["round"]) and int(after["turn_index"]) > int(before["turn_index"]))
+		_check(advanced and after != before,
+			"%s: the heal spends the Monk's genuine turn and changes real battle state (seed %d)"
+				% [label, seed_value])
+		break
+	_check(witnessed, "%s: a real seeded rank-4 Lamplight Wash heals the wounded four-hero party" % label)
+
+
 func _test_guard_and_shroud() -> void:
 	var guard_witness := false
 	for seed_value in range(500301, 500336):
@@ -433,6 +720,86 @@ func _test_rejection_no_spend() -> void:
 			_reject_without_spend(far, STARTERS["arms"], 1, "forbidden launch rank 4")
 		else:
 			_check(false, "AC3: rank-4 witness has a scheduled turn")
+
+
+## AC3 at rank 4: only the torso's own launch array gained rank 4. Wick Spark and Moth Cloud
+## stay illegal from rank 4, Lamplight Wash stays illegal from rank 1, and copied malformed
+## launch/target arrays still fail the existing validator with no turn, state or RNG spend.
+func _test_rank4_launch_rejections() -> void:
+	var b := _battle("", 1, 500820, true)
+	if b == null or not _to(b, "lantern_monk"):
+		_check(false, "AC3: rank-4 rejection witness receives a real scheduled turn")
+	else:
+		_check(int(b.get_unit("lantern_monk")["rank"]) == 4,
+			"AC3: rejection witness really stands in hero rank 4")
+		_reject_without_spend(b, STARTERS["arms"], 1, "Wick Spark forbidden from hero rank 4")
+		_reject_without_spend(b, ALTERNATES["torso"], 1, "unequipped torso part")
+		_reject_without_spend(b, STARTERS["torso"], 0, "out-of-range target rank 0")
+		_reject_without_spend(b, STARTERS["torso"], 5, "out-of-range target rank 5")
+		var healed := b.use_part(STARTERS["torso"], 1)
+		_check(bool(healed.get("ok", false)) and healed.get("results", []).size() == 4,
+			"AC3: the same rank-4 Monk spends the turn on the legal torso heal")
+
+	var cloud := _battle(ALTERNATES["head"], 1, 500821, true)
+	if cloud == null or not _to(cloud, "lantern_monk"):
+		_check(false, "AC3: rank-4 Moth Cloud witness receives a real scheduled turn")
+	else:
+		var cloud_part: Dictionary = _catalog()["by_id"][ALTERNATES["head"]]
+		_check(str(cloud_part["ability"]["target_side"]) == "enemy"
+			and cloud_part["ability"]["target"] == [1, 2, 3, 4]
+			and not StitchedParts.ranks_allowed(int(cloud_part["ability"]["launch_mask"]), 4),
+			"AC3: Moth Cloud keeps four-rank ENEMY targeting while hero rank 4 stays unlaunchable")
+		_reject_without_spend(cloud, ALTERNATES["head"], 1, "Moth Cloud forbidden from hero rank 4")
+
+	var config := _config("", 1, 500822, true)
+	var monk: Dictionary = config["heroes"].pop_back()
+	config["heroes"].insert(0, monk)
+	var created := StitchedRules.create(config)
+	_check(bool(created.get("ok", false)), "AC3: a real rank-1 Lantern Monk loadout enters battle")
+	if bool(created.get("ok", false)):
+		var front: StitchedRules = created["battle"]
+		_check(int(front.get_unit("lantern_monk")["rank"]) == 1,
+			"AC3: rank-1 witness really stands in hero rank 1")
+		if _to(front, "lantern_monk"):
+			_reject_without_spend(front, STARTERS["torso"], 1, "Lamplight Wash forbidden from hero rank 1")
+		else:
+			_check(false, "AC3: rank-1 Lamplight Wash witness receives a real turn")
+
+	config = _config("", 1, 500823, true)
+	config["heroes"][3]["parts"]["torso"] = {"id": STARTERS["torso"], "tier": 1, "torn": true}
+	created = StitchedRules.create(config)
+	_check(bool(created.get("ok", false)), "AC3: a real torn Lamplight Wash enters a rank-4 battle")
+	if bool(created.get("ok", false)):
+		var torn: StitchedRules = created["battle"]
+		if _to(torn, "lantern_monk"):
+			_reject_without_spend(torn, STARTERS["torso"], 1, "torn Lamplight Wash")
+		else:
+			_check(false, "AC3: torn Lamplight Wash witness receives a real turn")
+
+	var stale := _battle("", 1, 500824, true)
+	if stale == null or not _to(stale, "fray_scavenger"):
+		_check(false, "AC3: off-turn Lamplight Wash witness receives a real foe turn")
+	else:
+		_reject_without_spend(stale, STARTERS["torso"], 1, "stale off-turn Lamplight Wash")
+
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC3: catalog available for copied-part validator checks")
+	if not bool(cat.get("ok", false)):
+		return
+	var source: Dictionary = cat["by_id"][STARTERS["torso"]]
+	for bad_launch in [[2, 3, 4, 4], [2, 3, 4, 5], [0, 2, 3, 4]]:
+		var copy: Dictionary = source.duplicate(true)
+		copy["ability"]["launch"] = bad_launch
+		_check(not bool(StitchedParts.validate_part(copy).get("ok", false)),
+			"AC3: copied Lamplight Wash launch %s still fails validation" % str(bad_launch))
+	var wrong_side: Dictionary = source.duplicate(true)
+	wrong_side["ability"]["target_side"] = "allies"
+	_check(not bool(StitchedParts.validate_part(wrong_side).get("ok", false)),
+		"AC3: copied Lamplight Wash with an unknown target side still fails validation")
+	var wrong_target: Dictionary = source.duplicate(true)
+	wrong_target["ability"]["target"] = [1, 2, 3, 5]
+	_check(not bool(StitchedParts.validate_part(wrong_target).get("ok", false)),
+		"AC3: copied Lamplight Wash with target rank 5 still fails validation")
 
 
 func _reject_without_spend(b: StitchedRules, id: String, rank: int, label: String) -> void:

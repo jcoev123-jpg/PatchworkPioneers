@@ -25,7 +25,7 @@ const EFFECT_KEYS := [
 	"bleed", "weak", "exposed", "tangled", "stun", "mark", "thorns", "riposte", "blind",
 	"guard", "heal", "fray", "snip", "push", "pull", "tear", "dodge", "duration",
 ]
-const MOVE_POSES := ["attack", "attack2", "guard", "skill"]
+const MOVE_POSES := ["attack", "attack2", "attack3", "attack4", "guard", "skill"]
 const MIN_TIER := 1
 const MAX_TIER := 3
 const MIN_RANK := 1
