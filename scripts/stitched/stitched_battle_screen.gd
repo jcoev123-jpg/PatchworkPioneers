@@ -34,6 +34,7 @@ var _part_buttons: Dictionary = {}
 var _action_buttons: Dictionary = {}
 var _target_buttons: Dictionary = {}
 var _labels: Dictionary = {}
+var _turn_ribbon: StitchedTurnOrderRibbon
 var _notice := ""
 var _inspected_seat := ""
 var _portrait_font: Font
@@ -150,7 +151,12 @@ func _build_screen() -> void:
 	_panel(Rect2(1032, 458, 228, 242), Color("1a1b23ed"))
 	_label("STITCHED  /  " + str(config.get("title", "A frayed fray")), Rect2(26, 13, 420, 28), 26, ACCENT)
 	_labels["round"] = _label("", Rect2(454, 13, 190, 28), 21)
-	_labels["order"] = _label("", Rect2(454, 45, 760, 35), 18, MUTED)
+	_labels["order"] = _label("TURN ORDER", Rect2(454, 46, 99, 42), 17, MUTED)
+	_turn_ribbon = StitchedTurnOrderRibbon.new()
+	_turn_ribbon.name = "StitchedTurnOrderRibbon"
+	_turn_ribbon.position = Vector2(557, 46)
+	_turn_ribbon.size = Vector2(690, 42)
+	add_child(_turn_ribbon)
 	_labels["candle"] = _label("", Rect2(1008, 10, 242, 33), 20, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
 	_label("4 HERO RANKS  •  rear to front", Rect2(40, 113, 520, 32), 20, ACCENT)
 	_label("4 FOE RANKS  •  front to rear", Rect2(705, 113, 535, 32), 20, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
@@ -354,12 +360,11 @@ func _refresh() -> void:
 	var acting := battle.get_unit(battle.current_actor_id())
 	var hero_turn := battle.current_side() == "hero" and not battle.is_over()
 	_labels["round"].text = "ROUND %d  ·  %s" % [battle.round_number(), battle.outcome().to_upper()]
-	var order: Array[String] = []
+	# Project authoritative round slots without reading a turn pointer or rolling.
+	var entries: Array[Dictionary] = []
 	for id in battle.turn_order():
-		var unit := battle.get_unit(str(id))
-		if not unit.is_empty():
-			order.append(("%s%s" % ["● " if id == battle.current_actor_id() else "· ", str(unit["name"])]))
-	_labels["order"].text = "TURN ORDER   " + "   ".join(order)
+		entries.append(battle.get_unit(str(id)))
+	_turn_ribbon.show_order(entries, battle.current_actor_id(), battle.is_over())
 	var band: Dictionary = battle.candle_band()
 	_labels["candle"].text = "CANDLE  %d / 100  ·  %s" % [battle.candle(), str(band.get("name", "glowing")).capitalize()]
 	_labels["hero"].text = str(acting.get("name", "Battle ended"))
