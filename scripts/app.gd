@@ -685,6 +685,9 @@ const STITCHED_SEWING_NODE_ID := "s5_scissor_crab_sewing_circle"
 const STITCHED_CLAW_ID := "scissor_crab_claw_arm"
 const STITCHED_SACK_ID := "fray_scavenger_sack_arm"
 const STITCHED_INKBRUSH_ID := "moth_scribe_inkbrush_arm"
+## The title Roadblock's authored trophy order. Each foe is only paid when this exact
+## encounter actually killed it; the ids and parts come from the canonical S5 roster.
+const STITCHED_ROADBLOCK_FOES := ["scissor_crab", "fray_scavenger", "moth_scribe"]
 const STITCHED_TITLE_WALLET := {"gold": 0, "scraps": 0}
 var base_screen: BaseScreen
 ## True only while an uncommitted opening chooser was launched from the Base.
@@ -1364,17 +1367,32 @@ func _build_title() -> void:
 
 
 ## S3's ordinary-title, card-free Stitched encounter. The preview record is only
-## a roster/foe source: none of its prototype Warden parts are admitted here.
+## the title roster: the three foes themselves come from the canonical S5 enemy
+## profiles, so every live Roadblock fight uses the same authored kit as the
+## catalog and every enemy trophy is resolved by the same loader.
 func _stitched_floor_config() -> Dictionary:
 	var preview := StitchedBattleScreen.read_preview()
 	if not preview.get("heroes") is Array or preview["heroes"].size() != 4 \
 			or not preview.get("foes") is Array or preview["foes"].size() != 3 \
 			or not preview.get("parts") is Array:
 		return {}
+	var roster := StitchedEnemyCatalog.load_catalog()
 	var warden := StitchedParts.load_catalog("res://data/parts/warden_parts.json")
-	var foes := StitchedParts.load_catalog("res://data/parts/enemy_parts.json")
-	if not bool(warden.get("ok", false)) or not bool(foes.get("ok", false)):
+	if not bool(roster.get("ok", false)) or not bool(warden.get("ok", false)):
 		return {}
+	var foes: Array = []
+	var seen_foes: Dictionary = {}
+	for entry in preview["foes"]:
+		if not entry is Dictionary:
+			return {}
+		var foe_id := str(entry.get("id", ""))
+		if foe_id.is_empty() or seen_foes.has(foe_id):
+			return {}
+		seen_foes[foe_id] = true
+		var foe := StitchedEnemyCatalog.foe_for(roster, foe_id)
+		if foe.is_empty():
+			return {}
+		foes.append(foe)
 	var generic: Array = []
 	for entry in preview["parts"]:
 		if not entry is Dictionary:
@@ -1384,7 +1402,7 @@ func _stitched_floor_config() -> Dictionary:
 	var definitions: Array = []
 	definitions.append_array(warden["parts"])
 	definitions.append_array(generic)
-	definitions.append_array(foes["parts"])
+	definitions.append_array(roster["parts"])
 	var catalog := StitchedParts.build_catalog(definitions)
 	if not bool(catalog.get("ok", false)):
 		return {}
@@ -1428,6 +1446,7 @@ func _stitched_floor_config() -> Dictionary:
 					return {}
 				hero["parts"][slot] = gear.duplicate(true)
 	config["parts"] = catalog["parts"]
+	config["foes"] = foes
 	config["seed"] = 4982026
 	config["title"] = "Floor 01 · Stitched Crossing"
 	config["subtitle"] = "Four heroes against three foes · sewn parts only"
@@ -1609,35 +1628,39 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 			and battle != null and battle.is_valid() and battle.is_over() \
 			and battle.outcome() == "victory" and not stage.receipts.is_empty()
 	var heroes: Array = []
+	var defeated: Array = []
+	var roster: Dictionary = {}
 	if won:
-		var crab: Dictionary = battle.get_unit("scissor_crab")
-		won = str(crab.get("side", "")) == "foe" and bool(crab.get("dead", false)) \
-				and int(crab.get("hp", -1)) == 0
-		for foe in battle.get_foes():
-			won = won and bool(foe.get("dead", false)) and int(foe.get("hp", -1)) == 0
+		roster = StitchedEnemyCatalog.load_catalog()
+		won = bool(roster.get("ok", false))
+		if won:
+			for foe in battle.get_foes():
+				var foe_id := str(foe.get("id", ""))
+				if not foe_id in STITCHED_ROADBLOCK_FOES:
+					won = false
+					continue
+				won = won and bool(foe.get("dead", false)) and int(foe.get("hp", -1)) == 0
+				defeated.append(foe_id)
+			won = won and defeated.size() == STITCHED_ROADBLOCK_FOES.size()
 		for hero in battle.get_heroes():
 			if not bool(hero.get("lost", false)):
 				heroes.append(hero.duplicate(true))
 	_close_stitched_fight()
 	# Retire combat authority before giving the player another interactive node.
 	if won and not heroes.is_empty():
-		if stitched_preview_satchel.size() < RunStitchedSewingSwap.SATCHEL_CAP:
+		# Only this encounter's own dead foes pay, and each pays through the one
+		# canonical S5 trophy the enemy roster resolved for it.
+		for foe_id in STITCHED_ROADBLOCK_FOES:
+			if not foe_id in defeated:
+				continue
+			if stitched_preview_satchel.size() >= RunStitchedSewingSwap.SATCHEL_CAP:
+				break
+			var trophy := StitchedEnemyCatalog.trophy_for(roster, str(foe_id))
+			var part: Dictionary = roster.get("parts_by_id", {}).get(trophy, {})
+			if trophy.is_empty() or part.is_empty():
+				continue
 			stitched_preview_satchel.append({
-				"id": STITCHED_CLAW_ID, "slot": "arms", "tier": 1, "torn": false,
-			})
-		var scavenger: Dictionary = battle.get_unit("fray_scavenger")
-		if str(scavenger.get("side", "")) == "foe" and bool(scavenger.get("dead", false)) \
-				and int(scavenger.get("hp", -1)) == 0 \
-				and stitched_preview_satchel.size() < RunStitchedSewingSwap.SATCHEL_CAP:
-			stitched_preview_satchel.append({
-				"id": STITCHED_SACK_ID, "slot": "arms", "tier": 1, "torn": false,
-			})
-		var scribe: Dictionary = battle.get_unit("moth_scribe")
-		if str(scribe.get("side", "")) == "foe" and bool(scribe.get("dead", false)) \
-				and int(scribe.get("hp", -1)) == 0 \
-				and stitched_preview_satchel.size() < RunStitchedSewingSwap.SATCHEL_CAP:
-			stitched_preview_satchel.append({
-				"id": STITCHED_INKBRUSH_ID, "slot": "arms", "tier": 1, "torn": false,
+				"id": trophy, "slot": str(part["slot"]), "tier": 1, "torn": false,
 			})
 		_open_stitched_sewing(heroes)
 
@@ -1651,10 +1674,15 @@ func _open_stitched_sewing(heroes: Array) -> bool:
 	if config.is_empty():
 		return false
 	var catalog := StitchedParts.build_catalog(config["parts"])
-	if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(STITCHED_CLAW_ID) \
-			or not catalog["by_id"].has(STITCHED_SACK_ID) \
-			or not catalog["by_id"].has(STITCHED_INKBRUSH_ID):
+	if not bool(catalog.get("ok", false)):
 		return false
+	var roster := StitchedEnemyCatalog.load_catalog()
+	if not bool(roster.get("ok", false)):
+		return false
+	for foe_id in STITCHED_ROADBLOCK_FOES:
+		var trophy := StitchedEnemyCatalog.trophy_for(roster, str(foe_id))
+		if trophy.is_empty() or not catalog["by_id"].has(trophy):
+			return false
 	var visit := RunStitchedSewingSwap.new(
 		STITCHED_SEWING_NODE_ID, heroes, stitched_preview_satchel, catalog["by_id"])
 	if visit.read_state().get("ok") != true:

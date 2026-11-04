@@ -38,6 +38,11 @@ func _norm(value: Variant) -> Variant:
 	if value is Dictionary:
 		var result := {}
 		for key in value:
+			# S5 appends the authored Stitched profile; the legacy catalog contract
+			# below stays exact, and tests/stitched_s5_enemy_catalog_test.gd owns the
+			# new profile.
+			if str(key) == "stitched":
+				continue
 			result[key] = _norm(value[key])
 		return result
 	if value is Array:

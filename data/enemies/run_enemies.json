@@ -1,84 +1,1994 @@
 [
-  {"id": "fray_scavenger", "name": "Fray Scavenger", "max_hp": 14, "art_path": "res://assets/paper/enemies/fray_scavenger.png",
-    "intent": {"target": "lowest_living_hp", "actions": [
-      {"type": "attack", "amount": 5, "weight": 3},
-      {"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
-      {"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
-      {"type": "block", "amount": 2, "weight": 2},
-      {"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
-      {"type": "steal_gold", "amount": 2, "weight": 1}
-    ]}},
-  {"id": "button_guard", "name": "Button Guard", "max_hp": 16, "art_path": "res://assets/paper/enemies/button_guard.png",
-    "intent": {"target": "front", "actions": [
-      {"type": "attack", "amount": 5, "weight": 1},
-      {"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
-      {"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
-      {"type": "block", "amount": 2, "weight": 2},
-      {"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
-      {"type": "shove", "amount": 0, "direction": 1, "weight": 1}
-    ]}},
-  {"id": "spool_stalker", "name": "Spool Stalker", "max_hp": 14, "art_path": "res://assets/paper/enemies/spool_stalker.png",
-    "intent": {"target": "exposed", "actions": [
-      {"type": "attack", "amount": 5, "weight": 1},
-      {"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
-      {"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
-      {"type": "block", "amount": 2, "weight": 2},
-      {"type": "debuff", "amount": 1, "status": "exposed", "weight": 2},
-      {"type": "buff", "amount": 2, "weight": 1}
-    ]}},
-  {"id": "seam_ripper", "name": "Seam Ripper", "max_hp": 18, "art_path": "res://assets/paper/enemies/seam_ripper.png",
-    "intent": {"target": "lowest_living_hp", "actions": [
-      {"type": "attack", "amount": 5, "weight": 3},
-      {"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
-      {"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
-      {"type": "block", "amount": 2, "weight": 2},
-      {"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
-      {"type": "buff", "amount": 2, "weight": 1}
-    ]}},
-  {"id": "felt_bulwark", "name": "Felt Bulwark", "max_hp": 18, "art_path": "res://assets/paper/enemies/felt_bulwark.png",
-    "intent": {"target": "front", "actions": [
-      {"type": "attack", "amount": 5, "weight": 1},
-      {"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
-      {"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
-      {"type": "block", "amount": 3, "weight": 3},
-      {"type": "buff", "amount": 2, "weight": 1}
-    ]}},
-  {"id": "moth_scribe", "name": "Moth Scribe", "max_hp": 14, "chew_block_on_attack": true, "art_path": "res://assets/paper/enemies/moth_scribe.png",
-    "intent": {"target": "exposed", "actions": [
-      {"type": "attack", "amount": 5, "weight": 1},
-      {"type": "attack", "amount": 6, "move": "attack2", "weight": 1},
-      {"type": "attack", "amount": 7, "move": "attack3", "weight": 1},
-      {"type": "debuff", "amount": 1, "status": "weak", "weight": 2},
-      {"type": "block", "amount": 2, "weight": 1}
-    ]}},
-  {"id": "pin_skitter", "name": "Pin Skitter", "max_hp": 13, "thorns": 2, "art_path": "res://assets/paper/enemies/pin_skitter.png",
-    "intent": {"target": "random", "actions": [
-      {"type": "attack", "amount": 5, "weight": 3},
-      {"type": "attack", "amount": 6, "weight": 1, "move": "attack2"},
-      {"type": "shove", "amount": 0, "direction": 1, "weight": 1},
-      {"type": "block", "amount": 1, "weight": 1}
-    ]}},
-  {"id": "thread_biter", "name": "Thread Biter", "max_hp": 15, "drain": true, "art_path": "res://assets/paper/enemies/thread_biter.png",
-    "intent": {"target": "lowest_living_hp", "actions": [
-      {"type": "attack", "amount": 5, "weight": 2},
-      {"type": "attack", "amount": 6, "weight": 1, "move": "attack2"},
-      {"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
-      {"type": "block", "amount": 2, "weight": 1}
-    ]}},
-  {"id":"scissor_crab","name":"Scissor Crab","max_hp":26,"chew_block_on_attack":true,"art_path":"res://assets/paper/enemies/scissor_crab.png","intent":{"target":"front","actions":[{"type":"snip_block","amount":0,"weight":2},{"type":"attack","amount":6,"hits":2,"weight":3},{"type":"attack","amount":8,"move":"attack2","weight":1},{"type":"attack","amount":7,"hits":2,"move":"attack3","weight":1}]}},
-  {"id":"thimble_beetle","name":"Thimble Beetle","max_hp":29,"art_path":"res://assets/paper/enemies/thimble_beetle.png","intent":{"target":"front","actions":[{"type":"block","amount":9,"weight":3},{"type":"attack","amount":5,"weight":2},{"type":"attack","amount":7,"move":"attack2","weight":1}]}},
-  {"id":"zipper_snake","name":"Zipper Snake","max_hp":24,"art_path":"res://assets/paper/enemies/zipper_snake.png","intent":{"target":"front","actions":[{"type":"shove","amount":0,"direction":-1,"weight":2},{"type":"attack","amount":6,"weight":3},{"type":"attack","amount":7,"hits":2,"move":"attack2","weight":1}]}},
-  {"id":"pincushion_hedgehog","name":"Pincushion Hedgehog","max_hp":25,"thorns":3,"art_path":"res://assets/paper/enemies/pincushion_hedgehog.png","intent":{"target":"front","actions":[{"type":"attack","amount":6,"weight":3},{"type":"block","amount":6,"weight":2},{"type":"attack","amount":6,"hits":2,"move":"attack2","weight":1}]}},
-  {"id":"moth_swarm","name":"Moth Swarm","max_hp":21,"chew_block_on_attack":true,"art_path":"res://assets/paper/enemies/moth_swarm.png","intent":{"target":"front","actions":[{"type":"snip_block","amount":0,"weight":2},{"type":"attack","amount":7,"weight":3},{"type":"debuff","status":"weak","amount":1,"weight":1},{"type":"summon","amount":0,"weight":1},{"type":"attack","amount":6,"hits":2,"move":"attack2","weight":1}]}},
-  {"id":"needle_wasp","name":"Needle Wasp","max_hp":22,"bleed_on_attack":true,"art_path":"res://assets/paper/enemies/needle_wasp.png","intent":{"target":"lowest_living_hp","actions":[{"type":"debuff","status":"bleed","amount":2,"weight":2},{"type":"attack","amount":8,"hits":2,"weight":3},{"type":"attack","amount":7,"move":"attack2","weight":1}]}},
-  {"id":"shearwing_mantis","name":"Shearwing Mantis","max_hp":26,"chew_block_on_attack":true,"art_path":"res://assets/paper/enemies/shearwing_mantis.png","intent":{"target":"front","actions":[{"type":"snip_block","amount":0,"weight":2},{"type":"attack","amount":8,"weight":3},{"type":"attack","amount":6,"hits":2,"move":"attack2","weight":1},{"type":"attack","amount":9,"move":"attack3","weight":1}]}},
-  {"id":"spoolback_hound","name":"Spoolback Hound","max_hp":28,"enrage":true,"art_path":"res://assets/paper/enemies/spoolback_hound.png","intent":{"target":"front","actions":[{"type":"shove","amount":0,"direction":1,"weight":2},{"type":"attack","amount":7,"weight":3},{"type":"attack","amount":8,"move":"attack2","weight":1},{"type":"attack","amount":6,"hits":2,"move":"attack3","weight":1}]}},
-  {"id":"inkbrush_imp","name":"Inkbrush Imp","max_hp":23,"art_path":"res://assets/paper/enemies/inkbrush_imp.png","intent":{"target":"lowest_living_hp","actions":[{"type":"debuff","amount":2,"status":"exposed","weight":2},{"type":"attack","amount":6,"weight":3},{"type":"debuff","amount":1,"status":"blind_next_attack","weight":2},{"type":"attack","amount":7,"move":"attack2","weight":1},{"type":"attack","amount":6,"hits":2,"move":"attack3","weight":1}]}},
-  {"id":"spindle_ram","name":"Spindle Ram","max_hp":30,"charge":true,"art_path":"res://assets/paper/enemies/spindle_ram.png","intent":{"target":"front","actions":[{"type":"shove","amount":0,"direction":1,"weight":2},{"type":"block","amount":7,"weight":2},{"type":"attack","amount":8,"weight":3},{"type":"attack","amount":7,"hits":2,"move":"attack2","weight":1},{"type":"attack","amount":9,"move":"attack3","weight":1}]}},
-  {"id":"razor_ribbon_wraith","name":"Razor Ribbon Wraith","max_hp":27,"revive_once":true,"art_path":"res://assets/paper/enemies/razor_ribbon_wraith.png","intent":{"target":"lowest_living_hp","actions":[{"type":"debuff","status":"bleed","amount":2,"weight":2},{"type":"debuff","status":"exposed","amount":1,"weight":1},{"type":"attack","amount":9,"weight":3},{"type":"attack","amount":8,"hits":2,"move":"attack2","weight":1},{"type":"attack","amount":6,"move":"attack3","weight":1}]}},
-  {"id":"clothespin_crusher","name":"Clothespin Crusher","max_hp":30,"art_path":"res://assets/paper/enemies/clothespin_crusher.png","intent":{"target":"front","actions":[{"type":"snip_block","amount":0,"weight":2},{"type":"attack","amount":8,"weight":3},{"type":"block","amount":7,"weight":1},{"type":"attack","amount":6,"move":"attack2","weight":1},{"type":"attack","amount":9,"hits":2,"move":"attack3","weight":1}]}},
-  {"id":"crochet_hook_harrier","name":"Crochet Hook Harrier","max_hp":26,"art_path":"res://assets/paper/enemies/crochet_hook_harrier.png","intent":{"target":"front","actions":[{"type":"shove","amount":0,"direction":-1,"weight":2},{"type":"attack","amount":7,"weight":3},{"type":"debuff","amount":1,"status":"exposed","weight":1},{"type":"attack","amount":6,"hits":2,"move":"attack2","weight":1},{"type":"attack","amount":9,"move":"attack3","weight":1}]}},
-  {"id":"thistle_patch_doll","name":"Thistle Patch Doll","max_hp":28,"thorns":2,"art_path":"res://assets/paper/enemies/thistle_patch_doll.png","intent":{"target":"front","actions":[{"type":"block","amount":8,"weight":2},{"type":"attack","amount":6,"weight":3},{"type":"attack","amount":7,"move":"attack2","weight":1},{"type":"attack","amount":6,"hits":2,"move":"attack3","weight":1}]}},
-  {"id":"bobbin_bat","name":"Bobbin Bat","max_hp":27,"drain":true,"art_path":"res://assets/paper/enemies/bobbin_bat.png","intent":{"target":"lowest_living_hp","actions":[{"type":"attack","amount":7,"hits":2,"weight":4},{"type":"debuff","status":"weak","amount":1,"weight":1},{"type":"block","amount":4,"weight":1},{"type":"attack","amount":8,"move":"attack2","weight":1},{"type":"attack","amount":6,"hits":2,"move":"attack3","weight":1}]}},
-  {"id":"quilt_termite","name":"Quilt Termite","max_hp":26,"split_on_death":true,"chew_block_on_attack":true,"art_path":"res://assets/paper/enemies/quilt_termite.png","intent":{"target":"front","actions":[{"type":"attack","amount":6,"weight":4},{"type":"block","amount":5,"weight":1},{"type":"debuff","status":"exposed","amount":1,"weight":1},{"type":"attack","amount":6,"hits":2,"move":"attack2","weight":1},{"type":"attack","amount":7,"move":"attack3","weight":1}]}}
+  {
+    "id": "fray_scavenger",
+    "name": "Fray Scavenger",
+    "max_hp": 14,
+    "art_path": "res://assets/paper/enemies/fray_scavenger.png",
+    "intent": {
+      "target": "lowest_living_hp",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 5,
+          "weight": 3
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "move": "attack3",
+          "weight": 1
+        },
+        {
+          "type": "block",
+          "amount": 2,
+          "weight": 2
+        },
+        {
+          "type": "debuff",
+          "amount": 1,
+          "status": "exposed",
+          "weight": 1
+        },
+        {
+          "type": "steal_gold",
+          "amount": 2,
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 30,
+      "speed": 4,
+      "dodge": 5,
+      "acc": 0,
+      "prot": 4,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "fray_scavenger_sack_arm",
+      "abilities": [
+        {
+          "id": "sack_swing",
+          "name": "Sack Swing",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [4, 7],
+          "crit": 3,
+          "effects": {
+            "fray": 4
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "rag_cloak",
+          "name": "Rag Cloak",
+          "kind": "buff",
+          "launch": [1, 2],
+          "target": [1, 2],
+          "target_side": "self",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "riposte": 1
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "button_guard",
+    "name": "Button Guard",
+    "max_hp": 16,
+    "art_path": "res://assets/paper/enemies/button_guard.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 5,
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "move": "attack3",
+          "weight": 1
+        },
+        {
+          "type": "block",
+          "amount": 2,
+          "weight": 2
+        },
+        {
+          "type": "debuff",
+          "amount": 1,
+          "status": "exposed",
+          "weight": 1
+        },
+        {
+          "type": "shove",
+          "amount": 0,
+          "direction": 1,
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 16,
+      "speed": 3,
+      "dodge": 4,
+      "acc": 0,
+      "prot": 6,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "button_guard_button_buckler",
+      "abilities": [
+        {
+          "id": "seam_punch",
+          "name": "Seam Punch",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [3, 5],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack"
+        },
+        {
+          "id": "button_wall",
+          "name": "Button Wall",
+          "kind": "buff",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "self",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "thorns": 2
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "spool_stalker",
+    "name": "Spool Stalker",
+    "max_hp": 14,
+    "art_path": "res://assets/paper/enemies/spool_stalker.png",
+    "intent": {
+      "target": "exposed",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 5,
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "move": "attack3",
+          "weight": 1
+        },
+        {
+          "type": "block",
+          "amount": 2,
+          "weight": 2
+        },
+        {
+          "type": "debuff",
+          "amount": 1,
+          "status": "exposed",
+          "weight": 2
+        },
+        {
+          "type": "buff",
+          "amount": 2,
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 14,
+      "speed": 6,
+      "dodge": 8,
+      "acc": 0,
+      "prot": 0,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "spool_stalker_thread_legs",
+      "abilities": [
+        {
+          "id": "spool_lash",
+          "name": "Spool Lash",
+          "kind": "melee",
+          "launch": [1, 3],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [3, 4],
+          "crit": 0,
+          "effects": {
+            "tangled": 1
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "spool_stalk",
+          "name": "Spool Stalk",
+          "kind": "buff",
+          "launch": [1, 3],
+          "target": [1, 3],
+          "target_side": "self",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "dodge": 5,
+            "duration": 1
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "seam_ripper",
+    "name": "Seam Ripper",
+    "max_hp": 18,
+    "art_path": "res://assets/paper/enemies/seam_ripper.png",
+    "intent": {
+      "target": "lowest_living_hp",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 5,
+          "weight": 3
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "move": "attack3",
+          "weight": 1
+        },
+        {
+          "type": "block",
+          "amount": 2,
+          "weight": 2
+        },
+        {
+          "type": "debuff",
+          "amount": 1,
+          "status": "bleed",
+          "weight": 1
+        },
+        {
+          "type": "buff",
+          "amount": 2,
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 18,
+      "speed": 5,
+      "dodge": 6,
+      "acc": 0,
+      "prot": 0,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "seam_ripper_notch_blade",
+      "abilities": [
+        {
+          "id": "seam_split",
+          "name": "Seam Split",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [4, 6],
+          "crit": 0,
+          "effects": {
+            "bleed": 1
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "ripper_feint",
+          "name": "Ripper Feint",
+          "kind": "debuff",
+          "launch": [1, 3],
+          "target": [1, 3],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "weak": 1
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "felt_bulwark",
+    "name": "Felt Bulwark",
+    "max_hp": 18,
+    "art_path": "res://assets/paper/enemies/felt_bulwark.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 5,
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "move": "attack3",
+          "weight": 1
+        },
+        {
+          "type": "block",
+          "amount": 3,
+          "weight": 3
+        },
+        {
+          "type": "buff",
+          "amount": 2,
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 18,
+      "speed": 2,
+      "dodge": 2,
+      "acc": 0,
+      "prot": 10,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "felt_bulwark_button_shield",
+      "abilities": [
+        {
+          "id": "felt_slam",
+          "name": "Felt Slam",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 84,
+          "dmg": [3, 4],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "bulwark_pad",
+          "name": "Bulwark Pad",
+          "kind": "buff",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "self",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "thorns": 2
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "moth_scribe",
+    "name": "Moth Scribe",
+    "max_hp": 14,
+    "chew_block_on_attack": true,
+    "art_path": "res://assets/paper/enemies/moth_scribe.png",
+    "intent": {
+      "target": "exposed",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 5,
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "move": "attack3",
+          "weight": 1
+        },
+        {
+          "type": "debuff",
+          "amount": 1,
+          "status": "weak",
+          "weight": 2
+        },
+        {
+          "type": "block",
+          "amount": 2,
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 19,
+      "speed": 3,
+      "dodge": 12,
+      "acc": 0,
+      "prot": 0,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "moth_scribe_inkbrush_arm",
+      "abilities": [
+        {
+          "id": "ink_flick",
+          "name": "Ink Flick",
+          "kind": "ranged",
+          "launch": [2, 3, 4],
+          "target": [2, 3, 4],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [3, 5],
+          "crit": 0,
+          "effects": {
+            "fray": 6
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "dust_scrawl",
+          "name": "Dust Scrawl",
+          "kind": "debuff",
+          "launch": [2, 3, 4],
+          "target": [1, 2, 3, 4],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "weak": 1
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "pin_skitter",
+    "name": "Pin Skitter",
+    "max_hp": 13,
+    "thorns": 2,
+    "art_path": "res://assets/paper/enemies/pin_skitter.png",
+    "intent": {
+      "target": "random",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 5,
+          "weight": 3
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "weight": 1,
+          "move": "attack2"
+        },
+        {
+          "type": "shove",
+          "amount": 0,
+          "direction": 1,
+          "weight": 1
+        },
+        {
+          "type": "block",
+          "amount": 1,
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 13,
+      "speed": 7,
+      "dodge": 10,
+      "acc": 0,
+      "prot": 0,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "pin_skitter_quill_legs",
+      "abilities": [
+        {
+          "id": "pin_prick",
+          "name": "Pin Prick",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [2, 3],
+          "crit": 0,
+          "effects": {
+            "bleed": 1
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "skitter",
+          "name": "Skitter",
+          "kind": "move",
+          "launch": [1, 3],
+          "target": [1, 3],
+          "target_side": "self",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "dodge": 4,
+            "duration": 1
+          },
+          "self_move": 1,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "thread_biter",
+    "name": "Thread Biter",
+    "max_hp": 15,
+    "drain": true,
+    "art_path": "res://assets/paper/enemies/thread_biter.png",
+    "intent": {
+      "target": "lowest_living_hp",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 5,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "weight": 1,
+          "move": "attack2"
+        },
+        {
+          "type": "debuff",
+          "amount": 1,
+          "status": "bleed",
+          "weight": 1
+        },
+        {
+          "type": "block",
+          "amount": 2,
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 15,
+      "speed": 4,
+      "dodge": 5,
+      "acc": 0,
+      "prot": 2,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "thread_biter_lint_gland",
+      "abilities": [
+        {
+          "id": "thread_bite",
+          "name": "Thread Bite",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 87,
+          "dmg": [3, 5],
+          "crit": 0,
+          "effects": {
+            "bleed": 1
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "lint_spit",
+          "name": "Lint Spit",
+          "kind": "debuff",
+          "launch": [1, 3],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 85,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "exposed": 1
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "scissor_crab",
+    "name": "Scissor Crab",
+    "max_hp": 26,
+    "chew_block_on_attack": true,
+    "art_path": "res://assets/paper/enemies/scissor_crab.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "snip_block",
+          "amount": 0,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "hits": 2,
+          "weight": 3
+        },
+        {
+          "type": "attack",
+          "amount": 8,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "hits": 2,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 22,
+      "speed": 5,
+      "dodge": 6,
+      "acc": 0,
+      "prot": 8,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "scissor_crab_claw_arm",
+      "abilities": [
+        {
+          "id": "pinch",
+          "name": "Pinch",
+          "kind": "melee",
+          "launch": [1, 2, 3],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [3, 6],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "thread_snip",
+          "name": "Thread Snip",
+          "kind": "debuff",
+          "launch": [1, 2, 3],
+          "target": [1, 2, 3],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 92,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "snip": 1
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "thimble_beetle",
+    "name": "Thimble Beetle",
+    "max_hp": 29,
+    "art_path": "res://assets/paper/enemies/thimble_beetle.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "block",
+          "amount": 9,
+          "weight": 3
+        },
+        {
+          "type": "attack",
+          "amount": 5,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "move": "attack2",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 29,
+      "speed": 2,
+      "dodge": 2,
+      "acc": 0,
+      "prot": 10,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "thimble_beetle_shell",
+      "abilities": [
+        {
+          "id": "thimble_ram",
+          "name": "Thimble Ram",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 84,
+          "dmg": [3, 4],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "shell_up",
+          "name": "Shell Up",
+          "kind": "buff",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "self",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "thorns": 3
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "zipper_snake",
+    "name": "Zipper Snake",
+    "max_hp": 24,
+    "art_path": "res://assets/paper/enemies/zipper_snake.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "shove",
+          "amount": 0,
+          "direction": -1,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "weight": 3
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "hits": 2,
+          "move": "attack2",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 24,
+      "speed": 6,
+      "dodge": 7,
+      "acc": 0,
+      "prot": 0,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "zipper_snake_zip_teeth",
+      "abilities": [
+        {
+          "id": "zip_lunge",
+          "name": "Zip Lunge",
+          "kind": "melee",
+          "launch": [1, 3],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [4, 5],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "tooth_shove",
+          "name": "Tooth Shove",
+          "kind": "debuff",
+          "launch": [1, 3],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 90,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "push": 1
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "pincushion_hedgehog",
+    "name": "Pincushion Hedgehog",
+    "max_hp": 25,
+    "thorns": 3,
+    "art_path": "res://assets/paper/enemies/pincushion_hedgehog.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 6,
+          "weight": 3
+        },
+        {
+          "type": "block",
+          "amount": 6,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "hits": 2,
+          "move": "attack2",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 25,
+      "speed": 3,
+      "dodge": 4,
+      "acc": 0,
+      "prot": 6,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "pincushion_hedgehog_quill_mail",
+      "abilities": [
+        {
+          "id": "quill_burst",
+          "name": "Quill Burst",
+          "kind": "melee",
+          "launch": [1, 4],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 85,
+          "dmg": [2, 3],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "bristle",
+          "name": "Bristle",
+          "kind": "buff",
+          "launch": [1, 3],
+          "target": [1, 3],
+          "target_side": "self",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "thorns": 3
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "moth_swarm",
+    "name": "Moth Swarm",
+    "max_hp": 21,
+    "chew_block_on_attack": true,
+    "art_path": "res://assets/paper/enemies/moth_swarm.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "snip_block",
+          "amount": 0,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "weight": 3
+        },
+        {
+          "type": "debuff",
+          "status": "weak",
+          "amount": 1,
+          "weight": 1
+        },
+        {
+          "type": "summon",
+          "amount": 0,
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "hits": 2,
+          "move": "attack2",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 21,
+      "speed": 6,
+      "dodge": 12,
+      "acc": 0,
+      "prot": 0,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "moth_swarm_wings",
+      "abilities": [
+        {
+          "id": "wing_dust",
+          "name": "Wing Dust",
+          "kind": "ranged",
+          "launch": [1, 4],
+          "target": [1, 3],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [2, 3],
+          "crit": 0,
+          "effects": {
+            "fray": 4
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "swarm_blur",
+          "name": "Swarm Blur",
+          "kind": "buff",
+          "launch": [1, 3],
+          "target": [1, 3],
+          "target_side": "self",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "dodge": 6,
+            "duration": 1
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "needle_wasp",
+    "name": "Needle Wasp",
+    "max_hp": 22,
+    "bleed_on_attack": true,
+    "art_path": "res://assets/paper/enemies/needle_wasp.png",
+    "intent": {
+      "target": "lowest_living_hp",
+      "actions": [
+        {
+          "type": "debuff",
+          "status": "bleed",
+          "amount": 2,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 8,
+          "hits": 2,
+          "weight": 3
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "move": "attack2",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 22,
+      "speed": 7,
+      "dodge": 8,
+      "acc": 0,
+      "prot": 0,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "needle_wasp_stinger",
+      "abilities": [
+        {
+          "id": "needle_sting",
+          "name": "Needle Sting",
+          "kind": "melee",
+          "launch": [1, 3],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [3, 4],
+          "crit": 0,
+          "effects": {
+            "bleed": 2
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "wasp_dart",
+          "name": "Wasp Dart",
+          "kind": "move",
+          "launch": [1, 3],
+          "target": [1, 3],
+          "target_side": "self",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "dodge": 5,
+            "duration": 1
+          },
+          "self_move": 1,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "shearwing_mantis",
+    "name": "Shearwing Mantis",
+    "max_hp": 26,
+    "chew_block_on_attack": true,
+    "art_path": "res://assets/paper/enemies/shearwing_mantis.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "snip_block",
+          "amount": 0,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 8,
+          "weight": 3
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "hits": 2,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 9,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 26,
+      "speed": 6,
+      "dodge": 7,
+      "acc": 0,
+      "prot": 2,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "shearwing_mantis_shear_wing",
+      "abilities": [
+        {
+          "id": "shear_slash",
+          "name": "Shear Slash",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [4, 6],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "wing_shear",
+          "name": "Wing Shear",
+          "kind": "debuff",
+          "launch": [1, 3],
+          "target": [1, 3],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "bleed": 2
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "spoolback_hound",
+    "name": "Spoolback Hound",
+    "max_hp": 28,
+    "enrage": true,
+    "art_path": "res://assets/paper/enemies/spoolback_hound.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "shove",
+          "amount": 0,
+          "direction": 1,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "weight": 3
+        },
+        {
+          "type": "attack",
+          "amount": 8,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "hits": 2,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 28,
+      "speed": 6,
+      "dodge": 5,
+      "acc": 0,
+      "prot": 2,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "spoolback_hound_spool_hide",
+      "abilities": [
+        {
+          "id": "spool_bite",
+          "name": "Spool Bite",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [4, 6],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "back_shove",
+          "name": "Back Shove",
+          "kind": "debuff",
+          "launch": [1, 3],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 90,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "push": 1
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "inkbrush_imp",
+    "name": "Inkbrush Imp",
+    "max_hp": 23,
+    "art_path": "res://assets/paper/enemies/inkbrush_imp.png",
+    "intent": {
+      "target": "lowest_living_hp",
+      "actions": [
+        {
+          "type": "debuff",
+          "amount": 2,
+          "status": "exposed",
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "weight": 3
+        },
+        {
+          "type": "debuff",
+          "amount": 1,
+          "status": "blind_next_attack",
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "hits": 2,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 23,
+      "speed": 5,
+      "dodge": 9,
+      "acc": 0,
+      "prot": 0,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "inkbrush_imp_ink_horn",
+      "abilities": [
+        {
+          "id": "ink_lash",
+          "name": "Ink Lash",
+          "kind": "ranged",
+          "launch": [2, 3, 4],
+          "target": [1, 3],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 87,
+          "dmg": [3, 4],
+          "crit": 0,
+          "effects": {
+            "exposed": 1
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "blinding_ink",
+          "name": "Blinding Ink",
+          "kind": "debuff",
+          "launch": [2, 3, 4],
+          "target": [1, 3],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "blind": 1
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "spindle_ram",
+    "name": "Spindle Ram",
+    "max_hp": 30,
+    "charge": true,
+    "art_path": "res://assets/paper/enemies/spindle_ram.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "shove",
+          "amount": 0,
+          "direction": 1,
+          "weight": 2
+        },
+        {
+          "type": "block",
+          "amount": 7,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 8,
+          "weight": 3
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "hits": 2,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 9,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 30,
+      "speed": 4,
+      "dodge": 3,
+      "acc": 0,
+      "prot": 6,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "spindle_ram_horn",
+      "abilities": [
+        {
+          "id": "horn_charge",
+          "name": "Horn Charge",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [4, 6],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "yarn_hurl",
+          "name": "Yarn Hurl",
+          "kind": "ranged",
+          "launch": [1, 3],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 85,
+          "dmg": [2, 3],
+          "crit": 0,
+          "effects": {
+            "tangled": 1
+          },
+          "self_move": 0,
+          "move": "attack3"
+        }
+      ]
+    }
+  },
+  {
+    "id": "razor_ribbon_wraith",
+    "name": "Razor Ribbon Wraith",
+    "max_hp": 27,
+    "revive_once": true,
+    "art_path": "res://assets/paper/enemies/razor_ribbon_wraith.png",
+    "intent": {
+      "target": "lowest_living_hp",
+      "actions": [
+        {
+          "type": "debuff",
+          "status": "bleed",
+          "amount": 2,
+          "weight": 2
+        },
+        {
+          "type": "debuff",
+          "status": "exposed",
+          "amount": 1,
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 9,
+          "weight": 3
+        },
+        {
+          "type": "attack",
+          "amount": 8,
+          "hits": 2,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 27,
+      "speed": 7,
+      "dodge": 9,
+      "acc": 0,
+      "prot": 0,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "razor_ribbon_wraith_ribbon",
+      "abilities": [
+        {
+          "id": "ribbon_cut",
+          "name": "Ribbon Cut",
+          "kind": "melee",
+          "launch": [1, 3],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [4, 5],
+          "crit": 0,
+          "effects": {
+            "bleed": 2
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "wraith_wail",
+          "name": "Wraith Wail",
+          "kind": "debuff",
+          "launch": [1, 4],
+          "target": [1, 2, 3, 4],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 90,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "fray": 8
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "clothespin_crusher",
+    "name": "Clothespin Crusher",
+    "max_hp": 30,
+    "art_path": "res://assets/paper/enemies/clothespin_crusher.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "snip_block",
+          "amount": 0,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 8,
+          "weight": 3
+        },
+        {
+          "type": "block",
+          "amount": 7,
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 9,
+          "hits": 2,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 30,
+      "speed": 3,
+      "dodge": 3,
+      "acc": 0,
+      "prot": 8,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "clothespin_crusher_clamp",
+      "abilities": [
+        {
+          "id": "clamp_crush",
+          "name": "Clamp Crush",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 85,
+          "dmg": [4, 6],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "pin_pitch",
+          "name": "Pin Pitch",
+          "kind": "ranged",
+          "launch": [1, 4],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 84,
+          "dmg": [2, 3],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack3"
+        }
+      ]
+    }
+  },
+  {
+    "id": "crochet_hook_harrier",
+    "name": "Crochet Hook Harrier",
+    "max_hp": 26,
+    "art_path": "res://assets/paper/enemies/crochet_hook_harrier.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "shove",
+          "amount": 0,
+          "direction": -1,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "weight": 3
+        },
+        {
+          "type": "debuff",
+          "amount": 1,
+          "status": "exposed",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "hits": 2,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 9,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 26,
+      "speed": 6,
+      "dodge": 8,
+      "acc": 0,
+      "prot": 2,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "crochet_hook_harrier_hook",
+      "abilities": [
+        {
+          "id": "hook_drag",
+          "name": "Hook Drag",
+          "kind": "melee",
+          "launch": [1, 3],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 87,
+          "dmg": [3, 5],
+          "crit": 0,
+          "effects": {
+            "pull": 1
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "harry",
+          "name": "Harry",
+          "kind": "move",
+          "launch": [1, 3],
+          "target": [1, 3],
+          "target_side": "self",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "dodge": 4,
+            "duration": 1
+          },
+          "self_move": 1,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "thistle_patch_doll",
+    "name": "Thistle Patch Doll",
+    "max_hp": 28,
+    "thorns": 2,
+    "art_path": "res://assets/paper/enemies/thistle_patch_doll.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "block",
+          "amount": 8,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "weight": 3
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "hits": 2,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 28,
+      "speed": 3,
+      "dodge": 4,
+      "acc": 0,
+      "prot": 6,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "thistle_patch_doll_patch",
+      "abilities": [
+        {
+          "id": "thistle_burst",
+          "name": "Thistle Burst",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 85,
+          "dmg": [3, 4],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "patch_prick",
+          "name": "Patch Prick",
+          "kind": "debuff",
+          "launch": [1, 3],
+          "target": [1, 3],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "bleed": 2
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "bobbin_bat",
+    "name": "Bobbin Bat",
+    "max_hp": 27,
+    "drain": true,
+    "art_path": "res://assets/paper/enemies/bobbin_bat.png",
+    "intent": {
+      "target": "lowest_living_hp",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 7,
+          "hits": 2,
+          "weight": 4
+        },
+        {
+          "type": "debuff",
+          "status": "weak",
+          "amount": 1,
+          "weight": 1
+        },
+        {
+          "type": "block",
+          "amount": 4,
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 8,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "hits": 2,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 27,
+      "speed": 8,
+      "dodge": 11,
+      "acc": 0,
+      "prot": 0,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "bobbin_bat_wing",
+      "abilities": [
+        {
+          "id": "bobbin_dive",
+          "name": "Bobbin Dive",
+          "kind": "melee",
+          "launch": [1, 3],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [3, 4],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "sonar_shriek",
+          "name": "Sonar Shriek",
+          "kind": "debuff",
+          "launch": [1, 4],
+          "target": [1, 2, 3, 4],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 90,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "weak": 1
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "quilt_termite",
+    "name": "Quilt Termite",
+    "max_hp": 26,
+    "split_on_death": true,
+    "chew_block_on_attack": true,
+    "art_path": "res://assets/paper/enemies/quilt_termite.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 6,
+          "weight": 4
+        },
+        {
+          "type": "block",
+          "amount": 5,
+          "weight": 1
+        },
+        {
+          "type": "debuff",
+          "status": "exposed",
+          "amount": 1,
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "hits": 2,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 26,
+      "speed": 4,
+      "dodge": 5,
+      "acc": 0,
+      "prot": 4,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "quilt_termite_mandible",
+      "abilities": [
+        {
+          "id": "quilt_chew",
+          "name": "Quilt Chew",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 87,
+          "dmg": [3, 4],
+          "crit": 0,
+          "effects": {
+            "bleed": 1
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "termite_swarm",
+          "name": "Termite Swarm",
+          "kind": "buff",
+          "launch": [1, 3],
+          "target": [1, 3],
+          "target_side": "self",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "dodge": 4,
+            "duration": 1
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  }
 ]

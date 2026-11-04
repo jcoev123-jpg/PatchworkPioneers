@@ -1,13 +1,141 @@
 [
-  {"id": "ragling", "name": "Ragling", "max_hp": 12, "art_path": "res://assets/paper/enemies/ragling.png",
-    "intent": {"target": "front", "actions": [
-      {"type": "attack", "amount": 5, "weight": 3}
-    ]}},
-  {"id": "ragling_guard", "name": "Guard Ragling", "max_hp": 12, "art_path": "res://assets/paper/enemies/ragling_guard.png",
-    "intent": {"target": "front", "actions": [
-      {"type": "block", "amount": 5, "weight": 3},
-      {"type": "shove", "amount": 0, "direction": 1, "weight": 2},
-      {"type": "attack", "amount": 6, "weight": 1},
-      {"type": "attack", "amount": 7, "weight": 1, "move": "attack2"}
-    ]}}
+  {
+    "id": "ragling",
+    "name": "Ragling",
+    "max_hp": 12,
+    "art_path": "res://assets/paper/enemies/ragling.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 5,
+          "weight": 3
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 12,
+      "speed": 4,
+      "dodge": 8,
+      "acc": 0,
+      "prot": 0,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "ragling_tatter_claw",
+      "abilities": [
+        {
+          "id": "rag_rake",
+          "name": "Rag Rake",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 85,
+          "dmg": [3, 5],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack"
+        },
+        {
+          "id": "loose_thread",
+          "name": "Loose Thread",
+          "kind": "debuff",
+          "launch": [1, 3],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "fray": 5
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "ragling_guard",
+    "name": "Guard Ragling",
+    "max_hp": 12,
+    "art_path": "res://assets/paper/enemies/ragling_guard.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "block",
+          "amount": 5,
+          "weight": 3
+        },
+        {
+          "type": "shove",
+          "amount": 0,
+          "direction": 1,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "weight": 1,
+          "move": "attack2"
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 12,
+      "speed": 3,
+      "dodge": 4,
+      "acc": 0,
+      "prot": 6,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "ragling_guard_button_plate",
+      "abilities": [
+        {
+          "id": "padding_bash",
+          "name": "Padding Bash",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [3, 4],
+          "crit": 0,
+          "effects": {
+            "exposed": 1
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "button_bulwark",
+          "name": "Button Bulwark",
+          "kind": "buff",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "self",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "thorns": 2
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  }
 ]

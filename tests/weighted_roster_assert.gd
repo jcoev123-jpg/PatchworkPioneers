@@ -30,6 +30,10 @@ static func project(value: Variant) -> Variant:
 			if not _valid_intent(record.get("intent")):
 				return {"invalid_weighted_enemy": record.get("id")}
 			record.erase("intent")
+			# S5 appends an authored "stitched" profile beside the legacy card record.
+			# This helper protects the historical identity/HP/Block/art fields those
+			# tests assert; tests/stitched_s5_enemy_catalog_test.gd owns the profile.
+			record.erase("stitched")
 		return record
 	return value
 

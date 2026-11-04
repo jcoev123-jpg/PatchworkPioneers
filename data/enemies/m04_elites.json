@@ -1,52 +1,711 @@
 [
-  {"id": "needle_marshal", "name": "Needle Marshal", "max_hp": 28, "thorns": 3, "bleed_on_attack": true, "enrage": true, "art_path": "res://assets/paper/enemies/needle_marshal.png",
-    "intent": {"target": "front", "actions": [
-      {"type": "attack", "amount": 5, "weight": 2},
-      {"type": "attack", "amount": 4, "move": "attack2", "weight": 1},
-      {"type": "attack", "amount": 6, "move": "attack3", "weight": 1},
-      {"type": "buff", "amount": 3, "weight": 1},
-      {"type": "shove", "amount": 0, "direction": 1, "weight": 1}
-    ]}},
-  {"id": "spool_hexer", "name": "Spool Hexer", "max_hp": 24, "art_path": "res://assets/paper/enemies/spool_hexer.png",
-    "intent": {"target": "random", "actions": [
-      {"type": "attack", "amount": 9, "weight": 1},
-      {"type": "attack", "amount": 8, "move": "attack2", "weight": 1},
-      {"type": "attack", "amount": 10, "move": "attack3", "weight": 1},
-      {"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
-      {"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
-    ]}},
-  {"id": "scissor_bailiff", "name": "Scissor Bailiff", "max_hp": 36, "bleed_on_attack": true, "chew_block_on_attack": true, "art_path": "res://assets/paper/enemies/scissor_bailiff.png",
-    "intent": {"target": "front", "actions": [
-      {"type": "snip_block", "amount": 0, "weight": 2},
-      {"type": "debuff", "amount": 2, "status": "bleed", "weight": 2},
-      {"type": "attack", "amount": 9, "weight": 2},
-      {"type": "attack", "amount": 8, "hits": 2, "move": "attack2", "weight": 1},
-      {"type": "attack", "amount": 7, "move": "attack3", "weight": 1}
-    ]}},
-  {"id": "zipper_hauler", "name": "Zipper Hauler", "max_hp": 38, "art_path": "res://assets/paper/enemies/zipper_hauler.png",
-    "intent": {"target": "front", "actions": [
-      {"type": "shove", "amount": 0, "direction": -1, "weight": 2},
-      {"type": "debuff", "amount": 1, "status": "exposed", "weight": 2},
-      {"type": "attack", "amount": 8, "weight": 2},
-      {"type":"attack","amount":10,"move":"attack2","weight":1},
-      {"type":"attack","amount":6,"hits":2,"move":"attack3","weight":1}
-    ]}},
-  {"id": "needle_briar_guard", "name": "Needle Briar Guard", "max_hp": 42, "thorns": 3, "art_path": "res://assets/paper/enemies/needle_briar_guard.png",
-    "intent": {"target": "front", "actions": [
-      {"type": "debuff", "amount": 2, "status": "bleed", "weight": 2},
-      {"type": "block", "amount": 8, "weight": 2},
-      {"type": "attack", "amount": 9, "weight": 3},
-      {"type": "attack", "amount": 8, "hits": 2, "move": "attack2", "weight": 1},
-      {"type": "attack", "amount": 7, "move": "attack3", "weight": 1}
-    ]}},
-  {"id": "spool_snarekeeper", "name": "Spool Snarekeeper", "max_hp": 40, "art_path": "res://assets/paper/enemies/spool_snarekeeper.png",
-    "intent": {"target": "front", "actions": [
-      {"type": "shove", "amount": 0, "direction": 1, "weight": 2},
-      {"type": "debuff", "amount": 2, "status": "weak", "weight": 2},
-      {"type": "attack", "amount": 8, "weight": 3},
-      {"type": "attack", "amount": 9, "move": "attack2", "weight": 1},
-      {"type": "attack", "amount": 6, "hits": 2, "move": "attack3", "weight": 1}
-    ]}}
-  ,{"id":"pincushion_matriarch","name":"Pincushion Matriarch","max_hp":44,"thorns":4,"art_path":"res://assets/paper/enemies/pincushion_matriarch.png","intent":{"target":"front","actions":[{"type":"attack","amount":9,"weight":3},{"type":"debuff","status":"bleed","amount":2,"weight":2},{"type":"block","amount":9,"weight":2},{"type":"attack","amount":8,"hits":2,"move":"attack2","weight":1},{"type":"attack","amount":10,"move":"attack3","weight":1}]}}
-  ,{"id":"spool_leech","name":"Spool Leech","max_hp":42,"drain":true,"chew_block_on_attack":true,"art_path":"res://assets/paper/enemies/spool_leech.png","intent":{"target":"lowest_living_hp","actions":[{"type":"attack","amount":8,"weight":4},{"type":"debuff","status":"weak","amount":2,"weight":2},{"type":"block","amount":6,"weight":1},{"type":"attack","amount":6,"hits":2,"move":"attack2","weight":1},{"type":"attack","amount":10,"move":"attack3","weight":1}]}}
+  {
+    "id": "needle_marshal",
+    "name": "Needle Marshal",
+    "max_hp": 28,
+    "thorns": 3,
+    "bleed_on_attack": true,
+    "enrage": true,
+    "art_path": "res://assets/paper/enemies/needle_marshal.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 5,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 4,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "move": "attack3",
+          "weight": 1
+        },
+        {
+          "type": "buff",
+          "amount": 3,
+          "weight": 1
+        },
+        {
+          "type": "shove",
+          "amount": 0,
+          "direction": 1,
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 28,
+      "speed": 5,
+      "dodge": 6,
+      "acc": 0,
+      "prot": 6,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "needle_marshal_sash",
+      "abilities": [
+        {
+          "id": "marshal_prick",
+          "name": "Marshal Prick",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 87,
+          "dmg": [4, 6],
+          "crit": 0,
+          "effects": {
+            "bleed": 1
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "marshal_volley",
+          "name": "Marshal Volley",
+          "kind": "ranged",
+          "launch": [1, 4],
+          "target": [1, 3],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 85,
+          "dmg": [3, 5],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack3"
+        },
+        {
+          "id": "iron_discipline",
+          "name": "Iron Discipline",
+          "kind": "buff",
+          "launch": [1, 3],
+          "target": [1, 2, 3, 4],
+          "target_side": "ally",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "thorns": 2
+          },
+          "self_move": 0,
+          "move": "guard"
+        }
+      ]
+    }
+  },
+  {
+    "id": "spool_hexer",
+    "name": "Spool Hexer",
+    "max_hp": 24,
+    "art_path": "res://assets/paper/enemies/spool_hexer.png",
+    "intent": {
+      "target": "random",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 9,
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 8,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 10,
+          "move": "attack3",
+          "weight": 1
+        },
+        {
+          "type": "debuff",
+          "amount": 1,
+          "status": "exposed",
+          "weight": 1
+        },
+        {
+          "type": "debuff",
+          "amount": 1,
+          "status": "weak",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 24,
+      "speed": 6,
+      "dodge": 7,
+      "acc": 0,
+      "prot": 2,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "spool_hexer_spool",
+      "abilities": [
+        {
+          "id": "hex_bolt",
+          "name": "Hex Bolt",
+          "kind": "ranged",
+          "launch": [1, 4],
+          "target": [1, 3],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [4, 5],
+          "crit": 0,
+          "effects": {
+            "weak": 1
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "spool_curse",
+          "name": "Spool Curse",
+          "kind": "debuff",
+          "launch": [1, 4],
+          "target": [1, 2, 3, 4],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 90,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "exposed": 2
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "scissor_bailiff",
+    "name": "Scissor Bailiff",
+    "max_hp": 36,
+    "bleed_on_attack": true,
+    "chew_block_on_attack": true,
+    "art_path": "res://assets/paper/enemies/scissor_bailiff.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "snip_block",
+          "amount": 0,
+          "weight": 2
+        },
+        {
+          "type": "debuff",
+          "amount": 2,
+          "status": "bleed",
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 9,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 8,
+          "hits": 2,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 36,
+      "speed": 4,
+      "dodge": 5,
+      "acc": 0,
+      "prot": 8,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "scissor_bailiff_shears",
+      "abilities": [
+        {
+          "id": "bailiff_snip",
+          "name": "Bailiff Snip",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [4, 6],
+          "crit": 0,
+          "effects": {
+            "bleed": 2
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "seize_thread",
+          "name": "Seize Thread",
+          "kind": "debuff",
+          "launch": [1, 3],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "snip": 1
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "zipper_hauler",
+    "name": "Zipper Hauler",
+    "max_hp": 38,
+    "art_path": "res://assets/paper/enemies/zipper_hauler.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "shove",
+          "amount": 0,
+          "direction": -1,
+          "weight": 2
+        },
+        {
+          "type": "debuff",
+          "amount": 1,
+          "status": "exposed",
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 8,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 10,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "hits": 2,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 38,
+      "speed": 3,
+      "dodge": 3,
+      "acc": 0,
+      "prot": 10,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "zipper_hauler_chain",
+      "abilities": [
+        {
+          "id": "hauler_slam",
+          "name": "Hauler Slam",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 84,
+          "dmg": [5, 7],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "chain_drag",
+          "name": "Chain Drag",
+          "kind": "debuff",
+          "launch": [1, 4],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "push": 1
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "needle_briar_guard",
+    "name": "Needle Briar Guard",
+    "max_hp": 42,
+    "thorns": 3,
+    "art_path": "res://assets/paper/enemies/needle_briar_guard.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "debuff",
+          "amount": 2,
+          "status": "bleed",
+          "weight": 2
+        },
+        {
+          "type": "block",
+          "amount": 8,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 9,
+          "weight": 3
+        },
+        {
+          "type": "attack",
+          "amount": 8,
+          "hits": 2,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 7,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 42,
+      "speed": 3,
+      "dodge": 4,
+      "acc": 0,
+      "prot": 10,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "needle_briar_guard_briar",
+      "abilities": [
+        {
+          "id": "briar_thrust",
+          "name": "Briar Thrust",
+          "kind": "melee",
+          "launch": [1, 3],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [4, 5],
+          "crit": 0,
+          "effects": {
+            "bleed": 2
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "briar_wall",
+          "name": "Briar Wall",
+          "kind": "buff",
+          "launch": [1, 3],
+          "target": [1, 2, 3, 4],
+          "target_side": "ally",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "thorns": 3
+          },
+          "self_move": 0,
+          "move": "guard"
+        }
+      ]
+    }
+  },
+  {
+    "id": "spool_snarekeeper",
+    "name": "Spool Snarekeeper",
+    "max_hp": 40,
+    "art_path": "res://assets/paper/enemies/spool_snarekeeper.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "shove",
+          "amount": 0,
+          "direction": 1,
+          "weight": 2
+        },
+        {
+          "type": "debuff",
+          "amount": 2,
+          "status": "weak",
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 8,
+          "weight": 3
+        },
+        {
+          "type": "attack",
+          "amount": 9,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "hits": 2,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 40,
+      "speed": 4,
+      "dodge": 5,
+      "acc": 0,
+      "prot": 8,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "spool_snarekeeper_snare",
+      "abilities": [
+        {
+          "id": "snare_lash",
+          "name": "Snare Lash",
+          "kind": "melee",
+          "launch": [1, 3],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [4, 5],
+          "crit": 0,
+          "effects": {
+            "tangled": 1
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "spool_snare",
+          "name": "Spool Snare",
+          "kind": "debuff",
+          "launch": [1, 4],
+          "target": [1, 3],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 90,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "fray": 6
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  },
+  {
+    "id": "pincushion_matriarch",
+    "name": "Pincushion Matriarch",
+    "max_hp": 44,
+    "thorns": 4,
+    "art_path": "res://assets/paper/enemies/pincushion_matriarch.png",
+    "intent": {
+      "target": "front",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 9,
+          "weight": 3
+        },
+        {
+          "type": "debuff",
+          "status": "bleed",
+          "amount": 2,
+          "weight": 2
+        },
+        {
+          "type": "block",
+          "amount": 9,
+          "weight": 2
+        },
+        {
+          "type": "attack",
+          "amount": 8,
+          "hits": 2,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 10,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 44,
+      "speed": 3,
+      "dodge": 4,
+      "acc": 0,
+      "prot": 8,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "pincushion_matriarch_crown",
+      "abilities": [
+        {
+          "id": "matriarch_burst",
+          "name": "Matriarch Burst",
+          "kind": "melee",
+          "launch": [1, 4],
+          "target": [1, 2, 3],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 85,
+          "dmg": [3, 4],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "pin_crown",
+          "name": "Pin Crown",
+          "kind": "buff",
+          "launch": [1, 3],
+          "target": [1, 2, 3, 4],
+          "target_side": "ally",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "thorns": 4
+          },
+          "self_move": 0,
+          "move": "guard"
+        }
+      ]
+    }
+  },
+  {
+    "id": "spool_leech",
+    "name": "Spool Leech",
+    "max_hp": 42,
+    "drain": true,
+    "chew_block_on_attack": true,
+    "art_path": "res://assets/paper/enemies/spool_leech.png",
+    "intent": {
+      "target": "lowest_living_hp",
+      "actions": [
+        {
+          "type": "attack",
+          "amount": 8,
+          "weight": 4
+        },
+        {
+          "type": "debuff",
+          "status": "weak",
+          "amount": 2,
+          "weight": 2
+        },
+        {
+          "type": "block",
+          "amount": 6,
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 6,
+          "hits": 2,
+          "move": "attack2",
+          "weight": 1
+        },
+        {
+          "type": "attack",
+          "amount": 10,
+          "move": "attack3",
+          "weight": 1
+        }
+      ]
+    },
+    "stitched": {
+      "max_hp": 42,
+      "speed": 4,
+      "dodge": 5,
+      "acc": 0,
+      "prot": 6,
+      "is_boss": false,
+      "turns_per_round": 1,
+      "trophy": "spool_leech_maw",
+      "abilities": [
+        {
+          "id": "leech_bite",
+          "name": "Leech Bite",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [4, 6],
+          "crit": 0,
+          "effects": {
+            "bleed": 1
+          },
+          "self_move": 0,
+          "move": "attack2"
+        },
+        {
+          "id": "drain_thread",
+          "name": "Drain Thread",
+          "kind": "debuff",
+          "launch": [1, 3],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 90,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "weak": 2
+          },
+          "self_move": 0,
+          "move": "skill"
+        }
+      ]
+    }
+  }
 ]
