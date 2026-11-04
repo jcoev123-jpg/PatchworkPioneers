@@ -208,6 +208,91 @@ func _refuse(mode: String, queued: bool) -> void:
 	await _dispose()
 
 
+## One real mounted, held-card Lunge against a foe carrying Thorns 3 and Enrage:
+## the same Duelist takes the retaliation at the slot he moves into (never the ally
+## who takes his old slot), the selected foe gains exactly one stack, and the
+## existing projection then pays +2 for it.
+func _keywords(keyboard: bool) -> void:
+	var panel := await _begin(IDS[0], 2)
+	if panel == null:
+		await _dispose()
+		return
+	for hero in app.party._heroes:
+		hero.statuses = {}
+	for enemy in app.enemies._enemies:
+		enemy.statuses = {}
+	app.enemies._enemies[0]["thorns"] = 3
+	app.enemies._enemies[0]["enrage"] = true
+	_check(app.party.start_player_turn() and app.party.gain_block(2, 2),
+		"mounted keyword fixture: living Duelist holding exactly two Block")
+	var heroes: Array = app.party.get_heroes()
+	var enemies: Array = app.enemies.get_enemies()
+	var hand: Array = app.deck.hand.duplicate()
+	var discard: Array = app.deck.discard_pile.duplicate()
+	var draw: Array = app.deck.draw_pile.duplicate()
+	var rng_state: int = app.run_rng.state
+	_check(heroes[1].id == "rag_duelist" and heroes[1].hp == 28 and heroes[1].block == 2
+		and enemies[0].thorns == 3 and enemies[0].enrage == true,
+		"mounted keyword preconditions are real, living and non-vacuous")
+	var before := _state()
+	await _hover(panel)
+	var quote: Dictionary = presenter.current_forecast.duplicate(true)
+	_check(quote.get("playable", false) and quote.hits[0].damage == 5
+		and presenter.cue.text.contains("1 energy"), "mounted keyword forecast still quotes the printed strike")
+	_check(_state() == before, "mounted keyword hover is pure including RNG")
+	await _arm(panel, keyboard)
+	_check(_state() == before, "mounted keyword selection is pure including RNG")
+	if keyboard:
+		root.push_input(_key(KEY_1), true)
+		root.push_input(_key(KEY_1), true)
+		root.push_input(_key(KEY_1, false), true)
+		await _frames()
+	else:
+		await _mouse(app.get_node("LiveEnemyRoster")._labels[0])
+	var event: Dictionary = presenter.last_event
+	_check(event.get("ok", false) and event.damage == 5 and event.cost == 1
+		and event.owner_position == 2 and event.destination_position == 1
+		and event.target_position == 1, "mounted keyword confirmed receipt")
+	_check(event.get("thorns_retaliation") == {"ok": true, "applied": true, "thorns": 3,
+		"block_absorbed": 2, "hp_loss": 1}, "mounted confirmed hit provokes one Thorns retaliation")
+	_check(event.get("enrage_commit") == {"ok": true, "applied": true,
+		"enrage_stacks": 1, "attack_bonus": 2}, "mounted confirmed hit commits one Enrage stack")
+	var expected_enemies: Array = enemies.duplicate(true)
+	expected_enemies[0]["hp"] = int(expected_enemies[0]["hp"]) - 5
+	expected_enemies[0]["enrage_stacks"] = 1
+	_check(app.enemies.get_enemies() == expected_enemies,
+		"selected foe loses exactly the printed five, gains one stack, others untouched")
+	var mover: Dictionary = heroes[1]
+	var neighbor: Dictionary = heroes[0]
+	heroes[0] = mover
+	heroes[1] = neighbor
+	mover.position = 1
+	neighbor.position = 2
+	var absorbed := mini(int(mover.block), 3)
+	mover.block -= absorbed
+	mover.hp -= 3 - absorbed
+	_check(app.party.get_heroes() == heroes,
+		"the same Duelist takes the Thorns hit after moving, every other hero preserved")
+	_check(app.party.get_hero(1).id == "rag_duelist" and app.party.get_hero(1).hp == 27
+		and app.party.get_hero(1).block == 0, "moved Duelist paid 2 Block then 1 HP")
+	_check(app.party.get_hero(2).id == "warden" and app.party.get_hero(2).hp == 39
+		and app.party.get_hero(2).block == 0, "the swapped ally never takes the retaliation")
+	var projected := CombatEnemyKeywordRules.new().project_enrage_action(
+		app.enemies.get_enemy(1), {"type": "attack", "amount": 3})
+	_check(projected.ok and projected.attack_bonus == 2 and projected.action.amount == 5,
+		"the existing action projection pays +2 for the committed stack")
+	hand.erase(IDS[0])
+	discard.append(IDS[0])
+	_check(app.deck.energy == 0 and app.deck.hand == hand and app.deck.discard_pile == discard
+		and app.deck.draw_pile == draw and app.run_rng.state == rng_state,
+		"one exact spend/discard/swap, every actor field and RNG preserved")
+	var settled := _state()
+	presenter._queue_attack(1)
+	await _frames()
+	_check(_state() == settled, "settled mounted keyword play cannot replay a hit or a stack")
+	await _dispose()
+
+
 func _dead_slot() -> void:
 	var panel := await _begin(IDS[3], 3)
 	app.enemies.apply_damage(1, 999)
@@ -236,6 +321,8 @@ func _run() -> void:
 		"inactive", "turn", "closed", "hidden", "session", "rng", "deck", "panel", "label", "escape"]:
 		for queued in [false, true]:
 			await _refuse(mode, queued)
+	for keyboard in [false, true]:
+		await _keywords(keyboard)
 	await _dead_slot()
 	_finish()
 
