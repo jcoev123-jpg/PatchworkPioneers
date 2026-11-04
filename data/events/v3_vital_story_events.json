@@ -1047,6 +1047,46 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_mourning_organ_ward",
+      "title": "The Mourning-Organ Ward",
+      "description": "A round button-eyed organist pumps a coffin-tall felt organ; each bone-cream pipe sighs red thread into the candlelit fog.",
+      "choices": [
+        { "id": "mend_bellows", "text": "Spend 2 scraps to mend the organ's heart bellows (heal 7 HP; gain 1 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 7, "max_hp": 1 } },
+        { "id": "play_hollow_chord", "text": "Play the hollow chord (lose 5 HP; gain 20 gold)", "outcome": { "gold": 20, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the organ's final note hanging in the fog", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_blackwax_heart_cabinet",
+      "title": "The Blackwax Heart Cabinet",
+      "description": "A squat wax-faced keeper unlocks a tall oxblood cabinet, its drawers beating like stitched hearts beneath brass keyholes.",
+      "choices": [
+        { "id": "seal_heart_drawer", "text": "Pay 23 gold to seal a lasting heart seam (+3 max HP)", "outcome": { "gold": -23, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "pry_heart_latch", "text": "Unpick 2 max HP from the heart latch for 25 gold", "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Let the heart drawers fall silent", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_inkcloth_stork_crib",
+      "title": "The Inkcloth Stork Crib",
+      "description": "A button-eyed cloth stork guards an oversized rocking crib woven from midnight-blue bandages; candle stubs light the ragged canopy.",
+      "choices": [
+        { "id": "pad_crib_seam", "text": "Spend 1 scrap on warm crib stuffing (heal 8 HP)", "outcome": { "gold": 0, "scraps": -1, "hp": 8, "max_hp": 0 } },
+        { "id": "salvage_rattle_wires", "text": "Unpick the sharp rattle wires (lose 4 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the crib to rock quietly", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_ossuary_spool_chandelier",
+      "title": "The Ossuary Spool Chandelier",
+      "description": "A plump ragdoll lamplighter steadies a chandelier of hanging silver spools above a cracked plum-velvet chapel floor.",
+      "choices": [
+        { "id": "bind_chandelier_heart", "text": "Pay 15 gold and 1 scrap to bind a heart seam (heal 4 HP; gain 1 max HP)", "outcome": { "gold": -15, "scraps": -1, "hp": 4, "max_hp": 1 } },
+        { "id": "catch_falling_spools", "text": "Catch the falling spools (lose 5 HP; gain 24 gold)", "outcome": { "gold": 24, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the candlelit spools sway overhead", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
