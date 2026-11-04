@@ -179,7 +179,7 @@ func _open(app: Node) -> Dictionary:
 		and state == candle.read_state() and quote == candle.quote() \
 		and state.get("node_id") == NODE \
 		and state.get("item", {}).get("price") == PRICE \
-		and quote.get("restore") == 25 \
+		and quote.get("restore") == mini(25, 100 - int(quote.get("candle", 0))) \
 		and quote.get("gold") == app.stitched_preview_gold \
 		and quote.get("candle") == app.stitched_roadblock_candle \
 		and bandage_state.get("heroes", []).size() == 4 \
