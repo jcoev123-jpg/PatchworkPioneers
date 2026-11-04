@@ -53,7 +53,7 @@ const FRAY_MAX := 200
 const FRAY_RESOLVE := 100
 const FRAY_RECOVER := 50
 const COUNTDOWN_KEYS := [
-	"weak", "exposed", "tangled", "mark", "thorns", "riposte", "blind", "stun_resist", "guard",
+	"weak", "exposed", "tangled", "mark", "thorns", "riposte", "stun_resist", "guard",
 ]
 
 var _parts: Dictionary = {}

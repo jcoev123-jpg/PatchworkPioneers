@@ -1,0 +1,462 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "lantern_monk_head_moth_wink",
+      "name": "Moth Wink",
+      "slot": "head",
+      "owner": "lantern_monk",
+      "stat": {
+        "acc": 3
+      },
+      "ability": {
+        "id": "lantern_monk_head_moth_wink_move",
+        "name": "Moth Wink",
+        "kind": "debuff",
+        "launch": [
+          1,
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 90,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "blind": 1
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "acc": 94
+          }
+        },
+        "3": {
+          "ability": {
+            "acc": 100,
+            "effects": {
+              "blind": 1,
+              "exposed": 1
+            }
+          }
+        }
+      },
+      "text": "A flicker of moth-wing light blinds one nearby foe; no retired card draw."
+    },
+    {
+      "id": "lantern_monk_arms_wick_spark",
+      "name": "Wick Spark",
+      "slot": "arms",
+      "owner": "lantern_monk",
+      "stat": {
+        "dmg": 1
+      },
+      "ability": {
+        "id": "lantern_monk_arms_wick_spark_move",
+        "name": "Wick Spark",
+        "kind": "ranged",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 91,
+        "dmg": [
+          4,
+          6
+        ],
+        "crit": 0,
+        "effects": {
+          "blind": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              5,
+              8
+            ]
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              7,
+              10
+            ],
+            "acc": 95
+          }
+        }
+      },
+      "text": "Fling a wick spark across the front three enemy ranks and Blind its target."
+    },
+    {
+      "id": "lantern_monk_torso_lamplight_wash",
+      "name": "Lamplight Wash",
+      "slot": "torso",
+      "owner": "lantern_monk",
+      "stat": {
+        "max_hp": 6,
+        "prot": 4
+      },
+      "ability": {
+        "id": "lantern_monk_torso_lamplight_wash_move",
+        "name": "Lamplight Wash",
+        "kind": "heal",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "target_side": "ally",
+        "multi": true,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "heal": 2
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "heal": 3
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "heal": 5
+            }
+          }
+        }
+      },
+      "text": "Wash every living ally in mending lamplight; each receives a separate Heal receipt."
+    },
+    {
+      "id": "lantern_monk_legs_pole_shelter",
+      "name": "Pole Shelter",
+      "slot": "legs",
+      "owner": "lantern_monk",
+      "stat": {
+        "speed": 1,
+        "dodge": 3
+      },
+      "ability": {
+        "id": "lantern_monk_legs_pole_shelter_move",
+        "name": "Pole Shelter",
+        "kind": "guard",
+        "launch": [
+          1,
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "guard": 2
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "guard": 3
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "guard": 4
+            }
+          }
+        }
+      },
+      "text": "Plant the lantern pole to Guard one ally for two turns, taking its blows."
+    },
+    {
+      "id": "lantern_monk_head_moth_cloud",
+      "name": "Moth Cloud",
+      "slot": "head",
+      "owner": "lantern_monk",
+      "stat": {
+        "crit": 3
+      },
+      "ability": {
+        "id": "lantern_monk_head_moth_cloud_move",
+        "name": "Moth Cloud",
+        "kind": "debuff",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": true,
+        "acc": 90,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "blind": 1
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "acc": 95
+          }
+        },
+        "3": {
+          "ability": {
+            "acc": 100,
+            "effects": {
+              "blind": 1,
+              "exposed": 1
+            }
+          }
+        }
+      },
+      "text": "Loose a cloud of moths; attempt Blind independently on each living foe in ranks one to three."
+    },
+    {
+      "id": "lantern_monk_arms_snuff_flame",
+      "name": "Snuff Flame",
+      "slot": "arms",
+      "owner": "lantern_monk",
+      "stat": {
+        "dmg": 2
+      },
+      "ability": {
+        "id": "lantern_monk_arms_snuff_flame_move",
+        "name": "Snuff Flame",
+        "kind": "ranged",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 90,
+        "dmg": [
+          3,
+          5
+        ],
+        "crit": 0,
+        "effects": {
+          "blind": 1,
+          "exposed": 1
+        },
+        "self_move": 0,
+        "move": "attack"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              4,
+              6
+            ],
+            "effects": {
+              "blind": 1,
+              "exposed": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              5,
+              8
+            ],
+            "effects": {
+              "blind": 1,
+              "exposed": 3
+            }
+          }
+        }
+      },
+      "text": "Snuff a foe's light with a stinging flame; Blind and Expose the target."
+    },
+    {
+      "id": "lantern_monk_torso_vigil_ring",
+      "name": "Vigil Ring",
+      "slot": "torso",
+      "owner": "lantern_monk",
+      "stat": {
+        "max_hp": 5,
+        "prot": 6
+      },
+      "ability": {
+        "id": "lantern_monk_torso_vigil_ring_move",
+        "name": "Vigil Ring",
+        "kind": "heal",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "target_side": "ally",
+        "multi": true,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "heal": 4,
+          "dodge": 4,
+          "duration": 1
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "heal": 5,
+              "dodge": 6,
+              "duration": 1
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "heal": 7,
+              "dodge": 8,
+              "duration": 1
+            }
+          }
+        }
+      },
+      "text": "A ring of lanternlight heals all living allies and shelters each with temporary Dodge."
+    },
+    {
+      "id": "lantern_monk_legs_moth_shroud",
+      "name": "Moth Shroud",
+      "slot": "legs",
+      "owner": "lantern_monk",
+      "stat": {
+        "speed": 1,
+        "dodge": 4
+      },
+      "ability": {
+        "id": "lantern_monk_legs_moth_shroud_move",
+        "name": "Moth Shroud",
+        "kind": "buff",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "dodge": 10,
+          "duration": 2
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "dodge": 14,
+              "duration": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "dodge": 18,
+              "duration": 2
+            }
+          }
+        }
+      },
+      "text": "Wrap one ally in a fluttering moth shroud, granting temporary Dodge for two turns."
+    }
+  ]
+}
