@@ -679,6 +679,9 @@ var stitched_sewing_visit: RunStitchedSewingSwap
 var stitched_sewing_mend_visit: RunStitchedSewingMend
 var stitched_preview_satchel: Array = []
 var stitched_preview_scraps := 0
+## Separate from S2's 78-candle standalone preview; lasts for this title session.
+var stitched_roadblock_candle := 100
+var _stitched_admitted_fight_gate: RunV3FightEventGate
 var _stitched_gear_overrides: Dictionary = {}
 var _stitched_sewing_quote: Dictionary = {}
 var _stitched_mend_quote: Dictionary = {}
@@ -696,6 +699,7 @@ var _stitched_party_cancel_button: Button
 const STITCHED_ROADBLOCK_ID := "v3_stitchline_roadblock"
 const STITCHED_SEWING_NODE_ID := "s5_scissor_crab_sewing_circle"
 const STITCHED_SEWING_MEND_COST := 2
+const STITCHED_ROADBLOCK_CANDLE_COST := 8
 const STITCHED_CLAW_ID := "scissor_crab_claw_arm"
 const STITCHED_SACK_ID := "fray_scavenger_sack_arm"
 const STITCHED_INKBRUSH_ID := "moth_scribe_inkbrush_arm"
@@ -1844,8 +1848,14 @@ func _commit_stitched_roadblock(receipt: Dictionary, source: WeakRef, gate: RunV
 			and admitted.get("wallet") == STITCHED_TITLE_WALLET \
 			and admitted.get("fight_request") == {"node_type": "Fight"}
 	_retire_stitched_roadblock()
-	if not fight_ok or not _begin_stitched_battle(admitted, gate):
-		_restore_stitched_title()
+	if fight_ok:
+		# Only the receipt settled by THIS panel may enter the live stage.
+		_stitched_admitted_fight_gate = gate
+		var mounted := _begin_stitched_battle(admitted, gate)
+		_stitched_admitted_fight_gate = null
+		if mounted:
+			return
+	_restore_stitched_title()
 
 
 func _retire_stitched_roadblock() -> void:
@@ -1873,7 +1883,8 @@ func _restore_stitched_title() -> void:
 
 
 func _begin_stitched_battle(admission: Dictionary, gate: RunV3FightEventGate) -> bool:
-	if gate == null or not gate.is_claimed() or admission.get("ok") != true \
+	if gate == null or gate != _stitched_admitted_fight_gate \
+			or not gate.is_claimed() or admission.get("ok") != true \
 			or admission.get("event_id") != STITCHED_ROADBLOCK_ID \
 			or admission.get("choice_id") != gate.get_fight_choice_id() \
 			or admission.get("wallet") != STITCHED_TITLE_WALLET \
@@ -1887,6 +1898,10 @@ func _begin_stitched_battle(admission: Dictionary, gate: RunV3FightEventGate) ->
 	var data := _stitched_floor_config()
 	if data.is_empty():
 		return false
+	# The charge belongs to this Roadblock entry, never the S2 preview.
+	# Project first; a rejected begin cannot consume any candlelight.
+	var projected_candle := maxi(0, stitched_roadblock_candle - STITCHED_ROADBLOCK_CANDLE_COST)
+	data["candle"] = projected_candle
 	var stage := StitchedBattleScreen.new()
 	if not stage.begin(data):
 		stage.free()
@@ -1895,6 +1910,11 @@ func _begin_stitched_battle(admission: Dictionary, gate: RunV3FightEventGate) ->
 	_stitched_battle_ticket = weakref(stage)
 	stage.exit_requested.connect(_stitched_fight_exit.bind(weakref(stage)))
 	add_child(stage)
+	if stage.get_parent() != self or not stage.is_inside_tree():
+		_close_stitched_fight()
+		return false
+	# Debit once, after the real fight is mounted with the projected rules input.
+	stitched_roadblock_candle = projected_candle
 	return true
 
 
