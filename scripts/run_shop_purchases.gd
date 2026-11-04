@@ -342,10 +342,14 @@ static func sample_patch_stall_offers(rng: Variant, candidates: Variant,
 		# owned or not, counts toward the scarce-stock admission gate below.
 		supplied_powers[id_str] = true
 		if owned_set.has(id_str):
-			# An owned rare or authored Heirloom keeps its own catalog as the
-			# only price authority.
-			if not rare_tickets.has(id_str) and not heirloom_tickets.has(id_str) \
-					and not owned_prices.has(id_str):
+			# An owned P8 rare explicitly supplied among the valid candidates
+			# may fill a truthful SOLD row at its verified catalog price; its
+			# own catalog stays the only price authority, never the supplied
+			# price. An owned authored Heirloom is never added here.
+			if rare_tickets.has(id_str):
+				if not owned_prices.has(id_str):
+					owned_prices[id_str] = rare_prices[id_str]
+			elif not heirloom_tickets.has(id_str) and not owned_prices.has(id_str):
 				owned_prices[id_str] = price
 			continue
 		# A rare or unlocked Heirloom listed among ordinary data stays one

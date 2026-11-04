@@ -1961,6 +1961,138 @@ func _test_patch_stall_sampling() -> void:
 	_check(owned_stall.get_stock()["trinkets"][1]["sold"],
 		"owned listing starts sold")
 
+	_test_patch_stall_scarce_owned_rares()
+
 	# Restore the original seed to verify the helper never touched global RNG.
 	seed(88001)
 	_check(randi() == expected_draw, "sampling tests consume no global RNG")
+
+
+## Scarce stock: one buyable ordinary power remains and both owned P8 rares are
+## explicitly supplied, so they fill truthful SOLD rows at their catalog price.
+func _test_patch_stall_scarce_owned_rares() -> void:
+	var authored: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/shop/initial_offers.json"))
+	_check(typeof(authored) == TYPE_DICTIONARY and authored.has("trinkets"),
+		"scarce fixture reads the actual initial offers")
+	var rare := _rare_records()
+	var rare_price := {}
+	for record in rare:
+		rare_price[record.id] = int(record.shop_price_gold)
+	for id in RARE_PATCH_IDS:
+		_check(rare_price.get(id) == 100, "actual rare catalog prices " + id + " at 100")
+	var power_slots := _power_slots()
+	var candidates := _offer_ids(authored.get("trinkets", []),
+		["button_eye", "relay_bobbin", "hearth_lining"])
+	var candidate_ids: Array = candidates.map(func(offer): return offer.get("id"))
+	for id in ["button_eye", "relay_bobbin", "hearth_lining"]:
+		_check(candidate_ids.has(id) and power_slots.has(id),
+			"actual authored candidate is a real power: " + id)
+	_check(candidates.size() == 3, "scarce fixture filters exactly the three authored candidates")
+	var owned: Array = RARE_PATCH_IDS.duplicate()
+	var seed_value := 60417
+
+	var rng := _seeded_rng(seed_value)
+	var initial_state := rng.state
+	var sampled := RunShopPurchases.sample_patch_stall_offers(rng, candidates, owned)
+	_check(sampled.get("ok") == true and sampled.get("offers", []).size() == 3,
+		"owned rares explicitly supplied still complete three offers")
+	var sampled_ids := _sampled_ids(sampled)
+	var unique := {}
+	for id in sampled_ids:
+		unique[id] = true
+	_check(unique.size() == 3 and sampled_ids.has("button_eye")
+		and sampled_ids.has("relay_bobbin") and sampled_ids.has("hearth_lining"),
+		"stock holds three unique IDs: the buyable one and both owned rares")
+	for offer in sampled.get("offers", []):
+		_check(offer.get("price") == 100, "every scarce offer is priced 100: " + str(offer.get("id")))
+
+	# One real unowned draw only, identical for reversed candidate order.
+	var oracle := _seeded_rng(seed_value)
+	oracle.randi_range(0, ORDINARY_TICKETS - 1)
+	_check(rng.state == oracle.state and rng.state != initial_state,
+		"exactly one ticket is drawn, for the single unowned power")
+	var reversed_candidates: Array = candidates.duplicate(true)
+	reversed_candidates.reverse()
+	var reversed_rng := _seeded_rng(seed_value)
+	var reversed := RunShopPurchases.sample_patch_stall_offers(
+		reversed_rng, reversed_candidates, owned)
+	_check(reversed == sampled and reversed_rng.state == rng.state,
+		"same seed and reversed candidates give identical stock and run RNG state")
+
+	# The authored catalog price, not a supplied price, prices an owned rare.
+	var repriced: Array = candidates.duplicate(true)
+	for offer in repriced:
+		if offer.get("id") == "relay_bobbin":
+			offer["price"] = 77
+	var repriced_result := RunShopPurchases.sample_patch_stall_offers(
+		_seeded_rng(seed_value), repriced, owned)
+	_check(repriced_result.get("ok") == true and repriced_result.get("offers") == sampled.get("offers"),
+		"an owned rare keeps its verified catalog price")
+
+	# Admit through the real purchase ledger.
+	var offers: Array = sampled.get("offers", [])
+	var stall := RunShopPurchases.new(PATCH_STALL_PARTY.duplicate(),
+		PATCH_STALL_DECK.duplicate(), owned.duplicate(), 100, [], offers, "patch_stall")
+	_check(stall.is_valid(), "scarce owned-rare stock admits as a patch_stall visit")
+	var stock := stall.get_stock()
+	var sold_ids: Array = []
+	var unsold_ids: Array = []
+	for row in stock.trinkets:
+		_check(row.price == 100, "ledger row price is the 100 catalog price: " + str(row.id))
+		if row.sold:
+			sold_ids.append(row.id)
+		else:
+			unsold_ids.append(row.id)
+	sold_ids.sort()
+	_check(stock.cards.is_empty() and stock.trinkets.size() == 3
+		and sold_ids == ["hearth_lining", "relay_bobbin"] and unsold_ids == ["button_eye"],
+		"both owned rares are SOLD and button_eye stays buyable")
+
+	# Neither SOLD rare can be bought: nothing changes anywhere.
+	var before_state := stall.get_state()
+	var before_stock := stall.get_stock()
+	for id in RARE_PATCH_IDS:
+		var refused := stall.buy("trinket", id)
+		_assert_result(refused, false, before_state, before_stock, "SOLD rare refused: " + id)
+		_assert_model(stall, before_state, before_stock, "SOLD rare refusal leaves the stall: " + id)
+		_check(not stall.patch_stall_choice_used(), "refused SOLD rare never latches: " + id)
+
+	# The one real purchase debits exactly 100 once and latches the visit.
+	var expected_state := before_state.duplicate(true)
+	expected_state.gold = 0
+	expected_state.trinkets.append("button_eye")
+	var expected_stock := before_stock.duplicate(true)
+	for row in expected_stock.trinkets:
+		if row.id == "button_eye":
+			row.sold = true
+	_assert_result(stall.buy("trinket", "button_eye"), true, expected_state, expected_stock,
+		"button_eye purchase", {"kind": "trinket", "id": "button_eye", "price": 100})
+	_check(stall.patch_stall_choice_used(), "the paid choice latches the visit")
+	for id in ["button_eye", "relay_bobbin", "hearth_lining"]:
+		_assert_result(stall.buy("trinket", id), false, expected_state, expected_stock,
+			"replay refused: " + id)
+	_assert_model(stall, expected_state, expected_stock, "replay leaves the settled stall")
+
+	# Fail-closed neighbours: an unsupplied owned rare is never fabricated.
+	var one_rare_supplied := _offer_ids(authored.get("trinkets", []),
+		["button_eye", "relay_bobbin"])
+	var short_rng := _seeded_rng(seed_value)
+	var short_state := short_rng.state
+	_check(RunShopPurchases.sample_patch_stall_offers(short_rng, one_rare_supplied, owned)
+		== {"ok": false} and short_rng.state == short_state,
+		"an unsupplied owned rare is not fabricated into the stock before any draw")
+	# All three owned leaves no buyable power: refused before any draw.
+	var all_owned_rng := _seeded_rng(seed_value)
+	var all_owned_state := all_owned_rng.state
+	_check(RunShopPurchases.sample_patch_stall_offers(all_owned_rng, candidates,
+			owned + ["button_eye"]) == {"ok": false} and all_owned_rng.state == all_owned_state,
+		"all supplied powers owned refuses without a draw")
+	# A supplied owned rare plus two unowned ordinary powers is still honest.
+	var mixed := _offer_ids(authored.get("trinkets", []),
+		["button_eye", "frayfinder_mitt", "relay_bobbin"])
+	var mixed_result := RunShopPurchases.sample_patch_stall_offers(
+		_seeded_rng(seed_value), mixed, owned)
+	_check(mixed_result.get("ok") == true and not _sampled_ids(mixed_result).has("hearth_lining")
+		and _sampled_ids(mixed_result).has("relay_bobbin"),
+		"only explicitly supplied owned rares fill SOLD rows")
