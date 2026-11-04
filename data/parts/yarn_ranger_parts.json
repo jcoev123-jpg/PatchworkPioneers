@@ -15,7 +15,8 @@
         "kind": "ranged",
         "launch": [
           2,
-          3
+          3,
+          4
         ],
         "target": [
           1,
@@ -245,7 +246,8 @@
         "kind": "ranged",
         "launch": [
           2,
-          3
+          3,
+          4
         ],
         "target": [
           1,
