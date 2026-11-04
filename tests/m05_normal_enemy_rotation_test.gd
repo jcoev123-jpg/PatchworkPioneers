@@ -124,6 +124,11 @@ func _normalized(value: Variant) -> Variant:
 	if value is Dictionary:
 		var result := {}
 		for key in value:
+			# S5 appends an authored Stitched profile; this rotation oracle protects
+			# the legacy card record, while tests/stitched_s5_enemy_catalog_test.gd
+			# owns the new profile contract.
+			if str(key) == "stitched":
+				continue
 			result[key] = _normalized(value[key])
 		return result
 	if value is float and is_finite(value) and floorf(value) == value:

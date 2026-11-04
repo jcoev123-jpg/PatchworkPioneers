@@ -26,6 +26,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_catalog()
 	_test_every_tier_in_real_combat()
+	_test_back_rank_shots()
 	_test_heal_and_guard()
 	_test_mark_overload()
 	_test_invalid_actions_and_equipment()
@@ -152,6 +153,51 @@ func _test_catalog() -> void:
 		"AC1: Overload uses native mark_damage rather than Combat Scrap")
 	_check(int(accepted["by_id"]["tinker_legs_spare_screws"]["ability"]["self_move"]) == 1,
 		"AC1: Spare Screws steps exactly one rank backward")
+	# AC1: only the two named base launches grow to hero rank 4; every other authored launch,
+	# every tier and every named ability number stays exactly as shipped.
+	var expected_launches := {
+		"tinker_head_cog_shot": [2, 3, 4],
+		"tinker_arms_scrap_bomb": [3, 4],
+		"tinker_torso_casing_ward": [1, 2, 3],
+		"tinker_legs_tune_up": [1, 2, 3, 4],
+		"tinker_head_spring_clamp": [2, 3],
+		"tinker_arms_overload": [2, 3],
+		"tinker_torso_gear_brace": [1, 2, 3],
+		"tinker_legs_spare_screws": [2, 3],
+	}
+	for id in expected_launches:
+		var expected: Array = expected_launches[id]
+		var authored: Dictionary = accepted["by_id"][id]
+		_check(authored["ability"]["launch"] == expected and int(authored["ability"]["launch_mask"]) == StitchedParts.rank_mask(expected),
+			"AC1: base launch and derived mask are exactly authored for " + id)
+		for tier in [1, 2, 3]:
+			var tier_ability := StitchedParts.ability_at_tier(authored, tier)
+			_check(tier_ability["launch"] == expected and int(tier_ability["launch_mask"]) == StitchedParts.rank_mask(expected),
+				"AC1: tier %d keeps the base launch mask of %s" % [tier, id])
+	var cog_mask := int(accepted["by_id"]["tinker_head_cog_shot"]["ability"]["launch_mask"])
+	_check(StitchedParts.ranks_allowed(cog_mask, 2) and StitchedParts.ranks_allowed(cog_mask, 3) and StitchedParts.ranks_allowed(cog_mask, 4) and not StitchedParts.ranks_allowed(cog_mask, 1),
+		"AC1: Cog Shot launches from ranks 2-4, never rank 1")
+	var bomb_mask := int(accepted["by_id"]["tinker_arms_scrap_bomb"]["ability"]["launch_mask"])
+	_check(StitchedParts.ranks_allowed(bomb_mask, 3) and StitchedParts.ranks_allowed(bomb_mask, 4) and not StitchedParts.ranks_allowed(bomb_mask, 1) and not StitchedParts.ranks_allowed(bomb_mask, 2),
+		"AC1: Scrap Bomb launches from ranks 3-4, never ranks 1-2")
+	var expected_shots := {
+		"tinker_head_cog_shot": {"acc": [91, 91, 95], "dmg": [[4, 6], [5, 8], [7, 10]], "mark": [2, 3, 3], "multi": false},
+		"tinker_arms_scrap_bomb": {"acc": [90, 92, 95], "dmg": [[3, 4], [4, 6], [5, 7]], "mark": [0, 0, 0], "multi": true},
+	}
+	for id in expected_shots:
+		var expected_shot: Dictionary = expected_shots[id]
+		for tier in [1, 2, 3]:
+			var shot := StitchedParts.ability_at_tier(accepted["by_id"][id], tier)
+			_check(int(shot["acc"]) == int(expected_shot["acc"][tier - 1])
+				and shot["dmg"] == expected_shot["dmg"][tier - 1]
+				and int(shot["effects"].get("mark", 0)) == int(expected_shot["mark"][tier - 1])
+				and bool(shot["multi"]) == bool(expected_shot["multi"])
+				and shot["target"] == [1, 2, 3]
+				and int(shot["target_mask"]) == StitchedParts.rank_mask([1, 2, 3])
+				and int(shot["self_move"]) == 0
+				and str(shot["target_side"]) == "enemy"
+				and str(shot["move"]) == "attack2",
+				"AC1: tier %d numbers, target ranks 1-3 and attack2 pose stay authored for %s" % [tier, id])
 	for id in ALL_IDS:
 		var part: Dictionary = accepted["by_id"][id]
 		var copied := part.duplicate(true)
@@ -166,6 +212,12 @@ func _test_catalog() -> void:
 	bad_rank["ability"]["target"] = [1, 2, 3, 5]
 	_check(not bool(StitchedParts.validate_part(bad_rank).get("ok", false)),
 		"AC3: invented fourth foe rank beyond legal ranks rejects")
+	for id in [STARTERS["head"], STARTERS["arms"]]:
+		for bad_launch in [[2, 3, 4, 5], [2, 3, 4, 4]]:
+			var bad_launch_part: Dictionary = accepted["by_id"][id].duplicate(true)
+			bad_launch_part["ability"]["launch"] = bad_launch.duplicate()
+			_check(not bool(StitchedParts.validate_part(bad_launch_part).get("ok", false)),
+				"AC3: malformed launch %s rejects for %s" % [str(bad_launch), id])
 	for key in ["cost", "block", "draw", "combat_scrap_gain"]:
 		for part in accepted["parts"]:
 			_check(not part.has(key) and not part["ability"].has(key) and not part["ability"]["effects"].has(key),
@@ -230,6 +282,109 @@ func _test_every_tier_in_real_combat() -> void:
 	for id in ["tinker_head_cog_shot", "tinker_arms_scrap_bomb", "tinker_head_spring_clamp", "tinker_arms_overload"]:
 		_check(int(hit_witness[id]) > 0,
 			"AC2: nonvacuous seeded hit/status witness for " + id)
+
+
+## AC2 witness: a real seeded 4v3 battle where rank-3 Tinker swaps backward with Spare Screws,
+## survives to his next scheduled turn and fires the named shot from hero rank 4.
+func _back_rank_witness(part_id: String, seed_value: int) -> Dictionary:
+	var battle := _battle(ALTERNATES["legs"], 1, seed_value)
+	if battle == null or not _to(battle, "tinker"):
+		return {}
+	if int(battle.get_unit("tinker")["rank"]) != 3:
+		return {}
+	var swap := battle.use_part(ALTERNATES["legs"], 3)
+	if not bool(swap.get("ok", false)) \
+		or str(swap.get("actor", "")) != "tinker" \
+		or str(swap.get("part", "")) != ALTERNATES["legs"] \
+		or str(swap.get("ability", "")) != "tinker_spare_screws_move":
+		return {}
+	if not bool(swap.get("self_move", {}).get("ok", false)) or int(swap["self_move"].get("to", 0)) != 4:
+		return {}
+	if int(battle.get_unit("tinker")["rank"]) != 4 or int(battle.get_unit("lantern_monk")["rank"]) != 3:
+		return {}
+	if battle.current_actor_id() == "tinker":
+		return {}
+	if not _to(battle, "tinker") or battle.is_over():
+		return {}
+	if int(battle.get_unit("tinker")["rank"]) != 4:
+		return {}
+	for foe_id in ["fray_scavenger", "scissor_crab", "moth_scribe"]:
+		var foe := battle.get_unit(foe_id)
+		if bool(foe.get("dead", true)) or int(foe.get("hp", 0)) <= 0:
+			return {}
+	if int(battle.get_unit("fray_scavenger")["rank"]) != 1:
+		return {}
+	var before := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var actor_before := battle.current_actor_id()
+	# Enemy rank 4 stays outside both shots' target arrays: refused before any spend.
+	var refused := battle.use_part(part_id, 4)
+	var after_refusal := battle.state_snapshot()
+	var actor_after_refusal := battle.current_actor_id()
+	var shot := battle.use_part(part_id, 1)
+	if not bool(shot.get("ok", false)):
+		return {}
+	return {
+		"battle": battle,
+		"swap": swap,
+		"refused": refused,
+		"shot": shot,
+		"before": before,
+		"rng": rng,
+		"actor_before": actor_before,
+		"after_refusal": after_refusal,
+		"actor_after_refusal": actor_after_refusal,
+	}
+
+
+func _test_back_rank_shots() -> void:
+	var expected := {
+		STARTERS["head"]: {"ability": "tinker_cog_shot_move", "results": 1},
+		STARTERS["arms"]: {"ability": "tinker_scrap_bomb_move", "results": 3},
+	}
+	for part_id in expected:
+		var wanted: Dictionary = expected[part_id]
+		var witness: Dictionary = {}
+		for seed_value in range(499400, 499440):
+			witness = _back_rank_witness(part_id, seed_value)
+			if not witness.is_empty():
+				break
+		_check(not witness.is_empty(), "AC2: real seeded back-rank witness exists for " + part_id)
+		if witness.is_empty():
+			continue
+		var battle: StitchedRules = witness["battle"]
+		var swap: Dictionary = witness["swap"]
+		var shot: Dictionary = witness["shot"]
+		_check(str(swap.get("actor", "")) == "tinker" and str(swap.get("part", "")) == ALTERNATES["legs"] and str(swap.get("ability", "")) == "tinker_spare_screws_move",
+			"AC2: Spare Screws is Tinker's own legs ability action for " + part_id)
+		_check(int(battle.get_unit("tinker")["rank"]) == 4 and int(battle.get_unit("lantern_monk")["rank"]) == 3,
+			"AC2: Spare Screws swaps rank-3 Tinker behind rank-4 Lantern Monk for " + part_id)
+		_check(str(shot.get("action", "")) == "ability" and str(shot.get("actor", "")) == "tinker"
+			and str(shot.get("part", "")) == part_id and str(shot.get("ability", "")) == str(wanted["ability"]),
+			"AC2: the named shot executes as Tinker's real equipment action for " + part_id)
+		_check(str(witness["actor_before"]) == "tinker" and battle.current_actor_id() != "tinker" and int(battle.get_unit("tinker")["rank"]) == 4,
+			"AC2: the rank-4 shot consumes Tinker's scheduled turn for " + part_id)
+		_check(not bool(witness["refused"].get("ok", false))
+			and witness["before"] == witness["after_refusal"]
+			and int(witness["rng"]) == int(witness["after_refusal"].get("rng_state", -1))
+			and str(witness["actor_after_refusal"]) == "tinker",
+			"AC3: enemy rank-4 target refuses without changing snapshot, turn or seeded RNG for " + part_id)
+		var results: Array = shot.get("results", [])
+		_check(results.size() == int(wanted["results"]),
+			"AC2: %s yields %d target receipt(s) from hero rank 4" % [part_id, int(wanted["results"])])
+		var seen: Dictionary = {}
+		for hit in results:
+			seen[str(hit["target"])] = true
+			_check(str(hit["target_side"]) == "foe" and int(hit["target_rank"]) >= 1 and int(hit["target_rank"]) <= 3,
+				"AC2: %s only receipts living enemy ranks 1-3" % part_id)
+		if part_id == STARTERS["head"]:
+			_check(results.size() == 1 and str(results[0]["target"]) == "fray_scavenger" and int(results[0]["target_rank"]) == 1,
+				"AC2: Cog Shot yields exactly one receipt for the living rank-1 foe")
+		else:
+			_check(results.size() == 3 and seen.size() == 3 and seen.has("fray_scavenger") and seen.has("scissor_crab") and seen.has("moth_scribe"),
+				"AC2: Scrap Bomb receipts each of the three living foes in ranks 1-3 exactly once")
+			_check(not StitchedParts.ranks_allowed(int(_catalog()["by_id"][part_id]["ability"]["target_mask"]), 4),
+				"AC2: Scrap Bomb still has no enemy rank-4 target")
 
 
 func _test_heal_and_guard() -> void:

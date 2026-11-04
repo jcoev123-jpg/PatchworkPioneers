@@ -1,0 +1,554 @@
+extends SceneTree
+## S5 enemy cohort contract: every canonical normal, Elite and boss has one validated Stitched kit
+## plus one unique tiered foreign part, the pure loader fails closed on malformed profiles, seeded
+## rules replay two/three-foe and boss fights, and the live title Roadblock builds from that roster.
+##
+## Catalog checks are by required id and source record, never by a catalog total or ordered list.
+
+const PREVIEW_PATH := "res://data/stitched/s2_preview.json"
+const PHASE_TWO_PATH := "res://data/enemies/m05_behemoth_phase_two.json"
+const BOSS_PATH := "res://data/enemies/boss.json"
+const ELITE_PATH := "res://data/enemies/m04_elites.json"
+const TOUGH_PATH := "res://data/enemies/v3_tough_normals.json"
+const SHIPPED_TROPHIES := {
+	"scissor_crab_claw_arm": "snip",
+	"moth_swarm_wings": "flutter_back",
+	"felt_bulwark_button_shield": "button_shield",
+	"fray_scavenger_sack_arm": "sack_sweep",
+	"moth_scribe_inkbrush_arm": "ink_stroke",
+}
+const ROADBLOCK_IDS := ["fray_scavenger", "scissor_crab", "moth_scribe"]
+const DUPLICATE_IDS := ["spindle_ram", "razor_ribbon_wraith"]
+
+var failures: Array[String] = []
+var checks := 0
+
+
+func _initialize() -> void:
+	_run.call_deferred()
+
+
+func _check(condition: bool, description: String) -> void:
+	checks += 1
+	if not condition:
+		failures.append(description)
+
+
+func _run() -> void:
+	root.size = Vector2i(1280, 720)
+	var catalog := StitchedEnemyCatalog.load_catalog()
+	_check(bool(catalog.get("ok", false)),
+		"the canonical S5 roster loads: " + str(catalog.get("error", "")))
+	if not bool(catalog.get("ok", false)):
+		_finish()
+		return
+	_test_completeness(catalog)
+	_test_trophies(catalog)
+	_test_fail_closed(catalog)
+	_test_seeded_fights(catalog)
+	_test_invalid_inputs(catalog)
+	await _test_live_admission(catalog)
+	_finish()
+
+
+func _finish() -> void:
+	for failure in failures:
+		printerr(failure)
+	print("stitched_s5_enemy_catalog_test: ", "PASS" if failures.is_empty() else "FAIL",
+		" (", checks, " checks)")
+	quit(0 if failures.is_empty() else 1)
+
+
+func _read_json(path: String) -> Variant:
+	if not FileAccess.file_exists(path):
+		return null
+	return JSON.parse_string(FileAccess.get_file_as_string(path))
+
+
+# ---------------------------------------------------------------- AC1 completeness
+
+func _test_completeness(catalog: Dictionary) -> void:
+	var raw_by_id: Dictionary = {}
+	for entry in StitchedEnemyCatalog.CATALOGS:
+		var parsed: Variant = _read_json(str(entry["path"]))
+		_check(parsed is Array and not (parsed as Array).is_empty(),
+			"canonical catalog parses: " + str(entry["path"]))
+		if not parsed is Array:
+			continue
+		for raw in parsed:
+			if not raw is Dictionary:
+				_check(false, "canonical enemy is an object: " + str(entry["path"]))
+				continue
+			var record: Dictionary = raw
+			var enemy_id := str(record.get("id", ""))
+			if raw_by_id.has(enemy_id):
+				_check(raw_by_id[enemy_id] == record,
+					"duplicate enemy record agrees: " + enemy_id)
+			else:
+				raw_by_id[enemy_id] = record
+			_check(catalog["enemies"].has(enemy_id),
+				"AC1: every canonical enemy resolves a kit: " + enemy_id)
+			_check(catalog["foes"].has(enemy_id),
+				"AC1: every canonical enemy resolves a StitchedRules foe: " + enemy_id)
+			var foe: Dictionary = catalog["foes"].get(enemy_id, {})
+			_check(int(foe.get("max_hp", 0)) > 0 and not foe.get("abilities", []).is_empty(),
+				"AC1: resolved foe carries real HP and abilities: " + enemy_id)
+			_check(not str(catalog["trophies"].get(enemy_id, "")).is_empty(),
+				"AC1: every canonical enemy resolves exactly one trophy: " + enemy_id)
+	for enemy_id in raw_by_id:
+		_check(catalog["enemies"].has(str(enemy_id)),
+			"AC1: no stale profile without a canonical record: " + str(enemy_id))
+	for duplicate_id in DUPLICATE_IDS:
+		var occurrences := 0
+		for entry in StitchedEnemyCatalog.CATALOGS:
+			var parsed: Variant = _read_json(str(entry["path"]))
+			if parsed is Array:
+				for raw in parsed:
+					if raw is Dictionary and str(raw.get("id", "")) == duplicate_id:
+						occurrences += 1
+		_check(occurrences == 2, "AC1: the tough normal is still repeated in both catalogs: "
+			+ duplicate_id)
+	# Boss tier: every boss record takes the authored two-turn exception; Elites never do.
+	var bosses: Variant = _read_json(BOSS_PATH)
+	var boss_ids: Array = []
+	if bosses is Array:
+		for raw in bosses:
+			if raw is Dictionary:
+				boss_ids.append(str(raw["id"]))
+	for expected_boss in ["patchwork_behemoth", "sewing_machine_colossus", "moth_queen"]:
+		_check(str(expected_boss) in boss_ids,
+			"AC1: seed boss is still authored: " + str(expected_boss))
+	_check(not boss_ids.is_empty(), "AC1: the boss catalog still authors its seed bosses")
+	for boss_id in boss_ids:
+		var foe: Dictionary = catalog["foes"].get(str(boss_id), {})
+		_check(bool(foe.get("is_boss", false)) and int(foe.get("turns_per_round", 0)) == 2
+			and StitchedEnemyCatalog.is_boss(catalog, str(boss_id)),
+			"AC1/AC2: boss authors the two-turn exception: " + str(boss_id))
+	var elites: Variant = _read_json(ELITE_PATH)
+	if elites is Array:
+		for raw in elites:
+			if not raw is Dictionary:
+				continue
+			var elite_id := str(raw["id"])
+			var foe: Dictionary = catalog["foes"].get(elite_id, {})
+			_check(not bool(foe.get("is_boss", true)) and int(foe.get("turns_per_round", 0)) == 1,
+				"AC1: Elite keeps one turn and no boss identity: " + elite_id)
+	# Behemoth phase two preserves its authored identity and a distinct second kit.
+	var phase_record: Variant = _read_json(PHASE_TWO_PATH)
+	var kits: Dictionary = catalog.get("phase_two", {})
+	_check(kits.has("patchwork_behemoth"), "AC1/AC2: Behemoth resolves an authored phase two")
+	if phase_record is Dictionary and kits.has("patchwork_behemoth"):
+		var legacy: Dictionary = phase_record
+		var intent: Dictionary = legacy.get("intent", {})
+		var actions: Array = intent.get("actions", [])
+		_check(int(legacy.get("threshold_hp", 0)) == 21
+			and int(kits["patchwork_behemoth"]["threshold_hp"]) == 21,
+			"AC2: phase two keeps its 21 HP threshold")
+		_check(actions.size() >= 6 and int(actions[0].get("amount", 0)) == 40,
+			"AC2: phase two keeps its authored heavy legacy actions")
+		var phase_two: Array = kits["patchwork_behemoth"]["abilities"]
+		var phase_one: Array = catalog["foes"]["patchwork_behemoth"]["abilities"]
+		var phase_one_ids: Dictionary = {}
+		for ability in phase_one:
+			phase_one_ids[str(ability["id"])] = true
+		var distinct := 0
+		for ability in phase_two:
+			if not phase_one_ids.has(str(ability["id"])):
+				distinct += 1
+		_check(phase_two.size() >= 4 and distinct == phase_two.size(),
+			"AC2: every phase-two action is a distinct authored move")
+
+
+# ---------------------------------------------------------------- AC1 trophies
+
+func _test_trophies(catalog: Dictionary) -> void:
+	var seen_ids: Dictionary = {}
+	var seen_names: Dictionary = {}
+	var seen_abilities: Dictionary = {}
+	for enemy_id in catalog["trophies"]:
+		var trophy := str(catalog["trophies"][enemy_id])
+		_check(not seen_ids.has(trophy), "AC1: trophy is unique to one foe: " + trophy)
+		seen_ids[trophy] = true
+		var part: Dictionary = catalog["parts_by_id"].get(trophy, {})
+		_check(not part.is_empty(), "AC1: trophy resolves in the part catalog: " + trophy)
+		if part.is_empty():
+			continue
+		_check(str(part.get("owner", "")) == "any",
+			"AC1: trophy can be worn by any hero: " + trophy)
+		_check(str(part.get("slot", "")) in StitchedParts.SLOTS,
+			"AC1: trophy fills a real slot: " + trophy)
+		_check(not str(part.get("name", "")).is_empty() and not str(part.get("text", "")).is_empty(),
+			"AC1: trophy is named and has rules text: " + trophy)
+		_check(not seen_names.has(str(part["name"])),
+			"AC1: trophy name is unique: " + str(part["name"]))
+		seen_names[str(part["name"])] = true
+		var tiers: Dictionary = part.get("tiers", {})
+		_check(tiers.has("2") and tiers.has("3"),
+			"AC1: trophy authors stitch tiers II and III: " + trophy)
+		for tier in [1, 2, 3]:
+			var ability := StitchedParts.ability_at_tier(part, tier)
+			_check(not ability.is_empty()
+				and bool(StitchedParts.validate_ability(ability).get("ok", false)),
+				"AC1: %s tier %d ability validates" % [trophy, tier])
+			var ability_id := str(ability.get("id", ""))
+			if tier == 1:
+				_check(not seen_abilities.has(ability_id),
+					"AC1: trophy ability id is unique: " + ability_id)
+				seen_abilities[ability_id] = true
+			else:
+				_check(ability_id == str(part["ability"]["id"]),
+					"AC1: a tier keeps its trophy ability identity: " + trophy)
+	for shipped_id in SHIPPED_TROPHIES:
+		var shipped: Dictionary = catalog["parts_by_id"].get(shipped_id, {})
+		_check(not shipped.is_empty()
+			and str(shipped.get("ability", {}).get("id", "")) == expected_ability(shipped_id),
+			"AC1: earlier trophy stays authored: " + shipped_id)
+
+
+func expected_ability(part_id: String) -> String:
+	return str(SHIPPED_TROPHIES[part_id])
+
+
+# ---------------------------------------------------------------- pure loader refusals
+
+func _documents(catalog: Dictionary) -> Array:
+	var documents: Array = []
+	for entry in StitchedEnemyCatalog.CATALOGS:
+		documents.append({
+			"path": str(entry["path"]),
+			"tier": str(entry["tier"]),
+			"entries": (_read_json(str(entry["path"])) as Array).duplicate(true),
+		})
+	return documents
+
+
+func _phase_record() -> Dictionary:
+	return (_read_json(PHASE_TWO_PATH) as Dictionary).duplicate(true)
+
+
+func _document(documents: Array, path: String) -> Dictionary:
+	for document in documents:
+		if str(document["path"]) == path:
+			return document
+	return {}
+
+
+func _record(documents: Array, enemy_id: String) -> Dictionary:
+	for document in documents:
+		for record in document["entries"]:
+			if str(record.get("id", "")) == enemy_id:
+				return record
+	return {}
+
+
+func _test_fail_closed(catalog: Dictionary) -> void:
+	var parts: Array = catalog["parts"]
+	# Missing profile.
+	var missing := _documents(catalog)
+	_record(missing, "ragling").erase("stitched")
+	_check(not bool(StitchedEnemyCatalog.build_catalog(missing, _phase_record(), parts).get("ok", true)),
+		"AC1: a canonical enemy without a Stitched profile is rejected")
+	# Mismatched repeated record.
+	var mismatched := _documents(catalog)
+	var twin: Dictionary = _record(mismatched, "spindle_ram").duplicate(true)
+	twin["max_hp"] = int(twin["max_hp"]) + 1
+	(_document(mismatched, "res://data/enemies/v3_tough_normals.json"))["entries"].append(twin)
+	_check(not bool(StitchedEnemyCatalog.build_catalog(mismatched, _phase_record(), parts).get("ok", true)),
+		"AC1: repeated enemy ids with different records are rejected")
+	# Duplicate trophy.
+	var shared := _documents(catalog)
+	_record(shared, "ragling_guard")["stitched"]["trophy"] = "ragling_tatter_claw"
+	_check(not bool(StitchedEnemyCatalog.build_catalog(shared, _phase_record(), parts).get("ok", true)),
+		"AC1: two foes cannot share one trophy")
+	# Illegal boss and normal turn counts.
+	var two_turn_normal := _documents(catalog)
+	_record(two_turn_normal, "ragling")["stitched"]["turns_per_round"] = 2
+	_check(not bool(StitchedEnemyCatalog.build_catalog(two_turn_normal, _phase_record(), parts).get("ok", true)),
+		"AC2: an ordinary foe cannot take two turns")
+	var one_turn_boss := _documents(catalog)
+	_record(one_turn_boss, "moth_queen")["stitched"]["turns_per_round"] = 1
+	_check(not bool(StitchedEnemyCatalog.build_catalog(one_turn_boss, _phase_record(), parts).get("ok", true)),
+		"AC2: a boss must author its two-turn exception")
+	# Illegal rank and duplicate ability ids.
+	var bad_rank := _documents(catalog)
+	_record(bad_rank, "ragling")["stitched"]["abilities"][0]["launch"] = [5]
+	_check(not bool(StitchedEnemyCatalog.build_catalog(bad_rank, _phase_record(), parts).get("ok", true)),
+		"AC2: an illegal launch rank is rejected")
+	var repeated_move := _documents(catalog)
+	var profile: Dictionary = _record(repeated_move, "ragling")["stitched"]
+	profile["abilities"][1]["id"] = str(profile["abilities"][0]["id"])
+	_check(not bool(StitchedEnemyCatalog.build_catalog(repeated_move, _phase_record(), parts).get("ok", true)),
+		"AC1: one foe cannot repeat an ability id")
+	# Phase-two refusals.
+	var no_phase: Dictionary = _phase_record()
+	no_phase.erase("stitched_phase_two")
+	_check(not bool(StitchedEnemyCatalog.build_catalog(_documents(catalog), no_phase, parts).get("ok", true)),
+		"AC2: the behemoth phase-two kit is required")
+	var repeated_phase: Dictionary = _phase_record()
+	repeated_phase["stitched_phase_two"]["abilities"][0]["id"] = "behemoth_maul"
+	_check(not bool(StitchedEnemyCatalog.build_catalog(_documents(catalog), repeated_phase, parts).get("ok", true)),
+		"AC2: phase two must author distinct actions")
+	_check(bool(catalog.get("ok", false)) and catalog["foes"].size() > 0,
+		"AC1: the real loader still validates after every malformed probe")
+
+
+# ---------------------------------------------------------------- AC2 seeded rules
+
+func _config(catalog: Dictionary, ids: Array, seed_value: int,
+		phases: Dictionary = {}) -> Dictionary:
+	var preview: Variant = _read_json(PREVIEW_PATH)
+	if not preview is Dictionary:
+		return {}
+	var config: Dictionary = preview
+	var parts: Array = catalog["parts"].duplicate(true)
+	parts.append_array(config["parts"])
+	var foes: Array = []
+	for enemy_id in ids:
+		var phase := str(phases.get(str(enemy_id), StitchedEnemyCatalog.PHASE_ONE))
+		var foe := StitchedEnemyCatalog.foe_for(catalog, str(enemy_id), phase)
+		if foe.is_empty():
+			return {}
+		foes.append(foe)
+	return {
+		"mode": "stitched",
+		"seed": seed_value,
+		"candle": 100,
+		"heroes": config["heroes"].duplicate(true),
+		"parts": parts,
+		"foes": foes,
+	}
+
+
+func _battle(catalog: Dictionary, ids: Array, seed_value: int,
+		phases: Dictionary = {}) -> StitchedRules:
+	var config := _config(catalog, ids, seed_value, phases)
+	if config.is_empty():
+		return null
+	var created := StitchedRules.create(config)
+	_check(bool(created.get("ok", false)),
+		"AC2: seeded %d-foe fight builds: %s" % [ids.size(), str(created.get("error", ""))])
+	return created.get("battle") if bool(created.get("ok", false)) else null
+
+
+func _auto_play(battle: StitchedRules, max_steps: int) -> Dictionary:
+	var receipts: Array = []
+	var rounds := 1
+	for step in range(max_steps):
+		if battle.is_over():
+			break
+		var actor_id := battle.current_actor_id()
+		var actor := battle.get_unit(actor_id)
+		var acted := false
+		if battle.current_side() == "hero":
+			for slot in StitchedParts.SLOTS:
+				if acted:
+					break
+				var worn: Dictionary = actor.get("parts", {}).get(slot, {})
+				if worn.is_empty() or bool(worn.get("torn", false)):
+					continue
+				var definition: Dictionary = battle._parts.get(str(worn["id"]), {})
+				var ability := StitchedParts.ability_at_tier(definition, int(worn["tier"]))
+				if ability.is_empty() or not battle._self_move_gate(actor, ability).is_empty():
+					continue
+				for rank in range(1, 5):
+					if battle._legal_targets(actor, ability, rank).is_empty():
+						continue
+					var receipt := battle.use_part(str(worn["id"]), rank)
+					if bool(receipt.get("ok", false)):
+						receipts.append(receipt)
+						acted = true
+					break
+		else:
+			for ability in actor.get("abilities", []):
+				if acted:
+					break
+				if not battle._self_move_gate(actor, ability).is_empty():
+					continue
+				for rank in range(1, 5):
+					if battle._legal_targets(actor, ability, rank).is_empty():
+						continue
+					var receipt := battle.use_foe_ability(str(ability["id"]), rank)
+					if bool(receipt.get("ok", false)):
+						receipts.append(receipt)
+						acted = true
+					break
+		if not acted and not battle.is_over():
+			var passed := battle.pass_turn()
+			if bool(passed.get("ok", false)):
+				receipts.append(passed)
+		rounds = battle.round_number()
+	return {
+		"rounds": rounds,
+		"outcome": battle.outcome(),
+		"snapshot": battle.state_snapshot(),
+		"rng": battle.rng_state(),
+		"receipts": receipts.duplicate(true),
+	}
+
+
+func _test_seeded_fights(catalog: Dictionary) -> void:
+	# Two-foe front/rear normal fight: a melee rank-1 Ragling and a rear rank-2 Moth Scribe.
+	var two := _battle(catalog, ["ragling", "moth_scribe"], 6101)
+	if two != null:
+		_check(two.get_foes().size() == 2 and two.current_side() == "hero",
+			"AC2: seeded two-foe fight starts with living heroes and foes")
+		var first := _auto_play(two, 120)
+		var replay := _auto_play(_battle(catalog, ["ragling", "moth_scribe"], 6101), 120)
+		_check(first == replay, "AC2: seeded two-foe normal fight replays receipts and state")
+		_check(int(first["rounds"]) >= 1 and not first["receipts"].is_empty(),
+			"AC2: seeded two-foe fight really executes actions")
+	# Three-foe Elite fight with real legal ranks.
+	var three := _battle(catalog, ["needle_marshal", "spool_hexer", "scissor_bailiff"], 6102)
+	if three != null:
+		_check(three.get_foes().size() == 3,
+			"AC2: seeded three-foe Elite fight admits all three foes")
+		var first := _auto_play(three, 140)
+		var replay := _auto_play(
+			_battle(catalog, ["needle_marshal", "spool_hexer", "scissor_bailiff"], 6102), 140)
+		_check(first == replay, "AC2: seeded three-foe Elite fight replays receipts and state")
+		_check(int(first["rounds"]) >= 1 and not first["receipts"].is_empty(),
+			"AC2: seeded Elite fight really executes authored actions")
+		_check(first["outcome"] in ["ongoing", "victory", "defeat"],
+			"AC2: seeded Elite fight reaches a real rules outcome, never a mock")
+	# Every boss: two turns in the rolled order, authored actions and identical replay.
+	for boss_id in ["patchwork_behemoth", "sewing_machine_colossus", "moth_queen"]:
+		var boss_battle := _battle(catalog, [str(boss_id), "ragling", "ragling_guard"], 6103)
+		if boss_battle == null:
+			continue
+		var order := boss_battle.turn_order()
+		var boss_turns := 0
+		for entry in order:
+			if str(entry) == str(boss_id):
+				boss_turns += 1
+		_check(boss_turns == 2 and int(
+			boss_battle.get_unit(str(boss_id)).get("turns_per_round", 0)) == 2,
+			"AC2: boss takes two turns in the rolled order: " + str(boss_id))
+		var first := _auto_play(boss_battle, 160)
+		var boss_actions := 0
+		for receipt in first["receipts"]:
+			if str(receipt.get("actor", "")) == str(boss_id) \
+					and str(receipt.get("action", "")) == "ability":
+				boss_actions += 1
+		_check(boss_actions >= 2,
+			"AC2: boss really acts twice before the fight ends: " + str(boss_id))
+		var replay := _auto_play(
+			_battle(catalog, [str(boss_id), "ragling", "ragling_guard"], 6103), 160)
+		_check(first == replay, "AC2: seeded boss fight replays receipts and state: " + str(boss_id))
+	# Behemoth phase two: build the actual second kit from the loader and witness its moves.
+	var phase := StitchedEnemyCatalog.foe_for(catalog, "patchwork_behemoth", StitchedEnemyCatalog.PHASE_TWO)
+	_check(not phase.is_empty() and phase["abilities"].size() >= 4,
+		"AC2: the loader publishes the Behemoth phase-two kit")
+	if not phase.is_empty():
+		var phase_ids := {"patchwork_behemoth": StitchedEnemyCatalog.PHASE_TWO}
+		var phase_battle := _battle(
+			catalog, ["ragling", "ragling_guard", "patchwork_behemoth"], 6106, phase_ids)
+		if phase_battle != null:
+			_check(str(phase_battle.get_unit("patchwork_behemoth")["abilities"][0]["id"]) ==
+				str(phase["abilities"][0]["id"]),
+				"AC2: the phase-two battle really carries the second kit")
+			var kit_ids: Dictionary = {}
+			for ability in phase["abilities"]:
+				kit_ids[str(ability["id"])] = true
+			var first := _auto_play(phase_battle, 120)
+			var used := 0
+			for receipt in first["receipts"]:
+				if str(receipt.get("actor", "")) == "patchwork_behemoth" \
+						and kit_ids.has(str(receipt.get("ability", ""))):
+					used += 1
+			_check(used > 0, "AC2: a seeded phase-two Behemoth executes its distinct actions")
+			var replay := _auto_play(
+				_battle(catalog, ["ragling", "ragling_guard", "patchwork_behemoth"], 6106, phase_ids),
+				120)
+			_check(first == replay, "AC2: phase-two Behemoth fight replays identically")
+	# Statuses and fray are genuinely exercised by the authored kits.
+	var status_battle := _battle(catalog, ["pin_skitter", "moth_scribe"], 6107)
+	if status_battle != null:
+		var seen_status := false
+		var seen_fray := false
+		for step in range(60):
+			if status_battle.is_over() or status_battle.current_side() != "foe":
+				if status_battle.is_over():
+					break
+				status_battle.pass_turn()
+				continue
+			var actor := status_battle.get_unit(status_battle.current_actor_id())
+			var acted := false
+			for ability in actor.get("abilities", []):
+				if acted:
+					break
+				for rank in range(1, 5):
+					if status_battle._legal_targets(actor, ability, rank).is_empty():
+						continue
+					var receipt := status_battle.use_foe_ability(str(ability["id"]), rank)
+					if bool(receipt.get("ok", false)):
+						acted = true
+						for hit in receipt.get("results", []):
+							if hit.get("fray_event", {}).get("ok") == true:
+								seen_fray = true
+							if not hit.get("statuses", []).is_empty():
+								seen_status = true
+					break
+			if not acted and not status_battle.is_over():
+				status_battle.pass_turn()
+			if seen_status and seen_fray:
+				break
+		_check(seen_status, "AC2: an authored foe status really lands in seeded combat")
+		_check(seen_fray, "AC2: an authored fray attack really changes hero fray")
+
+
+# ---------------------------------------------------------------- AC2 invalid inputs
+
+func _test_invalid_inputs(catalog: Dictionary) -> void:
+	seed(508001)
+	var before_rng := randi()
+	seed(508001)
+	var four := _config(catalog, ["ragling", "ragling_guard", "moth_scribe", "pin_skitter"], 6108)
+	var created := StitchedRules.create(four)
+	_check(not bool(created.get("ok", false)) and created.get("battle") == null,
+		"AC2: four opening foes are refused without a battle")
+	_check(randi() == before_rng, "AC2: refusing four foes spends no global RNG")
+	var battle := _battle(catalog, ["ragling", "moth_scribe"], 6109)
+	if battle == null:
+		return
+	for step in range(20):
+		if battle.current_side() == "foe":
+			break
+		battle.pass_turn()
+	_check(battle.current_side() == "foe", "AC2: a real foe turn preceded invalid action checks")
+	var foe := battle.get_unit(battle.current_actor_id())
+	var ability_id := str(foe["abilities"][0]["id"])
+	var before_state := battle.state_snapshot()
+	var before_snapshot_rng := battle.rng_state()
+	var unknown := battle.use_foe_ability("not_an_ability", 1)
+	var illegal_rank := battle.use_foe_ability(ability_id, 4)
+	_check(not bool(unknown.get("ok", true)) and not bool(illegal_rank.get("ok", true)),
+		"AC2: unknown abilities and illegal target ranks are refused")
+	_check(before_state == battle.state_snapshot() and before_snapshot_rng == battle.rng_state(),
+		"AC2: refused foe actions change neither state nor seeded RNG")
+
+
+# ---------------------------------------------------------------- live admission uses the loader
+
+func _test_live_admission(catalog: Dictionary) -> void:
+	var app: Node = load("res://scenes/app.tscn").instantiate()
+	root.add_child(app)
+	await process_frame
+	var config: Dictionary = app._stitched_floor_config()
+	_check(not config.is_empty(), "AC3: the real title still builds a Roadblock admission config")
+	if not config.is_empty():
+		_check(config.get("foes", []).size() == 3,
+			"AC3: the live Roadblock keeps exactly its original three foes")
+		var ids: Array = []
+		for foe in config.get("foes", []):
+			ids.append(str(foe.get("id", "")))
+			_check(foe == StitchedEnemyCatalog.foe_for(catalog, str(foe.get("id", ""))),
+				"AC3: the live foe is the canonical loader kit: " + str(foe.get("id", "")))
+		_check(ids == ROADBLOCK_IDS, "AC3: the live Roadblock roster is unchanged")
+		var parts: Dictionary = StitchedParts.build_catalog(config.get("parts", []))
+		_check(bool(parts.get("ok", false)), "AC3: the live merged part catalog validates")
+		for enemy_id in ROADBLOCK_IDS:
+			var trophy := StitchedEnemyCatalog.trophy_for(catalog, str(enemy_id))
+			_check(not trophy.is_empty() and parts["by_id"].has(trophy),
+				"AC3: the live catalog can receive the foe's canonical trophy: " + str(enemy_id))
+	app.free()
+	await process_frame

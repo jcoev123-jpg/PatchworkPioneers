@@ -368,6 +368,7 @@ func _run() -> void:
 	await process_frame
 	await _run_sack_path()
 	await _run_inkbrush_path()
+	await _run_defeat_path()
 	_finish()
 
 
@@ -527,6 +528,51 @@ func _run_sack_path() -> void:
 	await process_frame
 	_check(app.stitched_preview_satchel == before_exit and app.stitched_sewing_panel == null \
 		and _no_wallet(app), "unwon next Fight leaves sack and no-spend receipt unchanged")
+	app.free()
+	await process_frame
+
+
+## A genuine Roadblock DEFEAT must never pay a trophy. Real mounted hero passes let the
+## authored foes win the fight, then the real Back control retires it: no satchel entry,
+## no Sewing Circle, no wallet and no global RNG draw.
+func _run_defeat_path() -> void:
+	var app := _spawn()
+	await process_frame
+	_check(app.stitched_preview_satchel.is_empty() and _no_wallet(app),
+		"fresh defeat path starts without spoils or a wallet")
+	var stage: StitchedBattleScreen = await _admit(app)
+	if stage == null:
+		_check(false, "defeat witness admits a real Roadblock from the title")
+		app.free()
+		await process_frame
+		return
+	var passes := 0
+	for turn in range(220):
+		if stage.battle.is_over() or stage.battle.current_side() != "hero":
+			break
+		var receipt: Dictionary = stage.submit_pass()
+		if receipt.get("ok") != true:
+			break
+		passes += 1
+	var lost_heroes := 0
+	for hero in stage.battle.get_heroes():
+		if bool(hero.get("lost", false)):
+			lost_heroes += 1
+	_check(passes > 0 and stage.battle.is_over() and stage.battle.outcome() == "defeat"
+		and lost_heroes > 0,
+		"mounted hero passes reach a genuine defeat with a lost hero")
+	var satchel_before: Array = app.stitched_preview_satchel.duplicate(true)
+	seed(661207)
+	var expected_global := randi()
+	seed(661207)
+	stage._action_buttons["exit"].pressed.emit()
+	await process_frame
+	_check(app.stitched_preview_satchel == satchel_before \
+		and app.stitched_preview_satchel.is_empty() \
+		and app.stitched_sewing_visit == null and app.stitched_sewing_panel == null \
+		and app.title_view.is_visible_in_tree() and randi() == expected_global \
+		and _no_wallet(app),
+		"a genuine defeat pays no trophy, opens no Circle, and spends no RNG or wallet")
 	app.free()
 	await process_frame
 

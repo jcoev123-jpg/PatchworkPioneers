@@ -350,7 +350,7 @@ static func _floor_band_material(band_pools: Variant, tough_catalog_text: Varian
     # Compare in the catalog parser's numeric representation (JSON action
     # numbers remain floats until the combat intent binder normalizes them).
     var expected := RunTypedBattleRoster._parse_catalog_text(JSON.stringify([authentic]))
-    if ram != expected[0]:
+    if _legacy_fields(ram) != expected[0]:
         return {"ok": false}
     var authentic_wraith := {
         "id": "razor_ribbon_wraith", "name": "Razor Ribbon Wraith", "max_hp": 27,
@@ -364,7 +364,7 @@ static func _floor_band_material(band_pools: Variant, tough_catalog_text: Varian
         ]},
     }
     var expected_wraith := RunTypedBattleRoster._parse_catalog_text(JSON.stringify([authentic_wraith]))
-    if wraith != expected_wraith[0]:
+    if _legacy_fields(wraith) != expected_wraith[0]:
         return {"ok": false}
     for record in [ram, wraith]:
         var id: String = record["id"]
@@ -383,6 +383,15 @@ static func _floor_band_material(band_pools: Variant, tough_catalog_text: Varian
     if RunV3FloorBandRoster._validated_bands(pools).is_empty():
         return {"ok": false}
     return {"ok": true, "pools": pools, "records": records}
+
+
+## S5 appends an authored "stitched" profile to every canonical enemy. This gate
+## authenticates the card-era legacy record it was written for; the S5 enemy
+## catalog test owns the separate profile validation.
+static func _legacy_fields(record: Dictionary) -> Dictionary:
+    var legacy := record.duplicate(true)
+    legacy.erase("stitched")
+    return legacy
 
 
 ## Three contiguous, non-overlapping bands of the ordered normal roster. The
