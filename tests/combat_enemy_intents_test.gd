@@ -2238,8 +2238,8 @@ func _test_ram_charge_seeded_cache() -> void:
 		if record.get("id") == CombatEnemyIntents.CHARGE_ID:
 			ram = record.duplicate(true)
 	_check(not ram.is_empty() and ram.get("charge") == true
-		and ram.get("intent", {}).get("actions", []).size() == 3,
-		"AC1 precondition: real catalog Ram has Charge and all three authored choices")
+		and ram.get("intent", {}).get("actions", []).size() == 5,
+		"AC1 precondition: real catalog Ram has Charge and all five authored choices")
 	if ram.is_empty():
 		return
 	var attack: Dictionary = ram["intent"]["actions"][2].duplicate(true)
@@ -2313,15 +2313,17 @@ func _test_inkbrush_blind_schema() -> void:
 	if imp.is_empty():
 		return
 	var slot := CombatEnemyIntents._weighted_slot(1, imp.intent)
-	_check(not slot.is_empty() and slot.actions.size() == 3,
-		"real Imp binds all three authored choices")
+	_check(not slot.is_empty() and slot.actions.size() == 5,
+		"real Imp binds all five authored choices")
 	var options: Array = []
 	for item in slot.get("actions", []):
 		options.append({"action": item.action, "weight": item.weight})
 	_check(options == [
 		{"action": {"type": "debuff", "amount": 2, "status": "exposed"}, "weight": 2},
 		{"action": {"type": "attack", "amount": 6}, "weight": 3},
-		{"action": {"type": "debuff", "amount": 1, "status": "blind_next_attack"}, "weight": 2}],
+		{"action": {"type": "debuff", "amount": 1, "status": "blind_next_attack"}, "weight": 2},
+		{"action": {"type": "attack", "amount": 7, "move": "attack2"}, "weight": 1},
+		{"action": {"type": "attack", "amount": 6, "hits": 2, "move": "attack3"}, "weight": 1}],
 		"Imp preserves original Exposed/attack alternatives and exact Blind 1/2")
 	var legal := {"type": "debuff", "amount": 1,
 		"status": "blind_next_attack", "target_position": 3}

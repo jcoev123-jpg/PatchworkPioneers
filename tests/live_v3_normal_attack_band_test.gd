@@ -322,15 +322,21 @@ func _ram_phases() -> Array:
 	var trace: Array = [_mounted_state()]
 	var ram: Dictionary = app.enemies.get_enemy(ram_slot)
 	_check(ram.max_hp == 45 and ram.hp == 45 and ram.charge == true
-		and ram.intent.target == "front" and ram.intent.actions[2].amount == 12,
-		"Ram keeps charge/front targeting with existing high-floor HP 45 and base attack 12")
+		and ram.intent.target == "front" and ram.intent.actions.size() == 5
+		and ram.intent.actions[2].amount == 12
+		and ram.intent.actions[3].amount == 10 and ram.intent.actions[3].get("hits") == 2
+		and ram.intent.actions[3].get("move") == "attack2" and ram.intent.actions[3].weight == 1
+		and ram.intent.actions[4].amount == 13 and ram.intent.actions[4].get("move") == "attack3"
+		and ram.intent.actions[4].weight == 1,
+		"Ram retains scaled HP 45, Charge/front and base 12 alongside Horn Charge 10/2 and Yarn Hurl 13")
 	for actor in actors:
 		if actor.position != ram_slot:
 			_check(app.enemies.apply_damage(actor.position, 99999), "isolate the authentic routed Ram")
 	var witnessed := {}
 	var strikes := 0
 	for turn in range(50):
-		if witnessed.has("shove") and witnessed.has("block") and strikes >= 2:
+		if witnessed.has("shove") and witnessed.has("block") and witnessed.has("attack2") \
+				and witnessed.has("attack3") and strikes >= 2:
 			break
 		_check(not app._battle_closed and app.deck.turn_active, "Ram witness has a playable real turn")
 		if app._battle_closed or not app.deck.turn_active:
@@ -341,7 +347,7 @@ func _ram_phases() -> Array:
 			hero.statuses = {}
 		var action: Dictionary = app.enemy_intents.get_intents()[ram_slot - 1]
 		var armed: bool = app.enemies.get_enemy(ram_slot).has("charge_pending")
-		var shield := 3 if armed and strikes > 0 else 0
+		var shield := 3 if (armed and strikes > 0) or action.has("move") else 0
 		if shield > 0:
 			_check(app.party.gain_block(action.target_position, shield), "real Block mitigates the second charge")
 		app._refresh_enemy_roster()
@@ -350,9 +356,18 @@ func _ram_phases() -> Array:
 			and badge.intent_type == action.type and badge.amount == action.amount,
 			"mounted Ram badge is visible and matches the authoritative source/action/amount")
 		if action.type == "attack":
-			_check(action.amount == (30 if armed else 0)
-				and badge.charge_state == ("strike" if armed else "wind_up")
-				and badge.tooltip_text.contains("30"), "mounted wind-up/strike shows floor(12 * 2.5) = 30")
+			if action.has("move"):
+				var named_ok: bool = (action.move == "attack2" and action.amount == 10
+					and action.get("hits") == 2 and badge.move_name == "Horn Charge") \
+					or (action.move == "attack3" and action.amount == 13
+					and not action.has("hits") and badge.move_name == "Yarn Hurl")
+				_check(not armed and named_ok and action.target_position == 1
+					and badge.charge_state == "" and badge.tooltip_text.contains(str(action.amount)),
+					"mounted named Ram attack retains authentic scaled amount, hits, front target and pose")
+			else:
+				_check(action.amount == (30 if armed else 0)
+					and badge.charge_state == ("strike" if armed else "wind_up")
+					and badge.tooltip_text.contains("30"), "mounted wind-up/strike shows floor(12 * 2.5) = 30")
 		var heroes: Array = app.party.get_heroes()
 		var block_before: int = app.enemies.get_enemy(ram_slot).block
 		trace.append([action.duplicate(true), heroes, app.enemies.get_enemies(), app.run_rng.state])
@@ -370,15 +385,21 @@ func _ram_phases() -> Array:
 			var hero: Dictionary = app.party.get_hero(action.target_position)
 			_check(hero.hp == heroes[action.target_position - 1].hp - maxi(0, action.amount - shield),
 				"real charge phase deals exactly the displayed damage after Block")
-			_check(app.enemies.get_enemy(ram_slot).has("charge_pending") != armed,
-				"wind-up arms and the next real strike consumes the actor-owned latch")
-			if armed:
-				strikes += 1
+			if action.has("move"):
+				_check(not armed and not app.enemies.get_enemy(ram_slot).has("charge_pending"),
+					"named Ram strikes neither wind up nor consume the Charge latch")
+				witnessed[action.move] = true
 			else:
-				witnessed.wind_up = true
+				_check(app.enemies.get_enemy(ram_slot).has("charge_pending") != armed,
+					"wind-up arms and the next real strike consumes the actor-owned latch")
+				if armed:
+					strikes += 1
+				else:
+					witnessed.wind_up = true
 		trace.append(_mounted_state())
 	_check(witnessed.has("shove") and witnessed.has("block") and witnessed.has("wind_up")
-		and strikes >= 2, "non-vacuous Ram trace resolves shove, Block, wind-up and two scaled strikes")
+		and witnessed.has("attack2") and witnessed.has("attack3") and strikes >= 2,
+		"non-vacuous mounted Ram trace resolves shove, Block, wind-up, two charged strikes and both named attacks")
 	return trace
 
 

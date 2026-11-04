@@ -22,13 +22,26 @@ func _begin(id: String, seat: int = 2, mode: String = "plain") -> Control:
 	var ranger := {"id": "yarn_ranger", "name": "Yarn Ranger", "max_hp": 27}
 	if mode == "weak_exposed":
 		ranger["statuses"] = {"weak": 1}
+	elif mode == "mixed_status":
+		# Canonical lawful tokens in the role that owns them: a Dodging, Feared Ranger.
+		ranger["statuses"] = {"dodge_next_attack": 1, "cannot_buff_next_turn": true}
 	heroes.insert(seat - 1, ranger)
 	app.party = CombatParty.new(heroes)
-	var status := {"exposed": 1, "tangled": 2} if mode == "tangled_exposed" else ({"exposed": 1} if mode == "weak_exposed" else {})
-	app.enemies = CombatEnemies.new([
+	var status: Dictionary = {}
+	if mode == "tangled_exposed":
+		status = {"exposed": 1, "tangled": 2}
+	elif mode == "weak_exposed":
+		status = {"exposed": 1}
+	elif mode == "mixed_status":
+		# A Blinded, Feared foe that is already Tangled: both are inert for this hit.
+		status = {"blind_next_attack": 1, "cannot_buff_next_turn": true, "tangled": 1}
+	var foes: Array = [
 		{"id": "first", "name": "First", "max_hp": 40, "statuses": status},
 		{"id": "second", "name": "Second", "max_hp": 40},
-		{"id": "third", "name": "Third", "max_hp": 40}])
+		{"id": "third", "name": "Third", "max_hp": 40}]
+	if mode == "mixed_status":
+		foes[1]["statuses"] = {"blind_next_attack": 0}
+	app.enemies = CombatEnemies.new(foes)
 	_check(app.party.is_valid() and app.enemies.is_valid(), "three authentic seats and valid enemy roster")
 	if mode == "plain":
 		_check(app.enemies.gain_block(1, 1), "plain target begins with Block")
@@ -36,6 +49,13 @@ func _begin(id: String, seat: int = 2, mode: String = "plain") -> Control:
 		_check(app.enemies.gain_block(1, 4), "Tangled/Exposed target begins with Block")
 	elif mode == "weak_exposed":
 		_check(app.enemies.gain_block(1, 2), "Weak/Exposed target begins with Block")
+	elif mode == "mixed_status":
+		_check(app.enemies.gain_block(1, 2), "mixed-status target begins with Block")
+		_check(app.party.get_hero(seat).get("statuses")
+			== {"dodge_next_attack": 1, "cannot_buff_next_turn": true}
+			and app.enemies.get_enemy(1).get("statuses")
+			== {"blind_next_attack": 1, "cannot_buff_next_turn": true, "tangled": 1},
+			"the mounted fight really carries Ranger Dodge 1/Fear and enemy Blind 1/Fear/Tangled 1")
 	app.battle_result = CombatBattleResult.new(app.party, app.enemies)
 	app.victory_gold = RunVictoryGold.new(app.battle_result)
 	app.round_flow = CombatRoundFlow.new(app.deck, app.party, app.enemies, app.enemy_intents, app.battle_result)
@@ -137,6 +157,10 @@ func _success(id: String, mode: String, keyboard: bool, seat: int, target: int =
 		adjusted = int(floor(float(printed) * 1.5)) + 2
 	elif mode == "weak_exposed":
 		adjusted = int(floor(float(printed) * 9.0 / 8.0))
+	elif mode == "mixed_status":
+		# Dodge and Blind are inert for this outgoing hit; the foe's pre-hit Tangled 1 still
+		# confers its flat +2 before the cast's own Tangled is added.
+		adjusted = printed + 2
 	var absorbed: int = mini(int(previous.block), adjusted)
 	var expected_hp: int = maxi(0, int(previous.hp) - (adjusted - absorbed))
 	await _select(target_panel, keyboard)
@@ -147,6 +171,14 @@ func _success(id: String, mode: String, keyboard: bool, seat: int, target: int =
 	for index in range(3):
 		if index != target - 1:
 			_check(app.enemies.get_enemy(index + 1) == other_enemies[index], "other enemy state unchanged")
+	if mode == "mixed_status":
+		_check(app.party.get_hero(seat).get("statuses")
+			== {"dodge_next_attack": 1, "cannot_buff_next_turn": true},
+			"the Ranger keeps its Dodge 1 and Fear true through the paid bolas hit")
+		_check(after.get("statuses") == {"blind_next_attack": 1,
+			"cannot_buff_next_turn": true,
+			"tangled": 1 + int(definition.effects.tangled)},
+			"the struck foe keeps Blind 1 and Fear true and gains exactly its printed Tangled")
 	_check(app.party.get_heroes() == prior_party and app.run_rng.state == prior_rng
 		and app.enemy_intents.get_intents() == prior_intents and app.battle_result.get_outcome() == CombatBattleResult.ACTIVE,
 		"party, intents, battle result and RNG remain unchanged")
@@ -319,6 +351,8 @@ func _run() -> void:
 		await _success(id, "plain", false, 2)
 		await _success(id, "tangled_exposed", true, 3)
 		await _success(id, "weak_exposed", false, 2)
+		await _success(id, "mixed_status", false, 2)
+		await _success(id, "mixed_status", true, 3)
 		await _success(id, "plain", true, 3, 2)
 		await _success(id, "plain", false, 2, 3)
 		await _lethal(id)

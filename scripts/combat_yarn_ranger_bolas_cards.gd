@@ -18,6 +18,12 @@ extends RefCounted
 ## Tangled count is added to that same authoritative enemy slot; a confirmed lethal hit
 ## therefore keeps its status on the nonmoving original slot.
 ##
+## The two actor status maps are preflighted with the same role-aware policy the hit itself
+## uses: the attacking Ranger may already carry Dodge 0|1 and Fear true, and the defending
+## enemy may already carry Blind 0|1 and Fear true. Those one-shot tokens are inert here and
+## are never consumed; the opposite role's token, every malformed value and every unknown key
+## stay refused before any payment.
+##
 ## Every rejection is a pure no-op: no energy, hand, pile, party, enemy or RNG change. This
 ## is callable rules-layer behaviour only; registering these IDs in the live hand or reward
 ## flow is a later, separately owned wiring task. Real held-card app dispatch is a later
@@ -277,7 +283,13 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if not defender_raw is Dictionary:
 		return _refusal("invalid_enemies")
 	var defender_statuses: Dictionary = defender_raw
-	if not _valid_statuses(attacker_statuses) or not _valid_statuses(defender_statuses):
+	# The role-aware preflight the hit itself uses (CombatStatusAttacks.resolve_vs_enemy):
+	# an attacking Yarn Ranger may already carry Dodge 0|1 and Fear true; a defending
+	# enemy may already carry Blind 0|1 and Fear true. Both are inert for this outgoing
+	# hit and are never consumed here. The opposite-role token, every malformed value
+	# and every unknown key stay refused before any payment.
+	if not _valid_attacker_statuses(attacker_statuses) \
+			or not _valid_defender_statuses(defender_statuses):
 		return _refusal("invalid_statuses")
 
 	# Preflight Tangled overflow against the pre-hit counter.
@@ -308,15 +320,20 @@ func _read_statuses(actor: Dictionary) -> Variant:
 ## can never make the paid hit fail after the charge. Any broader shared vocabulary stays with the
 ## status owners; this card only ever adds Tangled after the hit.
 func _valid_statuses(statuses: Dictionary) -> bool:
-	if not statuses is Dictionary:
-		return false
-	for name in statuses:
-		if not name is String or name not in ["bleed", "weak", "exposed", "tangled", "riposte"]:
-			return false
-		var count = statuses[name]
-		if not count is int or count < 0:
-			return false
-	return true
+	return _attacks._valid_statuses(statuses)
+
+
+## An attacking hero may carry the canonical Dodge token (`dodge_next_attack` integer 0 or 1)
+## and Fear (`cannot_buff_next_turn: true`). Both are inert for this outgoing hit and are never
+## consumed here; a hero-side Blind stays refused.
+func _valid_attacker_statuses(statuses: Dictionary) -> bool:
+	return _attacks._valid_attacker_statuses(statuses)
+
+
+## A defending enemy may already carry the canonical Blind token (`blind_next_attack` integer 0
+## or 1) and Fear. Neither protects it from this incoming hit; an enemy-side Dodge stays refused.
+func _valid_defender_statuses(statuses: Dictionary) -> bool:
+	return _attacks._valid_defender_statuses(statuses)
 
 
 func _refusal(reason: String) -> Dictionary:

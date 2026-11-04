@@ -71,7 +71,8 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 			for entry in spec.actions:
 				if entry is Dictionary and entry.has("move"):
 					has_authored_move = true
-		if action.has("move") or (policy_targets and action.get("type") == "attack" and has_authored_move):
+		if action.has("move") or (policy_targets and action.get("type") == "attack" and has_authored_move
+				and actor.get(CombatEnemyIntents.CHARGE_FLAG, false) != true):
 			# Only this source's current authored amount/move pair is authority.
 			# RoundFlow owns cache identity; presentation metadata owns neither.
 			# Unbound legacy schedules retain their independent plain amounts.
@@ -104,7 +105,10 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 					authored = true
 			if not authored:
 				return failure
-		if actor.get(CombatEnemyIntents.CHARGE_FLAG, false) == true and actor["hp"] > 0:
+		if actor.has(CombatEnemyIntents.CHARGE_PENDING) and action.has("move"):
+			return failure
+		if actor.get(CombatEnemyIntents.CHARGE_FLAG, false) == true and actor["hp"] > 0 \
+				and not action.has("move"):
 			var armed := actor.has(CombatEnemyIntents.CHARGE_PENDING)
 			if armed and action.get("type") != "attack":
 				return failure
@@ -141,7 +145,7 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		# floor-scaled authored attack, not against a UI-only counter.
 		# An unarmed charge wind-up is a telegraph/skip, not the next attempted
 		# attack; Blind is bypassed and preserved for the armed 2.5x strike.
-		if effective.type == "attack" and not staged_enemies.is_slain(source) \
+		if effective.type == "attack" and not effective.has("move") and not staged_enemies.is_slain(source) \
 				and staged_enemies._enemies[source - 1].get(CombatEnemyIntents.CHARGE_FLAG, false) == true \
 				and not staged_enemies._enemies[source - 1].has(CombatEnemyIntents.CHARGE_PENDING) \
 				and not staged_party.is_downed(effective.target_position):

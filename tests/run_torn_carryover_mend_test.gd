@@ -9,6 +9,7 @@ func _initialize() -> void:
 	var global_next := randi()
 	seed(99119)
 	_vital_timeline()
+	_named_vital_carryover()
 	_negatives()
 	_map_projection_negative()
 	var map_bound := _map_paid_timeline(true)
@@ -510,3 +511,251 @@ func _vital_timeline() -> void:
 					"Rest uses permanently changed caps without removing tears")
 				_win(f, "after_vital_fight")
 				_check(c.create_next_fight_party() != null, "battle observation and reward replay remain valid after vitality and Rest")
+
+
+## Construct a real admitted trio, with a completed and settled CombatBattleResult
+## before opening its required-hero Event. Both modes share the same real paths.
+func _named_vital_fixture(bound: bool, picks: Array, required: String, tear_target: bool = false) -> Dictionary:
+	var admission := RunV3PartyAdmission.admit(picks)
+	_check(admission.ok and admission.party.size() == 3, "named carryover admission")
+	if not admission.ok:
+		return {}
+	var party := CombatParty.new(admission.party)
+	_check(party.is_valid(), "named real battle party")
+	if not party.is_valid():
+		return {}
+	var carry := RunTornCarryover.new(party.get_heroes())
+	_check(carry.is_valid() and carry.torn.is_valid(), "named carryover and torn owner valid")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 47129
+	var wardrobe: RunPatchWardrobe = null
+	if bound:
+		var slots: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/initial_patch_slots.json"))
+		wardrobe = RunPatchWardrobe.new(party.get_heroes(), ["stitched_badge", "spare_spool"],
+			slots, 6, 60, ["warden_strike"], 47129)
+		_check(wardrobe.is_valid(), "bound named wardrobe initialized")
+		if wardrobe.is_valid():
+			_check(wardrobe.sew("stitched_badge", "tinker", "HEAD", "sew",
+				wardrobe.get_snapshot()).ok, "named wardrobe has a real worn patch")
+			_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()),
+				"named wardrobe binds exactly the authoritative owner")
+	var f := {"carry": carry, "wardrobe": wardrobe, "rng": rng,
+		"gold": 60, "scraps": 6, "deck": ["warden_strike"], "rewards": []}
+	var next := carry.create_next_fight_party()
+	_check(next != null and next.is_valid(), "named next-fight party exists before victory")
+	if next == null:
+		return {}
+	var enemies := CombatEnemies.new([{"id": "vital_dummy", "max_hp": 8}])
+	var result := CombatBattleResult.new(next, enemies)
+	_check(result.get_outcome() == CombatBattleResult.ACTIVE
+		and carry.begin_battle("gated_battle", result, next), "named genuine ACTIVE battle")
+	var position := -1
+	for actor in next.get_heroes():
+		if actor.id == required:
+			position = actor.position
+	_check(position > 1, "named required hero is not first combat actor")
+	if position < 0:
+		return {}
+	_check(next.apply_damage(position, 999 if tear_target else 3),
+		"real battle damage applied to named target")
+	_check(enemies.apply_damage(1, 999)
+		and result.evaluate() == CombatBattleResult.VICTORY, "genuine won battle evaluation")
+	_check(carry.commit_victory("gated_battle", result, next).ok
+		and carry.apply_reward("gated_battle", result, next).ok,
+		"named battle and authoritative tear snapshot settle")
+	_check(carry.torn.read_state().completed_battles.has("gated_battle"),
+		"tear owner recorded real battle before Event")
+	return f
+
+
+func _named_vital_carryover() -> void:
+	var records: Array = RunV3HeroVitalEventGate.load_shipped_catalog().get("events", [])
+	_check(not records.is_empty(), "carryover uses shipped canonical hero-gated records")
+	var covered: Dictionary = {}
+	for bound in [false, true]:
+		for record in records:
+			var required: String = record.required_hero
+			if required not in ["warden", "seamstress", "tinker", "lantern_monk"] \
+				or (bound and required in ["warden", "lantern_monk"]):
+				continue
+			var picks: Array
+			match required:
+				"warden": picks = ["rag_duelist", "warden", "tinker"]
+				"lantern_monk": picks = ["warden", "lantern_monk", "tinker"]
+				_: picks = ["warden", "seamstress", "tinker"]
+			for choice in record.choices:
+				if choice.id == "leave":
+					continue
+				var f := _named_vital_fixture(bound, picks, required)
+				if f.is_empty():
+					continue
+				var c: RunTornCarryover = f.carry
+				var state := c.read_state()
+				var hero: Dictionary = {}
+				var target := -1
+				var ids: Array = []
+				for i in range(state.heroes.size()):
+					ids.append(state.heroes[i].id)
+					if state.heroes[i].id == required:
+						hero = state.heroes[i]
+						target = i
+				_check(target > 0 and hero.hp > 0 and hero.hp < hero.max_hp,
+					"real worn named hero behind a living front actor")
+				if target < 0 or hero.hp <= 0:
+					continue
+				var snapshot := {"gold": f.gold, "scraps": f.scraps,
+					"hero": {"id": hero.id, "hp": hero.hp, "max_hp": hero.max_hp}}
+				var gate := RunV3HeroVitalEventGate.new(ids)
+				_check(gate.is_valid(), "carryover validates genuine party gate")
+				if not gate.is_valid():
+					continue
+				var visit := gate.enter(record, snapshot)
+				_check(visit != null and visit.is_valid(), "carryover authentic visit opens")
+				if visit == null:
+					continue
+				var receipt := visit.choose_with_vitals(choice.id)
+				_check(receipt.ok, "carryover genuine gate claim")
+				if not receipt.ok:
+					continue
+				var wardrobe_state: Variant = f.wardrobe.get_snapshot() if bound else null
+				var before := _snapshot(f)
+				var wrong_receipt := receipt.duplicate(true)
+				wrong_receipt.state.hero.max_hp += 1
+				_check(not c.apply_vital_event("gated_vital", record, wrong_receipt,
+					snapshot, state, wardrobe_state) and _snapshot(f) == before,
+					"forged receipt refuses without carry, wallet, cap, patch or RNG drift")
+				var wrong_snapshot := snapshot.duplicate(true)
+				wrong_snapshot.hero.hp += 1
+				_check(not c.apply_vital_event("gated_vital", record, receipt,
+					wrong_snapshot, state, wardrobe_state) and _snapshot(f) == before,
+					"forged opening hero refuses atomically")
+				var modified: Dictionary = record.duplicate(true)
+				modified.erase("required_hero")
+				_check(not c.apply_vital_event("gated_vital", modified, receipt,
+					snapshot, state, wardrobe_state) and _snapshot(f) == before,
+					"stripped required hero refuses atomically")
+				modified = record.duplicate(true)
+				modified.required_hero = ids[0]
+				_check(not c.apply_vital_event("gated_vital", modified, receipt,
+					snapshot, state, wardrobe_state) and _snapshot(f) == before,
+					"forged required owner refuses atomically")
+				_check(not c.apply_vital_event("gated_battle", record, receipt,
+					snapshot, state, wardrobe_state) and _snapshot(f) == before,
+					"battle node cannot be claimed as gated visit")
+				if bound:
+					var stale_w: Dictionary = wardrobe_state.duplicate(true)
+					stale_w.gold += 1
+					_check(not c.apply_vital_event("gated_vital", record, receipt,
+						snapshot, state, stale_w) and _snapshot(f) == before,
+						"stale bound wardrobe rejects without partial publication")
+				else:
+					_check(not c.apply_vital_event("gated_vital", record, receipt,
+						snapshot, state, {}) and _snapshot(f) == before,
+						"unbound wardrobe cannot be fabricated")
+				_check(c.apply_vital_event("gated_vital", record, receipt,
+					snapshot, state, wardrobe_state), "authentic delegated named settlement")
+				var expected: Array = state.heroes.duplicate(true)
+				expected[target].max_hp = hero.max_hp + int(choice.outcome.max_hp)
+				expected[target].hp = mini(hero.hp + int(choice.outcome.hp), expected[target].max_hp)
+				var torn_state := c.torn.read_state()
+				_check(c.read_state().heroes == expected and torn_state.heroes == expected
+					and c.read_state().completed_vital_events == ["gated_vital"]
+					and torn_state.vital_cap_offsets.get(required) == int(choice.outcome.max_hp),
+					"exact target HP/max-HP, cap offset and one used node through carryover")
+				_check(c._max_hp_by_id[required] == expected[target].max_hp
+					and c._receipts.size() == 2, "delegated max-HP by owner and battle/visit receipts persist")
+				_check(receipt.state.gold == snapshot.gold + int(choice.outcome.gold)
+					and receipt.state.scraps == snapshot.scraps + int(choice.outcome.scraps),
+					"authored price exact in delegated receipt")
+				if bound:
+					var published: Dictionary = f.wardrobe.get_snapshot()
+					_check(published.heroes == expected and published.gold == receipt.state.gold
+						and published.scraps == receipt.state.scraps
+						and published.worn == wardrobe_state.worn
+						and published.operation_ids == wardrobe_state.operation_ids,
+						"bound wardrobe wallet, health and worn patch identity synchronized")
+				var hydrated := c.create_next_fight_party()
+				_check(hydrated != null and hydrated.is_valid()
+					and hydrated.get_heroes() == expected,
+					"real next Fight hydrates the targeted canonical trio")
+				before = _snapshot(f)
+				_check(not c.apply_vital_event("gated_vital", record, receipt,
+					snapshot, c.read_state(),
+					f.wardrobe.get_snapshot() if bound else null) and _snapshot(f) == before,
+					"gated receipt replay leaves all carryover state and RNG unchanged")
+				_check(not c.apply_vital_event("new", record, receipt, snapshot, state,
+					f.wardrobe.get_snapshot() if bound else null) and _snapshot(f) == before,
+					"stale carryover state refuses atomically")
+				covered[record.id] = true
+	for required_event_id in [
+		"v3_warden_buckle_heart_ward", "v3_seamstress_crimson_quilt_surgeon",
+		"v3_tinker_copper_needle_greenhouse", "v3_lantern_monk_thimble_moon_vigil",
+	]:
+		_check(covered.has(required_event_id),
+			"genuine carried Event for required non-front owner: " + required_event_id)
+
+	# A genuine won battle that left the required owner Torn must not admit
+	# a forged positive-HP opening snapshot, even with an otherwise valid gate.
+	for bound in [false, true]:
+		var torn_f := _named_vital_fixture(bound, ["warden", "seamstress", "tinker"], "seamstress", true)
+		if torn_f.is_empty():
+			continue
+		var c: RunTornCarryover = torn_f.carry
+		var record: Dictionary = {}
+		for candidate in records:
+			if candidate.required_hero == "seamstress":
+				record = candidate
+				break
+		_check(not record.is_empty(), "canonical Torn-owner record exists")
+		if record.is_empty():
+			continue
+		var state := c.read_state()
+		_check(state.heroes[1].hp == 0, "real previous battle left required hero Torn")
+		var fake_opening := {"gold": torn_f.gold, "scraps": torn_f.scraps,
+			"hero": {"id": "seamstress", "hp": 1, "max_hp": state.heroes[1].max_hp}}
+		var gate := RunV3HeroVitalEventGate.new(["warden", "seamstress", "tinker"])
+		var fake_visit := gate.enter(record, fake_opening)
+		_check(fake_visit != null, "forgery witness is accepted by detached gate without held owner")
+		if fake_visit == null:
+			continue
+		var fake_receipt := fake_visit.choose_with_vitals("stitch_wound")
+		var previous := _snapshot(torn_f)
+		_check(fake_receipt.ok and not c.apply_vital_event("forged_torn", record,
+			fake_receipt, fake_opening, state,
+			torn_f.wardrobe.get_snapshot() if bound else null)
+			and _snapshot(torn_f) == previous,
+			"Torn owner refuses even correctly formed independent claim with no state/RNG drift")
+
+	# A valid detached visit for a different canonical trio cannot grant a
+	# required hero absent from this battle-completed carryover.
+	var unrelated := RunV3PartyAdmission.admit(["warden", "lantern_monk", "tinker"])
+	_check(unrelated.ok, "absent-owner witness uses a second real canonical party")
+	if unrelated.ok:
+		var other_party := CombatParty.new(unrelated.party)
+		var other_hero: Dictionary = other_party.get_heroes()[1]
+		var absent_record: Dictionary = {}
+		for candidate in records:
+			if candidate.required_hero == "lantern_monk":
+				absent_record = candidate
+				break
+		_check(not absent_record.is_empty(), "absent-owner canonical Event exists")
+		if not absent_record.is_empty():
+			var other_opening := {"gold": 60, "scraps": 6,
+				"hero": {"id": other_hero.id, "hp": other_hero.hp, "max_hp": other_hero.max_hp}}
+			var other_gate := RunV3HeroVitalEventGate.new(["warden", "lantern_monk", "tinker"])
+			var other_visit := other_gate.enter(absent_record, other_opening)
+			_check(other_visit != null and other_visit.is_valid(), "absent owner has legitimate external visit")
+			if other_visit != null:
+				var other_claim := other_visit.choose_with_vitals("moonlight_seam")
+				_check(other_claim.ok, "absent-owner receipt is independently authentic")
+				for bound in [false, true]:
+					var f := _named_vital_fixture(bound, ["warden", "seamstress", "tinker"], "tinker")
+					if f.is_empty():
+						continue
+					var c: RunTornCarryover = f.carry
+					var prior := _snapshot(f)
+					_check(not c.apply_vital_event("absent_owner", absent_record, other_claim,
+						other_opening, c.read_state(), f.wardrobe.get_snapshot() if bound else null)
+						and _snapshot(f) == prior,
+						"absent required hero cannot spend or move bound/unbound ledgers or RNG")

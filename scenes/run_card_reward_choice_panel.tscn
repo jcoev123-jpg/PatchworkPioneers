@@ -40,7 +40,7 @@ theme_override_constants/margin_bottom = 18
 
 [node name="RewardContent" type="VBoxContainer" parent="PaperPanel/ContentMargin"]
 layout_mode = 2
-theme_override_constants/separation = 6
+theme_override_constants/separation = 4
 
 [node name="TopStitches" type="Label" parent="PaperPanel/ContentMargin/RewardContent"]
 layout_mode = 2
@@ -53,22 +53,27 @@ layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="GoldLabel" type="Label" parent="PaperPanel/ContentMargin/RewardContent"]
+[node name="ReceiptRow" type="HBoxContainer" parent="PaperPanel/ContentMargin/RewardContent"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 10
+
+[node name="GoldLabel" type="Label" parent="PaperPanel/ContentMargin/RewardContent/ReceiptRow"]
 layout_mode = 2
 horizontal_alignment = 1
 
-[node name="TrinketLabel" type="Label" parent="PaperPanel/ContentMargin/RewardContent"]
+[node name="TrinketLabel" type="Label" parent="PaperPanel/ContentMargin/RewardContent/ReceiptRow"]
 layout_mode = 2
 horizontal_alignment = 1
 
 [node name="CardChoices" type="HBoxContainer" parent="PaperPanel/ContentMargin/RewardContent"]
-custom_minimum_size = Vector2(0, 320)
+custom_minimum_size = Vector2(0, 390)
 layout_mode = 2
 size_flags_vertical = 3
-theme_override_constants/separation = 14
+theme_override_constants/separation = 12
 
 [node name="SkipButton" type="Button" parent="PaperPanel/ContentMargin/RewardContent"]
-custom_minimum_size = Vector2(0, 54)
+custom_minimum_size = Vector2(0, 46)
 layout_mode = 2
 size_flags_horizontal = 4
 focus_mode = 2

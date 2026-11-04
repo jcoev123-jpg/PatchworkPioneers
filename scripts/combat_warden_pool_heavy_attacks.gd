@@ -249,7 +249,9 @@ func play_attack(
 	pinned: Variant = null,
 	patches: Variant = null,
 	mitt: Variant = null,
-	quote: Dictionary = {}
+	quote: Dictionary = {},
+	needle_rules: CombatHeirloomPatchTriggers = null,
+	needle_quote: Dictionary = {}
 ) -> Dictionary:
 	var active_pinned: CombatPinned = _pinned
 	var active_patches: CombatPatchAttackRules = _patches
@@ -267,47 +269,47 @@ func play_attack(
 			active_quote = (arg as Dictionary).duplicate(true)
 
 	if active_patches != null and not active_patches.is_valid():
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	if active_mitt != null and not active_mitt.is_valid():
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	if deck == null or party == null or enemies == null:
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	if not deck.turn_active:
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	if not party.is_valid() or not enemies.is_valid():
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	if enemies.is_victorious() or party.is_defeated():
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	if not SUPPORTED_CARD_IDS.has(card_id):
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	var catalog: WardenPoolCards = WardenPoolCards.new()
 	var definition: Dictionary = catalog.get_definition(card_id)
 	if definition.is_empty():
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	var owner_id: String = str(definition.get("owner", ""))
 	if owner_id != WARDEN_ID:
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	var cost: int = int(definition.get("cost", 2))
 	if cost < 0 or cost > CombatState.TURN_ENERGY:
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	var from_positions: Array = definition.get("from_positions", []) as Array
 	var to_positions: Array = definition.get("to_positions", []) as Array
 	var target_kind: String = str(definition.get("target_kind", ""))
 	if target_kind != "enemy_single":
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	var effects: Dictionary = definition.get("effects", {}) as Dictionary
 	if not effects.has("damage"):
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	var base_damage: int = int(effects.get("damage", 0))
 	if base_damage <= 0:
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	var hits_count: int = int(effects.get("hits", 1))
 	if hits_count < 1:
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	var patch_damage: int = 0 if active_patches == null else active_patches.damage_bonus(WARDEN_ID)
 	var patch_first_status: Dictionary = {} if active_patches == null else active_patches.exposed_for_first_hit(WARDEN_ID)
@@ -321,22 +323,22 @@ func play_attack(
 			var authorized: int = active_mitt.authorize_heavy_hit(active_quote, deck, party,
 				enemies, card_id, target_position)
 			if authorized != 2:
-				return _failure(card_id, target_position)
+				return _reject_needle(card_id, target_position, needle_rules)
 			mitt_bonus = 2
 		elif active_quote.get("bonus") != 0:
-			return _failure(card_id, target_position)
+			return _reject_needle(card_id, target_position, needle_rules)
 	elif not active_quote.is_empty() and active_quote.get("bonus", 0) != 0:
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	# Reserve Pinned's possible +5, patch_damage and mitt_bonus before any debit so hit math cannot overflow.
-	if base_damage > CombatStatuses.MAX_INT - 5 - patch_damage - mitt_bonus:
-		return _failure(card_id, target_position)
+	if base_damage > CombatStatuses.MAX_INT - 5 - patch_damage - mitt_bonus - (1 if needle_rules != null else 0):
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	# Precondition: held copy in hand and sufficient energy
 	if not deck.hand.has(card_id):
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	if deck.energy < cost:
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	# Precondition: living Warden in legal FROM position
 	var warden_hero: Dictionary = {}
@@ -350,29 +352,29 @@ func play_attack(
 			warden_hero = hero
 
 	if warden_count != 1 or warden_pos <= 0:
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	if party.is_downed(warden_pos):
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	if not from_positions.has(warden_pos):
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	# Precondition: legal living enemy in allowed TO position
 	if not to_positions.has(target_position):
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	var enemy_count: int = enemies.get_enemies().size()
 	if target_position < 1 or target_position > enemy_count:
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	if enemies.is_slain(target_position):
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	var target_enemy: Dictionary = enemies.get_enemy(target_position)
 	if target_enemy.is_empty() or int(target_enemy.get("hp", 0)) <= 0:
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	# Validate any caller-supplied statuses without letting them determine damage
 	if not _valid_statuses(attacker_statuses):
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	if not _validate_enemy_statuses(enemy_statuses_by_position, enemies):
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	# Authoritative owner statuses from the unique Warden hero record
 	var owner_statuses: Dictionary = {}
@@ -381,7 +383,7 @@ func play_attack(
 		for k: Variant in (hero_statuses as Dictionary):
 			owner_statuses[str(k)] = int(hero_statuses[k])
 	if not _valid_statuses(owner_statuses):
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	# Validate authoritative target enemy statuses before debiting
 	var initial_target_statuses: Dictionary = {}
@@ -390,17 +392,30 @@ func play_attack(
 		for k: Variant in (initial_foe_statuses as Dictionary):
 			initial_target_statuses[str(k)] = int(initial_foe_statuses[k])
 	if not _valid_statuses(initial_target_statuses):
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	# Preflight optional patch status application against authoritative live models BEFORE debiting
 	if patch_exposed > 0 and not enemies.can_apply_statuses({target_position: {"exposed": patch_exposed}}):
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
+
+	# A held, affordable, real heavy definition must authenticate its exact
+	# worn HEAD, shared Pinned identity and single-turn Needle ticket BEFORE debit.
+	var needle_bonus := 0
+	if needle_rules != null:
+		if active_pinned == null or needle_rules._pinned != active_pinned \
+				or not needle_quote.get("ok", false) \
+				or not needle_rules.authorizes_needle_hit(needle_quote, party, enemies,
+					card_id, target_position):
+			return _reject_needle(card_id, target_position, needle_rules)
+		needle_bonus = 1
+	elif not needle_quote.is_empty():
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	# Commit transaction: debit energy and discard card once
 	if not deck.try_spend_energy(cost):
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 	if not deck.discard_played(card_id):
-		return _failure(card_id, target_position)
+		return _reject_needle(card_id, target_position, needle_rules)
 
 	# Execute sequential hits using CombatStatusAttacks
 	var hits: Array[Dictionary] = []
@@ -430,14 +445,20 @@ func play_attack(
 			pin_bonus = active_pinned.bonus_for_attack(enemies, target_position, WARDEN_ID)
 
 		var hit_mitt_bonus: int = mitt_bonus if i == 0 else 0
+		var hit_needle_bonus: int = needle_bonus if i == 0 else 0
 		var hit_result: Dictionary = damage_resolver.resolve_vs_enemy(
-			enemies, target_position, base_damage + pin_bonus + patch_damage + hit_mitt_bonus, owner_statuses, target_statuses
+			enemies, target_position, base_damage + pin_bonus + patch_damage + hit_mitt_bonus + hit_needle_bonus, owner_statuses, target_statuses
 		)
 		if not hit_result.get("ok", false):
 			break
 		# A confirmed cross-hero hit consumes the token on that original slot once.
 		if active_pinned != null:
 			active_pinned.consume_after_attack(target_position, WARDEN_ID, true)
+
+		# Observe the first resolved Block/HP contact before hit 2 changes the
+		# target again; only that first observation may commit the Needle latch.
+		if i == 0 and needle_rules != null:
+			needle_rules.finish_needle_hit(needle_quote, hit_result)
 
 		hits.append({
 			"position": target_position,
@@ -447,6 +468,9 @@ func play_attack(
 			"pinned_bonus": pin_bonus,
 			"statuses": {},
 		})
+
+	if needle_rules != null and hits.is_empty():
+		needle_rules.cancel_needle_hit()
 
 	# Button Eye: once-per-combat rider applied after all hits of the first successful attack.
 	# Hit 2 of Pin and Pound does not benefit from this Exposed.
@@ -478,10 +502,12 @@ func play(
 	pinned: Variant = null,
 	patches: Variant = null,
 	mitt: Variant = null,
-	quote: Dictionary = {}
+	quote: Dictionary = {},
+	needle_rules: CombatHeirloomPatchTriggers = null,
+	needle_quote: Dictionary = {}
 ) -> Dictionary:
 	return play_attack(deck, party, enemies, card_id, target_position, attacker_statuses,
-		enemy_statuses_by_position, pinned, patches, mitt, quote)
+		enemy_statuses_by_position, pinned, patches, mitt, quote, needle_rules, needle_quote)
 
 
 ## Alias for play_attack.
@@ -496,10 +522,21 @@ func play_card(
 	pinned: Variant = null,
 	patches: Variant = null,
 	mitt: Variant = null,
-	quote: Dictionary = {}
+	quote: Dictionary = {},
+	needle_rules: CombatHeirloomPatchTriggers = null,
+	needle_quote: Dictionary = {}
 ) -> Dictionary:
 	return play_attack(deck, party, enemies, card_id, target_position, attacker_statuses,
-		enemy_statuses_by_position, pinned, patches, mitt, quote)
+		enemy_statuses_by_position, pinned, patches, mitt, quote, needle_rules, needle_quote)
+
+
+## All paid-path refusals also invalidate an offered Echo ticket; no resource or
+## Pinned mutation can occur before this boundary.
+func _reject_needle(card_id: String, target_position: int,
+		needle_rules: CombatHeirloomPatchTriggers) -> Dictionary:
+	if needle_rules != null:
+		needle_rules.cancel_needle_hit()
+	return _failure(card_id, target_position)
 
 
 func _valid_statuses(statuses: Dictionary) -> bool:

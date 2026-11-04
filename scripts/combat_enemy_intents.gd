@@ -14,6 +14,7 @@ const CHARGE_FLAG := "charge"
 # A single actor-owned pending strike is the armed latch; its absence means unarmed.
 const CHARGE_PENDING := "charge_pending"
 
+## Named moves use their authored damage; only the unkeyed strike owns Charge.
 ## Authenticate charge metadata on the real roster, including an already
 ## floor-scaled attack. The actor is the only owner of its pending amount/target.
 static func charge_attack_amount(actor: Dictionary) -> int:
@@ -23,7 +24,7 @@ static func charge_attack_amount(actor: Dictionary) -> int:
 	var attack_amount := -1
 	for entry in slot["actions"]:
 		var action: Dictionary = entry["action"]
-		if action.get("type") == "attack":
+		if action.get("type") == "attack" and not action.has("move"):
 			if attack_amount >= 0 or action.has("hits"):
 				return -1
 			attack_amount = action["amount"]
@@ -46,7 +47,7 @@ static func valid_charge_actor(actor: Dictionary) -> bool:
 	var attack_count := 0
 	for entry in slot["actions"]:
 		var action: Dictionary = entry["action"]
-		if action.get("type") == "attack":
+		if action.get("type") == "attack" and not action.has("move"):
 			attack_count += 1
 			if action.has("hits") or action["amount"] > CombatParty.MAX_INT / 5:
 				return false
@@ -81,7 +82,7 @@ static func charge_announcement(actor: Dictionary, cached: Dictionary) -> Dictio
 		action = {"type": "attack", "amount": quote["damage"],
 			"target_position": stored["target_position"],
 			"enemy_position": cached["enemy_position"]}
-	elif action.get("type") == "attack":
+	elif action.get("type") == "attack" and not action.has("move"):
 		action["amount"] = 0
 	return action
 

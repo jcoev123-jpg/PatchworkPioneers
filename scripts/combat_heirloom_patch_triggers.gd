@@ -21,6 +21,10 @@ const NEEDLE_TINKER := [
     "tinker_long_barrel", "tinker_long_barrel_plus",
     "tinker_bobbin_cannon", "tinker_bobbin_cannon_plus",
 ]
+const NEEDLE_WARDEN_HEAVY := [
+    "warden_heavy_thimble", "warden_heavy_thimble_plus",
+    "warden_pin_and_pound", "warden_pin_and_pound_plus",
+]
 const NEEDLE_WARDEN_TOSS := [
     "warden_v3_rim_toss", "warden_v3_rim_toss_plus",
     "warden_v3_shield_toss", "warden_v3_shield_toss_plus",
@@ -35,6 +39,8 @@ func _needle_definition(card_id: String) -> Dictionary:
         return StarterCards.new().get_definition(card_id)
     if NEEDLE_TINKER.has(card_id):
         return TinkerPoolCards.new().get_definition(card_id)
+    if NEEDLE_WARDEN_HEAVY.has(card_id):
+        return WardenPoolCards.new().get_definition(card_id)
     if NEEDLE_POOL.has(card_id):
         return (WardenPoolCards.new().get_definition(card_id)
             if card_id.begins_with("warden_")
@@ -287,7 +293,19 @@ func authorizes_needle_hit(quote: Dictionary, party: CombatParty,
             or not owner is String or not RunV3PartyAdmission.HERO_IDS.has(owner) \
             or not definition.get("effects") is Dictionary:
         return false
-    if NEEDLE_WARDEN_TOSS.has(card_id):
+    if NEEDLE_WARDEN_HEAVY.has(card_id):
+        var heavy_effects: Dictionary = {
+            "warden_heavy_thimble": {"damage": 11},
+            "warden_heavy_thimble_plus": {"damage": 15},
+            "warden_pin_and_pound": {"damage": 9, "hits": 2},
+            "warden_pin_and_pound_plus": {"damage": 12, "hits": 2},
+        }
+        if owner != "warden" or definition.get("cost") != 2 \
+                or definition.get("from_positions") != [1] \
+                or definition.get("to_positions") != ([1, 2] if card_id.begins_with("warden_heavy_") else [1, 2, 3]) \
+                or definition["effects"] != heavy_effects[card_id]:
+            return false
+    elif NEEDLE_WARDEN_TOSS.has(card_id):
         if owner != "warden":
             return false
         var effects: Dictionary = definition["effects"]

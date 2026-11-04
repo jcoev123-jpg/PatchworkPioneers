@@ -2334,7 +2334,7 @@ func _test_ram_charge_fail_closed() -> void:
 		if item.get("id") == "spindle_ram":
 			ram = item.duplicate(true)
 	_check(not ram.is_empty() and ram.get("charge") == true
-		and ram.get("intent", {}).get("actions", []).size() == 3,
+		and ram.get("intent", {}).get("actions", []).size() == 5,
 		"AC3 precondition: real authored Ram and shove/Block/attack alternatives")
 	if ram.is_empty():
 		return
