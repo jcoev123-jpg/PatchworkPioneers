@@ -699,9 +699,12 @@ var stitched_peddler_button: Button
 var stitched_peddler_panel: Control
 var stitched_peddler_visit: RunStitchedPeddlerBandage
 var stitched_peddler_candle_visit: RunPeddlerVisit
+var stitched_peddler_part_visit: RunStitchedPeddlerPart
 var _stitched_peddler_quote: Dictionary = {}
 var _stitched_peddler_candle_state: Dictionary = {}
 var _stitched_peddler_candle_quote: Dictionary = {}
+var _stitched_peddler_part_state: Dictionary = {}
+var _stitched_peddler_part_quote: Dictionary = {}
 var _stitched_peddler_generation := 0
 var _stitched_peddler_roster: Array = []
 ## This separate four-hero health authority is earned by the same terminal
@@ -713,6 +716,12 @@ var _stitched_campfire_state: Dictionary = {}
 var _stitched_campfire_roster: Array = []
 var _stitched_campfire_authorized_roster: Array = []
 var _stitched_campfire_generation := 0
+# Separate, one-exchange Campfire authority; never shares the recovery visit.
+var _stitched_campfire_swap_roster: Array = []
+var _stitched_campfire_swap_satchel: Array = []
+var _stitched_campfire_swap_gear: Dictionary = {}
+var _stitched_campfire_swap_visit: RunStitchedSewingSwap
+var _stitched_campfire_swap_state: Dictionary = {}
 var _stitched_postvictory_stop_available := false
 ## This is a detached, authenticated party receipt, not an editable UI request.
 const STITCHED_DEFAULT_PICKS := ["warden", "seamstress", "tinker", "lantern_monk"]
@@ -731,6 +740,7 @@ const STITCHED_ROADBLOCK_CANDLE_COST := 8
 const STITCHED_PEDDLER_NODE_ID := "s6_stitched_roadblock_peddler"
 const STITCHED_CAMPFIRE_NODE_ID := "s6_stitched_roadblock_campfire"
 const STITCHED_PEDDLER_PRICE := 10
+const STITCHED_PEDDLER_PART_ID := "warden_head_helmet_rattle"
 const STITCHED_PREVIEW_WIN_GOLD := 10
 const STITCHED_CLAW_ID := "scissor_crab_claw_arm"
 const STITCHED_SACK_ID := "fray_scavenger_sack_arm"
@@ -1408,7 +1418,7 @@ func _build_title() -> void:
 	stitched_peddler_button = Button.new()
 	stitched_peddler_button.name = "StitchedPeddlerButton"
 	stitched_peddler_button.text = "Stitched Peddler"
-	stitched_peddler_button.tooltip_text = "Spend Roadblock spoils on a Bleed-curing bandage"
+	stitched_peddler_button.tooltip_text = "Choose a bandage, candle stub or spare body part with Roadblock gold"
 	stitched_peddler_button.custom_minimum_size = Vector2(240, 56)
 	stitched_peddler_button.visible = false
 	stitched_peddler_button.disabled = true
@@ -1732,6 +1742,9 @@ func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
 		_stitched_peddler_roster.clear()
 		_stitched_campfire_roster.clear()
 		_stitched_campfire_authorized_roster.clear()
+		_stitched_campfire_swap_roster.clear()
+		_stitched_campfire_swap_satchel.clear()
+		_stitched_campfire_swap_gear.clear()
 		_stitched_postvictory_stop_available = false
 		_refresh_stitched_peddler_button()
 	_stitched_picker_sync()
@@ -2078,6 +2091,9 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 		_stitched_peddler_roster.clear()
 		_stitched_campfire_roster.clear()
 		_stitched_campfire_authorized_roster.clear()
+		_stitched_campfire_swap_roster.clear()
+		_stitched_campfire_swap_satchel.clear()
+		_stitched_campfire_swap_gear.clear()
 		_stitched_postvictory_stop_available = false
 		_refresh_stitched_peddler_button()
 		# One preview scrap comes from this authenticated victory exit alone.
@@ -2683,6 +2699,9 @@ func _offer_stitched_peddler(survivors: Array) -> void:
 func _offer_stitched_campfire(survivors: Array) -> void:
 	_stitched_campfire_roster.clear()
 	_stitched_campfire_authorized_roster.clear()
+	_stitched_campfire_swap_roster.clear()
+	_stitched_campfire_swap_satchel.clear()
+	_stitched_campfire_swap_gear.clear()
 	if survivors.size() == 4 and _stitched_party_picks.size() == 4:
 		var roster: Array = []
 		for value in survivors:
@@ -2714,6 +2733,13 @@ func _offer_stitched_campfire(survivors: Array) -> void:
 					and state.get("status") == RunCampfireVisit.STITCHED_OPEN:
 				_stitched_campfire_roster = roster.duplicate(true)
 				_stitched_campfire_authorized_roster = roster.duplicate(true)
+				# Retain the FULL worn parts from the authenticated Circle Leave,
+				# not the HP/FRAY-only roster the recovery service needs.
+				_stitched_campfire_swap_roster = survivors.duplicate(true)
+				_stitched_campfire_swap_roster.sort_custom(
+					func(a, b): return int(a["rank"]) < int(b["rank"]))
+				_stitched_campfire_swap_satchel = stitched_preview_satchel.duplicate(true)
+				_stitched_campfire_swap_gear = _stitched_gear_overrides.duplicate(true)
 	_stitched_postvictory_stop_available = not _stitched_campfire_roster.is_empty() \
 		or not _stitched_peddler_roster.is_empty()
 	_refresh_stitched_peddler_button()
@@ -2801,6 +2827,7 @@ func _refresh_stitched_peddler_button() -> void:
 	var peddler_ready: bool = _stitched_postvictory_stop_available \
 		and not _stitched_peddler_roster.is_empty() \
 		and stitched_peddler_visit == null and stitched_peddler_candle_visit == null \
+		and stitched_peddler_part_visit == null \
 		and not is_instance_valid(stitched_peddler_panel) \
 		and stitched_campfire_visit == null and not is_instance_valid(stitched_campfire_panel)
 	var campfire_ready: bool = _stitched_postvictory_stop_available \
@@ -2832,13 +2859,13 @@ func _refresh_stitched_peddler_button() -> void:
 		stitched_campfire_button.focus_next = stitched_campfire_button.get_path_to(start_button)
 
 
-## The title-accessible Peddler: one quoted bandage for a genuinely bleeding
-## survivor, or a free Leave. Only an earned roster can open it.
+## The title-accessible Peddler: one quoted bandage, candle stub or canonical
+## spare, or a free Leave. Only an earned roster can open it.
 func _open_stitched_peddler() -> bool:
 	if not _stitched_postvictory_stop_available \
 			or is_instance_valid(stitched_campfire_panel) or stitched_campfire_visit != null \
 			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
-			or stitched_peddler_candle_visit != null \
+			or stitched_peddler_candle_visit != null or stitched_peddler_part_visit != null \
 			or is_instance_valid(stitched_event_panel) or stitched_event_gate != null \
 			or is_instance_valid(stitched_fight_view) \
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
@@ -2883,23 +2910,59 @@ func _open_stitched_peddler() -> bool:
 			or candle_quote.get("choices", []) != [
 				RunPeddlerVisit.BUY_CANDLE_STUB, RunPeddlerVisit.STITCHED_LEAVE]:
 		return false
+	# The spare-stock authority is the same validated part catalog used by
+	# the real Roadblock and Sewing Circle, never a hand-built UI offer.
+	var config := _stitched_floor_config()
+	if config.is_empty():
+		return false
+	var catalog := StitchedParts.build_catalog(config["parts"])
+	if catalog.get("ok") != true or not catalog.get("by_id", {}).has(STITCHED_PEDDLER_PART_ID):
+		return false
+	var part_visit := RunStitchedPeddlerPart.open_stitched(
+		STITCHED_PEDDLER_NODE_ID, stitched_preview_gold, stitched_preview_satchel,
+		catalog["by_id"], STITCHED_PEDDLER_PART_ID, STITCHED_PEDDLER_PRICE)
+	if not part_visit.is_valid() or not part_visit.is_open():
+		return false
+	var part_state: Dictionary = part_visit.read_state()
+	var part_quote: Dictionary = part_visit.quote()
+	var offered: Dictionary = part_quote.get("offer", {})
+	if part_quote.get("ok") != true or part_quote.get("state") != part_state \
+			or part_quote.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or part_quote.get("price") != STITCHED_PEDDLER_PRICE \
+			or part_quote.get("gold") != stitched_preview_gold \
+			or part_quote.get("satchel_count") != stitched_preview_satchel.size() \
+			or part_quote.get("satchel_max") != RunStitchedPeddlerPart.SATCHEL_CAP \
+			or part_quote.get("choices") != [
+				RunStitchedPeddlerPart.DECISION_BUY, RunStitchedPeddlerPart.DECISION_LEAVE] \
+			or part_state.get("satchel") != stitched_preview_satchel \
+			or part_state.get("status") != RunStitchedPeddlerPart.STATUS_OPEN \
+			or offered.get("id") != STITCHED_PEDDLER_PART_ID \
+			or offered.get("name") != "Helmet Rattle" \
+			or offered.get("tier") != 1 or offered.get("torn") != false:
+		return false
 	var generation := _stitched_peddler_generation + 1
 	var built := _mount_stitched_peddler(
-		visit, quote, candle_state, candle_quote, generation)
+		visit, quote, candle_state, candle_quote, part_state, part_quote, generation)
 	var panel: Control = built.get("panel")
 	if panel == null:
 		return false
-	# Both displayed ledgers belong to one exact panel generation.
+	# All three displayed ledgers belong to one exact panel generation.
 	stitched_peddler_visit = visit
 	stitched_peddler_candle_visit = candle_visit
+	stitched_peddler_part_visit = part_visit
 	stitched_peddler_panel = panel
 	_stitched_peddler_quote = quote.duplicate(true)
 	_stitched_peddler_candle_state = candle_state.duplicate(true)
 	_stitched_peddler_candle_quote = candle_quote.duplicate(true)
+	_stitched_peddler_part_state = part_state.duplicate(true)
+	_stitched_peddler_part_quote = part_quote.duplicate(true)
 	_stitched_peddler_generation = generation
 	# Selection consumes the common earned stop, not just a purchase/Leave.
 	_stitched_postvictory_stop_available = false
 	_stitched_campfire_roster.clear()
+	_stitched_campfire_swap_roster.clear()
+	_stitched_campfire_swap_satchel.clear()
+	_stitched_campfire_swap_gear.clear()
 	_refresh_stitched_peddler_button()
 	add_child(panel)
 	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -2916,9 +2979,10 @@ func _open_stitched_peddler() -> bool:
 ## theme supplies button chrome, so nothing is drawn in code.
 func _mount_stitched_peddler(visit: RunStitchedPeddlerBandage,
 		quote: Dictionary, candle_state: Dictionary, candle_quote: Dictionary,
-		generation: int) -> Dictionary:
+		part_state: Dictionary, part_quote: Dictionary, generation: int) -> Dictionary:
 	if not visit.is_valid() or not visit.is_open() \
-			or candle_state.get("ok") != true or candle_quote.get("ok") != true:
+			or candle_state.get("ok") != true or candle_quote.get("ok") != true \
+			or part_state.get("ok") != true or part_quote.get("ok") != true:
 		return {}
 	var panel := Control.new()
 	panel.name = "StitchedPeddler"
@@ -2940,14 +3004,14 @@ func _mount_stitched_peddler(visit: RunStitchedPeddlerBandage,
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(frame)
 	var heading := Label.new()
-	heading.text = "STITCHED PEDDLER  ·  BANDAGES & CANDLE STUBS"
+	heading.text = "STITCHED PEDDLER  ·  BANDAGES, CANDLE & SPARE PART"
 	heading.position = Vector2(165, 78)
 	heading.size = Vector2(960, 54)
 	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	heading.add_theme_font_size_override("font_size", 27)
 	panel.add_child(heading)
 	var description := Label.new()
-	description.text = "The hooded peddler offers one bandage to cure a hero's Bleed, or a candle stub to restore up to 25 light. Choose just one."
+	description.text = "Choose one: cure Bleed with a bandage, restore up to 25 light with a candle stub, or buy an untorn tier-I Helmet Rattle spare."
 	description.position = Vector2(170, 143)
 	description.size = Vector2(950, 64)
 	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -2955,7 +3019,7 @@ func _mount_stitched_peddler(visit: RunStitchedPeddlerBandage,
 	panel.add_child(description)
 	var wallet := Label.new()
 	wallet.name = "PeddlerQuote"
-	wallet.text = "PREVIEW GOLD  %d    ·    BANDAGE OR CANDLE STUB  %d    ·    LEAVE FREE" % [
+	wallet.text = "PREVIEW GOLD  %d    ·    EACH OFFER  %d    ·    LEAVE FREE" % [
 		int(quote["gold"]), int(quote["price"])]
 	wallet.position = Vector2(183, 212)
 	wallet.size = Vector2(910, 36)
@@ -3006,7 +3070,7 @@ func _mount_stitched_peddler(visit: RunStitchedPeddlerBandage,
 			first = button
 	if bleeding == 0:
 		var empty := Label.new()
-		empty.text = "No survivor is bleeding. Candle stubs remain available."
+		empty.text = "No survivor is bleeding. Candle stubs and spare parts remain available."
 		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		offers.add_child(empty)
 	var candle_button := Button.new()
@@ -3032,6 +3096,25 @@ func _mount_stitched_peddler(visit: RunStitchedPeddlerBandage,
 	offers.add_child(candle_button)
 	if first == null and not candle_button.disabled:
 		first = candle_button
+	var part_offer: Dictionary = part_quote["offer"]
+	var part_button := Button.new()
+	part_button.name = "PeddlerHelmetRattle"
+	part_button.custom_minimum_size = Vector2(850, 56)
+	part_button.disabled = not bool(part_quote["can_buy"])
+	part_button.focus_mode = Control.FOCUS_NONE if part_button.disabled else Control.FOCUS_ALL
+	part_button.text = "%s · tier %d %s spare · %d gold" % [
+		str(part_offer["name"]), int(part_offer["tier"]), str(part_offer["slot"]),
+		int(part_quote["price"])]
+	if part_button.disabled:
+		part_button.text += " · " + str(part_quote["blocked"])
+	part_button.tooltip_text = "Buy one canonical untorn %s part for the Sewing Circle" % str(
+		part_offer["name"])
+	part_button.pressed.connect(_stitched_peddler_buy_part.bind(
+		state.duplicate(true), candle_state.duplicate(true), candle_quote.duplicate(true),
+		part_state.duplicate(true), part_quote.duplicate(true), weakref(panel), generation))
+	offers.add_child(part_button)
+	if first == null and not part_button.disabled:
+		first = part_button
 	var leave_button := Button.new()
 	leave_button.name = "PeddlerLeave"
 	leave_button.text = "Leave the Peddler · free"
@@ -3177,6 +3260,107 @@ func _stitched_peddler_buy_candle(expected_bandage: Dictionary,
 	return receipt
 
 
+## One canonical spare purchase competes with the bandage and candle for the
+## same earned panel. Every displayed quote, service, ledger and live hero must
+## still agree before this one-use receipt may debit the preview wallet.
+func _stitched_peddler_buy_part(expected_bandage: Dictionary,
+		expected_candle: Dictionary, expected_candle_quote: Dictionary,
+		expected_part: Dictionary, expected_part_quote: Dictionary,
+		source: WeakRef, generation: int) -> Dictionary:
+	var panel: Control = source.get_ref() if source != null else null
+	if panel == null or not is_instance_valid(panel) or panel != stitched_peddler_panel \
+			or not panel.is_visible_in_tree() \
+			or generation != _stitched_peddler_generation \
+			or panel.get_meta("peddler_generation", -1) != generation \
+			or stitched_peddler_visit == null or not stitched_peddler_visit.is_open() \
+			or stitched_peddler_candle_visit == null \
+			or not stitched_peddler_candle_visit.is_open() \
+			or stitched_peddler_part_visit == null \
+			or not stitched_peddler_part_visit.is_open() \
+			or is_instance_valid(stitched_fight_view) \
+			or is_instance_valid(stitched_event_panel) or stitched_event_gate != null \
+			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+			or _stitched_peddler_quote != expected_bandage \
+			or _stitched_peddler_candle_state != expected_candle \
+			or _stitched_peddler_candle_quote != expected_candle_quote \
+			or _stitched_peddler_part_state != expected_part \
+			or _stitched_peddler_part_quote != expected_part_quote \
+			or stitched_peddler_visit.read_state() != expected_bandage \
+			or stitched_peddler_candle_visit.read_state() != expected_candle \
+			or stitched_peddler_candle_visit.quote() != expected_candle_quote \
+			or stitched_peddler_part_visit.read_state() != expected_part \
+			or stitched_peddler_part_visit.quote() != expected_part_quote:
+		return {"ok": false, "error": "stale Peddler spare"}
+	var living := _stitched_peddler_living_roster()
+	if living.size() != 4 or living != expected_bandage.get("heroes", []) \
+			or expected_bandage.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or expected_bandage.get("status") != RunStitchedPeddlerBandage.OPEN \
+			or expected_bandage.get("gold") != stitched_preview_gold \
+			or expected_bandage.get("price") != STITCHED_PEDDLER_PRICE \
+			or expected_candle.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or expected_candle.get("status") != RunPeddlerVisit.STITCHED_OPEN \
+			or expected_candle.get("gold") != stitched_preview_gold \
+			or expected_candle.get("candle") != stitched_roadblock_candle \
+			or expected_candle.get("item", {}).get("price") != STITCHED_PEDDLER_PRICE \
+			or expected_candle_quote.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or expected_candle_quote.get("item") != RunPeddlerVisit.CANDLE_STUB \
+			or expected_candle_quote.get("price") != STITCHED_PEDDLER_PRICE \
+			or expected_candle_quote.get("gold") != stitched_preview_gold \
+			or expected_candle_quote.get("candle") != stitched_roadblock_candle \
+			or expected_part.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or expected_part.get("status") != RunStitchedPeddlerPart.STATUS_OPEN \
+			or expected_part.get("gold") != stitched_preview_gold \
+			or expected_part.get("satchel") != stitched_preview_satchel \
+			or expected_part_quote.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or expected_part_quote.get("state") != expected_part \
+			or expected_part_quote.get("price") != STITCHED_PEDDLER_PRICE \
+			or expected_part_quote.get("gold") != stitched_preview_gold \
+			or expected_part_quote.get("satchel_count") != stitched_preview_satchel.size() \
+			or expected_part_quote.get("satchel_max") != RunStitchedPeddlerPart.SATCHEL_CAP \
+			or expected_part_quote.get("can_buy") != true \
+			or expected_part_quote.get("blocked") != "" \
+			or expected_part_quote.get("choices") != [
+				RunStitchedPeddlerPart.DECISION_BUY, RunStitchedPeddlerPart.DECISION_LEAVE] \
+			or expected_part_quote.get("offer", {}).get("id") != STITCHED_PEDDLER_PART_ID \
+			or expected_part_quote.get("offer", {}).get("name") != "Helmet Rattle" \
+			or expected_part_quote.get("offer", {}).get("tier") != 1 \
+			or expected_part_quote.get("offer", {}).get("torn") != false \
+			or stitched_preview_gold < STITCHED_PEDDLER_PRICE:
+		return {"ok": false, "error": "unauthorized Peddler spare"}
+	var before_gold := stitched_preview_gold
+	var before_satchel := stitched_preview_satchel.duplicate(true)
+	var wanted := {"id": STITCHED_PEDDLER_PART_ID, "slot": "head",
+		"tier": 1, "torn": false}
+	var expected_after := before_satchel.duplicate(true)
+	expected_after.append(wanted)
+	var receipt: Dictionary = stitched_peddler_part_visit.buy(
+		STITCHED_PEDDLER_NODE_ID, expected_part)
+	if receipt.get("ok") != true \
+			or receipt.get("decision") != RunStitchedPeddlerPart.DECISION_BUY \
+			or receipt.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or receipt.get("price") != STITCHED_PEDDLER_PRICE \
+			or receipt.get("charged_gold") != STITCHED_PEDDLER_PRICE \
+			or receipt.get("gold_before") != before_gold \
+			or receipt.get("gold") != before_gold - STITCHED_PEDDLER_PRICE \
+			or receipt.get("part") != wanted \
+			or receipt.get("satchel_index") != before_satchel.size() \
+			or receipt.get("satchel") != expected_after \
+			or receipt.get("source_state") != expected_part \
+			or receipt.get("status") != RunStitchedPeddlerPart.STATUS_BOUGHT \
+			or receipt.get("state") != stitched_peddler_part_visit.read_state() \
+			or receipt.get("state", {}).get("satchel") != expected_after \
+			or receipt.get("state", {}).get("gold") != before_gold - STITCHED_PEDDLER_PRICE \
+			or not stitched_peddler_part_visit.is_consumed():
+		return {"ok": false, "error": "Peddler spare receipt rejected"}
+	# Commit only the new spare and debit. The common teardown retires both
+	# other offers, so no old focused button can charge or cure afterward.
+	stitched_preview_gold = int(receipt["gold"])
+	stitched_preview_satchel = receipt["satchel"].duplicate(true)
+	_stitched_peddler_roster.clear()
+	_close_stitched_peddler()
+	return receipt
+
+
 ## Leaves the Peddler for free, preserving every carried status and resource.
 func _stitched_peddler_leave(expected_snapshot: Dictionary, source: WeakRef) -> Dictionary:
 	var panel: Control = source.get_ref() if source != null else null
@@ -3203,20 +3387,26 @@ func _stitched_peddler_leave(expected_snapshot: Dictionary, source: WeakRef) -> 
 
 func _close_stitched_peddler() -> void:
 	var panel := stitched_peddler_panel
-	# Every exit retires both one-use ledgers; neither an old bandage nor an
+	# Every exit retires all three one-use ledgers; neither an old bandage nor an
 	# old candle button may later spend from a superseded panel.
 	if stitched_peddler_visit != null and stitched_peddler_visit.is_open():
 		stitched_peddler_visit.leave(STITCHED_PEDDLER_NODE_ID,
 			stitched_peddler_visit.read_state())
 	if stitched_peddler_candle_visit != null:
 		stitched_peddler_candle_visit.close()
+	if stitched_peddler_part_visit != null and stitched_peddler_part_visit.is_open():
+		stitched_peddler_part_visit.leave(STITCHED_PEDDLER_NODE_ID,
+			stitched_peddler_part_visit.read_state())
 	# Retire app authority before removing controls; queued input is then inert.
 	stitched_peddler_panel = null
 	stitched_peddler_visit = null
 	stitched_peddler_candle_visit = null
+	stitched_peddler_part_visit = null
 	_stitched_peddler_quote.clear()
 	_stitched_peddler_candle_state.clear()
 	_stitched_peddler_candle_quote.clear()
+	_stitched_peddler_part_state.clear()
+	_stitched_peddler_part_quote.clear()
 	_stitched_peddler_generation += 1
 	if is_instance_valid(panel):
 		if panel.get_parent() == self:
@@ -3265,13 +3455,53 @@ func _open_stitched_campfire() -> bool:
 			or state.get("quote", {}).get("choices", []).find(RunCampfireVisit.TRIM_THE_WICK) == -1 \
 			or state.get("quote", {}).get("choices", []).find(RunCampfireVisit.STITCHED_LEAVE) == -1:
 		return false
+	# Build a distinct swap service from the FINAL Circle Leave parts and six-slot
+	# satchel. Recovery remains the ordinary RunCampfireVisit with its own quote.
+	var swap_visit: RunStitchedSewingSwap = null
+	var swap_state: Dictionary = {}
+	var swap_quote: Dictionary = {}
+	var config := _stitched_floor_config()
+	var source: Array = _stitched_campfire_swap_roster.duplicate(true)
+	var lawful := source.size() == 4 and not config.is_empty() \
+		and _stitched_campfire_swap_satchel == stitched_preview_satchel \
+		and _stitched_campfire_swap_gear == _stitched_gear_overrides
+	if lawful:
+		for index in range(4):
+			var hero: Dictionary = source[index]
+			var recovered: Dictionary = roster[index]
+			if str(hero.get("id", "")) != str(recovered["id"]) \
+					or int(hero.get("rank", -1)) != int(recovered["position"]) \
+					or hero.get("hp") != recovered["hp"] \
+					or hero.get("max_hp") != recovered["max_hp"] \
+					or hero.get("fray") != recovered["fray"] \
+					or not hero.get("parts") is Dictionary \
+					or hero["parts"] != config["heroes"][index]["parts"]:
+				lawful = false
+				break
+	if lawful:
+		var catalog: Dictionary = StitchedParts.build_catalog(config["parts"])
+		if catalog.get("ok") == true:
+			var candidate := RunStitchedSewingSwap.new(
+				STITCHED_CAMPFIRE_NODE_ID, source, stitched_preview_satchel, catalog["by_id"])
+			var candidate_state: Dictionary = candidate.read_state()
+			var candidate_quote: Dictionary = candidate.quote()
+			if candidate_state.get("ok") == true and candidate_state.get("open") == true \
+					and candidate_state.get("node_id") == STITCHED_CAMPFIRE_NODE_ID \
+					and candidate_state.get("heroes", []).size() == 4 \
+					and candidate_state.get("satchel") == stitched_preview_satchel \
+					and candidate_quote.get("state") == candidate_state:
+				swap_visit = candidate
+				swap_state = candidate_state
+				swap_quote = candidate_quote
 	var generation := _stitched_campfire_generation + 1
-	var mounted := _mount_stitched_campfire(state, generation)
+	var mounted := _mount_stitched_campfire(state, generation, swap_quote)
 	var panel: Control = mounted.get("panel")
 	if panel == null:
 		return false
 	stitched_campfire_visit = visit
 	stitched_campfire_panel = panel
+	_stitched_campfire_swap_visit = swap_visit
+	_stitched_campfire_swap_state = swap_state.duplicate(true)
 	_stitched_campfire_state = state.duplicate(true)
 	_stitched_campfire_generation = generation
 	# The stop is spent on panel selection, even if the player chooses Leave.
@@ -3288,7 +3518,8 @@ func _open_stitched_campfire() -> bool:
 	return true
 
 
-func _mount_stitched_campfire(state: Dictionary, generation: int) -> Dictionary:
+func _mount_stitched_campfire(state: Dictionary, generation: int,
+		swap_quote: Dictionary) -> Dictionary:
 	var panel := Control.new()
 	panel.name = "StitchedCampfire"
 	panel.set_meta("campfire_generation", generation)
@@ -3342,13 +3573,62 @@ func _mount_stitched_campfire(state: Dictionary, generation: int) -> Dictionary:
 			(maximum * RunCampfireVisit.MEND_HEAL_PERCENT) / 100)
 		var row := Label.new()
 		row.name = "CampfireHero_%s" % str(hero["id"])
-		row.text = "%d  %s    HP %d / %d    FRAY %d    MEND +%d" % [
+		row.text = "%d  %s  HP %d/%d  FRAY %d  MEND +%d" % [
 			int(hero["position"]), str(hero["name"]), int(hero["hp"]),
 			maximum, int(hero["fray"]), heal]
-		row.position = Vector2(245, 270 + index * 57)
-		row.size = Vector2(800, 47)
-		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		row.position = Vector2(165, 270 + index * 57)
+		row.size = Vector2(535, 47)
+		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 		panel.add_child(row)
+	# Actual per-hero, same-slot catalog offers, in a keyboard-scrollable column.
+	# No fabricated tier or spare is ever displayed as actionable.
+	var swap_heading := Label.new()
+	swap_heading.name = "CampfireSwapHeading"
+	swap_heading.text = "EXCHANGE ONE SPARE  ·  FREE"
+	swap_heading.position = Vector2(705, 268)
+	swap_heading.size = Vector2(430, 36)
+	panel.add_child(swap_heading)
+	var scroll := ScrollContainer.new()
+	scroll.name = "CampfireSwapOffers"
+	scroll.position = Vector2(700, 305)
+	scroll.size = Vector2(430, 225)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.add_child(scroll)
+	var offers_box := VBoxContainer.new()
+	offers_box.name = "CampfireSwapChoices"
+	offers_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(offers_box)
+	var swap_buttons: Array[Button] = []
+	if swap_quote.get("ok") == true and swap_quote.get("open") == true:
+		for hero_row in swap_quote.get("heroes", []):
+			for slot_row in hero_row.get("slots", []):
+				if not bool(slot_row.get("can_swap", false)):
+					continue
+				for offer in slot_row.get("offers", []):
+					var hero_id := str(hero_row["hero_id"])
+					var slot := str(slot_row["slot"])
+					var satchel_index := int(offer["satchel_index"])
+					var button := Button.new()
+					button.name = "CampfireSwap_%s_%s_%d" % [hero_id, slot, satchel_index]
+					button.text = "%s · %s: %s → %s (T%d%s)" % [
+						str(hero_row["name"]), slot,
+						str(slot_row["worn"]["name"]), str(offer["part"]["name"]),
+						int(offer["part"]["tier"]),
+						" torn" if bool(offer["part"]["torn"]) else ""]
+					button.custom_minimum_size = Vector2(409, 42)
+					button.focus_mode = Control.FOCUS_ALL
+					button.pressed.connect(_stitched_campfire_swap_part.bind(
+						hero_id, slot, satchel_index, swap_quote["state"].duplicate(true),
+						weakref(panel), generation))
+					offers_box.add_child(button)
+					swap_buttons.append(button)
+	if swap_buttons.is_empty():
+		var empty := Label.new()
+		empty.name = "CampfireNoSwap"
+		empty.text = "No lawful untorn, same-slot spare available."
+		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		offers_box.add_child(empty)
 	var mend := Button.new()
 	mend.name = "CampfireMend"
 	mend.text = "Mend · 30% max HP for each · free"
@@ -3382,7 +3662,124 @@ func _mount_stitched_campfire(state: Dictionary, generation: int) -> Dictionary:
 	leave.focus_previous = leave.get_path_to(wick)
 	leave.focus_next = leave.get_path_to(mend)
 	mend.focus_previous = mend.get_path_to(leave)
+	if not swap_buttons.is_empty():
+		# Preserve the existing Mend → Wick → Leave Tab ring (Wick regression).
+		# Up from the recovery row enters the scrollable swap list; each offer
+		# can then be traversed by keyboard, while recovery Tab remains stable.
+		mend.focus_neighbor_top = mend.get_path_to(swap_buttons[0])
+		wick.focus_neighbor_top = wick.get_path_to(swap_buttons[0])
+		leave.focus_neighbor_top = leave.get_path_to(swap_buttons[0])
+		for index in range(swap_buttons.size()):
+			var previous: Button = leave if index == 0 else swap_buttons[index - 1]
+			var following: Button = mend if index == swap_buttons.size() - 1 else swap_buttons[index + 1]
+			swap_buttons[index].focus_previous = swap_buttons[index].get_path_to(previous)
+			swap_buttons[index].focus_next = swap_buttons[index].get_path_to(following)
 	return {"panel": panel, "first": mend}
+
+
+## Commit ONE quoted exchange on this specific mounted Campfire panel. The
+## recovery visit stays open, with its original HP/FRAY/CANDLE authority.
+func _stitched_campfire_swap_part(hero_id: String, slot: String, satchel_index: int,
+		expected: Dictionary, source: WeakRef, generation: int) -> Dictionary:
+	var panel: Control = source.get_ref() if source != null else null
+	var service := _stitched_campfire_swap_visit
+	if panel == null or not is_instance_valid(panel) or panel != stitched_campfire_panel \
+			or not panel.is_visible_in_tree() or not panel.is_inside_tree() \
+			or panel.get_meta("campfire_generation", -1) != generation \
+			or generation != _stitched_campfire_generation \
+			or service == null or service.read_state().get("open") != true \
+			or _stitched_campfire_swap_state != expected \
+			or service.read_state() != expected \
+			or expected.get("node_id") != STITCHED_CAMPFIRE_NODE_ID \
+			or expected.get("heroes") != _stitched_campfire_swap_roster \
+			or expected.get("satchel") != stitched_preview_satchel \
+			or _stitched_campfire_swap_satchel != stitched_preview_satchel \
+			or _stitched_campfire_swap_gear != _stitched_gear_overrides \
+			or stitched_campfire_visit == null \
+			or stitched_campfire_visit.read_state() != _stitched_campfire_state \
+			or _stitched_campfire_state.get("status") != RunCampfireVisit.STITCHED_OPEN \
+			or _stitched_campfire_state.get("node_id") != STITCHED_CAMPFIRE_NODE_ID \
+			or _stitched_campfire_state.get("heroes") != _stitched_campfire_authorized_roster \
+			or _stitched_campfire_state.get("candle") != stitched_roadblock_candle \
+			or _stitched_hp_carry.size() != 4 \
+			or is_instance_valid(stitched_fight_view) \
+			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
+			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null:
+		return {"ok": false, "error": "stale or forged Campfire exchange"}
+	for hero in _stitched_campfire_authorized_roster:
+		if not _stitched_hp_carry.has(str(hero["id"])) \
+				or _stitched_hp_carry[str(hero["id"])] != hero["hp"]:
+			return {"ok": false, "error": "changed survivor authority"}
+	var quote: Dictionary = service.quote()
+	if quote.get("ok") != true or quote.get("open") != true \
+			or quote.get("state") != expected:
+		return {"ok": false, "error": "no current exchange quote"}
+	var chosen_hero := -1
+	var offered := false
+	for index in range(quote.get("heroes", []).size()):
+		var hero_row: Dictionary = quote["heroes"][index]
+		if str(hero_row["hero_id"]) != hero_id:
+			continue
+		chosen_hero = index
+		for slot_row in hero_row["slots"]:
+			if str(slot_row["slot"]) != slot or not bool(slot_row["can_swap"]) \
+					or bool(slot_row["worn"]["torn"]):
+				continue
+			for spare_offer in slot_row["offers"]:
+				if int(spare_offer["satchel_index"]) == satchel_index \
+						and str(spare_offer["part"]["slot"]) == slot:
+					offered = true
+	if not offered or chosen_hero < 0 or not slot in StitchedParts.SLOTS \
+			or satchel_index < 0 or satchel_index >= expected["satchel"].size():
+		return {"ok": false, "error": "not an offered same-slot spare"}
+	var worn: Dictionary = expected["heroes"][chosen_hero]["parts"][slot]
+	var spare: Dictionary = expected["satchel"][satchel_index]
+	if bool(worn["torn"]) or str(spare["slot"]) != slot:
+		return {"ok": false, "error": "torn or wrong-slot part"}
+	var incoming := {"id": str(spare["id"]), "tier": int(spare["tier"]),
+		"torn": bool(spare["torn"])}
+	var outgoing := {"id": str(worn["id"]), "tier": int(worn["tier"]),
+		"torn": bool(worn["torn"]), "slot": slot}
+	var after_state: Dictionary = expected.duplicate(true)
+	after_state["version"] = int(expected["version"]) + 1
+	after_state["heroes"][chosen_hero]["parts"][slot] = incoming.duplicate(true)
+	after_state["satchel"][satchel_index] = outgoing.duplicate(true)
+	var receipt: Dictionary = service.swap(
+		hero_id, slot, satchel_index, STITCHED_CAMPFIRE_NODE_ID, expected)
+	var complete := {"ok": true, "error": "", "action": "swap",
+		"node_id": STITCHED_CAMPFIRE_NODE_ID, "hero_id": hero_id,
+		"slot": slot, "satchel_index": satchel_index,
+		"worn_before": worn, "worn_after": incoming,
+		"satchel_before": spare, "satchel_after": outgoing,
+		"changed_heroes": [after_state["heroes"][chosen_hero]],
+		"satchel": after_state["satchel"], "source_state": expected, "state": after_state}
+	if receipt != complete or service.read_state() != after_state:
+		return {"ok": false, "error": "incomplete Campfire swap receipt"}
+	# Close swap only, NOT the separate one-decision recovery service.
+	var closed: Dictionary = service.leave(STITCHED_CAMPFIRE_NODE_ID, after_state)
+	var closed_state: Dictionary = after_state.duplicate(true)
+	closed_state["open"] = false
+	closed_state["version"] = int(after_state["version"]) + 1
+	if closed != {"ok": true, "error": "", "action": "leave",
+			"node_id": STITCHED_CAMPFIRE_NODE_ID, "changed_heroes": [],
+			"satchel": closed_state["satchel"], "source_state": after_state,
+			"state": closed_state} or service.read_state() != closed_state:
+		return {"ok": false, "error": "Campfire exchange did not close"}
+	# Only now publish precisely the worn slot and same satchel index.
+	var carried: Dictionary = _stitched_gear_overrides.get(hero_id, {}).duplicate(true)
+	carried[slot] = incoming.duplicate(true)
+	_stitched_gear_overrides[hero_id] = carried
+	stitched_preview_satchel = after_state["satchel"].duplicate(true)
+	_stitched_campfire_swap_state = closed_state.duplicate(true)
+	for button in panel.find_children("CampfireSwap_*", "Button", true, false):
+		button.disabled = true
+	var heading: Label = panel.find_child("CampfireSwapHeading", true, false)
+	if heading != null:
+		heading.text = "SPARE EXCHANGED  ·  RECOVERY STILL AVAILABLE"
+	var mend: Button = panel.find_child("CampfireMend", true, false)
+	if mend != null:
+		mend.grab_focus()
+	return receipt
 
 
 ## The app accepts only this live panel generation and its WHOLE quoted
@@ -3444,6 +3841,15 @@ func _stitched_campfire_choose(decision: String, expected: Dictionary,
 
 func _close_stitched_campfire() -> void:
 	var panel := stitched_campfire_panel
+	if _stitched_campfire_swap_visit != null:
+		var swap_open: Dictionary = _stitched_campfire_swap_visit.read_state()
+		if swap_open.get("ok") == true and swap_open.get("open") == true:
+			_stitched_campfire_swap_visit.leave(STITCHED_CAMPFIRE_NODE_ID, swap_open)
+	_stitched_campfire_swap_visit = null
+	_stitched_campfire_swap_state.clear()
+	_stitched_campfire_swap_roster.clear()
+	_stitched_campfire_swap_satchel.clear()
+	_stitched_campfire_swap_gear.clear()
 	if stitched_campfire_visit != null:
 		var open: Dictionary = stitched_campfire_visit.read_state()
 		if open.get("status") == RunCampfireVisit.STITCHED_OPEN:
