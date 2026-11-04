@@ -4006,6 +4006,25 @@ func _min_fray_party_event() -> Dictionary:
 	], "ev_stitched_seamstress_fray_relief")
 
 
+func _min_fray_party_any_event() -> Dictionary:
+	return _event([
+		_choice("party_calm", "Calm the frayed company.", {
+			"candle": 0,
+			"fray": -25,
+			"target": "party",
+			"min_fray": 100,
+		}),
+		_choice("party_wick", "Spend wick to rally frayed souls.", {
+			"candle": -25,
+			"fray": -25,
+			"target": "party",
+			"min_fray": 100,
+			"require_full_candle": true,
+		}),
+		_choice("leave", "Leave the company as they are.", _effect(0, 0, "party")),
+	], "ev_stitched_party_fray_relief")
+
+
 func _test_min_fray_gates() -> void:
 	var expected_preview_keys := [
 		"available", "candle", "candle_delta", "choice_id",
@@ -4283,7 +4302,276 @@ func _test_min_fray_gates() -> void:
 	_check(absent_leave_rec.get("ok") == true and absent_leave_rec.get("candle") == 40,
 		"AC2: Leave still claims after hidden party min_fray refusal")
 
-	# --- AC3: Malformed min_fray values, party min_fray without required_hero, and extra keys ---
+	# --- AC1/AC2/AC3: Party-targeted min_fray for ANY active frayed hero (no required_hero) ---
+	var party_any_event := _min_fray_party_any_event()
+	var party_any_original := party_any_event.duplicate(true)
+	var snap_any_100 := _four(40, [0, 99, 100, 200])
+	var snap_any_100_original := snap_any_100.duplicate(true)
+	var snap_any_99 := _four(40, [0, 99, 99, 0])
+	var snap_any_99_original := snap_any_99.duplicate(true)
+
+	# Eligible [0, 99, 100, 200]: preview marks available, projects -25 for all four active heroes; choose latches once
+	var svc_any := RunStitchedEventConsequence.new(party_any_event)
+	var prev_any_100 := svc_any.preview(snap_any_100)
+	_check(prev_any_100.get("ok") == true
+		and _choice_ids(prev_any_100) == ["party_calm", "party_wick", "leave"],
+		"AC1: party min_fray without required_hero is schema-valid and visible in authored order")
+
+	var calm_entry_100 := _entry(prev_any_100, "party_calm")
+	var expected_four_minus_25 := {
+		"warden": -25, "seamstress": -25, "tinker": -25, "button_golem": -25,
+	}
+	_check(calm_entry_100.get("available") == true
+		and calm_entry_100.get("target") == "party"
+		and calm_entry_100.get("hero_id") == ""
+		and calm_entry_100.get("candle_delta") == 0
+		and calm_entry_100.get("fray_delta") == -25
+		and calm_entry_100.get("candle") == 40
+		and calm_entry_100.get("fray") == expected_four_minus_25
+		and _receipt_keys(calm_entry_100) == expected_preview_keys,
+		"AC1: party min_fray:100 is available for [0,99,100,200] and projects -25 for all four heroes")
+
+	var rec_any_100 := svc_any.choose("party_calm", snap_any_100)
+	_check(rec_any_100.get("ok") == true
+		and rec_any_100.get("event_id") == "ev_stitched_party_fray_relief"
+		and rec_any_100.get("choice_id") == "party_calm"
+		and rec_any_100.get("target") == "party"
+		and rec_any_100.get("hero_id") == ""
+		and rec_any_100.get("candle") == 40
+		and rec_any_100.get("fray") == expected_four_minus_25
+		and _receipt_keys(rec_any_100) == expected_receipt_keys,
+		"AC2: choose(party_calm) emits exactly four raw fray intents {-25} and preserves candle 40")
+	_check(svc_any.is_claimed() and not svc_any.is_valid(),
+		"AC2: choose(party_calm) latches the visit once")
+	_assert_rejected(svc_any, "party_calm", snap_any_100, 40,
+		"AC2: replay after party_calm claim is rejected")
+	_assert_rejected(svc_any, "leave", snap_any_100, 40,
+		"AC2: leave after party_calm claim is rejected")
+	_check(svc_any.preview(snap_any_100) == _denied_preview(),
+		"AC2: preflight after claim is denied")
+
+	# Ineligible [0, 99, 99, 0]: available:false, parsed deltas, empty fray map; choose refused without latching
+	var svc_any_refuse := RunStitchedEventConsequence.new(party_any_event)
+	var prev_any_99 := svc_any_refuse.preview(snap_any_99)
+	_check(_choice_ids(prev_any_99) == ["party_calm", "party_wick", "leave"],
+		"AC1: with all heroes below threshold [0,99,99,0], choices remain visible in authored slots")
+	var calm_entry_99 := _entry(prev_any_99, "party_calm")
+	_check(calm_entry_99.get("available") == false
+		and calm_entry_99.get("candle_delta") == 0
+		and calm_entry_99.get("fray_delta") == -25
+		and calm_entry_99.get("candle") == 40
+		and calm_entry_99.get("fray") == {}
+		and _receipt_keys(calm_entry_99) == expected_preview_keys,
+		"AC1: party min_fray:100 is unavailable for [0,99,99,0] with parsed deltas and empty fray")
+
+	_assert_rejected(svc_any_refuse, "party_calm", snap_any_99, 40,
+		"AC2: choose(party_calm) at [0,99,99,0] is refused without latching")
+	_check(not svc_any_refuse.is_claimed() and svc_any_refuse.is_valid(),
+		"AC2: refused party_calm leaves service valid and unclaimed")
+
+	# Retry with qualifying snapshot succeeds on same unclaimed instance:
+	var rec_any_retry := svc_any_refuse.choose("party_calm", snap_any_100)
+	_check(rec_any_retry.get("ok") == true and rec_any_retry.get("fray") == expected_four_minus_25,
+		"AC2: retry with qualifying snapshot succeeds on same unclaimed instance")
+
+	# Fallback Leave on another instance:
+	var svc_any_leave := RunStitchedEventConsequence.new(party_any_event)
+	_assert_rejected(svc_any_leave, "party_calm", snap_any_99, 40,
+		"AC2: party_calm refused before Leave")
+	var rec_any_leave := svc_any_leave.choose("leave", snap_any_99)
+	_check(rec_any_leave.get("ok") == true
+		and rec_any_leave.get("choice_id") == "leave"
+		and rec_any_leave.get("candle") == 40
+		and rec_any_leave.get("fray") == {},
+		"AC2: Leave succeeds after party_calm refusal")
+
+	# Thresholds 1 (0 vs 1), 100 (99 vs 100), 200 (199 vs 200) across all array/rank positions:
+	var bound_event_1_100 := _event([
+		_choice("gate_1", "Min fray 1.", {"candle": 0, "fray": -5, "target": "party", "min_fray": 1}),
+		_choice("gate_100", "Min fray 100.", {"candle": 0, "fray": -10, "target": "party", "min_fray": 100}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_stitched_party_bounds_1_100")
+
+	var bound_event_200 := _event([
+		_choice("gate_200", "Min fray 200.", {"candle": 0, "fray": -20, "target": "party", "min_fray": 200}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_stitched_party_bounds_200")
+
+	# All at 0: all gates unavailable
+	var snap_all_0 := _four(50, [0, 0, 0, 0])
+	var prev_all_0_a := RunStitchedEventConsequence.new(bound_event_1_100).preview(snap_all_0)
+	var prev_all_0_b := RunStitchedEventConsequence.new(bound_event_200).preview(snap_all_0)
+	_check(_entry(prev_all_0_a, "gate_1").get("available") == false
+		and _entry(prev_all_0_a, "gate_100").get("available") == false
+		and _entry(prev_all_0_b, "gate_200").get("available") == false,
+		"AC1: at fray [0,0,0,0], min_fray 1, 100, 200 are all unavailable")
+
+	# For each position 0..3: frayed hero at threshold 1 qualifies gate_1 while 0 does not
+	for pos in range(4):
+		var frays_1 := [0, 0, 0, 0]
+		frays_1[pos] = 1
+		var snap_pos_1 := _four(50, frays_1)
+		var prev_pos_1 := RunStitchedEventConsequence.new(bound_event_1_100).preview(snap_pos_1)
+		_check(_entry(prev_pos_1, "gate_1").get("available") == true
+			and _entry(prev_pos_1, "gate_100").get("available") == false,
+			"AC1: frayed hero at fray 1 at position %d qualifies min_fray:1" % pos)
+
+	# All at 99: min_fray 100 unavailable
+	var snap_all_99 := _four(50, [99, 99, 99, 99])
+	var prev_all_99 := RunStitchedEventConsequence.new(bound_event_1_100).preview(snap_all_99)
+	_check(_entry(prev_all_99, "gate_1").get("available") == true
+		and _entry(prev_all_99, "gate_100").get("available") == false,
+		"AC1: at fray [99,99,99,99], min_fray:100 is unavailable")
+
+	# For each position 0..3: frayed hero at threshold 100 qualifies gate_100 while 99 does not
+	for pos in range(4):
+		var frays_100 := [99, 99, 99, 99]
+		frays_100[pos] = 100
+		var snap_pos_100 := _four(50, frays_100)
+		var prev_pos_100 := RunStitchedEventConsequence.new(bound_event_1_100).preview(snap_pos_100)
+		_check(_entry(prev_pos_100, "gate_1").get("available") == true
+			and _entry(prev_pos_100, "gate_100").get("available") == true,
+			"AC1: frayed hero at fray 100 at position %d qualifies min_fray:100" % pos)
+
+	# All at 199: min_fray 200 unavailable
+	var snap_all_199 := _four(50, [199, 199, 199, 199])
+	var prev_all_199 := RunStitchedEventConsequence.new(bound_event_200).preview(snap_all_199)
+	_check(_entry(prev_all_199, "gate_200").get("available") == false,
+		"AC1: at fray [199,199,199,199], min_fray:200 is unavailable")
+
+	# For each position 0..3: frayed hero at threshold 200 qualifies gate_200 while 199 does not
+	for pos in range(4):
+		var frays_200 := [199, 199, 199, 199]
+		frays_200[pos] = 200
+		var snap_pos_200 := _four(50, frays_200)
+		var prev_pos_200 := RunStitchedEventConsequence.new(bound_event_200).preview(snap_pos_200)
+		_check(_entry(prev_pos_200, "gate_200").get("available") == true,
+			"AC1: frayed hero at fray 200 at position %d qualifies min_fray:200" % pos)
+
+	# Smaller active party (e.g. 2 heroes after losses):
+	var snap_two_heroes := _snapshot(40, [["warden", 0], ["seamstress", 100]])
+	var svc_two := RunStitchedEventConsequence.new(party_any_event)
+	var prev_two := svc_two.preview(snap_two_heroes)
+	_check(_entry(prev_two, "party_calm").get("available") == true
+		and _entry(prev_two, "party_calm").get("fray") == {"warden": -25, "seamstress": -25},
+		"AC1: party min_fray works with 2-hero active party when one qualifies")
+	var rec_two := svc_two.choose("party_calm", snap_two_heroes)
+	_check(rec_two.get("ok") == true and rec_two.get("fray") == {"warden": -25, "seamstress": -25},
+		"AC2: choose(party_calm) with 2-hero party emits exactly two fray intents")
+
+	# AC3: Paid candle combination with any-member gate (require_full_candle: true, candle: -25, min_fray: 100)
+	var snap_candle_25_qual := _four(25, [0, 99, 100, 200])
+	var snap_candle_24_qual := _four(24, [0, 99, 100, 200])
+	var snap_candle_100_no_fray := _four(100, [0, 99, 99, 0])
+	var snap_candle_24_no_fray := _four(24, [0, 99, 99, 0])
+
+	# Exactly 25 candle + qualifying fray: preview available, candle projected 25 - 25 = 0, choose succeeds
+	var svc_wick_25 := RunStitchedEventConsequence.new(party_any_event)
+	var prev_wick_25 := svc_wick_25.preview(snap_candle_25_qual)
+	var entry_wick_25 := _entry(prev_wick_25, "party_wick")
+	_check(entry_wick_25.get("available") == true
+		and entry_wick_25.get("candle_delta") == -25
+		and entry_wick_25.get("fray_delta") == -25
+		and entry_wick_25.get("candle") == 0
+		and entry_wick_25.get("fray") == expected_four_minus_25,
+		"AC3: party min_fray:100 with require_full_candle:true succeeds at exactly candle 25")
+	var rec_wick_25 := svc_wick_25.choose("party_wick", snap_candle_25_qual)
+	_check(rec_wick_25.get("ok") == true
+		and rec_wick_25.get("candle") == 0
+		and rec_wick_25.get("fray") == expected_four_minus_25,
+		"AC3: choose(party_wick) at candle 25 commits once with candle 0")
+
+	# 24 candle with qualifying fray: preview available:false, choose refused with unchanged candle 24
+	var svc_wick_24 := RunStitchedEventConsequence.new(party_any_event)
+	var prev_wick_24 := svc_wick_24.preview(snap_candle_24_qual)
+	var entry_wick_24 := _entry(prev_wick_24, "party_wick")
+	_check(entry_wick_24.get("available") == false
+		and entry_wick_24.get("candle_delta") == -25
+		and entry_wick_24.get("candle") == 24
+		and entry_wick_24.get("fray") == {},
+		"AC3: candle 24 is unavailable even with qualifying fray due to require_full_candle")
+	_assert_rejected(svc_wick_24, "party_wick", snap_candle_24_qual, 24,
+		"AC3: choose(party_wick) at candle 24 refused without latching")
+	_check(svc_wick_24.choose("leave", snap_candle_24_qual).get("ok") == true,
+		"AC3: Leave succeeds after candle 24 refusal")
+
+	# 100 candle with non-qualifying fray [0,99,99,0]: preview available:false, choose refused
+	var svc_wick_100_no_fray := RunStitchedEventConsequence.new(party_any_event)
+	var prev_wick_100 := svc_wick_100_no_fray.preview(snap_candle_100_no_fray)
+	var entry_wick_100 := _entry(prev_wick_100, "party_wick")
+	_check(entry_wick_100.get("available") == false
+		and entry_wick_100.get("candle") == 100
+		and entry_wick_100.get("fray") == {},
+		"AC3: funded party (candle 100) with no qualifying fray cannot buy party_wick")
+	_assert_rejected(svc_wick_100_no_fray, "party_wick", snap_candle_100_no_fray, 100,
+		"AC3: choose(party_wick) with no qualifying fray refused at candle 100")
+	_check(svc_wick_100_no_fray.choose("leave", snap_candle_100_no_fray).get("ok") == true,
+		"AC3: Leave succeeds after non-qualifying fray refusal at candle 100")
+
+	# 24 candle with non-qualifying fray: both fail, refused
+	var svc_wick_24_no_fray := RunStitchedEventConsequence.new(party_any_event)
+	_assert_rejected(svc_wick_24_no_fray, "party_wick", snap_candle_24_no_fray, 24,
+		"AC3: choose(party_wick) refused when both candle and fray fail")
+
+	# AC3: Optional rewards combination (scraps, gold, part, hp) on party-any gate:
+	var party_rewards_event := _event([
+		_choice("rally", "Rally the frayed band.", {
+			"candle": 10,
+			"fray": -25,
+			"target": "party",
+			"min_fray": 100,
+			"scraps": 3,
+			"gold": 5,
+			"hp": 4,
+			"part": {"id": "warden_head_pot_helm_bonk", "tier": 2},
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_stitched_party_rewards")
+
+	var snap_rewards_qual := _gold_scraps_satchel_four(40, 2, 10, 1, [0, 99, 100, 200])
+	var snap_rewards_ineligible := _gold_scraps_satchel_four(40, 2, 10, 1, [0, 99, 99, 0])
+
+	# Eligible: projects candle, fray, scraps, gold, satchel_count, hp
+	var svc_rewards := RunStitchedEventConsequence.new(party_rewards_event, warden_catalog)
+	var prev_rewards := svc_rewards.preview(snap_rewards_qual)
+	var rally_entry := _entry(prev_rewards, "rally")
+	var expected_four_hp := {
+		"warden": 4, "seamstress": 4, "tinker": 4, "button_golem": 4,
+	}
+	_check(rally_entry.get("available") == true
+		and rally_entry.get("candle") == 50
+		and rally_entry.get("fray") == expected_four_minus_25
+		and rally_entry.get("hp") == expected_four_hp
+		and rally_entry.get("scraps") == 5
+		and rally_entry.get("gold") == 15
+		and rally_entry.get("satchel_count") == 2,
+		"AC3: party min_fray projects optional scraps, gold, part, and party hp intents")
+	var rec_rewards := svc_rewards.choose("rally", snap_rewards_qual)
+	_check(rec_rewards.get("ok") == true
+		and rec_rewards.get("candle") == 50
+		and rec_rewards.get("fray") == expected_four_minus_25
+		and rec_rewards.get("hp") == expected_four_hp
+		and rec_rewards.get("scraps") == 5
+		and rec_rewards.get("gold") == 15
+		and rec_rewards.get("satchel_count") == 2,
+		"AC3: choose(rally) returns exact optional scraps, gold, part and hp receipts")
+
+	# Ineligible: available:false, rewards unprojected, wallet/satchel unchanged on refusal
+	var svc_rewards_ineligible := RunStitchedEventConsequence.new(party_rewards_event, warden_catalog)
+	var prev_rewards_ineligible := svc_rewards_ineligible.preview(snap_rewards_ineligible)
+	var rally_ineligible := _entry(prev_rewards_ineligible, "rally")
+	_check(rally_ineligible.get("available") == false
+		and rally_ineligible.get("candle") == 40
+		and rally_ineligible.get("fray") == {}
+		and rally_ineligible.get("hp") == {}
+		and rally_ineligible.get("scraps") == 2
+		and rally_ineligible.get("gold") == 10
+		and rally_ineligible.get("satchel_count") == 1,
+		"AC3: party min_fray ineligible leaves rewards unprojected and base balances unchanged")
+	_assert_rejected(svc_rewards_ineligible, "rally", snap_rewards_ineligible, 40,
+		"AC3: choose(rally) refused when party is ineligible")
+
+	# --- AC4: Malformed min_fray values, structural invalid gates, and extra keys fail closed ---
 	var malformed_min_frays: Array = [0, -1, -100, 201, 999, 100.0, 1.5, true, false, "100", "", null, [100], {"min_fray": 100}]
 	for idx in range(malformed_min_frays.size()):
 		var bad_val: Variant = malformed_min_frays[idx]
@@ -4324,13 +4612,15 @@ func _test_min_fray_gates() -> void:
 			_check(bad_svc.choose(fallback_choice, snap_seamstress_100).get("ok") == true,
 				"AC3: %s claims after malformed min_fray %d (%s) refusal" % [fallback_choice, idx, target_mode])
 
-	# Party target with min_fray but missing required_hero, and unexpected extra key alongside min_fray:
+	# Structural malformed cases with min_fray: unknown hero, unexpected extra keys, missing required fields:
 	var structural_bad_effects: Array = [
-		{"candle": 0, "fray": -10, "target": "party", "min_fray": 100},
-		{"candle": -25, "fray": -25, "target": "party", "min_fray": 100, "require_full_candle": true},
+		{"candle": 0, "fray": -10, "target": "party", "min_fray": 100, "extra": 1},
+		{"candle": -25, "fray": -25, "target": "party", "min_fray": 100, "require_full_candle": true, "bogus": true},
+		{"candle": 0, "fray": -10, "target": "party", "min_fray": 100, "hero_id": "warden"},
 		{"candle": 0, "fray": -10, "target": "party", "required_hero": "porcelain_doll", "min_fray": 100},
 		{"candle": 0, "fray": -10, "target": "party", "required_hero": "seamstress", "min_fray": 100, "extra": 1},
 		{"candle": -25, "fray": -25, "target": "hero", "hero_id": "warden", "min_fray": 100, "extra": 1},
+		{"candle": 0, "fray": -10, "target": "hero", "min_fray": 100},
 	]
 	for idx in range(structural_bad_effects.size()):
 		var bad_svc := RunStitchedEventConsequence.new(_event([
@@ -4359,13 +4649,16 @@ func _test_min_fray_gates() -> void:
 	rec_party_100["fray"]["seamstress"] = -888
 	_check(confess_event == confess_event_original
 		and party_event == party_event_original
+		and party_any_event == party_any_original
 		and snap_warden_100 == snap_warden_100_original
 		and snap_warden_99 == snap_warden_99_original
 		and snap_candle_24 == snap_candle_24_original
 		and snap_seamstress_100 == snap_seamstress_100_original
 		and snap_seamstress_99 == snap_seamstress_99_original
-		and snap_seamstress_absent == snap_seamstress_absent_original,
-		"AC1/AC2/AC3: min_fray previews, claims and rejections never mutate caller snapshots or events")
+		and snap_seamstress_absent == snap_seamstress_absent_original
+		and snap_any_100 == snap_any_100_original
+		and snap_any_99 == snap_any_99_original,
+		"AC1/AC2/AC3/AC4: min_fray previews, claims and rejections never mutate caller snapshots or events")
 	_check(randi() == expected_rng,
 		"AC1/AC2/AC3: min_fray checks never draw from the seeded global RNG")
 
