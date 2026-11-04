@@ -2244,16 +2244,48 @@ func _stitched_sewing_swap(hero_id: String, slot: String, satchel_index: int,
 func _stitched_sewing_leave(expected_state: Dictionary, source: WeakRef) -> Dictionary:
 	var panel: Control = source.get_ref() if source != null else null
 	if panel == null or panel != stitched_sewing_panel or not panel.is_visible_in_tree() \
-			or stitched_sewing_visit == null \
+			or stitched_sewing_visit == null or is_instance_valid(stitched_fight_view) \
 			or _stitched_sewing_quote.get("state", {}) != expected_state \
 			or not _stitched_sewing_consistent():
 		return {"ok": false, "error": "stale Sewing Circle"}
+	var mend_expected: Dictionary = _stitched_mend_quote["state"].duplicate(true)
 	var receipt: Dictionary = stitched_sewing_visit.leave(STITCHED_SEWING_NODE_ID, expected_state)
-	if receipt.get("ok") == true:
-		var mend_receipt: Dictionary = stitched_sewing_mend_visit.leave(
-			STITCHED_SEWING_NODE_ID, _stitched_mend_quote["state"])
-		if mend_receipt.get("ok") == true:
-			_close_stitched_sewing()
+	if receipt.get("ok") != true:
+		return {"ok": false, "error": "swap Leave rejected"}
+	var mend_receipt: Dictionary = stitched_sewing_mend_visit.leave(
+		STITCHED_SEWING_NODE_ID, mend_expected)
+	if mend_receipt.get("ok") != true:
+		return {"ok": false, "error": "mend Leave rejected"}
+	# Only both authenticated, one-shot terminal receipts can carry equipment.
+	# A service's closed state preserves exactly the worn heroes it was given.
+	var swap_final: Dictionary = receipt.get("state", {})
+	var mend_final: Dictionary = mend_receipt.get("state", {})
+	if receipt.get("action") != "leave" or mend_receipt.get("action") != "leave" \
+			or receipt.get("node_id") != STITCHED_SEWING_NODE_ID \
+			or mend_receipt.get("node_id") != STITCHED_SEWING_NODE_ID \
+			or receipt.get("source_state") != expected_state \
+			or mend_receipt.get("source_state") != mend_expected \
+			or swap_final.get("open") != false or mend_final.get("open") != false \
+			or swap_final.get("version") != int(expected_state["version"]) + 1 \
+			or mend_final.get("version") != int(mend_expected["version"]) + 1 \
+			or swap_final.get("heroes") != mend_final.get("heroes") \
+			or swap_final.get("heroes") != expected_state.get("heroes") \
+			or swap_final.get("satchel") != stitched_preview_satchel \
+			or mend_final.get("scraps") != stitched_preview_scraps:
+		return {"ok": false, "error": "inconsistent Sewing Circle Leave"}
+	var next_overrides: Dictionary = _stitched_gear_overrides.duplicate(true)
+	for hero in swap_final["heroes"]:
+		var hero_id := str(hero["id"])
+		var carried: Dictionary = next_overrides.get(hero_id, {}).duplicate(true)
+		for slot in StitchedParts.SLOTS:
+			var worn: Dictionary = hero["parts"][slot]
+			if bool(worn["torn"]):
+				# Do not replace lawful swap/mend overrides or unrelated gear.
+				carried[slot] = worn.duplicate(true)
+		if not carried.is_empty():
+			next_overrides[hero_id] = carried
+	_stitched_gear_overrides = next_overrides
+	_close_stitched_sewing()
 	return receipt
 
 
