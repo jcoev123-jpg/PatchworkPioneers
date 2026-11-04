@@ -168,7 +168,9 @@ func _build_screen() -> void:
 		var slot: String = SLOTS[index]
 		_part_buttons[slot] = _button(slot.capitalize(), Rect2(266 + index * 187, 496, 178, 44),
 			func(): select_part(slot))
-	_labels["preview"] = _label("", Rect2(266, 542, 740, 48), 18, MUTED)
+	_labels["preview"] = _label("", Rect2(266, 542, 740, 48), 14, MUTED)
+	_labels["preview"].autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_labels["preview"].vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	_action_buttons["move_front"] = _button("Move front", Rect2(266, 594, 135, 38), func(): submit_move(-1))
 	_action_buttons["move_back"] = _button("Move back", Rect2(409, 594, 135, 38), func(): submit_move(1))
 	_action_buttons["re_tie"] = _button("Re-tie", Rect2(552, 594, 135, 38), func(): submit_re_tie())
@@ -319,6 +321,7 @@ func _inspect_seat(key: String) -> void:
 	_inspected_seat = key
 	if _labels.has("log"):
 		_labels["log"].text = _seat_detail_for(key)
+	_present_forecast()
 
 
 func _clear_seat_inspection(key: String = "") -> void:
@@ -326,6 +329,7 @@ func _clear_seat_inspection(key: String = "") -> void:
 		_inspected_seat = ""
 		if _labels.has("log"):
 			_labels["log"].text = _default_log_text()
+		_present_forecast()
 
 
 func _art_for(id: String) -> Dictionary:
@@ -413,10 +417,8 @@ func _refresh() -> void:
 			var targets: Array = battle._legal_targets(acting, ability, rank)
 			if not targets.is_empty():
 				var side := "hero" if str(targets[0]["side"]) == "hero" else "foe"
-				_target_ranks[side + "_" + str(rank)] = true
-		_labels["preview"].text = _preview_text(acting, ability)
-	else:
-		_labels["preview"].text = "Select a legal part to see its range, hit chance and damage. No RNG spent."
+				if not StitchedTargetForecast.for_rank(battle, acting, ability, side, rank).is_empty():
+					_target_ranks[side + "_" + str(rank)] = true
 	for key in _seat_buttons:
 		_seat_buttons[key].disabled = not _target_ranks.has(key)
 	for key in _target_buttons:
@@ -427,6 +429,7 @@ func _refresh() -> void:
 	_action_buttons["pass"].disabled = not hero_turn
 	_action_buttons["retreat"].disabled = not hero_turn or battle.is_boss_encounter()
 	_labels["log"].text = _seat_detail_for(_inspected_seat) if not _inspected_seat.is_empty() else _default_log_text()
+	_present_forecast()
 
 
 func _valid_part(actor: Dictionary, equipped: Dictionary) -> bool:
@@ -451,20 +454,43 @@ func _can_move(direction: int) -> bool:
 
 func _preview_text(actor: Dictionary, ability: Dictionary) -> String:
 	var rank_labels: Array[String] = []
-	var detail := ""
 	for rank in range(1, 5):
 		var targets: Array = battle._legal_targets(actor, ability, rank)
 		if targets.is_empty():
 			continue
-		rank_labels.append(str(rank))
-		var target: Dictionary = targets[0]
-		if detail.is_empty():
-			var chance := StitchedRules.hit_chance(int(ability["acc"]) + int(actor["acc"]),
-				int(target.get("dodge", 0)), int(actor["miss_streak"]))
-			detail = " · HIT %d%% · DMG %d–%d" % [chance, int(ability["dmg"][0]) + int(actor["dmg_bonus"]), int(ability["dmg"][1]) + int(actor["dmg_bonus"])]
+		var side := str(targets[0].get("side", ""))
+		if not StitchedTargetForecast.for_rank(battle, actor, ability, side, rank).is_empty():
+			rank_labels.append(str(rank))
 	if rank_labels.is_empty():
 		return str(ability["name"]) + " · no legal targets"
-	return str(ability["name"]) + " · target ranks " + ", ".join(rank_labels) + detail
+	return str(ability["name"]) + " · legal ranks " + ", ".join(rank_labels) + " · hover or focus a lit rank for its forecast."
+
+
+func _present_forecast() -> void:
+	if not _labels.has("preview") or battle == null:
+		return
+	var generic := "Select a legal part to see its range, hit chance and damage. No RNG spent."
+	var acting := battle.get_unit(battle.current_actor_id())
+	var ability: Dictionary = {}
+	if battle.current_side() == "hero" and not battle.is_over() and not _selected_part.is_empty():
+		var equipped: Dictionary = acting.get("parts", {}).get(_selected_part, {})
+		if _valid_part(acting, equipped):
+			ability = StitchedParts.ability_at_tier(parts[str(equipped["id"])], int(equipped["tier"]))
+	if not ability.is_empty():
+		generic = _preview_text(acting, ability)
+	var forecast: Dictionary = {}
+	if not ability.is_empty() and _target_ranks.has(_inspected_seat):
+		var key_parts := _inspected_seat.split("_")
+		if key_parts.size() == 2:
+			forecast = StitchedTargetForecast.for_rank(battle, acting, ability, str(key_parts[0]), int(key_parts[1]))
+	_labels["preview"].text = str(forecast.get("text", generic))
+	_labels["preview"].tooltip_text = str(forecast.get("tooltip", ""))
+	for key in _seat_buttons:
+		var detail := _seat_detail_for(key)
+		var tip := str(forecast.get("tooltip", "")) if key == _inspected_seat else ""
+		_seat_buttons[key].tooltip_text = detail + ("\n\n" + tip if not tip.is_empty() else "")
+		if _target_buttons.has(key):
+			_target_buttons[key].tooltip_text = detail + ("\n\n" + tip if not tip.is_empty() else "")
 
 
 func select_part(slot: String) -> bool:
