@@ -157,6 +157,175 @@ func _run() -> void:
 	
 	# AC4: Global/Run RNG isolation
 	_check(rng.state == rng_state, "visit creation and actions do not consume global or run RNG")
+	_run_four_hero_stitched()
+
+
+## Four-hero Stitched Patch Stall: warden, seamstress, tinker, lantern_monk, an
+## empty deck and authentic seeded stock from the real sampler. The wrapper is
+## unchanged; the helper now admits the four actors.
+func _run_four_hero_stitched() -> void:
+	seed(495021)
+	var expected_global := randi()
+	seed(495021)
+	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 495021
+	var party := ["warden", "seamstress", "tinker", "lantern_monk"]
+	var deck: Array = []
+	var owned := ["button_eye"]
+	var gold := 500
+	var sampled := RunShopPurchases.sample_patch_stall_offers(rng, authored.trinkets, owned)
+	_check(sampled.ok and sampled.offers.size() == 3, "four-hero seeded sampler returns three offers")
+	if not sampled.ok:
+		return
+	var offers: Array = sampled.offers
+	var rng_state := rng.state
+	var authored_prices := {}
+	for entry in authored.trinkets:
+		authored_prices[entry.id] = int(entry.price)
+	for offer in offers:
+		_check(offer.price is int and offer.price > 0 and not owned.has(offer.id),
+			"four-hero offer is priced and unowned " + str(offer.id))
+		if authored_prices.has(offer.id):
+			_check(authored_prices[offer.id] == offer.price,
+				"four-hero ordinary offer keeps authored price " + str(offer.id))
+	var price: int = offers[0].price
+
+	# AC1: admission, party order, empty deck, exactly three priced patches plus Leave.
+	var old_visit := RunPatchStallVisit.new("node_4", party, deck, owned, gold, offers)
+	var visit := RunPatchStallVisit.new("node_4", party, deck, owned, gold, offers)
+	_check(old_visit.is_valid() and visit.is_valid(), "four-hero Stitched visits are valid")
+	var state := visit.read_state()
+	var old_state := old_visit.read_state()
+	_check(state.snapshot == {"party_ids": party, "deck_ids": [], "owned_trinkets": owned, "gold": gold},
+		"four-hero snapshot keeps all four IDs in order and the empty deck")
+	_check(state.visit_id != old_state.visit_id and state.status == "available",
+		"four-hero identical-source visits have distinct identities")
+	var expected_quote: Array = []
+	for offer in offers:
+		expected_quote.append({"id": offer.id, "price": offer.price, "sold": false})
+	var quote := visit.quote()
+	_check(quote == {"offers": expected_quote, "decisions": ["buy_patch", "leave"]}
+		and quote.offers.size() == 3, "four-hero quote is exactly three priced patches plus Leave")
+	_check_stale_requests(old_state.visit_id, visit, offers[0].id)
+	_check_stale_requests(state.visit_id, old_visit, offers[0].id)
+
+	# Quotes and reads are detached from the caller and from the service.
+	var detached_offers: Array = offers.duplicate(true)
+	var detached_party: Array = party.duplicate()
+	var detached := RunPatchStallVisit.new("node_4", detached_party, deck.duplicate(), owned.duplicate(), gold, detached_offers)
+	var detached_state := detached.read_state()
+	var detached_quote := detached.quote()
+	detached_party[0] = "intruder"
+	detached_offers[0].price = 0
+	var read := detached.read_state()
+	read.snapshot.party_ids.clear()
+	read.snapshot.gold = 0
+	var read_quote := detached.quote()
+	read_quote.offers[0].sold = true
+	read_quote.offers.pop_back()
+	read_quote.decisions.clear()
+	_check(detached.read_state() == detached_state and detached.quote() == detached_quote,
+		"four-hero caller data and returned reads are detached")
+
+	# AC3: forged, stale, wrong node, unoffered and unaffordable attempts change nothing.
+	var snapshot: Dictionary = state.snapshot
+	var bad_snapshot := snapshot.duplicate(true)
+	bad_snapshot.gold += 1
+	var short_party_snapshot := snapshot.duplicate(true)
+	short_party_snapshot.party_ids = party.slice(0, 3)
+	_check(not visit.buy_patch(offers[0].id, "wrong_visit", "node_4", snapshot).ok, "four-hero wrong visit refused")
+	_check(not visit.buy_patch(offers[0].id, state.visit_id, "wrong_node", snapshot).ok, "four-hero wrong node refused")
+	_check(not visit.buy_patch(offers[0].id, state.visit_id, "node_4", bad_snapshot).ok, "four-hero mutated gold snapshot refused")
+	_check(not visit.buy_patch(offers[0].id, state.visit_id, "node_4", short_party_snapshot).ok, "four-hero truncated party snapshot refused")
+	_check(not visit.buy_patch("forged_id", state.visit_id, "node_4", snapshot).ok, "four-hero forged patch refused")
+	_check(not visit.buy_patch("", state.visit_id, "node_4", snapshot).ok and not visit.buy_patch(7, state.visit_id, "node_4", snapshot).ok,
+		"four-hero blank and non-string patch refused")
+	_check(not visit.leave("wrong_visit", "node_4", snapshot).ok and not visit.leave(state.visit_id, "wrong_node", snapshot).ok
+		and not visit.leave(state.visit_id, "node_4", bad_snapshot).ok, "four-hero forged Leave refused")
+	_check(visit.read_state() == state and visit.quote() == quote and not visit.is_consumed(),
+		"four-hero refusals preserve ledger, quote and usable Leave")
+	var owned_visit := RunPatchStallVisit.new("node_4", party, deck, owned + [offers[1].id], gold, offers)
+	var owned_state := owned_visit.read_state()
+	var owned_quote := owned_visit.quote()
+	_check(owned_visit.is_valid() and owned_quote.offers[1].sold, "four-hero owned listing starts sold")
+	_check(not owned_visit.buy_patch(offers[1].id, owned_state.visit_id, "node_4", owned_state.snapshot).ok
+		and owned_visit.preview_purchase(offers[1].id, owned_state.visit_id, "node_4", owned_state.snapshot).is_empty(),
+		"four-hero already-sold patch refused and not previewable")
+	_check(owned_visit.read_state() == owned_state and owned_visit.quote() == owned_quote and not owned_visit.is_consumed(),
+		"four-hero sold-listing refusal changes nothing")
+
+	var poor_visit := RunPatchStallVisit.new("node_4", party, deck, owned, price - 1, offers)
+	var poor_state := poor_visit.read_state()
+	var poor_quote := poor_visit.quote()
+	_check(poor_visit.is_valid() and poor_quote.offers.size() == 3, "four-hero poor visit is valid and quotes three")
+	_check(not poor_visit.buy_patch(offers[0].id, poor_state.visit_id, "node_4", poor_state.snapshot).ok,
+		"four-hero unaffordable buy refused")
+	_check(poor_visit.preview_purchase(offers[0].id, poor_state.visit_id, "node_4", poor_state.snapshot).is_empty()
+		and not poor_visit.reconcile_purchase({"kind": "trinket", "id": offers[0].id, "price": price},
+			poor_state.visit_id, "node_4", poor_state.snapshot),
+		"four-hero unaffordable preview and reconcile refused")
+	_check(not poor_visit.is_consumed() and poor_visit.read_state() == poor_state and poor_visit.quote() == poor_quote,
+		"four-hero unaffordable attempts keep ledger, quote and open Leave")
+	var poor_leave := poor_visit.leave(poor_state.visit_id, "node_4", poor_state.snapshot)
+	_check(poor_leave.ok and poor_leave.ledger == {"party_ids": party, "deck": [], "trinkets": owned, "gold": price - 1},
+		"rejected unaffordable four-hero buy still permits one exact Leave")
+	_check(not poor_visit.leave(poor_state.visit_id, "node_4", poor_state.snapshot).ok, "four-hero Leave latches once")
+	_check_closed_quote(poor_visit, poor_quote, poor_state, "four-hero unaffordable then Leave")
+
+	# AC2: one purchase spends exactly the authored quote once; Leave spends nothing.
+	var leave_visit := RunPatchStallVisit.new("node_4", party, deck, owned, gold, offers)
+	var leave_state := leave_visit.read_state()
+	var leave_quote := leave_visit.quote()
+	var leave_receipt := leave_visit.leave(leave_state.visit_id, "node_4", leave_state.snapshot)
+	_check(leave_receipt.ok and leave_receipt.decision == "leave"
+		and leave_receipt.ledger == {"party_ids": party, "deck": [], "trinkets": owned, "gold": gold}
+		and leave_receipt.source_snapshot == leave_state.snapshot, "four-hero Leave changes no wallet or inventory")
+	_check(not leave_visit.buy_patch(offers[0].id, leave_state.visit_id, "node_4", leave_state.snapshot).ok, "four-hero cannot buy after Leave")
+	_check_closed_quote(leave_visit, leave_quote, leave_state, "four-hero Leave")
+
+	var buy_receipt := visit.buy_patch(offers[0].id, state.visit_id, "node_4", snapshot)
+	_check(buy_receipt.ok and buy_receipt.decision == "buy_patch"
+		and buy_receipt.receipt == {"kind": "trinket", "id": offers[0].id, "price": price},
+		"four-hero buy returns the exact authored receipt")
+	_check(buy_receipt.ledger == {"party_ids": party, "deck": [], "trinkets": owned + [offers[0].id], "gold": gold - price},
+		"four-hero buy spends the exact price once and adds only that patch")
+	_check(visit.is_consumed() and visit.read_state().visit_id == state.visit_id, "four-hero buy consumes the visit")
+	for offer in offers:
+		_check(not visit.buy_patch(offer.id, state.visit_id, "node_4", snapshot).ok, "four-hero later buy refused " + str(offer.id))
+	_check(not visit.leave(state.visit_id, "node_4", snapshot).ok, "four-hero Leave refused after buying")
+	_check_closed_quote(visit, quote, state, "four-hero direct buy")
+	buy_receipt.receipt.price = -1
+	buy_receipt.ledger.party_ids.clear()
+	buy_receipt.source_snapshot.gold = 0
+	_check(visit.read_state() == {"node_id": "node_4", "visit_id": state.visit_id, "status": "closed", "snapshot": snapshot},
+		"four-hero buy receipt is detached from the service")
+
+	# The atomic paid-and-sewn route reconciles exactly once.
+	var atomic := RunPatchStallVisit.new("node_4", party, deck, owned, gold, offers)
+	var atomic_state := atomic.read_state()
+	var atomic_quote := atomic.quote()
+	var atomic_receipt := atomic.preview_purchase(offers[2].id, atomic_state.visit_id, "node_4", atomic_state.snapshot)
+	_check(atomic_receipt == {"kind": "trinket", "id": offers[2].id, "price": offers[2].price}
+		and atomic.read_state() == atomic_state, "four-hero preview is exact and read-only")
+	_check(not atomic.reconcile_purchase({"kind": "trinket", "id": offers[2].id, "price": offers[2].price + 1},
+		atomic_state.visit_id, "node_4", atomic_state.snapshot) and not atomic.is_consumed(),
+		"four-hero forged receipt leaves the service open")
+	_check(atomic.reconcile_purchase(atomic_receipt, atomic_state.visit_id, "node_4", atomic_state.snapshot)
+		and not atomic.reconcile_purchase(atomic_receipt, atomic_state.visit_id, "node_4", atomic_state.snapshot),
+		"four-hero identical receipt reconciles once and replay is refused")
+	_check_closed_quote(atomic, atomic_quote, atomic_state, "four-hero atomic reconcile")
+
+	# Cardinality is still bounded at the wrapper: two or five heroes, bad IDs and stock refuse.
+	for bad_party in [party.slice(0, 2), party + ["scarecrow"],
+			["warden", "warden", "tinker", "lantern_monk"], ["warden", "seamstress", "", "lantern_monk"]]:
+		var bad := RunPatchStallVisit.new("node_4", bad_party, deck, owned, gold, offers)
+		_check(not bad.is_valid() and bad.read_state() == {} and bad.quote() == {},
+			"Patch Stall visit refuses party " + str(bad_party))
+	_check(not RunPatchStallVisit.new("node_4", party, deck, owned, gold, offers.slice(0, 2)).is_valid(),
+		"four-hero visit refuses two-patch stock")
+	_check(rng.state == rng_state, "four-hero visits and actions consume no run RNG")
+	_check(randi() == expected_global, "four-hero visits and actions consume no global RNG")
 
 
 ## Every terminal route (direct buy, atomic paid-and-sewn reconcile, Leave) must

@@ -26,6 +26,7 @@ func _initialize() -> void:
 	_test_patch_stall_contract()
 	_test_patch_stall_purchase()
 	_test_patch_stall_rejections()
+	_test_four_hero_patch_stall()
 	_test_patch_stall_sampling()
 	_test_peddler()
 	if failures.is_empty():
@@ -1466,6 +1467,175 @@ func _test_patch_stall_rejections() -> void:
 
 	_check(randi() == expected_draw,
 		"stall rejections, removal rebases and settle consume no global RNG")
+
+
+const STITCHED_PARTY := ["warden", "seamstress", "tinker", "lantern_monk"]
+
+
+## Authentic seeded Stitched stock: the real sampler over the authored candidates.
+func _stitched_stall_stock(rng: RandomNumberGenerator, owned: Array) -> Array:
+	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/shop/initial_offers.json"))
+	var sampled := RunShopPurchases.sample_patch_stall_offers(rng, authored.trinkets, owned)
+	_check(sampled.ok and sampled.offers.size() == 3,
+		"seeded Stitched stall sampler returns three authored offers")
+	return sampled.offers if sampled.ok else []
+
+
+func _stitched_stall(party: Array, deck: Array, owned: Array, gold: Variant,
+		offers: Array) -> RunShopPurchases:
+	return RunShopPurchases.new(party.duplicate(true), deck.duplicate(true),
+		owned.duplicate(true), gold, [], offers.duplicate(true), "patch_stall")
+
+
+func _test_four_hero_patch_stall() -> void:
+	seed(495011)
+	var expected_draw := randi()
+	seed(495011)
+	var rng := _seeded_rng(495011)
+	var owned := ["button_eye"]
+	var offers := _stitched_stall_stock(rng, owned)
+	var after_stock := rng.state
+	_check(offers.size() == 3, "four-hero fixture has three seeded offers")
+	if offers.size() != 3:
+		return
+	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/shop/initial_offers.json"))
+	var authored_prices := {}
+	for entry in authored.trinkets:
+		authored_prices[entry.id] = int(entry.price)
+	var seen := {}
+	for offer in offers:
+		_check(not seen.has(offer.id) and not owned.has(offer.id)
+			and offer.price is int and offer.price > 0,
+			"seeded offer is distinct, unowned and priced " + str(offer.id))
+		seen[offer.id] = true
+		if authored_prices.has(offer.id):
+			_check(authored_prices[offer.id] == offer.price,
+				"ordinary offer keeps its authored price " + str(offer.id))
+	var price: int = offers[0].price
+
+	# AC1: admission preserves all four heroes in order, zero cards, three patches.
+	var stall := _stitched_stall(STITCHED_PARTY, [], owned, 500, offers)
+	_check(stall.is_valid(), "four-hero empty-deck Patch Stall admits")
+	var initial_state := stall.get_state()
+	var initial_stock := stall.get_stock()
+	_check(initial_state == {"party_ids": STITCHED_PARTY, "deck": [],
+		"trinkets": owned, "gold": 500}, "four-hero ledger exact and in order")
+	var expected_stock := {"cards": [], "trinkets": []}
+	for offer in offers:
+		expected_stock.trinkets.append({"id": offer.id, "price": offer.price, "sold": false})
+	_check(initial_stock == expected_stock, "stock is the exact three seeded priced patches")
+	_check(not stall.patch_stall_choice_used(), "fresh four-hero stall has no used choice")
+
+	# Inputs and reads are detached.
+	var fixture_party := STITCHED_PARTY.duplicate()
+	var fixture_offers := offers.duplicate(true)
+	var detached := RunShopPurchases.new(fixture_party, [], owned.duplicate(), 500, [],
+		fixture_offers, "patch_stall")
+	fixture_party[3] = "intruder"
+	fixture_offers[0].price = 0
+	fixture_offers[1].id = "forged"
+	_check(detached.get_state() == initial_state and detached.get_stock() == initial_stock,
+		"four-hero admission copies caller data")
+	var read_state := detached.get_state()
+	var read_stock := detached.get_stock()
+	read_state.party_ids.clear()
+	read_state.gold = 1
+	read_stock.trinkets[0].sold = true
+	read_stock.trinkets.pop_back()
+	_check(detached.get_state() == initial_state and detached.get_stock() == initial_stock,
+		"four-hero reads are detached")
+
+	# AC2: one affordable purchase spends exactly its price once.
+	var expected_state := initial_state.duplicate(true)
+	expected_state.gold -= price
+	expected_state.trinkets.append(offers[0].id)
+	var paid_stock := initial_stock.duplicate(true)
+	paid_stock.trinkets[0].sold = true
+	var paid := stall.buy("trinket", offers[0].id)
+	_assert_result(paid, true, expected_state, paid_stock, "four-hero purchase",
+		{"kind": "trinket", "id": offers[0].id, "price": price})
+	_check(stall.patch_stall_choice_used(), "four-hero purchase latches the choice")
+	_check(stall.get_state().deck == [] and stall.get_state().party_ids == STITCHED_PARTY,
+		"purchase leaves empty deck and party intact")
+	paid.receipt.price = -1
+	paid.state.party_ids.clear()
+	paid.stock.trinkets.clear()
+	_assert_stall_model(stall, expected_state, paid_stock, "four-hero paid result detached")
+	for repeat in range(2):
+		for offer in offers:
+			_assert_result(stall.buy("trinket", offer.id), false, expected_state,
+				paid_stock, "four-hero later buy " + str(offer.id))
+	_assert_result(stall.buy("card", "anything"), false, expected_state, paid_stock,
+		"four-hero card kind refused")
+
+	# Exact-price purchase empties the wallet; every other offer stays buyable data.
+	var exact := _stitched_stall(STITCHED_PARTY, [], owned, price, offers)
+	_check(exact.buy("trinket", offers[0].id).ok and exact.get_state().gold == 0,
+		"exact-wallet four-hero purchase succeeds")
+
+	# AC3: unaffordable, unoffered, owned/sold and malformed selections change nothing.
+	var poor := _stitched_stall(STITCHED_PARTY, [], owned, price - 1, offers)
+	_check(poor.is_valid(), "four-hero poor stall admits")
+	_stall_rejected(poor, "trinket", offers[0].id, "four-hero unaffordable")
+	_check(not poor.patch_stall_choice_used() and poor.get_state().gold == price - 1,
+		"unaffordable four-hero buy neither latches nor spends")
+	for action in [["trinket", "not_in_stock"], ["trinket", ""], ["trinket", " "],
+			["", offers[0].id], ["Trinket", offers[0].id], ["card", offers[0].id]]:
+		_stall_rejected(poor, action[0], action[1], "four-hero refused " + str(action))
+	_check(not poor.patch_stall_choice_used(), "four-hero refusals never latch")
+	var sold_stall := _stitched_stall(STITCHED_PARTY, [], owned + [offers[1].id], 500, offers)
+	_check(sold_stall.is_valid() and sold_stall.get_stock().trinkets[1].sold,
+		"already-owned four-hero listing starts sold")
+	_stall_rejected(sold_stall, "trinket", offers[1].id, "four-hero already sold")
+	_check(not sold_stall.patch_stall_choice_used(), "sold-listing refusal does not latch")
+
+	# AC4: cardinality only widens for Patch Stall; all other bounds stay closed.
+	_check(_stitched_stall(PATCH_STALL_PARTY, PATCH_STALL_DECK, owned, 500, offers).is_valid(),
+		"three-hero Patch Stall remains valid")
+	for bad_party in [[], ["warden"], ["warden", "seamstress"],
+			STITCHED_PARTY + ["scarecrow"]]:
+		var bad := _stitched_stall(bad_party, [], owned, 500, offers)
+		_check(not bad.is_valid() and bad.get_state() == {} and bad.get_stock() == {},
+			"Patch Stall refuses a party of " + str(bad_party.size()))
+	for bad_party in [
+			["warden", "warden", "tinker", "lantern_monk"],
+			["warden", "seamstress", "", "lantern_monk"],
+			["warden", "seamstress", "  ", "lantern_monk"],
+			["warden", "seamstress", "tinker", 7],
+			["warden", "seamstress", "tinker", null]]:
+		var bad := _stitched_stall(bad_party, [], owned, 500, offers)
+		_check(not bad.is_valid() and bad.get_state() == {} and bad.get_stock() == {},
+			"four-hero Patch Stall refuses bad IDs " + str(bad_party))
+	var bad_stock_cases: Array = [offers.slice(0, 2), offers + [offers[0]],
+		[offers[0], offers[0], offers[1]],
+		[{"id": offers[0].id, "price": -1}, offers[1], offers[2]],
+		[{"id": offers[0].id, "price": 1.5}, offers[1], offers[2]]]
+	for stock_case in bad_stock_cases:
+		_check(not _stitched_stall(STITCHED_PARTY, [], owned, 500, stock_case).is_valid(),
+			"four-hero Patch Stall refuses invalid stock")
+	var with_cards := RunShopPurchases.new(STITCHED_PARTY.duplicate(), [], owned.duplicate(),
+		500, [{"id": "c_a", "owner": "warden", "price": 5}], offers.duplicate(true), "patch_stall")
+	_check(not with_cards.is_valid(), "four-hero Patch Stall refuses card offers")
+	for gold in [-1, 1.5, "500", null]:
+		_check(not _stitched_stall(STITCHED_PARTY, [], owned, gold, offers).is_valid(),
+			"four-hero Patch Stall refuses gold " + str(gold))
+	# Shop and Peddler still require exactly three actors, with otherwise legal stock.
+	var shop_fixture := _fixture()
+	shop_fixture.party_ids = STITCHED_PARTY.duplicate()
+	_check(not _shop(shop_fixture).is_valid(), "Shop refuses a four-hero party")
+	var peddler_fixture := _peddler_fixture(_seeded_rng(256031))
+	var peddler_four: Dictionary = peddler_fixture.duplicate(true)
+	_check(_peddler(peddler_fixture).is_valid(), "three-hero Peddler control still admits")
+	peddler_four.party_ids = STITCHED_PARTY.duplicate()
+	_check(not _peddler(peddler_four).is_valid(), "Peddler refuses a four-hero party")
+	for kind in ["", "stall", "Patch_Stall", 7, null]:
+		var odd := RunShopPurchases.new(STITCHED_PARTY.duplicate(), [], owned.duplicate(),
+			500, [], offers.duplicate(true), kind)
+		_check(not odd.is_valid(), "four-hero unknown kind " + str(kind) + " refuses")
+	_check(rng.state == after_stock, "four-hero admission and purchases consume no run RNG")
+	_check(randi() == expected_draw, "four-hero admission and purchases consume no global RNG")
 
 
 func _test_legacy_quote_and_rebase() -> void:
