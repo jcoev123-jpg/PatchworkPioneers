@@ -2058,7 +2058,7 @@ func _refresh_stitched_sewing() -> void:
 	description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	panel.add_child(description)
 	var count := Label.new()
-	count.text = "SATCHEL  %d / %d    ·    PREVIEW SCRAPS  %d    ·    Mend torn arms: %d scraps" % [
+	count.text = "SATCHEL  %d / %d    ·    PREVIEW SCRAPS  %d    ·    Mend torn parts: %d scraps" % [
 		int(quote["satchel_count"]), int(quote["satchel_max"]),
 		stitched_preview_scraps, STITCHED_SEWING_MEND_COST]
 	count.position = Vector2(183, 224)
@@ -2077,22 +2077,20 @@ func _refresh_stitched_sewing() -> void:
 	var mend_state: Dictionary = mend_quote["state"].duplicate(true)
 	for hero_row in quote["heroes"]:
 		for slot_row in hero_row["slots"]:
-			if str(slot_row["slot"]) != "arms":
-				continue
 			var worn: Dictionary = slot_row["worn"]
 			var hero_name := str(hero_row["name"])
 			var blocked := str(slot_row["blocked"])
-			# Only actual torn arms are offered a Mend control. Unaffordable
+			# Only quoted torn worn parts get a Mend control. Unaffordable
 			# and lost-hero requests remain visible but disabled with a reason.
 			if bool(worn["torn"]):
 				for mend_hero in mend_quote["heroes"]:
 					if str(mend_hero["hero_id"]) != str(hero_row["hero_id"]):
 						continue
 					for mend_slot in mend_hero["slots"]:
-						if str(mend_slot["slot"]) != "arms":
+						if str(mend_slot["slot"]) != str(slot_row["slot"]):
 							continue
 						var mend_button := Button.new()
-						mend_button.name = "Mend_%s_arms" % str(hero_row["hero_id"])
+						mend_button.name = "Mend_%s_%s" % [str(hero_row["hero_id"]), str(slot_row["slot"])]
 						mend_button.custom_minimum_size = Vector2(850, 48)
 						mend_button.disabled = not bool(mend_slot["can_mend"])
 						mend_button.focus_mode = Control.FOCUS_NONE if mend_button.disabled else Control.FOCUS_ALL
@@ -2102,7 +2100,7 @@ func _refresh_stitched_sewing() -> void:
 							(" — " + reason) if not reason.is_empty() else ""]
 						mend_button.tooltip_text = reason
 						mend_button.pressed.connect(_stitched_sewing_mend.bind(
-							str(hero_row["hero_id"]), "arms", mend_state.duplicate(true), weakref(panel)))
+							str(hero_row["hero_id"]), str(slot_row["slot"]), mend_state.duplicate(true), weakref(panel)))
 						offers.add_child(mend_button)
 						if not mend_button.disabled and first_button == null:
 							first_button = mend_button
@@ -2166,11 +2164,11 @@ func _stitched_sewing_mend(hero_id: String, slot: String,
 		if str(hero_row["hero_id"]) != hero_id:
 			continue
 		for slot_row in hero_row["slots"]:
-			if str(slot_row["slot"]) == slot and slot == "arms" \
+			if str(slot_row["slot"]) == slot \
 					and bool(slot_row["can_mend"]) and bool(slot_row["worn"]["torn"]):
 				offered = true
 	if not offered:
-		return {"ok": false, "error": "not a quoted affordable torn arm"}
+		return {"ok": false, "error": "not a quoted affordable torn part"}
 	var receipt: Dictionary = stitched_sewing_mend_visit.mend(
 		hero_id, slot, STITCHED_SEWING_NODE_ID, expected_state)
 	if receipt.get("ok") != true or receipt.get("source_state") != expected_state \
